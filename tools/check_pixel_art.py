@@ -107,8 +107,10 @@ def main(path, names):
             continue
         shapes = [i for i in g.GetItems() if i.GetClass() == 'PCB_SHAPE']
         own = {s.m_Uuid.AsString() for s in shapes}
-        layers = sorted({board.GetLayerName(s.GetLayer()) for s in shapes})
-        side = 'B' if layers == ['B.Silkscreen'] or layers == ['B.SilkS'] else 'F'
+        names = {pcbnew.B_SilkS: 'B.SilkS', pcbnew.F_SilkS: 'F.SilkS'}
+        ids = {s.GetLayer() for s in shapes}
+        layers = sorted(names.get(i, board.GetLayerName(i)) for i in ids)
+        side = 'B' if ids == {pcbnew.B_SilkS} else 'F'
         obs = obstacles(board, side, own)
         outside, hits = [], set()
         for s in shapes:
