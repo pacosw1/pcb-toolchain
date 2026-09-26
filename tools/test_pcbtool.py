@@ -533,6 +533,26 @@ class CorridorBoardTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn('grid x0=19.000 y0=9.000 cell=0.5 cols=16 rows=4', r.stdout)
 
+    def run_box(self, *box):
+        import subprocess
+        import sys
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            board = self.make_board(d)
+            r = subprocess.run([sys.executable, os.path.join(HERE, 'pcbtool.py'), 'corridor', board, 'SIG',
+                                '--cell', '0.5', '--box', *map(str, box)], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout
+
+    def test_box_maps_only_the_window_at_the_cell(self):
+        out = self.run_box(16, 11, 14, 9)                    # corners in any order
+        self.assertIn('grid x0=14.000 y0=9.000 cell=0.5 cols=4 rows=4', out)
+        self.assertNotIn('cell grown', out)
+
+    def test_large_box_grows_the_cell_and_says_so(self):
+        out = self.run_box(0, 0, 60, 20)
+        self.assertIn('cell grown from 0.5 to 0.75', out)
+
 
 def json_copy(x):
     import json

@@ -14,7 +14,7 @@ Run with the KiCad bundled Python (it has pcbnew):
   $PY tools/pcbtool.py widen  BOARD NET W [--layer L] [--box X0 Y0 X1 Y1]  widen the net's thinner tracks, DRC
   $PY tools/pcbtool.py near   BOARD X Y [--r 0.3] [--within 1]  copper of all nets near a point, edge gap
   $PY tools/pcbtool.py drc    BOARD                           DRC --schematic-parity summary
-  $PY tools/pcbtool.py corridor BOARD NET [--margin 3] [--cell 0.25] [--pair N]  unconnected pad pairs + ASCII free/blocked map
+  $PY tools/pcbtool.py corridor BOARD NET [--margin 3] [--cell 0.25] [--pair N] [--box X1 Y1 X2 Y2]  unconnected pad pairs + ASCII free/blocked map
   $PY tools/pcbtool.py netcheck BOARD NET                     DRC on a temp copy: one total line + this net only
   $PY tools/pcbtool.py widths BOARD [--limit N]              tracks thinner than the net class width (current)
   $PY tools/pcbtool.py paths  BOARD SPEC.json [--verbose]     widest copper path between power pads >= design current
@@ -1025,8 +1025,14 @@ def cmd_corridor(a):
         sys.exit(f'--pair {a.pair}: the net has {len(pairs)} pairs')
     shown = [k for pr in ([pairs[a.pair - 1]] if a.pair else pairs[:12]) for k in pr]
     xs, ys = [pos[k][0] for k in shown], [pos[k][1] for k in shown]
-    grid = fit_grid((min(xs) - a.margin, min(ys) - a.margin, max(xs) + a.margin, max(ys) + a.margin), a.cell)
+    if a.box:
+        bx = (min(a.box[0], a.box[2]), min(a.box[1], a.box[3]), max(a.box[0], a.box[2]), max(a.box[1], a.box[3]))
+    else:
+        bx = (min(xs) - a.margin, min(ys) - a.margin, max(xs) + a.margin, max(ys) + a.margin)
+    grid = fit_grid(bx, a.cell)
     x0, y0, cell, cols, rows = grid
+    if a.box and cell > a.cell:
+        print(f'box larger than 80x40 cells: cell grown from {a.cell:g} to {cell:g}')
     ds = b.GetDesignSettings()
     o = p.SHAPE_POLY_SET()
     b.GetBoardPolygonOutlines(o, True)
@@ -1287,7 +1293,9 @@ def main():
     s = sp.add_parser('drc'); s.add_argument('board'); s.set_defaults(f=cmd_drc)
     s = sp.add_parser('corridor'); s.add_argument('board'); s.add_argument('net')
     s.add_argument('--margin', type=float, default=3.0); s.add_argument('--cell', type=float, default=0.25)
-    s.add_argument('--pair', type=int, help='map only this pair (1 = first listed)'); s.set_defaults(f=cmd_corridor)
+    s.add_argument('--pair', type=int, help='map only this pair (1 = first listed)')
+    s.add_argument('--box', type=float, nargs=4, metavar=('X1', 'Y1', 'X2', 'Y2'), help='map only this window')
+    s.set_defaults(f=cmd_corridor)
     s = sp.add_parser('netcheck'); s.add_argument('board'); s.add_argument('net'); s.set_defaults(f=cmd_netcheck)
     s = sp.add_parser('paths'); s.add_argument('board'); s.add_argument('spec'); s.add_argument('--limit', type=int, default=4)
     s.add_argument('--verbose', action='store_true'); s.set_defaults(f=cmd_paths)
