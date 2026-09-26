@@ -709,6 +709,26 @@ class SuggestCoreTest(unittest.TestCase):
         self.assertIn(6, reached)
         self.assertNotIn(8, reached)
 
+    def test_astar_ends_at_the_goal_node_with_the_lowest_total_cost(self):
+        free = [bytearray([1] * 5)]
+        path, cost = pt.astar((5, 1, 1.0), free, bytearray(5), [[0.0] * 5], 0, {0}, 4, {0}, via_cost=2,
+                              t_cost={(3, 0): 5.0, (4, 0): 0.0})
+        self.assertEqual((path[-1], cost), ((4, 0), 4.0))
+        path, cost = pt.astar((5, 1, 1.0), free, bytearray(5), [[0.0] * 5], 0, {0}, 4, {0}, via_cost=2,
+                              t_cost={(3, 0): 0.5, (4, 0): 0.0})
+        self.assertEqual((path[-1], cost), ((3, 0), 3.5))
+
+    def test_astar_starts_at_the_start_node_with_the_lowest_total_cost(self):
+        free = [bytearray([1] * 5)]
+        path, cost = pt.astar((5, 1, 1.0), free, bytearray(5), [[0.0] * 5], 0, {0}, 4, {0}, via_cost=2,
+                              s_cost={(0, 0): 0.0, (2, 0): 1.0})
+        self.assertEqual((path[0], cost), ((2, 0), 3.0))
+
+    def test_path_points_add_off_centre_end_nodes_once(self):
+        out = pt.path_points((0, 0), (5, 0.05), (0.1, 0), [('via', (4, 0))], (4, 0))
+        self.assertEqual(out, [('end', (0, 0)), ('through', (0.1, 0)), ('via', (4, 0)), ('end', (5, 0.05))])
+        self.assertEqual(pt.path_points((0, 0), (5, 0), (0, 0), [], (5, 0)), [('end', (0, 0)), ('end', (5, 0))])
+
     def test_drop_jogs_removes_short_legs_and_straight_points_when_free(self):
         pts = [('end', (0, 0)), ('through', (5, 0)), ('through', (5.2, 0.2)), ('through', (8, 0.2)), ('end', (10, 0.2))]
         out = pt.drop_jogs(pts, 'F.Cu', lambda a, b, c, L: True)
@@ -756,7 +776,7 @@ class SuggestBoardTest(unittest.TestCase):
     """Synthetic board 30 x 20 mm: SIG pads R1.1 (10, 10) and R2.1 (20, 10) on F.Cu; optional GND track x = 15 on
     F.Cu from y1 to y2; optional zone (net, x1, y1, x2, y2) on F.Cu."""
 
-    def make_board(self, d, wall=None, zone=None):
+    def make_board(self, d, wall=None, zone=None, gnd=(), pad_size=(1, 1)):
         import json
         mm = pcbnew.FromMM
         b = pcbnew.BOARD()
@@ -778,12 +798,20 @@ class SuggestBoardTest(unittest.TestCase):
             pad.SetNumber('1')
             pad.SetAttribute(pcbnew.PAD_ATTRIB_SMD)
             pad.SetShape(pcbnew.PAD_SHAPE_RECT)
-            pad.SetSize(pcbnew.VECTOR2I(mm(1), mm(1)))
+            pad.SetSize(pcbnew.VECTOR2I(mm(pad_size[0]), mm(pad_size[1])))
             pad.SetLayerSet(pad.SMDMask())
             pad.SetPosition(pcbnew.VECTOR2I(mm(x), mm(10)))
             pad.SetNet(nets['SIG'])
             fp.Add(pad)
             b.Add(fp)
+        for x1, y1, x2, y2, *layer in gnd:
+            t = pcbnew.PCB_TRACK(b)
+            t.SetStart(pcbnew.VECTOR2I(mm(x1), mm(y1)))
+            t.SetEnd(pcbnew.VECTOR2I(mm(x2), mm(y2)))
+            t.SetWidth(mm(0.25))
+            t.SetLayer(layer[0] if layer else pcbnew.F_Cu)
+            t.SetNet(nets['GND'])
+            b.Add(t)
         if wall:
             t = pcbnew.PCB_TRACK(b)
             t.SetStart(pcbnew.VECTOR2I(mm(15), mm(wall[0])))
@@ -810,14 +838,14 @@ class SuggestBoardTest(unittest.TestCase):
                                         'netclass_patterns': []}}, f)
         return path
 
-    def run_suggest(self, *args, wall=None, zone=None):
+    def run_suggest(self, *args, wall=None, zone=None, **kw):
         """(suggest result, connect result of the first proposed line or None)."""
         import subprocess
         import sys
         import tempfile
         tool = os.path.join(HERE, 'pcbtool.py')
         with tempfile.TemporaryDirectory() as d:
-            board = self.make_board(d, wall, zone)
+            board = self.make_board(d, wall, zone, **kw)
             r = subprocess.run([sys.executable, tool, 'suggest', board, 'SIG', '--cell', '0.25', *args],
                                capture_output=True, text=True)
             lines = [l for l in r.stdout.splitlines() if l.startswith('SIG R1.1 -> R2.1')]
@@ -877,6 +905,20 @@ class SuggestBoardTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(before, after)
         self.assertIn('1) verified len 10.00 vias 0', r.stdout)
+
+    def test_narrow_channel_to_the_pad_is_found_with_an_exact_end_leg(self):
+        # GND tracks 0.475 mm above and below the pad row, closed at x = 21.5: the SIG track centre needs 0.425 mm,
+        # so the channel is open by 0.05 mm. The grid (0.25 mm cell, 0.18 mm inflation) sees it closed.
+        gnd = [(18.6, 9.525, 21.5, 9.525), (18.6, 10.475, 21.5, 10.475), (21.5, 9.525, 21.5, 10.475)]
+        r, line, c = self.run_suggest('--layers', 'F.Cu', gnd=gnd, pad_size=(1, 0.2))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(c.returncode, 0, c.stdout + c.stderr)
+
+    def test_via_fits_a_slot_narrower_than_the_grid_inflation(self):
+        # F.Cu wall x = 15, B.Cu wall x = 13.65: the left via centre must be in x 14.275 .. 14.375 (0.1 mm slot).
+        r, line, c = self.run_suggest('--cell', '0.1', wall=(0, 20), gnd=[(13.65, 0, 13.65, 20, pcbnew.B_Cu)])
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(c.returncode, 0, c.stdout + c.stderr)
 
     def test_other_net_pour_blocks(self):
         r, line, c = self.run_suggest('--layers', 'F.Cu', zone=('VCC', 13, 0, 17, 20))

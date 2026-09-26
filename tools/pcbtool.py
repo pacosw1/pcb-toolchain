@@ -494,41 +494,57 @@ BUDGET_KINDS = {  # command -> (kind(line), keep the last line)
 # ---------------------------------------------------------------- suggest: A* path proposals as connect lines
 MOVES = [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)]
 BEND_COST = {1: 0.05, 2: 0.2}   # mm-equivalent cost of a 45 / 90 degree turn; sharper turns are not allowed
+ESCAPE_MM = 2.5                 # pad escape: grid nodes this near a pad may end the path with an exact leg
 POUR_EXTRA = 2.0                # extra cost per mm in another net's GND pour (x3 length); other-net pours are blocked
 
 
-def astar(dims, free, via_ok, extra, s, s_layers, t, t_layers, via_cost):
+def astar(dims, free, via_ok, extra, s, s_layers, t, t_layers, via_cost, s_cost=None, t_cost=None):
     """Cheapest node path on a node grid (dims = cols, rows, cell) with 8 moves per layer and vias between layers.
     free[layer]: bytearray, 1 = a track centre may be on the node; via_ok: bytearray; extra[layer][node]: extra cost per mm.
     Cost = length * (1 + extra) + BEND_COST per turn + via_cost per via. No via on the start node or right after a via.
-    Returns ([(node, layer)], cost), or (None, set of reached nodes)."""
+    s_cost / t_cost {(node, layer): cost}: start / goal states with a cost added (the exact leg to the pad centre), in
+    place of s, s_layers / t, t_layers. Returns ([(node, layer)], cost), or (None, set of reached nodes)."""
     import heapq
     cols, rows, cell = dims
     tc, tr = t % cols, t // cols
     diag = math.sqrt(2)
+    s_cost = s_cost or {(s, L): 0.0 for L in s_layers}
+    t_cost = t_cost or {(t, L): 0.0 for L in t_layers}
 
-    def h(i):
+    def octile(i):
         dx, dy = abs(i % cols - tc), abs(i // cols - tr)
         return cell * (max(dx, dy) + (diag - 1) * min(dx, dy))
+    slack = max(octile(i) for i, _ in t_cost)
+
+    def h(i):
+        return max(0.0, octile(i) - slack)
     best, prev, heap, n = {}, {}, [], 0
-    for L in s_layers:
-        best[(s, L, 8)] = 0.0
-        heap.append((h(s), 0.0, n, (s, L, 8)))
+    for (i, L), c in s_cost.items():
+        best[(i, L, 8)] = c
+        heap.append((c + h(i), c, n, (i, L, 8)))
         n += 1
+    heapq.heapify(heap)
     reached = set()
     while heap:
         _, g, _, st = heapq.heappop(heap)
         if g > best.get(st, math.inf):
             continue
-        i, L, d = st
-        reached.add(i)
-        if i == t and L in t_layers:
-            path = [(i, L)]
+        if st[0] == 'end':
+            st = prev[st]
+            path = [(st[0], st[1])]
             while st in prev:
                 st = prev[st]
                 if (st[0], st[1]) != path[-1]:
                     path.append((st[0], st[1]))
             return path[::-1], g
+        i, L, d = st
+        reached.add(i)
+        if (i, L) in t_cost:
+            end = ('end', i, L)
+            if g + t_cost[(i, L)] < best.get(end, math.inf) - 1e-12:
+                best[end], prev[end] = g + t_cost[(i, L)], st
+                heapq.heappush(heap, (best[end], best[end], n, end))
+                n += 1
         c, r = i % cols, i // cols
         nxt = []
         for k, (dc, dr) in enumerate(MOVES):
@@ -561,6 +577,14 @@ def node_corners(path, cols):
             out.append(('through', i1))
     return out
 
+
+def path_points(sa, sb, first, corners, last):
+    """[(kind, (x, y))] from pad centre sa to pad centre sb: the first and last grid node of the path as 'through' when
+    they are off the pad centre and not already the neighbouring corner (a via on the goal node), then the corners."""
+    pts = [('end', sa)] + ([('through', first)] if math.dist(first, sa) > 1e-6 else []) + list(corners)
+    if math.dist(last, sb) > 1e-6 and math.dist(last, pts[-1][1]) > 1e-6:
+        pts.append(('through', last))
+    return pts + [('end', sb)]
 
 def drop_jogs(pts, layer, ok):
     """Remove 'through' waypoints while ok(a, b, c, layer) says the direct leg a -> c may replace a -> b -> c.
@@ -1586,7 +1610,7 @@ def cmd_suggest(a):
     for name, obs in obstacles.items():
         for sh, c, label in obs:
             if near(sh):
-                mark_near(grid, sh, c + via_d / 2 + m, via_ok, via_lab, lab_id(label))
+                mark_near(grid, sh, c + via_d / 2, via_ok, via_lab, lab_id(label))  # a via sits on a node: no inflation
     for z in b.Zones():
         if z.GetIsRuleArea() and z.GetDoNotAllowVias():
             mark_near(grid, ('poly', poly_points(p, z.Outline().Outline(0))), m, via_ok, via_lab, lab_id('via keepout'))
@@ -1596,7 +1620,7 @@ def cmd_suggest(a):
                 L = p.F_Cu if pd.IsOnLayer(p.F_Cu) else p.B_Cu
                 sh = ('poly', poly_points(p, pd.GetEffectivePolygon(L).Outline(0)))
                 if near(sh):
-                    mark_near(grid, sh, via_drill / 2 + m, via_ok, via_lab, lab_id(f'via-in-pad {fp.GetReference()}.{pd.GetNumber()}'))
+                    mark_near(grid, sh, via_drill / 2, via_ok, via_lab, lab_id(f'via-in-pad {fp.GetReference()}.{pd.GetNumber()}'))
     for f in free:
         f[s] = f[t] = 1
 
@@ -1629,17 +1653,46 @@ def cmd_suggest(a):
         if clear_margin(new, [], via_d, {L: obstacles[L]})[0] < -1e-6:
             return False
         return pour_len(new) <= pour_len(leg_segs(u, w, L) + leg_segs(w, v, L)) + 1e-6
+
+    def end_nodes(q, layers_i, at_start, reach=ESCAPE_MM):
+        """{(node, layer): leg length} of free nodes near a pad centre q whose exact leg to q (connect geometry) is clear
+        of copper at the real clearance and crosses no blocked pour. The inflated grid can close the last gap at a pad."""
+        out, k = {}, math.ceil(reach / cell)
+        qc, qr = round((q[0] - x0) / cell), round((q[1] - y0) / cell)
+        near_obs = {}
+        for li in layers_i:
+            L = layers[li]
+            near_obs[L] = [o for o in obstacles[L] if (lambda bx: bx[0] < q[0] + reach + 2 and bx[2] > q[0] - reach - 2 and
+                                                        bx[1] < q[1] + reach + 2 and bx[3] > q[1] - reach - 2)(shape_box(o[0]))]
+            for r in range(max(0, qr - k), min(rows, qr + k + 1)):
+                for c in range(max(0, qc - k), min(cols, qc + k + 1)):
+                    i = r * cols + c
+                    u = xy(i)
+                    if not free[li][i] or math.dist(u, q) > reach:
+                        continue
+                    segs = leg_segs(q, u, L) if at_start else leg_segs(u, q, L)
+                    if not segs:
+                        out[(i, li)] = 0.0
+                        continue
+                    if any(j is not None and lab[li][j] >= 0 and labels[lab[li][j]].startswith('pour ')
+                           for p1, p2, _, _ in segs for j in map(node, samples(p1, p2))):
+                        continue
+                    if clear_margin(segs, [], via_d, {L: near_obs[L]})[0] >= -1e-6:
+                        out[(i, li)] = sum(math.dist(p1, p2) for p1, p2, _, _ in segs)
+        return out
     head = (f'pair {n} of {len(pairs)}: {na} -> {nb}; class {cls_name} w {width:g} clr {clr:g} via {via_d:g}/{via_drill:g}; '
             f'cell {cell:g} box {bx[0]:.1f},{bx[1]:.1f}..{bx[2]:.1f},{bx[3]:.1f}; GND pour x3 cost, other pours blocked; '
             f'.kicad_dru not used')
     print(head)
     base = [list(e) for e in extra]
+    s_cost = {**end_nodes(sa, s_layers, True), **{(s, L): 0.0 for L in s_layers}}
+    t_cost = {**end_nodes(sb, t_layers, False), **{(t, L): math.dist(xy(t), sb) for L in t_layers}}
     band = max(3, round(0.5 / cell))
     found, seen = [], set()
     for _ in range(a.k * 2):
         if len(found) >= a.k:
             break
-        path, cost = astar((cols, rows, cell), free, via_ok, extra, s, s_layers, t, t_layers, a.via_cost)
+        path, cost = astar((cols, rows, cell), free, via_ok, extra, s, s_layers, t, t_layers, a.via_cost, s_cost, t_cost)
         if path is None:
             if found:
                 break
@@ -1657,10 +1710,8 @@ def cmd_suggest(a):
                   f'blocked there by {what}. Try a larger --box, --layers F.Cu,B.Cu or a lower --via-cost.')
             sys.exit(1)
         L0 = layers[path[0][1]]
-        pts = [('end', sa)] + [(k, xy(i)) for k, i in node_corners(path, cols)]
-        if math.dist(xy(t), sb) > 1e-6:
-            pts.append(('through', xy(t)))
-        pts = drop_jogs(pts + [('end', sb)], L0, leg_ok)
+        pts = path_points(sa, sb, xy(path[0][0]), [(k, xy(i)) for k, i in node_corners(path, cols)], xy(path[-1][0]))
+        pts = drop_jogs(pts, L0, leg_ok)
         line = f'{a.net} {na} -> {nb} layer={L0}' + ''.join(f' {k} {fmt_mm(q[0])},{fmt_mm(q[1])}' for k, q in pts[1:-1])
         for (i, L) in path:                          # push the next search away from this one (a band around it)
             for dr in range(-band, band + 1):
