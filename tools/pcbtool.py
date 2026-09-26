@@ -495,7 +495,7 @@ BUDGET_KINDS = {  # command -> (kind(line), keep the last line)
 MOVES = [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)]
 BEND_COST = {1: 0.05, 2: 0.2}   # mm-equivalent cost of a 45 / 90 degree turn; sharper turns are not allowed
 ESCAPE_MM = 2.5                 # pad escape: grid nodes this near a pad may end the path with an exact leg
-POUR_EXTRA = 2.0                # extra cost per mm in another net's GND pour (x3 length); other-net pours are blocked
+POUR_EXTRA = 2.0                # extra cost per mm in the own-domain ground pour (x3 length); other pours are blocked
 
 
 def astar(dims, free, via_ok, extra, s, s_layers, t, t_layers, via_cost, s_cost=None, t_cost=None):
@@ -622,6 +622,35 @@ def verify_verdict(base, cand, net):
         if n != net and cu[n] > bu[n]:
             return False, f'{n} unconnected {bu[n]} -> {cu[n]}'
     return True, ''
+
+
+def ground_spec(path):
+    """(grounds, domain patterns) of a reference-planes.json (tools/si_planes.py); (['GND'], {}) when there is no file."""
+    if not os.path.exists(path):
+        return ['GND'], {}
+    s = json.load(open(path))
+    return list(s['grounds']), dict(s.get('domains') or {})
+
+
+def net_domain(net, pad_grounds, grounds, patterns):
+    """Ground domain of a net as si_planes.py finds it: a ground is its own domain, then a spec pattern, then the ground
+    whose zone outline holds most of its pads. With one ground that ground is the fallback; else a tie gives None."""
+    import fnmatch
+    if net in grounds:
+        return net
+    for g, pats in patterns.items():
+        if any(fnmatch.fnmatchcase(net, q) for q in pats):
+            return g
+    top = collections.Counter(g for g in pad_grounds if g).most_common(2)
+    if top and (len(top) == 1 or top[0][1] > top[1][1]):
+        return top[0][0]
+    return grounds[0] if len(grounds) == 1 else None
+
+
+def pour_rule(zone_net, domain):
+    """'cost' for a pour of the net's own ground domain, else 'block' (other nets, a ground of another domain:
+    the isolation barrier; every ground when the domain is unknown)."""
+    return 'cost' if domain is not None and zone_net == domain else 'block'
 
 
 def mark_near(grid, shape, keep, free, lab, li):
@@ -1509,6 +1538,13 @@ def net_pad_pairs(p, b, net):
     return [(info[u], info[v]) for u, v in pairs]
 
 
+def board_pad_grounds(p, b, net, grounds):
+    """Per pad of the net: the ground whose (non rule area) zone outline holds the pad centre, else None."""
+    zones = [(z.GetNetname(), z.Outline()) for z in b.Zones() if not z.GetIsRuleArea() and z.GetNetname() in grounds]
+    return [next((n for n, o in zones if o.Contains(pd.GetPosition())), None)
+            for fp in b.GetFootprints() for pd in fp.Pads() if pd.GetNetname() == net]
+
+
 def fmt_mm(v):
     return f'{v:.6f}'.rstrip('0').rstrip('.')
 
@@ -1516,7 +1552,8 @@ def fmt_mm(v):
 def cmd_suggest(a):
     """A* path proposals for one unconnected pad pair, as connect lines. Reads the board, writes nothing.
     Blocked for a track centre: other-net copper + clearance + width/2, board edge, track keepouts, pours of other nets
-    (a GND pour of another net is not blocked but costs POUR_EXTRA per mm, so the path goes around it when it can).
+    (a pour of the net's own ground domain, --planes, is not blocked but costs POUR_EXTRA per mm, so the path goes
+    around it when it can; a ground pour of another domain blocks: isolation barrier).
     Blocked for a via: other-net copper on every copper layer, via keepouts, and SMD pads of any net (via-in-pad)."""
     p = pcb()
     b = p.LoadBoard(a.board)
@@ -1530,6 +1567,9 @@ def cmd_suggest(a):
         sys.exit('--layers: F.Cu and/or B.Cu (connect changes layer between these two only)')
     lid = [b.GetLayerID(L) for L in layers]
     pro = json.load(open(os.path.splitext(a.board)[0] + '.kicad_pro'))
+    grounds, patterns = ground_spec(a.planes or os.path.join(os.path.dirname(os.path.abspath(a.board)), '..', '..',
+                                                             'reference-planes.json'))
+    domain = net_domain(a.net, board_pad_grounds(p, b, a.net, grounds), grounds, patterns)
     cls_name, width, clr = net_rules(pro, a.net)
     cls = {c['name']: c for c in pro['net_settings']['classes']}[cls_name]
     via_d, via_drill = cls['via_diameter'], cls['via_drill']
@@ -1598,7 +1638,7 @@ def cmd_suggest(a):
             ol = z.Outline()
             zr = [poly_points(p, ol.Outline(k)) for k in range(ol.OutlineCount())]
             zr += [poly_points(p, ol.Hole(k, h)) for k in range(ol.OutlineCount()) for h in range(ol.HoleCount(k))]
-            gnd = 'GND' in z.GetNetname().upper()
+            gnd = pour_rule(z.GetNetname(), domain) == 'cost'
             li = lab_id(f'pour {z.GetNetname() or "(no net)"}')
             for i in poly_nodes(grid, zr):
                 if gnd:
@@ -1681,7 +1721,7 @@ def cmd_suggest(a):
                         out[(i, li)] = sum(math.dist(p1, p2) for p1, p2, _, _ in segs)
         return out
     head = (f'pair {n} of {len(pairs)}: {na} -> {nb}; class {cls_name} w {width:g} clr {clr:g} via {via_d:g}/{via_drill:g}; '
-            f'cell {cell:g} box {bx[0]:.1f},{bx[1]:.1f}..{bx[2]:.1f},{bx[3]:.1f}; GND pour x3 cost, other pours blocked; '
+            f'cell {cell:g} box {bx[0]:.1f},{bx[1]:.1f}..{bx[2]:.1f},{bx[3]:.1f}; {domain} pour x3 cost, other pours blocked; '
             f'.kicad_dru not used')
     print(head)
     base = [list(e) for e in extra]
@@ -2021,6 +2061,8 @@ def main():
     s.add_argument('--k', type=int, default=3); s.add_argument('--margin', type=float, default=3.0)
     s.add_argument('--cell', type=float, default=0.1)
     s.add_argument('--verify', action='store_true', help='DRC each candidate on a temp copy; print only the clean ones')
+    s.add_argument('--planes', help='reference-planes.json: grounds and domains (default: two folders above the board; '
+                                    'no file = GND only). Own-domain ground pour costs, other pours block')
     s.set_defaults(f=cmd_suggest)
     s = sp.add_parser('netcheck'); s.add_argument('board'); s.add_argument('net'); s.set_defaults(f=cmd_netcheck)
     s = sp.add_parser('paths'); s.add_argument('board'); s.add_argument('spec'); s.add_argument('--limit', type=int, default=4)

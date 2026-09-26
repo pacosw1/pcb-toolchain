@@ -765,6 +765,11 @@ class VerifyVerdictTest(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn('GND unconnected 1 -> 2', why)
 
+    def test_more_second_ground_unconnected_is_rejected(self):
+        ok, why = pt.verify_verdict(self.drc(unc=['SIG', 'ISO_0V']), self.drc(unc=['ISO_0V', 'ISO_0V']), 'SIG')
+        self.assertFalse(ok)
+        self.assertIn('ISO_0V unconnected 1 -> 2', why)
+
     def test_net_still_open_is_rejected(self):
         ok, why = pt.verify_verdict(self.drc(unc=['SIG']), self.drc(unc=['SIG']), 'SIG')
         self.assertFalse(ok)
@@ -846,7 +851,7 @@ class SuggestBoardTest(unittest.TestCase):
         mm = pcbnew.FromMM
         b = pcbnew.BOARD()
         nets = {}
-        for n in ('SIG', 'GND', 'VCC'):
+        for n in ('SIG', 'GND', 'VCC', 'ISO_0V'):
             nets[n] = pcbnew.NETINFO_ITEM(b, n)
             b.Add(nets[n])
         edge = pcbnew.PCB_SHAPE(b)
@@ -903,14 +908,19 @@ class SuggestBoardTest(unittest.TestCase):
                                         'netclass_patterns': []}}, f)
         return path
 
-    def run_suggest(self, *args, wall=None, zone=None, **kw):
-        """(suggest result, connect result of the first proposed line or None)."""
+    def run_suggest(self, *args, wall=None, zone=None, planes=None, **kw):
+        """(suggest result, connect result of the first proposed line or None). planes: reference-planes spec dict."""
+        import json
         import subprocess
         import sys
         import tempfile
         tool = os.path.join(HERE, 'pcbtool.py')
         with tempfile.TemporaryDirectory() as d:
             board = self.make_board(d, wall, zone, **kw)
+            if planes is not None:
+                with open(os.path.join(d, 'planes.json'), 'w') as f:
+                    json.dump(planes, f)
+                args += ('--planes', os.path.join(d, 'planes.json'))
             r = subprocess.run([sys.executable, tool, 'suggest', board, 'SIG', '--cell', '0.25', *args],
                                capture_output=True, text=True)
             lines = [l for l in r.stdout.splitlines() if l.startswith('SIG R1.1 -> R2.1')]
@@ -989,6 +999,46 @@ class SuggestBoardTest(unittest.TestCase):
         r, line, c = self.run_suggest('--layers', 'F.Cu', zone=('VCC', 13, 0, 17, 20))
         self.assertEqual(r.returncode, 1, r.stderr)
         self.assertIn('pour VCC', r.stdout)
+
+    def test_own_domain_second_ground_pour_is_a_cost_not_a_block(self):
+        planes = {'grounds': ['GND', 'ISO_0V'], 'domains': {'ISO_0V': ['SIG']}}
+        r, line, c = self.run_suggest('--layers', 'F.Cu', zone=('ISO_0V', 13, 0, 17, 20), planes=planes)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn('pour 0.0', r.stdout.split('1) ')[1].splitlines()[0])
+
+    def test_foreign_domain_ground_pour_blocks(self):
+        planes = {'grounds': ['GND', 'ISO_0V'], 'domains': {'ISO_0V': ['SIG']}}
+        r, line, c = self.run_suggest('--layers', 'F.Cu', zone=('GND', 13, 0, 17, 20), planes=planes)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn('pour GND', r.stdout)
+
+
+class GroundDomainTest(unittest.TestCase):
+    def test_pattern_first_then_pad_votes(self):
+        self.assertEqual(pt.net_domain('/AI1', ['GND', 'GND'], ['GND', 'ISO_0V'], {'ISO_0V': ['/AI*']}), 'ISO_0V')
+        self.assertEqual(pt.net_domain('/X', ['GND', 'ISO_0V', 'ISO_0V', None], ['GND', 'ISO_0V'], {}), 'ISO_0V')
+
+    def test_a_ground_is_its_own_domain(self):
+        self.assertEqual(pt.net_domain('ISO_0V', ['GND'], ['GND', 'ISO_0V'], {}), 'ISO_0V')
+
+    def test_one_ground_is_the_fallback_and_a_tie_of_two_is_none(self):
+        self.assertEqual(pt.net_domain('/X', [None], ['GND'], {}), 'GND')
+        self.assertIsNone(pt.net_domain('/X', ['GND', 'ISO_0V'], ['GND', 'ISO_0V'], {}))
+
+    def test_pour_rule(self):
+        self.assertEqual(pt.pour_rule('ISO_0V', 'ISO_0V'), 'cost')
+        self.assertEqual(pt.pour_rule('GND', 'ISO_0V'), 'block')
+        self.assertEqual(pt.pour_rule('VCC', 'GND'), 'block')
+        self.assertEqual(pt.pour_rule('GND', None), 'block')
+
+    def test_ground_spec_file_or_gnd(self):
+        import json
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(pt.ground_spec(os.path.join(d, 'none.json')), (['GND'], {}))
+            f = os.path.join(d, 'p.json')
+            json.dump({'grounds': ['GND', 'ISO_0V'], 'domains': {'ISO_0V': ['/AI*']}}, open(f, 'w'))
+            self.assertEqual(pt.ground_spec(f), (['GND', 'ISO_0V'], {'ISO_0V': ['/AI*']}))
 
 def json_copy(x):
     import json
