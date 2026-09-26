@@ -127,6 +127,44 @@ class JudgeTest(unittest.TestCase):
         self.assertFalse(ru.judge(self.base, cand, ['/T'])[0])
 
 
+class FastNetTest(unittest.TestCase):
+    def test_patterns_decide_and_no_file_is_all_strict(self):
+        import json
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            self.assertTrue(ru.fast_nets(d)('/ETH_RESET'))
+            json.dump({'about': 'x', 'fast': ['/ETH_SCLK*', '/USB_*']}, open(os.path.join(d, 'rp001-fast-nets.json'), 'w'))
+            fast = ru.fast_nets(d)
+        self.assertTrue(fast('/ETH_SCLK_MCU'))
+        self.assertTrue(fast('/USB_DP'))
+        self.assertFalse(fast('/ETH_RESET'))
+
+    def test_bad_file_fails(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            open(os.path.join(d, 'rp001-fast-nets.json'), 'w').write('{"fast": "x"}')
+            with self.assertRaises(ValueError):
+                ru.fast_nets(d)
+
+
+class SlowRp001Test(unittest.TestCase):
+    def test_new_rp001_on_a_slow_net_is_allowed_and_listed(self):
+        g = lambda *l: {'kicad_happy': collections.Counter(l)}
+        base = ru.state_result(drc([], ['/T']), g())
+        line = 'FAIL RP-001 Missing stitching via at layer transition: /T'
+        cand = ru.state_result(drc([], []), g(line))
+        ok, why, delta = ru.judge(base, cand, ['/T'], fast=lambda n: False)
+        self.assertTrue(ok, why)
+        self.assertEqual(delta['rp001_exempt'], ['/T'])
+        ok, why, _ = ru.judge(base, cand, ['/T'], fast=lambda n: True)
+        self.assertFalse(ok)
+
+    def test_other_new_kicad_happy_finding_still_rejects(self):
+        base = ru.state_result(drc([], ['/T']), {'kicad_happy': collections.Counter()})
+        cand = ru.state_result(drc([], []), {'kicad_happy': collections.Counter(['FAIL GP-001 x: /T'])})
+        self.assertFalse(ru.judge(base, cand, ['/T'], fast=lambda n: False)[0])
+
+
 class CostTest(unittest.TestCase):
     def test_length_plus_via_plus_pour(self):
         self.assertEqual(ru.route_cost([(10.0, 2, 1.5), (3.0, 0, 0.0)]), 10 + 4 + 1.5 + 3)
@@ -174,13 +212,13 @@ class BeamTest(unittest.TestCase):
 
 class RouteNetTest(unittest.TestCase):
     """route_net with a fake runner: suggest gives two lines, then 'unconnected: none' after one connect."""
-    def run_route(self, stitch_ok):
+    def run_route(self, stitch_ok, fast=True):
         import tempfile
         calls = []
         state = {'routed': False}
 
         def sh(cmd):
-            calls.append(cmd[2:4] + cmd[4:5])
+            calls.append(cmd[2:])
             if cmd[2] == 'suggest':
                 if state['routed']:
                     return 0, '/N: unconnected: none\n'
@@ -198,7 +236,7 @@ class RouteNetTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             board = os.path.join(d, 'B.kicad_pcb')
             open(board, 'w').write('base|')
-            done, fail = ru.route_net(board, 'N', None, max_vias=4, sh=sh)
+            done, fail = ru.route_net(board, 'N', None, max_vias=4, sh=sh, fast=lambda n: fast)
             text = open(board).read()
         return done, fail, calls, text
 
@@ -208,6 +246,11 @@ class RouteNetTest(unittest.TestCase):
         self.assertEqual([r[3] for r in done], ['N A.1 -> B.1 two'])
         self.assertEqual(text, 'base|N A.1 -> B.1 two')
         self.assertEqual([c[0] for c in calls], ['suggest', 'connect', 'stitch', 'suggest'])
+        self.assertNotIn('--best-effort', calls[2])
+
+    def test_slow_net_stitch_is_best_effort(self):
+        done, fail, calls, text = self.run_route(lambda t: True, fast=False)
+        self.assertIn('--best-effort', calls[2])
 
     def test_no_stitch_room_restores_the_board_and_tries_the_next_line(self):
         done, fail, calls, text = self.run_route(lambda t: t.endswith('zero'))

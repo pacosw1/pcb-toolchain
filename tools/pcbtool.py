@@ -1921,7 +1921,8 @@ string_letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
 def cmd_stitch(a):
     """A ground via (class size) within --r mm of each via of NET that has none (kicad-happy RP-001). The ground is the
     net's domain (--planes). Each spot is clearance-checked like suggest: other-net copper on every layer, board edge,
-    via keepouts, SMD pads, other-net pours, other ground vias. A via without room: nothing is written, exit 1."""
+    via keepouts, SMD pads, other-net pours, other ground vias. A via without room: nothing is written, exit 1
+    (--best-effort: the other vias are written, exit 0)."""
     p = pcb()
     b = p.LoadBoard(a.board)
     if b is None or b.FindNet(a.net) is None:
@@ -1972,8 +1973,9 @@ def cmd_stitch(a):
         gv.append(spot)
     if miss:
         print(f'{a.net}: no room for a {gnd} via within {a.r:g} mm of ' + ', '.join(f'({x:.3f}, {y:.3f})' for x, y in miss) +
-              '; nothing written')
-        sys.exit(1)
+              ('; best effort: the others are placed' if a.best_effort else '; nothing written'))
+        if not a.best_effort:
+            sys.exit(1)
     for q in added:
         v = p.PCB_VIA(b)
         v.SetPosition(pt_(q))
@@ -2206,6 +2208,7 @@ def main():
     s.set_defaults(f=cmd_suggest)
     s = sp.add_parser('stitch'); s.add_argument('board'); s.add_argument('net')
     s.add_argument('--r', type=float, default=1.0, help='max mm from a signal via to a ground via')
+    s.add_argument('--best-effort', action='store_true', help='place the vias that fit; a via without room is not an error')
     s.add_argument('--planes', help='reference-planes.json (default: two folders above the board; no file = GND)')
     s.set_defaults(f=cmd_stitch)
     s = sp.add_parser('netcheck'); s.add_argument('board'); s.add_argument('net'); s.set_defaults(f=cmd_netcheck)

@@ -8,6 +8,8 @@
 2. Beam search: a state is a set of ripped nets (depth <= --depth). A state is evaluated on a temp copy of the
    project folder: unroute the ripped nets, route NET with suggest + connect + stitch, then re-route each ripped net.
    A suggest line is used only with <= --max-vias vias and room for a ground via near each via (pcbtool stitch).
+   RP-001 is strict only for the fast nets of --specs/rp001-fast-nets.json (lead decision D6; no file = all strict):
+   a slow net gets a best-effort stitch, and its new RP-001 finding is allowed and listed as an exemption to add.
    A state with a net left open is expanded with one more blocker (the blockers of that net first).
    The search stops at the first depth that has a clean state: fewer rip-ups first.
 3. Gates on each routed state against the unchanged board (hard, all must hold):
@@ -24,6 +26,7 @@ Nets with a zone (planes) and --keep nets are never ripped.
 import argparse
 import collections
 import concurrent.futures
+import fnmatch
 import importlib.util
 import json
 import math
@@ -114,8 +117,21 @@ def state_result(d, gates):
     return {'err': err, 'unc': unc, 'parity': len(d.get('schematic_parity', [])), 'gates': gates}
 
 
-def judge(base, cand, nets):
-    """(ok, reason, deltas) of a routed state against the baseline. nets: the target and the ripped nets."""
+def fast_nets(specs):
+    """fast(net) -> bool from <specs>/rp001-fast-nets.json {"fast": [fnmatch patterns]}: RP-001 is strict for a fast
+    net (lead decision D6); no file = every net is strict (fail closed). ValueError on a bad file."""
+    path = os.path.join(specs, 'rp001-fast-nets.json')
+    if not os.path.exists(path):
+        return lambda net: True
+    pats = json.load(open(path)).get('fast')
+    if not isinstance(pats, list) or not all(isinstance(q, str) for q in pats):
+        raise ValueError(f'{path}: "fast" must be a list of net patterns')
+    return lambda net: any(fnmatch.fnmatchcase(net, q) for q in pats)
+
+
+def judge(base, cand, nets, fast=lambda net: True):
+    """(ok, reason, deltas) of a routed state against the baseline. nets: the target and the ripped nets.
+    A new kicad-happy RP-001 finding on a slow net (not fast) is allowed and listed in deltas['rp001_exempt']."""
     delta = {'errors': sum(cand['err'].values()) - sum(base['err'].values()),
              'unconnected': sum(cand['unc'].values()) - sum(base['unc'].values()), 'parity': cand['parity']}
     for g in base['gates']:
@@ -136,6 +152,10 @@ def judge(base, cand, nets):
         if g not in cand['gates']:
             return False, f'{g} did not run', delta
         new = cand['gates'][g] - base['gates'][g]
+        if g == 'kicad_happy':
+            slow = {k: m.group(1) for k in new for m in [re.match(r'FAIL RP-001 .*: (\S+)$', k)] if m and not fast(m.group(1))}
+            delta['rp001_exempt'] = sorted(set(slow.values()))
+            new = collections.Counter({k: v for k, v in new.items() if k not in slow})
         if new:
             return False, f'{g} new: {next(iter(new))[:120]}', delta
     return True, '', delta
@@ -225,10 +245,11 @@ def suggest(board, net, planes, sh=run):
     return parse_suggest(out, code)
 
 
-def route_net(board, net, planes, max_vias=4, max_pairs=40, sh=run):
+def route_net(board, net, planes, max_vias=4, max_pairs=40, sh=run, fast=lambda net: True):
     """(routed [(len, vias, pour, line)], None) when the net is fully connected, else (routed, suggest result).
     Per open pair: the first suggest line with <= max_vias vias that connects and then gets a ground stitch via
-    near each via (pcbtool stitch). A line whose stitch finds no room is undone (board file restored)."""
+    near each via (pcbtool stitch). A line whose stitch finds no room is undone (board file restored); a slow net
+    (fast(net) False) gets a best-effort stitch."""
     done = []
     keep = board + '.ripup-keep'
     for _ in range(max_pairs):
@@ -242,7 +263,8 @@ def route_net(board, net, planes, max_vias=4, max_pairs=40, sh=run):
             if sh([sys.executable, PCBTOOL, 'connect', board, line])[0] != 0:
                 shutil.copyfile(keep, board)
                 continue
-            if sh([sys.executable, PCBTOOL, 'stitch', board, net, *(['--planes', planes] if planes else [])])[0] != 0:
+            if sh([sys.executable, PCBTOOL, 'stitch', board, net, *(['--planes', planes] if planes else []),
+                   *([] if fast(net) else ['--best-effort'])])[0] != 0:
                 shutil.copyfile(keep, board)
                 continue
             done.append((L, v, pour, line))
@@ -261,7 +283,7 @@ def copy_project(board, d):
     return os.path.join(proj, os.path.basename(board))
 
 
-def make_evaluator(board, net, base, specs, gates, skip, planes, max_vias):
+def make_evaluator(board, net, base, specs, gates, skip, planes, max_vias, fast):
     def evaluate(rips):
         t0 = time.time()
         with tempfile.TemporaryDirectory() as d:
@@ -273,7 +295,7 @@ def make_evaluator(board, net, base, specs, gates, skip, planes, max_vias):
                 routes = {}
                 order = (net,) + tuple(rips)
                 for i, n in enumerate(order):
-                    routes[n], fail = route_net(bd, n, planes, max_vias)
+                    routes[n], fail = route_net(bd, n, planes, max_vias, fast=fast)
                     if fail:
                         return {'status': 'open', 'open': len(order) - i, 'why': f'{n}: {fail["why"]}',
                                 'blocked_by': [b for b in fail['blocked_by'] if b not in skip and b not in order],
@@ -281,7 +303,7 @@ def make_evaluator(board, net, base, specs, gates, skip, planes, max_vias):
                 cand = run_gates(bd, specs, gates)
             except Exception as e:
                 return {'status': 'reject', 'why': f'{type(e).__name__}: {e}'[:200], 's': round(time.time() - t0, 1)}
-        ok, why, delta = judge(base, cand, list(order))
+        ok, why, delta = judge(base, cand, list(order), fast)
         flat = [r for n in order for r in routes[n]]
         return {'status': 'ok' if ok else 'reject', 'why': why, 'delta': delta, 's': round(time.time() - t0, 1),
                 'cost': round(route_cost([r[:3] for r in flat]), 2), 'lines': [r[3] for r in flat]}
@@ -348,7 +370,7 @@ def main(argv=None):
         print(f'{a.net}: suggest routes it without a rip-up (or it is connected); use suggest --verify')
         return 1
     print(f'{a.net} {s["pads"][0]} -> {s["pads"][1]}: reach {s["reach"]}; blockers {", ".join(blockers[:2 * a.width])}', flush=True)
-    ev = make_evaluator(board, a.net, base, specs, gates, skip, planes, a.max_vias)
+    ev = make_evaluator(board, a.net, base, specs, gates, skip, planes, a.max_vias, fast_nets(specs))
     with concurrent.futures.ThreadPoolExecutor(max_workers=a.jobs) as ex:
         best, log = beam_search(blockers, lambda rips: progress(rips, ev(rips)), a.width, a.depth, pmap=ex.map)
     wall = round(time.time() - t0, 1)

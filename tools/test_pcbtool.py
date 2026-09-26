@@ -1084,6 +1084,12 @@ class SuggestBoardTest(unittest.TestCase):
             self.assertTrue(any(math.dist(q, g) <= 1.0 for g in gnd))
             self.assertTrue(all(math.dist(q, g) >= 0.6 + 0.2 for g in gnd))  # via size + clearance
 
+    def test_best_effort_stitch_without_room_passes_and_names_the_via(self):
+        st, gnd, sig, changed = self.stitch_after_forced_vias('--r', '0.5', '--best-effort')
+        self.assertEqual(st.returncode, 0, st.stdout + st.stderr)
+        self.assertIn('no room', st.stdout)
+        self.assertEqual(gnd, [])
+
     def test_stitch_without_room_writes_nothing(self):
         st, gnd, sig, changed = self.stitch_after_forced_vias('--r', '0.5')
         self.assertEqual(st.returncode, 1, st.stdout + st.stderr)
