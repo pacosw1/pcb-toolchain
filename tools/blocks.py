@@ -139,6 +139,22 @@ def cache_key(paths, variant):
     return h.hexdigest()[:24]
 
 
+def revision(roots):
+    """Short hash of (path, size, mtime) of every file under roots: changes when a source changes."""
+    h = hashlib.sha256()
+    for r in roots:
+        for dp, dn, fn in sorted(os.walk(r)):
+            dn.sort()
+            for n in sorted(fn):
+                p = os.path.join(dp, n)
+                try:
+                    st = os.stat(p)
+                except OSError:
+                    continue
+                h.update(f'{p}|{st.st_size}|{st.st_mtime_ns}\n'.encode())
+    return h.hexdigest()[:16]
+
+
 def safe_path(root, rel):
     if not rel or os.path.isabs(rel):
         return None
@@ -363,6 +379,9 @@ def cmd_serve(port):
             try:
                 if not parts:
                     return self.send(200, PAGE, types['html'])
+                if parts == ['api', 'rev']:
+                    roots = [os.path.dirname(LIB)] + [v['dir'] for (k, _), v in items().items() if k == 'board']
+                    return self.js({'rev': revision(roots)})
                 if parts == ['api', 'items']:
                     out = []
                     for (k, i), v in items().items():
@@ -469,7 +488,7 @@ function pz(src,sel='#tab'){const box=document.createElement('div');box.classNam
  let dr=null;box.onmousedown=e=>{dr=[e.clientX-x,e.clientY-y];box.style.cursor='grabbing'};onmouseup=()=>{dr=null;box.style.cursor='grab'};
  box.onmousemove=e=>{if(dr){x=e.clientX-dr[0];y=e.clientY-dr[1];ap()}}};
  im.onerror=async()=>{const r=await fetch(src);box.innerHTML=`<p class="bad" style="padding:12px">${esc((await r.json()).error)}</p>`};im.src=src}
-nav();
+nav();let rev=null;setInterval(async()=>{try{const r=(await j('/api/rev')).rev;if(rev&&r!=rev)await nav();rev=r}catch(e){}},3000);
 </script></body></html>'''
 
 

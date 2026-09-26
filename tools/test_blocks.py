@@ -127,6 +127,17 @@ class CacheTest(unittest.TestCase):
             self.assertNotEqual(k2, bk.cache_key([p], 'bottom'))
 
 
+class RevisionTest(unittest.TestCase):
+    def test_revision_changes_when_a_file_changes_or_appears(self):
+        with tempfile.TemporaryDirectory() as d:
+            a = os.path.join(d, 'a.kicad_pcb'); open(a, 'w').write('1')
+            r1 = bk.revision([d])
+            open(a, 'w').write('22'); r2 = bk.revision([d])
+            open(os.path.join(d, 'b.kicad_sch'), 'w').write('x'); r3 = bk.revision([d])
+            self.assertEqual(len({r1, r2, r3}), 3)
+            self.assertEqual(r3, bk.revision([d]))
+
+
 class SafePathTest(unittest.TestCase):
     def test_inside_root_resolves(self):
         with tempfile.TemporaryDirectory() as d:
