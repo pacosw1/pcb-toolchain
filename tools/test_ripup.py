@@ -64,6 +64,15 @@ class SuggestParseTest(unittest.TestCase):
             ru.parse_suggest('Traceback: boom\n', 1)
 
 
+class NeedsRipupTest(unittest.TestCase):
+    def test_only_lines_with_too_many_vias_need_a_ripup(self):
+        s = {'done': False, 'lines': [(20.0, 8, 0.0, 'a'), (22.0, 6, 0.0, 'b')], 'reach': None}
+        self.assertTrue(ru.needs_ripup(s, 4))
+        self.assertFalse(ru.needs_ripup(s, 8))
+        self.assertTrue(ru.needs_ripup({'done': False, 'lines': [], 'reach': (1, 2)}, 4))
+        self.assertFalse(ru.needs_ripup({'done': True, 'lines': [], 'reach': None}, 4))
+
+
 class GateParseTest(unittest.TestCase):
     def test_findings_are_normalized_fail_lines(self):
         out = 'INFO x\nFAIL via in pad U4.2 GND via at (122.150, 107.050)\n1 vias in SMD pads\n'

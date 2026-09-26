@@ -1083,7 +1083,8 @@ def cmd_unroute(a):
     p.ZONE_FILLER(b).Fill(b.Zones())
     b.Save(a.board)
     print(f'removed {n} track items')
-    print_drc(run_drc(a.board))
+    if not a.no_drc:
+        print_drc(run_drc(a.board))
 
 
 def remove_temp_project(tmp):
@@ -2183,7 +2184,8 @@ def main():
     s.set_defaults(f=cmd_pads)
     for name, f in (('place', cmd_place), ('route', cmd_route)):
         s = sp.add_parser(name); s.add_argument('board'); s.add_argument('spec'); s.set_defaults(f=f)
-    s = sp.add_parser('unroute'); s.add_argument('board'); s.add_argument('nets', nargs='+'); s.set_defaults(f=cmd_unroute)
+    s = sp.add_parser('unroute'); s.add_argument('board'); s.add_argument('nets', nargs='+')
+    s.add_argument('--no-drc', action='store_true', help='no DRC summary after the removal'); s.set_defaults(f=cmd_unroute)
     s = sp.add_parser('near'); s.add_argument('board'); s.add_argument('x', type=float); s.add_argument('y', type=float)
     s.add_argument('--r', type=float, default=0.3); s.add_argument('--within', type=float, default=1.0); s.set_defaults(f=cmd_near)
     s = sp.add_parser('widen'); s.add_argument('board'); s.add_argument('net'); s.add_argument('width', type=float)

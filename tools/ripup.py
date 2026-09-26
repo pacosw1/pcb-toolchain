@@ -161,6 +161,11 @@ def judge(base, cand, nets, fast=lambda net: True):
     return True, '', delta
 
 
+def needs_ripup(s, max_vias):
+    """True when a suggest result has an open pair and no line with <= max_vias vias."""
+    return not s['done'] and not any(v <= max_vias for _, v, _, _ in s['lines'])
+
+
 def route_cost(routes):
     """Soft cost of [(len, vias, pour)]: mm of track + VIA_MM per via + mm in another net's GND pour."""
     return sum(L + VIA_MM * v + pour for L, v, pour in routes)
@@ -289,7 +294,7 @@ def make_evaluator(board, net, base, specs, gates, skip, planes, max_vias, fast)
         with tempfile.TemporaryDirectory() as d:
             try:
                 bd = copy_project(board, d)
-                code, out = run([sys.executable, PCBTOOL, 'unroute', bd, *rips])
+                code, out = run([sys.executable, PCBTOOL, 'unroute', bd, *rips, '--no-drc'])
                 if code:
                     raise RuntimeError('unroute: ' + out.strip()[-160:])
                 routes = {}
@@ -310,10 +315,10 @@ def make_evaluator(board, net, base, specs, gates, skip, planes, max_vias, fast)
     return evaluate
 
 
-def target_blockers(board, net, band, skip, planes):
+def target_blockers(board, net, band, skip, planes, max_vias):
     """[net] ranked: suggest's blockers at its closest reach, then the corridor band ranking."""
     s = suggest(board, net, planes)
-    if s['done'] or s['lines']:
+    if not needs_ripup(s, max_vias):
         return None, s
     pt = load_pcbtool()
     p = pt.pcb()
@@ -365,9 +370,10 @@ def main(argv=None):
     skip = set(a.keep)
     planes = os.path.join(specs, 'reference-planes.json')
     planes = planes if os.path.exists(planes) else None
-    blockers, s = target_blockers(board, a.net, a.band, skip, planes)
+    blockers, s = target_blockers(board, a.net, a.band, skip, planes, a.max_vias)
     if blockers is None:
-        print(f'{a.net}: suggest routes it without a rip-up (or it is connected); use suggest --verify')
+        print(f'{a.net}: suggest routes it with <= {a.max_vias} vias without a rip-up (or it is connected); '
+              f'use suggest --verify')
         return 1
     print(f'{a.net} {s["pads"][0]} -> {s["pads"][1]}: reach {s["reach"]}; blockers {", ".join(blockers[:2 * a.width])}', flush=True)
     ev = make_evaluator(board, a.net, base, specs, gates, skip, planes, a.max_vias, fast_nets(specs))
