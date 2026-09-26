@@ -1012,6 +1012,58 @@ class SuggestBoardTest(unittest.TestCase):
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertIn('pour GND', r.stdout)
 
+    def stitch_after_forced_vias(self, *stitch_args):
+        """Route SIG with 2 vias (GND wall on F.Cu), then stitch SIG. (stitch result, GND vias, SIG vias, sha changed)."""
+        import hashlib
+        import pathlib
+        import subprocess
+        import sys
+        import tempfile
+        tool = os.path.join(HERE, 'pcbtool.py')
+        with tempfile.TemporaryDirectory() as d:
+            board = self.make_board(d, (0, 20), None)
+            r = subprocess.run([sys.executable, tool, 'suggest', board, 'SIG', '--cell', '0.25'], capture_output=True, text=True)
+            line = [l for l in r.stdout.splitlines() if l.startswith('SIG R1.1 -> R2.1')][0]
+            subprocess.run([sys.executable, tool, 'connect', board, line], check=True, capture_output=True)
+            before = hashlib.sha256(pathlib.Path(board).read_bytes()).hexdigest()
+            st = subprocess.run([sys.executable, tool, 'stitch', board, 'SIG', *stitch_args], capture_output=True, text=True)
+            changed = hashlib.sha256(pathlib.Path(board).read_bytes()).hexdigest() != before
+            b = pcbnew.LoadBoard(board)
+            vias = [(v.GetNetname(), (pcbnew.ToMM(v.GetPosition().x), pcbnew.ToMM(v.GetPosition().y)))
+                    for v in b.GetTracks() if isinstance(v, pcbnew.PCB_VIA)]
+        return st, [q for n, q in vias if n == 'GND'], [q for n, q in vias if n == 'SIG'], changed
+
+    def test_stitch_puts_a_ground_via_near_each_signal_via(self):
+        import math
+        st, gnd, sig, changed = self.stitch_after_forced_vias()
+        self.assertEqual(st.returncode, 0, st.stdout + st.stderr)
+        self.assertEqual(len(sig), 2)
+        self.assertEqual(len(gnd), 2)
+        self.assertTrue(changed)
+        for q in sig:
+            self.assertTrue(any(math.dist(q, g) <= 1.0 for g in gnd))
+            self.assertTrue(all(math.dist(q, g) >= 0.6 + 0.2 for g in gnd))  # via size + clearance
+
+    def test_stitch_without_room_writes_nothing(self):
+        st, gnd, sig, changed = self.stitch_after_forced_vias('--r', '0.5')
+        self.assertEqual(st.returncode, 1, st.stdout + st.stderr)
+        self.assertIn('no room', st.stdout)
+        self.assertEqual(gnd, [])
+        self.assertFalse(changed)
+
+
+class StitchCoreTest(unittest.TestCase):
+    def test_spots_are_on_rings_inside_r(self):
+        import math
+        spots = list(pt.stitch_spots((1.0, 2.0), 1.0))
+        self.assertEqual(len(spots), 4 * 36)
+        self.assertAlmostEqual(math.dist(spots[0], (1.0, 2.0)), 0.97, places=3)
+        self.assertTrue(all(0.69 <= math.dist(q, (1.0, 2.0)) <= 0.971 for q in spots))
+
+    def test_needs_stitch(self):
+        self.assertFalse(pt.needs_stitch((0, 0), [(0.9, 0.3)], 1.0))
+        self.assertTrue(pt.needs_stitch((0, 0), [(1.1, 0)], 1.0))
+
 
 class GroundDomainTest(unittest.TestCase):
     def test_pattern_first_then_pad_votes(self):

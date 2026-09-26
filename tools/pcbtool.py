@@ -18,6 +18,7 @@ Run with the KiCad bundled Python (it has pcbnew):
   $PY tools/pcbtool.py connect BOARD INTENT                 intent lines -> 0/45/90 tracks, class width/via, clearance check
   $PY tools/pcbtool.py suggest BOARD NET [--pair N] [--box X1 Y1 X2 Y2] [--layers F.Cu,B.Cu] [--via-cost 8] [--k 3] [--cell 0.1] [--verify]
                                                               A* proposals as connect lines (writes nothing)
+  $PY tools/pcbtool.py stitch BOARD NET [--r 1.0] [--planes P]  ground via within r of each via of NET (RP-001)
   $PY tools/pcbtool.py netcheck BOARD NET                     DRC on a temp copy: one total line + this net only
   $PY tools/pcbtool.py widths BOARD [--limit N]              tracks thinner than the net class width (current)
   $PY tools/pcbtool.py paths  BOARD SPEC.json [--verbose]     widest copper path between power pads >= design current
@@ -651,6 +652,19 @@ def pour_rule(zone_net, domain):
     """'cost' for a pour of the net's own ground domain, else 'block' (other nets, a ground of another domain:
     the isolation barrier; every ground when the domain is unknown)."""
     return 'cost' if domain is not None and zone_net == domain else 'block'
+
+
+def stitch_spots(q, r, rings=(0.97, 0.9, 0.8, 0.7), n=36):
+    """Candidate ground via centres around a signal via q: rings at r x rings, n points each, outer ring first."""
+    for f in rings:
+        for k in range(n):
+            a = 2 * math.pi * k / n
+            yield (round(q[0] + f * r * math.cos(a), 4), round(q[1] + f * r * math.sin(a), 4))
+
+
+def needs_stitch(q, ground_vias, r):
+    """True when no ground via is within r mm of the via q (kicad-happy RP-001)."""
+    return not any(math.dist(q, g) <= r for g in ground_vias)
 
 
 def mark_near(grid, shape, keep, free, lab, li):
@@ -1847,6 +1861,75 @@ def verify_candidates(board, net, lines, drc=drc_refill, apply=connect_line):
 string_letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
 
 
+def cmd_stitch(a):
+    """A ground via (class size) within --r mm of each via of NET that has none (kicad-happy RP-001). The ground is the
+    net's domain (--planes). Each spot is clearance-checked like suggest: other-net copper on every layer, board edge,
+    via keepouts, SMD pads, other-net pours, other ground vias. A via without room: nothing is written, exit 1."""
+    p = pcb()
+    b = p.LoadBoard(a.board)
+    if b is None or b.FindNet(a.net) is None:
+        sys.exit(f'cannot load {a.board} or no net {a.net}')
+    mm = p.ToMM
+    pro = json.load(open(os.path.splitext(a.board)[0] + '.kicad_pro'))
+    grounds, patterns = ground_spec(a.planes or os.path.join(os.path.dirname(os.path.abspath(a.board)), '..', '..',
+                                                             'reference-planes.json'))
+    gnd = net_domain(a.net, board_pad_grounds(p, b, a.net, grounds), grounds, patterns)
+    if gnd is None or gnd == a.net:
+        sys.exit(f'{a.net}: no single ground domain; set "domains" in the planes spec')
+    cls_name, _, clr = net_rules(pro, gnd)
+    cls = {c['name']: c for c in pro['net_settings']['classes']}[cls_name]
+    via_d, via_drill = cls['via_diameter'], cls['via_drill']
+    o = p.SHAPE_POLY_SET()
+    b.GetBoardPolygonOutlines(o, True)
+    edge_clr = mm(b.GetDesignSettings().m_CopperEdgeClearance)
+    edges = []
+    for i in range(o.OutlineCount()):
+        for pts in [poly_points(p, o.Outline(i))] + [poly_points(p, o.Hole(i, h)) for h in range(o.HoleCount(i))]:
+            edges += [(('seg', u, v, 0), edge_clr, 'board edge') for u, v in zip(pts, pts[1:] + pts[:1])]
+    net_clr = {}
+    obstacles = {b.GetLayerName(L): copper_obstacles(p, b, pro, gnd, clr, L, net_clr)[1] + edges
+                 for L in b.GetEnabledLayers().CuStack()}
+    keepouts = [z.Outline() for z in b.Zones() if z.GetIsRuleArea() and z.GetDoNotAllowVias()]
+    pours = [z.Outline() for z in b.Zones() if not z.GetIsRuleArea() and z.GetNetname() != gnd]
+    vias = [(t.GetNetname(), (mm(t.GetPosition().x), mm(t.GetPosition().y))) for t in b.GetTracks() if isinstance(t, p.PCB_VIA)]
+    gv = [q for n, q in vias if n == gnd]
+    pt_ = lambda q: p.VECTOR2I(p.FromMM(q[0]), p.FromMM(q[1]))
+
+    def room(q):
+        if any(k.Contains(pt_(q)) or k.Distance(pt_(q)) < p.FromMM(via_d / 2) for k in keepouts):
+            return False
+        if any(z.Contains(pt_(q)) for z in pours):
+            return False
+        if any(math.dist(q, g) < via_d + clr for g in gv):
+            return False
+        return clear_margin([], [q], via_d, obstacles)[0] >= -1e-6
+    added, miss = [], []
+    for n, q in vias:
+        if n != a.net or not needs_stitch(q, gv, a.r):
+            continue
+        spot = next((c for c in stitch_spots(q, a.r) if room(c)), None)
+        if spot is None:
+            miss.append(q)
+            continue
+        added.append(spot)
+        gv.append(spot)
+    if miss:
+        print(f'{a.net}: no room for a {gnd} via within {a.r:g} mm of ' + ', '.join(f'({x:.3f}, {y:.3f})' for x, y in miss) +
+              '; nothing written')
+        sys.exit(1)
+    for q in added:
+        v = p.PCB_VIA(b)
+        v.SetPosition(pt_(q))
+        v.SetWidth(p.FromMM(via_d))
+        v.SetDrill(p.FromMM(via_drill))
+        v.SetNet(b.FindNet(gnd))
+        b.Add(v)
+    if added:
+        p.ZONE_FILLER(b).Fill(b.Zones())
+        b.Save(a.board)
+    print(f'{a.net}: added {len(added)} {gnd} vias {via_d:g}/{via_drill:g}' + ''.join(f' ({x:.3f}, {y:.3f})' for x, y in added))
+
+
 def pd_on(side, layer, p):
     return side == 'THT' or (side == 'F') == (layer == p.F_Cu)
 
@@ -2064,6 +2147,10 @@ def main():
     s.add_argument('--planes', help='reference-planes.json: grounds and domains (default: two folders above the board; '
                                     'no file = GND only). Own-domain ground pour costs, other pours block')
     s.set_defaults(f=cmd_suggest)
+    s = sp.add_parser('stitch'); s.add_argument('board'); s.add_argument('net')
+    s.add_argument('--r', type=float, default=1.0, help='max mm from a signal via to a ground via')
+    s.add_argument('--planes', help='reference-planes.json (default: two folders above the board; no file = GND)')
+    s.set_defaults(f=cmd_stitch)
     s = sp.add_parser('netcheck'); s.add_argument('board'); s.add_argument('net'); s.set_defaults(f=cmd_netcheck)
     s = sp.add_parser('paths'); s.add_argument('board'); s.add_argument('spec'); s.add_argument('--limit', type=int, default=4)
     s.add_argument('--verbose', action='store_true'); s.set_defaults(f=cmd_paths)
