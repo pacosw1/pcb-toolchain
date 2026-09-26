@@ -36,6 +36,8 @@ Route spec:  {"clear": ["NET"], "routes": [{"net": "VBAT", "width": 1.5, "layer"
 Intent line: NET REF.PAD -> REF.PAD [layer=F.Cu] [width=0.3|auto] [via=auto|0.6/0.3] [through x,y] [via x,y] ...
   Waypoints in order; `via x,y` changes the layer. Each leg: half straight, 45 degrees, half straight.
   A conflict with other-net copper (class clearance, board edge) writes nothing. '#' starts a comment.
+--budget [N] on netcheck, paths, viapads, corridor: cut the output to N chars (default 2000); the last lines
+  say what was cut. netcheck then lists all the net's items that fit (not 3).
 Coordinates: KiCad mm, Y down.
 """
 import argparse
@@ -436,7 +438,8 @@ def dru_mentions(text, names):
 
 
 def net_check(d, net, limit=3):
-    """(text, ok): one DRC total line, then up to limit short lines for the net. ok = no violation, no unconnected."""
+    """(text, ok): one DRC total line, then up to limit short lines for the net (None: all). ok = no violation, no unconnected."""
+    limit = len(d.get('violations', [])) + len(d.get('unconnected_items', [])) if limit is None else limit
     tag = f'[{net}]'
     s = summarize_drc(d)
     viol = [x for x in d.get('violations', []) if any(tag in i['description'] for i in x['items'])]
@@ -450,6 +453,39 @@ def net_check(d, net, limit=3):
         lines.append('  U ' + ' | '.join(i['description'] + (' ({x:.3f}, {y:.3f})'.format(**i['pos']) if 'pos' in i else '')
                                         for i in u['items'])[:160])
     return '\n'.join(lines), not viol and not unc
+
+
+def budget_cut(lines, budget, kind, keep_last=False):
+    """The lines that fit in budget chars (newlines counted). When lines are cut, one line names what was cut, so
+    "not shown" never reads as "not present". kind(line) -> (label, net) or (None, None). keep_last keeps a total line."""
+    if sum(len(l) + 1 for l in lines) <= budget:
+        return lines
+    tail = lines[-1:] if keep_last else []
+    body = lines[:-1] if keep_last else lines
+    for n in range(len(body), -1, -1):
+        counts, nets = collections.Counter(), set()
+        for l in body[n:]:
+            k, net = kind(l)
+            counts[k or 'lines'] += 1
+            if net:
+                nets.add(net)
+        parts = [f'{c} more {k}' if i == 0 else f'{c} {k}' for i, (k, c) in enumerate(counts.items())]
+        note = '... ' + ', '.join(parts + ([f'{len(nets)} nets'] if nets else []) + ['not shown'])
+        out = body[:n] + [note] + tail
+        if n == 0 or sum(len(l) + 1 for l in out) <= budget:
+            return out
+
+
+BUDGET_KINDS = {  # command -> (kind(line), keep the last line)
+    'netcheck': (lambda l: ('violations', None) if l[:4] in ('  E ', '  W ') else ('unconnected', None) if l.startswith('  U ')
+                 else (None, None), False),
+    'paths': (lambda l: ('pairs below current', l.split()[1]) if l.startswith('LOW ') else ('OK pairs', l.split()[1])
+              if l.startswith('OK ') else (None, None), True),
+    'viapads': (lambda l: ('vias in pads', l.split()[5]) if l.startswith('FAIL via in pad') and len(l.split()) > 5
+                else (None, None), True),
+    'corridor': (lambda l: ('maps', None) if l.startswith('map ') else ('map rows', None) if re.match(r'\s*\d', l)
+                 else ('pairs', None) if re.match(r'  [A-Za-z?] ', l) else (None, None), False),
+}
 
 
 def widest_path(edges, a, b):
@@ -1295,7 +1331,7 @@ def cmd_netcheck(a):
         if not os.path.exists(out):
             sys.exit('kicad-cli pcb drc wrote no report')
         with open(out) as f:
-            text, ok = net_check(json.load(f), a.net)
+            text, ok = net_check(json.load(f), a.net, None if a.budget else 3)
     print(text)
     sys.exit(0 if ok else 1)
 
@@ -1496,8 +1532,26 @@ def main():
     s = sp.add_parser('snapshot'); s.add_argument('board'); s.add_argument('out'); s.add_argument('--checker')
     s.set_defaults(f=cmd_snapshot)
     s = sp.add_parser('compare'); s.add_argument('before'); s.add_argument('after'); s.set_defaults(f=cmd_compare)
+    for name in BUDGET_KINDS:
+        sp.choices[name].add_argument('--budget', type=int, nargs='?', const=2000, metavar='N',
+                                      help='cut the output to N chars (default 2000) and name what was cut')
     a = ap.parse_args()
-    a.f(a)
+    if not getattr(a, 'budget', None):
+        return a.f(a)
+    import contextlib
+    import io
+    buf, code = io.StringIO(), None
+    try:
+        with contextlib.redirect_stdout(buf):
+            a.f(a)
+    except SystemExit as e:
+        code = e
+    kind, keep_last = BUDGET_KINDS[a.cmd]
+    lines = buf.getvalue().splitlines()
+    if lines:
+        print('\n'.join(budget_cut(lines, a.budget, kind, keep_last)))
+    if code is not None:
+        raise code
 
 
 if __name__ == '__main__':

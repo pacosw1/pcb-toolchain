@@ -503,6 +503,32 @@ class SegClearTest(unittest.TestCase):
         self.assertRegex(pt.first_conflict([], [(5, 0.8)], 0.6, obs), r'^F\.Cu via \(5\.000, 0\.800\)')
 
 
+class BudgetTest(unittest.TestCase):
+    LINES = ['head'] + [f'LOW N{i % 3} pair {i} ' + 'x' * 20 for i in range(20)] + ['20 pairs below']
+
+    def kind(self, line):
+        return ('pairs below current', line.split()[1]) if line.startswith('LOW') else (None, None)
+
+    def test_fits_is_unchanged(self):
+        self.assertEqual(pt.budget_cut(self.LINES, 10 ** 6, self.kind, keep_last=True), self.LINES)
+
+    def test_cut_keeps_head_and_last_and_names_the_rest(self):
+        out = pt.budget_cut(self.LINES, 200, self.kind, keep_last=True)
+        self.assertLessEqual(len('\n'.join(out)) + 1, 200)
+        self.assertEqual((out[0], out[-1]), ('head', '20 pairs below'))
+        shown = sum(1 for l in out if l.startswith('LOW'))
+        self.assertEqual(out[-2], f'... {20 - shown} more pairs below current, 3 nets, not shown')
+
+    def test_unknown_lines_count_as_lines(self):
+        out = pt.budget_cut(['a' * 10] * 5, 30, lambda l: (None, None))
+        self.assertEqual(out[-1], f'... {5 - len(out) + 1} more lines, not shown')
+        self.assertLessEqual(len('\n'.join(out)) + 1, 30)
+
+    def test_net_check_without_limit_lists_all(self):
+        text, _ = pt.net_check(NetCheckTest.D, 'VBAT', limit=None)
+        self.assertEqual(len(text.splitlines()), 3)
+
+
 try:
     import pcbnew
 except ImportError:
@@ -643,6 +669,20 @@ class CorridorBoardTest(unittest.TestCase):
         self.assertEqual(len(vias), 2)
         self.assertEqual(segs, [('B.Cu', 0.2), ('F.Cu', 0.2), ('F.Cu', 0.2)])   # class width, B.Cu under the GND track
         self.assertEqual(pcbnew.ToMM(vias[0].GetWidth(pcbnew.F_Cu)), 0.6)
+
+    def test_corridor_budget_cuts_and_says_what(self):
+        import subprocess
+        import sys
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            board = self.make_board(d)
+            cmd = [sys.executable, os.path.join(HERE, 'pcbtool.py'), 'corridor', board, 'SIG', '--margin', '1', '--cell', '0.5']
+            full = subprocess.run(cmd, capture_output=True, text=True)
+            r = subprocess.run(cmd + ['--budget', '700'], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertLessEqual(len(r.stdout), 700)
+        self.assertRegex(r.stdout.splitlines()[-1], r'^\.\.\. \d+ more map rows(, \d+ maps)?, not shown$')
+        self.assertTrue(full.stdout.startswith(r.stdout.rsplit('\n', 2)[0]))
 
 
 def json_copy(x):
