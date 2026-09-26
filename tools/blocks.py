@@ -218,12 +218,23 @@ def evidence(lcsc):
     d = json.loads(_read(files[-1], '{}') or '{}')
     src = _read(os.path.join(REG, 'cad-assets', lcsc, 'easyeda-bridge-source.json'), '')
     cls = re.search(r'"JLCPCB Part Class"\s*:\s*"([^"]+)"', src)
+    api = sorted(glob.glob(os.path.join(REG, 'evidence', '*', lcsc + '.api.json')))
+    rec = (json.loads(_read(api[-1], '{}') or '{}').get('record') if api else None)
     return {'date': d.get('fetched_at_utc', '')[:10], 'stock': (d.get('purchase_record') or {}).get('overseasStockCount'),
             'verified': d.get('stock_verified'), 'file': os.path.relpath(files[-1], REG),
-            'price': (d.get('purchase_record') or {}).get('initialPrice'), 'jlc_class': cls.group(1) if cls else None}
+            'price': (d.get('purchase_record') or {}).get('initialPrice'), 'jlc_class': jlc_class(rec, cls.group(1) if cls else None)}
 
 
-JLC_EXTENDED_FEE_USD = 3.0  # JLC PCBA loading fee per unique Extended part per order; recheck at order time
+def jlc_class(api_record, bridge_class):
+    """JLC class from the saved parts-API record (it knows Preferred); else the bridge class."""
+    if not api_record:
+        return bridge_class
+    if api_record.get('componentLibraryType') == 'base':
+        return 'Basic Part'
+    return 'Preferred Extended Part' if api_record.get('preferredComponentFlag') else 'Extended Part'
+
+
+JLC_EXTENDED_FEE_USD = 3.07  # Economic PCBA feeder loading fee per unique Extended part (jlcpcb.com/help/article/pcb-assembly-price, read 2026-09-26); Preferred parts are exempt
 
 
 def cost(rows):
@@ -509,7 +520,7 @@ const T_={
 overview(d){const n=d.bom.reduce((a,r)=>a+r.qty,0),e=d.part_errors.length+(d.fact_errors||[]).length;
  $('#tab').innerHTML=`<div class="card"><table>
  <tr><th>Parts</th><td>${n} in ${d.bom.length} lines</td></tr>
- <tr><th>Parts cost</th><td>${d.cost?d.kind=='block'?`<b>$${d.cost.parts_usd.toFixed(2)}</b> parts per copy (JLC unit price at the smallest quantity, dated snapshots). ${d.cost.extended.length} Extended parts: ${d.cost.extended.map(esc).join(', ')}. The Extended-part fee is paid once per unique part per order, so it is counted on the board, not here.`:`<b>$${d.cost.first_board_usd.toFixed(2)}</b> for one board = parts $${d.cost.parts_usd.toFixed(2)} (JLC unit price at the smallest quantity, dated snapshots) + Extended-part fee $${d.cost.extended_fee_usd.toFixed(2)} (${d.cost.extended.length} unique x $3.00, once per order: ${d.cost.extended.map(esc).join(', ')}). Each extra board adds only $${d.cost.parts_usd.toFixed(2)}.${d.cost.unknown_class.length?` <span class="bad">JLC class unknown (fee not counted): ${d.cost.unknown_class.map(esc).join(', ')}</span>`:''}${d.cost.missing.length?` · <span class="bad">no price: ${d.cost.missing.map(esc).join(', ')}</span>`:''}`:''}</td></tr>
+ <tr><th>Parts cost</th><td>${d.cost?d.kind=='block'?`<b>$${d.cost.parts_usd.toFixed(2)}</b> parts per copy (JLC unit price at the smallest quantity, dated snapshots). ${d.cost.extended.length} Extended parts: ${d.cost.extended.map(esc).join(', ')}. The Extended-part fee is paid once per unique part per order, so it is counted on the board, not here.`:`<b>$${d.cost.first_board_usd.toFixed(2)}</b> for one board = parts $${d.cost.parts_usd.toFixed(2)} (JLC unit price at the smallest quantity, dated snapshots) + Extended-part fee $${d.cost.extended_fee_usd.toFixed(2)} (${d.cost.extended.length} unique x $3.07, once per order: ${d.cost.extended.map(esc).join(', ')}). Each extra board adds only $${d.cost.parts_usd.toFixed(2)}.${d.cost.unknown_class.length?` <span class="bad">JLC class unknown (fee not counted): ${d.cost.unknown_class.map(esc).join(', ')}</span>`:''}${d.cost.missing.length?` · <span class="bad">no price: ${d.cost.missing.map(esc).join(', ')}</span>`:''}`:''}</td></tr>
  <tr><th>Part checks</th><td class="${e?'bad':'ok'}">${e?e+' errors':'all parts have a C-number and a checked datasheet'}</td></tr>
  ${d.kind=='block'?`<tr><th>Used in</th><td>${d.used_in.map(esc).join(', ')||'<span class="muted">no board yet</span>'}</td></tr><tr><th>Keywords</th><td>${esc(d.keywords)}</td></tr>`:`<tr><th>Blocks placed</th><td>${d.blocks.map(esc).join(', ')||'<span class="muted">none</span>'}</td></tr>`}
  <tr><th>Source files</th><td>${d.files.map(f=>`<a href="/file/${d.kind}/${encodeURIComponent(d.id)}/${encodeURIComponent(f)}">${esc(f)}</a>`).join(' · ')}</td></tr></table></div>

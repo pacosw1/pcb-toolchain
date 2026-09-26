@@ -170,6 +170,16 @@ class UnknownClassTest(unittest.TestCase):
         self.assertEqual(c['extended_fee_usd'], 0)
 
 
+class JlcClassTest(unittest.TestCase):
+    def test_api_record_wins_and_preferred_pays_no_fee(self):
+        self.assertEqual(bk.jlc_class({'componentLibraryType': 'expand', 'preferredComponentFlag': True}, 'Extended Part'), 'Preferred Extended Part')
+        self.assertEqual(bk.jlc_class({'componentLibraryType': 'expand', 'preferredComponentFlag': False}, None), 'Extended Part')
+        self.assertEqual(bk.jlc_class({'componentLibraryType': 'base'}, 'Extended Part'), 'Basic Part')
+        self.assertEqual(bk.jlc_class(None, 'Extended Part'), 'Extended Part')
+        rows = [{'refs': ['U3'], 'qty': 1, 'lcsc': 'C7562', 'evidence': {'price': 0.1, 'jlc_class': 'Preferred Extended Part'}}]
+        self.assertEqual(bk.cost(rows)['extended'], [])
+
+
 class ViewVariantTest(unittest.TestCase):
     def test_variant_changes_with_the_export_command(self):
         v1 = bk.view_variant('front')
