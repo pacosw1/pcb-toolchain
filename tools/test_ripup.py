@@ -222,5 +222,14 @@ class RouteNetTest(unittest.TestCase):
         self.assertEqual(text, 'base|')
 
 
+class ProgressTest(unittest.TestCase):
+    def test_one_flushed_line_per_state_and_the_result_passes_through(self):
+        import io
+        out = io.StringIO()
+        r = {'status': 'open', 'why': '/T: no path', 's': 8.0}
+        self.assertIs(ru.progress(('/A', '/B'), r, out), r)
+        self.assertEqual(out.getvalue(), 'state rip /A+/B: open  /T: no path (8.0 s)\n')
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -178,6 +178,12 @@ def beam_search(blockers, evaluate, width, depth, pmap):
     return None, log
 
 
+def progress(rips, r, out=sys.stdout):
+    """Print one line for an evaluated state at once (live log) and return the result unchanged."""
+    print(f'state rip {"+".join(rips)}: {r["status"]} {r.get("cost", "")} {r.get("why", "")} ({r["s"]} s)', file=out, flush=True)
+    return r
+
+
 # ---------------------------------------------------------------- edges (subprocess, pcbnew)
 def load_pcbtool():
     spec = importlib.util.spec_from_file_location('pcbtool', PCBTOOL)
@@ -341,12 +347,10 @@ def main(argv=None):
     if blockers is None:
         print(f'{a.net}: suggest routes it without a rip-up (or it is connected); use suggest --verify')
         return 1
-    print(f'{a.net} {s["pads"][0]} -> {s["pads"][1]}: reach {s["reach"]}; blockers {", ".join(blockers[:2 * a.width])}')
+    print(f'{a.net} {s["pads"][0]} -> {s["pads"][1]}: reach {s["reach"]}; blockers {", ".join(blockers[:2 * a.width])}', flush=True)
     ev = make_evaluator(board, a.net, base, specs, gates, skip, planes, a.max_vias)
     with concurrent.futures.ThreadPoolExecutor(max_workers=a.jobs) as ex:
-        best, log = beam_search(blockers, ev, a.width, a.depth, pmap=ex.map)
-    for rips, r in log:
-        print(f'  rip {"+".join(rips)}: {r["status"]} {r.get("cost", "")} {r.get("why", "")} ({r["s"]} s)')
+        best, log = beam_search(blockers, lambda rips: progress(rips, ev(rips)), a.width, a.depth, pmap=ex.map)
     wall = round(time.time() - t0, 1)
     res = {'board': board, 'net': a.net, 'gates': gates, 'wall_s': wall, 'states': len(log),
            'best': best and {'rips': list(best[0]), **best[1]},
