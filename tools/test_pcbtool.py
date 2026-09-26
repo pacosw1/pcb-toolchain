@@ -685,6 +685,147 @@ class CorridorBoardTest(unittest.TestCase):
         self.assertTrue(full.stdout.startswith(r.stdout.rsplit('\n', 2)[0]))
 
 
+
+class SuggestCoreTest(unittest.TestCase):
+    def test_corners_keep_turns_and_vias_only(self):
+        cols = 10                                        # (c, r) -> r * cols + c; layers 0/1
+        path = [(0, 0), (1, 0), (2, 0), (13, 0), (24, 0), (24, 1), (25, 1), (26, 1)]
+        self.assertEqual(pt.node_corners(path, cols), [('through', 2), ('via', 24)])
+
+    def test_astar_goes_around_a_block_and_under_a_wall(self):
+        cols, rows = 5, 3                                # wall at c = 2 on layer 0, all rows
+        free0 = bytearray(1 if i % cols != 2 else 0 for i in range(cols * rows))
+        path, cost = pt.astar((cols, rows, 1.0), [free0, bytearray([1] * 15)], bytearray([1] * 15),
+                              [[0.0] * 15, [0.0] * 15], 5, {0}, 9, {0}, via_cost=2)
+        self.assertEqual([l for _, l in path].count(1) > 0, True)
+        self.assertEqual(path[0], (5, 0))
+        self.assertEqual(path[-1], (9, 0))
+        self.assertAlmostEqual(cost, 4 + 2 * 2)          # 4 steps, 2 vias
+
+    def test_astar_no_path_returns_the_reached_nodes(self):
+        free0 = bytearray(1 if i % 5 != 2 else 0 for i in range(15))
+        path, reached = pt.astar((5, 3, 1.0), [free0], bytearray(15), [[0.0] * 15], 5, {0}, 9, {0}, via_cost=2)
+        self.assertIsNone(path)
+        self.assertIn(6, reached)
+        self.assertNotIn(8, reached)
+
+
+@unittest.skipIf(pcbnew is None, 'needs the KiCad bundled Python (pcbnew)')
+class SuggestBoardTest(unittest.TestCase):
+    """Synthetic board 30 x 20 mm: SIG pads R1.1 (10, 10) and R2.1 (20, 10) on F.Cu; optional GND track x = 15 on
+    F.Cu from y1 to y2; optional zone (net, x1, y1, x2, y2) on F.Cu."""
+
+    def make_board(self, d, wall=None, zone=None):
+        import json
+        mm = pcbnew.FromMM
+        b = pcbnew.BOARD()
+        nets = {}
+        for n in ('SIG', 'GND', 'VCC'):
+            nets[n] = pcbnew.NETINFO_ITEM(b, n)
+            b.Add(nets[n])
+        edge = pcbnew.PCB_SHAPE(b)
+        edge.SetShape(pcbnew.SHAPE_T_RECT)
+        edge.SetStart(pcbnew.VECTOR2I(mm(0), mm(0)))
+        edge.SetEnd(pcbnew.VECTOR2I(mm(30), mm(20)))
+        edge.SetLayer(pcbnew.Edge_Cuts)
+        b.Add(edge)
+        for ref, x in (('R1', 10), ('R2', 20)):
+            fp = pcbnew.FOOTPRINT(b)
+            fp.SetReference(ref)
+            fp.SetPosition(pcbnew.VECTOR2I(mm(x), mm(10)))
+            pad = pcbnew.PAD(fp)
+            pad.SetNumber('1')
+            pad.SetAttribute(pcbnew.PAD_ATTRIB_SMD)
+            pad.SetShape(pcbnew.PAD_SHAPE_RECT)
+            pad.SetSize(pcbnew.VECTOR2I(mm(1), mm(1)))
+            pad.SetLayerSet(pad.SMDMask())
+            pad.SetPosition(pcbnew.VECTOR2I(mm(x), mm(10)))
+            pad.SetNet(nets['SIG'])
+            fp.Add(pad)
+            b.Add(fp)
+        if wall:
+            t = pcbnew.PCB_TRACK(b)
+            t.SetStart(pcbnew.VECTOR2I(mm(15), mm(wall[0])))
+            t.SetEnd(pcbnew.VECTOR2I(mm(15), mm(wall[1])))
+            t.SetWidth(mm(0.25))
+            t.SetLayer(pcbnew.F_Cu)
+            t.SetNet(nets['GND'])
+            b.Add(t)
+        if zone:
+            z = pcbnew.ZONE(b)
+            z.SetLayer(pcbnew.F_Cu)
+            z.SetNet(nets[zone[0]])
+            ol = z.Outline()
+            ol.NewOutline()
+            x1, y1, x2, y2 = zone[1:]
+            for x, y in ((x1, y1), (x2, y1), (x2, y2), (x1, y2)):
+                ol.Append(mm(x), mm(y))
+            b.Add(z)
+        path = os.path.join(d, 'T.kicad_pcb')
+        b.Save(path)
+        with open(os.path.join(d, 'T.kicad_pro'), 'w') as f:
+            json.dump({'net_settings': {'classes': [{'name': 'Default', 'track_width': 0.2, 'clearance': 0.2,
+                                                         'via_diameter': 0.6, 'via_drill': 0.3}],
+                                        'netclass_patterns': []}}, f)
+        return path
+
+    def run_suggest(self, *args, wall=None, zone=None):
+        """(suggest result, connect result of the first proposed line or None)."""
+        import subprocess
+        import sys
+        import tempfile
+        tool = os.path.join(HERE, 'pcbtool.py')
+        with tempfile.TemporaryDirectory() as d:
+            board = self.make_board(d, wall, zone)
+            r = subprocess.run([sys.executable, tool, 'suggest', board, 'SIG', '--cell', '0.25', *args],
+                               capture_output=True, text=True)
+            lines = [l for l in r.stdout.splitlines() if l.startswith('SIG R1.1 -> R2.1')]
+            c = lines and subprocess.run([sys.executable, tool, 'connect', board, lines[0]], capture_output=True, text=True)
+        return r, (lines[0] if lines else None), c
+
+    def test_straight_path(self):
+        r, line, c = self.run_suggest()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(line, 'SIG R1.1 -> R2.1 layer=F.Cu')
+        self.assertIn('1) len 10.00 vias 0 bends 0', r.stdout)
+        self.assertEqual(c.returncode, 0, c.stdout + c.stderr)
+        self.assertLess(len(r.stdout), 1500)
+
+    def test_detour_around_an_obstacle(self):
+        r, line, c = self.run_suggest('--layers', 'F.Cu', wall=(8, 12))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('through', line)
+        self.assertNotIn('via ', line)
+        self.assertRegex(r.stdout, r'1\) len 1\d\.\d\d vias 0 ')
+        self.assertEqual(c.returncode, 0, c.stdout + c.stderr)
+
+    def test_forced_via_to_the_other_layer(self):
+        r, line, c = self.run_suggest(wall=(0, 20))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(line.count(' via '), 2)
+        self.assertIn('vias 2', r.stdout)
+        self.assertEqual(c.returncode, 0, c.stdout + c.stderr)
+
+    def test_no_path_names_the_block(self):
+        r, line, c = self.run_suggest('--layers', 'F.Cu', wall=(0, 20))
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIsNone(line)
+        self.assertIn('no path', r.stdout)
+        self.assertIn('track GND', r.stdout)
+
+    def test_gnd_pour_is_avoided_when_a_detour_is_cheap(self):
+        r, line, c = self.run_suggest('--layers', 'F.Cu', zone=('GND', 13, 9, 17, 20))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('pour 0.0', r.stdout.split('1) ')[1].splitlines()[0])
+        ys = [float(t.split(',')[1]) for t in line.split() if ',' in t]
+        self.assertTrue(ys and min(ys) < 9)
+        self.assertEqual(c.returncode, 0, c.stdout + c.stderr)
+
+    def test_other_net_pour_blocks(self):
+        r, line, c = self.run_suggest('--layers', 'F.Cu', zone=('VCC', 13, 0, 17, 20))
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn('pour VCC', r.stdout)
+
 def json_copy(x):
     import json
     return json.loads(json.dumps(x))

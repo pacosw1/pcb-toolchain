@@ -16,6 +16,8 @@ Run with the KiCad bundled Python (it has pcbnew):
   $PY tools/pcbtool.py drc    BOARD                           DRC --schematic-parity summary
   $PY tools/pcbtool.py corridor BOARD NET [--margin 3] [--cell 0.25] [--pair N] [--box X1 Y1 X2 Y2]  unconnected pad pairs + ASCII free/blocked map
   $PY tools/pcbtool.py connect BOARD INTENT                 intent lines -> 0/45/90 tracks, class width/via, clearance check
+  $PY tools/pcbtool.py suggest BOARD NET [--pair N] [--box X1 Y1 X2 Y2] [--layers F.Cu,B.Cu] [--via-cost 8] [--k 3] [--cell 0.1]
+                                                              A* proposals as connect lines (writes nothing)
   $PY tools/pcbtool.py netcheck BOARD NET                     DRC on a temp copy: one total line + this net only
   $PY tools/pcbtool.py widths BOARD [--limit N]              tracks thinner than the net class width (current)
   $PY tools/pcbtool.py paths  BOARD SPEC.json [--verbose]     widest copper path between power pads >= design current
@@ -36,7 +38,7 @@ Route spec:  {"clear": ["NET"], "routes": [{"net": "VBAT", "width": 1.5, "layer"
 Intent line: NET REF.PAD -> REF.PAD [layer=F.Cu] [width=0.3|auto] [via=auto|0.6/0.3] [through x,y] [via x,y] ...
   Waypoints in order; `via x,y` changes the layer. Each leg: half straight, 45 degrees, half straight.
   A conflict with other-net copper (class clearance, board edge) writes nothing. '#' starts a comment.
---budget [N] on netcheck, paths, viapads, corridor: cut the output to N chars (default 2000); the last lines
+--budget [N] on netcheck, paths, viapads, corridor, suggest: cut the output to N chars (default 2000); the last lines
   say what was cut. netcheck then lists all the net's items that fit (not 3).
 Coordinates: KiCad mm, Y down.
 """
@@ -483,9 +485,123 @@ BUDGET_KINDS = {  # command -> (kind(line), keep the last line)
               if l.startswith('OK ') else (None, None), True),
     'viapads': (lambda l: ('vias in pads', l.split()[5]) if l.startswith('FAIL via in pad') and len(l.split()) > 5
                 else (None, None), True),
+    'suggest': (lambda l: ('alternatives', None) if re.match(r'\d+\) ', l) else (None, None), False),
     'corridor': (lambda l: ('maps', None) if l.startswith('map ') else ('map rows', None) if re.match(r'\s*\d', l)
                  else ('pairs', None) if re.match(r'  [A-Za-z?] ', l) else (None, None), False),
 }
+
+
+# ---------------------------------------------------------------- suggest: A* path proposals as connect lines
+MOVES = [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)]
+BEND_COST = {1: 0.05, 2: 0.2}   # mm-equivalent cost of a 45 / 90 degree turn; sharper turns are not allowed
+POUR_EXTRA = 2.0                # extra cost per mm in another net's GND pour (x3 length); other-net pours are blocked
+
+
+def astar(dims, free, via_ok, extra, s, s_layers, t, t_layers, via_cost):
+    """Cheapest node path on a node grid (dims = cols, rows, cell) with 8 moves per layer and vias between layers.
+    free[layer]: bytearray, 1 = a track centre may be on the node; via_ok: bytearray; extra[layer][node]: extra cost per mm.
+    Cost = length * (1 + extra) + BEND_COST per turn + via_cost per via. No via on the start node or right after a via.
+    Returns ([(node, layer)], cost), or (None, set of reached nodes)."""
+    import heapq
+    cols, rows, cell = dims
+    tc, tr = t % cols, t // cols
+    diag = math.sqrt(2)
+
+    def h(i):
+        dx, dy = abs(i % cols - tc), abs(i // cols - tr)
+        return cell * (max(dx, dy) + (diag - 1) * min(dx, dy))
+    best, prev, heap, n = {}, {}, [], 0
+    for L in s_layers:
+        best[(s, L, 8)] = 0.0
+        heap.append((h(s), 0.0, n, (s, L, 8)))
+        n += 1
+    reached = set()
+    while heap:
+        _, g, _, st = heapq.heappop(heap)
+        if g > best.get(st, math.inf):
+            continue
+        i, L, d = st
+        reached.add(i)
+        if i == t and L in t_layers:
+            path = [(i, L)]
+            while st in prev:
+                st = prev[st]
+                if (st[0], st[1]) != path[-1]:
+                    path.append((st[0], st[1]))
+            return path[::-1], g
+        c, r = i % cols, i // cols
+        nxt = []
+        for k, (dc, dr) in enumerate(MOVES):
+            turn = 0 if d == 8 else min(abs(k - d), 8 - abs(k - d))
+            if turn > 2 or not (0 <= c + dc < cols and 0 <= r + dr < rows):
+                continue
+            j = i + dr * cols + dc
+            if free[L][j]:
+                step = cell * (diag if dc and dr else 1)
+                nxt.append(((j, L, k), g + step * (1 + (extra[L][i] + extra[L][j]) / 2) + BEND_COST.get(turn, 0)))
+        if d != 8 and via_ok[i]:
+            nxt += [((i, L2, 8), g + via_cost) for L2 in range(len(free)) if L2 != L and free[L2][i]]
+        for st2, g2 in nxt:
+            if g2 < best.get(st2, math.inf) - 1e-12:
+                best[st2], prev[st2] = g2, st
+                heapq.heappush(heap, (g2 + h(st2[0]), g2, n, st2))
+                n += 1
+    return None, reached
+
+
+def node_corners(path, cols):
+    """Waypoints of a node path [(node, layer)]: ('through', node) at each turn, ('via', node) at each layer change.
+    The two ends are not included."""
+    out = []
+    for k in range(1, len(path) - 1):
+        (i0, l0), (i1, l1), (i2, l2) = path[k - 1:k + 2]
+        if i1 == i2:
+            out.append(('via', i1))
+        elif l0 == l1 and (i1 % cols - i0 % cols, i1 // cols - i0 // cols) != (i2 % cols - i1 % cols, i2 // cols - i1 // cols):
+            out.append(('through', i1))
+    return out
+
+
+def mark_near(grid, shape, keep, free, lab, li):
+    """Block (free = 0, lab = li) the nodes closer than keep to a shape. grid = (x0, y0, cell, cols, rows); nodes at x0 + c * cell."""
+    x0, y0, cell, cols, rows = grid
+    bx0, by0, bx1, by1 = shape_box(shape)
+    for r in range(max(0, math.ceil((by0 - keep - y0) / cell)), min(rows, math.floor((by1 + keep - y0) / cell) + 1)):
+        for c in range(max(0, math.ceil((bx0 - keep - x0) / cell)), min(cols, math.floor((bx1 + keep - x0) / cell) + 1)):
+            i = r * cols + c
+            if free[i] and shape_dist(shape, (x0 + c * cell, y0 + r * cell)) < keep:
+                free[i], lab[i] = 0, li
+
+
+def poly_nodes(grid, rings):
+    """Nodes inside the rings (even-odd, so a hole ring cuts out), by scanline."""
+    x0, y0, cell, cols, rows = grid
+    edges = [(a, b) for ring in rings for a, b in zip(ring, ring[1:] + ring[:1]) if a[1] != b[1]]
+    out = []
+    for r in range(rows):
+        y = y0 + r * cell
+        xs = sorted(ax + (y - ay) * (bx - ax) / (by - ay) for (ax, ay), (bx, by) in edges if (ay > y) != (by > y))
+        for xa, xb in zip(xs[::2], xs[1::2]):
+            out += [r * cols + c for c in range(max(0, math.ceil((xa - x0) / cell)), min(cols, math.floor((xb - x0) / cell) + 1))]
+    return out
+
+
+def clear_margin(segs, vias, via_size, obstacles, window=1.0):
+    """(smallest gap minus clearance, label) of new tracks and vias to other-net copper; negative = conflict.
+    Copper farther than window is not measured, so the margin is at most window."""
+    items = [(L, a, b, w) for a, b, L, w in segs] + [(L, q, q, via_size) for q in vias for L in obstacles]
+    best = (window, '')
+    for L, a, b, w in items:
+        lo = (min(a[0], b[0]) - w / 2 - window, min(a[1], b[1]) - w / 2 - window)
+        hi = (max(a[0], b[0]) + w / 2 + window, max(a[1], b[1]) + w / 2 + window)
+        for shape, clr, label in obstacles.get(L, []):
+            bx = shape_box(shape)
+            if bx[0] - clr > hi[0] or bx[2] + clr < lo[0] or bx[1] - clr > hi[1] or bx[3] + clr < lo[1]:
+                continue
+            m = shape_seg_dist(shape, a, b) - w / 2 - clr
+            if m < best[0]:
+                best = (m, label)
+    return best
 
 
 def widest_path(edges, a, b):
@@ -1306,6 +1422,199 @@ def cmd_connect(a):
         os.remove(f.name)
 
 
+def net_pad_pairs(p, b, net):
+    """Unconnected pad pairs of a net (ratsnest, as corridor): [((name, (x, y), pad), (name, (x, y), pad))]."""
+    mm = p.ToMM
+    b.BuildConnectivity()
+    conn = b.GetConnectivity()
+    pads = {pd.m_Uuid.AsString(): pd for fp in b.GetFootprints() for pd in fp.Pads() if pd.GetNetname() == net and pd.GetNumber()}
+    info = {k: (f'{pd.GetParentFootprint().GetReference()}.{pd.GetNumber()}', (mm(pd.GetPosition().x), mm(pd.GetPosition().y)), pd)
+            for k, pd in pads.items()}
+    root = {k: k for k in pads}
+
+    def find(k):
+        while root[k] != k:
+            k = root[k]
+        return k
+    for k, pd in pads.items():
+        for it in conn.GetConnectedItems(pd):
+            if it.m_Uuid.AsString() in root:
+                root[find(it.m_Uuid.AsString())] = find(k)
+    groups = collections.defaultdict(list)
+    for k in pads:
+        groups[find(k)].append((k, info[k][1]))
+    pairs = mst_pairs(sorted(groups.values(), key=lambda g: sorted(info[k][0] for k, _ in g)))
+    return [(info[u], info[v]) for u, v in pairs]
+
+
+def fmt_mm(v):
+    return f'{v:.6f}'.rstrip('0').rstrip('.')
+
+
+def cmd_suggest(a):
+    """A* path proposals for one unconnected pad pair, as connect lines. Reads the board, writes nothing.
+    Blocked for a track centre: other-net copper + clearance + width/2, board edge, track keepouts, pours of other nets
+    (a GND pour of another net is not blocked but costs POUR_EXTRA per mm, so the path goes around it when it can).
+    Blocked for a via: other-net copper on every copper layer, via keepouts, and SMD pads of any net (via-in-pad)."""
+    p = pcb()
+    b = p.LoadBoard(a.board)
+    if b is None:
+        sys.exit(f'cannot load {a.board}')
+    if b.FindNet(a.net) is None:
+        sys.exit(f'no net {a.net} on the board')
+    mm = p.ToMM
+    layers = a.layers.split(',')
+    if not layers or any(L not in OTHER for L in layers) or len(set(layers)) != len(layers):
+        sys.exit('--layers: F.Cu and/or B.Cu (connect changes layer between these two only)')
+    lid = [b.GetLayerID(L) for L in layers]
+    pro = json.load(open(os.path.splitext(a.board)[0] + '.kicad_pro'))
+    cls_name, width, clr = net_rules(pro, a.net)
+    cls = {c['name']: c for c in pro['net_settings']['classes']}[cls_name]
+    via_d, via_drill = cls['via_diameter'], cls['via_drill']
+    pairs = net_pad_pairs(p, b, a.net)
+    if not pairs:
+        print(f'{a.net}: unconnected: none')
+        return
+    n = a.pair or 1
+    if not 1 <= n <= len(pairs):
+        sys.exit(f'--pair {n}: the net has {len(pairs)} pairs')
+    (na, sa, pa), (nb, sb, pb) = pairs[n - 1]
+
+    def pad_layers(pd):
+        if pd.GetAttribute() in (p.PAD_ATTRIB_PTH, p.PAD_ATTRIB_NPTH):
+            return {i for i, L in enumerate(lid)}
+        return {i for i, L in enumerate(lid) if pd.IsOnLayer(L)}
+    s_layers, t_layers = pad_layers(pa), pad_layers(pb)
+    if not s_layers or not t_layers:
+        sys.exit(f'{na if not s_layers else nb} is not on --layers {a.layers}')
+    if a.box:
+        bx = (min(a.box[0], a.box[2]), min(a.box[1], a.box[3]), max(a.box[0], a.box[2]), max(a.box[1], a.box[3]))
+        if not all(bx[0] <= q[0] <= bx[2] and bx[1] <= q[1] <= bx[3] for q in (sa, sb)):
+            sys.exit(f'--box must hold both pads {na} {sa} and {nb} {sb}')
+    else:
+        bx = (min(sa[0], sb[0]) - a.margin, min(sa[1], sb[1]) - a.margin, max(sa[0], sb[0]) + a.margin, max(sa[1], sb[1]) + a.margin)
+    cell = max(a.cell, math.sqrt((bx[2] - bx[0]) * (bx[3] - bx[1]) / 250000))
+    cell = round(math.ceil(cell / 0.05 - 1e-9) * 0.05, 3) if cell > a.cell else cell
+    cs, rs = math.floor((sa[0] - bx[0]) / cell), math.floor((sa[1] - bx[1]) / cell)
+    x0, y0 = sa[0] - cs * cell, sa[1] - rs * cell   # the start pad centre is a node
+    cols, rows = math.floor((bx[2] - x0) / cell) + 1, math.floor((bx[3] - y0) / cell) + 1
+    grid = (x0, y0, cell, cols, rows)
+    N = cols * rows
+    xy = lambda i: (x0 + (i % cols) * cell, y0 + (i // cols) * cell)
+    s = rs * cols + cs
+    t = min(max(0, round((sb[1] - y0) / cell)), rows - 1) * cols + min(max(0, round((sb[0] - x0) / cell)), cols - 1)
+    m = 0.71 * cell                                  # a step between two free nodes then keeps the full clearance
+    near = lambda sh: (lambda q: q[0] < bx[2] + 5 and q[2] > bx[0] - 5 and q[1] < bx[3] + 5 and q[3] > bx[1] - 5)(shape_box(sh))
+    labels = []
+
+    def lab_id(text):
+        labels.append(text)
+        return len(labels) - 1
+    ds = b.GetDesignSettings()
+    edge_clr = mm(ds.m_CopperEdgeClearance)
+    o = p.SHAPE_POLY_SET()
+    b.GetBoardPolygonOutlines(o, True)
+    rings = []
+    for i in range(o.OutlineCount()):
+        rings += [poly_points(p, o.Outline(i))] + [poly_points(p, o.Hole(i, h)) for h in range(o.HoleCount(i))]
+    edges = [(('seg', u, v, 0), edge_clr, 'board edge') for ring in rings for u, v in zip(ring, ring[1:] + ring[:1])]
+    inside = bytearray(N)
+    for i in poly_nodes(grid, rings):
+        inside[i] = 1
+    net_clr, obstacles = {}, {}
+    for L in b.GetEnabledLayers().CuStack():
+        obstacles[b.GetLayerName(L)] = copper_obstacles(p, b, pro, a.net, clr, L, net_clr)[1] + edges
+    free, lab, extra = [], [], []
+    for L, name in zip(lid, layers):
+        f, lb, ex = bytearray(inside), [-1] * N, [0.0] * N
+        for sh, c, label in obstacles[name]:
+            if near(sh):
+                mark_near(grid, sh, c + width / 2 + m, f, lb, lab_id(label))
+        for z in b.Zones():
+            if z.GetIsRuleArea() or not z.IsOnLayer(L) or z.GetNetname() == a.net:
+                continue
+            ol = z.Outline()
+            zr = [poly_points(p, ol.Outline(k)) for k in range(ol.OutlineCount())]
+            zr += [poly_points(p, ol.Hole(k, h)) for k in range(ol.OutlineCount()) for h in range(ol.HoleCount(k))]
+            gnd = 'GND' in z.GetNetname().upper()
+            li = lab_id(f'pour {z.GetNetname() or "(no net)"}')
+            for i in poly_nodes(grid, zr):
+                if gnd:
+                    ex[i] = POUR_EXTRA
+                elif f[i]:
+                    f[i], lb[i] = 0, li
+        free.append(f), lab.append(lb), extra.append(ex)
+    via_ok, via_lab = bytearray(inside), [-1] * N
+    for name, obs in obstacles.items():
+        for sh, c, label in obs:
+            if near(sh):
+                mark_near(grid, sh, c + via_d / 2 + m, via_ok, via_lab, lab_id(label))
+    for z in b.Zones():
+        if z.GetIsRuleArea() and z.GetDoNotAllowVias():
+            mark_near(grid, ('poly', poly_points(p, z.Outline().Outline(0))), m, via_ok, via_lab, lab_id('via keepout'))
+    for fp in b.GetFootprints():
+        for pd in fp.Pads():
+            if pd.GetAttribute() == p.PAD_ATTRIB_SMD:
+                L = p.F_Cu if pd.IsOnLayer(p.F_Cu) else p.B_Cu
+                sh = ('poly', poly_points(p, pd.GetEffectivePolygon(L).Outline(0)))
+                if near(sh):
+                    mark_near(grid, sh, via_drill / 2 + m, via_ok, via_lab, lab_id(f'via-in-pad {fp.GetReference()}.{pd.GetNumber()}'))
+    for f in free:
+        f[s] = f[t] = 1
+    head = (f'pair {n} of {len(pairs)}: {na} -> {nb}; class {cls_name} w {width:g} clr {clr:g} via {via_d:g}/{via_drill:g}; '
+            f'cell {cell:g} box {bx[0]:.1f},{bx[1]:.1f}..{bx[2]:.1f},{bx[3]:.1f}; GND pour x3 cost, other pours blocked; '
+            f'.kicad_dru not used')
+    print(head)
+    base = [list(e) for e in extra]
+    band = max(3, round(0.5 / cell))
+    found, seen = [], set()
+    for _ in range(a.k * 2):
+        if len(found) >= a.k:
+            break
+        path, cost = astar((cols, rows, cell), free, via_ok, extra, s, s_layers, t, t_layers, a.via_cost)
+        if path is None:
+            if found:
+                break
+            far = min(cost, key=lambda i: math.dist(xy(i), sb))
+            fx, fy = xy(far)
+            near_labels = collections.Counter()
+            for lb in lab + [via_lab]:
+                for dr in range(-band * 2, band * 2 + 1):
+                    for dc in range(-band * 2, band * 2 + 1):
+                        c, r = far % cols + dc, far // cols + dr
+                        if 0 <= c < cols and 0 <= r < rows and lb[r * cols + c] >= 0:
+                            near_labels[labels[lb[r * cols + c]]] += 1
+            what = ', '.join(k for k, _ in near_labels.most_common(3)) or 'box edge'
+            print(f'no path: closest reach ({fx:.3f}, {fy:.3f}) is {math.dist((fx, fy), sb):.2f} mm from {nb}; '
+                  f'blocked there by {what}. Try a larger --box, --layers F.Cu,B.Cu or a lower --via-cost.')
+            sys.exit(1)
+        pts = node_corners(path, cols)
+        if math.dist(xy(t), sb) > 1e-6:
+            pts.append(('through', t))
+        line = f'{a.net} {na} -> {nb} layer={layers[path[0][1]]}' + ''.join(
+            f' {k} {fmt_mm(xy(i)[0])},{fmt_mm(xy(i)[1])}' for k, i in pts)
+        for (i, L) in path:                          # push the next search away from this one (a band around it)
+            for dr in range(-band, band + 1):
+                for dc in range(-band, band + 1):
+                    c, r = i % cols + dc, i // cols + dr
+                    if 0 <= c < cols and 0 <= r < rows:
+                        extra[L][r * cols + c] += 1.0
+        if line in seen:
+            continue
+        seen.add(line)
+        it = parse_intent(line)
+        segs, vias = expand_route(intent_route(it, sa, sb, layers[path[0][1]], width, (via_d, via_drill)))
+        length = sum(math.dist(u, v) for u, v, _, _ in segs)
+        bends = sum(1 for k, _ in pts if k == 'through') - (1 if math.dist(xy(t), sb) > 1e-6 else 0)
+        pour = sum(math.dist(xy(i), xy(j)) for (i, L), (j, L2) in zip(path, path[1:]) if L == L2 and base[L][i] and base[L][j])
+        margin, why = clear_margin(segs, vias, via_d, obstacles)
+        found.append((len(found) + 1, length, len(vias), bends, margin, why, pour, line))
+    for k, length, nv, bends, margin, why, pour, line in found:
+        flag = f' CONFLICT to {why}' if margin < -1e-6 else ''
+        print(f'{k}) len {length:.2f} vias {nv} bends {bends} margin {margin:+.3f} pour {pour:.1f}{flag}')
+        print(line)
+
+
 string_letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
 
 
@@ -1516,6 +1825,12 @@ def main():
     s.set_defaults(f=cmd_corridor)
     s = sp.add_parser('connect'); s.add_argument('board'); s.add_argument('spec', help='intent file, or one intent line')
     s.set_defaults(f=cmd_connect)
+    s = sp.add_parser('suggest'); s.add_argument('board'); s.add_argument('net')
+    s.add_argument('--pair', type=int, help='pad pair as corridor lists it (default 1)')
+    s.add_argument('--box', type=float, nargs=4, metavar=('X1', 'Y1', 'X2', 'Y2'), help='search only this window')
+    s.add_argument('--layers', default='F.Cu,B.Cu'); s.add_argument('--via-cost', type=float, default=8.0, help='mm of track')
+    s.add_argument('--k', type=int, default=3); s.add_argument('--margin', type=float, default=3.0)
+    s.add_argument('--cell', type=float, default=0.1); s.set_defaults(f=cmd_suggest)
     s = sp.add_parser('netcheck'); s.add_argument('board'); s.add_argument('net'); s.set_defaults(f=cmd_netcheck)
     s = sp.add_parser('paths'); s.add_argument('board'); s.add_argument('spec'); s.add_argument('--limit', type=int, default=4)
     s.add_argument('--verbose', action='store_true'); s.set_defaults(f=cmd_paths)
