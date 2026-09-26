@@ -46,7 +46,7 @@ def main():
     ap.add_argument("--layers", default="F.Cu,B.Cu")
     ap.add_argument("--passes", type=int, default=30)
     ap.add_argument("--nets", default="")
-    ap.add_argument("--timeout", default="00:05:00", help="Freerouting job timeout, HH:MM:SS")
+    ap.add_argument("--timeout", default="00:02:00", help="Freerouting job timeout, HH:MM:SS")
     ap.add_argument("--jar", default=JAR)
     a = ap.parse_args()
     if not os.path.isfile(a.jar):
