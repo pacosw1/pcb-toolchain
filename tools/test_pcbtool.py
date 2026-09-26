@@ -108,6 +108,11 @@ class ColorTest(unittest.TestCase):
         out = pt.apply_colors(STACK + '\t\t)\n' + tail, mask='Black', silk='White', finish='ENIG')
         self.assertTrue(out.endswith(tail))
 
+    def test_render_black_is_opaque_hex_but_fab_name_stays_black(self):
+        out = pt.apply_colors(STACK, mask='Black', silk='White', finish='ENIG', render=True)
+        self.assertIn('(color "%s")' % pt.RENDER_COLOR['Black'], out)
+        self.assertNotIn('(color "Black")', out)
+
     def test_rejects_colour_jlc_does_not_make(self):
         with self.assertRaises(ValueError):
             pt.apply_colors(STACK, mask='Pink', silk='White', finish='ENIG')

@@ -118,11 +118,16 @@ JLC_FINISH = ('HAL lead-free', 'ENIG')
 LAYER_RE = re.compile(r'^\s*\(layer "([^"]+)"')
 
 
-def apply_colors(text, mask, silk, finish):
+# KiCad draws the named 'Black' mask semi-transparent (brown over FR4). For renders only, a near-opaque hex.
+RENDER_COLOR = {'Black': '#0E0E10F5'}
+
+
+def apply_colors(text, mask, silk, finish, render=False):
     """Set the stackup colours (KiCad render and fab notes). Only colours JLC makes."""
     if mask not in JLC_MASK or silk not in JLC_SILK or finish not in JLC_FINISH:
         raise ValueError(f'not a JLC option: mask {mask}, silk {silk}, finish {finish}')
-    want = {'F.Mask': mask, 'B.Mask': mask, 'F.SilkS': silk, 'B.SilkS': silk}
+    shown = RENDER_COLOR.get(mask, mask) if render else mask
+    want = {'F.Mask': shown, 'B.Mask': shown, 'F.SilkS': silk, 'B.SilkS': silk}
     out, cur, inside = [], None, False
     for line in text.split('\n'):
         if line.strip().startswith('(stackup'):
@@ -443,7 +448,7 @@ def cmd_colors(a):
     for name in (a.variants or VARIANTS):
         tmp = os.path.join(d, f'.pcbtool-{name}.kicad_pcb')
         with open(tmp, 'w') as f:
-            f.write(apply_colors(src, *VARIANTS[name]))
+            f.write(apply_colors(src, *VARIANTS[name], render=True))
         try:
             for side, extra in (('iso', ['--rotate', '-40,0,30', '--zoom', '0.9']), ('bottom', ['--side', 'bottom'])):
                 out = os.path.join(a.outdir, f'{name}-{side}.png')
