@@ -1744,9 +1744,42 @@ def cmd_suggest(a):
         sys.exit(1)
 
 
-def verify_candidates(board, net, lines):
-    """[(ok, reason)] per connect line: DRC (--refill-zones) with the line applied, on temp copies of the project folder,
-    against the DRC of an unchanged copy (verify_verdict). Up to 8 in parallel. The board is not changed."""
+def check_drc_report(code, out):
+    """The DRC report dict of a kicad-cli run with exit code `code` and report file `out`, or RuntimeError.
+    Fail closed: a killed or failed run, a missing, broken or incomplete report is never read as a clean DRC."""
+    if code != 0:
+        raise RuntimeError(f'kicad-cli pcb drc exit {code}')
+    if not os.path.exists(out):
+        raise RuntimeError('kicad-cli pcb drc wrote no report')
+    try:
+        with open(out) as f:
+            d = json.load(f)
+    except ValueError:
+        raise RuntimeError('kicad-cli pcb drc report is not valid JSON') from None
+    if not isinstance(d, dict) or not isinstance(d.get('violations'), list) or not isinstance(d.get('unconnected_items'), list):
+        raise RuntimeError('kicad-cli pcb drc report has no violations / unconnected_items lists')
+    return d
+
+
+def drc_refill(board):
+    """DRC report dict (--refill-zones) of a board, or RuntimeError (check_drc_report)."""
+    out = os.path.join(os.path.dirname(board), 'suggest-drc.json')
+    r = subprocess.run([KICAD_CLI, 'pcb', 'drc', '--refill-zones', '--format', 'json', '-o', out, board],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    return check_drc_report(r.returncode, out)
+
+
+def connect_line(board, line):
+    """Apply one connect line to a board with this tool, or RuntimeError."""
+    r = subprocess.run([sys.executable, os.path.abspath(__file__), 'connect', board, line], capture_output=True, text=True)
+    if r.returncode:
+        raise RuntimeError('connect: ' + ((r.stdout + r.stderr).strip().splitlines() or ['failed'])[-1][:120])
+
+
+def verify_candidates(board, net, lines, drc=drc_refill, apply=connect_line):
+    """[(ok, reason)] per connect line: DRC with the line applied, on temp copies of the project folder, against the DRC
+    of an unchanged copy (verify_verdict). Up to 8 in parallel. The board is not changed. Fail closed: a failed baseline
+    DRC exits non-zero; a failed apply or candidate DRC rejects that candidate."""
     import concurrent.futures
     import shutil
     import tempfile
@@ -1758,22 +1791,18 @@ def verify_candidates(board, net, lines):
             proj = os.path.join(d, os.path.basename(src))
             shutil.copytree(src, proj, ignore=shutil.ignore_patterns('*.lck', '*.step', '*.stp', '*.wrl', '*-backups'))
             bd = os.path.join(proj, os.path.basename(board))
-            if line is not None:
-                r = subprocess.run([sys.executable, os.path.abspath(__file__), 'connect', bd, line], capture_output=True, text=True)
-                if r.returncode:
-                    return None, 'connect: ' + ((r.stdout + r.stderr).strip().splitlines() or ['failed'])[-1][:120]
-            out = os.path.join(d, 'drc.json')
-            subprocess.run([KICAD_CLI, 'pcb', 'drc', '--refill-zones', '--format', 'json', '-o', out, bd],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-            if not os.path.exists(out):
-                return None, 'kicad-cli pcb drc wrote no report'
-            with open(out) as f:
-                return json.load(f), ''
+            try:
+                if line is not None:
+                    apply(bd, line)
+                return drc(bd), ''
+            except Exception as e:
+                return None, str(e) or type(e).__name__
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(lines) + 1)) as ex:
         res = list(ex.map(run, [None] + lines))
     if res[0][0] is None:
-        sys.exit(f'baseline DRC failed: {res[0][1]}')
+        sys.exit(f'baseline DRC failed: {res[0][1]}; no candidate is verified')
     return [verify_verdict(res[0][0], d, net) if d is not None else (False, why) for d, why in res[1:]]
+
 
 string_letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
 

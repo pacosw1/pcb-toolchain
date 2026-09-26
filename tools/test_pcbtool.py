@@ -771,6 +771,71 @@ class VerifyVerdictTest(unittest.TestCase):
         self.assertIn('SIG unconnected 1 -> 1', why)
 
 
+
+class VerifyFailClosedTest(unittest.TestCase):
+    """verify_candidates with injected runners: apply writes the line into the board copy, drc reads it back."""
+
+    def run_verify(self, drc):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            os.mkdir(os.path.join(d, 'P'))
+            board = os.path.join(d, 'P', 'T.kicad_pcb')
+            with open(board, 'w') as f:
+                f.write('BASE')
+
+            def apply(bd, line):
+                with open(bd, 'w') as f:
+                    f.write(line)
+
+            def run(bd):
+                with open(bd) as f:
+                    return drc(f.read())
+            return pt.verify_candidates(board, 'SIG', ['OK', 'CRASH'], drc=run, apply=apply)
+
+    @staticmethod
+    def report(unc):
+        return {'violations': [], 'unconnected_items': [{'items': [{'description': f'Pad [{n}]'}]} for n in unc]}
+
+    def test_baseline_drc_failure_exits_non_zero(self):
+        def drc(text):
+            if text == 'BASE':
+                raise RuntimeError('kicad-cli pcb drc killed by signal 9')
+            return self.report([])
+        with self.assertRaises(SystemExit) as e:
+            self.run_verify(drc)
+        self.assertNotIn(e.exception.code, (None, 0))
+        self.assertIn('baseline DRC failed', str(e.exception.code))
+
+    def test_candidate_drc_crash_is_rejected(self):
+        def drc(text):
+            if text == 'CRASH':
+                raise RuntimeError('kicad-cli pcb drc killed by signal 9')
+            return self.report(['SIG'] if text == 'BASE' else [])
+        (ok1, _), (ok2, why2) = self.run_verify(drc)
+        self.assertTrue(ok1)
+        self.assertFalse(ok2)
+        self.assertIn('signal 9', why2)
+
+    def test_drc_report_rejects_a_failed_or_broken_run(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            out = os.path.join(d, 'drc.json')
+            for code, text, msg in ((-9, '{"violations": [], "unconnected_items": []}', 'exit -9'),
+                                    (0, '{"violations": [', 'not valid JSON'),
+                                    (0, '{}', 'no violations'),
+                                    (0, None, 'no report')):
+                if os.path.exists(out):
+                    os.remove(out)
+                if text is not None:
+                    with open(out, 'w') as f:
+                        f.write(text)
+                with self.assertRaises(RuntimeError) as e:
+                    pt.check_drc_report(code, out)
+                self.assertIn(msg, str(e.exception))
+            with open(out, 'w') as f:
+                f.write('{"violations": [], "unconnected_items": []}')
+            self.assertEqual(pt.check_drc_report(0, out), {'violations': [], 'unconnected_items': []})
+
 @unittest.skipIf(pcbnew is None, 'needs the KiCad bundled Python (pcbnew)')
 class SuggestBoardTest(unittest.TestCase):
     """Synthetic board 30 x 20 mm: SIG pads R1.1 (10, 10) and R2.1 (20, 10) on F.Cu; optional GND track x = 15 on
