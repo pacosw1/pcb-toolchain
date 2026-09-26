@@ -1,0 +1,95 @@
+{
+  "analyzer_type": "schematic",
+  "findings": [
+    {
+      "detector": "analyze_usb_compliance",
+      "rule_id": "UC-001",
+      "category": "usb_compliance",
+      "summary": "No decoupling capacitor on VBUS at J1",
+      "description": "USB connector J1: no capacitor found on the VBUS net. USB 2.0 recommends >=1uF bulk + 100nF local decoupling on VBUS.",
+      "components": [
+        "J1"
+      ],
+      "nets": [
+        "VBUS"
+      ],
+      "pins": [],
+      "severity": "warning",
+      "confidence": "deterministic",
+      "evidence_source": "topology",
+      "recommendation": "Add bulk (>=1uF) + 100nF decoupling on VBUS near J1.",
+      "report_context": {
+        "section": "USB Compliance",
+        "impact": "USB functionality / robustness",
+        "standard_ref": ""
+      },
+      "check": "vbus_decoupling",
+      "finding_id": "schematic:UC-001:j1",
+      "stages": [
+        "schematic"
+      ]
+    },
+    {
+      "detector": "validate_voltage_levels",
+      "rule_id": "VM-001",
+      "category": "signal_integrity",
+      "summary": "Net SLOT5_EN: 5.0V / 3.3V domain crossing without level shifter",
+      "description": "Net SLOT5_EN connects ICs in 5.0V and 3.3V domains. The 5.0V output may exceed the 3.3V input absolute maximum rating of 3.6V, risking damage.",
+      "components": [
+        "U1",
+        "U6"
+      ],
+      "nets": [
+        "SLOT5_EN"
+      ],
+      "pins": [
+        {
+          "ref": "U6",
+          "pin": "EN",
+          "function": "signal_io"
+        },
+        {
+          "ref": "U1",
+          "pin": "IO40",
+          "function": "signal_io"
+        }
+      ],
+      "severity": "error",
+      "confidence": "heuristic",
+      "evidence_source": "topology",
+      "recommendation": "Add a level shifter between the 5.0V and 3.3V domains on net SLOT5_EN, or verify that the connected ICs have tolerant inputs.",
+      "fix_params": {
+        "type": "add_component",
+        "components": [
+          {
+            "type": "level_shifter",
+            "domain_a": "5.0V",
+            "domain_b": "3.3V",
+            "nets": [
+              "SLOT5_EN"
+            ]
+          }
+        ],
+        "basis": "Net crosses 5.0V to 3.3V boundary"
+      },
+      "report_context": {
+        "section": "Signal Integrity",
+        "impact": "Risk of damage or unreliable logic levels",
+        "standard_ref": ""
+      },
+      "provenance": {
+        "evidence": "vm_rail_mismatch",
+        "confidence": "deterministic",
+        "claimed_components": [],
+        "excluded_by": [],
+        "suppressed_candidates": []
+      },
+      "schema_era": "v1.4",
+      "finding_id": "schematic:validation_findings-2c3fbecbacc6",
+      "detection_id": "validation_findings:2c3fbecbacc6",
+      "stages": [
+        "schematic"
+      ]
+    }
+  ]
+}

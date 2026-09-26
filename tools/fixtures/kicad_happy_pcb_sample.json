@@ -1,0 +1,107 @@
+{
+  "analyzer_type": "pcb",
+  "findings": [
+    {
+      "component": "C4",
+      "pad": "1",
+      "via_x": 138.43,
+      "via_y": 114.8,
+      "tented": false,
+      "detector": "analyze_via_in_pad",
+      "rule_id": "VP-001",
+      "category": "dfm",
+      "severity": "warning",
+      "confidence": "heuristic",
+      "evidence_source": "topology",
+      "summary": "Via in pad: C4:1 (untented)",
+      "description": "Via at (138.43, 114.8) inside SMD pad C4:1. Not tented \u2014 solder may wick through.",
+      "components": [
+        "C4"
+      ],
+      "nets": [
+        "SLOT_5V"
+      ],
+      "pins": [],
+      "recommendation": "Fill and cap via in C4:1 or tent with solder mask.",
+      "report_context": {
+        "section": "DFM",
+        "impact": "Solder wicking risk",
+        "standard_ref": ""
+      },
+      "stages": [
+        "layout"
+      ],
+      "finding_id": "pcb:VP-001:c4"
+    },
+    {
+      "via_x": 101.0,
+      "via_y": 137.0,
+      "keepout_name": "H3_KEEPOUT",
+      "keepout_allowed_net": "",
+      "detector": "analyze_keepout_violations",
+      "rule_id": "KO-001",
+      "category": "placement",
+      "severity": "error",
+      "confidence": "heuristic",
+      "evidence_source": "topology",
+      "summary": "Keepout violation: via at (101.0, 137.0) inside keepout H3_KEEPOUT",
+      "description": "Via at (101.0, 137.0) is inside keepout zone H3_KEEPOUT (bbox check).",
+      "components": [],
+      "nets": [],
+      "pins": [],
+      "recommendation": "Move via outside the keepout zone.",
+      "report_context": {
+        "section": "Placement",
+        "impact": "Design rule violation",
+        "standard_ref": ""
+      },
+      "stages": [
+        "layout"
+      ],
+      "finding_id": "pcb:KO-001:3209c3d8dfdd"
+    },
+    {
+      "net": "/AI1_ADC",
+      "net_number": 2,
+      "min_track_width_mm": 0.15,
+      "max_track_width_mm": 0.2,
+      "track_widths_used": [
+        0.15,
+        0.2
+      ],
+      "copper_layers": [
+        "B.Cu",
+        "F.Cu"
+      ],
+      "segment_count": 8,
+      "via_count": 1,
+      "via_drill_sizes_mm": [
+        0.3
+      ],
+      "detector": "analyze_current_capacity",
+      "rule_id": "CC-002",
+      "category": "current_capacity",
+      "severity": "warning",
+      "confidence": "deterministic",
+      "evidence_source": "topology",
+      "summary": "Narrow signal: /AI1_ADC min 0.15mm",
+      "description": "Signal net /AI1_ADC has narrow traces: min 0.15mm across 8 segments.",
+      "components": [],
+      "nets": [
+        "/AI1_ADC"
+      ],
+      "pins": [],
+      "recommendation": "Widen trace or verify signal integrity requirements.",
+      "report_context": {
+        "section": "Current Capacity",
+        "impact": "Signal integrity",
+        "standard_ref": ""
+      },
+      "stages": [
+        "layout",
+        "pre_fab"
+      ],
+      "finding_id": "pcb:CC-002:/ai1_adc"
+    }
+  ]
+}
