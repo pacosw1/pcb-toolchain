@@ -14,6 +14,8 @@ Run with the KiCad bundled Python (it has pcbnew):
   $PY tools/pcbtool.py widen  BOARD NET W [--layer L] [--box X0 Y0 X1 Y1]  widen the net's thinner tracks, DRC
   $PY tools/pcbtool.py near   BOARD X Y [--r 0.3] [--within 1]  copper of all nets near a point, edge gap
   $PY tools/pcbtool.py drc    BOARD                           DRC --schematic-parity summary
+  $PY tools/pcbtool.py corridor BOARD NET [--margin 3] [--cell 0.25] [--pair N]  unconnected pad pairs + ASCII free/blocked map
+  $PY tools/pcbtool.py netcheck BOARD NET                     DRC on a temp copy: one total line + this net only
   $PY tools/pcbtool.py widths BOARD [--limit N]              tracks thinner than the net class width (current)
   $PY tools/pcbtool.py paths  BOARD SPEC.json [--verbose]     widest copper path between power pads >= design current
   $PY tools/pcbtool.py render BOARD OUTDIR                    top + iso PNG
@@ -235,6 +237,123 @@ def find_point(points, q, tol=0.01):
 def copper_gap(c, r, a, b, w):
     """Edge-to-edge gap (mm) from a circle (centre c, radius r) to a track a-b of width w. Negative = overlap."""
     return round(math.dist(c, project(a, b, c)) - r - w / 2, 4)
+
+
+def fit_grid(box, cell, max_cols=80, max_rows=40):
+    """(x0, y0, cell, cols, rows) over box. The cell grows in 0.05 mm steps to stay inside the cap."""
+    w, h = box[2] - box[0], box[3] - box[1]
+    need = max(cell, w / max_cols, h / max_rows)
+    if need > cell:
+        cell = round(math.ceil(need / 0.05 - 1e-9) * 0.05, 3)
+    return (box[0], box[1], cell, max(1, math.ceil(w / cell - 1e-9)), max(1, math.ceil(h / cell - 1e-9)))
+
+
+def seg_dist(q, a, b):
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    t = min(1.0, max(0.0, ((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / ((dx * dx + dy * dy) or 1)))
+    return math.dist(q, (a[0] + t * dx, a[1] + t * dy))
+
+
+def in_poly(q, pts):
+    inside = False
+    for (ax, ay), (bx, by) in zip(pts, pts[1:] + pts[:1]):
+        if (ay > q[1]) != (by > q[1]) and q[0] < ax + (q[1] - ay) * (bx - ax) / (by - ay):
+            inside = not inside
+    return inside
+
+
+def shape_dist(shape, q):
+    """Distance from q to a shape edge; <= 0 inside. ('seg', a, b, half_width) or ('poly', [points])."""
+    if shape[0] == 'seg':
+        return seg_dist(q, shape[1], shape[2]) - shape[3]
+    pts = shape[1]
+    d = min(seg_dist(q, a, b) for a, b in zip(pts, pts[1:] + pts[:1]))
+    return -d if in_poly(q, pts) else d
+
+
+def shape_box(shape):
+    pts = [shape[1], shape[2]] if shape[0] == 'seg' else shape[1]
+    r = shape[3] if shape[0] == 'seg' else 0
+    return (min(q[0] for q in pts) - r, min(q[1] for q in pts) - r, max(q[0] for q in pts) + r, max(q[1] for q in pts) + r)
+
+
+def corridor_map(grid, outline, edge_gap, own, others, marks):
+    """ASCII rows: '.' free for a track centre, '#' blocked (other copper + keep, board edge), '+' own copper,
+    letters = marks. others: [(shape, keep)]; outline: board polygons (None = no edge)."""
+    x0, y0, cell, cols, rows = grid
+    g = [['.'] * cols for _ in range(rows)]
+
+    def cells(shape, keep):  # only the cells near the shape (fast on a large board)
+        bx0, by0, bx1, by1 = shape_box(shape)
+        for r in range(max(0, int((by0 - keep - y0) // cell)), min(rows, int((by1 + keep - y0) // cell) + 1)):
+            for c in range(max(0, int((bx0 - keep - x0) // cell)), min(cols, int((bx1 + keep - x0) // cell) + 1)):
+                yield r, c, (x0 + (c + 0.5) * cell, y0 + (r + 0.5) * cell)
+
+    if outline is not None:
+        for r in range(rows):
+            for c in range(cols):
+                q = (x0 + (c + 0.5) * cell, y0 + (r + 0.5) * cell)
+                if not any(in_poly(q, pts) and -shape_dist(('poly', pts), q) >= edge_gap for pts in outline):
+                    g[r][c] = '#'
+    for s, keep in others:
+        for r, c, q in cells(s, keep):
+            if shape_dist(s, q) < keep:
+                g[r][c] = '#'
+    for s in own:
+        for r, c, q in cells(s, 0):
+            if shape_dist(s, q) <= 0:
+                g[r][c] = '+'
+    for ch, (x, y) in marks:
+        c, r = int((x - x0) // cell), int((y - y0) // cell)
+        if 0 <= r < rows and 0 <= c < cols:
+            g[r][c] = ch
+    return [''.join(row) for row in g]
+
+
+def mst_pairs(islands):
+    """Ratsnest: join the islands of a net (lists of (name, (x, y))) by the nearest pad pairs (Prim)."""
+    done, pairs = [0], []
+    while len(done) < len(islands):
+        d, a, j, b = min((math.dist(pa, pb), na, j, nb) for i in done for na, pa in islands[i]
+                         for j in range(len(islands)) if j not in done for nb, pb in islands[j])
+        done.append(j)
+        pairs.append((a, b))
+    return pairs
+
+
+def net_rules(pro, net):
+    """(class, track width, clearance) of a net from the .kicad_pro dict (first matching pattern, else Default)."""
+    import fnmatch
+    ns = pro['net_settings']
+    cls = {c['name']: c for c in ns['classes']}
+    name = next((x['netclass'] for x in ns.get('netclass_patterns') or [] if fnmatch.fnmatchcase(net, x['pattern'])), 'Default')
+    return name, cls[name]['track_width'], cls[name]['clearance']
+
+
+def dru_mentions(text, names):
+    """Names of the .kicad_dru rules whose text quotes one of names (net name or class)."""
+    out = []
+    for block in text.split('(rule "')[1:]:
+        if any(f"'{n}'" in block for n in names):
+            out.append(block.split('"', 1)[0])
+    return out
+
+
+def net_check(d, net, limit=3):
+    """(text, ok): one DRC total line, then up to limit short lines for the net. ok = no violation, no unconnected."""
+    tag = f'[{net}]'
+    s = summarize_drc(d)
+    viol = [x for x in d.get('violations', []) if any(tag in i['description'] for i in x['items'])]
+    unc = [u for u in d.get('unconnected_items', []) if any(tag in i['description'] for i in u['items'])]
+    lines = [f"DRC total: {s['errors']} errors, {s['unconnected']} unconnected, {s['parity']} parity | "
+             f"{net}: {len(viol)} violations, {len(unc)} unconnected"]
+    for x in viol[:limit]:
+        text = ' | '.join(i['description'] for i in x['items'])
+        lines.append(f"  {x.get('severity', '?')[0].upper()} {x['type']}: {text}"[:170])
+    for u in unc[:max(0, limit - len(viol))]:
+        lines.append('  U ' + ' | '.join(i['description'] + (' ({x:.3f}, {y:.3f})'.format(**i['pos']) if 'pos' in i else '')
+                                        for i in u['items'])[:160])
+    return '\n'.join(lines), not viol and not unc
 
 
 def widest_path(edges, a, b):
@@ -848,6 +967,151 @@ def cmd_drc(a):
     print_drc(run_drc(a.board), limit=60)
 
 
+def poly_points(p, chain):
+    return [(p.ToMM(chain.CPoint(i).x), p.ToMM(chain.CPoint(i).y)) for i in range(chain.PointCount())]
+
+
+def cmd_corridor(a):
+    """Unconnected pad pairs of one net and a small free/blocked ASCII map per outer layer around them."""
+    p = pcb()
+    b = p.LoadBoard(a.board)
+    if b is None:
+        sys.exit(f'cannot load {a.board}')
+    if b.FindNet(a.net) is None:
+        sys.exit(f'no net {a.net} on the board')
+    mm = p.ToMM
+    pro = json.load(open(os.path.splitext(a.board)[0] + '.kicad_pro'))
+    cls, width, clr = net_rules(pro, a.net)
+    head = f'net {a.net}: class {cls}, width {width:g}, clearance {clr:g}'
+    dru = os.path.splitext(a.board)[0] + '.kicad_dru'
+    if os.path.exists(dru):
+        names = dru_mentions(open(dru).read(), [a.net, cls])
+        head += f"; dru rules on it: {', '.join(names) or 'none'} (map uses class clearances only, check .kicad_dru)"
+    print(head)
+    b.BuildConnectivity()
+    conn = b.GetConnectivity()
+    pads = [pd for fp in b.GetFootprints() for pd in fp.Pads() if pd.GetNetname() == a.net and pd.GetNumber()]
+    name = {pd.m_Uuid.AsString(): f'{pd.GetParentFootprint().GetReference()}.{pd.GetNumber()}' for pd in pads}
+    pos = {pd.m_Uuid.AsString(): (mm(pd.GetPosition().x), mm(pd.GetPosition().y)) for pd in pads}
+    side = {pd.m_Uuid.AsString(): 'THT' if pd.GetAttribute() == p.PAD_ATTRIB_PTH else ('F' if pd.IsOnLayer(p.F_Cu) else 'B')
+            for pd in pads}
+    root = {k: k for k in name}
+
+    def find(k):
+        while root[k] != k:
+            k = root[k]
+        return k
+    for pd in pads:
+        for it in conn.GetConnectedItems(pd):
+            k = it.m_Uuid.AsString()
+            if k in root:
+                root[find(k)] = find(pd.m_Uuid.AsString())
+    groups = collections.defaultdict(list)
+    for k in name:
+        groups[find(k)].append((k, pos[k]))
+    pairs = mst_pairs(sorted(groups.values(), key=lambda g: sorted(name[k] for k, _ in g)))
+    if not pairs:
+        print('unconnected: none')
+        return
+    letters = {}
+    for k in (k for pr in pairs for k in pr):
+        letters.setdefault(k, (string_letters[len(letters)] if len(letters) < len(string_letters) else '?'))
+    print(f'unconnected: {len(pairs)} pairs')
+    for u, v in pairs[:12]:
+        print('  ' + '  -  '.join(f'{letters[k]} {name[k]} ({pos[k][0]:.3f}, {pos[k][1]:.3f}) {side[k]}' for k in (u, v)))
+    if len(pairs) > 12:
+        print(f'  ... {len(pairs) - 12} more pairs (not in the map)')
+    if a.pair and not 1 <= a.pair <= len(pairs):
+        sys.exit(f'--pair {a.pair}: the net has {len(pairs)} pairs')
+    shown = [k for pr in ([pairs[a.pair - 1]] if a.pair else pairs[:12]) for k in pr]
+    xs, ys = [pos[k][0] for k in shown], [pos[k][1] for k in shown]
+    grid = fit_grid((min(xs) - a.margin, min(ys) - a.margin, max(xs) + a.margin, max(ys) + a.margin), a.cell)
+    x0, y0, cell, cols, rows = grid
+    ds = b.GetDesignSettings()
+    o = p.SHAPE_POLY_SET()
+    b.GetBoardPolygonOutlines(o, True)
+    outline = [poly_points(p, o.Outline(i)) for i in range(o.OutlineCount())]
+    edge_gap = mm(ds.m_CopperEdgeClearance) + width / 2
+    holes = [(('poly', poly_points(p, o.Hole(i, h))), edge_gap) for i in range(o.OutlineCount()) for h in range(o.HoleCount(i))]
+    net_clr = {}
+
+    def keep(net):
+        if net not in net_clr:
+            net_clr[net] = max(clr, net_rules(pro, net)[2] if net else 0)
+        return net_clr[net] + width / 2
+    print(f'grid x0={x0:.3f} y0={y0:.3f} cell={cell:g} cols={cols} rows={rows}: cell (c, r) centre = '
+          f'(x0 + (c + 0.5) * cell, y0 + (r + 0.5) * cell). Legend: . free for a {width:g} mm track centre, '
+          f'# blocked (other copper + clearance, edge, keepout), + own copper, letters = pads above. '
+          f'Pours of other nets are not shown.')
+    ruler = '   ' + ''.join(str(c // 10 % 10) if c % 10 == 0 else ' ' for c in range(cols))
+    for layer in (p.F_Cu, p.B_Cu):
+        own, others = [], list(holes)
+        for t in b.GetTracks():
+            if not t.IsOnLayer(layer):
+                continue
+            if isinstance(t, p.PCB_VIA):
+                c = (mm(t.GetPosition().x), mm(t.GetPosition().y))
+                s = ('seg', c, c, mm(t.GetWidth(p.F_Cu)) / 2)
+            else:
+                s = ('seg', (mm(t.GetStart().x), mm(t.GetStart().y)), (mm(t.GetEnd().x), mm(t.GetEnd().y)), mm(t.GetWidth()) / 2)
+            (own.append(s) if t.GetNetname() == a.net else others.append((s, keep(t.GetNetname()))))
+        for fp in b.GetFootprints():
+            for pd in fp.Pads():
+                if not pd.IsOnLayer(layer) and pd.GetAttribute() != p.PAD_ATTRIB_NPTH:
+                    continue
+                if pd.GetAttribute() == p.PAD_ATTRIB_NPTH:
+                    c = (mm(pd.GetPosition().x), mm(pd.GetPosition().y))
+                    others.append((('seg', c, c, mm(pd.GetDrillSize().x) / 2), keep('')))
+                    continue
+                poly = pd.GetEffectivePolygon(layer)
+                s = ('poly', poly_points(p, poly.Outline(0)))
+                (own.append(s) if pd.GetNetname() == a.net else others.append((s, keep(pd.GetNetname()))))
+        for z in b.Zones():
+            if z.GetIsRuleArea() and z.GetDoNotAllowTracks() and z.IsOnLayer(layer):
+                others.append((('poly', poly_points(p, z.Outline().Outline(0))), width / 2))
+        box = (x0 - 5, y0 - 5, x0 + cols * cell + 5, y0 + rows * cell + 5)  # drop far items (keep < 5 mm)
+
+        def near(s):
+            bx = shape_box(s)
+            return bx[0] < box[2] and bx[2] > box[0] and bx[1] < box[3] and bx[3] > box[1]
+        rows_ = corridor_map(grid, outline, edge_gap, [s for s in own if near(s)], [(s, k) for s, k in others if near(s)],
+                             [(ch, pos[k]) for k, ch in letters.items() if k in shown and pd_on(side[k], layer, p)])
+        print(f'map {b.GetLayerName(layer)}')
+        print(ruler)
+        for r, line in enumerate(rows_):
+            print(f'{r:2d} {line}')
+
+
+string_letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
+
+
+def pd_on(side, layer, p):
+    return side == 'THT' or (side == 'F') == (layer == p.F_Cu)
+
+
+def cmd_netcheck(a):
+    """DRC (--schematic-parity --refill-zones) on a temp copy of the project folder; one line + the net's items."""
+    import shutil
+    import tempfile
+    board = os.path.abspath(a.board)
+    if f'"{a.net}"' not in open(board).read():
+        sys.exit(f'no net {a.net} on the board')
+    src = os.path.dirname(board)
+    with tempfile.TemporaryDirectory() as d:
+        proj = os.path.join(d, os.path.basename(src))
+        shutil.copytree(src, proj, ignore=shutil.ignore_patterns('*.lck', '*.step', '*.stp', '*.wrl', '*-backups'))
+        out = os.path.join(d, 'drc.json')
+        subprocess.run([KICAD_CLI, 'pcb', 'drc', '--schematic-parity', '--refill-zones', '--format', 'json', '-o', out,
+                        os.path.join(proj, os.path.basename(board))],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        if not os.path.exists(out):
+            sys.exit('kicad-cli pcb drc wrote no report')
+        with open(out) as f:
+            text, ok = net_check(json.load(f), a.net)
+    print(text)
+    sys.exit(0 if ok else 1)
+
+
 def cmd_render(a):
     os.makedirs(a.outdir, exist_ok=True)
     base = os.path.join(a.outdir, os.path.splitext(os.path.basename(a.board))[0])
@@ -1021,6 +1285,10 @@ def main():
     s = sp.add_parser('widen'); s.add_argument('board'); s.add_argument('net'); s.add_argument('width', type=float)
     s.add_argument('--layer'); s.add_argument('--box', type=float, nargs=4); s.set_defaults(f=cmd_widen)
     s = sp.add_parser('drc'); s.add_argument('board'); s.set_defaults(f=cmd_drc)
+    s = sp.add_parser('corridor'); s.add_argument('board'); s.add_argument('net')
+    s.add_argument('--margin', type=float, default=3.0); s.add_argument('--cell', type=float, default=0.25)
+    s.add_argument('--pair', type=int, help='map only this pair (1 = first listed)'); s.set_defaults(f=cmd_corridor)
+    s = sp.add_parser('netcheck'); s.add_argument('board'); s.add_argument('net'); s.set_defaults(f=cmd_netcheck)
     s = sp.add_parser('paths'); s.add_argument('board'); s.add_argument('spec'); s.add_argument('--limit', type=int, default=4)
     s.add_argument('--verbose', action='store_true'); s.set_defaults(f=cmd_paths)
     s = sp.add_parser('viapads'); s.add_argument('board')

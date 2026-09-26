@@ -360,6 +360,180 @@ class ViaPadAllowTest(unittest.TestCase):
             pt.drop_allowed(hits, ['U7.5'])   # an allow entry that matches nothing is stale
 
 
+class CorridorGridTest(unittest.TestCase):
+    def test_keeps_the_cell_when_the_box_fits(self):
+        self.assertEqual(pt.fit_grid((10, 20, 15, 22), 0.25), (10, 20, 0.25, 20, 8))
+
+    def test_grows_the_cell_to_stay_inside_the_cap(self):
+        x0, y0, cell, cols, rows = pt.fit_grid((0, 0, 100, 10), 0.25, max_cols=80, max_rows=40)
+        self.assertLessEqual(cols, 80)
+        self.assertLessEqual(rows, 40)
+        self.assertGreaterEqual(cell * cols, 100)
+
+
+class ShapeDistTest(unittest.TestCase):
+    def test_capsule(self):
+        seg = ('seg', (0, 0), (10, 0), 0.5)
+        self.assertAlmostEqual(pt.shape_dist(seg, (5, 2)), 1.5)
+        self.assertAlmostEqual(pt.shape_dist(seg, (13, 0)), 2.5)
+        self.assertLessEqual(pt.shape_dist(seg, (5, 0.2)), 0)
+
+    def test_polygon_inside_is_zero_or_less_outside_is_edge_distance(self):
+        sq = ('poly', [(0, 0), (4, 0), (4, 4), (0, 4)])
+        self.assertLessEqual(pt.shape_dist(sq, (2, 2)), 0)
+        self.assertAlmostEqual(pt.shape_dist(sq, (7, 2)), 3)
+
+
+class CorridorMapTest(unittest.TestCase):
+    # grid 0..4 x 0..1 mm, cell 0.5: 8 cols x 2 rows, centres x = 0.25, 0.75, ...
+    GRID = (0, 0, 0.5, 8, 2)
+
+    def test_marks_own_other_and_free(self):
+        own = [('seg', (0, 0), (0, 1), 0.3)]                      # covers column 0
+        other = [(('seg', (2, 0), (2, 1), 0.1), 0.3)]             # blocks x in (1.6, 2.4): cols 3, 4
+        rows = pt.corridor_map(self.GRID, None, 0, own, other, [('A', (3.8, 0.2))])
+        self.assertEqual(rows, ['+..##..A', '+..##...'])
+
+    def test_outside_the_board_outline_is_blocked(self):
+        outline = [[(-1, -1), (3, -1), (3, 2), (-1, 2)]]
+        rows = pt.corridor_map(self.GRID, outline, 0.3, [], [], [])
+        self.assertEqual(rows, ['.....###', '.....###'])   # col 5 centre 2.75 is 0.25 from the edge
+
+
+class RatsnestPairsTest(unittest.TestCase):
+    def test_nearest_pads_join_the_islands(self):
+        islands = [[('U1.1', (0, 0))], [('R1.1', (10, 0)), ('R1.2', (5, 0))], [('C1.1', (5, 4))]]
+        self.assertEqual(pt.mst_pairs(islands), [('U1.1', 'R1.2'), ('R1.2', 'C1.1')])
+
+    def test_one_island_needs_nothing(self):
+        self.assertEqual(pt.mst_pairs([[('U1.1', (0, 0)), ('U1.2', (1, 0))]]), [])
+
+
+class NetRulesTest(unittest.TestCase):
+    PRO = {'net_settings': {'classes': [{'name': 'Default', 'track_width': 0.2, 'clearance': 0.2},
+                                        {'name': 'CELL', 'track_width': 1.5, 'clearance': 0.3}],
+                            'netclass_patterns': [{'netclass': 'CELL', 'pattern': 'VBAT*'}]}}
+
+    def test_pattern_class_and_default(self):
+        self.assertEqual(pt.net_rules(self.PRO, 'VBAT_F'), ('CELL', 1.5, 0.3))
+        self.assertEqual(pt.net_rules(self.PRO, '/SDA'), ('Default', 0.2, 0.2))
+
+    def test_dru_rules_that_name_the_net_or_class(self):
+        dru = ('(version 1)\n(rule "Cell gap"\n (condition "A.NetClass == \'CELL\'")\n (constraint clearance (min 1mm)))\n'
+               '(rule "Other"\n (condition "A.NetName == \'/SDA\'")\n (constraint clearance (min 0.3mm)))\n')
+        self.assertEqual(pt.dru_mentions(dru, ['VBAT_F', 'CELL']), ['Cell gap'])
+
+
+class NetCheckTest(unittest.TestCase):
+    D = {'violations': [
+        {'type': 'clearance', 'severity': 'error', 'items': [{'description': 'Track [VBAT] on F.Cu'}, {'description': 'Pad 1 [GND] of U1'}]},
+        {'type': 'clearance', 'severity': 'error', 'items': [{'description': 'Track [/SDA] on F.Cu'}, {'description': 'Pad 2 [GND] of U1'}]},
+        {'type': 'silk_overlap', 'severity': 'warning', 'items': [{'description': 'x'}]}],
+        'unconnected_items': [{'items': [{'description': 'Pad 1 [VBAT] of Q1'}, {'description': 'Pad 8 [VBAT] of U1'}]},
+                              {'items': [{'description': 'Pad 1 [/SDA] of U2'}, {'description': 'Pad 3 [/SDA] of U1'}]}],
+        'schematic_parity': [{'type': 'x'}]}
+
+    def test_one_summary_line_then_the_net_items(self):
+        text, ok = pt.net_check(self.D, 'VBAT')
+        lines = text.splitlines()
+        self.assertEqual(lines[0], 'DRC total: 2 errors, 2 unconnected, 1 parity | VBAT: 1 violations, 1 unconnected')
+        self.assertEqual(len(lines), 3)
+        self.assertIn('clearance', lines[1])
+        self.assertFalse(ok)
+
+    def test_clean_net_is_ok(self):
+        text, ok = pt.net_check(self.D, '/SCL')
+        self.assertTrue(ok)
+        self.assertEqual(len(text.splitlines()), 1)
+
+    def test_net_match_is_exact(self):
+        self.assertTrue(pt.net_check(self.D, 'BAT')[1])
+
+
+try:
+    import pcbnew
+except ImportError:
+    pcbnew = None
+
+
+@unittest.skipIf(pcbnew is None, 'needs the KiCad bundled Python (pcbnew)')
+class CorridorBoardTest(unittest.TestCase):
+    """Synthetic board: SIG pads R1.1 (10, 10), R2.1 (20, 10), R3.1 (26, 10) on F.Cu; a GND track x = 15 on F.Cu."""
+
+    def make_board(self, d):
+        import json
+        mm = pcbnew.FromMM
+        b = pcbnew.BOARD()
+        nets = {}
+        for n in ('SIG', 'GND'):
+            nets[n] = pcbnew.NETINFO_ITEM(b, n)
+            b.Add(nets[n])
+        edge = pcbnew.PCB_SHAPE(b)
+        edge.SetShape(pcbnew.SHAPE_T_RECT)
+        edge.SetStart(pcbnew.VECTOR2I(mm(0), mm(0)))
+        edge.SetEnd(pcbnew.VECTOR2I(mm(30), mm(20)))
+        edge.SetLayer(pcbnew.Edge_Cuts)
+        b.Add(edge)
+        for ref, x in (('R1', 10), ('R2', 20), ('R3', 26)):
+            fp = pcbnew.FOOTPRINT(b)
+            fp.SetReference(ref)
+            fp.SetPosition(pcbnew.VECTOR2I(mm(x), mm(10)))
+            pad = pcbnew.PAD(fp)
+            pad.SetNumber('1')
+            pad.SetAttribute(pcbnew.PAD_ATTRIB_SMD)
+            pad.SetShape(pcbnew.PAD_SHAPE_RECT)
+            pad.SetSize(pcbnew.VECTOR2I(mm(1), mm(1)))
+            pad.SetLayerSet(pad.SMDMask())
+            pad.SetPosition(pcbnew.VECTOR2I(mm(x), mm(10)))
+            pad.SetNet(nets['SIG'])
+            fp.Add(pad)
+            b.Add(fp)
+        t = pcbnew.PCB_TRACK(b)
+        t.SetStart(pcbnew.VECTOR2I(mm(15), mm(5)))
+        t.SetEnd(pcbnew.VECTOR2I(mm(15), mm(15)))
+        t.SetWidth(mm(0.25))
+        t.SetLayer(pcbnew.F_Cu)
+        t.SetNet(nets['GND'])
+        b.Add(t)
+        path = os.path.join(d, 'T.kicad_pcb')
+        b.Save(path)
+        with open(os.path.join(d, 'T.kicad_pro'), 'w') as f:
+            json.dump({'net_settings': {'classes': [{'name': 'Default', 'track_width': 0.2, 'clearance': 0.2}],
+                                        'netclass_patterns': []}}, f)
+        return path
+
+    def test_corridor_lists_the_pair_and_maps_the_block(self):
+        import subprocess
+        import sys
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            board = self.make_board(d)
+            r = subprocess.run([sys.executable, os.path.join(HERE, 'pcbtool.py'), 'corridor', board, 'SIG',
+                                '--margin', '1', '--cell', '0.5'], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = r.stdout
+        self.assertIn('class Default, width 0.2, clearance 0.2', out)
+        self.assertRegex(out, r'A R1\.1 \(10\.000, 10\.000\) F\s*-\s*B R2\.1 \(20\.000, 10\.000\) F')
+        maps = out.split('map ')[1:]
+        self.assertEqual([m.split()[0] for m in maps], ['F.Cu', 'B.Cu'])
+        front = [l for l in maps[0].splitlines() if 'A' in l and 'B' in l][0]
+        self.assertRegex(front, r'A[.+]*#+[.+]*B')          # the GND track blocks the straight path on F.Cu
+        back = maps[1].splitlines()[maps[0].splitlines().index(front)]
+        self.assertNotRegex(back, r'[#AB]')                  # B.Cu is free; SMD pads on F.Cu are not marked there
+        self.assertLess(len(out), 2500)
+
+    def test_pair_option_maps_one_pair_only(self):
+        import subprocess
+        import sys
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            board = self.make_board(d)
+            r = subprocess.run([sys.executable, os.path.join(HERE, 'pcbtool.py'), 'corridor', board, 'SIG',
+                                '--margin', '1', '--cell', '0.5', '--pair', '2'], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('grid x0=19.000 y0=9.000 cell=0.5 cols=16 rows=4', r.stdout)
+
+
 def json_copy(x):
     import json
     return json.loads(json.dumps(x))
