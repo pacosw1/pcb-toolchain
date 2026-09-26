@@ -194,6 +194,7 @@ def project(a, c, q):
 
 
 NECK_MAX_MM = 1.0
+THERMAL_SPOKES = 2
 
 
 def is_neck(length, width, pad_minor, max_len=NECK_MAX_MM):
@@ -550,15 +551,27 @@ def net_graph(p, b, net, thick, dT, plating):
             polys = z.GetFilledPolysList(lid)
             for k in range(polys.OutlineCount()):
                 isl = ('zone', zi, L, k)
-                inside = lambda q: polys.Contains(q, k)
+                one = p.SHAPE_POLY_SET()  # this island with its holes (thermal gaps)
+                one.AddOutline(polys.Outline(k))
+                for h in range(polys.HoleCount(k)):
+                    one.AddHole(polys.Hole(k, h))
+                inside = lambda q: one.Contains(q)
+                touches = lambda item: one.Collide(item.GetEffectiveShape(lid), 0)
                 for L2, e in nodes:
                     if L2 == L and inside(p.VECTOR2I(p.FromMM(e[0]), p.FromMM(e[1]))):
                         edges.append((isl, (L2, e), inf, 'zone'))
                 for lab, pd in pads.items():
-                    if pd.IsOnLayer(lid) and inside(pd.GetPosition()):
-                        edges.append((isl, lab, inf, f'zone {L} (thermal spokes not counted)'))
+                    if pd.IsOnLayer(lid) and touches(pd):
+                        conn = pd.GetLocalZoneConnection()
+                        if conn == p.ZONE_CONNECTION_INHERITED:
+                            conn = z.GetPadConnection()
+                        solid = conn == p.ZONE_CONNECTION_FULL or (conn == p.ZONE_CONNECTION_THT_THERMAL and pd.GetAttribute() == p.PAD_ATTRIB_SMD)
+                        sw = round(mm(z.GetThermalReliefSpokeWidth()), 3)
+                        # thermal: 2 spokes (the KiCad default minimum), each an IPC conductor of the spoke width
+                        edges.append((isl, lab, inf if solid else THERMAL_SPOKES * ipc_amps(sw, thick.get(L, 0.035), dT, inner=L.startswith('In')),
+                                      f'zone {L} ' + ('solid' if solid else f'thermal {THERMAL_SPOKES} x {sw} mm spokes to {lab}')))
                 for i, v in enumerate(vias):
-                    if inside(v.GetPosition()):
+                    if v.IsOnLayer(lid) and touches(v):
                         edges.append((isl, ('via', i), via_amps(mm(v.GetDrillValue()), plating, dT), f'via drill {mm(v.GetDrillValue()):.2f} at {pt_(v.GetPosition())}'))
     return edges, set(pads)
 
@@ -583,7 +596,7 @@ def cmd_paths(a):
             amps, path = widest_path(edges, u, v)
             if amps >= n['amps']:
                 if a.verbose:
-                    print(f"OK  {net} {u}->{v}: {amps:.2f} A >= {n['amps']} A")
+                    print(f"OK  {net} {u}->{v}: " + ('pour' if amps == float('inf') else f'{amps:.2f} A') + f" >= {n['amps']} A")
                 continue
             bad += 1
             if not path:
