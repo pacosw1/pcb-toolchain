@@ -76,3 +76,9 @@ test('kicad-happy: summary parses and FAIL rule lines fail the gate', async () =
   assert.equal(bad.ok, false);
   assert.match(bad.detail, /OW_DATA/);
 });
+
+test('viapads: allow list goes to the tool, empty list adds nothing', async () => {
+  const {viaPadsArgs} = await import('./si-checks.mjs');
+  assert.deepEqual(viaPadsArgs('b.kicad_pcb', []), ['viapads', 'b.kicad_pcb']);
+  assert.deepEqual(viaPadsArgs('b.kicad_pcb', ['U1.9']), ['viapads', 'b.kicad_pcb', '--allow', 'U1.9']);
+});

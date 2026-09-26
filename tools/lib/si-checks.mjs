@@ -43,9 +43,14 @@ export function pairsCheck({python, tool, pcb, spec, check}) {
   check(name, ok, detail);
 }
 
-export function viaPadsCheck({python, tool, pcb, check}) {
-  const name = 'no via lands inside an SMD pad (pcbtool.py viapads)';
-  const {out, exit} = runGate({python, tool, args: ['viapads', pcb]});
+// allow: REF.PAD entries where the datasheet land pattern requires a (tented) via in the pad.
+export function viaPadsArgs(pcb, allow = []) {
+  return ['viapads', pcb, ...(allow.length ? ['--allow', ...allow] : [])];
+}
+
+export function viaPadsCheck({python, tool, pcb, check, allow = []}) {
+  const name = `no via lands inside an SMD pad (pcbtool.py viapads${allow.length ? `, allowed: ${allow.join(' ')}` : ''})`;
+  const {out, exit} = runGate({python, tool, args: viaPadsArgs(pcb, allow)});
   const {ok, detail} = parseGateOutput(out, exit, /vias in SMD pads/, 'FAIL via in pad');
   check(name, ok, detail);
 }

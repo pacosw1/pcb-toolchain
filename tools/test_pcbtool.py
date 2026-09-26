@@ -309,6 +309,14 @@ class ViaInPadTest(unittest.TestCase):
         self.assertTrue(pt.hole_in_pad((0.45, 0.45, 0.1), (0, 0, 1.0, 1.0, 0, 0)))
 
 
+class ViaPadAllowTest(unittest.TestCase):
+    def test_allowed_pads_are_removed_and_unknown_allow_is_an_error(self):
+        hits = ['U1.9 GND via at (1.000, 2.000)', 'R9.1 VBUS via at (3.000, 4.000)']
+        self.assertEqual(pt.drop_allowed(hits, ['U1.9']), ['R9.1 VBUS via at (3.000, 4.000)'])
+        with self.assertRaises(ValueError):
+            pt.drop_allowed(hits, ['U7.5'])   # an allow entry that matches nothing is stale
+
+
 def json_copy(x):
     import json
     return json.loads(json.dumps(x))

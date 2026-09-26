@@ -436,6 +436,14 @@ def hole_in_pad(hole, pad):
     return math.hypot(qx, qy) - cr < r
 
 
+def drop_allowed(hits, allow):
+    """Remove hits on allowed pads (REF.PAD). An allow entry that matches no hit is an error (stale)."""
+    stale = [x for x in allow if not any(h.split()[0] == x for h in hits)]
+    if stale:
+        raise ValueError('allowed pad has no via in it: ' + ', '.join(stale))
+    return [h for h in hits if h.split()[0] not in allow]
+
+
 def cmd_viapads(a):
     """Via holes inside SMD pads (via-in-pad). Exit 1 when any is found: solder flows into an open via."""
     p = pcb()
@@ -448,7 +456,7 @@ def cmd_viapads(a):
         hole = (mm(v.GetPosition().x), mm(v.GetPosition().y), mm(v.GetDrillValue()) / 2)
         for fp in b.GetFootprints():
             for pd in fp.Pads():
-                if pd.GetAttribute() != p.PAD_ATTRIB_SMD:
+                if pd.GetAttribute() != p.PAD_ATTRIB_SMD or not pd.GetNumber():   # no number: a paste/mask opening
                     continue
                 lay = p.F_Cu if pd.IsOnLayer(p.F_Cu) else p.B_Cu
                 sh = pd.GetShape(lay)
@@ -462,6 +470,11 @@ def cmd_viapads(a):
                     hit = pd.GetEffectiveShape(lay).Collide(p.SHAPE_CIRCLE(v.GetPosition(), v.GetDrillValue() // 2))
                 if hit:
                     hits.append(f'{fp.GetReference()}.{pd.GetNumber()} {pd.GetNetname()} via at ({hole[0]:.3f}, {hole[1]:.3f})')
+    try:
+        hits = drop_allowed(hits, a.allow)
+    except ValueError as e:
+        print(f'FAIL {e}')
+        sys.exit(2)
     for line in sorted(hits):
         print('FAIL via in pad', line)
     print(f'{len(hits)} vias in SMD pads')
@@ -945,7 +958,9 @@ def main():
     s = sp.add_parser('drc'); s.add_argument('board'); s.set_defaults(f=cmd_drc)
     s = sp.add_parser('paths'); s.add_argument('board'); s.add_argument('spec'); s.add_argument('--limit', type=int, default=4)
     s.add_argument('--verbose', action='store_true'); s.set_defaults(f=cmd_paths)
-    s = sp.add_parser('viapads'); s.add_argument('board'); s.set_defaults(f=cmd_viapads)
+    s = sp.add_parser('viapads'); s.add_argument('board')
+    s.add_argument('--allow', nargs='*', default=[], help='REF.PAD with a datasheet-required via (tented), e.g. U1.9')
+    s.set_defaults(f=cmd_viapads)
     s = sp.add_parser('widths'); s.add_argument('board'); s.add_argument('--limit', type=int, default=4); s.set_defaults(f=cmd_widths)
     s = sp.add_parser('render'); s.add_argument('board'); s.add_argument('outdir'); s.set_defaults(f=cmd_render)
     s = sp.add_parser('art'); s.add_argument('board'); s.add_argument('spec'); s.set_defaults(f=cmd_art)
