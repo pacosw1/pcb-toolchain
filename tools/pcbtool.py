@@ -452,7 +452,9 @@ def cmd_colors(a):
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
                 print(out)
         finally:
-            os.remove(tmp)
+            for f in (tmp, tmp[:-len('.kicad_pcb')] + '.kicad_prl'):  # kicad-cli writes a .kicad_prl
+                if os.path.exists(f):
+                    os.remove(f)
 
 
 def cmd_setcolors(a):
