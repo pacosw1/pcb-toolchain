@@ -424,6 +424,50 @@ def delete_nets(b, nets):
     return n
 
 
+def hole_in_pad(hole, pad):
+    """True when a via hole (x, y, r) touches a pad (cx, cy, w, h, angle_deg, corner_r). All in mm."""
+    x, y, r = hole
+    cx, cy, w, h, ang, cr = pad
+    t = math.radians(ang)
+    dx, dy = x - cx, y - cy
+    u, v = dx * math.cos(t) + dy * math.sin(t), -dx * math.sin(t) + dy * math.cos(t)
+    cr = min(cr, w / 2, h / 2)
+    qx, qy = max(abs(u) - (w / 2 - cr), 0), max(abs(v) - (h / 2 - cr), 0)
+    return math.hypot(qx, qy) - cr < r
+
+
+def cmd_viapads(a):
+    """Via holes inside SMD pads (via-in-pad). Exit 1 when any is found: solder flows into an open via."""
+    p = pcb()
+    b = p.LoadBoard(a.board)
+    if b is None:
+        sys.exit(f'cannot load {a.board}')
+    mm = p.ToMM
+    hits = []
+    for v in (t for t in b.GetTracks() if isinstance(t, p.PCB_VIA)):
+        hole = (mm(v.GetPosition().x), mm(v.GetPosition().y), mm(v.GetDrillValue()) / 2)
+        for fp in b.GetFootprints():
+            for pd in fp.Pads():
+                if pd.GetAttribute() != p.PAD_ATTRIB_SMD:
+                    continue
+                lay = p.F_Cu if pd.IsOnLayer(p.F_Cu) else p.B_Cu
+                sh = pd.GetShape(lay)
+                size = pd.GetSize(lay)
+                w, h = mm(size.x), mm(size.y)
+                if sh in (p.PAD_SHAPE_RECT, p.PAD_SHAPE_ROUNDRECT, p.PAD_SHAPE_OVAL, p.PAD_SHAPE_CIRCLE):
+                    cr = {p.PAD_SHAPE_RECT: 0, p.PAD_SHAPE_ROUNDRECT: pd.GetRoundRectCornerRadius(lay) and mm(pd.GetRoundRectCornerRadius(lay))}.get(sh, min(w, h) / 2)
+                    c = pd.GetPosition()
+                    hit = hole_in_pad(hole, (mm(c.x), mm(c.y), w, h, -pd.GetOrientation().AsDegrees(), cr))
+                else:   # custom or trapezoid pad: use the KiCad shape
+                    hit = pd.GetEffectiveShape(lay).Collide(p.SHAPE_CIRCLE(v.GetPosition(), v.GetDrillValue() // 2))
+                if hit:
+                    hits.append(f'{fp.GetReference()}.{pd.GetNumber()} {pd.GetNetname()} via at ({hole[0]:.3f}, {hole[1]:.3f})')
+    for line in sorted(hits):
+        print('FAIL via in pad', line)
+    print(f'{len(hits)} vias in SMD pads')
+    sys.exit(1 if hits else 0)
+
+
 def cmd_near(a):
     """Copper of every net near a point: tracks, vias and pads per layer, with the edge gap to a circle of radius r."""
     p = pcb()
@@ -901,6 +945,7 @@ def main():
     s = sp.add_parser('drc'); s.add_argument('board'); s.set_defaults(f=cmd_drc)
     s = sp.add_parser('paths'); s.add_argument('board'); s.add_argument('spec'); s.add_argument('--limit', type=int, default=4)
     s.add_argument('--verbose', action='store_true'); s.set_defaults(f=cmd_paths)
+    s = sp.add_parser('viapads'); s.add_argument('board'); s.set_defaults(f=cmd_viapads)
     s = sp.add_parser('widths'); s.add_argument('board'); s.add_argument('--limit', type=int, default=4); s.set_defaults(f=cmd_widths)
     s = sp.add_parser('render'); s.add_argument('board'); s.add_argument('outdir'); s.set_defaults(f=cmd_render)
     s = sp.add_parser('art'); s.add_argument('board'); s.add_argument('spec'); s.set_defaults(f=cmd_art)

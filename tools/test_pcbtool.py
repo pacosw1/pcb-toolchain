@@ -292,6 +292,23 @@ class TempProjectTest(unittest.TestCase):
             pt.remove_temp_project(tmp)  # nothing left to remove is not an error
 
 
+class ViaInPadTest(unittest.TestCase):
+    # pad: (cx, cy, w, h, angle_deg, corner_r); via hole: (x, y, r)
+    def test_hole_inside_or_touching_the_pad_is_a_hit(self):
+        pad = (10, 10, 1.0, 0.6, 0, 0)
+        self.assertTrue(pt.hole_in_pad((10.2, 10.1, 0.15), pad))
+        self.assertTrue(pt.hole_in_pad((10.6, 10, 0.15), pad))    # edge 0.45 < 0.5 + ...
+        self.assertFalse(pt.hole_in_pad((10.7, 10, 0.15), pad))   # hole edge 0.55, pad edge 0.5
+
+    def test_rotation_and_round_corners(self):
+        pad = (0, 0, 2.0, 0.4, 90, 0)                              # long side on y after rotation
+        self.assertTrue(pt.hole_in_pad((0, 0.9, 0.1), pad))
+        self.assertFalse(pt.hole_in_pad((0.9, 0, 0.1), pad))
+        corner = (0, 0, 1.0, 1.0, 0, 0.5)                          # a circle of r 0.5
+        self.assertFalse(pt.hole_in_pad((0.45, 0.45, 0.1), corner))
+        self.assertTrue(pt.hole_in_pad((0.45, 0.45, 0.1), (0, 0, 1.0, 1.0, 0, 0)))
+
+
 def json_copy(x):
     import json
     return json.loads(json.dumps(x))
