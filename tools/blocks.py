@@ -229,7 +229,7 @@ JLC_EXTENDED_FEE_USD = 3.0  # JLC PCBA loading fee per unique Extended part per 
 def cost(rows):
     """Parts cost estimate: unit price at the smallest quantity (JLC evidence) x qty, per block.
     Extended parts are listed because JLC adds a per-order fee for each unique Extended part."""
-    total, ext, missing = 0.0, [], []
+    total, ext, missing, unknown = 0.0, [], [], []
     for r in rows:
         ev = r.get('evidence') or {}
         if ev.get('price') is None:
@@ -237,8 +237,10 @@ def cost(rows):
         total += ev['price'] * r['qty']
         if (ev.get('jlc_class') or '').startswith('Extended'):
             ext.append(r['lcsc'])
+        elif not ev.get('jlc_class'):
+            unknown.append(r['lcsc'])
     fee = len(set(ext)) * JLC_EXTENDED_FEE_USD
-    return {'parts_usd': round(total, 4), 'extended': sorted(set(ext)), 'missing': missing,
+    return {'parts_usd': round(total, 4), 'extended': sorted(set(ext)), 'missing': missing, 'unknown_class': sorted(set(unknown)),
             'extended_fee_usd': fee, 'first_board_usd': round(total + fee, 4)}
 
 
@@ -507,7 +509,7 @@ const T_={
 overview(d){const n=d.bom.reduce((a,r)=>a+r.qty,0),e=d.part_errors.length+(d.fact_errors||[]).length;
  $('#tab').innerHTML=`<div class="card"><table>
  <tr><th>Parts</th><td>${n} in ${d.bom.length} lines</td></tr>
- <tr><th>Parts cost</th><td>${d.cost?`<b>$${d.cost.first_board_usd.toFixed(2)}</b> for one board = parts $${d.cost.parts_usd.toFixed(2)} (JLC unit price at the smallest quantity, dated snapshots) + Extended-part fee $${d.cost.extended_fee_usd.toFixed(2)} (${d.cost.extended.length} x $3.00 per order: ${d.cost.extended.map(esc).join(', ')}). Each extra board adds only $${d.cost.parts_usd.toFixed(2)}.${d.cost.missing.length?` · <span class="bad">no price: ${d.cost.missing.map(esc).join(', ')}</span>`:''}`:''}</td></tr>
+ <tr><th>Parts cost</th><td>${d.cost?d.kind=='block'?`<b>$${d.cost.parts_usd.toFixed(2)}</b> parts per copy (JLC unit price at the smallest quantity, dated snapshots). ${d.cost.extended.length} Extended parts: ${d.cost.extended.map(esc).join(', ')}. The Extended-part fee is paid once per unique part per order, so it is counted on the board, not here.`:`<b>$${d.cost.first_board_usd.toFixed(2)}</b> for one board = parts $${d.cost.parts_usd.toFixed(2)} (JLC unit price at the smallest quantity, dated snapshots) + Extended-part fee $${d.cost.extended_fee_usd.toFixed(2)} (${d.cost.extended.length} unique x $3.00, once per order: ${d.cost.extended.map(esc).join(', ')}). Each extra board adds only $${d.cost.parts_usd.toFixed(2)}.${d.cost.unknown_class.length?` <span class="bad">JLC class unknown (fee not counted): ${d.cost.unknown_class.map(esc).join(', ')}</span>`:''}${d.cost.missing.length?` · <span class="bad">no price: ${d.cost.missing.map(esc).join(', ')}</span>`:''}`:''}</td></tr>
  <tr><th>Part checks</th><td class="${e?'bad':'ok'}">${e?e+' errors':'all parts have a C-number and a checked datasheet'}</td></tr>
  ${d.kind=='block'?`<tr><th>Used in</th><td>${d.used_in.map(esc).join(', ')||'<span class="muted">no board yet</span>'}</td></tr><tr><th>Keywords</th><td>${esc(d.keywords)}</td></tr>`:`<tr><th>Blocks placed</th><td>${d.blocks.map(esc).join(', ')||'<span class="muted">none</span>'}</td></tr>`}
  <tr><th>Source files</th><td>${d.files.map(f=>`<a href="/file/${d.kind}/${encodeURIComponent(d.id)}/${encodeURIComponent(f)}">${esc(f)}</a>`).join(' · ')}</td></tr></table></div>

@@ -162,6 +162,14 @@ class CostTest(unittest.TestCase):
         self.assertAlmostEqual(c['first_board_usd'], 0.9359 + 2 * bk.JLC_EXTENDED_FEE_USD, places=4)
 
 
+class UnknownClassTest(unittest.TestCase):
+    def test_price_without_jlc_class_is_listed_not_counted_as_basic(self):
+        rows = [{'refs': ['U1'], 'qty': 1, 'lcsc': 'C1', 'evidence': {'price': 1.0, 'jlc_class': None}}]
+        c = bk.cost(rows)
+        self.assertEqual(c['unknown_class'], ['C1'])
+        self.assertEqual(c['extended_fee_usd'], 0)
+
+
 class ViewVariantTest(unittest.TestCase):
     def test_variant_changes_with_the_export_command(self):
         v1 = bk.view_variant('front')
