@@ -117,9 +117,14 @@ P = {'segs': [seg(0, 0, 10, 0)]}
 N = {'segs': [seg(0, 0.35, 10, 0.35)]}
 
 
-def board(p=P, n=N, ref=lambda layer, x, y: {'GND'}):
+def board(p=P, n=N, ref=lambda layer, x, y: {'GND'}, vias=None):
     return {'stackup': sp.parse_stackup(STACKUP_TEXT), 'nets': {'/DP': p, '/DN': n}, 'ref_at': ref,
-            'dru': DRU_TEXT}
+            'dru': DRU_TEXT, 'vias': vias or {}}
+
+
+# A gap in the reference plane between x 4 and 6 (a 2 mm hole), the rest fully covered. 10 mm track.
+def ref_with_gap(layer, x, y):
+    return set() if 4 <= x <= 6 else {'GND'}
 
 
 PAIR = {'name': 'USB', 'p': '/DP', 'n': '/DN', 'z_diff': 90, 'tol_pct': 10, 'dru_rule': 'USB 90R diff pair',
@@ -166,6 +171,90 @@ class Evaluate(unittest.TestCase):
         spec = {'stackup': {'layers': LAYERS}, 'pairs': [],
                 'nets': [{'name': 'SCK', 'net': '/DN', 'reference': 'GND'}]}
         self.assertEqual(status(sp.evaluate(spec, board())), {'reference': 'PASS'})
+
+
+class ExemptAreas(unittest.TestCase):
+    def spec(self, **kw):
+        return {'stackup': {'layers': LAYERS}, 'pairs': [dict(PAIR, **kw)]}
+
+    def test_gap_fails_without_exemption(self):
+        st = status(sp.evaluate(self.spec(), board(ref=ref_with_gap)))
+        self.assertEqual((st['reference p'], st['reference n']), ('FAIL', 'FAIL'))
+
+    def test_exempt_area_removes_gap_from_coverage(self):
+        areas = [{'layer': 'F.Cu', 'rect': [4, -1, 6, 1], 'reason': 'via keepout, see ECO-12'}]
+        rows = sp.evaluate(self.spec(exempt_areas=areas), board(ref=ref_with_gap))
+        st = status(rows)
+        self.assertEqual((st['reference p'], st['reference n']), ('PASS', 'PASS'))
+
+    def test_exempt_area_length_is_reported(self):
+        areas = [{'layer': 'F.Cu', 'rect': [4, -1, 6, 1], 'reason': 'via keepout'}]
+        rows = sp.evaluate(self.spec(exempt_areas=areas), board(ref=ref_with_gap))
+        exempt_rows = [r for r in rows if r['check'] == 'exempt area']
+        self.assertEqual(len(exempt_rows), 1)
+        self.assertIn('4.0', exempt_rows[0]['detail'])  # 2 mm on each of p and n
+
+    def test_exempt_area_needs_a_reason(self):
+        areas = [{'layer': 'F.Cu', 'rect': [4, -1, 6, 1], 'reason': ''}]
+        with self.assertRaises(sp.SpecError):
+            sp.evaluate(self.spec(exempt_areas=areas), board(ref=ref_with_gap))
+
+    def test_stale_exempt_area_raises(self):
+        # This area touches no track: it removes nothing, so it is stale.
+        areas = [{'layer': 'F.Cu', 'rect': [100, 100, 110, 110], 'reason': 'unused'}]
+        with self.assertRaisesRegex(sp.SpecError, 'STALE exempt_area'):
+            sp.evaluate(self.spec(exempt_areas=areas), board(ref=ref_with_gap))
+
+    def test_top_level_exempt_areas_apply_to_every_pair(self):
+        spec = {'stackup': {'layers': LAYERS}, 'pairs': [dict(PAIR)],
+                'exempt_areas': [{'layer': 'F.Cu', 'rect': [4, -1, 6, 1], 'reason': 'via keepout'}]}
+        st = status(sp.evaluate(spec, board(ref=ref_with_gap)))
+        self.assertEqual(st['reference p'], 'PASS')
+
+    def test_pair_level_exempt_areas_overrides_top_level(self):
+        # The pair opts out with an empty list, so the top-level area does not apply to it.
+        spec = {'stackup': {'layers': LAYERS}, 'pairs': [dict(PAIR, exempt_areas=[])],
+                'exempt_areas': [{'layer': 'F.Cu', 'rect': [4, -1, 6, 1], 'reason': 'via keepout'}]}
+        with self.assertRaisesRegex(sp.SpecError, 'STALE exempt_area'):
+            sp.evaluate(spec, board(ref=ref_with_gap))
+
+
+class ViaAntipadAllowance(unittest.TestCase):
+    def spec(self, **kw):
+        return {'stackup': {'layers': LAYERS}, 'pairs': [dict(PAIR, **kw)]}
+
+    def test_gap_near_a_same_net_via_is_allowed(self):
+        # A via of /DP at (5, 0) with a 1.5 mm allowance radius covers the whole x 4..6 gap.
+        vias = {'/DP': [(5, 0, 1.5)], '/DN': [(5, 0.35, 1.5)]}
+        rows = sp.evaluate(self.spec(via_antipad_allowance=True), board(ref=ref_with_gap, vias=vias))
+        st = status(rows)
+        self.assertEqual((st['reference p'], st['reference n']), ('PASS', 'PASS'))
+
+    def test_allowance_is_off_by_default(self):
+        vias = {'/DP': [(5, 0, 1.5)], '/DN': [(5, 0.35, 1.5)]}
+        st = status(sp.evaluate(self.spec(), board(ref=ref_with_gap, vias=vias)))
+        self.assertEqual(st['reference p'], 'FAIL')
+
+    def test_allowed_length_is_reported(self):
+        vias = {'/DP': [(5, 0, 1.5)], '/DN': [(5, 0.35, 1.5)]}
+        rows = sp.evaluate(self.spec(via_antipad_allowance=True), board(ref=ref_with_gap, vias=vias))
+        allow_rows = [r for r in rows if r['check'] == 'via antipad' and r['status'] == 'INFO']
+        self.assertEqual(len(allow_rows), 1)
+        self.assertIn('4.0', allow_rows[0]['detail'])  # 2 mm gap x 2 legs
+
+    def test_allowance_over_1_5_mm_per_via_warns(self):
+        vias = {'/DP': [(5, 0, 1.5)], '/DN': [(5, 0.35, 1.5)]}
+        rows = sp.evaluate(self.spec(via_antipad_allowance=True), board(ref=ref_with_gap, vias=vias))
+        warns = [r for r in rows if r['status'] == 'WARN']
+        self.assertTrue(warns, rows)
+
+    def test_small_allowance_does_not_warn(self):
+        # A 0.5 mm gap next to the via stays under the 1.5 mm-per-via bound.
+        def ref_small_gap(layer, x, y):
+            return set() if 4.75 <= x <= 5.25 else {'GND'}
+        vias = {'/DP': [(5, 0, 1.5)], '/DN': [(5, 0.35, 1.5)]}
+        rows = sp.evaluate(self.spec(via_antipad_allowance=True), board(ref=ref_small_gap, vias=vias))
+        self.assertFalse([r for r in rows if r['status'] == 'WARN'], rows)
 
 
 class Arc(unittest.TestCase):

@@ -16,8 +16,18 @@ Exit 0: all PASS. Exit 1: one or more FAIL. Exit 2: tool error (bad spec, net or
 The tool only reads the board. It never writes a .kicad_* file.
 
 Spec: see hardware-design/boards/BASE-PWR/diff-pairs.json.
+
+Two opt-in keys, on a pair entry or at the spec top level (a pair entry overrides the top level):
+  "exempt_areas": [{"layer": "F.Cu" or "*", "rect": [x1, y1, x2, y2], "reason": "..."}]
+    Track length inside the rect on that layer does not count in the reference-plane coverage.
+    An area that removes no length from any pair is stale: the tool stops with exit 2.
+  "via_antipad_allowance": true
+    Track length within (via pad radius + the plane zone clearance to the via) of a via of the
+    same net does not count as uncovered (it still counts as track length). A WARN line prints
+    when this removes more than 1.5 mm of a single via's own allowance.
 """
 import argparse
+import collections
 import json
 import math
 import os
@@ -195,6 +205,62 @@ def ref_coverage(nets, layers, ref_nets, ref_at, step=0.05):
     return 100.0 * hit / tot if tot else 0.0
 
 
+VIA_ANTIPAD_WARN_MM = 1.5   # a single via's own allowance above this is worth a look
+
+
+def _exempt_area_at(layer, x, y, areas):
+    """The first exempt area whose layer and rect cover this point, else None."""
+    for a in areas:
+        if a.get('layer', '*') not in ('*', layer):
+            continue
+        x1, y1, x2, y2 = a['rect']
+        if min(x1, x2) <= x <= max(x1, x2) and min(y1, y2) <= y <= max(y1, y2):
+            return a
+    return None
+
+
+def _nearest_via(x, y, vias):
+    """The nearest via (x, y, radius_mm) whose allowance radius covers this point, else None."""
+    best, best_d = None, None
+    for v in vias:
+        d = math.hypot(x - v[0], y - v[1])
+        if d <= v[2] and (best is None or d < best_d):
+            best, best_d = v, d
+    return best
+
+
+def coverage_detail(net, layers, ref_nets, ref_at, step=0.05, exempt_areas=(), vias=()):
+    """Reference-plane coverage of one net, with exempt areas and the via-antipad allowance applied.
+
+    Return {tot, hit, pct, exempted, area_len, allowed, via_len}:
+      tot/hit/pct: coverage as ref_coverage, but length inside an exempt area is left out of both.
+      exempted: total length left out for an exempt area; area_len: the same, keyed by id(area).
+      allowed: length that failed the reference check but sits inside a same-net via's allowance
+        (it still counts in tot and hit); via_len: the same, keyed by the via tuple.
+    """
+    ref_nets = {ref_nets} if isinstance(ref_nets, str) else set(ref_nets)
+    tot = hit = exempted = allowed = 0.0
+    area_len = {id(a): 0.0 for a in exempt_areas}
+    via_len = collections.defaultdict(float)
+    for layer, x, y, _, L in _samples(net, step):
+        area = _exempt_area_at(layer, x, y, exempt_areas)
+        if area is not None:
+            exempted += L
+            area_len[id(area)] += L
+            continue
+        tot += L
+        if ref_nets & ref_at(layers[layer]['ref_layer'], x, y):
+            hit += L
+            continue
+        via = _nearest_via(x, y, vias)
+        if via is not None:
+            hit += L
+            allowed += L
+            via_len[via] += L
+    return {'tot': tot, 'hit': hit, 'pct': 100.0 * hit / tot if tot else 0.0,
+            'exempted': exempted, 'area_len': area_len, 'allowed': allowed, 'via_len': dict(via_len)}
+
+
 # ---------------------------------------------------------------- DRU rule (pure)
 def parse_dru_rule(text, name):
     """Return {constraint: {min, opt, max}} (mm) of the rule with this name in a .kicad_dru text."""
@@ -247,18 +313,72 @@ def _row(item, check, ok, detail):
     return {'item': item, 'check': check, 'status': 'PASS' if ok else 'FAIL', 'detail': detail}
 
 
-def _ref_row(item, check, net, layers, ent, ref_at):
-    cov = ref_coverage((net,), layers, ent['reference'], ref_at)
+def _note_row(item, check, status, detail):
+    return {'item': item, 'check': check, 'status': status, 'detail': detail}
+
+
+def _register_areas(areas, area_totals):
+    """Check each area's reason and add it to area_totals (id(area) -> [area, length]), so an area
+    that removes no length from any pair (including one no entry ends up using) is caught as stale."""
+    for a in areas:
+        if not str(a.get('reason', '')).strip():
+            raise SpecError(f'exempt_areas: a written reason is required ({a})')
+        area_totals.setdefault(id(a), [a, 0.0])
+
+
+def _entry_areas(ent, top_areas, area_totals):
+    """The exempt_areas of a pair or net entry: its own when it overrides, else the spec top level."""
+    areas = ent.get('exempt_areas', top_areas)
+    _register_areas(areas, area_totals)
+    return areas
+
+
+def _ref_row(item, check, net, layers, ent, ref_at, areas=(), vias=()):
+    """A reference-plane row, plus its coverage_detail (for the exempt/allowance bookkeeping)."""
+    cov = coverage_detail(net, layers, ent['reference'], ref_at, exempt_areas=areas, vias=vias)
     lim = ent.get('min_ref_pct', 100)
-    return _row(item, check, cov >= lim,
-                f'{math.floor(cov * 10) / 10:.1f} % of the length over {ent["reference"]} (min {lim} %)')
+    detail = f'{math.floor(cov["pct"] * 10) / 10:.1f} % of the length over {ent["reference"]} (min {lim} %)'
+    return _row(item, check, cov['pct'] >= lim, detail), cov
 
 
 def evaluate(spec, board):
     """Return result rows {item, check, status, detail}. Raise SpecError on a spec or board problem."""
     layers = spec['stackup']['layers']
     check_stackup(layers, board['stackup'])
+    top_areas = spec.get('exempt_areas', [])
+    top_allow = spec.get('via_antipad_allowance', False)
+    vias = board.get('vias', {})
+    area_totals = {}
+    _register_areas(top_areas, area_totals)   # so an area every pair opts out of still shows as stale
     rows = []
+
+    def ref_rows(name, entries, ent):
+        """entries: [(check, net_name, net)]. Adds the reference rows and, when opted in, the
+        per-pair exempt-area and via-antipad-allowance notes."""
+        areas = _entry_areas(ent, top_areas, area_totals)
+        allow = ent.get('via_antipad_allowance', top_allow)
+        exempted = allowed = 0.0
+        via_len = collections.Counter()
+        for check, net_name, net in entries:
+            row, cov = _ref_row(name, check, net, layers, ent, board['ref_at'], areas,
+                                vias.get(net_name, ()) if allow else ())
+            rows.append(row)
+            exempted += cov['exempted']
+            allowed += cov['allowed']
+            for a, L in cov['area_len'].items():
+                area_totals[a][1] += L
+            for v, L in cov['via_len'].items():
+                via_len[v] += L
+        if areas:
+            rows.append(_note_row(name, 'exempt area', 'INFO', f'{exempted:.2f} mm exempted from the reference check'))
+        if allow:
+            rows.append(_note_row(name, 'via antipad', 'INFO', f'{allowed:.2f} mm allowed near a same-net via'))
+            for v, L in via_len.items():
+                if L > VIA_ANTIPAD_WARN_MM:
+                    rows.append(_note_row(name, 'via antipad', 'WARN',
+                                          f'{L:.2f} mm allowed near one via at ({v[0]:.2f}, {v[1]:.2f}) '
+                                          f'(over the {VIA_ANTIPAD_WARN_MM} mm bound)'))
+
     for pr in spec.get('pairs', []):
         name = pr['name']
         p, n = _net(board, pr['p']), _net(board, pr['n'])
@@ -271,12 +391,16 @@ def evaluate(spec, board):
             rows.append(_row(name, f'zdiff {lname}', ok,
                              f'{nom:.1f} ohm (window {lo:.1f}..{hi:.1f}, target {pr["z_diff"]} +-{pr["tol_pct"]} %) '
                              f'rule "{pr["dru_rule"]}" w {rule["track_width"]} gap {rule["diff_pair_gap"]}'))
-        rows.append(_ref_row(name, 'reference p', p, layers, pr, board['ref_at']))
-        rows.append(_ref_row(name, 'reference n', n, layers, pr, board['ref_at']))
+        ref_rows(name, [('reference p', pr['p'], p), ('reference n', pr['n'], n)], pr)
     for ne in spec.get('nets', []):
         net = _net(board, ne['net'])
         _check_layers((net,), layers)
-        rows.append(_ref_row(ne['name'], 'reference', net, layers, ne, board['ref_at']))
+        ref_rows(ne['name'], [('reference', ne['net'], net)], ne)
+    stale = [a for a, L in area_totals.values() if L <= 0]
+    if stale:
+        a = stale[0]
+        raise SpecError(f'STALE exempt_area {a.get("layer", "*")} {a["rect"]} ({a["reason"]}): '
+                         'removes no length from any pair')
     return rows
 
 
@@ -358,10 +482,11 @@ def main(argv=None):
         print(f'si_pairs: ERROR {type(e).__name__}: {e}', file=sys.stderr)
         return 2
     fails = [r for r in rows if r['status'] == 'FAIL']
+    passes = [r for r in rows if r['status'] == 'PASS']
     for r in rows:
-        if args.verbose or r['status'] == 'FAIL':
+        if args.verbose or r['status'] in ('FAIL', 'WARN', 'INFO'):
             print(f"{r['status']:4} {r['item']:12} {r['check']:14} {r['detail']}")
-    print(f'si_pairs: {len(rows) - len(fails)} PASS, {len(fails)} FAIL')
+    print(f'si_pairs: {len(passes)} PASS, {len(fails)} FAIL')
     return 1 if fails else 0
 
 
