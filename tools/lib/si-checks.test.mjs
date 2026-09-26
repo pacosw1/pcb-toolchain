@@ -67,3 +67,12 @@ test('summary line present but exit code non-zero: fails closed', () => {
   const r = parseGateOutput(out, 1, /vias in SMD pads/, 'FAIL via in pad');
   assert.equal(r.ok, false);
 });
+
+test('kicad-happy: summary parses and FAIL rule lines fail the gate', async () => {
+  const {KICAD_HAPPY_SUMMARY} = await import('./si-checks.mjs');
+  const ok = parseGateOutput('0 kicad-happy findings (rules GP-001,RP-001)\n', 0, KICAD_HAPPY_SUMMARY, 'FAIL');
+  assert.equal(ok.ok, true);
+  const bad = parseGateOutput('FAIL RP-001 /OW_DATA no return via\n1 kicad-happy findings (rules RP-001)\n', 1, KICAD_HAPPY_SUMMARY, 'FAIL');
+  assert.equal(bad.ok, false);
+  assert.match(bad.detail, /OW_DATA/);
+});
