@@ -11,6 +11,8 @@ Run with the KiCad bundled Python (it has pcbnew):
   $PY tools/pcbtool.py place  BOARD SPEC.json                 set positions, then DRC summary
   $PY tools/pcbtool.py route  BOARD SPEC.json                 add tracks and vias, refill, DRC summary
   $PY tools/pcbtool.py unroute BOARD NET [NET ...]            remove the tracks and vias of nets
+  $PY tools/pcbtool.py widen  BOARD NET W [--layer L] [--box X0 Y0 X1 Y1]  widen the net's thinner tracks, DRC
+  $PY tools/pcbtool.py near   BOARD X Y [--r 0.3] [--within 1]  copper of all nets near a point, edge gap
   $PY tools/pcbtool.py drc    BOARD                           DRC --schematic-parity summary
   $PY tools/pcbtool.py widths BOARD [--limit N]              tracks thinner than the net class width (current)
   $PY tools/pcbtool.py paths  BOARD SPEC.json [--verbose]     widest copper path between power pads >= design current
@@ -24,7 +26,8 @@ Run with the KiCad bundled Python (it has pcbnew):
 Place spec:  {"place": {"R1": [x, y, rot]}, "grids": [{"refs": [...], "origin": [x, y],
               "pitch": [dx, dy], "cols": n, "rot": 0}]}
 Route spec:  {"clear": ["NET"], "routes": [{"net": "VBAT", "width": 1.5, "layer": "F.Cu",
-              "path": [[x, y], [x, y], {"via": [x, y]}, [x, y]]}]}
+              "path": [[x, y], [x, y], {"via": [x, y]}, [x, y]]}],
+              "move_vias": [{"net": "GND", "from": [x, y], "to": [x, y]}]}
   A {"via": [x, y]} point adds a via and changes the layer (F.Cu <-> B.Cu).
   Segments must be 0/45/90 degrees unless the route has "any_angle": true.
 Coordinates: KiCad mm, Y down.
@@ -211,6 +214,27 @@ def spec_pairs(spec):
     return out
 
 
+def select_tracks(tracks, net, width, layer=None, box=None):
+    """Indexes of the net's tracks narrower than width, on layer (if given), with both ends in box (if given)."""
+    def inside(q):
+        return box[0] <= q[0] <= box[2] and box[1] <= q[1] <= box[3]
+    return [i for i, t in enumerate(tracks) if t['net'] == net and t['width'] < width - 1e-6
+            and (layer is None or t['layer'] == layer) and (box is None or (inside(t['start']) and inside(t['end'])))]
+
+
+def find_point(points, q, tol=0.01):
+    """Index of the one point within tol mm of q. None or several is an error."""
+    hit = [i for i, pt_ in enumerate(points) if math.dist(pt_, q) <= tol]
+    if len(hit) != 1:
+        raise ValueError(f'{len(hit)} points within {tol} mm of {q}')
+    return hit[0]
+
+
+def copper_gap(c, r, a, b, w):
+    """Edge-to-edge gap (mm) from a circle (centre c, radius r) to a track a-b of width w. Negative = overlap."""
+    return round(math.dist(c, project(a, b, c)) - r - w / 2, 4)
+
+
 def widest_path(edges, a, b):
     """Path from a to b with the highest bottleneck current. edges: (u, v, amps, label), undirected.
     Returns (amps, labels). Parallel paths do not add (conservative)."""
@@ -305,7 +329,7 @@ def seigaiha(box, r, rings=3, step_deg=4):
 
 
 # ---------------------------------------------------------------- side effects (pcbnew, kicad-cli)
-NOISE = ('Fontconfig warning:', 'create wxApp before calling this')
+NOISE = ('Fontconfig warning:', 'create wxApp before calling this', 'Adding duplicate image handler')
 
 
 def drop_noise(text):
@@ -400,6 +424,54 @@ def delete_nets(b, nets):
     return n
 
 
+def cmd_near(a):
+    """Copper of every net near a point: tracks, vias and pads per layer, with the edge gap to a circle of radius r."""
+    p = pcb()
+    b = p.LoadBoard(a.board)
+    if b is None:
+        sys.exit(f'cannot load {a.board}')
+    mm = p.ToMM
+    c = (a.x, a.y)
+    rows = []
+    for t in b.GetTracks():
+        if isinstance(t, p.PCB_VIA):
+            q = (mm(t.GetPosition().x), mm(t.GetPosition().y))
+            rows.append((round(math.dist(c, q) - a.r - mm(t.GetWidth(p.F_Cu)) / 2, 3), 'via', t.GetNetname(), f'at ({q[0]:.3f}, {q[1]:.3f})'))
+        else:
+            s_, e_ = (mm(t.GetStart().x), mm(t.GetStart().y)), (mm(t.GetEnd().x), mm(t.GetEnd().y))
+            rows.append((copper_gap(c, a.r, s_, e_, mm(t.GetWidth())), t.GetLayerName(), t.GetNetname(),
+                         f'{mm(t.GetWidth()):.2f} mm ({s_[0]:.3f}, {s_[1]:.3f})-({e_[0]:.3f}, {e_[1]:.3f})'))
+    for fp in b.GetFootprints():
+        for pd in fp.Pads():
+            q = (mm(pd.GetPosition().x), mm(pd.GetPosition().y))
+            size = pd.GetSize(p.F_Cu)
+            side = 'pad THT' if pd.GetAttribute() in (p.PAD_ATTRIB_PTH, p.PAD_ATTRIB_NPTH) else ('pad B' if pd.IsOnLayer(p.B_Cu) else 'pad F')
+            rows.append((round(math.dist(c, q) - a.r - mm(max(size.x, size.y)) / 2, 3), side, pd.GetNetname(),
+                         f'{fp.GetReference()}.{pd.GetNumber()} at ({q[0]:.3f}, {q[1]:.3f}) (gap to the long side, low bound)'))
+    for gap, layer, net, what in sorted(r for r in rows if r[0] < a.within):
+        print(f'{gap:7.3f}  {layer:7} {net:14} {what}')
+
+
+def cmd_widen(a):
+    p = pcb()
+    b = p.LoadBoard(a.board)
+    if b is None:
+        sys.exit(f'cannot load {a.board}')
+    mm = p.ToMM
+    items = [t for t in b.GetTracks() if not isinstance(t, p.PCB_VIA)]
+    rows = [{'net': t.GetNetname(), 'layer': t.GetLayerName(), 'width': round(mm(t.GetWidth()), 4),
+             'start': (mm(t.GetStart().x), mm(t.GetStart().y)), 'end': (mm(t.GetEnd().x), mm(t.GetEnd().y))} for t in items]
+    pick = select_tracks(rows, a.net, a.width, a.layer, tuple(a.box) if a.box else None)
+    if not pick:
+        sys.exit(f'no {a.net} track narrower than {a.width} mm matches')
+    for i in pick:
+        items[i].SetWidth(p.FromMM(a.width))
+    p.ZONE_FILLER(b).Fill(b.Zones())
+    b.Save(a.board)
+    print(f'widened {len(pick)} {a.net} segments to {a.width} mm')
+    print_drc(run_drc(a.board))
+
+
 def cmd_unroute(a):
     p = pcb()
     b = p.LoadBoard(a.board)
@@ -410,12 +482,29 @@ def cmd_unroute(a):
     print_drc(run_drc(a.board))
 
 
+def remove_temp_project(tmp):
+    """Save and LoadBoard make a .kicad_pro/.kicad_prl for the temporary board. Remove them."""
+    for ext in ('.kicad_pro', '.kicad_prl'):
+        if os.path.exists(tmp[:-len('.kicad_pcb')] + ext):
+            os.remove(tmp[:-len('.kicad_pcb')] + ext)
+
+
 def cmd_route(a):
     p = pcb()
     spec = json.load(open(a.spec))
     plan = [(r, *expand_route(r)) for r in spec['routes']]  # validate all before any change
     b = p.LoadBoard(a.board)
+    moves = []  # validate all via moves before any change
+    for m in spec.get('move_vias', []):
+        vias_ = [t for t in b.GetTracks() if isinstance(t, p.PCB_VIA) and t.GetNetname() == m['net']]
+        try:
+            i = find_point([(p.ToMM(t.GetPosition().x), p.ToMM(t.GetPosition().y)) for t in vias_], tuple(m['from']))
+        except ValueError as e:
+            sys.exit(f"move_vias {m['net']} {m['from']}: {e}")
+        moves.append((vias_[i], m['to']))
     removed = delete_nets(b, set(spec.get('clear', [])))
+    for v, to in moves:
+        v.SetPosition(v2(*to))
     via_d = spec.get('via', {'size': 0.6, 'drill': 0.3})
     nseg = nvia = 0
     for r, segs, vias in plan:
@@ -451,8 +540,23 @@ def cmd_route(a):
                 if len(others) < 2:
                     print(f"  W {r['net']}: end {end} is not on a pad of the net")
     p.ZONE_FILLER(b).Fill(b.Zones())
-    b.Save(a.board)
-    print(f'removed {removed}, added {nseg} segments and {nvia} vias')
+    # KiCad gives a via the net of the copper it touches, and it shows only in the saved file.
+    # Save to a temporary file, reload, check the moved vias, then replace the board.
+    tmp = os.path.join(os.path.dirname(os.path.abspath(a.board)), '.pcbtool-route.kicad_pcb')
+    b.Save(tmp)
+    if moves:
+        c = p.LoadBoard(tmp)
+        got = {(round(p.ToMM(t.GetPosition().x), 3), round(p.ToMM(t.GetPosition().y), 3)): t.GetNetname()
+               for t in c.GetTracks() if isinstance(t, p.PCB_VIA)}
+        renet = [f"{m['net']} {m['to']} -> {got.get((round(m['to'][0], 3), round(m['to'][1], 3)))}"
+                 for m in spec['move_vias'] if got.get((round(m['to'][0], 3), round(m['to'][1], 3))) != m['net']]
+        if renet:
+            remove_temp_project(tmp)
+            os.remove(tmp)
+            sys.exit('moved via touches copper of another net, board not changed: ' + '; '.join(renet))
+    remove_temp_project(tmp)
+    os.replace(tmp, a.board)
+    print(f'removed {removed}, moved {len(moves)} vias, added {nseg} segments and {nvia} vias')
     print_drc(run_drc(a.board))
 
 
@@ -790,6 +894,10 @@ def main():
     for name, f in (('place', cmd_place), ('route', cmd_route)):
         s = sp.add_parser(name); s.add_argument('board'); s.add_argument('spec'); s.set_defaults(f=f)
     s = sp.add_parser('unroute'); s.add_argument('board'); s.add_argument('nets', nargs='+'); s.set_defaults(f=cmd_unroute)
+    s = sp.add_parser('near'); s.add_argument('board'); s.add_argument('x', type=float); s.add_argument('y', type=float)
+    s.add_argument('--r', type=float, default=0.3); s.add_argument('--within', type=float, default=1.0); s.set_defaults(f=cmd_near)
+    s = sp.add_parser('widen'); s.add_argument('board'); s.add_argument('net'); s.add_argument('width', type=float)
+    s.add_argument('--layer'); s.add_argument('--box', type=float, nargs=4); s.set_defaults(f=cmd_widen)
     s = sp.add_parser('drc'); s.add_argument('board'); s.set_defaults(f=cmd_drc)
     s = sp.add_parser('paths'); s.add_argument('board'); s.add_argument('spec'); s.add_argument('--limit', type=int, default=4)
     s.add_argument('--verbose', action='store_true'); s.set_defaults(f=cmd_paths)

@@ -234,6 +234,43 @@ class CurrentTest(unittest.TestCase):
         self.assertEqual(pt.widest_path([('A', 'x', 3.0, 'w')], 'A', 'B'), (0.0, []))
 
 
+class WidenSelectTest(unittest.TestCase):
+    T = [{'net': 'V5', 'layer': 'In2.Cu', 'width': 0.5, 'start': (0, 0), 'end': (10, 0)},
+         {'net': 'V5', 'layer': 'F.Cu', 'width': 0.5, 'start': (0, 0), 'end': (0, 5)},
+         {'net': 'V5', 'layer': 'In2.Cu', 'width': 1.0, 'start': (10, 0), 'end': (20, 0)},
+         {'net': 'V5', 'layer': 'In2.Cu', 'width': 0.5, 'start': (50, 50), 'end': (60, 50)},
+         {'net': 'GND', 'layer': 'In2.Cu', 'width': 0.5, 'start': (0, 1), 'end': (10, 1)}]
+
+    def test_net_layer_and_narrower_than_the_new_width(self):
+        self.assertEqual(pt.select_tracks(self.T, 'V5', 0.9, layer='In2.Cu'), [0, 3])
+
+    def test_box_keeps_tracks_with_both_ends_inside(self):
+        self.assertEqual(pt.select_tracks(self.T, 'V5', 0.9, box=(-1, -1, 30, 10)), [0, 1])
+
+
+class FindPointTest(unittest.TestCase):
+    def test_finds_the_one_point_within_tolerance(self):
+        self.assertEqual(pt.find_point([(1, 1), (124.635, 116.912)], (124.64, 116.91)), 1)
+
+    def test_missing_or_ambiguous_point_is_an_error(self):
+        with self.assertRaises(ValueError):
+            pt.find_point([(1, 1)], (2, 2))
+        with self.assertRaises(ValueError):
+            pt.find_point([(1, 1), (1.005, 1)], (1, 1))
+
+
+class GapTest(unittest.TestCase):
+    def test_copper_gap_from_a_via_to_a_track(self):
+        # via r 0.3 at (0, 1); track 0.2 wide from (-5, 0) to (5, 0): 1 - 0.3 - 0.1 = 0.6
+        self.assertAlmostEqual(pt.copper_gap((0, 1), 0.3, (-5, 0), (5, 0), 0.2), 0.6)
+
+    def test_gap_past_the_track_end_uses_the_end(self):
+        self.assertAlmostEqual(pt.copper_gap((8, 0), 0.3, (-5, 0), (5, 0), 0.2), 2.6)
+
+    def test_overlap_is_negative(self):
+        self.assertLess(pt.copper_gap((0, 0), 0.3, (-5, 0), (5, 0), 0.2), 0)
+
+
 class NoiseTest(unittest.TestCase):
     def test_drops_known_pcbnew_noise_keeps_real_errors(self):
         text = ('./src/common/stdpbase.cpp(59): assert ""traits"" failed in Get(): create wxApp before calling this\n'
@@ -241,6 +278,18 @@ class NoiseTest(unittest.TestCase):
                 'Traceback (most recent call last):\n'
                 'ValueError: net /X not on board\n')
         self.assertEqual(pt.drop_noise(text), 'Traceback (most recent call last):\nValueError: net /X not on board\n')
+
+
+class TempProjectTest(unittest.TestCase):
+    def test_removes_project_files_of_the_temp_board_only(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            tmp = os.path.join(d, '.pcbtool-route.kicad_pcb')
+            for f in (tmp, tmp[:-3] + 'pro', tmp[:-3] + 'prl', os.path.join(d, 'B.kicad_pro')):
+                open(f, 'w').close()
+            pt.remove_temp_project(tmp)
+            self.assertEqual(sorted(os.listdir(d)), ['.pcbtool-route.kicad_pcb', 'B.kicad_pro'])
+            pt.remove_temp_project(tmp)  # nothing left to remove is not an error
 
 
 def json_copy(x):
