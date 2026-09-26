@@ -82,3 +82,9 @@ test('viapads: allow list goes to the tool, empty list adds nothing', async () =
   assert.deepEqual(viaPadsArgs('b.kicad_pcb', []), ['viapads', 'b.kicad_pcb']);
   assert.deepEqual(viaPadsArgs('b.kicad_pcb', ['U1.9']), ['viapads', 'b.kicad_pcb', '--allow', 'U1.9']);
 });
+
+test('kicad-happy: exempt file goes to the tool, no file adds nothing', async () => {
+  const {kicadHappyArgs} = await import('./si-checks.mjs');
+  assert.deepEqual(kicadHappyArgs('b.kicad_pcb'), ['b.kicad_pcb']);
+  assert.deepEqual(kicadHappyArgs('b.kicad_pcb', 'ex.json'), ['b.kicad_pcb', '--exempt-file', 'ex.json']);
+});

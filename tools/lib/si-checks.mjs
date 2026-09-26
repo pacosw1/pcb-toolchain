@@ -58,9 +58,14 @@ export function viaPadsCheck({python, tool, pcb, check, allow = []}) {
 // kicad-happy (pinned clone, see tools/kicad_happy_gate.py): return path, return vias, via in pad, decoupling.
 export const KICAD_HAPPY_SUMMARY = /kicad-happy findings/;
 
-export function kicadHappyCheck({python, tool, pcb, check}) {
-  const name = 'kicad-happy GP-001 RP-001 VP-001 DC-002 UC-001 (tools/kicad_happy_gate.py)';
-  const {out, exit} = runGate({python, tool, args: [pcb]});
+// exemptFile: JSON list of {rule, net, reason}; a stale entry fails the gate (exit 2).
+export function kicadHappyArgs(pcb, exemptFile) {
+  return [pcb, ...(exemptFile ? ['--exempt-file', exemptFile] : [])];
+}
+
+export function kicadHappyCheck({python, tool, pcb, check, exemptFile}) {
+  const name = `kicad-happy GP-001 RP-001 VP-001 DC-002 UC-001 (tools/kicad_happy_gate.py${exemptFile ? `, exempt: ${exemptFile}` : ''})`;
+  const {out, exit} = runGate({python, tool, args: kicadHappyArgs(pcb, exemptFile)});
   const {ok, detail} = parseGateOutput(out, exit, KICAD_HAPPY_SUMMARY, 'FAIL');
   check(name, ok, detail);
 }

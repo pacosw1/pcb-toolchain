@@ -153,5 +153,94 @@ class CheckPinnedTests(unittest.TestCase):
             self.assertIn("not the pinned commit", err)
 
 
+class ExemptTests(unittest.TestCase):
+    RULES = ["GP-001", "RP-001", "VP-001", "DC-002", "UC-001"]
+
+    def setUp(self):
+        self.findings = gate.filter_findings(
+            gate.load_findings(load_fixture("kicad_happy_sch_sample.json"))
+            + gate.load_findings(load_fixture("kicad_happy_pcb_sample.json"))
+            + gate.load_findings(load_fixture("kicad_happy_emc_sample.json")),
+            self.RULES,
+        )
+
+    def test_cli_exempt_parses_rule_and_net(self):
+        self.assertEqual(
+            gate.parse_exempt_args(["GP-001:/PS1_24V"]),
+            [{"rule": "GP-001", "net": "/PS1_24V", "reason": "--exempt on the command line"}],
+        )
+
+    def test_cli_exempt_without_net_is_an_error(self):
+        with self.assertRaises(ValueError):
+            gate.parse_exempt_args(["GP-001"])
+
+    def test_file_entry_without_reason_is_an_error(self):
+        with self.assertRaises(ValueError):
+            gate.load_exempt_file([{"rule": "GP-001", "net": "/PS1_24V"}])
+        with self.assertRaises(ValueError):
+            gate.load_exempt_file([{"rule": "GP-001", "net": "/PS1_24V", "reason": " "}])
+
+    def test_matching_rule_and_net_drops_the_finding(self):
+        ex = [{"rule": "GP-001", "net": "/PS1_24V", "reason": "24 V power, not a signal"}]
+        kept, stale = gate.apply_exemptions(self.findings, ex)
+        self.assertEqual(stale, [])
+        self.assertNotIn("GP-001", {f["rule_id"] for f in kept})
+        self.assertEqual(len(kept), len(self.findings) - 1)
+
+    def test_ref_entry_drops_findings_of_that_rule_that_name_the_component(self):
+        ex = gate.load_exempt_file([{"rule": "VP-001", "ref": "C4", "reason": "tented via, datasheet land pattern"}])
+        kept, stale = gate.apply_exemptions(self.findings, ex)
+        self.assertEqual(stale, [])
+        self.assertNotIn("VP-001", {f["rule_id"] for f in kept})
+        self.assertEqual(len(kept), len(self.findings) - 1)
+        kept, stale = gate.apply_exemptions(self.findings, [{"rule": "VP-001", "ref": "U4", "reason": "x"}])
+        self.assertEqual(len(kept), len(self.findings))
+        self.assertEqual(len(stale), 1)
+
+    def test_file_entry_needs_exactly_one_of_net_and_ref(self):
+        with self.assertRaises(ValueError):
+            gate.load_exempt_file([{"rule": "VP-001", "reason": "x"}])
+        with self.assertRaises(ValueError):
+            gate.load_exempt_file([{"rule": "VP-001", "net": "/A", "ref": "C4", "reason": "x"}])
+
+    def test_stale_ref_entry_names_the_ref(self):
+        lines, code = gate.evaluate(self.findings, self.RULES, None, [{"rule": "VP-001", "ref": "U4", "reason": "x"}])
+        self.assertEqual(code, 2)
+        self.assertTrue(any(l.startswith("STALE exempt VP-001 U4") for l in lines))
+
+    def test_other_rule_on_that_net_is_not_dropped(self):
+        ex = [{"rule": "RP-001", "net": "/PS1_24V", "reason": "x"}]
+        kept, stale = gate.apply_exemptions(self.findings, ex)
+        self.assertEqual(len(kept), len(self.findings))
+        self.assertEqual(stale, ex)
+
+    def test_stale_exempt_gives_exit_2(self):
+        ex = [{"rule": "GP-001", "net": "/NO_SUCH_NET", "reason": "x"}]
+        lines, code = gate.evaluate(self.findings, self.RULES, None, ex)
+        self.assertEqual(code, 2)
+        self.assertTrue(any(l.startswith("STALE exempt GP-001 /NO_SUCH_NET") for l in lines))
+
+    def test_no_exempt_keeps_the_old_result(self):
+        lines, code = gate.evaluate(self.findings, self.RULES, None, [])
+        self.assertEqual(code, 1)
+        self.assertEqual(lines[:-1], [gate.format_finding(f) for f in self.findings])
+
+    def test_exempt_file_without_reason_exits_2_before_any_analysis(self):
+        import tempfile
+
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+            json.dump([{"rule": "GP-001", "net": "/PS1_24V"}], fh)
+        import contextlib
+        import io
+
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err):
+                self.assertEqual(gate.main(["/nonexistent/board", "--exempt-file", fh.name]), 2)
+            self.assertIn("reason", err.getvalue())
+        finally:
+            os.unlink(fh.name)
+
+
 if __name__ == "__main__":
     unittest.main()

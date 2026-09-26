@@ -20,9 +20,17 @@ XT-001, ...) is ignored: those were evaluated and found false on our boards.
 Usage:
   python3 tools/kicad_happy_gate.py BOARD_DIR_OR_PCB \\
       [--rules GP-001,RP-001,VP-001,DC-002,UC-001] [--min-severity warning]
+      [--exempt RULE:NET ...] [--exempt-file EXEMPT.json]
+
+An exemption drops a finding when its rule matches and the finding names
+that net. The file is a JSON list of {"rule", "net" or "ref", "reason"};
+a "ref" entry drops findings of the rule that name that component. The
+reason is required. An exemption that matches no finding is stale: it prints
+"STALE exempt ..." and gives exit 2, so exemptions cannot rot.
 
 Exit codes: 0 no matching findings, 1 one or more matching findings,
-2 tool error (missing/unpinned clone, bad board path, analyzer crash).
+2 tool error (missing/unpinned clone, bad board path, analyzer crash,
+bad or stale exemption).
 """
 import argparse
 import json
@@ -135,6 +143,77 @@ def format_finding(f):
     return f"FAIL {f.get('rule_id')} {msg}"
 
 
+def parse_exempt_args(items):
+    """Pure: --exempt RULE:NET values to exemption entries."""
+    out = []
+    for item in items:
+        rule, _, net = item.partition(":")
+        if not rule.strip() or not net.strip():
+            raise ValueError(f"--exempt {item!r}: use RULE:NET")
+        out.append({"rule": rule.strip(), "net": net.strip(), "reason": "--exempt on the command line"})
+    return out
+
+
+def load_exempt_file(doc):
+    """Pure: check the parsed JSON of an --exempt-file. Each entry needs rule, reason and one of net, ref."""
+    if not isinstance(doc, list):
+        raise ValueError("exempt file must be a JSON list")
+    for i, e in enumerate(doc):
+        if not isinstance(e, dict) or set(e) - {"rule", "net", "ref", "reason"}:
+            raise ValueError(f"exempt entry {i}: use only the keys rule, net, ref, reason")
+        if ("net" in e) == ("ref" in e):
+            raise ValueError(f"exempt entry {i}: give exactly one of net, ref")
+        for k in ("rule", "net" if "net" in e else "ref", "reason"):
+            if not isinstance(e.get(k), str) or not e[k].strip():
+                raise ValueError(f"exempt entry {i}: {k} is required")
+    return doc
+
+
+def finding_nets(f):
+    """Pure: the net names that one finding names."""
+    nets = list(f.get("nets") or [])
+    if f.get("net"):
+        nets.append(f["net"])
+    return nets
+
+
+def finding_refs(f):
+    """Pure: the component references that one finding names."""
+    refs = list(f.get("components") or [])
+    if f.get("component"):
+        refs.append(f["component"])
+    return refs
+
+
+def exempt_target(e):
+    """Pure: the net or the ref that one exemption names."""
+    return e["net"] if "net" in e else e["ref"]
+
+
+def apply_exemptions(findings, exempts):
+    """Pure: (kept findings, stale exemptions). A finding is dropped when an exemption has its rule
+    and one of its nets (a net entry) or one of its components (a ref entry)."""
+    def names(f, e):
+        return e["net"] in finding_nets(f) if "net" in e else e["ref"] in finding_refs(f)
+
+    used, kept = set(), []
+    for f in findings:
+        hits = [i for i, e in enumerate(exempts) if e["rule"] == f.get("rule_id") and names(f, e)]
+        used.update(hits)
+        if not hits:
+            kept.append(f)
+    return kept, [e for i, e in enumerate(exempts) if i not in used]
+
+
+def evaluate(all_findings, rule_ids, min_severity, exempts):
+    """Pure: (report lines, exit code) for the merged findings."""
+    kept, stale = apply_exemptions(filter_findings(all_findings, rule_ids, min_severity), exempts)
+    lines = [format_finding(f) for f in kept]
+    lines += [f"STALE exempt {e['rule']} {exempt_target(e)}: no finding matched ({e['reason']})" for e in stale]
+    lines.append(f"{len(kept)} kicad-happy findings (rules {','.join(rule_ids)})")
+    return lines, 2 if stale else (1 if kept else 0)
+
+
 def run_gate(happy_dir, pcb, sch, tmp_dir):
     """Run the three analyzers and return their merged raw findings."""
     all_findings = []
@@ -179,7 +258,27 @@ def main(argv=None):
         default=None,
         help="Drop findings below this severity (default: keep all severities)",
     )
+    parser.add_argument(
+        "--exempt",
+        action="append",
+        default=[],
+        metavar="RULE:NET",
+        help="Drop findings of RULE that name NET (repeatable)",
+    )
+    parser.add_argument(
+        "--exempt-file",
+        help='JSON list of {"rule", "net" or "ref", "reason"} exemptions',
+    )
     args = parser.parse_args(argv)
+
+    try:
+        exempts = parse_exempt_args(args.exempt)
+        if args.exempt_file:
+            with open(args.exempt_file) as fh:
+                exempts += load_exempt_file(json.load(fh))
+    except (ValueError, OSError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
 
     happy_dir = resolve_happy_dir()
     err = check_pinned(happy_dir)
@@ -204,11 +303,10 @@ def main(argv=None):
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    kept = filter_findings(all_findings, rule_ids, args.min_severity)
-    for f in kept:
-        print(format_finding(f))
-    print(f"{len(kept)} kicad-happy findings (rules {','.join(rule_ids)})")
-    return 1 if kept else 0
+    lines, code = evaluate(all_findings, rule_ids, args.min_severity, exempts)
+    for line in lines:
+        print(line)
+    return code
 
 
 if __name__ == "__main__":

@@ -84,7 +84,8 @@ def load_spec(raw):
     unknown = set(raw) - KEYS
     if unknown:
         raise SpecError(f'unknown spec keys: {sorted(unknown)}')
-    missing = [k for k in REQUIRED if not raw.get(k)]
+    # plane_layers may be empty: a 2-layer board has no plane layer
+    missing = [k for k in REQUIRED if k not in raw or (k != 'plane_layers' and not raw[k])]
     if missing:
         raise SpecError(f'missing spec keys: {missing}')
     s = dict(DEFAULTS)
@@ -408,4 +409,5 @@ def main(argv=None):
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    from hard_exit import hard_exit
+    hard_exit(main)

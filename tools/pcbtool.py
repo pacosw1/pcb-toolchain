@@ -205,12 +205,14 @@ def is_neck(length, width, pad_minor, max_len=NECK_MAX_MM):
     return length <= max_len + 1e-6 and width >= pad_minor - 1e-3
 
 
-def spec_pairs(spec):
-    """(net, pad, pad, amps) for each consecutive pad pair. A net has 'amps' + 'pads', or 'chains' of them."""
+def spec_pairs(spec, parallel=False):
+    """(net, pad, pad, amps) for each consecutive pad pair. A net has 'amps' + 'pads', or 'chains' of them.
+    parallel=True adds the 'parallel' flag of the chain (or of the net) as a fifth item."""
     out = []
     for net, n in spec['nets'].items():
         for ch in n.get('chains', [n]):
-            out += [(net, u, v, ch['amps']) for u, v in zip(ch['pads'], ch['pads'][1:])]
+            flag = (bool(ch.get('parallel', n.get('parallel', False))),) if parallel else ()
+            out += [(net, u, v, ch['amps'], *flag) for u, v in zip(ch['pads'], ch['pads'][1:])]
     return out
 
 
@@ -265,6 +267,65 @@ def widest_path(edges, a, b):
                 k += 1
                 heapq.heappush(heap, (-c, k, v))
     return 0.0, []
+
+
+def max_flow(edges, a, b):
+    """Max current from a to b with parallel paths added (Edmonds-Karp). edges: (u, v, amps, label), undirected.
+    Returns (amps, labels of the min cut). A path of only unlimited edges gives (inf, [])."""
+    adj, cap = {}, {}
+    for u, v, amps, _ in edges:
+        adj.setdefault(u, set()).add(v)
+        adj.setdefault(v, set()).add(u)
+    if a not in adj or b not in adj:
+        return 0.0, []
+    unlimited = {frozenset((u, v)) for u, v, amps, _ in edges if amps == float('inf')}
+    if b in reach(adj, a, lambda u, v: frozenset((u, v)) in unlimited):
+        return float('inf'), []
+    big = sum(e[2] for e in edges if e[2] != float('inf')) + 1.0
+    for u, v, amps, _ in edges:
+        c = big if amps == float('inf') else amps
+        cap[u, v] = cap.get((u, v), 0.0) + c
+        cap[v, u] = cap.get((v, u), 0.0) + c
+    total = 0.0
+    while True:
+        prev, queue = {a: None}, collections.deque([a])
+        while queue and b not in prev:
+            u = queue.popleft()
+            for v in adj[u]:
+                if v not in prev and cap[u, v] > 1e-12:
+                    prev[v] = u
+                    queue.append(v)
+        if b not in prev:
+            break
+        path, v = [], b
+        while prev[v] is not None:
+            path.append((prev[v], v))
+            v = prev[v]
+        push = min(cap[e] for e in path)
+        for u, v in path:
+            cap[u, v] -= push
+            cap[v, u] += push
+        total += push
+    side = reach(adj, a, lambda u, v: cap[u, v] > 1e-12)
+    cut = sorted({e[3] for e in edges if (e[0] in side) != (e[1] in side)})
+    return round(total, 9), cut
+
+
+def reach(adj, a, ok):
+    """Nodes reachable from a over the arcs u->v where ok(u, v)."""
+    seen, stack = {a}, [a]
+    while stack:
+        u = stack.pop()
+        for v in adj.get(u, ()):
+            if v not in seen and ok(u, v):
+                seen.add(v)
+                stack.append(v)
+    return seen
+
+
+def pair_capacity(edges, a, b, parallel=False):
+    """(amps, items): max flow and min cut when parallel, else the widest single path and its items."""
+    return max_flow(edges, a, b) if parallel else widest_path(edges, a, b)
 
 
 def compare(a, b):
@@ -755,7 +816,7 @@ def cmd_paths(a):
     thick = copper_thickness(a.board)
     dT, plating = spec.get('dT', 10.0), spec.get('via_plating_mm', 0.018)
     bad, graphs = 0, {}
-    for net, u, v, need in spec_pairs(spec):
+    for net, u, v, need, par in spec_pairs(spec, parallel=True):
         if net not in graphs:
             graphs[net] = net_graph(p, b, net, thick, dT, plating)
         edges, have = graphs[net]
@@ -764,14 +825,18 @@ def cmd_paths(a):
             print(f'LOW {net} {u}->{v}: pads not on this net: {missing}')
             bad += 1
             continue
-        amps, path = widest_path(edges, u, v)
+        amps, path = pair_capacity(edges, u, v, par)
+        tag = ' (parallel)' if par else ''
         if amps >= need:
             if a.verbose:
-                print(f"OK  {net} {u}->{v}: " + ('pour' if amps == float('inf') else f'{amps:.2f} A') + f' >= {need} A')
+                print(f"OK  {net} {u}->{v}{tag}: " + ('pour' if amps == float('inf') else f'{amps:.2f} A') + f' >= {need} A')
             continue
         bad += 1
         if not path:
-            print(f'LOW {net} {u}->{v}: no copper path (need {need} A)')
+            print(f'LOW {net} {u}->{v}{tag}: no copper path (need {need} A)')
+            continue
+        if par:  # the min cut: these items together carry all the current
+            print(f'LOW {net} {u}->{v}{tag}: {amps:.2f} A < {need} A; {len(path)} cut items: ' + '; '.join(path[:a.limit]))
             continue
         thin = sorted({e[3] for e in edges if e[3] in path and e[2] < need})
         print(f'LOW {net} {u}->{v}: {amps:.2f} A < {need} A; {len(thin)} items under: ' + '; '.join(thin[:a.limit]))
@@ -976,4 +1041,5 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    from hard_exit import hard_exit
+    hard_exit(main)

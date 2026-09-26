@@ -234,6 +234,49 @@ class CurrentTest(unittest.TestCase):
         self.assertEqual(pt.widest_path([('A', 'x', 3.0, 'w')], 'A', 'B'), (0.0, []))
 
 
+class MaxFlowTest(unittest.TestCase):
+    inf = float('inf')
+
+    def test_two_parallel_1a_edges_give_2a(self):
+        edges = [('A', 'B', 1.0, 'p1'), ('A', 'm', 1.0, 'p2a'), ('m', 'B', 1.0, 'p2b')]
+        amps, cut = pt.max_flow(edges, 'A', 'B')
+        self.assertAlmostEqual(amps, 2.0)
+        self.assertIn('p1', cut)
+        self.assertEqual(len(cut), 2)
+
+    def test_series_chain_gives_its_minimum(self):
+        edges = [('A', 'x', 3.0, 'w1'), ('x', 'y', 0.8, 'thin'), ('y', 'B', 2.0, 'w2')]
+        self.assertEqual(pt.max_flow(edges, 'A', 'B'), (0.8, ['thin']))
+
+    def test_edges_are_undirected(self):
+        self.assertEqual(pt.max_flow([('B', 'A', 1.5, 'e')], 'A', 'B'), (1.5, ['e']))
+
+    def test_zone_island_is_unlimited_and_all_zone_path_is_infinite(self):
+        edges = [('A', 'z', self.inf, 'zone'), ('z', 'B', self.inf, 'zone')]
+        self.assertEqual(pt.max_flow(edges, 'A', 'B')[0], self.inf)
+        edges = [('A', 'z', self.inf, 'zone'), ('z', 'B', 0.5, 'v1'), ('z', 'B', 0.5, 'v2')]
+        self.assertEqual(pt.max_flow(edges, 'A', 'B'), (1.0, ['v1', 'v2']))
+
+    def test_no_path_is_zero_amps(self):
+        self.assertEqual(pt.max_flow([('A', 'x', 3.0, 'w')], 'A', 'B'), (0.0, []))
+
+    def test_spec_pairs_parallel_flag_on_net_or_chain(self):
+        spec = {'nets': {'A': {'amps': 1.0, 'parallel': True, 'pads': ['U1.1', 'C1.1']},
+                         'B': {'chains': [{'amps': 2.0, 'parallel': True, 'pads': ['U2.6', 'C2.1']},
+                                          {'amps': 0.5, 'pads': ['C2.1', 'U7.1']}]}}}
+        self.assertEqual(pt.spec_pairs(spec, parallel=True),
+                         [('A', 'U1.1', 'C1.1', 1.0, True), ('B', 'U2.6', 'C2.1', 2.0, True),
+                          ('B', 'C2.1', 'U7.1', 0.5, False)])
+
+    def test_flagless_spec_gives_the_widest_path_result(self):
+        edges = [('A', 'B', 1.0, 'p1'), ('A', 'm', 1.0, 'p2a'), ('m', 'B', 1.0, 'p2b')]
+        spec = {'nets': {'N': {'amps': 1.5, 'pads': ['A', 'B']}}}
+        (net, u, v, need, par), = pt.spec_pairs(spec, parallel=True)
+        self.assertFalse(par)
+        self.assertEqual(pt.pair_capacity(edges, u, v, par), pt.widest_path(edges, u, v))
+        self.assertEqual(pt.pair_capacity(edges, u, v, True)[0], 2.0)
+
+
 class WidenSelectTest(unittest.TestCase):
     T = [{'net': 'V5', 'layer': 'In2.Cu', 'width': 0.5, 'start': (0, 0), 'end': (10, 0)},
          {'net': 'V5', 'layer': 'F.Cu', 'width': 0.5, 'start': (0, 0), 'end': (0, 5)},

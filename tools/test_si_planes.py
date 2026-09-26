@@ -64,6 +64,19 @@ class SpecTest(unittest.TestCase):
         with self.assertRaises(sp.SpecError):
             sp.load_spec(bad)
 
+    def test_two_layer_board_with_empty_plane_layers_loads(self):
+        self.assertEqual(sp.load_spec(base_spec(adjacent={'F.Cu': 'B.Cu'}, plane_layers=[]))['plane_layers'], [])
+
+    def test_missing_plane_layers_is_still_an_error(self):
+        bad = base_spec()
+        del bad['plane_layers']
+        with self.assertRaises(sp.SpecError):
+            sp.load_spec(bad)
+
+    def test_empty_grounds_is_still_an_error(self):
+        with self.assertRaises(sp.SpecError):
+            sp.load_spec(base_spec(grounds=[]))
+
     def test_unknown_key_is_an_error(self):
         with self.assertRaises(sp.SpecError):
             sp.load_spec(base_spec(max_gap=3))
