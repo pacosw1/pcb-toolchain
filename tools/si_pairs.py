@@ -208,6 +208,12 @@ def ref_coverage(nets, layers, ref_nets, ref_at, step=0.05):
 VIA_ANTIPAD_WARN_MM = 1.5   # a single via's own allowance above this is worth a look
 
 
+def via_antipad_radius(width_mm, clearances_mm):
+    """The via-antipad allowance radius: half the via width, plus the largest of the zone
+    clearances that apply to it (0 when it has no reference zone on its layers)."""
+    return width_mm / 2 + (max(clearances_mm) if clearances_mm else 0.0)
+
+
 def _exempt_area_at(layer, x, y, areas):
     """The first exempt area whose layer and rect cover this point, else None."""
     for a in areas:
@@ -432,6 +438,31 @@ def pcb():
     return pcbnew
 
 
+def collect_vias(bd, p):
+    """Per-net via records (x, y, radius_mm) for the via-antipad allowance.
+
+    radius_mm is via_antipad_radius of the via width on F.Cu and the local clearance of every zone
+    that shares one of the via's copper layers (the widest of them applies; 0 with no such zone).
+    This reads the zone's own clearance override, not the fully resolved DRC clearance (net class,
+    board minimum, ...): a reasonable stand-in, since the tool only reads the board.
+    """
+    mm = p.ToMM
+    zones = list(bd.Zones())
+    vias = {}
+    for t in bd.GetTracks():
+        if t.GetClass() != 'PCB_VIA':
+            continue
+        net = t.GetNetname()
+        if not net:
+            continue
+        layers = set(t.GetLayerSet().Seq())
+        clearances = [mm(z.GetLocalClearance()) for z in zones if any(z.IsOnLayer(lid) for lid in layers)]
+        r = via_antipad_radius(mm(t.GetWidth(p.F_Cu)), clearances)
+        pos = t.GetPosition()
+        vias.setdefault(net, []).append((mm(pos.x), mm(pos.y), r))
+    return vias
+
+
 def load_board(path, net_names, dru_path):
     """Read the board (no write). Fill the zones in memory only, so the reference check sees the current fill."""
     with open(path) as f:
@@ -456,12 +487,13 @@ def load_board(path, net_names, dru_path):
         for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
             net['segs'].append((t.GetLayerName(), x1, y1, x2, y2, mm(t.GetWidth())))
     zones = list(bd.Zones())
+    vias = {n: v for n, v in collect_vias(bd, p).items() if n in nets}
 
     def ref_at(layer, x, y):
         lid = bd.GetLayerID(layer)
         pos = p.VECTOR2I(p.FromMM(x), p.FromMM(y))
         return {z.GetNetname() for z in zones if z.IsOnLayer(lid) and z.HitTestFilledArea(lid, pos)}
-    return {'stackup': parse_stackup(text), 'nets': nets, 'ref_at': ref_at, 'dru': dru}
+    return {'stackup': parse_stackup(text), 'nets': nets, 'ref_at': ref_at, 'dru': dru, 'vias': vias}
 
 
 def main(argv=None):

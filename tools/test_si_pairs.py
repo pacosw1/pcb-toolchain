@@ -173,6 +173,14 @@ class Evaluate(unittest.TestCase):
         self.assertEqual(status(sp.evaluate(spec, board())), {'reference': 'PASS'})
 
 
+class ViaAntipadRadius(unittest.TestCase):
+    def test_radius_is_half_width_plus_the_largest_zone_clearance(self):
+        self.assertAlmostEqual(sp.via_antipad_radius(0.6, [0.3, 0.2]), 0.6)
+
+    def test_no_clearance_is_just_half_the_via_width(self):
+        self.assertAlmostEqual(sp.via_antipad_radius(0.6, []), 0.3)
+
+
 class ExemptAreas(unittest.TestCase):
     def spec(self, **kw):
         return {'stackup': {'layers': LAYERS}, 'pairs': [dict(PAIR, **kw)]}
