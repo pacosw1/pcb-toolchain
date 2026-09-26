@@ -15,6 +15,7 @@ Run with the KiCad bundled Python (it has pcbnew):
   $PY tools/pcbtool.py near   BOARD X Y [--r 0.3] [--within 1]  copper of all nets near a point, edge gap
   $PY tools/pcbtool.py drc    BOARD                           DRC --schematic-parity summary
   $PY tools/pcbtool.py corridor BOARD NET [--margin 3] [--cell 0.25] [--pair N] [--box X1 Y1 X2 Y2]  unconnected pad pairs + ASCII free/blocked map
+  $PY tools/pcbtool.py connect BOARD INTENT                 intent lines -> 0/45/90 tracks, class width/via, clearance check
   $PY tools/pcbtool.py netcheck BOARD NET                     DRC on a temp copy: one total line + this net only
   $PY tools/pcbtool.py widths BOARD [--limit N]              tracks thinner than the net class width (current)
   $PY tools/pcbtool.py paths  BOARD SPEC.json [--verbose]     widest copper path between power pads >= design current
@@ -32,6 +33,9 @@ Route spec:  {"clear": ["NET"], "routes": [{"net": "VBAT", "width": 1.5, "layer"
               "move_vias": [{"net": "GND", "from": [x, y], "to": [x, y]}]}
   A {"via": [x, y]} point adds a via and changes the layer (F.Cu <-> B.Cu).
   Segments must be 0/45/90 degrees unless the route has "any_angle": true.
+Intent line: NET REF.PAD -> REF.PAD [layer=F.Cu] [width=0.3|auto] [via=auto|0.6/0.3] [through x,y] [via x,y] ...
+  Waypoints in order; `via x,y` changes the layer. Each leg: half straight, 45 degrees, half straight.
+  A conflict with other-net copper (class clearance, board edge) writes nothing. '#' starts a comment.
 Coordinates: KiCad mm, Y down.
 """
 import argparse
@@ -275,6 +279,98 @@ def shape_box(shape):
     pts = [shape[1], shape[2]] if shape[0] == 'seg' else shape[1]
     r = shape[3] if shape[0] == 'seg' else 0
     return (min(q[0] for q in pts) - r, min(q[1] for q in pts) - r, max(q[0] for q in pts) + r, max(q[1] for q in pts) + r)
+
+
+def parse_intent(line):
+    """One connect intent line: NET REF.PAD -> REF.PAD [layer=L] [width=W] [via=auto|D/DRILL] [through x,y] [via x,y] ...
+    through = waypoint on the current layer, via = via at the point and a layer change. Missing options are None (auto)."""
+    tok = line.split()
+    if len(tok) < 4 or tok[2] != '->':
+        raise ValueError(f'expected "NET REF.PAD -> REF.PAD ...": {line}')
+
+    def pad(t):
+        ref, dot, num = t.partition('.')
+        if not (ref and dot and num):
+            raise ValueError(f'expected REF.PAD, got {t}')
+        return ref, num
+    it = {'net': tok[0], 'a': pad(tok[1]), 'b': pad(tok[3]), 'layer': None, 'width': None, 'via': None, 'points': []}
+    rest = tok[4:]
+    while rest:
+        t = rest.pop(0)
+        if t in ('through', 'via'):
+            try:
+                x, y = rest.pop(0).split(',')
+                it['points'].append((t, (float(x), float(y))))
+            except (IndexError, ValueError):
+                raise ValueError(f'{t} needs x,y: {line}') from None
+        elif t.startswith('layer='):
+            it['layer'] = t[6:]
+        elif t.startswith('width='):
+            it['width'] = None if t[6:] == 'auto' else float(t[6:])
+        elif t.startswith('via='):
+            it['via'] = None if t[4:] == 'auto' else tuple(float(v) for v in t[4:].split('/'))
+        else:
+            raise ValueError(f'unknown option {t}: {line}')
+    return it
+
+
+def leg(a, b):
+    """Points from a to b (a not included) as 0/90 and 45 degree segments: half the straight part, the diagonal,
+    the other half. So every pad and waypoint is entered and left straight."""
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    d = min(abs(dx), abs(dy))
+    s = max(abs(dx), abs(dy)) - d
+    if d < 1e-9 or s < 1e-9:
+        return [b]
+    sx, sy = math.copysign(1, dx), math.copysign(1, dy)
+    h = (sx * s / 2, 0) if abs(dx) > abs(dy) else (0, sy * s / 2)
+    p1 = (a[0] + h[0], a[1] + h[1])
+    p2 = (p1[0] + sx * d, p1[1] + sy * d)
+    return [p1, p2, b]
+
+
+def intent_route(it, start, end, layer, width, via):
+    """A route spec entry (see Route spec) from an intent, the pad centres, the start layer, width and via (size, drill)."""
+    path, cur = [start], start
+    for kind, q in it['points'] + [('end', end)]:
+        pts = leg(cur, q)
+        path.extend(pts[:-1])
+        path.append({'via': q} if kind == 'via' else q)
+        cur = q
+    return {'net': it['net'], 'width': width, 'layer': layer, 'via_size': via[0], 'via_drill': via[1], 'path': path}
+
+
+def seg_seg_dist(a, b, c, d):
+    """Smallest distance between segments a-b and c-d (0 when they cross)."""
+    def side(p, q, r):
+        return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+    d1, d2, d3, d4 = side(c, d, a), side(c, d, b), side(a, b, c), side(a, b, d)
+    if ((d1 > 0) != (d2 > 0)) and ((d3 > 0) != (d4 > 0)) and 0 not in (d1, d2, d3, d4):
+        return 0
+    return min(seg_dist(a, c, d), seg_dist(b, c, d), seg_dist(c, a, b), seg_dist(d, a, b))
+
+
+def shape_seg_dist(shape, a, b):
+    """Distance from segment a-b to a shape edge; 0 when the segment is inside or crosses a polygon."""
+    if shape[0] == 'seg':
+        return seg_seg_dist(a, b, shape[1], shape[2]) - shape[3]
+    pts = shape[1]
+    if in_poly(a, pts):
+        return 0
+    return min(seg_seg_dist(a, b, p, q) for p, q in zip(pts, pts[1:] + pts[:1]))
+
+
+def first_conflict(segs, vias, via_size, obstacles):
+    """First new copper item closer than its clearance to other-net copper, as one line, or None.
+    segs: expand_route segments; obstacles: {layer: [(shape, clearance, label)]}; a via is on every layer given."""
+    items = [(L, 'track', a, b, w) for a, b, L, w in segs] + [(L, 'via', q, q, via_size) for q in vias for L in obstacles]
+    for L, kind, a, b, w in items:
+        for shape, clr, label in obstacles.get(L, []):
+            gap = shape_seg_dist(shape, a, b) - w / 2
+            if gap < clr - 1e-6:
+                where = f'({a[0]:.3f}, {a[1]:.3f})' + ('' if kind == 'via' else f'-({b[0]:.3f}, {b[1]:.3f})')
+                return f'{L} {kind} {where} w {w:g}: gap {gap:.3f} < {clr:g} to {label}'
+    return None
 
 
 def corridor_map(grid, outline, edge_gap, own, others, marks):
@@ -1039,42 +1135,15 @@ def cmd_corridor(a):
     outline = [poly_points(p, o.Outline(i)) for i in range(o.OutlineCount())]
     edge_gap = mm(ds.m_CopperEdgeClearance) + width / 2
     holes = [(('poly', poly_points(p, o.Hole(i, h))), edge_gap) for i in range(o.OutlineCount()) for h in range(o.HoleCount(i))]
-    net_clr = {}
-
-    def keep(net):
-        if net not in net_clr:
-            net_clr[net] = max(clr, net_rules(pro, net)[2] if net else 0)
-        return net_clr[net] + width / 2
     print(f'grid x0={x0:.3f} y0={y0:.3f} cell={cell:g} cols={cols} rows={rows}: cell (c, r) centre = '
           f'(x0 + (c + 0.5) * cell, y0 + (r + 0.5) * cell). Legend: . free for a {width:g} mm track centre, '
           f'# blocked (other copper + clearance, edge, keepout), + own copper, letters = pads above. '
           f'Pours of other nets are not shown.')
     ruler = '   ' + ''.join(str(c // 10 % 10) if c % 10 == 0 else ' ' for c in range(cols))
+    net_clr = {}
     for layer in (p.F_Cu, p.B_Cu):
-        own, others = [], list(holes)
-        for t in b.GetTracks():
-            if not t.IsOnLayer(layer):
-                continue
-            if isinstance(t, p.PCB_VIA):
-                c = (mm(t.GetPosition().x), mm(t.GetPosition().y))
-                s = ('seg', c, c, mm(t.GetWidth(p.F_Cu)) / 2)
-            else:
-                s = ('seg', (mm(t.GetStart().x), mm(t.GetStart().y)), (mm(t.GetEnd().x), mm(t.GetEnd().y)), mm(t.GetWidth()) / 2)
-            (own.append(s) if t.GetNetname() == a.net else others.append((s, keep(t.GetNetname()))))
-        for fp in b.GetFootprints():
-            for pd in fp.Pads():
-                if not pd.IsOnLayer(layer) and pd.GetAttribute() != p.PAD_ATTRIB_NPTH:
-                    continue
-                if pd.GetAttribute() == p.PAD_ATTRIB_NPTH:
-                    c = (mm(pd.GetPosition().x), mm(pd.GetPosition().y))
-                    others.append((('seg', c, c, mm(pd.GetDrillSize().x) / 2), keep('')))
-                    continue
-                poly = pd.GetEffectivePolygon(layer)
-                s = ('poly', poly_points(p, poly.Outline(0)))
-                (own.append(s) if pd.GetNetname() == a.net else others.append((s, keep(pd.GetNetname()))))
-        for z in b.Zones():
-            if z.GetIsRuleArea() and z.GetDoNotAllowTracks() and z.IsOnLayer(layer):
-                others.append((('poly', poly_points(p, z.Outline().Outline(0))), width / 2))
+        own, obs = copper_obstacles(p, b, pro, a.net, clr, layer, net_clr)
+        others = list(holes) + [(s, c + width / 2) for s, c, _ in obs]
         box = (x0 - 5, y0 - 5, x0 + cols * cell + 5, y0 + rows * cell + 5)  # drop far items (keep < 5 mm)
 
         def near(s):
@@ -1086,6 +1155,119 @@ def cmd_corridor(a):
         print(ruler)
         for r, line in enumerate(rows_):
             print(f'{r:2d} {line}')
+
+
+def copper_obstacles(p, b, pro, net, clr, layer, net_clr):
+    """(own shapes, [(shape, clearance, label)]) on one copper layer: tracks, vias, pads, NPTH holes, track keepouts.
+    clearance = max(clr, the other net's class clearance); 0 for a keepout. net_clr caches the class clearances."""
+    mm = p.ToMM
+
+    def keep(n):
+        if n not in net_clr:
+            net_clr[n] = max(clr, net_rules(pro, n)[2] if n else 0)
+        return net_clr[n]
+    own, others = [], []
+    for t in b.GetTracks():
+        if not t.IsOnLayer(layer):
+            continue
+        if isinstance(t, p.PCB_VIA):
+            c = (mm(t.GetPosition().x), mm(t.GetPosition().y))
+            s, kind = ('seg', c, c, mm(t.GetWidth(p.F_Cu)) / 2), 'via'
+        else:
+            s, kind = ('seg', (mm(t.GetStart().x), mm(t.GetStart().y)), (mm(t.GetEnd().x), mm(t.GetEnd().y)), mm(t.GetWidth()) / 2), 'track'
+        (own.append(s) if t.GetNetname() == net else others.append((s, keep(t.GetNetname()), f'{kind} {t.GetNetname()}')))
+    for fp in b.GetFootprints():
+        for pd in fp.Pads():
+            if not pd.IsOnLayer(layer) and pd.GetAttribute() != p.PAD_ATTRIB_NPTH:
+                continue
+            name = f'{fp.GetReference()}.{pd.GetNumber()}'
+            if pd.GetAttribute() == p.PAD_ATTRIB_NPTH:
+                c = (mm(pd.GetPosition().x), mm(pd.GetPosition().y))
+                others.append((('seg', c, c, mm(pd.GetDrillSize().x) / 2), keep(''), f'NPTH hole {name}'))
+                continue
+            poly = pd.GetEffectivePolygon(layer)
+            s = ('poly', poly_points(p, poly.Outline(0)))
+            (own.append(s) if pd.GetNetname() == net else others.append((s, keep(pd.GetNetname()), f'pad {name} {pd.GetNetname()}')))
+    for z in b.Zones():
+        if z.GetIsRuleArea() and z.GetDoNotAllowTracks() and z.IsOnLayer(layer):
+            others.append((('poly', poly_points(p, z.Outline().Outline(0))), 0, 'track keepout'))
+    return own, others
+
+
+def cmd_connect(a):
+    """Intent lines -> tracks and vias. The agent chooses the path (waypoints, vias); the code makes the 0/45/90 geometry,
+    takes the class width and via, checks clearance to other-net copper, then writes with the route command.
+    On a conflict nothing is written. Pours of other nets are not checked (they refill)."""
+    import tempfile
+    text = open(a.spec).read() if os.path.exists(a.spec) else a.spec
+    lines = [l.split('#', 1)[0].strip() for l in text.splitlines()]
+    try:
+        intents = [parse_intent(l) for l in lines if l]
+    except ValueError as e:
+        sys.exit(str(e))
+    if not intents:
+        sys.exit('no intent lines')
+    p = pcb()
+    b = p.LoadBoard(a.board)
+    if b is None:
+        sys.exit(f'cannot load {a.board}')
+    mm = p.ToMM
+    pro = json.load(open(os.path.splitext(a.board)[0] + '.kicad_pro'))
+    classes = {c['name']: c for c in pro['net_settings']['classes']}
+    copper = [b.GetLayerName(l) for l in b.GetEnabledLayers().CuStack()]
+    o = p.SHAPE_POLY_SET()
+    b.GetBoardPolygonOutlines(o, True)
+    edge_clr = mm(b.GetDesignSettings().m_CopperEdgeClearance)
+    edges = []
+    for i in range(o.OutlineCount()):
+        for pts in [poly_points(p, o.Outline(i))] + [poly_points(p, o.Hole(i, h)) for h in range(o.HoleCount(i))]:
+            edges += [(('seg', u, v, 0), edge_clr, 'board edge') for u, v in zip(pts, pts[1:] + pts[:1])]
+    routes, new = [], []
+    for it in intents:
+        net = it['net']
+        if b.FindNet(net) is None:
+            sys.exit(f'no net {net} on the board')
+        ends = []
+        for ref, num in (it['a'], it['b']):
+            fp = b.FindFootprintByReference(ref)
+            pd = fp and next((q for q in fp.Pads() if q.GetNumber() == num), None)
+            if pd is None:
+                sys.exit(f'no pad {ref}.{num}')
+            if pd.GetNetname() != net:
+                sys.exit(f'pad {ref}.{num} is on net {pd.GetNetname()}, not {net}')
+            ends.append(((mm(pd.GetPosition().x), mm(pd.GetPosition().y)), pd))
+        cls_name, cls_w, clr = net_rules(pro, net)
+        cls = classes[cls_name]
+        (start, pa), (end, pb) = ends
+        layer = it['layer'] or ('B.Cu' if pa.GetAttribute() == p.PAD_ATTRIB_SMD and pa.IsOnLayer(p.B_Cu) else 'F.Cu')
+        via = it['via'] or (cls['via_diameter'], cls['via_drill'])
+        r = intent_route(it, start, end, layer, it['width'] or cls_w, via)
+        try:
+            segs, vias = expand_route(r)
+        except ValueError as e:
+            sys.exit(str(e))
+        for pd, L, what in ((pa, segs[0][2], 'start'), (pb, segs[-1][2], 'end')):
+            if not pd.IsOnLayer(b.GetLayerID(L)):
+                sys.exit(f'{net}: the {what} pad is not on {L}; add or remove a via')
+        net_clr = {}
+        obstacles = {L: copper_obstacles(p, b, pro, net, clr, b.GetLayerID(L), net_clr)[1] + edges for L in copper}
+        for n2, s2, v2_, vs2 in new:  # the other nets of this spec
+            if n2 != net:
+                for L in copper:
+                    obstacles[L] += [(('seg', u, v, w / 2), clr, f'new track {n2}') for u, v, L2, w in s2 if L2 == L]
+                    obstacles[L] += [(('seg', q, q, vs2 / 2), clr, f'new via {n2}') for q in v2_]
+        hit = first_conflict(segs, vias, via[0], obstacles)
+        if hit:
+            print(f'conflict: {net} {hit}; nothing written')
+            sys.exit(1)
+        new.append((net, segs, vias, via[0]))
+        routes.append(r)
+    with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as f:
+        json.dump({'routes': routes}, f)
+    try:
+        cmd_route(argparse.Namespace(board=a.board, spec=f.name))
+    finally:
+        os.remove(f.name)
 
 
 string_letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
@@ -1296,6 +1478,8 @@ def main():
     s.add_argument('--pair', type=int, help='map only this pair (1 = first listed)')
     s.add_argument('--box', type=float, nargs=4, metavar=('X1', 'Y1', 'X2', 'Y2'), help='map only this window')
     s.set_defaults(f=cmd_corridor)
+    s = sp.add_parser('connect'); s.add_argument('board'); s.add_argument('spec', help='intent file, or one intent line')
+    s.set_defaults(f=cmd_connect)
     s = sp.add_parser('netcheck'); s.add_argument('board'); s.add_argument('net'); s.set_defaults(f=cmd_netcheck)
     s = sp.add_parser('paths'); s.add_argument('board'); s.add_argument('spec'); s.add_argument('--limit', type=int, default=4)
     s.add_argument('--verbose', action='store_true'); s.set_defaults(f=cmd_paths)

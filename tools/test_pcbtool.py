@@ -450,6 +450,59 @@ class NetCheckTest(unittest.TestCase):
         self.assertTrue(pt.net_check(self.D, 'BAT')[1])
 
 
+class IntentParseTest(unittest.TestCase):
+    def test_full_line(self):
+        it = pt.parse_intent('/SDA U1.3 -> R5.1 layer=B.Cu width=0.3 via=0.6/0.3 through 10,5 via 12,5 through 14,7')
+        self.assertEqual(it, {'net': '/SDA', 'a': ('U1', '3'), 'b': ('R5', '1'), 'layer': 'B.Cu', 'width': 0.3,
+                              'via': (0.6, 0.3), 'points': [('through', (10.0, 5.0)), ('via', (12.0, 5.0)), ('through', (14.0, 7.0))]})
+
+    def test_defaults_are_auto(self):
+        it = pt.parse_intent('GND C1.2 -> U1.EP')
+        self.assertEqual((it['layer'], it['width'], it['via'], it['points'], it['b']), (None, None, None, [], ('U1', 'EP')))
+
+    def test_bad_lines_raise(self):
+        for bad in ('GND C1.2 R1.1', 'GND C1.2 -> R1.1 through 1', 'GND C1.2 -> R1.1 color=red', 'GND C1 -> R1.1'):
+            with self.assertRaises(ValueError, msg=bad):
+                pt.parse_intent(bad)
+
+
+class IntentLegTest(unittest.TestCase):
+    def test_straight_and_pure_diagonal_are_one_segment(self):
+        self.assertEqual(pt.leg((0, 0), (5, 0)), [(5, 0)])
+        self.assertEqual(pt.leg((0, 0), (3, -3)), [(3, -3)])
+
+    def test_diagonal_in_the_middle_of_the_straight_part(self):
+        self.assertEqual(pt.leg((0, 0), (10, 2)), [(4.0, 0), (6.0, 2), (10, 2)])
+        self.assertEqual(pt.leg((0, 0), (-1, -5)), [(0, -2.0), (-1, -3.0), (-1, -5)])
+
+    def test_route_through_points_and_via(self):
+        it = pt.parse_intent('N A.1 -> B.1 via 4,0 through 4,4')
+        r = pt.intent_route(it, (0, 0), (8, 4), 'F.Cu', 0.25, (0.6, 0.3))
+        self.assertEqual(r, {'net': 'N', 'width': 0.25, 'layer': 'F.Cu', 'via_size': 0.6, 'via_drill': 0.3,
+                             'path': [(0, 0), {'via': (4.0, 0.0)}, (4.0, 4.0), (8, 4)]})
+        segs, vias = pt.expand_route(r)                     # the route writer accepts it: 0/45/90 only
+        self.assertEqual([s[2] for s in segs], ['F.Cu', 'B.Cu', 'B.Cu'])
+
+
+class SegClearTest(unittest.TestCase):
+    def test_seg_seg_distance(self):
+        self.assertAlmostEqual(pt.seg_seg_dist((0, 0), (10, 0), (5, 1), (5, 4)), 1)
+        self.assertEqual(pt.seg_seg_dist((0, 0), (10, 0), (5, -1), (5, 4)), 0)   # crossing
+
+    def test_shape_seg_dist_poly_inside_is_zero(self):
+        sq = ('poly', [(0, 0), (4, 0), (4, 4), (0, 4)])
+        self.assertEqual(pt.shape_seg_dist(sq, (1, 1), (2, 2)), 0)
+        self.assertAlmostEqual(pt.shape_seg_dist(sq, (6, 0), (6, 4)), 2)
+        self.assertAlmostEqual(pt.shape_seg_dist(('seg', (0, 0), (0, 4), 0.5), (2, 1), (2, 3)), 1.5)
+
+    def test_first_conflict_names_the_obstacle(self):
+        obs = {'F.Cu': [(('seg', (5, -5), (5, 5), 0.125), 0.2, 'track GND')], 'B.Cu': []}
+        hit = pt.first_conflict([((0, 0), (10, 0), 'F.Cu', 0.2)], [], 0.6, obs)
+        self.assertRegex(hit, r'^F\.Cu track \(0\.000, 0\.000\)-\(10\.000, 0\.000\) w 0\.2: gap -0\.225 < 0\.2 to track GND$')
+        self.assertIsNone(pt.first_conflict([((0, 0), (10, 0), 'B.Cu', 0.2)], [], 0.6, obs))
+        self.assertRegex(pt.first_conflict([], [(5, 0.8)], 0.6, obs), r'^F\.Cu via \(5\.000, 0\.800\)')
+
+
 try:
     import pcbnew
 except ImportError:
@@ -498,7 +551,8 @@ class CorridorBoardTest(unittest.TestCase):
         path = os.path.join(d, 'T.kicad_pcb')
         b.Save(path)
         with open(os.path.join(d, 'T.kicad_pro'), 'w') as f:
-            json.dump({'net_settings': {'classes': [{'name': 'Default', 'track_width': 0.2, 'clearance': 0.2}],
+            json.dump({'net_settings': {'classes': [{'name': 'Default', 'track_width': 0.2, 'clearance': 0.2,
+                                                         'via_diameter': 0.6, 'via_drill': 0.3}],
                                         'netclass_patterns': []}}, f)
         return path
 
@@ -552,6 +606,43 @@ class CorridorBoardTest(unittest.TestCase):
     def test_large_box_grows_the_cell_and_says_so(self):
         out = self.run_box(0, 0, 60, 20)
         self.assertIn('cell grown from 0.5 to 0.75', out)
+
+    def run_connect(self, *intent):
+        import hashlib
+        import pathlib
+        import subprocess
+        import sys
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            board = self.make_board(d)
+            before = hashlib.sha256(pathlib.Path(board).read_bytes()).hexdigest()
+            spec = os.path.join(d, 'intent.txt')
+            with open(spec, 'w') as f:
+                f.write('# comment\n' + '\n'.join(intent) + '\n')
+            r = subprocess.run([sys.executable, os.path.join(HERE, 'pcbtool.py'), 'connect', board, spec],
+                               capture_output=True, text=True)
+            b = pcbnew.LoadBoard(board)
+            sig = [t for t in b.GetTracks() if t.GetNetname() == 'SIG']
+            changed = hashlib.sha256(pathlib.Path(board).read_bytes()).hexdigest() != before
+        return r, sig, changed
+
+    def test_connect_conflict_writes_nothing(self):
+        r, sig, changed = self.run_connect('SIG R1.1 -> R2.1')
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertFalse(changed)
+        self.assertEqual(r.stdout.strip().splitlines(), [r.stdout.strip()])
+        self.assertIn('to track GND', r.stdout)
+        self.assertIn('nothing written', r.stdout)
+
+    def test_connect_with_vias_under_the_block(self):
+        r, sig, changed = self.run_connect('SIG R1.1 -> R2.1 via 12,10 via 18,10')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertTrue(changed)
+        vias = [t for t in sig if isinstance(t, pcbnew.PCB_VIA)]
+        segs = sorted((t.GetLayerName(), pcbnew.ToMM(t.GetWidth())) for t in sig if not isinstance(t, pcbnew.PCB_VIA))
+        self.assertEqual(len(vias), 2)
+        self.assertEqual(segs, [('B.Cu', 0.2), ('F.Cu', 0.2), ('F.Cu', 0.2)])   # class width, B.Cu under the GND track
+        self.assertEqual(pcbnew.ToMM(vias[0].GetWidth(pcbnew.F_Cu)), 0.6)
 
 
 def json_copy(x):
