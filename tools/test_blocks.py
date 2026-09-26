@@ -83,6 +83,11 @@ class BomTest(unittest.TestCase):
         self.assertEqual(rows[0]['qty'], 2)
         self.assertEqual(rows[0]['datasheet'], 'SS36.pdf')
 
+    def test_row_description_is_first_non_empty_of_group(self):
+        rows = bk.bom(bk.parse_footprints(PCB))
+        self.assertEqual(rows[0]['description'], 'reverse polarity diode')
+        self.assertEqual(rows[1]['description'], '')
+
 
 class CheckPartsTest(unittest.TestCase):
     def test_missing_c_number_and_datasheet_are_errors(self):
@@ -136,6 +141,36 @@ class RevisionTest(unittest.TestCase):
             open(os.path.join(d, 'b.kicad_sch'), 'w').write('x'); r3 = bk.revision([d])
             self.assertEqual(len({r1, r2, r3}), 3)
             self.assertEqual(r3, bk.revision([d]))
+
+
+class CostTest(unittest.TestCase):
+    def test_total_from_unit_price_and_qty_extended_count(self):
+        rows = [{'refs': ['C1', 'C2'], 'qty': 2, 'lcsc': 'C13585', 'evidence': {'price': 0.2653, 'jlc_class': 'Basic Part'}},
+                {'refs': ['F1'], 'qty': 1, 'lcsc': 'C87383', 'evidence': {'price': 0.3748, 'jlc_class': 'Extended Part'}},
+                {'refs': ['TP1'], 'qty': 1, 'lcsc': '', 'evidence': None}]
+        c = bk.cost(rows)
+        self.assertAlmostEqual(c['parts_usd'], 0.9054, places=4)
+        self.assertEqual(c['extended'], ['C87383'])
+        self.assertEqual(c['missing'], ['TP1'])
+
+    def test_order_fee_per_unique_extended_part(self):
+        rows = [{'refs': ['F1'], 'qty': 1, 'lcsc': 'C87383', 'evidence': {'price': 0.3748, 'jlc_class': 'Extended Part'}},
+                {'refs': ['D3'], 'qty': 1, 'lcsc': 'C224048', 'evidence': {'price': 0.2958, 'jlc_class': 'Extended Part'}},
+                {'refs': ['C1'], 'qty': 1, 'lcsc': 'C13585', 'evidence': {'price': 0.2653, 'jlc_class': 'Basic Part'}}]
+        c = bk.cost(rows)
+        self.assertEqual(c['extended_fee_usd'], 2 * bk.JLC_EXTENDED_FEE_USD)
+        self.assertAlmostEqual(c['first_board_usd'], 0.9359 + 2 * bk.JLC_EXTENDED_FEE_USD, places=4)
+
+
+class ViewVariantTest(unittest.TestCase):
+    def test_variant_changes_with_the_export_command(self):
+        v1 = bk.view_variant('front')
+        ext, cmd = bk.VIEWS['front']
+        bk.VIEWS['front'] = (ext, lambda s, o: cmd(s, o) + ['--extra'])
+        try:
+            self.assertNotEqual(v1, bk.view_variant('front'))
+        finally:
+            bk.VIEWS['front'] = (ext, cmd)
 
 
 class RecolorTest(unittest.TestCase):

@@ -89,8 +89,12 @@ def bom(fps):
             continue
         k = (f['value'], f['footprint'], f['lcsc'], f.get('mpn', ''), f.get('datasheet', ''))
         rows.setdefault(k, []).append(f['ref'])
+    desc = {}
+    for f in sorted(fps, key=lambda f: _natural(f['ref'])):
+        desc.setdefault(f['ref'], f.get('description', ''))
     out = [{'refs': sorted(r, key=_natural), 'value': k[0], 'footprint': k[1], 'lcsc': k[2], 'mpn': k[3],
-            'datasheet': k[4], 'qty': len(r)} for k, r in rows.items()]
+            'datasheet': k[4], 'qty': len(r),
+            'description': next((desc[x] for x in sorted(r, key=_natural) if desc[x]), '')} for k, r in rows.items()]
     return sorted(out, key=lambda r: _natural(r['refs'][0]))
 
 
@@ -212,8 +216,30 @@ def evidence(lcsc):
     if not files:
         return None
     d = json.loads(_read(files[-1], '{}') or '{}')
+    src = _read(os.path.join(REG, 'cad-assets', lcsc, 'easyeda-bridge-source.json'), '')
+    cls = re.search(r'"JLCPCB Part Class"\s*:\s*"([^"]+)"', src)
     return {'date': d.get('fetched_at_utc', '')[:10], 'stock': (d.get('purchase_record') or {}).get('overseasStockCount'),
-            'verified': d.get('stock_verified'), 'file': os.path.relpath(files[-1], REG)}
+            'verified': d.get('stock_verified'), 'file': os.path.relpath(files[-1], REG),
+            'price': (d.get('purchase_record') or {}).get('initialPrice'), 'jlc_class': cls.group(1) if cls else None}
+
+
+JLC_EXTENDED_FEE_USD = 3.0  # JLC PCBA loading fee per unique Extended part per order; recheck at order time
+
+
+def cost(rows):
+    """Parts cost estimate: unit price at the smallest quantity (JLC evidence) x qty, per block.
+    Extended parts are listed because JLC adds a per-order fee for each unique Extended part."""
+    total, ext, missing = 0.0, [], []
+    for r in rows:
+        ev = r.get('evidence') or {}
+        if ev.get('price') is None:
+            missing += r['refs']; continue
+        total += ev['price'] * r['qty']
+        if (ev.get('jlc_class') or '').startswith('Extended'):
+            ext.append(r['lcsc'])
+    fee = len(set(ext)) * JLC_EXTENDED_FEE_USD
+    return {'parts_usd': round(total, 4), 'extended': sorted(set(ext)), 'missing': missing,
+            'extended_fee_usd': fee, 'first_board_usd': round(total + fee, 4)}
 
 
 def detail(kind, iid):
@@ -229,7 +255,7 @@ def detail(kind, iid):
     rows = bom(fps)
     for r in rows:
         r['evidence'] = evidence(r['lcsc'])
-    d = {'kind': kind, 'id': iid, 'bom': rows, 'part_errors': check_parts(fps, idx),
+    d = {'kind': kind, 'id': iid, 'bom': rows, 'cost': cost(rows), 'part_errors': check_parts(fps, idx),
          'datasheets': [{'name': n, 'ok': n in idx and idx[n][0] == idx[n][1], 'present': n in idx} for n in names],
          'files': sorted(f for f in os.listdir(it['dir']) if f.endswith(('.kicad_sch', '.kicad_pcb', '.kicad_pro', '.kicad_dru', '.json'))),
          'has_sch': os.path.exists(it['sch']), 'has_pcb': os.path.exists(it['pcb'])}
@@ -255,7 +281,7 @@ def recolor_svg(text, color):
 # Overlay layers: User.1 = block borders and labels, User.2 = component borders and labels.
 OVERLAYS = {'blocks': ('User.1', '#00B8D4'), 'components': ('User.2', '#D500F9')}
 _svg_layer = lambda layer: (lambda src, out: ['kicad-cli', 'pcb', 'export', 'svg', '--mode-single', '--page-size-mode', '2',
-                                             '--exclude-drawing-sheet', '-l', layer, '-o', out, src])
+                                             '--exclude-drawing-sheet', '--drill-shape-opt', '0', '-l', layer, '-o', out, src])
 
 VIEWS = {
     'sch': ('svg', lambda src, out: ['kicad-cli', 'sch', 'export', 'svg', '-e', '-o', os.path.dirname(out), src]),
@@ -263,9 +289,9 @@ VIEWS = {
     'bottom': ('png', lambda src, out: ['kicad-cli', 'pcb', 'render', '--side', 'bottom', '--quality', 'high', '-w', '1800', '-h', '1200', '-o', out, src]),
     'iso': ('png', lambda src, out: ['kicad-cli', 'pcb', 'render', '--rotate', '-45,0,45', '--perspective', '--quality', 'high', '-w', '1800', '-h', '1200', '-o', out, src]),
     'front': ('svg', lambda src, out: ['kicad-cli', 'pcb', 'export', 'svg', '--mode-single', '--page-size-mode', '2', '--exclude-drawing-sheet',
-                                       '-l', 'F.Cu,F.Mask,F.SilkS,F.Fab,Edge.Cuts', '-o', out, src]),
+                                       '-l', 'F.Cu,F.Mask,F.SilkS,Edge.Cuts', '-o', out, src]),
     'back': ('svg', lambda src, out: ['kicad-cli', 'pcb', 'export', 'svg', '--mode-single', '--page-size-mode', '2', '--exclude-drawing-sheet',
-                                      '-m', '-l', 'B.Cu,B.Mask,B.SilkS,B.Fab,Edge.Cuts', '-o', out, src]),
+                                      '-m', '-l', 'B.Cu,B.Mask,B.SilkS,Edge.Cuts', '-o', out, src]),
     'blocks': ('svg', _svg_layer(OVERLAYS['blocks'][0])),
     'components': ('svg', _svg_layer(OVERLAYS['components'][0])),
     'glb': ('glb', lambda src, out: ['kicad-cli', 'pcb', 'export', 'glb', '-f', '--subst-models', '--include-tracks', '--include-pads',
@@ -273,6 +299,11 @@ VIEWS = {
 }
 _locks = {}
 _locks_guard = threading.Lock()
+
+
+def view_variant(view):
+    """Cache variant: the view name plus its export command, so a changed command gives a new render."""
+    return view + ' ' + ' '.join(VIEWS[view][1]('SRC', 'OUT'))
 
 
 def render(kind, iid, view):
@@ -283,7 +314,7 @@ def render(kind, iid, view):
     if not os.path.exists(src):
         return None, f'no source {os.path.basename(src)}'
     ext, cmd = VIEWS[view]
-    key = cache_key([src], view)
+    key = cache_key([src], view_variant(view))
     out_dir = os.path.join(CACHE, key)
     out = os.path.join(out_dir, f'{iid}-{view}.{ext}')
     with _locks_guard:
@@ -476,9 +507,12 @@ const T_={
 overview(d){const n=d.bom.reduce((a,r)=>a+r.qty,0),e=d.part_errors.length+(d.fact_errors||[]).length;
  $('#tab').innerHTML=`<div class="card"><table>
  <tr><th>Parts</th><td>${n} in ${d.bom.length} lines</td></tr>
+ <tr><th>Parts cost</th><td>${d.cost?`<b>$${d.cost.first_board_usd.toFixed(2)}</b> for one board = parts $${d.cost.parts_usd.toFixed(2)} (JLC unit price at the smallest quantity, dated snapshots) + Extended-part fee $${d.cost.extended_fee_usd.toFixed(2)} (${d.cost.extended.length} x $3.00 per order: ${d.cost.extended.map(esc).join(', ')}). Each extra board adds only $${d.cost.parts_usd.toFixed(2)}.${d.cost.missing.length?` · <span class="bad">no price: ${d.cost.missing.map(esc).join(', ')}</span>`:''}`:''}</td></tr>
  <tr><th>Part checks</th><td class="${e?'bad':'ok'}">${e?e+' errors':'all parts have a C-number and a checked datasheet'}</td></tr>
  ${d.kind=='block'?`<tr><th>Used in</th><td>${d.used_in.map(esc).join(', ')||'<span class="muted">no board yet</span>'}</td></tr><tr><th>Keywords</th><td>${esc(d.keywords)}</td></tr>`:`<tr><th>Blocks placed</th><td>${d.blocks.map(esc).join(', ')||'<span class="muted">none</span>'}</td></tr>`}
  <tr><th>Source files</th><td>${d.files.map(f=>`<a href="/file/${d.kind}/${encodeURIComponent(d.id)}/${encodeURIComponent(f)}">${esc(f)}</a>`).join(' · ')}</td></tr></table></div>
+ ${(d.facts&&d.facts.ports||[]).length?`<div class="card"><b>Ports</b><table><tr><th>Port</th><th>Net</th><th>Where</th><th>Dir</th><th>Limits</th></tr>${d.facts.ports.map(p=>`<tr><td>${esc(p.name||'')}</td><td>${esc(p.net)}</td><td>${esc(p.at)}</td><td>${esc(p.dir||'')}</td><td>${esc(p.limits||p.note||'')}</td></tr>`).join('')}</table></div>`:''}
+ <div class="card"><b>Parts and roles</b><table><tr><th>Refs</th><th>Value</th><th>What it does</th></tr>${d.bom.map(r=>`<tr><td>${r.refs.map(esc).join(', ')}</td><td>${esc(r.value)}</td><td>${esc(r.description||'')}</td></tr>`).join('')}</table></div>
  ${e?`<div class="card"><b class="bad">Errors</b><ul>${[...d.part_errors,...(d.fact_errors||[])].map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`:''}
  <div class="imgs"><img src="${R('iso')}" alt="3D render (made live by kicad-cli)"></div>`},
 schematic(d){pz(R('sch'))},

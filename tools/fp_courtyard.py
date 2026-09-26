@@ -3,7 +3,7 @@
 
   python3 tools/fp_courtyard.py [--margin 0.25] FILE.kicad_mod ...
 
-Courtyard = bounding box of all pads and all F.Fab geometry, plus --margin (IPC-7351 nominal 0.25 mm).
+Courtyard = bounding box of all pads and all F.Fab and F.SilkS geometry (bridge parts draw the body on silk), plus --margin (IPC-7351 nominal 0.25 mm).
 A footprint that already has an F.CrtYd item is left unchanged.
 """
 import argparse
@@ -23,7 +23,7 @@ def box(text, margin):
         hw, hh = (w * c + h * s) / 2, (w * s + h * c) / 2
         xs += [x - hw, x + hw]; ys += [y - hh, y + hh]
     for it in _ITEM.finditer(text):
-        if re.search(r'\(layer\s+"?F\.Fab"?\)', it.group(0)):
+        if re.search(r'\(layer\s+"?F\.(?:Fab|SilkS)"?\)', it.group(0)):
             for p in _PT.finditer(it.group(0)):
                 xs.append(float(p[1])); ys.append(float(p[2]))
     r = lambda v: round(v, 3)
