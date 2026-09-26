@@ -1,7 +1,16 @@
 #!/usr/bin/env python3
 """ripup: rip-up and re-route search for a net that `pcbtool.py suggest` cannot route because other nets block it.
 
-  $PY tools/ripup.py BOARD NET [--width 4] [--depth 2] [--jobs 8] [--specs DIR] [--keep NET ...] [--out result.json]
+  $PY tools/ripup.py BOARD NET [--width 4] [--depth 2] [--jobs 8] [--band 1.5] [--max-vias 4] [--specs DIR]
+                    [--keep NET ...] [--out result.json]
+  On the box (whole search in one job; kicad-happy clone as a tar, KICAD_HAPPY_DIR):
+  REMOTE_CPUS=8 REMOTE_MEM=10g tools/remote.sh hardware-design/boards/B --in COPY.kicad_pcb --in kicad-happy.tar -- \
+    bash -c "cp in/B.kicad_pcb <board dir>/cad/B/ && tar -C /job -xf in/kicad-happy.tar &&
+             KICAD_HAPPY_DIR=/job/kicad-happy python3 -u tools/ripup.py <board dir>/cad/B/B.kicad_pcb NET --jobs 8 --out out/r.json"
+
+Options: --width W: blockers ripped at depth 1 and children per open state; --depth D: max ripped nets;
+--jobs N: states evaluated in parallel (threads over subprocesses; about 1 GB and 1 CPU each); --band: half width of
+the blocker band; --specs: folder with the gate specs (default: the folder above cad/); --out: JSON with every state.
 
 1. Blockers: the nets whose tracks and vias `suggest` names at its closest reach, then the nets with the most
    track length in a band (--band mm half width) along pad A -> closest reach -> pad B.
@@ -22,6 +31,10 @@
    BOARD is never written; use a copy of a live board.
 Fail closed: a gate crash rejects the state; a baseline gate crash or parity > 0 exits 2.
 Nets with a zone (planes) and --keep nets are never ripped.
+
+Limits: it only rips whole nets and re-routes them with suggest (F.Cu/B.Cu, 3 candidates, first usable line); it does
+not move parts or vias of zone nets. Blockers name nets, not parts. Each state costs about 30-200 s. Exit 0 = a clean
+state, 1 = none, 2 = baseline failure. Measured 2026-09-26 on BASE-PWR / INPUT-4D2A: 1 of 5 nets clean (ETH_SCSn).
 """
 import argparse
 import collections
