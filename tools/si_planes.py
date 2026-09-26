@@ -14,6 +14,14 @@ Spec (one per board, hardware-design/boards/<board>/reference-planes.json):
   {"about": "text",
    "adjacent": {"F.Cu": "In1.Cu", "B.Cu": "In2.Cu"},      outer layer -> its reference layer
    "plane_layers": ["In1.Cu", "In2.Cu"],                   a track on these layers is a FAIL
+   "mixed_layers": {"In2.Cu": {"allow": "slow", "fast_file": "rp001-fast-nets.json",
+                               "power": ["GND", "VBUS"], "reason": "..."}},
+                                                           optional: a plane layer that may also carry tracks of
+                                                           slow nets (not fast, not power, not a ground). fast_file is
+                                                           relative to the spec ({"fast": [patterns]}; no file = error).
+                                                           A fast net over it (on the outer layer that it references)
+                                                           fails on any gap; each fill piece of a ground on it must
+                                                           hold a via or a through-hole pad of that ground (no island).
    "grounds": ["GND", "ISO_0V"],                           one ground net per domain
    "alt_refs": {"VDD_3V3": {"domain": "GND", "reason": "..."}},   other plane nets that are a reference
    "domains": {"ISO_0V": ["/AI*"]},                        optional: net patterns -> domain (else the
@@ -35,7 +43,7 @@ import sys
 
 DEFAULTS = {'max_unreferenced_mm': 1.0, 'via_allow_mm': 0.6, 'step_mm': 0.25}
 REQUIRED = ('about', 'adjacent', 'plane_layers', 'grounds')
-KEYS = set(REQUIRED) | set(DEFAULTS) | {'alt_refs', 'domains', 'exempt'}
+KEYS = set(REQUIRED) | set(DEFAULTS) | {'alt_refs', 'domains', 'exempt', 'mixed_layers'}
 
 
 class SpecError(ValueError):
@@ -117,7 +125,51 @@ def load_spec(raw):
             raise SpecError(f'exempt area {i}: needs box [x0, y0, x1, y1] and nets')
         _reason(ar.get('reason'), f'exempt area {i}')
     s['exempt'] = ex
+    s['mixed_layers'] = s.get('mixed_layers') or {}
+    for L, m in s['mixed_layers'].items():
+        if L not in s['plane_layers'] or not isinstance(m, dict):
+            raise SpecError(f'mixed_layers {L}: must be a plane layer with an object value')
+        if m.get('allow') != 'slow' or not isinstance(m.get('fast_file'), str) or not m['fast_file']:
+            raise SpecError(f'mixed_layers {L}: needs "allow": "slow" and "fast_file"')
+        if not isinstance(m.get('power'), list) or not all(isinstance(q, str) for q in m['power']):
+            raise SpecError(f'mixed_layers {L}: "power" must be a list of net patterns')
+        _reason(m.get('reason'), f'mixed_layers {L}')
     return s
+
+
+def parse_fast(raw, path):
+    """The "fast" net patterns of an rp001-fast-nets.json dict. Raise SpecError when they are not a list of strings."""
+    pats = raw.get('fast') if isinstance(raw, dict) else None
+    if not isinstance(pats, list) or not pats or not all(isinstance(q, str) for q in pats):
+        raise SpecError(f'{path}: "fast" must be a list of net patterns')
+    return pats
+
+
+def set_fast(s, fast):
+    """Put the fast patterns {mixed layer: [patterns]} in the spec."""
+    for L, pats in fast.items():
+        s['mixed_layers'][L]['fast'] = list(pats)
+
+
+def load_fast(s, spec_dir):
+    """Read the fast_file of each mixed layer (relative to spec_dir). A missing or bad file is a SpecError (fail closed)."""
+    fast = {}
+    for L, m in s['mixed_layers'].items():
+        path = os.path.join(spec_dir, m['fast_file'])
+        if not os.path.isfile(path):
+            raise SpecError(f'mixed_layers {L}: no fast net file {path}')
+        with open(path) as f:
+            fast[L] = parse_fast(json.load(f), path)
+    set_fast(s, fast)
+
+
+def net_kind(net, m, s):
+    """'fast', 'power' or 'slow' for a net on a mixed layer m. Every ground is power."""
+    if any(fnmatch.fnmatchcase(net, q) for q in m['fast']):
+        return 'fast'
+    if net in s['grounds'] or any(fnmatch.fnmatchcase(net, q) for q in m['power']):
+        return 'power'
+    return 'slow'
 
 
 def check_against_board(s, nets, layers):
@@ -217,8 +269,14 @@ def _checked(net, s):
     return net not in s['grounds'] and net not in s['exempt']['nets']
 
 
+def _fast_over_mixed(layer, net, s):
+    m = s['mixed_layers'].get(s['adjacent'].get(layer))
+    return m is not None and net_kind(net, m, s) == 'fast'
+
+
 def reference_failures(results, domains, s):
-    """FAIL lines from evaluate_net results keyed (layer, net). domains: net -> domain or None."""
+    """FAIL lines from evaluate_net results keyed (layer, net). domains: net -> domain or None.
+    A fast net on the outer layer over a mixed layer may have no gap at all."""
     nodom, cross, gaps, seen = [], [], [], set()
     for (layer, net), r in results.items():
         if not _checked(net, s):
@@ -231,7 +289,11 @@ def reference_failures(results, domains, s):
         if r['cross'] > 0:
             cross.append((r['cross'], f"FAIL domain-cross {layer} {net}: {r['cross']:.1f} mm over "
                                       f"{r['cross_net']} (domain {domains[net]})"))
-        if r['worst'] > s['max_unreferenced_mm']:
+        if _fast_over_mixed(layer, net, s) and r['worst'] > 0:
+            x, y = r['worst_at']
+            gaps.append((r['worst'], f"FAIL fast-unreferenced {layer} {net}: gap {r['worst']:.2f} mm at ({x:.1f}, {y:.1f}) "
+                                     f"over the mixed layer {s['adjacent'][layer]} (a fast net needs ground under every mm)"))
+        elif r['worst'] > s['max_unreferenced_mm']:
             x, y = r['worst_at']
             pct = 100 * r['unref'] / r['length'] if r['length'] else 0
             gaps.append((r['worst'], f"FAIL unreferenced {layer} {net}: gap {r['worst']:.1f} mm at "
@@ -240,9 +302,24 @@ def reference_failures(results, domains, s):
 
 
 def plane_cut_failures(cuts, s):
-    """FAIL lines for tracks on a plane layer. cuts: (layer, net) -> mm. No exemption applies."""
-    rows = sorted(((mm, layer, net) for (layer, net), mm in cuts.items() if layer in s['plane_layers']), reverse=True)
-    return [f'FAIL plane-cut {layer} {net}: {mm:.1f} mm of track' for mm, layer, net in rows]
+    """FAIL lines for tracks on a plane layer. cuts: (layer, net) -> mm. No exemption applies.
+    On a mixed layer only a fast or power net fails."""
+    out = []
+    for mm, layer, net in sorted(((mm, layer, net) for (layer, net), mm in cuts.items() if layer in s['plane_layers']),
+                                 reverse=True):
+        m = s['mixed_layers'].get(layer)
+        if m is None:
+            out.append(f'FAIL plane-cut {layer} {net}: {mm:.1f} mm of track')
+        elif net_kind(net, m, s) != 'slow':
+            out.append(f'FAIL plane-cut {layer} {net}: {mm:.1f} mm of track; a {net_kind(net, m, s)} net on the mixed layer')
+    return out
+
+
+def island_failures(pieces):
+    """FAIL lines for ground fill pieces on a mixed layer with no via or through-hole pad of the ground.
+    pieces: [(layer, ground, number of ground vias and pads in the piece, (x, y) of a point in the piece)]."""
+    return [f'FAIL island {layer} {g}: fill piece at ({x:.1f}, {y:.1f}) has no {g} via or pad'
+            for layer, g, n, (x, y) in pieces if n == 0]
 
 
 def max_min_distance(points, vias):
@@ -314,21 +391,25 @@ def analyse(board_path, s, verbose):
 
     outlines = [(z.GetNetname(), z.Outline()) for z in zones if z.GetNetname() in refs]
     pad_refs, anchors = collections.defaultdict(list), collections.defaultdict(list)
+    gpads = collections.defaultdict(list)
     for pad in b.GetPads():
         net, c = pad.GetNetname(), pad.GetPosition()
+        sz_ = pad.GetSize(p.F_Cu) if hasattr(pad, 'GetSize') else pad.GetSize()
+        gpads[net].append((mm(c.x), mm(c.y), mm(max(sz_.x, sz_.y)) / 2, pad.GetAttribute() == p.PAD_ATTRIB_PTH))
         v = p.VECTOR2I(c.x, c.y)
         pad_refs[net].append(next((n for n, o in outlines if o.Contains(v)), None))
         sz = pad.GetSize(p.F_Cu) if hasattr(pad, 'GetSize') else pad.GetSize()
         anchors[net].append((mm(c.x), mm(c.y), mm(max(sz.x, sz.y)) / 2))
 
     samples, cuts = collections.defaultdict(list), collections.defaultdict(float)
-    vias = collections.defaultdict(list)
+    vias, via_r = collections.defaultdict(list), collections.defaultdict(list)
     for t in b.GetTracks():
         net, cls = t.GetNetname(), t.GetClass()
         if cls == 'PCB_VIA':
             pos = t.GetPosition()
             anchors[net].append((mm(pos.x), mm(pos.y), mm(t.GetWidth(p.F_Cu)) / 2))
             vias[net].append((mm(pos.x), mm(pos.y)))
+            via_r[net].append((mm(pos.x), mm(pos.y), mm(t.GetWidth(p.F_Cu)) / 2))
             continue
         lname = b.GetLayerName(t.GetLayer())
         a, e = t.GetStart(), t.GetEnd()
@@ -372,7 +453,23 @@ def analyse(board_path, s, verbose):
         info.append(f"INFO stitch {g}: {len(vias[g])} vias, farthest pour point "
                     f"{'n/a (no via)' if far is None else f'{far:.1f} mm'} from a via")
 
-    fails = plane_cut_failures(cuts, s) + reference_failures(results, domains, s)
+    pieces = []
+    for lname in s['mixed_layers']:
+        for g in s['grounds']:
+            pts = [(x, y, r) for x, y, r in via_r[g]] + [(x, y, r) for x, y, r, tht in gpads[g] if tht]
+            for net, poly in fills[layers[lname]]:
+                if net != g:
+                    continue
+                for k in range(poly.OutlineCount()):
+                    one = p.SHAPE_POLY_SET(poly.Outline(k))
+                    c = poly.Outline(k).CPoint(0)
+                    # a via or pad touches the piece (a thermal pad centre sits outside the fill)
+                    n = sum(1 for x, y, r in pts if one.Collide(p.VECTOR2I(p.FromMM(x), p.FromMM(y)), p.FromMM(r) + 1000))
+                    pieces.append((lname, g, n, (mm(c.x), mm(c.y))))
+        info.append(f'INFO mixed {lname}: {sum(1 for q in pieces if q[0] == lname)} ground fill pieces; '
+                    f'tracks: ' + (', '.join(f'{n} {v:.1f} mm' for (L, n), v in sorted(cuts.items()) if L == lname) or 'none'))
+
+    fails = plane_cut_failures(cuts, s) + island_failures(pieces) + reference_failures(results, domains, s)
     detail = []
     if verbose:
         for (lname, net), r in sorted(results.items(), key=lambda kv: -kv[1]['worst']):
@@ -395,6 +492,7 @@ def main(argv=None):
             raise SpecError(f'no board file: {a.board}')
         with open(a.spec) as f:
             s = load_spec(json.load(f))
+        load_fast(s, os.path.dirname(os.path.abspath(a.spec)))
         fails, info, detail = analyse(a.board, s, a.verbose)
     except (SpecError, OSError, json.JSONDecodeError) as e:
         print(f'ERROR {e}')

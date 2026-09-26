@@ -257,6 +257,78 @@ class FailureTest(unittest.TestCase):
         self.assertEqual(sp.plane_cut_failures({('F.Cu', '/A'): 3.0}, self.spec), [])
 
 
+MIXED = {'In2.Cu': {'allow': 'slow', 'fast_file': 'fast.json', 'power': ['GND', 'VBUS', '/P*'],
+                    'reason': 'user decision'}}
+
+
+class MixedLayerTest(unittest.TestCase):
+    def setUp(self):
+        self.spec = sp.load_spec(base_spec(mixed_layers=MIXED))
+        sp.set_fast(self.spec, {'In2.Cu': ['/USB_*', '/SCK*']})
+
+    def res(self, **kw):
+        r = {'length': 10.0, 'unref': 0.0, 'worst': 0.0, 'worst_at': (0, 0), 'cross': 0.0, 'cross_net': None}
+        r.update(kw)
+        return r
+
+    def test_spec_needs_a_plane_layer_a_reason_and_allow_slow(self):
+        for bad in ({'In3.Cu': MIXED['In2.Cu']},
+                    {'In2.Cu': dict(MIXED['In2.Cu'], reason='')},
+                    {'In2.Cu': dict(MIXED['In2.Cu'], allow='all')},
+                    {'In2.Cu': dict(MIXED['In2.Cu'], power='GND')},
+                    {'In2.Cu': {k: v for k, v in MIXED['In2.Cu'].items() if k != 'fast_file'}}):
+            with self.assertRaises(sp.SpecError):
+                sp.load_spec(base_spec(mixed_layers=bad))
+
+    def test_fast_file_must_be_a_list_of_patterns(self):
+        self.assertEqual(sp.parse_fast({'fast': ['/A*']}, 'f.json'), ['/A*'])
+        for bad in ({}, {'fast': '/A*'}, {'fast': []}, {'fast': [1]}):
+            with self.assertRaises(sp.SpecError):
+                sp.parse_fast(bad, 'f.json')
+
+    def test_missing_fast_file_fails_closed(self):
+        with self.assertRaises(sp.SpecError):
+            sp.load_fast(self.spec, '/no/such/dir')
+
+    def test_net_kind(self):
+        m = self.spec['mixed_layers']['In2.Cu']
+        self.assertEqual(sp.net_kind('/USB_DP', m, self.spec), 'fast')
+        self.assertEqual(sp.net_kind('VBUS', m, self.spec), 'power')
+        self.assertEqual(sp.net_kind('/PROBE_3V3', m, self.spec), 'power')
+        self.assertEqual(sp.net_kind('ISO_0V', m, self.spec), 'power')   # every ground is power
+        self.assertEqual(sp.net_kind('/EN', m, self.spec), 'slow')
+
+    def test_slow_net_on_mixed_layer_is_not_a_cut(self):
+        self.assertEqual(sp.plane_cut_failures({('In2.Cu', '/EN'): 5.0}, self.spec), [])
+
+    def test_fast_and_power_on_mixed_layer_fail(self):
+        fails = sp.plane_cut_failures({('In2.Cu', '/SCK'): 2.0, ('In2.Cu', 'VBUS'): 1.0}, self.spec)
+        self.assertEqual(len(fails), 2)
+        self.assertTrue(any('/SCK' in f and 'fast' in f for f in fails))
+        self.assertTrue(any('VBUS' in f and 'power' in f for f in fails))
+
+    def test_slow_net_on_solid_plane_still_fails(self):
+        self.assertEqual(len(sp.plane_cut_failures({('In1.Cu', '/EN'): 1.0}, self.spec)), 1)
+
+    def test_fast_net_over_mixed_layer_allows_no_gap(self):
+        fails = sp.reference_failures({('B.Cu', '/USB_DP'): self.res(worst=0.3, unref=0.3)}, {'/USB_DP': 'GND'}, self.spec)
+        self.assertEqual(len(fails), 1)
+        self.assertIn('fast', fails[0])
+
+    def test_fast_net_on_other_layer_keeps_the_normal_limit(self):
+        self.assertEqual(sp.reference_failures({('F.Cu', '/USB_DP'): self.res(worst=0.3, unref=0.3)},
+                                               {'/USB_DP': 'GND'}, self.spec), [])
+
+    def test_slow_net_over_mixed_layer_keeps_the_normal_limit(self):
+        self.assertEqual(sp.reference_failures({('B.Cu', '/EN'): self.res(worst=0.9, unref=3)}, {'/EN': 'GND'}, self.spec), [])
+
+    def test_island_without_ground_via_or_pad_fails(self):
+        fails = sp.island_failures([('In2.Cu', 'GND', 3, (1, 2)), ('In2.Cu', 'GND', 0, (5.25, 6))])
+        self.assertEqual(len(fails), 1)
+        self.assertIn('island', fails[0])
+        self.assertIn('(5.2, 6.0)', fails[0])
+
+
 class StitchTest(unittest.TestCase):
     def test_farthest_point_from_vias(self):
         pts = [(0, 0), (3, 4), (10, 0)]
