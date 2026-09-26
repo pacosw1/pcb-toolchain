@@ -188,6 +188,46 @@ class WidthTest(unittest.TestCase):
         self.assertEqual(pt.width_report([self.seg('SDA', 0.2, (0, 0), (1, 0))], self.NEED, self.PADS), {})
 
 
+class CurrentTest(unittest.TestCase):
+    def test_ipc2221_external_1oz_matches_layout_spec_table(self):
+        # BACKUP-POWER LAYOUT-SPEC: 1 oz, dT 10 K: 0.25 mm 0.87 A, 1.0 mm 2.4 A, 1.5 mm 3.2 A
+        self.assertAlmostEqual(pt.ipc_amps(0.25), 0.87, delta=0.03)
+        self.assertAlmostEqual(pt.ipc_amps(1.0), 2.4, delta=0.1)
+        self.assertAlmostEqual(pt.ipc_amps(1.5), 3.2, delta=0.1)
+
+    def test_inner_layer_carries_half_of_external(self):
+        self.assertAlmostEqual(pt.ipc_amps(1.0, inner=True), pt.ipc_amps(1.0) / 2, places=6)
+
+    def test_widest_path_ignores_thin_branch_but_finds_thin_bottleneck(self):
+        inf = float('inf')
+        edges = [('A', 'x', 3.0, 'wide1'), ('x', 'B', 3.0, 'wide2'),   # main path 3 A
+                 ('x', 'C', 0.8, 'branch'),                             # thin branch to a small pin
+                 ('B', 'D', 0.8, 'thin'), ('D', 'E', inf, 'zone')]
+        amps, path = pt.widest_path(edges, 'A', 'B')
+        self.assertEqual((amps, path), (3.0, ['wide1', 'wide2']))
+        amps, path = pt.widest_path(edges, 'A', 'E')
+        self.assertEqual(amps, 0.8)
+        self.assertIn('thin', path)
+
+    def test_parallel_paths_do_not_add(self):
+        # conservative: two 1 A paths are not one 2 A path
+        edges = [('A', 'B', 1.0, 'p1'), ('A', 'm', 1.0, 'p2a'), ('m', 'B', 1.0, 'p2b')]
+        self.assertEqual(pt.widest_path(edges, 'A', 'B')[0], 1.0)
+
+    def test_project_point_onto_segment_is_clamped(self):
+        self.assertEqual(pt.project((0, 0), (10, 0), (4, 3)), (4.0, 0.0))
+        self.assertEqual(pt.project((0, 0), (10, 0), (-5, 1)), (0.0, 0.0))
+        self.assertEqual(pt.project((0, 0), (0, 10), (1, 12)), (0.0, 10.0))
+
+    def test_neck_is_short_and_as_wide_as_the_pad(self):
+        self.assertTrue(pt.is_neck(length=0.8, width=0.6, pad_minor=0.6))
+        self.assertFalse(pt.is_neck(length=1.55, width=0.6, pad_minor=0.6))   # too long
+        self.assertFalse(pt.is_neck(length=0.5, width=0.25, pad_minor=0.6))   # narrower than the pad
+
+    def test_no_path_is_zero_amps(self):
+        self.assertEqual(pt.widest_path([('A', 'x', 3.0, 'w')], 'A', 'B'), (0.0, []))
+
+
 class NoiseTest(unittest.TestCase):
     def test_drops_known_pcbnew_noise_keeps_real_errors(self):
         text = ('./src/common/stdpbase.cpp(59): assert ""traits"" failed in Get(): create wxApp before calling this\n'

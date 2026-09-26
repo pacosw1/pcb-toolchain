@@ -13,6 +13,7 @@ Run with the KiCad bundled Python (it has pcbnew):
   $PY tools/pcbtool.py unroute BOARD NET [NET ...]            remove the tracks and vias of nets
   $PY tools/pcbtool.py drc    BOARD                           DRC --schematic-parity summary
   $PY tools/pcbtool.py widths BOARD [--limit N]              tracks thinner than the net class width (current)
+  $PY tools/pcbtool.py paths  BOARD SPEC.json [--verbose]     widest copper path between power pads >= design current
   $PY tools/pcbtool.py render BOARD OUTDIR                    top + iso PNG
   $PY tools/pcbtool.py art    BOARD SPEC.json                 silkscreen art group (waves, circles, lines, texts)
   $PY tools/pcbtool.py colors BOARD OUTDIR [VARIANT ...]      JLC colour variant renders (board unchanged)
@@ -171,6 +172,65 @@ def width_report(segs, need, pads, neck_max=2.0):
         else:
             r['under'].append((sg['width'], length, sg['start']))
     return out
+
+
+def ipc_amps(width_mm, thick_mm=0.035, dT=10.0, inner=False):
+    """IPC-2221 conductor current: I = k dT^0.44 A^0.725, A in mil^2; k 0.048 external, 0.024 inner."""
+    area = (width_mm / 0.0254) * (thick_mm / 0.0254)
+    return (0.024 if inner else 0.048) * dT ** 0.44 * area ** 0.725
+
+
+def via_amps(drill_mm, plating_mm=0.018, dT=10.0):
+    """Via barrel as an external IPC-2221 conductor of width pi x drill (JLC plating >= 18 um)."""
+    return ipc_amps(math.pi * drill_mm, plating_mm, dT)
+
+
+def project(a, c, q):
+    """Point of segment a-c nearest to q (clamped to the segment), rounded to 1 um."""
+    dx, dy = c[0] - a[0], c[1] - a[1]
+    t = ((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / ((dx * dx + dy * dy) or 1)
+    t = min(1.0, max(0.0, t))
+    return (round(a[0] + t * dx, 3), round(a[1] + t * dy, 3))
+
+
+NECK_MAX_MM = 1.0
+
+
+def is_neck(length, width, pad_minor, max_len=NECK_MAX_MM):
+    """A short track into a pad, at least as wide as the pad: the pad (the part) is the limit, not the track."""
+    return length <= max_len + 1e-6 and width >= pad_minor - 1e-3
+
+
+def widest_path(edges, a, b):
+    """Path from a to b with the highest bottleneck current. edges: (u, v, amps, label), undirected.
+    Returns (amps, labels). Parallel paths do not add (conservative)."""
+    import heapq
+    adj = {}
+    for u, v, amps, label in edges:
+        adj.setdefault(u, []).append((v, amps, label))
+        adj.setdefault(v, []).append((u, amps, label))
+    best = {a: float('inf')}
+    prev = {}
+    heap = [(-float('inf'), 0, a)]
+    k = 0
+    while heap:
+        neg, _, u = heapq.heappop(heap)
+        if -neg < best.get(u, -1):
+            continue
+        if u == b:
+            path = []
+            while u != a:
+                u, label = prev[u]
+                path.append(label)
+            return -neg, path[::-1]
+        for v, amps, label in adj.get(u, []):
+            c = min(-neg, amps)
+            if c > best.get(v, -1):
+                best[v] = c
+                prev[v] = (u, label)
+                k += 1
+                heapq.heappush(heap, (-c, k, v))
+    return 0.0, []
 
 
 def compare(a, b):
@@ -431,6 +491,111 @@ def cmd_widths(a):
     sys.exit(1 if bad else 0)
 
 
+def copper_thickness(board):
+    text = open(board).read()
+    return {m[0]: float(m[1]) for m in re.findall(r'\(layer "([^"]+\.Cu)"\s+\(type "copper"\)\s+\(thickness ([0-9.]+)\)', text)}
+
+
+def net_graph(p, b, net, thick, dT, plating):
+    """Copper graph of one net: tracks (IPC capacity), vias (barrel), filled zone islands (planes), pads."""
+    mm, inf = p.ToMM, float('inf')
+    pt_ = lambda v: (round(mm(v.x), 3), round(mm(v.y), 3))
+    tracks = [t for t in b.GetTracks() if t.GetNetname() == net]
+    segs = [t for t in tracks if not isinstance(t, p.PCB_VIA)]
+    vias = [t for t in tracks if isinstance(t, p.PCB_VIA)]
+    ends = [(t.GetLayerName(), pt_(e)) for t in segs for e in (t.GetStart(), t.GetEnd())]
+    net_pads = [pd for fp in b.GetFootprints() for pd in fp.Pads() if pd.GetNumber() and pd.GetNetname() == net]
+    edges, nodes_extra = [], []
+    for t in segs:
+        L = t.GetLayerName()
+        a, c = pt_(t.GetStart()), pt_(t.GetEnd())
+        w = round(mm(t.GetWidth()), 3)
+        # T junction: another end on this segment splits it
+        cuts = {e for l2, e in ends if l2 == L and e not in (a, c) and t.HitTest(p.VECTOR2I(p.FromMM(e[0]), p.FromMM(e[1])))}
+        # a pad or via that the track passes through (not at an end) also splits it
+        for o in [pd for pd in net_pads if pd.IsOnLayer(t.GetLayer())] + vias:
+            q = project(a, c, pt_(o.GetPosition()))
+            if q not in (a, c) and o.HitTest(p.VECTOR2I(p.FromMM(q[0]), p.FromMM(q[1]))):
+                cuts.add(q)
+        cuts = sorted(cuts, key=lambda e: math.dist(a, e))
+        nodes_extra.extend((L, e) for e in cuts)
+        amps = ipc_amps(w, thick.get(L, 0.035), dT, inner=L.startswith('In'))
+        chain = [a, *cuts, c]
+        for u, v in zip(chain, chain[1:]):
+            neck = any(is_neck(math.dist(u, v), w, round(mm(min(pd.GetSize(t.GetLayer()).x, pd.GetSize(t.GetLayer()).y)), 3))
+                       for pd in net_pads if pd.IsOnLayer(t.GetLayer())
+                       and any(pd.HitTest(p.VECTOR2I(p.FromMM(e[0]), p.FromMM(e[1]))) for e in (u, v)))
+            edges.append(((L, u), (L, v), inf if neck else amps, f'{L} {w} mm {u}-{v}' + (' (pad neck)' if neck else '')))
+    nodes = {(L, e) for L, e in ends} | set(nodes_extra)
+    pads = {f'{fp.GetReference()}.{pd.GetNumber()}': pd for fp in b.GetFootprints() for pd in fp.Pads()
+            if pd.GetNumber() and pd.GetNetname() == net}
+    for lab, pd in pads.items():
+        for L, e in nodes:
+            if pd.IsOnLayer(b.GetLayerID(L)) and pd.HitTest(p.VECTOR2I(p.FromMM(e[0]), p.FromMM(e[1]))):
+                edges.append((lab, (L, e), inf, 'pad'))
+    for i, v in enumerate(vias):
+        c = pt_(v.GetPosition())
+        va = via_amps(mm(v.GetDrillValue()), plating, dT)
+        for L, e in nodes:
+            if v.HitTest(p.VECTOR2I(p.FromMM(e[0]), p.FromMM(e[1]))):
+                edges.append((('via', i), (L, e), va, f'via drill {mm(v.GetDrillValue()):.2f} at {c}'))
+        for lab, pd in pads.items():
+            if pd.HitTest(v.GetPosition()):
+                edges.append((('via', i), lab, va, f'via drill {mm(v.GetDrillValue()):.2f} at {c}'))
+    for zi, z in enumerate(b.Zones()):
+        if z.GetIsRuleArea() or z.GetNetname() != net:
+            continue
+        for lid in z.GetLayerSet().Seq():
+            L = b.GetLayerName(lid)
+            polys = z.GetFilledPolysList(lid)
+            for k in range(polys.OutlineCount()):
+                isl = ('zone', zi, L, k)
+                inside = lambda q: polys.Contains(q, k)
+                for L2, e in nodes:
+                    if L2 == L and inside(p.VECTOR2I(p.FromMM(e[0]), p.FromMM(e[1]))):
+                        edges.append((isl, (L2, e), inf, 'zone'))
+                for lab, pd in pads.items():
+                    if pd.IsOnLayer(lid) and inside(pd.GetPosition()):
+                        edges.append((isl, lab, inf, f'zone {L} (thermal spokes not counted)'))
+                for i, v in enumerate(vias):
+                    if inside(v.GetPosition()):
+                        edges.append((isl, ('via', i), via_amps(mm(v.GetDrillValue()), plating, dT), f'via drill {mm(v.GetDrillValue()):.2f} at {pt_(v.GetPosition())}'))
+    return edges, set(pads)
+
+
+def cmd_paths(a):
+    spec = json.load(open(a.spec))
+    p = pcb()
+    b = p.LoadBoard(a.board)
+    if b is None:
+        sys.exit(f'cannot load {a.board}')
+    thick = copper_thickness(a.board)
+    dT, plating = spec.get('dT', 10.0), spec.get('via_plating_mm', 0.018)
+    bad = 0
+    for net, n in spec['nets'].items():
+        edges, have = net_graph(p, b, net, thick, dT, plating)
+        missing = [x for x in n['pads'] if x not in have]
+        if missing:
+            print(f'LOW {net}: pads not on this net: {missing}')
+            bad += 1
+            continue
+        for u, v in zip(n['pads'], n['pads'][1:]):
+            amps, path = widest_path(edges, u, v)
+            if amps >= n['amps']:
+                if a.verbose:
+                    print(f"OK  {net} {u}->{v}: {amps:.2f} A >= {n['amps']} A")
+                continue
+            bad += 1
+            if not path:
+                print(f"LOW {net} {u}->{v}: no copper path (need {n['amps']} A)")
+                continue
+            worst = min((e for e in edges if e[3] in path), key=lambda e: e[2])
+            thin = sorted({e[3] for e in edges if e[3] in path and e[2] < n['amps']})
+            print(f"LOW {net} {u}->{v}: {amps:.2f} A < {n['amps']} A; {len(thin)} items under: " + '; '.join(thin[:a.limit]))
+    print(f'{bad} power-path pairs below the design current')
+    sys.exit(1 if bad else 0)
+
+
 def cmd_drc(a):
     print_drc(run_drc(a.board), limit=60)
 
@@ -604,6 +769,8 @@ def main():
         s = sp.add_parser(name); s.add_argument('board'); s.add_argument('spec'); s.set_defaults(f=f)
     s = sp.add_parser('unroute'); s.add_argument('board'); s.add_argument('nets', nargs='+'); s.set_defaults(f=cmd_unroute)
     s = sp.add_parser('drc'); s.add_argument('board'); s.set_defaults(f=cmd_drc)
+    s = sp.add_parser('paths'); s.add_argument('board'); s.add_argument('spec'); s.add_argument('--limit', type=int, default=4)
+    s.add_argument('--verbose', action='store_true'); s.set_defaults(f=cmd_paths)
     s = sp.add_parser('widths'); s.add_argument('board'); s.add_argument('--limit', type=int, default=4); s.set_defaults(f=cmd_widths)
     s = sp.add_parser('render'); s.add_argument('board'); s.add_argument('outdir'); s.set_defaults(f=cmd_render)
     s = sp.add_parser('art'); s.add_argument('board'); s.add_argument('spec'); s.set_defaults(f=cmd_art)
