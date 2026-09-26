@@ -64,7 +64,7 @@ export function kicadHappyArgs(pcb, exemptFile) {
 }
 
 export function kicadHappyCheck({python, tool, pcb, check, exemptFile}) {
-  const name = `kicad-happy GP-001 RP-001 VP-001 DC-002 UC-001 (tools/kicad_happy_gate.py${exemptFile ? `, exempt: ${exemptFile}` : ''})`;
+  const name = `kicad-happy GP-001 RP-001 DC-002 UC-001 (tools/kicad_happy_gate.py${exemptFile ? `, exempt: ${exemptFile}` : ''})`;
   const {out, exit} = runGate({python, tool, args: kicadHappyArgs(pcb, exemptFile)});
   const {ok, detail} = parseGateOutput(out, exit, KICAD_HAPPY_SUMMARY, 'FAIL');
   check(name, ok, detail);

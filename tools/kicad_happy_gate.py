@@ -19,7 +19,7 @@ XT-001, ...) is ignored: those were evaluated and found false on our boards.
 
 Usage:
   python3 tools/kicad_happy_gate.py BOARD_DIR_OR_PCB \\
-      [--rules GP-001,RP-001,VP-001,DC-002,UC-001] [--min-severity warning]
+      [--rules GP-001,RP-001,DC-002,UC-001] [--min-severity warning]
       [--exempt RULE:NET ...] [--exempt-file EXEMPT.json]
 
 An exemption drops a finding when its rule matches and the finding names
@@ -41,7 +41,9 @@ import sys
 import tempfile
 
 PINNED_COMMIT = "a6bba1a"
-DEFAULT_RULES = ["GP-001", "RP-001", "VP-001", "DC-002", "UC-001"]
+# VP-001 is left out: kicad-happy a6bba1a reads the KiCad 10 tenting format as untented.
+# pcbtool.py viapads (with --allow for datasheet vias) is the via-in-pad gate.
+DEFAULT_RULES = ["GP-001", "RP-001", "DC-002", "UC-001"]
 SEVERITY_ORDER = ["info", "warning", "error", "critical"]
 
 

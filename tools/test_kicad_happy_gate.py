@@ -242,5 +242,13 @@ class ExemptTests(unittest.TestCase):
             os.unlink(fh.name)
 
 
+
+class DefaultRulesTest(unittest.TestCase):
+    def test_vp001_is_not_a_default_rule(self):
+        # kicad-happy a6bba1a reads KiCad 10 "(tenting (front no) (back yes))" as untented, so VP-001
+        # is always true. pcbtool.py viapads (with --allow) is the via-in-pad gate.
+        self.assertNotIn("VP-001", gate.DEFAULT_RULES)
+        self.assertEqual(gate.DEFAULT_RULES, ["GP-001", "RP-001", "DC-002", "UC-001"])
+
 if __name__ == "__main__":
     unittest.main()
