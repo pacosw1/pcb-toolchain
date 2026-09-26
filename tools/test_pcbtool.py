@@ -846,7 +846,7 @@ class SuggestBoardTest(unittest.TestCase):
     """Synthetic board 30 x 20 mm: SIG pads R1.1 (10, 10) and R2.1 (20, 10) on F.Cu; optional GND track x = 15 on
     F.Cu from y1 to y2; optional zone (net, x1, y1, x2, y2) on F.Cu."""
 
-    def make_board(self, d, wall=None, zone=None, gnd=(), pad_size=(1, 1)):
+    def make_board(self, d, wall=None, zone=None, gnd=(), pad_size=(1, 1), gnd_pad=None, fill=False):
         import json
         mm = pcbnew.FromMM
         b = pcbnew.BOARD()
@@ -890,16 +890,36 @@ class SuggestBoardTest(unittest.TestCase):
             t.SetLayer(pcbnew.F_Cu)
             t.SetNet(nets['GND'])
             b.Add(t)
+        if gnd_pad:
+            fp = pcbnew.FOOTPRINT(b)
+            fp.SetReference('R9')
+            fp.SetPosition(pcbnew.VECTOR2I(mm(gnd_pad[0]), mm(gnd_pad[1])))
+            pad = pcbnew.PAD(fp)
+            pad.SetNumber('1')
+            pad.SetAttribute(pcbnew.PAD_ATTRIB_SMD)
+            pad.SetShape(pcbnew.PAD_SHAPE_RECT)
+            pad.SetSize(pcbnew.VECTOR2I(mm(1), mm(1)))
+            pad.SetLayerSet(pad.SMDMask())
+            pad.SetPosition(pcbnew.VECTOR2I(mm(gnd_pad[0]), mm(gnd_pad[1])))
+            pad.SetNet(nets['GND'])
+            pad.SetThermalSpokeAngleDegrees(90)
+            fp.Add(pad)
+            b.Add(fp)
         if zone:
             z = pcbnew.ZONE(b)
             z.SetLayer(pcbnew.F_Cu)
             z.SetNet(nets[zone[0]])
+            z.SetPadConnection(pcbnew.ZONE_CONNECTION_THERMAL)
+            z.SetThermalReliefGap(mm(0.5))
+            z.SetThermalReliefSpokeWidth(mm(0.5))
             ol = z.Outline()
             ol.NewOutline()
             x1, y1, x2, y2 = zone[1:]
             for x, y in ((x1, y1), (x2, y1), (x2, y2), (x1, y2)):
                 ol.Append(mm(x), mm(y))
             b.Add(z)
+        if fill:
+            pcbnew.ZONE_FILLER(b).Fill(b.Zones())
         path = os.path.join(d, 'T.kicad_pcb')
         b.Save(path)
         with open(os.path.join(d, 'T.kicad_pro'), 'w') as f:
@@ -1012,6 +1032,26 @@ class SuggestBoardTest(unittest.TestCase):
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertIn('pour GND', r.stdout)
 
+    def test_thermal_spokes_of_a_pour_pad_are_kept_clear(self):
+        # GND pad R9.1 at (15, 11.2) in a filled GND pour (x 13..17, full height): its upward spoke reaches y = 10.7 - 0.5 - 0.5 = 9.7 and crosses
+        # the straight SIG line at y = 10 (starved_thermal). The line must go around it.
+        r, line, c = self.run_suggest('--layers', 'F.Cu', gnd_pad=(15, 11.2), zone=('GND', 13, 0, 17, 20), fill=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotEqual(line, 'SIG R1.1 -> R2.1 layer=F.Cu')
+        ys = [float(t.split(',')[1]) for t in line.split() if ',' in t]
+        self.assertTrue(ys and min(ys) < 9.7 - 0.25 - 0.2 - 0.1 + 1e-6, line)
+        self.assertEqual(c.returncode, 0, c.stdout + c.stderr)
+
+    def test_no_spoke_where_the_fill_has_no_spoke(self):
+        # The GND zone outline ends 0.4 mm above the pad (less than the 0.5 mm gap): the fill has no copper and no
+        # spoke above the pad, so the straight line at y = 10 is not blocked by a spoke.
+        r, line, c = self.run_suggest('--layers', 'F.Cu', gnd_pad=(15, 11.2), zone=('GND', 14.2, 10.3, 15.8, 12.5), fill=True)
+        self.assertEqual(line, 'SIG R1.1 -> R2.1 layer=F.Cu', r.stdout)
+
+    def test_no_spokes_for_a_pad_outside_its_pour(self):
+        r, line, c = self.run_suggest('--layers', 'F.Cu', gnd_pad=(15, 11.2), zone=('GND', 3, 15, 6, 18))
+        self.assertEqual(line, 'SIG R1.1 -> R2.1 layer=F.Cu')
+
     def stitch_after_forced_vias(self, *stitch_args):
         """Route SIG with 2 vias (GND wall on F.Cu), then stitch SIG. (stitch result, GND vias, SIG vias, sha changed)."""
         import hashlib
@@ -1050,6 +1090,21 @@ class SuggestBoardTest(unittest.TestCase):
         self.assertIn('no room', st.stdout)
         self.assertEqual(gnd, [])
         self.assertFalse(changed)
+
+
+class SpokeTest(unittest.TestCase):
+    def test_four_spokes_from_the_pad_edge_out(self):
+        segs = pt.spoke_segments((10, 10), 0.5, 0.3, 0, 0, 1.0)
+        ends = sorted((round(b[0], 3), round(b[1], 3)) for a, b in segs)
+        self.assertEqual(ends, [(8.5, 10), (10, 8.7), (10, 11.3), (11.5, 10)])
+        starts = sorted((round(a[0], 3), round(a[1], 3)) for a, b in segs)
+        self.assertEqual(starts, [(9.5, 10), (10, 9.7), (10, 10.3), (10.5, 10)])
+
+    def test_spoke_angle_45_on_a_round_pad(self):
+        segs = pt.spoke_segments((0, 0), 0.5, 0.5, 0, 45, 1.0, round_pad=True)
+        for a, b in segs:
+            self.assertAlmostEqual(abs(b[0]), 1.5 / 2 ** 0.5, places=3)
+            self.assertAlmostEqual(abs(b[1]), 1.5 / 2 ** 0.5, places=3)
 
 
 class StitchCoreTest(unittest.TestCase):

@@ -654,6 +654,20 @@ def pour_rule(zone_net, domain):
     return 'cost' if domain is not None and zone_net == domain else 'block'
 
 
+def spoke_segments(c, hx, hy, orient_deg, spoke_deg, reach, round_pad=False):
+    """The 4 thermal spoke centre lines of a pad at c (half sizes hx, hy; a round pad uses hx as radius): from the pad
+    edge out by reach, at spoke_deg + k x 90 in the pad frame, turned by the pad orientation (KiCad, Y down)."""
+    out = []
+    for k in range(4):
+        a = math.radians(spoke_deg + 90 * k)
+        ca, sa = math.cos(a), math.sin(a)
+        edge = hx if round_pad else min(hx / abs(ca) if abs(ca) > 1e-9 else math.inf, hy / abs(sa) if abs(sa) > 1e-9 else math.inf)
+        t = math.radians(orient_deg)
+        d = (ca * math.cos(t) + sa * math.sin(t), -ca * math.sin(t) + sa * math.cos(t))
+        out.append(((c[0] + d[0] * edge, c[1] + d[1] * edge), (c[0] + d[0] * (edge + reach), c[1] + d[1] * (edge + reach))))
+    return out
+
+
 def stitch_spots(q, r, rings=(0.97, 0.9, 0.8, 0.7), n=36):
     """Candidate ground via centres around a signal via q: rings at r x rings, n points each, outer ring first."""
     for f in rings:
@@ -1451,6 +1465,46 @@ def copper_obstacles(p, b, pro, net, clr, layer, net_clr):
     return own, others
 
 
+def thermal_spokes(p, b, pro, net, clr, net_clr):
+    """{layer name: [(shape, clearance, label)]}: thermal spokes of the pads in a pour of their own net (not `net`).
+    A track through a spoke starves the thermal (DRC starved_thermal). A filled zone keeps only the spokes that its fill
+    holds (at half the gap from the pad edge); an unfilled zone keeps all 4 (conservative)."""
+    mm = p.ToMM
+    out = collections.defaultdict(list)
+    opt = lambda v, d: d if v is None or v == 0 else v
+    for z in b.Zones():
+        zn = z.GetNetname()
+        if z.GetIsRuleArea() or not zn or zn == net:
+            continue
+        c_ = net_clr.setdefault(zn, max(clr, net_rules(pro, zn)[2]))
+        for fp in b.GetFootprints():
+            for pd in fp.Pads():
+                if pd.GetNetname() != zn or not z.Outline().Contains(pd.GetPosition()):
+                    continue
+                conn = pd.GetLocalZoneConnection()
+                conn = z.GetPadConnection() if conn == p.ZONE_CONNECTION_INHERITED else conn
+                tht = pd.GetAttribute() == p.PAD_ATTRIB_PTH
+                if not (conn == p.ZONE_CONNECTION_THERMAL or (conn == p.ZONE_CONNECTION_THT_THERMAL and tht)):
+                    continue
+                w = mm(opt(pd.GetLocalThermalSpokeWidthOverride(), z.GetThermalReliefSpokeWidth()))
+                gap = mm(opt(pd.GetLocalThermalGapOverride(), z.GetThermalReliefGap()))
+                for L in z.GetLayerSet().CuStack():
+                    if not pd.IsOnLayer(L):
+                        continue
+                    sz = pd.GetSize(L)
+                    pos = (mm(pd.GetPosition().x), mm(pd.GetPosition().y))
+                    segs = spoke_segments(pos, mm(sz.x) / 2, mm(sz.y) / 2, pd.GetOrientationDegrees(),
+                                          pd.GetThermalSpokeAngleDegrees(), gap + w,
+                                          round_pad=pd.GetShape(L) == p.PAD_SHAPE_CIRCLE)
+                    if z.IsFilled():             # KiCad drops a spoke that the fill does not reach
+                        fill = z.GetFilledPolysList(L)
+                        segs = [(u, v) for u, v in segs if fill.Contains(p.VECTOR2I(
+                            p.FromMM(u[0] + (v[0] - u[0]) * (gap / 2) / (gap + w)), p.FromMM(u[1] + (v[1] - u[1]) * (gap / 2) / (gap + w))))]
+                    out[b.GetLayerName(L)] += [(('seg', u, v, w / 2), c_, f'thermal spoke {fp.GetReference()}.{pd.GetNumber()}')
+                                               for u, v in segs]
+    return out
+
+
 def cmd_connect(a):
     """Intent lines -> tracks and vias. The agent chooses the path (waypoints, vias); the code makes the 0/45/90 geometry,
     takes the class width and via, checks clearance to other-net copper, then writes with the route command.
@@ -1567,7 +1621,8 @@ def cmd_suggest(a):
     """A* path proposals for one unconnected pad pair, as connect lines. Reads the board, writes nothing.
     Blocked for a track centre: other-net copper + clearance + width/2, board edge, track keepouts, pours of other nets
     (a pour of the net's own ground domain, --planes, is not blocked but costs POUR_EXTRA per mm, so the path goes
-    around it when it can; a ground pour of another domain blocks: isolation barrier).
+    around it when it can; a ground pour of another domain blocks: isolation barrier), and the thermal spokes of pads
+    in their own pour (starved_thermal).
     Blocked for a via: other-net copper on every copper layer, via keepouts, and SMD pads of any net (via-in-pad)."""
     p = pcb()
     b = p.LoadBoard(a.board)
@@ -1640,6 +1695,8 @@ def cmd_suggest(a):
     net_clr, obstacles = {}, {}
     for L in b.GetEnabledLayers().CuStack():
         obstacles[b.GetLayerName(L)] = copper_obstacles(p, b, pro, a.net, clr, L, net_clr)[1] + edges
+    for name, sp in thermal_spokes(p, b, pro, a.net, clr, net_clr).items():
+        obstacles[name] += sp
     free, lab, extra = [], [], []
     for L, name in zip(lid, layers):
         f, lb, ex = bytearray(inside), [-1] * N, [0.0] * N
