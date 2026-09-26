@@ -16,7 +16,7 @@ Run with the KiCad bundled Python (it has pcbnew):
   $PY tools/pcbtool.py drc    BOARD                           DRC --schematic-parity summary
   $PY tools/pcbtool.py corridor BOARD NET [--margin 3] [--cell 0.25] [--pair N] [--box X1 Y1 X2 Y2]  unconnected pad pairs + ASCII free/blocked map
   $PY tools/pcbtool.py connect BOARD INTENT                 intent lines -> 0/45/90 tracks, class width/via, clearance check
-  $PY tools/pcbtool.py suggest BOARD NET [--pair N] [--box X1 Y1 X2 Y2] [--layers F.Cu,B.Cu] [--via-cost 8] [--k 3] [--cell 0.1]
+  $PY tools/pcbtool.py suggest BOARD NET [--pair N] [--box X1 Y1 X2 Y2] [--layers F.Cu,B.Cu] [--via-cost 8] [--k 3] [--cell 0.1] [--verify]
                                                               A* proposals as connect lines (writes nothing)
   $PY tools/pcbtool.py netcheck BOARD NET                     DRC on a temp copy: one total line + this net only
   $PY tools/pcbtool.py widths BOARD [--limit N]              tracks thinner than the net class width (current)
@@ -560,6 +560,44 @@ def node_corners(path, cols):
         elif l0 == l1 and (i1 % cols - i0 % cols, i1 // cols - i0 // cols) != (i2 % cols - i1 % cols, i2 // cols - i1 // cols):
             out.append(('through', i1))
     return out
+
+
+def drop_jogs(pts, layer, ok):
+    """Remove 'through' waypoints while ok(a, b, c, layer) says the direct leg a -> c may replace a -> b -> c.
+    A direct 0/45/90 leg is never longer, so this removes jogs and extra bends. pts: [(kind, (x, y))], the two pad
+    centres first and last; a 'via' changes the layer."""
+    pts = list(pts)
+    k = 1
+    while k < len(pts) - 1:
+        L = layer
+        for kind, _ in pts[1:k]:
+            L = OTHER[L] if kind == 'via' else L
+        if pts[k][0] == 'through' and ok(pts[k - 1][1], pts[k][1], pts[k + 1][1], L):
+            del pts[k]
+            k = max(1, k - 1)
+        else:
+            k += 1
+    return pts
+
+
+def verify_verdict(base, cand, net):
+    """(ok, reason) of a candidate DRC report against the baseline report: no new error type count,
+    fewer unconnected items on the net, no more on any other net."""
+    def counts(d):
+        unc = collections.Counter(n for x in d.get('unconnected_items', [])
+                                  for n in {m.group(1) for i in x['items'] for m in [NET_RE.search(i['description'])] if m})
+        err = collections.Counter(x['type'] for x in d.get('violations', []) if x.get('severity') == 'error')
+        return unc, err
+    (bu, be), (cu, ce) = counts(base), counts(cand)
+    for t in sorted(ce):
+        if ce[t] > be[t]:
+            return False, f'+{ce[t] - be[t]} {t}'
+    if cu[net] >= bu[net]:
+        return False, f'{net} unconnected {bu[net]} -> {cu[net]}'
+    for n in sorted(cu):
+        if n != net and cu[n] > bu[n]:
+            return False, f'{n} unconnected {bu[n]} -> {cu[n]}'
+    return True, ''
 
 
 def mark_near(grid, shape, keep, free, lab, li):
@@ -1561,6 +1599,36 @@ def cmd_suggest(a):
                     mark_near(grid, sh, via_drill / 2 + m, via_ok, via_lab, lab_id(f'via-in-pad {fp.GetReference()}.{pd.GetNumber()}'))
     for f in free:
         f[s] = f[t] = 1
+
+    def node(q):
+        c, r = round((q[0] - x0) / cell), round((q[1] - y0) / cell)
+        return r * cols + c if 0 <= c < cols and 0 <= r < rows else None
+
+    def samples(u, v):
+        n = max(1, math.ceil(math.dist(u, v) / (cell / 2)))
+        return [(u[0] + (v[0] - u[0]) * j / n, u[1] + (v[1] - u[1]) * j / n) for j in range(n + 1)]
+
+    def pour_len(segs):
+        """mm of the segments in another net's GND pour (sampled at half a cell)."""
+        out = 0.0
+        for u, v, L, _ in segs:
+            li = layers.index(L)
+            q = samples(u, v)
+            out += sum(math.dist(p1, p2) for p1, p2 in zip(q, q[1:]) if (lambda i: i is not None and base[li][i])(node(p1)))
+        return out
+
+    def leg_segs(u, v, L):
+        q = [u] + leg(u, v)
+        return [(p1, p2, L, width) for p1, p2 in zip(q, q[1:])]
+
+    def leg_ok(u, w, v, L):
+        """The direct leg u -> v may replace u -> w -> v: free on the grid (pours), clear of copper, no more GND pour."""
+        new, li = leg_segs(u, v, L), layers.index(L)
+        if any(node(q) is None or not free[li][node(q)] for p1, p2, _, _ in new for q in samples(p1, p2)):
+            return False
+        if clear_margin(new, [], via_d, {L: obstacles[L]})[0] < -1e-6:
+            return False
+        return pour_len(new) <= pour_len(leg_segs(u, w, L) + leg_segs(w, v, L)) + 1e-6
     head = (f'pair {n} of {len(pairs)}: {na} -> {nb}; class {cls_name} w {width:g} clr {clr:g} via {via_d:g}/{via_drill:g}; '
             f'cell {cell:g} box {bx[0]:.1f},{bx[1]:.1f}..{bx[2]:.1f},{bx[3]:.1f}; GND pour x3 cost, other pours blocked; '
             f'.kicad_dru not used')
@@ -1588,11 +1656,12 @@ def cmd_suggest(a):
             print(f'no path: closest reach ({fx:.3f}, {fy:.3f}) is {math.dist((fx, fy), sb):.2f} mm from {nb}; '
                   f'blocked there by {what}. Try a larger --box, --layers F.Cu,B.Cu or a lower --via-cost.')
             sys.exit(1)
-        pts = node_corners(path, cols)
+        L0 = layers[path[0][1]]
+        pts = [('end', sa)] + [(k, xy(i)) for k, i in node_corners(path, cols)]
         if math.dist(xy(t), sb) > 1e-6:
-            pts.append(('through', t))
-        line = f'{a.net} {na} -> {nb} layer={layers[path[0][1]]}' + ''.join(
-            f' {k} {fmt_mm(xy(i)[0])},{fmt_mm(xy(i)[1])}' for k, i in pts)
+            pts.append(('through', xy(t)))
+        pts = drop_jogs(pts + [('end', sb)], L0, leg_ok)
+        line = f'{a.net} {na} -> {nb} layer={L0}' + ''.join(f' {k} {fmt_mm(q[0])},{fmt_mm(q[1])}' for k, q in pts[1:-1])
         for (i, L) in path:                          # push the next search away from this one (a band around it)
             for dr in range(-band, band + 1):
                 for dc in range(-band, band + 1):
@@ -1602,18 +1671,58 @@ def cmd_suggest(a):
         if line in seen:
             continue
         seen.add(line)
-        it = parse_intent(line)
-        segs, vias = expand_route(intent_route(it, sa, sb, layers[path[0][1]], width, (via_d, via_drill)))
+        segs, vias = expand_route(intent_route(parse_intent(line), sa, sb, L0, width, (via_d, via_drill)))
         length = sum(math.dist(u, v) for u, v, _, _ in segs)
-        bends = sum(1 for k, _ in pts if k == 'through') - (1 if math.dist(xy(t), sb) > 1e-6 else 0)
-        pour = sum(math.dist(xy(i), xy(j)) for (i, L), (j, L2) in zip(path, path[1:]) if L == L2 and base[L][i] and base[L][j])
+        bends = sum(1 for (u, v, L, _), (u2, v2, L2, _) in zip(segs, segs[1:]) if L == L2 and
+                    abs((v[0] - u[0]) * (v2[1] - u2[1]) - (v[1] - u[1]) * (v2[0] - u2[0])) > 1e-9)
         margin, why = clear_margin(segs, vias, via_d, obstacles)
-        found.append((len(found) + 1, length, len(vias), bends, margin, why, pour, line))
-    for k, length, nv, bends, margin, why, pour, line in found:
+        found.append((len(found) + 1, length, len(vias), bends, margin, why, pour_len(segs), line))
+    verdicts = verify_candidates(a.board, a.net, [f[-1] for f in found]) if a.verify else [(True, '')] * len(found)
+    shown = 0
+    for (k, length, nv, bends, margin, why, pour, line), (ok, reason) in zip(found, verdicts):
+        if not ok:
+            continue
+        shown += 1
         flag = f' CONFLICT to {why}' if margin < -1e-6 else ''
-        print(f'{k}) len {length:.2f} vias {nv} bends {bends} margin {margin:+.3f} pour {pour:.1f}{flag}')
+        mark = 'verified ' if a.verify else ''
+        print(f'{shown}) {mark}len {length:.2f} vias {nv} bends {bends} margin {margin:+.3f} pour {pour:.1f}{flag}')
         print(line)
+    if a.verify and shown < len(found):
+        print('rejected by DRC: ' + '; '.join(f'len {f[1]:.2f} vias {f[2]}: {v[1]}' for f, v in zip(found, verdicts) if not v[0]))
+    if not shown:
+        sys.exit(1)
 
+
+def verify_candidates(board, net, lines):
+    """[(ok, reason)] per connect line: DRC (--refill-zones) with the line applied, on temp copies of the project folder,
+    against the DRC of an unchanged copy (verify_verdict). Up to 8 in parallel. The board is not changed."""
+    import concurrent.futures
+    import shutil
+    import tempfile
+    board = os.path.abspath(board)
+    src = os.path.dirname(board)
+
+    def run(line):
+        with tempfile.TemporaryDirectory() as d:
+            proj = os.path.join(d, os.path.basename(src))
+            shutil.copytree(src, proj, ignore=shutil.ignore_patterns('*.lck', '*.step', '*.stp', '*.wrl', '*-backups'))
+            bd = os.path.join(proj, os.path.basename(board))
+            if line is not None:
+                r = subprocess.run([sys.executable, os.path.abspath(__file__), 'connect', bd, line], capture_output=True, text=True)
+                if r.returncode:
+                    return None, 'connect: ' + ((r.stdout + r.stderr).strip().splitlines() or ['failed'])[-1][:120]
+            out = os.path.join(d, 'drc.json')
+            subprocess.run([KICAD_CLI, 'pcb', 'drc', '--refill-zones', '--format', 'json', '-o', out, bd],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+            if not os.path.exists(out):
+                return None, 'kicad-cli pcb drc wrote no report'
+            with open(out) as f:
+                return json.load(f), ''
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(lines) + 1)) as ex:
+        res = list(ex.map(run, [None] + lines))
+    if res[0][0] is None:
+        sys.exit(f'baseline DRC failed: {res[0][1]}')
+    return [verify_verdict(res[0][0], d, net) if d is not None else (False, why) for d, why in res[1:]]
 
 string_letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
 
@@ -1830,7 +1939,9 @@ def main():
     s.add_argument('--box', type=float, nargs=4, metavar=('X1', 'Y1', 'X2', 'Y2'), help='search only this window')
     s.add_argument('--layers', default='F.Cu,B.Cu'); s.add_argument('--via-cost', type=float, default=8.0, help='mm of track')
     s.add_argument('--k', type=int, default=3); s.add_argument('--margin', type=float, default=3.0)
-    s.add_argument('--cell', type=float, default=0.1); s.set_defaults(f=cmd_suggest)
+    s.add_argument('--cell', type=float, default=0.1)
+    s.add_argument('--verify', action='store_true', help='DRC each candidate on a temp copy; print only the clean ones')
+    s.set_defaults(f=cmd_suggest)
     s = sp.add_parser('netcheck'); s.add_argument('board'); s.add_argument('net'); s.set_defaults(f=cmd_netcheck)
     s = sp.add_parser('paths'); s.add_argument('board'); s.add_argument('spec'); s.add_argument('--limit', type=int, default=4)
     s.add_argument('--verbose', action='store_true'); s.set_defaults(f=cmd_paths)

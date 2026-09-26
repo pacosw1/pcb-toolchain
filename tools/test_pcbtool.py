@@ -709,6 +709,47 @@ class SuggestCoreTest(unittest.TestCase):
         self.assertIn(6, reached)
         self.assertNotIn(8, reached)
 
+    def test_drop_jogs_removes_short_legs_and_straight_points_when_free(self):
+        pts = [('end', (0, 0)), ('through', (5, 0)), ('through', (5.2, 0.2)), ('through', (8, 0.2)), ('end', (10, 0.2))]
+        out = pt.drop_jogs(pts, 'F.Cu', lambda a, b, c, L: True)
+        self.assertEqual(out, [('end', (0, 0)), ('end', (10, 0.2))])
+
+    def test_drop_jogs_keeps_a_jog_when_the_direct_leg_is_blocked(self):
+        pts = [('end', (0, 0)), ('through', (5, 0)), ('through', (5.2, 0.2)), ('end', (10, 0.2))]
+        self.assertEqual(pt.drop_jogs(pts, 'F.Cu', lambda a, b, c, L: False), pts)
+
+    def test_drop_jogs_tracks_the_layer_after_a_via(self):
+        seen = []
+        pts = [('end', (0, 0)), ('via', (2, 0)), ('through', (4, 0)), ('end', (6, 0))]
+        pt.drop_jogs(pts, 'F.Cu', lambda a, b, c, L: seen.append(L) or True)
+        self.assertEqual(seen, ['B.Cu'])
+
+
+class VerifyVerdictTest(unittest.TestCase):
+    @staticmethod
+    def drc(errors=(), unc=()):
+        return {'violations': [{'type': t, 'severity': 'error', 'items': [{'description': f'Track [{n}]'}]} for t, n in errors],
+                'unconnected_items': [{'items': [{'description': f'Pad 1 [{n}]'}, {'description': f'Pad 2 [{n}]'}]} for n in unc]}
+
+    def test_ok_when_the_net_connects_and_nothing_else_changes(self):
+        base = self.drc([('clearance', 'X')], ['SIG', 'GND'])
+        self.assertEqual(pt.verify_verdict(base, self.drc([('clearance', 'X')], ['GND']), 'SIG'), (True, ''))
+
+    def test_new_error_is_rejected(self):
+        ok, why = pt.verify_verdict(self.drc(unc=['SIG']), self.drc([('clearance', 'SIG')]), 'SIG')
+        self.assertFalse(ok)
+        self.assertIn('+1 clearance', why)
+
+    def test_more_gnd_unconnected_is_rejected(self):
+        ok, why = pt.verify_verdict(self.drc(unc=['SIG', 'GND']), self.drc(unc=['GND', 'GND']), 'SIG')
+        self.assertFalse(ok)
+        self.assertIn('GND unconnected 1 -> 2', why)
+
+    def test_net_still_open_is_rejected(self):
+        ok, why = pt.verify_verdict(self.drc(unc=['SIG']), self.drc(unc=['SIG']), 'SIG')
+        self.assertFalse(ok)
+        self.assertIn('SIG unconnected 1 -> 1', why)
+
 
 @unittest.skipIf(pcbnew is None, 'needs the KiCad bundled Python (pcbnew)')
 class SuggestBoardTest(unittest.TestCase):
@@ -820,6 +861,22 @@ class SuggestBoardTest(unittest.TestCase):
         ys = [float(t.split(',')[1]) for t in line.split() if ',' in t]
         self.assertTrue(ys and min(ys) < 9)
         self.assertEqual(c.returncode, 0, c.stdout + c.stderr)
+
+    def test_verify_applies_on_a_copy_and_marks_verified(self):
+        import hashlib
+        import pathlib
+        import subprocess
+        import sys
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            board = self.make_board(d)
+            before = hashlib.sha256(pathlib.Path(board).read_bytes()).hexdigest()
+            r = subprocess.run([sys.executable, os.path.join(HERE, 'pcbtool.py'), 'suggest', board, 'SIG', '--cell', '0.25',
+                                '--k', '2', '--verify'], capture_output=True, text=True)
+            after = hashlib.sha256(pathlib.Path(board).read_bytes()).hexdigest()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(before, after)
+        self.assertIn('1) verified len 10.00 vias 0', r.stdout)
 
     def test_other_net_pour_blocks(self):
         r, line, c = self.run_suggest('--layers', 'F.Cu', zone=('VCC', 13, 0, 17, 20))
