@@ -224,6 +224,12 @@ class CurrentTest(unittest.TestCase):
         self.assertFalse(pt.is_neck(length=1.55, width=0.6, pad_minor=0.6))   # too long
         self.assertFalse(pt.is_neck(length=0.5, width=0.25, pad_minor=0.6))   # narrower than the pad
 
+    def test_spec_pairs_from_pads_or_chains(self):
+        spec = {'nets': {'A': {'amps': 1.0, 'pads': ['U1.1', 'C1.1', 'J1.1']},
+                         'B': {'chains': [{'amps': 2.0, 'pads': ['U2.6', 'C2.1']}, {'amps': 0.5, 'pads': ['C2.1', 'U7.1']}]}}}
+        self.assertEqual(pt.spec_pairs(spec), [('A', 'U1.1', 'C1.1', 1.0), ('A', 'C1.1', 'J1.1', 1.0),
+                                               ('B', 'U2.6', 'C2.1', 2.0), ('B', 'C2.1', 'U7.1', 0.5)])
+
     def test_no_path_is_zero_amps(self):
         self.assertEqual(pt.widest_path([('A', 'x', 3.0, 'w')], 'A', 'B'), (0.0, []))
 

@@ -202,6 +202,15 @@ def is_neck(length, width, pad_minor, max_len=NECK_MAX_MM):
     return length <= max_len + 1e-6 and width >= pad_minor - 1e-3
 
 
+def spec_pairs(spec):
+    """(net, pad, pad, amps) for each consecutive pad pair. A net has 'amps' + 'pads', or 'chains' of them."""
+    out = []
+    for net, n in spec['nets'].items():
+        for ch in n.get('chains', [n]):
+            out += [(net, u, v, ch['amps']) for u, v in zip(ch['pads'], ch['pads'][1:])]
+    return out
+
+
 def widest_path(edges, a, b):
     """Path from a to b with the highest bottleneck current. edges: (u, v, amps, label), undirected.
     Returns (amps, labels). Parallel paths do not add (conservative)."""
@@ -584,27 +593,27 @@ def cmd_paths(a):
         sys.exit(f'cannot load {a.board}')
     thick = copper_thickness(a.board)
     dT, plating = spec.get('dT', 10.0), spec.get('via_plating_mm', 0.018)
-    bad = 0
-    for net, n in spec['nets'].items():
-        edges, have = net_graph(p, b, net, thick, dT, plating)
-        missing = [x for x in n['pads'] if x not in have]
+    bad, graphs = 0, {}
+    for net, u, v, need in spec_pairs(spec):
+        if net not in graphs:
+            graphs[net] = net_graph(p, b, net, thick, dT, plating)
+        edges, have = graphs[net]
+        missing = [x for x in (u, v) if x not in have]
         if missing:
-            print(f'LOW {net}: pads not on this net: {missing}')
+            print(f'LOW {net} {u}->{v}: pads not on this net: {missing}')
             bad += 1
             continue
-        for u, v in zip(n['pads'], n['pads'][1:]):
-            amps, path = widest_path(edges, u, v)
-            if amps >= n['amps']:
-                if a.verbose:
-                    print(f"OK  {net} {u}->{v}: " + ('pour' if amps == float('inf') else f'{amps:.2f} A') + f" >= {n['amps']} A")
-                continue
-            bad += 1
-            if not path:
-                print(f"LOW {net} {u}->{v}: no copper path (need {n['amps']} A)")
-                continue
-            worst = min((e for e in edges if e[3] in path), key=lambda e: e[2])
-            thin = sorted({e[3] for e in edges if e[3] in path and e[2] < n['amps']})
-            print(f"LOW {net} {u}->{v}: {amps:.2f} A < {n['amps']} A; {len(thin)} items under: " + '; '.join(thin[:a.limit]))
+        amps, path = widest_path(edges, u, v)
+        if amps >= need:
+            if a.verbose:
+                print(f"OK  {net} {u}->{v}: " + ('pour' if amps == float('inf') else f'{amps:.2f} A') + f' >= {need} A')
+            continue
+        bad += 1
+        if not path:
+            print(f'LOW {net} {u}->{v}: no copper path (need {need} A)')
+            continue
+        thin = sorted({e[3] for e in edges if e[3] in path and e[2] < need})
+        print(f'LOW {net} {u}->{v}: {amps:.2f} A < {need} A; {len(thin)} items under: ' + '; '.join(thin[:a.limit]))
     print(f'{bad} power-path pairs below the design current')
     sys.exit(1 if bad else 0)
 
