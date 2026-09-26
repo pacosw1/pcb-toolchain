@@ -13,6 +13,11 @@ Run with the KiCad bundled Python (it has pcbnew):
   $PY tools/pcbtool.py unroute BOARD NET [NET ...]            remove the tracks and vias of nets
   $PY tools/pcbtool.py drc    BOARD                           DRC --schematic-parity summary
   $PY tools/pcbtool.py render BOARD OUTDIR                    top + iso PNG
+  $PY tools/pcbtool.py art    BOARD SPEC.json                 silkscreen art group (waves, circles, lines, texts)
+  $PY tools/pcbtool.py colors BOARD OUTDIR [VARIANT ...]      JLC colour variant renders (board unchanged)
+  $PY tools/pcbtool.py setcolors BOARD MASK SILK FINISH       write the stackup colours
+  $PY tools/pcbtool.py snapshot BOARD OUT.json [--checker CMD]  before/after state
+  $PY tools/pcbtool.py compare BEFORE.json AFTER.json         exit 1 on a regression
 
 Place spec:  {"place": {"R1": [x, y, rot]}, "grids": [{"refs": [...], "origin": [x, y],
               "pitch": [dx, dy], "cols": n, "rot": 0}]}
@@ -105,6 +110,98 @@ def summarize_drc(d):
         'error_lines': [f"{x['type']}: " + ' | '.join(i['description'] for i in x['items']) for x in errs],
         'unrouted': dict(unrouted),
     }
+
+
+JLC_MASK = ('Green', 'Red', 'Yellow', 'Blue', 'White', 'Black', 'Purple')
+JLC_SILK = ('White', 'Black')
+JLC_FINISH = ('HAL lead-free', 'ENIG')
+LAYER_RE = re.compile(r'^\s*\(layer "([^"]+)"')
+
+
+def apply_colors(text, mask, silk, finish):
+    """Set the stackup colours (KiCad render and fab notes). Only colours JLC makes."""
+    if mask not in JLC_MASK or silk not in JLC_SILK or finish not in JLC_FINISH:
+        raise ValueError(f'not a JLC option: mask {mask}, silk {silk}, finish {finish}')
+    want = {'F.Mask': mask, 'B.Mask': mask, 'F.SilkS': silk, 'B.SilkS': silk}
+    out, cur, inside = [], None, False
+    for line in text.split('\n'):
+        if line.strip().startswith('(stackup'):
+            inside = True
+        elif inside and line.strip().startswith('(copper_finish'):
+            inside = False
+        m = LAYER_RE.match(line)
+        if m:
+            cur = m.group(1)
+        if not inside:
+            cur = None
+        if cur in want and line.strip().startswith('(color '):
+            continue
+        out.append(line)
+        if cur in want and line.strip().startswith('(type '):
+            indent = line[:len(line) - len(line.lstrip())]
+            out.append(f'{indent}(color "{want[cur]}")')
+    return re.sub(r'\(copper_finish "[^"]*"\)', f'(copper_finish "{finish}")', '\n'.join(out))
+
+
+def compare(a, b):
+    """Before/after harness: regressions (worse), progress (better), part changes."""
+    reg, prog = [], []
+    for key, label in (('errors', 'DRC errors'), ('parity', 'parity'), ('unconnected', 'unconnected')):
+        x, y = a['drc'][key], b['drc'][key]
+        if y > x:
+            reg.append(f'{label} {x} -> {y}')
+        elif y < x:
+            prog.append(f'{label} {x} -> {y}')
+    if a.get('checker') and b.get('checker'):
+        (p0, n0), (p1, n1) = a['checker'], b['checker']
+        if p1 < p0:
+            reg.append(f'checker {p0}/{n0} -> {p1}/{n1}')
+        elif p1 > p0:
+            prog.append(f'checker {p0}/{n0} -> {p1}/{n1}')
+    fmt = lambda v: '(' + ', '.join(str(i) for i in v) + ')'
+    pa, pb = a['parts'], b['parts']
+    moved = [f'{r} {fmt(pa[r])} -> {fmt(pb[r])}' for r in sorted(pa) if r in pb and list(pa[r]) != list(pb[r])]
+    return {'regressions': reg, 'progress': prog, 'moved': moved,
+            'added': sorted(set(pb) - set(pa)), 'removed': sorted(set(pa) - set(pb)),
+            'tracks': (a.get('tracks'), b.get('tracks')), 'vias': (a.get('vias'), b.get('vias'))}
+
+
+def seigaiha(box, r, rings=3, step_deg=4):
+    """Japanese wave pattern (seigaiha) as visible arc spans ((cx, cy), radius, a0, a1), degrees.
+
+    Scales of radius r, 2r apart, rows r/2 apart, odd rows shifted by r. A lower row is in
+    front. Only upper halves are drawn (Y down: angles 180-360). Every scale fits in the box.
+    """
+    x0, y0, x1, y1 = box
+    centres = []
+    j = 0
+    while y0 + r + j * r / 2 <= y1:
+        cy = y0 + r + j * r / 2
+        cx = x0 + r + (r if j % 2 else 0)
+        while cx + r <= x1 + 1e-9:
+            centres.append((cx, cy))
+            cx += 2 * r
+        j += 1
+    arcs = []
+    for c in centres:
+        front = [f for f in centres if f[1] > c[1] + 1e-9 and abs(f[0] - c[0]) < 2 * r and f[1] - c[1] < 2 * r]
+        for k in range(1, rings + 1):
+            rad = r * k / rings
+            span = None
+            a = 180
+            while a < 360:
+                m = math.radians(a + step_deg / 2)
+                px, py = c[0] + rad * math.cos(m), c[1] + rad * math.sin(m)
+                hidden = any(math.hypot(px - f[0], py - f[1]) < r - 1e-6 for f in front)
+                if not hidden:
+                    span = (span[0], a + step_deg) if span else (a, a + step_deg)
+                elif span:
+                    arcs.append((c, rad, span[0], span[1]))
+                    span = None
+                a += step_deg
+            if span:
+                arcs.append((c, rad, span[0], span[1]))
+    return arcs
 
 
 # ---------------------------------------------------------------- side effects (pcbnew, kicad-cli)
@@ -252,6 +349,153 @@ def cmd_render(a):
         print(j[-1])
 
 
+def cmd_art(a):
+    """Silkscreen art from a spec, in one PCB_GROUP. A rerun replaces the group."""
+    p = pcb()
+    spec = json.load(open(a.spec))
+    b = p.LoadBoard(a.board)
+    name = spec.get('group', 'art')
+    for g in list(b.Groups()):
+        if g.GetName() == name or g.GetName() in spec.get('remove_groups', []):
+            for it in list(g.GetItems()):
+                b.Delete(it)
+            b.Delete(g)
+    layer = b.GetLayerID(spec.get('layer', 'B.SilkS'))
+    mirror = spec.get('layer', 'B.SilkS').startswith('B.')
+    grp = p.PCB_GROUP(b)
+    grp.SetName(name)
+    b.Add(grp)
+    items = []
+    faces = {}  # text uuid -> TrueType face; pcbnew does not save SetUnresolvedFontName, so it is written after Save
+
+    def arc(c, rad, a0, a1, w):
+        sh = p.PCB_SHAPE(b, p.SHAPE_T_ARC)
+        pts = [v2(c[0] + rad * math.cos(math.radians(t)), c[1] + rad * math.sin(math.radians(t))) for t in (a0, (a0 + a1) / 2, a1)]
+        sh.SetArcGeometry(*pts)
+        sh.SetWidth(p.FromMM(w))
+        sh.SetLayer(layer)
+        items.append(sh)
+
+    for wv in spec.get('waves', []):
+        for c, rad, a0, a1 in seigaiha(wv['box'], wv['r'], wv.get('rings', 3)):
+            arc(c, rad, a0, a1, wv.get('width', 0.18))
+    for c in spec.get('circles', []):
+        sh = p.PCB_SHAPE(b, p.SHAPE_T_CIRCLE)
+        sh.SetCenter(v2(*c['c']))
+        sh.SetEnd(v2(c['c'][0] + c['r'], c['c'][1]))
+        sh.SetWidth(p.FromMM(c.get('width', 0.2)))
+        sh.SetFilled(bool(c.get('fill')))
+        sh.SetLayer(layer)
+        items.append(sh)
+    for ln in spec.get('lines', []):
+        sh = p.PCB_SHAPE(b, p.SHAPE_T_SEGMENT)
+        sh.SetStart(v2(*ln['a']))
+        sh.SetEnd(v2(*ln['b']))
+        sh.SetWidth(p.FromMM(ln.get('width', 0.2)))
+        sh.SetLayer(layer)
+        items.append(sh)
+    for t in spec.get('texts', []):
+        chars = list(t['text']) if t.get('vertical') else [t['text']]
+        for i, ch in enumerate(chars):
+            tx = p.PCB_TEXT(b)
+            tx.SetText(ch)
+            x, y = t['at']
+            tx.SetPosition(v2(x, y + i * t['size'] * t.get('line', 1.1)))
+            tx.SetLayer(layer)
+            tx.SetTextSize(v2(t['size'], t['size']))
+            tx.SetTextThickness(p.FromMM(t.get('thickness', t['size'] * 0.15)))
+            tx.SetBold(bool(t.get('bold')))
+            tx.SetTextAngleDegrees(t.get('angle', 0))
+            tx.SetMirrored(mirror)
+            if t.get('font'):
+                faces[tx.m_Uuid.AsString()] = t['font']
+            items.append(tx)
+    for it in items:
+        b.Add(it)
+        grp.AddItem(it)
+    b.Save(a.board)
+    if faces:
+        with open(a.board) as f:
+            txt = f.read()
+        for uid, face in faces.items():
+            txt, n = re.subn(r'(\(uuid "%s"\)\s*\(effects\s*\(font\n)(\s*)' % re.escape(uid),
+                             lambda m: f'{m.group(1)}{m.group(2)}(face "{face}")\n{m.group(2)}', txt, count=1)
+            if n != 1:
+                sys.exit(f'font face not written for text {uid}')
+        with open(a.board, 'w') as f:
+            f.write(txt)
+    print(f'{name}: {len(items)} items on {spec.get("layer", "B.SilkS")}')
+    print_drc(run_drc(a.board))
+
+
+VARIANTS = {
+    'black-enig': ('Black', 'White', 'ENIG'), 'white-enig': ('White', 'Black', 'ENIG'),
+    'blue-enig': ('Blue', 'White', 'ENIG'), 'purple-enig': ('Purple', 'White', 'ENIG'),
+    'red-enig': ('Red', 'White', 'ENIG'), 'green-hasl': ('Green', 'White', 'HAL lead-free'),
+}
+
+
+def cmd_colors(a):
+    """Render colour variants from a temporary copy next to the board (KIPRJMOD stays valid)."""
+    os.makedirs(a.outdir, exist_ok=True)
+    src = open(a.board).read()
+    d = os.path.dirname(os.path.abspath(a.board))
+    for name in (a.variants or VARIANTS):
+        tmp = os.path.join(d, f'.pcbtool-{name}.kicad_pcb')
+        with open(tmp, 'w') as f:
+            f.write(apply_colors(src, *VARIANTS[name]))
+        try:
+            for side, extra in (('iso', ['--rotate', '-40,0,30', '--zoom', '0.9']), ('bottom', ['--side', 'bottom'])):
+                out = os.path.join(a.outdir, f'{name}-{side}.png')
+                subprocess.run([KICAD_CLI, 'pcb', 'render', '--quality', 'high', '--width', '1600', '--height', '1300',
+                                '--background', 'opaque', *extra, '-o', out, tmp],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                print(out)
+        finally:
+            os.remove(tmp)
+
+
+def cmd_setcolors(a):
+    with open(a.board) as f:
+        s = f.read()
+    with open(a.board, 'w') as f:
+        f.write(apply_colors(s, a.mask, a.silk, a.finish))
+    print(f'stackup: mask {a.mask}, silk {a.silk}, finish {a.finish}')
+
+
+def cmd_snapshot(a):
+    p = pcb()
+    b = p.LoadBoard(a.board)
+    snap = {'drc': run_drc(a.board),
+            'parts': {fp.GetReference(): [round(p.ToMM(fp.GetPosition().x), 3), round(p.ToMM(fp.GetPosition().y), 3),
+                                          round(fp.GetOrientationDegrees(), 1), 'B' if fp.IsFlipped() else 'F']
+                      for fp in b.GetFootprints()},
+            'tracks': sum(1 for t in b.GetTracks() if not isinstance(t, p.PCB_VIA)),
+            'vias': sum(1 for t in b.GetTracks() if isinstance(t, p.PCB_VIA))}
+    if a.checker:
+        out = subprocess.run(a.checker, shell=True, capture_output=True, text=True).stdout
+        m = re.search(r'(\d+)/(\d+) checks pass', out)
+        snap['checker'] = [int(m.group(1)), int(m.group(2))] if m else None
+    with open(a.out, 'w') as f:
+        json.dump(snap, f, indent=1)
+    c = snap.get('checker')
+    print(f"snapshot {a.out}: {snap['drc']['errors']} errors, {snap['drc']['unconnected']} unconnected, "
+          f"{snap['drc']['parity']} parity, {snap['tracks']} tracks, {snap['vias']} vias" + (f', checker {c[0]}/{c[1]}' if c else ''))
+
+
+def cmd_compare(a):
+    r = compare(json.load(open(a.before)), json.load(open(a.after)))
+    for k in ('regressions', 'progress'):
+        print(f"{k}: {', '.join(r[k]) or '-'}")
+    print(f"tracks {r['tracks'][0]} -> {r['tracks'][1]}, vias {r['vias'][0]} -> {r['vias'][1]}")
+    for k in ('added', 'removed'):
+        if r[k]:
+            print(f"{k}: {', '.join(r[k])}")
+    for m in r['moved'][:40]:
+        print('  moved ' + m)
+    sys.exit(1 if r['regressions'] else 0)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sp = ap.add_subparsers(dest='cmd', required=True)
@@ -262,6 +506,14 @@ def main():
     s = sp.add_parser('unroute'); s.add_argument('board'); s.add_argument('nets', nargs='+'); s.set_defaults(f=cmd_unroute)
     s = sp.add_parser('drc'); s.add_argument('board'); s.set_defaults(f=cmd_drc)
     s = sp.add_parser('render'); s.add_argument('board'); s.add_argument('outdir'); s.set_defaults(f=cmd_render)
+    s = sp.add_parser('art'); s.add_argument('board'); s.add_argument('spec'); s.set_defaults(f=cmd_art)
+    s = sp.add_parser('colors'); s.add_argument('board'); s.add_argument('outdir'); s.add_argument('variants', nargs='*')
+    s.set_defaults(f=cmd_colors)
+    s = sp.add_parser('setcolors'); s.add_argument('board'); s.add_argument('mask'); s.add_argument('silk'); s.add_argument('finish')
+    s.set_defaults(f=cmd_setcolors)
+    s = sp.add_parser('snapshot'); s.add_argument('board'); s.add_argument('out'); s.add_argument('--checker')
+    s.set_defaults(f=cmd_snapshot)
+    s = sp.add_parser('compare'); s.add_argument('before'); s.add_argument('after'); s.set_defaults(f=cmd_compare)
     a = ap.parse_args()
     a.f(a)
 

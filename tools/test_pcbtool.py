@@ -71,5 +71,91 @@ class DrcSummaryTest(unittest.TestCase):
         self.assertEqual(s['unrouted'], {'VBAT': 1})
 
 
+STACK = """		(stackup
+			(layer "F.SilkS"
+				(type "Top Silk Screen")
+			)
+			(layer "F.Mask"
+				(type "Top Solder Mask")
+				(thickness 0.01)
+			)
+			(layer "B.Mask"
+				(type "Bottom Solder Mask")
+				(color "Green")
+				(thickness 0.01)
+			)
+			(layer "B.SilkS"
+				(type "Bottom Silk Screen")
+			)
+			(copper_finish "HAL lead-free")
+"""
+
+
+class ColorTest(unittest.TestCase):
+    def test_sets_mask_silk_and_finish(self):
+        out = pt.apply_colors(STACK, mask='Black', silk='White', finish='ENIG')
+        self.assertEqual(out.count('(color "Black")'), 2)
+        self.assertEqual(out.count('(color "White")'), 2)
+        self.assertNotIn('Green', out)
+        self.assertIn('(copper_finish "ENIG")', out)
+
+    def test_twice_is_same_as_once(self):
+        once = pt.apply_colors(STACK, mask='Blue', silk='White', finish='ENIG')
+        self.assertEqual(pt.apply_colors(once, mask='Blue', silk='White', finish='ENIG'), once)
+
+    def test_changes_only_the_stackup(self):
+        tail = '\t(gr_line\n\t\t(layer "F.SilkS")\n\t)\n\t(gr_line\n\t\t(stroke\n\t\t\t(width 0.1)\n\t\t\t(type solid)\n\t\t)\n\t)\n'
+        out = pt.apply_colors(STACK + '\t\t)\n' + tail, mask='Black', silk='White', finish='ENIG')
+        self.assertTrue(out.endswith(tail))
+
+    def test_rejects_colour_jlc_does_not_make(self):
+        with self.assertRaises(ValueError):
+            pt.apply_colors(STACK, mask='Pink', silk='White', finish='ENIG')
+
+
+class CompareTest(unittest.TestCase):
+    A = {'drc': {'errors': 0, 'unconnected': 81, 'parity': 0}, 'checker': [47, 52],
+         'parts': {'R1': [1, 1, 0, 'F'], 'R2': [2, 2, 0, 'F']}, 'tracks': 10, 'vias': 2}
+
+    def test_no_change_is_clean(self):
+        r = pt.compare(self.A, self.A)
+        self.assertEqual(r['regressions'], [])
+        self.assertEqual(r['moved'], [])
+
+    def test_more_errors_or_fewer_checks_is_a_regression(self):
+        b = json_copy(self.A)
+        b['drc']['errors'] = 2
+        b['checker'] = [45, 52]
+        r = pt.compare(self.A, b)
+        self.assertEqual(r['regressions'], ['DRC errors 0 -> 2', 'checker 47/52 -> 45/52'])
+
+    def test_fewer_unconnected_is_progress_and_moves_are_listed(self):
+        b = json_copy(self.A)
+        b['drc']['unconnected'] = 70
+        b['parts']['R1'] = [1.5, 1, 0, 'F']
+        del b['parts']['R2']
+        b['parts']['R3'] = [3, 3, 0, 'F']
+        r = pt.compare(self.A, b)
+        self.assertEqual(r['regressions'], [])
+        self.assertEqual(r['progress'], ['unconnected 81 -> 70'])
+        self.assertEqual(r['moved'], ['R1 (1, 1, 0, F) -> (1.5, 1, 0, F)'])
+        self.assertEqual(r['added'], ['R3'])
+        self.assertEqual(r['removed'], ['R2'])
+
+
+class WaveTest(unittest.TestCase):
+    def test_seigaiha_arcs_stay_inside_the_box(self):
+        arcs = pt.seigaiha((0, 0, 20, 10), r=2.0, rings=3)
+        self.assertTrue(arcs)
+        for (cx, cy), rad, a0, a1 in arcs:
+            self.assertTrue(0 <= cx - rad and cx + rad <= 20 and 0 <= cy - rad and cy <= 10)
+            self.assertTrue(0 < rad <= 2.0)
+
+
+def json_copy(x):
+    import json
+    return json.loads(json.dumps(x))
+
+
 if __name__ == '__main__':
     unittest.main()
