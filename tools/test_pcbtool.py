@@ -157,6 +157,15 @@ class WaveTest(unittest.TestCase):
             self.assertTrue(0 < rad <= 2.0)
 
 
+class NoiseTest(unittest.TestCase):
+    def test_drops_known_pcbnew_noise_keeps_real_errors(self):
+        text = ('./src/common/stdpbase.cpp(59): assert ""traits"" failed in Get(): create wxApp before calling this\n'
+                'Fontconfig warning: "/opt/homebrew/etc/fonts/conf.d/49-sansserif.conf", line 10: invalid constant used : serif\n'
+                'Traceback (most recent call last):\n'
+                'ValueError: net /X not on board\n')
+        self.assertEqual(pt.drop_noise(text), 'Traceback (most recent call last):\nValueError: net /X not on board\n')
+
+
 def json_copy(x):
     import json
     return json.loads(json.dumps(x))

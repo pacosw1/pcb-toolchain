@@ -210,7 +210,29 @@ def seigaiha(box, r, rings=3, step_deg=4):
 
 
 # ---------------------------------------------------------------- side effects (pcbnew, kicad-cli)
+NOISE = ('Fontconfig warning:', 'create wxApp before calling this')
+
+
+def drop_noise(text):
+    return ''.join(l for l in text.splitlines(keepends=True) if not any(n in l for n in NOISE))
+
+
 def pcb():
+    # pcbnew writes a wx assert and many Fontconfig lines to fd 2 (C code). Catch fd 2 in a file and at exit
+    # pass on only the other lines, so a real error still shows.
+    if 'pcbnew' not in sys.modules:
+        import atexit
+        import tempfile
+        cap = tempfile.TemporaryFile(mode='w+b')
+        real = os.dup(2)
+        os.dup2(cap.fileno(), 2)
+
+        def restore():
+            sys.stderr.flush()
+            os.dup2(real, 2)
+            cap.seek(0)
+            sys.stderr.write(drop_noise(cap.read().decode(errors='replace')))
+        atexit.register(restore)
     import pcbnew
     return pcbnew
 
