@@ -172,5 +172,55 @@ class BeamTest(unittest.TestCase):
         self.assertEqual(seen, [('/A',)])
 
 
+class RouteNetTest(unittest.TestCase):
+    """route_net with a fake runner: suggest gives two lines, then 'unconnected: none' after one connect."""
+    def run_route(self, stitch_ok):
+        import tempfile
+        calls = []
+        state = {'routed': False}
+
+        def sh(cmd):
+            calls.append(cmd[2:4] + cmd[4:5])
+            if cmd[2] == 'suggest':
+                if state['routed']:
+                    return 0, '/N: unconnected: none\n'
+                return 0, ('pair 1 of 1: A.1 -> B.1; x\n1) len 30.00 vias 6 bends 0 margin +0.1 pour 0.0\nN A.1 -> B.1 six\n'
+                           '2) len 10.00 vias 2 bends 0 margin +0.1 pour 0.0\nN A.1 -> B.1 two\n'
+                           '3) len 12.00 vias 0 bends 0 margin +0.1 pour 0.0\nN A.1 -> B.1 zero\n')
+            if cmd[2] == 'connect':
+                with open(cmd[3], 'a') as f:
+                    f.write(cmd[4])
+                return 0, 'added'
+            if cmd[2] == 'stitch':
+                ok = stitch_ok(open(cmd[3]).read())
+                state['routed'] = ok
+                return (0, 'added') if ok else (1, 'no room')
+        with tempfile.TemporaryDirectory() as d:
+            board = os.path.join(d, 'B.kicad_pcb')
+            open(board, 'w').write('base|')
+            done, fail = ru.route_net(board, 'N', None, max_vias=4, sh=sh)
+            text = open(board).read()
+        return done, fail, calls, text
+
+    def test_too_many_vias_is_skipped_and_stitch_follows_connect(self):
+        done, fail, calls, text = self.run_route(lambda t: True)
+        self.assertIsNone(fail)
+        self.assertEqual([r[3] for r in done], ['N A.1 -> B.1 two'])
+        self.assertEqual(text, 'base|N A.1 -> B.1 two')
+        self.assertEqual([c[0] for c in calls], ['suggest', 'connect', 'stitch', 'suggest'])
+
+    def test_no_stitch_room_restores_the_board_and_tries_the_next_line(self):
+        done, fail, calls, text = self.run_route(lambda t: t.endswith('zero'))
+        self.assertIsNone(fail)
+        self.assertEqual([r[3] for r in done], ['N A.1 -> B.1 zero'])
+        self.assertEqual(text, 'base|N A.1 -> B.1 zero')
+
+    def test_no_stitchable_line_is_a_failure(self):
+        done, fail, calls, text = self.run_route(lambda t: False)
+        self.assertEqual(done, [])
+        self.assertIn('stitch', fail['why'])
+        self.assertEqual(text, 'base|')
+
+
 if __name__ == '__main__':
     unittest.main()
