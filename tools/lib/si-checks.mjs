@@ -5,14 +5,15 @@
 import {execFileSync} from 'node:child_process';
 
 // parseGateOutput is pure: no process spawn, so a test can call it directly with fake output.
-// summaryRegex finds the one-line summary. failPrefix marks a failing detail line.
+// summaryRegex finds the one-line summary. failPrefix (a string or a list of strings) marks a failing detail line.
 export function parseGateOutput(out, exit, summaryRegex, failPrefix) {
   const lines = out.split('\n');
   const summary = lines.find((line) => summaryRegex.test(line));
   if (!summary) {
     return {ok: false, ran: false, detail: `tool did not run (exit ${exit}): ${out.slice(0, 200)}`};
   }
-  const fails = lines.filter((line) => line.startsWith(failPrefix));
+  const prefixes = [failPrefix].flat();
+  const fails = lines.filter((line) => prefixes.some((p) => line.startsWith(p)));
   const ok = exit === 0 && fails.length === 0;
   return {ok, ran: true, detail: fails.length ? fails.slice(0, 8).join(' | ') : summary};
 }
@@ -57,6 +58,8 @@ export function viaPadsCheck({python, tool, pcb, check, allow = []}) {
 
 // kicad-happy (pinned clone, see tools/kicad_happy_gate.py): return path, return vias, via in pad, decoupling.
 export const KICAD_HAPPY_SUMMARY = /kicad-happy findings/;
+// A finding line, or an exemption that matched no finding (the tool exits 2).
+export const KICAD_HAPPY_FAIL = ['FAIL', 'STALE exempt'];
 
 // exemptFile: JSON list of {rule, net, reason}; a stale entry fails the gate (exit 2).
 export function kicadHappyArgs(pcb, exemptFile) {
@@ -66,6 +69,6 @@ export function kicadHappyArgs(pcb, exemptFile) {
 export function kicadHappyCheck({python, tool, pcb, check, exemptFile}) {
   const name = `kicad-happy GP-001 RP-001 DC-002 UC-001 (tools/kicad_happy_gate.py${exemptFile ? `, exempt: ${exemptFile}` : ''})`;
   const {out, exit} = runGate({python, tool, args: kicadHappyArgs(pcb, exemptFile)});
-  const {ok, detail} = parseGateOutput(out, exit, KICAD_HAPPY_SUMMARY, 'FAIL');
+  const {ok, detail} = parseGateOutput(out, exit, KICAD_HAPPY_SUMMARY, KICAD_HAPPY_FAIL);
   check(name, ok, detail);
 }

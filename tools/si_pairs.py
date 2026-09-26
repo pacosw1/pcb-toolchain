@@ -366,4 +366,5 @@ def main(argv=None):
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    from hard_exit import hard_exit
+    hard_exit(main)

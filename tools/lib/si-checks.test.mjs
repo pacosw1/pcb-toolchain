@@ -88,3 +88,11 @@ test('kicad-happy: exempt file goes to the tool, no file adds nothing', async ()
   assert.deepEqual(kicadHappyArgs('b.kicad_pcb'), ['b.kicad_pcb']);
   assert.deepEqual(kicadHappyArgs('b.kicad_pcb', 'ex.json'), ['b.kicad_pcb', '--exempt-file', 'ex.json']);
 });
+
+test('kicad-happy: a STALE exempt line fails the gate and shows in the detail', async () => {
+  const {KICAD_HAPPY_SUMMARY, KICAD_HAPPY_FAIL} = await import('./si-checks.mjs');
+  const out = 'STALE exempt GP-001 /PS1_24V: no finding matched (24 V power)\n0 kicad-happy findings (rules GP-001)\n';
+  const r = parseGateOutput(out, 2, KICAD_HAPPY_SUMMARY, KICAD_HAPPY_FAIL);
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /STALE exempt GP-001 \/PS1_24V/);
+});
