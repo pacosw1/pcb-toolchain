@@ -2,7 +2,7 @@
 """ripup: rip-up and re-route search for a net that `pcbtool.py suggest` cannot route because other nets block it.
 
   $PY tools/ripup.py BOARD NET [--width 4] [--depth 2] [--jobs 8] [--band 1.5] [--max-vias 4] [--specs DIR]
-                    [--keep NET ...] [--out result.json]
+                    [--keep NET ...] [--layers F.Cu,In2.Cu,B.Cu] [--out result.json]
   On the box (whole search in one job; kicad-happy clone as a tar, KICAD_HAPPY_DIR):
   REMOTE_CPUS=8 REMOTE_MEM=10g tools/remote.sh hardware-design/boards/B --in COPY.kicad_pcb --in kicad-happy.tar -- \
     bash -c "cp in/B.kicad_pcb <board dir>/cad/B/ && tar -C /job -xf in/kicad-happy.tar &&
@@ -32,7 +32,8 @@ the blocker band; --specs: folder with the gate specs (default: the folder above
 Fail closed: a gate crash rejects the state; a baseline gate crash or parity > 0 exits 2.
 Nets with a zone (planes) and --keep nets are never ripped.
 
-Limits: it only rips whole nets and re-routes them with suggest (F.Cu/B.Cu, 3 candidates, first usable line); it does
+Limits: it only rips whole nets and re-routes them with suggest (--layers, default F.Cu,B.Cu; a mixed plane layer such as
+In2.Cu only for slow nets; 3 candidates, first usable line); it does
 not move parts or vias of zone nets. Blockers name nets, not parts. Each state costs about 30-200 s. Exit 0 = a clean
 state, 1 = none, 2 = baseline failure. Measured 2026-09-26 on BASE-PWR / INPUT-4D2A: 1 of 5 nets clean (ETH_SCSn).
 """
@@ -258,12 +259,18 @@ def active_gates(specs):
     return [g for g, (f, _, _) in GATES.items() if f is None or g == 'kicad_happy' or os.path.exists(os.path.join(specs, f))]
 
 
-def suggest(board, net, planes, sh=run):
-    code, out = sh([sys.executable, PCBTOOL, 'suggest', board, net, '--k', '3', *(['--planes', planes] if planes else [])])
+def route_layers(layers, kinds):
+    """The --layers text for a net: a mixed plane layer (kinds {layer: 'slow' | 'fast' | 'power'}) only for a slow net."""
+    return ','.join(L for L in layers.split(',') if kinds.get(L, 'slow') == 'slow')
+
+
+def suggest(board, net, planes, sh=run, layers='F.Cu,B.Cu'):
+    code, out = sh([sys.executable, PCBTOOL, 'suggest', board, net, '--k', '3', '--layers', layers,
+                    *(['--planes', planes] if planes else [])])
     return parse_suggest(out, code)
 
 
-def route_net(board, net, planes, max_vias=4, max_pairs=40, sh=run, fast=lambda net: True):
+def route_net(board, net, planes, max_vias=4, max_pairs=40, sh=run, fast=lambda net: True, layers='F.Cu,B.Cu'):
     """(routed [(len, vias, pour, line)], None) when the net is fully connected, else (routed, suggest result).
     Per open pair: the first suggest line with <= max_vias vias that connects and then gets a ground stitch via
     near each via (pcbtool stitch). A line whose stitch finds no room is undone (board file restored); a slow net
@@ -271,14 +278,14 @@ def route_net(board, net, planes, max_vias=4, max_pairs=40, sh=run, fast=lambda 
     done = []
     keep = board + '.ripup-keep'
     for _ in range(max_pairs):
-        s = suggest(board, net, planes, sh)
+        s = suggest(board, net, planes, sh, layers)
         if s['done']:
             return done, None
         for L, v, pour, line in s['lines']:
             if v > max_vias:
                 continue
             shutil.copyfile(board, keep)
-            if sh([sys.executable, PCBTOOL, 'connect', board, line])[0] != 0:
+            if sh([sys.executable, PCBTOOL, 'connect', board, line, *(['--planes', planes] if planes else [])])[0] != 0:
                 shutil.copyfile(keep, board)
                 continue
             if sh([sys.executable, PCBTOOL, 'stitch', board, net, *(['--planes', planes] if planes else []),
@@ -301,7 +308,7 @@ def copy_project(board, d):
     return os.path.join(proj, os.path.basename(board))
 
 
-def make_evaluator(board, net, base, specs, gates, skip, planes, max_vias, fast):
+def make_evaluator(board, net, base, specs, gates, skip, planes, max_vias, fast, layers_for=lambda n: 'F.Cu,B.Cu'):
     def evaluate(rips):
         t0 = time.time()
         with tempfile.TemporaryDirectory() as d:
@@ -313,7 +320,7 @@ def make_evaluator(board, net, base, specs, gates, skip, planes, max_vias, fast)
                 routes = {}
                 order = (net,) + tuple(rips)
                 for i, n in enumerate(order):
-                    routes[n], fail = route_net(bd, n, planes, max_vias, fast=fast)
+                    routes[n], fail = route_net(bd, n, planes, max_vias, fast=fast, layers=layers_for(n))
                     if fail:
                         return {'status': 'open', 'open': len(order) - i, 'why': f'{n}: {fail["why"]}',
                                 'blocked_by': [b for b in fail['blocked_by'] if b not in skip and b not in order],
@@ -328,9 +335,9 @@ def make_evaluator(board, net, base, specs, gates, skip, planes, max_vias, fast)
     return evaluate
 
 
-def target_blockers(board, net, band, skip, planes, max_vias):
+def target_blockers(board, net, band, skip, planes, max_vias, layers='F.Cu,B.Cu'):
     """[net] ranked: suggest's blockers at its closest reach, then the corridor band ranking."""
-    s = suggest(board, net, planes)
+    s = suggest(board, net, planes, layers=layers)
     if not needs_ripup(s, max_vias):
         return None, s
     pt = load_pcbtool()
@@ -364,6 +371,8 @@ def main(argv=None):
     ap.add_argument('--specs', help='folder with reference-planes.json, current-paths.json, ... (default: the folder above cad/)')
     ap.add_argument('--max-vias', type=int, default=4, help='suggest lines with more vias are not used')
     ap.add_argument('--keep', nargs='*', default=[], help='nets that are never ripped')
+    ap.add_argument('--layers', default='F.Cu,B.Cu', help='routing layers; a mixed plane layer of reference-planes.json '
+                                                          '(for example In2.Cu) is used only for slow nets')
     ap.add_argument('--out', help='write the result JSON here')
     a = ap.parse_args(argv)
     t0 = time.time()
@@ -383,13 +392,16 @@ def main(argv=None):
     skip = set(a.keep)
     planes = os.path.join(specs, 'reference-planes.json')
     planes = planes if os.path.exists(planes) else None
-    blockers, s = target_blockers(board, a.net, a.band, skip, planes, a.max_vias)
+    pt = load_pcbtool()
+    pro = json.load(open(os.path.splitext(board)[0] + '.kicad_pro'))
+    layers_for = lambda n: route_layers(a.layers, pt.mixed_kinds(n, planes, pro))
+    blockers, s = target_blockers(board, a.net, a.band, skip, planes, a.max_vias, layers_for(a.net))
     if blockers is None:
         print(f'{a.net}: suggest routes it with <= {a.max_vias} vias without a rip-up (or it is connected); '
               f'use suggest --verify')
         return 1
     print(f'{a.net} {s["pads"][0]} -> {s["pads"][1]}: reach {s["reach"]}; blockers {", ".join(blockers[:2 * a.width])}', flush=True)
-    ev = make_evaluator(board, a.net, base, specs, gates, skip, planes, a.max_vias, fast_nets(specs))
+    ev = make_evaluator(board, a.net, base, specs, gates, skip, planes, a.max_vias, fast_nets(specs), layers_for)
     with concurrent.futures.ThreadPoolExecutor(max_workers=a.jobs) as ex:
         best, log = beam_search(blockers, lambda rips: progress(rips, ev(rips)), a.width, a.depth, pmap=ex.map)
     wall = round(time.time() - t0, 1)

@@ -745,6 +745,81 @@ class SuggestCoreTest(unittest.TestCase):
         self.assertEqual(seen, ['B.Cu'])
 
 
+class MixedLayerRouteTest(unittest.TestCase):
+    """Routes with a mixed plane layer (In2.Cu for slow nets, BASE-PWR user decision 2026-09-26)."""
+    def test_via_with_a_target_layer(self):
+        it = pt.parse_intent('N A.1 -> B.1 via 4,0@In2.Cu through 4,4 via 4,6@B.Cu')
+        self.assertEqual(it['points'], [('via', (4.0, 0.0), 'In2.Cu'), ('through', (4.0, 4.0)), ('via', (4.0, 6.0), 'B.Cu')])
+        r = pt.intent_route(it, (0, 0), (8, 6), 'F.Cu', 0.2, (0.6, 0.3))
+        self.assertEqual(r['path'][1], {'via': (4.0, 0.0), 'to': 'In2.Cu'})
+        segs, vias = pt.expand_route(r)
+        self.assertEqual([s[2] for s in segs], ['F.Cu', 'In2.Cu', 'In2.Cu', 'B.Cu'])
+        self.assertEqual(vias, [(4.0, 0.0), (4.0, 6.0)])
+
+    def test_bad_via_target_raises(self):
+        with self.assertRaises(ValueError):
+            pt.parse_intent('N A.1 -> B.1 via 4,0@')
+        with self.assertRaises(ValueError):   # from In2.Cu the next layer is not implicit
+            pt.expand_route({'net': 'N', 'width': 0.2, 'layer': 'F.Cu',
+                             'path': [(0, 0), {'via': (2, 0), 'to': 'In2.Cu'}, {'via': (2, 2)}, (4, 2)]})
+        with self.assertRaises(ValueError):   # a via to the same layer
+            pt.expand_route({'net': 'N', 'width': 0.2, 'layer': 'F.Cu', 'path': [(0, 0), {'via': (2, 0), 'to': 'F.Cu'}, (4, 0)]})
+
+    def test_drop_jogs_tracks_a_via_target(self):
+        seen = []
+        pts = [('end', (0, 0)), ('via', (2, 0), 'In2.Cu'), ('through', (4, 0)), ('end', (6, 0))]
+        pt.drop_jogs(pts, 'F.Cu', lambda a, b, c, L: seen.append(L) or True)
+        self.assertEqual(seen, ['In2.Cu'])
+
+    def test_via_layers_of_a_node_path(self):
+        path = [(0, 0), (1, 0), (1, 2), (2, 2), (2, 1), (3, 1)]
+        self.assertEqual(pt.via_layers(path), [2, 1])
+
+    def test_via_token(self):
+        self.assertEqual(pt.via_token((1, 2), 'F.Cu', 'B.Cu'), ' via 1,2')
+        self.assertEqual(pt.via_token((1, 2.5), 'F.Cu', 'In2.Cu'), ' via 1,2.5@In2.Cu')
+        self.assertEqual(pt.via_token((1, 2), 'In2.Cu', 'B.Cu'), ' via 1,2@B.Cu')
+
+    def test_layers_error(self):
+        mixed = {'In2.Cu': 'slow'}
+        self.assertIsNone(pt.layers_error('/EN', ['F.Cu', 'In2.Cu', 'B.Cu'], mixed))
+        self.assertIsNone(pt.layers_error('/EN', ['F.Cu'], mixed))
+        self.assertIn('In1.Cu', pt.layers_error('/EN', ['F.Cu', 'In1.Cu'], mixed))
+        for kind in ('fast', 'power'):
+            e = pt.layers_error('/X', ['F.Cu', 'In2.Cu'], {'In2.Cu': kind})
+            self.assertIn(kind, e)
+            self.assertIn('slow nets only', e)
+
+    def test_mixed_kinds_read_the_planes_spec_and_the_power_class(self):
+        import json
+        import tempfile
+        pro = {'net_settings': {'classes': [{'name': 'Default', 'track_width': 0.2, 'clearance': 0.2},
+                                            {'name': 'POWER', 'track_width': 0.8, 'clearance': 0.2}],
+                                'netclass_patterns': [{'netclass': 'POWER', 'pattern': 'VIN'}]}}
+        with tempfile.TemporaryDirectory() as d:
+            planes = os.path.join(d, 'reference-planes.json')
+            self.assertEqual(pt.mixed_kinds('/EN', planes, pro), {})          # no spec: no mixed layer
+            json.dump({'about': 'x', 'adjacent': {'F.Cu': 'In1.Cu', 'B.Cu': 'In2.Cu'}, 'plane_layers': ['In1.Cu', 'In2.Cu'],
+                       'grounds': ['GND'], 'mixed_layers': {'In2.Cu': {'allow': 'slow', 'fast_file': 'fast.json',
+                                                                        'power': ['VBUS'], 'reason': 'r'}}}, open(planes, 'w'))
+            with self.assertRaises(SystemExit):                              # fail closed: no fast file
+                pt.mixed_kinds('/EN', planes, pro)
+            json.dump({'fast': ['/USB_*']}, open(os.path.join(d, 'fast.json'), 'w'))
+            got = {n: pt.mixed_kinds(n, planes, pro)['In2.Cu'] for n in ('/EN', '/USB_DP', 'VBUS', 'VIN', 'GND')}
+        self.assertEqual(got, {'/EN': 'slow', '/USB_DP': 'fast', 'VBUS': 'power', 'VIN': 'power', 'GND': 'power'})
+
+    def test_reference_obstacles_keep_fast_nets_over_ground(self):
+        fast_b = [('/SCK', ('seg', (0, 0), (10, 0), 0.1))]
+        in2 = [('/EN', ('seg', (0, 5), (10, 5), 0.1)), ('/SCK', ('seg', (0, 9), (1, 9), 0.1))]
+        # a slow net on the mixed layer keeps away from fast tracks on the outer layer above it
+        got = pt.reference_obstacles('/EN', 'slow', ['F.Cu', 'In2.Cu', 'B.Cu'], 'In2.Cu', 'B.Cu', fast_b, in2, 0.3)
+        self.assertEqual(got, {'In2.Cu': [(('seg', (0, 0), (10, 0), 0.1), 0.3, 'fast ref B.Cu /SCK')]})
+        # a fast net on the outer layer keeps away from tracks of other nets on the mixed layer under it
+        got = pt.reference_obstacles('/SCK', 'fast', ['F.Cu', 'B.Cu'], 'In2.Cu', 'B.Cu', fast_b, in2, 0.3)
+        self.assertEqual(got, {'B.Cu': [(('seg', (0, 5), (10, 5), 0.1), 0.3, 'In2.Cu track /EN')]})
+        self.assertEqual(pt.reference_obstacles('/EN', 'slow', ['F.Cu', 'B.Cu'], 'In2.Cu', 'B.Cu', fast_b, in2, 0.3), {})
+
+
 class VerifyVerdictTest(unittest.TestCase):
     @staticmethod
     def drc(errors=(), unc=()):

@@ -16,7 +16,7 @@ Run with the KiCad bundled Python (it has pcbnew):
   $PY tools/pcbtool.py drc    BOARD                           DRC --schematic-parity summary
   $PY tools/pcbtool.py corridor BOARD NET [--margin 3] [--cell 0.25] [--pair N] [--box X1 Y1 X2 Y2]  unconnected pad pairs + ASCII free/blocked map
   $PY tools/pcbtool.py connect BOARD INTENT                 intent lines -> 0/45/90 tracks, class width/via, clearance check
-  $PY tools/pcbtool.py suggest BOARD NET [--pair N] [--box X1 Y1 X2 Y2] [--layers F.Cu,B.Cu] [--via-cost 8] [--k 3] [--cell 0.1] [--verify]
+  $PY tools/pcbtool.py suggest BOARD NET [--pair N] [--box X1 Y1 X2 Y2] [--layers F.Cu,B.Cu (+ In2.Cu mixed, slow nets)] [--via-cost 8] [--k 3] [--cell 0.1] [--verify]
                                                               A* proposals as connect lines (writes nothing)
   $PY tools/pcbtool.py stitch BOARD NET [--r 1.0] [--planes P]  ground via within r of each via of NET (RP-001)
   $PY tools/pcbtool.py netcheck BOARD NET                     DRC on a temp copy: one total line + this net only
@@ -92,7 +92,10 @@ def expand_route(r):
             if prev is not None and pt != prev:
                 segs.append((prev, pt, layer, r['width']))
             vias.append(pt)
-            layer = OTHER[layer]
+            to = p.get('to') or OTHER.get(layer)
+            if to is None or to == layer:
+                raise ValueError(f"{r['net']}: via at {pt} from {layer} needs a target layer (via X,Y@LAYER)")
+            layer = to
         else:
             pt = tuple(p)
             if prev is not None:
@@ -287,8 +290,9 @@ def shape_box(shape):
 
 
 def parse_intent(line):
-    """One connect intent line: NET REF.PAD -> REF.PAD [layer=L] [width=W] [via=auto|D/DRILL] [through x,y] [via x,y] ...
-    through = waypoint on the current layer, via = via at the point and a layer change. Missing options are None (auto)."""
+    """One connect intent line: NET REF.PAD -> REF.PAD [layer=L] [width=W] [via=auto|D/DRILL] [through x,y] [via x,y[@L]] ...
+    through = waypoint on the current layer, via = via at the point and a layer change (to L; without @L F.Cu <-> B.Cu).
+    Missing options are None (auto)."""
     tok = line.split()
     if len(tok) < 4 or tok[2] != '->':
         raise ValueError(f'expected "NET REF.PAD -> REF.PAD ...": {line}')
@@ -304,10 +308,13 @@ def parse_intent(line):
         t = rest.pop(0)
         if t in ('through', 'via'):
             try:
-                x, y = rest.pop(0).split(',')
-                it['points'].append((t, (float(x), float(y))))
+                q, at, to = rest.pop(0).partition('@')
+                x, y = q.split(',')
+                if at and (t != 'via' or not to):
+                    raise ValueError
+                it['points'].append((t, (float(x), float(y))) + ((to,) if to else ()))
             except (IndexError, ValueError):
-                raise ValueError(f'{t} needs x,y: {line}') from None
+                raise ValueError(f'{t} needs x,y (via: x,y or x,y@LAYER): {line}') from None
         elif t.startswith('layer='):
             it['layer'] = t[6:]
         elif t.startswith('width='):
@@ -337,10 +344,10 @@ def leg(a, b):
 def intent_route(it, start, end, layer, width, via):
     """A route spec entry (see Route spec) from an intent, the pad centres, the start layer, width and via (size, drill)."""
     path, cur = [start], start
-    for kind, q in it['points'] + [('end', end)]:
+    for kind, q, *to in it['points'] + [('end', end)]:
         pts = leg(cur, q)
         path.extend(pts[:-1])
-        path.append({'via': q} if kind == 'via' else q)
+        path.append(({'via': q, 'to': to[0]} if to else {'via': q}) if kind == 'via' else q)
         cur = q
     return {'net': it['net'], 'width': width, 'layer': layer, 'via_size': via[0], 'via_drill': via[1], 'path': path}
 
@@ -590,19 +597,85 @@ def path_points(sa, sb, first, corners, last):
 def drop_jogs(pts, layer, ok):
     """Remove 'through' waypoints while ok(a, b, c, layer) says the direct leg a -> c may replace a -> b -> c.
     A direct 0/45/90 leg is never longer, so this removes jogs and extra bends. pts: [(kind, (x, y))], the two pad
-    centres first and last; a 'via' changes the layer."""
+    centres first and last; a 'via' changes the layer (to its third item, else F.Cu <-> B.Cu)."""
     pts = list(pts)
     k = 1
     while k < len(pts) - 1:
         L = layer
-        for kind, _ in pts[1:k]:
-            L = OTHER[L] if kind == 'via' else L
+        for kind, _, *to in pts[1:k]:
+            L = (to[0] if to else OTHER[L]) if kind == 'via' else L
         if pts[k][0] == 'through' and ok(pts[k - 1][1], pts[k][1], pts[k + 1][1], L):
             del pts[k]
             k = max(1, k - 1)
         else:
             k += 1
     return pts
+
+
+def via_layers(path):
+    """The layer after each via of a node path [(node, layer)], in path order (as node_corners lists the vias)."""
+    return [l2 for (i1, _), (i2, l2) in zip(path, path[1:]) if i1 == i2]
+
+
+def via_token(q, cur, to):
+    """The connect line text of a via at q from layer cur to layer to: '@to' only when it is not F.Cu <-> B.Cu."""
+    return f' via {fmt_mm(q[0])},{fmt_mm(q[1])}' + ('' if OTHER.get(cur) == to else f'@{to}')
+
+
+def layers_error(net, layers, mixed):
+    """None when net may use every layer in layers, else the reason. mixed: {mixed plane layer: kind of the net}.
+    F.Cu and B.Cu are always allowed; a mixed layer (reference-planes.json mixed_layers) only for a slow net."""
+    for L in layers:
+        if L in OTHER:
+            continue
+        if L not in mixed:
+            return f'{L} is not a routing layer (F.Cu, B.Cu, or a mixed layer of reference-planes.json)'
+        if mixed[L] != 'slow':
+            return f'{net} is a {mixed[L]} net: {L} is for slow nets only (reference-planes.json mixed_layers)'
+    return None
+
+
+def load_si_planes():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('si_planes', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'si_planes.py'))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def mixed_kinds(net, planes, pro):
+    """{mixed layer: 'fast' | 'power' | 'slow'} of a net from reference-planes.json (si_planes rules; a net of the
+    POWER class is power too). No spec file = no mixed layer. A bad spec or a missing fast file exits (fail closed)."""
+    if not planes or not os.path.exists(planes):
+        return {}
+    sp = load_si_planes()
+    try:
+        s = sp.load_spec(json.load(open(planes)))
+        sp.load_fast(s, os.path.dirname(os.path.abspath(planes)))
+    except (sp.SpecError, ValueError, OSError) as e:
+        sys.exit(f'{planes}: {e}')
+    out = {}
+    for L, m in s['mixed_layers'].items():
+        k = sp.net_kind(net, m, s)
+        out[L] = 'power' if k == 'slow' and net_rules(pro, net)[0] == 'POWER' else k
+    return out
+
+
+def reference_obstacles(net, kind, layers, mixed, under, fast_tracks, mixed_tracks, clr):
+    """{layer: [(shape, clearance, label)]} that keep ground fill of the mixed layer under every fast-net track on the
+    outer layer `under` (si_planes fast-unreferenced). A net routed on the mixed layer keeps clr from the fast tracks
+    on `under`; a fast net routed on `under` keeps clr from the other nets' tracks on the mixed layer.
+    fast_tracks / mixed_tracks: [(net, shape)]; clr: the fill clearance of the ground zone."""
+    out = {}
+    if mixed in layers:
+        got = [(sh, clr, f'fast ref {under} {n}') for n, sh in fast_tracks if n != net]
+        if got:
+            out[mixed] = got
+    if kind == 'fast' and under in layers:
+        got = [(sh, clr, f'{mixed} track {n}') for n, sh in mixed_tracks if n != net]
+        if got:
+            out[under] = got
+    return out
 
 
 def verify_verdict(base, cand, net):
@@ -1525,6 +1598,7 @@ def cmd_connect(a):
         sys.exit(f'cannot load {a.board}')
     mm = p.ToMM
     pro = json.load(open(os.path.splitext(a.board)[0] + '.kicad_pro'))
+    planes = a.planes or os.path.join(os.path.dirname(os.path.abspath(a.board)), '..', '..', 'reference-planes.json')
     classes = {c['name']: c for c in pro['net_settings']['classes']}
     copper = [b.GetLayerName(l) for l in b.GetEnabledLayers().CuStack()]
     o = p.SHAPE_POLY_SET()
@@ -1558,6 +1632,10 @@ def cmd_connect(a):
             segs, vias = expand_route(r)
         except ValueError as e:
             sys.exit(str(e))
+        used = sorted({L for _, _, L, _ in segs})
+        err = layers_error(net, used, mixed_kinds(net, planes, pro) if any(L not in OTHER for L in used) else {})
+        if err:
+            sys.exit(err)
         for pd, L, what in ((pa, segs[0][2], 'start'), (pb, segs[-1][2], 'end')):
             if not pd.IsOnLayer(b.GetLayerID(L)):
                 sys.exit(f'{net}: the {what} pad is not on {L}; add or remove a via')
@@ -1633,12 +1711,14 @@ def cmd_suggest(a):
         sys.exit(f'no net {a.net} on the board')
     mm = p.ToMM
     layers = a.layers.split(',')
-    if not layers or any(L not in OTHER for L in layers) or len(set(layers)) != len(layers):
-        sys.exit('--layers: F.Cu and/or B.Cu (connect changes layer between these two only)')
-    lid = [b.GetLayerID(L) for L in layers]
     pro = json.load(open(os.path.splitext(a.board)[0] + '.kicad_pro'))
-    grounds, patterns = ground_spec(a.planes or os.path.join(os.path.dirname(os.path.abspath(a.board)), '..', '..',
-                                                             'reference-planes.json'))
+    planes = a.planes or os.path.join(os.path.dirname(os.path.abspath(a.board)), '..', '..', 'reference-planes.json')
+    mixed = mixed_kinds(a.net, planes, pro)
+    err = layers_error(a.net, layers, mixed)
+    if not layers or err or len(set(layers)) != len(layers):
+        sys.exit(f'--layers: {err or "no layer or a layer twice"}')
+    lid = [b.GetLayerID(L) for L in layers]
+    grounds, patterns = ground_spec(planes)
     domain = net_domain(a.net, board_pad_grounds(p, b, a.net, grounds), grounds, patterns)
     cls_name, width, clr = net_rules(pro, a.net)
     cls = {c['name']: c for c in pro['net_settings']['classes']}[cls_name]
@@ -1698,6 +1778,30 @@ def cmd_suggest(a):
         obstacles[b.GetLayerName(L)] = copper_obstacles(p, b, pro, a.net, clr, L, net_clr)[1] + edges
     for name, sp in thermal_spokes(p, b, pro, a.net, clr, net_clr).items():
         obstacles[name] += sp
+    ref_vias = []                                    # (shape, clearance, label): no via antipad under a fast track
+    if mixed:
+        adj = json.load(open(planes))['adjacent']
+        kinds = {}
+        kind_of = lambda n: kinds[n] if n in kinds else kinds.setdefault(n, mixed_kinds(n, planes, pro))
+        for M in mixed:
+            under = next((o for o, r in adj.items() if r == M), None)
+            gz = [z for z in b.Zones() if not z.GetIsRuleArea() and z.IsOnLayer(b.GetLayerID(M)) and z.GetNetname() in grounds]
+            if under is None or not gz:
+                continue
+            zc = max([clr] + [mm(z.GetLocalClearance() or 0) for z in gz])
+            fast_t, mixed_t = [], []
+            for tr in b.GetTracks():
+                if isinstance(tr, p.PCB_VIA) or not tr.GetNetname():
+                    continue
+                sh = ('seg', (mm(tr.GetStart().x), mm(tr.GetStart().y)), (mm(tr.GetEnd().x), mm(tr.GetEnd().y)), mm(tr.GetWidth()) / 2)
+                Ln = b.GetLayerName(tr.GetLayer())
+                if Ln == under and kind_of(tr.GetNetname()).get(M) == 'fast':
+                    fast_t.append((tr.GetNetname(), sh))
+                elif Ln == M:
+                    mixed_t.append((tr.GetNetname(), sh))
+            for name, obs in reference_obstacles(a.net, mixed[M], layers, M, under, fast_t, mixed_t, zc).items():
+                obstacles[name] += obs
+            ref_vias += [(sh, zc, f'fast ref {under} {n}') for n, sh in fast_t if n != a.net]
     free, lab, extra = [], [], []
     for L, name in zip(lid, layers):
         f, lb, ex = bytearray(inside), [-1] * N, [0.0] * N
@@ -1723,6 +1827,9 @@ def cmd_suggest(a):
         for sh, c, label in obs:
             if near(sh):
                 mark_near(grid, sh, c + via_d / 2, via_ok, via_lab, lab_id(label))  # a via sits on a node: no inflation
+    for sh, c, label in ref_vias:
+        if near(sh):
+            mark_near(grid, sh, c + via_d / 2, via_ok, via_lab, lab_id(label))
     for z in b.Zones():
         if z.GetIsRuleArea() and z.GetDoNotAllowVias():
             mark_near(grid, ('poly', poly_points(p, z.Outline().Outline(0))), m, via_ok, via_lab, lab_id('via keepout'))
@@ -1822,9 +1929,16 @@ def cmd_suggest(a):
                   f'blocked there by {what}. Try a larger --box, --layers F.Cu,B.Cu or a lower --via-cost.')
             sys.exit(1)
         L0 = layers[path[0][1]]
-        pts = path_points(sa, sb, xy(path[0][0]), [(k, xy(i)) for k, i in node_corners(path, cols)], xy(path[-1][0]))
-        pts = drop_jogs(pts, L0, leg_ok)
-        line = f'{a.net} {na} -> {nb} layer={L0}' + ''.join(f' {k} {fmt_mm(q[0])},{fmt_mm(q[1])}' for k, q in pts[1:-1])
+        vl = iter(via_layers(path))
+        corners = [(k, xy(i)) + ((layers[next(vl)],) if k == 'via' else ()) for k, i in node_corners(path, cols)]
+        pts = drop_jogs(path_points(sa, sb, xy(path[0][0]), corners, xy(path[-1][0])), L0, leg_ok)
+        line, cur = f'{a.net} {na} -> {nb} layer={L0}', L0
+        for k, q, *to in pts[1:-1]:
+            if k == 'via':
+                line += via_token(q, cur, to[0])
+                cur = to[0]
+            else:
+                line += f' {k} {fmt_mm(q[0])},{fmt_mm(q[1])}'
         for (i, L) in path:                          # push the next search away from this one (a band around it)
             for dr in range(-band, band + 1):
                 for dc in range(-band, band + 1):
@@ -1840,7 +1954,8 @@ def cmd_suggest(a):
                     abs((v[0] - u[0]) * (v2[1] - u2[1]) - (v[1] - u[1]) * (v2[0] - u2[0])) > 1e-9)
         margin, why = clear_margin(segs, vias, via_d, obstacles)
         found.append((len(found) + 1, length, len(vias), bends, margin, why, pour_len(segs), line))
-    verdicts = verify_candidates(a.board, a.net, [f[-1] for f in found]) if a.verify else [(True, '')] * len(found)
+    verdicts = (verify_candidates(a.board, a.net, [f[-1] for f in found], apply=lambda bd, ln: connect_line(bd, ln, planes))
+                if a.verify else [(True, '')] * len(found))
     shown = 0
     for (k, length, nv, bends, margin, why, pour, line), (ok, reason) in zip(found, verdicts):
         if not ok:
@@ -1881,9 +1996,10 @@ def drc_refill(board):
     return check_drc_report(r.returncode, out)
 
 
-def connect_line(board, line):
+def connect_line(board, line, planes=None):
     """Apply one connect line to a board with this tool, or RuntimeError."""
-    r = subprocess.run([sys.executable, os.path.abspath(__file__), 'connect', board, line], capture_output=True, text=True)
+    r = subprocess.run([sys.executable, os.path.abspath(__file__), 'connect', board, line,
+                        *(['--planes', os.path.abspath(planes)] if planes else [])], capture_output=True, text=True)
     if r.returncode:
         raise RuntimeError('connect: ' + ((r.stdout + r.stderr).strip().splitlines() or ['failed'])[-1][:120])
 
@@ -2197,11 +2313,12 @@ def main():
     s.add_argument('--box', type=float, nargs=4, metavar=('X1', 'Y1', 'X2', 'Y2'), help='map only this window')
     s.set_defaults(f=cmd_corridor)
     s = sp.add_parser('connect'); s.add_argument('board'); s.add_argument('spec', help='intent file, or one intent line')
+    s.add_argument('--planes', help='reference-planes.json: mixed layers (default: two folders above the board)')
     s.set_defaults(f=cmd_connect)
     s = sp.add_parser('suggest'); s.add_argument('board'); s.add_argument('net')
     s.add_argument('--pair', type=int, help='pad pair as corridor lists it (default 1)')
     s.add_argument('--box', type=float, nargs=4, metavar=('X1', 'Y1', 'X2', 'Y2'), help='search only this window')
-    s.add_argument('--layers', default='F.Cu,B.Cu'); s.add_argument('--via-cost', type=float, default=8.0, help='mm of track')
+    s.add_argument('--layers', default='F.Cu,B.Cu', help='F.Cu, B.Cu and mixed layers of --planes (slow nets only)'); s.add_argument('--via-cost', type=float, default=8.0, help='mm of track')
     s.add_argument('--k', type=int, default=3); s.add_argument('--margin', type=float, default=3.0)
     s.add_argument('--cell', type=float, default=0.1)
     s.add_argument('--verify', action='store_true', help='DRC each candidate on a temp copy; print only the clean ones')

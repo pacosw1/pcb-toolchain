@@ -156,6 +156,20 @@ class FastNetTest(unittest.TestCase):
                 ru.fast_nets(d)
 
 
+class RouteLayersTest(unittest.TestCase):
+    def test_mixed_layers_only_for_slow_nets(self):
+        self.assertEqual(ru.route_layers('F.Cu,In2.Cu,B.Cu', {'In2.Cu': 'slow'}), 'F.Cu,In2.Cu,B.Cu')
+        self.assertEqual(ru.route_layers('F.Cu,In2.Cu,B.Cu', {'In2.Cu': 'fast'}), 'F.Cu,B.Cu')
+        self.assertEqual(ru.route_layers('F.Cu,In2.Cu,B.Cu', {'In2.Cu': 'power'}), 'F.Cu,B.Cu')
+        self.assertEqual(ru.route_layers('F.Cu,B.Cu', {'In2.Cu': 'slow'}), 'F.Cu,B.Cu')
+
+    def test_suggest_gets_the_layers(self):
+        calls = []
+        ru.suggest('B.kicad_pcb', '/N', None, sh=lambda cmd: calls.append(cmd) or (0, '/N: unconnected: none'),
+                   layers='F.Cu,In2.Cu,B.Cu')
+        self.assertEqual(calls[0][calls[0].index('--layers') + 1], 'F.Cu,In2.Cu,B.Cu')
+
+
 class SlowRp001Test(unittest.TestCase):
     def test_new_rp001_on_a_slow_net_is_allowed_and_listed(self):
         g = lambda *l: {'kicad_happy': collections.Counter(l)}
