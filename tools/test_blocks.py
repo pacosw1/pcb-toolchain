@@ -138,6 +138,13 @@ class RevisionTest(unittest.TestCase):
             self.assertEqual(r3, bk.revision([d]))
 
 
+class RecolorTest(unittest.TestCase):
+    def test_all_fill_and_stroke_colors_become_one(self):
+        svg = '<g style="fill:#C2C200; stroke:#C2C200"><path fill="#000000" stroke="#FF00ff"/></g><rect fill="none"/>'
+        out = bk.recolor_svg(svg, '#00B8D4')
+        self.assertEqual(out, '<g style="fill:#00B8D4; stroke:#00B8D4"><path fill="#00B8D4" stroke="#00B8D4"/></g><rect fill="none"/>')
+
+
 class SafePathTest(unittest.TestCase):
     def test_inside_root_resolves(self):
         with tempfile.TemporaryDirectory() as d:

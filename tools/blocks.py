@@ -246,6 +246,17 @@ def detail(kind, iid):
 # ---------------------------------------------------------------- renders (kicad-cli, temp cache)
 
 
+def recolor_svg(text, color):
+    """Paint every fill and stroke color of a one-layer SVG with one color ('none' stays)."""
+    text = re.sub(r'((?:fill|stroke):\s*)#[0-9A-Fa-f]{6}', lambda m: m.group(1) + color, text)
+    return re.sub(r'((?:fill|stroke)=")#[0-9A-Fa-f]{6}(")', lambda m: m.group(1) + color + m.group(2), text)
+
+
+# Overlay layers: User.1 = block borders and labels, User.2 = component borders and labels.
+OVERLAYS = {'blocks': ('User.1', '#00B8D4'), 'components': ('User.2', '#D500F9')}
+_svg_layer = lambda layer: (lambda src, out: ['kicad-cli', 'pcb', 'export', 'svg', '--mode-single', '--page-size-mode', '2',
+                                             '--exclude-drawing-sheet', '-l', layer, '-o', out, src])
+
 VIEWS = {
     'sch': ('svg', lambda src, out: ['kicad-cli', 'sch', 'export', 'svg', '-e', '-o', os.path.dirname(out), src]),
     'top': ('png', lambda src, out: ['kicad-cli', 'pcb', 'render', '--side', 'top', '--quality', 'high', '-w', '1800', '-h', '1200', '-o', out, src]),
@@ -255,6 +266,8 @@ VIEWS = {
                                        '-l', 'F.Cu,F.Mask,F.SilkS,F.Fab,Edge.Cuts', '-o', out, src]),
     'back': ('svg', lambda src, out: ['kicad-cli', 'pcb', 'export', 'svg', '--mode-single', '--page-size-mode', '2', '--exclude-drawing-sheet',
                                       '-m', '-l', 'B.Cu,B.Mask,B.SilkS,B.Fab,Edge.Cuts', '-o', out, src]),
+    'blocks': ('svg', _svg_layer(OVERLAYS['blocks'][0])),
+    'components': ('svg', _svg_layer(OVERLAYS['components'][0])),
     'glb': ('glb', lambda src, out: ['kicad-cli', 'pcb', 'export', 'glb', '-f', '--subst-models', '--include-tracks', '--include-pads',
                                      '--include-zones', '--include-silkscreen', '--include-soldermask', '-o', out, src]),
 }
@@ -287,6 +300,9 @@ def render(kind, iid, view):
         if view == 'sch':
             done = sorted(glob.glob(os.path.join(out_dir, '*.svg')))
             return (done[0], None) if done else (None, (r.stdout + r.stderr)[-800:])
+        if view in OVERLAYS and os.path.exists(out):
+            text = recolor_svg(open(out).read(), OVERLAYS[view][1])
+            open(out, 'w').write(text)
         return (out, None) if os.path.exists(out) else (None, (r.stdout + r.stderr)[-800:])
 
 
@@ -466,8 +482,11 @@ overview(d){const n=d.bom.reduce((a,r)=>a+r.qty,0),e=d.part_errors.length+(d.fac
  ${e?`<div class="card"><b class="bad">Errors</b><ul>${[...d.part_errors,...(d.fact_errors||[])].map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`:''}
  <div class="imgs"><img src="${R('iso')}" alt="3D render (made live by kicad-cli)"></div>`},
 schematic(d){pz(R('sch'))},
-pcb(d){$('#tab').innerHTML=`<div class="row"><button class="btn" data-v="front">Front layers</button><button class="btn" data-v="back">Back layers</button><button class="btn" data-v="top">Top render</button><button class="btn" data-v="bottom">Bottom render</button></div><div id="pv"></div>`;
- const go=v=>{$('#pv').innerHTML='';pz(R(v),'#pv')};document.querySelectorAll('[data-v]').forEach(b=>b.onclick=()=>go(b.dataset.v));go('front')},
+pcb(d){$('#tab').innerHTML=`<div class="row"><button class="btn" data-v="front">Front layers</button><button class="btn" data-v="back">Back layers</button><button class="btn" data-v="top">Top render</button><button class="btn" data-v="bottom">Bottom render</button>
+ <label><input type="checkbox" id="ov-blocks"> <span style="color:#00B8D4">&#9632;</span> Blocks</label> <label><input type="checkbox" id="ov-components"> <span style="color:#D500F9">&#9632;</span> Components</label></div><div id="pv"></div>`;
+ const ovs=['blocks','components'];ovs.forEach(o=>{const c=$('#ov-'+o);let on='1';try{on=localStorage.getItem('ov-'+o)??'1'}catch(e){}c.checked=on=='1';
+  c.onchange=()=>{try{localStorage.setItem('ov-'+o,c.checked?'1':'0')}catch(e){}document.querySelectorAll('img[data-ov="'+o+'"]').forEach(i=>i.style.display=c.checked?'':'none')}});
+ const go=v=>{$('#pv').innerHTML='';pz(R(v),'#pv',v=='front'?ovs.map(o=>({o,src:R(o),on:$('#ov-'+o).checked})):[])};document.querySelectorAll('[data-v]').forEach(b=>b.onclick=()=>go(b.dataset.v));go('front')},
 '3d'(d){$('#tab').innerHTML=`<p class="muted">GLB made live by kicad-cli (first load takes a few seconds).</p><model-viewer src="${R('glb')}" camera-controls auto-rotate shadow-intensity="0.6" exposure="1.1"></model-viewer>`},
 bom(d){$('#tab').innerHTML=`<div class="card"><table><tr><th>Refs</th><th>Qty</th><th>Value</th><th>MPN</th><th>C-number</th><th>JLC snapshot</th><th>Footprint</th><th>Datasheet</th></tr>
  ${d.bom.map(r=>`<tr><td>${r.refs.map(esc).join(', ')}</td><td>${r.qty}</td><td>${esc(r.value)}</td><td>${esc(r.mpn)}</td>
@@ -481,9 +500,11 @@ rules(d){const r=d.facts.layout_rules||[];$('#tab').innerHTML=`<div class="card"
 async checks(d){$('#tab').innerHTML=`<div class="card"><div class="row"><button class="btn" id="run">Run DRC with schematic parity</button><span class="muted">Runs kicad-cli on the source now; cached by source hash.</span></div><div id="dr"></div></div>`;
  $('#run').onclick=async()=>{$('#dr').innerHTML='<p class="muted">Running…</p>';const r=await j(`/api/drc/${d.kind}/${encodeURIComponent(d.id)}`);
  $('#dr').innerHTML=r.error?`<p class="bad">${esc(r.error)}</p>`:`<table><tr><th>Errors</th><td class="${r.errors?'bad':'ok'}">${r.errors}</td></tr><tr><th>Unconnected</th><td class="${r.unconnected?'bad':'ok'}">${r.unconnected}</td></tr><tr><th>Parity</th><td class="${r.parity?'bad':'ok'}">${r.parity}</td></tr><tr><th>Warnings</th><td>${r.warnings}</td></tr><tr><th>Error types</th><td>${Object.entries(r.by_type).map(([k,v])=>esc(k)+' '+v).join(', ')||'-'}</td></tr></table>`}}};
-function pz(src,sel='#tab'){const box=document.createElement('div');box.className='view';box.innerHTML='<p class="muted" style="padding:12px">Rendering from source…</p>';$(sel).appendChild(box);
- const im=new Image();im.onload=()=>{box.innerHTML='';box.appendChild(im);let s=Math.min(box.clientWidth/im.naturalWidth,box.clientHeight/im.naturalHeight),x=0,y=0;
- const ap=()=>im.style.transform=`translate(${x}px,${y}px) scale(${s})`;ap();
+function pz(src,sel='#tab',ovs=[]){const box=document.createElement('div');box.className='view';box.innerHTML='<p class="muted" style="padding:12px">Rendering from source…</p>';$(sel).appendChild(box);
+ const im=new Image();im.onload=()=>{box.innerHTML='';const st=document.createElement('div');st.style.cssText='position:absolute;left:0;top:0;transform-origin:0 0';im.style.position='relative';st.appendChild(im);box.appendChild(st);
+ ovs.forEach(v=>{const o=new Image();o.dataset.ov=v.o;o.style.cssText='position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none';if(!v.on)o.style.display='none';o.src=v.src;st.appendChild(o)});
+ let s=Math.min(box.clientWidth/im.naturalWidth,box.clientHeight/im.naturalHeight),x=0,y=0;
+ const ap=()=>st.style.transform=`translate(${x}px,${y}px) scale(${s})`;ap();
  box.onwheel=e=>{e.preventDefault();const r=box.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top,f=e.deltaY<0?1.15:1/1.15;x=mx-(mx-x)*f;y=my-(my-y)*f;s*=f;ap()};
  let dr=null;box.onmousedown=e=>{dr=[e.clientX-x,e.clientY-y];box.style.cursor='grabbing'};onmouseup=()=>{dr=null;box.style.cursor='grab'};
  box.onmousemove=e=>{if(dr){x=e.clientX-dr[0];y=e.clientY-dr[1];ap()}}};
