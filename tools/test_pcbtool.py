@@ -157,6 +157,37 @@ class WaveTest(unittest.TestCase):
             self.assertTrue(0 < rad <= 2.0)
 
 
+class WidthTest(unittest.TestCase):
+    NEED = {'VBAT': 1.5, 'VIN': 1.0}
+    PADS = [{'net': 'VBAT', 'pos': (0, 0), 'minor': 0.6}, {'net': 'VBAT', 'pos': (20, 0), 'minor': 3.0}]
+
+    def seg(self, net, w, a, b):
+        return {'net': net, 'width': w, 'start': a, 'end': b}
+
+    def test_full_width_is_clean(self):
+        r = pt.width_report([self.seg('VBAT', 1.5, (0, 0), (20, 0))], self.NEED, self.PADS)
+        self.assertEqual(r['VBAT']['under'], [])
+
+    def test_short_neck_into_narrow_pad_is_allowed(self):
+        r = pt.width_report([self.seg('VBAT', 0.6, (0, 0), (0, 1.5)), self.seg('VBAT', 1.5, (0, 1.5), (20, 0))], self.NEED, self.PADS)
+        self.assertEqual(r['VBAT']['under'], [])
+        self.assertEqual(r['VBAT']['necks'], 1)
+
+    def test_thin_segment_is_under_width(self):
+        r = pt.width_report([self.seg('VIN', 0.4, (5, 5), (9, 5))], self.NEED, self.PADS)
+        self.assertEqual(r['VIN']['under'], [(0.4, 4.0, (5, 5))])
+
+    def test_long_neck_or_neck_narrower_than_pad_is_under_width(self):
+        r = pt.width_report([self.seg('VBAT', 0.6, (0, 0), (0, 3)),     # too long
+                             self.seg('VBAT', 0.4, (0, 0), (0, -1)),    # narrower than the 0.6 pad
+                             self.seg('VBAT', 1.0, (20, 0), (20, 1))],  # the 3.0 pad is not narrow
+                            self.NEED, self.PADS)
+        self.assertEqual(len(r['VBAT']['under']), 3)
+
+    def test_nets_without_a_need_are_ignored(self):
+        self.assertEqual(pt.width_report([self.seg('SDA', 0.2, (0, 0), (1, 0))], self.NEED, self.PADS), {})
+
+
 class NoiseTest(unittest.TestCase):
     def test_drops_known_pcbnew_noise_keeps_real_errors(self):
         text = ('./src/common/stdpbase.cpp(59): assert ""traits"" failed in Get(): create wxApp before calling this\n'

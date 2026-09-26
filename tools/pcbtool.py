@@ -12,6 +12,7 @@ Run with the KiCad bundled Python (it has pcbnew):
   $PY tools/pcbtool.py route  BOARD SPEC.json                 add tracks and vias, refill, DRC summary
   $PY tools/pcbtool.py unroute BOARD NET [NET ...]            remove the tracks and vias of nets
   $PY tools/pcbtool.py drc    BOARD                           DRC --schematic-parity summary
+  $PY tools/pcbtool.py widths BOARD [--limit N]              tracks thinner than the net class width (current)
   $PY tools/pcbtool.py render BOARD OUTDIR                    top + iso PNG
   $PY tools/pcbtool.py art    BOARD SPEC.json                 silkscreen art group (waves, circles, lines, texts)
   $PY tools/pcbtool.py colors BOARD OUTDIR [VARIANT ...]      JLC colour variant renders (board unchanged)
@@ -146,6 +147,30 @@ def apply_colors(text, mask, silk, finish, render=False):
             indent = line[:len(line) - len(line.lstrip())]
             out.append(f'{indent}(color "{want[cur]}")')
     return re.sub(r'\(copper_finish "[^"]*"\)', f'(copper_finish "{finish}")', '\n'.join(out))
+
+
+def width_report(segs, need, pads, neck_max=2.0):
+    """Track segments narrower than the net class width (the current rule). A short neck (<= neck_max mm)
+    is allowed only where it ends on a same-net pad that is itself narrower than the class width, and the
+    neck is not narrower than that pad."""
+    out = {}
+    for sg in segs:
+        w_need = need.get(sg['net'])
+        if w_need is None:
+            continue
+        r = out.setdefault(sg['net'], {'need': w_need, 'min': sg['width'], 'necks': 0, 'under': []})
+        r['min'] = min(r['min'], sg['width'])
+        if sg['width'] >= w_need - 1e-6:
+            continue
+        length = round(math.dist(sg['start'], sg['end']), 3)
+        neck = length <= neck_max and any(
+            pd['net'] == sg['net'] and pd['minor'] < w_need and sg['width'] >= pd['minor'] - 1e-6
+            and any(math.dist(pd['pos'], e) < 0.01 for e in (sg['start'], sg['end'])) for pd in pads)
+        if neck:
+            r['necks'] += 1
+        else:
+            r['under'].append((sg['width'], length, sg['start']))
+    return out
 
 
 def compare(a, b):
@@ -361,6 +386,51 @@ def cmd_route(a):
     print_drc(run_drc(a.board))
 
 
+def class_widths(board):
+    """Net -> class track width from the .kicad_pro next to the board (classes wider than Default only)."""
+    import fnmatch
+    pro = json.load(open(os.path.splitext(board)[0] + '.kicad_pro'))['net_settings']
+    width = {c['name']: c['track_width'] for c in pro['classes']}
+    base = width.get('Default', 0.2)
+    pats = [(x['pattern'], width[x['netclass']]) for x in pro.get('netclass_patterns') or [] if width.get(x['netclass'], 0) > base]
+    return lambda net: next((w for pat, w in pats if fnmatch.fnmatchcase(net, pat)), None)
+
+
+def cmd_widths(a):
+    p = pcb()
+    b = p.LoadBoard(a.board)
+    if b is None:
+        sys.exit(f'cannot load {a.board}')
+    cls = class_widths(a.board)
+    mm = p.ToMM
+    segs, need = [], {}
+    for t in b.GetTracks():
+        if isinstance(t, p.PCB_VIA):
+            continue
+        n = t.GetNetname()
+        w = cls(n)
+        if w is not None:
+            need[n] = w
+            segs.append({'net': n, 'width': round(mm(t.GetWidth()), 4), 'layer': t.GetLayerName(),
+                         'start': (round(mm(t.GetStart().x), 3), round(mm(t.GetStart().y), 3)),
+                         'end': (round(mm(t.GetEnd().x), 3), round(mm(t.GetEnd().y), 3))})
+    pads = [{'net': pd.GetNetname(), 'pos': (round(mm(pd.GetPosition().x), 3), round(mm(pd.GetPosition().y), 3)),
+             'minor': round(mm(min(pd.GetSize(p.F_Cu).x, pd.GetSize(p.F_Cu).y)), 3)}
+            for fp in b.GetFootprints() for pd in fp.Pads() if pd.GetNumber()]
+    rep = width_report(segs, need, pads)
+    bad = 0
+    for n in sorted(rep, key=lambda n: -sum(u[1] for u in rep[n]['under'])):
+        r = rep[n]
+        tot = sum(u[1] for u in r['under'])
+        bad += len(r['under'])
+        flag = 'OK ' if not r['under'] else 'LOW'
+        print(f"{flag} {n}: need {r['need']} mm, min {r['min']} mm, {len(r['under'])} thin segments ({tot:.1f} mm), {r['necks']} pad necks")
+        for w, length, st in sorted(r['under'], key=lambda u: u[0])[:a.limit]:
+            print(f'      {w} mm x {length} mm at {st}')
+    print(f'{bad} thin segments on {sum(1 for r in rep.values() if r["under"])} nets')
+    sys.exit(1 if bad else 0)
+
+
 def cmd_drc(a):
     print_drc(run_drc(a.board), limit=60)
 
@@ -534,6 +604,7 @@ def main():
         s = sp.add_parser(name); s.add_argument('board'); s.add_argument('spec'); s.set_defaults(f=f)
     s = sp.add_parser('unroute'); s.add_argument('board'); s.add_argument('nets', nargs='+'); s.set_defaults(f=cmd_unroute)
     s = sp.add_parser('drc'); s.add_argument('board'); s.set_defaults(f=cmd_drc)
+    s = sp.add_parser('widths'); s.add_argument('board'); s.add_argument('--limit', type=int, default=4); s.set_defaults(f=cmd_widths)
     s = sp.add_parser('render'); s.add_argument('board'); s.add_argument('outdir'); s.set_defaults(f=cmd_render)
     s = sp.add_parser('art'); s.add_argument('board'); s.add_argument('spec'); s.set_defaults(f=cmd_art)
     s = sp.add_parser('colors'); s.add_argument('board'); s.add_argument('outdir'); s.add_argument('variants', nargs='*')
