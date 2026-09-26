@@ -329,6 +329,45 @@ class MixedLayerTest(unittest.TestCase):
         self.assertIn('(5.2, 6.0)', fails[0])
 
 
+class SlowLimitTest(unittest.TestCase):
+    """Lead decision D8: slow nets min 95 % coverage and max 5 mm per gap; fast nets keep the 1.0 mm limit."""
+    def setUp(self):
+        self.spec = sp.load_spec(base_spec(mixed_layers=MIXED, slow_max_gap_mm=5.0, slow_min_coverage_pct=95))
+        sp.set_fast(self.spec, {'In2.Cu': ['/SCK*']})
+
+    def res(self, **kw):
+        r = {'length': 100.0, 'unref': 0.0, 'bad': 0.0, 'worst': 0.0, 'worst_at': (0, 0), 'cross': 0.0, 'cross_net': None}
+        r.update(kw)
+        return r
+
+    def fails(self, layer, net, **kw):
+        return sp.reference_failures({(layer, net): self.res(**kw)}, {net: 'GND'}, self.spec)
+
+    def test_slow_gap_up_to_5_mm_passes(self):
+        self.assertEqual(self.fails('F.Cu', '/EN', worst=4.9, unref=4.9, bad=4.9), [])
+
+    def test_slow_gap_over_5_mm_fails(self):
+        self.assertEqual(len(self.fails('F.Cu', '/EN', worst=5.1, unref=5.1, bad=5.1)), 1)
+
+    def test_slow_coverage_under_95_fails(self):
+        f = self.fails('F.Cu', '/EN', worst=2.0, unref=6.0, bad=6.0)
+        self.assertEqual(len(f), 1)
+        self.assertIn('coverage', f[0])
+
+    def test_fast_net_keeps_1_mm(self):
+        self.assertEqual(len(self.fails('F.Cu', '/SCK', worst=1.5, unref=1.5, bad=1.5)), 1)
+
+    def test_evaluate_net_reports_bad_length(self):
+        s = sp.load_spec(base_spec())
+        pts = [(x + 0.5, 0, 1.0) for x in range(10)]
+        r = sp.evaluate_net(pts, lambda x, y: None if 2 <= x <= 5 else 'GND', 'GND', [], s)
+        self.assertAlmostEqual(r['bad'], 3.0)
+
+    def test_limits_must_be_numbers(self):
+        with self.assertRaises(sp.SpecError):
+            sp.load_spec(base_spec(slow_max_gap_mm='x'))
+
+
 class StitchTest(unittest.TestCase):
     def test_farthest_point_from_vias(self):
         pts = [(0, 0), (3, 4), (10, 0)]

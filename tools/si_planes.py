@@ -29,6 +29,8 @@ Spec (one per board, hardware-design/boards/<board>/reference-planes.json):
    "exempt": {"nets": {"VIN": "reason"},
               "areas": [{"box": [x0, y0, x1, y1], "nets": ["/A"], "reason": "..."}]},
    "max_unreferenced_mm": 1.0,   longest continuous unreferenced run that passes
+   "slow_max_gap_mm": 5.0,       optional: this limit for a slow net (not fast in mixed_layers), and
+   "slow_min_coverage_pct": 95,  optional: min referenced % of its length (samples near own vias/pads count)
    "via_allow_mm": 0.6,          a run this near (plus the pad/via radius) the net's own via/pad is OK
    "step_mm": 0.25}              sample step along each track
 Coordinates: KiCad mm, Y down.
@@ -43,7 +45,8 @@ import sys
 
 DEFAULTS = {'max_unreferenced_mm': 1.0, 'via_allow_mm': 0.6, 'step_mm': 0.25}
 REQUIRED = ('about', 'adjacent', 'plane_layers', 'grounds')
-KEYS = set(REQUIRED) | set(DEFAULTS) | {'alt_refs', 'domains', 'exempt', 'mixed_layers'}
+SLOW_LIMITS = ('slow_max_gap_mm', 'slow_min_coverage_pct')
+KEYS = set(REQUIRED) | set(DEFAULTS) | {'alt_refs', 'domains', 'exempt', 'mixed_layers'} | set(SLOW_LIMITS)
 
 
 class SpecError(ValueError):
@@ -98,7 +101,7 @@ def load_spec(raw):
         raise SpecError(f'missing spec keys: {missing}')
     s = dict(DEFAULTS)
     s.update(raw)
-    for k in DEFAULTS:
+    for k in list(DEFAULTS) + [k for k in SLOW_LIMITS if k in s]:
         if not isinstance(s[k], (int, float)) or s[k] <= 0:
             raise SpecError(f'{k} must be a number > 0')
     if not isinstance(s['adjacent'], dict) or not isinstance(s['plane_layers'], list) or not isinstance(s['grounds'], list):
@@ -261,7 +264,7 @@ def evaluate_net(samples, ref_at, domain, anchors, s, net=None):
             cross_nets[ref] += w
     runs = _runs(bad, 1.2 * s['step_mm'])
     worst, at = max(runs, default=(0, None))
-    return {'length': length, 'unref': unref, 'worst': worst, 'worst_at': at, 'cross': cross,
+    return {'length': length, 'unref': unref, 'bad': sum(w for _, _, w in bad), 'worst': worst, 'worst_at': at, 'cross': cross,
             'cross_net': cross_nets.most_common(1)[0][0] if cross_nets else None}
 
 
@@ -289,11 +292,18 @@ def reference_failures(results, domains, s):
         if r['cross'] > 0:
             cross.append((r['cross'], f"FAIL domain-cross {layer} {net}: {r['cross']:.1f} mm over "
                                       f"{r['cross_net']} (domain {domains[net]})"))
+        slow = s['mixed_layers'] and not any(net_kind(net, m, s) == 'fast' for m in s['mixed_layers'].values())
+        limit = s.get('slow_max_gap_mm', s['max_unreferenced_mm']) if slow else s['max_unreferenced_mm']
         if _fast_over_mixed(layer, net, s) and r['worst'] > 0:
             x, y = r['worst_at']
             gaps.append((r['worst'], f"FAIL fast-unreferenced {layer} {net}: gap {r['worst']:.2f} mm at ({x:.1f}, {y:.1f}) "
                                      f"over the mixed layer {s['adjacent'][layer]} (a fast net needs ground under every mm)"))
-        elif r['worst'] > s['max_unreferenced_mm']:
+        elif slow and 'slow_min_coverage_pct' in s and r['length'] and \
+                100 * (1 - r.get('bad', 0) / r['length']) < s['slow_min_coverage_pct']:
+            gaps.append((r.get('bad', 0), f"FAIL unreferenced {layer} {net}: coverage "
+                                          f"{100 * (1 - r.get('bad', 0) / r['length']):.0f}% < {s['slow_min_coverage_pct']}% "
+                                          f"(slow net); worst gap {r['worst']:.1f} mm"))
+        elif r['worst'] > limit:
             x, y = r['worst_at']
             pct = 100 * r['unref'] / r['length'] if r['length'] else 0
             gaps.append((r['worst'], f"FAIL unreferenced {layer} {net}: gap {r['worst']:.1f} mm at "
