@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""si_pairs: gate for differential pairs and controlled-impedance nets.
+"""si_pairs: impedance and reference-plane gate for differential pairs.
 
-It reads the routed copper of each pair in SPEC.json and checks:
-  - differential impedance from the trace width, gap and the stackup,
-  - length skew between the two legs,
-  - uncoupled length (the part of a leg that is not next to the other leg at the pair pitch),
-  - width and gap consistency, via count per leg, and the reference plane under the pair.
-It also reports the length and the reference plane of single-ended fast nets (for example SPI clocks).
+KiCad DRC checks the pair geometry (track_width, diff_pair_gap, diff_pair_uncoupled, skew, via_count, length)
+from the board .kicad_dru. This tool checks only what KiCad does not:
+  - Zdiff: the differential impedance that the track_width / diff_pair_gap window of the pair DRU rule gives
+    with the board stackup, against the target,
+  - reference: the part of each leg that has the reference plane net under it on the adjacent layer.
+It also checks the reference plane under single-ended fast nets (for example SPI clocks).
 
 Run with the KiCad bundled Python (it has pcbnew):
   PY=/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3
-  $PY tools/si_pairs.py BOARD.kicad_pcb SPEC.json [--verbose]
-Exit 0: all PASS. Exit 1: one or more FAIL. Exit 2: tool error (bad spec, net not found, stackup mismatch).
+  $PY tools/si_pairs.py BOARD.kicad_pcb SPEC.json [--dru RULES.kicad_dru] [--verbose]
+--dru defaults to the .kicad_dru next to the board.
+Exit 0: all PASS. Exit 1: one or more FAIL. Exit 2: tool error (bad spec, net or rule not found, stackup mismatch).
 The tool only reads the board. It never writes a .kicad_* file.
 
 Spec: see hardware-design/boards/BASE-PWR/diff-pairs.json.
@@ -151,7 +152,7 @@ def check_stackup(layers, board_stackup, rel=0.01):
 
 
 # ---------------------------------------------------------------- geometry (pure)
-# A net is {'segs': [(layer, x1, y1, x2, y2, width)], 'vias': [(x, y)], 'pads': {name: [(x, y) track ends in pad]}}.
+# A net is {'segs': [(layer, x1, y1, x2, y2, width)]}.
 # All in mm. Arcs come in as short chords.
 def arc_points(start, mid, end, max_chord=0.05):
     """Points along the circle arc through start, mid and end, with chords of at most max_chord mm."""
@@ -172,56 +173,6 @@ def arc_points(start, mid, end, max_chord=0.05):
                       for i in range(1, k)] + [end]
 
 
-def _key(x, y):
-    return (round(x, 4), round(y, 4))
-
-
-def _seg_dist(px, py, x1, y1, x2, y2):
-    dx, dy = x2 - x1, y2 - y1
-    L2 = dx * dx + dy * dy
-    t = 0.0 if L2 == 0 else max(0.0, min(1.0, ((px - x1) * dx + (py - y1) * dy) / L2))
-    return math.hypot(px - x1 - t * dx, py - y1 - t * dy)
-
-
-def path_length(net, a, b):
-    """Shortest copper path length from pad a to pad b. Stubs off the path do not count."""
-    import heapq
-    for p in (a, b):
-        if p not in net['pads'] or not net['pads'][p]:
-            raise SpecError(f'pad {p} has no track end in it')
-    ends = [(s[1], s[2]) for s in net['segs']] + [(s[3], s[4]) for s in net['segs']]
-    graph = {}
-
-    def edge(u, v, w):
-        graph.setdefault(u, []).append((v, w))
-        graph.setdefault(v, []).append((u, w))
-    for _, x1, y1, x2, y2, _ in net['segs']:
-        # Split the segment where another track ends on it (a T junction).
-        L = math.hypot(x2 - x1, y2 - y1)
-        ts = sorted({0.0, 1.0} | {((ex - x1) * (x2 - x1) + (ey - y1) * (y2 - y1)) / (L * L)
-                                  for ex, ey in ends if L > 0 and _seg_dist(ex, ey, x1, y1, x2, y2) < 1e-3})
-        pts = [(x1 + t * (x2 - x1), y1 + t * (y2 - y1)) for t in ts if 0 <= t <= 1]
-        for (ux, uy), (vx, vy) in zip(pts, pts[1:]):
-            edge(_key(ux, uy), _key(vx, vy), math.hypot(vx - ux, vy - uy))
-    for name, pts in net['pads'].items():
-        for x, y in pts:
-            edge(('pad', name), _key(x, y), 0.0)
-    dist, todo = {('pad', a): 0.0}, [(0.0, 0, ('pad', a))]
-    n = 0
-    while todo:
-        d, _, u = heapq.heappop(todo)
-        if u == ('pad', b):
-            return d
-        if d > dist.get(u, math.inf):
-            continue
-        for v, w in graph.get(u, []):
-            if d + w < dist.get(v, math.inf):
-                dist[v] = d + w
-                n += 1
-                heapq.heappush(todo, (d + w, n, v))
-    raise SpecError(f'no copper path from pad {a} to pad {b}')
-
-
 def _samples(net, step):
     """Points along every segment: (layer, x, y, width, length it stands for)."""
     for layer, x1, y1, x2, y2, w in net['segs']:
@@ -230,38 +181,6 @@ def _samples(net, step):
         for i in range(k):
             t = (i + 0.5) / k
             yield layer, x1 + t * (x2 - x1), y1 + t * (y2 - y1), w, L / k
-
-
-def _gaps(a, b, step):
-    """For each sample of leg a: (sample, edge gap to the nearest segment of leg b on the same layer)."""
-    out = []
-    for s in _samples(a, step):
-        best = math.inf
-        for layer, x1, y1, x2, y2, w in b['segs']:
-            if layer == s[0]:
-                best = min(best, _seg_dist(s[1], s[2], x1, y1, x2, y2) - (w + s[3]) / 2)
-        out.append((s, best))
-    return out
-
-
-def analyze_pair(p, n, step=0.05, gap_tol=0.02, max_gap=0.5):
-    """Coupling of two legs. The nominal gap per layer is the most common edge gap below max_gap.
-    A sample is coupled when its gap is within gap_tol of the nominal gap."""
-    gp, gn = _gaps(p, n, step), _gaps(n, p, step)
-    layers = {}
-    for layer in sorted({s[0] for s, _ in gp + gn}):
-        near = [round(g, 3) for s, g in gp + gn if s[0] == layer and g <= max_gap]
-        if not near:
-            continue
-        nominal = max(set(near), key=lambda g: (near.count(g), -g))
-        cs = [s for s, g in gp + gn if s[0] == layer and abs(g - nominal) <= gap_tol]
-        layers[layer] = {'gap': nominal, 'coupled_mm': sum(s[4] for s in cs) / 2,
-                         'widths': sorted({round(s[3], 4) for s in cs}),
-                         'w': sum(s[3] * s[4] for s in cs) / sum(s[4] for s in cs)}
-
-    def uncoupled(gs):
-        return sum(s[4] for s, g in gs if s[0] not in layers or abs(g - layers[s[0]]['gap']) > gap_tol)
-    return {'layers': layers, 'uncoupled_p': uncoupled(gp), 'uncoupled_n': uncoupled(gn)}
 
 
 def ref_coverage(nets, layers, ref_nets, ref_at, step=0.05):
@@ -276,6 +195,19 @@ def ref_coverage(nets, layers, ref_nets, ref_at, step=0.05):
     return 100.0 * hit / tot if tot else 0.0
 
 
+# ---------------------------------------------------------------- DRU rule (pure)
+def parse_dru_rule(text, name):
+    """Return {constraint: {min, opt, max}} (mm) of the rule with this name in a .kicad_dru text."""
+    text = '\n'.join(line for line in text.splitlines() if not line.lstrip().startswith('#'))
+    m = re.search(r'\(rule\s+"' + re.escape(name) + r'"(.*?)(?=\(rule\s+"|\Z)', text, re.S)
+    if not m:
+        raise SpecError(f'rule "{name}" not found in the .kicad_dru')
+    out = {}
+    for c in re.finditer(r'\(constraint\s+(\w+)((?:\s*\((?:min|opt|max)\s+[\d.]+(?:mm)?\))*)', m.group(1)):
+        out[c.group(1)] = {k: float(v) for k, v in re.findall(r'\((min|opt|max)\s+([\d.]+)', c.group(2))}
+    return out
+
+
 # ---------------------------------------------------------------- evaluation (pure)
 def zdiff(layer, w, s):
     m = layer['model']
@@ -283,29 +215,43 @@ def zdiff(layer, w, s):
         return layer.get('mask_factor_diff', 1.0) * microstrip_zdiff(w, s, layer['h_mm'], layer['t_mm'], layer['er'])
     if m == 'stripline':
         return stripline_zdiff(w, s, layer['b_mm'], layer['t_mm'], layer['er'])
-    raise SpecError(f'unknown model {m}')
+    raise SpecError(f'no impedance model "{m}" for a pair on this layer')
+
+
+def zdiff_window(layer, rule):
+    """(low, nominal, high) Zdiff over the track_width x diff_pair_gap window of a DRU rule.
+    Z falls when the width grows and rises when the gap grows. A missing min or max counts as opt."""
+    try:
+        w, g = rule['track_width'], rule['diff_pair_gap']
+        wo, go = w['opt'], g['opt']
+    except KeyError as e:
+        raise SpecError(f'the pair rule needs track_width and diff_pair_gap with an opt value ({e})')
+    return (zdiff(layer, w.get('max', wo), g.get('min', go)), zdiff(layer, wo, go),
+            zdiff(layer, w.get('min', wo), g.get('max', go)))
 
 
 def _net(board, name):
     if name not in board['nets'] or not board['nets'][name]['segs']:
         raise SpecError(f'net {name} has no tracks on the board')
-    net = board['nets'][name]
-    return net
+    return board['nets'][name]
 
 
 def _check_layers(nets, layers):
     for net in nets:
         for s in net['segs']:
             if s[0] not in layers:
-                raise SpecError(f'track on {s[0]} but the spec has no model for {s[0]}')
-
-
-def _leg_len(net, pads):
-    return path_length(net, *pads) if pads else sum(math.hypot(s[3] - s[1], s[4] - s[2]) for s in net['segs'])
+                raise SpecError(f'track on {s[0]} but the spec has no entry for {s[0]}')
 
 
 def _row(item, check, ok, detail):
     return {'item': item, 'check': check, 'status': 'PASS' if ok else 'FAIL', 'detail': detail}
+
+
+def _ref_row(item, check, net, layers, ent, ref_at):
+    cov = ref_coverage((net,), layers, ent['reference'], ref_at)
+    lim = ent.get('min_ref_pct', 100)
+    return _row(item, check, cov >= lim,
+                f'{math.floor(cov * 10) / 10:.1f} % of the length over {ent["reference"]} (min {lim} %)')
 
 
 def evaluate(spec, board):
@@ -317,42 +263,21 @@ def evaluate(spec, board):
         name = pr['name']
         p, n = _net(board, pr['p']), _net(board, pr['n'])
         _check_layers((p, n), layers)
-        a = analyze_pair(p, n, gap_tol=pr.get('gap_tol_mm', 0.02), max_gap=pr.get('max_gap_mm', 0.5))
-        rows.append(_row(name, 'coupling', bool(a['layers']),
-                         f'coupled on {sorted(a["layers"])}' if a['layers'] else
-                         f'the legs are never within {pr.get("max_gap_mm", 0.5)} mm of each other'))
+        rule = parse_dru_rule(board['dru'], pr['dru_rule'])
         tol = pr['tol_pct'] / 100 * pr['z_diff']
-        for lname, lay in a['layers'].items():
-            z = zdiff(layers[lname], lay['w'], lay['gap'])
-            rows.append(_row(name, f'zdiff {lname}', abs(z - pr['z_diff']) <= tol,
-                             f'{z:.1f} ohm (target {pr["z_diff"]} +-{pr["tol_pct"]}%) w {lay["w"]:.3f} '
-                             f'gap {lay["gap"]:.3f} coupled {lay["coupled_mm"]:.2f} mm'))
-            rows.append(_row(name, f'width {lname}', len(lay['widths']) == 1, f'coupled widths {lay["widths"]}'))
-        lp, ln = _leg_len(p, pr.get('p_pads')), _leg_len(n, pr.get('n_pads'))
-        rows.append(_row(name, 'skew', abs(lp - ln) <= pr['max_skew_mm'],
-                         f'{abs(lp - ln):.3f} mm (p {lp:.3f}, n {ln:.3f}, max {pr["max_skew_mm"]})'))
-        unc = max(a['uncoupled_p'], a['uncoupled_n'])
-        rows.append(_row(name, 'uncoupled', unc <= pr['max_uncoupled_mm'],
-                         f'{unc:.2f} mm (p {a["uncoupled_p"]:.2f}, n {a["uncoupled_n"]:.2f}, '
-                         f'max {pr["max_uncoupled_mm"]})'))
-        rows.append(_row(name, 'vias', len(p['vias']) == len(n['vias']),
-                         f'p {len(p["vias"])}, n {len(n["vias"])}'))
-        cov = ref_coverage((p, n), layers, pr['reference'], board['ref_at'])
-        rows.append(_row(name, 'reference', cov >= pr.get('min_ref_pct', 100),
-                         f'{math.floor(cov * 10) / 10:.1f} % of the length over {pr["reference"]} (min {pr.get("min_ref_pct", 100)} %)'))
+        for lname in sorted({s[0] for s in p['segs'] + n['segs']}):
+            lo, nom, hi = zdiff_window(layers[lname], rule)
+            ok = pr['z_diff'] - tol <= lo and hi <= pr['z_diff'] + tol
+            rows.append(_row(name, f'zdiff {lname}', ok,
+                             f'{nom:.1f} ohm (window {lo:.1f}..{hi:.1f}, target {pr["z_diff"]} +-{pr["tol_pct"]} %) '
+                             f'rule "{pr["dru_rule"]}" w {rule["track_width"]} gap {rule["diff_pair_gap"]}'))
+        rows.append(_ref_row(name, 'reference p', p, layers, pr, board['ref_at']))
+        rows.append(_ref_row(name, 'reference n', n, layers, pr, board['ref_at']))
     for ne in spec.get('nets', []):
         net = _net(board, ne['net'])
         _check_layers((net,), layers)
-        L = _leg_len(net, ne.get('pads'))
-        lim = ne.get('max_len_mm', math.inf)
-        rows.append(_row(ne['name'], 'length', L <= lim,
-                         f'{L:.2f} mm, {len(net["vias"])} vias, layers {sorted({s[0] for s in net["segs"]})}'
-                         + (f' (max {lim})' if lim < math.inf else '')))
-        cov = ref_coverage((net,), layers, ne['reference'], board['ref_at'])
-        rows.append(_row(ne['name'], 'reference', cov >= ne.get('min_ref_pct', 100),
-                         f'{math.floor(cov * 10) / 10:.1f} % of the length over {ne["reference"]} (min {ne.get("min_ref_pct", 100)} %)'))
+        rows.append(_ref_row(ne['name'], 'reference', net, layers, ne, board['ref_at']))
     return rows
-
 
 
 # ---------------------------------------------------------------- side effects (pcbnew, files)
@@ -383,21 +308,22 @@ def pcb():
     return pcbnew
 
 
-def load_board(path, net_names):
+def load_board(path, net_names, dru_path):
     """Read the board (no write). Fill the zones in memory only, so the reference check sees the current fill."""
     with open(path) as f:
         text = f.read()
+    with open(dru_path) as f:
+        dru = f.read()
     p = pcb()
     bd = p.LoadBoard(path)
     p.ZONE_FILLER(bd).Fill(bd.Zones())
     mm = p.ToMM
-    nets = {n: {'segs': [], 'vias': [], 'pads': {}} for n in net_names}
+    nets = {n: {'segs': []} for n in net_names}
     for t in bd.GetTracks():
         net = nets.get(t.GetNetname())
         if net is None:
             continue
         if t.GetClass() == 'PCB_VIA':
-            net['vias'].append((mm(t.GetPosition().x), mm(t.GetPosition().y)))
             continue
         a, b = (mm(t.GetStart().x), mm(t.GetStart().y)), (mm(t.GetEnd().x), mm(t.GetEnd().y))
         pts = [a, b]
@@ -405,30 +331,20 @@ def load_board(path, net_names):
             pts = arc_points(a, (mm(t.GetMid().x), mm(t.GetMid().y)), b)
         for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
             net['segs'].append((t.GetLayerName(), x1, y1, x2, y2, mm(t.GetWidth())))
-    for pad in bd.GetPads():
-        net = nets.get(pad.GetNetname())
-        if net is None:
-            continue
-        name = f'{pad.GetParentFootprint().GetReference()}.{pad.GetNumber()}'
-        inside = net['pads'].setdefault(name, [])
-        for layer, x1, y1, x2, y2, _ in net['segs']:
-            lid = bd.GetLayerID(layer)
-            for x, y in ((x1, y1), (x2, y2)):
-                if pad.IsOnLayer(lid) and pad.HitTest(p.VECTOR2I(p.FromMM(x), p.FromMM(y))):
-                    inside.append((x, y))
     zones = list(bd.Zones())
 
     def ref_at(layer, x, y):
         lid = bd.GetLayerID(layer)
         pos = p.VECTOR2I(p.FromMM(x), p.FromMM(y))
         return {z.GetNetname() for z in zones if z.IsOnLayer(lid) and z.HitTestFilledArea(lid, pos)}
-    return {'stackup': parse_stackup(text), 'nets': nets, 'ref_at': ref_at}
+    return {'stackup': parse_stackup(text), 'nets': nets, 'ref_at': ref_at, 'dru': dru}
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description='Differential pair and controlled-impedance gate (read only).')
+    ap = argparse.ArgumentParser(description='Pair impedance and reference-plane gate (read only).')
     ap.add_argument('board')
     ap.add_argument('spec')
+    ap.add_argument('--dru', help='rules file (default: the .kicad_dru next to the board)')
     ap.add_argument('--verbose', action='store_true', help='also print the PASS rows')
     args = ap.parse_args(argv)
     try:
@@ -436,7 +352,8 @@ def main(argv=None):
             spec = json.load(f)
         names = [x for pr in spec.get('pairs', []) for x in (pr['p'], pr['n'])]
         names += [ne['net'] for ne in spec.get('nets', [])]
-        rows = evaluate(spec, load_board(args.board, names))
+        dru = args.dru or os.path.splitext(args.board)[0] + '.kicad_dru'
+        rows = evaluate(spec, load_board(args.board, names, dru))
     except (SpecError, OSError, KeyError, ValueError) as e:
         print(f'si_pairs: ERROR {type(e).__name__}: {e}', file=sys.stderr)
         return 2

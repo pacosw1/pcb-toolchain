@@ -74,42 +74,56 @@ class Stackup(unittest.TestCase):
             sp.check_stackup(bad, sp.parse_stackup(STACKUP_TEXT))
 
 
+DRU_TEXT = """
+# comment (rule "not a rule")
+(rule "USB 90R diff pair"
+  (condition "A.inDiffPair('/USB_D')")
+  (constraint track_width (min 0.22mm) (opt 0.22mm) (max 0.22mm))
+  (constraint diff_pair_gap (min 0.12mm) (opt 0.13mm)))
+
+(rule "Other"
+  (constraint clearance (min 0.5mm)))
+"""
+
+
+class Dru(unittest.TestCase):
+    def test_parse_rule_constraints(self):
+        r = sp.parse_dru_rule(DRU_TEXT, 'USB 90R diff pair')
+        self.assertEqual(r['track_width'], {'min': 0.22, 'opt': 0.22, 'max': 0.22})
+        self.assertEqual(r['diff_pair_gap'], {'min': 0.12, 'opt': 0.13})
+
+    def test_missing_rule_raises(self):
+        with self.assertRaises(sp.SpecError):
+            sp.parse_dru_rule(DRU_TEXT, 'Nope')
+
+    def test_zdiff_window_uses_the_corners(self):
+        # Z falls with width and rises with gap: low corner (w max, gap min), high corner (w min, gap max).
+        rule = {'track_width': {'min': 0.2, 'opt': 0.22, 'max': 0.24}, 'diff_pair_gap': {'min': 0.12, 'opt': 0.13}}
+        lo, nom, hi = sp.zdiff_window(LAYERS['F.Cu'], rule)
+        self.assertAlmostEqual(lo, sp.zdiff(LAYERS['F.Cu'], 0.24, 0.12))
+        self.assertAlmostEqual(nom, sp.zdiff(LAYERS['F.Cu'], 0.22, 0.13))
+        self.assertAlmostEqual(hi, sp.zdiff(LAYERS['F.Cu'], 0.2, 0.13))
+
+    def test_rule_without_gap_raises(self):
+        with self.assertRaises(sp.SpecError):
+            sp.zdiff_window(LAYERS['F.Cu'], {'track_width': {'opt': 0.2}})
+
+
 def seg(x1, y1, x2, y2, w=0.22, layer='F.Cu'):
     return (layer, x1, y1, x2, y2, w)
 
 
-# A 10 mm pair on F.Cu at 0.37 mm pitch (w 0.22, gap 0.15). The p leg has a 1 mm fanout at the start and a 2 mm
-# stub (for example to an ESD pad) at x = 5. Pads: A at the start, B at the end of each leg.
-P = {'segs': [seg(-1, 0, 0, 0), seg(0, 0, 10, 0), seg(5, 0, 5, -2)], 'vias': [],
-     'pads': {'A': [(-1, 0)], 'B': [(10, 0)]}}
-N = {'segs': [seg(0, 0.37, 10, 0.37)], 'vias': [],
-     'pads': {'A': [(0, 0.37)], 'B': [(10, 0.37)]}}
-
-
-class Geometry(unittest.TestCase):
-    def test_path_length_ignores_stub(self):
-        self.assertAlmostEqual(sp.path_length(P, 'A', 'B'), 11.0, places=6)
-
-    def test_path_length_missing_pad_raises(self):
-        with self.assertRaises(sp.SpecError):
-            sp.path_length(P, 'A', 'X')
-
-    def test_pair_coupling(self):
-        r = sp.analyze_pair(P, N, gap_tol=0.02)
-        # About 0.1 mm of the fanout and the stub root are at the nominal gap, so 2.86 mm, not 3.0 mm.
-        self.assertAlmostEqual(r['uncoupled_p'], 3.0, delta=0.2)
-        self.assertAlmostEqual(r['uncoupled_n'], 0.0, delta=0.1)
-        lay = r['layers']['F.Cu']
-        self.assertAlmostEqual(lay['gap'], 0.15, places=3)
-        self.assertEqual(lay['widths'], [0.22])
+P = {'segs': [seg(0, 0, 10, 0)]}
+N = {'segs': [seg(0, 0.35, 10, 0.35)]}
 
 
 def board(p=P, n=N, ref=lambda layer, x, y: {'GND'}):
-    return {'stackup': sp.parse_stackup(STACKUP_TEXT), 'nets': {'/DP': p, '/DN': n}, 'ref_at': ref}
+    return {'stackup': sp.parse_stackup(STACKUP_TEXT), 'nets': {'/DP': p, '/DN': n}, 'ref_at': ref,
+            'dru': DRU_TEXT}
 
 
-PAIR = {'name': 'USB', 'p': '/DP', 'n': '/DN', 'p_pads': ['A', 'B'], 'n_pads': ['A', 'B'], 'z_diff': 90,
-        'tol_pct': 10, 'max_skew_mm': 1.5, 'max_uncoupled_mm': 3.5, 'reference': 'GND'}
+PAIR = {'name': 'USB', 'p': '/DP', 'n': '/DN', 'z_diff': 90, 'tol_pct': 10, 'dru_rule': 'USB 90R diff pair',
+        'reference': 'GND'}
 
 
 def status(rows):
@@ -122,37 +136,22 @@ class Evaluate(unittest.TestCase):
 
     def test_good_pair_passes(self):
         rows = sp.evaluate(self.spec(), board())
-        self.assertEqual(set(status(rows).values()), {'PASS'}, rows)
+        self.assertEqual(status(rows), {'zdiff F.Cu': 'PASS', 'reference p': 'PASS', 'reference n': 'PASS'}, rows)
 
     def test_zdiff_off_target_fails(self):
         self.assertEqual(status(sp.evaluate(self.spec(z_diff=120), board()))['zdiff F.Cu'], 'FAIL')
 
-    def test_skew_fails(self):
-        self.assertEqual(status(sp.evaluate(self.spec(max_skew_mm=0.5), board()))['skew'], 'FAIL')
-
-    def test_uncoupled_fails(self):
-        self.assertEqual(status(sp.evaluate(self.spec(max_uncoupled_mm=1), board()))['uncoupled'], 'FAIL')
-
-    def test_unequal_vias_fail(self):
-        p = dict(P, vias=[(5, 0)])
-        self.assertEqual(status(sp.evaluate(self.spec(), board(p=p)))['vias'], 'FAIL')
-
-    def test_reference_gap_fails(self):
+    def test_reference_gap_under_one_leg_fails(self):
         def ref(layer, x, y):
-            return {'GND'} if x < 5 else set()
-        self.assertEqual(status(sp.evaluate(self.spec(), board(ref=ref)))['reference'], 'FAIL')
-
-    def test_never_coupled_pair_fails_not_error(self):
-        n = dict(N, segs=[seg(0, 3, 10, 3)], pads={'A': [(0, 3)], 'B': [(10, 3)]})
-        st = status(sp.evaluate(self.spec(), board(n=n)))
-        self.assertEqual(st['coupling'], 'FAIL')
-        self.assertEqual(st['uncoupled'], 'FAIL')
+            return set() if y > 0.1 and x > 5 else {'GND'}
+        st = status(sp.evaluate(self.spec(), board(ref=ref)))
+        self.assertEqual((st['reference p'], st['reference n']), ('PASS', 'FAIL'))
 
     def test_reference_may_list_nets(self):
         def ref(layer, x, y):
             return {'GND'} if x < 5 else {'VDD'}
-        self.assertEqual(status(sp.evaluate(self.spec(reference=['GND', 'VDD']), board(ref=ref)))['reference'],
-                         'PASS')
+        st = status(sp.evaluate(self.spec(reference=['GND', 'VDD']), board(ref=ref)))
+        self.assertEqual(st['reference p'], 'PASS')
 
     def test_missing_net_raises(self):
         with self.assertRaises(sp.SpecError):
@@ -163,12 +162,10 @@ class Evaluate(unittest.TestCase):
         with self.assertRaises(sp.SpecError):
             sp.evaluate(self.spec(), board(p=p))
 
-    def test_single_ended_net_length(self):
+    def test_single_ended_net_reference(self):
         spec = {'stackup': {'layers': LAYERS}, 'pairs': [],
-                'nets': [{'name': 'SCK', 'net': '/DN', 'pads': ['A', 'B'], 'max_len_mm': 5, 'reference': 'GND'}]}
-        st = status(sp.evaluate(spec, board()))
-        self.assertEqual(st['length'], 'FAIL')
-        self.assertEqual(st['reference'], 'PASS')
+                'nets': [{'name': 'SCK', 'net': '/DN', 'reference': 'GND'}]}
+        self.assertEqual(status(sp.evaluate(spec, board())), {'reference': 'PASS'})
 
 
 class Arc(unittest.TestCase):
