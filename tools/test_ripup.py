@@ -235,7 +235,7 @@ class BeamTest(unittest.TestCase):
 
 class RouteNetTest(unittest.TestCase):
     """route_net with a fake runner: suggest gives two lines, then 'unconnected: none' after one connect."""
-    def run_route(self, stitch_ok, fast=True):
+    def run_route(self, stitch_ok, fast=True, **kw):
         import tempfile
         calls = []
         state = {'routed': False}
@@ -259,7 +259,7 @@ class RouteNetTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             board = os.path.join(d, 'B.kicad_pcb')
             open(board, 'w').write('base|')
-            done, fail = ru.route_net(board, 'N', None, max_vias=4, sh=sh, fast=lambda n: fast)
+            done, fail = ru.route_net(board, 'N', None, max_vias=4, sh=sh, fast=lambda n: fast, **kw)
             text = open(board).read()
         return done, fail, calls, text
 
@@ -274,6 +274,15 @@ class RouteNetTest(unittest.TestCase):
     def test_slow_net_stitch_is_best_effort(self):
         done, fail, calls, text = self.run_route(lambda t: True, fast=False)
         self.assertIn('--best-effort', calls[2])
+
+    def test_slow_net_takes_a_line_with_up_to_6_vias(self):
+        # lead decision D9: max 4 vias for a fast net, 6 for a slow net
+        done, fail, calls, text = self.run_route(lambda t: True, fast=False)
+        self.assertEqual([r[3] for r in done], ['N A.1 -> B.1 six'])
+
+    def test_suggest_box_margin_is_passed(self):
+        done, fail, calls, text = self.run_route(lambda t: True, margin=12)
+        self.assertEqual(calls[0][calls[0].index('--margin') + 1], '12')
 
     def test_no_stitch_room_restores_the_board_and_tries_the_next_line(self):
         done, fail, calls, text = self.run_route(lambda t: t.endswith('zero'))
