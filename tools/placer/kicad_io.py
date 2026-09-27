@@ -35,7 +35,7 @@ import re
 
 import pcbnew
 
-from . import cost
+from . import cost, dru
 
 M = 1e6
 IC_PREFIX = ('U', 'J', 'P', 'CN', 'K', 'SW', 'Y', 'X')
@@ -224,8 +224,14 @@ def _decaps(fps, member, dist):
 
 def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), free_box=None,
                  region_refs=(), region_weight=1.0, region_box=None, spacing=(0.5, 1.0), tie=0.0,
-                 rigid_nets=(), decap_tie=0.0, keepout_zones=(), edges=None, zone_refs=None, domains=()):
+                 rigid_nets=(), decap_tie=0.0, keepout_zones=(), edges=None, zone_refs=None, domains=None):
     board = pcbnew.LoadBoard(path)
+    holes, ignored = [], []
+    if domains is None:  # single source: the board .kicad_dru
+        dp = os.path.splitext(path)[0] + '.kicad_dru'
+        r = dru.parse(open(dp).read()) if os.path.exists(dp) else {'domains': [], 'holes': [], 'ignored': []}
+        domains, holes, ignored = r['domains'], r['holes'], r['ignored']
+    hole_gap = {ref: g for _, refs, g in holes for ref in refs}
     dom_ids = {}  # net class of a domain -> class id (1, 2, ...)
     outline, holes = outline_of(board)
     keepouts = [h for h in holes]
@@ -301,6 +307,11 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
             kinds = [(p, _domain(p, domains)) for p in fp.Pads() if p.GetNetname()]
             if domains and not kinds:  # no net pad (a mounting hole): only its own class to a domain pad
                 mech.append(len(rects) - 1)
+                if r in hole_gap:  # a .kicad_dru hole rule: its gap to the domain pads
+                    for p in fp.Pads():
+                        bb = p.GetBoundingBox()
+                        dom.append((len(hv), -1, hole_gap[r], 0.0))
+                        hv.append(((mm(bb.GetX()), mm(bb.GetY()), mm(bb.GetRight()), mm(bb.GetBottom())), 0.0))
             elif any(d for _, d in kinds):  # every pad its own rect; the courtyard holds no pad
                 mech.append(len(rects) - 1)
                 for p, d in kinds:
@@ -347,6 +358,9 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
                           'rects': [[a - ox, c - oy, e - ox, f - oy, clr] for (a, c, e, f), clr in rects],
                           'pads': pads,
                           'borders': u['borders'], 'box': u['box'], 'group': u.get('group')})
+        dk = {k for k, *_ in dom}
+        if len(hv) > len(dk):  # pad rects with a net-class clearance: DRC enforces them
+            out_units[-1]['hard'] = [base + k for k in range(len(hv)) if k not in dk]
         if dom:
             out_units[-1]['dom'] = [[base + k, c, g, nc] for k, c, g, nc in dom]
         if mech:
@@ -396,7 +410,8 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
     copper = kept_copper(board, out_units, by_ref)
     return {'board_file': os.path.abspath(path), 'units': out_units, 'nets': nets,
             'board': {'outline': outline, 'keepouts': keepouts, 'edge_clearance': edge, 'copper': copper},
-            'region': region, 'move_box': list(free_box) if free_box else None, 'decaps': decaps}
+            'region': region, 'move_box': list(free_box) if free_box else None, 'decaps': decaps,
+            'dru_ignored': ignored}
 
 
 def _domain(pad, domains):

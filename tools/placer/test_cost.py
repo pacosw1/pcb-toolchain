@@ -202,7 +202,9 @@ class OverlapTest(unittest.TestCase):
         pr = problem([unit('A', 0, 0, [[0, 0, 1, 1, .5], [0.5, 0, 1.5, 1, .5]]),
                       unit('B', 1.3, 0, [[0, 0, 1, 1, .5]])], [])
         # A-B: rect 1 x term 0.2 -> 0.3; rect 2: 1.5 - 1.3 + 0.5 = 0.7 -> 1.05. Inside A: not counted.
-        self.assertAlmostEqual(cost.overlap(pr, cost.initial_pose(pr)), 1.35)
+        # Hard: only rect 2 meets B (0.2 x 1 = 0.2); the rest of the D-040 halo is soft spacing.
+        self.assertAlmostEqual(cost.overlap(pr, cost.initial_pose(pr)), 0.2)
+        self.assertAlmostEqual(cost.spacing(pr, cost.initial_pose(pr)), 1.15)
 
     def test_fixed_pairs_do_not_count(self):
         pr = problem([unit('A', 0, 0, [[0, 0, 1, 1, .5]], fixed=True),
@@ -236,6 +238,8 @@ def random_problem(rng, n=8, nets=10):
         if i % 3 == 0:
             rects.append([w / 2, -h / 2, w / 2 + 1, h / 2, .5])
         units.append(unit('U%d' % i, rng.uniform(0, 20), rng.uniform(0, 20), rects, fixed=(i == 0)))
+        if i % 3 == 0:
+            units[-1]['hard'] = [1]
         units[-1]['pads'] = [[rng.uniform(-w / 2, w / 2), rng.uniform(-h / 2, h / 2)] for _ in range(rng.randint(0, 6))]
     ns = []
     for j in range(nets):
@@ -248,11 +252,37 @@ def random_problem(rng, n=8, nets=10):
                    region={'box': [0, 0, 10, 10], 'weight': 2.0, 'refs': []})
 
 
+class SoftSpacingTest(unittest.TestCase):
+    """Hard (illegal) = what KiCad DRC enforces: courtyard overlap, and the gap of a rect in u['hard'] (a pad
+    with its net-class or .kicad_dru clearance). The D-040 halo of a courtyard is a soft cost (w_sp)."""
+
+    def pr(self, hard=False):
+        a = unit('A', 5.0, 5.0, [[-1, -1, 1, 1, 0.5], [-0.5, -0.5, 0.5, 0.5, 1.5]])
+        if hard:
+            a['hard'] = [1]
+        return problem([a, unit('B', 7.3, 5.0, [[-1, -1, 1, 1, 0.5]])], [], square_board(20.0))
+
+    def test_d040_halo_is_soft_and_legal(self):
+        pr = self.pr()
+        c = cost.components(pr, cost.initial_pose(pr), P)
+        self.assertAlmostEqual(c['overlap'], 0.0)
+        self.assertGreater(c['spacing'], 0.0)
+        ev = cost.Evaluator(pr, dict(P, w_sp=3.0))
+        self.assertAlmostEqual(ev.legal_penalty(1), 0.0)
+        self.assertAlmostEqual(ev.components()['spacing'], c['spacing'])
+        self.assertAlmostEqual(ev.cost, cost.total(pr, ev.pose(), dict(P, w_sp=3.0)))
+
+    def test_a_pad_clearance_rect_is_hard(self):
+        pr = self.pr(hard=True)  # pad edge 5.5, B courtyard 6.3: 0.8 < 1.5
+        self.assertGreater(cost.components(pr, cost.initial_pose(pr), P)['overlap'], 0.0)
+        self.assertGreater(cost.Evaluator(pr, P).legal_penalty(1), 0.0)
+
+
 class EvaluatorTest(unittest.TestCase):
     def test_incremental_equals_full_after_random_moves(self):
         rng = random.Random(7)
         pr = random_problem(rng)
-        P = dict(globals()['P'], pin_demand=0.4, limit=0.05)
+        P = dict(globals()['P'], pin_demand=0.4, limit=0.05, w_sp=2.0)
         ev = cost.Evaluator(pr, P)
         self.assertAlmostEqual(ev.cost, cost.total(pr, ev.pose(), P), places=6)
         for k in range(300):
@@ -379,6 +409,15 @@ class DomainRectTest(unittest.TestCase):
         b = unit('B', 19.6, 20.0, [[7, -1, 9, 1, 0.5], [-8, -2, 8, 2, 0.0]])  # border 1.1 mm from the pad
         b['mech'] = [1]
         self.assertAlmostEqual(self.overlap([self.mains('K1', 10.0, 1), b]), 0.0)
+
+    def test_a_hole_rule_keeps_its_gap_to_domain_pads_only(self):
+        h = unit('H', 20.0, 20.0, [[-2, -2, 2, 2, 0.0], [-1, -1, 1, 1, 0.0]], fixed=True)  # courtyard, NPTH hole
+        h['dom'] = [[1, -1, 9.65, 0.0]]
+        h['mech'] = [0]
+        self.assertGreater(self.overlap([self.mains('K1', 10.0, 1), h]), 0.0)  # pad 8.5 mm from the hole
+        self.assertAlmostEqual(self.overlap([self.mains('K1', 8.0, 1), h]), 0.0)  # 10.5 mm
+        r = unit('R', 16.0, 20.0, [[-1, -1, 1, 1, 0.5]])
+        self.assertAlmostEqual(self.overlap([r, h]), 0.0)  # other parts: courtyard rule only
 
     def test_a_slot_next_to_a_domain_pad_is_legal(self):
         s = unit('S', 12.6, 30.0, [[-1, -1, 1, 1, 0.5], [-1, -11, 1, -9, 0.0]])  # slot 1.1 mm from the pad

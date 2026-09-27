@@ -30,12 +30,14 @@ def cmd_read(a):
                                region_refs=a.region_ref, region_weight=a.region_weight, region_box=a.region_box,
                                tie=a.tie, rigid_nets=[x for x in a.rigid_net.split(',') if x], decap_tie=a.decap_tie,
                                keepout_zones=a.keepout_zone, edges=parse_edges(a.edge),
-                               zone_refs=dict(x.split('=', 1) for x in a.zone_ref), domains=parse_domains(a.domain))
+                               zone_refs=dict(x.split('=', 1) for x in a.zone_ref), domains=parse_domains(a.domain) if a.domain else None)
     json.dump(pr, open(a.o, 'w'))
     mov = [u for u in pr['units'] if not u['fixed']]
     print('units %d (movable %d, blocks %d), nets %d, keepouts %d' % (
         len(pr['units']), len(mov), sum(1 for u in pr['units'] if u['box']), len(pr['nets']),
         len(pr['board']['keepouts'])))
+    if pr['dru_ignored']:
+        print('NOT MODELLED .kicad_dru rules (check them after placement): %s' % ', '.join(pr['dru_ignored']))
     far = [d for d in pr['decaps'] if d[2] > 1.0]
     print('decaps %d tied, %d over 1.0 mm (D-040): %s' % (len(pr['decaps']), len(far),
                                                         ' '.join('%s-%s %.2f' % tuple(d) for d in far)))
@@ -177,7 +179,7 @@ def main(argv=None):
     r.add_argument('--zone-ref', nargs='*', default=[], metavar='ZONE=REF',
                    help='rule area that moves with the unit of REF (antenna, mains keepout of a block)')
     r.add_argument('--domain', nargs='*', default=[], metavar='CLASS:GAP:CLASS_GAP',
-                   help="net-class domain spacing from the .kicad_dru rules, for example 'MAINS_K*:8:3'")
+                   help="override of the domain rules read from the board .kicad_dru, for example 'MAINS_K*:8:3'")
     r.add_argument('--edge', nargs='*', default=[], metavar='REF=SIDES:SIDE',
                    help='edge anchor: side N/S/E/W of the REF courtyard (as placed now) on a board edge in LRTB')
     r.set_defaults(f=cmd_read)

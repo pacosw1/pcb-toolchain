@@ -149,7 +149,8 @@ class LegalizeCopperTest(unittest.TestCase):
 class LegalizeRetryTest(unittest.TestCase):
     def test_second_pass_doubles_the_radius(self):
         pr = two_units()
-        pr['units'][1]['x'], pr['units'][1]['y'] = 5.5, 5.0  # needs a 1.0 mm move; radius 0.5 is too small
+        # the courtyards meet: needs a 0.8 mm move; radius 0.5 is too small
+        pr['units'][1]['x'], pr['units'][1]['y'] = 5.2, 5.0
         ev = cost.Evaluator(pr, P)
         self.assertEqual(anneal.legalize(ev, dict(P, legal_radius=0.5, legal_passes=1)), [1])
         ev = cost.Evaluator(pr, P)
@@ -201,7 +202,7 @@ class EndToEndTest(unittest.TestCase):
         self.assertEqual([x['epoch'] for x in h], [1, 2, 3])
         for x in h:
             self.assertEqual(len(x['pose']), len(pr['units']))
-            self.assertEqual(set(x['components']), {'hpwl', 'cong', 'overlap', 'oob'})
+            self.assertEqual(set(x['components']), {'hpwl', 'cong', 'overlap', 'oob', 'spacing'})
             self.assertAlmostEqual(x['components']['hpwl'], cost.hpwl(pr, x['pose']), places=6)
 
     def test_beats_initial_and_random_placement(self):

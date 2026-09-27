@@ -20,7 +20,8 @@ try:
 except ImportError:  # plain python3 without KiCad
     pcbnew = None
 
-REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.dirname(os.path.dirname(HERE))
 SRC = os.path.join(REPO, 'hardware-design/boards/PWR-24V-5V/cad/PWR-24V-5V')
 
 
@@ -71,6 +72,7 @@ class RoundTripTest(unittest.TestCase):
         pads = [p for p in pcbnew.LoadBoard(self.board).FindFootprintByReference('U1').Pads() if p.GetNetname() == net]
         hv = [[round(v, 2) for v in r] for r in u['rects'] if r[4] == 2.5]
         self.assertEqual(len(hv), len(pads))  # the mains rule is pad to copper, not courtyard to courtyard
+        self.assertEqual(sorted(u['hard']), [k for k, r in enumerate(u['rects']) if r[4] == 2.5])  # DRC enforces it
         bb = pads[0].GetBoundingBox()
         self.assertIn([round(v, 2) for v in (bb.GetX() / 1e6 - u['x'], bb.GetY() / 1e6 - u['y'],
                                              bb.GetRight() / 1e6 - u['x'], bb.GetBottom() / 1e6 - u['y'], 2.5)], hv)
@@ -97,8 +99,36 @@ class RoundTripTest(unittest.TestCase):
         self.assertIn(0, u['mech'])  # the courtyard: its pads have their own rects
         pads = [p for p in fp.Pads() if p.GetNetname()]
         self.assertEqual(len(u['rects']), 1 + len(pads))
+        self.assertEqual(sorted(u['hard'] + [i for i, *_ in u['dom']]), list(range(1, 1 + len(pads))))
         self.assertNotIn('dom', pr['units'][self.unit(pr, 'R2')])
         self.assertEqual(pr['units'][self.unit(pr, 'H3')]['mech'], [0])  # a mounting hole: no net pad
+
+    def test_domain_and_hole_rules_come_from_the_board_dru(self):
+        import json as js
+        net = next(p.GetNetname() for p in pcbnew.LoadBoard(self.board).FindFootprintByReference('U1').Pads()
+                   if p.GetNetname() and p.GetNetClassName() == 'Default')
+        shutil.copytree(os.path.join(self.tmp, 'b'), os.path.join(self.tmp, 'e'))  # pcbnew keeps a loaded project
+        pro = os.path.join(self.tmp, 'e', 'PWR-24V-5V.kicad_pro')
+        d = js.load(open(pro))
+        d['net_settings']['classes'].append(dict(d['net_settings']['classes'][0], name='MAINS_K1', priority=0))
+        d['net_settings']['netclass_patterns'] = (d['net_settings'].get('netclass_patterns') or []) + [
+            {'netclass': 'MAINS_K1', 'pattern': net}]
+        js.dump(d, open(pro, 'w'))
+        with open(os.path.join(self.tmp, 'e', 'PWR-24V-5V.kicad_dru'), 'a') as f:
+            f.write('\n(rule "M" (condition "A.NetClass == \'MAINS_K*\' && B.NetClass != \'MAINS_K*\'")'
+                    ' (constraint clearance (min 8mm)))\n'
+                    '(rule "H" (condition "A.NetClass == \'MAINS_K*\' && B.Type == \'Pad\' && B.Reference == \'H3\'")'
+                    ' (constraint hole_clearance (min 9.65mm)))\n'
+                    '(rule "X" (condition "(A.NetClass == \'A\' || A.NetClass == \'B\') && B.NetClass == \'C\'")'
+                    ' (constraint clearance (min 4mm)))\n')
+        pr = kicad_io.read_problem(os.path.join(self.tmp, 'e', 'PWR-24V-5V.kicad_pcb'))
+        u = pr['units'][self.unit(pr, 'U1')]
+        self.assertEqual({(c, u['rects'][i][4]) for i, c, *_ in u['dom']}, {(1, 8.0)})
+        h = pr['units'][self.unit(pr, 'H3')]
+        self.assertEqual([(c, g) for _, c, g, _ in h['dom']], [(-1, 9.65)])
+        self.assertEqual(pr['dru_ignored'], ['X'])
+        self.assertNotIn('dom', kicad_io.read_problem(os.path.join(self.tmp, 'e', 'PWR-24V-5V.kicad_pcb'),
+                                                      domains=[])['units'][self.unit(pr, 'U1')])
 
     def test_reader_units_fixed_parts_and_nets(self):
         pr = kicad_io.read_problem(self.board)
@@ -528,6 +558,28 @@ class RoundTripTest(unittest.TestCase):
         d0 = (g0.GetPosition().x - f0.GetPosition().x, g0.GetPosition().y - f0.GetPosition().y)
         d1 = (g1.GetPosition().x - f1.GetPosition().x, g1.GetPosition().y - f1.GetPosition().y)
         self.assertTrue(near(d1, (-d0[0], -d0[1]), 2))
+
+
+RELAY4 = os.path.join(REPO, 'hardware-design', 'boards', 'RELAY-4', 'cad', 'RELAY-4', 'RELAY-4.kicad_pcb')
+
+
+@unittest.skipUnless(pcbnew and os.path.exists(RELAY4), 'needs pcbnew and the RELAY-4 board')
+class KnownGoodGateTest(unittest.TestCase):
+    """The model must accept a known-good routed board and reject a placement that breaks its .kicad_dru rules."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.pr = kicad_io.read_problem(RELAY4, keepout_zones=['H*_KEEPOUT'], skip=['GND', 'FIELD_GND'])
+
+    def test_the_relay4_original_is_legal(self):
+        ev = cost.Evaluator(self.pr, {})
+        self.assertEqual([u['name'] for i, u in enumerate(self.pr['units'])
+                          if not u['fixed'] and ev.legal_penalty(i) > 0], [])
+
+    def test_the_bench_b_v2_placement_that_broke_the_mains_rule_is_illegal(self):
+        pose = [tuple(q) for q in json.load(open(os.path.join(HERE, 'testdata', 'relay4-bench-b-v2-P.json')))['pose']]
+        ev = cost.Evaluator(self.pr, {}, pose)
+        self.assertGreater(sum(1 for i in range(ev.n) if not ev.fixed[i] and ev.legal_penalty(i) > 0), 10)
 
 
 if __name__ == '__main__':

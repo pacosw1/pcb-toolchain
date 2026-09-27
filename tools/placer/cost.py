@@ -12,6 +12,7 @@ Problem (a dict, JSON-able; tools/placer/kicad_io.py writes it from a board):
           may overlap a board keepout or a ko rect of another unit; a courtyard or kept copper in it is illegal.
           dom (optional) = [[rect index, class id, gap to another class of the domain, net-class clearance]]:
           a pad of a domain (mains) whose rect clr is the gap to all other nets (.kicad_dru, for example 8 mm).
+          Class id -1 = a hole with a .kicad_dru hole rule: the gap (third field) to domain pads only.
           mech (optional) = indices of rects that hold no pad of their own (a block border, the courtyard of a
           part whose pads have their own rects, a part with no net pads): a domain rect keeps only their own
           class to them, as to a keepout rect (a slot is the creepage barrier).
@@ -23,7 +24,11 @@ Problem (a dict, JSON-able; tools/placer/kicad_io.py writes it from a board):
           obstacles in the forbidden mask (grown by gap). Zones are not in it: a pour gives way to tracks.
 Pose: [(x, y, r), ...] per unit.
 
-Cost = w_wl * sum(weight * HPWL) + w_cong * RUDY overflow + w_ov * spacing overlap + w_oob * forbidden area.
+Cost = w_wl * sum(weight * HPWL) + w_cong * RUDY overflow + w_ov * hard overlap + w_oob * forbidden area
+       + w_sp * soft spacing.
+Hard overlap (illegal) = what KiCad DRC enforces: courtyard over courtyard, and the gap of a rect in u['hard'] (a pad
+with its net-class or .kicad_dru clearance), domain gaps and keepouts. The D-040 halo (clr of a courtyard) is the
+soft spacing: the halo overlap beyond the hard overlap.
 RUDY (Spindler, DATE 2007): each net spreads its HPWL evenly over the cells of its box. Pin RUDY:
 each pad (unit['pads'], local points) adds pin_demand mm of wire to its cell (pin escape and blockage).
 Capacity per cell = cell area * layers / pitch; overflow = sum of (demand - limit * capacity) above the limit.
@@ -37,7 +42,7 @@ import math
 import numpy as np
 
 DEFAULTS = {'rudy_cell': 1.0, 'mask_cell': 0.1, 'layers': 2, 'pitch': 0.4, 'limit': 1.0, 'pin_demand': 0.0, 'gap': 0.2,
-            'w_wl': 1.0, 'w_cong': 1.0, 'w_ov': 20.0, 'w_oob': 20.0}
+            'w_wl': 1.0, 'w_cong': 1.0, 'w_ov': 20.0, 'w_oob': 20.0, 'w_sp': 2.0}
 EPS = 1e-9
 ROUTE_LAYERS = ('F.Cu', 'B.Cu')  # the `layers` routing layers; copper on other layers uses no RUDY capacity
 OBSTACLE_LAYERS = ('F.Cu', 'via')  # kept copper that a top-side part must not cover
@@ -231,13 +236,29 @@ def _pen(A, ca, B, cb, ka=None, kb=None):
     return float(a.sum())
 
 
+def hard_clr(u):
+    """Hard gap per rect: its clr when in u['hard'] or a domain rect, else 0 (a courtyard: no overlap only)."""
+    h = np.zeros(len(u['rects']))
+    for i in list(u.get('hard', [])) + [d[0] for d in u.get('dom', [])]:
+        h[i] = u['rects'][i][4]
+    return h
+
+
+def _pen_hs(A, ca, ha, B, cb, hb, ka=None, kb=None):
+    """(hard overlap, soft spacing) of two rect sets: ca/cb = full gaps (D-040 halo), ha/hb = hard gaps."""
+    hard = _pen(A, ha, B, hb, ka, kb)
+    return hard, _pen(A, ca, B, cb, ka, kb) - hard
+
+
 def _domain_gap(g, ca, cb, ka, kb):
     (oa, da, sa, na, xa), (ob, db, sb, nb, xb) = ka, kb
     both = (da[:, None] > 0) & (db[None, :] > 0)
     g = np.where(both, np.where(da[:, None] != db[None, :], np.maximum(sa[:, None], sb[None, :]),
                                 np.maximum(na[:, None], nb[None, :])), g)
     g = np.where((da[:, None] > 0) & (xb | ob)[None, :], cb[None, :], g)  # no pad, no net: its own class
-    return np.where((xa | oa)[:, None] & (db[None, :] > 0), ca[:, None], g)
+    g = np.where((xa | oa)[:, None] & (db[None, :] > 0), ca[:, None], g)
+    g = np.where((da[:, None] > 0) & (db[None, :] < 0), sb[None, :], g)  # a hole rule (class -1): its gap
+    return np.where((da[:, None] < 0) & (db[None, :] > 0), sa[:, None], g)
 
 
 def ko_flags(u):
@@ -350,16 +371,28 @@ def overflow(g, params, cw):
     return float((ex * cw).sum() if cw is not None else ex.sum())
 
 
-def overlap(pr, pose):
+def _overlaps(pr, pose):
     us = pr['units']
     w = [np.array(world_rects(u, pose[i]), dtype=float).reshape(-1, 5) for i, u in enumerate(us)]
-    t = 0.0
+    h, s = 0.0, 0.0
     for i in range(len(us)):
         for j in range(i + 1, len(us)):
             if us[i]['fixed'] and us[j]['fixed']:
                 continue
-            t += _pen(w[i][:, :4], w[i][:, 4], w[j][:, :4], w[j][:, 4], ko_flags(us[i]), ko_flags(us[j]))
-    return t
+            a, b = _pen_hs(w[i][:, :4], w[i][:, 4], hard_clr(us[i]), w[j][:, :4], w[j][:, 4], hard_clr(us[j]),
+                           ko_flags(us[i]), ko_flags(us[j]))
+            h, s = h + a, s + b
+    return h, s
+
+
+def overlap(pr, pose):
+    """Hard overlap (0 = legal)."""
+    return _overlaps(pr, pose)[0]
+
+
+def spacing(pr, pose):
+    """Soft D-040 spacing overlap."""
+    return _overlaps(pr, pose)[1]
 
 
 def world_pads(u, pose_u):
@@ -396,13 +429,14 @@ def components(pr, pose, params):
     return {'hpwl': hpwl(pr, pose),
             'cong': overflow(rudy_grid(pr, pose, p), p, cell_weights(pr, p)),
             'overlap': overlap(pr, pose),
-            'oob': sum(forbidden(pr, pose, mask, i) for i, u in enumerate(pr['units']) if not u['fixed'])}
+            'oob': sum(forbidden(pr, pose, mask, i) for i, u in enumerate(pr['units']) if not u['fixed']),
+            'spacing': spacing(pr, pose)}
 
 
 def weighted(comp, params):
     p = params_with_defaults(params)
     return (p['w_wl'] * comp['hpwl'] + p['w_cong'] * comp['cong'] + p['w_ov'] * comp['overlap']
-            + p['w_oob'] * comp['oob'])
+            + p['w_oob'] * comp['oob'] + p['w_sp'] * comp.get('spacing', 0.0))
 
 
 def total(pr, pose, params):
@@ -421,6 +455,7 @@ class Evaluator:
                        for r in range(4)] for u in us]
         self.clr = [np.array([rc[4] for rc in u['rects']], dtype=float) for u in us]
         self.ko = [ko_flags(u) for u in us]  # rect kinds
+        self.hclr = [hard_clr(u) for u in us]
         self.kos = [set(u.get('ko', [])) for u in us]
         self.lbox = [[(lr[:, 0].min(), lr[:, 1].min(), lr[:, 2].max(), lr[:, 3].max()) for lr in self.lrect[i]]
                      for i in range(self.n)]
@@ -470,15 +505,17 @@ class Evaluator:
                 self.G[rd[0]:rd[1], rd[2]:rd[3]] += rd[4]
         self.comp = [sum(w * ln for w, ln in zip(self.nw, self.nlen)),
                      self._excess((0, self.grid.ny, 0, self.grid.nx)),
-                     self._overlap_all(),
-                     sum(self.forb)]
+                     0.0,
+                     sum(self.forb),
+                     0.0]
+        self.comp[2], self.comp[4] = self._overlap_all()
         self.cost = self._weighted(self.comp)
         self.pending = None
 
     # helpers
     def _weighted(self, c):
         p = self.p
-        return p['w_wl'] * c[0] + p['w_cong'] * c[1] + p['w_ov'] * c[2] + p['w_oob'] * c[3]
+        return p['w_wl'] * c[0] + p['w_cong'] * c[1] + p['w_ov'] * c[2] + p['w_oob'] * c[3] + p['w_sp'] * c[4]
 
     def _set_ub(self, i):
         b = self.lbox[i][self.R[i]]
@@ -495,23 +532,34 @@ class Evaluator:
                 + edge_miss(self.units[i], (self.X[i], self.Y[i], self.R[i]), self.board, self.obox))
 
     def _pen(self, i, j):
-        return _pen(self._world(i), self.clr[i], self._world(j), self.clr[j], self.ko[i], self.ko[j])
+        """(hard, soft) of units i and j."""
+        return _pen_hs(self._world(i), self.clr[i], self.hclr[i], self._world(j), self.clr[j], self.hclr[j],
+                       self.ko[i], self.ko[j])
 
-    def _unit_overlap(self, i, skip):
+    def _unit_pairs(self, i, skip):
         b = self.UB[i]
         U = self.UB
         cand = np.nonzero((U[:, 0] < b[2]) & (U[:, 2] > b[0]) & (U[:, 1] < b[3]) & (U[:, 3] > b[1]))[0]
-        return sum(self._pen(i, int(j)) for j in cand if j != i and j not in skip)
+        h, s = 0.0, 0.0
+        for j in cand:
+            if j != i and j not in skip:
+                a, c = self._pen(i, int(j))
+                h, s = h + a, s + c
+        return h, s
+
+    def _unit_overlap(self, i, skip):
+        return self._unit_pairs(i, skip)[0]
 
     def _overlap_all(self):
-        t = 0.0
+        h, s = 0.0, 0.0
         for i in range(self.n):
             if self.fixed[i]:
                 continue
             # count movable-movable pairs once (j > i) and movable-fixed pairs always
             skip = {j for j in range(self.n) if (j < i and not self.fixed[j])}
-            t += self._unit_overlap(i, skip)
-        return t
+            a, b = self._unit_pairs(i, skip)
+            h, s = h + a, s + b
+        return h, s
 
     def _net_box(self, k):
         x0 = y0 = math.inf
@@ -567,12 +615,24 @@ class Evaluator:
             ex = ex * self.cw[s[0]:s[1], s[2]:s[3]]
         return float(ex.sum())
 
+    def _moved_pairs(self, M, Ms):
+        h, s = 0.0, 0.0
+        for i in M:
+            a, b = self._unit_pairs(i, Ms)
+            h, s = h + a, s + b
+        for a in range(len(M)):
+            for b in range(a + 1, len(M)):
+                x, y = self._pen(M[a], M[b])
+                h, s = h + x, s + y
+        return h, s
+
     # public
     def pose(self):
         return [(self.X[i], self.Y[i], self.R[i]) for i in range(self.n)]
 
     def components(self):
-        return {'hpwl': self.comp[0], 'cong': self.comp[1], 'overlap': self.comp[2], 'oob': self.comp[3]}
+        return {'hpwl': self.comp[0], 'cong': self.comp[1], 'overlap': self.comp[2], 'oob': self.comp[3],
+                'spacing': self.comp[4]}
 
     def unit_penalty(self, i):
         """Spacing overlap + forbidden area of one unit (0 = legal)."""
@@ -614,14 +674,12 @@ class Evaluator:
         old_pose = [(i, self.X[i], self.Y[i], self.R[i]) for i in M]
         pad_spans = [self._pad_span(i) for i in M] if self.pd else []
         pad_old = [(i, self._pad_cells(i)) for i in M] if self.pd else []
-        ov0 = sum(self._unit_overlap(i, Ms) for i in M)
-        ov0 += sum(self._pen(M[a], M[b]) for a in range(len(M)) for b in range(a + 1, len(M)))
+        ov0, sp0 = self._moved_pairs(M, Ms)
         fb0 = sum(self.forb[i] for i in M)
         for i, x, y, r in moves:
             self.X[i], self.Y[i], self.R[i] = float(x), float(y), int(r) % 4
             self._set_ub(i)
-        ov1 = sum(self._unit_overlap(i, Ms) for i in M)
-        ov1 += sum(self._pen(M[a], M[b]) for a in range(len(M)) for b in range(a + 1, len(M)))
+        ov1, sp1 = self._moved_pairs(M, Ms)
         old_forb = [(i, self.forb[i]) for i in M]
         for i in M:
             self.forb[i] = self._forb(i)
@@ -657,11 +715,11 @@ class Evaluator:
                 if c1 is not None:
                     np.add.at(self.G, c1, self.pd)
             dcong = self._excess(reg) - e0
-        d = [dwl, dcong, ov1 - ov0, fb1 - fb0]
+        d = [dwl, dcong, ov1 - ov0, fb1 - fb0, sp1 - sp0]
         delta = self._weighted(d)
         self.pending = (old_pose, old_forb, old_nets, saved, list(self.comp), self.cost)
         self.last_old = [(i, x, y, r) for i, x, y, r in old_pose]
-        for a in range(4):
+        for a in range(5):
             self.comp[a] += d[a]
         self.cost += delta
         return delta
