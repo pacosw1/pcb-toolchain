@@ -115,6 +115,17 @@ class LegalizeTest(unittest.TestCase):
         self.assertLess(ev.components()['hpwl'], 2.0)
 
 
+class LegalizeRetryTest(unittest.TestCase):
+    def test_second_pass_doubles_the_radius(self):
+        pr = two_units()
+        pr['units'][1]['x'], pr['units'][1]['y'] = 5.5, 5.0  # needs a 1.0 mm move; radius 0.5 is too small
+        ev = cost.Evaluator(pr, P)
+        self.assertEqual(anneal.legalize(ev, dict(P, legal_radius=0.5, legal_passes=1)), [1])
+        ev = cost.Evaluator(pr, P)
+        self.assertEqual(anneal.legalize(ev, dict(P, legal_radius=0.5, legal_passes=2)), [])
+        self.assertAlmostEqual(ev.unit_penalty(1), 0.0)
+
+
 class EndToEndTest(unittest.TestCase):
     def test_two_units_reach_the_known_optimum(self):
         res = anneal.optimize(two_units(), P, workers=1, epochs=4, steps=1500, seed=3, top=1)
