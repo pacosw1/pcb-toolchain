@@ -154,6 +154,26 @@ class FixedCopperTest(unittest.TestCase):
         self.assertGreater(cost.forbidden(pr, pose, m, 2), 0)
         self.assertAlmostEqual(cost.forbidden(pr, pose, m, 3), 0.0)
 
+    def test_copper_under_the_body_between_pads_is_no_obstacle_with_pad_rects(self):
+        # a via under the body of a part, clear of its pads (as under an LQFP), is legal when pad_rects are known
+        b = square_board()
+        b['copper'] = [['via', 5.0, 5.0, 5.0, 5.0, 0.6]]
+        a = unit('A', 5, 5, [[-2, -2, 2, 2, .5]])
+        a['pad_rects'] = [[-2, -2, -1.5, 2], [1.5, -2, 2, 2]]
+        pr = problem([a], [], board=b)
+        m = cost.Mask(pr['board'], 0.1, gap=0.2)
+        pose = cost.initial_pose(pr)
+        self.assertAlmostEqual(cost.forbidden(pr, pose, m, 0), 0.0)
+        self.assertAlmostEqual(cost.Evaluator(pr, P, mask=m).unit_penalty(0), 0.0)
+        # a pad on the via is an obstacle, also after a turn of the unit
+        a['pad_rects'] = [[-.5, -.5, .5, .5]]
+        self.assertGreater(cost.forbidden(pr, pose, m, 0), 0)
+        self.assertGreater(cost.Evaluator(pr, P, mask=m).penalty_at(0, 5, 5, 1), 0)
+        # the courtyard still counts against the board edge
+        a['pad_rects'] = []
+        self.assertGreater(cost.Evaluator(pr, P, mask=m).penalty_at(0, 1, 5, 0), 0)
+        self.assertAlmostEqual(cost.Evaluator(pr, P, mask=m).penalty_at(0, 5, 5, 0), 0.0)
+
 
 class OverlapTest(unittest.TestCase):
     def test_pair_penalty_below_gap(self):

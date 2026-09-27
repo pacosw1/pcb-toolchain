@@ -123,7 +123,8 @@ def sat(a):
 
 
 class Mask:
-    """Forbidden cells: outside the outline shrunk by edge_clearance, or inside a keepout."""
+    """Forbidden cells: outside the outline shrunk by edge_clearance, or inside a keepout (edge table), or on kept
+    F.Cu copper / vias grown by gap (copper table). A unit with pad_rects tests only its pads against copper."""
 
     MARGIN = 2.0
 
@@ -149,11 +150,14 @@ class Mask:
             out = (s[j1, i1] - s[j0, i1] - s[j1, i0] + s[j0, i0]) > 0
         for poly in board.get('keepouts', []):
             out |= point_in_poly(gx, gy, poly)
+        cu = np.zeros_like(out)
         for layer, a0, b0, a1, b1, w in board.get('copper', []):
             if layer in OBSTACLE_LAYERS:
-                self._segment(out, a0, b0, a1, b1, w / 2 + gap)
-        self.forb = out
-        self.s = sat(out.astype(np.int64))
+                self._segment(cu, a0, b0, a1, b1, w / 2 + gap)
+        self.forb = out | cu
+        self.s = sat(self.forb.astype(np.int64))
+        self.s_edge = sat(out.astype(np.int64))
+        self.s_cu = sat(cu.astype(np.int64))
 
     def _segment(self, out, a0, b0, a1, b1, r):
         """Mark the cells whose centre is within r of the segment (a0, b0)-(a1, b1)."""
@@ -173,17 +177,26 @@ class Mask:
         d2 = (px - a0 - t * dx) ** 2 + (py - b0 - t * dy) ** 2
         out[j0:j1, i0:i1] |= d2 <= r * r
 
-    def rect_area(self, x0, y0, x1, y1):
+    def rect_area(self, x0, y0, x1, y1, s=None, outside=True):
+        """Forbidden area in the rect (cells outside the grid count when `outside`)."""
         c = self.c
         a0, a1, i0, i1 = cell_range(x0, x1, self.x0, c, self.nx)
         b0, b1, j0, j1 = cell_range(y0, y1, self.y0, c, self.ny)
-        total = (a1 - a0) * (b1 - b0)
+        total = (a1 - a0) * (b1 - b0) if outside else 0
         if i1 <= i0 or j1 <= j0:
             return total * c * c
-        s = self.s
-        inside = (i1 - i0) * (j1 - j0)
+        s = self.s if s is None else s
+        inside = (i1 - i0) * (j1 - j0) if outside else 0
         bad = s[j1, i1] - s[j0, i1] - s[j1, i0] + s[j0, i0]
         return float(total - inside + bad) * c * c
+
+    def unit_area(self, rects, pads=None):
+        """Forbidden area of a unit: courtyard rects against all, or (pads given) rects against the edge
+        table and pads against the copper table."""
+        if pads is None:
+            return sum(self.rect_area(*r[:4]) for r in rects)
+        return (sum(self.rect_area(*r[:4], s=self.s_edge) for r in rects)
+                + sum(self.rect_area(*r[:4], s=self.s_cu, outside=False) for r in pads))
 
 
 def pair_penalty(a, b):
@@ -308,8 +321,17 @@ def overlap(pr, pose):
     return t
 
 
+def world_pads(u, pose_u):
+    """World pad boxes of a unit, or None when the unit has no pad_rects."""
+    if 'pad_rects' not in u:
+        return None
+    x, y, r = pose_u
+    return [[a + x, b + y, c + x, d + y] for rc in u['pad_rects'] for (a, b, c, d) in [rot_rect(rc, r)]]
+
+
 def forbidden(pr, pose, mask, i):
-    return sum(mask.rect_area(*r[:4]) for r in world_rects(pr['units'][i], pose[i]))
+    u = pr['units'][i]
+    return mask.unit_area(world_rects(u, pose[i]), world_pads(u, pose[i]))
 
 
 def components(pr, pose, params):
@@ -353,6 +375,9 @@ class Evaluator:
         self.UB = np.zeros((self.n, 4))
         for i in range(self.n):
             self._set_ub(i)
+        self.lpad = [None if 'pad_rects' not in u else
+                     [np.array([rot_rect(rc, r) for rc in u['pad_rects']], dtype=float).reshape(-1, 4) for r in range(4)]
+                     for u in us]
         self.mask = mask or Mask(pr['board'], p['mask_cell'], p['gap'])
         self.forb = [0.0 if self.fixed[i] else self._forb(i) for i in range(self.n)]
         # nets
@@ -405,8 +430,9 @@ class Evaluator:
         return self.lrect[i][self.R[i]] + (self.X[i], self.Y[i], self.X[i], self.Y[i])
 
     def _forb(self, i):
-        m = self.mask
-        return sum(m.rect_area(*r) for r in self._world(i).tolist())
+        lp = self.lpad[i]
+        pads = None if lp is None else (lp[self.R[i]] + (self.X[i], self.Y[i], self.X[i], self.Y[i])).tolist()
+        return self.mask.unit_area(self._world(i).tolist(), pads)
 
     def _pen(self, i, j):
         return _pen(self._world(i), self.clr[i], self._world(j), self.clr[j])

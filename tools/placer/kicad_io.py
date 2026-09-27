@@ -318,6 +318,11 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
                           'rects': [[a - ox, c - oy, e - ox, f - oy, clr] for (a, c, e, f), clr in rects],
                           'pads': pads,
                           'borders': u['borders'], 'box': u['box'], 'group': u.get('group')})
+        if not u['box']:  # pads meet kept copper; a block also moves its tracks, so its courtyards stay the test
+            out_units[-1]['pad_rects'] = [
+                [round(mm(bb.GetX()) - ox, 6), round(mm(bb.GetY()) - oy, 6),
+                 round(mm(bb.GetRight()) - ox, 6), round(mm(bb.GetBottom()) - oy, 6)]
+                for r in u['refs'] for bb in (p.GetBoundingBox() for p in by_ref[r].Pads())]
 
     skip_pat = list(skip)
     region_refs = set(region_refs)

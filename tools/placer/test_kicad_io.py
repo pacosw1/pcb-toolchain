@@ -170,6 +170,17 @@ class RoundTripTest(unittest.TestCase):
         return [t for t in b.GetTracks() if t.GetClass() == 'PCB_VIA'
                 and (t.GetNetCode(), t.GetPosition().x, t.GetPosition().y) not in ends]
 
+    def test_units_carry_their_pad_boxes_for_the_copper_obstacle_check(self):
+        pr = kicad_io.read_problem(self.board)
+        b = pcbnew.LoadBoard(self.board)
+        u = pr['units'][self.unit(pr, 'U1')]
+        pads = [p for r in u['refs'] for p in b.FindFootprintByReference(r).Pads()]
+        self.assertEqual(len(u['pad_rects']), len(pads))
+        for p in pads:
+            q = p.GetPosition()
+            x, y = q.x / 1e6 - u['x'], q.y / 1e6 - u['y']
+            self.assertTrue(any(r[0] <= x <= r[2] and r[1] <= y <= r[3] for r in u['pad_rects']))
+
     def test_lone_stitching_vias_are_not_kept_copper(self):
         # a via-only cluster (stitching via to a zone) is no obstacle: the writer removes it where a part lands
         b = pcbnew.LoadBoard(self.board)
