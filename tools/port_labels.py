@@ -8,7 +8,8 @@ needs a title: a text within --title-dist mm of its pads that is not the only
 label of a pad. References do not count.
 
 Skipped pads: no net, "unconnected-*", NC, CHASSIS or SHIELD nets, NPTH, mounting and shield pads
-(number empty, MP, SH, EP, MH, S<n>).
+(number empty, MP, SH, EP, MH, S<n>, SH<n>). A footprint with no checked pad
+(for example a mounting hole with a P reference) is not a port.
 
 Exemptions: <board>/port-labels.json {"exempt": [{"ref", "pads": [..] | "all", "reason"},
 {"ref", "title": true, "reason"}, {"ref", "skip": [..], "reason"}]}. "skip" removes
@@ -26,7 +27,7 @@ import re
 import sys
 
 CONN = re.compile(r'^(J|P|CN)\d')
-SKIP_NUM = re.compile(r'^(|MP|SH|EP|MH|S\d*)$', re.I)
+SKIP_NUM = re.compile(r'^(|MP\d*|SH\d*|EP|MH\d*|S\d*)$', re.I)
 SKIP_NET = re.compile(r'^(unconnected-.*|/?NC|/?N/C|/?CHASSIS|/?SHIELD|/?SHLD)$', re.I)
 TOKEN = re.compile(r'\s*(?:(\()|(\))|"((?:[^"\\]|\\.)*)"|([^\s()"]+))')
 
@@ -101,7 +102,8 @@ def board_items(text):
                 pads.append((p[1], None) + pad_xy(fat, at(p)[:2]))
             else:
                 pads.append((p[1], netname) + pad_xy(fat, at(p)[:2]))
-        conns[ref] = pads
+        if any(p[1] for p in pads):  # a footprint with no checked pad (mounting hole) is no port
+            conns[ref] = pads
     for t in kids(root, 'gr_text'):
         if layer(t) == 'F.SilkS':
             x, y, _ = at(t)

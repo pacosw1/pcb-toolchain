@@ -47,6 +47,13 @@ class PortLabelsTest(unittest.TestCase):
         pads = J1_PADS + [('15', 'thru_hole', 7, 0, 'CHASSIS'), ('16', 'thru_hole', 7, 1, '/SHIELD')]
         self.assertEqual(pl.check(GOOD.replace(fp('J1', 10, 10, 0, J1_PADS), fp('J1', 10, 10, 0, pads)))['pads'], 2)
 
+    def test_footprint_without_checked_pads_needs_no_title(self):
+        # a mounting hole with a P reference, and SH1/SH2 shield pads
+        b = GOOD[:-2] + fp('P7', 60, 60, 0, [('', 'np_thru_hole', 0, 0, None)]) \
+            + fp('J9', 80, 80, 0, [('SH1', 'thru_hole', 0, 0, 'GND'), ('SH2', 'thru_hole', 5, 0, 'GND')]) + ')\n'
+        r = pl.check(b)
+        self.assertEqual((r['connectors'], r['failures']), (1, []))
+
     def test_missing_pin_label_fails(self):
         b = GOOD.replace(gr('B', 12.5, 8), '')
         self.assertEqual(fails(b), ['FAIL J1 pad 2 (B): no F.SilkS label within 4.0 mm'])
