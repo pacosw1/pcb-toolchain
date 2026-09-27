@@ -20,7 +20,8 @@ import time
 from . import cost
 
 SEARCH = {'grid': 0.05, 'p_swap': 0.1, 'p_rot': 0.1, 'swap_ratio': 1.5, 't_ratio': 1e-4, 'w1': 0.25,
-          'legal_step': 0.25, 'legal_radius': 5.0, 'legal_passes': 3, 'ramp': 20.0}
+          'legal_step': 0.25, 'legal_radius': 5.0, 'legal_passes': 3, 'legal_time': 60.0,
+          'ramp': 20.0}
 
 
 def params_all(params):
@@ -138,31 +139,46 @@ def ring(k):
         yield (k, b)
 
 
-def legalize(ev, params):
+class LegalizeTimeout(RuntimeError):
+    """The legalizer used its time (legal_time s). The placement is not legal: `illegal` = units with a penalty."""
+
+    def __init__(self, illegal, limit):
+        self.illegal = illegal
+        super().__init__('legalizer time limit %.1f s reached: %d units stay illegal' % (limit, len(illegal)))
+
+
+def legalize(ev, params, clock=time.monotonic):
     """Move each unit with spacing overlap or forbidden area to the lowest-cost legal spot nearby.
     Biggest units first; ring search on legal_step up to legal_radius, own rotation first.
-    Up to legal_passes passes; each pass doubles the radius. Returns the units that stay illegal."""
+    Up to legal_passes passes; each pass doubles the radius. Returns the units that stay illegal.
+    Raises LegalizeTimeout after legal_time seconds (clock is injected for tests)."""
     p = params_all(params)
+    end = clock() + p['legal_time']
     bad = []
     for k in range(int(p['legal_passes'])):
-        bad = _legal_pass(ev, p['legal_step'], p['legal_radius'] * 2 ** k)
+        bad = _legal_pass(ev, p['legal_step'], p['legal_radius'] * 2 ** k, end, clock, p['legal_time'])
         if not bad:
             break
     return bad
 
 
-def _legal_pass(ev, step, radius):
+def _legal_pass(ev, step, radius, end, clock, limit):
+    def check():
+        if clock() > end:
+            raise LegalizeTimeout([j for j in range(ev.n) if not ev.fixed[j] and ev.unit_penalty(j) > 1e-9], limit)
     rings = int(radius / step + 1e-9)
     order = sorted((i for i in range(ev.n) if not ev.fixed[i]), key=lambda i: (-ev.area[i], i))
     bad = []
     for i in order:
         if ev.unit_penalty(i) <= 1e-9:
             continue
+        check()
         x0, y0, r0 = ev.X[i], ev.Y[i], ev.R[i]
         best = None
         for rots in ([r0], [r for r in range(4) if r != r0]):
             first = None
             for k in range(1, rings + 1):
+                check()
                 for a, b in ring(k):
                     for r in rots:
                         x, y = x0 + a * step, y0 + b * step
@@ -213,9 +229,13 @@ def _epoch(task):
 def _finish(task):
     w, pose, p = task
     ev = _evaluator(pose, p)
-    bad = legalize(ev, p)
+    timeout = False
+    try:
+        bad = legalize(ev, p)
+    except LegalizeTimeout as e:
+        bad, timeout = e.illegal, True
     return {'worker': w, 'pose': ev.pose(), 'cost': ev.cost, 'components': ev.components(),
-            'illegal': [_W['pr']['units'][i]['name'] for i in bad]}
+            'illegal': [_W['pr']['units'][i]['name'] for i in bad], 'timeout': timeout}
 
 
 def optimize(pr, params, workers=1, epochs=10, steps=10000, seed=1, top=3, log=None):

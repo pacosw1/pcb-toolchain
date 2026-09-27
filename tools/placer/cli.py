@@ -56,6 +56,11 @@ def cmd_run(a):
     for k, c in enumerate(res['candidates']):
         print('cand%d     %s illegal %d %s' % (k, fmt(c), len(c['illegal']), ' '.join(c['illegal'][:8])))
     print('wall %.0f s, %.0f moves/s per worker' % (res['wall_s'], res['moves_per_s_per_worker']))
+    if any(c['timeout'] for c in res['candidates']):
+        print('LEGALIZE TIMEOUT: a candidate is not legal (legalizer time limit). Run more steps or raise legal_time.')
+    if not res['candidates'] or res['candidates'][0]['illegal']:
+        print('NO LEGAL CANDIDATE')
+        sys.exit(3)
 
 
 def cmd_write(a):

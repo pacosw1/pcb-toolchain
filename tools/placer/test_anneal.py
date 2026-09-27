@@ -126,6 +126,35 @@ class LegalizeRetryTest(unittest.TestCase):
         self.assertAlmostEqual(ev.unit_penalty(1), 0.0)
 
 
+class LegalizeTimeLimitTest(unittest.TestCase):
+    def test_time_limit_fails_closed(self):
+        pr = chain(10, seed=3)
+        for u in pr['units']:
+            u['x'], u['y'] = 15.0, 15.0  # all on one spot: much work for the legalizer
+        ev = cost.Evaluator(pr, P)
+        t = [0.0]
+
+        def clock():  # fake clock: 0.01 s per call
+            t[0] += 0.01
+            return t[0]
+        with self.assertRaises(anneal.LegalizeTimeout) as cm:
+            anneal.legalize(ev, dict(P, legal_time=0.5), clock=clock)
+        self.assertGreater(len(cm.exception.illegal), 0)
+        for i in cm.exception.illegal:
+            self.assertGreater(ev.unit_penalty(i), 0)
+        self.assertLess(t[0], 0.5 + 0.2)
+        self.assertIn('legalizer time limit', str(cm.exception))
+
+    def test_optimize_marks_a_timed_out_candidate_illegal(self):
+        pr = chain(10, seed=3)
+        for u in pr['units']:
+            u['x'], u['y'] = 15.0, 15.0
+        res = anneal.optimize(pr, dict(P, legal_time=0.0), workers=1, epochs=1, steps=10, seed=1, top=1)
+        c = res['candidates'][0]
+        self.assertTrue(c['timeout'])
+        self.assertGreater(len(c['illegal']), 0)
+
+
 class EndToEndTest(unittest.TestCase):
     def test_two_units_reach_the_known_optimum(self):
         res = anneal.optimize(two_units(), P, workers=1, epochs=4, steps=1500, seed=3, top=1)
