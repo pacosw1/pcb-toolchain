@@ -136,8 +136,9 @@ class RoundTripTest(unittest.TestCase):
     def test_kept_copper_is_the_copper_the_writer_keeps(self):
         b0 = pcbnew.LoadBoard(self.board)
         n_tracks = len(list(b0.GetTracks()))
+        n_lone = len(self.lone_vias(b0))
         none = kicad_io.read_problem(self.board, free_box=[0, 0, 1, 1])  # nothing movable: all copper stays
-        self.assertEqual(len(none['board']['copper']), n_tracks)
+        self.assertEqual(len(none['board']['copper']), n_tracks - n_lone)  # lone stitching vias are no obstacle
         self.assertTrue(any(c[0] == 'via' for c in none['board']['copper']))
         ic = kicad_io.fp_rect(b0.FindFootprintByReference('U1'))
         pr = kicad_io.read_problem(self.board, free_box=list(ic))  # only U1 moves
@@ -145,8 +146,53 @@ class RoundTripTest(unittest.TestCase):
         i = self.unit(pr, 'U1')
         pose = cost.initial_pose(pr)
         pose[i] = (pose[i][0] + 3.0, pose[i][1], 0)
-        rep = kicad_io.write_board(self.board, pr, pose, os.path.join(self.tmp, 'b', 'out.kicad_pcb'))
-        self.assertEqual(len(pr['board']['copper']), n_tracks - (rep['removed_tracks'] - rep['removed_collisions']))
+        out = os.path.join(self.tmp, 'b', 'out.kicad_pcb')
+        rep = kicad_io.write_board(self.board, pr, pose, out)
+        b1 = pcbnew.LoadBoard(out)
+        lone = {self.key(t) for t in self.lone_vias(b1)}
+        kept = {self.key(t) for t in b1.GetTracks()} - lone
+        cost_copper = {tuple(round(v, 3) for v in c[1:5]) for c in pr['board']['copper']}
+        self.assertEqual(kept - cost_copper, set())  # the writer keeps nothing the cost did not count
+        self.assertLessEqual(len(cost_copper - kept), rep['removed_collisions'])
+
+    @staticmethod
+    def key(t):
+        if t.GetClass() == 'PCB_VIA':
+            q = t.GetPosition()
+            return tuple(round(v / 1e6, 3) for v in (q.x, q.y, q.x, q.y))
+        a, b = t.GetStart(), t.GetEnd()
+        return tuple(round(v / 1e6, 3) for v in (a.x, a.y, b.x, b.y))
+
+    @staticmethod
+    def lone_vias(b):
+        ends = {(t.GetNetCode(), p.x, p.y) for t in b.GetTracks() if t.GetClass() != 'PCB_VIA'
+                for p in (t.GetStart(), t.GetEnd())}
+        return [t for t in b.GetTracks() if t.GetClass() == 'PCB_VIA'
+                and (t.GetNetCode(), t.GetPosition().x, t.GetPosition().y) not in ends]
+
+    def test_lone_stitching_vias_are_not_kept_copper(self):
+        # a via-only cluster (stitching via to a zone) is no obstacle: the writer removes it where a part lands
+        b = pcbnew.LoadBoard(self.board)
+        u1 = b.FindFootprintByReference('U1')
+        q = u1.GetPosition()
+        spot = None
+        for d in range(20, 200):  # first free point left of U1, off all pads and tracks
+            v = pcbnew.VECTOR2I(q.x - d * 100000, q.y)
+            if (not any(p.HitTest(v, 500000) for p in b.GetPads())
+                    and not any(t.HitTest(v, 500000) for t in b.GetTracks())
+                    and not any(fp.GetCourtyard(pcbnew.F_CrtYd).Collide(v, 300000) for fp in b.GetFootprints())):
+                spot = (v.x / 1e6, v.y / 1e6)
+                break
+        self.assertIsNotNone(spot)
+        via = pcbnew.PCB_VIA(b)
+        via.SetPosition(pcbnew.VECTOR2I(int(spot[0] * 1e6), int(spot[1] * 1e6)))
+        via.SetWidth(600000)
+        via.SetDrill(300000)
+        via.SetNet(b.FindNet('GND'))
+        b.Add(via)
+        pcbnew.SaveBoard(self.board, b)
+        pr = kicad_io.read_problem(self.board)
+        self.assertFalse(any(c[0] == 'via' and near(c[1:3], spot) for c in pr['board']['copper']))
 
     def test_lone_via_under_a_movable_part_moves_with_it_not_kept(self):
         # a stitching via under the U1 body (on no pad, no track) belongs to U1: not an obstacle, removed on a move
@@ -172,7 +218,6 @@ class RoundTripTest(unittest.TestCase):
         b.Add(via)
         pcbnew.SaveBoard(self.board, b)
         at = lambda c: c[0] == 'via' and near(c[1:3], spot)  # noqa: E731
-        self.assertTrue(any(at(c) for c in kicad_io.read_problem(self.board, free_box=[0, 0, 1, 1])['board']['copper']))
         pr = kicad_io.read_problem(self.board, free_box=list(kicad_io.fp_rect(u1)))
         self.assertFalse(any(at(c) for c in pr['board']['copper']))
         i = self.unit(pr, 'U1')

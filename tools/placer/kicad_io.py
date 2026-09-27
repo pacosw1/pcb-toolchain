@@ -428,9 +428,9 @@ def _hit(free, find, pads_by_net):
     return hit
 
 
-def _owned(free, find, rects):
-    """Cluster ids made of vias only (stitching vias, no track) that all lie inside one of the courtyard rects:
-    they belong to that part and go when it moves."""
+def _owned(free, find, rects=None):
+    """Cluster ids made of vias only (stitching vias, no track) that all lie inside one of the courtyard rects
+    (rects None: anywhere). Under a part they belong to it and go when it moves."""
     tracked, inside = set(), {}
     for k, t in enumerate(free):
         c = find(k)
@@ -438,30 +438,30 @@ def _owned(free, find, rects):
             tracked.add(c)
             continue
         q = t.GetPosition()
-        ok = any(inside_box(mm(q.x), mm(q.y), r) for r in rects)
+        ok = rects is None or any(inside_box(mm(q.x), mm(q.y), r) for r in rects)
         inside[c] = inside.get(c, True) and ok
     return {c for c, ok in inside.items() if ok and c not in tracked}
 
 
 def kept_copper(board, units, by_ref):
     """Copper that stays whatever the movable units do: clusters with no end point on a pad of a movable
-    unit, not inside the border of a movable block, and not a lone via under a movable part. [[layer, x0, y0, x1, y1, width], ...]"""
+    unit, not inside the border of a movable block, and not a lone (via-only) stitching via. [[layer, x0, y0, x1, y1, width], ...]"""
     tracks = list(board.GetTracks())
-    pads, boxes, rects = {}, [], []
+    pads, boxes = {}, []
     for u in units:
         if u['fixed']:
             continue
         if u['box']:
             boxes.append(u['box'])
         for r in u['refs']:
-            rects.append(fp_rect(by_ref[r]))
             for p in by_ref[r].Pads():
                 if p.GetNetname():
                     pads.setdefault(p.GetNetname(), []).append(p)
     free = [t for t in tracks
             if not any(all(inside_box(mm(p.x), mm(p.y), b) for p in _ends(t)) for b in boxes)]
     find = _clusters(free)
-    hit = _hit(free, find, pads) | _owned(free, find, rects)
+    # lone stitching vias are no obstacle: the writer removes those that a moved part lands on
+    hit = _hit(free, find, pads) | _owned(free, find)
     out = []
     for k, t in enumerate(free):
         if find(k) in hit:
