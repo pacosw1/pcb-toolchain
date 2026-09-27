@@ -14,7 +14,7 @@ read_problem(board) -> problem dict (see cost.py)
   Pads: every pad centre of the unit (pin RUDY). Pins: one box per (net, unit) of the pad centres. Nets matching `skip` (default GND) and nets
   inside one unit are left out.
   Keepouts: rule areas that do not allow footprints or whose name matches `keepout_zones`, and closed shapes
-  on `keepout_layers`. Other rule areas that meet a block border move with the block (_edges_and_block_zones).
+  on `keepout_layers`. Rule areas named in `zone_refs` move with the unit of their ref (_edges_and_block_zones).
   Edge anchors: `edges` {ref: (sides, courtyard side)} (cost.edge_miss).
   Copper: the tracks and vias that stay whatever the movable units do (kept_copper); cost.py counts
   them as used routing capacity and (F.Cu, vias) as obstacles.
@@ -224,7 +224,7 @@ def _decaps(fps, member, dist):
 
 def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), free_box=None,
                  region_refs=(), region_weight=1.0, region_box=None, spacing=(0.5, 1.0), tie=0.0,
-                 rigid_nets=(), decap_tie=0.0, keepout_zones=(), edges=None):
+                 rigid_nets=(), decap_tie=0.0, keepout_zones=(), edges=None, zone_refs=None):
     board = pcbnew.LoadBoard(path)
     outline, holes = outline_of(board)
     keepouts = [h for h in holes]
@@ -331,7 +331,7 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
                  round(mm(bb.GetRight()) - ox, 6), round(mm(bb.GetBottom()) - oy, 6)]
                 for r in u['refs'] for bb in (p.GetBoundingBox() for p in by_ref[r].Pads())]
 
-    _edges_and_block_zones(board, out_units, index, member, by_ref, edges or {}, keepout_zones)
+    _edges_and_block_zones(board, out_units, index, member, by_ref, edges or {}, zone_refs or {})
 
     skip_pat = list(skip)
     region_refs = set(region_refs)
@@ -372,10 +372,11 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
             'region': region, 'move_box': list(free_box) if free_box else None, 'decaps': decaps}
 
 
-def _edges_and_block_zones(board, units, index, member, by_ref, edges, keepout_zones):
+def _edges_and_block_zones(board, units, index, member, by_ref, edges, zone_refs):
     """Edge anchors: edges[ref] = (sides 'LRTB', courtyard side 'N'/'S'/'E'/'W' of ref, board frame now).
-    Rule areas (not keepouts) that meet a block border belong to the block: they move with it and are a rect
-    of class 0, cut at the anchor line when the block has an anchor (the part beyond lies off the board)."""
+    zone_refs {rule area name: ref}: the area goes with the unit of ref (an antenna or mains keepout of a block):
+    it moves with it and is a rect of class 0, cut at the anchor line when the unit has an anchor (the part
+    beyond lies off the board). Other rule areas stay where they are."""
     cut = {}
     for ref, (sides, side) in edges.items():
         i = index[member[ref]]
@@ -386,28 +387,24 @@ def _edges_and_block_zones(board, units, index, member, by_ref, edges, keepout_z
         u['edge'] = {'at': [ax - u['x'], ay - u['y']], 'sides': sides, 'tol': 0.5}
         cut[i] = (side, ax, ay)
     for z in board.Zones():
-        if (not z.GetIsRuleArea() or z.GetDoNotAllowFootprints()
-                or any(fnmatch.fnmatchcase(z.GetZoneName(), p) for p in keepout_zones)):
+        if not z.GetIsRuleArea() or z.GetZoneName() not in zone_refs:
             continue
         bb = z.GetBoundingBox()
         r = [mm(bb.GetX()), mm(bb.GetY()), mm(bb.GetRight()), mm(bb.GetBottom())]
-        for i, u in enumerate(units):
-            b = u['box']
-            if not b or r[0] >= b[2] or r[2] <= b[0] or r[1] >= b[3] or r[3] <= b[1]:
-                continue
-            if i in cut:
-                side, ax, ay = cut[i]
-                if side == 'S':
-                    r[3] = min(r[3], ay)
-                elif side == 'N':
-                    r[1] = max(r[1], ay)
-                elif side == 'E':
-                    r[2] = min(r[2], ax)
-                else:
-                    r[0] = max(r[0], ax)
-            u['rects'].append([r[0] - u['x'], r[1] - u['y'], r[2] - u['x'], r[3] - u['y'], 0.0])
-            u.setdefault('zones', []).append(z.m_Uuid.AsString())
-            break
+        i = index[member[zone_refs[z.GetZoneName()]]]
+        u = units[i]
+        if i in cut:
+            side, ax, ay = cut[i]
+            if side == 'S':
+                r[3] = min(r[3], ay)
+            elif side == 'N':
+                r[1] = max(r[1], ay)
+            elif side == 'E':
+                r[2] = min(r[2], ax)
+            else:
+                r[0] = max(r[0], ax)
+        u['rects'].append([r[0] - u['x'], r[1] - u['y'], r[2] - u['x'], r[3] - u['y'], 0.0])
+        u.setdefault('zones', []).append(z.m_Uuid.AsString())
 
 
 def _a(v):

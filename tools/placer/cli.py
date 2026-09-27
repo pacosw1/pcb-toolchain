@@ -29,7 +29,8 @@ def cmd_read(a):
                                keepout_layers=a.keepout_layer, free_box=a.free_box,
                                region_refs=a.region_ref, region_weight=a.region_weight, region_box=a.region_box,
                                tie=a.tie, rigid_nets=[x for x in a.rigid_net.split(',') if x], decap_tie=a.decap_tie,
-                               keepout_zones=a.keepout_zone, edges=parse_edges(a.edge))
+                               keepout_zones=a.keepout_zone, edges=parse_edges(a.edge),
+                               zone_refs=dict(x.split('=', 1) for x in a.zone_ref))
     json.dump(pr, open(a.o, 'w'))
     mov = [u for u in pr['units'] if not u['fixed']]
     print('units %d (movable %d, blocks %d), nets %d, keepouts %d' % (
@@ -161,6 +162,8 @@ def main(argv=None):
     r.add_argument("--decap-tie", type=float, default=3.0,
                    help="join a GND decoupling cap to the IC pin of its net within this pad gap (mm); >1.0 mm is reported")
     r.add_argument('--keepout-zone', nargs='*', default=[], help='rule area names (fnmatch) that are keepouts')
+    r.add_argument('--zone-ref', nargs='*', default=[], metavar='ZONE=REF',
+                   help='rule area that moves with the unit of REF (antenna, mains keepout of a block)')
     r.add_argument('--edge', nargs='*', default=[], metavar='REF=SIDES:SIDE',
                    help='edge anchor: side N/S/E/W of the REF courtyard (as placed now) on a board edge in LRTB')
     r.set_defaults(f=cmd_read)

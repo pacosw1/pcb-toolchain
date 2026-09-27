@@ -395,7 +395,10 @@ class RoundTripTest(unittest.TestCase):
         z = self._rule_area(b, 'ANT', (ic[0] - 3, ic[3] - 1, ic[2] + 3, ic[3] + 5))  # beyond the S side
         zid = z.m_Uuid.AsString()
         pcbnew.SaveBoard(self.board, b)
-        pr = kicad_io.read_problem(self.board, edges={'U1': ('LR', 'S')})
+        # a rule area goes with a unit only when named: a board-wide area (a mains domain) that meets a block stays
+        pr0 = kicad_io.read_problem(self.board)
+        self.assertNotIn('zones', pr0['units'][self.unit(pr0, 'U1')])
+        pr = kicad_io.read_problem(self.board, edges={'U1': ('LR', 'S')}, zone_refs={'ANT': 'U1'})
         i = self.unit(pr, 'U1')
         u = pr['units'][i]
         self.assertEqual(u['edge']['sides'], 'LR')
