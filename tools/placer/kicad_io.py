@@ -175,7 +175,8 @@ def _join(member, r, anchor):
 
 
 def _rigid(fps, member, patterns):
-    """All parts on a net that matches a pattern (a buck switch node) join the unit of the part with the most pads."""
+    """All parts on a net that matches a pattern and has an inductor pad (a buck switch node) join the unit of
+    the part with the most pads."""
     nets = {}
     for fp in fps:
         if is_test_point(fp.GetReference()) or is_mounting_hole(fp):
@@ -185,6 +186,8 @@ def _rigid(fps, member, patterns):
             if n and any(fnmatch.fnmatchcase(n, pat) for pat in patterns):
                 nets.setdefault(n, {})[fp.GetReference()] = fp
     for n in sorted(nets):
+        if not any(ref_prefix(r) == 'L' for r in nets[n]):
+            continue  # a switch node has an inductor (SWDIO/SWCLK match *SW* but are not one)
         parts = sorted(nets[n].values(), key=lambda f: (-len(f.Pads()), f.GetReference()))
         for fp in parts[1:]:
             _join(member, fp.GetReference(), parts[0].GetReference())

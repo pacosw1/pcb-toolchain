@@ -90,6 +90,15 @@ class RoundTripTest(unittest.TestCase):
         for r in ('L1', 'D3', 'C4'):  # every part on /SW
             self.assertIn(r, refs)
 
+    def test_rigid_net_without_an_inductor_is_not_a_switch_node(self):
+        # /EN matches the pattern but has no inductor pad (as SWDIO/SWCLK match *SW* on MC-MAIN)
+        pr = kicad_io.read_problem(self.board, rigid_nets=['/EN'])
+        refs = pr['units'][self.unit(pr, 'U1')]['refs']
+        b = pcbnew.LoadBoard(self.board)
+        on_en = {p.GetParentFootprint().GetReference() for p in b.GetPads() if p.GetNetname() == '/EN'} - {'U1'}
+        self.assertTrue(on_en)
+        self.assertFalse(on_en & set(refs))
+
     def test_decap_tie_joins_caps_near_an_ic_power_pin_and_reports_distance(self):
         pr = kicad_io.read_problem(self.board, decap_tie=3.0)
         refs = pr['units'][self.unit(pr, 'U1')]['refs']
