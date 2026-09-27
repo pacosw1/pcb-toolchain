@@ -523,8 +523,8 @@ class RoundTripTest(unittest.TestCase):
         out = os.path.join(self.tmp, 'b', 'out.kicad_pcb')
         kicad_io.write_board(self.board, pr, pose, out)
         c1 = next(d for d in pcbnew.LoadBoard(out).GetDrawings() if d.m_Uuid.AsString() == cid)
-        bb = c1.GetBoundingBox()
-        self.assertTrue(near((bb.GetX() / 1e6, bb.GetY() / 1e6), (sl[0] - 4.0, sl[1] + 1.0), 0.05))
+        q0 = c1.GetStart()  # the rect corner (the bounding box adds half the line width)
+        self.assertTrue(near((q0.x / 1e6, q0.y / 1e6), (sl[0] - 4.0, sl[1] + 1.0), 0.05))
 
     def test_named_rule_areas_are_board_keepouts(self):
         b = pcbnew.LoadBoard(self.board)
@@ -575,6 +575,11 @@ class RoundTripTest(unittest.TestCase):
 
 RELAY4 = os.path.join(REPO, 'hardware-design', 'boards', 'RELAY-4', 'cad', 'RELAY-4', 'RELAY-4.kicad_pcb')
 IO6X6 = os.path.join(REPO, 'hardware-design', 'boards', 'IO-6X6', 'cad', 'IO-6X6', 'IO-6X6.kicad_pcb')
+KNOWN_GOOD = ['RELAY-4', 'IO-6X6', 'INPUT-4D2A', 'POE-ETHERNET', 'PWR-24V-5V', 'FIELD-24V-BUS', 'BASE-PWR']
+
+
+def board_path(name):
+    return os.path.join(REPO, 'hardware-design', 'boards', name, 'cad', name, name + '.kicad_pcb')
 
 
 @unittest.skipUnless(pcbnew and os.path.exists(RELAY4), 'needs pcbnew and the RELAY-4 board')
@@ -589,6 +594,40 @@ class KnownGoodGateTest(unittest.TestCase):
         ev = cost.Evaluator(self.pr, {})
         self.assertEqual([u['name'] for i, u in enumerate(self.pr['units'])
                           if not u['fixed'] and ev.legal_penalty(i) > 0], [])
+
+    def test_the_courtyard_rect_is_the_courtyard_polygon_box(self):  # BBox() adds about 0.05 mm per side
+        fp = pcbnew.LoadBoard(board_path('BASE-PWR')).FindFootprintByReference('R36')
+        c = fp.GetCourtyard(pcbnew.F_CrtYd).Outline(0)
+        xs = [pcbnew.ToMM(c.CPoint(k).x) for k in range(c.PointCount())]
+        ys = [pcbnew.ToMM(c.CPoint(k).y) for k in range(c.PointCount())]
+        for got, want in zip(kicad_io.fp_rect(fp), (min(xs), min(ys), max(xs), max(ys))):
+            self.assertAlmostEqual(got, want, places=4)
+
+    def test_a_round_courtyard_is_a_circle(self):  # POE TP4/TP5: boxes overlap, circles 0.015 mm apart
+        pr = kicad_io.read_problem(board_path('POE-ETHERNET'))
+        u = pr['units'][[x['name'] for x in pr['units']].index('TP5')]
+        (i, rho), = u['rho']
+        r = u['rects'][i]
+        self.assertAlmostEqual(r[2] - r[0], 2 * rho, places=3)
+
+    def test_a_no_footprint_area_on_the_back_only_does_not_hold_top_parts(self):  # BASE-PWR INPUT_J2_KEEPOUT
+        pr = kicad_io.read_problem(board_path('BASE-PWR'))
+        self.assertFalse(any(min(p[0] for p in k) > 149 and max(p[0] for p in k) < 167 for k in pr['board']['keepouts']))
+
+    def test_all_known_good_originals_are_legal(self):
+        bad = {}
+        for name in KNOWN_GOOD:
+            pr = kicad_io.read_problem(board_path(name))
+            ev = cost.Evaluator(pr, {})
+            bad[name] = [u['name'] for i, u in enumerate(pr['units']) if not u['fixed'] and ev.legal_penalty(i) > 0]
+        # open: the BASE-PWR U1 antenna hangs over the outline notch by design (D-021); DRC does not check a
+        # courtyard against the outline. Decision pending: courtyard outside the outline hard or soft.
+        self.assertEqual({k: v for k, v in bad.items() if v}, {'BASE-PWR': ['U1']})
+
+    def test_the_edge_band_is_the_board_copper_to_edge_clearance(self):
+        pr = kicad_io.read_problem(board_path('INPUT-4D2A'))
+        self.assertEqual(pr['board']['edge_clearance'], 0.5)
+        self.assertTrue(all('edge_pads' in u for u in pr['units'] if 'pad_rects' not in u and u['refs']))
 
     def test_the_io6x6_original_is_legal(self):  # its block borders BLOCK2 and DO1-2 overlap: legal, not DRC
         pr = kicad_io.read_problem(IO6X6)

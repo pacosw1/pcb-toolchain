@@ -214,7 +214,9 @@ class OverlapTest(unittest.TestCase):
 
 class ForbiddenTest(unittest.TestCase):
     def test_edge_clearance_and_keepout(self):
-        pr = problem([unit('A', 0.5, 0.5, [[-.5, -.5, .5, .5, .5]]),
+        a = unit('A', 0.5, 0.5, [[-.5, -.5, .5, .5, .5]])
+        a['pad_rects'] = [[-.5, -.5, .5, .5]]  # the band is for copper (pads) only
+        pr = problem([a,
                       unit('B', 2.5, 2.5, [[-.5, -.5, .5, .5, .5]]),
                       unit('C', 5.5, 5.5, [[-.5, -.5, .5, .5, .5]])], [],
                      board=square_board(10, edge=1.0, keepouts=[[[5, 5], [7, 5], [7, 7], [5, 7]]]))
@@ -425,6 +427,53 @@ class DomainRectTest(unittest.TestCase):
         s = unit('S', 12.6, 30.0, [[-1, -1, 1, 1, 0.5], [-1, -11, 1, -9, 0.0]])  # slot 1.1 mm from the pad
         s['ko'] = [1]
         self.assertAlmostEqual(self.overlap([self.mains('K1', 10.0, 1), s]), 0.0)
+
+
+class RoundRectTest(unittest.TestCase):
+    """u['rho'] = [[rect index, radius]]: a round courtyard (a test point) is its box with corners rounded by the
+    radius (a circle when the box is square). The clearance is measured to the circle, as KiCad DRC."""
+
+    def overlap(self, dx, dy):
+        a = unit('A', 10.0, 10.0, [[-1.3, -1.3, 1.3, 1.3, 0.0]])
+        b = unit('B', 10.0 + dx, 10.0 + dy, [[-1.8, -1.8, 1.8, 1.8, 0.0]])
+        a['rho'], b['rho'] = [[0, 1.3]], [[0, 1.8]]
+        pr = problem([a, b], [], square_board(40.0))
+        return cost.components(pr, cost.initial_pose(pr), P)['overlap'], cost.Evaluator(pr, P).components()['overlap']
+
+    def test_circles_apart_on_a_diagonal_are_legal(self):
+        for v in self.overlap(1.0, 2.94):  # centres 3.105 apart, radii 3.1
+            self.assertAlmostEqual(v, 0.0)
+
+    def test_circles_that_meet_are_illegal(self):
+        for v in self.overlap(1.0, 2.8):  # centres 2.97 apart
+            self.assertGreater(v, 0.0)
+
+
+class EdgeBandTest(unittest.TestCase):
+    """The copper-to-edge clearance (edge_clearance) applies to pads only. A courtyard or a block border only
+    stays inside the outline. A block has no pad_rects: its edge_pads are the copper for the edge test."""
+
+    def legal(self, u):
+        pr = problem([u], [], square_board(20.0, edge=0.5))
+        return cost.Evaluator(pr, P).legal_penalty(0)
+
+    def part(self, pad_x0, key='pad_rects'):  # courtyard 0.2 mm from the left edge
+        u = unit('A', 5.0, 10.0, [[-4.8, -1, 1, 1, 0.0]])
+        u[key] = [[pad_x0 - 5.0, -0.5, pad_x0 - 4.0, 0.5]]
+        return u
+
+    def test_a_courtyard_in_the_band_is_legal(self):
+        self.assertAlmostEqual(self.legal(self.part(2.0)), 0.0)
+        self.assertAlmostEqual(self.legal(self.part(2.0, 'edge_pads')), 0.0)
+
+    def test_a_pad_in_the_band_is_illegal(self):
+        self.assertGreater(self.legal(self.part(0.25)), 0.0)
+        self.assertGreater(self.legal(self.part(0.25, 'edge_pads')), 0.0)
+
+    def test_a_courtyard_outside_the_outline_is_illegal(self):
+        u = self.part(2.0)
+        u['x'] = 4.0
+        self.assertGreater(self.legal(u), 0.0)
 
 
 class CornerGapTest(unittest.TestCase):

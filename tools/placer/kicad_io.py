@@ -83,9 +83,9 @@ def inside_box(x, y, b):
 
 def fp_rect(fp):
     c = fp.GetCourtyard(pcbnew.F_CrtYd)
-    if c.OutlineCount():
-        bb = c.BBox()
-        return (mm(bb.GetX()), mm(bb.GetY()), mm(bb.GetRight()), mm(bb.GetBottom()))
+    if c.OutlineCount():  # the outline points: BBox() adds about 0.05 mm per side
+        pts = [c.Outline(k).CPoint(j) for k in range(c.OutlineCount()) for j in range(c.Outline(k).PointCount())]
+        return (mm(min(q.x for q in pts)), mm(min(q.y for q in pts)), mm(max(q.x for q in pts)), mm(max(q.y for q in pts)))
     xs, ys = [], []
     for p in fp.Pads():
         bb = p.GetBoundingBox()
@@ -95,6 +95,15 @@ def fp_rect(fp):
         q = fp.GetPosition()
         xs, ys = [mm(q.x)], [mm(q.y)]
     return (min(xs) - .25, min(ys) - .25, max(xs) + .25, max(ys) + .25)
+
+
+def _round_courtyard(fp):
+    """(centre x, centre y, radius) when the courtyard is one circle (a test point), else None."""
+    g = [d for d in fp.GraphicalItems() if d.GetLayer() == pcbnew.F_CrtYd]
+    if len(g) == 1 and g[0].GetShape() == pcbnew.SHAPE_T_CIRCLE:
+        c = g[0].GetCenter()
+        return (mm(c.x), mm(c.y), round(mm(g[0].GetRadius()), 6))
+    return None
 
 
 def is_mounting_hole(fp):
@@ -238,7 +247,8 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
     keepouts = [h for h in holes]
     for z in board.Zones():
         if z.GetIsRuleArea() and z.Outline().OutlineCount() and (
-                z.GetDoNotAllowFootprints() or any(fnmatch.fnmatchcase(z.GetZoneName(), p) for p in keepout_zones)):
+                (z.GetDoNotAllowFootprints() and z.GetLayerSet().Contains(pcbnew.F_Cu))  # all parts are on top
+                or any(fnmatch.fnmatchcase(z.GetZoneName(), p) for p in keepout_zones)):
             keepouts.append(poly_points(z.Outline().Outline(0)))
     lays = {board.GetLayerID(n) for n in keepout_layers}
     for d in board.GetDrawings():
@@ -246,7 +256,7 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
             poly = shape_polygon(d)
             if poly:
                 keepouts.append(poly)
-    edge = 1.0
+    edge = mm(board.GetDesignSettings().m_CopperEdgeClearance)  # DRC copper-to-edge: the band for pads
 
     fps = list(board.GetFootprints())
     member = {}  # ref -> unit key
@@ -299,12 +309,17 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
     for key, u in units.items():
         if not u['refs']:
             continue
-        rects, hv, dom, mech, fixed = [], [], [], [], False
+        rects, hv, dom, mech, rho, fixed = [], [], [], [], [], False
         for r in u['refs']:
             fp = by_ref[r]
             rc = fp_rect(fp)
             clr = 0.0 if is_test_point(r) else spacing[1] if ref_prefix(r) in IC_PREFIX else spacing[0]
+            rr = _round_courtyard(fp)
+            if rr:  # the circle, not its polygon
+                rc = (rr[0] - rr[2], rr[1] - rr[2], rr[0] + rr[2], rr[1] + rr[2])
             rects.append((rc, clr))
+            if rr:
+                rho.append([len(rects) - 1, rr[2]])
             kinds = [(p, _domain(p, domains) or _pair_class(p, pairs)) for p in fp.Pads() if p.GetNetname()]
             if (domains or pairs) and not kinds:  # no net pad (a mounting hole): only its own class to a domain pad
                 mech.append(len(rects) - 1)
@@ -368,13 +383,18 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
             out_units[-1]['dom'] = [[base + k, c, g, nc] for k, c, g, nc in dom]
         if mech:
             out_units[-1]['mech'] = mech
+        if rho:  # a round courtyard: DRC measures to the circle
+            out_units[-1]['rho'] = rho
         if border:  # DRC does not check a block border: its overlap is a soft cost
             out_units[-1]['border'] = border
-        if not u['box']:  # pads meet kept copper; a block also moves its tracks, so its courtyards stay the test
-            out_units[-1]['pad_rects'] = [
-                [round(mm(bb.GetX()) - ox, 6), round(mm(bb.GetY()) - oy, 6),
-                 round(mm(bb.GetRight()) - ox, 6), round(mm(bb.GetBottom()) - oy, 6)]
-                for r in u['refs'] for bb in (p.GetBoundingBox() for p in by_ref[r].Pads())]
+        pad_boxes = [
+            [round(mm(bb.GetX()) - ox, 6), round(mm(bb.GetY()) - oy, 6),
+             round(mm(bb.GetRight()) - ox, 6), round(mm(bb.GetBottom()) - oy, 6)]
+            for r in u['refs'] for bb in (p.GetBoundingBox() for p in by_ref[r].Pads())]
+        if u['box']:  # a block: its pads are the copper for the edge band
+            out_units[-1]['edge_pads'] = pad_boxes
+        else:  # pads meet kept copper; a block also moves its tracks, so its courtyards stay the test
+            out_units[-1]['pad_rects'] = pad_boxes
 
     _edges_and_block_zones(board, out_units, index, member, by_ref, edges or {}, zone_refs or {})
     keepouts = _block_cuts(board, out_units, keepouts)

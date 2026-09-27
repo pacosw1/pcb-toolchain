@@ -137,8 +137,9 @@ def sat(a):
 
 
 class Mask:
-    """Forbidden cells: outside the outline shrunk by edge_clearance, or inside a keepout (edge table), or on kept
-    F.Cu copper / vias grown by gap (copper table). A unit with pad_rects tests only its pads against copper."""
+    """Forbidden cells: outside the outline or inside a keepout (edge table, for courtyards and borders), outside
+    the outline shrunk by edge_clearance (band table, for pads: DRC copper-to-edge), or on kept F.Cu copper /
+    vias grown by gap (copper table). A unit with pad_rects tests only its pads against copper."""
 
     MARGIN = 2.0
 
@@ -152,6 +153,7 @@ class Mask:
         ys = self.y0 + (np.arange(self.ny) + 0.5) * cell
         gx, gy = np.meshgrid(xs, ys)
         out = ~point_in_poly(gx, gy, board['outline'])
+        out0 = out
         k = math.ceil(board.get('edge_clearance', 0.0) / cell - EPS)
         if k > 0:
             s = sat(out.astype(np.int64))
@@ -163,14 +165,16 @@ class Mask:
             i1 = np.clip(ii + k + 1, 0, self.nx)[None, :]
             out = (s[j1, i1] - s[j0, i1] - s[j1, i0] + s[j0, i0]) > 0
         for poly in board.get('keepouts', []):
-            out |= point_in_poly(gx, gy, poly)
+            ko = point_in_poly(gx, gy, poly)
+            out, out0 = out | ko, out0 | ko
         cu = np.zeros_like(out)
         for layer, a0, b0, a1, b1, w in board.get('copper', []):
             if layer in OBSTACLE_LAYERS:
                 self._segment(cu, a0, b0, a1, b1, w / 2 + gap)
-        self.forb = out | cu
+        self.forb = out0 | cu
         self.s = sat(self.forb.astype(np.int64))
-        self.s_edge = sat(out.astype(np.int64))
+        self.s_edge = sat(out0.astype(np.int64))
+        self.s_band = sat(out.astype(np.int64))
         self.s_cu = sat(cu.astype(np.int64))
 
     def _segment(self, out, a0, b0, a1, b1, r):
@@ -204,15 +208,18 @@ class Mask:
         bad = s[j1, i1] - s[j0, i1] - s[j1, i0] + s[j0, i0]
         return float(total - inside + bad) * c * c
 
-    def edge_area(self, rects, ko=()):
-        """Area of the rects outside the board (edge clearance) or in a keepout; kept copper not counted.
-        Keepout rects (indices ko) do not count."""
-        return sum(self.rect_area(*r[:4], s=self.s_edge) for k, r in enumerate(rects) if k not in ko)
+    def edge_area(self, rects, ko=(), epads=None):
+        """Area of the rects outside the board or in a keepout, and of the pads (epads) in the copper-to-edge
+        band; kept copper not counted. Keepout rects (indices ko) do not count."""
+        return (sum(self.rect_area(*r[:4], s=self.s_edge) for k, r in enumerate(rects) if k not in ko)
+                + sum(self.rect_area(*r[:4], s=self.s_band) for r in epads or ()))
 
-    def unit_area(self, rects, pads=None, ko=()):
+    def unit_area(self, rects, pads=None, ko=(), epads=None):
         """Forbidden area of a unit: courtyard rects against all, or (pads given) rects against the edge
-        table and pads against the copper table. Keepout rects (indices ko) count only kept copper."""
+        table and pads against the copper table; pads (epads) against the band. Keepout rects (indices ko)
+        count only kept copper."""
         t = sum(self.rect_area(*r[:4], s=self.s_cu, outside=False) for k, r in enumerate(rects) if k in ko)
+        t += sum(self.rect_area(*r[:4], s=self.s_band) for r in epads or ())
         if pads is None:
             return t + sum(self.rect_area(*r[:4]) for k, r in enumerate(rects) if k not in ko)
         return (t + self.edge_area(rects, ko)
@@ -226,10 +233,14 @@ def pair_penalty(a, b):
     return _pen(a[:, :4], a[:, 4], b[:, :4], b[:, 4])
 
 
-def _pen(A, ca, B, cb, ka=None, kb=None, skip=None):
+def _pen(A, ca, B, cb, ka=None, kb=None, skip=None, ra=None, rb=None):
     g = np.maximum(ca[:, None], cb[None, :])
     if ka is not None and ka[1] is not None and kb[1] is not None:
         g = _domain_gap(g, ca, cb, ka, kb)
+    if ra is not None and (ra.any() or rb.any()):  # rounded corners: the inner box, gap + both radii
+        A = A + ra[:, None] * np.array([1, 1, -1, -1])
+        B = B + rb[:, None] * np.array([1, 1, -1, -1])
+        g = g + ra[:, None] + rb[None, :]
     dx = np.minimum(A[:, None, 2], B[None, :, 2]) - np.maximum(A[:, None, 0], B[None, :, 0]) + g
     dy = np.minimum(A[:, None, 3], B[None, :, 3]) - np.maximum(A[:, None, 1], B[None, :, 1]) + g
     a = np.clip(dx, 0, None) * np.clip(dy, 0, None)
@@ -253,12 +264,12 @@ def hard_clr(u):
     return h
 
 
-def _pen_hs(A, ca, ha, B, cb, hb, ka=None, kb=None, sa=None, sb=None):
+def _pen_hs(A, ca, ha, B, cb, hb, ka=None, kb=None, sa=None, sb=None, ra=None, rb=None):
     """(hard overlap, soft spacing) of two rect sets: ca/cb = full gaps (D-040 halo), ha/hb = hard gaps,
-    sa/sb = soft-only rects (a block border: DRC does not check it)."""
+    sa/sb = soft-only rects (a block border: DRC does not check it), ra/rb = corner radius per rect."""
     skip = None if sa is None or not (sa.any() or sb.any()) else sa[:, None] | sb[None, :]
-    hard = _pen(A, ha, B, hb, ka, kb, skip)
-    return hard, _pen(A, ca, B, cb, ka, kb) - hard
+    hard = _pen(A, ha, B, hb, ka, kb, skip, ra, rb)
+    return hard, _pen(A, ca, B, cb, ka, kb, None, ra, rb) - hard
 
 
 def _domain_gap(g, ca, cb, ka, kb):
@@ -274,6 +285,13 @@ def _domain_gap(g, ca, cb, ka, kb):
     g = np.where((xa | oa)[:, None] & (db[None, :] > 0), ca[:, None], g)
     g = np.where((da[:, None] > 0) & (db[None, :] < 0), sb[None, :], g)  # a hole rule (class -1): its gap
     return np.where((da[:, None] < 0) & (db[None, :] > 0), sa[:, None], g)
+
+
+def radii(u):
+    r = np.zeros(len(u['rects']))
+    for i, v in u.get('rho', []):
+        r[i] = v
+    return r
 
 
 def border_flags(u):
@@ -408,7 +426,8 @@ def _overlaps(pr, pose):
             if us[i]['fixed'] and us[j]['fixed']:
                 continue
             a, b = _pen_hs(w[i][:, :4], w[i][:, 4], hard_clr(us[i]), w[j][:, :4], w[j][:, 4], hard_clr(us[j]),
-                           ko_flags(us[i], T), ko_flags(us[j], T), border_flags(us[i]), border_flags(us[j]))
+                           ko_flags(us[i], T), ko_flags(us[j], T), border_flags(us[i]), border_flags(us[j]),
+                           radii(us[i]), radii(us[j]))
             h, s = h + a, s + b
     return h, s
 
@@ -423,12 +442,17 @@ def spacing(pr, pose):
     return _overlaps(pr, pose)[1]
 
 
-def world_pads(u, pose_u):
+def world_pads(u, pose_u, key='pad_rects'):
     """World pad boxes of a unit, or None when the unit has no pad_rects."""
-    if 'pad_rects' not in u:
+    if key not in u:
         return None
     x, y, r = pose_u
-    return [[a + x, b + y, c + x, d + y] for rc in u['pad_rects'] for (a, b, c, d) in [rot_rect(rc, r)]]
+    return [[a + x, b + y, c + x, d + y] for rc in u[key] for (a, b, c, d) in [rot_rect(rc, r)]]
+
+
+def edge_pads(u, pose_u):
+    """World copper boxes for the edge band: pad_rects, else edge_pads (a block)."""
+    return world_pads(u, pose_u) or world_pads(u, pose_u, 'edge_pads')
 
 
 def edge_miss(u, pose_u, board, box=None):
@@ -447,7 +471,7 @@ def edge_miss(u, pose_u, board, box=None):
 
 def forbidden(pr, pose, mask, i):
     u = pr['units'][i]
-    return (mask.unit_area(world_rects(u, pose[i]), world_pads(u, pose[i]), set(u.get('ko', [])))
+    return (mask.unit_area(world_rects(u, pose[i]), world_pads(u, pose[i]), set(u.get('ko', [])), edge_pads(u, pose[i]))
             + edge_miss(u, pose[i], pr['board']))
 
 
@@ -485,6 +509,7 @@ class Evaluator:
         self.ko = [ko_flags(u, class_table(pr)) for u in us]  # rect kinds
         self.hclr = [hard_clr(u) for u in us]
         self.bd = [border_flags(u) for u in us]
+        self.rho = [radii(u) for u in us]
         self.kos = [set(u.get('ko', [])) for u in us]
         self.lbox = [[(lr[:, 0].min(), lr[:, 1].min(), lr[:, 2].max(), lr[:, 3].max()) for lr in self.lrect[i]]
                      for i in range(self.n)]
@@ -504,6 +529,9 @@ class Evaluator:
         self.lpad = [None if 'pad_rects' not in u else
                      [np.array([rot_rect(rc, r) for rc in u['pad_rects']], dtype=float).reshape(-1, 4) for r in range(4)]
                      for u in us]
+        self.lepad = [lp if lp is not None or 'edge_pads' not in u else
+                      [np.array([rot_rect(rc, r) for rc in u['edge_pads']], dtype=float).reshape(-1, 4) for r in range(4)]
+                      for lp, u in zip(self.lpad, us)]
         self.mask = mask or Mask(pr['board'], p['mask_cell'], p['gap'])
         self.units, self.board, self.obox = us, pr['board'], outline_box(pr['board'])
         self.forb = [0.0 if self.fixed[i] else self._forb(i) for i in range(self.n)]
@@ -558,16 +586,20 @@ class Evaluator:
     def _world(self, i):
         return self.lrect[i][self.R[i]] + (self.X[i], self.Y[i], self.X[i], self.Y[i])
 
+    def _epads(self, i):
+        lp = self.lepad[i]
+        return None if lp is None else (lp[self.R[i]] + (self.X[i], self.Y[i], self.X[i], self.Y[i])).tolist()
+
     def _forb(self, i):
         lp = self.lpad[i]
         pads = None if lp is None else (lp[self.R[i]] + (self.X[i], self.Y[i], self.X[i], self.Y[i])).tolist()
-        return (self.mask.unit_area(self._world(i).tolist(), pads, self.kos[i])
+        return (self.mask.unit_area(self._world(i).tolist(), pads, self.kos[i], self._epads(i))
                 + edge_miss(self.units[i], (self.X[i], self.Y[i], self.R[i]), self.board, self.obox))
 
     def _pen(self, i, j):
         """(hard, soft) of units i and j."""
         return _pen_hs(self._world(i), self.clr[i], self.hclr[i], self._world(j), self.clr[j], self.hclr[j],
-                       self.ko[i], self.ko[j], self.bd[i], self.bd[j])
+                       self.ko[i], self.ko[j], self.bd[i], self.bd[j], self.rho[i], self.rho[j])
 
     def _unit_pairs(self, i, skip):
         b = self.UB[i]
@@ -674,7 +706,7 @@ class Evaluator:
     def legal_penalty(self, i):
         """Spacing overlap + edge/keepout area (0 = legal). Kept copper is a cost only: the writer rips up
         the copper that a moved pad lands on."""
-        return (self._unit_overlap(i, set()) + self.mask.edge_area(self._world(i).tolist(), self.kos[i])
+        return (self._unit_overlap(i, set()) + self.mask.edge_area(self._world(i).tolist(), self.kos[i], self._epads(i))
                 + edge_miss(self.units[i], (self.X[i], self.Y[i], self.R[i]), self.board, self.obox))
 
     def legal_penalty_at(self, i, x, y, r):
