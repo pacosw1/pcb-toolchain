@@ -54,6 +54,22 @@ class StripTest(unittest.TestCase):
         finally:
             shutil.rmtree(tmp)
 
+    def test_strip_only_removes_the_tracks_of_the_listed_nets(self):
+        tmp = tempfile.mkdtemp(prefix='placer-strip-')
+        try:
+            src = os.path.join(REPO, 'hardware-design/boards/PWR-24V-5V/cad/PWR-24V-5V/PWR-24V-5V.kicad_pcb')
+            out = os.path.join(tmp, 'o.kicad_pcb')
+            b0 = pcbnew.LoadBoard(src)
+            only = sorted({t.GetNetname() for t in b0.GetTracks()})[:2]
+            n = validate.strip_tracks(src, out, only=only)
+            b1 = pcbnew.LoadBoard(out)
+            self.assertEqual(n, sum(1 for t in b0.GetTracks() if t.GetNetname() in only))
+            self.assertGreater(n, 0)
+            self.assertEqual(sorted(t.GetNetname() for t in b1.GetTracks()),
+                             sorted(t.GetNetname() for t in b0.GetTracks() if t.GetNetname() not in only))
+        finally:
+            shutil.rmtree(tmp)
+
 
 if __name__ == '__main__':
     unittest.main()

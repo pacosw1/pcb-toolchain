@@ -35,10 +35,15 @@ def count_drc(d, subset=()):
             'open_nets': open_nets, 'error_types': kinds}
 
 
-def strip_tracks(path, out, keep=()):
+def strip_tracks(path, out, keep=(), only=None):
+    """Remove all tracks and vias except the nets matching `keep`; with `only` (exact net names), remove only those."""
     import pcbnew
     b = pcbnew.LoadBoard(path)
-    gone = [t for t in b.GetTracks() if not any(fnmatch.fnmatchcase(t.GetNetname(), k) for k in keep)]
+    if only is not None:
+        only = set(only)
+        gone = [t for t in b.GetTracks() if t.GetNetname() in only]
+    else:
+        gone = [t for t in b.GetTracks() if not any(fnmatch.fnmatchcase(t.GetNetname(), k) for k in keep)]
     for t in gone:
         b.Delete(t)
     pcbnew.SaveBoard(out, b)
@@ -52,12 +57,14 @@ def main(argv=None):
     s.add_argument('board')
     s.add_argument('out')
     s.add_argument('--keep', default='')
+    s.add_argument('--only', help='file with comma-separated net names: remove only the tracks of these nets')
     c = sub.add_parser('count')
     c.add_argument('drc')
     c.add_argument('--nets')
     a = ap.parse_args(argv)
     if a.cmd == 'strip':
-        print('removed', strip_tracks(a.board, a.out, [k for k in a.keep.split(',') if k]))
+        only = open(a.only).read().strip().split(',') if a.only else None
+        print('removed', strip_tracks(a.board, a.out, [k for k in a.keep.split(',') if k], only))
     else:
         nets = open(a.nets).read().strip().split(',') if a.nets else []
         r = count_drc(json.load(open(a.drc)), nets)
