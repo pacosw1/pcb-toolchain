@@ -154,6 +154,7 @@ class Mask:
         gx, gy = np.meshgrid(xs, ys)
         out = ~point_in_poly(gx, gy, board['outline'])
         out0 = out.copy()
+        self.s_outl = sat(out.astype(np.int64))  # outside the outline only
         k = math.ceil(board.get('edge_clearance', 0.0) / cell - EPS)
         if k > 0:
             s = sat(out.astype(np.int64))
@@ -211,11 +212,28 @@ class Mask:
         bad = s[j1, i1] - s[j0, i1] - s[j1, i0] + s[j0, i0]
         return float(total - inside + bad) * c * c
 
+    def overhang(self, rects, ko):
+        """Outside-the-outline area of the rects that lies inside a keepout rect of the same unit (an antenna
+        zone over an outline notch): legal, so it is taken off."""
+        if not ko:
+            return 0.0
+        t = 0.0
+        for k, r in enumerate(rects):
+            if k in ko:
+                continue
+            for j in ko:
+                q = rects[j]
+                a, b, c, d = max(r[0], q[0]), max(r[1], q[1]), min(r[2], q[2]), min(r[3], q[3])
+                if c > a and d > b:
+                    t += self.rect_area(a, b, c, d, s=self.s_outl)
+        return t
+
     def edge_area(self, rects, ko=(), epads=None):
-        """Area of the rects outside the board or in a keepout, and of the pads (epads) in the copper-to-edge
-        band; kept copper not counted. Keepout rects (indices ko) do not count."""
+        """Area of the rects outside the board or in a keepout (not the overhang into its own keepout), and of
+        the pads (epads) in the copper-to-edge band; kept copper not counted. Keepout rects (indices ko) do not
+        count."""
         return (sum(self.rect_area(*r[:4], s=self.s_edge) for k, r in enumerate(rects) if k not in ko)
-                + sum(self.rect_area(*r[:4], s=self.s_band) for r in epads or ()))
+                - self.overhang(rects, ko) + sum(self.rect_area(*r[:4], s=self.s_band) for r in epads or ()))
 
     def unit_area(self, rects, pads=None, ko=(), epads=None):
         """Forbidden area of a unit: courtyard rects against all, or (pads given) rects against the edge
@@ -224,7 +242,7 @@ class Mask:
         t = sum(self.rect_area(*r[:4], s=self.s_cu, outside=False) for k, r in enumerate(rects) if k in ko)
         t += sum(self.rect_area(*r[:4], s=self.s_band) for r in epads or ())
         if pads is None:
-            return t + sum(self.rect_area(*r[:4]) for k, r in enumerate(rects) if k not in ko)
+            return t + sum(self.rect_area(*r[:4]) for k, r in enumerate(rects) if k not in ko) - self.overhang(rects, ko)
         return (t + self.edge_area(rects, ko)
                 + sum(self.rect_area(*r[:4], s=self.s_cu, outside=False) for r in pads))
 
@@ -314,6 +332,8 @@ def ko_flags(u, T=None):
     n = len(u['rects'])
     k = np.zeros(n, dtype=bool)
     k[list(u.get('ko', []))] = True
+    if u.get('nocu'):  # no copper pad (an NPTH hole): a keepout of another unit may cover it
+        k[:] = True
     if not u.get('dom') and not u.get('mech') and not u.get('ko'):
         return (k, None)
     d, sg, nc, x = np.zeros(n, dtype=int), np.zeros(n), np.zeros(n), np.zeros(n, dtype=bool)

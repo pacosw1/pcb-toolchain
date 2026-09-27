@@ -429,6 +429,45 @@ class DomainRectTest(unittest.TestCase):
         self.assertAlmostEqual(self.overlap([self.mains('K1', 10.0, 1), s]), 0.0)
 
 
+class OwnKeepoutOverhangTest(unittest.TestCase):
+    """A courtyard may leave the outline only inside a keepout rect of its own unit (u['ko']: an antenna zone moved
+    with --zone-ref, BASE-PWR U1_ANTENNA over the outline notch). Elsewhere the part outside is illegal."""
+
+    def legal(self, ko_rect):
+        u = unit('U1', 10.0, 18.0, [[-3, -3, 3, 3, 0.0]])  # 1 mm over the bottom edge (y 20)
+        if ko_rect:
+            u['rects'].append(ko_rect + [0.0])
+            u['ko'] = [1]
+        return cost.Evaluator(problem([u], [], square_board(20.0)), P).legal_penalty(0)
+
+    def test_the_overhang_inside_its_own_keepout_is_legal(self):
+        self.assertAlmostEqual(self.legal([-4, 1.5, 4, 6]), 0.0)
+
+    def test_the_overhang_without_a_keepout_is_illegal(self):
+        self.assertGreater(self.legal(None), 0.0)
+
+    def test_the_overhang_beyond_its_keepout_is_illegal(self):
+        self.assertGreater(self.legal([-1, 1.5, 1, 6]), 0.0)  # the keepout covers 2 of the 6 mm
+
+
+class NoCopperPartTest(unittest.TestCase):
+    """u['nocu']: a part with no copper pad (an NPTH mounting hole). A keepout rect of another unit may cover it
+    (BASE-PWR H1 inside U1_ANTENNA: the rule area forbids copper, not footprints); a normal part may not."""
+
+    def overlap(self, other_ko):
+        a = unit('U1', 10.0, 10.0, [[-1, -1, 1, 1, 0.0], [-5, -5, 5, 5, 0.0]])
+        a['ko'] = [1] if other_ko else []
+        h = unit('H1', 13.0, 10.0, [[-1, -1, 1, 1, 0.0]], fixed=True)
+        h['nocu'] = True
+        return cost.Evaluator(problem([a, h], [], square_board(30.0)), P).legal_penalty(0)
+
+    def test_a_keepout_over_a_no_copper_part_is_legal(self):
+        self.assertAlmostEqual(self.overlap(True), 0.0)
+
+    def test_a_courtyard_over_a_no_copper_part_is_illegal(self):
+        self.assertGreater(self.overlap(False), 0.0)
+
+
 class LockedCopperTest(unittest.TestCase):
     """board['fixed_copper']: locked tracks and vias. The writer never removes them, so a pad over one is illegal.
     A courtyard (no pad) over one is legal: a part body may cover a track."""

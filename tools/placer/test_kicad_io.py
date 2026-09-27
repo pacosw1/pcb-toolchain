@@ -596,6 +596,7 @@ class RoundTripTest(unittest.TestCase):
 RELAY4 = os.path.join(REPO, 'hardware-design', 'boards', 'RELAY-4', 'cad', 'RELAY-4', 'RELAY-4.kicad_pcb')
 IO6X6 = os.path.join(REPO, 'hardware-design', 'boards', 'IO-6X6', 'cad', 'IO-6X6', 'IO-6X6.kicad_pcb')
 KNOWN_GOOD = ['RELAY-4', 'IO-6X6', 'INPUT-4D2A', 'POE-ETHERNET', 'PWR-24V-5V', 'FIELD-24V-BUS', 'BASE-PWR']
+ZONE_REFS = {'BASE-PWR': {'U1_ANTENNA': 'U1'}}  # the WROOM antenna keepout moves with U1 (D-021)
 
 
 def board_path(name):
@@ -637,12 +638,10 @@ class KnownGoodGateTest(unittest.TestCase):
     def test_all_known_good_originals_are_legal(self):
         bad = {}
         for name in KNOWN_GOOD:
-            pr = kicad_io.read_problem(board_path(name))
+            pr = kicad_io.read_problem(board_path(name), zone_refs=ZONE_REFS.get(name))
             ev = cost.Evaluator(pr, {})
             bad[name] = [u['name'] for i, u in enumerate(pr['units']) if not u['fixed'] and ev.legal_penalty(i) > 0]
-        # open: the BASE-PWR U1 antenna hangs over the outline notch by design (D-021); DRC does not check a
-        # courtyard against the outline. Decision pending: courtyard outside the outline hard or soft.
-        self.assertEqual({k: v for k, v in bad.items() if v}, {'BASE-PWR': ['U1']})
+        self.assertEqual({k: v for k, v in bad.items() if v}, {})
 
     def test_the_edge_band_is_the_board_copper_to_edge_clearance(self):
         pr = kicad_io.read_problem(board_path('INPUT-4D2A'))

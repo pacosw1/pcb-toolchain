@@ -387,6 +387,9 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
             out_units[-1]['dom'] = [[base + k, c, g, nc] for k, c, g, nc in dom]
         if mech:
             out_units[-1]['mech'] = mech
+        if all(p.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH
+               for r in u['refs'] for p in by_ref[r].Pads()):  # no copper pad (NPTH only): a keepout may cover it
+            out_units[-1]['nocu'] = True
         if rho:  # a round courtyard: DRC measures to the circle
             out_units[-1]['rho'] = rho
         if border:  # DRC does not check a block border: its overlap is a soft cost
