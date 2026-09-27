@@ -250,5 +250,28 @@ class DefaultRulesTest(unittest.TestCase):
         self.assertNotIn("VP-001", gate.DEFAULT_RULES)
         self.assertEqual(gate.DEFAULT_RULES, ["GP-001", "RP-001", "DC-002", "UC-001"])
 
+
+class GroundViaTests(unittest.TestCase):
+    # kicad-happy a6bba1a finds ground vias by name only (GND, *GND, 0V); FIELD_0V is not one.
+    def doc(self):
+        return {"nets": {"1": "FIELD_0V", "2": "/SIG", "3": "GND"},
+                "vias": {"vias": [{"x": 0, "y": 0, "net": 1}, {"x": 1, "y": 0, "net": 2},
+                                  {"x": 2, "y": 0, "net": 3}]}}
+
+    def test_named_ground_vias_are_marked_gnd(self):
+        d = self.doc()
+        self.assertEqual(gate.mark_ground_vias(d, ["FIELD_0V"]), 1)
+        self.assertEqual([v.get("net_name") for v in d["vias"]["vias"]], ["GND", None, None])
+
+    def test_no_grounds_changes_nothing(self):
+        d = self.doc()
+        self.assertEqual(gate.mark_ground_vias(d, []), 0)
+        self.assertEqual(d, self.doc())
+
+    def test_unknown_ground_net_is_an_error(self):
+        with self.assertRaises(ValueError):
+            gate.mark_ground_vias(self.doc(), ["FIELD_GND"])
+
+
 if __name__ == "__main__":
     unittest.main()

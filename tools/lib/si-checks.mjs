@@ -62,13 +62,13 @@ export const KICAD_HAPPY_SUMMARY = /kicad-happy findings/;
 export const KICAD_HAPPY_FAIL = ['FAIL', 'STALE exempt'];
 
 // exemptFile: JSON list of {rule, net, reason}; a stale entry fails the gate (exit 2).
-export function kicadHappyArgs(pcb, exemptFile) {
-  return [pcb, ...(exemptFile ? ['--exempt-file', exemptFile] : [])];
+export function kicadHappyArgs(pcb, exemptFile, grounds = []) {
+  return [pcb, ...(exemptFile ? ['--exempt-file', exemptFile] : []), ...grounds.flatMap((g) => ['--ground', g])];
 }
 
-export function kicadHappyCheck({python, tool, pcb, check, exemptFile}) {
+export function kicadHappyCheck({python, tool, pcb, check, exemptFile, grounds}) {
   const name = `kicad-happy GP-001 RP-001 DC-002 UC-001 (tools/kicad_happy_gate.py${exemptFile ? `, exempt: ${exemptFile}` : ''})`;
-  const {out, exit} = runGate({python, tool, args: kicadHappyArgs(pcb, exemptFile)});
+  const {out, exit} = runGate({python, tool, args: kicadHappyArgs(pcb, exemptFile, grounds)});
   const {ok, detail} = parseGateOutput(out, exit, KICAD_HAPPY_SUMMARY, KICAD_HAPPY_FAIL);
   check(name, ok, detail);
 }

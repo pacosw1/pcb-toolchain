@@ -216,7 +216,25 @@ def evaluate(all_findings, rule_ids, min_severity, exempts):
     return lines, 2 if stale else (1 if kept else 0)
 
 
-def run_gate(happy_dir, pcb, sch, tmp_dir):
+def mark_ground_vias(pcb_doc, grounds):
+    """Mark the vias of the named ground nets as GND in the analyze_pcb JSON.
+
+    kicad-happy a6bba1a finds ground vias by net name only (GND, *GND, 0V), so RP-001 misses a
+    domain ground such as FIELD_0V. A name in grounds that is not a board net is an error.
+    Returns the number of vias marked."""
+    names = {str(k): v for k, v in (pcb_doc.get("nets") or {}).items()}
+    missing = set(grounds) - set(names.values())
+    if missing:
+        raise ValueError(f"--ground: no such net on the board: {sorted(missing)}")
+    n = 0
+    for via in (pcb_doc.get("vias") or {}).get("vias", []):
+        if grounds and names.get(str(via.get("net"))) in grounds:
+            via["net_name"] = "GND"
+            n += 1
+    return n
+
+
+def run_gate(happy_dir, pcb, sch, tmp_dir, grounds=()):
     """Run the three analyzers and return their merged raw findings."""
     all_findings = []
     sch_out = None
@@ -233,6 +251,10 @@ def run_gate(happy_dir, pcb, sch, tmp_dir):
         pcb_args += ["--schematic", sch_out]
     pcb_doc = run_analyzer(happy_dir, "skills/kicad/scripts/analyze_pcb.py", pcb_args, pcb_out)
     all_findings += load_findings(pcb_doc)
+    if grounds:
+        mark_ground_vias(pcb_doc, grounds)
+        with open(pcb_out, "w") as fh:
+            json.dump(pcb_doc, fh)
 
     emc_out = os.path.join(tmp_dir, "emc.json")
     emc_args = ["--pcb", pcb_out]
@@ -271,6 +293,13 @@ def main(argv=None):
         "--exempt-file",
         help='JSON list of {"rule", "net" or "ref", "reason"} exemptions',
     )
+    parser.add_argument(
+        "--ground",
+        action="append",
+        default=[],
+        metavar="NET",
+        help="Count the vias of NET as ground vias for RP-001 (repeatable; for FIELD_0V and similar)",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -298,8 +327,8 @@ def main(argv=None):
 
     tmp_dir = tempfile.mkdtemp(prefix="kicad_happy_gate_")
     try:
-        all_findings = run_gate(happy_dir, pcb, sch, tmp_dir)
-    except (RuntimeError, json.JSONDecodeError) as exc:
+        all_findings = run_gate(happy_dir, pcb, sch, tmp_dir, args.ground)
+    except (RuntimeError, ValueError, json.JSONDecodeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
     finally:
