@@ -154,6 +154,20 @@ def s_fit(pr, k, s_hi, iters=40):
     return lo
 
 
+def bare_scale(pr):
+    """Board scale below which the parts with no halo cannot fit, even at 100 % fill."""
+    return _raw_scale(with_halos(pr, 0.0)) * math.sqrt(HALO['fill'])
+
+
+def outline_s(pr, k, best, k_floor):
+    """Halo scale for an outline step at board scale k: the largest that fits k (s_fit); when no halo fits,
+    s goes down linearly from the best pass (at best['k']) to 0 at the bare-parts floor k_floor."""
+    s = s_fit(pr, k, best['s'])
+    if s > 0.0 or k_floor < 1.0:
+        return s
+    return best['s'] * (k - k_floor) / (best['k'] - k_floor)
+
+
 K_TOL = 0.02  # the outline phase stops when the board scale gap is below 2 %
 
 
@@ -163,7 +177,8 @@ def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, 
     write(problem, pose, k, step) -> board path; route(path, step) -> [unrouted per router run].
     Halo phase: s from s0, board scale k from the grown area (larger on an illegal result). A step passes when
     the best router run leaves <= target unrouted. Outline phase (when the best pass has k > 1): the real board
-    (k = 1) first, then bisect k between the last fail and the best pass; s = the largest that fits k.
+    (k = 1) first, then bisect k between the last fail and the best pass; s = outline_s. When the bare parts
+    do not fit the real board (bare_scale > 1), the bisection starts between bare_scale and the best pass.
     Stops when both phases are done or when `budget` seconds have passed before a step starts."""
     import time
     clock = clock or time.monotonic
@@ -208,12 +223,14 @@ def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, 
     passed = [t for t in steps if t['passed']]
     if passed and stop == 'schedule done':
         best = min(passed, key=lambda t: (t['k'], t['s']))
-        hi, lo, k = best['k'], 1.0, 1.0
+        k_floor = bare_scale(pr)
+        hi, lo = best['k'], max(1.0, k_floor)
+        k = 1.0 if k_floor < 1.0 else (lo + hi) / 2  # the real board first, when the bare parts fit it
         while hi > 1.0 + 1e-9 and (hi - lo) / hi >= K_TOL:
             if over():
                 stop = 'time budget %.0f s' % budget
                 break
-            t = step(s_fit(pr, k, best['s']), k, False, 'outline')
+            t = step(outline_s(pr, k, best, k_floor), k, False, 'outline')
             if t['passed']:
                 hi = k
             else:

@@ -200,6 +200,26 @@ class LoopTest(unittest.TestCase):
         self.assertTrue(1.2 <= run['best']['k'] <= 1.2 * 1.03)
         self.assertIn('needs', run['verdict'])
 
+    def test_the_outline_phase_never_tries_a_board_smaller_than_the_bare_parts(self):
+        # bare parts (s = 0) need 144.5 mm2 on a 100 mm2 board: k below sqrt(1.445) = 1.202 cannot hold them
+        pr = {'units': [unit('A', 2, 2, [[-4, -4, 4, 4, .5]]), unit('B', 8, 8, [[-4, -4, 4, 4, .5]])],
+              'nets': [net('N%d' % k, 0, 1) for k in range(4)], 'board': board()}
+        res = {'candidates': [{'pose': [[2, 2, 0], [8, 8, 0]], 'cost': 1.0, 'illegal': []}]}
+        ks = {}
+
+        def write(q, pose, k, n):
+            ks[n] = k
+            return 'b%d' % n
+        run = compact.run_loop(pr, (10, 10), lambda q, n: res, write, lambda b, n: [0] if ks[n] >= 1.25 else [3],
+                               s0=4.0, budget=1e9, clock=lambda: 0.0)
+        out = [t for t in run['steps'] if t.get('phase') == 'outline']
+        halo = [t for t in run['steps'] if t.get('phase') == 'halo']
+        best_halo = min((t for t in halo if t['passed']), key=lambda t: (t['k'], t['s']))
+        self.assertTrue(out)
+        self.assertTrue(all(t['k'] > 1.202 for t in out))
+        self.assertTrue(all(0.0 < t['s'] <= best_halo['s'] for t in out))
+        self.assertTrue(1.25 <= run['best']['k'] <= 1.25 * 1.03)
+
     def test_outline_phase_reports_a_fit_when_the_real_board_routes(self):
         pr = {'units': [unit('A', 2, 2, [[-2, -2, 2, 2, .5]]), unit('B', 8, 8, [[-2, -2, 2, 2, .5]])],
               'nets': [net('N%d' % k, 0, 1) for k in range(4)], 'board': board()}
