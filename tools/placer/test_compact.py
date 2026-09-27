@@ -53,6 +53,17 @@ class VirtualBoardTest(unittest.TestCase):
         need = (10 + 2.0) ** 2 / compact.HALO['fill']
         self.assertAlmostEqual(compact.board_scale(big), math.sqrt(need / 100.0))
 
+    def test_a_block_counts_its_border_once_not_its_parts_again(self):
+        u = unit('B', 5, 5, [[-3, -1, -1, 1, 1.0], [1, -1, 3, 1, 1.0], [-4, -2, 4, 2, 1.0]])
+        u['box'] = [1, 3, 9, 7]
+        pr = {'units': [u], 'nets': [], 'board': board(20, 20)}
+        need = (8 + 1.0) * (4 + 1.0) / compact.HALO['fill']
+        self.assertAlmostEqual(compact._raw_scale(pr), math.sqrt(need / 400.0))
+        # a rule area rect beyond the border adds its part outside the border
+        u['rects'].append([-4, 2, 4, 5, 1.0])
+        need += 8 * 3 / compact.HALO['fill']
+        self.assertAlmostEqual(compact._raw_scale(pr), math.sqrt(need / 400.0))
+
     def test_virtual_board_scales_outline_and_move_box_about_the_centre(self):
         pr = {'units': [], 'nets': [], 'board': board(10, 4), 'move_box': [2, 1, 4, 3]}
         q = compact.virtual(pr, 2.0)

@@ -44,8 +44,22 @@ def _area(poly):
     return abs(sum(a[0] * b[1] - b[0] * a[1] for a, b in zip(poly, poly[1:] + poly[:1]))) / 2
 
 
+def _unit_need(u):
+    """Area a unit takes with its spacing: a block counts its border box once (its parts are inside) plus the
+    part of any rect beyond the border (a rule area); a single part counts each rect."""
+    if not u.get('box'):
+        return sum((r[2] - r[0] + r[4]) * (r[3] - r[1] + r[4]) for r in u['rects'])
+    b = [u['box'][0] - u['x'], u['box'][1] - u['y'], u['box'][2] - u['x'], u['box'][3] - u['y']]
+    c = max([r[4] for r in u['rects']] + [0.0])
+    out = 0.0
+    for r in u['rects']:
+        inner = (max(0.0, min(r[2], b[2]) - max(r[0], b[0])) * max(0.0, min(r[3], b[3]) - max(r[1], b[1])))
+        out += (r[2] - r[0]) * (r[3] - r[1]) - inner
+    return (b[2] - b[0] + c) * (b[3] - b[1] + c) + out
+
+
 def _raw_scale(pr):
-    need = sum((r[2] - r[0] + r[4]) * (r[3] - r[1] + r[4]) for u in pr['units'] for r in u['rects'])
+    need = sum(_unit_need(u) for u in pr['units'])
     return math.sqrt(need / HALO['fill'] / _area(pr['board']['outline']))
 
 
