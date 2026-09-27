@@ -42,7 +42,7 @@ def _remote(board_dir, ins, results, cmd, cpus, log_path):
     return rc, open(log_path).read()
 
 
-def main(argv=None):
+def parser():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('prob')
     ap.add_argument('board')
@@ -65,7 +65,13 @@ def main(argv=None):
                     'leaves GND pads open when the GND plane is on an inner layer')
     ap.add_argument('--snapshots', metavar='DIR', help='after the run: viewer.html, frames.json, timelapse '
                     '(PNG frames, run.gif, run.mp4) and one routed render per step in DIR (scratch, not committed)')
-    a = ap.parse_args(argv)
+    ap.add_argument('--shrink', type=float, default=0.85, help='halo scale factor after a pass')
+    ap.add_argument('--tol', type=float, default=0.05, help='halo bisection stops at this relative gap')
+    return ap
+
+
+def main(argv=None):
+    a = parser().parse_args(argv)
     from placer import kicad_io
     pr = json.load(open(a.prob))
     os.makedirs(a.outdir, exist_ok=True)
@@ -117,7 +123,7 @@ def main(argv=None):
             return list(ex.map(one, range(a.routes)))
 
     run = compact.run_loop(pr, tuple(a.size), search, write, route, s0=a.s0, budget=a.budget, target=a.target,
-                           log=lambda s: print(s, flush=True))
+                           shrink=a.shrink, tol=a.tol, log=lambda s: print(s, flush=True))
     run['problem'] = pr
     run['size'] = list(a.size)
     json.dump(run, open(os.path.join(a.outdir, 'run.json'), 'w'))

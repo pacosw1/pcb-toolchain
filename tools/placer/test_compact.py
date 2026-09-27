@@ -229,6 +229,15 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(compact_cli.parse_unrouted('FR_RC 0\nUNROUTED 12 SUBSET 3 ERRORS 1\n'), 12)
         self.assertEqual(compact_cli.parse_unrouted('remote: exit 124\n'), compact_cli.NO_RESULT)
 
+    def test_the_schedule_shrink_and_tolerance_come_from_the_command_line(self):
+        from placer import compact_cli
+        a = compact_cli.parser().parse_args(['p.json', 'b.kicad_pcb', '--board-dir', 'd', '--outdir', 'o', '--size', '70',
+                                             '50', '--wheel', 'w.whl', '--tol', '0.2', '--shrink', '0.8'])
+        self.assertEqual((a.tol, a.shrink), (0.2, 0.8))
+        d = compact_cli.parser().parse_args(['p.json', 'b', '--board-dir', 'd', '--outdir', 'o', '--size', '1', '1',
+                                             '--wheel', 'w'])
+        self.assertEqual((d.tol, d.shrink), (0.05, 0.85))
+
     def test_route_job_adds_ground_pad_vias_only_when_asked(self):
         from placer import compact_cli
         self.assertEqual(compact_cli.route_cmd('B', False), ['bash', 'tools/placer/fr_job.sh', 'B'])
