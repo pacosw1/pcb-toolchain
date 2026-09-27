@@ -108,5 +108,50 @@ class VerdictTest(unittest.TestCase):
         self.assertIn('needs %.1f x %.1f mm' % (170.5 * 1.1, 86.5 * 1.1), v)
 
 
+class LoopTest(unittest.TestCase):
+    def problem(self):
+        return {'units': [unit('A', 2, 2, [[-.5, -.5, .5, .5, .5]]), unit('B', 8, 8, [[-.5, -.5, .5, .5, .5]])],
+                'nets': [net('N%d' % k, 0, 1) for k in range(4)], 'board': board()}
+
+    def fakes(self, routes_below, t_step=60.0):
+        calls = {'search': [], 'write': [], 'route': []}
+        now = [0.0]
+
+        def search(q, step):
+            calls['search'].append((step, q['units'][0]['rects'][0][4]))
+            now[0] += t_step
+            return {'candidates': [{'pose': [[2, 2, 0], [8, 8, 0]], 'cost': 1.0, 'illegal': []}],
+                    'history': [{'epoch': 1, 'cost': 1.0, 'pose': [[2, 2, 0], [8, 8, 0]], 'components': {}}]}
+
+        def write(q, pose, k, step):
+            calls['write'].append((step, k))
+            return 'board-%d' % step
+
+        def route(path, step):
+            s = calls['search'][step][1]  # the spacing the step used stands for s
+            calls['route'].append(path)
+            return [0, 3] if s >= routes_below else [4, 5]
+        return calls, search, write, route, (lambda: now[0])
+
+    def test_loop_shrinks_until_it_fails_then_bisects_and_reports(self):
+        calls, search, write, route, clock = self.fakes(routes_below=compact.halo(4, 2.0))
+        run = compact.run_loop(self.problem(), (10, 10), search, write, route, s0=4.0, budget=1e9, clock=clock)
+        ss = [round(t['s'], 6) for t in run['steps']]
+        self.assertEqual(ss[:3], [4.0, 3.4, 2.89])
+        self.assertTrue(all(t['passed'] == (t['s'] >= 2.0 - 1e-9) for t in run['steps']))
+        self.assertTrue(run['steps'][0]['passed'])
+        self.assertEqual(run['steps'][0]['unrouted'], 0)  # best of the router runs
+        self.assertEqual(run['steps'][0]['runs'], [0, 3])
+        self.assertIn('history', run['steps'][0])
+        self.assertLess(run['best']['s'], 2.2)
+        self.assertIn('verdict', run)
+
+    def test_loop_stops_at_the_time_budget(self):
+        calls, search, write, route, clock = self.fakes(routes_below=0.0, t_step=100.0)
+        run = compact.run_loop(self.problem(), (10, 10), search, write, route, s0=4.0, budget=250.0, clock=clock)
+        self.assertEqual(len(run['steps']), 3)  # starts at 0, 100, 200; not at 300
+        self.assertIn('budget', run['stop'])
+
+
 if __name__ == '__main__':
     unittest.main()

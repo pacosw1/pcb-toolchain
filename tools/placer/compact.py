@@ -115,3 +115,45 @@ def verdict(steps, size):
     t = min(ok, key=lambda t: t['k'])
     return ('needs %.1f x %.1f mm (board scale %.3f) at halo scale s = %.2f; it does not route on the real outline'
             % (size[0] * t['k'], size[1] * t['k'], t['k'], t['s']))
+
+
+def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, target=0, shrink=0.85, tol=0.05,
+             log=None):
+    """Easy-to-hard loop. Injected effects: search(problem, step) -> optimize() result;
+    write(problem, pose, k, step) -> board path; route(path, step) -> [unrouted per router run].
+    A step passes when the best router run leaves <= target unrouted. Stops when the schedule is done or
+    when `budget` seconds have passed before a step starts."""
+    import time
+    clock = clock or time.monotonic
+    t0 = clock()
+    sch = Schedule(s0, shrink, tol)
+    steps, stop = [], 'schedule done'
+    while not sch.done:
+        if clock() - t0 >= budget:
+            stop = 'time budget %.0f s' % budget
+            break
+        s, n = sch.s, len(steps)
+        q = with_halos(pr, s)
+        k = board_scale(q)
+        res = search(virtual(q, k), n)
+        c = res['candidates'][0]
+        step = {'s': s, 'k': k, 'cost': c['cost'], 'illegal': c['illegal'], 'history': res.get('history', []),
+                'pose': c['pose'], 'halo': [u['rects'][0][4] if u['rects'] else 0.0 for u in q['units']]}
+        if c['illegal']:
+            step.update(runs=[], unrouted=None, passed=False, board=None)
+        else:
+            step['board'] = write(q, c['pose'], k, n)
+            step['runs'] = route(step['board'], n)
+            step['unrouted'] = min(step['runs'])
+            step['passed'] = step['unrouted'] <= target
+        steps.append(step)
+        if log:
+            log('step %d s %.3f k %.3f cost %.1f illegal %d runs %s -> %s' % (
+                n, s, k, c['cost'], len(c['illegal']), step['runs'], 'PASS' if step['passed'] else 'FAIL'))
+        sch.report(step['passed'])
+    ok = [t for t in steps if t['passed']]
+    summary = [{kk: t[kk] for kk in ('s', 'k', 'unrouted', 'passed')} for t in steps]
+    for t in summary:
+        t['unrouted'] = -1 if t['unrouted'] is None else t['unrouted']
+    return {'steps': steps, 'best': min(ok, key=lambda t: (t['k'], t['s'])) if ok else None,
+            'verdict': verdict(summary, size), 'stop': stop}
