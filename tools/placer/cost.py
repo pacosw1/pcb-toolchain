@@ -226,7 +226,7 @@ def pair_penalty(a, b):
     return _pen(a[:, :4], a[:, 4], b[:, :4], b[:, 4])
 
 
-def _pen(A, ca, B, cb, ka=None, kb=None):
+def _pen(A, ca, B, cb, ka=None, kb=None, skip=None):
     g = np.maximum(ca[:, None], cb[None, :])
     if ka is not None and ka[1] is not None and kb[1] is not None:
         g = _domain_gap(g, ca, cb, ka, kb)
@@ -235,6 +235,8 @@ def _pen(A, ca, B, cb, ka=None, kb=None):
     a = np.clip(dx, 0, None) * np.clip(dy, 0, None)
     if ka is not None:
         a = a * ~(ka[0][:, None] & kb[0][None, :])  # keepout over keepout is legal
+    if skip is not None:
+        a = a * ~skip
     return float(a.sum())
 
 
@@ -246,9 +248,11 @@ def hard_clr(u):
     return h
 
 
-def _pen_hs(A, ca, ha, B, cb, hb, ka=None, kb=None):
-    """(hard overlap, soft spacing) of two rect sets: ca/cb = full gaps (D-040 halo), ha/hb = hard gaps."""
-    hard = _pen(A, ha, B, hb, ka, kb)
+def _pen_hs(A, ca, ha, B, cb, hb, ka=None, kb=None, sa=None, sb=None):
+    """(hard overlap, soft spacing) of two rect sets: ca/cb = full gaps (D-040 halo), ha/hb = hard gaps,
+    sa/sb = soft-only rects (a block border: DRC does not check it)."""
+    skip = None if sa is None or not (sa.any() or sb.any()) else sa[:, None] | sb[None, :]
+    hard = _pen(A, ha, B, hb, ka, kb, skip)
     return hard, _pen(A, ca, B, cb, ka, kb) - hard
 
 
@@ -265,6 +269,12 @@ def _domain_gap(g, ca, cb, ka, kb):
     g = np.where((xa | oa)[:, None] & (db[None, :] > 0), ca[:, None], g)
     g = np.where((da[:, None] > 0) & (db[None, :] < 0), sb[None, :], g)  # a hole rule (class -1): its gap
     return np.where((da[:, None] < 0) & (db[None, :] > 0), sa[:, None], g)
+
+
+def border_flags(u):
+    b = np.zeros(len(u['rects']), dtype=bool)
+    b[list(u.get('border', []))] = True
+    return b
 
 
 def class_table(pr):
@@ -393,7 +403,7 @@ def _overlaps(pr, pose):
             if us[i]['fixed'] and us[j]['fixed']:
                 continue
             a, b = _pen_hs(w[i][:, :4], w[i][:, 4], hard_clr(us[i]), w[j][:, :4], w[j][:, 4], hard_clr(us[j]),
-                           ko_flags(us[i], T), ko_flags(us[j], T))
+                           ko_flags(us[i], T), ko_flags(us[j], T), border_flags(us[i]), border_flags(us[j]))
             h, s = h + a, s + b
     return h, s
 
@@ -469,6 +479,7 @@ class Evaluator:
         self.clr = [np.array([rc[4] for rc in u['rects']], dtype=float) for u in us]
         self.ko = [ko_flags(u, class_table(pr)) for u in us]  # rect kinds
         self.hclr = [hard_clr(u) for u in us]
+        self.bd = [border_flags(u) for u in us]
         self.kos = [set(u.get('ko', [])) for u in us]
         self.lbox = [[(lr[:, 0].min(), lr[:, 1].min(), lr[:, 2].max(), lr[:, 3].max()) for lr in self.lrect[i]]
                      for i in range(self.n)]
@@ -551,7 +562,7 @@ class Evaluator:
     def _pen(self, i, j):
         """(hard, soft) of units i and j."""
         return _pen_hs(self._world(i), self.clr[i], self.hclr[i], self._world(j), self.clr[j], self.hclr[j],
-                       self.ko[i], self.ko[j])
+                       self.ko[i], self.ko[j], self.bd[i], self.bd[j])
 
     def _unit_pairs(self, i, skip):
         b = self.UB[i]

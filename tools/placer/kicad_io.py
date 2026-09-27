@@ -347,8 +347,10 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
         if free_box and not inside_box(ox, oy, free_box):
             fixed = True
         index[key] = len(out_units)
+        border = []
         if u['box']:  # block copper may leave the courtyards but stays inside the border
             rects.append((tuple(u['box']), 0.0))
+            border = [len(rects) - 1]
             if dom:
                 mech.append(len(rects) - 1)
         base = len(rects)
@@ -366,6 +368,8 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
             out_units[-1]['dom'] = [[base + k, c, g, nc] for k, c, g, nc in dom]
         if mech:
             out_units[-1]['mech'] = mech
+        if border:  # DRC does not check a block border: its overlap is a soft cost
+            out_units[-1]['border'] = border
         if not u['box']:  # pads meet kept copper; a block also moves its tracks, so its courtyards stay the test
             out_units[-1]['pad_rects'] = [
                 [round(mm(bb.GetX()) - ox, 6), round(mm(bb.GetY()) - oy, 6),

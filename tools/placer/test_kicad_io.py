@@ -574,6 +574,7 @@ class RoundTripTest(unittest.TestCase):
 
 
 RELAY4 = os.path.join(REPO, 'hardware-design', 'boards', 'RELAY-4', 'cad', 'RELAY-4', 'RELAY-4.kicad_pcb')
+IO6X6 = os.path.join(REPO, 'hardware-design', 'boards', 'IO-6X6', 'cad', 'IO-6X6', 'IO-6X6.kicad_pcb')
 
 
 @unittest.skipUnless(pcbnew and os.path.exists(RELAY4), 'needs pcbnew and the RELAY-4 board')
@@ -588,6 +589,13 @@ class KnownGoodGateTest(unittest.TestCase):
         ev = cost.Evaluator(self.pr, {})
         self.assertEqual([u['name'] for i, u in enumerate(self.pr['units'])
                           if not u['fixed'] and ev.legal_penalty(i) > 0], [])
+
+    def test_the_io6x6_original_is_legal(self):  # its block borders BLOCK2 and DO1-2 overlap: legal, not DRC
+        pr = kicad_io.read_problem(IO6X6)
+        ev = cost.Evaluator(pr, {})
+        self.assertEqual([u['name'] for i, u in enumerate(pr['units'])
+                          if not u['fixed'] and ev.legal_penalty(i) > 0], [])
+        self.assertEqual(len(pr['units'][[u['name'] for u in pr['units']].index('BLOCK2')]['border']), 1)
 
     def test_the_bench_b_v2_placement_that_broke_the_mains_rule_is_illegal(self):
         pose = [tuple(q) for q in json.load(open(os.path.join(HERE, 'testdata', 'relay4-bench-b-v2-P.json')))['pose']]

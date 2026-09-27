@@ -427,6 +427,33 @@ class DomainRectTest(unittest.TestCase):
         self.assertAlmostEqual(self.overlap([self.mains('K1', 10.0, 1), s]), 0.0)
 
 
+class BorderSoftTest(unittest.TestCase):
+    """A block border (u['border'], User.1) is not checked by KiCad DRC: border over border and border over a
+    foreign part are a soft cost. Courtyard over courtyard stays hard."""
+
+    def block(self, name, x):  # courtyard 2 x 2 mm inside a border 6 x 6 mm
+        u = unit(name, x, 10.0, [[-1, -1, 1, 1, 0.0], [-3, -3, 3, 3, 0.0]])
+        u['border'] = [1]
+        return u
+
+    def check(self, units, hard):
+        pr = problem(units, [], square_board(40.0))
+        c, ev = cost.components(pr, cost.initial_pose(pr), P), cost.Evaluator(pr, P)
+        for comp in (c, ev.components()):
+            (self.assertGreater if hard else self.assertAlmostEqual)(comp['overlap'], 0.0)
+            self.assertGreater(comp['spacing'], 0.0)
+        self.assertEqual(ev.legal_penalty(1) > 0, hard)
+
+    def test_border_over_border_is_soft(self):
+        self.check([self.block('A', 10.0), self.block('B', 14.0)], hard=False)
+
+    def test_border_over_a_foreign_part_is_soft(self):
+        self.check([self.block('A', 10.0), unit('R', 12.5, 10.0, [[-1, -1, 1, 1, 0.0]])], hard=False)
+
+    def test_courtyard_over_courtyard_stays_hard(self):
+        self.check([self.block('A', 10.0), unit('R', 11.5, 10.0, [[-1, -1, 1, 1, 0.0]])], hard=True)
+
+
 class ClassGapTableTest(unittest.TestCase):
     """pr['class_gaps'] = {'names', 'gaps'}: the gap between two domain classes (ids 1..n) from the .kicad_dru, for
     example the IO-6X6 barrier FIELD/FIELD_PWR to HOST/HOST_PWR 4 mm. A pad of such a class keeps only its net-class
