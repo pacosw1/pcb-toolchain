@@ -277,6 +277,38 @@ class MaxFlowTest(unittest.TestCase):
         self.assertEqual(pt.pair_capacity(edges, u, v, True)[0], 2.0)
 
 
+def net_(name, cls, *nodes):
+    """One (net ...) block of a kicad-cli kicadsexpr netlist. nodes: (pinfunction, pintype)."""
+    body = ''.join(f'\n\t\t\t(node\n\t\t\t\t(ref "U1")\n\t\t\t\t(pin "1")\n\t\t\t\t(pinfunction "{f}")\n\t\t\t\t(pintype "{t}")\n\t\t\t)'
+                   for f, t in nodes)
+    return f'\n\t\t(net\n\t\t\t(code "1")\n\t\t\t(name "{name}")\n\t\t\t(class "{cls}"){body}\n\t\t)'
+
+
+class SupplyCoverageTest(unittest.TestCase):
+    netlist = '(export\n\t(components)\n\t(nets' + ''.join([
+        net_('/SIG', 'Default', ('PA1_12', 'unspecified')),
+        net_('/A', 'Default', ('X_3', 'power_in')),              # power pin type
+        net_('/B', 'POWER_2A6', ('1_1', 'passive')),              # power net class
+        net_('/C', 'SELV', ('AVDD_11', 'unspecified')),           # supply pin name (bridge style NAME_NUMBER)
+        net_('/LDO/LDO_IN', 'SELV', ('IN_1', 'unspecified')),     # regulator input pin
+        net_('/RB_24V_IN', 'SELV', ('1_1', 'unspecified')),       # voltage in the net name
+        net_('FIELD_GND', 'POWER', ('GND_2', 'power_in')),        # ground: exempt by default
+        net_('unconnected-(U8-VP-Pad5)', 'Default', ('VP_5', 'unspecified')),
+    ]) + '\n\t)\n)'
+
+    def test_finds_supply_nets_by_pin_type_class_pin_name_or_net_name(self):
+        self.assertEqual(sorted(pt.supply_nets(self.netlist)), ['/A', '/B', '/C', '/LDO/LDO_IN', '/RB_24V_IN'])
+
+    def test_listed_and_exempt_nets_are_covered(self):
+        spec = {'nets': {'/A': {}, '/B': {}}, 'exempt': [{'net': '/C', 'reason': 'sense input only'}]}
+        self.assertEqual([n for n, _ in pt.uncovered_supplies(pt.supply_nets(self.netlist), spec)],
+                         ['/LDO/LDO_IN', '/RB_24V_IN'])
+
+    def test_exempt_needs_a_reason(self):
+        with self.assertRaises(ValueError):
+            pt.uncovered_supplies({'/C': 'pin AVDD'}, {'nets': {}, 'exempt': [{'net': '/C'}]})
+
+
 class WidenSelectTest(unittest.TestCase):
     T = [{'net': 'V5', 'layer': 'In2.Cu', 'width': 0.5, 'start': (0, 0), 'end': (10, 0)},
          {'net': 'V5', 'layer': 'F.Cu', 'width': 0.5, 'start': (0, 0), 'end': (0, 5)},

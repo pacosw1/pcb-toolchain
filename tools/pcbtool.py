@@ -21,7 +21,7 @@ Run with the KiCad bundled Python (it has pcbnew):
   $PY tools/pcbtool.py stitch BOARD NET [--r 1.0] [--planes P]  ground via within r of each via of NET (RP-001)
   $PY tools/pcbtool.py netcheck BOARD NET                     DRC on a temp copy: one total line + this net only
   $PY tools/pcbtool.py widths BOARD [--limit N]              tracks thinner than the net class width (current)
-  $PY tools/pcbtool.py paths  BOARD SPEC.json [--verbose]     widest copper path between power pads >= design current
+  $PY tools/pcbtool.py paths  BOARD SPEC.json [--verbose]     widest copper path between power pads >= design current; every supply net listed or exempt
   $PY tools/pcbtool.py render BOARD OUTDIR                    top + iso PNG
   $PY tools/pcbtool.py art    BOARD SPEC.json                 silkscreen art group (waves, circles, lines, texts)
   $PY tools/pcbtool.py colors BOARD OUTDIR [VARIANT ...]      JLC colour variant renders (board unchanged)
@@ -228,6 +228,43 @@ def spec_pairs(spec, parallel=False):
             flag = (bool(ch.get('parallel', n.get('parallel', False))),) if parallel else ()
             out += [(net, u, v, ch['amps'], *flag) for u, v in zip(ch['pads'], ch['pads'][1:])]
     return out
+
+
+# JLC/EasyEDA bridge symbols have pin type "unspecified", so the pin name and the net name also mark a supply.
+SUPPLY_PIN = re.compile(r'^([AD]?V(CC|DD|IN|BUS|BAT|P|S|SYS|OUT)\d*|\d+V\d+O?|IN|OUT)$')
+SUPPLY_NET = re.compile(r'(^|[_/+])(\d+V\d*[A-Z]?|[AD]?V(CC|DD|IN|BUS|BAT|SYS)[A-Z0-9]*)(_|$)')
+
+
+def supply_nets(netlist):
+    """{net: reason} for the supply nets of a kicad-cli kicadsexpr netlist: a power_in/power_out pin, a net class
+    with POWER or PWR in the name, a supply pin name (bridge style NAME_NUMBER) or a voltage/supply net name.
+    Ground nets and unconnected-(...) pad nets are not supplies."""
+    t = ' '.join(netlist.split())
+    out = {}
+    for body in t[t.index('(nets'):].split('(net (code')[1:]:
+        name = re.search(r'\(name "([^"]*)"', body).group(1)
+        leaf = name.rsplit('/', 1)[-1]
+        if 'GND' in leaf.upper() or name.startswith('unconnected-'):
+            continue
+        cls = (re.search(r'\(class "([^"]*)"', body) or [None, ''])[1]
+        types = set(re.findall(r'\(pintype "([a-z_]+)', body)) & {'power_in', 'power_out'}
+        pins = sorted({f.rsplit('_', 1)[0] for f in re.findall(r'\(pinfunction "([^"]*)"', body) if SUPPLY_PIN.match(f.rsplit('_', 1)[0])})
+        why = ([f'pin type {"/".join(sorted(types))}'] if types else []) + \
+              ([f'class {cls}'] if 'POWER' in cls or 'PWR' in cls else []) + \
+              ([f'pin {"/".join(pins)}'] if pins else []) + (['net name'] if SUPPLY_NET.search(leaf) else [])
+        if why:
+            out[name] = ', '.join(why)
+    return out
+
+
+def uncovered_supplies(supplies, spec):
+    """[(net, reason)] of the supply nets that are not in spec['nets'] and not in spec['exempt'] (each with a reason)."""
+    exempt = set()
+    for x in spec.get('exempt', []):
+        if not str(x.get('reason', '')).strip():
+            raise ValueError(f"exempt net {x.get('net')} has no reason")
+        exempt.add(x['net'])
+    return sorted((n, r) for n, r in supplies.items() if n not in spec['nets'] and n not in exempt)
 
 
 def select_tracks(tracks, net, width, layer=None, box=None):
@@ -490,7 +527,8 @@ BUDGET_KINDS = {  # command -> (kind(line), keep the last line)
     'netcheck': (lambda l: ('violations', None) if l[:4] in ('  E ', '  W ') else ('unconnected', None) if l.startswith('  U ')
                  else (None, None), False),
     'paths': (lambda l: ('pairs below current', l.split()[1]) if l.startswith('LOW ') else ('OK pairs', l.split()[1])
-              if l.startswith('OK ') else (None, None), True),
+              if l.startswith('OK ') else ('supply nets not covered', l.split()[1]) if l.startswith('MISSING ')
+              else (None, None), True),
     'viapads': (lambda l: ('vias in pads', l.split()[5]) if l.startswith('FAIL via in pad') and len(l.split()) > 5
                 else (None, None), True),
     'suggest': (lambda l: ('alternatives', None) if re.match(r'\d+\) ', l) else (None, None), False),
@@ -1401,7 +1439,24 @@ def cmd_paths(a):
         thin = sorted({e[3] for e in edges if e[3] in path and e[2] < need})
         print(f'LOW {net} {u}->{v}: {amps:.2f} A < {need} A; {len(thin)} items under: ' + '; '.join(thin[:a.limit]))
     print(f'{bad} power-path pairs below the design current')
-    sys.exit(1 if bad else 0)
+    miss = uncovered_supplies(supply_nets(sch_netlist(a.board)), spec)
+    for net, why in miss:
+        print(f'MISSING {net} ({why}): supply net not in the spec nets or exempt list')
+    print(f'{len(miss)} supply nets not covered')
+    sys.exit(1 if bad or miss else 0)
+
+
+def sch_netlist(board):
+    """kicadsexpr netlist text of the .kicad_sch next to board (kicad-cli). A failed export stops the gate."""
+    import tempfile
+    sch = os.path.splitext(board)[0] + '.kicad_sch'
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, 'n.net')
+        r = subprocess.run([KICAD_CLI, 'sch', 'export', 'netlist', '--format', 'kicadsexpr', '-o', out, sch],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, check=False)
+        if r.returncode or not os.path.exists(out):
+            sys.exit(f'netlist export of {sch} failed (exit {r.returncode}): {r.stderr.strip()[:200]}')
+        return open(out).read()
 
 
 def cmd_drc(a):
