@@ -5,7 +5,7 @@ read_problem(board) -> problem dict (see cost.py)
   whose anchor is inside it (the User.1 border and label move with it); else one footprint.
   Origin: the centre of the block border, else the centre of the courtyard boxes.
   Fixed: locked footprints, mounting holes (ref H<n> or a MountingHole footprint), connectors
-  (J/P/CN) whose courtyard is within edge_dist of the outline, parts on B.Cu, refs in `fix`
+  (J/P/CN) whose courtyard is within edge_dist of the outline (not wholly outside it: staged), parts on B.Cu, refs in `fix`
   (fnmatch), and units whose origin is outside `free_box`. A unit with one fixed part is fixed.
   Rects: F.CrtYd box per footprint (else pads + 0.25 mm); spacing class 1.0 mm for IC and
   connector refs (U, J, P, CN, K, SW, Y, X), 0.5 mm for the rest (D-040). A block also has its
@@ -299,7 +299,8 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
             if ref_prefix(r) in ('J', 'P', 'CN'):
                 g = edge_dist
                 corners = [(rc[0] - g, rc[1] - g), (rc[2] + g, rc[1] - g), (rc[2] + g, rc[3] + g), (rc[0] - g, rc[3] + g)]
-                if not all(cost.point_in_poly(_a(x), _a(y), outline)[0] for x, y in corners):
+                inside = sum(1 for x, y in corners if cost.point_in_poly(_a(x), _a(y), outline)[0])
+                if 0 < inside < 4:  # at the edge; wholly outside = staged for placement, movable
                     fixed = True
         if u['box']:
             b = u['box']

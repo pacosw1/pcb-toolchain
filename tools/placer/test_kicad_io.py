@@ -44,6 +44,14 @@ class RoundTripTest(unittest.TestCase):
     def unit(self, pr, ref):
         return next(i for i, u in enumerate(pr['units']) if ref in u['refs'])
 
+    def test_a_connector_staged_wholly_outside_the_outline_is_movable(self):
+        b = pcbnew.LoadBoard(self.board)
+        j = b.FindFootprintByReference('J1')
+        j.Move(pcbnew.VECTOR2I(0, int(100e6)))
+        pcbnew.SaveBoard(self.board, b)
+        pr = kicad_io.read_problem(self.board)
+        self.assertFalse(pr['units'][self.unit(pr, 'J1')]['fixed'])
+
     def test_reader_units_fixed_parts_and_nets(self):
         pr = kicad_io.read_problem(self.board)
         refs = sorted(r for u in pr['units'] for r in u['refs'])
