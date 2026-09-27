@@ -333,9 +333,23 @@ def world_pads(u, pose_u):
     return [[a + x, b + y, c + x, d + y] for rc in u['pad_rects'] for (a, b, c, d) in [rot_rect(rc, r)]]
 
 
+def edge_miss(u, pose_u, board, box=None):
+    """Edge anchor: u['edge'] = {'at': local point, 'sides': subset of 'LRTB', 'tol'} must lie on one of the
+    sides (inner line = outline box minus edge_clearance; T = smaller y). Returns the miss in mm beyond tol."""
+    e = u.get('edge')
+    if not e:
+        return 0.0
+    x0, y0, x1, y1 = box or outline_box(board)
+    c = board.get('edge_clearance', 0.0)
+    ax, ay = rot_pt(e['at'][0], e['at'][1], pose_u[2])
+    ax, ay = ax + pose_u[0], ay + pose_u[1]
+    d = {'L': abs(ax - x0 - c), 'R': abs(x1 - c - ax), 'T': abs(ay - y0 - c), 'B': abs(y1 - c - ay)}
+    return max(0.0, min(d[s] for s in e['sides']) - e.get('tol', 0.5))
+
+
 def forbidden(pr, pose, mask, i):
     u = pr['units'][i]
-    return mask.unit_area(world_rects(u, pose[i]), world_pads(u, pose[i]))
+    return mask.unit_area(world_rects(u, pose[i]), world_pads(u, pose[i])) + edge_miss(u, pose[i], pr['board'])
 
 
 def components(pr, pose, params):
@@ -383,6 +397,7 @@ class Evaluator:
                      [np.array([rot_rect(rc, r) for rc in u['pad_rects']], dtype=float).reshape(-1, 4) for r in range(4)]
                      for u in us]
         self.mask = mask or Mask(pr['board'], p['mask_cell'], p['gap'])
+        self.units, self.board, self.obox = us, pr['board'], outline_box(pr['board'])
         self.forb = [0.0 if self.fixed[i] else self._forb(i) for i in range(self.n)]
         # nets
         self.nw = [float(n['weight']) for n in pr['nets']]
@@ -436,7 +451,8 @@ class Evaluator:
     def _forb(self, i):
         lp = self.lpad[i]
         pads = None if lp is None else (lp[self.R[i]] + (self.X[i], self.Y[i], self.X[i], self.Y[i])).tolist()
-        return self.mask.unit_area(self._world(i).tolist(), pads)
+        return (self.mask.unit_area(self._world(i).tolist(), pads)
+                + edge_miss(self.units[i], (self.X[i], self.Y[i], self.R[i]), self.board, self.obox))
 
     def _pen(self, i, j):
         return _pen(self._world(i), self.clr[i], self._world(j), self.clr[j])
@@ -525,7 +541,8 @@ class Evaluator:
     def legal_penalty(self, i):
         """Spacing overlap + edge/keepout area (0 = legal). Kept copper is a cost only: the writer rips up
         the copper that a moved pad lands on."""
-        return self._unit_overlap(i, set()) + self.mask.edge_area(self._world(i).tolist())
+        return (self._unit_overlap(i, set()) + self.mask.edge_area(self._world(i).tolist())
+                + edge_miss(self.units[i], (self.X[i], self.Y[i], self.R[i]), self.board, self.obox))
 
     def legal_penalty_at(self, i, x, y, r):
         old = (self.X[i], self.Y[i], self.R[i])

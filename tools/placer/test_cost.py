@@ -285,5 +285,33 @@ class EvaluatorTest(unittest.TestCase):
             ev.propose([(0, 1.0, 1.0, 0)])
 
 
+class EdgeAnchorTest(unittest.TestCase):
+    """A unit with 'edge' {'at': local point, 'sides': 'LRTB' subset, 'tol'} must have that point on one of
+    the sides (inner edge line = outline box minus edge_clearance); the miss in mm counts as forbidden area."""
+
+    def pr(self, x, sides='L'):
+        u = unit('J', x, 10.0, [[-1, -1, 1, 1, 0.0]])
+        u['edge'] = {'at': [-1.0, 0.0], 'sides': sides, 'tol': 0.5}
+        return problem([u], [], square_board(20.0, edge=1.0))
+
+    def test_anchor_on_an_allowed_side_is_free_and_a_miss_costs_its_distance(self):
+        self.assertAlmostEqual(cost.components(self.pr(2.0), [(2.0, 10.0, 0)], P)['oob'], 0.0)
+        self.assertAlmostEqual(cost.components(self.pr(5.0), [(5.0, 10.0, 0)], P)['oob'], 2.5)
+
+    def test_turned_unit_moves_its_anchor(self):
+        # r = 2 puts the anchor on the right of the unit: at x = 17 it touches the right line x = 19 ... 18
+        self.assertAlmostEqual(cost.components(self.pr(18.0, 'R'), [(18.0, 10.0, 2)], P)['oob'], 0.0)
+        self.assertAlmostEqual(cost.components(self.pr(18.0, 'L'), [(18.0, 10.0, 2)], P)['oob'], 17.5)
+
+    def test_evaluator_and_legality_agree_with_the_full_cost(self):
+        pr = self.pr(5.0)
+        ev = cost.Evaluator(pr, P)
+        self.assertAlmostEqual(ev.components()['oob'], 2.5)
+        self.assertAlmostEqual(ev.legal_penalty(0), 2.5)
+        self.assertAlmostEqual(ev.legal_penalty_at(0, 2.0, 10.0, 0), 0.0)
+        d = ev.propose([(0, 2.0, 10.0, 0)])
+        self.assertAlmostEqual(d, -2.5)
+
+
 if __name__ == '__main__':
     unittest.main()

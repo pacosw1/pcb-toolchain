@@ -28,7 +28,8 @@ def cmd_read(a):
     pr = kicad_io.read_problem(a.board, fix=a.fix, skip=[x for x in a.skip_net.split(',') if x], edge_dist=a.edge_dist,
                                keepout_layers=a.keepout_layer, free_box=a.free_box,
                                region_refs=a.region_ref, region_weight=a.region_weight, region_box=a.region_box,
-                               tie=a.tie, rigid_nets=[x for x in a.rigid_net.split(',') if x], decap_tie=a.decap_tie)
+                               tie=a.tie, rigid_nets=[x for x in a.rigid_net.split(',') if x], decap_tie=a.decap_tie,
+                               keepout_zones=a.keepout_zone, edges=parse_edges(a.edge))
     json.dump(pr, open(a.o, 'w'))
     mov = [u for u in pr['units'] if not u['fixed']]
     print('units %d (movable %d, blocks %d), nets %d, keepouts %d' % (
@@ -37,6 +38,18 @@ def cmd_read(a):
     far = [d for d in pr['decaps'] if d[2] > 1.0]
     print('decaps %d tied, %d over 1.0 mm (D-040): %s' % (len(pr['decaps']), len(far),
                                                         ' '.join('%s-%s %.2f' % tuple(d) for d in far)))
+
+
+def parse_edges(items):
+    """['J1=TB:S', ...] -> {'J1': ('TB', 'S')}: the S side of the J1 courtyard (as placed now) on the T or B edge."""
+    out = {}
+    for it in items:
+        ref, v = it.split('=', 1)
+        sides, side = v.split(':')
+        if not sides or set(sides) - set('LRTB') or side not in ('N', 'S', 'E', 'W'):
+            raise SystemExit('bad --edge %s: use REF=<sides from LRTB>:<N|S|E|W>' % it)
+        out[ref] = (sides, side)
+    return out
 
 
 def parse_params(items):
@@ -147,6 +160,9 @@ def main(argv=None):
     r.add_argument("--rigid-net", default='*SW*', help="comma list (use '='): parts on these nets form one rigid unit")
     r.add_argument("--decap-tie", type=float, default=3.0,
                    help="join a GND decoupling cap to the IC pin of its net within this pad gap (mm); >1.0 mm is reported")
+    r.add_argument('--keepout-zone', nargs='*', default=[], help='rule area names (fnmatch) that are keepouts')
+    r.add_argument('--edge', nargs='*', default=[], metavar='REF=SIDES:SIDE',
+                   help='edge anchor: side N/S/E/W of the REF courtyard (as placed now) on a board edge in LRTB')
     r.set_defaults(f=cmd_read)
     r = sub.add_parser('run')
     r.add_argument('prob')

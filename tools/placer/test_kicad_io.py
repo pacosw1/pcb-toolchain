@@ -345,6 +345,65 @@ class RoundTripTest(unittest.TestCase):
                 if pad.GetNetname() != tr.GetNetname() and pad.IsOnLayer(tr.GetLayer()):
                     self.assertFalse(kicad_io.collide(tr, pad, 0), 'copper of %s under U1' % tr.GetNetname())
 
+    def _block_u1(self, b):
+        ic = kicad_io.fp_rect(b.FindFootprintByReference('U1'))
+        other = min((f for f in b.GetFootprints() if f.GetReference() not in ('U1', 'J1', 'J2')),
+                    key=lambda f: max(ic[0] - kicad_io.fp_rect(f)[2], kicad_io.fp_rect(f)[0] - ic[2],
+                                      ic[1] - kicad_io.fp_rect(f)[3], kicad_io.fp_rect(f)[1] - ic[3]))
+        oc = kicad_io.fp_rect(other)
+        box = (min(ic[0], oc[0]) - .5, min(ic[1], oc[1]) - .5, max(ic[2], oc[2]) + .5, max(ic[3], oc[3]) + .5)
+        rect = pcbnew.PCB_SHAPE(b)
+        rect.SetShape(pcbnew.SHAPE_T_RECT)
+        rect.SetLayer(b.GetLayerID('User.1'))
+        rect.SetStart(pcbnew.VECTOR2I(int(box[0] * 1e6), int(box[1] * 1e6)))
+        rect.SetEnd(pcbnew.VECTOR2I(int(box[2] * 1e6), int(box[3] * 1e6)))
+        b.Add(rect)
+        return ic, box
+
+    def _rule_area(self, b, name, r):
+        z = pcbnew.ZONE(b)
+        z.SetIsRuleArea(True)
+        z.SetDoNotAllowTracks(True)
+        z.SetDoNotAllowFootprints(False)
+        z.SetZoneName(name)
+        z.SetLayer(pcbnew.F_Cu)
+        o = z.Outline()
+        o.NewOutline()
+        for x, y in ((r[0], r[1]), (r[2], r[1]), (r[2], r[3]), (r[0], r[3])):
+            o.Append(pcbnew.VECTOR2I(int(x * 1e6), int(y * 1e6)))
+        b.Add(z)
+        return z
+
+    def test_edge_anchor_and_block_rule_area_clipped_at_the_anchor_line_move_with_the_block(self):
+        b = pcbnew.LoadBoard(self.board)
+        ic, box = self._block_u1(b)
+        z = self._rule_area(b, 'ANT', (ic[0] - 3, ic[3] - 1, ic[2] + 3, ic[3] + 5))  # beyond the S side
+        zid = z.m_Uuid.AsString()
+        pcbnew.SaveBoard(self.board, b)
+        pr = kicad_io.read_problem(self.board, edges={'U1': ('LR', 'S')})
+        i = self.unit(pr, 'U1')
+        u = pr['units'][i]
+        self.assertEqual(u['edge']['sides'], 'LR')
+        self.assertTrue(near(u['edge']['at'], ((ic[0] + ic[2]) / 2 - u['x'], ic[3] - u['y']), 0.01))
+        self.assertEqual(u['zones'], [zid])
+        self.assertIn([round(v, 2) for v in (ic[0] - 3 - u['x'], ic[3] - 1 - u['y'], ic[2] + 3 - u['x'],
+                                             ic[3] - u['y'], 0.0)],
+                      [[round(v, 2) for v in r] for r in u['rects']])
+        pose = cost.initial_pose(pr)
+        pose[i] = (pose[i][0] - 4.0, pose[i][1] + 1.0, 0)
+        out = os.path.join(self.tmp, 'b', 'out.kicad_pcb')
+        kicad_io.write_board(self.board, pr, pose, out)
+        z1 = next(q for q in pcbnew.LoadBoard(out).Zones() if q.m_Uuid.AsString() == zid)
+        bb = z1.GetBoundingBox()
+        self.assertTrue(near((bb.GetX() / 1e6, bb.GetY() / 1e6), (ic[0] - 3 - 4.0, ic[3] - 1 + 1.0), 0.01))
+
+    def test_named_rule_areas_are_board_keepouts(self):
+        b = pcbnew.LoadBoard(self.board)
+        self._rule_area(b, 'ZZ9_KEEPOUT', (0, 0, 2, 2))
+        pcbnew.SaveBoard(self.board, b)
+        self.assertEqual(len(kicad_io.read_problem(self.board, keepout_zones=['ZZ*'])['board']['keepouts'])
+                         - len(kicad_io.read_problem(self.board)['board']['keepouts']), 1)
+
     def test_block_border_moves_with_its_parts(self):
         # Border on User.1 around U1 and its nearest part: one rigid unit (with any other part inside).
         b = pcbnew.LoadBoard(self.board)
