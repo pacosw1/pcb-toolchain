@@ -53,7 +53,7 @@ class RoundTripTest(unittest.TestCase):
         pr = kicad_io.read_problem(self.board)
         self.assertFalse(pr['units'][self.unit(pr, 'J1')]['fixed'])
 
-    def test_spacing_class_grows_to_the_net_class_clearance_of_the_part_pads(self):
+    def test_a_pad_of_a_net_class_with_a_larger_clearance_gets_its_own_spacing_rect(self):
         import json as js
         net = next(p.GetNetname() for p in pcbnew.LoadBoard(self.board).FindFootprintByReference('U1').Pads()
                    if p.GetNetname() and p.GetNetClassName() == 'Default')
@@ -66,7 +66,14 @@ class RoundTripTest(unittest.TestCase):
             {'netclass': 'HV', 'pattern': net}]
         js.dump(d, open(pro, 'w'))
         pr = kicad_io.read_problem(os.path.join(self.tmp, 'c', 'PWR-24V-5V.kicad_pcb'))
-        self.assertEqual(pr['units'][self.unit(pr, 'U1')]['rects'][0][4], 2.5)
+        u = pr['units'][self.unit(pr, 'U1')]
+        self.assertEqual(u['rects'][0][4], 1.0)  # the courtyard keeps the D-040 class
+        pads = [p for p in pcbnew.LoadBoard(self.board).FindFootprintByReference('U1').Pads() if p.GetNetname() == net]
+        hv = [[round(v, 2) for v in r] for r in u['rects'] if r[4] == 2.5]
+        self.assertEqual(len(hv), len(pads))  # the mains rule is pad to copper, not courtyard to courtyard
+        bb = pads[0].GetBoundingBox()
+        self.assertIn([round(v, 2) for v in (bb.GetX() / 1e6 - u['x'], bb.GetY() / 1e6 - u['y'],
+                                             bb.GetRight() / 1e6 - u['x'], bb.GetBottom() / 1e6 - u['y'], 2.5)], hv)
 
     def test_reader_units_fixed_parts_and_nets(self):
         pr = kicad_io.read_problem(self.board)

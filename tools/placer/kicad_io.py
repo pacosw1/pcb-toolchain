@@ -291,14 +291,18 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
     for key, u in units.items():
         if not u['refs']:
             continue
-        rects, fixed = [], False
+        rects, hv, fixed = [], [], False
         for r in u['refs']:
             fp = by_ref[r]
             rc = fp_rect(fp)
             clr = 0.0 if is_test_point(r) else spacing[1] if ref_prefix(r) in IC_PREFIX else spacing[0]
-            if clr:  # a net class with a larger clearance (mains) widens the spacing of the part
-                clr = max([clr] + [mm(p.GetOwnClearance(pcbnew.F_Cu)) for p in fp.Pads() if p.GetNetname()])
             rects.append((rc, clr))
+            if clr:  # a pad of a net class with a larger clearance (mains) gets its own spacing rect
+                for p in fp.Pads():
+                    pc = mm(p.GetOwnClearance(pcbnew.F_Cu)) if p.GetNetname() else 0.0
+                    if pc > clr:
+                        bb = p.GetBoundingBox()
+                        hv.append(((mm(bb.GetX()), mm(bb.GetY()), mm(bb.GetRight()), mm(bb.GetBottom())), pc))
             if (fp.IsLocked() or is_mounting_hole(fp) or fp.GetLayer() != pcbnew.F_Cu
                     or any(fnmatch.fnmatchcase(r, p) for p in fix_pat)):
                 fixed = True
@@ -319,6 +323,7 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
         index[key] = len(out_units)
         if u['box']:  # block copper may leave the courtyards but stays inside the border
             rects.append((tuple(u['box']), 0.0))
+        rects += hv
         pads = [[round(mm(q.x) - ox, 6), round(mm(q.y) - oy, 6)]
                 for r in u['refs'] if not is_test_point(r) for q in (p.GetPosition() for p in by_ref[r].Pads())]
         out_units.append({'name': u['name'], 'refs': sorted(u['refs']), 'fixed': fixed, 'x': ox, 'y': oy,
