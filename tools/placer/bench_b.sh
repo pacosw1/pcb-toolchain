@@ -7,6 +7,7 @@
 # Steps: S = legal random placement (search SCR with w_wl=0 w_cong=0); P = placer search from SCR;
 # both written against PROB (the writer moves from the original places); then RUNS (default 5)
 # Freerouting jobs each for O, S and P. Prints one line per board: UNROUTED / SUBSET per run.
+# GNDVIAS=1 GNDNET=FIELD_GND: plane vias for the pads of that net before each Freerouting run.
 set -eu
 BD=$1; N=$2; OB=$3; PROB=$4; SCR=$5; NETS=$6; OUT=$7; RUNS=${8:-5}
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
@@ -31,7 +32,8 @@ route() {  # $1 board tag, $2 run
   local d=$OUT/$1/cand0
   REMOTE_MEM=8g REMOTE_CPUS=4 tools/remote.sh "$BD" --in "$d/$N.kicad_pcb" --in "$d/$N.kicad_pro" \
     --in "$d/$N.kicad_dru" --in "$NETS" --results "$OUT/$1-r$2" -- \
-    bash tools/placer/fr_job.sh "$N" "$(basename "$NETS")" > "$OUT/$1-r$2.log" 2>&1 || true
+    env GNDVIAS="${GNDVIAS:-}" GNDNET="${GNDNET:-GND}" bash tools/placer/fr_job.sh "$N" "$(basename "$NETS")" \
+    > "$OUT/$1-r$2.log" 2>&1 || true
 }
 for t in O S P; do for r in $(seq 1 "$RUNS"); do route $t $r & done; wait; done  # 5 jobs x 4 CPUs at a time
 for t in O S P; do
