@@ -11,7 +11,7 @@
 #    The Mac board files are never written. Final gates stay on the Mac.
 # The exit code is the exit code of the command; a transport error also gives non-zero.
 #
-# Env: REMOTE_HOST (root@100.64.0.2), REMOTE_CPUS (24), REMOTE_MEM (32g), REMOTE_TIMEOUT (s, 3600),
+# Env: REMOTE_HOST (root@100.64.0.2), REMOTE_CPUS (24), REMOTE_MEM (32g), REMOTE_TIMEOUT (s, 600; exit 124 = timed out: fix placement, do not wait longer),
 #      REMOTE_KEEP=1 keeps the remote job folder after success (a failed job folder is always kept).
 # Image: tools/remote-route.Dockerfile, built on the box in /srv/iot-lab-route/image.
 set -euo pipefail
@@ -62,7 +62,7 @@ CMD=$(printf '%q ' "$@")
 set +e
 $SSH "$HOST" "chown -R 1000:1000 $RDIR && docker run --rm --name iot-lab-route-$JOB \
   --cpus ${REMOTE_CPUS:-24} --memory ${REMOTE_MEM:-32g} -v $RDIR:/job -w /job -e TMPDIR=/job/out/tmp \
-  $IMAGE bash -c 'mkdir -p out/tmp && timeout -k 10 ${REMOTE_TIMEOUT:-3600} \"\$@\" 2>&1 | tee out/job.log; exit \${PIPESTATUS[0]}' _ $CMD"
+  $IMAGE bash -c 'mkdir -p out/tmp && timeout -k 10 ${REMOTE_TIMEOUT:-600} \"\$@\" 2>&1 | tee out/job.log; exit \${PIPESTATUS[0]}' _ $CMD"
 RC=$?
 rsync -a "$HOST:$RDIR/out/" "$RESULTS/"
 SYNC=$?
