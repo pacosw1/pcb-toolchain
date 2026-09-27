@@ -43,6 +43,7 @@ def main():
     w = MM(a.width)
 
     others = []  # (shape, layer set) of other-net copper
+    own_smd = []
     holes = []
     for fp in b.GetFootprints():
         for p in fp.Pads():
@@ -50,6 +51,8 @@ def main():
                 holes.append((p.GetPosition(), p.GetDrillSize().x // 2))
             if p.GetNetCode() != net.GetNetCode():
                 others.append((p, None))
+            elif p.GetAttribute() == pcbnew.PAD_ATTRIB_SMD:
+                own_smd.append(p)  # no via in an SMD pad (pcbtool.py viapads gate)
     vias = []
     for t in b.GetTracks():
         if t.GetClass() == 'PCB_VIA':
@@ -82,6 +85,9 @@ def main():
                     return False
                 if seg is not None and layer == pcbnew.F_Cu and item.GetEffectiveShape(layer).Collide(seg, w // 2 + clr):
                     return False
+        for p in own_smd:
+            if p.GetEffectiveShape(pcbnew.F_Cu).Collide(pt, rad):
+                return False
         for hp, hr in holes:
             if math.hypot(hp.x - pt.x, hp.y - pt.y) < hr + drill // 2 + MM(0.25):
                 return False
