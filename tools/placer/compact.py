@@ -106,6 +106,9 @@ def verdict(steps, size):
     ok = [t for t in steps if t['passed']]
     if not ok:
         t = steps[0]
+        if t['unrouted'] < 0:
+            return ('no legal placement at the largest halo scale s = %.2f (board scale %.2f): lower --s0 or give '
+                    'the search more steps' % (t['s'], t['k']))
         return ('does not route fully even at the largest halo scale s = %.2f (unrouted %d): the cause is '
                 'pin order or layer rules, not placement' % (t['s'], t['unrouted']))
     real = [t for t in ok if t['k'] <= 1.0 + 1e-9]
@@ -117,8 +120,11 @@ def verdict(steps, size):
             % (size[0] * t['k'], size[1] * t['k'], t['k'], t['s']))
 
 
+GROW, TRIES = 1.15, 3  # an illegal search result: same s again on a 15 % larger virtual board, up to 3 tries
+
+
 def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, target=0, shrink=0.85, tol=0.05,
-             log=None):
+             log=None, s_min=0.05):
     """Easy-to-hard loop. Injected effects: search(problem, step) -> optimize() result;
     write(problem, pose, k, step) -> board path; route(path, step) -> [unrouted per router run].
     A step passes when the best router run leaves <= target unrouted. Stops when the schedule is done or
@@ -126,7 +132,7 @@ def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, 
     import time
     clock = clock or time.monotonic
     t0 = clock()
-    sch = Schedule(s0, shrink, tol)
+    sch = Schedule(s0, shrink, tol, s_min)
     steps, stop = [], 'schedule done'
     while not sch.done:
         if clock() - t0 >= budget:
@@ -135,9 +141,13 @@ def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, 
         s, n = sch.s, len(steps)
         q = with_halos(pr, s)
         k = board_scale(q)
-        res = search(virtual(q, k), n)
-        c = res['candidates'][0]
-        step = {'s': s, 'k': k, 'cost': c['cost'], 'illegal': c['illegal'], 'history': res.get('history', []),
+        for tries in range(1, TRIES + 1):
+            res = search(virtual(q, k), n)
+            c = res['candidates'][0]
+            if not c['illegal'] or tries == TRIES or clock() - t0 >= budget:
+                break
+            k *= GROW
+        step = {'s': s, 'k': k, 'tries': tries, 'cost': c['cost'], 'illegal': c['illegal'], 'history': res.get('history', []),
                 'pose': c['pose'], 'halo': [u['rects'][0][4] if u['rects'] else 0.0 for u in q['units']]}
         if c['illegal']:
             step.update(runs=[], unrouted=None, passed=False, board=None)

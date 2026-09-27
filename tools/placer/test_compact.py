@@ -98,6 +98,8 @@ class VerdictTest(unittest.TestCase):
         self.assertIn('no step', v)
         v = compact.verdict([{'s': 4.0, 'k': 1.3, 'unrouted': 12, 'passed': False}], size)
         self.assertIn('pin order', v)
+        v = compact.verdict([{'s': 4.0, 'k': 1.3, 'unrouted': -1, 'passed': False}], size)
+        self.assertIn('no legal placement', v)
         v = compact.verdict([{'s': 4.0, 'k': 1.3, 'unrouted': 0, 'passed': True},
                              {'s': 3.0, 'k': 1.0, 'unrouted': 0, 'passed': True}], size)
         self.assertIn('fits in 170.5 x 86.5 mm', v)
@@ -145,6 +147,22 @@ class LoopTest(unittest.TestCase):
         self.assertIn('history', run['steps'][0])
         self.assertLess(run['best']['s'], 2.2)
         self.assertIn('verdict', run)
+
+    def test_an_illegal_search_retries_the_same_scale_on_a_larger_virtual_board(self):
+        seen = []
+
+        def search(q, n):
+            xs = [p[0] for p in q['board']['outline']]
+            seen.append(max(xs) - min(xs))
+            ok = seen[-1] > 10 * 1.3
+            return {'candidates': [{'pose': [[2, 2, 0], [8, 8, 0]], 'cost': 1.0, 'illegal': [] if ok else ['A']}]}
+        run = compact.run_loop(self.problem(), (10, 10), search, lambda q, p, k, n: 'b', lambda b, n: [0],
+                               s0=0.1, budget=1e9, clock=lambda: 0.0, s_min=0.09)
+        self.assertEqual([round(w, 3) for w in seen], [10.0, 11.5, 13.225])
+        t = run['steps'][0]
+        self.assertTrue(t['passed'])
+        self.assertAlmostEqual(t['k'], 1.3225)
+        self.assertEqual(t['tries'], 3)
 
     def test_loop_stops_at_the_time_budget(self):
         calls, search, write, route, clock = self.fakes(routes_below=0.0, t_step=100.0)
