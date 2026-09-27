@@ -401,6 +401,16 @@ class Evaluator:
         """Spacing overlap + forbidden area of one unit (0 = legal)."""
         return self._unit_overlap(i, set()) + self.forb[i]
 
+    def penalty_at(self, i, x, y, r):
+        """unit_penalty(i) with unit i at (x, y, r); the state does not change."""
+        old = (self.X[i], self.Y[i], self.R[i])
+        self.X[i], self.Y[i], self.R[i] = x, y, r % 4
+        self._set_ub(i)
+        pen = self._unit_overlap(i, set()) + self._forb(i)
+        self.X[i], self.Y[i], self.R[i] = old
+        self._set_ub(i)
+        return pen
+
     def propose(self, moves):
         if self.pending is not None:
             raise RuntimeError('propose() before commit()/revert()')
@@ -449,6 +459,7 @@ class Evaluator:
         d = [dwl, dcong, ov1 - ov0, fb1 - fb0]
         delta = self._weighted(d)
         self.pending = (old_pose, old_forb, old_nets, saved, list(self.comp), self.cost)
+        self.last_old = [(i, x, y, r) for i, x, y, r in old_pose]
         for a in range(4):
             self.comp[a] += d[a]
         self.cost += delta
