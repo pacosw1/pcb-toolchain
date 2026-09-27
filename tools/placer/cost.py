@@ -14,7 +14,8 @@ Problem (a dict, JSON-able; tools/placer/kicad_io.py writes it from a board):
 Pose: [(x, y, r), ...] per unit.
 
 Cost = w_wl * sum(weight * HPWL) + w_cong * RUDY overflow + w_ov * spacing overlap + w_oob * forbidden area.
-RUDY (Spindler, DATE 2007): each net spreads its HPWL evenly over the cells of its box.
+RUDY (Spindler, DATE 2007): each net spreads its HPWL evenly over the cells of its box. Pin RUDY:
+each pad (unit['pads'], local points) adds pin_demand mm of wire to its cell (pin escape and blockage).
 Capacity per cell = cell area * layers / pitch; overflow = sum of (demand - limit * capacity) above the limit.
 Spacing overlap of two courtyard boxes with classes ca, cb: g = max(ca, cb), penalty = the area of
 the intersection of both boxes grown by g / 2 (0 when the gap is g or more). Boxes of the same unit
@@ -25,7 +26,7 @@ import math
 
 import numpy as np
 
-DEFAULTS = {'rudy_cell': 1.0, 'mask_cell': 0.1, 'layers': 2, 'pitch': 0.4, 'limit': 1.0,
+DEFAULTS = {'rudy_cell': 1.0, 'mask_cell': 0.1, 'layers': 2, 'pitch': 0.4, 'limit': 1.0, 'pin_demand': 0.0,
             'w_wl': 1.0, 'w_cong': 1.0, 'w_ov': 20.0, 'w_oob': 20.0}
 EPS = 1e-9
 
@@ -209,6 +210,14 @@ def rudy_grid(pr, pose, params):
         if s is None or wl <= 0:
             continue
         g[s[0]:s[1], s[2]:s[3]] += wl / ((s[1] - s[0]) * (s[3] - s[2]))
+    if p['pin_demand']:
+        for u, (x, y, r) in zip(pr['units'], pose):
+            for q in u.get('pads', []):
+                a, b = rot_pt(q[0], q[1], r)
+                i = math.floor((a + x - grid.x0) / grid.c)
+                j = math.floor((b + y - grid.y0) / grid.c)
+                if 0 <= i < grid.nx and 0 <= j < grid.ny:
+                    g[j, i] += p['pin_demand']
     return g
 
 
@@ -305,6 +314,14 @@ class Evaluator:
         self.unit_nets = [sorted(s) for s in un]
         self.grid = Grid(pr['board'], p['rudy_cell'])
         self.G = np.zeros((self.grid.ny, self.grid.nx))
+        self.pd = p['pin_demand']
+        self.pads = []
+        for u in us:
+            q = np.array(u.get('pads', []) if self.pd else [], dtype=float).reshape(-1, 2)
+            self.pads.append([np.array([rot_pt(a, b, r) for a, b in q.tolist()], dtype=float).reshape(-1, 2)
+                              for r in range(4)])
+        for i in range(self.n):
+            self._stamp(i, 1.0)
         self.thr = threshold(p)
         self.cw = cell_weights(pr, p)
         self.nbox, self.nlen, self.nrudy = [], [], []
@@ -376,6 +393,29 @@ class Evaluator:
                 y1 = d + y
         return (x0, y0, x1, y1)
 
+    def _pad_cells(self, i):
+        q = self.pads[i][self.R[i]]
+        if not len(q):
+            return None
+        g = self.grid
+        ii = np.floor((q[:, 0] + self.X[i] - g.x0) / g.c).astype(int)
+        jj = np.floor((q[:, 1] + self.Y[i] - g.y0) / g.c).astype(int)
+        ok = (ii >= 0) & (ii < g.nx) & (jj >= 0) & (jj < g.ny)
+        if not ok.any():
+            return None
+        return jj[ok], ii[ok]
+
+    def _stamp(self, i, sign):
+        c = self._pad_cells(i)
+        if c is not None:
+            np.add.at(self.G, c, sign * self.pd)
+
+    def _pad_span(self, i):
+        c = self._pad_cells(i)
+        if c is None:
+            return None
+        return (int(c[0].min()), int(c[0].max()) + 1, int(c[1].min()), int(c[1].max()) + 1)
+
     def _rudy(self, b):
         wl = (b[2] - b[0]) + (b[3] - b[1])
         s = self.grid.span(b)
@@ -420,6 +460,8 @@ class Evaluator:
             if self.fixed[i]:
                 raise ValueError('unit %d is fixed' % i)
         old_pose = [(i, self.X[i], self.Y[i], self.R[i]) for i in M]
+        pad_spans = [self._pad_span(i) for i in M] if self.pd else []
+        pad_old = [(i, self._pad_cells(i)) for i in M] if self.pd else []
         ov0 = sum(self._unit_overlap(i, Ms) for i in M)
         ov0 += sum(self._pen(M[a], M[b]) for a in range(len(M)) for b in range(a + 1, len(M)))
         fb0 = sum(self.forb[i] for i in M)
@@ -443,7 +485,9 @@ class Evaluator:
             dwl += self.nw[k] * (ln - self.nlen[k])
             self.nbox[k], self.nlen[k] = b, ln
             new_r.append(self._rudy(b))
-        spans = [q[3] for q in old_nets if q[3]] + [q for q in new_r if q]
+        pad_new = [(i, self._pad_cells(i)) for i in M] if self.pd else []
+        pad_spans += [self._pad_span(i) for i in M] if self.pd else []
+        spans = [q[3] for q in old_nets if q[3]] + [q for q in new_r if q] + [q for q in pad_spans if q]
         dcong, saved = 0.0, None
         if spans:
             reg = (min(q[0] for q in spans), max(q[1] for q in spans), min(q[2] for q in spans), max(q[3] for q in spans))
@@ -455,6 +499,11 @@ class Evaluator:
                 if nr:
                     self.G[nr[0]:nr[1], nr[2]:nr[3]] += nr[4]
                 self.nrudy[k] = nr
+            for (_, c0), (_, c1) in zip(pad_old, pad_new):
+                if c0 is not None:
+                    np.add.at(self.G, c0, -self.pd)
+                if c1 is not None:
+                    np.add.at(self.G, c1, self.pd)
             dcong = self._excess(reg) - e0
         d = [dwl, dcong, ov1 - ov0, fb1 - fb0]
         delta = self._weighted(d)

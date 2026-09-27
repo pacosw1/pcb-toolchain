@@ -90,6 +90,24 @@ class RudyTest(unittest.TestCase):
         self.assertAlmostEqual(cost.overflow(g, P, cw), 0.5 * 5 + 3 * 0.5)
 
 
+class PinDemandTest(unittest.TestCase):
+    def test_each_pad_adds_pin_demand_in_its_cell(self):
+        a = unit('A', 1, 1, [[-.5, -.5, .5, .5, .5]])
+        a['pads'] = [[.5, .5], [.5, .6], [-.5, -.5]]
+        pr = problem([a], [])
+        g = cost.rudy_grid(pr, cost.initial_pose(pr), dict(P, pin_demand=0.3))
+        self.assertAlmostEqual(float(g[1, 1]), 0.6)
+        self.assertAlmostEqual(float(g[0, 0]), 0.3)
+        self.assertAlmostEqual(float(g.sum()), 0.9)
+
+    def test_pads_turn_with_the_unit(self):
+        a = unit('A', 5, 5, [[-.5, -.5, .5, .5, .5]])
+        a['pads'] = [[1.5, 0.2]]
+        pr = problem([a], [])
+        g = cost.rudy_grid(pr, [(5.0, 5.0, 1)], dict(P, pin_demand=1.0))
+        self.assertAlmostEqual(float(g[3, 5]), 1.0)  # (0.2, -1.5) + (5, 5) = (5.2, 3.5)
+
+
 class OverlapTest(unittest.TestCase):
     def test_pair_penalty_below_gap(self):
         a = [[0, 0, 1, 1, .5]]
@@ -139,6 +157,7 @@ def random_problem(rng, n=8, nets=10):
         if i % 3 == 0:
             rects.append([w / 2, -h / 2, w / 2 + 1, h / 2, .5])
         units.append(unit('U%d' % i, rng.uniform(0, 20), rng.uniform(0, 20), rects, fixed=(i == 0)))
+        units[-1]['pads'] = [[rng.uniform(-w / 2, w / 2), rng.uniform(-h / 2, h / 2)] for _ in range(rng.randint(0, 6))]
     ns = []
     for j in range(nets):
         us = rng.sample(range(n), rng.randint(2, 4))
@@ -154,6 +173,7 @@ class EvaluatorTest(unittest.TestCase):
     def test_incremental_equals_full_after_random_moves(self):
         rng = random.Random(7)
         pr = random_problem(rng)
+        P = dict(globals()['P'], pin_demand=0.4, limit=0.05)
         ev = cost.Evaluator(pr, P)
         self.assertAlmostEqual(ev.cost, cost.total(pr, ev.pose(), P), places=6)
         for k in range(300):

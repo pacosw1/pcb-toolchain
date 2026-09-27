@@ -91,6 +91,17 @@ class AnnealTest(unittest.TestCase):
             self.assertLessEqual(best, ev.cost + 1e-9)
 
 
+class RampTest(unittest.TestCase):
+    def test_spacing_weights_grow_from_start_to_ramp_times(self):
+        p = anneal.params_all({'w_ov': 20.0, 'w_oob': 10.0, 'ramp': 20.0})
+        e0, e_last = anneal.epoch_params(p, 0, 5), anneal.epoch_params(p, 4, 5)
+        self.assertAlmostEqual(e0['w_ov'], 20.0)
+        self.assertAlmostEqual(e_last['w_ov'], 400.0)
+        self.assertAlmostEqual(e_last['w_oob'], 200.0)
+        self.assertAlmostEqual(anneal.epoch_params(p, 0, 1)['w_ov'], 400.0)
+        self.assertEqual(e0['w_wl'], p['w_wl'])
+
+
 class LegalizeTest(unittest.TestCase):
     def test_overlapping_unit_moves_to_a_legal_spot(self):
         pr = two_units()

@@ -4,7 +4,8 @@ optimize(problem, params, workers, epochs, steps, seed, top) -> result dict
   1. T0 = mean uphill delta of 200 random moves at the full window (or params['t0']).
      T falls geometrically from T0 to T0 * t_ratio over all epochs; the move window falls from
      w0 (half the board) to w1 in the same way.
-  2. Each epoch, each worker runs `steps` moves from its own state with its own seed
+  2. The spacing and forbidden-area weights grow from w to w * ramp over the epochs (epoch_params).
+     Each epoch, each worker runs `steps` moves from its own state with its own seed
      (seed, worker, epoch). After the epoch, the worse half of the workers (by current cost)
      restart from the global best pose. The exchange is synchronous, so a seed gives one result.
   3. The best pose of each worker is legalized (legalize()) and ranked: illegal unit count, then cost.
@@ -19,13 +20,23 @@ import time
 from . import cost
 
 SEARCH = {'grid': 0.05, 'p_swap': 0.1, 'p_rot': 0.1, 'swap_ratio': 1.5, 't_ratio': 1e-4, 'w1': 0.25,
-          'legal_step': 0.25, 'legal_radius': 20.0}
+          'legal_step': 0.25, 'legal_radius': 5.0, 'ramp': 20.0}
 
 
 def params_all(params):
     p = cost.params_with_defaults(SEARCH)
     p.update(params or {})
     return p
+
+
+def epoch_params(p, e, epochs):
+    """Spacing and forbidden-area weights grow geometrically from w to w * ramp over the epochs
+    (the last epoch, the legalizer and the final ranking use w * ramp)."""
+    f = e / (epochs - 1) if epochs > 1 else 1.0
+    q = dict(p)
+    q['w_ov'] = p['w_ov'] * p['ramp'] ** f
+    q['w_oob'] = p['w_oob'] * p['ramp'] ** f
+    return q
 
 
 def seed_for(seed, worker, epoch):
@@ -175,14 +186,14 @@ def _init(pr, params):
     _W['mask'] = cost.Mask(pr['board'], p['mask_cell'])
 
 
-def _evaluator(pose):
-    return cost.Evaluator(_W['pr'], _W['p'], pose=pose, mask=_W['mask'])
+def _evaluator(pose, p=None):
+    return cost.Evaluator(_W['pr'], p or _W['p'], pose=pose, mask=_W['mask'])
 
 
 def _epoch(task):
-    w, pose, sd, t0, t1, w0, w1, steps = task
-    ev = _evaluator(pose)
-    mover = Mover(_W['pr'], ev, _W['p'])
+    w, pose, sd, t0, t1, w0, w1, steps, p = task
+    ev = _evaluator(pose, p)
+    mover = Mover(_W['pr'], ev, p)
     rng = random.Random(sd)
     t = time.time()
     best, best_pose = anneal(ev, mover, rng, steps, t0, t1, w0, w1)
@@ -191,9 +202,9 @@ def _epoch(task):
 
 
 def _finish(task):
-    w, pose = task
-    ev = _evaluator(pose)
-    bad = legalize(ev, _W['p'])
+    w, pose, p = task
+    ev = _evaluator(pose, p)
+    bad = legalize(ev, p)
     return {'worker': w, 'pose': ev.pose(), 'cost': ev.cost, 'components': ev.components(),
             'illegal': [_W['pr']['units'][i]['name'] for i in bad]}
 
@@ -201,8 +212,10 @@ def _finish(task):
 def optimize(pr, params, workers=1, epochs=10, steps=10000, seed=1, top=3, log=None):
     p = params_all(params)
     _init(pr, p)
-    ev0 = _evaluator(None)
-    initial = {'pose': ev0.pose(), 'cost': ev0.cost, 'components': ev0.components()}
+    pf = epoch_params(p, epochs - 1, epochs)
+    ev0 = _evaluator(None, epoch_params(p, 0, epochs))
+    evf = _evaluator(None, pf)
+    initial = {'pose': evf.pose(), 'cost': evf.cost, 'components': evf.components()}
     bx0, by0, bx1, by1 = cost.outline_box(pr['board'])
     w0 = p.get('w0') or max(bx1 - bx0, by1 - by0) / 2
     w1 = min(p['w1'], w0)
@@ -211,21 +224,21 @@ def optimize(pr, params, workers=1, epochs=10, steps=10000, seed=1, top=3, log=N
     frac = lambda a, b, f: a * (b / a) ** f  # noqa: E731
     cur = [initial['pose']] * workers
     cur_cost = [initial['cost']] * workers
-    best = [(initial['cost'], initial['pose'])] * workers
+    best = [(ev0.cost, initial['pose'])] * workers
     pool = mp.get_context('spawn').Pool(workers, _init, (pr, p)) if workers > 1 else None
     run = pool.map if pool else lambda f, xs: [f(x) for x in xs]
     t_start, busy = time.time(), 0.0
     try:
         for e in range(epochs):
             f0, f1 = e / epochs, (e + 1) / epochs
+            pe = epoch_params(p, e, epochs)
             tasks = [(w, cur[w], seed_for(seed, w, e), frac(t0, t1, f0), frac(t0, t1, f1),
-                      frac(w0, w1, f0), frac(w0, w1, f1), steps) for w in range(workers)]
+                      frac(w0, w1, f0), frac(w0, w1, f1), steps, pe) for w in range(workers)]
             out = run(_epoch, tasks)
             for o in out:
                 w = o['worker']
                 cur[w], cur_cost[w] = o['cur_pose'], o['cur_cost']
-                if o['best_cost'] < best[w][0]:
-                    best[w] = (o['best_cost'], o['best_pose'])
+                best[w] = (o['best_cost'], o['best_pose'])  # this epoch's weights: compare within the epoch only
                 busy += o['seconds']
             g = min(range(workers), key=lambda w: (best[w][0], w))
             if log:
@@ -235,7 +248,7 @@ def optimize(pr, params, workers=1, epochs=10, steps=10000, seed=1, top=3, log=N
                 for w in sorted(range(workers), key=lambda w: (-cur_cost[w], w))[:workers // 2]:
                     if w != g:
                         cur[w], cur_cost[w] = best[g][1], best[g][0]
-        fin = run(_finish, [(w, best[w][1]) for w in range(workers)])
+        fin = run(_finish, [(w, best[w][1], pf) for w in range(workers)])
     finally:
         if pool:
             pool.close()

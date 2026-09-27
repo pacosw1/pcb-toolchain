@@ -9,7 +9,7 @@ read_problem(board) -> problem dict (see cost.py)
   (fnmatch), and units whose origin is outside `free_box`. A unit with one fixed part is fixed.
   Rects: F.CrtYd box per footprint (else pads + 0.25 mm); spacing class 1.0 mm for IC and
   connector refs (U, J, P, CN, K, SW, Y, X), 0.5 mm for the rest (D-040).
-  Pins: one box per (net, unit) of the pad centres. Nets matching `skip` (default GND) and nets
+  Pads: every pad centre of the unit (pin RUDY). Pins: one box per (net, unit) of the pad centres. Nets matching `skip` (default GND) and nets
   inside one unit are left out.
   Keepouts: rule areas that do not allow footprints, and closed shapes on `keepout_layers`.
   Region: nets with a pad on `region_refs` get weight `region_weight`; RUDY cells in `region_box`
@@ -235,8 +235,11 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
         if free_box and not inside_box(ox, oy, free_box):
             fixed = True
         index[key] = len(out_units)
+        pads = [[round(mm(q.x) - ox, 6), round(mm(q.y) - oy, 6)]
+                for r in u['refs'] for q in (p.GetPosition() for p in by_ref[r].Pads())]
         out_units.append({'name': u['name'], 'refs': sorted(u['refs']), 'fixed': fixed, 'x': ox, 'y': oy,
                           'rects': [[a - ox, c - oy, e - ox, f - oy, clr] for (a, c, e, f), clr in rects],
+                          'pads': pads,
                           'borders': u['borders'], 'box': u['box'], 'group': u.get('group')})
 
     skip_pat = list(skip)

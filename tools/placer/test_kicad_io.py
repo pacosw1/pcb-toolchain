@@ -58,6 +58,10 @@ class RoundTripTest(unittest.TestCase):
             self.assertGreaterEqual(len({p[0] for p in n['pins']}), 2)
         u = pr['units'][self.unit(pr, 'U1')]
         self.assertEqual(u['rects'][0][4], 1.0)                # IC spacing class
+        fp = pcbnew.LoadBoard(self.board).FindFootprintByReference('U1')
+        self.assertEqual(len(u['pads']), len(fp.Pads()))       # pin RUDY points
+        q = fp.Pads()[0].GetPosition()
+        self.assertTrue(any(near((a + u['x'], b + u['y']), (q.x / 1e6, q.y / 1e6)) for a, b in u['pads']))
         self.assertEqual(pr['units'][self.unit(pr, 'R2')]['rects'][0][4], 0.5)
 
     def test_tie_joins_small_parts_next_to_an_ic(self):
