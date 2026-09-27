@@ -30,7 +30,8 @@ def cmd_read(a):
                                region_refs=a.region_ref, region_weight=a.region_weight, region_box=a.region_box,
                                tie=a.tie, rigid_nets=[x for x in a.rigid_net.split(',') if x], decap_tie=a.decap_tie,
                                keepout_zones=a.keepout_zone, edges=parse_edges(a.edge),
-                               zone_refs=dict(x.split('=', 1) for x in a.zone_ref), domains=parse_domains(a.domain) if a.domain else None)
+                               zone_refs=dict(x.split('=', 1) for x in a.zone_ref),
+                               domains=parse_domains(a.domain) if a.domain else None)
     json.dump(pr, open(a.o, 'w'))
     mov = [u for u in pr['units'] if not u['fixed']]
     print('units %d (movable %d, blocks %d), nets %d, keepouts %d' % (
