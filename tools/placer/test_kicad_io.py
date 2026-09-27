@@ -636,6 +636,28 @@ class KnownGoodGateTest(unittest.TestCase):
                           if not u['fixed'] and ev.legal_penalty(i) > 0], [])
         self.assertEqual(len(pr['units'][[u['name'] for u in pr['units']].index('BLOCK2')]['border']), 1)
 
+    def test_a_selv_part_6_7_mm_from_a_mains_pad_is_illegal(self):
+        # the 8 mm gap comes from the RELAY-4 .kicad_dru "Mains to SELV and 24 V", read by the reader
+        pr = kicad_io.read_problem(RELAY4)
+        b = pcbnew.LoadBoard(RELAY4)
+        pads = [p for f in b.GetFootprints() for p in f.Pads() if p.GetNetClassName().startswith('MAINS_K')]
+        pad = max(pads, key=lambda p: p.GetBoundingBox().GetRight())  # the right-most mains pad
+        ref = pad.GetParentFootprint().GetReference()
+        i = next(k for k, u in enumerate(pr['units']) if ref in u['refs'])
+        mu = pr['units'][i]
+        box = [mu['x'] + r[2] for r in mu['rects']]
+        bb = pad.GetBoundingBox()
+        right, y = pcbnew.ToMM(bb.GetRight()), pcbnew.ToMM(bb.GetCenter().y)
+        self.assertLessEqual(max(box), right + 6.7)  # nothing else of the unit reaches the test part
+
+        def penalty(gap):
+            selv = {'name': 'R', 'refs': ['R'], 'fixed': False, 'x': right + gap + 0.5, 'y': y,
+                    'rects': [[-0.5, -0.5, 0.5, 0.5, 0.0]]}
+            q = dict(pr, units=[dict(mu, fixed=True), selv], nets=[], decaps=[], region=None)
+            return cost.Evaluator(q, {}).legal_penalty(1)
+        self.assertGreater(penalty(6.7), 0.0)
+        self.assertAlmostEqual(penalty(8.1), 0.0)
+
     def test_the_bench_b_v2_placement_that_broke_the_mains_rule_is_illegal(self):
         pose = [tuple(q) for q in json.load(open(os.path.join(HERE, 'testdata', 'relay4-bench-b-v2-P.json')))['pose']]
         ev = cost.Evaluator(self.pr, {}, pose)
