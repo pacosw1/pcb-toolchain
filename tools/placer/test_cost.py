@@ -4,6 +4,7 @@
   $PY -m unittest discover -s tools/placer -p 'test_*.py'
   ($PY = the KiCad bundled Python; it has numpy and pcbnew.)
 """
+import json
 import os
 import random
 import sys
@@ -629,3 +630,19 @@ class ParseDomainTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class RudyCalibrationTest(unittest.TestCase):
+    # RELAY-4 bench v3: Freerouting opens O 8 < S 133 < P 142 (median of 5).
+    # The default RUDY limit must see congestion and rank the routable original first.
+    def test_default_limit_ranks_the_original_below_the_searched_poses(self):
+        path = os.path.join(os.path.dirname(__file__), 'fixtures', 'relay4-bench-v3.json')
+        with open(path) as f:
+            fx = json.load(f)
+        p = cost.params_with_defaults({})
+        cong = {'O': cost.Evaluator(fx['problem'], p).components()['cong']}
+        for t, pose in fx['poses'].items():
+            cong[t] = cost.Evaluator(fx['problem'], p, [tuple(q) for q in pose]).components()['cong']
+        self.assertGreater(cong['O'], 0.0)
+        self.assertLess(cong['O'], cong['P'])
+        self.assertLess(cong['O'], cong['S'])

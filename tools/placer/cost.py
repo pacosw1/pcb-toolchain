@@ -43,7 +43,8 @@ import math
 
 import numpy as np
 
-DEFAULTS = {'rudy_cell': 1.0, 'mask_cell': 0.1, 'layers': 2, 'pitch': 0.4, 'limit': 1.0, 'pin_demand': 0.0, 'gap': 0.2,
+# limit 0.1: calibrated on RELAY-4 bench v3 (the routable original has the lowest cong; limit 1.0 gave 0 for all).
+DEFAULTS = {'rudy_cell': 1.0, 'mask_cell': 0.1, 'layers': 2, 'pitch': 0.4, 'limit': 0.1, 'pin_demand': 0.0, 'gap': 0.2,
             'w_wl': 1.0, 'w_cong': 1.0, 'w_ov': 20.0, 'w_oob': 20.0, 'w_sp': 2.0}
 EPS = 1e-9
 ROUTE_LAYERS = ('F.Cu', 'B.Cu')  # the `layers` routing layers; copper on other layers uses no RUDY capacity
