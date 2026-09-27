@@ -147,6 +147,41 @@ class RoundTripTest(unittest.TestCase):
         rep = kicad_io.write_board(self.board, pr, pose, os.path.join(self.tmp, 'b', 'out.kicad_pcb'))
         self.assertEqual(len(pr['board']['copper']), n_tracks - (rep['removed_tracks'] - rep['removed_collisions']))
 
+    def test_lone_via_under_a_movable_part_moves_with_it_not_kept(self):
+        # a stitching via under the U1 body (on no pad, no track) belongs to U1: not an obstacle, removed on a move
+        b = pcbnew.LoadBoard(self.board)
+        u1 = b.FindFootprintByReference('U1')
+        x0, y0, x1, y1 = kicad_io.fp_rect(u1)
+        spot = None
+        for i in range(1, 20):
+            for j in range(1, 20):
+                x, y = x0 + (x1 - x0) * i / 20, y0 + (y1 - y0) * j / 20
+                v = pcbnew.VECTOR2I(int(x * 1e6), int(y * 1e6))
+                if not any(p.HitTest(v, 400000) for p in b.GetPads()):
+                    spot = (x, y)
+                    break
+            if spot:
+                break
+        self.assertIsNotNone(spot)
+        via = pcbnew.PCB_VIA(b)
+        via.SetPosition(pcbnew.VECTOR2I(int(spot[0] * 1e6), int(spot[1] * 1e6)))
+        via.SetWidth(600000)
+        via.SetDrill(300000)
+        via.SetNet(b.FindNet('GND'))
+        b.Add(via)
+        pcbnew.SaveBoard(self.board, b)
+        at = lambda c: c[0] == 'via' and near(c[1:3], spot)  # noqa: E731
+        self.assertTrue(any(at(c) for c in kicad_io.read_problem(self.board, free_box=[0, 0, 1, 1])['board']['copper']))
+        pr = kicad_io.read_problem(self.board, free_box=list(kicad_io.fp_rect(u1)))
+        self.assertFalse(any(at(c) for c in pr['board']['copper']))
+        i = self.unit(pr, 'U1')
+        pose = cost.initial_pose(pr)
+        pose[i] = (pose[i][0] + 3.0, pose[i][1], 0)
+        out = os.path.join(self.tmp, 'b', 'out.kicad_pcb')
+        kicad_io.write_board(self.board, pr, pose, out)
+        self.assertFalse(any(t.GetClass() == 'PCB_VIA' and near((t.GetPosition().x / 1e6, t.GetPosition().y / 1e6), spot)
+                             for t in pcbnew.LoadBoard(out).GetTracks()))
+
     def test_write_moves_and_rotates_like_the_model(self):
         pr = kicad_io.read_problem(self.board)
         i = self.unit(pr, 'U1')

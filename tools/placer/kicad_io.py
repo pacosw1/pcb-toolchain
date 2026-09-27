@@ -428,24 +428,40 @@ def _hit(free, find, pads_by_net):
     return hit
 
 
+def _owned(free, find, rects):
+    """Cluster ids made of vias only (stitching vias, no track) that all lie inside one of the courtyard rects:
+    they belong to that part and go when it moves."""
+    tracked, inside = set(), {}
+    for k, t in enumerate(free):
+        c = find(k)
+        if t.GetClass() != 'PCB_VIA':
+            tracked.add(c)
+            continue
+        q = t.GetPosition()
+        ok = any(inside_box(mm(q.x), mm(q.y), r) for r in rects)
+        inside[c] = inside.get(c, True) and ok
+    return {c for c, ok in inside.items() if ok and c not in tracked}
+
+
 def kept_copper(board, units, by_ref):
     """Copper that stays whatever the movable units do: clusters with no end point on a pad of a movable
-    unit, and not inside the border of a movable block. [[layer, x0, y0, x1, y1, width], ...]"""
+    unit, not inside the border of a movable block, and not a lone via under a movable part. [[layer, x0, y0, x1, y1, width], ...]"""
     tracks = list(board.GetTracks())
-    pads, boxes = {}, []
+    pads, boxes, rects = {}, [], []
     for u in units:
         if u['fixed']:
             continue
         if u['box']:
             boxes.append(u['box'])
         for r in u['refs']:
+            rects.append(fp_rect(by_ref[r]))
             for p in by_ref[r].Pads():
                 if p.GetNetname():
                     pads.setdefault(p.GetNetname(), []).append(p)
     free = [t for t in tracks
             if not any(all(inside_box(mm(p.x), mm(p.y), b) for p in _ends(t)) for b in boxes)]
     find = _clusters(free)
-    hit = _hit(free, find, pads)
+    hit = _hit(free, find, pads) | _owned(free, find, rects)
     out = []
     for k, t in enumerate(free):
         if find(k) in hit:
@@ -492,7 +508,8 @@ def write_board(path, pr, pose, out):
     # copper clusters per net (end points and vias), not counting the rigid block copper
     free = [t for t in tracks if t.m_Uuid.AsString() not in internal]
     find = _clusters(free)
-    hit = _hit(free, find, moved_pads)
+    rects = [fp_rect(by_ref[r]) for i, u, *_ in moved for r in u['refs']]
+    hit = _hit(free, find, moved_pads) | _owned(free, find, rects)
     remove = [t for k, t in enumerate(free) if find(k) in hit]
 
     for i, u, x, y, r in moved:
