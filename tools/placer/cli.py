@@ -98,6 +98,20 @@ def drc_summary(board):
             'unconnected': len(d.get('unconnected_items', [])), 'error_types': kinds}
 
 
+def cmd_pinswap(a):
+    from placer import pinswap, pinswap_io
+    nets, slots, fixed = pinswap_io.read_pins(a.board, a.pinmap, a.ref)
+    res = pinswap.search(nets, slots, fixed, seed=a.seed, w_x=a.w_x, restarts=a.restarts)
+    json.dump(res, open(a.o, 'w'), indent=1)
+    print('swappable nets %d, slots %d, fixed rat lines %d' % (len(nets), len(slots), len(fixed)))
+    for k in ('before', 'after'):
+        print('%-6s HPWL %.1f mm, crossings %d' % (k, res[k]['hpwl'], res[k]['crossings']))
+    for d in res['diff']:
+        print('  %-12s %s (%s) -> %s (%s)' % (d['net'], d['from_pin'], d['from_name'], d['to_pin'], d['to_name']))
+    if a.apply:
+        print(json.dumps(pinswap_io.apply(a.board, res['diff'], a.apply, a.ref)))
+
+
 def cmd_drc(a):
     for b in a.boards:
         print(b, json.dumps(drc_summary(b)))
@@ -139,6 +153,16 @@ def main(argv=None):
     r.add_argument('--outdir', required=True)
     r.add_argument('--initial', action='store_true')
     r.set_defaults(f=cmd_write)
+    r = sub.add_parser('pinswap', help='propose a pin-map diff for the swappable pins of one IC (never edits the schematic)')
+    r.add_argument('board')
+    r.add_argument('pinmap')
+    r.add_argument('-o', required=True, help='proposal JSON (before, after, diff, assign)')
+    r.add_argument('--ref', default=None)
+    r.add_argument('--seed', type=int, default=0)
+    r.add_argument('--w-x', type=float, default=10.0, help='cost of one rat-line crossing in mm of HPWL')
+    r.add_argument('--restarts', type=int, default=5)
+    r.add_argument('--apply', metavar='OUT.kicad_pcb', help='write a board COPY with the swapped pad nets (benchmark only)')
+    r.set_defaults(f=cmd_pinswap)
     r = sub.add_parser('drc')
     r.add_argument('boards', nargs='+')
     r.set_defaults(f=cmd_drc)
