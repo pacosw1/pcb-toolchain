@@ -113,6 +113,17 @@ def cmd_pinswap(a):
         print(json.dumps(pinswap_io.apply(a.board, res['diff'], a.apply, ref)))
 
 
+def cmd_scramble(a):
+    from placer import bench
+    pr = json.load(open(a.prob))
+    pose = bench.scramble(pr, a.seed, a.sigma)
+    for u, (x, y, _) in zip(pr['units'], pose):
+        u['x'], u['y'] = x, y
+    json.dump(pr, open(a.o, 'w'))
+    print('scrambled %d movable units (seed %d, sigma %s)' % (sum(1 for u in pr['units'] if not u['fixed']),
+                                                              a.seed, a.sigma))
+
+
 def cmd_drc(a):
     for b in a.boards:
         print(b, json.dumps(drc_summary(b)))
@@ -164,6 +175,13 @@ def main(argv=None):
     r.add_argument('--restarts', type=int, default=5)
     r.add_argument('--apply', metavar='OUT.kicad_pcb', help='write a board COPY with the swapped pad nets (benchmark only)')
     r.set_defaults(f=cmd_pinswap)
+    r = sub.add_parser('scramble', help='problem copy with seeded random start positions (benchmarks); '
+                                        'search it with --param w_wl=0 w_cong=0 for a legal random placement')
+    r.add_argument('prob')
+    r.add_argument('-o', required=True)
+    r.add_argument('--seed', type=int, default=1)
+    r.add_argument('--sigma', type=float, default=None, help='mm step from the current place (default: uniform)')
+    r.set_defaults(f=cmd_scramble)
     r = sub.add_parser('drc')
     r.add_argument('boards', nargs='+')
     r.set_defaults(f=cmd_drc)

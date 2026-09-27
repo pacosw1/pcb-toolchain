@@ -44,5 +44,20 @@ class ScrambleTest(unittest.TestCase):
             self.assertTrue(1.5 <= x <= 18.5 and 1.5 <= y <= 18.5)
 
 
+class ScrambleCliTest(unittest.TestCase):
+    def test_cli_writes_a_problem_copy_with_scrambled_start_positions(self):
+        import json
+        import tempfile
+        from placer import cli
+        d = tempfile.mkdtemp()
+        src, out = os.path.join(d, 'p.json'), os.path.join(d, 'q.json')
+        json.dump(problem(), open(src, 'w'))
+        cli.main(['scramble', src, '-o', out, '--seed', '3', '--sigma', '4'])
+        q = json.load(open(out))
+        pose = bench.scramble(problem(), seed=3, sigma=4.0)
+        self.assertEqual([(u['x'], u['y']) for u in q['units']], [(p[0], p[1]) for p in pose])
+        self.assertEqual((q['units'][2]['x'], q['units'][2]['y']), (1, 1))
+
+
 if __name__ == '__main__':
     unittest.main()
