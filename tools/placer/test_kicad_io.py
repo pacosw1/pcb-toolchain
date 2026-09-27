@@ -27,6 +27,10 @@ def near(a, b, tol=1e-3):
     return all(abs(x - y) <= tol for x, y in zip(a, b))
 
 
+def is_fixed(pr, ref):
+    return any(u['fixed'] for u in pr['units'] if ref in u['refs'])
+
+
 @unittest.skipUnless(pcbnew, 'needs pcbnew (KiCad bundled Python)')
 class RoundTripTest(unittest.TestCase):
     def setUp(self):
@@ -55,6 +59,26 @@ class RoundTripTest(unittest.TestCase):
         u = pr['units'][self.unit(pr, 'U1')]
         self.assertEqual(u['rects'][0][4], 1.0)                # IC spacing class
         self.assertEqual(pr['units'][self.unit(pr, 'R2')]['rects'][0][4], 0.5)
+
+    def test_tie_joins_small_parts_next_to_an_ic(self):
+        loose = kicad_io.read_problem(self.board, tie=0)
+        self.assertEqual(loose['units'][self.unit(loose, 'U1')]['refs'], ['U1'])
+        pr = kicad_io.read_problem(self.board, tie=1.5)
+        refs = pr['units'][self.unit(pr, 'U1')]['refs']
+        self.assertGreater(len(refs), 1)
+        b = pcbnew.LoadBoard(self.board)
+        u1 = b.FindFootprintByReference('U1')
+        ic = kicad_io.fp_rect(u1)
+        ic_nets = {p.GetNetname() for p in u1.Pads()} - {'GND', ''}
+        for fp in b.GetFootprints():
+            r = fp.GetReference()
+            c = kicad_io.fp_rect(fp)
+            gap = max(ic[0] - c[2], c[0] - ic[2], ic[1] - c[3], c[1] - ic[3])
+            shared = {p.GetNetname() for p in fp.Pads()} & ic_nets
+            if r != 'U1' and len(fp.Pads()) <= 3 and gap <= 1.5 and shared and not is_fixed(pr, r):
+                self.assertIn(r, refs)
+        for r in refs:
+            self.assertFalse(is_fixed(loose, r))
 
     def test_write_moves_and_rotates_like_the_model(self):
         pr = kicad_io.read_problem(self.board)
@@ -104,28 +128,40 @@ class RoundTripTest(unittest.TestCase):
                         self.assertFalse(pad.HitTest(pt), 'track left at a moved pad')
 
     def test_block_border_moves_with_its_parts(self):
+        # Border on User.1 around U1 and its nearest part: one rigid unit (with any other part inside).
         b = pcbnew.LoadBoard(self.board)
-        u1 = b.FindFootprintByReference('U1')
-        bb = u1.GetCourtyard(pcbnew.F_CrtYd).BBox()
+        ic = kicad_io.fp_rect(b.FindFootprintByReference('U1'))
+        other = min((f for f in b.GetFootprints() if f.GetReference() not in ('U1', 'J1', 'J2')),
+                    key=lambda f: max(ic[0] - kicad_io.fp_rect(f)[2], kicad_io.fp_rect(f)[0] - ic[2],
+                                      ic[1] - kicad_io.fp_rect(f)[3], kicad_io.fp_rect(f)[1] - ic[3]))
+        oc = kicad_io.fp_rect(other)
+        box = (min(ic[0], oc[0]) - .5, min(ic[1], oc[1]) - .5, max(ic[2], oc[2]) + .5, max(ic[3], oc[3]) + .5)
         rect = pcbnew.PCB_SHAPE(b)
         rect.SetShape(pcbnew.SHAPE_T_RECT)
         rect.SetLayer(b.GetLayerID('User.1'))
-        rect.SetStart(pcbnew.VECTOR2I(bb.GetX() - 1000000, bb.GetY() - 1000000))
-        rect.SetEnd(pcbnew.VECTOR2I(bb.GetRight() + 1000000, bb.GetBottom() + 1000000))
+        rect.SetStart(pcbnew.VECTOR2I(int(box[0] * 1e6), int(box[1] * 1e6)))
+        rect.SetEnd(pcbnew.VECTOR2I(int(box[2] * 1e6), int(box[3] * 1e6)))
         b.Add(rect)
         pcbnew.SaveBoard(self.board, b)
         pr = kicad_io.read_problem(self.board)
         i = self.unit(pr, 'U1')
-        self.assertGreater(len(pr['units'][i]['borders']), 0)
+        self.assertIn(other.GetReference(), pr['units'][i]['refs'])
+        self.assertEqual(pr['units'][i]['borders'], [rect.m_Uuid.AsString()])
         pose = cost.initial_pose(pr)
         pose[i] = (pose[i][0] - 4.0, pose[i][1] + 1.0, 2)
         out = os.path.join(self.tmp, 'b', 'out.kicad_pcb')
         kicad_io.write_board(self.board, pr, pose, out)
         b1 = pcbnew.LoadBoard(out)
         r1 = next(d for d in b1.GetDrawings() if d.m_Uuid.AsString() == rect.m_Uuid.AsString())
-        c0 = ((bb.GetX() + bb.GetRight()) / 2e6, (bb.GetY() + bb.GetBottom()) / 2e6)
+        c0 = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
         c1 = ((r1.GetStart().x + r1.GetEnd().x) / 2e6, (r1.GetStart().y + r1.GetEnd().y) / 2e6)
         self.assertTrue(near(c1, (c0[0] - 4.0, c0[1] + 1.0), 0.01))
+        # the two parts keep their relative layout (turned 180 deg)
+        f1, g1 = b1.FindFootprintByReference('U1'), b1.FindFootprintByReference(other.GetReference())
+        f0, g0 = b.FindFootprintByReference('U1'), b.FindFootprintByReference(other.GetReference())
+        d0 = (g0.GetPosition().x - f0.GetPosition().x, g0.GetPosition().y - f0.GetPosition().y)
+        d1 = (g1.GetPosition().x - f1.GetPosition().x, g1.GetPosition().y - f1.GetPosition().y)
+        self.assertTrue(near(d1, (-d0[0], -d0[1]), 2))
 
 
 if __name__ == '__main__':

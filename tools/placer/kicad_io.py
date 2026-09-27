@@ -32,6 +32,8 @@ from . import cost
 
 M = 1e6
 IC_PREFIX = ('U', 'J', 'P', 'CN', 'K', 'SW', 'Y', 'X')
+LABEL_DIST = 3.0   # a User.1 text this close to a block border is its label
+BLOCK_SHARE = 0.6  # a part is in a block when its anchor and this share of its courtyard are inside
 
 
 def mm(v):
@@ -113,21 +115,45 @@ def block_borders(board):
                 shapes.append((bbox_of(poly), d))
         elif 'TEXT' in d.GetClass():
             texts.append(d)
-    out = []
-    for box, d in shapes:
-        ids = [d.m_Uuid.AsString()]
-        label = None
-        for t in texts:
-            q = t.GetPosition()
-            if inside_box(mm(q.x), mm(q.y), box):
-                ids.append(t.m_Uuid.AsString())
-                label = label or t.GetText()
-        out.append((box, ids, label))
+    out = [(box, [d.m_Uuid.AsString()], None) for box, d in shapes]
+    for t in texts:
+        q = t.GetPosition()
+        x, y = mm(q.x), mm(q.y)
+        dist = [max(b[0] - x, x - b[2], b[1] - y, y - b[3], 0.0) for b, _, _ in out]
+        if dist and min(dist) <= LABEL_DIST:
+            k = dist.index(min(dist))
+            out[k][1].append(t.m_Uuid.AsString())
+            if out[k][2] is None:
+                out[k] = (out[k][0], out[k][1], t.GetText())
     return out
 
 
+def _tie(fps, member, tie, skip):
+    """A loose part with <= 3 pads joins the unit of the nearest part with > 3 pads (an IC) that shares a
+    net (not `skip`) and whose courtyard is within `tie` mm. Decoupling and support parts stay with their IC."""
+    nets = {fp.GetReference(): {p.GetNetname() for p in fp.Pads() if p.GetNetname()
+                                and not any(fnmatch.fnmatchcase(p.GetNetname(), s) for s in skip)} for fp in fps}
+    ics = [fp for fp in fps if len(fp.Pads()) > 3]
+    joins = {}
+    for fp in fps:
+        r = fp.GetReference()
+        if r in member or len(fp.Pads()) > 3 or is_mounting_hole(fp) or fp.IsLocked():
+            continue
+        c = fp_rect(fp)
+        best = None
+        for ic in ics:
+            q = fp_rect(ic)
+            gap = max(q[0] - c[2], c[0] - q[2], q[1] - c[3], c[1] - q[3])
+            if gap <= tie and nets[r] & nets[ic.GetReference()] and (best is None or gap < best[0]):
+                best = (gap, ic.GetReference())
+        if best:
+            joins[r] = best[1]
+    for r, ic in joins.items():
+        member[r] = member.setdefault(ic, 'F:' + ic)
+
+
 def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), free_box=None,
-                 region_refs=(), region_weight=1.0, region_box=None, spacing=(0.5, 1.0)):
+                 region_refs=(), region_weight=1.0, region_box=None, spacing=(0.5, 1.0), tie=0.0):
     board = pcbnew.LoadBoard(path)
     outline, holes = outline_of(board)
     keepouts = [h for h in holes]
@@ -156,18 +182,28 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
             for r in refs:
                 member[r] = key
     for k, (box, ids, label) in enumerate(block_borders(board)):
-        key = 'B:%d' % k
-        units[key] = {'name': label or 'BLOCK%d' % (k + 1), 'refs': [], 'borders': ids, 'box': list(box)}
+        inside = []
         for fp in fps:
             q = fp.GetPosition()
-            if fp.GetReference() not in member and inside_box(mm(q.x), mm(q.y), box):
-                member[fp.GetReference()] = key
+            c = fp_rect(fp)
+            share = (max(0, min(c[2], box[2]) - max(c[0], box[0])) * max(0, min(c[3], box[3]) - max(c[1], box[1]))
+                     / max((c[2] - c[0]) * (c[3] - c[1]), 1e-9))
+            if fp.GetReference() not in member and inside_box(mm(q.x), mm(q.y), box) and share >= BLOCK_SHARE:
+                inside.append(fp.GetReference())
+        if len(inside) < 2:  # a block has 2 or more parts; a border around one part is stale
+            continue
+        key = 'B:%d' % k
+        units[key] = {'name': label or 'BLOCK%d' % (k + 1), 'refs': [], 'borders': ids, 'box': list(box)}
+        for r in inside:
+            member[r] = key
+    by_ref = {fp.GetReference(): fp for fp in fps}
+    if tie > 0:
+        _tie(fps, member, tie, list(skip))
     for fp in fps:
         r = fp.GetReference()
-        if r not in member:
-            member[r] = 'F:' + r
-            units['F:' + r] = {'name': r, 'refs': [], 'borders': [], 'box': None}
-    by_ref = {fp.GetReference(): fp for fp in fps}
+        key = member.setdefault(r, 'F:' + r)
+        if key not in units:
+            units[key] = {'name': key[2:], 'refs': [], 'borders': [], 'box': None}
     for fp in fps:
         units[member[fp.GetReference()]]['refs'].append(fp.GetReference())
 
