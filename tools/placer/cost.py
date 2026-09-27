@@ -8,6 +8,8 @@ Problem (a dict, JSON-able; tools/placer/kicad_io.py writes it from a board):
   units:  [{name, refs, fixed, x, y, rects: [[x0, y0, x1, y1, clr], ...]}]
           x, y = unit origin on the board; rects = courtyard boxes relative to the origin at r = 0;
           clr = spacing class (D-040: 0.5 mm passive, 1.0 mm IC or connector).
+          ko (optional) = indices of rects that are copper-free rule areas (an antenna keepout): such a rect
+          may overlap a board keepout or a ko rect of another unit; a courtyard or kept copper in it is illegal.
   nets:   [{name, weight, pins: [[unit, x0, y0, x1, y1], ...]}]   pin boxes relative to the origin.
   board:  {outline: [[x, y], ...], keepouts: [[[x, y], ...], ...], edge_clearance}
   region: None or {box: [x0, y0, x1, y1], weight, refs}   RUDY cells in box count weight times.
@@ -190,16 +192,18 @@ class Mask:
         bad = s[j1, i1] - s[j0, i1] - s[j1, i0] + s[j0, i0]
         return float(total - inside + bad) * c * c
 
-    def edge_area(self, rects):
-        """Area of the rects outside the board (edge clearance) or in a keepout; kept copper not counted."""
-        return sum(self.rect_area(*r[:4], s=self.s_edge) for r in rects)
+    def edge_area(self, rects, ko=()):
+        """Area of the rects outside the board (edge clearance) or in a keepout; kept copper not counted.
+        Keepout rects (indices ko) do not count."""
+        return sum(self.rect_area(*r[:4], s=self.s_edge) for k, r in enumerate(rects) if k not in ko)
 
-    def unit_area(self, rects, pads=None):
+    def unit_area(self, rects, pads=None, ko=()):
         """Forbidden area of a unit: courtyard rects against all, or (pads given) rects against the edge
-        table and pads against the copper table."""
+        table and pads against the copper table. Keepout rects (indices ko) count only kept copper."""
+        t = sum(self.rect_area(*r[:4], s=self.s_cu, outside=False) for k, r in enumerate(rects) if k in ko)
         if pads is None:
-            return sum(self.rect_area(*r[:4]) for r in rects)
-        return (sum(self.rect_area(*r[:4], s=self.s_edge) for r in rects)
+            return t + sum(self.rect_area(*r[:4]) for k, r in enumerate(rects) if k not in ko)
+        return (t + self.edge_area(rects, ko)
                 + sum(self.rect_area(*r[:4], s=self.s_cu, outside=False) for r in pads))
 
 
@@ -210,11 +214,20 @@ def pair_penalty(a, b):
     return _pen(a[:, :4], a[:, 4], b[:, :4], b[:, 4])
 
 
-def _pen(A, ca, B, cb):
+def _pen(A, ca, B, cb, ka=None, kb=None):
     g = np.maximum(ca[:, None], cb[None, :])
     dx = np.minimum(A[:, None, 2], B[None, :, 2]) - np.maximum(A[:, None, 0], B[None, :, 0]) + g
     dy = np.minimum(A[:, None, 3], B[None, :, 3]) - np.maximum(A[:, None, 1], B[None, :, 1]) + g
-    return float((np.clip(dx, 0, None) * np.clip(dy, 0, None)).sum())
+    a = np.clip(dx, 0, None) * np.clip(dy, 0, None)
+    if ka is not None:
+        a = a * ~(ka[:, None] & kb[None, :])  # keepout over keepout is legal
+    return float(a.sum())
+
+
+def ko_flags(u):
+    k = np.zeros(len(u['rects']), dtype=bool)
+    k[list(u.get('ko', []))] = True
+    return k
 
 
 def world_rects(u, pose_u):
@@ -321,7 +334,7 @@ def overlap(pr, pose):
         for j in range(i + 1, len(us)):
             if us[i]['fixed'] and us[j]['fixed']:
                 continue
-            t += _pen(w[i][:, :4], w[i][:, 4], w[j][:, :4], w[j][:, 4])
+            t += _pen(w[i][:, :4], w[i][:, 4], w[j][:, :4], w[j][:, 4], ko_flags(us[i]), ko_flags(us[j]))
     return t
 
 
@@ -349,7 +362,8 @@ def edge_miss(u, pose_u, board, box=None):
 
 def forbidden(pr, pose, mask, i):
     u = pr['units'][i]
-    return mask.unit_area(world_rects(u, pose[i]), world_pads(u, pose[i])) + edge_miss(u, pose[i], pr['board'])
+    return (mask.unit_area(world_rects(u, pose[i]), world_pads(u, pose[i]), set(u.get('ko', [])))
+            + edge_miss(u, pose[i], pr['board']))
 
 
 def components(pr, pose, params):
@@ -382,6 +396,8 @@ class Evaluator:
         self.lrect = [[np.array([rot_rect(rc, r) for rc in u['rects']], dtype=float).reshape(-1, 4)
                        for r in range(4)] for u in us]
         self.clr = [np.array([rc[4] for rc in u['rects']], dtype=float) for u in us]
+        self.ko = [ko_flags(u) for u in us]
+        self.kos = [set(u.get('ko', [])) for u in us]
         self.lbox = [[(lr[:, 0].min(), lr[:, 1].min(), lr[:, 2].max(), lr[:, 3].max()) for lr in self.lrect[i]]
                      for i in range(self.n)]
         self.grow = [float(c.max()) if len(c) else 0.0 for c in self.clr]
@@ -451,11 +467,11 @@ class Evaluator:
     def _forb(self, i):
         lp = self.lpad[i]
         pads = None if lp is None else (lp[self.R[i]] + (self.X[i], self.Y[i], self.X[i], self.Y[i])).tolist()
-        return (self.mask.unit_area(self._world(i).tolist(), pads)
+        return (self.mask.unit_area(self._world(i).tolist(), pads, self.kos[i])
                 + edge_miss(self.units[i], (self.X[i], self.Y[i], self.R[i]), self.board, self.obox))
 
     def _pen(self, i, j):
-        return _pen(self._world(i), self.clr[i], self._world(j), self.clr[j])
+        return _pen(self._world(i), self.clr[i], self._world(j), self.clr[j], self.ko[i], self.ko[j])
 
     def _unit_overlap(self, i, skip):
         b = self.UB[i]
@@ -541,7 +557,7 @@ class Evaluator:
     def legal_penalty(self, i):
         """Spacing overlap + edge/keepout area (0 = legal). Kept copper is a cost only: the writer rips up
         the copper that a moved pad lands on."""
-        return (self._unit_overlap(i, set()) + self.mask.edge_area(self._world(i).tolist())
+        return (self._unit_overlap(i, set()) + self.mask.edge_area(self._world(i).tolist(), self.kos[i])
                 + edge_miss(self.units[i], (self.X[i], self.Y[i], self.R[i]), self.board, self.obox))
 
     def legal_penalty_at(self, i, x, y, r):

@@ -405,6 +405,7 @@ class RoundTripTest(unittest.TestCase):
         # in a block the anchor is on the border (block copper ends there), in line with the part side
         self.assertTrue(near(u['edge']['at'], ((ic[0] + ic[2]) / 2 - u['x'], box[3] - u['y']), 0.01))
         self.assertEqual(u['zones'], [zid])
+        self.assertEqual([u['rects'][k][4] for k in u['ko']], [0.0])  # the area rect is a keepout rect
         self.assertIn([round(v, 2) for v in (ic[0] - 3 - u['x'], ic[3] - 1 - u['y'], ic[2] + 3 - u['x'],
                                              box[3] - u['y'], 0.0)],
                       [[round(v, 2) for v in r] for r in u['rects']])

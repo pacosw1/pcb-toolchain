@@ -313,5 +313,34 @@ class EdgeAnchorTest(unittest.TestCase):
         self.assertAlmostEqual(d, -2.5)
 
 
+class KeepoutRectTest(unittest.TestCase):
+    """u['ko'] = indices of rects that are copper-free rule areas (an antenna keepout). A keepout may overlap
+    another keepout (a board keepout or a keepout rect of an other unit); a courtyard in it is illegal."""
+
+    def pr(self, bx):
+        # A: a part at (5, 5) plus a keepout rect to its right; B: a part at bx with its own keepout rect
+        a = unit('A', 5.0, 5.0, [[-1, -1, 1, 1, 0.5], [1, -1, 4, 1, 0.0]])
+        a['ko'] = [1]
+        b = unit('B', bx, 5.0, [[-1, -1, 1, 1, 0.5], [-4, -1, -1, 1, 0.0]])
+        b['ko'] = [1]
+        return problem([a, b], [], square_board(30.0, keepouts=[[[7, 3], [9, 3], [9, 7], [7, 7]]]))
+
+    def test_keepout_over_keepout_is_legal(self):
+        pr = self.pr(12.0)  # A keepout 6..9 over the board keepout 7..9 and over B keepout 8..11
+        pose = cost.initial_pose(pr)
+        c = cost.components(pr, pose, P)
+        self.assertAlmostEqual(c['overlap'], 0.0)
+        self.assertAlmostEqual(c['oob'], 0.0)
+        ev = cost.Evaluator(pr, P)
+        self.assertAlmostEqual(ev.legal_penalty(0), 0.0)
+        self.assertAlmostEqual(ev.unit_penalty(1), 0.0)
+
+    def test_courtyard_in_a_keepout_rect_stays_illegal(self):
+        pr = self.pr(9.5)  # B courtyard 8.5..10.5 is in A keepout 6..9
+        ev = cost.Evaluator(pr, P)
+        self.assertGreater(ev.legal_penalty(1), 0.0)
+        self.assertGreater(cost.components(pr, cost.initial_pose(pr), P)['overlap'], 0.0)
+
+
 if __name__ == '__main__':
     unittest.main()

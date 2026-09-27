@@ -376,8 +376,8 @@ def _edges_and_block_zones(board, units, index, member, by_ref, edges, zone_refs
     """Edge anchors: edges[ref] = (sides 'LRTB', courtyard side 'N'/'S'/'E'/'W' of ref, board frame now; in a
     block the point is on that side of the border).
     zone_refs {rule area name: ref}: the area goes with the unit of ref (an antenna or mains keepout of a block):
-    it moves with it and is a rect of class 0, cut at the anchor line when the unit has an anchor (the part
-    beyond lies off the board). Other rule areas stay where they are."""
+    it moves with it and is a keepout rect (u['ko']) of class 0, cut at the anchor line when the unit has an
+    anchor (the part beyond lies off the board). Other rule areas stay where they are."""
     cut = {}
     for ref, (sides, side) in edges.items():
         i = index[member[ref]]
@@ -406,6 +406,7 @@ def _edges_and_block_zones(board, units, index, member, by_ref, edges, zone_refs
                 r[2] = min(r[2], ax)
             else:
                 r[0] = max(r[0], ax)
+        u.setdefault('ko', []).append(len(u['rects']))
         u['rects'].append([r[0] - u['x'], r[1] - u['y'], r[2] - u['x'], r[3] - u['y'], 0.0])
         u.setdefault('zones', []).append(z.m_Uuid.AsString())
 
