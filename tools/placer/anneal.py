@@ -9,7 +9,8 @@ optimize(problem, params, workers, epochs, steps, seed, top) -> result dict
      (seed, worker, epoch). After the epoch, the worse half of the workers (by current cost)
      restart from the global best pose. The exchange is synchronous, so a seed gives one result.
   3. The best pose of each worker is legalized (legalize()) and ranked: illegal unit count, then cost.
-Moves: translate (dx, dy multiples of params['grid'], inside the outline box), rotate 90/180/270 deg,
+Moves: translate (dx, dy multiples of params['grid'], unit origin inside problem['move_box'] (region mode)
+or else the outline box), rotate 90/180/270 deg,
 swap the places of two units whose courtyard areas differ by at most swap_ratio.
 """
 import math
@@ -50,7 +51,7 @@ class Mover:
         self.ev = ev
         self.g = p['grid']
         self.p_swap, self.p_rot = p['p_swap'], p['p_rot']
-        self.box = cost.outline_box(pr['board'])
+        self.box = tuple(pr['move_box']) if pr.get('move_box') else cost.outline_box(pr['board'])
         self.mov = [i for i in range(ev.n) if not ev.fixed[i]]
         self.rot = [i for i in self.mov if pr['units'][i].get('rotate', True)]
         q = p['swap_ratio']

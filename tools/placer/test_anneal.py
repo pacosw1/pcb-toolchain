@@ -63,6 +63,24 @@ class MoveTest(unittest.TestCase):
         self.assertEqual(kinds, {'swap', 'rotate', 'translate'})
 
 
+class MoveBoxTest(unittest.TestCase):
+    def test_region_mode_keeps_unit_origins_in_the_move_box(self):
+        pr = chain()
+        pr['move_box'] = [10, 10, 20, 20]
+        for u in pr['units']:
+            u['fixed'] = not (10 <= u['x'] <= 20 and 10 <= u['y'] <= 20)
+        self.assertTrue(any(not u['fixed'] for u in pr['units']))
+        ev = cost.Evaluator(pr, P)
+        mv = anneal.Mover(pr, ev, P)
+        rng = random.Random(2)
+        for _ in range(3000):
+            moves, _ = mv.propose(rng, window=15.0)
+            for i, x, y, r in moves:
+                self.assertTrue(10 - 1e-9 <= x <= 20 + 1e-9 and 10 - 1e-9 <= y <= 20 + 1e-9, (x, y))
+            ev.propose(moves)
+            ev.commit()
+
+
 class DeterminismTest(unittest.TestCase):
     def test_same_seed_same_result_in_process(self):
         r1 = anneal.optimize(chain(), P, workers=1, epochs=3, steps=800, seed=11, top=1)

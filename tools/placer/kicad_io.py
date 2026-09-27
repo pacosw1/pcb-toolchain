@@ -282,7 +282,7 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
     copper = kept_copper(board, out_units, by_ref)
     return {'board_file': os.path.abspath(path), 'units': out_units, 'nets': nets,
             'board': {'outline': outline, 'keepouts': keepouts, 'edge_clearance': edge, 'copper': copper},
-            'region': region}
+            'region': region, 'move_box': list(free_box) if free_box else None}
 
 
 def _a(v):
