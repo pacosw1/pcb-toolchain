@@ -332,6 +332,7 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
                 for r in u['refs'] for bb in (p.GetBoundingBox() for p in by_ref[r].Pads())]
 
     _edges_and_block_zones(board, out_units, index, member, by_ref, edges or {}, zone_refs or {})
+    keepouts = _block_cuts(board, out_units, keepouts)
 
     skip_pat = list(skip)
     region_refs = set(region_refs)
@@ -370,6 +371,28 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
     return {'board_file': os.path.abspath(path), 'units': out_units, 'nets': nets,
             'board': {'outline': outline, 'keepouts': keepouts, 'edge_clearance': edge, 'copper': copper},
             'region': region, 'move_box': list(free_box) if free_box else None, 'decaps': decaps}
+
+
+def _block_cuts(board, units, keepouts):
+    """A board hole (slot) wholly inside a block border is part of the block (a creepage slot under a relay):
+    its Edge.Cuts shapes move with the block (u['cuts']) and it is a keepout rect of the block, not a board
+    keepout. Returns the other keepouts."""
+    def inside(bb, box):
+        t = 0.2  # mm: an Edge.Cuts shape box includes its line width
+        return box[0] - t <= bb[0] and box[1] - t <= bb[1] and bb[2] <= box[2] + t and bb[3] <= box[3] + t
+    cuts = [(d, (mm(bb.GetX()), mm(bb.GetY()), mm(bb.GetRight()), mm(bb.GetBottom())))
+            for d in board.GetDrawings() if d.GetLayer() == pcbnew.Edge_Cuts for bb in [d.GetBoundingBox()]]
+    rest = []
+    for k in keepouts:
+        hb = bbox_of(k)
+        u = next((u for u in units if u['box'] and inside(hb, u['box'])), None)
+        if u is None:
+            rest.append(k)
+            continue
+        u.setdefault('ko', []).append(len(u['rects']))
+        u['rects'].append([hb[0] - u['x'], hb[1] - u['y'], hb[2] - u['x'], hb[3] - u['y'], 0.0])
+        u.setdefault('cuts', []).extend(d.m_Uuid.AsString() for d, bb in cuts if inside(bb, hb))
+    return rest
 
 
 def _edges_and_block_zones(board, units, index, member, by_ref, edges, zone_refs):
@@ -528,11 +551,13 @@ def kept_copper(board, units, by_ref):
     return out
 
 
-def _virtual_outline(board, outline, k):
-    """Replace the Edge.Cuts shapes by the bounding box of `outline` scaled by k about its centre."""
+def _virtual_outline(board, outline, k, keep=()):
+    """Replace the Edge.Cuts shapes (not the block slots in keep) by the bounding box of `outline` scaled by k
+    about its centre."""
     xs, ys = [p[0] for p in outline], [p[1] for p in outline]
     cx, cy, hw, hh = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2, (max(xs) - min(xs)) * k / 2, (max(ys) - min(ys)) * k / 2
-    for d in [d for d in board.GetDrawings() if d.GetLayer() == pcbnew.Edge_Cuts]:
+    for d in [d for d in board.GetDrawings()
+              if d.GetLayer() == pcbnew.Edge_Cuts and d.m_Uuid.AsString() not in keep]:
         board.Delete(d)
     r = pcbnew.PCB_SHAPE(board)
     r.SetShape(pcbnew.SHAPE_T_RECT)
@@ -598,6 +623,7 @@ def write_board(path, pr, pose, out, outline_scale=1.0):
         ang = pcbnew.EDA_ANGLE(90.0 * r, pcbnew.DEGREES_T)
         items = [by_ref[ref] for ref in u['refs']] + [by_id[b] for b in u['borders'] if b in by_id]
         items += [by_zone[z] for z in u.get('zones', []) if z in by_zone]
+        items += [by_id[c] for c in u.get('cuts', []) if c in by_id]
         items += [t for t in tracks if internal.get(t.m_Uuid.AsString()) == i]
         for it in items:
             if r:
@@ -623,7 +649,8 @@ def write_board(path, pr, pose, out, outline_scale=1.0):
     for t in remove:
         board.Delete(t)  # Remove() leaves freed tracks that break later LoadBoard() calls
     if outline_scale != 1.0:
-        _virtual_outline(board, pr['board']['outline'], outline_scale)
+        _virtual_outline(board, pr['board']['outline'], outline_scale,
+                         {c for u in pr['units'] for c in u.get('cuts', [])})
     pcbnew.SaveBoard(out, board)
     return {'moved_units': len(moved), 'removed_tracks': len(remove),
             'removed_collisions': sum(1 for k in range(len(free)) if find(k) in clash),

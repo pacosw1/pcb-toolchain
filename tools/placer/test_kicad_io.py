@@ -4,6 +4,7 @@
   $PY -m unittest discover -s tools/placer -p 'test_*.py'
 The repo board is only read (copied); all writes go to a temporary folder.
 """
+import json
 import os
 import shutil
 import sys
@@ -416,6 +417,39 @@ class RoundTripTest(unittest.TestCase):
         z1 = next(q for q in pcbnew.LoadBoard(out).Zones() if q.m_Uuid.AsString() == zid)
         bb = z1.GetBoundingBox()
         self.assertTrue(near((bb.GetX() / 1e6, bb.GetY() / 1e6), (ic[0] - 3 - 4.0, ic[3] - 1 + 1.0), 0.01))
+
+    def test_a_board_slot_inside_a_block_border_moves_with_the_block_as_a_keepout_rect(self):
+        # RELAY-4: each relay block has an Edge.Cuts slot under the relay (creepage); it is part of the block
+        b = pcbnew.LoadBoard(self.board)
+        ic, box = self._block_u1(b)
+        sl = (ic[0] + 0.5, ic[1] + 0.5, ic[0] + 1.5, ic[1] + 2.5)
+        cut = pcbnew.PCB_SHAPE(b)
+        cut.SetShape(pcbnew.SHAPE_T_RECT)
+        cut.SetLayer(pcbnew.Edge_Cuts)
+        cut.SetStart(pcbnew.VECTOR2I(int(sl[0] * 1e6), int(sl[1] * 1e6)))
+        cut.SetEnd(pcbnew.VECTOR2I(int(sl[2] * 1e6), int(sl[3] * 1e6)))
+        b.Add(cut)
+        cid = cut.m_Uuid.AsString()
+        pcbnew.SaveBoard(self.board, b)
+        pr = kicad_io.read_problem(self.board)
+        self.assertFalse(any(abs(min(q[0] for q in k) - sl[0]) < 0.01 for k in pr['board']['keepouts']))
+        i = self.unit(pr, 'U1')
+        u = pr['units'][i]
+        self.assertEqual(u['cuts'], [cid])
+        self.assertIn([round(v, 2) for v in (sl[0] - u['x'], sl[1] - u['y'], sl[2] - u['x'], sl[3] - u['y'], 0.0)],
+                      [[round(v, 2) for v in u['rects'][k]] for k in u['ko']])
+        pose = cost.initial_pose(pr)
+        q = json.loads(json.dumps(pr))
+        q['units'][i]['rects'].pop()
+        del q['units'][i]['ko']
+        self.assertAlmostEqual(cost.Evaluator(pr, {}).legal_penalty(i),  # its own slot adds no penalty
+                               cost.Evaluator(q, {}).legal_penalty(i))
+        pose[i] = (pose[i][0] - 4.0, pose[i][1] + 1.0, 0)
+        out = os.path.join(self.tmp, 'b', 'out.kicad_pcb')
+        kicad_io.write_board(self.board, pr, pose, out)
+        c1 = next(d for d in pcbnew.LoadBoard(out).GetDrawings() if d.m_Uuid.AsString() == cid)
+        bb = c1.GetBoundingBox()
+        self.assertTrue(near((bb.GetX() / 1e6, bb.GetY() / 1e6), (sl[0] - 4.0, sl[1] + 1.0), 0.05))
 
     def test_named_rule_areas_are_board_keepouts(self):
         b = pcbnew.LoadBoard(self.board)
