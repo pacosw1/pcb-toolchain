@@ -26,3 +26,13 @@ Decision: keep this placer; the compaction halo uses the same form (base + coef 
 Compaction (`compact_cli.py`, easy to hard): each unit gets a routing halo = s * 0.4 * sqrt(fan-out) mm (`compact.HALO`), used as its spacing. The first step uses a large s on a virtual board (the outline scaled by k about its centre, k from the unit area at fill 0.5). Each step: search on Hetzner, legalize, write, then 2 Freerouting runs (300 s). A step passes when the best run is at or below `--target` unrouted. After a pass, s goes down 15 %. After the first fail, the step size is halved (bisect, 5 % tolerance). `--budget` defaults to 45 min. Full-board zones (ground pours) grow with the virtual outline, so the refill reaches the moved parts. `--snapshots DIR` writes `viewer.html` (self-contained: slider, play, click a part), `frames.json`, the timelapse (`movie.py`: PNG frames, `run.gif`, `run.mp4`) and one `kicad-cli` render of the best routed board per step.
 
 Board constraints for `cli.py read`: `--edge REF=SIDES:SIDE` puts the N/S/E/W courtyard side of REF (as placed now) on one of the board edges in SIDES (L, R, T, B; T = smaller y); the miss counts as forbidden area and makes the unit illegal. `--keepout-zone 'H*_KEEPOUT'` makes named rule areas keepouts. Other rule areas that meet a block border (an antenna or mains keepout) move with the block, and they keep other parts out; the part beyond an edge anchor is cut off. A connector staged wholly outside the outline is movable.
+
+Benchmark B, known-good recovery, RELAY-4 (2026-09-27; Hetzner; `bench_b.sh`). All signal tracks are removed and the FIELD_GND copper stays. Scramble seed 7 is uniform. S = a legal random placement (a search with w_wl=0 w_cong=0). P = the placer search from S. There are 5 Freerouting runs of 3.5 min each. The subset is the 56 signal nets.
+
+| Board | HPWL (proxy) | Unrouted per run | Signal subset | DRC errors |
+|---|---|---|---|---|
+| O original | 1109 | 6 / 6 / 7 / 7 / 8 | 6-8 | 0-1 |
+| S scrambled | 3330 | 136 / 136 / 139 / 139 / 140 | 97-100 | 342-386 |
+| P placer from S | 1233 | 129 / 129 / 130 / 130 / 137 | 100-108 | 229-241 |
+
+Result: FAIL. The placer gets the HPWL back to within 11 % of the original, but it does not get the routability back. The errors before routing show the cause. RELAY-4 has MAINS_K1-K4 net classes with 3.0 mm clearance, plus a creepage barrier band. The placer knows only the D-040 spacing (0.5 / 1.0 mm) and has no mains/SELV domain region. Thus relays, mains connectors and SELV parts end up too close, and kept FIELD_GND vias sit next to relay pads. Next fixes: pad-pair spacing from the net-class clearance, and a domain box per net class (mains side / barrier band as a keepout for the other domain).
