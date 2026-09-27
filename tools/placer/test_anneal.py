@@ -133,6 +133,19 @@ class LegalizeTest(unittest.TestCase):
         self.assertLess(ev.components()['hpwl'], 2.0)
 
 
+class LegalizeCopperTest(unittest.TestCase):
+    def test_unit_on_kept_copper_only_is_legal_and_stays(self):
+        pr = two_units()
+        pr['board']['copper'] = [['via', pr['units'][1]['x'], pr['units'][1]['y'], pr['units'][1]['x'],
+                                  pr['units'][1]['y'], 0.6]]
+        pr['units'][1]['pad_rects'] = [[-.2, -.2, .2, .2]]
+        ev = cost.Evaluator(pr, P)
+        self.assertGreater(ev.unit_penalty(1), 0)
+        x, y = ev.X[1], ev.Y[1]
+        self.assertEqual(anneal.legalize(ev, P), [])
+        self.assertEqual((ev.X[1], ev.Y[1]), (x, y))
+
+
 class LegalizeRetryTest(unittest.TestCase):
     def test_second_pass_doubles_the_radius(self):
         pr = two_units()

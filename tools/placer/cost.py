@@ -190,6 +190,10 @@ class Mask:
         bad = s[j1, i1] - s[j0, i1] - s[j1, i0] + s[j0, i0]
         return float(total - inside + bad) * c * c
 
+    def edge_area(self, rects):
+        """Area of the rects outside the board (edge clearance) or in a keepout; kept copper not counted."""
+        return sum(self.rect_area(*r[:4], s=self.s_edge) for r in rects)
+
     def unit_area(self, rects, pads=None):
         """Forbidden area of a unit: courtyard rects against all, or (pads given) rects against the edge
         table and pads against the copper table."""
@@ -517,6 +521,20 @@ class Evaluator:
     def unit_penalty(self, i):
         """Spacing overlap + forbidden area of one unit (0 = legal)."""
         return self._unit_overlap(i, set()) + self.forb[i]
+
+    def legal_penalty(self, i):
+        """Spacing overlap + edge/keepout area (0 = legal). Kept copper is a cost only: the writer rips up
+        the copper that a moved pad lands on."""
+        return self._unit_overlap(i, set()) + self.mask.edge_area(self._world(i).tolist())
+
+    def legal_penalty_at(self, i, x, y, r):
+        old = (self.X[i], self.Y[i], self.R[i])
+        self.X[i], self.Y[i], self.R[i] = x, y, r % 4
+        self._set_ub(i)
+        pen = self.legal_penalty(i)
+        self.X[i], self.Y[i], self.R[i] = old
+        self._set_ub(i)
+        return pen
 
     def penalty_at(self, i, x, y, r):
         """unit_penalty(i) with unit i at (x, y, r); the state does not change."""

@@ -174,6 +174,18 @@ class FixedCopperTest(unittest.TestCase):
         self.assertGreater(cost.Evaluator(pr, P, mask=m).penalty_at(0, 1, 5, 0), 0)
         self.assertAlmostEqual(cost.Evaluator(pr, P, mask=m).penalty_at(0, 5, 5, 0), 0.0)
 
+    def test_legal_penalty_ignores_kept_copper_but_not_the_edge(self):
+        # the writer rips up kept copper that a moved pad lands on: copper is a cost, not a legality rule
+        b = square_board()
+        b['copper'] = [['via', 5.0, 5.0, 5.0, 5.0, 0.6]]
+        a = unit('A', 5, 5, [[-1, -1, 1, 1, .5]])
+        a['pad_rects'] = [[-.5, -.5, .5, .5]]
+        ev = cost.Evaluator(problem([a], [], board=b), P)
+        self.assertGreater(ev.unit_penalty(0), 0)
+        self.assertAlmostEqual(ev.legal_penalty(0), 0.0)
+        self.assertAlmostEqual(ev.legal_penalty_at(0, 5, 5, 1), 0.0)
+        self.assertGreater(ev.legal_penalty_at(0, 0.5, 5, 0), 0)
+
 
 class OverlapTest(unittest.TestCase):
     def test_pair_penalty_below_gap(self):

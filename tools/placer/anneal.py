@@ -149,7 +149,8 @@ class LegalizeTimeout(RuntimeError):
 
 
 def legalize(ev, params, clock=time.monotonic):
-    """Move each unit with spacing overlap or forbidden area to the lowest-cost legal spot nearby.
+    """Move each unit with spacing overlap or edge/keepout area to the lowest-cost legal spot nearby
+    (kept copper is a cost, not a legality rule: Evaluator.legal_penalty).
     Biggest units first; ring search on legal_step up to legal_radius, own rotation first.
     Up to legal_passes passes; each pass doubles the radius. Returns the units that stay illegal.
     Raises LegalizeTimeout after legal_time seconds (clock is injected for tests)."""
@@ -166,12 +167,12 @@ def legalize(ev, params, clock=time.monotonic):
 def _legal_pass(ev, step, radius, end, clock, limit):
     def check():
         if clock() > end:
-            raise LegalizeTimeout([j for j in range(ev.n) if not ev.fixed[j] and ev.unit_penalty(j) > 1e-9], limit)
+            raise LegalizeTimeout([j for j in range(ev.n) if not ev.fixed[j] and ev.legal_penalty(j) > 1e-9], limit)
     rings = int(radius / step + 1e-9)
     order = sorted((i for i in range(ev.n) if not ev.fixed[i]), key=lambda i: (-ev.area[i], i))
     bad = []
     for i in order:
-        if ev.unit_penalty(i) <= 1e-9:
+        if ev.legal_penalty(i) <= 1e-9:
             continue
         check()
         x0, y0, r0 = ev.X[i], ev.Y[i], ev.R[i]
@@ -183,7 +184,7 @@ def _legal_pass(ev, step, radius, end, clock, limit):
                 for a, b in ring(k):
                     for r in rots:
                         x, y = x0 + a * step, y0 + b * step
-                        if ev.penalty_at(i, x, y, r) > 1e-9:
+                        if ev.legal_penalty_at(i, x, y, r) > 1e-9:
                             continue
                         d = ev.propose([(i, x, y, r)])
                         ev.revert()
