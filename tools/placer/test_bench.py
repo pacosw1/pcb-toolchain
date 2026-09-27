@@ -73,5 +73,16 @@ class TableTest(unittest.TestCase):
         self.assertIn('| x | 5.0 | no result |', text)
 
 
+class ScatterTest(unittest.TestCase):
+    def test_scatter_moves_the_start_of_movable_units_into_the_board_on_a_copy(self):
+        pr = problem()
+        pr['units'][0]['x'] = 500.0  # staged outside the board
+        q = bench.scatter(pr, 1)
+        self.assertEqual(pr['units'][0]['x'], 500.0)
+        self.assertEqual((q['units'][2]['x'], q['units'][2]['y']), (1, 1))
+        for u in q['units'][:2]:
+            self.assertTrue(1.5 <= u['x'] <= 18.5 and 1.5 <= u['y'] <= 18.5)
+
+
 if __name__ == '__main__':
     unittest.main()

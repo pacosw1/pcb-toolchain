@@ -18,7 +18,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from placer import compact  # noqa: E402
+from placer import bench, compact  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 NO_RESULT = 10 ** 6  # a router job without an UNROUTED line (transport error, timeout) never passes
@@ -54,6 +54,8 @@ def main(argv=None):
     ap.add_argument('--steps', type=int, default=12000)
     ap.add_argument('--seed', type=int, default=1)
     ap.add_argument('--param', nargs='*', default=[])
+    ap.add_argument('--scatter', type=int, metavar='SEED', help='start each search from seeded uniform places inside '
+                    'the (virtual) board: for parts staged outside the outline')
     ap.add_argument('--snapshots', metavar='DIR', help='after the run: viewer.html, frames.json, timelapse '
                     '(PNG frames, run.gif, run.mp4) and one routed render per step in DIR (scratch, not committed)')
     a = ap.parse_args(argv)
@@ -71,6 +73,8 @@ def main(argv=None):
 
     def search(q, n):
         d = sdir(n)
+        if a.scatter is not None:
+            q = bench.scatter(q, a.scatter)
         json.dump(q, open(os.path.join(d, 'prob.json'), 'w'))
         cmd = ['bash', 'tools/placer/remote_run.sh', 'run', 'in/prob.json', '-o', 'out/res.json',
                '--workers', str(a.workers), '--epochs', str(a.epochs), '--steps', str(a.steps),

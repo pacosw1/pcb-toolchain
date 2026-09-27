@@ -57,6 +57,17 @@ def scramble(pr, seed, sigma=None):
     return pose
 
 
+
+def scatter(pr, seed):
+    """Copy of the problem whose movable units start at seeded uniform places inside the board (a search start
+    for parts staged outside the outline). Write the result against the original problem."""
+    import copy
+    q = copy.deepcopy(pr)
+    for u, (x, y, _) in zip(q['units'], scramble(pr, seed)):
+        u['x'], u['y'] = x, y
+    return q
+
+
 def table(rows):
     """rows: [(tag, proxy cost, [unrouted per router run])] -> (markdown table, Spearman of proxy vs median).
     A row without router results is shown but not in the correlation."""
