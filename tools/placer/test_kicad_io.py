@@ -248,6 +248,25 @@ class RoundTripTest(unittest.TestCase):
         cx, cy, w, h = (x0 + x1) / 2, (y0 + y1) / 2, (x1 - x0) * 1.5, (y1 - y0) * 1.5
         self.assertTrue(near(cost.outline_box(q['board']), (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2), 0.01))
 
+    def test_write_on_a_virtual_board_grows_the_full_board_zones_with_the_outline(self):
+        pr = kicad_io.read_problem(self.board)
+        x0, y0, x1, y1 = cost.outline_box(pr['board'])
+        full = lambda z: z.GetBoundingBox()  # noqa: E731
+        before = {z.GetZoneName(): full(z) for z in pcbnew.LoadBoard(self.board).Zones()}
+        out = os.path.join(self.tmp, 'b', 'out.kicad_pcb')
+        kicad_io.write_board(self.board, pr, cost.initial_pose(pr), out, outline_scale=1.5)
+        after = {z.GetZoneName(): full(z) for z in pcbnew.LoadBoard(out).Zones()}
+        self.assertIn('GND_F', after)
+        w, h = (x1 - x0) * 1.5, (y1 - y0) * 1.5
+        for name in ('GND_F', 'GND_B'):
+            bb = after[name]
+            self.assertGreater(bb.GetWidth() / 1e6, w - 1.0, name)
+            self.assertGreater(bb.GetHeight() / 1e6, h - 1.0, name)
+        # a local zone (not the whole board) keeps its outline
+        for name, bb in before.items():
+            if bb.GetWidth() / 1e6 < (x1 - x0) * 0.9:
+                self.assertEqual((after[name].GetWidth(), after[name].GetHeight()), (bb.GetWidth(), bb.GetHeight()))
+
     def test_write_moves_and_rotates_like_the_model(self):
         pr = kicad_io.read_problem(self.board)
         i = self.unit(pr, 'U1')

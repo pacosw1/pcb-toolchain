@@ -493,6 +493,17 @@ def _virtual_outline(board, outline, k):
     r.SetEnd(_v(cx + hw, cy + hh))
     r.SetWidth(int(0.1 * M))
     board.Add(r)
+    # a zone that covers the whole outline (a ground pour) grows to the virtual box, so the refill
+    # still reaches the parts placed outside the real outline; a local zone keeps its outline
+    w0, h0 = max(xs) - min(xs), max(ys) - min(ys)
+    for z in board.Zones():
+        bb = z.GetBoundingBox()
+        if bb.GetWidth() / M >= 0.9 * w0 and bb.GetHeight() / M >= 0.9 * h0:
+            o = z.Outline()
+            o.RemoveAllContours()
+            o.NewOutline()
+            for x, y in ((cx - hw, cy - hh), (cx + hw, cy - hh), (cx + hw, cy + hh), (cx - hw, cy + hh)):
+                o.Append(_v(x, y))
 
 
 def write_board(path, pr, pose, out, outline_scale=1.0):
