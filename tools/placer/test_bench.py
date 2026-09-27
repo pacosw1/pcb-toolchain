@@ -59,5 +59,19 @@ class ScrambleCliTest(unittest.TestCase):
         self.assertEqual((q['units'][2]['x'], q['units'][2]['y']), (1, 1))
 
 
+class TableTest(unittest.TestCase):
+    def test_median_per_row_and_rank_correlation_of_proxy_vs_median(self):
+        rows = [('a', 10.0, [5, 1, 3]), ('b', 20.0, [9, 7, 8]), ('c', 30.0, [20, 30, 10])]
+        text, rho = bench.table(rows)
+        self.assertAlmostEqual(rho, 1.0)
+        self.assertIn('| a | 10.0 | 1 / 3 / 5 |', text)
+
+    def test_a_row_without_router_results_is_left_out_of_the_correlation(self):
+        rows = [('a', 10.0, [1]), ('b', 20.0, [2]), ('x', 5.0, []), ('c', 30.0, [3])]
+        text, rho = bench.table(rows)
+        self.assertAlmostEqual(rho, 1.0)
+        self.assertIn('| x | 5.0 | no result |', text)
+
+
 if __name__ == '__main__':
     unittest.main()

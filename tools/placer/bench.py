@@ -55,3 +55,60 @@ def scramble(pr, seed, sigma=None):
             x, y, r = u['x'] + rng.gauss(0, sigma), u['y'] + rng.gauss(0, sigma), 0
         pose.append((min(max(x, lo_x), hi_x), min(max(y, lo_y), hi_y), r))
     return pose
+
+
+def table(rows):
+    """rows: [(tag, proxy cost, [unrouted per router run])] -> (markdown table, Spearman of proxy vs median).
+    A row without router results is shown but not in the correlation."""
+    out = ['| Placement | Proxy cost | Unrouted min / median / max |', '|---|---|---|']
+    xs, ys = [], []
+    for tag, c, runs in rows:
+        if not runs:
+            out.append('| %s | %.1f | no result |' % (tag, c))
+            continue
+        v = sorted(runs)
+        med = v[len(v) // 2] if len(v) % 2 else (v[len(v) // 2 - 1] + v[len(v) // 2]) / 2
+        out.append('| %s | %.1f | %s / %s / %s |' % (tag, c, v[0], med, v[-1]))
+        xs.append(c)
+        ys.append(med)
+    rho = spearman(xs, ys)
+    out.append('')
+    out.append('Spearman (proxy cost vs median unrouted, n = %d): %.2f' % (len(xs), rho))
+    return '\n'.join(out), rho
+
+
+def main(argv=None):
+    """bench.py collect PROB OUT TAG...: proxy cost (default params) of OUT/TAG-search/res.json cand0 (TAG 'base':
+    the problem pose) against the UNROUTED lines of OUT/TAG-r*.log; prints the table."""
+    import argparse
+    import glob
+    import json
+    import os
+    import re
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from placer import cost
+    ap = argparse.ArgumentParser()
+    ap.add_argument('cmd', choices=['collect'])
+    ap.add_argument('prob')
+    ap.add_argument('out')
+    ap.add_argument('tags', nargs='+')
+    a = ap.parse_args(argv)
+    pr = json.load(open(a.prob))
+    rows = []
+    for t in a.tags:
+        if t == 'base':
+            pose = cost.initial_pose(pr)
+        else:
+            pose = [tuple(p) for p in json.load(open(os.path.join(a.out, t + '-search', 'res.json')))['candidates'][0]['pose']]
+        runs = []
+        for log in sorted(glob.glob(os.path.join(a.out, t + '-r*.log'))):
+            m = re.findall(r'^UNROUTED (\d+)', open(log).read(), re.M)
+            if m:
+                runs.append(int(m[-1]))
+        rows.append((t, cost.total(pr, pose, {}), runs))
+    print(table(rows)[0])
+
+
+if __name__ == '__main__':
+    main()
