@@ -15,3 +15,10 @@ Region-mode result, MC-MAIN at 942ab95 (2026-09-27, Hetzner, 5 Freerouting runs 
 | Region + U1 pin swap | 342 | 249 / 284 / 330 | 160 / 190 / 223 |
 
 The router routes only 47-64 connections in 3.5 min, so the spread is larger than the difference: this score cannot rank these placements.
+
+KiCadRoutingTools (MIT, pinned 46c90458), read 2026-09-27, not used by this tool:
+- `py_placer/place_optimize.py`: greedy quench of an existing placement (nudges inside a displacement cap, 90-degree turns, same-footprint swaps); cost = airwire length + crossings + halo whitespace, halo = 0.5 + 0.15 * sqrt(pins) mm (`placement/quench.py`). Local refinement, not a global search.
+- `place_route_loop.py`: route, then re-quench only small parts on failed/blocker nets; accept on a better re-route, else widen the displacement cap. Not easy-to-hard: it does not shrink spacing.
+- `py_router/target_swap.py`: Hungarian assignment for swappable diff-pair targets (scipy, own parser); no EXTI/pin-function rules, so it does not fit the U1 GPIO swap.
+- `py_router/qfn_fanout`: QFN/QFP escape router; a possible later routing step for the U1 LQFP-100 escape.
+Decision: keep this placer; the compaction halo uses the same form (base + coef * sqrt(pins)) as a cross-check.
