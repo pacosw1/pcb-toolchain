@@ -11,6 +11,9 @@ Problem (a dict, JSON-able; tools/placer/kicad_io.py writes it from a board):
   nets:   [{name, weight, pins: [[unit, x0, y0, x1, y1], ...]}]   pin boxes relative to the origin.
   board:  {outline: [[x, y], ...], keepouts: [[[x, y], ...], ...], edge_clearance}
   region: None or {box: [x0, y0, x1, y1], weight, refs}   RUDY cells in box count weight times.
+  board['copper'] (optional): kept copper [[layer, x0, y0, x1, y1, width], ...]; layer 'via' = a via at
+          (x0, y0) with diameter width. It uses RUDY capacity (fixed_grid) and F.Cu copper and vias are
+          obstacles in the forbidden mask (grown by gap). Zones are not in it: a pour gives way to tracks.
 Pose: [(x, y, r), ...] per unit.
 
 Cost = w_wl * sum(weight * HPWL) + w_cong * RUDY overflow + w_ov * spacing overlap + w_oob * forbidden area.
@@ -26,9 +29,11 @@ import math
 
 import numpy as np
 
-DEFAULTS = {'rudy_cell': 1.0, 'mask_cell': 0.1, 'layers': 2, 'pitch': 0.4, 'limit': 1.0, 'pin_demand': 0.0,
+DEFAULTS = {'rudy_cell': 1.0, 'mask_cell': 0.1, 'layers': 2, 'pitch': 0.4, 'limit': 1.0, 'pin_demand': 0.0, 'gap': 0.2,
             'w_wl': 1.0, 'w_cong': 1.0, 'w_ov': 20.0, 'w_oob': 20.0}
 EPS = 1e-9
+ROUTE_LAYERS = ('F.Cu', 'B.Cu')  # the `layers` routing layers; copper on other layers uses no RUDY capacity
+OBSTACLE_LAYERS = ('F.Cu', 'via')  # kept copper that a top-side part must not cover
 
 
 def params_with_defaults(params):
@@ -122,7 +127,7 @@ class Mask:
 
     MARGIN = 2.0
 
-    def __init__(self, board, cell):
+    def __init__(self, board, cell, gap=0.2):
         x0, y0, x1, y1 = outline_box(board)
         m = self.MARGIN
         self.x0, self.y0, self.c = x0 - m, y0 - m, cell
@@ -144,8 +149,29 @@ class Mask:
             out = (s[j1, i1] - s[j0, i1] - s[j1, i0] + s[j0, i0]) > 0
         for poly in board.get('keepouts', []):
             out |= point_in_poly(gx, gy, poly)
+        for layer, a0, b0, a1, b1, w in board.get('copper', []):
+            if layer in OBSTACLE_LAYERS:
+                self._segment(out, a0, b0, a1, b1, w / 2 + gap)
         self.forb = out
         self.s = sat(out.astype(np.int64))
+
+    def _segment(self, out, a0, b0, a1, b1, r):
+        """Mark the cells whose centre is within r of the segment (a0, b0)-(a1, b1)."""
+        c = self.c
+        i0 = max(int((min(a0, a1) - r - self.x0) / c), 0)
+        i1 = min(int((max(a0, a1) + r - self.x0) / c) + 2, self.nx)
+        j0 = max(int((min(b0, b1) - r - self.y0) / c), 0)
+        j1 = min(int((max(b0, b1) + r - self.y0) / c) + 2, self.ny)
+        if i1 <= i0 or j1 <= j0:
+            return
+        xs = self.x0 + (np.arange(i0, i1) + 0.5) * c
+        ys = self.y0 + (np.arange(j0, j1) + 0.5) * c
+        px, py = np.meshgrid(xs, ys)
+        dx, dy = a1 - a0, b1 - b0
+        ll = dx * dx + dy * dy
+        t = np.clip(((px - a0) * dx + (py - b0) * dy) / ll, 0, 1) if ll > 0 else 0.0
+        d2 = (px - a0 - t * dx) ** 2 + (py - b0 - t * dy) ** 2
+        out[j0:j1, i0:i1] |= d2 <= r * r
 
     def rect_area(self, x0, y0, x1, y1):
         c = self.c
@@ -199,10 +225,35 @@ def hpwl(pr, pose):
     return t
 
 
-def rudy_grid(pr, pose, params):
+def fixed_grid(pr, params):
+    """RUDY demand of the kept copper (mm of wire per cell). A track on a routing layer uses its length *
+    (width + gap) / pitch; a via uses (diameter + gap)^2 / pitch on each of the `layers` routing layers."""
     p = params_with_defaults(params)
     grid = Grid(pr['board'], p['rudy_cell'])
     g = np.zeros((grid.ny, grid.nx))
+    c, pitch, gap = grid.c, p['pitch'], p['gap']
+
+    def add(x, y, v):
+        i = math.floor((x - grid.x0) / c)
+        j = math.floor((y - grid.y0) / c)
+        if 0 <= i < grid.nx and 0 <= j < grid.ny:
+            g[j, i] += v
+    for layer, a0, b0, a1, b1, w in pr['board'].get('copper', []):
+        if layer == 'via':
+            add(a0, b0, (w + gap) ** 2 / pitch * p['layers'])
+        elif layer in ROUTE_LAYERS:
+            length = math.hypot(a1 - a0, b1 - b0)
+            n = max(1, math.ceil(length / (c / 4)))
+            for k in range(n):
+                f = (k + 0.5) / n
+                add(a0 + f * (a1 - a0), b0 + f * (b1 - b0), length / n * (w + gap) / pitch)
+    return g
+
+
+def rudy_grid(pr, pose, params):
+    p = params_with_defaults(params)
+    grid = Grid(pr['board'], p['rudy_cell'])
+    g = fixed_grid(pr, p)
     for n in pr['nets']:
         b = net_box(n, pose)
         s = grid.span(b)
@@ -263,7 +314,7 @@ def forbidden(pr, pose, mask, i):
 
 def components(pr, pose, params):
     p = params_with_defaults(params)
-    mask = Mask(pr['board'], p['mask_cell'])
+    mask = Mask(pr['board'], p['mask_cell'], p['gap'])
     return {'hpwl': hpwl(pr, pose),
             'cong': overflow(rudy_grid(pr, pose, p), p, cell_weights(pr, p)),
             'overlap': overlap(pr, pose),
@@ -302,7 +353,7 @@ class Evaluator:
         self.UB = np.zeros((self.n, 4))
         for i in range(self.n):
             self._set_ub(i)
-        self.mask = mask or Mask(pr['board'], p['mask_cell'])
+        self.mask = mask or Mask(pr['board'], p['mask_cell'], p['gap'])
         self.forb = [0.0 if self.fixed[i] else self._forb(i) for i in range(self.n)]
         # nets
         self.nw = [float(n['weight']) for n in pr['nets']]
@@ -313,7 +364,7 @@ class Evaluator:
                 un[q[0]].add(k)
         self.unit_nets = [sorted(s) for s in un]
         self.grid = Grid(pr['board'], p['rudy_cell'])
-        self.G = np.zeros((self.grid.ny, self.grid.nx))
+        self.G = fixed_grid(pr, p)
         self.pd = p['pin_demand']
         self.pads = []
         for u in us:

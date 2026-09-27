@@ -208,7 +208,7 @@ _W = {}
 def _init(pr, params):
     p = params_all(params)
     _W['pr'], _W['p'] = pr, p
-    _W['mask'] = cost.Mask(pr['board'], p['mask_cell'])
+    _W['mask'] = cost.Mask(pr['board'], p['mask_cell'], p['gap'])
 
 
 def _evaluator(pose, p=None):

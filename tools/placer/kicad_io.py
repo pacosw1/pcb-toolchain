@@ -13,6 +13,8 @@ read_problem(board) -> problem dict (see cost.py)
   Pads: every pad centre of the unit (pin RUDY). Pins: one box per (net, unit) of the pad centres. Nets matching `skip` (default GND) and nets
   inside one unit are left out.
   Keepouts: rule areas that do not allow footprints, and closed shapes on `keepout_layers`.
+  Copper: the tracks and vias that stay whatever the movable units do (kept_copper); cost.py counts
+  them as used routing capacity and (F.Cu, vias) as obstacles.
   Region: nets with a pad on `region_refs` get weight `region_weight`; RUDY cells in `region_box`
   (default: the courtyard box of the region refs grown by 15 mm) count region_weight times.
 
@@ -277,8 +279,10 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
             region_box = [min(r[0] for r in rs) - 15, min(r[1] for r in rs) - 15,
                           max(r[2] for r in rs) + 15, max(r[3] for r in rs) + 15]
         region = {'box': list(region_box), 'weight': region_weight, 'refs': sorted(region_refs)}
+    copper = kept_copper(board, out_units, by_ref)
     return {'board_file': os.path.abspath(path), 'units': out_units, 'nets': nets,
-            'board': {'outline': outline, 'keepouts': keepouts, 'edge_clearance': edge}, 'region': region}
+            'board': {'outline': outline, 'keepouts': keepouts, 'edge_clearance': edge, 'copper': copper},
+            'region': region}
 
 
 def _a(v):
@@ -317,6 +321,71 @@ def _meet(a, b):
     return a[0] <= b[2] and b[0] <= a[2] and a[1] <= b[3] and b[1] <= a[3]
 
 
+def _ends(t):
+    return [t.GetPosition()] if t.GetClass() == 'PCB_VIA' else [t.GetStart(), t.GetEnd()]
+
+
+def _clusters(free):
+    """Union-find over tracks and vias of one net that share an end point. Returns find(k)."""
+    parent = list(range(len(free)))
+
+    def find(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+    at = {}
+    for k, t in enumerate(free):
+        for p in _ends(t):
+            key = (t.GetNetCode(), _pt_key(p))
+            if key in at:
+                parent[find(k)] = find(at[key])
+            else:
+                at[key] = k
+    return find
+
+
+def _hit(free, find, pads_by_net):
+    """Cluster ids with an end point on a pad in pads_by_net {net: [pad, ...]}."""
+    hit = set()
+    for k, t in enumerate(free):
+        pads = pads_by_net.get(t.GetNetname())
+        if pads and any(pad.HitTest(p) for p in _ends(t) for pad in pads):
+            hit.add(find(k))
+    return hit
+
+
+def kept_copper(board, units, by_ref):
+    """Copper that stays whatever the movable units do: clusters with no end point on a pad of a movable
+    unit, and not inside the border of a movable block. [[layer, x0, y0, x1, y1, width], ...]"""
+    tracks = list(board.GetTracks())
+    pads, boxes = {}, []
+    for u in units:
+        if u['fixed']:
+            continue
+        if u['box']:
+            boxes.append(u['box'])
+        for r in u['refs']:
+            for p in by_ref[r].Pads():
+                if p.GetNetname():
+                    pads.setdefault(p.GetNetname(), []).append(p)
+    free = [t for t in tracks
+            if not any(all(inside_box(mm(p.x), mm(p.y), b) for p in _ends(t)) for b in boxes)]
+    find = _clusters(free)
+    hit = _hit(free, find, pads)
+    out = []
+    for k, t in enumerate(free):
+        if find(k) in hit:
+            continue
+        if t.GetClass() == 'PCB_VIA':
+            q = t.GetPosition()
+            out.append(['via', mm(q.x), mm(q.y), mm(q.x), mm(q.y), mm(t.GetWidth(pcbnew.F_Cu))])
+        else:
+            a, b = t.GetStart(), t.GetEnd()
+            out.append([board.GetLayerName(t.GetLayer()), mm(a.x), mm(a.y), mm(b.x), mm(b.y), mm(t.GetWidth())])
+    return out
+
+
 def write_board(path, pr, pose, out):
     if os.path.abspath(path) == os.path.abspath(out):
         raise ValueError('write_board writes a copy only: out must differ from the input board')
@@ -348,33 +417,9 @@ def write_board(path, pr, pose, out):
                     moved_pads.setdefault(p.GetNetname(), []).append(p)
 
     # copper clusters per net (end points and vias), not counting the rigid block copper
-    parent = {}
-
-    def find(a):
-        while parent[a] != a:
-            parent[a] = parent[parent[a]]
-            a = parent[a]
-        return a
-
     free = [t for t in tracks if t.m_Uuid.AsString() not in internal]
-    at = {}
-    for k, t in enumerate(free):
-        parent[k] = k
-        pts = [t.GetPosition()] if t.GetClass() == 'PCB_VIA' else [t.GetStart(), t.GetEnd()]
-        for p in pts:
-            key = (t.GetNetCode(), _pt_key(p))
-            if key in at:
-                parent[find(k)] = find(at[key])
-            else:
-                at[key] = k
-    hit = set()
-    for k, t in enumerate(free):
-        pads = moved_pads.get(t.GetNetname())
-        if not pads:
-            continue
-        pts = [t.GetPosition()] if t.GetClass() == 'PCB_VIA' else [t.GetStart(), t.GetEnd()]
-        if any(pad.HitTest(p) for p in pts for pad in pads):
-            hit.add(find(k))
+    find = _clusters(free)
+    hit = _hit(free, find, moved_pads)
     remove = [t for k, t in enumerate(free) if find(k) in hit]
 
     for i, u, x, y, r in moved:

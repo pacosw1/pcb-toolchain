@@ -108,6 +108,53 @@ class PinDemandTest(unittest.TestCase):
         self.assertAlmostEqual(float(g[3, 5]), 1.0)  # (0.2, -1.5) + (5, 5) = (5.2, 3.5)
 
 
+class FixedCopperTest(unittest.TestCase):
+    # board['copper']: [layer, x0, y0, x1, y1, width]; layer 'via' = a via at (x0, y0), width = diameter.
+    def test_track_on_a_routing_layer_uses_capacity(self):
+        b = square_board()
+        b['copper'] = [['F.Cu', 2.0, 5.5, 5.0, 5.5, 0.2]]
+        pr = problem([], [], board=b)
+        g = cost.fixed_grid(pr, dict(P, pitch=0.4, gap=0.2))
+        # 3 mm of a 0.2 mm track + 0.2 mm gap = 3 * 0.4 / 0.4 = 3 mm of wire, in row 5, cells 2..4
+        self.assertAlmostEqual(float(g.sum()), 3.0, places=2)
+        self.assertAlmostEqual(float(g[5, 2:5].sum()), 3.0, places=2)
+
+    def test_inner_layer_track_is_not_routing_capacity(self):
+        b = square_board()
+        b['copper'] = [['In1.Cu', 2.0, 5.5, 5.0, 5.5, 0.2]]
+        self.assertAlmostEqual(float(cost.fixed_grid(problem([], [], board=b), P).sum()), 0.0)
+
+    def test_via_uses_capacity_on_each_routing_layer(self):
+        b = square_board()
+        b['copper'] = [['via', 5.5, 5.5, 5.5, 5.5, 0.6]]
+        g = cost.fixed_grid(problem([], [], board=b), dict(P, pitch=0.4, gap=0.2, layers=2))
+        # (0.6 + 0.2)^2 / 0.4 per layer, 2 layers
+        self.assertAlmostEqual(float(g[5, 5]), 2 * 0.64 / 0.4, places=6)
+
+    def test_fixed_copper_counts_in_overflow_of_the_evaluator(self):
+        b = square_board()
+        b['copper'] = [['F.Cu', 0.0, 5.5, 10.0, 5.5, 0.2]]
+        pr = problem([unit('A', 1, 1, [[-.1, -.1, .1, .1, .5]])], [], board=b)
+        q = dict(P, pitch=0.4, gap=0.2, layers=1, limit=0.1)
+        ev = cost.Evaluator(pr, q)
+        self.assertGreater(ev.components()['cong'], 0)
+        self.assertAlmostEqual(ev.cost, cost.total(pr, ev.pose(), q), places=6)
+
+    def test_front_copper_and_vias_are_obstacles_back_copper_is_not(self):
+        b = square_board()
+        b['copper'] = [['F.Cu', 2.0, 5.0, 8.0, 5.0, 0.2], ['B.Cu', 2.0, 3.0, 8.0, 3.0, 0.2],
+                       ['via', 5.0, 8.0, 5.0, 8.0, 0.6]]
+        pr = problem([unit('A', 5, 5, [[-.5, -.5, .5, .5, .5]]), unit('B', 5, 3, [[-.5, -.5, .5, .5, .5]]),
+                      unit('C', 5, 8, [[-.5, -.5, .5, .5, .5]]), unit('D', 5, 1.5, [[-.2, -.2, .2, .2, .5]])], [],
+                     board=b)
+        m = cost.Mask(pr['board'], 0.1, gap=0.2)
+        pose = cost.initial_pose(pr)
+        self.assertGreater(cost.forbidden(pr, pose, m, 0), 0)
+        self.assertAlmostEqual(cost.forbidden(pr, pose, m, 1), 0.0)
+        self.assertGreater(cost.forbidden(pr, pose, m, 2), 0)
+        self.assertAlmostEqual(cost.forbidden(pr, pose, m, 3), 0.0)
+
+
 class OverlapTest(unittest.TestCase):
     def test_pair_penalty_below_gap(self):
         a = [[0, 0, 1, 1, .5]]

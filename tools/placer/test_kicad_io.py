@@ -84,6 +84,21 @@ class RoundTripTest(unittest.TestCase):
         for r in refs:
             self.assertFalse(is_fixed(loose, r))
 
+    def test_kept_copper_is_the_copper_the_writer_keeps(self):
+        b0 = pcbnew.LoadBoard(self.board)
+        n_tracks = len(list(b0.GetTracks()))
+        none = kicad_io.read_problem(self.board, free_box=[0, 0, 1, 1])  # nothing movable: all copper stays
+        self.assertEqual(len(none['board']['copper']), n_tracks)
+        self.assertTrue(any(c[0] == 'via' for c in none['board']['copper']))
+        ic = kicad_io.fp_rect(b0.FindFootprintByReference('U1'))
+        pr = kicad_io.read_problem(self.board, free_box=list(ic))  # only U1 moves
+        self.assertEqual([u['refs'] for u in pr['units'] if not u['fixed']], [['U1']])
+        i = self.unit(pr, 'U1')
+        pose = cost.initial_pose(pr)
+        pose[i] = (pose[i][0] + 3.0, pose[i][1], 0)
+        rep = kicad_io.write_board(self.board, pr, pose, os.path.join(self.tmp, 'b', 'out.kicad_pcb'))
+        self.assertEqual(len(pr['board']['copper']), n_tracks - (rep['removed_tracks'] - rep['removed_collisions']))
+
     def test_write_moves_and_rotates_like_the_model(self):
         pr = kicad_io.read_problem(self.board)
         i = self.unit(pr, 'U1')
