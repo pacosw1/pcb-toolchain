@@ -202,7 +202,7 @@ def ref_coverage(nets, layers, ref_nets, ref_at, step=0.05):
             tot += L
             if ref_nets & ref_at(layers[layer]['ref_layer'], x, y):
                 hit += L
-    return 100.0 * hit / tot if tot else 0.0
+    return 100.0 * (hit / tot) if tot else 0.0
 
 
 VIA_ANTIPAD_WARN_MM = 1.5   # a single via's own allowance above this is worth a look
@@ -263,7 +263,7 @@ def coverage_detail(net, layers, ref_nets, ref_at, step=0.05, exempt_areas=(), v
             hit += L
             allowed += L
             via_len[via] += L
-    return {'tot': tot, 'hit': hit, 'pct': 100.0 * hit / tot if tot else 0.0,
+    return {'tot': tot, 'hit': hit, 'pct': 100.0 * (hit / tot) if tot else 0.0,
             'exempted': exempted, 'area_len': area_len, 'allowed': allowed, 'via_len': dict(via_len)}
 
 

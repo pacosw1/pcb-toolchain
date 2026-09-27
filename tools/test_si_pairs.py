@@ -276,5 +276,16 @@ class Arc(unittest.TestCase):
         self.assertAlmostEqual(L, math.pi / 2, delta=0.002)
 
 
+class FullCoverage(unittest.TestCase):
+    def test_full_coverage_is_exactly_100_pct(self):
+        # POE-ETHERNET ETH_RXP (2026-09-26): hit == tot, but 100 * hit / tot gave 99.99999999999999.
+        net = {'segs': [('F.Cu', 135.788, 113.7, 133.475, 113.7, 0.2), ('F.Cu', 135.838, 113.75, 135.788, 113.7, 0.2),
+                        ('F.Cu', 133.475, 113.7, 133.05, 114.05, 0.2)]}
+        layers = {'F.Cu': {'ref_layer': 'In1.Cu'}}
+        ref_at = lambda layer, x, y: {'GND'}  # noqa: E731
+        self.assertEqual(sp.coverage_detail(net, layers, 'GND', ref_at)['pct'], 100.0)
+        self.assertEqual(sp.ref_coverage([net], layers, 'GND', ref_at), 100.0)
+
+
 if __name__ == '__main__':
     unittest.main()
