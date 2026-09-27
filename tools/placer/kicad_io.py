@@ -373,7 +373,8 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
 
 
 def _edges_and_block_zones(board, units, index, member, by_ref, edges, zone_refs):
-    """Edge anchors: edges[ref] = (sides 'LRTB', courtyard side 'N'/'S'/'E'/'W' of ref, board frame now).
+    """Edge anchors: edges[ref] = (sides 'LRTB', courtyard side 'N'/'S'/'E'/'W' of ref, board frame now; in a
+    block the point is on that side of the border).
     zone_refs {rule area name: ref}: the area goes with the unit of ref (an antenna or mains keepout of a block):
     it moves with it and is a rect of class 0, cut at the anchor line when the unit has an anchor (the part
     beyond lies off the board). Other rule areas stay where they are."""
@@ -383,6 +384,8 @@ def _edges_and_block_zones(board, units, index, member, by_ref, edges, zone_refs
         u = units[i]
         rc = fp_rect(by_ref[ref])
         mx, my = (rc[0] + rc[2]) / 2, (rc[1] + rc[3]) / 2
+        if u['box']:  # block copper ends at the border: the anchor goes onto the border, in line with the part
+            rc = u['box']
         ax, ay = {'N': (mx, rc[1]), 'S': (mx, rc[3]), 'W': (rc[0], my), 'E': (rc[2], my)}[side]
         u['edge'] = {'at': [ax - u['x'], ay - u['y']], 'sides': sides, 'tol': 0.5}
         cut[i] = (side, ax, ay)

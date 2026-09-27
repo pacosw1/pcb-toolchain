@@ -402,10 +402,11 @@ class RoundTripTest(unittest.TestCase):
         i = self.unit(pr, 'U1')
         u = pr['units'][i]
         self.assertEqual(u['edge']['sides'], 'LR')
-        self.assertTrue(near(u['edge']['at'], ((ic[0] + ic[2]) / 2 - u['x'], ic[3] - u['y']), 0.01))
+        # in a block the anchor is on the border (block copper ends there), in line with the part side
+        self.assertTrue(near(u['edge']['at'], ((ic[0] + ic[2]) / 2 - u['x'], box[3] - u['y']), 0.01))
         self.assertEqual(u['zones'], [zid])
         self.assertIn([round(v, 2) for v in (ic[0] - 3 - u['x'], ic[3] - 1 - u['y'], ic[2] + 3 - u['x'],
-                                             ic[3] - u['y'], 0.0)],
+                                             box[3] - u['y'], 0.0)],
                       [[round(v, 2) for v in r] for r in u['rects']])
         pose = cost.initial_pose(pr)
         pose[i] = (pose[i][0] - 4.0, pose[i][1] + 1.0, 0)
