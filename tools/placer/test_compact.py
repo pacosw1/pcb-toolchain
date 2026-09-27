@@ -153,5 +153,12 @@ class LoopTest(unittest.TestCase):
         self.assertIn('budget', run['stop'])
 
 
+class ParseTest(unittest.TestCase):
+    def test_router_output_gives_the_last_unrouted_count_or_a_no_result_value(self):
+        from placer import compact_cli
+        self.assertEqual(compact_cli.parse_unrouted('FR_RC 0\nUNROUTED 12 SUBSET 3 ERRORS 1\n'), 12)
+        self.assertEqual(compact_cli.parse_unrouted('remote: exit 124\n'), compact_cli.NO_RESULT)
+
+
 if __name__ == '__main__':
     unittest.main()
