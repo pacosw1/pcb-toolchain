@@ -72,3 +72,15 @@ export function kicadHappyCheck({python, tool, pcb, check, exemptFile}) {
   const {ok, detail} = parseGateOutput(out, exit, KICAD_HAPPY_SUMMARY, KICAD_HAPPY_FAIL);
   check(name, ok, detail);
 }
+
+// Port labels (tools/port_labels.py): a F.SilkS name at each connector pin and a title.
+// The tool reads <board>/port-labels.json (exemptions with a reason); a stale exemption fails.
+export const PORT_LABELS_SUMMARY = /^port_labels: \d+ connectors/;
+export const PORT_LABELS_FAIL = ['FAIL', 'STALE exempt'];
+
+export function portLabelsCheck({python, tool, pcb, check}) {
+  const name = 'connector port labels on F.SilkS (tools/port_labels.py, port-labels.json)';
+  const {out, exit} = runGate({python, tool, args: [pcb]});
+  const {ok, detail} = parseGateOutput(out, exit, PORT_LABELS_SUMMARY, PORT_LABELS_FAIL);
+  check(name, ok, detail);
+}

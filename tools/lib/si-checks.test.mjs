@@ -96,3 +96,14 @@ test('kicad-happy: a STALE exempt line fails the gate and shows in the detail', 
   assert.equal(r.ok, false);
   assert.match(r.detail, /STALE exempt GP-001 \/PS1_24V/);
 });
+
+test('port labels: summary and FAIL/STALE lines are parsed', async () => {
+  const {PORT_LABELS_SUMMARY, PORT_LABELS_FAIL} = await import('./si-checks.mjs');
+  const ok = parseGateOutput('port_labels: 3 connectors, 31 pads, 0 failures\n', 0, PORT_LABELS_SUMMARY, PORT_LABELS_FAIL);
+  assert.equal(ok.ok, true);
+  const out = 'FAIL J2 pad 1 (24V): no F.SilkS label within 4.0 mm\nSTALE exempt J3 pad 2: the pad has a label\n' +
+    'port_labels: 3 connectors, 31 pads, 2 failures\n';
+  const bad = parseGateOutput(out, 1, PORT_LABELS_SUMMARY, PORT_LABELS_FAIL);
+  assert.equal(bad.ok, false);
+  assert.match(bad.detail, /J2 pad 1.*\| STALE exempt J3/);
+});
