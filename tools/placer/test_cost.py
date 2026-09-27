@@ -418,11 +418,48 @@ class DomainRectTest(unittest.TestCase):
         self.assertAlmostEqual(self.overlap([self.mains('K1', 8.0, 1), h]), 0.0)  # 10.5 mm
         r = unit('R', 16.0, 20.0, [[-1, -1, 1, 1, 0.5]])
         self.assertAlmostEqual(self.overlap([r, h]), 0.0)  # other parts: courtyard rule only
+        pr = problem([self.mains('K1', 10.0, 1), h], [], square_board(60.0))
+        self.assertGreater(cost.Evaluator(pr, P).components()['overlap'], 0.0)  # the pair search sees 9.65 mm
 
     def test_a_slot_next_to_a_domain_pad_is_legal(self):
         s = unit('S', 12.6, 30.0, [[-1, -1, 1, 1, 0.5], [-1, -11, 1, -9, 0.0]])  # slot 1.1 mm from the pad
         s['ko'] = [1]
         self.assertAlmostEqual(self.overlap([self.mains('K1', 10.0, 1), s]), 0.0)
+
+
+class ClassGapTableTest(unittest.TestCase):
+    """pr['class_gaps'] = {'names', 'gaps'}: the gap between two domain classes (ids 1..n) from the .kicad_dru, for
+    example the IO-6X6 barrier FIELD/FIELD_PWR to HOST/HOST_PWR 4 mm. A pad of such a class keeps only its net-class
+    clearance to other nets."""
+
+    def pad(self, name, x, cls):
+        u = unit(name, x, 20.0, [[-1, -1, 1, 1, 0.5], [-0.5, -0.5, 0.5, 0.5, 0.2]])
+        u['dom'] = [[1, cls, 0.0, 0.2]]
+        u['mech'] = [0]
+        return u
+
+    def overlap(self, units):
+        pr = problem(units, [], square_board(60.0))
+        pr['class_gaps'] = {'names': ['FIELD', 'HOST'], 'gaps': [[0, 0, 0], [0, 0, 4.0], [0, 4.0, 0]]}
+        return cost.Evaluator(pr, P).components()['overlap']
+
+    def test_the_two_sets_keep_the_barrier_gap(self):
+        self.assertGreater(self.overlap([self.pad('A', 10.0, 1), self.pad('B', 14.0, 2)]), 0.0)  # pads 3 mm
+        self.assertAlmostEqual(self.overlap([self.pad('A', 10.0, 1), self.pad('B', 15.2, 2)]), 0.0)  # 4.2 mm
+
+    def test_one_set_to_other_nets_keeps_the_net_clearance(self):
+        self.assertAlmostEqual(self.overlap([self.pad('A', 10.0, 1), unit('R', 12.3, 20.0, [[-1, -1, 1, 1, 0.5]])]),
+                               0.0)
+        self.assertAlmostEqual(self.overlap([self.pad('A', 10.0, 1), self.pad('C', 12.5, 1)]), 0.0)
+
+    def test_two_classes_without_a_rule_keep_the_net_clearance(self):
+        def edge_pad(name, x, cls):  # the pad fills the courtyard: only the pad gap is left
+            u = unit(name, x, 20.0, [[-1, -1, 1, 1, 0.0], [-1, -1, 1, 1, 0.2]])
+            u['dom'], u['mech'] = [[1, cls, 0.0, 0.2]], [0]
+            return u
+        pr = problem([edge_pad('A', 10.0, 1), edge_pad('B', 12.1, 3)], [], square_board(60.0))  # 0.1 mm apart
+        pr['class_gaps'] = {'names': ['', 'FIELD', 'HOST', 'OTHER'], 'gaps': [[0.0] * 4 for _ in range(4)]}
+        self.assertGreater(cost.Evaluator(pr, P).components()['overlap'], 0.0)
 
 
 class ParseDomainTest(unittest.TestCase):

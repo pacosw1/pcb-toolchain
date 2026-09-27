@@ -105,28 +105,41 @@ class RoundTripTest(unittest.TestCase):
 
     def test_domain_and_hole_rules_come_from_the_board_dru(self):
         import json as js
-        net = next(p.GetNetname() for p in pcbnew.LoadBoard(self.board).FindFootprintByReference('U1').Pads()
+        b = pcbnew.LoadBoard(self.board)
+        net = next(p.GetNetname() for p in b.FindFootprintByReference('U1').Pads()
                    if p.GetNetname() and p.GetNetClassName() == 'Default')
+        fb, hb = [p.GetNetname() for p in b.FindFootprintByReference('R2').Pads()]
         shutil.copytree(os.path.join(self.tmp, 'b'), os.path.join(self.tmp, 'e'))  # pcbnew keeps a loaded project
         pro = os.path.join(self.tmp, 'e', 'PWR-24V-5V.kicad_pro')
         d = js.load(open(pro))
         d['net_settings']['classes'].append(dict(d['net_settings']['classes'][0], name='MAINS_K1', priority=0))
         d['net_settings']['netclass_patterns'] = (d['net_settings'].get('netclass_patterns') or []) + [
-            {'netclass': 'MAINS_K1', 'pattern': net}]
+            {'netclass': 'MAINS_K1', 'pattern': net}, {'netclass': 'FB', 'pattern': fb}, {'netclass': 'HB', 'pattern': hb}]
+        d['net_settings']['classes'] += [dict(d['net_settings']['classes'][0], name=c, priority=0) for c in ('FB', 'HB')]
         js.dump(d, open(pro, 'w'))
         with open(os.path.join(self.tmp, 'e', 'PWR-24V-5V.kicad_dru'), 'a') as f:
             f.write('\n(rule "M" (condition "A.NetClass == \'MAINS_K*\' && B.NetClass != \'MAINS_K*\'")'
                     ' (constraint clearance (min 8mm)))\n'
                     '(rule "H" (condition "A.NetClass == \'MAINS_K*\' && B.Type == \'Pad\' && B.Reference == \'H3\'")'
                     ' (constraint hole_clearance (min 9.65mm)))\n'
-                    '(rule "X" (condition "(A.NetClass == \'A\' || A.NetClass == \'B\') && B.NetClass == \'C\'")'
-                    ' (constraint clearance (min 4mm)))\n')
+                    '(rule "X" (condition "A.NetClass == \'FB\' && B.NetClass == \'HB\'")'
+                    ' (constraint clearance (min 4mm)))\n'
+                    '(rule "Odd" (condition "A.NetClass == \'FB\' || B.Layer == \'F.Cu\'")'
+                    ' (constraint clearance (min 1mm)))\n')
         pr = kicad_io.read_problem(os.path.join(self.tmp, 'e', 'PWR-24V-5V.kicad_pcb'))
+        cg = pr['class_gaps']
+        i = {n.split(',')[0]: k for k, n in enumerate(cg['names'])}  # a net in 2 classes: 'HB,POWER'
         u = pr['units'][self.unit(pr, 'U1')]
-        self.assertEqual({(c, u['rects'][i][4]) for i, c, *_ in u['dom']}, {(1, 8.0)})
+        self.assertEqual({u['rects'][k][4] for k, c, *_ in u['dom'] if c == i['MAINS_K1']}, {8.0})
         h = pr['units'][self.unit(pr, 'H3')]
         self.assertEqual([(c, g) for _, c, g, _ in h['dom']], [(-1, 9.65)])
-        self.assertEqual(pr['dru_ignored'], ['X'])
+        self.assertEqual(pr['dru_ignored'], ['Odd'])
+        self.assertEqual(set(i) - {''}, {'MAINS_K1', 'FB', 'HB'})
+        self.assertEqual(cg['gaps'][i['FB']][i['HB']], 4.0)  # the pair rule (barrier)
+        self.assertEqual(cg['gaps'][i['HB']][i['FB']], 4.0)
+        self.assertEqual(cg['gaps'][i['MAINS_K1']][i['FB']], 8.0)  # mains to every other net
+        r2 = pr['units'][self.unit(pr, 'R2')]
+        self.assertEqual({c for _, c, *_ in r2['dom']}, {i['FB'], i['HB']})
         self.assertNotIn('dom', kicad_io.read_problem(os.path.join(self.tmp, 'e', 'PWR-24V-5V.kicad_pcb'),
                                                       domains=[])['units'][self.unit(pr, 'U1')])
 

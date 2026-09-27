@@ -226,11 +226,12 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
                  region_refs=(), region_weight=1.0, region_box=None, spacing=(0.5, 1.0), tie=0.0,
                  rigid_nets=(), decap_tie=0.0, keepout_zones=(), edges=None, zone_refs=None, domains=None):
     board = pcbnew.LoadBoard(path)
-    holes, ignored = [], []
+    holes, pairs, ignored = [], [], []
     if domains is None:  # single source: the board .kicad_dru
         dp = os.path.splitext(path)[0] + '.kicad_dru'
-        r = dru.parse(open(dp).read()) if os.path.exists(dp) else {'domains': [], 'holes': [], 'ignored': []}
-        domains, holes, ignored = r['domains'], r['holes'], r['ignored']
+        r = dru.parse(open(dp).read()) if os.path.exists(dp) else {'domains': [], 'holes': [], 'pairs': [],
+                                                                     'ignored': []}
+        domains, holes, pairs, ignored = r['domains'], r['holes'], r['pairs'], r['ignored']
     hole_gap = {ref: g for _, refs, g in holes for ref in refs}
     dom_ids = {}  # net class of a domain -> class id (1, 2, ...)
     outline, holes = outline_of(board)
@@ -304,8 +305,8 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
             rc = fp_rect(fp)
             clr = 0.0 if is_test_point(r) else spacing[1] if ref_prefix(r) in IC_PREFIX else spacing[0]
             rects.append((rc, clr))
-            kinds = [(p, _domain(p, domains)) for p in fp.Pads() if p.GetNetname()]
-            if domains and not kinds:  # no net pad (a mounting hole): only its own class to a domain pad
+            kinds = [(p, _domain(p, domains) or _pair_class(p, pairs)) for p in fp.Pads() if p.GetNetname()]
+            if (domains or pairs) and not kinds:  # no net pad (a mounting hole): only its own class to a domain pad
                 mech.append(len(rects) - 1)
                 if r in hole_gap:  # a .kicad_dru hole rule: its gap to the domain pads
                     for p in fp.Pads():
@@ -321,7 +322,7 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
                     if d:
                         cid = dom_ids.setdefault(p.GetNetClassName(), len(dom_ids) + 1)
                         dom.append((len(hv), cid, d[2], nc))
-                    hv.append((pb, d[1] if d else nc))
+                    hv.append((pb, d[1] if d and d[1] is not None else nc))
             elif clr:  # a pad of a net class with a larger clearance (mains) gets its own spacing rect
                 for p in fp.Pads():
                     pc = mm(p.GetOwnClearance(pcbnew.F_Cu)) if p.GetNetname() else 0.0
@@ -411,7 +412,7 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
     return {'board_file': os.path.abspath(path), 'units': out_units, 'nets': nets,
             'board': {'outline': outline, 'keepouts': keepouts, 'edge_clearance': edge, 'copper': copper},
             'region': region, 'move_box': list(free_box) if free_box else None, 'decaps': decaps,
-            'dru_ignored': ignored}
+            'dru_ignored': ignored, 'class_gaps': _class_gaps(dom_ids, domains, pairs) if dom_ids else None}
 
 
 def _domain(pad, domains):
@@ -419,6 +420,33 @@ def _domain(pad, domains):
     pattern matches the pad, or None."""
     c = pad.GetNetClassName()
     return next((d for d in domains if any(fnmatch.fnmatchcase(x, d[0]) for x in c.split(','))), None)
+
+
+def _pair_class(pad, pairs):
+    """A pad of a net class in a .kicad_dru pair rule: a domain pad with the net clearance, no class gap."""
+    c = pad.GetNetClassName().split(',')
+    m = any(fnmatch.fnmatchcase(x, q) for a, b, _ in pairs for q in a + b for x in c)
+    return ('', None, 0.0) if m else None
+
+
+def _class_gaps(dom_ids, domains, pairs):
+    """Gap table between domain classes (index = class id, 0 unused): the class gap inside one domain, else the
+    larger gap to other nets of the two domains, and at least the gap of a pair rule between the two classes."""
+    names = [''] + sorted(dom_ids, key=dom_ids.get)
+    hit = lambda n, pats: any(fnmatch.fnmatchcase(x, q) for q in pats for x in n.split(','))
+    dom = [next((d for d in domains if hit(n, [d[0]])), None) for n in names]
+    gaps = [[0.0] * len(names) for _ in names]
+    for i in range(1, len(names)):
+        for j in range(1, len(names)):
+            if i == j:
+                continue
+            a, b = dom[i], dom[j]
+            g = a[2] if a and a is b else max(a[1] if a else 0.0, b[1] if b else 0.0)
+            for pa, pb, pg in pairs:
+                if (hit(names[i], pa) and hit(names[j], pb)) or (hit(names[i], pb) and hit(names[j], pa)):
+                    g = max(g, pg)
+            gaps[i][j] = g
+    return {'names': names, 'gaps': gaps}
 
 
 def _block_cuts(board, units, keepouts):

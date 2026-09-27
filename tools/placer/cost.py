@@ -13,6 +13,8 @@ Problem (a dict, JSON-able; tools/placer/kicad_io.py writes it from a board):
           dom (optional) = [[rect index, class id, gap to another class of the domain, net-class clearance]]:
           a pad of a domain (mains) whose rect clr is the gap to all other nets (.kicad_dru, for example 8 mm).
           Class id -1 = a hole with a .kicad_dru hole rule: the gap (third field) to domain pads only.
+  class_gaps (optional): {names, gaps}: gaps[i][j] = the gap between two domain classes i != j (ids 1..n);
+          without it, two classes keep the larger class gap field.
           mech (optional) = indices of rects that hold no pad of their own (a block border, the courtyard of a
           part whose pads have their own rects, a part with no net pads): a domain rect keeps only their own
           class to them, as to a keepout rect (a slot is the creepage barrier).
@@ -251,18 +253,28 @@ def _pen_hs(A, ca, ha, B, cb, hb, ka=None, kb=None):
 
 
 def _domain_gap(g, ca, cb, ka, kb):
-    (oa, da, sa, na, xa), (ob, db, sb, nb, xb) = ka, kb
+    (oa, da, sa, na, xa, T), (ob, db, sb, nb, xb, _) = ka, kb
     both = (da[:, None] > 0) & (db[None, :] > 0)
-    g = np.where(both, np.where(da[:, None] != db[None, :], np.maximum(sa[:, None], sb[None, :]),
-                                np.maximum(na[:, None], nb[None, :])), g)
+    if T is None:
+        other = np.maximum(sa[:, None], sb[None, :])
+    else:  # class gap table (.kicad_dru pair rules), at least the net clearance
+        other = np.maximum(T[np.clip(da, 0, None)[:, None], np.clip(db, 0, None)[None, :]],
+                           np.maximum(na[:, None], nb[None, :]))
+    g = np.where(both, np.where(da[:, None] != db[None, :], other, np.maximum(na[:, None], nb[None, :])), g)
     g = np.where((da[:, None] > 0) & (xb | ob)[None, :], cb[None, :], g)  # no pad, no net: its own class
     g = np.where((xa | oa)[:, None] & (db[None, :] > 0), ca[:, None], g)
     g = np.where((da[:, None] > 0) & (db[None, :] < 0), sb[None, :], g)  # a hole rule (class -1): its gap
     return np.where((da[:, None] < 0) & (db[None, :] > 0), sa[:, None], g)
 
 
-def ko_flags(u):
-    """Rect kinds of a unit: (keepout flags, and None or (domain class, class gap, net clearance, mech flags))."""
+def class_table(pr):
+    cg = pr.get('class_gaps')
+    return None if not cg else np.array(cg['gaps'], dtype=float)
+
+
+def ko_flags(u, T=None):
+    """Rect kinds of a unit: (keepout flags, and None or (domain class, class gap, net clearance, mech flags,
+    class gap table))."""
     n = len(u['rects'])
     k = np.zeros(n, dtype=bool)
     k[list(u.get('ko', []))] = True
@@ -272,7 +284,7 @@ def ko_flags(u):
     for i, c, a, b in u.get('dom', []):
         d[i], sg[i], nc[i] = c, a, b
     x[list(u.get('mech', []))] = True
-    return (k, d, sg, nc, x)
+    return (k, d, sg, nc, x, T)
 
 
 def world_rects(u, pose_u):
@@ -373,6 +385,7 @@ def overflow(g, params, cw):
 
 def _overlaps(pr, pose):
     us = pr['units']
+    T = class_table(pr)
     w = [np.array(world_rects(u, pose[i]), dtype=float).reshape(-1, 5) for i, u in enumerate(us)]
     h, s = 0.0, 0.0
     for i in range(len(us)):
@@ -380,7 +393,7 @@ def _overlaps(pr, pose):
             if us[i]['fixed'] and us[j]['fixed']:
                 continue
             a, b = _pen_hs(w[i][:, :4], w[i][:, 4], hard_clr(us[i]), w[j][:, :4], w[j][:, 4], hard_clr(us[j]),
-                           ko_flags(us[i]), ko_flags(us[j]))
+                           ko_flags(us[i], T), ko_flags(us[j], T))
             h, s = h + a, s + b
     return h, s
 
@@ -454,12 +467,16 @@ class Evaluator:
         self.lrect = [[np.array([rot_rect(rc, r) for rc in u['rects']], dtype=float).reshape(-1, 4)
                        for r in range(4)] for u in us]
         self.clr = [np.array([rc[4] for rc in u['rects']], dtype=float) for u in us]
-        self.ko = [ko_flags(u) for u in us]  # rect kinds
+        self.ko = [ko_flags(u, class_table(pr)) for u in us]  # rect kinds
         self.hclr = [hard_clr(u) for u in us]
         self.kos = [set(u.get('ko', [])) for u in us]
         self.lbox = [[(lr[:, 0].min(), lr[:, 1].min(), lr[:, 2].max(), lr[:, 3].max()) for lr in self.lrect[i]]
                      for i in range(self.n)]
-        self.grow = [float(c.max()) if len(c) else 0.0 for c in self.clr]
+        T = class_table(pr)
+        tg = float(T.max()) if T is not None else 0.0
+        # pair search box: the largest gap of the unit, incl. hole and class-table gaps of its domain rects
+        self.grow = [max([float(c.max()) if len(c) else 0.0] + [max(d[2], tg) for d in u.get('dom', [])])
+                     for c, u in zip(self.clr, us)]
         self.area = [float(((lr[0][:, 2] - lr[0][:, 0]) * (lr[0][:, 3] - lr[0][:, 1])).sum()) for lr in self.lrect]
         pose = pose or initial_pose(pr)
         self.X = [float(q[0]) for q in pose]
