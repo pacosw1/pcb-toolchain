@@ -54,6 +54,8 @@ def main(argv=None):
     ap.add_argument('--steps', type=int, default=12000)
     ap.add_argument('--seed', type=int, default=1)
     ap.add_argument('--param', nargs='*', default=[])
+    ap.add_argument('--snapshots', metavar='DIR', help='after the run: viewer.html, frames.json, timelapse '
+                    '(PNG frames, run.gif, run.mp4) and one routed render per step in DIR (scratch, not committed)')
     a = ap.parse_args(argv)
     from placer import kicad_io
     pr = json.load(open(a.prob))
@@ -113,6 +115,13 @@ def main(argv=None):
     if run['best']:
         print('BEST board %s s %.3f k %.3f unrouted %d' % (run['best']['board'], run['best']['s'], run['best']['k'],
                                                           run['best']['unrouted']))
+    if a.snapshots:
+        from placer import movie, viewer
+        rj = os.path.join(a.outdir, 'run.json')
+        os.makedirs(a.snapshots, exist_ok=True)
+        viewer.main([rj, os.path.join(a.snapshots, 'viewer.html'), '--frames-json',
+                     os.path.join(a.snapshots, 'frames.json')])
+        movie.main([rj, a.snapshots, '--routed', a.outdir])
 
 
 if __name__ == '__main__':
