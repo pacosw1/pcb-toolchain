@@ -120,14 +120,15 @@ class RoundTripTest(unittest.TestCase):
                 self.assertAlmostEqual(seen[fp.GetReference()][2], gap, places=3)
         self.assertTrue(seen)
 
-    def test_test_points_are_fixed_and_left_out_of_the_cost(self):
+    def test_test_points_move_freely_and_are_left_out_of_the_cost(self):
+        # a fixed test point blocked U1 on MC-MAIN; a test point keeps only its courtyard (spacing 0)
         b = pcbnew.LoadBoard(self.board)
         b.FindFootprintByReference('R7').SetReference('TP1')
         pcbnew.SaveBoard(self.board, b)
         pr = kicad_io.read_problem(self.board)
         i = self.unit(pr, 'TP1')
         u = pr['units'][i]
-        self.assertTrue(u['fixed'])
+        self.assertFalse(u['fixed'])
         self.assertEqual([r[4] for r in u['rects']], [0.0])
         self.assertEqual(u['pads'], [])
         self.assertFalse(any(q[0] == i for n in pr['nets'] for q in n['pins']))

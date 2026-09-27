@@ -266,7 +266,7 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
         for r in inside:
             member[r] = key
     by_ref = {fp.GetReference(): fp for fp in fps}
-    for fp in fps:  # test points: own unit, fixed, not in the cost
+    for fp in fps:  # test points: own unit, spacing 0, no pads or pins in the cost
         if is_test_point(fp.GetReference()):
             member[fp.GetReference()] = 'F:' + fp.GetReference()
     if rigid_nets:
@@ -293,7 +293,7 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
             rc = fp_rect(fp)
             clr = 0.0 if is_test_point(r) else spacing[1] if ref_prefix(r) in IC_PREFIX else spacing[0]
             rects.append((rc, clr))
-            if (fp.IsLocked() or is_mounting_hole(fp) or is_test_point(r) or fp.GetLayer() != pcbnew.F_Cu
+            if (fp.IsLocked() or is_mounting_hole(fp) or fp.GetLayer() != pcbnew.F_Cu
                     or any(fnmatch.fnmatchcase(r, p) for p in fix_pat)):
                 fixed = True
             if ref_prefix(r) in ('J', 'P', 'CN'):
