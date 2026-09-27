@@ -153,7 +153,7 @@ class Mask:
         ys = self.y0 + (np.arange(self.ny) + 0.5) * cell
         gx, gy = np.meshgrid(xs, ys)
         out = ~point_in_poly(gx, gy, board['outline'])
-        out0 = out
+        out0 = out.copy()
         k = math.ceil(board.get('edge_clearance', 0.0) / cell - EPS)
         if k > 0:
             s = sat(out.astype(np.int64))
@@ -167,6 +167,9 @@ class Mask:
         for poly in board.get('keepouts', []):
             ko = point_in_poly(gx, gy, poly)
             out, out0 = out | ko, out0 | ko
+        for layer, a0, b0, a1, b1, w in board.get('fixed_copper', []):  # locked: a pad over it is illegal
+            if layer in OBSTACLE_LAYERS:
+                self._segment(out, a0, b0, a1, b1, w / 2 + gap)
         cu = np.zeros_like(out)
         for layer, a0, b0, a1, b1, w in board.get('copper', []):
             if layer in OBSTACLE_LAYERS:

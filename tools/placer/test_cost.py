@@ -429,6 +429,23 @@ class DomainRectTest(unittest.TestCase):
         self.assertAlmostEqual(self.overlap([self.mains('K1', 10.0, 1), s]), 0.0)
 
 
+class LockedCopperTest(unittest.TestCase):
+    """board['fixed_copper']: locked tracks and vias. The writer never removes them, so a pad over one is illegal.
+    A courtyard (no pad) over one is legal: a part body may cover a track."""
+
+    def legal(self, pad_x):
+        u = unit('A', 10.0, 10.0, [[-2, -1, 2, 1, 0.0]])
+        u['pad_rects'] = [[pad_x - 10.25, -0.25, pad_x - 9.75, 0.25]]
+        board = dict(square_board(20.0), fixed_copper=[['F.Cu', 11.5, 5.0, 11.5, 15.0, 0.2]])
+        return cost.Evaluator(problem([u], [], board), P).legal_penalty(0)
+
+    def test_a_pad_over_fixed_copper_is_illegal(self):
+        self.assertGreater(self.legal(11.5), 0.0)
+
+    def test_a_courtyard_over_fixed_copper_is_legal(self):
+        self.assertAlmostEqual(self.legal(8.5), 0.0)
+
+
 class RoundRectTest(unittest.TestCase):
     """u['rho'] = [[rect index, radius]]: a round courtyard (a test point) is its box with corners rounded by the
     radius (a circle when the box is square). The clearance is measured to the circle, as KiCad DRC."""

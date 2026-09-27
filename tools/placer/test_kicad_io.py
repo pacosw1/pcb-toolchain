@@ -46,6 +46,26 @@ class RoundTripTest(unittest.TestCase):
     def unit(self, pr, ref):
         return next(i for i, u in enumerate(pr['units']) if ref in u['refs'])
 
+    def test_a_locked_track_is_fixed_copper_and_the_writer_keeps_it(self):
+        b = pcbnew.LoadBoard(self.board)
+        t = next(t for t in b.GetTracks() if t.GetClass() == 'PCB_TRACK')
+        t.SetLocked(True)
+        tid = t.m_Uuid.AsString()
+        pcbnew.SaveBoard(self.board, b)
+        pr = kicad_io.read_problem(self.board)
+        self.assertEqual(len(pr['board']['fixed_copper']), 1)
+        ends = [(pcbnew.ToMM(q.x), pcbnew.ToMM(q.y)) for q in (t.GetStart(), t.GetEnd())]
+        on = [f.GetReference() for f in b.GetFootprints() for p in f.Pads() if any(p.HitTest(pcbnew.VECTOR2I(
+            int(x * 1e6), int(y * 1e6))) for x, y in ends)]
+        self.assertTrue(on and all(is_fixed(pr, r) for r in on))  # its parts stay: the route is fixed
+        pose = cost.initial_pose(pr)
+        for i, u in enumerate(pr['units']):  # every movable unit moves onto the track
+            if not u['fixed']:
+                pose[i] = (ends[0][0], ends[0][1], 0)
+        out = os.path.join(self.tmp, 'b', 'out.kicad_pcb')
+        kicad_io.write_board(self.board, pr, pose, out)
+        self.assertIn(tid, [x.m_Uuid.AsString() for x in pcbnew.LoadBoard(out).GetTracks()])
+
     def test_a_connector_staged_wholly_outside_the_outline_is_movable(self):
         b = pcbnew.LoadBoard(self.board)
         j = b.FindFootprintByReference('J1')

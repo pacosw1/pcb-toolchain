@@ -244,6 +244,7 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
     hole_gap = {ref: g for _, refs, g in holes for ref in refs}
     dom_ids = {}  # net class of a domain -> class id (1, 2, ...)
     outline, holes = outline_of(board)
+    locked = [t for t in board.GetTracks() if t.IsLocked()]  # fixed copper: the writer never removes it
     keepouts = [h for h in holes]
     for z in board.Zones():
         if z.GetIsRuleArea() and z.Outline().OutlineCount() and (
@@ -361,6 +362,9 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
         ox, oy = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
         if free_box and not inside_box(ox, oy, free_box):
             fixed = True
+        if any(t.GetNetCode() == p.GetNetCode() and (t.HitTest(p.GetPosition()) or any(p.HitTest(q) for q in _ends(t)))
+               for r in u['refs'] for p in by_ref[r].Pads() if p.GetNetname() for t in locked):
+            fixed = True  # a locked track of its net meets its pad: the route is fixed
         index[key] = len(out_units)
         border = []
         if u['box']:  # block copper may leave the courtyards but stays inside the border
@@ -433,8 +437,10 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
                           max(r[2] for r in rs) + 15, max(r[3] for r in rs) + 15]
         region = {'box': list(region_box), 'weight': region_weight, 'refs': sorted(region_refs)}
     copper = kept_copper(board, out_units, by_ref)
+    fixed_copper = [_copper_row(board, t) for t in locked]
     return {'board_file': os.path.abspath(path), 'units': out_units, 'nets': nets,
-            'board': {'outline': outline, 'keepouts': keepouts, 'edge_clearance': edge, 'copper': copper},
+            'board': {'outline': outline, 'keepouts': keepouts, 'edge_clearance': edge, 'copper': copper,
+                      'fixed_copper': fixed_copper},
             'region': region, 'move_box': list(free_box) if free_box else None, 'decaps': decaps,
             'dru_ignored': ignored, 'class_gaps': _class_gaps(dom_ids, domains, pairs) if dom_ids else None}
 
@@ -622,7 +628,7 @@ def _owned(free, find, rects=None):
 def kept_copper(board, units, by_ref):
     """Copper that stays whatever the movable units do: clusters with no end point on a pad of a movable
     unit, not inside the border of a movable block, and not a lone (via-only) stitching via. [[layer, x0, y0, x1, y1, width], ...]"""
-    tracks = list(board.GetTracks())
+    tracks = [t for t in board.GetTracks() if not t.IsLocked()]  # locked: fixed_copper
     pads, boxes = {}, []
     for u in units:
         if u['fixed']:
@@ -642,13 +648,16 @@ def kept_copper(board, units, by_ref):
     for k, t in enumerate(free):
         if find(k) in hit:
             continue
-        if t.GetClass() == 'PCB_VIA':
-            q = t.GetPosition()
-            out.append(['via', mm(q.x), mm(q.y), mm(q.x), mm(q.y), mm(t.GetWidth(pcbnew.F_Cu))])
-        else:
-            a, b = t.GetStart(), t.GetEnd()
-            out.append([board.GetLayerName(t.GetLayer()), mm(a.x), mm(a.y), mm(b.x), mm(b.y), mm(t.GetWidth())])
+        out.append(_copper_row(board, t))
     return out
+
+
+def _copper_row(board, t):
+    if t.GetClass() == 'PCB_VIA':
+        q = t.GetPosition()
+        return ['via', mm(q.x), mm(q.y), mm(q.x), mm(q.y), mm(t.GetWidth(pcbnew.F_Cu))]
+    a, b = t.GetStart(), t.GetEnd()
+    return [board.GetLayerName(t.GetLayer()), mm(a.x), mm(a.y), mm(b.x), mm(b.y), mm(t.GetWidth())]
 
 
 def _virtual_outline(board, outline, k, keep=()):
@@ -711,7 +720,7 @@ def write_board(path, pr, pose, out, outline_scale=1.0):
                     moved_pads.setdefault(p.GetNetname(), []).append(p)
 
     # copper clusters per net (end points and vias), not counting the rigid block copper
-    free = [t for t in tracks if t.m_Uuid.AsString() not in internal]
+    free = [t for t in tracks if t.m_Uuid.AsString() not in internal and not t.IsLocked()]  # locked: stays
     find = _clusters(free)
     rects = [fp_rect(by_ref[r]) for i, u, *_ in moved for r in u['refs']]
     hit = _hit(free, find, moved_pads) | _owned(free, find, rects)
