@@ -233,6 +233,11 @@ def _pen(A, ca, B, cb, ka=None, kb=None, skip=None):
     dx = np.minimum(A[:, None, 2], B[None, :, 2]) - np.maximum(A[:, None, 0], B[None, :, 0]) + g
     dy = np.minimum(A[:, None, 3], B[None, :, 3]) - np.maximum(A[:, None, 1], B[None, :, 1]) + g
     a = np.clip(dx, 0, None) * np.clip(dy, 0, None)
+    sx, sy = g - dx, g - dy  # the free distance on each axis
+    c = (sx > 0) & (sy > 0) & (a > 0)
+    if c.any():  # a corner: DRC measures the true distance; scale down to 0 at distance = gap
+        d = np.hypot(sx, sy)
+        a = np.where(c, a * np.clip((g - d) / np.maximum(g - np.maximum(sx, sy), 1e-9), 0, 1), a)
     if ka is not None:
         a = a * ~(ka[0][:, None] & kb[0][None, :])  # keepout over keepout is legal
     if skip is not None:

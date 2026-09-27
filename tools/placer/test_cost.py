@@ -427,6 +427,31 @@ class DomainRectTest(unittest.TestCase):
         self.assertAlmostEqual(self.overlap([self.mains('K1', 10.0, 1), s]), 0.0)
 
 
+class CornerGapTest(unittest.TestCase):
+    """KiCad DRC measures a clearance as the true distance. Two rects offset on both axes (a corner) are legal
+    when that distance is at least the gap, even if the gap-inflated boxes overlap (INPUT-4D2A U14 to U3:
+    dx 2.66, dy 3.20, distance 4.17 mm, barrier 4 mm)."""
+
+    def overlap(self, dx, dy):
+        a = unit('A', 10.0, 10.0, [[0, 0, 1, 1, 4.0]])
+        b = unit('B', 11.0 + dx, 11.0 + dy, [[0, 0, 1, 1, 4.0]])
+        a['hard'] = b['hard'] = [0]
+        pr = problem([a, b], [], square_board(40.0))
+        return cost.components(pr, cost.initial_pose(pr), P)['overlap'], cost.Evaluator(pr, P).components()['overlap']
+
+    def test_a_corner_farther_than_the_gap_is_legal(self):
+        for v in self.overlap(2.66, 3.20):
+            self.assertAlmostEqual(v, 0.0)
+
+    def test_a_corner_nearer_than_the_gap_is_illegal(self):
+        for v in self.overlap(2.5, 2.8):  # distance 3.75
+            self.assertGreater(v, 0.0)
+
+    def test_one_axis_apart_keeps_the_box_penalty(self):
+        for v in self.overlap(3.0, -0.5):
+            self.assertAlmostEqual(v, 1.0 * 4.5)  # x: 4 - 3 mm, y: 0.5 mm overlap + 4 mm
+
+
 class BorderSoftTest(unittest.TestCase):
     """A block border (u['border'], User.1) is not checked by KiCad DRC: border over border and border over a
     foreign part are a soft cost. Courtyard over courtyard stays hard."""
