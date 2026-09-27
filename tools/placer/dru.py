@@ -2,11 +2,13 @@
 
 parse(text) -> {'domains': [(class pattern, gap to other nets, gap between two classes of the domain)],
                 'holes': [(class pattern, (refs, ...), hole clearance)],
+                'pairs': [((A class patterns), (B class patterns), gap)],
                 'ignored': [names of clearance/creepage/hole rules the model cannot read]}
 Read forms (gap = the larger of clearance and creepage):
   A.NetClass == 'P' && B.NetClass != 'P'                                -> domain P, gap to other nets
   A.NetClass == 'P' && B.NetClass == 'P' && A.NetClass != B.NetClass    -> gap between two classes of P
   A.NetClass == 'P' && ... (B.Reference == 'H1' || ...) + hole_clearance -> hole rule for those refs
+  (A.NetClass == 'X' || A.NetClass == 'Y') && (B.NetClass == 'H' || ...) -> gap between the two class sets
 Rules limited to one footprint, net names, courtyards or diff pairs are local exceptions: not read, not listed.
 Other rules with a net-class condition and a clearance, creepage or hole constraint are listed in 'ignored'.
 """
@@ -52,7 +54,7 @@ def _rules(text):
 
 
 def parse(text):
-    doms, cls, holes, ignored = {}, {}, [], []
+    doms, cls, holes, pairs, ignored = {}, {}, [], [], []
     for name, cond, gaps in _rules(text):
         if not gaps or 'NetClass' not in cond or any(k in cond for k in LOCAL):
             continue
@@ -61,6 +63,7 @@ def parse(text):
         b = re.fullmatch(r"A\.NetClass=='([^']+)'&&B\.NetClass=='\1'&&A\.NetClass!=B\.NetClass", c)
         h = re.match(r"A\.NetClass=='([^']+)'&&", c)
         refs = re.findall(r"B\.Reference=='([^']+)'", c)
+        p = re.fullmatch(r"\(?((?:A\.NetClass=='[^']+'(?:\|\|)?)+)\)?&&\(?((?:B\.NetClass=='[^']+'(?:\|\|)?)+)\)?", c)
         gap = max(gaps.get('clearance', 0.0), gaps.get('creepage', 0.0))
         if a and gap:
             doms[a.group(1)] = max(doms.get(a.group(1), 0.0), gap)
@@ -68,7 +71,10 @@ def parse(text):
             cls[b.group(1)] = max(cls.get(b.group(1), 0.0), gap)
         elif h and refs and 'hole_clearance' in gaps:
             holes.append((h.group(1), tuple(refs), gaps['hole_clearance']))
+        elif p and gap:
+            pairs.append((tuple(re.findall(r"'([^']+)'", p.group(1))), tuple(re.findall(r"'([^']+)'", p.group(2))), gap))
         else:
             ignored.append(name)
     return {'domains': [(p, g, cls.get(p, 0.0)) for p, g in doms.items()], 'holes': holes,
+            'pairs': sorted(set(pairs)),
             'ignored': sorted(set(ignored) | {p for p in cls if p not in doms})}

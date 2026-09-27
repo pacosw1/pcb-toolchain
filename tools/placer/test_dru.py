@@ -33,9 +33,15 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(r['domains'], [('MAINS_K*', 8.0, 3.0)])  # the larger of clearance and creepage
         self.assertEqual(r['holes'], [('MAINS_K*', ('H1', 'H2'), 9.65)])
 
-    def test_a_clearance_rule_the_model_cannot_read_is_listed_not_dropped(self):
+    def test_a_barrier_between_two_class_sets_is_a_pair_rule(self):
         r = dru.parse(RELAY)
-        self.assertEqual(r['ignored'], ['Isolation barrier'])  # silk rules are no placement rules
+        self.assertEqual(r['pairs'], [(('FIELD', 'FIELD_PWR'), ('HOST', 'HOST_PWR'), 4.0)])
+        self.assertEqual(r['ignored'], [])  # silk rules are no placement rules
+
+    def test_a_clearance_rule_the_model_cannot_read_is_listed_not_dropped(self):
+        r = dru.parse('(rule "Odd" (condition "A.NetClass == \'X\' || B.Layer == \'F.Cu\'")'
+                      ' (constraint clearance (min 1mm)))')
+        self.assertEqual(r['ignored'], ['Odd'])
 
     def test_a_domain_without_a_class_rule_keeps_the_net_clearance_between_its_classes(self):
         r = dru.parse('(rule "PoE" (condition "A.NetClass == \'POE\' && B.NetClass != \'POE\'")'
