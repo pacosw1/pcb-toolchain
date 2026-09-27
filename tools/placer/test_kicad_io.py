@@ -174,6 +174,9 @@ class RoundTripTest(unittest.TestCase):
         i = self.unit(pr, 'U1')
         self.assertIn(other.GetReference(), pr['units'][i]['refs'])
         self.assertEqual(pr['units'][i]['borders'], [rect.m_Uuid.AsString()])
+        u = pr['units'][i]  # the border box is a rect of class 0: block copper inside it stays clear of other parts
+        self.assertIn([round(v, 3) for v in (box[0] - u['x'], box[1] - u['y'], box[2] - u['x'], box[3] - u['y'], 0.0)],
+                      [[round(v, 3) for v in r] for r in u['rects']])
         pose = cost.initial_pose(pr)
         pose[i] = (pose[i][0] - 4.0, pose[i][1] + 1.0, 2)
         out = os.path.join(self.tmp, 'b', 'out.kicad_pcb')

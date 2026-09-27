@@ -8,7 +8,8 @@ read_problem(board) -> problem dict (see cost.py)
   (J/P/CN) whose courtyard is within edge_dist of the outline, parts on B.Cu, refs in `fix`
   (fnmatch), and units whose origin is outside `free_box`. A unit with one fixed part is fixed.
   Rects: F.CrtYd box per footprint (else pads + 0.25 mm); spacing class 1.0 mm for IC and
-  connector refs (U, J, P, CN, K, SW, Y, X), 0.5 mm for the rest (D-040).
+  connector refs (U, J, P, CN, K, SW, Y, X), 0.5 mm for the rest (D-040). A block also has its
+  border box as a rect of class 0 (its copper stays inside the border).
   Pads: every pad centre of the unit (pin RUDY). Pins: one box per (net, unit) of the pad centres. Nets matching `skip` (default GND) and nets
   inside one unit are left out.
   Keepouts: rule areas that do not allow footprints, and closed shapes on `keepout_layers`.
@@ -236,6 +237,8 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
         if free_box and not inside_box(ox, oy, free_box):
             fixed = True
         index[key] = len(out_units)
+        if u['box']:  # block copper may leave the courtyards but stays inside the border
+            rects.append((tuple(u['box']), 0.0))
         pads = [[round(mm(q.x) - ox, 6), round(mm(q.y) - oy, 6)]
                 for r in u['refs'] for q in (p.GetPosition() for p in by_ref[r].Pads())]
         out_units.append({'name': u['name'], 'refs': sorted(u['refs']), 'fixed': fixed, 'x': ox, 'y': oy,
