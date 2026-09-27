@@ -100,7 +100,8 @@ def drc_summary(board):
 
 def cmd_pinswap(a):
     from placer import pinswap, pinswap_io
-    nets, slots, fixed = pinswap_io.read_pins(a.board, a.pinmap, a.ref)
+    ref = a.ref or json.load(open(a.pinmap)).get('ref', 'U1')
+    nets, slots, fixed = pinswap_io.read_pins(a.board, a.pinmap, ref)
     res = pinswap.search(nets, slots, fixed, seed=a.seed, w_x=a.w_x, restarts=a.restarts)
     json.dump(res, open(a.o, 'w'), indent=1)
     print('swappable nets %d, slots %d, fixed rat lines %d' % (len(nets), len(slots), len(fixed)))
@@ -109,7 +110,7 @@ def cmd_pinswap(a):
     for d in res['diff']:
         print('  %-12s %s (%s) -> %s (%s)' % (d['net'], d['from_pin'], d['from_name'], d['to_pin'], d['to_name']))
     if a.apply:
-        print(json.dumps(pinswap_io.apply(a.board, res['diff'], a.apply, a.ref)))
+        print(json.dumps(pinswap_io.apply(a.board, res['diff'], a.apply, ref)))
 
 
 def cmd_drc(a):

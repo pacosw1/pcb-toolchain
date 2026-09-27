@@ -86,6 +86,12 @@ class PinSwapIoTest(unittest.TestCase):
                                  if t.GetClass() != 'PCB_VIA' and t.GetNetname() in ('/EN', '/RT')))
         self.assertEqual(self.pad(pcbnew.LoadBoard(self.board), 3).GetNetname(), '/EN')  # source untouched
 
+    def test_cli_apply_takes_the_ref_from_the_pin_map(self):
+        from placer import cli
+        out = os.path.join(self.tmp, 'b', 'swapped.kicad_pcb')
+        cli.main(['pinswap', self.board, self.map, '-o', os.path.join(self.tmp, 'ps.json'), '--apply', out])
+        self.assertTrue(os.path.exists(out))
+
 
 if __name__ == '__main__':
     unittest.main()
