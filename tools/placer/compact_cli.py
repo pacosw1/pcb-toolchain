@@ -29,6 +29,11 @@ def parse_unrouted(text):
     return int(m[-1]) if m else NO_RESULT
 
 
+def route_cmd(name, gnd_vias):
+    cmd = ['bash', 'tools/placer/fr_job.sh', name]
+    return ['env', 'GNDVIAS=1'] + cmd if gnd_vias else cmd
+
+
 def _remote(board_dir, ins, results, cmd, cpus, log_path):
     env = dict(os.environ, REMOTE_MEM='8g', REMOTE_CPUS=str(cpus))
     args = ['tools/remote.sh', board_dir] + [x for f in ins for x in ('--in', f)] + ['--results', results, '--'] + cmd
@@ -56,6 +61,8 @@ def main(argv=None):
     ap.add_argument('--param', nargs='*', default=[])
     ap.add_argument('--scatter', type=int, metavar='SEED', help='start each search from seeded uniform places inside '
                     'the (virtual) board: for parts staged outside the outline')
+    ap.add_argument('--gnd-vias', action='store_true', help='tools/gnd_pad_vias.py before Freerouting: Freerouting '
+                    'leaves GND pads open when the GND plane is on an inner layer')
     ap.add_argument('--snapshots', metavar='DIR', help='after the run: viewer.html, frames.json, timelapse '
                     '(PNG frames, run.gif, run.mp4) and one routed render per step in DIR (scratch, not committed)')
     a = ap.parse_args(argv)
@@ -104,7 +111,7 @@ def main(argv=None):
 
         def one(r):
             rc, text = _remote(a.board_dir, ins, os.path.join(d, 'route-%d' % r),
-                               ['bash', 'tools/placer/fr_job.sh', name], 4, os.path.join(d, 'route-%d.log' % r))
+                               route_cmd(name, a.gnd_vias), 4, os.path.join(d, 'route-%d.log' % r))
             return parse_unrouted(text)
         with ThreadPoolExecutor(a.routes) as ex:
             return list(ex.map(one, range(a.routes)))

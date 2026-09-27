@@ -229,6 +229,11 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(compact_cli.parse_unrouted('FR_RC 0\nUNROUTED 12 SUBSET 3 ERRORS 1\n'), 12)
         self.assertEqual(compact_cli.parse_unrouted('remote: exit 124\n'), compact_cli.NO_RESULT)
 
+    def test_route_job_adds_ground_pad_vias_only_when_asked(self):
+        from placer import compact_cli
+        self.assertEqual(compact_cli.route_cmd('B', False), ['bash', 'tools/placer/fr_job.sh', 'B'])
+        self.assertEqual(compact_cli.route_cmd('B', True), ['env', 'GNDVIAS=1', 'bash', 'tools/placer/fr_job.sh', 'B'])
+
 
 if __name__ == '__main__':
     unittest.main()
