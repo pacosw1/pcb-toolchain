@@ -259,6 +259,7 @@ def optimize(pr, params, workers=1, epochs=10, steps=10000, seed=1, top=3, log=N
     pool = mp.get_context('spawn').Pool(workers, _init, (pr, p)) if workers > 1 else None
     run = pool.map if pool else lambda f, xs: [f(x) for x in xs]
     t_start, busy = time.time(), 0.0
+    history = []  # best pose of each epoch, for snapshots
     try:
         for e in range(epochs):
             f0, f1 = e / epochs, (e + 1) / epochs
@@ -272,6 +273,8 @@ def optimize(pr, params, workers=1, epochs=10, steps=10000, seed=1, top=3, log=N
                 best[w] = (o['best_cost'], o['best_pose'])  # this epoch's weights: compare within the epoch only
                 busy += o['seconds']
             g = min(range(workers), key=lambda w: (best[w][0], w))
+            history.append({'epoch': e + 1, 'cost': best[g][0], 'pose': [list(q) for q in best[g][1]],
+                            'components': cost.components(pr, best[g][1], pf)})
             if log:
                 log('epoch %d/%d T %.3g best %.2f (worker %d) cur %s' % (
                     e + 1, epochs, frac(t0, t1, f1), best[g][0], g, ' '.join('%.1f' % c for c in cur_cost)))
@@ -291,6 +294,6 @@ def optimize(pr, params, workers=1, epochs=10, steps=10000, seed=1, top=3, log=N
         if key not in seen:
             seen.add(key)
             cands.append(c)
-    return {'initial': initial, 'candidates': cands[:top], 't0': t0, 'seed': seed, 'workers': workers,
+    return {'initial': initial, 'candidates': cands[:top], 'history': history, 't0': t0, 'seed': seed, 'workers': workers,
             'epochs': epochs, 'steps': steps, 'params': p, 'wall_s': time.time() - t_start,
             'moves_per_s_per_worker': epochs * steps * workers / busy if busy else 0.0}

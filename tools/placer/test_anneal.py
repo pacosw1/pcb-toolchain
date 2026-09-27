@@ -194,6 +194,16 @@ class EndToEndTest(unittest.TestCase):
         self.assertAlmostEqual(c['components']['overlap'], 0.0)
         self.assertLess(c['components']['hpwl'], 1.5 + 0.1)
 
+    def test_history_keeps_the_best_pose_and_cost_parts_of_each_epoch(self):
+        pr = two_units()
+        res = anneal.optimize(pr, P, workers=1, epochs=3, steps=500, seed=3, top=1)
+        h = res['history']
+        self.assertEqual([x['epoch'] for x in h], [1, 2, 3])
+        for x in h:
+            self.assertEqual(len(x['pose']), len(pr['units']))
+            self.assertEqual(set(x['components']), {'hpwl', 'cong', 'overlap', 'oob'})
+            self.assertAlmostEqual(x['components']['hpwl'], cost.hpwl(pr, x['pose']), places=6)
+
     def test_beats_initial_and_random_placement(self):
         pr = chain(12, seed=2)
         res = anneal.optimize(pr, P, workers=2, epochs=4, steps=3000, seed=9, top=1)
