@@ -5,3 +5,13 @@ Search on Hetzner (the image has no numpy): pass a PyPI numpy wheel for CPython 
 Pin swap proposal (never edits the schematic): `python3 tools/placer/cli.py pinswap BOARD PINMAP.json -o proposal.json [--apply COPY.kicad_pcb]` (run it on Hetzner through `remote_run.sh`; MC-MAIN U1: 35 s). `--apply` writes a board copy with the swapped pad nets for a routing benchmark only; schematic parity fails on that copy.
 
 Benchmark scope: `python3 tools/placer/validate.py strip BOARD OUT --only NETS.txt` removes only the tracks of the listed nets, so each candidate routes the same nets. Legality = spacing + board edge/keepouts; kept copper is a cost, and the writer rips up the copper that a moved pad lands on (`removed_collisions`).
+
+Region-mode result, MC-MAIN at 942ab95 (2026-09-27, Hetzner, 5 Freerouting runs of 3.5 min each, same 84 nets stripped on each board):
+
+| Board | Open before | Unrouted min / median / max | U1 subset min / median / max |
+|---|---|---|---|
+| Baseline | 312 | 188 / 265 / 280 | 135 / 196 / 210 |
+| Region (--free-box 158 126 196 166) | 342 | 212 / 278 / 318 | 136 / 191 / 221 |
+| Region + U1 pin swap | 342 | 249 / 284 / 330 | 160 / 190 / 223 |
+
+The router routes only 47-64 connections in 3.5 min, so the spread is larger than the difference: this score cannot rank these placements.
