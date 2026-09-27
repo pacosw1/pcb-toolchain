@@ -2,7 +2,7 @@
 """Block placement optimizer: fast proxy cost (HPWL + RUDY + D-040 spacing) in parallel annealing.
 
 Run with the KiCad bundled Python ($PY; it has numpy and pcbnew):
-  $PY tools/placer/cli.py read  BOARD -o prob.json [--fix REF ...] [--skip-net GND ...] [--keepout-layer User.Comments]
+  $PY tools/placer/cli.py read  BOARD -o prob.json [--fix REF ...] [--skip-net=GND,+3V3,...] [--keepout-layer User.Comments]
                                  [--free-box X0 Y0 X1 Y1] [--region-ref U1 --region-weight 3 [--region-box ...]]
   $PY tools/placer/cli.py run   prob.json -o result.json [--workers 16 --epochs 20 --steps 20000 --seed 1 --top 3]
                                  [--param w_ov=20 ...]
@@ -25,7 +25,7 @@ from placer import anneal, cost  # noqa: E402
 
 def cmd_read(a):
     from placer import kicad_io
-    pr = kicad_io.read_problem(a.board, fix=a.fix, skip=a.skip_net, edge_dist=a.edge_dist,
+    pr = kicad_io.read_problem(a.board, fix=a.fix, skip=[x for x in a.skip_net.split(',') if x], edge_dist=a.edge_dist,
                                keepout_layers=a.keepout_layer, free_box=a.free_box,
                                region_refs=a.region_ref, region_weight=a.region_weight, region_box=a.region_box,
                                tie=a.tie)
@@ -102,7 +102,7 @@ def main(argv=None):
     r.add_argument('board')
     r.add_argument('-o', required=True)
     r.add_argument('--fix', nargs='*', default=[])
-    r.add_argument('--skip-net', nargs='*', default=['GND'])
+    r.add_argument('--skip-net', default='GND', help='comma list of fnmatch patterns; use --skip-net=-15V,...')
     r.add_argument('--edge-dist', type=float, default=1.5)
     r.add_argument('--keepout-layer', nargs='*', default=[])
     r.add_argument('--free-box', nargs=4, type=float)
