@@ -480,7 +480,22 @@ def kept_copper(board, units, by_ref):
     return out
 
 
-def write_board(path, pr, pose, out):
+def _virtual_outline(board, outline, k):
+    """Replace the Edge.Cuts shapes by the bounding box of `outline` scaled by k about its centre."""
+    xs, ys = [p[0] for p in outline], [p[1] for p in outline]
+    cx, cy, hw, hh = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2, (max(xs) - min(xs)) * k / 2, (max(ys) - min(ys)) * k / 2
+    for d in [d for d in board.GetDrawings() if d.GetLayer() == pcbnew.Edge_Cuts]:
+        board.Delete(d)
+    r = pcbnew.PCB_SHAPE(board)
+    r.SetShape(pcbnew.SHAPE_T_RECT)
+    r.SetLayer(pcbnew.Edge_Cuts)
+    r.SetStart(_v(cx - hw, cy - hh))
+    r.SetEnd(_v(cx + hw, cy + hh))
+    r.SetWidth(int(0.1 * M))
+    board.Add(r)
+
+
+def write_board(path, pr, pose, out, outline_scale=1.0):
     if os.path.abspath(path) == os.path.abspath(out):
         raise ValueError('write_board writes a copy only: out must differ from the input board')
     board = pcbnew.LoadBoard(path)
@@ -546,6 +561,8 @@ def write_board(path, pr, pose, out):
     remove += [t for k, t in enumerate(free) if find(k) in clash]
     for t in remove:
         board.Delete(t)  # Remove() leaves freed tracks that break later LoadBoard() calls
+    if outline_scale != 1.0:
+        _virtual_outline(board, pr['board']['outline'], outline_scale)
     pcbnew.SaveBoard(out, board)
     return {'moved_units': len(moved), 'removed_tracks': len(remove),
             'removed_collisions': sum(1 for k in range(len(free)) if find(k) in clash),

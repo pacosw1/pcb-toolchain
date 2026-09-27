@@ -239,6 +239,15 @@ class RoundTripTest(unittest.TestCase):
         self.assertFalse(any(t.GetClass() == 'PCB_VIA' and near((t.GetPosition().x / 1e6, t.GetPosition().y / 1e6), spot)
                              for t in pcbnew.LoadBoard(out).GetTracks()))
 
+    def test_write_on_a_virtual_board_replaces_the_outline_by_the_scaled_box(self):
+        pr = kicad_io.read_problem(self.board)
+        x0, y0, x1, y1 = cost.outline_box(pr['board'])
+        out = os.path.join(self.tmp, 'b', 'out.kicad_pcb')
+        kicad_io.write_board(self.board, pr, cost.initial_pose(pr), out, outline_scale=1.5)
+        q = kicad_io.read_problem(out)
+        cx, cy, w, h = (x0 + x1) / 2, (y0 + y1) / 2, (x1 - x0) * 1.5, (y1 - y0) * 1.5
+        self.assertTrue(near(cost.outline_box(q['board']), (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2), 0.01))
+
     def test_write_moves_and_rotates_like_the_model(self):
         pr = kicad_io.read_problem(self.board)
         i = self.unit(pr, 'U1')
