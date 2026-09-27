@@ -75,6 +75,13 @@ class SearchTest(unittest.TestCase):
         res = pinswap.search(nets, slots, [], seed=1)
         self.assertEqual(res['assign'], {'A': 2})
 
+    def test_a_cost_per_changed_pin_keeps_small_gains_out_of_the_proposal(self):
+        slots = {1: slot('PD1', 0, 0), 2: slot('PD2', 10, 0)}
+        nets = {'A': {'kind': 'in', 'pin': 1, 'ft': True, 'ends': [[10, 10]]}}
+        self.assertEqual(pinswap.measure({'A': 2}, nets, slots, [], w_c=4.0)['changes'], 1)
+        self.assertEqual(pinswap.search(nets, slots, [], seed=1, w_c=15.0)['assign'], {'A': 1})  # gain 10 mm < 15
+        self.assertEqual(pinswap.search(nets, slots, [], seed=1, w_c=5.0)['assign'], {'A': 2})
+
     def test_search_never_breaks_a_rule_for_a_gain(self):
         # B would gain on pin 1 (PE2), but line 2 belongs to A, and A has no other legal pin
         slots = {1: slot('PE2', 0, 0), 2: slot('PD5', 10, 0), 3: slot('PD2', 30, 0)}

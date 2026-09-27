@@ -102,7 +102,7 @@ def cmd_pinswap(a):
     from placer import pinswap, pinswap_io
     ref = a.ref or json.load(open(a.pinmap)).get('ref', 'U1')
     nets, slots, fixed = pinswap_io.read_pins(a.board, a.pinmap, ref)
-    res = pinswap.search(nets, slots, fixed, seed=a.seed, w_x=a.w_x, restarts=a.restarts)
+    res = pinswap.search(nets, slots, fixed, seed=a.seed, w_x=a.w_x, restarts=a.restarts, w_c=a.w_c)
     json.dump(res, open(a.o, 'w'), indent=1)
     print('swappable nets %d, slots %d, fixed rat lines %d' % (len(nets), len(slots), len(fixed)))
     for k in ('before', 'after'):
@@ -173,6 +173,7 @@ def main(argv=None):
     r.add_argument('--seed', type=int, default=0)
     r.add_argument('--w-x', type=float, default=10.0, help='cost of one rat-line crossing in mm of HPWL')
     r.add_argument('--restarts', type=int, default=5)
+    r.add_argument('--w-c', type=float, default=5.0, help='cost of one changed pin in mm of HPWL (prefer few changes)')
     r.add_argument('--apply', metavar='OUT.kicad_pcb', help='write a board COPY with the swapped pad nets (benchmark only)')
     r.set_defaults(f=cmd_pinswap)
     r = sub.add_parser('scramble', help='problem copy with seeded random start positions (benchmarks); '
