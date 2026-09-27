@@ -10,6 +10,11 @@ Problem (a dict, JSON-able; tools/placer/kicad_io.py writes it from a board):
           clr = spacing class (D-040: 0.5 mm passive, 1.0 mm IC or connector).
           ko (optional) = indices of rects that are copper-free rule areas (an antenna keepout): such a rect
           may overlap a board keepout or a ko rect of another unit; a courtyard or kept copper in it is illegal.
+          dom (optional) = [[rect index, class id, gap to another class of the domain, net-class clearance]]:
+          a pad of a domain (mains) whose rect clr is the gap to all other nets (.kicad_dru, for example 8 mm).
+          mech (optional) = indices of rects that hold no pad of their own (a block border, the courtyard of a
+          part whose pads have their own rects, a part with no net pads): a domain rect keeps only their own
+          class to them, as to a keepout rect (a slot is the creepage barrier).
   nets:   [{name, weight, pins: [[unit, x0, y0, x1, y1], ...]}]   pin boxes relative to the origin.
   board:  {outline: [[x, y], ...], keepouts: [[[x, y], ...], ...], edge_clearance}
   region: None or {box: [x0, y0, x1, y1], weight, refs}   RUDY cells in box count weight times.
@@ -216,18 +221,37 @@ def pair_penalty(a, b):
 
 def _pen(A, ca, B, cb, ka=None, kb=None):
     g = np.maximum(ca[:, None], cb[None, :])
+    if ka is not None and ka[1] is not None and kb[1] is not None:
+        g = _domain_gap(g, ca, cb, ka, kb)
     dx = np.minimum(A[:, None, 2], B[None, :, 2]) - np.maximum(A[:, None, 0], B[None, :, 0]) + g
     dy = np.minimum(A[:, None, 3], B[None, :, 3]) - np.maximum(A[:, None, 1], B[None, :, 1]) + g
     a = np.clip(dx, 0, None) * np.clip(dy, 0, None)
     if ka is not None:
-        a = a * ~(ka[:, None] & kb[None, :])  # keepout over keepout is legal
+        a = a * ~(ka[0][:, None] & kb[0][None, :])  # keepout over keepout is legal
     return float(a.sum())
 
 
+def _domain_gap(g, ca, cb, ka, kb):
+    (oa, da, sa, na, xa), (ob, db, sb, nb, xb) = ka, kb
+    both = (da[:, None] > 0) & (db[None, :] > 0)
+    g = np.where(both, np.where(da[:, None] != db[None, :], np.maximum(sa[:, None], sb[None, :]),
+                                np.maximum(na[:, None], nb[None, :])), g)
+    g = np.where((da[:, None] > 0) & (xb | ob)[None, :], cb[None, :], g)  # no pad, no net: its own class
+    return np.where((xa | oa)[:, None] & (db[None, :] > 0), ca[:, None], g)
+
+
 def ko_flags(u):
-    k = np.zeros(len(u['rects']), dtype=bool)
+    """Rect kinds of a unit: (keepout flags, and None or (domain class, class gap, net clearance, mech flags))."""
+    n = len(u['rects'])
+    k = np.zeros(n, dtype=bool)
     k[list(u.get('ko', []))] = True
-    return k
+    if not u.get('dom') and not u.get('mech') and not u.get('ko'):
+        return (k, None)
+    d, sg, nc, x = np.zeros(n, dtype=int), np.zeros(n), np.zeros(n), np.zeros(n, dtype=bool)
+    for i, c, a, b in u.get('dom', []):
+        d[i], sg[i], nc[i] = c, a, b
+    x[list(u.get('mech', []))] = True
+    return (k, d, sg, nc, x)
 
 
 def world_rects(u, pose_u):
@@ -396,7 +420,7 @@ class Evaluator:
         self.lrect = [[np.array([rot_rect(rc, r) for rc in u['rects']], dtype=float).reshape(-1, 4)
                        for r in range(4)] for u in us]
         self.clr = [np.array([rc[4] for rc in u['rects']], dtype=float) for u in us]
-        self.ko = [ko_flags(u) for u in us]
+        self.ko = [ko_flags(u) for u in us]  # rect kinds
         self.kos = [set(u.get('ko', [])) for u in us]
         self.lbox = [[(lr[:, 0].min(), lr[:, 1].min(), lr[:, 2].max(), lr[:, 3].max()) for lr in self.lrect[i]]
                      for i in range(self.n)]

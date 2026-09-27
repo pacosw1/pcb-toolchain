@@ -224,8 +224,9 @@ def _decaps(fps, member, dist):
 
 def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), free_box=None,
                  region_refs=(), region_weight=1.0, region_box=None, spacing=(0.5, 1.0), tie=0.0,
-                 rigid_nets=(), decap_tie=0.0, keepout_zones=(), edges=None, zone_refs=None):
+                 rigid_nets=(), decap_tie=0.0, keepout_zones=(), edges=None, zone_refs=None, domains=()):
     board = pcbnew.LoadBoard(path)
+    dom_ids = {}  # net class of a domain -> class id (1, 2, ...)
     outline, holes = outline_of(board)
     keepouts = [h for h in holes]
     for z in board.Zones():
@@ -291,13 +292,26 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
     for key, u in units.items():
         if not u['refs']:
             continue
-        rects, hv, fixed = [], [], False
+        rects, hv, dom, mech, fixed = [], [], [], [], False
         for r in u['refs']:
             fp = by_ref[r]
             rc = fp_rect(fp)
             clr = 0.0 if is_test_point(r) else spacing[1] if ref_prefix(r) in IC_PREFIX else spacing[0]
             rects.append((rc, clr))
-            if clr:  # a pad of a net class with a larger clearance (mains) gets its own spacing rect
+            kinds = [(p, _domain(p, domains)) for p in fp.Pads() if p.GetNetname()]
+            if domains and not kinds:  # no net pad (a mounting hole): only its own class to a domain pad
+                mech.append(len(rects) - 1)
+            elif any(d for _, d in kinds):  # every pad its own rect; the courtyard holds no pad
+                mech.append(len(rects) - 1)
+                for p, d in kinds:
+                    bb = p.GetBoundingBox()
+                    pb = (mm(bb.GetX()), mm(bb.GetY()), mm(bb.GetRight()), mm(bb.GetBottom()))
+                    nc = mm(p.GetOwnClearance(pcbnew.F_Cu))
+                    if d:
+                        cid = dom_ids.setdefault(p.GetNetClassName(), len(dom_ids) + 1)
+                        dom.append((len(hv), cid, d[2], nc))
+                    hv.append((pb, d[1] if d else nc))
+            elif clr:  # a pad of a net class with a larger clearance (mains) gets its own spacing rect
                 for p in fp.Pads():
                     pc = mm(p.GetOwnClearance(pcbnew.F_Cu)) if p.GetNetname() else 0.0
                     if pc > clr:
@@ -323,6 +337,9 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
         index[key] = len(out_units)
         if u['box']:  # block copper may leave the courtyards but stays inside the border
             rects.append((tuple(u['box']), 0.0))
+            if dom:
+                mech.append(len(rects) - 1)
+        base = len(rects)
         rects += hv
         pads = [[round(mm(q.x) - ox, 6), round(mm(q.y) - oy, 6)]
                 for r in u['refs'] if not is_test_point(r) for q in (p.GetPosition() for p in by_ref[r].Pads())]
@@ -330,6 +347,10 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
                           'rects': [[a - ox, c - oy, e - ox, f - oy, clr] for (a, c, e, f), clr in rects],
                           'pads': pads,
                           'borders': u['borders'], 'box': u['box'], 'group': u.get('group')})
+        if dom:
+            out_units[-1]['dom'] = [[base + k, c, g, nc] for k, c, g, nc in dom]
+        if mech:
+            out_units[-1]['mech'] = mech
         if not u['box']:  # pads meet kept copper; a block also moves its tracks, so its courtyards stay the test
             out_units[-1]['pad_rects'] = [
                 [round(mm(bb.GetX()) - ox, 6), round(mm(bb.GetY()) - oy, 6),
@@ -376,6 +397,13 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
     return {'board_file': os.path.abspath(path), 'units': out_units, 'nets': nets,
             'board': {'outline': outline, 'keepouts': keepouts, 'edge_clearance': edge, 'copper': copper},
             'region': region, 'move_box': list(free_box) if free_box else None, 'decaps': decaps}
+
+
+def _domain(pad, domains):
+    """(pattern, gap to other nets, gap to another class of the domain) of the first domain whose net-class
+    pattern matches the pad, or None."""
+    c = pad.GetNetClassName()
+    return next((d for d in domains if any(fnmatch.fnmatchcase(x, d[0]) for x in c.split(','))), None)
 
 
 def _block_cuts(board, units, keepouts):

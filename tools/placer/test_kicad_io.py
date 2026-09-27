@@ -75,6 +75,31 @@ class RoundTripTest(unittest.TestCase):
         self.assertIn([round(v, 2) for v in (bb.GetX() / 1e6 - u['x'], bb.GetY() / 1e6 - u['y'],
                                              bb.GetRight() / 1e6 - u['x'], bb.GetBottom() / 1e6 - u['y'], 2.5)], hv)
 
+    def test_domain_pads_get_domain_rects_and_the_part_courtyard_holds_no_pad(self):
+        import json as js
+        net = next(p.GetNetname() for p in pcbnew.LoadBoard(self.board).FindFootprintByReference('U1').Pads()
+                   if p.GetNetname() and p.GetNetClassName() == 'Default')
+        shutil.copytree(os.path.join(self.tmp, 'b'), os.path.join(self.tmp, 'd'))  # pcbnew keeps a loaded project
+        pro = os.path.join(self.tmp, 'd', 'PWR-24V-5V.kicad_pro')
+        d = js.load(open(pro))
+        d['net_settings']['classes'].append(dict(d['net_settings']['classes'][0], name='MAINS_K1', priority=0))
+        d['net_settings']['netclass_patterns'] = (d['net_settings'].get('netclass_patterns') or []) + [
+            {'netclass': 'MAINS_K1', 'pattern': net}]
+        js.dump(d, open(pro, 'w'))
+        path = os.path.join(self.tmp, 'd', 'PWR-24V-5V.kicad_pcb')
+        pr = kicad_io.read_problem(path, domains=[('MAINS_K*', 8.0, 3.0)])
+        u = pr['units'][self.unit(pr, 'U1')]
+        fp = pcbnew.LoadBoard(path).FindFootprintByReference('U1')
+        mains = [p for p in fp.Pads() if p.GetNetname() == net]
+        self.assertEqual(len(u['dom']), len(mains))
+        self.assertEqual({(c, g) for _, c, g, _ in u['dom']}, {(1, 3.0)})
+        self.assertEqual({u['rects'][i][4] for i, *_ in u['dom']}, {8.0})
+        self.assertIn(0, u['mech'])  # the courtyard: its pads have their own rects
+        pads = [p for p in fp.Pads() if p.GetNetname()]
+        self.assertEqual(len(u['rects']), 1 + len(pads))
+        self.assertNotIn('dom', pr['units'][self.unit(pr, 'R2')])
+        self.assertEqual(pr['units'][self.unit(pr, 'H3')]['mech'], [0])  # a mounting hole: no net pad
+
     def test_reader_units_fixed_parts_and_nets(self):
         pr = kicad_io.read_problem(self.board)
         refs = sorted(r for u in pr['units'] for r in u['refs'])

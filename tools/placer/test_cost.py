@@ -342,5 +342,57 @@ class KeepoutRectTest(unittest.TestCase):
         self.assertGreater(cost.components(pr, cost.initial_pose(pr), P)['overlap'], 0.0)
 
 
+class DomainRectTest(unittest.TestCase):
+    """u['dom'] = [[rect index, class id, gap to another class of the domain, net-class clearance], ...]: a pad
+    of a domain (mains) with rect clr = the gap to the other nets (8 mm, .kicad_dru). Two domain rects keep the
+    other-class gap (3 mm) or, same class, the net-class clearance. A rect with no pad of its own (u['mech']: a
+    block border, the courtyard of a part whose pads have their own rects, a part with no net pads) and a
+    keepout rect (a slot: the creepage barrier) keep only their own class to a domain rect."""
+
+    def mains(self, name, x, cls):
+        u = unit(name, x, 20.0, [[-1, -1, 1, 1, 0.5], [-0.5, -0.5, 0.5, 0.5, 8.0]])
+        u['dom'] = [[1, cls, 3.0, 0.5]]
+        u['mech'] = [0]
+        return u
+
+    def overlap(self, units):
+        pr = problem(units, [], square_board(60.0))
+        return cost.components(pr, cost.initial_pose(pr), P)['overlap']
+
+    def test_other_nets_keep_the_domain_gap(self):
+        selv = lambda x: unit('R', x, 20.0, [[-1, -1, 1, 1, 0.5]])
+        self.assertGreater(self.overlap([self.mains('K1', 10.0, 1), selv(10.0 + 0.5 + 6.7 + 1)]), 0.0)
+        self.assertAlmostEqual(self.overlap([self.mains('K1', 10.0, 1), selv(10.0 + 0.5 + 8.1 + 1)]), 0.0)
+
+    def test_two_domain_classes_keep_the_class_gap_and_one_class_the_net_clearance(self):
+        # pad edges 4 mm apart; courtyards stay 2 mm apart
+        self.assertAlmostEqual(self.overlap([self.mains('K1', 10.0, 1), self.mains('K2', 15.0, 2)]), 0.0)
+        self.assertGreater(self.overlap([self.mains('K1', 10.0, 1), self.mains('K2', 12.8, 2)]), 0.0)
+        self.assertAlmostEqual(self.overlap([self.mains('K1', 10.0, 1), self.mains('J1', 12.8, 1)]), 0.0)
+
+    def test_a_block_border_rect_keeps_its_own_class_only(self):
+        b = unit('B', 20.0, 20.0, [[-1, -1, 1, 1, 0.5], [-8, -2, 8, 2, 0.0]])  # its part 8.5 mm from the pad
+        b['mech'] = [1]
+        self.assertAlmostEqual(self.overlap([self.mains('K1', 10.0, 1), b]), 0.0)  # pad 1.5 mm from the border
+        pr = problem([self.mains('K1', 10.0, 1), b], [], square_board(60.0))
+        self.assertAlmostEqual(cost.Evaluator(pr, P).components()['overlap'], 0.0)
+        b = unit('B', 19.6, 20.0, [[7, -1, 9, 1, 0.5], [-8, -2, 8, 2, 0.0]])  # border 1.1 mm from the pad
+        b['mech'] = [1]
+        self.assertAlmostEqual(self.overlap([self.mains('K1', 10.0, 1), b]), 0.0)
+
+    def test_a_slot_next_to_a_domain_pad_is_legal(self):
+        s = unit('S', 12.6, 30.0, [[-1, -1, 1, 1, 0.5], [-1, -11, 1, -9, 0.0]])  # slot 1.1 mm from the pad
+        s['ko'] = [1]
+        self.assertAlmostEqual(self.overlap([self.mains('K1', 10.0, 1), s]), 0.0)
+
+
+class ParseDomainTest(unittest.TestCase):
+    def test_domain_option_gives_pattern_gap_and_class_gap(self):
+        from placer import cli
+        self.assertEqual(cli.parse_domains(['MAINS_K*:8:3']), [('MAINS_K*', 8.0, 3.0)])
+        with self.assertRaises(SystemExit):
+            cli.parse_domains(['MAINS_K*:8'])
+
+
 if __name__ == '__main__':
     unittest.main()
