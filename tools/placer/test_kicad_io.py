@@ -131,6 +131,29 @@ class RoundTripTest(unittest.TestCase):
                     if pad.GetNetname() == t.GetNetname():
                         self.assertFalse(pad.HitTest(pt), 'track left at a moved pad')
 
+    def test_write_removes_other_copper_under_moved_pads(self):
+        pr = kicad_io.read_problem(self.board)
+        i = self.unit(pr, 'U1')
+        b0 = pcbnew.LoadBoard(self.board)
+        u1_nets = {p.GetNetname() for p in b0.FindFootprintByReference('U1').Pads()}
+        t = next(t for t in b0.GetTracks() if t.GetClass() == 'PCB_TRACK' and t.GetNetname() not in u1_nets
+                 and t.GetLength() > 2e6)
+        mid = ((t.GetStart().x + t.GetEnd().x) / 2e6, (t.GetStart().y + t.GetEnd().y) / 2e6)
+        pose = cost.initial_pose(pr)
+        u = pr['units'][i]
+        dx = mid[0] - (u['x'] + u['pads'][0][0])  # put U1 pad 0 on the track
+        dy = mid[1] - (u['y'] + u['pads'][0][1])
+        pose[i] = (u['x'] + dx, u['y'] + dy, 0)
+        out = os.path.join(self.tmp, 'b', 'out.kicad_pcb')
+        rep = kicad_io.write_board(self.board, pr, pose, out)
+        self.assertGreater(rep['removed_collisions'], 0)
+        b1 = pcbnew.LoadBoard(out)
+        pads = list(b1.FindFootprintByReference('U1').Pads())
+        for tr in b1.GetTracks():
+            for pad in pads:
+                if pad.GetNetname() != tr.GetNetname() and pad.IsOnLayer(tr.GetLayer()):
+                    self.assertFalse(kicad_io.collide(tr, pad, 0), 'copper of %s under U1' % tr.GetNetname())
+
     def test_block_border_moves_with_its_parts(self):
         # Border on User.1 around U1 and its nearest part: one rigid unit (with any other part inside).
         b = pcbnew.LoadBoard(self.board)

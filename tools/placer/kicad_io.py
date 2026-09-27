@@ -19,7 +19,8 @@ write_board(board, problem, pose, out) -> report dict
   Each moved unit turns by r * 90 deg about its origin, then moves to the new origin. Its
   footprints, its block border and label, and the tracks inside its block border move rigidly.
   Other tracks and vias: each copper cluster (connected by end points) that touches a pad of a
-  moved unit is removed. Zones stay (refill them in the DRC). The result goes to `out` only.
+  moved unit is removed, and so is each cluster that now collides (own clearance rules) with a moved
+  pad or moved block copper of another net. Zones stay (refill them in the DRC). The result goes to `out` only.
 """
 import fnmatch
 import math
@@ -290,6 +291,29 @@ def _pt_key(p):
     return (p.x, p.y)
 
 
+COPPER = ('F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu')
+
+
+def collide(a, b, clearance=None):
+    """True when copper items a and b are closer than the clearance (nm; default: their own rules) on a shared layer."""
+    for name in COPPER:
+        lay = getattr(pcbnew, name.replace('.', '_'))
+        if a.IsOnLayer(lay) and b.IsOnLayer(lay):
+            c = clearance if clearance is not None else max(a.GetOwnClearance(lay), b.GetOwnClearance(lay))
+            if a.GetEffectiveShape(lay).Collide(b.GetEffectiveShape(lay), int(c)):
+                return True
+    return False
+
+
+def _box(it, grow):
+    bb = it.GetBoundingBox()
+    return (bb.GetX() - grow, bb.GetY() - grow, bb.GetRight() + grow, bb.GetBottom() + grow)
+
+
+def _meet(a, b):
+    return a[0] <= b[2] and b[0] <= a[2] and a[1] <= b[3] and b[1] <= a[3]
+
+
 def write_board(path, pr, pose, out):
     if os.path.abspath(path) == os.path.abspath(out):
         raise ValueError('write_board writes a copy only: out must differ from the input board')
@@ -360,8 +384,26 @@ def write_board(path, pr, pose, out):
             if r:
                 it.Rotate(o, ang)
             it.Move(d)
+    # kept copper that now touches a moved pad or moved block copper of another net goes too (whole cluster)
+    moved_items = [p for i, u, *_ in moved for r in u['refs'] for p in by_ref[r].Pads()]
+    moved_items += [t for t in tracks if t.m_Uuid.AsString() in internal]
+    grow = 500000
+    mboxes = [(_box(it, grow), it) for it in moved_items]
+    removed = {find(k) for k in hit}
+    clash = set()
+    for k, t in enumerate(free):
+        c = find(k)
+        if c in removed or c in clash:
+            continue
+        tb = _box(t, 0)
+        for mb, it in mboxes:
+            if _meet(tb, mb) and it.GetNetCode() != t.GetNetCode() and collide(t, it):
+                clash.add(c)
+                break
+    remove += [t for k, t in enumerate(free) if find(k) in clash]
     for t in remove:
         board.Delete(t)  # Remove() leaves freed tracks that break later LoadBoard() calls
     pcbnew.SaveBoard(out, board)
     return {'moved_units': len(moved), 'removed_tracks': len(remove),
+            'removed_collisions': sum(1 for k in range(len(free)) if find(k) in clash),
             'moved_block_tracks': sum(1 for _ in internal)}
