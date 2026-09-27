@@ -52,6 +52,21 @@ class RoundTripTest(unittest.TestCase):
         pr = kicad_io.read_problem(self.board)
         self.assertFalse(pr['units'][self.unit(pr, 'J1')]['fixed'])
 
+    def test_spacing_class_grows_to_the_net_class_clearance_of_the_part_pads(self):
+        import json as js
+        net = next(p.GetNetname() for p in pcbnew.LoadBoard(self.board).FindFootprintByReference('U1').Pads()
+                   if p.GetNetname() and p.GetNetClassName() == 'Default')
+        shutil.copytree(os.path.join(self.tmp, 'b'), os.path.join(self.tmp, 'c'))  # pcbnew keeps a loaded project
+        pro = os.path.join(self.tmp, 'c', 'PWR-24V-5V.kicad_pro')
+        d = js.load(open(pro))
+        hv = dict(d['net_settings']['classes'][0], name='HV', clearance=2.5, priority=0)
+        d['net_settings']['classes'].append(hv)
+        d['net_settings']['netclass_patterns'] = (d['net_settings'].get('netclass_patterns') or []) + [
+            {'netclass': 'HV', 'pattern': net}]
+        js.dump(d, open(pro, 'w'))
+        pr = kicad_io.read_problem(os.path.join(self.tmp, 'c', 'PWR-24V-5V.kicad_pcb'))
+        self.assertEqual(pr['units'][self.unit(pr, 'U1')]['rects'][0][4], 2.5)
+
     def test_reader_units_fixed_parts_and_nets(self):
         pr = kicad_io.read_problem(self.board)
         refs = sorted(r for u in pr['units'] for r in u['refs'])

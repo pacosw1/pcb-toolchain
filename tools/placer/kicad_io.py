@@ -8,7 +8,8 @@ read_problem(board) -> problem dict (see cost.py)
   (J/P/CN) whose courtyard is within edge_dist of the outline (not wholly outside it: staged), parts on B.Cu, refs in `fix`
   (fnmatch), and units whose origin is outside `free_box`. A unit with one fixed part is fixed.
   Rects: F.CrtYd box per footprint (else pads + 0.25 mm); spacing class 1.0 mm for IC and
-  connector refs (U, J, P, CN, K, SW, Y, X), 0.5 mm for the rest (D-040). A block also has its
+  connector refs (U, J, P, CN, K, SW, Y, X), 0.5 mm for the rest (D-040), or the largest net-class
+  clearance of the part pads when that is larger (mains classes). A block also has its
   border box as a rect of class 0 (its copper stays inside the border).
   Pads: every pad centre of the unit (pin RUDY). Pins: one box per (net, unit) of the pad centres. Nets matching `skip` (default GND) and nets
   inside one unit are left out.
@@ -295,6 +296,8 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
             fp = by_ref[r]
             rc = fp_rect(fp)
             clr = 0.0 if is_test_point(r) else spacing[1] if ref_prefix(r) in IC_PREFIX else spacing[0]
+            if clr:  # a net class with a larger clearance (mains) widens the spacing of the part
+                clr = max([clr] + [mm(p.GetOwnClearance(pcbnew.F_Cu)) for p in fp.Pads() if p.GetNetname()])
             rects.append((rc, clr))
             if (fp.IsLocked() or is_mounting_hole(fp) or fp.GetLayer() != pcbnew.F_Cu
                     or any(fnmatch.fnmatchcase(r, p) for p in fix_pat)):
