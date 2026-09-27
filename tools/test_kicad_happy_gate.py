@@ -273,5 +273,39 @@ class GroundViaTests(unittest.TestCase):
             gate.mark_ground_vias(self.doc(), ["FIELD_GND"])
 
 
+class ExemptTransitionTests(unittest.TestCase):
+    # kicad-happy a6bba1a stops RP-001 after 20 nets ("21+ nets ... (truncated)"), so nets past 20 are never seen.
+    # The gate takes the RP-001-exempt nets out of the kicad-happy input and checks them itself.
+    def doc(self):
+        return {"nets": {"1": "GND", "2": "/A", "3": "/B"},
+                "vias": {"vias": [{"x": 0, "y": 0, "net": 2}, {"x": 5, "y": 0, "net": 3},
+                                  {"x": 5.9, "y": 0, "net": 1}]},
+                "layer_transitions": [
+                    {"net": "/A", "copper_layers": ["F.Cu", "B.Cu"], "via_positions": [{"x": 0, "y": 0}]},
+                    {"net": "/B", "copper_layers": ["F.Cu", "B.Cu"], "via_positions": [{"x": 5, "y": 0}]}]}
+
+    def test_unstitched_exempt_net_moves_to_gate_finding(self):
+        d = self.doc()
+        found = gate.take_exempt_transitions(d, {"/A"})
+        self.assertEqual([t["net"] for t in d["layer_transitions"]], ["/B"])
+        self.assertEqual([(f["rule_id"], f["nets"]) for f in found], [("RP-001", ["/A"])])
+
+    def test_stitched_exempt_net_stays_for_kicad_happy(self):
+        d = self.doc()
+        self.assertEqual(gate.take_exempt_transitions(d, {"/B"}), [])
+        self.assertEqual([t["net"] for t in d["layer_transitions"]], ["/A", "/B"])
+
+    def test_marked_ground_via_counts(self):
+        d = self.doc()
+        d["nets"]["1"] = "FIELD_0V"
+        d["vias"]["vias"][2]["net_name"] = "GND"
+        self.assertEqual(gate.take_exempt_transitions(d, {"/B"}), [])
+
+    def test_no_exempt_nets_changes_nothing(self):
+        d = self.doc()
+        self.assertEqual(gate.take_exempt_transitions(d, set()), [])
+        self.assertEqual(d, self.doc())
+
+
 if __name__ == "__main__":
     unittest.main()

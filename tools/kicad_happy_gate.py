@@ -33,6 +33,7 @@ Exit codes: 0 no matching findings, 1 one or more matching findings,
 bad or stale exemption).
 """
 import argparse
+import math
 import json
 import os
 import shutil
@@ -234,7 +235,35 @@ def mark_ground_vias(pcb_doc, grounds):
     return n
 
 
-def run_gate(happy_dir, pcb, sch, tmp_dir, grounds=()):
+def take_exempt_transitions(pcb_doc, nets):
+    """Take the layer transitions of the RP-001-exempt nets out of the analyze_pcb JSON.
+
+    kicad-happy a6bba1a stops RP-001 after 20 nets, so a board with more flagged nets hides the rest.
+    For each exempt net with a via that has no ground via within 1.0 mm (the kicad-happy radius for
+    dielectrics up to 0.5 mm), the transition is removed and an RP-001 finding is returned for it, so the
+    exemption still matches. A stitched exempt net stays in the input: its exemption goes stale.
+    Ground vias: net_name GND (mark_ground_vias) or a net named GND, *GND or 0V, as kicad-happy."""
+    if not nets:
+        return []
+    names = {str(k): v for k, v in (pcb_doc.get("nets") or {}).items()}
+    def is_gnd(v):
+        n = v.get("net_name") or names.get(str(v.get("net")), "")
+        return n.upper().endswith("GND") or n.upper() == "0V"
+    gnd = [(v.get("x", 0), v.get("y", 0)) for v in (pcb_doc.get("vias") or {}).get("vias", []) if is_gnd(v)]
+    keep, found = [], []
+    for t in pcb_doc.get("layer_transitions", []):
+        open_vias = [q for q in t.get("via_positions", [])
+                     if not any(math.dist((q.get("x", 0), q.get("y", 0)), g) <= 1.0 for g in gnd)]
+        if t.get("net") in nets and open_vias:
+            found.append({"rule_id": "RP-001", "severity": "warning", "nets": [t["net"]],
+                          "title": f"Missing stitching via at layer transition: {t['net']} (checked by the gate)"})
+        else:
+            keep.append(t)
+    pcb_doc["layer_transitions"] = keep
+    return found
+
+
+def run_gate(happy_dir, pcb, sch, tmp_dir, grounds=(), exempt_rp_nets=()):
     """Run the three analyzers and return their merged raw findings."""
     all_findings = []
     sch_out = None
@@ -253,6 +282,8 @@ def run_gate(happy_dir, pcb, sch, tmp_dir, grounds=()):
     all_findings += load_findings(pcb_doc)
     if grounds:
         mark_ground_vias(pcb_doc, grounds)
+    all_findings += take_exempt_transitions(pcb_doc, set(exempt_rp_nets))
+    if grounds or exempt_rp_nets:
         with open(pcb_out, "w") as fh:
             json.dump(pcb_doc, fh)
 
@@ -327,7 +358,8 @@ def main(argv=None):
 
     tmp_dir = tempfile.mkdtemp(prefix="kicad_happy_gate_")
     try:
-        all_findings = run_gate(happy_dir, pcb, sch, tmp_dir, args.ground)
+        rp_nets = {e["net"] for e in exempts if e.get("rule") == "RP-001" and e.get("net")}
+        all_findings = run_gate(happy_dir, pcb, sch, tmp_dir, args.ground, rp_nets)
     except (RuntimeError, ValueError, json.JSONDecodeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
