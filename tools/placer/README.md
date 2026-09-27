@@ -36,3 +36,13 @@ Benchmark B, known-good recovery, RELAY-4 (2026-09-27; Hetzner; `bench_b.sh`). A
 | P placer from S | 1233 | 129 / 129 / 130 / 130 / 137 | 100-108 | 229-241 |
 
 Result: FAIL. The placer gets the HPWL back to within 11 % of the original, but it does not get the routability back. The errors before routing show the cause. RELAY-4 has MAINS_K1-K4 net classes with 3.0 mm clearance, plus a creepage barrier band. The placer knows only the D-040 spacing (0.5 / 1.0 mm) and has no mains/SELV domain region. Thus relays, mains connectors and SELV parts end up too close, and kept FIELD_GND vias sit next to relay pads. Next fixes: pad-pair spacing from the net-class clearance, and a domain box per net class (mains side / barrier band as a keepout for the other domain).
+
+Benchmark B v2 (2026-09-27; same set-up; the spacing class now grows to the net-class clearance of the pads):
+
+| Board | Unrouted per run | Signal subset | DRC errors |
+|---|---|---|---|
+| O original | 7 / 8 / 9 / 7 / 8 | 7-9 | 0-1 |
+| S scrambled | 147 / 141 / 152 / 142 / 146 | 111-122 | 136-160 |
+| P placer from S | 119 / 116 / 127 / 126 / 132 | 97-111 | 224-245 |
+
+Result: still FAIL. P is better than S by about 20 open connections, but far from O. The DRC errors of P show the cause that stays: there is no mains/SELV domain region, and the kept FIELD_GND vias clash with moved parts. Next fix: a domain box per net class.
