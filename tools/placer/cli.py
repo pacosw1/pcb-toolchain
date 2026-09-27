@@ -28,12 +28,15 @@ def cmd_read(a):
     pr = kicad_io.read_problem(a.board, fix=a.fix, skip=[x for x in a.skip_net.split(',') if x], edge_dist=a.edge_dist,
                                keepout_layers=a.keepout_layer, free_box=a.free_box,
                                region_refs=a.region_ref, region_weight=a.region_weight, region_box=a.region_box,
-                               tie=a.tie)
+                               tie=a.tie, rigid_nets=[x for x in a.rigid_net.split(',') if x], decap_tie=a.decap_tie)
     json.dump(pr, open(a.o, 'w'))
     mov = [u for u in pr['units'] if not u['fixed']]
     print('units %d (movable %d, blocks %d), nets %d, keepouts %d' % (
         len(pr['units']), len(mov), sum(1 for u in pr['units'] if u['box']), len(pr['nets']),
         len(pr['board']['keepouts'])))
+    far = [d for d in pr['decaps'] if d[2] > 1.0]
+    print('decaps %d tied, %d over 1.0 mm (D-040): %s' % (len(pr['decaps']), len(far),
+                                                        ' '.join('%s-%s %.2f' % tuple(d) for d in far)))
 
 
 def parse_params(items):
@@ -115,6 +118,9 @@ def main(argv=None):
     r.add_argument('--region-weight', type=float, default=1.0)
     r.add_argument('--region-box', nargs=4, type=float)
     r.add_argument("--tie", type=float, default=0.0, help="join <=3-pad parts within TIE mm to their IC unit")
+    r.add_argument("--rigid-net", default='*SW*', help="comma list (use '='): parts on these nets form one rigid unit")
+    r.add_argument("--decap-tie", type=float, default=3.0,
+                   help="join a GND decoupling cap to the IC pin of its net within this pad gap (mm); >1.0 mm is reported")
     r.set_defaults(f=cmd_read)
     r = sub.add_parser('run')
     r.add_argument('prob')

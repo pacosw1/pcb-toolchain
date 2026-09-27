@@ -156,8 +156,69 @@ def _tie(fps, member, tie, skip):
         member[r] = member.setdefault(ic, 'F:' + ic)
 
 
+def is_test_point(ref):
+    return ref_prefix(ref) == 'TP'
+
+
+def pad_gap(a, b):
+    """Edge-to-edge distance (mm) of the bounding boxes of two pads."""
+    p, q = a.GetBoundingBox(), b.GetBoundingBox()
+    dx = max(q.GetX() - p.GetRight(), p.GetX() - q.GetRight(), 0)
+    dy = max(q.GetY() - p.GetBottom(), p.GetY() - q.GetBottom(), 0)
+    return math.hypot(dx, dy) / M
+
+
+def _join(member, r, anchor):
+    """Part r joins the unit of anchor, if r has no unit yet."""
+    if r not in member:
+        member[r] = member.setdefault(anchor, 'F:' + anchor)
+
+
+def _rigid(fps, member, patterns):
+    """All parts on a net that matches a pattern (a buck switch node) join the unit of the part with the most pads."""
+    nets = {}
+    for fp in fps:
+        if is_test_point(fp.GetReference()) or is_mounting_hole(fp):
+            continue
+        for p in fp.Pads():
+            n = p.GetNetname()
+            if n and any(fnmatch.fnmatchcase(n, pat) for pat in patterns):
+                nets.setdefault(n, {})[fp.GetReference()] = fp
+    for n in sorted(nets):
+        parts = sorted(nets[n].values(), key=lambda f: (-len(f.Pads()), f.GetReference()))
+        for fp in parts[1:]:
+            _join(member, fp.GetReference(), parts[0].GetReference())
+
+
+def _decaps(fps, member, dist):
+    """A 2-pad capacitor with one pad on GND whose other pad is within `dist` mm (pad edge to pin) of a pin
+    of the same net on an IC (U, > 3 pads) joins the unit of the nearest such IC (a hard tie).
+    Returns [[cap, ic, gap], ...] for every such cap (also caps that already had a unit)."""
+    ics = [f for f in fps if len(f.Pads()) > 3 and ref_prefix(f.GetReference()) == 'U']
+    out = []
+    for fp in fps:
+        r = fp.GetReference()
+        pads = list(fp.Pads())
+        nets = [p.GetNetname() for p in pads]
+        if ref_prefix(r) != 'C' or len(pads) != 2 or 'GND' not in nets or nets.count('GND') == 2:
+            continue
+        pw = [p for p in pads if p.GetNetname() != 'GND' and p.GetNetname()]
+        best = None
+        for ic in ics:
+            for pin in ic.Pads():
+                if pw and pin.GetNetname() == pw[0].GetNetname():
+                    g = pad_gap(pw[0], pin)
+                    if best is None or g < best[0]:
+                        best = (g, ic.GetReference())
+        if best and best[0] <= dist:
+            out.append([r, best[1], round(best[0], 6)])
+            _join(member, r, best[1])
+    return out
+
+
 def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), free_box=None,
-                 region_refs=(), region_weight=1.0, region_box=None, spacing=(0.5, 1.0), tie=0.0):
+                 region_refs=(), region_weight=1.0, region_box=None, spacing=(0.5, 1.0), tie=0.0,
+                 rigid_nets=(), decap_tie=0.0):
     board = pcbnew.LoadBoard(path)
     outline, holes = outline_of(board)
     keepouts = [h for h in holes]
@@ -192,7 +253,8 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
             c = fp_rect(fp)
             share = (max(0, min(c[2], box[2]) - max(c[0], box[0])) * max(0, min(c[3], box[3]) - max(c[1], box[1]))
                      / max((c[2] - c[0]) * (c[3] - c[1]), 1e-9))
-            if fp.GetReference() not in member and inside_box(mm(q.x), mm(q.y), box) and share >= BLOCK_SHARE:
+            if (fp.GetReference() not in member and not is_test_point(fp.GetReference())
+                    and inside_box(mm(q.x), mm(q.y), box) and share >= BLOCK_SHARE):
                 inside.append(fp.GetReference())
         if len(inside) < 2:  # a block has 2 or more parts; a border around one part is stale
             continue
@@ -201,6 +263,12 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
         for r in inside:
             member[r] = key
     by_ref = {fp.GetReference(): fp for fp in fps}
+    for fp in fps:  # test points: own unit, fixed, not in the cost
+        if is_test_point(fp.GetReference()):
+            member[fp.GetReference()] = 'F:' + fp.GetReference()
+    if rigid_nets:
+        _rigid(fps, member, list(rigid_nets))
+    decaps = _decaps(fps, member, decap_tie) if decap_tie > 0 else []
     if tie > 0:
         _tie(fps, member, tie, list(skip))
     for fp in fps:
@@ -220,9 +288,9 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
         for r in u['refs']:
             fp = by_ref[r]
             rc = fp_rect(fp)
-            clr = spacing[1] if ref_prefix(r) in IC_PREFIX else spacing[0]
+            clr = 0.0 if is_test_point(r) else spacing[1] if ref_prefix(r) in IC_PREFIX else spacing[0]
             rects.append((rc, clr))
-            if (fp.IsLocked() or is_mounting_hole(fp) or fp.GetLayer() != pcbnew.F_Cu
+            if (fp.IsLocked() or is_mounting_hole(fp) or is_test_point(r) or fp.GetLayer() != pcbnew.F_Cu
                     or any(fnmatch.fnmatchcase(r, p) for p in fix_pat)):
                 fixed = True
             if ref_prefix(r) in ('J', 'P', 'CN'):
@@ -242,7 +310,7 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
         if u['box']:  # block copper may leave the courtyards but stays inside the border
             rects.append((tuple(u['box']), 0.0))
         pads = [[round(mm(q.x) - ox, 6), round(mm(q.y) - oy, 6)]
-                for r in u['refs'] for q in (p.GetPosition() for p in by_ref[r].Pads())]
+                for r in u['refs'] if not is_test_point(r) for q in (p.GetPosition() for p in by_ref[r].Pads())]
         out_units.append({'name': u['name'], 'refs': sorted(u['refs']), 'fixed': fixed, 'x': ox, 'y': oy,
                           'rects': [[a - ox, c - oy, e - ox, f - oy, clr] for (a, c, e, f), clr in rects],
                           'pads': pads,
@@ -253,6 +321,8 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
     pins = {}  # net -> {unit: [x0, y0, x1, y1]}
     region_nets = set()
     for fp in fps:
+        if is_test_point(fp.GetReference()):
+            continue
         ui = index[member[fp.GetReference()]]
         u = out_units[ui]
         for p in fp.Pads():
@@ -282,7 +352,7 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
     copper = kept_copper(board, out_units, by_ref)
     return {'board_file': os.path.abspath(path), 'units': out_units, 'nets': nets,
             'board': {'outline': outline, 'keepouts': keepouts, 'edge_clearance': edge, 'copper': copper},
-            'region': region, 'move_box': list(free_box) if free_box else None}
+            'region': region, 'move_box': list(free_box) if free_box else None, 'decaps': decaps}
 
 
 def _a(v):

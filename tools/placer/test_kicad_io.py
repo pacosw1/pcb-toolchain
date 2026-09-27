@@ -84,6 +84,45 @@ class RoundTripTest(unittest.TestCase):
         for r in refs:
             self.assertFalse(is_fixed(loose, r))
 
+    def test_rigid_switch_net_makes_one_hot_loop_unit(self):
+        pr = kicad_io.read_problem(self.board, rigid_nets=['*SW*'])
+        refs = pr['units'][self.unit(pr, 'U1')]['refs']
+        for r in ('L1', 'D3', 'C4'):  # every part on /SW
+            self.assertIn(r, refs)
+
+    def test_decap_tie_joins_caps_near_an_ic_power_pin_and_reports_distance(self):
+        pr = kicad_io.read_problem(self.board, decap_tie=3.0)
+        refs = pr['units'][self.unit(pr, 'U1')]['refs']
+        b = pcbnew.LoadBoard(self.board)
+        u1 = b.FindFootprintByReference('U1')
+        seen = {d[0]: d for d in pr['decaps']}
+        for fp in b.GetFootprints():
+            nets = [p.GetNetname() for p in fp.Pads()]
+            if not fp.GetReference().startswith('C') or len(nets) != 2 or 'GND' not in nets:
+                continue
+            other = [n for n in nets if n != 'GND'][0]
+            pins = [p for p in u1.Pads() if p.GetNetname() == other]
+            if not pins:
+                continue
+            gap = min(kicad_io.pad_gap(q, pin) for q in fp.Pads() if q.GetNetname() == other for pin in pins)
+            if gap <= 3.0:
+                self.assertIn(fp.GetReference(), refs)
+                self.assertEqual(seen[fp.GetReference()][1], 'U1')
+                self.assertAlmostEqual(seen[fp.GetReference()][2], gap, places=3)
+        self.assertTrue(seen)
+
+    def test_test_points_are_fixed_and_left_out_of_the_cost(self):
+        b = pcbnew.LoadBoard(self.board)
+        b.FindFootprintByReference('R7').SetReference('TP1')
+        pcbnew.SaveBoard(self.board, b)
+        pr = kicad_io.read_problem(self.board)
+        i = self.unit(pr, 'TP1')
+        u = pr['units'][i]
+        self.assertTrue(u['fixed'])
+        self.assertEqual([r[4] for r in u['rects']], [0.0])
+        self.assertEqual(u['pads'], [])
+        self.assertFalse(any(q[0] == i for n in pr['nets'] for q in n['pins']))
+
     def test_kept_copper_is_the_copper_the_writer_keeps(self):
         b0 = pcbnew.LoadBoard(self.board)
         n_tracks = len(list(b0.GetTracks()))
