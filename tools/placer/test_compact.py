@@ -158,11 +158,52 @@ class LoopTest(unittest.TestCase):
             return {'candidates': [{'pose': [[2, 2, 0], [8, 8, 0]], 'cost': 1.0, 'illegal': [] if ok else ['A']}]}
         run = compact.run_loop(self.problem(), (10, 10), search, lambda q, p, k, n: 'b', lambda b, n: [0],
                                s0=0.1, budget=1e9, clock=lambda: 0.0, s_min=0.09)
-        self.assertEqual([round(w, 3) for w in seen], [10.0, 11.5, 13.225])
+        self.assertEqual([round(w, 3) for w in seen[:3]], [10.0, 11.5, 13.225])  # halo phase
         t = run['steps'][0]
         self.assertTrue(t['passed'])
         self.assertAlmostEqual(t['k'], 1.3225)
         self.assertEqual(t['tries'], 3)
+
+    def test_after_the_halo_phase_the_outline_phase_tries_the_real_board_then_bisects_the_board_scale(self):
+        pr = {'units': [unit('A', 2, 2, [[-2, -2, 2, 2, .5]]), unit('B', 8, 8, [[-2, -2, 2, 2, .5]])],
+              'nets': [net('N%d' % k, 0, 1) for k in range(4)], 'board': board()}
+        seen = []
+
+        def search(q, n):
+            seen.append(q)
+            return {'candidates': [{'pose': [[2, 2, 0], [8, 8, 0]], 'cost': 1.0, 'illegal': []}]}
+        ks = {}
+
+        def write(q, pose, k, n):
+            ks[n] = k
+            return 'b%d' % n
+        run = compact.run_loop(pr, (10, 10), search, write, lambda b, n: [0] if ks[n] >= 1.2 else [3],
+                               s0=4.0, budget=1e9, clock=lambda: 0.0)
+        out = [t for t in run['steps'] if t.get('phase') == 'outline']
+        self.assertTrue(out)
+        self.assertEqual(out[0]['k'], 1.0)  # the real outline first
+        self.assertFalse(out[0]['passed'])
+        # the halo scale on the real board is the largest that fits it
+        q = seen[len(run['steps']) - len(out)]
+        self.assertLessEqual(compact.board_scale(q), 1.0 + 1e-6)
+        self.assertTrue(1.2 <= run['best']['k'] <= 1.2 * 1.03)
+        self.assertIn('needs', run['verdict'])
+
+    def test_outline_phase_reports_a_fit_when_the_real_board_routes(self):
+        pr = {'units': [unit('A', 2, 2, [[-2, -2, 2, 2, .5]]), unit('B', 8, 8, [[-2, -2, 2, 2, .5]])],
+              'nets': [net('N%d' % k, 0, 1) for k in range(4)], 'board': board()}
+        res = {'candidates': [{'pose': [[2, 2, 0], [8, 8, 0]], 'cost': 1.0, 'illegal': []}]}
+        ks = {}
+
+        def write(q, pose, k, n):
+            ks[n] = k
+            return 'b%d' % n
+        # the halo phase fails below s 3.0 (k about 1.3); the real board still routes with small halos
+        run = compact.run_loop(pr, (10, 10), lambda q, n: res, write,
+                               lambda b, n: [0] if ks[n] >= 1.3 or ks[n] == 1.0 else [2],
+                               s0=4.0, budget=1e9, clock=lambda: 0.0)
+        self.assertEqual(run['best']['k'], 1.0)
+        self.assertIn('fits in 10.0 x 10.0 mm', run['verdict'])
 
     def test_loop_stops_at_the_time_budget(self):
         calls, search, write, route, clock = self.fakes(routes_below=0.0, t_step=100.0)

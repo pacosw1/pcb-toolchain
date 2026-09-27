@@ -44,10 +44,14 @@ def _area(poly):
     return abs(sum(a[0] * b[1] - b[0] * a[1] for a, b in zip(poly, poly[1:] + poly[:1]))) / 2
 
 
+def _raw_scale(pr):
+    need = sum((r[2] - r[0] + r[4]) * (r[3] - r[1] + r[4]) for u in pr['units'] for r in u['rects'])
+    return math.sqrt(need / HALO['fill'] / _area(pr['board']['outline']))
+
+
 def board_scale(pr):
     """Linear scale of the virtual board: 1 when the grown units fit in `fill` of the board area."""
-    need = sum((r[2] - r[0] + r[4]) * (r[3] - r[1] + r[4]) for u in pr['units'] for r in u['rects'])
-    return max(1.0, math.sqrt(need / HALO['fill'] / _area(pr['board']['outline'])))
+    return max(1.0, _raw_scale(pr))
 
 
 def virtual(pr, k):
@@ -123,44 +127,84 @@ def verdict(steps, size):
 GROW, TRIES = 1.15, 3  # an illegal search result: same s again on a 15 % larger virtual board, up to 3 tries
 
 
+def s_fit(pr, k, s_hi, iters=40):
+    """Largest halo scale s <= s_hi whose grown units fit a board of scale k (board_scale <= k); 0 if none."""
+    def fits(s):
+        return _raw_scale(with_halos(pr, s)) <= k + 1e-9
+    if fits(s_hi):
+        return s_hi
+    lo, hi = 0.0, s_hi
+    for _ in range(iters):
+        mid = (lo + hi) / 2
+        lo, hi = (mid, hi) if fits(mid) else (lo, mid)
+    return lo
+
+
+K_TOL = 0.02  # the outline phase stops when the board scale gap is below 2 %
+
+
 def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, target=0, shrink=0.85, tol=0.05,
              log=None, s_min=0.05):
     """Easy-to-hard loop. Injected effects: search(problem, step) -> optimize() result;
     write(problem, pose, k, step) -> board path; route(path, step) -> [unrouted per router run].
-    A step passes when the best router run leaves <= target unrouted. Stops when the schedule is done or
-    when `budget` seconds have passed before a step starts."""
+    Halo phase: s from s0, board scale k from the grown area (larger on an illegal result). A step passes when
+    the best router run leaves <= target unrouted. Outline phase (when the best pass has k > 1): the real board
+    (k = 1) first, then bisect k between the last fail and the best pass; s = the largest that fits k.
+    Stops when both phases are done or when `budget` seconds have passed before a step starts."""
     import time
     clock = clock or time.monotonic
     t0 = clock()
-    sch = Schedule(s0, shrink, tol, s_min)
-    steps, stop = [], 'schedule done'
-    while not sch.done:
-        if clock() - t0 >= budget:
-            stop = 'time budget %.0f s' % budget
-            break
-        s, n = sch.s, len(steps)
+    steps = []
+
+    def over():
+        return clock() - t0 >= budget
+
+    def step(s, k, grow, phase):
+        n = len(steps)
         q = with_halos(pr, s)
-        k = board_scale(q)
         for tries in range(1, TRIES + 1):
             res = search(virtual(q, k), n)
             c = res['candidates'][0]
-            if not c['illegal'] or tries == TRIES or clock() - t0 >= budget:
+            if not c['illegal'] or not grow or tries == TRIES or over():
                 break
             k *= GROW
-        step = {'s': s, 'k': k, 'tries': tries, 'cost': c['cost'], 'illegal': c['illegal'], 'history': res.get('history', []),
-                'pose': c['pose'], 'halo': [u['rects'][0][4] if u['rects'] else 0.0 for u in q['units']]}
+        t = {'s': s, 'k': k, 'tries': tries, 'cost': c['cost'], 'illegal': c['illegal'], 'phase': phase,
+             'history': res.get('history', []), 'pose': c['pose'],
+             'halo': [u['rects'][0][4] if u['rects'] else 0.0 for u in q['units']]}
         if c['illegal']:
-            step.update(runs=[], unrouted=None, passed=False, board=None)
+            t.update(runs=[], unrouted=None, passed=False, board=None)
         else:
-            step['board'] = write(q, c['pose'], k, n)
-            step['runs'] = route(step['board'], n)
-            step['unrouted'] = min(step['runs'])
-            step['passed'] = step['unrouted'] <= target
-        steps.append(step)
+            t['board'] = write(q, c['pose'], k, n)
+            t['runs'] = route(t['board'], n)
+            t['unrouted'] = min(t['runs'])
+            t['passed'] = t['unrouted'] <= target
+        steps.append(t)
         if log:
-            log('step %d s %.3f k %.3f cost %.1f illegal %d runs %s -> %s' % (
-                n, s, k, c['cost'], len(c['illegal']), step['runs'], 'PASS' if step['passed'] else 'FAIL'))
-        sch.report(step['passed'])
+            log('step %d %s s %.3f k %.3f cost %.1f illegal %d runs %s -> %s' % (
+                n, phase, s, k, c['cost'], len(c['illegal']), t['runs'], 'PASS' if t['passed'] else 'FAIL'))
+        return t
+
+    stop = 'schedule done'
+    sch = Schedule(s0, shrink, tol, s_min)
+    while not sch.done:
+        if over():
+            stop = 'time budget %.0f s' % budget
+            break
+        sch.report(step(sch.s, board_scale(with_halos(pr, sch.s)), True, 'halo')['passed'])
+    passed = [t for t in steps if t['passed']]
+    if passed and stop == 'schedule done':
+        best = min(passed, key=lambda t: (t['k'], t['s']))
+        hi, lo, k = best['k'], 1.0, 1.0
+        while hi > 1.0 + 1e-9 and (hi - lo) / hi >= K_TOL:
+            if over():
+                stop = 'time budget %.0f s' % budget
+                break
+            t = step(s_fit(pr, k, best['s']), k, False, 'outline')
+            if t['passed']:
+                hi = k
+            else:
+                lo = k
+            k = (lo + hi) / 2
     ok = [t for t in steps if t['passed']]
     summary = [{kk: t[kk] for kk in ('s', 'k', 'unrouted', 'passed')} for t in steps]
     for t in summary:
