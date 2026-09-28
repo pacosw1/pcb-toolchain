@@ -48,3 +48,9 @@ Benchmark B v2 (2026-09-27; same set-up; the spacing class now grows to the net-
 | P placer from S | 119 / 116 / 127 / 126 / 132 | 97-111 | 224-245 |
 
 Result: still FAIL. P is better than S by about 20 open connections, but far from O. The DRC errors of P show the cause that stays: there is no mains/SELV domain region, and the kept FIELD_GND vias clash with moved parts. Next fix: a domain box per net class.
+
+Analytic global placement (`gplace.py`, optimize `--param global=1`): ePlace style WA wirelength + electrostatic density (DCT Poisson on a bins x bins grid; fixed units, the area outside the outline and keepouts are fixed charge), Nesterov with a growing density weight until the overflow is below 0.1, and RePlAce cell inflation where RUDY is above the routing capacity (2 rounds, at most 2x area). Rotation stays; edge anchors are projected onto their side. The annealer then starts from the global places (use a low `t0`). On RELAY-4 the global stage takes about 0.1 s.
+
+Prior art checked on 2026-09-27 (no code copied):
+- SA_PCB (gitlab.lukevassallo.com/luke/SA_PCB, the SA baseline of RL_PCB): no license file (only `src/main.cpp` has a BSD-3 header; the KicadParser submodule has no license). Do not vendor it. We use its ideas only: the modified Lam schedule (base_lam 0.133, T factor 0.885), swap probability 0.25, and cost terms normalized on observed values. Its reader parses KiCad 5 files (`version 20171130`); a KiCad 10 board is not checked, so it gives no second baseline on RELAY-4 without a converter.
+- RL_PCB (github.com/LukeVassallo/RL_PCB, MIT): reward = tan of a weighted mean of clipped normalized Euclidean wirelength gain, HPWL gain and a no-overlap flag; "adaptive" = the reference values follow the best seen. Not used.
