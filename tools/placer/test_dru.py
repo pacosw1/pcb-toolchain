@@ -43,6 +43,18 @@ class ParseTest(unittest.TestCase):
                       ' (constraint clearance (min 1mm)))')
         self.assertEqual(r['ignored'], ['Odd'])
 
+    def test_a_domain_rule_with_a_pad_exception_is_read_and_the_pad_is_a_domain_member(self):
+        # BACKUP-POWER b2f9c3e: PS1 pad 3 has no net (parity), the dru makes it FIELD side by rule
+        r = dru.parse('(rule "FIELD to SELV" (condition "A.NetClass == \'FIELD\' && B.NetClass != \'FIELD\' && '
+                      '!(B.Type == \'Pad\' && B.memberOfFootprint(\'PS1\') && B.Pad_Number == \'3\')")'
+                      ' (constraint clearance (min 4mm)) (constraint creepage (min 4mm)))')
+        self.assertEqual(r['domains'], [('FIELD', 4.0, 0.0)])
+        self.assertEqual(r['members'], [('FIELD', 'PS1', '3')])
+        self.assertEqual(r['ignored'], [])
+
+    def test_a_rule_without_a_pad_exception_has_no_members(self):
+        self.assertEqual(dru.parse(RELAY)['members'], [])
+
     def test_a_domain_without_a_class_rule_keeps_the_net_clearance_between_its_classes(self):
         r = dru.parse('(rule "PoE" (condition "A.NetClass == \'POE\' && B.NetClass != \'POE\'")'
                       ' (constraint clearance (min 3mm)))')

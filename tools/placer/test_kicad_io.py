@@ -68,12 +68,13 @@ class RoundTripTest(unittest.TestCase):
             n = b.FindNet(name)
             self.assertEqual((n.GetNetCode(), n.GetNetClassName()), (int(k), cls))
 
-    def test_cu_pads_give_the_ref_and_pad_kind_of_each_copper_box(self):
+    def test_cu_pads_give_the_ref_pad_kind_and_pad_number_of_each_copper_box(self):
         b = pcbnew.LoadBoard(self.board)
         kind = {pcbnew.PAD_ATTRIB_SMD: 'smd', pcbnew.PAD_ATTRIB_PTH: 'pth', pcbnew.PAD_ATTRIB_NPTH: 'npth',
                 pcbnew.PAD_ATTRIB_CONN: 'smd'}
         for u in kicad_io.read_problem(self.board)['units']:
-            want = [[r, kind[p.GetAttribute()]] for r in u['refs'] for p in b.FindFootprintByReference(r).Pads()]
+            want = [[r, kind[p.GetAttribute()], p.GetNumber()] for r in u['refs']
+                    for p in b.FindFootprintByReference(r).Pads()]
             self.assertEqual(u['cu_pads'], want)
             self.assertEqual(len(u['cu_pads']), len([q for q in u['cu'] if q[4] != -1]))   # no-via rows (-1) come after
 

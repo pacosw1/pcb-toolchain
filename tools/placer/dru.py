@@ -3,18 +3,22 @@
 parse(text) -> {'domains': [(class pattern, gap to other nets, gap between two classes of the domain)],
                 'holes': [(class pattern, (refs, ...), hole clearance)],
                 'pairs': [((A class patterns), (B class patterns), gap)],
-                'ignored': [names of clearance/creepage/hole rules the model cannot read]}
+                'ignored': [names of clearance/creepage/hole rules the model cannot read],
+                'members': [(class pattern, ref, pad number)]: no-net pads the dru puts in a domain}
 Read forms (gap = the larger of clearance and creepage):
   A.NetClass == 'P' && B.NetClass != 'P'                                -> domain P, gap to other nets
   A.NetClass == 'P' && B.NetClass == 'P' && A.NetClass != B.NetClass    -> gap between two classes of P
   A.NetClass == 'P' && ... (B.Reference == 'H1' || ...) + hole_clearance -> hole rule for those refs
   (A.NetClass == 'X' || A.NetClass == 'Y') && (B.NetClass == 'H' || ...) -> gap between the two class sets
+  A domain rule ending in && !(B.Type == 'Pad' && B.memberOfFootprint('R') && B.Pad_Number == 'N')
+                                                                        -> the domain, and pad R.N is a member
 Rules limited to one footprint, net names, courtyards or diff pairs are local exceptions: not read, not listed.
 Other rules with a net-class condition and a clearance, creepage or hole constraint are listed in 'ignored'.
 """
 import re
 
 GAPS = ('clearance', 'creepage', 'hole_clearance')
+EXCEPT = re.compile(r"&&!\(B\.Type=='Pad'&&B\.memberOfFootprint\('([^']+)'\)&&B\.Pad_Number=='([^']+)'\)")
 LOCAL = ('memberOfFootprint', 'NetName', 'intersectsCourtyard', 'DiffPair', 'isCoupledDiffPair')
 
 
@@ -54,11 +58,14 @@ def _rules(text):
 
 
 def parse(text):
-    doms, cls, holes, pairs, ignored = {}, {}, [], [], []
+    doms, cls, holes, pairs, ignored, members = {}, {}, [], [], [], []
     for name, cond, gaps in _rules(text):
-        if not gaps or 'NetClass' not in cond or any(k in cond for k in LOCAL):
-            continue
         c = cond.replace(' ', '')
+        ex = EXCEPT.search(c)
+        if ex:
+            c = c[:ex.start()] + c[ex.end():]
+        if not gaps or 'NetClass' not in c or any(k in c for k in LOCAL):
+            continue
         a = re.fullmatch(r"A\.NetClass=='([^']+)'&&B\.NetClass!='\1'", c)
         b = re.fullmatch(r"A\.NetClass=='([^']+)'&&B\.NetClass=='\1'&&A\.NetClass!=B\.NetClass", c)
         h = re.match(r"A\.NetClass=='([^']+)'&&", c)
@@ -67,6 +74,8 @@ def parse(text):
         gap = max(gaps.get('clearance', 0.0), gaps.get('creepage', 0.0))
         if a and gap:
             doms[a.group(1)] = max(doms.get(a.group(1), 0.0), gap)
+            if ex:
+                members.append((a.group(1), ex.group(1), ex.group(2)))
         elif b and gap:
             cls[b.group(1)] = max(cls.get(b.group(1), 0.0), gap)
         elif h and refs and 'hole_clearance' in gaps:
@@ -76,5 +85,5 @@ def parse(text):
         else:
             ignored.append(name)
     return {'domains': [(p, g, cls.get(p, 0.0)) for p, g in doms.items()], 'holes': holes,
-            'pairs': sorted(set(pairs)),
+            'pairs': sorted(set(pairs)), 'members': sorted(set(members)),
             'ignored': sorted(set(ignored) | {p for p in cls if p not in doms})}

@@ -322,15 +322,18 @@ def faults(pr, pose, nets, jumpered=frozenset(), layers=('F.Cu', 'B.Cu')):
     classes = {c: v[0] for c, v in rules['classes'].items()}
     width = {c: v[1] for c, v in rules['classes'].items()}
     gap = board_gap(rules['dru'], classes, pr['board']['edge_clearance'])
+    member = {(ref, num): pat for pat, ref, num in rules['dru'].get('members', ())}  # no-net pads of a domain
     pads = []  # (Item, kind)
     for u, (x, y, r) in zip(pr['units'], pose):
-        for q, (ref, kind) in zip(u.get('cu', ()), u.get('cu_pads', ())):
+        for q, (ref, kind, *num) in zip(u.get('cu', ()), u.get('cu_pads', ())):
             x0, y0, x1, y1 = rot_rect(q, r)
             shape = ('rect', x + (x0 + x1) / 2, y + (y0 + y1) / 2, x1 - x0, y1 - y0)
             if kind == 'npth':
                 pads.append((Item(ref, '', 'HOLE:' + ref, shape), kind))
             else:
                 name, cls = pr['cu_nets'].get(str(q[4]), ('', 'Default'))
+                if not name and num and (ref, num[0]) in member:
+                    cls = member[(ref, num[0])]
                 pads.append((Item(ref, name, cls, shape), kind))
     ol = pr['board']['outline']
     edge = [Item('edge', '', 'EDGE', ('seg', a[0], a[1], b[0], b[1], 0)) for a, b in zip(ol, ol[1:] + ol[:1])]

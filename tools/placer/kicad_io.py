@@ -406,7 +406,8 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
         out_units[-1]['cu'] = [box + [p.GetNetCode()] for box, p in
                                zip(pad_boxes, (p for r in u['refs'] for p in by_ref[r].Pads()))]
         kinds = {pcbnew.PAD_ATTRIB_PTH: 'pth', pcbnew.PAD_ATTRIB_NPTH: 'npth'}  # SMD and edge connector: 'smd'
-        out_units[-1]['cu_pads'] = [[r, kinds.get(p.GetAttribute(), 'smd')] for r in u['refs'] for p in by_ref[r].Pads()]
+        out_units[-1]['cu_pads'] = [[r, kinds.get(p.GetAttribute(), 'smd'), p.GetNumber()]
+                                    for r in u['refs'] for p in by_ref[r].Pads()]
         if u['box']:  # a block: its pads are the copper for the edge band
             out_units[-1]['edge_pads'] = pad_boxes
         else:  # pads meet kept copper; a block also moves its tracks, so its courtyards stay the test

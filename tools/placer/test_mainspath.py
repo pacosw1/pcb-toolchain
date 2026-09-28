@@ -205,5 +205,30 @@ class FaultsTest(unittest.TestCase):
         self.assertEqual(mr.faults(pr, [at[tuple(u['refs'])] for u in pr['units']], MAINS), [])
 
 
+class MemberTest(unittest.TestCase):
+    """A no-net pad that the dru makes a domain member (BACKUP-POWER PS1 pad 3) is no obstacle to the domain nets."""
+
+    def prob(self, members):
+        u = {'refs': ['PS1'], 'x': 0, 'y': 0, 'cu': [[-0.5, -0.5, 0.5, 0.5, 1], [2.0, -0.5, 3.0, 0.5, 0],
+                                                    [4.5, -0.5, 5.5, 0.5, 1]],
+             'cu_pads': [['PS1', 'pth', '1'], ['PS1', 'pth', '3'], ['PS1', 'pth', '2']]}
+        return {'units': [u], 'cu_nets': {'1': ['FGND', 'FIELD']},
+                'route_rules': {'dru': {'domains': [('FIELD', 4.0, 0.0)], 'holes': [], 'pairs': [], 'members': members},
+                                'classes': {'Default': [0.2, 0.2], 'FIELD': [0.2, 0.5]}},
+                'board': {'outline': [[-10, -10], [15, -10], [15, 10], [-10, 10]], 'edge_clearance': 0.3}}
+
+    def test_a_no_net_pad_between_two_domain_pads_blocks_them(self):
+        fs = mr.faults(self.prob([]), [(0, 0, 0)], ['FGND'])
+        self.assertEqual([f['net'] for f in fs], ['FGND'])
+
+    def test_the_same_pad_as_a_domain_member_does_not(self):
+        self.assertEqual(mr.faults(self.prob([['FIELD', 'PS1', '3']]), [(0, 0, 0)], ['FGND']), [])
+
+    def test_old_two_field_cu_pads_still_read(self):
+        pr = self.prob([])
+        pr['units'][0]['cu_pads'] = [r[:2] for r in pr['units'][0]['cu_pads']]
+        self.assertEqual([f['net'] for f in mr.faults(pr, [(0, 0, 0)], ['FGND'])], ['FGND'])
+
+
 if __name__ == '__main__':
     unittest.main()
