@@ -72,7 +72,10 @@ def parse_params(items):
     p = {}
     for it in items:
         k, v = it.split('=', 1)
-        p[k] = float(v)
+        try:
+            p[k] = float(v)
+        except ValueError:  # a word (schedule=lam, init=spectral)
+            p[k] = v
     return p
 
 

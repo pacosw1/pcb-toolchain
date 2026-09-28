@@ -86,3 +86,10 @@ class ScatterTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ParamTest(unittest.TestCase):
+    def test_params_are_numbers_or_words(self):
+        from placer import cli
+        self.assertEqual(cli.parse_params(['t0=5', 'schedule=lam', 'init=spectral']),
+                         {'t0': 5.0, 'schedule': 'lam', 'init': 'spectral'})
