@@ -112,9 +112,9 @@ def main(argv=None):
         runs = []
         for e in argv[1:]:
             name, res, log = e.split(':')
-            m = re.findall(r'^UNROUTED (\d+) SUBSET \d+ ERRORS (\d+)', open(log).read(), re.M) if os.path.exists(log) else []
+            m = re.findall(r'^UNROUTED (\d+) SUBSET \d+ ERRORS (\d+)( CAPPED)?', open(log).read(), re.M) if os.path.exists(log) else []
             runs.append({'name': name, 'cost': json.load(open(res))['candidates'][0]['cost'],
-                         'unrouted': int(m[-1][0]) if m else None, 'errors': int(m[-1][1]) if m else None})
+                         'unrouted': (float('inf') if m[-1][2] else int(m[-1][0])) if m else None, 'errors': int(m[-1][1]) if m else None})
         w = portfolio_pick(runs)
         print(w['name'] if w else 'NONE')
         return w['name'] if w else None

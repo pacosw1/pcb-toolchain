@@ -1,7 +1,8 @@
 """Validation helpers: DRC JSON counts and a track strip for router scoring.
 
-count_drc(drc_json, subset) -> {errors, parity, unconnected, subset_unconnected, open_nets, error_types}
-  The net of an unconnected item is the [NET] in its first item description.
+count_drc(drc_json, subset) -> {errors, parity, unconnected, subset_unconnected, open_nets, error_types, capped}
+  The net of an unconnected item is the [NET] in its first item description. capped: the list has CAP items, so
+  every open count is a lower bound (the count line ends in CAPPED; rank it as unknown-high).
 strip_tracks(board, out, keep) -> removed count   (pcbnew; tracks and vias of nets not in keep go;
   zones stay). Used to give the baseline and each candidate the same start for a router job.
 
@@ -15,6 +16,7 @@ import json
 import re
 import sys
 
+CAP = 499  # kicad-cli DRC JSON lists at most this many unconnected items: a full list is a lower bound
 NET = re.compile(r'\[([^\]]*)\]')
 
 
@@ -32,7 +34,8 @@ def count_drc(d, subset=()):
     return {'errors': len(errs), 'parity': len(d.get('schematic_parity', [])),
             'unconnected': sum(open_nets.values()),
             'subset_unconnected': sum(v for k, v in open_nets.items() if k in subset),
-            'open_nets': open_nets, 'error_types': kinds}
+            'open_nets': open_nets, 'error_types': kinds,
+            'capped': len(d.get('unconnected_items', [])) >= CAP}
 
 
 def strip_tracks(path, out, keep=(), only=None):
@@ -68,7 +71,8 @@ def main(argv=None):
     else:
         nets = open(a.nets).read().strip().split(',') if a.nets else []
         r = count_drc(json.load(open(a.drc)), nets)
-        print('UNROUTED %d SUBSET %d ERRORS %d' % (r['unconnected'], r['subset_unconnected'], r['errors']))
+        print('UNROUTED %d SUBSET %d ERRORS %d' % (r['unconnected'], r['subset_unconnected'], r['errors'])
+              + (' CAPPED' if r['capped'] else ''))
         print(json.dumps(r))
 
 

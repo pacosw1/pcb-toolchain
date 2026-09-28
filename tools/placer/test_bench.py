@@ -120,6 +120,19 @@ class PortfolioPickTest(unittest.TestCase):
             args.append('%s:%s:%s' % (name, res, rl))
         self.assertEqual(bench.main(['pick'] + args), 's1')   # s2 has the same unrouted and a lower cost, but ERRORS 1
 
+    def test_a_capped_unrouted_count_is_unknown_high_in_the_pick(self):
+        import json
+        import tempfile
+        d = tempfile.mkdtemp()
+        args = []
+        for name, cost, log in (('s1', 1.0, 'UNROUTED 499 SUBSET 0 ERRORS 0 CAPPED\n'),
+                                ('s2', 2.0, 'UNROUTED 499 SUBSET 0 ERRORS 0\n')):   # a capped 499 is more than 499
+            res, rl = os.path.join(d, name + '.json'), os.path.join(d, name + '.log')
+            json.dump({'candidates': [{'cost': cost, 'pose': []}]}, open(res, 'w'))
+            open(rl, 'w').write(log)
+            args.append('%s:%s:%s' % (name, res, rl))
+        self.assertEqual(bench.main(['pick'] + args), 's2')
+
 
 class ScatterTest(unittest.TestCase):
     def test_scatter_moves_the_start_of_movable_units_into_the_board_on_a_copy(self):
