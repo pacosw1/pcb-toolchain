@@ -73,6 +73,39 @@ class TableTest(unittest.TestCase):
         self.assertIn('| x | 5.0 | no result |', text)
 
 
+class PortfolioPickTest(unittest.TestCase):
+    """Seed portfolio: K searches with other seeds, one route of each best pose; the fewest unrouted wins,
+    a tie goes to the lower search cost, a pose without a route result never wins."""
+
+    def test_the_fewest_unrouted_wins(self):
+        runs = [{'name': 's23', 'unrouted': 9, 'cost': 1.0}, {'name': 's37', 'unrouted': 5, 'cost': 9.0},
+                {'name': 's51', 'unrouted': 30, 'cost': 0.5}]
+        self.assertEqual(bench.portfolio_pick(runs)['name'], 's37')
+
+    def test_a_tie_goes_to_the_lower_cost(self):
+        runs = [{'name': 'a', 'unrouted': 5, 'cost': 1005.6}, {'name': 'b', 'unrouted': 5, 'cost': 1001.0}]
+        self.assertEqual(bench.portfolio_pick(runs)['name'], 'b')
+
+    def test_a_pose_without_a_route_result_never_wins(self):
+        runs = [{'name': 'a', 'unrouted': None, 'cost': 0.1}, {'name': 'b', 'unrouted': 80, 'cost': 5.0}]
+        self.assertEqual(bench.portfolio_pick(runs)['name'], 'b')
+        self.assertIsNone(bench.portfolio_pick([{'name': 'a', 'unrouted': None, 'cost': 0.1}]))
+
+    def test_pick_command_reads_the_search_cost_and_the_last_unrouted_line(self):
+        import json
+        import tempfile
+        d = tempfile.mkdtemp()
+        args = []
+        for name, cost, log in (('s1', 3.0, 'FR_RC 0\nUNROUTED 7 SUBSET 7 ERRORS 0\n'),
+                                ('s2', 2.0, 'UNROUTED 9 SUBSET 9 ERRORS 0\nUNROUTED 7 SUBSET 7 ERRORS 1\n'),
+                                ('s3', 1.0, 'remote: job x exit 124\n')):
+            res, rl = os.path.join(d, name + '.json'), os.path.join(d, name + '.log')
+            json.dump({'candidates': [{'cost': cost, 'pose': []}]}, open(res, 'w'))
+            open(rl, 'w').write(log)
+            args.append('%s:%s:%s' % (name, res, rl))
+        self.assertEqual(bench.main(['pick'] + args), 's2')
+
+
 class ScatterTest(unittest.TestCase):
     def test_scatter_moves_the_start_of_movable_units_into_the_board_on_a_copy(self):
         pr = problem()

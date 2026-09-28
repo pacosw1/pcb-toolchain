@@ -88,15 +88,35 @@ def table(rows):
     return '\n'.join(out), rho
 
 
+def portfolio_pick(runs):
+    """Seed portfolio: runs [{'name', 'unrouted' (one route; None = no result), 'cost' (search cost)}] -> the run
+    with the fewest unrouted, a tie to the lower cost; None when no run has a route result."""
+    ok = [r for r in runs if r['unrouted'] is not None]
+    return min(ok, key=lambda r: (r['unrouted'], r['cost'])) if ok else None
+
+
 def main(argv=None):
     """bench.py collect PROB OUT TAG...: proxy cost (default params) of OUT/TAG-search/res.json cand0 (TAG 'base':
-    the problem pose) against the UNROUTED lines of OUT/TAG-r*.log; prints the table."""
+    the problem pose) against the UNROUTED lines of OUT/TAG-r*.log; prints the table.
+    bench.py pick NAME:RES_JSON:ROUTE_LOG...: prints (and returns) the portfolio_pick winner name, or NONE; the cost
+    is cand0 of RES_JSON, the unrouted count the last UNROUTED line of ROUTE_LOG."""
     import argparse
     import glob
     import json
     import os
     import re
     import sys
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ['pick']:
+        runs = []
+        for e in argv[1:]:
+            name, res, log = e.split(':')
+            m = re.findall(r'^UNROUTED (\d+)', open(log).read(), re.M) if os.path.exists(log) else []
+            runs.append({'name': name, 'cost': json.load(open(res))['candidates'][0]['cost'],
+                         'unrouted': int(m[-1]) if m else None})
+        w = portfolio_pick(runs)
+        print(w['name'] if w else 'NONE')
+        return w['name'] if w else None
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from placer import cost
     ap = argparse.ArgumentParser()
