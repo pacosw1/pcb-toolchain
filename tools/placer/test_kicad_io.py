@@ -85,7 +85,7 @@ class RoundTripTest(unittest.TestCase):
         self.assertEqual(pr['route_rules']['classes'], {c['name']: [c['clearance'], c['track_width']] for c in cs})
         want = dru.parse(open(stem + '.kicad_dru').read()) if os.path.exists(stem + '.kicad_dru') else None
         got = pr['route_rules']['dru']
-        self.assertEqual(set(got), {'domains', 'holes', 'pairs'})
+        self.assertEqual(set(got), {'domains', 'holes', 'pairs', 'members'})
         if want:
             self.assertEqual(json.loads(json.dumps(got)), json.loads(json.dumps({k: want[k] for k in got})))
 

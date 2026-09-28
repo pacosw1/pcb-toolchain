@@ -236,13 +236,13 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
                  region_refs=(), region_weight=1.0, region_box=None, spacing=(0.5, 1.0), tie=0.0,
                  rigid_nets=(), decap_tie=0.0, keepout_zones=(), edges=None, zone_refs=None, domains=None, via_nets=()):
     board = pcbnew.LoadBoard(path)
-    holes, pairs, ignored = [], [], []
+    holes, pairs, ignored, members = [], [], [], []
     if domains is None:  # single source: the board .kicad_dru
         dp = os.path.splitext(path)[0] + '.kicad_dru'
         r = dru.parse(open(dp).read()) if os.path.exists(dp) else {'domains': [], 'holes': [], 'pairs': [],
-                                                                     'ignored': []}
-        domains, holes, pairs, ignored = r['domains'], r['holes'], r['pairs'], r['ignored']
-    rules = {'domains': domains, 'holes': holes, 'pairs': pairs}  # for the mains path check (mainspath.py)
+                                                                     'ignored': [], 'members': []}
+        domains, holes, pairs, ignored, members = r['domains'], r['holes'], r['pairs'], r['ignored'], r['members']
+    rules = {'domains': domains, 'holes': holes, 'pairs': pairs, 'members': members}  # for mainspath.py
     hole_gap = {ref: g for _, refs, g in holes for ref in refs}
     dom_ids = {}  # net class of a domain -> class id (1, 2, ...)
     outline, holes = outline_of(board)
