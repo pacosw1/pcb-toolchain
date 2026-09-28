@@ -434,7 +434,7 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
             if fp.GetReference() in region_refs:
                 region_nets.add(n)
     nets = []
-    tracks = class_tracks(os.path.splitext(path)[0] + '.kicad_pro')
+    tracks = class_tracks(os.path.splitext(path)[0] + '.kicad_pro', domains)
     for n in sorted(pins):
         us = pins[n]
         if len(us) < 2 or all(out_units[i]['fixed'] for i in us):
@@ -460,11 +460,15 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
                                if any(fnmatch.fnmatchcase(str(name), q) for q in via_nets))}
 
 
-def class_tracks(pro):
-    """{net class: track width + clearance (mm)} from the .kicad_pro net settings."""
+def class_tracks(pro, domains=()):
+    """{net class: track width + clearance (mm)}: width and clearance from the .kicad_pro net settings; the
+    clearance is at least the .kicad_dru gap between two classes of the class's domain (tracks of one domain run
+    together). The domain gap to other nets is a placement spacing (domain rects), not a track pitch."""
     with open(pro) as f:
         cs = json.load(f)['net_settings']['classes']
-    return {c['name']: c['track_width'] + c['clearance'] for c in cs}
+    return {c['name']: c['track_width'] + max([c['clearance']] + [d[2] for d in domains
+                                                                  if fnmatch.fnmatchcase(c['name'], d[0])])
+            for c in cs}
 
 
 def _domain(pad, domains):

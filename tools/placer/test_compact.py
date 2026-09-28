@@ -257,6 +257,7 @@ class ParseTest(unittest.TestCase):
         d = compact_cli.parser().parse_args(['p.json', 'b', '--board-dir', 'd', '--outdir', 'o', '--size', '1', '1',
                                              '--wheel', 'w'])
         self.assertEqual((d.tol, d.shrink), (0.05, 0.85))
+        self.assertEqual(d.routes, 3)  # a step passes when the best of 3 runs is at or below the target
 
     def test_route_job_adds_ground_pad_vias_only_when_asked(self):
         from placer import compact_cli

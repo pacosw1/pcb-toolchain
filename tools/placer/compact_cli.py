@@ -2,7 +2,7 @@
 """Compaction driver: search and Freerouting on Hetzner (tools/remote.sh), writer on the Mac.
 
   $PY tools/placer/compact_cli.py PROB.json BOARD.kicad_pcb --board-dir hardware-design/boards/X/cad/X \
-      --outdir DIR --size W H --wheel numpy-...whl [--s0 4] [--budget 2700] [--routes 2] [--target 0]
+      --outdir DIR --size W H --wheel numpy-...whl [--s0 4] [--budget 2700] [--routes 3] [--target 0]
 
 PROB.json comes from `cli.py read` on BOARD (a copy with the signal tracks removed). Each step writes
 DIR/step-N/ (prob.json, search/, b/<board>.kicad_pcb, route-K/). DIR/run.json holds the problem, every
@@ -53,7 +53,7 @@ def parser():
     ap.add_argument('--s0', type=float, default=4.0)
     ap.add_argument('--budget', type=float, default=2700.0, help='seconds (default 45 min)')
     ap.add_argument('--target', type=int, default=0)
-    ap.add_argument('--routes', type=int, default=2, help='parallel Freerouting runs per step (best counts)')
+    ap.add_argument('--routes', type=int, default=3, help='parallel Freerouting runs per step (pass: best run <= target)')
     ap.add_argument('--workers', type=int, default=30)
     ap.add_argument('--epochs', type=int, default=20)
     ap.add_argument('--steps', type=int, default=12000)

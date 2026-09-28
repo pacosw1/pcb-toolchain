@@ -171,6 +171,17 @@ class RoundTripTest(unittest.TestCase):
             if cls[n] == 'Default':
                 self.assertAlmostEqual(t, default['track_width'] + default['clearance'])
 
+    def test_the_track_clearance_takes_the_larger_dru_class_gap(self):
+        import json as js
+        pro = os.path.join(self.tmp, 'tracks.kicad_pro')
+        cls = [{'name': 'Default', 'track_width': 0.2, 'clearance': 0.2},
+               {'name': 'MAINS_K1', 'track_width': 2.0, 'clearance': 1.0}]
+        js.dump({'net_settings': {'classes': cls}}, open(pro, 'w'))
+        t = kicad_io.class_tracks(pro, domains=[('MAINS_K*', 8.0, 3.0)])
+        self.assertAlmostEqual(t['MAINS_K1'], 2.0 + 3.0)  # the gap between two classes of the domain
+        self.assertAlmostEqual(t['Default'], 0.4)
+        self.assertAlmostEqual(kicad_io.class_tracks(pro)['MAINS_K1'], 3.0)
+
     def test_domain_pads_get_domain_rects_and_the_part_courtyard_holds_no_pad(self):
         import json as js
         net = next(p.GetNetname() for p in pcbnew.LoadBoard(self.board).FindFootprintByReference('U1').Pads()
