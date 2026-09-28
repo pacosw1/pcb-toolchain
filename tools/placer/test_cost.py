@@ -655,36 +655,48 @@ def spearman(a, b):
 
 class RudyCalibrationTest(unittest.TestCase):
     # RELAY-4 Freerouting opens (median of 5): bench v3 O 8 < S 133 < P 142; bench v4 O 8, P2 6 < P 67.
-    # With the net track widths, the default RUDY limit must rank the routable poses below the failed ones.
-    def cong(self, name):
+    # Track RUDY (tracks=1) rankings; the default is the old RUDY (P5 holdout, bench v5).
+    def cong(self, name, **params):
         path = os.path.join(os.path.dirname(__file__), 'fixtures', name)
         with open(path) as f:
             fx = json.load(f)
-        p = cost.params_with_defaults({})
+        if params.pop('no_tracks', False):
+            for n in fx['problem']['nets']:
+                n.pop('track', None)
+        p = cost.params_with_defaults(params)
         c = {'O': cost.Evaluator(fx['problem'], p).components()['cong']}
         for t, pose in fx['poses'].items():
             c[t] = cost.Evaluator(fx['problem'], p, [tuple(q) for q in pose]).components()['cong']
         return c
 
-    def test_default_limit_ranks_the_original_below_the_searched_poses(self):
-        c = self.cong('relay4-bench-v3.json')
+    def test_track_rudy_at_0_7_ranks_the_original_below_the_searched_poses(self):
+        c = self.cong('relay4-bench-v3.json', tracks=1.0, limit=0.7)
         self.assertGreater(c['O'], 0.0)
         self.assertLess(c['O'], c['S'])
         self.assertLess(c['O'], c['P'])
 
-    def test_default_limit_ranks_the_routable_poses_below_the_failed_one(self):
-        c = self.cong('relay4-bench-v4.json')
+    def test_track_rudy_at_0_7_ranks_the_routable_poses_below_the_failed_one(self):
+        c = self.cong('relay4-bench-v4.json', tracks=1.0, limit=0.7)
         self.assertLess(c['O'], c['P'])
         self.assertLess(c['P2'], c['P'])
 
-    def test_default_limit_ranks_the_nine_routed_poses_and_is_never_zero(self):
+    def test_track_rudy_at_0_3_ranks_the_nine_routed_poses_and_is_never_zero(self):
         # bench v5: the P3 search drove the term to 0 at limit 0.7 and routed worse (11-13) than O (8)
-        c = self.cong('relay4-bench-v5.json')
+        c = self.cong('relay4-bench-v5.json', tracks=1.0, limit=0.3)
         with open(os.path.join(os.path.dirname(__file__), 'fixtures', 'relay4-bench-v5.json')) as f:
             un = json.load(f)['unrouted']
         self.assertEqual({t: v for t, v in c.items() if v <= 0.0}, {})
         names = sorted(un)
         self.assertGreaterEqual(spearman([c[t] for t in names], [un[t] for t in names]), 0.5)
+
+    def test_the_default_is_the_old_rudy(self):
+        # P5 holdout: the P2R config with track RUDY 0.3 routed 7 8 8 6 8 (median 8) vs P2R 7 8 8 7 5 (7), so the
+        # default stays the cost of P2 and P2R: net tracks off, limit 0.1
+        got = self.cong('relay4-bench-v5.json')
+        want = self.cong('relay4-bench-v5.json', no_tracks=True, limit=0.1)
+        self.assertEqual(set(got), set(want))
+        for t in want:
+            self.assertAlmostEqual(got[t], want[t], places=6, msg=t)
 
 
 class TrackWidthTest(unittest.TestCase):
@@ -699,7 +711,7 @@ class TrackWidthTest(unittest.TestCase):
         return problem(us, [n], board=square_board(20))
 
     def test_demand_scales_with_the_track(self):
-        p = dict(P, pitch=0.4)
+        p = dict(P, pitch=0.4, tracks=1.0)
         g1 = cost.rudy_grid(self.pr(), cost.initial_pose(self.pr()), p)
         g2 = cost.rudy_grid(self.pr(0.7), cost.initial_pose(self.pr(0.7)), p)
         self.assertGreater(g1.sum(), 0.0)
@@ -711,7 +723,7 @@ class TrackWidthTest(unittest.TestCase):
         for k, n in enumerate(pr['nets']):
             if k % 2:
                 n['track'] = rng.choice([0.5, 2.0, 5.0])
-        p = dict(P, limit=0.05)
+        p = dict(P, limit=0.05, tracks=1.0)
         ev = cost.Evaluator(pr, p)
         self.assertAlmostEqual(ev.cost, cost.total(pr, ev.pose(), p), places=6)
         for _ in range(200):
