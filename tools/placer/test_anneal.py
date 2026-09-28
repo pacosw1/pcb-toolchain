@@ -259,5 +259,30 @@ class LamScheduleTest(unittest.TestCase):
         self.assertGreater(acc[0], acc[-1])
 
 
+
+class NormalizeTest(unittest.TestCase):
+    """normalize = 1 (SA_PCB): each soft term (hpwl, cong, via, crossing) is divided by its value on the start
+    pose, so it adds its weight there; the hard weights (overlap, oob, spacing) are divided by the start HPWL
+    to keep their ratio to the wirelength. A term that is 0 at the start keeps w / start HPWL."""
+
+    def test_weights(self):
+        p = dict(anneal.params_all({}), w_x=5.0)
+        comp = {'hpwl': 200.0, 'cong': 50.0, 'overlap': 9.0, 'oob': 1.0, 'spacing': 3.0, 'via': 4, 'crossing': 0.0}
+        q = anneal.normalized(p, comp)
+        self.assertAlmostEqual(q['w_wl'] * 200.0, p['w_wl'])
+        self.assertAlmostEqual(q['w_cong'] * 50.0, p['w_cong'])
+        self.assertAlmostEqual(q['w_via'] * 4, p['w_via'])
+        self.assertAlmostEqual(q['w_x'], p['w_x'] / 200.0)
+        for k in ('w_ov', 'w_oob', 'w_sp'):
+            self.assertAlmostEqual(q[k], p[k] / 200.0)
+
+    def test_optimize_normalizes_on_the_start_pose(self):
+        pr = chain(12, seed=2)
+        res = anneal.optimize(pr, dict(P, normalize=1), workers=1, epochs=3, steps=2000, seed=9, top=1)
+        c0 = cost.components(pr, cost.initial_pose(pr), P)
+        self.assertAlmostEqual(res['params']['w_wl'] * c0['hpwl'], 1.0)
+        self.assertLess(res['candidates'][0]['components']['hpwl'], 0.5 * c0['hpwl'])
+
+
 if __name__ == '__main__':
     unittest.main()

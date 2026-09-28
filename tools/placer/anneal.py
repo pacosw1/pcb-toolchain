@@ -3,6 +3,7 @@
 optimize(problem, params, workers, epochs, steps, seed, top) -> result dict
   0. With params['global'] = 1: analytic global placement (gplace.place) first; the annealer starts from
      its places (pass a low t0 to use the annealer as detailed placement).
+     With params['normalize'] = 1: the weights are divided by the start values of their terms (normalized()).
   1. T0 = mean uphill delta of 200 random moves at the full window (or params['t0']).
      T falls geometrically from T0 to T0 * t_ratio over all epochs; the move window falls from
      w0 (half the board) to w1 in the same way. schedule 'lam': T follows the modified Lam feedback
@@ -28,13 +29,29 @@ from . import cost
 SEARCH = {'grid': 0.05, 'p_swap': 0.1, 'p_rot': 0.1, 'swap_ratio': 1.5, 't_ratio': 1e-4, 'w1': 0.25,
           'legal_step': 0.25, 'legal_radius': 5.0, 'legal_passes': 3, 'legal_time': 60.0,
           'ramp': 20.0, 'schedule': 'geometric', 'base_lam': 0.44, 'lam_rate': 0.885, 'lam_window': 500,
-          'area_ref': 10.0, 'area_max': 5.0}
+          'area_ref': 10.0, 'area_max': 5.0, 'normalize': 0}
 
 
 def params_all(params):
     p = cost.params_with_defaults(SEARCH)
     p.update(params or {})
     return p
+
+
+EPS_N = 1e-9
+SOFT = (('w_wl', 'hpwl'), ('w_cong', 'cong'), ('w_via', 'via'), ('w_x', 'crossing'))
+
+
+def normalized(p, comp):
+    """Weights divided by the start value of their term (soft terms) or by the start HPWL (hard terms, and a
+    soft term that is 0 at the start)."""
+    h = max(comp['hpwl'], EPS_N)
+    q = dict(p)
+    for w, k in SOFT:
+        q[w] = p[w] / comp[k] if comp.get(k, 0) > EPS_N else p[w] / h
+    for w in ('w_ov', 'w_oob', 'w_sp'):
+        q[w] = p[w] / h
+    return q
 
 
 def epoch_params(p, e, epochs):
@@ -316,6 +333,8 @@ def optimize(pr, params, workers=1, epochs=10, steps=10000, seed=1, top=3, log=N
         for u, (x, y, _) in zip(pr['units'], g['pose']):
             u['x'], u['y'] = x, y
         glob = {'iters': len(g['history']), 'overflow': g['history'][-1]['overflow'] if g['history'] else None}
+    if p['normalize']:  # SA_PCB: each term relative to its value on the start pose
+        p = normalized(p, cost.components(pr, cost.initial_pose(pr), p))
     _init(pr, p)
     pf = epoch_params(p, epochs - 1, epochs)
     ev0 = _evaluator(None, epoch_params(p, 0, epochs))
