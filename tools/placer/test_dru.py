@@ -52,6 +52,16 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(r['members'], [('FIELD', 'PS1', '3')])
         self.assertEqual(r['ignored'], [])
 
+    def test_a_creepage_rule_from_a_class_to_no_net_is_a_keepout_gap(self):
+        # BACKUP-POWER: a FIELD pad keeps 0.7 mm creepage to the no-net BARRIER rule areas
+        r = dru.parse('(rule "FIELD to no-net creepage" (condition "A.NetClass == \'FIELD\' && B.NetName == \'\'")'
+                      ' (constraint creepage (min 0.7mm)))')
+        self.assertEqual(r['nonet'], [('FIELD', 0.7)])
+        self.assertEqual(r['ignored'], [])
+
+    def test_a_dru_without_a_no_net_rule_has_no_keepout_gap(self):
+        self.assertEqual(dru.parse(RELAY)['nonet'], [])
+
     def test_a_rule_without_a_pad_exception_has_no_members(self):
         self.assertEqual(dru.parse(RELAY)['members'], [])
 

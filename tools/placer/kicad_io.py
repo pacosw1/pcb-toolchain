@@ -236,12 +236,13 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
                  region_refs=(), region_weight=1.0, region_box=None, spacing=(0.5, 1.0), tie=0.0,
                  rigid_nets=(), decap_tie=0.0, keepout_zones=(), edges=None, zone_refs=None, domains=None, via_nets=()):
     board = pcbnew.LoadBoard(path)
-    holes, pairs, ignored, members = [], [], [], []
+    holes, pairs, ignored, members, nonet = [], [], [], [], []
     if domains is None:  # single source: the board .kicad_dru
         dp = os.path.splitext(path)[0] + '.kicad_dru'
         r = dru.parse(open(dp).read()) if os.path.exists(dp) else {'domains': [], 'holes': [], 'pairs': [],
-                                                                     'ignored': [], 'members': []}
+                                                                     'ignored': [], 'members': [], 'nonet': []}
         domains, holes, pairs, ignored, members = r['domains'], r['holes'], r['pairs'], r['ignored'], r['members']
+        nonet = r['nonet']
     rules = {'domains': domains, 'holes': holes, 'pairs': pairs, 'members': members}  # for mainspath.py
     hole_gap = {ref: g for _, refs, g in holes for ref in refs}
     dom_ids = {}  # net class of a domain -> class id (1, 2, ...)
@@ -457,7 +458,8 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
     fixed_copper = [_copper_row(board, t) for t in locked]
     return {'board_file': os.path.abspath(path), 'units': out_units, 'nets': nets,
             'board': {'outline': outline, 'keepouts': keepouts, 'edge_clearance': edge, 'copper': copper,
-                      'fixed_copper': fixed_copper, 'via_keepouts': via_keepouts},
+                      'fixed_copper': fixed_copper, 'via_keepouts': via_keepouts,
+                      'keepout_gaps': _keepout_gaps(dom_ids, nonet)},
             'region': region, 'move_box': list(free_box) if free_box else None, 'decaps': decaps,
             'dru_ignored': ignored, 'class_gaps': _class_gaps(dom_ids, domains, pairs) if dom_ids else None,
             'domain_areas': _domain_areas(dom_ids, domains),
@@ -497,6 +499,20 @@ def _pair_class(pad, pairs):
     c = pad.GetNetClassName().split(',')
     m = any(fnmatch.fnmatchcase(x, q) for a, b, _ in pairs for q in a + b for x in c)
     return ('', None, 0.0) if m else None
+
+
+KO_MARGIN = 0.05  # mm on top of the .kicad_dru no-net creepage: the placer grid and the router do not hit it exactly
+
+
+def _keepout_gaps(dom_ids, nonet):
+    """{class id (str): gap} from the no-net creepage rules: a domain pad of the class keeps the creepage +
+    KO_MARGIN to each board keepout (BACKUP-POWER: FIELD 0.7 mm to the BARRIER rule areas)."""
+    out = {}
+    for p, g in nonet:
+        for n, c in dom_ids.items():
+            if any(fnmatch.fnmatchcase(x, p) for x in n.split(',')):
+                out[str(c)] = max(out.get(str(c), 0.0), g + KO_MARGIN)
+    return out
 
 
 def _domain_areas(dom_ids, domains):

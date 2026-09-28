@@ -34,6 +34,17 @@ def is_fixed(pr, ref):
 
 
 @unittest.skipUnless(pcbnew, 'needs pcbnew (KiCad bundled Python)')
+class KeepoutGapsTest(unittest.TestCase):
+    def test_a_no_net_creepage_rule_gives_its_domain_classes_the_gap_plus_the_margin(self):
+        g = kicad_io._keepout_gaps({'FIELD': 1, 'CELL': 2}, [('FIELD', 0.7)])
+        self.assertEqual(list(g), ['1'])
+        self.assertAlmostEqual(g['1'], 0.75)
+
+    def test_no_rule_gives_no_gap(self):
+        self.assertEqual(kicad_io._keepout_gaps({'FIELD': 1}, []), {})
+
+
+@unittest.skipUnless(pcbnew, 'needs pcbnew (KiCad bundled Python)')
 class RoundTripTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix='placer-test-')

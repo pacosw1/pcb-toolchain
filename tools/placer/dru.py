@@ -4,7 +4,8 @@ parse(text) -> {'domains': [(class pattern, gap to other nets, gap between two c
                 'holes': [(class pattern, (refs, ...), hole clearance)],
                 'pairs': [((A class patterns), (B class patterns), gap)],
                 'ignored': [names of clearance/creepage/hole rules the model cannot read],
-                'members': [(class pattern, ref, pad number)]: no-net pads the dru puts in a domain}
+                'members': [(class pattern, ref, pad number)]: no-net pads the dru puts in a domain,
+                'nonet': [(class pattern, creepage)]: the creepage from the class to no-net items (a rule area)}
 Read forms (gap = the larger of clearance and creepage):
   A.NetClass == 'P' && B.NetClass != 'P'                                -> domain P, gap to other nets
   A.NetClass == 'P' && B.NetClass == 'P' && A.NetClass != B.NetClass    -> gap between two classes of P
@@ -12,6 +13,7 @@ Read forms (gap = the larger of clearance and creepage):
   (A.NetClass == 'X' || A.NetClass == 'Y') && (B.NetClass == 'H' || ...) -> gap between the two class sets
   A domain rule ending in && !(B.Type == 'Pad' && B.memberOfFootprint('R') && B.Pad_Number == 'N')
                                                                         -> the domain, and pad R.N is a member
+  A.NetClass == 'P' && B.NetName == '' + creepage                       -> no-net creepage of P (a keepout gap)
 Rules limited to one footprint, net names, courtyards or diff pairs are local exceptions: not read, not listed.
 Other rules with a net-class condition and a clearance, creepage or hole constraint are listed in 'ignored'.
 """
@@ -58,12 +60,16 @@ def _rules(text):
 
 
 def parse(text):
-    doms, cls, holes, pairs, ignored, members = {}, {}, [], [], [], []
+    doms, cls, holes, pairs, ignored, members, nonet = {}, {}, [], [], [], [], []
     for name, cond, gaps in _rules(text):
         c = cond.replace(' ', '')
         ex = EXCEPT.search(c)
         if ex:
             c = c[:ex.start()] + c[ex.end():]
+        n = re.fullmatch(r"A\.NetClass=='([^']+)'&&B\.NetName==''", c)
+        if n and 'creepage' in gaps:
+            nonet.append((n.group(1), gaps['creepage']))
+            continue
         if not gaps or 'NetClass' not in c or any(k in c for k in LOCAL):
             continue
         a = re.fullmatch(r"A\.NetClass=='([^']+)'&&B\.NetClass!='\1'", c)
@@ -85,5 +91,5 @@ def parse(text):
         else:
             ignored.append(name)
     return {'domains': [(p, g, cls.get(p, 0.0)) for p, g in doms.items()], 'holes': holes,
-            'pairs': sorted(set(pairs)), 'members': sorted(set(members)),
+            'pairs': sorted(set(pairs)), 'members': sorted(set(members)), 'nonet': sorted(set(nonet)),
             'ignored': sorted(set(ignored) | {p for p in cls if p not in doms})}

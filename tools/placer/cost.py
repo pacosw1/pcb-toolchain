@@ -21,7 +21,8 @@ Problem (a dict, JSON-able; tools/placer/kicad_io.py writes it from a board):
           part whose pads have their own rects, a part with no net pads): a domain rect keeps only their own
           class to them, as to a keepout rect (a slot is the creepage barrier).
   nets:   [{name, weight, pins: [[unit, x0, y0, x1, y1], ...]}]   pin boxes relative to the origin.
-  board:  {outline: [[x, y], ...], keepouts: [[[x, y], ...], ...], edge_clearance}
+  board:  {outline: [[x, y], ...], keepouts: [[[x, y], ...], ...], edge_clearance, keepout_gaps (optional):
+          {class id: gap}: a domain pad of the class keeps the gap to each keepout (no-net creepage)}
   region: None or {box: [x0, y0, x1, y1], weight, refs}   RUDY cells in box count weight times.
   board['copper'] (optional): kept copper [[layer, x0, y0, x1, y1, width], ...]; layer 'via' = a via at
           (x0, y0) with diameter width. It uses RUDY capacity (fixed_grid) and F.Cu copper and vias are
@@ -186,6 +187,12 @@ class Mask:
         self.s_edge = sat(out0.astype(np.int64))
         self.s_band = sat(out.astype(np.int64))
         self.s_cu = sat(cu.astype(np.int64))
+        self.s_kog = {}  # class id -> keepouts grown by the no-net creepage of the class (board['keepout_gaps'])
+        for c, g in board.get('keepout_gaps', {}).items():
+            near = np.zeros_like(out)
+            for poly in board.get('keepouts', []):
+                near |= point_in_poly(gx, gy, poly) | (_poly_d2(gx, gy, poly) < g * g)
+            self.s_kog[int(c)] = sat(near.astype(np.int64))
 
     def _segment(self, out, a0, b0, a1, b1, r):
         """Mark the cells whose centre is within r of the segment (a0, b0)-(a1, b1)."""
@@ -240,6 +247,11 @@ class Mask:
         count."""
         return (sum(self.rect_area(*r[:4], s=self.s_edge) for k, r in enumerate(rects) if k not in ko)
                 - self.overhang(rects, ko) + sum(self.rect_area(*r[:4], s=self.s_band) for r in epads or ()))
+
+    def gap_area(self, rects, dom):
+        """Area of the domain pad rects (u['dom']) within the keepout gap of their class."""
+        return sum(self.rect_area(*rects[k][:4], s=self.s_kog[c], outside=False)
+                   for k, c, *_ in dom if c in self.s_kog)
 
     def unit_area(self, rects, pads=None, ko=(), epads=None):
         """Forbidden area of a unit: courtyard rects against all, or (pads given) rects against the edge
@@ -596,8 +608,9 @@ def edge_miss(u, pose_u, board, box=None):
 
 def forbidden(pr, pose, mask, i):
     u = pr['units'][i]
-    return (mask.unit_area(world_rects(u, pose[i]), world_pads(u, pose[i]), set(u.get('ko', [])), edge_pads(u, pose[i]))
-            + edge_miss(u, pose[i], pr['board']))
+    w = world_rects(u, pose[i])
+    return (mask.unit_area(w, world_pads(u, pose[i]), set(u.get('ko', [])), edge_pads(u, pose[i]))
+            + mask.gap_area(w, u.get('dom', [])) + edge_miss(u, pose[i], pr['board']))
 
 
 VIA_EXTRA = (0.2, 0.5)  # via site distance beyond the pad edge + via radius (tools/gnd_pad_vias.py)
@@ -957,7 +970,8 @@ class Evaluator:
     def _forb(self, i):
         lp = self.lpad[i]
         pads = None if lp is None else (lp[self.R[i]] + (self.X[i], self.Y[i], self.X[i], self.Y[i])).tolist()
-        return (self.mask.unit_area(self._world(i).tolist(), pads, self.kos[i], self._epads(i))
+        w = self._world(i).tolist()
+        return (self.mask.unit_area(w, pads, self.kos[i], self._epads(i)) + self.mask.gap_area(w, self.units[i].get('dom', []))
                 + edge_miss(self.units[i], (self.X[i], self.Y[i], self.R[i]), self.board, self.obox))
 
     def _pen(self, i, j):
@@ -1077,7 +1091,9 @@ class Evaluator:
     def legal_penalty(self, i):
         """Spacing overlap + edge/keepout area (0 = legal). Kept copper is a cost only: the writer rips up
         the copper that a moved pad lands on."""
-        return (self._unit_overlap(i, set()) + self.mask.edge_area(self._world(i).tolist(), self.kos[i], self._epads(i))
+        w = self._world(i).tolist()
+        return (self._unit_overlap(i, set()) + self.mask.edge_area(w, self.kos[i], self._epads(i))
+                + self.mask.gap_area(w, self.units[i].get('dom', []))
                 + edge_miss(self.units[i], (self.X[i], self.Y[i], self.R[i]), self.board, self.obox))
 
     def legal_penalty_at(self, i, x, y, r):

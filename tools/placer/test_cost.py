@@ -570,6 +570,34 @@ class RoundRectTest(unittest.TestCase):
             self.assertGreater(v, 0.0)
 
 
+class KeepoutGapTest(unittest.TestCase):
+    """board['keepout_gaps'] {class id: gap}: a domain pad of that class keeps the gap to each board keepout
+    (the .kicad_dru creepage from the class to no-net: a BARRIER rule area). Other pads may touch it."""
+
+    def legal(self, pad_x0, cls=1):
+        u = unit('A', 5.0, 10.0, [[pad_x0 - 5.0, -0.5, pad_x0 - 4.0, 0.5, 0.0]])
+        u['pad_rects'] = [[pad_x0 - 5.0, -0.5, pad_x0 - 4.0, 0.5]]
+        if cls:
+            u['dom'] = [[0, cls, 0.0, 0.2]]
+        b = square_board(20.0, keepouts=[[[10, 0], [12, 0], [12, 20], [10, 20]]])
+        b['keepout_gaps'] = {'1': 0.75}
+        pr = problem([u], [], b)
+        m = cost.Mask(b, 0.05)
+        return cost.Evaluator(pr, P, mask=m).legal_penalty(0), cost.forbidden(pr, cost.initial_pose(pr), m, 0)
+
+    def test_a_domain_pad_nearer_than_the_gap_is_illegal(self):
+        for v in self.legal(8.5):  # pad edge 9.5, keepout at 10: 0.5 mm < 0.75 mm
+            self.assertGreater(v, 0.0)
+
+    def test_a_domain_pad_beyond_the_gap_is_legal(self):
+        for v in self.legal(8.2):  # 0.8 mm
+            self.assertAlmostEqual(v, 0.0)
+
+    def test_a_pad_of_another_class_may_be_near_a_keepout(self):
+        for v in self.legal(8.5, cls=0):
+            self.assertAlmostEqual(v, 0.0)
+
+
 class EdgeBandTest(unittest.TestCase):
     """The copper-to-edge clearance (edge_clearance) applies to pads only. A courtyard or a block border only
     stays inside the outline. A block has no pad_rects: its edge_pads are the copper for the edge test."""
