@@ -51,7 +51,7 @@ def to_bookshelf(pr, start, outdir, name, s):
         nodes.append('KO%d %d %d terminal' % (k, w, h))
         pl.append('KO%d %.3f %.3f : N /FIXED' % (k, (a - x0) * s, (b - y0) * s))
     nets, npins = [], 0
-    for n in pr['nets']:
+    for k, n in enumerate(pr['nets']):
         pins = []
         for q in n['pins']:
             i = q[0]
@@ -59,7 +59,7 @@ def to_bookshelf(pr, start, outdir, name, s):
             pins.append('\tU%d B : %.3f %.3f' % (i, px * s, py * s))
         if len({p.split()[0] for p in pins}) < 2:
             continue
-        nets.append('NetDegree : %d %s' % (len(pins), n['name'].replace(' ', '_')))
+        nets.append('NetDegree : %d N%d' % (len(pins), k))  # the Bookshelf lexer rejects '/' in a name
         nets.extend(pins)
         npins += len(pins)
     nterm = sum(1 for n in nodes if n.endswith('terminal'))
