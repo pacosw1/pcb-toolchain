@@ -220,5 +220,44 @@ class EndToEndTest(unittest.TestCase):
         self.assertAlmostEqual(best['cost'], cost.total(pr, best['pose'], P), places=5)
 
 
+
+class LamScheduleTest(unittest.TestCase):
+    """Modified Lam schedule (SA_PCB): the target acceptance decays from 1 to base_lam over the first 15 %
+    of the moves, holds to 65 %, then falls; every lam_window moves T *= lam_rate when the acceptance EMA is
+    above the target, else T /= lam_rate."""
+
+    def test_target_shape(self):
+        t = anneal.lam_target
+        self.assertAlmostEqual(t(0.0, 0.44), 1.0)
+        self.assertAlmostEqual(t(0.15, 0.44), 0.44, delta=0.002)
+        self.assertAlmostEqual(t(0.40, 0.44), 0.44)
+        self.assertAlmostEqual(t(0.65, 0.44), 0.44)
+        self.assertLess(t(1.0, 0.44), 0.44 / 100)
+        self.assertTrue(all(t(a / 100, 0.133) >= t((a + 1) / 100, 0.133) for a in range(100)))
+
+    def test_controller_cools_on_high_acceptance_and_heats_on_low(self):
+        c = anneal.Lam(t=10.0, base=0.44, rate=0.885, window=500)
+        for _ in range(500):
+            c.step(True, 0.5)  # 100 % acceptance vs target 0.44
+        self.assertAlmostEqual(c.t, 10.0 * 0.885)
+        c = anneal.Lam(t=10.0, base=0.44, rate=0.885, window=500, ema=0.0)
+        for _ in range(500):
+            c.step(False, 0.5)
+        self.assertAlmostEqual(c.t, 10.0 / 0.885)
+
+    def test_optimize_with_the_lam_schedule(self):
+        pr = chain(12, seed=2)
+        q = dict(P, schedule='lam', base_lam=0.44, lam_window=100)  # short run: faster feedback
+        r1 = anneal.optimize(pr, q, workers=1, epochs=4, steps=3000, seed=9, top=1)
+        r2 = anneal.optimize(pr, q, workers=1, epochs=4, steps=3000, seed=9, top=1)
+        self.assertEqual(r1['candidates'][0]['pose'], r2['candidates'][0]['pose'])
+        best = r1['candidates'][0]
+        self.assertEqual(best['illegal'], [])
+        self.assertLess(best['cost'], 0.5 * r1['initial']['cost'])
+        self.assertIn('lam', r1)  # the acceptance and T of each epoch, to check the schedule
+        acc = [e['accept'] for e in r1['lam']]
+        self.assertGreater(acc[0], acc[-1])
+
+
 if __name__ == '__main__':
     unittest.main()
