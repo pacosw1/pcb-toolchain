@@ -89,6 +89,17 @@ class RoundTripTest(unittest.TestCase):
             self.assertEqual(u['cu_pads'], want)
             self.assertEqual(len(u['cu_pads']), len([q for q in u['cu'] if q[4] != -1]))   # no-via rows (-1) come after
 
+    def test_centres_give_each_part_origin_relative_to_the_unit_origin(self):
+        b = pcbnew.LoadBoard(self.board)
+        pr = kicad_io.read_problem(self.board)
+        for u in pr['units']:
+            self.assertEqual(sorted(u['centres']), sorted(u['refs']))
+            for r, (lx, ly) in u['centres'].items():
+                q = b.FindFootprintByReference(r).GetPosition()
+                self.assertAlmostEqual(lx + u['x'], pcbnew.ToMM(q.x), places=5)
+                self.assertAlmostEqual(ly + u['y'], pcbnew.ToMM(q.y), places=5)
+            self.assertEqual(cost.rule_miss(pr, cost.initial_pose(pr), 0), 0.0)
+
     def test_route_rules_hold_the_dru_rules_and_the_net_class_clearance_and_width(self):
         pr = kicad_io.read_problem(self.board)
         stem = os.path.splitext(self.board)[0]

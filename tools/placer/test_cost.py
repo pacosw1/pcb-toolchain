@@ -348,6 +348,48 @@ class EdgeAnchorTest(unittest.TestCase):
         self.assertAlmostEqual(d, -2.5)
 
 
+
+class PartRuleTest(unittest.TestCase):
+    """pr['part_rules']: regions [{refs, box}] (the part centre must be in the box) and min_dist [{a, b, d}]
+    (each part centre of a keeps d mm or more to each part centre of b). u['centres'] = {ref: local point at
+    r = 0}; without it the centre is the unit origin. The miss in mm is illegal (legal_penalty), not a cost."""
+
+    def pr(self):
+        h = unit('H', 5.0, 5.0, [[-1, -1, 1, 1, 0.0]])
+        h['refs'], h['centres'] = ['U1', 'C1'], {'U1': [0.0, 0.0], 'C1': [2.0, 0.0]}
+        b = unit('B', 25.0, 5.0, [[-1, -1, 1, 1, 0.0]])
+        b['refs'] = ['R1']
+        pr = problem([h, b], [], square_board(40.0))
+        pr['part_rules'] = {'regions': [{'refs': ['U1'], 'box': [0, 0, 40, 10]}],
+                            'min_dist': [{'a': ['U1', 'C1'], 'b': ['R1'], 'd': 20.0}]}
+        return pr
+
+    def test_a_legal_pose_has_no_miss(self):
+        pr = self.pr()
+        self.assertAlmostEqual(cost.rule_miss(pr, [(5.0, 5.0, 0), (28.0, 5.0, 0)], 0), 0.0)
+        self.assertAlmostEqual(cost.rule_miss(pr, [(5.0, 5.0, 0), (28.0, 5.0, 0)], 1), 0.0)
+
+    def test_region_miss_is_the_distance_out_of_the_box(self):
+        pr = self.pr()
+        self.assertAlmostEqual(cost.rule_miss(pr, [(5.0, 13.0, 0), (28.0, 13.0, 0)], 0), 3.0)
+
+    def test_min_dist_miss_counts_for_both_units_and_uses_the_part_centre(self):
+        pr = self.pr()
+        pose = [(5.0, 5.0, 0), (22.0, 5.0, 0)]  # C1 at x 7: 15 mm to R1 (5 short); U1 at x 5: 17 mm (3 short)
+        self.assertAlmostEqual(cost.rule_miss(pr, pose, 0), 8.0)
+        self.assertAlmostEqual(cost.rule_miss(pr, pose, 1), 8.0)
+
+    def test_turned_unit_turns_its_part_centres(self):
+        pr = self.pr()
+        pose = [(5.0, 5.0, 2), (22.0, 5.0, 0)]  # r = 2 puts C1 at x 3: 19 mm (1 short); U1: 17 mm (3 short)
+        self.assertAlmostEqual(cost.rule_miss(pr, pose, 0), 4.0)
+
+    def test_legal_penalty_holds_the_miss(self):
+        pr = self.pr()
+        ev = cost.Evaluator(pr, P, pose=[(5.0, 5.0, 0), (22.0, 5.0, 0)])
+        self.assertAlmostEqual(ev.legal_penalty(1), 8.0)
+        self.assertAlmostEqual(ev.legal_penalty_at(1, 30.0, 5.0, 0), 0.0)
+
 class KeepoutRectTest(unittest.TestCase):
     """u['ko'] = indices of rects that are copper-free rule areas (an antenna keepout). A keepout may overlap
     another keepout (a board keepout or a keepout rect of an other unit); a courtyard in it is illegal."""

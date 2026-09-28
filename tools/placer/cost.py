@@ -607,6 +607,37 @@ def edge_miss(u, pose_u, board, box=None):
     return max(0.0, min(d[s] for s in e['sides']) - e.get('tol', 0.5))
 
 
+
+def part_centre(u, pose_u, ref):
+    """World centre of one part of a unit: u['centres'][ref] (local, r = 0), else the unit origin."""
+    lx, ly = u.get('centres', {}).get(ref, (0.0, 0.0))
+    x, y = rot_pt(lx, ly, pose_u[2])
+    return x + pose_u[0], y + pose_u[1]
+
+
+def rule_miss(pr, pose, i):
+    """Part rules of unit i in mm (0 = legal): pr['part_rules'] regions [{refs, box}] (the part centre in the box)
+    and min_dist [{a, b, d}] (each centre of a keeps d or more to each centre of b, a pair counts once)."""
+    rules = pr.get('part_rules')
+    if not rules:
+        return 0.0
+    units = pr['units']
+    where = {r: j for j, u in enumerate(units) for r in u['refs']}
+    at = lambda r: part_centre(units[where[r]], pose[where[r]], r)
+    mine = set(units[i]['refs'])
+    miss = 0.0
+    for g in rules.get('regions', []):
+        x0, y0, x1, y1 = g['box']
+        for r in mine.intersection(g['refs']):
+            x, y = at(r)
+            miss += math.hypot(max(x0 - x, 0.0, x - x1), max(y0 - y, 0.0, y - y1))
+    for g in rules.get('min_dist', []):
+        pairs = {(a, b) for a in g['a'] for b in g['b'] if a in where and b in where and (a in mine or b in mine)}
+        for a, b in pairs:
+            (xa, ya), (xb, yb) = at(a), at(b)
+            miss += max(0.0, g['d'] - math.hypot(xa - xb, ya - yb))
+    return miss
+
 def forbidden(pr, pose, mask, i):
     u = pr['units'][i]
     w = world_rects(u, pose[i])
@@ -811,6 +842,7 @@ class Evaluator:
 
     def __init__(self, pr, params, pose=None, mask=None):
         p = self.p = params_with_defaults(params)
+        self._pr = pr  # part_rules (legal_penalty)
         us = pr['units']
         self.n = len(us)
         self.fixed = [bool(u['fixed']) for u in us]
@@ -1095,7 +1127,8 @@ class Evaluator:
         w = self._world(i).tolist()
         return (self._unit_overlap(i, set()) + self.mask.edge_area(w, self.kos[i], self._epads(i))
                 + self.mask.gap_area(w, self.units[i].get('dom', []))
-                + edge_miss(self.units[i], (self.X[i], self.Y[i], self.R[i]), self.board, self.obox))
+                + edge_miss(self.units[i], (self.X[i], self.Y[i], self.R[i]), self.board, self.obox)
+                + rule_miss(self._pr, self.pose(), i))
 
     def legal_penalty_at(self, i, x, y, r):
         old = (self.X[i], self.Y[i], self.R[i])
