@@ -15,6 +15,8 @@ Problem (a dict, JSON-able; tools/placer/kicad_io.py writes it from a board):
           Class id -1 = a hole with a .kicad_dru hole rule: the gap (third field) to domain pads only.
   class_gaps (optional): {names, gaps}: gaps[i][j] = the gap between two domain classes i != j (ids 1..n);
           without it, two classes keep the larger class gap field.
+  domain_areas (optional): [{classes, gap}]: per .kicad_dru domain, the convex hull of its domain pads grown by gap
+          (the mains area). A part with no domain pad in it is a hard overlap: its tracks would cross the area.
           mech (optional) = indices of rects that hold no pad of their own (a block border, the courtyard of a
           part whose pads have their own rects, a part with no net pads): a domain rect keeps only their own
           class to them, as to a keepout rect (a slot is the creepage barrier).
@@ -347,6 +349,96 @@ def ko_flags(u, T=None):
     return (k, d, sg, nc, x, T)
 
 
+def hull(pts):
+    """Convex hull of points (Andrew's monotone chain); fewer than 3 distinct points stay as they are."""
+    pts = sorted(set(pts))
+    if len(pts) < 3:
+        return pts
+
+    def half(ps):
+        h = []
+        for p in ps:
+            while len(h) >= 2 and ((h[-1][0] - h[-2][0]) * (p[1] - h[-2][1])
+                                   - (h[-1][1] - h[-2][1]) * (p[0] - h[-2][0])) <= 0:
+                h.pop()
+            h.append(p)
+        return h
+    return half(pts)[:-1] + half(pts[::-1])[:-1]
+
+
+def area_pen(R, H, g):
+    """Rects R (m x 4) against the convex polygon H (k x 2, k >= 1) grown by g: per rect g - distance when
+    nearer than g, g + depth when they overlap (separating axes: x, y and the edge normals of H)."""
+    if not len(R):
+        return 0.0
+    C = np.stack([R[:, [0, 1]], R[:, [2, 1]], R[:, [2, 3]], R[:, [0, 3]]], axis=1)  # m x 4 x 2
+    E = np.roll(H, -1, axis=0) - H
+    ok = np.hypot(E[:, 0], E[:, 1]) > EPS
+    A, E = H[ok], E[ok]  # hull edges: start points and vectors (none for one point)
+    axes = np.vstack([[[1.0, 0.0], [0.0, 1.0]], np.stack([-E[:, 1], E[:, 0]], axis=1)
+                      / np.hypot(E[:, 0], E[:, 1])[:, None]])
+    pc, ph = C @ axes.T, H @ axes.T  # m x 4 x a, k x a
+    s = np.maximum(pc.min(axis=1) - ph.max(axis=0), ph.min(axis=0) - pc.max(axis=1)).max(axis=1)
+    dx = np.maximum(np.maximum(R[:, 0:1] - H[:, 0], H[:, 0] - R[:, 2:3]), 0.0)  # hull vertices to rects
+    dy = np.maximum(np.maximum(R[:, 1:2] - H[:, 1], H[:, 1] - R[:, 3:4]), 0.0)
+    d = np.hypot(dx, dy).min(axis=1)
+    if len(E):  # rect corners to hull edges
+        t = np.clip(((C[:, :, None, :] - A) * E).sum(axis=3) / (E * E).sum(axis=1), 0.0, 1.0)
+        q = A + t[..., None] * E - C[:, :, None, :]
+        d = np.minimum(d, np.hypot(q[..., 0], q[..., 1]).min(axis=(1, 2)))
+    return float(np.where(s < 0, g - s, np.clip(g - d, 0.0, None)).sum())
+
+
+def area_setup(pr):
+    """Domain areas (pr['domain_areas']): [(sources [(unit, domain rect indices)], gap, all sources fixed)], and per
+    unit the rect indices that must stay out of them: None for a unit with domain pads; no keepout rect (a slot), no
+    NPTH-only part and no block border."""
+    areas = []
+    for a in pr.get('domain_areas') or []:
+        cl = set(a['classes'])
+        src = [(i, [k for k, c, *_ in u.get('dom', []) if c in cl]) for i, u in enumerate(pr['units'])]
+        src = [(i, ks) for i, ks in src if ks]
+        if src:
+            areas.append((src, float(a['gap']), all(pr['units'][i]['fixed'] for i, _ in src)))
+    subj = []
+    for u in pr['units']:
+        skip = ko_flags(u)[0] | border_flags(u)
+        idx = [k for k in range(len(u['rects'])) if not skip[k]]
+        subj.append(None if u.get('dom') or not idx else idx)
+    return areas, subj
+
+
+def area_hulls(areas, world):
+    """[(hull k x 2, gap, all sources fixed)] of the areas; world(i) = the world rects (n x 4+) of unit i."""
+    out = []
+    for src, g, fx in areas:
+        pts = [(float(x), float(y)) for i, ks in src for r in np.asarray(world(i))[ks]
+               for x, y in ((r[0], r[1]), (r[2], r[1]), (r[2], r[3]), (r[0], r[3]))]
+        out.append((np.array(hull(pts), dtype=float), g, fx))
+    return out
+
+
+def unit_area_pen(R, idx, fixed, hulls):
+    """Area penalty of one unit: its rects R[idx] against each hull; a fixed unit and an area of fixed parts: 0."""
+    if idx is None:
+        return 0.0
+    R = np.asarray(R, dtype=float)[idx, :4]
+    b = (R[:, 0].min(), R[:, 1].min(), R[:, 2].max(), R[:, 3].max())
+    return sum(area_pen(R, H, g) for H, g, fx in hulls if not (fixed and fx)  # box test first (speed)
+               and b[0] < H[:, 0].max() + g and b[2] > H[:, 0].min() - g
+               and b[1] < H[:, 1].max() + g and b[3] > H[:, 1].min() - g)
+
+
+def domain_area(pr, pose):
+    """Hard penalty of the parts without domain pads in the domain areas (0 = legal)."""
+    areas, subj = area_setup(pr)
+    if not areas:
+        return 0.0
+    us = pr['units']
+    hs = area_hulls(areas, lambda i: world_rects(us[i], pose[i]))
+    return sum(unit_area_pen(world_rects(u, pose[i]), subj[i], u['fixed'], hs) for i, u in enumerate(us))
+
+
 def world_rects(u, pose_u):
     x, y, r = pose_u
     return [[a + x, b + y, c + x, d + y, rc[4]] for rc in u['rects'] for (a, b, c, d) in [rot_rect(rc, r)]]
@@ -462,7 +554,7 @@ def _overlaps(pr, pose):
                            ko_flags(us[i], T), ko_flags(us[j], T), border_flags(us[i]), border_flags(us[j]),
                            radii(us[i]), radii(us[j]))
             h, s = h + a, s + b
-    return h, s
+    return h + domain_area(pr, pose), s
 
 
 def overlap(pr, pose):
@@ -776,6 +868,12 @@ class Evaluator:
                      sum(self.forb),
                      0.0]
         self.comp[2], self.comp[4] = self._overlap_all()
+        # domain areas (mains): the hulls move with the domain parts
+        self.areas, self.subj = area_setup(pr)
+        self.adom = {i for src, *_ in self.areas for i, _ in src}
+        self.hulls = area_hulls(self.areas, self._world)
+        self.apen = [self._apen(i, self.hulls) for i in range(self.n)]
+        self.comp[2] += sum(self.apen)
         # via room: via-net pads (lvia) and the copper box of each unit (CB)
         self.vn = list(pr.get('via_nets') or ())
         self.vsites = ViaSites(pr['board'], p['via_d'] / 2) if self.vn else None
@@ -878,8 +976,15 @@ class Evaluator:
                 h, s = h + a, s + c
         return h, s
 
+    def _apen(self, i, hulls):
+        return unit_area_pen(self._world(i), self.subj[i], self.fixed[i], hulls) if hulls else 0.0
+
     def _unit_overlap(self, i, skip):
-        return self._unit_pairs(i, skip)[0]
+        a = 0.0
+        if self.areas:  # a domain part: the area of all others at its pose; another part: its own
+            hs = area_hulls(self.areas, self._world) if i in self.adom else self.hulls
+            a = sum(self._apen(j, hs) for j in range(self.n)) if i in self.adom else self._apen(i, hs)
+        return self._unit_pairs(i, skip)[0] + a
 
     def _overlap_all(self):
         h, s = 0.0, 0.0
@@ -1013,6 +1118,16 @@ class Evaluator:
             self._set_ub(i)
             self._set_cb(i)
         ov1, sp1 = self._moved_pairs(M, Ms)
+        old_area = (self.hulls, self.apen)
+        if self.areas:
+            if Ms & self.adom:
+                self.hulls = area_hulls(self.areas, self._world)
+                self.apen = [self._apen(j, self.hulls) for j in range(self.n)]
+            else:
+                self.apen = list(self.apen)
+                for i in M:
+                    self.apen[i] = self._apen(i, self.hulls)
+            ov1 += sum(self.apen) - sum(old_area[1])
         old_vb = []
         if self.vsites is not None:
             va |= self._via_units(M)
@@ -1070,7 +1185,7 @@ class Evaluator:
             drow += self.rv[k] - v
         d = [dwl, dcong, ov1 - ov0, fb1 - fb0, sp1 - sp0, dvia, dx_, drow]
         delta = self._weighted(d)
-        self.pending = (old_pose, old_forb, old_nets, saved, list(self.comp), self.cost, old_vb, old_seg, old_rv)
+        self.pending = (old_pose, old_forb, old_nets, saved, list(self.comp), self.cost, old_vb, old_seg, old_rv, old_area)
         self.last_old = [(i, x, y, r) for i, x, y, r in old_pose]
         for a in range(8):
             self.comp[a] += d[a]
@@ -1081,7 +1196,8 @@ class Evaluator:
         self.pending = None
 
     def revert(self):
-        old_pose, old_forb, old_nets, saved, comp, c, old_vb, old_seg, old_rv = self.pending
+        old_pose, old_forb, old_nets, saved, comp, c, old_vb, old_seg, old_rv, old_area = self.pending
+        self.hulls, self.apen = old_area
         for k, v in old_rv:
             self.rv[k] = v
         if old_seg is not None:

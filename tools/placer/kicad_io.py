@@ -456,6 +456,7 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
                       'fixed_copper': fixed_copper, 'via_keepouts': via_keepouts},
             'region': region, 'move_box': list(free_box) if free_box else None, 'decaps': decaps,
             'dru_ignored': ignored, 'class_gaps': _class_gaps(dom_ids, domains, pairs) if dom_ids else None,
+            'domain_areas': _domain_areas(dom_ids, domains),
             'via_nets': sorted(n.GetNetCode() for name, n in board.GetNetsByName().items()
                                if any(fnmatch.fnmatchcase(str(name), q) for q in via_nets))}
 
@@ -483,6 +484,17 @@ def _pair_class(pad, pairs):
     c = pad.GetNetClassName().split(',')
     m = any(fnmatch.fnmatchcase(x, q) for a, b, _ in pairs for q in a + b for x in c)
     return ('', None, 0.0) if m else None
+
+
+def _domain_areas(dom_ids, domains):
+    """One area per .kicad_dru domain (not a pair rule): its class ids and its gap to other nets. Parts without
+    domain pads stay out of the hull of its pads grown by the gap (cost.area_setup)."""
+    out = []
+    for p, g, _ in domains:
+        cl = sorted(c for n, c in dom_ids.items() if any(fnmatch.fnmatchcase(x, p) for x in n.split(',')))
+        if cl:
+            out.append({'classes': cl, 'gap': g})
+    return out
 
 
 def _class_gaps(dom_ids, domains, pairs):

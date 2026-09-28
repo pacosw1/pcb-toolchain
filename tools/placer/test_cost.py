@@ -432,6 +432,68 @@ class DomainRectTest(unittest.TestCase):
         self.assertAlmostEqual(self.overlap([self.mains('K1', 10.0, 1), s]), 0.0)
 
 
+class DomainAreaTest(unittest.TestCase):
+    """pr['domain_areas'] = [{classes, gap}]: the convex hull of all domain pads of these classes (the mains area)
+    grown by gap. A part with no domain pad must not be in it: its tracks would cross the mains area (the PORT2
+    creepage fault). A keepout rect (a slot) and a block border may be in it."""
+
+    def mains(self, name, x, cls=1):
+        return DomainRectTest.mains(self, name, x, cls)
+
+    def pr(self, units, areas=({'classes': [1], 'gap': 8.0},)):
+        pr = problem(units, [], square_board(60.0))
+        pr['domain_areas'] = [dict(a) for a in areas]
+        return pr
+
+    def overlap(self, units, **kw):
+        pr = self.pr(units, **kw)
+        return cost.components(pr, cost.initial_pose(pr), P)['overlap']
+
+    def selv(self, y):
+        return unit('R', 25.0, y, [[-1, -1, 1, 1, 0.5]])
+
+    def test_a_part_between_mains_pads_is_illegal(self):
+        k = lambda: [self.mains('K1', 10.0), self.mains('K2', 40.0)]  # pads 29 mm apart, hull y 19.5..20.5
+        self.assertAlmostEqual(self.overlap(k() + [self.selv(20.0)], areas=()), 0.0)  # the pad gaps pass
+        self.assertGreater(self.overlap(k() + [self.selv(20.0)]), 0.0)
+        self.assertGreater(self.overlap(k() + [self.selv(20.5 + 6.5 + 1)]), 0.0)
+        self.assertAlmostEqual(self.overlap(k() + [self.selv(20.5 + 8.1 + 1)]), 0.0)
+
+    def test_domain_parts_slots_and_borders_may_be_in_the_area(self):
+        k = [self.mains('K1', 10.0), self.mains('K2', 40.0)]
+        self.assertAlmostEqual(self.overlap(k + [self.mains('K3', 25.0)]), 0.0)
+        s = unit('S', 25.0, 40.0, [[-1, -1, 1, 1, 0.5], [-1, -21, 1, -19, 0.0]])  # slot on the pad line
+        s['ko'] = [1]
+        self.assertAlmostEqual(self.overlap(k + [s]), 0.0)
+        b = unit('B', 25.0, 40.0, [[-1, -1, 1, 1, 0.5], [-3, -21, 3, -1, 0.0]])  # border into the area
+        b['mech'], b['border'] = [1], [1]
+        self.assertAlmostEqual(self.overlap(k + [b]), 0.0)
+
+    def test_the_area_moves_with_the_domain_parts(self):
+        pr = self.pr([self.mains('K1', 10.0), self.mains('K2', 12.0), self.selv(20.0)])
+        ev = cost.Evaluator(pr, P)
+        self.assertAlmostEqual(ev.components()['overlap'], 0.0)  # R 11.5 mm right of the K2 pad
+        ev.propose([(1, 40.0, 20.0, 0)])  # K2 jumps over R: R is now inside the hull
+        self.assertAlmostEqual(ev.components()['overlap'], cost.overlap(pr, ev.pose()), places=6)
+        self.assertGreater(ev.components()['overlap'], 0.0)
+        self.assertGreater(ev.legal_penalty(2), 0.0)
+        self.assertGreater(ev.legal_penalty(1), 0.0)
+        self.assertAlmostEqual(ev.legal_penalty_at(2, 25.0, 40.0, 0), 0.0)
+        ev.revert()
+        self.assertAlmostEqual(ev.components()['overlap'], 0.0)
+        self.assertAlmostEqual(ev.legal_penalty(2), 0.0)
+
+    def test_incremental_equals_full_after_random_moves(self):
+        rng = random.Random(5)
+        pr = self.pr([self.mains('K1', 10.0), self.mains('K2', 40.0), self.selv(30.0), self.selv(45.0),
+                      self.mains('K3', 25.0, 2)])
+        ev = cost.Evaluator(pr, P)
+        for _ in range(200):
+            ev.propose([(rng.randrange(5), rng.uniform(5, 55), rng.uniform(5, 55), rng.randrange(4))])
+            ev.commit() if rng.random() < .5 else ev.revert()
+            self.assertAlmostEqual(ev.components()['overlap'], cost.overlap(pr, ev.pose()), places=5)
+
+
 class OwnKeepoutOverhangTest(unittest.TestCase):
     """A courtyard may leave the outline only inside a keepout rect of its own unit (u['ko']: an antenna zone moved
     with --zone-ref, BASE-PWR U1_ANTENNA over the outline notch). Elsewhere the part outside is illegal."""

@@ -701,6 +701,17 @@ class KnownGoodGateTest(unittest.TestCase):
         self.assertEqual([u['name'] for i, u in enumerate(self.pr['units'])
                           if not u['fixed'] and ev.legal_penalty(i) > 0], [])
 
+    def test_the_mains_area_keeps_c24_out_as_in_the_port2_winner(self):
+        (a,) = self.pr['domain_areas']  # one .kicad_dru domain: MAINS_K*, 8 mm to all other nets
+        self.assertEqual((len(a['classes']), a['gap']), (4, 8.0))
+        self.assertAlmostEqual(cost.overlap(self.pr, cost.initial_pose(self.pr)), 0.0)
+        i = [u['name'] for u in self.pr['units']].index('C24')
+        pose = cost.initial_pose(self.pr)
+        pose[i] = (147.8, 179.8, 1)  # PORT2 s89: below the mains connectors, 8 mm from the J4 pads
+        pr = dict(self.pr, domain_areas=[])
+        self.assertAlmostEqual(cost.Evaluator(pr, {}, pose).legal_penalty(i), 0.0)  # the pad gaps pass
+        self.assertGreater(cost.Evaluator(self.pr, {}, pose).legal_penalty(i), 0.0)
+
     def test_the_courtyard_rect_is_the_courtyard_polygon_box(self):  # BBox() adds about 0.05 mm per side
         fp = pcbnew.LoadBoard(board_path('BASE-PWR')).FindFootprintByReference('R36')
         c = fp.GetCourtyard(pcbnew.F_CrtYd).Outline(0)
