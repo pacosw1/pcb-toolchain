@@ -242,6 +242,7 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
         r = dru.parse(open(dp).read()) if os.path.exists(dp) else {'domains': [], 'holes': [], 'pairs': [],
                                                                      'ignored': []}
         domains, holes, pairs, ignored = r['domains'], r['holes'], r['pairs'], r['ignored']
+    rules = {'domains': domains, 'holes': holes, 'pairs': pairs}  # for the mains path check (mainspath.py)
     hole_gap = {ref: g for _, refs, g in holes for ref in refs}
     dom_ids = {}  # net class of a domain -> class id (1, 2, ...)
     outline, holes = outline_of(board)
@@ -457,8 +458,17 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
             'region': region, 'move_box': list(free_box) if free_box else None, 'decaps': decaps,
             'dru_ignored': ignored, 'class_gaps': _class_gaps(dom_ids, domains, pairs) if dom_ids else None,
             'domain_areas': _domain_areas(dom_ids, domains),
+            'route_rules': {'dru': rules, 'classes': class_rules(os.path.splitext(path)[0] + '.kicad_pro')},
+            'cu_nets': {str(c): [n.GetNetname(), n.GetNetClassName()] for c in sorted(
+                {q[4] for u in out_units for q in u.get('cu', ()) if q[4] > 0}) for n in [board.FindNet(c)]},
             'via_nets': sorted(n.GetNetCode() for name, n in board.GetNetsByName().items()
                                if any(fnmatch.fnmatchcase(str(name), q) for q in via_nets))}
+
+
+def class_rules(pro):
+    """{net class: [clearance, track width] (mm)} from the .kicad_pro net settings."""
+    with open(pro) as f:
+        return {c['name']: [c['clearance'], c['track_width']] for c in json.load(f)['net_settings']['classes']}
 
 
 def class_tracks(pro, domains=()):

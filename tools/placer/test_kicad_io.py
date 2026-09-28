@@ -16,7 +16,7 @@ from placer import cost  # noqa: E402
 
 try:
     import pcbnew
-    from placer import kicad_io
+    from placer import dru, kicad_io
 except ImportError:  # plain python3 without KiCad
     pcbnew = None
 
@@ -58,6 +58,26 @@ class RoundTripTest(unittest.TestCase):
             self.assertEqual(sorted(q[4] for q in u['cu']), sorted(p.GetNetCode() for p in pads))
         self.assertTrue(any(q[4] == gnd for u in pr['units'] for q in u['cu']))
         self.assertEqual(cost.via_room(pr, cost.initial_pose(pr), {}), 0)  # the routed original has via room
+
+    def test_cu_nets_name_the_net_and_class_of_each_copper_net_code(self):
+        b = pcbnew.LoadBoard(self.board)
+        pr = kicad_io.read_problem(self.board)
+        codes = {q[4] for u in pr['units'] for q in u['cu'] if q[4] > 0}
+        self.assertEqual({int(k) for k in pr['cu_nets']}, codes)
+        for k, (name, cls) in pr['cu_nets'].items():
+            n = b.FindNet(name)
+            self.assertEqual((n.GetNetCode(), n.GetNetClassName()), (int(k), cls))
+
+    def test_route_rules_hold_the_dru_rules_and_the_net_class_clearance_and_width(self):
+        pr = kicad_io.read_problem(self.board)
+        stem = os.path.splitext(self.board)[0]
+        cs = json.load(open(stem + '.kicad_pro'))['net_settings']['classes']
+        self.assertEqual(pr['route_rules']['classes'], {c['name']: [c['clearance'], c['track_width']] for c in cs})
+        want = dru.parse(open(stem + '.kicad_dru').read()) if os.path.exists(stem + '.kicad_dru') else None
+        got = pr['route_rules']['dru']
+        self.assertEqual(set(got), {'domains', 'holes', 'pairs'})
+        if want:
+            self.assertEqual(json.loads(json.dumps(got)), json.loads(json.dumps({k: want[k] for k in got})))
 
     def test_no_via_rule_areas_are_board_via_keepouts_or_move_with_their_unit(self):
         shutil.copytree(os.path.join(self.tmp, 'b'), os.path.join(self.tmp, 'v'))  # pcbnew keeps a loaded project
