@@ -49,6 +49,15 @@ Benchmark B v2 (2026-09-27; same set-up; the spacing class now grows to the net-
 
 Result: still FAIL. P is better than S by about 20 open connections, but far from O. The DRC errors of P show the cause that stays: there is no mains/SELV domain region, and the kept FIELD_GND vias clash with moved parts. Next fix: a domain box per net class.
 
+Benchmark DOOR W, warm start from a hand placement (2026-09-27; Hetzner). DOOR-RELAY at 64f8baa (hand placement 84 x 60 mm, USB tracks locked = fixed copper, 38 of 49 units movable). Search from the hand pose, w0 5 mm, 18 workers, default cost; the winner and the unchanged hand board (O) get 5 Freerouting runs each (`fr_job.sh`, GNDVIAS=1, alternating).
+
+| Board | HPWL | Unrouted per run | Median |
+|---|---|---|---|
+| O hand board | 1286 | 4 / 0 / 4 / 0 / 5 | 4 |
+| W placer from O | 1018 | 0 / 0 / 1 / 1 / 7 | 1 |
+
+Result: PASS (W median <= O median). DRC classes (per run, W / O): no new class in W. Errors: track_width 8-9 / 7-9, copper_edge_clearance 0-3 / 0-4, skew_out_of_range 0 / 0-1. Warnings: silk_overlap 177 / 131, silk_over_copper 94 / 82 (silk only; refdes silk is removed before fab), track_dangling 2-6 / 1-3, via_dangling 0-3 / 0-2. No track or via in the U1_ANTENNA keepout in any W or O run. W is evidence only; the repo board stays the hand board.
+
 Analytic global placement (`gplace.py`, optimize `--param global=1`): ePlace style WA wirelength + electrostatic density (DCT Poisson on a bins x bins grid; fixed units, the area outside the outline and keepouts are fixed charge), Nesterov with a growing density weight until the overflow is below 0.1, and RePlAce cell inflation where RUDY is above the routing capacity (2 rounds, at most 2x area). Rotation stays; edge anchors are projected onto their side. The annealer then starts from the global places (use a low `t0`). On RELAY-4 the global stage takes about 0.1 s.
 
 Prior art checked on 2026-09-27 (no code copied):
