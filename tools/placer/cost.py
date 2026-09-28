@@ -22,7 +22,8 @@ Problem (a dict, JSON-able; tools/placer/kicad_io.py writes it from a board):
           class to them, as to a keepout rect (a slot is the creepage barrier).
   nets:   [{name, weight, pins: [[unit, x0, y0, x1, y1], ...]}]   pin boxes relative to the origin.
   board:  {outline: [[x, y], ...], keepouts: [[[x, y], ...], ...], edge_clearance, keepout_gaps (optional):
-          {class id: gap}: a domain pad of the class keeps the gap to each keepout (no-net creepage)}
+          {class id: gap}: a domain pad of the class keeps the gap to each keepout (no-net creepage),
+          gap_keepouts (optional): [[[x, y], ...], ...] areas for that gap only (a courtyard may cover them)}
   region: None or {box: [x0, y0, x1, y1], weight, refs}   RUDY cells in box count weight times.
   board['copper'] (optional): kept copper [[layer, x0, y0, x1, y1, width], ...]; layer 'via' = a via at
           (x0, y0) with diameter width. It uses RUDY capacity (fixed_grid) and F.Cu copper and vias are
@@ -187,10 +188,10 @@ class Mask:
         self.s_edge = sat(out0.astype(np.int64))
         self.s_band = sat(out.astype(np.int64))
         self.s_cu = sat(cu.astype(np.int64))
-        self.s_kog = {}  # class id -> keepouts grown by the no-net creepage of the class (board['keepout_gaps'])
+        self.s_kog = {}  # class id -> keepouts and gap_keepouts grown by the no-net creepage of the class (board['keepout_gaps'])
         for c, g in board.get('keepout_gaps', {}).items():
             near = np.zeros_like(out)
-            for poly in board.get('keepouts', []):
+            for poly in board.get('keepouts', []) + board.get('gap_keepouts', []):
                 near |= point_in_poly(gx, gy, poly) | (_poly_d2(gx, gy, poly) < g * g)
             self.s_kog[int(c)] = sat(near.astype(np.int64))
 

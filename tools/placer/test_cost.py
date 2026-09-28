@@ -593,6 +593,24 @@ class KeepoutGapTest(unittest.TestCase):
         for v in self.legal(8.2):  # 0.8 mm
             self.assertAlmostEqual(v, 0.0)
 
+    def test_a_gap_keepout_holds_the_gap_but_a_courtyard_may_cover_it(self):
+        # BACKUP-POWER BARRIER_*: tracks not allowed, footprints and pads allowed; only the creepage gap holds
+        def pen(pad_x0, court_x1):
+            u = unit('A', 5.0, 10.0, [[pad_x0 - 5.0, -0.5, court_x1 - 5.0, 0.5, 0.0], [pad_x0 - 5.0, -0.5, pad_x0 - 4.0, 0.5, 0.0]])
+            u['pad_rects'] = [[pad_x0 - 5.0, -0.5, pad_x0 - 4.0, 0.5]]
+            u['mech'] = [0]
+            u['dom'] = [[1, 1, 0.0, 0.2]]
+            b = square_board(20.0)
+            b['gap_keepouts'] = [[[10, 0], [12, 0], [12, 20], [10, 20]]]
+            b['keepout_gaps'] = {'1': 0.75}
+            pr = problem([u], [], b)
+            m = cost.Mask(b, 0.05)
+            return cost.Evaluator(pr, P, mask=m).legal_penalty(0), cost.forbidden(pr, cost.initial_pose(pr), m, 0)
+        for v in pen(8.2, 11.0):  # pad 0.8 mm off, courtyard 1 mm into the area
+            self.assertAlmostEqual(v, 0.0)
+        for v in pen(8.5, 9.5):  # pad 0.5 mm off
+            self.assertGreater(v, 0.0)
+
     def test_a_pad_of_another_class_may_be_near_a_keepout(self):
         for v in self.legal(8.5, cls=0):
             self.assertAlmostEqual(v, 0.0)
