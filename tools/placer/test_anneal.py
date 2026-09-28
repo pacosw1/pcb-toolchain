@@ -258,6 +258,15 @@ class LamScheduleTest(unittest.TestCase):
         acc = [e['accept'] for e in r1['lam']]
         self.assertGreater(acc[0], acc[-1])
 
+    def test_measured_acceptance_follows_the_target_curve(self):
+        # RELAY-4 ALL froze at 0.5 % acceptance: check that the controller itself follows lam_target
+        pr, epochs = chain(12, seed=2), 10
+        q = dict(P, schedule='lam', base_lam=0.44, lam_window=100)
+        r = anneal.optimize(pr, q, workers=1, epochs=epochs, steps=3000, seed=9, top=1)
+        for e, got in enumerate(r['lam'][1:], 1):  # epoch 1: the EMA starts at 1.0 and lags
+            want = sum(anneal.lam_target((e + s / 100) / epochs, 0.44) for s in range(100)) / 100
+            self.assertAlmostEqual(got['accept'], want, delta=0.05, msg='epoch %d' % (e + 1))
+
 
 
 class NormalizeTest(unittest.TestCase):
