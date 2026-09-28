@@ -1,0 +1,10 @@
+FROM python:3.9-slim-bookworm
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential cmake bison flex libfl-dev libboost-dev libboost-graph-dev libboost-regex-dev libboost-system-dev libboost-filesystem-dev libboost-iostreams-dev zlib1g-dev libcairo2-dev git pkg-config && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir torch==1.10.0+cpu -f https://download.pytorch.org/whl/cpu/torch_stable.html
+RUN pip install --no-cache-dir "numpy<1.24" scipy "shapely<2" matplotlib cairocffi pkgconfig pyunpack patool
+COPY src /Cypress
+WORKDIR /Cypress/build
+RUN cmake .. -DCMAKE_INSTALL_PREFIX=/Cypress/install -DPython_EXECUTABLE=$(which python) -DCMAKE_CXX_ABI=0 && make -j12 && make install
+WORKDIR /Cypress/install
+RUN pip install --no-cache-dir torchvision==0.11.1+cpu -f https://download.pytorch.org/whl/cpu/torch_stable.html
