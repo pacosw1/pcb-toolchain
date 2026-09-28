@@ -29,7 +29,7 @@ from . import cost
 SEARCH = {'grid': 0.05, 'p_swap': 0.1, 'p_rot': 0.1, 'swap_ratio': 1.5, 't_ratio': 1e-4, 'w1': 0.25,
           'legal_step': 0.25, 'legal_radius': 5.0, 'legal_passes': 3, 'legal_time': 60.0,
           'ramp': 20.0, 'schedule': 'geometric', 'base_lam': 0.44, 'lam_rate': 0.885, 'lam_window': 500,
-          'area_ref': 10.0, 'area_max': 5.0, 'normalize': 0}
+          'area_ref': 10.0, 'area_max': 5.0, 'normalize': 0, 'distinct': 0.0}
 
 
 def params_all(params):
@@ -53,6 +53,23 @@ def normalized(p, comp):
     for w in ('w_ov', 'w_oob', 'w_sp'):
         q[w] = p[w] / min(ds)
     return q
+
+
+def distinct(cands, d, fixed):
+    """Candidates (best first) whose movable units are on average d mm or more from each kept one; with d = 0,
+    only exact copies are dropped."""
+    mov = [i for i, f in enumerate(fixed) if not f]
+
+    def gap(a, b):
+        return sum(math.hypot(a[i][0] - b[i][0], a[i][1] - b[i][1]) for i in mov) / max(len(mov), 1)
+    kept, seen = [], set()
+    for c in cands:
+        key = tuple((round(x, 3), round(y, 3), r) for x, y, r in c['pose'])
+        if key in seen or (d > 0 and any(gap(c['pose'], k['pose']) < d for k in kept)):
+            continue
+        seen.add(key)
+        kept.append(c)
+    return kept
 
 
 def epoch_params(p, e, epochs):
@@ -393,12 +410,7 @@ def optimize(pr, params, workers=1, epochs=10, steps=10000, seed=1, top=3, log=N
             pool.close()
             pool.join()
     fin.sort(key=lambda c: (len(c['illegal']), c['cost'], c['worker']))
-    cands, seen = [], set()
-    for c in fin:
-        key = tuple((round(x, 3), round(y, 3), r) for x, y, r in c['pose'])
-        if key not in seen:
-            seen.add(key)
-            cands.append(c)
+    cands = distinct(fin, p['distinct'], [u['fixed'] for u in pr['units']])
     return {'global': glob, 'lam': lam_log, 'initial': initial, 'candidates': cands[:top], 'history': history, 't0': t0, 'seed': seed, 'workers': workers,
             'epochs': epochs, 'steps': steps, 'params': p, 'wall_s': time.time() - t_start,
             'moves_per_s_per_worker': epochs * steps * workers / busy if busy else 0.0}

@@ -292,5 +292,38 @@ class NormalizeTest(unittest.TestCase):
         self.assertLess(res['candidates'][0]['components']['hpwl'], 0.5 * c0['hpwl'])
 
 
+
+class DistinctTest(unittest.TestCase):
+    """distinct = d mm: the returned candidates are the best legal poses whose movable units are on average d mm
+    or more from each better one (different basins for a router pick); d = 0 drops exact copies only."""
+
+    def cands(self):
+        base = [(0.0, 0.0, 0), (5.0, 5.0, 0), (9.0, 1.0, 0)]
+        def c(cost_, dx, illegal=()):
+            return {'cost': cost_, 'illegal': list(illegal), 'worker': 0,
+                    'pose': [base[0]] + [(x + dx, y, r) for x, y, r in base[1:]]}
+        return [c(1.0, 0.0), c(1.1, 0.2), c(1.2, 3.0), c(1.3, 3.1), c(0.5, 9.0, ['U1'])]
+
+    def test_near_copies_are_dropped(self):
+        fixed = [True, False, False]
+        got = anneal.distinct(self.cands(), 1.0, fixed)
+        self.assertEqual([c['cost'] for c in got], [1.0, 1.2, 0.5])
+
+    def test_zero_keeps_all_but_exact_copies(self):
+        cs = self.cands() + [self.cands()[0]]
+        self.assertEqual(len(anneal.distinct(cs, 0.0, [True, False, False])), 5)
+
+    def test_optimize_returns_distinct_candidates(self):
+        pr = chain(12, seed=2)
+        res = anneal.optimize(pr, dict(P, distinct=0.5), workers=4, epochs=2, steps=800, seed=3, top=4)
+        cs = res['candidates']
+        mov = [i for i, u in enumerate(pr['units']) if not u['fixed']]
+        for a in range(len(cs)):
+            for b in range(a):
+                d = sum(((cs[a]['pose'][i][0] - cs[b]['pose'][i][0]) ** 2 +
+                         (cs[a]['pose'][i][1] - cs[b]['pose'][i][1]) ** 2) ** 0.5 for i in mov) / len(mov)
+                self.assertGreaterEqual(d, 0.5)
+
+
 if __name__ == '__main__':
     unittest.main()
