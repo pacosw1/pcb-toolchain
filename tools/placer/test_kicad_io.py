@@ -89,15 +89,16 @@ class RoundTripTest(unittest.TestCase):
             self.assertEqual(u['cu_pads'], want)
             self.assertEqual(len(u['cu_pads']), len([q for q in u['cu'] if q[4] != -1]))   # no-via rows (-1) come after
 
-    def test_centres_give_each_part_origin_relative_to_the_unit_origin(self):
+    def test_centres_give_each_part_courtyard_centre_relative_to_the_unit_origin(self):
+        # the board checkers measure part distances from the courtyard box centre, not the footprint origin
         b = pcbnew.LoadBoard(self.board)
         pr = kicad_io.read_problem(self.board)
         for u in pr['units']:
             self.assertEqual(sorted(u['centres']), sorted(u['refs']))
             for r, (lx, ly) in u['centres'].items():
-                q = b.FindFootprintByReference(r).GetPosition()
-                self.assertAlmostEqual(lx + u['x'], pcbnew.ToMM(q.x), places=5)
-                self.assertAlmostEqual(ly + u['y'], pcbnew.ToMM(q.y), places=5)
+                c = kicad_io.fp_rect(b.FindFootprintByReference(r))
+                self.assertAlmostEqual(lx + u['x'], (c[0] + c[2]) / 2, places=5)
+                self.assertAlmostEqual(ly + u['y'], (c[1] + c[3]) / 2, places=5)
             self.assertEqual(cost.rule_miss(pr, cost.initial_pose(pr), 0), 0.0)
 
     def test_route_rules_hold_the_dru_rules_and_the_net_class_clearance_and_width(self):

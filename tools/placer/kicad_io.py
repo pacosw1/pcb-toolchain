@@ -385,8 +385,8 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
         out_units.append({'name': u['name'], 'refs': sorted(u['refs']), 'fixed': fixed, 'x': ox, 'y': oy,
                           'rects': [[a - ox, c - oy, e - ox, f - oy, clr] for (a, c, e, f), clr in rects],
                           'pads': pads,
-                          'centres': {r: [round(mm(by_ref[r].GetPosition().x) - ox, 6),
-                                          round(mm(by_ref[r].GetPosition().y) - oy, 6)] for r in sorted(u['refs'])},
+                          'centres': {r: [round((c[0] + c[2]) / 2 - ox, 6), round((c[1] + c[3]) / 2 - oy, 6)]
+                                      for r in sorted(u['refs']) for c in [fp_rect(by_ref[r])]},  # courtyard centre
                           'borders': u['borders'], 'box': u['box'], 'group': u.get('group')})
         dk = {k for k, *_ in dom}
         if len(hv) > len(dk):  # pad rects with a net-class clearance: DRC enforces them
