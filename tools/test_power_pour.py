@@ -305,14 +305,19 @@ class ConnectedTest(unittest.TestCase):
 class ForeignTest(unittest.TestCase):
     REG = {'-15V': [(10, 10), (30, 10), (30, 20), (10, 20)]}
 
-    def test_tht_pad_or_via_of_an_in2_net_inside_is_a_conflict(self):
-        items = [('PTH pad U103.5', 'GND', (15, 15)), ('via', 'GND', (25, 12)), ('via', 'GND', (40, 15)),
-                 ('via', '/SIG', (20, 15))]
+    def test_tht_pad_of_an_in2_net_inside_is_a_conflict(self):
+        items = [('PTH pad U103.5', 'GND', (15, 15), 'tht'), ('PTH pad J1.2', 'GND', (25, 12), 'tht'),
+                 ('PTH pad J2.1', 'GND', (40, 15), 'tht'), ('PTH pad J3.1', '/SIG', (20, 15), 'tht')]
         self.assertEqual(pp.foreign_in2(self.REG, items, in2_nets={'GND'}),
                          [('-15V', 'GND', 2, 'PTH pad U103.5')])
 
+    def test_gnd_via_inside_a_region_passes(self):
+        # a stitching via goes through In2 with an antipad and keeps GND on F.Cu, In1 and B.Cu: no starved thermal
+        items = [('via (15, 15)', 'GND', (15, 15), 'via')]
+        self.assertEqual(pp.foreign_in2(self.REG, items, in2_nets={'GND'}), [])
+
     def test_own_net_items_pass(self):
-        self.assertEqual(pp.foreign_in2(self.REG, [('via', '-15V', (15, 15))], in2_nets={'-15V', 'GND'}), [])
+        self.assertEqual(pp.foreign_in2(self.REG, [('PTH pad J9.1', '-15V', (15, 15), 'tht')], in2_nets={'-15V', 'GND'}), [])
 
 
 if __name__ == '__main__':
