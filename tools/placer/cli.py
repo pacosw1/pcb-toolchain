@@ -31,7 +31,7 @@ def cmd_read(a):
                                tie=a.tie, rigid_nets=[x for x in a.rigid_net.split(',') if x], decap_tie=a.decap_tie,
                                keepout_zones=a.keepout_zone, edges=parse_edges(a.edge),
                                zone_refs=dict(x.split('=', 1) for x in a.zone_ref),
-                               domains=parse_domains(a.domain) if a.domain else None)
+                               domains=parse_domains(a.domain) if a.domain else None, via_nets=a.via_net)
     json.dump(pr, open(a.o, 'w'))
     mov = [u for u in pr['units'] if not u['fixed']]
     print('units %d (movable %d, blocks %d), nets %d, keepouts %d' % (
@@ -183,6 +183,8 @@ def main(argv=None):
                    help="override of the domain rules read from the board .kicad_dru, for example 'MAINS_K*:8:3'")
     r.add_argument('--edge', nargs='*', default=[], metavar='REF=SIDES:SIDE',
                    help='edge anchor: side N/S/E/W of the REF courtyard (as placed now) on a board edge in LRTB')
+    r.add_argument('--via-net', nargs='*', default=[], metavar='NET',
+                   help='nets (fnmatch) whose pads need a free via site nearby (via room cost), for example GND')
     r.set_defaults(f=cmd_read)
     r = sub.add_parser('run')
     r.add_argument('prob')

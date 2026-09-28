@@ -646,3 +646,106 @@ class RudyCalibrationTest(unittest.TestCase):
         self.assertGreater(cong['O'], 0.0)
         self.assertLess(cong['O'], cong['P'])
         self.assertLess(cong['O'], cong['S'])
+
+
+class ViaRoomTest(unittest.TestCase):
+    """Each pad of a via net (pr['via_nets']) needs a free via site near it: 16 sites (4 sides, 4 corners;
+    0.2 and 0.5 mm beyond the pad edge + via radius, as tools/gnd_pad_vias.py). A site is blocked by copper
+    of another net within via radius + clearance, or when it is within edge_clearance + via radius of the
+    board edge. via = the count of via-net pads with no free site. u['cu'] = [[x0, y0, x1, y1, net code]]."""
+    FRAME = [[-2, -2, -0.7, 2, 2], [0.7, -2, 2, 2, 2], [-2, -2, 2, -0.7, 2], [-2, 0.7, 2, 2, 2]]
+    VP = dict(P, via_d=0.6, via_clr=0.2, w_via=10.0)
+
+    def pr(self, gx, frame_net=2, fx=None, board=None):
+        g = unit('G', gx, 10, [[-.5, -.5, .5, .5, 0]])
+        g['cu'] = [[-.5, -.5, .5, .5, 1]]
+        f = unit('F', gx if fx is None else fx, 10, [[-2, -2, 2, 2, 0]])
+        f['cu'] = [r[:4] + [frame_net] for r in self.FRAME]
+        pr = problem([g, f], [], board=board or square_board(20.0, edge=0.5))
+        pr['via_nets'] = [1]
+        return pr
+
+    def via(self, pr):
+        return cost.via_room(pr, cost.initial_pose(pr), self.VP)
+
+    def test_a_free_pad_has_room(self):
+        self.assertEqual(self.via(self.pr(10, fx=16)), 0)
+
+    def test_other_net_copper_on_all_sides_blocks_the_pad(self):
+        self.assertEqual(self.via(self.pr(10)), 1)
+
+    def test_same_net_copper_does_not_block(self):
+        self.assertEqual(self.via(self.pr(10, frame_net=1)), 0)
+
+    def test_three_sides_leave_one_side_free(self):
+        # the frame without its left side: the left sites are free
+        self.assertEqual(self.via(self._three(10)), 0)
+
+    def _three(self, gx):
+        pr = self.pr(gx)
+        pr['units'][1]['cu'] = [r[:4] + [2] for r in (self.FRAME[1], self.FRAME[2], self.FRAME[3])]
+        return pr
+
+    def test_the_board_edge_blocks_the_free_side(self):
+        # left side open, but the pad is 0.9 mm from the left edge: a via there is within 0.5 + 0.3 mm
+        pr = self._three(1.4)
+        self.assertEqual(self.via(pr), 1)
+        self.assertEqual(self.via(self._three(10)), 0)
+
+    def test_a_board_via_keepout_blocks_the_sites_inside_it(self):
+        # the pad is free (frame far away) but it sits in a no-via rule area of the board
+        board = square_board(20.0, edge=0.5)
+        board['via_keepouts'] = [[[7, 7], [13, 7], [13, 13], [7, 13]]]
+        self.assertEqual(self.via(self.pr(10, fx=16, board=board)), 1)
+        board['via_keepouts'] = [[[7, 7], [13, 7], [13, 9.9], [7, 9.9]]]  # the lower sites stay free
+        self.assertEqual(self.via(self.pr(10, fx=16, board=board)), 0)
+
+    def test_a_no_via_area_of_a_unit_blocks_within_the_via_radius_only(self):
+        # net code -1 = a no-via rule area that moves with its unit: no clearance, only the via radius
+        pr = self._three(10)
+        pr['units'][1]['cu'].append([-2.0, -0.35, -1.55, 0.35, 2])  # other-net copper 0.25 mm from the far left site
+        self.assertEqual(self.via(pr), 0)  # the near left site (x -1.0) is still free
+        pr['units'][1]['cu'][-1] = [-1.2, -2, -0.85, 2, 2]  # 0.15 mm from the near site: blocked, far site too
+        self.assertEqual(self.via(pr), 1)
+        pr['units'][1]['cu'][-1] = [-2.0, -2, -1.35, 2, -1]  # no-via area 0.35 mm from the near left site: free
+        self.assertEqual(self.via(pr), 0)
+        pr['units'][1]['cu'][-1] = [-2.0, -2, -1.25, 2, -1]  # 0.25 mm < via radius: blocked
+        self.assertEqual(self.via(pr), 1)
+
+    def test_no_via_nets_gives_zero(self):
+        pr = self.pr(10)
+        del pr['via_nets']
+        self.assertEqual(self.via(pr), 0)
+
+    def test_the_weight_adds_to_the_total(self):
+        pr = self.pr(10)
+        c = cost.components(pr, cost.initial_pose(pr), self.VP)
+        self.assertEqual(c['via'], 1)
+        c0 = dict(c, via=0)
+        self.assertAlmostEqual(cost.weighted(c, self.VP) - cost.weighted(c0, self.VP), 10.0)
+
+    def test_incremental_equals_full_after_random_moves(self):
+        rng = random.Random(5)
+        us = []
+        for k in range(8):
+            u = unit('U%d' % k, rng.uniform(2, 8), rng.uniform(2, 8), [[-1, -1, 1, 1, 0]])
+            u['cu'] = [[-1, -1, -0.2, -0.2, rng.choice([1, 2, 3])], [0.2, 0.2, 1, 1, rng.choice([1, 2, 3])],
+                       [0.2, -1, 1, -0.5, 1]]
+            us.append(u)
+        pr = problem(us, [], board=square_board(10.0, edge=0.5))
+        pr['via_nets'] = [1]
+        ev = cost.Evaluator(pr, self.VP)
+        self.assertEqual(ev.components()['via'], cost.via_room(pr, ev.pose(), self.VP))
+        seen = set()
+        for k in range(300):
+            u = rng.randrange(8)
+            ev.propose([(u, rng.uniform(1, 9), rng.uniform(1, 9), rng.randrange(4))])
+            if rng.random() < .5:
+                ev.commit()
+            else:
+                ev.revert()
+            v = cost.via_room(pr, ev.pose(), self.VP)
+            seen.add(v)
+            self.assertEqual(ev.components()['via'], v)
+            self.assertAlmostEqual(ev.cost, cost.total(pr, ev.pose(), self.VP), places=5)
+        self.assertGreater(len(seen), 1)  # the moves did change the count

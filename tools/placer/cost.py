@@ -45,7 +45,8 @@ import numpy as np
 
 # limit 0.1: calibrated on RELAY-4 bench v3 (the routable original has the lowest cong; limit 1.0 gave 0 for all).
 DEFAULTS = {'rudy_cell': 1.0, 'mask_cell': 0.1, 'layers': 2, 'pitch': 0.4, 'limit': 0.1, 'pin_demand': 0.0, 'gap': 0.2,
-            'w_wl': 1.0, 'w_cong': 1.0, 'w_ov': 20.0, 'w_oob': 20.0, 'w_sp': 2.0}
+            'w_wl': 1.0, 'w_cong': 1.0, 'w_ov': 20.0, 'w_oob': 20.0, 'w_sp': 2.0,
+            'via_d': 0.6, 'via_clr': 0.2, 'w_via': 10.0}  # via 0.6/0.3 mm, clearance 0.2 mm (default net class)
 EPS = 1e-9
 ROUTE_LAYERS = ('F.Cu', 'B.Cu')  # the `layers` routing layers; copper on other layers uses no RUDY capacity
 OBSTACLE_LAYERS = ('F.Cu', 'via')  # kept copper that a top-side part must not cover
@@ -499,6 +500,92 @@ def forbidden(pr, pose, mask, i):
             + edge_miss(u, pose[i], pr['board']))
 
 
+VIA_EXTRA = (0.2, 0.5)  # via site distance beyond the pad edge + via radius (tools/gnd_pad_vias.py)
+VIA_DIRS = ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, 1), (1, -1), (-1, -1))
+
+
+def _poly_d2(gx, gy, poly):
+    """Squared distance of the points to the polygon edges."""
+    d2 = np.full(gx.shape, np.inf)
+    for k in range(len(poly)):
+        (a0, b0), (a1, b1) = poly[k], poly[(k + 1) % len(poly)]
+        dx, dy = a1 - a0, b1 - b0
+        ll = dx * dx + dy * dy
+        t = np.clip(((gx - a0) * dx + (gy - b0) * dy) / ll, 0, 1) if ll > 0 else 0.0
+        d2 = np.minimum(d2, (gx - a0 - t * dx) ** 2 + (gy - b0 - t * dy) ** 2)
+    return d2
+
+
+class ViaSites:
+    """Via centres the board allows: inside the outline, edge_clearance + via radius from it, and not inside or
+    within the via radius of a no-via rule area of the board (board['via_keepouts'] polygons)."""
+
+    def __init__(self, board, r, cell=0.1):
+        x0, y0, x1, y1 = outline_box(board)
+        self.x0, self.y0, self.c = x0, y0, cell
+        self.nx, self.ny = math.ceil((x1 - x0) / cell) + 1, math.ceil((y1 - y0) / cell) + 1
+        gx, gy = np.meshgrid(x0 + np.arange(self.nx) * cell, y0 + np.arange(self.ny) * cell)
+        poly = board['outline']
+        g = board.get('edge_clearance', 0.0) + r
+        self.ok = point_in_poly(gx, gy, poly) & (_poly_d2(gx, gy, poly) >= g * g - EPS)
+        for ko in board.get('via_keepouts', ()):
+            self.ok &= ~point_in_poly(gx, gy, ko) & (_poly_d2(gx, gy, ko) >= r * r - EPS)
+
+    def test(self, xs, ys):
+        i = np.rint((xs - self.x0) / self.c).astype(int)
+        j = np.rint((ys - self.y0) / self.c).astype(int)
+        inside = (i >= 0) & (i < self.nx) & (j >= 0) & (j < self.ny)
+        out = np.zeros(xs.shape, dtype=bool)
+        out[inside] = self.ok[j[inside], i[inside]]
+        return out
+
+
+def world_cu(u, pose_u):
+    """(N, 5) world copper pad boxes of a unit with their net code (u['cu'])."""
+    x, y, r = pose_u
+    return np.array([[a + x, b + y, c + x, d + y, q[4]] for q in u.get('cu', ()) for (a, b, c, d) in [rot_rect(q, r)]],
+                    dtype=float).reshape(-1, 5)
+
+
+def via_reach(p):
+    """Distance beyond a pad box within which copper can block its via sites."""
+    return max(VIA_EXTRA) + p['via_d'] + p['via_clr']
+
+
+def via_blocked(vp, obs, sites, p):
+    """Count of via-net pads vp (M, 5) with no free via site: each of the 16 sites is off the board (sites)
+    or within via radius + clearance of copper of another net in obs (K, 5). Net code -1 in obs = a no-via
+    rule area of a unit: it blocks within the via radius."""
+    if not len(vp):
+        return 0
+    rv = p['via_d'] / 2
+    g = rv + p['via_clr']
+    cx, cy = (vp[:, 0] + vp[:, 2]) / 2, (vp[:, 1] + vp[:, 3]) / 2
+    hx, hy = (vp[:, 2] - vp[:, 0]) / 2, (vp[:, 3] - vp[:, 1]) / 2
+    sx = np.stack([cx + dx * (hx + rv + e) for e in VIA_EXTRA for dx, dy in VIA_DIRS], axis=1)
+    sy = np.stack([cy + dy * (hy + rv + e) for e in VIA_EXTRA for dx, dy in VIA_DIRS], axis=1)
+    free = sites.test(sx, sy)
+    if len(obs):
+        ddx = np.maximum(np.maximum(obs[:, 0] - sx[..., None], sx[..., None] - obs[:, 2]), 0.0)
+        ddy = np.maximum(np.maximum(obs[:, 1] - sy[..., None], sy[..., None] - obs[:, 3]), 0.0)
+        other = (obs[:, 4][None, :] != vp[:, 4][:, None])[:, None, :]
+        gg = np.where(obs[:, 4] == -1, rv, g) ** 2 - EPS
+        free &= ~((ddx * ddx + ddy * ddy < gg) & other).any(axis=2)
+    return int((~free.any(axis=1)).sum())
+
+
+def via_room(pr, pose, params):
+    """Count of pads on a via net (pr['via_nets']) with no free via site (see via_blocked)."""
+    p = params_with_defaults(params)
+    vn = list(pr.get('via_nets') or ())
+    if not vn:
+        return 0
+    sites = ViaSites(pr['board'], p['via_d'] / 2)
+    W = [world_cu(u, pose[i]) for i, u in enumerate(pr['units'])]
+    obs = np.concatenate(W) if W else np.zeros((0, 5))
+    return sum(via_blocked(w[np.isin(w[:, 4], vn)], obs, sites, p) for w in W)
+
+
 def components(pr, pose, params):
     p = params_with_defaults(params)
     mask = Mask(pr['board'], p['mask_cell'], p['gap'])
@@ -506,13 +593,14 @@ def components(pr, pose, params):
             'cong': overflow(rudy_grid(pr, pose, p), p, cell_weights(pr, p)),
             'overlap': overlap(pr, pose),
             'oob': sum(forbidden(pr, pose, mask, i) for i, u in enumerate(pr['units']) if not u['fixed']),
-            'spacing': spacing(pr, pose)}
+            'spacing': spacing(pr, pose),
+            'via': via_room(pr, pose, p)}
 
 
 def weighted(comp, params):
     p = params_with_defaults(params)
     return (p['w_wl'] * comp['hpwl'] + p['w_cong'] * comp['cong'] + p['w_ov'] * comp['overlap']
-            + p['w_oob'] * comp['oob'] + p['w_sp'] * comp.get('spacing', 0.0))
+            + p['w_oob'] * comp['oob'] + p['w_sp'] * comp.get('spacing', 0.0) + p['w_via'] * comp.get('via', 0))
 
 
 def total(pr, pose, params):
@@ -594,13 +682,51 @@ class Evaluator:
                      sum(self.forb),
                      0.0]
         self.comp[2], self.comp[4] = self._overlap_all()
+        # via room: via-net pads (lvia) and the copper box of each unit (CB)
+        self.vn = list(pr.get('via_nets') or ())
+        self.vsites = ViaSites(pr['board'], p['via_d'] / 2) if self.vn else None
+        self.vreach = via_reach(p)
+        self.lcu = [[world_cu(u, (0.0, 0.0, r)) for r in range(4)] for u in us]
+        self.lvia = [np.isin(c[0][:, 4], self.vn) for c in self.lcu]
+        self.CB = np.zeros((self.n, 4))
+        for i in range(self.n):
+            self._set_cb(i)
+        self.vb = [self._vcount(i) for i in range(self.n)]
+        self.comp.append(sum(self.vb))
         self.cost = self._weighted(self.comp)
         self.pending = None
 
     # helpers
     def _weighted(self, c):
         p = self.p
-        return p['w_wl'] * c[0] + p['w_cong'] * c[1] + p['w_ov'] * c[2] + p['w_oob'] * c[3] + p['w_sp'] * c[4]
+        return (p['w_wl'] * c[0] + p['w_cong'] * c[1] + p['w_ov'] * c[2] + p['w_oob'] * c[3] + p['w_sp'] * c[4]
+                + p['w_via'] * c[5])
+
+    def _cu(self, i):
+        return self.lcu[i][self.R[i]] + (self.X[i], self.Y[i], self.X[i], self.Y[i], 0.0)
+
+    def _set_cb(self, i):
+        c = self.lcu[i][self.R[i]]
+        if not len(c):
+            self.CB[i] = (math.inf, math.inf, -math.inf, -math.inf)  # meets nothing
+            return
+        self.CB[i] = (c[:, 0].min() + self.X[i], c[:, 1].min() + self.Y[i],
+                      c[:, 2].max() + self.X[i], c[:, 3].max() + self.Y[i])
+
+    def _cb_near(self, b, g):
+        """Units whose copper box meets box b grown by g."""
+        C = self.CB
+        return np.nonzero((C[:, 0] < b[2] + g) & (C[:, 2] > b[0] - g) & (C[:, 1] < b[3] + g) & (C[:, 3] > b[1] - g))[0]
+
+    def _vcount(self, i):
+        if self.vsites is None or not self.lvia[i].any():
+            return 0
+        obs = np.concatenate([self._cu(int(k)) for k in self._cb_near(self.CB[i], self.vreach)])
+        return via_blocked(self._cu(i)[self.lvia[i]], obs, self.vsites, self.p)
+
+    def _via_units(self, M):
+        """Units with via pads whose count can depend on the copper of the units M (at their current pose)."""
+        return {int(j) for i in M for j in self._cb_near(self.CB[i], self.vreach) if self.lvia[j].any()}
 
     def _set_ub(self, i):
         b = self.lbox[i][self.R[i]]
@@ -721,7 +847,7 @@ class Evaluator:
 
     def components(self):
         return {'hpwl': self.comp[0], 'cong': self.comp[1], 'overlap': self.comp[2], 'oob': self.comp[3],
-                'spacing': self.comp[4]}
+                'spacing': self.comp[4], 'via': self.comp[5]}
 
     def unit_penalty(self, i):
         """Spacing overlap + forbidden area of one unit (0 = legal)."""
@@ -765,10 +891,19 @@ class Evaluator:
         pad_old = [(i, self._pad_cells(i)) for i in M] if self.pd else []
         ov0, sp0 = self._moved_pairs(M, Ms)
         fb0 = sum(self.forb[i] for i in M)
+        va = self._via_units(M) if self.vsites is not None else set()
         for i, x, y, r in moves:
             self.X[i], self.Y[i], self.R[i] = float(x), float(y), int(r) % 4
             self._set_ub(i)
+            self._set_cb(i)
         ov1, sp1 = self._moved_pairs(M, Ms)
+        old_vb = []
+        if self.vsites is not None:
+            va |= self._via_units(M)
+            old_vb = [(j, self.vb[j]) for j in va]
+            for j in va:
+                self.vb[j] = self._vcount(j)
+        dvia = sum(self.vb[j] - v for j, v in old_vb)
         old_forb = [(i, self.forb[i]) for i in M]
         for i in M:
             self.forb[i] = self._forb(i)
@@ -804,11 +939,11 @@ class Evaluator:
                 if c1 is not None:
                     np.add.at(self.G, c1, self.pd)
             dcong = self._excess(reg) - e0
-        d = [dwl, dcong, ov1 - ov0, fb1 - fb0, sp1 - sp0]
+        d = [dwl, dcong, ov1 - ov0, fb1 - fb0, sp1 - sp0, dvia]
         delta = self._weighted(d)
-        self.pending = (old_pose, old_forb, old_nets, saved, list(self.comp), self.cost)
+        self.pending = (old_pose, old_forb, old_nets, saved, list(self.comp), self.cost, old_vb)
         self.last_old = [(i, x, y, r) for i, x, y, r in old_pose]
-        for a in range(5):
+        for a in range(6):
             self.comp[a] += d[a]
         self.cost += delta
         return delta
@@ -817,10 +952,13 @@ class Evaluator:
         self.pending = None
 
     def revert(self):
-        old_pose, old_forb, old_nets, saved, comp, c = self.pending
+        old_pose, old_forb, old_nets, saved, comp, c, old_vb = self.pending
         for i, x, y, r in old_pose:
             self.X[i], self.Y[i], self.R[i] = x, y, r
             self._set_ub(i)
+            self._set_cb(i)
+        for j, v in old_vb:
+            self.vb[j] = v
         for i, f in old_forb:
             self.forb[i] = f
         for k, b, ln, rd in old_nets:

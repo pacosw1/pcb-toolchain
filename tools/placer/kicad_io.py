@@ -233,7 +233,7 @@ def _decaps(fps, member, dist):
 
 def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), free_box=None,
                  region_refs=(), region_weight=1.0, region_box=None, spacing=(0.5, 1.0), tie=0.0,
-                 rigid_nets=(), decap_tie=0.0, keepout_zones=(), edges=None, zone_refs=None, domains=None):
+                 rigid_nets=(), decap_tie=0.0, keepout_zones=(), edges=None, zone_refs=None, domains=None, via_nets=()):
     board = pcbnew.LoadBoard(path)
     holes, pairs, ignored = [], [], []
     if domains is None:  # single source: the board .kicad_dru
@@ -251,6 +251,9 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
                 (z.GetDoNotAllowFootprints() and z.GetLayerSet().Contains(pcbnew.F_Cu))  # all parts are on top
                 or any(fnmatch.fnmatchcase(z.GetZoneName(), p) for p in keepout_zones)):
             keepouts.append(poly_points(z.Outline().Outline(0)))
+    via_keepouts = [poly_points(z.Outline().Outline(0)) for z in board.Zones()  # vias pass all layers
+                    if z.GetIsRuleArea() and z.GetDoNotAllowVias() and z.Outline().OutlineCount()
+                    and z.GetZoneName() not in (zone_refs or {})]
     lays = {board.GetLayerID(n) for n in keepout_layers}
     for d in board.GetDrawings():
         if d.GetLayer() in lays and d.GetClass() == 'PCB_SHAPE':
@@ -398,6 +401,8 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
             [round(mm(bb.GetX()) - ox, 6), round(mm(bb.GetY()) - oy, 6),
              round(mm(bb.GetRight()) - ox, 6), round(mm(bb.GetBottom()) - oy, 6)]
             for r in u['refs'] for bb in (p.GetBoundingBox() for p in by_ref[r].Pads())]
+        out_units[-1]['cu'] = [box + [p.GetNetCode()] for box, p in
+                               zip(pad_boxes, (p for r in u['refs'] for p in by_ref[r].Pads()))]
         if u['box']:  # a block: its pads are the copper for the edge band
             out_units[-1]['edge_pads'] = pad_boxes
         else:  # pads meet kept copper; a block also moves its tracks, so its courtyards stay the test
@@ -443,9 +448,11 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
     fixed_copper = [_copper_row(board, t) for t in locked]
     return {'board_file': os.path.abspath(path), 'units': out_units, 'nets': nets,
             'board': {'outline': outline, 'keepouts': keepouts, 'edge_clearance': edge, 'copper': copper,
-                      'fixed_copper': fixed_copper},
+                      'fixed_copper': fixed_copper, 'via_keepouts': via_keepouts},
             'region': region, 'move_box': list(free_box) if free_box else None, 'decaps': decaps,
-            'dru_ignored': ignored, 'class_gaps': _class_gaps(dom_ids, domains, pairs) if dom_ids else None}
+            'dru_ignored': ignored, 'class_gaps': _class_gaps(dom_ids, domains, pairs) if dom_ids else None,
+            'via_nets': sorted(n.GetNetCode() for name, n in board.GetNetsByName().items()
+                               if any(fnmatch.fnmatchcase(str(name), q) for q in via_nets))}
 
 
 def _domain(pad, domains):
@@ -541,6 +548,8 @@ def _edges_and_block_zones(board, units, index, member, by_ref, edges, zone_refs
         u.setdefault('ko', []).append(len(u['rects']))
         u['rects'].append([r[0] - u['x'], r[1] - u['y'], r[2] - u['x'], r[3] - u['y'], 0.0])
         u.setdefault('zones', []).append(z.m_Uuid.AsString())
+        if z.GetDoNotAllowVias():  # net code -1: a no-via area for the via room cost
+            u['cu'].append([r[0] - u['x'], r[1] - u['y'], r[2] - u['x'], r[3] - u['y'], -1])
 
 
 def _a(v):

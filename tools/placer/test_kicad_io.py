@@ -46,6 +46,57 @@ class RoundTripTest(unittest.TestCase):
     def unit(self, pr, ref):
         return next(i for i, u in enumerate(pr['units']) if ref in u['refs'])
 
+    def test_via_nets_give_each_unit_its_copper_pads_with_the_net_code(self):
+        b = pcbnew.LoadBoard(self.board)
+        gnd = b.FindNet('GND').GetNetCode()
+        self.assertEqual(kicad_io.read_problem(self.board)['via_nets'], [])
+        pr = kicad_io.read_problem(self.board, via_nets=['GND'])
+        self.assertEqual(pr['via_nets'], [gnd])
+        for u in pr['units']:
+            pads = [p for r in u['refs'] for p in b.FindFootprintByReference(r).Pads()]
+            self.assertEqual(len(u['cu']), len(pads))
+            self.assertEqual(sorted(q[4] for q in u['cu']), sorted(p.GetNetCode() for p in pads))
+        self.assertTrue(any(q[4] == gnd for u in pr['units'] for q in u['cu']))
+        self.assertEqual(cost.via_room(pr, cost.initial_pose(pr), {}), 0)  # the routed original has via room
+
+    def test_no_via_rule_areas_are_board_via_keepouts_or_move_with_their_unit(self):
+        shutil.copytree(os.path.join(self.tmp, 'b'), os.path.join(self.tmp, 'v'))  # pcbnew keeps a loaded project
+        path = os.path.join(self.tmp, 'v', 'PWR-24V-5V.kicad_pcb')
+        b = pcbnew.LoadBoard(path)
+        c = b.FindFootprintByReference('U1').GetPosition()
+        x, y = c.x / 1e6, c.y / 1e6
+        z = pcbnew.ZONE(b)
+        z.SetIsRuleArea(True)
+        z.SetDoNotAllowVias(True)
+        z.SetDoNotAllowFootprints(False)
+        z.SetLayerSet(pcbnew.LSET.AllCuMask())
+        z.SetZoneName('NOVIA_T')
+        o = z.Outline()
+        o.NewOutline()
+        for px, py in ((x - 2, y - 1), (x + 2, y - 1), (x + 2, y + 1), (x - 2, y + 1)):
+            o.Append(int(round(px * 1e6)), int(round(py * 1e6)))
+        b.Add(z)
+        pcbnew.SaveBoard(path, b)
+        pr = kicad_io.read_problem(path)
+        n = len(pr['board']['via_keepouts'])
+        self.assertIn([[round(x - 2, 3), round(y - 1, 3)], [round(x + 2, 3), round(y - 1, 3)],
+                       [round(x + 2, 3), round(y + 1, 3)], [round(x - 2, 3), round(y + 1, 3)]],
+                      [[[round(v, 3) for v in q] for q in k] for k in pr['board']['via_keepouts']])
+        pr = kicad_io.read_problem(path, zone_refs={'NOVIA_T': 'U1'})
+        self.assertEqual(len(pr['board']['via_keepouts']), n - 1)
+        u = pr['units'][self.unit(pr, 'U1')]
+        rows = [q for q in u['cu'] if q[4] == -1]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual([round(v, 3) for v in (rows[0][0] + u['x'], rows[0][1] + u['y'], rows[0][2] + u['x'],
+                                                rows[0][3] + u['y'])],
+                         [round(x - 2, 3), round(y - 1, 3), round(x + 2, 3), round(y + 1, 3)])
+
+    def test_cli_read_takes_the_via_nets(self):
+        from placer import cli
+        out = os.path.join(self.tmp, 'p.json')
+        cli.main(['read', self.board, '-o', out, '--via-net', 'GND', 'NOPE*'])
+        self.assertEqual(json.load(open(out))['via_nets'], [pcbnew.LoadBoard(self.board).FindNet('GND').GetNetCode()])
+
     def test_a_locked_track_is_fixed_copper_and_the_writer_keeps_it(self):
         b = pcbnew.LoadBoard(self.board)
         t = next(t for t in b.GetTracks() if t.GetClass() == 'PCB_TRACK')
