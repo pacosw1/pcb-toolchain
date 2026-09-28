@@ -74,22 +74,37 @@ class TableTest(unittest.TestCase):
 
 
 class PortfolioPickTest(unittest.TestCase):
-    """Seed portfolio: K searches with other seeds, one route of each best pose; the fewest unrouted wins,
-    a tie goes to the lower search cost, a pose without a route result never wins."""
+    """Seed portfolio: K searches with other seeds, one route of each best pose; the fewest DRC errors win, then
+    the fewest unrouted, then the lower search cost; a pose without a route result never wins."""
 
     def test_the_fewest_unrouted_wins(self):
-        runs = [{'name': 's23', 'unrouted': 9, 'cost': 1.0}, {'name': 's37', 'unrouted': 5, 'cost': 9.0},
-                {'name': 's51', 'unrouted': 30, 'cost': 0.5}]
+        runs = [{'name': 's23', 'unrouted': 9, 'errors': 0, 'cost': 1.0},
+                {'name': 's37', 'unrouted': 5, 'errors': 0, 'cost': 9.0},
+                {'name': 's51', 'unrouted': 30, 'errors': 0, 'cost': 0.5}]
         self.assertEqual(bench.portfolio_pick(runs)['name'], 's37')
 
     def test_a_tie_goes_to_the_lower_cost(self):
-        runs = [{'name': 'a', 'unrouted': 5, 'cost': 1005.6}, {'name': 'b', 'unrouted': 5, 'cost': 1001.0}]
+        runs = [{'name': 'a', 'unrouted': 5, 'errors': 0, 'cost': 1005.6},
+                {'name': 'b', 'unrouted': 5, 'errors': 0, 'cost': 1001.0}]
         self.assertEqual(bench.portfolio_pick(runs)['name'], 'b')
 
+    def test_a_pose_with_drc_errors_loses_to_any_pose_without(self):
+        # VX4 2026-09-28: s51 (5 unrouted, 1 error) won over s37 (30, 0) and s23 (48, 0).
+        runs = [{'name': 's23', 'unrouted': 48, 'errors': 0, 'cost': 1.0},
+                {'name': 's51', 'unrouted': 5, 'errors': 1, 'cost': 1.0}]
+        self.assertEqual(bench.portfolio_pick(runs)['name'], 's23')
+
+    def test_when_all_poses_have_errors_the_fewest_errors_win(self):
+        runs = [{'name': 's79', 'unrouted': 56, 'errors': 6, 'cost': 1.0},
+                {'name': 's89', 'unrouted': 10, 'errors': 10, 'cost': 1.0},
+                {'name': 's97', 'unrouted': 45, 'errors': 3, 'cost': 1.0}]
+        self.assertEqual(bench.portfolio_pick(runs)['name'], 's97')
+
     def test_a_pose_without_a_route_result_never_wins(self):
-        runs = [{'name': 'a', 'unrouted': None, 'cost': 0.1}, {'name': 'b', 'unrouted': 80, 'cost': 5.0}]
+        runs = [{'name': 'a', 'unrouted': None, 'errors': None, 'cost': 0.1},
+                {'name': 'b', 'unrouted': 80, 'errors': 3, 'cost': 5.0}]
         self.assertEqual(bench.portfolio_pick(runs)['name'], 'b')
-        self.assertIsNone(bench.portfolio_pick([{'name': 'a', 'unrouted': None, 'cost': 0.1}]))
+        self.assertIsNone(bench.portfolio_pick([{'name': 'a', 'unrouted': None, 'errors': None, 'cost': 0.1}]))
 
     def test_pick_command_reads_the_search_cost_and_the_last_unrouted_line(self):
         import json
@@ -103,7 +118,7 @@ class PortfolioPickTest(unittest.TestCase):
             json.dump({'candidates': [{'cost': cost, 'pose': []}]}, open(res, 'w'))
             open(rl, 'w').write(log)
             args.append('%s:%s:%s' % (name, res, rl))
-        self.assertEqual(bench.main(['pick'] + args), 's2')
+        self.assertEqual(bench.main(['pick'] + args), 's1')   # s2 has the same unrouted and a lower cost, but ERRORS 1
 
 
 class ScatterTest(unittest.TestCase):
