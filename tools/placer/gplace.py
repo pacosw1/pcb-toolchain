@@ -8,6 +8,8 @@ Objective: WA wirelength (weighted-average smooth HPWL, pin centres) + lambda * 
   - Nesterov descent with a Lipschitz step estimate (a unit moves at most max_move bin widths per step), a
     diagonal preconditioner (pins + lambda * area) and a growing lambda (x mu per iteration) until the
     overflow is below `stop_overflow`.
+  - Routability (RePlAce): each time the overflow falls below route_overflow (route_rounds times), the units
+    in bins with RUDY above the routing capacity grow in area (inflate(), at most max_infl in total).
   - Start: all movable units at the outline box centre with a small jitter (init 'centre'), or at their
     places (init 'pose', a warm start).
   - Rotation stays as it is (the annealer makes the 90 degree turns). Fixed units do not move. Each unit
@@ -23,7 +25,7 @@ from . import cost
 
 GLOBAL = {'bins': 64, 'target': 0.9, 'iters': 1000, 'stop_overflow': 0.1, 'mu': 1.05, 'gamma': None,
           'max_move': 0.5, 'infl': 1.0, 'seed': 1,
-          'init': 'centre'}
+          'init': 'centre', 'route_rounds': 2, 'route_overflow': 0.2, 'max_infl': 2.0}
 
 
 def _box(u, r):
@@ -56,6 +58,7 @@ class Model:
                 for u, r in zip(us, self.R) for rs in [[cost.rot_rect(rc, r) for rc in u['rects']]]]
         self.bare = np.array(bare, dtype=float).reshape(-1, 4)
         self.area = (self.ox1 - self.ox0) * (self.oy1 - self.oy0)
+        self.infl_total = np.ones(self.n)
         self.edges = [u.get('edge') for u in us]
         # pins (centres, rotated)
         pu, px, py, pn, w = [], [], [], [], []
@@ -117,6 +120,43 @@ class Model:
         ax = np.clip(np.minimum(x1[:, None], self.ex[None, 1:]) - np.maximum(x0[:, None], self.ex[None, :-1]), 0, None)
         ay = np.clip(np.minimum(y1[:, None], self.ey[None, 1:]) - np.maximum(y0[:, None], self.ey[None, :-1]), 0, None)
         return ax, ay
+
+    def rudy(self, x, y):
+        """RUDY per bin (mm of track per mm2): each net spreads (w + h) * weight uniformly over its pin box."""
+        px, py = x[self.pu] + self.pdx, y[self.pu] + self.pdy
+        x0, x1 = np.full(self.nnet, np.inf), np.full(self.nnet, -np.inf)
+        y0, y1 = np.full(self.nnet, np.inf), np.full(self.nnet, -np.inf)
+        np.minimum.at(x0, self.pn, px)
+        np.maximum.at(x1, self.pn, px)
+        np.minimum.at(y0, self.pn, py)
+        np.maximum.at(y1, self.pn, py)
+        ok = np.isfinite(x0) & (np.bincount(self.pn, minlength=self.nnet) > 1)
+        x0, x1, y0, y1, w = x0[ok], x1[ok], y0[ok], y1[ok], self.nw[ok]
+        x1, y1 = np.maximum(x1, x0 + self.bw), np.maximum(y1, y0 + self.bh)  # a line net covers one bin row
+        dens = w * ((x1 - x0) + (y1 - y0)) / ((x1 - x0) * (y1 - y0))
+        ax = np.clip(np.minimum(x1[:, None], self.ex[None, 1:]) - np.maximum(x0[:, None], self.ex[None, :-1]), 0, None)
+        ay = np.clip(np.minimum(y1[:, None], self.ey[None, 1:]) - np.maximum(y0[:, None], self.ey[None, :-1]), 0, None)
+        return (ax * dens[:, None]).T @ ay / self.barea
+
+    def inflate(self, x, y):
+        """RePlAce cell inflation: each movable unit grows in area by its overlap-weighted RUDY over the routing
+        capacity (cost limit * layers / pitch), clipped to [1, max_infl] in total. Returns the area factors."""
+        cp = cost.params_with_defaults(self.p)
+        cap = cp['limit'] * cp['layers'] / cp['pitch']
+        R = self.rudy(x, y)
+        ax, ay = self._overlaps(x, y, self.mov)
+        a = ax.sum(1) * ay.sum(1)
+        r = np.einsum('ik,kl,il->i', ax, R, ay) / np.maximum(a, 1e-12)
+        f = np.ones(self.n)
+        f[self.mov] = np.clip(r / cap, 1.0, None)
+        f = np.minimum(self.infl_total * f, self.p['max_infl']) / self.infl_total
+        self.infl_total = self.infl_total * f
+        s = np.sqrt(f)
+        cx, cy = (self.ox0 + self.ox1) / 2, (self.oy0 + self.oy1) / 2
+        self.ox0, self.ox1 = cx - (cx - self.ox0) * s, cx + (self.ox1 - cx) * s
+        self.oy0, self.oy1 = cy - (cy - self.oy0) * s, cy + (self.oy1 - cy) * s
+        self.area = (self.ox1 - self.ox0) * (self.oy1 - self.oy0)
+        return self.infl_total
 
     def wa(self, x, y, gamma=None):
         """Weighted-average wirelength and its gradient (fixed units get 0)."""
@@ -211,6 +251,7 @@ def place(pr, params=None, pose=None, log=None):
     hist = []
     v, v_prev, g_prev = u.copy(), None, None
     ak = 1.0
+    rounds = 0
     step = 0.1 * max(m.bw, m.bh)
     for k in range(p['iters']):
         gam = m.gamma_for(ovf)
@@ -218,7 +259,12 @@ def place(pr, params=None, pose=None, log=None):
         hist.append({'iter': k, 'wa': w, 'overflow': ovf, 'lambda': lam})
         if log and k % 50 == 0:
             log('gplace %d wa %.1f overflow %.3f lambda %.3g' % (k, w, ovf, lam))
-        if ovf < p['stop_overflow'] and k > 0:
+        if ovf < p['route_overflow'] and rounds < p['route_rounds']:
+            m.inflate(v[:n], v[n:])  # routability: grow the units under congestion, then spread again
+            rounds += 1
+            hist[-1]['inflated'] = True
+            _, ovf, gw, gd = grad(v, lam, gam)
+        elif ovf < p['stop_overflow'] and k > 0:
             u = v  # the measured point
             break
         pre = np.concatenate([m.npin + lam * m.area, m.npin + lam * m.area])

@@ -94,6 +94,30 @@ class DensityTest(unittest.TestCase):
         self.assertAlmostEqual(res['pose'][5][1] + 1.0, 20.0 - 0.5)
 
 
+class RoutabilityTest(unittest.TestCase):
+    """RePlAce: a unit in bins where RUDY is above the routing capacity (cost limit * layers / pitch mm of
+    track per mm2) grows by the ratio, at most max_infl in area; a unit in free bins keeps its size."""
+
+    def bundle(self):
+        us = [unit('F1', 2, 10, [[-1, -1, 1, 1, 0.0]], fixed=True), unit('F2', 38, 10, [[-1, -1, 1, 1, 0.0]], fixed=True),
+              unit('A', 20, 10, [[-1, -1, 1, 1, 0.0]]), unit('B', 20, 17, [[-1, -1, 1, 1, 0.0]])]
+        ns = [{'name': 'N%d' % k, 'weight': 1.0, 'pins': [[0, -.1, -1.1, .1, -.9], [1, -.1, .9, .1, 1.1]]}
+              for k in range(20)]
+        return problem(us, ns, board=box_board(40.0, 20.0))
+
+    def test_units_under_congestion_grow_and_free_units_do_not(self):
+        m = gplace.Model(self.bundle(), {'bins': 32, 'max_infl': 2.0})
+        f = m.inflate(m.x0, m.y0)
+        self.assertAlmostEqual(f[2], 2.0)
+        self.assertAlmostEqual(f[3], 1.0)
+        self.assertAlmostEqual(m.area[2], 2.0 * 4.0)
+        self.assertAlmostEqual(m.area[3], 4.0)
+
+    def test_place_runs_the_inflation_rounds(self):
+        res = gplace.place(self.bundle(), {'bins': 32, 'iters': 400, 'route_rounds': 2})
+        self.assertEqual(sum(1 for h in res['history'] if h.get('inflated')), 2)
+
+
 class ConvergeTest(unittest.TestCase):
     def test_two_clusters_converge(self):
         pr = clusters(seed=3)
@@ -110,3 +134,15 @@ class ConvergeTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class PipelineTest(unittest.TestCase):
+    def test_optimize_with_global_starts_the_annealer_from_the_global_placement(self):
+        from placer import anneal
+        pr = clusters(seed=3)
+        prm = {'global': 1, 'bins': 32, 'iters': 500, 'rudy_cell': 1.0, 'mask_cell': 0.25}
+        g = gplace.place(pr, anneal.params_all(prm))
+        res = anneal.optimize(pr, prm, workers=1, epochs=2, steps=300, seed=1, top=1)
+        self.assertEqual([tuple(q) for q in res['initial']['pose']], [tuple(q) for q in g['pose']])
+        self.assertEqual(res['global']['iters'], len(g['history']))
+        self.assertLess(res['candidates'][0]['components']['hpwl'], cost.hpwl(pr, cost.initial_pose(pr)))

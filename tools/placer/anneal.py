@@ -1,6 +1,8 @@
 """Search: simulated annealing on the incremental cost, one run per core, best exchange per epoch.
 
 optimize(problem, params, workers, epochs, steps, seed, top) -> result dict
+  0. With params['global'] = 1: analytic global placement (gplace.place) first; the annealer starts from
+     its places (pass a low t0 to use the annealer as detailed placement).
   1. T0 = mean uphill delta of 200 random moves at the full window (or params['t0']).
      T falls geometrically from T0 to T0 * t_ratio over all epochs; the move window falls from
      w0 (half the board) to w1 in the same way.
@@ -13,6 +15,7 @@ Moves: translate (dx, dy multiples of params['grid'], unit origin inside problem
 or else the outline box), rotate 90/180/270 deg,
 swap the places of two units whose courtyard areas differ by at most swap_ratio.
 """
+import copy
 import math
 import multiprocessing as mp
 import random
@@ -242,6 +245,14 @@ def _finish(task):
 
 def optimize(pr, params, workers=1, epochs=10, steps=10000, seed=1, top=3, log=None):
     p = params_all(params)
+    glob = None
+    if p.get('global'):  # analytic global placement first (gplace.py); the annealer starts from it
+        from . import gplace
+        g = gplace.place(pr, p, log=log)
+        pr = copy.deepcopy(pr)
+        for u, (x, y, _) in zip(pr['units'], g['pose']):
+            u['x'], u['y'] = x, y
+        glob = {'iters': len(g['history']), 'overflow': g['history'][-1]['overflow'] if g['history'] else None}
     _init(pr, p)
     pf = epoch_params(p, epochs - 1, epochs)
     ev0 = _evaluator(None, epoch_params(p, 0, epochs))
@@ -294,6 +305,6 @@ def optimize(pr, params, workers=1, epochs=10, steps=10000, seed=1, top=3, log=N
         if key not in seen:
             seen.add(key)
             cands.append(c)
-    return {'initial': initial, 'candidates': cands[:top], 'history': history, 't0': t0, 'seed': seed, 'workers': workers,
+    return {'global': glob, 'initial': initial, 'candidates': cands[:top], 'history': history, 't0': t0, 'seed': seed, 'workers': workers,
             'epochs': epochs, 'steps': steps, 'params': p, 'wall_s': time.time() - t_start,
             'moves_per_s_per_worker': epochs * steps * workers / busy if busy else 0.0}
