@@ -47,7 +47,7 @@ import numpy as np
 # limit 0.7 with the net tracks: calibrated on RELAY-4 bench v3 and v4 (O < S < P, O < P2 < P; 0.1 ranked O worst).
 DEFAULTS = {'rudy_cell': 1.0, 'mask_cell': 0.1, 'layers': 2, 'pitch': 0.4, 'limit': 0.7, 'pin_demand': 0.0, 'gap': 0.2,
             'w_wl': 1.0, 'w_cong': 1.0, 'w_ov': 20.0, 'w_oob': 20.0, 'w_sp': 2.0,
-            'via_d': 0.6, 'via_clr': 0.2, 'w_via': 10.0, 'w_x': 0.0}  # via 0.6/0.3 mm, clearance 0.2 mm (default net class)
+            'via_d': 0.6, 'via_clr': 0.2, 'w_via': 10.0, 'w_x': 0.0, 'w_row': 0.0, 'row_pitch': 1.0}  # via 0.6/0.3 mm, clearance 0.2 mm (default net class)
 EPS = 1e-9
 ROUTE_LAYERS = ('F.Cu', 'B.Cu')  # the `layers` routing layers; copper on other layers uses no RUDY capacity
 OBSTACLE_LAYERS = ('F.Cu', 'via')  # kept copper that a top-side part must not cover
@@ -631,6 +631,49 @@ def crossings(pr, pose):
     return float(cross_matrix(S, sn, S, sn).sum() / 2) if len(S) else 0.0
 
 
+ROW_TOL = 0.2  # mm: rect sizes of one block kind may differ by this much (footprint rounding)
+
+
+def row_groups(pr):
+    """Repeated blocks: movable units of 2 or more parts with the same part count and pad count and rect sizes
+    within ROW_TOL; groups of 2 or more (unit indices)."""
+    groups = []  # [(part count, pad count, sorted rect sizes), [unit indices]]
+    for i, u in enumerate(pr['units']):
+        if u['fixed'] or len(u.get('refs', [])) < 2:
+            continue
+        sig = (len(u['refs']), len(u.get('pads', [])), sorted((r[2] - r[0], r[3] - r[1]) for r in u['rects']))
+        for g in groups:
+            s = g[0]
+            if s[:2] == sig[:2] and len(s[2]) == len(sig[2]) and all(
+                    abs(a[0] - b[0]) <= ROW_TOL and abs(a[1] - b[1]) <= ROW_TOL for a, b in zip(s[2], sig[2])):
+                g[1].append(i)
+                break
+        else:
+            groups.append((sig, [i]))
+    return [g for _, g in groups if len(g) >= 2]
+
+
+def row_cost(pts, pitch=1.0):
+    """Row term of one group of points: sum |minor coordinate - median| on the axis with the smaller spread,
+    + pitch * sum |gap - mean gap| along the other axis."""
+    xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+
+    def dev(v):
+        m = float(np.median(v))
+        return sum(abs(a - m) for a in v)
+    dx, dy = dev(xs), dev(ys)
+    minor, major = (dy, xs) if dy <= dx else (dx, ys)
+    s = sorted(major)
+    gaps = [b - a for a, b in zip(s, s[1:])]
+    mg = sum(gaps) / len(gaps)
+    return minor + pitch * sum(abs(g - mg) for g in gaps)
+
+
+def rows(pr, pose, pitch=1.0):
+    """Row term: repeated blocks out of a common row or column, or at an unequal pitch (row_cost per group)."""
+    return sum(row_cost([pose[i][:2] for i in g], pitch) for g in row_groups(pr))
+
+
 def components(pr, pose, params):
     p = params_with_defaults(params)
     mask = Mask(pr['board'], p['mask_cell'], p['gap'])
@@ -640,14 +683,15 @@ def components(pr, pose, params):
             'oob': sum(forbidden(pr, pose, mask, i) for i, u in enumerate(pr['units']) if not u['fixed']),
             'spacing': spacing(pr, pose),
             'via': via_room(pr, pose, p),
-            'crossing': crossings(pr, pose) if p['w_x'] else 0.0}  # not computed at weight 0 (speed)
+            'crossing': crossings(pr, pose) if p['w_x'] else 0.0,  # not computed at weight 0 (speed)
+            'row': rows(pr, pose, p['row_pitch']) if p['w_row'] else 0.0}
 
 
 def weighted(comp, params):
     p = params_with_defaults(params)
     return (p['w_wl'] * comp['hpwl'] + p['w_cong'] * comp['cong'] + p['w_ov'] * comp['overlap']
             + p['w_oob'] * comp['oob'] + p['w_sp'] * comp.get('spacing', 0.0) + p['w_via'] * comp.get('via', 0)
-            + p['w_x'] * comp.get('crossing', 0.0))
+            + p['w_x'] * comp.get('crossing', 0.0) + p['w_row'] * comp.get('row', 0.0))
 
 
 def total(pr, pose, params):
@@ -747,6 +791,11 @@ class Evaluator:
         if not p['w_x']:  # weight 0: not computed (speed)
             self.S = self.S[:0]
         self.comp.append(float(cross_matrix(self.S, self.sn, self.S, self.sn).sum() / 2) if len(self.S) else 0.0)
+        # repeated-block rows (not computed at weight 0)
+        self.rg = row_groups(pr) if p['w_row'] else []
+        self.unit_rg = {i: k for k, g in enumerate(self.rg) for i in g}
+        self.rv = [row_cost([(self.X[i], self.Y[i]) for i in g], p['row_pitch']) for g in self.rg]
+        self.comp.append(sum(self.rv))
         self.cost = self._weighted(self.comp)
         self.pending = None
 
@@ -754,7 +803,7 @@ class Evaluator:
     def _weighted(self, c):
         p = self.p
         return (p['w_wl'] * c[0] + p['w_cong'] * c[1] + p['w_ov'] * c[2] + p['w_oob'] * c[3] + p['w_sp'] * c[4]
-                + p['w_via'] * c[5] + p['w_x'] * c[6])
+                + p['w_via'] * c[5] + p['w_x'] * c[6] + p['w_row'] * c[7])
 
     def _cu(self, i):
         return self.lcu[i][self.R[i]] + (self.X[i], self.Y[i], self.X[i], self.Y[i], 0.0)
@@ -912,7 +961,7 @@ class Evaluator:
 
     def components(self):
         return {'hpwl': self.comp[0], 'cong': self.comp[1], 'overlap': self.comp[2], 'oob': self.comp[3],
-                'spacing': self.comp[4], 'via': self.comp[5], 'crossing': self.comp[6]}
+                'spacing': self.comp[4], 'via': self.comp[5], 'crossing': self.comp[6], 'row': self.comp[7]}
 
     def unit_penalty(self, i):
         """Spacing overlap + forbidden area of one unit (0 = legal)."""
@@ -1012,11 +1061,16 @@ class Evaluator:
                 if c1 is not None:
                     np.add.at(self.G, c1, self.pd)
             dcong = self._excess(reg) - e0
-        d = [dwl, dcong, ov1 - ov0, fb1 - fb0, sp1 - sp0, dvia, dx_]
+        old_rv = [(k, self.rv[k]) for k in sorted({self.unit_rg[i] for i, *_ in old_pose if i in self.unit_rg})]
+        drow = 0.0
+        for k, v in old_rv:
+            self.rv[k] = row_cost([(self.X[i], self.Y[i]) for i in self.rg[k]], self.p['row_pitch'])
+            drow += self.rv[k] - v
+        d = [dwl, dcong, ov1 - ov0, fb1 - fb0, sp1 - sp0, dvia, dx_, drow]
         delta = self._weighted(d)
-        self.pending = (old_pose, old_forb, old_nets, saved, list(self.comp), self.cost, old_vb, old_seg)
+        self.pending = (old_pose, old_forb, old_nets, saved, list(self.comp), self.cost, old_vb, old_seg, old_rv)
         self.last_old = [(i, x, y, r) for i, x, y, r in old_pose]
-        for a in range(7):
+        for a in range(8):
             self.comp[a] += d[a]
         self.cost += delta
         return delta
@@ -1025,7 +1079,9 @@ class Evaluator:
         self.pending = None
 
     def revert(self):
-        old_pose, old_forb, old_nets, saved, comp, c, old_vb, old_seg = self.pending
+        old_pose, old_forb, old_nets, saved, comp, c, old_vb, old_seg, old_rv = self.pending
+        for k, v in old_rv:
+            self.rv[k] = v
         if old_seg is not None:
             self.S[old_seg[0]] = old_seg[1]
         for i, x, y, r in old_pose:

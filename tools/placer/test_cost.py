@@ -692,6 +692,60 @@ class TrackWidthTest(unittest.TestCase):
             self.assertAlmostEqual(ev.cost, cost.total(pr, ev.pose(), p), places=5)
 
 
+class RowTest(unittest.TestCase):
+    """Repeated blocks (units of 2 or more parts with the same part count, pad count and rect sizes) should sit
+    in one row or column at an equal pitch. row = sum over each group of |minor coordinate - median| (the
+    axis with the smaller spread) + sum |gap - mean gap| along the other axis. Weight w_row, default 0."""
+
+    def block(self, name, x, y, w=4.0):
+        u = unit(name, x, y, [[-w / 2, -2, w / 2, 2, 0.5]])
+        u['refs'] = [name + '_K', name + '_R']
+        return u
+
+    def pr(self, ys=(10, 10, 10, 10), xs=(10, 20, 30, 40)):
+        us = [self.block('B%d' % k, x, y) for k, (x, y) in enumerate(zip(xs, ys))]
+        us.append(unit('R1', 12, 30, [[-.5, -.5, .5, .5, 0.5]]))  # a single part: not a block
+        us.append(self.block('W', 25, 40, w=6.0))  # another block kind: not in the row group
+        return problem(us, [], board=square_board(60))
+
+    def row(self, pr):
+        return cost.rows(pr, cost.initial_pose(pr))
+
+    def test_equal_blocks_in_a_row_at_equal_pitch_cost_0(self):
+        self.assertEqual(self.row(self.pr()), 0.0)
+        self.assertEqual(self.row(self.pr(ys=(10, 20, 30, 40), xs=(5, 5, 5, 5))), 0.0)  # a column
+
+    def test_a_block_out_of_the_row_costs_more_than_0(self):
+        self.assertAlmostEqual(self.row(self.pr(ys=(10, 10, 18, 10))), 8.0)
+
+    def test_an_unequal_pitch_costs_more_than_0(self):
+        self.assertGreater(self.row(self.pr(xs=(10, 20, 26, 40))), 0.0)
+
+    def test_row_pitch_0_leaves_only_the_alignment(self):
+        pr = self.pr(xs=(10, 20, 26, 40), ys=(10, 10, 13, 10))
+        self.assertAlmostEqual(cost.rows(pr, cost.initial_pose(pr), 0.0), 3.0)  # RELAY-4 O: pitch 24/15/24 mm
+        self.assertGreater(cost.rows(pr, cost.initial_pose(pr)), 3.0)
+
+    def test_blocks_within_0_2_mm_of_each_other_are_one_kind(self):
+        pr = self.pr()
+        pr['units'][2]['rects'][0][2] += 0.1  # 4.1 mm wide: a rounding drift of the same block (RELAY-4 2.65 mm)
+        self.assertEqual(cost.row_groups(pr), [[0, 1, 2, 3]])
+
+    def test_weight_0_is_the_default_and_the_evaluator_is_incremental(self):
+        pr = self.pr(ys=(10, 10, 18, 10))
+        self.assertEqual(cost.components(pr, cost.initial_pose(pr), P)['row'], 0.0)
+        p = dict(P, w_row=2.0)
+        self.assertAlmostEqual(cost.components(pr, cost.initial_pose(pr), p)['row'], 8.0)
+        ev = cost.Evaluator(pr, p)
+        self.assertAlmostEqual(ev.cost, cost.total(pr, ev.pose(), p))
+        rng = random.Random(5)
+        for _ in range(100):
+            ev.propose([(rng.randrange(6), rng.uniform(5, 50), rng.uniform(5, 50), rng.randrange(4))])
+            ev.commit() if rng.random() < .5 else ev.revert()
+            self.assertAlmostEqual(ev.cost, cost.total(pr, ev.pose(), p), places=6)
+            self.assertAlmostEqual(ev.components()['row'], cost.rows(pr, ev.pose()), places=6)
+
+
 class ViaRoomTest(unittest.TestCase):
     """Each pad of a via net (pr['via_nets']) needs a free via site near it: 16 sites (4 sides, 4 corners;
     0.2 and 0.5 mm beyond the pad edge + via radius, as tools/gnd_pad_vias.py). A site is blocked by copper

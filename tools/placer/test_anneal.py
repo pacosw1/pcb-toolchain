@@ -202,7 +202,7 @@ class EndToEndTest(unittest.TestCase):
         self.assertEqual([x['epoch'] for x in h], [1, 2, 3])
         for x in h:
             self.assertEqual(len(x['pose']), len(pr['units']))
-            self.assertEqual(set(x['components']), {'hpwl', 'cong', 'overlap', 'oob', 'spacing', 'via', 'crossing'})
+            self.assertEqual(set(x['components']), {'hpwl', 'cong', 'overlap', 'oob', 'spacing', 'via', 'crossing', 'row'})
             self.assertAlmostEqual(x['components']['hpwl'], cost.hpwl(pr, x['pose']), places=6)
 
     def test_beats_initial_and_random_placement(self):
@@ -280,7 +280,7 @@ class NormalizeTest(unittest.TestCase):
         p = dict(anneal.params_all({}), w_x=2.0)
         comp = {'hpwl': 2800.0, 'cong': 265.0, 'overlap': 100.0, 'oob': 5.0, 'spacing': 0.0, 'via': 3, 'crossing': 546}
         q = anneal.normalized(p, comp)
-        for w, _ in anneal.SOFT:
+        for w in (w for w, _ in anneal.SOFT if p[w]):  # a term at weight 0 cannot gain
             for k in ('w_ov', 'w_oob', 'w_sp'):
                 self.assertGreaterEqual(q[k] / q[w], p[k] / p[w] - 1e-9)
 
