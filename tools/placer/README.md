@@ -53,4 +53,5 @@ Analytic global placement (`gplace.py`, optimize `--param global=1`): ePlace sty
 
 Prior art checked on 2026-09-27 (no code copied):
 - SA_PCB (gitlab.lukevassallo.com/luke/SA_PCB, the SA baseline of RL_PCB): no license file (only `src/main.cpp` has a BSD-3 header; the KicadParser submodule has no license). Do not vendor it. We use its ideas only: the modified Lam schedule (base_lam 0.133, T factor 0.885), swap probability 0.25, and cost terms normalized on observed values. Its reader parses KiCad 5 files (`version 20171130`); a KiCad 10 board is not checked, so it gives no second baseline on RELAY-4 without a converter.
+- Lam + window by T freezes when T drops by a large factor (ALL); a VPR limiter fights the Lam controller; the geometric schedule stays the default.
 - RL_PCB (github.com/LukeVassallo/RL_PCB, MIT): reward = tan of a weighted mean of clipped normalized Euclidean wirelength gain, HPWL gain and a no-overlap flag; "adaptive" = the reference values follow the best seen. Not used.
