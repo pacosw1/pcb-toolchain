@@ -634,6 +634,25 @@ if __name__ == '__main__':
     unittest.main()
 
 
+def spearman(a, b):
+    """Rank correlation; tied values get their mean rank."""
+    def ranks(v):
+        o = sorted(range(len(v)), key=lambda i: v[i])
+        r, k = [0.0] * len(v), 0
+        while k < len(o):
+            j = k
+            while j + 1 < len(o) and v[o[j + 1]] == v[o[k]]:
+                j += 1
+            for m in range(k, j + 1):
+                r[o[m]] = (k + j) / 2
+            k = j + 1
+        return r
+    ra, rb = ranks(a), ranks(b)
+    ma, mb = sum(ra) / len(ra), sum(rb) / len(rb)
+    cov = sum((x - ma) * (y - mb) for x, y in zip(ra, rb))
+    return cov / (sum((x - ma) ** 2 for x in ra) * sum((y - mb) ** 2 for y in rb)) ** 0.5
+
+
 class RudyCalibrationTest(unittest.TestCase):
     # RELAY-4 Freerouting opens (median of 5): bench v3 O 8 < S 133 < P 142; bench v4 O 8, P2 6 < P 67.
     # With the net track widths, the default RUDY limit must rank the routable poses below the failed ones.
@@ -657,6 +676,15 @@ class RudyCalibrationTest(unittest.TestCase):
         c = self.cong('relay4-bench-v4.json')
         self.assertLess(c['O'], c['P'])
         self.assertLess(c['P2'], c['P'])
+
+    def test_default_limit_ranks_the_nine_routed_poses_and_is_never_zero(self):
+        # bench v5: the P3 search drove the term to 0 at limit 0.7 and routed worse (11-13) than O (8)
+        c = self.cong('relay4-bench-v5.json')
+        with open(os.path.join(os.path.dirname(__file__), 'fixtures', 'relay4-bench-v5.json')) as f:
+            un = json.load(f)['unrouted']
+        self.assertEqual({t: v for t, v in c.items() if v <= 0.0}, {})
+        names = sorted(un)
+        self.assertGreaterEqual(spearman([c[t] for t in names], [un[t] for t in names]), 0.5)
 
 
 class TrackWidthTest(unittest.TestCase):

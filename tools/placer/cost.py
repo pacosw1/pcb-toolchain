@@ -44,8 +44,8 @@ import math
 
 import numpy as np
 
-# limit 0.7 with the net tracks: calibrated on RELAY-4 bench v3 and v4 (O < S < P, O < P2 < P; 0.1 ranked O worst).
-DEFAULTS = {'rudy_cell': 1.0, 'mask_cell': 0.1, 'layers': 2, 'pitch': 0.4, 'limit': 0.7, 'pin_demand': 0.0, 'gap': 0.2,
+# limit 0.3 with the net tracks: RELAY-4 bench v5, 9 routed poses (Spearman 0.60; 0.7 gave 0.17 and a search drove it to 0).
+DEFAULTS = {'rudy_cell': 1.0, 'mask_cell': 0.1, 'layers': 2, 'pitch': 0.4, 'limit': 0.3, 'pin_demand': 0.0, 'gap': 0.2,
             'w_wl': 1.0, 'w_cong': 1.0, 'w_ov': 20.0, 'w_oob': 20.0, 'w_sp': 2.0,
             'via_d': 0.6, 'via_clr': 0.2, 'w_via': 10.0, 'w_x': 0.0, 'w_row': 0.0, 'row_pitch': 1.0}  # via 0.6/0.3 mm, clearance 0.2 mm (default net class)
 EPS = 1e-9
