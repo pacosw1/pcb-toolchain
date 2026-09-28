@@ -11,7 +11,7 @@ Objective: WA wirelength (weighted-average smooth HPWL, pin centres) + lambda * 
   - Routability (RePlAce): each time the overflow falls below route_overflow (route_rounds times), the units
     in bins with RUDY above the routing capacity grow in area (inflate(), at most max_infl in total).
   - Start: all movable units at the outline box centre with a small jitter (init 'centre'), or at their
-    places (init 'pose', a warm start).
+    places (init 'pose', a warm start), or at the spectral seed (init 'spectral', spectral_pose, NS-Place).
   - Rotation stays as it is (the annealer makes the 90 degree turns). Fixed units do not move. Each unit
     stays inside the outline box; an edge-anchored unit (u['edge']) is put back on its nearest allowed side.
 place(pr, params, pose=None) -> {'pose': [(x, y, r)], 'history': [{'iter', 'wa', 'overflow', 'lambda'}]}
@@ -226,6 +226,48 @@ class Model:
         return x, y
 
 
+def spectral_pose(pr, pose=None, all_orientations=False, span=0.5):
+    """NS-Place seed: the 2nd and 3rd eigenvectors of the clique-model Laplacian (weight w / (k - 1) per pin
+    pair; a weak all-to-all term joins separate parts), scaled to `span` of the outline box about its centre.
+    Of the 8 flips and turns, the pose with the lowest HPWL; fixed units keep their places."""
+    us = pr['units']
+    n = len(us)
+    pose = pose or cost.initial_pose(pr)
+    L = np.zeros((n, n))
+    for net in pr['nets']:
+        u = [q[0] for q in net['pins']]
+        if len(u) < 2:
+            continue
+        w = float(net['weight']) / (len(u) - 1)
+        for a in range(len(u)):
+            for b in range(a + 1, len(u)):
+                if u[a] != u[b]:
+                    L[u[a], u[b]] -= w
+                    L[u[b], u[a]] -= w
+    wmean = -L[L < 0].mean() if (L < 0).any() else 1.0
+    L -= 1e-3 * wmean / n  # weak all-to-all: one connected graph
+    np.fill_diagonal(L, 0.0)
+    np.fill_diagonal(L, -L.sum(axis=1))
+    _, vec = np.linalg.eigh(L)
+    e2, e3 = vec[:, 1], vec[:, 2]
+    bx0, by0, bx1, by1 = cost.outline_box(pr['board'])
+    cx, cy = (bx0 + bx1) / 2, (by0 + by1) / 2
+
+    def scale(v, c, half):
+        r = np.abs(v).max()
+        return c + (v / r if r > 0 else v) * half
+
+    cands = []
+    for a, b in ((e2, e3), (e3, e2)):
+        for sx in (1, -1):
+            for sy in (1, -1):
+                x = scale(sx * a, cx, span * (bx1 - bx0) / 2)
+                y = scale(sy * b, cy, span * (by1 - by0) / 2)
+                cands.append([pose[i] if us[i]['fixed'] else (float(x[i]), float(y[i]), pose[i][2]) for i in range(n)])
+    best = min(cands, key=lambda q: cost.hpwl(pr, q))
+    return (best, cands) if all_orientations else best
+
+
 def place(pr, params=None, pose=None, log=None):
     m = Model(pr, params, pose)
     p = m.p
@@ -235,6 +277,9 @@ def place(pr, params=None, pose=None, log=None):
     jx, jy = m.x0.copy(), m.y0.copy()
     if p['init'] == 'centre':  # all movable units start at the board centre and spread (ePlace); 'pose' keeps them
         jx[mv], jy[mv] = (m.bb[0] + m.bb[2]) / 2, (m.bb[1] + m.bb[3]) / 2
+    elif p['init'] == 'spectral':  # NS-Place seed
+        sp = spectral_pose(pr, pose)
+        jx[mv], jy[mv] = [sp[i][0] for i in mv], [sp[i][1] for i in mv]
     jx[mv] += rng.uniform(-0.5, 0.5, len(mv)) * m.bw
     jy[mv] += rng.uniform(-0.5, 0.5, len(mv)) * m.bh
     u = np.concatenate(m.project(jx, jy))

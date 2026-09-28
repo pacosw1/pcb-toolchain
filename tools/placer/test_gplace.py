@@ -136,6 +136,36 @@ if __name__ == '__main__':
     unittest.main()
 
 
+class SpectralSeedTest(unittest.TestCase):
+    """NS-Place seed: x, y = the 2nd and 3rd eigenvectors of the clique-model Laplacian of the units, scaled to
+    the outline box; of the 8 flips and turns, the one with the lowest HPWL (fixed units stay)."""
+
+    def test_the_seed_separates_the_clusters(self):
+        pr = clusters(seed=3)
+        pose = gplace.spectral_pose(pr)
+        c = [np.mean([pose[i][:2] for i in g], axis=0) for g in (range(0, 4), range(4, 8))]
+        spread = max(np.hypot(pose[i][0] - c[k][0], pose[i][1] - c[k][1])
+                     for k, g in enumerate((range(0, 4), range(4, 8))) for i in g)
+        self.assertGreater(np.hypot(*(c[0] - c[1])), 3 * spread)
+
+    def test_the_seed_keeps_the_best_of_the_8_orientations_and_the_fixed_units(self):
+        pr = clusters(seed=3)
+        pr['units'][0]['fixed'] = True
+        pose, cands = gplace.spectral_pose(pr, all_orientations=True)
+        self.assertEqual(len(cands), 8)
+        self.assertEqual(cost.hpwl(pr, pose), min(cost.hpwl(pr, q) for q in cands))
+        self.assertEqual(tuple(pose[0][:2]), (pr['units'][0]['x'], pr['units'][0]['y']))
+
+    def test_place_can_start_from_the_seed(self):
+        pr = clusters(seed=3)
+        res = gplace.place(pr, {'bins': 32, 'iters': 500, 'init': 'spectral'})
+        pose = res['pose']
+        self.assertLess(res['history'][-1]['overflow'], 0.15)
+        self.assertLess(cost.hpwl(pr, pose), 0.6 * cost.hpwl(pr, cost.initial_pose(pr)))
+        xs = [[pose[i][0] for i in g] for g in (range(0, 4), range(4, 8))]
+        self.assertTrue(max(xs[1]) < min(xs[0]) or max(xs[0]) < min(xs[1]))  # the seed keeps the groups apart
+
+
 class PipelineTest(unittest.TestCase):
     def test_optimize_with_global_starts_the_annealer_from_the_global_placement(self):
         from placer import anneal
