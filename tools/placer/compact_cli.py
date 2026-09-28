@@ -96,7 +96,8 @@ def main(argv=None):
                         a.workers, os.path.join(d, 'search.log'))
         res_path = os.path.join(d, 'search', 'res.json')
         if not os.path.exists(res_path):
-            raise RuntimeError('search step %d failed (rc %d), see %s' % (n, rc, os.path.join(d, 'search.log')))
+            print('search step %d: no result (rc %d), see %s' % (n, rc, os.path.join(d, 'search.log')), flush=True)
+            return None
         return json.load(open(res_path))
 
     def write(q, pose, k, n):

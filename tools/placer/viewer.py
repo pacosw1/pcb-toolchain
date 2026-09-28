@@ -57,6 +57,8 @@ def build(run, params=None):
             f.update(step=n, label='step %d epoch %d' % (n, h['epoch']), s=st['s'], cost=h['cost'],
                      comp=h['components'], unrouted=None)
             frames.append(f)
+        if st['pose'] is None:  # no search result
+            continue
         f = frame(pr, st['pose'], outline)
         f.update(step=n, label='step %d result' % n, s=st['s'], cost=st['cost'],
                  comp=(st['history'][-1]['components'] if st['history'] else {}),

@@ -32,6 +32,13 @@ class ViewerTest(unittest.TestCase):
         self.assertNotIn("href=\"http", html)
         self.assertEqual(data['units'][0]['nets'], ['N'])
 
+    def test_a_step_with_no_search_result_adds_no_frame(self):
+        r = run()
+        r['steps'].append({'s': 1.0, 'k': 1.0, 'cost': float('nan'), 'unrouted': None, 'passed': False,
+                           'pose': None, 'history': []})
+        html, data = viewer.build(r)
+        self.assertEqual(len(data['frames']), 3)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -175,6 +175,23 @@ class LoopTest(unittest.TestCase):
         self.assertAlmostEqual(t['k'], 1.3225)
         self.assertEqual(t['tries'], 3)
 
+    def test_a_search_with_no_result_is_a_failed_step_and_the_loop_goes_on(self):
+        # DOOR run 6: the outline-phase search timed out (rc 124) and the run stopped with an exception
+        pr = {'units': [unit('A', 2, 2, [[-2, -2, 2, 2, .5]]), unit('B', 8, 8, [[-2, -2, 2, 2, .5]])],
+              'nets': [net('N%d' % k, 0, 1) for k in range(4)], 'board': board()}
+
+        def search(q, n):
+            xs = [p[0] for p in q['board']['outline']]
+            if max(xs) - min(xs) < 12.0:
+                return None  # no result: remote timeout
+            return {'candidates': [{'pose': [[2, 2, 0], [8, 8, 0]], 'cost': 1.0, 'illegal': []}]}
+        run = compact.run_loop(pr, (10, 10), search, lambda q, p, k, n: 'b', lambda b, n: [0],
+                               s0=4.0, budget=1e9, clock=lambda: 0.0)
+        failed = [t for t in run['steps'] if t['illegal'] == ['no search result']]
+        self.assertTrue(failed)
+        self.assertTrue(all(not t['passed'] and t['board'] is None for t in failed))
+        self.assertGreaterEqual(run['best']['k'], 1.2)
+
     def test_after_the_halo_phase_the_outline_phase_tries_the_real_board_then_bisects_the_board_scale(self):
         pr = {'units': [unit('A', 2, 2, [[-2, -2, 2, 2, .5]]), unit('B', 8, 8, [[-2, -2, 2, 2, .5]])],
               'nets': [net('N%d' % k, 0, 1) for k in range(4)], 'board': board()}

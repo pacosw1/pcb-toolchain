@@ -193,6 +193,10 @@ def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, 
         q = with_halos(pr, s)
         for tries in range(1, TRIES + 1):
             res = search(virtual(q, k), n)
+            if res is None:  # no search result (remote timeout): a failed step, not an exception
+                res = {'candidates': [{'pose': None, 'cost': float('nan'), 'illegal': ['no search result']}]}
+                c = res['candidates'][0]
+                break
             c = res['candidates'][0]
             if not c['illegal'] or not grow or tries == TRIES or over():
                 break
