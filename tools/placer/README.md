@@ -58,6 +58,17 @@ Benchmark DOOR W, warm start from a hand placement (2026-09-27; Hetzner). DOOR-R
 
 Result: PASS (W median <= O median). DRC classes (per run, W / O): no new class in W. Errors: track_width 8-9 / 7-9, copper_edge_clearance 0-3 / 0-4, skew_out_of_range 0 / 0-1. Warnings: silk_overlap 177 / 131, silk_over_copper 94 / 82 (silk only; refdes silk is removed before fab), track_dangling 2-6 / 1-3, via_dangling 0-3 / 0-2. No track or via in the U1_ANTENNA keepout in any W or O run. W is evidence only; the repo board stays the hand board.
 
+Benchmark ALL line, RELAY-4 (2026-09-27; closed). ALL = the paper changes together (`global=1 init=spectral`, Lam schedule base_lam 0.133, `p_swap=0.25 swap_ratio=1e9`, `w_x=2`, `normalize=1`, t0 5, w0 5) on relay-scr4 (old RUDY). One change per step, 5 routes each:
+
+| Variant | Unrouted per run | Median |
+|---|---|---|
+| ALL | 89 / 92 / 95 / 104 / 99 | 95 |
+| ALLN: geometric schedule (t0 sampled, default w0) | 79 / 65 / 71 / 64 / 73 | 71 |
+| ALLN-n0: also `normalize=0` | 37 / 16 / 16 / 14 / 28 | 16 |
+| P2 / P2R (scatter start, default search) | 9 / 4 / 5 / 6 / 10; 7 / 8 / 8 / 7 / 5 | 6; 7 |
+
+Result: the Lam schedule (move window by T, frozen at w1 from epoch 2) and `normalize=1` (congestion 10x and crossing 23x relative to HPWL; the normalized cost ranked ALLN better than P2) hurt on RELAY-4. gplace + spectral + swap 0.25 + w_x 2 give no gain over the P2 scatter start (16 vs 6-7). They stay options with their defaults off (`global` unset, `schedule` geometric, `p_swap` 0.1, `swap_ratio` 1.5, `w_x` 0, `normalize` 0). The main line is the P2 method plus seed portfolio selection (`bench.portfolio_pick`). No more ALL ablations unless the portfolio fails.
+
 Analytic global placement (`gplace.py`, optimize `--param global=1`): ePlace style WA wirelength + electrostatic density (DCT Poisson on a bins x bins grid; fixed units, the area outside the outline and keepouts are fixed charge), Nesterov with a growing density weight until the overflow is below 0.1, and RePlAce cell inflation where RUDY is above the routing capacity (2 rounds, at most 2x area). Rotation stays; edge anchors are projected onto their side. The annealer then starts from the global places (use a low `t0`). On RELAY-4 the global stage takes about 0.1 s.
 
 Prior art checked on 2026-09-27 (no code copied):
