@@ -749,3 +749,49 @@ class ViaRoomTest(unittest.TestCase):
             self.assertEqual(ev.components()['via'], v)
             self.assertAlmostEqual(ev.cost, cost.total(pr, ev.pose(), self.VP), places=5)
         self.assertGreater(len(seen), 1)  # the moves did change the count
+
+
+class CrossingTest(unittest.TestCase):
+    """Net crossings (Cypress, ISPD 2025): each net is a star (pin centre -> mean of its pin centres). Two
+    segments of different nets with line parameters t, u add B(t - 0.5) * B(u - 0.5); B(x) = 1 - 2x^2 for
+    |x| <= 0.5, 2 (1 - |x|)^2 for |x| <= 1, else 0. crossing = the sum over segment pairs; weight w_x."""
+    XP = dict(P, w_x=5.0)
+
+    def two_nets(self, bx, by):
+        us = [unit('A', 0, 0, [[-.1, -.1, .1, .1, 0]]), unit('B', 4, 4, [[-.1, -.1, .1, .1, 0]]),
+              unit('C', 0, 4, [[-.1, -.1, .1, .1, 0]]), unit('D', bx, by, [[-.1, -.1, .1, .1, 0]])]
+        ns = [{'name': 'N1', 'weight': 1.0, 'pins': [[0, 0, 0, 0, 0], [1, 0, 0, 0, 0]]},
+              {'name': 'N2', 'weight': 1.0, 'pins': [[2, 0, 0, 0, 0], [3, 0, 0, 0, 0]]}]
+        return problem(us, ns, board=square_board(20.0))
+
+    def test_bump(self):
+        self.assertEqual(cost.bump(0.0), 1.0)
+        self.assertAlmostEqual(cost.bump(0.5), 0.5)
+        self.assertAlmostEqual(cost.bump(-0.75), 2 * 0.25 ** 2)
+        self.assertEqual(cost.bump(1.2), 0.0)
+
+    def test_an_x_is_one_crossing_and_parallel_nets_are_none(self):
+        pr = self.two_nets(4, 0)  # N1 (0,0)-(4,4) and N2 (0,4)-(4,0) cross at their middles
+        # the star of a 2-pin net is 2 half segments; they meet at t = 1 of each half (B(0.5) = 0.5)
+        self.assertGreater(cost.crossings(pr, cost.initial_pose(pr)), 0.9)
+        pr = self.two_nets(4, 8)  # N2 (0,4)-(4,8) is parallel to N1
+        self.assertEqual(cost.crossings(pr, cost.initial_pose(pr)), 0.0)
+
+    def test_the_segments_of_one_net_do_not_cross_each_other(self):
+        us = [unit('U%d' % k, x, y, [[-.1, -.1, .1, .1, 0]]) for k, (x, y) in enumerate([(0, 0), (4, 0), (2, 4)])]
+        pr = problem(us, [{'name': 'N', 'weight': 1.0, 'pins': [[k, 0, 0, 0, 0] for k in range(3)]}],
+                     board=square_board(20.0))
+        self.assertEqual(cost.crossings(pr, cost.initial_pose(pr)), 0.0)
+
+    def test_weight_and_incremental_equal_full(self):
+        rng = random.Random(9)
+        pr = random_problem(rng, n=10, nets=14)
+        ev = cost.Evaluator(pr, self.XP)
+        self.assertAlmostEqual(ev.components()['crossing'], cost.crossings(pr, ev.pose()))
+        self.assertAlmostEqual(ev.cost, cost.total(pr, ev.pose(), self.XP), places=6)
+        for k in range(200):
+            u = rng.randrange(1, 10)
+            ev.propose([(u, rng.uniform(0, 20), rng.uniform(0, 20), rng.randrange(4))])
+            ev.commit() if rng.random() < .5 else ev.revert()
+            self.assertAlmostEqual(ev.components()['crossing'], cost.crossings(pr, ev.pose()), places=6)
+            self.assertAlmostEqual(ev.cost, cost.total(pr, ev.pose(), self.XP), places=5)

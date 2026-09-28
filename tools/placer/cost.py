@@ -46,7 +46,7 @@ import numpy as np
 # limit 0.1: calibrated on RELAY-4 bench v3 (the routable original has the lowest cong; limit 1.0 gave 0 for all).
 DEFAULTS = {'rudy_cell': 1.0, 'mask_cell': 0.1, 'layers': 2, 'pitch': 0.4, 'limit': 0.1, 'pin_demand': 0.0, 'gap': 0.2,
             'w_wl': 1.0, 'w_cong': 1.0, 'w_ov': 20.0, 'w_oob': 20.0, 'w_sp': 2.0,
-            'via_d': 0.6, 'via_clr': 0.2, 'w_via': 10.0}  # via 0.6/0.3 mm, clearance 0.2 mm (default net class)
+            'via_d': 0.6, 'via_clr': 0.2, 'w_via': 10.0, 'w_x': 0.0}  # via 0.6/0.3 mm, clearance 0.2 mm (default net class)
 EPS = 1e-9
 ROUTE_LAYERS = ('F.Cu', 'B.Cu')  # the `layers` routing layers; copper on other layers uses no RUDY capacity
 OBSTACLE_LAYERS = ('F.Cu', 'via')  # kept copper that a top-side part must not cover
@@ -586,6 +586,45 @@ def via_room(pr, pose, params):
     return sum(via_blocked(w[np.isin(w[:, 4], vn)], obs, sites, p) for w in W)
 
 
+def bump(x):
+    """Cypress crossing bump: 1 - 2x^2 for |x| <= 0.5, 2 (1 - |x|)^2 for |x| <= 1, else 0."""
+    a = np.abs(x)
+    return np.where(a <= 0.5, 1 - 2 * a * a, np.where(a <= 1.0, 2 * (1 - a) ** 2, 0.0))
+
+
+def cross_matrix(A, na, B, nb):
+    """Crossing penalty of each segment in A (m, 4) with each in B (k, 4); 0 for the same net."""
+    r = A[:, None, 2:] - A[:, None, :2]
+    s_ = B[None, :, 2:] - B[None, :, :2]
+    qp = B[None, :, :2] - A[:, None, :2]
+    den = r[..., 0] * s_[..., 1] - r[..., 1] * s_[..., 0]
+    ok = (np.abs(den) > EPS) & (na[:, None] != nb[None, :])
+    d = np.where(ok, den, 1.0)
+    t = (qp[..., 0] * s_[..., 1] - qp[..., 1] * s_[..., 0]) / d
+    u = (qp[..., 0] * r[..., 1] - qp[..., 1] * r[..., 0]) / d
+    return np.where(ok, bump(t - 0.5) * bump(u - 0.5), 0.0)
+
+
+def star_segments(pr, pose):
+    """Star model of each net: a segment from each pin centre to the mean of the net pin centres."""
+    seg, sn = [], []
+    for k, n in enumerate(pr['nets']):
+        pts = []
+        for q in n['pins']:
+            a, b, c, d = rot_rect(q[1:5], pose[q[0]][2])
+            pts.append(((a + c) / 2 + pose[q[0]][0], (b + d) / 2 + pose[q[0]][1]))
+        cx, cy = sum(x for x, _ in pts) / len(pts), sum(y for _, y in pts) / len(pts)
+        seg += [(x, y, cx, cy) for x, y in pts]
+        sn += [k] * len(pts)
+    return np.array(seg, dtype=float).reshape(-1, 4), np.array(sn, dtype=int)
+
+
+def crossings(pr, pose):
+    """Smooth count of net crossings (star segments of different nets, Cypress bump)."""
+    S, sn = star_segments(pr, pose)
+    return float(cross_matrix(S, sn, S, sn).sum() / 2) if len(S) else 0.0
+
+
 def components(pr, pose, params):
     p = params_with_defaults(params)
     mask = Mask(pr['board'], p['mask_cell'], p['gap'])
@@ -594,13 +633,15 @@ def components(pr, pose, params):
             'overlap': overlap(pr, pose),
             'oob': sum(forbidden(pr, pose, mask, i) for i, u in enumerate(pr['units']) if not u['fixed']),
             'spacing': spacing(pr, pose),
-            'via': via_room(pr, pose, p)}
+            'via': via_room(pr, pose, p),
+            'crossing': crossings(pr, pose) if p['w_x'] else 0.0}  # not computed at weight 0 (speed)
 
 
 def weighted(comp, params):
     p = params_with_defaults(params)
     return (p['w_wl'] * comp['hpwl'] + p['w_cong'] * comp['cong'] + p['w_ov'] * comp['overlap']
-            + p['w_oob'] * comp['oob'] + p['w_sp'] * comp.get('spacing', 0.0) + p['w_via'] * comp.get('via', 0))
+            + p['w_oob'] * comp['oob'] + p['w_sp'] * comp.get('spacing', 0.0) + p['w_via'] * comp.get('via', 0)
+            + p['w_x'] * comp.get('crossing', 0.0))
 
 
 def total(pr, pose, params):
@@ -693,6 +734,12 @@ class Evaluator:
             self._set_cb(i)
         self.vb = [self._vcount(i) for i in range(self.n)]
         self.comp.append(sum(self.vb))
+        # net crossings: star segments, contiguous per net (soff[k]:soff[k + 1])
+        self.S, self.sn = star_segments(pr, self.pose())
+        self.soff = np.concatenate([[0], np.cumsum([len(n['pins']) for n in pr['nets']])]).astype(int)
+        if not p['w_x']:  # weight 0: not computed (speed)
+            self.S = self.S[:0]
+        self.comp.append(float(cross_matrix(self.S, self.sn, self.S, self.sn).sum() / 2) if len(self.S) else 0.0)
         self.cost = self._weighted(self.comp)
         self.pending = None
 
@@ -700,7 +747,7 @@ class Evaluator:
     def _weighted(self, c):
         p = self.p
         return (p['w_wl'] * c[0] + p['w_cong'] * c[1] + p['w_ov'] * c[2] + p['w_oob'] * c[3] + p['w_sp'] * c[4]
-                + p['w_via'] * c[5])
+                + p['w_via'] * c[5] + p['w_x'] * c[6])
 
     def _cu(self, i):
         return self.lcu[i][self.R[i]] + (self.X[i], self.Y[i], self.X[i], self.Y[i], 0.0)
@@ -723,6 +770,17 @@ class Evaluator:
             return 0
         obs = np.concatenate([self._cu(int(k)) for k in self._cb_near(self.CB[i], self.vreach)])
         return via_blocked(self._cu(i)[self.lvia[i]], obs, self.vsites, self.p)
+
+    def _net_star(self, k):
+        pts = np.array([((b[0] + b[2]) / 2 + self.X[u], (b[1] + b[3]) / 2 + self.Y[u])
+                        for u, rb in self.npins[k] for b in [rb[self.R[u]]]], dtype=float)
+        c = pts.mean(axis=0)
+        return np.hstack([pts, np.broadcast_to(c, pts.shape)])
+
+    def _cross_part(self, C):
+        """Crossings of the segments C with all segments, pairs inside C counted once."""
+        m = cross_matrix(self.S[C], self.sn[C], self.S, self.sn)
+        return float(m.sum() - 0.5 * m[:, C].sum())
 
     def _via_units(self, M):
         """Units with via pads whose count can depend on the copper of the units M (at their current pose)."""
@@ -847,7 +905,7 @@ class Evaluator:
 
     def components(self):
         return {'hpwl': self.comp[0], 'cong': self.comp[1], 'overlap': self.comp[2], 'oob': self.comp[3],
-                'spacing': self.comp[4], 'via': self.comp[5]}
+                'spacing': self.comp[4], 'via': self.comp[5], 'crossing': self.comp[6]}
 
     def unit_penalty(self, i):
         """Spacing overlap + forbidden area of one unit (0 = legal)."""
@@ -919,6 +977,14 @@ class Evaluator:
             dwl += self.nw[k] * (ln - self.nlen[k])
             self.nbox[k], self.nlen[k] = b, ln
             new_r.append(self._rudy(b))
+        dx_, old_seg = 0.0, None
+        if nets and len(self.S):
+            C = np.concatenate([np.arange(self.soff[k], self.soff[k + 1]) for k in nets])
+            x0_ = self._cross_part(C)
+            old_seg = (C, self.S[C].copy())
+            for k in nets:
+                self.S[self.soff[k]:self.soff[k + 1]] = self._net_star(k)
+            dx_ = self._cross_part(C) - x0_
         pad_new = [(i, self._pad_cells(i)) for i in M] if self.pd else []
         pad_spans += [self._pad_span(i) for i in M] if self.pd else []
         spans = [q[3] for q in old_nets if q[3]] + [q for q in new_r if q] + [q for q in pad_spans if q]
@@ -939,11 +1005,11 @@ class Evaluator:
                 if c1 is not None:
                     np.add.at(self.G, c1, self.pd)
             dcong = self._excess(reg) - e0
-        d = [dwl, dcong, ov1 - ov0, fb1 - fb0, sp1 - sp0, dvia]
+        d = [dwl, dcong, ov1 - ov0, fb1 - fb0, sp1 - sp0, dvia, dx_]
         delta = self._weighted(d)
-        self.pending = (old_pose, old_forb, old_nets, saved, list(self.comp), self.cost, old_vb)
+        self.pending = (old_pose, old_forb, old_nets, saved, list(self.comp), self.cost, old_vb, old_seg)
         self.last_old = [(i, x, y, r) for i, x, y, r in old_pose]
-        for a in range(6):
+        for a in range(7):
             self.comp[a] += d[a]
         self.cost += delta
         return delta
@@ -952,7 +1018,9 @@ class Evaluator:
         self.pending = None
 
     def revert(self):
-        old_pose, old_forb, old_nets, saved, comp, c, old_vb = self.pending
+        old_pose, old_forb, old_nets, saved, comp, c, old_vb, old_seg = self.pending
+        if old_seg is not None:
+            self.S[old_seg[0]] = old_seg[1]
         for i, x, y, r in old_pose:
             self.X[i], self.Y[i], self.R[i] = x, y, r
             self._set_ub(i)
