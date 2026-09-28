@@ -24,6 +24,8 @@ Rules (fail closed):
 - A pad whose own tracks already reach a via or a THT pad of its net is "already connected": no new via.
 - A region over (or within the clearance of) a B.Cu or In2.Cu track of a fast net is a conflict: the fast net
   needs the In2 ground under it.
+- A region that holds a THT pad or via of another net with In2.Cu copper (its own In2 zone) is a conflict: the
+  higher-priority rail pour takes that In2 connection (starved thermal).
 - A via never touches an SMD pad unless --allow names REF.PAD; it keeps the class clearance to other-net copper and
   hole-to-hole to its own net, and it lies inside its region.
 Coordinates: KiCad mm, Y down.
@@ -240,6 +242,19 @@ def fast_over(regions_by_net, segs, clearance):
     return [(r, n, k) for (r, n), k in sorted(hits.items())]
 
 
+def foreign_in2(regions_by_net, items, in2_nets):
+    """[(rail, net, count, first label)]: THT pads and vias of another net with In2.Cu copper (its own In2 zone)
+    inside a rail region. The rail pour (higher priority) takes their In2 connection away (starved thermal).
+    items: [(label, net, point)]."""
+    hits = {}
+    for rail, poly in regions_by_net.items():
+        for label, net, q in items:
+            if net != rail and net in in2_nets and pt.in_poly(q, poly):
+                k = hits.setdefault((rail, net), [0, label])
+                k[0] += 1
+    return [(r, n, k, lab) for (r, n), (k, lab) in sorted(hits.items())]
+
+
 def reached_anchor(p, tracks, vias, th):
     """The first via or THT pad of the net that the pad's own tracks reach, or None. tracks: [(a, b, width)] of the
     net on the pad layer; vias: [(centre, radius)]; th: [(REF.PAD, centre, (w, h), angle)]. Items connect when they
@@ -368,10 +383,17 @@ def make_plan(p, b, pro, a):
            for t in b.GetTracks() if t.GetLayerName() in (REF_LAYER, 'In2.Cu') and not isinstance(t, p.PCB_VIA)
            and any(fnmatch.fnmatchcase(t.GetNetname(), f) for f in fast)]
     fast_hits = fast_over(reg, ref, clr)
+    lay2 = b.GetLayerID('In2.Cu')
+    in2_nets = {z.GetNetname() for z in b.Zones() if z.IsOnLayer(lay2) and not z.GetIsRuleArea() and z.GetNetname()}
+    items = [(f'via ({mm(t.GetPosition().x):.2f}, {mm(t.GetPosition().y):.2f})', t.GetNetname(), (mm(t.GetPosition().x), mm(t.GetPosition().y)))
+             for t in b.GetTracks() if isinstance(t, p.PCB_VIA)]
+    items += [(f'PTH pad {fp.GetReference()}.{pd.GetNumber()}', pd.GetNetname(), (mm(pd.GetPosition().x), mm(pd.GetPosition().y)))
+              for fp in b.GetFootprints() for pd in fp.Pads() if pd.GetAttribute() == p.PAD_ATTRIB_PTH]
+    foreign = foreign_in2(reg, items, in2_nets)
     layer = {q['name']: q['layer'] for ps in pads.values() for q in ps}
     return {'bad': bad, 'missing': missing, 'regions': reg, 'conflicts': conf, 'plans': plans, 'rules': rules,
             'classes': cls, 'in2_other': in2, 'layer': layer,
-            'fast_over': fast_hits}
+            'fast_over': fast_hits, 'foreign': foreign}
 
 
 def net_copper(p, b, net):
@@ -419,6 +441,9 @@ def print_plan(pl, verbose):
         print(f'CONFLICT regions {a} / {b}: gap {g} mm < {pl["rules"]["clr"]} mm')
     for rail, net, k in pl['fast_over']:
         print(f'CONFLICT region {rail} lies over {k} {REF_LAYER}/In2.Cu segments of fast net {net} (In2 GND is its reference)')
+    for rail, net, k, lab in pl['foreign']:
+        print(f'CONFLICT region {rail} holds {k} THT pads/vias of {net}, which has In2.Cu copper (first: {lab}); '
+              'the pour takes their In2 connection')
     for r in pl['plans']:
         if 'error' in r:
             print(f"CONFLICT via {r['net']} {r['pad']} ({r['amps']} A, {r['n']} via): {r['error']}")
@@ -427,7 +452,7 @@ def print_plan(pl, verbose):
         elif verbose and r['n']:
             print(f"  {r['net']} {r['pad']} {r['amps']} A -> {r['n']} via at " + ' '.join(f'({x:.3f}, {y:.3f})' for x, y in r['vias'])
                   + (f" stub w {r['stub'][2]:.2f}" if r['stub'] else ' in pad'))
-    nbad = len(pl['bad']) + len(pl['missing']) + len(pl['conflicts']) + len(pl['fast_over']) + sum(1 for r in pl['plans'] if 'error' in r)
+    nbad = len(pl['bad']) + len(pl['missing']) + len(pl['conflicts']) + len(pl['fast_over']) + len(pl['foreign']) + sum(1 for r in pl['plans'] if 'error' in r)
     print(f'{nbad} conflicts')
     return nbad
 

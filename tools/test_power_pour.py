@@ -302,5 +302,18 @@ class ConnectedTest(unittest.TestCase):
         self.assertGreaterEqual(depth(reg['+3V3'], (12, 20)), 1.0 - 1e-6)
 
 
+class ForeignTest(unittest.TestCase):
+    REG = {'-15V': [(10, 10), (30, 10), (30, 20), (10, 20)]}
+
+    def test_tht_pad_or_via_of_an_in2_net_inside_is_a_conflict(self):
+        items = [('PTH pad U103.5', 'GND', (15, 15)), ('via', 'GND', (25, 12)), ('via', 'GND', (40, 15)),
+                 ('via', '/SIG', (20, 15))]
+        self.assertEqual(pp.foreign_in2(self.REG, items, in2_nets={'GND'}),
+                         [('-15V', 'GND', 2, 'PTH pad U103.5')])
+
+    def test_own_net_items_pass(self):
+        self.assertEqual(pp.foreign_in2(self.REG, [('via', '-15V', (15, 15))], in2_nets={'-15V', 'GND'}), [])
+
+
 if __name__ == '__main__':
     unittest.main()
