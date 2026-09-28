@@ -262,8 +262,8 @@ class LamScheduleTest(unittest.TestCase):
 
 class NormalizeTest(unittest.TestCase):
     """normalize = 1 (SA_PCB): each soft term (hpwl, cong, via, crossing) is divided by its value on the start
-    pose, so it adds its weight there; the hard weights (overlap, oob, spacing) are divided by the start HPWL
-    to keep their ratio to the wirelength. A term that is 0 at the start keeps w / start HPWL."""
+    pose, so it adds its weight there. A term that is 0 at the start keeps w / start HPWL. The hard weights
+    (overlap, oob, spacing) are divided by the smallest soft start value, so no soft term gains on them."""
 
     def test_weights(self):
         p = dict(anneal.params_all({}), w_x=5.0)
@@ -274,7 +274,15 @@ class NormalizeTest(unittest.TestCase):
         self.assertAlmostEqual(q['w_via'] * 4, p['w_via'])
         self.assertAlmostEqual(q['w_x'], p['w_x'] / 200.0)
         for k in ('w_ov', 'w_oob', 'w_sp'):
-            self.assertAlmostEqual(q[k], p[k] / 200.0)
+            self.assertAlmostEqual(q[k], p[k] / 4)
+
+    def test_no_soft_term_gains_on_the_hard_terms(self):
+        p = dict(anneal.params_all({}), w_x=2.0)
+        comp = {'hpwl': 2800.0, 'cong': 265.0, 'overlap': 100.0, 'oob': 5.0, 'spacing': 0.0, 'via': 3, 'crossing': 546}
+        q = anneal.normalized(p, comp)
+        for w, _ in anneal.SOFT:
+            for k in ('w_ov', 'w_oob', 'w_sp'):
+                self.assertGreaterEqual(q[k] / q[w], p[k] / p[w] - 1e-9)
 
     def test_optimize_normalizes_on_the_start_pose(self):
         pr = chain(12, seed=2)

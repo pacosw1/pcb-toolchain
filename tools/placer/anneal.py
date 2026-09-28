@@ -43,14 +43,15 @@ SOFT = (('w_wl', 'hpwl'), ('w_cong', 'cong'), ('w_via', 'via'), ('w_x', 'crossin
 
 
 def normalized(p, comp):
-    """Weights divided by the start value of their term (soft terms) or by the start HPWL (hard terms, and a
-    soft term that is 0 at the start)."""
+    """Soft weights divided by the start value of their term (the start HPWL for a term that is 0 at the start).
+    Hard weights divided by the smallest of these divisors, so no soft term gains on overlap, oob or spacing."""
     h = max(comp['hpwl'], EPS_N)
     q = dict(p)
-    for w, k in SOFT:
-        q[w] = p[w] / comp[k] if comp.get(k, 0) > EPS_N else p[w] / h
+    ds = [comp[k] if comp.get(k, 0) > EPS_N else h for _, k in SOFT]
+    for (w, _), d in zip(SOFT, ds):
+        q[w] = p[w] / d
     for w in ('w_ov', 'w_oob', 'w_sp'):
-        q[w] = p[w] / h
+        q[w] = p[w] / min(ds)
     return q
 
 
