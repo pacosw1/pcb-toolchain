@@ -148,6 +148,29 @@ class RoundTripTest(unittest.TestCase):
         self.assertIn([round(v, 2) for v in (bb.GetX() / 1e6 - u['x'], bb.GetY() / 1e6 - u['y'],
                                              bb.GetRight() / 1e6 - u['x'], bb.GetBottom() / 1e6 - u['y'], 2.5)], hv)
 
+    def test_each_net_gets_the_track_of_its_net_class(self):
+        import json as js
+        net = next(p.GetNetname() for p in pcbnew.LoadBoard(self.board).FindFootprintByReference('U1').Pads()
+                   if p.GetNetname() and p.GetNetClassName() == 'Default')
+        shutil.copytree(os.path.join(self.tmp, 'b'), os.path.join(self.tmp, 'e'))  # pcbnew keeps a loaded project
+        pro = os.path.join(self.tmp, 'e', 'PWR-24V-5V.kicad_pro')
+        d = js.load(open(pro))
+        d['net_settings']['classes'].append(dict(d['net_settings']['classes'][0], name='P24', track_width=0.5,
+                                                 clearance=0.3, priority=0))
+        d['net_settings']['netclass_patterns'] = (d['net_settings'].get('netclass_patterns') or []) + [
+            {'netclass': 'P24', 'pattern': net}]
+        js.dump(d, open(pro, 'w'))
+        default = next(c for c in d['net_settings']['classes'] if c['name'] == 'Default')
+        pr = kicad_io.read_problem(os.path.join(self.tmp, 'e', 'PWR-24V-5V.kicad_pcb'))
+        tracks = {n['name']: n['track'] for n in pr['nets']}
+        self.assertAlmostEqual(tracks.pop(net), 0.8)
+        self.assertTrue(tracks)
+        b = pcbnew.LoadBoard(os.path.join(self.tmp, 'e', 'PWR-24V-5V.kicad_pcb'))
+        cls = {p.GetNetname(): p.GetNetClassName() for p in b.GetPads()}
+        for n, t in tracks.items():
+            if cls[n] == 'Default':
+                self.assertAlmostEqual(t, default['track_width'] + default['clearance'])
+
     def test_domain_pads_get_domain_rects_and_the_part_courtyard_holds_no_pad(self):
         import json as js
         net = next(p.GetNetname() for p in pcbnew.LoadBoard(self.board).FindFootprintByReference('U1').Pads()

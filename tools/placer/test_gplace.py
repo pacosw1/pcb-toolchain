@@ -113,6 +113,15 @@ class RoutabilityTest(unittest.TestCase):
         self.assertAlmostEqual(m.area[2], 2.0 * 4.0)
         self.assertAlmostEqual(m.area[3], 4.0)
 
+    def test_a_wide_track_net_adds_track_over_pitch_times_the_demand(self):
+        pr = self.bundle()
+        m = gplace.Model(pr, {'bins': 32, 'pitch': 0.4})
+        r1 = m.rudy(m.x0, m.y0)
+        for n in pr['nets']:
+            n['track'] = 0.7
+        m = gplace.Model(pr, {'bins': 32, 'pitch': 0.4})
+        np.testing.assert_allclose(m.rudy(m.x0, m.y0), 1.75 * r1)
+
     def test_place_runs_the_inflation_rounds(self):
         res = gplace.place(self.bundle(), {'bins': 32, 'iters': 400, 'route_rounds': 2})
         self.assertEqual(sum(1 for h in res['history'] if h.get('inflated')), 2)

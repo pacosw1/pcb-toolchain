@@ -10,6 +10,8 @@ import random
 import sys
 import unittest
 
+import numpy as np
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from placer import cost  # noqa: E402
 
@@ -633,19 +635,61 @@ if __name__ == '__main__':
 
 
 class RudyCalibrationTest(unittest.TestCase):
-    # RELAY-4 bench v3: Freerouting opens O 8 < S 133 < P 142 (median of 5).
-    # The default RUDY limit must see congestion and rank the routable original first.
-    def test_default_limit_ranks_the_original_below_the_searched_poses(self):
-        path = os.path.join(os.path.dirname(__file__), 'fixtures', 'relay4-bench-v3.json')
+    # RELAY-4 Freerouting opens (median of 5): bench v3 O 8 < S 133 < P 142; bench v4 O 8, P2 6 < P 67.
+    # With the net track widths, the default RUDY limit must rank the routable poses below the failed ones.
+    def cong(self, name):
+        path = os.path.join(os.path.dirname(__file__), 'fixtures', name)
         with open(path) as f:
             fx = json.load(f)
         p = cost.params_with_defaults({})
-        cong = {'O': cost.Evaluator(fx['problem'], p).components()['cong']}
+        c = {'O': cost.Evaluator(fx['problem'], p).components()['cong']}
         for t, pose in fx['poses'].items():
-            cong[t] = cost.Evaluator(fx['problem'], p, [tuple(q) for q in pose]).components()['cong']
-        self.assertGreater(cong['O'], 0.0)
-        self.assertLess(cong['O'], cong['P'])
-        self.assertLess(cong['O'], cong['S'])
+            c[t] = cost.Evaluator(fx['problem'], p, [tuple(q) for q in pose]).components()['cong']
+        return c
+
+    def test_default_limit_ranks_the_original_below_the_searched_poses(self):
+        c = self.cong('relay4-bench-v3.json')
+        self.assertGreater(c['O'], 0.0)
+        self.assertLess(c['O'], c['S'])
+        self.assertLess(c['O'], c['P'])
+
+    def test_default_limit_ranks_the_routable_poses_below_the_failed_one(self):
+        c = self.cong('relay4-bench-v4.json')
+        self.assertLess(c['O'], c['P'])
+        self.assertLess(c['P2'], c['P'])
+
+
+class TrackWidthTest(unittest.TestCase):
+    """A net with n['track'] (net-class track width + clearance, mm) uses track / pitch times the RUDY demand of
+    a net without it (a pitch-wide track). RELAY-4 bench v4: most opens of P are 24V-class nets (0.5 mm)."""
+
+    def pr(self, track=None):
+        us = [unit('A', 5, 5, [[-.5, -.5, .5, .5, 0]]), unit('B', 15, 12, [[-.5, -.5, .5, .5, 0]])]
+        n = {'name': 'N', 'weight': 1.0, 'pins': [[0, -.1, -.1, .1, .1], [1, -.1, -.1, .1, .1]]}
+        if track is not None:
+            n['track'] = track
+        return problem(us, [n], board=square_board(20))
+
+    def test_demand_scales_with_the_track(self):
+        p = dict(P, pitch=0.4)
+        g1 = cost.rudy_grid(self.pr(), cost.initial_pose(self.pr()), p)
+        g2 = cost.rudy_grid(self.pr(0.7), cost.initial_pose(self.pr(0.7)), p)
+        self.assertGreater(g1.sum(), 0.0)
+        np.testing.assert_allclose(g2, 1.75 * g1)
+
+    def test_incremental_equals_full_with_track_nets(self):
+        rng = random.Random(8)
+        pr = random_problem(rng)
+        for k, n in enumerate(pr['nets']):
+            if k % 2:
+                n['track'] = rng.choice([0.5, 2.0, 5.0])
+        p = dict(P, limit=0.05)
+        ev = cost.Evaluator(pr, p)
+        self.assertAlmostEqual(ev.cost, cost.total(pr, ev.pose(), p), places=6)
+        for _ in range(200):
+            ev.propose([(rng.randrange(1, 8), rng.uniform(-2, 22), rng.uniform(-2, 22), rng.randrange(4))])
+            ev.commit() if rng.random() < .5 else ev.revert()
+            self.assertAlmostEqual(ev.cost, cost.total(pr, ev.pose(), p), places=5)
 
 
 class ViaRoomTest(unittest.TestCase):

@@ -74,6 +74,8 @@ class Model:
         self.pdx, self.pdy = np.array(px, dtype=float), np.array(py, dtype=float)
         self.pn = np.array(pn, dtype=int)
         self.nw = np.array(w, dtype=float)
+        cp = cost.params_with_defaults(self.p)
+        self.ntf = np.array([cost.track_factor(n, cp) for n in pr['nets']], dtype=float)
         self.nnet = len(w)
         self.npin = np.bincount(self.pu, minlength=self.n).astype(float)
         # bins
@@ -122,7 +124,8 @@ class Model:
         return ax, ay
 
     def rudy(self, x, y):
-        """RUDY per bin (mm of track per mm2): each net spreads (w + h) * weight uniformly over its pin box."""
+        """RUDY per bin (mm of track per mm2): each net spreads (w + h) * weight * track factor uniformly over its
+        pin box."""
         px, py = x[self.pu] + self.pdx, y[self.pu] + self.pdy
         x0, x1 = np.full(self.nnet, np.inf), np.full(self.nnet, -np.inf)
         y0, y1 = np.full(self.nnet, np.inf), np.full(self.nnet, -np.inf)
@@ -131,7 +134,7 @@ class Model:
         np.minimum.at(y0, self.pn, py)
         np.maximum.at(y1, self.pn, py)
         ok = np.isfinite(x0) & (np.bincount(self.pn, minlength=self.nnet) > 1)
-        x0, x1, y0, y1, w = x0[ok], x1[ok], y0[ok], y1[ok], self.nw[ok]
+        x0, x1, y0, y1, w = x0[ok], x1[ok], y0[ok], y1[ok], self.nw[ok] * self.ntf[ok]
         x1, y1 = np.maximum(x1, x0 + self.bw), np.maximum(y1, y0 + self.bh)  # a line net covers one bin row
         dens = w * ((x1 - x0) + (y1 - y0)) / ((x1 - x0) * (y1 - y0))
         ax = np.clip(np.minimum(x1[:, None], self.ex[None, 1:]) - np.maximum(x0[:, None], self.ex[None, :-1]), 0, None)

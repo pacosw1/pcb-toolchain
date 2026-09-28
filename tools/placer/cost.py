@@ -31,7 +31,8 @@ Cost = w_wl * sum(weight * HPWL) + w_cong * RUDY overflow + w_ov * hard overlap 
 Hard overlap (illegal) = what KiCad DRC enforces: courtyard over courtyard, and the gap of a rect in u['hard'] (a pad
 with its net-class or .kicad_dru clearance), domain gaps and keepouts. The D-040 halo (clr of a courtyard) is the
 soft spacing: the halo overlap beyond the hard overlap.
-RUDY (Spindler, DATE 2007): each net spreads its HPWL evenly over the cells of its box. Pin RUDY:
+RUDY (Spindler, DATE 2007): each net spreads its HPWL evenly over the cells of its box, times its track factor
+(net['track'] = net-class width + clearance, over pitch; 1 without). Pin RUDY:
 each pad (unit['pads'], local points) adds pin_demand mm of wire to its cell (pin escape and blockage).
 Capacity per cell = cell area * layers / pitch; overflow = sum of (demand - limit * capacity) above the limit.
 Spacing overlap of two courtyard boxes with classes ca, cb: g = max(ca, cb), penalty = the area of
@@ -43,8 +44,8 @@ import math
 
 import numpy as np
 
-# limit 0.1: calibrated on RELAY-4 bench v3 (the routable original has the lowest cong; limit 1.0 gave 0 for all).
-DEFAULTS = {'rudy_cell': 1.0, 'mask_cell': 0.1, 'layers': 2, 'pitch': 0.4, 'limit': 0.1, 'pin_demand': 0.0, 'gap': 0.2,
+# limit 0.7 with the net tracks: calibrated on RELAY-4 bench v3 and v4 (O < S < P, O < P2 < P; 0.1 ranked O worst).
+DEFAULTS = {'rudy_cell': 1.0, 'mask_cell': 0.1, 'layers': 2, 'pitch': 0.4, 'limit': 0.7, 'pin_demand': 0.0, 'gap': 0.2,
             'w_wl': 1.0, 'w_cong': 1.0, 'w_ov': 20.0, 'w_oob': 20.0, 'w_sp': 2.0,
             'via_d': 0.6, 'via_clr': 0.2, 'w_via': 10.0, 'w_x': 0.0}  # via 0.6/0.3 mm, clearance 0.2 mm (default net class)
 EPS = 1e-9
@@ -395,6 +396,11 @@ def fixed_grid(pr, params):
     return g
 
 
+def track_factor(net, p):
+    """RUDY demand factor of a net: its track (net-class width + clearance) over the routing pitch; 1 without."""
+    return net['track'] / p['pitch'] if 'track' in net else 1.0
+
+
 def rudy_grid(pr, pose, params):
     p = params_with_defaults(params)
     grid = Grid(pr['board'], p['rudy_cell'])
@@ -405,7 +411,7 @@ def rudy_grid(pr, pose, params):
         wl = (b[2] - b[0]) + (b[3] - b[1])
         if s is None or wl <= 0:
             continue
-        g[s[0]:s[1], s[2]:s[3]] += wl / ((s[1] - s[0]) * (s[3] - s[2]))
+        g[s[0]:s[1], s[2]:s[3]] += track_factor(n, p) * wl / ((s[1] - s[0]) * (s[3] - s[2]))
     if p['pin_demand']:
         for u, (x, y, r) in zip(pr['units'], pose):
             for q in u.get('pads', []):
@@ -709,11 +715,12 @@ class Evaluator:
         self.thr = threshold(p)
         self.cw = cell_weights(pr, p)
         self.nbox, self.nlen, self.nrudy = [], [], []
+        self.ntf = [track_factor(n, p) for n in pr['nets']]
         for k in range(len(self.nw)):
             b = self._net_box(k)
             self.nbox.append(b)
             self.nlen.append((b[2] - b[0]) + (b[3] - b[1]))
-            rd = self._rudy(b)
+            rd = self._rudy(b, self.ntf[k])
             self.nrudy.append(rd)
             if rd:
                 self.G[rd[0]:rd[1], rd[2]:rd[3]] += rd[4]
@@ -874,12 +881,12 @@ class Evaluator:
             return None
         return (int(c[0].min()), int(c[0].max()) + 1, int(c[1].min()), int(c[1].max()) + 1)
 
-    def _rudy(self, b):
+    def _rudy(self, b, f):
         wl = (b[2] - b[0]) + (b[3] - b[1])
         s = self.grid.span(b)
         if s is None or wl <= 0:
             return None
-        return (s[0], s[1], s[2], s[3], wl / ((s[1] - s[0]) * (s[3] - s[2])))
+        return (s[0], s[1], s[2], s[3], f * wl / ((s[1] - s[0]) * (s[3] - s[2])))
 
     def _excess(self, s):
         g = self.G[s[0]:s[1], s[2]:s[3]]
@@ -976,7 +983,7 @@ class Evaluator:
             old_nets.append((k, self.nbox[k], self.nlen[k], self.nrudy[k]))
             dwl += self.nw[k] * (ln - self.nlen[k])
             self.nbox[k], self.nlen[k] = b, ln
-            new_r.append(self._rudy(b))
+            new_r.append(self._rudy(b, self.ntf[k]))
         dx_, old_seg = 0.0, None
         if nets and len(self.S):
             C = np.concatenate([np.arange(self.soff[k], self.soff[k + 1]) for k in nets])

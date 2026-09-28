@@ -29,6 +29,7 @@ write_board(board, problem, pose, out) -> report dict
   pad or moved block copper of another net. Zones stay (refill them in the DRC). The result goes to `out` only.
 """
 import fnmatch
+import json
 import math
 import os
 import re
@@ -414,6 +415,7 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
     skip_pat = list(skip)
     region_refs = set(region_refs)
     pins = {}  # net -> {unit: [x0, y0, x1, y1]}
+    ncls = {}  # net -> net class name
     region_nets = set()
     for fp in fps:
         if is_test_point(fp.GetReference()):
@@ -426,17 +428,20 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
                 continue
             q = p.GetPosition()
             x, y = mm(q.x) - u['x'], mm(q.y) - u['y']
+            ncls[n] = p.GetNetClassName()
             b = pins.setdefault(n, {}).setdefault(ui, [x, y, x, y])
             b[0], b[1], b[2], b[3] = min(b[0], x), min(b[1], y), max(b[2], x), max(b[3], y)
             if fp.GetReference() in region_refs:
                 region_nets.add(n)
     nets = []
+    tracks = class_tracks(os.path.splitext(path)[0] + '.kicad_pro')
     for n in sorted(pins):
         us = pins[n]
         if len(us) < 2 or all(out_units[i]['fixed'] for i in us):
             continue
         nets.append({'name': n, 'weight': region_weight if n in region_nets else 1.0,
-                     'pins': [[i] + [round(v, 6) for v in us[i]] for i in sorted(us)]})
+                     'pins': [[i] + [round(v, 6) for v in us[i]] for i in sorted(us)],
+                     'track': max(tracks.get(c, tracks['Default']) for c in ncls[n].split(','))})
     region = None
     if region_refs:
         if region_box is None:
@@ -453,6 +458,13 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
             'dru_ignored': ignored, 'class_gaps': _class_gaps(dom_ids, domains, pairs) if dom_ids else None,
             'via_nets': sorted(n.GetNetCode() for name, n in board.GetNetsByName().items()
                                if any(fnmatch.fnmatchcase(str(name), q) for q in via_nets))}
+
+
+def class_tracks(pro):
+    """{net class: track width + clearance (mm)} from the .kicad_pro net settings."""
+    with open(pro) as f:
+        cs = json.load(f)['net_settings']['classes']
+    return {c['name']: c['track_width'] + c['clearance'] for c in cs}
 
 
 def _domain(pad, domains):
