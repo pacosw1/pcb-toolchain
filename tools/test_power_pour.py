@@ -170,7 +170,7 @@ class ViaPlanTest(unittest.TestCase):
         self.assertIn('error', r)
 
     def test_taken_via_of_another_net_keeps_the_clearance(self):
-        r = self.plan(pad('U1.1', (10, 10), fp_c=(8, 10)), taken=[((11.2, 10), '5V')])
+        r = self.plan(pad('U1.1', (10, 10), fp_c=(8, 10)), taken=[((11.2, 10), '5V', 0.4)])
         for v in r['vias']:
             self.assertGreaterEqual(math.dist(v, (11.2, 10)), VIA['dia'] + RULES['clr'] - 1e-9)
 
@@ -232,6 +232,74 @@ class FastOverTest(unittest.TestCase):
     def test_fast_track_near_the_edge_is_a_conflict(self):
         self.assertEqual(pp.fast_over(self.REG, [('/F', (0, 20.1), (40, 20.1))], clearance=0.2), [('5V', '/F', 1)])
         self.assertEqual(pp.fast_over(self.REG, [('/F', (0, 20.5), (40, 20.5))], clearance=0.2), [])
+
+
+class ArgsTest(unittest.TestCase):
+    BASE = ['plan', 'B.kicad_pcb', '--currents', 'c.json', '--fast', 'none']
+
+    def test_nets_that_start_with_a_dash(self):
+        a = pp.parse_args(self.BASE + ['--nets', '+3V3', '-15V', '+15V'])
+        self.assertEqual(a.nets, ['+3V3', '-15V', '+15V'])
+        a = pp.parse_args(self.BASE + ['--nets=-15V', '--nets', '+3V3'])
+        self.assertEqual(a.nets, ['-15V', '+3V3'])
+
+    def test_nets_file_adds_nets(self):
+        import tempfile
+        with tempfile.NamedTemporaryFile('w', suffix='.txt', delete=False) as f:
+            f.write('# rails\n-15V\n\n/POWER/PWR_VIN_F\n')
+        try:
+            a = pp.parse_args(self.BASE + ['--nets', '+3V3', '--nets-file', f.name])
+        finally:
+            os.unlink(f.name)
+        self.assertEqual(a.nets, ['+3V3', '-15V', '/POWER/PWR_VIN_F'])
+
+    def test_no_nets_is_an_error(self):
+        with self.assertRaises(SystemExit):
+            pp.parse_args(self.BASE)
+
+
+class MixedViaTest(unittest.TestCase):
+    def test_each_pad_uses_its_own_class_via(self):
+        small = {'dia': 0.6, 'drill': 0.3, 'plating': 0.018, 'dT': 10.0}
+        a = dict(pad('A1.1', (10, 10), fp_c=(8, 10), net='A'))
+        b = dict(pad('B1.1', (12.4, 10), fp_c=(14.4, 10), net='B'), via=small)
+        base = {n: {'F.Cu': [], 'B.Cu': [], 'In2.Cu': []} for n in 'AB'}
+        smd = [(q['name'], (*q['c'], *q['size'], 0, 0)) for q in (a, b)]
+        reg, conf, plans = pp.plan_rails({'A': [a], 'B': [b]}, {'B1.1': pt.via_amps(0.3) * 1.5}, VIA, RULES, base, smd,
+                                         BOX, margin=1.0)
+        ra, rb = plans
+        self.assertEqual((ra['via'], rb['via']), ((0.8, 0.4), (0.6, 0.3)))
+        self.assertEqual(rb['n'], 2)          # 1.5 x the 0.3 mm via current -> 2 small vias (1 big one would do)
+        need = 0.8 / 2 + 0.6 / 2 + RULES['clr']
+        for v in rb['vias']:
+            self.assertGreaterEqual(math.dist(v, ra['vias'][0]), need - 1e-9)
+        self.assertEqual(sorted(reg), ['A', 'B'])   # both classes in one region check
+        self.assertEqual([(x, y) for x, y, _ in conf], [('A', 'B')])
+
+
+class ConnectedTest(unittest.TestCase):
+    P = pad('U1.1', (10, 10), fp_c=(8, 10))
+
+    def test_track_chain_to_a_via(self):
+        tracks = [((10, 10), (12, 10), 0.3), ((12, 10), (12, 13), 0.3)]
+        self.assertEqual(pp.reached_anchor(self.P, tracks, vias=[((12, 13), 0.4)], th=[]), (12, 13))
+
+    def test_t_junction_and_tht_pad(self):
+        tracks = [((10, 10), (10, 14), 0.3), ((10, 12), (5, 12), 0.3)]   # second track starts on the first
+        th = [('J1.1', (5, 12), (1.7, 1.7), 0)]
+        self.assertEqual(pp.reached_anchor(self.P, tracks, vias=[], th=th), (5, 12))
+
+    def test_open_track_is_not_connected(self):
+        tracks = [((10, 10), (12, 10), 0.3)]
+        self.assertIsNone(pp.reached_anchor(self.P, tracks, vias=[((15, 10), 0.4)], th=[]))
+
+    def test_connected_pad_gets_no_new_via_and_the_region_holds_the_anchor(self):
+        p = dict(self.P, anchor=(12, 20))
+        base = {'+3V3': {'F.Cu': [], 'B.Cu': [], 'In2.Cu': []}}
+        reg, _, plans = pp.plan_rails({'+3V3': [p]}, {}, VIA, RULES, base, [], BOX, margin=1.0)
+        self.assertEqual(plans[0]['vias'], [])
+        self.assertEqual(plans[0]['connected'], (12, 20))
+        self.assertGreaterEqual(depth(reg['+3V3'], (12, 20)), 1.0 - 1e-6)
 
 
 if __name__ == '__main__':

@@ -6,6 +6,8 @@ Run with the KiCad bundled Python (it has pcbnew):
   PY=/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3
   $PY tools/power_pour.py plan  BOARD     --nets N1 N2 ... --currents current-paths.json --fast FILE|none
   $PY tools/power_pour.py apply BOARD OUT --nets N1 N2 ... --currents current-paths.json --fast FILE|none
+Nets: --nets N1 N2 ... (a name that starts with a dash, such as -15V, is a net too), --nets-file FILE (one net
+per line, # comment), or both.
 Options: --margin 1.5 (region grows this far around the pads), --gap 0.2 (pad edge to via ring), --connect
 thermal|solid (THT pads in the pour), --grounds GND, --allow REF.PAD ... (via in that SMD pad is allowed).
 plan prints the regions, the via plan per pad and the conflicts, and changes nothing. apply writes OUT (never the
@@ -18,6 +20,8 @@ Rules (fail closed):
   regions closer than the plane clearance are a conflict (the placer must group the rail pads).
 - Vias per pad: n = ceil(amps / pcbtool.via_amps(drill)), minimum 1. The amps of a pad are the largest chain through
   it in current-paths.json (the pcbtool paths spec); a pad that is not in the spec gets 1 via. THT pads get none.
+  Each pad uses the via of its own net class; the regions of all nets are checked together.
+- A pad whose own tracks already reach a via or a THT pad of its net is "already connected": no new via.
 - A region over (or within the clearance of) a B.Cu or In2.Cu track of a fast net is a conflict: the fast net
   needs the In2 ground under it.
 - A via never touches an SMD pad unless --allow names REF.PAD; it keeps the class clearance to other-net copper and
@@ -151,8 +155,8 @@ def _spot_ok(p, vias, stub, via, rules, obstacles, smd, region, allow, taken):
         for name, sp in smd:
             if name not in allow and pt.hole_in_pad((v[0], v[1], r), sp):
                 return f'touches SMD pad {name}'
-        for q, net in taken:
-            need = max(via['dia'], via['drill'] + rules['h2h']) if net == p['net'] else via['dia'] + rules['clr']
+        for q, net, qr in taken:
+            need = max(via['dia'], via['drill'] + rules['h2h']) if net == p['net'] else r + qr + rules['clr']
             if math.dist(v, q) < need - 1e-9:
                 return f'near new via of {net}'
     segs = [(stub[0], stub[1], p['layer'], stub[2])] if stub else []
@@ -163,7 +167,9 @@ def via_plan(p, amps, via, rules, obstacles, smd, region, allow=(), taken=()):
     """Vias and one stub for an SMD power pad. p: {name, net, c, size (w, h), angle (deg, pcbtool hole_in_pad
     frame), fp_c (footprint centre), layer}. obstacles: {layer: [(shape, clearance, label)]} of other-net copper.
     smd: [(REF.PAD, (cx, cy, w, h, angle, corner_r))] of all SMD pads. The result has 'vias' and 'stub'
-    ((a, b, width) or None), or 'error' when no spot is free (fail closed)."""
+    ((a, b, width) or None), or 'error' when no spot is free (fail closed). A 'via' key in p (the pad's own class
+    via) replaces the via argument. taken: [(point, net, radius)] of the new vias so far."""
+    via = p.get('via', via)
     n = via_count(amps, via)
     c = tuple(p['c'])
     w, h = p['size']
@@ -188,16 +194,22 @@ def via_plan(p, amps, via, rules, obstacles, smd, region, allow=(), taken=()):
         stub = None if vias[-1] == c else (c, vias[-1], width)
         why = _spot_ok(p, vias, stub, via, rules, obstacles, smd, region, allow, taken)
         if why is None:
-            return {'pad': p['name'], 'net': p['net'], 'n': n, 'amps': amps, 'vias': vias, 'stub': stub}
+            return {'pad': p['name'], 'net': p['net'], 'n': n, 'amps': amps, 'vias': vias, 'stub': stub,
+                    'via': (via['dia'], via['drill'])}
     return {'pad': p['name'], 'net': p['net'], 'n': n, 'amps': amps, 'error': f'no free spot for {n} via(s); last: {why}'}
 
 
 def plan_all(pads, amps_by_pad, via, rules, obstacles_by_net, smd, regions_by_net, allow=()):
-    """via_plan for each pad, in the pad order. The new vias and stubs of one net are obstacles for the others."""
+    """via_plan for each pad, in the pad order. The new vias and stubs of one net are obstacles for the others.
+    A THT pad needs no via; a pad with an 'anchor' (its own copper already reaches a via or a THT pad of the net)
+    is 'connected' and gets no new via."""
     out, new, taken = [], [], []
     for p in pads:
-        if p.get('th'):
-            out.append({'pad': p['name'], 'net': p['net'], 'n': 0, 'amps': amps_by_pad.get(p['name'], 0), 'vias': [], 'stub': None})
+        if p.get('th') or p.get('anchor'):
+            r = {'pad': p['name'], 'net': p['net'], 'n': 0, 'amps': amps_by_pad.get(p['name'], 0), 'vias': [], 'stub': None}
+            if not p.get('th'):
+                r['connected'] = tuple(p['anchor'])
+            out.append(r)
             continue
         obs = {L: list(items) for L, items in obstacles_by_net[p['net']].items()}
         for net, L, shape in new:
@@ -208,8 +220,9 @@ def plan_all(pads, amps_by_pad, via, rules, obstacles_by_net, smd, regions_by_ne
         r = via_plan(p, amps_by_pad.get(p['name'], 0), via, rules, obs, smd, regions_by_net[p['net']], allow, taken)
         out.append(r)
         if 'vias' in r:
-            taken += [(q, p['net']) for q in r['vias']]
-            new += [(p['net'], None, ('seg', q, q, via['dia'] / 2)) for q in r['vias']]
+            vr = r['via'][0] / 2
+            taken += [(q, p['net'], vr) for q in r['vias']]
+            new += [(p['net'], None, ('seg', q, q, vr)) for q in r['vias']]
             if r['stub']:
                 a, b, w = r['stub']
                 new.append((p['net'], p['layer'], ('seg', a, b, w / 2)))
@@ -225,6 +238,32 @@ def fast_over(regions_by_net, segs, clearance):
             if pt.shape_seg_dist(('poly', poly), a, b) < clearance:
                 hits[(rail, net)] += 1
     return [(r, n, k) for (r, n), k in sorted(hits.items())]
+
+
+def reached_anchor(p, tracks, vias, th):
+    """The first via or THT pad of the net that the pad's own tracks reach, or None. tracks: [(a, b, width)] of the
+    net on the pad layer; vias: [(centre, radius)]; th: [(REF.PAD, centre, (w, h), angle)]. Items connect when they
+    touch: a track end in a pad, a track end on another track, a via on a track."""
+    box = (*p['c'], *p['size'], p['angle'], 0)
+    for c, r in vias:                            # via in the pad
+        if pt.hole_in_pad((c[0], c[1], r), box):
+            return tuple(c)
+    seen = {i for i, (a, b, w) in enumerate(tracks) if any(pt.hole_in_pad((q[0], q[1], w / 2), box) for q in (a, b))}
+    todo = list(seen)
+    while todo:
+        a, b, w = tracks[todo.pop()]
+        for c, r in vias:
+            if pt.seg_dist(c, a, b) <= r + 1e-6:
+                return tuple(c)
+        for _, c, (tw, th_), ang in th:
+            if any(pt.hole_in_pad((q[0], q[1], w / 2), (c[0], c[1], tw, th_, ang, 0)) for q in (a, b)):
+                return tuple(c)
+        for j, (a2, b2, w2) in enumerate(tracks):
+            if j not in seen and (min(pt.seg_dist(q, a, b) for q in (a2, b2)) <= w / 2 + 1e-6
+                                  or min(pt.seg_dist(q, a2, b2) for q in (a, b)) <= w2 / 2 + 1e-6):
+                seen.add(j)
+                todo.append(j)
+    return None
 
 
 def pad_corners(p):
@@ -243,7 +282,7 @@ def plan_rails(pads_by_net, amps_by_pad, via, rules, obstacles_by_net, smd, box,
     plans = plan_all(order, amps_by_pad, via, rules, obstacles_by_net, smd, {n: board for n in pads_by_net}, allow)
     pts = {n: [k for q in ps for k in pad_corners(q)] for n, ps in pads_by_net.items() if ps}
     for r in plans:
-        pts[r['net']] += r.get('vias', [])
+        pts[r['net']] += r.get('vias', []) + ([r['connected']] if 'connected' in r else [])
     reg, conf = regions(pts, box, margin, rules['clr'])
     return reg, conf, plans
 
@@ -311,11 +350,15 @@ def make_plan(p, b, pro, a):
     net_clr, obst = {}, {}
     for n in cls:
         obst[n] = {L: pt.copper_obstacles(p, b, pro, n, cls[n]['clearance'], b.GetLayerID(L), net_clr)[1] for L in LAYERS}
-    sizes = {(c['via_diameter'], c['via_drill']) for c in cls.values()}
-    if len(sizes) > 1:   # plan_all spaces the new vias with one via size
-        bad.append(('+'.join(cls), f'the nets need one via size, the classes give {sorted(sizes)}'))
-    dia, drill = min(sizes) if sizes else (0, 0)
-    via = {'dia': dia, 'drill': drill, 'plating': spec.get('via_plating_mm', 0.018), 'dT': spec.get('dT', 10.0)}
+    vias = {n: {'dia': c['via_diameter'], 'drill': c['via_drill'], 'plating': spec.get('via_plating_mm', 0.018),
+                'dT': spec.get('dT', 10.0)} for n, c in cls.items()}
+    for n, ps in pads.items():   # each pad: the via of its own class, and the anchor its own copper already reaches
+        cu = net_copper(p, b, n)
+        for q in ps:
+            q['via'] = vias[n]
+            if not q['th']:
+                q['anchor'] = reached_anchor(q, cu['tracks'].get(q['layer'], []), cu['vias'], cu['th'])
+    via = next(iter(vias.values()), None)
     amps = {}
     for n in cls:
         amps.update(pad_currents(spec, n))
@@ -327,8 +370,25 @@ def make_plan(p, b, pro, a):
     fast_hits = fast_over(reg, ref, clr)
     layer = {q['name']: q['layer'] for ps in pads.values() for q in ps}
     return {'bad': bad, 'missing': missing, 'regions': reg, 'conflicts': conf, 'plans': plans, 'rules': rules,
-            'classes': cls, 'via': via, 'in2_other': in2, 'layer': layer,
+            'classes': cls, 'in2_other': in2, 'layer': layer,
             'fast_over': fast_hits}
+
+
+def net_copper(p, b, net):
+    """{'tracks': {layer: [(a, b, width)]}, 'vias': [(centre, radius)], 'th': [(REF.PAD, centre, (w, h), angle)]}."""
+    mm = p.ToMM
+    out = {'tracks': collections.defaultdict(list), 'vias': [], 'th': []}
+    for t in b.GetTracks():
+        if t.GetNetname() != net:
+            continue
+        if isinstance(t, p.PCB_VIA):
+            out['vias'].append(((mm(t.GetPosition().x), mm(t.GetPosition().y)), mm(t.GetWidth(p.F_Cu)) / 2))
+        else:
+            out['tracks'][t.GetLayerName()].append(((mm(t.GetStart().x), mm(t.GetStart().y)), (mm(t.GetEnd().x), mm(t.GetEnd().y)), mm(t.GetWidth())))
+    for q in rail_pads(p, b, net):
+        if q['th']:
+            out['th'].append((q['name'], q['c'], q['size'], q['angle']))
+    return out
 
 
 def in2_cuts(p, b, reg):
@@ -353,7 +413,8 @@ def print_plan(pl, verbose):
         ps = [r for r in pl['plans'] if r['net'] == n]
         print(f'REGION {n}: box ({min(xs):.1f}, {min(ys):.1f})-({max(xs):.1f}, {max(ys):.1f}), {area:.0f} mm2, '
               f"{len(ps)} pads, {sum(len(r.get('vias', [])) for r in ps)} vias, "
-              f"{sum(1 for r in ps if r['n'] == 0)} THT, {pl['in2_other'][n]} other-net In2 track ends inside")
+              f"{sum(1 for r in ps if 'connected' in r)} already connected, "
+              f"{sum(1 for r in ps if r['n'] == 0 and 'connected' not in r)} THT, {pl['in2_other'][n]} other-net In2 track ends inside")
     for a, b, g in pl['conflicts']:
         print(f'CONFLICT regions {a} / {b}: gap {g} mm < {pl["rules"]["clr"]} mm')
     for rail, net, k in pl['fast_over']:
@@ -361,6 +422,8 @@ def print_plan(pl, verbose):
     for r in pl['plans']:
         if 'error' in r:
             print(f"CONFLICT via {r['net']} {r['pad']} ({r['amps']} A, {r['n']} via): {r['error']}")
+        elif verbose and 'connected' in r:
+            print(f"  {r['net']} {r['pad']} already connected: own copper reaches ({r['connected'][0]:.3f}, {r['connected'][1]:.3f})")
         elif verbose and r['n']:
             print(f"  {r['net']} {r['pad']} {r['amps']} A -> {r['n']} via at " + ' '.join(f'({x:.3f}, {y:.3f})' for x, y in r['vias'])
                   + (f" stub w {r['stub'][2]:.2f}" if r['stub'] else ' in pad'))
@@ -422,8 +485,8 @@ def cmd_apply(a):
         for x, y in r['vias']:
             v = p.PCB_VIA(b)
             v.SetPosition(pt.v2(x, y))
-            v.SetWidth(p.FromMM(pl['via']['dia']))
-            v.SetDrill(p.FromMM(pl['via']['drill']))
+            v.SetWidth(p.FromMM(r['via'][0]))
+            v.SetDrill(p.FromMM(r['via'][1]))
             v.SetNet(net)
             b.Add(v)
             nv += 1
@@ -436,7 +499,23 @@ def cmd_apply(a):
     print(f"wrote {a.out}: {len(pl['regions'])} In2.Cu zones (priority {prio}), {ns} stubs, {nv} vias")
 
 
-def main():
+def nets_argv(argv):
+    """Each token after --nets (up to the next --option) becomes --nets=TOKEN, so a net such as -15V is a value."""
+    out, in_nets = [], False
+    for t in argv:
+        if t == '--nets':
+            in_nets = True
+        elif t.startswith('--'):
+            in_nets = False
+            out.append(t)
+        elif in_nets:
+            out.append('--nets=' + t)
+        else:
+            out.append(t)
+    return out
+
+
+def parse_args(argv):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest='cmd', required=True)
     for name in ('plan', 'apply'):
@@ -444,7 +523,8 @@ def main():
         s.add_argument('board')
         if name == 'apply':
             s.add_argument('out')
-        s.add_argument('--nets', nargs='+', required=True)
+        s.add_argument('--nets', action='append', default=[], help='net names; repeat or list them')
+        s.add_argument('--nets-file', help='one net per line; # starts a comment')
         s.add_argument('--currents', required=True)
         s.add_argument('--fast', required=True, help='fast-net file {"fast": [patterns]}, or none')
         s.add_argument('--grounds', nargs='+', default=['GND'])
@@ -453,7 +533,16 @@ def main():
         s.add_argument('--connect', choices=('thermal', 'solid'), default='thermal')
         s.add_argument('--allow', nargs='*', default=[])
         s.add_argument('--verbose', action='store_true')
-    a = ap.parse_args()
+    a = ap.parse_args(nets_argv(argv))
+    if a.nets_file:
+        a.nets += [x.split('#')[0].strip() for x in open(a.nets_file) if x.split('#')[0].strip()]
+    if not a.nets:
+        ap.error('no nets: give --nets or --nets-file')
+    return a
+
+
+def main():
+    a = parse_args(sys.argv[1:])
     {'plan': cmd_plan, 'apply': cmd_apply}[a.cmd](a)
 
 
