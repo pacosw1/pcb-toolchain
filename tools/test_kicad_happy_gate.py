@@ -307,5 +307,77 @@ class ExemptTransitionTests(unittest.TestCase):
         self.assertEqual(d, self.doc())
 
 
+class OwnHoleCreditTests(unittest.TestCase):
+    # kicad-happy a6bba1a credits the antipad of a via (KH-392) but not of a through-hole pad, so a track
+    # that ends in its own TH pad reads as a plane gap. The gate credits the antipad of the net's own hole only.
+    def doc(self):
+        return {"nets": {"1": "GND", "2": "/A", "3": "/B"},
+                "zones": [{"net_name": "GND", "clearance": 0.3}],
+                "net_classes": [{"name": "Default", "clearance": 0.2}],
+                "vias": {"vias": []},
+                "return_path_continuity": [{"net": "/A", "samples_checked": 2,
+                                            "samples_with_reference_plane": 1,
+                                            "reference_plane_coverage_pct": 50.0}]}
+
+    def pads(self):
+        return [{"net_name": "/A", "type": "thru_hole", "shape": "circle", "abs_x": 0, "abs_y": 0,
+                 "width": 3.0, "height": 3.0},
+                {"net_name": "/B", "type": "thru_hole", "shape": "circle", "abs_x": 10, "abs_y": 0,
+                 "width": 3.0, "height": 3.0}]
+
+    def samples(self, miss):
+        return [{"net": "/A", "x": 5, "y": 0, "hit": True},
+                {"net": "/A", "x": miss[0], "y": miss[1], "hit": False}]
+
+    def test_miss_in_own_th_pad_antipad_is_covered(self):
+        d = self.doc()
+        changed = gate.credit_own_holes(d, self.samples((0.5, 0)), self.pads())
+        self.assertEqual(d["return_path_continuity"], [])
+        self.assertEqual(changed, [("/A", 50.0, 100.0)])
+
+    def test_miss_in_other_net_hole_antipad_stays_a_gap(self):
+        d = self.doc()
+        self.assertEqual(gate.credit_own_holes(d, self.samples((10.5, 0)), self.pads()), [])
+        self.assertEqual(d, self.doc())
+
+    def test_plane_void_away_from_any_hole_stays_a_gap(self):
+        d = self.doc()
+        self.assertEqual(gate.credit_own_holes(d, self.samples((20, 0)), self.pads()), [])
+        self.assertEqual(d, self.doc())
+
+    def test_miss_just_outside_pad_plus_zone_clearance_stays_a_gap(self):
+        d = self.doc()  # pad radius 1.5 + zone clearance 0.3 = 1.8
+        self.assertEqual(gate.credit_own_holes(d, self.samples((1.85, 0)), self.pads()), [])
+
+    def test_rect_pad_corner_uses_the_rectangle_not_a_circle(self):
+        d = self.doc()
+        pads = [{"net_name": "/A", "type": "thru_hole", "shape": "rect", "abs_x": 0, "abs_y": 0,
+                 "width": 1.0, "height": 1.0}]
+        self.assertEqual(gate.credit_own_holes(d, self.samples((0.75, 0.0)), pads), [("/A", 50.0, 100.0)])
+        d = self.doc()  # corner: 0.35 mm from the rectangle > 0.3
+        self.assertEqual(gate.credit_own_holes(d, self.samples((0.75, 0.75)), pads), [])
+
+    def test_smd_pad_of_own_net_gets_no_credit(self):
+        d = self.doc()
+        pads = [dict(self.pads()[0], type="smd")]
+        self.assertEqual(gate.credit_own_holes(d, self.samples((0.5, 0)), pads), [])
+
+    def test_own_via_antipad_uses_the_net_class_clearance(self):
+        d = self.doc()
+        d["nets"]["2"] = "/A"
+        d["net_classes"].append({"name": "CELL", "clearance": 0.5, "nets": ["/A"]})
+        d["vias"]["vias"].append({"x": 0, "y": 0, "size": 1.4, "net": 2})
+        self.assertEqual(gate.credit_own_holes(d, self.samples((1.1, 0)), []), [("/A", 50.0, 100.0)])
+
+    def test_partial_credit_updates_the_coverage(self):
+        d = self.doc()
+        d["return_path_continuity"][0].update(samples_checked=4, samples_with_reference_plane=2)
+        samples = self.samples((0.5, 0)) + [{"net": "/A", "x": 5, "y": 1, "hit": True},
+                                            {"net": "/A", "x": 20, "y": 0, "hit": False}]
+        self.assertEqual(gate.credit_own_holes(d, samples, self.pads()), [("/A", 50.0, 75.0)])
+        self.assertEqual(d["return_path_continuity"][0]["reference_plane_coverage_pct"], 75.0)
+        self.assertEqual(d["return_path_continuity"][0]["samples_with_reference_plane"], 3)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -263,6 +263,77 @@ def take_exempt_transitions(pcb_doc, nets):
     return found
 
 
+def _pad_distance(p, x, y):
+    """Distance from (x, y) to the copper of a pad: circle, oval (capsule) or rectangle."""
+    a = math.radians(p.get("angle") or 0)
+    dx, dy = x - p["abs_x"], y - p["abs_y"]
+    lx, ly = dx * math.cos(a) - dy * math.sin(a), dx * math.sin(a) + dy * math.cos(a)
+    hw, hh = p.get("width", 0) / 2.0, p.get("height", 0) / 2.0
+    if p.get("shape") in ("circle", "oval"):
+        r = min(hw, hh)
+        return math.hypot(max(abs(lx) - (hw - r), 0), max(abs(ly) - (hh - r), 0)) - r
+    return math.hypot(max(abs(lx) - hw, 0), max(abs(ly) - hh, 0))
+
+
+def credit_own_holes(pcb_doc, samples, pads):
+    """GP-001: count a missed sample inside the antipad of its own net's hole as covered.
+
+    kicad-happy a6bba1a credits the antipad of a via (KH-392) but not of a through-hole pad, so a track
+    that ends in its own TH pad (a battery clip, a connector pin) reads as a plane gap. A missed sample
+    is covered when it is within the clearance of a TH pad or via of the same net. The clearance is the
+    largest zone clearance or the net class clearance of the net, whichever is larger. A miss at the hole
+    of another net or in a plane void stays a gap. samples are the analyze_pcb --gp001-debug samples;
+    pads are extract_footprints() pads. The return_path_continuity entries are updated in place
+    (removed at 95 % or more, as kicad-happy). Returns [(net, old_pct, new_pct)] for each changed net."""
+    names = {str(k): v for k, v in (pcb_doc.get("nets") or {}).items()}
+    zone_c = max([z.get("clearance") or 0 for z in pcb_doc.get("zones") or []] + [0.2])
+    class_c, default_c = {}, 0.0
+    for nc in pcb_doc.get("net_classes") or []:
+        if nc.get("name") == "Default":
+            default_c = nc.get("clearance") or 0
+        for n in nc.get("nets") or []:
+            class_c[n] = nc.get("clearance") or 0
+    holes = {}
+    for p in pads:
+        if p.get("type") == "thru_hole" and p.get("net_name"):
+            holes.setdefault(p["net_name"], []).append(p)
+    for v in (pcb_doc.get("vias") or {}).get("vias", []):
+        n = v.get("net_name") or names.get(str(v.get("net")), "")
+        holes.setdefault(n, []).append({"shape": "circle", "abs_x": v["x"], "abs_y": v["y"],
+                                        "width": v.get("size", 0), "height": v.get("size", 0)})
+    changed, keep = [], []
+    for e in pcb_doc.get("return_path_continuity") or []:
+        net = e.get("net")
+        c = max(zone_c, class_c.get(net, default_c))
+        own = [s for s in samples if s.get("net") == net]
+        gaps = [s for s in own if not s.get("hit")
+                and not any(_pad_distance(h, s["x"], s["y"]) <= c + 1e-9 for h in holes.get(net, []))]
+        if not own or len(gaps) == len(own) - e.get("samples_with_reference_plane", 0):
+            keep.append(e)
+            continue
+        pct = round((1 - len(gaps) / len(own)) * 100, 1)
+        changed.append((net, e.get("reference_plane_coverage_pct"), pct))
+        if pct < 95:
+            e.update(samples_with_reference_plane=len(own) - len(gaps), reference_plane_coverage_pct=pct)
+            keep.append(e)
+    pcb_doc["return_path_continuity"] = keep
+    return changed
+
+
+def load_pads(happy_dir, pcb):
+    """Return the pads of all footprints (absolute position, size, type, net), parsed by the pinned
+    kicad-happy clone, so the pad geometry agrees with its analysis."""
+    scripts = os.path.join(happy_dir, "skills", "kicad", "scripts")
+    sys.path.insert(0, scripts)
+    try:
+        import sexp_parser
+        import analyze_pcb
+        fps = analyze_pcb.extract_footprints(sexp_parser.parse_file(pcb))
+    finally:
+        sys.path.remove(scripts)
+    return [p for f in fps for p in f.get("pads", [])]
+
+
 def run_gate(happy_dir, pcb, sch, tmp_dir, grounds=(), exempt_rp_nets=()):
     """Run the three analyzers and return their merged raw findings."""
     all_findings = []
@@ -275,7 +346,15 @@ def run_gate(happy_dir, pcb, sch, tmp_dir, grounds=(), exempt_rp_nets=()):
         all_findings += load_findings(sch_doc)
 
     pcb_out = os.path.join(tmp_dir, "pcb.json")
-    pcb_args = [pcb, "--full"]
+    # --gp001-debug writes gp001_debug.json next to the board, so analyze_pcb reads a copy in tmp_dir.
+    board_dir = os.path.join(tmp_dir, "board")
+    os.makedirs(board_dir)
+    stem = os.path.splitext(pcb)[0]
+    for ext in (".kicad_pcb", ".kicad_pro", ".kicad_dru"):
+        if os.path.exists(stem + ext):
+            shutil.copy(stem + ext, board_dir)
+    pcb_copy = os.path.join(board_dir, os.path.basename(pcb))
+    pcb_args = [pcb_copy, "--full", "--gp001-debug"]
     if sch_out:
         pcb_args += ["--schematic", sch_out]
     pcb_doc = run_analyzer(happy_dir, "skills/kicad/scripts/analyze_pcb.py", pcb_args, pcb_out)
@@ -283,9 +362,15 @@ def run_gate(happy_dir, pcb, sch, tmp_dir, grounds=(), exempt_rp_nets=()):
     if grounds:
         mark_ground_vias(pcb_doc, grounds)
     all_findings += take_exempt_transitions(pcb_doc, set(exempt_rp_nets))
-    if grounds or exempt_rp_nets:
-        with open(pcb_out, "w") as fh:
-            json.dump(pcb_doc, fh)
+    debug_path = os.path.join(board_dir, "gp001_debug.json")
+    if not os.path.exists(debug_path):
+        raise RuntimeError("analyze_pcb.py --gp001-debug wrote no gp001_debug.json")
+    with open(debug_path) as fh:
+        samples = json.load(fh).get("samples", [])
+    for net, old, new in credit_own_holes(pcb_doc, samples, load_pads(happy_dir, pcb)):
+        print(f"GP-001 own-hole antipad credit: {net} {old}% -> {new}%", file=sys.stderr)
+    with open(pcb_out, "w") as fh:
+        json.dump(pcb_doc, fh)
 
     emc_out = os.path.join(tmp_dir, "emc.json")
     emc_args = ["--pcb", pcb_out]
