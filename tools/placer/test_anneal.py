@@ -187,6 +187,53 @@ class LegalizeTimeLimitTest(unittest.TestCase):
         self.assertGreater(len(c['illegal']), 0)
 
 
+def walled_mains(wall=True):
+    """two_units() plus the mains net M (class MAINS_K1) from fixed A (5, 5) to fixed C (15, 5); with `wall`, a
+    fixed SELV pad W from edge to edge at x = 10 leaves no legal mains path (8 mm to SELV)."""
+    pr = two_units()
+    pr['units'][0].update(cu=[[-.5, -.5, .5, .5, 1]], cu_pads=[['A', 'pth']])
+    pr['units'].append(dict(unit('C', 15, 5, [[-.5, -.5, .5, .5, .5]], fixed=True),
+                            cu=[[-.5, -.5, .5, .5, 1]], cu_pads=[['C', 'pth']]))
+    if wall:
+        pr['units'].append(dict(unit('W', 10, 10, [[-.5, -10, .5, 10, .5]], fixed=True),
+                                cu=[[-.5, -10, .5, 10, 2]], cu_pads=[['W', 'pth']]))
+    pr['cu_nets'] = {'1': ['M', 'MAINS_K1'], '2': ['S', 'SELV']}
+    pr['route_rules'] = {'dru': {'domains': [['MAINS_K*', 8.0, 3.0]], 'holes': [], 'pairs': []},
+                         'classes': {'MAINS_K1': [0.2, 2.0], 'SELV': [0.2, 0.25], 'Default': [0.2, 0.25]}}
+    return pr
+
+
+class MainsTest(unittest.TestCase):
+    """mains = 1: each final candidate gets the mains path faults (mainspath.faults on the nets of the .kicad_dru
+    domain classes); a candidate with faults ranks after every candidate without."""
+
+    def test_off_by_default_no_check(self):
+        res = anneal.optimize(walled_mains(), P, workers=1, epochs=1, steps=50, seed=1, top=1)
+        self.assertEqual(res['candidates'][0]['mains'], [])
+
+    def test_on_a_blocked_mains_net_is_a_fault_of_the_candidate(self):
+        res = anneal.optimize(walled_mains(), dict(P, mains=1), workers=1, epochs=1, steps=50, seed=1, top=1)
+        self.assertEqual([f['net'] for f in res['candidates'][0]['mains']], ['M'])
+        self.assertIn('W', {b['ref'] for b in res['candidates'][0]['mains'][0]['blockers']})
+
+    def test_on_an_open_mains_net_is_no_fault(self):
+        res = anneal.optimize(walled_mains(wall=False), dict(P, mains=1), workers=1, epochs=1, steps=50, seed=1,
+                              top=1)
+        self.assertEqual(res['candidates'][0]['mains'], [])
+
+    def test_on_without_route_rules_stops(self):
+        pr = walled_mains()
+        del pr['route_rules']
+        with self.assertRaises(ValueError):
+            anneal.optimize(pr, dict(P, mains=1), workers=1, epochs=1, steps=50, seed=1, top=1)
+
+    def test_a_candidate_with_mains_faults_ranks_after_one_without(self):
+        fin = [{'worker': 0, 'illegal': [], 'mains': [{'net': 'M'}], 'cost': 1.0},
+               {'worker': 1, 'illegal': [], 'mains': [], 'cost': 9.0},
+               {'worker': 2, 'illegal': ['B'], 'mains': [], 'cost': 0.5}]
+        self.assertEqual([c['worker'] for c in sorted(fin, key=anneal.final_key)], [1, 0, 2])
+
+
 class EndToEndTest(unittest.TestCase):
     def test_two_units_reach_the_known_optimum(self):
         res = anneal.optimize(two_units(), P, workers=1, epochs=4, steps=1500, seed=3, top=1)

@@ -196,6 +196,9 @@ class FaultsTest(unittest.TestCase):
         pr = relay4('O')
         self.assertEqual(mr.faults(pr, pose(pr), MAINS), [])
 
+    def test_the_domain_nets_of_relay_4_are_the_tier_1_mains_nets(self):
+        self.assertEqual(mr.domain_nets(relay4('O')), sorted(MAINS))
+
     def test_the_check_uses_the_pose_not_the_read_positions(self):
         pr, o = relay4('s67'), relay4('O')
         at = {tuple(u['refs']): (u['x'], u['y'], 0) for u in o['units']}   # the unit names differ per read

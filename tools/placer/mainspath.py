@@ -355,3 +355,10 @@ def faults(pr, pose, nets, jumpered=frozenset(), layers=('F.Cu', 'B.Cu')):
         elif res['path'] is None:
             out.append(res['fault'])
     return out
+
+
+def domain_nets(pr):
+    """The nets of the .kicad_dru domain classes (for RELAY-4: MAINS_K*, the tier-1 mains nets), sorted."""
+    import fnmatch
+    pats = [d[0] for d in pr['route_rules']['dru']['domains']]
+    return sorted(n for n, c in pr['cu_nets'].values() if any(fnmatch.fnmatchcase(c, q) for q in pats))

@@ -24,12 +24,13 @@ import multiprocessing as mp
 import random
 import time
 
-from . import cost
+from . import cost, mainspath
 
 SEARCH = {'grid': 0.05, 'p_swap': 0.1, 'p_rot': 0.1, 'swap_ratio': 1.5, 't_ratio': 1e-4, 'w1': 0.25,
           'legal_step': 0.25, 'legal_radius': 5.0, 'legal_passes': 3, 'legal_time': 60.0,
           'ramp': 20.0, 'schedule': 'geometric', 'base_lam': 0.44, 'lam_rate': 0.885, 'lam_window': 500,
-          'area_ref': 10.0, 'area_max': 5.0, 'normalize': 0, 'distinct': 0.0}
+          'area_ref': 10.0, 'area_max': 5.0, 'normalize': 0, 'distinct': 0.0,
+          'mains': 0}  # mains 1: mains path check of the final candidates (mainspath.faults), a rank key after illegal
 
 
 def params_all(params):
@@ -304,6 +305,8 @@ _W = {}
 
 def _init(pr, params):
     p = params_all(params)
+    if p['mains'] and 'route_rules' not in pr:
+        raise ValueError('mains = 1 needs route_rules and cu_nets in the problem: read it again with kicad_io')
     _W['pr'], _W['p'] = pr, p
     _W['mask'] = cost.Mask(pr['board'], p['mask_cell'], p['gap'])
 
@@ -337,8 +340,15 @@ def _finish(task):
         bad = legalize(ev, p)
     except LegalizeTimeout as e:
         bad, timeout = e.illegal, True
+    pr = _W['pr']
+    mains = mainspath.faults(pr, ev.pose(), mainspath.domain_nets(pr)) if p['mains'] else []
     return {'worker': w, 'pose': ev.pose(), 'cost': ev.cost, 'components': ev.components(),
-            'illegal': [_W['pr']['units'][i]['name'] for i in bad], 'timeout': timeout}
+            'illegal': [pr['units'][i]['name'] for i in bad], 'timeout': timeout, 'mains': mains}
+
+
+def final_key(c):
+    """Final candidate order: legal first, then no mains path faults, then the lower cost."""
+    return (len(c['illegal']), len(c['mains']), c['cost'], c['worker'])
 
 
 def optimize(pr, params, workers=1, epochs=10, steps=10000, seed=1, top=3, log=None):
@@ -409,7 +419,7 @@ def optimize(pr, params, workers=1, epochs=10, steps=10000, seed=1, top=3, log=N
         if pool:
             pool.close()
             pool.join()
-    fin.sort(key=lambda c: (len(c['illegal']), c['cost'], c['worker']))
+    fin.sort(key=final_key)
     cands = distinct(fin, p['distinct'], [u['fixed'] for u in pr['units']])
     return {'global': glob, 'lam': lam_log, 'initial': initial, 'candidates': cands[:top], 'history': history, 't0': t0, 'seed': seed, 'workers': workers,
             'epochs': epochs, 'steps': steps, 'params': p, 'wall_s': time.time() - t_start,
