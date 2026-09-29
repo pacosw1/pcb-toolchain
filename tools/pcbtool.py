@@ -2120,7 +2120,13 @@ def cmd_stitch(a):
     obstacles = {b.GetLayerName(L): copper_obstacles(p, b, pro, gnd, clr, L, net_clr)[1] + edges
                  for L in b.GetEnabledLayers().CuStack()}
     keepouts = [z.Outline() for z in b.Zones() if z.GetIsRuleArea() and z.GetDoNotAllowVias()]
-    pours = [z.Outline() for z in b.Zones() if not z.GetIsRuleArea() and z.GetNetname() != gnd]
+    pours = [z for z in b.Zones() if not z.GetIsRuleArea() and z.GetNetname() != gnd]
+    gpours = [z for z in b.Zones() if not z.GetIsRuleArea() and z.GetNetname() == gnd]
+
+    def covered(z, v):
+        # a ground pour of higher priority on the same layer takes the fill there
+        return any(g.GetLayerSet().Contains(L) and g.GetAssignedPriority() > z.GetAssignedPriority() and g.Outline().Contains(v)
+                   for L in z.GetLayerSet().Seq() for g in gpours)
     vias = [(t.GetNetname(), (mm(t.GetPosition().x), mm(t.GetPosition().y))) for t in b.GetTracks() if isinstance(t, p.PCB_VIA)]
     gv = [q for n, q in vias if n == gnd]
     pt_ = lambda q: p.VECTOR2I(p.FromMM(q[0]), p.FromMM(q[1]))
@@ -2128,7 +2134,7 @@ def cmd_stitch(a):
     def room(q):
         if any(k.Contains(pt_(q)) or k.Distance(pt_(q)) < p.FromMM(via_d / 2) for k in keepouts):
             return False
-        if any(z.Contains(pt_(q)) for z in pours):
+        if any(z.Outline().Contains(pt_(q)) and not covered(z, pt_(q)) for z in pours):
             return False
         if any(math.dist(q, g) < via_d + clr for g in gv):
             return False

@@ -1159,8 +1159,9 @@ class SuggestBoardTest(unittest.TestCase):
         r, line, c = self.run_suggest('--layers', 'F.Cu', gnd_pad=(15, 11.2), zone=('GND', 3, 15, 6, 18))
         self.assertEqual(line, 'SIG R1.1 -> R2.1 layer=F.Cu')
 
-    def stitch_after_forced_vias(self, *stitch_args):
-        """Route SIG with 2 vias (GND wall on F.Cu), then stitch SIG. (stitch result, GND vias, SIG vias, sha changed)."""
+    def stitch_after_forced_vias(self, *stitch_args, pours=()):
+        """Route SIG with 2 vias (GND wall on F.Cu), add the (net, priority) board-size B.Cu pours, then stitch SIG.
+        (stitch result, GND vias, SIG vias, sha changed)."""
         import hashlib
         import pathlib
         import subprocess
@@ -1172,6 +1173,19 @@ class SuggestBoardTest(unittest.TestCase):
             r = subprocess.run([sys.executable, tool, 'suggest', board, 'SIG', '--cell', '0.25'], capture_output=True, text=True)
             line = [l for l in r.stdout.splitlines() if l.startswith('SIG R1.1 -> R2.1')][0]
             subprocess.run([sys.executable, tool, 'connect', board, line], check=True, capture_output=True)
+            if pours:
+                b = pcbnew.LoadBoard(board)
+                for net, prio in pours:
+                    z = pcbnew.ZONE(b)
+                    z.SetLayer(pcbnew.B_Cu)
+                    z.SetNet(b.FindNet(net))
+                    z.SetAssignedPriority(prio)
+                    ol = z.Outline()
+                    ol.NewOutline()
+                    for x, y in ((0, 0), (30, 0), (30, 20), (0, 20)):
+                        ol.Append(pcbnew.FromMM(x), pcbnew.FromMM(y))
+                    b.Add(z)
+                b.Save(board)
             before = hashlib.sha256(pathlib.Path(board).read_bytes()).hexdigest()
             st = subprocess.run([sys.executable, tool, 'stitch', board, 'SIG', *stitch_args], capture_output=True, text=True)
             changed = hashlib.sha256(pathlib.Path(board).read_bytes()).hexdigest() != before
@@ -1190,6 +1204,17 @@ class SuggestBoardTest(unittest.TestCase):
         for q in sig:
             self.assertTrue(any(math.dist(q, g) <= 1.0 for g in gnd))
             self.assertTrue(all(math.dist(q, g) >= 0.6 + 0.2 for g in gnd))  # via size + clearance
+
+    def test_stitch_in_a_ground_pour_over_a_lower_priority_other_net_pour(self):
+        # A VCC pour (priority 1) under a GND pour (priority 2): the fill there is GND, so a GND via has room.
+        st, gnd, sig, changed = self.stitch_after_forced_vias(pours=(('VCC', 1), ('GND', 2)))
+        self.assertEqual(st.returncode, 0, st.stdout + st.stderr)
+        self.assertEqual(len(gnd), 2)
+
+    def test_stitch_in_an_other_net_pour_has_no_room(self):
+        st, gnd, sig, changed = self.stitch_after_forced_vias(pours=(('VCC', 1),))
+        self.assertEqual(st.returncode, 1, st.stdout + st.stderr)
+        self.assertEqual(gnd, [])
 
     def test_unroute_no_drc_removes_tracks_without_a_drc_run(self):
         import subprocess

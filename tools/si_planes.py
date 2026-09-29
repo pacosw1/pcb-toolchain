@@ -325,6 +325,14 @@ def plane_cut_failures(cuts, s):
     return out
 
 
+def ground_pieces(p, polys):
+    """The copper pieces of one ground on one layer. Fills of two zones of the same net that touch are one piece."""
+    u = p.SHAPE_POLY_SET()
+    for poly in polys:
+        u.BooleanAdd(poly)
+    return [p.SHAPE_LINE_CHAIN(u.Outline(k)) for k in range(u.OutlineCount())]
+
+
 def island_failures(pieces):
     """FAIL lines for ground fill pieces on a mixed layer with no via or through-hole pad of the ground.
     pieces: [(layer, ground, number of ground vias and pads in the piece, (x, y) of a point in the piece)]."""
@@ -467,15 +475,12 @@ def analyse(board_path, s, verbose):
     for lname in s['mixed_layers']:
         for g in s['grounds']:
             pts = [(x, y, r) for x, y, r in via_r[g]] + [(x, y, r) for x, y, r, tht in gpads[g] if tht]
-            for net, poly in fills[layers[lname]]:
-                if net != g:
-                    continue
-                for k in range(poly.OutlineCount()):
-                    one = p.SHAPE_POLY_SET(poly.Outline(k))
-                    c = poly.Outline(k).CPoint(0)
-                    # a via or pad touches the piece (a thermal pad centre sits outside the fill)
-                    n = sum(1 for x, y, r in pts if one.Collide(p.VECTOR2I(p.FromMM(x), p.FromMM(y)), p.FromMM(r) + 1000))
-                    pieces.append((lname, g, n, (mm(c.x), mm(c.y))))
+            for outline in ground_pieces(p, [poly for net, poly in fills[layers[lname]] if net == g]):
+                one = p.SHAPE_POLY_SET(outline)
+                c = outline.CPoint(0)
+                # a via or pad touches the piece (a thermal pad centre sits outside the fill)
+                n = sum(1 for x, y, r in pts if one.Collide(p.VECTOR2I(p.FromMM(x), p.FromMM(y)), p.FromMM(r) + 1000))
+                pieces.append((lname, g, n, (mm(c.x), mm(c.y))))
         info.append(f'INFO mixed {lname}: {sum(1 for q in pieces if q[0] == lname)} ground fill pieces; '
                     f'tracks: ' + (', '.join(f'{n} {v:.1f} mm' for (L, n), v in sorted(cuts.items()) if L == lname) or 'none'))
 
