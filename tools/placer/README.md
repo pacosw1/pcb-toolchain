@@ -95,3 +95,18 @@ Result: at the same short search budget, GP + anneal routes to a median of 5-8 o
 Routability surrogate (2026-09-29, stopped): `features.py` (6-channel raster + 7 scalars), `surrogate.py` (CNN + scalars, log1p target, pairwise rank loss inside each board, per-net routed head, optional D4 augmentation; `build`, `train`, `eval`; `Surrogate.score` / `batch_score`), `surrogate_gen.py` (sample poses: small anneal moves, large moves sigma 8-16 mm frac 0.4-0.7, GP + short anneal; legalize, route 90 s with Freerouting on Hetzner, DRC; rich labels). Recipe: `surrogate_gen.py prep`, then `surrogate_gen.py --case ... --timeout 00:01:30` through `tools/remote.sh`, then `surrogate.py build`, `surrogate.py train --holdout B,B --device mps [--aug]`. Weights are not stored.
 
 Result: the targets (held-out board Spearman >= 0.7, top-10% recall >= 0.8) are not met, and the work stopped. Data: 149 routed samples, 14-28 per board; 102 of them hit the 90 s timeout. Router noise (3 routes of one pose) is 27-32 % of the pose spread on RELAY-4, IO-6X6 and INPUT-4D2A, 75 % on DOOR-RELAY, and above 100 % on BASE-PWR and POE-ETHERNET. On the held-out generated samples the model Spearman is -0.45 to 0.30, and HPWL is -0.39 to 0.04. On the 44 old RELAY-4 placer poses (3.5-min median labels), the model with RELAY-4 held out gives 0.39 / 0.67 (no aug) and 0.79 / 1.00 (aug); HPWL gives 0.66 / 0.83. Speed: features 4 ms per pose; the model 0.03 ms per pose on MPS at batch 512, 0.8-1.1 ms on CPU. A new attempt needs labels with less noise (median of 3 or more routes, or a longer route) and more samples per board.
+
+Holdout GP (2026-09-29, IO-6X6 and DOOR-RELAY; the same set-up as the RELAY-4 GP bench). Inputs come fresh from the repo boards. The tracks are stripped; the plane and zone nets stay (DOOR also keeps the locked USB tracks). Then `cli.py read` and scramble seed 7. The original is legal on both boards. There are 5 Freerouting runs of 3.5 min with GND pad vias. The Hetzner load was 12-60 from other jobs, so the wall times are not exact.
+
+| Board | Run | Search | HPWL final | Unrouted per run | Median |
+|---|---|---|---|---|---|
+| IO-6X6 | O (hand) | - | 1705 | 13 / 6 / 11 / 16 / 1 | 11 |
+| IO-6X6 | CS (no GP) | 12 workers, 4 x 5000, 227 s | 2154 | 170 / 177 / 151 / 161 / 127 | 161 |
+| IO-6X6 | GP0c | 12 workers, 4 x 5000, 289 s | 1398 | 74 / 125 / 141 / 100 / 74 | 100 |
+| IO-6X6 | P2R | 8 workers, 16 x 30000, 1911 s | 1451 | 86 / 89 / 162 / 160 / 102 | 102 |
+| DOOR-RELAY | O (hand) | - | 1286 | 29 / 21 / 19 / 26 / 34 | 26 |
+| DOOR-RELAY | CS (no GP) | 12 workers, 6 x 8000, 107 s | 1155 | 11 / 24 / 12 / 11 / 18 | 12 |
+| DOOR-RELAY | GP0c | 12 workers, 6 x 8000, 105 s | 1138 | 18 / 9 / 11 / 14 / 22 | 14 |
+| DOOR-RELAY | P2R | 8 workers, 16 x 30000, 1197 s | 1028 | 16 / 10 / 9 / 11 / 11 | 11 |
+
+Result: GP + a short anneal does not hold as a general gain. On IO-6X6 it equals P2R (100 vs 102) in 1/6 of the search time, and it is better than CS (161). All three are far from the hand layout (11). On DOOR-RELAY it gives no gain (14 vs CS 12 and P2R 11), and it has 14 copper_edge_clearance errors per run where the others have none. The IO-6X6 search is 4-6x slower per move (150-310 moves/s), so its short budget is 4 x 5000, not 6 x 8000. The DOOR O here (26) is not the DOOR W bench O (4), because this bench strips all signal tracks. Decision: GP stays off by default (`global` unset). It is an option for a fast first pose on a board where the anneal alone does not recover (RELAY-4, IO-6X6).
