@@ -1,0 +1,179 @@
+"""Scored placement samples for the routability surrogate (surrogate.py). Runs on the Hetzner box only.
+
+Each sample: the original pose of a problem, a random fraction of the movable units moved by a normal step (and
+turned), then anneal.legalize. A legal pose is written (kicad_io.write_board), routed once by Freerouting
+(tools/freeroute.py, F.Cu + B.Cu, one fixed timeout for all samples) and counted from the kicad-cli DRC JSON.
+An illegal pose is recorded without a route. One JSON line per sample goes to OUT/samples.jsonl:
+  {case, seed, cfg, pose, illegal, unrouted, errors, capped, wall_s}   (unrouted None: not routed)
+
+  REMOTE_MEM=16g REMOTE_CPUS=15 REMOTE_TIMEOUT=560 tools/remote.sh <any board dir> \
+      --in PROB.json --in B.kicad_pcb --in B.kicad_pro --in B.kicad_dru [...more cases] --in numpy-*.whl -- \
+      python3 tools/placer/surrogate_gen.py --case NAME:in/PROB.json:in/B.kicad_pcb [...] \
+      --seed S --workers 14 --budget 520 --timeout 00:01:30 -o out
+The work files stay in work/ (not returned); only samples.jsonl and the log come back.
+"""
+import argparse
+import glob
+import json
+import os
+import random
+import shutil
+import subprocess
+import sys
+import time
+import zipfile
+
+FRACS = (0.05, 0.15, 0.3, 0.6, 1.0)
+SIGMAS = (0.5, 1.0, 2.0, 4.0, 8.0, 16.0)
+TURNS = (0.0, 0.1, 0.3)
+
+
+def sample_config(rng):
+    return {'frac': rng.choice(FRACS), 'sigma': rng.choice(SIGMAS), 'p_turn': rng.choice(TURNS)}
+
+
+def perturb(pr, rng, cfg):
+    """Original pose with round(frac x movable) units (at least 1) moved by N(0, sigma) mm on each axis and turned
+    by a random quarter with probability p_turn; clipped so the unit centre stays inside the outline box less
+    the edge clearance and the unit radius (as bench.scramble). Fixed units stay."""
+    xs = [p[0] for p in pr['board']['outline']]
+    ys = [p[1] for p in pr['board']['outline']]
+    e = pr['board'].get('edge_clearance', 0.0)
+    box = pr.get('move_box') or [min(xs), min(ys), max(xs), max(ys)]
+    pose = [(u['x'], u['y'], 0) for u in pr['units']]
+    movable = [k for k, u in enumerate(pr['units']) if not u['fixed']]
+    for k in rng.sample(movable, max(1, round(cfg['frac'] * len(movable)))):
+        u = pr['units'][k]
+        rad = max(max(abs(v) for v in r[:4]) for r in u['rects']) if u['rects'] else 0.0
+        lo_x, hi_x = max(box[0], min(xs) + e + rad), min(box[2], max(xs) - e - rad)
+        lo_y, hi_y = max(box[1], min(ys) + e + rad), min(box[3], max(ys) - e - rad)
+        x, y = u['x'] + rng.gauss(0, cfg['sigma']), u['y'] + rng.gauss(0, cfg['sigma'])
+        r = rng.randrange(1, 4) if rng.random() < cfg['p_turn'] else 0
+        pose[k] = (min(max(x, lo_x), hi_x), min(max(y, lo_y), hi_y), r)
+    return pose
+
+
+def drc_row(drc):
+    from placer import validate
+    c = validate.count_drc(drc)
+    return {'unrouted': c['unconnected'], 'errors': c['errors'], 'capped': c['capped']}
+
+
+_W = {}
+
+
+def _init(cases, timeout, budget_end, gnd):
+    from placer import anneal, cost
+    _W.update(cases=cases, timeout=timeout, end=budget_end, gnd=gnd, ev={})
+    for name, (prob, _board) in cases.items():
+        pr = json.load(open(prob))
+        p = anneal.params_all({'legal_time': 30.0})
+        _W['ev'][name] = (pr, p, cost.Mask(pr['board'], p['mask_cell'], p['gap']))
+
+
+def _hms(s):
+    h, m = divmod(int(s), 3600)
+    return '%02d:%02d:%02d' % (h, m // 60, m % 60)
+
+
+def one(task):
+    """Make, legalize, write, route and count one sample. None when the budget has no room for a route."""
+    from placer import anneal, cost, kicad_io
+    name, seed = task
+    rt = sum(int(v) * 60 ** k for k, v in enumerate(reversed(_W['timeout'].split(':'))))
+    if time.time() + rt + 90 > _W['end']:
+        return None
+    t0 = time.time()
+    pr, p, mask = _W['ev'][name]
+    rng = random.Random(seed)
+    cfg = sample_config(rng)
+    ev = cost.Evaluator(pr, p, pose=perturb(pr, rng, cfg), mask=mask)
+    try:
+        bad = anneal.legalize(ev, p)
+    except anneal.LegalizeTimeout as e:
+        bad = e.illegal
+    row = {'case': name, 'seed': seed, 'cfg': cfg, 'pose': [list(q) for q in ev.pose()], 'illegal': len(bad),
+           'unrouted': None, 'errors': None, 'capped': None}
+    if not bad:
+        board = _W['cases'][name][1]
+        stem = os.path.splitext(os.path.basename(board))[0]
+        d = os.path.abspath('work/%s-%d' % (name, seed))
+        os.makedirs(d, exist_ok=True)
+        pcb = os.path.join(d, stem + '.kicad_pcb')
+        kicad_io.write_board(board, pr, [tuple(q) for q in ev.pose()], pcb)
+        for ext in ('.kicad_pro', '.kicad_dru'):
+            src = os.path.splitext(board)[0] + ext
+            if os.path.exists(src):
+                shutil.copy(src, os.path.join(d, stem + ext))
+                shutil.copy(src, os.path.join(d, stem + '-r' + ext))
+        log = open(os.path.join(d, 'job.log'), 'w')
+        if _W['gnd'].get(name):
+            subprocess.run([sys.executable, 'tools/gnd_pad_vias.py', pcb, pcb, '--net', _W['gnd'][name]],
+                           stdout=log, stderr=subprocess.STDOUT)
+        routed = os.path.join(d, stem + '-r.kicad_pcb')
+        subprocess.run([sys.executable, 'tools/freeroute.py', pcb, routed, '--no-live', '--timeout', _W['timeout']],
+                       stdout=log, stderr=subprocess.STDOUT)
+        drc = os.path.join(d, 'drc.json')
+        subprocess.run(['kicad-cli', 'pcb', 'drc', '--format', 'json', '-o', drc, routed],
+                       stdout=log, stderr=subprocess.STDOUT)
+        if os.path.exists(drc) and os.path.exists(routed):
+            row.update(drc_row(json.load(open(drc))))
+        shutil.rmtree(d, ignore_errors=True)
+    row['wall_s'] = round(time.time() - t0, 1)
+    return row
+
+
+def _numpy_from_wheel():
+    try:
+        import numpy  # noqa: F401
+    except ImportError:
+        whl = glob.glob('in/numpy-*.whl')
+        if not whl:
+            sys.exit('surrogate_gen: no numpy and no in/numpy-*.whl')
+        zipfile.ZipFile(whl[0]).extractall('py')
+        sys.path.insert(0, os.path.abspath('py'))
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--case', action='append', required=True, help='NAME:PROB.json:BOARD.kicad_pcb[:GNDNET]')
+    ap.add_argument('--seed', type=int, required=True, help='first sample seed; sample k of a case uses seed + k')
+    ap.add_argument('--n', type=int, default=100000, help='samples per case (the budget usually stops first)')
+    ap.add_argument('--workers', type=int, default=14)
+    ap.add_argument('--budget', type=float, default=520.0, help='seconds; no new route starts after the end')
+    ap.add_argument('--timeout', default='00:01:30', help='Freerouting timeout per sample')
+    ap.add_argument('-o', default='out')
+    a = ap.parse_args(argv)
+    _numpy_from_wheel()
+    sys.path.insert(0, os.path.join(os.getcwd(), 'tools'))
+    import multiprocessing as mp
+    cases, gnd = {}, {}
+    for c in a.case:
+        f = c.split(':')
+        cases[f[0]] = (f[1], f[2])
+        if len(f) > 3:
+            gnd[f[0]] = f[3]
+    tasks = [(name, a.seed + k) for k in range(a.n) for name in cases]
+    end = time.time() + a.budget
+    os.makedirs(a.o, exist_ok=True)
+    n = routed = 0
+    with open(os.path.join(a.o, 'samples.jsonl'), 'a') as fh, \
+            mp.get_context('fork').Pool(a.workers, _init, (cases, a.timeout, end, gnd)) as pool:
+        for row in pool.imap_unordered(one, tasks):
+            if row is None:
+                if time.time() > end:
+                    pool.terminate()
+                    break
+                continue
+            fh.write(json.dumps(row) + '\n')
+            fh.flush()
+            n += 1
+            routed += row['unrouted'] is not None
+            print('sample %s %d illegal %d unrouted %s wall %.0f' % (row['case'], row['seed'], row['illegal'],
+                                                                   row['unrouted'], row['wall_s']), flush=True)
+    print('DONE samples %d routed %d' % (n, routed))
+
+
+if __name__ == '__main__':
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    main()
