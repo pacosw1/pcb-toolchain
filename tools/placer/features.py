@@ -8,6 +8,8 @@ box side / n; row = y). Each channel is a density per mm2, so boards of other si
   blocked  1 off the outline or in a keepout (cell centre test)
   vpins    pads of a via net (pr['via_nets'], u['cu'] net codes) per mm2: each needs a plane via
   copper   kept and fixed copper: track length per mm2 on the grid; a via counts as 1 mm
+  rudy_h   the horizontal part of rudy: w / (w * h) per net (rudy = rudy_h + rudy_v)
+  rudy_v   the vertical part of rudy: h / (w * h) per net
 scalars(pr, pose) gives the global values in SCALARS order.
 """
 import math
@@ -16,7 +18,7 @@ import numpy as np
 
 from placer import cost
 
-CHANNELS = ('occ', 'pins', 'rudy', 'blocked', 'vpins', 'copper')
+CHANNELS = ('occ', 'pins', 'rudy', 'blocked', 'vpins', 'copper', 'rudy_h', 'rudy_v')
 SCALARS = ('log_hpwl', 'units', 'nets', 'pins', 'log_area', 'fill', 'rudy_p95')
 
 
@@ -59,7 +61,7 @@ def rasterize(pr, pose, n=64):
     """(len(CHANNELS), n, n) float32 array and the grid {'x0', 'y0', 'cell', 'n'}."""
     g = grid_of(pr['board'], n)
     x = np.zeros((len(CHANNELS), n, n))
-    occ, pins, rudy, blk, vpins, cu = x
+    occ, pins, rudy, blk, vpins, cu, rudy_h, rudy_v = x
     via_nets = set(pr.get('via_nets', ()))
     for u, (ux, uy, r) in zip(pr['units'], pose):
         for rc in cost.world_rects(u, (ux, uy, r)):
@@ -81,6 +83,8 @@ def rasterize(pr, pose, n=64):
         w, h = max(w, g['cell']), max(h, g['cell'])
         _add_box(rudy, g, cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2,
                  net['weight'] * (bx1 - bx0 + by1 - by0) / (w * h))
+        _add_box(rudy_h, g, cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2, net['weight'] * (bx1 - bx0) / (w * h))
+        _add_box(rudy_v, g, cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2, net['weight'] * (by1 - by0) / (w * h))
     cs = g['x0'] + (np.arange(n) + 0.5) * g['cell']
     rs = g['y0'] + (np.arange(n) + 0.5) * g['cell']
     xs, ys = np.meshgrid(cs, rs)

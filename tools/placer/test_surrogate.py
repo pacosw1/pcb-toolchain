@@ -158,6 +158,24 @@ class Model(unittest.TestCase):
         d = surrogate.train(x, s, y, groups=['sq'] * 30, epochs=3, seed=7, device='cpu', aug=True).predict(x, s)
         np.testing.assert_allclose(c, d, rtol=1e-6)
 
+    def test_rank_only_loss_ignores_the_board_scale(self):
+        # w_mse 0: only the order inside each board counts, so a per-board monotone change of y gives the same model
+        pr, poses, y = synthetic(60, 4)
+        x, s = surrogate.featurize_many(pr, poses, n=16)
+        g = ['a'] * 30 + ['b'] * 30
+        y2 = np.concatenate([y[:30], 10 * y[30:] + 50])
+        a = surrogate.train(x, s, y, groups=g, epochs=3, seed=5, device='cpu', w_mse=0).predict(x, s)
+        b = surrogate.train(x, s, y2, groups=g, epochs=3, seed=5, device='cpu', w_mse=0).predict(x, s)
+        np.testing.assert_array_equal(np.argsort(a), np.argsort(b))
+        c = surrogate.train(x, s, y2, groups=g, epochs=3, seed=5, device='cpu').predict(x, s)
+        self.assertFalse(np.array_equal(np.argsort(a), np.argsort(c)))
+
+    def test_rank_only_loss_learns_the_order(self):
+        pr, poses, y = synthetic(240, 1)
+        x, s = surrogate.featurize_many(pr, poses, n=16)
+        m = surrogate.train(x[:200], s[:200], y[:200], groups=['sq'] * 200, epochs=60, seed=0, device='cpu', w_mse=0)
+        self.assertGreater(surrogate.spearman(m.predict(x[200:], s[200:]), y[200:]), 0.8)
+
 
 if __name__ == '__main__':
     unittest.main()

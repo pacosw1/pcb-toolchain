@@ -1,7 +1,7 @@
 """Routability surrogate: predicts the Freerouting unrouted count of a placement in milliseconds, so the placer can
 send only its best candidates to Freerouting (on Hetzner).
 
-Input: features.rasterize (6 density channels, n x n) + features.scalars. Model: a small CNN (3 conv blocks, global
+Input: features.rasterize (density channels features.CHANNELS, n x n) + features.scalars. Model: a small CNN (3 conv blocks, global
 mean + max pool) joined with the scalars, then an MLP; target log1p(unrouted). A second head gives the probability
 that each net stays open (mean of the block-2 features over the net pin box + net features). Loss: MSE + a
 pairwise rank term inside a board + BCE of the net head. Optional D4 augmentation. Channel and scalar scales come
@@ -211,11 +211,12 @@ class Surrogate:
 
 
 def train(x, s, y, groups, nets=None, epochs=80, seed=0, device='cpu', lr=2e-3, batch=64, aug=False, w_net=0.5,
-          log=None):
+          log=None, w_mse=1.0):
     """Fit on feature arrays x (N, C, n, n), s (N, S) and unrouted counts y. Loss: MSE on log1p(y) plus a
     pairwise rank term inside each group (a board): the model must order the candidates of one board.
     nets: per sample (boxes, features, labels) from net_rows: adds w_net x the BCE of the per-net open head.
-    aug: each batch gets one random D4 transform (d4) of the rasters and the net boxes."""
+    aug: each batch gets one random D4 transform (d4) of the rasters and the net boxes.
+    w_mse: weight of the MSE term; 0 = rank loss inside each board only (the scale of each board does not count)."""
     import torch
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
@@ -244,7 +245,7 @@ def train(x, s, y, groups, nets=None, epochs=80, seed=0, device='cpu', lr=2e-3, 
             tb = torch.as_tensor(t[idx], device=device)
             gb = torch.as_tensor(g[idx], device=device)
             p, z = m.net(xb, sb, m._nets(rows, boxes) if rows else None)
-            loss = torch.mean((p - tb) ** 2)
+            loss = w_mse * torch.mean((p - tb) ** 2)
             same = (gb[:, None] == gb[None, :]) & (tb[:, None] < tb[None, :])
             if same.any():
                 loss = loss + torch.nn.functional.softplus(p[:, None] - p[None, :])[same].mean()
@@ -328,7 +329,7 @@ def cmd_train(a):
     tr, te = split(d['g'], a.holdout.split(',') if a.holdout else [])
     t0 = time.time()
     m = train(d['x'][tr], d['s'][tr], d['y'][tr], d['g'][tr], nets=[d['nets'][k] for k in tr] if d['nets'] else None,
-              epochs=a.epochs, seed=a.seed, device=a.device, aug=a.aug,
+              epochs=a.epochs, seed=a.seed, device=a.device, aug=a.aug, w_mse=a.w_mse,
               log=lambda t: print(t, flush=True) if a.verbose else None)
     print('train n %d, %.0f s on %s, aug %s' % (len(tr), time.time() - t0, a.device, a.aug))
     m.save(a.o)
@@ -359,6 +360,7 @@ def main(argv=None):
     r.add_argument('--epochs', type=int, default=80)
     r.add_argument('--seed', type=int, default=0)
     r.add_argument('--aug', action='store_true', help='D4 augmentation (flip and turn the whole raster)')
+    r.add_argument('--w-mse', type=float, default=1.0, help='MSE weight; 0 = rank loss inside each board only')
     r.add_argument('--verbose', action='store_true')
     r = sub.add_parser('eval')
     r.add_argument('model')

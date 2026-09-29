@@ -62,6 +62,18 @@ class Rasterize(unittest.TestCase):
         wl = cost.hpwl(self.pr, self.pose)
         self.assertAlmostEqual(float(rudy.sum()) * g['cell'] ** 2, wl, places=3)
 
+    def test_rudy_splits_into_horizontal_and_vertical_wire(self):
+        x, g = features.rasterize(self.pr, self.pose, n=20)
+        c = features.CHANNELS
+        h, v = x[c.index('rudy_h')], x[c.index('rudy_v')]
+        wh = sum(n['weight'] * (b[2] - b[0]) for n in self.pr['nets'] for b in [cost.net_box(n, self.pose)])
+        wv = sum(n['weight'] * (b[3] - b[1]) for n in self.pr['nets'] for b in [cost.net_box(n, self.pose)])
+        self.assertAlmostEqual(float(h.sum()) * g['cell'] ** 2, wh, places=3)
+        self.assertAlmostEqual(float(v.sum()) * g['cell'] ** 2, wv, places=3)
+        self.assertTrue(np.allclose(h + v, x[c.index('rudy')], atol=1e-5))
+        self.assertGreater(wh, 0)
+        self.assertGreater(wv, 0)
+
     def test_blocked_is_outline_and_keepouts(self):
         pr = square_problem()
         pr['board']['outline'] = [[0, 0], [20, 0], [20, 10], [0, 10]]  # 20 x 10: lower grid half is off board
