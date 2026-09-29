@@ -158,6 +158,15 @@ class Result(unittest.TestCase):
         self.assertIsNone(surrogate_gen.median_rep([ok, {'unrouted': None}, ok]))
         self.assertIsNone(surrogate_gen.median_rep([ok, {'unrouted': 499, 'capped': True}, ok]))
 
+    def test_collect_replaces_a_hung_route(self):
+        out = iter([{'unrouted': 5}, {'hung': True}, {'unrouted': 7}, {'unrouted': 6}])
+        good, hung = surrogate_gen.collect(lambda: next(out), 3, 2)
+        self.assertEqual(([r['unrouted'] for r in good], hung), ([5, 7, 6], 1))
+
+    def test_collect_stops_after_the_extra_tries(self):
+        good, hung = surrogate_gen.collect(lambda: {'hung': True}, 3, 2)
+        self.assertEqual((good, hung), ([], 5))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -27,6 +27,7 @@ import math
 import random
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -39,6 +40,7 @@ MOVES = {'small': ((0.05, 0.1, 0.2), (0.5, 1.0, 2.0), (0.0, 0.1)),   # frac, sig
          'large': ((0.4, 0.55, 0.7), (8.0, 12.0, 16.0), (0.1, 0.3))}
 GP_STEPS = (2000, 5000)
 TRIES = 3  # legalizer tries per sample (retry_config between them)
+EXTRA = 2  # extra routes of a pose when a route hangs (--reps > 1)
 
 
 def sample_config(rng):
@@ -227,14 +229,26 @@ def one(task):
         for net in filter(None, _W['gnd'].get(name, '').split(',')):
             subprocess.run([sys.executable, 'tools/gnd_pad_vias.py', pcb, pcb, '--net', net],
                            stdout=log, stderr=subprocess.STDOUT)
-        reps = [_route(d, pcb, stem, rt, log) for _ in range(_W['reps'])]
-        if _W['reps'] == 1:
-            row.update(reps[0])
-        elif median_rep(reps):
-            row.update(median_rep(reps))
+        reps, row['hung'] = collect(lambda: _route(d, pcb, stem, rt, log), _W['reps'], EXTRA if _W['reps'] > 1 else 0)
+        if len(reps) == _W['reps'] and (_W['reps'] == 1 or median_rep(reps)):
+            row.update(reps[0] if _W['reps'] == 1 else median_rep(reps))
         shutil.rmtree(d, ignore_errors=True)
     row['wall_s'] = round(time.time() - t0, 1)
     return row
+
+
+def collect(route, reps, extra):
+    """Call route() until it gave reps results without 'hung', at most reps + extra calls -> (results, hung count)."""
+    good, hung = [], 0
+    for _ in range(reps + extra):
+        r = route()
+        if r.get('hung'):
+            hung += 1
+        else:
+            good.append(r)
+            if len(good) == reps:
+                break
+    return good, hung
 
 
 def median_rep(reps):
@@ -248,14 +262,24 @@ def median_rep(reps):
 
 def _route(d, pcb, stem, rt, log):
     """One Freerouting run of pcb and its DRC -> label dict ({} when the router or DRC gave no file)."""
+    if time.time() + rt + 120 > _W['end'] + 240:  # an extra route after a hang must not outrun the job timeout
+        return {'hung': True, 'late': True}
     routed = os.path.join(d, stem + '-r.kicad_pcb')
     drc = os.path.join(d, 'drc.json')
     for f in [routed, drc] + glob.glob(os.path.join(d, 'freeroute-*', 'freerouting.log')):
         if os.path.exists(f):  # files of the previous route of this pose
             os.remove(f)
     t1 = time.time()
-    subprocess.run([sys.executable, 'tools/freeroute.py', pcb, routed, '--no-live', '--timeout', _W['timeout']],
-                   stdout=log, stderr=subprocess.STDOUT, env=dict(os.environ, TMPDIR=d))
+    # Freerouting 2.1.0 sometimes ignores its job timeout; freeroute.py stops it only at 900 s. Stop the whole
+    # process group (freeroute.py and java) at the limit + 120 s; the caller then routes the pose again.
+    proc = subprocess.Popen([sys.executable, 'tools/freeroute.py', pcb, routed, '--no-live', '--timeout', _W['timeout']],
+                            stdout=log, stderr=subprocess.STDOUT, env=dict(os.environ, TMPDIR=d), start_new_session=True)
+    try:
+        proc.wait(timeout=rt + 120)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        proc.wait()
+        return {'hung': True}
     route_s = time.time() - t1
     subprocess.run(['kicad-cli', 'pcb', 'drc', '--format', 'json', '-o', drc, routed],
                    stdout=log, stderr=subprocess.STDOUT)
