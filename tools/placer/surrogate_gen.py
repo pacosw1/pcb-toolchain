@@ -161,7 +161,7 @@ def one(task):
     from placer import anneal, cost, kicad_io
     name, seed = task
     rt = sum(int(v) * 60 ** k for k, v in enumerate(reversed(_W['timeout'].split(':'))))
-    if time.time() + rt + 90 > _W['end']:
+    if time.time() + rt + 120 > _W['end']:  # write + GND vias + DRC take up to about 120 s more
         return None
     t0 = time.time()
     pr, p, mask = _W['ev'][name]
