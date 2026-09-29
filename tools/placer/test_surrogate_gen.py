@@ -54,6 +54,15 @@ class Perturb(unittest.TestCase):
             self.assertIn(c['p_turn'], surrogate_gen.TURNS)
 
 
+    def test_negative_seed_is_the_original_pose(self):
+        pr = many_units()
+        rng, cfg, pose = surrogate_gen.start(pr, 'X', -3)
+        self.assertIsNone(cfg)
+        self.assertEqual(pose, [(u['x'], u['y'], 0) for u in pr['units']])
+        rng, cfg, pose = surrogate_gen.start(pr, 'X', 3)
+        self.assertEqual(cfg, surrogate_gen.sample_config(surrogate_gen.case_rng('X', 3)))
+        self.assertNotEqual(pose, [(u['x'], u['y'], 0) for u in pr['units']])
+
     def test_retry_is_smaller(self):
         c = surrogate_gen.retry_config({'frac': 0.3, 'sigma': 8.0, 'p_turn': 0.3})
         self.assertEqual(c, {'frac': 0.15, 'sigma': 4.0, 'p_turn': 0.15})

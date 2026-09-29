@@ -47,6 +47,16 @@ def case_rng(name, seed):
     return random.Random('%s:%d' % (name, seed))
 
 
+def start(pr, name, seed):
+    """(rng, cfg, first pose) of a sample. A negative seed is a repeat of the original pose (cfg None): its
+    spread over repeats is the router noise."""
+    rng = case_rng(name, seed)
+    if seed < 0:
+        return rng, None, [(u['x'], u['y'], 0) for u in pr['units']]
+    cfg = sample_config(rng)
+    return rng, cfg, perturb(pr, rng, cfg)
+
+
 def retry_config(cfg):
     """A smaller step for the next try when the legalizer fails: half the fraction, the step and the turn rate."""
     return {'frac': cfg['frac'] / 2, 'sigma': cfg['sigma'] / 2, 'p_turn': cfg['p_turn'] / 2}
@@ -165,17 +175,17 @@ def one(task):
         return None
     t0 = time.time()
     pr, p, mask = _W['ev'][name]
-    rng = case_rng(name, seed)
-    cfg = sample_config(rng)
+    rng, cfg, pose = start(pr, name, seed)
     for tries in range(1, TRIES + 1):
-        ev = cost.Evaluator(pr, p, pose=perturb(pr, rng, cfg), mask=mask)
+        ev = cost.Evaluator(pr, p, pose=pose, mask=mask)
         try:
             bad = anneal.legalize(ev, p)
         except anneal.LegalizeTimeout as e:
             bad = e.illegal
-        if not bad:
+        if not bad or cfg is None:
             break
         cfg = retry_config(cfg)
+        pose = perturb(pr, rng, cfg)
     row = {'case': name, 'seed': seed, 'cfg': cfg, 'tries': tries, 'pose': [list(q) for q in ev.pose()],
            'illegal': len(bad), 'unrouted': None, 'errors': None, 'capped': None}
     if not bad:
@@ -233,6 +243,7 @@ def main(argv=None):
     ap.add_argument('--case', action='append', required=True, help='NAME:PROB.json:BOARD.kicad_pcb[:GNDNET,...]')
     ap.add_argument('--seed', type=int, required=True, help='first sample seed; sample k of a case uses seed + k')
     ap.add_argument('--n', type=int, default=100000, help='samples per case (the budget usually stops first)')
+    ap.add_argument('--repeats', type=int, default=0, help='first route the original pose of each case R times')
     ap.add_argument('--workers', type=int, default=14)
     ap.add_argument('--budget', type=float, default=520.0, help='seconds; no new route starts after the end')
     ap.add_argument('--timeout', default='00:01:30', help='Freerouting timeout per sample')
@@ -247,7 +258,8 @@ def main(argv=None):
         cases[f[0]] = (f[1], f[2])
         if len(f) > 3:
             gnd[f[0]] = f[3]
-    tasks = [(name, a.seed + k) for k in range(a.n) for name in cases]
+    tasks = [(name, -1 - k) for k in range(a.repeats) for name in cases] + \
+        [(name, a.seed + k) for k in range(a.n) for name in cases]
     end = time.time() + a.budget
     os.makedirs(a.o, exist_ok=True)
     n = routed = 0
