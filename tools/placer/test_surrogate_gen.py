@@ -144,6 +144,20 @@ class Result(unittest.TestCase):
         drc = {'unconnected_items': [{'items': [{'description': 'Pad 1 [/A] of R1'}]}] * 499, 'violations': []}
         self.assertTrue(surrogate_gen.drc_row(drc)['capped'])
 
+    def test_median_rep_is_the_middle_route(self):
+        reps = [{'unrouted': 9, 'capped': False, 'timeout': True, 'vias': 1},
+                {'unrouted': 4, 'capped': False, 'timeout': True, 'vias': 2},
+                {'unrouted': 6, 'capped': False, 'timeout': False, 'vias': 3}]
+        m = surrogate_gen.median_rep(reps)
+        self.assertEqual((m['unrouted'], m['vias'], m['timeout']), (6, 3, False))
+        self.assertEqual(m['rep_unrouted'], [9, 4, 6])
+
+    def test_median_rep_needs_every_route(self):
+        # a failed or capped route leaves the label unknown: no median of the rest
+        ok = {'unrouted': 4, 'capped': False}
+        self.assertIsNone(surrogate_gen.median_rep([ok, {'unrouted': None}, ok]))
+        self.assertIsNone(surrogate_gen.median_rep([ok, {'unrouted': 499, 'capped': True}, ok]))
+
 
 if __name__ == '__main__':
     unittest.main()

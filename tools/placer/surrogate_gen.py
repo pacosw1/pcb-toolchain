@@ -175,9 +175,9 @@ def timed_out(route_s, limit_s, unrouted):
 _W = {}
 
 
-def _init(cases, timeout, budget_end, gnd):
+def _init(cases, timeout, budget_end, gnd, reps=1):
     from placer import anneal, cost
-    _W.update(cases=cases, timeout=timeout, end=budget_end, gnd=gnd, ev={})
+    _W.update(cases=cases, timeout=timeout, end=budget_end, gnd=gnd, ev={}, reps=reps)
     for name, (prob, _board) in cases.items():
         pr = json.load(open(prob))
         p = anneal.params_all({'legal_time': 15.0})
@@ -194,7 +194,7 @@ def one(task):
     from placer import anneal, cost, kicad_io
     name, seed = task
     rt = sum(int(v) * 60 ** k for k, v in enumerate(reversed(_W['timeout'].split(':'))))
-    if time.time() + rt + 120 > _W['end']:  # write + GND vias + DRC take up to about 120 s more
+    if time.time() + _W['reps'] * (rt + 120) > _W['end']:  # write + GND vias + DRC take up to 120 s more
         return None
     t0 = time.time()
     pr, p, mask = _W['ev'][name]
@@ -227,23 +227,46 @@ def one(task):
         for net in filter(None, _W['gnd'].get(name, '').split(',')):
             subprocess.run([sys.executable, 'tools/gnd_pad_vias.py', pcb, pcb, '--net', net],
                            stdout=log, stderr=subprocess.STDOUT)
-        routed = os.path.join(d, stem + '-r.kicad_pcb')
-        t1 = time.time()
-        subprocess.run([sys.executable, 'tools/freeroute.py', pcb, routed, '--no-live', '--timeout', _W['timeout']],
-                       stdout=log, stderr=subprocess.STDOUT, env=dict(os.environ, TMPDIR=d))
-        route_s = time.time() - t1
-        drc = os.path.join(d, 'drc.json')
-        subprocess.run(['kicad-cli', 'pcb', 'drc', '--format', 'json', '-o', drc, routed],
-                       stdout=log, stderr=subprocess.STDOUT)
-        if os.path.exists(drc) and os.path.exists(routed):
-            row.update(drc_row(json.load(open(drc)), rich=True))
-            row.update(copper_stats(open(routed, errors='ignore').read()))
-            flog = glob.glob(os.path.join(d, 'freeroute-*', 'freerouting.log'))
-            row['passes'] = router_passes(open(flog[0], errors='ignore').read()) if flog else None
-            row['route_s'] = round(route_s, 1)
-            row['timeout'] = timed_out(route_s, rt, row['unrouted'])
+        reps = [_route(d, pcb, stem, rt, log) for _ in range(_W['reps'])]
+        if _W['reps'] == 1:
+            row.update(reps[0])
+        elif median_rep(reps):
+            row.update(median_rep(reps))
         shutil.rmtree(d, ignore_errors=True)
     row['wall_s'] = round(time.time() - t0, 1)
+    return row
+
+
+def median_rep(reps):
+    """The route with the median unrouted count of R routes of one pose, plus rep_unrouted (all counts in order).
+    None when a route failed or hit the 499 cap: the label is then unknown."""
+    if any(r.get('unrouted') is None or r.get('capped') for r in reps):
+        return None
+    order = sorted(range(len(reps)), key=lambda k: reps[k]['unrouted'])
+    return dict(reps[order[(len(reps) - 1) // 2]], rep_unrouted=[r['unrouted'] for r in reps])
+
+
+def _route(d, pcb, stem, rt, log):
+    """One Freerouting run of pcb and its DRC -> label dict ({} when the router or DRC gave no file)."""
+    routed = os.path.join(d, stem + '-r.kicad_pcb')
+    drc = os.path.join(d, 'drc.json')
+    for f in [routed, drc] + glob.glob(os.path.join(d, 'freeroute-*', 'freerouting.log')):
+        if os.path.exists(f):  # files of the previous route of this pose
+            os.remove(f)
+    t1 = time.time()
+    subprocess.run([sys.executable, 'tools/freeroute.py', pcb, routed, '--no-live', '--timeout', _W['timeout']],
+                   stdout=log, stderr=subprocess.STDOUT, env=dict(os.environ, TMPDIR=d))
+    route_s = time.time() - t1
+    subprocess.run(['kicad-cli', 'pcb', 'drc', '--format', 'json', '-o', drc, routed],
+                   stdout=log, stderr=subprocess.STDOUT)
+    if not (os.path.exists(drc) and os.path.exists(routed)):
+        return {}
+    row = drc_row(json.load(open(drc)), rich=True)
+    row.update(copper_stats(open(routed, errors='ignore').read()))
+    flog = glob.glob(os.path.join(d, 'freeroute-*', 'freerouting.log'))
+    row['passes'] = router_passes(open(flog[0], errors='ignore').read()) if flog else None
+    row['route_s'] = round(route_s, 1)
+    row['timeout'] = timed_out(route_s, rt, row['unrouted'])
     return row
 
 
@@ -267,6 +290,7 @@ def main(argv=None):
     ap.add_argument('--seed', type=int, required=True, help='first sample seed; sample k of a case uses seed + k')
     ap.add_argument('--n', type=int, default=100000, help='samples per case (the budget usually stops first)')
     ap.add_argument('--repeats', type=int, default=0, help='first route the original pose of each case R times')
+    ap.add_argument('--reps', type=int, default=1, help='route each pose R times; the label is the median route')
     ap.add_argument('--workers', type=int, default=14)
     ap.add_argument('--budget', type=float, default=520.0, help='seconds; no new route starts after the end')
     ap.add_argument('--timeout', default='00:01:30', help='Freerouting timeout per sample')
@@ -287,7 +311,7 @@ def main(argv=None):
     os.makedirs(a.o, exist_ok=True)
     n = routed = 0
     with open(os.path.join(a.o, 'samples.jsonl'), 'a') as fh, \
-            mp.get_context('fork').Pool(a.workers, _init, (cases, a.timeout, end, gnd)) as pool:
+            mp.get_context('fork').Pool(a.workers, _init, (cases, a.timeout, end, gnd, a.reps)) as pool:
         for row in pool.imap_unordered(one, tasks):
             if row is None:
                 if time.time() > end:
