@@ -131,3 +131,20 @@ Benchmark (`bench_batch.py`; this Mac, M3 Max, other agents active, load 13-30; 
 | IO-6X6 | mps C64 P16 | 25340 | 3044 | 4670 / 4111 / 4472 | 4472 |
 
 Result: FAIL for the search. Evaluations per second go up 5-13x (RELAY-4) and 4-38x (IO-6X6), and mps beats cpu torch by 2-6x. But one batch step takes 25-100 ms whatever the batch size (kernel launch and sync overhead), so each chain makes only 10-40 moves per second against 700-1900 for a scalar chain. At an equal wall-clock budget, every batch variant ends worse than the single scalar chain (RELAY-4 median 3004-4458 vs 1836; IO-6X6 3897-7767 vs 3520). Speculative proposals help little: at the high early temperature most first proposals are accepted. The scalar path stays the default. Use `BatchCost` where many independent poses need a cost (candidate ranking, surrogate labels): about 14-25k evaluations/s on mps. Next step, if wanted: fused kernels (fewer launches per step) or batched incremental state on the cpu without torch overhead.
+
+Attempt 2 (2026-09-29 night, surrogate stays off): labels = the median of 3 Freerouting routes at 3.5 min (`surrogate_gen.py --reps 3 --timeout 00:03:30`; a route that ignores its job timeout is killed at the limit + 120 s and the pose is routed again, at most 2 extra), on RELAY-4, IO-6X6, INPUT-4D2A, DOOR-RELAY only. Features: 8 channels (`rudy_h`, `rudy_v` added). Loss: MSE + rank inside each board (`w_mse` 1) or rank only (`w_mse` 0). Training: the new labels + the old 3.5-min placer poses (62; 9 BACKUP-POWER poses do not rebuild), whole boards held out (RELAY-4 + INPUT-4D2A, IO-6X6 + DOOR-RELAY), 80 epochs, 3 seeds, MPS.
+
+Data: 197 poses, 47 illegal (24 %), 98 labels (RELAY-4 24, IO-6X6 29, INPUT-4D2A 22, DOOR-RELAY 23), 52 legal poses without a label (most before the hang fix). All labels are timeouts at 3.5 min. Route SD / pose spread SD: RELAY-4 5.4 / 20.7, IO-6X6 8.9 / 55.1, INPUT-4D2A 4.5 / 51.8, DOOR-RELAY 7.7 / 38.7. Hang bias: 11 labels with a hung route (median 27) vs 87 without (median 23).
+
+Held-out Spearman / top-10% recall, mean of 3 seeds (gen = new poses, old = placer poses):
+
+| Board (set) | w_mse 1 | w_mse 1 + D4 | w_mse 0 | w_mse 0 + D4 | HPWL |
+|---|---|---|---|---|---|
+| RELAY-4 gen (24) | 0.12 / 0.33 | 0.17 / 0.33 | 0.13 / 0.50 | 0.21 / 0.67 | 0.27 / 0.50 |
+| RELAY-4 old (44) | 0.54 / 0.56 | 0.61 / 0.72 | 0.14 / 0.50 | 0.45 / 0.72 | 0.66 / 0.83 |
+| INPUT-4D2A gen (22) | 0.32 / 0.17 | 0.71 / 0.17 | -0.76 / 0.00 | -0.29 / 0.17 | -0.48 / 0.00 |
+| IO-6X6 gen (29) | -0.12 / 0.08 | -0.39 / 0.00 | 0.35 / 0.33 | -0.41 / 0.00 | -0.67 / 0.00 |
+| DOOR-RELAY gen (23) | 0.51 / 0.83 | 0.76 / 1.00 | -0.73 / 0.00 | -0.26 / 0.33 | -0.41 / 0.00 |
+| DOOR-RELAY old (13) | 0.14 / 0.67 | 0.16 / 1.00 | 0.03 / 0.33 | 0.14 / 0.33 | 0.53 / 1.00 |
+
+Result: the targets are met only on DOOR-RELAY gen (w_mse 1 + D4: 0.76 / 1.00, seeds 0.73-0.78). On the generated poses that variant beats HPWL on 3 of 4 held-out boards (INPUT-4D2A, IO-6X6, DOOR-RELAY), but on those poses HPWL has the wrong sign (spread-out poses route better). On the old placer poses, which are what the placer would score, HPWL wins on both boards (RELAY-4 0.66 vs 0.61, DOOR-RELAY 0.53 vs 0.16). The variant was picked on the same held-out data. The surrogate stays off in the placer; HPWL + a Freerouting check stays the placement score. rank-only (w_mse 0) is not stable across boards. Weights are not stored (scratch only).
