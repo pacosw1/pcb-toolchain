@@ -45,27 +45,48 @@ class Perturb(unittest.TestCase):
         for x, y, _ in pose:
             self.assertTrue(0.0 <= x <= 20.0 and 0.0 <= y <= 20.0)
 
-    def test_config_from_the_sets(self):
+    def test_config_from_the_mode_sets(self):
         rng = random.Random(5)
-        for _ in range(50):
+        seen = set()
+        for _ in range(300):
             c = surrogate_gen.sample_config(rng)
-            self.assertIn(c['frac'], surrogate_gen.FRACS)
-            self.assertIn(c['sigma'], surrogate_gen.SIGMAS)
-            self.assertIn(c['p_turn'], surrogate_gen.TURNS)
+            seen.add(c['mode'])
+            if c['mode'] == 'gp':
+                self.assertIn(c['steps'], surrogate_gen.GP_STEPS)
+                continue
+            fr, sg, tu = surrogate_gen.MOVES[c['mode']]
+            self.assertIn(c['frac'], fr)
+            self.assertIn(c['sigma'], sg)
+            self.assertIn(c['p_turn'], tu)
+        self.assertEqual(seen, {'small', 'large', 'gp'})
 
+    def test_large_moves_are_large(self):
+        fr, sg, _ = surrogate_gen.MOVES['large']
+        self.assertTrue(min(fr) >= 0.4 and max(fr) <= 0.7 and min(sg) >= 8 and max(sg) <= 16)
+
+    def test_gp_has_no_retry(self):
+        self.assertIsNone(surrogate_gen.retry_config({'mode': 'gp', 'steps': 2000, 'gseed': 1}))
 
     def test_negative_seed_is_the_original_pose(self):
         pr = many_units()
         rng, cfg, pose = surrogate_gen.start(pr, 'X', -3)
         self.assertIsNone(cfg)
         self.assertEqual(pose, [(u['x'], u['y'], 0) for u in pr['units']])
-        rng, cfg, pose = surrogate_gen.start(pr, 'X', 3)
-        self.assertEqual(cfg, surrogate_gen.sample_config(surrogate_gen.case_rng('X', 3)))
-        self.assertNotEqual(pose, [(u['x'], u['y'], 0) for u in pr['units']])
+        fake_gp = lambda pr, cfg: 'GP'  # noqa: E731
+        modes = set()
+        for seed in range(30):
+            rng, cfg, pose = surrogate_gen.start(pr, 'X', seed, gp=fake_gp)
+            self.assertEqual(cfg, surrogate_gen.sample_config(surrogate_gen.case_rng('X', seed)))
+            modes.add(cfg['mode'])
+            if cfg['mode'] == 'gp':
+                self.assertEqual(pose, 'GP')
+            else:
+                self.assertNotEqual(pose, [(u['x'], u['y'], 0) for u in pr['units']])
+        self.assertIn('gp', modes)
 
     def test_retry_is_smaller(self):
-        c = surrogate_gen.retry_config({'frac': 0.3, 'sigma': 8.0, 'p_turn': 0.3})
-        self.assertEqual(c, {'frac': 0.15, 'sigma': 4.0, 'p_turn': 0.15})
+        c = surrogate_gen.retry_config({'mode': 'large', 'frac': 0.4, 'sigma': 8.0, 'p_turn': 0.3})
+        self.assertEqual(c, {'mode': 'large', 'frac': 0.2, 'sigma': 4.0, 'p_turn': 0.15})
 
     def test_cases_get_other_configs(self):
         a = [surrogate_gen.sample_config(surrogate_gen.case_rng('RELAY-4', s)) for s in range(20)]

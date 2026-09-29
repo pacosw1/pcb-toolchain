@@ -1,7 +1,7 @@
 """Scored placement samples for the routability surrogate (surrogate.py). Runs on the Hetzner box only.
 
 Each sample: the original pose of a problem, a random fraction of the movable units moved by a normal step (and
-turned), then anneal.legalize. A legal pose is written (kicad_io.write_board), routed once by Freerouting
+turned), or a gplace + short anneal result (MODES), then anneal.legalize. A legal pose is written (kicad_io.write_board), routed once by Freerouting
 (tools/freeroute.py, F.Cu + B.Cu, one fixed timeout for all samples) and counted from the kicad-cli DRC JSON.
 An illegal pose is recorded without a route. One JSON line per sample goes to OUT/samples.jsonl:
   {case, seed, cfg, tries, pose, illegal, unrouted, errors, capped, wall_s}   (unrouted None: not routed)
@@ -32,14 +32,34 @@ import sys
 import time
 import zipfile
 
-FRACS = (0.05, 0.1, 0.2, 0.4, 0.7)
-SIGMAS = (0.5, 1.0, 2.0, 4.0, 8.0, 16.0)
-TURNS = (0.0, 0.1, 0.3)
+# Move mix (main, 2026-09-28): what the placer really compares. small = anneal-size moves, large = sigma 8-16 mm on
+# 40-70 % of the units, gp = gplace (global=1) + a short anneal from the original pose (anneal.optimize, 1 worker).
+MODES = (('small', 0.4), ('large', 0.3), ('gp', 0.3))
+MOVES = {'small': ((0.05, 0.1, 0.2), (0.5, 1.0, 2.0), (0.0, 0.1)),   # frac, sigma, p_turn
+         'large': ((0.4, 0.55, 0.7), (8.0, 12.0, 16.0), (0.1, 0.3))}
+GP_STEPS = (2000, 5000)
 TRIES = 3  # legalizer tries per sample (retry_config between them)
 
 
 def sample_config(rng):
-    return {'frac': rng.choice(FRACS), 'sigma': rng.choice(SIGMAS), 'p_turn': rng.choice(TURNS)}
+    x, mode = rng.random(), MODES[-1][0]
+    for m, w in MODES:
+        if x < w:
+            mode = m
+            break
+        x -= w
+    if mode == 'gp':
+        return {'mode': 'gp', 'steps': rng.choice(GP_STEPS), 'gseed': rng.randrange(10 ** 6)}
+    fr, sg, tu = MOVES[mode]
+    return {'mode': mode, 'frac': rng.choice(fr), 'sigma': rng.choice(sg), 'p_turn': rng.choice(tu)}
+
+
+def gp_pose(pr, cfg):
+    """Pose of a gp sample: gplace + a short anneal (2 epochs, low start temperature) from the original pose."""
+    from placer import anneal
+    res = anneal.optimize(pr, {'global': 1, 't0': 1.0}, workers=1, epochs=2, steps=cfg['steps'], seed=cfg['gseed'],
+                          top=1)
+    return [tuple(q) for q in res['candidates'][0]['pose']]
 
 
 def case_rng(name, seed):
@@ -47,19 +67,22 @@ def case_rng(name, seed):
     return random.Random('%s:%d' % (name, seed))
 
 
-def start(pr, name, seed):
+def start(pr, name, seed, gp=gp_pose):
     """(rng, cfg, first pose) of a sample. A negative seed is a repeat of the original pose (cfg None): its
-    spread over repeats is the router noise."""
+    spread over repeats is the router noise. A gp config gets its pose from gp(pr, cfg)."""
     rng = case_rng(name, seed)
     if seed < 0:
         return rng, None, [(u['x'], u['y'], 0) for u in pr['units']]
     cfg = sample_config(rng)
-    return rng, cfg, perturb(pr, rng, cfg)
+    return rng, cfg, gp(pr, cfg) if cfg['mode'] == 'gp' else perturb(pr, rng, cfg)
 
 
 def retry_config(cfg):
-    """A smaller step for the next try when the legalizer fails: half the fraction, the step and the turn rate."""
-    return {'frac': cfg['frac'] / 2, 'sigma': cfg['sigma'] / 2, 'p_turn': cfg['p_turn'] / 2}
+    """A smaller step for the next try when the legalizer fails: half the fraction, the step and the turn rate.
+    None for a gp sample (no retry: its pose is the search result)."""
+    if cfg.get('mode') == 'gp':
+        return None
+    return dict(cfg, frac=cfg['frac'] / 2, sigma=cfg['sigma'] / 2, p_turn=cfg['p_turn'] / 2)
 
 
 def perturb(pr, rng, cfg):
@@ -182,7 +205,7 @@ def one(task):
             bad = anneal.legalize(ev, p)
         except anneal.LegalizeTimeout as e:
             bad = e.illegal
-        if not bad or cfg is None:
+        if not bad or cfg is None or retry_config(cfg) is None:
             break
         cfg = retry_config(cfg)
         pose = perturb(pr, rng, cfg)
