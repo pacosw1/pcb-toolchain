@@ -364,6 +364,9 @@ def optimize(pr, params, workers=1, epochs=10, steps=10000, seed=1, top=3, log=N
         glob = {'iters': len(g['history']), 'overflow': g['history'][-1]['overflow'] if g['history'] else None}
     if p['normalize']:  # SA_PCB: each term relative to its value on the start pose
         p = normalized(p, cost.components(pr, cost.initial_pose(pr), p))
+    if p.get('batch'):  # K chains as one torch batch (batch.py); the scalar workers below stay the default
+        from . import batch
+        return dict(batch.optimize(pr, p, epochs, steps, seed, top, log, start), **{'global': glob})
     _init(pr, p)
     pf = epoch_params(p, epochs - 1, epochs)
     ev0 = _evaluator(start, epoch_params(p, 0, epochs))
