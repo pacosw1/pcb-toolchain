@@ -112,6 +112,8 @@ def load_spec(raw):
     for net, a in s['alt_refs'].items():
         if not isinstance(a, dict) or a.get('domain') not in grounds:
             raise SpecError(f'alt_refs {net}: domain must be one of the grounds')
+        if 'cap_mm' in a and (not isinstance(a['cap_mm'], (int, float)) or a['cap_mm'] <= 0):
+            raise SpecError(f'alt_refs {net}: cap_mm must be a number > 0')
         if not isinstance(a.get('slow_only', False), bool):
             raise SpecError(f'alt_refs {net}: slow_only must be true or false')
         _reason(a.get('reason'), f'alt_refs {net}')
@@ -190,12 +192,17 @@ def check_against_board(s, nets, layers):
         raise SpecError(f'nets not on the board: {sorted(want_nets - set(nets))}')
 
 
-def ref_domain(ref, s, fast=False):
-    """The domain of a reference net (a ground or an alt_ref), else None. A slow_only alt_ref is no reference for a fast net."""
+def ref_domain(ref, s, fast=False, xy=None, caps=None):
+    """The domain of a reference net (a ground or an alt_ref), else None. A slow_only alt_ref is no reference for a fast net.
+    An alt_ref with cap_mm is a reference only within cap_mm of a decoupling cap centre (caps: net -> [(x, y)])."""
     if ref in s['grounds']:
         return ref
     a = s['alt_refs'].get(ref)
-    return a['domain'] if a and not (fast and a.get('slow_only')) else None
+    if not a or (fast and a.get('slow_only')):
+        return None
+    if 'cap_mm' in a and not any(math.dist(xy, c) <= a['cap_mm'] for c in (caps or {}).get(ref, [])):
+        return None
+    return a['domain']
 
 
 def net_domain(net, pad_refs, s):
@@ -239,7 +246,7 @@ def _runs(bad, link):
     return out
 
 
-def evaluate_net(samples, ref_at, domain, anchors, s, net=None):
+def evaluate_net(samples, ref_at, domain, anchors, s, net=None, caps=None):
     """Check the samples of one net on one outer layer.
 
     ref_at(x, y) gives the net of the filled zone under the point on the adjacent layer, or None.
@@ -254,7 +261,7 @@ def evaluate_net(samples, ref_at, domain, anchors, s, net=None):
     for x, y, w in samples:
         length += w
         ref = ref_at(x, y)
-        rd = ref_domain(ref, s, fast)
+        rd = ref_domain(ref, s, fast, (x, y), caps)
         if domain is not None and rd == domain:
             continue
         unref += w
@@ -445,13 +452,19 @@ def analyse(board_path, s, verbose):
         else:
             cuts[(lname, net)] += sum(w for _, _, w in pts)
 
+    caps = collections.defaultdict(list)   # alt_ref net -> centres of its decoupling caps (a C part from it to a ground)
+    for fp in b.GetFootprints():
+        fn = {pd.GetNetname() for pd in fp.Pads()}
+        if fp.GetReference().startswith('C') and fn & set(s['grounds']):
+            for n in fn & set(s['alt_refs']):
+                caps[n].append((mm(fp.GetPosition().x), mm(fp.GetPosition().y)))
     domains = {net: net_domain(net, pad_refs[net], s) for _, net in samples}
     results = {}
     for (lname, net), pts in samples.items():
         if not _checked(net, s):
             continue
         results[(lname, net)] = evaluate_net(pts, ref_fn(layers[s['adjacent'][lname]]), domains[net],
-                                             anchors[net], s, net=net)
+                                             anchors[net], s, net=net, caps=caps)
 
     info = []
     outline = p.SHAPE_POLY_SET()

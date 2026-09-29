@@ -345,6 +345,17 @@ class MixedLayerTest(unittest.TestCase):
         fails = sp.reference_failures({('B.Cu', '/USB_DP'): r}, {'/USB_DP': 'GND'}, s)
         self.assertTrue(any('fast-unreferenced' in f for f in fails))
 
+    def test_cap_mm_alt_ref_counts_only_near_a_decoupling_cap(self):
+        s = sp.load_spec(base_spec(mixed_layers=MIXED, alt_refs={
+            '+3V3': {'domain': 'GND', 'slow_only': True, 'cap_mm': 5, 'reason': 'decoupling cap to GND within 5 mm'}}))
+        sp.set_fast(s, {'In2.Cu': ['/USB_*']})
+        r = sp.evaluate_net(track(0, 10), lambda x, y: '+3V3', 'GND', [], s, net='/LED', caps={'+3V3': [(0, 3)]})
+        self.assertAlmostEqual(r['unref'], 6.0)   # only the samples at x 0..4 are within 5 mm of the cap
+
+    def test_cap_mm_must_be_a_positive_number(self):
+        with self.assertRaises(sp.SpecError):
+            sp.load_spec(base_spec(alt_refs={'+3V3': {'domain': 'GND', 'cap_mm': 0, 'reason': 'x'}}))
+
     def test_slow_only_must_be_a_bool(self):
         with self.assertRaises(sp.SpecError):
             sp.load_spec(base_spec(alt_refs={'+3V3': {'domain': 'GND', 'slow_only': 'yes', 'reason': 'x'}}))
