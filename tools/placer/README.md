@@ -77,3 +77,17 @@ Prior art checked on 2026-09-27 (no code copied):
 - SA_PCB (gitlab.lukevassallo.com/luke/SA_PCB, the SA baseline of RL_PCB): no license file (only `src/main.cpp` has a BSD-3 header; the KicadParser submodule has no license). Do not vendor it. We use its ideas only: the modified Lam schedule (base_lam 0.133, T factor 0.885), swap probability 0.25, and cost terms normalized on observed values. Its reader parses KiCad 5 files (`version 20171130`); a KiCad 10 board is not checked, so it gives no second baseline on RELAY-4 without a converter.
 - Lam + window by T freezes when T drops by a large factor (ALL); a VPR limiter fights the Lam controller; the geometric schedule stays the default.
 - RL_PCB (github.com/LukeVassallo/RL_PCB, MIT): reward = tan of a weighted mean of clipped normalized Euclidean wirelength gain, HPWL gain and a no-overlap flag; "adaptive" = the reference values follow the best seen. Not used.
+
+Benchmark GP (2026-09-28, RELAY-4 bench v4 set-up: relay-scr4 start = scramble seed 7, written against relay-prob4, 5 Freerouting runs of 3.5 min with FIELD_GND pad vias, `route5.sh`). The GP stage runs on the Mac or on Hetzner; the search and the routes ran on Hetzner. Short anneal = 12 workers, 6 epochs x 8000 steps (about 150 s). GP time = best of 3 on this Mac (M-series, arm64), 47 movable units, bins 64.
+
+| Run | GP | Anneal | GP time numpy / torch cpu / torch mps | HPWL after GP | HPWL final | Unrouted per run | Median |
+|---|---|---|---|---|---|---|---|
+| CS (control) | none | short, t0 sampled | - | - | 1673 | 106 / 94 / 78 / 103 / 81 | 94 |
+| GP0c | centre, rotate 0 | short, t0 5, w0 5 | 0.75 / 0.38 / 7.5 s (1000 iterations) | 1427 | 844 | 6 / 5 / 8 / 5 / 5 | 5 |
+| GPc | centre, rotate 1 | short, t0 5, w0 5 | 1.11 / 0.54 / 10.7 s (153 iterations) | 1256 | 819 | 8 / 5 / 5 / 7 / 9 | 7 |
+| GPp | scramble pose (as Cypress), rotate 1 | short, t0 5, w0 5 | 1.08 / 0.53 / 8.2 s | 1757 | 890 | 7 / 9 / 8 / 14 / 8 | 8 |
+| P2R (bench v4) | none | 8 workers, 16 x 30000 (785 s) | - | - | 796 | 7 / 8 / 8 / 7 / 5 | 7 |
+| Cypress #09 (cypress-eval.md, bench v3) | Cypress CPU | none (not legal) | on Hetzner | - | 877 | 39 / 36 / 38 / 35 / 40 | 38 |
+| O original | - | - | - | - | 1109 | 8 / 6 / 8 / 7 / 8 | 8 |
+
+Result: at the same short search budget, GP + anneal routes to a median of 5-8 open connections; without GP the median is 94. GP + a 150 s anneal equals the 785 s P2R search (7) and the hand layout O (8), and beats Cypress (38). All GP candidates are legal under our rules. Rotation gives no gain here (5 vs 7 is inside the router spread) and stays off by default. GP0c has 2 clearance errors in 3 of 5 runs: a Freerouting 24V_SW track 7.8 mm from K1 pad 7 (rule 8 mm); the router does not know the .kicad_dru domain rule. torch cpu is 2x faster than numpy; mps is 10x slower (a 64 x 64 grid and 47 units are too small for the GPU launch cost). The rotate=0 GP stops at 1000 iterations with the overflow at 0.10-0.102 (the stop is 0.1); the rotate=1 runs reach it at about 153. Not done: the RePlAce adaptive mu (the density weight grows by a fixed mu 1.05).
