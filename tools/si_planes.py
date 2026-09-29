@@ -24,6 +24,7 @@ Spec (one per board, hardware-design/boards/<board>/reference-planes.json):
                                                            hold a via or a through-hole pad of that ground (no island).
    "grounds": ["GND", "ISO_0V"],                           one ground net per domain
    "alt_refs": {"VDD_3V3": {"domain": "GND", "reason": "..."}},   other plane nets that are a reference
+                                                           ("slow_only": true: for slow nets only, not fast nets)
    "domains": {"ISO_0V": ["/AI*"]},                        optional: net patterns -> domain (else the
                                                            ground zone outline that holds most pads)
    "exempt": {"nets": {"VIN": "reason"},
@@ -111,6 +112,8 @@ def load_spec(raw):
     for net, a in s['alt_refs'].items():
         if not isinstance(a, dict) or a.get('domain') not in grounds:
             raise SpecError(f'alt_refs {net}: domain must be one of the grounds')
+        if not isinstance(a.get('slow_only', False), bool):
+            raise SpecError(f'alt_refs {net}: slow_only must be true or false')
         _reason(a.get('reason'), f'alt_refs {net}')
     s['domains'] = s.get('domains') or {}
     for g, pats in s['domains'].items():
@@ -187,12 +190,12 @@ def check_against_board(s, nets, layers):
         raise SpecError(f'nets not on the board: {sorted(want_nets - set(nets))}')
 
 
-def ref_domain(ref, s):
-    """The domain of a reference net (a ground or an alt_ref), else None."""
+def ref_domain(ref, s, fast=False):
+    """The domain of a reference net (a ground or an alt_ref), else None. A slow_only alt_ref is no reference for a fast net."""
     if ref in s['grounds']:
         return ref
     a = s['alt_refs'].get(ref)
-    return a['domain'] if a else None
+    return a['domain'] if a and not (fast and a.get('slow_only')) else None
 
 
 def net_domain(net, pad_refs, s):
@@ -247,10 +250,11 @@ def evaluate_net(samples, ref_at, domain, anchors, s, net=None):
     areas = [a['box'] for a in s['exempt']['areas'] if net in a['nets']]
     length = unref = cross = 0.0
     bad, cross_nets = [], collections.Counter()
+    fast = net is not None and any(net_kind(net, m, s) == 'fast' for m in s['mixed_layers'].values() if 'fast' in m)
     for x, y, w in samples:
         length += w
         ref = ref_at(x, y)
-        rd = ref_domain(ref, s)
+        rd = ref_domain(ref, s, fast)
         if domain is not None and rd == domain:
             continue
         unref += w

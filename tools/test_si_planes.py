@@ -328,6 +328,27 @@ class MixedLayerTest(unittest.TestCase):
         self.assertIn('island', fails[0])
         self.assertIn('(5.2, 6.0)', fails[0])
 
+    def slow_only_spec(self):
+        s = sp.load_spec(base_spec(mixed_layers=MIXED, alt_refs={
+            '+3V3': {'domain': 'GND', 'slow_only': True, 'reason': 'decoupling cap to GND within 5 mm'}}))
+        sp.set_fast(s, {'In2.Cu': ['/USB_*', '/SCK*']})
+        return s
+
+    def test_slow_only_alt_ref_is_a_reference_for_a_slow_net(self):
+        r = sp.evaluate_net(track(0, 4), lambda x, y: '+3V3', 'GND', [], self.slow_only_spec(), net='/LED')
+        self.assertAlmostEqual(r['unref'], 0)
+
+    def test_slow_only_alt_ref_is_not_a_reference_for_a_fast_net(self):
+        s = self.slow_only_spec()
+        r = sp.evaluate_net(track(0, 4), lambda x, y: '+3V3', 'GND', [], s, net='/USB_DP')
+        self.assertAlmostEqual(r['unref'], 4.0)
+        fails = sp.reference_failures({('B.Cu', '/USB_DP'): r}, {'/USB_DP': 'GND'}, s)
+        self.assertTrue(any('fast-unreferenced' in f for f in fails))
+
+    def test_slow_only_must_be_a_bool(self):
+        with self.assertRaises(sp.SpecError):
+            sp.load_spec(base_spec(alt_refs={'+3V3': {'domain': 'GND', 'slow_only': 'yes', 'reason': 'x'}}))
+
 
 class SlowLimitTest(unittest.TestCase):
     """Lead decision D8: slow nets min 95 % coverage and max 5 mm per gap; fast nets keep the 1.0 mm limit."""
