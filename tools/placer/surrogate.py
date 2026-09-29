@@ -29,8 +29,10 @@ N = 64
 
 
 def spearman(a, b):
+    """Rank correlation; 0 when one side is constant (no order to compare)."""
     from placer import bench
-    return bench.spearman(list(map(float, a)), list(map(float, b)))
+    a, b = list(map(float, a)), list(map(float, b))
+    return bench.spearman(a, b) if len(set(a)) > 1 and len(set(b)) > 1 else 0.0
 
 
 def topk_recall(pred, true, k_true=0.1, k_pred=0.3):

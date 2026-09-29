@@ -33,6 +33,10 @@ class Metrics(unittest.TestCase):
         pred = np.array([0, 9, 1, 2, 3, 4, 5, 6, 7, 8.0])
         self.assertEqual(surrogate.topk_recall(pred, true, 0.1, 0.3), 0.5)
 
+    def test_spearman_of_a_constant_is_zero(self):
+        self.assertEqual(surrogate.spearman([1, 1, 1], [1, 2, 3]), 0.0)
+        self.assertAlmostEqual(surrogate.spearman([1, 2, 3], [10, 20, 40]), 1.0)
+
     def test_split_by_group(self):
         groups = ['A', 'B', 'A', 'C', 'B']
         tr, te = surrogate.split(groups, ['B'])
