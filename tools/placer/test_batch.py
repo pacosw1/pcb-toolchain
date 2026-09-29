@@ -81,13 +81,13 @@ class TestBatchCost(unittest.TestCase):
 
 @unittest.skipIf(torch is None, 'torch not installed')
 class TestChains(unittest.TestCase):
-    def run_chains(self, name, seed=3, steps=60):
+    def run_chains(self, name, seed=3, steps=60, spec=1, hot=1e4):
         pr = load(name)
         p = anneal.params_all({})
-        ch = batch.Chains(pr, p, bench.scramble(pr, 7), chains=6, seed=seed, device='cpu')
+        ch = batch.Chains(pr, p, bench.scramble(pr, 7), chains=6, seed=seed, device='cpu', spec=spec)
         bx0, by0, bx1, by1 = cost.outline_box(pr['board'])
         for s in range(steps):  # hot: most moves are accepted, so the state changes on each chain
-            ch.step(1e4 if s % 2 else 1.0, max(bx1 - bx0, by1 - by0) / 2)
+            ch.step(hot if s % 2 else 1.0, max(bx1 - bx0, by1 - by0) / 2)
         return pr, p, ch
 
     def test_state_cost_equals_scalar_after_moves(self):
@@ -108,6 +108,15 @@ class TestChains(unittest.TestCase):
             for i, u in enumerate(pr['units']):
                 if u['fixed']:
                     self.assertEqual(tuple(pose[i]), tuple(start[i]))
+
+    def test_speculative_state_equals_scalar(self):
+        pr, p, ch = self.run_chains('relay4-prob.json', spec=4, hot=5.0)
+        for k, pose in enumerate(ch.poses()):
+            self.assertTrue(close(float(ch.cost[k]), cost.total(pr, pose, p)))
+        # 60 steps x 6 chains x 4 proposals; each step uses 1 to 4 sequential moves per chain
+        self.assertEqual(ch.evals, 60 * 6 * 4)
+        self.assertTrue(ch.accepted <= 60 * 6 <= ch.moves <= ch.evals, (ch.accepted, ch.moves))
+        self.assertGreater(ch.moves, 60 * 6)
 
     def test_same_seed_same_result(self):
         a = self.run_chains('relay4-prob.json', seed=5, steps=20)[2].poses()

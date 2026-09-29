@@ -2,7 +2,7 @@
 """Speed benchmark of the anneal: cost evaluations per second and the final cost after a wall-clock budget.
 
   $PY tools/placer/bench_batch.py PROB.json --mode scalar --seconds 60 --seed 1
-  $PY tools/placer/bench_batch.py PROB.json --mode batch --device mps --chains 256 --seconds 60 --seed 1
+  $PY tools/placer/bench_batch.py PROB.json --mode batch --device mps --chains 256 [--spec 4] --seconds 60 --seed 1
 
 Start = bench.scramble(problem, 7) (uniform, seeded). Schedule = geometric over the budget: T from the sampled t0
 to t0 * t_ratio, window from half the board to w1. The final cost is the scalar cost.total of the best pose
@@ -10,7 +10,6 @@ to t0 * t_ratio, window from half the board to w1. The final cost is the scalar 
 """
 import argparse
 import json
-import math
 import os
 import random
 import sys
@@ -41,7 +40,7 @@ def run_scalar(pr, p, start, seconds, seed, clock=time.monotonic):
         if b < best:
             best, best_pose = b, bp
     dt = clock() - t_start
-    return {'evals': n, 'seconds': dt, 'evals_per_s': n / dt, 'best_pose': best_pose}
+    return {'evals': n, 'moves': n, 'seconds': dt, 'evals_per_s': n / dt, 'moves_per_s': n / dt, 'best_pose': best_pose}
 
 
 def main(argv=None):
@@ -50,6 +49,7 @@ def main(argv=None):
     ap.add_argument('--mode', choices=('scalar', 'batch'), default='scalar')
     ap.add_argument('--device', default='cpu')
     ap.add_argument('--chains', type=int, default=256)
+    ap.add_argument('--spec', type=int, default=1, help='proposals per chain and step (batch)')
     ap.add_argument('--seconds', type=float, default=60.0)
     ap.add_argument('--seed', type=int, default=1)
     ap.add_argument('--scramble', type=int, default=7)
@@ -61,10 +61,11 @@ def main(argv=None):
         r = run_scalar(pr, p, start, a.seconds, a.seed)
     else:
         from placer import batch
-        r = batch.anneal_budget(pr, p, start, a.seconds, a.seed, chains=a.chains, device=a.device)
+        r = batch.anneal_budget(pr, p, start, a.seconds, a.seed, chains=a.chains, device=a.device, spec=a.spec)
     r['final_cost'] = cost.total(pr, r.pop('best_pose'), p)
     r.update(prob=os.path.basename(a.prob), mode=a.mode, device=a.device if a.mode == 'batch' else '-',
-             chains=a.chains if a.mode == 'batch' else 1, seed=a.seed, budget_s=a.seconds)
+             chains=a.chains if a.mode == 'batch' else 1, spec=a.spec if a.mode == 'batch' else 1,
+             seed=a.seed, budget_s=a.seconds)
     print(json.dumps(r))
 
 

@@ -27,6 +27,7 @@ from . import anneal, cost
 EPS = cost.EPS
 TERMS = ('hpwl', 'cong', 'overlap', 'oob', 'spacing')
 CHUNK = 1 << 24  # rect pairs per block on a GPU (a quarter on cpu, float64): memory bound
+BUCKET = 512  # flat pair rows on a GPU: padded to a multiple of this
 OFF = 1e6  # gap of a rect pair that does not count (same unit, both fixed, keepout over keepout, border skip)
 
 
@@ -60,7 +61,7 @@ def _hull(P):
     out = [s]
     prev = torch.full((K,), -math.pi / 2, dtype=P.dtype, device=P.device)
     done = torch.zeros(K, dtype=torch.bool, device=P.device)
-    for _ in range(m):
+    for it in range(m):
         pc = P[ar, cur]
         v = P - pc[:, None, :]
         d2 = (v * v).sum(dim=2)
@@ -74,7 +75,7 @@ def _hull(P):
         prev = torch.where(closed, prev, torch.atan2(q[:, 1] - pc[:, 1], q[:, 0] - pc[:, 0]))
         cur = torch.where(closed, cur, nxt)
         done = closed
-        if bool(done.all()):
+        if it % 4 == 3 and bool(done.all()):  # a sync per 4 steps (mps)
             break
     return torch.stack(out, dim=1)
 
@@ -332,23 +333,36 @@ class BatchCost:
 
     # domain areas (mains): hull of the domain pad rects, penalty of the other units' rects
     def _area_setup(self, pr):
+        """Per area: the hull vertices of each source unit (local, per turn; their union has the same hull as all
+        domain rect corners), the subject rect indices and the gap."""
         areas, subj = cost.area_setup(pr)
+        us = pr['units']
         self.areas = []
         for src, g, fx in areas:
-            s_idx = [int(self.off[i] + k) for i, ks in src for k in ks]
             j_idx = [int(self.off[i] + k) for i, idx in enumerate(subj) if idx is not None
                      and not (self.fixed[i] and fx) for k in idx]
-            if j_idx:
-                self.areas.append((torch.as_tensor(s_idx, device=self.dev), torch.as_tensor(j_idx, device=self.dev),
-                                   float(g)))
+            if not j_idx:
+                continue
+            hv = []
+            for i, ks in src:
+                per = []
+                for r in range(4):
+                    pts = [(x, y) for k in ks for a, b, c, d in [cost.rot_rect(us[i]['rects'][k], r)]
+                           for x, y in ((a, b), (c, b), (c, d), (a, d))]
+                    per.append(cost.hull(pts))
+                hv.append((i, per))
+            m = max(len(v) for _, per in hv for v in per)
+            U = torch.as_tensor([i for i, _ in hv], device=self.dev)
+            L = self._t([[(v + [v[0]] * m)[:m] for v in per] for _, per in hv])  # u 4 m 2
+            self.areas.append((U, L, torch.as_tensor(j_idx, device=self.dev), float(g)))
 
-    def area_pen(self, W):
-        """Domain-area penalty of K poses (world rects W, K R 4)."""
+    def area_pen(self, W, X, Y, Rt):
+        """Domain-area penalty of K poses (world rects W, K R 4; unit poses X, Y, Rt)."""
         tot = torch.zeros(W.shape[0], dtype=self.dt, device=self.dev)
-        for s_idx, j_idx, g in self.areas:
-            Rs = W[:, s_idx]
-            P = torch.stack([Rs[..., [0, 1]], Rs[..., [2, 1]], Rs[..., [2, 3]], Rs[..., [0, 3]]], dim=2).flatten(1, 2)
-            tot = tot + _area_pen(W[:, j_idx], _hull(P), g).sum(dim=1)
+        for U, L, j_idx, g in self.areas:
+            ar = torch.arange(len(U), device=self.dev)[None, :]
+            P = L[ar, Rt[:, U]] + torch.stack([X[:, U], Y[:, U]], dim=2)[:, :, None, :]  # K u m 2
+            tot = tot + _area_pen(W[:, j_idx], _hull(P.flatten(1, 2)), g).sum(dim=1)
         return tot
 
     # rects and pairs
@@ -377,6 +391,25 @@ class BatchCost:
             wr = wr * (1.0 - 0.5 * cmask[:, None, :].to(self.dt))
         s = (_pen(ox, oy, T[..., 0]) * wr).sum(dim=(1, 2))
         h = (_pen(ox, oy, T[..., 1]) * wr).sum(dim=(1, 2))
+        return h, s
+
+    def pair_flat(self, ci, rr, W, cmask, wv):
+        """(hard, soft full) per chain (K,) of the flat rows: rect rr (N,) of chain ci (N,) with weight wv (N,)
+        against all rects of its chain in W; pairs with the rects in cmask (K, R) count half."""
+        K = W.shape[0]
+        h = torch.zeros(K, dtype=self.dt, device=self.dev)
+        s = torch.zeros_like(h)
+        step = max(1, self.chunk // self.R)
+        Ws = W + self.SH
+        for a in range(0, len(ci), step):
+            c, r = ci[a:a + step], rr[a:a + step]
+            A, B = Ws[c, r], Ws[c]  # N 4, N R 4
+            T = self.PT[r]
+            ox = torch.minimum(A[:, None, 2], B[..., 2]) - torch.maximum(A[:, None, 0], B[..., 0])
+            oy = torch.minimum(A[:, None, 3], B[..., 3]) - torch.maximum(A[:, None, 1], B[..., 1])
+            wr = wv[a:a + step, None] * (1.0 - 0.5 * cmask[c].to(self.dt))
+            s.index_add_(0, c, (_pen(ox, oy, T[..., 0]) * wr).sum(dim=1))
+            h.index_add_(0, c, (_pen(ox, oy, T[..., 1]) * wr).sum(dim=1))
         return h, s
 
     def pairs_full(self, W):
@@ -411,7 +444,7 @@ class BatchCost:
         W = self.world(X, Y, Rt)
         hp, cg = self.hpwl_cong(X, Y, Rt)
         h, s = self.pairs_full(W)
-        return {'hpwl': hp, 'cong': cg, 'overlap': h + self.area_pen(W), 'oob': self.forb_all(X, Y, Rt).sum(dim=1),
+        return {'hpwl': hp, 'cong': cg, 'overlap': h + self.area_pen(W, X, Y, Rt), 'oob': self.forb_all(X, Y, Rt).sum(dim=1),
                 'spacing': s - h}
 
     def weighted(self, c, p=None):
@@ -424,24 +457,29 @@ class BatchCost:
 
 
 class Chains:
-    """K annealing chains from one start pose. Positions are integer steps of params['grid'] from the start."""
+    """C annealing chains from one start pose; each step evaluates `spec` proposals per chain from its state as one
+    batch (K = C x spec rows) and applies the first accepted proposal of each chain. The earlier proposals were
+    rejected at the same state, so this is the sequential Metropolis chain with up to `spec` moves per step
+    (speculative parallel annealing). Positions are integer steps of params['grid'] from the start."""
 
-    def __init__(self, pr, params, start, chains=64, seed=1, device='cpu', bc=None):
+    def __init__(self, pr, params, start, chains=64, seed=1, device='cpu', bc=None, spec=1):
         p = self.p = anneal.params_all(params)
         if p['schedule'] != 'geometric':
             raise ValueError('batch: only the geometric schedule is supported')
         self.bc = bc or BatchCost(pr, p, device)
         bc = self.bc
-        self.dev, self.dt, self.K, self.n = bc.dev, bc.dt, chains, bc.n
+        self.dev, self.dt, self.C, self.P, self.n = bc.dev, bc.dt, chains, int(spec), bc.n
+        self.K = chains * self.P
+        self.rep = torch.arange(chains, device=self.dev).repeat_interleave(self.P)
         self.gen = torch.Generator().manual_seed(int(seed))
         self.g = p['grid']
         self.start = [(float(x), float(y), int(r) % 4) for x, y, r in start]
         self.X0 = bc._t([q[0] for q in self.start])
         self.Y0 = bc._t([q[1] for q in self.start])
-        K, n = chains, self.n
-        self.DX = torch.zeros((K, n), dtype=torch.long, device=self.dev)
+        n = self.n
+        self.DX = torch.zeros((chains, n), dtype=torch.long, device=self.dev)
         self.DY = torch.zeros_like(self.DX)
-        self.Rt = torch.as_tensor([q[2] for q in self.start], device=self.dev).repeat(K, 1)
+        self.Rt = torch.as_tensor([q[2] for q in self.start], device=self.dev).repeat(chains, 1)
         # move set (anneal.Mover)
         self.box = tuple(pr['move_box']) if pr.get('move_box') else cost.outline_box(pr['board'])
         mov = [i for i in range(n) if not bc.fixed[i]]
@@ -458,12 +496,9 @@ class Chains:
         mp = max([len(part[i]) for i in sw] or [1])
         self.part = torch.as_tensor([(part[i] + [part[i][0]] * mp)[:mp] for i in sw] or [[0]], device=self.dev)
         self.npart = torch.as_tensor([len(part[i]) for i in sw] or [1], device=self.dev)
-        maxr = max(bc.nr)
-        self.UR = torch.as_tensor([list(range(bc.off[i], bc.off[i + 1])) + [int(bc.off[i])] * (maxr - bc.nr[i])
-                                   for i in range(n)], device=self.dev)
-        self.NR = torch.as_tensor(bc.nr, device=self.dev)
-        self.evals = 0
+        self.evals = 0  # evaluated proposals
         self._acc = torch.zeros((), dtype=torch.long, device=self.dev)
+        self._moves = torch.zeros((), dtype=torch.long, device=self.dev)  # sequential moves: proposals up to the accepted one
         self.set_params(p)
 
     def xy(self, DX=None, DY=None):
@@ -478,7 +513,7 @@ class Chains:
         self.W = bc.world(X, Y, self.Rt)
         self.hp, self.cg = bc.hpwl_cong(X, Y, self.Rt)
         self.h, self.s = bc.pairs_full(self.W)
-        self.ap = bc.area_pen(self.W)
+        self.ap = bc.area_pen(self.W, X, Y, self.Rt)
         self.F = bc.forb_all(X, Y, self.Rt)
         self.cost = self._weighted(self.hp, self.cg, self.h, self.s, self.ap, self.F.sum(dim=1))
 
@@ -498,15 +533,19 @@ class Chains:
     def accepted(self):
         return int(self._acc)
 
+    @property
+    def moves(self):
+        return int(self._moves)
+
     def _rand(self, *shape):
         return torch.rand(shape, generator=self.gen, dtype=torch.float64).to(self.dev, self.dt)
 
     def _pick(self, table, u):
         return table[(u * len(table)).long().clamp(max=len(table) - 1)]
 
-    def propose(self, window):
-        """One move per chain: (m1, m2, has2, DXn, DYn, Rn)."""
-        K, g = self.K, self.g
+    def propose(self, window, DX, DY, Rt):
+        """One move per row of the states DX, DY, Rt (K, n): (m1, m2, has2, DXn, DYn, Rn)."""
+        K, g = DX.shape[0], self.g
         u, r1, r2, r3, r4 = (self._rand(K) for _ in range(5))
         p = self.p
         swap = (u < p['p_swap']) & self.has_sw
@@ -514,7 +553,7 @@ class Chains:
         ar = torch.arange(K, device=self.dev)
         # translate
         i = self._pick(self.mov, r1)
-        X, Y = self.xy()
+        X, Y = self.xy(DX, DY)
         x, y = X[ar, i], Y[ar, i]
         bx0, by0, bx1, by1 = self.box
         dx = torch.round((2 * r3 - 1) * window / g)
@@ -531,80 +570,101 @@ class Chains:
         sdy = torch.round((Y[ar, b] - Y[ar, a]) / g).long()
         m1 = torch.where(swap, a, torch.where(rot, j, i))
         m2 = torch.where(swap, b, m1)
-        DXn, DYn, Rn = self.DX.clone(), self.DY.clone(), self.Rt.clone()
+        DXn, DYn, Rn = DX.clone(), DY.clone(), Rt.clone()
         z = torch.zeros_like(sdx)
         d1x = torch.where(swap, sdx, torch.where(rot, z, dx.long()))
         d1y = torch.where(swap, sdy, torch.where(rot, z, dy.long()))
-        r1n = torch.where(rot, (self.Rt[ar, j] + 1 + (r2 * 3).long().clamp(max=2)) % 4, self.Rt[ar, m1])
-        n2x = torch.where(swap, self.DX[ar, b] - sdx, self.DX[ar, m1] + d1x)
-        n2y = torch.where(swap, self.DY[ar, b] - sdy, self.DY[ar, m1] + d1y)
-        n2r = torch.where(swap, self.Rt[ar, b], r1n)
+        r1n = torch.where(rot, (Rt[ar, j] + 1 + (r2 * 3).long().clamp(max=2)) % 4, Rt[ar, m1])
+        n2x = torch.where(swap, DX[ar, b] - sdx, DX[ar, m1] + d1x)
+        n2y = torch.where(swap, DY[ar, b] - sdy, DY[ar, m1] + d1y)
+        n2r = torch.where(swap, Rt[ar, b], r1n)
         DXn[ar, m2], DYn[ar, m2], Rn[ar, m2] = n2x, n2y, n2r
-        DXn[ar, m1] = self.DX[ar, m1] + d1x
-        DYn[ar, m1] = self.DY[ar, m1] + d1y
+        DXn[ar, m1] = DX[ar, m1] + d1x
+        DYn[ar, m1] = DY[ar, m1] + d1y
         Rn[ar, m1] = r1n
         return m1, m2, swap, DXn, DYn, Rn
 
-    def _rows(self, m1, m2, has2):
-        nr1 = int(self.NR[m1].max())
-        rows = [self.UR[m1][:, :nr1]]
-        mask = [torch.arange(nr1, device=self.dev)[None, :] < self.NR[m1][:, None]]
-        if bool(has2.any()):
-            nr2 = int(self.NR[m2].max())
-            rows.append(self.UR[m2][:, :nr2])
-            mask.append((torch.arange(nr2, device=self.dev)[None, :] < self.NR[m2][:, None]) & has2[:, None])
-        return torch.cat(rows, dim=1), torch.cat(mask, dim=1)
+    def _flat_rows(self, m1, m2, has2):
+        """Flat list of the moved rects: batch row (N,), rect index (N,) and weight (N,: 0 = padding). Built on
+        the cpu; on a GPU the length is padded to a multiple of BUCKET (few shapes: cached kernels)."""
+        bc = self.bc
+        m1, m2, has2 = m1.cpu().numpy(), m2.cpu().numpy(), has2.cpu().numpy()
+        nr = np.asarray(bc.nr)
+        K = len(m1)
+        blk = np.r_[m1, m2]  # one block of rects per moved unit
+        ln = np.r_[nr[m1], nr[m2] * has2]
+        c = np.repeat(np.r_[np.arange(K), np.arange(K)], ln)
+        pos = np.arange(ln.sum()) - np.repeat(np.cumsum(ln) - ln, ln)
+        r = np.asarray(bc.off)[np.repeat(blk, ln)] + pos
+        w = np.ones(len(c))
+        if self.dev.type != 'cpu':
+            pad = -len(c) % BUCKET
+            c, r, w = np.r_[c, np.zeros(pad, dtype=int)], np.r_[r, np.zeros(pad, dtype=int)], np.r_[w, np.zeros(pad)]
+        t = lambda a: torch.as_tensor(a, device=self.dev)  # noqa: E731
+        return t(c), t(r), bc._t(w)
 
     def step(self, T, window):
-        bc, K = self.bc, self.K
+        """One batch step at temperature T and move window; returns the sequential moves per chain."""
+        bc, K, C, P = self.bc, self.K, self.C, self.P
         ar = torch.arange(K, device=self.dev)
-        m1, m2, has2, DXn, DYn, Rn = self.propose(window)
+        rep = self.rep
+        DX, DY, Rt = (self.DX, self.DY, self.Rt) if P == 1 else (self.DX[rep], self.DY[rep], self.Rt[rep])
+        W, F = (self.W, self.F) if P == 1 else (self.W[rep], self.F[rep])
+        m1, m2, has2, DXn, DYn, Rn = self.propose(window, DX, DY, Rt)
         Xn, Yn = self.xy(DXn, DYn)
         Wn = bc.world(Xn, Yn, Rn)
-        rows, rmask = self._rows(m1, m2, has2)
+        ci, rr, wv = self._flat_rows(m1, m2, has2)
         uo = bc.UO[None, :]
         cm = (uo == m1[:, None]) | ((uo == m2[:, None]) & has2[:, None])
-        h0, s0 = bc.pair_rows(rows, rmask, self.W, cm)
-        h1, s1 = bc.pair_rows(rows, rmask, Wn, cm)
+        h0, s0 = bc.pair_flat(ci, rr, W, cm, wv)
+        h1, s1 = bc.pair_flat(ci, rr, Wn, cm, wv)
         f1a = bc.forb_units(m1, Xn[ar, m1], Yn[ar, m1], Rn[ar, m1])
         f1b = bc.forb_units(m2, Xn[ar, m2], Yn[ar, m2], Rn[ar, m2])
         zero = torch.zeros_like(f1a)
-        dfb = (f1a - self.F[ar, m1]) + torch.where(has2, f1b - self.F[ar, m2], zero)
+        fbn = F.sum(dim=1) + (f1a - F[ar, m1]) + torch.where(has2, f1b - F[ar, m2], zero)
         hp, cg = bc.hpwl_cong(Xn, Yn, Rn)
-        ap = bc.area_pen(Wn) if bc.areas else self.ap
-        hn, sn = self.h + (h1 - h0), self.s + (s1 - s0)
-        fbn = self.F.sum(dim=1) + dfb
+        ap = bc.area_pen(Wn, Xn, Yn, Rn) if bc.areas else self.ap[rep]
+        hn, sn = self.h[rep] + (h1 - h0), self.s[rep] + (s1 - s0)
         cn = self._weighted(hp, cg, hn, sn, ap, fbn)
-        d = cn - self.cost
+        d = cn - self.cost[rep]
         acc = (d <= 0) | (self._rand(K) < torch.exp(-d / T))
-        self._acc += acc.sum()
-        self.evals += K
-        a1, a2, a3 = acc[:, None], acc[:, None, None], acc
-        self.DX = torch.where(a1, DXn, self.DX)
-        self.DY = torch.where(a1, DYn, self.DY)
-        self.Rt = torch.where(a1, Rn, self.Rt)
-        self.W = torch.where(a2, Wn, self.W)
-        self.hp, self.cg = torch.where(a3, hp, self.hp), torch.where(a3, cg, self.cg)
-        self.h, self.s = torch.where(a3, hn, self.h), torch.where(a3, sn, self.s)
-        self.ap = torch.where(a3, ap, self.ap)
-        Fn = self.F.clone()
+        Fn = F.clone()
         Fn[ar, m2] = torch.where(has2, f1b, Fn[ar, m2])
         Fn[ar, m1] = f1a
-        self.F = torch.where(a1, Fn, self.F)
-        self.cost = torch.where(a3, cn, self.cost)
+        if P == 1:
+            ok, sel, used = acc, ar, torch.ones_like(m1)
+        else:  # the first accepted proposal of each chain
+            A = acc.view(C, P)
+            ok = A.any(dim=1)
+            first = torch.argmax(A.to(torch.int8), dim=1)
+            sel = torch.arange(C, device=self.dev) * P + first
+            used = torch.where(ok, first + 1, torch.full_like(first, P))
+        self._acc += ok.sum()
+        self._moves += used.sum()
+        self.evals += K
+        a1, a2 = ok[:, None], ok[:, None, None]
+        self.DX = torch.where(a1, DXn[sel], self.DX)
+        self.DY = torch.where(a1, DYn[sel], self.DY)
+        self.Rt = torch.where(a1, Rn[sel], self.Rt)
+        self.W = torch.where(a2, Wn[sel], self.W)
+        self.F = torch.where(a1, Fn[sel], self.F)
+        self.hp, self.cg = torch.where(ok, hp[sel], self.hp), torch.where(ok, cg[sel], self.cg)
+        self.h, self.s = torch.where(ok, hn[sel], self.h), torch.where(ok, sn[sel], self.s)
+        self.ap = torch.where(ok, ap[sel], self.ap)
+        self.cost = torch.where(ok, cn[sel], self.cost)
         better = self.cost < self.best - 1e-12
         self.best = torch.where(better, self.cost, self.best)
         b1 = better[:, None]
         self.bDX = torch.where(b1, self.DX, self.bDX)
         self.bDY = torch.where(b1, self.DY, self.bDY)
         self.bR = torch.where(b1, self.Rt, self.bR)
-        return acc
+        return used
 
     def _poses(self, DX, DY, Rt):
         dx, dy, r = DX.cpu().numpy(), DY.cpu().numpy(), Rt.cpu().numpy()
         g = self.g
         return [[(x + float(dx[k, i]) * g, y + float(dy[k, i]) * g, int(r[k, i])) for i, (x, y, _) in enumerate(self.start)]
-                for k in range(self.K)]
+                for k in range(self.C)]
 
     def poses(self):
         return self._poses(self.DX, self.DY, self.Rt)
@@ -619,15 +679,12 @@ class Chains:
             a[idx] = b[src]
 
 
-def default_device():
-    return 'mps' if torch.backends.mps.is_available() else 'cpu'
-
-
 def optimize(pr, p, epochs, steps, seed, top, log=None, start=None):
-    """Batched anneal.optimize: params chains (K), batch_device, finish (chains legalized, default 8)."""
+    """Batched anneal.optimize: params chains (C), spec (proposals per chain and step), batch_device, finish (the
+    best chains legalized, default 8). `steps` = sequential moves per chain and epoch (as a worker)."""
     if p['schedule'] != 'geometric':
         raise ValueError('batch: only the geometric schedule is supported')
-    K = int(p.get('chains') or 64)
+    C = int(p.get('chains') or 64)
     dev = p.get('batch_device') or 'cpu'
     anneal._init(pr, p)
     pf = anneal.epoch_params(p, epochs - 1, epochs)
@@ -640,15 +697,16 @@ def optimize(pr, p, epochs, steps, seed, top, log=None, start=None):
     w1 = min(p['w1'], w0)
     t0 = p.get('t0') or anneal.estimate_t0(ev0, anneal.Mover(pr, ev0, p), random.Random(seed), w0)
     t1 = t0 * p['t_ratio']
-    ch = Chains(pr, p0, initial['pose'], chains=K, seed=seed, device=dev)
+    ch = Chains(pr, p0, initial['pose'], chains=C, seed=seed, device=dev, spec=int(p.get('spec') or 1))
     t_start = time.time()
     history = []
     for e in range(epochs):
         if e:
             ch.set_params(anneal.epoch_params(p, e, epochs))
-        for s in range(steps):
+        s = 0.0
+        while s < steps:  # the schedule follows the mean sequential moves per chain
             f = (e + s / steps) / epochs
-            ch.step(t0 * (t1 / t0) ** f, w0 * (w1 / w0) ** f)
+            s += float(ch.step(t0 * (t1 / t0) ** f, w0 * (w1 / w0) ** f).float().mean())
         best = ch.best.cpu().numpy()
         g = int(np.argmin(best))
         history.append({'epoch': e + 1, 'cost': float(best[g]), 'pose': [list(q) for q in ch.best_poses()[g]]})
@@ -656,34 +714,33 @@ def optimize(pr, p, epochs, steps, seed, top, log=None, start=None):
             log('epoch %d/%d best %.2f (chain %d)' % (e + 1, epochs, best[g], g))
         if e < epochs - 1:
             cur = ch.cost.cpu().numpy()
-            worse = [w for w in sorted(range(K), key=lambda w: (-cur[w], w))[:K // 2] if w != g]
+            worse = [w for w in sorted(range(C), key=lambda w: (-cur[w], w))[:C // 2] if w != g]
             if worse:
                 ch.restart_from(worse, g)
     wall = time.time() - t_start
     best = ch.best.cpu().numpy()
-    order = sorted(range(K), key=lambda w: (best[w], w))[:int(p.get('finish') or 8)]
+    order = sorted(range(C), key=lambda w: (best[w], w))[:int(p.get('finish') or 8)]
     bp = ch.best_poses()
     fin = [anneal._finish((w, bp[w], pf)) for w in order]
     fin.sort(key=anneal.final_key)
     cands = anneal.distinct(fin, p['distinct'], [u['fixed'] for u in pr['units']])
     return {'lam': None, 'initial': initial, 'candidates': cands[:top], 'history': history, 't0': t0, 'seed': seed,
             'workers': 1, 'epochs': epochs, 'steps': steps, 'params': p, 'wall_s': time.time() - t_start,
-            'moves_per_s_per_worker': ch.evals / wall if wall else 0.0,
-            'batch': {'chains': K, 'device': dev, 'evals': ch.evals, 'evals_per_s': ch.evals / wall if wall else 0.0}}
+            'moves_per_s_per_worker': ch.moves / wall if wall else 0.0,
+            'batch': {'chains': C, 'spec': ch.P, 'device': dev, 'evals': ch.evals, 'moves': ch.moves,
+                      'evals_per_s': ch.evals / wall if wall else 0.0}}
 
 
-def anneal_budget(pr, p, start, seconds, seed, chains=256, device='cpu', clock=time.monotonic):
+def anneal_budget(pr, p, start, seconds, seed, chains=256, device='cpu', spec=1, clock=time.monotonic):
     """Benchmark driver (bench_batch.py): geometric schedule over a wall-clock budget, one weight set."""
     ev = cost.Evaluator(pr, p, pose=start)
     bx0, by0, bx1, by1 = cost.outline_box(pr['board'])
     w0, w1 = max(bx1 - bx0, by1 - by0) / 2, p['w1']
     t0 = anneal.estimate_t0(ev, anneal.Mover(pr, ev, p), random.Random(seed), w0)
     t1 = t0 * p['t_ratio']
-    ch = Chains(pr, p, start, chains=chains, seed=seed, device=device)
+    ch = Chains(pr, p, start, chains=chains, seed=seed, device=device, spec=spec)
     ch.step(t0, w0)  # warm-up (kernel compile on mps), not timed
-    ch.set_params(p)
-    ch.evals = 0
-    ch._acc.zero_()
+    ch = Chains(pr, p, start, chains=chains, seed=seed, device=device, spec=spec, bc=ch.bc)
     t_start = clock()
     while True:
         f = (clock() - t_start) / seconds
@@ -694,5 +751,5 @@ def anneal_budget(pr, p, start, seconds, seed, chains=256, device='cpu', clock=t
     dt = clock() - t_start
     best = ch.best.cpu().numpy()
     k = int(np.argmin(best))
-    return {'evals': ch.evals, 'seconds': dt, 'evals_per_s': ch.evals / dt, 'best_pose': ch.best_poses()[k],
-            'accept': ch.accepted / max(ch.evals, 1)}
+    return {'evals': ch.evals, 'moves': ch.moves, 'seconds': dt, 'evals_per_s': ch.evals / dt,
+            'moves_per_s': ch.moves / dt, 'best_pose': ch.best_poses()[k], 'accept': ch.accepted / max(ch.moves, 1)}
