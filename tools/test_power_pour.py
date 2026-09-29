@@ -199,7 +199,7 @@ class PlanRailsTest(unittest.TestCase):
         pads = {'A': [pad('A1.1', (10, 10), fp_c=(8, 10), net='A'), pad('A2.1', (30, 10), fp_c=(32, 10), net='A')]}
         base = {'A': {'F.Cu': [], 'B.Cu': [], 'In2.Cu': []}}
         smd = [(q['name'], (*q['c'], *q['size'], 0, 0)) for q in pads['A']]
-        reg, conf, plans = pp.plan_rails(pads, {}, VIA, RULES, base, smd, BOX, margin=1.0)
+        reg, conf, plans, _ = pp.plan_rails(pads, {}, VIA, RULES, base, smd, BOX, margin=1.0)
         self.assertEqual(conf, [])
         vias = [v for r in plans for v in r['vias']]
         self.assertEqual(len(vias), 2)
@@ -210,7 +210,7 @@ class PlanRailsTest(unittest.TestCase):
         big = dict(pad('J1.1', (20, 20), size=(2.4, 2.4), net='A'), th=True)
         pads = {'A': [big, pad('C1.1', (40, 20), net='A')]}
         base = {'A': {'F.Cu': [], 'B.Cu': [], 'In2.Cu': []}}
-        reg, _, _ = pp.plan_rails(pads, {}, VIA, RULES, base, [], BOX, margin=1.0)
+        reg, _, _, _ = pp.plan_rails(pads, {}, VIA, RULES, base, [], BOX, margin=1.0)
         for q in ((18.8, 18.8), (18.8, 21.2), (18.8, 20), (20, 21.2)):   # THT pad edge: thermal spokes need room
             self.assertGreaterEqual(depth(reg['A'], q), 1.0 - 1e-6, q)
 
@@ -218,20 +218,8 @@ class PlanRailsTest(unittest.TestCase):
         pads = {'A': [pad('A1.1', (10, 25), net='A'), pad('A2.1', (40, 25), net='A')],
                 'B': [pad('B1.1', (25, 10), net='B'), pad('B2.1', (25, 40), net='B')]}
         base = {n: {'F.Cu': [], 'B.Cu': [], 'In2.Cu': []} for n in pads}
-        _, conf, _ = pp.plan_rails(pads, {}, VIA, RULES, base, [], BOX, margin=1.0)
+        _, conf, _, _ = pp.plan_rails(pads, {}, VIA, RULES, base, [], BOX, margin=1.0)
         self.assertEqual([(a, b) for a, b, _ in conf], [('A', 'B')])
-
-
-class FastOverTest(unittest.TestCase):
-    REG = {'5V': [(10, 10), (30, 10), (30, 20), (10, 20)]}
-
-    def test_fast_track_under_a_region_is_a_conflict(self):
-        segs = [('/USB_DP', (0, 15), (40, 15)), ('/USB_DN', (12, 12), (14, 12)), ('/ETH_X', (0, 30), (40, 30))]
-        self.assertEqual(pp.fast_over(self.REG, segs, clearance=0.2), [('5V', '/USB_DN', 1), ('5V', '/USB_DP', 1)])
-
-    def test_fast_track_near_the_edge_is_a_conflict(self):
-        self.assertEqual(pp.fast_over(self.REG, [('/F', (0, 20.1), (40, 20.1))], clearance=0.2), [('5V', '/F', 1)])
-        self.assertEqual(pp.fast_over(self.REG, [('/F', (0, 20.5), (40, 20.5))], clearance=0.2), [])
 
 
 class ArgsTest(unittest.TestCase):
@@ -265,7 +253,7 @@ class MixedViaTest(unittest.TestCase):
         b = dict(pad('B1.1', (12.4, 10), fp_c=(14.4, 10), net='B'), via=small)
         base = {n: {'F.Cu': [], 'B.Cu': [], 'In2.Cu': []} for n in 'AB'}
         smd = [(q['name'], (*q['c'], *q['size'], 0, 0)) for q in (a, b)]
-        reg, conf, plans = pp.plan_rails({'A': [a], 'B': [b]}, {'B1.1': pt.via_amps(0.3) * 1.5}, VIA, RULES, base, smd,
+        reg, conf, plans, _ = pp.plan_rails({'A': [a], 'B': [b]}, {'B1.1': pt.via_amps(0.3) * 1.5}, VIA, RULES, base, smd,
                                          BOX, margin=1.0)
         ra, rb = plans
         self.assertEqual((ra['via'], rb['via']), ((0.8, 0.4), (0.6, 0.3)))
@@ -296,28 +284,81 @@ class ConnectedTest(unittest.TestCase):
     def test_connected_pad_gets_no_new_via_and_the_region_holds_the_anchor(self):
         p = dict(self.P, anchor=(12, 20))
         base = {'+3V3': {'F.Cu': [], 'B.Cu': [], 'In2.Cu': []}}
-        reg, _, plans = pp.plan_rails({'+3V3': [p]}, {}, VIA, RULES, base, [], BOX, margin=1.0)
+        reg, _, plans, _ = pp.plan_rails({'+3V3': [p]}, {}, VIA, RULES, base, [], BOX, margin=1.0)
         self.assertEqual(plans[0]['vias'], [])
         self.assertEqual(plans[0]['connected'], (12, 20))
         self.assertGreaterEqual(depth(reg['+3V3'], (12, 20)), 1.0 - 1e-6)
 
 
-class ForeignTest(unittest.TestCase):
-    REG = {'-15V': [(10, 10), (30, 10), (30, 20), (10, 20)]}
+def rect(x0, y0, x1, y1):
+    return [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
 
-    def test_tht_pad_of_an_in2_net_inside_is_a_conflict(self):
-        items = [('PTH pad U103.5', 'GND', (15, 15), 'tht'), ('PTH pad J1.2', 'GND', (25, 12), 'tht'),
-                 ('PTH pad J2.1', 'GND', (40, 15), 'tht'), ('PTH pad J3.1', '/SIG', (20, 15), 'tht')]
-        self.assertEqual(pp.foreign_in2(self.REG, items, in2_nets={'GND'}),
-                         [('-15V', 'GND', 2, 'PTH pad U103.5')])
 
-    def test_gnd_via_inside_a_region_passes(self):
-        # a stitching via goes through In2 with an antipad and keeps GND on F.Cu, In1 and B.Cu: no starved thermal
-        items = [('via (15, 15)', 'GND', (15, 15), 'via')]
-        self.assertEqual(pp.foreign_in2(self.REG, items, in2_nets={'GND'}), [])
+class SplitTest(unittest.TestCase):
+    def test_pads_outside_the_box_or_in_a_minus_box_go_to_tracks(self):
+        ps = {'A': [pad('A1.1', (5, 5), net='A'), pad('A2.1', (30, 5), net='A'), pad('A3.1', (12, 12), net='A')],
+              'B': [pad('B1.1', (90, 40), net='B')]}
+        inside, tracks = pp.split_pads(ps, boxes={'A': (0, 0, 20, 20)}, minus={'A': [(10, 10, 15, 15)]})
+        self.assertEqual([q['name'] for q in inside['A']], ['A1.1'])
+        self.assertEqual([q['name'] for q in inside['B']], ['B1.1'])      # no box: all pads stay
+        self.assertEqual(tracks, [('A', 'A2.1'), ('A', 'A3.1')])
 
-    def test_own_net_items_pass(self):
-        self.assertEqual(pp.foreign_in2(self.REG, [('PTH pad J9.1', '-15V', (15, 15), 'tht')], in2_nets={'-15V', 'GND'}), [])
+    def test_anchor_outside_the_box_is_dropped(self):
+        ps = {'A': [dict(pad('A1.1', (5, 5), net='A'), anchor=(30, 5))]}
+        inside, _ = pp.split_pads(ps, boxes={'A': (0, 0, 20, 20)}, minus={})
+        self.assertNotIn('anchor', inside['A'][0])
+
+    def test_region_is_clipped_to_its_net_box(self):
+        reg, _ = pp.regions({'A': [(6, 6), (24, 24)]}, BOX, margin=3.0, clearance=0.3, boxes={'A': (5, 5, 25, 25)})
+        for x, y in reg['A']:
+            self.assertTrue(5 - 1e-9 <= x <= 25 + 1e-9 and 5 - 1e-9 <= y <= 25 + 1e-9)
+
+
+class CutTest(unittest.TestCase):
+    BASE = {'F.Cu': [], 'B.Cu': [], 'In2.Cu': []}
+
+    def test_cut_shape_holds_the_track_with_its_margin(self):
+        c = pp.cut_seg((10, 10), (20, 10), 0.6)
+        for q in ((10, 10), (15, 10), (20, 10), (15, 10.6), (9.4, 10)):
+            self.assertGreaterEqual(depth(c, q), -1e-6, q)
+        self.assertLess(depth(c, (15, 11.2)), 0)
+
+    def test_cut_inside_the_region_is_a_hole_not_a_conflict(self):
+        ps = {'A': [pad('A1.1', (10, 20), net='A'), pad('A2.1', (40, 20), net='A')]}
+        near, far = rect(20, 19, 22, 21), rect(80, 40, 82, 42)
+        reg, conf, plans, holes = pp.plan_rails(ps, {}, VIA, RULES, {'A': dict(self.BASE)}, [], BOX, margin=2.0,
+                                                cuts={'A': [near, far]})
+        self.assertEqual(conf, [])
+        self.assertEqual(holes['A'], [near])
+        self.assertFalse(any('error' in r for r in plans))
+
+    def test_vias_keep_out_of_a_cut(self):
+        ps = {'A': [pad('A1.1', (10, 10), fp_c=(8, 10), net='A'), pad('A2.1', (30, 10), net='A')]}
+        cut = rect(10.6, 9, 13, 11)        # over the outward (+x) via spots
+        _, _, plans, _ = pp.plan_rails(ps, {}, VIA, RULES, {'A': dict(self.BASE)}, [], BOX, margin=2.0, cuts={'A': [cut]})
+        v = plans[0]['vias'][0]
+        self.assertGreaterEqual(-depth(cut, v), VIA['dia'] / 2 + pp.FILL_MIN - 1e-6)
+
+    def test_a_cut_that_splits_the_region_fails_closed(self):
+        ps = {'A': [pad('A1.1', (10, 25), net='A'), pad('A2.1', (40, 25), net='A')]}
+        bar = rect(24, 0, 26, 50)
+        _, _, plans, _ = pp.plan_rails(ps, {}, VIA, RULES, {'A': dict(self.BASE)}, [], BOX, margin=2.0, cuts={'A': [bar]})
+        self.assertEqual(sum('isolated' in r.get('error', '') for r in plans), 1)
+
+    def test_islands_find_a_point_in_a_hole_and_a_cut_off_piece(self):
+        poly = rect(0, 0, 30, 10)
+        holes = [rect(14, -1, 16, 11), rect(4, 4, 6, 6)]
+        self.assertEqual(pp.pour_islands(poly, holes, [(2, 2), (8, 8), (25, 5), (5, 5)]), [2, 3])
+
+    def test_region_and_minus_options(self):
+        a = pp.parse_args(['plan', 'B', '--currents', 'c', '--fast', 'none', '--nets', '+3V3', '5V_SYS',
+                           '--region', '+3V3=112,109,178,168', '--region', '5V_SYS=181,136,240,162',
+                           '--minus', '+3V3=155,153,181,187'])
+        self.assertEqual(a.nets, ['+3V3', '5V_SYS'])
+        self.assertEqual(a.region, {'+3V3': (112, 109, 178, 168), '5V_SYS': (181, 136, 240, 162)})
+        self.assertEqual(a.minus, {'+3V3': [(155, 153, 181, 187)]})
+        with self.assertRaises(SystemExit):
+            pp.parse_args(['plan', 'B', '--currents', 'c', '--fast', 'none', '--nets', 'A', '--region', 'A=1,2,3'])
 
 
 if __name__ == '__main__':

@@ -9,7 +9,8 @@ Run with the KiCad bundled Python (it has pcbnew):
 Nets: --nets N1 N2 ... (a name that starts with a dash, such as -15V, is a net too), --nets-file FILE (one net
 per line, # comment), or both.
 Options: --margin 1.5 (region grows this far around the pads), --gap 0.2 (pad edge to via ring), --connect
-thermal|solid (THT pads in the pour), --grounds GND, --allow REF.PAD ... (via in that SMD pad is allowed).
+thermal|solid (THT pads in the pour), --grounds GND, --allow REF.PAD ... (via in that SMD pad is allowed),
+--region NET=x0,y0,x1,y1 and --minus NET=x0,y0,x1,y1 (repeat them), --cut-margin 0.5.
 plan prints the regions, the via plan per pad and the conflicts, and changes nothing. apply writes OUT (never the
 input) with the zones, stubs and vias, after a refill. Exit 1 on any conflict; apply then writes nothing.
 
@@ -22,10 +23,12 @@ Rules (fail closed):
   it in current-paths.json (the pcbtool paths spec); a pad that is not in the spec gets 1 via. THT pads get none.
   Each pad uses the via of its own net class; the regions of all nets are checked together.
 - A pad whose own tracks already reach a via or a THT pad of its net is "already connected": no new via.
-- A region over (or within the clearance of) a B.Cu or In2.Cu track of a fast net is a conflict: the fast net
-  needs the In2 ground under it.
-- A region that holds a THT pad of another net with In2.Cu copper (its own In2 zone) is a conflict: the
-  higher-priority rail pour takes that In2 thermal (starved thermal). A via of that net passes (In2 antipad).
+- Keep-out cuts (holes in the zone, grown by the clearance + --cut-margin): B.Cu and In2.Cu tracks of fast nets
+  (they keep In2 GND under them), THT pads of another net with its own In2 zone (their In2 thermal), and the
+  --minus boxes. A cut that cuts off a planned via, an anchor or a THT pad from the rest of the pour is a
+  conflict ('isolated'). New vias keep out of the cuts.
+- --region NET=x0,y0,x1,y1 limits a pour to a box: its pads outside the box (or in a --minus box) are listed as
+  TRACKS (route with tracks) and are not in the hull.
 - A via never touches an SMD pad unless --allow names REF.PAD; it keeps the class clearance to other-net copper and
   hole-to-hole to its own net, and it lies inside its region.
 Coordinates: KiCad mm, Y down.
@@ -108,9 +111,12 @@ def poly_gap(a, b):
     return min(pt.seg_seg_dist(p, q, r, s) for p, q in zip(a, a[1:] + a[:1]) for r, s in zip(b, b[1:] + b[:1]))
 
 
-def regions(pads_by_net, box, margin, clearance):
-    """({net: polygon}, [(net, net, gap)]): one In2 region per rail net; a gap below clearance is a conflict."""
+def regions(pads_by_net, box, margin, clearance, boxes=None):
+    """({net: polygon}, [(net, net, gap)]): one In2 region per rail net, clipped to the board box and to the net's
+    own box in boxes; a gap below clearance is a conflict."""
+    boxes = boxes or {}
     reg = {n: clip_box(grow(pts, margin), box) for n, pts in sorted(pads_by_net.items())}
+    reg = {n: clip_box(poly, boxes[n]) if n in boxes else poly for n, poly in reg.items()}
     conf = []
     for a, b in itertools.combinations(sorted(reg), 2):
         g = poly_gap(reg[a], reg[b])
@@ -231,31 +237,6 @@ def plan_all(pads, amps_by_pad, via, rules, obstacles_by_net, smd, regions_by_ne
     return out
 
 
-def fast_over(regions_by_net, segs, clearance):
-    """[(rail, fast net, segments)]: fast-net segments on the layer that uses In2.Cu as reference (B.Cu), inside a
-    rail region or nearer than clearance to it. A pour there takes the ground away from the fast net."""
-    hits = collections.Counter()
-    for rail, poly in regions_by_net.items():
-        for net, a, b in segs:
-            if pt.shape_seg_dist(('poly', poly), a, b) < clearance:
-                hits[(rail, net)] += 1
-    return [(r, n, k) for (r, n), k in sorted(hits.items())]
-
-
-def foreign_in2(regions_by_net, items, in2_nets):
-    """[(rail, net, count, first label)]: THT pads of another net with In2.Cu copper (its own In2 zone) inside a
-    rail region. The rail pour (higher priority) takes their In2 thermal away (starved thermal). A via passes: it
-    goes through In2 with an antipad and keeps its net on the other layers. items: [(label, net, point, kind)],
-    kind 'tht' or 'via'."""
-    hits = {}
-    for rail, poly in regions_by_net.items():
-        for label, net, q, kind in items:
-            if kind == 'tht' and net != rail and net in in2_nets and pt.in_poly(q, poly):
-                k = hits.setdefault((rail, net), [0, label])
-                k[0] += 1
-    return [(r, n, k, lab) for (r, n), (k, lab) in sorted(hits.items())]
-
-
 def reached_anchor(p, tracks, vias, th):
     """The first via or THT pad of the net that the pad's own tracks reach, or None. tracks: [(a, b, width)] of the
     net on the pad layer; vias: [(centre, radius)]; th: [(REF.PAD, centre, (w, h), angle)]. Items connect when they
@@ -289,18 +270,98 @@ def pad_corners(p):
             for su in (1, -1) for sv in (1, -1)]
 
 
-def plan_rails(pads_by_net, amps_by_pad, via, rules, obstacles_by_net, smd, box, margin, allow=()):
-    """(regions, conflicts, plans). The vias are spotted first (inside the board box); then each region grows by
-    the margin around the pad edges and the vias of its net, so a via next to an edge pad is inside its pour."""
-    x0, y0, x1, y1 = box
-    board = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+def rect(b):
+    return [(b[0], b[1]), (b[2], b[1]), (b[2], b[3]), (b[0], b[3])]
+
+
+def in_box(q, b):
+    return b[0] <= q[0] <= b[2] and b[1] <= q[1] <= b[3]
+
+
+def split_pads(pads_by_net, boxes, minus):
+    """({net: pads in the pour}, [(net, REF.PAD) to route with tracks]). A net with a box keeps only the pads inside
+    it and outside its minus boxes; an anchor outside the box does not reach the pour, so it is dropped."""
+    inside, tracks = {}, []
+    for n, ps in pads_by_net.items():
+        keep = []
+        for q in ps:
+            if n in boxes and (not in_box(q['c'], boxes[n]) or any(in_box(q['c'], m) for m in minus.get(n, []))):
+                tracks.append((n, q['name']))
+                continue
+            if n in boxes and q.get('anchor') and not in_box(q['anchor'], boxes[n]):
+                q = {k: v for k, v in q.items() if k != 'anchor'}
+            keep.append(q)
+        inside[n] = keep
+    return inside, tracks
+
+
+def cut_seg(a, b, r):
+    """Keep-out cut around a track a-b: every point within r of the segment (a stadium polygon)."""
+    return grow([a, b], r)
+
+
+def pour_islands(poly, holes, points, cell=0.25):
+    """Indices of the points that the pour (poly minus holes, raster of cell mm) does not join: a point in no
+    free cell, or in a piece other than the one that holds the most points. Sorted."""
+    xs, ys = [q[0] for q in poly], [q[1] for q in poly]
+    x0, y0 = min(xs), min(ys)
+    nx, ny = int((max(xs) - x0) / cell) + 1, int((max(ys) - y0) / cell) + 1
+    free = [[pt.in_poly((x0 + (i + 0.5) * cell, y0 + (j + 0.5) * cell), poly) for i in range(nx)] for j in range(ny)]
+    for h in holes:
+        bx = pt.shape_box(('poly', h))
+        for j in range(max(0, int((bx[1] - y0) / cell) - 2), min(ny, int((bx[3] - y0) / cell) + 3)):
+            for i in range(max(0, int((bx[0] - x0) / cell) - 2), min(nx, int((bx[2] - x0) / cell) + 3)):
+                if free[j][i] and pt.shape_dist(('poly', h), (x0 + (i + 0.5) * cell, y0 + (j + 0.5) * cell)) < FILL_MIN / 2:
+                    free[j][i] = False
+    comp, label = {}, 0
+    for j in range(ny):
+        for i in range(nx):
+            if free[j][i] and (i, j) not in comp:
+                todo, comp[(i, j)] = [(i, j)], label
+                while todo:
+                    ci, cj = todo.pop()
+                    for di, dj in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                        k = (ci + di, cj + dj)
+                        if 0 <= k[0] < nx and 0 <= k[1] < ny and free[k[1]][k[0]] and k not in comp:
+                            comp[k] = label
+                            todo.append(k)
+                label += 1
+    of = [comp.get((int((q[0] - x0) / cell), int((q[1] - y0) / cell))) for q in points]
+    counts = collections.Counter(c for c in of if c is not None)
+    main = counts.most_common(1)[0][0] if counts else None
+    return [k for k, c in enumerate(of) if c is None or c != main]
+
+
+def plan_rails(pads_by_net, amps_by_pad, via, rules, obstacles_by_net, smd, box, margin, allow=(), boxes=None, cuts=None):
+    """(regions, conflicts, plans, holes). The vias are spotted first (inside the board box and the net box, out of
+    the net's cuts); then each region grows by the margin around the pad edges and the vias of its net, so a via
+    next to an edge pad is inside its pour. holes: {net: the cuts that touch its region} (keep-outs in the zone).
+    A pad whose via, anchor or THT pad the holes cut off from the rest of the pour gets an 'isolated' error."""
+    boxes, cuts = boxes or {}, cuts or {}
+    board = rect(box)
+    via_reg = {n: clip_box(rect(boxes[n]), box) if n in boxes else board for n in pads_by_net}
+    obs = {}
+    for n in pads_by_net:
+        obs[n] = {L: list(v) for L, v in obstacles_by_net[n].items()}
+        obs[n].setdefault('In2.Cu', [])
+        obs[n]['In2.Cu'] += [(('poly', c), FILL_MIN, f'keep-out cut of {n}') for c in cuts.get(n, [])]
     order = [q for n in sorted(pads_by_net) for q in pads_by_net[n]]
-    plans = plan_all(order, amps_by_pad, via, rules, obstacles_by_net, smd, {n: board for n in pads_by_net}, allow)
+    plans = plan_all(order, amps_by_pad, via, rules, obs, smd, via_reg, allow)
     pts = {n: [k for q in ps for k in pad_corners(q)] for n, ps in pads_by_net.items() if ps}
     for r in plans:
         pts[r['net']] += r.get('vias', []) + ([r['connected']] if 'connected' in r else [])
-    reg, conf = regions(pts, box, margin, rules['clr'])
-    return reg, conf, plans
+    reg, conf = regions(pts, box, margin, rules['clr'], boxes)
+    holes = {n: [c for c in cuts.get(n, []) if poly_gap(c, poly) == 0] for n, poly in reg.items()}
+    centre = {q['name']: tuple(q['c']) for ps in pads_by_net.values() for q in ps}
+    for n, poly in reg.items():
+        own = [r for r in plans if r['net'] == n and 'error' not in r]
+        spots = [(r, q) for r in own for q in (r['vias'] or [r.get('connected', centre[r['pad']])])]
+        for k in pour_islands(poly, holes[n], [q for _, q in spots]):
+            r = spots[k][0]
+            if 'error' not in r:
+                r.pop('vias', None)
+                r['error'] = 'isolated from the pour by a keep-out cut'
+    return reg, conf, plans, holes
 
 
 # ---------- pcbnew edge ----------
@@ -352,6 +413,7 @@ def make_plan(p, b, pro, a):
     spec = json.load(open(a.currents))
     rules_d = pro['board']['design_settings']['rules']
     bad = [(n, why) for n in a.nets for why in [refused(n, fast, a.grounds)] if why]
+    bad += [(n, '--region/--minus net is not in --nets') for n in set(a.region) | set(a.minus) if n not in a.nets]
     missing = [n for n in a.nets if b.FindNet(n) is None]
     cls = {n: class_of(pro, n) for n in a.nets if n not in missing}
     clr = max([c['clearance'] for c in cls.values()] + [0.0])
@@ -378,21 +440,41 @@ def make_plan(p, b, pro, a):
     amps = {}
     for n in cls:
         amps.update(pad_currents(spec, n))
-    reg, conf, plans = plan_rails(pads, amps, via, rules, obst, smd_pads(p, b), box, a.margin, a.allow)
+    pads, tracks = split_pads(pads, a.region, a.minus)
+    pads = {n: ps for n, ps in pads.items() if ps}
+    cuts, kinds = make_cuts(p, b, fast, list(pads), a.region, a.minus, box, clr + a.cut_margin)
+    reg, conf, plans, holes = plan_rails(pads, amps, via, rules, obst, smd_pads(p, b), box, a.margin, a.allow,
+                                         a.region, cuts)
     in2 = in2_cuts(p, b, reg)
-    ref = [(t.GetNetname(), (mm(t.GetStart().x), mm(t.GetStart().y)), (mm(t.GetEnd().x), mm(t.GetEnd().y)))
-           for t in b.GetTracks() if t.GetLayerName() in (REF_LAYER, 'In2.Cu') and not isinstance(t, p.PCB_VIA)
-           and any(fnmatch.fnmatchcase(t.GetNetname(), f) for f in fast)]
-    fast_hits = fast_over(reg, ref, clr)
+    layer = {q['name']: q['layer'] for ps in pads.values() for q in ps}
+    used = {n: collections.Counter(kinds[n][id(c)] for c in holes[n]) for n in holes}
+    return {'bad': bad, 'missing': missing, 'regions': reg, 'conflicts': conf, 'plans': plans, 'rules': rules,
+            'classes': cls, 'in2_other': in2, 'layer': layer, 'holes': holes, 'tracks': tracks, 'cut_kinds': used}
+
+
+def make_cuts(p, b, fast, nets, boxes, minus, board, r):
+    """({net: [cut polygons]}, {net: {id(cut): kind}}) in the net box (or the board box): fast-net tracks on B.Cu
+    and In2.Cu grown by r + half width, THT pads of other nets that have an In2 zone grown by r, and the minus boxes."""
+    mm = p.ToMM
     lay2 = b.GetLayerID('In2.Cu')
     in2_nets = {z.GetNetname() for z in b.Zones() if z.IsOnLayer(lay2) and not z.GetIsRuleArea() and z.GetNetname()}
-    items = [(f'PTH pad {fp.GetReference()}.{pd.GetNumber()}', pd.GetNetname(), (mm(pd.GetPosition().x), mm(pd.GetPosition().y)), 'tht')
-             for fp in b.GetFootprints() for pd in fp.Pads() if pd.GetAttribute() == p.PAD_ATTRIB_PTH]
-    foreign = foreign_in2(reg, items, in2_nets)
-    layer = {q['name']: q['layer'] for ps in pads.values() for q in ps}
-    return {'bad': bad, 'missing': missing, 'regions': reg, 'conflicts': conf, 'plans': plans, 'rules': rules,
-            'classes': cls, 'in2_other': in2, 'layer': layer,
-            'fast_over': fast_hits, 'foreign': foreign}
+    segs = [((mm(t.GetStart().x), mm(t.GetStart().y)), (mm(t.GetEnd().x), mm(t.GetEnd().y)), mm(t.GetWidth()))
+            for t in b.GetTracks() if t.GetLayerName() in (REF_LAYER, 'In2.Cu') and not isinstance(t, p.PCB_VIA)
+            and any(fnmatch.fnmatchcase(t.GetNetname(), f) for f in fast)]
+    tht = [(pd.GetNetname(), (mm(pd.GetPosition().x), mm(pd.GetPosition().y)), (mm(pd.GetSize(p.F_Cu).x), mm(pd.GetSize(p.F_Cu).y)),
+            -pd.GetOrientation().AsDegrees()) for fp in b.GetFootprints() for pd in fp.Pads()
+           if pd.GetAttribute() == p.PAD_ATTRIB_PTH and pd.GetNetname() in in2_nets]
+    cuts, kinds = {}, {}
+    for n in nets:
+        area = boxes.get(n, board)
+        near = (area[0] - r - 1, area[1] - r - 1, area[2] + r + 1, area[3] + r + 1)
+        cs = [('fast track', cut_seg(a, e, w / 2 + r)) for a, e, w in segs if in_box(a, near) or in_box(e, near)]
+        cs += [('THT pad', grow(pad_corners({'c': c, 'size': sz, 'angle': ang}), r)) for net, c, sz, ang in tht
+               if net != n and in_box(c, near)]
+        cs += [('minus box', rect(m)) for m in minus.get(n, [])]
+        cuts[n] = [c for _, c in cs]
+        kinds[n] = {id(c): k for k, c in cs}
+    return cuts, kinds
 
 
 def net_copper(p, b, net):
@@ -438,11 +520,12 @@ def print_plan(pl, verbose):
               f"{sum(1 for r in ps if r['n'] == 0 and 'connected' not in r)} THT, {pl['in2_other'][n]} other-net In2 track ends inside")
     for a, b, g in pl['conflicts']:
         print(f'CONFLICT regions {a} / {b}: gap {g} mm < {pl["rules"]["clr"]} mm')
-    for rail, net, k in pl['fast_over']:
-        print(f'CONFLICT region {rail} lies over {k} {REF_LAYER}/In2.Cu segments of fast net {net} (In2 GND is its reference)')
-    for rail, net, k, lab in pl['foreign']:
-        print(f'CONFLICT region {rail} holds {k} THT pads of {net}, which has In2.Cu copper (first: {lab}); '
-              'the pour takes their In2 connection')
+    for n, k in pl['cut_kinds'].items():
+        if k:
+            print(f'CUTS {n}: ' + ', '.join(f'{v} {kind}' for kind, v in sorted(k.items())) + ' (keep-outs in the zone)')
+    for n in sorted({n for n, _ in pl['tracks']}):
+        names = [q for m, q in pl['tracks'] if m == n]
+        print(f'TRACKS {n}: {len(names)} pads outside the pour, route with tracks: ' + ' '.join(names))
     for r in pl['plans']:
         if 'error' in r:
             print(f"CONFLICT via {r['net']} {r['pad']} ({r['amps']} A, {r['n']} via): {r['error']}")
@@ -451,7 +534,7 @@ def print_plan(pl, verbose):
         elif verbose and r['n']:
             print(f"  {r['net']} {r['pad']} {r['amps']} A -> {r['n']} via at " + ' '.join(f'({x:.3f}, {y:.3f})' for x, y in r['vias'])
                   + (f" stub w {r['stub'][2]:.2f}" if r['stub'] else ' in pad'))
-    nbad = len(pl['bad']) + len(pl['missing']) + len(pl['conflicts']) + len(pl['fast_over']) + len(pl['foreign']) + sum(1 for r in pl['plans'] if 'error' in r)
+    nbad = len(pl['bad']) + len(pl['missing']) + len(pl['conflicts']) + sum(1 for r in pl['plans'] if 'error' in r)
     print(f'{nbad} conflicts')
     return nbad
 
@@ -492,6 +575,16 @@ def cmd_apply(a):
         z.Outline().NewOutline()
         for x, y in poly:
             z.Outline().Append(p.FromMM(x), p.FromMM(y))
+        if pl['holes'][n]:
+            cut = p.SHAPE_POLY_SET()
+            for h in pl['holes'][n]:
+                cut.NewOutline()
+                for x, y in h:
+                    cut.Append(p.FromMM(x), p.FromMM(y))
+            cut.Simplify()
+            z.Outline().BooleanSubtract(cut)
+            if z.Outline().OutlineCount() != 1:
+                sys.exit(f'zone {n}: the cuts split the outline into {z.Outline().OutlineCount()} pieces; nothing written')
         b.Add(z)
     nv = ns = 0
     for r in pl['plans']:
@@ -523,19 +616,38 @@ def cmd_apply(a):
     print(f"wrote {a.out}: {len(pl['regions'])} In2.Cu zones (priority {prio}), {ns} stubs, {nv} vias")
 
 
+LIST_OPTS = ('--nets', '--region', '--minus')
+
+
 def nets_argv(argv):
-    """Each token after --nets (up to the next --option) becomes --nets=TOKEN, so a net such as -15V is a value."""
-    out, in_nets = [], False
+    """Each token after --nets, --region or --minus (up to the next --option) becomes --OPT=TOKEN, so a net such as
+    -15V is a value."""
+    out, opt = [], None
     for t in argv:
-        if t == '--nets':
-            in_nets = True
+        if t in LIST_OPTS:
+            opt = t
         elif t.startswith('--'):
-            in_nets = False
+            opt = None
             out.append(t)
-        elif in_nets:
-            out.append('--nets=' + t)
+        elif opt:
+            out.append(f'{opt}={t}')
         else:
             out.append(t)
+    return out
+
+
+def net_boxes(items, ap, name):
+    """[NET=x0,y0,x1,y1, ...] -> [(net, box)]; a bad item is an argument error."""
+    out = []
+    for it in items:
+        net, _, val = it.rpartition('=')
+        try:
+            box = tuple(float(v) for v in val.split(','))
+        except ValueError:
+            box = ()
+        if not net or len(box) != 4 or box[0] >= box[2] or box[1] >= box[3]:
+            ap.error(f'{name} {it!r}: give NET=x0,y0,x1,y1 with x0 < x1 and y0 < y1')
+        out.append((net, box))
     return out
 
 
@@ -549,6 +661,9 @@ def parse_args(argv):
             s.add_argument('out')
         s.add_argument('--nets', action='append', default=[], help='net names; repeat or list them')
         s.add_argument('--nets-file', help='one net per line; # starts a comment')
+        s.add_argument('--region', action='append', default=[], help='NET=x0,y0,x1,y1: the pour box of the net')
+        s.add_argument('--minus', action='append', default=[], help='NET=x0,y0,x1,y1: a keep-out box in that pour')
+        s.add_argument('--cut-margin', type=float, default=0.5, help='keep-out cut margin around fast tracks and THT pads')
         s.add_argument('--currents', required=True)
         s.add_argument('--fast', required=True, help='fast-net file {"fast": [patterns]}, or none')
         s.add_argument('--grounds', nargs='+', default=['GND'])
@@ -562,6 +677,11 @@ def parse_args(argv):
         a.nets += [x.split('#')[0].strip() for x in open(a.nets_file) if x.split('#')[0].strip()]
     if not a.nets:
         ap.error('no nets: give --nets or --nets-file')
+    a.region = dict(net_boxes(a.region, ap, '--region'))
+    minus = {}
+    for n, bx in net_boxes(a.minus, ap, '--minus'):
+        minus.setdefault(n, []).append(bx)
+    a.minus = minus
     return a
 
 
