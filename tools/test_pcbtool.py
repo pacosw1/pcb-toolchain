@@ -1128,13 +1128,15 @@ class SuggestBoardTest(unittest.TestCase):
         self.assertIn('pour VCC', r.stdout)
 
     def test_own_domain_second_ground_pour_is_a_cost_not_a_block(self):
-        planes = {'grounds': ['GND', 'ISO_0V'], 'domains': {'ISO_0V': ['SIG']}}
+        planes = {'about': 'test', 'adjacent': {'F.Cu': 'In1.Cu'}, 'plane_layers': [], 'grounds': ['GND', 'ISO_0V'],
+                  'domains': {'ISO_0V': ['SIG']}}
         r, line, c = self.run_suggest('--layers', 'F.Cu', zone=('ISO_0V', 13, 0, 17, 20), planes=planes)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertNotIn('pour 0.0', r.stdout.split('1) ')[1].splitlines()[0])
 
     def test_foreign_domain_ground_pour_blocks(self):
-        planes = {'grounds': ['GND', 'ISO_0V'], 'domains': {'ISO_0V': ['SIG']}}
+        planes = {'about': 'test', 'adjacent': {'F.Cu': 'In1.Cu'}, 'plane_layers': [], 'grounds': ['GND', 'ISO_0V'],
+                  'domains': {'ISO_0V': ['SIG']}}
         r, line, c = self.run_suggest('--layers', 'F.Cu', zone=('GND', 13, 0, 17, 20), planes=planes)
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertIn('pour GND', r.stdout)
