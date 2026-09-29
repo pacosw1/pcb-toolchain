@@ -78,6 +78,38 @@ class Result(unittest.TestCase):
                'violations': [{'severity': 'error', 'type': 'clearance'}, {'severity': 'warning', 'type': 'x'}]}
         self.assertEqual(surrogate_gen.drc_row(drc), {'unrouted': 2, 'errors': 1, 'capped': False})
 
+    def test_row_keeps_the_rich_labels(self):
+        drc = {'unconnected_items': [{'items': [{'description': 'Pad 1 [/A] of R1'}]}] * 2,
+               'violations': [{'severity': 'error', 'type': 'clearance'}] * 3}
+        r = surrogate_gen.drc_row(drc, rich=True)
+        self.assertEqual(r['open_nets'], {'/A': 2})
+        self.assertEqual(r['error_types'], {'clearance': 3})
+
+    def test_copper_stats(self):
+        text = """(segment
+\t\t(start 0 0)
+\t\t(end 3 4)
+\t\t(width 0.2)
+\t)
+\t(segment (start 1 1) (end 1 3) (width 0.2))
+\t(via
+\t\t(at 1 1)
+\t)
+\t(via (at 2 2))
+\t(footprint "R" (at 5 5))"""
+        self.assertEqual(surrogate_gen.copper_stats(text), {'vias': 2, 'track_mm': 7.0})
+
+    def test_passes_in_the_router_log(self):
+        log = "x Auto-router pass #1 on board\ny Auto-router pass #2 on board\nz Restoring an earlier board\n"
+        self.assertEqual(surrogate_gen.router_passes(log), 2)
+        self.assertEqual(surrogate_gen.router_passes(''), 0)
+
+    def test_timeout_rule(self):
+        # the router used the whole limit and left opens: a timeout (the count is an upper bound, not a low score)
+        self.assertTrue(surrogate_gen.timed_out(89.0, 90, 5))
+        self.assertFalse(surrogate_gen.timed_out(40.0, 90, 5))
+        self.assertFalse(surrogate_gen.timed_out(89.5, 90, 0))
+
     def test_row_marks_the_499_cap(self):
         drc = {'unconnected_items': [{'items': [{'description': 'Pad 1 [/A] of R1'}]}] * 499, 'violations': []}
         self.assertTrue(surrogate_gen.drc_row(drc)['capped'])

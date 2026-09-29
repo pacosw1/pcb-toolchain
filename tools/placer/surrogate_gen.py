@@ -4,7 +4,9 @@ Each sample: the original pose of a problem, a random fraction of the movable un
 turned), then anneal.legalize. A legal pose is written (kicad_io.write_board), routed once by Freerouting
 (tools/freeroute.py, F.Cu + B.Cu, one fixed timeout for all samples) and counted from the kicad-cli DRC JSON.
 An illegal pose is recorded without a route. One JSON line per sample goes to OUT/samples.jsonl:
-  {case, seed, cfg, pose, illegal, unrouted, errors, capped, wall_s}   (unrouted None: not routed)
+  {case, seed, cfg, tries, pose, illegal, unrouted, errors, capped, wall_s}   (unrouted None: not routed)
+  routed samples also: open_nets {net: open connections}, error_types, vias, track_mm, passes, route_s,
+  timeout (the router used its whole limit with opens left: the count is an upper bound, not a low score)
 
   REMOTE_MEM=16g REMOTE_CPUS=15 REMOTE_TIMEOUT=560 tools/remote.sh <any board dir> \
       --in PROB.json --in B.kicad_pcb --in B.kicad_pro --in B.kicad_dru [...more cases] --in numpy-*.whl -- \
@@ -21,6 +23,7 @@ import argparse
 import glob
 import json
 import os
+import math
 import random
 import re
 import shutil
@@ -107,10 +110,33 @@ def prep(out, boards, repo):
     json.dump(cases, open(os.path.join(out, 'cases.json'), 'w'), indent=1)
 
 
-def drc_row(drc):
+def drc_row(drc, rich=False):
+    """Open count, error count and the 499 cap flag; rich adds the open connections per net and the errors per type."""
     from placer import validate
     c = validate.count_drc(drc)
-    return {'unrouted': c['unconnected'], 'errors': c['errors'], 'capped': c['capped']}
+    row = {'unrouted': c['unconnected'], 'errors': c['errors'], 'capped': c['capped']}
+    if rich:
+        row.update(open_nets=c['open_nets'], error_types=c['error_types'])
+    return row
+
+
+SEG = re.compile(r'\(segment\s*\(start ([-\d.]+) ([-\d.]+)\)\s*\(end ([-\d.]+) ([-\d.]+)\)')
+
+
+def copper_stats(text):
+    """Via count and total track length (mm) of a .kicad_pcb text."""
+    length = sum(math.hypot(float(c) - float(a), float(d) - float(b)) for a, b, c, d in SEG.findall(text))
+    return {'vias': len(re.findall(r'\(via\b', text)), 'track_mm': round(length, 3)}
+
+
+def router_passes(log):
+    """Auto-router passes that Freerouting completed (its freerouting.log)."""
+    return len(re.findall(r'Auto-router pass #\d+', log))
+
+
+def timed_out(route_s, limit_s, unrouted):
+    """The router used its whole time limit and left opens: the count is an upper bound, not a low score."""
+    return unrouted > 0 and route_s >= limit_s - 2
 
 
 _W = {}
@@ -169,13 +195,20 @@ def one(task):
             subprocess.run([sys.executable, 'tools/gnd_pad_vias.py', pcb, pcb, '--net', net],
                            stdout=log, stderr=subprocess.STDOUT)
         routed = os.path.join(d, stem + '-r.kicad_pcb')
+        t1 = time.time()
         subprocess.run([sys.executable, 'tools/freeroute.py', pcb, routed, '--no-live', '--timeout', _W['timeout']],
-                       stdout=log, stderr=subprocess.STDOUT)
+                       stdout=log, stderr=subprocess.STDOUT, env=dict(os.environ, TMPDIR=d))
+        route_s = time.time() - t1
         drc = os.path.join(d, 'drc.json')
         subprocess.run(['kicad-cli', 'pcb', 'drc', '--format', 'json', '-o', drc, routed],
                        stdout=log, stderr=subprocess.STDOUT)
         if os.path.exists(drc) and os.path.exists(routed):
-            row.update(drc_row(json.load(open(drc))))
+            row.update(drc_row(json.load(open(drc)), rich=True))
+            row.update(copper_stats(open(routed, errors='ignore').read()))
+            flog = glob.glob(os.path.join(d, 'freeroute-*', 'freerouting.log'))
+            row['passes'] = router_passes(open(flog[0], errors='ignore').read()) if flog else None
+            row['route_s'] = round(route_s, 1)
+            row['timeout'] = timed_out(route_s, rt, row['unrouted'])
         shutil.rmtree(d, ignore_errors=True)
     row['wall_s'] = round(time.time() - t0, 1)
     return row
