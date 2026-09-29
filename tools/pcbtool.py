@@ -2119,6 +2119,15 @@ def cmd_stitch(a):
     net_clr = {}
     obstacles = {b.GetLayerName(L): copper_obstacles(p, b, pro, gnd, clr, L, net_clr)[1] + edges
                  for L in b.GetEnabledLayers().CuStack()}
+    # a ground SMD pad is own copper, but a via in it is a via in pad (viapads): keep the class clearance to it
+    for fp in b.GetFootprints():
+        for pd in fp.Pads():
+            if pd.GetNetname() != gnd or pd.GetAttribute() != p.PAD_ATTRIB_SMD:
+                continue
+            for L in b.GetEnabledLayers().CuStack():
+                if pd.IsOnLayer(L):
+                    obstacles[b.GetLayerName(L)].append((('poly', poly_points(p, pd.GetEffectivePolygon(L).Outline(0))), clr,
+                                                         f'pad {fp.GetReference()}.{pd.GetNumber()} {gnd}'))
     keepouts = [z.Outline() for z in b.Zones() if z.GetIsRuleArea() and z.GetDoNotAllowVias()]
     pours = [z for z in b.Zones() if not z.GetIsRuleArea() and z.GetNetname() != gnd]
     gpours = [z for z in b.Zones() if not z.GetIsRuleArea() and z.GetNetname() == gnd]

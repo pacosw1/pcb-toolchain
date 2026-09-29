@@ -1159,8 +1159,9 @@ class SuggestBoardTest(unittest.TestCase):
         r, line, c = self.run_suggest('--layers', 'F.Cu', gnd_pad=(15, 11.2), zone=('GND', 3, 15, 6, 18))
         self.assertEqual(line, 'SIG R1.1 -> R2.1 layer=F.Cu')
 
-    def stitch_after_forced_vias(self, *stitch_args, pours=()):
-        """Route SIG with 2 vias (GND wall on F.Cu), add the (net, priority) board-size B.Cu pours, then stitch SIG.
+    def stitch_after_forced_vias(self, *stitch_args, pours=(), gnd_smd=()):
+        """Route SIG with 2 vias (GND wall on F.Cu), add the (net, priority) board-size B.Cu pours and the (x, y)
+        0.6 mm GND SMD pads on F.Cu, then stitch SIG.
         (stitch result, GND vias, SIG vias, sha changed)."""
         import hashlib
         import pathlib
@@ -1173,8 +1174,22 @@ class SuggestBoardTest(unittest.TestCase):
             r = subprocess.run([sys.executable, tool, 'suggest', board, 'SIG', '--cell', '0.25'], capture_output=True, text=True)
             line = [l for l in r.stdout.splitlines() if l.startswith('SIG R1.1 -> R2.1')][0]
             subprocess.run([sys.executable, tool, 'connect', board, line], check=True, capture_output=True)
-            if pours:
+            if pours or gnd_smd:
                 b = pcbnew.LoadBoard(board)
+                for x, y in gnd_smd:
+                    fp = pcbnew.FOOTPRINT(b)
+                    fp.SetReference('C9')
+                    fp.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(x), pcbnew.FromMM(y)))
+                    pad = pcbnew.PAD(fp)
+                    pad.SetNumber('1')
+                    pad.SetAttribute(pcbnew.PAD_ATTRIB_SMD)
+                    pad.SetShape(pcbnew.PAD_SHAPE_RECT)
+                    pad.SetSize(pcbnew.VECTOR2I(pcbnew.FromMM(0.6), pcbnew.FromMM(0.6)))
+                    pad.SetLayerSet(pad.SMDMask())
+                    pad.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(x), pcbnew.FromMM(y)))
+                    pad.SetNet(b.FindNet('GND'))
+                    fp.Add(pad)
+                    b.Add(fp)
                 for net, prio in pours:
                     z = pcbnew.ZONE(b)
                     z.SetLayer(pcbnew.B_Cu)
@@ -1210,6 +1225,14 @@ class SuggestBoardTest(unittest.TestCase):
         st, gnd, sig, changed = self.stitch_after_forced_vias(pours=(('VCC', 1), ('GND', 2)))
         self.assertEqual(st.returncode, 0, st.stdout + st.stderr)
         self.assertEqual(len(gnd), 2)
+
+    def test_stitch_puts_no_via_in_a_ground_smd_pad(self):
+        # Without the pad, the GND via for the SIG via at (17.5, 10) goes to (18.24, 10.62); a GND SMD pad covers it.
+        st, gnd, sig, changed = self.stitch_after_forced_vias(gnd_smd=((18.35, 10.75),))
+        self.assertEqual(st.returncode, 0, st.stdout + st.stderr)
+        self.assertIn((17.5, 10.0), sig)
+        self.assertEqual(len(gnd), 2)
+        self.assertFalse(any(abs(x - 18.35) < 0.3 + 0.3 and abs(y - 10.75) < 0.3 + 0.3 for x, y in gnd), gnd)
 
     def test_stitch_in_an_other_net_pour_has_no_room(self):
         st, gnd, sig, changed = self.stitch_after_forced_vias(pours=(('VCC', 1),))
