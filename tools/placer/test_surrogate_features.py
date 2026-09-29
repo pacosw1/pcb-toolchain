@@ -64,7 +64,7 @@ class Rasterize(unittest.TestCase):
 
     def test_blocked_is_outline_and_keepouts(self):
         pr = square_problem()
-        pr['board']['outline'] = [[0, 0], [20, 0], [20, 10], [0, 10]]  # 20 x 10: the lower half of the grid is off board
+        pr['board']['outline'] = [[0, 0], [20, 0], [20, 10], [0, 10]]  # 20 x 10: lower grid half is off board
         x, g = features.rasterize(pr, self.pose, n=20)
         blk = x[features.CHANNELS.index('blocked')]
         self.assertEqual(float(blk[15, 2]), 1.0)  # y 15: off board

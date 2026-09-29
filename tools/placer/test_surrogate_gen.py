@@ -54,6 +54,23 @@ class Perturb(unittest.TestCase):
             self.assertIn(c['p_turn'], surrogate_gen.TURNS)
 
 
+    def test_retry_is_smaller(self):
+        c = surrogate_gen.retry_config({'frac': 0.3, 'sigma': 8.0, 'p_turn': 0.3})
+        self.assertEqual(c, {'frac': 0.15, 'sigma': 4.0, 'p_turn': 0.15})
+
+    def test_cases_get_other_configs(self):
+        a = [surrogate_gen.sample_config(surrogate_gen.case_rng('RELAY-4', s)) for s in range(20)]
+        b = [surrogate_gen.sample_config(surrogate_gen.case_rng('IO-6X6', s)) for s in range(20)]
+        self.assertNotEqual(a, b)
+        self.assertEqual(a, [surrogate_gen.sample_config(surrogate_gen.case_rng('RELAY-4', s)) for s in range(20)])
+
+
+class Prep(unittest.TestCase):
+    def test_plane_nets_are_the_ground_nets(self):
+        names = ['GND', '/FIELD_GND', 'FIELD_GND', 'PGND_ISO', '+3V3', '/GNDSENSE', 'VBUS', '']
+        self.assertEqual(surrogate_gen.plane_nets(names), ['/FIELD_GND', 'FIELD_GND', 'GND', 'PGND_ISO'])
+
+
 class Result(unittest.TestCase):
     def test_row_from_drc(self):
         drc = {'unconnected_items': [{'items': [{'description': 'Pad 1 [/A] of R1'}]},

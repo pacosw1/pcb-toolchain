@@ -11,25 +11,42 @@ An illegal pose is recorded without a route. One JSON line per sample goes to OU
       python3 tools/placer/surrogate_gen.py --case NAME:in/PROB.json:in/B.kicad_pcb [...] \
       --seed S --workers 14 --budget 520 --timeout 00:01:30 -o out
 The work files stay in work/ (not returned); only samples.jsonl and the log come back.
+
+Data recipe (Mac, KiCad Python): `surrogate_gen.py prep OUT BOARD...` copies each repo board, removes all tracks
+and vias except the ground plane nets (plane_nets), reads the problem (keepouts H*_KEEPOUT, BASE-PWR antenna
+zone with U1) and writes OUT/cases.json {case: {board, prob, pcb, gnd, legal}}. GNDNET = the plane nets: each
+routed sample first gets tools/gnd_pad_vias.py for each of them (the inner plane connects those pads).
 """
 import argparse
 import glob
 import json
 import os
 import random
+import re
 import shutil
 import subprocess
 import sys
 import time
 import zipfile
 
-FRACS = (0.05, 0.15, 0.3, 0.6, 1.0)
+FRACS = (0.05, 0.1, 0.2, 0.4, 0.7)
 SIGMAS = (0.5, 1.0, 2.0, 4.0, 8.0, 16.0)
 TURNS = (0.0, 0.1, 0.3)
+TRIES = 3  # legalizer tries per sample (retry_config between them)
 
 
 def sample_config(rng):
     return {'frac': rng.choice(FRACS), 'sigma': rng.choice(SIGMAS), 'p_turn': rng.choice(TURNS)}
+
+
+def case_rng(name, seed):
+    """Seeded generator of one sample: other cases get other configs for the same seed."""
+    return random.Random('%s:%d' % (name, seed))
+
+
+def retry_config(cfg):
+    """A smaller step for the next try when the legalizer fails: half the fraction, the step and the turn rate."""
+    return {'frac': cfg['frac'] / 2, 'sigma': cfg['sigma'] / 2, 'p_turn': cfg['p_turn'] / 2}
 
 
 def perturb(pr, rng, cfg):
@@ -53,6 +70,43 @@ def perturb(pr, rng, cfg):
     return pose
 
 
+PLANE = re.compile(r'^([A-Z0-9]+_)?[A-Z]?GND(_[A-Z0-9]+)?$')
+ZONE_REFS = {'BASE-PWR': {'U1_ANTENNA': 'U1'}}  # as test_kicad_io: the WROOM antenna keepout moves with U1
+
+
+def plane_nets(names):
+    """Ground plane nets (GND, FIELD_GND, PGND_ISO, ...; the last path part is tested), sorted."""
+    return sorted(n for n in names if n and PLANE.match(n.split('/')[-1]))
+
+
+def prep(out, boards, repo):
+    """Stripped board copies + problems + cases.json (see the module text)."""
+    import pcbnew
+    from placer import cost, kicad_io, validate
+    cases = {}
+    for name in boards:
+        src = os.path.join(repo, 'hardware-design', 'boards', name, 'cad', name, name)
+        d = os.path.join(out, name)
+        os.makedirs(d, exist_ok=True)
+        pcb = os.path.join(d, name + '.kicad_pcb')
+        for ext in ('.kicad_pro', '.kicad_dru'):
+            if os.path.exists(src + ext):
+                shutil.copy(src + ext, os.path.join(d, name + ext))
+        nets = [str(n) for n in pcbnew.LoadBoard(src + '.kicad_pcb').GetNetsByName().keys()]
+        gnd = plane_nets(nets)
+        validate.strip_tracks(src + '.kicad_pcb', pcb, keep=gnd)
+        pr = kicad_io.read_problem(pcb, skip=gnd, keepout_zones=['H*_KEEPOUT'], zone_refs=ZONE_REFS.get(name),
+                                   via_nets=gnd)
+        prob = os.path.join(d, name + '-prob.json')
+        json.dump(pr, open(prob, 'w'))
+        ev = cost.Evaluator(pr, {})
+        bad = [u['name'] for i, u in enumerate(pr['units']) if not u['fixed'] and ev.legal_penalty(i) > 0]
+        cases[name] = {'board': name, 'prob': prob, 'pcb': pcb, 'gnd': ','.join(gnd), 'legal': not bad}
+        print('%-14s units %3d nets %3d plane %s original illegal %d %s' % (
+            name, len(pr['units']), len(pr['nets']), ','.join(gnd), len(bad), ' '.join(bad[:6])), flush=True)
+    json.dump(cases, open(os.path.join(out, 'cases.json'), 'w'), indent=1)
+
+
 def drc_row(drc):
     from placer import validate
     c = validate.count_drc(drc)
@@ -67,7 +121,7 @@ def _init(cases, timeout, budget_end, gnd):
     _W.update(cases=cases, timeout=timeout, end=budget_end, gnd=gnd, ev={})
     for name, (prob, _board) in cases.items():
         pr = json.load(open(prob))
-        p = anneal.params_all({'legal_time': 30.0})
+        p = anneal.params_all({'legal_time': 15.0})
         _W['ev'][name] = (pr, p, cost.Mask(pr['board'], p['mask_cell'], p['gap']))
 
 
@@ -85,15 +139,19 @@ def one(task):
         return None
     t0 = time.time()
     pr, p, mask = _W['ev'][name]
-    rng = random.Random(seed)
+    rng = case_rng(name, seed)
     cfg = sample_config(rng)
-    ev = cost.Evaluator(pr, p, pose=perturb(pr, rng, cfg), mask=mask)
-    try:
-        bad = anneal.legalize(ev, p)
-    except anneal.LegalizeTimeout as e:
-        bad = e.illegal
-    row = {'case': name, 'seed': seed, 'cfg': cfg, 'pose': [list(q) for q in ev.pose()], 'illegal': len(bad),
-           'unrouted': None, 'errors': None, 'capped': None}
+    for tries in range(1, TRIES + 1):
+        ev = cost.Evaluator(pr, p, pose=perturb(pr, rng, cfg), mask=mask)
+        try:
+            bad = anneal.legalize(ev, p)
+        except anneal.LegalizeTimeout as e:
+            bad = e.illegal
+        if not bad:
+            break
+        cfg = retry_config(cfg)
+    row = {'case': name, 'seed': seed, 'cfg': cfg, 'tries': tries, 'pose': [list(q) for q in ev.pose()],
+           'illegal': len(bad), 'unrouted': None, 'errors': None, 'capped': None}
     if not bad:
         board = _W['cases'][name][1]
         stem = os.path.splitext(os.path.basename(board))[0]
@@ -107,8 +165,8 @@ def one(task):
                 shutil.copy(src, os.path.join(d, stem + ext))
                 shutil.copy(src, os.path.join(d, stem + '-r' + ext))
         log = open(os.path.join(d, 'job.log'), 'w')
-        if _W['gnd'].get(name):
-            subprocess.run([sys.executable, 'tools/gnd_pad_vias.py', pcb, pcb, '--net', _W['gnd'][name]],
+        for net in filter(None, _W['gnd'].get(name, '').split(',')):
+            subprocess.run([sys.executable, 'tools/gnd_pad_vias.py', pcb, pcb, '--net', net],
                            stdout=log, stderr=subprocess.STDOUT)
         routed = os.path.join(d, stem + '-r.kicad_pcb')
         subprocess.run([sys.executable, 'tools/freeroute.py', pcb, routed, '--no-live', '--timeout', _W['timeout']],
@@ -135,8 +193,11 @@ def _numpy_from_wheel():
 
 
 def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ['prep']:
+        return prep(argv[1], argv[2:], os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
     ap = argparse.ArgumentParser()
-    ap.add_argument('--case', action='append', required=True, help='NAME:PROB.json:BOARD.kicad_pcb[:GNDNET]')
+    ap.add_argument('--case', action='append', required=True, help='NAME:PROB.json:BOARD.kicad_pcb[:GNDNET,...]')
     ap.add_argument('--seed', type=int, required=True, help='first sample seed; sample k of a case uses seed + k')
     ap.add_argument('--n', type=int, default=100000, help='samples per case (the budget usually stops first)')
     ap.add_argument('--workers', type=int, default=14)
