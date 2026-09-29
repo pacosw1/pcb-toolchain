@@ -25,7 +25,8 @@ from . import cost
 
 GLOBAL = {'bins': 64, 'target': 0.9, 'iters': 1000, 'stop_overflow': 0.1, 'mu': 1.05, 'gamma': None,
           'max_move': 0.5, 'infl': 1.0, 'seed': 1,
-          'init': 'centre', 'route_rounds': 2, 'route_overflow': 0.2, 'max_infl': 2.0}
+          'init': 'centre', 'route_rounds': 2, 'route_overflow': 0.2, 'max_infl': 2.0,
+          'rotate': 0, 'rot_every': 25, 'backend': 'numpy', 'device': None}
 
 
 def _box(u, r):
@@ -46,32 +47,27 @@ class Model:
         self.fixed = np.array([bool(u['fixed']) for u in us])
         self.mov = np.nonzero(~self.fixed)[0]
         self.fix = np.nonzero(self.fixed)[0]
+        self.us = us
+        self.rot = np.array([not u['fixed'] and u.get('rotate', True) for u in us])
         # unit boxes (offsets from the origin): grown by half the clearance x infl, and bare (for the board)
-        grown = [_box(u, r) for u, r in zip(us, self.R)]
-        c = [(b[0] + b[2]) / 2 for b in grown], [(b[1] + b[3]) / 2 for b in grown]
-        f = p['infl']
-        self.ox0 = np.array([cx - (cx - b[0]) * f for cx, b in zip(c[0], grown)])
-        self.ox1 = np.array([cx + (b[2] - cx) * f for cx, b in zip(c[0], grown)])
-        self.oy0 = np.array([cy - (cy - b[1]) * f for cy, b in zip(c[1], grown)])
-        self.oy1 = np.array([cy + (b[3] - cy) * f for cy, b in zip(c[1], grown)])
-        bare = [(min(q[0] for q in rs), min(q[1] for q in rs), max(q[2] for q in rs), max(q[3] for q in rs))
-                for u, r in zip(us, self.R) for rs in [[cost.rot_rect(rc, r) for rc in u['rects']]]]
-        self.bare = np.array(bare, dtype=float).reshape(-1, 4)
-        self.area = (self.ox1 - self.ox0) * (self.oy1 - self.oy0)
+        self.ox0, self.ox1, self.oy0, self.oy1, self.area = (np.zeros(self.n) for _ in range(5))
+        self.bare = np.zeros((self.n, 4))
         self.infl_total = np.ones(self.n)
         self.edges = [u.get('edge') for u in us]
-        # pins (centres, rotated)
-        pu, px, py, pn, w = [], [], [], [], []
+        # pins (centres, rotated by _geom)
+        pu, pr_, pn, w = [], [], [], []
         for k, net in enumerate(pr['nets']):
             for q in net['pins']:
-                a, b, cc, d = cost.rot_rect(q[1:5], self.R[q[0]])
                 pu.append(q[0])
-                px.append((a + cc) / 2)
-                py.append((b + d) / 2)
+                pr_.append(q[1:5])
                 pn.append(k)
             w.append(float(net['weight']))
         self.pu = np.array(pu, dtype=int)
-        self.pdx, self.pdy = np.array(px, dtype=float), np.array(py, dtype=float)
+        self.praw = pr_
+        self.pins_of = [np.nonzero(self.pu == i)[0] for i in range(self.n)]
+        self.pdx, self.pdy = np.zeros(len(pu)), np.zeros(len(pu))
+        for i in range(self.n):
+            self._geom(i)
         self.pn = np.array(pn, dtype=int)
         self.nw = np.array(w, dtype=float)
         cp = cost.params_with_defaults(self.p)
@@ -99,6 +95,21 @@ class Model:
         self.inv[0, 0] = 0.0
         self.wu, self.wv = wu, wv
         self.F = self._fixed_map(pr)
+
+    def _geom(self, i):
+        """Boxes and pin offsets of unit i at its turn self.R[i] (and its inflation)."""
+        r = self.R[i]
+        b = _box(self.us[i], r)
+        cx, cy = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
+        f = self.p['infl'] * math.sqrt(self.infl_total[i])
+        self.ox0[i], self.ox1[i] = cx - (cx - b[0]) * f, cx + (b[2] - cx) * f
+        self.oy0[i], self.oy1[i] = cy - (cy - b[1]) * f, cy + (b[3] - cy) * f
+        self.area[i] = (self.ox1[i] - self.ox0[i]) * (self.oy1[i] - self.oy0[i])
+        rs = [cost.rot_rect(rc, r) for rc in self.us[i]['rects']]
+        self.bare[i] = (min(q[0] for q in rs), min(q[1] for q in rs), max(q[2] for q in rs), max(q[3] for q in rs))
+        for j in self.pins_of[i]:
+            a, bb, c, d = cost.rot_rect(self.praw[j], r)
+            self.pdx[j], self.pdy[j] = (a + c) / 2, (bb + d) / 2
 
     def _fixed_map(self, pr):
         """Fixed charge per bin (area): fixed units, outside the outline, keepouts (4 x 4 samples per bin)."""
@@ -154,12 +165,34 @@ class Model:
         f[self.mov] = np.clip(r / cap, 1.0, None)
         f = np.minimum(self.infl_total * f, self.p['max_infl']) / self.infl_total
         self.infl_total = self.infl_total * f
-        s = np.sqrt(f)
-        cx, cy = (self.ox0 + self.ox1) / 2, (self.oy0 + self.oy1) / 2
-        self.ox0, self.ox1 = cx - (cx - self.ox0) * s, cx + (self.ox1 - cx) * s
-        self.oy0, self.oy1 = cy - (cy - self.oy0) * s, cy + (self.oy1 - cy) * s
-        self.area = (self.ox1 - self.ox0) * (self.oy1 - self.oy0)
+        for i in range(self.n):
+            self._geom(i)
         return self.infl_total
+
+    def objective(self, x, y, lam, gamma):
+        """WA wirelength + lam * density energy (the function that place() descends)."""
+        return self.wa(x, y, gamma)[0] + lam * self.density(x, y)[0]
+
+    def rotate_pass(self, x, y, lam, gamma):
+        """Each turnable unit in turn takes the turn (0/90/180/270) with the lowest objective; the others stay.
+        x, y change in place (the projection of a turned unit). Returns the number of units turned."""
+        x[:], y[:] = self.project(x, y)
+        turned = 0
+        for i in np.nonzero(self.rot)[0]:
+            r0 = self.R[i]
+            best = (self.objective(x, y, lam, gamma), r0, x[i], y[i])
+            for dr in (1, 2, 3):
+                self.R[i] = (r0 + dr) % 4
+                self._geom(i)
+                xt, yt = self.project(x.copy(), y.copy())
+                f = self.objective(xt, yt, lam, gamma)
+                if f < best[0] - 1e-9:
+                    best = (f, self.R[i], xt[i], yt[i])
+            self.R[i] = best[1]
+            self._geom(i)
+            x[i], y[i] = best[2], best[3]
+            turned += best[1] != r0
+        return turned
 
     def wa(self, x, y, gamma=None):
         """Weighted-average wirelength and its gradient (fixed units get 0)."""
@@ -184,16 +217,23 @@ class Model:
             grads.append(gr)
         return tot, grads[0], grads[1]
 
+    def potential(self, rho):
+        """(potential, field x, field y) on the bin centres: Poisson with a cosine (DCT-II) basis."""
+        a = self.Cx.T @ rho @ self.Cy * (4.0 / (self.nb * self.nb))
+        a[0, :] *= 0.5  # the u = 0 and v = 0 modes have half weight in the inverse DCT-II (DREAMPlace)
+        a[:, 0] *= 0.5
+        coef = a * self.inv
+        psi = self.Cx @ coef @ self.Cy.T
+        Ex = self.Sx @ (coef * self.wu[:, None]) @ self.Cy.T
+        Ey = self.Cx @ (coef * self.wv[None, :]) @ self.Sy.T
+        return psi, Ex, Ey
+
     def density(self, x, y):
         """(energy, grad x, grad y, overflow) of the movable units in the fixed charge."""
         ax, ay = self._overlaps(x, y, self.mov)
         D = ax.T @ ay
         rho = (D + self.F) / self.barea
-        a = self.Cx.T @ rho @ self.Cy * (4.0 / (self.nb * self.nb))
-        coef = a * self.inv
-        psi = self.Cx @ coef @ self.Cy.T
-        Ex = self.Sx @ (coef * self.wu[:, None]) @ self.Cy.T
-        Ey = self.Cx @ (coef * self.wv[None, :]) @ self.Sy.T
+        psi, Ex, Ey = self.potential(rho)
         energy = 0.5 * float((rho * psi).sum()) * self.barea
         gx, gy = np.zeros(self.n), np.zeros(self.n)
         gx[self.mov] = -np.einsum('ik,kl,il->i', ax, Ex, ay)
@@ -227,6 +267,15 @@ class Model:
             x[i] += dx
             y[i] += dy
         return x, y
+
+
+def make_model(pr, params=None, pose=None):
+    """Model on the backend of params['backend']: 'numpy' (default) or 'torch' (TorchModel)."""
+    p = dict(GLOBAL, **(params or {}))
+    if p['backend'] == 'torch':
+        from . import gplace_torch
+        return gplace_torch.TorchModel(pr, p, pose)
+    return Model(pr, p, pose)
 
 
 def spectral_pose(pr, pose=None, all_orientations=False, span=0.5):
@@ -272,7 +321,7 @@ def spectral_pose(pr, pose=None, all_orientations=False, span=0.5):
 
 
 def place(pr, params=None, pose=None, log=None):
-    m = Model(pr, params, pose)
+    m = make_model(pr, params, pose)
     p = m.p
     mv = m.mov
     n = m.n
@@ -305,6 +354,13 @@ def place(pr, params=None, pose=None, log=None):
         gam = m.gamma_for(ovf)
         w, ovf, gw, gd = grad(v, lam, gam)
         hist.append({'iter': k, 'wa': w, 'overflow': ovf, 'lambda': lam})
+        if p['rotate'] and k > 0 and k % p['rot_every'] == 0:  # discrete turns on the current point
+            x, y = v[:n].copy(), v[n:].copy()
+            hist[-1]['turned'] = m.rotate_pass(x, y, lam, gam)
+            v = np.concatenate([x, y])
+            u = np.concatenate(m.project(u[:n].copy(), u[n:].copy()))
+            g_prev = None  # the pin offsets changed: no step estimate across the turn
+            w, ovf, gw, gd = grad(v, lam, gam)
         if log and k % 50 == 0:
             log('gplace %d wa %.1f overflow %.3f lambda %.3g' % (k, w, ovf, lam))
         if ovf < p['route_overflow'] and rounds < p['route_rounds']:
@@ -334,6 +390,10 @@ def place(pr, params=None, pose=None, log=None):
         v = np.concatenate([x, y])
         u, ak = u_new, a_new
         lam *= p['mu']
-    x, y = u[:n], u[n:]
+    x, y = u[:n].copy(), u[n:].copy()
+    if p['rotate']:
+        turned = m.rotate_pass(x, y, lam, m.gamma_for(ovf))
+        if hist:
+            hist[-1]['turned'] = hist[-1].get('turned', 0) + turned
     return {'pose': [(float(x[i]), float(y[i]), m.R[i]) for i in range(n)], 'history': hist,
             'movable': [int(i) for i in mv]}

@@ -353,20 +353,21 @@ def final_key(c):
 
 def optimize(pr, params, workers=1, epochs=10, steps=10000, seed=1, top=3, log=None):
     p = params_all(params)
-    glob = None
+    glob = start = None
     if p.get('global'):  # analytic global placement first (gplace.py); the annealer starts from it
         from . import gplace
         g = gplace.place(pr, p, log=log)
         pr = copy.deepcopy(pr)
         for u, (x, y, _) in zip(pr['units'], g['pose']):
             u['x'], u['y'] = x, y
+        start = [tuple(q) for q in g['pose']]  # with gplace rotate=1 the turns carry over
         glob = {'iters': len(g['history']), 'overflow': g['history'][-1]['overflow'] if g['history'] else None}
     if p['normalize']:  # SA_PCB: each term relative to its value on the start pose
         p = normalized(p, cost.components(pr, cost.initial_pose(pr), p))
     _init(pr, p)
     pf = epoch_params(p, epochs - 1, epochs)
-    ev0 = _evaluator(None, epoch_params(p, 0, epochs))
-    evf = _evaluator(None, pf)
+    ev0 = _evaluator(start, epoch_params(p, 0, epochs))
+    evf = _evaluator(start, pf)
     initial = {'pose': evf.pose(), 'cost': evf.cost, 'components': evf.components()}
     bx0, by0, bx1, by1 = cost.outline_box(pr['board'])
     w0 = p.get('w0') or max(bx1 - bx0, by1 - by0) / 2
