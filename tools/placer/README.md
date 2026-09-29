@@ -110,3 +110,24 @@ Holdout GP (2026-09-29, IO-6X6 and DOOR-RELAY; the same set-up as the RELAY-4 GP
 | DOOR-RELAY | P2R | 8 workers, 16 x 30000, 1197 s | 1028 | 16 / 10 / 9 / 11 / 11 | 11 |
 
 Result: GP + a short anneal does not hold as a general gain. On IO-6X6 it equals P2R (100 vs 102) in 1/6 of the search time, and it is better than CS (161). All three are far from the hand layout (11). On DOOR-RELAY it gives no gain (14 vs CS 12 and P2R 11), and it has 14 copper_edge_clearance errors per run where the others have none. The IO-6X6 search is 4-6x slower per move (150-310 moves/s), so its short budget is 4 x 5000, not 6 x 8000. The DOOR O here (26) is not the DOOR W bench O (4), because this bench strips all signal tracks. Decision: GP stays off by default (`global` unset). It is an option for a fast first pose on a board where the anneal alone does not recover (RELAY-4, IO-6X6).
+
+Batched annealing on torch (`batch.py`, 2026-09-29; option `--param batch=1 chains=C spec=P batch_device=cpu|mps`; the scalar workers stay the default). `BatchCost` gives the `cost.components` terms for N poses as one batch: static gap tables per rect pair (same rules as `_pen` / `_domain_gap`), summed-area lookups for the forbidden area, RUDY by a difference array, the domain-area hull by gift wrapping. `Chains` runs C chains; each step evaluates P proposals per chain from its state and applies the first accepted one (exact sequential Metropolis, up to P moves per step). The best chains are legalized and ranked by `anneal._finish`, so legality is the same. Not supported (ValueError): `w_x`, `w_row`, `pin_demand`, via nets, the Lam schedule. Tests (`test_batch.py`, real problems `testdata/relay4-prob.json`, `io6x6-prob.json`): batch terms equal the scalar terms to 1e-6 relative (cpu float64), 1e-3 on mps (float32).
+
+Benchmark (`bench_batch.py`; this Mac, M3 Max, other agents active, load 13-30; scramble seed 7; 60 s wall clock per run; seeds 1 2 3; final cost = scalar `cost.total` of the best pose; evals = cost evaluations, moves = sequential moves per chain summed over the chains; scalar = one thread, batch cpu = 12 torch threads):
+
+| Board | Mode | Evals/s | Moves/s | Final cost per seed | Median |
+|---|---|---|---|---|---|
+| RELAY-4 | scalar | 1875 | 1875 | 2064 / 1836 / 1818 | 1836 |
+| RELAY-4 | cpu C256 P1 | 4881 | 4881 | 4458 / 5169 / 3541 | 4458 |
+| RELAY-4 | cpu C32 P8 | 6641 | 1474 | 7264 / 3693 / 3856 | 3856 |
+| RELAY-4 | mps C256 P1 | 10334 | 10334 | 4810 / 2782 / 3004 | 3004 |
+| RELAY-4 | mps C32 P8 | 9737 | 2136 | 3207 / 3097 / 2642 | 3097 |
+| RELAY-4 | mps C64 P16 | 24582 | 2651 | 3016 / 2912 / 4251 | 3016 |
+| IO-6X6 | scalar | 675 | 675 | 3520 / 3838 / 3371 | 3520 |
+| IO-6X6 | cpu C256 P1 | 2513 | 2513 | 7767 / 6096 / 8309 | 7767 |
+| IO-6X6 | cpu C32 P8 | 2254 | 526 | 7298 / 5308 / 6355 | 6355 |
+| IO-6X6 | mps C256 P1 | 13946 | 13946 | 4775 / 3732 / 4383 | 4383 |
+| IO-6X6 | mps C32 P8 | 16575 | 4161 | 4314 / 3260 / 3897 | 3897 |
+| IO-6X6 | mps C64 P16 | 25340 | 3044 | 4670 / 4111 / 4472 | 4472 |
+
+Result: FAIL for the search. Evaluations per second go up 5-13x (RELAY-4) and 4-38x (IO-6X6), and mps beats cpu torch by 2-6x. But one batch step takes 25-100 ms whatever the batch size (kernel launch and sync overhead), so each chain makes only 10-40 moves per second against 700-1900 for a scalar chain. At an equal wall-clock budget, every batch variant ends worse than the single scalar chain (RELAY-4 median 3004-4458 vs 1836; IO-6X6 3897-7767 vs 3520). Speculative proposals help little: at the high early temperature most first proposals are accepted. The scalar path stays the default. Use `BatchCost` where many independent poses need a cost (candidate ranking, surrogate labels): about 14-25k evaluations/s on mps. Next step, if wanted: fused kernels (fewer launches per step) or batched incremental state on the cpu without torch overhead.
