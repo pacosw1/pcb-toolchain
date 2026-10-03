@@ -2,7 +2,7 @@
 import {access, readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 const root = new URL('../hardware-design/boards/', import.meta.url);
-const boards = ['BASE-PWR','POE-ETHERNET','BACKUP-POWER','PQ-METER'];
+const boards = ['BASE-PWR','POE-ETHERNET','BACKUP-POWER','PQ-METER','MOTION-CTRL'];
 const required = ['README.md','STATUS.md','SPEC.md','BOM-VERIFIED.csv','SCHEMATIC.md','DATASHEETS.md','POWER-AND-IC-ANALYSIS.md','MECHANICAL.md','JLC-SUBMISSION.md','BRINGUP-TEST-PLAN.md','DOC-RECONCILIATION.md','reports/README.md','handoff/README.md'];
 const failures=[];
 for(const board of boards){

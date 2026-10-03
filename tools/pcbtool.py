@@ -1776,9 +1776,27 @@ def cmd_suggest(a):
     grounds, patterns = ground_spec(planes)
     domain = net_domain(a.net, board_pad_grounds(p, b, a.net, grounds), grounds, patterns)
     cls_name, width, clr = net_rules(pro, a.net)
+    requested_width = getattr(a, 'width', None)
+    if requested_width is not None:
+        if not math.isfinite(requested_width) or requested_width <= 0:
+            sys.exit('--width must be a finite positive number')
+        width = requested_width
     cls = {c['name']: c for c in pro['net_settings']['classes']}[cls_name]
     via_d, via_drill = cls['via_diameter'], cls['via_drill']
     pairs = net_pad_pairs(p, b, a.net)
+    requested_pads = getattr(a, 'pads', None)
+    if requested_pads:
+        if a.pair:
+            sys.exit('--pads and --pair are alternatives')
+        chosen = []
+        for name in requested_pads:
+            ref, number = name.rsplit('.', 1)
+            fp = b.FindFootprintByReference(ref)
+            pd = next((pd for pd in fp.Pads() if pd.GetNumber() == number), None) if fp else None
+            if pd is None or pd.GetNetname() != a.net:
+                sys.exit(f'{name} is not a pad of {a.net}')
+            chosen.append((name, (mm(pd.GetPosition().x), mm(pd.GetPosition().y)), pd))
+        pairs = [tuple(chosen)]
     if not pairs:
         print(f'{a.net}: unconnected: none')
         return
@@ -1800,7 +1818,10 @@ def cmd_suggest(a):
             sys.exit(f'--box must hold both pads {na} {sa} and {nb} {sb}')
     else:
         bx = (min(sa[0], sb[0]) - a.margin, min(sa[1], sb[1]) - a.margin, max(sa[0], sb[0]) + a.margin, max(sa[1], sb[1]) + a.margin)
-    cell = max(a.cell, math.sqrt((bx[2] - bx[0]) * (bx[3] - bx[1]) / 250000))
+    max_nodes = getattr(a, 'max_nodes', 250000)
+    if max_nodes <= 0 or max_nodes > 10000000:
+        sys.exit('--max-nodes must be between 1 and 10000000')
+    cell = max(a.cell, math.sqrt((bx[2] - bx[0]) * (bx[3] - bx[1]) / max_nodes))
     cell = round(math.ceil(cell / 0.05 - 1e-9) * 0.05, 3) if cell > a.cell else cell
     cs, rs = math.floor((sa[0] - bx[0]) / cell), math.floor((sa[1] - bx[1]) / cell)
     x0, y0 = sa[0] - cs * cell, sa[1] - rs * cell   # the start pad centre is a node
@@ -1831,8 +1852,10 @@ def cmd_suggest(a):
     net_clr, obstacles = {}, {}
     for L in b.GetEnabledLayers().CuStack():
         obstacles[b.GetLayerName(L)] = copper_obstacles(p, b, pro, a.net, clr, L, net_clr)[1] + edges
-    for name, sp in thermal_spokes(p, b, pro, a.net, clr, net_clr).items():
-        obstacles[name] += sp
+    probe_thermals = getattr(a, 'probe_thermals', False)
+    if not probe_thermals:
+        for name, sp in thermal_spokes(p, b, pro, a.net, clr, net_clr).items():
+            obstacles[name] += sp
     ref_vias = []                                    # (shape, clearance, label): no via antipad under a fast track
     if mixed:
         adj = json.load(open(planes))['adjacent']
@@ -1895,6 +1918,20 @@ def cmd_suggest(a):
                 sh = ('poly', poly_points(p, pd.GetEffectivePolygon(L).Outline(0)))
                 if near(sh):
                     mark_near(grid, sh, via_drill / 2, via_ok, via_lab, lab_id(f'via-in-pad {fp.GetReference()}.{pd.GetNumber()}'))
+    return_radius = getattr(a, 'return_via_r', None)
+    if return_radius is not None:
+        if not math.isfinite(return_radius) or return_radius <= 0:
+            sys.exit('--return-via-r must be a finite positive number')
+        far = bytearray([1]) * N
+        far_labels = [-1] * N
+        for tr in b.GetTracks():
+            if isinstance(tr, p.PCB_VIA) and tr.GetNetname() == domain:
+                q = (mm(tr.GetPosition().x), mm(tr.GetPosition().y))
+                mark_near(grid, ('seg', q, q, 0), return_radius, far, far_labels, 0)
+        label = lab_id(f'no {domain} return via within {return_radius:g} mm')
+        for i in range(N):
+            if via_ok[i] and far[i]:
+                via_ok[i], via_lab[i] = 0, label
     for f in free:
         f[s] = f[t] = 1
 
@@ -1988,6 +2025,8 @@ def cmd_suggest(a):
         corners = [(k, xy(i)) + ((layers[next(vl)],) if k == 'via' else ()) for k, i in node_corners(path, cols)]
         pts = drop_jogs(path_points(sa, sb, xy(path[0][0]), corners, xy(path[-1][0])), L0, leg_ok)
         line, cur = f'{a.net} {na} -> {nb} layer={L0}', L0
+        if requested_width is not None:
+            line += f' width={fmt_mm(width)}'
         for k, q, *to in pts[1:-1]:
             if k == 'via':
                 line += via_token(q, cur, to[0])
@@ -2009,18 +2048,19 @@ def cmd_suggest(a):
                     abs((v[0] - u[0]) * (v2[1] - u2[1]) - (v[1] - u[1]) * (v2[0] - u2[0])) > 1e-9)
         margin, why = clear_margin(segs, vias, via_d, obstacles)
         found.append((len(found) + 1, length, len(vias), bends, margin, why, pour_len(segs), line))
+    want_verify = a.verify or probe_thermals
     verdicts = (verify_candidates(a.board, a.net, [f[-1] for f in found], apply=lambda bd, ln: connect_line(bd, ln, planes))
-                if a.verify else [(True, '')] * len(found))
+                if want_verify else [(True, '')] * len(found))
     shown = 0
     for (k, length, nv, bends, margin, why, pour, line), (ok, reason) in zip(found, verdicts):
         if not ok:
             continue
         shown += 1
         flag = f' CONFLICT to {why}' if margin < -1e-6 else ''
-        mark = 'verified ' if a.verify else ''
+        mark = 'verified ' if want_verify else ''
         print(f'{shown}) {mark}len {length:.2f} vias {nv} bends {bends} margin {margin:+.3f} pour {pour:.1f}{flag}')
         print(line)
-    if a.verify and shown < len(found):
+    if want_verify and shown < len(found):
         print('rejected by DRC: ' + '; '.join(f'len {f[1]:.2f} vias {f[2]}: {v[1]}' for f, v in zip(found, verdicts) if not v[0]))
     if not shown:
         sys.exit(1)
@@ -2386,6 +2426,11 @@ def main():
     s.add_argument('--planes', help='reference-planes.json: mixed layers (default: two folders above the board)')
     s.set_defaults(f=cmd_connect)
     s = sp.add_parser('suggest'); s.add_argument('board'); s.add_argument('net')
+    s.add_argument('--width', type=float, help='proposed width override in mm; DRC and current-path verification still required')
+    s.add_argument('--pads', nargs=2, metavar=('START', 'END'), help='explicit REF.PAD endpoints instead of a ratsnest pair')
+    s.add_argument('--return-via-r', type=float, help='limit new signal vias to this distance from an existing same-domain ground via')
+    s.add_argument('--probe-thermals', action='store_true', help='probe routes through thermal-spoke masks; mandatory DRC verification still rejects starved pads or new opens')
+    s.add_argument('--max-nodes', type=int, default=250000, help='grid budget for narrow corridors (default 250000; max 10000000)')
     s.add_argument('--pair', type=int, help='pad pair as corridor lists it (default 1)')
     s.add_argument('--box', type=float, nargs=4, metavar=('X1', 'Y1', 'X2', 'Y2'), help='search only this window')
     s.add_argument('--layers', default='F.Cu,B.Cu', help='F.Cu, B.Cu and mixed layers of --planes (slow nets only)'); s.add_argument('--via-cost', type=float, default=8.0, help='mm of track')

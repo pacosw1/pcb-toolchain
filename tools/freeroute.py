@@ -17,6 +17,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import route_preview
 
 import pcbnew
 
@@ -48,6 +49,7 @@ def main():
     ap.add_argument("--nets", default="")
     ap.add_argument("--timeout", default="00:02:00", help="Freerouting job timeout, HH:MM:SS")
     ap.add_argument("--jar", default=JAR)
+    ap.add_argument("--no-live", action="store_true", help="Disable optional visual-stage snapshots")
     a = ap.parse_args()
     if not os.path.isfile(a.jar):
         sys.exit(f"freeroute: jar not found: {a.jar}")
@@ -68,27 +70,45 @@ def main():
         text = restrict_dsn(f.read(), layers, nets)
     with open(dsn, "w") as f:
         f.write(text)
+    # Freeze the routing input for previews even if another agent later saves the source.
+    pcbnew.SaveBoard(os.path.join(work, 'source.kicad_pcb'), board)
 
     # Freerouting 2.1.0 does not always stop at -mp, so give the pass limit in both forms
     # and a job timeout. The Python timeout is the last stop.
     cmd = ["java", "-jar", a.jar, "-de", dsn, "-do", ses, "-mp", str(a.passes),
            f"--router.max_passes={a.passes}", f"--router.job_timeout={a.timeout}",
            "--gui.enabled=false"]
+    live = None
+    if not a.no_live:
+        try:
+            prefix, status_path, status_data = route_preview.prepare(a.board, a.out, work, a.jar)
+            cmd = prefix + cmd[3:]
+            live = (status_path, status_data)
+        except Exception as exc:
+            print(f"freeroute: live preview unavailable ({type(exc).__name__}); routing normally", file=sys.stderr)
     with open(log, "w") as lf:
         try:
             rc = subprocess.run(cmd, stdout=lf, stderr=subprocess.STDOUT, timeout=900).returncode
         except subprocess.TimeoutExpired:
+            if live:
+                route_preview.finish(*live, 'timed out')
             sys.exit(f"freeroute: Freerouting did not stop in 900 s, log: {log}")
     if rc != 0 or not os.path.isfile(ses):
+        if live:
+            route_preview.finish(*live, 'failed')
         sys.exit(f"freeroute: Freerouting failed (rc {rc}), log: {log}")
 
     if not pcbnew.ImportSpecctraSES(board, ses):
+        if live:
+            route_preview.finish(*live, 'import failed')
         sys.exit("freeroute: SES import failed")
     for t in board.GetTracks():
         t.SetLocked(was_locked.get(t.m_Uuid.AsString(), False))
     # The new tracks cut through the old zone fill. Refill, or DRC shows false clearance errors.
     pcbnew.ZONE_FILLER(board).Fill(board.Zones())
     pcbnew.SaveBoard(a.out, board)
+    if live:
+        route_preview.finish(*live, 'candidate saved')
     print(f"freeroute: wrote {a.out}; work files in {work}")
 
 
