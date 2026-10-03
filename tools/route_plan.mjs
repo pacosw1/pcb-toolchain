@@ -47,8 +47,10 @@ const list = [...nets.values()].sort((x, y) => rank[x.cls] - rank[y.cls] || (x.c
 const total = list.reduce((s, n) => s + n.open, 0);
 const count = (cls) => list.filter((n) => n.cls === cls);
 const sum = (cls) => count(cls).reduce((s, n) => s + n.open, 0);
-console.log(`route plan ${board}: ${total} open connections in ${list.length} nets  (power ${sum('power')} in ${count('power').length} nets, fast ${sum('fast')} in ${count('fast').length}, slow ${sum('slow')} in ${count('slow').length})`);
-if (process.argv.includes('--md')) {
+if (!process.argv.includes('--json')) console.log(`route plan ${board}: ${total} open connections in ${list.length} nets  (power ${sum('power')} in ${count('power').length} nets, fast ${sum('fast')} in ${count('fast').length}, slow ${sum('slow')} in ${count('slow').length})`);
+if (process.argv.includes('--json')) {
+  console.log(JSON.stringify(list.map(({name, cls, open, mm, amps: a}) => ({name, cls, open, mm: Number(mm.toFixed(1)), amps: a}))));
+} else if (process.argv.includes('--md')) {
   console.log('\n| # | Class | Net | Open | Air length mm | Design A |\n| --- | --- | --- | ---: | ---: | ---: |');
   list.forEach((n, i) => console.log(`| ${i + 1} | ${n.cls} | ${n.name} | ${n.open} | ${n.mm.toFixed(1)} | ${n.amps ?? ''} |`));
 } else {

@@ -5,6 +5,7 @@
 //   node tools/gate.mjs <BOARD> --ratchet   compare with gate-metrics.json of git HEAD; exit 1 only on a blocked regression
 //   node tools/gate.mjs <BOARD> --write     also write <board>/gate-metrics.json (tracked: no time, no absolute path)
 //   node tools/gate.mjs <BOARD> --ratchet --baseline FILE   compare with a metrics file in place of git HEAD
+//   --strict (with --ratchet): a WARNING also gives exit 1
 //   node tools/gate.mjs --list              the boards that have a gate.json
 //
 // gate.json: {"project": "cad/MC-MAIN/MC-MAIN", "checks": {"erc": true, "drc": true, "planes": "reference-planes.json",
@@ -154,7 +155,8 @@ if (flag('--ratchet')) {
   for (const l of r.waived) console.log(`  waived   ${l}`);
   for (const l of r.warnings) console.log(`  WARNING  ${l}`);
   for (const l of r.blocked) console.log(`  BLOCKED  ${l}`);
-  if (r.blocked.length) exit = 1;
+  // --strict: a soft regression also fails (tools/route_batch.mjs accepts a batch only when no gate is worse).
+  if (r.blocked.length || (flag('--strict') && r.warnings.length)) exit = 1;
   console.log(r.blocked.length ? 'gate: regression. Fix it, or add a waiver with a reason to gate-waivers.json' : 'gate: no blocked regression');
 } else {
   const p = passes(metrics);
