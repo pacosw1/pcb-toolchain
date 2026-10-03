@@ -52,6 +52,8 @@ def main():
     ap.add_argument("--timeout", default="00:02:00", help="Freerouting job timeout, HH:MM:SS")
     ap.add_argument("--nets-file", default="", help="file with one net name per line (in place of --nets)")
     ap.add_argument("--hard-timeout", type=int, default=900, help="seconds; the Python stop for the Freerouting process")
+    ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
+                    help="extra Freerouting setting, for example --set router.via_costs=25 (repeatable)")
     ap.add_argument("--jar", default=JAR)
     ap.add_argument("--no-live", action="store_true", help="Disable optional visual-stage snapshots")
     a = ap.parse_args()
@@ -84,7 +86,7 @@ def main():
     # and a job timeout. The Python timeout is the last stop.
     cmd = [JAVA, "-jar", a.jar, "-de", dsn, "-do", ses, "-mp", str(a.passes),
            f"--router.max_passes={a.passes}", f"--router.job_timeout={a.timeout}",
-           "--gui.enabled=false"]
+           "--gui.enabled=false"] + [f"--{kv}" for kv in a.set]
     live = None
     if not a.no_live:
         try:
