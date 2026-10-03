@@ -90,13 +90,15 @@ function route(nets, work) {
 
 // Try to keep the candidate copper of `nets`. Returns the accepted net names. Bisects on a reject.
 function accept(nets, cand, before) {
-  const restore = () => git('checkout', '--', pcbRel, metricsRel);
+  // pcbnew SaveBoard also rewrites the .kicad_pro: restore the project file too, and never commit it here.
+  const restore = () => git('checkout', '--', pcbRel, metricsRel, pcbRel.replace(/\.kicad_pcb$/, '.kicad_pro'));
   let reason = 'import failed';
   if (ok(kicadPython, ['tools/import_nets.py', pcb, cand, pcb, '--nets', nets.join(',')])) {
     const gateOk = ok('node', ['tools/gate.mjs', board, '--ratchet', '--strict', '--write']);
     const now = metrics();
     if (gateOk && now.drc_unconnected < before.drc_unconnected) {
       git('add', '--', pcbRel, metricsRel);
+      git('checkout', '--', pcbRel.replace(/\.kicad_pcb$/, '.kicad_pro'));
       // --no-verify: the same gate ran on this exact board a moment ago.
       git('commit', '-q', '--no-verify', '-m', `${board} route_batch: ${nets.length} slow nets, open ${before.drc_unconnected} -> ${now.drc_unconnected}\n\nFreerouting (${layers}), accepted by tools/gate.mjs --ratchet --strict.\nNets: ${nets.join(', ')}\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`);
       log(`ACCEPT ${nets.length} nets, open ${before.drc_unconnected} -> ${now.drc_unconnected}: ${nets.join(' ')}`);
