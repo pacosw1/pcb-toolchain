@@ -3,6 +3,7 @@
 // check(name, ok, detail) records one result. A tool failure is a failed check (fail closed).
 
 import {execFileSync} from 'node:child_process';
+import {modernPython} from './env.mjs';
 
 // parseGateOutput is pure: no process spawn, so a test can call it directly with fake output.
 // summaryRegex finds the one-line summary. failPrefix (a string or a list of strings) marks a failing detail line.
@@ -68,7 +69,8 @@ export function kicadHappyArgs(pcb, exemptFile, grounds = []) {
 
 export function kicadHappyCheck({python, tool, pcb, check, exemptFile, grounds}) {
   const name = `kicad-happy GP-001 RP-001 DC-002 UC-001 (tools/kicad_happy_gate.py${exemptFile ? `, exempt: ${exemptFile}` : ''})`;
-  const {out, exit} = runGate({python, tool, args: kicadHappyArgs(pcb, exemptFile, grounds)});
+  // kicad-happy needs Python 3.10 or later: a caller that passes plain 'python3' gets modernPython (lib/env.mjs).
+  const {out, exit} = runGate({python: python === 'python3' ? modernPython : python, tool, args: kicadHappyArgs(pcb, exemptFile, grounds)});
   const {ok, detail} = parseGateOutput(out, exit, KICAD_HAPPY_SUMMARY, KICAD_HAPPY_FAIL);
   check(name, ok, detail);
 }
