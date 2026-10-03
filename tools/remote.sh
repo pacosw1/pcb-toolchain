@@ -18,7 +18,7 @@ set -euo pipefail
 
 HOST=${REMOTE_HOST:-root@100.64.0.2}
 BASE=/srv/iot-lab-route/jobs
-IMAGE=iot-lab-route:10.0
+IMAGE=${REMOTE_IMAGE:-iot-lab-route:10.0}
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 
 usage() { echo "usage: tools/remote.sh <board-dir> [--in FILE]... [--results DIR] -- <command...>" >&2; exit 2; }

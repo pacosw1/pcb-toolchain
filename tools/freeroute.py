@@ -21,8 +21,10 @@ import route_preview
 
 import pcbnew
 
-JAR = os.path.expanduser(
+# FREEROUTING_JAR and FREEROUTING_JAVA select the version (image iot-lab-route:10.0-fr241 sets both: 2.4.1, Java 25).
+JAR = os.environ.get("FREEROUTING_JAR") or os.path.expanduser(
     "~/Documents/KiCad/9.0/3rdparty/plugins/app_freerouting_kicad-plugin/jar/freerouting-2.1.0.jar")
+JAVA = os.environ.get("FREEROUTING_JAVA", "java")
 
 
 def restrict_dsn(text, layers, nets):
@@ -80,7 +82,7 @@ def main():
 
     # Freerouting 2.1.0 does not always stop at -mp, so give the pass limit in both forms
     # and a job timeout. The Python timeout is the last stop.
-    cmd = ["java", "-jar", a.jar, "-de", dsn, "-do", ses, "-mp", str(a.passes),
+    cmd = [JAVA, "-jar", a.jar, "-de", dsn, "-do", ses, "-mp", str(a.passes),
            f"--router.max_passes={a.passes}", f"--router.job_timeout={a.timeout}",
            "--gui.enabled=false"]
     live = None
