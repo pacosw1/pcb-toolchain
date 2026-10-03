@@ -75,7 +75,8 @@ if (git('status', '--porcelain', '--', pcbRel, metricsRel).trim()) {
 function plan() {
   ok('node', ['tools/gate.mjs', board]);
   const list = JSON.parse(sh('node', ['tools/route_plan.mjs', board, '--json']));
-  return list.filter((n) => n.cls === 'slow' && n.mm <= maxMm && !state.failed.includes(n.name));
+  // Ground nets connect through plane vias (gnd_pad_vias.py, pcbtool stitch), not through routed tracks.
+  return list.filter((n) => n.cls === 'slow' && !/GND/.test(n.name) && n.mm <= maxMm && !state.failed.includes(n.name));
 }
 
 // Freerouting on the listed nets. Returns the candidate board path, or null.
