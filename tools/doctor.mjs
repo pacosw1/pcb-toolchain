@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 // Environment check for this repository. Run it on a new computer and before a gate run.
 //   node tools/doctor.mjs          report only
-//   node tools/doctor.mjs --fix    also install the KiCad global library tables when they are missing
+//   node tools/doctor.mjs --fix    also install the KiCad global library tables when they are missing,
+//                                  and set the git hooks path to tools/hooks (gate ratchet)
 // Exit code 1 when a REQUIRED item fails. An OPTIONAL item only gives a warning.
 // --fix makes no other change: it does not install software and does not move a tool repository.
 
 import {execFileSync} from 'node:child_process';
 import {existsSync, mkdirSync, copyFileSync} from 'node:fs';
 import {join} from 'node:path';
-import {kicadCli, kicadPython, kicadShared, kicadConfig, KICAD_VERSION, pinnedRepos, freeroutingJar, modernPython} from './lib/env.mjs';
+import {root, kicadCli, kicadPython, kicadShared, kicadConfig, KICAD_VERSION, pinnedRepos, freeroutingJar, modernPython} from './lib/env.mjs';
 
 const fix = process.argv.includes('--fix');
 const rows = [];
@@ -54,6 +55,14 @@ for (const r of pinnedRepos) {
 
 const modern = run(modernPython, ['-c', 'import sys; assert sys.version_info >= (3, 10); print(sys.version.split()[0])']);
 add('REQUIRED', 'Python 3.10 or later (kicad-happy gate)', Boolean(modern), modern ? `${modern} as ${modernPython}` : 'not found: brew install python@3.12, or set PYTHON_MODERN');
+
+// Gate ratchet hook (tools/hooks/pre-commit)
+let hooks = run('git', ['-C', root, 'config', '--get', 'core.hooksPath']);
+if (hooks !== 'tools/hooks' && fix) {
+  run('git', ['-C', root, 'config', 'core.hooksPath', 'tools/hooks']);
+  hooks = run('git', ['-C', root, 'config', '--get', 'core.hooksPath']);
+}
+add('REQUIRED', 'git hooks path (gate ratchet)', hooks === 'tools/hooks', hooks === 'tools/hooks' ? 'tools/hooks' : 'not set: run with --fix (git config core.hooksPath tools/hooks)');
 
 // Routing
 const java = run('java', ['-version']) !== null;
