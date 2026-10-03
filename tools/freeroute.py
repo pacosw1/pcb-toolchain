@@ -48,6 +48,8 @@ def main():
     ap.add_argument("--passes", type=int, default=30)
     ap.add_argument("--nets", default="")
     ap.add_argument("--timeout", default="00:02:00", help="Freerouting job timeout, HH:MM:SS")
+    ap.add_argument("--nets-file", default="", help="file with one net name per line (in place of --nets)")
+    ap.add_argument("--hard-timeout", type=int, default=900, help="seconds; the Python stop for the Freerouting process")
     ap.add_argument("--jar", default=JAR)
     ap.add_argument("--no-live", action="store_true", help="Disable optional visual-stage snapshots")
     a = ap.parse_args()
@@ -66,6 +68,9 @@ def main():
         sys.exit("freeroute: DSN export failed")
     layers = set(a.layers.split(","))
     nets = set(n for n in a.nets.split(",") if n)
+    if a.nets_file:
+        with open(a.nets_file) as f:
+            nets |= set(line.strip() for line in f if line.strip())
     with open(dsn) as f:
         text = restrict_dsn(f.read(), layers, nets)
     with open(dsn, "w") as f:
@@ -88,11 +93,11 @@ def main():
             print(f"freeroute: live preview unavailable ({type(exc).__name__}); routing normally", file=sys.stderr)
     with open(log, "w") as lf:
         try:
-            rc = subprocess.run(cmd, stdout=lf, stderr=subprocess.STDOUT, timeout=900).returncode
+            rc = subprocess.run(cmd, stdout=lf, stderr=subprocess.STDOUT, timeout=a.hard_timeout).returncode
         except subprocess.TimeoutExpired:
             if live:
                 route_preview.finish(*live, 'timed out')
-            sys.exit(f"freeroute: Freerouting did not stop in 900 s, log: {log}")
+            sys.exit(f"freeroute: Freerouting did not stop in the hard timeout, log: {log}")
     if rc != 0 or not os.path.isfile(ses):
         if live:
             route_preview.finish(*live, 'failed')
