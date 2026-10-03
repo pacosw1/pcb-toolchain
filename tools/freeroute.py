@@ -42,6 +42,31 @@ def restrict_dsn(text, layers, nets):
     return text
 
 
+def verify_result(log_path, ses_path, vias_before, vias_after):
+    """Independent check that the saved result is the full router result (2026-10-03: Freerouting 2.1.0 wrote
+    a partial SES at the job timeout and the exit code was 0). Returns a list of problems; empty = verified.
+    1. The router log says the job finished with state COMPLETED (not a timeout, not a kill).
+    2. The log names the saved SES file ("Successfully saved output file").
+    3. Each via of the SES is on the board after the import (via count before + SES vias = via count after).
+    It prints the router's own final unrouted count; compare it with the gate result of the board."""
+    problems = []
+    with open(log_path, errors="replace") as f:
+        log = f.read()
+    with open(ses_path, errors="replace") as f:
+        routes = f.read()
+    routes = routes[routes.find("(routes"):]
+    if "finished with state: COMPLETED" not in log:
+        problems.append("the router log has no 'finished with state: COMPLETED' (timeout or kill: the SES can be partial)")
+    if "Successfully saved output file" not in log:
+        problems.append("the router log does not confirm the saved SES")
+    ses_vias = routes.count("(via ")
+    if vias_before + ses_vias != vias_after:
+        problems.append(f"via count: {vias_before} before + {ses_vias} in the SES != {vias_after} after the import")
+    final = re.findall(r"final score: [\d.]+ \((\d+) unrouted", log)
+    print(f"freeroute: router final unrouted {final[-1] if final else 'unknown'}; SES {routes.count('(wire')} wires, {ses_vias} vias")
+    return problems
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("board")
@@ -54,6 +79,7 @@ def main():
     ap.add_argument("--hard-timeout", type=int, default=900, help="seconds; the Python stop for the Freerouting process")
     ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
                     help="extra Freerouting setting, for example --set router.via_costs=25 (repeatable)")
+    ap.add_argument("--no-verify", action="store_true", help="do not fail on an unverified result (Freerouting 2.1.0 logs have no COMPLETED line)")
     ap.add_argument("--jar", default=JAR)
     ap.add_argument("--no-live", action="store_true", help="Disable optional visual-stage snapshots")
     a = ap.parse_args()
@@ -107,6 +133,7 @@ def main():
             route_preview.finish(*live, 'failed')
         sys.exit(f"freeroute: Freerouting failed (rc {rc}), log: {log}")
 
+    vias_before = sum(1 for t in board.GetTracks() if t.GetClass() == "PCB_VIA")
     if not pcbnew.ImportSpecctraSES(board, ses):
         if live:
             route_preview.finish(*live, 'import failed')
@@ -119,6 +146,9 @@ def main():
     if live:
         route_preview.finish(*live, 'candidate saved')
     print(f"freeroute: wrote {a.out}; work files in {work}")
+    problems = verify_result(log, ses, vias_before, sum(1 for t in board.GetTracks() if t.GetClass() == "PCB_VIA"))
+    if problems and not a.no_verify:
+        sys.exit("freeroute: RESULT NOT VERIFIED, do not use this board: " + "; ".join(problems))
 
 
 if __name__ == "__main__":
