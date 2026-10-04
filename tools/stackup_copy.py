@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
 """Make a copy of a board with 2, 4 or 6 copper layers, for a routability test (tools/design_sweep.py).
 
-  $PY tools/stackup_copy.py IN.kicad_pcb OUT.kicad_pcb --layers 2|4|6 [--plane-net NET]
+  $PY tools/stackup_copy.py IN.kicad_pcb OUT.kicad_pcb --layers 2|4|6 [--grounds GND,ISO_GND] [--plane-net NET]
+                            [--lock-tracks]
 
-Use it on a board without inner-layer tracks (strip them first). Result:
-  2 layers: F.Cu signal | B.Cu signal + a full GND pour (no planes: each rail is routed as tracks).
-  4 layers: F.Cu signal | In1.Cu GND | In2.Cu PLANE | B.Cu signal.
-  6 layers: F.Cu signal | In1.Cu GND | In2.Cu signal | In3.Cu PLANE | In4.Cu GND | B.Cu signal.
-PLANE = one full-board pour of --plane-net (default GND). Give the rail with the most pads (for example +3V3);
-the other rails are routed as tracks with their net-class width. The split power pours of the source board go:
-they belong to one placement. All full-board pours copy the outline of the first In1.Cu (or other) GND zone.
-Prints the signal layers for tools/fastroute_job.py --layers and the plane nets for --plane-nets.
+Result:
+  2 layers: F.Cu signal | B.Cu signal + the ground pours (no planes: each rail is routed as tracks).
+  4 layers: F.Cu signal | In1.Cu grounds | In2.Cu PLANE | B.Cu signal.
+  6 layers: F.Cu signal | In1.Cu grounds | In2.Cu signal | In3.Cu PLANE | In4.Cu grounds | B.Cu signal.
+Grounds (--grounds, default GND; tools/design_sweep.py reads them from reference-planes.json): a board can have
+more than one ground domain (an isolated side). The ground zones of the board keep their outlines, so a domain
+border or an isolation gap stays. A ground with no zone gets a pour of the board box (PQ-METER has no pour yet).
+PLANE: --plane-net. A ground (default: the first ground): each ground zone is copied to the plane layer.
+A rail (for example +3V3): one pour with the outline of the first ground zone; the other rails are tracks.
+The power pours of the source board on inner layers go: they belong to one placement.
+A rule area on an inner layer goes to all inner layers (a mains keepout is for all inner copper).
+Kept tracks on an inner layer stay on 4 and 6 layers (block copper); on 2 layers they are removed.
+Prints the signal layers and the plane nets for tools/fastroute_job.py.
 The physical stackup (dielectric, impedance) is not set: the copy is for routability, not for fabrication.
 """
 import argparse
@@ -26,58 +32,79 @@ def main():
     ap.add_argument("src")
     ap.add_argument("out")
     ap.add_argument("--layers", type=int, choices=[2, 4, 6], required=True)
-    ap.add_argument("--plane-net", default="GND")
+    ap.add_argument("--grounds", default="GND")
+    ap.add_argument("--plane-net", default="")
     ap.add_argument("--lock-tracks", action="store_true", help="lock each track and via that is on the board")
     a = ap.parse_args()
     b = pcbnew.LoadBoard(a.src)
-    plane = b.FindNet(a.plane_net)
-    gnd = b.FindNet("GND")
-    if plane is None or gnd is None:
-        sys.exit(f"stackup_copy: net not found: {a.plane_net if plane is None else 'GND'}")
+    grounds = [g for g in a.grounds.split(",") if g and b.FindNet(g) is not None]
+    if not grounds:
+        sys.exit(f"stackup_copy: no ground net of {a.grounds} is on the board (give --grounds)")
+    plane_name = a.plane_net or grounds[0]
+    if b.FindNet(plane_name) is None:
+        sys.exit(f"stackup_copy: net not found: {plane_name}")
     zones = [z for z in b.Zones() if not z.GetIsRuleArea()]
-    model = next((z for z in zones if z.GetNetname() == "GND" and z.GetLayer() in INNER), None) or \
-        next((z for z in zones if z.GetNetname() == "GND"), None)
-    if model is None:
-        sys.exit("stackup_copy: no GND zone to copy the outline from")
-    # On 6 layers In2.Cu is a signal layer: kept block copper on In2.Cu stays there.
-    plane_layers = INNER if a.layers != 6 else [l for l in INNER if l != pcbnew.In2_Cu]
-    inner_tracks = [t for t in b.GetTracks() if t.GetClass() != "PCB_VIA" and t.GetLayer() in plane_layers]
-    if inner_tracks:
-        sys.exit(f"stackup_copy: {len(inner_tracks)} tracks on inner layers: strip them first")
 
-    def pour(layer, net, name):
+    # One model zone per ground: its inner zone, else another zone of the net, else a new pour of the board box.
+    models = {}
+    for g in grounds:
+        own = [z for z in zones if z.GetNetname() == g]
+        m = next((z for z in own if z.GetLayer() in INNER), None) or (own[0] if own else None)
+        if m is None:
+            box = b.GetBoardEdgesBoundingBox()
+            m = pcbnew.ZONE(b)
+            m.SetNet(b.FindNet(g))
+            m.SetLayer(pcbnew.In1_Cu)
+            m.SetZoneName(g + "_NEW")
+            d = pcbnew.FromMM(0.5)
+            o = m.Outline()
+            o.NewOutline()
+            for x, y in ((box.GetLeft() + d, box.GetTop() + d), (box.GetRight() - d, box.GetTop() + d),
+                         (box.GetRight() - d, box.GetBottom() - d), (box.GetLeft() + d, box.GetBottom() - d)):
+                o.Append(x, y)
+            m.SetIsFilled(False)
+            models[g] = (m, True)   # not on the board yet
+        else:
+            models[g] = (m, False)
+
+    def pour(layer, model, net_name, name):
         z = model.Duplicate(False).Cast()
         z.SetLayer(layer)
-        z.SetNet(net)
+        z.SetNet(b.FindNet(net_name))
         z.SetZoneName(name)
         z.SetAssignedPriority(0)
         b.Add(z)
 
+    # Inner zones of the source go; they come back from the models on the new layers.
     for z in zones:
-        if z.GetLayer() in INNER and z is not model:
+        if z.GetLayer() in INNER:
             b.Remove(z)
-    keep_model_on = model.GetLayer()
+    removed_tracks = 0
     if a.layers == 2:
-        if not any(z.GetNetname() == "GND" and z.GetLayer() == pcbnew.B_Cu for z in zones):
-            pour(pcbnew.B_Cu, gnd, "GND_B")
-        if keep_model_on in INNER:
-            b.Remove(model)
+        for t in list(b.GetTracks()):
+            if t.GetClass() != "PCB_VIA" and t.GetLayer() in INNER:
+                b.Remove(t)
+                removed_tracks += 1
+        on_b = {z.GetNetname() for z in zones if z.GetLayer() == pcbnew.B_Cu}
+        for g in grounds:
+            if g not in on_b:
+                pour(pcbnew.B_Cu, models[g][0], g, g + "_B")
         b.SetCopperLayerCount(2)
-        signal, planes = "F.Cu,B.Cu", ["GND"]
+        signal, planes = "F.Cu,B.Cu", list(grounds)
     else:
         b.SetCopperLayerCount(a.layers)
-        if keep_model_on != pcbnew.In1_Cu:
-            pour(pcbnew.In1_Cu, gnd, "GND_IN1")
-        if a.layers == 4:
-            pour(pcbnew.In2_Cu, plane, "PLANE_IN2")
-            signal = "F.Cu,B.Cu"
-        else:
-            pour(pcbnew.In3_Cu, plane, "PLANE_IN3")
-            pour(pcbnew.In4_Cu, gnd, "GND_IN4")
-            signal = "F.Cu,In2.Cu,B.Cu"
-        planes = ["GND"] + ([a.plane_net] if a.plane_net != "GND" else [])
-    # A rule area (keepout) on an inner layer is for all inner copper (for example a mains keepout): extend it to the
-    # new inner layers. DOOR-RELAY 6 layers, 2026-10-03: without this the new planes went below the mains area.
+        plane_layer = pcbnew.In2_Cu if a.layers == 4 else pcbnew.In3_Cu
+        for g in grounds:
+            pour(pcbnew.In1_Cu, models[g][0], g, g + "_IN1")
+            if a.layers == 6:
+                pour(pcbnew.In4_Cu, models[g][0], g, g + "_IN4")
+            if plane_name in grounds:
+                pour(plane_layer, models[g][0], g, g + "_PLANE")
+        if plane_name not in grounds:
+            pour(plane_layer, models[grounds[0]][0], plane_name, "PLANE_" + plane_name)
+        signal = "F.Cu,B.Cu" if a.layers == 4 else "F.Cu,In2.Cu,B.Cu"
+        planes = list(grounds) + ([plane_name] if plane_name not in grounds else [])
+
     extended = 0
     if a.layers == 6:
         for z in b.Zones():
@@ -87,17 +114,16 @@ def main():
                     ls.AddLayer(l)
                 z.SetLayerSet(ls)
                 extended += 1
-    # A pour piece with no connection is removed (KiCad DRC lists an island as an open connection).
     for z in b.Zones():
         if not z.GetIsRuleArea():
             z.SetIslandRemovalMode(pcbnew.ISLAND_REMOVAL_MODE_ALWAYS)
     if a.lock_tracks:
-        # Kept copper (a pair inside a fixed block) is locked: the placer then keeps the parts on it in place.
         for t in b.GetTracks():
             t.SetLocked(True)
     pcbnew.ZONE_FILLER(b).Fill(b.Zones())
     pcbnew.SaveBoard(a.out, b)
-    print(f"stackup_copy: {a.layers} layers SIGNAL {signal} PLANES {','.join(planes)} (rule areas extended: {extended})", flush=True)
+    print(f"stackup_copy: {a.layers} layers SIGNAL {signal} PLANES {','.join(planes)} "
+          f"(rule areas extended: {extended}, inner tracks removed: {removed_tracks})", flush=True)
 
 
 if __name__ == "__main__":

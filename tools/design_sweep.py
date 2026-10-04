@@ -51,7 +51,8 @@ def main():
     ap.add_argument('outdir')
     ap.add_argument('--board-dir', required=True)
     ap.add_argument('--layers', type=int, nargs='+', default=[6, 4, 2])
-    ap.add_argument('--plane-net', default='GND')
+    ap.add_argument('--plane-net', default='', help='the rail with a full plane on 4 and 6 layers (default: the grounds)')
+    ap.add_argument('--grounds', default='', help='comma list of ground nets (default: reference-planes.json of the board)')
     ap.add_argument('--keep', default='')
     ap.add_argument('--keep-blocks', action='store_true', help='keep the copper inside each block (tools/strip_keep_blocks.py)')
     ap.add_argument('--read-args', default='')
@@ -73,6 +74,25 @@ def main():
     os.makedirs(out, exist_ok=True)
     pairs = os.path.join(REPO, a.board_dir, 'diff-pairs.json')
     rows = []
+    # Ground nets: reference-planes.json of the board ("grounds"), else each net with GND in its name that has a zone.
+    spec = os.path.join(REPO, a.board_dir, 'reference-planes.json')
+    if a.grounds:
+        grounds = a.grounds
+    elif os.path.exists(spec):
+        grounds = ','.join(json.load(open(spec)).get('grounds', ['GND']))
+    else:
+        import pcbnew
+        zb = pcbnew.LoadBoard(a.board)
+        found = sorted({z.GetNetname() for z in zb.Zones() if not z.GetIsRuleArea() and 'GND' in z.GetNetname()})
+        if not found:  # no pour yet: the ground-like net with the most pads
+            count = {}
+            for fp in zb.GetFootprints():
+                for p in fp.Pads():
+                    n = p.GetNetname()
+                    if re.search(r'GND|0V|VSS', n):
+                        count[n] = count.get(n, 0) + 1
+            found = [max(count, key=count.get)] if count else []
+        grounds = ','.join(found) or 'GND'
 
     def save():
         json.dump(rows, open(os.path.join(out, 'sweep.json'), 'w'), indent=1)
@@ -104,7 +124,8 @@ def main():
             run([PY, 'tools/strip_keep_blocks.py', a.board, stripped, '--keep', a.keep], os.path.join(d, 'strip.log'))
         else:
             run([PY, 'tools/placer/validate.py', 'strip', a.board, stripped, '--keep=' + a.keep])
-        rc, text = run([PY, 'tools/stackup_copy.py', stripped, board, '--layers', str(L), '--plane-net', a.plane_net]
+        rc, text = run([PY, 'tools/stackup_copy.py', stripped, board, '--layers', str(L), '--grounds', grounds]
+                       + (['--plane-net', a.plane_net] if a.plane_net else [])
                        + (['--lock-tracks'] if a.keep or a.keep_blocks else []),
                        os.path.join(d, 'stackup.log'))
         m = re.search(r'SIGNAL (\S+) PLANES (\S+)', text)
