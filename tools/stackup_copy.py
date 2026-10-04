@@ -82,14 +82,15 @@ def main():
             b.Remove(z)
     removed_tracks = 0
     if a.layers == 2:
-        for t in list(b.GetTracks()):
-            if t.GetClass() != "PCB_VIA" and t.GetLayer() in INNER:
-                b.Remove(t)
-                removed_tracks += 1
+        # The pours first: after a track is removed, Duplicate() of a zone gives an object with no type (KiCad 10.0.6).
         on_b = {z.GetNetname() for z in zones if z.GetLayer() == pcbnew.B_Cu}
         for g in grounds:
             if g not in on_b:
                 pour(pcbnew.B_Cu, models[g][0], g, g + "_B")
+        for t in list(b.GetTracks()):
+            if t.GetClass() != "PCB_VIA" and t.GetLayer() in INNER:
+                b.Remove(t)
+                removed_tracks += 1
         b.SetCopperLayerCount(2)
         signal, planes = "F.Cu,B.Cu", list(grounds)
     else:
