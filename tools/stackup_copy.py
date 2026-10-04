@@ -39,7 +39,9 @@ def main():
         next((z for z in zones if z.GetNetname() == "GND"), None)
     if model is None:
         sys.exit("stackup_copy: no GND zone to copy the outline from")
-    inner_tracks = [t for t in b.GetTracks() if t.GetClass() != "PCB_VIA" and t.GetLayer() in INNER]
+    # On 6 layers In2.Cu is a signal layer: kept block copper on In2.Cu stays there.
+    plane_layers = INNER if a.layers != 6 else [l for l in INNER if l != pcbnew.In2_Cu]
+    inner_tracks = [t for t in b.GetTracks() if t.GetClass() != "PCB_VIA" and t.GetLayer() in plane_layers]
     if inner_tracks:
         sys.exit(f"stackup_copy: {len(inner_tracks)} tracks on inner layers: strip them first")
 

@@ -53,6 +53,7 @@ def main():
     ap.add_argument('--layers', type=int, nargs='+', default=[6, 4, 2])
     ap.add_argument('--plane-net', default='GND')
     ap.add_argument('--keep', default='')
+    ap.add_argument('--keep-blocks', action='store_true', help='keep the copper inside each block (tools/strip_keep_blocks.py)')
     ap.add_argument('--read-args', default='')
     ap.add_argument('--place', nargs='+', default=['existing', 'anneal'], choices=['existing', 'anneal'])
     ap.add_argument('--route-extra', default='', help='more arguments for tools/fastroute_job.py (one string)')
@@ -97,9 +98,12 @@ def main():
                     c.update(track_width=tw, clearance=cl, via_diameter=vd, via_drill=vh)
             json.dump(pro, open(pro_path, 'w'), indent=2)
         stripped = os.path.join(d, 'stripped.kicad_pcb')
-        run([PY, 'tools/placer/validate.py', 'strip', a.board, stripped, '--keep=' + a.keep])
+        if a.keep_blocks:
+            run([PY, 'tools/strip_keep_blocks.py', a.board, stripped, '--keep', a.keep], os.path.join(d, 'strip.log'))
+        else:
+            run([PY, 'tools/placer/validate.py', 'strip', a.board, stripped, '--keep=' + a.keep])
         rc, text = run([PY, 'tools/stackup_copy.py', stripped, board, '--layers', str(L), '--plane-net', a.plane_net]
-                       + (['--lock-tracks'] if a.keep else []),
+                       + (['--lock-tracks'] if a.keep or a.keep_blocks else []),
                        os.path.join(d, 'stackup.log'))
         m = re.search(r'SIGNAL (\S+) PLANES (\S+)', text)
         if rc != 0 or not m:
