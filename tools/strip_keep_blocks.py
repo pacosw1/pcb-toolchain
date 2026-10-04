@@ -35,8 +35,8 @@ def main():
 
     keep = set()
     for i, t in enumerate(tracks):
-        if any(fnmatch.fnmatchcase(t.GetNetname(), k) for k in keep_pat):
-            keep.add(i)
+        if t.IsLocked() or any(fnmatch.fnmatchcase(t.GetNetname(), k) for k in keep_pat):
+            keep.add(i)  # a locked track is fixed copper (for example POE-ETHERNET)
     block_kept = 0
     for box in boxes:
         pads = [p for fp in b.GetFootprints() if box.Contains(fp.GetPosition()) for p in fp.Pads() if p.GetNetCode() > 0]
