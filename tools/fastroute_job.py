@@ -73,6 +73,7 @@ def main():
     ap.add_argument("--gnd-vias", action="store_true", help="same as --plane-nets GND")
     ap.add_argument("--plane-nets", default="", help="comma list of exact net names that have a plane: each pad gets a "
                     "via to the plane (gnd_pad_vias.py --net) and the net is not routed")
+    ap.add_argument("--only-nets", default="", help="comma list of exact net names: route only these nets")
     ap.add_argument("--route-planes", action="store_true", help="the router also routes the plane nets (after the pad vias)")
     ap.add_argument("--neck-um", type=int, default=0, help="retry failed connections with tracks of this width (um), "
                     "for example a short power link at an IC pin; 0 = off")
@@ -124,6 +125,13 @@ def main():
     if a.route_planes:
         skip = [p for p in skip if not any(fnmatch.fnmatchcase(n, p) for n in planes)]
     nets = set(str(n) for n in b.GetNetsByName().keys() if str(n) and not any(fnmatch.fnmatchcase(str(n), p) for p in skip))
+    if a.only_nets:
+        # Route only these nets (for example new test points on a finished board); the other nets stay as they are.
+        want = {n for n in a.only_nets.split(",") if n}
+        missing = want - set(str(n) for n in b.GetNetsByName().keys())
+        if missing:
+            sys.exit(f"fastroute_job: no such net: {sorted(missing)}")
+        nets = want
     with open(dsn) as f:
         text = freeroute.restrict_dsn(f.read(), set(a.layers.split(",")), nets)
     with open(dsn, "w") as f:
