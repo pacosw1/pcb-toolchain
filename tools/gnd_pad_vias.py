@@ -167,25 +167,31 @@ def main():
                 if done:
                     break
             if not done and only:
-                # Repair: a short F.Cu link to a via or pad of the same net at most 1.2 mm away.
+                # Repair: a short F.Cu link to a via or pad of the same net at most 2 mm away.
                 # Targets: the vias of the net first (a via 0.8 mm away with the pour between cut), then its pads.
                 targets = list(vias) + [q.GetPosition() for q in own_smd if q.m_Uuid.AsString() != p.m_Uuid.AsString()]
                 for qc in sorted(targets, key=lambda qc: math.hypot(qc.x - c.x, qc.y - c.y)):
                     dist = math.hypot(qc.x - c.x, qc.y - c.y)
                     if dist < 1:
                         continue
-                    if dist > MM(1.2):
+                    if dist > MM(2.0):
                         break
-                    seg = pcbnew.SEG(c, qc)
-                    if all(not (it.IsOnLayer(pcbnew.F_Cu) and it.GetEffectiveShape(pcbnew.F_Cu).Collide(seg, sw // 2 + cl))
-                           for it, cl in others):
-                        t = pcbnew.PCB_TRACK(b)
-                        t.SetStart(c)
-                        t.SetEnd(qc)
-                        t.SetWidth(sw)
-                        t.SetLayer(pcbnew.F_Cu)
-                        t.SetNet(net)
-                        b.Add(t)
+                    def clear(u, v):
+                        seg = pcbnew.SEG(u, v)
+                        return all(not (it.IsOnLayer(pcbnew.F_Cu) and it.GetEffectiveShape(pcbnew.F_Cu).Collide(seg, sw // 2 + cl))
+                                   for it, cl in others)
+                    # A straight link, or an L with the corner on the pad axis (out of a fine-pitch pin row first).
+                    paths = [[c, qc], [c, pcbnew.VECTOR2I(c.x, qc.y), qc], [c, pcbnew.VECTOR2I(qc.x, c.y), qc]]
+                    path = next((pp for pp in paths if all(clear(u, v) for u, v in zip(pp, pp[1:]))), None)
+                    if path:
+                        for u, v in zip(path, path[1:]):
+                            t = pcbnew.PCB_TRACK(b)
+                            t.SetStart(u)
+                            t.SetEnd(v)
+                            t.SetWidth(sw)
+                            t.SetLayer(pcbnew.F_Cu)
+                            t.SetNet(net)
+                            b.Add(t)
                         links.append(f'{fp.GetReference()}.{p.GetNumber()}')
                         done = True
                         break

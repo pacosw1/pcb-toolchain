@@ -60,6 +60,8 @@ def main():
     ap.add_argument('--no-pairs', action='store_true', help='do not give diff-pairs.json to the router (the pair copper is kept with --keep)')
     ap.add_argument('--default-rule', default='', metavar='TRACK,CLEARANCE,VIA,DRILL', help='Default net class in mm for the '
                     'copies, for example 0.15,0.15,0.5,0.3 (a part with 0.5 mm pin pitch needs it); check the fab limits first')
+    ap.add_argument('--stitch', default='', help='fnmatch patterns of kept fast nets that get ground stitching vias before routing')
+    ap.add_argument('--planes-spec', default='', help='planes spec file name in --board-dir for pcbtool stitch')
     ap.add_argument('--budget', type=int, default=900)
     ap.add_argument('--workers', type=int, default=12)
     ap.add_argument('--epochs', type=int, default=6)
@@ -116,6 +118,19 @@ def main():
             via_args = ['--via', vd, vh, '--clearance', cl]
         if L >= 6:
             via_args.append('--in-pad')  # JLCPCB: filled and capped vias are standard on 6 layers and more
+        if a.stitch:
+            # Ground stitching vias for the kept fast nets, before the router takes the room (kicad-happy RP-001).
+            import fnmatch
+            import pcbnew
+            kept = {t.GetNetname() for t in pcbnew.LoadBoard(board).GetTracks() if t.GetClass() == 'PCB_VIA'}
+            n_st = 0
+            for net in sorted(kept):
+                if any(fnmatch.fnmatchcase(net, pat) for pat in a.stitch.split(',')):
+                    rc2, t2 = run([PY, 'tools/pcbtool.py', 'stitch', board, net, '--best-effort'] + (
+                        ['--planes', os.path.join(REPO, a.board_dir, a.planes_spec)] if a.planes_spec else []))
+                    mm_ = re.search(r'added (\d+) GND vias', t2)
+                    n_st += int(mm_.group(1)) if mm_ else 0
+            open(os.path.join(d, 'stitch.log'), 'w').write('stitch vias added before routing: %d\n' % n_st)
         route_args = ['--layers', m.group(1), '--plane-nets', m.group(2)] + shlex.split(a.route_extra) + (
             ['--via-args', ' '.join(via_args)] if via_args else []) + (
             ['--pairs-json', pairs] if os.path.exists(pairs) and not a.no_pairs else [])
