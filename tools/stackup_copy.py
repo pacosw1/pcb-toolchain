@@ -76,6 +76,7 @@ def main():
         z.SetAssignedPriority(0)
         b.Add(z)
 
+    on_b = {z.GetNetname() for z in zones if z.GetLayer() == pcbnew.B_Cu}  # before a zone is deleted
     # Inner zones of the source go; they come back from the models on the new layers.
     for z in zones:
         if z.GetLayer() in INNER:
@@ -83,7 +84,6 @@ def main():
     removed_tracks = 0
     if a.layers == 2:
         # The pours first: after a track is removed, Duplicate() of a zone gives an object with no type (KiCad 10.0.6).
-        on_b = {z.GetNetname() for z in zones if z.GetLayer() == pcbnew.B_Cu}
         for g in grounds:
             if g not in on_b:
                 pour(pcbnew.B_Cu, models[g][0], g, g + "_B")
