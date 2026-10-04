@@ -24,6 +24,7 @@ import fnmatch
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -75,6 +76,8 @@ def main():
     ap.add_argument("--route-planes", action="store_true", help="the router also routes the plane nets (after the pad vias)")
     ap.add_argument("--neck-um", type=int, default=0, help="retry failed connections with tracks of this width (um), "
                     "for example a short power link at an IC pin; 0 = off")
+    ap.add_argument("--via-args", default="", help="more arguments for tools/gnd_pad_vias.py, one string "
+                    "(for example \"--via 0.5 0.3 --clearance 0.15 --in-pad\")")
     ap.add_argument("--pairs-json", default="", help="<board>/diff-pairs.json: its pairs go to fastroute --pairs with the "
                     "diff_pair_gap (opt) of their .kicad_dru rule")
     ap.add_argument("--max-time", type=int, default=0)
@@ -99,7 +102,10 @@ def main():
     tool = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gnd_pad_vias.py")
     for net in planes:
         tmp = os.path.join(a.outdir, "planevias.kicad_pcb")
-        subprocess.run([sys.executable, tool, base, tmp, "--net", net], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        r = subprocess.run([sys.executable, tool, base, tmp, "--net", net] + shlex.split(a.via_args),
+                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        with open(os.path.join(a.outdir, "planevias.log"), "a") as f:
+            f.write("".join(l + "\n" for l in r.stdout.splitlines() if "vias added" in l))
         if os.path.isfile(tmp):
             os.replace(tmp, base)
 
@@ -152,6 +158,7 @@ def main():
     for t in b.GetTracks():
         t.SetLocked(was.get(t.m_Uuid.AsString(), False))
     after = vias()
+    imported_vias = after
     pcbnew.ZONE_FILLER(b).Fill(b.Zones())
     pcbnew.SaveBoard(out, b)
     drc = os.path.join(a.outdir, "drc.json")
@@ -162,6 +169,27 @@ def main():
         subprocess.run([KICAD_CLI, "pcb", "render", "--side", "top", "--quality", "basic", "-w", "1600", "-h", "1200",
                         "-o", os.path.join(a.outdir, "routed.png"), out], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     d = json.load(open(drc))
+    # Repair: a plane-net pad that is open after routing (no via, or the pour to its via is cut) gets its own
+    # stub and via now, with the routed copper as the obstacle. Then DRC runs again.
+    todo = {}
+    for u in d.get("unconnected_items", []):
+        for it in u.get("items", []):
+            m = re.match(r"Pad (\S+) \[([^\]]*)\] of (\S+)", it["description"])
+            if m and m.group(2) in plane_names:
+                todo.setdefault(m.group(2), set()).add(f"{m.group(3)}.{m.group(1)}")
+    if todo:
+        for net, pads in todo.items():
+            tmp = os.path.join(a.outdir, "repair.kicad_pcb")
+            r = subprocess.run([sys.executable, tool, out, tmp, "--net", net, "--only", ",".join(sorted(pads))]
+                               + shlex.split(a.via_args), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            with open(os.path.join(a.outdir, "planevias.log"), "a") as f:
+                f.write("".join("repair " + l + "\n" for l in r.stdout.splitlines() if "vias added" in l))
+            if os.path.isfile(tmp):
+                os.replace(tmp, out)
+        subprocess.run([KICAD_CLI, "pcb", "drc", "--refill-zones", "--severity-all", "--format", "json", "--units", "mm", "-o", drc, out],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        d = json.load(open(drc))
+        after = sum(1 for t in pcbnew.LoadBoard(out).GetTracks() if t.GetClass() == "PCB_VIA")
     errors = sum(1 for v in d.get("violations", []) if v.get("severity") == "error")
     diag = report.get("diagnosis", {})
     # Open connections of the skipped (ground) nets are a ground-via matter (gnd_pad_vias.py, a thermal pad via),
@@ -176,8 +204,8 @@ def main():
     print(f"UNROUTED {signal_open} GND_OPEN {gnd_open} ERRORS {errors} ROUTER_UNROUTED {report['stats']['unrouted']} "
           f"CONGESTION {diag.get('congestion', 0)} BLOCKED {diag.get('blocked', 0)} "
           f"TRACK_MM {report['stats']['trace_length_mm']:.0f} VIAS {after} SECONDS {secs}", flush=True)
-    if after != report["stats"]["vias"]:
-        print(f"fastroute_job: RESULT NOT VERIFIED: {after} vias on the board, {report['stats']['vias']} in the router report", flush=True)
+    if imported_vias != report["stats"]["vias"]:
+        print(f"fastroute_job: RESULT NOT VERIFIED: {imported_vias} vias on the board, {report['stats']['vias']} in the router report", flush=True)
         sys.exit(4)
 
 

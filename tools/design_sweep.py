@@ -106,7 +106,14 @@ def main():
             rows.append({'layers': L, 'placement': '-', 'pass': 'NO', 'note': 'stackup copy failed: ' + text.strip()[-120:]})
             save()
             continue
+        via_args = []
+        if a.default_rule:
+            tw, cl, vd, vh = a.default_rule.split(',')
+            via_args = ['--via', vd, vh, '--clearance', cl]
+        if L >= 6:
+            via_args.append('--in-pad')  # JLCPCB: filled and capped vias are standard on 6 layers and more
         route_args = ['--layers', m.group(1), '--plane-nets', m.group(2)] + shlex.split(a.route_extra) + (
+            ['--via-args', ' '.join(via_args)] if via_args else []) + (
             ['--pairs-json', pairs] if os.path.exists(pairs) and not a.no_pairs else [])
         if 'existing' in a.place:
             rc, text = run([PY, 'tools/fastroute_job.py', board, os.path.join(d, 'existing'), '--render'] + route_args,
