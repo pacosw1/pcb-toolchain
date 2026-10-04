@@ -79,7 +79,7 @@ def main():
     # Inner zones of the source go; they come back from the models on the new layers.
     for z in zones:
         if z.GetLayer() in INNER:
-            b.Remove(z)
+            b.Delete(z)
     removed_tracks = 0
     if a.layers == 2:
         # The pours first: after a track is removed, Duplicate() of a zone gives an object with no type (KiCad 10.0.6).
@@ -89,7 +89,7 @@ def main():
                 pour(pcbnew.B_Cu, models[g][0], g, g + "_B")
         for t in list(b.GetTracks()):
             if t.GetClass() != "PCB_VIA" and t.GetLayer() in INNER:
-                b.Remove(t)
+                b.Delete(t)
                 removed_tracks += 1
         b.SetCopperLayerCount(2)
         signal, planes = "F.Cu,B.Cu", list(grounds)

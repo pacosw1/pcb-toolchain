@@ -84,7 +84,7 @@ def main():
         if i in keep:
             t.SetLocked(True)
         else:
-            b.Remove(t)
+            b.Delete(t)
             removed += 1
     pcbnew.SaveBoard(a.out, b)
     print(f'strip_keep_blocks: {len(boxes)} blocks, removed {removed}, kept {len(keep)} ({block_kept} block copper)')

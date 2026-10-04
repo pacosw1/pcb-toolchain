@@ -50,7 +50,7 @@ def main():
         if t.GetNetname() in slow:
             if t.GetClass() != "PCB_VIA":
                 mm += t.GetLength() / 1e6
-            b.Remove(t)
+            b.Delete(t)
             removed += 1
     pcbnew.ZONE_FILLER(b).Fill(b.Zones())
     pcbnew.SaveBoard(a.out, b)

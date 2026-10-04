@@ -63,7 +63,7 @@ def main():
     for t in list(b.GetTracks()):
         ends = [t.GetPosition()] if t.GetClass() == 'PCB_VIA' else [t.GetStart(), t.GetEnd()]
         if t.GetNetCode() in nets and any(math.hypot(e.x - q.x, e.y - q.y) < MM(0.05) for e in ends for q in old_pads):
-            b.Remove(t)
+            b.Delete(t)
     fp.SetPosition(pcbnew.VECTOR2I(int(best[1] - off.x), int(best[2] - off.y)))
     pcbnew.SaveBoard(a.out, b)
     print(f'move_part: {a.ref} to ({best[1] / 1e6:.2f}, {best[2] / 1e6:.2f}), {best[0] * 0.25:.2f} mm from {a.near}')
