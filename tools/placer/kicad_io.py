@@ -779,7 +779,13 @@ def write_board(path, pr, pose, out, outline_scale=1.0):
     for i, u, *_ in moved:
         if u['box']:
             b = u['box']
+            # Block copper = a track inside the block box, not locked, on a net of a pad of the block.
+            # MC-MAIN 2026-10-04: the locked USB pair goes through the ENC0 and ENC1 block boxes; 4 of its
+            # items moved with those blocks and the pair was cut. Locked copper is fixed copper: it never moves.
+            own = {p.GetNetname() for r in u['refs'] for p in by_ref[r].Pads() if p.GetNetname()}
             for t in tracks:
+                if t.IsLocked() or t.GetNetname() not in own:
+                    continue
                 pts = [t.GetPosition()] if t.GetClass() == 'PCB_VIA' else [t.GetStart(), t.GetEnd()]
                 if all(inside_box(mm(p.x), mm(p.y), b) for p in pts):
                     internal[t.m_Uuid.AsString()] = i

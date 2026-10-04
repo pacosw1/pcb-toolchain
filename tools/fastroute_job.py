@@ -129,7 +129,9 @@ def main():
            f"--report={rep}", "--diagnose"] + [f"--{kv}" for kv in a.set]
     if a.neck_um:
         cmd.append(f"--router.neck_width_um={a.neck_um}")
-    pairs_file = write_pairs(a.pairs_json, stem + ".kicad_dru", nets, os.path.join(a.outdir, "pairs.txt"))
+    # A pair that has copper on the board already (kept block copper) is not given to the pair router.
+    has_copper = {t.GetNetname() for t in b.GetTracks() if t.GetClass() != "PCB_VIA"}
+    pairs_file = write_pairs(a.pairs_json, stem + ".kicad_dru", nets - has_copper, os.path.join(a.outdir, "pairs.txt"))
     if pairs_file:
         cmd.append(f"--pairs={pairs_file}")
     if a.max_time:
