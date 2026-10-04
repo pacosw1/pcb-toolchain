@@ -49,7 +49,9 @@ def parser():
     ap.add_argument('--board-dir', required=True, help='repo board folder for tools/remote.sh (read only)')
     ap.add_argument('--outdir', required=True)
     ap.add_argument('--size', type=float, nargs=2, required=True, metavar=('W', 'H'))
-    ap.add_argument('--wheel', required=True, help='numpy cp313 manylinux wheel for the remote search')
+    ap.add_argument('--search', choices=['local', 'remote'], default='local', help='local: the search runs here '
+                    '(default). remote: Hetzner, needs --wheel')
+    ap.add_argument('--wheel', default='', help='numpy cp313 manylinux wheel for the remote search')
     ap.add_argument('--s0', type=float, default=4.0)
     ap.add_argument('--budget', type=float, default=2700.0, help='seconds (default 45 min)')
     ap.add_argument('--target', type=int, default=0)
@@ -81,7 +83,7 @@ def main(argv=None):
     os.makedirs(a.outdir, exist_ok=True)
     name = os.path.splitext(os.path.basename(a.board))[0]
     src = os.path.dirname(os.path.abspath(a.board))
-    wheel = os.path.abspath(a.wheel)
+    wheel = os.path.abspath(a.wheel) if a.wheel else ''
 
     def sdir(n):
         d = os.path.join(os.path.abspath(a.outdir), 'step-%d' % n)
@@ -93,6 +95,19 @@ def main(argv=None):
         if a.scatter is not None:
             q = bench.scatter(q, a.scatter)
         json.dump(q, open(os.path.join(d, 'prob.json'), 'w'))
+        if a.search == 'local':
+            # The search uses a.workers processes: a many-core job, so it runs here (KiCad Python has numpy).
+            res_path = os.path.join(d, 'search', 'res.json')
+            os.makedirs(os.path.dirname(res_path), exist_ok=True)
+            cmd = [sys.executable, os.path.join(REPO, 'tools', 'placer', 'cli.py'), 'run', os.path.join(d, 'prob.json'),
+                   '-o', res_path, '--workers', str(a.workers), '--epochs', str(a.epochs), '--steps', str(a.steps),
+                   '--seed', str(a.seed), '--top', '1'] + (['--param'] + a.param if a.param else [])
+            with open(os.path.join(d, 'search.log'), 'w') as fh:
+                rc = subprocess.run(cmd, cwd=REPO, stdout=fh, stderr=subprocess.STDOUT).returncode
+            if not os.path.exists(res_path):
+                print('search step %d: no result (rc %d), see %s' % (n, rc, os.path.join(d, 'search.log')), flush=True)
+                return None
+            return json.load(open(res_path))
         cmd = ['bash', 'tools/placer/remote_run.sh', 'run', 'in/prob.json', '-o', 'out/res.json',
                '--workers', str(a.workers), '--epochs', str(a.epochs), '--steps', str(a.steps),
                '--seed', str(a.seed), '--top', '1'] + (['--param'] + a.param if a.param else [])
@@ -124,7 +139,7 @@ def main(argv=None):
             # Fastroute runs here (many cores, user rule 2026-10-03); it is deterministic, so one run per step.
             # The count is the KiCad DRC unconnected count of the verified result (tools/fastroute_job.py).
             cmd = [sys.executable, os.path.join(REPO, 'tools', 'fastroute_job.py'), path, os.path.join(d, 'route-0'),
-                   '--passes', str(a.passes)] + (['--gnd-vias'] if a.gnd_vias else [])
+                   '--passes', str(a.passes), '--render'] + (['--gnd-vias'] if a.gnd_vias else [])
             p = subprocess.run(cmd, cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             open(os.path.join(d, 'route-0.log'), 'w').write(p.stdout)
             return [parse_unrouted(p.stdout) if p.returncode == 0 else NO_RESULT]

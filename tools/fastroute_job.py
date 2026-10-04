@@ -44,6 +44,7 @@ def main():
     ap.add_argument("--gnd-vias", action="store_true")
     ap.add_argument("--max-time", type=int, default=0)
     ap.add_argument("--threads", type=int, default=0)
+    ap.add_argument("--render", action="store_true", help="write OUTDIR/routed.png (kicad-cli pcb render, top view)")
     ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE")
     a = ap.parse_args()
     if not os.path.isfile(BIN):
@@ -102,6 +103,10 @@ def main():
     drc = os.path.join(a.outdir, "drc.json")
     subprocess.run([KICAD_CLI, "pcb", "drc", "--refill-zones", "--severity-all", "--format", "json", "--units", "mm", "-o", drc, out],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if a.render:
+        # One top-view picture per job (user rule 2026-10-03: each shrink step has a board picture).
+        subprocess.run([KICAD_CLI, "pcb", "render", "--side", "top", "--quality", "basic", "-w", "1600", "-h", "1200",
+                        "-o", os.path.join(a.outdir, "routed.png"), out], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     d = json.load(open(drc))
     errors = sum(1 for v in d.get("violations", []) if v.get("severity") == "error")
     diag = report.get("diagnosis", {})
