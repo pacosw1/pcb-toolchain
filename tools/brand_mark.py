@@ -76,6 +76,7 @@ def main():
     ap.add_argument('--near', type=float, nargs=2)
     ap.add_argument('--dry-run', action='store_true')
     a = ap.parse_args()
+    stackup_before = (stackup_block(open(a.board).read()) or (None,))[0]
     b = pcbnew.LoadBoard(a.board)
     gname = f'brand {a.name}'
     for g in list(b.Groups()):
@@ -167,6 +168,31 @@ def main():
     b.Add(t)
     g.AddItem(t)
     pcbnew.SaveBoard(a.board, b)
+    keep_stackup(a.board, stackup_before)
+
+
+def stackup_block(text):
+    """The (stackup ...) block of a board file: (text, start, end), or None."""
+    i = text.find('(stackup')
+    if i < 0:
+        return None
+    depth = 0
+    for j in range(i, len(text)):
+        depth += text[j] == '('
+        depth -= text[j] == ')'
+        if depth == 0:
+            return text[i:j + 1], i, j + 1
+
+
+def keep_stackup(path, before):
+    """pcbnew can write a default stackup (a 6-layer board came back with a 4-layer one, 2026-10-04). Put the stackup
+    the file had (written by tools/set_stackup.py) back."""
+    text = open(path).read()
+    now = stackup_block(text)
+    if before is None or now is None or now[0] == before:
+        return
+    open(path, 'w').write(text[:now[1]] + before + text[now[2]:])
+    print('brand_mark: kept the stackup of the board file (pcbnew wrote another one)')
 
 
 if __name__ == '__main__':
