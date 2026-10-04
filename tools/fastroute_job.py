@@ -13,13 +13,15 @@ Steps:
   3. fastroute -mp PASSES --router.min_trace_width_um=<board minimum> --report --diagnose.
   4. tools/import_ses.py rule: import with locked copper; via count must equal the router report.
   5. kicad-cli pcb drc on OUTDIR/routed.kicad_pcb (the .kicad_pro and .kicad_dru of BOARD are copied).
-Prints "UNROUTED <n> ERRORS <n> ROUTER_UNROUTED <n> CONGESTION <n> BLOCKED <n> SECONDS <n>".
+Prints "UNROUTED <signal> GND_OPEN <n> ERRORS <n> ROUTER_UNROUTED <n> CONGESTION <n> BLOCKED <n> TRACK_MM <n> VIAS <n> SECONDS <n>".
+UNROUTED counts the open connections of the routed nets only; GND_OPEN counts those of the --skip-net nets.
 Exit code 4: the result is not verified (do not use the board).
 """
 import argparse
 import fnmatch
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -110,8 +112,18 @@ def main():
     d = json.load(open(drc))
     errors = sum(1 for v in d.get("violations", []) if v.get("severity") == "error")
     diag = report.get("diagnosis", {})
-    print(f"UNROUTED {len(d.get('unconnected_items', []))} ERRORS {errors} ROUTER_UNROUTED {report['stats']['unrouted']} "
-          f"CONGESTION {diag.get('congestion', 0)} BLOCKED {diag.get('blocked', 0)} SECONDS {secs}", flush=True)
+    # Open connections of the skipped (ground) nets are a ground-via matter (gnd_pad_vias.py, a thermal pad via),
+    # not a routing result: they are counted apart, so one ground pad cannot decide a placement step.
+    gnd_open = 0
+    for u in d.get("unconnected_items", []):
+        m = re.search(r"\[([^\]]*)\]", u["items"][0]["description"]) if u.get("items") else None
+        name = m.group(1) if m else ""
+        if any(fnmatch.fnmatchcase(name, p) or p in name for p in skip):
+            gnd_open += 1
+    signal_open = len(d.get("unconnected_items", [])) - gnd_open
+    print(f"UNROUTED {signal_open} GND_OPEN {gnd_open} ERRORS {errors} ROUTER_UNROUTED {report['stats']['unrouted']} "
+          f"CONGESTION {diag.get('congestion', 0)} BLOCKED {diag.get('blocked', 0)} "
+          f"TRACK_MM {report['stats']['trace_length_mm']:.0f} VIAS {after} SECONDS {secs}", flush=True)
     if after != report["stats"]["vias"]:
         print(f"fastroute_job: RESULT NOT VERIFIED: {after} vias on the board, {report['stats']['vias']} in the router report", flush=True)
         sys.exit(4)
