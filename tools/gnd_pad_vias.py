@@ -45,6 +45,15 @@ def main():
     # Default net class of the boards: via 0.6/0.3 mm, clearance 0.2 mm.
     via_d, drill = MM(a.via[0]), MM(a.via[1])
     clr = max(MM(a.clearance), ds.m_MinClearance)
+    # The new vias and stubs are on `net`: its own class clearance applies too (+3V3 in POWER: 0.2 mm).
+    for fp in b.GetFootprints():
+        own = next((p for p in fp.Pads() if p.GetNetCode() == net.GetNetCode()), None)
+        if own is not None:
+            try:
+                clr = max(clr, own.GetOwnClearance(pcbnew.F_Cu))
+            except Exception:
+                pass
+            break
     edge_gap = MM(0.5)
     w = MM(a.width)
 
@@ -64,7 +73,7 @@ def main():
                 holes.append((p.GetPosition(), p.GetDrillSize().x // 2))
             if p.GetNetCode() != net.GetNetCode():
                 others.append((p, item_clr(p)))
-            elif p.GetAttribute() == pcbnew.PAD_ATTRIB_SMD:
+            elif p.GetAttribute() in (pcbnew.PAD_ATTRIB_SMD, pcbnew.PAD_ATTRIB_CONN):
                 own_smd.append(p)  # no via in an SMD pad (pcbtool.py viapads gate)
     vias = []
     for t in b.GetTracks():
@@ -99,21 +108,21 @@ def main():
                 if seg is not None and layer == pcbnew.F_Cu and item.GetEffectiveShape(layer).Collide(seg, w // 2 + c):
                     return False
         for p in own_smd:
-            if p is not in_pad and p.GetEffectiveShape(pcbnew.F_Cu).Collide(pt, rad):
+            if (in_pad is None or p.m_Uuid.AsString() != in_pad.m_Uuid.AsString()) and p.GetEffectiveShape(pcbnew.F_Cu).Collide(pt, rad):
                 return False
         for hp, hr in holes:
             if math.hypot(hp.x - pt.x, hp.y - pt.y) < hr + drill // 2 + MM(0.25):
                 return False
         return True
 
-    added, failed, in_pad = 0, [], []
+    added, failed, in_pad, links = 0, [], [], []
     for fp in b.GetFootprints():
         if fp.GetReference() in skip:
             continue
         for p in fp.Pads():
             if f'{fp.GetReference()}.{p.GetNumber()}' in skip:
                 continue
-            if p.GetNetCode() != net.GetNetCode() or p.GetAttribute() != pcbnew.PAD_ATTRIB_SMD:
+            if p.GetNetCode() != net.GetNetCode() or p.GetAttribute() not in (pcbnew.PAD_ATTRIB_SMD, pcbnew.PAD_ATTRIB_CONN):
                 continue
             if only and f'{fp.GetReference()}.{p.GetNumber()}' not in only:
                 continue
@@ -157,7 +166,38 @@ def main():
                         break
                 if done:
                     break
-            if not done and a.in_pad and 2 * min(hx, hy) >= via_d and free(c, via_d // 2, None, sw, in_pad=p):
+            if not done and only:
+                # Repair: a short F.Cu link to a via or pad of the same net at most 1.2 mm away.
+                # Targets: the vias of the net first (a via 0.8 mm away with the pour between cut), then its pads.
+                targets = list(vias) + [q.GetPosition() for q in own_smd if q.m_Uuid.AsString() != p.m_Uuid.AsString()]
+                for qc in sorted(targets, key=lambda qc: math.hypot(qc.x - c.x, qc.y - c.y)):
+                    dist = math.hypot(qc.x - c.x, qc.y - c.y)
+                    if dist < 1:
+                        continue
+                    if dist > MM(1.2):
+                        break
+                    seg = pcbnew.SEG(c, qc)
+                    if all(not (it.IsOnLayer(pcbnew.F_Cu) and it.GetEffectiveShape(pcbnew.F_Cu).Collide(seg, sw // 2 + cl))
+                           for it, cl in others):
+                        t = pcbnew.PCB_TRACK(b)
+                        t.SetStart(c)
+                        t.SetEnd(qc)
+                        t.SetWidth(sw)
+                        t.SetLayer(pcbnew.F_Cu)
+                        t.SetNet(net)
+                        b.Add(t)
+                        links.append(f'{fp.GetReference()}.{p.GetNumber()}')
+                        done = True
+                        break
+            spot = None
+            if not done and a.in_pad and 2 * min(hx, hy) >= via_d:
+                # Places in the pad: the centre first, then a 5 x 5 grid (a track on another layer can be below the centre).
+                rx, ry = hx - via_d // 2, hy - via_d // 2
+                grid = [pcbnew.VECTOR2I(c.x + ix * rx // 2, c.y + iy * ry // 2)
+                        for ix, iy in sorted(((i, j) for i in range(-2, 3) for j in range(-2, 3)), key=lambda q: q[0] ** 2 + q[1] ** 2)]
+                spot = next((g for g in grid if free(g, via_d // 2, None, sw, in_pad=p)), None)
+            if spot is not None:
+                c = spot
                 v = pcbnew.PCB_VIA(b)
                 v.SetPosition(c)
                 v.SetWidth(via_d)
@@ -172,7 +212,7 @@ def main():
             if not done:
                 failed.append(f'{fp.GetReference()}.{p.GetNumber()}')
     pcbnew.SaveBoard(a.out, b)
-    print(f'{a.net} vias added: {added}; in pad: {len(in_pad)} {" ".join(in_pad)}; no free place: {len(failed)} {" ".join(failed)}')
+    print(f'{a.net} vias added: {added}; pad links: {len(links)} {" ".join(links)}; in pad: {len(in_pad)} {" ".join(in_pad)}; no free place: {len(failed)} {" ".join(failed)}')
 
 
 if __name__ == '__main__':

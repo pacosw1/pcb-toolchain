@@ -177,6 +177,31 @@ def main():
             m = re.match(r"Pad (\S+) \[([^\]]*)\] of (\S+)", it["description"])
             if m and m.group(2) in plane_names:
                 todo.setdefault(m.group(2), set()).add(f"{m.group(3)}.{m.group(1)}")
+    # A pour piece on an outer layer with pads but no via or through-hole pad of its net is an island with parts on
+    # it (DRC shows it as zone to zone, with no pad name): its pads go to the repair list too.
+    if any("Zone" in u["items"][0]["description"] and "Zone" in u["items"][1]["description"] for u in d.get("unconnected_items", [])):
+        rb = pcbnew.LoadBoard(out)
+        for z in rb.Zones():
+            net = z.GetNetname()
+            if z.GetIsRuleArea() or net not in plane_names or z.GetLayer() not in (pcbnew.F_Cu, pcbnew.B_Cu):
+                continue
+            poly = z.GetFilledPolysList(z.GetLayer())
+            anchors = [t.GetPosition() for t in rb.GetTracks() if t.GetClass() == "PCB_VIA" and t.GetNetname() == net]
+            smd = []
+            for fp in rb.GetFootprints():
+                for p in fp.Pads():
+                    if p.GetNetname() != net:
+                        continue
+                    if p.GetDrillSize().x:
+                        anchors.append(p.GetPosition())
+                    elif p.IsOnLayer(z.GetLayer()):
+                        smd.append((f"{fp.GetReference()}.{p.GetNumber()}", p.GetPosition()))
+            for i in range(poly.OutlineCount()):
+                if any(poly.Contains(pt, i) for pt in anchors):
+                    continue
+                for name, pt in smd:
+                    if poly.Contains(pt, i):
+                        todo.setdefault(net, set()).add(name)
     if todo:
         for net, pads in todo.items():
             tmp = os.path.join(a.outdir, "repair.kicad_pcb")

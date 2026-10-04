@@ -85,6 +85,10 @@ def main():
                     ls.AddLayer(l)
                 z.SetLayerSet(ls)
                 extended += 1
+    # A pour piece with no connection is removed (KiCad DRC lists an island as an open connection).
+    for z in b.Zones():
+        if not z.GetIsRuleArea():
+            z.SetIslandRemovalMode(pcbnew.ISLAND_REMOVAL_MODE_ALWAYS)
     if a.lock_tracks:
         # Kept copper (a pair inside a fixed block) is locked: the placer then keeps the parts on it in place.
         for t in b.GetTracks():
