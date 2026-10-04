@@ -65,7 +65,8 @@ def main():
             m.SetIsFilled(False)
             models[g] = (m, True)   # not on the board yet
         else:
-            models[g] = (m, False)
+            # A copy made now: the zone itself can be an inner zone that is removed below.
+            models[g] = (m.Duplicate(False).Cast(), False)
 
     def pour(layer, model, net_name, name):
         z = model.Duplicate(False).Cast()
