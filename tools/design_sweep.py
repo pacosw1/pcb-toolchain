@@ -14,6 +14,7 @@ For each layer count (user rule 2026-10-03: start with low congestion, decrease 
   A row passes when 0 signal connections are open and DRC has 0 errors. Plane-net opens are listed apart
   (a pad with no free via place, a thermal pad): they need a via fix, not a route.
 Result: OUTDIR/sweep.json, OUTDIR/sweep.md (table) and one picture per row. All runs are on this computer.
+Knobs: --layers, the spacing (annealer loop), --default-rule (rule fineness).
 Not in this version: the board-size knob (the virtual outline does not move the edge connectors yet).
 """
 import argparse
@@ -56,6 +57,8 @@ def main():
     ap.add_argument('--place', nargs='+', default=['existing', 'anneal'], choices=['existing', 'anneal'])
     ap.add_argument('--route-extra', default='', help='more arguments for tools/fastroute_job.py (one string)')
     ap.add_argument('--no-pairs', action='store_true', help='do not give diff-pairs.json to the router (the pair copper is kept with --keep)')
+    ap.add_argument('--default-rule', default='', metavar='TRACK,CLEARANCE,VIA,DRILL', help='Default net class in mm for the '
+                    'copies, for example 0.15,0.15,0.5,0.3 (a part with 0.5 mm pin pitch needs it); check the fab limits first')
     ap.add_argument('--budget', type=int, default=900)
     ap.add_argument('--workers', type=int, default=12)
     ap.add_argument('--epochs', type=int, default=6)
@@ -84,6 +87,15 @@ def main():
         for ext in ('.kicad_pro', '.kicad_dru'):
             if os.path.exists(os.path.join(src, name + ext)):
                 shutil.copy(os.path.join(src, name + ext), d)
+        if a.default_rule:
+            # Rule knob: track, clearance, via diameter, via drill (mm) of the Default net class, in the copy only.
+            tw, cl, vd, vh = (float(x) for x in a.default_rule.split(','))
+            pro_path = os.path.join(d, name + '.kicad_pro')
+            pro = json.load(open(pro_path))
+            for c in pro['net_settings']['classes']:
+                if c['name'] == 'Default':
+                    c.update(track_width=tw, clearance=cl, via_diameter=vd, via_drill=vh)
+            json.dump(pro, open(pro_path, 'w'), indent=2)
         stripped = os.path.join(d, 'stripped.kicad_pcb')
         run([PY, 'tools/placer/validate.py', 'strip', a.board, stripped, '--keep=' + a.keep])
         rc, text = run([PY, 'tools/stackup_copy.py', stripped, board, '--layers', str(L), '--plane-net', a.plane_net]
