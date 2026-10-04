@@ -118,6 +118,12 @@ def main():
             for c in pro['net_settings']['classes']:
                 if c['name'] == 'Default':
                     c.update(track_width=tw, clearance=cl, via_diameter=vd, via_drill=vh)
+            # The board minimums follow, when they are larger than the new class values.
+            rules = pro['board']['design_settings']['rules']
+            for key, val in (('min_track_width', tw), ('min_clearance', cl), ('min_via_diameter', vd),
+                             ('min_through_hole_diameter', vh), ('min_via_annular_width', round((vd - vh) / 2, 4))):
+                if rules.get(key, 0) > val:
+                    rules[key] = val
             json.dump(pro, open(pro_path, 'w'), indent=2)
         stripped = os.path.join(d, 'stripped.kicad_pcb')
         if a.keep_blocks:
