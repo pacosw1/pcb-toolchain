@@ -65,6 +65,10 @@ def parser():
                     'leaves GND pads open when the GND plane is on an inner layer')
     ap.add_argument('--snapshots', metavar='DIR', help='after the run: viewer.html, frames.json, timelapse '
                     '(PNG frames, run.gif, run.mp4) and one routed render per step in DIR (scratch, not committed)')
+    ap.add_argument('--router', choices=['freerouting', 'fastroute'], default='fastroute',
+                    help='fastroute: tools/fastroute_job.py on this computer (default). freerouting: 2.1.0 on Hetzner '
+                    '(its timed-out runs lost most of the result, 2026-10-03; kept for old benchmarks only)')
+    ap.add_argument('--passes', type=int, default=40, help='router passes per step (fastroute)')
     ap.add_argument('--shrink', type=float, default=0.85, help='halo scale factor after a pass')
     ap.add_argument('--tol', type=float, default=0.05, help='halo bisection stops at this relative gap')
     return ap
@@ -115,6 +119,15 @@ def main(argv=None):
         b = os.path.dirname(path)
         ins = [os.path.join(b, name + ext) for ext in ('.kicad_pcb', '.kicad_pro', '.kicad_dru')
                if os.path.exists(os.path.join(b, name + ext))]
+
+        if a.router == 'fastroute':
+            # Fastroute runs here (many cores, user rule 2026-10-03); it is deterministic, so one run per step.
+            # The count is the KiCad DRC unconnected count of the verified result (tools/fastroute_job.py).
+            cmd = [sys.executable, os.path.join(REPO, 'tools', 'fastroute_job.py'), path, os.path.join(d, 'route-0'),
+                   '--passes', str(a.passes)] + (['--gnd-vias'] if a.gnd_vias else [])
+            p = subprocess.run(cmd, cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            open(os.path.join(d, 'route-0.log'), 'w').write(p.stdout)
+            return [parse_unrouted(p.stdout) if p.returncode == 0 else NO_RESULT]
 
         def one(r):
             rc, text = _remote(a.board_dir, ins, os.path.join(d, 'route-%d' % r),
