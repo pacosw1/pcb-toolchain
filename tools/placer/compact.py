@@ -138,6 +138,7 @@ def verdict(steps, size):
             % (size[0] * t['k'], size[1] * t['k'], t['k'], t['s']))
 
 
+REAL_S = (1.0, 0.5, 0.25, 0.0)  # real phase: halo scales tried on the real outline, the largest first
 GROW, TRIES = 1.15, 3  # an illegal search result: same s again on a 15 % larger virtual board, up to 3 tries
 
 
@@ -172,14 +173,20 @@ K_TOL = 0.02  # the outline phase stops when the board scale gap is below 2 %
 
 
 def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, target=0, shrink=0.85, tol=0.05,
-             log=None, s_min=0.05):
+             log=None, s_min=0.05, real_first=False):
     """Easy-to-hard loop. Injected effects: search(problem, step) -> optimize() result;
     write(problem, pose, k, step) -> board path; route(path, step) -> [unrouted per router run].
     Halo phase: s from s0, board scale k from the grown area (larger on an illegal result). A step passes when
     the best router run leaves <= target unrouted. Outline phase (when the best pass has k > 1): the real board
     (k = 1) first, then bisect k between the last fail and the best pass; s = outline_s. When the bare parts
     do not fit the real board (bare_scale > 1), the bisection starts between bare_scale and the best pass.
-    Stops when both phases are done or when `budget` seconds have passed before a step starts."""
+    Stops when both phases are done or when `budget` seconds have passed before a step starts.
+    real_first (2026-10-03): a real phase goes first. It places on the real outline (k = 1) with the largest
+    halo that gives a legal placement (s_fit, then REAL_S) and routes it. The first step that routes ends the
+    loop (no virtual board). If no step routes, the halo and outline phases follow and tell how much larger
+    the board must be.
+    Reason: DOOR-RELAY routed on its real outline, but the virtual phases said that it needs 112 x 80 mm;
+    on a virtual board the fixed connectors stay at their places, so the added area is an empty band."""
     import time
     clock = clock or time.monotonic
     t0 = clock()
@@ -218,6 +225,24 @@ def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, 
         return t
 
     stop = 'schedule done'
+    if real_first:
+        # The area model (fill 0.5) is conservative: DOOR-RELAY and MC-MAIN give s_fit(k = 1) = 0, but a search
+        # on the real outline is legal. So the real phase tries a short list of halo scales, the largest first,
+        # and keeps the first legal placement that routes. An illegal or failed step goes to the next smaller s.
+        first = s_fit(pr, 1.0, s0)
+        for s1 in ([first] if first >= s_min else []) + [x for x in REAL_S if x < max(first, s_min) or first < s_min]:
+            if over():
+                stop = 'time budget %.0f s' % budget
+                break
+            if step(s1, 1.0, False, 'real')['passed']:
+                break
+        ok = [t for t in steps if t['passed']]
+        if ok or stop != 'schedule done':
+            summary = [{kk: t[kk] for kk in ('s', 'k', 'unrouted', 'passed')} for t in steps]
+            for t in summary:
+                t['unrouted'] = -1 if t['unrouted'] is None else t['unrouted']
+            return {'steps': steps, 'best': min(ok, key=lambda t: (t['k'], t['s'])) if ok else None,
+                    'verdict': verdict(summary, size), 'stop': stop}
     sch = Schedule(s0, shrink, tol, s_min)
     while not sch.done:
         if over():

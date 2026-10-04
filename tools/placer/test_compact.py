@@ -175,6 +175,36 @@ class LoopTest(unittest.TestCase):
         self.assertAlmostEqual(t['k'], 1.3225)
         self.assertEqual(t['tries'], 3)
 
+    def test_real_first_places_on_the_real_outline_and_stops_at_the_first_step_that_routes(self):
+        pr = {'units': [unit('A', 2, 2, [[-1, -1, 1, 1, .5]]), unit('B', 8, 8, [[-1, -1, 1, 1, .5]])],
+              'nets': [net('N%d' % k, 0, 1) for k in range(4)], 'board': board()}
+        widths = []
+
+        def search(q, n):
+            xs = [p[0] for p in q['board']['outline']]
+            widths.append(max(xs) - min(xs))
+            legal = len(widths) > 1  # the largest halo is not legal, the next one is
+            return {'candidates': [{'pose': [[2, 2, 0], [8, 8, 0]], 'cost': 1.0, 'illegal': [] if legal else ['A']}]}
+        run = compact.run_loop(pr, (10, 10), search, lambda q, p, k, n: 'b', lambda b, n: [0],
+                               s0=4.0, budget=1e9, clock=lambda: 0.0, real_first=True)
+        self.assertTrue(all(abs(w - 10.0) < 1e-9 for w in widths))  # the outline never grows
+        self.assertEqual([t['phase'] for t in run['steps']], ['real', 'real'])
+        self.assertEqual([t['passed'] for t in run['steps']], [False, True])
+        self.assertGreater(run['steps'][0]['s'], run['steps'][1]['s'])
+        self.assertIn('fits in 10.0 x 10.0 mm', run['verdict'])
+
+    def test_real_first_falls_back_to_the_virtual_phases_when_the_real_outline_fails(self):
+        pr = {'units': [unit('A', 2, 2, [[-1, -1, 1, 1, .5]]), unit('B', 8, 8, [[-1, -1, 1, 1, .5]])],
+              'nets': [net('N%d' % k, 0, 1) for k in range(4)], 'board': board()}
+
+        def search(q, n):
+            return {'candidates': [{'pose': [[2, 2, 0], [8, 8, 0]], 'cost': 1.0, 'illegal': []}]}
+        run = compact.run_loop(pr, (10, 10), search, lambda q, p, k, n: 'b', lambda b, n: [5],
+                               s0=4.0, budget=1e9, clock=lambda: 0.0, real_first=True)
+        self.assertEqual(run['steps'][0]['phase'], 'real')
+        self.assertEqual([t['phase'] for t in run['steps'] if t['phase'] != 'real'][0], 'halo')
+        self.assertIsNone(run['best'])
+
     def test_a_search_with_no_result_is_a_failed_step_and_the_loop_goes_on(self):
         # DOOR run 6: the outline-phase search timed out (rc 124) and the run stopped with an exception
         pr = {'units': [unit('A', 2, 2, [[-2, -2, 2, 2, .5]]), unit('B', 8, 8, [[-2, -2, 2, 2, .5]])],

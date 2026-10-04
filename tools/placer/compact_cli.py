@@ -71,6 +71,8 @@ def parser():
                     help='fastroute: tools/fastroute_job.py on this computer (default). freerouting: 2.1.0 on Hetzner '
                     '(its timed-out runs lost most of the result, 2026-10-03; kept for old benchmarks only)')
     ap.add_argument('--passes', type=int, default=40, help='router passes per step (fastroute)')
+    ap.add_argument('--virtual-first', action='store_true', help='old order: virtual (scaled) board first. Default: '
+                    'the real outline first, at the largest halo that fits; the halo decreases only after a pass')
     ap.add_argument('--shrink', type=float, default=0.85, help='halo scale factor after a pass')
     ap.add_argument('--tol', type=float, default=0.05, help='halo bisection stops at this relative gap')
     return ap
@@ -152,7 +154,8 @@ def main(argv=None):
             return list(ex.map(one, range(a.routes)))
 
     run = compact.run_loop(pr, tuple(a.size), search, write, route, s0=a.s0, budget=a.budget, target=a.target,
-                           shrink=a.shrink, tol=a.tol, log=lambda s: print(s, flush=True))
+                           shrink=a.shrink, tol=a.tol, log=lambda s: print(s, flush=True),
+                           real_first=not a.virtual_first)
     run['problem'] = pr
     run['size'] = list(a.size)
     json.dump(run, open(os.path.join(a.outdir, 'run.json'), 'w'))

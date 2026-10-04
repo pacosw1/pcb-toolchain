@@ -10,7 +10,8 @@ Steps:
   1. --gnd-vias: tools/gnd_pad_vias.py first (ground pads reach the inner plane through vias, not tracks).
   2. Existing copper is locked and kept. The DSN gets only --layers as signal layers; nets that match
      --skip-net (comma list of fnmatch patterns) are not routed.
-  3. fastroute -mp PASSES --router.min_trace_width_um=<board minimum> --report --diagnose.
+  3. fastroute -mp PASSES --router.min_trace_width_um=<board minimum>
+     --router.copper_to_edge_clearance_um=<board setting> --report --diagnose.
   4. tools/import_ses.py rule: import with locked copper; via count must equal the router report.
   5. kicad-cli pcb drc on OUTDIR/routed.kicad_pcb (the .kicad_pro and .kicad_dru of BOARD are copied).
 Prints "UNROUTED <signal> GND_OPEN <n> ERRORS <n> ROUTER_UNROUTED <n> CONGESTION <n> BLOCKED <n> TRACK_MM <n> VIAS <n> SECONDS <n>".
@@ -80,7 +81,9 @@ def main():
     with open(dsn, "w") as f:
         f.write(text)
     min_um = int(round(b.GetDesignSettings().m_TrackMinWidth / 1000))
+    edge_um = int(round(b.GetDesignSettings().m_CopperEdgeClearance / 1000))
     cmd = [BIN, "-de", dsn, "-do", ses, "-mp", str(a.passes), f"--router.min_trace_width_um={min_um}",
+           f"--router.copper_to_edge_clearance_um={edge_um}",
            f"--report={rep}", "--diagnose"] + [f"--{kv}" for kv in a.set]
     if a.max_time:
         cmd.append(f"--max-time={a.max_time}")
