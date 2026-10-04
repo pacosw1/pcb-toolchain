@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """One Fastroute job on this computer: route a board copy, import, verify, count with KiCad DRC.
 
-  $PY tools/fastroute_job.py BOARD.kicad_pcb OUTDIR [--passes 40] [--layers F.Cu,B.Cu] [--skip-net GND]
+  $PY tools/fastroute_job.py BOARD.kicad_pcb OUTDIR [--passes 40] [--layers F.Cu,B.Cu] [--skip-net '*GND*']
                              [--gnd-vias] [--max-time S] [--threads N] [--set KEY=VALUE ...]
 
 Fastroute (github.com/parisxmas/fastroute, GPL-3.0, a Rust port of Freerouting) routes on many cores, so this
@@ -43,7 +43,7 @@ def main():
     ap.add_argument("outdir")
     ap.add_argument("--passes", type=int, default=40)
     ap.add_argument("--layers", default="F.Cu,B.Cu")
-    ap.add_argument("--skip-net", default="GND")
+    ap.add_argument("--skip-net", default="*GND*", help="comma list of fnmatch patterns (exact name or with *)")
     ap.add_argument("--gnd-vias", action="store_true")
     ap.add_argument("--max-time", type=int, default=0)
     ap.add_argument("--threads", type=int, default=0)
@@ -75,7 +75,7 @@ def main():
     if not pcbnew.ExportSpecctraDSN(b, dsn):
         sys.exit("fastroute_job: DSN export failed")
     skip = [p for p in a.skip_net.split(",") if p]
-    nets = set(str(n) for n in b.GetNetsByName().keys() if str(n) and not any(fnmatch.fnmatchcase(str(n), p) or p in str(n) for p in skip))
+    nets = set(str(n) for n in b.GetNetsByName().keys() if str(n) and not any(fnmatch.fnmatchcase(str(n), p) for p in skip))
     with open(dsn) as f:
         text = freeroute.restrict_dsn(f.read(), set(a.layers.split(",")), nets)
     with open(dsn, "w") as f:
@@ -121,7 +121,7 @@ def main():
     for u in d.get("unconnected_items", []):
         m = re.search(r"\[([^\]]*)\]", u["items"][0]["description"]) if u.get("items") else None
         name = m.group(1) if m else ""
-        if any(fnmatch.fnmatchcase(name, p) or p in name for p in skip):
+        if any(fnmatch.fnmatchcase(name, p) for p in skip):
             gnd_open += 1
     signal_open = len(d.get("unconnected_items", [])) - gnd_open
     print(f"UNROUTED {signal_open} GND_OPEN {gnd_open} ERRORS {errors} ROUTER_UNROUTED {report['stats']['unrouted']} "
