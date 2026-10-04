@@ -2,12 +2,13 @@
 """One Fastroute job on this computer: route a board copy, import, verify, count with KiCad DRC.
 
   $PY tools/fastroute_job.py BOARD.kicad_pcb OUTDIR [--passes 40] [--layers F.Cu,B.Cu] [--skip-net '*GND*']
-                             [--gnd-vias] [--max-time S] [--threads N] [--set KEY=VALUE ...]
+                             [--gnd-vias] [--plane-nets GND,+3V3] [--pairs-json diff-pairs.json] [--max-time S] [--threads N] [--set KEY=VALUE ...]
 
 Fastroute (github.com/parisxmas/fastroute, GPL-3.0, a Rust port of Freerouting) routes on many cores, so this
 job runs on the Mac (user rule 2026-10-03). Binary: $FASTROUTE_BIN, default ~/opt/fastroute/fastroute-0.1.7-macos-arm64/fastroute.
 Steps:
-  1. --gnd-vias: tools/gnd_pad_vias.py first (ground pads reach the inner plane through vias, not tracks).
+  1. --plane-nets (or --gnd-vias): tools/gnd_pad_vias.py first for each plane net (its pads reach the plane
+     through vias, not tracks). GND_OPEN in the result counts the open connections of all skipped nets.
   2. Existing copper is locked and kept. The DSN gets only --layers as signal layers; nets that match
      --skip-net (comma list of fnmatch patterns) are not routed.
   3. fastroute -mp PASSES --router.min_trace_width_um=<board minimum>
@@ -37,6 +38,30 @@ BIN = os.environ.get("FASTROUTE_BIN") or os.path.expanduser("~/opt/fastroute/fas
 KICAD_CLI = os.environ.get("KICAD_CLI", "/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli")
 
 
+def write_pairs(pairs_json, dru, nets, out):
+    """fastroute pairs file from <board>/diff-pairs.json: one line "pair P N gap=G" for each pair whose two nets
+    are routed. G = the diff_pair_gap opt value (mm) of the pair's .kicad_dru rule; no gap when the rule has none.
+    Returns the file path, or None when there is no pair."""
+    if not pairs_json or not os.path.isfile(pairs_json):
+        return None
+    rules = open(dru).read() if os.path.isfile(dru) else ""
+    lines = []
+    for p in json.load(open(pairs_json)).get("pairs", []):
+        if p["p"] not in nets or p["n"] not in nets:
+            continue
+        gap = ""
+        i = rules.find('(rule "%s"' % p.get("dru_rule", "\0"))
+        if i >= 0:
+            m = re.search(r"diff_pair_gap[^\n]*\(opt ([\d.]+)mm\)", rules[i:i + 600])
+            gap = f" gap={m.group(1)}" if m else ""
+        lines.append(f"pair {p['p']} {p['n']}{gap}")
+    if not lines:
+        return None
+    with open(out, "w") as f:
+        f.write("\n".join(lines) + "\n")
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("board")
@@ -44,7 +69,11 @@ def main():
     ap.add_argument("--passes", type=int, default=40)
     ap.add_argument("--layers", default="F.Cu,B.Cu")
     ap.add_argument("--skip-net", default="*GND*", help="comma list of fnmatch patterns (exact name or with *)")
-    ap.add_argument("--gnd-vias", action="store_true")
+    ap.add_argument("--gnd-vias", action="store_true", help="same as --plane-nets GND")
+    ap.add_argument("--plane-nets", default="", help="comma list of exact net names that have a plane: each pad gets a "
+                    "via to the plane (gnd_pad_vias.py --net) and the net is not routed")
+    ap.add_argument("--pairs-json", default="", help="<board>/diff-pairs.json: its pairs go to fastroute --pairs with the "
+                    "diff_pair_gap (opt) of their .kicad_dru rule")
     ap.add_argument("--max-time", type=int, default=0)
     ap.add_argument("--threads", type=int, default=0)
     ap.add_argument("--render", action="store_true", help="write OUTDIR/routed.png (kicad-cli pcb render, top view)")
@@ -60,11 +89,16 @@ def main():
         if os.path.isfile(stem + ext):
             shutil.copy(stem + ext, os.path.join(a.outdir, "base" + ext))
             shutil.copy(stem + ext, os.path.join(a.outdir, "routed" + ext))
-    if a.gnd_vias:
-        tool = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gnd_pad_vias.py")
-        subprocess.run([sys.executable, tool, a.board, base, "--net", "GND"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    if not os.path.isfile(base):
-        shutil.copy(a.board, base)
+    planes = [n for n in a.plane_nets.split(",") if n]
+    if a.gnd_vias and "GND" not in planes:
+        planes.insert(0, "GND")
+    shutil.copy(a.board, base)
+    tool = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gnd_pad_vias.py")
+    for net in planes:
+        tmp = os.path.join(a.outdir, "planevias.kicad_pcb")
+        subprocess.run([sys.executable, tool, base, tmp, "--net", net], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if os.path.isfile(tmp):
+            os.replace(tmp, base)
 
     b = pcbnew.LoadBoard(base)
     was = {}
@@ -74,7 +108,7 @@ def main():
     dsn, ses, rep = (os.path.join(a.outdir, n) for n in ("board.dsn", "board.ses", "report.json"))
     if not pcbnew.ExportSpecctraDSN(b, dsn):
         sys.exit("fastroute_job: DSN export failed")
-    skip = [p for p in a.skip_net.split(",") if p]
+    skip = [p for p in a.skip_net.split(",") if p] + planes
     nets = set(str(n) for n in b.GetNetsByName().keys() if str(n) and not any(fnmatch.fnmatchcase(str(n), p) for p in skip))
     with open(dsn) as f:
         text = freeroute.restrict_dsn(f.read(), set(a.layers.split(",")), nets)
@@ -85,6 +119,9 @@ def main():
     cmd = [BIN, "-de", dsn, "-do", ses, "-mp", str(a.passes), f"--router.min_trace_width_um={min_um}",
            f"--router.copper_to_edge_clearance_um={edge_um}",
            f"--report={rep}", "--diagnose"] + [f"--{kv}" for kv in a.set]
+    pairs_file = write_pairs(a.pairs_json, stem + ".kicad_dru", nets, os.path.join(a.outdir, "pairs.txt"))
+    if pairs_file:
+        cmd.append(f"--pairs={pairs_file}")
     if a.max_time:
         cmd.append(f"--max-time={a.max_time}")
     if a.threads:

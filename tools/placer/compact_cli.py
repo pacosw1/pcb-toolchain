@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -71,6 +72,8 @@ def parser():
                     help='fastroute: tools/fastroute_job.py on this computer (default). freerouting: 2.1.0 on Hetzner '
                     '(its timed-out runs lost most of the result, 2026-10-03; kept for old benchmarks only)')
     ap.add_argument('--passes', type=int, default=40, help='router passes per step (fastroute)')
+    ap.add_argument('--route-args', default='', help='more arguments for tools/fastroute_job.py, one string '
+                    '(for example "--layers F.Cu,In2.Cu,B.Cu --plane-nets GND,+3V3")')
     ap.add_argument('--virtual-first', action='store_true', help='old order: virtual (scaled) board first. Default: '
                     'the real outline first, at the largest halo that fits; the halo decreases only after a pass')
     ap.add_argument('--shrink', type=float, default=0.85, help='halo scale factor after a pass')
@@ -141,10 +144,14 @@ def main(argv=None):
             # Fastroute runs here (many cores, user rule 2026-10-03); it is deterministic, so one run per step.
             # The count is the KiCad DRC unconnected count of the verified result (tools/fastroute_job.py).
             cmd = [sys.executable, os.path.join(REPO, 'tools', 'fastroute_job.py'), path, os.path.join(d, 'route-0'),
-                   '--passes', str(a.passes), '--render'] + (['--gnd-vias'] if a.gnd_vias else [])
+                   '--passes', str(a.passes), '--render'] + (['--gnd-vias'] if a.gnd_vias else []) + shlex.split(a.route_args)
             p = subprocess.run(cmd, cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             open(os.path.join(d, 'route-0.log'), 'w').write(p.stdout)
-            return [parse_unrouted(p.stdout) if p.returncode == 0 else NO_RESULT]
+            if p.returncode != 0:
+                return [NO_RESULT]
+            # A step passes on 0 open signal connections and 0 DRC errors (the plane-net opens are counted apart).
+            m = re.findall(r'^UNROUTED (\d+) GND_OPEN \d+ ERRORS (\d+)', p.stdout, re.M)
+            return [int(m[-1][0]) + int(m[-1][1])] if m else [NO_RESULT]
 
         def one(r):
             rc, text = _remote(a.board_dir, ins, os.path.join(d, 'route-%d' % r),
