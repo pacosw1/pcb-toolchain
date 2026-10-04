@@ -244,6 +244,7 @@ def main():
                         or any(d.GetClass() == 'PCB_SHAPE' and d.GetLayer() == pcbnew.F_SilkS and d.GetBoundingBox().Intersects(tb)
                                and d.GetEffectiveShape().Collide(rect(tb), 0) for d in silk) \
                         or any(lb.GetBoundingBox().Intersects(tb) for lb in labels) \
+                        or any(c.Intersects(tb) for c, cref in court if cref != p['ref']) \
                         or not all(outline.Contains(pcbnew.VECTOR2I(x, y)) for x in (tb.GetLeft() - MM(0.35), tb.GetRight() + MM(0.35))
                                    for y in (tb.GetTop() - MM(0.35), tb.GetBottom() + MM(0.35)))  # silk_edge_clearance
                     if not clash:
