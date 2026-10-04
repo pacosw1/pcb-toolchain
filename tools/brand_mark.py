@@ -27,6 +27,7 @@ MM = pcbnew.FromMM
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOGO = os.path.join(ROOT, 'hardware-design', 'boards', '_art', 'pitsa-logo.png')
 PIX = 0.1  # mm
+SILK_W = 0.16  # mm, JLC silkscreen minimum line 0.153 mm
 
 
 def logo_rects(width_mm):
@@ -152,9 +153,14 @@ def main():
         r.SetShape(pcbnew.SHAPE_T_RECT)
         r.SetLayer(pcbnew.B_SilkS)
         r.SetFilled(True)
-        r.SetWidth(0)
-        r.SetStart(pcbnew.VECTOR2I(MM(cx + (cx - (lx0 + x1))), MM(ly0 + y0)))
-        r.SetEnd(pcbnew.VECTOR2I(MM(cx + (cx - (lx0 + x0))), MM(ly0 + y1)))
+        # A SILK_W stroke inset by SILK_W / 2 (as tools/pixel-art.py): the outer edge is the pixel edge, and each line
+        # meets the JLC silk minimum (0.153 mm). A run thinner than SILK_W becomes a SILK_W line.
+        r.SetWidth(MM(SILK_W))
+        xa, xb = cx + (cx - (lx0 + x1)), cx + (cx - (lx0 + x0))
+        ya, yb = ly0 + y0, ly0 + y1
+        ix, iy = min(SILK_W / 2, (xb - xa) / 2), min(SILK_W / 2, (yb - ya) / 2)
+        r.SetStart(pcbnew.VECTOR2I(MM(xa + ix), MM(ya + iy)))
+        r.SetEnd(pcbnew.VECTOR2I(MM(xb - ix), MM(yb - iy)))
         b.Add(r)
         g.AddItem(r)
     t.SetPosition(pcbnew.VECTOR2I(MM(cx), MM(cy + bh / 2 - th / 2)))
