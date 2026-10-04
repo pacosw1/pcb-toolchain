@@ -6,6 +6,7 @@
 //   node tools/gate.mjs <BOARD> --write     also write <board>/gate-metrics.json (tracked: no time, no absolute path)
 //   node tools/gate.mjs <BOARD> --ratchet --baseline FILE   compare with a metrics file in place of git HEAD
 //   --strict (with --ratchet): a WARNING also gives exit 1
+//   --config NAME    use <board>/NAME in place of gate.json (for example gate-6layer.json for a candidate)
 //   node tools/gate.mjs --list              the boards that have a gate.json
 //
 // gate.json: {"project": "cad/MC-MAIN/MC-MAIN", "checks": {"erc": true, "drc": true, "planes": "reference-planes.json",
@@ -32,13 +33,15 @@ if (flag('--list')) {
   for (const b of readdirSync(boardsDir)) if (existsSync(join(boardsDir, b, 'gate.json'))) console.log(b);
   process.exit(0);
 }
-const board = args.find((a, i) => !a.startsWith('--') && args[i - 1] !== '--baseline');
+const board = args.find((a, i) => !a.startsWith('--') && args[i - 1] !== '--baseline' && args[i - 1] !== '--config');
+// --config NAME: another gate file in the board folder (a candidate with another stackup). Default gate.json.
+const configName = args.includes('--config') ? args[args.indexOf('--config') + 1] : 'gate.json';
 const dir = join(boardsDir, board ?? '');
-if (!board || !existsSync(join(dir, 'gate.json'))) {
+if (!board || !existsSync(join(dir, configName))) {
   console.error(`usage: node tools/gate.mjs <BOARD> [--ratchet] [--write] | --list   (no gate.json in ${relative(root, dir)})`);
   process.exit(2);
 }
-const cfg = JSON.parse(readFileSync(join(dir, 'gate.json'), 'utf8'));
+const cfg = JSON.parse(readFileSync(join(dir, configName), 'utf8'));
 const pcb = join(dir, `${cfg.project}.kicad_pcb`);
 const sch = join(dir, `${cfg.project}.kicad_sch`);
 const logDir = join(dir, '.gate');

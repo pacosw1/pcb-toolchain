@@ -30,6 +30,7 @@ Spec (one per board, hardware-design/boards/<board>/reference-planes.json):
    "exempt": {"nets": {"VIN": "reason"},
               "areas": [{"box": [x0, y0, x1, y1], "nets": ["/A"], "reason": "..."}]},
    "max_unreferenced_mm": 1.0,   longest continuous unreferenced run that passes
+   "fast_file": "rp001-fast-nets.json",   optional, for a stackup with no mixed layer: fast net patterns; each other net is slow
    "slow_max_gap_mm": 5.0,       optional: this limit for a slow net (not fast in mixed_layers), and
    "slow_min_coverage_pct": 95,  optional: min referenced % of its length (samples near own vias/pads count)
    "via_allow_mm": 0.6,          a run this near (plus the pad/via radius) the net's own via/pad is OK
@@ -47,7 +48,7 @@ import sys
 DEFAULTS = {'max_unreferenced_mm': 1.0, 'via_allow_mm': 0.6, 'step_mm': 0.25}
 REQUIRED = ('about', 'adjacent', 'plane_layers', 'grounds')
 SLOW_LIMITS = ('slow_max_gap_mm', 'slow_min_coverage_pct')
-KEYS = set(REQUIRED) | set(DEFAULTS) | {'alt_refs', 'domains', 'exempt', 'mixed_layers'} | set(SLOW_LIMITS)
+KEYS = set(REQUIRED) | set(DEFAULTS) | {'alt_refs', 'domains', 'exempt', 'mixed_layers', 'fast_file'} | set(SLOW_LIMITS)
 
 
 class SpecError(ValueError):
@@ -169,6 +170,12 @@ def load_fast(s, spec_dir):
         with open(path) as f:
             fast[L] = parse_fast(json.load(f), path)
     set_fast(s, fast)
+    if isinstance(s.get('fast_file'), str) and s['fast_file']:
+        path = os.path.join(spec_dir, s['fast_file'])
+        if not os.path.isfile(path):
+            raise SpecError(f'fast_file: no fast net file {path}')
+        with open(path) as f:
+            s['_fast_top'] = list(json.load(f).get('fast', []))
 
 
 def net_kind(net, m, s):
@@ -303,7 +310,11 @@ def reference_failures(results, domains, s):
         if r['cross'] > 0:
             cross.append((r['cross'], f"FAIL domain-cross {layer} {net}: {r['cross']:.1f} mm over "
                                       f"{r['cross_net']} (domain {domains[net]})"))
-        slow = s['mixed_layers'] and not any(net_kind(net, m, s) == 'fast' for m in s['mixed_layers'].values())
+        if s.get('_fast_top') is not None:
+            # A stackup with no mixed layer (6 layers): the top-level "fast_file" tells fast from slow.
+            slow = not any(fnmatch.fnmatchcase(net, pat) for pat in s['_fast_top'])
+        else:
+            slow = s['mixed_layers'] and not any(net_kind(net, m, s) == 'fast' for m in s['mixed_layers'].values())
         limit = s.get('slow_max_gap_mm', s['max_unreferenced_mm']) if slow else s['max_unreferenced_mm']
         if _fast_over_mixed(layer, net, s) and r['worst'] > 0:
             x, y = r['worst_at']
