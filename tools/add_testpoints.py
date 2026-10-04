@@ -112,6 +112,8 @@ def main():
         return next(q for q in b.FindFootprintByReference(ref).Pads() if q.GetNumber() == num).GetPosition()
 
     placed, blocks, labels = [], [], []
+    # Each label must be clearly nearer its own pad than any other test point (a GND label next to a 5 V pad is a trap).
+    tp_pos = [f.GetPosition() for f in b.GetFootprints() if f.GetReference().startswith('TP')]
     cols = 8
     x0, y0, x1, y1 = spec['sheet_area']
     for k, p in enumerate(spec['points']):
@@ -245,6 +247,8 @@ def main():
                                and d.GetEffectiveShape().Collide(rect(tb), 0) for d in silk) \
                         or any(lb.GetBoundingBox().Intersects(tb) for lb in labels) \
                         or any(c.Intersects(tb) for c, cref in court if cref != p['ref']) \
+                        or any(math.hypot(q.x - tb.GetCenter().x, q.y - tb.GetCenter().y) <= math.hypot(pos.x - tb.GetCenter().x, pos.y - tb.GetCenter().y) + MM(0.5)
+                               for q in tp_pos) \
                         or not all(outline.Contains(pcbnew.VECTOR2I(x, y)) for x in (tb.GetLeft() - MM(0.35), tb.GetRight() + MM(0.35))
                                    for y in (tb.GetTop() - MM(0.35), tb.GetBottom() + MM(0.35)))  # silk_edge_clearance
                     if not clash:
@@ -260,6 +264,7 @@ def main():
         c = fp.GetCourtyard(pcbnew.F_CrtYd).BBox()
         court.append((c if c.GetWidth() else fp.GetBoundingBox(False, False), p['ref']))
         copper.append(pad)
+        tp_pos.append(fp.GetPosition())
         print(f'{p["ref"]} {p["net"]}: ({best[1] / 1e6:.2f}, {best[2] / 1e6:.2f}), {best[0] * 0.25:.2f} mm from {p["near"]}'
               + (', on a F.Cu track of its net' if p.get('_on_track') else ', needs a route')
               + (f', label {labels[-1].GetText()}' if done_label else ''))
