@@ -27,6 +27,7 @@ def main():
     ap.add_argument("out")
     ap.add_argument("--layers", type=int, choices=[2, 4, 6], required=True)
     ap.add_argument("--plane-net", default="GND")
+    ap.add_argument("--lock-tracks", action="store_true", help="lock each track and via that is on the board")
     a = ap.parse_args()
     b = pcbnew.LoadBoard(a.src)
     plane = b.FindNet(a.plane_net)
@@ -84,6 +85,10 @@ def main():
                     ls.AddLayer(l)
                 z.SetLayerSet(ls)
                 extended += 1
+    if a.lock_tracks:
+        # Kept copper (a pair inside a fixed block) is locked: the placer then keeps the parts on it in place.
+        for t in b.GetTracks():
+            t.SetLocked(True)
     pcbnew.ZONE_FILLER(b).Fill(b.Zones())
     pcbnew.SaveBoard(a.out, b)
     print(f"stackup_copy: {a.layers} layers SIGNAL {signal} PLANES {','.join(planes)} (rule areas extended: {extended})", flush=True)

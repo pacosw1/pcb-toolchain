@@ -72,6 +72,9 @@ def main():
     ap.add_argument("--gnd-vias", action="store_true", help="same as --plane-nets GND")
     ap.add_argument("--plane-nets", default="", help="comma list of exact net names that have a plane: each pad gets a "
                     "via to the plane (gnd_pad_vias.py --net) and the net is not routed")
+    ap.add_argument("--route-planes", action="store_true", help="the router also routes the plane nets (after the pad vias)")
+    ap.add_argument("--neck-um", type=int, default=0, help="retry failed connections with tracks of this width (um), "
+                    "for example a short power link at an IC pin; 0 = off")
     ap.add_argument("--pairs-json", default="", help="<board>/diff-pairs.json: its pairs go to fastroute --pairs with the "
                     "diff_pair_gap (opt) of their .kicad_dru rule")
     ap.add_argument("--max-time", type=int, default=0)
@@ -108,7 +111,12 @@ def main():
     dsn, ses, rep = (os.path.join(a.outdir, n) for n in ("board.dsn", "board.ses", "report.json"))
     if not pcbnew.ExportSpecctraDSN(b, dsn):
         sys.exit("fastroute_job: DSN export failed")
-    skip = [p for p in a.skip_net.split(",") if p] + planes
+    # --route-planes: the router also gets the plane nets. Fastroute connects a pad to its plane with a via of its
+    # own where gnd_pad_vias.py found no free place (it accepts a connection that ends in a via into the plane).
+    skip = [p for p in a.skip_net.split(",") if p] + ([] if a.route_planes else planes)
+    plane_names = set(planes)
+    if a.route_planes:
+        skip = [p for p in skip if not any(fnmatch.fnmatchcase(n, p) for n in planes)]
     nets = set(str(n) for n in b.GetNetsByName().keys() if str(n) and not any(fnmatch.fnmatchcase(str(n), p) for p in skip))
     with open(dsn) as f:
         text = freeroute.restrict_dsn(f.read(), set(a.layers.split(",")), nets)
@@ -119,6 +127,8 @@ def main():
     cmd = [BIN, "-de", dsn, "-do", ses, "-mp", str(a.passes), f"--router.min_trace_width_um={min_um}",
            f"--router.copper_to_edge_clearance_um={edge_um}",
            f"--report={rep}", "--diagnose"] + [f"--{kv}" for kv in a.set]
+    if a.neck_um:
+        cmd.append(f"--router.neck_width_um={a.neck_um}")
     pairs_file = write_pairs(a.pairs_json, stem + ".kicad_dru", nets, os.path.join(a.outdir, "pairs.txt"))
     if pairs_file:
         cmd.append(f"--pairs={pairs_file}")
@@ -158,7 +168,7 @@ def main():
     for u in d.get("unconnected_items", []):
         m = re.search(r"\[([^\]]*)\]", u["items"][0]["description"]) if u.get("items") else None
         name = m.group(1) if m else ""
-        if any(fnmatch.fnmatchcase(name, p) for p in skip):
+        if any(fnmatch.fnmatchcase(name, p) for p in skip) or name in plane_names:
             gnd_open += 1
     signal_open = len(d.get("unconnected_items", [])) - gnd_open
     print(f"UNROUTED {signal_open} GND_OPEN {gnd_open} ERRORS {errors} ROUTER_UNROUTED {report['stats']['unrouted']} "

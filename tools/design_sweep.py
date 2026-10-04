@@ -54,6 +54,8 @@ def main():
     ap.add_argument('--keep', default='')
     ap.add_argument('--read-args', default='')
     ap.add_argument('--place', nargs='+', default=['existing', 'anneal'], choices=['existing', 'anneal'])
+    ap.add_argument('--route-extra', default='', help='more arguments for tools/fastroute_job.py (one string)')
+    ap.add_argument('--no-pairs', action='store_true', help='do not give diff-pairs.json to the router (the pair copper is kept with --keep)')
     ap.add_argument('--budget', type=int, default=900)
     ap.add_argument('--workers', type=int, default=12)
     ap.add_argument('--epochs', type=int, default=6)
@@ -84,14 +86,16 @@ def main():
                 shutil.copy(os.path.join(src, name + ext), d)
         stripped = os.path.join(d, 'stripped.kicad_pcb')
         run([PY, 'tools/placer/validate.py', 'strip', a.board, stripped, '--keep=' + a.keep])
-        rc, text = run([PY, 'tools/stackup_copy.py', stripped, board, '--layers', str(L), '--plane-net', a.plane_net],
+        rc, text = run([PY, 'tools/stackup_copy.py', stripped, board, '--layers', str(L), '--plane-net', a.plane_net]
+                       + (['--lock-tracks'] if a.keep else []),
                        os.path.join(d, 'stackup.log'))
         m = re.search(r'SIGNAL (\S+) PLANES (\S+)', text)
         if rc != 0 or not m:
             rows.append({'layers': L, 'placement': '-', 'pass': 'NO', 'note': 'stackup copy failed: ' + text.strip()[-120:]})
             save()
             continue
-        route_args = ['--layers', m.group(1), '--plane-nets', m.group(2)] + (['--pairs-json', pairs] if os.path.exists(pairs) else [])
+        route_args = ['--layers', m.group(1), '--plane-nets', m.group(2)] + shlex.split(a.route_extra) + (
+            ['--pairs-json', pairs] if os.path.exists(pairs) and not a.no_pairs else [])
         if 'existing' in a.place:
             rc, text = run([PY, 'tools/fastroute_job.py', board, os.path.join(d, 'existing'), '--render'] + route_args,
                            os.path.join(d, 'existing.log'))
