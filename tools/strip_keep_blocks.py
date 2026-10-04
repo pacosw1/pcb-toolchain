@@ -56,6 +56,13 @@ def main():
                     parent[find(i)] = find(by_point[key])
                 else:
                     by_point[key] = i
+        # A track that ends on the body of another track of its net (a T junction) is in the same group.
+        segs = [i for i in inside if tracks[i].GetClass() != 'PCB_VIA']
+        for i in inside:
+            for p in pts(tracks[i]):
+                for j in segs:
+                    if j != i and tracks[j].GetNetCode() == tracks[i].GetNetCode() and find(i) != find(j) and tracks[j].HitTest(p):
+                        parent[find(i)] = find(j)
         groups = {}
         for i in inside:
             groups.setdefault(find(i), []).append(i)
