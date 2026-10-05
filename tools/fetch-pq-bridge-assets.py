@@ -18,7 +18,8 @@ import urllib.request
 ROOT = Path(__file__).resolve().parent.parent
 ASSETS = ROOT / 'hardware-design/registry/cad-assets'
 BRIDGE = 'http://127.0.0.1:49620/execute'
-CONVERTER_PY = '/Library/Developer/CommandLineTools/usr/bin/python3'
+import os
+CONVERTER_PY = os.environ.get('EASYEDA_CONVERTER_PY', '/Library/Developer/CommandLineTools/usr/bin/python3')
 
 
 def bridge(code):
@@ -55,8 +56,24 @@ def capture(code):
     if dev_path.exists():
         device = json.loads(dev_path.read_text())
     else:
-        devices = bridge('return await eda.lib_Device.getByLcscIds([' + json.dumps(code) + ']);')
-        device = next(d for d in devices if d.get('supplierId') == code)
+        try:
+            devices = bridge('return await eda.lib_Device.getByLcscIds([' + json.dumps(code) + ']);')
+            device = next(d for d in devices if d.get('supplierId') == code)
+        except Exception as error:
+            # No logged-in EasyEDA Pro editor (the eda API): take the device fields from the public component source
+            # (the same JLC/LCSC record), and say so in the file.
+            raw = fetch_bytes(f'https://easyeda.com/api/products/{code}/components?version=6.4.19.5')
+            res = json.loads(raw)['result']
+            cp = res.get('dataStr', {}).get('head', {}).get('c_para', {})
+            pk = res.get('packageDetail', {})
+            supplier = res.get('lcsc') or res.get('szlcsc') or {}
+            if str(supplier.get('number', '')) != code:
+                raise RuntimeError(f'{code}: public source is for {supplier.get("number")}') from error
+            device = {'uuid': res.get('uuid', ''), 'symbolUuid': res.get('uuid', ''),
+                      'supplier': 'LCSC', 'supplierId': code, 'manufacturerId': res.get('title'),
+                      'manufacturer': cp.get('Manufacturer', ''), 'footprintName': pk.get('title', ''),
+                      'footprintUuid': pk.get('uuid', ''), 'otherProperty': cp,
+                      'source': 'public EasyEDA component API (no editor eda.lib_Device); ' + str(error)[:80]}
         dev_path.write_text(json.dumps(device, ensure_ascii=False, indent=2) + '\n')
     source = folder / 'easyeda-bridge-source.json'
     source_url = f'https://easyeda.com/api/products/{code}/components?version=6.4.19.5'
