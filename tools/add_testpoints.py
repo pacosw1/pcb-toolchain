@@ -6,7 +6,8 @@
 Reads <board>/testpoints.json:
   {"about": "...", "project": "cad/X/X", "sheet_area": [x0, y0, x1, y1],
    "points": [{"ref": "TP12", "net": "VBUS", "kind": "smd" | "tht", "power": "power:VBUS" | null,
-               "near": "J1.A4" | [x, y], "max_mm": 8, "label": "VBUS"}, ...]}
+               "near": "J1.A4" | [x, y], "max_mm": 8, "label": "VBUS", "track_only": false}, ...]}
+- track_only true: the pad must sit on a F.Cu track of its net (no route); use it where the router cannot reach a pad.
 - label: a 0.8 mm F.Silkscreen text beside the pad. The reference stays on F.Fab, hidden (D-040: no reference on silk).
 - kind smd: TestPoint:TestPoint_Pad_D1.5mm. kind tht: TestPoint:TestPoint_THTPad_D2.5mm_Drill1.2mm (a probe clip
   or a ground hook fits; on a plane net it connects through the inner plane, so it needs no route).
@@ -69,6 +70,42 @@ def sym_block(ref, value, fpname, x, y, power, net):
                    f'\t\t\t(justify left bottom)\n\t\t)\n\t\t(uuid "{u()}")\n\t)')
     return '\n'.join(out), tp_uuid
 
+
+
+def lib_symbol_block(text, lib_id):
+    """The (symbol "<lib_id>" ...) definition inside the lib_symbols of a schematic text, or None."""
+    ls = text.find('(lib_symbols')
+    i = text.find(f'(symbol "{lib_id}"', ls) if ls >= 0 else -1
+    if i < 0:
+        return None
+    depth = 0
+    for j in range(i, len(text)):
+        depth += text[j] == '('
+        depth -= text[j] == ')'
+        if depth == 0:
+            return text[i:j + 1]
+
+
+def embed_lib_symbols(sch, sch_path, lib_ids):
+    """Each symbol needs its definition in the lib_symbols of its own sheet, else KiCad drops it from the netlist
+    (IO-6X6 2026-10-04: AUTO:TP was only in BASE-PWR). Copy a missing definition from the board's other sheets or from
+    a board that has it (BASE-PWR is the source of AUTO:TP)."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    sources = [os.path.join(os.path.dirname(sch_path), f) for f in sorted(os.listdir(os.path.dirname(sch_path))) if f.endswith('.kicad_sch')]
+    blocks_dir = os.path.join(os.path.dirname(sch_path), 'blocks')
+    if os.path.isdir(blocks_dir):
+        sources += [os.path.join(blocks_dir, f) for f in sorted(os.listdir(blocks_dir)) if f.endswith('.kicad_sch')]
+    sources.append(os.path.join(root, 'hardware-design', 'boards', 'BASE-PWR', 'cad', 'BASE-PWR', 'BASE-PWR.kicad_sch'))
+    for lib_id in sorted(set(lib_ids)):
+        if lib_symbol_block(sch, lib_id):
+            continue
+        block = next((blk for f in sources if os.path.exists(f) for blk in [lib_symbol_block(open(f).read(), lib_id)] if blk), None)
+        if not block:
+            sys.exit(f'add_testpoints: no definition of {lib_id} to embed in {sch_path}')
+        k = sch.index('(lib_symbols') + len('(lib_symbols')
+        sch = sch[:k] + '\n\t\t' + block + sch[k:]
+        print(f'add_testpoints: embedded the {lib_id} symbol definition')
+    return sch
 
 def main():
     ap = argparse.ArgumentParser()
@@ -196,6 +233,9 @@ def main():
                         best = (d, cx, cy)
             if best:
                 p['_on_track'] = True
+        if p.get('track_only') and not best:
+            sys.exit(f'add_testpoints: {p["ref"]} ({p["net"]}) is track_only and has no place on a F.Cu track of its net '
+                     f'within {p.get("max_mm", 8)} mm of {p["near"]}')
         for ix in range(-n, n + 1) if not best else []:
             for iy in range(-n, n + 1):
                 d = math.hypot(ix, iy)
@@ -273,6 +313,7 @@ def main():
         return
     i = sch.index('\n\t(sheet_instances')
     sch = sch[:i] + '\n' + '\n'.join(blocks) + sch[i:]
+    sch = embed_lib_symbols(sch, sch_path, re.findall(r'\(lib_id "([^"]+)"\)', '\n'.join(blocks)))
     open(sch_path, 'w').write(sch)
     for fp in placed:
         b.Add(fp)

@@ -161,12 +161,27 @@ def main():
     report = json.load(open(rep))
 
     vias = lambda: sum(1 for t in b.GetTracks() if t.GetClass() == "PCB_VIA")
+
+    def key(t):
+        e = t.GetEnd() if t.GetClass() == "PCB_TRACK" else t.GetStart()
+        return (t.GetClass(), t.GetNetname(), t.GetLayer(), t.GetStart().x, t.GetStart().y, e.x, e.y)
+    copper_before = {key(t) for t in b.GetTracks()}
     if not pcbnew.ImportSpecctraSES(b, ses):
         sys.exit("fastroute_job: SES import failed")
     for t in b.GetTracks():
         t.SetLocked(was.get(t.m_Uuid.AsString(), False))
     after = vias()
     imported_vias = after
+    if a.only_nets:
+        # Fastroute can add copper to a net that is not in --only-nets (RELAY-4 2026-10-04: a second route on /COIL1
+        # and /LINK_SCL, both already connected). Remove new copper on the other nets: they keep their old copper.
+        want = {n for n in a.only_nets.split(",") if n}
+        extra = [t for t in b.GetTracks() if t.GetNetname() not in want and key(t) not in copper_before]
+        names = sorted({t.GetNetname() for t in extra})
+        for t in extra:
+            b.Delete(t)
+        if extra:
+            print(f"fastroute_job: removed {len(extra)} new items on nets outside --only-nets: {', '.join(names)}")
     pcbnew.ZONE_FILLER(b).Fill(b.Zones())
     pcbnew.SaveBoard(out, b)
     drc = os.path.join(a.outdir, "drc.json")
