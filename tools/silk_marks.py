@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Add rating labels, cable mating labels and an isolation-barrier line to the top silkscreen of a board.
 
-  $PY tools/silk_marks.py <BOARD> [--dry-run]        (KiCad python: pcbnew)
+  $PY tools/silk_marks.py <BOARD> [--dry-run] [--pcb PATH]   (KiCad python: pcbnew; --pcb: a scratch copy)
 
 Reads hardware-design/boards/<BOARD>/silk-marks.json:
   {"texts": [{"text": "18-32V DC IN", "near": "J1", "size": 1.0}, ...],
    "barrier": {"classes": ["HOST", "HOST_PWR"], "gap": 4.0, "label": "ISOLATED",
                "label_near": [x, y], "label_angle": 90},          (label_near/label_angle optional: a dense barrier)
-   "no_silk": [[x0, y0, x1, y1], ...]}
+   "no_silk": [[x0, y0, x1, y1], ...],
+   "refs": {"keep": ["J*", "TP*", ...], "size": 0.8, "max_mm": 2.5}}       (references kept on F.SilkS)
 - texts: F.SilkS, stroke 0.15 mm (JLC minimum 0.153 mm is for lines; text 0.15 with 0.8 mm height prints, the
   repo standard), placed at the free spot nearest to the anchor footprint: the text box (+0.2 mm) is inside the
   board (1.0 mm from the edge), clear of every pad and hole (+0.25 mm), of all other silkscreen (+0.15 mm), of every
@@ -44,6 +45,8 @@ def main():
     bd = os.path.join(ROOT, 'hardware-design', 'boards', board)
     spec = json.load(open(os.path.join(bd, 'silk-marks.json')))
     pcb = os.path.join(bd, json.load(open(os.path.join(bd, 'gate.json')))['project'] + '.kicad_pcb')
+    if '--pcb' in sys.argv:   # a scratch copy of the board
+        pcb = sys.argv[sys.argv.index('--pcb') + 1]
     b = pcbnew.LoadBoard(pcb)
     for g in list(b.Groups()):
         if g.GetName() == GROUP:
@@ -75,7 +78,13 @@ def main():
         bb.Inflate(MM(mm))
         return bb
 
-    def box_free(bb, own=None):
+    bodies = []
+    for ref, c in courts:   # the part body: the courtyard less its 0.25 mm margin (D-051)
+        bb = pcbnew.BOX2I(c.GetPosition(), c.GetSize())
+        bb.Inflate(-MM(0.25))
+        bodies.append((ref, bb))
+
+    def box_free(bb, own=None, body_only=False):
         for k in range(0, 9):  # box corners and edge midpoints inside the inset outline
             x = bb.GetLeft() + bb.GetWidth() * (k % 3) // 2
             y = bb.GetTop() + bb.GetHeight() * (k // 3) // 2
@@ -87,7 +96,7 @@ def main():
             return False
         if any(bb.Intersects(grow(s.GetBoundingBox(), 0.15)) for s in silk):
             return False
-        if any(bb.Intersects(c) for ref, c in courts):
+        if any(bb.Intersects(c) for ref, c in (bodies if body_only else courts)):
             return False
         return not any(bb.Intersects(z) for z in no_silk)
 
@@ -204,6 +213,75 @@ def main():
             near = min(mids, key=lambda p: (p[0] - mx) ** 2 + (p[1] - my) ** 2)
             near = [T(near[0]), T(near[1])]
             place_text(br['label'], br.get('label_near', near), 0.8, br.get('label_angle', 0))
+    # Reference designators kept on F.SilkS (2026-10-07): connectors, test points and parts with a polarity or a pin 1
+    # (tools/silk_refs.py moved all references to F.Fab first). Each goes to the free place nearest to its courtyard
+    # (0.25 mm steps, up to max_mm, angle 0 then 90); a reference with no free place stays on F.Fab and is listed.
+    rs = spec.get('refs')
+    no_place = []
+    if rs:
+        import fnmatch
+        size = rs.get('size', 0.8)
+        def tup(bb, mm):
+            g = MM(mm)
+            return (bb.GetLeft() - g, bb.GetTop() - g, bb.GetRight() + g, bb.GetBottom() + g)
+        obs = [tup(p.GetBoundingBox(), 0.25) for p in pads] + [tup(v.GetBoundingBox(), 0.1) for v in holes] + \
+              [tup(c, 0.0) for _, c in bodies] + [tup(z, 0.0) for z in no_silk]
+        silk_t = [tup(x.GetBoundingBox(), 0.15) for x in silk]
+        ib = inner.BBox()
+        for f in sorted(b.GetFootprints(), key=lambda f: f.GetReference()):
+            ref = f.GetReference()
+            if not any(fnmatch.fnmatchcase(ref, pat) for pat in rs['keep']):
+                continue
+            fld = f.Reference()
+            fld.SetLayer(pcbnew.F_SilkS)
+            fld.SetVisible(True)
+            fld.SetTextSize(pcbnew.VECTOR2I(MM(size), MM(size)))
+            fld.SetTextThickness(MM(0.15))
+            fld.SetHorizJustify(pcbnew.GR_TEXT_H_ALIGN_CENTER)
+            fld.SetVertJustify(pcbnew.GR_TEXT_V_ALIGN_CENTER)
+            c = [cb for r, cb in courts if r == ref][0]
+            cx, cy = c.GetCenter().x, c.GetCenter().y
+            reach = MM(rs.get('max_mm', 2.5) + 4)
+            win = (c.GetLeft() - reach, c.GetTop() - reach, c.GetRight() + reach, c.GetBottom() + reach)
+            near = lambda o: o[0] < win[2] and win[0] < o[2] and o[1] < win[3] and win[1] < o[3]
+            local = [o for o in obs + silk_t if near(o)]
+            best = None
+            for ang in (0, 90):
+                fld.SetTextAngleDegrees(ang)
+                fld.SetPosition(pcbnew.VECTOR2I(cx, cy))
+                tb = tup(fld.GetBoundingBox(), 0.1)
+                dx0, dy0, dx1, dy1 = tb[0] - cx, tb[1] - cy, tb[2] - cx, tb[3] - cy
+                tw, th = tb[2] - tb[0], tb[3] - tb[1]
+                for k in range(0, int(rs.get('max_mm', 2.5) / 0.25) + 1):
+                    g = MM(0.1 + 0.25 * k)
+                    xs = [c.GetLeft() - g - tw // 2, c.GetRight() + g + tw // 2]
+                    ys = [c.GetTop() - g - th // 2, c.GetBottom() + g + th // 2]
+                    hw, hh = c.GetWidth() // 2 + tw // 2, c.GetHeight() // 2 + th // 2
+                    cands = [(cx + dx, y) for dx in range(-hw, hw + 1, MM(0.25)) for y in ys] + \
+                            [(x, cy + dy) for dy in range(-hh, hh + 1, MM(0.25)) for x in xs]
+                    cands.sort(key=lambda q: math.hypot(q[0] - cx, q[1] - cy))
+                    for x, y in cands:
+                        r = (x + dx0, y + dy0, x + dx1, y + dy1)
+                        if r[0] < ib.GetLeft() or r[1] < ib.GetTop() or r[2] > ib.GetRight() or r[3] > ib.GetBottom():
+                            continue
+                        if any(r[0] < o[2] and o[0] < r[2] and r[1] < o[3] and o[1] < r[3] for o in local):
+                            continue
+                        best = (int(x), int(y), ang)
+                        break
+                    if best:
+                        break
+                if best:
+                    break
+            if best is None:
+                fld.SetLayer(pcbnew.F_Fab)
+                no_place.append(ref)
+                continue
+            fld.SetTextAngleDegrees(best[2])
+            fld.SetPosition(pcbnew.VECTOR2I(best[0], best[1]))
+            silk.append(fld)
+            silk_t.append(tup(fld.GetBoundingBox(), 0.15))
+        print(f'  references on F.SilkS: {sum(1 for f in b.GetFootprints() if f.Reference().GetLayer() == pcbnew.F_SilkS)}'
+              + (f'; no free place (left on F.Fab): {", ".join(no_place)}' if no_place else ''))
     if dry:
         print(f'silk_marks {board}: dry run, {len(added)} items')
         return

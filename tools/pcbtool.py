@@ -2171,7 +2171,11 @@ def cmd_stitch(a):
                     obstacles[b.GetLayerName(L)].append((('poly', poly_points(p, pd.GetEffectivePolygon(L).Outline(0))), clr,
                                                          f'pad {fp.GetReference()}.{pd.GetNumber()} {gnd}'))
     keepouts = [z.Outline() for z in b.Zones() if z.GetIsRuleArea() and z.GetDoNotAllowVias()]
-    pours = [z for z in b.Zones() if not z.GetIsRuleArea() and z.GetNetname() != gnd]
+    thru = {n for n in (a.through_pours or '').split(',') if n}
+    # --through-pours: inner-layer plane pours of these nets may take a ground via (the fill clears round it)
+    inner_only = lambda z: all(L not in (p.F_Cu, p.B_Cu) for L in z.GetLayerSet().Seq())
+    pours = [z for z in b.Zones() if not z.GetIsRuleArea() and z.GetNetname() != gnd
+             and not (z.GetNetname() in thru and inner_only(z))]
     gpours = [z for z in b.Zones() if not z.GetIsRuleArea() and z.GetNetname() == gnd]
 
     def covered(z, v):
@@ -2446,6 +2450,8 @@ def main():
     s.add_argument('--r', type=float, default=1.0, help='max mm from a signal via to a ground via')
     s.add_argument('--best-effort', action='store_true', help='place the vias that fit; a via without room is not an error')
     s.add_argument('--planes', help='reference-planes.json (default: two folders above the board; no file = GND)')
+    s.add_argument('--through-pours', default='', help='comma list of nets whose inner-layer pours may take a ground via '
+                   '(for example the island SLOT_3V3 plane on In2)')
     s.add_argument('--via', default='', help='D,DRILL mm of the ground via (default: the net class via); for example '
                    '0.45,0.2 (JLC multilayer standard, no extra fee, 2026-10-07)')
     s.set_defaults(f=cmd_stitch)
