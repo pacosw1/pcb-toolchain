@@ -76,6 +76,17 @@ class PortLabelsTest(unittest.TestCase):
         b = GOOD.replace(gr('B', 12.5, 8), gr('J1', 12.5, 8) + gr('B', 12.5, 8.1, 'B.SilkS'))
         self.assertEqual(len(fails(b)), 1)
 
+    def test_reference_text_far_from_its_part_is_a_label(self):
+        # "C1" (RTD lead C) at the connector, with a capacitor C1 30 mm away, is a pin label; "RTD1 C" is a label
+        cap = fp('C1', 40, 40, 0, [('1', 'smd', 0, 0, 'X'), ('2', 'smd', 1, 0, 'Y')])
+        b = GOOD[:-2] + cap + ')\n'
+        self.assertEqual(fails(b.replace(gr('B', 12.5, 8), gr('C1', 12.5, 8))), [])
+        self.assertEqual(fails(b.replace(gr('B', 12.5, 8), gr('RTD1 C', 12.5, 8))), [])
+        # the same text next to its own part is that part's reference: it does not count
+        near = fp('C1', 12.5, 10, 0, [('1', 'smd', 3, 3, 'X')])
+        b2 = GOOD[:-2] + near + ')\n'
+        self.assertEqual(len(fails(b2.replace(gr('B', 12.5, 8), gr('C1', 12.5, 8)))), 1)
+
     def test_fp_text_user_in_rotated_footprint_counts(self):
         # rot 90: local (0, 2.5) is board (12.5, 10); local (-2, 2.5) is board (12.5, 12)
         pads = [('1', 'smd', 0, 0, 'A'), ('2', 'smd', 0, 2.5, 'B')]

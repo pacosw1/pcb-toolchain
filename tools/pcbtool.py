@@ -2149,6 +2149,8 @@ def cmd_stitch(a):
     cls_name, _, clr = net_rules(pro, gnd)
     cls = {c['name']: c for c in pro['net_settings']['classes']}[cls_name]
     via_d, via_drill = cls['via_diameter'], cls['via_drill']
+    if a.via:
+        via_d, via_drill = (float(v) for v in a.via.split(','))
     o = p.SHAPE_POLY_SET()
     b.GetBoardPolygonOutlines(o, True)
     edge_clr = mm(b.GetDesignSettings().m_CopperEdgeClearance)
@@ -2444,6 +2446,8 @@ def main():
     s.add_argument('--r', type=float, default=1.0, help='max mm from a signal via to a ground via')
     s.add_argument('--best-effort', action='store_true', help='place the vias that fit; a via without room is not an error')
     s.add_argument('--planes', help='reference-planes.json (default: two folders above the board; no file = GND)')
+    s.add_argument('--via', default='', help='D,DRILL mm of the ground via (default: the net class via); for example '
+                   '0.45,0.2 (JLC multilayer standard, no extra fee, 2026-10-07)')
     s.set_defaults(f=cmd_stitch)
     s = sp.add_parser('netcheck'); s.add_argument('board'); s.add_argument('net'); s.set_defaults(f=cmd_netcheck)
     s = sp.add_parser('paths'); s.add_argument('board'); s.add_argument('spec'); s.add_argument('--limit', type=int, default=4)

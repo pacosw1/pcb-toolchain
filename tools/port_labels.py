@@ -5,7 +5,9 @@ A connector is a top-side footprint with reference J*, P* or CN*. Each pad with 
 net must have its own F.SilkS text (gr_text, or fp_text user of any footprint)
 within --dist mm. A text names only its nearest checked pad. Each connector also
 needs a title: a text within --title-dist mm of its pads that is not the only
-label of a pad. References do not count.
+label of a pad. References do not count: a text that is the exact reference of a
+footprint and stands within 5 mm of that footprint (anchor or pad). The same text
+far from that part ("C1" as an RTD lead name) is a label.
 
 Skipped pads: no net, "unconnected-*", NC, CHASSIS or SHIELD nets, NPTH, mounting and shield pads
 (number empty, MP, SH, EP, MH, S<n>, SH<n>). A footprint with no checked pad
@@ -29,6 +31,7 @@ import sys
 CONN = re.compile(r'^(J|P|CN)\d')
 SKIP_NUM = re.compile(r'^(|MP\d*|SH\d*|EP|MH\d*|S\d*)$', re.I)
 SKIP_NET = re.compile(r'^(unconnected-.*|/?NC|/?N/C|/?CHASSIS|/?SHIELD|/?SHLD)$', re.I)
+REF_NEAR = 5.0   # mm: a reference text stands next to its own part
 TOKEN = re.compile(r'\s*(?:(\()|(\))|"((?:[^"\\]|\\.)*)"|([^\s()"]+))')
 
 
@@ -80,14 +83,14 @@ def layer(node):
 def board_items(text):
     """Return (connectors, texts, refs). connectors: ref -> list of (num, net, x, y)."""
     root = parse(text)
-    conns, texts, refs = {}, [], set()
+    conns, texts, refs = {}, [], {}
     for f in kids(root, 'footprint'):
         fat = at(f)
         ref = next((p[2] for p in kids(f, 'property') if p[1] == 'Reference'), None)
         if ref is None:
             t = next((t for t in kids(f, 'fp_text') if t[1] == 'reference'), None)
             ref = t[2] if t else ''
-        refs.add(ref)
+        refs.setdefault(ref, []).extend([fat[:2]] + [pad_xy(fat, at(p)[:2]) for p in kids(f, 'pad')])
         for t in kids(f, 'fp_text'):
             if t[1] == 'user' and layer(t) == 'F.SilkS' and not one(t, 'hide'):
                 lx, ly, _ = at(t)
@@ -108,8 +111,16 @@ def board_items(text):
         if layer(t) == 'F.SilkS':
             x, y, _ = at(t)
             texts.append((t[1], (x, y)))
-    texts = [(s, xy) for s, xy in texts if s != '${REFERENCE}' and s not in refs and s.strip()]
+    texts = [(s, xy) for s, xy in texts if s != '${REFERENCE}' and s.strip() and not is_reference(s, xy, refs)]
     return conns, texts
+
+
+def is_reference(s, xy, refs, near=REF_NEAR):
+    """A text is a reference designator only when it is the exact reference of a footprint AND it stands within
+    near mm of that footprint (its anchor or a pad). A port label that reads like a reference ("C1" for RTD lead C,
+    "RTD1 C", "COM") far from that part is a label (2026-10-07: the RTD labels were renamed 1A/1C/1B to pass)."""
+    pts = refs.get(s)
+    return bool(pts) and any(math.hypot(x - xy[0], y - xy[1]) <= near for x, y in pts)
 
 
 def box_dist(xy, pads):
