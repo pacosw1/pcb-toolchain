@@ -16,6 +16,7 @@ Reads hardware-design/boards/<BOARD>/board-labels.json:
                    "title": ["24V DC IN", "18-32V"],                 title lines (horizontal); or a list of wordings
                                                                      [["24V DC IN", "18-32V"], ["24V IN", "18-32V DC"]]
                    "title_near": [x, y], "pin_h": [...], "title_h": [...], "max_gap": 3.0, "title_dx": 12}],
+   "free_texts": [{"text": ["FIELD 24V BUS"], "near": [x, y], "h": [2.0, 1.5]}],   board texts (not a port)
    "brand": {"name": "PWR-24V-5V", "rev": "A", "logo_mm": [26, 22, 18, 16], "text_mm": [2.0, 1.5, 1.2],
              "near": [x, y]}}
 
@@ -25,7 +26,7 @@ Steps (each rerun gives the same result):
 2. Pin labels, one per listed pad: horizontal, on the board side of the terminal (dir), aligned to the pin (the
    label anchor is nearer to its own pad than to any other connector pad, within 4 mm: tools/port_labels.py), clear
    of every pad (0.2 mm; NPTH 0.3 mm), via (0.15 mm), footprint silk and other board silk (0.1 mm), part body
-   (courtyard less 0.2 mm), M3 screw head (r 3.0 mm round a hole >= 3 mm), other labels (0.2 mm) and 0.5 mm inside
+   (courtyard less 0.2 mm; first clear of the vias, then over the tented vias before a smaller size), M3 screw head (r 3.0 mm round a hole >= 3 mm), other labels (0.2 mm) and 0.5 mm inside
    the board outline. All the pins of one connector get one size: the largest of pin_h where every pin fits.
    Stroke: 0.15 mm per mm of text height, 0.15 mm minimum.
 3. Titles: after all pin labels, each title block (its lines kept together) goes to the free place nearest to
@@ -145,8 +146,9 @@ class Board:
         self.obs = obs
         self.placed = []   # (rect, text, kind): kind 'pin' or 'title'
 
-    def local(self, win):
-        return [o for o in self.obs if hit(o, win)]
+    def local(self, win, vias=True):
+        """Obstacles in the window; vias=False leaves out the vias (tented: the silk prints over them)."""
+        return [o for o, w in zip(self.obs, self.why) if hit(o, win) and (vias or not w.startswith('via '))]
 
     def inside(self, r):
         for k in range(9):
@@ -209,7 +211,7 @@ def place_pins(B, conn, pads_all, cfg):
     max_shift = conn.get('max_shift', 0.8)
     shifts = [0.0] + [v * sg for v in [round(0.1 * k, 2) for k in range(1, int(max_shift / 0.1 + 1e-6) + 1)] for sg in (1, -1)]
 
-    def one(pin, h):
+    def one(pin, h, vias=True):
         num, text = pin[0], pin[1]
         opt = pin[3] if len(pin) > 3 else {}
         dx, dy = DIRS[opt.get('dir', conn['dir'])]
@@ -223,7 +225,7 @@ def place_pins(B, conn, pads_all, cfg):
             hj, vj = 'C', ('T' if dy > 0 else 'B')
             edge = pb[3] if dy > 0 else pb[1]
         e = extent(b, text, h, h, hj, vj)
-        local = B.local((px - 9, py - 9, px + 9, py + 9))
+        local = B.local((px - 9, py - 9, px + 9, py + 9), vias)
         for k in range(int(opt.get('max_gap', max_gap) / 0.05) + 1):
             g = PAD_GAP + 0.05 + 0.05 * k
             for sh in shifts:
@@ -243,22 +245,23 @@ def place_pins(B, conn, pads_all, cfg):
         return None, f'{ref} pin {num} "{text}" at {h} mm (0.5 mm from the pad: {", ".join(sorted(set(why)))})'
 
     sizes = conn.get('pin_h', cfg.get('pin_h', [1.27, 1.0]))
-    for h in [v for v in sizes if v >= PIN_MIN]:
+    # first clear of the vias; then (tented vias, all boards) over them, before a size below PIN_MIN
+    for h, vias in [(h, v) for v in (True, False) for h in sizes if h >= PIN_MIN]:
         mark = len(B.placed)
         out = []
         for pin in conn['pins']:
-            it, r = one(pin, h)
+            it, r = one(pin, h, vias)
             if it is None:
                 break
             B.placed.append((r, pin[1], 'pin'))
             out.append(it)
         else:
-            return out, []
+            return out, ([] if vias else [f'{ref} pins: over tented vias'])
         del B.placed[mark:]
     out, notes, fails = [], [], []
     for pin in conn['pins']:     # no size >= PIN_MIN fits all: each pin the largest size <= PIN_MIN that fits
         for h in [v for v in sizes if v <= PIN_MIN]:
-            it, r = one(pin, h)
+            it, r = one(pin, h, False)
             if it is not None:
                 B.placed.append((r, pin[1], 'pin'))
                 out.append(it)
@@ -282,12 +285,16 @@ def place_title(B, conn, cfg):
     if not title:
         return []
     alts = title if isinstance(title[0], list) else [title]   # wordings, preferred first; the size goes before the wording
-    fp = b.FindFootprintByReference(ref)
-    pads = [(T(p.GetPosition().x), T(p.GetPosition().y)) for p in fp.Pads() if p.GetNumber() and p.GetDrillSize().x < M(3.0)]
-    x0, y0 = min(x for x, _ in pads), min(y for _, y in pads)
-    x1, y1 = max(x for x, _ in pads), max(y for _, y in pads)
-    reach = lambda x, y: math.hypot(max(x0 - x, 0, x - x1), max(y0 - y, 0, y - y1)) <= TITLE_DIST
-    dx, dy = DIRS[conn['dir']]
+    if ref:
+        fp = b.FindFootprintByReference(ref)
+        pads = [(T(p.GetPosition().x), T(p.GetPosition().y)) for p in fp.Pads() if p.GetNumber() and p.GetDrillSize().x < M(3.0)]
+        x0, y0 = min(x for x, _ in pads), min(y for _, y in pads)
+        x1, y1 = max(x for x, _ in pads), max(y for _, y in pads)
+        reach = lambda x, y: math.hypot(max(x0 - x, 0, x - x1), max(y0 - y, 0, y - y1)) <= TITLE_DIST
+    else:   # a board text (free_texts): no connector
+        x0, y0 = x1, y1 = conn['title_near']
+        reach = lambda x, y: True
+    dx, dy = DIRS[conn.get('dir', 'N')]
     if conn.get('title_near'):
         nx, ny = conn['title_near']
     else:
@@ -295,11 +302,13 @@ def place_title(B, conn, cfg):
     span = conn.get('title_dx', 12)
     n4 = int(span * 4)
     steps = sorted(((i, j) for i in range(-n4, n4 + 1) for j in range(-n4, n4 + 1)), key=lambda q: q[0] ** 2 + q[1] ** 2)
-    local = B.local((nx - span - 30, ny - span - 15, nx + span + 30, ny + span + 15))
-    for h, lines, wf in [(h, ln, wf) for h in conn.get('title_h', cfg.get('title_h', [2.0, 1.5, 1.27, 1.0]))
-                         for ln in alts for wf in (1.0, 0.8)]:
+    win = (nx - span - 30, ny - span - 15, nx + span + 30, ny + span + 15)
+    locals_ = {True: B.local(win), False: B.local(win, False)}
+    for h, vias, lines, wf in [(h, v, ln, wf) for h in conn.get('title_h', cfg.get('title_h', [2.0, 1.5, 1.27, 1.0]))
+                               for v in (True, False) for ln in alts for wf in (1.0, 0.8)]:
+        local = locals_[vias]
         n = len(lines)
-        if True:
+        for _ in (0,):
             w = round(h * wf, 3)
             pitch = round(h * 1.4, 3)
             ext = {hj: [extent(b, ln, h, w, hj, 'C') for ln in lines] for hj in conn.get('title_just', 'CLR')}
@@ -362,7 +371,21 @@ def main():
     if errs:
         raise SystemExit('board_labels: pin labels with no free place:\n  ' + '\n  '.join(errs))
     for conn in cfg['connectors']:
-        items += place_title(B, conn, cfg)
+        try:
+            items += place_title(B, conn, cfg)
+        except SystemExit as e:
+            errs.append(str(e))
+    for ft in cfg.get('free_texts', []):   # board texts (legend, board title): same search, no connector
+        try:
+            items += place_title(B, {'ref': None, 'title': ft['text'], 'title_near': ft['near'],
+                                     'title_h': ft.get('h', [1.5, 1.27, 1.0]), 'title_dx': ft.get('dx', 6),
+                                     'title_just': 'C'}, cfg)
+        except SystemExit as e:
+            errs.append(str(e))
+    if errs and '--keep-going' in args:
+        print('  NOT PLACED (--keep-going):\n  ' + '\n  '.join(errs))
+    if errs and '--keep-going' not in args:   # --keep-going: write what fits (a scratch copy, for review)
+        raise SystemExit('board_labels: titles with no free place:\n  ' + '\n  '.join(errs))
     group = pcbnew.PCB_GROUP(b)
     group.SetName(GROUP)
     b.Add(group)
@@ -370,7 +393,7 @@ def main():
         t = text_item(b, text, h, w, x, y, hj, vj)
         b.Add(t)
         group.AddItem(t)
-        print(f'  {ref}.{num or "title"} "{text}" {h:g}x{w:g} mm at ({x:.2f}, {y:.2f})')
+        print(f'  {ref or "board"}.{num or "title"} "{text}" {h:g}x{w:g} mm at ({x:.2f}, {y:.2f})')
     sizes = {}
     for ref, num, text, h, w, *_ in items:
         sizes.setdefault((ref, num is None), set()).add(h)
