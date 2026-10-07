@@ -5,7 +5,8 @@
 
 Reads hardware-design/boards/<BOARD>/silk-marks.json:
   {"texts": [{"text": "18-32V DC IN", "near": "J1", "size": 1.0}, ...],
-   "barrier": {"classes": ["HOST", "HOST_PWR"], "gap": 4.0, "label": "ISOLATED"},
+   "barrier": {"classes": ["HOST", "HOST_PWR"], "gap": 4.0, "label": "ISOLATED",
+               "label_near": [x, y], "label_angle": 90},          (label_near/label_angle optional: a dense barrier)
    "no_silk": [[x0, y0, x1, y1], ...]}
 - texts: F.SilkS, stroke 0.15 mm (JLC minimum 0.153 mm is for lines; text 0.15 with 0.8 mm height prints, the
   repo standard), placed at the free spot nearest to the anchor footprint: the text box (+0.2 mm) is inside the
@@ -201,7 +202,8 @@ def main():
             mx = sum(x for x, y in mids) // len(mids)
             my = sum(y for x, y in mids) // len(mids)
             near = min(mids, key=lambda p: (p[0] - mx) ** 2 + (p[1] - my) ** 2)
-            place_text(br['label'], [T(near[0]), T(near[1])], 0.8)
+            near = [T(near[0]), T(near[1])]
+            place_text(br['label'], br.get('label_near', near), 0.8, br.get('label_angle', 0))
     if dry:
         print(f'silk_marks {board}: dry run, {len(added)} items')
         return
