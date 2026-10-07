@@ -8,7 +8,7 @@ SILKSCREEN ONLY: the tool writes F.SilkS texts, reference fields and B.SilkS bra
 footprint, pad, track, via or zone.
 
 Reads hardware-design/boards/<BOARD>/board-labels.json:
-  {"remove": [["24V", 145.6, 107.05], ...],        legacy loose F.SilkS texts that this tool replaces (text, x, y;
+  {"remove": [["24V", 145.6, 107.05], ...], "remove_groups": ["j6-labels"],   (legacy label groups this tool replaces)        legacy loose F.SilkS texts that this tool replaces (text, x, y;
                                                      matched within 0.3 mm). A rerun finds none: that is not an error.
    "pin_h": [1.27, 1.0], "title_h": [2.0, 1.5, 1.27, 1.0],          sizes to try, largest first (defaults)
    "connectors": [{"ref": "J1", "dir": "E",                         labels go from the pins toward this side (N/S/E/W)
@@ -17,7 +17,8 @@ Reads hardware-design/boards/<BOARD>/board-labels.json:
                                         "angle": 90 (vertical, last resort)}
                    "title": ["24V DC IN", "18-32V"],                 title lines (horizontal); or a list of wordings
                                                                      [["24V DC IN", "18-32V"], ["24V IN", "18-32V DC"]]
-                   "title_near": [x, y], "pin_h": [...], "title_h": [...], "max_gap": 3.0, "title_dx": 12}],
+                   "title_near": [x, y], "pin_h": [...], "title_h": [...], "max_gap": 3.0, "title_dx": 12,
+                   "rows": 3 (staggered label rows for a fine pitch), "pin_gap_x": 0.5}],
    "free_texts": [{"text": ["FIELD 24V BUS"], "near": [x, y], "h": [2.0, 1.5]}],   board texts (not a port)
    "brand": {"name": "PWR-24V-5V", "rev": "A", "logo_mm": [26, 22, 18, 16], "text_mm": [2.0, 1.5, 1.2],
              "near": [x, y]}}
@@ -237,8 +238,10 @@ def place_pins(B, conn, pads_all, cfg):
         lim = opt.get('far', PIN_DIST)   # far: a pin with a gate exemption (port-labels.json): its label may stand further
         shs = shifts if 'max_shift' not in opt else \
             [0.0] + [round(0.1 * k, 2) * sg for k in range(1, int(opt['max_shift'] / 0.1 + 1e-6) + 1) for sg in (1, -1)]
+        row = conn['pins'].index(pin) % conn.get('rows', 1)   # staggered rows (fine pitch): row k starts k lines out
+        g0 = PAD_GAP + 0.05 + row * (e[3] - e[1] + PIN_GAP_Y + 0.1) if not dx else PAD_GAP + 0.05
         for k in range(int(opt.get('max_gap', max_gap) / 0.05) + 1):
-            g = PAD_GAP + 0.05 + 0.05 * k
+            g = g0 + 0.05 * k
             for sh in shs:
                 x, y = (edge + dx * g, py + sh) if dx else (px + sh, edge + dy * g)
                 # gate: the anchor is nearest to its own pad among all connector pads, within PIN_DIST
@@ -357,7 +360,7 @@ def main():
     if n and dry:
         print(f'  (dry run: {n} references would move to F.Fab first)')
     for g in list(b.Groups()):
-        if g.GetName() in (GROUP, 'silk-marks'):
+        if g.GetName() in (GROUP, 'silk-marks') or g.GetName() in cfg.get('remove_groups', []):
             for it in list(g.GetItems()):
                 b.Delete(it)
             b.Delete(g)
