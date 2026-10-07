@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Put the brand block on the bottom silkscreen of a board: the PITSA logo and "<NAME> rev <REV>".
 
-  $PY tools/brand_mark.py BOARD.kicad_pcb --name BASE-PWR --rev A [--logo-mm 16] [--near X Y] [--dry-run]
+  $PY tools/brand_mark.py BOARD.kicad_pcb --name BASE-PWR --rev A [--logo-mm 16] [--text-mm 1.2] [--near X Y] [--dry-run]
 
 User request 2026-10-04: each board shows its name, its revision and the PITSA logo. All parts are on the top side,
 so the block goes on B.SilkS (mirrored, so it reads correctly from the bottom).
 - Logo: hardware-design/boards/_art/pitsa-logo.png (see its .source.json). The dark pixels become filled silk
   rectangles: the image is resampled to a 0.1 mm pixel grid and each run of a row is one rectangle; equal runs of
   adjacent rows are joined. The smallest logo feature at 16 mm wide is about 0.3 mm (JLC silk minimum 0.153 mm).
-- Text: "<NAME> rev <REV>", 1.2 mm high, 0.18 mm stroke, under the logo.
+- Text: "<NAME> rev <REV>", 1.2 mm high (--text-mm), 0.18 mm stroke (0.15 mm per mm above 1.2 mm), under the logo.
 - Place: the block box (+ 0.5 mm) must be 1 mm inside the board outline (holes and cut-outs included), clear of
   each hole (vias, through-hole pads, NPTH) by 0.3 mm, of B.Cu pads, of rule areas on B.Cu, and of all B.SilkS
   items (board and footprint). The free place nearest to --near (default: the board centre) on a 0.5 mm grid.
@@ -74,6 +74,7 @@ def main():
     ap.add_argument('--rev', required=True)
     ap.add_argument('--logo-mm', type=float, default=16.0)
     ap.add_argument('--near', type=float, nargs=2)
+    ap.add_argument('--text-mm', type=float, default=1.2)   # text height; stroke 0.15 mm per mm, 0.18 mm minimum
     ap.add_argument('--dry-run', action='store_true')
     a = ap.parse_args()
     stackup_before = (stackup_block(open(a.board).read()) or (None,))[0]
@@ -87,7 +88,7 @@ def main():
 
     rects, lw, lh = logo_rects(a.logo_mm)
     text = f'{a.name} rev {a.rev}'
-    th, tt = 1.2, 0.18
+    th, tt = a.text_mm, max(0.18, round(0.15 * a.text_mm, 3))
     t = pcbnew.PCB_TEXT(b)
     t.SetText(text)
     t.SetLayer(pcbnew.B_SilkS)
