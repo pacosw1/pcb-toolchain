@@ -12,7 +12,9 @@ Reads hardware-design/boards/<BOARD>/board-labels.json:
                                                      matched within 0.3 mm). A rerun finds none: that is not an error.
    "pin_h": [1.27, 1.0], "title_h": [2.0, 1.5, 1.27, 1.0],          sizes to try, largest first (defaults)
    "connectors": [{"ref": "J1", "dir": "E",                         labels go from the pins toward this side (N/S/E/W)
-                   "pins": [["1", "24V", "/VIN_RAW"], ...],          pad, label, expected net (string or list)
+                   "pins": [["1", "24V", "/VIN_RAW"], ...],          pad, label, expected net (string or list), and an
+                                       optional dict: {"dir", "max_gap", "max_shift", "far": mm (a pin exempted in port-labels.json),
+                                        "angle": 90 (vertical, last resort)}
                    "title": ["24V DC IN", "18-32V"],                 title lines (horizontal); or a list of wordings
                                                                      [["24V DC IN", "18-32V"], ["24V IN", "18-32V DC"]]
                    "title_near": [x, y], "pin_h": [...], "title_h": [...], "max_gap": 3.0, "title_dx": 12}],
@@ -68,6 +70,9 @@ def stroke(h):
 
 
 def text_item(b, text, h, w, x, y, hj, vj):
+    """hj 'L' / 'C' / 'R'; 'R90': right justified, turned 90 degrees (a pin label with angle 90, see place_pins)."""
+    ang = 90 if hj.endswith('90') else 0
+    hj = hj[0]
     t = pcbnew.PCB_TEXT(b)
     t.SetText(text)
     t.SetLayer(pcbnew.F_SilkS)
@@ -75,7 +80,7 @@ def text_item(b, text, h, w, x, y, hj, vj):
     t.SetTextThickness(M(stroke(h)))
     t.SetHorizJustify(HJ[hj])
     t.SetVertJustify(VJ[vj])
-    t.SetTextAngleDegrees(0)
+    t.SetTextAngleDegrees(ang)
     t.SetPosition(pcbnew.VECTOR2I(M(x), M(y)))
     return t
 
@@ -145,6 +150,7 @@ class Board:
                 self.why.append('board silk ' + (d.GetText() if d.GetClass() == 'PCB_TEXT' else d.GetClass()))
         self.obs = obs
         self.placed = []   # (rect, text, kind): kind 'pin' or 'title'
+        self.pin_gap_x = PIN_GAP_X   # a connector may ask for more (pin_gap_x)
 
     def local(self, win, vias=True):
         """Obstacles in the window; vias=False leaves out the vias (tented: the silk prints over them)."""
@@ -164,7 +170,7 @@ class Board:
     def clash(self, r, kind):
         out = []
         for p, t, k in self.placed:
-            gx, gy = (PIN_GAP_X, PIN_GAP_Y) if kind == k == 'pin' else (TITLE_GAP, TITLE_GAP)
+            gx, gy = (self.pin_gap_x, PIN_GAP_Y) if kind == k == 'pin' else (TITLE_GAP, TITLE_GAP)
             if hit((r[0] - gx, r[1] - gy, r[2] + gx, r[3] + gy), p):
                 out.append(t)
         return out
@@ -224,15 +230,20 @@ def place_pins(B, conn, pads_all, cfg):
         else:    # N / S: centred on the pin
             hj, vj = 'C', ('T' if dy > 0 else 'B')
             edge = pb[3] if dy > 0 else pb[1]
+        if opt.get('angle') == 90:   # vertical: only where no horizontal place exists (reported)
+            hj, vj = 'R90', 'C'
         e = extent(b, text, h, h, hj, vj)
-        local = B.local((px - 9, py - 9, px + 9, py + 9), vias)
+        local = B.local((px - 12, py - 12, px + 12, py + 12), vias)
+        lim = opt.get('far', PIN_DIST)   # far: a pin with a gate exemption (port-labels.json): its label may stand further
+        shs = shifts if 'max_shift' not in opt else \
+            [0.0] + [round(0.1 * k, 2) * sg for k in range(1, int(opt['max_shift'] / 0.1 + 1e-6) + 1) for sg in (1, -1)]
         for k in range(int(opt.get('max_gap', max_gap) / 0.05) + 1):
             g = PAD_GAP + 0.05 + 0.05 * k
-            for sh in shifts:
+            for sh in shs:
                 x, y = (edge + dx * g, py + sh) if dx else (px + sh, edge + dy * g)
                 # gate: the anchor is nearest to its own pad among all connector pads, within PIN_DIST
                 d, r_, n_ = min((math.hypot(qx - x, qy - y), r_, n_) for r_, n_, qx, qy in pads_all)
-                if (r_, n_) != (ref, num) or d > PIN_DIST:
+                if (r_, n_) != (ref, num) or d > lim:
                     continue
                 r = (x + e[0], y + e[1], x + e[2], y + e[3])
                 if B.free(r, local):
@@ -245,6 +256,7 @@ def place_pins(B, conn, pads_all, cfg):
         return None, f'{ref} pin {num} "{text}" at {h} mm (0.5 mm from the pad: {", ".join(sorted(set(why)))})'
 
     sizes = conn.get('pin_h', cfg.get('pin_h', [1.27, 1.0]))
+    B.pin_gap_x = conn.get('pin_gap_x', PIN_GAP_X)
     # first clear of the vias; then (tented vias, all boards) over them, before a size below PIN_MIN
     for h, vias in [(h, v) for v in (True, False) for h in sizes if h >= PIN_MIN]:
         mark = len(B.placed)
@@ -256,7 +268,8 @@ def place_pins(B, conn, pads_all, cfg):
             B.placed.append((r, pin[1], 'pin'))
             out.append(it)
         else:
-            return out, ([] if vias else [f'{ref} pins: over tented vias'])
+            return out, ([] if vias else [f'{ref} pins: over tented vias']) + \
+                [f'{ref} pin {p[0]} "{p[1]}": vertical' for p in conn['pins'] if len(p) > 3 and p[3].get('angle')]
         del B.placed[mark:]
     out, notes, fails = [], [], []
     for pin in conn['pins']:     # no size >= PIN_MIN fits all: each pin the largest size <= PIN_MIN that fits
@@ -363,12 +376,13 @@ def main():
     for conn in cfg['connectors']:
         if conn.get('pins'):
             r = place_pins(B, conn, pads_all, cfg)
+            B.pin_gap_x = PIN_GAP_X
             if isinstance(r, SystemExit):
                 errs.append(str(r))
             else:
                 items += r[0]
                 notes += r[1]
-    if errs:
+    if errs and '--keep-going' not in args:
         raise SystemExit('board_labels: pin labels with no free place:\n  ' + '\n  '.join(errs))
     for conn in cfg['connectors']:
         try:
