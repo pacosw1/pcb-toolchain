@@ -787,6 +787,9 @@ def stitch_spots(q, r, rings=(0.97, 0.9, 0.8, 0.7), n=36):
             yield (round(q[0] + f * r * math.cos(a), 4), round(q[1] + f * r * math.sin(a), 4))
 
 
+STITCH_RINGS = (0.99, 0.95, 0.9, 0.85, 0.8, 0.75, 0.7)   # with --via (small ground vias): a finer search
+
+
 def needs_stitch(q, ground_vias, r):
     """True when no ground via is within r mm of the via q (kicad-happy RP-001)."""
     return not any(math.dist(q, g) <= r for g in ground_vias)
@@ -2198,7 +2201,7 @@ def cmd_stitch(a):
     for n, q in vias:
         if n != a.net or not needs_stitch(q, gv, a.r):
             continue
-        spot = next((c for c in stitch_spots(q, a.r) if room(c)), None)
+        spot = next((c for c in stitch_spots(q, a.r, *((STITCH_RINGS, 72) if a.via else ())) if room(c)), None)
         if spot is None:
             miss.append(q)
             continue

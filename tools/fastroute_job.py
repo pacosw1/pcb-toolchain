@@ -63,6 +63,26 @@ def write_pairs(pairs_json, dru, nets, out):
     return out
 
 
+def big_signal_via(text, dia_mm, classes):
+    """A second via padstack "Via[0-3]_RP_um" (circle dia_mm on every layer of the class via padstack) for the nets of
+    the given DSN classes: (use_via ...) of those classes points to it."""
+    m = re.search(r'\(padstack "(Via[^"]*)"\n(.*?)\n    \)', text, re.S)
+    if not m:
+        sys.exit("fastroute_job: no via padstack in the DSN")
+    name, body = m.group(1), m.group(2)
+    big = re.sub(r'\(circle (\S+) [\d.]+\)', lambda k: f'(circle {k.group(1)} {int(dia_mm * 1000)})', body)
+    text = text.replace(m.group(0), m.group(0) + f'\n    (padstack "Via[0-3]_RP_um"\n{big}\n    )', 1)
+    text = text.replace(f'(via "{name}")', f'(via "{name}" "Via[0-3]_RP_um")', 1)
+    for c in classes:
+        i = text.find(f"(class {c} ")
+        if i < 0:
+            continue
+        j = text.find("(use_via", i)
+        k = text.find(")", j)
+        text = text[:j] + '(use_via "Via[0-3]_RP_um"' + text[k:]
+    return text
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("board")
@@ -85,6 +105,12 @@ def main():
     ap.add_argument("--threads", type=int, default=0)
     ap.add_argument("--render", action="store_true", help="write OUTDIR/routed.png (kicad-cli pcb render, top view)")
     ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE")
+    ap.add_argument("--signal-via", type=float, default=0.0, help="routing padstack diameter (mm) of the vias of the "
+                    "--signal-via-classes nets: the router keeps other copper off a disc this wide round each signal "
+                    "via (room for an RP-001 ground via); after the import the vias get their class size again")
+    ap.add_argument("--signal-via-classes", default="FIELD,HOST")
+    ap.add_argument("--unlock-nets", default="", help="comma list of routed nets whose existing copper the router may "
+                    "rip up and route again (default: all existing copper is locked)")
     a = ap.parse_args()
     if not os.path.isfile(BIN):
         sys.exit(f"fastroute_job: binary not found: {BIN} (set FASTROUTE_BIN)")
@@ -112,9 +138,12 @@ def main():
 
     b = pcbnew.LoadBoard(base)
     was = {}
+    unlock = {n for n in a.unlock_nets.split(",") if n}
     for t in b.GetTracks():
         was[t.m_Uuid.AsString()] = t.IsLocked()
-        t.SetLocked(True)
+        # --unlock-nets: the copper of these nets goes to the router as normal wiring (a start it may rip up and
+        # route again); a locked item stays locked
+        t.SetLocked(t.IsLocked() or t.GetNetname() not in unlock)
     dsn, ses, rep = (os.path.join(a.outdir, n) for n in ("board.dsn", "board.ses", "report.json"))
     if not pcbnew.ExportSpecctraDSN(b, dsn):
         sys.exit("fastroute_job: DSN export failed")
@@ -134,6 +163,8 @@ def main():
         nets = want
     with open(dsn) as f:
         text = freeroute.restrict_dsn(f.read(), set(a.layers.split(",")), nets)
+    if a.signal_via:
+        text = big_signal_via(text, a.signal_via, [c for c in a.signal_via_classes.split(",") if c])
     with open(dsn, "w") as f:
         f.write(text)
     min_um = int(round(b.GetDesignSettings().m_TrackMinWidth / 1000))
@@ -170,6 +201,18 @@ def main():
         sys.exit("fastroute_job: SES import failed")
     for t in b.GetTracks():
         t.SetLocked(was.get(t.m_Uuid.AsString(), False))
+    if a.signal_via:   # the routing padstack back to the class via size
+        pro = json.load(open(stem + ".kicad_pro"))["net_settings"]["classes"]
+        sizes = {c["name"]: (c["via_diameter"], c["via_drill"]) for c in pro}
+        n_big = 0
+        for t in b.GetTracks():
+            if t.GetClass() == "PCB_VIA" and t.GetWidth(pcbnew.F_Cu) > pcbnew.FromMM(a.signal_via) - 1000:
+                d, dr = sizes.get(str(t.GetNetClassName()), sizes["Default"])
+                t.SetWidth(pcbnew.FromMM(d))
+                t.SetDrill(pcbnew.FromMM(dr))
+                n_big += 1
+        print(f"fastroute_job: {n_big} signal vias routed with the {a.signal_via:g} mm padstack, set to the class size",
+              flush=True)
     after = vias()
     imported_vias = after
     if a.only_nets:

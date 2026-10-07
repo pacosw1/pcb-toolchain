@@ -8,7 +8,8 @@ Reads hardware-design/boards/<BOARD>/silk-marks.json:
    "barrier": {"classes": ["HOST", "HOST_PWR"], "gap": 4.0, "label": "ISOLATED",
                "label_near": [x, y], "label_angle": 90},          (label_near/label_angle optional: a dense barrier)
    "no_silk": [[x0, y0, x1, y1], ...],
-   "refs": {"keep": ["J*", "TP*", ...], "size": 0.8, "max_mm": 2.5}}       (references kept on F.SilkS)
+   "refs": {"keep": ["J*", "TP*", ...], "skip_values": ["*CA"], "size": 0.8, "max_mm": 2.5}}
+                                                   (references kept on F.SilkS; skip_values: no polarity, e.g. bidirectional TVS)
 - texts: F.SilkS, stroke 0.15 mm (JLC minimum 0.153 mm is for lines; text 0.15 with 0.8 mm height prints, the
   repo standard), placed at the free spot nearest to the anchor footprint: the text box (+0.2 mm) is inside the
   board (1.0 mm from the edge), clear of every pad and hole (+0.25 mm), of all other silkscreen (+0.15 mm), of every
@@ -224,14 +225,22 @@ def main():
         def tup(bb, mm):
             g = MM(mm)
             return (bb.GetLeft() - g, bb.GetTop() - g, bb.GetRight() + g, bb.GetBottom() + g)
-        obs = [tup(p.GetBoundingBox(), 0.25) for p in pads] + [tup(v.GetBoundingBox(), 0.1) for v in holes] + \
+        # tented vias do not stop a reference (silk prints on the solder mask over them); pads and holes do
+        obs = [tup(p.GetBoundingBox(), 0.25) for p in pads] + \
+              [tup(v.GetBoundingBox(), 0.1) for v in holes if v.GetClass() != 'PCB_VIA'] + \
               [tup(c, 0.0) for _, c in bodies] + [tup(z, 0.0) for z in no_silk]
         silk_t = [tup(x.GetBoundingBox(), 0.15) for x in silk]
         ib = inner.BBox()
-        for f in sorted(b.GetFootprints(), key=lambda f: f.GetReference()):
+        targets = [f for f in b.GetFootprints() if any(fnmatch.fnmatchcase(f.GetReference(), pat) for pat in rs['keep'])
+                   and not any(fnmatch.fnmatchcase(f.GetValue(), pat) for pat in rs.get('skip_values', []))]
+
+        def crowd(f):   # the parts in crowded places first: they have the fewest free places
+            c = [cb for r, cb in courts if r == f.GetReference()][0]
+            w = MM(3)
+            return -sum(1 for o in obs if o[0] < c.GetRight() + w and c.GetLeft() - w < o[2] and
+                        o[1] < c.GetBottom() + w and c.GetTop() - w < o[3])
+        for f in sorted(targets, key=lambda f: (crowd(f), f.GetReference())):
             ref = f.GetReference()
-            if not any(fnmatch.fnmatchcase(ref, pat) for pat in rs['keep']):
-                continue
             fld = f.Reference()
             fld.SetLayer(pcbnew.F_SilkS)
             fld.SetVisible(True)
