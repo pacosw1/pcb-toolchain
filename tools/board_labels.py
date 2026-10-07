@@ -231,7 +231,7 @@ def place_pins(B, conn, pads_all, cfg):
             hj, vj = 'C', ('T' if dy > 0 else 'B')
             edge = pb[3] if dy > 0 else pb[1]
         if opt.get('angle') == 90:   # vertical: only where no horizontal place exists (reported)
-            hj, vj = 'R90', 'C'
+            hj, vj = ('R90' if dy else 'C90'), 'C'
         e = extent(b, text, h, h, hj, vj)
         local = B.local((px - 12, py - 12, px + 12, py + 12), vias)
         lim = opt.get('far', PIN_DIST)   # far: a pin with a gate exemption (port-labels.json): its label may stand further
