@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Connector pin labels and group titles on F.SilkS, then the silk marks, references and brand block of a board
+"""Connector pin labels and group titles on F.SilkS (and B.SilkS, "back": true), then the silk marks, references and brand block of a board
 (user request 2026-10-07 "logos and clear labels, bigger if possible"; model: the AIO labels, D-102).
 
   $PY tools/board_labels.py <BOARD> [--dry-run] [--pcb PATH] [--labels-only]      (KiCad python: pcbnew)
@@ -38,7 +38,15 @@ Steps (each rerun gives the same result):
    A pin or title with no free place stops the tool (fail closed); nothing is written.
 4. tools/silk_marks.py <BOARD> (silk-marks.json: ratings, mating labels, barrier line, kept references) and
    tools/brand_mark.py (the largest logo_mm / text_mm block that fits on B.SilkS near "near").
---labels-only: steps 1-3 only.
+5. "back": true (user request 2026-10-07: the bottom side may be easier to read while wiring): the same pin labels and
+   titles on B.SilkS, mirrored, aligned to the same pins (group "board-labels-back"; back_pass). It runs last and only
+   adds B.SilkS texts, so the front stays the same. Obstacles: through-hole pads and holes (0.2 mm; NPTH 0.3 mm), pads
+   on B.Cu / B.Mask, vias (0.15 mm, always: no tented-via fallback), all B.SilkS (brand block, footprint silk; 0.1
+   mm), M3 screw heads, other back labels and 0.5 mm inside the outline. Same sizes, wordings and pin-to-label rule
+   (nearest own pad, within 3.9 mm) as the front; a pin label that does not fit on the dir side goes to the other side
+   of its pin. An SMD connector (GH, FPC: no pad on the bottom) gets its labels
+   and title under its body (courtyard) first. A pin or title with no free place is skipped and listed (not an error).
+--labels-only: steps 1-3 (and 5).
 """
 import json
 import math
@@ -55,6 +63,7 @@ from brand_mark import keep_stackup, stackup_block  # noqa: E402
 from silk_refs import refs_off_silk  # noqa: E402
 
 GROUP = 'board-labels'
+GROUP_BACK = 'board-labels-back'   # the B.SilkS copy ("back": true), user request 2026-10-07
 PAD_GAP, NPTH_GAP, VIA_GAP, SILK_GAP, EDGE_GAP = 0.2, 0.3, 0.15, 0.1, 0.5
 PIN_GAP_X, PIN_GAP_Y = 0.5, 0.08   # between two pin labels: side by side / one over the other (1.25 mm pitch columns)
 TITLE_GAP = 0.6                     # between a title and any other label
@@ -70,13 +79,16 @@ def stroke(h):
     return max(0.15, round(0.15 * h, 3))
 
 
-def text_item(b, text, h, w, x, y, hj, vj):
-    """hj 'L' / 'C' / 'R'; 'R90': right justified, turned 90 degrees (a pin label with angle 90, see place_pins)."""
+def text_item(b, text, h, w, x, y, hj, vj, back=False):
+    """hj 'L' / 'C' / 'R'; 'R90': right justified, turned 90 degrees (a pin label with angle 90, see place_pins).
+    back: B.SilkS, mirrored (reads correctly from the bottom side)."""
     ang = 90 if hj.endswith('90') else 0
     hj = hj[0]
     t = pcbnew.PCB_TEXT(b)
     t.SetText(text)
-    t.SetLayer(pcbnew.F_SilkS)
+    t.SetLayer(pcbnew.B_SilkS if back else pcbnew.F_SilkS)
+    if back:
+        t.SetMirrored(True)
     t.SetTextSize(pcbnew.VECTOR2I(M(w), M(h)))
     t.SetTextThickness(M(stroke(h)))
     t.SetHorizJustify(HJ[hj])
@@ -89,13 +101,28 @@ def text_item(b, text, h, w, x, y, hj, vj):
 _ext = {}
 
 
-def extent(b, text, h, w, hj, vj):
+def extent(b, text, h, w, hj, vj, back=False):
     """Glyph box of the text relative to its anchor: (dx0, dy0, dx1, dy1) mm."""
-    k = (text, h, w, hj, vj)
+    k = (text, h, w, hj, vj, back)
     if k not in _ext:
-        bb = text_item(b, text, h, w, 0, 0, hj, vj).GetEffectiveTextShape().BBox()
+        bb = text_item(b, text, h, w, 0, 0, hj, vj, back).GetEffectiveTextShape().BBox()
         _ext[k] = (T(bb.GetLeft()), T(bb.GetTop()), T(bb.GetRight()), T(bb.GetBottom()))
     return _ext[k]
+
+
+def pick(b, text, h, w, u, vertical, back):
+    """Justification (hj, vj) that puts the glyph box on the side u = (ux, uy) of its anchor, centred across u.
+    Measured from the glyph box, so a mirrored (B.SilkS) text gets the right side too."""
+    ux, uy = u
+    if vertical:
+        opts = [('L90', 'C'), ('R90', 'C')] if uy else [('C90', 'C')]
+    else:
+        opts = [('L', 'C'), ('R', 'C')] if ux else [('C', 'T'), ('C', 'B')]
+
+    def along(o):
+        e = extent(b, text, h, w, o[0], o[1], back)
+        return (e[0] + e[2]) / 2 * ux + (e[1] + e[3]) / 2 * uy
+    return max(opts, key=along)
 
 
 def hit(r, o):
@@ -111,31 +138,41 @@ def bbox_mm(bb, g=0.0):
 
 
 class Board:
-    def __init__(self, b, removed_ids):
+    def __init__(self, b, removed_ids, back=False):
+        """back: the obstacles of the B.SilkS pass (all parts are on the top side): through-hole pads and holes, pads
+        on B.Cu / B.Mask, vias, B.SilkS (footprint and board, the brand block included), screw heads, board edge."""
         self.b = b
+        self.back = back
+        self.smd = {}   # back: ref -> courtyard box of a connector with no through-hole pin (labels go under it)
         outline = pcbnew.SHAPE_POLY_SET()
         b.GetBoardPolygonOutlines(outline, False)
         self.inner = pcbnew.SHAPE_POLY_SET(outline)
         self.inner.Deflate(M(EDGE_GAP), pcbnew.CORNER_STRATEGY_ROUND_ALL_CORNERS, M(0.02))
         obs, self.screws, self.why = [], [], []
+        silk_layer = pcbnew.B_SilkS if back else pcbnew.F_SilkS
         for f in b.GetFootprints():
             for p in f.Pads():
                 npth = p.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH
-                obs.append(bbox_mm(p.GetBoundingBox(), NPTH_GAP if npth else PAD_GAP))
-                self.why.append(f'pad {f.GetReference()}.{p.GetNumber()}')
+                if back and not (p.GetDrillSize().x or p.IsOnLayer(pcbnew.B_Cu) or p.IsOnLayer(pcbnew.B_Mask)):
+                    pass   # a top SMD pad: not on the bottom side
+                else:
+                    obs.append(bbox_mm(p.GetBoundingBox(), NPTH_GAP if npth else PAD_GAP))
+                    self.why.append(f'pad {f.GetReference()}.{p.GetNumber()}')
                 if p.GetDrillSize().x >= M(3.0):
                     self.screws.append((T(p.GetPosition().x), T(p.GetPosition().y)))
             c = f.GetCourtyard(pcbnew.F_CrtYd)
-            if not c.IsEmpty() and not any(p.GetDrillSize().x >= M(3.0) for p in f.Pads()):
+            if back and not c.IsEmpty() and not any(p.GetDrillSize().x for p in f.Pads()):
+                self.smd[f.GetReference()] = bbox_mm(c.BBox())
+            if not back and not c.IsEmpty() and not any(p.GetDrillSize().x >= M(3.0) for p in f.Pads()):
                 bb = c.BBox()
                 obs.append(bbox_mm(bb, -0.2))
                 self.why.append(f'body {f.GetReference()}')
             for g in f.GraphicalItems():
-                if g.GetLayer() == pcbnew.F_SilkS and (g.GetClass() != 'PCB_TEXT' or g.IsVisible()):
+                if g.GetLayer() == silk_layer and (g.GetClass() != 'PCB_TEXT' or g.IsVisible()):
                     obs.append(bbox_mm(g.GetBoundingBox(), SILK_GAP))
                     self.why.append(f'silk {f.GetReference()}')
             for fld in (f.Reference(), f.Value()):
-                if fld.GetLayer() == pcbnew.F_SilkS and fld.IsVisible():
+                if fld.GetLayer() == silk_layer and fld.IsVisible():
                     obs.append(bbox_mm(fld.GetBoundingBox(), SILK_GAP))
                     self.why.append(f'field {f.GetReference()}')
         for t in b.GetTracks():
@@ -143,9 +180,9 @@ class Board:
                 obs.append(bbox_mm(t.GetBoundingBox(), VIA_GAP))
                 self.why.append(f'via {t.GetNetname()}')
         for d in b.GetDrawings():
-            if d.GetLayer() == pcbnew.F_SilkS and id(d) not in removed_ids:
+            if d.GetLayer() == silk_layer and id(d) not in removed_ids:
                 g = d.GetParentGroup()
-                if g and g.GetName() in (GROUP, 'silk-marks'):
+                if g and g.GetName() in (GROUP, 'silk-marks', GROUP_BACK):
                     continue
                 obs.append(bbox_mm(d.GetBoundingBox(), SILK_GAP))
                 self.why.append('board silk ' + (d.GetText() if d.GetClass() == 'PCB_TEXT' else d.GetClass()))
@@ -155,6 +192,7 @@ class Board:
 
     def local(self, win, vias=True):
         """Obstacles in the window; vias=False leaves out the vias (tented: the silk prints over them)."""
+        vias = vias or self.back   # back: always clear of the vias (no tented-via fallback)
         return [o for o, w in zip(self.obs, self.why) if hit(o, win) and (vias or not w.startswith('via '))]
 
     def inside(self, r):
@@ -233,24 +271,45 @@ def place_pins(B, conn, pads_all, cfg):
             edge = pb[3] if dy > 0 else pb[1]
         if opt.get('angle') == 90:   # vertical: only where no horizontal place exists (reported)
             hj, vj = ('R90' if dy else 'C90'), 'C'
-        e = extent(b, text, h, h, hj, vj)
+        modes = [('out', hj, vj)]
+        if B.back:   # mirrored text: the justification comes from the glyph box
+            vert = opt.get('angle') == 90
+            # then the other side of the pin (no part on the bottom: the side behind the terminal body is free)
+            modes = [('out',) + pick(b, text, h, h, (dx, dy), vert, True),
+                     ('opp',) + pick(b, text, h, h, (-dx, -dy), vert, True)]
+            if ref in B.smd:   # SMD connector: no pad on the bottom; first under the connector body (courtyard)
+                modes.insert(0, ('in',) + pick(b, text, h, h, (-dx, -dy), vert, True))
         local = B.local((px - 12, py - 12, px + 12, py + 12), vias)
         lim = opt.get('far', PIN_DIST)   # far: a pin with a gate exemption (port-labels.json): its label may stand further
         shs = shifts if 'max_shift' not in opt else \
             [0.0] + [round(0.1 * k, 2) * sg for k in range(1, int(opt['max_shift'] / 0.1 + 1e-6) + 1) for sg in (1, -1)]
         row = conn['pins'].index(pin) % conn.get('rows', 1)   # staggered rows (fine pitch): row k starts k lines out
-        g0 = PAD_GAP + 0.05 + row * (e[3] - e[1] + PIN_GAP_Y + 0.1) if not dx else PAD_GAP + 0.05
-        for k in range(int(opt.get('max_gap', max_gap) / 0.05) + 1):
-            g = g0 + 0.05 * k
-            for sh in shs:
-                x, y = (edge + dx * g, py + sh) if dx else (px + sh, edge + dy * g)
-                # gate: the anchor is nearest to its own pad among all connector pads, within PIN_DIST
-                d, r_, n_ = min((math.hypot(qx - x, qy - y), r_, n_) for r_, n_, qx, qy in pads_all)
-                if (r_, n_) != (ref, num) or d > lim:
-                    continue
-                r = (x + e[0], y + e[1], x + e[2], y + e[3])
-                if B.free(r, local):
-                    return (ref, num, text, h, h, x, y, hj, vj), r
+        for mode, hj, vj in modes:
+            e = extent(b, text, h, h, hj, vj, B.back)
+            g0 = PAD_GAP + 0.05 + row * (e[3] - e[1] + PIN_GAP_Y + 0.1) if not dx else PAD_GAP + 0.05
+            if mode == 'in':
+                g0 -= PAD_GAP + 0.05
+            edge_o = (pb[0] if dx > 0 else pb[2]) if dx else (pb[1] if dy > 0 else pb[3])   # 'opp': far pad edge
+            for k in range(int(opt.get('max_gap', max_gap) / 0.05) + 1):
+                g = g0 + 0.05 * k
+                for sh in shs:
+                    if mode == 'in':   # from the pad centre into the body
+                        x, y = (px - dx * g, py + sh) if dx else (px + sh, py - dy * g)
+                    elif mode == 'opp':
+                        x, y = (edge_o - dx * g, py + sh) if dx else (px + sh, edge_o - dy * g)
+                    else:
+                        x, y = (edge + dx * g, py + sh) if dx else (px + sh, edge + dy * g)
+                    # gate: the anchor is nearest to its own pad among all connector pads, within PIN_DIST
+                    d, r_, n_ = min((math.hypot(qx - x, qy - y), r_, n_) for r_, n_, qx, qy in pads_all)
+                    if (r_, n_) != (ref, num) or d > lim:
+                        continue
+                    r = (x + e[0], y + e[1], x + e[2], y + e[3])
+                    if mode == 'in':
+                        c = B.smd[ref]
+                        if not (c[0] <= r[0] and c[1] <= r[1] and r[2] <= c[2] and r[3] <= c[3]):
+                            continue
+                    if B.free(r, local):
+                        return (ref, num, text, h, h, x, y, hj, vj), r
         x, y = (edge + dx * 0.5, py) if dx else (px, edge + dy * 0.5)
         r = (x + e[0], y + e[1], x + e[2], y + e[3])
         why = [w for o, w in zip(B.obs, B.why) if hit(r, o)] + [f'label {t}' for t in B.clash(r, 'pin')]
@@ -286,6 +345,8 @@ def place_pins(B, conn, pads_all, cfg):
                 break
         else:
             fails.append(r)
+    if fails and B.back:   # back: a pin with no free place is skipped (listed), the others stay
+        return out, notes + ['SKIPPED ' + f for f in fails]
     if fails:
         return SystemExit('\n  '.join(fails))
     return out, notes
@@ -311,7 +372,10 @@ def place_title(B, conn, cfg):
         x0, y0 = x1, y1 = conn['title_near']
         reach = lambda x, y: True
     dx, dy = DIRS[conn.get('dir', 'N')]
-    if conn.get('title_near'):
+    if B.back and ref in B.smd:   # SMD connector, back: the title goes under the connector body first
+        c = B.smd[ref]
+        nx, ny = (c[0] + c[2]) / 2, (c[1] + c[3]) / 2
+    elif conn.get('title_near'):
         nx, ny = conn['title_near']
     else:
         nx, ny = (x0 + x1) / 2 + dx * 6, (y0 + y1) / 2 + dy * 6
@@ -327,7 +391,7 @@ def place_title(B, conn, cfg):
         for _ in (0,):
             w = round(h * wf, 3)
             pitch = round(h * 1.4, 3)
-            ext = {hj: [extent(b, ln, h, w, hj, 'C') for ln in lines] for hj in conn.get('title_just', 'CLR')}
+            ext = {hj: [extent(b, ln, h, w, hj, 'C', B.back) for ln in lines] for hj in conn.get('title_just', 'CLR')}
             for i, j in steps:
                 cx, cy = nx + i * 0.25, ny + j * 0.25
                 ys = [cy + (k - (n - 1) / 2) * pitch for k in range(n)]
@@ -360,7 +424,7 @@ def main():
     if n and dry:
         print(f'  (dry run: {n} references would move to F.Fab first)')
     for g in list(b.Groups()):
-        if g.GetName() in (GROUP, 'silk-marks') or g.GetName() in cfg.get('remove_groups', []):
+        if g.GetName() in (GROUP, 'silk-marks', GROUP_BACK) or g.GetName() in cfg.get('remove_groups', []):
             for it in list(g.GetItems()):
                 b.Delete(it)
             b.Delete(g)
@@ -424,8 +488,61 @@ def main():
     pcbnew.SaveBoard(pcb, b)
     keep_stackup(pcb, stack)
     print(f'board_labels {board}: {len(items)} texts in group "{GROUP}"')
-    if '--labels-only' in args:
-        return
+    if '--labels-only' not in args:
+        silk_and_brand(board, pcb, cfg, args)
+    if cfg.get('back'):
+        back_pass(board, pcb, cfg)
+
+
+def back_pass(board, pcb, cfg):
+    """Step 5 ("back": true): the same pin labels and titles on B.SilkS, mirrored, aligned to the same pins. It runs
+    last, so it sees the brand block and never changes a front item. Same sizes and search as the front; the obstacles
+    are the bottom side ones (Board(back=True)); vias always stay clear. An SMD connector (no pad on the bottom) gets
+    its labels under its body first. A pin or title with no free place is skipped and listed (not an error)."""
+    stack = (stackup_block(open(pcb).read()) or (None,))[0]
+    b = pcbnew.LoadBoard(pcb)
+    for g in list(b.Groups()):
+        if g.GetName() == GROUP_BACK:
+            for it in list(g.GetItems()):
+                b.Delete(it)
+            b.Delete(g)
+    B = Board(b, set(), back=True)
+    pads_all = port_pads(b, None)
+    items, skipped, notes = [], [], []
+    for conn in cfg['connectors']:
+        if conn.get('pins'):
+            r = place_pins(B, conn, pads_all, cfg)
+            B.pin_gap_x = PIN_GAP_X
+            if isinstance(r, SystemExit):
+                skipped.append(str(r))
+            else:
+                items += r[0]
+                notes += r[1]
+    for conn in cfg['connectors']:
+        try:
+            items += place_title(B, conn, cfg)
+        except SystemExit as e:
+            skipped.append(str(e))
+    skipped += [n_[8:] for n_ in notes if n_.startswith('SKIPPED ')]
+    notes = [n_ for n_ in notes if not n_.startswith('SKIPPED ')]
+    group = pcbnew.PCB_GROUP(b)
+    group.SetName(GROUP_BACK)
+    b.Add(group)
+    for ref, num, text, h, w, x, y, hj, vj in items:
+        t = text_item(b, text, h, w, x, y, hj, vj, back=True)
+        b.Add(t)
+        group.AddItem(t)
+        print(f'  back {ref}.{num or "title"} "{text}" {h:g}x{w:g} mm at ({x:.2f}, {y:.2f})')
+    for n_ in notes:
+        print('  back SMALLER: ' + n_)
+    for n_ in skipped:
+        print('  back SKIPPED: ' + n_)
+    pcbnew.SaveBoard(pcb, b)
+    keep_stackup(pcb, stack)
+    print(f'board_labels {board}: {len(items)} back texts in group "{GROUP_BACK}", {len(skipped)} skipped')
+
+
+def silk_and_brand(board, pcb, cfg, args):
     py = sys.executable
     pcb_arg = ['--pcb', pcb] if '--pcb' in args else []
     subprocess.run([py, os.path.join(ROOT, 'tools', 'silk_marks.py'), board] + pcb_arg, check=True)
