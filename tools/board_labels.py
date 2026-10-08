@@ -10,7 +10,7 @@ footprint, pad, track, via or zone.
 Reads hardware-design/boards/<BOARD>/board-labels.json:
   {"remove": [["24V", 145.6, 107.05], ...], "remove_groups": ["j6-labels"],   (legacy label groups this tool replaces)        legacy loose F.SilkS texts that this tool replaces (text, x, y;
                                                      matched within 0.3 mm). A rerun finds none: that is not an error.
-   "pin_h": [1.27, 1.0], "title_h": [2.0, 1.5, 1.27, 1.0],          sizes to try, largest first (defaults)
+   "pin_h": [1.0, 0.9], "title_h": [1.5, 1.27, 1.0],          sizes to try, largest first (defaults)
    "connectors": [{"ref": "J1", "dir": "E",                         labels go from the pins toward this side (N/S/E/W)
                    "pins": [["1", "24V", "/VIN_RAW"], ...],          pad, label, expected net (string or list), and an
                                        optional dict: {"dir", "max_gap", "max_shift", "far": mm (a pin exempted in port-labels.json),
@@ -258,7 +258,7 @@ def place_pins(B, conn, pads_all, cfg):
         why += ['screw head'] if B.screw(r) else []
         return None, f'{ref} pin {num} "{text}" at {h} mm (0.5 mm from the pad: {", ".join(sorted(set(why)))})'
 
-    sizes = conn.get('pin_h', cfg.get('pin_h', [1.27, 1.0]))
+    sizes = conn.get('pin_h', cfg.get('pin_h', [1.0, 0.9]))
     B.pin_gap_x = conn.get('pin_gap_x', PIN_GAP_X)
     # first clear of the vias; then (tented vias, all boards) over them, before a size below PIN_MIN
     for h, vias in [(h, v) for v in (True, False) for h in sizes if h >= PIN_MIN]:
@@ -320,7 +320,7 @@ def place_title(B, conn, cfg):
     steps = sorted(((i, j) for i in range(-n4, n4 + 1) for j in range(-n4, n4 + 1)), key=lambda q: q[0] ** 2 + q[1] ** 2)
     win = (nx - span - 30, ny - span - 15, nx + span + 30, ny + span + 15)
     locals_ = {True: B.local(win), False: B.local(win, False)}
-    for h, vias, lines, wf in [(h, v, ln, wf) for h in conn.get('title_h', cfg.get('title_h', [2.0, 1.5, 1.27, 1.0]))
+    for h, vias, lines, wf in [(h, v, ln, wf) for h in conn.get('title_h', cfg.get('title_h', [1.5, 1.27, 1.0]))
                                for v in (True, False) for ln in alts for wf in (1.0, 0.8)]:
         local = locals_[vias]
         n = len(lines)
