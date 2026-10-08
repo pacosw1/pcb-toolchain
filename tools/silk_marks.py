@@ -8,7 +8,8 @@ Reads hardware-design/boards/<BOARD>/silk-marks.json:
    "barrier": {"classes": ["HOST", "HOST_PWR"], "gap": 4.0, "label": "ISOLATED",
                "label_near": [x, y], "label_angle": 90},          (label_near/label_angle optional: a dense barrier)
    "no_silk": [[x0, y0, x1, y1], ...],
-   "refs": {"keep": ["J*", "TP*", ...], "skip_values": ["*CA"], "size": 0.8, "max_mm": 2.5}}
+   "refs": {"keep": ["J*", "TP*", ...], "skip_values": ["*CA"], "size": 0.8, "max_mm": 2.5,
+            "inside_span": false (true: a reference stays inside the x / y span of its own courtyard)}}
                                                    (references kept on F.SilkS; skip_values: no polarity, e.g. bidirectional TVS)
 - texts: F.SilkS, stroke 0.15 mm (JLC minimum 0.153 mm is for lines; text 0.15 with 0.8 mm height prints, the
   repo standard), placed at the free spot nearest to the anchor footprint: the text box (+0.2 mm) is inside the
@@ -266,6 +267,8 @@ def main():
                     xs = [c.GetLeft() - g - tw // 2, c.GetRight() + g + tw // 2]
                     ys = [c.GetTop() - g - th // 2, c.GetBottom() + g + th // 2]
                     hw, hh = c.GetWidth() // 2 + tw // 2, c.GetHeight() // 2 + th // 2
+                    if rs.get('inside_span'):   # the text stays inside the span of its own part (no reading as a neighbour's)
+                        hw, hh = max(c.GetWidth() // 2 - tw // 2, 0), max(c.GetHeight() // 2 - th // 2, 0)
                     cands = [(cx + dx, y) for dx in range(-hw, hw + 1, MM(0.25)) for y in ys] + \
                             [(x, cy + dy) for dy in range(-hh, hh + 1, MM(0.25)) for x in xs]
                     cands.sort(key=lambda q: math.hypot(q[0] - cx, q[1] - cy))
