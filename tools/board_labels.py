@@ -186,6 +186,10 @@ class Board:
                     continue
                 obs.append(bbox_mm(d.GetBoundingBox(), SILK_GAP))
                 self.why.append('board silk ' + (d.GetText() if d.GetClass() == 'PCB_TEXT' else d.GetClass()))
+        for g in b.Groups():   # the brand block is one obstacle: no label in the gaps between its letters
+            if g.GetName().startswith('brand ') and any(i.GetLayer() == silk_layer for i in g.GetItems()):
+                obs.append(bbox_mm(g.GetBoundingBox(), SILK_GAP))
+                self.why.append('brand block')
         self.obs = obs
         self.placed = []   # (rect, text, kind): kind 'pin' or 'title'
         self.pin_gap_x = PIN_GAP_X   # a connector may ask for more (pin_gap_x)
@@ -375,6 +379,8 @@ def place_title(B, conn, cfg):
     if B.back and ref in B.smd:   # SMD connector, back: the title goes under the connector body first
         c = B.smd[ref]
         nx, ny = (c[0] + c[2]) / 2, (c[1] + c[3]) / 2
+    elif B.back and conn.get('back_title_near'):   # back only: a different place (e.g. the brand block is in the way)
+        nx, ny = conn['back_title_near']
     elif conn.get('title_near'):
         nx, ny = conn['title_near']
     else:
@@ -403,6 +409,8 @@ def place_title(B, conn, cfg):
                         for r, ln in zip(rs, lines):
                             B.placed.append((r, ln, 'title'))
                         return [(ref, None, ln, h, w, cx, y, hj, 'C') for ln, y in zip(lines, ys)]
+    if B.back and span < 12:   # back: the brand block can fill the small search box; widen it (the front keeps title_dx)
+        return place_title(B, dict(conn, title_dx=12), cfg)
     raise SystemExit(f'board_labels: {ref} title {alts}: no free place within {TITLE_DIST} mm of the pads')
 
 
