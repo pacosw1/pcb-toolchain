@@ -1,0 +1,20 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync,mkdirSync,writeFileSync,rmSync} from 'node:fs';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
+import {latestDrc} from './gate-evidence.mjs';
+import {gateInputs,fingerprint} from './gate-inputs.mjs';
+test('routing rejects obsolete or failed DRC but accepts completed exploratory evidence',t=>{
+ const root=mkdtempSync(join(tmpdir(),'gate-evidence-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
+ const board='X';const base='hardware-design/boards/X/';
+ const put=(p,v)=>{mkdirSync(join(root,p,'..'),{recursive:true});writeFileSync(join(root,p),typeof v==='string'?v:JSON.stringify(v));};
+ put(base+'gate.json',{project:'cad/X',checks:{erc:true,drc:true}});put(base+'cad/X.kicad_pcb','old');
+ put(base+'.gate/latest.json',{run:'run-test',exit:1});
+ const result={changedDuringRun:false,metrics:{drc_errors:2},provenance:fingerprint(root,gateInputs(root,board).files)};
+ put(base+'.gate/run-test/result.json',result);put(base+'.gate/run-test/drc.json',{violations:[{severity:'error'},{severity:'error'}],schematic_parity:[],unconnected_items:[]});
+ assert.equal(latestDrc(root,board).violations.length,2);
+ put(base+'cad/X.kicad_pcb','new');assert.throws(()=>latestDrc(root,board),/inputs have changed/);
+ put(base+'cad/X.kicad_pcb','old');result.metrics.drc_errors=null;put(base+'.gate/run-test/result.json',result);assert.throws(()=>latestDrc(root,board),/did not complete/);
+ put(base+'.gate/latest.json',{run:'../../elsewhere'});assert.throws(()=>latestDrc(root,board),/invalid gate run/);
+});

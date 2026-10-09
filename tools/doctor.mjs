@@ -9,7 +9,9 @@
 import {execFileSync} from 'node:child_process';
 import {existsSync, mkdirSync, copyFileSync} from 'node:fs';
 import {join} from 'node:path';
-import {root, kicadCli, kicadPython, kicadShared, kicadConfig, KICAD_VERSION, pinnedRepos, freeroutingJar, modernPython} from './lib/env.mjs';
+import {root, kicadCli, kicadPython, kicadShared, kicadConfig, KICAD_VERSION, pinnedRepos, modernPython} from './lib/env.mjs';
+import {hookCheck} from './lib/doctor-checks.mjs';
+import {homedir} from 'node:os';
 
 const fix = process.argv.includes('--fix');
 const rows = [];
@@ -58,16 +60,23 @@ add('REQUIRED', 'Python 3.10 or later (kicad-happy gate)', Boolean(modern), mode
 
 // Gate ratchet hook (tools/hooks/pre-commit)
 let hooks = run('git', ['-C', root, 'config', '--get', 'core.hooksPath']);
-if (hooks !== 'tools/hooks' && fix) {
+if (!hookCheck(root,hooks).ok && fix) {
   run('git', ['-C', root, 'config', 'core.hooksPath', 'tools/hooks']);
   hooks = run('git', ['-C', root, 'config', '--get', 'core.hooksPath']);
 }
-add('REQUIRED', 'git hooks path (gate ratchet)', hooks === 'tools/hooks', hooks === 'tools/hooks' ? 'tools/hooks' : 'not set: run with --fix (git config core.hooksPath tools/hooks)');
+const hook=hookCheck(root,hooks);
+add('REQUIRED', 'git hooks path (gate ratchet)', hook.ok, hook.detail);
 
 // Routing
-const java = run('java', ['-version']) !== null;
-add('OPTIONAL', 'Java (Freerouting)', java, java ? which('java') : 'no Java runtime: brew install openjdk');
-add('OPTIONAL', 'Freerouting 2.1.0 jar', existsSync(freeroutingJar), existsSync(freeroutingJar) ? freeroutingJar : `not found: ${freeroutingJar} (set FREEROUTING_JAR)`);
+const fastroute=process.env.FASTROUTE_BIN ?? join(homedir(),'opt/fastroute/fastroute-0.1.7-macos-arm64/fastroute');
+const routeVersion=existsSync(fastroute) ? run(fastroute,['--version']) : null;
+add('REQUIRED','Fastroute 0.1.7 (primary router)',Boolean(routeVersion?.includes('0.1.7')),routeVersion ?? `not found: ${fastroute}`);
+const cross=process.env.FREEROUTING_CROSSCHECK_JAR;
+const crossVersion=cross && existsSync(cross) ? run('java',['-jar',cross,'--version']) : null;
+add('OPTIONAL','Freerouting 2.4.1 (remote cross-check)',Boolean(crossVersion?.includes('2.4.1')),cross ? `${cross}: ${crossVersion ?? 'version could not be verified'}` : 'remote-only: iot-lab-route:10.0-fr241; not checked from this host');
+const tracemaker=process.env.TRACEMAKER_BIN ?? join(homedir(),'opt/tracemaker/build/macos-metal/src/app/tracemaker');
+const tmVersion=existsSync(tracemaker)?run(tracemaker,['--version']):null;
+add('OPTIONAL','TraceMaker 0.9.0 (benchmark only)',Boolean(tmVersion?.includes('0.9.0')),tmVersion ? `${tmVersion} at ${tracemaker}` : `not found or version unavailable: ${tracemaker}`);
 
 // Other tools from CLAUDE.md section 5
 for (const [cmd, use] of [['node', 'checkers'], ['uv', 'easyeda2kicad'], ['docling', 'datasheet to Markdown'], ['ngspice', 'simulation'], ['git-lfs', 'not used yet']]) {

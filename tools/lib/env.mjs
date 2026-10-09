@@ -6,11 +6,12 @@ import {existsSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 import {homedir} from 'node:os';
 import {join} from 'node:path';
+import {fileURLToPath} from 'node:url';
 
 const home = homedir();
 const first = (candidates) => candidates.find((p) => p && existsSync(p)) ?? candidates.find(Boolean);
 
-export const root = new URL('../..', import.meta.url).pathname.replace(/\/$/, '');
+export const root = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/, '');
 export const kicadApp = process.env.KICAD_APP ?? '/Applications/KiCad/KiCad.app/Contents';
 export const kicadCli = process.env.KICAD_CLI ?? `${kicadApp}/MacOS/kicad-cli`;
 export const kicadPython = process.env.KICAD_PYTHON ?? `${kicadApp}/Frameworks/Python.framework/Versions/Current/bin/python3`;
@@ -25,13 +26,6 @@ export const pinnedRepos = [
   {name: 'KiCadRoutingTools', env: 'KRT_DIR', commit: '46c90458', dir: repo('KiCadRoutingTools', 'KRT_DIR'), needed: 'advisory'},
   {name: 'KiCadRoutingPlacementTools', env: 'KRPT_DIR', commit: '409d53e', dir: repo('KiCadRoutingPlacementTools', 'KRPT_DIR'), needed: 'optional'},
 ];
-
-export const freeroutingJar = first([
-  process.env.FREEROUTING_JAR,
-  join(home, 'Documents/KiCad/9.0/3rdparty/plugins/app_freerouting_kicad-plugin/jar/freerouting-2.1.0.jar'),
-  join(home, 'Documents/KiCad/10.0/3rdparty/plugins/app_freerouting_kicad-plugin/jar/freerouting-2.1.0.jar'),
-  join(home, 'opt/freerouting/freerouting-2.1.0.jar'),
-]);
 
 // kicad-happy needs Python 3.10 or later. The macOS python3 and the KiCad Python are 3.9.
 // modernPython: env PYTHON_MODERN, else the first python3.1x on PATH, else 'python3' (doctor.mjs then reports it).

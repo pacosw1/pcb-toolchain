@@ -13,18 +13,18 @@
 //   "pairs": "diff-pairs.json", "paths": "current-paths.json", "viapads": {"allow": ["U1.9"]},
 //   "kicad_happy": {"exempt": "kicad-happy-exempt.json", "grounds": []}, "port_labels": true, "rf": "rf-lines.json"}}
 // Only the listed checks run. Metric levels and targets: tools/lib/gate-core.mjs.
-// Waivers: <board>/gate-waivers.json, a list of {metric, to, reason, date}.
-// The full tool output goes to <board>/.gate/ (not tracked).
+// Ratchet waivers: {metric, from, to, reason, owner, date, expires, revision, inputFingerprint}.
+// Waivers cannot make a target gate pass. Full tool output goes to isolated .gate/run-* directories.
 
-import {execFile, execFileSync} from 'node:child_process';
-import {promisify} from 'node:util';
+import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import {readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync} from 'node:fs';
+import {readFileSync, writeFileSync, existsSync, readdirSync, renameSync} from 'node:fs';
 import {join, relative, dirname, resolve} from 'node:path';
-import {root, kicadCli, kicadPython, modernPython} from './lib/env.mjs';
-import {METRICS, passes, ratchet, metricsText, countFrom} from './lib/gate-core.mjs';
+import {root, kicadCli, kicadPython, modernPython, kicadShared, kicadConfig, pinnedRepos} from './lib/env.mjs';
+import {METRICS, passes, ratchet, metricsText, countFrom, validateConfig, expectedMetrics} from './lib/gate-core.mjs';
+import {runDirectory, runTool, readReport, checkedText, readHappyResult} from './lib/gate-runtime.mjs';
+import {gateInputs, fingerprint} from './lib/gate-inputs.mjs';
 
-const run = promisify(execFile);
 const args = process.argv.slice(2);
 const flag = (name) => args.includes(name);
 const boardsDir = join(root, 'hardware-design/boards');
@@ -42,10 +42,12 @@ if (!board || !existsSync(join(dir, configName))) {
   process.exit(2);
 }
 const cfg = JSON.parse(readFileSync(join(dir, configName), 'utf8'));
+const configErrors = validateConfig(cfg);
+if (configErrors.length) { console.error(configErrors.join('\n')); process.exit(2); }
 const pcb = join(dir, `${cfg.project}.kicad_pcb`);
 const sch = join(dir, `${cfg.project}.kicad_sch`);
-const logDir = join(dir, '.gate');
-mkdirSync(logDir, {recursive: true});
+const logDir = runDirectory(join(dir, '.gate'));
+console.log(`gate evidence: ${relative(root, logDir)}`);
 const tool = (name) => join(root, 'tools', name);
 const spec = (name) => join(dir, name);
 const sha = (file) => (existsSync(file) ? createHash('sha256').update(readFileSync(file)).digest('hex') : null);
@@ -57,16 +59,7 @@ const shaSheets = (folder) => {
 };
 
 // A tool that exits non-zero still gives its output (the count is in the text). No output = the metric is null.
-async function output(id, cmd, cmdArgs) {
-  let out = '';
-  try {
-    out = (await run(cmd, cmdArgs, {encoding: 'utf8', maxBuffer: 256 * 1024 * 1024})).stdout;
-  } catch (e) {
-    out = `${e.stdout ?? ''}\n[exit ${e.code}] ${String(e.stderr ?? e.message).slice(0, 2000)}`;
-  }
-  writeFileSync(join(logDir, `${id}.log`), out);
-  return out;
-}
+async function output(id, cmd, cmdArgs) { return checkedText(await runTool(logDir,id,cmd,cmdArgs)); }
 const json = (file) => {
   try {
     return JSON.parse(readFileSync(file, 'utf8'));
@@ -77,17 +70,32 @@ const json = (file) => {
 const bySeverity = (items, severity) => (items ?? []).filter((v) => v.severity === severity).length;
 
 const c = cfg.checks ?? {};
+const required = expectedMetrics(cfg);
+const environment={configDir:kicadConfig,variables:{KICAD10_FOOTPRINT_DIR:join(kicadShared,'footprints'),KICAD10_SYMBOL_DIR:join(kicadShared,'symbols')},repositories:pinnedRepos.filter(r=>r.needed==='gate').map(r=>r.dir)};
+const externalRoots={kicad:kicadShared,kicad_config:kicadConfig,...Object.fromEntries(pinnedRepos.map(r=>[r.name,r.dir]))};
+const inputs = gateInputs(root,board,configName,environment);
+const versions = {};
+for (const [name,cmd,args] of [['kicad',kicadCli,['--version']],['pcbnew',kicadPython,['-c','import pcbnew; print(pcbnew.Version())']],['python',modernPython,['--version']]]) {
+  try { versions[name] = execFileSync(cmd,args,{encoding:'utf8',stdio:['ignore','pipe','ignore']}).trim(); }
+  catch { versions[name] = null; }
+}
+versions.node=process.version;
+for(const repo of pinnedRepos) {
+  try{versions[repo.name]=execFileSync('git',['-C',repo.dir,'rev-parse','HEAD'],{encoding:'utf8',stdio:['ignore','pipe','ignore'],env:Object.fromEntries(Object.entries(process.env).filter(([k])=>!k.startsWith('GIT_')))}).trim();}
+  catch{if(repo.needed==='gate') versions[repo.name]=null;}
+}
+const start = fingerprint(root,inputs.files,versions,externalRoots);
 const jobs = {
   async erc() {
     const file = join(logDir, 'erc.json');
-    await output('erc', kicadCli, ['sch', 'erc', '--format', 'json', '--severity-all', '--units', 'mm', '-o', file, sch]);
-    const all = json(file)?.sheets?.flatMap((s) => s.violations ?? []);
+    const result = await runTool(logDir,'erc', kicadCli, ['sch', 'erc', '--format', 'json', '--severity-all', '--units', 'mm', '-o', file, sch]);
+    const all = readReport(file,'erc',result)?.sheets.flatMap(s=>s.violations);
     return {erc_errors: all ? bySeverity(all, 'error') : null, erc_warnings: all ? bySeverity(all, 'warning') : null};
   },
   async drc() {
     const file = join(logDir, 'drc.json');
-    await output('drc', kicadCli, ['pcb', 'drc', '--schematic-parity', '--refill-zones', '--severity-all', '--format', 'json', '--units', 'mm', '-o', file, pcb]);
-    const d = json(file);
+    const result = await runTool(logDir,'drc', kicadCli, ['pcb', 'drc', '--schematic-parity', '--refill-zones', '--severity-all', '--format', 'json', '--units', 'mm', '-o', file, pcb]);
+    const d = readReport(file,'drc',result);
     if (!d) return {drc_errors: null, drc_parity: null, drc_unconnected: null, drc_warnings: null};
     return {
       drc_errors: bySeverity(d.violations, 'error'),
@@ -109,15 +117,16 @@ const jobs = {
   },
   async paths() {
     const out = await output('paths', kicadPython, [tool('pcbtool.py'), 'paths', pcb, spec(c.paths), '--limit', '2']);
-    const ran = out.includes('power-path pairs below the design current');
-    return {paths_low: ran ? out.split('\n').filter((l) => l.startsWith('LOW')).length : null};
+    const ran = out.includes('power-path pairs below the design current') && out.includes('supply nets not covered');
+    // Unspecified supply nets are unchecked current paths, not a zero result.
+    const count=out.split('\n').filter(l=>l.startsWith('LOW') || l.startsWith('MISSING ')).length;
+    return {paths_low: ran && !(count===0 && out.includes('[gate-check-exit:1]')) ? count : null};
   },
   async kicad_happy() {
-    const a = [tool('kicad_happy_gate.py'), pcb, ...(c.kicad_happy?.exempt ? ['--exempt-file', spec(c.kicad_happy.exempt)] : []), ...(c.kicad_happy?.grounds ?? []).flatMap((g) => ['--ground', g])];
-    const out = await output('kicad_happy', modernPython, a);
-    const findings = countFrom(out, /(\d+) kicad-happy findings/);
-    const stale = out.split('\n').filter((l) => l.startsWith('STALE exempt')).length;
-    return {kicad_happy_findings: findings === null ? null : findings + stale};
+    const file = join(logDir, 'kicad_happy.json');
+    const a = [tool('kicad_happy_gate.py'), pcb, '--result', file, ...(c.kicad_happy?.exempt ? ['--exempt-file', spec(c.kicad_happy.exempt)] : []), ...(c.kicad_happy?.grounds ?? []).flatMap((g) => ['--ground', g])];
+    const result = await runTool(logDir, 'kicad_happy', modernPython, a);
+    return {kicad_happy_findings: readHappyResult(file, result)};
   },
   // RF line rule (tools/rf_lines.py + <board>/rf-lines.json, first used on CELLULAR 2026-10-09): GCPW width/gap, no via,
   // length, coplanar and reference ground, ground via fence.
@@ -136,6 +145,9 @@ if (unknown.length) {
 }
 const results = await Promise.all(Object.keys(c).filter((k) => c[k]).map((k) => jobs[k]()));
 const metrics = Object.assign({}, ...results);
+const provenance = fingerprint(root,gateInputs(root,board,configName,environment).files,versions,externalRoots);
+const changedDuringRun = provenance.input_sha256 !== start.input_sha256;
+if (changedDuringRun) console.error('gate: inputs changed during run; evidence is invalid');
 
 console.log(`gate ${board}  (${relative(root, pcb)})`);
 for (const [name, value] of Object.entries(metrics)) {
@@ -145,7 +157,7 @@ for (const [name, value] of Object.entries(metrics)) {
 }
 
 const metricsFile = join(dir, 'gate-metrics.json');
-const text = metricsText({board, pcbSha256: sha(pcb), schSha256: shaSheets(dirname(sch)), metrics});
+const text = metricsText({board, pcbSha256: sha(pcb), schSha256: shaSheets(dirname(sch)), metrics, provenance});
 let exit = 0;
 if (flag('--ratchet')) {
   let before = null;
@@ -158,7 +170,7 @@ if (flag('--ratchet')) {
     console.log('  ratchet: no gate-metrics.json in git HEAD; this run becomes the baseline');
   }
   const waivers = json(join(dir, 'gate-waivers.json')) ?? [];
-  const r = ratchet(before, metrics, waivers);
+  const r = ratchet(before, metrics, waivers, {required,revision:cfg.project,inputFingerprint:provenance.input_sha256});
   for (const l of r.improved) console.log(`  better   ${l}`);
   for (const l of r.waived) console.log(`  waived   ${l}`);
   for (const l of r.warnings) console.log(`  WARNING  ${l}`);
@@ -167,9 +179,14 @@ if (flag('--ratchet')) {
   if (r.blocked.length || (flag('--strict') && r.warnings.length)) exit = 1;
   console.log(r.blocked.length ? 'gate: regression. Fix it, or add a waiver with a reason to gate-waivers.json' : 'gate: no blocked regression');
 } else {
-  const p = passes(metrics);
+  const p = passes(metrics,required);
   if (!p.ok) exit = 1;
   console.log(p.ok ? 'gate: PASS (all checks at target)' : `gate: NOT AT TARGET: ${p.open.join(', ')}`);
 }
-if (flag('--write')) writeFileSync(metricsFile, text);
+if (changedDuringRun || Object.values(versions).some(v=>v===null)) exit=1;
+writeFileSync(join(logDir,'gate-metrics.json'),text);
+writeFileSync(join(logDir,'result.json'),JSON.stringify({exit,changedDuringRun,metrics,provenance},null,2)+'\n');
+const atomicWrite = (file,content) => { const temp=`${file}.${process.pid}.tmp`; writeFileSync(temp,content); renameSync(temp,file); };
+if (flag('--write') && !changedDuringRun) atomicWrite(metricsFile,text);
+atomicWrite(join(dir,'.gate/latest.json'),JSON.stringify({run:relative(join(dir,'.gate'),logDir),exit},null,2)+'\n');
 process.exit(exit);

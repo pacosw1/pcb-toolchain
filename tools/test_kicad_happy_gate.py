@@ -9,6 +9,8 @@ import json
 import os
 import sys
 import unittest
+import tempfile
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -34,6 +36,30 @@ class LoadFindingsTests(unittest.TestCase):
 
     def test_non_dict_input_returns_empty(self):
         self.assertEqual(gate.load_findings(None), [])
+
+
+class AnalyzerCompletionTests(unittest.TestCase):
+    def test_nonzero_exit_cannot_reuse_written_json(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "result.json")
+            with open(path, "w") as fh:
+                json.dump({"findings": []}, fh)
+            with patch.object(gate.subprocess, "run") as run:
+                run.return_value.returncode = 1
+                run.return_value.stderr = "crashed"
+                with self.assertRaises(RuntimeError):
+                    gate.run_analyzer(d, "analyze.py", [], path)
+
+    def test_empty_or_error_envelope_is_rejected(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "result.json")
+            with patch.object(gate.subprocess, "run") as run:
+                run.return_value.returncode = 0
+                for doc in ({}, {"findings": [], "error": "internal failure"}, {"findings": [None]}):
+                    with open(path, "w") as fh:
+                        json.dump(doc, fh)
+                    with self.assertRaises(RuntimeError):
+                        gate.run_analyzer(d, "analyze.py", [], path)
 
 
 class FilterFindingsTests(unittest.TestCase):
@@ -91,6 +117,12 @@ class FormatFindingTests(unittest.TestCase):
 
 
 class ResolveBoardTests(unittest.TestCase):
+    def test_named_root_is_used_with_nested_sheet(self):
+        with tempfile.TemporaryDirectory() as d:
+            pcb = os.path.join(d, "BOARD.kicad_pcb")
+            for name in ("BOARD.kicad_pcb", "BOARD.kicad_sch", "PWR-24V.kicad_sch"):
+                open(os.path.join(d, name), "w").close()
+            self.assertEqual(gate.resolve_board(pcb), (pcb, os.path.join(d, "BOARD.kicad_sch")))
     def test_resolves_pcb_file_argument(self):
         import tempfile
 

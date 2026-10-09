@@ -67,6 +67,9 @@ def check_pinned(happy_dir):
             capture_output=True,
             text=True,
             check=True,
+            # A git hook exports GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE: without this, the pre-commit hook
+            # reads the iot-lab HEAD instead of the kicad-happy clone and the pin check fails closed.
+            env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")},
         ).stdout.strip()
     except (subprocess.CalledProcessError, OSError) as exc:
         return f"kicad-happy at {happy_dir} is not a git repository: {exc}"
@@ -99,7 +102,10 @@ def resolve_board(board_dir_or_pcb):
         raise ValueError(f"{board_dir_or_pcb} is not a .kicad_pcb file or a directory.")
 
     schs = sorted(f for f in os.listdir(board_dir) if f.endswith(".kicad_sch"))
-    sch = os.path.join(board_dir, schs[0]) if len(schs) == 1 else None
+    root_sch = os.path.splitext(pcb)[0] + ".kicad_sch"
+    sch = root_sch if os.path.isfile(root_sch) else (
+        os.path.join(board_dir, schs[0]) if len(schs) == 1 else None
+    )
     return pcb, sch
 
 
@@ -108,13 +114,20 @@ def run_analyzer(happy_dir, script_rel, script_args, out_path):
     script = os.path.join(happy_dir, script_rel)
     cmd = [sys.executable, script] + script_args + ["-o", out_path]
     proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(f"{script_rel} failed (exit {proc.returncode}): {proc.stderr.strip()[:500]}")
     if not os.path.exists(out_path):
         raise RuntimeError(
             f"{script_rel} produced no output (exit {proc.returncode}): "
             f"{proc.stderr.strip()[:500]}"
         )
     with open(out_path) as fh:
-        return json.load(fh)
+        doc = json.load(fh)
+    if (not isinstance(doc, dict) or doc.get("error") or doc.get("errors")
+            or not isinstance(doc.get("findings"), list)
+            or any(not isinstance(f, dict) for f in doc["findings"])):
+        raise RuntimeError(f"{script_rel} produced an incomplete or error report")
+    return doc
 
 
 def load_findings(doc):
@@ -387,6 +400,7 @@ def main(argv=None):
         description="Gate a KiCad board on a fixed set of pinned kicad-happy rule IDs."
     )
     parser.add_argument("board", help="Path to a .kicad_pcb file or a board directory")
+    parser.add_argument("--result", help="Write a completion report only after every analyzer succeeds")
     parser.add_argument(
         "--rules",
         default=",".join(DEFAULT_RULES),
@@ -445,13 +459,18 @@ def main(argv=None):
     try:
         rp_nets = {e["net"] for e in exempts if e.get("rule") == "RP-001" and e.get("net")}
         all_findings = run_gate(happy_dir, pcb, sch, tmp_dir, args.ground, rp_nets)
-    except (RuntimeError, ValueError, json.JSONDecodeError) as exc:
+    except (RuntimeError, ValueError, OSError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
     lines, code = evaluate(all_findings, rule_ids, args.min_severity, exempts)
+    if args.result:
+        kept, stale = apply_exemptions(filter_findings(all_findings, rule_ids, args.min_severity), exempts)
+        with open(args.result, "w") as fh:
+            json.dump({"schema_version": 1, "completed": True, "findings": len(kept),
+                       "stale_exemptions": len(stale), "exit": code}, fh)
     for line in lines:
         print(line)
     return code
