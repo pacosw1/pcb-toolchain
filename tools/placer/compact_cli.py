@@ -9,6 +9,7 @@ DIR/step-N/ (prob.json, search/, b/<board>.kicad_pcb, route-K/). DIR/run.json ho
 step (s, k, router runs, epoch history, pose) and the verdict, for the viewer (viewer.py).
 """
 import argparse
+import copy
 import json
 import os
 import re
@@ -95,8 +96,20 @@ def main(argv=None):
         os.makedirs(d, exist_ok=True)
         return d
 
+    # Route feature pin_escape_check (tools/route-features.json): the parts with boxed-in pins of the last routed
+    # step (route-0/pin-escape.json of tools/fastroute_job.py) get halo_hint_mm more spacing in the next search.
+    escape_hint = {}
+
     def search(q, n):
         d = sdir(n)
+        if escape_hint:
+            q = copy.deepcopy(q)
+            for u in q['units']:
+                names = set(u.get('refs', [])) | {u.get('name', ''), u.get('ref', '')}
+                extra = max([escape_hint.get(r, 0.0) for r in names] + [0.0])
+                if extra:
+                    for r in u['rects']:
+                        r[4] += extra
         if a.scatter is not None:
             q = bench.scatter(q, a.scatter)
         json.dump(q, open(os.path.join(d, 'prob.json'), 'w'))
@@ -147,6 +160,10 @@ def main(argv=None):
                    '--passes', str(a.passes), '--render'] + (['--gnd-vias'] if a.gnd_vias else []) + shlex.split(a.route_args)
             p = subprocess.run(cmd, cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             open(os.path.join(d, 'route-0.log'), 'w').write(p.stdout)
+            pe = os.path.join(d, 'route-0', 'pin-escape.json')
+            if os.path.isfile(pe):
+                for r, mm in json.load(open(pe)).get('halo_hint', {}).items():
+                    escape_hint[r] = escape_hint.get(r, 0.0) + mm
             if p.returncode != 0:
                 return [NO_RESULT]
             # A step passes on 0 open signal connections and 0 DRC errors (the plane-net opens are counted apart).

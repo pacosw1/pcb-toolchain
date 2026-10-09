@@ -1,0 +1,38 @@
+{
+  "about": "Routing-flow features (user decision 2026-10-09: each idea from hardware-design/reports/2026-10-08-tracemaker-ideas.md is a switch here, benchmarked with and without: hardware-design/reports/2026-10-09-route-features-benchmark.md). Read by tools/route_features.py for tools/fastroute_job.py, tools/stitch_all.py and tools/placer/compact_cli.py. A board overrides any key in its gate.json under \"route_features\" (same shape, merged per feature). The environment overrides last: ROUTE_FEATURES=\"name=1,name=0\" (all=0 / all=1 for every flag); ROUTE_BOARD=<BOARD> names the board when the PCB is a copy outside hardware-design/boards/. Defaults: see the benchmark report verdict.",
+  "features": {
+    "triage_opens": {
+      "on": false,
+      "about": "After routing: each open signal connection is ENCLOSED (no legal path: flood fill over the clearance grid of the routed board) or ROUTER_MISS, with the blocking nets and parts. OUTDIR/open-triage.json and <board>/.gate/open-triage.json; one TRIAGE line.",
+      "grid_mm": 0.1,
+      "max_opens": 60
+    },
+    "rule_compiler": {
+      "on": false,
+      "about": "Before routing: the board .kicad_dru (disallow track per layer, disallow via, class-to-class clearance) and the extra rules below become Fastroute constraints: per-net layer masks and via bans (DSN class circuit use_layer: a via-banned net gets one outer layer, so no via is possible), class_class clearances. Rule areas with no tracks / no vias are already exported by KiCad as wire_keepout / via_keepout.",
+      "class_class": true,
+      "extra": []
+    },
+    "via_off_small_pads": {
+      "on": false,
+      "about": "Before routing: a DSN via_keepout over each SMD pad whose smaller side is below max_pad_mm (exposed pads and large pads keep their in-pad vias). The viapads gate still checks the result.",
+      "max_pad_mm": 2.0
+    },
+    "pin_escape_check": {
+      "on": false,
+      "about": "Before routing: pins that cannot leave their package (flood fill on the pad layer at the minimum track width and the net clearance: out of the footprint box, or to a place where a via fits). OUTDIR/pin-escape.json; one ESCAPE line. tools/placer/compact_cli.py adds halo_hint_mm to the spacing of those parts for the next search step.",
+      "grid_mm": 0.05,
+      "reach_mm": 2.0,
+      "halo_hint_mm": 0.5
+    },
+    "via_halo": {
+      "on": false,
+      "about": "Fastroute routes the vias of the selected nets with a larger padstack (size_mm), so a ground stitching via (kicad-happy RP-001) fits beside each one; after the import the vias get their class size again. Nets: the globs in nets, the net classes in classes, the fast list of <board>/<fast_nets_file>, and the nets tools/stitch_all.py found with no room (<board>/.gate/halo-nets.json). Generalises the CELLULAR halo (tools/cell_route.py --halo).",
+      "size_mm": 1.8,
+      "nets": [],
+      "classes": [],
+      "fast_nets_file": "rp001-fast-nets.json",
+      "learn_noroom": true
+    }
+  }
+}
