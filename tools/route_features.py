@@ -45,7 +45,8 @@ def board_dir(pcb=None, board=None):
 
 
 def load(pcb=None, board=None):
-    cfg = json.load(open(DEFAULTS))['features']
+    # ROUTE_FEATURES_FILE: another defaults file (an experiment), same shape as tools/route-features.json
+    cfg = json.load(open(os.environ.get('ROUTE_FEATURES_FILE') or DEFAULTS))['features']
     bd = board_dir(pcb, board)
     if bd and os.path.isfile(os.path.join(bd, 'gate.json')):
         over = json.load(open(os.path.join(bd, 'gate.json'))).get('route_features', {})
@@ -124,6 +125,11 @@ class Obj:
         raise Unknown(k)
 
 
+def kname(dsn_class):
+    """KiCad net class name of a DSN class (the KiCad DSN export calls Default "kicad_default")."""
+    return 'Default' if dsn_class == 'kicad_default' else dsn_class
+
+
 def cond_eval(cond, A, B):
     expr = cond.replace('&&', ' and ').replace('||', ' or ')
     expr = re.sub(r'!(?!=)', ' not ', expr)
@@ -170,13 +176,13 @@ def compile_dru(dru_text, nets, net_class, pad_layers, layers, extra=()):
                 hit = 0
                 try:
                     for n in nets:
-                        if 'track' in what and cond_eval(r['condition'], Obj(n, net_class.get(n), 'Track'), Obj()):
+                        if 'track' in what and cond_eval(r['condition'], Obj(n, kname(net_class.get(n)), 'Track'), Obj()):
                             if r['layer'] is None:
                                 notes.append(f"rule '{r['name']}': disallow track on every layer for {n}: not compiled")
                             else:
                                 deny.setdefault(n, set()).add(r['layer'])
                                 hit += 1
-                        if 'via' in what and cond_eval(r['condition'], Obj(n, net_class.get(n), 'Via'), Obj()):
+                        if 'via' in what and cond_eval(r['condition'], Obj(n, kname(net_class.get(n)), 'Via'), Obj()):
                             noval.add(n)
                             hit += 1
                     if what & {'track', 'via'}:
@@ -194,7 +200,7 @@ def compile_dru(dru_text, nets, net_class, pad_layers, layers, extra=()):
                     hit = 0
                     for ca in classes:
                         for cb in classes:
-                            if cond_eval(r['condition'], Obj(cls=ca), Obj(cls=cb)):
+                            if cond_eval(r['condition'], Obj(cls=kname(ca)), Obj(cls=kname(cb))):
                                 key = tuple(sorted((ca, cb)))
                                 pairs[key] = max(pairs.get(key, 0), v)
                                 hit += 1
@@ -205,7 +211,7 @@ def compile_dru(dru_text, nets, net_class, pad_layers, layers, extra=()):
                     notes.append(f"rule '{r['name']}': clearance condition not read ({e}), not compiled")
     for x in extra or ():
         sel = [n for n in nets if any(fnmatch.fnmatchcase(n, g) for g in x.get('nets', []))
-               or net_class.get(n) in x.get('classes', [])]
+               or kname(net_class.get(n)) in x.get('classes', [])]
         for n in sel:
             deny.setdefault(n, set()).update(x.get('deny_layers', []))
             if x.get('no_via'):
@@ -278,8 +284,13 @@ def add_class_class(text, pairs):
     pair gets the rule, so split classes keep it."""
     if not pairs:
         return text
+    if any('kicad_default' in p for p in pairs):
+        # Fastroute puts the pads with no net in the class kicad_default too: a class_class rule on it would also hold
+        # those pads (AC-24V 2026-10-09: J1 and F2 mounting pins 8 mm from the mains pins, the mains stage failed;
+        # KiCad DRC does not apply the rule to them). The nets of kicad_default go to a copy of the class.
+        text = re.sub(r'\(class kicad_default((?:__L\d+|_RPV)*) ', r'(class kicad_default\1__nets ', text)
     dsn = sorted({m.group(1) for m in CLASS_RE.finditer(text)})
-    base = lambda c: re.sub(r'(__L\d+|_RPV)+$', '', c)  # noqa: E731
+    base = lambda c: re.sub(r'(__L\d+|_RPV|__nets)+$', '', c)  # noqa: E731
     lines = []
     for (ca, cb), v in sorted(pairs.items()):
         for x in dsn:
