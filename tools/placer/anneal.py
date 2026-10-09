@@ -359,6 +359,9 @@ def final_key(c):
 def optimize(pr, params, workers=1, epochs=10, steps=10000, seed=1, top=3, log=None):
     full_start = time.monotonic()
     p = params_all(params)
+    if p.get('batch'):
+        from .batch_capabilities import check_search
+        check_search(pr, p)  # Before optional Torch import or global placement.
     glob = start = None
     if p.get('global'):  # analytic global placement first (gplace.py); the annealer starts from it
         from . import gplace
@@ -371,7 +374,10 @@ def optimize(pr, params, workers=1, epochs=10, steps=10000, seed=1, top=3, log=N
     if p['normalize']:  # SA_PCB: each term relative to its value on the start pose
         p = normalized(p, cost.components(pr, cost.initial_pose(pr), p))
     if p.get('batch'):  # K chains as one torch batch (batch.py); the scalar workers below stay the default
-        from . import batch
+        try:
+            from . import batch
+        except ImportError as e:
+            raise RuntimeError('batch backend unavailable; use the default scalar CPU path or an isolated validated runtime') from e
         return dict(batch.optimize(pr, p, epochs, steps, seed, top, log, start), **{'global': glob})
     _init(pr, p)
     pf = epoch_params(p, epochs - 1, epochs)

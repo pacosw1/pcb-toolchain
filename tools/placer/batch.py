@@ -23,6 +23,7 @@ import numpy as np
 import torch
 
 from . import anneal, cost
+from .batch_capabilities import check_cost, check_search
 
 EPS = cost.EPS
 TERMS = ('hpwl', 'cong', 'overlap', 'oob', 'spacing')
@@ -32,11 +33,7 @@ OFF = 1e6  # gap of a rect pair that does not count (same unit, both fixed, keep
 
 
 def check_supported(pr, p):
-    for k in ('w_x', 'w_row', 'pin_demand'):
-        if p.get(k):
-            raise ValueError('batch: %s = %s is not supported (use the scalar path)' % (k, p[k]))
-    if pr.get('via_nets'):
-        raise ValueError('batch: via nets (via room term) are not supported (use the scalar path)')
+    check_cost(pr, p)
 
 
 def _pen(ox, oy, g):
@@ -519,8 +516,9 @@ class Chains:
 
     def set_params(self, params):
         """New weights: recompute the state cost; the best so far restarts from the current state."""
-        self.p = anneal.params_all(params)
-        check_supported(self.bc.pr, self.p)
+        p = anneal.params_all(params)
+        check_search(self.bc.pr, p)
+        self.p = p
         self.resync()
         self.best = self.cost.clone()
         self.bDX, self.bDY, self.bR = self.DX.clone(), self.DY.clone(), self.Rt.clone()
