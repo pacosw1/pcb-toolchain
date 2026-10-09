@@ -4,25 +4,58 @@
 Run with KiCad's bundled Python (pcbnew):
   $PY tools/gnd_pad_vias.py BOARD.kicad_pcb OUT.kicad_pcb [--net GND] [--skip U1,U10] [--r 1.0]
 
-For each SMD pad of NET on F.Cu with no NET via within --r mm of its centre:
+For each SMD pad of NET on F.Cu with no connected NET via within --r mm of its centre:
 1. Try via places around the pad (4 sides, then 4 corners; 2 distances).
 2. Keep the first place with class clearance to every other-net pad, track and via,
    0.25 mm hole to hole, 0.5 mm copper to the board edge (D-040), and not in a rule
    area that forbids vias.
 3. Add the via (net class size) and a short F.Cu track from the pad centre.
 A pad with no free place is listed; the router or a hand fix must connect it.
+Nearby-via skips are proved before repairs. If copper changes, one final fill
+rechecks those skips and the repairs; disconnected results are listed as unresolved.
+At most two zone fills are performed, without an iterative repair/refill loop.
 The result is a proposal: DRC with --schematic-parity decides.
 """
 import argparse
 import math
 
-import pcbnew
+class NearbyViaConnectivity:
+    """A proximity candidate needs fresh native connectivity before it can suppress a repair.
 
-MM = pcbnew.FromMM
-COPPER = (pcbnew.F_Cu, pcbnew.B_Cu, pcbnew.In1_Cu, pcbnew.In2_Cu, pcbnew.In3_Cu, pcbnew.In4_Cu)
+    The refresh callback must rebuild connectivity, refilling zones unless query
+    flags exclude zone traversal. Every copper mutation invalidates that proof;
+    saved filled polygons alone are not evidence.
+    Exceptions propagate rather than silently treating an unproved pad as connected.
+    """
+
+    def __init__(self, refresh, flags=0):
+        self.refresh = refresh
+        self.flags = flags
+        self.connectivity = None
+
+    def invalidate(self):
+        self.connectivity = None
+
+    def connected(self, pad, via_positions, radius):
+        center = pad.GetPosition()
+        def nearby(position):
+            return math.hypot(position.x - center.x, position.y - center.y) <= radius
+        if not any(nearby(position) for position in via_positions):
+            return False
+        if self.connectivity is None:
+            self.connectivity = self.refresh()
+        items = (self.connectivity.GetConnectedItems(pad, self.flags) if self.flags
+                 else self.connectivity.GetConnectedItems(pad))
+        return any(item.GetClass() == 'PCB_VIA'
+                   and item.GetNetCode() == pad.GetNetCode()
+                   and nearby(item.GetPosition())
+                   for item in items)
 
 
 def main():
+    import pcbnew
+    MM = pcbnew.FromMM
+    COPPER = (pcbnew.F_Cu, pcbnew.B_Cu, pcbnew.In1_Cu, pcbnew.In2_Cu, pcbnew.In3_Cu, pcbnew.In4_Cu)
     ap = argparse.ArgumentParser()
     ap.add_argument('board')
     ap.add_argument('out')
@@ -40,6 +73,22 @@ def main():
     skip = set(filter(None, a.skip.split(',')))
     only = set(filter(None, a.only.split(',')))
     b = pcbnew.LoadBoard(a.board)
+    def refresh_connectivity():
+        # Native connectivity includes zone islands. Refresh the fill on the
+        # current geometry, including changes made by this invocation.
+        b.BuildConnectivity()
+        if any(not zone.GetIsRuleArea() for zone in b.Zones()):
+            if not pcbnew.ZONE_FILLER(b).Fill(b.Zones()):
+                raise RuntimeError('zone refill failed; nearby-via connectivity is unproved')
+        b.BuildConnectivity()
+        return b.GetConnectivity()
+    via_connectivity = NearbyViaConnectivity(refresh_connectivity)
+    def refresh_direct_connectivity():
+        b.BuildConnectivity()
+        return b.GetConnectivity()
+    # EXCLUDE_ZONES excludes zone traversal in native SearchClusters, so this
+    # inexpensive proof cannot mistake stale filled polygons for a connection.
+    direct_connectivity = NearbyViaConnectivity(refresh_direct_connectivity, pcbnew.EXCLUDE_ZONES)
     ds = b.GetDesignSettings()
     net = b.GetNetsByName()[a.net]
     # Default net class of the boards: via 0.6/0.3 mm, clearance 0.2 mm.
@@ -115,7 +164,22 @@ def main():
                 return False
         return True
 
+    # Snapshot decisions before the first mutation. Plane-only connections must
+    # not cause repeated fills or duplicate vias after an earlier pad repair.
+    initial_connected = set()
+    if not only:
+        for fp in b.GetFootprints():
+            if fp.GetReference() in skip:
+                continue
+            for p in fp.Pads():
+                name = f'{fp.GetReference()}.{p.GetNumber()}'
+                if (name not in skip and p.GetNetCode() == net.GetNetCode()
+                        and p.GetAttribute() in (pcbnew.PAD_ATTRIB_SMD, pcbnew.PAD_ATTRIB_CONN)
+                        and p.IsOnLayer(pcbnew.F_Cu)
+                        and via_connectivity.connected(p, vias, MM(a.r))):
+                    initial_connected.add(p.m_Uuid.AsString())
     added, failed, in_pad, links = 0, [], [], []
+    verify = []
     for fp in b.GetFootprints():
         if fp.GetReference() in skip:
             continue
@@ -129,7 +193,12 @@ def main():
             if not p.IsOnLayer(pcbnew.F_Cu):
                 continue
             c = p.GetPosition()
-            if not only and any(math.hypot(v.x - c.x, v.y - c.y) <= MM(a.r) for v in vias):
+            if not only and p.m_Uuid.AsString() in initial_connected:
+                verify.append((p, MM(a.r)))
+                continue
+            if not only and direct_connectivity.connected(p, vias, MM(a.r)):
+                # An earlier new via/stub may also have connected this pad.
+                verify.append((p, MM(a.r)))
                 continue
             bb = p.GetBoundingBox()
             hx, hy = bb.GetWidth() // 2, bb.GetHeight() // 2
@@ -159,6 +228,8 @@ def main():
                         t.SetLayer(pcbnew.F_Cu)
                         t.SetNet(net)
                         b.Add(t)
+                        via_connectivity.invalidate()
+                        direct_connectivity.invalidate()
                         holes.append((pt, drill // 2))
                         vias.append(pt)
                         added += 1
@@ -193,6 +264,8 @@ def main():
                             t.SetNet(net)
                             b.Add(t)
                         links.append(f'{fp.GetReference()}.{p.GetNumber()}')
+                        via_connectivity.invalidate()
+                        direct_connectivity.invalidate()
                         done = True
                         break
             spot = None
@@ -211,14 +284,31 @@ def main():
                 v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
                 v.SetNet(net)
                 b.Add(v)
+                via_connectivity.invalidate()
+                direct_connectivity.invalidate()
                 holes.append((c, drill // 2))
                 vias.append(c)
                 in_pad.append(f'{fp.GetReference()}.{p.GetNumber()}')
                 done = True
             if not done:
                 failed.append(f'{fp.GetReference()}.{p.GetNumber()}')
+            else:
+                verify.append((p, float('inf')))
+    verification_failed = []
+    if added or links or in_pad:
+        # All mutations are complete. One fresh fill proves final connectivity;
+        # a severed provisional plane connection is unresolved, never a skip
+        # falsely reported as connected. Do not restart the repair/fill loop.
+        via_connectivity.invalidate()
+        for p, radius in verify:
+            if not via_connectivity.connected(p, vias, radius):
+                name = f'{p.GetParentFootprint().GetReference()}.{p.GetNumber()}'
+                verification_failed.append(name)
+                if name not in failed:
+                    failed.append(name)
     pcbnew.SaveBoard(a.out, b)
     print(f'{a.net} vias added: {added}; pad links: {len(links)} {" ".join(links)}; in pad: {len(in_pad)} {" ".join(in_pad)}; no free place: {len(failed)} {" ".join(failed)}')
+    print(f'final connectivity unresolved: {len(verification_failed)} {" ".join(verification_failed)}')
 
 
 if __name__ == '__main__':

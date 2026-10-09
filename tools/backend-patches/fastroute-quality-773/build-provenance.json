@@ -4,7 +4,7 @@
   "upstream_commit": "e5d52c4544795422b8b28077acc0605fdf11265a",
   "upstream_url": "https://github.com/parisxmas/fastroute",
   "license": "GPL-3.0-or-later",
-  "patch_sha256": "9856594eb3c3b9facab4cb5fafa0967376d85cc5357a1eda4743d8114c726d2e",
+  "patch_sha256": "be7144adb240f4b4f08f28d8bba46374a3974e493f6c6f21d6e1aee3f073e2f2",
   "cargo_lock_sha256": "4761175c5d8df0ed4c2c69036df2686dc7e3a186cd085d2ae766936134cab9a6",
   "source_files": {
     "crates/fastroute/examples/quality_probe.rs": "bbe8b236b3828e0d01d1d651f8f47f63aeee648049c7d17199013427e881e8a2",
@@ -78,7 +78,7 @@
     "crates/fr-engine/src/library/mod.rs": "57a8b6aaa92075c84688a1625ecd6e364cbcfa193387ae97ff5b31bb14fcb7d7",
     "crates/fr-engine/src/library/package.rs": "46d461801741a818686340bee870adf19c0e7b977681ef696b63a606c512bf16",
     "crates/fr-engine/src/library/padstack.rs": "93db92f5c6ab7c234b3d70d141f5c9204c2ba68b930a11a335af6343f71db42b",
-    "crates/fr-engine/src/pipeline/autorouter.rs": "087561dd7e72f65f7baf1a5055c8e80d7973c8efaca5c22b2ec4a96caa932ef6",
+    "crates/fr-engine/src/pipeline/autorouter.rs": "19ab6ba6eb28d372aa79a173b8ae58ac01ff999c30a8128afb5d153f2dd24c72",
     "crates/fr-engine/src/pipeline/fanout.rs": "2830216c54d2670dec645049a5ae804b7b8aa9c4e326379d4037f6eb49066db8",
     "crates/fr-engine/src/pipeline/history.rs": "ee6aca2f994f8d379c97f6badbb0b4b2a8eab8762390493dd0da28362293d25b",
     "crates/fr-engine/src/pipeline/mod.rs": "4ec65b8f70234681093410cda162808c7c20f50c5dc00a280e47e76fc52ab8aa",
@@ -110,7 +110,7 @@
     "crates/fr-engine/tests/common/autoroute_ops.rs": "01469a1e012851c3200b412e5ba571f70ad628500bf6afd51dbfadc6c93900bd",
     "crates/fr-engine/tests/common/routing_ops.rs": "e3958fd7ca26e3c7da92e24e25fa68e19b55dd821e78dfae50e0d07368be235f",
     "crates/fr-engine/tests/common/scoring_ops.rs": "2d7cbc189d573bb8adefccb2383c144a6b00fb3ac91b9114f5c06e7a45b3cdd9",
-    "crates/fr-engine/tests/quality_identity.rs": "c7dd34c27a0eb5473d3ec5e3fb10fe3e3bbbf4ce9a66c68d6ce848ca99614917",
+    "crates/fr-engine/tests/quality_identity.rs": "f37e91b55df727ed49be01b53576e7211197aa5f6c76aa14df159ee9e145d1b4",
     "crates/fr-geom/src/area.rs": "ee6c5ee68cbf40b02fd0d72339e736c4294691ae0a9a370ea9951b8979835555",
     "crates/fr-geom/src/big_int_aux.rs": "3de62c7e8909a57e4286a94ba667ed1785b8c0e814d64d5f9c404331c6c33c97",
     "crates/fr-geom/src/big_int_direction.rs": "303f92177001f4def49ce89de7b6b773faa365edfdf6b63d72b9a0fb0f4dc99f",
@@ -214,38 +214,42 @@
     },
     "profile_hashes_unchanged": true
   },
-  "binary_sha256": "586bb08fbc4a301ca2a33bc99d7f8ed470ad26fd5c85ceb5d98dd0a2d4da7358",
+  "binary_sha256": "797e08f8e7e55bdcb6a8a48f854e92ce80bfaead17a8fd8503b8314a90fcec6b",
   "native_validation": {
     "status": "passed",
     "scope": "artifact QA and production CLI no-routing checkpoint replay; zero native errors/parity,11opens; not board qualified",
     "evidence": [
       {
-        "path": "/tmp/lean-fastroute-quality-773-bridge-native/proof/native-proof.json",
-        "sha256": "7644a94b992a4dfe816dbbdfc13d0106a178af2c8e9d188bc7c3c8c2a1347fca"
+        "path": "/tmp/lean-fastroute-quality-773-blocked-native/proof/native-proof.json",
+        "sha256": "5fbd56f1763cb02d861c14f1df21446f7a9386f5b63d6ad74fabd486892c1865"
       },
       {
-        "path": "/tmp/lean-fastroute-quality-773-bridge-native/proof/drc.json",
-        "sha256": "546af89d6044b732d14b33757e62229454b7f573ea49904eb31b13dd1f369ca2"
+        "path": "/tmp/lean-fastroute-quality-773-blocked-native/proof/drc.json",
+        "sha256": "f401a208ced6c3eb3b05ea688f80940768f86e0cb9cc1573838f8b847c571569"
       },
       {
-        "path": "/tmp/lean-fastroute-quality-773-bridge-native/proof/safe.ses",
+        "path": "/tmp/lean-fastroute-quality-773-blocked-native/proof/safe.ses",
         "sha256": "369c30f1b6c4b5de5ca17a234e7f28145eebc2628c958dc58394bbdc0240f26b"
       },
       {
-        "path": "/tmp/lean-fastroute-quality-773-bridge-native/proof/safe-report.json",
-        "sha256": "f84002fb85fd026912b0f33418aedf9e66afc71ed42d99979bf9bd4281ee1c2a"
+        "path": "/tmp/lean-fastroute-quality-773-blocked-native/proof/safe-report.json",
+        "sha256": "5634c3ef43d47c03f60c7a54f8e9755f6ad0a549c408923fe6fcdff7d5160f80"
       },
       {
-        "path": "/tmp/lean-fastroute-quality-773-bridge-native/proof/safe-checkpoint.log",
-        "sha256": "d580482ca5626cf042a0c0a38df160b100f81af37a649b4a4356ad8b3719d797"
+        "path": "/tmp/lean-fastroute-quality-773-blocked-native/proof/safe-checkpoint.log",
+        "sha256": "c245da463f50ea23af1e020ffe161db7bfb426eca1227a6ce032c82238fc346d"
       },
       {
-        "path": "/tmp/lean-fastroute-quality-773-bridge-native/proof/unsafe-checkpoint.log",
-        "sha256": "4c309313e40085d631ef25733a0d356d8c3fdbc5f6596157b5f1de76cf5fa043"
+        "path": "/tmp/lean-fastroute-quality-773-blocked-native/proof/unsafe-checkpoint.log",
+        "sha256": "bad3b5df526c3fd782ae657762395e01ce658bd26fa22f2f6f7262b7f8606a89"
       },
       {
-        "path": "/tmp/lean-bridge-773-tests-v3/command.log",
-        "sha256": "7b0b12798c45b78e3170ca3d8df031daf309aec8a9518f26c63e77cba835300a"
+        "path": "/tmp/lean-blocked-773-tests-v3/command.log",
+        "sha256": "28d15ac089ec90f494ccae6722e3341ec0186fcfddba309c4eb6bfa1e5bac5cc"
+      },
+      {
+        "path": "/tmp/lean-fastroute-quality-773-blocked-native/proof/blocked-endpoint.log",
+        "sha256": "6cadafcf8db341e96a8ffe5b63a8303782c823c149a21921c8f8b2b030ef9e66"
       }
     ],
     "proof": {
@@ -253,7 +257,7 @@
       "backend_artifact_qa_only": true,
       "board_qualified": false,
       "no_routing": true,
-      "binary_sha256": "586bb08fbc4a301ca2a33bc99d7f8ed470ad26fd5c85ceb5d98dd0a2d4da7358",
+      "binary_sha256": "797e08f8e7e55bdcb6a8a48f854e92ce80bfaead17a8fd8503b8314a90fcec6b",
       "capability": true,
       "bad_session_rejected": true,
       "bad_session_no_output": true,
@@ -363,6 +367,1471 @@
       "native_errors": {},
       "native_parity": 0,
       "native_opens": 11,
+      "engine_report": {
+        "fastroute": "0.1.7",
+        "input": "/tmp/lean-base-b-routing-778-quality-v1/job/board.dsn",
+        "time_s": {
+          "load": 0.1104,
+          "route": 0.0147,
+          "total": 0.172,
+          "diagnose": null
+        },
+        "stats": {
+          "layers": 4,
+          "components": 210,
+          "nets": 136,
+          "pins": 644,
+          "connections": 500,
+          "unrouted": 21,
+          "unrouted_ignored_classes": 6,
+          "violations": 33,
+          "violations_unfixable": 33,
+          "vias": 447,
+          "vias_blind": 0,
+          "vias_buried": 0,
+          "traces": 1416,
+          "trace_length_mm": 6316.2261,
+          "bends_90": 20,
+          "bends_45": 1365,
+          "bends_other": 1,
+          "router_score": 942.6223,
+          "optimizer_score": -81.5217
+        },
+        "unrouted": [
+          {
+            "net": "/CAN_GND",
+            "length_mm": 0.9808,
+            "from": {
+              "kind": "pin",
+              "component": "C51",
+              "pin": "2",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "from_xy": [
+              113.9,
+              68.4
+            ],
+            "to": {
+              "kind": "via",
+              "layers": [
+                "F.Cu",
+                "B.Cu"
+              ]
+            },
+            "to_xy": [
+              114.52,
+              69.16
+            ]
+          },
+          {
+            "net": "VDD_3V3",
+            "length_mm": 4.6215,
+            "from": {
+              "kind": "pin",
+              "component": "R23",
+              "pin": "1",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "from_xy": [
+              161.9,
+              118.4
+            ],
+            "to": {
+              "kind": "pin",
+              "component": "U2",
+              "pin": "1",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "to_xy": [
+              157.71,
+              120.35
+            ]
+          },
+          {
+            "net": "VDD_3V3",
+            "length_mm": 5.5279,
+            "from": {
+              "kind": "pin",
+              "component": "R24",
+              "pin": "1",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "from_xy": [
+              153.08,
+              117.33
+            ],
+            "to": {
+              "kind": "pin",
+              "component": "U2",
+              "pin": "1",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "to_xy": [
+              157.71,
+              120.35
+            ]
+          },
+          {
+            "net": "VDD_3V3",
+            "length_mm": 6.9364,
+            "from": {
+              "kind": "via",
+              "layers": [
+                "F.Cu",
+                "B.Cu"
+              ]
+            },
+            "from_xy": [
+              147.5669,
+              113.1205
+            ],
+            "to": {
+              "kind": "pin",
+              "component": "R24",
+              "pin": "1",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "to_xy": [
+              153.08,
+              117.33
+            ]
+          },
+          {
+            "net": "VDD_3V3",
+            "length_mm": 10.2806,
+            "from": {
+              "kind": "pin",
+              "component": "U15",
+              "pin": "5",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "from_xy": [
+              124.33,
+              77.93
+            ],
+            "to": {
+              "kind": "pin",
+              "component": "TP3",
+              "pin": "1",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "to_xy": [
+              126.4,
+              88
+            ]
+          },
+          {
+            "net": "/PWR-24V/5V_24V",
+            "length_mm": 13.1106,
+            "from": {
+              "kind": "pin",
+              "component": "C47",
+              "pin": "1",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "from_xy": [
+              162.47,
+              121.98
+            ],
+            "to": {
+              "kind": "pin",
+              "component": "R61",
+              "pin": "1",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "to_xy": [
+              152.06,
+              114.01
+            ]
+          },
+          {
+            "net": "/SLOT_MISO",
+            "length_mm": 85.0531,
+            "from": {
+              "kind": "pin",
+              "component": "U1",
+              "pin": "8",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "from_xy": [
+              127.9,
+              128.1607
+            ],
+            "to": {
+              "kind": "pin",
+              "component": "J4",
+              "pin": "7",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "to_xy": [
+              162.47,
+              50.45
+            ]
+          },
+          {
+            "net": "VBUS",
+            "length_mm": 1.1715,
+            "from": {
+              "kind": "pin",
+              "component": "C29",
+              "pin": "2",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "from_xy": [
+              100.8,
+              111.05
+            ],
+            "to": {
+              "kind": "via",
+              "layers": [
+                "F.Cu",
+                "B.Cu"
+              ]
+            },
+            "to_xy": [
+              101.7,
+              110.3
+            ]
+          },
+          {
+            "net": "VBUS",
+            "length_mm": 2.445,
+            "from": {
+              "kind": "pin",
+              "component": "J1",
+              "pin": "B4",
+              "layers": [
+                "F.Cu",
+                "B.Cu"
+              ]
+            },
+            "from_xy": [
+              114.325,
+              112.25
+            ],
+            "to": {
+              "kind": "via",
+              "layers": [
+                "F.Cu",
+                "B.Cu"
+              ]
+            },
+            "to_xy": [
+              115,
+              114.6
+            ]
+          },
+          {
+            "net": "VBUS",
+            "length_mm": 2.844,
+            "from": {
+              "kind": "pin",
+              "component": "J1",
+              "pin": "B9",
+              "layers": [
+                "F.Cu",
+                "B.Cu"
+              ]
+            },
+            "from_xy": [
+              114.325,
+              106.75
+            ],
+            "to": {
+              "kind": "via",
+              "layers": [
+                "F.Cu",
+                "B.Cu"
+              ]
+            },
+            "to_xy": [
+              113.6,
+              104
+            ]
+          },
+          {
+            "net": "VBUS",
+            "length_mm": 3.083,
+            "from": {
+              "kind": "pin",
+              "component": "U4",
+              "pin": "5",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "from_xy": [
+              120.35,
+              107
+            ],
+            "to": {
+              "kind": "pin",
+              "component": "C23",
+              "pin": "1",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "to_xy": [
+              120.8,
+              103.95
+            ]
+          },
+          {
+            "net": "VBUS",
+            "length_mm": 7.0298,
+            "from": {
+              "kind": "pin",
+              "component": "J1",
+              "pin": "A9",
+              "layers": [
+                "F.Cu",
+                "B.Cu"
+              ]
+            },
+            "from_xy": [
+              115.675,
+              112.25
+            ],
+            "to": {
+              "kind": "pin",
+              "component": "U4",
+              "pin": "5",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "to_xy": [
+              120.35,
+              107
+            ]
+          },
+          {
+            "net": "/USB_DP",
+            "length_mm": 2.3,
+            "from": {
+              "kind": "pin",
+              "component": "U4",
+              "pin": "6",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "from_xy": [
+              120.35,
+              107.95
+            ],
+            "to": {
+              "kind": "pin",
+              "component": "U4",
+              "pin": "1",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "to_xy": [
+              122.65,
+              107.95
+            ]
+          },
+          {
+            "net": "/USB_DN",
+            "length_mm": 1.7414,
+            "from": {
+              "kind": "pin",
+              "component": "J1",
+              "pin": "A7",
+              "layers": [
+                "F.Cu",
+                "B.Cu"
+              ]
+            },
+            "from_xy": [
+              115.675,
+              110.05
+            ],
+            "to": {
+              "kind": "pin",
+              "component": "J1",
+              "pin": "B7",
+              "layers": [
+                "F.Cu",
+                "B.Cu"
+              ]
+            },
+            "to_xy": [
+              114.325,
+              108.95
+            ]
+          },
+          {
+            "net": "/USB_DN",
+            "length_mm": 2.3,
+            "from": {
+              "kind": "pin",
+              "component": "U4",
+              "pin": "4",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "from_xy": [
+              120.35,
+              106.05
+            ],
+            "to": {
+              "kind": "pin",
+              "component": "U4",
+              "pin": "3",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "to_xy": [
+              122.65,
+              106.05
+            ]
+          },
+          {
+            "net": "PRIMARY_5V_RAW",
+            "length_mm": 2.4146,
+            "from": {
+              "kind": "pin",
+              "component": "R35",
+              "pin": "1",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "from_xy": [
+              172.33,
+              131.95
+            ],
+            "to": {
+              "kind": "pin",
+              "component": "C19",
+              "pin": "1",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "to_xy": [
+              170.84,
+              130.05
+            ]
+          },
+          {
+            "net": "PRIMARY_5V_RAW",
+            "length_mm": 2.879,
+            "from": {
+              "kind": "pin",
+              "component": "U19",
+              "pin": "1",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "from_xy": [
+              160.65,
+              125.17
+            ],
+            "to": {
+              "kind": "pin",
+              "component": "C42",
+              "pin": "1",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "to_xy": [
+              157.85,
+              124.5
+            ]
+          },
+          {
+            "net": "PRIMARY_5V_RAW",
+            "length_mm": 3.9314,
+            "from": {
+              "kind": "pin",
+              "component": "R8",
+              "pin": "1",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "from_xy": [
+              164.19,
+              122.11
+            ],
+            "to": {
+              "kind": "pin",
+              "component": "U19",
+              "pin": "8",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "to_xy": [
+              160.65,
+              123.82
+            ]
+          },
+          {
+            "net": "/USB_MCU_DN",
+            "length_mm": 2.8014,
+            "from": {
+              "kind": "pin",
+              "component": "U1",
+              "pin": "13",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "from_xy": [
+              127.9,
+              121.8107
+            ],
+            "to": {
+              "kind": "pin",
+              "component": "R13",
+              "pin": "2",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "to_xy": [
+              130.7,
+              121.9
+            ]
+          },
+          {
+            "net": "/USB_MCU_DP",
+            "length_mm": 2.8963,
+            "from": {
+              "kind": "pin",
+              "component": "U1",
+              "pin": "14",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "from_xy": [
+              127.9,
+              120.5407
+            ],
+            "to": {
+              "kind": "pin",
+              "component": "R14",
+              "pin": "2",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "to_xy": [
+              130.7,
+              119.8
+            ]
+          },
+          {
+            "net": "/PWR-24V/MUX_SS",
+            "length_mm": 3.0065,
+            "from": {
+              "kind": "pin",
+              "component": "U19",
+              "pin": "11",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "from_xy": [
+              159.85,
+              124.75
+            ],
+            "to": {
+              "kind": "pin",
+              "component": "C41",
+              "pin": "1",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "to_xy": [
+              157.95,
+              122.42
+            ]
+          }
+        ],
+        "clearance_violations": [
+          {
+            "layer": "F.Cu",
+            "xy": [
+              158.6525,
+              125.1504
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0.1951,
+            "unfixable": true,
+            "first": {
+              "kind": "via",
+              "layers": [
+                "F.Cu",
+                "B.Cu"
+              ]
+            },
+            "second": {
+              "kind": "pin",
+              "component": "C42",
+              "pin": "1",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "F.Cu",
+            "xy": [
+              154.3675,
+              124.52
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0,
+            "unfixable": true,
+            "first": {
+              "kind": "via",
+              "layers": [
+                "F.Cu",
+                "B.Cu"
+              ]
+            },
+            "second": {
+              "kind": "via",
+              "layers": [
+                "F.Cu",
+                "B.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "In1.Cu",
+            "xy": [
+              154.3675,
+              124.52
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0,
+            "unfixable": true,
+            "first": {
+              "kind": "via",
+              "layers": [
+                "F.Cu",
+                "B.Cu"
+              ]
+            },
+            "second": {
+              "kind": "via",
+              "layers": [
+                "F.Cu",
+                "B.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "In2.Cu",
+            "xy": [
+              154.3675,
+              124.52
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0,
+            "unfixable": true,
+            "first": {
+              "kind": "via",
+              "layers": [
+                "F.Cu",
+                "B.Cu"
+              ]
+            },
+            "second": {
+              "kind": "via",
+              "layers": [
+                "F.Cu",
+                "B.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "B.Cu",
+            "xy": [
+              154.3675,
+              124.52
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0,
+            "unfixable": true,
+            "first": {
+              "kind": "via",
+              "layers": [
+                "F.Cu",
+                "B.Cu"
+              ]
+            },
+            "second": {
+              "kind": "via",
+              "layers": [
+                "F.Cu",
+                "B.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "F.Cu",
+            "xy": [
+              132.95,
+              116.775
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0.1301,
+            "unfixable": true,
+            "first": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "second": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "F.Cu",
+            "xy": [
+              123.725,
+              116.6
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0.1301,
+            "unfixable": true,
+            "first": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "second": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "F.Cu",
+            "xy": [
+              128.425,
+              116.775
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0.1301,
+            "unfixable": true,
+            "first": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "second": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "F.Cu",
+            "xy": [
+              133.125,
+              118
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0.1301,
+            "unfixable": true,
+            "first": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "second": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "F.Cu",
+            "xy": [
+              133.125,
+              116.95
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0.1301,
+            "unfixable": true,
+            "first": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "second": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "F.Cu",
+            "xy": [
+              133.125,
+              119.05
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0.1301,
+            "unfixable": true,
+            "first": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "second": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "F.Cu",
+            "xy": [
+              123.725,
+              112.5
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0.1301,
+            "unfixable": true,
+            "first": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "second": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "F.Cu",
+            "xy": [
+              123.725,
+              110.75
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0.1301,
+            "unfixable": true,
+            "first": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "second": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "F.Cu",
+            "xy": [
+              123.725,
+              112
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0.1301,
+            "unfixable": true,
+            "first": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "second": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "F.Cu",
+            "xy": [
+              123.725,
+              110.5
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0.1301,
+            "unfixable": true,
+            "first": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "second": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "F.Cu",
+            "xy": [
+              123.725,
+              110
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0.1301,
+            "unfixable": true,
+            "first": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "second": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "F.Cu",
+            "xy": [
+              123.725,
+              115.05
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0.1301,
+            "unfixable": true,
+            "first": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "second": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "F.Cu",
+            "xy": [
+              123.725,
+              113
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0.1301,
+            "unfixable": true,
+            "first": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "second": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "F.Cu",
+            "xy": [
+              123.725,
+              111
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0.1301,
+            "unfixable": true,
+            "first": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "second": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "F.Cu",
+            "xy": [
+              123.9,
+              116.775
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0.1301,
+            "unfixable": true,
+            "first": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "second": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "F.Cu",
+            "xy": [
+              123.725,
+              108.85
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0.1301,
+            "unfixable": true,
+            "first": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "second": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "F.Cu",
+            "xy": [
+              123.725,
+              113.5
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0.1301,
+            "unfixable": true,
+            "first": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "second": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "F.Cu",
+            "xy": [
+              123.725,
+              109.425
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0.1301,
+            "unfixable": true,
+            "first": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "second": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "F.Cu",
+            "xy": [
+              123.725,
+              111.5
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0.1301,
+            "unfixable": true,
+            "first": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "second": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "F.Cu",
+            "xy": [
+              123.725,
+              111.75
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0.1301,
+            "unfixable": true,
+            "first": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "second": {
+              "kind": "trace",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "F.Cu",
+            "xy": [
+              96.225,
+              128.8672
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0.0501,
+            "unfixable": true,
+            "first": {
+              "kind": "pin",
+              "component": "C25",
+              "pin": "1",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "second": {
+              "kind": "via",
+              "layers": [
+                "F.Cu",
+                "B.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "F.Cu",
+            "xy": [
+              159.4325,
+              128.9279
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0.1773,
+            "unfixable": true,
+            "first": {
+              "kind": "pin",
+              "component": "C44",
+              "pin": "2",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "second": {
+              "kind": "via",
+              "layers": [
+                "F.Cu",
+                "B.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "F.Cu",
+            "xy": [
+              141.6328,
+              117.025
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0.0501,
+            "unfixable": true,
+            "first": {
+              "kind": "pin",
+              "component": "C9",
+              "pin": "1",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "second": {
+              "kind": "via",
+              "layers": [
+                "F.Cu",
+                "B.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "F.Cu",
+            "xy": [
+              89.37,
+              82.15
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0.1401,
+            "unfixable": true,
+            "first": {
+              "kind": "pin",
+              "component": "R56",
+              "pin": "2",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "second": {
+              "kind": "via",
+              "layers": [
+                "F.Cu",
+                "B.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "F.Cu",
+            "xy": [
+              118.65,
+              129.341
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0.0001,
+            "unfixable": true,
+            "first": {
+              "kind": "pin",
+              "component": "U1",
+              "pin": "41@18",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "second": {
+              "kind": "via",
+              "layers": [
+                "F.Cu",
+                "B.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "F.Cu",
+            "xy": [
+              110.2975,
+              105.7975
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0,
+            "unfixable": true,
+            "first": {
+              "kind": "pin",
+              "component": "R12",
+              "pin": "1",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "second": {
+              "kind": "via",
+              "layers": [
+                "F.Cu",
+                "B.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "F.Cu",
+            "xy": [
+              114.3322,
+              83.195
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0.1456,
+            "unfixable": true,
+            "first": {
+              "kind": "pin",
+              "component": "C49",
+              "pin": "2",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "second": {
+              "kind": "via",
+              "layers": [
+                "F.Cu",
+                "B.Cu"
+              ]
+            }
+          },
+          {
+            "layer": "F.Cu",
+            "xy": [
+              114.2822,
+              68.855
+            ],
+            "clearance_mm": 0.2,
+            "actual_mm": 0.0749,
+            "unfixable": true,
+            "first": {
+              "kind": "pin",
+              "component": "C51",
+              "pin": "2",
+              "layers": [
+                "F.Cu",
+                "F.Cu"
+              ]
+            },
+            "second": {
+              "kind": "via",
+              "layers": [
+                "F.Cu",
+                "B.Cu"
+              ]
+            }
+          }
+        ]
+      },
       "project_hierarchy_sidecars_unchanged": {
         "BASE-PWR-B.kicad_pcb.net.xml": "6887fe1ea6dcc7d3967c228d795b27cb6c54a244dfad376eb32a3f18b961976b",
         "gate-waivers.json": "d63dd38c0ccd0693f5e38bec1fc08a15ce66230ba30a86069d328cf900cbcb84",
@@ -398,25 +1867,25 @@
         "/tmp/lean-base-b-routing-778-quality-v1/job/base.kicad_pcb": "58dbcf99b13ff9a067aecfaeb2a13aedb7027ad1ecc89680a75eb74c8b309b15",
         "/tmp/lean-base-b-routing-778-quality-v1/job/board.dsn": "0c31eb89280aaf025c021904f93c6b132c6171a079c36d12c9a58dde543e0b0e",
         "/tmp/lean-base-b-routing-778-quality-v1/job/board.ses": "192f07edfb8865ac8bb54b1cdf0af01a1fb08cc90d34c5abd7308d30421da2da",
-        "/tmp/lean-fastroute-quality-773-bridge-native/proof/safe.ses": "369c30f1b6c4b5de5ca17a234e7f28145eebc2628c958dc58394bbdc0240f26b",
-        "/tmp/lean-fastroute-quality-773-bridge-native/proof/safe-report.json": "f84002fb85fd026912b0f33418aedf9e66afc71ed42d99979bf9bd4281ee1c2a",
-        "/tmp/lean-fastroute-quality-773-bridge-native/proof/reference.kicad_pcb": "f90cd538bacd379a72fd13b043b6439cfdde4f3577d348aff703eacd6e12c14d",
-        "/tmp/lean-fastroute-quality-773-bridge-native/proof/input/BASE-PWR-B.kicad_pcb": "74728b12ef482bf388b89643683822d334903ba5257919f8546e5ac99507083a",
-        "/tmp/lean-fastroute-quality-773-bridge-native/proof/drc.json": "546af89d6044b732d14b33757e62229454b7f573ea49904eb31b13dd1f369ca2",
-        "/tmp/lean-fastroute-quality-773-bridge-native/proof/safe-checkpoint.log": "d580482ca5626cf042a0c0a38df160b100f81af37a649b4a4356ad8b3719d797",
-        "/tmp/lean-fastroute-quality-773-bridge-native/proof/unsafe-checkpoint.log": "4c309313e40085d631ef25733a0d356d8c3fdbc5f6596157b5f1de76cf5fa043"
+        "/tmp/lean-fastroute-quality-773-blocked-native/proof/safe.ses": "369c30f1b6c4b5de5ca17a234e7f28145eebc2628c958dc58394bbdc0240f26b",
+        "/tmp/lean-fastroute-quality-773-blocked-native/proof/safe-report.json": "5634c3ef43d47c03f60c7a54f8e9755f6ad0a549c408923fe6fcdff7d5160f80",
+        "/tmp/lean-fastroute-quality-773-blocked-native/proof/reference.kicad_pcb": "8ced475bf444d87f335714103c9f7bce0ef429e35620d68362c579ec9b391c29",
+        "/tmp/lean-fastroute-quality-773-blocked-native/proof/input/BASE-PWR-B.kicad_pcb": "337c23ca65e27b8c3f14a9ba9af5857a92396f62086ddb2500872640abbfe319",
+        "/tmp/lean-fastroute-quality-773-blocked-native/proof/drc.json": "f401a208ced6c3eb3b05ea688f80940768f86e0cb9cc1573838f8b847c571569",
+        "/tmp/lean-fastroute-quality-773-blocked-native/proof/safe-checkpoint.log": "c245da463f50ea23af1e020ffe161db7bfb426eca1227a6ce032c82238fc346d",
+        "/tmp/lean-fastroute-quality-773-blocked-native/proof/unsafe-checkpoint.log": "bad3b5df526c3fd782ae657762395e01ce658bd26fa22f2f6f7262b7f8606a89"
       }
     },
     "library_tests_passed": 85,
-    "geometry_checkpoint_clone_tests_passed": 6,
+    "geometry_checkpoint_clone_endpoint_tests_passed": 8,
     "test_outcome": {
       "cause": "exit",
       "returncode": 0,
       "qualified": false,
       "signals": [],
       "cleanup_errors": [],
-      "elapsed_s": 10.63401000003796,
-      "deadline_remaining_s": 109.36598899995442,
+      "elapsed_s": 6.802784999948926,
+      "deadline_remaining_s": 113.19721400004346,
       "owned_child_terminal": true
     },
     "qa_outcome": {
@@ -425,15 +1894,49 @@
       "qualified": false,
       "signals": [],
       "cleanup_errors": [],
-      "elapsed_s": 19.879111999995075,
-      "deadline_remaining_s": 70.12088699999731,
+      "elapsed_s": 15.459461999940686,
+      "deadline_remaining_s": 74.5405370000517,
       "owned_child_terminal": true
     },
-    "engine_stats": {
-      "unrouted": 21,
-      "unrouted_ignored_classes": 6,
-      "violations": 33,
-      "violations_unfixable": 33
+    "blocked_endpoint_scope": "actual known U15.5 failed single-endpoint probe on frozen DSN; immediate owned pristine snapshot; no full pipeline route",
+    "blocked_endpoint": {
+      "pristine_revision": 2874,
+      "item_id": 685,
+      "kind": "pin",
+      "ref": "U15",
+      "pad": "5",
+      "nets": [
+        {
+          "number": 21,
+          "name": "VDD_3V3",
+          "subnet": 1
+        }
+      ],
+      "layers": [
+        "F.Cu"
+      ],
+      "dsn_center": [
+        124330.0,
+        -77930.0
+      ],
+      "dsn_bounds": [
+        124140.0,
+        -78320.0,
+        124520.0,
+        -77540.0
+      ],
+      "dsn_unit": "um",
+      "dsn_resolution": 10,
+      "failure_count": 2,
+      "state": "Failed",
+      "details": "Failed to route connection, because no connection was found between their nets."
+    },
+    "diagnostic_executable": {
+      "path": "/tmp/lean-fastroute-quality-773-native/target/release/examples/escape_probe",
+      "sha256": "a1f144c98f30705f922e0f8c6eeffbeb03892de3b531e4dd4095843f4363d8b2",
+      "source_path": "/tmp/lean-fastroute-quality-773-source/crates/fastroute/examples/escape_probe.rs",
+      "source_sha256": "c4f6c7d76ef6a5c83e693ed9ae72639fb45f7e75b04767c719dc8599b03519eb",
+      "untracked_diagnostic_only": true
     }
   },
   "frozen_fixture": {
@@ -486,54 +1989,47 @@
       "qualified": false,
       "signals": [],
       "cleanup_errors": [],
-      "elapsed_s": 37.364823000039905,
-      "deadline_remaining_s": 262.6351760000689,
+      "elapsed_s": 35.45308400003705,
+      "deadline_remaining_s": 264.54691499995533,
       "owned_child_terminal": true
     },
     "supervisor": "/tmp/lean-router-quality-773-supervisor.py",
     "no_production_replacement": true
   },
   "previous_artifact": {
-    "patch_sha256": "3ef9849bd0522c657f12d586416b0e051e1d26d91960012ceac76ca0d54dacfd",
-    "binary_sha256": "a3986e877a74f3e052db9210089d0bc0399d67bd45eea8200af847f6707e98a9",
-    "linux_validation": {
-      "image": "sha256:ecbe59a8408895edd02d9ef422504b8501dd9fa1526de27a45b73406d734d659",
-      "rust": "1.93.1",
-      "cpu": 2,
-      "memory_gib": 4,
-      "cargo_jobs": 2,
-      "external_limit_s": 120,
-      "policy_tests_passed": 2,
-      "geometry_checkpoint_clone_tests_passed": 4,
-      "cli_compiles": true,
-      "bad_session_rejected_before_routing": true,
-      "safe_session_accepted": true,
-      "safe_session_imported_items": 0,
-      "debug_contended_observations": {
-        "baseline_create_ms": 543.889,
-        "five_identity_checks_ms": 415.563
-      },
-      "no_speed_or_production_adoption_claim": true
-    },
+    "patch_sha256": "9856594eb3c3b9facab4cb5fafa0967376d85cc5357a1eda4743d8114c726d2e",
+    "binary_sha256": "586bb08fbc4a301ca2a33bc99d7f8ed470ad26fd5c85ceb5d98dd0a2d4da7358",
     "native_validation": {
       "status": "passed",
-      "scope": "artifact QA only; safe original fixed wiring; no routing; no board qualification",
+      "scope": "artifact QA and production CLI no-routing checkpoint replay; zero native errors/parity,11opens; not board qualified",
       "evidence": [
         {
-          "path": "/tmp/lean-fastroute-quality-773-native/proof/native-proof.json",
-          "sha256": "1070d4f6ad3f9f2d6140bb07aaa5cad82de9d8be68cfdd49324567c3d141a421"
+          "path": "/tmp/lean-fastroute-quality-773-bridge-native/proof/native-proof.json",
+          "sha256": "7644a94b992a4dfe816dbbdfc13d0106a178af2c8e9d188bc7c3c8c2a1347fca"
         },
         {
-          "path": "/tmp/lean-fastroute-quality-773-native/build2/outcome.json",
-          "sha256": "3b8bae6441465a53fb6a9308933509f9d0295a6f25d377c3e87c787e4b5cf0b6"
+          "path": "/tmp/lean-fastroute-quality-773-bridge-native/proof/drc.json",
+          "sha256": "546af89d6044b732d14b33757e62229454b7f573ea49904eb31b13dd1f369ca2"
         },
         {
-          "path": "/tmp/lean-fastroute-quality-773-native/proof/safe.ses",
-          "sha256": "c8b145843e20bbf11bc1510ce3ebfd2875d3f44fe072bca849518f7374587b0e"
+          "path": "/tmp/lean-fastroute-quality-773-bridge-native/proof/safe.ses",
+          "sha256": "369c30f1b6c4b5de5ca17a234e7f28145eebc2628c958dc58394bbdc0240f26b"
         },
         {
-          "path": "/tmp/lean-fastroute-quality-773-native/proof/drc.json",
-          "sha256": "9debee0553e73d3b6af93e0516df571ef8caecab8b0c522f8698b695ea5a0226"
+          "path": "/tmp/lean-fastroute-quality-773-bridge-native/proof/safe-report.json",
+          "sha256": "f84002fb85fd026912b0f33418aedf9e66afc71ed42d99979bf9bd4281ee1c2a"
+        },
+        {
+          "path": "/tmp/lean-fastroute-quality-773-bridge-native/proof/safe-checkpoint.log",
+          "sha256": "d580482ca5626cf042a0c0a38df160b100f81af37a649b4a4356ad8b3719d797"
+        },
+        {
+          "path": "/tmp/lean-fastroute-quality-773-bridge-native/proof/unsafe-checkpoint.log",
+          "sha256": "4c309313e40085d631ef25733a0d356d8c3fdbc5f6596157b5f1de76cf5fa043"
+        },
+        {
+          "path": "/tmp/lean-bridge-773-tests-v3/command.log",
+          "sha256": "7b0b12798c45b78e3170ca3d8df031daf309aec8a9518f26c63e77cba835300a"
         }
       ],
       "proof": {
@@ -541,16 +2037,187 @@
         "backend_artifact_qa_only": true,
         "board_qualified": false,
         "no_routing": true,
-        "binary_sha256": "a3986e877a74f3e052db9210089d0bc0399d67bd45eea8200af847f6707e98a9",
+        "binary_sha256": "586bb08fbc4a301ca2a33bc99d7f8ed470ad26fd5c85ceb5d98dd0a2d4da7358",
         "capability": true,
         "bad_session_rejected": true,
         "bad_session_no_output": true,
         "safe_session_accepted": true,
-        "exact_all_native_immutable_nodes": true,
-        "exact_poses_pads_readback": true,
+        "unsafe_enhancement_rolled_back": true,
+        "exact_safe_checkpoint_copper_geometry": true,
+        "exact_existing_copper_parts_setup_zones": true,
+        "exact_poses_pads": true,
+        "restored": [
+          {
+            "uuid": "03591aff-4893-49ab-bafe-209e5e0b4d1f",
+            "ref": "TP14",
+            "position_nm": [
+              87140000,
+              130389999
+            ],
+            "imported_position_nm": [
+              87140000,
+              130390000
+            ],
+            "delta_nm": [
+              0,
+              1
+            ]
+          },
+          {
+            "uuid": "132c9a22-1bad-447e-9855-5a463013a54f",
+            "ref": "D22",
+            "position_nm": [
+              135010000,
+              65959999
+            ],
+            "imported_position_nm": [
+              135010000,
+              65960000
+            ],
+            "delta_nm": [
+              0,
+              1
+            ]
+          },
+          {
+            "uuid": "716cb3f3-da4f-4bc9-945c-963d621ccbe3",
+            "ref": "R56",
+            "position_nm": [
+              89869999,
+              81400000
+            ],
+            "imported_position_nm": [
+              89870000,
+              81400000
+            ],
+            "delta_nm": [
+              1,
+              0
+            ]
+          },
+          {
+            "uuid": "7abfcdd3-61c7-4da0-8c5c-66144f2a7593",
+            "ref": "C36",
+            "position_nm": [
+              84869999,
+              60400000
+            ],
+            "imported_position_nm": [
+              84870000,
+              60400000
+            ],
+            "delta_nm": [
+              1,
+              0
+            ]
+          },
+          {
+            "uuid": "856e854b-41ec-40e0-910e-34b276f7b71d",
+            "ref": "C4",
+            "position_nm": [
+              131199999,
+              134900000
+            ],
+            "imported_position_nm": [
+              131200000,
+              134900000
+            ],
+            "delta_nm": [
+              1,
+              0
+            ]
+          },
+          {
+            "uuid": "df5c1f0c-48e6-4ff4-9a26-c2b26174e1fd",
+            "ref": "R50",
+            "position_nm": [
+              107000000,
+              133539999
+            ],
+            "imported_position_nm": [
+              107000000,
+              133540000
+            ],
+            "delta_nm": [
+              0,
+              1
+            ]
+          }
+        ],
         "native_errors": {},
         "native_parity": 0,
-        "native_opens": 302
+        "native_opens": 11,
+        "project_hierarchy_sidecars_unchanged": {
+          "BASE-PWR-B.kicad_pcb.net.xml": "6887fe1ea6dcc7d3967c228d795b27cb6c54a244dfad376eb32a3f18b961976b",
+          "gate-waivers.json": "d63dd38c0ccd0693f5e38bec1fc08a15ce66230ba30a86069d328cf900cbcb84",
+          "gate.json": "2b7f836b9c604c51949268388cbf6fc06dd33c6de2f910264573c353c17a8498",
+          "reference-planes.json": "4ec036cff6e2699ce5c63c537a3322df2cf4c3e332b250c608522dcd7f403a4d",
+          "fp-lib-table": "50473d313d802bf65bbaa7f2d7507ee6029cf042ccd890cc00ce8c9092fbe43c",
+          "current-paths.json": "b02db0631438e91f49493d7d1e77d536d2bb730f8b0571b166ae05f1fecb38e9",
+          "BASE-PWR-B.kicad_dru": "e7a381c121f1073673809bac5c1b557ea7ecc5ea2d3d098ab50f6f8a6406c1c5",
+          "diff-pairs.json": "8571441fa0047a55b611e4bcc216d0da4c64095ab2a1103e1f32cfc1387c8c7f",
+          "rp001-fast-nets.json": "087f95dbdb87593d5c61dd2fb10a4c0408b9f2c8b82267f869427b15c4803123",
+          "board-labels.json": "d2ce3fbf1d0b7c89d62d8b3c8138c31fbe98a6029e7175646213eae8c8755a4d",
+          "kicad-happy-exempt.json": "c5496642b8d0ca8c2fee7aa460519f9bad0b236f18a3e20c99ce518c8a438128",
+          "port-labels.json": "547aab3cfeb2279ca4b22a541f757ca56ca6f755ce100178b65111b9d5d9c111",
+          "BASE-PWR-B.kicad_sch": "0dc8d628a4db92ff936ab453eeada802867412204b4217e24a25cf0f6795235d",
+          "AUTO.kicad_sym": "fce7f5d297e53aec32bc4e53ca1e4067bfb1890eb0f345d666b32c8d17149e32",
+          "BASE-PWR-B.kicad_pro": "1e7a3b0575c8fa4b7eac13983bb9f168d993addb903cb1ef20597b660c3640e7",
+          "PWR-24V.kicad_sch": "c0c63a1b8841f3c211ddc73b2627ec918ef62e45141ae05232ad29619d0c1b92",
+          "sym-lib-table": "4ad2a8876ed7bdb9f74bdfb3bfb42effb07bf127025665db54aa59ee017b645f",
+          "gate-metrics.json": "91755b3053a9a4cfa6544d96526f30f6b3182bd7390454b487af78a80c7e4eb9",
+          "silk-marks.json": "357d3b9b3876cb0f9b9609e45b3019e02722841867d05e151bf8d80a422e82bf",
+          "blocks/IF-BKP-LINK-ESD.kicad_sch": "95fbc9e529c1d37ed18ea170fa519ac41d428bad3c8475395ee9fdd01685f604",
+          "blocks/IF-RS485.kicad_sch": "003371de89e8a522fa16210044358e9f9d257491bf4dce7c8b7bb785e3a3c394",
+          "blocks/PSW-TPS2553.kicad_sch": "7c1f315584c4a3f29b0f93391b38ce6bbd7df636ef92eee84d66bab30d46c9a3",
+          "BASE.pretty/Buzzer_MLT-5030.kicad_mod": "0b6cdbdd564194c9fb778b2d3e925671964bf629c3b7efd15a1994ae2f13b731",
+          "BASE.pretty/WJ15EDGRC-3.81-03P_THT.kicad_mod": "58655dfbdeedd3ac68e28b5f32e769f8cfe9022162cbfe6ffb53d497a9cb2ffe",
+          "BASE.pretty/D_SOD-123FL_MDD.kicad_mod": "5ae26cda73ac5450e2ce6654380d94419301bfc8ced7982175c9ce83ea0732c6",
+          "BASE.pretty/WJ15EDGRC-3.81-07P_THT.kicad_mod": "77d1fe5ce368574029be1a836ac9db99a702fce88f373d9fcabc218dd5754d65",
+          "BASE.pretty/USON-10_2.5x1.0mm_P0.5mm_TI-DQA0010A.kicad_mod": "36d6915ddcd80496cbbd446aed39b1258b834257c4673dc488abf8d6755d3e95",
+          "BASE.pretty/USB-C_TYPE-C-31-D-09_THT.kicad_mod": "e066f5ffd80525ed5eaccb353cf79fef511765b4c470f5b06b02f04c041a0077",
+          "BASE.pretty/WJ15EDGRC-3.81-09P_THT.kicad_mod": "55cfa0a317071eda61e28d6eb17d770251e8468147aa4da03d7c79e0216ba2a7"
+        },
+        "hashes": {
+          "/tmp/lean-base-b-routing-778-quality-v1/job/base.kicad_pcb": "58dbcf99b13ff9a067aecfaeb2a13aedb7027ad1ecc89680a75eb74c8b309b15",
+          "/tmp/lean-base-b-routing-778-quality-v1/job/board.dsn": "0c31eb89280aaf025c021904f93c6b132c6171a079c36d12c9a58dde543e0b0e",
+          "/tmp/lean-base-b-routing-778-quality-v1/job/board.ses": "192f07edfb8865ac8bb54b1cdf0af01a1fb08cc90d34c5abd7308d30421da2da",
+          "/tmp/lean-fastroute-quality-773-bridge-native/proof/safe.ses": "369c30f1b6c4b5de5ca17a234e7f28145eebc2628c958dc58394bbdc0240f26b",
+          "/tmp/lean-fastroute-quality-773-bridge-native/proof/safe-report.json": "f84002fb85fd026912b0f33418aedf9e66afc71ed42d99979bf9bd4281ee1c2a",
+          "/tmp/lean-fastroute-quality-773-bridge-native/proof/reference.kicad_pcb": "f90cd538bacd379a72fd13b043b6439cfdde4f3577d348aff703eacd6e12c14d",
+          "/tmp/lean-fastroute-quality-773-bridge-native/proof/input/BASE-PWR-B.kicad_pcb": "74728b12ef482bf388b89643683822d334903ba5257919f8546e5ac99507083a",
+          "/tmp/lean-fastroute-quality-773-bridge-native/proof/drc.json": "546af89d6044b732d14b33757e62229454b7f573ea49904eb31b13dd1f369ca2",
+          "/tmp/lean-fastroute-quality-773-bridge-native/proof/safe-checkpoint.log": "d580482ca5626cf042a0c0a38df160b100f81af37a649b4a4356ad8b3719d797",
+          "/tmp/lean-fastroute-quality-773-bridge-native/proof/unsafe-checkpoint.log": "4c309313e40085d631ef25733a0d356d8c3fdbc5f6596157b5f1de76cf5fa043"
+        }
+      },
+      "library_tests_passed": 85,
+      "geometry_checkpoint_clone_tests_passed": 6,
+      "test_outcome": {
+        "cause": "exit",
+        "returncode": 0,
+        "qualified": false,
+        "signals": [],
+        "cleanup_errors": [],
+        "elapsed_s": 10.63401000003796,
+        "deadline_remaining_s": 109.36598899995442,
+        "owned_child_terminal": true
+      },
+      "qa_outcome": {
+        "cause": "exit",
+        "returncode": 0,
+        "qualified": false,
+        "signals": [],
+        "cleanup_errors": [],
+        "elapsed_s": 19.879111999995075,
+        "deadline_remaining_s": 70.12088699999731,
+        "owned_child_terminal": true
+      },
+      "engine_stats": {
+        "unrouted": 21,
+        "unrouted_ignored_classes": 6,
+        "violations": 33,
+        "violations_unfixable": 33
       }
     },
     "native_build": {
@@ -565,16 +2232,16 @@
         "qualified": false,
         "signals": [],
         "cleanup_errors": [],
-        "elapsed_s": 41.47567399998661,
-        "deadline_remaining_s": 258.5243250000058,
+        "elapsed_s": 37.364823000039905,
+        "deadline_remaining_s": 262.6351760000689,
         "owned_child_terminal": true
       },
       "supervisor": "/tmp/lean-router-quality-773-supervisor.py",
       "no_production_replacement": true
     },
     "frozen_fixture": {
-      "dsn_sha256": "bc8c22364be89730c0cf9da3846e48b0b4f8d0f86d3c2c6f1c437ef364a53187",
-      "ses_sha256": "82cd668382075e46f3dc0edc38f2778fd7feb2b087e85dd0c1ec9b505a212e3c"
+      "dsn_sha256": "0c31eb89280aaf025c021904f93c6b132c6171a079c36d12c9a58dde543e0b0e",
+      "ses_sha256": "192f07edfb8865ac8bb54b1cdf0af01a1fb08cc90d34c5abd7308d30421da2da"
     }
   }
 }

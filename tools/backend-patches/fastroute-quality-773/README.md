@@ -33,6 +33,15 @@ transaction runs before an autoroute engine exists; a live engine is rejected
 because its transient state is intentionally absent from a board clone.
 The original frontier is never promoted to include an unsafe bridge.
 
+When the existing pristine single-endpoint probe identifies a blocked endpoint,
+the engine immediately emits one `BLOCKED_ENDPOINT` INFO record. Its owned
+snapshot names the original component/pad, nets/subnets, layers, DSN center and
+bounds with unit/resolution, pristine revision and diagnostic item ID. Probe
+state/details and failure count are recorded without another route attempt.
+The wrapper retains this log even when its deadline prevents final reporting;
+its run manifest binds the loaded DSN hash. No baseline promotion, hash dependency,
+or extra final-report diagnosis is needed to preserve this evidence.
+
 ## Repeatable isolated build
 
 Start a new upstream checkout and verify its exact commit before applying:
@@ -100,6 +109,11 @@ checkpoint copper remain identical; these engine counts cannot substitute for
 native opens. Actual geometry fixtures prove both unsafe whole-board rollback
 and safe retained bridge copper, including merged traces; 85 library and six
 geometry tests passed with no ignored tests on the isolated native toolchain.
+Two additional endpoint tests prove exact pin attribution, control-character
+escaping, immutable snapshots after candidate mutation, and non-pin geometry
+fallback. The updated run passes 85 library and eight integration tests with
+no ignored tests. A bounded single U15.5 probe checks the actual frozen DSN
+endpoint record; it is distinct from a full routing run.
 
 An explicitly bound wrapper requires this flag and artifact; legacy invocation
 remains explicitly unverified. Production binary replacement has not occurred.

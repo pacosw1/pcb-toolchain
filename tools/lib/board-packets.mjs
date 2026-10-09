@@ -1,27 +1,10 @@
 import {existsSync,readFileSync,readdirSync} from 'node:fs';
 import {join,resolve,relative} from 'node:path';
+import {inspectBomCoverage} from './bom-coverage.mjs';
+import {parseCsv} from './csv.mjs';
+export {parseCsv} from './csv.mjs';
 
 export const FULL_PACKET=['README.md','STATUS.md','SPEC.md','BOM-VERIFIED.csv','SCHEMATIC.md','DATASHEETS.md','POWER-AND-IC-ANALYSIS.md','MECHANICAL.md','JLC-SUBMISSION.md','BRINGUP-TEST-PLAN.md','DOC-RECONCILIATION.md','reports/README.md','handoff/README.md'];
-
-// Preserve quoted commas/newlines so LCSC IDs cannot shift columns.
-export function parseCsv(text) {
- const rows=[];let row=[],field='',quoted=false;
- for(let i=0;i<text.length;i++) {
-  const c=text[i];
-  if(c==='"') {
-   if(quoted && text[i+1]==='"'){field+='"';i++;}
-   else if(quoted) quoted=false;
-   else if(!field) quoted=true;
-   else throw new Error('quote inside unquoted CSV field');
-  } else if(!quoted && (c===',' || c==='\n')) {
-   row.push(field.replace(/\r$/,''));field='';
-   if(c==='\n'){if(row.some(Boolean)) rows.push(row);row=[];}
-  } else field+=c;
- }
- if(quoted) throw new Error('unterminated quoted CSV field');
- if(field || row.length){row.push(field.replace(/\r$/,''));if(row.some(Boolean)) rows.push(row);}
- return rows;
-}
 
 export function inspectPackets(root,registry) {
  const findings=[];const checked=[];
@@ -77,6 +60,10 @@ export function inspectPackets(root,registry) {
      for(const [i,r] of rows.slice(1).entries()) {
       if(r.length!==rows[0].length) fail(e.id,'bom_row',`BOM row ${i+2} has inconsistent column count`);
       if(r[3] && !/^C\d+$/.test(r[3].trim())) fail(e.id,'bom_identity',`BOM row ${i+2} has invalid LCSC ID`);
+     }
+     if(rows.length>1) {
+      try {inspectBomCoverage(root,e,readFileSync(p,'utf8'),rows);}
+      catch(error) {fail(e.id,'bom_coverage',error.message);}
      }
     } catch(error){fail(e.id,'bom_csv',error.message);}
    }

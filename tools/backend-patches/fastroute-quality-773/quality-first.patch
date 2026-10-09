@@ -146,10 +146,84 @@ index a474456..a703710 100644
      if let Some(out) = args.design_out {
          // The Java CLI names the session after the input file stem.
 diff --git a/crates/fr-engine/src/pipeline/autorouter.rs b/crates/fr-engine/src/pipeline/autorouter.rs
-index 0c9159a..0d87dd5 100644
+index 0c9159a..3310b46 100644
 --- a/crates/fr-engine/src/pipeline/autorouter.rs
 +++ b/crates/fr-engine/src/pipeline/autorouter.rs
-@@ -923,6 +923,7 @@ impl BatchAutorouter {
+@@ -21,6 +21,58 @@ use super::history::{board_hash, BoardHistory, MAX_HISTORY_SIZE};
+ use super::stats::{format_score, incomplete_count, StatsCache};
+ use super::{CheckpointKey, PipelineContext};
+ 
++/// Owned evidence from the immutable pristine board, captured before its existing probe.
++/// Item IDs are diagnostic only; ref/pad/net/layers/geometry identify the endpoint.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct BlockedEndpointSnapshot(String);
++
++fn evidence_string(value: &str) -> String {
++    let mut out=String::from("\"");
++    for c in value.chars() {
++        match c {
++            '"' => out.push_str("\\\""), '\\' => out.push_str("\\\\"),
++            c if c <= '\u{001f}' => out.push_str(&format!("\\u{:04x}",c as u32)),
++            c => out.push(c),
++        }
++    }
++    out.push('"'); out
++}
++
++impl BlockedEndpointSnapshot {
++    pub fn capture(board: &RoutingBoard, key: ItemKey) -> Self {
++        let item=board.item(key);
++        let (kind,reference,pad)=match &item.kind {
++            crate::board::ItemKind::Pin(pin) => {
++                let component=board.components.get(item.component_no());
++                let package=board.library.packages.get(component.get_package());
++                ("pin",component.name.clone(),package.get_pin(pin.pin_index).map(|p|p.name.clone()))
++            },
++            _ => (if item.is_via(){"via"}else if item.is_trace(){"trace"}else{"other"},String::new(),None),
++        };
++        let nets=item.net_numbers().iter().map(|&n| {
++            let net=board.rules.nets.get(n);
++            format!("{{\"number\":{n},\"name\":{},\"subnet\":{}}}",
++                net.map(|net|evidence_string(&net.name)).unwrap_or_else(||"null".into()),
++                net.map(|net|net.subnet_number.to_string()).unwrap_or_else(||"null".into()))
++        }).collect::<Vec<_>>().join(",");
++        let layers=(item.first_layer(board)..=item.last_layer(board)).map(|layer| {
++            board.layer_structure.layers.get(layer as usize).map(|l|evidence_string(&l.name)).unwrap_or_else(||"null".into())
++        }).collect::<Vec<_>>().join(",");
++        let bounds=board.communication.coordinate_transform.board_to_dsn_box(&item.bounding_box(board));
++        let center=if matches!(&item.kind,crate::board::ItemKind::Pin(_)|crate::board::ItemKind::Via(_)) {
++            board.communication.coordinate_transform.board_to_dsn_point(&item.center(board).to_float())
++        } else { [(bounds[0]+bounds[2])/2.,(bounds[1]+bounds[3])/2.] };
++        Self(format!("\"pristine_revision\":{},\"item_id\":{},\"kind\":{},\"ref\":{},\"pad\":{},\"nets\":[{}],\"layers\":[{}],\"dsn_center\":{:?},\"dsn_bounds\":{:?},\"dsn_unit\":{},\"dsn_resolution\":{}",
++            board.revision(),item.id().0,evidence_string(kind),evidence_string(&reference),
++            pad.as_deref().map(evidence_string).unwrap_or_else(||"null".into()),nets,layers,center,bounds,
++            evidence_string(&board.communication.unit.to_string()),board.communication.resolution))
++    }
++    pub fn record(&self, failure_count: i32, result: &AutorouteAttemptResult) -> String {
++        format!("BLOCKED_ENDPOINT {{{},\"failure_count\":{},\"state\":{},\"details\":{}}}",
++            self.0,failure_count,evidence_string(&format!("{:?}",result.state)),evidence_string(&result.details))
++    }
++}
++
+ /// Java `BOARD_RANK_LIMIT`.
+ const BOARD_RANK_LIMIT: i32 = MAX_HISTORY_SIZE as i32;
+ /// Java `MAXIMUM_TRIES_ON_THE_SAME_BOARD`.
+@@ -827,10 +879,13 @@ impl BatchAutorouter {
+         }
+         let mut b = (**pristine).clone();
+         let Some(k) = b.get_item(ItemId(id)) else { return };
++        let endpoint=BlockedEndpointSnapshot::capture(pristine,k);
+         let r = b.autoroute(k, settings, settings.get_via_costs(), None, None);
+         if matches!(r.state, AutorouteAttemptState::Failed | AutorouteAttemptState::InsertError) {
+             log::debug!(target: "fr_engine::pipeline::diag", "item #{id} cannot be routed on the pristine board ({}): skipped from now on", r.details);
+-            self.blocked.insert(id);
++            if self.blocked.insert(id) {
++                log::info!("{}",endpoint.record(failure_count,&r));
++            }
+         }
+     }
+ 
+@@ -923,6 +978,7 @@ impl BatchAutorouter {
              }
          }
  
@@ -157,7 +231,7 @@ index 0c9159a..0d87dd5 100644
          let current_unrouted = incomplete_count(board, None);
          // fastroute: unrouted connections of ignored net classes (constant: never routed)
          let ignored = if ctx.enhancements { super::stats::ignored_incomplete_count(board) } else { 0 };
-@@ -960,15 +961,22 @@ impl BatchAutorouter {
+@@ -960,15 +1016,22 @@ impl BatchAutorouter {
              {
                  let hash = board_hash(board);
                  let b: &RoutingBoard = board;
@@ -182,7 +256,7 @@ index 0c9159a..0d87dd5 100644
                  if (current_pass % STOP_AT_PASS_MODULO == 0 && current_pass >= STOP_AT_PASS_MINIMUM) || stop.is_stop_autorouter_requested() {
                      if bh.get_max_score() > after.router_score {
                          let Some(to_restore) = bh.restore_board(MAXIMUM_TRIES_ON_THE_SAME_BOARD) else {
-@@ -1013,7 +1021,7 @@ impl BatchAutorouter {
+@@ -1013,7 +1076,7 @@ impl BatchAutorouter {
                      score: after.router_score,
                  });
              }
@@ -191,7 +265,7 @@ index 0c9159a..0d87dd5 100644
                  // fastroute: a pass that loses much more than it gains (ripped nets) is undone:
                  // the next pass starts from the best board so far. Java keeps routing from the
                  // worse board and restores the history only every few passes.
-@@ -1131,6 +1139,7 @@ impl BatchAutorouter {
+@@ -1131,6 +1194,7 @@ impl BatchAutorouter {
                  );
              }
          }
@@ -448,10 +522,10 @@ index 0000000..479e754
 +}
 diff --git a/crates/fr-engine/tests/quality_identity.rs b/crates/fr-engine/tests/quality_identity.rs
 new file mode 100644
-index 0000000..65a36a8
+index 0000000..02a1ffd
 --- /dev/null
 +++ b/crates/fr-engine/tests/quality_identity.rs
-@@ -0,0 +1,141 @@
+@@ -0,0 +1,190 @@
 +use fr_engine::board::*;
 +use fr_engine::datastructures::ItemIdGenerator;
 +use fr_engine::ids::FixedState;
@@ -592,4 +666,53 @@ index 0000000..65a36a8
 +    assert_ne!(enhanced_geometry,original_geometry,"bridge copper must be retained, including merged traces");
 +    segment(&mut b.basic,4000,3);
 +    assert!(!guard.accepts(&b),"safe enhancement must not grant later faults permission");
++}
++
++fn blocked_pin_fixture() -> (RoutingBoard, ItemKey) {
++    use fr_engine::library::PackagePin;
++    let mut b=board();
++    let shapes=vec![Some(ConvexShape::Circle(Circle::new(IntPoint::new(0,0),100)));2];
++    let library=std::sync::Arc::make_mut(&mut b.library);
++    let stack=library.padstacks.add("pin",shapes,true,false);
++    let package=library.packages.add("H5VUT3UA",vec![PackagePin::new("5",stack,Vector::get_instance(0,0),0.)],
++        None,None,None,vec![],vec![],vec![],true);
++    let component=std::sync::Arc::make_mut(&mut b.components).add("U15",Some(Point::Int(IntPoint::new(1243300,779300))),0.,true,package,package,true,None);
++    std::sync::Arc::make_mut(&mut b.rules).nets.get_mut(1).unwrap().name="VDD_3V3".into();
++    let key=b.insert_pin(component,0,&[1],1,FixedState::UserFixed);
++    (RoutingBoard::from_basic(b),key)
++}
++
++#[test]
++fn blocked_endpoint_snapshot_is_owned_and_uses_pristine_pin_identity() {
++    use fr_engine::pipeline::autorouter::BlockedEndpointSnapshot;
++    let (pristine,key)=blocked_pin_fixture();
++    let snapshot=BlockedEndpointSnapshot::capture(&pristine,key);
++    let result=fr_engine::autoroute::AutorouteAttemptResult::with_details(AutorouteAttemptState::Failed,"insert \"blocked\"\nnext\\path");
++    let record=snapshot.record(2,&result);
++    assert!(record.starts_with("BLOCKED_ENDPOINT {"));
++    for field in ["\"ref\":\"U15\"","\"pad\":\"5\"","\"name\":\"VDD_3V3\"","\"layers\":[\"F.Cu\",\"B.Cu\"]",
++        "\"dsn_center\":[1243300.0, 779300.0]","\"state\":\"Failed\""] {
++        assert!(record.contains(field),"missing {field}: {record}");
++    }
++    assert!(record.contains("insert \\\"blocked\\\"\\u000anext\\\\path"));
++    assert!(!record.contains('\n'));
++    let mut candidate=pristine.clone();
++    candidate.remove_items([key]);
++    std::sync::Arc::make_mut(&mut candidate.rules).nets.get_mut(1).unwrap().name="WRONG".into();
++    assert_eq!(snapshot.record(2,&result),record,"candidate/probe mutations must not rewrite captured endpoint");
++    assert_eq!(BlockedEndpointSnapshot::capture(&pristine,key),snapshot);
++}
++
++#[test]
++fn blocked_endpoint_non_pin_geometry_and_insert_error_are_attributable() {
++    use fr_engine::pipeline::autorouter::BlockedEndpointSnapshot;
++    let mut b=board();let key=segment(&mut b,3000,1);
++    let b=RoutingBoard::from_basic(b);
++    let record=BlockedEndpointSnapshot::capture(&b,key).record(3,
++        &fr_engine::autoroute::AutorouteAttemptResult::with_details(AutorouteAttemptState::InsertError,"collision"));
++    assert!(record.contains("\"kind\":\"trace\""));
++    assert!(record.contains("\"pad\":null"));
++    assert!(record.contains("\"layers\":[\"F.Cu\"]"));
++    assert!(record.contains("\"state\":\"InsertError\""));
++    assert!(record.contains("\"dsn_bounds\":"));
 +}
