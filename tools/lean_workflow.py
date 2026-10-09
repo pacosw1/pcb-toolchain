@@ -104,6 +104,13 @@ def preflight_errors(drc):
             and not v.get('excluded', False)]
 
 
+def validate_drc(drc):
+    if not isinstance(drc, dict) or any(not isinstance(drc.get(k), list)
+                                         for k in ('violations', 'unconnected_items')):
+        raise ValueError('missing or malformed native DRC evidence')
+    return drc
+
+
 def select_real(run, directory):
     """Select only attributed, non-timeout candidates on the accepted outline."""
     candidates = []
@@ -122,6 +129,11 @@ def select_real(run, directory):
         board = root / f'step-{index}' / 'route-0' / 'routed.kicad_pcb'
         if not board.is_file():
             continue
+        outcome = board.parent / 'outcome.json'
+        if outcome.exists():
+            evidence = json.loads(outcome.read_text())
+            if evidence.get('status') != 'complete' or evidence.get('board_sha256') != digest(board):
+                continue
         candidates.append((not step.get('passed', False), min(scores), index, board))
     if not candidates:
         raise ValueError('no verified candidate on the accepted outline; diagnostic evidence retained')

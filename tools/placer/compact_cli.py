@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import time
+import math
 from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -75,6 +76,9 @@ def parser():
                     help='fastroute: tools/fastroute_job.py on this computer (default). freerouting: 2.1.0 on Hetzner '
                     '(its timed-out runs lost most of the result, 2026-10-03; kept for old benchmarks only)')
     ap.add_argument('--passes', type=int, default=40, help='router passes per step (fastroute)')
+    ap.add_argument('--diagnostic-budget', type=float, default=None,
+                    help='seconds reserved for virtual diagnostics after real-outline failures')
+    ap.add_argument('--optimizer', choices=['always', 'off', 'if-routed'], default='always')
     ap.add_argument('--route-args', default='', help='more arguments for tools/fastroute_job.py, one string '
                     '(for example "--layers F.Cu,In2.Cu,B.Cu --plane-nets GND,+3V3")')
     ap.add_argument('--virtual-first', action='store_true', help='old order: virtual (scaled) board first. Default: '
@@ -87,15 +91,23 @@ def parser():
 def main(argv=None):
     a = parser().parse_args(argv)
     from placer import kicad_io
-    if a.budget <= 0:
+    if not math.isfinite(a.budget) or a.budget <= 0:
         raise ValueError('budget must be positive')
+    if a.diagnostic_budget is not None and (not math.isfinite(a.diagnostic_budget) or a.diagnostic_budget < 0):
+        raise ValueError('diagnostic budget must be finite and nonnegative')
     deadline = time.monotonic() + a.budget
     inherited = os.environ.get('IOT_LEAN_DEADLINE')
     if inherited:
         deadline = min(deadline, float(inherited))
     pr = json.load(open(a.prob))
+    if os.path.isdir(a.outdir) and os.listdir(a.outdir):
+        raise ValueError('compaction output directory must be fresh')
     os.makedirs(a.outdir, exist_ok=True)
     events = os.path.join(a.outdir, 'stages.jsonl')
+    lean.atomic_json(os.path.join(a.outdir, 'input-manifest.json'),
+                     dict(board=os.path.abspath(a.board), board_sha256=lean.digest(a.board),
+                          problem_sha256=lean.digest(a.prob), configuration=vars(a), qualified=False,
+                          note='run attribution only; no cached result reuse or release qualification'))
     def run_stage(cmd, stage, **kwargs):
         return lean.run_stage(cmd, stage=stage, event_file=events, deadline=deadline, **kwargs)
     name = os.path.splitext(os.path.basename(a.board))[0]
@@ -112,6 +124,14 @@ def main(argv=None):
     escape_hint = {}
 
     def search(q, n):
+        nonlocal deadline
+        # Virtual input changes the outline; use it only as a bounded diagnostic.
+        outline = q['board']['outline']
+        xs, ys = [v[0] for v in outline], [v[1] for v in outline]
+        virtual = max(xs)-min(xs) > a.size[0]+1e-6 or max(ys)-min(ys) > a.size[1]+1e-6
+        if virtual and a.diagnostic_budget is not None and not getattr(search, 'diagnostic_started', False):
+            deadline = min(deadline, time.monotonic()+a.diagnostic_budget)
+            search.diagnostic_started = True
         d = sdir(n)
         if escape_hint:
             q = copy.deepcopy(q)
@@ -168,7 +188,7 @@ def main(argv=None):
             # Fastroute runs here (many cores, user rule 2026-10-03); it is deterministic, so one run per step.
             # The count is the KiCad DRC unconnected count of the verified result (tools/fastroute_job.py).
             cmd = [sys.executable, os.path.join(REPO, 'tools', 'fastroute_job.py'), path, os.path.join(d, 'route-0'),
-                   '--passes', str(a.passes), '--render'] + (['--gnd-vias'] if a.gnd_vias else []) + shlex.split(a.route_args)
+                   '--passes', str(a.passes), '--optimizer', a.optimizer, '--render'] + (['--gnd-vias'] if a.gnd_vias else []) + shlex.split(a.route_args)
             p = run_stage(cmd, 'routing', cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             open(os.path.join(d, 'route-0.log'), 'w').write(p.stdout)
             pe = os.path.join(d, 'route-0', 'pin-escape.json')
@@ -191,7 +211,7 @@ def main(argv=None):
     run = compact.run_loop(pr, tuple(a.size), search, write, route, s0=a.s0,
                            budget=max(0., deadline-time.monotonic()), target=a.target,
                            shrink=a.shrink, tol=a.tol, log=lambda s: print(s, flush=True),
-                           real_first=not a.virtual_first)
+                           real_first=not a.virtual_first, diagnostic_budget=a.diagnostic_budget)
     run['problem'] = pr
     run['size'] = list(a.size)
     json.dump(run, open(os.path.join(a.outdir, 'run.json'), 'w'))

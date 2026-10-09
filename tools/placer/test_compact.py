@@ -320,6 +320,15 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(run['steps'][0]['status'], 'timeout')
         self.assertIsNone(run['best'])
 
+    def test_zero_virtual_budget_retains_real_attempts_but_stops_diagnostic_work(self):
+        pr = {'units': [unit('A', 2, 2, [[0, 0, 1, 1, .5]])], 'nets': [], 'board': board()}
+        res = {'candidates': [{'pose': [[2, 2, 0]], 'cost': 1., 'illegal': []}]}
+        run = compact.run_loop(pr, (10, 10), lambda q, n: res, lambda *args: 'b', lambda *args: [3],
+                               real_first=True, budget=1e6, clock=lambda: 0., diagnostic_budget=0)
+        self.assertTrue(run['steps'])
+        self.assertTrue(all(s['phase'] == 'real' for s in run['steps']))
+        self.assertIn('budget', run['stop'])
+
     def test_router_output_gives_the_last_unrouted_count_or_a_no_result_value(self):
         from placer import compact_cli
         self.assertEqual(compact_cli.parse_unrouted('FR_RC 0\nUNROUTED 12 SUBSET 3 ERRORS 1\n'), 12)
