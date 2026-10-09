@@ -108,7 +108,7 @@ class VerdictTest(unittest.TestCase):
         v = compact.verdict([], size)
         self.assertIn('no step', v)
         v = compact.verdict([{'s': 4.0, 'k': 1.3, 'unrouted': 12, 'passed': False}], size)
-        self.assertIn('pin order', v)
+        self.assertIn('not established', v)
         v = compact.verdict([{'s': 4.0, 'k': 1.3, 'unrouted': -1, 'passed': False}], size)
         self.assertIn('no legal placement', v)
         v = compact.verdict([{'s': 4.0, 'k': 1.3, 'unrouted': 0, 'passed': True},
@@ -291,6 +291,35 @@ class LoopTest(unittest.TestCase):
 
 
 class ParseTest(unittest.TestCase):
+    def test_routing_timeout_keeps_checkpoint_board_but_cannot_pass(self):
+        import subprocess
+        pr = {'units': [unit('A', 2, 2, [[0, 0, 1, 1, .5]])], 'nets': [], 'board': board()}
+        now = [0.]
+        def route(path, n):
+            now[0] = 10.
+            raise subprocess.TimeoutExpired('router', 1)
+        res = {'candidates': [{'pose': [[2, 2, 0]], 'cost': 1., 'illegal': []}]}
+        run = compact.run_loop(pr, (10, 10), lambda q, n: res, lambda *args: 'checkpoint', route,
+                               real_first=True, budget=2, clock=lambda: now[0])
+        self.assertIsNone(run['best'])
+        self.assertEqual(run['steps'][0]['board'], 'checkpoint')
+        self.assertEqual(run['steps'][0]['status'], 'timeout')
+        self.assertFalse(run['steps'][0]['passed'])
+
+    def test_placement_timeout_does_not_route(self):
+        import subprocess
+        now = [0.]
+        def search(q, n):
+            now[0] = 10.
+            raise subprocess.TimeoutExpired('placement', 1)
+        def forbidden(*args):
+            self.fail('timeout must not write or route')
+        pr = {'units': [unit('A', 2, 2, [[0, 0, 1, 1, .5]])], 'nets': [], 'board': board()}
+        run = compact.run_loop(pr, (10, 10), search, forbidden, forbidden,
+                               real_first=True, budget=2, clock=lambda: now[0])
+        self.assertEqual(run['steps'][0]['status'], 'timeout')
+        self.assertIsNone(run['best'])
+
     def test_router_output_gives_the_last_unrouted_count_or_a_no_result_value(self):
         from placer import compact_cli
         self.assertEqual(compact_cli.parse_unrouted('FR_RC 0\nUNROUTED 12 SUBSET 3 ERRORS 1\n'), 12)
