@@ -29,7 +29,7 @@ def collect(board, config, rep, secs, rc, d):
         row.update(json.load(open(gm))['metrics'])
     kh = os.path.join(d, 'gate-out', 'kicad_happy.log')
     if os.path.isfile(kh):
-        row['rp001'] = sum(1 for l in open(kh) if 'RP-001' in l and 'findings' not in l)
+        row['rp001'] = sum(1 for l in open(kh) if l.startswith('FAIL RP-001'))
     pcb = os.path.join(d, 'routed.kicad_pcb')
     if os.path.isfile(pcb):
         import pcbnew

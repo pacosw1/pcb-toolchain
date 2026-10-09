@@ -2,7 +2,7 @@
 # Route-feature benchmark (2026-10-09, user decision: each feature of tools/route-features.json measured with and without).
 #   sh tools/route_bench.sh [BOARD ...]       default: AC-24V ENV-SENSE CELLULAR AIO
 # Env: BENCH_WORK (default <repo>/.bench, not tracked), BENCH_REPS (2), BENCH_CONFIGS (default: base, each flag alone, all),
-#      BENCH_AIO_PASSES (100).
+#      BENCH_AIO_PASSES (100), BENCH_TAG (suffix of the scratch gate folder, for two streams of one board).
 # For each board: one placement (the board build script at the committed spread; the same input for every run), then the
 # routing stage of the board flow for each config and repeat, with ROUTE_FEATURES set (all=0 = the current flow):
 #   AC-24V tools/ac24_route.py, ENV-SENSE tools/env_route.py, CELLULAR tools/cell_route.py (includes its stitching),
@@ -32,14 +32,14 @@ place() {   # $1 board, $2 output placed board
 
 route() {   # $1 board, $2 placed, $3 outdir; prints the routed board path
   case $1 in
-    AC-24V) $PY tools/ac24_route.py "$2" "$3" --neck-um 2000 >&2; echo "$3/AC-24V.kicad_pcb" ;;
-    ENV-SENSE) $PY tools/env_route.py "$2" "$3" >&2; echo "$3/ENV-SENSE.kicad_pcb" ;;
-    CELLULAR) $PY tools/cell_route.py "$2" "$3" >&2; echo "$3/CELLULAR.kicad_pcb" ;;
+    AC-24V) $PY tools/ac24_route.py "$2" "$3" --neck-um 2000 >&2 || return 1; echo "$3/AC-24V.kicad_pcb" ;;
+    ENV-SENSE) $PY tools/env_route.py "$2" "$3" >&2 || return 1; echo "$3/ENV-SENSE.kicad_pcb" ;;
+    CELLULAR) $PY tools/cell_route.py "$2" "$3" >&2 || return 1; echo "$3/CELLULAR.kicad_pcb" ;;
     AIO) VC=${VIA_COSTS:-300}
          $PY tools/aio_route.py "$2" "$3" --passes "${BENCH_AIO_PASSES:-100}" --route-extra "--set multi-start=16 \
-           --set router.scoring.via_costs=$VC --set router.scoring.default_undesired_direction_trace_cost=1.0" >&2
+           --set router.scoring.via_costs=$VC --set router.scoring.default_undesired_direction_trace_cost=1.0" >&2 || return 1
          $PY tools/stitch_all.py "$3/aio.kicad_pcb" --planes hardware-design/boards/AIO/reference-planes.json \
-           --via 0.45,0.2 --through-pours SLOT_3V3,AVDD >&2
+           --via 0.45,0.2 --through-pours SLOT_3V3,AVDD >&2 || return 1
          echo "$3/aio.kicad_pcb" ;;
   esac
 }
@@ -50,7 +50,7 @@ for B in $BOARDS; do
   if [ ! -f "$bw/placed.kicad_pcb" ]; then
     place "$B" "$bw/placed.kicad_pcb" > "$bw/place.log" 2>&1 || { echo "$B: placement FAIL (see $bw/place.log)"; continue; }
   fi
-  g="hardware-design/boards/_bench_$B"
+  g="hardware-design/boards/_bench_$B${BENCH_TAG:-}"
   proj=$(python3 -c "import json;print(json.load(open('hardware-design/boards/$B/gate.json'))['project'])")
   for c in $CONFIGS; do
     case $c in base) F="all=0" ;; all) F="all=1" ;; *) F="all=0,$c=1" ;; esac
@@ -66,7 +66,7 @@ for B in $BOARDS; do
       (cd "hardware-design/boards/$B" && tar cf - --exclude cad/fab --exclude reports --exclude .gate .) | (cd "$g" && tar xf -)
       if [ -f "$out" ]; then
         cp "$out" "$g/$proj.kicad_pcb"
-        node tools/gate.mjs "_bench_$B" --write > "$d/gate.log" 2>&1
+        node tools/gate.mjs "_bench_$B${BENCH_TAG:-}" --write > "$d/gate.log" 2>&1
         cp "$g/gate-metrics.json" "$d/gate-metrics.json" 2>/dev/null
         cp "$out" "$d/routed.kicad_pcb"
         cp -R "$g/.gate" "$d/gate-out" 2>/dev/null
