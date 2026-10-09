@@ -431,7 +431,7 @@ def optimize(pr, params, workers=1, epochs=10, steps=10000, seed=1, top=3, log=N
                 busy += o['seconds']
             g = min(range(workers), key=lambda w: (best[w][0], w))
             history.append({'epoch': e + 1, 'cost': best[g][0], 'pose': [list(q) for q in best[g][1]],
-                            'components': cost.components(pr, best[g][1], pf)})
+                            'components': cost.components(pr, best[g][1], pf, mask=_W['mask'])})
             if log:
                 log('epoch %d/%d T %.3g best %.2f (worker %d) cur %s' % (
                     e + 1, epochs, frac(t0, t1, f1), best[g][0], g, ' '.join('%.1f' % c for c in cur_cost)))
