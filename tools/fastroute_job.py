@@ -112,7 +112,7 @@ def big_signal_via(text, dia_mm, classes, nets=()):
     return text
 
 
-def main():
+def _main():
     ap = argparse.ArgumentParser()
     ap.add_argument("board")
     ap.add_argument("outdir")
@@ -149,6 +149,10 @@ def main():
     a = ap.parse_args()
     if a.max_time < 0 or a.threads < 0 or a.passes <= 0:
         ap.error('passes must be positive; time and threads must be nonnegative')
+    import lean_resources as resources
+    a.threads = a.threads or resources.default_cpu()
+    if any(k.split('=', 1)[0] in ('router.autorouter.max_threads', 'router.optimizer.max_threads') for k in a.set):
+        ap.error('use --threads for admitted autorouter and optimizer caps')
     if a.optimizer != 'always' and any(k.split('=', 1)[0] == 'router.optimizer.enabled' for k in a.set):
         ap.error('--optimizer conflicts with --set router.optimizer.enabled')
     if not os.path.isfile(BIN):
@@ -470,6 +474,21 @@ def main():
                      dict(status='complete', qualified=False, optimizer=a.optimizer, signal_open=signal_open,
                           ground_open=gnd_open, errors=errors, board_sha256=lean.digest(out),
                           note='import verified; full final board gate remains required'))
+
+
+def main():
+    import lean_resources as resources
+    ap = argparse.ArgumentParser(add_help=False)
+    ap.add_argument('--threads', type=int, default=0)
+    a, _ = ap.parse_known_args()
+    if '--help' in sys.argv or '-h' in sys.argv:
+        return _main()
+    cpu = a.threads or resources.default_cpu()
+    outdir = sys.argv[2] if len(sys.argv) > 2 and not sys.argv[2].startswith('-') else None
+    events = outdir + '.admission.jsonl' if outdir else None
+    with resources.reserve(cpu, events=events, label='routing') as env:
+        with resources.environment(env):
+            return _main()
 
 
 if __name__ == "__main__":

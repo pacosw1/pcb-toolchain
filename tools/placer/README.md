@@ -182,3 +182,46 @@ and reports incomplete runs honestly. It cannot adopt settings or qualify a rele
 inputs under recorded competing load, compare opens/DRC/plane/pair/current-path/label checks and full
 gate results, and report time to compliant output. Smoke-test timings do not substantiate the earlier
 15–30 minute estimate; no BASE-B runtime saving has been measured yet.
+# Cooperating Mac resource budgets (CIP 779)
+
+Local `cli.py run`, compaction stages, and `fastroute_job.py` share
+`~/.cache/iot-lab/resources`. Defaults reserve at most 12 CPU worker tokens
+(or the machine count if smaller), 16 GiB total declared memory, and 8 GiB
+per job. These are conservative initial settings, not measured optimal settings.
+Set `IOT_CPU_BUDGET`, `IOT_MEMORY_BUDGET_GIB`, and `IOT_JOB_MEMORY_GIB` consistently
+for cooperating jobs. All active clients must agree on capacity; a mismatch
+fails closed. An explicit request larger than capacity is rejected.
+
+Placement workers each receive one native library thread (`OMP_NUM_THREADS`,
+`OPENBLAS_NUM_THREADS`, `MKL_NUM_THREADS`, `VECLIB_MAXIMUM_THREADS`,
+`NUMEXPR_NUM_THREADS`, `BLIS_NUM_THREADS`). Fastroute's admitted `--threads`
+applies to both its autorouter and optimizer, supported by pinned 0.1.7 help.
+Use `--threads`, not `--set` thread overrides. A child inherits its live parent's
+reservation and must stay within it. CPU reservations count supported worker
+pools; they are not hard OS CPU quotas. Memory is declared capacity, not an RSS
+limit, and unmanaged processes remain outside admission control.
+
+Admission is FIFO with a 30 second maximum wait, shortened by an inherited run
+deadline. SIGTERM/interrupt cancels waiting work. A crashed owner releases its
+file locks automatically; the next caller removes its stale reservation ticket.
+No existing router is killed or displaced. Admission events record queued,
+admitted, released, cancelled or failed work; compaction keeps them beside its
+stage log. Logs/checkpoints remain when admission fails.
+
+For a bounded resource profile (use a fresh output directory):
+
+```sh
+IOT_CPU_BUDGET=15 "$PY" tools/lean_resources.py --cpu 8 --memory-gib 8 \
+  --seconds 60 --output /tmp/placement-resource-profile -- \
+  "$PY" tools/placer/cli.py run /tmp/frozen/prob.json -o /tmp/result.json \
+  --workers 8 --epochs 3 --steps 8000 --seed 1 --top 1
+```
+
+The profiler preserves raw process RSS/CPU, compressor, swap and paging samples,
+plus wall/child CPU timing and admission events. System VM counters cannot
+attribute swap to a router. Sampled RSS includes shared pages and the profiler,
+and can miss peaks; `ps` CPU is a lifetime average. GPU memory is explicitly
+unavailable from this profiler. A resource profile never qualifies a board.
+Re-run matched isolated/competing workloads on frozen inputs and retain complete
+native gates before changing production settings. See the task 779 report for
+the initial 8/12/15 worker observations and remaining acceptance work.
