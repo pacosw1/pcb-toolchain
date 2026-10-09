@@ -17,10 +17,12 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from placer import bench, compact  # noqa: E402
+import lean_workflow as lean
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 NO_RESULT = 10 ** 6  # a router job without an UNROUTED line (transport error, timeout) never passes
@@ -85,8 +87,17 @@ def parser():
 def main(argv=None):
     a = parser().parse_args(argv)
     from placer import kicad_io
+    if a.budget <= 0:
+        raise ValueError('budget must be positive')
+    deadline = time.monotonic() + a.budget
+    inherited = os.environ.get('IOT_LEAN_DEADLINE')
+    if inherited:
+        deadline = min(deadline, float(inherited))
     pr = json.load(open(a.prob))
     os.makedirs(a.outdir, exist_ok=True)
+    events = os.path.join(a.outdir, 'stages.jsonl')
+    def run_stage(cmd, stage, **kwargs):
+        return lean.run_stage(cmd, stage=stage, event_file=events, deadline=deadline, **kwargs)
     name = os.path.splitext(os.path.basename(a.board))[0]
     src = os.path.dirname(os.path.abspath(a.board))
     wheel = os.path.abspath(a.wheel) if a.wheel else ''
@@ -121,7 +132,7 @@ def main(argv=None):
                    '-o', res_path, '--workers', str(a.workers), '--epochs', str(a.epochs), '--steps', str(a.steps),
                    '--seed', str(a.seed), '--top', '1'] + (['--param'] + a.param if a.param else [])
             with open(os.path.join(d, 'search.log'), 'w') as fh:
-                rc = subprocess.run(cmd, cwd=REPO, stdout=fh, stderr=subprocess.STDOUT).returncode
+                rc = run_stage(cmd, 'placement', cwd=REPO, stdout=fh, stderr=subprocess.STDOUT).returncode
             if not os.path.exists(res_path):
                 print('search step %d: no result (rc %d), see %s' % (n, rc, os.path.join(d, 'search.log')), flush=True)
                 return None
@@ -158,7 +169,7 @@ def main(argv=None):
             # The count is the KiCad DRC unconnected count of the verified result (tools/fastroute_job.py).
             cmd = [sys.executable, os.path.join(REPO, 'tools', 'fastroute_job.py'), path, os.path.join(d, 'route-0'),
                    '--passes', str(a.passes), '--render'] + (['--gnd-vias'] if a.gnd_vias else []) + shlex.split(a.route_args)
-            p = subprocess.run(cmd, cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            p = run_stage(cmd, 'routing', cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             open(os.path.join(d, 'route-0.log'), 'w').write(p.stdout)
             pe = os.path.join(d, 'route-0', 'pin-escape.json')
             if os.path.isfile(pe):
@@ -177,7 +188,8 @@ def main(argv=None):
         with ThreadPoolExecutor(a.routes) as ex:
             return list(ex.map(one, range(a.routes)))
 
-    run = compact.run_loop(pr, tuple(a.size), search, write, route, s0=a.s0, budget=a.budget, target=a.target,
+    run = compact.run_loop(pr, tuple(a.size), search, write, route, s0=a.s0,
+                           budget=max(0., deadline-time.monotonic()), target=a.target,
                            shrink=a.shrink, tol=a.tol, log=lambda s: print(s, flush=True),
                            real_first=not a.virtual_first)
     run['problem'] = pr

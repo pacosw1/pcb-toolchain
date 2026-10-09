@@ -128,7 +128,7 @@ def verdict(steps, size):
             return ('no legal placement at the largest halo scale s = %.2f (board scale %.2f): lower --s0 or give '
                     'the search more steps' % (t['s'], t['k']))
         return ('does not route fully even at the largest halo scale s = %.2f (unrouted %d): the cause is '
-                'pin order or layer rules, not placement' % (t['s'], t['unrouted']))
+                'not established; inspect congestion, pin escape and effective rules' % (t['s'], t['unrouted']))
     real = [t for t in ok if t['k'] <= 1.0 + 1e-9]
     if real:
         t = min(real, key=lambda t: t['s'])
@@ -188,6 +188,7 @@ def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, 
     Reason: DOOR-RELAY routed on its real outline, but the virtual phases said that it needs 112 x 80 mm;
     on a virtual board the fixed connectors stay at their places, so the added area is an empty band."""
     import time
+    import subprocess
     clock = clock or time.monotonic
     t0 = clock()
     steps = []
@@ -199,7 +200,14 @@ def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, 
         n = len(steps)
         q = with_halos(pr, s)
         for tries in range(1, TRIES + 1):
-            res = search(virtual(q, k), n)
+            try:
+                res = search(virtual(q, k), n)
+            except subprocess.TimeoutExpired:
+                t = dict(s=s, k=k, tries=tries, cost=None, illegal=['placement deadline'], phase=phase,
+                         history=[], pose=None, halo=[], runs=[], unrouted=None, passed=False, board=None,
+                         status='timeout')
+                steps.append(t)
+                return t
             if res is None:  # no search result (remote timeout): a failed step, not an exception
                 res = {'candidates': [{'pose': None, 'cost': float('nan'), 'illegal': ['no search result']}]}
                 c = res['candidates'][0]
@@ -215,9 +223,14 @@ def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, 
             t.update(runs=[], unrouted=None, passed=False, board=None)
         else:
             t['board'] = write(q, c['pose'], k, n)
-            t['runs'] = route(t['board'], n)
-            t['unrouted'] = min(t['runs'])
-            t['passed'] = t['unrouted'] <= target
+            try:
+                if over():
+                    raise subprocess.TimeoutExpired('routing', 0)
+                t['runs'] = route(t['board'], n)
+                t['unrouted'] = min(t['runs'])
+                t['passed'] = t['unrouted'] <= target
+            except subprocess.TimeoutExpired:
+                t.update(runs=[], unrouted=None, passed=False, status='timeout')
         steps.append(t)
         if log:
             log('step %d %s s %.3f k %.3f cost %.1f illegal %d runs %s -> %s' % (
