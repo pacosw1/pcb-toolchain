@@ -18,6 +18,15 @@ Steps:
 Prints "UNROUTED <signal> GND_OPEN <n> ERRORS <n> ROUTER_UNROUTED <n> CONGESTION <n> BLOCKED <n> TRACK_MM <n> VIAS <n> SECONDS <n>".
 UNROUTED counts the open connections of the routed nets only; GND_OPEN counts those of the --skip-net nets.
 Exit code 4: the result is not verified (do not use the board).
+
+Route features (tools/route-features.json, a board override in <board>/gate.json "route_features", the environment
+ROUTE_FEATURES="name=1,..." last; tools/route_features.py show BOARD prints them). Each one is off unless switched on:
+  pin_escape_check   before routing: tools/route_grid.py escape -> OUTDIR/pin-escape.json, line "ESCAPE ..."
+  via_off_small_pads before routing: a DSN via_keepout over each SMD pad smaller than max_pad_mm
+  rule_compiler      before routing: .kicad_dru (+ extra rules) -> per-net use_layer masks, via bans, class_class
+  via_halo           the --signal-via padstack (size_mm) for the selected nets, also with no --signal-via argument
+  triage_opens       after routing: tools/route_grid.py triage -> OUTDIR/open-triage.json (+ <board>/.gate/), "TRIAGE ..."
+The feature lines are printed before the UNROUTED line (callers read the last UNROUTED line).
 """
 import argparse
 import fnmatch
@@ -34,6 +43,7 @@ import pcbnew
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import freeroute  # noqa: E402  (restrict_dsn)
+import route_features  # noqa: E402  (feature switches, tools/route-features.json)
 
 BIN = os.environ.get("FASTROUTE_BIN") or os.path.expanduser("~/opt/fastroute/fastroute-0.1.7-macos-arm64/fastroute")
 KICAD_CLI = os.environ.get("KICAD_CLI", "/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli")
@@ -136,6 +146,8 @@ def main():
         sys.exit(f"fastroute_job: binary not found: {BIN} (set FASTROUTE_BIN)")
     os.makedirs(a.outdir, exist_ok=True)
     stem = os.path.splitext(a.board)[0]
+    feat = route_features.load(a.board)
+    print("FEATURES " + route_features.summary(feat), flush=True)
     base = os.path.join(a.outdir, "base.kicad_pcb")
     out = os.path.join(a.outdir, "routed.kicad_pcb")
     for ext in (".kicad_pro", ".kicad_dru"):
@@ -155,6 +167,11 @@ def main():
             f.write("".join(l + "\n" for l in r.stdout.splitlines() if "vias added" in l))
         if os.path.isfile(tmp):
             os.replace(tmp, base)
+
+    def routed_nets_file():
+        f = os.path.join(a.outdir, "routed-nets.txt")
+        open(f, "w").write("\n".join(sorted(nets)) + "\n")
+        return f
 
     b = pcbnew.LoadBoard(base)
     was = {}
@@ -181,11 +198,63 @@ def main():
         if missing:
             sys.exit(f"fastroute_job: no such net: {sorted(missing)}")
         nets = want
+    if route_features.on(feat, "pin_escape_check"):
+        # Read-only check on the job input (with the plane pad vias): pins of the routed nets that cannot leave their part.
+        p = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "route_grid.py"),
+                            "escape", base, "--layers", a.layers, "--skip", "", "--nets", routed_nets_file(),
+                            "--out", os.path.join(a.outdir, "pin-escape.json")], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        print(([l for l in p.stdout.splitlines() if l.startswith("ESCAPE")] or ["ESCAPE failed"])[-1], flush=True)
     with open(dsn) as f:
         text = freeroute.restrict_dsn(f.read(), set(a.layers.split(",")), nets)
+    net_class = route_features.dsn_classes(text)
+    if route_features.on(feat, "via_halo"):
+        # The CELLULAR halo for every board: the selected nets get the larger via padstack (room for an RP-001 via).
+        hn = route_features.halo_nets(feat, sorted(nets), net_class, feat["_board_dir"])
+        if a.signal_via and a.signal_via_nets:
+            hn = sorted(set(hn) | {n for n in a.signal_via_nets.split(",") if n})
+        if hn:
+            a.signal_via = a.signal_via or float(feat["via_halo"].get("size_mm", 1.8))
+            a.signal_via_nets = ",".join(hn)
+        print(f"VIA_HALO {len(hn)} nets, {a.signal_via:g} mm", flush=True)
     if a.signal_via:
         text = big_signal_via(text, a.signal_via, [c for c in a.signal_via_classes.split(",") if c],
                               [n for n in a.signal_via_nets.split(",") if n])
+    if route_features.on(feat, "rule_compiler"):
+        pad_layers = {}
+        for fp in b.GetFootprints():
+            for p in fp.Pads():
+                pad_layers.setdefault(p.GetNetname(), set()).add("*" if p.GetDrillSize().x else p.GetLayerName())
+        dru_text = open(stem + ".kicad_dru").read() if os.path.isfile(stem + ".kicad_dru") else ""
+        rc_cfg = feat["rule_compiler"]
+        masks, pairs, notes = route_features.compile_dru(dru_text, sorted(nets), net_class, pad_layers,
+                                                         [l for l in a.layers.split(",") if l], rc_cfg.get("extra", []))
+        text = route_features.apply_layer_masks(text, masks)
+        if rc_cfg.get("class_class", True):
+            text = route_features.add_class_class(text, pairs)
+        with open(os.path.join(a.outdir, "rules.log"), "w") as f:
+            f.write("\n".join(notes) + "\n" + "".join(f"mask {n}: {' '.join(v)}\n" for n, v in sorted(masks.items())) +
+                    "".join(f"class_class {x} {y}: {v:g} mm\n" for (x, y), v in sorted(pairs.items())))
+        print(f"RULES masks {len(masks)} class_class {len(pairs) if rc_cfg.get('class_class', True) else 0} "
+              f"notes {len(notes)} (see rules.log)", flush=True)
+    if route_features.on(feat, "via_off_small_pads"):
+        lim = pcbnew.FromMM(float(feat["via_off_small_pads"].get("max_pad_mm", 2.0)))
+        polys = []
+        job_layers = set(a.layers.split(","))
+        for fp in b.GetFootprints():
+            for p in fp.Pads():
+                ln = p.GetLayerName()
+                if p.GetDrillSize().x or ln not in job_layers:
+                    continue
+                bb = p.GetBoundingBox()
+                if min(bb.GetWidth(), bb.GetHeight()) >= lim:
+                    continue
+                ps = pcbnew.SHAPE_POLY_SET()
+                p.TransformShapeToPolygon(ps, p.GetLayer(), 0, 5000, pcbnew.ERROR_INSIDE)
+                if ps.OutlineCount():
+                    ol = ps.Outline(0)
+                    polys.append((ln, [(ol.CPoint(i).x / 1e6, ol.CPoint(i).y / 1e6) for i in range(ol.PointCount())]))
+        text = route_features.add_via_keepouts(text, polys)
+        print(f"VIAKEEP {len(polys)} SMD pads below {pcbnew.ToMM(lim):g} mm", flush=True)
     with open(dsn, "w") as f:
         f.write(text)
     min_um = int(round(b.GetDesignSettings().m_TrackMinWidth / 1000))
@@ -313,6 +382,19 @@ def main():
         if any(fnmatch.fnmatchcase(name, p) for p in skip) or name in plane_names:
             gnd_open += 1
     signal_open = len(d.get("unconnected_items", [])) - gnd_open
+    if route_features.on(feat, "triage_opens"):
+        tri = os.path.join(a.outdir, "open-triage.json")
+        if signal_open:
+            p = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "route_grid.py"),
+                                "triage", out, "--drc", drc, "--layers", a.layers, "--skip", ",".join(skip + planes), "--nets", routed_nets_file(),
+                                "--out", tri], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            print(([l for l in p.stdout.splitlines() if l.startswith("TRIAGE")] or ["TRIAGE failed"])[-1], flush=True)
+        else:
+            json.dump({"open": 0, "enclosed": 0, "router_miss": 0, "connections": []}, open(tri, "w"))
+            print("TRIAGE open 0", flush=True)
+        if feat["_board_dir"] and os.path.isfile(tri):
+            os.makedirs(os.path.join(feat["_board_dir"], ".gate"), exist_ok=True)
+            shutil.copy(tri, os.path.join(feat["_board_dir"], ".gate", "open-triage.json"))
     print(f"UNROUTED {signal_open} GND_OPEN {gnd_open} ERRORS {errors} ROUTER_UNROUTED {report['stats']['unrouted']} "
           f"CONGESTION {diag.get('congestion', 0)} BLOCKED {diag.get('blocked', 0)} "
           f"TRACK_MM {report['stats']['trace_length_mm']:.0f} VIAS {after} SECONDS {secs}", flush=True)
