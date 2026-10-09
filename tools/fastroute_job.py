@@ -47,6 +47,7 @@ import freeroute  # noqa: E402  (restrict_dsn)
 import route_features  # noqa: E402  (feature switches, tools/route-features.json)
 import lean_workflow as lean
 import thermal_repair
+import import_pose_guard
 
 BIN = os.environ.get("FASTROUTE_BIN") or os.path.expanduser("~/opt/fastroute/fastroute-0.1.7-macos-arm64/fastroute")
 KICAD_CLI = os.environ.get("KICAD_CLI", "/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli")
@@ -429,8 +430,23 @@ def _main(a=None):
                             was.get(t.m_Uuid.AsString(), False) if original_locks else t.IsLocked()))
         return sorted(records)
     skipped_before = skipped_copper(original_locks=True)
+    try:
+        poses_before = import_pose_guard.snapshot(b)
+        pose_grid = import_pose_guard.grid_nm(dsn, ses)
+    except ValueError as exc:
+        sys.exit('fastroute_job: SES pose integrity precondition failed; result is not verified: ' + str(exc))
     if not pcbnew.ImportSpecctraSES(b, ses):
         sys.exit("fastroute_job: SES import failed")
+    try:
+        restored = import_pose_guard.restore(b, poses_before, pose_grid)
+    except ValueError as exc:
+        sys.exit('fastroute_job: SES pose integrity failed; result is not verified: ' + str(exc))
+    with open(os.path.join(a.outdir, 'import-pose-audit.json'), 'w') as audit:
+        json.dump(dict(grid_nm=pose_grid, restored=restored, exact_poses_and_pads=True,
+                       guard_sha256=lean.digest(import_pose_guard.__file__),
+                       dsn_sha256=lean.digest(dsn), ses_sha256=lean.digest(ses),
+                       before_snapshot_sha256=hashlib.sha256(json.dumps(poses_before, sort_keys=True).encode()).hexdigest(),
+                       qualified=False, independent_native_gate_required=True), audit, indent=2)
     for t in b.GetTracks():
         t.SetLocked(was.get(t.m_Uuid.AsString(), False))
     if skipped_copper() != skipped_before:
