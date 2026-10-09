@@ -45,6 +45,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import freeroute  # noqa: E402  (restrict_dsn)
 import route_features  # noqa: E402  (feature switches, tools/route-features.json)
 import lean_workflow as lean
+import thermal_repair
 
 BIN = os.environ.get("FASTROUTE_BIN") or os.path.expanduser("~/opt/fastroute/fastroute-0.1.7-macos-arm64/fastroute")
 KICAD_CLI = os.environ.get("KICAD_CLI", "/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli")
@@ -204,7 +205,14 @@ def _main():
                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
         if p.returncode or not os.path.isfile(check):
             sys.exit('preflight failed to produce independent native evidence')
-        faults = lean.preflight_errors(lean.validate_drc(json.load(open(check))))
+        d = lean.validate_drc(json.load(open(check)))
+        d, thermal = thermal_repair.repair(base, a.board, d, planes, shlex.split(a.via_args),
+                                          KICAD_CLI, os.path.join(a.outdir, 'stages.jsonl'), 'preflight-thermal')
+        lean.atomic_json(check, d)
+        lean.atomic_json(os.path.join(a.outdir, 'preflight-thermal.json'), thermal)
+        b = pcbnew.LoadBoard(base)
+        faults = lean.preflight_errors(d) + [v for v in d['violations']
+                                             if v.get('severity') == 'error' and v.get('type') == 'starved_thermal']
         lean.atomic_json(os.path.join(a.outdir, 'preflight-summary.json'),
                          dict(board_sha256=lean.digest(base), blocking=faults,
                               note='opens and router-internal skipped-net findings are not preflight blockers'))
@@ -471,6 +479,11 @@ def _main():
             sys.exit('native repair DRC failed; result is not verified')
         d = lean.validate_drc(json.load(open(drc)))
         after = sum(1 for t in pcbnew.LoadBoard(out).GetTracks() if t.GetClass() == "PCB_VIA")
+    d, thermal = thermal_repair.repair(out, a.board, d, planes, shlex.split(a.via_args),
+                                      KICAD_CLI, phases, 'postroute-thermal')
+    lean.atomic_json(drc, d)
+    lean.atomic_json(os.path.join(a.outdir, 'thermal-repair.json'), thermal)
+    after = sum(1 for t in pcbnew.LoadBoard(out).GetTracks() if t.GetClass() == 'PCB_VIA')
     errors = sum(1 for v in d.get("violations", []) if v.get("severity") == "error")
     diag = report.get("diagnosis", {})
     # Open connections of the skipped (ground) nets are a ground-via matter (gnd_pad_vias.py, a thermal pad via),
