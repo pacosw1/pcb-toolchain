@@ -5,7 +5,7 @@
  * Two layers, run together:
  *
  *   1. Deterministic (no network): cross-references board BOM-VERIFIED.csv rows
- *      against registry/components.json states. Excluded or unrecorded parts in
+ *      against registry/components.json or strictly scoped historical board selections. Excluded or unrecorded parts in
  *      a verified BOM are findings. Exact lookups stay in code.
  *
  *   2. Semantic (TypeSafe Jev, two batched calls): typed Noul judgments for
@@ -33,6 +33,7 @@ import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {resolveApiKey, systemOne, DEFAULT_MODEL} from './lib/jev-client.mjs';
 import {inspectPackets,loadBoardRegistry,parseCsv} from './lib/board-packets.mjs';
+import {loadBoardSelection} from './lib/board-selections.mjs';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 const DRY_RUN = process.argv.includes('--dry-run');
@@ -126,12 +127,20 @@ async function checkBomAgainstRegistry(components) {
     const csv = await readProject(`hardware-design/boards/${board}/BOM-VERIFIED.csv`).catch(() => '');
     let csvRows=[];
     try {csvRows=parseCsv(csv);}catch{continue;} // packet layer records malformed CSV
+    let selection=null;
+    try {
+      selection=await loadBoardSelection(REPO,boardRegistry.boards.find(e=>e.directory===board),csv,csvRows);
+    } catch(error) {
+      findings.push({level:'alert',board,check:'bom_selection_evidence',detail:`${board}: ${error.message}`});
+    }
     for (const [i, row] of csvRows.entries()) {
       if (i === 0) continue;
       rows++;
       const lcsc = (row[3] || '').trim();
       if (!lcsc) continue;
-      const rec = byLcsc.get(lcsc);
+      const globalRec=byLcsc.get(lcsc);
+      // An explicit global exclusion cannot be bypassed by a board ledger.
+      const rec=globalRec?.state?.startsWith('excluded') ? globalRec : selection?.references.get(row[0]?.trim()) ?? globalRec;
       if (!rec) {
         findings.push({level: 'alert', check: 'bom_registry_record', detail: `${board} BOM-VERIFIED.csv record ${i + 1} lists ${lcsc} with no attributable component registry record`});
       } else if (rec.state.startsWith('excluded')) {
