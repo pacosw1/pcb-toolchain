@@ -64,6 +64,7 @@ export function gateInputs(root, board, configName = 'gate.json', environment = 
   add(join(root,'hardware-design/registry/courtyard-bodies.json'));
   for (const p of walkFiles(join(root,'tools'), p=>/\.(mjs|py|sh|java)$/.test(p) || p.endsWith('/hooks/pre-commit'))) add(p);
   add(join(root,'tools/route-features.json'));
+  add(join(root,'tools/edge-rates.json')); // D-124 rise-time table read by si_planes.py
   for(const repo of environment.repositories ?? []) for(const p of walkFiles(repo,p=>p.endsWith('.py'))) add(p);
   return {cfg, project, files:[...files].sort()};
 }

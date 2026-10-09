@@ -1,0 +1,34 @@
+{
+  "about": "D-124: rise (or fall) time per net class for the reference-plane detour budget of tools/si_planes.py. Source report: hardware-design/reports/2026-10-09-design-rules-sources.md C1 and C3. [P] primary source read, [S] secondary (a document that quotes the source). assumption = true: NO SOURCE was found; the value is the report's marked conservative assumption. Use the fastest edge of the driver (the smaller of rise and fall).",
+  "budget": {
+    "nh_per_ns": 10,
+    "nh_per_ns_source": "Bogatin rule: abrupt inductance (nH) < 10 x rise time (ns) for a ~10 % reflection at 50 ohm; NextPCB 'SI design experience' #55, https://nextpcb.com/blog/engineer-summary-signal-integrity-design-experience-100-1 [S]",
+    "nh_per_mm": 1.5,
+    "nh_per_mm_source": "Return detour adds 0.8-1.5 nH per mm (a 10 mm detour adds 8-15 nH); upper end used. rfessentials 'Current return', https://rfessentials.com/resources/rf-glossary/current-return/ [S]. Allowed detour = 10 / 1.5 = 6.7 mm per ns of rise time."
+  },
+  "default_class": "gpio",
+  "classes": {
+    "gpio": {
+      "tr_ns": 1.0,
+      "assumption": true,
+      "source": "ASSUMPTION, NO SOURCE (report C1): ESP32-S3 GPIO edge rate is not published; 1 ns is the report's conservative assumption for GPIO, SPI and WS2812. Default for every net with no class."
+    },
+    "100base_tx": {
+      "tr_ns": 1.0,
+      "assumption": true,
+      "source": "ASSUMPTION, NO SOURCE (report C1): no 100BASE-TX edge rate found; the report's 1 ns conservative assumption is used."
+    },
+    "usb_fs": {
+      "tr_ns": 4.0,
+      "source": "USB 2.0 Table 7-9: full-speed driver tr >= 4 ns, via mbedded.ninja https://blog.mbedded.ninja/electronics/communication-protocols/usb-protocol/how-to-route-usb-tracks [S]"
+    },
+    "i2c": {
+      "tr_ns": 12.0,
+      "source": "NXP UM10204 Table 10: Fast-mode fall time tf min = 20 ns x (VDD / 5.5 V) = 12 ns at 3.3 V (rise max 300 ns); report C1/C2, table not re-fetched [S]"
+    },
+    "rs485": {
+      "tr_ns": 460.0,
+      "source": "TI THVD1410 datasheet, driver tr/tf 460 ns typ (680 ns max), hardware-design/registry/datasheets/THVD1410DR.pdf [P]. Only the bus pins A/B (driver output), not the logic pins DE/RE/D/R, which the MCU or the transceiver logic drives."
+    }
+  }
+}

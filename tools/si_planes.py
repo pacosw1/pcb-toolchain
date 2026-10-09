@@ -29,13 +29,25 @@ Spec (one per board, hardware-design/boards/<board>/reference-planes.json):
                                                            ground zone outline that holds most pads)
    "exempt": {"nets": {"VIN": "reason"},
               "areas": [{"box": [x0, y0, x1, y1], "nets": ["/A"], "reason": "..."}]},
-   "max_unreferenced_mm": 1.0,   longest continuous unreferenced run that passes
-   "fast_file": "rp001-fast-nets.json",   optional, for a stackup with no mixed layer: fast net patterns; each other net is slow
-   "slow_max_gap_mm": 5.0,       optional: this limit for a slow net (not fast in mixed_layers), and
-   "slow_min_coverage_pct": 95,  optional: min referenced % of its length (samples near own vias/pads count)
+   "fast_file": "rp001-fast-nets.json",   optional, for a stackup with no mixed layer: fast net patterns
+   "power": ["VBUS", "/MAINS_*"],   optional: power and DC nets (no edge): no reference rule (D-124); the "power"
+                                 lists of mixed_layers count too. A track on a plane layer still fails.
+   "edge_classes": {"i2c": ["/SDA"], "rs485": ["/RS485_A"]},   optional: net patterns -> a class of
+                                 tools/edge-rates.json (rise time with its source); other nets use its default class
    "via_allow_mm": 0.6,          a run this near (plus the pad/via radius) the net's own via/pad is OK
    "step_mm": 0.25}              sample step along each track
 Coordinates: KiCad mm, Y down.
+
+Rules (D-124, hardware-design/reports/2026-10-09-design-rules-sources.md A1 and C3):
+  fast net (fast_file / mixed_layers fast): no crossing of a gap, void, hole or slot in its reference, outside
+      via_allow_mm at its own vias and pads ("Net crossing gap / hole or slot": HyperLynx DRC rule list,
+      https://signalintegrityjournal.com/articles/577-design-rule-checks-for-high-speed-pcb-design [P]).
+  power / DC net: no reference rule.
+  other nets: each unreferenced run is a crossing; the return detour (the shortest path in the reference copper of
+      the net's domain between the two crossing points, the whole path counted) must be <= tr[ns] x 10 nH/ns / 1.5 nH/mm
+      = 6.7 mm per ns (tools/edge-rates.json). When that budget is larger than the board (outline bounding-box
+      perimeter), the class has no reference rule. An unreachable reference fails.
+  every net except a ground: domain crossing (a track over the ground of another domain) fails.
 """
 import argparse
 import collections
@@ -45,10 +57,34 @@ import math
 import os
 import sys
 
-DEFAULTS = {'max_unreferenced_mm': 1.0, 'via_allow_mm': 0.6, 'step_mm': 0.25}
+DEFAULTS = {'via_allow_mm': 0.6, 'step_mm': 0.25}
 REQUIRED = ('about', 'adjacent', 'plane_layers', 'grounds')
-SLOW_LIMITS = ('slow_max_gap_mm', 'slow_min_coverage_pct')
-KEYS = set(REQUIRED) | set(DEFAULTS) | {'alt_refs', 'domains', 'exempt', 'mixed_layers', 'fast_file'} | set(SLOW_LIMITS)
+# D-124 removed max_unreferenced_mm (1.0 mm), slow_max_gap_mm and slow_min_coverage_pct: no source (report A1).
+KEYS = set(REQUIRED) | set(DEFAULTS) | {'alt_refs', 'domains', 'exempt', 'mixed_layers', 'fast_file', 'power', 'edge_classes'}
+EDGE_RATES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'edge-rates.json')
+
+
+def load_edge_rates(path=EDGE_RATES_FILE):
+    """The classes of tools/edge-rates.json: {class: {tr_ns, source, assumption}}. A class needs tr_ns > 0 and a source."""
+    with open(path) as f:
+        raw = json.load(f)
+    out = {}
+    for k, v in raw['classes'].items():
+        if not isinstance(v.get('tr_ns'), (int, float)) or v['tr_ns'] <= 0 or not str(v.get('source', '')).strip():
+            raise SpecError(f'{path}: class {k} needs tr_ns > 0 and a source')
+        out[k] = {'tr_ns': v['tr_ns'], 'source': v['source'], 'assumption': bool(v.get('assumption', False))}
+    return out
+
+
+def _edge_budget():
+    with open(EDGE_RATES_FILE) as f:
+        raw = json.load(f)
+    return raw['budget']['nh_per_ns'] / raw['budget']['nh_per_mm'], raw['default_class']
+
+
+def detour_budget_mm(tr_ns):
+    """Allowed return detour for a rise time: tr x 10 nH/ns / 1.5 nH/mm (tools/edge-rates.json, report C3)."""
+    return tr_ns * _edge_budget()[0]
 
 
 class SpecError(ValueError):
@@ -103,7 +139,7 @@ def load_spec(raw):
         raise SpecError(f'missing spec keys: {missing}')
     s = dict(DEFAULTS)
     s.update(raw)
-    for k in list(DEFAULTS) + [k for k in SLOW_LIMITS if k in s]:
+    for k in DEFAULTS:
         if not isinstance(s[k], (int, float)) or s[k] <= 0:
             raise SpecError(f'{k} must be a number > 0')
     if not isinstance(s['adjacent'], dict) or not isinstance(s['plane_layers'], list) or not isinstance(s['grounds'], list):
@@ -143,7 +179,37 @@ def load_spec(raw):
         if not isinstance(m.get('power'), list) or not all(isinstance(q, str) for q in m['power']):
             raise SpecError(f'mixed_layers {L}: "power" must be a list of net patterns')
         _reason(m.get('reason'), f'mixed_layers {L}')
+    s['power'] = s.get('power') or []
+    if not isinstance(s['power'], list) or not all(isinstance(q, str) for q in s['power']):
+        raise SpecError('"power" must be a list of net patterns')
+    s['edge_classes'] = s.get('edge_classes') or {}
+    known = load_edge_rates()
+    for k, pats in s['edge_classes'].items():
+        if k not in known:
+            raise SpecError(f'edge_classes {k}: not a class of {EDGE_RATES_FILE} ({sorted(known)})')
+        if not isinstance(pats, list) or not all(isinstance(q, str) for q in pats):
+            raise SpecError(f'edge_classes {k}: must be a list of net patterns')
+    s['_edge_rates'] = known
     return s
+
+
+def is_power(net, s):
+    """A power or DC net (no reference rule): a ground, the top-level "power" or a mixed layer "power" pattern."""
+    pats = list(s.get('power') or []) + [q for m in s['mixed_layers'].values() for q in m['power']]
+    return net in s['grounds'] or any(fnmatch.fnmatchcase(net, q) for q in pats)
+
+
+def is_fast(net, s):
+    if any(fnmatch.fnmatchcase(net, q) for q in s.get('_fast_top') or []):
+        return True
+    return any(net_kind(net, m, s) == 'fast' for m in s['mixed_layers'].values() if 'fast' in m)
+
+
+def edge_class(net, s):
+    for k, pats in s['edge_classes'].items():
+        if any(fnmatch.fnmatchcase(net, q) for q in pats):
+            return k
+    return _edge_budget()[1]
 
 
 def parse_fast(raw, path):
@@ -224,9 +290,9 @@ def net_domain(net, pad_refs, s):
     return top[0][0]
 
 
-def _runs(bad, link):
-    """Group bad samples (x, y, w) that touch (distance <= link). Return [(length, (cx, cy))]."""
-    parent = list(range(len(bad)))
+def _groups(pts, link):
+    """Group points (x, y, ...) that touch (distance <= link). Returns lists of indices."""
+    parent = list(range(len(pts)))
 
     def find(i):
         while parent[i] != i:
@@ -234,23 +300,19 @@ def _runs(bad, link):
             i = parent[i]
         return i
     grid = collections.defaultdict(list)
-    for i, (x, y, _) in enumerate(bad):
-        grid[(math.floor(x / link), math.floor(y / link))].append(i)
+    for i, q in enumerate(pts):
+        grid[(math.floor(q[0] / link), math.floor(q[1] / link))].append(i)
     for (gx, gy), ids in grid.items():
         for dx in (-1, 0, 1):
             for dy in (-1, 0, 1):
                 for j in grid.get((gx + dx, gy + dy), ()):
                     for i in ids:
-                        if i < j and math.dist(bad[i][:2], bad[j][:2]) <= link:
+                        if i < j and math.dist(pts[i][:2], pts[j][:2]) <= link:
                             parent[find(i)] = find(j)
     groups = collections.defaultdict(list)
-    for i in range(len(bad)):
-        groups[find(i)].append(bad[i])
-    out = []
-    for g in groups.values():
-        w = sum(p[2] for p in g)
-        out.append((w, (sum(p[0] * p[2] for p in g) / w, sum(p[1] * p[2] for p in g) / w)))
-    return out
+    for i in range(len(pts)):
+        groups[find(i)].append(i)
+    return list(groups.values())
 
 
 def evaluate_net(samples, ref_at, domain, anchors, s, net=None, caps=None):
@@ -259,20 +321,27 @@ def evaluate_net(samples, ref_at, domain, anchors, s, net=None, caps=None):
     ref_at(x, y) gives the net of the filled zone under the point on the adjacent layer, or None.
     anchors are the net's own vias and pads (x, y, radius). A bad sample near an anchor, or in an
     exempt area of this net, does not count in the worst run or in the crossing length.
+    Each run of bad samples gets its terminals: the good samples next to it (x, y, snap), where the return current
+    leaves and joins the reference (snap: the search radius for reference copper; at an own via or pad it is the
+    anchor radius + via_allow_mm).
     """
     allow = s['via_allow_mm']
+    step = s['step_mm']
     areas = [a['box'] for a in s['exempt']['areas'] if net in a['nets']]
     length = unref = cross = 0.0
-    bad, cross_nets = [], collections.Counter()
-    fast = net is not None and any(net_kind(net, m, s) == 'fast' for m in s['mixed_layers'].values() if 'fast' in m)
+    bad, good, cross_nets = [], [], collections.Counter()
+    fast = net is not None and is_fast(net, s)
     for x, y, w in samples:
         length += w
         ref = ref_at(x, y)
         rd = ref_domain(ref, s, fast, (x, y), caps)
         if domain is not None and rd == domain:
+            good.append((x, y, step))
             continue
         unref += w
-        if any(math.dist((x, y), a[:2]) <= a[2] + allow for a in anchors):
+        near = [a for a in anchors if math.dist((x, y), a[:2]) <= a[2] + allow]
+        if near:
+            good.append((x, y, max(a[2] for a in near) + allow + step))
             continue
         if any(min(b[0], b[2]) <= x <= max(b[0], b[2]) and min(b[1], b[3]) <= y <= max(b[1], b[3]) for b in areas):
             continue
@@ -280,56 +349,157 @@ def evaluate_net(samples, ref_at, domain, anchors, s, net=None, caps=None):
         if domain is not None and rd is not None:
             cross += w
             cross_nets[ref] += w
-    runs = _runs(bad, 1.2 * s['step_mm'])
-    worst, at = max(runs, default=(0, None))
-    return {'length': length, 'unref': unref, 'bad': sum(w for _, _, w in bad), 'worst': worst, 'worst_at': at, 'cross': cross,
+    link = 1.2 * step
+    runs = []
+    gidx = collections.defaultdict(list)
+    for i, q in enumerate(good):
+        gidx[(math.floor(q[0] / link), math.floor(q[1] / link))].append(i)
+    for g in _groups(bad, link):
+        w = sum(bad[i][2] for i in g)
+        at = (sum(bad[i][0] * bad[i][2] for i in g) / w, sum(bad[i][1] * bad[i][2] for i in g) / w)
+        term = set()
+        for i in g:
+            bx, by = bad[i][:2]
+            cx, cy = math.floor(bx / link), math.floor(by / link)
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for j in gidx.get((cx + dx, cy + dy), ()):
+                        if math.dist((bx, by), good[j][:2]) <= link:
+                            term.add(j)
+        # one terminal per side: join terminals that touch each other
+        tl = [good[j] for j in sorted(term)]
+        ends = [max((tl[k] for k in grp), key=lambda q: q[2]) for grp in _groups(tl, link)] if tl else []
+        runs.append({'length': w, 'at': at, 'terminals': ends})
+    worst = max(runs, key=lambda r: r['length'], default=None)
+    return {'length': length, 'unref': unref, 'bad': sum(w for _, _, w in bad), 'worst': worst['length'] if worst else 0,
+            'worst_at': worst['at'] if worst else None, 'cross': cross, 'runs': runs,
             'cross_net': cross_nets.most_common(1)[0][0] if cross_nets else None}
+
+
+def detour_mm(ok, terminals, budget, cell, portals=()):
+    """Return detour of one run: the shortest path in the reference copper from the first terminal to the farthest
+    other terminal, on a grid of this cell size (8 neighbours, a diagonal step only between two free sides).
+    portals: (x, y) of the ground vias and through-hole pads of the domain ground. The return current may go down one
+    and up another; the path between them is counted as the straight line (the other ground plane, In1, is solid by
+    the stackup rule; a track on it fails as plane-cut).
+    ok(x, y) -> True on reference copper. terminals: [(x, y, snap)]; a terminal is reached at any copper cell within
+    snap of it. Returns the length in mm, or None when it is longer than budget or there is no copper path.
+    Fewer than two terminals: a stub, no crossing: 0."""
+    import heapq
+    if len(terminals) < 2:
+        return 0.0
+    cache = {}
+
+    def free(c):
+        if c not in cache:
+            cache[c] = bool(ok(c[0] * cell, c[1] * cell))
+        return cache[c]
+
+    def cells(t):
+        r = max(t[2], cell)
+        n = math.ceil(r / cell)
+        cx, cy = round(t[0] / cell), round(t[1] / cell)
+        return {(cx + i, cy + j) for i in range(-n, n + 1) for j in range(-n, n + 1)
+                if math.dist(((cx + i) * cell, (cy + j) * cell), t[:2]) <= r + 1e-9 and free((cx + i, cy + j))}
+    src = cells(terminals[0])
+    if not src:
+        return None
+    ports = [(round(x / cell), round(y / cell)) for x, y in portals]
+    ports = [q for q in ports if free(q) or any(free((q[0] + i, q[1] + j)) for i in (-1, 0, 1) for j in (-1, 0, 1))]
+    at_port = collections.defaultdict(list)
+    for k, q in enumerate(ports):
+        for i in (-1, 0, 1):
+            for j in (-1, 0, 1):
+                at_port[(q[0] + i, q[1] + j)].append(k)
+    worst = 0.0
+    for t in terminals[1:]:
+        dst = cells(t)
+        if not dst:
+            return None
+        if src & dst:
+            continue
+        tx, ty, tr = t[0] / cell, t[1] / cell, max(t[2], cell) / cell
+        h = lambda c: max(0.0, math.hypot(c[0] - tx, c[1] - ty) - tr - 1)
+        dist = {c: 0.0 for c in src}
+        heap = [(h(c), 0.0, c) for c in src]
+        heapq.heapify(heap)
+        found = None
+        while heap:
+            f, d, c = heapq.heappop(heap)
+            if d > dist.get(c, math.inf) + 1e-12:
+                continue
+            if c in dst:
+                found = d
+                break
+            if f * cell > budget + 1e-9:
+                break
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    if not (dx or dy):
+                        continue
+                    n = (c[0] + dx, c[1] + dy)
+                    if not free(n) or (dx and dy and not (free((c[0] + dx, c[1])) and free((c[0], c[1] + dy)))):
+                        continue
+                    nd = d + (1.4142135623730951 if dx and dy else 1.0)
+                    if nd < dist.get(n, math.inf) - 1e-12:
+                        dist[n] = nd
+                        heapq.heappush(heap, (nd + h(n), nd, n))
+            for k in at_port.get(c, ()):   # down a ground via, along the solid plane, up another
+                for q in ports:
+                    for n in ((q[0] + i, q[1] + j) for i in (-1, 0, 1) for j in (-1, 0, 1)):
+                        if free(n):
+                            nd = d + math.dist(c, n)
+                            if nd < dist.get(n, math.inf) - 1e-12 and nd * cell <= budget + 1e-9:
+                                dist[n] = nd
+                                heapq.heappush(heap, (nd + h(n), nd, n))
+        if found is None or found * cell > budget + 1e-9:
+            return None
+        worst = max(worst, found * cell)
+    return worst
 
 
 def _checked(net, s):
     return net not in s['grounds'] and net not in s['exempt']['nets']
 
 
-def _fast_over_mixed(layer, net, s):
-    m = s['mixed_layers'].get(s['adjacent'].get(layer))
-    return m is not None and net_kind(net, m, s) == 'fast'
-
-
-def reference_failures(results, domains, s):
+def reference_failures(results, domains, s, detour=None, board_mm=None):
     """FAIL lines from evaluate_net results keyed (layer, net). domains: net -> domain or None.
-    A fast net on the outer layer over a mixed layer may have no gap at all."""
+    detour(layer, domain, run, budget) -> mm or None (over budget / unreachable); board_mm: the size above which a
+    budget gives no rule (the board outline bounding-box perimeter). Rules: see the module text (D-124)."""
     nodom, cross, gaps, seen = [], [], [], set()
+    rates = s.get('_edge_rates') or load_edge_rates()
     for (layer, net), r in results.items():
         if not _checked(net, s):
             continue
+        power = is_power(net, s)
         if domains.get(net) is None:
-            if net not in seen:
+            if net not in seen and not power:
                 seen.add(net)
                 nodom.append(f'FAIL no-domain {net}: no pad in a ground zone outline; set "domains" or "exempt"')
             continue
         if r['cross'] > 0:
             cross.append((r['cross'], f"FAIL domain-cross {layer} {net}: {r['cross']:.1f} mm over "
                                       f"{r['cross_net']} (domain {domains[net]})"))
-        if s.get('_fast_top') is not None:
-            # A stackup with no mixed layer (6 layers): the top-level "fast_file" tells fast from slow.
-            slow = not any(fnmatch.fnmatchcase(net, pat) for pat in s['_fast_top'])
-        else:
-            slow = s['mixed_layers'] and not any(net_kind(net, m, s) == 'fast' for m in s['mixed_layers'].values())
-        limit = s.get('slow_max_gap_mm', s['max_unreferenced_mm']) if slow else s['max_unreferenced_mm']
-        if _fast_over_mixed(layer, net, s) and r['worst'] > 0:
-            x, y = r['worst_at']
-            gaps.append((r['worst'], f"FAIL fast-unreferenced {layer} {net}: gap {r['worst']:.2f} mm at ({x:.1f}, {y:.1f}) "
-                                     f"over the mixed layer {s['adjacent'][layer]} (a fast net needs ground under every mm)"))
-        elif slow and 'slow_min_coverage_pct' in s and r['length'] and \
-                100 * (1 - r.get('bad', 0) / r['length']) < s['slow_min_coverage_pct']:
-            gaps.append((r.get('bad', 0), f"FAIL unreferenced {layer} {net}: coverage "
-                                          f"{100 * (1 - r.get('bad', 0) / r['length']):.0f}% < {s['slow_min_coverage_pct']}% "
-                                          f"(slow net); worst gap {r['worst']:.1f} mm"))
-        elif r['worst'] > limit:
-            x, y = r['worst_at']
-            pct = 100 * r['unref'] / r['length'] if r['length'] else 0
-            gaps.append((r['worst'], f"FAIL unreferenced {layer} {net}: gap {r['worst']:.1f} mm at "
-                                     f"({x:.1f}, {y:.1f}); total {r['unref']:.1f} mm, {pct:.0f}%"))
+        if power:
+            continue
+        if is_fast(net, s):
+            if r['worst'] > 0:
+                x, y = r['worst_at']
+                gaps.append((r['worst'], f"FAIL fast-crossing {layer} {net}: {len(r.get('runs') or [1])} crossings, longest "
+                                         f"{r['worst']:.2f} mm at ({x:.1f}, {y:.1f}) (a fast net may cross no gap, void or slot)"))
+            continue
+        k = edge_class(net, s)
+        tr = rates[k]['tr_ns']
+        budget = detour_budget_mm(tr)
+        if board_mm is not None and budget > board_mm:
+            continue
+        over = [run for run in r.get('runs') or [] if (detour(layer, domains[net], run, budget) if detour else None) is None]
+        if over:
+            w = max(over, key=lambda q: q['length'])
+            x, y = w['at']
+            gaps.append((w['length'], f"FAIL detour {layer} {net}: {len(over)} of {len(r['runs'])} crossings with a return detour "
+                                      f"> {budget:.1f} mm or no reference path, longest run {w['length']:.1f} mm at ({x:.1f}, {y:.1f}) "
+                                      f"(class {k}, tr {tr:g} ns{', assumption' if rates[k]['assumption'] else ''})"))
     return sorted(nodom) + [t for _, t in sorted(cross, reverse=True)] + [t for _, t in sorted(gaps, reverse=True)]
 
 
@@ -512,13 +682,28 @@ def analyse(board_path, s, verbose):
         info.append(f'INFO mixed {lname}: {sum(1 for q in pieces if q[0] == lname)} ground fill pieces; '
                     f'tracks: ' + (', '.join(f'{n} {v:.1f} mm' for (L, n), v in sorted(cuts.items()) if L == lname) or 'none'))
 
-    fails = plane_cut_failures(cuts, s) + island_failures(pieces) + reference_failures(results, domains, s)
+    bb_w, bb_h = mm(bb.GetWidth()), mm(bb.GetHeight())
+    board_mm = 2 * (bb_w + bb_h)
+
+    def detour(lname, domain, run, budget):
+        ref_at = ref_fn(layers[s['adjacent'][lname]])
+        ok = lambda x, y: ref_domain(ref_at(x, y), s, False, (x, y), caps) == domain
+        # grid cell: 0.1 mm, coarser for a long budget (at most 200 cells per budget; a coarser grid only makes
+        # the path longer, so it never hides a failure)
+        ports = [(x, y) for x, y, _ in via_r[domain]] + [(x, y) for x, y, _, tht in gpads[domain] if tht]
+        return detour_mm(ok, run['terminals'], budget, min(0.5, max(0.1, budget / 200)), ports)
+
+    fails = plane_cut_failures(cuts, s) + island_failures(pieces) + reference_failures(results, domains, s, detour, board_mm)
+    info.append(f'INFO detour budget: no rule above {board_mm:.0f} mm (board bounding-box perimeter); '
+                + ', '.join(f"{k} {v['tr_ns']:g} ns -> {detour_budget_mm(v['tr_ns']):.1f} mm" + (' (assumption)' if v['assumption'] else '')
+                            for k, v in s['_edge_rates'].items()))
     detail = []
     if verbose:
         for (lname, net), r in sorted(results.items(), key=lambda kv: -kv[1]['worst']):
             pct = 100 * r['unref'] / r['length'] if r['length'] else 0
-            detail.append(f"  {lname} {net} [{domains[net]}]: {r['length']:.1f} mm, unref {r['unref']:.1f} mm "
-                          f"({pct:.0f}%), worst {r['worst']:.1f} mm, cross {r['cross']:.1f} mm")
+            kind = 'power' if is_power(net, s) else 'fast' if is_fast(net, s) else edge_class(net, s)
+            detail.append(f"  {lname} {net} [{domains[net]}, {kind}]: {r['length']:.1f} mm, unref {r['unref']:.1f} mm "
+                          f"({pct:.0f}%), worst {r['worst']:.1f} mm, {len(r['runs'])} runs, cross {r['cross']:.1f} mm")
         for net, why in s['exempt']['nets'].items():
             detail.append(f'  exempt {net}: {why}')
     return fails, info, detail

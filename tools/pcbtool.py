@@ -167,12 +167,25 @@ def apply_colors(text, mask, silk, finish, render=False):
     return re.sub(r'\(copper_finish "[^"]*"\)', f'(copper_finish "{finish}")', '\n'.join(out))
 
 
-def width_report(segs, need, pads, neck_max=2.0):
-    """Track segments narrower than the net class width (the current rule). A short neck (<= neck_max mm)
-    is allowed only where it ends on a same-net pad that is itself narrower than the class width, and the
-    neck is not narrower than that pad."""
+def width_report(segs, need, pads, thick=None, dT=10.0):
+    """Track segments narrower than the net class width (the current rule). D-124: a narrow segment passes as a
+    neck when its neck chain (neck_chains: the run of segments no wider than it, between pads, branches or wider
+    copper) is short enough to be cooled by conduction at the class design current (neck_max_mm). The class
+    design current is the IPC current of the class width (ipc_amps). thick: layer -> copper mm (default 0.035)."""
+    thick = thick or {}
     out = {}
-    for sg in segs:
+    pieces, stops = [], set()
+    for i, sg in enumerate(segs):
+        if sg['net'] in need:
+            pieces.append((i, (sg['net'], sg.get('layer', 'F.Cu')), tuple(sg['start']), tuple(sg['end']), sg['width']))
+    for pd in pads:   # a pad of the net ends a chain on every layer of its segments
+        for _, key, u, v, _ in pieces:
+            if key[0] == pd['net']:
+                for e in (u, v):
+                    if math.dist(pd['pos'], e) < 0.01:
+                        stops.add((key, e))
+    chains = neck_chains(pieces, stops)
+    for i, sg in enumerate(segs):
         w_need = need.get(sg['net'])
         if w_need is None:
             continue
@@ -180,26 +193,117 @@ def width_report(segs, need, pads, neck_max=2.0):
         r['min'] = min(r['min'], sg['width'])
         if sg['width'] >= w_need - 1e-6:
             continue
-        length = round(math.dist(sg['start'], sg['end']), 3)
-        neck = length <= neck_max and any(
-            pd['net'] == sg['net'] and pd['minor'] < w_need and sg['width'] >= pd['minor'] - 1e-6
-            and any(math.dist(pd['pos'], e) < 0.01 for e in (sg['start'], sg['end'])) for pd in pads)
-        if neck:
+        t = thick.get(sg.get('layer'), 0.035)
+        length, w_min = chains[i]
+        if length <= neck_max_mm(w_min, t, ipc_amps(w_need, t, dT), dT) + 1e-9:
             r['necks'] += 1
         else:
-            r['under'].append((sg['width'], length, sg['start']))
+            r['under'].append((sg['width'], round(math.dist(sg['start'], sg['end']), 3), sg['start']))
     return out
 
 
-def ipc_amps(width_mm, thick_mm=0.035, dT=10.0, inner=False):
-    """IPC-2221 conductor current: I = k dT^0.44 A^0.725, A in mil^2; k 0.048 external, 0.024 inner."""
-    area = (width_mm / 0.0254) * (thick_mm / 0.0254)
-    return (0.024 if inner else 0.048) * dT ** 0.44 * area ** 0.725
+# ---- Current capacity (D-124, hardware-design/reports/2026-10-09-design-rules-sources.md A3 and C5, C8)
+# IPC-2221 chart fit I = k dT^0.44 A^0.725 (A in mil^2) with the EXTERNAL constant k = 0.048 on ALL layers.
+# Source: IPC-2152 (2009) found internal and external conductors heat nearly the same; the IPC-2221 internal curve
+# (k = 0.024) was made by halving the external current, not from test data. Cadence, "IPC-2152 vs IPC-2221",
+# https://resources.system-analysis.cadence.com/blog/ipc-2152-vs-ipc-2221-which-to-use-for-pcb-thermal-analysis [S];
+# PCD&F "Determining current carrying capacity" https://pcdandf.com/pcdesign/index.php/2009-archive-articles/5731-determining-current-carrying-capacity [S].
+# Conservative: it ignores the solid In1 GND plane (the largest IPC-2152 correction, PCD&F).
+IPC_K = 0.048
+# Copper for the neck (heat conduction) limit (report C5 inputs; sources added for D-124):
+# rho_Cu = 1.72e-8 ohm m: the IEC 60028 international annealed copper standard, 1/58 ohm mm2/m = 1.724e-8 ohm m at 20 C
+#   (standard value, paywalled, quoted widely) [S]; C11000 Cu-ETP data sheet 0.017 ohm mm2/m at 20 C, Aurubis,
+#   https://aurubis.com/dam/jcr:ec116d17-1541-419a-a897-ad31b4fa6c93/c11000-cu-etp-us.pdf [S, search summary 2026-10-09].
+# k_Cu = 390 W/(m K): C11000 Cu-ETP 388-391 W/(m K), same Aurubis data sheet and MakeItFrom
+#   https://www.makeitfrom.com/material-properties/UNS-C11000-CW004A-Electrolytic-Tough-Pitch-Copper [S, search summary 2026-10-09].
+#   PCB foil is electrodeposited copper with about the same values; a lower k gives a shorter neck limit.
+RHO_CU = 1.72e-8
+K_CU = 390.0
+
+
+def area_amps(area_mm2, dT=10.0):
+    """IPC current of a conductor with this copper cross-section (mm2); k = IPC_K on every layer (IPC-2152)."""
+    return IPC_K * dT ** 0.44 * (area_mm2 / 0.0254 ** 2) ** 0.725
+
+
+def ipc_amps(width_mm, thick_mm=0.035, dT=10.0):
+    """IPC current of a track width x thickness (mm). Same constant for inner and outer layers (D-124, IPC-2152)."""
+    return area_amps(width_mm * thick_mm, dT)
+
+
+def via_group_amps(drills_mm, plating_mm=0.018, dT=10.0):
+    """Vias in parallel between the same copper: rated as the trace with the same copper cross-section.
+    IPC-2152 as quoted by Brooks & Adam, "Vias are cooler than we think", Signal Integrity Journal,
+    https://signalintegrityjournal.com/articles/1459-vias-are-cooler-than-we-think [P]: "the cross-sectional area
+    of a via should be at least the same as the conductor coming into it", or use several vias (their barrel areas
+    add). Barrel area = pi x drill x plating. Plating 0.018 mm: JLC "Average Hole Plating Thickness: 18 um",
+    https://jlcpcb.com/capabilities/pcb-capabilities [P]. So a via group passes a current exactly when its summed
+    area is at least the area of a trace that carries that current."""
+    return area_amps(sum(math.pi * d * plating_mm for d in drills_mm), dT)
 
 
 def via_amps(drill_mm, plating_mm=0.018, dT=10.0):
-    """Via barrel as an external IPC-2221 conductor of width pi x drill (JLC plating >= 18 um)."""
-    return ipc_amps(math.pi * drill_mm, plating_mm, dT)
+    """One via (via_group_amps of one drill)."""
+    return via_group_amps([drill_mm], plating_mm, dT)
+
+
+def _neck_k(dT):
+    return math.sqrt(8 * K_CU * dT / RHO_CU)   # A/m: J L <= sqrt(8 k dT / rho)
+
+
+def neck_max_mm(width_mm, thick_mm, amps, dT=10.0):
+    """Longest neck that stays within dT at this current: L <= (A / I) x sqrt(8 k dT / rho) (report C5, [D]:
+    uniform Joule heating of a conductor whose two ends are held at the trace temperature, dT_max = J^2 rho L^2 / (8 k);
+    conservative, conduction into FR-4 and the planes is ignored; Brooks: the rest of the trace acts as a heat sink [S])."""
+    return (width_mm * thick_mm * 1e-6 / amps) * _neck_k(dT) * 1e3 if amps > 0 else float('inf')
+
+
+def neck_amps(width_mm, thick_mm, length_mm, dT=10.0):
+    """The current at which a neck of this length reaches dT (inverse of neck_max_mm)."""
+    return width_mm * thick_mm * 1e-6 * _neck_k(dT) / (length_mm * 1e-3) if length_mm > 0 else float('inf')
+
+
+def track_amps(width_mm, thick_mm, dT, chain):
+    """Capacity of a track piece: the larger of its IPC current and the neck current of its chain (length, min width)."""
+    length, w_min = chain
+    return max(ipc_amps(width_mm, thick_mm, dT), neck_amps(w_min, thick_mm, length, dT))
+
+
+def neck_chains(pieces, stops=()):
+    """{key: (length, min width)} of the neck chain of each track piece. pieces: (key, layer, u, v, width).
+    The chain of a piece is the run of pieces joined end to end through nodes where exactly two pieces of that layer
+    meet and that are not in stops ((layer, point): a pad, via or zone), using only pieces no wider than it.
+    A piece next to wider copper therefore ends there (the wider copper is the heat sink); the chain of the widest
+    piece of a neck spans the whole neck at its narrowest width (conservative)."""
+    at = collections.defaultdict(list)
+    for i, (_, L, u, v, _) in enumerate(pieces):
+        at[(L, u)].append(i)
+        at[(L, v)].append(i)
+    stops = set(stops)
+    out = {}
+    for i, (key, L, u, v, w) in enumerate(pieces):
+        seen, todo = {i}, [i]
+        while todo:
+            j = todo.pop()
+            for e in pieces[j][2:4]:
+                node = (pieces[j][1], e)
+                if node in stops or len(at[node]) != 2:
+                    continue
+                for k in at[node]:
+                    if k not in seen and pieces[k][4] <= w + 1e-9:
+                        seen.add(k)
+                        todo.append(k)
+        out[key] = (sum(math.dist(pieces[j][2], pieces[j][3]) for j in seen), min(pieces[j][4] for j in seen))
+    return out
+
+
+def via_groups(links):
+    """Group via ids whose copper ends (sets of graph nodes) are the same: they are in parallel (their areas add).
+    links: {via id: set of nodes}. Returns a list of lists of via ids."""
+    groups = collections.defaultdict(list)
+    for i, ends in links.items():
+        groups[frozenset(ends)].append(i)
+    return list(groups.values())
 
 
 def project(a, c, q):
@@ -210,13 +314,9 @@ def project(a, c, q):
     return (round(a[0] + t * dx, 3), round(a[1] + t * dy, 3))
 
 
-NECK_MAX_MM = 1.0
+# Thermal relief: 2 spokes (the KiCad default minimum), each an IPC conductor of the spoke width. Not changed by D-124
+# (report A3: replace with the zone's real spoke count later).
 THERMAL_SPOKES = 2
-
-
-def is_neck(length, width, pad_minor, max_len=NECK_MAX_MM):
-    """A short track into a pad, at least as wide as the pad: the pad (the part) is the limit, not the track."""
-    return length <= max_len + 1e-6 and width >= pad_minor - 1e-3
 
 
 def spec_pairs(spec, parallel=False):
@@ -1310,7 +1410,8 @@ def cmd_widths(a):
     pads = [{'net': pd.GetNetname(), 'pos': (round(mm(pd.GetPosition().x), 3), round(mm(pd.GetPosition().y), 3)),
              'minor': round(mm(min(pd.GetSize(p.F_Cu).x, pd.GetSize(p.F_Cu).y)), 3)}
             for fp in b.GetFootprints() for pd in fp.Pads() if pd.GetNumber()]
-    rep = width_report(segs, need, pads)
+    # dT 10 K: the same allowed rise as the paths check default (current-paths.json "dT"; a design choice, report A3)
+    rep = width_report(segs, need, pads, thick=copper_thickness(a.board), dT=10.0)
     bad = 0
     for n in sorted(rep, key=lambda n: -sum(u[1] for u in rep[n]['under'])):
         r = rep[n]
@@ -1330,7 +1431,8 @@ def copper_thickness(board):
 
 
 def net_graph(p, b, net, thick, dT, plating):
-    """Copper graph of one net: tracks (IPC capacity), vias (barrel), filled zone islands (planes), pads."""
+    """Copper graph of one net: tracks (IPC current or neck current, D-124), via groups (barrel cross-section, D-124),
+    filled zone islands (planes), pads."""
     mm, inf = p.ToMM, float('inf')
     pt_ = lambda v: (round(mm(v.x), 3), round(mm(v.y), 3))
     tracks = [t for t in b.GetTracks() if t.GetNetname() == net]
@@ -1338,7 +1440,7 @@ def net_graph(p, b, net, thick, dT, plating):
     vias = [t for t in tracks if isinstance(t, p.PCB_VIA)]
     ends = [(t.GetLayerName(), pt_(e)) for t in segs for e in (t.GetStart(), t.GetEnd())]
     net_pads = [pd for fp in b.GetFootprints() for pd in fp.Pads() if pd.GetNumber() and pd.GetNetname() == net]
-    edges, nodes_extra = [], []
+    edges, nodes_extra, pieces = [], [], []
     for t in segs:
         L = t.GetLayerName()
         a, c = pt_(t.GetStart()), pt_(t.GetEnd())
@@ -1352,29 +1454,28 @@ def net_graph(p, b, net, thick, dT, plating):
                 cuts.add(q)
         cuts = sorted(cuts, key=lambda e: math.dist(a, e))
         nodes_extra.extend((L, e) for e in cuts)
-        amps = ipc_amps(w, thick.get(L, 0.035), dT, inner=L.startswith('In'))
         chain = [a, *cuts, c]
         for u, v in zip(chain, chain[1:]):
-            neck = any(is_neck(math.dist(u, v), w, round(mm(min(pd.GetSize(t.GetLayer()).x, pd.GetSize(t.GetLayer()).y)), 3))
-                       for pd in net_pads if pd.IsOnLayer(t.GetLayer())
-                       and any(pd.HitTest(p.VECTOR2I(p.FromMM(e[0]), p.FromMM(e[1]))) for e in (u, v)))
-            edges.append(((L, u), (L, v), inf if neck else amps, f'{L} {w} mm {u}-{v}' + (' (pad neck)' if neck else '')))
+            if u != v:
+                pieces.append((len(pieces), L, u, v, w))
     nodes = {(L, e) for L, e in ends} | set(nodes_extra)
     pads = {f'{fp.GetReference()}.{pd.GetNumber()}': pd for fp in b.GetFootprints() for pd in fp.Pads()
             if pd.GetNumber() and pd.GetNetname() == net}
+    stops = set()   # track nodes on a pad, via or zone: a neck chain ends there
     for lab, pd in pads.items():
         for L, e in nodes:
             if pd.IsOnLayer(b.GetLayerID(L)) and pd.HitTest(p.VECTOR2I(p.FromMM(e[0]), p.FromMM(e[1]))):
                 edges.append((lab, (L, e), inf, 'pad'))
+                stops.add((L, e))
+    links = {i: set() for i in range(len(vias))}   # via -> the copper it joins
     for i, v in enumerate(vias):
-        c = pt_(v.GetPosition())
-        va = via_amps(mm(v.GetDrillValue()), plating, dT)
         for L, e in nodes:
             if v.HitTest(p.VECTOR2I(p.FromMM(e[0]), p.FromMM(e[1]))):
-                edges.append((('via', i), (L, e), va, f'via drill {mm(v.GetDrillValue()):.2f} at {c}'))
+                links[i].add((L, e))
+                stops.add((L, e))
         for lab, pd in pads.items():
             if pd.HitTest(v.GetPosition()):
-                edges.append((('via', i), lab, va, f'via drill {mm(v.GetDrillValue()):.2f} at {c}'))
+                links[i].add(lab)
     for zi, z in enumerate(b.Zones()):
         if z.GetIsRuleArea() or z.GetNetname() != net:
             continue
@@ -1392,6 +1493,7 @@ def net_graph(p, b, net, thick, dT, plating):
                 for L2, e in nodes:
                     if L2 == L and inside(p.VECTOR2I(p.FromMM(e[0]), p.FromMM(e[1]))):
                         edges.append((isl, (L2, e), inf, 'zone'))
+                        stops.add((L2, e))
                 for lab, pd in pads.items():
                     if pd.IsOnLayer(lid) and touches(pd):
                         conn = pd.GetLocalZoneConnection()
@@ -1400,11 +1502,25 @@ def net_graph(p, b, net, thick, dT, plating):
                         solid = conn == p.ZONE_CONNECTION_FULL or (conn == p.ZONE_CONNECTION_THT_THERMAL and pd.GetAttribute() == p.PAD_ATTRIB_SMD)
                         sw = round(mm(z.GetThermalReliefSpokeWidth()), 3)
                         # thermal: 2 spokes (the KiCad default minimum), each an IPC conductor of the spoke width
-                        edges.append((isl, lab, inf if solid else THERMAL_SPOKES * ipc_amps(sw, thick.get(L, 0.035), dT, inner=L.startswith('In')),
+                        edges.append((isl, lab, inf if solid else THERMAL_SPOKES * ipc_amps(sw, thick.get(L, 0.035), dT),
                                       f'zone {L} ' + ('solid' if solid else f'thermal {THERMAL_SPOKES} x {sw} mm spokes to {lab}')))
                 for i, v in enumerate(vias):
                     if v.IsOnLayer(lid) and touches(v):
-                        edges.append((isl, ('via', i), via_amps(mm(v.GetDrillValue()), plating, dT), f'via drill {mm(v.GetDrillValue()):.2f} at {pt_(v.GetPosition())}'))
+                        links[i].add(isl)
+    # D-124: vias that join the same copper are in parallel: their barrel areas add (via_group_amps)
+    for g in via_groups({i: ends_ for i, ends_ in links.items() if ends_}):
+        drills = [mm(vias[i].GetDrillValue()) for i in g]
+        va = via_group_amps(drills, plating, dT)
+        lab = (f'via drill {drills[0]:.2f} at {pt_(vias[g[0]].GetPosition())}' if len(g) == 1 else
+               f'{len(g)} vias in parallel (drill {min(drills):.2f}-{max(drills):.2f}) at {pt_(vias[g[0]].GetPosition())}')
+        for end in links[g[0]]:
+            edges.append((('via', g[0]), end, va, lab))
+    chains = neck_chains(pieces, stops)
+    for i, L, u, v, w in pieces:
+        th = thick.get(L, 0.035)
+        amps = track_amps(w, th, dT, chains[i])
+        neck = amps > ipc_amps(w, th, dT) + 1e-12
+        edges.append(((L, u), (L, v), amps, f'{L} {w} mm {u}-{v}' + (f' (neck {chains[i][0]:.2f} mm)' if neck else '')))
     return edges, set(pads)
 
 

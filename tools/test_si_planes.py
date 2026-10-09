@@ -54,7 +54,7 @@ class SampleTest(unittest.TestCase):
 class SpecTest(unittest.TestCase):
     def test_minimal_spec_gets_defaults(self):
         s = sp.load_spec(base_spec())
-        self.assertEqual(s['max_unreferenced_mm'], 1.0)
+        self.assertNotIn('max_unreferenced_mm', s)
         self.assertEqual(s['via_allow_mm'], 0.6)
         self.assertEqual(s['step_mm'], 0.25)
 
@@ -132,6 +132,16 @@ class DomainTest(unittest.TestCase):
 
 def track(x0, x1, y=0.0):
     return sp.sample_segment((x0, y), (x1, y), 0.25)
+
+
+def run(detour, length=1.0):
+    """A bad run whose return detour (for the fake detour function) is detour mm, None = unreachable."""
+    return {'length': length, 'at': (0, 0), 'terminals': [(0, 0, 0.1), (1, 0, 0.1)], 'fake_detour': detour}
+
+
+def fixed_detour(layer, domain, run_, budget, fast=False):
+    d = run_['fake_detour']
+    return None if d is None or d > budget else d
 
 
 class EvaluateTest(unittest.TestCase):
@@ -221,14 +231,17 @@ class FailureTest(unittest.TestCase):
         r.update(kw)
         return r
 
-    def test_gap_over_limit_fails(self):
-        fails = sp.reference_failures({('B.Cu', '/A'): self.res(worst=1.5, unref=2.0)}, {'/A': 'GND'}, self.spec)
+    def test_unclassified_net_uses_the_gpio_assumption_budget(self):
+        # D-124: no class -> 1 ns (marked assumption) -> 6.7 mm detour budget
+        fails = sp.reference_failures({('B.Cu', '/A'): self.res(worst=1.5, unref=2.0, runs=[run(9.0)])}, {'/A': 'GND'},
+                                      self.spec, detour=fixed_detour, board_mm=200)
         self.assertEqual(len(fails), 1)
         self.assertTrue(fails[0].startswith('FAIL'))
         self.assertIn('/A', fails[0])
 
-    def test_gap_at_limit_passes(self):
-        self.assertEqual(sp.reference_failures({('B.Cu', '/A'): self.res(worst=1.0)}, {'/A': 'GND'}, self.spec), [])
+    def test_detour_inside_the_budget_passes(self):
+        self.assertEqual(sp.reference_failures({('B.Cu', '/A'): self.res(worst=3.0, runs=[run(6.0)])}, {'/A': 'GND'},
+                                               self.spec, detour=fixed_detour, board_mm=200), [])
 
     def test_exempt_net_does_not_fail(self):
         self.assertEqual(sp.reference_failures({('B.Cu', 'VIN'): self.res(worst=5, unref=5)}, {'VIN': 'GND'}, self.spec), [])
@@ -267,7 +280,7 @@ class MixedLayerTest(unittest.TestCase):
         sp.set_fast(self.spec, {'In2.Cu': ['/USB_*', '/SCK*']})
 
     def res(self, **kw):
-        r = {'length': 10.0, 'unref': 0.0, 'worst': 0.0, 'worst_at': (0, 0), 'cross': 0.0, 'cross_net': None}
+        r = {'length': 10.0, 'unref': 0.0, 'worst': 0.0, 'worst_at': (0, 0), 'cross': 0.0, 'cross_net': None, 'runs': []}
         r.update(kw)
         return r
 
@@ -315,12 +328,19 @@ class MixedLayerTest(unittest.TestCase):
         self.assertEqual(len(fails), 1)
         self.assertIn('fast', fails[0])
 
-    def test_fast_net_on_other_layer_keeps_the_normal_limit(self):
-        self.assertEqual(sp.reference_failures({('F.Cu', '/USB_DP'): self.res(worst=0.3, unref=0.3)},
-                                               {'/USB_DP': 'GND'}, self.spec), [])
+    def test_fast_net_on_any_layer_allows_no_crossing(self):
+        # D-124: HyperLynx "net crossing gap / hole or slot" has no length allowance
+        fails = sp.reference_failures({('F.Cu', '/USB_DP'): self.res(worst=0.3, unref=0.3)}, {'/USB_DP': 'GND'}, self.spec)
+        self.assertEqual(len(fails), 1)
+        self.assertIn('fast-crossing', fails[0])
 
-    def test_slow_net_over_mixed_layer_keeps_the_normal_limit(self):
-        self.assertEqual(sp.reference_failures({('B.Cu', '/EN'): self.res(worst=0.9, unref=3)}, {'/EN': 'GND'}, self.spec), [])
+    def test_slow_net_over_mixed_layer_uses_the_detour_budget(self):
+        self.assertEqual(sp.reference_failures({('B.Cu', '/EN'): self.res(worst=0.9, unref=3, runs=[run(2.0)])}, {'/EN': 'GND'},
+                                               self.spec, detour=fixed_detour, board_mm=200), [])
+
+    def test_power_net_has_no_plane_rule(self):
+        self.assertEqual(sp.reference_failures({('B.Cu', 'VBUS'): self.res(worst=9, unref=9, runs=[run(50.0)])}, {'VBUS': 'GND'},
+                                               self.spec, detour=fixed_detour, board_mm=200), [])
 
     def test_island_without_ground_via_or_pad_fails(self):
         fails = sp.island_failures([('In2.Cu', 'GND', 3, (1, 2)), ('In2.Cu', 'GND', 0, (5.25, 6))])
@@ -343,7 +363,7 @@ class MixedLayerTest(unittest.TestCase):
         r = sp.evaluate_net(track(0, 4), lambda x, y: '+3V3', 'GND', [], s, net='/USB_DP')
         self.assertAlmostEqual(r['unref'], 4.0)
         fails = sp.reference_failures({('B.Cu', '/USB_DP'): r}, {'/USB_DP': 'GND'}, s)
-        self.assertTrue(any('fast-unreferenced' in f for f in fails))
+        self.assertTrue(any('fast-crossing' in f for f in fails))
 
     def test_cap_mm_alt_ref_counts_only_near_a_decoupling_cap(self):
         s = sp.load_spec(base_spec(mixed_layers=MIXED, alt_refs={
@@ -361,33 +381,59 @@ class MixedLayerTest(unittest.TestCase):
             sp.load_spec(base_spec(alt_refs={'+3V3': {'domain': 'GND', 'slow_only': 'yes', 'reason': 'x'}}))
 
 
-class SlowLimitTest(unittest.TestCase):
-    """Lead decision D8: slow nets min 95 % coverage and max 5 mm per gap; fast nets keep the 1.0 mm limit."""
+class EdgeRateTest(unittest.TestCase):
+    """D-124: the detour budget comes from the net's rise time (tools/edge-rates.json)."""
     def setUp(self):
-        self.spec = sp.load_spec(base_spec(mixed_layers=MIXED, slow_max_gap_mm=5.0, slow_min_coverage_pct=95))
+        self.spec = sp.load_spec(base_spec(mixed_layers=MIXED, power=['/VLIM'],
+                                           edge_classes={'i2c': ['/SDA', '/SCL'], 'rs485': ['/RS485_A']}))
         sp.set_fast(self.spec, {'In2.Cu': ['/SCK*']})
 
     def res(self, **kw):
-        r = {'length': 100.0, 'unref': 0.0, 'bad': 0.0, 'worst': 0.0, 'worst_at': (0, 0), 'cross': 0.0, 'cross_net': None}
+        r = {'length': 100.0, 'unref': 0.0, 'bad': 0.0, 'worst': 0.0, 'worst_at': (0, 0), 'cross': 0.0, 'cross_net': None, 'runs': []}
         r.update(kw)
         return r
 
-    def fails(self, layer, net, **kw):
-        return sp.reference_failures({(layer, net): self.res(**kw)}, {net: 'GND'}, self.spec)
+    def fails(self, layer, net, board_mm=200, **kw):
+        return sp.reference_failures({(layer, net): self.res(**kw)}, {net: 'GND'}, self.spec, detour=fixed_detour, board_mm=board_mm)
 
-    def test_slow_gap_up_to_5_mm_passes(self):
-        self.assertEqual(self.fails('F.Cu', '/EN', worst=4.9, unref=4.9, bad=4.9), [])
+    def test_table_has_sources_and_marks_assumptions(self):
+        t = sp.load_edge_rates()
+        self.assertEqual(t['rs485']['tr_ns'], 460)
+        self.assertTrue(t['gpio']['assumption'])
+        self.assertTrue(t['100base_tx']['assumption'])
+        for k, v in t.items():
+            self.assertTrue(v['source'].strip(), k)
 
-    def test_slow_gap_over_5_mm_fails(self):
-        self.assertEqual(len(self.fails('F.Cu', '/EN', worst=5.1, unref=5.1, bad=5.1)), 1)
+    def test_budget_is_6_7_mm_per_ns(self):
+        self.assertAlmostEqual(sp.detour_budget_mm(1.0), 6.67, places=2)
+        self.assertAlmostEqual(sp.detour_budget_mm(4.0), 26.7, places=1)
 
-    def test_slow_coverage_under_95_fails(self):
-        f = self.fails('F.Cu', '/EN', worst=2.0, unref=6.0, bad=6.0)
-        self.assertEqual(len(f), 1)
-        self.assertIn('coverage', f[0])
+    def test_net_class_and_rise_time(self):
+        self.assertEqual(sp.edge_class('/SDA', self.spec), 'i2c')
+        self.assertEqual(sp.edge_class('/EN', self.spec), 'gpio')   # default: the marked 1 ns assumption
 
-    def test_fast_net_keeps_1_mm(self):
-        self.assertEqual(len(self.fails('F.Cu', '/SCK', worst=1.5, unref=1.5, bad=1.5)), 1)
+    def test_i2c_detour_under_80_mm_passes_and_over_fails(self):
+        self.assertEqual(self.fails('F.Cu', '/SDA', worst=5, runs=[run(70.0)]), [])
+        self.assertEqual(len(self.fails('F.Cu', '/SDA', worst=5, runs=[run(90.0)])), 1)
+
+    def test_budget_larger_than_the_board_means_no_rule(self):
+        self.assertEqual(self.fails('F.Cu', '/RS485_A', worst=30, runs=[run(None)]), [])
+        self.assertEqual(self.fails('F.Cu', '/SDA', board_mm=60, worst=30, runs=[run(None)]), [])
+
+    def test_unreachable_reference_fails(self):
+        self.assertEqual(len(self.fails('F.Cu', '/EN', worst=3, runs=[run(None)])), 1)
+
+    def test_top_level_power_net_has_no_plane_rule(self):
+        self.assertEqual(self.fails('F.Cu', '/VLIM', worst=30, runs=[run(None)]), [])
+
+    def test_removed_made_up_limits_are_rejected(self):
+        for k, v in (('max_unreferenced_mm', 1.0), ('slow_max_gap_mm', 5.0), ('slow_min_coverage_pct', 95)):
+            with self.assertRaises(sp.SpecError):
+                sp.load_spec(base_spec(**{k: v}))
+
+    def test_unknown_edge_class_is_an_error(self):
+        with self.assertRaises(sp.SpecError):
+            sp.load_spec(base_spec(edge_classes={'spi_fast': ['/A']}))
 
     def test_evaluate_net_reports_bad_length(self):
         s = sp.load_spec(base_spec())
@@ -395,9 +441,43 @@ class SlowLimitTest(unittest.TestCase):
         r = sp.evaluate_net(pts, lambda x, y: None if 2 <= x <= 5 else 'GND', 'GND', [], s)
         self.assertAlmostEqual(r['bad'], 3.0)
 
-    def test_limits_must_be_numbers(self):
-        with self.assertRaises(sp.SpecError):
-            sp.load_spec(base_spec(slow_max_gap_mm='x'))
+
+class RunTerminalTest(unittest.TestCase):
+    def test_slot_run_has_two_referenced_terminals(self):
+        s = sp.load_spec(base_spec())
+        r = sp.evaluate_net(track(0, 10), lambda x, y: None if 4 < x < 6 else 'GND', 'GND', [], s)
+        self.assertEqual(len(r['runs']), 1)
+        ends = sorted(t[0] for t in r['runs'][0]['terminals'])
+        self.assertAlmostEqual(ends[0], 3.875)
+        self.assertAlmostEqual(ends[-1], 6.125)
+
+
+class DetourTest(unittest.TestCase):
+    def test_straight_gap_with_copper_beside_is_short(self):
+        # copper everywhere except a 1 mm wide strip x in (4.5, 5.5), y < 0.5: the return goes round the strip end
+        ok = lambda x, y: not (4.5 < x < 5.5 and y < 0.5)
+        d = sp.detour_mm(ok, [(4.4, 0, 0.1), (5.6, 0, 0.1)], 6.7, 0.1)
+        self.assertIsNotNone(d)
+        self.assertLess(d, 3.0)
+
+    def test_long_slot_forces_a_long_detour(self):
+        # a 0.5 mm slot from y = -15 to y = 15: the return path goes round an end, about 30 mm
+        ok = lambda x, y: not (4.75 < x < 5.25 and -15 < y < 15)
+        self.assertIsNone(sp.detour_mm(ok, [(4.6, 0, 0.1), (5.4, 0, 0.1)], 6.7, 0.1))
+        d = sp.detour_mm(ok, [(4.6, 0, 0.1), (5.4, 0, 0.1)], 40, 0.2)
+        self.assertGreater(d, 29)
+
+    def test_ground_vias_join_cut_plane_pieces(self):
+        # an In2 lane cuts the plane fully (x in 4.75..5.25 for all y): the return goes down a ground via on each side
+        # (at (4, 1) and (6, 1)) and through the solid plane below; path = 1.4 + 2.0 + 1.4 mm, about 5 mm
+        ok = lambda x, y: not (4.75 < x < 5.25)
+        self.assertIsNone(sp.detour_mm(ok, [(4.6, 0, 0.1), (5.4, 0, 0.1)], 6.7, 0.1))
+        d = sp.detour_mm(ok, [(4.6, 0, 0.1), (5.4, 0, 0.1)], 6.7, 0.1, portals=[(4, 1), (6, 1)])
+        self.assertIsNotNone(d)
+        self.assertAlmostEqual(d, 1.17 + 2.0 + 1.17, delta=0.6)   # grid snap and via cell shave a few cells
+
+    def test_no_copper_is_unreachable(self):
+        self.assertIsNone(sp.detour_mm(lambda x, y: False, [(0, 0, 0.1), (1, 0, 0.1)], 6.7, 0.1))
 
 
 class StitchTest(unittest.TestCase):

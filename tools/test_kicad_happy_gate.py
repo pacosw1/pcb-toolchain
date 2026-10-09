@@ -280,7 +280,7 @@ class DefaultRulesTest(unittest.TestCase):
         # kicad-happy a6bba1a reads KiCad 10 "(tenting (front no) (back yes))" as untented, so VP-001
         # is always true. pcbtool.py viapads (with --allow) is the via-in-pad gate.
         self.assertNotIn("VP-001", gate.DEFAULT_RULES)
-        self.assertEqual(gate.DEFAULT_RULES, ["GP-001", "RP-001", "DC-002", "UC-001"])
+        self.assertEqual(gate.DEFAULT_RULES, ["RP-001", "DC-002", "UC-001"])   # D-124: GP-001 has no source
 
 
 class GroundViaTests(unittest.TestCase):
