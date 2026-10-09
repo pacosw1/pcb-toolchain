@@ -6,11 +6,12 @@ import {existsSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 import {homedir} from 'node:os';
 import {join} from 'node:path';
+import {fileURLToPath} from 'node:url';
 
 const home = homedir();
 const first = (candidates) => candidates.find((p) => p && existsSync(p)) ?? candidates.find(Boolean);
 
-export const root = new URL('../..', import.meta.url).pathname.replace(/\/$/, '');
+export const root = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/, '');
 export const kicadApp = process.env.KICAD_APP ?? '/Applications/KiCad/KiCad.app/Contents';
 export const kicadCli = process.env.KICAD_CLI ?? `${kicadApp}/MacOS/kicad-cli`;
 export const kicadPython = process.env.KICAD_PYTHON ?? `${kicadApp}/Frameworks/Python.framework/Versions/Current/bin/python3`;

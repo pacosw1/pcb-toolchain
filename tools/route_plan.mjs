@@ -14,7 +14,9 @@ import {root} from './lib/env.mjs';
 
 const board = process.argv[2];
 const dir = join(root, 'hardware-design/boards', board ?? '');
-const drcFile = join(dir, '.gate/drc.json');
+const latestFile=join(dir,'.gate/latest.json');
+const latest=existsSync(latestFile) ? JSON.parse(readFileSync(latestFile,'utf8')) : null;
+const drcFile = latest ? join(dir,'.gate',latest.run,'drc.json') : '';
 if (!board || !existsSync(drcFile)) {
   console.error('usage: node tools/route_plan.mjs <BOARD> [--md]   (run node tools/gate.mjs <BOARD> first)');
   process.exit(2);
