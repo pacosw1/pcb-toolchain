@@ -43,6 +43,8 @@ def main():
         added += int(m.group(1)) if m else 0
         r = re.search(r'no room for a \S+ via within [\d.]+ mm of (.*?); best effort', p.stdout)
         no_room += r.group(1).count('(') if r else 0
+        if r:
+            print(f'NOROOM {n}')   # tools/cell_route.py re-routes these nets (repair loop)
     print(f'stitch_all: {len(nets)} nets, {added} ground vias added, {no_room} signal vias with no room')
 
 
