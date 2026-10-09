@@ -57,6 +57,18 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn('--router.optimizer.max_threads=4', opts)
         self.assertIn('--router.optimizer.enabled=false', opts)
 
+    def test_modified_candidate_and_malformed_drc_are_rejected(self):
+        with self.assertRaises(ValueError):
+            lean.validate_drc({'violations': []})
+        with tempfile.TemporaryDirectory() as d:
+            b = Path(d) / 'step-0/route-0/routed.kicad_pcb'
+            b.parent.mkdir(parents=True)
+            b.write_text('before')
+            lean.atomic_json(b.parent / 'outcome.json', dict(status='complete', board_sha256=lean.digest(b)))
+            b.write_text('changed')
+            with self.assertRaises(ValueError):
+                lean.select_real({'steps': [dict(k=1., board='b', runs=[0], passed=True)]}, d)
+
 
 if __name__ == '__main__':
     unittest.main()

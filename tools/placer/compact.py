@@ -173,7 +173,7 @@ K_TOL = 0.02  # the outline phase stops when the board scale gap is below 2 %
 
 
 def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, target=0, shrink=0.85, tol=0.05,
-             log=None, s_min=0.05, real_first=False):
+             log=None, s_min=0.05, real_first=False, diagnostic_budget=None):
     """Easy-to-hard loop. Injected effects: search(problem, step) -> optimize() result;
     write(problem, pose, k, step) -> board path; route(path, step) -> [unrouted per router run].
     Halo phase: s from s0, board scale k from the grown area (larger on an illegal result). A step passes when
@@ -256,6 +256,10 @@ def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, 
                 t['unrouted'] = -1 if t['unrouted'] is None else t['unrouted']
             return {'steps': steps, 'best': min(ok, key=lambda t: (t['k'], t['s'])) if ok else None,
                     'verdict': verdict(summary, size), 'stop': stop}
+    # Retain low-density/virtual diagnostics, with their own explicit budget.
+    # The injected driver also bounds each child, so a step cannot overrun it.
+    if diagnostic_budget is not None:
+        budget = min(budget, clock() - t0 + diagnostic_budget)
     sch = Schedule(s0, shrink, tol, s_min)
     while not sch.done:
         if over():

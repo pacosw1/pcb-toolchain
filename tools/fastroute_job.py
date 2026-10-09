@@ -44,6 +44,7 @@ import pcbnew
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import freeroute  # noqa: E402  (restrict_dsn)
 import route_features  # noqa: E402  (feature switches, tools/route-features.json)
+import lean_workflow as lean
 
 BIN = os.environ.get("FASTROUTE_BIN") or os.path.expanduser("~/opt/fastroute/fastroute-0.1.7-macos-arm64/fastroute")
 KICAD_CLI = os.environ.get("KICAD_CLI", "/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli")
@@ -131,6 +132,10 @@ def main():
                     "diff_pair_gap (opt) of their .kicad_dru rule")
     ap.add_argument("--max-time", type=int, default=0)
     ap.add_argument("--threads", type=int, default=0)
+    ap.add_argument("--optimizer", choices=['always', 'off', 'if-routed'], default='always',
+                    help='if-routed screens without polishing, then optimizes the checkpoint only at zero router opens')
+    ap.add_argument('--preflight', action='store_true',
+                    help='stop on native DRC existing-copper shorts/clearance faults before routing')
     ap.add_argument("--render", action="store_true", help="write OUTDIR/routed.png (kicad-cli pcb render, top view)")
     ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE")
     ap.add_argument("--signal-via", type=float, default=0.0, help="routing padstack diameter (mm) of the vias of the "
@@ -142,12 +147,25 @@ def main():
     ap.add_argument("--unlock-nets", default="", help="comma list of routed nets whose existing copper the router may "
                     "rip up and route again (default: all existing copper is locked)")
     a = ap.parse_args()
+    if a.max_time < 0 or a.threads < 0 or a.passes <= 0:
+        ap.error('passes must be positive; time and threads must be nonnegative')
+    if a.optimizer != 'always' and any(k.split('=', 1)[0] == 'router.optimizer.enabled' for k in a.set):
+        ap.error('--optimizer conflicts with --set router.optimizer.enabled')
     if not os.path.isfile(BIN):
         sys.exit(f"fastroute_job: binary not found: {BIN} (set FASTROUTE_BIN)")
+    if os.path.isdir(a.outdir) and os.listdir(a.outdir):
+        sys.exit('router output directory is not empty; choose a fresh job directory')
     os.makedirs(a.outdir, exist_ok=True)
     stem = os.path.splitext(a.board)[0]
     feat = route_features.load(a.board)
     print("FEATURES " + route_features.summary(feat), flush=True)
+    lean.atomic_json(os.path.join(a.outdir, 'input-manifest.json'),
+                     dict(board=os.path.abspath(a.board), board_sha256=lean.digest(a.board),
+                          router_sha256=lean.digest(BIN), configuration=vars(a), features=feat,
+                          sidecars={ext: lean.digest(os.path.splitext(a.board)[0]+ext)
+                                    for ext in ('.kicad_pro', '.kicad_dru')
+                                    if os.path.isfile(os.path.splitext(a.board)[0]+ext)},
+                          qualified=False))
     base = os.path.join(a.outdir, "base.kicad_pcb")
     out = os.path.join(a.outdir, "routed.kicad_pcb")
     for ext in (".kicad_pro", ".kicad_dru"):
@@ -174,6 +192,20 @@ def main():
         return f
 
     b = pcbnew.LoadBoard(base)
+    if a.preflight:
+        check = os.path.join(a.outdir, 'preflight.json')
+        p = lean.run_stage([KICAD_CLI, 'pcb', 'drc', '--refill-zones', '--severity-all', '--format', 'json',
+                            '--units', 'mm', '-o', check, base], stage='native-preflight',
+                           event_file=os.path.join(a.outdir, 'stages.jsonl'),
+                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        if p.returncode or not os.path.isfile(check):
+            sys.exit('preflight failed to produce independent native evidence')
+        faults = lean.preflight_errors(lean.validate_drc(json.load(open(check))))
+        lean.atomic_json(os.path.join(a.outdir, 'preflight-summary.json'),
+                         dict(board_sha256=lean.digest(base), blocking=faults,
+                              note='opens and router-internal skipped-net findings are not preflight blockers'))
+        if faults:
+            sys.exit(f'preflight blocked: {len(faults)} native existing-copper faults; see {check}')
     was = {}
     unlock = {n for n in a.unlock_nets.split(",") if n}
     for t in b.GetTracks():
@@ -271,12 +303,38 @@ def main():
         cmd.append(f"--pairs={pairs_file}")
     if a.max_time:
         cmd.append(f"--max-time={a.max_time}")
+    # Bound both phases with the same remaining job budget, and cap both pools.
+    if a.optimizer != 'always':
+        cmd += lean.optimizer_options(a.optimizer)
     if a.threads:
-        cmd.append(f"--router.autorouter.max_threads={a.threads}")
-    t0 = time.time()
+        cmd += [f'--router.autorouter.max_threads={a.threads}', f'--router.optimizer.max_threads={a.threads}']
+    t0 = time.monotonic()
+    deadline = t0 + a.max_time if a.max_time else None
+    inherited = os.environ.get('IOT_LEAN_DEADLINE')
+    if inherited:
+        deadline = min(deadline, float(inherited)) if deadline else float(inherited)
+    phases = os.path.join(a.outdir, 'stages.jsonl')
     with open(os.path.join(a.outdir, "run.log"), "w") as lf:
-        rc = subprocess.run(cmd, stdout=lf, stderr=subprocess.STDOUT).returncode
-    secs = int(time.time() - t0)
+        rc = lean.run_stage(cmd, stage='router-screen' if a.optimizer != 'always' else 'router',
+                            event_file=phases, deadline=deadline, stdout=lf, stderr=subprocess.STDOUT).returncode
+    if rc == 0 and a.optimizer == 'if-routed' and os.path.isfile(rep) and os.path.isfile(ses):
+        screen = json.load(open(rep))
+        if screen.get('stats', {}).get('unrouted') == 0:
+            checkpoint = os.path.join(a.outdir, 'screen.ses')
+            shutil.copy(ses, checkpoint)
+            shutil.copy(rep, os.path.join(a.outdir, 'screen-report.json'))
+            optimize = [x for x in cmd if not x.startswith('--router.optimizer.enabled=')
+                        and not x.startswith('--max-time=')]
+            optimize += ['--router.optimizer.enabled=true', f'--initial-session={checkpoint}']
+            left = lean.remaining(deadline)
+            if left is not None:
+                optimize.append(f'--max-time={max(1, int(left))}')
+            with open(os.path.join(a.outdir, 'optimize.log'), 'w') as lf:
+                rc = lean.run_stage(optimize, stage='router-optimize', event_file=phases, deadline=deadline,
+                                    stdout=lf, stderr=subprocess.STDOUT).returncode
+        else:
+            print('OPTIMIZER deferred: screening result still has open connections', flush=True)
+    secs = int(time.monotonic() - t0)
     if rc != 0 or not os.path.isfile(ses) or not os.path.isfile(rep):
         sys.exit(f"fastroute_job: fastroute failed (rc {rc}), see {a.outdir}/run.log")
     report = json.load(open(rep))
@@ -318,13 +376,11 @@ def main():
     pcbnew.ZONE_FILLER(b).Fill(b.Zones())
     pcbnew.SaveBoard(out, b)
     drc = os.path.join(a.outdir, "drc.json")
-    subprocess.run([KICAD_CLI, "pcb", "drc", "--refill-zones", "--severity-all", "--format", "json", "--units", "mm", "-o", drc, out],
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    if a.render:
-        # One top-view picture per job (user rule 2026-10-03: each shrink step has a board picture).
-        subprocess.run([KICAD_CLI, "pcb", "render", "--side", "top", "--quality", "basic", "-w", "1600", "-h", "1200",
-                        "-o", os.path.join(a.outdir, "routed.png"), out], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    d = json.load(open(drc))
+    p = lean.run_stage([KICAD_CLI, "pcb", "drc", "--refill-zones", "--severity-all", "--format", "json", "--units", "mm", "-o", drc, out],
+                       stage='native-drc', event_file=phases, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    if p.returncode:
+        sys.exit('native DRC failed; result is not verified')
+    d = lean.validate_drc(json.load(open(drc)))
     # Repair: a plane-net pad that is open after routing (no via, or the pour to its via is cut) gets its own
     # stub and via now, with the routed copper as the obstacle. Then DRC runs again.
     todo = {}
@@ -367,9 +423,11 @@ def main():
                 f.write("".join("repair " + l + "\n" for l in r.stdout.splitlines() if "vias added" in l))
             if os.path.isfile(tmp):
                 os.replace(tmp, out)
-        subprocess.run([KICAD_CLI, "pcb", "drc", "--refill-zones", "--severity-all", "--format", "json", "--units", "mm", "-o", drc, out],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        d = json.load(open(drc))
+        p = lean.run_stage([KICAD_CLI, "pcb", "drc", "--refill-zones", "--severity-all", "--format", "json", "--units", "mm", "-o", drc, out],
+                           stage='repair-drc', event_file=phases, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        if p.returncode:
+            sys.exit('native repair DRC failed; result is not verified')
+        d = lean.validate_drc(json.load(open(drc)))
         after = sum(1 for t in pcbnew.LoadBoard(out).GetTracks() if t.GetClass() == "PCB_VIA")
     errors = sum(1 for v in d.get("violations", []) if v.get("severity") == "error")
     diag = report.get("diagnosis", {})
@@ -401,6 +459,17 @@ def main():
     if imported_vias != report["stats"]["vias"]:
         print(f"fastroute_job: RESULT NOT VERIFIED: {imported_vias} vias on the board, {report['stats']['vias']} in the router report", flush=True)
         sys.exit(4)
+    # Required image reflects the final repaired board, not the earlier import.
+    if a.render:
+        p = lean.run_stage([KICAD_CLI, "pcb", "render", "--side", "top", "--quality", "basic", "-w", "1600", "-h", "1200",
+                            "-o", os.path.join(a.outdir, "routed.png"), out], stage='render', event_file=phases,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        if p.returncode or not os.path.isfile(os.path.join(a.outdir, 'routed.png')):
+            sys.exit('required per-step rendering failed')
+    lean.atomic_json(os.path.join(a.outdir, 'outcome.json'),
+                     dict(status='complete', qualified=False, optimizer=a.optimizer, signal_open=signal_open,
+                          ground_open=gnd_open, errors=errors, board_sha256=lean.digest(out),
+                          note='import verified; full final board gate remains required'))
 
 
 if __name__ == "__main__":
