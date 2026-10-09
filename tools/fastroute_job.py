@@ -239,9 +239,23 @@ def main():
     with open(dsn) as f:
         text = freeroute.restrict_dsn(f.read(), set(a.layers.split(",")), nets)
     net_class = route_features.dsn_classes(text)
+    mandatory_masks = {}
+    base_b_cfg = None
+    if os.path.basename(stem) == 'BASE-PWR-B' or os.environ.get('ROUTE_BOARD') == 'BASE-PWR-B':
+        import base_b_route_rules
+        base_b_dir = os.path.join(route_features.ROOT, 'hardware-design', 'boards', 'BASE-PWR-B')
+        base_b_cfg = base_b_route_rules.evidence(base_b_dir, stem + '.kicad_pro')
+        layers = [l for l in a.layers.split(',') if l]
+        for n in nets:
+            allow = [l for l in layers if l != 'In1.Cu' and
+                     (l != 'In2.Cu' or base_b_route_rules.eligible(n, *base_b_cfg))]
+            if not allow:
+                sys.exit(f'BASE-B no legal routing layer for {n}')
+            if allow != layers:
+                mandatory_masks[n] = allow
     if route_features.on(feat, "via_halo"):
         # The CELLULAR halo for every board: the selected nets get the larger via padstack (room for an RP-001 via).
-        hn = route_features.halo_nets(feat, sorted(nets), net_class, feat["_board_dir"])
+        hn = route_features.halo_nets(feat, sorted(nets), net_class, feat["_board_dir"], a.board)
         if a.signal_via and a.signal_via_nets:
             hn = sorted(set(hn) | {n for n in a.signal_via_nets.split(",") if n})
         if hn:
@@ -260,7 +274,12 @@ def main():
         rc_cfg = feat["rule_compiler"]
         masks, pairs, notes = route_features.compile_dru(dru_text, sorted(nets), net_class, pad_layers,
                                                          [l for l in a.layers.split(",") if l], rc_cfg.get("extra", []))
+        for n, allowed in mandatory_masks.items():
+            masks[n] = [l for l in masks.get(n, a.layers.split(',')) if l in allowed]
+            if not masks[n]:
+                sys.exit(f'BASE-B and compiled rules deny every layer for {n}')
         text = route_features.apply_layer_masks(text, masks)
+        route_features.verify_layer_masks(text, masks)
         if rc_cfg.get("class_class", True):
             text = route_features.add_class_class(text, pairs)
         with open(os.path.join(a.outdir, "rules.log"), "w") as f:
@@ -268,6 +287,9 @@ def main():
                     "".join(f"class_class {x} {y}: {v:g} mm\n" for (x, y), v in sorted(pairs.items())))
         print(f"RULES masks {len(masks)} class_class {len(pairs) if rc_cfg.get('class_class', True) else 0} "
               f"notes {len(notes)} (see rules.log)", flush=True)
+    elif mandatory_masks:
+        text = route_features.apply_layer_masks(text, mandatory_masks)
+        route_features.verify_layer_masks(text, mandatory_masks)
     if route_features.on(feat, "via_off_small_pads"):
         lim = pcbnew.FromMM(float(feat["via_off_small_pads"].get("max_pad_mm", 2.0)))
         polys = []
@@ -308,6 +330,22 @@ def main():
         cmd += lean.optimizer_options(a.optimizer)
     if a.threads:
         cmd += [f'--router.autorouter.max_threads={a.threads}', f'--router.optimizer.max_threads={a.threads}']
+    sources = [os.environ.get('ROUTE_FEATURES_FILE') or route_features.DEFAULTS]
+    if feat['_board_dir']:
+        sources += [os.path.join(feat['_board_dir'], 'gate.json'),
+                    os.path.join(feat['_board_dir'], feat['via_halo'].get('fast_nets_file', 'rp001-fast-nets.json'))]
+    if base_b_cfg:
+        sources += [os.path.join(base_b_dir, name) for name in
+                    ('current-paths.json','reference-planes.json','rp001-fast-nets.json','diff-pairs.json')]
+        sources += [base_b_route_rules.__file__]
+    effective = dict(configuration=vars(a), features=feat, command=cmd, dsn_sha256=lean.digest(dsn),
+                     feature_sources={p: lean.digest(p) for p in sources if os.path.isfile(p)},
+                     environment={k: os.environ.get(k) for k in ('ROUTE_FEATURES','ROUTE_BOARD','ROUTE_FEATURES_FILE')},
+                     learned_halo=route_features.learned_halo(a.board, feat['_board_dir'])[1],
+                     mandatory_layer_masks=mandatory_masks, qualified=False)
+    import hashlib
+    effective['effective_sha256'] = hashlib.sha256(json.dumps(effective, sort_keys=True).encode()).hexdigest()
+    lean.atomic_json(os.path.join(a.outdir, 'effective-configuration.json'), effective)
     t0 = time.monotonic()
     deadline = t0 + a.max_time if a.max_time else None
     inherited = os.environ.get('IOT_LEAN_DEADLINE')
@@ -459,6 +497,18 @@ def main():
     if imported_vias != report["stats"]["vias"]:
         print(f"fastroute_job: RESULT NOT VERIFIED: {imported_vias} vias on the board, {report['stats']['vias']} in the router report", flush=True)
         sys.exit(4)
+    if base_b_cfg:
+        rb = pcbnew.LoadBoard(out)
+        faults = base_b_route_rules.layer_faults([(t.GetNetname(), t.GetLayerName()) for t in rb.GetTracks()
+                                                if t.GetClass() != 'PCB_VIA'], *base_b_cfg)
+        counts = {}
+        for t in rb.GetTracks():
+            if t.GetClass() == 'PCB_VIA':
+                counts[t.GetNetname()] = counts.get(t.GetNetname(), 0) + 1
+        faults += base_b_route_rules.pair_via_faults(counts, json.load(open(os.path.join(base_b_dir, 'diff-pairs.json')))['pairs'])
+        lean.atomic_json(os.path.join(a.outdir, 'mandatory-rules.json'), dict(faults=faults, qualified=False))
+        if faults:
+            sys.exit('BASE-B mandatory imported-board rule check failed; see mandatory-rules.json')
     # Required image reflects the final repaired board, not the earlier import.
     if a.render:
         p = lean.run_stage([KICAD_CLI, "pcb", "render", "--side", "top", "--quality", "basic", "-w", "1600", "-h", "1200",

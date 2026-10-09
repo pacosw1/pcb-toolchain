@@ -18,10 +18,12 @@ its keep-vias-off-pads option, s26; this code is our own):
 No pcbnew import here: the caller gives the board data.
 """
 import fnmatch
+import hashlib
 import json
 import os
 import re
 import sys
+from pathlib import Path
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULTS = os.path.join(ROOT, 'tools', 'route-features.json')
@@ -36,6 +38,10 @@ def board_dir(pcb=None, board=None):
         d = os.path.join(ROOT, 'hardware-design', 'boards', board)
         return d if os.path.isdir(d) else None
     if pcb:
+        # Revision B keeps its CAD under BASE-PWR, but owns BASE-PWR-B's gate.
+        named = os.path.join(ROOT, 'hardware-design', 'boards', os.path.splitext(os.path.basename(pcb))[0])
+        if os.path.isfile(os.path.join(named, 'gate.json')):
+            return named
         d = os.path.dirname(os.path.abspath(pcb))
         for _ in range(4):
             if os.path.isfile(os.path.join(d, 'gate.json')):
@@ -72,6 +78,23 @@ def on(cfg, name):
 
 def summary(cfg):
     return ' '.join(f"{f}={'on' if on(cfg, f) else 'off'}" for f in FLAGS)
+
+
+def source_fingerprint(pcb):
+    """Exact CAD/rule identity for learned hints; old unstamped files are rejected."""
+    stem = os.path.splitext(pcb)[0]
+    return {ext: hashlib.sha256(Path(stem + ext).read_bytes()).hexdigest()
+            for ext in ('.kicad_pcb', '.kicad_pro', '.kicad_dru') if os.path.isfile(stem + ext)}
+
+
+def learned_halo(pcb, bd):
+    path = os.path.join(bd, '.gate', 'halo-nets.json') if bd else ''
+    if not path or not os.path.isfile(path):
+        return [], None
+    data = Path(path).read_bytes()
+    raw = json.loads(data)
+    valid = raw.get('source_fingerprint') == source_fingerprint(pcb)
+    return (raw.get('nets', []) if valid else []), dict(path=path, sha256=hashlib.sha256(data).hexdigest(), accepted=valid)
 
 
 # ---------------------------------------------------------------- .kicad_dru
@@ -178,7 +201,7 @@ def compile_dru(dru_text, nets, net_class, pad_layers, layers, extra=()):
                     for n in nets:
                         if 'track' in what and cond_eval(r['condition'], Obj(n, kname(net_class.get(n)), 'Track'), Obj()):
                             if r['layer'] is None:
-                                notes.append(f"rule '{r['name']}': disallow track on every layer for {n}: not compiled")
+                                raise ValueError(f"rule '{r['name']}': track prohibited on every layer for {n}")
                             else:
                                 deny.setdefault(n, set()).add(r['layer'])
                                 hit += 1
@@ -187,6 +210,10 @@ def compile_dru(dru_text, nets, net_class, pad_layers, layers, extra=()):
                             hit += 1
                     if what & {'track', 'via'}:
                         notes.append(f"rule '{r['name']}': disallow {'/'.join(sorted(what & {'track', 'via'}))} -> {hit} net(s)")
+                    if what - {'track','via'}:
+                        notes.append(f"rule '{r['name']}': disallow {'/'.join(sorted(what-{'track','via'}))} not compiled; mandatory native post-check")
+                except ValueError:
+                    raise
                 except Unknown as e:
                     notes.append(f"rule '{r['name']}': term {e} not supported, not compiled")
                 except Exception as e:  # noqa: BLE001  a condition we cannot read is reported, not guessed
@@ -194,6 +221,7 @@ def compile_dru(dru_text, nets, net_class, pad_layers, layers, extra=()):
             elif kind == 'clearance':
                 mn = [x for x in c[1:] if isinstance(x, list) and x[0] == 'min']
                 if not mn or 'B.' not in r['condition']:
+                    notes.append(f"rule '{r['name']}': clearance not compiled; mandatory native post-check")
                     continue
                 v = mm(mn[0][1])
                 try:
@@ -209,6 +237,8 @@ def compile_dru(dru_text, nets, net_class, pad_layers, layers, extra=()):
                     notes.append(f"rule '{r['name']}': clearance term {e} not supported, not compiled")
                 except Exception as e:  # noqa: BLE001
                     notes.append(f"rule '{r['name']}': clearance condition not read ({e}), not compiled")
+            else:
+                notes.append(f"rule '{r['name']}': {kind} not compiled; mandatory native/final post-check")
     for x in extra or ():
         sel = [n for n in nets if any(fnmatch.fnmatchcase(n, g) for g in x.get('nets', []))
                or kname(net_class.get(n)) in x.get('classes', [])]
@@ -224,12 +254,11 @@ def compile_dru(dru_text, nets, net_class, pad_layers, layers, extra=()):
             smd = pad_layers.get(n, set()) - {'*'}
             one = [l for l in allow if (not smd or smd == {l})]
             if len(smd) > 1 or not one:
-                notes.append(f"via ban on {n}: SMD pads on {sorted(smd)}, allowed {allow}: cannot be one layer, left as is")
+                raise ValueError(f"via ban on {n}: cannot construct a legal single-layer route")
             else:
                 allow = one[:1] if smd else [l for l in allow if l in ('F.Cu', 'B.Cu')][:1] or allow[:1]
         if not allow:
-            notes.append(f"{n}: every job layer denied, left as is")
-            continue
+            raise ValueError(f"{n}: every job layer denied")
         if allow != list(layers):
             masks[n] = allow
     return masks, pairs, notes
@@ -279,6 +308,31 @@ def apply_layer_masks(text, masks):
     return text[:j] + "\n" + "\n".join(add) + text[j:]
 
 
+def verify_layer_masks(text, masks):
+    """Round-trip the transformed DSN, rejecting lost nets or ambiguous masks."""
+    found = {}
+    def walk(node):
+        if not isinstance(node, list):
+            return
+        if node and node[0] == 'class':
+            names = [x for x in node[2:] if isinstance(x, str)]
+            circuit = next((x for x in node if isinstance(x, list) and x and x[0] == 'circuit'), [])
+            use = [x[1:] for x in circuit if isinstance(x, list) and x and x[0] == 'use_layer']
+            for n in names:
+                if n in masks:
+                    if n in found or len(use) != 1 or use[0] != list(masks[n]):
+                        raise ValueError(f'DSN layer mask not represented exactly: {n}')
+                    found[n] = use[0]
+        for child in node:
+            if isinstance(child, list):
+                walk(child)
+    # Specctra declares its quote character as a bare quote, not a quoted token.
+    parsed = re.sub(r'\(string_quote\s+"\)', '(string_quote quote)', text)
+    walk(sexpr(parsed))
+    if set(found) != set(masks):
+        raise ValueError(f'DSN missing layer-masked nets: {sorted(set(masks)-set(found))}')
+
+
 def add_class_class(text, pairs):
     """pairs: {(kicad_class_a, kicad_class_b): mm}. Every DSN class whose base name (before __ or _RPV) is one of the
     pair gets the rule, so split classes keep it."""
@@ -318,15 +372,15 @@ def add_via_keepouts(text, polys):
     return text[:j] + '\n' + '\n'.join(out) + text[j:]
 
 
-def halo_nets(cfg, nets, net_class, bd):
+def halo_nets(cfg, nets, net_class, bd, pcb=None):
     """Nets that get the via halo padstack (feature via_halo)."""
     h = cfg['via_halo']
     want = set()
     globs = list(h.get('nets', []))
     if bd and h.get('fast_nets_file') and os.path.isfile(os.path.join(bd, h['fast_nets_file'])):
         globs += json.load(open(os.path.join(bd, h['fast_nets_file']))).get('fast', [])
-    if bd and h.get('learn_noroom') and os.path.isfile(os.path.join(bd, '.gate', 'halo-nets.json')):
-        globs += json.load(open(os.path.join(bd, '.gate', 'halo-nets.json'))).get('nets', [])
+    if pcb and h.get('learn_noroom'):
+        globs += learned_halo(pcb, bd)[0]
     for n in nets:
         if any(fnmatch.fnmatchcase(n, g) for g in globs) or net_class.get(n) in h.get('classes', []):
             want.add(n)
