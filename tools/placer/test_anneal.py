@@ -82,6 +82,19 @@ class MoveBoxTest(unittest.TestCase):
 
 
 class DeterminismTest(unittest.TestCase):
+    def test_profile_accounts_for_setup_epochs_and_finish(self):
+        result = anneal.optimize(two_units(), P, workers=1, epochs=2, steps=20, seed=11, top=1)
+        profile = result['profile']
+        self.assertEqual(len(profile['epochs']), 2)
+        accounted = profile['setup_seconds'] + profile['pool_create_seconds'] + profile['finish_map_seconds']
+        for epoch in profile['epochs']:
+            accounted += epoch['map_seconds']
+            self.assertEqual(len(epoch['worker_total_seconds']), 1)
+            self.assertGreaterEqual(epoch['worker_total_seconds'][0], epoch['worker_setup_seconds'][0])
+            self.assertEqual(epoch['worker_imbalance_seconds'], 0.)
+        self.assertGreaterEqual(profile['full_seconds'], accounted)
+        self.assertFalse(result['candidates'][0]['illegal'])
+
     def test_same_seed_same_result_in_process(self):
         r1 = anneal.optimize(chain(), P, workers=1, epochs=3, steps=800, seed=11, top=1)
         r2 = anneal.optimize(chain(), P, workers=1, epochs=3, steps=800, seed=11, top=1)
