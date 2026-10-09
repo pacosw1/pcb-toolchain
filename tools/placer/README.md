@@ -148,3 +148,37 @@ Held-out Spearman / top-10% recall, mean of 3 seeds (gen = new poses, old = plac
 | DOOR-RELAY old (13) | 0.14 / 0.67 | 0.16 / 1.00 | 0.03 / 0.33 | 0.14 / 0.33 | 0.53 / 1.00 |
 
 Result: the targets are met only on DOOR-RELAY gen (w_mse 1 + D4: 0.76 / 1.00, seeds 0.73-0.78). On the generated poses that variant beats HPWL on 3 of 4 held-out boards (INPUT-4D2A, IO-6X6, DOOR-RELAY), but on those poses HPWL has the wrong sign (spread-out poses route better). On the old placer poses, which are what the placer would score, HPWL wins on both boards (RELAY-4 0.66 vs 0.61, DOOR-RELAY 0.53 vs 0.16). The variant was picked on the same held-out data. The surrogate stays off in the placer; HPWL + a Freerouting check stays the placement score. rank-only (w_mse 0) is not stable across boards. Weights are not stored (scratch only).
+
+Lean workflow experiment (CIP epic 60; PR #2): `BASEB_LEAN=1 sh tools/base_b_pipeline.sh`
+uses the existing seeded/locked placement and all electrical rules, skips polishing compaction
+candidates, and gives virtual diagnostics a separate 600-second cap (`BASEB_DIAGNOSTIC_BUDGET`).
+This effort policy is opt-in until identical-input BASE-B comparisons establish quality and time benefit.
+The baseline effort policy remains available with `BASEB_LEAN=0`. The overall `BASEB_BUDGET`
+now includes the pipeline, not just search, with bounded checkpoint shutdown grace.
+
+Each pipeline has a fresh run directory (`BASEB_WORK` may name a new directory) and one cooperating
+heavy-job slot on this Mac. A competing invocation exits with retry status 75; it does not terminate
+other jobs. This is a WIP guard, not global CIP admission or a measured memory allocator.
+Old `BASEB_LOOP` reuse is refused until complete input/rule/library/tool fingerprint matching is available.
+Per-job manifests and `stages.jsonl` retain attribution/timing; they are not cache/release certificates.
+Virtual or timed-out candidates cannot be promoted, and actual CAD must retain the accepted 100x100 outline.
+
+Native preflight stops existing copper shorts/clearance faults; ordinary opens and router-internal
+skipped-net/pair-gap warnings do not establish a defect. Required per-step images reflect the repaired
+board. Final gates remain mandatory, and failed gates stop fab/high-quality exports. Successful router
+imports are explicitly unqualified until those full checks and Gerber connectivity succeed.
+
+Bounded routing comparison (run with KiCad Python):
+
+```sh
+"$KICAD_PY" tools/lean_route_bench.py BOARD.kicad_pcb /tmp/new-comparison \
+  --board-name BASE-PWR-B --seconds 30 --threads 1 --passes 40 \
+  --route-args '--layers F.Cu,B.Cu --plane-nets GND,/CAN_GND --neck-um 800 --pairs-json hardware-design/boards/BASE-PWR/diff-pairs.json --skip-net "*GND*,/USB_DP,/USB_DN,/USB_MCU_DP,/USB_MCU_DN"'
+```
+
+Supply the full accepted routing options, including pair configuration, for the board being compared.
+The harness freezes local CAD/config, records tool/input hashes, alternates A/B order when requested,
+and reports incomplete runs honestly. It cannot adopt settings or qualify a release. Repeat on identical
+inputs under recorded competing load, compare opens/DRC/plane/pair/current-path/label checks and full
+gate results, and report time to compliant output. Smoke-test timings do not substantiate the earlier
+15–30 minute estimate; no BASE-B runtime saving has been measured yet.
