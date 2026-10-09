@@ -141,8 +141,9 @@ def cleanup_group(proc):
 def run_stage(cmd, *, stage, event_file=None, deadline=None, **kwargs):
     """Bound the entire child process group; timeout output is never a pass.
 
-    SIGTERM allows router checkpoints; at most five additional seconds are allowed
-    for shutdown. Logs/checkpoints are retained, but no timeout result is accepted.
+    SIGTERM allows router checkpoints for five seconds, followed by at most two
+    seconds for SIGKILL cleanup. Logs/checkpoints are retained, but no timeout
+    result is accepted.
     """
     child_env = dict(kwargs.get('env', os.environ))
     child_deadline = inherited_deadline(child_env)
