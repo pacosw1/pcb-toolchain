@@ -54,14 +54,19 @@ export function checkStaged(root) {
     // Stage only metrics derived from the index. Do not git-add working files.
     // Keep any unstaged user edits to metrics intact.
     if(git(['write-tree']).trim()!==indexTree) throw new Error('index changed during gate checks; no generated metrics were staged');
+    const updates=[];
     for(const {path,text} of results) {
       let staged=null;try{staged=git(['show',`:${path}`]);}catch{}
       const file=join(root,path);
       const work=existsSync(file)?readFileSync(file,'utf8'):null;
       const oid=git(['hash-object','-w','--stdin'],{input:text}).trim();
-      git(['update-index','--add','--cacheinfo',`100644,${oid},${path}`]);
-      if(work===staged) writeFileSync(file,text);
+      updates.push({path,text,file,updateWork:work===staged,oid});
     }
+    if(git(['write-tree']).trim()!==indexTree) throw new Error('index changed before metric staging');
+    // One index transaction prevents a lock conflict from leaving a partially
+    // updated set of board metrics. Git owns the lock; never remove it here.
+    git(['update-index','-z','--index-info'],{input:updates.map(u=>`100644 ${u.oid}\t${u.path}\0`).join('')});
+    for(const u of updates) if(u.updateWork) writeFileSync(u.file,u.text);
   } catch (error) {
     // Keep failure logs after deleting the large temporary CAD checkout.
     const parent=join(root,'.gate');mkdirSync(parent,{recursive:true});
