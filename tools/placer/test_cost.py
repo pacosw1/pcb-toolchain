@@ -33,6 +33,26 @@ P = {'rudy_cell': 1.0, 'mask_cell': 0.25, 'layers': 1, 'pitch': 1.0, 'limit': 0.
      'w_wl': 1.0, 'w_cong': 1.0, 'w_ov': 1.0, 'w_oob': 1.0}
 
 
+class MaskReuseTest(unittest.TestCase):
+    def test_reuse_preserves_all_independent_cost_terms(self):
+        pr = problem([unit('A', 1, 1, [[-.5, -.5, .5, .5, .5]]),
+                      unit('B', 4, 4, [[-.5, -.5, .5, .5, .5]])],
+                     [{'name': 'N', 'weight': 1., 'pins': [[0, 0, 0, 0, 0], [1, 0, 0, 0, 0]]}],
+                     board=square_board(10, edge=.5, keepouts=[[[2, 2], [3, 2], [3, 3], [2, 3]]]))
+        p = cost.params_with_defaults(P)
+        mask = cost.Mask(pr['board'], p['mask_cell'], p['gap'])
+        for pose in (cost.initial_pose(pr), [(2.5, 2.5, 0), (8., 8., 1)]):
+            self.assertEqual(cost.components(pr, pose, p), cost.components(pr, pose, p, mask=mask))
+        pr['board']['edge_clearance'] = 1.
+        with self.assertRaisesRegex(ValueError, 'reused mask'):
+            cost.components(pr, cost.initial_pose(pr), p, mask=mask)
+        fresh = cost.Mask(pr['board'], p['mask_cell'], p['gap'])
+        self.assertEqual(cost.components(pr, cost.initial_pose(pr), p),
+                         cost.components(pr, cost.initial_pose(pr), p, mask=fresh))
+        with self.assertRaisesRegex(ValueError, 'reused mask'):
+            cost.components(pr, cost.initial_pose(pr), dict(p, gap=p['gap'] + .1), mask=fresh)
+
+
 class RotationTest(unittest.TestCase):
     def test_r1_is_kicad_plus_90(self):
         # KiCad RotatePoint(+90 deg), y axis down: (x, y) -> (y, -x).

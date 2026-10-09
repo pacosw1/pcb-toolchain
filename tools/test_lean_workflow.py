@@ -10,6 +10,20 @@ import lean_workflow as lean
 
 
 class WorkflowTest(unittest.TestCase):
+    def test_router_timeout_retains_checkpoint_hash_and_cannot_be_promoted(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            checkpoint = root / 'board.ses'
+            checkpoint.write_text('partial session')
+            lean.router_timeout(root)
+            evidence = json.loads((root / 'outcome.json').read_text())
+            self.assertEqual(evidence['status'], 'timeout')
+            self.assertEqual(evidence['returncode'], 124)
+            self.assertFalse(evidence['qualified'])
+            self.assertEqual(evidence['artifacts']['board.ses'], lean.digest(checkpoint))
+            self.assertEqual(checkpoint.read_text(), 'partial session')
+            self.assertFalse((root / 'routed.kicad_pcb').exists())
+
     def test_deadline_preserves_checkpoint_and_never_accepts_successful_timeout(self):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / 'checkpoint'

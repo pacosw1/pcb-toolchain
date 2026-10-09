@@ -57,8 +57,9 @@ def main():
     if route_features.on(feat, 'via_halo') and feat['via_halo'].get('learn_noroom') and bd and noroom_nets:
         f = os.path.join(bd, '.gate', 'halo-nets.json')
         os.makedirs(os.path.dirname(f), exist_ok=True)
-        old = json.load(open(f)).get('nets', []) if os.path.isfile(f) else []
-        json.dump({'nets': sorted(set(old) | set(noroom_nets))}, open(f, 'w'), indent=1)
+        old = route_features.learned_halo(a.board, bd)[0]
+        json.dump({'nets': sorted(set(old) | set(noroom_nets)),
+                   'source_fingerprint': route_features.source_fingerprint(a.board)}, open(f, 'w'), indent=1)
         print(f'stitch_all: via_halo learns {len(noroom_nets)} nets -> {f}')
 
 

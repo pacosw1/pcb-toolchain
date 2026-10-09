@@ -36,6 +36,18 @@ def digest(path):
     return h.hexdigest()
 
 
+def router_timeout(outdir):
+    """Describe retained evidence without importing or qualifying a checkpoint."""
+    outdir = Path(outdir)
+    artifacts = {name: digest(outdir / name) for name in
+                 ('board.dsn', 'board.ses', 'screen.ses', 'report.json',
+                  'run.log', 'stages.jsonl', 'effective-configuration.json')
+                 if (outdir / name).is_file()}
+    atomic_json(outdir / 'outcome.json', dict(status='timeout', returncode=124,
+                qualified=False, artifacts=artifacts,
+                note='deadline reached; checkpoints are incomplete evidence, not a verified candidate'))
+
+
 def remaining(deadline=None):
     deadline = deadline if deadline is not None else os.environ.get('IOT_LEAN_DEADLINE')
     return max(0., float(deadline) - time.monotonic()) if deadline else None

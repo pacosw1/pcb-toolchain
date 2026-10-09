@@ -1,5 +1,7 @@
 Tests (from the repo root; needs numpy and pcbnew, so use the KiCad Python): `/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3 -m unittest discover -s tools/placer -p 'test_*.py'` (without KiCad: `uv run --with numpy python -m unittest discover -s tools/placer -p 'test_*.py'` runs the cost and search tests; the pcbnew tests skip). Search and benchmark runs go on Hetzner only (`tools/remote.sh`); this Mac runs tests and short smoke runs only.
 
+Seeded compaction: `--seeded-policy` enforces no scatter/global placement/swaps/turns, including legalizer turns. `--retain-candidates 3` preserves scored alternatives without routing them; legal candidates rank before illegal/incomplete ones. Per-step `placement-audit.json` shows seed and legalizer movement, components and constraint hashes. `w0` bounds one move, not total displacement; optional `--max-displacement 3` bounds cumulative seed displacement and rejects violations. This cap and `--congestion-feedback` remain opt-in pending routing evidence. Pin-escape feedback requires complete native-clean matching CAD evidence and is capped by `--feedback-max-mm` (default 1, maximum 2); `feedback.json` records provenance. See `hardware-design/reports/2026-10-09-base-b-placement-audit.md` for the measured limitations.
+
 Search on Hetzner (the image has no numpy): pass a PyPI numpy wheel for CPython 3.13 x86_64 (for example numpy-2.2.6-cp313-cp313-manylinux_2_17_x86_64, sha256 1bc23a79bfabc5d056d106f9befb8d50c31ced2fbc70eedb8155aec74a45798f) with `--in`, and run `bash tools/placer/remote_run.sh run in/prob.json -o out/res.json --workers 30 --epochs 20 --steps 20000` (MC-MAIN: 250 s). Do not use short runs (for example 4 x 2000 steps): the end state is far from legal and the legalizer then takes more than 300 s.
 
 Pin swap proposal (never edits the schematic): `python3 tools/placer/cli.py pinswap BOARD PINMAP.json -o proposal.json [--apply COPY.kicad_pcb]` (run it on Hetzner through `remote_run.sh`; MC-MAIN U1: 35 s). `--apply` writes a board copy with the swapped pad nets for a routing benchmark only; schematic parity fails on that copy.
@@ -182,3 +184,57 @@ and reports incomplete runs honestly. It cannot adopt settings or qualify a rele
 inputs under recorded competing load, compare opens/DRC/plane/pair/current-path/label checks and full
 gate results, and report time to compliant output. Smoke-test timings do not substantiate the earlier
 15–30 minute estimate; no BASE-B runtime saving has been measured yet.
+
+# Cooperating Mac resource budgets (CIP 779)
+
+Local `cli.py run`, compaction stages, and `fastroute_job.py` share
+`~/.cache/iot-lab/resources`. Defaults reserve at most 12 CPU worker tokens
+(or the machine count if smaller), 16 GiB total declared memory, and 8 GiB
+per job. These are conservative initial settings, not measured optimal settings.
+Set `IOT_CPU_BUDGET`, `IOT_MEMORY_BUDGET_GIB`, and `IOT_JOB_MEMORY_GIB` consistently
+for cooperating jobs. All active clients must agree on capacity; a mismatch
+fails closed. An explicit request larger than capacity is rejected.
+
+Placement workers each receive one native library thread (`OMP_NUM_THREADS`,
+`OPENBLAS_NUM_THREADS`, `MKL_NUM_THREADS`, `VECLIB_MAXIMUM_THREADS`,
+`NUMEXPR_NUM_THREADS`, `BLIS_NUM_THREADS`). Fastroute's admitted `--threads`
+applies to both its autorouter and optimizer, supported by pinned 0.1.7 help.
+Use `--threads`, not `--set` thread overrides. A child inherits its live parent's
+reservation and must stay within it. CPU reservations count supported worker
+pools; they are not hard OS CPU quotas. Memory is declared capacity, not an RSS
+limit, and unmanaged processes remain outside admission control.
+
+Admission is FIFO with a 30 second maximum wait, shortened by an inherited run
+deadline. SIGTERM/interrupt cancels waiting work. A crashed owner releases its
+file locks automatically; the next caller removes its stale reservation ticket.
+No existing router is killed or displaced. Admission events record queued,
+admitted, released, cancelled or failed work; compaction keeps them beside its
+stage log. Logs/checkpoints remain when admission fails.
+
+For a bounded resource profile (use a fresh output directory):
+
+```sh
+IOT_CPU_BUDGET=15 "$PY" tools/lean_resources.py --cpu 8 --memory-gib 8 \
+  --seconds 60 --output /tmp/placement-resource-profile -- \
+  "$PY" tools/placer/cli.py run /tmp/frozen/prob.json -o /tmp/result.json \
+  --workers 8 --epochs 3 --steps 8000 --seed 1 --top 1
+```
+
+The profiler preserves raw process RSS/CPU, compressor, swap and paging samples,
+plus wall/child CPU timing and admission events. System VM counters cannot
+attribute swap to a router. Sampled RSS includes shared pages and the profiler,
+and can miss peaks; `ps` CPU is a lifetime average. GPU memory is explicitly
+unavailable from this profiler. A resource profile never qualifies a board.
+Re-run matched isolated/competing workloads on frozen inputs and retain complete
+native gates before changing production settings. See the task 779 report for
+the initial 8/12/15 worker observations and remaining acceptance work.
+
+GPU decision (CIP 780, 2026-10-09): scalar CPU remains the default. The Torch
+installation and M3 Max results above are historical; Torch is absent in the
+current native KiCad Python. No GPU runtime was installed or current GPU
+benchmark run. Batch policy checks now run without Torch and before optional
+imports/global work; a live chain also rejects a switch to Lam before mutating
+its state. Never set active crossings, rows, pin demand or via-room terms to
+zero to enable batching. See `hardware-design/reports/2026-10-09-lean-gpu-decision.md`
+for the measured evidence, no-go decision, future trigger and unmet conditional
+prototype/adoption criteria.

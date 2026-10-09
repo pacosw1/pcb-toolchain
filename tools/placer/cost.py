@@ -45,6 +45,7 @@ the intersection of both boxes grown by g / 2 (0 when the gap is g or more). Box
 Forbidden area = courtyard area on cells outside the outline shrunk by edge_clearance or inside a keepout.
 """
 import math
+import json
 
 import numpy as np
 
@@ -152,6 +153,9 @@ class Mask:
     MARGIN = 2.0
 
     def __init__(self, board, cell, gap=0.2):
+        # The serialized problem is the interchange format. Bind reusable masks
+        # to the full board data and both mask parameters, not an object address.
+        self.input_signature = (json.dumps(board, sort_keys=True), cell, gap)
         x0, y0, x1, y1 = outline_box(board)
         m = self.MARGIN
         self.x0, self.y0, self.c = x0 - m, y0 - m, cell
@@ -813,9 +817,18 @@ def rows(pr, pose, pitch=1.0):
     return sum(row_cost([pose[i][:2] for i in g], pitch) for g in row_groups(pr))
 
 
-def components(pr, pose, params):
+def components(pr, pose, params, *, mask=None):
+    """Recompute all terms; optionally reuse the caller's immutable board mask.
+
+    A mask is valid only for this problem's board, mask_cell and gap. The scalar
+    optimizer owns one mask per optimize invocation and rebuilds it in _init;
+    this does not cache poses, costs, legality results or gate verification.
+    """
     p = params_with_defaults(params)
-    mask = Mask(pr['board'], p['mask_cell'], p['gap'])
+    if mask is None:
+        mask = Mask(pr['board'], p['mask_cell'], p['gap'])
+    elif mask.input_signature != (json.dumps(pr['board'], sort_keys=True), p['mask_cell'], p['gap']):
+        raise ValueError('reused mask does not match board geometry/rules or mask parameters')
     return {'hpwl': hpwl(pr, pose),
             'cong': overflow(rudy_grid(pr, pose, p), p, cell_weights(pr, p)),
             'overlap': overlap(pr, pose),

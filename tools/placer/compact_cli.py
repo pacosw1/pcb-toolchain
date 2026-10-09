@@ -22,8 +22,9 @@ import math
 from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from placer import bench, compact  # noqa: E402
+from placer import bench, compact, placement_audit  # noqa: E402
 import lean_workflow as lean
+import lean_resources as resources
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 NO_RESULT = 10 ** 6  # a router job without an UNROUTED line (transport error, timeout) never passes
@@ -61,10 +62,15 @@ def parser():
     ap.add_argument('--budget', type=float, default=2700.0, help='seconds (default 45 min)')
     ap.add_argument('--target', type=int, default=0)
     ap.add_argument('--routes', type=int, default=3, help='parallel Freerouting runs per step (pass: best run <= target)')
-    ap.add_argument('--workers', type=int, default=30)
+    ap.add_argument('--workers', type=int, default=resources.default_cpu())
     ap.add_argument('--epochs', type=int, default=20)
     ap.add_argument('--steps', type=int, default=12000)
     ap.add_argument('--seed', type=int, default=1)
+    ap.add_argument('--retain-candidates', type=int, default=1, help='retain up to 8 alternatives; routes only the selected legal candidate')
+    ap.add_argument('--seeded-policy', action='store_true', help='enforce fixed units and no swaps or turns, including legalizer turns')
+    ap.add_argument('--max-displacement', type=float, default=None, help='optional rejecting displacement cap from the input seed (mm)')
+    ap.add_argument('--feedback-max-mm', type=float, default=1.0, help='cumulative per-reference pin-escape soft spacing cap (mm)')
+    ap.add_argument('--congestion-feedback', action='store_true', help='opt-in bounded ENCLOSED blocker spacing; requires clean attributed native evidence')
     ap.add_argument('--param', nargs='*', default=[])
     ap.add_argument('--scatter', type=int, metavar='SEED', help='start each search from seeded uniform places inside '
                     'the (virtual) board: for parts staged outside the outline')
@@ -95,6 +101,22 @@ def main(argv=None):
         raise ValueError('budget must be positive')
     if a.diagnostic_budget is not None and (not math.isfinite(a.diagnostic_budget) or a.diagnostic_budget < 0):
         raise ValueError('diagnostic budget must be finite and nonnegative')
+    if not 1 <= a.retain_candidates <= 8:
+        raise ValueError('retain-candidates must be 1..8')
+    if not math.isfinite(a.feedback_max_mm) or not 0 <= a.feedback_max_mm <= 2:
+        raise ValueError('feedback cap must be finite, 0..2mm')
+    if a.max_displacement is not None and (not math.isfinite(a.max_displacement) or a.max_displacement <= 0):
+        raise ValueError('displacement cap must be finite and positive')
+    if a.seeded_policy:
+        from placer.cli import parse_params
+        p = parse_params(a.param)
+        if a.scatter is not None or any(p.get(k, 0) for k in ('p_swap','p_rot','global','rotate','legal_rotate')):
+            raise ValueError('seeded policy prohibits scatter, global placement, swaps and turns')
+        a.param += ['p_swap=0','p_rot=0','legal_rotate=0']
+    if a.max_displacement is not None:
+        if not a.seeded_policy:
+            raise ValueError('displacement cap requires seeded policy')
+        a.param += ['max_displacement=%s' % a.max_displacement]
     deadline = time.monotonic() + a.budget
     inherited = os.environ.get('IOT_LEAN_DEADLINE')
     if inherited:
@@ -107,9 +129,24 @@ def main(argv=None):
     lean.atomic_json(os.path.join(a.outdir, 'input-manifest.json'),
                      dict(board=os.path.abspath(a.board), board_sha256=lean.digest(a.board),
                           problem_sha256=lean.digest(a.prob), configuration=vars(a), qualified=False,
+                          sidecars={ext:lean.digest(os.path.splitext(a.board)[0]+ext)
+                                    for ext in ('.kicad_pro','.kicad_dru') if os.path.isfile(os.path.splitext(a.board)[0]+ext)},
                           note='run attribution only; no cached result reuse or release qualification'))
     def run_stage(cmd, stage, **kwargs):
-        return lean.run_stage(cmd, stage=stage, event_file=events, deadline=deadline, **kwargs)
+        cpu = a.workers if stage == 'placement' else resources.default_cpu()
+        if stage == 'routing':
+            args = shlex.split(a.route_args)
+            for i, arg in enumerate(args):
+                if arg == '--threads':
+                    cpu = int(args[i+1]) or resources.default_cpu()
+                elif arg.startswith('--threads='):
+                    cpu = int(arg.split('=', 1)[1]) or resources.default_cpu()
+        try:
+            with resources.reserve(cpu, wait_s=min(30., max(0., deadline-time.monotonic())),
+                                   events=os.path.join(a.outdir, 'admission.jsonl'), label=stage) as env:
+                return lean.run_stage(cmd, stage=stage, event_file=events, deadline=deadline, env=env, **kwargs)
+        except TimeoutError as e:
+            raise subprocess.TimeoutExpired(cmd, 0) from e
     name = os.path.splitext(os.path.basename(a.board))[0]
     src = os.path.dirname(os.path.abspath(a.board))
     wheel = os.path.abspath(a.wheel) if a.wheel else ''
@@ -122,6 +159,23 @@ def main(argv=None):
     # Route feature pin_escape_check (tools/route-features.json): the parts with boxed-in pins of the last routed
     # step (route-0/pin-escape.json of tools/fastroute_job.py) get halo_hint_mm more spacing in the next search.
     escape_hint = {}
+
+    def audit_search(q, n, res):
+        reports = []
+        for c in res['candidates']:
+            try:
+                report = placement_audit.candidate_report(q, c, res.get('params', {}),
+                                                         a.seeded_policy, a.max_displacement)
+            except (ValueError, TypeError):
+                report = dict(illegal=['malformed placement evidence'], qualified=False)
+            c['illegal'] = report['illegal']
+            reports.append(report)
+        lean.atomic_json(os.path.join(sdir(n), 'placement-audit.json'),
+                         dict(board_sha256=lean.digest(a.board), problem_sha256=placement_audit.identity(q),
+                              candidates=reports, retained=len(reports), qualified=False))
+        # An illegal or timed-out alternative cannot win merely by having a lower score.
+        res['candidates'].sort(key=placement_audit.candidate_key)
+        return res
 
     def search(q, n):
         nonlocal deadline
@@ -150,23 +204,23 @@ def main(argv=None):
             os.makedirs(os.path.dirname(res_path), exist_ok=True)
             cmd = [sys.executable, os.path.join(REPO, 'tools', 'placer', 'cli.py'), 'run', os.path.join(d, 'prob.json'),
                    '-o', res_path, '--workers', str(a.workers), '--epochs', str(a.epochs), '--steps', str(a.steps),
-                   '--seed', str(a.seed), '--top', '1'] + (['--param'] + a.param if a.param else [])
+                   '--seed', str(a.seed), '--top', str(a.retain_candidates)] + (['--param'] + a.param if a.param else [])
             with open(os.path.join(d, 'search.log'), 'w') as fh:
                 rc = run_stage(cmd, 'placement', cwd=REPO, stdout=fh, stderr=subprocess.STDOUT).returncode
             if not os.path.exists(res_path):
                 print('search step %d: no result (rc %d), see %s' % (n, rc, os.path.join(d, 'search.log')), flush=True)
                 return None
-            return json.load(open(res_path))
+            return audit_search(q, n, json.load(open(res_path)))
         cmd = ['bash', 'tools/placer/remote_run.sh', 'run', 'in/prob.json', '-o', 'out/res.json',
                '--workers', str(a.workers), '--epochs', str(a.epochs), '--steps', str(a.steps),
-               '--seed', str(a.seed), '--top', '1'] + (['--param'] + a.param if a.param else [])
+               '--seed', str(a.seed), '--top', str(a.retain_candidates)] + (['--param'] + a.param if a.param else [])
         rc, _ = _remote(a.board_dir, [os.path.join(d, 'prob.json'), wheel], os.path.join(d, 'search'), cmd,
                         a.workers, os.path.join(d, 'search.log'))
         res_path = os.path.join(d, 'search', 'res.json')
         if not os.path.exists(res_path):
             print('search step %d: no result (rc %d), see %s' % (n, rc, os.path.join(d, 'search.log')), flush=True)
             return None
-        return json.load(open(res_path))
+        return audit_search(q, n, json.load(open(res_path)))
 
     def write(q, pose, k, n):
         b = os.path.join(sdir(n), 'b')
@@ -191,12 +245,14 @@ def main(argv=None):
                    '--passes', str(a.passes), '--optimizer', a.optimizer, '--render'] + (['--gnd-vias'] if a.gnd_vias else []) + shlex.split(a.route_args)
             p = run_stage(cmd, 'routing', cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             open(os.path.join(d, 'route-0.log'), 'w').write(p.stdout)
-            pe = os.path.join(d, 'route-0', 'pin-escape.json')
-            if os.path.isfile(pe):
-                for r, mm in json.load(open(pe)).get('halo_hint', {}).items():
-                    escape_hint[r] = escape_hint.get(r, 0.0) + mm
             if p.returncode != 0:
                 return [NO_RESULT]
+            hints, evidence = placement_audit.bounded_feedback(pr, os.path.join(d, 'route-0'),
+                                                              lean.digest(path), escape_hint,
+                                                              a.feedback_max_mm, a.congestion_feedback)
+            escape_hint.clear()
+            escape_hint.update(hints)
+            lean.atomic_json(os.path.join(d, 'feedback.json'), evidence)
             # A step passes on 0 open signal connections and 0 DRC errors (the plane-net opens are counted apart).
             m = re.findall(r'^UNROUTED (\d+) GND_OPEN \d+ ERRORS (\d+)', p.stdout, re.M)
             return [int(m[-1][0]) + int(m[-1][1])] if m else [NO_RESULT]
