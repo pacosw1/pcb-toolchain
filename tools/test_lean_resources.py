@@ -62,7 +62,7 @@ class ResourcesTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 with r.reserve(cpu, memory):
                     pass
-        with patch.dict(os.environ, IOT_LEAN_DEADLINE=str(time.monotonic()-1)):
+        with patch.dict(os.environ, IOT_LEAN_DEADLINE=r.lean.encode_deadline(r.lean.now()-1)):
             with self.assertRaises(TimeoutError):
                 with r.reserve(1, 1):
                     pass

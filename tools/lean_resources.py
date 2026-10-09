@@ -17,6 +17,7 @@ import signal
 import threading
 import time
 import uuid
+import lean_workflow as lean
 
 NATIVE_KEYS = ('OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'MKL_NUM_THREADS',
                'VECLIB_MAXIMUM_THREADS', 'NUMEXPR_NUM_THREADS', 'BLIS_NUM_THREADS')
@@ -52,22 +53,22 @@ def event(path, **values):
     if path:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with open(path, 'a') as f:
-            f.write(json.dumps(dict(time_monotonic=time.monotonic(), **values)) + '\n')
+            f.write(json.dumps(dict(time_monotonic=lean.now(), **values)) + '\n')
 
 
 @contextlib.contextmanager
 def guard(root, deadline=None):
     root.mkdir(parents=True, exist_ok=True)
-    deadline = time.monotonic() + 5 if deadline is None else deadline
+    deadline = lean.now() + 5 if deadline is None else deadline
     with open(root / 'guard', 'a') as f:
         while True:
             try:
                 fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 break
             except BlockingIOError:
-                if time.monotonic() >= deadline:
+                if lean.now() >= deadline:
                     raise TimeoutError('resource ledger busy; admission deadline reached')
-                time.sleep(min(.01, max(0., deadline-time.monotonic())))
+                time.sleep(min(.01, max(0., deadline-lean.now())))
         yield
 
 
@@ -109,16 +110,20 @@ def reserve(cpu, memory_gib=None, *, wait_s=30., events=None, label='board'):
         raise ValueError('request exceeds cooperating resource capacity')
     if not math.isfinite(wait_s) or wait_s < 0:
         raise ValueError('admission wait must be finite and nonnegative')
+    if lean.remaining() == 0:
+        raise TimeoutError('end-to-end deadline reached before admission')
     if inherited(cpu, memory_gib):
         yield native_env()
         return
     root = root_directory()
-    started = time.monotonic()
+    started = lean.now()
     deadline = started + wait_s
-    if os.environ.get('IOT_LEAN_DEADLINE'):
-        deadline = min(deadline, float(os.environ['IOT_LEAN_DEADLINE']))
+    inherited_deadline = lean.inherited_deadline()
+    if inherited_deadline is not None:
+        deadline = min(deadline, inherited_deadline)
     ticket = root / (uuid.uuid4().hex + '.ticket')
     claim = dict(id=ticket.stem, pid=os.getpid(), queued_at=started, status='waiting',
+                 clock_protocol=lean.DEADLINE_PROTOCOL,
                  label=label, cpu=cpu, memory_gib=memory_gib,
                  cpu_capacity=capacity, memory_capacity_gib=memory_capacity)
     def write(f):
@@ -134,14 +139,17 @@ def reserve(cpu, memory_gib=None, *, wait_s=30., events=None, label='board'):
     handlers = {}
     if threading.current_thread() is threading.main_thread():
         def cancelled(signum, frame):
-            raise KeyboardInterrupt()
-        handlers[signal.SIGTERM] = signal.signal(signal.SIGTERM, cancelled)
+            raise lean.StageCancelled(signum)
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            handlers[sig] = signal.signal(sig, cancelled)
     try:
         while True:
-            if os.environ.get('IOT_LEAN_DEADLINE') and time.monotonic() >= float(os.environ['IOT_LEAN_DEADLINE']):
+            if inherited_deadline is not None and lean.now() >= inherited_deadline:
                 raise TimeoutError('end-to-end deadline reached during admission')
             with guard(root, deadline):
                 active = live_claims(root)
+                if any(c.get('clock_protocol') != lean.DEADLINE_PROTOCOL for c in active):
+                    raise ValueError('cooperating jobs use incompatible queue clock protocols')
                 # All clients must agree on the same capacities, otherwise an
                 # optimistic client could break a pessimistic client's budget.
                 if any(c['cpu_capacity'] != capacity or c['memory_capacity_gib'] != memory_capacity for c in active):
@@ -154,15 +162,16 @@ def reserve(cpu, memory_gib=None, *, wait_s=30., events=None, label='board'):
                     claim['status'] = 'admitted'
                     write(f)
                     break
-            if time.monotonic() >= deadline:
+            if lean.now() >= deadline:
                 raise TimeoutError('cooperating resource admission deadline reached')
-            time.sleep(min(.1, max(0., deadline - time.monotonic())))
-        event(events, action='admitted', queue_s=time.monotonic() - started, **claim)
+            time.sleep(min(.1, max(0., deadline - lean.now())))
+        event(events, action='admitted', queue_s=lean.now() - started, **claim)
         yield dict(native_env(), IOT_RESOURCE_TICKET=str(ticket), IOT_RESOURCE_CPU=str(cpu),
                    IOT_JOB_MEMORY_GIB=str(memory_gib))
     except BaseException as e:
         event(events, action='cancelled' if isinstance(e, KeyboardInterrupt) else 'failed',
-              reason=type(e).__name__, queue_s=time.monotonic() - started, **claim)
+              reason=type(e).__name__, signal=getattr(e, 'signum', None),
+              queue_s=lean.now() - started, **claim)
         raise
     finally:
         for sig, handler in handlers.items():
@@ -177,7 +186,7 @@ def reserve(cpu, memory_gib=None, *, wait_s=30., events=None, label='board'):
 
 @contextlib.contextmanager
 def environment(env):
-    saved = {k: os.environ.get(k) for k in env if k.startswith('IOT_RESOURCE_') or k == 'IOT_JOB_MEMORY_GIB' or k in NATIVE_KEYS}
+    saved = {k: os.environ.get(k) for k in env if k.startswith('IOT_RESOURCE_') or k in ('IOT_JOB_MEMORY_GIB', 'IOT_LEAN_DEADLINE') or k in NATIVE_KEYS}
     try:
         os.environ.update({k: env[k] for k in saved})
         yield
@@ -202,7 +211,7 @@ def sample(pid):
         if expanded == family:
             break
         family = expanded
-    result = dict(monotonic=time.monotonic(), processes=[r for r in rows if r['pid'] in family],
+    result = dict(monotonic=lean.now(), processes=[r for r in rows if r['pid'] in family],
                   gpu_memory_bytes=None, gpu_memory_note='no supported process GPU counter collected')
     for name, cmd in [('vm_stat', ['vm_stat']), ('swapusage', ['sysctl', 'vm.swapusage'])]:
         try:
@@ -268,27 +277,32 @@ def main():
                 stop.wait(.5)
     thread = threading.Thread(target=monitor, daemon=True)
     thread.start()
-    started = time.monotonic()
+    started = lean.now()
+    deadline = lean.deadline_after(a.seconds)
+    budget_env = dict(os.environ, IOT_LEAN_DEADLINE=lean.encode_deadline(deadline))
+    cause, cleanup = None, None
     try:
-        with reserve(a.cpu, a.memory_gib, wait_s=a.wait, events=output / 'admission.jsonl') as env:
-            deadline = time.monotonic() + a.seconds
-            env['IOT_LEAN_DEADLINE'] = str(min(deadline, float(env.get('IOT_LEAN_DEADLINE', deadline))))
+        with environment(budget_env), reserve(a.cpu, a.memory_gib, wait_s=a.wait, events=output / 'admission.jsonl') as env:
+            env['IOT_LEAN_DEADLINE'] = lean.encode_deadline(deadline)
             with open(output / 'command.log', 'w') as log:
                 rc = lean.run_stage(cmd, stage='profile', deadline=env['IOT_LEAN_DEADLINE'],
                                     event_file=output / 'stages.jsonl', env=env, stdout=log, stderr=subprocess.STDOUT).returncode
         status = 'complete' if rc == 0 else 'failed'
-    except (TimeoutError, subprocess.TimeoutExpired):
+    except (TimeoutError, subprocess.TimeoutExpired) as error:
         rc, status = 124, 'timeout'
-    except KeyboardInterrupt:
-        rc, status = 130, 'cancelled'
+        cause, cleanup = dict(type=type(error).__name__, signal=None), getattr(error, 'cleanup', None)
+    except KeyboardInterrupt as error:
+        rc, status = 128 + (getattr(error, 'signum', None) or signal.SIGINT), 'cancelled'
+        cause, cleanup = dict(type=type(error).__name__, signal=getattr(error, 'signum', None)), getattr(error, 'cleanup', None)
     except (ValueError, OSError) as e:
         rc, status = 2, 'failed'
         event(output / 'admission.jsonl', action='failed', reason=str(e))
     finally:
         stop.set()
         thread.join(timeout=8)
-    lean.atomic_json(output / 'outcome.json', dict(status=status, returncode=rc, wall_s=time.monotonic()-started,
+    lean.atomic_json(output / 'outcome.json', dict(status=status, returncode=rc, wall_s=lean.now()-started,
                                                  cpu=a.cpu, memory_gib=a.memory_gib, qualified=False,
+                                                 cause=cause, cleanup=cleanup,
                                                  profile=summarize(output / 'samples.jsonl'),
                                                  note='resource profile only; native full board gate required'))
     return rc

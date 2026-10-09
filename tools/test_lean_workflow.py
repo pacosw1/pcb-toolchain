@@ -32,13 +32,13 @@ class WorkflowTest(unittest.TestCase):
                     'time.sleep(30)')
             with self.assertRaises(subprocess.TimeoutExpired):
                 lean.run_stage([sys.executable, '-c', code, str(p)], stage='test',
-                               deadline=time.monotonic() + .3, event_file=str(Path(d) / 'events'))
+                               deadline=lean.now() + .3, event_file=str(Path(d) / 'events'))
             self.assertEqual(p.read_text(), 'saved')
             self.assertEqual(json.loads((Path(d) / 'events').read_text())['status'], 'timeout')
 
     def test_expired_deadline_does_not_launch(self):
         with self.assertRaises(subprocess.TimeoutExpired):
-            lean.run_stage(['does-not-exist'], stage='test', deadline=time.monotonic() - 1)
+            lean.run_stage(['does-not-exist'], stage='test', deadline=lean.now() - 1)
 
     def test_only_native_existing_copper_errors_are_fatal(self):
         rows = [{'type': t, 'severity': 'error'} for t in ['clearance', 'shorting_items', 'unconnected_items']]

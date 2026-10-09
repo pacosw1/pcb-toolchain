@@ -117,10 +117,7 @@ def main(argv=None):
         if not a.seeded_policy:
             raise ValueError('displacement cap requires seeded policy')
         a.param += ['max_displacement=%s' % a.max_displacement]
-    deadline = time.monotonic() + a.budget
-    inherited = os.environ.get('IOT_LEAN_DEADLINE')
-    if inherited:
-        deadline = min(deadline, float(inherited))
+    deadline = lean.deadline_after(a.budget)
     pr = json.load(open(a.prob))
     if os.path.isdir(a.outdir) and os.listdir(a.outdir):
         raise ValueError('compaction output directory must be fresh')
@@ -142,8 +139,9 @@ def main(argv=None):
                 elif arg.startswith('--threads='):
                     cpu = int(arg.split('=', 1)[1]) or resources.default_cpu()
         try:
-            with resources.reserve(cpu, wait_s=min(30., max(0., deadline-time.monotonic())),
+            with resources.reserve(cpu, wait_s=min(30., max(0., deadline-lean.now())),
                                    events=os.path.join(a.outdir, 'admission.jsonl'), label=stage) as env:
+                env['IOT_LEAN_DEADLINE'] = lean.encode_deadline(deadline)
                 return lean.run_stage(cmd, stage=stage, event_file=events, deadline=deadline, env=env, **kwargs)
         except TimeoutError as e:
             raise subprocess.TimeoutExpired(cmd, 0) from e
@@ -184,7 +182,7 @@ def main(argv=None):
         xs, ys = [v[0] for v in outline], [v[1] for v in outline]
         virtual = max(xs)-min(xs) > a.size[0]+1e-6 or max(ys)-min(ys) > a.size[1]+1e-6
         if virtual and a.diagnostic_budget is not None and not getattr(search, 'diagnostic_started', False):
-            deadline = min(deadline, time.monotonic()+a.diagnostic_budget)
+            deadline = min(deadline, lean.now()+a.diagnostic_budget)
             search.diagnostic_started = True
         d = sdir(n)
         if escape_hint:
@@ -265,7 +263,7 @@ def main(argv=None):
             return list(ex.map(one, range(a.routes)))
 
     run = compact.run_loop(pr, tuple(a.size), search, write, route, s0=a.s0,
-                           budget=max(0., deadline-time.monotonic()), target=a.target,
+                           budget=max(0., deadline-lean.now()), target=a.target,
                            shrink=a.shrink, tol=a.tol, log=lambda s: print(s, flush=True),
                            real_first=not a.virtual_first, diagnostic_budget=a.diagnostic_budget)
     run['problem'] = pr

@@ -378,11 +378,8 @@ def _main(a=None):
     import hashlib
     effective['effective_sha256'] = hashlib.sha256(json.dumps(effective, sort_keys=True).encode()).hexdigest()
     lean.atomic_json(os.path.join(a.outdir, 'effective-configuration.json'), effective)
-    t0 = time.monotonic()
-    deadline = t0 + a.max_time if a.max_time else None
-    inherited = os.environ.get('IOT_LEAN_DEADLINE')
-    if inherited:
-        deadline = min(deadline, float(inherited)) if deadline else float(inherited)
+    t0 = lean.now()
+    deadline = lean.deadline_after(a.max_time) if a.max_time else lean.inherited_deadline()
     phases = os.path.join(a.outdir, 'stages.jsonl')
     with open(os.path.join(a.outdir, "run.log"), "w") as lf:
         rc = lean.run_stage(cmd, stage='router-screen' if a.optimizer != 'always' else 'router',
@@ -404,7 +401,7 @@ def _main(a=None):
                                     stdout=lf, stderr=subprocess.STDOUT).returncode
         else:
             print('OPTIMIZER deferred: screening result still has open connections', flush=True)
-    secs = int(time.monotonic() - t0)
+    secs = int(lean.now() - t0)
     if rc != 0 or not os.path.isfile(ses) or not os.path.isfile(rep):
         sys.exit(f"fastroute_job: fastroute failed (rc {rc}), see {a.outdir}/run.log")
     report = json.load(open(rep))
@@ -601,14 +598,24 @@ def main():
     outdir = a.outdir
     events = outdir + '.admission.jsonl' if outdir else None
     try:
-        with resources.reserve(cpu, events=events, label='routing') as env:
+        budget_env = dict(os.environ)
+        if a.max_time:
+            budget_env['IOT_LEAN_DEADLINE'] = lean.encode_deadline(lean.deadline_after(a.max_time))
+        with resources.environment(budget_env), resources.reserve(cpu, events=events, label='routing') as env:
             with resources.environment(env):
                 return _main(a)
-    except subprocess.TimeoutExpired:
+    except (TimeoutError, subprocess.TimeoutExpired) as error:
         if outdir and os.path.isdir(outdir):
-            lean.router_timeout(outdir)
+            lean.router_timeout(outdir, error)
         print('fastroute_job: deadline reached; retained checkpoints are unqualified', file=sys.stderr)
         return 124
+    except KeyboardInterrupt as error:
+        code = 128 + (getattr(error, 'signum', None) or 2)
+        if outdir and os.path.isdir(outdir):
+            lean.atomic_json(os.path.join(outdir, 'outcome.json'), dict(status='cancelled',
+                             returncode=code, qualified=False, signal=getattr(error, 'signum', None),
+                             cleanup=getattr(error, 'cleanup', None)))
+        return code
 
 
 if __name__ == "__main__":
