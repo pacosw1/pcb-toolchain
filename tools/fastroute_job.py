@@ -38,6 +38,7 @@ import shutil
 import subprocess
 import sys
 import time
+import dsn_skip
 
 import pcbnew
 
@@ -241,7 +242,9 @@ def _main():
                             "--out", os.path.join(a.outdir, "pin-escape.json")], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         print(([l for l in p.stdout.splitlines() if l.startswith("ESCAPE")] or ["ESCAPE failed"])[-1], flush=True)
     with open(dsn) as f:
-        text = freeroute.restrict_dsn(f.read(), set(a.layers.split(",")), nets)
+        # Keep electrical membership: exclusions are applied as dedicated router
+        # classes after rule and padstack transformations below.
+        text = freeroute.restrict_dsn(f.read(), set(a.layers.split(",")), None)
     net_class = route_features.dsn_classes(text)
     mandatory_masks = {}
     base_b_cfg = None
@@ -313,6 +316,15 @@ def _main():
                     polys.append((ln, [(ol.CPoint(i).x / 1e6, ol.CPoint(i).y / 1e6) for i in range(ol.PointCount())]))
         text = route_features.add_via_keepouts(text, polys)
         print(f"VIAKEEP {len(polys)} SMD pads below {pcbnew.ToMM(lim):g} mm", flush=True)
+    if unlock - nets:
+        sys.exit('fastroute_job: skipped nets cannot have unlocked copper')
+    if any(k.split('=', 1)[0] == 'router.autorouter.ignore_net_classes' for k in a.set):
+        sys.exit('fastroute_job: ignored classes are derived from selected nets')
+    text, ignored_classes = dsn_skip.exclude(text, nets)
+    if ignored_classes:
+        help_result = subprocess.run([BIN, '--help'], capture_output=True, text=True, timeout=10)
+        if help_result.returncode or 'router.autorouter.ignore_net_classes' not in help_result.stdout:
+            sys.exit('fastroute_job: backend does not support safe net-class exclusion')
     with open(dsn, "w") as f:
         f.write(text)
     min_um = int(round(b.GetDesignSettings().m_TrackMinWidth / 1000))
@@ -320,6 +332,8 @@ def _main():
     cmd = [BIN, "-de", dsn, "-do", ses, "-mp", str(a.passes), f"--router.min_trace_width_um={min_um}",
            f"--router.copper_to_edge_clearance_um={edge_um}",
            f"--report={rep}", "--diagnose"] + [f"--{kv}" for kv in a.set]
+    if ignored_classes:
+        cmd.append('--router.autorouter.ignore_net_classes=' + ','.join(ignored_classes))
     if a.neck_um:
         cmd.append(f"--router.neck_width_um={a.neck_um}")
     # A pair that has copper on the board already (kept block copper) is not given to the pair router.
@@ -346,7 +360,7 @@ def _main():
                      feature_sources={p: lean.digest(p) for p in sources if os.path.isfile(p)},
                      environment={k: os.environ.get(k) for k in ('ROUTE_FEATURES','ROUTE_BOARD','ROUTE_FEATURES_FILE')},
                      learned_halo=route_features.learned_halo(a.board, feat['_board_dir'])[1],
-                     mandatory_layer_masks=mandatory_masks, qualified=False)
+                     mandatory_layer_masks=mandatory_masks, ignored_classes=ignored_classes, qualified=False)
     import hashlib
     effective['effective_sha256'] = hashlib.sha256(json.dumps(effective, sort_keys=True).encode()).hexdigest()
     lean.atomic_json(os.path.join(a.outdir, 'effective-configuration.json'), effective)
@@ -361,7 +375,7 @@ def _main():
                             event_file=phases, deadline=deadline, stdout=lf, stderr=subprocess.STDOUT).returncode
     if rc == 0 and a.optimizer == 'if-routed' and os.path.isfile(rep) and os.path.isfile(ses):
         screen = json.load(open(rep))
-        if screen.get('stats', {}).get('unrouted') == 0:
+        if dsn_skip.routable_open(screen) == 0:
             checkpoint = os.path.join(a.outdir, 'screen.ses')
             shutil.copy(ses, checkpoint)
             shutil.copy(rep, os.path.join(a.outdir, 'screen-report.json'))
@@ -387,10 +401,25 @@ def _main():
         e = t.GetEnd() if t.GetClass() == "PCB_TRACK" else t.GetStart()
         return (t.GetClass(), t.GetNetname(), t.GetLayer(), t.GetStart().x, t.GetStart().y, e.x, e.y)
     copper_before = {key(t) for t in b.GetTracks()}
+    def skipped_copper():
+        records = []
+        for t in b.GetTracks():
+            if t.GetNetname() in nets:
+                continue
+            via = t.GetClass() == 'PCB_VIA'
+            mid = t.GetMid() if t.GetClass() == 'PCB_ARC' else t.GetStart()
+            records.append((key(t), t.GetEnd().x, t.GetEnd().y, mid.x, mid.y,
+                            t.GetWidth(), t.GetDrillValue() if via else 0,
+                            t.TopLayer() if via else t.GetLayer(),
+                            t.BottomLayer() if via else t.GetLayer()))
+        return sorted(records)
+    skipped_before = skipped_copper()
     if not pcbnew.ImportSpecctraSES(b, ses):
         sys.exit("fastroute_job: SES import failed")
     for t in b.GetTracks():
         t.SetLocked(was.get(t.m_Uuid.AsString(), False))
+    if skipped_copper() != skipped_before:
+        sys.exit('fastroute_job: router changed excluded-net copper; result is not verified')
     if a.signal_via:   # the routing padstack back to the class via size
         pro = json.load(open(stem + ".kicad_pro"))["net_settings"]["classes"]
         sizes = {c["name"]: (c["via_diameter"], c["via_drill"]) for c in pro}
