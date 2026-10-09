@@ -77,7 +77,8 @@ def main():
             if t.GetLayer() != layer or abs(T(t.GetWidth()) - w) > s['width_tol_mm']]
     check(bool(tracks) and not badw, f'{len(tracks)} RF tracks on {s["layer"]}, width {w} +- {s["width_tol_mm"]} mm; wrong {badw}')
     check(not vias, f'RF vias: {len(vias)}')
-    length = sum(T(t.GetLength()) for t in tracks)
+    segs = {(t.GetLayer(), *sorted([(t.GetStart().x, t.GetStart().y), (t.GetEnd().x, t.GetEnd().y)])): t for t in tracks}
+    length = sum(T(t.GetLength()) for t in segs.values())     # an exact duplicate segment is counted once
     check(length <= s['max_length_mm'], f'RF track length {length:.2f} mm (max {s["max_length_mm"]})')
     # Samples near a pad of a part on the line (series R, shunt C, ESD, connector, module) are not line samples.
     rf_pads = [p for fp in b.GetFootprints() if any(q.GetNetname() in nets for q in fp.Pads()) for p in fp.Pads()]
