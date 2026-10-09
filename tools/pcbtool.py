@@ -2164,6 +2164,24 @@ def cmd_stitch(a):
     net_clr = {}
     obstacles = {b.GetLayerName(L): copper_obstacles(p, b, pro, gnd, clr, L, net_clr)[1] + edges
                  for L in b.GetEnabledLayers().CuStack()}
+    if a.clearance:
+        # the scoped .kicad_dru rule: own-domain tracks, vias and SMD pads only (labels from copper_obstacles)
+        host = {'HOST', 'HOST_PWR'}
+        smd = {f'pad {fp.GetReference()}.{pd.GetNumber()} {pd.GetNetname()}' for fp in b.GetFootprints()
+               for pd in fp.Pads() if pd.GetAttribute() == p.PAD_ATTRIB_SMD}
+
+        def scoped(label):
+            kind, _, rest = label.partition(' ')
+            if kind == 'pad':
+                if label not in smd:
+                    return False
+                rest = rest.split(' ', 1)[1]
+            elif kind not in ('track', 'via'):
+                return False
+            cls_ = net_rules(pro, rest)[0] if rest else 'Default'
+            return cls_ != 'FIELD_HI' and cls_ != 'Default' and ((cls_ in host) == (cls_name in host))
+        obstacles = {L: [(s_, min(c_, a.clearance) if scoped(lb) else c_, lb) for s_, c_, lb in obs]
+                     for L, obs in obstacles.items()}
     # a ground SMD pad is own copper, but a via in it is a via in pad (viapads): keep the class clearance to it
     for fp in b.GetFootprints():
         for pd in fp.Pads():
@@ -2457,6 +2475,9 @@ def main():
                    '(for example the island SLOT_3V3 plane on In2)')
     s.add_argument('--via', default='', help='D,DRILL mm of the ground via (default: the net class via); for example '
                    '0.45,0.2 (JLC multilayer standard, no extra fee, 2026-10-07)')
+    s.add_argument('--clearance', type=float, default=0.0, help='mm from the ground via to tracks, vias and SMD pads of '
+                   'own-domain signal and supply nets (not FIELD_HI, PTH pads, pours or the other domain); needs the same '
+                   'scoped rule in the .kicad_dru (AIO "Ground stitching via clearance", 0.15 mm, 2026-10-07)')
     s.set_defaults(f=cmd_stitch)
     s = sp.add_parser('netcheck'); s.add_argument('board'); s.add_argument('net'); s.set_defaults(f=cmd_netcheck)
     s = sp.add_parser('paths'); s.add_argument('board'); s.add_argument('spec'); s.add_argument('--limit', type=int, default=4)

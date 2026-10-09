@@ -63,7 +63,7 @@ def write_pairs(pairs_json, dru, nets, out):
     return out
 
 
-def big_signal_via(text, dia_mm, classes):
+def big_signal_via(text, dia_mm, classes, nets=()):
     """A second via padstack "Via[0-3]_RP_um" (circle dia_mm on every layer of the class via padstack) for the nets of
     the given DSN classes: (use_via ...) of those classes points to it."""
     m = re.search(r'\(padstack "(Via[^"]*)"\n(.*?)\n    \)', text, re.S)
@@ -73,6 +73,24 @@ def big_signal_via(text, dia_mm, classes):
     big = re.sub(r'\(circle (\S+) [\d.]+\)', lambda k: f'(circle {k.group(1)} {int(dia_mm * 1000)})', body)
     text = text.replace(m.group(0), m.group(0) + f'\n    (padstack "Via[0-3]_RP_um"\n{big}\n    )', 1)
     text = text.replace(f'(via "{name}")', f'(via "{name}" "Via[0-3]_RP_um")', 1)
+    if nets:   # only these nets (fnmatch globs) get the big padstack: each class block loses them to a copy "<class>_RPV"
+        add = []
+
+        def split_class(m):
+            head, names, tail = m.group(1), m.group(2), m.group(3)
+            toks = re.findall(r'"[^"]*"|\S+', names)
+            hit = [t for t in toks if any(fnmatch.fnmatchcase(t.strip('"'), g) for g in nets)]
+            if not hit:
+                return m.group(0)
+            keep = [t for t in toks if t not in hit]
+            big_tail = re.sub(r'\(use_via "[^"]*"\)', '(use_via "Via[0-3]_RP_um")', tail)
+            add.append(f"    (class {head}_RPV " + " ".join(hit) + "\n      " + big_tail.lstrip())
+            return f"(class {head} " + " ".join(keep) + "\n      " + tail.lstrip()
+        text = re.sub(r'\(class (\S+) ((?:"[^"]*"|[^()"])*?)(\(circuit.*?\n    \))', split_class, text, flags=re.S)
+        i = text.rfind("    (class ")
+        j = text.find("\n    )", i) + len("\n    )")
+        text = text[:j] + "\n" + "\n".join(add) + text[j:]
+        return text
     for c in classes:
         i = text.find(f"(class {c} ")
         if i < 0:
@@ -109,6 +127,8 @@ def main():
                     "--signal-via-classes nets: the router keeps other copper off a disc this wide round each signal "
                     "via (room for an RP-001 ground via); after the import the vias get their class size again")
     ap.add_argument("--signal-via-classes", default="FIELD,HOST")
+    ap.add_argument("--signal-via-nets", default="", help="comma list of net globs: only these nets get the --signal-via "
+                    "padstack (the classes are not used), for example the fast nets for kicad-happy RP-001")
     ap.add_argument("--unlock-nets", default="", help="comma list of routed nets whose existing copper the router may "
                     "rip up and route again (default: all existing copper is locked)")
     a = ap.parse_args()
@@ -164,7 +184,8 @@ def main():
     with open(dsn) as f:
         text = freeroute.restrict_dsn(f.read(), set(a.layers.split(",")), nets)
     if a.signal_via:
-        text = big_signal_via(text, a.signal_via, [c for c in a.signal_via_classes.split(",") if c])
+        text = big_signal_via(text, a.signal_via, [c for c in a.signal_via_classes.split(",") if c],
+                              [n for n in a.signal_via_nets.split(",") if n])
     with open(dsn, "w") as f:
         f.write(text)
     min_um = int(round(b.GetDesignSettings().m_TrackMinWidth / 1000))

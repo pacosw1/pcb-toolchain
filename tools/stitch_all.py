@@ -25,6 +25,7 @@ def main():
     ap.add_argument('--planes', required=True)
     ap.add_argument('--skip', default='')
     ap.add_argument('--via', default='', help='D,DRILL of the ground vias (pcbtool stitch --via); default: net class')
+    ap.add_argument('--clearance', default='', help='pcbtool stitch --clearance (scoped ground-via clearance, mm)')
     ap.add_argument('--through-pours', default='', help='pcbtool stitch --through-pours (inner plane pours of these nets)')
     a = ap.parse_args()
     import json
@@ -36,7 +37,8 @@ def main():
     for n in nets:
         p = subprocess.run([sys.executable, os.path.join(HERE, 'pcbtool.py'), 'stitch', a.board, n, '--best-effort',
                             '--planes', a.planes] + (['--via', a.via] if a.via else []) + \
-                           (['--through-pours', a.through_pours] if a.through_pours else []), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                           (['--through-pours', a.through_pours] if a.through_pours else []) + \
+                           (['--clearance', a.clearance] if a.clearance else []), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         m = re.search(r'added (\d+) ', p.stdout)
         added += int(m.group(1)) if m else 0
         r = re.search(r'no room for a \S+ via within [\d.]+ mm of (.*?); best effort', p.stdout)
