@@ -316,10 +316,12 @@ def _evaluator(pose, p=None):
 
 
 def _epoch(task):
+    worker_start = time.monotonic()
     w, pose, sd, t0, t1, w0, w1, steps, p, ls = task
     ev = _evaluator(pose, p)
     mover = Mover(_W['pr'], ev, p)
     rng = random.Random(sd)
+    setup_seconds = time.monotonic() - worker_start
     t = time.time()
     out = {}
     if ls:  # Lam schedule: ls = {'t', 'ema', 'f0', 'f1', 't_ref'}; T carries over the epochs of the worker
@@ -329,10 +331,12 @@ def _epoch(task):
     else:
         best, best_pose = anneal(ev, mover, rng, steps, t0, t1, w0, w1)
     return dict(out, worker=w, cur_pose=ev.pose(), cur_cost=ev.cost, best_pose=best_pose, best_cost=best,
-                seconds=time.time() - t)
+                seconds=time.time() - t, setup_seconds=setup_seconds,
+                total_seconds=time.monotonic() - worker_start)
 
 
 def _finish(task):
+    start = time.monotonic()
     w, pose, p = task
     ev = _evaluator(pose, p)
     timeout = False
@@ -343,7 +347,8 @@ def _finish(task):
     pr = _W['pr']
     mains = mainspath.faults(pr, ev.pose(), mainspath.domain_nets(pr)) if p['mains'] else []
     return {'worker': w, 'pose': ev.pose(), 'cost': ev.cost, 'components': ev.components(),
-            'illegal': [pr['units'][i]['name'] for i in bad], 'timeout': timeout, 'mains': mains}
+            'illegal': [pr['units'][i]['name'] for i in bad], 'timeout': timeout, 'mains': mains,
+            'finish_seconds': time.monotonic() - start}
 
 
 def final_key(c):
@@ -352,6 +357,7 @@ def final_key(c):
 
 
 def optimize(pr, params, workers=1, epochs=10, steps=10000, seed=1, top=3, log=None):
+    full_start = time.monotonic()
     p = params_all(params)
     glob = start = None
     if p.get('global'):  # analytic global placement first (gplace.py); the annealer starts from it
@@ -381,10 +387,14 @@ def optimize(pr, params, workers=1, epochs=10, steps=10000, seed=1, top=3, log=N
     cur = [initial['pose']] * workers
     cur_cost = [initial['cost']] * workers
     best = [(ev0.cost, initial['pose'])] * workers
+    setup_seconds = time.monotonic() - full_start
+    pool_start = time.monotonic()
     pool = mp.get_context('spawn').Pool(workers, _init, (pr, p)) if workers > 1 else None
+    pool_create_seconds = time.monotonic() - pool_start
     run = pool.map if pool else lambda f, xs: [f(x) for x in xs]
     t_start, busy = time.time(), 0.0
     history = []  # best pose of each epoch, for snapshots
+    epoch_profile = []
     lam = lam_log = None
     if p['schedule'] == 'lam':
         lam, lam_log = [{'t': t0, 'ema': 1.0}] * workers, []
@@ -398,7 +408,18 @@ def optimize(pr, params, workers=1, epochs=10, steps=10000, seed=1, top=3, log=N
             else:
                 tasks = [(w, cur[w], seed_for(seed, w, e), frac(t0, t1, f0), frac(t0, t1, f1),
                           frac(w0, w1, f0), frac(w0, w1, f1), steps, pe, None) for w in range(workers)]
+            map_start = time.monotonic()
             out = run(_epoch, tasks)
+            map_seconds = time.monotonic() - map_start
+            totals = [o['total_seconds'] for o in out]
+            epoch_profile.append({'epoch': e + 1, 'map_seconds': map_seconds,
+                                  'worker_total_seconds': totals,
+                                  'worker_setup_seconds': [o['setup_seconds'] for o in out],
+                                  'worker_search_seconds': [o['seconds'] for o in out],
+                                  # Includes startup, IPC, scheduling and barriers. This
+                                  # is not a direct measurement of serialization alone.
+                                  'map_over_worker_max_seconds': max(0., map_seconds - max(totals)),
+                                  'worker_imbalance_seconds': max(totals) - min(totals)})
             if lam:
                 lam = [o['lam'] for o in sorted(out, key=lambda o: o['worker'])]
                 lam_log.append({'epoch': e + 1, 'accept': sum(o['accept'] for o in out) / len(out),
@@ -410,7 +431,7 @@ def optimize(pr, params, workers=1, epochs=10, steps=10000, seed=1, top=3, log=N
                 busy += o['seconds']
             g = min(range(workers), key=lambda w: (best[w][0], w))
             history.append({'epoch': e + 1, 'cost': best[g][0], 'pose': [list(q) for q in best[g][1]],
-                            'components': cost.components(pr, best[g][1], pf)})
+                            'components': cost.components(pr, best[g][1], pf, mask=_W['mask'])})
             if log:
                 log('epoch %d/%d T %.3g best %.2f (worker %d) cur %s' % (
                     e + 1, epochs, frac(t0, t1, f1), best[g][0], g, ' '.join('%.1f' % c for c in cur_cost)))
@@ -418,7 +439,9 @@ def optimize(pr, params, workers=1, epochs=10, steps=10000, seed=1, top=3, log=N
                 for w in sorted(range(workers), key=lambda w: (-cur_cost[w], w))[:workers // 2]:
                     if w != g:
                         cur[w], cur_cost[w] = best[g][1], best[g][0]
+        finish_start = time.monotonic()
         fin = run(_finish, [(w, best[w][1], pf) for w in range(workers)])
+        finish_seconds = time.monotonic() - finish_start
     finally:
         if pool:
             pool.close()
@@ -427,4 +450,8 @@ def optimize(pr, params, workers=1, epochs=10, steps=10000, seed=1, top=3, log=N
     cands = distinct(fin, p['distinct'], [u['fixed'] for u in pr['units']])
     return {'global': glob, 'lam': lam_log, 'initial': initial, 'candidates': cands[:top], 'history': history, 't0': t0, 'seed': seed, 'workers': workers,
             'epochs': epochs, 'steps': steps, 'params': p, 'wall_s': time.time() - t_start,
-            'moves_per_s_per_worker': epochs * steps * workers / busy if busy else 0.0}
+            'moves_per_s_per_worker': epochs * steps * workers / busy if busy else 0.0,
+            'profile': {'full_seconds': time.monotonic() - full_start, 'setup_seconds': setup_seconds,
+                        'pool_create_seconds': pool_create_seconds, 'epochs': epoch_profile,
+                        'finish_map_seconds': finish_seconds,
+                        'worker_finish_seconds': [c['finish_seconds'] for c in fin]}}
