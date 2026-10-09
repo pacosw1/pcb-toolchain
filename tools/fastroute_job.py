@@ -48,6 +48,7 @@ import route_features  # noqa: E402  (feature switches, tools/route-features.jso
 import lean_workflow as lean
 import thermal_repair
 import import_pose_guard
+import backend_quality
 
 BIN = os.environ.get("FASTROUTE_BIN") or os.path.expanduser("~/opt/fastroute/fastroute-0.1.7-macos-arm64/fastroute")
 KICAD_CLI = os.environ.get("KICAD_CLI", "/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli")
@@ -120,6 +121,8 @@ def _parse_args():
     ap.add_argument("board")
     ap.add_argument("outdir")
     ap.add_argument("--passes", type=int, default=40)
+    ap.add_argument('--quality-backend-manifest', default=os.environ.get('FASTROUTE_QUALITY_MANIFEST'),
+                    help='bind a verified patched backend; --quality-first is then mandatory')
     ap.add_argument("--layers", default="F.Cu,B.Cu")
     ap.add_argument("--skip-net", default="*GND*", help="comma list of fnmatch patterns (exact name or with *)")
     ap.add_argument("--gnd-vias", action="store_true", help="same as --plane-nets GND")
@@ -168,6 +171,14 @@ def _main(a=None):
     if os.path.isdir(a.outdir) and os.listdir(a.outdir):
         sys.exit('router output directory is not empty; choose a fresh job directory')
     os.makedirs(a.outdir, exist_ok=True)
+    phases = os.path.join(a.outdir, 'stages.jsonl')
+    try:
+        backend_policy = backend_quality.bind(BIN, a.quality_backend_manifest)
+    except (ValueError, OSError) as exc:
+        lean.atomic_json(os.path.join(a.outdir, 'backend-policy.json'),
+                         dict(mode='rejected', reason=str(exc), qualified=False))
+        sys.exit('fastroute_job: required quality backend rejected: ' + str(exc))
+    lean.atomic_json(os.path.join(a.outdir, 'backend-policy.json'), backend_policy)
     stem = os.path.splitext(a.board)[0]
     feat = route_features.load(a.board)
     print("FEATURES " + route_features.summary(feat), flush=True)
@@ -179,6 +190,18 @@ def _main(a=None):
                                     if os.path.isfile(os.path.splitext(a.board)[0]+ext)},
                           qualified=False))
     base = os.path.join(a.outdir, "base.kicad_pcb")
+    if backend_policy['mode'] == 'quality-first':
+        capability = lean.run_stage([BIN, '--help'], stage='quality-backend-capability',
+            event_file=phases, deadline=lean.deadline_after(10),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            if capability.returncode:
+                raise ValueError('quality backend capability probe failed')
+            backend_quality.require_capability(capability.stdout)
+        except ValueError as exc:
+            lean.atomic_json(os.path.join(a.outdir, 'backend-policy.json'),
+                             dict(mode='rejected', reason=str(exc), qualified=False))
+            sys.exit('fastroute_job: required quality backend rejected: ' + str(exc))
     out = os.path.join(a.outdir, "routed.kicad_pcb")
     for ext in (".kicad_pro", ".kicad_dru"):
         if os.path.isfile(stem + ext):
@@ -350,6 +373,8 @@ def _main(a=None):
         cmd.append('--router.autorouter.ignore_net_classes=' + ','.join(ignored_classes))
     if a.neck_um:
         cmd.append(f"--router.neck_width_um={a.neck_um}")
+    if backend_policy['mode'] == 'quality-first':
+        cmd.append('--quality-first')
     # A pair that has copper on the board already (kept block copper) is not given to the pair router.
     has_copper = {t.GetNetname() for t in b.GetTracks() if t.GetClass() != "PCB_VIA"}
     pairs_file = write_pairs(a.pairs_json, stem + ".kicad_dru", nets - has_copper, os.path.join(a.outdir, "pairs.txt"))
@@ -371,6 +396,7 @@ def _main(a=None):
                     ('current-paths.json','reference-planes.json','rp001-fast-nets.json','diff-pairs.json')]
         sources += [base_b_route_rules.__file__]
     effective = dict(configuration=vars(a), features=feat, command=cmd, dsn_sha256=lean.digest(dsn),
+                     backend_policy=backend_policy,
                      feature_sources={p: lean.digest(p) for p in sources if os.path.isfile(p)},
                      environment={k: os.environ.get(k) for k in ('ROUTE_FEATURES','ROUTE_BOARD','ROUTE_FEATURES_FILE')},
                      learned_halo=route_features.learned_halo(a.board, feat['_board_dir'])[1],
