@@ -24,6 +24,7 @@ from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from placer import bench, compact  # noqa: E402
 import lean_workflow as lean
+import lean_resources as resources
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 NO_RESULT = 10 ** 6  # a router job without an UNROUTED line (transport error, timeout) never passes
@@ -61,7 +62,7 @@ def parser():
     ap.add_argument('--budget', type=float, default=2700.0, help='seconds (default 45 min)')
     ap.add_argument('--target', type=int, default=0)
     ap.add_argument('--routes', type=int, default=3, help='parallel Freerouting runs per step (pass: best run <= target)')
-    ap.add_argument('--workers', type=int, default=30)
+    ap.add_argument('--workers', type=int, default=resources.default_cpu())
     ap.add_argument('--epochs', type=int, default=20)
     ap.add_argument('--steps', type=int, default=12000)
     ap.add_argument('--seed', type=int, default=1)
@@ -109,7 +110,20 @@ def main(argv=None):
                           problem_sha256=lean.digest(a.prob), configuration=vars(a), qualified=False,
                           note='run attribution only; no cached result reuse or release qualification'))
     def run_stage(cmd, stage, **kwargs):
-        return lean.run_stage(cmd, stage=stage, event_file=events, deadline=deadline, **kwargs)
+        cpu = a.workers if stage == 'placement' else resources.default_cpu()
+        if stage == 'routing':
+            args = shlex.split(a.route_args)
+            for i, arg in enumerate(args):
+                if arg == '--threads':
+                    cpu = int(args[i+1]) or resources.default_cpu()
+                elif arg.startswith('--threads='):
+                    cpu = int(arg.split('=', 1)[1]) or resources.default_cpu()
+        try:
+            with resources.reserve(cpu, wait_s=min(30., max(0., deadline-time.monotonic())),
+                                   events=os.path.join(a.outdir, 'admission.jsonl'), label=stage) as env:
+                return lean.run_stage(cmd, stage=stage, event_file=events, deadline=deadline, env=env, **kwargs)
+        except TimeoutError as e:
+            raise subprocess.TimeoutExpired(cmd, 0) from e
     name = os.path.splitext(os.path.basename(a.board))[0]
     src = os.path.dirname(os.path.abspath(a.board))
     wheel = os.path.abspath(a.wheel) if a.wheel else ''

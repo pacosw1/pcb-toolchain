@@ -20,6 +20,8 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import lean_resources as resources
+os.environ.update({k: '1' for k in resources.NATIVE_KEYS})
 from placer import anneal, cost  # noqa: E402
 
 
@@ -81,8 +83,10 @@ def parse_params(items):
 
 def cmd_run(a):
     pr = json.load(open(a.prob))
-    res = anneal.optimize(pr, parse_params(a.param), workers=a.workers, epochs=a.epochs, steps=a.steps,
-                          seed=a.seed, top=a.top, log=lambda s: print(s, flush=True))
+    with resources.reserve(a.workers, events=a.o + '.admission.jsonl', label='placement') as env:
+        with resources.environment(env):
+            res = anneal.optimize(pr, parse_params(a.param), workers=a.workers, epochs=a.epochs, steps=a.steps,
+                                  seed=a.seed, top=a.top, log=lambda s: print(s, flush=True))
     json.dump(res, open(a.o, 'w'))
     fmt = lambda c: 'cost %.1f hpwl %.1f cong %.1f overlap %.3f oob %.3f' % (  # noqa: E731
         c['cost'], c['components']['hpwl'], c['components']['cong'], c['components']['overlap'],
@@ -192,7 +196,7 @@ def main(argv=None):
     r = sub.add_parser('run')
     r.add_argument('prob')
     r.add_argument('-o', required=True)
-    r.add_argument('--workers', type=int, default=os.cpu_count())
+    r.add_argument('--workers', type=int, default=resources.default_cpu())
     r.add_argument('--epochs', type=int, default=20)
     r.add_argument('--steps', type=int, default=20000)
     r.add_argument('--seed', type=int, default=1)
