@@ -15,5 +15,7 @@ def check_cost(problem, params):
 
 def check_search(problem, params):
     check_cost(problem, params)
+    if params.get('max_displacement'):
+        raise ValueError('batch: cumulative displacement caps are not supported (use the scalar path)')
     if params.get('schedule', 'geometric') != 'geometric':
         raise ValueError('batch: only the geometric schedule is supported (use the scalar path)')

@@ -33,7 +33,7 @@ class BatchCapabilitiesTests(unittest.TestCase):
     def test_batch_rules_rejected_before_optional_import_or_global_work(self):
         # An intentionally incomplete problem would fail during global placement
         # or scalar setup. Unsupported batch policy must be the first failure.
-        for overrides in ({'w_x': 1}, {'w_row': 1}, {'pin_demand': 1}, {'schedule': 'lam'}):
+        for overrides in ({'w_x': 1}, {'w_row': 1}, {'pin_demand': 1}, {'schedule': 'lam'}, {'max_displacement': 3}):
             with self.assertRaisesRegex(ValueError, 'batch:'):
                 anneal.optimize({}, dict({'batch': 1, 'global': 1}, **overrides), epochs=1, steps=1)
         with self.assertRaisesRegex(ValueError, 'via room'):
@@ -57,7 +57,7 @@ class BatchCapabilitiesTests(unittest.TestCase):
         chain.p = anneal.params_all({})
         chain.resync = Mock()
         old = copy.deepcopy(chain.p)
-        for overrides in ({'schedule': 'lam'}, {'w_x': 1}, {'w_row': 1}, {'pin_demand': 1}):
+        for overrides in ({'schedule': 'lam'}, {'w_x': 1}, {'w_row': 1}, {'pin_demand': 1}, {'max_displacement': 3}):
             with self.assertRaises(ValueError):
                 chain.set_params(overrides)
             self.assertEqual(chain.p, old)
