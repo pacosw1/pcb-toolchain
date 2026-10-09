@@ -68,6 +68,7 @@ class SkipTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 dsn_skip.routable_open({'stats': bad})
 
+class NativeSkipTests(unittest.TestCase):
     def test_native_export_membership_and_copper(self):
         try:
             import pcbnew
