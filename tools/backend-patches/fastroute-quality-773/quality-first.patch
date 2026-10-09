@@ -27,7 +27,7 @@ index 0000000..2501b81
 +    if args.len()>2 { std::fs::write(&args[2],safe).unwrap(); }
 +}
 diff --git a/crates/fastroute/src/main.rs b/crates/fastroute/src/main.rs
-index a474456..9f6034c 100644
+index a474456..a703710 100644
 --- a/crates/fastroute/src/main.rs
 +++ b/crates/fastroute/src/main.rs
 @@ -40,6 +40,7 @@ struct Args {
@@ -72,7 +72,7 @@ index a474456..9f6034c 100644
      if let Some(summary) = fr_io::post_load::prepare_for_routing(&mut board, &mut settings, initial.as_deref()) {
          // the session reader fixes what it imports (as Freerouting does); here the session is
          // a starting point that may be ripped and optimized like routed wiring
-@@ -364,6 +371,9 @@ fn run() -> Result<(), String> {
+@@ -364,14 +371,26 @@ fn run() -> Result<(), String> {
          );
      }
      pipeline::deferred_post_load_processing(&mut board);
@@ -82,7 +82,28 @@ index a474456..9f6034c 100644
      if args.parity || args.no_enhancements {
          board.wire_keepouts_as_keepouts();
      }
-@@ -406,12 +416,13 @@ fn run() -> Result<(), String> {
+     if !args.parity && !args.no_enhancements {
+-        board.fallback_vias_own_class = true;
+-        board.set_overlap_contacts(true);
+-        let n = board.bridge_trace_ends_to_drill_centers();
+-        if n > 0 {
++        let enhance = |b: &mut RoutingBoard| {
++            b.fallback_vias_own_class = true;
++            b.set_overlap_contacts(true);
++            b.bridge_trace_ends_to_drill_centers()
++        };
++        let (accepted, n) = if let Some(guard) = &quality {
++            guard.lock().unwrap().enhance(&mut board, enhance)
++        } else {
++            (true, enhance(&mut board))
++        };
++        if !accepted {
++            log::warn!(target: "fastroute", "quality-first: enhancement introduces new clearance identity; restored safe pre-enhancement board ({n} attempted bridges)");
++        } else if n > 0 {
+             log::info!(target: "fastroute", "{n} trace ends inside a pad but off its center joined to the center");
+         }
+     }
+@@ -406,12 +425,13 @@ fn run() -> Result<(), String> {
          None => OptimizerMode::Parallel { threads: optimizer_threads },
      };
      let design_name = std::path::Path::new(&path).file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -97,7 +118,7 @@ index a474456..9f6034c 100644
                  return;
              }
              match write_ses_atomically(&out, &fr_io::ses_writer::ses_bytes(board, &name)) {
-@@ -432,7 +443,13 @@ fn run() -> Result<(), String> {
+@@ -432,7 +452,13 @@ fn run() -> Result<(), String> {
          enhancements: !args.parity && !args.no_enhancements,
          multi_start: args.multi_start,
          checkpoint,
@@ -111,7 +132,7 @@ index a474456..9f6034c 100644
      {
          // First signal: stop and write the best result; second: exit at once.
          let stop = ctx.stop.clone();
-@@ -560,6 +577,12 @@ fn run() -> Result<(), String> {
+@@ -560,6 +586,12 @@ fn run() -> Result<(), String> {
          }
          log::info!(target: "fastroute", "length tuning finished in {:.2} s", t.elapsed().as_secs_f64());
      }
@@ -320,10 +341,10 @@ index ecc8a16..4400f21 100644
                      *board = w.board.expect("improved candidate without board");
 diff --git a/crates/fr-engine/src/pipeline/quality.rs b/crates/fr-engine/src/pipeline/quality.rs
 new file mode 100644
-index 0000000..9d4bff7
+index 0000000..479e754
 --- /dev/null
 +++ b/crates/fr-engine/src/pipeline/quality.rs
-@@ -0,0 +1,88 @@
+@@ -0,0 +1,101 @@
 +//! Opt-in safety frontier: no new clearance identities relative to loaded DSN.
 +//! Counts cannot distinguish removal of an old fault from introduction of a new one.
 +use std::collections::BTreeSet;
@@ -383,6 +404,19 @@ index 0000000..9d4bff7
 +    pub fn accepts(&self, board: &RoutingBoard) -> bool {
 +        allowed(&self.baseline, &identities(board))
 +    }
++    /// Apply pre-routing enhancements against the ORIGINAL frontier. This is called
++    /// before an autoroute engine exists: Clone owns the item arena, search trees and
++    /// undo journal (shared rules/library use copy-on-write). Unlike deep_copy it
++    /// preserves revision, cached counts and history as well as both feature flags.
++    /// No rejected enhancement becomes the baseline or discards a safe imported SES.
++    pub fn enhance<T>(&self, board: &mut RoutingBoard, apply: impl FnOnce(&mut RoutingBoard) -> T) -> (bool, T) {
++        assert!(board.autoroute_engine.0.is_none(), "enhancement transaction requires no live autoroute engine");
++        let accepted_input = board.clone();
++        let result = apply(board);
++        let accepted = self.accepts(board);
++        if !accepted { *board = accepted_input; }
++        (accepted, result)
++    }
 +    pub fn observe(&mut self, board: &RoutingBoard, key: CheckpointKey) -> bool {
 +        if !self.accepts(board) { return false; }
 +        if key.quality_better_than(&self.key) {
@@ -414,10 +448,10 @@ index 0000000..9d4bff7
 +}
 diff --git a/crates/fr-engine/tests/quality_identity.rs b/crates/fr-engine/tests/quality_identity.rs
 new file mode 100644
-index 0000000..66a6207
+index 0000000..65a36a8
 --- /dev/null
 +++ b/crates/fr-engine/tests/quality_identity.rs
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,141 @@
 +use fr_engine::board::*;
 +use fr_engine::datastructures::ItemIdGenerator;
 +use fr_engine::ids::FixedState;
@@ -500,4 +534,62 @@ index 0000000..66a6207
 +    let remaining:Vec<_>=source.get_items().into_iter().filter(|k| source.item(*k).is_trace()).collect();
 +    source.remove_items(remaining);
 +    assert_eq!(guard.best().get_items().len(),retained_items,"observed incumbent must remain isolated");
++}
++
++fn bridge_board(other_y: i32) -> RoutingBoard {
++    let mut b=board();
++    let shapes=vec![Some(ConvexShape::Circle(Circle::new(IntPoint::new(0,0),600)));2];
++    let padstack=std::sync::Arc::make_mut(&mut b.library).padstacks.add("bridge",shapes,true,false);
++    b.insert_via(padstack,Point::Int(IntPoint::new(5000,4000)),&[1],1,FixedState::Unfixed,true);
++    b.insert_trace_without_cleaning(Polyline::from_int_points(&[
++        IntPoint::new(3000,4000),IntPoint::new(4500,4000)]),0,1200,&[1],1,FixedState::Unfixed).unwrap();
++    b.insert_trace_without_cleaning(Polyline::from_int_points(&[
++        IntPoint::new(5500,other_y),IntPoint::new(7000,other_y)]),0,100,&[2],1,FixedState::Unfixed).unwrap();
++    RoutingBoard::from_basic(b)
++}
++
++fn enhancements(b: &mut RoutingBoard) -> usize {
++    b.fallback_vias_own_class=true;
++    b.set_overlap_contacts(true);
++    b.bridge_trace_ends_to_drill_centers()
++}
++
++#[test]
++fn unsafe_bridge_rolls_back_entire_pre_enhancement_board_and_flags() {
++    use fr_engine::pipeline::quality::QualityGuard;
++    let mut b=bridge_board(5400);
++    let guard=QualityGuard::new(&b,&fr_settings::defaults::default_settings(2));
++    assert!(identities(&b).is_empty());
++    b.generate_snapshot(); // history must survive rollback as well as copper/settings
++    let expected=format!("{:?}",b);
++    let original=b.clone();
++    let mut unsafe_copy=b.clone();
++    assert!(enhancements(&mut unsafe_copy)>0);
++    assert!(!guard.accepts(&unsafe_copy),"fixture must create an actual new clearance identity");
++    let (accepted,n)=guard.enhance(&mut b,enhancements);
++    assert!(n>0); assert!(!accepted);
++    assert_eq!(format!("{:?}",b),expected,"restore whole board, search trees/history/flags included");
++    assert!(!b.fallback_vias_own_class);
++    let keys=b.get_traces();
++    b.translate_item(keys[0],&Vector::get_instance(0,9000));
++    std::sync::Arc::make_mut(&mut b.rules).nets.add("mutated",1,false,fr_engine::rules::NetClassId(0));
++    b.set_overlap_contacts(true);
++    assert_eq!(format!("{:?}",original),expected,"later candidate mutation cannot change accepted snapshot");
++    assert!(guard.accepts(&original));
++}
++
++#[test]
++fn safe_bridge_is_retained_without_promoting_quality_baseline() {
++    use fr_engine::pipeline::quality::QualityGuard;
++    let mut b=bridge_board(7000);
++    let guard=QualityGuard::new(&b,&fr_settings::defaults::default_settings(2));
++    let original_geometry:Vec<_>=b.get_traces().iter().map(|k|format!("{:?}",b.item(*k).kind)).collect();
++    let (accepted,n)=guard.enhance(&mut b,enhancements);
++    assert!(accepted); assert!(n>0);
++    assert!(b.fallback_vias_own_class);
++    assert!(guard.accepts(&b));
++    let enhanced_geometry:Vec<_>=b.get_traces().iter().map(|k|format!("{:?}",b.item(*k).kind)).collect();
++    assert_ne!(enhanced_geometry,original_geometry,"bridge copper must be retained, including merged traces");
++    segment(&mut b.basic,4000,3);
++    assert!(!guard.accepts(&b),"safe enhancement must not grant later faults permission");
 +}

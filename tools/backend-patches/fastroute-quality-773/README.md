@@ -24,6 +24,15 @@ isolated from later mutations. The normal engine continues routing from that
 frontier after a rejected pass. This changes search behavior and may leave more
 opens; it does not guarantee completion or improve routing speed.
 
+Pre-routing enhancements are also transactional against that original frontier.
+After accepting an initial SES, the CLI clones its whole board, applies the
+existing via-class/contact flags and trace-end bridges, and restores the whole
+accepted input if an enhancement introduces a new clearance identity. The clone
+retains item geometry, rules, undo history, search trees and feature flags. This
+transaction runs before an autoroute engine exists; a live engine is rejected
+because its transient state is intentionally absent from a board clone.
+The original frontier is never promoted to include an unsafe bridge.
+
 ## Repeatable isolated build
 
 Start a new upstream checkout and verify its exact commit before applying:
@@ -74,6 +83,23 @@ KiCad refill/parity found no errors or parity differences, 302 unchanged opens,
 exact immutable copper/parts/setup/zone nodes and poses/pads, and 29 unchanged
 project sidecars. This is artifact QA; the pre-route fixture is not a qualified
 board. The earlier routed candidate still has 13 native opens and a new J2 fault.
+
+The subsequent bounded routing trial timed out with a retained checkpoint:
+independent KiCad found zero errors/parity differences and 11 opens. Replaying
+that safe SES exposed a new clearance identity introduced by the trace-end
+bridge itself. The updated production CLI rejects only that enhancement and
+retains the exact checkpoint copper geometry. Its no-routing QA again found
+zero native errors/parity differences and 11 opens, unchanged poses, original
+copper, parts, setup, zone policy and all 29 project sidecars. The previous
+artifact/proofs remain recorded separately in build provenance.
+
+Whole-board rollback restores the disabled overlap-contact flag too: the
+updated CLI reports 21 engine opens (6 ignored), versus 17 (3 ignored) with
+overlap contacts enabled in the diagnostic model. Native connectivity and
+checkpoint copper remain identical; these engine counts cannot substitute for
+native opens. Actual geometry fixtures prove both unsafe whole-board rollback
+and safe retained bridge copper, including merged traces; 85 library and six
+geometry tests passed with no ignored tests on the isolated native toolchain.
 
 An explicitly bound wrapper requires this flag and artifact; legacy invocation
 remains explicitly unverified. Production binary replacement has not occurred.
