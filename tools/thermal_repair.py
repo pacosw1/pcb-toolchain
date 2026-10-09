@@ -17,6 +17,11 @@ import time
 import lean_workflow as lean
 
 
+def check_budget(deadline, command):
+    if time.monotonic() >= deadline:
+        raise subprocess.TimeoutExpired(command, 0)
+
+
 def thermal_targets(drc, pads, zones, planes):
     """Pure detector: native UUID, pad/ref/net and owning zone must all agree."""
     todo = collections.defaultdict(set)
@@ -94,7 +99,9 @@ def immutable_board(path, deadline=None):
                 index += 1
         tokens.append(text[start:index])
     stack, current = [], []
-    for token in tokens:
+    for number, token in enumerate(tokens):
+        if deadline is not None and number % 4096 == 0:
+            check_budget(deadline, ['native-policy-tree', str(path)])
         if token == '(':
             stack.append(current); current = []
         elif token == ')':
@@ -109,7 +116,9 @@ def immutable_board(path, deadline=None):
     def tag(x):
         return x[0] if isinstance(x, list) and x else None
     rows = {}
-    for node in tree[1:]:
+    for number, node in enumerate(tree[1:]):
+        if deadline is not None and number % 4096 == 0:
+            check_budget(deadline, ['native-policy-rows', str(path)])
         name = tag(node)
         if name not in ('footprint', 'zone', 'segment', 'arc', 'via', 'setup', 'gr_line', 'gr_arc', 'gr_rect', 'gr_poly'):
             continue
@@ -137,7 +146,9 @@ def copy_hierarchy(source, destination, deadline):
         target = destination/sheet.relative_to(root)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(sheet, target)
+        check_budget(deadline, ['copy-native-hierarchy', str(sheet)])
         for name in re.findall(r'\(property "Sheetfile" "([^"\n]+)"', sheet.read_text()):
+            check_budget(deadline, ['read-native-hierarchy', str(sheet)])
             name = name.replace('${KIPRJMOD}', str(root))
             pending.append(sheet.parent/name)
     return sorted(str(p.relative_to(root)) for p in seen)
@@ -146,6 +157,13 @@ def copy_hierarchy(source, destination, deadline):
 def errors(drc):
     return collections.Counter((v['type'], tuple(sorted(i.get('uuid', '') for i in v.get('items', []))))
                                for v in drc['violations'] if v.get('severity') == 'error')
+
+
+def parity_identities(drc):
+    # Complete native content includes type, item UUIDs, net/pad names and
+    # coordinates. Equal counts cannot conceal replacement parity faults.
+    return collections.Counter(json.dumps(v, sort_keys=True, separators=(',', ':'))
+                               for v in drc.get('schematic_parity', []))
 
 
 def acceptable(before, after, old_board, new_board):
@@ -159,7 +177,7 @@ def acceptable(before, after, old_board, new_board):
         return False, 'new native errors'
     if sum(new.values()) >= sum(old.values()):
         return False, 'no native error improvement'
-    if len(after.get('schematic_parity', [])) > len(before.get('schematic_parity', [])):
+    if parity_identities(after)-parity_identities(before):
         return False, 'schematic parity regressed'
     if len(after['unconnected_items']) > len(before['unconnected_items']):
         return False, 'native opens regressed'
@@ -167,7 +185,11 @@ def acceptable(before, after, old_board, new_board):
 
 
 def repair(board_path, project_board, drc, planes, via_args, kicad_cli, event_file, label):
-    """Single transaction, <=90 seconds. Retain proposal/evidence on rejection."""
+    """90-second checked budget, sharing the parent process watchdog.
+
+    Python work checks its budget periodically; individual filesystem calls
+    cannot be interrupted here. Retain proposal/evidence on rejection.
+    """
     import pcbnew
     board_path = Path(board_path)
     targets = thermal_targets(drc, *inventory(pcbnew.LoadBoard(str(board_path))), set(planes))
@@ -184,16 +206,16 @@ def repair(board_path, project_board, drc, planes, via_args, kicad_cli, event_fi
         lean.atomic_json(directory/'decision.json', evidence)
         return drc, evidence
     candidate = directory/source.name
-    # Keep the native project name and complete schematic hierarchy for parity.
-    for item in source.parent.iterdir():
-        if item.is_file() and item.suffix in ('.kicad_pro', '.kicad_dru', '.kicad_sch', '.kicad_sym'):
-            shutil.copy(item, directory/item.name)
-        elif item.name in ('blocks', 'BASE.pretty') and item.is_dir():
-            shutil.copytree(item, directory/item.name)
-    for filename in ('sym-lib-table', 'fp-lib-table'):
-        if (source.parent/filename).is_file():
-            shutil.copy(source.parent/filename, directory/filename)
-    shutil.copy(board_path, candidate)
+    def budget_copy(src, dst):
+        check_budget(deadline, ['copy-native-project', str(src)])
+        result = shutil.copy2(src, dst)
+        check_budget(deadline, ['copy-native-project', str(src)])
+        return result
+    def record(status):
+        lean.atomic_json(directory/'decision.json', dict(evidence, status=status))
+        if event_file:
+            with open(event_file, 'a') as log:
+                log.write(json.dumps(dict(stage=label, status=status, **evidence))+'\n')
     def check(name):
         report = directory/(name+'.json')
         result = lean.run_stage([kicad_cli, 'pcb', 'drc', '--refill-zones', '--schematic-parity', '--severity-all',
@@ -208,9 +230,23 @@ def repair(board_path, project_board, drc, planes, via_args, kicad_cli, event_fi
             raise ValueError('native parity evidence unavailable')
         return checked
     try:
+        # Keep the native project name and complete schematic hierarchy for parity.
+        for item in source.parent.iterdir():
+            check_budget(deadline, ['copy-native-project'])
+            if item.is_file() and item.suffix in ('.kicad_pro', '.kicad_dru', '.kicad_sch', '.kicad_sym'):
+                budget_copy(item, directory/item.name)
+            elif item.name in ('blocks', 'BASE.pretty') and item.is_dir():
+                shutil.copytree(item, directory/item.name, copy_function=budget_copy)
+        for filename in ('sym-lib-table', 'fp-lib-table'):
+            if (source.parent/filename).is_file():
+                budget_copy(source.parent/filename, directory/filename)
+        budget_copy(board_path, candidate)
         evidence['schematic_files'] = copy_hierarchy(source, directory, deadline)
-        sidecars = {str(p.relative_to(directory)): lean.digest(p) for p in directory.rglob('*')
-                    if p.is_file() and p.suffix in ('.kicad_pro', '.kicad_dru', '.kicad_sch')}
+        sidecars = {}
+        for path in directory.rglob('*'):
+            check_budget(deadline, ['hash-native-sidecars'])
+            if path.is_file() and path.suffix in ('.kicad_pro', '.kicad_dru', '.kicad_sch'):
+                sidecars[str(path.relative_to(directory))] = lean.digest(path)
         old_state = immutable_board(candidate, deadline)
         before = check('before')
         # Refill can change faults; detect against that current native evidence.
@@ -228,9 +264,12 @@ def repair(board_path, project_board, drc, planes, via_args, kicad_cli, event_fi
                 raise ValueError('thermal copper proposal failed')
             os.replace(proposal, candidate)
         after = check('after')
-        if any(lean.digest(directory/path) != digest for path, digest in sidecars.items()):
-            raise ValueError('native project, rules or schematic changed during proposal')
+        for path, digest in sidecars.items():
+            check_budget(deadline, ['verify-native-sidecars'])
+            if lean.digest(directory/path) != digest:
+                raise ValueError('native project, rules or schematic changed during proposal')
         accepted, reason = acceptable(before, after, old_state, immutable_board(candidate, deadline))
+        check_budget(deadline, ['accept-native-thermal-proposal'])
         evidence.update(accepted=accepted, reason=reason, directory=str(directory),
                         errors_before=sum(errors(before).values()), errors_after=sum(errors(after).values()),
                         remaining_thermal=sum(v.get('type') == 'starved_thermal' and v.get('severity') == 'error'
@@ -238,10 +277,14 @@ def repair(board_path, project_board, drc, planes, via_args, kicad_cli, event_fi
         if accepted:
             os.replace(candidate, board_path)
             drc = after
-    except (ValueError, OSError, subprocess.TimeoutExpired) as error:
+    except subprocess.TimeoutExpired as error:
+        evidence.update(accepted=False, reason=str(error), directory=str(directory))
+        lean.atomic_json(directory/'checkpoint.json',
+                         dict(status='timeout', qualified=False, accepted=False,
+                              board_sha256=lean.digest(board_path), native_evidence=drc))
+        record('timeout')
+        raise
+    except (ValueError, OSError) as error:
         evidence.update(reason=str(error), directory=str(directory))
-    lean.atomic_json(directory/'decision.json', evidence)
-    if event_file:
-        with open(event_file, 'a') as log:
-            log.write(json.dumps(dict(stage=label, status='complete', **evidence))+'\n')
+    record('complete' if evidence['accepted'] else 'rejected')
     return drc, evidence

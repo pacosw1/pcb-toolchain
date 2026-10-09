@@ -5,7 +5,9 @@ import shutil
 import subprocess
 import tempfile
 import time
+import types
 import unittest
+from unittest.mock import patch
 
 import thermal_repair as tr
 
@@ -34,6 +36,11 @@ class ThermalDetectionTests(unittest.TestCase):
                dict(after,schematic_parity=[{}]),dict(after,unconnected_items=[{},{}]),before]
         for candidate in cases:self.assertFalse(tr.acceptable(before,candidate,original,dict(original))[0])
         self.assertFalse(tr.acceptable(before,after,original,{('setup','setup'):['setup',['min_spokes','1']]} )[0])
+        old_parity=dict(before,schematic_parity=[dict(type='net_mismatch',items=[dict(uuid='old',description='old net')])])
+        new_parity=dict(after,schematic_parity=[dict(type='net_mismatch',items=[dict(uuid='new',description='new net')])])
+        self.assertFalse(tr.acceptable(old_parity,new_parity,original,dict(original))[0])
+        new_parity['schematic_parity'][0]['items'][0]['uuid']='old'
+        self.assertFalse(tr.acceptable(old_parity,new_parity,original,dict(original))[0])
 
     def test_complete_immutable_native_nodes_and_fill_exclusion(self):
         with tempfile.TemporaryDirectory() as td:
@@ -60,6 +67,32 @@ class ThermalDetectionTests(unittest.TestCase):
             (folder/'blocks').mkdir();(folder/'blocks/child.kicad_sch').write_text('(kicad_sch)')
             self.assertEqual(tr.copy_hierarchy(board,destination,time.monotonic()+1),['blocks/child.kicad_sch','board.kicad_sch'])
             with self.assertRaises(subprocess.TimeoutExpired):tr.copy_hierarchy(board,destination,time.monotonic()-1)
+
+    def test_timeout_is_persisted_and_propagated_without_accepting_original(self):
+        with tempfile.TemporaryDirectory() as td:
+            folder=Path(td);board=folder/'board.kicad_pcb';board.write_text('(kicad_pcb)')
+            board.with_suffix('.kicad_sch').write_text('(kicad_sch)')
+            d=dict(violations=[fault()],unconnected_items=[],schematic_parity=[])
+            events=folder/'stages.jsonl'
+            pcbnew=types.SimpleNamespace(LoadBoard=lambda path:object())
+            with patch.dict('sys.modules',{'pcbnew':pcbnew}), patch.object(tr,'inventory',return_value=({'p':('U16','2','GND')},{'z':'GND'})), \
+                 patch.object(tr.lean,'run_stage',side_effect=subprocess.TimeoutExpired(['native'],1)):
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    tr.repair(board,board,d,['GND'],[],'native',str(events),'test-timeout')
+            decision=json.loads(next(folder.glob('test-timeout-*/decision.json')).read_text())
+            checkpoint=json.loads(next(folder.glob('test-timeout-*/checkpoint.json')).read_text())
+            self.assertEqual(decision['status'],'timeout');self.assertFalse(decision['accepted'])
+            self.assertFalse(checkpoint['qualified']);self.assertEqual(checkpoint['native_evidence'],d)
+            self.assertEqual(json.loads(events.read_text())['status'],'timeout')
+            self.assertEqual(board.read_text(),'(kicad_pcb)')
+
+    def test_parser_tree_and_copy_phase_budget_checked(self):
+        with tempfile.TemporaryDirectory() as td:
+            board=Path(td)/'board.kicad_pcb';board.write_text('(kicad_pcb (setup))')
+            def expire_tree(deadline,command):
+                if command[0]=='native-policy-tree':raise subprocess.TimeoutExpired(command,0)
+            with patch.object(tr,'check_budget',side_effect=expire_tree):
+                with self.assertRaises(subprocess.TimeoutExpired):tr.immutable_board(board,time.monotonic()+1)
 
 
 @unittest.skipUnless(os.environ.get('THERMAL_REPAIR_FIXTURE'), 'set THERMAL_REPAIR_FIXTURE for frozen native two-pad evidence')
