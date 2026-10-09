@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import select
 import tempfile
 import time
 import unittest
@@ -30,9 +31,22 @@ class ResourcesTests(unittest.TestCase):
                 f'ctx=r.reserve({cpu},{memory});ctx.__enter__();print("ready",flush=True);time.sleep(20)')
         p = subprocess.Popen([sys.executable, '-c', code], cwd=Path(__file__).parent,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.addCleanup(self.reap, p)
+        self.assertTrue(select.select([p.stdout], [], [], 5)[0], 'holder did not become ready')
         self.assertEqual(p.stdout.readline().strip(), 'ready')
-        self.addCleanup(lambda: p.poll() is None and p.kill())
         return p
+
+    @staticmethod
+    def reap(p):
+        """Reap only this test's child and close pipes even after assertion failure."""
+        try:
+            if p.poll() is None:
+                p.kill()
+            p.communicate(timeout=5)
+        finally:
+            for pipe in (p.stdout, p.stderr):
+                if pipe is not None:
+                    pipe.close()
 
     def test_memory_wait_bound_and_crash_release(self):
         p = self.holder()
@@ -96,20 +110,45 @@ class ResourcesTests(unittest.TestCase):
     def test_wait_cancel_retains_observable_event(self):
         p = self.holder(cpu=2, memory=4)
         path = Path(self.tmp.name) / 'wait.jsonl'
-        code = ('import lean_resources as r; '
-                f'ctx=r.reserve(1,1,wait_s=10,events={str(path)!r});ctx.__enter__()')
+        code = ('import lean_resources as r\n'
+                'original=r.event\n'
+                'def observed(path, **values):\n'
+                ' original(path, **values)\n'
+                ' if values["action"]=="queued": print("ready", flush=True)\n'
+                'r.event=observed\n'
+                f'with r.reserve(1,1,wait_s=10,events={str(path)!r}): pass\n')
         waiter = subprocess.Popen([sys.executable, '-c', code], cwd=Path(__file__).parent,
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        self.addCleanup(lambda: waiter.poll() is None and waiter.kill())
-        for _ in range(100):
-            if path.exists():
-                break
-            time.sleep(.01)
+        self.addCleanup(self.reap, waiter)
+        self.assertTrue(select.select([waiter.stdout], [], [], 5)[0], 'waiter did not publish readiness')
+        self.assertEqual(waiter.stdout.readline().strip(), 'ready')
         waiter.terminate()
         waiter.communicate(timeout=2)
         self.assertIn('cancelled', [json.loads(line)['action'] for line in path.read_text().splitlines()])
         p.kill()
         p.communicate()
+
+    def test_signal_at_queued_publication_is_accounted_and_released(self):
+        path = Path(self.tmp.name) / 'publication.jsonl'
+        # Force the old failing interleaving, without scheduler timing or sleeps:
+        # SIGTERM is delivered immediately after the queued event is written.
+        code = ('import lean_resources as r,os,signal\n'
+                'original=r.event\n'
+                'def observed(path, **values):\n'
+                ' original(path, **values)\n'
+                ' if values["action"]=="queued": os.kill(os.getpid(), signal.SIGTERM)\n'
+                'r.event=observed\n'
+                f'with r.reserve(1,1,wait_s=10,events={str(path)!r}): pass\n')
+        child = subprocess.Popen([sys.executable, '-c', code], cwd=Path(__file__).parent,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.addCleanup(self.reap, child)
+        child.communicate(timeout=5)
+        self.assertNotEqual(child.returncode, 0)
+        events = [json.loads(line) for line in path.read_text().splitlines()]
+        self.assertEqual([e['action'] for e in events], ['queued', 'cancelled', 'released'])
+        self.assertEqual(events[1]['signal'], 15)
+        self.assertEqual(events[1]['reason'], 'StageCancelled')
+        self.assertEqual(list(Path(self.tmp.name).glob('*.ticket')), [])
 
 
 if __name__ == '__main__':

@@ -135,7 +135,6 @@ def reserve(cpu, memory_gib=None, *, wait_s=30., events=None, label='board'):
         f = open(ticket, 'w+')
         fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
         write(f)
-    event(events, action='queued', **claim)
     handlers = {}
     if threading.current_thread() is threading.main_thread():
         def cancelled(signum, frame):
@@ -143,6 +142,9 @@ def reserve(cpu, memory_gib=None, *, wait_s=30., events=None, label='board'):
         for sig in (signal.SIGTERM, signal.SIGINT):
             handlers[sig] = signal.signal(sig, cancelled)
     try:
+        # Publishing readiness must not expose a waiter with default signal
+        # handlers. Keep publication inside cleanup/cancellation accounting.
+        event(events, action='queued', **claim)
         while True:
             if inherited_deadline is not None and lean.now() >= inherited_deadline:
                 raise TimeoutError('end-to-end deadline reached during admission')
