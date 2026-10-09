@@ -27,6 +27,8 @@ export const CHECK_METRICS = {
 };
 export function validateConfig(cfg) {
   const errors = [];
+  if(!cfg || typeof cfg!=='object' || Array.isArray(cfg)) return ['gate configuration must be an object'];
+  if(!cfg.checks || typeof cfg.checks!=='object' || Array.isArray(cfg.checks)) return ['checks must be an object'];
   const stage = cfg.stage ?? 'G4';
   if (!['G3', 'G4', 'G5'].includes(stage)) errors.push(`unknown gate stage ${stage}`);
   const required = stage === 'G3' ? ['erc'] : ['erc', 'drc', 'paths', 'viapads', 'kicad_happy', 'port_labels'];
@@ -34,6 +36,8 @@ export function validateConfig(cfg) {
   for (const [key, value] of Object.entries(cfg.checks ?? {})) {
     if (!(key in CHECK_METRICS)) errors.push(`unknown check: ${key}`);
     if (['planes','pairs','paths','rf'].includes(key) && value && typeof value !== 'string') errors.push(`${key}: expected configuration filename`);
+    if(['erc','drc','port_labels'].includes(key) && typeof value!=='boolean') errors.push(`${key}: expected boolean`);
+    if(['viapads','kicad_happy'].includes(key) && value && (typeof value!=='object' || Array.isArray(value))) errors.push(`${key}: expected options object`);
   }
   if (typeof cfg.project !== 'string' || !cfg.project) errors.push('project is required');
   return errors;
@@ -42,6 +46,8 @@ export function expectedMetrics(cfg) {
   return Object.entries(cfg.checks).filter(([,v]) => v).flatMap(([k]) => CHECK_METRICS[k] ?? []);
 }
 const validCount = v => Number.isSafeInteger(v) && v >= 0;
+const validDate = d => typeof d==='string' && /^\d{4}-\d{2}-\d{2}$/.test(d) &&
+  !Number.isNaN(Date.parse(d)) && new Date(d).toISOString().slice(0,10)===d;
 export function passes(metrics, required = CORE_METRICS) {
   const open = [];
   for (const name of required) if (!(name in metrics)) open.push(`${name}: missing required metric`);
@@ -69,13 +75,17 @@ export function ratchet(before, after, waivers = [], context = {}) {
       res.blocked.push(`${name}: invalid count or tool did not run`);
       continue;
     }
+    if(was!==undefined && was!==null && !validCount(was)) {
+      res.blocked.push(`${name}: invalid baseline count`);
+      continue;
+    }
     if (was === undefined || was === null) continue;
     const line = `${name}: ${was} -> ${now}`;
     if (now < was) res.improved.push(line);
     if (now <= was || m.level === 'info') continue;
     const today = context.today ?? new Date().toISOString().slice(0,10);
     const waiver = waivers.find(w => w.metric === name && w.from === was && validCount(w.to) && now <= w.to &&
-      w.reason && w.owner && /^\d{4}-\d{2}-\d{2}$/.test(w.date ?? '') && /^\d{4}-\d{2}-\d{2}$/.test(w.expires ?? '') &&
+      typeof w.reason==='string' && w.reason.trim() && typeof w.owner==='string' && w.owner.trim() && validDate(w.date) && validDate(w.expires) &&
       w.date <= today && today <= w.expires && context.revision && w.revision === context.revision &&
       context.inputFingerprint && w.inputFingerprint === context.inputFingerprint);
     if (waiver) res.waived.push(`${line} (waiver ${waiver.date}: ${waiver.reason})`);

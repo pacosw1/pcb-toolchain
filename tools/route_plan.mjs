@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Routing worklist for a board on the gate runner: the open connections, by net, in the order to route them.
 //   node tools/gate.mjs <BOARD> && node tools/route_plan.mjs <BOARD> [--md]
-// It reads <board>/.gate/drc.json (from the last gate run) and the board data files:
+// It reads the latest isolated gate DRC after checking input freshness, and the board data files:
 //   current-paths.json  -> power nets with the design current
 //   rp001-fast-nets.json, diff-pairs.json -> fast nets
 // Order (CLAUDE.md section 4): 1 power, largest current first; 2 fast nets; 3 slow nets, shortest first.
@@ -10,15 +10,19 @@
 
 import {readFileSync, existsSync} from 'node:fs';
 import {join} from 'node:path';
-import {root} from './lib/env.mjs';
+import {root,kicadShared,kicadConfig,pinnedRepos} from './lib/env.mjs';
+import {latestDrc} from './lib/gate-evidence.mjs';
 
 const board = process.argv[2];
 const dir = join(root, 'hardware-design/boards', board ?? '');
-const latestFile=join(dir,'.gate/latest.json');
-const latest=existsSync(latestFile) ? JSON.parse(readFileSync(latestFile,'utf8')) : null;
-const drcFile = latest ? join(dir,'.gate',latest.run,'drc.json') : '';
-if (!board || !existsSync(drcFile)) {
-  console.error('usage: node tools/route_plan.mjs <BOARD> [--md]   (run node tools/gate.mjs <BOARD> first)');
+let drc;
+try {
+ if(!board) throw new Error('board required');
+ const environment={configDir:kicadConfig,variables:{KICAD10_FOOTPRINT_DIR:join(kicadShared,'footprints'),KICAD10_SYMBOL_DIR:join(kicadShared,'symbols')},repositories:pinnedRepos.filter(r=>r.needed==='gate').map(r=>r.dir)};
+ const externalRoots={kicad:kicadShared,kicad_config:kicadConfig,...Object.fromEntries(pinnedRepos.map(r=>[r.name,r.dir]))};
+ drc=latestDrc(root,board,environment,externalRoots);
+} catch(error) {
+  console.error(`route plan: ${error.message}; run node tools/gate.mjs <BOARD> first`);
   process.exit(2);
 }
 const read = (name) => (existsSync(join(dir, name)) ? JSON.parse(readFileSync(join(dir, name), 'utf8')) : null);
@@ -29,7 +33,7 @@ const globToRegex = (g) => new RegExp(`^${g.replace(/[.+?^${}()|[\]\\]/g, '\\$&'
 const fast = fastGlobs.map(globToRegex);
 
 const nets = new Map();
-for (const u of JSON.parse(readFileSync(drcFile, 'utf8')).unconnected_items ?? []) {
+for (const u of drc.unconnected_items) {
   const [a, b] = u.items;
   const name = /\[([^\]]+)\]/.exec(a.description)?.[1] ?? '?';
   const len = Math.hypot(a.pos.x - b.pos.x, a.pos.y - b.pos.y);

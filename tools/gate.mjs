@@ -13,8 +13,8 @@
 //   "pairs": "diff-pairs.json", "paths": "current-paths.json", "viapads": {"allow": ["U1.9"]},
 //   "kicad_happy": {"exempt": "kicad-happy-exempt.json", "grounds": []}, "port_labels": true, "rf": "rf-lines.json"}}
 // Only the listed checks run. Metric levels and targets: tools/lib/gate-core.mjs.
-// Waivers: <board>/gate-waivers.json, a list of {metric, to, reason, date}.
-// The full tool output goes to <board>/.gate/ (not tracked).
+// Ratchet waivers: {metric, from, to, reason, owner, date, expires, revision, inputFingerprint}.
+// Waivers cannot make a target gate pass. Full tool output goes to isolated .gate/run-* directories.
 
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';

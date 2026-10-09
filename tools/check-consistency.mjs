@@ -32,6 +32,7 @@ import {createHash} from 'node:crypto';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {resolveApiKey, systemOne, DEFAULT_MODEL} from './lib/jev-client.mjs';
+import {inspectPackets,loadBoardRegistry,parseCsv} from './lib/board-packets.mjs';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 const DRY_RUN = process.argv.includes('--dry-run');
@@ -112,29 +113,55 @@ const TOPICS = [
   },
 ];
 
-const BOARDS = ['BASE-PWR', 'POE-ETHERNET', 'BACKUP-POWER', 'PQ-METER'];
+const boardRegistry=loadBoardRegistry(REPO);
+const BOARDS=boardRegistry.boards.filter(e=>e.lifecycle==='active' && e.kind==='board').map(e=>e.directory);
 
 // ---------- deterministic layer ----------
 async function checkBomAgainstRegistry(components) {
   const byLcsc = new Map(components.map((c) => [c.lcsc, c]));
-  const findings = [];
+  const packets=inspectPackets(REPO,boardRegistry);
+  const findings = [...packets.findings];
   let rows = 0;
   for (const board of BOARDS) {
     const csv = await readProject(`hardware-design/boards/${board}/BOM-VERIFIED.csv`).catch(() => '');
-    for (const [i, line] of csv.split('\n').entries()) {
-      if (i === 0 || !line.trim()) continue; // header / blank
+    let csvRows=[];
+    try {csvRows=parseCsv(csv);}catch{continue;} // packet layer records malformed CSV
+    for (const [i, row] of csvRows.entries()) {
+      if (i === 0) continue;
       rows++;
-      const lcsc = (line.split(',')[3] || '').trim();
+      const lcsc = (row[3] || '').trim();
       if (!lcsc) continue;
       const rec = byLcsc.get(lcsc);
       if (!rec) {
-        findings.push({level: 'warn', check: 'bom_registry_record', detail: `${board} BOM-VERIFIED.csv:${i + 1} lists ${lcsc} with no registry record`});
+        findings.push({level: 'alert', check: 'bom_registry_record', detail: `${board} BOM-VERIFIED.csv record ${i + 1} lists ${lcsc} with no attributable component registry record`});
       } else if (rec.state.startsWith('excluded')) {
         findings.push({level: 'alert', check: 'bom_excluded_part', detail: `${board} BOM-VERIFIED.csv:${i + 1} lists ${rec.mpn} (${lcsc}) whose registry state is "${rec.state}"`});
+      } else if (!['electrically-selected','cad-verified','ordered','assembled','bench-validated'].includes(rec.state)) {
+        findings.push({level:'alert',check:'bom_candidate_state',detail:`${board} ${lcsc}: registry state ${rec.state} does not establish electrical/CAD selection`});
+      }
+      if(rec && rec.mpn!==row[2]?.trim()) findings.push({level:'alert',check:'bom_mpn_identity',detail:`${board} ${lcsc}: BOM MPN differs from component registry ${rec.mpn}`});
+      if(rec) {
+        for(const key of ['evidence','datasheet']) if(!rec[key]) findings.push({level:'alert',check:'bom_evidence',detail:`${board} ${lcsc}: missing ${key} attribution`});
+        if(rec.evidence) {
+          try {
+            const path=`hardware-design/registry/${rec.evidence}`;
+            const snapshot=JSON.parse(await readProject(path));
+            const source=await readProject(path.replace(/\.json$/,'.html'));
+            if(snapshot.expected_lcsc!==lcsc || !snapshot.identity_matched || !snapshot.stock_verified || !snapshot.fetched_at_utc || sha256(source)!==snapshot.source_sha256) throw new Error('identity/stock/source hash not verified');
+          }catch(error){findings.push({level:'alert',check:'bom_stock_evidence',detail:`${board} ${lcsc}: ${error.message}`});}
+        }
+        if(rec.datasheet) {
+          try {
+            const path=`hardware-design/registry/${rec.datasheet}`;
+            const pdf=await readFile(join(REPO,path));
+            const source=JSON.parse(await readProject(path+'.source.json'));
+            if(!source.source_url || !source.fetched_at_utc || sha256(pdf)!==source.sha256) throw new Error('datasheet provenance/hash mismatch');
+          }catch(error){findings.push({level:'alert',check:'bom_datasheet_evidence',detail:`${board} ${lcsc}: ${error.message}`});}
+        }
       }
     }
   }
-  return {rows_checked: rows, findings};
+  return {boards_checked:BOARDS,packet_coverage:packets.checked,rows_checked: rows, findings};
 }
 
 // ---------- semantic layer ----------
@@ -167,7 +194,9 @@ async function buildBoardCall(docs) {
   for (const board of BOARDS) {
     const key = `board_${board.toLowerCase().replace(/-/g, '_')}`;
     const status = await readProject(`hardware-design/boards/${board}/STATUS.md`).catch(() => '(missing)');
-    const spec = await readProject(`hardware-design/boards/${board}/SPEC.md`).catch(() => '(missing)');
+    const entry=boardRegistry.boards.find(e=>e.directory===board);
+    const specs=await Promise.all([...new Set(entry.revisions.map(r=>r.spec))].map(async file=>`${file}:\n${await readProject(`hardware-design/boards/${board}/${file}`).catch(()=>'(missing)')}`));
+    const spec=specs.join('\n\n');
     state[key] = clip(`STATUS.md:\n${status}\n\nSPEC.md:\n${spec}`, 5200);
     questions[`consistent_${key}`] = {
       type: 'noul',

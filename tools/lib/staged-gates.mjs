@@ -27,9 +27,11 @@ export function checkStaged(root) {
   const git=(args,opts={})=>execFileSync('git',['-C',root,...args],{encoding:'utf8',maxBuffer:256*1024*1024,...opts});
   const changed=git(['diff','--cached','--name-only','-z','--diff-filter=ACDMRT']).split('\0').filter(Boolean);
   if(!changed.length) return;
+  const indexTree=git(['write-tree']).trim();
   const snapshot=mkdtempSync(join(tmpdir(),'iot-lab-index-'));
   try {
     git(['checkout-index','--all',`--prefix=${snapshot}/`]);
+    if(git(['write-tree']).trim()!==indexTree) throw new Error('index changed while taking gate snapshot; retry the commit');
     const oldConfigs=new Map();
     const paths=git(['ls-tree','-r','--name-only','HEAD','hardware-design/boards']).split('\n').filter(p=>/\/gate.json$/.test(p));
     for(const p of paths) oldConfigs.set(p.split('/')[2],JSON.parse(git(['show',`HEAD:${p}`])));
@@ -51,6 +53,7 @@ export function checkStaged(root) {
     }
     // Stage only metrics derived from the index. Do not git-add working files.
     // Keep any unstaged user edits to metrics intact.
+    if(git(['write-tree']).trim()!==indexTree) throw new Error('index changed during gate checks; no generated metrics were staged');
     for(const {path,text} of results) {
       let staged=null;try{staged=git(['show',`:${path}`]);}catch{}
       const file=join(root,path);
@@ -64,11 +67,11 @@ export function checkStaged(root) {
     const parent=join(root,'.gate');mkdirSync(parent,{recursive:true});
     const evidence=mkdtempSync(join(parent,'staged-failure-'));
     const boardsDir=join(snapshot,'hardware-design/boards');
-    for(const board of readdirSync(boardsDir)) {
+    for(const board of existsSync(boardsDir)?readdirSync(boardsDir):[]) {
       const logs=join(boardsDir,board,'.gate');
       if(existsSync(logs)) cpSync(logs,join(evidence,board),{recursive:true});
     }
-    writeFileSync(join(evidence,'snapshot.json'),JSON.stringify({indexTree:git(['write-tree']).trim(),changed,error:error.message},null,2)+'\n');
+    writeFileSync(join(evidence,'snapshot.json'),JSON.stringify({indexTree,changed,error:error.message},null,2)+'\n');
     console.error(`staged failure evidence: ${evidence}`);
     throw error;
   } finally {rmSync(snapshot,{recursive:true,force:true});}

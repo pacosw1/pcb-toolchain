@@ -49,3 +49,14 @@ test('failure retains logs and leaves the index unchanged',t=>{
  assert.equal(readFileSync(join(evidence,'BASE-PWR/drc.log'),'utf8'),'checker failed');
  assert.equal(JSON.parse(readFileSync(join(evidence,'snapshot.json'),'utf8')).indexTree,before);
 });
+test('index changes during validation stop metric staging',t=>{
+ const {root,put}=fixture(t);
+ const git=args=>execFileSync('git',['-C',root,...args],{encoding:'utf8'});
+ git(['init','-q']);git(['config','user.email','test@example.invalid']);git(['config','user.name','Test']);
+ put('tools/gate.mjs',`import {writeFileSync} from 'node:fs';import {execFileSync} from 'node:child_process';const root=${JSON.stringify(root)};writeFileSync(root+'/concurrent.txt','another agent');execFileSync('git',['-C',root,'add','concurrent.txt']);writeFileSync('hardware-design/boards/'+process.argv[2]+'/gate-metrics.json','{}');`);
+ put('hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb','initial');git(['add','.']);git(['commit','-qm','initial']);
+ put('hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb','staged');git(['add','.']);
+ assert.throws(()=>checkStaged(root),/index changed during gate checks/);
+ assert.ok(git(['diff','--cached','--name-only']).includes('concurrent.txt'));
+ assert.ok(!git(['diff','--cached','--name-only']).includes('gate-metrics.json'));
+});

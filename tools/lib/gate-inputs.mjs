@@ -26,6 +26,16 @@ export function gateInputs(root, board, configName = 'gate.json', environment = 
   for (const p of walkFiles(dirname(project),native)) add(p);
   for (const p of readdirSync(dir)) if (p.endsWith('.json') && !['gate-metrics.json','gate-waivers.json'].includes(p)) add(join(dir,p));
   for (const ext of ['kicad_pcb','kicad_sch','kicad_pro','kicad_dru']) add(`${project}.${ext}`);
+  const sheets=[...files].filter(p=>p.endsWith('.kicad_sch'));const visited=new Set();
+  for(let i=0;i<sheets.length;i++) {
+    const sheet=sheets[i];if(visited.has(sheet) || !existsSync(sheet)) continue;
+    visited.add(sheet);
+    for(const m of readFileSync(sheet,'utf8').matchAll(/\(property "(?:Sheetfile|Sheet file)" "((?:\\.|[^"\\])*)"/g)) {
+      const name=JSON.parse('"'+m[1]+'"');
+      const path=resolve(dirname(sheet),name.replaceAll('${KIPRJMOD}',dirname(project)));
+      add(path);sheets.push(path);
+    }
+  }
   const text = [...files].filter(p=>existsSync(p)).map(p=>readFileSync(p,'utf8')).join('\n');
   const codes = new Set(text.match(/\bC\d+\b/g) ?? []);
   for (const code of codes) {
@@ -42,8 +52,13 @@ export function gateInputs(root, board, configName = 'gate.json', environment = 
       for(const [key,value] of Object.entries(environment.variables ?? {})) expanded=expanded.replaceAll('${'+key+'}',value);
       if (expanded.includes('${')) continue; // stock libraries recorded by tool versions below
       const target=resolve(dirname(project),expanded);
-      if (existsSync(target) && statSync(target).isDirectory()) walkFiles(target,native).forEach(add);
-      else add(target);
+      if (existsSync(target) && statSync(target).isDirectory()) {
+        // A footprint directory can hold thousands of unrelated library parts.
+        // KiCad loads the named .kicad_mod files; record those exact dependencies.
+        const escaped=name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+        const refs=new Set([...text.matchAll(new RegExp(`"${escaped}:([^"\\n]+)"`,'g'))].map(m=>m[1]));
+        for(const ref of refs) add(join(target,`${ref}.kicad_mod`));
+      } else add(target);
     }
   }
   add(join(root,'hardware-design/registry/courtyard-bodies.json'));

@@ -27,13 +27,6 @@ export const pinnedRepos = [
   {name: 'KiCadRoutingPlacementTools', env: 'KRPT_DIR', commit: '409d53e', dir: repo('KiCadRoutingPlacementTools', 'KRPT_DIR'), needed: 'optional'},
 ];
 
-export const freeroutingJar = first([
-  process.env.FREEROUTING_JAR,
-  join(home, 'Documents/KiCad/9.0/3rdparty/plugins/app_freerouting_kicad-plugin/jar/freerouting-2.1.0.jar'),
-  join(home, 'Documents/KiCad/10.0/3rdparty/plugins/app_freerouting_kicad-plugin/jar/freerouting-2.1.0.jar'),
-  join(home, 'opt/freerouting/freerouting-2.1.0.jar'),
-]);
-
 // kicad-happy needs Python 3.10 or later. The macOS python3 and the KiCad Python are 3.9.
 // modernPython: env PYTHON_MODERN, else the first python3.1x on PATH, else 'python3' (doctor.mjs then reports it).
 function findModernPython() {
