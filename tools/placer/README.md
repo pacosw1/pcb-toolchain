@@ -182,3 +182,13 @@ and reports incomplete runs honestly. It cannot adopt settings or qualify a rele
 inputs under recorded competing load, compare opens/DRC/plane/pair/current-path/label checks and full
 gate results, and report time to compliant output. Smoke-test timings do not substantiate the earlier
 15–30 minute estimate; no BASE-B runtime saving has been measured yet.
+
+GPU decision (CIP 780, 2026-10-09): scalar CPU remains the default. The Torch
+installation and M3 Max results above are historical; Torch is absent in the
+current native KiCad Python. No GPU runtime was installed or current GPU
+benchmark run. Batch policy checks now run without Torch and before optional
+imports/global work; a live chain also rejects a switch to Lam before mutating
+its state. Never set active crossings, rows, pin demand or via-room terms to
+zero to enable batching. See `hardware-design/reports/2026-10-09-lean-gpu-decision.md`
+for the measured evidence, no-go decision, future trigger and unmet conditional
+prototype/adoption criteria.
