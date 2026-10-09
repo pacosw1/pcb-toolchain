@@ -40,6 +40,8 @@ test('optional scoped selection preserves historical identity and does not propa
   f.save();const scoped=await f.run();
   assert.equal(scoped.revision,'A');assert.equal(scoped.references.size,2);
   assert.equal(scoped.parts.get('C578974').state,'electrically-selected');
+  assert.deepEqual(Object.keys(scoped.parts.get('C578974')).sort(),Object.keys(f.ledger.parts[0]).sort());
+  assert.equal(scoped.references.get('U1'),scoped.parts.get('C578974'));
   f.put('hardware-design/boards/OTHER/SPEC.md','Other board');
   assert.equal(await f.run(f.csv,{directory:'OTHER',revisions:[{revision:'A',spec:'SPEC.md'}]}),null);
 });
@@ -53,6 +55,14 @@ test('scoped ledger rejects stale, malformed and forged attribution',async t=>{
     'bench state cannot be inferred from selection review':f=>{f.ledger.state=f.ledger.parts[0].state='bench-validated';},
     'fresh stock claim':f=>{f.ledger.stock_current=true;},
     'qualification claim':f=>{f.ledger.qualified=true;},
+    'part qualification claim':f=>{f.ledger.parts[0].qualified=true;},
+    'part fresh stock claim':f=>{f.ledger.parts[0].stock_current=true;},
+    'part release approval claim':f=>{f.ledger.parts[0].release_approved=true;},
+    'part ordered claim':f=>{f.ledger.parts[0].ordered=true;},
+    'part assembled claim':f=>{f.ledger.parts[0].assembled=true;},
+    'part order record claim':f=>{f.ledger.parts[0].order={status:'ordered'};},
+    'part assembly record claim':f=>{f.ledger.parts[0].assembly={status:'assembled'};},
+    'unknown part field cannot propagate':f=>{f.ledger.parts[0].extra='unsupported';},
     'missing required review':f=>{delete f.ledger.review_evidence[f.ledger.selection_review];},
     'altered review':f=>{f.put(f.ledger.selection_review,'changed review');},
     'duplicate part identity':f=>{f.ledger.parts.push(structuredClone(f.ledger.parts[0]));},

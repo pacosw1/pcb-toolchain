@@ -7,6 +7,8 @@ const hash = value => typeof value==='string' && /^[a-f0-9]{64}$/.test(value);
 // This ledger proves historical design selection only. Later lifecycle states
 // need their own CAD/order/assembly/measurement evidence model.
 const states = new Set(['electrically-selected']);
+const partFields = ['lcsc','mpn','state','references','reviews','evidence','evidence_sha256',
+                    'observed_at_utc','datasheet','datasheet_sha256'];
 function need(condition, reason) { if(!condition) throw new Error(reason); }
 
 // Canonical relative paths plus realpath containment reject traversal and symlinks
@@ -65,6 +67,8 @@ export async function loadBoardSelection(root, entry, csv, rows) {
   need(Array.isArray(ledger.parts) && ledger.parts.length, 'selection parts missing');
   const parts=new Map(), references=new Map();
   for(const p of ledger.parts) {
+    need(p && typeof p==='object' && !Array.isArray(p) &&
+         Object.keys(p).every(key=>partFields.includes(key)), 'unsupported selection part field/lifecycle claim');
     need(/^C\d+$/.test(p.lcsc) && typeof p.mpn==='string' && p.mpn.trim()===p.mpn && p.mpn &&
          !parts.has(p.lcsc), 'invalid/duplicate selection part identity');
     need(p.state===ledger.state && states.has(p.state), 'selection part state mismatch');
@@ -72,9 +76,13 @@ export async function loadBoardSelection(root, entry, csv, rows) {
          'selection references missing');
     need(Array.isArray(p.reviews) && p.reviews.includes(ledger.selection_review) &&
          p.reviews.every(path=>hash(ledger.review_evidence[path])), 'selection part review missing');
+    // Return only the validated historical schema, never arbitrary manifest
+    // properties or mutable aliases to its arrays.
+    const selected=Object.fromEntries(partFields.map(key=>[key,
+      Array.isArray(p[key]) ? [...p[key]] : p[key]]));
     for(const ref of p.references) {
       need(!references.has(ref), 'duplicate selected reference');
-      references.set(ref,p);
+      references.set(ref,selected);
     }
     need(hash(p.evidence_sha256) && hash(p.datasheet_sha256), 'selection evidence hashes missing');
     const registry='hardware-design/registry';
@@ -95,7 +103,7 @@ export async function loadBoardSelection(root, entry, csv, rows) {
     need(sha(pdf)===p.datasheet_sha256 && receipt.sha256===p.datasheet_sha256 &&
          typeof receipt.source_url==='string' && /^https?:\/\//.test(receipt.source_url) &&
          Number.isFinite(Date.parse(receipt.fetched_at_utc)), 'selection PDF provenance/hash mismatch');
-    parts.set(p.lcsc,p);
+    parts.set(p.lcsc,selected);
   }
   const seen=new Set();
   for(const row of rows.slice(1)) {
