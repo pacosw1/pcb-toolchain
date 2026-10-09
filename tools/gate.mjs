@@ -11,7 +11,7 @@
 //
 // gate.json: {"project": "cad/MC-MAIN/MC-MAIN", "checks": {"erc": true, "drc": true, "planes": "reference-planes.json",
 //   "pairs": "diff-pairs.json", "paths": "current-paths.json", "viapads": {"allow": ["U1.9"]},
-//   "kicad_happy": {"exempt": "kicad-happy-exempt.json", "grounds": []}, "port_labels": true}}
+//   "kicad_happy": {"exempt": "kicad-happy-exempt.json", "grounds": []}, "port_labels": true, "rf": "rf-lines.json"}}
 // Only the listed checks run. Metric levels and targets: tools/lib/gate-core.mjs.
 // Waivers: <board>/gate-waivers.json, a list of {metric, to, reason, date}.
 // The full tool output goes to <board>/.gate/ (not tracked).
@@ -118,6 +118,11 @@ const jobs = {
     const findings = countFrom(out, /(\d+) kicad-happy findings/);
     const stale = out.split('\n').filter((l) => l.startsWith('STALE exempt')).length;
     return {kicad_happy_findings: findings === null ? null : findings + stale};
+  },
+  // RF line rule (tools/rf_lines.py + <board>/rf-lines.json, first used on CELLULAR 2026-10-09): GCPW width/gap, no via,
+  // length, coplanar and reference ground, ground via fence.
+  async rf() {
+    return {rf_failures: countFrom(await output('rf', kicadPython, [tool('rf_lines.py'), pcb, spec(c.rf)]), /rf_lines: \d+ PASS, (\d+) FAIL/)};
   },
   async port_labels() {
     return {port_label_failures: countFrom(await output('port_labels', kicadPython, [tool('port_labels.py'), pcb]), /port_labels: .* (\d+) failures/)};

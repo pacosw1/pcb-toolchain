@@ -15,6 +15,7 @@ export const METRICS = {
   paths_low: {level: 'soft', target: 0},
   kicad_happy_findings: {level: 'soft', target: 0},
   port_label_failures: {level: 'soft', target: 0},
+  rf_failures: {level: 'soft', target: 0},
 };
 
 // A metric of null means "the tool did not run". It never passes (fail closed).
