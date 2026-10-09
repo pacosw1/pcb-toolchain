@@ -30,7 +30,7 @@ SEARCH = {'grid': 0.05, 'p_swap': 0.1, 'p_rot': 0.1, 'swap_ratio': 1.5, 't_ratio
           'legal_step': 0.25, 'legal_radius': 5.0, 'legal_passes': 3, 'legal_time': 60.0,
           'ramp': 20.0, 'schedule': 'geometric', 'base_lam': 0.44, 'lam_rate': 0.885, 'lam_window': 500,
           'area_ref': 10.0, 'area_max': 5.0, 'normalize': 0, 'distinct': 0.0,
-          'mains': 0}  # mains 1: mains path check of the final candidates (mainspath.faults), a rank key after illegal
+          'mains': 0, 'legal_rotate': 1, 'max_displacement': 0}  # optional cumulative seed radius, 0 = unbounded
 
 
 def params_all(params):
@@ -95,6 +95,8 @@ class Mover:
         self.p_swap, self.p_rot = p['p_swap'], p['p_rot']
         self.box = tuple(pr['move_box']) if pr.get('move_box') else cost.outline_box(pr['board'])
         self.mov = [i for i in range(ev.n) if not ev.fixed[i]]
+        self.anchors = [(u['x'], u['y']) for u in pr['units']]
+        self.max_displacement = float(p['max_displacement'])
         self.rot = [i for i in self.mov if pr['units'][i].get('rotate', True)]
         q = p['swap_ratio']
         a = ev.area
@@ -128,6 +130,16 @@ class Mover:
         w = window * self.sc[i]
         dx = self._off(rng.uniform(-w, w), bx0 - x, bx1 - x)
         dy = self._off(rng.uniform(-w, w), by0 - y, by1 - y)
+        if self.max_displacement > 0:
+            ax, ay = self.anchors[i]
+            vx, vy = x+dx-ax, y+dy-ay
+            length = math.hypot(vx, vy)
+            if length > self.max_displacement:
+                scale = self.max_displacement/length
+                # Snap toward the seed, so rounding cannot exceed the radius.
+                vx = math.trunc(vx*scale/self.g)*self.g
+                vy = math.trunc(vy*scale/self.g)*self.g
+                dx, dy = ax+vx-x, ay+vy-y
         return [(i, x + dx, y + dy, ev.R[i])], 'translate'
 
 
@@ -254,13 +266,13 @@ def legalize(ev, params, clock=time.monotonic):
     end = clock() + p['legal_time']
     bad = []
     for k in range(int(p['legal_passes'])):
-        bad = _legal_pass(ev, p['legal_step'], p['legal_radius'] * 2 ** k, end, clock, p['legal_time'])
+        bad = _legal_pass(ev, p['legal_step'], p['legal_radius'] * 2 ** k, end, clock, p['legal_time'], bool(p['legal_rotate']), float(p['max_displacement']))
         if not bad:
             break
     return bad
 
 
-def _legal_pass(ev, step, radius, end, clock, limit):
+def _legal_pass(ev, step, radius, end, clock, limit, rotate=True, max_displacement=0):
     def check():
         if clock() > end:
             raise LegalizeTimeout([j for j in range(ev.n) if not ev.fixed[j] and ev.legal_penalty(j) > 1e-9], limit)
@@ -273,13 +285,16 @@ def _legal_pass(ev, step, radius, end, clock, limit):
         check()
         x0, y0, r0 = ev.X[i], ev.Y[i], ev.R[i]
         best = None
-        for rots in ([r0], [r for r in range(4) if r != r0]):
+        turns = [r for r in range(4) if r != r0] if rotate and ev.units[i].get('rotate', True) else []
+        for rots in ([r0], turns):
             first = None
             for k in range(1, rings + 1):
                 check()
                 for a, b in ring(k):
                     for r in rots:
                         x, y = x0 + a * step, y0 + b * step
+                        if max_displacement > 0 and math.hypot(x-ev.units[i]['x'], y-ev.units[i]['y']) > max_displacement+1e-9:
+                            continue
                         if ev.legal_penalty_at(i, x, y, r) > 1e-9:
                             continue
                         d = ev.propose([(i, x, y, r)])
@@ -335,6 +350,7 @@ def _epoch(task):
 def _finish(task):
     w, pose, p = task
     ev = _evaluator(pose, p)
+    prelegal_pose = ev.pose()
     timeout = False
     try:
         bad = legalize(ev, p)
@@ -342,7 +358,7 @@ def _finish(task):
         bad, timeout = e.illegal, True
     pr = _W['pr']
     mains = mainspath.faults(pr, ev.pose(), mainspath.domain_nets(pr)) if p['mains'] else []
-    return {'worker': w, 'pose': ev.pose(), 'cost': ev.cost, 'components': ev.components(),
+    return {'worker': w, 'pose': ev.pose(), 'prelegal_pose': prelegal_pose, 'cost': ev.cost, 'components': ev.components(),
             'illegal': [pr['units'][i]['name'] for i in bad], 'timeout': timeout, 'mains': mains}
 
 
