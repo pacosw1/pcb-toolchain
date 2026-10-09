@@ -69,6 +69,14 @@ class WorkflowTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 lean.select_real({'steps': [dict(k=1., board='b', runs=[0], passed=True)]}, d)
 
+    def test_pipeline_success_during_shutdown_grace_is_still_incomplete(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = subprocess.run([sys.executable, str(Path(lean.__file__)), 'exec', '--work', d,
+                                '--lock', str(Path(d) / 'lock'), '--budget', '.1', '--',
+                                sys.executable, '-c', 'import time;time.sleep(.2)'], capture_output=True, text=True)
+            self.assertEqual(p.returncode, 124)
+            self.assertEqual(json.loads((Path(d) / 'pipeline-outcome.json').read_text())['status'], 'timeout')
+
 
 if __name__ == '__main__':
     unittest.main()

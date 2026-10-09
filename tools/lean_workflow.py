@@ -183,8 +183,16 @@ def main():
             env = dict(os.environ, IOT_LEAN_ADMITTED='1', IOT_LEAN_DEADLINE=str(time.monotonic() + a.budget))
             result = run_stage(command, stage='pipeline', event_file=events, env=env,
                                deadline=float(env['IOT_LEAN_DEADLINE']) + 7)
+            if remaining(env['IOT_LEAN_DEADLINE']) <= 0:
+                atomic_json(work / 'pipeline-outcome.json', dict(status='timeout', qualified=False))
+                print('INCOMPLETE: work finished after the deadline', file=sys.stderr)
+                return 124
+            atomic_json(work / 'pipeline-outcome.json',
+                        dict(status='complete' if result.returncode == 0 else 'failed',
+                             returncode=result.returncode, qualified=False))
             return result.returncode
     except subprocess.TimeoutExpired:
+        atomic_json(work / 'pipeline-outcome.json', dict(status='timeout', qualified=False))
         print('INCOMPLETE: deadline reached; logs/checkpoints retained', file=sys.stderr)
         return 124
     except RuntimeError as e:
