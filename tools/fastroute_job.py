@@ -48,6 +48,7 @@ import route_features  # noqa: E402  (feature switches, tools/route-features.jso
 import lean_workflow as lean
 import thermal_repair
 import import_pose_guard
+import import_replay_guard
 import backend_quality
 
 BIN = os.environ.get("FASTROUTE_BIN") or os.path.expanduser("~/opt/fastroute/fastroute-0.1.7-macos-arm64/fastroute")
@@ -456,12 +457,16 @@ def _main(a=None):
     try:
         poses_before = import_pose_guard.snapshot(b)
         pose_grid = import_pose_guard.grid_nm(dsn, ses)
+        replay_path = os.path.join(a.outdir, 'import-copper-snapshot.kicad_pcb')
+        preserved = {t.m_Uuid.AsString() for t in b.GetTracks() if t.IsLocked()}
+        replay_before = import_replay_guard.snapshot(b, replay_path)
     except ValueError as exc:
         sys.exit('fastroute_job: SES pose integrity precondition failed; result is not verified: ' + str(exc))
     if not pcbnew.ImportSpecctraSES(b, ses):
         sys.exit("fastroute_job: SES import failed")
     try:
         restored = import_pose_guard.restore(b, poses_before, pose_grid)
+        replays = import_replay_guard.restore(b, replay_before, preserved, dsn, ses, replay_path)
     except ValueError as exc:
         sys.exit('fastroute_job: SES pose integrity failed; result is not verified: ' + str(exc))
     with open(os.path.join(a.outdir, 'import-pose-audit.json'), 'w') as audit:
@@ -470,6 +475,11 @@ def _main(a=None):
                        dsn_sha256=lean.digest(dsn), ses_sha256=lean.digest(ses),
                        before_snapshot_sha256=hashlib.sha256(json.dumps(poses_before, sort_keys=True).encode()).hexdigest(),
                        qualified=False, independent_native_gate_required=True), audit, indent=2)
+    with open(os.path.join(a.outdir, 'import-replay-audit.json'), 'w') as audit:
+        json.dump(dict(removed=replays, preserved_uuids=sorted(preserved),
+                       exact_preserved_source_policy=True, qualified=False,
+                       independent_native_gate_required=True,
+                       dsn_sha256=lean.digest(dsn), ses_sha256=lean.digest(ses)),audit,indent=2)
     for t in b.GetTracks():
         t.SetLocked(was.get(t.m_Uuid.AsString(), False))
     if skipped_copper() != skipped_before:

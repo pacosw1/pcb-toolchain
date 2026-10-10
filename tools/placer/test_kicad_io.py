@@ -170,6 +170,55 @@ class RoundTripTest(unittest.TestCase):
         kicad_io.write_board(self.board, pr, pose, out)
         self.assertIn(tid, [x.m_Uuid.AsString() for x in pcbnew.LoadBoard(out).GetTracks()])
 
+    def test_locked_bottom_track_membership_and_pth_smd_control(self):
+        b = pcbnew.LoadBoard(self.board)
+        track = next(t for t in b.GetTracks() if t.GetClass() == 'PCB_TRACK')
+        track.SetLayer(pcbnew.B_Cu)
+        track.SetLocked(True)
+        pcbnew.SaveBoard(self.board, b)
+        pr = kicad_io.read_problem(self.board)
+        self.assertIn(kicad_io._copper_row(b, track), pr['board']['fixed_copper_layers'])
+        actual = {fp.GetReference(): fp for fp in b.GetFootprints()}
+        for u in pr['units']:
+            pads = [p for ref in u['refs'] for p in actual[ref].Pads()]
+            self.assertEqual(len(pads), len(u['pad_copper_layers']))
+            for pad, layers in zip(pads, u['pad_copper_layers']):
+                self.assertEqual('B.Cu' in layers, pad.IsOnLayer(pcbnew.B_Cu))
+                self.assertEqual('F.Cu' in layers, pad.IsOnLayer(pcbnew.F_Cu))
+        pth = next((u, k) for u in pr['units'] for k, meta in enumerate(u['cu_pads'])
+                   if meta[1] == 'pth')
+        smd = next((u, k) for u in pr['units'] for k, layers in enumerate(u['pad_copper_layers'])
+                   if layers == ['F.Cu'])
+        board = {'outline': [[0, 0], [20, 0], [20, 20], [0, 20]], 'keepouts': [],
+                 'fixed_copper_layers': [['B.Cu', 9., 10., 11., 10., .2]]}
+        for (source, index), bad in ((pth, True), (smd, False)):
+            u = {'name': 'fixture', 'refs': ['fixture'], 'fixed': False, 'x': 10., 'y': 10.,
+                 'rects': [[-1., -1., 1., 1., 0.]], 'pad_rects': [[-.5, -.5, .5, .5]],
+                 'pad_copper_layers': [source['pad_copper_layers'][index]]}
+            ev = cost.Evaluator({'units': [u], 'nets': [], 'board': board}, {})
+            self.assertEqual(ev.legal_penalty(0) > 0., bad)
+
+    def test_locked_via_rows_record_actual_layer_span(self):
+        b = pcbnew.LoadBoard(self.board)
+        b.SetCopperLayerCount(4)
+        via = pcbnew.PCB_VIA(b)
+        via.SetPosition(pcbnew.VECTOR2I(int(10e6), int(10e6)))
+        via.SetWidth(int(.6e6))
+        via.SetDrill(int(.3e6))
+        via.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
+        via.SetLocked(True)
+        b.Add(via)
+        pcbnew.SaveBoard(self.board, b)
+        pr = kicad_io.read_problem(self.board)
+        rows = [r for r in pr['board']['fixed_copper_layers'] if r[1:5] == [10., 10., 10., 10.]]
+        self.assertTrue(rows)
+        self.assertEqual({r[0] for r in rows}, {'F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu'})
+        self.assertEqual(len(rows), 4)
+        self.assertTrue(all(r[0] != 'via' for r in rows))
+        via.SetViaType(pcbnew.VIATYPE_BLIND)
+        via.SetLayerPair(pcbnew.F_Cu, pcbnew.In1_Cu)
+        self.assertEqual({r[0] for r in kicad_io._layer_copper_rows(b, via)}, {'F.Cu', 'In1.Cu'})
+
     def test_a_connector_staged_wholly_outside_the_outline_is_movable(self):
         b = pcbnew.LoadBoard(self.board)
         j = b.FindFootprintByReference('J1')

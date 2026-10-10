@@ -611,6 +611,61 @@ class LockedCopperTest(unittest.TestCase):
     def test_a_courtyard_over_fixed_copper_is_legal(self):
         self.assertAlmostEqual(self.legal(8.5), 0.0)
 
+    def layered(self, layer, membership, *, legacy=False):
+        u = unit('TP7', 113., 101.7, [[-1.75, -1.75, 1.75, 1.75, 0.]])
+        u['pad_rects'] = [[-1.25, -1.25, 1.25, 1.25]]
+        if membership is not None:
+            u['pad_copper_layers'] = [membership]
+        row = [layer, 114.6, 100.95, 111., 100.95, .2]
+        board = dict(square_board(150.), fixed_copper=[row])
+        if not legacy:
+            board['fixed_copper_layers'] = [row]
+        pr = problem([u], [], board)
+        return pr, cost.Evaluator(pr, P)
+
+    def test_pth_over_locked_bottom_or_inner_copper_is_hard_illegal(self):
+        from placer import anneal
+        for layer in ('B.Cu', 'In2.Cu'):
+            with self.subTest(layer=layer):
+                pr, ev = self.layered(layer, ['F.Cu', 'In2.Cu', 'B.Cu'])
+                self.assertGreater(ev.legal_penalty(0), 0.)
+                self.assertGreater(ev.legal_penalty_at(0, 113., 101.7, 0), 0.)
+                self.assertGreater(cost.forbidden(pr, ev.pose(), ev.mask, 0), 0.)
+                self.assertAlmostEqual(ev.components()['oob'],
+                                       cost.components(pr, ev.pose(), P)['oob'])
+                # A zero-radius pass cannot claim a collision is legal.
+                self.assertEqual(anneal.legalize(ev, dict(P, legal_radius=0., legal_time=5.)), [0])
+
+    def test_top_smd_over_bottom_copper_remains_legal(self):
+        pr, ev = self.layered('B.Cu', ['F.Cu'])
+        self.assertEqual(ev.legal_penalty(0), 0.)
+        self.assertEqual(ev.unit_penalty(0), 0.)
+        self.assertEqual(cost.forbidden(pr, ev.pose(), ev.mask, 0), 0.)
+        self.assertGreater(ev.legal_penalty_at(0, 151., 101.7, 0), 0.)
+
+    def test_bottom_smd_and_spanned_via_use_only_shared_layers(self):
+        for membership, bad in ((['B.Cu'], True), (['F.Cu'], False), ([], False)):
+            pr, ev = self.layered('B.Cu', membership)
+            self.assertEqual(ev.legal_penalty(0) > 0., bad)
+
+    def test_legacy_missing_membership_and_unspanned_via_are_conservative(self):
+        for layer, membership in (('B.Cu', None), ('via', ['F.Cu'])):
+            pr, ev = self.layered(layer, membership, legacy=True)
+            self.assertGreater(ev.legal_penalty(0), 0.)
+
+    def test_layer_metadata_must_align_with_pad_boxes(self):
+        pr, ev = self.layered('B.Cu', ['F.Cu'])
+        pr['units'][0]['pad_copper_layers'] = []
+        with self.assertRaisesRegex(ValueError, 'align'):
+            cost.Evaluator(pr, P)
+
+    def test_malformed_membership_is_rejected(self):
+        for layers in ('B.Cu', ['B.Cu', 'B.Cu'], ['B.Mask'], ['Foo.Cu'], ['In63.Cu']):
+            pr, ev = self.layered('B.Cu', ['F.Cu'])
+            pr['units'][0]['pad_copper_layers'] = [layers]
+            with self.assertRaisesRegex(ValueError, 'distinct copper'):
+                cost.Evaluator(pr, P)
+
 
 class RoundRectTest(unittest.TestCase):
     """u['rho'] = [[rect index, radius]]: a round courtyard (a test point) is its box with corners rounded by the

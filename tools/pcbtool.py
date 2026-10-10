@@ -1329,13 +1329,32 @@ def copper_thickness(board):
     return {m[0]: float(m[1]) for m in re.findall(r'\(layer "([^"]+\.Cu)"\s+\(type "copper"\)\s+\(thickness ([0-9.]+)\)', text)}
 
 
+def physical_conductors(items, identity, rank):
+    """Count one physical conductor per exact geometry, never per UUID/label.
+
+    Same centerline/layer tracks are the widest copper union, not parallel area.
+    Same-position/span vias use the smallest drill conservatively; coincident
+    mismatched holes remain a native DRC fault. Distinct paths/via positions stay.
+    """
+    unique = {}
+    for item in items:
+        key = identity(item)
+        if key not in unique or rank(item) < rank(unique[key]): unique[key] = item
+    return list(unique.values())
+
+
 def net_graph(p, b, net, thick, dT, plating):
     """Copper graph of one net: tracks (IPC capacity), vias (barrel), filled zone islands (planes), pads."""
     mm, inf = p.ToMM, float('inf')
     pt_ = lambda v: (round(mm(v.x), 3), round(mm(v.y), 3))
     tracks = [t for t in b.GetTracks() if t.GetNetname() == net]
-    segs = [t for t in tracks if not isinstance(t, p.PCB_VIA)]
-    vias = [t for t in tracks if isinstance(t, p.PCB_VIA)]
+    xy = lambda q: (q.x,q.y)
+    def shape(t):
+        ends=tuple(sorted((xy(t.GetStart()),xy(t.GetEnd()))))
+        return (t.GetClass(),t.GetLayer(),ends,xy(t.GetMid()) if t.GetClass()=='PCB_ARC' else None)
+    segs = physical_conductors([t for t in tracks if not isinstance(t,p.PCB_VIA)],shape,lambda t:-t.GetWidth())
+    vias = physical_conductors([t for t in tracks if isinstance(t,p.PCB_VIA)],
+        lambda t:(xy(t.GetPosition()),t.TopLayer(),t.BottomLayer(),int(t.GetViaType())),lambda t:t.GetDrillValue())
     ends = [(t.GetLayerName(), pt_(e)) for t in segs for e in (t.GetStart(), t.GetEnd())]
     net_pads = [pd for fp in b.GetFootprints() for pd in fp.Pads() if pd.GetNumber() and pd.GetNetname() == net]
     edges, nodes_extra = [], []
