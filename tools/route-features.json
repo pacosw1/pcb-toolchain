@@ -33,6 +33,16 @@
       "classes": [],
       "fast_nets_file": "rp001-fast-nets.json",
       "learn_noroom": true
+    },
+    "routing_rules": {
+      "on": false,
+      "about": "D-125 (user rules 2026-10-10), tools/routing_rules.py, in tools/fastroute_job.py. 1: staged order, each stage's copper locked for the next: pairs_clocks (diff-pairs.json, clock_patterns), fast (rp001-fast-nets.json), wide (current-paths.json, net classes wider than Default, reference-planes power patterns; a switch node in the fast list is wide), rest, then a last pass with no keepout for the plane nets (--route-planes) and the nets a stage left open (their stage copper ripped up first). OFF: the A/B of 2026-10-10 (D-125) lost completion. A stage is split into its signal nets (keepouts) and its power/ground/exempt nets (no keepout): Fastroute 0.1.7 has no per-net keepout. 2: --router.scoring.via_costs=via_costs unless the caller sets it; OUTDIR/via-report.json (vias per stage and net class; fast-net vias with no ground via within the spec via_allow_mm), line VIAS_BY_STAGE. 3: before each signal stage the zones are refilled and every area of a job layer whose reference-planes.json adjacent layer has no ground / alt_ref copper (keepout_grid_mm scan; a disc of pad/via radius + disc_margin_mm, at most via_allow_mm, round each pad and via of a non-reference net stays open: pin access and antipads) becomes a DSN wire_keepout. OUTDIR/stage-plan.json; lines STAGES and STAGE. Off for BASE-PWR-B (its mandatory preflight).",
+      "via_costs": 300,
+      "keepouts": true,
+      "keepout_stages": ["pairs_clocks", "fast", "wide", "rest"],
+      "keepout_grid_mm": 0.1,
+      "disc_margin_mm": 0.35,
+      "clock_patterns": ["*CLK*", "*SCK*", "*XTAL*", "*OSC*"]
     }
   }
 }

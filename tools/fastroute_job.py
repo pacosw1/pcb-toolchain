@@ -26,6 +26,11 @@ ROUTE_FEATURES="name=1,..." last; tools/route_features.py show BOARD prints them
   rule_compiler      before routing: .kicad_dru (+ extra rules) -> per-net use_layer masks, via bans, class_class
   via_halo           the --signal-via padstack (size_mm) for the selected nets, also with no --signal-via argument
   triage_opens       after routing: tools/route_grid.py triage -> OUTDIR/open-triage.json (+ <board>/.gate/), "TRIAGE ..."
+  routing_rules      D-125 (tools/routing_rules.py): the router runs once per stage (pairs/clocks, fast, wide, rest; then a
+                     last pass for the plane nets and the nets a stage left open, their stage copper ripped up), each stage's copper locked for the next; via cost via_costs; DSN wire
+                     keepouts over the missing reference plane for the signal stages. OUTDIR/stage-plan.json,
+                     OUTDIR/via-report.json; lines "STAGES ...", "STAGE ...", "VIAS_BY_STAGE ...". Per-stage files have the
+                     stage in the name (board-fast.dsn, report-fast.json); the last pass keeps the plain names.
 The feature lines are printed before the UNROUTED line (callers read the last UNROUTED line).
 """
 import argparse
@@ -52,6 +57,7 @@ import thermal_repair
 import import_pose_guard
 import import_replay_guard
 import backend_quality
+import routing_rules  # noqa: E402  (D-125 staged order, via cost, reference-plane keepouts)
 
 BIN = os.environ.get("FASTROUTE_BIN") or os.path.expanduser("~/opt/fastroute/fastroute-0.1.7-macos-arm64/fastroute")
 KICAD_CLI = os.environ.get("KICAD_CLI", "/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli")
@@ -304,12 +310,6 @@ def _main(a=None):
     unlock = {n for n in a.unlock_nets.split(",") if n}
     for t in b.GetTracks():
         was[t.m_Uuid.AsString()] = t.IsLocked()
-        # --unlock-nets: the copper of these nets goes to the router as normal wiring (a start it may rip up and
-        # route again); a locked item stays locked
-        t.SetLocked(t.IsLocked() or t.GetNetname() not in unlock)
-    dsn, ses, rep = (os.path.join(a.outdir, n) for n in ("board.dsn", "board.ses", "report.json"))
-    if not pcbnew.ExportSpecctraDSN(b, dsn):
-        sys.exit("fastroute_job: DSN export failed")
     # --route-planes: the router also gets the plane nets. Fastroute connects a pad to its plane with a via of its
     # own where gnd_pad_vias.py found no free place (it accepts a connection that ends in a via into the plane).
     skip = [p for p in a.skip_net.split(",") if p] + ([] if a.route_planes else planes)
@@ -330,11 +330,6 @@ def _main(a=None):
                             "escape", base, "--layers", a.layers, "--skip", "", "--nets", routed_nets_file(),
                             "--out", os.path.join(a.outdir, "pin-escape.json")], stage="pin-escape", event_file=phases, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         print(([l for l in p.stdout.splitlines() if l.startswith("ESCAPE")] or ["ESCAPE failed"])[-1], flush=True)
-    with open(dsn) as f:
-        # Keep electrical membership: exclusions are applied as dedicated router
-        # classes after rule and padstack transformations below.
-        text = freeroute.restrict_dsn(f.read(), set(a.layers.split(",")), None)
-    net_class = route_features.dsn_classes(text)
     mandatory_masks = {}
     if base_b_cfg:
         layers = [l for l in a.layers.split(',') if l]
@@ -345,226 +340,384 @@ def _main(a=None):
                 sys.exit(f'BASE-B no legal routing layer for {n}')
             if allow != layers:
                 mandatory_masks[n] = allow
-    if route_features.on(feat, "via_halo"):
-        # The CELLULAR halo for every board: the selected nets get the larger via padstack (room for an RP-001 via).
-        hn = route_features.halo_nets(feat, sorted(nets), net_class, feat["_board_dir"], a.board)
-        if a.signal_via and a.signal_via_nets:
-            hn = sorted(set(hn) | {n for n in a.signal_via_nets.split(",") if n})
-        if hn:
-            a.signal_via = a.signal_via or float(feat["via_halo"].get("size_mm", 1.8))
-            a.signal_via_nets = ",".join(hn)
-        print(f"VIA_HALO {len(hn)} nets, {a.signal_via:g} mm", flush=True)
-    if a.signal_via:
-        text = big_signal_via(text, a.signal_via, [c for c in a.signal_via_classes.split(",") if c],
-                              [n for n in a.signal_via_nets.split(",") if n])
-    if route_features.on(feat, "rule_compiler"):
-        pad_layers = {}
-        for fp in b.GetFootprints():
-            for p in fp.Pads():
-                pad_layers.setdefault(p.GetNetname(), set()).add("*" if p.GetDrillSize().x else p.GetLayerName())
-        dru_text = open(stem + ".kicad_dru").read() if os.path.isfile(stem + ".kicad_dru") else ""
-        rc_cfg = feat["rule_compiler"]
-        masks, pairs, notes = route_features.compile_dru(dru_text, sorted(nets), net_class, pad_layers,
-                                                         [l for l in a.layers.split(",") if l], rc_cfg.get("extra", []))
-        for n, allowed in mandatory_masks.items():
-            masks[n] = [l for l in masks.get(n, a.layers.split(',')) if l in allowed]
-            if not masks[n]:
-                sys.exit(f'BASE-B and compiled rules deny every layer for {n}')
-        text = route_features.apply_layer_masks(text, masks)
-        route_features.verify_layer_masks(text, masks)
-        if rc_cfg.get("class_class", True):
-            text = route_features.add_class_class(text, pairs)
-        with open(os.path.join(a.outdir, "rules.log"), "w") as f:
-            f.write("\n".join(notes) + "\n" + "".join(f"mask {n}: {' '.join(v)}\n" for n, v in sorted(masks.items())) +
-                    "".join(f"class_class {x} {y}: {v:g} mm\n" for (x, y), v in sorted(pairs.items())))
-        print(f"RULES masks {len(masks)} class_class {len(pairs) if rc_cfg.get('class_class', True) else 0} "
-              f"notes {len(notes)} (see rules.log)", flush=True)
-    elif mandatory_masks:
-        text = route_features.apply_layer_masks(text, mandatory_masks)
-        route_features.verify_layer_masks(text, mandatory_masks)
-    if route_features.on(feat, "via_off_small_pads"):
-        lim = pcbnew.FromMM(float(feat["via_off_small_pads"].get("max_pad_mm", 2.0)))
-        polys = []
-        job_layers = set(a.layers.split(","))
-        for fp in b.GetFootprints():
-            for p in fp.Pads():
-                ln = p.GetLayerName()
-                if p.GetDrillSize().x or ln not in job_layers:
-                    continue
-                bb = p.GetBoundingBox()
-                if min(bb.GetWidth(), bb.GetHeight()) >= lim:
-                    continue
-                ps = pcbnew.SHAPE_POLY_SET()
-                p.TransformShapeToPolygon(ps, p.GetLayer(), 0, 5000, pcbnew.ERROR_INSIDE)
-                if ps.OutlineCount():
-                    ol = ps.Outline(0)
-                    polys.append((ln, [(ol.CPoint(i).x / 1e6, ol.CPoint(i).y / 1e6) for i in range(ol.PointCount())]))
-        text = route_features.add_via_keepouts(text, polys)
-        print(f"VIAKEEP {len(polys)} SMD pads below {pcbnew.ToMM(lim):g} mm", flush=True)
     if unlock - nets:
         sys.exit('fastroute_job: skipped nets cannot have unlocked copper')
     if any(k.split('=', 1)[0] == 'router.autorouter.ignore_net_classes' for k in a.set):
         sys.exit('fastroute_job: ignored classes are derived from selected nets')
-    text, ignored_classes = dsn_skip.exclude(text, nets)
-    if ignored_classes:
-        help_result = lean.run_stage([BIN, '--help'], stage='net-class-capability', event_file=phases,
-                                     deadline=lean.deadline_after(10), stdout=subprocess.PIPE,
-                                     stderr=subprocess.PIPE, text=True)
-        if help_result.returncode or 'router.autorouter.ignore_net_classes' not in help_result.stdout:
-            sys.exit('fastroute_job: backend does not support safe net-class exclusion')
-    with open(dsn, "w") as f:
-        f.write(text)
+    # Routing rules (D-125, feature routing_rules): critical nets first in stages, each stage's copper locked for the
+    # next; a high via cost; keepouts over the missing reference plane for the signal nets. Without the feature the
+    # job is one pass over all nets, as before.
+    rules = route_features.on(feat, "routing_rules") and not base_b_cfg
+    passes = [("all", set(nets), False)]
+    rr_info, rr_plan, rr_spec, rr_cls = None, [], {}, {}
+    if rules:
+        rr_cfg = feat["routing_rules"]
+        rr_info = routing_rules.board_info(feat["_board_dir"], rr_cfg)
+        rr_spec = rr_info["spec"]
+        try:
+            pro = json.load(open(stem + ".kicad_pro"))["net_settings"]["classes"]
+        except (OSError, KeyError, ValueError):
+            pro = []
+        dflt = next((c.get("track_width", 0) for c in pro if c["name"] == "Default"), 0)
+        wide = {c["name"] for c in pro if c.get("track_width", 0) > dflt}
+        rr_cls = {str(k): str(v.GetNetClassName()) for k, v in b.GetNetsByName().items() if str(k)}
+        rr_plan = routing_rules.stage_plan(sorted(nets), rr_info, rr_cls, wide, planes=plane_names)
+        if not rr_cfg.get("keepouts", True) or not rr_spec.get("adjacent"):
+            rr_plan = [(n, s, False) for n, s, _ in rr_plan]
+        ks = rr_cfg.get("keepout_stages", list(routing_rules.STAGES))
+        rr_plan = [(n, s, k and n in ks) for n, s, k in rr_plan]
+        if len(rr_plan) > 1 or (rr_plan and rr_plan[0][2]):
+            passes = [(n, set(s), k) for n, s, k in rr_plan] + [("final", set(nets), False)]
+        print("STAGES " + " ".join(f"{n}={len(s)}{'K' if k else ''}" for n, s, k in rr_plan) +
+              " final=rest (K = reference-plane keepouts)", flush=True)
     min_um = int(round(b.GetDesignSettings().m_TrackMinWidth / 1000))
     edge_um = int(round(b.GetDesignSettings().m_CopperEdgeClearance / 1000))
-    cmd = [BIN, "-de", dsn, "-do", ses, "-mp", str(a.passes), f"--router.min_trace_width_um={min_um}",
-           f"--router.copper_to_edge_clearance_um={edge_um}",
-           f"--report={rep}", "--diagnose"] + [f"--{kv}" for kv in a.set]
-    if ignored_classes:
-        cmd.append('--router.autorouter.ignore_net_classes=' + ','.join(ignored_classes))
-    if a.neck_um:
-        cmd.append(f"--router.neck_width_um={a.neck_um}")
-    if backend_policy['mode'] == 'quality-first':
-        cmd.append('--quality-first')
-    # A pair that has copper on the board already (kept block copper) is not given to the pair router.
-    has_copper = {t.GetNetname() for t in b.GetTracks() if t.GetClass() != "PCB_VIA"}
-    pairs_file = write_pairs(a.pairs_json, stem + ".kicad_dru", nets - has_copper, os.path.join(a.outdir, "pairs.txt"))
-    if pairs_file:
-        cmd.append(f"--pairs={pairs_file}")
-    if a.max_time:
-        cmd.append(f"--max-time={a.max_time}")
-    # Bound both phases with the same remaining job budget, and cap both pools.
-    if a.optimizer != 'always':
-        cmd += lean.optimizer_options(a.optimizer)
-    if a.threads:
-        cmd += [f'--router.autorouter.max_threads={a.threads}', f'--router.optimizer.max_threads={a.threads}']
     sources = [os.environ.get('ROUTE_FEATURES_FILE') or route_features.DEFAULTS]
-    if feat['_board_dir']:
+    if feat.get('_board_dir'):
         sources += [os.path.join(feat['_board_dir'], 'gate.json'),
                     os.path.join(feat['_board_dir'], feat['via_halo'].get('fast_nets_file', 'rp001-fast-nets.json'))]
+    if rules and feat.get('_board_dir'):
+        sources += [os.path.join(feat['_board_dir'], f) for f in
+                    ('reference-planes.json', 'current-paths.json', 'diff-pairs.json')]
     if base_b_cfg:
         sources += policy_sources
     router_env = resources.router_env(a.threads)
-    effective = dict(configuration=vars(a), features=feat, command=cmd, dsn_sha256=lean.digest(dsn),
-                     backend_policy=backend_policy,
-                     feature_sources={p: lean.digest(p) for p in sources if os.path.isfile(p)},
-                     environment={k: os.environ.get(k) for k in ('ROUTE_FEATURES','ROUTE_BOARD','ROUTE_FEATURES_FILE')},
-                     backend_resources=dict(global_rayon_threads=int(router_env['RAYON_NUM_THREADS']),
-                          autorouter_workers=a.threads, optimizer_workers=a.threads,
-                          live_reservation=router_env.get('IOT_RESOURCE_TICKET'),
-                          scope='cooperating pool caps; coordinator and independently built pools are additional threads'),
-                     learned_halo=route_features.learned_halo(a.board, feat['_board_dir'])[1],
-                     mandatory_layer_masks=mandatory_masks, ignored_classes=ignored_classes, qualified=False)
     import hashlib
-    effective['effective_sha256'] = hashlib.sha256(json.dumps(effective, sort_keys=True).encode()).hexdigest()
-    lean.atomic_json(os.path.join(a.outdir, 'effective-configuration.json'), effective)
     t0 = lean.now()
     deadline = lean.deadline_after(a.max_time) if a.max_time else lean.inherited_deadline()
     phases = os.path.join(a.outdir, 'stages.jsonl')
-    with open(os.path.join(a.outdir, "run.log"), "w") as lf:
-        rc = lean.run_stage(cmd, stage='router-screen' if a.optimizer != 'always' else 'router',
-                            event_file=phases, deadline=deadline, env=router_env,
-                            stdout=lf, stderr=subprocess.STDOUT).returncode
-    if rc == 0 and a.optimizer == 'if-routed' and os.path.isfile(rep) and os.path.isfile(ses):
-        screen = json.load(open(rep))
-        if dsn_skip.routable_open(screen) == 0:
-            checkpoint = os.path.join(a.outdir, 'screen.ses')
-            shutil.copy(ses, checkpoint)
-            shutil.copy(rep, os.path.join(a.outdir, 'screen-report.json'))
-            optimize = [x for x in cmd if not x.startswith('--router.optimizer.enabled=')
-                        and not x.startswith('--max-time=')]
-            optimize += ['--router.optimizer.enabled=true', f'--initial-session={checkpoint}']
-            left = lean.remaining(deadline)
-            if left is not None:
-                optimize.append(f'--max-time={max(1, int(left))}')
-            with open(os.path.join(a.outdir, 'optimize.log'), 'w') as lf:
-                rc = lean.run_stage(optimize, stage='router-optimize', event_file=phases, deadline=deadline,
-                                    env=router_env, stdout=lf, stderr=subprocess.STDOUT).returncode
-        else:
-            print('OPTIMIZER deferred: screening result still has open connections', flush=True)
-    secs = int(lean.now() - t0)
-    if rc != 0 or not os.path.isfile(ses) or not os.path.isfile(rep):
-        sys.exit(f"fastroute_job: fastroute failed (rc {rc}), see {a.outdir}/run.log")
-    report = json.load(open(rep))
 
-    vias = lambda: sum(1 for t in b.GetTracks() if t.GetClass() == "PCB_VIA")
+    def vias():
+        return sum(1 for t in b.GetTracks() if t.GetClass() == "PCB_VIA")
 
     def key(t):
         e = t.GetEnd() if t.GetClass() == "PCB_TRACK" else t.GetStart()
         return (t.GetClass(), t.GetNetname(), t.GetLayer(), t.GetStart().x, t.GetStart().y, e.x, e.y)
-    copper_before = {key(t) for t in b.GetTracks()}
-    def skipped_copper(original_locks=False):
-        records = []
-        for t in b.GetTracks():
-            if t.GetNetname() in nets:
+
+    def stage_keepouts(stage_nets):
+        """Rule 3: the refilled planes of the board as it is now -> wire keepouts on each adjacent signal layer."""
+        # Pads and vias of the other nets keep a disc open (pin access, their antipad in the plane): radius + margin,
+        # margin = disc_margin_mm (above the 0.25 mm plane clearance) and never above the spec via_allow_mm. A
+        # reference-net pad or via makes no void in its own plane, so it opens nothing.
+        allow = min(float(rr_spec.get("via_allow_mm", 0.6)), float(feat["routing_rules"].get("disc_margin_mm", 0.35)))
+        refs = routing_rules.ref_nets(rr_spec)
+        pcbnew.ZONE_FILLER(b).Fill(b.Zones())
+        ps = pcbnew.SHAPE_POLY_SET()
+        b.GetBoardPolygonOutlines(ps, True)
+
+        def rings(poly, k):
+            rr_ = [poly.Outline(k)] + [poly.Hole(k, j) for j in range(poly.HoleCount(k))]
+            return [[(c.CPoint(i).x / 1e6, c.CPoint(i).y / 1e6) for i in range(c.PointCount())] for c in rr_]
+        outline = [r for k in range(ps.OutlineCount()) for r in rings(ps, k)]
+        fills = {}
+        for z in b.Zones():
+            if z.GetIsRuleArea():
                 continue
-            via = t.GetClass() == 'PCB_VIA'
-            mid = t.GetMid() if t.GetClass() == 'PCB_ARC' else t.GetStart()
-            records.append((key(t), t.GetEnd().x, t.GetEnd().y, mid.x, mid.y,
-                            tuple((layer, t.GetWidth(layer)) for layer in b.GetEnabledLayers().CuStack()) if via else t.GetWidth(),
-                            t.GetDrillValue() if via else 0,
-                            t.TopLayer() if via else t.GetLayer(),
-                            t.BottomLayer() if via else t.GetLayer(),
-                            was.get(t.m_Uuid.AsString(), False) if original_locks else t.IsLocked()))
-        return sorted(records)
-    skipped_before = skipped_copper(original_locks=True)
-    try:
-        poses_before = import_pose_guard.snapshot(b)
-        pose_grid = import_pose_guard.grid_nm(dsn, ses)
-        replay_path = os.path.join(a.outdir, 'import-copper-snapshot.kicad_pcb')
-        preserved = {t.m_Uuid.AsString() for t in b.GetTracks() if t.IsLocked()}
-        replay_before = import_replay_guard.snapshot(b, replay_path)
-    except ValueError as exc:
-        sys.exit('fastroute_job: SES pose integrity precondition failed; result is not verified: ' + str(exc))
-    with _native_phase('ses-import', phases):
-        if not pcbnew.ImportSpecctraSES(b, ses):
-            sys.exit("fastroute_job: SES import failed")
-    try:
-        restored = import_pose_guard.restore(b, poses_before, pose_grid)
-        replays = import_replay_guard.restore(b, replay_before, preserved, dsn, ses, replay_path)
-    except ValueError as exc:
-        sys.exit('fastroute_job: SES pose integrity failed; result is not verified: ' + str(exc))
-    with open(os.path.join(a.outdir, 'import-pose-audit.json'), 'w') as audit:
-        json.dump(dict(grid_nm=pose_grid, restored=restored, exact_poses_and_pads=True,
-                       guard_sha256=lean.digest(import_pose_guard.__file__),
-                       dsn_sha256=lean.digest(dsn), ses_sha256=lean.digest(ses),
-                       before_snapshot_sha256=hashlib.sha256(json.dumps(poses_before, sort_keys=True).encode()).hexdigest(),
-                       qualified=False, independent_native_gate_required=True), audit, indent=2)
-    with open(os.path.join(a.outdir, 'import-replay-audit.json'), 'w') as audit:
-        json.dump(dict(removed=replays, preserved_uuids=sorted(preserved),
-                       exact_preserved_source_policy=True, qualified=False,
-                       independent_native_gate_required=True,
-                       dsn_sha256=lean.digest(dsn), ses_sha256=lean.digest(ses)),audit,indent=2)
-    for t in b.GetTracks():
-        t.SetLocked(was.get(t.m_Uuid.AsString(), False))
-    if skipped_copper() != skipped_before:
-        sys.exit('fastroute_job: router changed excluded-net copper; result is not verified')
-    if a.signal_via:   # the routing padstack back to the class via size
-        pro = json.load(open(stem + ".kicad_pro"))["net_settings"]["classes"]
-        sizes = {c["name"]: (c["via_diameter"], c["via_drill"]) for c in pro}
-        n_big = 0
+            for lid in z.GetLayerSet().Seq():
+                f = z.GetFilledPolysList(lid)
+                fills.setdefault(b.GetLayerName(lid), []).extend(
+                    (z.GetNetname(), rings(f, k)) for k in range(f.OutlineCount()))
+        job_layers = [l for l in a.layers.split(",") if l]
+        discs = {L: [] for L in job_layers}
+        lid = {L: b.GetLayerID(L) for L in job_layers}
+        for p in b.GetPads():
+            if p.GetNetname() in refs:
+                continue
+            c, sz = p.GetPosition(), p.GetBoundingBox()
+            r = max(sz.GetWidth(), sz.GetHeight()) / 2e6 + allow
+            for L in job_layers:
+                if p.IsOnLayer(lid[L]):
+                    discs[L].append((c.x / 1e6, c.y / 1e6, r))
         for t in b.GetTracks():
-            if (t.GetClass() == "PCB_VIA" and t.GetNetname() in nets and key(t) not in copper_before
-                    and t.GetWidth(pcbnew.F_Cu) > pcbnew.FromMM(a.signal_via) - 1000):
-                d, dr = sizes.get(str(t.GetNetClassName()), sizes["Default"])
-                t.SetWidth(pcbnew.FromMM(d))
-                t.SetDrill(pcbnew.FromMM(dr))
-                n_big += 1
-        print(f"fastroute_job: {n_big} signal vias routed with the {a.signal_via:g} mm padstack, set to the class size",
-              flush=True)
-    if skipped_copper() != skipped_before:
-        sys.exit('fastroute_job: via normalization changed excluded-net copper; result is not verified')
+            if t.GetClass() == "PCB_VIA" and t.GetNetname() not in refs:
+                c = t.GetPosition()
+                for L in job_layers:
+                    discs[L].append((c.x / 1e6, c.y / 1e6, t.GetWidth(pcbnew.F_Cu) / 2e6 + allow))
+        fast = any(routing_rules._match(n, rr_info["fast"]) for n in stage_nets)
+        return routing_rules.layer_keepouts(rr_spec, job_layers, outline, fills, discs,
+                                            float(feat["routing_rules"].get("keepout_grid_mm", 0.1)), fast)
+
+    def route_pass(tag, stage_nets, keep):
+        """One router run over stage_nets (the other nets are ignored classes; existing copper stays locked)."""
+        sfx = "" if tag in ("all", "final") else "-" + tag
+        for t in b.GetTracks():
+            u = t.m_Uuid.AsString()
+            # --unlock-nets: the copper of these nets goes to the router as normal wiring (a start it may rip up and
+            # route again); a locked item stays locked. Copper of an earlier stage is locked.
+            t.SetLocked(True if u not in was else (was[u] or t.GetNetname() not in (unlock & stage_nets)))
+        dsn, ses, rep = (os.path.join(a.outdir, n) for n in (f"board{sfx}.dsn", f"board{sfx}.ses", f"report{sfx}.json"))
+        if not pcbnew.ExportSpecctraDSN(b, dsn):
+            sys.exit("fastroute_job: DSN export failed")
+        with open(dsn) as f:
+            # Keep electrical membership: exclusions are applied as dedicated router
+            # classes after rule and padstack transformations below.
+            text = freeroute.restrict_dsn(f.read(), set(a.layers.split(",")), None)
+        net_class = route_features.dsn_classes(text)
+        if route_features.on(feat, "via_halo"):
+            # The CELLULAR halo for every board: the selected nets get the larger via padstack (room for an RP-001 via).
+            hn = route_features.halo_nets(feat, sorted(nets), net_class, feat["_board_dir"], a.board)
+            if a.signal_via and a.signal_via_nets:
+                hn = sorted(set(hn) | {n for n in a.signal_via_nets.split(",") if n})
+            if hn:
+                a.signal_via = a.signal_via or float(feat["via_halo"].get("size_mm", 1.8))
+                a.signal_via_nets = ",".join(hn)
+            print(f"VIA_HALO {len(hn)} nets, {a.signal_via:g} mm", flush=True)
+        if a.signal_via:
+            text = big_signal_via(text, a.signal_via, [c for c in a.signal_via_classes.split(",") if c],
+                                  [n for n in a.signal_via_nets.split(",") if n])
+        if route_features.on(feat, "rule_compiler"):
+            pad_layers = {}
+            for fp in b.GetFootprints():
+                for p in fp.Pads():
+                    pad_layers.setdefault(p.GetNetname(), set()).add("*" if p.GetDrillSize().x else p.GetLayerName())
+            dru_text = open(stem + ".kicad_dru").read() if os.path.isfile(stem + ".kicad_dru") else ""
+            rc_cfg = feat["rule_compiler"]
+            masks, pairs, notes = route_features.compile_dru(dru_text, sorted(nets), net_class, pad_layers,
+                                                             [l for l in a.layers.split(",") if l], rc_cfg.get("extra", []))
+            for n, allowed in mandatory_masks.items():
+                masks[n] = [l for l in masks.get(n, a.layers.split(',')) if l in allowed]
+                if not masks[n]:
+                    sys.exit(f'BASE-B and compiled rules deny every layer for {n}')
+            text = route_features.apply_layer_masks(text, masks)
+            route_features.verify_layer_masks(text, masks)
+            if rc_cfg.get("class_class", True):
+                text = route_features.add_class_class(text, pairs)
+            with open(os.path.join(a.outdir, "rules.log"), "w") as f:
+                f.write("\n".join(notes) + "\n" + "".join(f"mask {n}: {' '.join(v)}\n" for n, v in sorted(masks.items())) +
+                        "".join(f"class_class {x} {y}: {v:g} mm\n" for (x, y), v in sorted(pairs.items())))
+            print(f"RULES masks {len(masks)} class_class {len(pairs) if rc_cfg.get('class_class', True) else 0} "
+                  f"notes {len(notes)} (see rules.log)", flush=True)
+        elif mandatory_masks:
+            text = route_features.apply_layer_masks(text, mandatory_masks)
+            route_features.verify_layer_masks(text, mandatory_masks)
+        if route_features.on(feat, "via_off_small_pads"):
+            lim = pcbnew.FromMM(float(feat["via_off_small_pads"].get("max_pad_mm", 2.0)))
+            polys = []
+            job_layers = set(a.layers.split(","))
+            for fp in b.GetFootprints():
+                for p in fp.Pads():
+                    ln = p.GetLayerName()
+                    if p.GetDrillSize().x or ln not in job_layers:
+                        continue
+                    bb = p.GetBoundingBox()
+                    if min(bb.GetWidth(), bb.GetHeight()) >= lim:
+                        continue
+                    ps = pcbnew.SHAPE_POLY_SET()
+                    p.TransformShapeToPolygon(ps, p.GetLayer(), 0, 5000, pcbnew.ERROR_INSIDE)
+                    if ps.OutlineCount():
+                        ol = ps.Outline(0)
+                        polys.append((ln, [(ol.CPoint(i).x / 1e6, ol.CPoint(i).y / 1e6) for i in range(ol.PointCount())]))
+            text = route_features.add_via_keepouts(text, polys)
+            print(f"VIAKEEP {len(polys)} SMD pads below {pcbnew.ToMM(lim):g} mm", flush=True)
+        n_keep = 0
+        if keep:
+            ko = stage_keepouts(stage_nets)
+            n_keep = sum(len(v) for v in ko.values())
+            text = routing_rules.add_wire_keepouts(text, ko)
+        text, ignored_classes = dsn_skip.exclude(text, stage_nets)
+        if ignored_classes:
+            help_result = lean.run_stage([BIN, '--help'], stage='net-class-capability', event_file=phases,
+                                         deadline=lean.deadline_after(10), stdout=subprocess.PIPE,
+                                         stderr=subprocess.PIPE, text=True)
+            if help_result.returncode or 'router.autorouter.ignore_net_classes' not in help_result.stdout:
+                sys.exit('fastroute_job: backend does not support safe net-class exclusion')
+        with open(dsn, "w") as f:
+            f.write(text)
+        cmd = [BIN, "-de", dsn, "-do", ses, "-mp", str(a.passes), f"--router.min_trace_width_um={min_um}",
+               f"--router.copper_to_edge_clearance_um={edge_um}",
+               f"--report={rep}", "--diagnose"] + [f"--{kv}" for kv in a.set]
+        if rules and not any(k.split('=', 1)[0] == 'router.scoring.via_costs' for k in a.set):
+            # Rule 2: a layer change costs much more than Freerouting's default (50), so the router changes layer
+            # only where the detour is long. A caller's own --set router.scoring.via_costs wins.
+            cmd.append(f"--router.scoring.via_costs={int(feat['routing_rules'].get('via_costs', 300))}")
+        if ignored_classes:
+            cmd.append('--router.autorouter.ignore_net_classes=' + ','.join(ignored_classes))
+        if a.neck_um:
+            cmd.append(f"--router.neck_width_um={a.neck_um}")
+        if backend_policy['mode'] == 'quality-first':
+            cmd.append('--quality-first')
+        # A pair that has copper on the board already (kept block copper) is not given to the pair router.
+        has_copper = {t.GetNetname() for t in b.GetTracks() if t.GetClass() != "PCB_VIA"}
+        pairs_file = write_pairs(a.pairs_json, stem + ".kicad_dru", stage_nets - has_copper,
+                                 os.path.join(a.outdir, f"pairs{sfx}.txt"))
+        if pairs_file:
+            cmd.append(f"--pairs={pairs_file}")
+        if a.max_time:
+            left = lean.remaining(deadline) if len(passes) > 1 else a.max_time
+            cmd.append(f"--max-time={max(1, int(left))}")
+        # Bound both phases with the same remaining job budget, and cap both pools.
+        if a.optimizer != 'always':
+            cmd += lean.optimizer_options(a.optimizer)
+        if a.threads:
+            cmd += [f'--router.autorouter.max_threads={a.threads}', f'--router.optimizer.max_threads={a.threads}']
+        effective = dict(configuration=vars(a), features=feat, command=cmd, dsn_sha256=lean.digest(dsn),
+                         backend_policy=backend_policy,
+                         feature_sources={p: lean.digest(p) for p in sources if os.path.isfile(p)},
+                         environment={k: os.environ.get(k) for k in ('ROUTE_FEATURES','ROUTE_BOARD','ROUTE_FEATURES_FILE')},
+                         backend_resources=dict(global_rayon_threads=int(router_env['RAYON_NUM_THREADS']),
+                              autorouter_workers=a.threads, optimizer_workers=a.threads,
+                              live_reservation=router_env.get('IOT_RESOURCE_TICKET'),
+                              scope='cooperating pool caps; coordinator and independently built pools are additional threads'),
+                         learned_halo=route_features.learned_halo(a.board, feat['_board_dir'])[1],
+                         mandatory_layer_masks=mandatory_masks, ignored_classes=ignored_classes, qualified=False)
+        if rules:
+            effective.update(stage=tag, stage_nets=sorted(stage_nets), keepouts=n_keep)
+        effective['effective_sha256'] = hashlib.sha256(json.dumps(effective, sort_keys=True).encode()).hexdigest()
+        lean.atomic_json(os.path.join(a.outdir, f'effective-configuration{sfx}.json'), effective)
+        s0 = lean.now()
+        with open(os.path.join(a.outdir, f"run{sfx}.log"), "w") as lf:
+            rc = lean.run_stage(cmd, stage=('router-screen' if a.optimizer != 'always' else 'router') + sfx,
+                                event_file=phases, deadline=deadline, env=router_env,
+                                stdout=lf, stderr=subprocess.STDOUT).returncode
+        if rc == 0 and a.optimizer == 'if-routed' and os.path.isfile(rep) and os.path.isfile(ses):
+            screen = json.load(open(rep))
+            if dsn_skip.routable_open(screen) == 0:
+                checkpoint = os.path.join(a.outdir, f'screen{sfx}.ses')
+                shutil.copy(ses, checkpoint)
+                shutil.copy(rep, os.path.join(a.outdir, f'screen-report{sfx}.json'))
+                optimize = [x for x in cmd if not x.startswith('--router.optimizer.enabled=')
+                            and not x.startswith('--max-time=')]
+                optimize += ['--router.optimizer.enabled=true', f'--initial-session={checkpoint}']
+                left = lean.remaining(deadline)
+                if left is not None:
+                    optimize.append(f'--max-time={max(1, int(left))}')
+                with open(os.path.join(a.outdir, f'optimize{sfx}.log'), 'w') as lf:
+                    rc = lean.run_stage(optimize, stage='router-optimize' + sfx, event_file=phases, deadline=deadline,
+                                        env=router_env, stdout=lf, stderr=subprocess.STDOUT).returncode
+            else:
+                print('OPTIMIZER deferred: screening result still has open connections', flush=True)
+        if rc != 0 or not os.path.isfile(ses) or not os.path.isfile(rep):
+            sys.exit(f"fastroute_job: fastroute failed (rc {rc}), see {a.outdir}/run{sfx}.log")
+        report = json.load(open(rep))
+        copper_before = {key(t) for t in b.GetTracks()}
+
+        def skipped_copper(original_locks=False):
+            records = []
+            for t in b.GetTracks():
+                if t.GetNetname() in stage_nets:
+                    continue
+                via = t.GetClass() == 'PCB_VIA'
+                mid = t.GetMid() if t.GetClass() == 'PCB_ARC' else t.GetStart()
+                records.append((key(t), t.GetEnd().x, t.GetEnd().y, mid.x, mid.y,
+                                tuple((layer, t.GetWidth(layer)) for layer in b.GetEnabledLayers().CuStack()) if via else t.GetWidth(),
+                                t.GetDrillValue() if via else 0,
+                                t.TopLayer() if via else t.GetLayer(),
+                                t.BottomLayer() if via else t.GetLayer(),
+                                was.get(t.m_Uuid.AsString(), False) if original_locks else t.IsLocked()))
+            return sorted(records)
+        skipped_before = skipped_copper(original_locks=True)
+        try:
+            poses_before = import_pose_guard.snapshot(b)
+            pose_grid = import_pose_guard.grid_nm(dsn, ses)
+            replay_path = os.path.join(a.outdir, f'import-copper-snapshot{sfx}.kicad_pcb')
+            preserved = {t.m_Uuid.AsString() for t in b.GetTracks() if t.IsLocked()}
+            replay_before = import_replay_guard.snapshot(b, replay_path)
+        except ValueError as exc:
+            sys.exit('fastroute_job: SES pose integrity precondition failed; result is not verified: ' + str(exc))
+        with _native_phase('ses-import' + sfx, phases):
+            if not pcbnew.ImportSpecctraSES(b, ses):
+                sys.exit("fastroute_job: SES import failed")
+        dup = []
+        if rules:
+            # Fastroute 0.1.7 sometimes writes one segment twice (two wires of a net share it; seen with and without
+            # this feature, INPUT-4D2A and CELLULAR smoke runs). The second of two new tracks with the same net,
+            # layer, width and end points is identical copper: it is deleted before the replay guard, and listed.
+            seen = set()
+            for t in list(b.GetTracks()):
+                if t.GetClass() != "PCB_TRACK" or t.m_Uuid.AsString() in was or t.IsLocked():
+                    continue
+                g = key(t)[:3] + (t.GetWidth(),) + tuple(sorted(((t.GetStart().x, t.GetStart().y), (t.GetEnd().x, t.GetEnd().y))))
+                if g in seen:
+                    dup.append(dict(net=t.GetNetname(), layer=t.GetLayerName(), width_nm=t.GetWidth(), ends_nm=list(g[4:])))
+                    b.Delete(t)
+                else:
+                    seen.add(g)
+            if dup:
+                print(f"fastroute_job: {len(dup)} duplicate new segments removed (identical copper), stage {tag}", flush=True)
+        try:
+            restored = import_pose_guard.restore(b, poses_before, pose_grid)
+            replays = import_replay_guard.restore(b, replay_before, preserved, dsn, ses, replay_path)
+        except ValueError as exc:
+            sys.exit('fastroute_job: SES pose integrity failed; result is not verified: ' + str(exc))
+        with open(os.path.join(a.outdir, f'import-pose-audit{sfx}.json'), 'w') as audit:
+            json.dump(dict(grid_nm=pose_grid, restored=restored, exact_poses_and_pads=True,
+                           guard_sha256=lean.digest(import_pose_guard.__file__),
+                           dsn_sha256=lean.digest(dsn), ses_sha256=lean.digest(ses),
+                           before_snapshot_sha256=hashlib.sha256(json.dumps(poses_before, sort_keys=True).encode()).hexdigest(),
+                           qualified=False, independent_native_gate_required=True), audit, indent=2)
+        with open(os.path.join(a.outdir, f'import-replay-audit{sfx}.json'), 'w') as audit:
+            json.dump(dict(removed=replays, preserved_uuids=sorted(preserved), duplicate_new_segments_removed=dup,
+                           exact_preserved_source_policy=True, qualified=False,
+                           independent_native_gate_required=True,
+                           dsn_sha256=lean.digest(dsn), ses_sha256=lean.digest(ses)),audit,indent=2)
+        for t in b.GetTracks():
+            t.SetLocked(was.get(t.m_Uuid.AsString(), False))
+        if skipped_copper() != skipped_before:
+            sys.exit('fastroute_job: router changed excluded-net copper; result is not verified')
+        if a.signal_via:   # the routing padstack back to the class via size
+            pro = json.load(open(stem + ".kicad_pro"))["net_settings"]["classes"]
+            sizes = {c["name"]: (c["via_diameter"], c["via_drill"]) for c in pro}
+            n_big = 0
+            for t in b.GetTracks():
+                if (t.GetClass() == "PCB_VIA" and t.GetNetname() in stage_nets and key(t) not in copper_before
+                        and t.GetWidth(pcbnew.F_Cu) > pcbnew.FromMM(a.signal_via) - 1000):
+                    d, dr = sizes.get(str(t.GetNetClassName()), sizes["Default"])
+                    t.SetWidth(pcbnew.FromMM(d))
+                    t.SetDrill(pcbnew.FromMM(dr))
+                    n_big += 1
+            print(f"fastroute_job: {n_big} signal vias routed with the {a.signal_via:g} mm padstack, set to the class size",
+                  flush=True)
+        if skipped_copper() != skipped_before:
+            sys.exit('fastroute_job: via normalization changed excluded-net copper; result is not verified')
+        imported = vias()
+        if a.only_nets or stage_nets != nets:
+            # Fastroute can add copper to a net that is not in --only-nets (RELAY-4 2026-10-04: a second route on /COIL1
+            # and /LINK_SCL, both already connected). Remove new copper on the other nets: they keep their old copper.
+            extra = [t for t in b.GetTracks() if t.GetNetname() not in stage_nets and key(t) not in copper_before]
+            names = sorted({t.GetNetname() for t in extra})
+            for t in extra:
+                b.Delete(t)
+            if extra:
+                print(f"fastroute_job: removed {len(extra)} new items on nets outside "
+                      f"{'--only-nets' if tag in ('all', 'final') else 'stage ' + tag}: {', '.join(names)}")
+        if tag != "all":
+            print(f"STAGE {tag} nets {len(stage_nets)} keepouts {n_keep} ROUTER_UNROUTED {report['stats']['unrouted']} "
+                  f"VIAS {report['stats']['vias']} SECONDS {int(lean.now() - s0)}", flush=True)
+        left_open = {u['net'] for u in report.get('unrouted', []) if u.get('net') in stage_nets}
+        return report, imported, left_open, dict(stage=tag, nets=len(stage_nets), keepouts=n_keep, router_unrouted=report['stats']['unrouted'],
+                                      vias=report['stats']['vias'], seconds=round(lean.now() - s0, 1))
+
+    stage_log, staged, still_open = [], set(), set()
+    for tag, stage_nets, keep in passes:
+        if tag == "final":
+            # The last pass: the nets no stage routed (plane nets) and the nets a stage left open (their stage copper
+            # unlocked). A finished stage net is an ignored class here: locked copper of a routed net made Fastroute
+            # write coincident unprotected copper (CELLULAR /RF_ANT smoke run, import replay guard).
+            stage_nets = (stage_nets - staged) | still_open
+            # The stage copper of a net left open is ripped up (deleted, not drawn) so the last pass routes the net
+            # again from its pads; locked or unlocked, that copper made the import replay guard reject the result
+            # (coincident SES copper, CELLULAR smoke runs).
+            gone = [t for t in b.GetTracks() if t.m_Uuid.AsString() not in was and t.GetNetname() in still_open]
+            for t in gone:
+                b.Delete(t)
+            if gone:
+                print(f"STAGE final: {len(gone)} stage items of {len(still_open)} nets left open ripped up: "
+                      f"{', '.join(sorted(still_open))}", flush=True)
+            if not stage_nets:
+                last = passes[-2][0]
+                for n in ("board{}.dsn", "board{}.ses", "report{}.json"):
+                    shutil.copy(os.path.join(a.outdir, n.format("-" + last)), os.path.join(a.outdir, n.format("")))
+                print("STAGE final nets 0: every stage net routed; report.json is the last stage report", flush=True)
+                break
+        report, imported_vias, left_open, row = route_pass(tag, stage_nets, keep)
+        stage_log.append(dict(row, left_open=sorted(left_open)))
+        staged |= stage_nets
+        still_open = (still_open - stage_nets) | left_open
+    if rules:
+        lean.atomic_json(os.path.join(a.outdir, 'stage-plan.json'),
+                         dict(stages=[dict(stage=n, nets=s, keepout=k) for n, s, k in rr_plan], runs=stage_log))
+    secs = int(lean.now() - t0)
     after = vias()
-    imported_vias = after
-    if a.only_nets:
-        # Fastroute can add copper to a net that is not in --only-nets (RELAY-4 2026-10-04: a second route on /COIL1
-        # and /LINK_SCL, both already connected). Remove new copper on the other nets: they keep their old copper.
-        want = {n for n in a.only_nets.split(",") if n}
-        extra = [t for t in b.GetTracks() if t.GetNetname() not in want and key(t) not in copper_before]
-        names = sorted({t.GetNetname() for t in extra})
-        for t in extra:
-            b.Delete(t)
-        if extra:
-            print(f"fastroute_job: removed {len(extra)} new items on nets outside --only-nets: {', '.join(names)}")
     with _native_phase('native-zone-fill-save', phases):
         pcbnew.ZONE_FILLER(b).Fill(b.Zones())
         pcbnew.SaveBoard(out, b)
@@ -652,6 +805,27 @@ def _main(a=None):
         if feat["_board_dir"] and os.path.isfile(tri):
             os.makedirs(os.path.join(feat["_board_dir"], ".gate"), exist_ok=True)
             shutil.copy(tri, os.path.join(feat["_board_dir"], ".gate", "open-triage.json"))
+    if rules:
+        # Rule 2 evidence: vias per stage class and per net class; fast-net layer changes with no ground via near.
+        rb = pcbnew.LoadBoard(out)
+        grounds = set(rr_spec.get('grounds') or []) | plane_names
+        vl, anchors = [], []
+        for t in rb.GetTracks():
+            if t.GetClass() == 'PCB_VIA':
+                c, r = t.GetPosition(), t.GetWidth(pcbnew.F_Cu) / 2e6
+                vl.append((t.GetNetname(), c.x / 1e6, c.y / 1e6, r))
+                if t.GetNetname() in grounds:
+                    anchors.append((c.x / 1e6, c.y / 1e6, r))
+        for p in rb.GetPads():
+            if p.GetNetname() in grounds and p.GetAttribute() == pcbnew.PAD_ATTRIB_PTH:
+                c, bb = p.GetPosition(), p.GetBoundingBox()
+                anchors.append((c.x / 1e6, c.y / 1e6, min(bb.GetWidth(), bb.GetHeight()) / 2e6))
+        net_stage = {n: s for s, ns, _ in rr_plan for n in ns}
+        net_stage.update({n: 'plane' for n in plane_names})
+        vr = routing_rules.via_report(vl, net_stage, rr_cls, rr_info['fast'], grounds, anchors,
+                                      float(rr_spec.get('via_allow_mm', 0.6)))
+        lean.atomic_json(os.path.join(a.outdir, 'via-report.json'), vr)
+        print(routing_rules.summary_line(vr), flush=True)
     print(f"UNROUTED {signal_open} GND_OPEN {gnd_open} ERRORS {errors} ROUTER_UNROUTED {report['stats']['unrouted']} "
           f"CONGESTION {diag.get('congestion', 0)} BLOCKED {diag.get('blocked', 0)} "
           f"TRACK_MM {report['stats']['trace_length_mm']:.0f} VIAS {after} SECONDS {secs}", flush=True)

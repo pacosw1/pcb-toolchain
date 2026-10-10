@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Bounded identical-input router-policy comparison; never qualifies a release."""
+"""Bounded identical-input router-policy comparison; never qualifies a release.
+
+--feature NAME: A/B of one route feature of tools/route-features.json on the same input (A: NAME off, B: NAME on;
+optimizer "always" in both), for example the D-125 routing_rules A/B. The budget may then be up to 1800 s per run."""
 import argparse
 import json
 import os
@@ -37,9 +40,13 @@ def main():
     ap.add_argument('--threads', type=int, default=1)
     ap.add_argument('--route-args', default='')
     ap.add_argument('--order', choices=['AB', 'BA'], default='AB')
+    ap.add_argument('--feature', default='', help='A/B of this route feature (A off, B on) instead of the optimizer policy')
     a = ap.parse_args()
-    if not 1 <= a.seconds <= 300 or a.threads <= 0 or a.passes <= 0:
-        ap.error('positive passes/threads and 1–300 seconds per policy required')
+    limit = 1800 if a.feature else 300
+    if not 1 <= a.seconds <= limit or a.threads <= 0 or a.passes <= 0:
+        ap.error(f'positive passes/threads and 1–{limit} seconds per policy required')
+    if a.feature and a.feature not in route_features.FLAGS:
+        ap.error(f'unknown route feature {a.feature}')
     args = shlex.split(a.route_args)
     if any(v.split('=', 1)[0] in ('--optimizer', '--max-time', '--passes', '--threads', '--set') for v in args):
         ap.error('policy/budget controls cannot be overridden by route-args')
@@ -66,17 +73,21 @@ def main():
     before = {str(p): lean.digest(p) for p in paths if p.is_file()}
     results = []
     policies = [('A', 'always'), ('B', 'if-routed')]
+    if a.feature:
+        policies = [('A', 'always'), ('B', 'always')]
     if a.order == 'BA':
         policies.reverse()
     for name, policy in policies:
         cmd = [sys.executable, str(Path(__file__).parent / 'fastroute_job.py'), str(source / board.name), str(out / name),
                '--preflight', '--optimizer', policy, '--passes', str(a.passes), '--threads', str(a.threads),
                '--max-time', str(a.seconds)] + args
+        run_env = dict(env, ROUTE_FEATURES=f"{a.feature}={int(name == 'B')}") if a.feature else env
         with open(out / f'{name}.log', 'w') as log:
             rc, wall_s = run_policy(cmd, seconds=a.seconds,
-                                    events=str(out / 'stages.jsonl'), env=env, log=log, stage=name)
+                                    events=str(out / 'stages.jsonl'), env=run_env, log=log, stage=name)
         outcome = out / name / 'outcome.json'
         results.append(dict(name=name, policy=policy, wall_s=wall_s, returncode=rc,
+                            feature=(f"{a.feature}={int(name == 'B')}" if a.feature else None),
                             outcome=json.loads(outcome.read_text()) if outcome.exists() else None))
     unchanged = all(Path(p).is_file() and lean.digest(p) == h for p, h in before.items())
     summary = dict(configuration=vars(a), fingerprints=before, unchanged=unchanged, results=results,
