@@ -4,6 +4,7 @@
   python3 tools/test_net_drivers.py
 """
 import importlib.util
+import math
 import os
 import sys
 import unittest
@@ -125,13 +126,12 @@ class DriverEdgeTest(unittest.TestCase):
         with self.assertRaises(nd.TableError):
             nd.load_table(path)
 
-    def test_esp32_gpio_net_is_flagged_ibis_not_found(self):
-        e = self.edges()['/CS']
-        self.assertIn('IBIS not found', e['unknown'])
+    def test_esp32_gpio_net_without_routed_length_is_flagged(self):
+        e = self.edges()['/CS']   # no board geometry: the bound C*dV/I has no trace length
+        self.assertIn('routed length', e['unknown'])
         f = fails('/CS', self.s, 2.0)
         self.assertEqual(len(f), 1)
         self.assertIn('unknown driver', f[0])
-        self.assertIn('IBIS not found', f[0])
 
     def test_unknown_driver_is_flagged_not_1_ns(self):
         self.edges()
@@ -174,6 +174,157 @@ class DriverEdgeTest(unittest.TestCase):
     def test_no_gpio_default_class(self):
         self.assertNotIn('gpio', sp.load_edge_rates())
         self.assertIsNone(sp.edge_class('/EN', base_spec()))
+
+
+IBS_FIXTURE = """[IBIS Ver]      4.1
+[File Name]     fix.ibs
+[Component]     FIX_DBV
+[Manufacturer]  test
+[Package]
+R_pkg  0.1  0.08  0.12
+[Pin]  signal_name  model_name  R_pin  L_pin  C_pin
+1      A            FIX_IN
+4      Y            FIX_OUT
+5      VCC          POWER
+[Model Selector]  FIX_OUT
+FIX_OUT_33   3.3 volt Vcc
+FIX_OUT_50   5 volt Vcc
+[Model]     FIX_IN_33
+Model_type  Input
+C_comp      3.19pF      2.54pF      4.41pF
+[Model]     FIX_OUT_33
+Model_type  Output
+C_comp      7.52pF      3.81pF      9.89pF
+[Ramp]
+| variable       typ                min                max
+dV/dt_r          1.49/3.24E-10      1.22/5.27E-10      1.80/2.47E-10
+dV/dt_f          1.61/3.63E-10      1.36/6.15E-10      1.85/2.26E-10
+R_load = 50
+[Model]     FIX_OUT_50
+Model_type  Output
+C_comp      7.55pF      6.06pF      9.04pF
+[Ramp]
+dV/dt_r          2.49/2.51E-10      2.12/3.34E-10      2.91/1.84E-10
+dV/dt_f          2.50/2.85E-10      2.16/4.30E-10      2.87/1.86E-10
+R_load = 50
+[End]
+"""
+
+
+def fixture_path(name, text):
+    path = os.path.join(HERE, '__pycache__', name)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w') as f:
+        f.write(text)
+    return path
+
+
+BOUND_XML = """<export version="E">
+<components>
+  <comp ref="U1"><value>ESP32-S3-WROOM-1-N8</value><fields><field name="MPN">ESP32-S3-WROOM-1-N8</field></fields></comp>
+  <comp ref="U2"><value>FIXGATE</value><fields><field name="MPN">FIXGATE</field></fields></comp>
+  <comp ref="U3"><value>NOEDGE</value><fields><field name="MPN">NOEDGE</field></fields></comp>
+  <comp ref="R1"><value>10k</value></comp>
+</components>
+<nets>
+  <net code="1" name="VDD_3V3"><node ref="U1" pin="2" pinfunction="3V3_2" pintype="unspecified"/>
+    <node ref="U2" pin="5" pinfunction="VCC_5" pintype="unspecified"/></net>
+  <net code="2" name="/CS"><node ref="U1" pin="22" pinfunction="IO14_22" pintype="unspecified"/>
+    <node ref="U2" pin="1" pinfunction="A_1" pintype="unspecified"/></net>
+  <net code="3" name="/Y"><node ref="U2" pin="4" pinfunction="Y_4" pintype="unspecified"/></net>
+  <net code="4" name="/ODD"><node ref="U3" pin="1" pinfunction="OUT_1" pintype="unspecified"/></net>
+  <net code="5" name="/LED"><node ref="U1" pin="23" pinfunction="IO15_23" pintype="unspecified"/>
+    <node ref="R1" pin="1" pinfunction="1_1" pintype="passive"/></net>
+  <net code="6" name="/LED_K"><node ref="R1" pin="2" pinfunction="2_2" pintype="passive"/></net>
+</nets></export>"""
+
+
+def bound_table(ibs):
+    """FIXGATE: an IBIS model and a bound (the IBIS must win). ESP32: the real table entry. NOEDGE: neither."""
+    t = dict(nd.load_table())
+    t['FIXGATE'] = {'mpn': ['FIXGATE'], 'ibis': {'file': ibs, 'url': 'test', 'downloaded': '2026-10-09',
+                                                  'supply_pin': 'VCC', 'variants': {'3.3': '_33', '5': '_50'}},
+                    'pins': [{'match': 'A', 'role': 'input', 'ibis_model': 'FIX_IN'},
+                             {'match': 'Y', 'role': 'push_pull', 'ibis_model': 'FIX_OUT',
+                              'bound': {'i_ma': 20, 'i_source': 'test', 'supply_pin': 'VCC'}, 'source': 'test IBIS'},
+                             {'match': 'VCC', 'role': 'input'}]}
+    t['NOEDGE'] = {'mpn': ['NOEDGE'], 'pins': [{'match': 'OUT', 'role': 'unknown',
+                                                'source': 'no IBIS model and no output current in the datasheet'}]}
+    return t
+
+
+class IbisAndBoundTest(unittest.TestCase):
+    """D-124b: the vendor IBIS model first, else the bound t >= C x dV / I_max, else unknown."""
+
+    def setUp(self):
+        import ibis_ramp
+        self.ir = ibis_ramp
+        self.ibs = fixture_path('fix.ibs', IBS_FIXTURE)
+        self.nl = nd.parse_netlist(BOUND_XML)
+        self.table = bound_table(self.ibs)
+        self.s = base_spec()
+
+    def test_ibis_ramp_parse_gives_the_fastest_corner(self):
+        m = self.ir.load(self.ibs)['models']['fix_out_33']
+        e = self.ir.ramp_edges(m)
+        # typ 324 ps and max 247 ps (rise), typ 363 ps and max 226 ps (fall): the faster corner of typ and max
+        self.assertAlmostEqual(e['tr_ns'], 0.247, places=6)
+        self.assertAlmostEqual(e['tf_ns'], 0.226, places=6)
+        self.assertEqual(m['r_load'], 50)
+        self.assertAlmostEqual(self.ir.load(self.ibs)['models']['fix_in_33']['c_comp'][1], 2.54e-12)
+
+    def test_bound_formula_hand_computed(self):
+        # (2 pF pin + 3 pF receiver + 10 mm x 0.1 pF/mm) x 0.8 x 3.3 V / 20 mA = 6e-12 x 2.64 / 0.02 = 0.792 ns
+        self.assertAlmostEqual(nd.edge_bound_ns(6.0, 3.3, 20.0), 0.792, places=9)
+        # a 10 k series resistor (5 % low: 9.5 k) limits the current to 3.3 V / 9.5 k = 0.347 mA
+        self.assertAlmostEqual(nd.series_limit_ma(20.0, 3.3, 10000), 3.3 / 9.5, places=9)
+
+    def test_microstrip_capacitance_per_mm(self):
+        import si_pairs
+        z, eeff, _ = si_pairs._microstrip(0.2, 0.2, 0.035, 4.5)
+        self.assertAlmostEqual(nd.microstrip_pf_per_mm(0.2, 0.2, 0.035, 4.5), 1000 * math.sqrt(eeff) / (299.792458 * z))
+
+    def geom(self, **lengths):
+        return {'length_mm': lengths, 'pf_per_mm': {n: (0.1, 'test 0.1 pF/mm') for n in lengths}}
+
+    def test_part_with_ibis_uses_it_before_the_bound(self):
+        e = nd.net_edge('/Y', self.nl, self.table, geom=self.geom(**{'/Y': 10.0}))
+        self.assertAlmostEqual(e['edge_ns'], 0.226, places=6)   # VCC on VDD_3V3: FIX_OUT_33 fall, max corner
+        self.assertIn('IBIS', e['driver'])
+        self.assertNotIn('bound', e['driver'])
+
+    def test_esp32_net_uses_the_bound(self):
+        e = nd.net_edge('/CS', self.nl, self.table, geom=self.geom(**{'/CS': 10.0}))
+        # C = 2 pF (ESP32-S3 CIN) + 2.54 pF (FIX_IN_33 C_comp min) + 10 mm x 0.1 pF/mm; dV = 0.8 x 3.3 V; I = 20 mA
+        self.assertAlmostEqual(e['edge_ns'], (2 + 2.54 + 1.0) * 2.64 / 20, places=6)
+        self.assertIn('bound: C*dV/I', e['driver'])
+
+    def test_bound_through_a_series_resistor_is_current_limited(self):
+        e = nd.net_edge('/LED_K', self.nl, self.table, geom=self.geom(**{'/LED_K': 10.0}))
+        # only the trace on this side: 1 pF x 2.64 V / (3.3 V / 9.5 k) = 7.6 ns
+        self.assertAlmostEqual(e['edge_ns'], 1.0 * 2.64 / (3.3 / 9.5), places=6)
+        self.assertIn('through R1', e['driver'])
+
+    def test_bound_needs_the_routed_length(self):
+        self.assertIn('routed length', nd.net_edge('/CS', self.nl, self.table)['unknown'])
+
+    def test_part_with_neither_stays_flagged(self):
+        e = nd.net_edge('/ODD', self.nl, self.table, geom=self.geom(**{'/ODD': 10.0}))
+        self.assertIn('no IBIS model and no output current', e['unknown'])
+        s = base_spec()
+        s['_edges'] = {'/ODD': e}
+        f = fails('/ODD', s, 2.0)
+        self.assertEqual(len(f), 1)
+        self.assertTrue(f[0].startswith('FAIL unknown-driver B.Cu /ODD'), f[0])
+
+    def test_real_table_ibis_files_parse(self):
+        for key, p in nd.load_table().items():
+            if 'ibis' in p:
+                for rule in p['pins']:
+                    if rule.get('ibis_model') and rule['role'] != 'input':
+                        for v in p['ibis']['variants'].values():
+                            e = nd.ibis_edges(p, rule['ibis_model'] + v)
+                            self.assertGreater(min(e['tr_ns'], e['tf_ns']), 0, f'{key} {rule["ibis_model"]}{v}')
 
 
 if __name__ == '__main__':

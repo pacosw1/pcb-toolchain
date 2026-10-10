@@ -242,17 +242,39 @@ def power_patterns(s):
     return list(s.get('power') or []) + [q for m in s['mixed_layers'].values() for q in m['power']]
 
 
-def driver_edges(nets, nl, s, table=None):
+def driver_edges(nets, nl, s, table=None, geom=None):
     """{net: {'edge_ns', 'driver'} or {'unknown': reason}} for the nets that need a driver edge (not power, not fast,
-    no interface class). nl: a parsed schematic netlist (tools/net_drivers.py)."""
+    no interface class). nl: a parsed schematic netlist (tools/net_drivers.py). geom: routed length and trace
+    capacitance per net for the bound C*dV/I (D-124b, net_drivers.net_edge)."""
     import net_drivers
     table = net_drivers.load_table() if table is None else table
     out = {}
     for net in nets:
         if not _checked(net, s) or is_power(net, s) or is_fast(net, s) or edge_class(net, s):
             continue
-        out[net] = net_drivers.net_edge(net, nl, table, s['receivers'], s['offboard'], s['_edge_rates'], power_patterns(s))
+        out[net] = net_drivers.net_edge(net, nl, table, s['receivers'], s['offboard'], s['_edge_rates'], power_patterns(s),
+                                        geom)
     return out
+
+
+def trace_geometry(board_path, s, routed, width):
+    """D-124b: {'length_mm': {net: mm}, 'pf_per_mm': {net: (pF/mm, text)}}. The capacitance per mm is the microstrip
+    C' = sqrt(Eeff) / (c0 x Z0) (Hammerstad-Jensen, tools/si_pairs.py) at the net's narrowest track over the outer
+    layer dielectric of the stackup; the lower value of the outer layers is used (the inner stripline has more C),
+    so the bound is the shorter one."""
+    import net_drivers
+    import si_pairs
+    with open(board_path) as f:
+        st = si_pairs.parse_stackup(f.read())
+    outer = [(L, st[L]) for L in s['adjacent'] if L in st and st[L]['h_mm'] and st[L]['er']]
+    if not outer:
+        raise SpecError('board stackup: no dielectric height and Er for the outer layers (needed for the bound C*dV/I)')
+    geom = {'length_mm': dict(routed), 'pf_per_mm': {}}
+    for net, w in width.items():
+        c, L, d = min((net_drivers.microstrip_pf_per_mm(w, d['h_mm'], d['t_mm'] or 0, d['er']), L, d) for L, d in outer)
+        geom['pf_per_mm'][net] = (c, f"microstrip w {w:.3g} h {d['h_mm']:g} t {d['t_mm'] or 0:g} mm Er {d['er']:g} ({L} stackup), "
+                                     f"C' = sqrt(Eeff)/(c0 Z0), Hammerstad-Jensen (tools/si_pairs.py)")
+    return geom
 
 
 def net_edge_of(net, s):
@@ -692,6 +714,7 @@ def analyse(board_path, s, verbose, sch_path=None):
 
     samples, cuts = collections.defaultdict(list), collections.defaultdict(float)
     vias, via_r = collections.defaultdict(list), collections.defaultdict(list)
+    routed, width = collections.defaultdict(float), {}   # D-124b: routed length (all layers) and narrowest track
     for t in b.GetTracks():
         net, cls = t.GetNetname(), t.GetClass()
         if cls == 'PCB_VIA':
@@ -707,6 +730,8 @@ def analyse(board_path, s, verbose, sch_path=None):
             pts = sample_arc((mm(a.x), mm(a.y)), (mm(m.x), mm(m.y)), (mm(e.x), mm(e.y)), s['step_mm'])
         else:
             pts = sample_segment((mm(a.x), mm(a.y)), (mm(e.x), mm(e.y)), s['step_mm'])
+        routed[net] += sum(w for _, _, w in pts)
+        width[net] = min(width.get(net, math.inf), mm(t.GetWidth()))
         if lname in s['adjacent']:
             samples[(lname, net)].extend(pts)
         else:
@@ -728,7 +753,8 @@ def analyse(board_path, s, verbose, sch_path=None):
 
     import net_drivers
     nl = net_drivers.export_netlist(sch_path or os.path.splitext(board_path)[0] + '.kicad_sch')
-    s['_edges'] = driver_edges(sorted({net for _, net in results}), nl, s)
+    s['_edges'] = driver_edges(sorted({net for _, net in results}), nl, s,
+                               geom=trace_geometry(board_path, s, routed, width))
 
     info = []
     outline = p.SHAPE_POLY_SET()
