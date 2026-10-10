@@ -38,7 +38,8 @@ def thermal_targets(drc, pads, zones, planes):
             if row is None:
                 continue
             ref, number, net = row
-            match = re.fullmatch(r'Pad (\S+) \[([^\]]*)\] of (\S+) on (.+)', item.get('description', ''))
+            # kicad-cli wording: "Pad 2 [GND] of U16 on F.Cu" (SMD) or "PTH pad 11 [GND] of U10" (through hole, 10.0.6)
+            match = re.fullmatch(r'(?:Pad|PTH pad) (\S+) \[([^\]]*)\] of (\S+)(?: on (.+))?', item.get('description', ''))
             if not match or (match[3], match[1], match[2]) != row:
                 raise ValueError('native thermal pad identity mismatch')
             if not any(zones.get(i.get('uuid')) == net for i in v.get('items', [])):

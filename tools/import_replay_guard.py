@@ -104,6 +104,7 @@ def records(text, session=False):
         mode=modes[0][1] if modes else 'unspecified'
         if node[0] == 'wire':
             path = child(node, 'path')
+            if len(path) == 5: continue   # a one-point wire: no segment, KiCad imports no track for it
             if len(path) < 7 or (len(path)-3) % 2: raise ValueError('unsupported path')
             width = number(path[2], scale)
             points = [(number(path[i], scale), -number(path[i+1], scale)) for i in range(3,len(path),2)]
@@ -117,9 +118,20 @@ def records(text, session=False):
     return dict(out)
 
 
-def removal_plan(before, after, preserved, dsn, ses):
-    """Validate everything before mutation. Rows contain geometry and full policy."""
+def removal_plan(before, after, preserved, dsn, ses, unlocked=(), deduplicated=None):
+    """Validate everything before mutation. Rows contain geometry and full policy.
+
+    unlocked: the source UUIDs this job handed to the router as wiring it may rip up (--unlock-nets, the repair
+    pass). KiCad's SES import deletes that copper and adds the router's wiring again (KiCad 10.0.6, checked on a
+    POE-ETHERNET copy), so copper the router kept unchanged comes back as a new item coincident with the source.
+    That is accepted when the job's own DSN offered the geometry as unlocked wiring (type route) and the SES
+    returned it; a coincidence with copper the job did not unlock is still a replay of a foreign result.
+    deduplicated: {geometry: n} identical new copies the caller already deleted (Fastroute writes a wire twice now
+    and then); they count in the SES multiplicity."""
+    deduplicated = deduplicated or {}
     if not set(preserved) <= before.keys(): raise ValueError('unknown preserved UUID')
+    unlocked = set(unlocked) - set(preserved)
+    if not unlocked <= before.keys(): raise ValueError('unknown unlocked UUID')
     baseline = collections.defaultdict(list)
     for uid in preserved:
         row = before[uid]
@@ -135,9 +147,26 @@ def removal_plan(before, after, preserved, dsn, ses):
     for geometry, ids in additions.items():
         if geometry not in baseline:
             if len(ids) > 1: raise ValueError('new-new duplicate without preserved source')
-            # A coincident unlocked source is not eligible for deduplication.
-            if any(r['geometry'] == geometry for r in before.values()):
+            sources = [uid for uid, r in before.items() if r['geometry'] == geometry]
+            if not sources:
+                continue
+            # A coincident source outside the unlocked set is not eligible: foreign replay.
+            if not set(sources) <= unlocked:
                 raise ValueError('source coincidence outside preserved policy')
+            if len(sources) != 1: raise ValueError('ambiguous unlocked source geometry')
+            if geometry not in dsn or geometry not in ses:
+                raise ValueError('missing source DSN/SES provenance')
+            if any(m != 'route' for m in dsn[geometry]):
+                raise ValueError('unlocked source was not offered as unlocked wiring')
+            if len(ses[geometry]) != len(ids) + deduplicated.get(geometry, 0):
+                raise ValueError('SES replay multiplicity does not match import')
+            source = sources[0]
+            if source not in after:
+                continue   # the import removed the unlocked copper; the router's copy is the copper now
+            if after[source] != before[source]:
+                raise ValueError('unlocked source altered: '+source)
+            plan.append(dict(removed_uuid=ids[0],retained_uuid=source,geometry=geometry,
+                             dsn_modes=dsn[geometry],ses_modes=ses[geometry],unlocked=True))
             continue
         originals = baseline[geometry]
         if len(originals) != 1 or sum(r['geometry']==geometry for r in before.values()) != 1:
@@ -148,7 +177,7 @@ def removal_plan(before, after, preserved, dsn, ses):
             raise ValueError('unsupported DSN source mode')
         if any(m not in ('fix','protect') for m in ses[geometry]):
             raise ValueError('unprotected SES coincidence')
-        if len(ses[geometry]) != len(ids):
+        if len(ses[geometry]) != len(ids) + deduplicated.get(geometry, 0):
             raise ValueError('SES replay multiplicity does not match import')
         for uid in ids:
             plan.append(dict(removed_uuid=uid,retained_uuid=originals[0],geometry=geometry,
@@ -182,10 +211,10 @@ def snapshot(board, path):
     return out
 
 
-def restore(board, before, preserved, dsn_path, ses_path, snapshot_path):
+def restore(board, before, preserved, dsn_path, ses_path, snapshot_path, unlocked=(), deduplicated=None):
     dsn=records(Path(dsn_path).read_text());ses=records(Path(ses_path).read_text(),True)
     after=snapshot(board,snapshot_path)
-    plan=removal_plan(before,after,preserved,dsn,ses)
+    plan=removal_plan(before,after,preserved,dsn,ses,unlocked,deduplicated)
     items={t.m_Uuid.AsString():t for t in board.GetTracks()}
     # Delete owns native item destruction; Remove only detaches and leaves the
     # lifetime of orphaned SWIG pointers to the Python binding.

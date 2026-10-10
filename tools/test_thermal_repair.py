@@ -27,6 +27,14 @@ class ThermalDetectionTests(unittest.TestCase):
             with self.assertRaises(ValueError): tr.thermal_targets(d,pads,zones,{'GND'})
         self.assertEqual(tr.thermal_targets(d,{'p':('U16','2','GND')},{'z':'GND'},{'/CAN_GND'}),{})
 
+    def test_through_hole_pad_wording_of_kicad_10(self):
+        # kicad-cli 10.0.6 names a through-hole pad "PTH pad 11 [GND] of U10" (no layer); BASE-PWR rev A A/B 2026-10-10
+        d=dict(violations=[dict(type='starved_thermal',severity='error',items=[
+            dict(uuid='z',description="Zone 'GND_B' [GND] on B.Cu, priority 0"),
+            dict(uuid='p',description='PTH pad 11 [GND] of U10')])])
+        self.assertEqual(tr.thermal_targets(d,{'p':('U10','11','GND')},{'z':'GND'},{'GND'}),{'GND':['U10.11']})
+        with self.assertRaises(ValueError): tr.thermal_targets(d,{'p':('U10','12','GND')},{'z':'GND'},{'GND'})
+
     def test_transaction_rejects_new_errors_regression_and_policy_change(self):
         before=dict(violations=[fault()],unconnected_items=[{}],schematic_parity=[])
         after=dict(violations=[],unconnected_items=[],schematic_parity=[])

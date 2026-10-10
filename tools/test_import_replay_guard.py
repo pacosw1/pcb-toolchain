@@ -80,6 +80,13 @@ class ReplayGuardTests(unittest.TestCase):
         a=guard.records(dsn);b=guard.records(ses,True)
         self.assertEqual(set(a),set(b));self.assertEqual(len(a),2)
 
+    def test_single_point_path_is_no_copper(self):
+        # Fastroute 0.1.7 writes a degenerate one-point wire now and then (BASE-PWR fast stage, 2026-10-10): KiCad's
+        # SES import makes no track of it (a track needs two points), so the guard records nothing for it.
+        ses='(routes(resolution um 10)(library_out)(network_out(net P(wire(path F.Cu 20 10 -20))(wire(path F.Cu 20 10 -20 30 -20)))))'
+        self.assertEqual(len(guard.records(ses,True)),1)
+        with self.assertRaises(ValueError):guard.records(ses.replace('30 -20','30'),True)
+
     def test_via_padstack_shape_checked(self):
         dsn='(resolution um 10)(unit um)(library(padstack "Via[0-1]_600:300_um"(shape(circle F.Cu 600))(shape(circle B.Cu 600))))(wiring(via "Via[0-1]_600:300_um" 1 -2(net P)(type fix)))'
         self.assertEqual(len(guard.records(dsn)),1)
@@ -113,6 +120,71 @@ class ReplayGuardTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'unprotected'):
                 guard.restore(board,self.source,{'old'},'d','s','p')
         board.Delete.assert_not_called();board.GetTracks.assert_not_called()
+
+
+    # --unlock-nets continuation (W9, 2026-10-10): KiCad 10.0.6 ImportSpecctraSES deletes the unlocked copper and adds the
+    # router's wiring again (checked on a POE-ETHERNET copy: 8 unlocked items gone, the SES wires added as new items).
+    # The same job offered that copper to the router unlocked (DSN type route); unchanged copper is not a replay.
+    def unlocked_after(self):
+        return {'new':copy.deepcopy(self.after['new'])}
+
+    def test_unlocked_unchanged_copper_removed_by_the_import_is_accepted(self):
+        self.assertEqual(self.plan(after=self.unlocked_after(),preserved=set(),unlocked={'old'},
+                                   ses={self.geometry:['route']}),[])
+        self.assertEqual(self.plan(after=self.unlocked_after(),preserved=set(),unlocked={'old'},
+                                   ses={self.geometry:['unspecified']}),[])
+
+    def test_unlocked_unchanged_copper_kept_by_the_import_is_deduplicated(self):
+        plan=self.plan(preserved=set(),unlocked={'old'})
+        self.assertEqual((plan[0]['removed_uuid'],plan[0]['retained_uuid']),('new','old'))
+
+    def test_unlocked_copper_altered_by_the_import_is_rejected(self):
+        after=self.unlocked_after();after['old']=dict(geometry=self.geometry,policy=['segment',['locked','no']])
+        with self.assertRaisesRegex(ValueError,'altered'):self.plan(after=after,preserved=set(),unlocked={'old'})
+
+    def test_foreign_result_replay_still_rejected(self):
+        # not offered unlocked by this job: the coincidence is a replay of a foreign result
+        with self.assertRaisesRegex(ValueError,'outside preserved'):
+            self.plan(after=self.unlocked_after(),preserved=set())
+        other=('segment','Q','B.Cu',200000,((0,0),(1,0)))
+        before=dict(self.source,other=dict(geometry=other,policy=['segment']))
+        with self.assertRaisesRegex(ValueError,'outside preserved'):
+            self.plan(before=before,after=self.unlocked_after(),preserved=set(),unlocked={'other'})
+        with self.assertRaisesRegex(ValueError,'unknown unlocked'):
+            self.plan(after=self.unlocked_after(),preserved=set(),unlocked={'nothere'})
+        # offered, but not as unlocked wiring in the DSN the job exported, or absent from the SES
+        for kw in ({'dsn':{}},{'dsn':{self.geometry:['fix']}},{'dsn':{self.geometry:['protect']}},{'ses':{}}):
+            with self.assertRaises(ValueError):
+                self.plan(after=self.unlocked_after(),preserved=set(),unlocked={'old'},**kw)
+        # the SES holds the copper twice, the import added it once
+        with self.assertRaisesRegex(ValueError,'multiplicity'):
+            self.plan(after=self.unlocked_after(),preserved=set(),unlocked={'old'},ses={self.geometry:['route','route']})
+
+    def test_unlocked_duplicate_sources_are_ambiguous(self):
+        source=dict(self.source,old2=copy.deepcopy(self.source['old']))
+        with self.assertRaisesRegex(ValueError,'ambiguous'):
+            self.plan(before=source,after=self.unlocked_after(),preserved=set(),unlocked={'old','old2'})
+
+    def test_deduplicated_router_copies_count_in_the_multiplicity(self):
+        # BASE-PWR repair pass 2026-10-10: Fastroute wrote kept unlocked wires two or three times; the job deleted the
+        # identical new copies before the guard (24 of them), so the SES multiplicity is the import's plus the deleted.
+        kw=dict(after=self.unlocked_after(),preserved=set(),unlocked={'old'},ses={self.geometry:['route','route','route']})
+        with self.assertRaisesRegex(ValueError,'multiplicity'):self.plan(**kw)
+        self.assertEqual(self.plan(deduplicated={self.geometry:2},**kw),[])
+        with self.assertRaisesRegex(ValueError,'multiplicity'):self.plan(deduplicated={self.geometry:1},**kw)
+        # the preserved branch too
+        self.assertEqual(len(self.plan(ses={self.geometry:['protect','protect']},deduplicated={self.geometry:1})),1)
+
+    def test_restore_passes_unlocked_set(self):
+        class Item:
+            def __init__(self,uid):self.m_Uuid=mock.Mock(AsString=lambda:uid)
+        board=mock.Mock(GetTracks=lambda:[Item('new')])
+        after=self.unlocked_after()
+        with mock.patch.object(guard,'records',side_effect=[self.dsn,{self.geometry:['route']}]), \
+             mock.patch.object(guard,'snapshot',side_effect=[after,after]), \
+             mock.patch.object(guard.Path,'read_text',return_value=''):
+            self.assertEqual(guard.restore(board,self.source,set(),'d','s','p',unlocked={'old'}),[])
+        board.Delete.assert_not_called()
 
 
 if __name__=='__main__':unittest.main()
