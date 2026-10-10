@@ -19,9 +19,12 @@ Rules (tools/driver-edges.json "about" has the full text):
   - A rail is a net from a power symbol (no "/" in front of the name) or a spec power net: no driver search.
 
 D-124b (2026-10-09): the edge of a driver pin, in this order:
-  1. the vendor IBIS model ("ibis" of the part, "ibis_model" of the rule; hardware-design/registry/ibis/): the [Ramp]
-     20-80 % time of the model for the part's supply voltage (the rail on its "supply_pin"), the fastest of the typ
-     and max corners (tools/ibis_ramp.py);
+  1. the vendor IBIS model ("ibis" of the part, "ibis_model" of the rule; hardware-design/registry/ibis/), the model
+     for the part's supply voltage (the rail on its "supply_pin"). D-124c: NOT the [Ramp] (measured into a 50 ohm
+     fixture, far faster than a board load), but the same t = C x 0.8 V / I as the bound below, with C computed the
+     same way (the driver's own pin C = its IBIS C_comp min) and I = the mean current of the [Pulldown] / [Pullup]
+     V-I tables over 10-90 % of the swing, the faster of the typ and max corners (tools/ibis_ramp.py vi_edges, with
+     the method and its sources); open drain: the pulldown over the pull-up rail; label "IBIS V-I: C*dV/I_avg";
   2. the datasheet tr and tf ("tr_ns", "tf_ns");
   3. the bound t >= C x dV / I_max ("bound"): C = the net's routed length x the microstrip capacitance per mm (from
      the board stackup) + the input capacitance of each IC pin on the net that has a sourced value (IBIS C_comp min
@@ -204,11 +207,6 @@ def ibis_model(p, name):
     return m
 
 
-def ibis_edges(p, name):
-    import ibis_ramp
-    return ibis_ramp.ramp_edges(ibis_model(p, name))
-
-
 def _ibis_variants(p, ref, nl):
     """[(model suffix, volts, note)]: the variant for the part's supply rail, else all (the caller takes the worst)."""
     ib = p['ibis']
@@ -218,20 +216,6 @@ def _ibis_variants(p, ref, nl):
             if abs(float(k) - v) < 0.05:
                 return [(suf, v, f"{ib['supply_pin']} {v:g} V")]
     return [(suf, float(k), f"{ib['supply_pin']} rail not found: all variants") for k, suf in ib['variants'].items()]
-
-
-def ibis_pin_edge(p, rule, ref, nl):
-    """(edge_ns, text) of a driver pin from its IBIS model (the fastest variant when the supply is not known)."""
-    best = None
-    for suf, v, note in _ibis_variants(p, ref, nl):
-        name = rule['ibis_model'] + suf
-        e = ibis_edges(p, name)
-        edge = e['tf_ns'] if rule['role'] == 'open_drain' else min(e['tr_ns'], e['tf_ns'])
-        what = (f"tf {e['tf_ns']:.3g} ns ({e['corner_f']})" if rule['role'] == 'open_drain' else
-                f"min(tr {e['tr_ns']:.3g} ({e['corner_r']}), tf {e['tf_ns']:.3g} ({e['corner_f']})) ns")
-        if best is None or edge < best[0]:
-            best = (edge, f"IBIS {os.path.basename(p['ibis']['file'])} [Model] {name} ({note}), [Ramp] 20-80 % {what}")
-    return best
 
 
 def pin_c_pf(mpn, pin, table, ref=None, nl=None):
@@ -273,9 +257,8 @@ def pin_edge(mpn, pin, table, ref=None, nl=None):
                 return 'input', None, f'{key} {pin} input'
             if role == 'unknown':
                 return 'unknown', None, f"{key} {pin}: {rule['source']}"
-            if rule.get('ibis_model'):
-                e, text = ibis_pin_edge(p, rule, ref, nl)
-                return role, e, f"{key} {pin} {role.replace('_', ' ')}, {text}: {p['ibis']['url']} (downloaded {p['ibis']['downloaded']})"
+            if rule.get('ibis_model'):   # D-124c: C*dV/I with I from the V-I tables; needs the net (pin_bound)
+                return 'bound', None, (key, p, rule)
             if not _pos(rule.get('tf_ns')) and 'bound' in rule:
                 return 'bound', None, (key, p, rule)
             if role == 'open_drain':
@@ -366,9 +349,11 @@ def net_load_pf(net, nl, table, skip=None):
 def pin_bound(drv, net, nl, table, geom, power=()):
     """(edge_ns, text) or (None, reason) of a bound driver on a net (D-124b): t >= C x 0.8 VDD / I."""
     ref, name, _, (key, p, rule, home, series) = drv
-    b = rule['bound']
     if not geom or net not in (geom.get('length_mm') or {}):
         return None, f'{ref}.{name} {key}: the bound C*dV/I needs the routed length of {net} (no board geometry)'
+    if rule.get('ibis_model'):
+        return ibis_vi_bound(drv, net, nl, table, geom, power)
+    b = rule['bound']
     if b.get('supply_pin'):
         vdd = supply_volts(nl, ref, b['supply_pin'])
         vsrc = f"{b['supply_pin']} rail {vdd:g} V" if vdd else None
@@ -402,6 +387,62 @@ def pin_bound(drv, net, nl, table, geom, power=()):
             + f") x 0.8 x {vdd:g} V [{vsrc}] / {ilabel} = {t:.3g} ns"
             + (f"; loads with no source left out (bound shorter): {', '.join(left)}" if left else '') + via)
     return t, text
+
+
+def ibis_vi_bound(drv, net, nl, table, geom, power=()):
+    """(edge_ns, text) of an IBIS driver (D-124c): t = C x 0.8 V / I_avg, C as in pin_bound (trace + sourced loads
+    + the driver's C_comp min), I_avg from the model's V-I tables (ibis_ramp.vi_edges); the fastest model variant
+    when the supply rail is not found. Open drain: the swing is the pull-up rail on the net."""
+    import ibis_ramp
+    ref, name, _, (key, p, rule, home, series) = drv
+    try:
+        return _ibis_vi_bound(drv, net, nl, table, geom, power)
+    except (ibis_ramp.IbisError, TableError, OSError, ValueError, KeyError, TypeError, IndexError) as e:
+        # strict: a parse, lookup or applicability error makes the driver unknown (the net fails on a crossing)
+        return None, f'{ref}.{name} {key}: IBIS V-I edge not available ({type(e).__name__}: {e})'
+
+
+def _ibis_vi_bound(drv, net, nl, table, geom, power=()):
+    import ibis_ramp
+    ref, name, _, (key, p, rule, home, series) = drv
+    od = rule['role'] == 'open_drain'
+    v_pu = _pullup_volts(home, nl, power) if od else None
+    if od and not v_pu:
+        return None, f'{ref}.{name} {key}: open drain, no pull-up rail found on {home} for the swing'
+    length = geom['length_mm'][net]
+    cpm, cpm_src = geom['pf_per_mm'][net]
+    c_trace = length * cpm
+    c_load, used, left = net_load_pf(net, nl, table, skip=(ref, name))
+    best = None
+    for suf, v, note in _ibis_variants(p, ref, nl):
+        mname = rule['ibis_model'] + suf
+        m = ibis_model(p, mname)
+        c_pin = m['c_comp'][1] * 1e12 if not series and m['c_comp'] else 0.0
+        c = c_trace + c_load + c_pin
+        if c <= 0:
+            return None, f'{ref}.{name} {key}: the bound has no capacitance (no routed length)'
+        lim, limtext = None, ''
+        for rref, rv in series:
+            if rv is not None:
+                vv = v_pu or v
+                la = vv / (R_TOL * rv)
+                if lim is None or la < lim:
+                    lim, limtext = la, f' (limited to {vv:g} V / (0.95 x {rv:g} ohm {rref}))'
+        e = ibis_ramp.vi_edges(m, c * 1e-12, swing_v=v_pu, open_drain=od, i_limit_a=lim)
+        edge = e['tf_ns'] if od else min(e['tr_ns'], e['tf_ns'])
+        what = ' '.join(f"t{k} {e[f't{k}_ns']:.3g} ns ({e[f'corner_{k}']}, {e[f'v_{k}']:g} V, I_avg {e[f'i_{k}'] * 1000:.3g} mA)"
+                        for k in ('f', 'r') if f't{k}_ns' in e)
+        if best is None or edge < best[0]:
+            best = (edge, mname, note, c, c_pin, what + limtext)
+    edge, mname, note, c, c_pin, what = best
+    via = f" (through {', '.join(r for r, _ in series)} from {home})" if series else ''
+    text = (f"{ref}.{name} {key} IBIS V-I: C*dV/I_avg, {os.path.basename(p['ibis']['file'])} [Model] {mname} ({note}): "
+            f"C = {c_trace:.2f} pF trace [{length:.1f} mm x {cpm:.4f} pF/mm, {cpm_src}] + {c_load:.2f} pF loads "
+            f"[{'; '.join(used) or 'none with a source'}]" + (f" + {c_pin:.3g} pF C_comp min" if c_pin else '')
+            + f" = {c:.2f} pF; dV = 0.8 x swing; [Pulldown]/[Pullup] mean current over 10-90 %: {what} -> {edge:.3g} ns"
+            + (f"; loads with no source left out (bound shorter): {', '.join(left)}" if left else '') + via
+            + f": {p['ibis']['url']} (downloaded {p['ibis']['downloaded']})")
+    return edge, text
 
 
 def net_edge(net, nl, table, receivers=None, offboard=None, classes=None, power=(), geom=None):

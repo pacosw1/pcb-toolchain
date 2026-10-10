@@ -169,24 +169,24 @@ class WidthTest(unittest.TestCase):
         r = pt.width_report([self.seg('VBAT', 1.5, (0, 0), (20, 0))], self.NEED, self.PADS)
         self.assertEqual(r['VBAT']['under'], [])
 
-    def test_short_neck_into_narrow_pad_is_allowed(self):
+    def test_short_neck_into_a_pad_has_no_credit(self):
+        # D-124c: a pad end with no other evidence is at the full allowed dT: no budget is left for the neck
         r = pt.width_report([self.seg('VBAT', 0.6, (0, 0), (0, 1.5)), self.seg('VBAT', 1.5, (0, 1.5), (20, 0))], self.NEED, self.PADS)
-        self.assertEqual(r['VBAT']['under'], [])
-        self.assertEqual(r['VBAT']['necks'], 1)
+        self.assertEqual(len(r['VBAT']['under']), 1)
+        self.assertEqual(r['VBAT']['necks'], 0)
 
     def test_thin_segment_is_under_width(self):
         r = pt.width_report([self.seg('VIN', 0.4, (5, 5), (15, 5))], self.NEED, self.PADS)
         self.assertEqual(r['VIN']['under'], [(0.4, 10.0, (5, 5))])
 
-    def test_neck_limit_is_heat_conduction_not_a_fixed_length(self):
-        # D-124: a 3 mm neck and a neck narrower than its pad pass when L <= (A/I) sqrt(8 k dT / rho);
-        # the class width 1.5 mm carries ipc_amps(1.5) = 3.2 A, so a 0.6 mm neck may be 8.9 mm long, 0.4 mm 5.9 mm
-        r = pt.width_report([self.seg('VBAT', 0.6, (0, 0), (0, 3)),
-                             self.seg('VBAT', 0.4, (0, 0), (0, -1)),
-                             self.seg('VBAT', 1.0, (20, 0), (20, 1))],
-                            self.NEED, self.PADS)
+    def test_pin_escape_with_a_rating_passes_in_width_report(self):
+        # D-124c (b): a 0.6 mm x 0.5 mm escape from a pad 0.6 x 1.2 mm whose part pin is rated 5 A >= the class current
+        pads = [{'net': 'VBAT', 'pos': (0, 0), 'minor': 0.6, 'major': 1.2, 'pin_amps': 5.0}]
+        segs = [self.seg('VBAT', 0.6, (0, 0), (0, 0.5)), self.seg('VBAT', 1.5, (0, 0.5), (20, 0.5))]
+        r = pt.width_report(segs, self.NEED, pads)
         self.assertEqual(r['VBAT']['under'], [])
-        self.assertEqual(r['VBAT']['necks'], 3)
+        pads[0]['pin_amps'] = None   # no rating: no allowance
+        self.assertEqual(len(pt.width_report(segs, self.NEED, pads)['VBAT']['under']), 1)
 
     def test_long_neck_chain_is_under_width(self):
         # two 0.6 mm segments in a row (no pad, via or branch between them) are one 10 mm neck
@@ -225,10 +225,6 @@ class CurrentTest(unittest.TestCase):
         self.assertAlmostEqual(pt.neck_max_mm(0.2, 0.035, 0.5), 18.8, delta=0.3)
         self.assertAlmostEqual(pt.neck_amps(0.3, 0.035, pt.neck_max_mm(0.3, 0.035, 1.0)), 1.0, places=6)
 
-    def test_pq_meter_bst_sw_neck_passes(self):
-        # PQ-METER /BST_SW: 0.24-0.3 mm, 2.27 mm long, 1.1 A (the narrowest width over the whole length)
-        self.assertGreater(pt.neck_amps(0.24, 0.035, 2.27), 1.1)
-
     def test_neck_chains_stop_at_pads_branches_and_wider_copper(self):
         # pieces: (key, layer, u, v, width). b-c-d is a 0.3/0.24 neck between wide copper a-b and d-e
         pieces = [('ab', 'F', (0, 0), (5, 0), 1.0), ('bc', 'F', (5, 0), (6, 0), 0.3), ('cd', 'F', (6, 0), (7.27, 0), 0.24),
@@ -239,9 +235,87 @@ class CurrentTest(unittest.TestCase):
         self.assertAlmostEqual(ch['cd'][0], 1.27, places=6)     # the 0.24 piece does not extend into wider copper
         self.assertAlmostEqual(ch['ef'][0], 1.0)               # a stop (pad, via, zone) ends a chain
 
-    def test_track_capacity_is_the_larger_of_ipc_and_neck(self):
-        self.assertAlmostEqual(pt.track_amps(0.25, 0.035, 10.0, chain=(2.27, 0.25)), pt.neck_amps(0.25, 0.035, 2.27))
-        self.assertAlmostEqual(pt.track_amps(0.25, 0.035, 10.0, chain=(100, 0.25)), pt.ipc_amps(0.25))
+    def test_track_capacity_without_end_evidence_is_ipc(self):
+        # D-124c: no end evidence (default ends): no neck credit
+        self.assertAlmostEqual(pt.track_amps(0.25, 0.035, 10.0, chain=(2.27, 0.25)), pt.ipc_amps(0.25))
+        plane = (('plane',),)
+        self.assertAlmostEqual(pt.track_amps(0.25, 0.035, 10.0, (2.27, 0.25), ends=[plane, plane]),
+                               pt.neck_amps(0.25, 0.035, 2.27), places=4)
+
+
+class NeckEndTest(unittest.TestCase):
+    """D-124c (user decision 2026-10-09, option C): a neck's end temperatures come from evidence."""
+    PLANE = (('plane',),)
+    PAD = (('pad',),)
+
+    def test_ipc_rise_inverts_ipc_amps(self):
+        for w, t, dT in ((0.25, 0.035, 10.0), (1.0, 0.035, 4.0), (0.5, 0.0152, 20.0)):
+            self.assertAlmostEqual(pt.ipc_rise(pt.ipc_amps(w, t, dT), w, t), dT, places=9)
+
+    def test_joule_rise_is_the_fin_peak(self):
+        # J^2 rho L^2 / (8 k): 1.1 A, 0.25 x 0.035 mm, 2.27 mm
+        A, L = 0.25 * 0.035e-6, 2.27e-3
+        self.assertAlmostEqual(pt.joule_rise(0.25, 0.035, 2.27, 1.1), 1.1 ** 2 * 1.72e-8 * L ** 2 / (8 * 390 * A ** 2), places=12)
+
+    def test_neck_between_two_planes_passes(self):
+        # 0.25 mm x 2.27 mm at 1.1 A: Joule peak 0.45 K above two planes at rise 0 <= 10 K
+        r = pt.neck_peak_rise(0.25, 0.035, 2.27, 1.1, [self.PLANE, self.PLANE], 10.0)
+        self.assertAlmostEqual(r, pt.joule_rise(0.25, 0.035, 2.27, 1.1), places=12)
+        self.assertLess(r, 10.0)
+        self.assertGreater(pt.neck_capacity(0.25, 0.035, 2.27, [self.PLANE, self.PLANE], 10.0), 1.1)
+
+    def test_neck_to_a_wide_track_uses_that_tracks_rise(self):
+        wide = (('track', 1.0, 0.035),)
+        r = pt.neck_peak_rise(0.25, 0.035, 2.27, 1.1, [self.PLANE, wide], 10.0)
+        self.assertAlmostEqual(r, pt.ipc_rise(1.1, 1.0, 0.035) + pt.joule_rise(0.25, 0.035, 2.27, 1.1), places=12)
+        # the capacity is the current where that sum reaches dT
+        c = pt.neck_capacity(0.25, 0.035, 2.27, [self.PLANE, wide], 10.0)
+        self.assertAlmostEqual(pt.neck_peak_rise(0.25, 0.035, 2.27, c, [self.PLANE, wide], 10.0), 10.0, places=6)
+        # a hot pad (no evidence) at the other end: its full dT dominates the max, no credit
+        self.assertGreater(pt.neck_peak_rise(0.25, 0.035, 2.27, 1.1, [self.PAD, wide], 10.0), 10.0)
+        self.assertEqual(pt.neck_capacity(0.25, 0.035, 2.27, [self.PAD, wide], 10.0), 0.0)
+
+    def test_neck_to_an_unknown_pad_end_has_no_credit(self):
+        self.assertEqual(pt.neck_capacity(0.25, 0.035, 0.1, [self.PLANE, self.PAD], 10.0), 0.0)
+        self.assertEqual(pt.neck_capacity(0.25, 0.035, 0.1, [self.PLANE, ()], 10.0), 0.0)   # no evidence at all
+        self.assertAlmostEqual(pt.track_amps(0.25, 0.035, 10.0, (0.1, 0.25), ends=[self.PLANE, self.PAD]), pt.ipc_amps(0.25))
+
+    def test_end_takes_the_coolest_evidence(self):
+        # a pad that is also on a plane is a plane end
+        self.assertEqual(pt.end_rise((('pad',), ('plane',)), 1.0, 10.0), 0.0)
+        self.assertEqual(pt.end_rise((('pad',),), 1.0, 10.0), 10.0)
+
+    def test_pin_escape_needs_a_rating_and_stays_within_the_pad(self):
+        # pad 0.3 x 0.6 mm (TPS61023 SW), rated 2.7 A, net 1.1 A
+        self.assertTrue(pt.pin_escape(0.5, 0.3, 0.3, 0.6, 2.7, 1.1))
+        self.assertFalse(pt.pin_escape(0.5, 0.3, 0.3, 0.6, None, 1.1))   # no rating
+        self.assertFalse(pt.pin_escape(0.7, 0.3, 0.3, 0.6, 2.7, 1.1))    # longer than the pad
+        self.assertFalse(pt.pin_escape(0.5, 0.25, 0.3, 0.6, 2.7, 1.1))   # narrower than the pad
+        self.assertFalse(pt.pin_escape(0.5, 0.3, 0.3, 0.6, 1.0, 1.1))    # rating below the net current
+
+    def test_pin_ratings_file_has_a_source_per_pin(self):
+        r = pt.load_pin_ratings()
+        self.assertIn('TPS61023', r)
+        for key, part in r.items():
+            self.assertTrue(part['mpn'])
+            for pin, v in part['pins'].items():
+                self.assertGreater(v['amps'], 0)
+                self.assertIn('page', v['source'])
+        self.assertEqual(pt.pin_rating(r, 'TPS61023DRLR', '5')[0], 2.7)
+        self.assertIsNone(pt.pin_rating(r, 'TPS61023DRLR', '1')[0])
+        self.assertIsNone(pt.pin_rating(r, 'LM5164', '8')[0])
+
+    def test_pq_meter_bst_sw_fails_without_evidence(self):
+        # PQ-METER /BST_SW: 0.25 mm x 2.27 mm from U12.5 (0.3 x 0.6 mm pad) to L2.2: both ends are pads
+        self.assertEqual(pt.neck_capacity(0.25, 0.035, 2.27, [self.PAD, self.PAD], 10.0), 0.0)
+        self.assertFalse(pt.pin_escape(2.27, 0.25, 0.3, 0.6, 2.7, 1.1))
+
+    def test_neck_chain_reports_its_end_nodes(self):
+        pieces = [('ab', 'F', (0, 0), (5, 0), 1.0), ('bc', 'F', (5, 0), (6, 0), 0.3), ('cd', 'F', (6, 0), (7.27, 0), 0.24),
+                  ('de', 'F', (7.27, 0), (12, 0), 1.0)]
+        ch = pt.neck_chains(pieces)
+        self.assertEqual(sorted(ch['bc'][2]), [('F', (5, 0)), ('F', (7.27, 0))])
+        self.assertEqual(sorted(ch['cd'][2]), [('F', (6, 0)), ('F', (7.27, 0))])
 
     def test_via_groups_join_vias_with_the_same_ends(self):
         g = pt.via_groups({0: {'A', 'B'}, 1: {'B', 'A'}, 2: {'A', 'C'}})

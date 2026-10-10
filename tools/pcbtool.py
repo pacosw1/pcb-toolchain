@@ -168,23 +168,29 @@ def apply_colors(text, mask, silk, finish, render=False):
 
 
 def width_report(segs, need, pads, thick=None, dT=10.0):
-    """Track segments narrower than the net class width (the current rule). D-124: a narrow segment passes as a
-    neck when its neck chain (neck_chains: the run of segments no wider than it, between pads, branches or wider
-    copper) is short enough to be cooled by conduction at the class design current (neck_max_mm). The class
-    design current is the IPC current of the class width (ipc_amps). thick: layer -> copper mm (default 0.035)."""
+    """Track segments narrower than the net class width (the current rule). D-124c: a narrow segment passes as a
+    neck when its neck chain (neck_chains) stays within dT at the class design current (the IPC current of the class
+    width) with the end temperatures from evidence (neck_capacity); this report has no zones, so its evidence is
+    wider tracks only, and a pad end is at the full dT. Or (pin escape) when it starts on a pad, is no narrower than
+    the pad's narrow dimension, no longer than its long dimension, and the pad's part pin is rated for at least that
+    current (pads: 'minor', 'major', 'pin_amps' from tools/pin-ratings.json). thick: layer -> copper mm."""
     thick = thick or {}
     out = {}
-    pieces, stops = [], set()
+    pieces, stops, evidence, on_pad = [], set(), {}, {}
     for i, sg in enumerate(segs):
         if sg['net'] in need:
             pieces.append((i, (sg['net'], sg.get('layer', 'F.Cu')), tuple(sg['start']), tuple(sg['end']), sg['width']))
     for pd in pads:   # a pad of the net ends a chain on every layer of its segments
-        for _, key, u, v, _ in pieces:
+        for i, key, u, v, _ in pieces:
             if key[0] == pd['net']:
                 for e in (u, v):
                     if math.dist(pd['pos'], e) < 0.01:
                         stops.add((key, e))
+                        evidence.setdefault((key, e), []).append(('pad',))
+                        on_pad.setdefault(i, []).append(pd)
     chains = neck_chains(pieces, stops)
+    lay_thick = {key: thick.get(key[1], 0.035) for _, key, _, _, _ in pieces}
+    ends = chain_end_evidence(pieces, chains, lay_thick, evidence)
     for i, sg in enumerate(segs):
         w_need = need.get(sg['net'])
         if w_need is None:
@@ -194,11 +200,15 @@ def width_report(segs, need, pads, thick=None, dT=10.0):
         if sg['width'] >= w_need - 1e-6:
             continue
         t = thick.get(sg.get('layer'), 0.035)
-        length, w_min = chains[i]
-        if length <= neck_max_mm(w_min, t, ipc_amps(w_need, t, dT), dT) + 1e-9:
+        amps = ipc_amps(w_need, t, dT)
+        length = math.dist(sg['start'], sg['end'])
+        if any(pin_escape(length, sg['width'], pd['minor'], pd.get('major', 0), pd.get('pin_amps'), amps)
+               for pd in on_pad.get(i, [])):
+            r['necks'] += 1
+        elif track_amps(sg['width'], t, dT, chains[i], ends[i]) >= amps - 1e-9:
             r['necks'] += 1
         else:
-            r['under'].append((sg['width'], round(math.dist(sg['start'], sg['end']), 3), sg['start']))
+            r['under'].append((sg['width'], round(length, 3), sg['start']))
     return out
 
 
@@ -254,27 +264,128 @@ def _neck_k(dT):
 def neck_max_mm(width_mm, thick_mm, amps, dT=10.0):
     """Longest neck that stays within dT at this current: L <= (A / I) x sqrt(8 k dT / rho) (report C5, [D]:
     uniform Joule heating of a conductor whose two ends are held at the trace temperature, dT_max = J^2 rho L^2 / (8 k);
-    conservative, conduction into FR-4 and the planes is ignored; Brooks: the rest of the trace acts as a heat sink [S])."""
+    conservative, conduction into FR-4 and the planes is ignored). D-124c: this holds only when both ends are at
+    rise 0 (on a same-net plane); with warmer ends the budget is smaller (neck_capacity). A pad or a geometric
+    chain stop alone does not prove a cool end (codex 2617e1b0)."""
     return (width_mm * thick_mm * 1e-6 / amps) * _neck_k(dT) * 1e3 if amps > 0 else float('inf')
 
 
 def neck_amps(width_mm, thick_mm, length_mm, dT=10.0):
-    """The current at which a neck of this length reaches dT (inverse of neck_max_mm)."""
+    """The current at which a neck of this length reaches dT with both ends at rise 0 (inverse of neck_max_mm)."""
     return width_mm * thick_mm * 1e-6 * _neck_k(dT) / (length_mm * 1e-3) if length_mm > 0 else float('inf')
 
 
-def track_amps(width_mm, thick_mm, dT, chain):
-    """Capacity of a track piece: the larger of its IPC current and the neck current of its chain (length, min width)."""
-    length, w_min = chain
-    return max(ipc_amps(width_mm, thick_mm, dT), neck_amps(w_min, thick_mm, length, dT))
+# ---- D-124c (user decision 2026-10-09, option C): neck credit only from evidence of the end temperatures
+# Derivation [D]. A neck of length L, cross-section A, current I is a 1-D conductor with uniform heat generation
+# q''' = J^2 rho (J = I / A). Steady state, no heat loss through its sides (conduction into FR-4 and air is
+# ignored, which makes the result higher, so conservative): k d2T/dx2 = -J^2 rho. With both ends held at the same
+# temperature T_e the solution is a parabola with its peak in the middle: T_max - T_e = J^2 rho L^2 / (8 k).
+# Source: the plane wall with uniform thermal energy generation and equal surface temperatures, Incropera, DeWitt,
+# Bergman, Lavine, "Fundamentals of Heat and Mass Transfer", section 3.5 "Conduction with thermal energy
+# generation" (T_max - T_s = q L_half^2 / (2 k) with L_half = L / 2) [S]. The two ends of a real neck can be at
+# different temperatures; holding BOTH at the higher one gives a temperature at every point that is at least the
+# true one (superposition: the linear profile between unequal ends never exceeds the higher end), so
+#   peak rise = max(end rises) + I^2 rho L^2 / (8 k A^2)                                          (conservative)
+# and the neck passes when the peak rise <= the allowed dT. rho, k: RHO_CU, K_CU above.
+# End rise (an upper bound on the end's temperature rise, from evidence in the CAD data):
+#   - 'plane': the end is in a zone of the same net on that layer, on a pad solidly joined to one, or on a via that
+#     joins one (stitching vias): rise 0. IPC-2152 found that planes near a trace lower its temperature (PCD&F,
+#     "Determining current carrying capacity", above [S]); a same-net plane is the heat sink itself.
+#   - ('track', w, t): the end meets a wider track: that track's IPC rise at the current (ipc_rise, the IPC formula
+#     I = k dT^0.44 A^0.725 solved for dT).
+#   - anything else ('pad' with no other evidence, a dead end, a narrower branch): rise = the full allowed dT, so
+#     the neck has no budget left and is rated as a plain IPC track.
+# An end with several kinds of evidence takes the lowest bound (each one is an upper bound on the same node).
+
+
+def ipc_rise(amps, width_mm, thick_mm=0.035):
+    """Temperature rise of a track at this current (inverse of ipc_amps): dT = (I / (k A^0.725))^(1 / 0.44)."""
+    return (amps / (IPC_K * (width_mm * thick_mm / 0.0254 ** 2) ** 0.725)) ** (1 / 0.44)
+
+
+def joule_rise(width_mm, thick_mm, length_mm, amps):
+    """Peak rise of a neck above its ends: I^2 rho L^2 / (8 k A^2) (D-124c derivation above)."""
+    area = width_mm * thick_mm * 1e-6
+    return amps ** 2 * RHO_CU * (length_mm * 1e-3) ** 2 / (8 * K_CU * area ** 2)
+
+
+def end_rise(end, amps, dT):
+    """Upper bound on the rise of one neck end. end: a tuple of evidence items ('plane',), ('track', w, t),
+    ('pad',); the lowest bound wins; no evidence (or only 'pad') = the full dT."""
+    best = dT
+    for e in end or ():
+        if e[0] == 'plane':
+            best = min(best, 0.0)
+        elif e[0] == 'track':
+            best = min(best, ipc_rise(amps, e[1], e[2]))
+    return best
+
+
+def neck_peak_rise(width_mm, thick_mm, length_mm, amps, ends, dT):
+    """max(end rises) + Joule rise of the neck. ends: one evidence tuple per end (no ends: no evidence)."""
+    hot = max((end_rise(e, amps, dT) for e in ends), default=dT)
+    return hot + joule_rise(width_mm, thick_mm, length_mm, amps)
+
+
+def neck_capacity(width_mm, thick_mm, length_mm, ends, dT):
+    """The largest current whose neck_peak_rise is <= dT (0 when an end has no evidence). The peak rise grows
+    with the current, so a bisection between 0 and the plane-to-plane limit (neck_amps) finds it."""
+    if not ends or any(end_rise(e, 1e-9, dT) >= dT for e in ends):
+        return 0.0
+    lo, hi = 0.0, neck_amps(width_mm, thick_mm, length_mm, dT)
+    if hi == float('inf'):
+        return hi
+    for _ in range(80):
+        mid = (lo + hi) / 2
+        if neck_peak_rise(width_mm, thick_mm, length_mm, mid, ends, dT) <= dT:
+            lo = mid
+        else:
+            hi = mid
+    return lo
+
+
+def track_amps(width_mm, thick_mm, dT, chain, ends=()):
+    """Capacity of a track piece: the larger of its IPC current and the D-124c neck capacity of its chain
+    (length, min width) with the evidence at its ends. No ends given: no neck credit (IPC only)."""
+    length, w_min = chain[0], chain[1]
+    return max(ipc_amps(width_mm, thick_mm, dT), neck_capacity(w_min, thick_mm, length, ends, dT))
+
+
+# D-124c (b) pin-escape allowance: tools/pin-ratings.json (per part, the pin or switch current with its source).
+PIN_RATINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pin-ratings.json')
+
+
+def load_pin_ratings(path=PIN_RATINGS_FILE):
+    return json.load(open(path))['parts']
+
+
+def pin_rating(ratings, mpn, pin):
+    """(amps, source) of a part pin from pin-ratings.json, or (None, reason)."""
+    import fnmatch
+    for key, part in ratings.items():
+        if any(fnmatch.fnmatchcase(mpn or '', q) for q in part['mpn']):
+            v = part['pins'].get(str(pin))
+            if v:
+                return v['amps'], f"{key} pin {pin} {v['name']} {v['amps']:g} A ({v['source']})"
+            return None, f'{key} pin {pin}: no rating in tools/pin-ratings.json'
+    return None, f'{mpn}: no entry in tools/pin-ratings.json'
+
+
+def pin_escape(length_mm, width_mm, pad_minor_mm, pad_major_mm, pin_amps, amps):
+    """A track piece that starts on a pad is part of the pad (it carries the pin rating) when it is no narrower
+    than the pad's narrow dimension, no longer than the pad's long dimension, and the part's datasheet pin or
+    switch current (pin_amps; None = no rating) is at least the net current."""
+    return (pin_amps is not None and pin_amps >= amps - 1e-12 and width_mm >= pad_minor_mm - 1e-6
+            and length_mm <= pad_major_mm + 1e-6)
 
 
 def neck_chains(pieces, stops=()):
-    """{key: (length, min width)} of the neck chain of each track piece. pieces: (key, layer, u, v, width).
+    """{key: (length, min width, end nodes)} of the neck chain of each track piece. pieces: (key, layer, u, v, width).
     The chain of a piece is the run of pieces joined end to end through nodes where exactly two pieces of that layer
     meet and that are not in stops ((layer, point): a pad, via or zone), using only pieces no wider than it.
-    A piece next to wider copper therefore ends there (the wider copper is the heat sink); the chain of the widest
-    piece of a neck spans the whole neck at its narrowest width (conservative)."""
+    A piece next to wider copper therefore ends there; the chain of the widest piece of a neck spans the whole neck
+    at its narrowest width (conservative). The end nodes are where the chain stops; D-124c rates the chain only
+    from the evidence of the temperature at those nodes (a geometric stop alone is no heat sink)."""
     at = collections.defaultdict(list)
     for i, (_, L, u, v, _) in enumerate(pieces):
         at[(L, u)].append(i)
@@ -293,7 +404,35 @@ def neck_chains(pieces, stops=()):
                     if k not in seen and pieces[k][4] <= w + 1e-9:
                         seen.add(k)
                         todo.append(k)
-        out[key] = (sum(math.dist(pieces[j][2], pieces[j][3]) for j in seen), min(pieces[j][4] for j in seen))
+        ends = []
+        for j in seen:
+            for e in pieces[j][2:4]:
+                node = (pieces[j][1], e)
+                inner = node not in stops and len(at[node]) == 2 and all(k in seen for k in at[node])
+                if not inner and node not in ends:
+                    ends.append(node)
+        out[key] = (sum(math.dist(pieces[j][2], pieces[j][3]) for j in seen), min(pieces[j][4] for j in seen),
+                    tuple(ends))
+    return out
+
+
+def chain_end_evidence(pieces, chains, thick, evidence):
+    """{key: [evidence tuple per end node]} (D-124c). evidence: {(layer, point): [('plane',) | ('pad',) ...]} from
+    the caller (zones, pads, vias); a wider track at the node adds ('track', width, thickness)."""
+    at = collections.defaultdict(list)
+    for i, (_, L, u, v, _) in enumerate(pieces):
+        at[(L, u)].append(i)
+        at[(L, v)].append(i)
+    out = {}
+    for i, (key, L, u, v, w) in enumerate(pieces):
+        ends = []
+        for node in chains[key][2]:
+            ev = list(evidence.get(node, ()))
+            wider = [pieces[k][4] for k in at[node] if pieces[k][4] > w + 1e-9]
+            if wider:   # at a branch, the narrowest wider track (the highest of their rises: conservative)
+                ev.append(('track', min(wider), thick.get(node[0], 0.035)))
+            ends.append(tuple(ev))
+        out[key] = ends
     return out
 
 
@@ -1407,8 +1546,11 @@ def cmd_widths(a):
             segs.append({'net': n, 'width': round(mm(t.GetWidth()), 4), 'layer': t.GetLayerName(),
                          'start': (round(mm(t.GetStart().x), 3), round(mm(t.GetStart().y), 3)),
                          'end': (round(mm(t.GetEnd().x), 3), round(mm(t.GetEnd().y), 3))})
+    ratings = load_pin_ratings()
     pads = [{'net': pd.GetNetname(), 'pos': (round(mm(pd.GetPosition().x), 3), round(mm(pd.GetPosition().y), 3)),
-             'minor': round(mm(min(pd.GetSize(p.F_Cu).x, pd.GetSize(p.F_Cu).y)), 3)}
+             'minor': round(mm(min(pd.GetSize(p.F_Cu).x, pd.GetSize(p.F_Cu).y)), 3),
+             'major': round(mm(max(pd.GetSize(p.F_Cu).x, pd.GetSize(p.F_Cu).y)), 3),
+             'pin_amps': pin_rating(ratings, fp.GetValue(), pd.GetNumber())[0]}   # D-124c (b)
             for fp in b.GetFootprints() for pd in fp.Pads() if pd.GetNumber()]
     # dT 10 K: the same allowed rise as the paths check default (current-paths.json "dT"; a design choice, report A3)
     rep = width_report(segs, need, pads, thick=copper_thickness(a.board), dT=10.0)
@@ -1431,8 +1573,8 @@ def copper_thickness(board):
 
 
 def net_graph(p, b, net, thick, dT, plating):
-    """Copper graph of one net: tracks (IPC current or neck current, D-124), via groups (barrel cross-section, D-124),
-    filled zone islands (planes), pads."""
+    """Copper graph of one net: tracks (IPC current, or the D-124c neck capacity from end evidence, or the D-124c
+    pin-escape rating), via groups (barrel cross-section, D-124), filled zone islands (planes), pads."""
     mm, inf = p.ToMM, float('inf')
     pt_ = lambda v: (round(mm(v.x), 3), round(mm(v.y), 3))
     tracks = [t for t in b.GetTracks() if t.GetNetname() == net]
@@ -1462,11 +1604,16 @@ def net_graph(p, b, net, thick, dT, plating):
     pads = {f'{fp.GetReference()}.{pd.GetNumber()}': pd for fp in b.GetFootprints() for pd in fp.Pads()
             if pd.GetNumber() and pd.GetNetname() == net}
     stops = set()   # track nodes on a pad, via or zone: a neck chain ends there
+    evidence = collections.defaultdict(list)   # D-124c: node -> end temperature evidence
+    pad_nodes = collections.defaultdict(list)  # pad label -> its track nodes
     for lab, pd in pads.items():
         for L, e in nodes:
             if pd.IsOnLayer(b.GetLayerID(L)) and pd.HitTest(p.VECTOR2I(p.FromMM(e[0]), p.FromMM(e[1]))):
                 edges.append((lab, (L, e), inf, 'pad'))
                 stops.add((L, e))
+                evidence[(L, e)].append(('pad',))
+                pad_nodes[lab].append((L, e))
+    on_plane = set()   # pads solidly joined to a same-net zone, vias that join one
     links = {i: set() for i in range(len(vias))}   # via -> the copper it joins
     for i, v in enumerate(vias):
         for L, e in nodes:
@@ -1494,6 +1641,7 @@ def net_graph(p, b, net, thick, dT, plating):
                     if L2 == L and inside(p.VECTOR2I(p.FromMM(e[0]), p.FromMM(e[1]))):
                         edges.append((isl, (L2, e), inf, 'zone'))
                         stops.add((L2, e))
+                        evidence[(L2, e)].append(('plane',))
                 for lab, pd in pads.items():
                     if pd.IsOnLayer(lid) and touches(pd):
                         conn = pd.GetLocalZoneConnection()
@@ -1501,6 +1649,8 @@ def net_graph(p, b, net, thick, dT, plating):
                             conn = z.GetPadConnection()
                         solid = conn == p.ZONE_CONNECTION_FULL or (conn == p.ZONE_CONNECTION_THT_THERMAL and pd.GetAttribute() == p.PAD_ATTRIB_SMD)
                         sw = round(mm(z.GetThermalReliefSpokeWidth()), 3)
+                        if solid:
+                            on_plane.add(lab)
                         # thermal: 2 spokes (the KiCad default minimum), each an IPC conductor of the spoke width
                         edges.append((isl, lab, inf if solid else THERMAL_SPOKES * ipc_amps(sw, thick.get(L, 0.035), dT),
                                       f'zone {L} ' + ('solid' if solid else f'thermal {THERMAL_SPOKES} x {sw} mm spokes to {lab}')))
@@ -1515,12 +1665,38 @@ def net_graph(p, b, net, thick, dT, plating):
                f'{len(g)} vias in parallel (drill {min(drills):.2f}-{max(drills):.2f}) at {pt_(vias[g[0]].GetPosition())}')
         for end in links[g[0]]:
             edges.append((('via', g[0]), end, va, lab))
+    for i, ends_ in links.items():   # D-124c: a via that joins a same-net zone (stitching) is a plane end
+        if any(isinstance(x, tuple) and x[0] == 'zone' for x in ends_):
+            for x in ends_:
+                if isinstance(x, tuple) and x[0] != 'zone' and len(x) == 2:
+                    evidence[x].append(('plane',))
+    for lab in on_plane:
+        for node in pad_nodes[lab]:
+            evidence[node].append(('plane',))
     chains = neck_chains(pieces, stops)
+    ends = chain_end_evidence(pieces, chains, thick, evidence)
+    ratings = load_pin_ratings()
+    pad_rating = {}
+    for lab, pd in pads.items():
+        fp = pd.GetParentFootprint()
+        mpns = [fp.GetValue()] + [f.GetText() for f in fp.GetFields() if f.GetName().upper() in ('MPN', 'MFR PART', 'PART NUMBER')]
+        r = next((x for x in (pin_rating(ratings, m, pd.GetNumber()) for m in mpns) if x[0] is not None), (None, None))
+        pad_rating[lab] = r
     for i, L, u, v, w in pieces:
         th = thick.get(L, 0.035)
-        amps = track_amps(w, th, dT, chains[i])
+        amps = track_amps(w, th, dT, chains[i], ends[i])
         neck = amps > ipc_amps(w, th, dT) + 1e-12
-        edges.append(((L, u), (L, v), amps, f'{L} {w} mm {u}-{v}' + (f' (neck {chains[i][0]:.2f} mm)' if neck else '')))
+        label = f'{L} {w} mm {u}-{v}' + (f' (neck {chains[i][0]:.2f} mm, end evidence)' if neck else '')
+        # D-124c (b) pin escape: the piece starts on a rated pad, as wide as its narrow side, as short as its long side
+        for lab, pd in pads.items():
+            pin_a, src = pad_rating[lab]
+            if pin_a is None or not ((L, u) in pad_nodes[lab] or (L, v) in pad_nodes[lab]):
+                continue
+            sz = pd.GetSize(b.GetLayerID(L))
+            minor, major = mm(min(sz.x, sz.y)), mm(max(sz.x, sz.y))
+            if pin_escape(math.dist(u, v), w, minor, major, pin_a, 0.0) and pin_a > amps:
+                amps, label = pin_a, f'{L} {w} mm {u}-{v} (pin escape of {lab}: {src})'
+        edges.append(((L, u), (L, v), amps, label))
     return edges, set(pads)
 
 

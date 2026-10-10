@@ -1,0 +1,16 @@
+{
+  "about": "D-124c (user decision 2026-10-09, option C, part b): per-part pin or switch current ratings for the pin-escape allowance of tools/pcbtool.py (paths, widths). A track piece that starts on a pad, is no narrower than the pad's narrow dimension and no longer than the pad's long dimension is part of the pad; it carries the pin rating below when that rating is at least the net's design current. A part or pin not listed here gets no allowance. Each value: document, revision, section and table, page, URL, the local copy, and the statistic used (the minimum when the document gives one). [P]: primary source read.",
+  "parts": {
+    "TPS61023": {
+      "mpn": ["TPS61023*"],
+      "pins": {
+        "5": {
+          "name": "SW",
+          "amps": 2.7,
+          "statistic": "min",
+          "source": "TPS61023 datasheet SLVSF14B (Sep 2019, revised Aug 2020), section 6.5 Electrical Characteristics, POWER SWITCH, ILIM_SW valley current limit 2.7 A min, 3.7 A typ (VIN 3.6 V, VOUT 5.0 V, TJ -40 to 125 C), page 5; pin 5 = SW (Pin Functions table, page 3); https://www.ti.com/lit/ds/symlink/tps61023.pdf, local copy hardware-design/registry/datasheets/TPS61023.pdf [P]. The switch current through SW reaches the valley limit before current limiting acts, so the pin is designed to carry at least 2.7 A."
+        }
+      }
+    }
+  }
+}

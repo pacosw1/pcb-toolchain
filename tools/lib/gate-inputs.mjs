@@ -65,6 +65,8 @@ export function gateInputs(root, board, configName = 'gate.json', environment = 
   for (const p of walkFiles(join(root,'tools'), p=>/\.(mjs|py|sh|java)$/.test(p) || p.endsWith('/hooks/pre-commit'))) add(p);
   add(join(root,'tools/route-features.json'));
   add(join(root,'tools/edge-rates.json')); // D-124 rise-time table read by si_planes.py
+  add(join(root,'tools/driver-edges.json')); // D-124a/b/c driver table (IBIS files, bounds) read by net_drivers.py
+  add(join(root,'tools/pin-ratings.json')); // D-124c pin-escape ratings read by pcbtool.py paths
   for(const repo of environment.repositories ?? []) for(const p of walkFiles(repo,p=>p.endsWith('.py'))) add(p);
   return {cfg, project, files:[...files].sort()};
 }

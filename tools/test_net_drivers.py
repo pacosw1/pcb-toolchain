@@ -195,6 +195,18 @@ C_comp      3.19pF      2.54pF      4.41pF
 [Model]     FIX_OUT_33
 Model_type  Output
 C_comp      7.52pF      3.81pF      9.89pF
+[Voltage Range]     3.3     3.0     3.6
+[Pullup Reference]  3.3     3.0     3.6
+[Pulldown]
+| V-I: typ 100 ohm, min 200 ohm, max 50 ohm (ground-relative); a clamp-like point below 0 V
+| Voltage   I(typ)    I(min)    I(max)
+-1.0        -50mA     -40mA     -60mA
+0.0         0         0         0
+3.6         36mA      18mA      72mA
+[Pullup]
+| Vcc-relative: typ 200 ohm, min 400 ohm, max 100 ohm (current out of the pin is negative)
+0.0         0         0         0
+3.6         -18mA     -9mA      -36mA
 [Ramp]
 | variable       typ                min                max
 dV/dt_r          1.49/3.24E-10      1.22/5.27E-10      1.80/2.47E-10
@@ -264,6 +276,28 @@ class IbisAndBoundTest(unittest.TestCase):
         self.table = bound_table(self.ibs)
         self.s = base_spec()
 
+    def test_vi_table_average_current(self):
+        # D-124c: the mean |I| over 10-90 % of the swing from the [Pulldown] / [Pullup] V-I tables
+        m = self.ir.load(self.ibs)['models']['fix_out_33']
+        self.assertEqual(m['vrange'], [3.3, 3.0, 3.6])
+        # typ pulldown 100 ohm over 0.33..2.97 V: mean I = 1.65 V / 100 ohm = 16.5 mA
+        self.assertAlmostEqual(self.ir.vi_avg_current(m['vi']['pulldown'], 'typ', 0.33, 2.97), 0.0165, places=9)
+        # max pullup 100 ohm (Vcc-relative) over 0.36..3.24 V: 1.8 V / 100 ohm = 18 mA
+        self.assertAlmostEqual(self.ir.vi_avg_current(m['vi']['pullup'], 'max', 0.36, 3.24), 0.018, places=9)
+
+    def test_vi_drive_edges_hand_computed(self):
+        m = self.ir.load(self.ibs)['models']['fix_out_33']
+        e = self.ir.vi_edges(m, 4.81e-12)
+        # max corner (3.6 V): fall C x 0.8 x 3.6 / 36 mA = 0.3848 ns, rise C x 2.88 / 18 mA = 0.7696 ns
+        # typ corner (3.3 V): fall C x 2.64 / 16.5 mA = 0.7696 ns, rise C x 2.64 / 8.25 mA = 1.5392 ns
+        self.assertAlmostEqual(e['tf_ns'], 0.3848, places=6)
+        self.assertEqual(e['corner_f'], 'max')
+        self.assertAlmostEqual(e['tr_ns'], 0.7696, places=6)
+        # open drain with a 3.3 V pull-up: the pulldown only, over 0.33..2.97 V: max corner 50 ohm -> 33 mA
+        od = self.ir.vi_edges(m, 4.81e-12, swing_v=3.3, open_drain=True)
+        self.assertAlmostEqual(od['tf_ns'], 4.81e-3 * 2.64 / 0.033, places=6)
+        self.assertNotIn('tr_ns', od)
+
     def test_ibis_ramp_parse_gives_the_fastest_corner(self):
         m = self.ir.load(self.ibs)['models']['fix_out_33']
         e = self.ir.ramp_edges(m)
@@ -287,11 +321,27 @@ class IbisAndBoundTest(unittest.TestCase):
     def geom(self, **lengths):
         return {'length_mm': lengths, 'pf_per_mm': {n: (0.1, 'test 0.1 pF/mm') for n in lengths}}
 
-    def test_part_with_ibis_uses_it_before_the_bound(self):
+    def test_part_with_ibis_uses_its_vi_tables_not_the_ramp(self):
+        # D-124c: C_load = 10 mm x 0.1 pF/mm + the driver's C_comp min 3.81 pF = 4.81 pF; I from the V-I tables
+        # (max corner fall 36 mA at 3.6 V): 4.81 pF x 0.8 x 3.6 V / 36 mA = 0.3848 ns. The [Ramp] (into 50 ohm) gave 0.226.
         e = nd.net_edge('/Y', self.nl, self.table, geom=self.geom(**{'/Y': 10.0}))
-        self.assertAlmostEqual(e['edge_ns'], 0.226, places=6)   # VCC on VDD_3V3: FIX_OUT_33 fall, max corner
+        self.assertAlmostEqual(e['edge_ns'], 0.3848, places=6)
         self.assertIn('IBIS', e['driver'])
-        self.assertNotIn('bound', e['driver'])
+        self.assertIn('V-I', e['driver'])
+        self.assertNotIn('20 mA (test)', e['driver'])   # not the table bound of the same part
+
+    def test_ibis_error_makes_the_driver_unknown(self):
+        # strict: a model variant with no V-I tables (FIX_OUT_50) is an error -> unknown, never a silent pass
+        t = bound_table(self.ibs)
+        t['FIXGATE'] = dict(t['FIXGATE'], ibis=dict(t['FIXGATE']['ibis'], variants={'3.3': '_50'}))
+        e = nd.net_edge('/Y', self.nl, t, geom=self.geom(**{'/Y': 10.0}))
+        self.assertIn('IBIS V-I edge not available', e['unknown'])
+        # an input model is not an output
+        with self.assertRaises(self.ir.IbisError):
+            self.ir.vi_edges(self.ir.load(self.ibs)['models']['fix_in_33'], 1e-12, swing_v=3.3)
+
+    def test_ibis_driver_needs_the_routed_length(self):
+        self.assertIn('routed length', nd.net_edge('/Y', self.nl, self.table)['unknown'])
 
     def test_esp32_net_uses_the_bound(self):
         e = nd.net_edge('/CS', self.nl, self.table, geom=self.geom(**{'/CS': 10.0}))
@@ -323,8 +373,10 @@ class IbisAndBoundTest(unittest.TestCase):
                 for rule in p['pins']:
                     if rule.get('ibis_model') and rule['role'] != 'input':
                         for v in p['ibis']['variants'].values():
-                            e = nd.ibis_edges(p, rule['ibis_model'] + v)
-                            self.assertGreater(min(e['tr_ns'], e['tf_ns']), 0, f'{key} {rule["ibis_model"]}{v}')
+                            m = nd.ibis_model(p, rule['ibis_model'] + v)
+                            e = self.ir.vi_edges(m, 1e-12, swing_v=float(next(k for k, x in p['ibis']['variants'].items() if x == v)),
+                                                 open_drain=rule['role'] == 'open_drain')
+                            self.assertGreater(e['tf_ns'], 0, f'{key} {rule["ibis_model"]}{v}')
 
 
 if __name__ == '__main__':
