@@ -36,6 +36,7 @@ The scope JSON contains only these fields:
 | `native_population` | `DEFAULT` or the explicit registered variant represented by native CAD |
 | `classification` | Every native schematic/PCB reference, without implicit prefix exemptions |
 | `assembly` | Attributable complete assembly requirement scope and separate BOM |
+| `instance_project_names` (optional) | Explicit per-native-schematic-file project name selected from its existing instance records |
 
 Scope, SPEC, CSVs and reviews must remain inside the owning board directory,
 including after symlink resolution. Native recursive sheet files may be shared
@@ -59,6 +60,22 @@ Every native reference must have exactly one classification:
 
 Multi-unit components merge only compatible identities with distinct positive
 units. Exact placed project/sheet instance paths distinguish repeated sheets.
+When a symbol in the owning root has no `instances` node at all, the reader
+uses its exact native `Reference` property and positive unit, with a unique
+placed UUID. Fitted PCB source path must be `/UUID` for an actually placed
+root unit of that same reference. The reader retains all distinct unit UUIDs
+for a merged root part; another reference's UUID cannot supply its origin.
+No fallback applies to child sheets or present malformed/unmatched instances.
+Root page metadata is not a component reference map. These are attributed
+native properties; no instance records or references are invented.
+Normally the project name is the owning native stem's basename. An optional
+`instance_project_names` map can explicitly select an existing project name
+for each named schematic file. Every key must belong to the exact hashed native
+schematic closure and actually be used by a placed instance. Empty/unknown
+names, unused/non-schematic keys, multiple matching project nodes and mismatched
+sheet paths fail. Names are never inferred from a singleton project or old
+revision. The owning scope's SPEC, review and complete source hashes still
+apply; no reference/unit/sheet path or missing child instance is synthesized.
 The check does not demand that unused library units be placed. PCB footprint
 identity checks the named land pattern, not its dimensional correctness.
 

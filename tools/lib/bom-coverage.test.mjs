@@ -15,6 +15,9 @@ const symbol=(ref,path='/ROOT',extra='',unit=1)=>`(symbol (lib_id "Fixture:Part"
  (property "Reference" "${ref}") (property "Footprint" "Fixture:Part") (property "MPN" "PART") (property "LCSC" "C123") ${extra}
  (instances (project "PROJECT" (path "${path}" (reference "${ref}") (unit ${unit})))))`;
 const footprint=(ref,attrs='smd')=>`(footprint "Fixture:Part" (property "Reference" "${ref}") (property "MPN" "PART") (property "LCSC" "C123") (attr ${attrs}))`;
+const originUuid=n=>`00000000-0000-0000-0000-${String(n).padStart(12,'0')}`;
+const rootPropertySymbol=(ref,n,unit=1)=>{const s=symbol(ref,'/ROOT','',unit);return s.slice(0,s.indexOf(' (instances'))+` (uuid "${originUuid(n)}"))`;};
+const originFootprint=(ref,n)=>footprint(ref).replace(' (attr',` (path "/${originUuid(n)}") (attr`);
 function fixture(t) {
  const root=mkdtempSync(join(tmpdir(),'bom-coverage-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
  const prefix='hardware-design/boards/X',project=prefix+'/cad/PROJECT',review=prefix+'/reports/review.md';
@@ -32,7 +35,7 @@ function fixture(t) {
   assembly:{review,basis:'Fixture requires two loose mating pieces; quantities are explicit.',bom:prefix+'/ASSEMBLY-BOM.csv',bom_sha256:sha256(assembly),requirements:[{reference:'MATE-J1',kind:'mate',mpn:'MATE',lcsc:'C456',quantity:2,populations:['DEFAULT'],for_references:['J1'],review}]}};
  const save=(refresh=true)=>{
   put(prefix+'/BOM-VERIFIED.csv',csv);if(scope.assembly) put(scope.assembly.bom,assembly);
-  if(refresh){scope.bom_sha256=sha256(csv);if(scope.assembly) scope.assembly.bom_sha256=sha256(assembly);scope.source_hashes=readPopulation(root,scope.project).sources;
+  if(refresh){scope.bom_sha256=sha256(csv);if(scope.assembly) scope.assembly.bom_sha256=sha256(assembly);scope.source_hashes=readPopulation(root,scope.project,scope.instance_project_names).sources;
    if(entry.variants) scope.source_hashes[prefix+'/'+entry.variants.file]=sha256(readFileSync(join(root,prefix,entry.variants.file)));}
   put(prefix+'/BOM-VERIFIED.scope.json',scope);
  };
@@ -105,6 +108,125 @@ test('native schematic/PCB mismatch, missing footprints and duplicate units are 
 test('multi-unit part merges only compatible different units',t=>{
  const f=fixture(t);f.put(f.project+'.kicad_sch',`(kicad_sch (uuid "ROOT") ${symbol('U1')} ${symbol('U1','/ROOT','',2)} ${symbol('J1')})`);
  f.save();assert.equal(f.run().required_references,2);
+});
+test('root native property references require attributable matching PCB origins',t=>{
+ const f=fixture(t);f.put(f.project+'.kicad_sch',`(kicad_sch (uuid "ROOT") ${rootPropertySymbol('U1',1)} ${rootPropertySymbol('J1',2)})`);
+ f.put(f.project+'.kicad_pcb',`(kicad_pcb ${originFootprint('U1',1)} ${originFootprint('J1',2)})`);
+ f.save();assert.equal(f.run().required_references,2);
+ const n=readPopulation(f.root,f.project);assert.deepEqual([...n.rootPropertyOrigins.get('U1')],[originUuid(1)]);
+});
+test('root property mode never invents UUIDs, references or present instance attribution',async t=>{
+ const cases={
+  'wrong PCB path':f=>f.put(f.project+'.kicad_pcb',`(kicad_pcb ${originFootprint('U1',9)} ${originFootprint('J1',2)})`),
+  'missing PCB path':f=>f.put(f.project+'.kicad_pcb',`(kicad_pcb ${footprint('U1')} ${originFootprint('J1',2)})`),
+  'duplicate root symbol UUID':f=>f.put(f.project+'.kicad_sch',`(kicad_sch (uuid "ROOT") ${rootPropertySymbol('U1',1)} ${rootPropertySymbol('J1',1)})`),
+  'duplicate UUID case alias':f=>f.put(f.project+'.kicad_sch',`(kicad_sch (uuid "ROOT") ${rootPropertySymbol('U1',1).replace('00000000-','aaaaaaaa-')} ${rootPropertySymbol('J1',1).replace('00000000-','AAAAAAAA-')})`),
+  'missing root schematic UUID':f=>f.put(f.project+'.kicad_sch',`(kicad_sch ${rootPropertySymbol('U1',1)} ${rootPropertySymbol('J1',2)})`),
+  'missing root placed UUID':f=>f.put(f.project+'.kicad_sch',`(kicad_sch (uuid "ROOT") ${rootPropertySymbol('U1',1).replace(`(uuid "${originUuid(1)}")`,'')} ${rootPropertySymbol('J1',2)})`),
+  'missing root unit':f=>f.put(f.project+'.kicad_sch',`(kicad_sch (uuid "ROOT") ${rootPropertySymbol('U1',1).replace('(unit 1)','')} ${rootPropertySymbol('J1',2)})`),
+  'missing root Reference':f=>f.put(f.project+'.kicad_sch',`(kicad_sch (uuid "ROOT") ${rootPropertySymbol('U1',1).replace('(property "Reference" "U1")','')} ${rootPropertySymbol('J1',2)})`),
+  'malformed present instances':f=>f.put(f.project+'.kicad_sch',`(kicad_sch (uuid "ROOT") ${rootPropertySymbol('U1',1).slice(0,-1)} (instances)) ${rootPropertySymbol('J1',2)})`),
+  'wrong present project':f=>f.put(f.project+'.kicad_sch',`(kicad_sch (uuid "ROOT") ${symbol('U1','/ROOT',`(uuid "${originUuid(1)}")`).replace('project "PROJECT"','project "OTHER"')} ${rootPropertySymbol('J1',2)})`),
+  'wrong present sheet path':f=>f.put(f.project+'.kicad_sch',`(kicad_sch (uuid "ROOT") ${symbol('U1','/OTHER',`(uuid "${originUuid(1)}")`)} ${rootPropertySymbol('J1',2)})`),
+ };
+ for(const [name,change] of Object.entries(cases))await t.test(name,t=>{
+  const f=fixture(t);f.put(f.project+'.kicad_sch',`(kicad_sch (uuid "ROOT") ${rootPropertySymbol('U1',1)} ${rootPropertySymbol('J1',2)})`);
+  f.put(f.project+'.kicad_pcb',`(kicad_pcb ${originFootprint('U1',1)} ${originFootprint('J1',2)})`);
+  change(f);assert.throws(()=>{f.save();f.run();});
+ });
+});
+test('root multiunit origin includes only UUIDs of actual placed units of that reference',t=>{
+ const f=fixture(t);f.put(f.project+'.kicad_sch',`(kicad_sch (uuid "ROOT") ${rootPropertySymbol('U1',1)} ${rootPropertySymbol('U1',3,2)} ${rootPropertySymbol('J1',2)})`);
+ f.put(f.project+'.kicad_pcb',`(kicad_pcb ${originFootprint('U1',3)} ${originFootprint('J1',2)})`);
+ f.save();assert.equal(f.run().required_references,2);
+ f.put(f.project+'.kicad_pcb',`(kicad_pcb ${originFootprint('U1',2)} ${originFootprint('J1',2)})`);f.save();assert.throws(f.run,/placed-unit source path/);
+});
+test('merged root part retains explicit and property-only units without inventing origins',t=>{
+ const f=fixture(t);f.put(f.project+'.kicad_sch',`(kicad_sch (uuid "ROOT") ${symbol('U1','/ROOT',`(uuid "${originUuid(1)}")`)} ${rootPropertySymbol('U1',3,2)} ${rootPropertySymbol('J1',2)})`);
+ f.put(f.project+'.kicad_pcb',`(kicad_pcb ${originFootprint('U1',1)} ${originFootprint('J1',2)})`);
+ f.save();assert.equal(f.run().required_references,2);
+ assert.deepEqual([...readPopulation(f.root,f.project).rootPropertyOrigins.get('U1')],[originUuid(1),originUuid(3)]);
+});
+test('mixed root part cannot use an invalid explicit-unit UUID as PCB origin',t=>{
+ const f=fixture(t);f.put(f.project+'.kicad_sch',`(kicad_sch (uuid "ROOT") ${symbol('U1','/ROOT','(uuid "foo")')} ${rootPropertySymbol('U1',3,2)} ${rootPropertySymbol('J1',2)})`);
+ f.put(f.project+'.kicad_pcb',`(kicad_pcb ${footprint('U1').replace(' (attr',' (path "/foo") (attr')} ${originFootprint('J1',2)})`);
+ assert.throws(()=>{f.save();f.run();},/noncanonical placed-unit UUID/);
+});
+test('actual BASE A generated root references retain repeated child instances and native PCB origins',t=>{
+ const f=fixture(t),prefix='hardware-design/boards/BASE-PWR',project=prefix+'/cad/BASE-PWR/BASE-PWR';
+ cpSync(join(repo,prefix,'cad/BASE-PWR'),join(f.root,prefix,'cad/BASE-PWR'),{recursive:true});
+ const native=readPopulation(f.root,project);
+ assert.equal(native.symbols.size,318);assert.equal(native.rootPropertyOrigins.size,261);
+ assert.equal([...native.symbols.values()].filter(p=>p.on_board&&p.footprint).length,139);
+ assert.equal(native.footprints.size,139);assert.equal(Object.keys(native.sources).length,5);
+ assert.deepEqual([...native.rootPropertyOrigins.get('J2')],['4d715fe7-a760-5d36-8abb-ff6b3960a8b7']);
+ for(const [ref,ids] of native.rootPropertyOrigins)if(native.symbols.get(ref).footprint)
+  assert.ok([...ids].some(id=>native.footprints.get(ref)?.path==='/'+id),ref);
+ // Native parsing is not a selected-parts or complete assembly approval.
+});
+test('reused child property references without instances remain ambiguous and fail closed',t=>{
+ const f=fixture(t);f.put(f.project+'.kicad_sch','(kicad_sch (uuid "ROOT") (sheet (uuid "A") (property "Sheetfile" "part.kicad_sch")) (sheet (uuid "B") (property "Sheetfile" "part.kicad_sch")))');
+ f.put(f.prefix+'/cad/part.kicad_sch',`(kicad_sch (uuid "CHILD") ${rootPropertySymbol('U1',1)})`);
+ assert.throws(()=>readPopulation(f.root,f.project),/child symbol instance missing/);
+});
+test('scope-owned project mappings select exact existing records and remain hash bound',t=>{
+ const f=fixture(t);f.scope.instance_project_names={[f.project+'.kicad_sch']:'LEGACY'};
+ f.put(f.project+'.kicad_sch',`(kicad_sch (uuid "ROOT") ${symbol('U1').replace('project "PROJECT"','project "LEGACY"')} ${symbol('J1').replace('project "PROJECT"','project "LEGACY"')})`);
+ f.save();assert.equal(f.run().required_references,2);
+ f.scope.source_hashes[f.project+'.kicad_sch']='0'.repeat(64);f.save(false);assert.throws(f.run,/native source hash mismatch/);
+});
+test('project mappings reject unsafe, unknown, unused and ambiguous attribution',async t=>{
+ const cases={
+  'array map':f=>{f.scope.instance_project_names=[];},
+  'empty project':f=>{f.scope.instance_project_names={[f.project+'.kicad_sch']:''};},
+  'unknown project':f=>{f.scope.instance_project_names={[f.project+'.kicad_sch']:'NOT-PRESENT'};},
+  'outside closure':f=>{f.scope.instance_project_names={[f.prefix+'/cad/unused.kicad_sch']:'PROJECT'};},
+  'PCB key':f=>{f.scope.instance_project_names={[f.project+'.kicad_pcb']:'PROJECT'};},
+  'unsafe key':f=>{f.scope.instance_project_names={'hardware-design/../outside.kicad_sch':'PROJECT'};},
+  'unused map on property-only root':f=>{
+   f.scope.instance_project_names={[f.project+'.kicad_sch']:'PROJECT'};
+   f.put(f.project+'.kicad_sch',`(kicad_sch (uuid "ROOT") ${rootPropertySymbol('U1',1)} ${rootPropertySymbol('J1',2)})`);
+  },
+  'wrong exact sheet path':f=>{
+   f.scope.instance_project_names={[f.project+'.kicad_sch']:'PROJECT'};
+   f.put(f.project+'.kicad_sch',`(kicad_sch (uuid "ROOT") ${symbol('U1','/OTHER')} ${symbol('J1')})`);
+  },
+  'multiple matching projects':f=>{
+   f.scope.instance_project_names={[f.project+'.kicad_sch']:'PROJECT'};
+   f.put(f.project+'.kicad_sch',`(kicad_sch (uuid "ROOT") ${symbol('U1').replace('(instances ','(instances (project "PROJECT" (path "/ROOT" (reference "U1") (unit 1))) ')} ${symbol('J1')})`);
+  },
+ };
+ for(const [name,change] of Object.entries(cases))await t.test(name,t=>{const f=fixture(t);change(f);assert.throws(()=>{f.save();f.run();});});
+});
+test('an explicit project mapping never permits a reused child with missing instances',t=>{
+ const f=fixture(t),child=f.prefix+'/cad/part.kicad_sch';
+ f.put(f.project+'.kicad_sch','(kicad_sch (uuid "ROOT") (sheet (uuid "A") (property "Sheetfile" "part.kicad_sch")) (sheet (uuid "B") (property "Sheetfile" "part.kicad_sch")))');
+ f.put(child,`(kicad_sch (uuid "CHILD") ${rootPropertySymbol('U1',1)})`);
+ assert.throws(()=>readPopulation(f.root,f.project,{[child]:'PROJECT'}),/child symbol instance missing/);
+});
+test('actual BASE B uses only three explicit reviewed legacy project-name mappings',t=>{
+ const f=fixture(t),prefix='hardware-design/boards/BASE-PWR',project=prefix+'/cad/BASE-PWR-B/BASE-PWR-B',base=prefix+'/cad/BASE-PWR-B/blocks/';
+ cpSync(join(repo,prefix,'cad/BASE-PWR-B'),join(f.root,prefix,'cad/BASE-PWR-B'),{recursive:true});
+ const mapping=Object.fromEntries(['PSW-TPS2553','IF-BKP-LINK-ESD','IF-RS485'].map(name=>[base+name+'.kicad_sch','BASE-PWR']));
+ assert.throws(()=>readPopulation(f.root,project),/project instance missing/);
+ const native=readPopulation(f.root,project,mapping);
+ assert.equal(native.rootPropertyOrigins.size,269);assert.equal(Object.keys(native.sources).length,6);
+ assert.equal(native.symbols.get('J2').mpn,'436500400');
+ for(const [ref,ids] of native.rootPropertyOrigins)if(native.symbols.get(ref).footprint)
+  assert.ok([...ids].some(id=>native.footprints.get(ref)?.path==='/'+id),ref);
+ assert.throws(()=>readPopulation(f.root,project,{...mapping,[base+'unused.kicad_sch']:'BASE-PWR'}),/outside native schematic closure or unused/);
+ const incomplete={...mapping};delete incomplete[base+'IF-RS485.kicad_sch'];assert.throws(()=>readPopulation(f.root,project,incomplete),/project instance missing/);
+ const review=prefix+'/reports/fixture.md',spec=prefix+'/SPEC-REV-B.md',manifest=prefix+'/BOM-VERIFIED.scope.json';
+ f.put(review,'Synthetic negative source-binding fixture; no component selection.');f.put(spec,'Synthetic review spec, not the real BASE B engineering requirements.');
+ const scope={...f.scope,board:'BASE-PWR',revision:'B',revision_spec:spec,spec_sha256:sha256(readFileSync(join(f.root,spec))),
+  project,bom:prefix+'/BOM-VERIFIED.csv',bom_sha256:sha256(f.csv),instance_project_names:mapping,
+  review_evidence:{[review]:sha256(readFileSync(join(f.root,review)))},classification:{},
+  source_hashes:{...native.sources,[project+'.kicad_sch']:'0'.repeat(64)}};
+ const entry={directory:'BASE-PWR',revisions:[{revision:'B',spec:'SPEC-REV-B.md',project:'cad/BASE-PWR-B/BASE-PWR-B',bom:'BOM-VERIFIED.csv',bom_scope:'BOM-VERIFIED.scope.json'}]};
+ f.put(manifest,scope);assert.throws(()=>inspectBomCoverage(f.root,entry,f.csv,parseCsv(f.csv)),/native source hash mismatch/);
+ const file=base+'IF-RS485.kicad_sch';f.put(file,readFileSync(join(f.root,file),'utf8').replace(/\(path "[^"]+"/,'(path "/WRONG"'));
+ assert.throws(()=>readPopulation(f.root,project,mapping),/sheet instance missing/);
+ // This temporary map proves structural reading, never B's part selection.
 });
 test('complete variant map binds every physical ref, DNP and assembly population',t=>{
  const f=fixture(t);f.entry.variants={file:'variants.json',names:['AIR','ALL']};

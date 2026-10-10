@@ -27,7 +27,7 @@ export function inspectBomCoverage(root,entry,csv,rows) {
  const path=`${prefix}/${revision.bom_scope}`;
  const scope=JSON.parse(ownedFile(root,path,prefix));
  exactKeys(scope,['schema_version','board','revision','revision_spec','spec_sha256','project','bom','bom_sha256',
-  'source_hashes','review_evidence','classification','native_population','assembly'],'unsupported BOM coverage field');
+  'source_hashes','review_evidence','classification','native_population','assembly','instance_project_names'],'unsupported BOM coverage field');
  need(scope.schema_version===1 && scope.board===board && scope.revision===revision.revision,'BOM coverage board/revision/schema mismatch');
  const spec=`${prefix}/${revision.spec}`,project=`${prefix}/${revision.project}`;
  need(scope.revision_spec===spec && digest(scope.spec_sha256) && sha256(ownedFile(root,spec,prefix))===scope.spec_sha256,'BOM coverage spec identity/hash mismatch');
@@ -39,7 +39,7 @@ export function inspectBomCoverage(root,entry,csv,rows) {
   const content=ownedFile(root,p,prefix);need(content.toString().trim() && sha256(content)===h,'BOM coverage review hash mismatch');
  }
  const reviewed=x=>need(text(x) && x!==spec && digest(scope.review_evidence[x]),'BOM coverage scoped review missing');
- const native=readPopulation(root,project);let populations=['DEFAULT'],fit=null;
+ const native=readPopulation(root,project,scope.instance_project_names);let populations=['DEFAULT'],fit=null;
  if(entry.variants) {
   const file=`${prefix}/${entry.variants.file}`,raw=ownedFile(root,file,prefix),v=JSON.parse(raw);
   sameSet(v.variants,entry.variants.names,'BOM coverage variant names mismatch');
@@ -66,6 +66,8 @@ export function inspectBomCoverage(root,entry,csv,rows) {
    c.assembly_dependencies.every(text),`invalid assembly dependencies: ${ref}`);
   if(sch && sch.on_board && sch.footprint) {
    need(pcb,`native fitted/physical reference missing from PCB: ${ref}`);
+   if(native.rootPropertyOrigins.has(ref))
+    need([...native.rootPropertyOrigins.get(ref)].some(uuid=>pcb.path==='/'+uuid),`root property reference lacks matching PCB placed-unit source path: ${ref}`);
    need(sch.mpn===pcb.mpn && sch.lcsc===pcb.lcsc,`native schematic/PCB identity differs: ${ref}`);
    need(sch.footprint===pcb.footprint,`native schematic/PCB land identity differs: ${ref}`);
    need(sch.dnp===pcb.dnp,`native schematic/PCB DNP differs: ${ref}`);

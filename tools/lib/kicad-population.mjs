@@ -47,25 +47,44 @@ function identity(p) {
 function flag(n,name) {
  const value=single(n,name)?.[1];requireValue(['yes','no'].includes(value),`missing/invalid native ${name}`);return value==='yes';
 }
-export function readPopulation(root,project) {
+export function readPopulation(root,project,instanceProjectNames={}) {
+ requireValue(instanceProjectNames && typeof instanceProjectNames==='object' && !Array.isArray(instanceProjectNames),'invalid instance project mapping');
+ for(const [file,name] of Object.entries(instanceProjectNames))
+  requireValue(typeof file==='string' && file.startsWith('hardware-design/') && file.endsWith('.kicad_sch') &&
+   file.split('/').every(p=>p && p!=='.' && p!=='..') && !file.includes('\\') &&
+   typeof name==='string' && name.trim()===name && name.length>0,'invalid instance project mapping path/name');
+ const usedMappings=new Set();
  const sources={};const read=p=>{const b=ownedFile(root,p,'hardware-design');sources[p]=sha256(b);return parseNative(b.toString());};
  const rootPath=project+'.kicad_sch',main=read(rootPath);
  requireValue(main[0]==='kicad_sch','wrong schematic root');
  const rootUuid=single(main,'uuid')?.[1];requireValue(rootUuid,'schematic root UUID missing');
- const projectName=basename(project),symbols=new Map(),units=new Map();let visits=0;
+ const projectName=basename(project),symbols=new Map(),units=new Map(),rootUuids=new Set(),origins=new Map(),fallbackRefs=new Set();let visits=0;
  function walk(file,tree,sheetPath,ancestors) {
   requireValue(++visits<=10000,'schematic instance bound exceeded');
   requireValue(!ancestors.has(file),'cyclic schematic hierarchy');const next=new Set(ancestors);next.add(file);
   for(const n of children(tree,'symbol')) {
-   const inst=single(n,'instances');requireValue(inst,'placed symbol instance missing');
-   const projects=children(inst,'project').filter(p=>p[1]===projectName);
-   requireValue(projects.length===1,'placed symbol project instance missing/ambiguous');
-   const paths=children(projects[0],'path').filter(p=>p[1]===sheetPath);
-   requireValue(paths.length===1,'placed symbol sheet instance missing/ambiguous');
-   const ref=single(paths[0],'reference')?.[1],unit=single(paths[0],'unit')?.[1];
+   const p=properties(n),inst=single(n,'instances'),uuid=single(n,'uuid')?.[1],isRoot=file===rootPath && !ancestors.size;
+   if(isRoot && uuid!==undefined) {
+    requireValue(typeof uuid==='string' && uuid && !rootUuids.has(uuid.toLowerCase()),'missing/duplicate root placed symbol UUID');rootUuids.add(uuid.toLowerCase());
+   }
+   let ref,unit;
+   if(inst!==undefined) {
+    const expectedProject=Object.hasOwn(instanceProjectNames,file)?instanceProjectNames[file]:projectName;
+    const projects=children(inst,'project').filter(p=>p[1]===expectedProject);
+    requireValue(projects.length===1,'placed symbol project instance missing/ambiguous');
+    const paths=children(projects[0],'path').filter(p=>p[1]===sheetPath);
+    requireValue(paths.length===1,'placed symbol sheet instance missing/ambiguous');
+    ref=single(paths[0],'reference')?.[1];unit=single(paths[0],'unit')?.[1];
+    if(Object.hasOwn(instanceProjectNames,file))usedMappings.add(file);
+   } else {
+    requireValue(isRoot,'placed child symbol instance missing');
+    requireValue(typeof uuid==='string' && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(uuid),'root property reference requires exact canonical placed symbol UUID');
+    ref=p.Reference;unit=single(n,'unit')?.[1];fallbackRefs.add(ref);
+   }
    requireValue(typeof ref==='string' && ref.trim()===ref && ref && /^[1-9]\d*$/.test(unit??'') && Number.isSafeInteger(Number(unit)),'invalid placed reference/unit');
    const placedUnit=single(n,'unit')?.[1];requireValue(placedUnit===undefined || placedUnit===unit,'placed symbol/instance unit differs');
-   const p=properties(n),part={reference:ref,...identity(p),footprint:p.Footprint??'',
+   if(isRoot && uuid!==undefined) {if(!origins.has(ref))origins.set(ref,new Set());origins.get(ref).add(uuid);}
+   const part={reference:ref,...identity(p),footprint:p.Footprint??'',
     in_bom:flag(n,'in_bom'),on_board:flag(n,'on_board'),dnp:flag(n,'dnp')};
    const unitKey=ref+'/'+unit;requireValue(!units.has(unitKey),'duplicate placed reference/unit');units.set(unitKey,true);
    if(symbols.has(ref)) requireValue(JSON.stringify(symbols.get(ref))===JSON.stringify(part),'inconsistent multi-unit identity');
@@ -81,13 +100,23 @@ export function readPopulation(root,project) {
   }
  }
  walk(rootPath,main,'/'+rootUuid,new Set());
+ for(const file of Object.keys(instanceProjectNames))
+  requireValue(Object.hasOwn(sources,file) && file.endsWith('.kicad_sch') && usedMappings.has(file),
+   'instance project mapping is outside native schematic closure or unused');
  const pcb=read(project+'.kicad_pcb');requireValue(pcb[0]==='kicad_pcb','wrong PCB root');
  const footprints=new Map();for(const n of children(pcb,'footprint')) {
   const p=properties(n),ref=p.Reference,attrs=single(n,'attr')?.slice(1)??[];
   requireValue(ref && !footprints.has(ref),'missing/duplicate PCB reference');
   requireValue(typeof n[1]==='string' && n[1],'PCB footprint identity missing');
-  footprints.set(ref,{reference:ref,footprint:n[1],...identity(p),dnp:attrs.includes('dnp'),
+  footprints.set(ref,{reference:ref,footprint:n[1],path:single(n,'path')?.[1],...identity(p),dnp:attrs.includes('dnp'),
    excluded:attrs.includes('exclude_from_bom'),board_only:attrs.includes('board_only')});
  }
- return {symbols,footprints,sources};
+ // Direct root references are native property values, not fabricated instances.
+ // Keep every actually placed root unit UUID when one unit uses that mode.
+ const rootPropertyOrigins=new Map([...fallbackRefs].map(ref=>{
+  const ids=origins.get(ref);requireValue(ids && [...ids].every(uuid=>/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(uuid)),
+   'merged root property reference has noncanonical placed-unit UUID');
+  return [ref,ids];
+ }));
+ return {symbols,footprints,sources,rootPropertyOrigins};
 }
