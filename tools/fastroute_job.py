@@ -27,7 +27,9 @@ ROUTE_FEATURES="name=1,..." last; tools/route_features.py show BOARD prints them
   via_halo           the --signal-via padstack (size_mm) for the selected nets, also with no --signal-via argument
   triage_opens       after routing: tools/route_grid.py triage -> OUTDIR/open-triage.json (+ <board>/.gate/), "TRIAGE ..."
   routing_rules      D-125 (tools/routing_rules.py): the router runs once per stage (pairs/clocks, fast, wide, rest; then a
-                     last pass for the plane nets and the nets a stage left open, their stage copper ripped up), each stage's copper locked for the next; via cost via_costs; DSN wire
+                     last pass for the plane nets and the nets a stage left open, their stage copper ripped up; then at most
+                     repair_iterations rip-up-and-repair passes over the nets still open and their immediate blockers),
+                     each stage's copper locked for the next; via cost via_costs; DSN wire
                      keepouts over the missing reference plane for the signal stages. OUTDIR/stage-plan.json,
                      OUTDIR/via-report.json; lines "STAGES ...", "STAGE ...", "VIAS_BY_STAGE ...". Per-stage files have the
                      stage in the name (board-fast.dsn, report-fast.json); the last pass keeps the plain names.
@@ -56,6 +58,7 @@ import lean_workflow as lean
 import thermal_repair
 import import_pose_guard
 import import_replay_guard
+import board_uuids
 import backend_quality
 import routing_rules  # noqa: E402  (D-125 staged order, via cost, reference-plane keepouts)
 
@@ -269,6 +272,13 @@ def _main(a=None):
     if a.gnd_vias and "GND" not in planes:
         planes.insert(0, "GND")
     shutil.copy(a.board, base)
+    # Duplicate item UUIDs (zones copied with their UUID by a generator script) stop the import replay guard
+    # ("duplicate native immutable item identity"): the job copy gets deterministic new UUIDs (tools/board_uuids.py).
+    uuid_fix = board_uuids.repair_file(base)
+    lean.atomic_json(os.path.join(a.outdir, 'uuid-repair.json'), uuid_fix)
+    if uuid_fix['replaced']:
+        print(f"UUIDS {uuid_fix['replaced']} duplicate item UUIDs on the job copy replaced (deterministic; "
+              f"no copper change): " + ", ".join(f"{r['kind']} {r['uuid']}" for r in uuid_fix['rows']), flush=True)
     tool = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gnd_pad_vias.py")
     for net in planes:
         tmp = os.path.join(a.outdir, "planevias.kicad_pcb")
@@ -437,14 +447,19 @@ def _main(a=None):
         return routing_rules.layer_keepouts(rr_spec, job_layers, outline, fills, discs,
                                             float(feat["routing_rules"].get("keepout_grid_mm", 0.1)), fast)
 
-    def route_pass(tag, stage_nets, keep):
-        """One router run over stage_nets (the other nets are ignored classes; existing copper stays locked)."""
+    def route_pass(tag, stage_nets, keep, rip=frozenset()):
+        """One router run over stage_nets (the other nets are ignored classes; existing copper stays locked).
+        rip: nets whose copper of this job (stage copper) is unlocked too (the repair pass)."""
         sfx = "" if tag in ("all", "final") else "-" + tag
+        free = (unlock & stage_nets) | (set(rip) & stage_nets)
         for t in b.GetTracks():
             u = t.m_Uuid.AsString()
             # --unlock-nets: the copper of these nets goes to the router as normal wiring (a start it may rip up and
-            # route again); a locked item stays locked. Copper of an earlier stage is locked.
-            t.SetLocked(True if u not in was else (was[u] or t.GetNetname() not in (unlock & stage_nets)))
+            # route again); a locked item stays locked. Copper of an earlier stage is locked unless its net is ripped.
+            if u not in was:
+                t.SetLocked(t.GetNetname() not in rip)
+            else:
+                t.SetLocked(was[u] or t.GetNetname() not in free)
         dsn, ses, rep = (os.path.join(a.outdir, n) for n in (f"board{sfx}.dsn", f"board{sfx}.ses", f"report{sfx}.json"))
         if not pcbnew.ExportSpecctraDSN(b, dsn):
             sys.exit("fastroute_job: DSN export failed")
@@ -618,9 +633,10 @@ def _main(a=None):
             if not pcbnew.ImportSpecctraSES(b, ses):
                 sys.exit("fastroute_job: SES import failed")
         dup = []
-        if rules:
+        if True:
             # Fastroute 0.1.7 sometimes writes one segment twice (two wires of a net share it; seen with and without
-            # this feature, INPUT-4D2A and CELLULAR smoke runs). The second of two new tracks with the same net,
+            # the routing_rules feature: INPUT-4D2A and CELLULAR smoke runs, a FIELD-24V-BUS --unlock-nets
+            # continuation of 2026-10-10 with the feature off). The second of two new tracks with the same net,
             # layer, width and end points is identical copper: it is deleted before the replay guard, and listed.
             seen = set()
             for t in list(b.GetTracks()):
@@ -628,7 +644,8 @@ def _main(a=None):
                     continue
                 g = key(t)[:3] + (t.GetWidth(),) + tuple(sorted(((t.GetStart().x, t.GetStart().y), (t.GetEnd().x, t.GetEnd().y))))
                 if g in seen:
-                    dup.append(dict(net=t.GetNetname(), layer=t.GetLayerName(), width_nm=t.GetWidth(), ends_nm=list(g[4:])))
+                    dup.append(dict(net=t.GetNetname(), layer=t.GetLayerName(), width_nm=t.GetWidth(), ends_nm=list(g[4:]),
+                                    geometry=('segment', t.GetNetname(), t.GetLayerName(), t.GetWidth(), g[4])))
                     b.Delete(t)
                 else:
                     seen.add(g)
@@ -636,7 +653,11 @@ def _main(a=None):
                 print(f"fastroute_job: {len(dup)} duplicate new segments removed (identical copper), stage {tag}", flush=True)
         try:
             restored = import_pose_guard.restore(b, poses_before, pose_grid)
-            replays = import_replay_guard.restore(b, replay_before, preserved, dsn, ses, replay_path)
+            dedup = {}
+            for row in dup:
+                dedup[row['geometry']] = dedup.get(row['geometry'], 0) + 1
+            replays = import_replay_guard.restore(b, replay_before, preserved, dsn, ses, replay_path,
+                                                  unlocked=set(replay_before) - preserved, deduplicated=dedup)
         except ValueError as exc:
             sys.exit('fastroute_job: SES pose integrity failed; result is not verified: ' + str(exc))
         with open(os.path.join(a.outdir, f'import-pose-audit{sfx}.json'), 'w') as audit:
@@ -646,7 +667,8 @@ def _main(a=None):
                            before_snapshot_sha256=hashlib.sha256(json.dumps(poses_before, sort_keys=True).encode()).hexdigest(),
                            qualified=False, independent_native_gate_required=True), audit, indent=2)
         with open(os.path.join(a.outdir, f'import-replay-audit{sfx}.json'), 'w') as audit:
-            json.dump(dict(removed=replays, preserved_uuids=sorted(preserved), duplicate_new_segments_removed=dup,
+            json.dump(dict(removed=replays, preserved_uuids=sorted(preserved),
+                           duplicate_new_segments_removed=[{k: v for k, v in r.items() if k != 'geometry'} for r in dup],
                            exact_preserved_source_policy=True, qualified=False,
                            independent_native_gate_required=True,
                            dsn_sha256=lean.digest(dsn), ses_sha256=lean.digest(ses)),audit,indent=2)
@@ -713,6 +735,49 @@ def _main(a=None):
         stage_log.append(dict(row, left_open=sorted(left_open)))
         staged |= stage_nets
         still_open = (still_open - stage_nets) | left_open
+    if rules and still_open and int(feat["routing_rules"].get("repair_iterations", 2)) > 0:
+        # Rip-up-and-repair (W9): the staged order locks each stage's copper, so a later stage cannot move it and
+        # loses completion. Each repair iteration unlocks only the nets still open and their immediate blockers
+        # (tools/routing_rules.repair_selection: copper within repair_corridor_mm of the straight line of the open
+        # connection, the nearest repair_max_blockers nets), signal nets with the keepouts, exempt nets without; every
+        # other net stays locked, pair, clock and fast copper included unless it is such a blocker. At most
+        # repair_iterations; an iteration that leaves the same nets open stops the loop.
+        rr_cfg = feat["routing_rules"]
+        keep_any = any(k for _, _, k in rr_plan)
+        grounds = set(rr_spec.get('grounds') or []) | plane_names
+        for it in range(1, int(rr_cfg.get("repair_iterations", 2)) + 1):
+            copper = []
+            for t in b.GetTracks():
+                if t.GetClass() == 'PCB_VIA':
+                    c = t.GetPosition()
+                    copper.append((t.GetNetname(), None, (c.x / 1e6, c.y / 1e6), (c.x / 1e6, c.y / 1e6)))
+                else:
+                    s, e = t.GetStart(), t.GetEnd()
+                    copper.append((t.GetNetname(), t.GetLayerName(), (s.x / 1e6, s.y / 1e6), (e.x / 1e6, e.y / 1e6)))
+            rows = [u for u in report.get('unrouted', []) if u.get('net') in still_open]
+            sel = routing_rules.repair_selection(rows, copper, float(rr_cfg.get("repair_corridor_mm", 1.0)),
+                                                 exclude=grounds, max_blockers=int(rr_cfg.get("repair_max_blockers", 4)))
+            rip = set(sel['nets']) & nets
+            if not rip:
+                break
+            sig = {n for n in rip if not routing_rules.exempt(n, rr_info, plane_names)}
+            pwr = rip - sig
+            print(f"STAGE repair{it}: {len(still_open)} nets open, {len(rip)} nets unlocked ({len(sig)} signal, "
+                  f"{len(pwr)} exempt); blockers " + "; ".join(f"{k}: {', '.join(v) or '-'}" for k, v in sorted(sel['blockers'].items())),
+                  flush=True)
+            before_open = set(still_open)
+            for tag, part, keep in ((f"repair{it}", sig, keep_any), (f"repair{it}_exempt", pwr, False)):
+                if not part:
+                    continue
+                report, imported_vias, left_open, row = route_pass(tag, part, keep, rip=part)
+                stage_log.append(dict(row, left_open=sorted(left_open), repair=True, unlocked=sorted(part),
+                                      blockers=sel['blockers']))
+                still_open = (still_open - part) | left_open
+                for n in ("board{}.dsn", "board{}.ses", "report{}.json"):
+                    shutil.copy(os.path.join(a.outdir, n.format("-" + tag)), os.path.join(a.outdir, n.format("")))
+            print(f"STAGE repair{it}: {len(before_open)} -> {len(still_open)} nets open", flush=True)
+            if not still_open or still_open == before_open:
+                break
     if rules:
         lean.atomic_json(os.path.join(a.outdir, 'stage-plan.json'),
                          dict(stages=[dict(stage=n, nets=s, keepout=k) for n, s, k in rr_plan], runs=stage_log))

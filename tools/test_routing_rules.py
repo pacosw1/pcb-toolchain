@@ -108,5 +108,47 @@ class ViaReport(unittest.TestCase):
         self.assertIn('FAST_VIA_NO_GND 1', rr.summary_line(rep))
 
 
+class RepairSelection(unittest.TestCase):
+    """The repair pass (W9): the open nets and their immediate blockers, nothing else."""
+    def rows(self):
+        # open /A from (0, 5) to (10, 5) on F.Cu; /B crosses the corridor at x = 5, /C runs far away at y = 9,
+        # /D is a via on the line (every layer), GND crosses too but is excluded, /E crosses on B.Cu only
+        unrouted = [dict(net='/A', from_xy=[0, 5], to_xy=[10, 5], **{'from': dict(layers=['F.Cu', 'F.Cu']),
+                                                                     'to': dict(layers=['F.Cu', 'F.Cu'])})]
+        copper = [('/B', 'F.Cu', (5, 0), (5, 10)), ('/C', 'F.Cu', (0, 9), (10, 9)), ('/D', None, (7, 5.2), (7, 5.2)),
+                  ('GND', 'F.Cu', (3, 0), (3, 10)), ('/E', 'B.Cu', (8, 0), (8, 10)), ('/A', 'F.Cu', (0, 5), (2, 5))]
+        return unrouted, copper
+
+    def test_open_net_and_corridor_blockers_only(self):
+        unrouted, copper = self.rows()
+        sel = rr.repair_selection(unrouted, copper, corridor_mm=1.0, exclude={'GND'})
+        self.assertEqual(sel['nets'], ['/A', '/B', '/D'])
+        self.assertEqual(sel['blockers'], {'/A': ['/B', '/D']})
+        self.assertEqual(sel['connections'], 1)
+
+    def test_blockers_are_bounded_by_distance_rank(self):
+        unrouted, copper = self.rows()
+        copper += [('/F', 'F.Cu', (6, 4.5), (6, 5.5))]
+        sel = rr.repair_selection(unrouted, copper, corridor_mm=1.0, exclude={'GND'}, max_blockers=2)
+        # /B and /F cross the line (distance 0); /D is 0.2 mm off: it is dropped by the bound
+        self.assertEqual(sel['blockers'], {'/A': ['/B', '/F']})
+
+    def test_no_opens_selects_nothing(self):
+        self.assertEqual(rr.repair_selection([], [('/B', 'F.Cu', (0, 0), (1, 1))], 1.0)['nets'], [])
+
+    def test_pair_and_fast_copper_is_unlocked_only_as_a_blocker(self):
+        unrouted, copper = self.rows()
+        copper += [('/USB_DP', 'F.Cu', (0, 20), (10, 20))]
+        sel = rr.repair_selection(unrouted, copper, 1.0, exclude={'GND'})
+        self.assertNotIn('/USB_DP', sel['nets'])
+        copper += [('/USB_DN', 'F.Cu', (4, 4), (4, 6))]
+        self.assertIn('/USB_DN', rr.repair_selection(unrouted, copper, 1.0, exclude={'GND'})['nets'])
+
+    def test_segment_distance(self):
+        self.assertAlmostEqual(rr.segment_distance((0, 0), (10, 0), (5, 3), (5, 8)), 3.0)
+        self.assertAlmostEqual(rr.segment_distance((0, 0), (10, 0), (5, -1), (5, 1)), 0.0)
+        self.assertAlmostEqual(rr.segment_distance((0, 0), (0, 0), (3, 4), (3, 4)), 5.0)
+
+
 if __name__ == '__main__':
     unittest.main()

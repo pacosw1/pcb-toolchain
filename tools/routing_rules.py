@@ -290,3 +290,53 @@ def via_report(vias, net_stage, net_class, fast, grounds, gnd_anchors, via_allow
 def summary_line(rep):
     s = ' '.join(f"{k}={v['vias']}/{v['nets']}" for k, v in sorted(rep['by_stage'].items()))
     return f"VIAS_BY_STAGE {s or '-'} (vias/nets) FAST_VIA_NO_GND {len(rep['fast_no_gnd'])}"
+
+# ------------------------------------------------------------------ repair pass (W9, 2026-10-10)
+
+def segment_distance(a0, a1, b0, b1):
+    """Shortest distance between segments a0-a1 and b0-b1 (mm, 2D); a point is a segment of zero length."""
+    def orient(p, q, r):
+        return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+
+    def point_seg(p, s0, s1):
+        dx, dy = s1[0] - s0[0], s1[1] - s0[1]
+        L2 = dx * dx + dy * dy
+        if L2 == 0:
+            return math.dist(p, s0)
+        u = max(0.0, min(1.0, ((p[0] - s0[0]) * dx + (p[1] - s0[1]) * dy) / L2))
+        return math.dist(p, (s0[0] + u * dx, s0[1] + u * dy))
+    d1, d2 = orient(a0, a1, b0), orient(a0, a1, b1)
+    d3, d4 = orient(b0, b1, a0), orient(b0, b1, a1)
+    if ((d1 > 0) != (d2 > 0)) and ((d3 > 0) != (d4 > 0)) and d1 and d2 and d3 and d4:
+        return 0.0
+    return min(point_seg(b0, a0, a1), point_seg(b1, a0, a1), point_seg(a0, b0, b1), point_seg(a1, b0, b1))
+
+
+def repair_selection(unrouted, copper, corridor_mm=1.0, exclude=(), max_blockers=4):
+    """Nets to unlock for a repair pass: every net left open and its immediate blockers, nothing else.
+
+    unrouted: Fastroute report rows (net, from_xy, to_xy in board mm, from/to layers). copper: [(net, layer, p0, p1)]
+    of the routed board in mm (a via: layer None, p0 == p1). A blocker of an open connection is a net other than the
+    open one with copper within corridor_mm of the straight line between the connection's ends, on a layer of the
+    ends (a via counts on every layer); the max_blockers nearest nets per connection. exclude: nets never unlocked
+    (the plane nets, the grounds). Pair, clock and fast copper is unlocked only when it is such a blocker."""
+    open_nets = sorted({u['net'] for u in unrouted if u.get('net')})
+    blockers, n = {}, 0
+    for u in unrouted:
+        net, a0, a1 = u.get('net'), u.get('from_xy'), u.get('to_xy')
+        if not net or not a0 or not a1:
+            continue
+        n += 1
+        layers = set((u.get('from') or {}).get('layers') or []) | set((u.get('to') or {}).get('layers') or [])
+        best = {}
+        for (cn, layer, p0, p1) in copper:
+            if cn == net or cn in exclude or (layer is not None and layers and layer not in layers):
+                continue
+            d = segment_distance(tuple(a0), tuple(a1), tuple(p0), tuple(p1))
+            if d <= corridor_mm and d < best.get(cn, math.inf):
+                best[cn] = d
+        near = sorted(best, key=lambda k: (best[k], k))[:max_blockers]
+        blockers.setdefault(net, set()).update(near)
+    blockers = {k: sorted(v) for k, v in blockers.items()}
+    nets = set(open_nets) | {b for v in blockers.values() for b in v}
+    return dict(nets=sorted(nets - set(exclude)), blockers=blockers, connections=n, corridor_mm=corridor_mm)
