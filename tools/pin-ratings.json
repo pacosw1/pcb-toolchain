@@ -1,6 +1,6 @@
 {
-  "about": "D-124c (user decision 2026-10-09, option C, part b): per-part pin or switch current ratings for the pin-escape allowance of tools/pcbtool.py (paths, widths). A track piece that starts on a pad, is no narrower than the pad's narrow dimension and no longer than the pad's long dimension is part of the pad; it carries the pin rating below when that rating is at least the net's design current. A part or pin not listed here gets no allowance. Each value: document, revision, section and table, page, URL, the local copy, and the statistic used (the minimum when the document gives one). [P]: primary source read.",
-  "evidence_files": [{"path": "hardware-design/registry/datasheets/TPS61023.pdf"}],
+  "about": "D-124c (user decision 2026-10-09, option C, part b; D-124e adds TPS259251): per-part pin or switch current ratings for the pin-escape allowance of tools/pcbtool.py (paths, widths). A track piece that starts on a pad, is no narrower than the pad's narrow dimension and no longer than the pad's long dimension is part of the pad; it carries the pin rating below when that rating is at least the net's design current. A part or pin not listed here gets no allowance. Each value: document, revision, section and table, page, URL, the local copy, and the statistic used (the minimum when the document gives one). [P]: primary source read.",
+  "evidence_files": [{"path": "hardware-design/registry/datasheets/TPS61023.pdf"}, {"path": "hardware-design/registry/datasheets/TPS259251DRCR.pdf"}],
   "parts": {
     "TPS61023": {
       "mpn": ["TPS61023*"],
@@ -12,6 +12,47 @@
           "source": "TPS61023 datasheet SLVSF14B (Sep 2019, revised Aug 2020), section 6.5 Electrical Characteristics, POWER SWITCH, ILIM_SW valley current limit 2.7 A min, 3.7 A typ (VIN 3.6 V, VOUT 5.0 V, TJ -40 to 125 C), page 5; pin 5 = SW (Pin Functions table, page 3); https://www.ti.com/lit/ds/symlink/tps61023.pdf, local copy hardware-design/registry/datasheets/TPS61023.pdf [P]. The switch current through SW reaches the valley limit before current limiting acts, so the pin is designed to carry at least 2.7 A."
         }
       }
-    }
+    },
+    "TPS259251": {
+      "mpn": ["TPS259251*"],
+      "pins": {
+        "3": {
+          "name": "VIN",
+          "amps": 5.0,
+          "statistic": "max",
+          "source": "TPS259250, TPS259251, TPS259260, TPS259261 datasheet SLVSCQ3B (Aug 2015, revised Jun 2016), section 7.3 Recommended Operating Conditions, Continuous output current IOUT 0 to 5 A (max), page 4; pins 3, 4, 5 = VIN and 6, 7, 8 = OUT (Pin Functions table, page 3; the three pins of each group are one terminal, and the 5 A is the device rating at that terminal, not a per-pin figure); https://www.ti.com/lit/ds/symlink/tps259251.pdf, local copy hardware-design/registry/datasheets/TPS259251DRCR.pdf (source.json: SLVSCQ3B) [P]. Section 7.1 Absolute Maximum Ratings gives 6.25 A continuous (note 3, page 4); the Recommended 5 A is used."
+        },
+        "4": {
+          "name": "VIN",
+          "amps": 5.0,
+          "statistic": "max",
+          "source": "TPS259250, TPS259251, TPS259260, TPS259261 datasheet SLVSCQ3B (Aug 2015, revised Jun 2016), section 7.3 Recommended Operating Conditions, Continuous output current IOUT 0 to 5 A (max), page 4; pins 3, 4, 5 = VIN and 6, 7, 8 = OUT (Pin Functions table, page 3; the three pins of each group are one terminal, and the 5 A is the device rating at that terminal, not a per-pin figure); https://www.ti.com/lit/ds/symlink/tps259251.pdf, local copy hardware-design/registry/datasheets/TPS259251DRCR.pdf (source.json: SLVSCQ3B) [P]. Section 7.1 Absolute Maximum Ratings gives 6.25 A continuous (note 3, page 4); the Recommended 5 A is used."
+        },
+        "5": {
+          "name": "VIN",
+          "amps": 5.0,
+          "statistic": "max",
+          "source": "TPS259250, TPS259251, TPS259260, TPS259261 datasheet SLVSCQ3B (Aug 2015, revised Jun 2016), section 7.3 Recommended Operating Conditions, Continuous output current IOUT 0 to 5 A (max), page 4; pins 3, 4, 5 = VIN and 6, 7, 8 = OUT (Pin Functions table, page 3; the three pins of each group are one terminal, and the 5 A is the device rating at that terminal, not a per-pin figure); https://www.ti.com/lit/ds/symlink/tps259251.pdf, local copy hardware-design/registry/datasheets/TPS259251DRCR.pdf (source.json: SLVSCQ3B) [P]. Section 7.1 Absolute Maximum Ratings gives 6.25 A continuous (note 3, page 4); the Recommended 5 A is used."
+        },
+        "6": {
+          "name": "OUT",
+          "amps": 5.0,
+          "statistic": "max",
+          "source": "TPS259250, TPS259251, TPS259260, TPS259261 datasheet SLVSCQ3B (Aug 2015, revised Jun 2016), section 7.3 Recommended Operating Conditions, Continuous output current IOUT 0 to 5 A (max), page 4; pins 3, 4, 5 = VIN and 6, 7, 8 = OUT (Pin Functions table, page 3; the three pins of each group are one terminal, and the 5 A is the device rating at that terminal, not a per-pin figure); https://www.ti.com/lit/ds/symlink/tps259251.pdf, local copy hardware-design/registry/datasheets/TPS259251DRCR.pdf (source.json: SLVSCQ3B) [P]. Section 7.1 Absolute Maximum Ratings gives 6.25 A continuous (note 3, page 4); the Recommended 5 A is used."
+        },
+        "7": {
+          "name": "OUT",
+          "amps": 5.0,
+          "statistic": "max",
+          "source": "TPS259250, TPS259251, TPS259260, TPS259261 datasheet SLVSCQ3B (Aug 2015, revised Jun 2016), section 7.3 Recommended Operating Conditions, Continuous output current IOUT 0 to 5 A (max), page 4; pins 3, 4, 5 = VIN and 6, 7, 8 = OUT (Pin Functions table, page 3; the three pins of each group are one terminal, and the 5 A is the device rating at that terminal, not a per-pin figure); https://www.ti.com/lit/ds/symlink/tps259251.pdf, local copy hardware-design/registry/datasheets/TPS259251DRCR.pdf (source.json: SLVSCQ3B) [P]. Section 7.1 Absolute Maximum Ratings gives 6.25 A continuous (note 3, page 4); the Recommended 5 A is used."
+        },
+        "8": {
+          "name": "OUT",
+          "amps": 5.0,
+          "statistic": "max",
+          "source": "TPS259250, TPS259251, TPS259260, TPS259261 datasheet SLVSCQ3B (Aug 2015, revised Jun 2016), section 7.3 Recommended Operating Conditions, Continuous output current IOUT 0 to 5 A (max), page 4; pins 3, 4, 5 = VIN and 6, 7, 8 = OUT (Pin Functions table, page 3; the three pins of each group are one terminal, and the 5 A is the device rating at that terminal, not a per-pin figure); https://www.ti.com/lit/ds/symlink/tps259251.pdf, local copy hardware-design/registry/datasheets/TPS259251DRCR.pdf (source.json: SLVSCQ3B) [P]. Section 7.1 Absolute Maximum Ratings gives 6.25 A continuous (note 3, page 4); the Recommended 5 A is used."
+        }
+      }
+}
   }
 }

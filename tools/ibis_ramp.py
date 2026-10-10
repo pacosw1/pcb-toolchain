@@ -148,11 +148,31 @@ def vi_avg_current(rows,corner,v_lo,v_hi):
     return result
 
 def vi_edges(model,c_f,swing_v=None,open_drain=False,corners=CORNERS,i_limit_a=None):
-    """Conditional C*0.8*swing/mean-current estimate; static V-I is not a timing guarantee.
+    """Edge time of an IBIS output: the larger of two lower bounds (D-124e), each from its fastest corner.
+
+    (1) Ramp-derived 10-90 % time. [Ramp] dV/dt_r and dV/dt_f are the slew of the output into the ramp
+    fixture R_fixture (R_load here, 50 ohm recommended) over the 20-80 % part of the swing: IBIS 7.0 / Cookbook v4
+    3.2.1 p. 18 define dV as the voltage change from 20 % to 80 % of the final value and dt as the time it takes,
+    "measured into R_fixture", the fixture of the V-t data. This is the speed of the driver's own switching (the
+    pre-driver slew), so the ramp measures the driver, not a board load. A capacitive board load adds to the fixture
+    time (the same current has to charge the extra C), so the real edge is not shorter than the ramp time; hence a
+    lower bound. The 10-90 % time of the corner's swing V is 0.8 V / (dV/dt) (linear slew, the 20-80 % slope
+    continued to 10-90 %; for an open drain V is the pull-up rail on the net, same slope).
+    (2) C x 0.8 V / I_avg (D-124c): C the load (routed trace + sourced pins + C_comp), I_avg the mean magnitude of
+    the static [Pulldown] / [Pullup] V-I current over 10-90 % of the swing (Cookbook 3.1.1, p. 13-14); the output
+    cannot charge C faster than its V-I current allows, but this ignores the driver's own turn-on, so for
+    slew-controlled outputs (TCA9535: ramp 9.7-12.3 ns into 50 ohm, C dV/I 0.13 ns) it is far too short alone.
+    edge = max(fastest-corner ramp time, fastest-corner C dV/I): both are lower bounds of the real edge, so the
+    larger one is the better bound. A model with no [Ramp] for the edge, or no usable ramp corner, is an error
+    (strict: the net is unknown, never a pass). Static V-I is not a timing guarantee.
+    Sources: IBIS Open Forum, IBIS Modeling Cookbook v4, https://ibis.org/cookbook/cookbook-v4.pdf, 3.2.1 [Ramp] and
+    R_fixture; IBIS Specification 7.0 (https://ibis.org/ver7.0/ver7_0.pdf), keyword [Ramp] [P].
 
     D-124c uses ground-relative pulldown and supply-relative pullup coordinates.
     Arithmetic mean current omits turn-on/dynamic/package effects. Available
     corners remain explicit; absent corners never inherit typical values.
+    Result per edge e (r, f): t{e}_ns (the edge), t{e}_ramp_ns, t{e}_vi_ns, bound_{e} ('ramp' or 'C*dV/I'),
+    corner_{e} (V-I corner), corner_ramp_{e}.
     """
     if not math.isfinite(c_f) or c_f<=0:raise IbisError('invalid load capacitance')
     if not corners or any(c not in CORNERS for c in corners):raise IbisError('invalid corner selection')
@@ -161,25 +181,36 @@ def vi_edges(model,c_f,swing_v=None,open_drain=False,corners=CORNERS,i_limit_a=N
     kind=(model.get('type') or '').lower()
     if kind not in ('output','i/o','3-state','open_drain','open_sink','open_source'):raise IbisError('model is not an output')
     if open_drain and swing_v is None:raise IbisError('open drain needs pull-up voltage')
-    out={'qualified_fastest_bound':False,'method':'conditional static V-I arithmetic-mean current','missing_corners':{},'voltage_range':model.get('voltage_range'),'temperature_range':model.get('temperature_range'),'c_f':c_f}
+    out={'qualified_fastest_bound':False,'method':'max(ramp 10-90 time, static V-I arithmetic-mean C*dV/I), D-124e','missing_corners':{},'voltage_range':model.get('voltage_range'),'temperature_range':model.get('temperature_range'),'c_f':c_f}
     for edge,table in (('f','pulldown'),('r','pullup')):
         if edge=='r' and open_drain:continue
         rows=model.get('vi',{}).get(table)
         if not rows:raise IbisError('no '+table+' V-I table')
-        available=[];missing=[]
+        ramps=model.get('ramp',{}).get(edge)
+        if not ramps:raise IbisError('no ramp '+edge)
+        available=[];missing=[];ramp_available=[]
         for corner in corners:
             idx=CORNERS.index(corner);ref=model.get('pullup_ref') or model.get('voltage_range')
             v=swing_v if open_drain else (ref[idx] if ref else swing_v)
+            if v is not None and (not math.isfinite(v) or v<=0):raise IbisError('invalid reference voltage')
+            if v is not None and ramps[idx] is not None:
+                dv,dt=ramps[idx]
+                t=.8*v/(dv/dt)*1e9
+                if not math.isfinite(t) or t<=0:raise IbisError('invalid ramp time')
+                ramp_available.append((t,corner))
             if v is None or any(currents[idx] is None for _,currents in rows):missing.append(corner);continue
-            if not math.isfinite(v) or v<=0:raise IbisError('invalid reference voltage')
             i=vi_avg_current(rows,corner,.1*v,.9*v)
             if i_limit_a is not None:i=min(i,i_limit_a)
             t=c_f*.8*v/i*1e9
             if not math.isfinite(t) or t<=0:raise IbisError('invalid V-I estimate')
             available.append((t,corner,i,v))
         if not available:raise IbisError('all V-I corners unavailable')
-        t,corner,i,v=min(available)
-        out.update({f't{edge}_ns':t,f'corner_{edge}':corner,f'i_{edge}':i,f'v_{edge}':v})
+        if not ramp_available:raise IbisError('all ramp corners unavailable')
+        t_vi,corner,i,v=min(available)
+        t_ramp,corner_ramp=min(ramp_available)
+        t=max(t_vi,t_ramp)
+        out.update({f't{edge}_ns':t,f't{edge}_vi_ns':t_vi,f't{edge}_ramp_ns':t_ramp,f'bound_{edge}':'ramp' if t_ramp>t_vi else 'C*dV/I',
+                    f'corner_{edge}':corner,f'corner_ramp_{edge}':corner_ramp,f'i_{edge}':i,f'v_{edge}':v})
         out['missing_corners'][edge]=missing
     return out
 

@@ -388,6 +388,21 @@ class NeckEndTest(unittest.TestCase):
         self.assertIsNone(pt.pin_rating(r, 'TPS61023DRLR', '1')[0])
         self.assertIsNone(pt.pin_rating(r, 'LM5164', '8')[0])
 
+    def test_tps259251_power_pins_have_a_sourced_rating(self):
+        # D-124e: TPS259251 IN (3-5) and OUT (6-8), IOUT 5 A max continuous (SLVSCQ3B 7.3 Recommended Operating Conditions, p. 4)
+        r = pt.load_pin_ratings()
+        for mpn in ('TPS259251DRCR', 'TPS259251'):
+            for pin in ('3', '4', '5', '6', '7', '8'):
+                self.assertEqual(pt.pin_rating(r, mpn, pin)[0], 5.0, (mpn, pin))
+        for pin in ('1', '2', '9', '10'):
+            self.assertIsNone(pt.pin_rating(r, 'TPS259251DRCR', pin)[0], pin)
+        src = r['TPS259251']['pins']['4']
+        for word in ('SLVSCQ3B', '7.3', 'page 4', 'https://www.ti.com/lit/ds/symlink/tps259251.pdf'):
+            self.assertIn(word, src['source'])
+        self.assertEqual(src['statistic'], 'max')
+        # the 0.25 x 0.54 mm escape of BASE-PWR U10.4 (pad 0.25 x 0.6 mm) carrying 2.6 A is allowed
+        self.assertTrue(pt.pin_escape(0.54, 0.25, 0.25, 0.6, 5.0, 2.6))
+
     def test_pq_meter_bst_sw_fails_without_evidence(self):
         # PQ-METER /BST_SW: 0.25 mm x 2.27 mm from U12.5 (0.3 x 0.6 mm pad) to L2.2: both ends are pads
         self.assertEqual(pt.neck_capacity(0.25, 0.035, 2.27, [self.PAD, self.PAD], 10.0), 0.0)

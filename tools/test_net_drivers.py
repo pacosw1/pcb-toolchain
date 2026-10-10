@@ -274,8 +274,8 @@ C_comp 7.52pF 3.81pF 9.89pF
 0 0 0 0
 3.6 -18mA -9mA -36mA
 [Ramp]
-dV/dt_r 1/1n 1/1n 1/1n
-dV/dt_f 1/1n 1/1n 1/1n
+dV/dt_r 3.3/0.1n 3.3/0.1n 3.3/0.1n
+dV/dt_f 3.3/0.1n 3.3/0.1n 3.3/0.1n
 [End]
 '''
         self.write(self.fixture)
@@ -296,6 +296,24 @@ dV/dt_f 1/1n 1/1n 1/1n
         self.assertEqual(proof['estimates'][0]['driver_c_comp_min_pf'],3.81)
         self.geom['length_mm']['/Y']=20
         self.assertAlmostEqual(self.edge()['edge_ns'],.4648)
+    def ramp(self,dvdt):
+        self.write(self.fixture.replace('3.3/0.1n',dvdt));self.part['ibis']['sha256']=self.sha
+    def test_edge_is_the_larger_of_ramp_and_cdv_over_i_ramp_wins(self):
+        # D-124e. [Ramp] 3.3 V / 1 ns into R_fixture: fastest corner = min supply 3.0 V: 10-90 % = 0.8 * 3.0 / 3.3e9 = 0.72727 ns > C*dV/I fall 0.3848 ns (rise 0.7696 ns)
+        self.ramp('3.3/1n')
+        e=self.edge();self.assertAlmostEqual(e['edge_ns'],.8*3/3.3)
+        est=e['timing_evidence']['contributors'][0]['evidence']['estimates'][0]
+        self.assertEqual(est['bound_f'],'ramp');self.assertAlmostEqual(est['tf_ramp_ns'],.8*3/3.3);self.assertAlmostEqual(est['tf_vi_ns'],.3848)
+        self.assertAlmostEqual(est['tr_ns'],.7696)   # rise: C*dV/I 0.7696 ns > ramp 0.7273 ns
+        self.assertEqual(est['bound_r'],'C*dV/I')
+    def test_edge_is_the_larger_of_ramp_and_cdv_over_i_cdv_wins(self):
+        # D-124e. Ramp 3.3 V / 0.1 ns -> 0.0727 ns < C*dV/I 0.3848 ns (fall) and 0.7696 ns (rise): the V-I time stays
+        e=self.edge();self.assertAlmostEqual(e['edge_ns'],.3848)
+        est=e['timing_evidence']['contributors'][0]['evidence']['estimates'][0]
+        self.assertEqual(est['bound_f'],'C*dV/I');self.assertAlmostEqual(est['tf_ramp_ns'],.08*3/3.3)
+    def test_edge_without_a_ramp_is_unknown(self):
+        self.write(self.fixture.replace('[Ramp]','[Ramp Removed]'));self.part['ibis']['sha256']=self.sha
+        self.assertIn('ramp',self.edge()['unknown'])
     def test_receiver_capacitance_and_missing_loads_are_attributed(self):
         self.nl['comps'].update(U2='RECEIVER',U3='MISSING')
         self.nl['nets']['/Y'] += [('U2','1','IN'),('U3','1','IN')]

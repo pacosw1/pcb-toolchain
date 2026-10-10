@@ -102,6 +102,9 @@ C_comp 3pF 2pF 4pF
 [Pullup]
 0 0 0 0
 3.6 -18mA -9mA -36mA
+[Ramp]
+dV/dt_r 3.3/0.1n 3.0/0.1n 3.6/0.1n
+dV/dt_f 3.3/0.1n 3.0/0.1n 3.6/0.1n
 [End]
 ''').splitlines())['models']['out']
     def test_static_mean_and_hand_calculated_load(self):
@@ -111,6 +114,18 @@ C_comp 3pF 2pF 4pF
         self.assertEqual(e['corner_f'],'max');self.assertFalse(e['qualified_fastest_bound'])
         od=ib.vi_edges(m,4.81e-12,swing_v=3.3,open_drain=True)
         self.assertNotIn('tr_ns',od);self.assertAlmostEqual(od['tf_ns'],.3848)
+    def test_ramp_time_is_a_lower_bound_of_the_edge(self):
+        # D-124e. Ramp 3.3 V / 1 ns typ, 3.0 V / 1.5 ns min, 3.6 V / 0.5 ns max: 10-90 % of the corner's swing
+        # (Voltage Range 3.3 / 3.0 / 3.6) = 0.8 V / (dV/dt) = 0.8, 1.2, 0.4 ns; the faster corner (max) is 0.4 ns.
+        m=self.model();m['ramp']['f']=[(3.3,1e-9),(3.0,1.5e-9),(3.6,.5e-9)]
+        e=ib.vi_edges(m,4.81e-12)       # C*dV/I (fall): typ .7696, max .3848 ns
+        self.assertAlmostEqual(e['tf_ramp_ns'],.4);self.assertAlmostEqual(e['tf_vi_ns'],.3848)
+        self.assertAlmostEqual(e['tf_ns'],.4);self.assertEqual(e['bound_f'],'ramp')
+        e=ib.vi_edges(m,40e-12)         # C*dV/I (fall) max 3.2 ns > 0.4 ns
+        self.assertAlmostEqual(e['tf_ns'],e['tf_vi_ns']);self.assertEqual(e['bound_f'],'C*dV/I')
+    def test_missing_ramp_is_an_error(self):
+        m=self.model();m['ramp']={}
+        with self.assertRaises(ib.IbisError):ib.vi_edges(m,4.81e-12)
     def test_missing_corners_are_not_typical(self):
         m=self.model();m['vi']['pulldown'][0][1][2]=None
         e=ib.vi_edges(m,4.81e-12);self.assertEqual(e['corner_f'],'typ');self.assertEqual(e['missing_corners']['f'],['max'])
@@ -138,7 +153,7 @@ class DriverConditionalScreeningTest(unittest.TestCase):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.file=Path(self.temp.name)/'x.ibs'
         self.driver_fixture=FIX.replace('C_comp 3pF NA 4pF','C_comp 3pF 2pF 4pF').replace('[Ramp]',
-            '[Pulldown]\n0 0 0 0\n3.6 36mA 18mA 72mA\n[Pullup]\n0 0 0 0\n3.6 -18mA -9mA -36mA\n[Ramp]')
+            '[Pulldown]\n0 0 0 0\n3.6 36mA 18mA 72mA\n[Pullup]\n0 0 0 0\n3.6 -18mA -9mA -36mA\n[Ramp]').replace('1/10n','3.3/0.1n').replace('1/1n','3.3/0.1n').replace('1/5n','3.3/0.1n')
         self.file.write_text(self.driver_fixture)
         self.part={'mpn':['GATE'],'ibis':{'file':str(self.file),'sha256':hashlib.sha256(self.file.read_bytes()).hexdigest(),'component':'GATE','supply_pin':'VCC','variants':{'3.3':'_33'},'url':'vendor','downloaded':'2026-10-09'},'pins':[{'match':'Y','role':'push_pull','ibis_model':'OUT','source':'vendor model'},{'match':'A|VCC','role':'input'}]}
         self.table={'gate':self.part}
