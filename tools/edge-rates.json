@@ -1,18 +1,12 @@
 {
-  "about": "D-124: rise (or fall) time per net class for the reference-plane detour budget of tools/si_planes.py. Source report: hardware-design/reports/2026-10-09-design-rules-sources.md C1 and C3. [P] primary source read, [S] secondary (a document that quotes the source). assumption = true: NO SOURCE was found; the value is the report's marked conservative assumption. Use the fastest edge of the driver (the smaller of rise and fall).",
+  "about": "D-124: rise (or fall) time per net class for the reference-plane detour budget of tools/si_planes.py. Source report: hardware-design/reports/2026-10-09-design-rules-sources.md C1 and C3. [P] primary source read, [S] secondary (a document that quotes the source). assumption = true: NO SOURCE was found; the value is the report's marked conservative assumption. Use the fastest edge of the driver (the smaller of rise and fall). D-124 addendum (2026-10-09): interface classes only. There is no default class: a net with no class takes the edge of its actual driver (tools/driver-edges.json, tools/net_drivers.py); the former 'gpio, 1 ns, assumption' fallback is removed.",
   "budget": {
     "nh_per_ns": 10,
     "nh_per_ns_source": "Bogatin rule: abrupt inductance (nH) < 10 x rise time (ns) for a ~10 % reflection at 50 ohm; NextPCB 'SI design experience' #55, https://nextpcb.com/blog/engineer-summary-signal-integrity-design-experience-100-1 [S]",
     "nh_per_mm": 1.5,
     "nh_per_mm_source": "Return detour adds 0.8-1.5 nH per mm (a 10 mm detour adds 8-15 nH); upper end used. rfessentials 'Current return', https://rfessentials.com/resources/rf-glossary/current-return/ [S]. Allowed detour = 10 / 1.5 = 6.7 mm per ns of rise time."
   },
-  "default_class": "gpio",
   "classes": {
-    "gpio": {
-      "tr_ns": 1.0,
-      "assumption": true,
-      "source": "ASSUMPTION, NO SOURCE (report C1): ESP32-S3 GPIO edge rate is not published; 1 ns is the report's conservative assumption for GPIO, SPI and WS2812. Default for every net with no class."
-    },
     "100base_tx": {
       "tr_ns": 1.0,
       "assumption": true,

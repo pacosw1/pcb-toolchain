@@ -225,14 +225,15 @@ class EvaluateTest(unittest.TestCase):
 class FailureTest(unittest.TestCase):
     def setUp(self):
         self.spec = sp.load_spec(base_spec(exempt={'nets': {'VIN': 'power net, wide pour'}}))
+        self.spec['_edges'] = {'/A': {'edge_ns': 1.0, 'driver': 'test driver, 1 ns'}}
 
     def res(self, **kw):
         r = {'length': 10.0, 'unref': 0.0, 'worst': 0.0, 'worst_at': (0, 0), 'cross': 0.0, 'cross_net': None}
         r.update(kw)
         return r
 
-    def test_unclassified_net_uses_the_gpio_assumption_budget(self):
-        # D-124: no class -> 1 ns (marked assumption) -> 6.7 mm detour budget
+    def test_driver_edge_sets_the_budget(self):
+        # D-124 addendum: the driver edge (here 1 ns) -> 6.7 mm detour budget
         fails = sp.reference_failures({('B.Cu', '/A'): self.res(worst=1.5, unref=2.0, runs=[run(9.0)])}, {'/A': 'GND'},
                                       self.spec, detour=fixed_detour, board_mm=200)
         self.assertEqual(len(fails), 1)
@@ -278,6 +279,7 @@ class MixedLayerTest(unittest.TestCase):
     def setUp(self):
         self.spec = sp.load_spec(base_spec(mixed_layers=MIXED))
         sp.set_fast(self.spec, {'In2.Cu': ['/USB_*', '/SCK*']})
+        self.spec['_edges'] = {'/EN': {'edge_ns': 1.0, 'driver': 'test driver, 1 ns'}}
 
     def res(self, **kw):
         r = {'length': 10.0, 'unref': 0.0, 'worst': 0.0, 'worst_at': (0, 0), 'cross': 0.0, 'cross_net': None, 'runs': []}
@@ -387,6 +389,7 @@ class EdgeRateTest(unittest.TestCase):
         self.spec = sp.load_spec(base_spec(mixed_layers=MIXED, power=['/VLIM'],
                                            edge_classes={'i2c': ['/SDA', '/SCL'], 'rs485': ['/RS485_A']}))
         sp.set_fast(self.spec, {'In2.Cu': ['/SCK*']})
+        self.spec['_edges'] = {'/EN': {'edge_ns': 1.0, 'driver': 'test driver, 1 ns'}}
 
     def res(self, **kw):
         r = {'length': 100.0, 'unref': 0.0, 'bad': 0.0, 'worst': 0.0, 'worst_at': (0, 0), 'cross': 0.0, 'cross_net': None, 'runs': []}
@@ -399,7 +402,7 @@ class EdgeRateTest(unittest.TestCase):
     def test_table_has_sources_and_marks_assumptions(self):
         t = sp.load_edge_rates()
         self.assertEqual(t['rs485']['tr_ns'], 460)
-        self.assertTrue(t['gpio']['assumption'])
+        self.assertNotIn('gpio', t)   # D-124 addendum: no default class
         self.assertTrue(t['100base_tx']['assumption'])
         for k, v in t.items():
             self.assertTrue(v['source'].strip(), k)
@@ -410,7 +413,7 @@ class EdgeRateTest(unittest.TestCase):
 
     def test_net_class_and_rise_time(self):
         self.assertEqual(sp.edge_class('/SDA', self.spec), 'i2c')
-        self.assertEqual(sp.edge_class('/EN', self.spec), 'gpio')   # default: the marked 1 ns assumption
+        self.assertIsNone(sp.edge_class('/EN', self.spec))   # no class: the edge of the driver (no default)
 
     def test_i2c_detour_under_80_mm_passes_and_over_fails(self):
         self.assertEqual(self.fails('F.Cu', '/SDA', worst=5, runs=[run(70.0)]), [])

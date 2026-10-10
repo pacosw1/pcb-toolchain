@@ -1,0 +1,153 @@
+{
+  "about": "D-124 addendum (2026-10-09): edge time per driver pin for the reference-plane detour budget of tools/si_planes.py (tools/net_drivers.py reads this file). A net's edge is the shortest edge of its drivers, found in the schematic netlist. Roles: input (not a driver), push_pull (edge = min(tr, tf)), open_drain (open drain or open collector with a pull-up: edge = tf, the driver's fall; the RC rise is slower), opto (phototransistor output: min(tr, tf)), unknown (no published edge time: the net fails as 'unknown driver'). Statistic: the smallest value the document publishes (min, else typ, else max: then noted 'max only'). Each value: document, table, page, URL, [P] primary source read. Never a default: a part or pin with no rule is unknown.",
+  "parts": {
+    "LTV-217": {
+      "mpn": ["LTV-217*"],
+      "pins": [
+        {"match": "COL", "role": "opto", "tr_ns": 2000, "tf_ns": 3000, "stat": "typ", "load": "VCE = 10 V, IC = 2 mA, RL = 100 ohm, f = 100 Hz",
+         "source": "Lite-On LTV-217-G Series datasheet (Rev.-, July 16, 2012), Electrical-Optical Characteristics, p. 5 of 11: tr typ 2 us, tf typ 3 us (max 18 us), hardware-design/registry/datasheets/LTV-217.pdf, https://jlc-prod-smt.oss-eu-central-1.aliyuncs.com/smtDataManualFile/8586197836337172480-C115450.pdf [P]"},
+        {"match": "A|K|ANODE|CATHODE|EMIT|E", "role": "input"}
+      ]
+    },
+    "74HC08": {
+      "mpn": ["74HC08*"],
+      "pins": [
+        {"match": "[1-4]Y", "role": "push_pull", "tr_ns": 7, "tf_ns": 7, "stat": "typ", "load": "CL = 50 pF, VCC = 4.5 V row (the board runs it at 3.3 V; edges are slower at lower VCC: 19 ns typ at 2.0 V, so the 4.5 V row is the shorter, conservative value)",
+         "source": "Nexperia 74HC08 datasheet Rev. 7 (16 April 2020), Table 7 Dynamic characteristics p. 5: tt (= tTHL = tTLH) typ 7 ns at VCC 4.5 V, hardware-design/registry/datasheets/74HC08D_C5593.pdf, https://wmsc.lcsc.com/wmsc/upload/file/pdf/v2/lcsc/2407241044_Nexperia-74HC08D-653_C5593.pdf [P]"},
+        {"match": "[1-4][AB]", "role": "input"}
+      ]
+    },
+    "AM26C31": {
+      "mpn": ["AM26C31*"],
+      "pins": [
+        {"match": "[1-4][YZ]", "role": "push_pull", "tr_ns": 5, "tf_ns": 5, "stat": "typ", "load": "S1 open, Figure 6-3 (differential output)",
+         "source": "TI AM26C31 datasheet SLLS103P, 5.7 Switching Characteristics (AM26C31C/I) p. 6: tr(OD), tf(OD) typ 5 ns, max 10 ns, hardware-design/registry/datasheets/AM26C31-SLLS103-RevP.pdf, https://www.ti.com/lit/ds/symlink/am26c31.pdf [P]"},
+        {"match": "[1-4]A|G|~\\{G\\}", "role": "input"}
+      ]
+    },
+    "AM26C32": {
+      "mpn": ["AM26C32*"],
+      "pins": [
+        {"match": "[1-4]Y", "role": "push_pull", "tr_ns": 4, "tf_ns": 4, "stat": "typ", "load": "CL = 50 pF, Figure 6-1",
+         "source": "TI AM26C32 datasheet SLLS104M, 5.7 Switching Characteristics p. 6: tTLH, tTHL typ 4 ns, max 9 ns, hardware-design/registry/datasheets/AM26C32-SLLS104-RevM.pdf, https://www.ti.com/lit/ds/symlink/am26c32.pdf [P]"},
+        {"match": "[1-4][AB]|G|~\\{G\\}", "role": "input"}
+      ]
+    },
+    "CA-IS2062W": {
+      "mpn": ["CA-IS2062W*"],
+      "pins": [
+        {"match": "RXD", "role": "push_pull", "tr_ns": 2.5, "tf_ns": 2.5, "stat": "typ", "load": "Figure 8-6 receiver test circuit, VCC = 5 V, 25 C",
+         "source": "Chipanalog CA-IS2062W datasheet Version 1.00 (2022-01-10), 7.8 Switching characteristics p. 10: RXD tr, tf typ 2.5 ns, max 6 ns, hardware-design/registry/datasheets/CA-IS2062W_C5121953.pdf, https://jlc-prod-smt.oss-eu-central-1.aliyuncs.com/smtDataManualFile/8589837395584847872-C5121953.pdf [P]"},
+        {"match": "TXD", "role": "input"}
+      ]
+    },
+    "STM32H743": {
+      "mpn": ["STM32H743*"],
+      "pins": [
+        {"match": "P[A-K]\\d+", "role": "push_pull", "tr_ns": 1.5, "tf_ns": 1.5, "stat": "max only (no min or typ published)", "load": "C = 10 pF, 2.7 V <= VDD <= 3.6 V, OSPEEDR = 11, compensation cell on; setting: no MOTION-CTRL firmware exists, so the fastest setting is used. With OSPEEDR = 00 the same table gives 10 ns (C = 10 pF)",
+         "source": "ST DS12110 Rev 7 (STM32H742xI/G STM32H743xI/G), Table 63 Output timing characteristics (HSLV OFF), pp. 144-145: tr/tf max 1.5 ns at speed 11, C = 10 pF (speed 00: 10 ns), hardware-design/registry/datasheets/STM32H743VIT6_C114409.pdf, https://wmsc.lcsc.com/wmsc/upload/file/pdf/v2/lcsc/2304140030_STMicroelectronics-STM32H743VIT6_C114409.pdf [P]"},
+        {"match": "NRST", "role": "unknown", "source": "NRST: the internal reset pulls it low; DS12110 gives no fall time for the NRST pin"},
+        {"match": "VCAP|VDD.*|VSS.*|VREF.*|VBAT", "role": "input"}
+      ]
+    },
+    "LAN8742A": {
+      "mpn": ["LAN8742A*"],
+      "pins": [
+        {"match": "TX[PN]", "role": "push_pull", "tr_ns": 3.0, "tf_ns": 3.0, "stat": "min", "load": "100BASE-TX line driver, Note 1 of the table",
+         "source": "Microchip LAN8742A DS00001989A, Table 5-8 100BASE-TX transceiver characteristics p. 107: signal rise and fall time TRF 3.0 to 5.0 ns, hardware-design/registry/datasheets/LAN8742A-CZ-TR_C621424.pdf, https://wmsc.lcsc.com/wmsc/upload/file/pdf/v2/lcsc/2011201138_Microchip-Tech-LAN8742A-CZ-TR_C621424.pdf [P]"},
+        {"match": "RX[PN]|nRST|VDD.*", "role": "input"},
+        {"match": "LED.*", "role": "unknown", "source": "LED1/LED2 (nINT) outputs: DS00001989A gives no rise or fall time for the digital outputs"}
+      ]
+    },
+    "TL072": {
+      "mpn": ["TL072*"],
+      "pins": [
+        {"match": "[12]?IN[+-]|IN[12][+-]", "role": "input"},
+        {"match": "[12]?OUT[12]?", "role": "unknown", "source": "TL072 (ST, C6961 datasheet p. 5) gives tr 0.1 us (small signal, unity gain) and slew rate 16 V/us typ, but no fall time; the edge of an analog output depends on its step"}
+      ]
+    },
+    "ESP32-S3-WROOM-1": {
+      "mpn": ["ESP32-S3-WROOM-1*"],
+      "pins": [
+        {"match": "GND|3V3", "role": "input"},
+        {"match": ".*", "role": "unknown", "source": "ESP32-S3 GPIO: IBIS not found (search 2026-10-09: espressif.com documents/downloads, GitHub, ibis.org; datasheet v2.2 has no tr/tf; DECISIONS.md D-124 addendum)"}
+      ]
+    },
+    "TCA9535": {
+      "mpn": ["TCA9535*"],
+      "pins": [
+        {"match": "SCL|SDA|A[0-2]|VCC|GND", "role": "input"},
+        {"match": "P[01]\\d|~\\{INT\\}|INT", "role": "unknown", "source": "TI TCA9535 datasheet: no rise or fall time for the P ports or INT (only tocf for the I2C SDA output, 8.6 p. 8)"}
+      ]
+    },
+    "SN74LVC1G": {
+      "mpn": ["SN74LVC1G*"],
+      "pins": [
+        {"match": "A|B|IN\\d|CLK|D|#CLR|~\\{CLR\\}|~\\{PRE\\}|~\\{A\\}|B|CLR", "role": "input"},
+        {"match": ".*", "role": "unknown", "source": "TI SN74LVC1G08/14/57/74/123 datasheets give propagation delays only, no output rise or fall time (switching characteristics); CEXT/REXT of the LVC1G123 is an RC timing node"}
+      ]
+    },
+    "ULN2003A": {
+      "mpn": ["ULN2003A*"],
+      "pins": [
+        {"match": "[1-7]B|COM|E", "role": "input"},
+        {"match": "[1-7]C", "role": "unknown", "source": "TI ULN2003A datasheet SLRS027T, 5.10 Switching Characteristics p. 8: tPLH, tPHL 0.25 us typ only, no rise or fall time"}
+      ]
+    },
+    "SP3485": {
+      "mpn": ["SP3485*"],
+      "pins": [
+        {"match": "DI|DE|~\\{RE\\}|RE", "role": "input"},
+        {"match": "RO|A|B", "role": "unknown", "source": "Exar SP3485 datasheet: driver rise or fall time 5 to 20 ns for A/B only; no receiver output (RO) rise or fall time"}
+      ]
+    },
+    "TPS2553": {
+      "mpn": ["TPS2553*"],
+      "pins": [
+        {"match": "EN|~\\{EN\\}|IN|ILIM|GND", "role": "input"},
+        {"match": "/FAULT|~\\{FAULT\\}|FAULT", "role": "unknown", "source": "TI TPS2553 datasheet: /FAULT is open drain; no fall time is given (only the deglitch time)"}
+      ]
+    },
+    "TPS2116": {
+      "mpn": ["TPS2116*"],
+      "pins": [
+        {"match": "PR1|MODE|VIN\\d|GND", "role": "input"},
+        {"match": "ST", "role": "unknown", "source": "TI TPS2116 datasheet: ST is open drain; no fall time is given"}
+      ]
+    },
+    "TPS3808": {
+      "mpn": ["TPS3808*"],
+      "pins": [
+        {"match": "SENSE|CT|~\\{MR\\}|MR|VDD|GND", "role": "input"},
+        {"match": "RESET|~\\{RESET\\}", "role": "unknown", "source": "TI TPS3808 datasheet: no RESET output rise or fall time"}
+      ]
+    },
+    "TPS3828": {
+      "mpn": ["TPS3828*"],
+      "pins": [
+        {"match": "WDI|~\\{MR\\}|MR|VDD|GND", "role": "input"},
+        {"match": "RESET|~\\{RESET\\}", "role": "unknown", "source": "TI TPS3828 datasheet: no RESET output rise or fall time"}
+      ]
+    },
+    "DAC8760": {
+      "mpn": ["DAC8760*"],
+      "pins": [
+        {"match": "SCLK|DIN|LATCH|~\\{CLR\\}|CLR", "role": "input"},
+        {"match": ".*", "role": "unknown", "source": "TI DAC8760 datasheet: ALARM is open drain; no fall time is given"}
+      ]
+    },
+    "W5500": {
+      "mpn": ["W5500*"],
+      "pins": [
+        {"match": "MOSI|SCLK|SCSn|RSTn", "role": "input"},
+        {"match": ".*", "role": "unknown", "source": "WIZnet W5500 datasheet: no output rise or fall time"}
+      ]
+    },
+    "TPS2H160": {"mpn": ["TPS2H160*"], "pins": [{"match": "IN\\d|DIAG_EN|SEL\\d?|LATCH", "role": "input"}]},
+    "TPS54360": {"mpn": ["TPS54360*"], "pins": [{"match": "FB|EN|RT/CLK|COMP", "role": "input"}]},
+    "2N7002": {"mpn": ["2N7002*"], "pins": [{"match": "G", "role": "input"}]},
+    "AO3401A": {"mpn": ["AO3401*"], "pins": [{"match": "G", "role": "input"}]},
+    "TVS arrays": {"mpn": ["TPD4E05U06*", "SRV05-4*", "H5VUT3UA*", "H24VNT2B*"], "pins": [{"match": ".*", "role": "input"}],
+      "note": "ESD clamps: no driver"}
+  }
+}

@@ -32,8 +32,14 @@ Spec (one per board, hardware-design/boards/<board>/reference-planes.json):
    "fast_file": "rp001-fast-nets.json",   optional, for a stackup with no mixed layer: fast net patterns
    "power": ["VBUS", "/MAINS_*"],   optional: power and DC nets (no edge): no reference rule (D-124); the "power"
                                  lists of mixed_layers count too. A track on a plane layer still fails.
-   "edge_classes": {"i2c": ["/SDA"], "rs485": ["/RS485_A"]},   optional: net patterns -> a class of
-                                 tools/edge-rates.json (rise time with its source); other nets use its default class
+   "edge_classes": {"i2c": ["/SDA"], "rs485": ["/RS485_A"]},   optional: net patterns -> an interface class of
+                                 tools/edge-rates.json (rise time with its source)
+   "receivers": {"/ALMn": {"refs": ["U1"], "reason": "..."}},   optional: parts whose pin on that net is an input
+                                 (firmware pin map or design), so not a driver (D-124 addendum)
+   "offboard": {"/ENC_A*": {"class": "rs485", "reason": "..."}},   optional: a net driven only from off-board (a
+                                 connector) gets the edge of this interface class of tools/edge-rates.json
+   "schematic": "cad/X/X.kicad_sch",   optional, relative to the spec: the schematic for the driver lookup
+                                 (default: the board file with .kicad_sch)
    "via_allow_mm": 0.6,          a run this near (plus the pad/via radius) the net's own via/pad is OK
    "step_mm": 0.25}              sample step along each track
 Coordinates: KiCad mm, Y down.
@@ -46,7 +52,11 @@ Rules (D-124, hardware-design/reports/2026-10-09-design-rules-sources.md A1 and 
   other nets: each unreferenced run is a crossing; the return detour (the shortest path in the reference copper of
       the net's domain between the two crossing points, the whole path counted) must be <= tr[ns] x 10 nH/ns / 1.5 nH/mm
       = 6.7 mm per ns (tools/edge-rates.json). When that budget is larger than the board (outline bounding-box
-      perimeter), the class has no reference rule. An unreachable reference fails.
+      perimeter), the net has no reference rule. An unreachable reference fails.
+      tr: an "edge_classes" interface class, else the net's actual driver (D-124 addendum 2026-10-09,
+      tools/net_drivers.py: schematic netlist + tools/driver-edges.json, datasheet or IBIS tr/tf). There is no default:
+      a net with a crossing whose driver or edge time is not known fails as "unknown driver" (a run with no detour,
+      a stub, passes at any edge).
   every net except a ground: domain crossing (a track over the ground of another domain) fails.
 """
 import argparse
@@ -57,10 +67,12 @@ import math
 import os
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 DEFAULTS = {'via_allow_mm': 0.6, 'step_mm': 0.25}
 REQUIRED = ('about', 'adjacent', 'plane_layers', 'grounds')
 # D-124 removed max_unreferenced_mm (1.0 mm), slow_max_gap_mm and slow_min_coverage_pct: no source (report A1).
-KEYS = set(REQUIRED) | set(DEFAULTS) | {'alt_refs', 'domains', 'exempt', 'mixed_layers', 'fast_file', 'power', 'edge_classes'}
+KEYS = set(REQUIRED) | set(DEFAULTS) | {'alt_refs', 'domains', 'exempt', 'mixed_layers', 'fast_file', 'power', 'edge_classes',
+                                         'receivers', 'offboard', 'schematic'}
 EDGE_RATES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'edge-rates.json')
 
 
@@ -79,12 +91,14 @@ def load_edge_rates(path=EDGE_RATES_FILE):
 def _edge_budget():
     with open(EDGE_RATES_FILE) as f:
         raw = json.load(f)
-    return raw['budget']['nh_per_ns'] / raw['budget']['nh_per_mm'], raw['default_class']
+    if 'default_class' in raw:
+        raise SpecError(f'{EDGE_RATES_FILE}: no default class (D-124 addendum: the edge comes from the net driver)')
+    return raw['budget']['nh_per_ns'] / raw['budget']['nh_per_mm']
 
 
 def detour_budget_mm(tr_ns):
     """Allowed return detour for a rise time: tr x 10 nH/ns / 1.5 nH/mm (tools/edge-rates.json, report C3)."""
-    return tr_ns * _edge_budget()[0]
+    return tr_ns * _edge_budget()
 
 
 class SpecError(ValueError):
@@ -190,6 +204,17 @@ def load_spec(raw):
         if not isinstance(pats, list) or not all(isinstance(q, str) for q in pats):
             raise SpecError(f'edge_classes {k}: must be a list of net patterns')
     s['_edge_rates'] = known
+    s['receivers'] = s.get('receivers') or {}
+    for net, r in s['receivers'].items():
+        if not isinstance(r, dict) or not isinstance(r.get('refs'), list) or not r['refs']:
+            raise SpecError(f'receivers {net}: needs "refs" (a list of part references)')
+        _reason(r.get('reason'), f'receivers {net}')
+    s['offboard'] = s.get('offboard') or {}
+    for net, o in s['offboard'].items():
+        if not isinstance(o, dict) or o.get('class') not in known:
+            raise SpecError(f'offboard {net}: "class" must be a class of {EDGE_RATES_FILE}')
+        _reason(o.get('reason'), f'offboard {net}')
+    s.setdefault('_edges', {})
     return s
 
 
@@ -206,10 +231,42 @@ def is_fast(net, s):
 
 
 def edge_class(net, s):
+    """The interface class of a net ("edge_classes"), else None: the edge then comes from the net's driver."""
     for k, pats in s['edge_classes'].items():
         if any(fnmatch.fnmatchcase(net, q) for q in pats):
             return k
-    return _edge_budget()[1]
+    return None
+
+
+def power_patterns(s):
+    return list(s.get('power') or []) + [q for m in s['mixed_layers'].values() for q in m['power']]
+
+
+def driver_edges(nets, nl, s, table=None):
+    """{net: {'edge_ns', 'driver'} or {'unknown': reason}} for the nets that need a driver edge (not power, not fast,
+    no interface class). nl: a parsed schematic netlist (tools/net_drivers.py)."""
+    import net_drivers
+    table = net_drivers.load_table() if table is None else table
+    out = {}
+    for net in nets:
+        if not _checked(net, s) or is_power(net, s) or is_fast(net, s) or edge_class(net, s):
+            continue
+        out[net] = net_drivers.net_edge(net, nl, table, s['receivers'], s['offboard'], s['_edge_rates'], power_patterns(s))
+    return out
+
+
+def net_edge_of(net, s):
+    """(tr_ns, label) of a checked net, or (None, reason) for an unknown driver."""
+    k = edge_class(net, s)
+    if k:
+        r = s['_edge_rates'][k]
+        return r['tr_ns'], f"class {k}, tr {r['tr_ns']:g} ns{', assumption' if r['assumption'] else ''}"
+    e = s['_edges'].get(net)
+    if e is None:
+        return None, 'driver not looked up'
+    if 'unknown' in e:
+        return None, e['unknown']
+    return e['edge_ns'], f"driver {e['driver']}"
 
 
 def parse_fast(raw, path):
@@ -467,7 +524,6 @@ def reference_failures(results, domains, s, detour=None, board_mm=None):
     detour(layer, domain, run, budget) -> mm or None (over budget / unreachable); board_mm: the size above which a
     budget gives no rule (the board outline bounding-box perimeter). Rules: see the module text (D-124)."""
     nodom, cross, gaps, seen = [], [], [], set()
-    rates = s.get('_edge_rates') or load_edge_rates()
     for (layer, net), r in results.items():
         if not _checked(net, s):
             continue
@@ -488,18 +544,41 @@ def reference_failures(results, domains, s, detour=None, board_mm=None):
                 gaps.append((r['worst'], f"FAIL fast-crossing {layer} {net}: {len(r.get('runs') or [1])} crossings, longest "
                                          f"{r['worst']:.2f} mm at ({x:.1f}, {y:.1f}) (a fast net may cross no gap, void or slot)"))
             continue
-        k = edge_class(net, s)
-        tr = rates[k]['tr_ns']
+        tr, label = net_edge_of(net, s)
+        runs = r.get('runs') or []
+
+        def measure(run):
+            """The detour length of a run (a fine grid first, then up to the board size), None when unreachable."""
+            if not detour:
+                return None
+            for b in (20.0, board_mm if board_mm is not None else math.inf):
+                d = detour(layer, domains[net], run, b)
+                if d is not None:
+                    return d
+            return None
+        if tr is None:
+            # no edge time: only a run with no detour at all (a stub) passes
+            lens = [measure(run) for run in runs]
+            bad = [(run, d) for run, d in zip(runs, lens) if d is None or d > 0]
+            if bad:
+                w, d = max(bad, key=lambda q: q[0]['length'])
+                x, y = w['at']
+                gaps.append((w['length'], f"FAIL unknown-driver {layer} {net}: {len(bad)} of {len(runs)} crossings need an edge time "
+                                          f"(longest run {w['length']:.1f} mm at ({x:.1f}, {y:.1f}), detour "
+                                          f"{'none (no reference path)' if d is None else f'{d:.1f} mm'}); unknown driver: {label}"))
+            continue
         budget = detour_budget_mm(tr)
         if board_mm is not None and budget > board_mm:
             continue
-        over = [run for run in r.get('runs') or [] if (detour(layer, domains[net], run, budget) if detour else None) is None]
+        over = [run for run in runs if (detour(layer, domains[net], run, budget) if detour else None) is None]
         if over:
             w = max(over, key=lambda q: q['length'])
             x, y = w['at']
-            gaps.append((w['length'], f"FAIL detour {layer} {net}: {len(over)} of {len(r['runs'])} crossings with a return detour "
-                                      f"> {budget:.1f} mm or no reference path, longest run {w['length']:.1f} mm at ({x:.1f}, {y:.1f}) "
-                                      f"(class {k}, tr {tr:g} ns{', assumption' if rates[k]['assumption'] else ''})"))
+            d = measure(w)
+            gaps.append((w['length'], f"FAIL detour {layer} {net}: {len(over)} of {len(runs)} crossings with a return detour "
+                                      f"> {budget:.1f} mm or no reference path, longest run {w['length']:.1f} mm at ({x:.1f}, {y:.1f}), "
+                                      f"detour {'none (no reference path)' if d is None else f'{d:.1f} mm'} "
+                                      f"(tr {tr:g} ns: {label})"))
     return sorted(nodom) + [t for _, t in sorted(cross, reverse=True)] + [t for _, t in sorted(gaps, reverse=True)]
 
 
@@ -571,7 +650,7 @@ def mm(v):
     return v / 1e6
 
 
-def analyse(board_path, s, verbose):
+def analyse(board_path, s, verbose, sch_path=None):
     p = pcb()
     b = p.LoadBoard(board_path)
     if b is None:
@@ -647,6 +726,10 @@ def analyse(board_path, s, verbose):
         results[(lname, net)] = evaluate_net(pts, ref_fn(layers[s['adjacent'][lname]]), domains[net],
                                              anchors[net], s, net=net, caps=caps)
 
+    import net_drivers
+    nl = net_drivers.export_netlist(sch_path or os.path.splitext(board_path)[0] + '.kicad_sch')
+    s['_edges'] = driver_edges(sorted({net for _, net in results}), nl, s)
+
     info = []
     outline = p.SHAPE_POLY_SET()
     b.GetBoardPolygonOutlines(outline, True)
@@ -696,12 +779,16 @@ def analyse(board_path, s, verbose):
     fails = plane_cut_failures(cuts, s) + island_failures(pieces) + reference_failures(results, domains, s, detour, board_mm)
     info.append(f'INFO detour budget: no rule above {board_mm:.0f} mm (board bounding-box perimeter); '
                 + ', '.join(f"{k} {v['tr_ns']:g} ns -> {detour_budget_mm(v['tr_ns']):.1f} mm" + (' (assumption)' if v['assumption'] else '')
-                            for k, v in s['_edge_rates'].items()))
+                            for k, v in s['_edge_rates'].items()) + '; other nets: the edge of their driver (tools/driver-edges.json)')
+    unknown = sorted(n for n, e in s['_edges'].items() if 'unknown' in e)
+    info.append(f"INFO drivers: {len(s['_edges']) - len(unknown)} nets with a driver edge, {len(unknown)} unknown "
+                f"(a failure only with a crossing)")
     detail = []
     if verbose:
         for (lname, net), r in sorted(results.items(), key=lambda kv: -kv[1]['worst']):
             pct = 100 * r['unref'] / r['length'] if r['length'] else 0
-            kind = 'power' if is_power(net, s) else 'fast' if is_fast(net, s) else edge_class(net, s)
+            kind = 'power' if is_power(net, s) else 'fast' if is_fast(net, s) else (
+                edge_class(net, s) or ('unknown driver' if net_edge_of(net, s)[0] is None else f'{net_edge_of(net, s)[0]:g} ns'))
             detail.append(f"  {lname} {net} [{domains[net]}, {kind}]: {r['length']:.1f} mm, unref {r['unref']:.1f} mm "
                           f"({pct:.0f}%), worst {r['worst']:.1f} mm, {len(r['runs'])} runs, cross {r['cross']:.1f} mm")
         for net, why in s['exempt']['nets'].items():
@@ -720,8 +807,10 @@ def main(argv=None):
             raise SpecError(f'no board file: {a.board}')
         with open(a.spec) as f:
             s = load_spec(json.load(f))
-        load_fast(s, os.path.dirname(os.path.abspath(a.spec)))
-        fails, info, detail = analyse(a.board, s, a.verbose)
+        spec_dir = os.path.dirname(os.path.abspath(a.spec))
+        load_fast(s, spec_dir)
+        sch = os.path.join(spec_dir, s['schematic']) if s.get('schematic') else None
+        fails, info, detail = analyse(a.board, s, a.verbose, sch)
     except (SpecError, OSError, json.JSONDecodeError) as e:
         print(f'ERROR {e}')
         return 2
