@@ -10,19 +10,45 @@
     "100base_tx": {
       "tr_ns": 1.0,
       "assumption": true,
-      "source": "ASSUMPTION, NO SOURCE (report C1): no 100BASE-TX edge rate found; the report's 1 ns conservative assumption is used."
+      "source": "ASSUMPTION, NO SOURCE (report C1): no 100BASE-TX edge rate found; the report's 1 ns conservative assumption is used.",
+      "applicability": {
+        "kind": "protocol",
+        "reason": "Accepted D-124 100BASE-TX class remains an explicitly marked 1 ns assumption, not measured evidence."
+      }
     },
     "usb_fs": {
       "tr_ns": 4.0,
-      "source": "USB 2.0 Table 7-9: full-speed driver tr >= 4 ns, via mbedded.ninja https://blog.mbedded.ninja/electronics/communication-protocols/usb-protocol/how-to-route-usb-tracks [S]"
+      "source": "USB 2.0 Table 7-9: full-speed driver tr >= 4 ns, via mbedded.ninja https://blog.mbedded.ninja/electronics/communication-protocols/usb-protocol/how-to-route-usb-tracks [S]",
+      "applicability": {
+        "kind": "protocol",
+        "reason": "The accepted spec declares USB full-speed, with the stated USB 2.0 edge bound."
+      }
     },
     "i2c": {
       "tr_ns": 12.0,
-      "source": "NXP UM10204 Table 10: Fast-mode fall time tf min = 20 ns x (VDD / 5.5 V) = 12 ns at 3.3 V (rise max 300 ns); report C1/C2, table not re-fetched [S]"
+      "source": "NXP UM10204 Table 10: Fast-mode fall time tf min = 20 ns x (VDD / 5.5 V) = 12 ns at 3.3 V (rise max 300 ns); report C1/C2, table not re-fetched [S]",
+      "applicability": {
+        "kind": "protocol",
+        "reason": "The accepted spec declares an I2C bus; UM10204 fall-time limit at 3.3 V."
+      }
     },
     "rs485": {
       "tr_ns": 460.0,
-      "source": "TI THVD1410 datasheet, driver tr/tf 460 ns typ (680 ns max), hardware-design/registry/datasheets/THVD1410DR.pdf [P]. Only the bus pins A/B (driver output), not the logic pins DE/RE/D/R, which the MCU or the transceiver logic drives."
+      "source": "TI THVD1410 datasheet, driver tr/tf 460 ns typ (680 ns max), hardware-design/registry/datasheets/THVD1410DR.pdf [P]. Only the bus pins A/B (driver output), not the logic pins DE/RE/D/R, which the MCU or the transceiver logic drives.",
+      "applicability": {
+        "kind": "part",
+        "mpn": [
+          "THVD1410*"
+        ],
+        "pins": "A|B",
+        "reason": "This timing comes from THVD1410 bus outputs only, not a universal RS-485 edge."
+      }
     }
-  }
+  },
+  "evidence_files": [
+    {
+      "path": "hardware-design/registry/datasheets/THVD1410DR.pdf",
+      "sha256": "db9fc93709d880e670769f9e9a1b0313c6a8fca7fe9ee953d1225b2a29d19a0f"
+    }
+  ]
 }

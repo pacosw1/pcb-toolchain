@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,copyFileSync,chmodSync,existsSync,readdirSync,rmSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,copyFileSync,chmodSync,existsSync,readdirSync,rmSync,realpathSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {execFileSync} from 'node:child_process';
@@ -28,6 +28,7 @@ if(a[0]==='sch' || a[0]==='pcb') {
  }process.exit(0);
 }
 const script=path.basename(a[0]);
+if(script==='si_planes.py'){console.log('WARN unproved-fastest-edge F.Cu /SIG: missing source\\n0 reference-plane failures');process.exit(0);}
 if(script==='kicad_happy_gate.py') {fs.writeFileSync(a[a.indexOf('--result')+1],JSON.stringify({schema_version:1,completed:true,findings:0,stale_exemptions:0,exit:0}));process.exit(0);}
 if(script==='port_labels.py'){console.log('port_labels: 0 checked, 0 failures');process.exit(0);}
 if(a[1]==='viapads'){console.log('0 vias in SMD pads');process.exit(0);}
@@ -41,8 +42,18 @@ process.exit(2);
  const env={...process.env,KICAD_CLI:join(root,'bin/fake-tool'),KICAD_PYTHON:join(root,'bin/fake-tool'),PYTHON_MODERN:join(root,'bin/fake-tool'),KICAD_HAPPY_DIR:join(root,'happy'),KRT_DIR:join(root,'absent'),KRPT_DIR:join(root,'absent'),KICAD_CONFIG_HOME:join(root,'config')};
  const run=extra=>{try{execFileSync(process.execPath,[join(root,'tools/gate.mjs'),'X','--write'],{cwd:root,env:{...env,...extra},stdio:'pipe'});return 0;}catch(error){return error.status;}};
  const result=()=>{const dir=join(root,base,'.gate');const latest=JSON.parse(readFileSync(join(dir,'latest.json')));return JSON.parse(readFileSync(join(dir,latest.run,'result.json')));};
- return {root,put,base,run,result};
+ return {root,put,base,run,result,env};
 }
+test('CLI shows report-only timing warnings without increasing plane failures',t=>{
+ const {root,put,base,env,result}=fixture(t);
+ const cfg=JSON.parse(readFileSync(join(root,base,'gate.json')));
+ cfg.checks.planes='reference-planes.json';put(base+'gate.json',JSON.stringify(cfg));put(base+'reference-planes.json','{}');
+ const out=execFileSync(process.execPath,[join(root,'tools/gate.mjs'),'X','--write'],{cwd:root,env,encoding:'utf8'});
+ assert.match(out,/WARN unproved-fastest-edge/);
+ assert.equal(result().metrics.planes_failures,0);
+ const latest=JSON.parse(readFileSync(join(root,base,'.gate/latest.json')));
+ assert.match(readFileSync(join(root,base,'.gate',latest.run,'planes.log'),'utf8'),/WARN unproved-fastest-edge/);
+});
 test('CLI rejects failed fresh DRC even when stale and newly written reports look clean',t=>{
  const {root,put,base,run,result}=fixture(t);
  put(base+'.gate/drc.json',JSON.stringify({violations:[],schematic_parity:[],unconnected_items:[]}));
@@ -60,4 +71,17 @@ test('CLI cannot skip DRC at the default layout stage',t=>{
  const {root,put,base,run}=fixture(t);
  put(base+'gate.json',JSON.stringify({project:'cad/X',checks:{erc:true}}));
  assert.equal(run(),2);assert.equal(existsSync(join(root,base,'gate-metrics.json')),false);
+});
+test('CLI fingerprints library tables in the versioned configuration directory',t=>{
+ const {root,put,base,run,result}=fixture(t);
+ put(base+'cad/X.kicad_sch','(lib_id "Shared:Part")');
+ const asset='shared-symbols.kicad_sym';put(asset,'source symbol');
+ put('config/10.0/sym-lib-table',`(sym_lib_table (lib (name "Shared")(type "KiCad")(uri "${realpathSync(join(root,asset))}")))`);
+ // A stale table at the base path must not substitute for KiCad's active table.
+ put('config/sym-lib-table','stale base table');
+ assert.equal(run(),0);let evidence=result().provenance;
+ assert.ok(evidence.inputs.some(x=>x.path==='external/kicad_config/sym-lib-table'));
+ assert.ok(evidence.inputs.some(x=>x.path===asset));const before=evidence.input_sha256;
+ put(asset,'changed source symbol');assert.equal(run(),0);
+ assert.notEqual(result().provenance.input_sha256,before);
 });

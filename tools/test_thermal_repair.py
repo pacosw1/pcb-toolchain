@@ -60,13 +60,13 @@ class ThermalDetectionTests(unittest.TestCase):
     def test_parser_and_hierarchy_deadline_and_missing_sheet_fail_closed(self):
         with tempfile.TemporaryDirectory() as td:
             folder=Path(td);board=folder/'board.kicad_pcb';board.write_text('(kicad_pcb (setup))')
-            with self.assertRaises(subprocess.TimeoutExpired): tr.immutable_board(board,time.monotonic()-1)
+            with self.assertRaises(subprocess.TimeoutExpired): tr.immutable_board(board,tr.lean.now()-1)
             root=folder/'board.kicad_sch';root.write_text('(kicad_sch (property "Sheetfile" "blocks/child.kicad_sch"))')
             destination=folder/'copy';destination.mkdir()
-            with self.assertRaises(ValueError):tr.copy_hierarchy(board,destination,time.monotonic()+1)
+            with self.assertRaises(ValueError):tr.copy_hierarchy(board,destination,tr.lean.now()+1)
             (folder/'blocks').mkdir();(folder/'blocks/child.kicad_sch').write_text('(kicad_sch)')
-            self.assertEqual(tr.copy_hierarchy(board,destination,time.monotonic()+1),['blocks/child.kicad_sch','board.kicad_sch'])
-            with self.assertRaises(subprocess.TimeoutExpired):tr.copy_hierarchy(board,destination,time.monotonic()-1)
+            self.assertEqual(tr.copy_hierarchy(board,destination,tr.lean.now()+1),['blocks/child.kicad_sch','board.kicad_sch'])
+            with self.assertRaises(subprocess.TimeoutExpired):tr.copy_hierarchy(board,destination,tr.lean.now()-1)
 
     def test_timeout_is_persisted_and_propagated_without_accepting_original(self):
         with tempfile.TemporaryDirectory() as td:
@@ -92,7 +92,7 @@ class ThermalDetectionTests(unittest.TestCase):
             def expire_tree(deadline,command):
                 if command[0]=='native-policy-tree':raise subprocess.TimeoutExpired(command,0)
             with patch.object(tr,'check_budget',side_effect=expire_tree):
-                with self.assertRaises(subprocess.TimeoutExpired):tr.immutable_board(board,time.monotonic()+1)
+                with self.assertRaises(subprocess.TimeoutExpired):tr.immutable_board(board,tr.lean.now()+1)
 
 
 @unittest.skipUnless(os.environ.get('THERMAL_REPAIR_FIXTURE'), 'set THERMAL_REPAIR_FIXTURE for frozen native two-pad evidence')

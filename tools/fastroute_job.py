@@ -29,10 +29,12 @@ ROUTE_FEATURES="name=1,..." last; tools/route_features.py show BOARD prints them
 The feature lines are printed before the UNROUTED line (callers read the last UNROUTED line).
 """
 import argparse
+import contextlib
 import fnmatch
 import json
 import os
 import re
+import resource
 import shlex
 import shutil
 import subprocess
@@ -48,9 +50,43 @@ import route_features  # noqa: E402  (feature switches, tools/route-features.jso
 import lean_workflow as lean
 import thermal_repair
 import import_pose_guard
+import import_replay_guard
+import backend_quality
 
 BIN = os.environ.get("FASTROUTE_BIN") or os.path.expanduser("~/opt/fastroute/fastroute-0.1.7-macos-arm64/fastroute")
 KICAD_CLI = os.environ.get("KICAD_CLI", "/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli")
+
+
+@contextlib.contextmanager
+def _native_phase(stage, event_file):
+    """Measure blocking native work; deadline checks cannot preempt a C++ call."""
+    started = lean.now()
+    before_self = resource.getrusage(resource.RUSAGE_SELF)
+    before_child = resource.getrusage(resource.RUSAGE_CHILDREN)
+    status = 'failed'
+    try:
+        if lean.remaining() == 0:
+            raise subprocess.TimeoutExpired([stage], 0)
+        yield
+        if lean.remaining() == 0:
+            raise subprocess.TimeoutExpired([stage], 0)
+        status = 'complete'
+    except subprocess.TimeoutExpired:
+        status = 'timeout'
+        raise
+    except KeyboardInterrupt:
+        status = 'cancelled'
+        raise
+    finally:
+        after_self = resource.getrusage(resource.RUSAGE_SELF)
+        after_child = resource.getrusage(resource.RUSAGE_CHILDREN)
+        with open(event_file, 'a') as events:
+            events.write(json.dumps(dict(stage=stage, kind='inprocess', status=status,
+                wall_s=lean.now()-started,
+                self_cpu_s=(after_self.ru_utime+after_self.ru_stime)-(before_self.ru_utime+before_self.ru_stime),
+                child_cpu_s=(after_child.ru_utime+after_child.ru_stime)-(before_child.ru_utime+before_child.ru_stime),
+                accounting='process deltas; nested/whole-job intervals are non-additive',
+                blocking_native=True))+'\n')
 
 
 def write_pairs(pairs_json, dru, nets, out):
@@ -115,11 +151,13 @@ def big_signal_via(text, dia_mm, classes, nets=()):
     return text
 
 
-def _parse_args():
+def _parse_args(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("board")
     ap.add_argument("outdir")
     ap.add_argument("--passes", type=int, default=40)
+    ap.add_argument('--quality-backend-manifest', default=os.environ.get('FASTROUTE_QUALITY_MANIFEST'),
+                    help='bind a verified patched backend; --quality-first is then mandatory')
     ap.add_argument("--layers", default="F.Cu,B.Cu")
     ap.add_argument("--skip-net", default="*GND*", help="comma list of fnmatch patterns (exact name or with *)")
     ap.add_argument("--gnd-vias", action="store_true", help="same as --plane-nets GND")
@@ -149,7 +187,7 @@ def _parse_args():
                     "padstack (the classes are not used), for example the fast nets for kicad-happy RP-001")
     ap.add_argument("--unlock-nets", default="", help="comma list of routed nets whose existing copper the router may "
                     "rip up and route again (default: all existing copper is locked)")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
     if a.max_time < 0 or a.threads < 0 or a.passes <= 0:
         ap.error('passes must be positive; time and threads must be nonnegative')
     if any(k.split('=', 1)[0] in ('router.autorouter.max_threads', 'router.optimizer.max_threads') for k in a.set):
@@ -168,6 +206,14 @@ def _main(a=None):
     if os.path.isdir(a.outdir) and os.listdir(a.outdir):
         sys.exit('router output directory is not empty; choose a fresh job directory')
     os.makedirs(a.outdir, exist_ok=True)
+    phases = os.path.join(a.outdir, 'stages.jsonl')
+    try:
+        backend_policy = backend_quality.bind(BIN, a.quality_backend_manifest)
+    except (ValueError, OSError) as exc:
+        lean.atomic_json(os.path.join(a.outdir, 'backend-policy.json'),
+                         dict(mode='rejected', reason=str(exc), qualified=False))
+        sys.exit('fastroute_job: required quality backend rejected: ' + str(exc))
+    lean.atomic_json(os.path.join(a.outdir, 'backend-policy.json'), backend_policy)
     stem = os.path.splitext(a.board)[0]
     feat = route_features.load(a.board)
     print("FEATURES " + route_features.summary(feat), flush=True)
@@ -179,6 +225,35 @@ def _main(a=None):
                                     if os.path.isfile(os.path.splitext(a.board)[0]+ext)},
                           qualified=False))
     base = os.path.join(a.outdir, "base.kicad_pcb")
+    base_b_cfg = None
+    if os.path.basename(stem) == 'BASE-PWR-B' or os.environ.get('ROUTE_BOARD') == 'BASE-PWR-B':
+        import mandatory_preflight
+        import base_b_route_rules
+        base_b_dir = os.path.join(route_features.ROOT, 'hardware-design', 'boards', 'BASE-PWR-B')
+        try:
+            base_b_cfg, receipt = mandatory_preflight.inspect(
+                a, base_b_dir, os.environ.get('ROUTE_BOARD', ''), pcbnew.LoadBoard, lean.digest, route_features.ROOT)
+        except mandatory_preflight.SelectionError as exc:
+            sys.exit('BASE-B mandatory preflight rejected: ' + str(exc))
+        with open(os.path.join(base_b_dir, 'diff-pairs.json')) as pair_file:
+            mandatory_pairs = json.load(pair_file)['pairs']
+        pair_profile = receipt['preserved_pair_profile']
+        policy_sources = list(receipt['policy_sources'])
+        lean.atomic_json(os.path.join(a.outdir, 'mandatory-preflight.json'), receipt)
+        if receipt['faults']:
+            sys.exit('BASE-B immutable mandatory-rule faults block routing; see mandatory-preflight.json')
+    if backend_policy['mode'] == 'quality-first':
+        capability = lean.run_stage([BIN, '--help'], stage='quality-backend-capability',
+            event_file=phases, deadline=lean.deadline_after(10),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            if capability.returncode:
+                raise ValueError('quality backend capability probe failed')
+            backend_quality.require_capability(capability.stdout)
+        except ValueError as exc:
+            lean.atomic_json(os.path.join(a.outdir, 'backend-policy.json'),
+                             dict(mode='rejected', reason=str(exc), qualified=False))
+            sys.exit('fastroute_job: required quality backend rejected: ' + str(exc))
     out = os.path.join(a.outdir, "routed.kicad_pcb")
     for ext in (".kicad_pro", ".kicad_dru"):
         if os.path.isfile(stem + ext):
@@ -191,8 +266,8 @@ def _main(a=None):
     tool = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gnd_pad_vias.py")
     for net in planes:
         tmp = os.path.join(a.outdir, "planevias.kicad_pcb")
-        r = subprocess.run([sys.executable, tool, base, tmp, "--net", net] + shlex.split(a.via_args),
-                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        r = lean.run_stage([sys.executable, tool, base, tmp, "--net", net] + shlex.split(a.via_args),
+                           stage=f"initial-plane-vias:{net}", event_file=phases, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         with open(os.path.join(a.outdir, "planevias.log"), "a") as f:
             f.write("".join(l + "\n" for l in r.stdout.splitlines() if "vias added" in l))
         if os.path.isfile(tmp):
@@ -251,9 +326,9 @@ def _main(a=None):
         nets = want
     if route_features.on(feat, "pin_escape_check"):
         # Read-only check on the job input (with the plane pad vias): pins of the routed nets that cannot leave their part.
-        p = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "route_grid.py"),
+        p = lean.run_stage([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "route_grid.py"),
                             "escape", base, "--layers", a.layers, "--skip", "", "--nets", routed_nets_file(),
-                            "--out", os.path.join(a.outdir, "pin-escape.json")], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+                            "--out", os.path.join(a.outdir, "pin-escape.json")], stage="pin-escape", event_file=phases, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         print(([l for l in p.stdout.splitlines() if l.startswith("ESCAPE")] or ["ESCAPE failed"])[-1], flush=True)
     with open(dsn) as f:
         # Keep electrical membership: exclusions are applied as dedicated router
@@ -261,11 +336,7 @@ def _main(a=None):
         text = freeroute.restrict_dsn(f.read(), set(a.layers.split(",")), None)
     net_class = route_features.dsn_classes(text)
     mandatory_masks = {}
-    base_b_cfg = None
-    if os.path.basename(stem) == 'BASE-PWR-B' or os.environ.get('ROUTE_BOARD') == 'BASE-PWR-B':
-        import base_b_route_rules
-        base_b_dir = os.path.join(route_features.ROOT, 'hardware-design', 'boards', 'BASE-PWR-B')
-        base_b_cfg = base_b_route_rules.evidence(base_b_dir, stem + '.kicad_pro')
+    if base_b_cfg:
         layers = [l for l in a.layers.split(',') if l]
         for n in nets:
             allow = [l for l in layers if l != 'In1.Cu' and
@@ -336,7 +407,9 @@ def _main(a=None):
         sys.exit('fastroute_job: ignored classes are derived from selected nets')
     text, ignored_classes = dsn_skip.exclude(text, nets)
     if ignored_classes:
-        help_result = subprocess.run([BIN, '--help'], capture_output=True, text=True, timeout=10)
+        help_result = lean.run_stage([BIN, '--help'], stage='net-class-capability', event_file=phases,
+                                     deadline=lean.deadline_after(10), stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE, text=True)
         if help_result.returncode or 'router.autorouter.ignore_net_classes' not in help_result.stdout:
             sys.exit('fastroute_job: backend does not support safe net-class exclusion')
     with open(dsn, "w") as f:
@@ -350,6 +423,8 @@ def _main(a=None):
         cmd.append('--router.autorouter.ignore_net_classes=' + ','.join(ignored_classes))
     if a.neck_um:
         cmd.append(f"--router.neck_width_um={a.neck_um}")
+    if backend_policy['mode'] == 'quality-first':
+        cmd.append('--quality-first')
     # A pair that has copper on the board already (kept block copper) is not given to the pair router.
     has_copper = {t.GetNetname() for t in b.GetTracks() if t.GetClass() != "PCB_VIA"}
     pairs_file = write_pairs(a.pairs_json, stem + ".kicad_dru", nets - has_copper, os.path.join(a.outdir, "pairs.txt"))
@@ -367,26 +442,28 @@ def _main(a=None):
         sources += [os.path.join(feat['_board_dir'], 'gate.json'),
                     os.path.join(feat['_board_dir'], feat['via_halo'].get('fast_nets_file', 'rp001-fast-nets.json'))]
     if base_b_cfg:
-        sources += [os.path.join(base_b_dir, name) for name in
-                    ('current-paths.json','reference-planes.json','rp001-fast-nets.json','diff-pairs.json')]
-        sources += [base_b_route_rules.__file__]
+        sources += policy_sources
+    router_env = resources.router_env(a.threads)
     effective = dict(configuration=vars(a), features=feat, command=cmd, dsn_sha256=lean.digest(dsn),
+                     backend_policy=backend_policy,
                      feature_sources={p: lean.digest(p) for p in sources if os.path.isfile(p)},
                      environment={k: os.environ.get(k) for k in ('ROUTE_FEATURES','ROUTE_BOARD','ROUTE_FEATURES_FILE')},
+                     backend_resources=dict(global_rayon_threads=int(router_env['RAYON_NUM_THREADS']),
+                          autorouter_workers=a.threads, optimizer_workers=a.threads,
+                          live_reservation=router_env.get('IOT_RESOURCE_TICKET'),
+                          scope='cooperating pool caps; coordinator and independently built pools are additional threads'),
                      learned_halo=route_features.learned_halo(a.board, feat['_board_dir'])[1],
                      mandatory_layer_masks=mandatory_masks, ignored_classes=ignored_classes, qualified=False)
     import hashlib
     effective['effective_sha256'] = hashlib.sha256(json.dumps(effective, sort_keys=True).encode()).hexdigest()
     lean.atomic_json(os.path.join(a.outdir, 'effective-configuration.json'), effective)
-    t0 = time.monotonic()
-    deadline = t0 + a.max_time if a.max_time else None
-    inherited = os.environ.get('IOT_LEAN_DEADLINE')
-    if inherited:
-        deadline = min(deadline, float(inherited)) if deadline else float(inherited)
+    t0 = lean.now()
+    deadline = lean.deadline_after(a.max_time) if a.max_time else lean.inherited_deadline()
     phases = os.path.join(a.outdir, 'stages.jsonl')
     with open(os.path.join(a.outdir, "run.log"), "w") as lf:
         rc = lean.run_stage(cmd, stage='router-screen' if a.optimizer != 'always' else 'router',
-                            event_file=phases, deadline=deadline, stdout=lf, stderr=subprocess.STDOUT).returncode
+                            event_file=phases, deadline=deadline, env=router_env,
+                            stdout=lf, stderr=subprocess.STDOUT).returncode
     if rc == 0 and a.optimizer == 'if-routed' and os.path.isfile(rep) and os.path.isfile(ses):
         screen = json.load(open(rep))
         if dsn_skip.routable_open(screen) == 0:
@@ -401,10 +478,10 @@ def _main(a=None):
                 optimize.append(f'--max-time={max(1, int(left))}')
             with open(os.path.join(a.outdir, 'optimize.log'), 'w') as lf:
                 rc = lean.run_stage(optimize, stage='router-optimize', event_file=phases, deadline=deadline,
-                                    stdout=lf, stderr=subprocess.STDOUT).returncode
+                                    env=router_env, stdout=lf, stderr=subprocess.STDOUT).returncode
         else:
             print('OPTIMIZER deferred: screening result still has open connections', flush=True)
-    secs = int(time.monotonic() - t0)
+    secs = int(lean.now() - t0)
     if rc != 0 or not os.path.isfile(ses) or not os.path.isfile(rep):
         sys.exit(f"fastroute_job: fastroute failed (rc {rc}), see {a.outdir}/run.log")
     report = json.load(open(rep))
@@ -433,12 +510,17 @@ def _main(a=None):
     try:
         poses_before = import_pose_guard.snapshot(b)
         pose_grid = import_pose_guard.grid_nm(dsn, ses)
+        replay_path = os.path.join(a.outdir, 'import-copper-snapshot.kicad_pcb')
+        preserved = {t.m_Uuid.AsString() for t in b.GetTracks() if t.IsLocked()}
+        replay_before = import_replay_guard.snapshot(b, replay_path)
     except ValueError as exc:
         sys.exit('fastroute_job: SES pose integrity precondition failed; result is not verified: ' + str(exc))
-    if not pcbnew.ImportSpecctraSES(b, ses):
-        sys.exit("fastroute_job: SES import failed")
+    with _native_phase('ses-import', phases):
+        if not pcbnew.ImportSpecctraSES(b, ses):
+            sys.exit("fastroute_job: SES import failed")
     try:
         restored = import_pose_guard.restore(b, poses_before, pose_grid)
+        replays = import_replay_guard.restore(b, replay_before, preserved, dsn, ses, replay_path)
     except ValueError as exc:
         sys.exit('fastroute_job: SES pose integrity failed; result is not verified: ' + str(exc))
     with open(os.path.join(a.outdir, 'import-pose-audit.json'), 'w') as audit:
@@ -447,6 +529,11 @@ def _main(a=None):
                        dsn_sha256=lean.digest(dsn), ses_sha256=lean.digest(ses),
                        before_snapshot_sha256=hashlib.sha256(json.dumps(poses_before, sort_keys=True).encode()).hexdigest(),
                        qualified=False, independent_native_gate_required=True), audit, indent=2)
+    with open(os.path.join(a.outdir, 'import-replay-audit.json'), 'w') as audit:
+        json.dump(dict(removed=replays, preserved_uuids=sorted(preserved),
+                       exact_preserved_source_policy=True, qualified=False,
+                       independent_native_gate_required=True,
+                       dsn_sha256=lean.digest(dsn), ses_sha256=lean.digest(ses)),audit,indent=2)
     for t in b.GetTracks():
         t.SetLocked(was.get(t.m_Uuid.AsString(), False))
     if skipped_copper() != skipped_before:
@@ -478,8 +565,9 @@ def _main(a=None):
             b.Delete(t)
         if extra:
             print(f"fastroute_job: removed {len(extra)} new items on nets outside --only-nets: {', '.join(names)}")
-    pcbnew.ZONE_FILLER(b).Fill(b.Zones())
-    pcbnew.SaveBoard(out, b)
+    with _native_phase('native-zone-fill-save', phases):
+        pcbnew.ZONE_FILLER(b).Fill(b.Zones())
+        pcbnew.SaveBoard(out, b)
     drc = os.path.join(a.outdir, "drc.json")
     p = lean.run_stage([KICAD_CLI, "pcb", "drc", "--refill-zones", "--severity-all", "--format", "json", "--units", "mm", "-o", drc, out],
                        stage='native-drc', event_file=phases, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -522,8 +610,9 @@ def _main(a=None):
     if todo:
         for net, pads in todo.items():
             tmp = os.path.join(a.outdir, "repair.kicad_pcb")
-            r = subprocess.run([sys.executable, tool, out, tmp, "--net", net, "--only", ",".join(sorted(pads))]
-                               + shlex.split(a.via_args), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            r = lean.run_stage([sys.executable, tool, out, tmp, "--net", net, "--only", ",".join(sorted(pads))]
+                               + shlex.split(a.via_args), stage=f"postimport-plane-repair:{net}", event_file=phases,
+                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
             with open(os.path.join(a.outdir, "planevias.log"), "a") as f:
                 f.write("".join("repair " + l + "\n" for l in r.stdout.splitlines() if "vias added" in l))
             if os.path.isfile(tmp):
@@ -553,9 +642,9 @@ def _main(a=None):
     if route_features.on(feat, "triage_opens"):
         tri = os.path.join(a.outdir, "open-triage.json")
         if signal_open:
-            p = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "route_grid.py"),
+            p = lean.run_stage([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "route_grid.py"),
                                 "triage", out, "--drc", drc, "--layers", a.layers, "--skip", ",".join(skip + planes), "--nets", routed_nets_file(),
-                                "--out", tri], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+                                "--out", tri], stage="open-triage", event_file=phases, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
             print(([l for l in p.stdout.splitlines() if l.startswith("TRIAGE")] or ["TRIAGE failed"])[-1], flush=True)
         else:
             json.dump({"open": 0, "enclosed": 0, "router_miss": 0, "connections": []}, open(tri, "w"))
@@ -577,8 +666,8 @@ def _main(a=None):
         for t in rb.GetTracks():
             if t.GetClass() == 'PCB_VIA':
                 counts[t.GetNetname()] = counts.get(t.GetNetname(), 0) + 1
-        faults += base_b_route_rules.pair_via_faults(counts, json.load(open(os.path.join(base_b_dir, 'diff-pairs.json')))['pairs'])
-        lean.atomic_json(os.path.join(a.outdir, 'mandatory-rules.json'), dict(faults=faults, qualified=False))
+        faults += base_b_route_rules.pair_via_faults(counts, mandatory_pairs, pair_profile)
+        lean.atomic_json(os.path.join(a.outdir, 'mandatory-rules.json'), dict(faults=faults, preserved_pair_profile=pair_profile, qualified=False))
         if faults:
             sys.exit('BASE-B mandatory imported-board rule check failed; see mandatory-rules.json')
     # Required image reflects the final repaired board, not the earlier import.
@@ -601,14 +690,24 @@ def main():
     outdir = a.outdir
     events = outdir + '.admission.jsonl' if outdir else None
     try:
-        with resources.reserve(cpu, events=events, label='routing') as env:
+        budget_env = dict(os.environ)
+        if a.max_time:
+            budget_env['IOT_LEAN_DEADLINE'] = lean.encode_deadline(lean.deadline_after(a.max_time))
+        with resources.environment(budget_env), resources.reserve(cpu, events=events, label='routing') as env:
             with resources.environment(env):
                 return _main(a)
-    except subprocess.TimeoutExpired:
+    except (TimeoutError, subprocess.TimeoutExpired) as error:
         if outdir and os.path.isdir(outdir):
-            lean.router_timeout(outdir)
+            lean.router_timeout(outdir, error)
         print('fastroute_job: deadline reached; retained checkpoints are unqualified', file=sys.stderr)
         return 124
+    except KeyboardInterrupt as error:
+        code = 128 + (getattr(error, 'signum', None) or 2)
+        if outdir and os.path.isdir(outdir):
+            lean.atomic_json(os.path.join(outdir, 'outcome.json'), dict(status='cancelled',
+                             returncode=code, qualified=False, signal=getattr(error, 'signum', None),
+                             cleanup=getattr(error, 'cleanup', None)))
+        return code
 
 
 if __name__ == "__main__":

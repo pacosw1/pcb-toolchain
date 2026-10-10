@@ -16,10 +16,10 @@ test('new active boards cannot pass with only a SPEC',t=>{
  const {root,registry}=fixture(t);const r=inspectPackets(root,registry);
  assert.equal(r.ok,false);assert.ok(r.findings.some(f=>f.detail.includes('CELLULAR/BOM-VERIFIED.csv')));assert.equal(r.checked.length,1);
 });
-test('full packet with component rows passes; empty verified BOM fails',t=>{
+test('full packet with unscoped component rows cannot establish completeness; empty verified BOM fails',t=>{
  const {root,put,registry}=fixture(t);
  for(const p of FULL_PACKET) put('CELLULAR/'+p,p==='BOM-VERIFIED.csv'?'Designator,Function block,MPN/value,LCSC\nU1,"LTE, GNSS",EG912U,C123\n':'content');
- assert.equal(inspectPackets(root,registry).ok,true);
+ assert.ok(inspectPackets(root,registry).findings.some(f=>f.check==='bom_coverage'));
  put('CELLULAR/BOM-VERIFIED.csv','Designator,Function block,MPN/value,LCSC\n');
  assert.ok(inspectPackets(root,registry).findings.some(f=>f.check==='bom_empty'));
 });

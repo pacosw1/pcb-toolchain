@@ -411,6 +411,8 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
         kinds = {pcbnew.PAD_ATTRIB_PTH: 'pth', pcbnew.PAD_ATTRIB_NPTH: 'npth'}  # SMD and edge connector: 'smd'
         out_units[-1]['cu_pads'] = [[r, kinds.get(p.GetAttribute(), 'smd'), p.GetNumber()]
                                     for r in u['refs'] for p in by_ref[r].Pads()]
+        out_units[-1]['pad_copper_layers'] = [_copper_layers(board, p)
+                                             for r in u['refs'] for p in by_ref[r].Pads()]
         if u['box']:  # a block: its pads are the copper for the edge band
             out_units[-1]['edge_pads'] = pad_boxes
         else:  # pads meet kept copper; a block also moves its tracks, so its courtyards stay the test
@@ -458,9 +460,11 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
         region = {'box': list(region_box), 'weight': region_weight, 'refs': sorted(region_refs)}
     copper = kept_copper(board, out_units, by_ref)
     fixed_copper = [_copper_row(board, t) for t in locked]
+    fixed_copper_layers = [row for t in locked for row in _layer_copper_rows(board, t)]
     return {'board_file': os.path.abspath(path), 'units': out_units, 'nets': nets,
             'board': {'outline': outline, 'keepouts': keepouts, 'edge_clearance': edge, 'copper': copper,
-                      'fixed_copper': fixed_copper, 'via_keepouts': via_keepouts,
+                      'fixed_copper': fixed_copper, 'fixed_copper_layers': fixed_copper_layers,
+                      'via_keepouts': via_keepouts,
                       'keepout_gaps': _keepout_gaps(dom_ids, nonet)},
             'region': region, 'move_box': list(free_box) if free_box else None, 'decaps': decaps,
             'dru_ignored': ignored, 'class_gaps': _class_gaps(dom_ids, domains, pairs) if dom_ids else None,
@@ -721,6 +725,19 @@ def kept_copper(board, units, by_ref):
             continue
         out.append(_copper_row(board, t))
     return out
+
+
+def _copper_layers(board, item):
+    """Actual copper membership, including enabled inner layers and via spans."""
+    return [board.GetLayerName(lay) for lay in board.GetEnabledLayers().CuStack()
+            if item.IsOnLayer(lay)]
+
+
+def _layer_copper_rows(board, t):
+    row = _copper_row(board, t)
+    return [[layer] + row[1:5] + [mm(t.GetWidth(board.GetLayerID(layer)))]
+            if t.GetClass() == 'PCB_VIA' else [layer] + row[1:]
+            for layer in _copper_layers(board, t)]
 
 
 def _copper_row(board, t):

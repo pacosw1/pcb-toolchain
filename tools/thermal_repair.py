@@ -18,7 +18,7 @@ import lean_workflow as lean
 
 
 def check_budget(deadline, command):
-    if time.monotonic() >= deadline:
+    if lean.now() >= deadline:
         raise subprocess.TimeoutExpired(command, 0)
 
 
@@ -71,7 +71,7 @@ def immutable_board(path, deadline=None):
     def budget():
         nonlocal next_check
         if index >= next_check:
-            if deadline is not None and time.monotonic() >= deadline:
+            if deadline is not None and lean.now() >= deadline:
                 raise subprocess.TimeoutExpired(['native-policy-snapshot', str(path)], 0)
             next_check = index+65536
     while index < len(text):
@@ -135,7 +135,7 @@ def copy_hierarchy(source, destination, deadline):
     root = source.parent.resolve()
     pending, seen = [source.with_suffix('.kicad_sch')], set()
     while pending:
-        if time.monotonic() >= deadline:
+        if lean.now() >= deadline:
             raise subprocess.TimeoutExpired(['copy-native-hierarchy'], 0)
         sheet = pending.pop().resolve()
         if sheet in seen:
@@ -198,7 +198,7 @@ def repair(board_path, project_board, drc, planes, via_args, kicad_cli, event_fi
         return drc, dict(evidence, reason='no plane thermal targets')
     if any(x.split('=', 1)[0] in ('--net', '--only', '--in-pad') for x in via_args):
         return drc, dict(evidence, reason='thermal repair prohibits identity overrides and in-pad vias')
-    deadline = min(time.monotonic()+90, float(os.environ.get('IOT_LEAN_DEADLINE', 'inf')))
+    deadline = lean.deadline_after(90)
     directory = Path(tempfile.mkdtemp(prefix=label+'-', dir=board_path.parent))
     source = Path(project_board)
     if not source.with_suffix('.kicad_sch').is_file():

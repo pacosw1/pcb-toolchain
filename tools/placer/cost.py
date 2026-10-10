@@ -57,6 +57,7 @@ DEFAULTS = {'rudy_cell': 1.0, 'mask_cell': 0.1, 'layers': 2, 'pitch': 0.4, 'limi
 EPS = 1e-9
 ROUTE_LAYERS = ('F.Cu', 'B.Cu')  # the `layers` routing layers; copper on other layers uses no RUDY capacity
 OBSTACLE_LAYERS = ('F.Cu', 'via')  # kept copper that a top-side part must not cover
+COPPER_LAYER_NAMES = frozenset(('F.Cu', 'B.Cu') + tuple('In%d.Cu' % i for i in range(1, 63)))
 
 
 def params_with_defaults(params):
@@ -180,9 +181,15 @@ class Mask:
         for poly in board.get('keepouts', []):
             ko = point_in_poly(gx, gy, poly)
             out, out0 = out | ko, out0 | ko
-        for layer, a0, b0, a1, b1, w in board.get('fixed_copper', []):  # locked: a pad over it is illegal
-            if layer in OBSTACLE_LAYERS:
-                self._segment(out, a0, b0, a1, b1, w / 2 + gap)
+        # Locked copper cannot be ripped up. Keep its masks separate from the
+        # edge band so top-only pads may cover a track on a different layer.
+        fixed = {}
+        rows = board.get('fixed_copper_layers', board.get('fixed_copper', []))
+        for layer, a0, b0, a1, b1, w in rows:
+            self._segment(fixed.setdefault(layer, np.zeros_like(out)),
+                          a0, b0, a1, b1, w / 2 + gap)
+        self.fixed_masks = fixed
+        self.fixed_tables = {}
         cu = np.zeros_like(out)
         for layer, a0, b0, a1, b1, w in board.get('copper', []):
             if layer in OBSTACLE_LAYERS:
@@ -257,6 +264,34 @@ class Mask:
         """Area of the domain pad rects (u['dom']) within the keepout gap of their class."""
         return sum(self.rect_area(*rects[k][:4], s=self.s_kog[c], outside=False)
                    for k, c, *_ in dom if c in self.s_kog)
+
+    def fixed_area(self, pads, layers=None):
+        """Locked copper under pads on shared layers. Legacy unknown membership
+        or a legacy unspanned via conservatively obstructs every copper layer.
+        An explicit empty membership (NPTH) has no copper intersection."""
+        pads = pads or ()
+        if layers is not None and len(layers) != len(pads):
+            raise ValueError('pad_copper_layers must align with pad boxes')
+        total = 0.0
+        for i, pad in enumerate(pads):
+            membership = None if layers is None else layers[i]
+            if membership is not None and (not isinstance(membership, list)
+                    or any(not isinstance(layer, str) or layer not in COPPER_LAYER_NAMES for layer in membership)
+                    or len(set(membership)) != len(membership)):
+                raise ValueError('pad_copper_layers must contain distinct copper layer names')
+            if membership == []:
+                continue
+            key = tuple(sorted(self.fixed_masks if membership is None else
+                               set(membership).intersection(self.fixed_masks) | ({'via'} & self.fixed_masks.keys())))
+            if not key:
+                continue
+            if key not in self.fixed_tables:
+                union = np.zeros((self.ny, self.nx), dtype=bool)
+                for layer in key:
+                    union |= self.fixed_masks[layer]
+                self.fixed_tables[key] = sat(union.astype(np.int64))
+            total += self.rect_area(*pad[:4], s=self.fixed_tables[key], outside=False)
+        return total
 
     def unit_area(self, rects, pads=None, ko=(), epads=None):
         """Forbidden area of a unit: courtyard rects against all, or (pads given) rects against the edge
@@ -645,7 +680,10 @@ def rule_miss(pr, pose, i):
 def forbidden(pr, pose, mask, i):
     u = pr['units'][i]
     w = world_rects(u, pose[i])
-    return (mask.unit_area(w, world_pads(u, pose[i]), set(u.get('ko', [])), edge_pads(u, pose[i]))
+    pads = world_pads(u, pose[i])
+    epads = pads or world_pads(u, pose[i], 'edge_pads')
+    return (mask.unit_area(w, pads, set(u.get('ko', [])), epads)
+            + mask.fixed_area(epads, u.get('pad_copper_layers'))
             + mask.gap_area(w, u.get('dom', [])) + edge_miss(u, pose[i], pr['board']))
 
 
@@ -829,11 +867,14 @@ def components(pr, pose, params, *, mask=None):
         mask = Mask(pr['board'], p['mask_cell'], p['gap'])
     elif mask.input_signature != (json.dumps(pr['board'], sort_keys=True), p['mask_cell'], p['gap']):
         raise ValueError('reused mask does not match board geometry/rules or mask parameters')
+    # Both independent terms share the same complete pair/domain traversal.
+    # Recompute it for this pose once; no geometry, rule or pose result is cached.
+    hard_overlap, soft_spacing = _overlaps(pr, pose)
     return {'hpwl': hpwl(pr, pose),
             'cong': overflow(rudy_grid(pr, pose, p), p, cell_weights(pr, p)),
-            'overlap': overlap(pr, pose),
+            'overlap': hard_overlap,
             'oob': sum(forbidden(pr, pose, mask, i) for i, u in enumerate(pr['units']) if not u['fixed']),
-            'spacing': spacing(pr, pose),
+            'spacing': soft_spacing,
             'via': via_room(pr, pose, p),
             'crossing': crossings(pr, pose) if p['w_x'] else 0.0,  # not computed at weight 0 (speed)
             'row': rows(pr, pose, p['row_pitch']) if p['w_row'] else 0.0}
@@ -1017,7 +1058,10 @@ class Evaluator:
         lp = self.lpad[i]
         pads = None if lp is None else (lp[self.R[i]] + (self.X[i], self.Y[i], self.X[i], self.Y[i])).tolist()
         w = self._world(i).tolist()
-        return (self.mask.unit_area(w, pads, self.kos[i], self._epads(i)) + self.mask.gap_area(w, self.units[i].get('dom', []))
+        epads = pads if pads is not None else self._epads(i)
+        return (self.mask.unit_area(w, pads, self.kos[i], epads)
+                + self.mask.fixed_area(epads, self.units[i].get('pad_copper_layers'))
+                + self.mask.gap_area(w, self.units[i].get('dom', []))
                 + edge_miss(self.units[i], (self.X[i], self.Y[i], self.R[i]), self.board, self.obox))
 
     def _pen(self, i, j):
@@ -1138,7 +1182,9 @@ class Evaluator:
         """Spacing overlap + edge/keepout area (0 = legal). Kept copper is a cost only: the writer rips up
         the copper that a moved pad lands on."""
         w = self._world(i).tolist()
-        return (self._unit_overlap(i, set()) + self.mask.edge_area(w, self.kos[i], self._epads(i))
+        epads = self._epads(i)
+        return (self._unit_overlap(i, set()) + self.mask.edge_area(w, self.kos[i], epads)
+                + self.mask.fixed_area(epads, self.units[i].get('pad_copper_layers'))
                 + self.mask.gap_area(w, self.units[i].get('dom', []))
                 + edge_miss(self.units[i], (self.X[i], self.Y[i], self.R[i]), self.board, self.obox)
                 + rule_miss(self._pr, self.pose(), i))

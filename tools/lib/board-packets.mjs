@@ -1,27 +1,12 @@
 import {existsSync,readFileSync,readdirSync} from 'node:fs';
 import {join,resolve,relative} from 'node:path';
+import {inspectBomCoverage} from './bom-coverage.mjs';
+import {parseCsv} from './csv.mjs';
+import {revisionBoms} from './bom-ownership.mjs';
+import {ownedFile} from './kicad-population.mjs';
+export {parseCsv} from './csv.mjs';
 
 export const FULL_PACKET=['README.md','STATUS.md','SPEC.md','BOM-VERIFIED.csv','SCHEMATIC.md','DATASHEETS.md','POWER-AND-IC-ANALYSIS.md','MECHANICAL.md','JLC-SUBMISSION.md','BRINGUP-TEST-PLAN.md','DOC-RECONCILIATION.md','reports/README.md','handoff/README.md'];
-
-// Preserve quoted commas/newlines so LCSC IDs cannot shift columns.
-export function parseCsv(text) {
- const rows=[];let row=[],field='',quoted=false;
- for(let i=0;i<text.length;i++) {
-  const c=text[i];
-  if(c==='"') {
-   if(quoted && text[i+1]==='"'){field+='"';i++;}
-   else if(quoted) quoted=false;
-   else if(!field) quoted=true;
-   else throw new Error('quote inside unquoted CSV field');
-  } else if(!quoted && (c===',' || c==='\n')) {
-   row.push(field.replace(/\r$/,''));field='';
-   if(c==='\n'){if(row.some(Boolean)) rows.push(row);row=[];}
-  } else field+=c;
- }
- if(quoted) throw new Error('unterminated quoted CSV field');
- if(field || row.length){row.push(field.replace(/\r$/,''));if(row.some(Boolean)) rows.push(row);}
- return rows;
-}
 
 export function inspectPackets(root,registry) {
  const findings=[];const checked=[];
@@ -62,23 +47,33 @@ export function inspectPackets(root,registry) {
    }
   }
   if(e.lifecycle==='active' && e.packet!=='full') fail(e.id,'packet_profile','active physical boards require a full packet');
-  const required=e.lifecycle==='active'?FULL_PACKET:['SPEC.md'];
+  let boms=[];
+  if(e.lifecycle==='active')try {boms=revisionBoms(e);}catch(error){fail(e.id,'bom_ownership',error.message);}
+  const required=e.lifecycle==='active'?(e.bom_policy==='per-revision'?FULL_PACKET.filter(p=>p!=='BOM-VERIFIED.csv'):FULL_PACKET):['SPEC.md'];
   for(const file of required) {
    const p=join(dir,file);
    if(!existsSync(p) || !readFileSync(p,'utf8').trim()) fail(e.id,'packet_file',`missing or empty ${e.directory}/${file}`);
   }
   if(e.lifecycle==='active') {
-   const p=join(dir,'BOM-VERIFIED.csv');
+   for(const bom of boms) {
+   const p=join(dir,bom.bom),label=bom.revision?`${bom.bom} (revision ${bom.revision})`:bom.bom;
+   if(!existsSync(p) && e.bom_policy==='per-revision')fail(e.id,'packet_file',`missing or empty ${e.directory}/${label}`);
    if(existsSync(p)) {
     try {
-     const rows=parseCsv(readFileSync(p,'utf8'));
-     if(rows[0]?.slice(0,4).join(',')!=='Designator,Function block,MPN/value,LCSC') fail(e.id,'bom_header','invalid BOM-VERIFIED.csv header');
-     if(rows.length<2) fail(e.id,'bom_empty','BOM-VERIFIED.csv has no component rows; verification is not established');
+     const csv=e.bom_policy==='per-revision'?ownedFile(root,`hardware-design/boards/${e.directory}/${bom.bom}`,`hardware-design/boards/${e.directory}`).toString():readFileSync(p,'utf8');
+     const rows=parseCsv(csv);
+     if(rows[0]?.slice(0,4).join(',')!=='Designator,Function block,MPN/value,LCSC') fail(e.id,'bom_header',`invalid ${label} header`);
+     if(rows.length<2) fail(e.id,'bom_empty',`${label} has no component rows; verification is not established`);
      for(const [i,r] of rows.slice(1).entries()) {
       if(r.length!==rows[0].length) fail(e.id,'bom_row',`BOM row ${i+2} has inconsistent column count`);
       if(r[3] && !/^C\d+$/.test(r[3].trim())) fail(e.id,'bom_identity',`BOM row ${i+2} has invalid LCSC ID`);
      }
+     if(rows.length>1) {
+      try {inspectBomCoverage(root,e,csv,rows,bom.revision);}
+      catch(error) {fail(e.id,'bom_coverage',`${label}: ${error.message}`);}
+     }
     } catch(error){fail(e.id,'bom_csv',error.message);}
+   }
    }
   }
   if(e.variants) {

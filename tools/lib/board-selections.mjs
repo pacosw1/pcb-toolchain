@@ -1,6 +1,7 @@
 import {readFile,realpath,lstat} from 'node:fs/promises';
 import {resolve,relative,isAbsolute} from 'node:path';
 import {createHash} from 'node:crypto';
+import {revisionBoms} from './bom-ownership.mjs';
 
 const sha = value => createHash('sha256').update(value).digest('hex');
 const hash = value => typeof value==='string' && /^[a-f0-9]{64}$/.test(value);
@@ -25,14 +26,21 @@ async function bounded(root, path, prefix) {
   return readFile(target);
 }
 
-export async function loadBoardSelection(root, entry, csv, rows) {
+export async function loadBoardSelection(root, entry, csv, rows,revisionName) {
   const board=entry.directory;
   const prefix=`hardware-design/boards/${board}`;
-  const manifestPath=`${prefix}/BOM-VERIFIED.selection.json`;
+  const perRevision=entry.bom_policy==='per-revision';
+  revisionBoms(entry);
+  need(!perRevision || typeof revisionName==='string','per-revision selection requires explicit revision selector');
+  const owner=perRevision?entry.revisions.find(r=>r.revision===revisionName):null;
+  need(!perRevision || owner,'unknown selection revision selector');
+  if(owner)need(sha(await bounded(root,`${prefix}/${owner.bom}`,prefix))===sha(csv),
+   'selection supplied BOM differs from owned revision source');
+  const manifestPath=`${prefix}/${owner?.selection??'BOM-VERIFIED.selection.json'}`;
   try { await lstat(resolve(root,manifestPath)); }
   catch(error) {
     if(error.code==='ENOENT') {
-      need(!entry.revisions.some(r=>r.selection==='BOM-VERIFIED.selection.json'), 'registered board selection ledger missing');
+      need(!perRevision && !entry.revisions.some(r=>r.selection==='BOM-VERIFIED.selection.json'), 'registered board selection ledger missing');
       return null;
     }
     throw error;
@@ -41,12 +49,13 @@ export async function loadBoardSelection(root, entry, csv, rows) {
   const ledger=JSON.parse(text);
   need(ledger.schema_version===1 && ledger.board===board, 'selection board/schema mismatch');
   const revision=entry.revisions.find(r=>r.revision===ledger.revision);
+  need(!owner || revision===owner,'selection ledger belongs to a different requested revision');
   need(revision && ledger.revision_spec===`${prefix}/${revision.spec}`, 'selection revision/spec mismatch');
-  need(revision.bom==='BOM-VERIFIED.csv' && revision.selection==='BOM-VERIFIED.selection.json',
+  need((perRevision || revision.bom==='BOM-VERIFIED.csv') && `${prefix}/${revision.selection}`===manifestPath,
        'selection revision does not own this BOM/ledger');
   need(entry.revisions.filter(r=>r.bom===revision.bom || r.selection===revision.selection).length===1,
        'selection BOM/ledger has ambiguous revision ownership');
-  need(ledger.bom===`${prefix}/BOM-VERIFIED.csv` && hash(ledger.bom_sha256) && sha(csv)===ledger.bom_sha256,
+  need(ledger.bom===`${prefix}/${revision.bom}` && hash(ledger.bom_sha256) && sha(csv)===ledger.bom_sha256,
        'selection BOM identity/hash mismatch');
   need(states.has(ledger.state), 'selection state does not establish electrical/CAD selection');
   need(ledger.stock_current===false && ledger.qualified===false && ledger.release_approved===false,

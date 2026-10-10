@@ -411,6 +411,21 @@ class EdgeRateTest(unittest.TestCase):
         self.assertAlmostEqual(sp.detour_budget_mm(1.0), 6.67, places=2)
         self.assertAlmostEqual(sp.detour_budget_mm(4.0), 26.7, places=1)
 
+    def test_nonfinite_or_boolean_budget_inputs_fail_closed(self):
+        import tempfile,json
+        from unittest import mock
+        for value in (float('inf'),float('-inf'),float('nan'),True,False,0,-1):
+            with self.subTest(value=value):
+                with self.assertRaises(sp.SpecError):sp.detour_budget_mm(value)
+                with self.assertRaises(sp.SpecError):sp.load_spec(base_spec(step_mm=value))
+                with self.assertRaises(sp.SpecError):sp.load_spec(base_spec(alt_refs={'/N':{'domain':'GND','cap_mm':value,'reason':'fixture'}}))
+                with tempfile.NamedTemporaryFile(mode='w',suffix='.json') as f:
+                    raw={'classes':{'test':{'tr_ns':value,'source':'fixture','applicability':{'kind':'protocol','reason':'fixture'}}},'budget':{'nh_per_ns':value,'nh_per_mm':1}}
+                    json.dump(raw,f);f.flush()
+                    with self.assertRaises(sp.SpecError):sp.load_edge_rates(f.name)
+                    with mock.patch.object(sp,'EDGE_RATES_FILE',f.name),self.assertRaises(sp.SpecError):sp._edge_budget()
+        with mock.patch.object(sp,'_edge_budget',return_value=1e308),self.assertRaises(sp.SpecError):sp.detour_budget_mm(1e308)
+
     def test_net_class_and_rise_time(self):
         self.assertEqual(sp.edge_class('/SDA', self.spec), 'i2c')
         self.assertIsNone(sp.edge_class('/EN', self.spec))   # no class: the edge of the driver (no default)
@@ -420,6 +435,7 @@ class EdgeRateTest(unittest.TestCase):
         self.assertEqual(len(self.fails('F.Cu', '/SDA', worst=5, runs=[run(90.0)])), 1)
 
     def test_budget_larger_than_the_board_means_no_rule(self):
+        self.spec['_edges']['/RS485_A']={'edge_ns':460,'driver':'verified compatible THVD1410.A fixture'}
         self.assertEqual(self.fails('F.Cu', '/RS485_A', worst=30, runs=[run(None)]), [])
         self.assertEqual(self.fails('F.Cu', '/SDA', board_mm=60, worst=30, runs=[run(None)]), [])
 
@@ -456,31 +472,100 @@ class RunTerminalTest(unittest.TestCase):
 
 
 class DetourTest(unittest.TestCase):
+    def edge(self, ok, x0, x1, y0, y1):
+        points = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+        boundaries = list(zip(points, points[1:] + points[:1]))
+        return lambda a, b: sp.continuous_reference(ok, boundaries, a, b)
+
     def test_straight_gap_with_copper_beside_is_short(self):
         # copper everywhere except a 1 mm wide strip x in (4.5, 5.5), y < 0.5: the return goes round the strip end
         ok = lambda x, y: not (4.5 < x < 5.5 and y < 0.5)
-        d = sp.detour_mm(ok, [(4.4, 0, 0.1), (5.6, 0, 0.1)], 6.7, 0.1)
+        edge = self.edge(ok, 4.5, 5.5, -100, .5)
+        d = sp.detour_mm(ok, [(4.4, 0, 0.1), (5.6, 0, 0.1)], 6.7, 0.1, edge_ok=edge)
         self.assertIsNotNone(d)
         self.assertLess(d, 3.0)
 
     def test_long_slot_forces_a_long_detour(self):
         # a 0.5 mm slot from y = -15 to y = 15: the return path goes round an end, about 30 mm
         ok = lambda x, y: not (4.75 < x < 5.25 and -15 < y < 15)
-        self.assertIsNone(sp.detour_mm(ok, [(4.6, 0, 0.1), (5.4, 0, 0.1)], 6.7, 0.1))
-        d = sp.detour_mm(ok, [(4.6, 0, 0.1), (5.4, 0, 0.1)], 40, 0.2)
+        edge = self.edge(ok, 4.75, 5.25, -15, 15)
+        self.assertIsNone(sp.detour_mm(ok, [(4.6, 0, 0.1), (5.4, 0, 0.1)], 6.7, 0.1, edge_ok=edge))
+        d = sp.detour_mm(ok, [(4.6, 0, 0.1), (5.4, 0, 0.1)], 40, 0.2, edge_ok=edge)
         self.assertGreater(d, 29)
 
     def test_ground_vias_join_cut_plane_pieces(self):
         # an In2 lane cuts the plane fully (x in 4.75..5.25 for all y): the return goes down a ground via on each side
         # (at (4, 1) and (6, 1)) and through the solid plane below; path = 1.4 + 2.0 + 1.4 mm, about 5 mm
         ok = lambda x, y: not (4.75 < x < 5.25)
-        self.assertIsNone(sp.detour_mm(ok, [(4.6, 0, 0.1), (5.4, 0, 0.1)], 6.7, 0.1))
-        d = sp.detour_mm(ok, [(4.6, 0, 0.1), (5.4, 0, 0.1)], 6.7, 0.1, portals=[(4, 1), (6, 1)])
+        edge = self.edge(ok, 4.75, 5.25, -100, 100)
+        self.assertIsNone(sp.detour_mm(ok, [(4.6, 0, 0.1), (5.4, 0, 0.1)], 6.7, 0.1, edge_ok=edge))
+        d = sp.detour_mm(ok, [(4.6, 0, 0.1), (5.4, 0, 0.1)], 6.7, 0.1, portals=[(4, 1), (6, 1)],
+                         edge_ok=edge, alternate_ok=lambda x, y: True, alternate_edge_ok=lambda a, b: True)
         self.assertIsNotNone(d)
-        self.assertAlmostEqual(d, 1.17 + 2.0 + 1.17, delta=0.6)   # grid snap and via cell shave a few cells
+        self.assertAlmostEqual(d, 1.25 + 2.0 + 1.25, delta=0.2)   # positive exact access cost, no shaved terminal radius
 
     def test_no_copper_is_unreachable(self):
         self.assertIsNone(sp.detour_mm(lambda x, y: False, [(0, 0, 0.1), (1, 0, 0.1)], 6.7, 0.1))
+
+
+class RoutedLoadScreenTest(unittest.TestCase):
+    def test_load_geometry_forwarding_preserves_explicit_interface_selection(self):
+        from unittest.mock import patch
+        import net_drivers
+        s = dict(grounds=['GND'], exempt={'nets': {}}, power=[], mixed_layers={},
+                 _fast=[], edge_classes={'i2c': ['/S']}, receivers={}, offboard={}, _edge_rates={})
+        geom = {'length_mm': {'/S': 12}, 'pf_per_mm': {}}
+        with patch.object(net_drivers, 'net_edge', return_value={'unknown': 'no load capacitance'}) as call:
+            edges = sp.driver_edges(['/S', 'GND'], {}, s, table={}, geom=geom)
+        self.assertEqual(edges, {'/S': {'unknown': 'no load capacitance'}})
+        self.assertIs(call.call_args.kwargs['geom'], geom)
+        self.assertEqual(call.call_args.kwargs['interface'], 'i2c')
+
+    def test_duplicate_reversed_split_and_overlap_do_not_inflate_load(self):
+        rows = [('/S', 'F.Cu', ((0, 0), (10, 0)), .2),
+                ('/S', 'F.Cu', ((10, 0), (0, 0)), .2),
+                ('/S', 'F.Cu', ((2, 0), (7, 0)), .1),
+                ('/S', 'F.Cu', ((7, 0), (12, 0)), .2),
+                ('/S', 'B.Cu', ((0, 0), (10, 0)), .3)]
+        length, width = sp.routed_trace_summary(rows)
+        self.assertEqual(length, {'/S': 22.})
+        self.assertEqual(width, {'/S': .1})
+
+    def test_parallel_distinct_native_nm_paths_and_branch_are_retained(self):
+        rows = [('/S', 'F.Cu', ((0, 0), (10, 0)), .2),
+                ('/S', 'F.Cu', ((0, .000001), (10, .000001)), .2),
+                ('/S', 'F.Cu', ((5, 0), (5, 3)), .2)]
+        self.assertEqual(sp.routed_trace_summary(rows)[0], {'/S': 23.})
+
+    def test_reversed_arc_duplicate_and_other_arc(self):
+        import math
+        arc = ((1, 0), (0, 1), (-1, 0))
+        rows = [('/S', 'F.Cu', arc, .2), ('/S', 'F.Cu', arc[::-1], .2),
+                ('/S', 'F.Cu', ((1, 0), (0, -1), (-1, 0)), .2)]
+        self.assertAlmostEqual(sp.routed_trace_summary(rows)[0]['/S'], 2*math.pi)
+
+    def test_invalid_native_geometry_is_not_a_load(self):
+        for row in [('/S', 'F.Cu', ((0, 0), (1, 0)), 0),
+                    ('/S', 'F.Cu', ((0, 0), (float('nan'), 0)), .2),
+                    ('/S', 'F.Cu', ((0, 0),), .2)]:
+            with self.assertRaises(sp.SpecError):sp.routed_trace_summary([row])
+
+    def test_stackup_changes_recompute_screen_and_missing_stackup_is_unresolved(self):
+        import tempfile
+        from pathlib import Path
+        rows = [('/S', 'F.Cu', ((0, 0), (10, 0)), .2)]
+        def board(height):
+            return '(kicad_pcb (stackup (layer "F.Cu" (type "copper") (thickness .035)) (layer "dielectric 1" (type "core") (thickness '+str(height)+') (epsilon_r 4.2)) (layer "B.Cu" (type "copper") (thickness .035)) (copper_finish "ENIG")))'
+        with tempfile.TemporaryDirectory() as directory:
+            p = Path(directory)/'X.kicad_pcb';s = {'adjacent': {'F.Cu': 'B.Cu'}}
+            p.write_text(board(.2));first = sp.trace_geometry(p, s, rows)
+            p.write_text(board(.4));second = sp.trace_geometry(p, s, rows)
+            self.assertNotEqual(first['pf_per_mm']['/S'], second['pf_per_mm']['/S'])
+            self.assertFalse(first['model_applicability']['qualified_fastest_bound'])
+            p.write_text('(kicad_pcb)');missing = sp.trace_geometry(p, s, rows)
+            self.assertEqual(missing['pf_per_mm'], {})
+            self.assertEqual(missing['length_mm'], {'/S': 10.})
+            self.assertIn('missing stackup', missing['model_applicability']['reasons'][-1])
 
 
 class StitchTest(unittest.TestCase):

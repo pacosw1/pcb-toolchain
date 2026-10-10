@@ -8,10 +8,23 @@ import shlex
 import shutil
 import subprocess
 import sys
-import time
 
 import lean_workflow as lean
 import route_features
+
+
+def run_policy(cmd, *, seconds, events, env, log, stage='route-policy'):
+    """Same-host budget includes startup; cleanup has run_stage's own bound."""
+    started = lean.now()
+    deadline = lean.encode_deadline(lean.deadline_after(seconds, env))
+    try:
+        result = lean.run_stage(cmd, stage=stage, event_file=events,
+                                deadline=deadline, env=env, stdout=log,
+                                stderr=subprocess.STDOUT)
+        rc = result.returncode
+    except subprocess.TimeoutExpired:
+        rc = 124
+    return rc, lean.now()-started
 
 
 def main():
@@ -59,16 +72,11 @@ def main():
         cmd = [sys.executable, str(Path(__file__).parent / 'fastroute_job.py'), str(source / board.name), str(out / name),
                '--preflight', '--optimizer', policy, '--passes', str(a.passes), '--threads', str(a.threads),
                '--max-time', str(a.seconds)] + args
-        started = time.monotonic()
         with open(out / f'{name}.log', 'w') as log:
-            try:
-                p = lean.run_stage(cmd, stage=name, event_file=str(out / 'stages.jsonl'),
-                                   deadline=started+a.seconds+15, env=env, stdout=log, stderr=subprocess.STDOUT)
-                rc = p.returncode
-            except subprocess.TimeoutExpired:
-                rc = 124
+            rc, wall_s = run_policy(cmd, seconds=a.seconds,
+                                    events=str(out / 'stages.jsonl'), env=env, log=log, stage=name)
         outcome = out / name / 'outcome.json'
-        results.append(dict(name=name, policy=policy, wall_s=time.monotonic()-started, returncode=rc,
+        results.append(dict(name=name, policy=policy, wall_s=wall_s, returncode=rc,
                             outcome=json.loads(outcome.read_text()) if outcome.exists() else None))
     unchanged = all(Path(p).is_file() and lean.digest(p) == h for p, h in before.items())
     summary = dict(configuration=vars(a), fingerprints=before, unchanged=unchanged, results=results,

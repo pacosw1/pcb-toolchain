@@ -238,3 +238,19 @@ its state. Never set active crossings, rows, pin demand or via-room terms to
 zero to enable batching. See `hardware-design/reports/2026-10-09-lean-gpu-decision.md`
 for the measured evidence, no-go decision, future trigger and unmet conditional
 prototype/adoption criteria.
+# Locked copper layers
+
+The snapshot records each pad's actual copper layer membership in
+`pad_copper_layers`, aligned with `pad_rects` (or a block's `edge_pads`).
+`fixed_copper_layers` records locked segments and vias on each layer they occupy,
+including the actual via span. The hard legality check rejects a moved copper pad
+over locked copper on a shared layer. A top-only SMD pad can cover a bottom-layer
+track; a through-hole pad cannot. Bodies/courtyards alone do not obstruct copper.
+Unlocked kept copper retains the existing soft-cost and writer rip-up policy.
+
+Old snapshots without pad membership conservatively treat pads as occupying all
+layers with locked copper. A legacy `via` row without a span blocks every copper
+pad. Regenerate the snapshot to avoid these conservative restrictions. Explicit
+empty membership denotes a pad without copper; malformed alignment is rejected.
+This uses the existing pad-box/raster approximation and does not replace native
+KiCad DRC or establish same-net connectivity or electrical qualification.

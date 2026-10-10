@@ -7,6 +7,7 @@ import sys
 import tempfile
 import time
 import unittest
+import lean_workflow as lean
 
 try:
     import pcbnew
@@ -92,7 +93,7 @@ class NativeWorkflowTest(unittest.TestCase):
     def run_job(self, board, out, policy, extra=()):
         return subprocess.run([sys.executable, str(ROOT / 'tools/fastroute_job.py'), str(board), str(out),
                                '--preflight', '--optimizer', policy, '--threads', '1', '--passes', '2', '--max-time', '5']+list(extra),
-                              env=dict(os.environ, IOT_LEAN_DEADLINE=str(time.monotonic()+20)),
+                              env=dict(os.environ, IOT_LEAN_DEADLINE=lean.encode_deadline(lean.now()+20)),
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=25)
 
     def test_native_screen_and_checkpoint_optimization_keep_quality(self):

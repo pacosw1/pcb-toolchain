@@ -34,6 +34,8 @@ import {fileURLToPath} from 'node:url';
 import {resolveApiKey, systemOne, DEFAULT_MODEL} from './lib/jev-client.mjs';
 import {inspectPackets,loadBoardRegistry,parseCsv} from './lib/board-packets.mjs';
 import {loadBoardSelection} from './lib/board-selections.mjs';
+import {revisionBoms} from './lib/bom-ownership.mjs';
+import {ownedFile} from './lib/kicad-population.mjs';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 const DRY_RUN = process.argv.includes('--dry-run');
@@ -124,14 +126,18 @@ async function checkBomAgainstRegistry(components) {
   const findings = [...packets.findings];
   let rows = 0;
   for (const board of BOARDS) {
-    const csv = await readProject(`hardware-design/boards/${board}/BOM-VERIFIED.csv`).catch(() => '');
+    const entry=boardRegistry.boards.find(e=>e.directory===board);
+    let boms=[];try {boms=revisionBoms(entry);}catch{continue;} // packet layer records invalid ownership
+    for(const bom of boms) {
+    const label=bom.revision?`${board}/${bom.bom} (revision ${bom.revision})`:`${board} BOM-VERIFIED.csv`;
+    let csv='';try {csv=entry.bom_policy==='per-revision'?ownedFile(REPO,`hardware-design/boards/${board}/${bom.bom}`,`hardware-design/boards/${board}`).toString():await readProject(`hardware-design/boards/${board}/${bom.bom}`);}catch{continue;} // packet layer records missing/unsafe source
     let csvRows=[];
     try {csvRows=parseCsv(csv);}catch{continue;} // packet layer records malformed CSV
     let selection=null;
     try {
-      selection=await loadBoardSelection(REPO,boardRegistry.boards.find(e=>e.directory===board),csv,csvRows);
+      selection=await loadBoardSelection(REPO,entry,csv,csvRows,bom.revision);
     } catch(error) {
-      findings.push({level:'alert',board,check:'bom_selection_evidence',detail:`${board}: ${error.message}`});
+      findings.push({level:'alert',board,check:'bom_selection_evidence',detail:`${label}: ${error.message}`});
     }
     for (const [i, row] of csvRows.entries()) {
       if (i === 0) continue;
@@ -142,9 +148,9 @@ async function checkBomAgainstRegistry(components) {
       // An explicit global exclusion cannot be bypassed by a board ledger.
       const rec=globalRec?.state?.startsWith('excluded') ? globalRec : selection?.references.get(row[0]?.trim()) ?? globalRec;
       if (!rec) {
-        findings.push({level: 'alert', check: 'bom_registry_record', detail: `${board} BOM-VERIFIED.csv record ${i + 1} lists ${lcsc} with no attributable component registry record`});
+        findings.push({level: 'alert', check: 'bom_registry_record', detail: `${label} record ${i + 1} lists ${lcsc} with no attributable component registry record`});
       } else if (rec.state.startsWith('excluded')) {
-        findings.push({level: 'alert', check: 'bom_excluded_part', detail: `${board} BOM-VERIFIED.csv:${i + 1} lists ${rec.mpn} (${lcsc}) whose registry state is "${rec.state}"`});
+        findings.push({level: 'alert', check: 'bom_excluded_part', detail: `${label}:${i + 1} lists ${rec.mpn} (${lcsc}) whose registry state is "${rec.state}"`});
       } else if (!['electrically-selected','cad-verified','ordered','assembled','bench-validated'].includes(rec.state)) {
         findings.push({level:'alert',check:'bom_candidate_state',detail:`${board} ${lcsc}: registry state ${rec.state} does not establish electrical/CAD selection`});
       }
@@ -168,6 +174,7 @@ async function checkBomAgainstRegistry(components) {
           }catch(error){findings.push({level:'alert',check:'bom_datasheet_evidence',detail:`${board} ${lcsc}: ${error.message}`});}
         }
       }
+    }
     }
   }
   return {boards_checked:BOARDS,packet_coverage:packets.checked,rows_checked: rows, findings};

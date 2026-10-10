@@ -25,6 +25,11 @@ export function gateInputs(root, board, configName = 'gate.json', environment = 
   const native = p => /\.(kicad_(sch|pcb|pro|dru|sym|mod)|json)$/.test(p) || ['fp-lib-table','sym-lib-table'].includes(p.split('/').at(-1));
   for (const p of walkFiles(dirname(project),native)) add(p);
   for (const p of readdirSync(dir)) if (p.endsWith('.json') && !['gate-metrics.json','gate-waivers.json'].includes(p)) add(join(dir,p));
+  const preservedPolicy = join(dir,'preserved-usb-policy.json');
+  if(existsSync(preservedPolicy)) for(const source of JSON.parse(readFileSync(preservedPolicy,'utf8')).sources ?? []) {
+    if(typeof source.path !== 'string' || !source.path.startsWith('hardware-design/') || source.path.split('/').includes('..')) throw new Error('invalid preserved policy source path');
+    add(join(root,source.path));
+  }
   for (const ext of ['kicad_pcb','kicad_sch','kicad_pro','kicad_dru']) add(`${project}.${ext}`);
   const sheets=[...files].filter(p=>p.endsWith('.kicad_sch'));const visited=new Set();
   for(let i=0;i<sheets.length;i++) {
@@ -64,9 +69,27 @@ export function gateInputs(root, board, configName = 'gate.json', environment = 
   add(join(root,'hardware-design/registry/courtyard-bodies.json'));
   for (const p of walkFiles(join(root,'tools'), p=>/\.(mjs|py|sh|java)$/.test(p) || p.endsWith('/hooks/pre-commit'))) add(p);
   add(join(root,'tools/route-features.json'));
-  add(join(root,'tools/edge-rates.json')); // D-124 rise-time table read by si_planes.py
-  add(join(root,'tools/driver-edges.json')); // D-124a/b/c driver table (IBIS files, bounds) read by net_drivers.py
-  add(join(root,'tools/pin-ratings.json')); // D-124c pin-escape ratings read by pcbtool.py paths
+  // Pin escape ratings change the current-capacity result even though their
+  // JSON is not executable code. Record absence as well as changed ratings.
+  for (const data of ['edge-rates.json','driver-edges.json','pin-ratings.json']) {
+    const path=join(root,'tools',data);add(path);
+    if(!existsSync(path)) continue;
+    const table=JSON.parse(readFileSync(path,'utf8'));
+    for(const evidence of table.evidence_files ?? []) {
+      if(typeof evidence.path!=='string' || !/^hardware-design\/registry\/(datasheets|ibis)\//.test(evidence.path) || evidence.path.includes('..') || evidence.path.includes('\\')) throw new Error('invalid driver evidence path');
+      add(join(root,evidence.path));
+      if(evidence.path.endsWith('.pdf')) add(join(root,evidence.path+'.source.json'));
+    }
+    // Models are executable timing inputs even if their evidence list omits
+    // them. Keep absent originals/parser/receipts in the fingerprint as null;
+    // missing evidence must never look like unchanged successful validation.
+    for(const part of Object.values(table.parts ?? {})) if(part.ibis) {
+      const file=part.ibis.file;
+      if(typeof file!=='string' || !file.startsWith('hardware-design/registry/ibis/') || !file.endsWith('.ibs') || file.includes('..') || file.includes('\\')) throw new Error('invalid driver IBIS path');
+      add(join(root,file));add(join(root,file+'.source.json'));
+      add(join(root,'tools/ibis_ramp.py'));
+    }
+  }
   for(const repo of environment.repositories ?? []) for(const p of walkFiles(repo,p=>p.endsWith('.py'))) add(p);
   return {cfg, project, files:[...files].sort()};
 }

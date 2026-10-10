@@ -1,0 +1,663 @@
+{
+  "source": "/home/user/.codex/worktrees/lean-routing/iot-lab/hardware-design/boards/BASE-PWR/cad/BASE-PWR/BASE-PWR.kicad_pcb",
+  "source_sha256": "9ad6ca309673271353064d83e0f2ce46018e3e2219df1402257197685bad1976",
+  "note": "Pure parsed rev-A source records; generated seed UUIDs are different. Original source copper is not modified.",
+  "records": [
+    {
+      "uuid": "0f915db2-c863-4727-8caf-930d300b48ed",
+      "net": "/J1_CC2",
+      "kind": "segment",
+      "locked": false,
+      "geometry": [
+        [
+          110132500,
+          105950000
+        ],
+        [
+          109940000,
+          105950000
+        ]
+      ],
+      "width": 200000,
+      "layer": "F.Cu"
+    },
+    {
+      "uuid": "24a6fc80-6762-4ef0-9081-e453ebb95787",
+      "net": "/J1_CC2",
+      "kind": "segment",
+      "locked": false,
+      "geometry": [
+        [
+          112275000,
+          109650000
+        ],
+        [
+          111075000,
+          108450000
+        ]
+      ],
+      "width": 200000,
+      "layer": "F.Cu"
+    },
+    {
+      "uuid": "25ac5552-c3c4-4cd4-aa97-26baf3063665",
+      "net": "/J1_CC2",
+      "kind": "segment",
+      "locked": false,
+      "geometry": [
+        [
+          114325000,
+          111150000
+        ],
+        [
+          112825000,
+          109650000
+        ]
+      ],
+      "width": 200000,
+      "layer": "F.Cu"
+    },
+    {
+      "uuid": "45fa9c80-f4e4-4973-a8aa-e3a267e5c8a8",
+      "net": "/J1_CC2",
+      "kind": "segment",
+      "locked": false,
+      "geometry": [
+        [
+          110332500,
+          105750000
+        ],
+        [
+          110132500,
+          105950000
+        ]
+      ],
+      "width": 200000,
+      "layer": "F.Cu"
+    },
+    {
+      "uuid": "6a4e470a-ed7e-4dab-a12c-5f6797c624ed",
+      "net": "/J1_CC2",
+      "kind": "segment",
+      "locked": false,
+      "geometry": [
+        [
+          111075000,
+          108450000
+        ],
+        [
+          110525000,
+          108450000
+        ]
+      ],
+      "width": 200000,
+      "layer": "F.Cu"
+    },
+    {
+      "uuid": "b90e3c27-8e0f-46d9-be50-3c06c1f6ad8c",
+      "net": "/J1_CC2",
+      "kind": "segment",
+      "locked": false,
+      "geometry": [
+        [
+          110525000,
+          105750000
+        ],
+        [
+          110332500,
+          105750000
+        ]
+      ],
+      "width": 200000,
+      "layer": "F.Cu"
+    },
+    {
+      "uuid": "d8d7be9b-a2e9-494b-88b3-193e1e80ad0d",
+      "net": "/J1_CC2",
+      "kind": "segment",
+      "locked": false,
+      "geometry": [
+        [
+          112825000,
+          109650000
+        ],
+        [
+          112275000,
+          109650000
+        ]
+      ],
+      "width": 200000,
+      "layer": "F.Cu"
+    },
+    {
+      "uuid": "5310f191-41e1-48e6-85f9-3f7ef7028f3e",
+      "net": "/J1_CC2",
+      "kind": "via",
+      "locked": false,
+      "geometry": [
+        [
+          110525000,
+          108450000
+        ]
+      ],
+      "width": 600000,
+      "drill": 300000,
+      "layers": [
+        "F.Cu",
+        "B.Cu"
+      ]
+    },
+    {
+      "uuid": "c47fc7d4-f1f9-459c-a065-c0852f7ebb75",
+      "net": "/J1_CC2",
+      "kind": "via",
+      "locked": false,
+      "geometry": [
+        [
+          110525000,
+          105750000
+        ]
+      ],
+      "width": 600000,
+      "drill": 300000,
+      "layers": [
+        "F.Cu",
+        "B.Cu"
+      ]
+    },
+    {
+      "uuid": "29c0f92d-1e04-4932-b3f6-a8c35a494152",
+      "net": "/J1_CC2",
+      "kind": "segment",
+      "locked": false,
+      "geometry": [
+        [
+          110525000,
+          108450000
+        ],
+        [
+          110525000,
+          105750000
+        ]
+      ],
+      "width": 200000,
+      "layer": "In2.Cu"
+    },
+    {
+      "uuid": "4b5a8cad-9f81-46ed-ab17-7a35eecf7b33",
+      "net": "/J1_CC1",
+      "kind": "segment",
+      "locked": false,
+      "geometry": [
+        [
+          111000000,
+          100950000
+        ],
+        [
+          109940000,
+          100950000
+        ]
+      ],
+      "width": 200000,
+      "layer": "F.Cu"
+    },
+    {
+      "uuid": "11195f28-6ac2-4683-92de-200aafc3f11b",
+      "net": "/J1_CC1",
+      "kind": "via",
+      "locked": false,
+      "geometry": [
+        [
+          111000000,
+          100950000
+        ]
+      ],
+      "width": 600000,
+      "drill": 300000,
+      "layers": [
+        "F.Cu",
+        "B.Cu"
+      ]
+    },
+    {
+      "uuid": "8f06b848-dcda-4042-8ffc-bfc54de6bbcb",
+      "net": "/J1_CC1",
+      "kind": "via",
+      "locked": false,
+      "geometry": [
+        [
+          116650000,
+          103000000
+        ]
+      ],
+      "width": 600000,
+      "drill": 300000,
+      "layers": [
+        "F.Cu",
+        "B.Cu"
+      ]
+    },
+    {
+      "uuid": "32c5f2e4-4981-474f-a9eb-471701137988",
+      "net": "/J1_CC1",
+      "kind": "segment",
+      "locked": false,
+      "geometry": [
+        [
+          116650000,
+          103000000
+        ],
+        [
+          114700000,
+          101050000
+        ]
+      ],
+      "width": 200000,
+      "layer": "B.Cu"
+    },
+    {
+      "uuid": "a6ab93b2-0077-43bb-ba8b-2533eb3b4598",
+      "net": "/J1_CC1",
+      "kind": "segment",
+      "locked": false,
+      "geometry": [
+        [
+          114600000,
+          100950000
+        ],
+        [
+          111000000,
+          100950000
+        ]
+      ],
+      "width": 200000,
+      "layer": "B.Cu"
+    },
+    {
+      "uuid": "e8067103-246e-4403-bf66-b695134b3859",
+      "net": "/J1_CC1",
+      "kind": "segment",
+      "locked": false,
+      "geometry": [
+        [
+          114700000,
+          101050000
+        ],
+        [
+          114600000,
+          100950000
+        ]
+      ],
+      "width": 200000,
+      "layer": "B.Cu"
+    },
+    {
+      "uuid": "68dd853e-f3a1-4c24-82f2-41c0ef25aa70",
+      "net": "/J1_CC1",
+      "kind": "segment",
+      "locked": false,
+      "geometry": [
+        [
+          116365000,
+          103300000
+        ],
+        [
+          116650000,
+          103000000
+        ]
+      ],
+      "width": 150000,
+      "layer": "In2.Cu"
+    },
+    {
+      "uuid": "8ff2699f-2a47-400a-b774-40cf056d500d",
+      "net": "/J1_CC1",
+      "kind": "segment",
+      "locked": false,
+      "geometry": [
+        [
+          115675000,
+          107850000
+        ],
+        [
+          116365000,
+          107160000
+        ]
+      ],
+      "width": 150000,
+      "layer": "In2.Cu"
+    },
+    {
+      "uuid": "ca1bf1a1-dcd1-48a9-bc7e-f494e11b8cab",
+      "net": "/J1_CC1",
+      "kind": "segment",
+      "locked": false,
+      "geometry": [
+        [
+          116365000,
+          107160000
+        ],
+        [
+          116365000,
+          103300000
+        ]
+      ],
+      "width": 150000,
+      "layer": "In2.Cu"
+    }
+  ],
+  "captured_receipt": {
+    "path": "/tmp/lean-774-native-compact-failfast-v3/job/seed-mandatory-preflight.json",
+    "sha256": "21cbed2b88bb71a39136a43332c05d3d39867557482711da3c9dc32d7a596ac8",
+    "board_sha256": "8f14b524c9119fbd9f6f976d52d8621530a231bb16d8479f8e47be723250e274",
+    "lineage": [
+      {
+        "source_uuid": "d8d7be9b-a2e9-494b-88b3-193e1e80ad0d",
+        "generated_uuid": "0270b21b-d6a8-442f-b0fa-c63480611222",
+        "net": "/J1_CC2",
+        "generated_locked": true,
+        "layer": "F.Cu",
+        "geometry": [
+          [
+            112825000,
+            109650000
+          ],
+          [
+            112275000,
+            109650000
+          ]
+        ]
+      },
+      {
+        "source_uuid": "6a4e470a-ed7e-4dab-a12c-5f6797c624ed",
+        "generated_uuid": "27210508-e75e-4e58-9fb2-97c34c4de5c1",
+        "net": "/J1_CC2",
+        "generated_locked": true,
+        "layer": "F.Cu",
+        "geometry": [
+          [
+            111075000,
+            108450000
+          ],
+          [
+            110525000,
+            108450000
+          ]
+        ]
+      },
+      {
+        "source_uuid": "25ac5552-c3c4-4cd4-aa97-26baf3063665",
+        "generated_uuid": "74928392-e938-4f4e-ae8c-baad777ea3da",
+        "net": "/J1_CC2",
+        "generated_locked": true,
+        "layer": "F.Cu",
+        "geometry": [
+          [
+            114325000,
+            111150000
+          ],
+          [
+            112825000,
+            109650000
+          ]
+        ]
+      },
+      {
+        "source_uuid": "24a6fc80-6762-4ef0-9081-e453ebb95787",
+        "generated_uuid": "77c9992a-815d-4df7-84bc-4851fbc01a34",
+        "net": "/J1_CC2",
+        "generated_locked": true,
+        "layer": "F.Cu",
+        "geometry": [
+          [
+            112275000,
+            109650000
+          ],
+          [
+            111075000,
+            108450000
+          ]
+        ]
+      },
+      {
+        "source_uuid": "0f915db2-c863-4727-8caf-930d300b48ed",
+        "generated_uuid": "9630c0b3-7ae7-4db5-997f-183bc71e085c",
+        "net": "/J1_CC2",
+        "generated_locked": true,
+        "layer": "F.Cu",
+        "geometry": [
+          [
+            110132500,
+            105950000
+          ],
+          [
+            109940000,
+            105950000
+          ]
+        ]
+      },
+      {
+        "source_uuid": "45fa9c80-f4e4-4973-a8aa-e3a267e5c8a8",
+        "generated_uuid": "ace75ca2-e3e1-4a22-b0d9-de03af697e71",
+        "net": "/J1_CC2",
+        "generated_locked": true,
+        "layer": "F.Cu",
+        "geometry": [
+          [
+            110332500,
+            105750000
+          ],
+          [
+            110132500,
+            105950000
+          ]
+        ]
+      },
+      {
+        "source_uuid": "b90e3c27-8e0f-46d9-be50-3c06c1f6ad8c",
+        "generated_uuid": "b9c108c6-9d91-4d81-afa3-3efd46f4dee3",
+        "net": "/J1_CC2",
+        "generated_locked": true,
+        "layer": "F.Cu",
+        "geometry": [
+          [
+            110525000,
+            105750000
+          ],
+          [
+            110332500,
+            105750000
+          ]
+        ]
+      },
+      {
+        "source_uuid": "5310f191-41e1-48e6-85f9-3f7ef7028f3e",
+        "generated_uuid": "5d20920a-4d4c-4952-82db-a78c8a830dc8",
+        "net": "/J1_CC2",
+        "generated_locked": true,
+        "layer": "F.Cu",
+        "geometry": [
+          [
+            110525000,
+            108450000
+          ]
+        ]
+      },
+      {
+        "source_uuid": "c47fc7d4-f1f9-459c-a065-c0852f7ebb75",
+        "generated_uuid": "eb0e6e1a-7dfb-4e1b-a154-7a06550a83a0",
+        "net": "/J1_CC2",
+        "generated_locked": true,
+        "layer": "F.Cu",
+        "geometry": [
+          [
+            110525000,
+            105750000
+          ]
+        ]
+      },
+      {
+        "source_uuid": "29c0f92d-1e04-4932-b3f6-a8c35a494152",
+        "generated_uuid": "aed84668-2a32-46b0-939d-984b87638618",
+        "net": "/J1_CC2",
+        "generated_locked": true,
+        "layer": "In2.Cu",
+        "geometry": [
+          [
+            110525000,
+            108450000
+          ],
+          [
+            110525000,
+            105750000
+          ]
+        ]
+      },
+      {
+        "source_uuid": "4b5a8cad-9f81-46ed-ab17-7a35eecf7b33",
+        "generated_uuid": "d23e9da3-afb7-4ac8-a68b-93e13d71c666",
+        "net": "/J1_CC1",
+        "generated_locked": true,
+        "layer": "F.Cu",
+        "geometry": [
+          [
+            111000000,
+            100950000
+          ],
+          [
+            109940000,
+            100950000
+          ]
+        ]
+      },
+      {
+        "source_uuid": "11195f28-6ac2-4683-92de-200aafc3f11b",
+        "generated_uuid": "68240b0a-9270-45c6-a0ea-6dce7bd29a13",
+        "net": "/J1_CC1",
+        "generated_locked": true,
+        "layer": "F.Cu",
+        "geometry": [
+          [
+            111000000,
+            100950000
+          ]
+        ]
+      },
+      {
+        "source_uuid": "8f06b848-dcda-4042-8ffc-bfc54de6bbcb",
+        "generated_uuid": "eb76f116-c4cc-4161-a270-4a129e62273f",
+        "net": "/J1_CC1",
+        "generated_locked": true,
+        "layer": "F.Cu",
+        "geometry": [
+          [
+            116650000,
+            103000000
+          ]
+        ]
+      },
+      {
+        "source_uuid": "e8067103-246e-4403-bf66-b695134b3859",
+        "generated_uuid": "7b1de915-f200-4886-a470-51e622c710bd",
+        "net": "/J1_CC1",
+        "generated_locked": true,
+        "layer": "B.Cu",
+        "geometry": [
+          [
+            114700000,
+            101050000
+          ],
+          [
+            114600000,
+            100950000
+          ]
+        ]
+      },
+      {
+        "source_uuid": "a6ab93b2-0077-43bb-ba8b-2533eb3b4598",
+        "generated_uuid": "8d921df7-9734-44c3-b84b-aa1a808e5edb",
+        "net": "/J1_CC1",
+        "generated_locked": true,
+        "layer": "B.Cu",
+        "geometry": [
+          [
+            114600000,
+            100950000
+          ],
+          [
+            111000000,
+            100950000
+          ]
+        ]
+      },
+      {
+        "source_uuid": "32c5f2e4-4981-474f-a9eb-471701137988",
+        "generated_uuid": "93cf7300-0e57-4433-aba8-f68c0c51107f",
+        "net": "/J1_CC1",
+        "generated_locked": true,
+        "layer": "B.Cu",
+        "geometry": [
+          [
+            116650000,
+            103000000
+          ],
+          [
+            114700000,
+            101050000
+          ]
+        ]
+      },
+      {
+        "source_uuid": "8ff2699f-2a47-400a-b774-40cf056d500d",
+        "generated_uuid": "03b6f5f4-2008-467c-9548-5d1463c7addc",
+        "net": "/J1_CC1",
+        "generated_locked": true,
+        "layer": "In2.Cu",
+        "geometry": [
+          [
+            115675000,
+            107850000
+          ],
+          [
+            116365000,
+            107160000
+          ]
+        ]
+      },
+      {
+        "source_uuid": "68dd853e-f3a1-4c24-82f2-41c0ef25aa70",
+        "generated_uuid": "9e5cfac4-d917-46d3-8c7a-00f63bec06c8",
+        "net": "/J1_CC1",
+        "generated_locked": true,
+        "layer": "In2.Cu",
+        "geometry": [
+          [
+            116365000,
+            103300000
+          ],
+          [
+            116650000,
+            103000000
+          ]
+        ]
+      },
+      {
+        "source_uuid": "ca1bf1a1-dcd1-48a9-bc7e-f494e11b8cab",
+        "generated_uuid": "b356e523-f21b-4f5d-ba52-1db50f8be9e4",
+        "net": "/J1_CC1",
+        "generated_locked": true,
+        "layer": "In2.Cu",
+        "geometry": [
+          [
+            116365000,
+            107160000
+          ],
+          [
+            116365000,
+            103300000
+          ]
+        ]
+      }
+    ]
+  }
+}

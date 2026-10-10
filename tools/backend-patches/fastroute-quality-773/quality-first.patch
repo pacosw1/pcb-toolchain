@@ -1,0 +1,718 @@
+diff --git a/crates/fastroute/examples/quality_probe.rs b/crates/fastroute/examples/quality_probe.rs
+new file mode 100644
+index 0000000..2501b81
+--- /dev/null
++++ b/crates/fastroute/examples/quality_probe.rs
+@@ -0,0 +1,22 @@
++//! Read-only actual-DSN identity cost and safe-session acceptance probe. No routing.
++use std::time::Instant;
++use fr_engine::pipeline::quality::QualityGuard;
++fn main() {
++    let args:Vec<_>=std::env::args().collect();
++    let bytes=std::fs::read(&args[1]).unwrap();
++    let mut settings=fr_settings::defaults::default_settings(2);
++    let mut board=fr_io::post_load::load_from_specctra_dsn(&bytes,&mut settings).unwrap();
++    fr_io::post_load::prepare_for_routing(&mut board,&mut settings,None);
++    let start=Instant::now();
++    let guard=QualityGuard::new(&board,&settings);
++    println!("baseline_create_ms={:.3}",start.elapsed().as_secs_f64()*1000.);
++    let start=Instant::now();
++    for _ in 0..5 { assert!(guard.accepts(&board)); }
++    println!("five_fresh_identity_checks_ms={:.3}",start.elapsed().as_secs_f64()*1000.);
++    let safe=fr_io::ses_writer::ses_bytes(&board,"safe-replay");
++    let mut imported=board.deep_copy();
++    let summary=fr_io::ses_reader::read_ses(&safe,&mut imported);
++    println!("safe_session_import={summary:?} accepted={}",guard.accepts(&imported));
++    assert!(guard.accepts(&imported),"safe exported session must not introduce a new identity");
++    if args.len()>2 { std::fs::write(&args[2],safe).unwrap(); }
++}
+diff --git a/crates/fastroute/src/main.rs b/crates/fastroute/src/main.rs
+index a474456..a703710 100644
+--- a/crates/fastroute/src/main.rs
++++ b/crates/fastroute/src/main.rs
+@@ -40,6 +40,7 @@ struct Args {
+     design_out: Option<String>,
+     parity: bool,
+     no_enhancements: bool,
++    quality_first: bool,
+     multi_start: usize,
+     no_time_limits: bool,
+     optimizer_mode: Option<String>,
+@@ -62,6 +63,7 @@ fn parse_args() -> Result<Args, String> {
+         design_out: None,
+         parity: false,
+         no_enhancements: false,
++        quality_first: false,
+         multi_start: 4,
+         no_time_limits: false,
+         optimizer_mode: None,
+@@ -101,6 +103,7 @@ fn parse_args() -> Result<Args, String> {
+                 i += 1;
+                 continue;
+             }
++            "--quality-first" => { args.quality_first = true; i += 1; continue; }
+             _ if a.starts_with("--multi-start=") => {
+                 args.multi_start = a["--multi-start=".len()..]
+                     .parse::<usize>()
+@@ -202,6 +205,7 @@ options:
+                            lengths count in length matching as in KiCad
+   --tune=FILE              length matching after routing (groups of nets, see below)
+   --max-time=SECONDS       stop after this wall-clock time and write the best result
++  --quality-first          reject new clearance identities before all candidate/output selection
+                            (Ctrl+C / SIGTERM / Ctrl+Break do the same; a second one exits)
+   --initial-session=FILE   start from the wiring of a session (.ses), e.g. a checkpoint of an
+                            earlier run, instead of the wiring in the design
+@@ -349,6 +353,9 @@ fn run() -> Result<(), String> {
+         b.get_items().into_iter().filter(|&k| b.item(k).is_trace() || b.item(k).is_via()).map(|k| b.item(k).id()).collect()
+     };
+     let before = wiring_ids(&board);
++    if args.quality_first { fr_io::post_load::prepare_for_routing(&mut board, &mut settings, None); }
++    let quality = args.quality_first.then(|| Arc::new(std::sync::Mutex::new(
++        pipeline::quality::QualityGuard::new(&board, &settings))));
+     if let Some(summary) = fr_io::post_load::prepare_for_routing(&mut board, &mut settings, initial.as_deref()) {
+         // the session reader fixes what it imports (as Freerouting does); here the session is
+         // a starting point that may be ripped and optimized like routed wiring
+@@ -364,14 +371,26 @@ fn run() -> Result<(), String> {
+         );
+     }
+     pipeline::deferred_post_load_processing(&mut board);
++    if quality.as_ref().is_some_and(|g| !g.lock().unwrap().accepts(&board)) {
++        return Err("quality-first: initial session introduces new clearance identity".into());
++    }
+     if args.parity || args.no_enhancements {
+         board.wire_keepouts_as_keepouts();
+     }
+     if !args.parity && !args.no_enhancements {
+-        board.fallback_vias_own_class = true;
+-        board.set_overlap_contacts(true);
+-        let n = board.bridge_trace_ends_to_drill_centers();
+-        if n > 0 {
++        let enhance = |b: &mut RoutingBoard| {
++            b.fallback_vias_own_class = true;
++            b.set_overlap_contacts(true);
++            b.bridge_trace_ends_to_drill_centers()
++        };
++        let (accepted, n) = if let Some(guard) = &quality {
++            guard.lock().unwrap().enhance(&mut board, enhance)
++        } else {
++            (true, enhance(&mut board))
++        };
++        if !accepted {
++            log::warn!(target: "fastroute", "quality-first: enhancement introduces new clearance identity; restored safe pre-enhancement board ({n} attempted bridges)");
++        } else if n > 0 {
+             log::info!(target: "fastroute", "{n} trace ends inside a pad but off its center joined to the center");
+         }
+     }
+@@ -406,12 +425,13 @@ fn run() -> Result<(), String> {
+         None => OptimizerMode::Parallel { threads: optimizer_threads },
+     };
+     let design_name = std::path::Path::new(&path).file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
++    let quality_first = args.quality_first;
+     let checkpoint: Option<pipeline::Checkpoint> = args.design_out.clone().map(|out| {
+         let best: std::sync::Mutex<Option<CheckpointKey>> = std::sync::Mutex::new(None);
+         let name = design_name.clone();
+         Arc::new(move |board: &RoutingBoard, key: CheckpointKey| {
+             let mut best = best.lock().unwrap();
+-            if best.as_ref().is_some_and(|b| !key.better_than(b)) {
++            if best.as_ref().is_some_and(|b| !(if quality_first { key.quality_better_than(b) } else { key.better_than(b) })) {
+                 return;
+             }
+             match write_ses_atomically(&out, &fr_io::ses_writer::ses_bytes(board, &name)) {
+@@ -432,7 +452,13 @@ fn run() -> Result<(), String> {
+         enhancements: !args.parity && !args.no_enhancements,
+         multi_start: args.multi_start,
+         checkpoint,
++        quality,
+     };
++    if ctx.quality.is_some() {
++        let s = pipeline::StatsCache::new().score(&board, &settings);
++        ctx.checkpoint(&board, CheckpointKey { incomplete: s.incomplete_count,
++            violations: s.clearance_violation_count, stage: 0, score: s.router_score });
++    }
+     {
+         // First signal: stop and write the best result; second: exit at once.
+         let stop = ctx.stop.clone();
+@@ -560,6 +586,12 @@ fn run() -> Result<(), String> {
+         }
+         log::info!(target: "fastroute", "length tuning finished in {:.2} s", t.elapsed().as_secs_f64());
+     }
++    if ctx.quality.is_some() {
++        let s = pipeline::StatsCache::new().score(&board, &settings);
++        ctx.checkpoint(&board, CheckpointKey { incomplete: s.incomplete_count,
++            violations: s.clearance_violation_count, stage: 1, score: s.router_score });
++        ctx.quality_restore(&mut board);
++    }
+     report_violations(&board);
+     if let Some(out) = args.design_out {
+         // The Java CLI names the session after the input file stem.
+diff --git a/crates/fr-engine/src/pipeline/autorouter.rs b/crates/fr-engine/src/pipeline/autorouter.rs
+index 0c9159a..3310b46 100644
+--- a/crates/fr-engine/src/pipeline/autorouter.rs
++++ b/crates/fr-engine/src/pipeline/autorouter.rs
+@@ -21,6 +21,58 @@ use super::history::{board_hash, BoardHistory, MAX_HISTORY_SIZE};
+ use super::stats::{format_score, incomplete_count, StatsCache};
+ use super::{CheckpointKey, PipelineContext};
+ 
++/// Owned evidence from the immutable pristine board, captured before its existing probe.
++/// Item IDs are diagnostic only; ref/pad/net/layers/geometry identify the endpoint.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct BlockedEndpointSnapshot(String);
++
++fn evidence_string(value: &str) -> String {
++    let mut out=String::from("\"");
++    for c in value.chars() {
++        match c {
++            '"' => out.push_str("\\\""), '\\' => out.push_str("\\\\"),
++            c if c <= '\u{001f}' => out.push_str(&format!("\\u{:04x}",c as u32)),
++            c => out.push(c),
++        }
++    }
++    out.push('"'); out
++}
++
++impl BlockedEndpointSnapshot {
++    pub fn capture(board: &RoutingBoard, key: ItemKey) -> Self {
++        let item=board.item(key);
++        let (kind,reference,pad)=match &item.kind {
++            crate::board::ItemKind::Pin(pin) => {
++                let component=board.components.get(item.component_no());
++                let package=board.library.packages.get(component.get_package());
++                ("pin",component.name.clone(),package.get_pin(pin.pin_index).map(|p|p.name.clone()))
++            },
++            _ => (if item.is_via(){"via"}else if item.is_trace(){"trace"}else{"other"},String::new(),None),
++        };
++        let nets=item.net_numbers().iter().map(|&n| {
++            let net=board.rules.nets.get(n);
++            format!("{{\"number\":{n},\"name\":{},\"subnet\":{}}}",
++                net.map(|net|evidence_string(&net.name)).unwrap_or_else(||"null".into()),
++                net.map(|net|net.subnet_number.to_string()).unwrap_or_else(||"null".into()))
++        }).collect::<Vec<_>>().join(",");
++        let layers=(item.first_layer(board)..=item.last_layer(board)).map(|layer| {
++            board.layer_structure.layers.get(layer as usize).map(|l|evidence_string(&l.name)).unwrap_or_else(||"null".into())
++        }).collect::<Vec<_>>().join(",");
++        let bounds=board.communication.coordinate_transform.board_to_dsn_box(&item.bounding_box(board));
++        let center=if matches!(&item.kind,crate::board::ItemKind::Pin(_)|crate::board::ItemKind::Via(_)) {
++            board.communication.coordinate_transform.board_to_dsn_point(&item.center(board).to_float())
++        } else { [(bounds[0]+bounds[2])/2.,(bounds[1]+bounds[3])/2.] };
++        Self(format!("\"pristine_revision\":{},\"item_id\":{},\"kind\":{},\"ref\":{},\"pad\":{},\"nets\":[{}],\"layers\":[{}],\"dsn_center\":{:?},\"dsn_bounds\":{:?},\"dsn_unit\":{},\"dsn_resolution\":{}",
++            board.revision(),item.id().0,evidence_string(kind),evidence_string(&reference),
++            pad.as_deref().map(evidence_string).unwrap_or_else(||"null".into()),nets,layers,center,bounds,
++            evidence_string(&board.communication.unit.to_string()),board.communication.resolution))
++    }
++    pub fn record(&self, failure_count: i32, result: &AutorouteAttemptResult) -> String {
++        format!("BLOCKED_ENDPOINT {{{},\"failure_count\":{},\"state\":{},\"details\":{}}}",
++            self.0,failure_count,evidence_string(&format!("{:?}",result.state)),evidence_string(&result.details))
++    }
++}
++
+ /// Java `BOARD_RANK_LIMIT`.
+ const BOARD_RANK_LIMIT: i32 = MAX_HISTORY_SIZE as i32;
+ /// Java `MAXIMUM_TRIES_ON_THE_SAME_BOARD`.
+@@ -827,10 +879,13 @@ impl BatchAutorouter {
+         }
+         let mut b = (**pristine).clone();
+         let Some(k) = b.get_item(ItemId(id)) else { return };
++        let endpoint=BlockedEndpointSnapshot::capture(pristine,k);
+         let r = b.autoroute(k, settings, settings.get_via_costs(), None, None);
+         if matches!(r.state, AutorouteAttemptState::Failed | AutorouteAttemptState::InsertError) {
+             log::debug!(target: "fr_engine::pipeline::diag", "item #{id} cannot be routed on the pristine board ({}): skipped from now on", r.details);
+-            self.blocked.insert(id);
++            if self.blocked.insert(id) {
++                log::info!("{}",endpoint.record(failure_count,&r));
++            }
+         }
+     }
+ 
+@@ -923,6 +978,7 @@ impl BatchAutorouter {
+             }
+         }
+ 
++        if !ctx.quality_allows(board) { ctx.quality_restore(board); }
+         let current_unrouted = incomplete_count(board, None);
+         // fastroute: unrouted connections of ignored net classes (constant: never routed)
+         let ignored = if ctx.enhancements { super::stats::ignored_incomplete_count(board) } else { 0 };
+@@ -960,15 +1016,22 @@ impl BatchAutorouter {
+             {
+                 let hash = board_hash(board);
+                 let b: &RoutingBoard = board;
+-                bh.add_with(b, hash, || stats.score(b, settings).router_score);
++                if ctx.quality_allows(b) {
++                    bh.add_with(b, hash, || stats.score(b, settings).router_score);
++                }
+             }
+             self.pass_abort_above = (ctx.enhancements && !self.is_optimizer_autorouter && current_pass >= 2 && fewest_incomplete != i32::MAX)
+                 .then(|| fewest_incomplete + ((fewest_incomplete - ignored) * 3 / 10).max(20));
+             let (cont, counters) = self.autoroute_pass(board, settings, current_pass, stop);
+             continue_autorouting = cont;
+             let mut after = stats.score(board, settings);
++            if !ctx.quality_allows(board) {
++                log::warn!("quality-first: rejected pass with new clearance identity");
++                ctx.quality_restore(board);
++                after = stats.score(board, settings);
++            }
+ 
+-            if bh.size() >= STOP_AT_PASS_MINIMUM as usize || stop.is_stop_autorouter_requested() {
++            if ctx.quality.is_none() && (bh.size() >= STOP_AT_PASS_MINIMUM as usize || stop.is_stop_autorouter_requested()) {
+                 if (current_pass % STOP_AT_PASS_MODULO == 0 && current_pass >= STOP_AT_PASS_MINIMUM) || stop.is_stop_autorouter_requested() {
+                     if bh.get_max_score() > after.router_score {
+                         let Some(to_restore) = bh.restore_board(MAXIMUM_TRIES_ON_THE_SAME_BOARD) else {
+@@ -1013,7 +1076,7 @@ impl BatchAutorouter {
+                     score: after.router_score,
+                 });
+             }
+-            if ctx.enhancements && !self.is_optimizer_autorouter && continue_autorouting {
++            if ctx.quality.is_none() && ctx.enhancements && !self.is_optimizer_autorouter && continue_autorouting {
+                 // fastroute: a pass that loses much more than it gains (ripped nets) is undone:
+                 // the next pass starts from the best board so far. Java keeps routing from the
+                 // worse board and restores the history only every few passes.
+@@ -1131,6 +1194,7 @@ impl BatchAutorouter {
+                 );
+             }
+         }
++        if ctx.quality.is_some() { ctx.quality_restore(board); }
+         let was_router_run = settings.get_run_router() && settings.autorouter.max_passes.map(|m| m >= 0).unwrap_or(true);
+         // Java skips the final tail removal when the autorouter was stopped (also by its own
+         // stagnation rule), leaving unused fanout escapes (via + stub) on the board.
+diff --git a/crates/fr-engine/src/pipeline/mod.rs b/crates/fr-engine/src/pipeline/mod.rs
+index cf92b57..691eab9 100644
+--- a/crates/fr-engine/src/pipeline/mod.rs
++++ b/crates/fr-engine/src/pipeline/mod.rs
+@@ -35,6 +35,7 @@ pub mod history;
+ pub mod optimizer;
+ mod parallel_pass;
+ pub mod stats;
++pub mod quality;
+ 
+ use fr_settings::{RouterSettings, ALGORITHM_CURRENT};
+ 
+@@ -67,6 +68,7 @@ pub struct PipelineContext {
+     /// [`CheckpointKey`]); the CLI writes it as the session file, so a run that is stopped or
+     /// killed still leaves its best result behind.
+     pub checkpoint: Option<Checkpoint>,
++    pub quality: Option<std::sync::Arc<std::sync::Mutex<quality::QualityGuard>>>,
+ }
+ 
+ /// Callback for [`PipelineContext::checkpoint`].
+@@ -85,6 +87,10 @@ pub struct CheckpointKey {
+ }
+ 
+ impl CheckpointKey {
++    pub fn quality_better_than(&self, other: &CheckpointKey) -> bool {
++        (other.violations, other.incomplete, self.stage, ordered_f32(self.score))
++            > (self.violations, self.incomplete, other.stage, ordered_f32(other.score))
++    }
+     /// True if `self` is a better board than `other`.
+     pub fn better_than(&self, other: &CheckpointKey) -> bool {
+         (other.incomplete, other.violations, self.stage, ordered_f32(self.score))
+@@ -105,8 +111,20 @@ impl std::fmt::Debug for PipelineContext {
+ }
+ 
+ impl PipelineContext {
++    pub fn quality_allows(&self, board: &RoutingBoard) -> bool {
++        self.quality.as_ref().map_or(true, |g| g.lock().unwrap().accepts(board))
++    }
++    pub fn quality_restore(&self, board: &mut RoutingBoard) {
++        if let Some(g) = &self.quality { *board = g.lock().unwrap().best(); }
++    }
+     /// Reports a board to the checkpoint callback, if any.
+     pub fn checkpoint(&self, board: &RoutingBoard, key: CheckpointKey) {
++        if let Some(g) = &self.quality {
++            if !g.lock().unwrap().observe(board, key) {
++                log::warn!("quality-first: rejected checkpoint with new clearance identity");
++                return;
++            }
++        }
+         if let Some(cb) = &self.checkpoint {
+             cb(board, key);
+         }
+@@ -122,6 +140,7 @@ impl Default for PipelineContext {
+             enhancements: false,
+             multi_start: 1,
+             checkpoint: None,
++            quality: None,
+         }
+     }
+ }
+@@ -186,6 +205,7 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
+     }
+     outcome.fanout_timed_out = autorouter.fanout_timed_out;
+     board.finish_autoroute();
++    if !ctx.quality_allows(board) { ctx.quality_restore(board); }
+     if ctx.enhancements {
+         // The autorouter's own stop rules (stagnation, max passes) request a stop of the
+         // autorouter; in Java that request stays set, so every optimizer candidate fails to
+@@ -206,6 +226,7 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
+         optimizer.run_batch_loop(board, settings, ctx, &mut stats);
+         outcome.optimizer_timed_out = optimizer.timed_out;
+     }
++    if !ctx.quality_allows(board) { ctx.quality_restore(board); }
+     outcome
+ }
+ 
+@@ -233,6 +254,7 @@ fn multi_start(board: &mut RoutingBoard, start: &RoutingBoard, settings: &Router
+                 enhancements: true,
+                 multi_start: 1,
+                 checkpoint: ctx.checkpoint.clone(),
++                quality: ctx.quality.clone(),
+             };
+             let mut router = BatchAutorouter::for_job(&b, settings);
+             router.order_seed = Some(0x5eed_0000 + v as i64);
+@@ -246,16 +268,21 @@ fn multi_start(board: &mut RoutingBoard, start: &RoutingBoard, settings: &Router
+     let key = |s: &stats::Score| (s.incomplete_count, s.clearance_violation_count, std::cmp::Reverse(ordered_f32(s.router_score)));
+     let mut best: Option<(usize, RoutingBoard, stats::Score)> = None;
+     for (v, b, s) in variants {
++        if !ctx.quality_allows(&b) { continue; }
+         log::info!(
+             "Multi-start variant {v}: {} unrouted, {} violations, router score {:.2}.",
+             s.incomplete_count,
+             s.clearance_violation_count,
+             s.router_score as f64
+         );
+-        let better = match &best {
++        let better = if ctx.quality.is_some() {
++            let score_key = |s: &stats::Score| CheckpointKey { incomplete: s.incomplete_count,
++                violations: s.clearance_violation_count, stage: 0, score: s.router_score };
++            score_key(&s).quality_better_than(&score_key(best.as_ref().map_or(&first, |(_,_,bs)| bs)))
++        } else { match &best {
+             None => key(&s) < key(&first),
+             Some((_, _, bs)) => key(&s) < key(bs),
+-        };
++        }};
+         if better {
+             best = Some((v, b, s));
+         }
+diff --git a/crates/fr-engine/src/pipeline/optimizer.rs b/crates/fr-engine/src/pipeline/optimizer.rs
+index ecc8a16..4400f21 100644
+--- a/crates/fr-engine/src/pipeline/optimizer.rs
++++ b/crates/fr-engine/src/pipeline/optimizer.rs
+@@ -678,7 +678,9 @@ impl BatchOptimizer {
+             }
+             let pass_stats = stats.score(board, settings);
+             let score_after_pass = pass_stats.optimizer_score;
+-            match self.rejection_reason(pass_stats.incomplete_count, pass_stats.clearance_violation_count, score_after_pass) {
++            let rejection = if !ctx.quality_allows(board) { Some("DRC_IDENTITY_REGRESSION") }
++                else { self.rejection_reason(pass_stats.incomplete_count, pass_stats.clearance_violation_count, score_after_pass) };
++            match rejection {
+                 None => {
+                     self.best_score = score_after_pass;
+                     self.best_incomplete_count = pass_stats.incomplete_count;
+@@ -823,6 +825,7 @@ impl BatchOptimizer {
+             if s.incomplete_count <= current.incomplete_count
+                 && s.clearance_violation_count <= current.clearance_violation_count
+                 && s.optimizer_score > current.optimizer_score
++                && ctx.quality_allows(&trial)
+             {
+                 *board = trial;
+                 current = s;
+@@ -986,7 +989,7 @@ impl BatchOptimizer {
+         // candidate it found: it was routed on the pass's baseline like any winner. Java drops
+         // it; with a budget shorter than one pass the optimizer then never improved anything.
+         if !stopped_or_timed_out || ctx.enhancements {
+-            if let Some(w) = winning {
++            if let Some(w) = winning.filter(|w| w.board.as_ref().map_or(false, |b| ctx.quality_allows(b))) {
+                 if w.result.improved {
+                     let winner_id = w.result.item_id;
+                     *board = w.board.expect("improved candidate without board");
+diff --git a/crates/fr-engine/src/pipeline/quality.rs b/crates/fr-engine/src/pipeline/quality.rs
+new file mode 100644
+index 0000000..479e754
+--- /dev/null
++++ b/crates/fr-engine/src/pipeline/quality.rs
+@@ -0,0 +1,101 @@
++//! Opt-in safety frontier: no new clearance identities relative to loaded DSN.
++//! Counts cannot distinguish removal of an old fault from introduction of a new one.
++use std::collections::BTreeSet;
++use crate::board::{BasicBoard, ItemKey, ItemKind, RoutingBoard};
++use super::{CheckpointKey, StatsCache};
++use fr_settings::RouterSettings;
++
++fn item_identity(board: &BasicBoard, key: ItemKey) -> String {
++    let item = board.item(key);
++    let kind = match &item.kind {
++        ItemKind::Pin(p) => format!("pin:{}:{}", item.component_no(), p.pin_index),
++        ItemKind::Via(_) => "via".into(),
++        ItemKind::Trace(_) => "trace".into(),
++        ItemKind::ObstacleArea(_) => "obstacle".into(),
++        ItemKind::ConductionArea(_) => "conduction".into(),
++        ItemKind::ComponentOutline(_) => "component-outline".into(),
++        ItemKind::BoardOutline(_) => "board-outline".into(),
++    };
++    // Actual shape content, not arena keys, generated item IDs or transient caches.
++    let shapes: Vec<_> = (0..board.tile_shape_count(key))
++        .map(|i| (board.shape_layer(key, i), format!("{:?}", board.tile_shape(key, i))))
++        .collect();
++    let nets: Vec<_> = item.net_numbers().iter().map(|&n| {
++        board.rules.nets.get(n).map_or_else(|| format!("unknown-net:{n}"),
++            |net| format!("{}:{}", net.name, net.subnet_number))
++    }).collect();
++    format!("{kind}|nets={nets:?}|class={}|shapes={shapes:?}", item.clearance_class())
++}
++
++pub fn identities(board: &BasicBoard) -> BTreeSet<String> {
++    crate::drc::all_clearance_violations(board).into_iter().map(|v| {
++        let mut pair = [item_identity(board, v.first_item), item_identity(board, v.second_item)];
++        pair.sort();
++        format!("{:?}|layer={}|required={:x}|actual={:x}|intersection={:?}",
++            pair, v.layer, v.expected_clearance.to_bits(), v.actual_clearance.to_bits(), v.shape)
++    }).collect()
++}
++
++pub fn allowed(baseline: &BTreeSet<String>, candidate: &BTreeSet<String>) -> bool {
++    candidate.is_subset(baseline)
++}
++
++pub struct QualityGuard {
++    baseline: BTreeSet<String>,
++    best: RoutingBoard,
++    key: CheckpointKey,
++}
++
++impl QualityGuard {
++    pub fn new(board: &RoutingBoard, settings: &RouterSettings) -> Self {
++        let score = StatsCache::new().score(board, settings);
++        Self { baseline: identities(board), best: board.clone(), key: CheckpointKey {
++            incomplete: score.incomplete_count, violations: score.clearance_violation_count,
++            stage: 0, score: score.router_score,
++        }}
++    }
++    pub fn accepts(&self, board: &RoutingBoard) -> bool {
++        allowed(&self.baseline, &identities(board))
++    }
++    /// Apply pre-routing enhancements against the ORIGINAL frontier. This is called
++    /// before an autoroute engine exists: Clone owns the item arena, search trees and
++    /// undo journal (shared rules/library use copy-on-write). Unlike deep_copy it
++    /// preserves revision, cached counts and history as well as both feature flags.
++    /// No rejected enhancement becomes the baseline or discards a safe imported SES.
++    pub fn enhance<T>(&self, board: &mut RoutingBoard, apply: impl FnOnce(&mut RoutingBoard) -> T) -> (bool, T) {
++        assert!(board.autoroute_engine.0.is_none(), "enhancement transaction requires no live autoroute engine");
++        let accepted_input = board.clone();
++        let result = apply(board);
++        let accepted = self.accepts(board);
++        if !accepted { *board = accepted_input; }
++        (accepted, result)
++    }
++    pub fn observe(&mut self, board: &RoutingBoard, key: CheckpointKey) -> bool {
++        if !self.accepts(board) { return false; }
++        if key.quality_better_than(&self.key) {
++            self.best = board.clone(); self.key = key;
++        }
++        true
++    }
++    pub fn best(&self) -> RoutingBoard { self.best.deep_copy() }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    fn set(values: &[&str]) -> BTreeSet<String> { values.iter().map(|s| s.to_string()).collect() }
++    #[test]
++    fn new_identity_cannot_replace_old_at_same_count() {
++        assert!(!allowed(&set(&["old"]), &set(&["new"])));
++        assert!(allowed(&set(&["old", "fixed"]), &set(&["old"])));
++        assert!(allowed(&set(&["old"]), &set(&[])));
++        assert!(!allowed(&set(&[]), &set(&["new"])));
++    }
++    #[test]
++    fn electrical_quality_precedes_connectivity_and_score() {
++        let safe = CheckpointKey { incomplete: 21, violations: 33, stage: 0, score: 1. };
++        let fault = CheckpointKey { incomplete: 19, violations: 34, stage: 1, score: 99999. };
++        assert!(safe.quality_better_than(&fault));
++        assert!(!fault.quality_better_than(&safe));
++    }
++}
+diff --git a/crates/fr-engine/tests/quality_identity.rs b/crates/fr-engine/tests/quality_identity.rs
+new file mode 100644
+index 0000000..02a1ffd
+--- /dev/null
++++ b/crates/fr-engine/tests/quality_identity.rs
+@@ -0,0 +1,190 @@
++use fr_engine::board::*;
++use fr_engine::datastructures::ItemIdGenerator;
++use fr_engine::ids::FixedState;
++use fr_engine::library::{BoardLibrary, Packages, Padstacks};
++use fr_engine::rules::{BoardRules, ClearanceMatrix};
++use fr_engine::structure::{Communication, Components, CoordinateTransform, Layer, LayerStructure, SpecctraParserInfo, Unit};
++use fr_engine::pipeline::quality::{identities, allowed};
++use fr_geom::*;
++
++fn board() -> BasicBoard {
++    let ls = LayerStructure::new(vec![Layer::new("F.Cu", true), Layer::new("B.Cu", true)]);
++    let matrix = ClearanceMatrix::get_default_instance(&ls, 200);
++    let mut rules = BoardRules::new(ls.clone(), matrix);
++    let class = rules.net_classes.append("default", &ls, false);
++    for name in ["a", "b", "c"] { rules.nets.add(name, 1, false, class); }
++    let padstacks = Padstacks::new(&ls);
++    let comm = Communication::new(Unit::Mil, 1, Some(SpecctraParserInfo::default()), CoordinateTransform::new(1.0, 0.0, 0.0), ItemIdGenerator::new());
++    BasicBoard::new(IntBox::new(-1000, -1000, 101000, 101000), ls,
++        vec![PolylineShape::Tile(TileShape::IntBox(IntBox::new(0, 0, 100000, 100000)))],
++        1, rules, BoardLibrary::new(padstacks, Packages::new()), Components::new(), comm)
++}
++fn segment(b: &mut BasicBoard, y: i32, net: i32) -> ItemKey {
++    b.insert_trace_without_cleaning(Polyline::from_int_points(&[
++        IntPoint::new(1000,y),IntPoint::new(5000,y)]),0,100,&[net],1,FixedState::Unfixed).unwrap()
++}
++#[test]
++fn identities_preserve_geometry_across_regenerated_ids_and_reject_replacement() {
++    let mut b=board(); segment(&mut b,1000,1); let second=segment(&mut b,1200,2);
++    let original=identities(&b); assert!(!original.is_empty());
++    b.remove_item(second); let replacement=segment(&mut b,1200,2);
++    assert_eq!(identities(&b),original,"generated item IDs must not define identity");
++    b.remove_item(replacement); segment(&mut b,1250,2);
++    let changed=identities(&b); assert_eq!(original.len(),changed.len());
++    assert!(!allowed(&original,&changed),"same-count displaced fault must reject");
++}
++#[test]
++fn new_geometry_and_changed_net_do_not_inherit_baseline_permission() {
++    let mut b=board(); segment(&mut b,1000,1); let second=segment(&mut b,1200,2);
++    let original=identities(&b); b.remove_item(second);
++    assert!(allowed(&original,&identities(&b)));
++    segment(&mut b,1200,3);
++    assert!(!allowed(&original,&identities(&b)));
++}
++
++#[test]
++fn unsafe_checkpoint_cannot_replace_fallback_even_with_better_counts() {
++    use std::sync::{Arc,Mutex};
++    use std::sync::atomic::{AtomicUsize,Ordering};
++    use fr_engine::pipeline::{PipelineContext, CheckpointKey, quality::QualityGuard};
++    let mut basic=board(); segment(&mut basic,1000,1);
++    let baseline=RoutingBoard::from_basic(basic);
++    let settings=fr_settings::defaults::default_settings(2);
++    let guard=Arc::new(Mutex::new(QualityGuard::new(&baseline,&settings)));
++    let writes=Arc::new(AtomicUsize::new(0)); let observed=writes.clone();
++    let ctx=PipelineContext { quality:Some(guard), checkpoint:Some(Arc::new(move |_,_| {
++        observed.fetch_add(1,Ordering::SeqCst);
++    })),..Default::default() };
++    let mut unsafe_board=baseline.clone(); segment(&mut unsafe_board.basic,1200,2);
++    assert!(!ctx.quality_allows(&unsafe_board));
++    ctx.checkpoint(&unsafe_board,CheckpointKey { incomplete:0,violations:0,stage:1,score:99999. });
++    assert_eq!(writes.load(Ordering::SeqCst),0);
++    ctx.quality_restore(&mut unsafe_board);
++    assert_eq!(identities(&unsafe_board),identities(&baseline));
++    assert_eq!(unsafe_board.get_items().len(),baseline.get_items().len());
++}
++
++#[test]
++fn baseline_and_observed_incumbent_are_isolated_from_later_mutation() {
++    use fr_engine::pipeline::{CheckpointKey, quality::QualityGuard};
++    let mut basic=board(); segment(&mut basic,1000,1); let second=segment(&mut basic,1200,2);
++    let mut source=RoutingBoard::from_basic(basic);
++    let expected=identities(&source);
++    let mut guard=QualityGuard::new(&source,&fr_settings::defaults::default_settings(2));
++    source.translate_item(second,&Vector::get_instance(0,3000));
++    source.assign_net_no(second,3);
++    assert_eq!(identities(&guard.best()),expected,"baseline clone must remain isolated");
++    source.remove_item(second);
++    assert!(guard.observe(&source,CheckpointKey { incomplete:0,violations:0,stage:1,score:100. }));
++    let retained_items=guard.best().get_items().len();
++    let remaining:Vec<_>=source.get_items().into_iter().filter(|k| source.item(*k).is_trace()).collect();
++    source.remove_items(remaining);
++    assert_eq!(guard.best().get_items().len(),retained_items,"observed incumbent must remain isolated");
++}
++
++fn bridge_board(other_y: i32) -> RoutingBoard {
++    let mut b=board();
++    let shapes=vec![Some(ConvexShape::Circle(Circle::new(IntPoint::new(0,0),600)));2];
++    let padstack=std::sync::Arc::make_mut(&mut b.library).padstacks.add("bridge",shapes,true,false);
++    b.insert_via(padstack,Point::Int(IntPoint::new(5000,4000)),&[1],1,FixedState::Unfixed,true);
++    b.insert_trace_without_cleaning(Polyline::from_int_points(&[
++        IntPoint::new(3000,4000),IntPoint::new(4500,4000)]),0,1200,&[1],1,FixedState::Unfixed).unwrap();
++    b.insert_trace_without_cleaning(Polyline::from_int_points(&[
++        IntPoint::new(5500,other_y),IntPoint::new(7000,other_y)]),0,100,&[2],1,FixedState::Unfixed).unwrap();
++    RoutingBoard::from_basic(b)
++}
++
++fn enhancements(b: &mut RoutingBoard) -> usize {
++    b.fallback_vias_own_class=true;
++    b.set_overlap_contacts(true);
++    b.bridge_trace_ends_to_drill_centers()
++}
++
++#[test]
++fn unsafe_bridge_rolls_back_entire_pre_enhancement_board_and_flags() {
++    use fr_engine::pipeline::quality::QualityGuard;
++    let mut b=bridge_board(5400);
++    let guard=QualityGuard::new(&b,&fr_settings::defaults::default_settings(2));
++    assert!(identities(&b).is_empty());
++    b.generate_snapshot(); // history must survive rollback as well as copper/settings
++    let expected=format!("{:?}",b);
++    let original=b.clone();
++    let mut unsafe_copy=b.clone();
++    assert!(enhancements(&mut unsafe_copy)>0);
++    assert!(!guard.accepts(&unsafe_copy),"fixture must create an actual new clearance identity");
++    let (accepted,n)=guard.enhance(&mut b,enhancements);
++    assert!(n>0); assert!(!accepted);
++    assert_eq!(format!("{:?}",b),expected,"restore whole board, search trees/history/flags included");
++    assert!(!b.fallback_vias_own_class);
++    let keys=b.get_traces();
++    b.translate_item(keys[0],&Vector::get_instance(0,9000));
++    std::sync::Arc::make_mut(&mut b.rules).nets.add("mutated",1,false,fr_engine::rules::NetClassId(0));
++    b.set_overlap_contacts(true);
++    assert_eq!(format!("{:?}",original),expected,"later candidate mutation cannot change accepted snapshot");
++    assert!(guard.accepts(&original));
++}
++
++#[test]
++fn safe_bridge_is_retained_without_promoting_quality_baseline() {
++    use fr_engine::pipeline::quality::QualityGuard;
++    let mut b=bridge_board(7000);
++    let guard=QualityGuard::new(&b,&fr_settings::defaults::default_settings(2));
++    let original_geometry:Vec<_>=b.get_traces().iter().map(|k|format!("{:?}",b.item(*k).kind)).collect();
++    let (accepted,n)=guard.enhance(&mut b,enhancements);
++    assert!(accepted); assert!(n>0);
++    assert!(b.fallback_vias_own_class);
++    assert!(guard.accepts(&b));
++    let enhanced_geometry:Vec<_>=b.get_traces().iter().map(|k|format!("{:?}",b.item(*k).kind)).collect();
++    assert_ne!(enhanced_geometry,original_geometry,"bridge copper must be retained, including merged traces");
++    segment(&mut b.basic,4000,3);
++    assert!(!guard.accepts(&b),"safe enhancement must not grant later faults permission");
++}
++
++fn blocked_pin_fixture() -> (RoutingBoard, ItemKey) {
++    use fr_engine::library::PackagePin;
++    let mut b=board();
++    let shapes=vec![Some(ConvexShape::Circle(Circle::new(IntPoint::new(0,0),100)));2];
++    let library=std::sync::Arc::make_mut(&mut b.library);
++    let stack=library.padstacks.add("pin",shapes,true,false);
++    let package=library.packages.add("H5VUT3UA",vec![PackagePin::new("5",stack,Vector::get_instance(0,0),0.)],
++        None,None,None,vec![],vec![],vec![],true);
++    let component=std::sync::Arc::make_mut(&mut b.components).add("U15",Some(Point::Int(IntPoint::new(1243300,779300))),0.,true,package,package,true,None);
++    std::sync::Arc::make_mut(&mut b.rules).nets.get_mut(1).unwrap().name="VDD_3V3".into();
++    let key=b.insert_pin(component,0,&[1],1,FixedState::UserFixed);
++    (RoutingBoard::from_basic(b),key)
++}
++
++#[test]
++fn blocked_endpoint_snapshot_is_owned_and_uses_pristine_pin_identity() {
++    use fr_engine::pipeline::autorouter::BlockedEndpointSnapshot;
++    let (pristine,key)=blocked_pin_fixture();
++    let snapshot=BlockedEndpointSnapshot::capture(&pristine,key);
++    let result=fr_engine::autoroute::AutorouteAttemptResult::with_details(AutorouteAttemptState::Failed,"insert \"blocked\"\nnext\\path");
++    let record=snapshot.record(2,&result);
++    assert!(record.starts_with("BLOCKED_ENDPOINT {"));
++    for field in ["\"ref\":\"U15\"","\"pad\":\"5\"","\"name\":\"VDD_3V3\"","\"layers\":[\"F.Cu\",\"B.Cu\"]",
++        "\"dsn_center\":[1243300.0, 779300.0]","\"state\":\"Failed\""] {
++        assert!(record.contains(field),"missing {field}: {record}");
++    }
++    assert!(record.contains("insert \\\"blocked\\\"\\u000anext\\\\path"));
++    assert!(!record.contains('\n'));
++    let mut candidate=pristine.clone();
++    candidate.remove_items([key]);
++    std::sync::Arc::make_mut(&mut candidate.rules).nets.get_mut(1).unwrap().name="WRONG".into();
++    assert_eq!(snapshot.record(2,&result),record,"candidate/probe mutations must not rewrite captured endpoint");
++    assert_eq!(BlockedEndpointSnapshot::capture(&pristine,key),snapshot);
++}
++
++#[test]
++fn blocked_endpoint_non_pin_geometry_and_insert_error_are_attributable() {
++    use fr_engine::pipeline::autorouter::BlockedEndpointSnapshot;
++    let mut b=board();let key=segment(&mut b,3000,1);
++    let b=RoutingBoard::from_basic(b);
++    let record=BlockedEndpointSnapshot::capture(&b,key).record(3,
++        &fr_engine::autoroute::AutorouteAttemptResult::with_details(AutorouteAttemptState::InsertError,"collision"));
++    assert!(record.contains("\"kind\":\"trace\""));
++    assert!(record.contains("\"pad\":null"));
++    assert!(record.contains("\"layers\":[\"F.Cu\"]"));
++    assert!(record.contains("\"state\":\"InsertError\""));
++    assert!(record.contains("\"dsn_bounds\":"));
++}

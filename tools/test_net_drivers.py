@@ -4,10 +4,15 @@
   python3 tools/test_net_drivers.py
 """
 import importlib.util
-import math
 import os
 import sys
 import unittest
+from unittest import mock
+import tempfile
+import pathlib
+import subprocess
+import json
+import lean_workflow as lean
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -118,20 +123,20 @@ class DriverEdgeTest(unittest.TestCase):
 
     def test_open_drain_rule_needs_the_fall_time(self):
         bad = {'parts': {'X': {'mpn': ['X'], 'pins': [{'match': 'A', 'role': 'open_drain', 'tr_ns': 300, 'source': 's'}]}}}
-        path = os.path.join(HERE, '__pycache__', 'od-table-test.json')
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, 'w') as f:
-            import json
-            json.dump(bad, f)
-        with self.assertRaises(nd.TableError):
-            nd.load_table(path)
+        with tempfile.TemporaryDirectory(prefix='iot-driver-table-') as scratch:
+            path = os.path.join(scratch, 'od-table-test.json')
+            with open(path, 'w') as f:
+                json.dump(bad, f)
+            with self.assertRaises(nd.TableError):
+                nd.load_table(path)
 
-    def test_esp32_gpio_net_without_routed_length_is_flagged(self):
-        e = self.edges()['/CS']   # no board geometry: the bound C*dV/I has no trace length
-        self.assertIn('routed length', e['unknown'])
+    def test_esp32_gpio_net_is_flagged_ibis_not_found(self):
+        e = self.edges()['/CS']
+        self.assertIn('routed length', e['unknown'])  # D124b conditional estimate needs actual geometry.
         f = fails('/CS', self.s, 2.0)
         self.assertEqual(len(f), 1)
         self.assertIn('unknown driver', f[0])
+        self.assertIn('routed length', f[0])
 
     def test_unknown_driver_is_flagged_not_1_ns(self):
         self.edges()
@@ -141,13 +146,13 @@ class DriverEdgeTest(unittest.TestCase):
         self.assertIn('XYZ123: no entry', f[0])
         self.assertNotIn('1 ns', f[0])
 
-    def test_unknown_driver_with_a_stub_only_passes(self):
+    def test_unknown_driver_numeric_zero_is_not_a_stub_proof(self):
         self.edges()
-        self.assertEqual(fails('/ODD', self.s, 0.0), [])
+        self.assertEqual(len(fails('/ODD', self.s, 0.0)), 1)
 
-    def test_unknown_driver_with_no_reference_path_fails(self):
+    def test_unknown_driver_unmeasured_detour_stays_rejected(self):
         self.edges()
-        self.assertIn('no reference path', fails('/ODD', self.s, None)[0])
+        self.assertIn('detour not measured: missing edge bound', fails('/ODD', self.s, None)[0])
 
     def test_series_resistor_passes_the_driver_edge(self):
         e = self.edges()['/FLTn']   # U5 not in the real table, but R2 leads to /CAN_RXD (CA-IS2062W RXD 2.5 ns)
@@ -163,7 +168,76 @@ class DriverEdgeTest(unittest.TestCase):
     def test_offboard_net_needs_an_interface_class(self):
         self.assertIn('off-board via J1.1', self.edges()['/FIELD_IN']['unknown'])
         s = base_spec(offboard={'/FIELD_IN': {'class': 'rs485', 'reason': 'RS-485 bus from the drive'}})
+        self.assertIn('MPN/pin', self.edges(s=s)['/FIELD_IN']['unknown'])
+        s['offboard']['/FIELD_IN'].update(driver_mpn='THVD1410DR', driver_pin='A')
         self.assertEqual(self.edges(s=s)['/FIELD_IN']['edge_ns'], 460)
+
+    def test_sp3485_cannot_inherit_thvd1410_class(self):
+        nl={'comps':{'U13':'SP3485EN-L/TR'},'nets':{'/RS485_A':[('U13','6','A')]}}
+        s=base_spec(edge_classes={'rs485':['/RS485_A']})
+        s['_edges']=sp.driver_edges(['/RS485_A'],nl,s)
+        self.assertIn('incompatible',s['_edges']['/RS485_A']['unknown'])
+        self.assertIsNone(sp.net_edge_of('/RS485_A',s)[0])
+        self.assertEqual(len(fails('/RS485_A',s,2)),1)
+
+    def test_unknown_driver_cannot_be_masked_by_interface_class(self):
+        s=base_spec(edge_classes={'rs485':['/ODD']})
+        self.edges(s=s)
+        self.assertIn('XYZ123',s['_edges']['/ODD']['unknown'])
+        self.assertIsNone(sp.net_edge_of('/ODD',s)[0])
+
+    def test_thvd1410_bus_pin_is_compatible_but_logic_pin_is_not(self):
+        s=base_spec(edge_classes={'rs485':['/A']})
+        for pin,known in [('A',True),('R',False)]:
+            nl={'comps':{'U1':'THVD1410DR'},'nets':{'/A':[('U1','6',pin)]}}
+            e=sp.driver_edges(['/A'],nl,s)['/A']
+            self.assertEqual('edge_ns' in e,known)
+            if known:self.assertEqual(e['edge_ns'],460)
+
+    def test_offboard_driver_part_must_match(self):
+        s=base_spec(offboard={'/FIELD_IN':{'class':'rs485','reason':'field bus','driver_mpn':'SP3485EN-L/TR','driver_pin':'A'}})
+        self.assertIn('incompatible',self.edges(s=s)['/FIELD_IN']['unknown'])
+
+    def test_same_net_additional_incompatible_driver_cannot_be_hidden(self):
+        nl={'comps':{'U1':'THVD1410DR','U2':'SP3485EN-L/TR'},'nets':{'/A':[('U1','6','A'),('U2','6','A')]}}
+        s=base_spec(edge_classes={'rs485':['/A']})
+        self.assertIn('incompatible',sp.driver_edges(['/A'],nl,s)['/A']['unknown'])
+
+    def test_protocol_class_retains_explicit_contract_without_gpio_fallback(self):
+        s=base_spec(edge_classes={'i2c':['/CS']})
+        self.assertEqual(self.edges(s=s)['/CS']['edge_ns'],12)
+        self.assertIn('protocol i2c',s['_edges']['/CS']['driver'])
+
+
+class DeadlineEvidenceTest(unittest.TestCase):
+    def test_nonfinite_or_boolean_driver_timing_rejected(self):
+        for value in (float('inf'), float('-inf'), float('nan'), True, False, 0, -1):
+            with self.subTest(value=value), tempfile.NamedTemporaryFile(mode='w', suffix='.json') as f:
+                json.dump({'parts': {'test': {'mpn':['TEST'], 'pins':[{'match':'OUT', 'role':'push_pull', 'tr_ns':value, 'tf_ns':1, 'source':'fixture'}]}}},f)
+                f.flush()
+                with self.assertRaises(nd.TableError):nd.load_table(f.name)
+
+    def test_export_uses_supervised_absolute_inherited_deadline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sch=pathlib.Path(tmp)/'X.kicad_sch';sch.write_text('fixture')
+            inherited=lean.now()+5
+            def stage(cmd,**kw):
+                self.assertLessEqual(kw['deadline'],inherited)
+                pathlib.Path(cmd[cmd.index('-o')+1]).write_text(XML)
+                return subprocess.CompletedProcess(cmd,0,'','')
+            with mock.patch.dict(os.environ,IOT_LEAN_DEADLINE=lean.encode_deadline(inherited)),mock.patch.object(lean,'run_stage',side_effect=stage):
+                self.assertEqual(nd.export_netlist(str(sch),deadline=lean.now()+100)['comps']['U1'],'STM32H743VIT6')
+
+    def test_timeout_propagates_and_missing_schematic_never_looks_successful(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sch=pathlib.Path(tmp)/'X.kicad_sch';sch.write_text('fixture')
+            with mock.patch.object(lean,'run_stage',side_effect=subprocess.TimeoutExpired('export',1)):
+                with self.assertRaises(subprocess.TimeoutExpired):nd.export_netlist(str(sch))
+            with self.assertRaises(OSError):nd.export_netlist(str(sch.with_name('missing.kicad_sch')))
+
+    def test_changed_or_missing_evidence_rejects(self):
+        with self.assertRaises(nd.TableError):nd.verify_evidence({'evidence_files':[{'path':'hardware-design/registry/datasheets/SP3485EN-L-TR_C8963.pdf','sha256':'0'*64}]})
+        with self.assertRaises(nd.TableError):nd.verify_evidence({'evidence_files':[{'path':'hardware-design/registry/datasheets/../escape','sha256':'0'*64}]})
 
     def test_spec_checks_receivers_and_offboard(self):
         with self.assertRaises(sp.SpecError):
@@ -176,207 +250,83 @@ class DriverEdgeTest(unittest.TestCase):
         self.assertIsNone(sp.edge_class('/EN', base_spec()))
 
 
-IBS_FIXTURE = """[IBIS Ver]      4.1
-[File Name]     fix.ibs
-[Component]     FIX_DBV
-[Manufacturer]  test
-[Package]
-R_pkg  0.1  0.08  0.12
-[Pin]  signal_name  model_name  R_pin  L_pin  C_pin
-1      A            FIX_IN
-4      Y            FIX_OUT
-5      VCC          POWER
-[Model Selector]  FIX_OUT
-FIX_OUT_33   3.3 volt Vcc
-FIX_OUT_50   5 volt Vcc
-[Model]     FIX_IN_33
-Model_type  Input
-C_comp      3.19pF      2.54pF      4.41pF
-[Model]     FIX_OUT_33
-Model_type  Output
-C_comp      7.52pF      3.81pF      9.89pF
-[Voltage Range]     3.3     3.0     3.6
-[Pullup Reference]  3.3     3.0     3.6
-[Pulldown]
-| V-I: typ 100 ohm, min 200 ohm, max 50 ohm (ground-relative); a clamp-like point below 0 V
-| Voltage   I(typ)    I(min)    I(max)
--1.0        -50mA     -40mA     -60mA
-0.0         0         0         0
-3.6         36mA      18mA      72mA
-[Pullup]
-| Vcc-relative: typ 200 ohm, min 400 ohm, max 100 ohm (current out of the pin is negative)
-0.0         0         0         0
-3.6         -18mA     -9mA      -36mA
-[Ramp]
-| variable       typ                min                max
-dV/dt_r          1.49/3.24E-10      1.22/5.27E-10      1.80/2.47E-10
-dV/dt_f          1.61/3.63E-10      1.36/6.15E-10      1.85/2.26E-10
-R_load = 50
-[Model]     FIX_OUT_50
-Model_type  Output
-C_comp      7.55pF      6.06pF      9.04pF
-[Ramp]
-dV/dt_r          2.49/2.51E-10      2.12/3.34E-10      2.91/1.84E-10
-dV/dt_f          2.50/2.85E-10      2.16/4.30E-10      2.87/1.86E-10
-R_load = 50
-[End]
-"""
-
-
-def fixture_path(name, text):
-    path = os.path.join(HERE, '__pycache__', name)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, 'w') as f:
-        f.write(text)
-    return path
-
-
-BOUND_XML = """<export version="E">
-<components>
-  <comp ref="U1"><value>ESP32-S3-WROOM-1-N8</value><fields><field name="MPN">ESP32-S3-WROOM-1-N8</field></fields></comp>
-  <comp ref="U2"><value>FIXGATE</value><fields><field name="MPN">FIXGATE</field></fields></comp>
-  <comp ref="U3"><value>NOEDGE</value><fields><field name="MPN">NOEDGE</field></fields></comp>
-  <comp ref="R1"><value>10k</value></comp>
-</components>
-<nets>
-  <net code="1" name="VDD_3V3"><node ref="U1" pin="2" pinfunction="3V3_2" pintype="unspecified"/>
-    <node ref="U2" pin="5" pinfunction="VCC_5" pintype="unspecified"/></net>
-  <net code="2" name="/CS"><node ref="U1" pin="22" pinfunction="IO14_22" pintype="unspecified"/>
-    <node ref="U2" pin="1" pinfunction="A_1" pintype="unspecified"/></net>
-  <net code="3" name="/Y"><node ref="U2" pin="4" pinfunction="Y_4" pintype="unspecified"/></net>
-  <net code="4" name="/ODD"><node ref="U3" pin="1" pinfunction="OUT_1" pintype="unspecified"/></net>
-  <net code="5" name="/LED"><node ref="U1" pin="23" pinfunction="IO15_23" pintype="unspecified"/>
-    <node ref="R1" pin="1" pinfunction="1_1" pintype="passive"/></net>
-  <net code="6" name="/LED_K"><node ref="R1" pin="2" pinfunction="2_2" pintype="passive"/></net>
-</nets></export>"""
-
-
-def bound_table(ibs):
-    """FIXGATE: an IBIS model and a bound (the IBIS must win). ESP32: the real table entry. NOEDGE: neither."""
-    t = dict(nd.load_table())
-    t['FIXGATE'] = {'mpn': ['FIXGATE'], 'ibis': {'file': ibs, 'url': 'test', 'downloaded': '2026-10-09',
-                                                  'supply_pin': 'VCC', 'variants': {'3.3': '_33', '5': '_50'}},
-                    'pins': [{'match': 'A', 'role': 'input', 'ibis_model': 'FIX_IN'},
-                             {'match': 'Y', 'role': 'push_pull', 'ibis_model': 'FIX_OUT',
-                              'bound': {'i_ma': 20, 'i_source': 'test', 'supply_pin': 'VCC'}, 'source': 'test IBIS'},
-                             {'match': 'VCC', 'role': 'input'}]}
-    t['NOEDGE'] = {'mpn': ['NOEDGE'], 'pins': [{'match': 'OUT', 'role': 'unknown',
-                                                'source': 'no IBIS model and no output current in the datasheet'}]}
-    return t
-
-
-class IbisAndBoundTest(unittest.TestCase):
-    """D-124b: the vendor IBIS model first, else the bound t >= C x dV / I_max, else unknown."""
-
+class D124cLoadDriverTest(unittest.TestCase):
+    """D-124c hand calculations and unknown-on-error integration coverage."""
     def setUp(self):
-        import ibis_ramp
-        self.ir = ibis_ramp
-        self.ibs = fixture_path('fix.ibs', IBS_FIXTURE)
-        self.nl = nd.parse_netlist(BOUND_XML)
-        self.table = bound_table(self.ibs)
-        self.s = base_spec()
-
-    def test_vi_table_average_current(self):
-        # D-124c: the mean |I| over 10-90 % of the swing from the [Pulldown] / [Pullup] V-I tables
-        m = self.ir.load(self.ibs)['models']['fix_out_33']
-        self.assertEqual(m['vrange'], [3.3, 3.0, 3.6])
-        # typ pulldown 100 ohm over 0.33..2.97 V: mean I = 1.65 V / 100 ohm = 16.5 mA
-        self.assertAlmostEqual(self.ir.vi_avg_current(m['vi']['pulldown'], 'typ', 0.33, 2.97), 0.0165, places=9)
-        # max pullup 100 ohm (Vcc-relative) over 0.36..3.24 V: 1.8 V / 100 ohm = 18 mA
-        self.assertAlmostEqual(self.ir.vi_avg_current(m['vi']['pullup'], 'max', 0.36, 3.24), 0.018, places=9)
-
-    def test_vi_drive_edges_hand_computed(self):
-        m = self.ir.load(self.ibs)['models']['fix_out_33']
-        e = self.ir.vi_edges(m, 4.81e-12)
-        # max corner (3.6 V): fall C x 0.8 x 3.6 / 36 mA = 0.3848 ns, rise C x 2.88 / 18 mA = 0.7696 ns
-        # typ corner (3.3 V): fall C x 2.64 / 16.5 mA = 0.7696 ns, rise C x 2.64 / 8.25 mA = 1.5392 ns
-        self.assertAlmostEqual(e['tf_ns'], 0.3848, places=6)
-        self.assertEqual(e['corner_f'], 'max')
-        self.assertAlmostEqual(e['tr_ns'], 0.7696, places=6)
-        # open drain with a 3.3 V pull-up: the pulldown only, over 0.33..2.97 V: max corner 50 ohm -> 33 mA
-        od = self.ir.vi_edges(m, 4.81e-12, swing_v=3.3, open_drain=True)
-        self.assertAlmostEqual(od['tf_ns'], 4.81e-3 * 2.64 / 0.033, places=6)
-        self.assertNotIn('tr_ns', od)
-
-    def test_ibis_ramp_parse_gives_the_fastest_corner(self):
-        m = self.ir.load(self.ibs)['models']['fix_out_33']
-        e = self.ir.ramp_edges(m)
-        # typ 324 ps and max 247 ps (rise), typ 363 ps and max 226 ps (fall): the faster corner of typ and max
-        self.assertAlmostEqual(e['tr_ns'], 0.247, places=6)
-        self.assertAlmostEqual(e['tf_ns'], 0.226, places=6)
-        self.assertEqual(m['r_load'], 50)
-        self.assertAlmostEqual(self.ir.load(self.ibs)['models']['fix_in_33']['c_comp'][1], 2.54e-12)
-
-    def test_bound_formula_hand_computed(self):
-        # (2 pF pin + 3 pF receiver + 10 mm x 0.1 pF/mm) x 0.8 x 3.3 V / 20 mA = 6e-12 x 2.64 / 0.02 = 0.792 ns
-        self.assertAlmostEqual(nd.edge_bound_ns(6.0, 3.3, 20.0), 0.792, places=9)
-        # a 10 k series resistor (5 % low: 9.5 k) limits the current to 3.3 V / 9.5 k = 0.347 mA
-        self.assertAlmostEqual(nd.series_limit_ma(20.0, 3.3, 10000), 3.3 / 9.5, places=9)
-
-    def test_microstrip_capacitance_per_mm(self):
-        import si_pairs
-        z, eeff, _ = si_pairs._microstrip(0.2, 0.2, 0.035, 4.5)
-        self.assertAlmostEqual(nd.microstrip_pf_per_mm(0.2, 0.2, 0.035, 4.5), 1000 * math.sqrt(eeff) / (299.792458 * z))
-
-    def geom(self, **lengths):
-        return {'length_mm': lengths, 'pf_per_mm': {n: (0.1, 'test 0.1 pF/mm') for n in lengths}}
-
-    def test_part_with_ibis_uses_its_vi_tables_not_the_ramp(self):
-        # D-124c: C_load = 10 mm x 0.1 pF/mm + the driver's C_comp min 3.81 pF = 4.81 pF; I from the V-I tables
-        # (max corner fall 36 mA at 3.6 V): 4.81 pF x 0.8 x 3.6 V / 36 mA = 0.3848 ns. The [Ramp] (into 50 ohm) gave 0.226.
-        e = nd.net_edge('/Y', self.nl, self.table, geom=self.geom(**{'/Y': 10.0}))
-        self.assertAlmostEqual(e['edge_ns'], 0.3848, places=6)
-        self.assertIn('IBIS', e['driver'])
-        self.assertIn('V-I', e['driver'])
-        self.assertNotIn('20 mA (test)', e['driver'])   # not the table bound of the same part
-
-    def test_ibis_error_makes_the_driver_unknown(self):
-        # strict: a model variant with no V-I tables (FIX_OUT_50) is an error -> unknown, never a silent pass
-        t = bound_table(self.ibs)
-        t['FIXGATE'] = dict(t['FIXGATE'], ibis=dict(t['FIXGATE']['ibis'], variants={'3.3': '_50'}))
-        e = nd.net_edge('/Y', self.nl, t, geom=self.geom(**{'/Y': 10.0}))
-        self.assertIn('IBIS V-I edge not available', e['unknown'])
-        # an input model is not an output
-        with self.assertRaises(self.ir.IbisError):
-            self.ir.vi_edges(self.ir.load(self.ibs)['models']['fix_in_33'], 1e-12, swing_v=3.3)
-
-    def test_ibis_driver_needs_the_routed_length(self):
-        self.assertIn('routed length', nd.net_edge('/Y', self.nl, self.table)['unknown'])
-
-    def test_esp32_net_uses_the_bound(self):
-        e = nd.net_edge('/CS', self.nl, self.table, geom=self.geom(**{'/CS': 10.0}))
-        # C = 2 pF (ESP32-S3 CIN) + 2.54 pF (FIX_IN_33 C_comp min) + 10 mm x 0.1 pF/mm; dV = 0.8 x 3.3 V; I = 20 mA
-        self.assertAlmostEqual(e['edge_ns'], (2 + 2.54 + 1.0) * 2.64 / 20, places=6)
-        self.assertIn('bound: C*dV/I', e['driver'])
-
-    def test_bound_through_a_series_resistor_is_current_limited(self):
-        e = nd.net_edge('/LED_K', self.nl, self.table, geom=self.geom(**{'/LED_K': 10.0}))
-        # only the trace on this side: 1 pF x 2.64 V / (3.3 V / 9.5 k) = 7.6 ns
-        self.assertAlmostEqual(e['edge_ns'], 1.0 * 2.64 / (3.3 / 9.5), places=6)
-        self.assertIn('through R1', e['driver'])
-
-    def test_bound_needs_the_routed_length(self):
-        self.assertIn('routed length', nd.net_edge('/CS', self.nl, self.table)['unknown'])
-
-    def test_part_with_neither_stays_flagged(self):
-        e = nd.net_edge('/ODD', self.nl, self.table, geom=self.geom(**{'/ODD': 10.0}))
-        self.assertIn('no IBIS model and no output current', e['unknown'])
-        s = base_spec()
-        s['_edges'] = {'/ODD': e}
-        f = fails('/ODD', s, 2.0)
-        self.assertEqual(len(f), 1)
-        self.assertTrue(f[0].startswith('FAIL unknown-driver B.Cu /ODD'), f[0])
-
-    def test_real_table_ibis_files_parse(self):
-        for key, p in nd.load_table().items():
-            if 'ibis' in p:
-                for rule in p['pins']:
-                    if rule.get('ibis_model') and rule['role'] != 'input':
-                        for v in p['ibis']['variants'].values():
-                            m = nd.ibis_model(p, rule['ibis_model'] + v)
-                            e = self.ir.vi_edges(m, 1e-12, swing_v=float(next(k for k, x in p['ibis']['variants'].items() if x == v)),
-                                                 open_drain=rule['role'] == 'open_drain')
-                            self.assertGreater(e['tf_ns'], 0, f'{key} {rule["ibis_model"]}{v}')
+        self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
+        self.path=pathlib.Path(self.tmp.name)/'fixture.ibs'
+        self.fixture='''[Component] GATE
+[Pin] signal_name model_name
+4 Y OUT
+5 VCC POWER
+[Model Selector] OUT
+OUT_33 gate
+[Model] OUT_33
+Model_type Output
+C_comp 7.52pF 3.81pF 9.89pF
+[Voltage Range] 3.3 3.0 3.6
+[Pullup Reference] 3.3 3.0 3.6
+[Pulldown]
+-1 -50mA -40mA -60mA
+0 0 0 0
+3.6 36mA 18mA 72mA
+[Pullup]
+0 0 0 0
+3.6 -18mA -9mA -36mA
+[Ramp]
+dV/dt_r 1/1n 1/1n 1/1n
+dV/dt_f 1/1n 1/1n 1/1n
+[End]
+'''
+        self.write(self.fixture)
+        self.part={'mpn':['GATE'],'ibis':{'file':str(self.path),'sha256':self.sha,'component':'GATE','supply_pin':'VCC','variants':{'3.3':'_33'},'url':'fixture','downloaded':'2026-10-10'},'pins':[{'match':'Y','role':'push_pull','ibis_model':'OUT','source':'fixture V-I'},{'match':'VCC','role':'input'}]}
+        self.table={'gate':self.part}
+        self.nl={'comps':{'U1':'GATE'},'values':{},'nets':{'/Y':[('U1','4','Y')],'VDD_3V3':[('U1','5','VCC')]}}
+        self.geom={'length_mm':{'/Y':10},'pf_per_mm':{'/Y':(.1,'test 0.1 pF/mm')}}
+    def write(self,text):
+        import hashlib
+        self.path.write_text(text);self.sha=hashlib.sha256(self.path.read_bytes()).hexdigest()
+    def edge(self,**kw):return nd.net_edge('/Y',self.nl,self.table,geom=self.geom,**kw)
+    def test_actual_load_uses_vi_not_fixture_ramp(self):
+        e=self.edge();self.assertAlmostEqual(e['edge_ns'],.3848)
+        self.assertIn('V-I conditional estimate',e['driver'])
+        self.assertFalse(e['timing_evidence']['qualified_fastest_bound'])
+        proof=e['timing_evidence']['contributors'][0]['evidence']
+        self.assertEqual(proof['inputs']['trace_capacitance_pf'],1)
+        self.assertEqual(proof['estimates'][0]['driver_c_comp_min_pf'],3.81)
+        self.geom['length_mm']['/Y']=20
+        self.assertAlmostEqual(self.edge()['edge_ns'],.4648)
+    def test_receiver_capacitance_and_missing_loads_are_attributed(self):
+        self.nl['comps'].update(U2='RECEIVER',U3='MISSING')
+        self.nl['nets']['/Y'] += [('U2','1','IN'),('U3','1','IN')]
+        self.table['receiver']={'mpn':['RECEIVER'],'pin_c':{'pf':2,'source':'receiver fixture'},'pins':[{'match':'IN','role':'input'}]}
+        self.table['missing']={'mpn':['MISSING'],'pins':[{'match':'IN','role':'input'}]}
+        e=self.edge();self.assertAlmostEqual(e['edge_ns'],.5448)
+        inputs=e['timing_evidence']['contributors'][0]['evidence']['inputs']
+        self.assertEqual(inputs['receiver_capacitance_pf'],2)
+        self.assertEqual(inputs['omitted_loads'],['U3.IN'])
+    def test_missing_geometry_is_unknown(self):
+        self.assertIn('routed length',nd.net_edge('/Y',self.nl,self.table)['unknown'])
+    def test_missing_vi_never_uses_ramp_or_datasheet_fallback(self):
+        self.write(self.fixture.replace('[Pulldown]','[GND Clamp]'))
+        self.part['ibis']['sha256']=self.sha
+        self.part['pins'][0].update(tr_ns=1,tf_ns=1)
+        self.assertIn('no pulldown',self.edge()['unknown'])
+    def test_missing_supply_variant_does_not_hide_bad_possible_model(self):
+        self.nl['nets'].pop('VDD_3V3')
+        self.part['ibis']['variants']['5']='_MISSING'
+        self.assertIn('not in',self.edge()['unknown'])
+    def test_series_load_and_limit_are_explicit(self):
+        self.nl['comps']['R1']='10k';self.nl['values']['R1']='10k'
+        self.nl['nets']['/Y'].append(('R1','1','1'));self.nl['nets']['/POST']=[('R1','2','2')]
+        geom={'length_mm':{'/POST':10},'pf_per_mm':{'/POST':(.1,'fixture')}}
+        e=nd.net_edge('/POST',self.nl,self.table,geom=geom)
+        self.assertGreater(e['edge_ns'],5)
+        estimate=e['timing_evidence']['contributors'][0]['evidence']['estimates'][0]
+        self.assertTrue(estimate['driver_capacitance_omitted_for_series'])
+        self.assertEqual(estimate['driver_c_comp_min_pf'],0)
+        self.assertAlmostEqual(estimate['series_current_limit_a'],3.3/(.95*10000))
+        self.assertFalse(e['timing_evidence']['qualified_fastest_bound'])
 
 
 if __name__ == '__main__':

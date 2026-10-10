@@ -58,6 +58,11 @@ Rules (D-124, hardware-design/reports/2026-10-09-design-rules-sources.md A1 and 
       a net with a crossing whose driver or edge time is not known fails as "unknown driver" (a run with no detour,
       a stub, passes at any edge).
   every net except a ground: domain crossing (a track over the ground of another domain) fails.
+
+Enforced vs report-only: the gate counts the accepted D-124c screen above (sampled crossings, grid detour, a stub
+passes, an "edge_classes" class applies to its nets). The D-124d proposal (native continuous projection, native-stub
+proof, continuous-edge detour, class applicability, fastest-edge timing evidence) runs beside it; its findings that
+the D-124c screen lacks print as "WARN D-124d-proposed ..." / "WARN unproved-fastest-edge ..." and are not counted.
 """
 import argparse
 import collections
@@ -65,6 +70,7 @@ import fnmatch
 import json
 import math
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -76,15 +82,29 @@ KEYS = set(REQUIRED) | set(DEFAULTS) | {'alt_refs', 'domains', 'exempt', 'mixed_
 EDGE_RATES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'edge-rates.json')
 
 
+def _positive_finite(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v > 0
+
+
 def load_edge_rates(path=EDGE_RATES_FILE):
     """The classes of tools/edge-rates.json: {class: {tr_ns, source, assumption}}. A class needs tr_ns > 0 and a source."""
     with open(path) as f:
         raw = json.load(f)
+    import net_drivers
+    net_drivers.verify_evidence(raw)
     out = {}
     for k, v in raw['classes'].items():
-        if not isinstance(v.get('tr_ns'), (int, float)) or v['tr_ns'] <= 0 or not str(v.get('source', '')).strip():
+        if not _positive_finite(v.get('tr_ns')) or not str(v.get('source', '')).strip():
             raise SpecError(f'{path}: class {k} needs tr_ns > 0 and a source')
-        out[k] = {'tr_ns': v['tr_ns'], 'source': v['source'], 'assumption': bool(v.get('assumption', False))}
+        a = v.get('applicability')
+        if not isinstance(a, dict) or a.get('kind') not in ('part', 'protocol') or not str(a.get('reason', '')).strip():
+            raise SpecError(f'{path}: class {k} needs explicit part/protocol applicability and reason')
+        if a['kind'] == 'part':
+            if not isinstance(a.get('mpn'), list) or not a['mpn'] or not all(isinstance(q, str) and q for q in a['mpn']) or not isinstance(a.get('pins'), str) or not a['pins']:
+                raise SpecError(f'{path}: part class {k} needs MPN patterns and pin regex')
+            re.compile(a['pins'])
+        out[k] = {'tr_ns': v['tr_ns'], 'source': v['source'], 'assumption': bool(v.get('assumption', False)), 'applicability': a,
+                  'stat':v.get('stat','unspecified'),'load':v.get('load','not recorded')}
     return out
 
 
@@ -93,12 +113,23 @@ def _edge_budget():
         raw = json.load(f)
     if 'default_class' in raw:
         raise SpecError(f'{EDGE_RATES_FILE}: no default class (D-124 addendum: the edge comes from the net driver)')
-    return raw['budget']['nh_per_ns'] / raw['budget']['nh_per_mm']
+    budget = raw.get('budget', {})
+    if not all(_positive_finite(budget.get(k)) for k in ('nh_per_ns', 'nh_per_mm')):
+        raise SpecError(f'{EDGE_RATES_FILE}: budget coefficients must be finite numbers > 0')
+    ratio = budget['nh_per_ns'] / budget['nh_per_mm']
+    if not _positive_finite(ratio):
+        raise SpecError(f'{EDGE_RATES_FILE}: invalid budget ratio')
+    return ratio
 
 
 def detour_budget_mm(tr_ns):
     """Allowed return detour for a rise time: tr x 10 nH/ns / 1.5 nH/mm (tools/edge-rates.json, report C3)."""
-    return tr_ns * _edge_budget()
+    if not _positive_finite(tr_ns):
+        raise SpecError('edge time must be a finite number > 0')
+    budget = tr_ns * _edge_budget()
+    if not _positive_finite(budget):
+        raise SpecError('non-finite detour budget')
+    return budget
 
 
 class SpecError(ValueError):
@@ -135,6 +166,179 @@ def sample_arc(a, m, e, step):
             for i in range(n)]
 
 
+def partition_signal_path(path, boundaries, circles, step):
+    """Exact boundary partition of a native straight segment or circular arc.
+
+    Classification is constant on each open interval: polygon, anchor,
+    exemption and cap boundaries are all supplied. Step only subdivides those
+    already bounded intervals for diagnostics; it never establishes coverage.
+    Returns (start, midpoint, end, length) records in native path order.
+    """
+    a, e = path[0], path[-1]
+    arc = None
+    if len(path) == 3:
+        (ax, ay), (bx, by), (cx, cy) = path
+        den = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by))
+        if abs(den) > 1e-12:
+            ux = ((ax*ax+ay*ay)*(by-cy)+(bx*bx+by*by)*(cy-ay)+(cx*cx+cy*cy)*(ay-by))/den
+            uy = ((ax*ax+ay*ay)*(cx-bx)+(bx*bx+by*by)*(ax-cx)+(cx*cx+cy*cy)*(bx-ax))/den
+            radius = math.dist((ux, uy), a)
+            angles = [math.atan2(q[1]-uy, q[0]-ux) for q in path]
+            sweep = (angles[2]-angles[0]) % (2*math.pi)
+            if (angles[1]-angles[0]) % (2*math.pi) > sweep:
+                sweep -= 2*math.pi
+            arc = (ux, uy, radius, angles[0], sweep)
+    if arc is None:
+        length = math.dist(a, e)
+        cuts = reference_breaks(boundaries, a, e, circles)
+        point = lambda t: (a[0]+t*(e[0]-a[0]), a[1]+t*(e[1]-a[1]))
+    else:
+        ux, uy, radius, angle, sweep = arc
+        length = radius * abs(sweep)
+        point = lambda t: (ux+radius*math.cos(angle+t*sweep), uy+radius*math.sin(angle+t*sweep))
+        cuts = {0.0, 1.0}
+
+        def add(q):
+            theta = math.atan2(q[1]-uy, q[0]-ux)
+            delta = (theta-angle) % (2*math.pi) if sweep > 0 else -((angle-theta) % (2*math.pi))
+            t = delta / sweep
+            if -1e-12 <= t <= 1+1e-12:
+                cuts.add(min(1.0, max(0.0, t)))
+
+        for c, d in boundaries:
+            dx, dy = d[0]-c[0], d[1]-c[1]
+            qx, qy = c[0]-ux, c[1]-uy
+            norm = dx*dx+dy*dy
+            if not norm:
+                continue
+            linear = 2*(qx*dx+qy*dy)
+            disc = linear*linear-4*norm*(qx*qx+qy*qy-radius*radius)
+            if disc >= 0:
+                for u in ((-linear-math.sqrt(disc))/(2*norm), (-linear+math.sqrt(disc))/(2*norm)):
+                    if 0 <= u <= 1:
+                        add((c[0]+u*dx, c[1]+u*dy))
+        for (cx, cy), r in circles:
+            dist = math.dist((ux, uy), (cx, cy))
+            if not dist or dist > radius+r or dist < abs(radius-r):
+                continue
+            along = (radius*radius-r*r+dist*dist)/(2*dist)
+            height = math.sqrt(max(0.0, radius*radius-along*along))
+            vx, vy = (cx-ux)/dist, (cy-uy)/dist
+            for sign in (-1, 1):
+                add((ux+along*vx-sign*height*vy, uy+along*vy+sign*height*vx))
+        cuts = sorted(cuts)
+    if not length:
+        return []
+    records = []
+    for lo, hi in zip(cuts, cuts[1:]):
+        n = max(1, math.ceil(length*(hi-lo)/step))
+        for i in range(n):
+            u, v = lo+(hi-lo)*i/n, lo+(hi-lo)*(i+1)/n
+            if v > u:
+                records.append((point(u), point((u+v)/2), point(v), length*(v-u)))
+    return records
+
+
+def evaluate_paths(paths, boundaries, ref_at, domain, anchors, s, net, caps=None):
+    """Project whole native paths, preserving distinct sides of narrow voids.
+
+    Bad intervals join only at actual path endpoints. Close opposite sides of
+    a gap do not collapse into one terminal merely because the step is large.
+    """
+    circles = [(a[:2], a[2]+s['via_allow_mm']) for a in anchors]
+    for ref, cfg in s['alt_refs'].items():
+        if 'cap_mm' in cfg:
+            circles.extend((c, cfg['cap_mm']) for c in (caps or {}).get(ref, []))
+    edges = list(boundaries)
+    areas = [a['box'] for a in s['exempt']['areas'] if net in a['nets']]
+    for x0, y0, x1, y1 in areas:
+        ring = [(x0,y0),(x1,y0),(x1,y1),(x0,y1)]
+        edges.extend(zip(ring, ring[1:]+ring[:1]))
+    # Partition at same-net/layer native centreline junctions, independently
+    # of diagnostic step. A branch endpoint may lie inside an unsplit track.
+    # Full supporting circles may add harmless cuts outside an arc's sweep;
+    # joining still requires an actual interval endpoint on BOTH native paths.
+    # Zero-radius endpoint circles also split overlapping/coincident arcs.
+    for path in paths:
+        if len(path) == 2:
+            edges.append((path[0],path[-1]))
+        else:
+            (ax,ay),(bx,by),(cx,cy) = path
+            den = 2*(ax*(by-cy)+bx*(cy-ay)+cx*(ay-by))
+            if abs(den) <= 1e-12:
+                edges.append((path[0],path[-1]))
+            else:
+                ux = ((ax*ax+ay*ay)*(by-cy)+(bx*bx+by*by)*(cy-ay)+(cx*cx+cy*cy)*(ay-by))/den
+                uy = ((ax*ax+ay*ay)*(cx-bx)+(bx*bx+by*by)*(ax-cx)+(cx*cx+cy*cy)*(bx-ax))/den
+                circles.append(((ux,uy),math.dist((ux,uy),path[0])))
+        circles.extend((endpoint,0.0) for endpoint in (path[0],path[-1]))
+    length = unref = cross = 0.0
+    cross_nets = collections.Counter()
+    bad, terminals = [], collections.defaultdict(list)
+    # KiCad's native coordinate unit is one nanometre. This key is only for
+    # native endpoint identity, not an enlargement of reference copper.
+    key = lambda q: (round(q[0]*1e6), round(q[1]*1e6))
+    for path in paths:
+        states = []
+        for start, q, end, weight in partition_signal_path(path, edges, circles, s['step_mm']):
+            length += weight
+            ref = ref_at(*q)
+            rd = ref_domain(ref, s, is_fast(net, s), q, caps)
+            good = domain is not None and rd == domain
+            if not good:
+                unref += weight
+            near = [a for a in anchors if math.dist(q,a[:2]) <= a[2]+s['via_allow_mm']]
+            exempt = any(min(b[0],b[2]) <= q[0] <= max(b[0],b[2]) and min(b[1],b[3]) <= q[1] <= max(b[1],b[3]) for b in areas)
+            state = 'good' if good or near else 'exempt' if exempt else 'bad'
+            radius = s['step_mm'] if good else max((a[2]+s['via_allow_mm']+s['step_mm'] for a in near),default=0)
+            states.append((start,q,end,weight,state,radius))
+            if state == 'bad' and domain is not None and rd is not None:
+                cross += weight
+                cross_nets[ref] += weight
+        for i, row in enumerate(states):
+            start, q, end, weight, state, radius = row
+            if state == 'bad':
+                bad.append((start,q,end,weight))
+            elif state == 'good':
+                if i and states[i-1][4] == 'bad':
+                    terminals[key(start)].append((*q,radius))
+                if i+1 < len(states) and states[i+1][4] == 'bad':
+                    terminals[key(end)].append((*q,radius))
+                # Reference at a track junction also attaches a bad interval
+                # on another segment; only native shared endpoints are joined.
+                if i == 0:
+                    terminals[key(start)].append((*q,radius))
+                if i == len(states)-1:
+                    terminals[key(end)].append((*q,radius))
+    parent = list(range(len(bad)))
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+    touching = {}
+    for i, (start,q,end,w) in enumerate(bad):
+        for endpt in (start,end):
+            k = key(endpt)
+            if k in touching:
+                parent[find(i)] = find(touching[k])
+            else:
+                touching[k] = i
+    groups = collections.defaultdict(list)
+    for i in range(len(bad)):
+        groups[find(i)].append(i)
+    runs = []
+    for ids in groups.values():
+        weight = sum(bad[i][3] for i in ids)
+        at = tuple(sum(bad[i][1][j]*bad[i][3] for i in ids)/weight for j in (0,1))
+        terms = {t for i in ids for q in (bad[i][0],bad[i][2]) for t in terminals[key(q)]}
+        runs.append(dict(length=weight,at=at,terminals=sorted(terms),bad_points=[bad[i][1] for i in ids],net=net))
+    worst = max(runs,key=lambda r:r['length'],default=None)
+    return dict(length=length,unref=unref,bad=sum(r['length'] for r in runs),worst=worst['length'] if worst else 0,
+                worst_at=worst['at'] if worst else None,cross=cross,runs=runs,
+                cross_net=cross_nets.most_common(1)[0][0] if cross_nets else None)
+
+
 def _reason(v, where):
     if not isinstance(v, str) or not v.strip():
         raise SpecError(f'{where}: a written reason is required')
@@ -154,7 +358,7 @@ def load_spec(raw):
     s = dict(DEFAULTS)
     s.update(raw)
     for k in DEFAULTS:
-        if not isinstance(s[k], (int, float)) or s[k] <= 0:
+        if not _positive_finite(s[k]):
             raise SpecError(f'{k} must be a number > 0')
     if not isinstance(s['adjacent'], dict) or not isinstance(s['plane_layers'], list) or not isinstance(s['grounds'], list):
         raise SpecError('adjacent must be an object; plane_layers and grounds must be lists')
@@ -163,7 +367,7 @@ def load_spec(raw):
     for net, a in s['alt_refs'].items():
         if not isinstance(a, dict) or a.get('domain') not in grounds:
             raise SpecError(f'alt_refs {net}: domain must be one of the grounds')
-        if 'cap_mm' in a and (not isinstance(a['cap_mm'], (int, float)) or a['cap_mm'] <= 0):
+        if 'cap_mm' in a and not _positive_finite(a['cap_mm']):
             raise SpecError(f'alt_refs {net}: cap_mm must be a number > 0')
         if not isinstance(a.get('slow_only', False), bool):
             raise SpecError(f'alt_refs {net}: slow_only must be true or false')
@@ -244,43 +448,99 @@ def power_patterns(s):
 
 def driver_edges(nets, nl, s, table=None, geom=None):
     """{net: {'edge_ns', 'driver'} or {'unknown': reason}} for the nets that need a driver edge (not power, not fast,
-    no interface class). nl: a parsed schematic netlist (tools/net_drivers.py). geom: routed length and trace
-    capacitance per net for the bound C*dV/I (D-124b, net_drivers.net_edge)."""
+    no interface class). nl: a parsed schematic netlist (tools/net_drivers.py)."""
     import net_drivers
     table = net_drivers.load_table() if table is None else table
     out = {}
     for net in nets:
-        if not _checked(net, s) or is_power(net, s) or is_fast(net, s) or edge_class(net, s):
+        if not _checked(net, s) or is_power(net, s) or is_fast(net, s):
             continue
-        out[net] = net_drivers.net_edge(net, nl, table, s['receivers'], s['offboard'], s['_edge_rates'], power_patterns(s),
-                                        geom)
+        out[net] = net_drivers.net_edge(net, nl, table, s['receivers'], s['offboard'], s['_edge_rates'], power_patterns(s), interface=edge_class(net, s), geom=geom)
     return out
 
 
-def trace_geometry(board_path, s, routed, width):
-    """D-124b: {'length_mm': {net: mm}, 'pf_per_mm': {net: (pF/mm, text)}}. The capacitance per mm is the microstrip
-    C' = sqrt(Eeff) / (c0 x Z0) (Hammerstad-Jensen, tools/si_pairs.py) at the net's narrowest track over the outer
-    layer dielectric of the stackup; the lower value of the outer layers is used (the inner stripline has more C),
-    so the bound is the shorter one."""
+def routed_trace_summary(records):
+    """Physical line-union lengths for capacitance SCREENING, not a bound.
+
+    Native coordinates are integral nm. Union collinear segments within each
+    net/layer so duplicated, reversed or split-overlap CAD tracks cannot inflate
+    the modeled load. Exact reversed arcs are deduplicated; partial arc overlap,
+    copper width intersections, pads/vias/pours and distributed loads remain
+    unmodeled. Those limits prohibit fastest-edge qualification.
+    records: (net, layer, path in mm, width in mm).
+    """
+    lines, arcs, widths = collections.defaultdict(list), {}, {}
+    for net, layer, path, width in records:
+        if not math.isfinite(width) or width <= 0:
+            raise SpecError('trace geometry: invalid native width')
+        if not all(math.isfinite(v) for point in path for v in point):
+            raise SpecError('trace geometry: invalid native coordinate')
+        pts = tuple(tuple(round(v * 1e6) for v in point) for point in path)
+        if len(pts) not in (2, 3):
+            raise SpecError('trace geometry: invalid native path')
+        widths[net] = min(widths.get(net, math.inf), width)
+        a, e = pts[0], pts[-1]
+        if len(pts) == 3 and (pts[1][0]-a[0])*(e[1]-a[1]) != (pts[1][1]-a[1])*(e[0]-a[0]):
+            key = (net, layer, min(pts, pts[::-1]))
+            arcs[key] = sum(w for _, _, w in sample_arc(*path, 1e9))
+            continue
+        dx, dy = e[0]-a[0], e[1]-a[1]
+        divisor = math.gcd(dx, dy)
+        if not divisor:
+            continue
+        ux, uy = dx//divisor, dy//divisor
+        if ux < 0 or (ux == 0 and uy < 0):ux, uy = -ux, -uy
+        offset = a[0]*uy-a[1]*ux
+        start, end = sorted((a[0]*ux+a[1]*uy, e[0]*ux+e[1]*uy))
+        lines[(net, layer, ux, uy, offset)].append((start, end))
+    length = collections.defaultdict(float)
+    for (net, _, ux, uy, _), intervals in lines.items():
+        total, start, end = 0, None, None
+        for left, right in sorted(intervals):
+            if start is None:start, end = left, right
+            elif left <= end:end = max(end, right)
+            else:total += end-start;start, end = left, right
+        total += end-start
+        length[net] += total / math.hypot(ux, uy) / 1e6
+    for (net, _, _), arc_length in arcs.items():length[net] += arc_length
+    return dict(length), widths
+
+
+def trace_geometry(board_path, s, records):
+    """D-124b routed-load inputs, explicitly an unqualified screening model.
+
+    C'=sqrt(Eeff)/(c0*Z0) is the existing Hammerstad-Jensen outer-microstrip
+    model. Use minimum width and the lower available outer-layer value; no
+    claim that this proves actual inner/voided/distributed-load capacitance.
+    Missing stackup leaves C*dV/I unresolved without discarding known IBIS
+    or independently sourced driver values.
+    """
     import net_drivers
     import si_pairs
-    with open(board_path) as f:
-        st = si_pairs.parse_stackup(f.read())
-    outer = [(L, st[L]) for L in s['adjacent'] if L in st and st[L]['h_mm'] and st[L]['er']]
-    if not outer:
-        raise SpecError('board stackup: no dielectric height and Er for the outer layers (needed for the bound C*dV/I)')
-    geom = {'length_mm': dict(routed), 'pf_per_mm': {}}
-    for net, w in width.items():
-        c, L, d = min((net_drivers.microstrip_pf_per_mm(w, d['h_mm'], d['t_mm'] or 0, d['er']), L, d) for L, d in outer)
-        geom['pf_per_mm'][net] = (c, f"microstrip w {w:.3g} h {d['h_mm']:g} t {d['t_mm'] or 0:g} mm Er {d['er']:g} ({L} stackup), "
-                                     f"C' = sqrt(Eeff)/(c0 Z0), Hammerstad-Jensen (tools/si_pairs.py)")
-    return geom
+    length, width = routed_trace_summary(records)
+    result = {'length_mm': length, 'pf_per_mm': {},
+              'model_applicability': {'qualified_fastest_bound': False,
+                'reasons': ['outer microstrip approximation; actual return gaps/inner geometry unproved',
+                            'distributed full-net load is not a proved load at the driver edge',
+                            'partial arc overlap, pad/via/pour capacitance and physical intersection areas unmodeled']}}
+    try:
+        with open(board_path) as stream:stackup = si_pairs.parse_stackup(stream.read())
+        outer = [(layer, stackup[layer]) for layer in ('F.Cu', 'B.Cu') if layer in s['adjacent'] and layer in stackup]
+        outer = [(layer, d) for layer, d in outer if all(isinstance(d[k], (int, float)) and math.isfinite(d[k]) and d[k] > 0 for k in ('h_mm', 'er')) and (d['t_mm'] is None or math.isfinite(d['t_mm']) and d['t_mm'] >= 0)]
+        if not outer:raise si_pairs.SpecError('no usable outer-layer dielectric height/Er')
+        for net, w in width.items():
+            value, layer, d = min((net_drivers.microstrip_pf_per_mm(w, d['h_mm'], d['t_mm'] or 0, d['er']), layer, d) for layer, d in outer)
+            if not math.isfinite(value) or value <= 0:raise SpecError('trace geometry: invalid modeled capacitance')
+            result['pf_per_mm'][net] = (value, f"screening microstrip w {w:g} h {d['h_mm']:g} t {d['t_mm'] or 0:g} mm Er {d['er']:g} ({layer}); Hammerstad-Jensen tools/si_pairs.py; applicability unproved")
+    except (OSError, si_pairs.SpecError) as error:
+        result['model_applicability']['reasons'].append('missing stackup/model input: '+str(error))
+    return result
 
 
 def net_edge_of(net, s):
     """(tr_ns, label) of a checked net, or (None, reason) for an unknown driver."""
     k = edge_class(net, s)
-    if k:
+    if k and net not in s['_edges'] and s['_edge_rates'][k]['applicability']['kind'] == 'protocol':
         r = s['_edge_rates'][k]
         return r['tr_ns'], f"class {k}, tr {r['tr_ns']:g} ns{', assumption' if r['assumption'] else ''}"
     e = s['_edges'].get(net)
@@ -448,21 +708,373 @@ def evaluate_net(samples, ref_at, domain, anchors, s, net=None, caps=None):
         # one terminal per side: join terminals that touch each other
         tl = [good[j] for j in sorted(term)]
         ends = [max((tl[k] for k in grp), key=lambda q: q[2]) for grp in _groups(tl, link)] if tl else []
-        runs.append({'length': w, 'at': at, 'terminals': ends})
+        runs.append({'length': w, 'at': at, 'terminals': ends,
+                     'bad_points': [bad[i][:2] for i in g], 'net': net})
     worst = max(runs, key=lambda r: r['length'], default=None)
     return {'length': length, 'unref': unref, 'bad': sum(w for _, _, w in bad), 'worst': worst['length'] if worst else 0,
             'worst_at': worst['at'] if worst else None, 'cross': cross, 'runs': runs,
             'cross_net': cross_nets.most_common(1)[0][0] if cross_nets else None}
 
 
-def detour_mm(ok, terminals, budget, cell, portals=()):
+class SpatialCandidates:
+    """Immutable AABB tree; query results retain the original predicate order.
+
+    Bounds are inclusive. Native polygon membership queries use the rounded
+    integer PCB coordinate, not the unrounded millimetre coordinate.
+    """
+    def __init__(self, values, boxes):
+        self.values = tuple(values)
+        boxes = tuple(boxes)
+        def build(ids):
+            if not ids:
+                return None
+            box = (min(boxes[i][0] for i in ids), min(boxes[i][1] for i in ids),
+                   max(boxes[i][2] for i in ids), max(boxes[i][3] for i in ids))
+            if len(ids) <= 16:
+                return box, tuple(ids), None, None
+            axis = 0 if box[2] - box[0] >= box[3] - box[1] else 1
+            ids = sorted(ids, key=lambda i: boxes[i][axis] + boxes[i][axis + 2])
+            mid = len(ids) // 2
+            return box, (), build(ids[:mid]), build(ids[mid:])
+        self.boxes = boxes
+        self.tree = build(list(range(len(boxes))))
+
+    def __iter__(self):
+        return iter(self.values)
+
+    def candidates(self, query):
+        def overlaps(box):
+            return box[0] <= query[2] and query[0] <= box[2] and box[1] <= query[3] and query[1] <= box[3]
+        ids = []
+        def visit(node):
+            if node is None or not overlaps(node[0]):
+                return
+            if node[1]:
+                ids.extend(i for i in node[1] if overlaps(self.boxes[i]))
+            else:
+                visit(node[2]); visit(node[3])
+        visit(self.tree)
+        return (self.values[i] for i in sorted(ids))
+
+
+def segment_candidates(boundaries):
+    return SpatialCandidates(boundaries, [(min(a[0], b[0]), min(a[1], b[1]),
+                                          max(a[0], b[0]), max(a[1], b[1])) for a, b in boundaries])
+
+
+def circle_candidates(circles):
+    return SpatialCandidates(circles, [(c[0] - r, c[1] - r, c[0] + r, c[1] + r) for c, r in circles])
+
+
+def _edge_candidates(values, a, b):
+    if not isinstance(values, SpatialCandidates):
+        return values
+    # Sub-nanometre/degenerate edges retain the complete historical scan. The
+    # broad margin includes native 1 nm rounding and near-collinear tolerance.
+    if math.dist(a, b) < 1e-6:
+        return values
+    margin = max(1e-6, max(math.ulp(v) for v in tuple(a) + tuple(b)) * 64)
+    return values.candidates((min(a[0], b[0]) - margin, min(a[1], b[1]) - margin,
+                              max(a[0], b[0]) + margin, max(a[1], b[1]) + margin))
+
+
+def reference_breaks(boundaries, a, b, circles=()):
+    """Check the entire segment using every polygon/cap boundary intersection.
+
+    Point-only grid membership is insufficient: two free nodes can straddle a
+    hole narrower than the cell. Boundaries include outer rings AND holes.
+    """
+    ax, ay = a
+    dx, dy = b[0] - ax, b[1] - ay
+    ts = {0.0, 1.0}
+    for c, d in _edge_candidates(boundaries, a, b):
+        ex, ey = d[0] - c[0], d[1] - c[1]
+        den = dx * ey - dy * ex
+        cx, cy = c[0] - ax, c[1] - ay
+        if abs(den) > 1e-15:
+            t = (cx * ey - cy * ex) / den
+            u = (cx * dy - cy * dx) / den
+            if 0 <= t <= 1 and 0 <= u <= 1:
+                ts.add(t)
+        elif abs(cx * dy - cy * dx) <= 1e-15:
+            norm = dx * dx + dy * dy
+            if norm:
+                for q in (c, d):
+                    t = ((q[0] - ax) * dx + (q[1] - ay) * dy) / norm
+                    if 0 <= t <= 1:
+                        ts.add(t)
+    norm = dx * dx + dy * dy
+    for (cx, cy), r in _edge_candidates(circles, a, b):
+        if not norm:
+            continue
+        qx, qy = ax - cx, ay - cy
+        linear = 2 * (qx * dx + qy * dy)
+        disc = linear * linear - 4 * norm * (qx * qx + qy * qy - r * r)
+        if disc >= 0:
+            for t in ((-linear - math.sqrt(disc)) / (2 * norm), (-linear + math.sqrt(disc)) / (2 * norm)):
+                if 0 <= t <= 1:
+                    ts.add(t)
+    return sorted(ts)
+
+
+def continuous_reference(ok, boundaries, a, b, circles=()):
+    cuts = reference_breaks(boundaries, a, b, circles)
+    ax, ay = a
+    dx, dy = b[0] - ax, b[1] - ay
+    return all(ok(ax + t * dx, ay + t * dy)
+               for t in [0.0, 1.0] + [(u + v) / 2 for u, v in zip(cuts, cuts[1:])])
+
+
+def detour_mm(ok, terminals, budget, cell, portals=(), edge_ok=None,
+              alternate_ok=None, alternate_edge_ok=None):
     """Return detour of one run: the shortest path in the reference copper from the first terminal to the farthest
     other terminal, on a grid of this cell size (8 neighbours, a diagonal step only between two free sides).
-    portals: (x, y) of the ground vias and through-hole pads of the domain ground. The return current may go down one
-    and up another; the path between them is counted as the straight line (the other ground plane, In1, is solid by
-    the stackup rule; a track on it fails as plane-cut).
+    portals: exact positions of ground vias/through-hole pads spanning both
+    layers. Transfer requires actual alternate-plane copper and continuous
+    edges; plane-cut checks alone cannot prove the absence of holes or slots.
     ok(x, y) -> True on reference copper. terminals: [(x, y, snap)]; a terminal is reached at any copper cell within
-    snap of it. Returns the length in mm, or None when it is longer than budget or there is no copper path.
+    snap of it, with continuous access and its distance counted. Returns mm or
+    None when unreachable/over budget. Missing terminals are not proof of a
+    stub; only an independently proven stub may return zero."""
+    import heapq
+    if len(terminals) < 2:
+        return None
+    # A point predicate cannot establish continuous reference copper.
+    if edge_ok is None:
+        return None
+    cache = {}
+    predicates = (ok, alternate_ok)
+    edge_predicates = (edge_ok, alternate_edge_ok)
+
+    def free(c):
+        if c not in cache:
+            cache[c] = bool(predicates[c[0]](c[1] * cell, c[2] * cell))
+        return cache[c]
+
+    def cells(t):
+        r = max(t[2], cell)
+        n = math.ceil(r / cell)
+        cx, cy = round(t[0] / cell), round(t[1] / cell)
+        return {(0, cx + i, cy + j): math.dist(((cx + i) * cell, (cy + j) * cell), t[:2]) / cell
+                for i in range(-n, n + 1) for j in range(-n, n + 1)
+                if math.dist(((cx + i) * cell, (cy + j) * cell), t[:2]) <= r + 1e-9
+                and free((0, cx + i, cy + j)) and edge_ok(t[:2], ((cx + i) * cell, (cy + j) * cell))}
+    src = cells(terminals[0])
+    if not src:
+        return None
+    # Portal access must reach the exact physical position through copper.
+    # Missing alternate-plane geometry disables transfers, never invents copper.
+    ports = [(x, y) for x, y in portals if alternate_ok is not None and alternate_edge_ok is not None
+             and ok(x, y) and alternate_ok(x, y)]
+    at_port = collections.defaultdict(list)
+    for k, q in enumerate(ports):
+        q = (round(q[0] / cell), round(q[1] / cell))
+        for i in (-1, 0, 1):
+            for j in (-1, 0, 1):
+                at_port[(q[0] + i, q[1] + j)].append(k)
+    worst = 0.0
+    for t in terminals[1:]:
+        dst = cells(t)
+        if not dst:
+            return None
+        tx, ty = t[0] / cell, t[1] / cell
+        h = lambda c: math.hypot(c[1] - tx, c[2] - ty)
+        dist = dict(src)
+        heap = [(d + h(c), d, c) for c, d in src.items()]
+        heapq.heapify(heap)
+        found = None
+        while heap:
+            f, d, c = heapq.heappop(heap)
+            if d > dist.get(c, math.inf) + 1e-12:
+                continue
+            if found is not None and f >= found - 1e-12:
+                break
+            if f * cell > budget + 1e-9:
+                break
+            if c in dst:
+                found = min(found if found is not None else math.inf, d + dst[c])
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    if not (dx or dy):
+                        continue
+                    n = (c[0], c[1] + dx, c[2] + dy)
+                    if not free(n) or not edge_predicates[c[0]]((c[1] * cell, c[2] * cell), (n[1] * cell, n[2] * cell)):
+                        continue
+                    nd = d + (1.4142135623730951 if dx and dy else 1.0)
+                    if nd < dist.get(n, math.inf) - 1e-12:
+                        dist[n] = nd
+                        heapq.heappush(heap, (nd + h(n), nd, n))
+            # One layered graph, not O(portals**2) independent A* searches.
+            for k in at_port.get(c[1:], ()):
+                start = (c[1] * cell, c[2] * cell)
+                if not edge_predicates[c[0]](start, ports[k]):
+                    continue
+                q = ports[k]
+                qi = (round(q[0] / cell), round(q[1] / cell))
+                other = 1 - c[0]
+                for n in ((other, qi[0] + i, qi[1] + j) for i in (-1, 0, 1) for j in (-1, 0, 1)):
+                    end = (n[1] * cell, n[2] * cell)
+                    if free(n) and edge_predicates[other](q, end):
+                        nd = d + (math.dist(start, q) + math.dist(q, end)) / cell
+                        if nd < dist.get(n, math.inf) - 1e-12 and nd * cell <= budget + 1e-9:
+                            dist[n] = nd
+                            heapq.heappush(heap, (nd + h(n), nd, n))
+        if found is None or found * cell > budget + 1e-9:
+            return None
+        worst = max(worst, found * cell)
+    return worst
+
+
+def _checked(net, s):
+    return net not in s['grounds'] and net not in s['exempt']['nets']
+
+
+def _native_stub_matches(run, source_sha, net, layer, domain):
+    proof = run.get('_stub_proof')
+    try:
+        return (source_sha is not None and isinstance(proof, _NativeStubProof) and
+                proof.record.get('contract') == 'native-unloaded-single-straight-leaf-v1' and
+                proof.matches(source_sha, net, layer, domain, run))
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def reference_failures(results, domains, s, detour=None, board_mm=None, source_sha=None):
+    """FAIL lines from evaluate_net results keyed (layer, net). domains: net -> domain or None.
+    detour(layer, domain, run, budget) -> mm or None (over budget / unreachable); board_mm: the size above which a
+    budget gives no rule (the board outline bounding-box perimeter). Rules: see the module text (D-124)."""
+    nodom, cross, gaps, seen = [], [], [], set()
+    for (layer, net), r in results.items():
+        if not _checked(net, s):
+            continue
+        power = is_power(net, s)
+        if domains.get(net) is None:
+            if net not in seen and not power:
+                seen.add(net)
+                nodom.append(f'FAIL no-domain {net}: no pad in a ground zone outline; set "domains" or "exempt"')
+            continue
+        if r['cross'] > 0:
+            cross.append((r['cross'], f"FAIL domain-cross {layer} {net}: {r['cross']:.1f} mm over "
+                                      f"{r['cross_net']} (domain {domains[net]})"))
+        if power:
+            continue
+        if is_fast(net, s):
+            if r['worst'] > 0:
+                x, y = r['worst_at']
+                gaps.append((r['worst'], f"FAIL fast-crossing {layer} {net}: {len(r.get('runs') or [1])} crossings, longest "
+                                         f"{r['worst']:.2f} mm at ({x:.1f}, {y:.1f}) (a fast net may cross no gap, void or slot)"))
+            continue
+        tr, label = net_edge_of(net, s)
+        runs = r.get('runs') or []
+
+        def measure(run):
+            """The detour length of a run (a fine grid first, then up to the board size), None when unreachable."""
+            if not detour:
+                return None
+            for b in (20.0, board_mm if board_mm is not None else math.inf):
+                d = detour(layer, domains[net], run, b)
+                if d is not None:
+                    return d
+            return None
+        if tr is None:
+            # Positive detours cannot qualify a missing edge bound. Request
+            # only bounded native stub inspection; a numeric zero is no proof.
+            for run in runs:
+                if detour and not _native_stub_matches(run, source_sha, net, layer, domains[net]):
+                    detour(layer, domains[net], run, 0.0)
+            bad = [run for run in runs if not _native_stub_matches(run, source_sha, net, layer, domains[net])]
+            if bad:
+                w = max(bad, key=lambda q: q['length'])
+                x, y = w['at']
+                gaps.append((w['length'], f"FAIL unknown-driver {layer} {net}: {len(bad)} of {len(runs)} crossings need an edge time "
+                                          f"(longest run {w['length']:.1f} mm at ({x:.1f}, {y:.1f}), detour not measured: missing edge bound); unknown driver: {label}"))
+            continue
+        budget = detour_budget_mm(tr)
+        if board_mm is not None and budget > board_mm:
+            continue
+        over = [run for run in runs if (detour(layer, domains[net], run, budget) if detour else None) is None]
+        if over:
+            w = max(over, key=lambda q: q['length'])
+            x, y = w['at']
+            d = measure(w)
+            gaps.append((w['length'], f"FAIL detour {layer} {net}: {len(over)} of {len(runs)} crossings with a return detour "
+                                      f"> {budget:.1f} mm or no reference path, longest run {w['length']:.1f} mm at ({x:.1f}, {y:.1f}), "
+                                      f"detour {'none (no reference path)' if d is None else f'{d:.1f} mm'} "
+                                      f"(tr {tr:g} ns: {label})"))
+    return sorted(nodom) + [t for _, t in sorted(cross, reverse=True)] + [t for _, t in sorted(gaps, reverse=True)]
+
+
+def reference_assessment(results,domains,s,detour=None,board_mm=None,source_sha=None,report_only_timing=False):
+    """Keep accepted geometric screening separate from timing-evidence closure.
+    Timing-dependent crossings cannot qualify on TYP/MAX/assumed edge budgets,
+    including the screen's board-perimeter exemption. No timing requirement is
+    invented for continuous reference or strict-fast/power checks.
+    """
+    import net_drivers
+    screen=reference_failures(results,domains,s,detour,board_mm,source_sha);evidence=[]
+    if report_only_timing:
+        # D-124d proposed: retain D-124c's unknown-driver geometric screen.
+        # The stricter native-stub/evidence contract remains diagnostic here.
+        screen=[line for line in screen if not line.startswith('FAIL unknown-driver ')]
+        for (layer,net),r in results.items():
+            if not _checked(net,s) or is_power(net,s) or is_fast(net,s) or domains.get(net) is None or net_edge_of(net,s)[0] is not None:
+                continue
+            bad=[]
+            for run in r.get('runs') or []:
+                measured=None
+                if detour:
+                    for budget in (20.0,board_mm if board_mm is not None else math.inf):
+                        measured=detour(layer,domains[net],run,budget)
+                        if measured is not None:
+                            break
+                if measured is None or measured>0:
+                    bad.append((run,measured))
+            if bad:
+                run,measured=max(bad,key=lambda q:q[0]['length']);x,y=run['at']
+                distance='none (no reference path)' if measured is None else f'{measured:.1f} mm'
+                screen.append(f"FAIL unknown-driver {layer} {net}: {len(bad)} of {len(r.get('runs') or [])} crossings need an edge time (longest run {run['length']:.1f} mm at ({x:.1f}, {y:.1f}), detour {distance}); unknown driver: {net_edge_of(net,s)[1]}")
+    for (layer,net),r in results.items():
+        if not _checked(net,s) or is_power(net,s) or is_fast(net,s) or domains.get(net) is None or not r.get('runs'):
+            continue
+        # The geometric screen's large-budget exemption may not call detour.
+        # Ask the existing bounded native producer to inspect a single-terminal
+        # leaf independently of that exemption. Its numeric return proves nothing.
+        if source_sha is not None and detour and net_edge_of(net,s)[0] is not None:
+            for run in r['runs']:
+                if len(run.get('terminals',[]))==1 and not _native_stub_matches(run,source_sha,net,layer,domains[net]):
+                    detour(layer,domains[net],run,0.0)
+        nonstub=[run for run in r['runs'] if not _native_stub_matches(run,source_sha,net,layer,domains[net])]
+        if not nonstub:
+            continue
+        edge=s['_edges'].get(net)
+        if edge is None:
+            cls=edge_class(net,s)
+            rate=s['_edge_rates'].get(cls,{})
+            if rate.get('applicability',{}).get('kind')=='protocol':
+                edge={'edge_ns':rate['tr_ns'],'timing_evidence':net_drivers.timing_evidence(rate)}
+        if edge is None or 'unknown' in edge:
+            evidence.append(f"FAIL unproved-fastest-edge {layer} {net}: driver edge unknown for an unreferenced run; no qualified timing bound or topology-proven stub")
+            continue
+        quality=edge.get('timing_evidence',{})
+        if not quality.get('qualified_fastest_bound',False):
+            evidence.append(f"FAIL unproved-fastest-edge {layer} {net}: accepted screening edge {edge['edge_ns']:g} ns has no proven fastest-edge bound; timing-dependent crossing/perimeter exemption cannot qualify")
+    warnings=[line.replace('FAIL ','WARN ',1) for line in evidence] if report_only_timing else []
+    return dict(screening_failures=screen,timing_evidence_failures=evidence,
+                gate_failures=screen if report_only_timing else screen+evidence,gate_warnings=warnings,
+                timing_evidence_complete=not evidence,scope='timing evidence only; geometry/model/physical board qualification remain separate')
+
+
+# ---------------------------------------------------------------- D-124c enforced screen (accepted base behaviour)
+# The gate counts only this screen: sampled crossing detection (evaluate_net), the grid detour with ground-via
+# portals (d124c_detour_mm), "a run with no detour (a stub) passes at any edge", and an "edge_classes" class
+# applied to its nets directly. The native continuous projection, the native-stub proof, the continuous-edge
+# detour and the class applicability rules of the D-124d proposal run beside it; their extra findings are
+# REPORT-ONLY (WARN lines, not counted) until D-124d is accepted. A finding of this screen is never dropped.
+
+def d124c_detour_mm(ok, terminals, budget, cell, portals=()):
+    """D-124c detour of one run (the accepted grid search). ok(x, y) -> True on reference copper.
+    terminals: [(x, y, snap)]. portals: (x, y) of the domain ground vias and through-hole pads; the path between
+    two of them is counted as the straight line. Returns mm, or None over budget / unreachable.
     Fewer than two terminals: a stub, no crossing: 0."""
     import heapq
     if len(terminals) < 2:
@@ -537,14 +1149,58 @@ def detour_mm(ok, terminals, budget, cell, portals=()):
     return worst
 
 
-def _checked(net, s):
-    return net not in s['grounds'] and net not in s['exempt']['nets']
+def d124c_driver_edges(nets, nl, s, table=None, geom=None):
+    """D-124c driver lookup: nets with an "edge_classes" class take the class edge (no driver search)."""
+    import net_drivers
+    table = net_drivers.load_table() if table is None else table
+    out = {}
+    for net in nets:
+        if not _checked(net, s) or is_power(net, s) or is_fast(net, s) or edge_class(net, s):
+            continue
+        out[net] = net_drivers.net_edge(net, nl, table, s['receivers'], s['offboard'], s['_edge_rates'], power_patterns(s),
+                                        geom=geom)
+    return out
 
 
-def reference_failures(results, domains, s, detour=None, board_mm=None):
-    """FAIL lines from evaluate_net results keyed (layer, net). domains: net -> domain or None.
-    detour(layer, domain, run, budget) -> mm or None (over budget / unreachable); board_mm: the size above which a
-    budget gives no rule (the board outline bounding-box perimeter). Rules: see the module text (D-124)."""
+def d124c_net_edge_of(net, s, edges):
+    """D-124c (tr_ns, label): the "edge_classes" class of the net, else its driver edge in edges."""
+    k = edge_class(net, s)
+    if k:
+        r = s['_edge_rates'][k]
+        return r['tr_ns'], f"class {k}, tr {r['tr_ns']:g} ns{', assumption' if r['assumption'] else ''}"
+    e = edges.get(net)
+    if e is None:
+        return None, 'driver not looked up'
+    if 'unknown' in e:
+        return None, e['unknown']
+    return e['edge_ns'], f"driver {e['driver']}"
+
+
+def d124c_trace_geometry(board_path, s, routed, width):
+    """D-124c routed-load inputs: sampled routed length and the narrowest track of each net (microstrip C' at the
+    lower outer-layer value, tools/si_pairs.py)."""
+    import net_drivers
+    import si_pairs
+    geom = {'length_mm': dict(routed), 'pf_per_mm': {}}
+    # Like trace_geometry: a missing stackup leaves C*dV/I unresolved (unknown driver), it is no tool error.
+    try:
+        with open(board_path) as f:
+            st = si_pairs.parse_stackup(f.read())
+    except (OSError, si_pairs.SpecError):
+        return geom
+    outer = [(L, st[L]) for L in s['adjacent'] if L in st and st[L]['h_mm'] and st[L]['er']]
+    if not outer:
+        return geom
+    for net, w in width.items():
+        c, L, d = min((net_drivers.microstrip_pf_per_mm(w, d['h_mm'], d['t_mm'] or 0, d['er']), L, d) for L, d in outer)
+        geom['pf_per_mm'][net] = (c, f"microstrip w {w:.3g} h {d['h_mm']:g} t {d['t_mm'] or 0:g} mm Er {d['er']:g} ({L} stackup), "
+                                     f"C' = sqrt(Eeff)/(c0 Z0), Hammerstad-Jensen (tools/si_pairs.py)")
+    return geom
+
+
+def d124c_reference_failures(results, domains, s, edges, detour=None, board_mm=None):
+    """The enforced D-124c FAIL lines from evaluate_net results keyed (layer, net). edges: the D-124c driver edges.
+    detour(layer, domain, run, budget) -> mm or None; board_mm: no rule above this budget."""
     nodom, cross, gaps, seen = [], [], [], set()
     for (layer, net), r in results.items():
         if not _checked(net, s):
@@ -566,11 +1222,10 @@ def reference_failures(results, domains, s, detour=None, board_mm=None):
                 gaps.append((r['worst'], f"FAIL fast-crossing {layer} {net}: {len(r.get('runs') or [1])} crossings, longest "
                                          f"{r['worst']:.2f} mm at ({x:.1f}, {y:.1f}) (a fast net may cross no gap, void or slot)"))
             continue
-        tr, label = net_edge_of(net, s)
+        tr, label = d124c_net_edge_of(net, s, edges)
         runs = r.get('runs') or []
 
         def measure(run):
-            """The detour length of a run (a fine grid first, then up to the board size), None when unreachable."""
             if not detour:
                 return None
             for b in (20.0, board_mm if board_mm is not None else math.inf):
@@ -602,6 +1257,31 @@ def reference_failures(results, domains, s, detour=None, board_mm=None):
                                       f"detour {'none (no reference path)' if d is None else f'{d:.1f} mm'} "
                                       f"(tr {tr:g} ns: {label})"))
     return sorted(nodom) + [t for _, t in sorted(cross, reverse=True)] + [t for _, t in sorted(gaps, reverse=True)]
+
+
+def planes_outcome(geometry, enforced, assessment):
+    """(fails, report lines). fails (counted): plane cuts, islands and the enforced D-124c screen. report
+    (not counted): the D-124d proposed findings that the enforced screen lacks, and the timing-evidence warnings."""
+    proposed = proposed_report(enforced, assessment['gate_failures'])
+    fails = list(geometry) + list(enforced)
+    report = proposed + list(assessment['gate_warnings'])
+    report.append(f"SI_SCREEN geometric_failures={len(fails)} (D-124c enforced); "
+                  f"D-124d proposed screen: {len(assessment['gate_failures'])} findings, {len(proposed)} not in the "
+                  f"enforced screen (report-only, WARN D-124d-proposed)")
+    return fails, report
+
+
+def _finding_key(line):
+    """(kind, layer, net) of a FAIL line: 'FAIL detour B.Cu /X: ...' -> ('detour', 'B.Cu', '/X')."""
+    return tuple(line.split(':', 1)[0].split()[1:])
+
+
+def proposed_report(enforced, proposed):
+    """D-124d proposed findings that the enforced D-124c screen does not report: WARN lines (report-only, not
+    counted). A proposed finding with the same kind, layer and net as an enforced one is already counted."""
+    keys = {_finding_key(line) for line in enforced}
+    return [line.replace('FAIL ', 'WARN D-124d-proposed ', 1) for line in proposed
+            if line.startswith('FAIL ') and _finding_key(line) not in keys]
 
 
 def plane_cut_failures(cuts, s):
@@ -672,6 +1352,179 @@ def mm(v):
     return v / 1e6
 
 
+def native_reference_geometry(p, fills, layer, domain, s, caps, copper_items=()):
+    """Fresh filled copper plus the physical ground portal lands on this layer.
+
+    ERROR_INSIDE polygons conservatively approximate rounded lands. Ground
+    barrels are abstract attachment nodes; their copper lands connect them to
+    the fill only through real spokes/solid copper, not a radius allowance.
+    """
+    lands = []
+    for item in copper_items:
+        if item.GetNetname() != domain or not item.IsOnLayer(layer):
+            continue
+        poly = p.SHAPE_POLY_SET()
+        item.TransformShapeToPolygon(poly, layer, 0, p.FromMM(.001), p.ERROR_INSIDE)
+        poly.BuildBBoxCaches()
+        lands.append(poly)
+    polygons = [poly for _, poly in fills[layer]] + lands
+    boundaries = []
+    boxes = []
+    for poly in polygons:
+        points = []
+        for k in range(poly.OutlineCount()):
+            rings = [poly.Outline(k)] + [poly.Hole(k, j) for j in range(poly.HoleCount(k))]
+            for ring in rings:
+                pts = [(mm(ring.CPoint(j).x), mm(ring.CPoint(j).y)) for j in range(ring.PointCount())]
+                points.extend((ring.CPoint(j).x, ring.CPoint(j).y) for j in range(ring.PointCount()))
+                boundaries.extend(zip(pts, pts[1:] + pts[:1]))
+        boxes.append((min(x for x, y in points), min(y for x, y in points),
+                      max(x for x, y in points), max(y for x, y in points)) if points else (0, 0, -1, -1))
+    lands_index = SpatialCandidates(lands, boxes[len(fills[layer]):])
+    fills_index = SpatialCandidates(fills[layer], boxes[:len(fills[layer])])
+    boundaries = segment_candidates(boundaries)
+    point_cache = {}
+
+    def ok(x, y):
+        key = (x, y)
+        if key in point_cache:
+            return point_cache[key]
+        point = p.VECTOR2I(p.FromMM(x), p.FromMM(y))
+        query = (point.x, point.y, point.x, point.y)
+        if any(poly.Contains(point, -1, 0, True) for poly in lands_index.candidates(query)):
+            result = True
+        else:
+            ref = next((net for net, poly in fills_index.candidates(query) if poly.Contains(point, -1, 0, True)), None)
+            result = ref_domain(ref, s, False, (x, y), caps) == domain
+        if len(point_cache) >= 100000:
+            point_cache.clear()
+        point_cache[key] = result
+        return result
+    circles = circle_candidates([(c, a['cap_mm']) for n, a in s['alt_refs'].items() if 'cap_mm' in a for c in caps[n]])
+    edge_cache = {}
+    def edge(a, b):
+        # Retain directional answers inside an undirected key: floating-point
+        # intersections can differ at a tangency when evaluated in reverse.
+        a, b = tuple(a), tuple(b)
+        key = tuple(sorted((a, b)))
+        direction = (a, b)
+        answers = edge_cache.get(key)
+        if answers is not None and direction in answers:
+            return answers[direction]
+        result = continuous_reference(ok, boundaries, a, b, circles)
+        if len(edge_cache) >= 100000:
+            edge_cache.clear()
+        edge_cache.setdefault(key, {})[direction] = result
+        return result
+    edge.breaks = lambda a, b: reference_breaks(boundaries, a, b, circles)
+    return ok, edge
+
+
+def native_ground_portals(vertical_items, layer, alternate, domain):
+    """Only the actual domain's conductive barrels spanning both planes."""
+    return [(mm(item.GetPosition().x), mm(item.GetPosition().y)) for item in vertical_items
+            if item.GetNetname() == domain and item.IsOnLayer(layer) and item.IsOnLayer(alternate)]
+
+
+def single_leaf_candidate(start, end, run, ref_ok, breaks):
+    """Conservative straight-leaf contract; this alone is NOT a stub proof.
+
+    One genuine reference attachment, a contiguous referenced prefix followed
+    by an unreferenced tip, and every measured bad point on this same segment.
+    Native conductor/land collisions must still prove the tip is unloaded.
+    """
+    if len(run.get('terminals', ())) != 1 or not run.get('bad_points'):
+        return None
+    if not ref_ok(*start) and ref_ok(*end):
+        start, end = end, start
+    if not ref_ok(*start) or ref_ok(*end):
+        return None
+    dx, dy = end[0] - start[0], end[1] - start[1]
+    norm = dx * dx + dy * dy
+    if not norm:
+        return None
+    cuts = breaks(start, end)
+    states = [bool(ref_ok(start[0] + (a + b) / 2 * dx, start[1] + (a + b) / 2 * dy))
+              for a, b in zip(cuts, cuts[1:])]
+    if not states or states[0] is not True or states[-1] is not False:
+        return None
+    first = states.index(False)
+    if any(states[first:]):
+        return None
+    exit_t = cuts[first]
+
+    def on_segment(q, low, high):
+        t = ((q[0] - start[0]) * dx + (q[1] - start[1]) * dy) / norm
+        projection = (start[0] + t * dx, start[1] + t * dy)
+        return low - 1e-9 <= t <= high + 1e-9 and math.dist(q[:2], projection) <= 1e-6
+    terminal = run['terminals'][0]
+    if not ref_ok(*terminal[:2]) or not on_segment(terminal, 0, exit_t):
+        return None
+    if not all(on_segment(q, exit_t, 1) and not ref_ok(*q) for q in run['bad_points']):
+        return None
+    return start, (start[0] + exit_t * dx, start[1] + exit_t * dy), end
+
+
+def _run_fingerprint(run):
+    import hashlib
+    return hashlib.sha256(json.dumps({'bad': run.get('bad_points'), 'terminals': run.get('terminals')},
+                                    sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
+class _NativeStubProof:
+    """Internal producer result; never a user/spec boolean or terminal count."""
+    def __init__(self, source_sha, track, net, layer, domain, run):
+        self.record = dict(source_sha256=source_sha, track_uuid=str(track.m_Uuid.AsString()),
+                           net=net, layer=layer, domain=domain, run_sha256=_run_fingerprint(run),
+                           contract='native-unloaded-single-straight-leaf-v1')
+
+    def matches(self, source_sha, net, layer, domain, run):
+        return all(self.record[k] == v for k, v in dict(source_sha256=source_sha, net=net, layer=layer,
+                                                       domain=domain, run_sha256=_run_fingerprint(run)).items())
+
+
+def prove_native_stub(p, board, lname, net, domain, run, ref_ok, edge, source_sha):
+    """Prove an unloaded straight native copper leaf, not a pad/via escape.
+
+    Multi-segment/arc/branch stubs remain unproven. No component pad, via or
+    other conductor may touch the unreferenced tip; the referenced prefix must
+    physically attach to another same-net native conductor. Uses actual copper
+    width and land shapes, not radius-only endpoint or sample-count inference.
+    """
+    layer = board.GetLayerID(lname)
+    items = list(board.GetTracks()) + list(board.GetPads())
+    candidates = []
+    for track in items:
+        if track.GetClass() != 'PCB_TRACK' or track.GetNetname() != net or not track.IsOnLayer(layer):
+            continue
+        a, b = track.GetStart(), track.GetEnd()
+        candidate = single_leaf_candidate((mm(a.x), mm(a.y)), (mm(b.x), mm(b.y)), run, ref_ok, edge.breaks)
+        if candidate is not None:
+            candidates.append((track, candidate))
+    if len(candidates) != 1:
+        return None
+    track, (start, exit_, end) = candidates[0]
+    tip = p.PCB_TRACK(board)
+    tip.SetLayer(layer)
+    tip.SetWidth(track.GetWidth())
+    tip.SetStart(p.VECTOR2I(p.FromMM(exit_[0]), p.FromMM(exit_[1])))
+    tip.SetEnd(p.VECTOR2I(p.FromMM(end[0]), p.FromMM(end[1])))
+    tip_shape = tip.GetEffectiveShape(layer)
+    whole_shape = track.GetEffectiveShape(layer)
+    attached = False
+    for item in items:
+        if item == track or not item.IsOnLayer(layer):
+            continue
+        shape = item.GetEffectiveShape(layer)
+        if shape.Collide(tip_shape, 0):
+            return None
+        if item.GetNetname() == net and shape.Collide(whole_shape, 0):
+            attached = True
+    if not attached:
+        return None
+    return _NativeStubProof(source_sha, track, net, lname, domain, run)
+
+
 def analyse(board_path, s, verbose, sch_path=None):
     p = pcb()
     b = p.LoadBoard(board_path)
@@ -712,9 +1565,11 @@ def analyse(board_path, s, verbose, sch_path=None):
         sz = pad.GetSize(p.F_Cu) if hasattr(pad, 'GetSize') else pad.GetSize()
         anchors[net].append((mm(c.x), mm(c.y), mm(max(sz.x, sz.y)) / 2))
 
-    samples, cuts = collections.defaultdict(list), collections.defaultdict(float)
+    paths, cuts = collections.defaultdict(list), collections.defaultdict(float)
+    routed_records = []
+    # D-124c enforced screen inputs: sampled tracks, sampled routed length and the narrowest track of each net
+    samples, routed, width = collections.defaultdict(list), collections.defaultdict(float), {}
     vias, via_r = collections.defaultdict(list), collections.defaultdict(list)
-    routed, width = collections.defaultdict(float), {}   # D-124b: routed length (all layers) and narrowest track
     for t in b.GetTracks():
         net, cls = t.GetNetname(), t.GetClass()
         if cls == 'PCB_VIA':
@@ -727,12 +1582,15 @@ def analyse(board_path, s, verbose, sch_path=None):
         a, e = t.GetStart(), t.GetEnd()
         if cls == 'PCB_ARC':
             m = t.GetMid()
-            pts = sample_arc((mm(a.x), mm(a.y)), (mm(m.x), mm(m.y)), (mm(e.x), mm(e.y)), s['step_mm'])
+            path = ((mm(a.x), mm(a.y)), (mm(m.x), mm(m.y)), (mm(e.x), mm(e.y)))
         else:
-            pts = sample_segment((mm(a.x), mm(a.y)), (mm(e.x), mm(e.y)), s['step_mm'])
+            path = ((mm(a.x), mm(a.y)), (mm(e.x), mm(e.y)))
+        routed_records.append((net, lname, path, mm(t.GetWidth())))
+        pts = sample_arc(*path, s['step_mm']) if cls == 'PCB_ARC' else sample_segment(*path, s['step_mm'])
         routed[net] += sum(w for _, _, w in pts)
         width[net] = min(width.get(net, math.inf), mm(t.GetWidth()))
         if lname in s['adjacent']:
+            paths[(lname, net)].append(path)
             samples[(lname, net)].extend(pts)
         else:
             cuts[(lname, net)] += sum(w for _, _, w in pts)
@@ -743,18 +1601,36 @@ def analyse(board_path, s, verbose, sch_path=None):
         if fp.GetReference().startswith('C') and fn & set(s['grounds']):
             for n in fn & set(s['alt_refs']):
                 caps[n].append((mm(fp.GetPosition().x), mm(fp.GetPosition().y)))
-    domains = {net: net_domain(net, pad_refs[net], s) for _, net in samples}
+    domains = {net: net_domain(net, pad_refs[net], s) for _, net in paths}
+    projection_boundaries = {}
+    for lname in s['adjacent'].values():
+        edges = []
+        for _, poly in fills[layers[lname]]:
+            for index in range(poly.OutlineCount()):
+                for ring in [poly.COutline(index)] + [poly.CHole(index, h) for h in range(poly.HoleCount(index))]:
+                    vertices = [(mm(ring.CPoint(i).x), mm(ring.CPoint(i).y)) for i in range(ring.PointCount())]
+                    edges.extend(zip(vertices, vertices[1:]+vertices[:1]))
+        projection_boundaries[lname] = edges
     results = {}
-    for (lname, net), pts in samples.items():
+    for lname, net in paths:
         if not _checked(net, s):
             continue
-        results[(lname, net)] = evaluate_net(pts, ref_fn(layers[s['adjacent'][lname]]), domains[net],
-                                             anchors[net], s, net=net, caps=caps)
+        adjacent = s['adjacent'][lname]
+        results[(lname, net)] = evaluate_paths(paths[(lname, net)], projection_boundaries[adjacent],
+                                              ref_fn(layers[adjacent]), domains[net], anchors[net], s, net, caps)
+
+    d124c_results = {}
+    for (lname, net), pts in samples.items():
+        if _checked(net, s):
+            d124c_results[(lname, net)] = evaluate_net(pts, ref_fn(layers[s['adjacent'][lname]]), domains[net],
+                                                       anchors[net], s, net=net, caps=caps)
 
     import net_drivers
     nl = net_drivers.export_netlist(sch_path or os.path.splitext(board_path)[0] + '.kicad_sch')
     s['_edges'] = driver_edges(sorted({net for _, net in results}), nl, s,
-                               geom=trace_geometry(board_path, s, routed, width))
+                               geom=trace_geometry(board_path, s, routed_records))
+    d124c_edges = d124c_driver_edges(sorted({net for _, net in d124c_results}), nl, s,
+                                     geom=d124c_trace_geometry(board_path, s, routed, width))
 
     info = []
     outline = p.SHAPE_POLY_SET()
@@ -793,16 +1669,62 @@ def analyse(board_path, s, verbose, sch_path=None):
 
     bb_w, bb_h = mm(bb.GetWidth()), mm(bb.GetHeight())
     board_mm = 2 * (bb_w + bb_h)
+    copper_items = list(b.GetTracks()) + list(b.GetPads())
+    vertical_items = [item for item in copper_items
+                      if item.GetClass() == 'PCB_VIA' or (item.GetClass() == 'PAD' and item.GetAttribute() == p.PAD_ATTRIB_PTH)]
+    reference_geometry = {}
+    import hashlib
+    with open(board_path, 'rb') as source_file:
+        source_sha = hashlib.sha256(source_file.read()).hexdigest()
 
     def detour(lname, domain, run, budget):
+        if _native_stub_matches(run, source_sha, run['net'], lname, domain):
+            return 0.0
+        if budget == 0 and len(run['terminals']) != 1:
+            return None
+        lid = layers[s['adjacent'][lname]]
+
+        def geometry(layer):
+            key = (layer, domain)
+            if key not in reference_geometry:
+                reference_geometry[key] = native_reference_geometry(p, fills, layer, domain, s, caps, copper_items)
+            return reference_geometry[key]
+
+        ok, edge_ok = geometry(lid)
+        if len(run['terminals']) < 2:
+            proof = prove_native_stub(p, b, lname, run['net'], domain, run, ok, edge_ok, source_sha)
+            if proof is not None:
+                run['_stub_proof'] = proof
+                return 0.0
+        if budget == 0:
+            return None
+        alt = layers.get('In1.Cu')
+        alternate_ok = alternate_edge_ok = None
+        ports = []
+        if alt is not None and alt != lid:
+            alternate_ok, alternate_edge_ok = geometry(alt)
+            # A blind/buried via that does not span both planes is not a portal.
+            ports = native_ground_portals(vertical_items, lid, alt, domain)
+        # Continuous edge checks make coarsening conservative for topology;
+        # narrow channels may still produce false failures, never jump holes.
+        return detour_mm(ok, run['terminals'], budget, min(0.5, max(0.1, budget / 200)), ports,
+                         edge_ok, alternate_ok, alternate_edge_ok)
+
+    def d124c_detour(lname, domain, run, budget):
         ref_at = ref_fn(layers[s['adjacent'][lname]])
         ok = lambda x, y: ref_domain(ref_at(x, y), s, False, (x, y), caps) == domain
         # grid cell: 0.1 mm, coarser for a long budget (at most 200 cells per budget; a coarser grid only makes
         # the path longer, so it never hides a failure)
         ports = [(x, y) for x, y, _ in via_r[domain]] + [(x, y) for x, y, _, tht in gpads[domain] if tht]
-        return detour_mm(ok, run['terminals'], budget, min(0.5, max(0.1, budget / 200)), ports)
+        return d124c_detour_mm(ok, run['terminals'], budget, min(0.5, max(0.1, budget / 200)), ports)
 
-    fails = plane_cut_failures(cuts, s) + island_failures(pieces) + reference_failures(results, domains, s, detour, board_mm)
+    # Enforced: the accepted D-124c screen. The D-124d proposal (native projection, stub proof, continuous detour,
+    # class applicability, timing evidence) is report-only: its extra findings are WARN lines, not counted.
+    enforced = d124c_reference_failures(d124c_results, domains, s, d124c_edges, d124c_detour, board_mm)
+    assessment=reference_assessment(results,domains,s,detour,board_mm,source_sha,report_only_timing=True)
+    fails, report = planes_outcome(plane_cut_failures(cuts,s)+island_failures(pieces), enforced, assessment)
+    info.extend(report)
+    info.append(f"SI_TIMING_EVIDENCE mode=report-only decision=D-124d-proposed unresolved={len(assessment['timing_evidence_failures'])} timing_evidence_complete={str(assessment['timing_evidence_complete']).lower()}; geometry/model/physical_board_qualification separate")
     info.append(f'INFO detour budget: no rule above {board_mm:.0f} mm (board bounding-box perimeter); '
                 + ', '.join(f"{k} {v['tr_ns']:g} ns -> {detour_budget_mm(v['tr_ns']):.1f} mm" + (' (assumption)' if v['assumption'] else '')
                             for k, v in s['_edge_rates'].items()) + '; other nets: the edge of their driver (tools/driver-edges.json)')

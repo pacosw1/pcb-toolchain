@@ -1,224 +1,206 @@
 #!/usr/bin/env python3
-"""ibis_ramp: the output drive of a vendor IBIS model (D-124b, corrected by D-124c, 2026-10-09).
+"""Source-bound IBIS ramp and static V-I screening (D-124c).
 
-Reads only what the detour budget needs from an IBIS file (ANSI/EIA-656, IBIS 3.2 to 7): per [Model] the
-Model_type, C_comp (typ, min, max) and the [Ramp] section (dV/dt_r, dV/dt_f for typ, min, max and R_load), and
-the [Pin] lists (signal -> model name). The file is streamed line by line; it is never read into a report.
-
-[Ramp] (IBIS 4.1 section 6): dV/dt_r = (20 % to 80 % voltage swing) / (time of that swing) into R_load, for the
-rising edge; dV/dt_f for the falling edge. The edge time used is the dt: a 20-80 % time, which is shorter than the
-10-90 % time of the same edge (1.33 x for a linear ramp), so it is the conservative one for the detour budget.
-Corners: the columns are typ, min (slow, weak) and max (fast, strong). ramp_edges() takes the shortest dt of the
-corners asked (default typ and max): the fastest edge.
-
-D-124c (2026-10-09): the [Ramp] is measured into the ramp fixture (R_load, 50 ohm recommended: IBIS Modeling
-Cookbook v4, IBIS Open Forum, section 3.2.1 p. 18, https://ibis.org/cookbook/cookbook-v4.pdf [P]; R_load = 50 in all
-our TI files), so it is much faster than the edge into a real board load (TCA9535 INT read 0.16 ns). The edge is now
-the same t >= C x dV / I as for parts without IBIS (tools/net_drivers.py), with I from the [Pulldown] and [Pullup]
-V-I tables (vi_edges):
-  - the V-I tables are static (DC) output currents: "slow enough that the current measurement at each time point
-    is effectively DC"; [Pulldown] is ground-relative, [Pullup] is Vcc-relative (table V = Vcc - Vout; current into
-    the pin is positive) (Cookbook section 3.1.1 and 3.1.1.1, p. 13-14 [P]);
-  - a capacitor C driven by a static V-I curve: C dV/dt = I(V), so the 10-90 % time is t = C x integral dV / I(V)
-    over 0.1 V .. 0.9 V of the swing [D]. Using the MEAN current over that range, t = C x 0.8 V / I_avg, gives a time
-    no longer than that integral (arithmetic mean >= harmonic mean), and the driver's turn-on time is left out: so
-    the estimate is the faster (stricter) one. Howard Johnson, "Big Buffer", Signal Consistency newsletter vol. 8
-    issue 07 (2005), https://sigcon.com/Pubs/news/8_07.htm [S], uses the V-I curve current the same way
-    (TR = 2.3 x (VCC / ISHORT) x CLOAD for 0-90 %, one linear resistance); for a linear V-I curve our mean-current
-    10-90 % time is 1.6 RC, shorter than his 2.2 RC (10-90 %).
-  - swing: push-pull, the corner's [Pullup Reference] (else [Voltage Range]) voltage; open drain, the pull-up rail.
-  - corners: typ and max (IBIS: max is the strong, fast corner); the faster edge is used.
-
-  python3 tools/ibis_ramp.py FILE.ibs MODEL      print the ramp, V-I currents and C_comp of one model
+IBIS7.2 [Ramp] defines a20–80% loaded swing, package excluded/C_comp included.
+Original vendor bytes stay unchanged; corner omissions and load/PVT remain explicit.
 """
-import os
+import hashlib
+import json
+import math
 import re
 import sys
+from pathlib import Path
 
-SUFFIX = {'T': 1e12, 'G': 1e9, 'M': 1e6, 'k': 1e3, 'm': 1e-3, 'u': 1e-6, 'n': 1e-9, 'p': 1e-12, 'f': 1e-15}
-CORNERS = ('typ', 'min', 'max')
-_cache = {}
-
-
-class IbisError(ValueError):
-    pass
-
+SUFFIX={'T':1e12,'G':1e9,'M':1e6,'k':1e3,'m':1e-3,'u':1e-6,'n':1e-9,'p':1e-12,'f':1e-15}
+CORNERS=('typ','min','max')
+_cache={}
+class IbisError(ValueError):pass
 
 def number(text):
-    """An IBIS number: 3.22pF, 16.66p, 2.85826e-010, 1.0nH, 50 -> float in SI units. NA -> None."""
-    t = text.strip()
-    if t.upper() == 'NA':
-        return None
-    m = re.fullmatch(r'([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)([TGMkmunpf]?)[A-Za-z]*', t)
-    if not m:
-        raise IbisError(f'not an IBIS number: {text!r}')
-    return float(m.group(1)) * SUFFIX.get(m.group(2), 1.0)
+    text=text.strip()
+    if text.upper()=='NA':return None
+    m=re.fullmatch(r'([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)([TGMkmunpf]?)([A-Za-z]*)',text)
+    if not m:raise IbisError('invalid IBIS number: '+text)
+    if m[3] not in ('','V','A','F','H','s','ohm','ohms','Ohm','Ohms'):raise IbisError('unsupported IBIS unit: '+text)
+    value=float(m[1])*SUFFIX.get(m[2],1)
+    if not math.isfinite(value):raise IbisError('nonfinite IBIS number: '+text)
+    return value
 
-
-def _ramp_value(text):
-    """'1.49/3.24E-10' -> (1.49, 3.24e-10); NA -> None."""
-    if text.strip().upper() == 'NA':
-        return None
-    dv, dt = text.split('/')
-    return number(dv), number(dt)
-
+def triple(words):
+    if len(words)!=3:raise IbisError('expected typ/min/max triple')
+    return [number(x) for x in words]
 
 def parse(lines):
-    """{'models': {lower name: {'name', 'type', 'c_comp': [typ, min, max] F, 'ramp': {'r': [3], 'f': [3]},
-    'r_load'}}, 'pins': {component: {pin number: (signal, model name)}}}."""
-    models, pins = {}, {}
-    model = comp = None
-    section = ''
+    models={};pins={};selectors={};model=comp=None;section='';selector=None
     for raw in lines:
-        line = raw.split('|', 1)[0].rstrip()
-        if not line.strip():
-            continue
-        head = re.match(r'\s*\[([^\]]+)\]\s*(.*)', line)
+        line=raw.split('|',1)[0].strip()
+        if not line:continue
+        head=re.match(r'\[([^\]]+)\]\s*(.*)',line)
         if head:
-            section, arg = head.group(1).strip().lower(), head.group(2).strip()
-            if section == 'model':
-                name = arg.split()[0]
-                model = models.setdefault(name.lower(), {'name': name, 'type': None, 'c_comp': None,
-                                                         'ramp': {}, 'r_load': None, 'vi': {},
-                                                         'vrange': None, 'pullup_ref': None})
-            elif section in ('voltage range', 'pullup reference') and model is not None:
-                vals = [number(w) for w in arg.split()[:3]]
-                vals += [None] * (3 - len(vals))
-                model['vrange' if section == 'voltage range' else 'pullup_ref'] = [v if v is not None else vals[0] for v in vals]
-            elif section in ('pulldown', 'pullup') and model is not None:
-                model['vi'][section] = []
-            elif section == 'component':
-                comp, model = arg, None
-                pins.setdefault(comp, {})
-            elif section == 'end':
-                model = None
+            section,arg=head[1].strip().lower(),head[2].strip()
+            if section=='component':
+                comp=arg;model=None
+                if comp in pins:raise IbisError('duplicate component: '+comp)
+                pins[comp]={}
+            elif section=='model':
+                key=arg.lower()
+                if key in models:raise IbisError('duplicate model: '+arg)
+                model={'name':arg,'type':None,'c_comp':None,'ramp':{},'vi':{},'pullup_ref':None,'r_load':50.0,'r_load_default':True,'voltage_range':None,'temperature_range':None}
+                models[key]=model
+            elif section=='model selector':
+                selector=arg.lower()
+                if selector in selectors:raise IbisError('duplicate selector: '+arg)
+                selectors[selector]=[]
+            elif section in ('voltage range','temperature range','pullup reference') and model is not None:
+                key='pullup_ref' if section=='pullup reference' else section.replace(' ','_')
+                if model[key] is not None:raise IbisError('duplicate '+section)
+                model[key]=triple(arg.split())
+            elif section in ('pulldown','pullup') and model is not None:
+                if section in model['vi']:raise IbisError('duplicate V-I table')
+                model['vi'][section]=[]
+            elif section=='end':model=None
             continue
-        words = line.split()
-        if section == 'pin' and comp is not None and len(words) >= 3:
-            pins[comp][words[0]] = (words[1], words[2])
-        elif section == 'model' and model is not None:
-            key = words[0].lower()
-            if key == 'model_type' and len(words) > 1:
-                model['type'] = words[1]
-            elif key == 'c_comp' and len(words) >= 2:
-                vals = [number(w) for w in words[1:4]]
-                vals += [None] * (3 - len(vals))
-                model['c_comp'] = [v if v is not None else vals[0] for v in vals]
-        elif section in ('pulldown', 'pullup') and model is not None and len(words) >= 2:
-            try:
-                vals = [number(w) for w in words[:4]]
-            except IbisError:
-                continue
-            vals += [None] * (4 - len(vals))
-            model['vi'][section].append((vals[0], [v if v is not None else vals[1] for v in vals[1:]]))
-        elif section == 'ramp' and model is not None:
-            key = words[0].lower()
-            if key in ('dv/dt_r', 'dv/dt_f') and len(words) >= 2:
-                vals = [_ramp_value(w) for w in words[1:4]]
-                vals += [None] * (3 - len(vals))
-                model['ramp'][key[-1]] = [v if v is not None else vals[0] for v in vals]
+        words=line.split()
+        if section=='pin' and comp is not None:
+            if len(words)<3:raise IbisError('malformed pin')
+            if words[0] in pins[comp]:raise IbisError('duplicate component pin')
+            pins[comp][words[0]]=(words[1],words[2])
+        elif section=='model selector':selectors[selector].append(words[0].lower())
+        elif section=='model' and model is not None:
+            if words[0].lower()=='model_type':model['type']=words[1]
+            elif words[0].lower()=='c_comp':
+                model['c_comp']=triple(words[1:])
+                if any(v is not None and v<0 for v in model['c_comp']):raise IbisError('negative C_comp')
+        elif section in ('pulldown','pullup') and model is not None:
+            if len(words)!=4:raise IbisError('malformed V-I row')
+            v=number(words[0]);currents=triple(words[1:])
+            if v is None or currents[0] is None:raise IbisError('missing V-I voltage or typical current')
+            rows=model['vi'][section]
+            if rows and v<=rows[-1][0]:raise IbisError('V-I voltages must strictly increase')
+            rows.append((v,currents))
+        elif section=='ramp' and model is not None:
+            key=words[0].lower()
+            if key in ('dv/dt_r','dv/dt_f'):
+                if len(words)!=4:raise IbisError('malformed ramp triple')
+                vals=[]
+                for word in words[1:]:
+                    if word.upper()=='NA':vals.append(None);continue
+                    parts=word.split('/')
+                    if len(parts)!=2:raise IbisError('ramp requires explicit dV/dt fraction')
+                    dv,dt=map(number,parts)
+                    if dv is None or dt is None or dv<=0 or dt<=0:raise IbisError('nonpositive ramp dV/dt')
+                    vals.append((dv,dt))
+                if vals[0] is None:raise IbisError('typical ramp missing')
+                if key[-1] in model['ramp']:raise IbisError('duplicate ramp edge')
+                model['ramp'][key[-1]]=vals
             else:
-                m = re.match(r'r_load\s*=\s*(\S+)', line.strip(), re.I)
-                if m:
-                    model['r_load'] = number(m.group(1))
-    return {'models': models, 'pins': pins}
+                match=re.fullmatch(r'r_load\s*=\s*(\S+)',line,re.I)
+                if match:
+                    load=number(match[1])
+                    if load is None or load<=0:raise IbisError('nonpositive R_load')
+                    model['r_load']=load;model['r_load_default']=False
+    return {'models':models,'pins':pins,'selectors':selectors}
 
+def load(path,expected_sha256=None):
+    path=Path(path).resolve();data=path.read_bytes();sha=hashlib.sha256(data).hexdigest()
+    if expected_sha256 is not None and sha!=expected_sha256:raise IbisError('IBIS source hash mismatch: '+str(path))
+    key=(str(path),sha)
+    if key not in _cache:
+        result=parse(data.decode('utf-8',errors='replace').splitlines())
+        result.update(source_sha256=sha,source_path=str(path),decoding='UTF-8 replacement for parsing; original bytes retained')
+        _cache[key]=result
+    return _cache[key]
 
-def load(path):
-    """Parse an IBIS file once (cached by path)."""
-    path = os.path.abspath(path)
-    if path not in _cache:
-        if not os.path.isfile(path):
-            raise IbisError(f'no IBIS file {path}')
-        with open(path, errors='replace') as f:
-            _cache[path] = parse(f)
-    return _cache[path]
-
-
-def ramp_edges(model, corners=('typ', 'max')):
-    """{'tr_ns', 'tf_ns', 'corner_r', 'corner_f'}: the shortest 20-80 % time of the corners asked."""
-    out = {}
-    for edge in ('r', 'f'):
-        vals = model['ramp'].get(edge)
-        if not vals:
-            raise IbisError(f"model {model['name']}: no [Ramp] dV/dt_{edge}")
-        best = min((vals[CORNERS.index(c)][1], c) for c in corners if vals[CORNERS.index(c)])
-        out[f't{edge}_ns'] = best[0] * 1e9
-        out[f'corner_{edge}'] = best[1]
+def ramp_edges(model,corners=CORNERS):
+    if not corners or any(c not in CORNERS for c in corners):raise IbisError('invalid corner selection')
+    out={'r_load_ohm':model.get('r_load',50.0),'r_load_default':model.get('r_load_default',True),'voltage_range':model.get('voltage_range'),'temperature_range':model.get('temperature_range'),'model_type':model.get('type'),'missing_corners':{}}
+    for edge in ('r','f'):
+        vals=model['ramp'].get(edge)
+        if not vals:raise IbisError('no ramp '+edge)
+        available=[(vals[CORNERS.index(c)][1],c,vals[CORNERS.index(c)][0]) for c in corners if vals[CORNERS.index(c)] is not None]
+        if not available:raise IbisError('all requested corners unavailable')
+        dt,corner,dv=min(available)
+        out.update({f't{edge}_ns':dt*1e9,f'corner_{edge}':corner,f'dv_{edge}_v':dv})
+        out['missing_corners'][edge]=[c for c in CORNERS if vals[CORNERS.index(c)] is None]
     return out
 
 
-def vi_avg_current(rows, corner, v_lo, v_hi):
-    """Mean |I| (A) of a V-I table column over the table voltages v_lo..v_hi (linear between the points, held
-    flat outside the table)."""
-    pts = sorted((v, i[CORNERS.index(corner)]) for v, i in rows)
-    if not pts:
-        raise IbisError('empty V-I table')
-
+def vi_avg_current(rows,corner,v_lo,v_hi):
+    """Mean magnitude on a covered interval; no extrapolation or invented NA corner."""
+    if corner not in CORNERS:raise IbisError('invalid corner')
+    if not all(math.isfinite(v) for v in (v_lo,v_hi)) or not 0<=v_lo<v_hi:raise IbisError('invalid V-I interval')
+    index=CORNERS.index(corner)
+    if len(rows)<2 or rows[0][0]>v_lo or rows[-1][0]<v_hi:raise IbisError('V-I interval not covered')
+    if any(not math.isfinite(v) for v,_ in rows) or any(a[0]>=b[0] for a,b in zip(rows,rows[1:])):raise IbisError('invalid V-I voltages')
     def at(x):
-        if x <= pts[0][0]:
-            return pts[0][1]
-        for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
-            if x0 <= x <= x1:
-                return y0 if x1 == x0 else y0 + (y1 - y0) * (x - x0) / (x1 - x0)
-        return pts[-1][1]
-    xs = [v_lo] + [x for x, _ in pts if v_lo < x < v_hi] + [v_hi]
-    area = sum((abs(at(a)) + abs(at(b))) / 2 * (b - a) for a, b in zip(xs, xs[1:]))
-    return area / (v_hi - v_lo)
+        for (a,ca),(b,cb) in zip(rows,rows[1:]):
+            if a<=x<=b:
+                ya,yb=ca[index],cb[index]
+                if ya is None or yb is None:raise IbisError('missing V-I corner '+corner)
+                if not math.isfinite(ya) or not math.isfinite(yb):raise IbisError('nonfinite V-I current')
+                return ya+(yb-ya)*(x-a)/(b-a)
+        raise IbisError('V-I interval not covered')
+    xs=[v_lo]+[v for v,_ in rows if v_lo<v<v_hi]+[v_hi]
+    ys=[at(x) for x in xs]
+    if any(y==0 for y in ys) or min(ys)<0<max(ys):raise IbisError('zero or changing V-I current sign')
+    result=sum((abs(a)+abs(b))*.5*(v-u) for u,v,a,b in zip(xs,xs[1:],ys,ys[1:]))/(v_hi-v_lo)
+    if not math.isfinite(result) or result<=0:raise IbisError('invalid mean V-I current')
+    return result
 
+def vi_edges(model,c_f,swing_v=None,open_drain=False,corners=CORNERS,i_limit_a=None):
+    """Conditional C*0.8*swing/mean-current estimate; static V-I is not a timing guarantee.
 
-def vi_edges(model, c_f, swing_v=None, open_drain=False, corners=('typ', 'max'), i_limit_a=None):
-    """D-124c edge of an output into C (F): t = C x 0.8 V / I_avg, I_avg = mean |I| over 10-90 % of the swing.
-    Falling: [Pulldown] at Vout = 0.1 V .. 0.9 V. Rising: [Pullup], Vcc-relative, the same range. Swing: swing_v
-    (the pull-up rail of an open drain) else the corner's [Pullup Reference] or [Voltage Range]. i_limit_a: a series
-    resistor limit. Returns {'tf_ns', 'corner_f', 'i_f', 'v_f'} and for push-pull also tr: the fastest corner."""
-    kind = (model.get('type') or '').lower()
-    if not kind or kind.startswith('input') or kind in ('terminator', 'series', 'series_switch'):
-        raise IbisError(f"model {model['name']}: Model_type {model.get('type')} is not an output")
-    if open_drain and not swing_v:
-        raise IbisError(f"model {model['name']}: open drain needs the pull-up voltage")
-    out = {}
-    for edge, table in (('f', 'pulldown'), ('r', 'pullup')):
-        if edge == 'r' and open_drain:
-            continue
-        rows = model['vi'].get(table)
-        if not rows:
-            raise IbisError(f"model {model['name']}: no [{table.title()}] table")
-        best = None
-        for c in corners:
-            ref = model['pullup_ref'] or model['vrange']
-            v = swing_v if open_drain and swing_v else (ref[CORNERS.index(c)] if ref else swing_v)
-            if not v:
-                raise IbisError(f"model {model['name']}: no swing voltage ([Voltage Range] or pull-up rail)")
-            i = vi_avg_current(rows, c, 0.1 * v, 0.9 * v)
-            if not i > 0:
-                raise IbisError(f"model {model['name']}: no {table} current over 10-90 % ({c} corner)")
-            if i_limit_a is not None:
-                i = min(i, i_limit_a)
-            t = c_f * 0.8 * v / i * 1e9
-            if best is None or t < best[0]:
-                best = (t, c, i, v)
-        out[f't{edge}_ns'], out[f'corner_{edge}'], out[f'i_{edge}'], out[f'v_{edge}'] = best
+    D-124c uses ground-relative pulldown and supply-relative pullup coordinates.
+    Arithmetic mean current omits turn-on/dynamic/package effects. Available
+    corners remain explicit; absent corners never inherit typical values.
+    """
+    if not math.isfinite(c_f) or c_f<=0:raise IbisError('invalid load capacitance')
+    if not corners or any(c not in CORNERS for c in corners):raise IbisError('invalid corner selection')
+    if i_limit_a is not None and (not math.isfinite(i_limit_a) or i_limit_a<=0):raise IbisError('invalid series current limit')
+    if swing_v is not None and (not math.isfinite(swing_v) or swing_v<=0):raise IbisError('invalid swing')
+    kind=(model.get('type') or '').lower()
+    if kind not in ('output','i/o','3-state','open_drain','open_sink','open_source'):raise IbisError('model is not an output')
+    if open_drain and swing_v is None:raise IbisError('open drain needs pull-up voltage')
+    out={'qualified_fastest_bound':False,'method':'conditional static V-I arithmetic-mean current','missing_corners':{},'voltage_range':model.get('voltage_range'),'temperature_range':model.get('temperature_range'),'c_f':c_f}
+    for edge,table in (('f','pulldown'),('r','pullup')):
+        if edge=='r' and open_drain:continue
+        rows=model.get('vi',{}).get(table)
+        if not rows:raise IbisError('no '+table+' V-I table')
+        available=[];missing=[]
+        for corner in corners:
+            idx=CORNERS.index(corner);ref=model.get('pullup_ref') or model.get('voltage_range')
+            v=swing_v if open_drain else (ref[idx] if ref else swing_v)
+            if v is None or any(currents[idx] is None for _,currents in rows):missing.append(corner);continue
+            if not math.isfinite(v) or v<=0:raise IbisError('invalid reference voltage')
+            i=vi_avg_current(rows,corner,.1*v,.9*v)
+            if i_limit_a is not None:i=min(i,i_limit_a)
+            t=c_f*.8*v/i*1e9
+            if not math.isfinite(t) or t<=0:raise IbisError('invalid V-I estimate')
+            available.append((t,corner,i,v))
+        if not available:raise IbisError('all V-I corners unavailable')
+        t,corner,i,v=min(available)
+        out.update({f't{edge}_ns':t,f'corner_{edge}':corner,f'i_{edge}':i,f'v_{edge}':v})
+        out['missing_corners'][edge]=missing
     return out
-
 
 def main(argv=None):
-    a = sys.argv[1:] if argv is None else argv
-    if len(a) != 2:
-        print(__doc__)
+    """python tools/ibis_ramp.py FILE.ibs MODEL: source-bound screening JSON."""
+    args=sys.argv[1:] if argv is None else argv
+    if len(args)!=2:
+        print('usage: python tools/ibis_ramp.py FILE.ibs MODEL',file=sys.stderr)
         return 2
-    m = load(a[0])['models'].get(a[1].lower())
-    if m is None:
-        print(f'no model {a[1]}')
+    try:
+        parsed=load(args[0]);model=parsed['models'].get(args[1].lower())
+        if model is None:raise IbisError('model not found: '+args[1])
+        result=dict(qualified_fastest_bound=False,kind='ibis_ramp_screen',
+                    source_path=parsed['source_path'],source_sha256=parsed['source_sha256'],
+                    model=model,edge_screen=ramp_edges(model) if model['ramp'] else None,
+                    reason='characterized source model; actual board load/package/PVT applicability unproved')
+        print(json.dumps(result,sort_keys=True,allow_nan=False))
+        return 0
+    except (IbisError,OSError,UnicodeError) as error:
+        print(str(error),file=sys.stderr)
         return 1
-    e = ramp_edges(m) if m['ramp'] else {}
-    print(f"{m['name']} {m['type']} C_comp {m['c_comp']} R_load {m['r_load']} ramp {m['ramp']} -> {e} (not used, D-124c)")
-    if m['vi'].get('pulldown'):
-        od = not m['vi'].get('pullup')
-        ref = m['pullup_ref'] or m['vrange'] or [None] * 3
-        print(f"V-I edge into 1 pF: {vi_edges(m, 1e-12, swing_v=ref[0], open_drain=od)}")
-    return 0
 
 
-if __name__ == '__main__':
-    sys.exit(main())
+if __name__=='__main__':raise SystemExit(main())

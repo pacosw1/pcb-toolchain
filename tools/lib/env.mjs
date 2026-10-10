@@ -17,7 +17,9 @@ export const kicadCli = process.env.KICAD_CLI ?? `${kicadApp}/MacOS/kicad-cli`;
 export const kicadPython = process.env.KICAD_PYTHON ?? `${kicadApp}/Frameworks/Python.framework/Versions/Current/bin/python3`;
 export const kicadShared = `${kicadApp}/SharedSupport`;
 export const KICAD_VERSION = '10.0';
-export const kicadConfig = process.env.KICAD_CONFIG_HOME ?? join(home, 'Library/Preferences/kicad', KICAD_VERSION);
+// KICAD_CONFIG_HOME is the base path: KiCad appends its major/minor version.
+// Fingerprint the same library tables that the CLI actually opens.
+export const kicadConfig = join(process.env.KICAD_CONFIG_HOME ?? join(home, 'Library/Preferences/kicad'), KICAD_VERSION);
 
 // Pinned tool repos (CLAUDE.md section 5). dir: env override, then ~/Documents/GitHub, then ~/code.
 const repo = (name, envName) => first([process.env[envName], join(home, 'Documents/GitHub', name), join(home, 'code', name)]);

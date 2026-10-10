@@ -21,7 +21,7 @@ import {createHash} from 'node:crypto';
 import {readFileSync, writeFileSync, existsSync, readdirSync, renameSync} from 'node:fs';
 import {join, relative, dirname, resolve} from 'node:path';
 import {root, kicadCli, kicadPython, modernPython, kicadShared, kicadConfig, pinnedRepos} from './lib/env.mjs';
-import {METRICS, passes, ratchet, metricsText, countFrom, validateConfig, expectedMetrics} from './lib/gate-core.mjs';
+import {METRICS, passes, ratchet, metricsText, countFrom, validateConfig, expectedMetrics, pathFailures} from './lib/gate-core.mjs';
 import {runDirectory, runTool, readReport, checkedText, readHappyResult} from './lib/gate-runtime.mjs';
 import {gateInputs, fingerprint} from './lib/gate-inputs.mjs';
 
@@ -105,7 +105,9 @@ const jobs = {
     };
   },
   async planes() {
-    return {planes_failures: countFrom(await output('planes', kicadPython, [tool('si_planes.py'), pcb, spec(c.planes)]), /(\d+) reference-plane failures/)};
+    const out = await output('planes', kicadPython, [tool('si_planes.py'), pcb, spec(c.planes)]);
+    for (const line of out.split('\n').filter(line => line.startsWith('WARN '))) console.log(`  ${line}`);
+    return {planes_failures: countFrom(out, /(\d+) reference-plane failures/)};
   },
   async pairs() {
     return {pairs_failures: countFrom(await output('pairs', kicadPython, [tool('si_pairs.py'), pcb, spec(c.pairs)]), /si_pairs: \d+ PASS, (\d+) FAIL/)};
@@ -117,10 +119,7 @@ const jobs = {
   },
   async paths() {
     const out = await output('paths', kicadPython, [tool('pcbtool.py'), 'paths', pcb, spec(c.paths), '--limit', '2']);
-    const ran = out.includes('power-path pairs below the design current') && out.includes('supply nets not covered');
-    // Unspecified supply nets are unchecked current paths, not a zero result.
-    const count=out.split('\n').filter(l=>l.startsWith('LOW') || l.startsWith('MISSING ')).length;
-    return {paths_low: ran && !(count===0 && out.includes('[gate-check-exit:1]')) ? count : null};
+    return {paths_low: pathFailures(out)};
   },
   async kicad_happy() {
     const file = join(logDir, 'kicad_happy.json');

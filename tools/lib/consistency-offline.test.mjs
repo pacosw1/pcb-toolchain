@@ -12,7 +12,7 @@ test('offline evidence validation checks candidate state, exact MPN and original
  const root=mkdtempSync(join(tmpdir(),'consistency-offline-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
  const put=(p,v)=>{mkdirSync(join(root,p,'..'),{recursive:true});writeFileSync(join(root,p),typeof v==='string'?v:JSON.stringify(v));};
  const repo=fileURLToPath(new URL('../..',import.meta.url));
- for(const p of ['tools/check-consistency.mjs','tools/lib/board-packets.mjs','tools/lib/board-selections.mjs','tools/lib/jev-client.mjs']) {mkdirSync(join(root,p,'..'),{recursive:true});copyFileSync(join(repo,p),join(root,p));}
+ for(const p of ['tools/check-consistency.mjs','tools/lib/board-packets.mjs','tools/lib/board-selections.mjs','tools/lib/bom-ownership.mjs','tools/lib/jev-client.mjs','tools/lib/bom-coverage.mjs','tools/lib/kicad-population.mjs','tools/lib/csv.mjs']) {mkdirSync(join(root,p,'..'),{recursive:true});copyFileSync(join(repo,p),join(root,p));}
  for(const p of ['STATUS','REQUIREMENTS','DECISIONS','DOC-RECONCILIATION','BOARD-INDEX']) put('hardware-design/'+p+'.md','current evidence');
  for(const p of ['PLATFORM.md','MODULES.md','README.md']) put(p,'current evidence');
  put('hardware-design/registry/boards.json',{schema_version:1,boards:[{id:'CELLULAR',directory:'CELLULAR',kind:'board',lifecycle:'active',packet:'full',revisions:[{revision:'A',state:'review',spec:'SPEC.md'}]}]});
@@ -24,7 +24,7 @@ test('offline evidence validation checks candidate state, exact MPN and original
  put('hardware-design/registry/datasheets/module.pdf','original manufacturer PDF');
  put('hardware-design/registry/datasheets/module.pdf.source.json',{source_url:'https://manufacturer.example/datasheet.pdf',fetched_at_utc:'2026-10-09T00:00:00Z',sha256:sha('original manufacturer PDF')});
  const run=()=>{try{return JSON.parse(execFileSync(process.execPath,[join(root,'tools/check-consistency.mjs'),'--offline'],{encoding:'utf8'}));}catch(e){assert.equal(e.status,1);return JSON.parse(e.stdout);}};
- assert.equal(run().ok,true);
+ assert.equal(run().ok,false);assert.ok(run().findings.some(f=>f.check==='bom_coverage'));
  component.state='stock-observed';records();assert.ok(run().findings.some(f=>f.check==='bom_candidate_state'));
  component.state='electrically-selected';component.mpn='Different';records();assert.ok(run().findings.some(f=>f.check==='bom_mpn_identity'));
  component.mpn='EG912U';records();put('hardware-design/registry/evidence/C123.html','altered');assert.ok(run().findings.some(f=>f.check==='bom_stock_evidence'));
@@ -42,7 +42,7 @@ test('offline evidence validation checks candidate state, exact MPN and original
    selection_review:review,review_evidence:{[review]:sha('historical electrical selection review'),[prefix+'/SPEC.md']:sha('documented')},
    parts:[{lcsc:'C123',mpn:'EG912U',state:'electrically-selected',references:['U1'],reviews:[review],evidence:'evidence/C123.json',evidence_sha256:sha(JSON.stringify(snapshot)),observed_at_utc:snapshot.fetched_at_utc,datasheet:'datasheets/module.pdf',datasheet_sha256:sha('original manufacturer PDF')}]};
  put(prefix+'/BOM-VERIFIED.selection.json',ledger);
- assert.equal(run().ok,true);assert.equal(component.state,'stock-observed');
+ assert.equal(run().ok,false);assert.ok(run().findings.some(f=>f.check==='bom_coverage'));assert.equal(component.state,'stock-observed');
  component.state='excluded-zero-stock';records();assert.ok(run().findings.some(f=>f.check==='bom_excluded_part'));
  component.state='electrically-selected';records();
  put(review,'altered review');assert.ok(run().findings.some(f=>f.check==='bom_selection_evidence'));

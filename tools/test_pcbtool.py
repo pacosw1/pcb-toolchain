@@ -169,8 +169,7 @@ class WidthTest(unittest.TestCase):
         r = pt.width_report([self.seg('VBAT', 1.5, (0, 0), (20, 0))], self.NEED, self.PADS)
         self.assertEqual(r['VBAT']['under'], [])
 
-    def test_short_neck_into_a_pad_has_no_credit(self):
-        # D-124c: a pad end with no other evidence is at the full allowed dT: no budget is left for the neck
+    def test_short_pad_neck_needs_thermal_boundary_evidence(self):
         r = pt.width_report([self.seg('VBAT', 0.6, (0, 0), (0, 1.5)), self.seg('VBAT', 1.5, (0, 1.5), (20, 0))], self.NEED, self.PADS)
         self.assertEqual(len(r['VBAT']['under']), 1)
         self.assertEqual(r['VBAT']['necks'], 0)
@@ -179,14 +178,12 @@ class WidthTest(unittest.TestCase):
         r = pt.width_report([self.seg('VIN', 0.4, (5, 5), (15, 5))], self.NEED, self.PADS)
         self.assertEqual(r['VIN']['under'], [(0.4, 10.0, (5, 5))])
 
-    def test_pin_escape_with_a_rating_passes_in_width_report(self):
-        # D-124c (b): a 0.6 mm x 0.5 mm escape from a pad 0.6 x 1.2 mm whose part pin is rated 5 A >= the class current
-        pads = [{'net': 'VBAT', 'pos': (0, 0), 'minor': 0.6, 'major': 1.2, 'pin_amps': 5.0}]
-        segs = [self.seg('VBAT', 0.6, (0, 0), (0, 0.5)), self.seg('VBAT', 1.5, (0, 0.5), (20, 0.5))]
-        r = pt.width_report(segs, self.NEED, pads)
-        self.assertEqual(r['VBAT']['under'], [])
-        pads[0]['pin_amps'] = None   # no rating: no allowance
-        self.assertEqual(len(pt.width_report(segs, self.NEED, pads)['VBAT']['under']), 1)
+    def test_arbitrary_pad_branch_and_length_do_not_authorize_neck_uplift(self):
+        r = pt.width_report([self.seg('VBAT', 0.6, (0, 0), (0, 3)),
+                             self.seg('VBAT', 0.4, (0, 0), (0, -1)),
+                             self.seg('VBAT', 1.0, (20, 0), (20, 1))], self.NEED, self.PADS)
+        self.assertEqual(len(r['VBAT']['under']), 3)
+        self.assertEqual(r['VBAT']['necks'], 0)
 
     def test_long_neck_chain_is_under_width(self):
         # two 0.6 mm segments in a row (no pad, via or branch between them) are one 10 mm neck
@@ -196,6 +193,16 @@ class WidthTest(unittest.TestCase):
 
     def test_nets_without_a_need_are_ignored(self):
         self.assertEqual(pt.width_report([self.seg('SDA', 0.2, (0, 0), (1, 0))], self.NEED, self.PADS), {})
+
+
+    def test_pin_escape_with_a_rating_passes_in_width_report(self):
+        # D-124c (b): a 0.6 mm x 0.5 mm escape from a pad 0.6 x 1.2 mm whose part pin is rated 5 A >= the class current
+        pads = [{'net': 'VBAT', 'pos': (0, 0), 'minor': 0.6, 'major': 1.2, 'pin_amps': 5.0}]
+        segs = [self.seg('VBAT', 0.6, (0, 0), (0, 0.5)), self.seg('VBAT', 1.5, (0, 0.5), (20, 0.5))]
+        r = pt.width_report(segs, self.NEED, pads)
+        self.assertEqual(r['VBAT']['under'], [])
+        pads[0]['pin_amps'] = None   # no rating: no allowance
+        self.assertEqual(len(pt.width_report(segs, self.NEED, pads)['VBAT']['under']), 1)
 
 
 class CurrentTest(unittest.TestCase):
@@ -225,6 +232,10 @@ class CurrentTest(unittest.TestCase):
         self.assertAlmostEqual(pt.neck_max_mm(0.2, 0.035, 0.5), 18.8, delta=0.3)
         self.assertAlmostEqual(pt.neck_amps(0.3, 0.035, pt.neck_max_mm(0.3, 0.035, 1.0)), 1.0, places=6)
 
+    def test_analytical_pq_meter_neck_requires_unproved_cool_end_conditions(self):
+        # PQ-METER /BST_SW: 0.24-0.3 mm, 2.27 mm long, 1.1 A (the narrowest width over the whole length)
+        self.assertGreater(pt.neck_amps(0.24, 0.035, 2.27), 1.1)
+
     def test_neck_chains_stop_at_pads_branches_and_wider_copper(self):
         # pieces: (key, layer, u, v, width). b-c-d is a 0.3/0.24 neck between wide copper a-b and d-e
         pieces = [('ab', 'F', (0, 0), (5, 0), 1.0), ('bc', 'F', (5, 0), (6, 0), 0.3), ('cd', 'F', (6, 0), (7.27, 0), 0.24),
@@ -235,18 +246,90 @@ class CurrentTest(unittest.TestCase):
         self.assertAlmostEqual(ch['cd'][0], 1.27, places=6)     # the 0.24 piece does not extend into wider copper
         self.assertAlmostEqual(ch['ef'][0], 1.0)               # a stop (pad, via, zone) ends a chain
 
-    def test_track_capacity_without_end_evidence_is_ipc(self):
-        # D-124c: no end evidence (default ends): no neck credit
+    def test_track_capacity_without_endpoint_temperature_evidence_is_ipc(self):
         self.assertAlmostEqual(pt.track_amps(0.25, 0.035, 10.0, chain=(2.27, 0.25)), pt.ipc_amps(0.25))
-        plane = (('plane',),)
-        self.assertAlmostEqual(pt.track_amps(0.25, 0.035, 10.0, (2.27, 0.25), ends=[plane, plane]),
-                               pt.neck_amps(0.25, 0.035, 2.27), places=4)
+        self.assertAlmostEqual(pt.track_amps(0.25, 0.035, 10.0, chain=(100, 0.25)), pt.ipc_amps(0.25))
+
+    def test_via_groups_join_vias_with_the_same_ends(self):
+        g = pt.via_groups({0: {'A', 'B'}, 1: {'B', 'A'}, 2: {'A', 'C'}})
+        self.assertEqual(sorted(sorted(x) for x in g), [[0, 1], [2]])
+
+    def test_widest_path_ignores_thin_branch_but_finds_thin_bottleneck(self):
+        inf = float('inf')
+        edges = [('A', 'x', 3.0, 'wide1'), ('x', 'B', 3.0, 'wide2'),   # main path 3 A
+                 ('x', 'C', 0.8, 'branch'),                             # thin branch to a small pin
+                 ('B', 'D', 0.8, 'thin'), ('D', 'E', inf, 'zone')]
+        amps, path = pt.widest_path(edges, 'A', 'B')
+        self.assertEqual((amps, path), (3.0, ['wide1', 'wide2']))
+        amps, path = pt.widest_path(edges, 'A', 'E')
+        self.assertEqual(amps, 0.8)
+        self.assertIn('thin', path)
+
+    def test_parallel_paths_do_not_add(self):
+        # conservative: two 1 A paths are not one 2 A path
+        edges = [('A', 'B', 1.0, 'p1'), ('A', 'm', 1.0, 'p2a'), ('m', 'B', 1.0, 'p2b')]
+        self.assertEqual(pt.widest_path(edges, 'A', 'B')[0], 1.0)
+
+    def test_project_point_onto_segment_is_clamped(self):
+        self.assertEqual(pt.project((0, 0), (10, 0), (4, 3)), (4.0, 0.0))
+        self.assertEqual(pt.project((0, 0), (10, 0), (-5, 1)), (0.0, 0.0))
+        self.assertEqual(pt.project((0, 0), (0, 10), (1, 12)), (0.0, 10.0))
+
+    def test_spec_pairs_from_pads_or_chains(self):
+        spec = {'nets': {'A': {'amps': 1.0, 'pads': ['U1.1', 'C1.1', 'J1.1']},
+                         'B': {'chains': [{'amps': 2.0, 'pads': ['U2.6', 'C2.1']}, {'amps': 0.5, 'pads': ['C2.1', 'U7.1']}]}}}
+        self.assertEqual(pt.spec_pairs(spec), [('A', 'U1.1', 'C1.1', 1.0), ('A', 'C1.1', 'J1.1', 1.0),
+                                               ('B', 'U2.6', 'C2.1', 2.0), ('B', 'C2.1', 'U7.1', 0.5)])
+
+    def test_no_path_is_zero_amps(self):
+        self.assertEqual(pt.widest_path([('A', 'x', 3.0, 'w')], 'A', 'B'), (0.0, []))
 
 
 class NeckEndTest(unittest.TestCase):
     """D-124c (user decision 2026-10-09, option C): a neck's end temperatures come from evidence."""
     PLANE = (('plane',),)
     PAD = (('pad',),)
+
+    def test_pin_ratings_reject_invalid_values_and_missing_identity(self):
+        from copy import deepcopy
+        import json
+        import tempfile
+        from pathlib import Path
+        good = {'parts': {'SW': {'mpn': ['TEST'], 'pins': {'1': {'name': 'SW', 'amps': 2.7, 'source': 'datasheet page 5', 'statistic': 'min'}}}}}
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'ratings.json'
+            for amps in (0, -1, True, float('inf'), float('nan')):
+                bad = deepcopy(good);bad['parts']['SW']['pins']['1']['amps'] = amps
+                path.write_text(json.dumps(bad))
+                with self.assertRaises(ValueError):pt.load_pin_ratings(path)
+            for field in ('name', 'source', 'statistic'):
+                bad = deepcopy(good);del bad['parts']['SW']['pins']['1'][field]
+                path.write_text(json.dumps(bad))
+                with self.assertRaises(ValueError):pt.load_pin_ratings(path)
+            bad = deepcopy(good);bad['parts']['SW']['mpn'] = []
+            path.write_text(json.dumps(bad))
+            with self.assertRaises(ValueError):pt.load_pin_ratings(path)
+
+    def test_ambiguous_part_identity_has_no_pin_allowance(self):
+        ratings = {'A': {'mpn': ['TPS61023*'], 'pins': {'5': {'amps': 2.7, 'name': 'SW', 'source': 'page 5'}}},
+                   'B': {'mpn': ['TPS*'], 'pins': {'5': {'amps': 10, 'name': 'SW', 'source': 'page 5'}}}}
+        amps, reason = pt.pin_rating(ratings, 'TPS61023DRLR', '5')
+        self.assertIsNone(amps);self.assertIn('ambiguous', reason)
+
+    def test_split_does_not_turn_long_physical_track_into_pin_escape(self):
+        from unittest.mock import patch
+        from test_physical_current import Track, Pad, native_like, vector
+        pad = Pad('U', 0);pad.GetSize = lambda layer: vector(200000, 600000)
+        ratings = {'TEST': {'mpn': ['TEST'], 'pins': {'1': {'amps': 2.7, 'name': 'SW', 'source': 'page 5'}}}}
+        def edges(tracks):
+            p, b = native_like(tracks, [pad])
+            fp = b.GetFootprints()[0];fp.GetValue = lambda: 'TEST'
+            with patch.object(pt, 'load_pin_ratings', return_value=ratings):
+                return pt.net_graph(p, b, 'P', {}, 10, .018)[0]
+        short = edges([Track(0, end=500000)])
+        self.assertTrue(any('pin escape' in e[3] for e in short))
+        long_split = edges([Track(0, end=1000000), Track(0, start=300000, end=300000, end_y=100000)])
+        self.assertFalse(any('pin escape' in e[3] for e in long_split))
 
     def test_ipc_rise_inverts_ipc_amps(self):
         for w, t, dT in ((0.25, 0.035, 10.0), (1.0, 0.035, 4.0), (0.5, 0.0152, 20.0)):

@@ -356,18 +356,31 @@ PIN_RATINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pin
 
 
 def load_pin_ratings(path=PIN_RATINGS_FILE):
-    return json.load(open(path))['parts']
+    with open(path) as stream:
+        parts = json.load(stream)['parts']
+    for key, part in parts.items():
+        if not isinstance(part.get('mpn'), list) or not part['mpn'] or not all(isinstance(x, str) and x for x in part['mpn']):
+            raise ValueError(f'{key}: pin rating needs MPN identity')
+        for pin, value in part['pins'].items():
+            amps = value.get('amps')
+            if isinstance(amps, bool) or not isinstance(amps, (int, float)) or not math.isfinite(amps) or amps <= 0:
+                raise ValueError(f'{key}.{pin}: pin rating needs positive finite amps')
+            if not all(isinstance(value.get(field), str) and value[field].strip() for field in ('name', 'source')) or value.get('statistic') not in ('min', 'max', 'typ', 'rated'):
+                raise ValueError(f'{key}.{pin}: pin rating needs sourced statistic and pin identity')
+    return parts
 
 
 def pin_rating(ratings, mpn, pin):
     """(amps, source) of a part pin from pin-ratings.json, or (None, reason)."""
     import fnmatch
-    for key, part in ratings.items():
-        if any(fnmatch.fnmatchcase(mpn or '', q) for q in part['mpn']):
-            v = part['pins'].get(str(pin))
-            if v:
-                return v['amps'], f"{key} pin {pin} {v['name']} {v['amps']:g} A ({v['source']})"
-            return None, f'{key} pin {pin}: no rating in tools/pin-ratings.json'
+    matches = [(key, part) for key, part in ratings.items() if any(fnmatch.fnmatchcase(mpn or '', q) for q in part['mpn'])]
+    if len(matches) > 1:
+        return None, f'{mpn}: ambiguous part identity in tools/pin-ratings.json'
+    for key, part in matches:
+        v = part['pins'].get(str(pin))
+        if v:
+            return v['amps'], f"{key} pin {pin} {v['name']} {v['amps']:g} A ({v['source']})"
+        return None, f'{key} pin {pin}: no rating in tools/pin-ratings.json'
     return None, f'{mpn}: no entry in tools/pin-ratings.json'
 
 
@@ -378,6 +391,12 @@ def pin_escape(length_mm, width_mm, pad_minor_mm, pad_major_mm, pin_amps, amps):
     return (pin_amps is not None and pin_amps >= amps - 1e-12 and width_mm >= pad_minor_mm - 1e-6
             and length_mm <= pad_major_mm + 1e-6)
 
+
+def footprint_pin_rating(ratings, fp, pin):
+    mpns = [fp.GetValue()] if hasattr(fp, 'GetValue') else []
+    if hasattr(fp, 'GetFields'):
+        mpns += [f.GetText() for f in fp.GetFields() if f.GetName().upper() in ('MPN', 'MFR PART', 'PART NUMBER')]
+    return next((x for x in (pin_rating(ratings, m, pin) for m in mpns) if x[0] is not None), (None, 'no matched part pin rating'))
 
 def neck_chains(pieces, stops=()):
     """{key: (length, min width, end nodes)} of the neck chain of each track piece. pieces: (key, layer, u, v, width).
@@ -1550,7 +1569,7 @@ def cmd_widths(a):
     pads = [{'net': pd.GetNetname(), 'pos': (round(mm(pd.GetPosition().x), 3), round(mm(pd.GetPosition().y), 3)),
              'minor': round(mm(min(pd.GetSize(p.F_Cu).x, pd.GetSize(p.F_Cu).y)), 3),
              'major': round(mm(max(pd.GetSize(p.F_Cu).x, pd.GetSize(p.F_Cu).y)), 3),
-             'pin_amps': pin_rating(ratings, fp.GetValue(), pd.GetNumber())[0]}   # D-124c (b)
+             'pin_amps': footprint_pin_rating(ratings, fp, pd.GetNumber())[0]}   # D-124c (b)
             for fp in b.GetFootprints() for pd in fp.Pads() if pd.GetNumber()]
     # dT 10 K: the same allowed rise as the paths check default (current-paths.json "dT"; a design choice, report A3)
     rep = width_report(segs, need, pads, thick=copper_thickness(a.board), dT=10.0)
@@ -1572,17 +1591,39 @@ def copper_thickness(board):
     return {m[0]: float(m[1]) for m in re.findall(r'\(layer "([^"]+\.Cu)"\s+\(type "copper"\)\s+\(thickness ([0-9.]+)\)', text)}
 
 
+def physical_conductors(items, identity, rank):
+    """Count one physical conductor per exact geometry, never per UUID/label.
+
+    Same centerline/layer tracks are the widest copper union, not parallel area.
+    Same-position/span vias use the smallest drill conservatively; coincident
+    mismatched holes remain a native DRC fault. Distinct paths/via positions stay.
+    """
+    unique = {}
+    for item in items:
+        key = identity(item)
+        if key not in unique or rank(item) < rank(unique[key]): unique[key] = item
+    return list(unique.values())
+
+
 def net_graph(p, b, net, thick, dT, plating):
-    """Copper graph of one net: tracks (IPC current, or the D-124c neck capacity from end evidence, or the D-124c
-    pin-escape rating), via groups (barrel cross-section, D-124), filled zone islands (planes), pads."""
+    """Physical copper graph with D-124c end-evidence necks and rated pin escapes.
+    Coincident conductors are deduplicated; blind/buried via spans remain explicit.
+    Unproved ends retain finite IPC capacity. Filled zone islands and pad/thermal
+    links preserve the existing graph connectivity model.
+    """
     mm, inf = p.ToMM, float('inf')
     pt_ = lambda v: (round(mm(v.x), 3), round(mm(v.y), 3))
     tracks = [t for t in b.GetTracks() if t.GetNetname() == net]
-    segs = [t for t in tracks if not isinstance(t, p.PCB_VIA)]
-    vias = [t for t in tracks if isinstance(t, p.PCB_VIA)]
+    xy = lambda q: (q.x,q.y)
+    def shape(t):
+        ends=tuple(sorted((xy(t.GetStart()),xy(t.GetEnd()))))
+        return (t.GetClass(),t.GetLayer(),ends,xy(t.GetMid()) if t.GetClass()=='PCB_ARC' else None)
+    segs = physical_conductors([t for t in tracks if not isinstance(t,p.PCB_VIA)],shape,lambda t:-t.GetWidth())
+    vias = physical_conductors([t for t in tracks if isinstance(t,p.PCB_VIA)],
+        lambda t:(xy(t.GetPosition()),t.TopLayer(),t.BottomLayer(),int(t.GetViaType())),lambda t:t.GetDrillValue())
     ends = [(t.GetLayerName(), pt_(e)) for t in segs for e in (t.GetStart(), t.GetEnd())]
     net_pads = [pd for fp in b.GetFootprints() for pd in fp.Pads() if pd.GetNumber() and pd.GetNetname() == net]
-    edges, nodes_extra, pieces = [], [], []
+    edges, nodes_extra, pieces, physical_piece = [], [], [], {}
     for t in segs:
         L = t.GetLayerName()
         a, c = pt_(t.GetStart()), pt_(t.GetEnd())
@@ -1590,7 +1631,7 @@ def net_graph(p, b, net, thick, dT, plating):
         # T junction: another end on this segment splits it
         cuts = {e for l2, e in ends if l2 == L and e not in (a, c) and t.HitTest(p.VECTOR2I(p.FromMM(e[0]), p.FromMM(e[1])))}
         # a pad or via that the track passes through (not at an end) also splits it
-        for o in [pd for pd in net_pads if pd.IsOnLayer(t.GetLayer())] + vias:
+        for o in [pd for pd in net_pads if pd.IsOnLayer(t.GetLayer())] + [v for v in vias if v.IsOnLayer(t.GetLayer())]:
             q = project(a, c, pt_(o.GetPosition()))
             if q not in (a, c) and o.HitTest(p.VECTOR2I(p.FromMM(q[0]), p.FromMM(q[1]))):
                 cuts.add(q)
@@ -1599,6 +1640,7 @@ def net_graph(p, b, net, thick, dT, plating):
         chain = [a, *cuts, c]
         for u, v in zip(chain, chain[1:]):
             if u != v:
+                physical_piece[len(pieces)] = (a, c)
                 pieces.append((len(pieces), L, u, v, w))
     nodes = {(L, e) for L, e in ends} | set(nodes_extra)
     pads = {f'{fp.GetReference()}.{pd.GetNumber()}': pd for fp in b.GetFootprints() for pd in fp.Pads()
@@ -1613,15 +1655,16 @@ def net_graph(p, b, net, thick, dT, plating):
                 stops.add((L, e))
                 evidence[(L, e)].append(('pad',))
                 pad_nodes[lab].append((L, e))
+    pad_owners = {f'{fp.GetReference()}.{pd.GetNumber()}': fp for fp in b.GetFootprints() for pd in fp.Pads() if pd.GetNumber() and pd.GetNetname() == net}
     on_plane = set()   # pads solidly joined to a same-net zone, vias that join one
     links = {i: set() for i in range(len(vias))}   # via -> the copper it joins
     for i, v in enumerate(vias):
         for L, e in nodes:
-            if v.HitTest(p.VECTOR2I(p.FromMM(e[0]), p.FromMM(e[1]))):
+            if v.IsOnLayer(b.GetLayerID(L)) and v.HitTest(p.VECTOR2I(p.FromMM(e[0]), p.FromMM(e[1]))):
                 links[i].add((L, e))
                 stops.add((L, e))
         for lab, pd in pads.items():
-            if pd.HitTest(v.GetPosition()):
+            if any(pd.IsOnLayer(lid) and v.IsOnLayer(lid) for lid in b.GetEnabledLayers().CuStack()) and pd.HitTest(v.GetPosition()):
                 links[i].add(lab)
     for zi, z in enumerate(b.Zones()):
         if z.GetIsRuleArea() or z.GetNetname() != net:
@@ -1678,9 +1721,7 @@ def net_graph(p, b, net, thick, dT, plating):
     ratings = load_pin_ratings()
     pad_rating = {}
     for lab, pd in pads.items():
-        fp = pd.GetParentFootprint()
-        mpns = [fp.GetValue()] + [f.GetText() for f in fp.GetFields() if f.GetName().upper() in ('MPN', 'MFR PART', 'PART NUMBER')]
-        r = next((x for x in (pin_rating(ratings, m, pd.GetNumber()) for m in mpns) if x[0] is not None), (None, None))
+        r = footprint_pin_rating(ratings, pad_owners[lab], pd.GetNumber())
         pad_rating[lab] = r
     for i, L, u, v, w in pieces:
         th = thick.get(L, 0.035)
@@ -1690,11 +1731,12 @@ def net_graph(p, b, net, thick, dT, plating):
         # D-124c (b) pin escape: the piece starts on a rated pad, as wide as its narrow side, as short as its long side
         for lab, pd in pads.items():
             pin_a, src = pad_rating[lab]
-            if pin_a is None or not ((L, u) in pad_nodes[lab] or (L, v) in pad_nodes[lab]):
+            a, c = physical_piece[i]
+            if pin_a is None or not ((L, a) in pad_nodes[lab] or (L, c) in pad_nodes[lab]):
                 continue
             sz = pd.GetSize(b.GetLayerID(L))
             minor, major = mm(min(sz.x, sz.y)), mm(max(sz.x, sz.y))
-            if pin_escape(math.dist(u, v), w, minor, major, pin_a, 0.0) and pin_a > amps:
+            if pin_escape(math.dist(a, c), w, minor, major, pin_a, 0.0) and pin_a > amps:
                 amps, label = pin_a, f'{L} {w} mm {u}-{v} (pin escape of {lab}: {src})'
         edges.append(((L, u), (L, v), amps, label))
     return edges, set(pads)

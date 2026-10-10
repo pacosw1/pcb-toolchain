@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import lean_owned
 
 
 def atomic_json(path, data):
@@ -36,7 +37,7 @@ def digest(path):
     return h.hexdigest()
 
 
-def router_timeout(outdir):
+def router_timeout(outdir, error=None):
     """Describe retained evidence without importing or qualifying a checkpoint."""
     outdir = Path(outdir)
     artifacts = {name: digest(outdir / name) for name in
@@ -45,60 +46,200 @@ def router_timeout(outdir):
                  if (outdir / name).is_file()}
     atomic_json(outdir / 'outcome.json', dict(status='timeout', returncode=124,
                 qualified=False, artifacts=artifacts,
+                cause=type(error).__name__ if error else 'TimeoutExpired',
+                cleanup=getattr(error, 'cleanup', None),
                 note='deadline reached; checkpoints are incomplete evidence, not a verified candidate'))
 
 
+DEADLINE_PROTOCOL = 'clock-monotonic-v1:'
+
+
+def now():
+    """Same-host kernel epoch, including macOS Python 3.9 subprocesses.
+
+    Python 3.9 time.monotonic on macOS has a process-relative origin. Never
+    serialize that origin or transfer this same-host protocol to another host.
+    """
+    return time.clock_gettime(time.CLOCK_MONOTONIC)
+
+
+def decode_deadline(value):
+    if not isinstance(value, str) or not value.startswith(DEADLINE_PROTOCOL):
+        raise ValueError('unsupported inherited deadline protocol')
+    value = float(value[len(DEADLINE_PROTOCOL):])
+    if not math.isfinite(value):
+        raise ValueError('deadline must be finite')
+    return value
+
+
+def encode_deadline(value):
+    if not math.isfinite(value):
+        raise ValueError('deadline must be finite')
+    return DEADLINE_PROTOCOL + repr(value)
+
+
+def inherited_deadline(env=None):
+    value = (os.environ if env is None else env).get('IOT_LEAN_DEADLINE')
+    return decode_deadline(value) if value is not None else None
+
+
+def deadline_after(seconds, env=None):
+    if not math.isfinite(seconds) or seconds < 0:
+        raise ValueError('budget must be finite and nonnegative')
+    value = now() + seconds
+    inherited = inherited_deadline(env)
+    return min(value, inherited) if inherited is not None else value
+
+
 def remaining(deadline=None):
-    deadline = deadline if deadline is not None else os.environ.get('IOT_LEAN_DEADLINE')
-    return max(0., float(deadline) - time.monotonic()) if deadline else None
+    deadline = inherited_deadline() if deadline is None else deadline
+    if isinstance(deadline, str):
+        deadline = decode_deadline(deadline)
+    if deadline is not None and not math.isfinite(deadline):
+        raise ValueError('deadline must be finite')
+    return max(0., deadline - now()) if deadline is not None else None
+
+
+class StageCancelled(KeyboardInterrupt):
+    def __init__(self, signum=None):
+        self.signum = signum
+        super().__init__('stage cancelled by signal' if signum else 'stage cancelled')
+
+
+def stage_depth(env):
+    """Support root plus two nested owned supervisors; reject deeper nesting."""
+    value = env.get('IOT_LEAN_STAGE_DEPTH', '0')
+    if value not in ('0', '1', '2'):
+        raise ValueError('invalid/excessive owned stage depth')
+    return int(value)
+
+
+def cleanup_group(proc, depth=0):
+    """Signal only our new-session child group; never mask the original cause.
+
+    On a denied group signal, stop the directly owned child if permitted, but
+    retain unconfirmed group cleanup as an error rather than claim no orphan.
+    """
+    if isinstance(proc, lean_owned.Process):
+        result = proc.cleanup()
+        try:proc.communicate(timeout=0)
+        except Exception:pass
+        return result
+    # Popen may already have reaped its leader. A numeric PID no longer proves
+    # signal authority, so refuse unsupported handles without any signal.
+    return dict(complete=False, errors=[dict(operation='ownership',
+                error='cleanup requires an authenticated broker-owned stage')],
+                child_reaped=False, family_cleanup='unconfirmed')
 
 
 def run_stage(cmd, *, stage, event_file=None, deadline=None, **kwargs):
     """Bound the entire child process group; timeout output is never a pass.
 
-    SIGTERM allows router checkpoints; at most five additional seconds are allowed
-    for shutdown. Logs/checkpoints are retained, but no timeout result is accepted.
+    A root-owned broker retains registered group leaders across stopped nested
+    controllers. TERM allows five seconds for checkpoints, then KILL cleanup
+    gets two seconds; broker thread/descriptor draining is separately bounded.
+    Root plus two nested owned levels are supported. Arbitrary unregistered
+    setsid descendants are outside this ownership protocol. Logs/checkpoints
+    are retained, but no timeout or uncertain cleanup result is accepted.
     """
-    left = remaining(deadline)
-    started = time.monotonic()
-    before = resource.getrusage(resource.RUSAGE_CHILDREN)
+    child_env = dict(kwargs.get('env', os.environ))
+    child_deadline = inherited_deadline(child_env)
+    parent_deadline = inherited_deadline()
+    if parent_deadline is not None:
+        child_deadline = min(parent_deadline, child_deadline) if child_deadline is not None else parent_deadline
+    if deadline is not None:
+        value = decode_deadline(deadline) if isinstance(deadline, str) else deadline
+        child_deadline = min(value, child_deadline) if child_deadline is not None else value
+    if child_deadline is not None:
+        kwargs['env'] = dict(child_env, IOT_LEAN_DEADLINE=encode_deadline(child_deadline))
+    left = remaining(child_deadline)
+    started = now()
     status, rc, proc = 'failed', None, None
     handlers = {}
+    cleanup = None
+    cause = None
+    admitting = True
+    pending_signal = None
     def interrupted(signum, frame):
-        raise KeyboardInterrupt()
+        nonlocal pending_signal
+        if admitting:
+            pending_signal = signum
+            return
+        raise StageCancelled(signum)
     try:
+        depth = stage_depth(os.environ)
+        if 'IOT_LEAN_STAGE_DEPTH' in child_env and stage_depth(child_env) != depth:
+            raise ValueError('child environment cannot reset owned stage depth')
         if left is not None and left <= 0:
             status = 'timeout'
+            cause = dict(type='TimeoutExpired', signal=None)
             raise subprocess.TimeoutExpired(cmd, 0)
-        proc = subprocess.Popen(cmd, start_new_session=True, **kwargs)
-        # A surrounding pipeline watchdog must not leave a nested router group
-        # orphaned when it terminates this Python process.
+        # Admission/cancellation is installed before the broker can spawn any
+        # controller or helper. Only the root broker owns/reaps their leaders.
         for sig in (signal.SIGTERM, signal.SIGINT):
             handlers[sig] = signal.signal(sig, interrupted)
         try:
+            proc = lean_owned.prepare(cmd, kwargs)
+            if pending_signal:
+                admitting=False
+                raise StageCancelled(pending_signal)
+            proc.start()
+            admitting = False
+            if pending_signal:raise StageCancelled(pending_signal)
+            left = remaining(child_deadline)
+            if left is not None and left<=0:raise subprocess.TimeoutExpired(cmd,0)
+            proc.activate()
+            left = remaining(child_deadline)
             stdout, stderr = proc.communicate(timeout=left)
-        except (subprocess.TimeoutExpired, KeyboardInterrupt):
-            status = 'timeout'
-            os.killpg(proc.pid, signal.SIGTERM)
+        except (subprocess.TimeoutExpired, KeyboardInterrupt) as error:
+            status = 'cancelled' if isinstance(error, KeyboardInterrupt) else 'timeout'
+            cause = dict(type=type(error).__name__, signal=getattr(error, 'signum', None))
+            # Repeated cancellation must not interrupt bounded cleanup.
+            for sig in handlers:
+                signal.signal(sig, signal.SIG_IGN)
             try:
-                stdout, stderr = proc.communicate(timeout=5)
-            except subprocess.TimeoutExpired:
-                os.killpg(proc.pid, signal.SIGKILL)
-                stdout, stderr = proc.communicate()
-            raise subprocess.TimeoutExpired(cmd, left, output=stdout, stderr=stderr)
+                cleanup = cleanup_group(proc, depth) if proc else dict(complete=True, errors=[], child_reaped=True)
+            except Exception as cleanup_error:
+                # Cleanup diagnostics must never replace timeout/cancellation.
+                cleanup = dict(complete=False, child_reaped=proc.returncode is not None,
+                               family_cleanup='unconfirmed', errors=[dict(
+                                   operation='cleanup', type=type(cleanup_error).__name__,
+                                   error=str(cleanup_error))])
+            error.cleanup = cleanup
+            raise
         rc = proc.returncode
+        cleanup = proc.last_cleanup
+        if cleanup and not cleanup['complete']:
+            raise RuntimeError('owned-stage cleanup could not be confirmed')
         status = 'complete' if rc == 0 else 'failed'
         return subprocess.CompletedProcess(cmd, rc, stdout, stderr)
+    except BaseException as error:
+        if cause is None:cause=dict(type=type(error).__name__,signal=getattr(error,'signum',None))
+        if proc and cleanup is None:
+            for sig in handlers:signal.signal(sig,signal.SIG_IGN)
+            try:cleanup=cleanup_group(proc)
+            except Exception as cleanup_error:
+                cleanup=dict(complete=False,errors=[dict(operation='cleanup',error=str(cleanup_error))])
+            error.cleanup=cleanup
+        raise
     finally:
+        try:close_failed = bool(proc and not proc.close())
+        except Exception:close_failed = True
+        if close_failed:
+            cleanup = dict(complete=False, errors=[dict(operation='broker-close', error='owned broker has unsettled workers')])
+            if status=='complete':status='failed'
         for sig, handler in handlers.items():
             signal.signal(sig, handler)
-        after = resource.getrusage(resource.RUSAGE_CHILDREN)
         if event_file:
             event = dict(stage=stage, command=list(map(str, cmd)), status=status, returncode=rc,
-                         wall_s=time.monotonic() - started,
-                         child_cpu_s=(after.ru_utime + after.ru_stime - before.ru_utime - before.ru_stime))
+                         wall_s=now() - started, cause=cause, cleanup=cleanup,
+                         child_cpu_s=proc.child_cpu_s if proc else None,
+                         adopted_child_cpu_s=proc.adopted_child_cpu_s if proc else None,
+                         cpu_scope=proc.cpu_scope if proc else 'unavailable; no owned leader reaped')
             with open(event_file, 'a') as f:
                 f.write(json.dumps(event) + '\n')
+        if close_failed and cause is None:
+            raise RuntimeError('owned-stage broker did not settle')
 
 
 def optimizer_options(policy, threads=0):
@@ -192,9 +333,10 @@ def main():
     events = str(work / 'stages.jsonl')
     try:
         with job_slot(a.lock):
-            env = dict(os.environ, IOT_LEAN_ADMITTED='1', IOT_LEAN_DEADLINE=str(time.monotonic() + a.budget))
+            deadline = deadline_after(a.budget)
+            env = dict(os.environ, IOT_LEAN_ADMITTED='1', IOT_LEAN_DEADLINE=encode_deadline(deadline))
             result = run_stage(command, stage='pipeline', event_file=events, env=env,
-                               deadline=float(env['IOT_LEAN_DEADLINE']) + 7)
+                               deadline=deadline)
             if remaining(env['IOT_LEAN_DEADLINE']) <= 0:
                 atomic_json(work / 'pipeline-outcome.json', dict(status='timeout', qualified=False))
                 print('INCOMPLETE: work finished after the deadline', file=sys.stderr)
@@ -203,10 +345,16 @@ def main():
                         dict(status='complete' if result.returncode == 0 else 'failed',
                              returncode=result.returncode, qualified=False))
             return result.returncode
-    except subprocess.TimeoutExpired:
-        atomic_json(work / 'pipeline-outcome.json', dict(status='timeout', qualified=False))
+    except subprocess.TimeoutExpired as error:
+        atomic_json(work / 'pipeline-outcome.json', dict(status='timeout', qualified=False,
+                    cause=type(error).__name__, cleanup=getattr(error, 'cleanup', None)))
         print('INCOMPLETE: deadline reached; logs/checkpoints retained', file=sys.stderr)
         return 124
+    except KeyboardInterrupt as error:
+        code = 128 + (getattr(error, 'signum', None) or signal.SIGINT)
+        atomic_json(work / 'pipeline-outcome.json', dict(status='cancelled', returncode=code,
+                    signal=getattr(error, 'signum', None), cleanup=getattr(error, 'cleanup', None), qualified=False))
+        return code
     except RuntimeError as e:
         print(e, file=sys.stderr)
         return 75

@@ -5,6 +5,7 @@
   ($PY = the KiCad bundled Python; it has numpy and pcbnew.)
 """
 import json
+import copy
 import os
 import random
 import sys
@@ -51,6 +52,49 @@ class MaskReuseTest(unittest.TestCase):
                          cost.components(pr, cost.initial_pose(pr), p, mask=fresh))
         with self.assertRaisesRegex(ValueError, 'reused mask'):
             cost.components(pr, cost.initial_pose(pr), dict(p, gap=p['gap'] + .1), mask=fresh)
+
+
+class PairTraversalReuseTest(unittest.TestCase):
+    def test_components_recompute_changed_pose_geometry_and_spacing(self):
+        pr = problem([unit('A', 2, 2, [[0, 0, 1, 1, .5], [.5, 0, 1.5, 1, .5]]),
+                      unit('B', 3.3, 2, [[0, 0, 1, 1, .5]])], [])
+        pose = cost.initial_pose(pr)
+        def terms(q, at):
+            comp = cost.components(q, at, P)
+            self.assertEqual(comp['overlap'], cost.overlap(q, at))
+            self.assertEqual(comp['spacing'], cost.spacing(q, at))
+            return comp['overlap'], comp['spacing']
+        hard, soft = terms(pr, pose)
+        self.assertAlmostEqual(hard, .2)
+        self.assertAlmostEqual(soft, 1.15)
+        self.assertEqual(terms(pr, [pose[0], (7, 2, 1)]), (0., 0.))
+        changed = copy.deepcopy(pr)
+        changed['units'][1]['rects'][0][2] = 2.
+        changed['units'][1]['rects'][0][4] = 1.
+        self.assertGreater(terms(changed, pose)[1], soft)
+        changed['units'][0]['fixed'] = changed['units'][1]['fixed'] = True
+        self.assertEqual(terms(changed, pose), (0., 0.))
+        self.assertEqual(terms(pr, pose), (hard, soft))
+
+    def test_changed_domain_rules_are_not_reused(self):
+        a = unit('A', 10, 20, [[-1, -1, 1, 1, .5], [-.5, -.5, .5, .5, .2]])
+        b = unit('B', 14, 20, [[-1, -1, 1, 1, .5], [-.5, -.5, .5, .5, .2]])
+        a['dom'], b['dom'] = [[1, 1, 0., .2]], [[1, 2, 0., .2]]
+        a['mech'] = b['mech'] = [0]
+        pr = problem([a, b], [], square_board(60))
+        pr['class_gaps'] = {'names': ['FIELD', 'HOST'], 'gaps': [[0, 0, 0], [0, 0, 4.], [0, 4., 0]]}
+        pose = cost.initial_pose(pr)
+        before = cost.components(pr, pose, P)
+        self.assertGreater(before['overlap'], 0.)
+        changed = copy.deepcopy(pr)
+        changed['class_gaps']['gaps'][1][2] = changed['class_gaps']['gaps'][2][1] = 0.
+        after = cost.components(changed, pose, P)
+        self.assertEqual(after['overlap'], 0.)
+        for q in (pr, changed):
+            result = cost.components(q, pose, P)
+            self.assertEqual(result['overlap'], cost.overlap(q, pose))
+            self.assertEqual(result['spacing'], cost.spacing(q, pose))
+        self.assertEqual(cost.components(pr, pose, P), before)
 
 
 class RotationTest(unittest.TestCase):
@@ -610,6 +654,61 @@ class LockedCopperTest(unittest.TestCase):
 
     def test_a_courtyard_over_fixed_copper_is_legal(self):
         self.assertAlmostEqual(self.legal(8.5), 0.0)
+
+    def layered(self, layer, membership, *, legacy=False):
+        u = unit('TP7', 113., 101.7, [[-1.75, -1.75, 1.75, 1.75, 0.]])
+        u['pad_rects'] = [[-1.25, -1.25, 1.25, 1.25]]
+        if membership is not None:
+            u['pad_copper_layers'] = [membership]
+        row = [layer, 114.6, 100.95, 111., 100.95, .2]
+        board = dict(square_board(150.), fixed_copper=[row])
+        if not legacy:
+            board['fixed_copper_layers'] = [row]
+        pr = problem([u], [], board)
+        return pr, cost.Evaluator(pr, P)
+
+    def test_pth_over_locked_bottom_or_inner_copper_is_hard_illegal(self):
+        from placer import anneal
+        for layer in ('B.Cu', 'In2.Cu'):
+            with self.subTest(layer=layer):
+                pr, ev = self.layered(layer, ['F.Cu', 'In2.Cu', 'B.Cu'])
+                self.assertGreater(ev.legal_penalty(0), 0.)
+                self.assertGreater(ev.legal_penalty_at(0, 113., 101.7, 0), 0.)
+                self.assertGreater(cost.forbidden(pr, ev.pose(), ev.mask, 0), 0.)
+                self.assertAlmostEqual(ev.components()['oob'],
+                                       cost.components(pr, ev.pose(), P)['oob'])
+                # A zero-radius pass cannot claim a collision is legal.
+                self.assertEqual(anneal.legalize(ev, dict(P, legal_radius=0., legal_time=5.)), [0])
+
+    def test_top_smd_over_bottom_copper_remains_legal(self):
+        pr, ev = self.layered('B.Cu', ['F.Cu'])
+        self.assertEqual(ev.legal_penalty(0), 0.)
+        self.assertEqual(ev.unit_penalty(0), 0.)
+        self.assertEqual(cost.forbidden(pr, ev.pose(), ev.mask, 0), 0.)
+        self.assertGreater(ev.legal_penalty_at(0, 151., 101.7, 0), 0.)
+
+    def test_bottom_smd_and_spanned_via_use_only_shared_layers(self):
+        for membership, bad in ((['B.Cu'], True), (['F.Cu'], False), ([], False)):
+            pr, ev = self.layered('B.Cu', membership)
+            self.assertEqual(ev.legal_penalty(0) > 0., bad)
+
+    def test_legacy_missing_membership_and_unspanned_via_are_conservative(self):
+        for layer, membership in (('B.Cu', None), ('via', ['F.Cu'])):
+            pr, ev = self.layered(layer, membership, legacy=True)
+            self.assertGreater(ev.legal_penalty(0), 0.)
+
+    def test_layer_metadata_must_align_with_pad_boxes(self):
+        pr, ev = self.layered('B.Cu', ['F.Cu'])
+        pr['units'][0]['pad_copper_layers'] = []
+        with self.assertRaisesRegex(ValueError, 'align'):
+            cost.Evaluator(pr, P)
+
+    def test_malformed_membership_is_rejected(self):
+        for layers in ('B.Cu', ['B.Cu', 'B.Cu'], ['B.Mask'], ['Foo.Cu'], ['In63.Cu']):
+            pr, ev = self.layered('B.Cu', ['F.Cu'])
+            pr['units'][0]['pad_copper_layers'] = [layers]
+            with self.assertRaisesRegex(ValueError, 'distinct copper'):
+                cost.Evaluator(pr, P)
 
 
 class RoundRectTest(unittest.TestCase):
