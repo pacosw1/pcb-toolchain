@@ -105,7 +105,9 @@ const jobs = {
     };
   },
   async planes() {
-    return {planes_failures: countFrom(await output('planes', kicadPython, [tool('si_planes.py'), pcb, spec(c.planes)]), /(\d+) reference-plane failures/)};
+    const out = await output('planes', kicadPython, [tool('si_planes.py'), pcb, spec(c.planes)]);
+    for (const line of out.split('\n').filter(line => line.startsWith('WARN '))) console.log(`  ${line}`);
+    return {planes_failures: countFrom(out, /(\d+) reference-plane failures/)};
   },
   async pairs() {
     return {pairs_failures: countFrom(await output('pairs', kicadPython, [tool('si_pairs.py'), pcb, spec(c.pairs)]), /si_pairs: \d+ PASS, (\d+) FAIL/)};

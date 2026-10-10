@@ -7,10 +7,12 @@ import unittest
 
 import mandatory_preflight as preflight
 
-ROOT = Path(os.environ['VIA_RECORD_OUTPUT_ROOT'])
-SOURCE = Path(os.environ['VIA_RECORD_INPUT_BOARD'])
+ROOT = Path(os.environ['VIA_RECORD_OUTPUT_ROOT']) if os.environ.get('VIA_RECORD_OUTPUT_ROOT') else None
+SOURCE = Path(os.environ['VIA_RECORD_INPUT_BOARD']) if os.environ.get('VIA_RECORD_INPUT_BOARD') else None
 
 
+@unittest.skipUnless(ROOT is not None and SOURCE is not None,
+                     'native fixture requires VIA_RECORD_OUTPUT_ROOT and VIA_RECORD_INPUT_BOARD')
 class NativeViaRecordTests(unittest.TestCase):
     def record_oracle(self, board, via, row):
         expected={board.GetLayerName(layer):via.GetWidth(layer)

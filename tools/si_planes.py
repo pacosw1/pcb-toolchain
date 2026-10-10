@@ -999,7 +999,7 @@ def reference_failures(results, domains, s, detour=None, board_mm=None, source_s
     return sorted(nodom) + [t for _, t in sorted(cross, reverse=True)] + [t for _, t in sorted(gaps, reverse=True)]
 
 
-def reference_assessment(results,domains,s,detour=None,board_mm=None,source_sha=None):
+def reference_assessment(results,domains,s,detour=None,board_mm=None,source_sha=None,report_only_timing=False):
     """Keep accepted geometric screening separate from timing-evidence closure.
     Timing-dependent crossings cannot qualify on TYP/MAX/assumed edge budgets,
     including the screen's board-perimeter exemption. No timing requirement is
@@ -1007,6 +1007,27 @@ def reference_assessment(results,domains,s,detour=None,board_mm=None,source_sha=
     """
     import net_drivers
     screen=reference_failures(results,domains,s,detour,board_mm,source_sha);evidence=[]
+    if report_only_timing:
+        # D-124d proposed: retain D-124c's unknown-driver geometric screen.
+        # The stricter native-stub/evidence contract remains diagnostic here.
+        screen=[line for line in screen if not line.startswith('FAIL unknown-driver ')]
+        for (layer,net),r in results.items():
+            if not _checked(net,s) or is_power(net,s) or is_fast(net,s) or domains.get(net) is None or net_edge_of(net,s)[0] is not None:
+                continue
+            bad=[]
+            for run in r.get('runs') or []:
+                measured=None
+                if detour:
+                    for budget in (20.0,board_mm if board_mm is not None else math.inf):
+                        measured=detour(layer,domains[net],run,budget)
+                        if measured is not None:
+                            break
+                if measured is None or measured>0:
+                    bad.append((run,measured))
+            if bad:
+                run,measured=max(bad,key=lambda q:q[0]['length']);x,y=run['at']
+                distance='none (no reference path)' if measured is None else f'{measured:.1f} mm'
+                screen.append(f"FAIL unknown-driver {layer} {net}: {len(bad)} of {len(r.get('runs') or [])} crossings need an edge time (longest run {run['length']:.1f} mm at ({x:.1f}, {y:.1f}), detour {distance}); unknown driver: {net_edge_of(net,s)[1]}")
     for (layer,net),r in results.items():
         if not _checked(net,s) or is_power(net,s) or is_fast(net,s) or domains.get(net) is None or not r.get('runs'):
             continue
@@ -1032,7 +1053,9 @@ def reference_assessment(results,domains,s,detour=None,board_mm=None,source_sha=
         quality=edge.get('timing_evidence',{})
         if not quality.get('qualified_fastest_bound',False):
             evidence.append(f"FAIL unproved-fastest-edge {layer} {net}: accepted screening edge {edge['edge_ns']:g} ns has no proven fastest-edge bound; timing-dependent crossing/perimeter exemption cannot qualify")
+    warnings=[line.replace('FAIL ','WARN ',1) for line in evidence] if report_only_timing else []
     return dict(screening_failures=screen,timing_evidence_failures=evidence,
+                gate_failures=screen if report_only_timing else screen+evidence,gate_warnings=warnings,
                 timing_evidence_complete=not evidence,scope='timing evidence only; geometry/model/physical board qualification remain separate')
 
 
@@ -1449,11 +1472,12 @@ def analyse(board_path, s, verbose, sch_path=None):
         return detour_mm(ok, run['terminals'], budget, min(0.5, max(0.1, budget / 200)), ports,
                          edge_ok, alternate_ok, alternate_edge_ok)
 
-    assessment=reference_assessment(results,domains,s,detour,board_mm,source_sha)
+    assessment=reference_assessment(results,domains,s,detour,board_mm,source_sha,report_only_timing=True)
     geometry=plane_cut_failures(cuts,s)+island_failures(pieces)+assessment['screening_failures']
-    fails=geometry+assessment['timing_evidence_failures']
+    fails=plane_cut_failures(cuts,s)+island_failures(pieces)+assessment['gate_failures']
+    info.extend(assessment['gate_warnings'])
     info.append(f"SI_SCREEN geometric_failures={len(geometry)}; accepted screening values retained")
-    info.append(f"SI_TIMING_EVIDENCE unresolved={len(assessment['timing_evidence_failures'])} timing_evidence_complete={str(assessment['timing_evidence_complete']).lower()}; geometry/model/physical_board_qualification separate")
+    info.append(f"SI_TIMING_EVIDENCE mode=report-only decision=D-124d-proposed unresolved={len(assessment['timing_evidence_failures'])} timing_evidence_complete={str(assessment['timing_evidence_complete']).lower()}; geometry/model/physical_board_qualification separate")
     info.append(f'INFO detour budget: no rule above {board_mm:.0f} mm (board bounding-box perimeter); '
                 + ', '.join(f"{k} {v['tr_ns']:g} ns -> {detour_budget_mm(v['tr_ns']):.1f} mm" + (' (assumption)' if v['assumption'] else '')
                             for k, v in s['_edge_rates'].items()) + '; other nets: the edge of their driver (tools/driver-edges.json)')

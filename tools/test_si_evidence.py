@@ -6,6 +6,23 @@ import net_drivers as nd
 import si_planes as sp
 
 class TimingEvidenceTests(unittest.TestCase):
+    def test_report_only_retains_missing_evidence_without_counting_it(self):
+        s=sp.load_spec(dict(about='fixture',adjacent={'F.Cu':'In1.Cu'},plane_layers=['In1.Cu'],grounds=['GND'],mixed_layers={},power=[],edge_classes={},receivers={},offboard={}))
+        sp.set_fast(s,{})
+        r=dict(cross=0,runs=[{'length':2,'at':(0,0),'terminals':[(0,0,.1),(2,0,.1)]}],worst=2,worst_at=(0,0))
+        for edge in ({'unknown':'missing driver'},{'edge_ns':2000,'driver':'screening only'}):
+            with self.subTest(edge=edge):
+                s['_edges']={'/SIG':edge}
+                result=sp.reference_assessment({('F.Cu','/SIG'):r},{'/SIG':'GND'},s,lambda *_:0,200,report_only_timing=True)
+                self.assertEqual(result['gate_failures'],[])
+                self.assertEqual(len(result['gate_warnings']),1)
+                self.assertTrue(result['gate_warnings'][0].startswith('WARN unproved-fastest-edge'))
+                self.assertFalse(result['timing_evidence_complete'])
+        s['_edges']={'/SIG':{'unknown':'missing driver'}}
+        result=sp.reference_assessment({('F.Cu','/SIG'):r},{'/SIG':'GND'},s,lambda *_:None,200,report_only_timing=True)
+        self.assertEqual(len(result['gate_failures']),1)
+        self.assertTrue(result['gate_failures'][0].startswith('FAIL unknown-driver'))
+
     def setUp(self):
         self.saved=(nd.HERE,sp.EDGE_RATES_FILE);nd.HERE=str(ROOT/'tools');sp.EDGE_RATES_FILE=str(ROOT/'tools/edge-rates.json')
         self.addCleanup(self.restore)
