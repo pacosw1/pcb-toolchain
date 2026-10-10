@@ -4,6 +4,7 @@
   python3 tools/test_pcbtool.py
 """
 import importlib.util
+import math
 import os
 import unittest
 
@@ -168,21 +169,27 @@ class WidthTest(unittest.TestCase):
         r = pt.width_report([self.seg('VBAT', 1.5, (0, 0), (20, 0))], self.NEED, self.PADS)
         self.assertEqual(r['VBAT']['under'], [])
 
-    def test_short_neck_into_narrow_pad_is_allowed(self):
+    def test_short_pad_neck_needs_thermal_boundary_evidence(self):
         r = pt.width_report([self.seg('VBAT', 0.6, (0, 0), (0, 1.5)), self.seg('VBAT', 1.5, (0, 1.5), (20, 0))], self.NEED, self.PADS)
-        self.assertEqual(r['VBAT']['under'], [])
-        self.assertEqual(r['VBAT']['necks'], 1)
+        self.assertEqual(len(r['VBAT']['under']), 1)
+        self.assertEqual(r['VBAT']['necks'], 0)
 
     def test_thin_segment_is_under_width(self):
-        r = pt.width_report([self.seg('VIN', 0.4, (5, 5), (9, 5))], self.NEED, self.PADS)
-        self.assertEqual(r['VIN']['under'], [(0.4, 4.0, (5, 5))])
+        r = pt.width_report([self.seg('VIN', 0.4, (5, 5), (15, 5))], self.NEED, self.PADS)
+        self.assertEqual(r['VIN']['under'], [(0.4, 10.0, (5, 5))])
 
-    def test_long_neck_or_neck_narrower_than_pad_is_under_width(self):
-        r = pt.width_report([self.seg('VBAT', 0.6, (0, 0), (0, 3)),     # too long
-                             self.seg('VBAT', 0.4, (0, 0), (0, -1)),    # narrower than the 0.6 pad
-                             self.seg('VBAT', 1.0, (20, 0), (20, 1))],  # the 3.0 pad is not narrow
-                            self.NEED, self.PADS)
+    def test_arbitrary_pad_branch_and_length_do_not_authorize_neck_uplift(self):
+        r = pt.width_report([self.seg('VBAT', 0.6, (0, 0), (0, 3)),
+                             self.seg('VBAT', 0.4, (0, 0), (0, -1)),
+                             self.seg('VBAT', 1.0, (20, 0), (20, 1))], self.NEED, self.PADS)
         self.assertEqual(len(r['VBAT']['under']), 3)
+        self.assertEqual(r['VBAT']['necks'], 0)
+
+    def test_long_neck_chain_is_under_width(self):
+        # two 0.6 mm segments in a row (no pad, via or branch between them) are one 10 mm neck
+        r = pt.width_report([self.seg('VBAT', 0.6, (0, 0), (0, 5)), self.seg('VBAT', 0.6, (0, 5), (0, 10))],
+                            self.NEED, self.PADS)
+        self.assertEqual(len(r['VBAT']['under']), 2)
 
     def test_nets_without_a_need_are_ignored(self):
         self.assertEqual(pt.width_report([self.seg('SDA', 0.2, (0, 0), (1, 0))], self.NEED, self.PADS), {})
@@ -195,8 +202,47 @@ class CurrentTest(unittest.TestCase):
         self.assertAlmostEqual(pt.ipc_amps(1.0), 2.4, delta=0.1)
         self.assertAlmostEqual(pt.ipc_amps(1.5), 3.2, delta=0.1)
 
-    def test_inner_layer_carries_half_of_external(self):
-        self.assertAlmostEqual(pt.ipc_amps(1.0, inner=True), pt.ipc_amps(1.0) / 2, places=6)
+    def test_inner_layer_uses_the_external_constant(self):
+        # D-124, IPC-2152: inner and outer conductors heat about the same; 0.5 mm 0.5 oz inner = 0.79 A (report A3)
+        self.assertEqual(pt.IPC_K, 0.048)
+        self.assertAlmostEqual(pt.ipc_amps(0.5, 0.0152), 0.79, delta=0.02)
+        with self.assertRaises(TypeError):
+            pt.ipc_amps(1.0, inner=True)
+
+    def test_via_group_area_matches_the_feeding_trace(self):
+        # D-124, IPC-2152 via Brooks & Adam: a 0.3 mm drill (0.0170 mm2) = a 0.5 mm 1 oz trace (0.0175 mm2)
+        self.assertAlmostEqual(pt.via_group_amps([0.3]), pt.ipc_amps(0.5), delta=0.05)
+        # parallel vias add their barrel areas, not their currents
+        self.assertAlmostEqual(pt.via_group_amps([0.3] * 4), pt.area_amps(4 * math.pi * 0.3 * 0.018), places=9)
+        self.assertLess(pt.via_group_amps([0.3] * 4), 4 * pt.via_group_amps([0.3]))
+
+    def test_neck_length_limit_matches_report_c5(self):
+        self.assertAlmostEqual(pt.neck_max_mm(0.25, 0.035, 2.3), 5.1, delta=0.1)
+        self.assertAlmostEqual(pt.neck_max_mm(0.3, 0.035, 1.0), 14.1, delta=0.2)
+        self.assertAlmostEqual(pt.neck_max_mm(0.2, 0.035, 0.5), 18.8, delta=0.3)
+        self.assertAlmostEqual(pt.neck_amps(0.3, 0.035, pt.neck_max_mm(0.3, 0.035, 1.0)), 1.0, places=6)
+
+    def test_analytical_pq_meter_neck_requires_unproved_cool_end_conditions(self):
+        # PQ-METER /BST_SW: 0.24-0.3 mm, 2.27 mm long, 1.1 A (the narrowest width over the whole length)
+        self.assertGreater(pt.neck_amps(0.24, 0.035, 2.27), 1.1)
+
+    def test_neck_chains_stop_at_pads_branches_and_wider_copper(self):
+        # pieces: (key, layer, u, v, width). b-c-d is a 0.3/0.24 neck between wide copper a-b and d-e
+        pieces = [('ab', 'F', (0, 0), (5, 0), 1.0), ('bc', 'F', (5, 0), (6, 0), 0.3), ('cd', 'F', (6, 0), (7.27, 0), 0.24),
+                  ('de', 'F', (7.27, 0), (12, 0), 1.0), ('ef', 'F', (12, 0), (13, 0), 0.3)]
+        ch = pt.neck_chains(pieces, stops={('F', (12, 0))})
+        self.assertAlmostEqual(ch['bc'][0], 2.27, places=6)     # the 0.3 piece spans the whole neck
+        self.assertAlmostEqual(ch['bc'][1], 0.24)              # at the narrowest width
+        self.assertAlmostEqual(ch['cd'][0], 1.27, places=6)     # the 0.24 piece does not extend into wider copper
+        self.assertAlmostEqual(ch['ef'][0], 1.0)               # a stop (pad, via, zone) ends a chain
+
+    def test_track_capacity_without_endpoint_temperature_evidence_is_ipc(self):
+        self.assertAlmostEqual(pt.track_amps(0.25, 0.035, 10.0, chain=(2.27, 0.25)), pt.ipc_amps(0.25))
+        self.assertAlmostEqual(pt.track_amps(0.25, 0.035, 10.0, chain=(100, 0.25)), pt.ipc_amps(0.25))
+
+    def test_via_groups_join_vias_with_the_same_ends(self):
+        g = pt.via_groups({0: {'A', 'B'}, 1: {'B', 'A'}, 2: {'A', 'C'}})
+        self.assertEqual(sorted(sorted(x) for x in g), [[0, 1], [2]])
 
     def test_widest_path_ignores_thin_branch_but_finds_thin_bottleneck(self):
         inf = float('inf')
@@ -218,11 +264,6 @@ class CurrentTest(unittest.TestCase):
         self.assertEqual(pt.project((0, 0), (10, 0), (4, 3)), (4.0, 0.0))
         self.assertEqual(pt.project((0, 0), (10, 0), (-5, 1)), (0.0, 0.0))
         self.assertEqual(pt.project((0, 0), (0, 10), (1, 12)), (0.0, 10.0))
-
-    def test_neck_is_short_and_as_wide_as_the_pad(self):
-        self.assertTrue(pt.is_neck(length=0.8, width=0.6, pad_minor=0.6))
-        self.assertFalse(pt.is_neck(length=1.55, width=0.6, pad_minor=0.6))   # too long
-        self.assertFalse(pt.is_neck(length=0.5, width=0.25, pad_minor=0.6))   # narrower than the pad
 
     def test_spec_pairs_from_pads_or_chains(self):
         spec = {'nets': {'A': {'amps': 1.0, 'pads': ['U1.1', 'C1.1', 'J1.1']},

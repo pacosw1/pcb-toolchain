@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import lean_owned
 
 
 def atomic_json(path, data):
@@ -105,45 +106,41 @@ class StageCancelled(KeyboardInterrupt):
         super().__init__('stage cancelled by signal' if signum else 'stage cancelled')
 
 
-def cleanup_group(proc):
+def stage_depth(env):
+    """Support root plus two nested owned supervisors; reject deeper nesting."""
+    value = env.get('IOT_LEAN_STAGE_DEPTH', '0')
+    if value not in ('0', '1', '2'):
+        raise ValueError('invalid/excessive owned stage depth')
+    return int(value)
+
+
+def cleanup_group(proc, depth=0):
     """Signal only our new-session child group; never mask the original cause.
 
     On a denied group signal, stop the directly owned child if permitted, but
     retain unconfirmed group cleanup as an error rather than claim no orphan.
     """
-    errors = []
-    for sig, grace in ((signal.SIGTERM, 5), (signal.SIGKILL, 2)):
-        try:
-            os.killpg(proc.pid, sig)
-        except ProcessLookupError:
-            pass
-        except OSError as error:
-            errors.append(dict(operation='killpg', signal=sig, error=str(error)))
-            try:
-                proc.send_signal(sig)
-            except OSError as fallback:
-                errors.append(dict(operation='owned-child-signal', signal=sig, error=str(fallback)))
-        try:
-            proc.communicate(timeout=grace)
-            try:
-                os.killpg(proc.pid, 0)
-            except ProcessLookupError:
-                return dict(complete=not errors, errors=errors, child_reaped=True)
-            except OSError as error:
-                errors.append(dict(operation='verify-group', signal=0, error=str(error)))
-            # A reaped direct child does not prove its descendants have exited.
-            # Continue to SIGKILL the same owned group; never report it green.
-        except subprocess.TimeoutExpired:
-            pass
-    return dict(complete=False, errors=errors, child_reaped=proc.poll() is not None)
+    if isinstance(proc, lean_owned.Process):
+        result = proc.cleanup()
+        try:proc.communicate(timeout=0)
+        except Exception:pass
+        return result
+    # Popen may already have reaped its leader. A numeric PID no longer proves
+    # signal authority, so refuse unsupported handles without any signal.
+    return dict(complete=False, errors=[dict(operation='ownership',
+                error='cleanup requires an authenticated broker-owned stage')],
+                child_reaped=False, family_cleanup='unconfirmed')
 
 
 def run_stage(cmd, *, stage, event_file=None, deadline=None, **kwargs):
     """Bound the entire child process group; timeout output is never a pass.
 
-    SIGTERM allows router checkpoints for five seconds, followed by at most two
-    seconds for SIGKILL cleanup. Logs/checkpoints are retained, but no timeout
-    result is accepted.
+    A root-owned broker retains registered group leaders across stopped nested
+    controllers. TERM allows five seconds for checkpoints, then KILL cleanup
+    gets two seconds; broker thread/descriptor draining is separately bounded.
+    Root plus two nested owned levels are supported. Arbitrary unregistered
+    setsid descendants are outside this ownership protocol. Logs/checkpoints
+    are retained, but no timeout or uncertain cleanup result is accepted.
     """
     child_env = dict(kwargs.get('env', os.environ))
     child_deadline = inherited_deadline(child_env)
@@ -157,24 +154,42 @@ def run_stage(cmd, *, stage, event_file=None, deadline=None, **kwargs):
         kwargs['env'] = dict(child_env, IOT_LEAN_DEADLINE=encode_deadline(child_deadline))
     left = remaining(child_deadline)
     started = now()
-    before = resource.getrusage(resource.RUSAGE_CHILDREN)
     status, rc, proc = 'failed', None, None
     handlers = {}
     cleanup = None
     cause = None
+    admitting = True
+    pending_signal = None
     def interrupted(signum, frame):
+        nonlocal pending_signal
+        if admitting:
+            pending_signal = signum
+            return
         raise StageCancelled(signum)
     try:
+        depth = stage_depth(os.environ)
+        if 'IOT_LEAN_STAGE_DEPTH' in child_env and stage_depth(child_env) != depth:
+            raise ValueError('child environment cannot reset owned stage depth')
         if left is not None and left <= 0:
             status = 'timeout'
             cause = dict(type='TimeoutExpired', signal=None)
             raise subprocess.TimeoutExpired(cmd, 0)
-        proc = subprocess.Popen(cmd, start_new_session=True, **kwargs)
-        # A surrounding pipeline watchdog must not leave a nested router group
-        # orphaned when it terminates this Python process.
+        # Admission/cancellation is installed before the broker can spawn any
+        # controller or helper. Only the root broker owns/reaps their leaders.
         for sig in (signal.SIGTERM, signal.SIGINT):
             handlers[sig] = signal.signal(sig, interrupted)
         try:
+            proc = lean_owned.prepare(cmd, kwargs)
+            if pending_signal:
+                admitting=False
+                raise StageCancelled(pending_signal)
+            proc.start()
+            admitting = False
+            if pending_signal:raise StageCancelled(pending_signal)
+            left = remaining(child_deadline)
+            if left is not None and left<=0:raise subprocess.TimeoutExpired(cmd,0)
+            proc.activate()
+            left = remaining(child_deadline)
             stdout, stderr = proc.communicate(timeout=left)
         except (subprocess.TimeoutExpired, KeyboardInterrupt) as error:
             status = 'cancelled' if isinstance(error, KeyboardInterrupt) else 'timeout'
@@ -182,22 +197,49 @@ def run_stage(cmd, *, stage, event_file=None, deadline=None, **kwargs):
             # Repeated cancellation must not interrupt bounded cleanup.
             for sig in handlers:
                 signal.signal(sig, signal.SIG_IGN)
-            cleanup = cleanup_group(proc)
+            try:
+                cleanup = cleanup_group(proc, depth) if proc else dict(complete=True, errors=[], child_reaped=True)
+            except Exception as cleanup_error:
+                # Cleanup diagnostics must never replace timeout/cancellation.
+                cleanup = dict(complete=False, child_reaped=proc.returncode is not None,
+                               family_cleanup='unconfirmed', errors=[dict(
+                                   operation='cleanup', type=type(cleanup_error).__name__,
+                                   error=str(cleanup_error))])
             error.cleanup = cleanup
             raise
         rc = proc.returncode
+        cleanup = proc.last_cleanup
+        if cleanup and not cleanup['complete']:
+            raise RuntimeError('owned-stage cleanup could not be confirmed')
         status = 'complete' if rc == 0 else 'failed'
         return subprocess.CompletedProcess(cmd, rc, stdout, stderr)
+    except BaseException as error:
+        if cause is None:cause=dict(type=type(error).__name__,signal=getattr(error,'signum',None))
+        if proc and cleanup is None:
+            for sig in handlers:signal.signal(sig,signal.SIG_IGN)
+            try:cleanup=cleanup_group(proc)
+            except Exception as cleanup_error:
+                cleanup=dict(complete=False,errors=[dict(operation='cleanup',error=str(cleanup_error))])
+            error.cleanup=cleanup
+        raise
     finally:
+        try:close_failed = bool(proc and not proc.close())
+        except Exception:close_failed = True
+        if close_failed:
+            cleanup = dict(complete=False, errors=[dict(operation='broker-close', error='owned broker has unsettled workers')])
+            if status=='complete':status='failed'
         for sig, handler in handlers.items():
             signal.signal(sig, handler)
-        after = resource.getrusage(resource.RUSAGE_CHILDREN)
         if event_file:
             event = dict(stage=stage, command=list(map(str, cmd)), status=status, returncode=rc,
                          wall_s=now() - started, cause=cause, cleanup=cleanup,
-                         child_cpu_s=(after.ru_utime + after.ru_stime - before.ru_utime - before.ru_stime))
+                         child_cpu_s=proc.child_cpu_s if proc else None,
+                         adopted_child_cpu_s=proc.adopted_child_cpu_s if proc else None,
+                         cpu_scope=proc.cpu_scope if proc else 'unavailable; no owned leader reaped')
             with open(event_file, 'a') as f:
                 f.write(json.dumps(event) + '\n')
+        if close_failed and cause is None:
+            raise RuntimeError('owned-stage broker did not settle')
 
 
 def optimizer_options(policy, threads=0):

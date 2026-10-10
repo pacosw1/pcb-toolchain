@@ -29,10 +29,12 @@ ROUTE_FEATURES="name=1,..." last; tools/route_features.py show BOARD prints them
 The feature lines are printed before the UNROUTED line (callers read the last UNROUTED line).
 """
 import argparse
+import contextlib
 import fnmatch
 import json
 import os
 import re
+import resource
 import shlex
 import shutil
 import subprocess
@@ -53,6 +55,38 @@ import backend_quality
 
 BIN = os.environ.get("FASTROUTE_BIN") or os.path.expanduser("~/opt/fastroute/fastroute-0.1.7-macos-arm64/fastroute")
 KICAD_CLI = os.environ.get("KICAD_CLI", "/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli")
+
+
+@contextlib.contextmanager
+def _native_phase(stage, event_file):
+    """Measure blocking native work; deadline checks cannot preempt a C++ call."""
+    started = lean.now()
+    before_self = resource.getrusage(resource.RUSAGE_SELF)
+    before_child = resource.getrusage(resource.RUSAGE_CHILDREN)
+    status = 'failed'
+    try:
+        if lean.remaining() == 0:
+            raise subprocess.TimeoutExpired([stage], 0)
+        yield
+        if lean.remaining() == 0:
+            raise subprocess.TimeoutExpired([stage], 0)
+        status = 'complete'
+    except subprocess.TimeoutExpired:
+        status = 'timeout'
+        raise
+    except KeyboardInterrupt:
+        status = 'cancelled'
+        raise
+    finally:
+        after_self = resource.getrusage(resource.RUSAGE_SELF)
+        after_child = resource.getrusage(resource.RUSAGE_CHILDREN)
+        with open(event_file, 'a') as events:
+            events.write(json.dumps(dict(stage=stage, kind='inprocess', status=status,
+                wall_s=lean.now()-started,
+                self_cpu_s=(after_self.ru_utime+after_self.ru_stime)-(before_self.ru_utime+before_self.ru_stime),
+                child_cpu_s=(after_child.ru_utime+after_child.ru_stime)-(before_child.ru_utime+before_child.ru_stime),
+                accounting='process deltas; nested/whole-job intervals are non-additive',
+                blocking_native=True))+'\n')
 
 
 def write_pairs(pairs_json, dru, nets, out):
@@ -215,8 +249,8 @@ def _main(a=None):
     tool = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gnd_pad_vias.py")
     for net in planes:
         tmp = os.path.join(a.outdir, "planevias.kicad_pcb")
-        r = subprocess.run([sys.executable, tool, base, tmp, "--net", net] + shlex.split(a.via_args),
-                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        r = lean.run_stage([sys.executable, tool, base, tmp, "--net", net] + shlex.split(a.via_args),
+                           stage=f"initial-plane-vias:{net}", event_file=phases, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         with open(os.path.join(a.outdir, "planevias.log"), "a") as f:
             f.write("".join(l + "\n" for l in r.stdout.splitlines() if "vias added" in l))
         if os.path.isfile(tmp):
@@ -275,9 +309,9 @@ def _main(a=None):
         nets = want
     if route_features.on(feat, "pin_escape_check"):
         # Read-only check on the job input (with the plane pad vias): pins of the routed nets that cannot leave their part.
-        p = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "route_grid.py"),
+        p = lean.run_stage([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "route_grid.py"),
                             "escape", base, "--layers", a.layers, "--skip", "", "--nets", routed_nets_file(),
-                            "--out", os.path.join(a.outdir, "pin-escape.json")], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+                            "--out", os.path.join(a.outdir, "pin-escape.json")], stage="pin-escape", event_file=phases, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         print(([l for l in p.stdout.splitlines() if l.startswith("ESCAPE")] or ["ESCAPE failed"])[-1], flush=True)
     with open(dsn) as f:
         # Keep electrical membership: exclusions are applied as dedicated router
@@ -360,7 +394,9 @@ def _main(a=None):
         sys.exit('fastroute_job: ignored classes are derived from selected nets')
     text, ignored_classes = dsn_skip.exclude(text, nets)
     if ignored_classes:
-        help_result = subprocess.run([BIN, '--help'], capture_output=True, text=True, timeout=10)
+        help_result = lean.run_stage([BIN, '--help'], stage='net-class-capability', event_file=phases,
+                                     deadline=lean.deadline_after(10), stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE, text=True)
         if help_result.returncode or 'router.autorouter.ignore_net_classes' not in help_result.stdout:
             sys.exit('fastroute_job: backend does not support safe net-class exclusion')
     with open(dsn, "w") as f:
@@ -462,8 +498,9 @@ def _main(a=None):
         replay_before = import_replay_guard.snapshot(b, replay_path)
     except ValueError as exc:
         sys.exit('fastroute_job: SES pose integrity precondition failed; result is not verified: ' + str(exc))
-    if not pcbnew.ImportSpecctraSES(b, ses):
-        sys.exit("fastroute_job: SES import failed")
+    with _native_phase('ses-import', phases):
+        if not pcbnew.ImportSpecctraSES(b, ses):
+            sys.exit("fastroute_job: SES import failed")
     try:
         restored = import_pose_guard.restore(b, poses_before, pose_grid)
         replays = import_replay_guard.restore(b, replay_before, preserved, dsn, ses, replay_path)
@@ -511,8 +548,9 @@ def _main(a=None):
             b.Delete(t)
         if extra:
             print(f"fastroute_job: removed {len(extra)} new items on nets outside --only-nets: {', '.join(names)}")
-    pcbnew.ZONE_FILLER(b).Fill(b.Zones())
-    pcbnew.SaveBoard(out, b)
+    with _native_phase('native-zone-fill-save', phases):
+        pcbnew.ZONE_FILLER(b).Fill(b.Zones())
+        pcbnew.SaveBoard(out, b)
     drc = os.path.join(a.outdir, "drc.json")
     p = lean.run_stage([KICAD_CLI, "pcb", "drc", "--refill-zones", "--severity-all", "--format", "json", "--units", "mm", "-o", drc, out],
                        stage='native-drc', event_file=phases, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -555,8 +593,9 @@ def _main(a=None):
     if todo:
         for net, pads in todo.items():
             tmp = os.path.join(a.outdir, "repair.kicad_pcb")
-            r = subprocess.run([sys.executable, tool, out, tmp, "--net", net, "--only", ",".join(sorted(pads))]
-                               + shlex.split(a.via_args), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            r = lean.run_stage([sys.executable, tool, out, tmp, "--net", net, "--only", ",".join(sorted(pads))]
+                               + shlex.split(a.via_args), stage=f"postimport-plane-repair:{net}", event_file=phases,
+                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
             with open(os.path.join(a.outdir, "planevias.log"), "a") as f:
                 f.write("".join("repair " + l + "\n" for l in r.stdout.splitlines() if "vias added" in l))
             if os.path.isfile(tmp):
@@ -586,9 +625,9 @@ def _main(a=None):
     if route_features.on(feat, "triage_opens"):
         tri = os.path.join(a.outdir, "open-triage.json")
         if signal_open:
-            p = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "route_grid.py"),
+            p = lean.run_stage([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "route_grid.py"),
                                 "triage", out, "--drc", drc, "--layers", a.layers, "--skip", ",".join(skip + planes), "--nets", routed_nets_file(),
-                                "--out", tri], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+                                "--out", tri], stage="open-triage", event_file=phases, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
             print(([l for l in p.stdout.splitlines() if l.startswith("TRIAGE")] or ["TRIAGE failed"])[-1], flush=True)
         else:
             json.dump({"open": 0, "enclosed": 0, "router_miss": 0, "connections": []}, open(tri, "w"))

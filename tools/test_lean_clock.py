@@ -69,8 +69,8 @@ class ClockTests(unittest.TestCase):
         with patch.object(lean.os, 'killpg') as kill:
             record = lean.cleanup_group(proc)
         self.assertFalse(record['complete'])
-        self.assertTrue(record['child_reaped'])
-        self.assertTrue(any(call.args == (proc.pid, signal.SIGKILL) for call in kill.call_args_list))
+        self.assertFalse(record['child_reaped'])
+        kill.assert_not_called()  # A reaped/unowned PID cannot authorize signals.
 
     def test_actual_signal_distinguished_from_deadline(self):
         for signum in (signal.SIGINT, signal.SIGTERM):
