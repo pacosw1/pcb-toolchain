@@ -21,6 +21,34 @@ Other revisions cannot reuse the same BOM or scope. Planned or historical
 packet requirements remain unchanged. Missing and header-only BOM findings
 remain failures without implying that the board has selected parts.
 
+Alternatively, an owning board entry may explicitly set
+`bom_policy: "per-revision"`. Every declared revision then requires its own
+`bom`, `bom_scope`, `selection`, `project` and `spec`. BOM, scope and selection
+paths are relative to that board directory and must be distinct across all
+revisions and record types. Selected CSV names must be `BOM-VERIFIED.csv` or
+`BOM-VERIFIED-<name>.csv`. For example, A and B can own
+`BOM-VERIFIED-A.csv` and `BOM-VERIFIED-B.csv` with separately named scope and
+selection JSON files. Candidate inventory is a separate record and does not
+become selected evidence through file naming or revision ownership.
+
+With this policy, packet and offline consistency checks enumerate every
+declared revision independently, including historical revisions. There is no
+inferred active-revision filter: resolve intended applicability before opting
+in. Coverage and selection calls require an explicit revision selector and
+the supplied CSV must equal the actual board-owned revision source. Another
+revision's records, missing records, stale scope/selection attribution and
+symlink escape fail. Each scope still binds its owning native project, SPEC,
+source closure and complete assembly requirements; each selection ledger
+binds the same revision, CSV hash and attributed historical review evidence.
+
+Entries without this policy retain the existing single-owner behavior.
+Unknown policies fail. This optional contract does not migrate real records
+or establish engineering selection, current availability or qualification.
+Historical selection remains `stock_current: false`, `qualified: false` and
+`release_approved: false`. It introduces no shared assembly manifest or
+cross-board ownership inference; shared harness scope requires an actual
+attributed owner and consumer model before it can be recorded.
+
 ## Scope schema version 1
 
 The scope JSON contains only these fields:

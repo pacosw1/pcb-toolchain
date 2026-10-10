@@ -19,7 +19,7 @@ XT-001, ...) is ignored: those were evaluated and found false on our boards.
 
 Usage:
   python3 tools/kicad_happy_gate.py BOARD_DIR_OR_PCB \\
-      [--rules GP-001,RP-001,DC-002,UC-001] [--min-severity warning]
+      [--rules RP-001,DC-002,UC-001] [--min-severity warning]
       [--exempt RULE:NET ...] [--exempt-file EXEMPT.json]
 
 An exemption drops a finding when its rule matches and the finding names
@@ -44,7 +44,10 @@ import tempfile
 PINNED_COMMIT = "a6bba1a"
 # VP-001 is left out: kicad-happy a6bba1a reads the KiCad 10 tenting format as untented.
 # pcbtool.py viapads (with --allow for datasheet vias) is the via-in-pad gate.
-DEFAULT_RULES = ["GP-001", "RP-001", "DC-002", "UC-001"]
+# GP-001 (reference coverage < 95 / 80 / 50 %) is left out since D-124 (2026-10-09): no standard or checker gives a
+# coverage percentage (report hardware-design/reports/2026-10-09-design-rules-sources.md A2, NO SOURCE). The
+# tools/si_planes.py crossing and detour rules replace it. Run it by hand with --rules GP-001 if needed.
+DEFAULT_RULES = ["RP-001", "DC-002", "UC-001"]
 SEVERITY_ORDER = ["info", "warning", "error", "critical"]
 
 

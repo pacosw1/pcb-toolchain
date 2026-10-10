@@ -195,6 +195,16 @@ class WidthTest(unittest.TestCase):
         self.assertEqual(pt.width_report([self.seg('SDA', 0.2, (0, 0), (1, 0))], self.NEED, self.PADS), {})
 
 
+    def test_pin_escape_with_a_rating_passes_in_width_report(self):
+        # D-124c (b): a 0.6 mm x 0.5 mm escape from a pad 0.6 x 1.2 mm whose part pin is rated 5 A >= the class current
+        pads = [{'net': 'VBAT', 'pos': (0, 0), 'minor': 0.6, 'major': 1.2, 'pin_amps': 5.0}]
+        segs = [self.seg('VBAT', 0.6, (0, 0), (0, 0.5)), self.seg('VBAT', 1.5, (0, 0.5), (20, 0.5))]
+        r = pt.width_report(segs, self.NEED, pads)
+        self.assertEqual(r['VBAT']['under'], [])
+        pads[0]['pin_amps'] = None   # no rating: no allowance
+        self.assertEqual(len(pt.width_report(segs, self.NEED, pads)['VBAT']['under']), 1)
+
+
 class CurrentTest(unittest.TestCase):
     def test_ipc2221_external_1oz_matches_layout_spec_table(self):
         # BACKUP-POWER LAYOUT-SPEC: 1 oz, dT 10 K: 0.25 mm 0.87 A, 1.0 mm 2.4 A, 1.5 mm 3.2 A
@@ -239,6 +249,156 @@ class CurrentTest(unittest.TestCase):
     def test_track_capacity_without_endpoint_temperature_evidence_is_ipc(self):
         self.assertAlmostEqual(pt.track_amps(0.25, 0.035, 10.0, chain=(2.27, 0.25)), pt.ipc_amps(0.25))
         self.assertAlmostEqual(pt.track_amps(0.25, 0.035, 10.0, chain=(100, 0.25)), pt.ipc_amps(0.25))
+
+    def test_via_groups_join_vias_with_the_same_ends(self):
+        g = pt.via_groups({0: {'A', 'B'}, 1: {'B', 'A'}, 2: {'A', 'C'}})
+        self.assertEqual(sorted(sorted(x) for x in g), [[0, 1], [2]])
+
+    def test_widest_path_ignores_thin_branch_but_finds_thin_bottleneck(self):
+        inf = float('inf')
+        edges = [('A', 'x', 3.0, 'wide1'), ('x', 'B', 3.0, 'wide2'),   # main path 3 A
+                 ('x', 'C', 0.8, 'branch'),                             # thin branch to a small pin
+                 ('B', 'D', 0.8, 'thin'), ('D', 'E', inf, 'zone')]
+        amps, path = pt.widest_path(edges, 'A', 'B')
+        self.assertEqual((amps, path), (3.0, ['wide1', 'wide2']))
+        amps, path = pt.widest_path(edges, 'A', 'E')
+        self.assertEqual(amps, 0.8)
+        self.assertIn('thin', path)
+
+    def test_parallel_paths_do_not_add(self):
+        # conservative: two 1 A paths are not one 2 A path
+        edges = [('A', 'B', 1.0, 'p1'), ('A', 'm', 1.0, 'p2a'), ('m', 'B', 1.0, 'p2b')]
+        self.assertEqual(pt.widest_path(edges, 'A', 'B')[0], 1.0)
+
+    def test_project_point_onto_segment_is_clamped(self):
+        self.assertEqual(pt.project((0, 0), (10, 0), (4, 3)), (4.0, 0.0))
+        self.assertEqual(pt.project((0, 0), (10, 0), (-5, 1)), (0.0, 0.0))
+        self.assertEqual(pt.project((0, 0), (0, 10), (1, 12)), (0.0, 10.0))
+
+    def test_spec_pairs_from_pads_or_chains(self):
+        spec = {'nets': {'A': {'amps': 1.0, 'pads': ['U1.1', 'C1.1', 'J1.1']},
+                         'B': {'chains': [{'amps': 2.0, 'pads': ['U2.6', 'C2.1']}, {'amps': 0.5, 'pads': ['C2.1', 'U7.1']}]}}}
+        self.assertEqual(pt.spec_pairs(spec), [('A', 'U1.1', 'C1.1', 1.0), ('A', 'C1.1', 'J1.1', 1.0),
+                                               ('B', 'U2.6', 'C2.1', 2.0), ('B', 'C2.1', 'U7.1', 0.5)])
+
+    def test_no_path_is_zero_amps(self):
+        self.assertEqual(pt.widest_path([('A', 'x', 3.0, 'w')], 'A', 'B'), (0.0, []))
+
+
+class NeckEndTest(unittest.TestCase):
+    """D-124c (user decision 2026-10-09, option C): a neck's end temperatures come from evidence."""
+    PLANE = (('plane',),)
+    PAD = (('pad',),)
+
+    def test_pin_ratings_reject_invalid_values_and_missing_identity(self):
+        from copy import deepcopy
+        import json
+        import tempfile
+        from pathlib import Path
+        good = {'parts': {'SW': {'mpn': ['TEST'], 'pins': {'1': {'name': 'SW', 'amps': 2.7, 'source': 'datasheet page 5', 'statistic': 'min'}}}}}
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'ratings.json'
+            for amps in (0, -1, True, float('inf'), float('nan')):
+                bad = deepcopy(good);bad['parts']['SW']['pins']['1']['amps'] = amps
+                path.write_text(json.dumps(bad))
+                with self.assertRaises(ValueError):pt.load_pin_ratings(path)
+            for field in ('name', 'source', 'statistic'):
+                bad = deepcopy(good);del bad['parts']['SW']['pins']['1'][field]
+                path.write_text(json.dumps(bad))
+                with self.assertRaises(ValueError):pt.load_pin_ratings(path)
+            bad = deepcopy(good);bad['parts']['SW']['mpn'] = []
+            path.write_text(json.dumps(bad))
+            with self.assertRaises(ValueError):pt.load_pin_ratings(path)
+
+    def test_ambiguous_part_identity_has_no_pin_allowance(self):
+        ratings = {'A': {'mpn': ['TPS61023*'], 'pins': {'5': {'amps': 2.7, 'name': 'SW', 'source': 'page 5'}}},
+                   'B': {'mpn': ['TPS*'], 'pins': {'5': {'amps': 10, 'name': 'SW', 'source': 'page 5'}}}}
+        amps, reason = pt.pin_rating(ratings, 'TPS61023DRLR', '5')
+        self.assertIsNone(amps);self.assertIn('ambiguous', reason)
+
+    def test_split_does_not_turn_long_physical_track_into_pin_escape(self):
+        from unittest.mock import patch
+        from test_physical_current import Track, Pad, native_like, vector
+        pad = Pad('U', 0);pad.GetSize = lambda layer: vector(200000, 600000)
+        ratings = {'TEST': {'mpn': ['TEST'], 'pins': {'1': {'amps': 2.7, 'name': 'SW', 'source': 'page 5'}}}}
+        def edges(tracks):
+            p, b = native_like(tracks, [pad])
+            fp = b.GetFootprints()[0];fp.GetValue = lambda: 'TEST'
+            with patch.object(pt, 'load_pin_ratings', return_value=ratings):
+                return pt.net_graph(p, b, 'P', {}, 10, .018)[0]
+        short = edges([Track(0, end=500000)])
+        self.assertTrue(any('pin escape' in e[3] for e in short))
+        long_split = edges([Track(0, end=1000000), Track(0, start=300000, end=300000, end_y=100000)])
+        self.assertFalse(any('pin escape' in e[3] for e in long_split))
+
+    def test_ipc_rise_inverts_ipc_amps(self):
+        for w, t, dT in ((0.25, 0.035, 10.0), (1.0, 0.035, 4.0), (0.5, 0.0152, 20.0)):
+            self.assertAlmostEqual(pt.ipc_rise(pt.ipc_amps(w, t, dT), w, t), dT, places=9)
+
+    def test_joule_rise_is_the_fin_peak(self):
+        # J^2 rho L^2 / (8 k): 1.1 A, 0.25 x 0.035 mm, 2.27 mm
+        A, L = 0.25 * 0.035e-6, 2.27e-3
+        self.assertAlmostEqual(pt.joule_rise(0.25, 0.035, 2.27, 1.1), 1.1 ** 2 * 1.72e-8 * L ** 2 / (8 * 390 * A ** 2), places=12)
+
+    def test_neck_between_two_planes_passes(self):
+        # 0.25 mm x 2.27 mm at 1.1 A: Joule peak 0.45 K above two planes at rise 0 <= 10 K
+        r = pt.neck_peak_rise(0.25, 0.035, 2.27, 1.1, [self.PLANE, self.PLANE], 10.0)
+        self.assertAlmostEqual(r, pt.joule_rise(0.25, 0.035, 2.27, 1.1), places=12)
+        self.assertLess(r, 10.0)
+        self.assertGreater(pt.neck_capacity(0.25, 0.035, 2.27, [self.PLANE, self.PLANE], 10.0), 1.1)
+
+    def test_neck_to_a_wide_track_uses_that_tracks_rise(self):
+        wide = (('track', 1.0, 0.035),)
+        r = pt.neck_peak_rise(0.25, 0.035, 2.27, 1.1, [self.PLANE, wide], 10.0)
+        self.assertAlmostEqual(r, pt.ipc_rise(1.1, 1.0, 0.035) + pt.joule_rise(0.25, 0.035, 2.27, 1.1), places=12)
+        # the capacity is the current where that sum reaches dT
+        c = pt.neck_capacity(0.25, 0.035, 2.27, [self.PLANE, wide], 10.0)
+        self.assertAlmostEqual(pt.neck_peak_rise(0.25, 0.035, 2.27, c, [self.PLANE, wide], 10.0), 10.0, places=6)
+        # a hot pad (no evidence) at the other end: its full dT dominates the max, no credit
+        self.assertGreater(pt.neck_peak_rise(0.25, 0.035, 2.27, 1.1, [self.PAD, wide], 10.0), 10.0)
+        self.assertEqual(pt.neck_capacity(0.25, 0.035, 2.27, [self.PAD, wide], 10.0), 0.0)
+
+    def test_neck_to_an_unknown_pad_end_has_no_credit(self):
+        self.assertEqual(pt.neck_capacity(0.25, 0.035, 0.1, [self.PLANE, self.PAD], 10.0), 0.0)
+        self.assertEqual(pt.neck_capacity(0.25, 0.035, 0.1, [self.PLANE, ()], 10.0), 0.0)   # no evidence at all
+        self.assertAlmostEqual(pt.track_amps(0.25, 0.035, 10.0, (0.1, 0.25), ends=[self.PLANE, self.PAD]), pt.ipc_amps(0.25))
+
+    def test_end_takes_the_coolest_evidence(self):
+        # a pad that is also on a plane is a plane end
+        self.assertEqual(pt.end_rise((('pad',), ('plane',)), 1.0, 10.0), 0.0)
+        self.assertEqual(pt.end_rise((('pad',),), 1.0, 10.0), 10.0)
+
+    def test_pin_escape_needs_a_rating_and_stays_within_the_pad(self):
+        # pad 0.3 x 0.6 mm (TPS61023 SW), rated 2.7 A, net 1.1 A
+        self.assertTrue(pt.pin_escape(0.5, 0.3, 0.3, 0.6, 2.7, 1.1))
+        self.assertFalse(pt.pin_escape(0.5, 0.3, 0.3, 0.6, None, 1.1))   # no rating
+        self.assertFalse(pt.pin_escape(0.7, 0.3, 0.3, 0.6, 2.7, 1.1))    # longer than the pad
+        self.assertFalse(pt.pin_escape(0.5, 0.25, 0.3, 0.6, 2.7, 1.1))   # narrower than the pad
+        self.assertFalse(pt.pin_escape(0.5, 0.3, 0.3, 0.6, 1.0, 1.1))    # rating below the net current
+
+    def test_pin_ratings_file_has_a_source_per_pin(self):
+        r = pt.load_pin_ratings()
+        self.assertIn('TPS61023', r)
+        for key, part in r.items():
+            self.assertTrue(part['mpn'])
+            for pin, v in part['pins'].items():
+                self.assertGreater(v['amps'], 0)
+                self.assertIn('page', v['source'])
+        self.assertEqual(pt.pin_rating(r, 'TPS61023DRLR', '5')[0], 2.7)
+        self.assertIsNone(pt.pin_rating(r, 'TPS61023DRLR', '1')[0])
+        self.assertIsNone(pt.pin_rating(r, 'LM5164', '8')[0])
+
+    def test_pq_meter_bst_sw_fails_without_evidence(self):
+        # PQ-METER /BST_SW: 0.25 mm x 2.27 mm from U12.5 (0.3 x 0.6 mm pad) to L2.2: both ends are pads
+        self.assertEqual(pt.neck_capacity(0.25, 0.035, 2.27, [self.PAD, self.PAD], 10.0), 0.0)
+        self.assertFalse(pt.pin_escape(2.27, 0.25, 0.3, 0.6, 2.7, 1.1))
+
+    def test_neck_chain_reports_its_end_nodes(self):
+        pieces = [('ab', 'F', (0, 0), (5, 0), 1.0), ('bc', 'F', (5, 0), (6, 0), 0.3), ('cd', 'F', (6, 0), (7.27, 0), 0.24),
+                  ('de', 'F', (7.27, 0), (12, 0), 1.0)]
+        ch = pt.neck_chains(pieces)
+        self.assertEqual(sorted(ch['bc'][2]), [('F', (5, 0)), ('F', (7.27, 0))])
+        self.assertEqual(sorted(ch['cd'][2]), [('F', (6, 0)), ('F', (7.27, 0))])
 
     def test_via_groups_join_vias_with_the_same_ends(self):
         g = pt.via_groups({0: {'A', 'B'}, 1: {'B', 'A'}, 2: {'A', 'C'}})

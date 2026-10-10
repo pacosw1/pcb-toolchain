@@ -18,6 +18,17 @@ export const METRICS = {
   rf_failures: {level: 'soft', target: 0},
 };
 
+export function pathFailures(text) {
+  const lines=text.split(/\r?\n/);
+  const low=lines.filter(l=>l.startsWith('LOW ')).length;
+  const missing=lines.filter(l=>l.startsWith('MISSING ')).length;
+  const pairs=lines.filter(l=>/^\d+ power-path pairs below the design current$/.test(l));
+  const supplies=lines.filter(l=>/^\d+ supply nets not covered$/.test(l));
+  if(pairs.length!==1 || supplies.length!==1 || Number(pairs[0].split(' ')[0])!==low || Number(supplies[0].split(' ')[0])!==missing) return null;
+  if(low+missing===0 && text.includes('[gate-check-exit:1]')) return null;
+  return low+missing;
+}
+
 // A metric of null means "the tool did not run". It never passes (fail closed).
 export const CORE_METRICS = ['erc_errors', 'drc_errors', 'drc_parity', 'drc_unconnected'];
 export const CHECK_METRICS = {

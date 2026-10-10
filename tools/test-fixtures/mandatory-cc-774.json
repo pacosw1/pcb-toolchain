@@ -1,0 +1,306 @@
+{
+  "board_sha256": "8f14b524c9119fbd9f6f976d52d8621530a231bb16d8479f8e47be723250e274",
+  "faults": [
+    {
+      "net": "/J1_CC2",
+      "layer": "In2.Cu",
+      "reason": "not explicitly eligible for mixed layer",
+      "uuid": "aed84668-2a32-46b0-939d-984b87638618",
+      "source_locked": true,
+      "preservation": "locked or retained by this invocation"
+    },
+    {
+      "net": "/J1_CC1",
+      "layer": "In2.Cu",
+      "reason": "not explicitly eligible for mixed layer",
+      "uuid": "03b6f5f4-2008-467c-9548-5d1463c7addc",
+      "source_locked": true,
+      "preservation": "locked or retained by this invocation"
+    },
+    {
+      "net": "/J1_CC1",
+      "layer": "In2.Cu",
+      "reason": "not explicitly eligible for mixed layer",
+      "uuid": "9e5cfac4-d917-46d3-8c7a-00f63bec06c8",
+      "source_locked": true,
+      "preservation": "locked or retained by this invocation"
+    },
+    {
+      "net": "/J1_CC1",
+      "layer": "In2.Cu",
+      "reason": "not explicitly eligible for mixed layer",
+      "uuid": "b356e523-f21b-4f5d-ba52-1db50f8be9e4",
+      "source_locked": true,
+      "preservation": "locked or retained by this invocation"
+    }
+  ],
+  "qualified": false,
+  "policy_sources": {
+    "/home/user/.codex/worktrees/lean-routing/iot-lab/tools/base_b_route_rules.py": "cf92404ef387c364519cbae549a3fb2de09a325580606bb7b4503c30e92d121f",
+    "/private/tmp/lean-774-native-alias-v3/input/board.kicad_pro": "1e7a3b0575c8fa4b7eac13983bb9f168d993addb903cb1ef20597b660c3640e7",
+    "/home/user/.codex/worktrees/lean-routing/iot-lab/hardware-design/boards/BASE-PWR/cad/BASE-PWR-B/BASE-PWR-B.kicad_pro": "1e7a3b0575c8fa4b7eac13983bb9f168d993addb903cb1ef20597b660c3640e7",
+    "/home/user/.codex/worktrees/lean-routing/iot-lab/hardware-design/boards/BASE-PWR-B/current-paths.json": "b02db0631438e91f49493d7d1e77d536d2bb730f8b0571b166ae05f1fecb38e9",
+    "/home/user/.codex/worktrees/lean-routing/iot-lab/hardware-design/boards/BASE-PWR-B/reference-planes.json": "4ec036cff6e2699ce5c63c537a3322df2cf4c3e332b250c608522dcd7f403a4d",
+    "/home/user/.codex/worktrees/lean-routing/iot-lab/hardware-design/boards/BASE-PWR-B/rp001-fast-nets.json": "087f95dbdb87593d5c61dd2fb10a4c0408b9f2c8b82267f869427b15c4803123",
+    "/home/user/.codex/worktrees/lean-routing/iot-lab/hardware-design/boards/BASE-PWR-B/diff-pairs.json": "8571441fa0047a55b611e4bcc216d0da4c64095ab2a1103e1f32cfc1387c8c7f",
+    "/home/user/.codex/worktrees/lean-routing/iot-lab/hardware-design/boards/BASE-PWR-B/preserved-usb-policy.json": "569f72fd2f70ac43a528da684e9fcc9df6fc0dbd3e2ad42b5e070f644bd8e64f",
+    "/home/user/.codex/worktrees/lean-routing/iot-lab/hardware-design/DECISIONS.md": "ad0502360377a70c87b904c6bf9913cb0f97f5124b5980d76608948a4d7ecba9",
+    "/home/user/.codex/worktrees/lean-routing/iot-lab/hardware-design/boards/BASE-PWR/SPEC-REV-B.md": "7df22696da2d344cbca0614c91b25250085428c5fe72481a9459c9f05ecab5ba"
+  },
+  "preserved_pair_profile": {
+    "board": "BASE-PWR-B",
+    "pair": "USB",
+    "p": "/USB_DP",
+    "n": "/USB_DN",
+    "expected_vias": {
+      "p": 0,
+      "n": 1
+    },
+    "decisions": [
+      "D-066",
+      "D-119"
+    ],
+    "sources": [
+      {
+        "path": "hardware-design/DECISIONS.md",
+        "anchor": "| D-066 | Accepted |",
+        "excerpt": "DN has 1 via, DP has 0 (the pair must cross once between J1 and U4)."
+      },
+      {
+        "path": "hardware-design/DECISIONS.md",
+        "anchor": "| D-119 | Accepted",
+        "excerpt": "the rev A USB pair copper (J1, U4, R13/R14, U1) copied and locked, Fastroute skips the USB nets."
+      },
+      {
+        "path": "hardware-design/boards/BASE-PWR/SPEC-REV-B.md",
+        "anchor": "## 12. Outline and layout",
+        "excerpt": "The rev A USB pair copper (J1, U4, R13/R14, U1) is copied and locked; Fastroute does not route the USB nets."
+      }
+    ],
+    "scope": "Only the preserved rev-B USB pair excluded from routing; exact accepted counts, not arbitrary imbalance. Other pairs keep equal-count checks. Source geometry/locks and independent gates remain required."
+  },
+  "board_identity": {
+    "board": "BASE-PWR-B",
+    "declared_board": "BASE-PWR-B",
+    "input_basename": "board",
+    "source_project": "/private/tmp/lean-774-native-alias-v3/input/board.kicad_pro",
+    "owner_project": "/home/user/.codex/worktrees/lean-routing/iot-lab/hardware-design/boards/BASE-PWR/cad/BASE-PWR-B/BASE-PWR-B.kicad_pro",
+    "source_project_sha256": "1e7a3b0575c8fa4b7eac13983bb9f168d993addb903cb1ef20597b660c3640e7",
+    "owner_project_sha256": "1e7a3b0575c8fa4b7eac13983bb9f168d993addb903cb1ef20597b660c3640e7",
+    "provenance_mode": "explicit renamed exact-owner-project copy",
+    "scope": "invocation identity only; source copper/poses/parity/final gates remain independently required"
+  },
+  "routed_nets": [
+    "+5V_LINK",
+    "/BKP_ON_BATTn",
+    "/BKP_SCL",
+    "/BKP_SDA",
+    "/BOOT",
+    "/BUZ_DRV",
+    "/BUZ_GATE",
+    "/BUZ_VDD",
+    "/CANH",
+    "/CANL",
+    "/CAN_RX",
+    "/CAN_RXD",
+    "/CAN_TERM",
+    "/CAN_TX",
+    "/CAN_TXD",
+    "/CAN_VISO",
+    "/CHG_EN",
+    "/D4_A",
+    "/EN",
+    "/ETH_INT",
+    "/ETH_MISO",
+    "/ETH_MOSI",
+    "/ETH_RESET",
+    "/ETH_SCLK",
+    "/ETH_SCLK_MCU",
+    "/ETH_SCSn",
+    "/FLASH_CSn",
+    "/FLASH_HOLDn",
+    "/FLASH_WPn",
+    "/IF-RS485/TERM",
+    "/IOX_INT",
+    "/IOX_P10",
+    "/IOX_P11",
+    "/IOX_P12",
+    "/IOX_P13",
+    "/IOX_P14",
+    "/IOX_P15",
+    "/IOX_P16",
+    "/IOX_P17",
+    "/J1_CC1",
+    "/J1_CC2",
+    "/LED_ALERT",
+    "/LED_ALERT_K",
+    "/LED_NET",
+    "/LED_NET_K",
+    "/LED_OK",
+    "/LED_OK_K",
+    "/LINK_EN",
+    "/LINK_FAULTn",
+    "/MUX_ST",
+    "/OW_DATA",
+    "/OW_MCU",
+    "/PROBE_3V3",
+    "/PSW-QWIIC/FAULT_N",
+    "/PSW-QWIIC/ILIM",
+    "/PSW-VBUS/FAULT_N",
+    "/PSW-VBUS/ILIM",
+    "/PWR-24V/5V_24V",
+    "/PWR-24V/BOOT",
+    "/PWR-24V/COMP",
+    "/PWR-24V/COMP_RC",
+    "/PWR-24V/EN",
+    "/PWR-24V/FB",
+    "/PWR-24V/LED_A",
+    "/PWR-24V/LINK_ILIM",
+    "/PWR-24V/LINK_SRC",
+    "/PWR-24V/MUX_CP2",
+    "/PWR-24V/MUX_ILM",
+    "/PWR-24V/MUX_PR1",
+    "/PWR-24V/MUX_SS",
+    "/PWR-24V/RT",
+    "/PWR-24V/SW",
+    "/PWR-24V/V24_OUT",
+    "/PWR-24V/VIN",
+    "/PWR-24V/VIN_F",
+    "/PWR-24V/VIN_RAW",
+    "/QWIIC_3V3",
+    "/RS485_A",
+    "/RS485_B",
+    "/RS485_DE",
+    "/RS485_RX",
+    "/RS485_TX",
+    "/SLOT5_FAULTn",
+    "/SLOT_CS",
+    "/SLOT_EN",
+    "/SLOT_FAULTn",
+    "/SLOT_IRQ",
+    "/SLOT_MISO",
+    "/SLOT_MOSI",
+    "/SLOT_SCK",
+    "/SLOT_SCK_MCU",
+    "/SLOT_SCL",
+    "/SLOT_SDA",
+    "/SLOT_UART_RX",
+    "/SLOT_UART_TX",
+    "/U0TXD",
+    "/U10_EN_UVLO",
+    "/U10_ILIM",
+    "/U10_dV_dT",
+    "/U2_BST",
+    "/U2_SW",
+    "/U3_ILIM",
+    "/U7_ILIM",
+    "/VBUS_LIM",
+    "/VIN_SENSE",
+    "BACKUP_5V",
+    "CHG_5V",
+    "PRIMARY_5V",
+    "PRIMARY_5V_POE",
+    "PRIMARY_5V_RAW",
+    "SLOT_3V3",
+    "VBUS",
+    "VDD_3V3",
+    "VIN_5V",
+    "unconnected-(J11-Pad5)",
+    "unconnected-(J11-Pad6)",
+    "unconnected-(J9-Pad5)",
+    "unconnected-(J9-Pad6)",
+    "unconnected-(SW3-Pad1)",
+    "unconnected-(SW3-Pad4)",
+    "unconnected-(SW4-Pad1)",
+    "unconnected-(SW4-Pad4)",
+    "unconnected-(U15-I{slash}O-Pad6)",
+    "unconnected-(U16-I{slash}O-Pad6)",
+    "unconnected-(U22-NC-Pad14)",
+    "unconnected-(U22-NC-Pad4)",
+    "unconnected-(U22-NC-Pad6)",
+    "unconnected-(U22-NC-Pad7)",
+    "unconnected-(U8-I{slash}O-Pad4)",
+    "unconnected-(U8-VP-Pad5)"
+  ],
+  "unlock_nets": "",
+  "note": "only immutable invocation faults block; repairable copper remains subject to final checks",
+  "source_records": [
+    {
+      "uuid": "aed84668-2a32-46b0-939d-984b87638618",
+      "net": "/J1_CC2",
+      "layer": "In2.Cu",
+      "via": false,
+      "locked": true,
+      "geometry": [
+        [
+          110525000,
+          108450000
+        ],
+        [
+          110525000,
+          105750000
+        ]
+      ],
+      "width": 200000,
+      "kind": "PCB_TRACK"
+    },
+    {
+      "uuid": "03b6f5f4-2008-467c-9548-5d1463c7addc",
+      "net": "/J1_CC1",
+      "layer": "In2.Cu",
+      "via": false,
+      "locked": true,
+      "geometry": [
+        [
+          115675000,
+          107850000
+        ],
+        [
+          116365000,
+          107160000
+        ]
+      ],
+      "width": 150000,
+      "kind": "PCB_TRACK"
+    },
+    {
+      "uuid": "9e5cfac4-d917-46d3-8c7a-00f63bec06c8",
+      "net": "/J1_CC1",
+      "layer": "In2.Cu",
+      "via": false,
+      "locked": true,
+      "geometry": [
+        [
+          116365000,
+          103300000
+        ],
+        [
+          116650000,
+          103000000
+        ]
+      ],
+      "width": 150000,
+      "kind": "PCB_TRACK"
+    },
+    {
+      "uuid": "b356e523-f21b-4f5d-ba52-1db50f8be9e4",
+      "net": "/J1_CC1",
+      "layer": "In2.Cu",
+      "via": false,
+      "locked": true,
+      "geometry": [
+        [
+          116365000,
+          107160000
+        ],
+        [
+          116365000,
+          103300000
+        ]
+      ],
+      "width": 150000,
+      "kind": "PCB_TRACK"
+    }
+  ],
+  "fixture_scope": "Exact captured faulty-source subset and original receipt; no complete native board snapshot or new native qualification"
+}

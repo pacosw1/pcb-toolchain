@@ -5,6 +5,7 @@
   ($PY = the KiCad bundled Python; it has numpy and pcbnew.)
 """
 import json
+import copy
 import os
 import random
 import sys
@@ -51,6 +52,49 @@ class MaskReuseTest(unittest.TestCase):
                          cost.components(pr, cost.initial_pose(pr), p, mask=fresh))
         with self.assertRaisesRegex(ValueError, 'reused mask'):
             cost.components(pr, cost.initial_pose(pr), dict(p, gap=p['gap'] + .1), mask=fresh)
+
+
+class PairTraversalReuseTest(unittest.TestCase):
+    def test_components_recompute_changed_pose_geometry_and_spacing(self):
+        pr = problem([unit('A', 2, 2, [[0, 0, 1, 1, .5], [.5, 0, 1.5, 1, .5]]),
+                      unit('B', 3.3, 2, [[0, 0, 1, 1, .5]])], [])
+        pose = cost.initial_pose(pr)
+        def terms(q, at):
+            comp = cost.components(q, at, P)
+            self.assertEqual(comp['overlap'], cost.overlap(q, at))
+            self.assertEqual(comp['spacing'], cost.spacing(q, at))
+            return comp['overlap'], comp['spacing']
+        hard, soft = terms(pr, pose)
+        self.assertAlmostEqual(hard, .2)
+        self.assertAlmostEqual(soft, 1.15)
+        self.assertEqual(terms(pr, [pose[0], (7, 2, 1)]), (0., 0.))
+        changed = copy.deepcopy(pr)
+        changed['units'][1]['rects'][0][2] = 2.
+        changed['units'][1]['rects'][0][4] = 1.
+        self.assertGreater(terms(changed, pose)[1], soft)
+        changed['units'][0]['fixed'] = changed['units'][1]['fixed'] = True
+        self.assertEqual(terms(changed, pose), (0., 0.))
+        self.assertEqual(terms(pr, pose), (hard, soft))
+
+    def test_changed_domain_rules_are_not_reused(self):
+        a = unit('A', 10, 20, [[-1, -1, 1, 1, .5], [-.5, -.5, .5, .5, .2]])
+        b = unit('B', 14, 20, [[-1, -1, 1, 1, .5], [-.5, -.5, .5, .5, .2]])
+        a['dom'], b['dom'] = [[1, 1, 0., .2]], [[1, 2, 0., .2]]
+        a['mech'] = b['mech'] = [0]
+        pr = problem([a, b], [], square_board(60))
+        pr['class_gaps'] = {'names': ['FIELD', 'HOST'], 'gaps': [[0, 0, 0], [0, 0, 4.], [0, 4., 0]]}
+        pose = cost.initial_pose(pr)
+        before = cost.components(pr, pose, P)
+        self.assertGreater(before['overlap'], 0.)
+        changed = copy.deepcopy(pr)
+        changed['class_gaps']['gaps'][1][2] = changed['class_gaps']['gaps'][2][1] = 0.
+        after = cost.components(changed, pose, P)
+        self.assertEqual(after['overlap'], 0.)
+        for q in (pr, changed):
+            result = cost.components(q, pose, P)
+            self.assertEqual(result['overlap'], cost.overlap(q, pose))
+            self.assertEqual(result['spacing'], cost.spacing(q, pose))
+        self.assertEqual(cost.components(pr, pose, P), before)
 
 
 class RotationTest(unittest.TestCase):

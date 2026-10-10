@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from placer import bench, compact, placement_audit  # noqa: E402
 import lean_workflow as lean
 import lean_resources as resources
+import mandatory_preflight
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 NO_RESULT = 10 ** 6  # a router job without an UNROUTED line (transport error, timeout) never passes
@@ -118,7 +119,8 @@ def main(argv=None):
             raise ValueError('displacement cap requires seeded policy')
         a.param += ['max_displacement=%s' % a.max_displacement]
     deadline = lean.deadline_after(a.budget)
-    pr = json.load(open(a.prob))
+    with open(a.prob) as problem_file:
+        pr = json.load(problem_file)
     if os.path.isdir(a.outdir) and os.listdir(a.outdir):
         raise ValueError('compaction output directory must be fresh')
     os.makedirs(a.outdir, exist_ok=True)
@@ -129,6 +131,54 @@ def main(argv=None):
                           sidecars={ext:lean.digest(os.path.splitext(a.board)[0]+ext)
                                     for ext in ('.kicad_pro','.kicad_dru') if os.path.isfile(os.path.splitext(a.board)[0]+ext)},
                           note='run attribution only; no cached result reuse or release qualification'))
+    seed_receipt = None
+    if a.router == 'fastroute' and (os.path.splitext(os.path.basename(a.board))[0] == 'BASE-PWR-B' or os.environ.get('ROUTE_BOARD') == 'BASE-PWR-B'):
+        import fastroute_job
+        import pcbnew
+        import route_features
+        seed_args = fastroute_job._parse_args([a.board, a.outdir] +
+                    (['--gnd-vias'] if a.gnd_vias else []) + shlex.split(a.route_args))
+        board_dir = os.path.join(REPO, 'hardware-design', 'boards', 'BASE-PWR-B')
+        preflight_started = lean.now()
+        native_started = False
+        try:
+            with resources.reserve(1, wait_s=min(30., max(0., deadline-lean.now())),
+                                   events=os.path.join(a.outdir, 'admission.jsonl'), label='seed-preflight'):
+                if lean.now() >= deadline:
+                    raise subprocess.TimeoutExpired('seed-preflight', 0)
+                native_started = True
+                _, seed_receipt = mandatory_preflight.inspect(seed_args, board_dir, os.environ.get('ROUTE_BOARD', ''),
+                                                             pcbnew.LoadBoard, lean.digest, route_features.ROOT)
+                preflight_finished = lean.now()
+                if preflight_finished >= deadline:
+                    raise subprocess.TimeoutExpired('seed-preflight', 0)
+        except (subprocess.TimeoutExpired, TimeoutError) as exc:
+            cause = 'workflow_deadline' if isinstance(exc, subprocess.TimeoutExpired) else 'resource_admission_timeout'
+            with open(events, 'a') as fh:
+                fh.write(json.dumps(dict(stage='seed-preflight', status='timeout', cause=cause, started=preflight_started,
+                         elapsed_s=lean.now()-preflight_started, blocking_native=native_started)) + '\n')
+            if seed_receipt is not None:
+                lean.atomic_json(os.path.join(a.outdir, 'seed-mandatory-preflight.json'), seed_receipt)
+            lean.atomic_json(os.path.join(a.outdir, 'run.json'), dict(steps=[], best=None, qualified=False,
+                             stop='seed preflight timeout', verdict='seed preflight timeout', cause=cause))
+            print('VERDICT seed preflight timeout', flush=True)
+            print('STOP seed preflight timeout', flush=True)
+            raise SystemExit(124)
+        with open(events, 'a') as fh:
+            fh.write(json.dumps(dict(stage='seed-preflight', status='complete', started=preflight_started,
+                     elapsed_s=preflight_finished-preflight_started, blocking_native=True)) + '\n')
+        seed_path = os.path.join(a.outdir, 'seed-mandatory-preflight.json')
+        lean.atomic_json(seed_path, seed_receipt)
+        fatal = mandatory_preflight.locked_faults(seed_receipt, lean.digest(a.board),
+                  seed_receipt['source_records'], seed_receipt, seed_receipt['policy_sources'])
+        if fatal:
+            lean.atomic_json(os.path.join(a.outdir, 'run.json'), dict(steps=[], best=None,
+                             qualified=False, stop='immutable input mandatory rules',
+                             verdict='immutable input mandatory rules', failure_receipt=seed_path,
+                             immutable_faults=fatal, problem_sha256=lean.digest(a.prob)))
+            print('VERDICT immutable input mandatory rules', flush=True)
+            print('STOP immutable input mandatory rules', flush=True)
+            raise SystemExit(5)
     def run_stage(cmd, stage, **kwargs):
         cpu = a.workers if stage == 'placement' else resources.default_cpu()
         if stage == 'routing':
@@ -244,6 +294,20 @@ def main(argv=None):
             p = run_stage(cmd, 'routing', cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             open(os.path.join(d, 'route-0.log'), 'w').write(p.stdout)
             if p.returncode != 0:
+                receipt_path = os.path.join(d, 'route-0', 'mandatory-preflight.json')
+                if seed_receipt is not None and os.path.isfile(receipt_path):
+                    try:
+                        with open(receipt_path) as fh:
+                            receipt = json.load(fh)
+                        current_policy = {p: lean.digest(p) for p in receipt['policy_sources']}
+                        current_board = pcbnew.LoadBoard(path)
+                        rows = mandatory_preflight.records(current_board) if current_board is not None else []
+                        fatal = mandatory_preflight.locked_faults(receipt, lean.digest(path), rows,
+                                                                seed_receipt, current_policy)
+                        if fatal:
+                            raise mandatory_preflight.ImmutableInputFailure(dict(receipt, faults=fatal), receipt_path)
+                    except (OSError, ValueError, KeyError, TypeError):
+                        pass  # invalid/stale evidence is an ordinary failed candidate
                 return [NO_RESULT]
             hints, evidence = placement_audit.bounded_feedback(pr, os.path.join(d, 'route-0'),
                                                               lean.digest(path), escape_hint,
@@ -271,6 +335,8 @@ def main(argv=None):
     json.dump(run, open(os.path.join(a.outdir, 'run.json'), 'w'))
     print('VERDICT', run['verdict'])
     print('STOP', run['stop'])
+    if run['stop'] == 'immutable input mandatory rules':
+        raise SystemExit(5)
     if run['best']:
         print('BEST board %s s %.3f k %.3f unrouted %d' % (run['best']['board'], run['best']['s'], run['best']['k'],
                                                           run['best']['unrouted']))

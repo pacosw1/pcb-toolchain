@@ -1,5 +1,6 @@
 import {sha256,requireValue as need,ownedFile,readPopulation} from './kicad-population.mjs';
 import {parseCsv} from './csv.mjs';
+import {owningBomRevision} from './bom-ownership.mjs';
 
 const digest=x=>typeof x==='string' && /^[a-f0-9]{64}$/.test(x);
 const object=x=>x && typeof x==='object' && !Array.isArray(x);
@@ -17,11 +18,11 @@ function names(a,allowed,message) {
 // Structural completeness is independent of electrical selection. Review hashes
 // attribute human requirements; this cannot infer mating parts from ref prefixes
 // or prove the engineering conclusions in a review.
-export function inspectBomCoverage(root,entry,csv,rows) {
+export function inspectBomCoverage(root,entry,csv,rows,revisionName) {
  const board=entry.directory,prefix=`hardware-design/boards/${board}`;
- const owners=entry.revisions.filter(r=>r.bom==='BOM-VERIFIED.csv' && r.bom_scope);
- need(owners.length===1,'BOM coverage requires one explicitly owning revision/project/scope');
- const revision=owners[0];
+ const revision=owningBomRevision(entry,revisionName);
+ if(entry.bom_policy==='per-revision')need(sha256(ownedFile(root,`${prefix}/${revision.bom}`,prefix))===sha256(csv),
+  'revision BOM supplied bytes differ from owned source');
  need(entry.revisions.filter(r=>r.bom===revision.bom || r.bom_scope===revision.bom_scope).length===1,'ambiguous BOM coverage revision ownership');
  need(text(revision.project) && !revision.project.includes('..') && !revision.project.startsWith('/'),'BOM coverage native project missing/unsafe');
  const path=`${prefix}/${revision.bom_scope}`;
@@ -31,7 +32,7 @@ export function inspectBomCoverage(root,entry,csv,rows) {
  need(scope.schema_version===1 && scope.board===board && scope.revision===revision.revision,'BOM coverage board/revision/schema mismatch');
  const spec=`${prefix}/${revision.spec}`,project=`${prefix}/${revision.project}`;
  need(scope.revision_spec===spec && digest(scope.spec_sha256) && sha256(ownedFile(root,spec,prefix))===scope.spec_sha256,'BOM coverage spec identity/hash mismatch');
- need(scope.project===project && scope.bom===`${prefix}/BOM-VERIFIED.csv` &&
+ need(scope.project===project && scope.bom===`${prefix}/${revision.bom}` &&
   digest(scope.bom_sha256) && sha256(csv)===scope.bom_sha256,'BOM coverage project/BOM identity/hash mismatch');
  need(object(scope.review_evidence) && Object.keys(scope.review_evidence).length>0,'BOM coverage attributable reviews missing');
  for(const [p,h] of Object.entries(scope.review_evidence)) {
@@ -84,7 +85,8 @@ export function inspectBomCoverage(root,entry,csv,rows) {
    if(c.kind==='dnp') need(sch && pcb && !pops.length && sch.dnp,`DNP classification lacks native/variant evidence: ${ref}`);
    else if(c.kind==='excluded') need((sch && !sch.in_bom) || (!sch && pcb?.excluded && pcb?.board_only),`exclusion lacks native BOM/board-only evidence: ${ref}`);
    else if(c.kind==='fabrication-feature') need(pcb && pcb.excluded && pcb.board_only && !pcb.mpn && !pcb.lcsc && (!sch || (!sch.in_bom && !sch.mpn && !sch.lcsc)),`fabrication feature lacks native exclusion/board-only evidence: ${ref}`);
-   else if(c.kind==='nonphysical') need(sch && !sch.footprint && !sch.in_bom && !pcb,`nonphysical classification lacks native evidence: ${ref}`);
+   else if(c.kind==='nonphysical') need(sch && !sch.footprint && !pcb &&
+    (!sch.in_bom || (sch.power_symbol && !sch.mpn && !sch.lcsc)),`nonphysical classification lacks native evidence: ${ref}`);
    else need(false,`unknown BOM coverage classification: ${ref}`);
   }
  }

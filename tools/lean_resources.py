@@ -28,6 +28,20 @@ def native_env(env=None):
     return dict(os.environ if env is None else env, **{k: '1' for k in NATIVE_KEYS})
 
 
+def router_env(cpu):
+    """Cap the backend's global Rayon variants within a live CPU reservation.
+
+    Explicit autorouter/optimizer pools still need their CLI caps. Their worker
+    and coordinator threads are separate from this global pool; this is not an
+    OS quota or a bound on total process threads.
+    """
+    if type(cpu) is not int or cpu < 1:
+        raise ValueError('router CPU request must be a positive integer')
+    if not inherited(cpu, 0):
+        raise ValueError('router environment requires a live resource reservation')
+    return dict(native_env(), RAYON_NUM_THREADS=str(cpu))
+
+
 def limits():
     cpu = int(os.environ.get('IOT_CPU_BUDGET', min(12, os.cpu_count() or 1)))
     memory = float(os.environ.get('IOT_MEMORY_BUDGET_GIB', '16'))

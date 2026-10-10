@@ -1,6 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {passes, ratchet, metricsText, countFrom, validateConfig, expectedMetrics} from './gate-core.mjs';
+import {passes, ratchet, metricsText, countFrom, validateConfig, expectedMetrics, pathFailures} from './gate-core.mjs';
+test('all physical path failures count; contradictory summaries fail closed',()=>{
+ const rows=Array.from({length:8},(_,i)=>`LOW net${i} A->B: no copper path`).join('\n');
+ const text=rows+'\n8 power-path pairs below the design current\n0 supply nets not covered\n[gate-check-exit:1]';
+ assert.equal(pathFailures(text),8);assert.equal(pathFailures(text.replaceAll('\n','\r\n')),8);
+ assert.equal(pathFailures(text.replace('8 power-path','1 power-path')),null);
+ assert.equal(pathFailures('0 power-path pairs below the design current\n0 supply nets not covered'),0);
+ assert.equal(pathFailures('0 power-path pairs below the design current\n0 supply nets not covered\n[gate-check-exit:1]'),null);
+ assert.equal(pathFailures('MISSING SUPPLY no spec\n0 power-path pairs below the design current\n1 supply nets not covered'),1);
+});
 const core={erc_errors:0,drc_errors:0,drc_parity:0,drc_unconnected:0};
 test('complete zero targets pass; info remains advisory',()=>assert.equal(passes({...core,drc_warnings:164}).ok,true));
 test('empty, missing, invalid and unknown metrics fail closed',()=>{

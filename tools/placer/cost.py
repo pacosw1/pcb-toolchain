@@ -867,11 +867,14 @@ def components(pr, pose, params, *, mask=None):
         mask = Mask(pr['board'], p['mask_cell'], p['gap'])
     elif mask.input_signature != (json.dumps(pr['board'], sort_keys=True), p['mask_cell'], p['gap']):
         raise ValueError('reused mask does not match board geometry/rules or mask parameters')
+    # Both independent terms share the same complete pair/domain traversal.
+    # Recompute it for this pose once; no geometry, rule or pose result is cached.
+    hard_overlap, soft_spacing = _overlaps(pr, pose)
     return {'hpwl': hpwl(pr, pose),
             'cong': overflow(rudy_grid(pr, pose, p), p, cell_weights(pr, p)),
-            'overlap': overlap(pr, pose),
+            'overlap': hard_overlap,
             'oob': sum(forbidden(pr, pose, mask, i) for i, u in enumerate(pr['units']) if not u['fixed']),
-            'spacing': spacing(pr, pose),
+            'spacing': soft_spacing,
             'via': via_room(pr, pose, p),
             'crossing': crossings(pr, pose) if p['w_x'] else 0.0,  # not computed at weight 0 (speed)
             'row': rows(pr, pose, p['row_pitch']) if p['w_row'] else 0.0}

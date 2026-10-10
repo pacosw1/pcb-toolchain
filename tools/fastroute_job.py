@@ -151,7 +151,7 @@ def big_signal_via(text, dia_mm, classes, nets=()):
     return text
 
 
-def _parse_args():
+def _parse_args(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("board")
     ap.add_argument("outdir")
@@ -187,7 +187,7 @@ def _parse_args():
                     "padstack (the classes are not used), for example the fast nets for kicad-happy RP-001")
     ap.add_argument("--unlock-nets", default="", help="comma list of routed nets whose existing copper the router may "
                     "rip up and route again (default: all existing copper is locked)")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
     if a.max_time < 0 or a.threads < 0 or a.passes <= 0:
         ap.error('passes must be positive; time and threads must be nonnegative')
     if any(k.split('=', 1)[0] in ('router.autorouter.max_threads', 'router.optimizer.max_threads') for k in a.set):
@@ -225,6 +225,23 @@ def _main(a=None):
                                     if os.path.isfile(os.path.splitext(a.board)[0]+ext)},
                           qualified=False))
     base = os.path.join(a.outdir, "base.kicad_pcb")
+    base_b_cfg = None
+    if os.path.basename(stem) == 'BASE-PWR-B' or os.environ.get('ROUTE_BOARD') == 'BASE-PWR-B':
+        import mandatory_preflight
+        import base_b_route_rules
+        base_b_dir = os.path.join(route_features.ROOT, 'hardware-design', 'boards', 'BASE-PWR-B')
+        try:
+            base_b_cfg, receipt = mandatory_preflight.inspect(
+                a, base_b_dir, os.environ.get('ROUTE_BOARD', ''), pcbnew.LoadBoard, lean.digest, route_features.ROOT)
+        except mandatory_preflight.SelectionError as exc:
+            sys.exit('BASE-B mandatory preflight rejected: ' + str(exc))
+        with open(os.path.join(base_b_dir, 'diff-pairs.json')) as pair_file:
+            mandatory_pairs = json.load(pair_file)['pairs']
+        pair_profile = receipt['preserved_pair_profile']
+        policy_sources = list(receipt['policy_sources'])
+        lean.atomic_json(os.path.join(a.outdir, 'mandatory-preflight.json'), receipt)
+        if receipt['faults']:
+            sys.exit('BASE-B immutable mandatory-rule faults block routing; see mandatory-preflight.json')
     if backend_policy['mode'] == 'quality-first':
         capability = lean.run_stage([BIN, '--help'], stage='quality-backend-capability',
             event_file=phases, deadline=lean.deadline_after(10),
@@ -319,11 +336,7 @@ def _main(a=None):
         text = freeroute.restrict_dsn(f.read(), set(a.layers.split(",")), None)
     net_class = route_features.dsn_classes(text)
     mandatory_masks = {}
-    base_b_cfg = None
-    if os.path.basename(stem) == 'BASE-PWR-B' or os.environ.get('ROUTE_BOARD') == 'BASE-PWR-B':
-        import base_b_route_rules
-        base_b_dir = os.path.join(route_features.ROOT, 'hardware-design', 'boards', 'BASE-PWR-B')
-        base_b_cfg = base_b_route_rules.evidence(base_b_dir, stem + '.kicad_pro')
+    if base_b_cfg:
         layers = [l for l in a.layers.split(',') if l]
         for n in nets:
             allow = [l for l in layers if l != 'In1.Cu' and
@@ -429,13 +442,16 @@ def _main(a=None):
         sources += [os.path.join(feat['_board_dir'], 'gate.json'),
                     os.path.join(feat['_board_dir'], feat['via_halo'].get('fast_nets_file', 'rp001-fast-nets.json'))]
     if base_b_cfg:
-        sources += [os.path.join(base_b_dir, name) for name in
-                    ('current-paths.json','reference-planes.json','rp001-fast-nets.json','diff-pairs.json')]
-        sources += [base_b_route_rules.__file__]
+        sources += policy_sources
+    router_env = resources.router_env(a.threads)
     effective = dict(configuration=vars(a), features=feat, command=cmd, dsn_sha256=lean.digest(dsn),
                      backend_policy=backend_policy,
                      feature_sources={p: lean.digest(p) for p in sources if os.path.isfile(p)},
                      environment={k: os.environ.get(k) for k in ('ROUTE_FEATURES','ROUTE_BOARD','ROUTE_FEATURES_FILE')},
+                     backend_resources=dict(global_rayon_threads=int(router_env['RAYON_NUM_THREADS']),
+                          autorouter_workers=a.threads, optimizer_workers=a.threads,
+                          live_reservation=router_env.get('IOT_RESOURCE_TICKET'),
+                          scope='cooperating pool caps; coordinator and independently built pools are additional threads'),
                      learned_halo=route_features.learned_halo(a.board, feat['_board_dir'])[1],
                      mandatory_layer_masks=mandatory_masks, ignored_classes=ignored_classes, qualified=False)
     import hashlib
@@ -446,7 +462,8 @@ def _main(a=None):
     phases = os.path.join(a.outdir, 'stages.jsonl')
     with open(os.path.join(a.outdir, "run.log"), "w") as lf:
         rc = lean.run_stage(cmd, stage='router-screen' if a.optimizer != 'always' else 'router',
-                            event_file=phases, deadline=deadline, stdout=lf, stderr=subprocess.STDOUT).returncode
+                            event_file=phases, deadline=deadline, env=router_env,
+                            stdout=lf, stderr=subprocess.STDOUT).returncode
     if rc == 0 and a.optimizer == 'if-routed' and os.path.isfile(rep) and os.path.isfile(ses):
         screen = json.load(open(rep))
         if dsn_skip.routable_open(screen) == 0:
@@ -461,7 +478,7 @@ def _main(a=None):
                 optimize.append(f'--max-time={max(1, int(left))}')
             with open(os.path.join(a.outdir, 'optimize.log'), 'w') as lf:
                 rc = lean.run_stage(optimize, stage='router-optimize', event_file=phases, deadline=deadline,
-                                    stdout=lf, stderr=subprocess.STDOUT).returncode
+                                    env=router_env, stdout=lf, stderr=subprocess.STDOUT).returncode
         else:
             print('OPTIMIZER deferred: screening result still has open connections', flush=True)
     secs = int(lean.now() - t0)
@@ -649,8 +666,8 @@ def _main(a=None):
         for t in rb.GetTracks():
             if t.GetClass() == 'PCB_VIA':
                 counts[t.GetNetname()] = counts.get(t.GetNetname(), 0) + 1
-        faults += base_b_route_rules.pair_via_faults(counts, json.load(open(os.path.join(base_b_dir, 'diff-pairs.json')))['pairs'])
-        lean.atomic_json(os.path.join(a.outdir, 'mandatory-rules.json'), dict(faults=faults, qualified=False))
+        faults += base_b_route_rules.pair_via_faults(counts, mandatory_pairs, pair_profile)
+        lean.atomic_json(os.path.join(a.outdir, 'mandatory-rules.json'), dict(faults=faults, preserved_pair_profile=pair_profile, qualified=False))
         if faults:
             sys.exit('BASE-B mandatory imported-board rule check failed; see mandatory-rules.json')
     # Required image reflects the final repaired board, not the earlier import.

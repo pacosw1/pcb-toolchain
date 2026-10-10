@@ -47,6 +47,46 @@ function identity(p) {
 function flag(n,name) {
  const value=single(n,name)?.[1];requireValue(['yes','no'].includes(value),`missing/invalid native ${name}`);return value==='yes';
 }
+function embeddedPowerResolver(tree) {
+ const libraries=single(tree,'lib_symbols'),byId=new Map(),memo=new Map();
+ for(const n of libraries?children(libraries,'symbol'):[]) {
+  requireValue(typeof n[1]==='string' && n[1] && !byId.has(n[1]),'duplicate/malformed embedded library symbol');
+  byId.set(n[1],n);
+ }
+ return function resolvePower(id,visiting=new Set()) {
+  if(memo.has(id))return memo.get(id);
+  const n=byId.get(id);if(!n)return {power:false,physical:false};
+  requireValue(!visiting.has(id),'cyclic embedded symbol inheritance');
+  requireValue(visiting.size<64,'embedded symbol inheritance bound exceeded');
+  const next=new Set(visiting);next.add(id);
+  const marker=single(n,'power'),extendsNode=single(n,'extends');
+  if(marker)requireValue(marker.length===1 || (marker.length===2 && ['global','local'].includes(marker[1])),
+   'invalid embedded library power marker');
+  let inherited={power:false,physical:false};
+  if(extendsNode) {
+   requireValue(extendsNode.length===2 && typeof extendsNode[1]==='string' && extendsNode[1],
+    'invalid embedded symbol inheritance');
+   const parent=extendsNode[1],namespace=x=>x.includes(':')?x.slice(0,x.lastIndexOf(':')):'';
+   requireValue(!parent.includes(':') || namespace(parent)===namespace(id),
+    'embedded symbol inheritance crosses library ownership');
+   const qualified=id.includes(':') && !parent.includes(':')?id.slice(0,id.lastIndexOf(':')+1)+parent:parent;
+   const matches=[...new Set([parent,qualified])].filter(x=>byId.has(x));
+   requireValue(matches.length===1,'embedded symbol inheritance missing/ambiguous');
+   inherited=resolvePower(matches[0],next);
+   if(marker && inherited.power) {
+    // A derived local/global power annotation must agree with its inherited
+    // annotation, rather than silently choosing one contradictory boundary.
+    if(inherited.power!=='legacy' && marker[1])requireValue(inherited.power===marker[1],
+     'conflicting embedded library power markers');
+   }
+  }
+  const p=properties(n),part=identity(p);
+  const result={power:marker?(marker[1]??'legacy'):inherited.power,
+   physical:inherited.physical || !!(p.Footprint??'') || !!part.mpn || !!part.lcsc};
+  requireValue(!result.power || !result.physical,'embedded power symbol has conflicting physical identity');
+  memo.set(id,result);return result;
+ };
+}
 export function readPopulation(root,project,instanceProjectNames={}) {
  requireValue(instanceProjectNames && typeof instanceProjectNames==='object' && !Array.isArray(instanceProjectNames),'invalid instance project mapping');
  for(const [file,name] of Object.entries(instanceProjectNames))
@@ -62,6 +102,7 @@ export function readPopulation(root,project,instanceProjectNames={}) {
  function walk(file,tree,sheetPath,ancestors) {
   requireValue(++visits<=10000,'schematic instance bound exceeded');
   requireValue(!ancestors.has(file),'cyclic schematic hierarchy');const next=new Set(ancestors);next.add(file);
+  const powerSymbol=embeddedPowerResolver(tree);
   for(const n of children(tree,'symbol')) {
    const p=properties(n),inst=single(n,'instances'),uuid=single(n,'uuid')?.[1],isRoot=file===rootPath && !ancestors.size;
    if(isRoot && uuid!==undefined) {
@@ -84,7 +125,7 @@ export function readPopulation(root,project,instanceProjectNames={}) {
    requireValue(typeof ref==='string' && ref.trim()===ref && ref && /^[1-9]\d*$/.test(unit??'') && Number.isSafeInteger(Number(unit)),'invalid placed reference/unit');
    const placedUnit=single(n,'unit')?.[1];requireValue(placedUnit===undefined || placedUnit===unit,'placed symbol/instance unit differs');
    if(isRoot && uuid!==undefined) {if(!origins.has(ref))origins.set(ref,new Set());origins.get(ref).add(uuid);}
-   const part={reference:ref,...identity(p),footprint:p.Footprint??'',
+   const part={reference:ref,...identity(p),footprint:p.Footprint??'',power_symbol:!!powerSymbol(single(n,'lib_id')?.[1]).power,
     in_bom:flag(n,'in_bom'),on_board:flag(n,'on_board'),dnp:flag(n,'dnp')};
    const unitKey=ref+'/'+unit;requireValue(!units.has(unitKey),'duplicate placed reference/unit');units.set(unitKey,true);
    if(symbols.has(ref)) requireValue(JSON.stringify(symbols.get(ref))===JSON.stringify(part),'inconsistent multi-unit identity');

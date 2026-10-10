@@ -12,7 +12,7 @@ test('offline evidence validation checks candidate state, exact MPN and original
  const root=mkdtempSync(join(tmpdir(),'consistency-offline-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
  const put=(p,v)=>{mkdirSync(join(root,p,'..'),{recursive:true});writeFileSync(join(root,p),typeof v==='string'?v:JSON.stringify(v));};
  const repo=fileURLToPath(new URL('../..',import.meta.url));
- for(const p of ['tools/check-consistency.mjs','tools/lib/board-packets.mjs','tools/lib/board-selections.mjs','tools/lib/jev-client.mjs','tools/lib/bom-coverage.mjs','tools/lib/kicad-population.mjs','tools/lib/csv.mjs']) {mkdirSync(join(root,p,'..'),{recursive:true});copyFileSync(join(repo,p),join(root,p));}
+ for(const p of ['tools/check-consistency.mjs','tools/lib/board-packets.mjs','tools/lib/board-selections.mjs','tools/lib/bom-ownership.mjs','tools/lib/jev-client.mjs','tools/lib/bom-coverage.mjs','tools/lib/kicad-population.mjs','tools/lib/csv.mjs']) {mkdirSync(join(root,p,'..'),{recursive:true});copyFileSync(join(repo,p),join(root,p));}
  for(const p of ['STATUS','REQUIREMENTS','DECISIONS','DOC-RECONCILIATION','BOARD-INDEX']) put('hardware-design/'+p+'.md','current evidence');
  for(const p of ['PLATFORM.md','MODULES.md','README.md']) put(p,'current evidence');
  put('hardware-design/registry/boards.json',{schema_version:1,boards:[{id:'CELLULAR',directory:'CELLULAR',kind:'board',lifecycle:'active',packet:'full',revisions:[{revision:'A',state:'review',spec:'SPEC.md'}]}]});

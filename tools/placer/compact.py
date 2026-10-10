@@ -9,6 +9,7 @@ placement/quench.py (base + coef * sqrt(pins)), with the track + clearance pitch
 """
 import copy
 import math
+from mandatory_preflight import ImmutableInputFailure
 
 HALO = {
     'pitch': 0.4,  # mm per escaping track: 0.2 mm track + 0.2 mm clearance (JLC 4-layer standard class)
@@ -231,6 +232,9 @@ def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, 
                 t['passed'] = t['unrouted'] <= target
             except subprocess.TimeoutExpired:
                 t.update(runs=[], unrouted=None, passed=False, status='timeout')
+            except ImmutableInputFailure as exc:
+                t.update(runs=[], unrouted=None, passed=False, status='immutable-input',
+                         failure_receipt=exc.path, immutable_faults=exc.receipt['faults'])
         steps.append(t)
         if log:
             log('step %d %s s %.3f k %.3f cost %.1f illegal %d runs %s -> %s' % (
@@ -247,15 +251,19 @@ def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, 
             if over():
                 stop = 'time budget %.0f s' % budget
                 break
-            if step(s1, 1.0, False, 'real')['passed']:
+            result = step(s1, 1.0, False, 'real')
+            if result.get('status') == 'immutable-input':
+                stop = 'immutable input mandatory rules'
+                break
+            if result['passed']:
                 break
         ok = [t for t in steps if t['passed']]
         if ok or stop != 'schedule done':
             summary = [{kk: t[kk] for kk in ('s', 'k', 'unrouted', 'passed')} for t in steps]
             for t in summary:
                 t['unrouted'] = -1 if t['unrouted'] is None else t['unrouted']
-            return {'steps': steps, 'best': min(ok, key=lambda t: (t['k'], t['s'])) if ok else None,
-                    'verdict': verdict(summary, size), 'stop': stop}
+            return {'steps': steps, 'best': min(ok, key=lambda t: (t['k'], t['s'])) if ok and stop != 'immutable input mandatory rules' else None,
+                    'verdict': stop if stop == 'immutable input mandatory rules' else verdict(summary, size), 'stop': stop}
     # Retain low-density/virtual diagnostics, with their own explicit budget.
     # The injected driver also bounds each child, so a step cannot overrun it.
     if diagnostic_budget is not None:
@@ -265,7 +273,11 @@ def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, 
         if over():
             stop = 'time budget %.0f s' % budget
             break
-        sch.report(step(sch.s, board_scale(with_halos(pr, sch.s)), True, 'halo')['passed'])
+        result = step(sch.s, board_scale(with_halos(pr, sch.s)), True, 'halo')
+        if result.get('status') == 'immutable-input':
+            stop = 'immutable input mandatory rules'
+            break
+        sch.report(result['passed'])
     passed = [t for t in steps if t['passed']]
     if passed and stop == 'schedule done':
         best = min(passed, key=lambda t: (t['k'], t['s']))
@@ -277,6 +289,9 @@ def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, 
                 stop = 'time budget %.0f s' % budget
                 break
             t = step(outline_s(pr, k, best, k_floor), k, False, 'outline')
+            if t.get('status') == 'immutable-input':
+                stop = 'immutable input mandatory rules'
+                break
             if t['passed']:
                 hi = k
             else:
@@ -286,5 +301,5 @@ def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, 
     summary = [{kk: t[kk] for kk in ('s', 'k', 'unrouted', 'passed')} for t in steps]
     for t in summary:
         t['unrouted'] = -1 if t['unrouted'] is None else t['unrouted']
-    return {'steps': steps, 'best': min(ok, key=lambda t: (t['k'], t['s'])) if ok else None,
-            'verdict': verdict(summary, size), 'stop': stop}
+    return {'steps': steps, 'best': min(ok, key=lambda t: (t['k'], t['s'])) if ok and stop != 'immutable input mandatory rules' else None,
+            'verdict': stop if stop == 'immutable input mandatory rules' else verdict(summary, size), 'stop': stop}
