@@ -1253,12 +1253,22 @@ def main():
     cpu = a.threads or resources.default_cpu()
     outdir = a.outdir
     events = outdir + '.admission.jsonl' if outdir else None
+    # W17 (2026-10-11): a routing job reserves its measured peak, not the 8 GiB container default (IOT_JOB_MEMORY_GIB,
+    # sized for kicad-cli in the Hetzner Docker image): BASE-PWR-B, the largest board in scope, peaks at 1.07 GB in
+    # kicad-cli DRC --refill-zones, 0.38 GB in a pcbnew zone fill, 0.32 GB in Fastroute (/usr/bin/time -l), one after
+    # another; 2 GiB is about 2x. 8 GiB let only two jobs into the 16 GiB pool. A queued job waits for its slot (up to
+    # IOT_ROUTE_ADMISSION_WAIT_S, 1 h) and its --max-time starts after admission: run-6 (W15) and run-c2/c3 (W17) died
+    # after 30 s in the queue as "deadline reached", rc 124.
+    memory = float(os.environ.get('IOT_ROUTE_MEMORY_GIB', '2'))
+    wait = float(os.environ.get('IOT_ROUTE_ADMISSION_WAIT_S', '3600'))
+    admitted = False
     try:
-        budget_env = dict(os.environ)
-        if a.max_time:
-            budget_env['IOT_LEAN_DEADLINE'] = lean.encode_deadline(lean.deadline_after(a.max_time))
-        with resources.environment(budget_env), resources.reserve(cpu, events=events, label='routing') as env:
-            with resources.environment(env):
+        with resources.reserve(cpu, memory, wait_s=wait, events=events, label='routing') as env:
+            admitted = True
+            budget_env = dict(env)
+            if a.max_time:
+                budget_env['IOT_LEAN_DEADLINE'] = lean.encode_deadline(lean.deadline_after(a.max_time))
+            with resources.environment(budget_env):
                 try:
                     return _main(a)
                 finally:   # W5: the run record gets the passes, reasons, triage and exit from the job's files
@@ -1276,6 +1286,10 @@ def main():
     except (TimeoutError, subprocess.TimeoutExpired) as error:
         if outdir and os.path.isdir(outdir):
             lean.router_timeout(outdir, error)
+        if not admitted:
+            print(f'fastroute_job: ADMISSION TIMEOUT: no {cpu} CPU / {memory} GiB slot within {wait:.0f} s ({error})',
+                  file=sys.stderr)
+            return 124
         print('fastroute_job: deadline reached; retained checkpoints are unqualified', file=sys.stderr)
         return 124
     except KeyboardInterrupt as error:
