@@ -1215,6 +1215,8 @@ def _router_watch(log_path, stall_passes, dsn, stop, result, progress, stage):
                 result.update(stopped=True, pass_no=pass_no, unrouted=n, best=best, pids=pids,
                               seconds=round(time.time(), 1))
                 stop.set()
+                return   # W15: one stop signal only; a second one (more stale pass lines in the same read) made Fastroute
+                         # exit 130 without its best board ("second stop signal, exiting", run-escape.log of /tmp/w15/run-1)
         seen = len(lines)
 
 
@@ -1241,7 +1243,7 @@ def main():
                         if os.path.isdir(os.path.join(outdir, 'snapshots')):   # W12: the 60 s timelapse (frames deleted)
                             try:
                                 import board_frame
-                                board_frame.mp4(outdir)
+                                board_frame.mp4(outdir, keep=True)  # keep the frames: the live view replay (W12) reads snapshots/NNNN.png
                             except Exception as e:
                                 print(f'fastroute_job: timelapse not made: {type(e).__name__}: {e}', flush=True)
     except (TimeoutError, subprocess.TimeoutExpired) as error:
