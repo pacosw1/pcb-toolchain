@@ -61,7 +61,9 @@ class Handlers(unittest.TestCase):
         t = body.decode()
         self.assertIn('route 37.2s open=44 best=44 vias=- eta=17.0', t)
         self.assertIn('<polyline', t)                       # pass trend
-        self.assertIn('http-equiv="refresh" content="3"', t)
+        self.assertIn('new EventSource(', t)
+        self.assertNotIn('<meta http-equiv="refresh"', t)   # only a document.write fallback without EventSource
+        self.assertIn('/events', t)
         self.assertIn('frame.png', t)                        # latest frame present
         self.assertIn('autorouter pass 3', t)                # action log tail, derived in memory
         self.assertFalse(os.path.exists(os.path.join(self.rundir, 'run.jsonl')))   # nothing written by the viewer
@@ -77,6 +79,74 @@ class Handlers(unittest.TestCase):
         self.assertEqual(self.get('/run/' + os.path.relpath(self.rundir, '/'))[0], 404)
         self.assertEqual(self.get('/etc/passwd')[0], 404)
         self.assertEqual(self.get('/snapshots/latest.png')[0], 404)
+
+    def read_events(self, path, n_data=1, n_hb=0, timeout=8):
+        import socket
+        sk = socket.create_connection(('127.0.0.1', self.port), timeout=timeout)
+        sk.sendall(f'GET {path} HTTP/1.1\r\nHost: x\r\n\r\n'.encode())
+        return sk
+
+    @staticmethod
+    def frames(sk, want, timeout=8):
+        import time
+        buf, t0 = b'', time.time()
+        while time.time() - t0 < timeout and not want(buf):
+            try:
+                c = sk.recv(65536)
+            except OSError:
+                break
+            if not c:
+                break
+            buf += c
+        return buf
+
+    def test_events_full_delta_heartbeat(self):
+        old = rl.POLL_S, rl.HEARTBEAT_S
+        rl.POLL_S, rl.HEARTBEAT_S = 0.1, 0.6
+        prog = os.path.join(self.rundir, 'progress.jsonl')
+        png = os.path.join(self.rundir, 'snapshots', 'latest.png')
+        saved, png_t = open(prog).read(), os.stat(png).st_mtime
+        try:
+            sk = self.read_events('/run/x/run-7/events')
+            buf = self.frames(sk, lambda b: b.count(b'data: ') >= 1)
+            head, _, body = buf.partition(b'\r\n\r\n')
+            self.assertIn(b'text/event-stream', head)
+            first = json.loads(body.split(b'data: ', 1)[1].split(b'\n\n')[0])
+            self.assertTrue(first['full'])
+            self.assertEqual(first['passes'], [[1, 78], [3, 59], [4, 44]])
+            self.assertEqual((first['open'], first['stage'], first['best_open']), (44, 'route', 44))
+            self.assertTrue(first['frame']['url'].startswith('/run/x/run-7/frame.png'))
+            self.assertTrue(first['log_reset'] and first['log_tail'])
+            # nothing changed: a heartbeat comment, no data event
+            buf = self.frames(sk, lambda b: b': heartbeat' in b)
+            self.assertIn(b': heartbeat', buf)
+            self.assertNotIn(b'data: ', buf)
+            # append a pass and touch the frame: one delta event with only the new point
+            with open(os.path.join(self.rundir, 'progress.jsonl'), 'a') as f:
+                f.write(json.dumps({'elapsed_s': 41.0, 'stage': 'route', 'pass': 5, 'open': 30, 'vias': None, 'best_open': 30, 'eta_s': 9.0}) + '\n')
+            os.utime(png, (first['frame']['mtime'] + 5, first['frame']['mtime'] + 5))
+            buf = self.frames(sk, lambda b: b.count(b'data: ') >= 1)
+            ev = json.loads(buf.split(b'data: ', 1)[1].split(b'\n\n')[0])
+            self.assertFalse(ev['full'])
+            self.assertEqual(ev['passes'], [[5, 30]])
+            self.assertEqual(ev['open'], 30)
+            self.assertEqual(ev['log_tail'], [])
+            self.assertGreater(ev['frame']['mtime'], first['frame']['mtime'])
+            sk.close()
+        finally:
+            rl.POLL_S, rl.HEARTBEAT_S = old
+            open(prog, 'w').write(saved)
+            os.utime(png, (png_t, png_t))
+
+    def test_events_unknown_and_head(self):
+        self.assertEqual(self.get('/run/x/other/events')[0], 404)
+        self.assertEqual(self.get('/run/x/run-7/../../events')[0], 404)
+        self.assertEqual(self.get('/run/x/run-7/events', 'POST')[0], 405)
+        code, ctype, body = self.get('/run/x/run-7/events', 'HEAD')
+        self.assertEqual((code, body), (200, b''))
+        self.assertIn('text/event-stream', ctype)
+        code, _, body = self.get('/run/x/run-7', 'HEAD')
+        self.assertEqual((code, body), (200, b''))
 
     def test_read_only(self):
         self.assertEqual(self.get('/run/x/run-7', 'POST')[0], 405)
