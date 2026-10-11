@@ -4,6 +4,8 @@
   python3 tools/blocks.py serve [--port 8765]      viewer on http://127.0.0.1:8765
   python3 tools/blocks.py check [ID ...]           parts, datasheets and facts of blocks; exit 1 on an error
   python3 tools/blocks.py new ID "description" "keywords"   empty block folder (KiCad-native)
+  python3 tools/blocks.py find "USB" [--mpn MPN]   retrieve candidates without qualifying them
+  python3 tools/blocks.py reuse ID                inspect a fingerprinted reuse proposal
 
 Sources of truth (read at request time, never copied):
   hardware-design/blocks/iot-lab.kicad_blocks/<ID>.kicad_block/
@@ -566,7 +568,20 @@ def main():
     s = sp.add_parser('serve'); s.add_argument('--port', type=int, default=8765)
     s = sp.add_parser('check'); s.add_argument('ids', nargs='*')
     s = sp.add_parser('new'); s.add_argument('id'); s.add_argument('description'); s.add_argument('keywords')
+    s = sp.add_parser('find'); s.add_argument('query'); s.add_argument('--mpn'); s.add_argument('--footprint')
+    s = sp.add_parser('reuse'); s.add_argument('id'); s.add_argument('--expect-sha256')
     a = ap.parse_args()
+    if a.cmd in ('find', 'reuse'):
+        import block_reuse
+        try:
+            result = (block_reuse.find(LIB, a.query, a.mpn, a.footprint) if a.cmd == 'find'
+                      else block_reuse.reuse(LIB, a.id, a.expect_sha256))
+        except (ValueError, OSError) as exc:
+            print(f'FAIL — block retrieval: {exc}', file=sys.stderr)
+            return 1
+        print(json.dumps(result, indent=2))
+        print('PASS — discovery only; target qualification still required', file=sys.stderr)
+        return 0
     if a.cmd == 'serve':
         return cmd_serve(a.port)
     if a.cmd == 'check':

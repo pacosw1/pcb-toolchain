@@ -1,0 +1,70 @@
+{
+  "schema": "iot-lab.block-data-sources.v1",
+  "inspected_on": "2026-10-11",
+  "purpose": "Candidate data for small block matching, circuit-role and routing-difficulty models; not qualified training data",
+  "sources": [
+    {
+      "repository": "https://github.com/EasyGerber/pcb-dataset-lite",
+      "commit": "dea8b66c8ff778055fc1446fb277ff136223887e",
+      "metadata_records": 287,
+      "records_with_raw_kicad_pcb": 279,
+      "records_with_raw_kicad_sch": 5,
+      "database_license_claim": "ODbL; individual designs retain their licenses",
+      "candidate_tasks": ["component/neighborhood retrieval", "circuit-role classification", "local congestion features"],
+      "examples": [
+        {
+          "path": "boards/OLIMEX__ESP32-EVB_Rev_L",
+          "source_repository": "https://github.com/OLIMEX/ESP32-EVB",
+          "source_file": "HARDWARE/REV-L/ESP32-EVB_Rev_L.kicad_pcb",
+          "source_commit": null,
+          "license_claim": "apache-2.0",
+          "split_family": "OLIMEX/ESP32-EVB",
+          "review_label": null
+        },
+        {
+          "path": "boards/OLIMEX__ESP32-PoE_Rev_M",
+          "source_repository": "https://github.com/OLIMEX/ESP32-POE",
+          "source_file": null,
+          "source_commit": null,
+          "license_claim": "apache-2.0",
+          "split_family": "OLIMEX/ESP32-POE",
+          "review_label": null
+        },
+        {
+          "path": "boards/OLIMEX__ESP32-PoE_Rev_M1",
+          "source_repository": "https://github.com/OLIMEX/ESP32-POE",
+          "source_file": null,
+          "source_commit": null,
+          "license_claim": "apache-2.0",
+          "split_family": "OLIMEX/ESP32-POE",
+          "review_label": null
+        }
+      ],
+      "admission": "pending: verify original revision/license, parse and validate CAD, deduplicate by design family, annotate task-specific labels; no training labels inferred from popularity"
+    },
+    {
+      "repository": "https://github.com/PCBench/PCBench",
+      "commit": "dec3be75cbdef74787625f9043c7391cd473bb64",
+      "metadata_files_in_tree": 1182,
+      "readme_board_count_claim": 164,
+      "note": "Tree record count is not a verified unique-board count or a qualified corpus size",
+      "candidate_tasks": ["local routing difficulty", "route ordering experiments"],
+      "example": {
+        "path": "PCBs/1-Wire-Wing-pcb_1-Wire_Wing/metadata.json",
+        "source_repository": "https://github.com/j3270/1-Wire-Wing-pcb",
+        "source_commit": null,
+        "license_claim": "MIT",
+        "cad_version": "KiCad 4",
+        "split_family": "j3270/1-Wire-Wing-pcb",
+        "review_label": null
+      },
+      "admission": "pending: validate normalized representation against raw CAD and current rules; original revision/license and family dedup required"
+    },
+    {
+      "site": "https://heypcb.ai",
+      "bookmark": "https://x.com/justinplaygame/status/2103245955831345222",
+      "role": "Discovery of original projects, not a verified bulk training dataset",
+      "admission": "Follow original project sources and record per-design provenance before inclusion"
+    }
+  ]
+}
