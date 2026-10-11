@@ -132,7 +132,7 @@ def cleanup_group(proc, depth=0):
                 child_reaped=False, family_cleanup='unconfirmed')
 
 
-def run_stage(cmd, *, stage, event_file=None, deadline=None, **kwargs):
+def run_stage(cmd, *, stage, event_file=None, deadline=None, on_start=None, **kwargs):
     """Bound the entire child process group; timeout output is never a pass.
 
     A root-owned broker retains registered group leaders across stopped nested
@@ -189,6 +189,8 @@ def run_stage(cmd, *, stage, event_file=None, deadline=None, **kwargs):
             left = remaining(child_deadline)
             if left is not None and left<=0:raise subprocess.TimeoutExpired(cmd,0)
             proc.activate()
+            if on_start:   # audit #803: the caller gets the owned process (graceful interrupt), not a PID search
+                on_start(proc)
             left = remaining(child_deadline)
             stdout, stderr = proc.communicate(timeout=left)
         except (subprocess.TimeoutExpired, KeyboardInterrupt) as error:

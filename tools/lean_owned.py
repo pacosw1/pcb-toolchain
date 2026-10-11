@@ -602,6 +602,16 @@ class Scope:
             else:
                 selector.unregister(key.fileobj)
 
+    def interrupt(self, handle):
+        # Audit #803 (CIP 830): a graceful stop of one owned stage, e.g. the fail-fast stall stop of a router that
+        # writes its best board on SIGTERM. Only the registered group of this handle is signalled, once
+        # (signals_sent); no process discovery by name.
+        with self.lock:
+            state=self.states.get(handle)
+        if state is None:raise ValueError('foreign owned-stage handle')
+        self._signal(state,signal.SIGTERM)
+        return True
+
     def cancel(self, handle, include_self=True, immediate=False,deadline=None):
         deadline=deadline if deadline is not None else time.monotonic()+(2 if immediate else 7)
         with self.lock:
@@ -714,6 +724,9 @@ class Scope:
                 elif op=='activate':
                     self.activate(target)
                     _send(conn,{'activated':True})
+                elif op=='interrupt':
+                    conn.settimeout(.5)
+                    _send(conn,{'interrupted':self.interrupt(target.handle)})
                 else:
                     raise ValueError('unknown owned-stage request')
         except BaseException as error:
@@ -795,6 +808,10 @@ class Process:
         self.last_cleanup=result['cleanup']
         self.adopted_child_cpu_s=result.get('adopted_child_cpu_s')
         return _decoded(result['stdout'],self.options),_decoded(result['stderr'],self.options)
+
+    def interrupt(self):
+        return self.scope.interrupt(self.state.handle) if self.scope else _rpc(self.path,
+            dict(op='interrupt',cap=self.cap,handle=self.state),timeout=5).get('interrupted',False)
 
     def cleanup(self):
         return self.scope.cancel(self.state.handle) if self.scope else _rpc(self.path,

@@ -170,10 +170,29 @@ def big_signal_via(text, dia_mm, classes, nets=()):
     return text
 
 
-def plane_via_clearance_repair(path, drc, plane_names):
+def copper_key(t):
+    """Geometry identity of a track or via (class, net, layer, ends): the same item in the input and the routed board."""
+    e = t.GetEnd() if t.GetClass() == "PCB_TRACK" else t.GetStart()
+    return (t.GetClass(), t.GetNetname(), t.GetLayer(), t.GetStart().x, t.GetStart().y, e.x, e.y)
+
+
+def source_copper(path):
+    """The keys of every track and via of the job's input board: copper this job must never delete."""
+    return {copper_key(t) for t in pcbnew.LoadBoard(path).GetTracks()}
+
+
+def missing_source_copper(path, keys):
+    """Source items (copper_key) that are no longer on the board at path; empty when all are preserved."""
+    have = {copper_key(t) for t in pcbnew.LoadBoard(path).GetTracks()}
+    return sorted(k for k in keys if k not in have)
+
+
+def plane_via_clearance_repair(path, drc, plane_names, preserve=frozenset()):
     """Delete each plane-net via (and its stub from the pad) that the DRC lists in a clearance violation against
     copper of another net, and return {net: {"REF.PIN", ...}} of the pads to connect again. The board at path is
-    saved without those items. A via with no stub to a pad of its net is left alone (it is not a pad via)."""
+    saved without those items. A via with no stub to a pad of its net is left alone (it is not a pad via).
+    Audit #815 (CIP 830, 2026-10-11): only copper this job created is repaired. A locked via or stub, or one whose
+    copper_key is in preserve (the input board's copper, source_copper), is source copper and is never deleted."""
     hits = []
     for v in drc.get("violations", []):
         if v.get("severity") != "error" or v.get("type") != "clearance":
@@ -194,6 +213,8 @@ def plane_via_clearance_repair(path, drc, plane_names):
         stub = [t for t in b.GetTracks() if t.GetClass() == "PCB_TRACK" and t.GetNetname() == net
                 and (t.GetStart() == via.GetPosition() or t.GetEnd() == via.GetPosition())]
         if len(stub) != 1:
+            continue
+        if via.IsLocked() or stub[0].IsLocked() or copper_key(via) in preserve or copper_key(stub[0]) in preserve:
             continue
         far = stub[0].GetEnd() if stub[0].GetStart() == via.GetPosition() else stub[0].GetStart()
         pad = next((f"{fp.GetReference()}.{p.GetNumber()}" for fp in b.GetFootprints() for p in fp.Pads()
@@ -768,8 +789,8 @@ def _main(a=None):
         lean.atomic_json(os.path.join(a.outdir, f'effective-configuration{sfx}.json'), effective)
         s0 = lean.now()
         stall_n = int(fail_fast.get('stall_passes', 0) or 0)
-        stall_stop, stall_result = threading.Event(), {}
-        watcher = threading.Thread(target=_router_watch, args=(os.path.join(a.outdir, f"run{sfx}.log"), stall_n, dsn,
+        stall_stop, stall_result, owner = threading.Event(), {}, {}
+        watcher = threading.Thread(target=_router_watch, args=(os.path.join(a.outdir, f"run{sfx}.log"), stall_n, owner,
                                                                 stall_stop, stall_result, progress, 'route' + sfx), daemon=True)
         progress.write('route' + sfx + ' start')
         watcher.start()
@@ -779,6 +800,7 @@ def _main(a=None):
         with open(os.path.join(a.outdir, f"run{sfx}.log"), "w") as lf:
             rc = lean.run_stage(cmd, stage=('router-screen' if a.optimizer != 'always' else 'router') + sfx,
                                 event_file=phases, deadline=deadline, env=router_env,
+                                on_start=lambda p: owner.__setitem__('proc', p),
                                 stdout=lf, stderr=subprocess.STDOUT).returncode
         stall_stop.set()
         watcher.join(5)
@@ -1079,7 +1101,8 @@ def _main(a=None):
     # DSN gives every class clearance 0.2 mm; the router's own report lists the violation as fixable and leaves it).
     # The via and its stub are deleted and the pad goes to the repair list: gnd_pad_vias.py places the via again with
     # the routed copper as the obstacle and the class clearance of each neighbour. No track is moved.
-    moved = plane_via_clearance_repair(out, d, plane_names)
+    src_keys = source_copper(a.board)
+    moved = plane_via_clearance_repair(out, d, plane_names, preserve=src_keys)
     for net, pads in moved.items():
         todo.setdefault(net, set()).update(pads)
     if moved:
@@ -1105,6 +1128,13 @@ def _main(a=None):
                                       KICAD_CLI, phases, 'postroute-thermal')
     lean.atomic_json(drc, d)
     lean.atomic_json(os.path.join(a.outdir, 'thermal-repair.json'), thermal)
+    # Audit #815: every post-import repair (plane vias, thermal) is done; the input board's copper must all be there,
+    # except the nets the caller unlocked for the router (--unlock-nets).
+    unlocked = {n for n in a.unlock_nets.split(',') if n}
+    lost = [k for k in missing_source_copper(out, src_keys) if k[1] not in unlocked]
+    if lost:
+        sys.exit(f"fastroute_job: SOURCE COPPER LOST: {len(lost)} input tracks/vias are missing after the post-import "
+                 f"repairs (first {lost[0][:3]}); the result is not used")
     after = sum(1 for t in pcbnew.LoadBoard(out).GetTracks() if t.GetClass() == 'PCB_VIA')
     errors = sum(1 for v in d.get("violations", []) if v.get("severity") == "error")
     diag = report.get("diagnosis", {})
@@ -1202,11 +1232,12 @@ def _main(a=None):
                           note='import verified; full final board gate remains required'))
 
 
-def _router_watch(log_path, stall_passes, dsn, stop, result, progress, stage):
+def _router_watch(log_path, stall_passes, owner, stop, result, progress, stage):
     """Read the router log while it runs: one progress line per autorouter pass (route_progress), and fail_fast
     stall_passes: after that many consecutive passes whose open count is not below the best so far, SIGTERM the router
     (Fastroute then writes its best board and the report and exits 0, as at --max-time; 0 = no stall stop). The router
-    is found by its unique DSN path. Parallel multi-start runs interleave their pass lines; they are read in log order."""
+    is the owned stage in owner['proc'] (lean.run_stage on_start); it gets one graceful interrupt. Parallel multi-start
+    runs interleave their pass lines; they are read in log order."""
     best, stale, seen, starts, last_start = None, 0, 0, 1, False
     while not stop.wait(1.0):
         try:
@@ -1233,14 +1264,20 @@ def _router_watch(log_path, stall_passes, dsn, stop, result, progress, stage):
             else:
                 stale += 1
             if stall_passes > 0 and stale >= stall_passes * starts:
-                pids = subprocess.run(['pgrep', '-f', dsn], stdout=subprocess.PIPE, text=True).stdout.split()
-                for pid in pids:
-                    try:
-                        os.kill(int(pid), 15)
-                    except (OSError, ValueError):
-                        pass
-                result.update(stopped=True, pass_no=pass_no, unrouted=n, best=best, pids=pids,
-                              seconds=round(time.time(), 1))
+                # Audit #803 (CIP 830): stop only the router this job owns, through its owned-stage handle (one
+                # SIGTERM to its registered process group: Fastroute writes its best board). No process search by
+                # name: pgrep -f DSN also matched unrelated processes whose command line contains that text.
+                proc, how = owner.get('proc'), 'owned-stage interrupt'
+                try:
+                    if proc is None:
+                        raise RuntimeError('router not started as an owned stage yet')
+                    proc.interrupt()
+                except Exception as e:
+                    how = f'not stopped: {type(e).__name__}: {e}'
+                result.update(stopped=proc is not None and how == 'owned-stage interrupt', pass_no=pass_no, unrouted=n,
+                              best=best, how=how, seconds=round(time.time(), 1))
+                if not result['stopped']:
+                    continue
                 stop.set()
                 return   # W15: one stop signal only; a second one (more stale pass lines in the same read) made Fastroute
                          # exit 130 without its best board ("second stop signal, exiting", run-escape.log of /tmp/w15/run-1)
