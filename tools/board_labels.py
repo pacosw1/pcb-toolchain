@@ -64,6 +64,7 @@ from silk_refs import refs_off_silk  # noqa: E402
 
 GROUP = 'board-labels'
 GROUP_BACK = 'board-labels-back'   # the B.SilkS copy ("back": true), user request 2026-10-07
+GROUP_INFO = 'board-info-back'     # reference blocks on B.SilkS ("info_back"), user request 2026-10-11
 PAD_GAP, NPTH_GAP, VIA_GAP, SILK_GAP, EDGE_GAP = 0.2, 0.3, 0.15, 0.1, 0.5
 PIN_GAP_X, PIN_GAP_Y = 0.5, 0.08   # between two pin labels: side by side / one over the other (1.25 mm pitch columns)
 TITLE_GAP = 0.6                     # between a title and any other label
@@ -500,6 +501,8 @@ def main():
         silk_and_brand(board, pcb, cfg, args)
     if cfg.get('back'):
         back_pass(board, pcb, cfg)
+    if cfg.get('info_back'):
+        info_pass(board, pcb, cfg)
 
 
 def back_pass(board, pcb, cfg):
@@ -565,6 +568,227 @@ def silk_and_brand(board, pcb, cfg, args):
                     subprocess.run(base, check=True)
                     return
         raise SystemExit(f'board_labels {board}: no place for the brand block')
+
+
+
+
+def info_lines(b, block, cfg):
+    """The lines of one info_back block. Sources: the board itself (part values, test-point nets) and the config
+    (curated wording). kind 'text': its lines; 'parts': [ref, function] -> "REF VALUE  function" (VALUE from the
+    footprint); 'testpoints': every TPn with its net (from the pads), in columns of 'rows' lines."""
+    kind = block.get('kind', 'text')
+    if kind == 'text':   # "{date}": RENDER_DATE (the fab-set date of tools/fab-workflow.sh), else today
+        import datetime
+        date = os.environ.get('RENDER_DATE') or datetime.date.today().isoformat()
+        return [[ln.replace('{date}', date) for ln in block['lines']]]
+    if kind == 'parts':
+        out = []
+        for ref, fn in block['parts']:
+            fp = b.FindFootprintByReference(ref)
+            if fp is None:
+                raise SystemExit(f'board_labels: info_back parts: no footprint {ref}')
+            out.append(f'{ref} {fp.GetValue()}  {fn}')
+        rows = int(block.get('rows', len(out)))
+        return [out[i:i + rows] for i in range(0, len(out), rows)]
+    if kind == 'testpoints':
+        import re
+        tps = []
+        for fp in b.GetFootprints():
+            m = re.match(r'^TP(\d+)$', fp.GetReference())
+            if m:
+                nets = sorted({p.GetNetname() for p in fp.Pads() if p.GetNetname()})
+                tps.append((int(m.group(1)), f"TP{m.group(1)} {(nets[0] if nets else '-').lstrip('/').replace('PWR-24V/', '')}"))
+        lines = [t for _, t in sorted(tps)]
+        rows = int(block.get('rows', 10))
+        return [lines[i:i + rows] for i in range(0, len(lines), rows)]
+    raise SystemExit(f'board_labels: info_back: unknown kind {kind}')
+
+
+def info_pass(board, pcb, cfg):
+    """Step 6 ("info_back", user request 2026-10-11: useful reference on the bottom silkscreen): blocks of text on
+    B.SilkS, mirrored, each column kept together, placed at the free spot nearest to its "near" (default: board
+    centre) with the same bottom obstacles as the back labels (pads, holes, vias 0.15 mm, other B.SilkS 0.1 mm, screw
+    heads, 0.5 mm inside the outline) and TITLE_GAP to every other placed block. Text height h (default 1.0 mm,
+    PIN_MIN), stroke by stroke(h). A block with no free place is skipped and listed (not an error)."""
+    stack = (stackup_block(open(pcb).read()) or (None,))[0]
+    b = pcbnew.LoadBoard(pcb)
+    for g in list(b.Groups()):
+        if g.GetName() == GROUP_INFO:
+            for it in list(g.GetItems()):
+                b.Delete(it)
+            b.Delete(g)
+    B = Board(b, set(), back=True)
+    # every other B.SilkS text (the back pin labels and titles) is a placed block: TITLE_GAP to it (Board leaves the
+    # label groups out of its obstacles, the label passes rebuild them)
+    for d_ in b.GetDrawings():
+        if isinstance(d_, pcbnew.PCB_TEXT) and d_.GetLayer() == pcbnew.B_SilkS:
+            q = d_.GetEffectiveTextShape().BBox()
+            B.placed.append(((T(q.GetLeft()), T(q.GetTop()), T(q.GetRight()), T(q.GetBottom())), d_.GetText(), 'title'))
+    bb = b.GetBoardEdgesBoundingBox()
+    X0, Y0, X1, Y1 = T(bb.GetLeft()), T(bb.GetTop()), T(bb.GetRight()), T(bb.GetBottom())
+    group = pcbnew.PCB_GROUP(b)
+    group.SetName(GROUP_INFO)
+    b.Add(group)
+    placed, skipped = 0, []
+    blocks = []
+    for block in cfg['info_back']:   # "split": every column is its own block (fits between the vias), same near
+        if block.get('kind') == 'panel':
+            blocks.append(block)
+            continue
+        cols_ = info_lines(b, block, cfg)
+        if block.get('split') and len(cols_) > 1:
+            blocks += [dict(block, kind='text', lines=c, id=f"{block.get('id', 'info')}.{k + 1}") for k, c in enumerate(cols_)]
+        else:
+            blocks.append(block)
+    tented = 'back yes' in ' '.join(open(pcb).read().split('(tenting', 1)[-1].split(')', 3)[:3]).replace('(', ' ')
+    for block in blocks:
+        if block.get('kind') == 'panel':
+            r_ = info_panel(b, B, block, group, tented, (X0, Y0, X1, Y1))
+            if r_:
+                placed += 1
+            else:
+                skipped.append(f"{block.get('id')}: no free place")
+            continue
+        h = float(block.get('h', PIN_MIN))
+        pitch = h * float(block.get('line_pitch', 1.45))
+        cols = info_lines(b, block, cfg)
+        col_gap = float(block.get('col_gap', 2.0))
+        # column boxes relative to the block origin (top left of the first column), left justified lines
+        boxes, x = [], 0.0
+        for col in cols:
+            w = max((extent(b, t, h, h, 'L', 'T', True)[2] - extent(b, t, h, h, 'L', 'T', True)[0]) for t in col)
+            boxes.append((x, w, col))
+            x += w + col_gap
+        W, H = x - col_gap, pitch * max(len(c) for c in cols)
+        near = block.get('near', [(X0 + X1) / 2, (Y0 + Y1) / 2])
+        best = None
+        step = 0.5
+        ys = [Y0 + k * step for k in range(int((Y1 - Y0) / step))]
+        xs = [X0 + k * step for k in range(int((X1 - X0) / step))]
+        for y in ys:
+            for x0 in xs:
+                r = (x0, y, x0 + W, y + H)
+                d = math.hypot((r[0] + r[2]) / 2 - near[0], (r[1] + r[3]) / 2 - near[1])
+                if best is not None and d >= best[0]:
+                    continue
+                if B.free(r, B.local((r[0] - 0.5, r[1] - 0.5, r[2] + 0.5, r[3] + 0.5)), 'title'):
+                    best = (d, r)
+        if best is None:
+            skipped.append(f'{block.get("id", block.get("kind"))}: no free place for {W:.1f} x {H:.1f} mm')
+            continue
+        r = best[1]
+        B.placed.append((r, block.get('id', 'info'), 'title'))
+        for cx, cw, col in boxes:
+            for i, text in enumerate(col):
+                e = extent(b, text, h, h, 'L', 'T', True)
+                # mirrored text: the lines share their right edge in board coordinates, so they read left aligned
+                # from the bottom side; the glyph box (not the anchor) is placed
+                ax, ay = r[0] + cx + cw - e[2], r[1] + i * pitch - e[1]
+                t = text_item(b, text, h, h, ax, ay, 'L', 'T', back=True)
+                b.Add(t)
+                group.AddItem(t)
+        placed += 1
+        print(f'  info {block.get("id", block.get("kind"))}: {W:.1f} x {H:.1f} mm at ({r[0]:.2f}, {r[1]:.2f}), h {h:g} mm, '
+              f'{sum(len(c) for c in cols)} lines')
+    pcbnew.SaveBoard(pcb, b)
+    keep_stackup(pcb, stack)
+    print(f'board_labels {board}: {placed} info blocks in group "{GROUP_INFO}"' +
+          ''.join(f'\n  NOT PLACED info {s_}' for s_ in skipped))
+
+
+def info_panel(b, B, block, group, tented, outline):
+    """A framed panel on B.SilkS (info_back kind "panel", user request 2026-10-11: board description, features,
+    warnings, key parts; "aesthetic"). Laid out in bottom-view coordinates (u to the right as seen from below = -x on
+    the board, v down) and mirrored onto the board: a frame with 0.8 mm chamfered corners, a header (h_head, with an
+    optional "icon" glyph, e.g. the warning sign) and a rule under it, then the body lines (h; "• " bullets as given).
+    Frame and rule: 0.15 mm lines (stroke(1.0)). Placement: the free spot nearest to "near"; on a board with tented
+    back vias (setup tenting back yes) the panel may print over vias (solder mask covers them; pads, holes, screw
+    heads, other silk and the outline still keep clear), like the front labels' tented-via fallback."""
+    h = float(block.get('h', PIN_MIN))
+    hh = float(block.get('h_head', 1.6))
+    pad = float(block.get('pad', 1.0))
+    pitch = h * float(block.get('line_pitch', 1.6))
+    lw = stroke(1.0)
+    icon = block.get('icon', '')
+    head = block.get('header', '')
+    lines = info_lines(b, dict(block, kind=block.get('body_kind', 'text')), None)[0] + list(block.get('extra', []))
+    wid = lambda t, hgt: (extent(b, t, hgt, hgt, 'L', 'T', True)[2] - extent(b, t, hgt, hgt, 'L', 'T', True)[0])
+    ih = hh * 1.5 if icon else 0.0          # icon "warning": a drawn triangle (the stroke-font sign does not render)
+    head_w = (ih * 1.15 + 0.8 if icon else 0.0) + (wid(head, hh) if head else 0.0)
+    body_w = max([wid(t, h) for t in lines] or [0.0])
+    W = 2 * pad + max(head_w, body_w, float(block.get('min_w', 0)))
+    head_h = max(hh, ih) if (head or icon) else 0.0
+    H = 2 * pad + head_h + (pad * 1.3 if head_h else 0.0) + len(lines) * pitch - (pitch - h if lines else 0.0)
+    X0, Y0, X1, Y1 = outline
+    near = block.get('near', [(X0 + X1) / 2, (Y0 + Y1) / 2])
+    best = None
+    step = 0.5
+    y = Y0
+    while y + H < Y1:
+        x = X0
+        while x + W < X1:
+            r = (x, y, x + W, y + H)
+            d = math.hypot((r[0] + r[2]) / 2 - near[0], (r[1] + r[3]) / 2 - near[1])
+            if best is None or d < best[0]:
+                loc = B.local((r[0] - 0.5, r[1] - 0.5, r[2] + 0.5, r[3] + 0.5))
+                if tented:
+                    win = (r[0] - 0.5, r[1] - 0.5, r[2] + 0.5, r[3] + 0.5)
+                    loc = [o for o, w_ in zip(B.obs, B.why) if hit(o, win) and not w_.startswith('via ')]
+                if B.free(r, loc, 'title'):
+                    best = (d, r)
+            x += step
+        y += step
+    if best is None:
+        print(f"  info {block.get('id')}: no free place for {W:.1f} x {H:.1f} mm")
+        return None
+    r = best[1]
+    B.placed.append((r, block.get('id', 'panel'), 'title'))
+    vx = lambda u: r[2] - u            # bottom view: u from the panel's left edge as seen from below
+    items = []
+    def seg(u0, v0, u1, v1):
+        sh = pcbnew.PCB_SHAPE(b)
+        sh.SetShape(pcbnew.SHAPE_T_SEGMENT)
+        sh.SetLayer(pcbnew.B_SilkS)
+        sh.SetWidth(M(lw))
+        sh.SetStart(pcbnew.VECTOR2I(M(vx(u0)), M(r[1] + v0)))
+        sh.SetEnd(pcbnew.VECTOR2I(M(vx(u1)), M(r[1] + v1)))
+        items.append(sh)
+    c = 0.8   # chamfer
+    for a in ((c, 0, W - c, 0), (W, c, W, H - c), (W - c, H, c, H), (0, H - c, 0, c),
+              (0, c, c, 0), (W - c, 0, W, c), (W, H - c, W - c, H), (c, H, 0, H - c)):
+        seg(*a)
+    def txt(t, hgt, u_left, v_top):
+        e = extent(b, t, hgt, hgt, 'L', 'T', True)
+        w_ = e[2] - e[0]
+        # the glyph box spans u_left .. u_left + w_ (bottom view) = board x vx(u_left + w_) .. vx(u_left)
+        it = text_item(b, t, hgt, hgt, vx(u_left + w_) - e[0], r[1] + v_top - e[1], 'L', 'T', back=True)
+        items.append(it)
+        return w_
+    v = pad
+    if head_h:
+        u = pad
+        if icon:
+            tw, t0 = ih * 1.15, v + (head_h - ih) / 2      # triangle: base tw, height ih
+            seg(u, t0 + ih, u + tw, t0 + ih)
+            seg(u + tw, t0 + ih, u + tw / 2, t0)
+            seg(u + tw / 2, t0, u, t0 + ih)
+            bang = '!'
+            bh = ih * 0.55
+            txt(bang, bh, u + tw / 2 - wid(bang, bh) / 2, t0 + ih * 0.36)
+            u += tw + 0.8
+        if head:
+            txt(head, hh, u, v + (head_h - hh) / 2)
+        v += head_h + pad * 0.65
+        seg(pad * 0.5, v, W - pad * 0.5, v)
+        v += pad * 0.65
+    for t in lines:
+        txt(t, h, pad, v)
+        v += pitch
+    for it in items:
+        b.Add(it)
+        group.AddItem(it)
+    print(f"  info {block.get('id')}: panel {W:.1f} x {H:.1f} mm at ({r[0]:.2f}, {r[1]:.2f}), {len(lines)} lines")
+    return r
 
 
 if __name__ == '__main__':

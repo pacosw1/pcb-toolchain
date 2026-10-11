@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Gate: every connector has port labels on F.SilkS (user rule 2026-09-27).
 
+Label layers: F.SilkS by default. A board's port-labels.json may set "silk_layers" (for example
+["F.SilkS", "B.SilkS"]) with a "silk_layers_reason" naming the user decision (BASE-PWR-B: D-132, user
+2026-10-11, port labels may be on the bottom side). A label on any listed layer counts.
+
 A connector is a top-side footprint with reference J*, P* or CN*. Each pad with a
 net must have its own F.SilkS text (gr_text, or fp_text user of any footprint)
 within --dist mm. A text names only its nearest checked pad. Each connector also
@@ -75,6 +79,9 @@ def pad_xy(fp_at, local):
     return (round(x, 6), round(y, 6))
 
 
+
+SILK = {'F.SilkS'}   # label layers; port-labels.json silk_layers may add B.SilkS
+
 def layer(node):
     lay = one(node, 'layer')
     return lay[1] if lay else None
@@ -92,7 +99,7 @@ def board_items(text):
             ref = t[2] if t else ''
         refs.setdefault(ref, []).extend([fat[:2]] + [pad_xy(fat, at(p)[:2]) for p in kids(f, 'pad')])
         for t in kids(f, 'fp_text'):
-            if t[1] == 'user' and layer(t) == 'F.SilkS' and not one(t, 'hide'):
+            if t[1] == 'user' and layer(t) in SILK and not one(t, 'hide'):
                 lx, ly, _ = at(t)
                 texts.append((t[2], pad_xy(fat, (lx, ly))))
         if not CONN.match(ref) or layer(f) != 'F.Cu':
@@ -108,7 +115,7 @@ def board_items(text):
         if any(p[1] for p in pads):  # a footprint with no checked pad (mounting hole) is no port
             conns[ref] = pads
     for t in kids(root, 'gr_text'):
-        if layer(t) == 'F.SilkS':
+        if layer(t) in SILK:
             x, y, _ = at(t)
             texts.append((t[1], (x, y)))
     texts = [(s, xy) for s, xy in texts if s != '${REFERENCE}' and s.strip() and not is_reference(s, xy, refs)]
@@ -177,7 +184,7 @@ def check(text, dist=4.0, title_dist=8.0, exempt=()):
                 if (ref, str(n)) not in missing:
                     stale.append('STALE exempt %s pad %s: the pad has a label' % (ref, n))
     natural = lambda k: (k[0], [int(s) if s.isdigit() else s for s in re.split(r'(\d+)', k[1])])
-    failures = ['FAIL %s pad %s (%s): no F.SilkS label within %.1f mm' % (k[0], k[1], missing[k], dist)
+    failures = ['FAIL %s pad %s (%s): no %s label within %.1f mm' % (k[0], k[1], missing[k], '/'.join(sorted(SILK)), dist)
                 for k in sorted(missing, key=natural) if k not in ex_pads]
     failures += ['FAIL %s: no title text within %.1f mm' % (ref, title_dist) for ref in sorted(no_title - ex_title)]
     return {'connectors': len(conns), 'pads': len(checked), 'failures': failures + stale}
@@ -213,6 +220,15 @@ def main(argv):
         sys.exit(__doc__)
     pcb = args[0]
     ex_file = ex_file or default_exempt(pcb)
+    if ex_file:
+        cfg = json.load(open(ex_file))
+        if 'silk_layers' in cfg:
+            layers = cfg['silk_layers']
+            if (not isinstance(layers, list) or not layers or not all(l in ('F.SilkS', 'B.SilkS') for l in layers)
+                    or not str(cfg.get('silk_layers_reason', '')).strip()):
+                sys.exit('port_labels: silk_layers needs F.SilkS/B.SilkS entries and a silk_layers_reason')
+            SILK.clear()
+            SILK.update(layers)
     exempt = []
     if ex_file:
         with open(ex_file) as fh:
