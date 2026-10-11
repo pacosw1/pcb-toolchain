@@ -90,6 +90,8 @@ def parser():
                     '(for example "--layers F.Cu,In2.Cu,B.Cu --plane-nets GND,+3V3")')
     ap.add_argument('--virtual-first', action='store_true', help='old order: virtual (scaled) board first. Default: '
                     'the real outline first, at the largest halo that fits; the halo decreases only after a pass')
+    ap.add_argument('--max-routes', type=int, default=0, help='hard cap on router runs in this call (0 = no cap): '
+                    'when reached, later steps get no search and no route (fail fast, user rule 2026-10-11)')
     ap.add_argument('--shrink', type=float, default=0.85, help='halo scale factor after a pass')
     ap.add_argument('--tol', type=float, default=0.05, help='halo bisection stops at this relative gap')
     return ap
@@ -207,6 +209,7 @@ def main(argv=None):
     # Route feature pin_escape_check (tools/route-features.json): the parts with boxed-in pins of the last routed
     # step (route-0/pin-escape.json of tools/fastroute_job.py) get halo_hint_mm more spacing in the next search.
     escape_hint = {}
+    routes_done = [0]   # router runs started in this call (--max-routes)
 
     def audit_search(q, n, res):
         reports = []
@@ -227,6 +230,9 @@ def main(argv=None):
 
     def search(q, n):
         nonlocal deadline
+        if a.max_routes and routes_done[0] >= a.max_routes:
+            print('search step %d: skipped, router cap %d reached' % (n, a.max_routes), flush=True)
+            return None
         # Virtual input changes the outline; use it only as a bounded diagnostic.
         outline = q['board']['outline']
         xs, ys = [v[0] for v in outline], [v[1] for v in outline]
@@ -282,6 +288,9 @@ def main(argv=None):
 
     def route(path, n):
         d = sdir(n)
+        if a.max_routes and routes_done[0] >= a.max_routes:
+            return [NO_RESULT]
+        routes_done[0] += 1
         b = os.path.dirname(path)
         ins = [os.path.join(b, name + ext) for ext in ('.kicad_pcb', '.kicad_pro', '.kicad_dru')
                if os.path.exists(os.path.join(b, name + ext))]

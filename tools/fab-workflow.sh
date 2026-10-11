@@ -12,6 +12,7 @@ case "$board" in
   ENV-SENSE) maker=make-env-fab.sh; fab=hardware-design/boards/ENV-SENSE/cad/fab; check=check-env-pcb.py; config=;;
   FIELD-24V-BUS) maker=make-field-24v-bus-fab.sh; fab=hardware-design/boards/FIELD-24V-BUS/cad/fab; check=; config=;;
   BASE-PWR-B) maker=make-base-pwr-b-fab.sh; fab=hardware-design/boards/BASE-PWR/cad/BASE-PWR-B/fab; check=; config=;;
+  BASE-PWR-C) maker=make-base-pwr-c-fab.sh; fab=hardware-design/boards/BASE-PWR/cad/BASE-PWR-C/fab; check=; config=;;
   *) echo 'unsupported board' >&2; exit 2;;
 esac
 PY=${KICAD_PY:-/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3}
