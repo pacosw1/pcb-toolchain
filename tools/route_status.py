@@ -5,6 +5,8 @@
   python3 tools/route_status.py OUTDIR --follow    print each new line as it arrives (Ctrl-C to stop)
   python3 tools/route_status.py OUTDIR --mark gate [--end]   append a stage start/end event (the shell stages:
                                                    gate, render, fab) with the job's elapsed clock
+  python3 tools/route_status.py OUTDIR --log       the action log (W5: OUTDIR/run.jsonl, tools/run_record.py) in order,
+                                                   one line per action with its why
 """
 import argparse
 import os
@@ -21,7 +23,13 @@ def main():
     ap.add_argument('--follow', action='store_true')
     ap.add_argument('--mark', default='', help='append a stage event (start, or end with --end)')
     ap.add_argument('--end', action='store_true')
+    ap.add_argument('--log', action='store_true', help='print the action log (OUTDIR/run.jsonl)')
     a = ap.parse_args()
+    if a.log:
+        import run_record
+        for line in run_record.log_lines(a.outdir):
+            print(line)
+        return 0
     path = os.path.join(a.outdir, 'progress.jsonl')
     if a.mark:
         rows = [route_progress.json.loads(l) for l in open(path) if l.strip()] if os.path.isfile(path) else []

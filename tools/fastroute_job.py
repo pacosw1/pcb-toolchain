@@ -61,6 +61,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import freeroute  # noqa: E402  (restrict_dsn)
 import route_features  # noqa: E402  (feature switches, tools/route-features.json)
 import run_record  # noqa: E402  (W5 run record: OUTDIR/run.jsonl, one action per line; tools/run_record.py OUTDIR)
+import route_snapshots  # noqa: E402  (W12 checkpoint snapshots: OUTDIR/snapshots/NNNN.ses + .json + .png)
 import lean_workflow as lean
 import thermal_repair
 import import_pose_guard
@@ -244,6 +245,8 @@ def _parse_args(argv=None):
                     "padstack (the classes are not used), for example the fast nets for kicad-happy RP-001")
     ap.add_argument("--unlock-nets", default="", help="comma list of routed nets whose existing copper the router may "
                     "rip up and route again (default: all existing copper is locked)")
+    ap.add_argument("--snapshot-interval-s", type=float, default=5.0, help="W12: copy the router's checkpoint SES to "
+                    "OUTDIR/snapshots/NNNN.ses (+ .json sidecar, .png frame) every N seconds while it routes; 0 = off")
     a = ap.parse_args(argv)
     if a.max_time < 0 or a.threads < 0 or a.passes <= 0:
         ap.error('passes must be positive; time and threads must be nonnegative')
@@ -768,6 +771,9 @@ def _main(a=None):
                                                                 stall_stop, stall_result, progress, 'route' + sfx), daemon=True)
         progress.write('route' + sfx + ' start')
         watcher.start()
+        # W12 snapshots: the router's checkpoint SES every --snapshot-interval-s seconds (route_snapshots.Watcher)
+        snap = route_snapshots.Watcher(ses, a.outdir, os.path.join(a.outdir, f"run{sfx}.log"), a.snapshot_interval_s,
+                                       stage='route' + sfx, t0=run_record.clock(a.outdir), dsn=dsn).start()
         with open(os.path.join(a.outdir, f"run{sfx}.log"), "w") as lf:
             rc = lean.run_stage(cmd, stage=('router-screen' if a.optimizer != 'always' else 'router') + sfx,
                                 event_file=phases, deadline=deadline, env=router_env,
@@ -796,6 +802,7 @@ def _main(a=None):
                                         env=router_env, stdout=lf, stderr=subprocess.STDOUT).returncode
             else:
                 print('OPTIMIZER deferred: screening result still has open connections', flush=True)
+        snap.stop()
         if rc != 0 or not os.path.isfile(ses) or not os.path.isfile(rep):
             sys.exit(f"fastroute_job: fastroute failed (rc {rc}), see {a.outdir}/run{sfx}.log")
         report = json.load(open(rep))
@@ -1231,6 +1238,12 @@ def main():
                             run_record.sync(outdir)
                         except Exception:
                             pass
+                        if os.path.isdir(os.path.join(outdir, 'snapshots')):   # W12: the 60 s timelapse (frames deleted)
+                            try:
+                                import board_frame
+                                board_frame.mp4(outdir)
+                            except Exception as e:
+                                print(f'fastroute_job: timelapse not made: {type(e).__name__}: {e}', flush=True)
     except (TimeoutError, subprocess.TimeoutExpired) as error:
         if outdir and os.path.isdir(outdir):
             lean.router_timeout(outdir, error)
