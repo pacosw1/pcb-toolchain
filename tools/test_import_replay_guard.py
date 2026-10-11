@@ -51,6 +51,13 @@ class ReplayGuardTests(unittest.TestCase):
                    {'ses':{self.geometry:['unspecified']}},{'dsn':{self.geometry:['unknown']}}):
             with self.assertRaises(ValueError):self.plan(**kw)
 
+    def test_untyped_replay_of_fixed_dsn_wire_is_removed(self):
+        plan=self.plan(dsn={self.geometry:['fix']},ses={self.geometry:['unspecified']})
+        self.assertEqual(plan[0]['retained_uuid'],'old');self.assertEqual(plan[0]['removed_uuid'],'new')
+        for dsn,ses in (({self.geometry:['route']},['unspecified']),({self.geometry:['protect']},['unspecified']),
+                        ({self.geometry:['fix']},['route']),({self.geometry:['fix']},['unspecified','route'])):
+            with self.assertRaisesRegex(ValueError,'unprotected'):self.plan(dsn=dsn,ses={self.geometry:ses})
+
     def test_multiplicity_reject_and_new_new_without_source_reject(self):
         with self.assertRaises(ValueError):self.plan(ses={self.geometry:['protect','protect']})
         after={'x':copy.deepcopy(self.after['new']),'y':copy.deepcopy(self.after['new'])}

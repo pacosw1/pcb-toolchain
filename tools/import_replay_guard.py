@@ -211,7 +211,14 @@ def removal_plan(before, after, preserved, dsn, ses, unlocked=(), deduplicated=N
                              f" (DSN offered {offered is not None}, SES returned {geometry in ses})")
         if any(m not in ('fix','protect','route') for m in dsn[offered]):
             raise ValueError('unsupported DSN source mode')
-        if any(m not in ('fix','protect') for m in ses[geometry]):
+        # W21 (BASE-PWR-B runs 2, 3, 5 of 2026-10-11): Fastroute 0.1.7 now and then writes a wire that the job's DSN
+        # gave it as (type fix) back into the SES with no type, in a later stage of the same net (an escape-stage
+        # PRIMARY_5V segment in the wide_exempt stage). That copy is accepted only when the DSN offered this exact
+        # geometry as fix and nothing else: the source stays locked and unchanged and the copy is removed. A copy of
+        # route or protect wiring with no type is still rejected.
+        fixed_replay = offered == geometry and dsn[offered] and all(m == 'fix' for m in dsn[offered]) and \
+            all(m == 'unspecified' for m in ses[geometry])
+        if not fixed_replay and any(m not in ('fix','protect') for m in ses[geometry]):
             raise ValueError('unprotected SES coincidence: ' + describe(geometry) + f' (SES modes {ses[geometry]})')
         if len(ses[geometry]) != len(ids) + deduplicated.get(geometry, 0):
             raise ValueError('SES replay multiplicity does not match import')
