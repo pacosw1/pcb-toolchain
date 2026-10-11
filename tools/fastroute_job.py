@@ -283,7 +283,9 @@ def _main(a=None):
     run_record.append(a.outdir, 'job', 'configure', inputs=vars(a), evidence='input-manifest.json',
                       result={'features_on': sorted(k for k, v in feat.items() if isinstance(v, dict) and v.get('on'))},
                       why='the inputs and feature flags bound at the job start')
-    fail_fast = feat.get('fail_fast', {}) if route_features.on(feat, 'fail_fast') else {}
+    # W16: off means off; the .get(..., True) defaults below apply only when the feature is on.
+    fail_fast = (feat.get('fail_fast') or {'on': True}) if route_features.on(feat, 'fail_fast') else \
+        {'optimizer_if_routed': False, 'stuck_exit': False, 'stall_passes': 0}
     if fail_fast.get('optimizer_if_routed', True) and a.optimizer == 'always':
         a.optimizer = 'if-routed'
         print('FAIL_FAST optimizer if-routed: the optimizer runs only when the router leaves 0 open connections', flush=True)
@@ -800,6 +802,17 @@ def _main(a=None):
                 with open(os.path.join(a.outdir, f'optimize{sfx}.log'), 'w') as lf:
                     rc = lean.run_stage(optimize, stage='router-optimize' + sfx, event_file=phases, deadline=deadline,
                                         env=router_env, stdout=lf, stderr=subprocess.STDOUT).returncode
+                # W16 (AC-24V 2026-10-11): the optimizer, started from the checkpoint, moved mains tracks into the 3 mm
+                # clearance at J1 (2.68 mm, 2.98 mm) where the screen result had none. Keep the screen result when the
+                # optimizer adds fixable violations or opens: polish never trades a rule for track length.
+                def _bad(r):
+                    st = r.get('stats', {})
+                    return (st.get('violations', 0) - st.get('violations_unfixable', 0), dsn_skip.routable_open(r))
+                if rc == 0 and os.path.isfile(rep) and any(x > y for x, y in zip(_bad(json.load(open(rep))), _bad(screen))):
+                    print(f'OPTIMIZER rejected: violations/opens {_bad(json.load(open(rep)))} > screen {_bad(screen)}; '
+                          'the screen result is kept', flush=True)
+                    shutil.copy(checkpoint, ses)
+                    shutil.copy(os.path.join(a.outdir, f'screen-report{sfx}.json'), rep)
             else:
                 print('OPTIMIZER deferred: screening result still has open connections', flush=True)
         snap.stop()
@@ -1097,13 +1110,18 @@ def _main(a=None):
     diag = report.get("diagnosis", {})
     # Open connections of the skipped (ground) nets are a ground-via matter (gnd_pad_vias.py, a thermal pad via),
     # not a routing result: they are counted apart, so one ground pad cannot decide a placement step.
-    gnd_open = 0
+    # W16: a staged job (--only-nets, AC-24V stage M) leaves the nets of the later stages open by design; only opens on
+    # the nets this job routes make it STUCK. The UNROUTED line still counts every signal open (the callers read it).
+    gnd_open = other_open = 0
     for u in d.get("unconnected_items", []):
         m = re.search(r"\[([^\]]*)\]", u["items"][0]["description"]) if u.get("items") else None
         name = m.group(1) if m else ""
         if any(fnmatch.fnmatchcase(name, p) for p in skip) or name in plane_names:
             gnd_open += 1
+        elif a.only_nets and name not in nets:
+            other_open += 1
     signal_open = len(d.get("unconnected_items", [])) - gnd_open
+    job_open = signal_open - other_open
     progress.write('triage start', open_=signal_open, vias=after)
     if route_features.on(feat, "triage_opens"):
         tri = os.path.join(a.outdir, "open-triage.json")
@@ -1150,13 +1168,13 @@ def _main(a=None):
     if imported_vias != report["stats"]["vias"]:
         print(f"fastroute_job: RESULT NOT VERIFIED: {imported_vias} vias on the board, {report['stats']['vias']} in the router report", flush=True)
         sys.exit(4)
-    if fail_fast.get('stuck_exit', True) and signal_open:
+    if fail_fast.get('stuck_exit', True) and job_open:
         # The imported board, DRC, triage and the UNROUTED line are written; nothing more is spent on a board with opens.
         lean.atomic_json(os.path.join(a.outdir, 'outcome.json'),
                          dict(status='stuck', qualified=False, optimizer=a.optimizer, signal_open=signal_open,
                               ground_open=gnd_open, errors=errors, board_sha256=lean.digest(out),
                               note='fail_fast: open signal connections after routing; see open-triage.json'))
-        print(f"STUCK {signal_open} open signal connections after routing (fail_fast): no optimizer, exit {STUCK_RC}; "
+        print(f"STUCK {job_open} open signal connections after routing (fail_fast): no optimizer, exit {STUCK_RC}; "
               f"see {os.path.join(a.outdir, 'open-triage.json')}", flush=True)
         sys.exit(STUCK_RC)
     if base_b_cfg:
@@ -1189,23 +1207,32 @@ def _router_watch(log_path, stall_passes, dsn, stop, result, progress, stage):
     stall_passes: after that many consecutive passes whose open count is not below the best so far, SIGTERM the router
     (Fastroute then writes its best board and the report and exits 0, as at --max-time; 0 = no stall stop). The router
     is found by its unique DSN path. Parallel multi-start runs interleave their pass lines; they are read in log order."""
-    best, stale, seen = None, 0, 0
+    best, stale, seen, starts, last_start = None, 0, 0, 1, False
     while not stop.wait(1.0):
         try:
             lines = open(log_path, errors='replace').read().splitlines()
         except OSError:
             continue
         for line in lines[seen:]:
+            if 'Auto-routing stage started' in line:
+                # W16 (POE-ETHERNET 2026-10-11): a new router stage ("diff pairs released ... routing again") starts
+                # its own pass count; stale passes of the stage before must not stop it after its first pass. A burst
+                # of stage starts is a parallel multi-start: its pass lines interleave, so the stall window is
+                # stall_passes passes of each start (stall_passes x starts lines with no new best).
+                starts = starts + 1 if last_start else 1
+                best, stale, last_start = None, 0, True
+                continue
             m = route_progress.parse_pass(line)
             if not m:
                 continue
+            last_start = False
             pass_no, n, _ = m
             progress.router_pass(pass_no, n, stage)
             if best is None or n < best:
                 best, stale = n, 0
             else:
                 stale += 1
-            if stall_passes > 0 and stale >= stall_passes:
+            if stall_passes > 0 and stale >= stall_passes * starts:
                 pids = subprocess.run(['pgrep', '-f', dsn], stdout=subprocess.PIPE, text=True).stdout.split()
                 for pid in pids:
                     try:
