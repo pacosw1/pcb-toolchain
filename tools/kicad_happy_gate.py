@@ -279,6 +279,60 @@ def take_exempt_transitions(pcb_doc, nets):
     return found
 
 
+def return_radius(pcb_path, planes_path):
+    """RP-001 radius from the rule's own formula, max(2 x dielectric height, 1.0 mm) (kicad-happy
+    references/pcb-emc-rules.md RP-001: Ott, "PCB Stack-Up Part 6"; Sierra Circuits return path guide), with h the
+    dielectric the return current crosses: between the reference planes of the two signal layers (reference-planes.json
+    'adjacent', e.g. F.Cu -> In1.Cu and B.Cu -> In2.Cu: the In1-In2 core). kicad-a6bba1a takes the first dielectric of
+    the stackup instead. Returns (radius, h, (plane_a, plane_b)) or None when the spec or the stackup does not say."""
+    import re
+    try:
+        spec = json.load(open(planes_path))
+        adj = spec["adjacent"]
+        a, b = sorted(set(adj.values()))
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    text = open(pcb_path).read()
+    m = re.search(r"\(stackup(.*?)\(copper_finish", text, re.S)
+    if not m:
+        return None
+    layers = re.findall(r'\(layer "([^"]+)"(.*?)(?=\(layer "|\Z)', m.group(1), re.S)
+    names = [n for n, _ in layers]
+    if a not in names or b not in names:
+        return None
+    i, j = sorted((names.index(a), names.index(b)))
+    h = 0.0
+    for n, body in layers[i + 1:j]:
+        if "dielectric" in n:
+            t_ = re.search(r"\(thickness ([0-9.]+)", body)
+            h += float(t_.group(1)) if t_ else 0.0
+    if h <= 0:
+        return None
+    return max(2 * h, 1.0), h, (a, b)
+
+
+def take_return_stitched(pcb_doc, radius, pads):
+    """Drop the layer transitions whose every via has a ground via or a ground through-hole pad (it joins the planes
+    as a via does) within radius; the analyzer then flags only the rest. Returns the number dropped."""
+    names = {str(k): v for k, v in (pcb_doc.get("nets") or {}).items()}
+
+    def is_gnd(n):
+        return n.upper().endswith("GND") or n.upper() == "0V"
+    gnd = [(v.get("x", 0), v.get("y", 0)) for v in (pcb_doc.get("vias") or {}).get("vias", [])
+           if is_gnd(v.get("net_name") or names.get(str(v.get("net")), ""))]
+    gnd += [(p["abs_x"], p["abs_y"]) for p in pads if p.get("type") in ("thru_hole", "through_hole", "pth")
+            and is_gnd(p.get("net_name") or p.get("net") or "")]
+    keep, n = [], 0
+    for t in pcb_doc.get("layer_transitions", []):
+        vs = t.get("via_positions", [])
+        if vs and all(any(math.dist((q.get("x", 0), q.get("y", 0)), g) <= radius for g in gnd) for q in vs):
+            n += 1
+        else:
+            keep.append(t)
+    pcb_doc["layer_transitions"] = keep
+    return n
+
+
 def _pad_distance(p, x, y):
     """Distance from (x, y) to the copper of a pad: circle, oval (capsule) or rectangle."""
     a = math.radians(p.get("angle") or 0)
@@ -350,7 +404,7 @@ def load_pads(happy_dir, pcb):
     return [p for f in fps for p in f.get("pads", [])]
 
 
-def run_gate(happy_dir, pcb, sch, tmp_dir, grounds=(), exempt_rp_nets=()):
+def run_gate(happy_dir, pcb, sch, tmp_dir, grounds=(), exempt_rp_nets=(), rp_radius=None):
     """Run the three analyzers and return their merged raw findings."""
     all_findings = []
     sch_out = None
@@ -377,6 +431,9 @@ def run_gate(happy_dir, pcb, sch, tmp_dir, grounds=(), exempt_rp_nets=()):
     all_findings += load_findings(pcb_doc)
     if grounds:
         mark_ground_vias(pcb_doc, grounds)
+    if rp_radius:
+        n = take_return_stitched(pcb_doc, rp_radius, load_pads(happy_dir, pcb))
+        print(f"RP-001 return radius {rp_radius:.2f} mm (stackup): {n} transitions stitched", file=sys.stderr)
     all_findings += take_exempt_transitions(pcb_doc, set(exempt_rp_nets))
     debug_path = os.path.join(board_dir, "gp001_debug.json")
     if not os.path.exists(debug_path):
@@ -433,6 +490,10 @@ def main(argv=None):
         metavar="NET",
         help="Count the vias of NET as ground vias for RP-001 (repeatable; for FIELD_0V and similar)",
     )
+    parser.add_argument(
+        "--planes",
+        help="reference-planes.json: RP-001 radius from the dielectric between the reference planes (return_radius)",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -461,7 +522,11 @@ def main(argv=None):
     tmp_dir = tempfile.mkdtemp(prefix="kicad_happy_gate_")
     try:
         rp_nets = {e["net"] for e in exempts if e.get("rule") == "RP-001" and e.get("net")}
-        all_findings = run_gate(happy_dir, pcb, sch, tmp_dir, args.ground, rp_nets)
+        rr = return_radius(pcb, args.planes) if args.planes else None
+        if args.planes and rr is None:
+            print("ERROR: --planes given but no return dielectric from the stackup / adjacent map", file=sys.stderr)
+            return 2
+        all_findings = run_gate(happy_dir, pcb, sch, tmp_dir, args.ground, rp_nets, rr[0] if rr else None)
     except (RuntimeError, ValueError, OSError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2

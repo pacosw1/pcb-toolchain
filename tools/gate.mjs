@@ -123,7 +123,7 @@ const jobs = {
   },
   async kicad_happy() {
     const file = join(logDir, 'kicad_happy.json');
-    const a = [tool('kicad_happy_gate.py'), pcb, '--result', file, ...(c.kicad_happy?.exempt ? ['--exempt-file', spec(c.kicad_happy.exempt)] : []), ...(c.kicad_happy?.grounds ?? []).flatMap((g) => ['--ground', g])];
+    const a = [tool('kicad_happy_gate.py'), pcb, '--result', file, ...(c.kicad_happy?.exempt ? ['--exempt-file', spec(c.kicad_happy.exempt)] : []), ...(c.kicad_happy?.grounds ?? []).flatMap((g) => ['--ground', g]), ...(c.kicad_happy?.return_planes ? ['--planes', spec(c.kicad_happy.return_planes)] : [])];
     const result = await runTool(logDir, 'kicad_happy', modernPython, a);
     return {kicad_happy_findings: readHappyResult(file, result)};
   },

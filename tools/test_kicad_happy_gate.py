@@ -413,3 +413,41 @@ class OwnHoleCreditTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReturnRadiusTests(unittest.TestCase):
+    """D-138: RP-001 radius from the dielectric between the reference planes of the stackup."""
+    STACK = ('(kicad_pcb (setup (stackup (layer "F.Cu" (type "copper") (thickness 0.035))'
+             ' (layer "dielectric 1" (type "prepreg") (thickness 0.2104)) (layer "In1.Cu" (type "copper") (thickness 0.0152))'
+             ' (layer "dielectric 2" (type "core") (thickness 1.065)) (layer "In2.Cu" (type "copper") (thickness 0.0152))'
+             ' (layer "dielectric 3" (type "prepreg") (thickness 0.2104)) (layer "B.Cu" (type "copper") (thickness 0.035))'
+             ' (copper_finish "ENIG"))))')
+
+    def files(self, adjacent):
+        d = tempfile.mkdtemp()
+        pcb, planes = os.path.join(d, 'b.kicad_pcb'), os.path.join(d, 'p.json')
+        open(pcb, 'w').write(self.STACK)
+        json.dump({'adjacent': adjacent}, open(planes, 'w'))
+        return pcb, planes
+
+    def test_core_between_the_inner_planes(self):
+        r, h, planes = gate.return_radius(*self.files({'F.Cu': 'In1.Cu', 'B.Cu': 'In2.Cu'}))
+        self.assertAlmostEqual(h, 1.065)
+        self.assertAlmostEqual(r, 2.13)
+        self.assertEqual(planes, ('In1.Cu', 'In2.Cu'))
+
+    def test_minimum_one_mm_and_missing_spec(self):
+        pcb, planes = self.files({'F.Cu': 'In1.Cu', 'B.Cu': 'In1.Cu'})
+        self.assertIsNone(gate.return_radius(pcb, planes))          # one plane: no dielectric between two planes
+        self.assertIsNone(gate.return_radius(pcb, planes + '.missing'))
+
+    def test_transition_dropped_only_when_every_via_is_stitched(self):
+        doc = {'nets': {'1': 'GND', '2': 'S'},
+               'vias': {'vias': [{'x': 0, 'y': 0, 'net': 1}]},
+               'layer_transitions': [{'net': 'S', 'via_positions': [{'x': 2.0, 'y': 0}]},
+                                     {'net': 'S', 'via_positions': [{'x': 2.0, 'y': 0}, {'x': 5.0, 'y': 0}]}]}
+        pads = [{'type': 'thru_hole', 'net_name': 'GND', 'abs_x': 9.0, 'abs_y': 0}]
+        self.assertEqual(gate.take_return_stitched(doc, 2.13, []), 1)
+        self.assertEqual(len(doc['layer_transitions']), 1)
+        self.assertEqual(gate.take_return_stitched(doc, 2.13, pads), 0)   # 5.0 is 4 mm from both
+        self.assertEqual(gate.take_return_stitched(doc, 4.1, pads), 1)    # a GND through-hole pad counts
