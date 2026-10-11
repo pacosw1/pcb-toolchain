@@ -20,7 +20,8 @@ import pin_escape_flow as pef  # noqa: E402
 
 MM = pcbnew.FromMM
 PRO = {'net_settings': {'classes': [{'name': 'Default', 'track_width': 0.2, 'clearance': 0.2, 'via_diameter': 0.6}]},
-       'board': {'design_settings': {'rules': {'min_copper_edge_clearance': 0.3, 'min_hole_clearance': 0.25}}}}
+       'board': {'design_settings': {'rules': {'min_copper_edge_clearance': 0.3, 'min_hole_clearance': 0.25,
+                                                 'min_track_width': 0.15}}}}
 
 
 def v(x, y):
@@ -67,7 +68,7 @@ class Bd:
             t.SetLayer(pcbnew.F_Cu); t.SetNet(self.net(net))
             self.b.Add(t)
 
-    def run(self, region, layers='F.Cu,B.Cu'):
+    def run(self, region, layers='F.Cu,B.Cu', extra=()):
         d = tempfile.mkdtemp(prefix='pef-')
         pcb = os.path.join(d, 't.kicad_pcb')
         pcbnew.SaveBoard(pcb, self.b)
@@ -76,7 +77,7 @@ class Bd:
         out = os.path.join(d, 'o.json')
         buf = io.StringIO()
         with redirect_stdout(buf):
-            rc = pef.main([pcb, '--layers', layers, '--region=' + ','.join(map(str, region)), '--json', out])
+            rc = pef.main([pcb, '--layers', layers, '--region=' + ','.join(map(str, region)), '--json', out] + list(extra))
         with open(out) as fh:
             r = json.load(fh)['regions'][0]
         return rc, r, buf.getvalue()
@@ -114,6 +115,36 @@ class PinEscapeFlow(unittest.TestCase):
         rc, r, out = b.run((-4, -4, 7, 5), 'F.Cu')
         self.assertEqual((rc, r['verdict'], r['flow']), (1, 'FAIL', 0), out)
         self.assertEqual(sorted(r['unescaped']), ['N1', 'N2'])
+
+    def test_neck_near_pad_only(self):
+        # one net walled in on F.Cu; the gap (wall end centres 0.39 mm either side of a cell column) clears a 0.15 mm
+        # neck (0.39 - 0.1 >= 0.2 + 0.075) but not a 0.2 mm track (< 0.2 + 0.1)
+        def walled(top):
+            b = Bd(); b.row('U1', 0, ['N1']); b.row('U2', 20, ['N1'])
+            b.track([(0.2 - 0.39, top), (-1.2, top), (-1.2, 1.4), (1.2, 1.4), (1.2, top), (0.2 + 0.39, top)])
+            return b
+        near = walled(-1.4)    # gap 0.8 mm from the pad: inside the pad long dimension (1.2 mm)
+        rc, r, out = near.run((-2, -2, 4, 3), 'F.Cu')
+        self.assertEqual((rc, r['verdict'], r['neck_mm']), (0, 'PASS', 0.15), out)
+        rc, r, out = near.run((-2, -2, 4, 3), 'F.Cu', ['--neck-mm', '0'])
+        self.assertEqual((rc, r['verdict']), (1, 'FAIL'), out)
+        far = walled(-2.2)     # gap 1.6 mm from the pad: class width applies
+        rc, r, out = far.run((-2, -2.8, 4, 3), 'F.Cu')
+        self.assertEqual((rc, r['verdict']), (1, 'FAIL'), out)
+
+    def test_parts_mode_uses_part_pads_only(self):
+        b = Bd(); b.row('U1', 0, nets(4)); b.row('U2', 20, nets(4))
+        d = tempfile.mkdtemp(prefix='pef-')
+        pcb = os.path.join(d, 't.kicad_pcb')
+        pcbnew.SaveBoard(pcb, b.b)
+        with open(os.path.join(d, 't.kicad_pro'), 'w') as fh:
+            json.dump(PRO, fh)
+        out = os.path.join(d, 'o.json')
+        with redirect_stdout(io.StringIO()):
+            rc = pef.main([pcb, '--layers', 'F.Cu', '--parts', 'U1', '--json', out])
+        with open(out) as fh:
+            regs = json.load(fh)['regions']
+        self.assertEqual((rc, [r['region'] for r in regs], regs[0]['demand']), (0, ['U1'], 4))
 
 
 if __name__ == '__main__':

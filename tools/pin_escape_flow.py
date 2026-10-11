@@ -2,7 +2,11 @@
 """Simultaneous pin escape as a vertex-disjoint max-flow (W18, 2026-10-11, CIP #831 item 2 "ready-to-route").
 
   $PY tools/pin_escape_flow.py BOARD.kicad_pcb [--layers F.Cu,B.Cu] [--in2-nets N,..] [--plane-nets GND,..]
-        [--region x0,y0,x1,y1] [--only-nets N,..] [--escape-mm 3] [--json OUT]
+        [--parts REF,.. | --region x0,y0,x1,y1] [--only-nets N,..] [--escape-mm 3] [--neck-mm W] [--json OUT]
+
+Modes: --parts (per-part, the mode for blocks), no option (whole board: every footprint with >= 8 pads, per part),
+--region (pooled: a net's pads in the region are one source, so a net may leave from its other pad; not suitable for
+blocks, it hides pin conflicts at one part).
 
 Question: can all pins of a block leave it AT THE SAME TIME? tools/route_grid.py escape asks it per pad, so pins that
 compete for the same exits all pass there (BASE-PWR-B U19: 0 boxed-in pads, 1-3 nets open after every router run).
@@ -32,14 +36,22 @@ Grid and rules (read from the .kicad_pro next to the board and its .kicad_dru wh
 - 4-neighbour moves per layer, no 45-degree moves. A via (layer change) is allowed at a cell where a via of the class
   diameter plus clearance clears other nets' copper on every copper layer (through-hole) and the edge; vias are
   modelled as joining the same cell on two layers (the via's larger footprint on its neighbours is not charged).
+- router neck: within the pad's long dimension of a source pad (distance from the pad copper), tracks may be the
+  neck width: obstacles there grow by clearance + half the neck width. Distance source: the D-124c pin-escape
+  allowance (tools/pin-ratings.json "about", tools/pcbtool.py width_report: a track piece that starts on a pad and is
+  no longer than the pad's long dimension is part of the pad). Width source: the board min_track_width (.kicad_pro
+  design rules), which tools/fastroute_job.py gives the router as router.min_trace_width_um; the router used it
+  (0.15 mm) at the BASE-PWR-B J1 and U19 pads (/tmp/w15/run-7). --neck-mm overrides it, 0 = off. The neck zone is the
+  union over all source pads of the part (any net's track there may neck). The grid pitch stays the class pitch.
+  (fastroute_job.py --neck-um is a different thing: a retry width for failed power links; not modelled.)
 - --in2-nets: In2.Cu is added for those nets only; flow enters In2.Cu only from their sources (no other net can reach
   it), and may leave it by via.
 - sources: non-plane nets with a pad centre inside the region and another pad outside it or on another part
   (--only-nets restricts this); one unit each, all its pads in the region merged (region mode).
   Sinks: free cells on the region boundary ring (and a net whose own copper already reaches it).
-- whole-board mode (no --region): every footprint with >= 8 pads (plus, with --only-nets, every footprint with a pad
-  of those nets) is its own region = courtyard bbox grown by --escape-mm; sources are that footprint's pads only (the
-  net's pads on other parts block the other escaping nets).
+- per-part mode (--parts, or whole board = every footprint with >= 8 pads, plus with --only-nets every footprint with
+  a pad of those nets): the part's region = courtyard bbox grown by --escape-mm; sources are that part's pads only
+  (the net's pads on other parts block the other escaping nets).
 Output: one line per region "PIN_ESCAPE PASS|FAIL region ... demand D flow F unescaped [...] cut [...]", then
 "PIN_ESCAPE_SUMMARY ...". The unescaped nets are one valid choice of the losers (max-flow is not unique); "contested"
 lists every net whose source is on the source side of the min cut (they share the bottleneck). Exit 1 on any FAIL.
@@ -85,6 +97,7 @@ class Rules:
         r = pro.get('board', {}).get('design_settings', {}).get('rules', {})
         self.edge = r.get('min_copper_edge_clearance', 0.3) or 0.3
         self.hole = r.get('min_hole_clearance', 0.25) or 0.25
+        self.min_track = r.get('min_track_width', 0.0) or 0.0
         self.rules, self.notes = [], []
         if os.path.exists(base + '.kicad_dru'):
             for ru in dru_rules(read(base + '.kicad_dru')):
@@ -308,9 +321,10 @@ def residual_reach(s, cap_l, to_l, adj, st, n):
 
 # ---------------------------------------------------------------- one region
 class Checker:
-    def __init__(self, pcb, layers, in2_nets, plane_nets, only_nets):
+    def __init__(self, pcb, layers, in2_nets, plane_nets, only_nets, neck_mm=None):
         self.b = pcbnew.LoadBoard(pcb)
         self.rules = Rules(self.b, pcb)
+        self.neck = self.rules.min_track if neck_mm is None else neck_mm
         self.cu, self.items, self.pads, self.outline = collect(self.b)
         self.in2 = set(in2_nets or [])
         self.layers = [l for l in layers if l in self.cu]
@@ -419,6 +433,18 @@ class Checker:
         for k in D:
             others = [R.clearance(k, 'Track', o) + hw[o] for o in D if o != k]
             ro[k] = min(others) if others else 0.0
+        # router neck (see docstring): within the pad's long dimension of a source pad every track may be neck width
+        hwn = {k: min(hw[k], self.neck / 2) if self.neck > 0 else hw[k] for k in D}
+        hwnmin = min(hwn.values())
+        ron = {}
+        for k in D:
+            others = [R.clearance(k, 'Track', o) + hwn[o] for o in D if o != k]
+            ron[k] = min(others) if others else 0.0
+        blkn = [edge_blk.copy() for _ in L]
+        halo_nn = [np.zeros(PX.shape, np.int16) for _ in L]
+        halo_kn = [np.full(PX.shape, -1, int) for _ in L]
+        zone = [np.zeros(PX.shape, bool) for _ in L]
+        res['neck_mm'] = round(2 * hwnmin, 4)
         rmax = max([R.clearance('', 'Pad', k) for k in D] + [8.0]) + vr + p
         bb = self.bbs
         sel = np.nonzero((bb[:, 2] >= x0 - rmax) & (bb[:, 0] <= x1 + rmax) & (bb[:, 3] >= y0 - rmax) & (bb[:, 1] <= y1 + rmax))[0]
@@ -426,19 +452,22 @@ class Checker:
             it = self.items[idx]
             if it.kind in ('KeepTrack', 'KeepVia'):
                 rt = None if it.kind == 'KeepVia' else hwmin
+                rtn = None if it.kind == 'KeepVia' else hwnmin
                 rv = vr
             elif it.kind == 'Hole':
-                rt = R.hole + hwmin
+                rt, rtn = R.hole + hwmin, R.hole + hwnmin
                 rv = R.hole + vr
             else:
                 cl = {k: max(R.clearance(it.net, it.kind, k), it.lclr) for k in D if k != it.net}
                 rt = min((cl[k] + hw[k] for k in cl), default=None)
+                rtn = min((cl[k] + hwn[k] for k in cl), default=None)
                 rv = min((cl[k] for k in cl), default=0.0) + vr
             # per-part mode: only the part's own pads (and the net's tracks/vias) are its source copper; the net's
             # pads on other parts block the other escaping nets only
             esc = it.net in Dset and (fp_ref is None or it.kind != 'Pad' or it.ref == fp_ref)
             k = kidx.get(it.net, -1)
-            rbig = max(rt or 0.0, rv, (ro[it.net] + p) if esc else 0.0)  # p: own-copper cells reach d <= p/2
+            lpad = max(it.bb[2] - it.bb[0], it.bb[3] - it.bb[1]) if (esc and it.kind == 'Pad') else 0.0
+            rbig = max(rt or 0.0, rv, (ro[it.net] + p) if esc else 0.0, lpad)  # p: own cells reach d <= p/2
             a0 = max(0, int((it.bb[0] - rbig - x0) / p)); a1 = min(nx, int((it.bb[2] + rbig - x0) / p) + 2)
             b0 = max(0, int((it.bb[1] - rbig - y0) / p)); b1 = min(ny, int((it.bb[3] + rbig - y0) / p) + 2)
             if a1 <= a0 or b1 <= b0:
@@ -463,14 +492,17 @@ class Checker:
                     od, ok = own_d[li][sl], own_k[li][sl]
                     better = cm & (d < od)
                     od[better] = d[better]; ok[better] = k
-                    if rt is not None or ro[it.net] > 0:
-                        hm = d < ro[it.net]
-                        hn, hk = halo_n[li][sl], halo_k[li][sl]
+                    for rr, hN, hK in ((ro[it.net], halo_n, halo_k), (ron[it.net], halo_nn, halo_kn)):
+                        hm = d < rr
+                        hn, hk = hN[li][sl], hK[li][sl]
                         new = hm & (hk != k)
                         hn[new] += 1; hk[new] = k
+                    if lpad:
+                        zone[li][sl] |= d <= lpad
                 elif rt is not None:
                     m = d < rt
                     blk[li][sl] |= m
+                    blkn[li][sl] |= d < rtn
                     owner[li][sl][m] = idx
             if esc:
                 # make sure a pad smaller than a cell still owns its nearest cell
@@ -485,6 +517,10 @@ class Checker:
         state = []
         for li in range(nl):
             s = np.full(PX.shape, -1, int)
+            z = zone[li]
+            blk[li] = np.where(z, blkn[li], blk[li])
+            halo_n[li] = np.where(z, halo_nn[li], halo_n[li])
+            halo_k[li] = np.where(z, halo_kn[li], halo_k[li])
             hb = halo_n[li] > 1
             s[blk[li] | hb] = -2
             one = (halo_n[li] == 1) & ~blk[li]
@@ -622,13 +658,15 @@ class Checker:
         res['time_s'] = round(time.time() - t0, 3)
         return res
 
-    def footprint_regions(self, escape_mm):
+    def footprint_regions(self, escape_mm, refs=None):
         out = []
         for fp in self.b.GetFootprints():
             ref = fp.GetReference()
             pads = list(fp.Pads())
             want = len(pads) >= 8
-            if self.only is not None:
+            if refs is not None:
+                want = ref in refs
+            elif self.only is not None:
                 want = any(p.GetNetname() in self.only for p in pads)
             if not want:
                 continue
@@ -665,15 +703,22 @@ def main(argv=None):
     ap.add_argument('--layers', default='F.Cu,B.Cu')
     ap.add_argument('--in2-nets', default='')
     ap.add_argument('--plane-nets', default='')
-    ap.add_argument('--region', default='')
+    ap.add_argument('--parts', default='', help='per-part mode for these refs (the default for blocks)')
+    ap.add_argument('--region', default='', help='pooled region mode: not for blocks (pads of a net are pooled)')
+    ap.add_argument('--neck-mm', type=float, default=None,
+                    help='neck width near source pads (default: .kicad_pro min_track_width; 0 = off)')
     ap.add_argument('--only-nets', default='')
     ap.add_argument('--escape-mm', type=float, default=3.0)
     ap.add_argument('--json', default='')
     a = ap.parse_args(argv)
     t0 = time.time()
     sp = lambda s: [x for x in s.split(',') if x]  # noqa: E731
-    ck = Checker(a.board, sp(a.layers), sp(a.in2_nets), sp(a.plane_nets), sp(a.only_nets) or None)
-    if a.region:
+    ck = Checker(a.board, sp(a.layers), sp(a.in2_nets), sp(a.plane_nets), sp(a.only_nets) or None, a.neck_mm)
+    if a.parts:
+        regions = [(ref, r, ref) for ref, r in ck.footprint_regions(a.escape_mm, set(sp(a.parts)))]
+        missing = set(sp(a.parts)) - {r for r, _, _ in regions}
+        print(f"PIN_ESCAPE parts: checked {[r for r, _, _ in regions]} missing {sorted(missing)}")
+    elif a.region:
         rect = tuple(float(v) for v in a.region.split(','))
         regions = [('rect', rect, None)]
     else:
