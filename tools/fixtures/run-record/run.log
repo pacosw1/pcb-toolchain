@@ -1,0 +1,15 @@
+    1.998 INFO  Fanout pass #1 completed in 0.32 seconds with 132 SMD pins fanouted, 249 not routed, 0 insert errors, +1 extra via (0 SMD pins still to check in pass, ripup costs=100).
+    2.379 INFO  Fanout pass #2 completed in 0.38 seconds with 11 SMD pins fanouted, 312 not routed, 0 insert errors, +0 extra vias (0 SMD pins still to check in pass, ripup costs=200).
+    2.759 INFO  Fanout pass #3 completed in 0.38 seconds with 2 SMD pins fanouted, 318 not routed, 0 insert errors, +0 extra vias (0 SMD pins still to check in pass, ripup costs=300).
+    3.135 INFO  Fanout stage completed: 4 passes, completed in 1.46 seconds.
+   10.784 INFO  Auto-routing pass #1 was completed in 7.63 seconds with score 793.53 (78 unrouted and 3 violations) (routed 172, failed 35, ripped 93).
+   10.786 INFO  checkpoint: best board so far (78 unrouted, 3 violations) written to '/tmp/w12/run-1/board.ses'
+   15.592 INFO  Auto-routing pass #2 was completed in 4.81 seconds with score 782.95 (82 unrouted and 3 violations) (routed 74, failed 22, ripped 39).
+   20.561 INFO  Auto-routing pass #3 was completed in 4.97 seconds with score 843.79 (59 unrouted and 3 violations) (routed 77, failed 16, ripped 59).
+   20.563 INFO  checkpoint: best board so far (59 unrouted, 3 violations) written to '/tmp/w12/run-1/board.ses'
+   73.917 INFO  Auto-routing pass #29 was completed in 0.92 seconds with score 973.42 (10 unrouted and 3 violations) (routed 1, failed 7, ripped 1).
+   74.283 WARN  stop requested: finishing with the best result so far
+   74.312 INFO  Auto-routing pass #30 was completed in 0.39 seconds with score 973.42 (10 unrouted and 3 violations) (routed 1, failed 7, ripped 1).
+   74.340 INFO  Auto-routing stage completed: started with 313 unrouted nets, completed in 71.20 seconds, final score: 973.42 (10 unrouted and 3 violations).
+   74.340 INFO  8 item(s) cannot be routed even on the board as loaded (blocked by pins, keepouts or fixed wiring); they were skipped after their second failure.
+   83.094 INFO  diagnosis of 10 unrouted connections in 8.71 s: 6 routable alone (congestion), 4 not routable on the loaded board (blocked), 0 in ignored net classes

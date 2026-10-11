@@ -1,0 +1,139 @@
+{
+ "fastroute": "0.1.7",
+ "stats": {
+  "unrouted": 10,
+  "vias": 406
+ },
+ "diagnosis": {
+  "congestion": 6,
+  "blocked": 4,
+  "ignored": 0
+ },
+ "unrouted": [
+  {
+   "net": "/PWR-24V/VIN",
+   "length_mm": 7.555,
+   "from": {
+    "kind": "pin",
+    "component": "U18",
+    "pin": "2",
+    "layers": [
+     "F.Cu",
+     "F.Cu"
+    ]
+   },
+   "from_xy": [
+    91.56,
+    97.04
+   ],
+   "to": {
+    "kind": "via",
+    "layers": [
+     "F.Cu",
+     "B.Cu"
+    ]
+   },
+   "to_xy": [
+    95.499,
+    90.5931
+   ],
+   "diagnosis": {
+    "class": "blocked",
+    "from_alone": {
+     "state": "Failed",
+     "details": "Failed to route connection, because no connection was found between their nets."
+    },
+    "to_alone": null,
+    "in_context": [
+     {
+      "pass": 1,
+      "state": "Failed",
+      "details": "Failed to route connection, because no connection was found between their nets.",
+      "ripped": 0,
+      "unrouted_before_after_tails": [
+       10,
+       10,
+       10
+      ]
+     },
+     {
+      "pass": 10,
+      "state": "Failed",
+      "details": "Failed to route connection, because no connection was found between their nets.",
+      "ripped": 0,
+      "unrouted_before_after_tails": [
+       10,
+       10,
+       10
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "net": "/PWR-24V/5V_24V",
+   "length_mm": 4.7331,
+   "from": {
+    "kind": "pin",
+    "component": "U19",
+    "pin": "7",
+    "layers": [
+     "F.Cu",
+     "F.Cu"
+    ]
+   },
+   "from_xy": [
+    149.065,
+    100.825
+   ],
+   "to": {
+    "kind": "pin",
+    "component": "R61",
+    "pin": "1",
+    "layers": [
+     "F.Cu",
+     "F.Cu"
+    ]
+   },
+   "to_xy": [
+    147.71,
+    96.29
+   ],
+   "diagnosis": {
+    "class": "congestion",
+    "from_alone": {
+     "state": "Failed",
+     "details": "Failed to route connection, because the new connection could not be inserted."
+    },
+    "to_alone": {
+     "state": "Routed",
+     "details": ""
+    },
+    "in_context": [
+     {
+      "pass": 1,
+      "state": "Failed",
+      "details": "Failed to route connection, because no connection was found between their nets.",
+      "ripped": 0,
+      "unrouted_before_after_tails": [
+       10,
+       10,
+       10
+      ]
+     },
+     {
+      "pass": 10,
+      "state": "Failed",
+      "details": "Failed to route connection, because no connection was found between their nets.",
+      "ripped": 0,
+      "unrouted_before_after_tails": [
+       10,
+       10,
+       10
+      ]
+     }
+    ]
+   }
+  }
+ ]
+}

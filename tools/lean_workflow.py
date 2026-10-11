@@ -238,6 +238,14 @@ def run_stage(cmd, *, stage, event_file=None, deadline=None, **kwargs):
                          cpu_scope=proc.cpu_scope if proc else 'unavailable; no owned leader reaped')
             with open(event_file, 'a') as f:
                 f.write(json.dumps(event) + '\n')
+            try:   # W5 run record: the same stage end as one action next to stages.jsonl (never blocks the stage)
+                import run_record
+                run_record.append(os.path.dirname(os.path.abspath(str(event_file))), stage, 'stage ' + status,
+                                  inputs={'command': event['command']}, evidence=os.path.basename(str(event_file)),
+                                  result=dict(returncode=rc, wall_s=round(event['wall_s'], 3), cause=cause),
+                                  why='owned subprocess stage of the job' if status == 'complete' else f'stage {status}: {cause}')
+            except Exception:
+                pass
         if close_failed and cause is None:
             raise RuntimeError('owned-stage broker did not settle')
 

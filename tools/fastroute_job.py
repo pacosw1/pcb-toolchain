@@ -56,6 +56,7 @@ import pcbnew
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import freeroute  # noqa: E402  (restrict_dsn)
 import route_features  # noqa: E402  (feature switches, tools/route-features.json)
+import run_record  # noqa: E402  (W5 run record: OUTDIR/run.jsonl, one action per line; tools/run_record.py OUTDIR)
 import lean_workflow as lean
 import thermal_repair
 import import_pose_guard
@@ -267,6 +268,10 @@ def _main(a=None):
     stem = os.path.splitext(a.board)[0]
     feat = route_features.load(a.board)
     print("FEATURES " + route_features.summary(feat), flush=True)
+    run_record.start(a.outdir)
+    run_record.append(a.outdir, 'job', 'configure', inputs=vars(a), evidence='input-manifest.json',
+                      result={'features_on': sorted(k for k, v in feat.items() if isinstance(v, dict) and v.get('on'))},
+                      why='the inputs and feature flags bound at the job start')
     lean.atomic_json(os.path.join(a.outdir, 'input-manifest.json'),
                      dict(board=os.path.abspath(a.board), board_sha256=lean.digest(a.board),
                           router_sha256=lean.digest(BIN), configuration=vars(a), features=feat,
@@ -499,6 +504,20 @@ def _main(a=None):
             print("ESCAPE no fine-pitch footprint: no escape stage", flush=True)
         for net_, h in sorted(hot_info.items()):
             print(f"HOT_LOOP {net_} straight {h['straight_mm']:g} mm max {h['max_mm']:g} mm layer {h['layer'] or 'any'}", flush=True)
+        # W5 run record: one action per routing-rules decision with its why
+        for n, s_, k in rr_plan:
+            run_record.append(a.outdir, 'plan', 'stage ' + n, inputs={'nets': len(s_)}, evidence='STAGES line',
+                              result={'keepout': bool(k), 'locked_after': True},
+                              why=('reference-plane keepouts on the adjacent layer (rule 3: never cross a split)' if k else
+                                   'no keepout: power/ground or exempt nets') + '; its copper is locked for the later stages (rule 1)')
+        if fine:
+            run_record.append(a.outdir, 'plan', 'escape belt', inputs={'refs': sorted(fine), 'nets': len(esc_nets)}, evidence='ESCAPE line',
+                              result={'belt_mm': belt}, why=f"fine pitch <= {escape_info['fine_pitch_mm']:g} mm (IPC-7351B): fan out "
+                              "inside a belt of one clearance + a via + a track before any wide copper")
+        for net_, h in sorted(hot_info.items()):
+            run_record.append(a.outdir, 'plan', 'hot loop', inputs={'net': net_, 'pads': h['loop_pads']}, evidence='HOT_LOOP line',
+                              result={'max_mm': h['max_mm'], 'layer': h['layer']},
+                              why='switch node: corridor keepout, one layer, raised via cost (minimum loop area)')
     min_um = int(round(b.GetDesignSettings().m_TrackMinWidth / 1000))
     edge_um = int(round(b.GetDesignSettings().m_CopperEdgeClearance / 1000))
     sources = [os.environ.get('ROUTE_FEATURES_FILE') or route_features.DEFAULTS]
@@ -1112,7 +1131,14 @@ def main():
             budget_env['IOT_LEAN_DEADLINE'] = lean.encode_deadline(lean.deadline_after(a.max_time))
         with resources.environment(budget_env), resources.reserve(cpu, events=events, label='routing') as env:
             with resources.environment(env):
-                return _main(a)
+                try:
+                    return _main(a)
+                finally:   # W5: the run record gets the passes, reasons, triage and exit from the job's files
+                    if outdir and os.path.isdir(outdir):
+                        try:
+                            run_record.sync(outdir)
+                        except Exception:
+                            pass
     except (TimeoutError, subprocess.TimeoutExpired) as error:
         if outdir and os.path.isdir(outdir):
             lean.router_timeout(outdir, error)
