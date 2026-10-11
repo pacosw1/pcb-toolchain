@@ -27,7 +27,8 @@ from pathlib import Path
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULTS = os.path.join(ROOT, 'tools', 'route-features.json')
-FLAGS = ('triage_opens', 'rule_compiler', 'via_off_small_pads', 'pin_escape_check', 'via_halo', 'routing_rules')
+FLAGS = ('triage_opens', 'rule_compiler', 'via_off_small_pads', 'pin_escape_check', 'via_halo', 'routing_rules',
+         'fail_fast')
 
 
 # ---------------------------------------------------------------- configuration

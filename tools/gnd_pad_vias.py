@@ -7,8 +7,12 @@ Run with KiCad's bundled Python (pcbnew):
 For each SMD pad of NET on F.Cu with no connected NET via within --r mm of its centre:
 1. Try via places around the pad (4 sides, then 4 corners; 2 distances).
 2. Keep the first place with class clearance to every other-net pad, track and via,
-   0.25 mm hole to hole, 0.5 mm copper to the board edge (D-040), and not in a rule
-   area that forbids vias.
+   class clearance to every via of the board (same net too: the vias this run adds included; D-126, the
+   via pairs 0.00-0.117 mm apart under U19 that Fastroute reported as unfixable violations), the board's
+   hole-to-hole minimum (0.25 mm) to every hole, 0.45 mm hole to hole to a PTH pad (JLCPCB capabilities
+   "pad (PTH) hole to hole 0.45 mm", the .kicad_dru "JLC PTH hole to hole", D-124 A8), 0.5 mm copper to the
+   board edge (D-040), and not in a rule area that forbids vias. A place that collides is skipped: the next
+   candidate (the other sides, corners, larger distances) is tried.
 3. Add the via (net class size) and a short F.Cu track from the pad centre.
 A pad with no free place is listed; the router or a hand fix must connect it.
 Nearby-via skips are proved before repairs. If copper changes, one final fill
@@ -65,6 +69,8 @@ def main():
     ap.add_argument('--width', type=float, default=0.4)
     ap.add_argument('--via', type=float, nargs=2, default=(0.6, 0.3), metavar=('DIA', 'DRILL'))
     ap.add_argument('--clearance', type=float, default=0.2)
+    ap.add_argument('--pth-hole', type=float, default=0.45, help='hole to hole to a PTH pad, mm (JLCPCB capabilities '
+                    '"pad (PTH) hole to hole 0.45 mm"; .kicad_dru "JLC PTH hole to hole", D-124 A8)')
     ap.add_argument('--only', default='', help='comma list of REF.PAD: only these pads, also when a via of the net is '
                     'within --r (repair after routing: the pour between the pad and that via can be cut)')
     ap.add_argument('--in-pad', action='store_true', help='last choice: a via in the pad centre, when the pad is at '
@@ -105,6 +111,8 @@ def main():
             break
     edge_gap = MM(0.5)
     w = MM(a.width)
+    hole_min = max(MM(0.25), ds.m_HoleToHoleMin)   # the board setup minimum (via to via hole)
+    pth_hole = MM(a.pth_hole)
 
     def item_clr(item):
         # The clearance to an item is at least the clearance of its own net class (MC-MAIN HV class: 0.6 mm).
@@ -115,11 +123,13 @@ def main():
 
     others = []  # (item, clearance to it) of other-net copper
     own_smd = []
-    holes = []
+    holes = []       # (centre, hole radius, minimum hole to hole) of every pad hole and via
+    all_vias = []    # (centre, copper radius) of every via, any net (same-net via copper must not touch either)
     for fp in b.GetFootprints():
         for p in fp.Pads():
             if p.GetDrillSize().x:
-                holes.append((p.GetPosition(), p.GetDrillSize().x // 2))
+                holes.append((p.GetPosition(), p.GetDrillSize().x // 2,
+                              pth_hole if p.GetAttribute() == pcbnew.PAD_ATTRIB_PTH else hole_min))
             if p.GetNetCode() != net.GetNetCode():
                 others.append((p, item_clr(p)))
             elif p.GetAttribute() in (pcbnew.PAD_ATTRIB_SMD, pcbnew.PAD_ATTRIB_CONN):
@@ -127,7 +137,8 @@ def main():
     vias = []
     for t in b.GetTracks():
         if t.GetClass() == 'PCB_VIA':
-            holes.append((t.GetPosition(), t.GetDrill() // 2))
+            holes.append((t.GetPosition(), t.GetDrill() // 2, hole_min))
+            all_vias.append((t.GetPosition(), t.GetWidth(pcbnew.F_Cu) // 2))
             if t.GetNetCode() == net.GetNetCode():
                 vias.append(t.GetPosition())
         if t.GetNetCode() != net.GetNetCode():
@@ -159,8 +170,11 @@ def main():
         for p in own_smd:
             if (in_pad is None or p.m_Uuid.AsString() != in_pad.m_Uuid.AsString()) and p.GetEffectiveShape(pcbnew.F_Cu).Collide(pt, rad):
                 return False
-        for hp, hr in holes:
-            if math.hypot(hp.x - pt.x, hp.y - pt.y) < hr + drill // 2 + MM(0.25):
+        for hp, hr, gap in holes:
+            if math.hypot(hp.x - pt.x, hp.y - pt.y) < hr + drill // 2 + gap:
+                return False
+        for vp, vr in all_vias:
+            if math.hypot(vp.x - pt.x, vp.y - pt.y) < vr + rad + clr:
                 return False
         return True
 
@@ -230,7 +244,8 @@ def main():
                         b.Add(t)
                         via_connectivity.invalidate()
                         direct_connectivity.invalidate()
-                        holes.append((pt, drill // 2))
+                        holes.append((pt, drill // 2, hole_min))
+                        all_vias.append((pt, via_d // 2))
                         vias.append(pt)
                         added += 1
                         done = True
@@ -286,7 +301,8 @@ def main():
                 b.Add(v)
                 via_connectivity.invalidate()
                 direct_connectivity.invalidate()
-                holes.append((c, drill // 2))
+                holes.append((c, drill // 2, hole_min))
+                all_vias.append((c, via_d // 2))
                 vias.append(c)
                 in_pad.append(f'{fp.GetReference()}.{p.GetNumber()}')
                 done = True

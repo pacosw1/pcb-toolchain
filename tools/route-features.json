@@ -49,10 +49,27 @@
       "repair_corridor_mm": 1.0,
       "repair_max_blockers": 4,
       "keepouts": true,
-      "keepout_stages": ["pairs_clocks", "fast", "wide", "rest"],
+      "keepout_stages": [
+        "pairs_clocks",
+        "fast",
+        "wide",
+        "rest"
+      ],
       "keepout_grid_mm": 0.1,
       "disc_margin_mm": 0.35,
-      "clock_patterns": ["*CLK*", "*SCK*", "*XTAL*", "*OSC*"]
+      "clock_patterns": [
+        "*CLK*",
+        "*SCK*",
+        "*XTAL*",
+        "*OSC*"
+      ]
+    },
+    "fail_fast": {
+      "on": true,
+      "about": "D-126 (user direction 2026-10-11, W12): fail fast in the routing step. (1) optimizer_if_routed: a caller's --optimizer always becomes if-routed: the optimizer runs only when the router pass ends with 0 routable open connections (tools/fastroute_job.py --optimizer if-routed); with opens the job imports the router's best board, writes the triage and the UNROUTED line, prints STUCK and exits with code 3 (stuck_exit; tools/placer/compact_cli.py reads the UNROUTED line of such a step). (2) stall_passes: the router is stopped (SIGTERM: Fastroute writes its best board and the report, rc 0) when this many consecutive autorouter passes do not lower the open count below the best so far; OUTDIR/stall.json, line STALL. 0 = off. The pass ceiling (--passes) and the time budget (--max-time) stay. Replay on the W10 OFF log (/tmp/w8/bb/A/run.log, 2026-10-11): routing was done at 167 s, the optimizer then spent 1535 s on a board with opens; stall_passes 2 would have stopped at pass 9 (36 open; the run reached 20 at pass 30, 11 after multi-start); W12 loop 0 with 2 stopped at pass 11 with 29 open, so the user set 5 (2026-10-11, the LLM-in-the-loop workflow: a stuck run is diagnosed, one upstream fix, retry, at most 3 loops per task).",
+      "optimizer_if_routed": true,
+      "stuck_exit": true,
+      "stall_passes": 5
     }
   }
 }

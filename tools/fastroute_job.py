@@ -35,6 +35,9 @@ ROUTE_FEATURES="name=1,..." last; tools/route_features.py show BOARD prints them
                      keepouts over the missing reference plane for the signal stages. OUTDIR/stage-plan.json,
                      OUTDIR/via-report.json; lines "STAGES ...", "STAGE ...", "VIAS_BY_STAGE ...". Per-stage files have the
                      stage in the name (board-fast.dsn, report-fast.json); the last pass keeps the plain names.
+  fail_fast          D-126: --optimizer always becomes if-routed (the optimizer runs only on a routed board); the router is
+                     stopped after stall_passes autorouter passes with no lower open count (line "STALL ...", OUTDIR/stall.json);
+                     with open signal connections the job prints "STUCK ..." after the UNROUTED line and exits with code 3.
 The feature lines are printed before the UNROUTED line (callers read the last UNROUTED line).
 """
 import argparse
@@ -48,6 +51,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import dsn_skip
 
@@ -64,7 +68,9 @@ import import_replay_guard
 import board_uuids
 import backend_quality
 import routing_rules  # noqa: E402  (D-125 staged order, via cost, reference-plane keepouts)
+import route_progress  # noqa: E402  (D-126 live progress: OUTDIR/progress.jsonl, tools/route_status.py)
 
+STUCK_RC = 3   # fail_fast: routed with open signal connections (the result is imported and triaged, not qualified)
 BIN = os.environ.get("FASTROUTE_BIN") or os.path.expanduser("~/opt/fastroute/fastroute-0.1.7-macos-arm64/fastroute")
 KICAD_CLI = os.environ.get("KICAD_CLI", "/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli")
 
@@ -258,6 +264,8 @@ def _main(a=None):
         sys.exit('router output directory is not empty; choose a fresh job directory')
     os.makedirs(a.outdir, exist_ok=True)
     phases = os.path.join(a.outdir, 'stages.jsonl')
+    progress = route_progress.Progress(os.path.join(a.outdir, 'progress.jsonl'))
+    progress.write('job start')
     try:
         backend_policy = backend_quality.bind(BIN, a.quality_backend_manifest)
     except (ValueError, OSError) as exc:
@@ -272,6 +280,10 @@ def _main(a=None):
     run_record.append(a.outdir, 'job', 'configure', inputs=vars(a), evidence='input-manifest.json',
                       result={'features_on': sorted(k for k, v in feat.items() if isinstance(v, dict) and v.get('on'))},
                       why='the inputs and feature flags bound at the job start')
+    fail_fast = feat.get('fail_fast', {}) if route_features.on(feat, 'fail_fast') else {}
+    if fail_fast.get('optimizer_if_routed', True) and a.optimizer == 'always':
+        a.optimizer = 'if-routed'
+        print('FAIL_FAST optimizer if-routed: the optimizer runs only when the router leaves 0 open connections', flush=True)
     lean.atomic_json(os.path.join(a.outdir, 'input-manifest.json'),
                      dict(board=os.path.abspath(a.board), board_sha256=lean.digest(a.board),
                           router_sha256=lean.digest(BIN), configuration=vars(a), features=feat,
@@ -326,14 +338,30 @@ def _main(a=None):
         print(f"UUIDS {uuid_fix['replaced']} duplicate item UUIDs on the job copy replaced (deterministic; "
               f"no copper change): " + ", ".join(f"{r['kind']} {r['uuid']}" for r in uuid_fix['rows']), flush=True)
     tool = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gnd_pad_vias.py")
+    # <board>/gate.json "plane_via_skip": {net: [REF.PAD, ...]}: pads that get no plane via (D-126: the U22 /CAN_GND pads
+    # in the F.Cu island pour whose vias filled the CAN escape band). Merged with a --via-args --skip list.
+    via_skip = {}
+    if feat["_board_dir"] and os.path.isfile(os.path.join(feat["_board_dir"], "gate.json")):
+        via_skip = json.load(open(os.path.join(feat["_board_dir"], "gate.json"))).get("plane_via_skip", {})
+    progress.write('plane-vias start')
     for net in planes:
         tmp = os.path.join(a.outdir, "planevias.kicad_pcb")
-        r = lean.run_stage([sys.executable, tool, base, tmp, "--net", net] + shlex.split(a.via_args),
+        via_args = shlex.split(a.via_args)
+        pads = [p for p in via_skip.get(net, []) if isinstance(p, str)]
+        if pads:
+            if "--skip" in via_args:
+                i = via_args.index("--skip")
+                pads = via_args[i + 1].split(",") + pads
+                del via_args[i:i + 2]
+            via_args += ["--skip", ",".join(pads)]
+            print(f"PLANE_VIA_SKIP {net}: {' '.join(pads)} (gate.json plane_via_skip)", flush=True)
+        r = lean.run_stage([sys.executable, tool, base, tmp, "--net", net] + via_args,
                            stage=f"initial-plane-vias:{net}", event_file=phases, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         with open(os.path.join(a.outdir, "planevias.log"), "a") as f:
             f.write("".join(l + "\n" for l in r.stdout.splitlines() if "vias added" in l))
         if os.path.isfile(tmp):
             os.replace(tmp, base)
+    progress.write('plane-vias end')
 
     def routed_nets_file():
         f = os.path.join(a.outdir, "routed-nets.txt")
@@ -342,6 +370,7 @@ def _main(a=None):
 
     b = pcbnew.LoadBoard(base)
     if a.preflight:
+        progress.write('preflight start')
         check = os.path.join(a.outdir, 'preflight.json')
         p = lean.run_stage([KICAD_CLI, 'pcb', 'drc', '--refill-zones', '--severity-all', '--format', 'json',
                             '--units', 'mm', '-o', check, base], stage='native-preflight',
@@ -352,6 +381,7 @@ def _main(a=None):
         d = lean.validate_drc(json.load(open(check)))
         d, thermal = thermal_repair.repair(base, a.board, d, planes, shlex.split(a.via_args),
                                           KICAD_CLI, os.path.join(a.outdir, 'stages.jsonl'), 'preflight-thermal')
+        progress.write('preflight end')
         lean.atomic_json(check, d)
         lean.atomic_json(os.path.join(a.outdir, 'preflight-thermal.json'), thermal)
         b = pcbnew.LoadBoard(base)
@@ -732,10 +762,23 @@ def _main(a=None):
         effective['effective_sha256'] = hashlib.sha256(json.dumps(effective, sort_keys=True).encode()).hexdigest()
         lean.atomic_json(os.path.join(a.outdir, f'effective-configuration{sfx}.json'), effective)
         s0 = lean.now()
+        stall_n = int(fail_fast.get('stall_passes', 0) or 0)
+        stall_stop, stall_result = threading.Event(), {}
+        watcher = threading.Thread(target=_router_watch, args=(os.path.join(a.outdir, f"run{sfx}.log"), stall_n, dsn,
+                                                                stall_stop, stall_result, progress, 'route' + sfx), daemon=True)
+        progress.write('route' + sfx + ' start')
+        watcher.start()
         with open(os.path.join(a.outdir, f"run{sfx}.log"), "w") as lf:
             rc = lean.run_stage(cmd, stage=('router-screen' if a.optimizer != 'always' else 'router') + sfx,
                                 event_file=phases, deadline=deadline, env=router_env,
                                 stdout=lf, stderr=subprocess.STDOUT).returncode
+        stall_stop.set()
+        watcher.join(5)
+        progress.write('route' + sfx + ' end')
+        if stall_result.get('stopped'):
+            lean.atomic_json(os.path.join(a.outdir, f'stall{sfx}.json'), dict(stall_result, stall_passes=stall_n, stage=tag))
+            print(f"STALL router stopped after pass {stall_result['pass_no']}: {stall_n} passes without a lower open count "
+                  f"(best {stall_result['best']}, last {stall_result['unrouted']}); the router wrote its best board", flush=True)
         if rc == 0 and a.optimizer == 'if-routed' and os.path.isfile(rep) and os.path.isfile(ses):
             screen = json.load(open(rep))
             if dsn_skip.routable_open(screen) == 0:
@@ -781,9 +824,11 @@ def _main(a=None):
             replay_before = import_replay_guard.snapshot(b, replay_path)
         except ValueError as exc:
             sys.exit('fastroute_job: SES pose integrity precondition failed; result is not verified: ' + str(exc))
+        progress.write('import' + sfx + ' start')
         with _native_phase('ses-import' + sfx, phases):
             if not pcbnew.ImportSpecctraSES(b, ses):
                 sys.exit("fastroute_job: SES import failed")
+        progress.write('import' + sfx + ' end', vias=sum(1 for t in b.GetTracks() if t.GetClass() == 'PCB_VIA'))
         dup = []
         if True:
             # Fastroute 0.1.7 sometimes writes one segment twice (two wires of a net share it; seen with and without
@@ -969,10 +1014,12 @@ def _main(a=None):
         pcbnew.ZONE_FILLER(b).Fill(b.Zones())
         pcbnew.SaveBoard(out, b)
     drc = os.path.join(a.outdir, "drc.json")
+    progress.write('drc start')
     p = lean.run_stage([KICAD_CLI, "pcb", "drc", "--refill-zones", "--severity-all", "--format", "json", "--units", "mm", "-o", drc, out],
                        stage='native-drc', event_file=phases, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     if p.returncode:
         sys.exit('native DRC failed; result is not verified')
+    progress.write('drc end')
     d = lean.validate_drc(json.load(open(drc)))
     # Repair: a plane-net pad that is open after routing (no via, or the pour to its via is cut) gets its own
     # stub and via now, with the routed copper as the obstacle. Then DRC runs again.
@@ -1050,6 +1097,7 @@ def _main(a=None):
         if any(fnmatch.fnmatchcase(name, p) for p in skip) or name in plane_names:
             gnd_open += 1
     signal_open = len(d.get("unconnected_items", [])) - gnd_open
+    progress.write('triage start', open_=signal_open, vias=after)
     if route_features.on(feat, "triage_opens"):
         tri = os.path.join(a.outdir, "open-triage.json")
         if signal_open:
@@ -1088,12 +1136,22 @@ def _main(a=None):
                                       float(rr_spec.get('via_allow_mm', 0.6)), hot=hot_len)
         lean.atomic_json(os.path.join(a.outdir, 'via-report.json'), vr)
         print(routing_rules.summary_line(vr), flush=True)
+    progress.write('triage end', open_=signal_open)
     print(f"UNROUTED {signal_open} GND_OPEN {gnd_open} ERRORS {errors} ROUTER_UNROUTED {report['stats']['unrouted']} "
           f"CONGESTION {diag.get('congestion', 0)} BLOCKED {diag.get('blocked', 0)} "
           f"TRACK_MM {report['stats']['trace_length_mm']:.0f} VIAS {after} SECONDS {secs}", flush=True)
     if imported_vias != report["stats"]["vias"]:
         print(f"fastroute_job: RESULT NOT VERIFIED: {imported_vias} vias on the board, {report['stats']['vias']} in the router report", flush=True)
         sys.exit(4)
+    if fail_fast.get('stuck_exit', True) and signal_open:
+        # The imported board, DRC, triage and the UNROUTED line are written; nothing more is spent on a board with opens.
+        lean.atomic_json(os.path.join(a.outdir, 'outcome.json'),
+                         dict(status='stuck', qualified=False, optimizer=a.optimizer, signal_open=signal_open,
+                              ground_open=gnd_open, errors=errors, board_sha256=lean.digest(out),
+                              note='fail_fast: open signal connections after routing; see open-triage.json'))
+        print(f"STUCK {signal_open} open signal connections after routing (fail_fast): no optimizer, exit {STUCK_RC}; "
+              f"see {os.path.join(a.outdir, 'open-triage.json')}", flush=True)
+        sys.exit(STUCK_RC)
     if base_b_cfg:
         rb = pcbnew.LoadBoard(out)
         faults = base_b_route_rules.layer_faults([(t.GetNetname(), t.GetLayerName()) for t in rb.GetTracks()
@@ -1117,6 +1175,40 @@ def _main(a=None):
                      dict(status='complete', qualified=False, optimizer=a.optimizer, signal_open=signal_open,
                           ground_open=gnd_open, errors=errors, board_sha256=lean.digest(out),
                           note='import verified; full final board gate remains required'))
+
+
+def _router_watch(log_path, stall_passes, dsn, stop, result, progress, stage):
+    """Read the router log while it runs: one progress line per autorouter pass (route_progress), and fail_fast
+    stall_passes: after that many consecutive passes whose open count is not below the best so far, SIGTERM the router
+    (Fastroute then writes its best board and the report and exits 0, as at --max-time; 0 = no stall stop). The router
+    is found by its unique DSN path. Parallel multi-start runs interleave their pass lines; they are read in log order."""
+    best, stale, seen = None, 0, 0
+    while not stop.wait(1.0):
+        try:
+            lines = open(log_path, errors='replace').read().splitlines()
+        except OSError:
+            continue
+        for line in lines[seen:]:
+            m = route_progress.parse_pass(line)
+            if not m:
+                continue
+            pass_no, n, _ = m
+            progress.router_pass(pass_no, n, stage)
+            if best is None or n < best:
+                best, stale = n, 0
+            else:
+                stale += 1
+            if stall_passes > 0 and stale >= stall_passes:
+                pids = subprocess.run(['pgrep', '-f', dsn], stdout=subprocess.PIPE, text=True).stdout.split()
+                for pid in pids:
+                    try:
+                        os.kill(int(pid), 15)
+                    except (OSError, ValueError):
+                        pass
+                result.update(stopped=True, pass_no=pass_no, unrouted=n, best=best, pids=pids,
+                              seconds=round(time.time(), 1))
+                stop.set()
+        seen = len(lines)
 
 
 def main():

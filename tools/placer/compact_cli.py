@@ -293,7 +293,8 @@ def main(argv=None):
                    '--passes', str(a.passes), '--optimizer', a.optimizer, '--render'] + (['--gnd-vias'] if a.gnd_vias else []) + shlex.split(a.route_args)
             p = run_stage(cmd, 'routing', cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             open(os.path.join(d, 'route-0.log'), 'w').write(p.stdout)
-            if p.returncode != 0:
+            # Exit 3 (fastroute_job STUCK_RC, route feature fail_fast): routed with opens, UNROUTED line and triage written.
+            if p.returncode not in (0, 3):
                 receipt_path = os.path.join(d, 'route-0', 'mandatory-preflight.json')
                 if seed_receipt is not None and os.path.isfile(receipt_path):
                     try:
