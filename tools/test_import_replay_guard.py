@@ -54,6 +54,8 @@ class ReplayGuardTests(unittest.TestCase):
     def test_untyped_replay_of_fixed_dsn_wire_is_removed(self):
         plan=self.plan(dsn={self.geometry:['fix']},ses={self.geometry:['unspecified']})
         self.assertEqual(plan[0]['retained_uuid'],'old');self.assertEqual(plan[0]['removed_uuid'],'new')
+        near=('segment','P','F.Cu',200000,((1000,2000),(3000,2000+400)))   # the DSN at whole um
+        self.assertEqual(self.plan(dsn={near:['fix']},ses={self.geometry:['unspecified']})[0]['retained_uuid'],'old')
         for dsn,ses in (({self.geometry:['route']},['unspecified']),({self.geometry:['protect']},['unspecified']),
                         ({self.geometry:['fix']},['route']),({self.geometry:['fix']},['unspecified','route'])):
             with self.assertRaisesRegex(ValueError,'unprotected'):self.plan(dsn=dsn,ses={self.geometry:ses})
