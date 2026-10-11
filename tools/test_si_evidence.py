@@ -50,9 +50,9 @@ class TimingEvidenceTests(unittest.TestCase):
         self.assertFalse(edge['timing_evidence']['qualified_fastest_bound'])
         self.assertEqual(len(self.assess(edge)['timing_evidence_failures']),1)
 
-    def test_unsourced_100base_assumption_remains_screening_only(self):
+    def test_line_side_100base_edge_remains_screening_only(self):
         edge=nd.net_edge('/SIG',self.netlist('UNKNOWN','OUT'),self.table,classes=self.classes,interface='100base_tx')
-        self.assertEqual(edge['edge_ns'],1)
+        self.assertEqual(edge['edge_ns'],3.0)
         self.assertFalse(edge['timing_evidence']['qualified_fastest_bound'])
         self.assertFalse(self.assess(edge)['timing_evidence_complete'])
 

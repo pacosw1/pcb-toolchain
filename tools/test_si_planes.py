@@ -403,7 +403,8 @@ class EdgeRateTest(unittest.TestCase):
         t = sp.load_edge_rates()
         self.assertEqual(t['rs485']['tr_ns'], 460)
         self.assertNotIn('gpio', t)   # D-124 addendum: no default class
-        self.assertTrue(t['100base_tx']['assumption'])
+        self.assertFalse(t['100base_tx']['assumption'])     # sourced 2026-10-11: IEEE 802.3 cl. 25 / ANSI X3.263 9.1.6
+        self.assertEqual(t['100base_tx']['tr_ns'], 3.0)
         for k, v in t.items():
             self.assertTrue(v['source'].strip(), k)
 

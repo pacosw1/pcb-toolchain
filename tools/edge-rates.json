@@ -8,13 +8,14 @@
   },
   "classes": {
     "100base_tx": {
-      "tr_ns": 1.0,
-      "assumption": true,
-      "source": "ASSUMPTION, NO SOURCE (report C1): no 100BASE-TX edge rate found; the report's 1 ns conservative assumption is used.",
-      "applicability": {
-        "kind": "protocol",
-        "reason": "Accepted D-124 100BASE-TX class remains an explicitly marked 1 ns assumption, not measured evidence."
-      }
+     "tr_ns": 3.0,
+     "assumption": false,
+     "stat": "min",
+     "source": "100BASE-TX transmit rise/fall time 3.0-5.0 ns (10-90 %) at the active output interface: ANSI X3.263-1995 (FDDI TP-PMD) section 9.1.6, incorporated by IEEE 802.3 clause 25 (the ANSI text itself was not read). [S] UNH-IOL Clause 25 PMD Test Suite v2.5, Test #25.1.2 'All measured rise and fall times shall be between 3ns and 5ns' (references IEEE Std 802.3u-1995 clause 25 and ANSI X3.263-1995 section 9.1.6), hardware-design/registry/datasheets/UNH-IOL-CL25-PMD-Test-Suite-v2.5.pdf sha256 7b28663d1aed71bf4bd355003108f38fa2134657f49a90b1ac733bca56dee1e9; also cited by TI SNLA266B (DP83822 compliance) and the LAN83C185 / LXT9863 datasheets (3.0 ns min, not saved). The minimum 3.0 ns is used (shorter edge = tighter rules). Scope: the bound is at the MDI (line side of the magnetics); it does not bound the PHY pads before the transformer (net_drivers.timing_evidence), so it stays a screening edge, not a qualified fastest-edge bound.",
+     "applicability": {
+      "kind": "protocol",
+      "reason": "100BASE-TX transmit edge per IEEE 802.3 clause 25 / ANSI X3.263 9.1.6 (coordinator decision 2026-10-11, replaces the 1 ns D-124 assumption); line-side bound, screening on pre-transformer traces."
+     }
     },
     "usb_fs": {
       "tr_ns": 4.0,
