@@ -212,7 +212,7 @@ def removal_plan(before, after, preserved, dsn, ses, unlocked=(), deduplicated=N
         if any(m not in ('fix','protect','route') for m in dsn[offered]):
             raise ValueError('unsupported DSN source mode')
         if any(m not in ('fix','protect') for m in ses[geometry]):
-            raise ValueError('unprotected SES coincidence')
+            raise ValueError('unprotected SES coincidence: ' + describe(geometry) + f' (SES modes {ses[geometry]})')
         if len(ses[geometry]) != len(ids) + deduplicated.get(geometry, 0):
             raise ValueError('SES replay multiplicity does not match import')
         for uid in ids:
