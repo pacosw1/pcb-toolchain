@@ -4,23 +4,36 @@ import {join, resolve, relative, dirname} from 'node:path';
 import {tmpdir} from 'node:os';
 import {gateInputs} from './gate-inputs.mjs';
 
-export function affectedGates(root, changed, oldConfigs = new Map()) {
+// A changed path gates a board when it is one of that board's own files (gate.json, board JSONs, project cad/),
+// an input of the board's gate in the staged snapshot, or an input recorded in the board's committed gate-metrics.json
+// (headInputs: board -> Set of provenance.inputs paths; catches deleted inputs). A board without committed metrics
+// falls back to the conservative rule: any tool or shared library asset (D-129).
+export function stagedGateMap(root, changed, oldConfigs = new Map(), headInputs = new Map()) {
   const dir=join(root,'hardware-design/boards');
   const names=new Set([...oldConfigs.keys(),...readdirSync(dir).filter(b=>existsSync(join(dir,b,'gate.json')))]);
-  return [...names].filter(board=>{
+  const reasons=new Map();
+  const boards=[...names].filter(board=>{
     const config=join(dir,board,'gate.json');
     const old=oldConfigs.get(board);
     const cfg=existsSync(config)?JSON.parse(readFileSync(config,'utf8')):old;
     const projects=[cfg,old].filter(Boolean).map(c=>relative(root,dirname(resolve(dir,board,c.project)))+'/');
     let deps=[];
     if(existsSync(config)) deps=gateInputs(root,board).files.map(p=>relative(root,p));
-    return changed.some(p=>p.startsWith('tools/') || p==='hardware-design/registry/courtyard-bodies.json' ||
-      p===`hardware-design/boards/${board}/gate.json` ||
+    const recorded=headInputs.get(board);
+    const conservative=p=>p.startsWith('tools/') || p==='hardware-design/registry/courtyard-bodies.json' ||
+      // Deleted/replaced library assets may no longer be discoverable in the new snapshot.
+      p.startsWith('hardware-design/blocks/') || p.startsWith('hardware-design/registry/cad-assets/');
+    const hits=changed.filter(p=>p===`hardware-design/boards/${board}/gate.json` ||
       (p.startsWith(`hardware-design/boards/${board}/`) && p.endsWith('.json')) ||
       projects.some(prefix=>p.startsWith(prefix)) || deps.includes(p) ||
-      // Deleted/replaced library assets may no longer be discoverable in the new snapshot.
-      p.startsWith('hardware-design/blocks/') || p.startsWith('hardware-design/registry/cad-assets/'));
+      (recorded ? recorded.has(p) : conservative(p)));
+    for(const p of hits) reasons.set(p,[...(reasons.get(p) ?? []),board]);
+    return hits.length>0;
   }).sort();
+  return {boards,reasons};
+}
+export function affectedGates(root, changed, oldConfigs = new Map(), headInputs = new Map()) {
+  return stagedGateMap(root,changed,oldConfigs,headInputs).boards;
 }
 
 export function checkStaged(root) {
@@ -35,8 +48,13 @@ export function checkStaged(root) {
     const oldConfigs=new Map();
     const paths=git(['ls-tree','-r','--name-only','HEAD','hardware-design/boards']).split('\n').filter(p=>/\/gate.json$/.test(p));
     for(const p of paths) oldConfigs.set(p.split('/')[2],JSON.parse(git(['show',`HEAD:${p}`])));
-    const boards=affectedGates(snapshot,changed,oldConfigs);
-    console.log(`staged gates: ${boards.join(', ') || 'none'}`);
+    const headInputs=new Map();
+    for(const p of git(['ls-tree','-r','--name-only','HEAD','hardware-design/boards']).split('\n').filter(p=>/\/gate-metrics.json$/.test(p))) {
+      try {headInputs.set(p.split('/')[2],new Set((JSON.parse(git(['show',`HEAD:${p}`])).provenance?.inputs ?? []).map(i=>i.path)));} catch { /* unreadable metrics: conservative rule */ }
+    }
+    const {boards,reasons}=stagedGateMap(snapshot,changed,oldConfigs,headInputs);
+    const because=[...reasons].map(([p,b])=>`${p} -> ${b.length} board${b.length===1?'':'s'}`);
+    console.log(`staged gates: ${boards.join(', ') || 'none'}${because.length ? ` (because ${because.slice(0,8).join('; ')}${because.length>8 ? `; +${because.length-8} more` : ''})` : ''}`);
     const results=[];
     // Git exports repository variables inside hooks. They must not leak into
     // tools checking independent pinned repositories or the staged snapshot.

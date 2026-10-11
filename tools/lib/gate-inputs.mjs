@@ -12,9 +12,42 @@ export function walkFiles(dir, accept = () => true) {
   });
 }
 
-// Conservative dependency closure: complete project CAD/local libraries, gate
-// data, shared library assets named in the project, and all executable tools.
-// A changed shared tool invalidates every gate rather than guessing its imports.
+// The tools the gate executes (D-129): tools/gate.mjs, the node modules it
+// imports (transitively, inside tools/), the scripts it spawns with tool(NAME),
+// and the python modules those scripts import or load by file name (inside
+// tools/). Tests, viewers, routers, placers and seed builders change no
+// committed verdict, so they are not inputs. A named file that is absent is
+// still recorded (null hash) so a missing checker never looks unchanged.
+const STDLIB_LIKE=/^(?:sys|os|re|json|math|time|datetime|pathlib|collections|itertools|functools|typing|dataclasses|subprocess|hashlib|shutil|tempfile|csv|io|struct|copy|heapq|bisect|random|logging|enum|textwrap|contextlib|glob|traceback|statistics|fractions|decimal|operator|string|unicodedata|array|numbers|abc|warnings|atexit|fnmatch|signal|threading|importlib|xml|concurrent|argparse|pcbnew|numpy|wx)$/;
+export function gateTools(root) {
+  const tools=join(root,'tools');
+  const inside=p=>{const rel=relative(tools,p);return rel && !rel.startsWith('..') && !rel.includes('\\') && !/(^|\/)(test_[^/]*\.py|[^/]*\.test\.mjs)$/.test(rel);};
+  const files=new Set();const queue=[join(tools,'gate.mjs')];
+  while(queue.length) {
+    const file=resolve(queue.shift());
+    if(files.has(file) || !inside(file)) continue;
+    files.add(file);
+    if(!existsSync(file)) continue;
+    const text=readFileSync(file,'utf8');
+    if(file.endsWith('.mjs')) {
+      for(const m of text.matchAll(/(?:from|import)\s*'(\.\.?\/[^']+)'/g)) queue.push(resolve(dirname(file),m[1]));
+      for(const m of text.matchAll(/\btool\('([^']+)'\)/g)) queue.push(join(tools,m[1]));
+    } else if(file.endsWith('.py')) {
+      for(const line of text.split('\n')) {
+        const m=line.match(/^\s*(?:from\s+([\w.]+)\s+import\b|import\s+([\w.,\s]+?)\s*(?:#.*)?$)/);
+        if(!m) continue;
+        for(const name of (m[1] ? [m[1]] : m[2].split(',')).map(n=>n.trim().split(/\s+as\s+/)[0].split('.')[0])) {
+          if(!name || STDLIB_LIKE.test(name)) continue;
+          for(const candidate of [join(tools,`${name}.py`),join(tools,name,'__init__.py')]) if(existsSync(candidate)) queue.push(candidate);
+        }
+      }
+      // Modules loaded by file name (importlib.util.spec_from_file_location(..., 'NAME.py')).
+      for(const m of text.matchAll(/'(\w+\.py)'/g)) {const candidate=join(tools,m[1]);if(existsSync(candidate)) queue.push(candidate);}
+    }
+  }
+  return [...files].sort();
+}
+
 export function gateInputs(root, board, configName = 'gate.json', environment = {}) {
   const dir = join(root,'hardware-design/boards',board);
   const config = join(dir,configName);
@@ -67,8 +100,7 @@ export function gateInputs(root, board, configName = 'gate.json', environment = 
     }
   }
   add(join(root,'hardware-design/registry/courtyard-bodies.json'));
-  for (const p of walkFiles(join(root,'tools'), p=>/\.(mjs|py|sh|java)$/.test(p) || p.endsWith('/hooks/pre-commit'))) add(p);
-  add(join(root,'tools/route-features.json'));
+  for (const p of gateTools(root)) add(p);
   // Pin escape ratings change the current-capacity result even though their
   // JSON is not executable code. Record absence as well as changed ratings.
   for (const data of ['edge-rates.json','driver-edges.json','pin-ratings.json']) {

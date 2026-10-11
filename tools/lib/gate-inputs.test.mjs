@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {gateInputs,fingerprint} from './gate-inputs.mjs';
+import {gateInputs,fingerprint,gateTools} from './gate-inputs.mjs';
+import {fileURLToPath} from 'node:url';
 test('preserved copper policy source changes invalidate evidence',t=>{
  const r=mkdtempSync(join(tmpdir(),'preserved-inputs-'));t.after(()=>rmSync(r,{recursive:true,force:true}));
  const put=(p,v)=>{mkdirSync(join(r,p,'..'),{recursive:true});writeFileSync(join(r,p),v);};
@@ -78,9 +79,9 @@ test('nested sheets, configs, shared targets and tool versions invalidate eviden
  const put=(p,v)=>{mkdirSync(join(r,p,'..'),{recursive:true});writeFileSync(join(r,p),v);};
  put('hardware-design/boards/X/gate.json',JSON.stringify({project:'cad/X',checks:{erc:true,drc:true}}));
  put('hardware-design/boards/X/cad/X.kicad_pcb','C123');put('hardware-design/boards/X/cad/nested/A.kicad_sch','old');
- put('hardware-design/registry/cad-assets/C123/C123.kicad_mod','pad');put('hardware-design/boards/X/current-paths.json','{}');put('tools/route-features.json','{}');
+ put('hardware-design/registry/cad-assets/C123/C123.kicad_mod','pad');put('hardware-design/boards/X/current-paths.json','{}');
  const fp=()=>fingerprint(r,gateInputs(r,'X').files,{kicad:'10.0.6'}).input_sha256;let last=fp();
- for(const p of ['hardware-design/boards/X/cad/nested/A.kicad_sch','hardware-design/registry/cad-assets/C123/C123.kicad_mod','hardware-design/boards/X/current-paths.json','tools/route-features.json']) {put(p,'new');const next=fp();assert.notEqual(last,next);last=next;}
+ for(const p of ['hardware-design/boards/X/cad/nested/A.kicad_sch','hardware-design/registry/cad-assets/C123/C123.kicad_mod','hardware-design/boards/X/current-paths.json']) {put(p,'new');const next=fp();assert.notEqual(last,next);last=next;}
  assert.notEqual(last,fingerprint(r,gateInputs(r,'X').files,{kicad:'10.0.7'}).input_sha256);assert.equal(fp(),last);
 });
 test('referenced library footprints are hashed without unrelated library parts',t=>{
@@ -109,4 +110,30 @@ test('hierarchical sheets outside the project folder remain dependencies',t=>{
  assert.ok(gateInputs(r,'X').files.includes(path));
  const before=fingerprint(r,gateInputs(r,'X').files).input_sha256;put('hardware-design/shared/PWR.kicad_sch','changed');
  assert.notEqual(fingerprint(r,gateInputs(r,'X').files).input_sha256,before);
+});
+// D-129: only the tools the gate executes are inputs. A viewer or test change must not re-gate a board.
+test('a real board fingerprints the executed gate tools and no tests, viewers or routers',()=>{
+ const root=fileURLToPath(new URL('../..',import.meta.url)).replace(/\/$/,'');
+ const paths=fingerprint(root,gateInputs(root,'BASE-PWR').files).inputs.map(i=>i.path);
+ for(const p of ['tools/gate.mjs','tools/lib/gate-core.mjs','tools/si_planes.py','tools/pcbtool.py','tools/net_drivers.py','tools/edge-rates.json']) assert.ok(paths.includes(p),p);
+ for(const p of ['tools/route_live.py','tools/board_frame.py','tools/fastroute_job.py','tools/route-features.json','tools/hooks/pre-commit','tools/lib/staged-gates.mjs']) assert.ok(!paths.includes(p),p);
+ assert.deepEqual(paths.filter(p=>/(^|\/)test_[^/]*\.py$|\.test\.mjs$|\/test-/.test(p)),[]);
+ assert.ok(paths.filter(p=>p.startsWith('tools/')).length<40,'tools inputs stay a short executed closure');
+});
+test('the tool collector follows a new import added to a gate script',t=>{
+ const r=mkdtempSync(join(tmpdir(),'gate-tools-'));t.after(()=>rmSync(r,{recursive:true,force:true}));
+ const put=(p,v)=>{mkdirSync(join(r,p,'..'),{recursive:true});writeFileSync(join(r,p),v);};
+ put('tools/gate.mjs',"import {x} from './lib/gate-core.mjs';\nconst a=[tool('si_planes.py'), tool('pcbtool.py')];");
+ put('tools/lib/gate-core.mjs',"import {y} from './gate-runtime.mjs';");put('tools/lib/gate-runtime.mjs','');
+ put('tools/si_planes.py','import os\nimport json\n');put('tools/pcbtool.py',"def f():\n    spec_from_file_location('si_planes', 'si_planes.py')\n");
+ put('tools/route_live.py','import si_planes');put('tools/test_si_planes.py','import si_planes');put('tools/new_rule.py','import os');
+ const rel=()=>gateTools(r).map(p=>p.slice(r.length+1));
+ assert.deepEqual(rel(),['tools/gate.mjs','tools/lib/gate-core.mjs','tools/lib/gate-runtime.mjs','tools/pcbtool.py','tools/si_planes.py']);
+ put('tools/si_planes.py','import os\nfrom new_rule import check\n');
+ assert.ok(rel().includes('tools/new_rule.py'));
+ put('hardware-design/boards/X/gate.json',JSON.stringify({project:'cad/X'}));
+ const before=fingerprint(r,gateInputs(r,'X').files).input_sha256;
+ put('tools/route_live.py','changed viewer');put('tools/test_si_planes.py','changed test');
+ assert.equal(fingerprint(r,gateInputs(r,'X').files).input_sha256,before);
+ put('tools/new_rule.py','changed rule');assert.notEqual(fingerprint(r,gateInputs(r,'X').files).input_sha256,before);
 });
