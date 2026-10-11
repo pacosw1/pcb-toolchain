@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""power_pour: DC power rails as In2.Cu pours. Each power pad gets a short stub to its vias; the autorouter then
+"""power_pour: DC power rails as pours (In2.Cu by default; --layer F.Cu or B.Cu for an outer-layer pour, W14 2026-10-11).
+Each power pad gets a short stub to its vias; a pad on the pour layer touches the pour and gets none. The autorouter then
 routes only the signals.
 
 Run with the KiCad bundled Python (it has pcbnew):
@@ -10,21 +11,23 @@ Nets: --nets N1 N2 ... (a name that starts with a dash, such as -15V, is a net t
 per line, # comment), or both.
 Options: --margin 1.5 (region grows this far around the pads), --gap 0.2 (pad edge to via ring), --connect
 thermal|solid (THT pads in the pour), --grounds GND, --allow REF.PAD ... (via in that SMD pad is allowed),
---region NET=x0,y0,x1,y1 and --minus NET=x0,y0,x1,y1 (repeat them), --cut-margin 0.5.
+--region NET=x0,y0,x1,y1 and --minus NET=x0,y0,x1,y1 (repeat them), --cut-margin 0.5, --layer In2.Cu|F.Cu|B.Cu.
 plan prints the regions, the via plan per pad and the conflicts, and changes nothing. apply writes OUT (never the
 input) with the zones, stubs and vias, after a refill. Exit 1 on any conflict; apply then writes nothing.
 
 Rules (fail closed):
 - A switch node (name token SW or LX), a net in the fast list (fnmatch patterns, {"fast": [...]}) or a ground is
-  refused. In1.Cu stays solid GND; this tool writes only In2.Cu zones, and stubs on the pad layer.
+  refused. In1.Cu stays solid GND; this tool writes zones on the --layer (In2.Cu, F.Cu or B.Cu; never In1.Cu), and
+  stubs on the pad layer. The zone priority is one above the zones already on that layer (above an outer GND pour).
 - One region per rail net: the convex hull of its pad corners and vias grown by the margin, clipped to the board box. Two
   regions closer than the plane clearance are a conflict (the placer must group the rail pads).
 - Vias per pad: n = ceil(amps / pcbtool.via_amps(drill)), minimum 1. The amps of a pad are the largest chain through
   it in current-paths.json (the pcbtool paths spec); a pad that is not in the spec gets 1 via. THT pads get none.
   Each pad uses the via of its own net class; the regions of all nets are checked together.
 - A pad whose own tracks already reach a via or a THT pad of its net is "already connected": no new via.
-- Keep-out cuts (holes in the zone, grown by the clearance + --cut-margin): B.Cu and In2.Cu tracks of fast nets
-  (they keep In2 GND under them), THT pads of another net with its own In2 zone (their In2 thermal), and the
+- Keep-out cuts (holes in the zone, grown by the clearance + --cut-margin): fast-net tracks on the pour layer and on
+  the layer it is the reference of (In2.Cu pour: B.Cu and In2.Cu tracks keep In2 GND under them, D-124; an outer pour:
+  its own layer), THT pads of another net with its own zone on the pour layer (their thermal), and the
   --minus boxes. A cut that cuts off a planned via, an anchor or a THT pad from the rest of the pour is a
   conflict ('isolated'). New vias keep out of the cuts.
 - --region NET=x0,y0,x1,y1 limits a pour to a box: its pads outside the box (or in a --minus box) are listed as
@@ -54,6 +57,7 @@ DISK_N = 16
 LAYERS = ('F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu')
 EXTRA = (0, 0.25, 0.5, 1.0, 1.5)       # more distance from the pad when the first via spot is blocked (4 sides, then 4 corners)
 REF_LAYER = 'B.Cu'                     # standard stackup: B.Cu uses In2.Cu as its reference plane
+CUT_LAYERS = {'In2.Cu': (REF_LAYER, 'In2.Cu'), 'F.Cu': ('F.Cu',), 'B.Cu': ('B.Cu',)}   # fast tracks that cut a pour on the key layer
 FILL_MIN = 0.25                        # zone min thickness; a via needs this much fill around it
 
 
@@ -210,12 +214,14 @@ def via_plan(p, amps, via, rules, obstacles, smd, region, allow=(), taken=()):
 def plan_all(pads, amps_by_pad, via, rules, obstacles_by_net, smd, regions_by_net, allow=()):
     """via_plan for each pad, in the pad order. The new vias and stubs of one net are obstacles for the others.
     A THT pad needs no via; a pad with an 'anchor' (its own copper already reaches a via or a THT pad of the net)
-    is 'connected' and gets no new via."""
+    is 'connected' and gets no new via; a pad on the pour layer ('direct') touches the pour and gets none."""
     out, new, taken = [], [], []
     for p in pads:
-        if p.get('th') or p.get('anchor'):
+        if p.get('th') or p.get('anchor') or p.get('direct'):
             r = {'pad': p['name'], 'net': p['net'], 'n': 0, 'amps': amps_by_pad.get(p['name'], 0), 'vias': [], 'stub': None}
-            if not p.get('th'):
+            if p.get('direct'):
+                r['direct'] = True
+            elif not p.get('th'):
                 r['connected'] = tuple(p['anchor'])
             out.append(r)
             continue
@@ -332,7 +338,8 @@ def pour_islands(poly, holes, points, cell=0.25):
     return [k for k, c in enumerate(of) if c is None or c != main]
 
 
-def plan_rails(pads_by_net, amps_by_pad, via, rules, obstacles_by_net, smd, box, margin, allow=(), boxes=None, cuts=None):
+def plan_rails(pads_by_net, amps_by_pad, via, rules, obstacles_by_net, smd, box, margin, allow=(), boxes=None, cuts=None,
+               layer='In2.Cu'):
     """(regions, conflicts, plans, holes). The vias are spotted first (inside the board box and the net box, out of
     the net's cuts); then each region grows by the margin around the pad edges and the vias of its net, so a via
     next to an edge pad is inside its pour. holes: {net: the cuts that touch its region} (keep-outs in the zone).
@@ -343,8 +350,8 @@ def plan_rails(pads_by_net, amps_by_pad, via, rules, obstacles_by_net, smd, box,
     obs = {}
     for n in pads_by_net:
         obs[n] = {L: list(v) for L, v in obstacles_by_net[n].items()}
-        obs[n].setdefault('In2.Cu', [])
-        obs[n]['In2.Cu'] += [(('poly', c), FILL_MIN, f'keep-out cut of {n}') for c in cuts.get(n, [])]
+        obs[n].setdefault(layer, [])
+        obs[n][layer] += [(('poly', c), FILL_MIN, f'keep-out cut of {n}') for c in cuts.get(n, [])]
     order = [q for n in sorted(pads_by_net) for q in pads_by_net[n]]
     plans = plan_all(order, amps_by_pad, via, rules, obs, smd, via_reg, allow)
     pts = {n: [k for q in ps for k in pad_corners(q)] for n, ps in pads_by_net.items() if ps}
@@ -434,7 +441,9 @@ def make_plan(p, b, pro, a):
         cu = net_copper(p, b, n)
         for q in ps:
             q['via'] = vias[n]
-            if not q['th']:
+            if not q['th'] and q['layer'] == a.layer:
+                q['direct'] = True
+            elif not q['th']:
                 q['anchor'] = reached_anchor(q, cu['tracks'].get(q['layer'], []), cu['vias'], cu['th'])
     via = next(iter(vias.values()), None)
     amps = {}
@@ -442,24 +451,26 @@ def make_plan(p, b, pro, a):
         amps.update(pad_currents(spec, n))
     pads, tracks = split_pads(pads, a.region, a.minus)
     pads = {n: ps for n, ps in pads.items() if ps}
-    cuts, kinds = make_cuts(p, b, fast, list(pads), a.region, a.minus, box, clr + a.cut_margin)
+    cuts, kinds = make_cuts(p, b, fast, list(pads), a.region, a.minus, box, clr + a.cut_margin, a.layer)
     reg, conf, plans, holes = plan_rails(pads, amps, via, rules, obst, smd_pads(p, b), box, a.margin, a.allow,
-                                         a.region, cuts)
-    in2 = in2_cuts(p, b, reg)
+                                         a.region, cuts, a.layer)
+    in2 = in2_cuts(p, b, reg, a.layer)
     layer = {q['name']: q['layer'] for ps in pads.values() for q in ps}
     used = {n: collections.Counter(kinds[n][id(c)] for c in holes[n]) for n in holes}
     return {'bad': bad, 'missing': missing, 'regions': reg, 'conflicts': conf, 'plans': plans, 'rules': rules,
             'classes': cls, 'in2_other': in2, 'layer': layer, 'holes': holes, 'tracks': tracks, 'cut_kinds': used}
 
 
-def make_cuts(p, b, fast, nets, boxes, minus, board, r):
-    """({net: [cut polygons]}, {net: {id(cut): kind}}) in the net box (or the board box): fast-net tracks on B.Cu
-    and In2.Cu grown by r + half width, THT pads of other nets that have an In2 zone grown by r, and the minus boxes."""
+def make_cuts(p, b, fast, nets, boxes, minus, board, r, layer='In2.Cu'):
+    """({net: [cut polygons]}, {net: {id(cut): kind}}) in the net box (or the board box): fast-net tracks on the
+    CUT_LAYERS of the pour layer grown by r + half width, THT pads of other nets that have a zone on the pour layer
+    grown by r (In2.Cu pour only: their thermal; an outer-layer pour keeps the class clearance in the fill), and the
+    minus boxes."""
     mm = p.ToMM
-    lay2 = b.GetLayerID('In2.Cu')
+    lay2 = b.GetLayerID(layer)
     in2_nets = {z.GetNetname() for z in b.Zones() if z.IsOnLayer(lay2) and not z.GetIsRuleArea() and z.GetNetname()}
     segs = [((mm(t.GetStart().x), mm(t.GetStart().y)), (mm(t.GetEnd().x), mm(t.GetEnd().y)), mm(t.GetWidth()))
-            for t in b.GetTracks() if t.GetLayerName() in (REF_LAYER, 'In2.Cu') and not isinstance(t, p.PCB_VIA)
+            for t in b.GetTracks() if t.GetLayerName() in CUT_LAYERS[layer] and not isinstance(t, p.PCB_VIA)
             and any(fnmatch.fnmatchcase(t.GetNetname(), f) for f in fast)]
     tht = [(pd.GetNetname(), (mm(pd.GetPosition().x), mm(pd.GetPosition().y)), (mm(pd.GetSize(p.F_Cu).x), mm(pd.GetSize(p.F_Cu).y)),
             -pd.GetOrientation().AsDegrees()) for fp in b.GetFootprints() for pd in fp.Pads()
@@ -470,7 +481,7 @@ def make_cuts(p, b, fast, nets, boxes, minus, board, r):
         near = (area[0] - r - 1, area[1] - r - 1, area[2] + r + 1, area[3] + r + 1)
         cs = [('fast track', cut_seg(a, e, w / 2 + r)) for a, e, w in segs if in_box(a, near) or in_box(e, near)]
         cs += [('THT pad', grow(pad_corners({'c': c, 'size': sz, 'angle': ang}), r)) for net, c, sz, ang in tht
-               if net != n and in_box(c, near)]
+               if net != n and in_box(c, near) and layer == 'In2.Cu']   # an outer pour keeps the class clearance itself
         cs += [('minus box', rect(m)) for m in minus.get(n, [])]
         cuts[n] = [c for _, c in cs]
         kinds[n] = {id(c): k for k, c in cs}
@@ -494,10 +505,10 @@ def net_copper(p, b, net):
     return out
 
 
-def in2_cuts(p, b, reg):
-    """{net: count of other-net In2.Cu track segments with an end inside its region} (they cut the pour)."""
+def in2_cuts(p, b, reg, layer='In2.Cu'):
+    """{net: count of other-net track segments on the pour layer with an end inside its region} (they cut the pour)."""
     mm, out = p.ToMM, {}
-    lay = b.GetLayerID('In2.Cu')
+    lay = b.GetLayerID(layer)
     segs = [(t.GetNetname(), (mm(t.GetStart().x), mm(t.GetStart().y)), (mm(t.GetEnd().x), mm(t.GetEnd().y)))
             for t in b.GetTracks() if t.GetLayer() == lay and not isinstance(t, p.PCB_VIA)]
     for n, poly in reg.items():
@@ -517,7 +528,8 @@ def print_plan(pl, verbose):
         print(f'REGION {n}: box ({min(xs):.1f}, {min(ys):.1f})-({max(xs):.1f}, {max(ys):.1f}), {area:.0f} mm2, '
               f"{len(ps)} pads, {sum(len(r.get('vias', [])) for r in ps)} vias, "
               f"{sum(1 for r in ps if 'connected' in r)} already connected, "
-              f"{sum(1 for r in ps if r['n'] == 0 and 'connected' not in r)} THT, {pl['in2_other'][n]} other-net In2 track ends inside")
+              f"{sum(1 for r in ps if r['n'] == 0 and 'connected' not in r and 'direct' not in r)} THT, "
+              f"{sum(1 for r in ps if 'direct' in r)} on the pour layer, {pl['in2_other'][n]} other-net track ends inside")
     for a, b, g in pl['conflicts']:
         print(f'CONFLICT regions {a} / {b}: gap {g} mm < {pl["rules"]["clr"]} mm')
     for n, k in pl['cut_kinds'].items():
@@ -561,7 +573,7 @@ def cmd_apply(a):
     if print_plan(pl, a.verbose):
         print('nothing written')
         sys.exit(1)
-    lay = b.GetLayerID('In2.Cu')
+    lay = b.GetLayerID(a.layer)
     prio = max([z.GetAssignedPriority() for z in b.Zones() if z.IsOnLayer(lay) and not z.GetIsRuleArea()] + [-1]) + 1
     for n, poly in pl['regions'].items():
         z = p.ZONE(b)
@@ -613,7 +625,7 @@ def cmd_apply(a):
         if os.path.exists(src + ext) and not os.path.exists(dst + ext):
             shutil.copyfile(src + ext, dst + ext)
     b.Save(a.out)
-    print(f"wrote {a.out}: {len(pl['regions'])} In2.Cu zones (priority {prio}), {ns} stubs, {nv} vias")
+    print(f"wrote {a.out}: {len(pl['regions'])} {a.layer} zones (priority {prio}), {ns} stubs, {nv} vias")
 
 
 LIST_OPTS = ('--nets', '--region', '--minus')
@@ -664,6 +676,7 @@ def parse_args(argv):
         s.add_argument('--region', action='append', default=[], help='NET=x0,y0,x1,y1: the pour box of the net')
         s.add_argument('--minus', action='append', default=[], help='NET=x0,y0,x1,y1: a keep-out box in that pour')
         s.add_argument('--cut-margin', type=float, default=0.5, help='keep-out cut margin around fast tracks and THT pads')
+        s.add_argument('--layer', choices=sorted(CUT_LAYERS), default='In2.Cu', help='the pour layer (never In1.Cu)')
         s.add_argument('--currents', required=True)
         s.add_argument('--fast', required=True, help='fast-net file {"fast": [patterns]}, or none')
         s.add_argument('--grounds', nargs='+', default=['GND'])
