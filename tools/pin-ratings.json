@@ -95,6 +95,37 @@
      "source": "TPS2120, TPS2121 datasheet SLVSEA3F (Aug 2018, revised Aug 2020), section 7.3 Recommended Operating Conditions, TPS2121 Continuous Input Current IIN1, IIN2 (IN1, IN2) 4.5 A (max), page 6; Pin Functions table (page 3), VQFN-HR (RUX): IN1 = 7, IN2 = 2, OUT = 1, 8; https://www.ti.com/lit/ds/symlink/tps2121.pdf, local copy hardware-design/registry/datasheets/TPS2121.pdf (sha256 b2f5950f...) [P]. OUT carries the input current of the one selected channel (section 7.1: IOUT internally limited), so the OUT terminal (pins 1 and 8 together) takes the 4.5 A input rating; like TPS259251 here, the terminal rating is used for each pin of the terminal, not a per-pin figure."
     }
    }
+  },
+  "TPS26632": {
+   "mpn": [
+    "TPS2663*"
+   ],
+   "pins": {
+    "1": {
+     "name": "IN",
+     "amps": 5.58,
+     "statistic": "min",
+     "source": "TPS2663x datasheet SLVSE94G (Sep 2018, revised Jun 2024), section 6.5 Electrical Characteristics, I(LIM) overload current limit with R(ILIM) = 3 kOhm: 6 A typ, 5.58 A min (page 7); pins 1-2 = IN, 17-18 = OUT of the RGE VQFN-24 (Table 5-1, page 3); https://www.ti.com/lit/ds/symlink/tps2663.pdf, local copy hardware-design/registry/datasheets/TPS26632RGER_C1850278.pdf [P]. The power path through IN and OUT is designed for the 6 A setting; AC-24V sets 3.5 A (D-133)."
+    },
+    "2": {
+     "name": "IN",
+     "amps": 5.58,
+     "statistic": "min",
+     "source": "TPS2663x datasheet SLVSE94G (Sep 2018, revised Jun 2024), section 6.5 Electrical Characteristics, I(LIM) overload current limit with R(ILIM) = 3 kOhm: 6 A typ, 5.58 A min (page 7); pins 1-2 = IN, 17-18 = OUT of the RGE VQFN-24 (Table 5-1, page 3); https://www.ti.com/lit/ds/symlink/tps2663.pdf, local copy hardware-design/registry/datasheets/TPS26632RGER_C1850278.pdf [P]. The power path through IN and OUT is designed for the 6 A setting; AC-24V sets 3.5 A (D-133)."
+    },
+    "17": {
+     "name": "OUT",
+     "amps": 5.58,
+     "statistic": "min",
+     "source": "TPS2663x datasheet SLVSE94G (Sep 2018, revised Jun 2024), section 6.5 Electrical Characteristics, I(LIM) overload current limit with R(ILIM) = 3 kOhm: 6 A typ, 5.58 A min (page 7); pins 1-2 = IN, 17-18 = OUT of the RGE VQFN-24 (Table 5-1, page 3); https://www.ti.com/lit/ds/symlink/tps2663.pdf, local copy hardware-design/registry/datasheets/TPS26632RGER_C1850278.pdf [P]. The power path through IN and OUT is designed for the 6 A setting; AC-24V sets 3.5 A (D-133)."
+    },
+    "18": {
+     "name": "OUT",
+     "amps": 5.58,
+     "statistic": "min",
+     "source": "TPS2663x datasheet SLVSE94G (Sep 2018, revised Jun 2024), section 6.5 Electrical Characteristics, I(LIM) overload current limit with R(ILIM) = 3 kOhm: 6 A typ, 5.58 A min (page 7); pins 1-2 = IN, 17-18 = OUT of the RGE VQFN-24 (Table 5-1, page 3); https://www.ti.com/lit/ds/symlink/tps2663.pdf, local copy hardware-design/registry/datasheets/TPS26632RGER_C1850278.pdf [P]. The power path through IN and OUT is designed for the 6 A setting; AC-24V sets 3.5 A (D-133)."
+    }
+   }
   }
  }
 }
