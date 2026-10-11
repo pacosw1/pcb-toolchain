@@ -56,6 +56,11 @@ def _t0(outdir):
         return None
 
 
+def clock(outdir):
+    """The job's t0 (start() binding, else progress.jsonl, else now)."""
+    return _RUN.get(os.path.abspath(outdir)) or _t0(outdir) or time.time()
+
+
 def elapsed(outdir):
     t0 = _RUN.get(os.path.abspath(outdir)) or _t0(outdir)
     return round(time.time() - t0, 1) if t0 else None
@@ -253,6 +258,13 @@ def sync(outdir):
             f.write(json.dumps(r) + '\n')
         n += 1
     return n
+
+
+def view(outdir):
+    """run.jsonl plus the derived records not in it yet, nothing written (the live web view reads this)."""
+    rows = read(outdir)
+    have = {_key(r) for r in rows}
+    return rows + [r for r in derive(outdir) if _key(r) not in have]
 
 
 def ordered(records):
