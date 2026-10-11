@@ -20,6 +20,7 @@ Renders (kicad-cli) go to a temp cache keyed by the sha256 of the source files, 
 Levels: 0 = draft, 1 = passes the board gates, 2 = worked on a built board at bring-up.
 """
 import argparse
+from pathlib import Path
 import glob
 import hashlib
 import html
@@ -570,12 +571,19 @@ def main():
     s = sp.add_parser('new'); s.add_argument('id'); s.add_argument('description'); s.add_argument('keywords')
     s = sp.add_parser('find'); s.add_argument('query'); s.add_argument('--mpn'); s.add_argument('--footprint')
     s = sp.add_parser('reuse'); s.add_argument('id'); s.add_argument('--expect-sha256')
+    s = sp.add_parser('plan'); s.add_argument('id'); s.add_argument('target_manifest'); s.add_argument('--mapping')
     a = ap.parse_args()
-    if a.cmd in ('find', 'reuse'):
+    if a.cmd in ('find', 'reuse', 'plan'):
         import block_reuse
         try:
-            result = (block_reuse.find(LIB, a.query, a.mpn, a.footprint) if a.cmd == 'find'
-                      else block_reuse.reuse(LIB, a.id, a.expect_sha256))
+            if a.cmd == 'plan':
+                mapping = json.loads(Path(a.mapping).read_text()) if a.mapping else None
+                if mapping is not None and not isinstance(mapping, dict):
+                    raise ValueError('mapping must be a plan object')
+                result = block_reuse.target_plan(LIB, a.id, a.target_manifest, mapping)
+            else:
+                result = (block_reuse.find(LIB, a.query, a.mpn, a.footprint) if a.cmd == 'find'
+                          else block_reuse.reuse(LIB, a.id, a.expect_sha256))
         except (ValueError, OSError) as exc:
             print(f'FAIL — block retrieval: {exc}', file=sys.stderr)
             return 1

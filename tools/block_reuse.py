@@ -100,3 +100,45 @@ def reuse(library, iid, expected_sha256=None):
     if expected_sha256 and row['source_sha256'] != expected_sha256:
         raise ValueError('stale block: source fingerprint changed; inspect again')
     return row
+
+
+def target_plan(library, iid, target, mapping=None):
+    """Bind explicit target inputs and port mapping without granting CAD approval.
+
+    target is a JSON file listing paths relative to itself. Include requirements,
+    rules and CAD; callers choose the dependency closure, which remains reviewable.
+    mapping is a prior plan: all fingerprints must still match before reuse.
+    """
+    manifest = Path(target).resolve()
+    spec = json.loads(manifest.read_text())
+    if not isinstance(spec, dict) or not isinstance(spec.get('inputs'), list) or not spec['inputs']:
+        raise ValueError('target manifest requires a nonempty inputs list')
+    inputs = {}
+    for name in spec['inputs']:
+        if not isinstance(name, str) or not name:
+            raise ValueError('target input paths must be nonempty strings')
+        path = (manifest.parent / name).resolve()
+        inputs[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+    inputs['$manifest'] = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    digest = hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
+    row = reuse(library, iid)
+    names = [p.get('name') for p in row['ports']]
+    if any(not isinstance(n, str) or not n for n in names) or len(set(names)) != len(names):
+        raise ValueError('block ports require unique nonempty names')
+    ports = {name: None for name in names}
+    if mapping is not None:
+        if (mapping.get('block_id') != iid or mapping.get('source_sha256') != row['source_sha256']
+                or mapping.get('target_sha256') != digest):
+            raise ValueError('stale reuse plan: block or target inputs changed')
+        ports = mapping.get('port_map')
+        if not isinstance(ports, dict) or set(ports) != set(names):
+            raise ValueError('port map must cover exactly the block ports')
+        if any(v is not None and (not isinstance(v, str) or not v.strip()) for v in ports.values()):
+            raise ValueError('port destinations must be nonempty net names or null')
+    return {'schema': 'iot-lab.target-reuse-plan.v1', 'block_id': iid,
+            'source_sha256': row['source_sha256'], 'target_manifest': str(manifest),
+            'target_sha256': digest, 'target_inputs': inputs, 'port_map': ports,
+            'unmapped_ports': [k for k, v in ports.items() if v is None],
+            'qualification': 'unverified_for_target',
+            'missing_block_files': row['missing_files'], 'facts_errors': row['facts_errors'],
+            'open_items': row['open_items'], 'target_checks_required': row['target_checks_required']}

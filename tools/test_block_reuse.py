@@ -64,6 +64,32 @@ class ReuseTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'external'):
             br.reuse(self.lib, 'USB')
 
+    def test_target_plan_rejects_changed_requirements_and_missing_mapping(self):
+        requirements = self.lib / 'SPEC.md'
+        requirements.write_text('USB input')
+        manifest = self.lib / 'target.json'
+        manifest.write_text(json.dumps({'inputs': ['SPEC.md']}))
+        plan = br.target_plan(self.lib, 'USB', manifest)
+        self.assertEqual(plan['unmapped_ports'], ['VBUS'])
+        plan['port_map']['VBUS'] = '+5V_USB'
+        checked = br.target_plan(self.lib, 'USB', manifest, plan)
+        self.assertEqual(checked['unmapped_ports'], [])
+        self.assertEqual(checked['qualification'], 'unverified_for_target')
+        plan['port_map']['extra'] = 'GND'
+        with self.assertRaisesRegex(ValueError, 'exactly'):
+            br.target_plan(self.lib, 'USB', manifest, plan)
+        requirements.write_text('Different input')
+        with self.assertRaisesRegex(ValueError, 'stale'):
+            br.target_plan(self.lib, 'USB', manifest, plan)
+
+    def test_target_plan_rejects_changed_block(self):
+        manifest = self.lib / 'target.json'
+        manifest.write_text(json.dumps({'inputs': ['USB.kicad_block/USB.kicad_pcb']}))
+        plan = br.target_plan(self.lib, 'USB', manifest)
+        (self.block / 'USB.kicad_dru').write_text('(version 1)')
+        with self.assertRaisesRegex(ValueError, 'stale'):
+            br.target_plan(self.lib, 'USB', manifest, plan)
+
 
 if __name__ == '__main__':
     unittest.main()
