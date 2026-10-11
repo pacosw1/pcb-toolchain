@@ -583,11 +583,17 @@ def info_lines(b, block, cfg):
         return [[ln.replace('{date}', date) for ln in block['lines']]]
     if kind == 'parts':
         out = []
-        for ref, fn in block['parts']:
+        for ent in block['parts']:   # [ref, function] -> "REF VALUE  function"; [ref, None, short] -> "REF short"
+            ref, fn = ent[0], ent[1]
             fp = b.FindFootprintByReference(ref)
             if fp is None:
                 raise SystemExit(f'board_labels: info_back parts: no footprint {ref}')
-            out.append(f'{ref} {fp.GetValue()}  {fn}')
+            if len(ent) > 2:   # a short part name must be the start of the footprint value (the BOM part)
+                if not fp.GetValue().startswith(ent[2]):
+                    raise SystemExit(f'board_labels: info_back parts: {ref} "{ent[2]}" is not the start of {fp.GetValue()}')
+                out.append(f'{ref} {ent[2]}' + (f'  {fn}' if fn else ''))
+            else:
+                out.append(f'{ref} {fp.GetValue()}  {fn}')
         rows = int(block.get('rows', len(out)))
         return [out[i:i + rows] for i in range(0, len(out), rows)]
     if kind == 'testpoints':
@@ -641,6 +647,11 @@ def info_pass(board, pcb, cfg):
         else:
             blocks.append(block)
     tented = 'back yes' in ' '.join(open(pcb).read().split('(tenting', 1)[-1].split(')', 3)[:3]).replace('(', ' ')
+    lay = cfg.get('info_layout')
+    if lay:
+        placed += info_grid(b, B, blocks, lay, group, tented, (X0, Y0, X1, Y1), skipped)
+        laid = {i for row in lay['rows'] for i in row}
+        blocks = [bl for bl in blocks if bl.get('id') not in laid]
     for block in blocks:
         if block.get('kind') == 'panel':
             r_ = info_panel(b, B, block, group, tented, (X0, Y0, X1, Y1))
@@ -696,7 +707,7 @@ def info_pass(board, pcb, cfg):
           ''.join(f'\n  NOT PLACED info {s_}' for s_ in skipped))
 
 
-def info_panel(b, B, block, group, tented, outline):
+def info_panel(b, B, block, group, tented, outline, rect=None, measure=False):
     """A framed panel on B.SilkS (info_back kind "panel", user request 2026-10-11: board description, features,
     warnings, key parts; "aesthetic"). Laid out in bottom-view coordinates (u to the right as seen from below = -x on
     the board, v down) and mirrored onto the board: a frame with 0.8 mm chamfered corners, a header (h_head, with an
@@ -711,19 +722,27 @@ def info_panel(b, B, block, group, tented, outline):
     lw = stroke(1.0)
     icon = block.get('icon', '')
     head = block.get('header', '')
-    lines = info_lines(b, dict(block, kind=block.get('body_kind', 'text')), None)[0] + list(block.get('extra', []))
+    cols = info_lines(b, dict(block, kind=block.get('body_kind', 'text')), None)
+    cols[-1] = cols[-1] + list(block.get('extra', []))
+    cgap = float(block.get('col_gap', 2.5))
+    lines = max(cols, key=len)   # the body height is the longest column
     wid = lambda t, hgt: (extent(b, t, hgt, hgt, 'L', 'T', True)[2] - extent(b, t, hgt, hgt, 'L', 'T', True)[0])
     ih = hh * 1.5 if icon else 0.0          # icon "warning": a drawn triangle (the stroke-font sign does not render)
     head_w = (ih * 1.15 + 0.8 if icon else 0.0) + (wid(head, hh) if head else 0.0)
-    body_w = max([wid(t, h) for t in lines] or [0.0])
+    colw = [max([wid(t, h) for t in c] or [0.0]) for c in cols]
+    body_w = sum(colw) + cgap * (len(cols) - 1)
     W = 2 * pad + max(head_w, body_w, float(block.get('min_w', 0)))
     head_h = max(hh, ih) if (head or icon) else 0.0
     H = 2 * pad + head_h + (pad * 1.3 if head_h else 0.0) + len(lines) * pitch - (pitch - h if lines else 0.0)
+    if measure:
+        return W, H
     X0, Y0, X1, Y1 = outline
     near = block.get('near', [(X0 + X1) / 2, (Y0 + Y1) / 2])
-    best = None
+    best = None if rect is None else (0.0, rect)   # rect: a grid cell from info_layout (frame stretched to it)
+    if rect is not None:
+        W, H = rect[2] - rect[0], rect[3] - rect[1]
     step = 0.5
-    y = Y0
+    y = Y0 if rect is None else Y1   # no search for a given cell
     while y + H < Y1:
         x = X0
         while x + W < X1:
@@ -781,14 +800,67 @@ def info_panel(b, B, block, group, tented, outline):
         v += head_h + pad * 0.65
         seg(pad * 0.5, v, W - pad * 0.5, v)
         v += pad * 0.65
-    for t in lines:
-        txt(t, h, pad, v)
-        v += pitch
+    u = pad
+    for c, cw in zip(cols, colw):
+        for i, t in enumerate(c):
+            txt(t, h, u, v + i * pitch)
+        u += cw + cgap
     for it in items:
         b.Add(it)
         group.AddItem(it)
     print(f"  info {block.get('id')}: panel {W:.1f} x {H:.1f} mm at ({r[0]:.2f}, {r[1]:.2f}), {len(lines)} lines")
     return r
+
+
+def info_grid(b, B, blocks, lay, group, tented, outline, skipped):
+    """info_layout (user 2026-10-11: "aligned to some kind of grid ... it looks messy"): the listed panels as one grid
+    as seen from the bottom: rows of panels, every column the same width (the widest panel, at least col_w), every
+    panel of a row the same height (the tallest of the row), gutter mm between columns, row_gap between rows. The grid
+    origin (its top left corner seen from below) snaps to snap mm and goes to the free position nearest to "near"
+    (board centre by default) where every cell is free (the info_panel rules: tented vias allowed, pads, holes, screw
+    heads, other silk and the outline clear). Returns the number of panels drawn."""
+    by_id = {bl.get('id'): bl for bl in blocks}
+    rows = [[by_id[i] for i in row] for row in lay['rows']]
+    size = {bl['id']: info_panel(b, B, bl, group, tented, outline, measure=True) for row in rows for bl in row}
+    ncol = max(len(r) for r in rows)
+    col_w = max([float(lay.get('col_w', 0))] + [w for w, _ in size.values()])
+    gut, rgap, snap = float(lay.get('gutter', 3.0)), float(lay.get('row_gap', 3.0)), float(lay.get('snap', 0.5))
+    row_h = [max(size[bl['id']][1] for bl in r) for r in rows]
+    GW, GH = ncol * col_w + (ncol - 1) * gut, sum(row_h) + (len(rows) - 1) * rgap
+    X0, Y0, X1, Y1 = outline
+    near = lay.get('near', [(X0 + X1) / 2, (Y0 + Y1) / 2])
+    def cells(xr, yt):   # xr: board x of the grid's left edge seen from below (= its right edge on the board)
+        out, v = [], yt
+        for ri, r in enumerate(rows):
+            for ci, bl in enumerate(r):
+                u0 = ci * (col_w + gut)
+                out.append((bl, (xr - u0 - col_w, v, xr - u0, v + row_h[ri])))
+            v += row_h[ri] + rgap
+        return out
+    def free(r):
+        win = (r[0] - 0.5, r[1] - 0.5, r[2] + 0.5, r[3] + 0.5)
+        loc = [o for o, w_ in zip(B.obs, B.why) if hit(o, win) and not (tented and w_.startswith('via '))]
+        return B.free(r, loc, 'title')
+    best = None
+    k0 = math.ceil((X0 + GW) / snap)
+    for ky in range(math.ceil(Y0 / snap), int((Y1 - GH) / snap) + 1):
+        for kx in range(k0, int(X1 / snap) + 1):
+            xr, yt = kx * snap, ky * snap
+            d = math.hypot(xr - GW / 2 - near[0], yt + GH / 2 - near[1])
+            if best is not None and d >= best[0]:
+                continue
+            if all(free(r) for _, r in cells(xr, yt)):
+                best = (d, xr, yt)
+    if best is None:
+        skipped.append(f'info_layout: no free place for the {GW:.1f} x {GH:.1f} mm grid')
+        return 0
+    n = 0
+    for bl, r in cells(best[1], best[2]):
+        if info_panel(b, B, bl, group, tented, outline, rect=r):
+            n += 1
+    print(f'  info_layout: {len(rows)} rows x {ncol} columns, cell width {col_w:.1f} mm, grid {GW:.1f} x {GH:.1f} mm '
+          f'at ({best[1] - GW:.2f}, {best[2]:.2f})')
+    return n
 
 
 if __name__ == '__main__':
