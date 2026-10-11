@@ -1,0 +1,18 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>iot-lab boards 3D</title>
+<script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/4.0.0/model-viewer.min.js"></script>
+<style>body{margin:0;font:16px -apple-system,sans-serif;background:#111;color:#eee}
+nav{display:flex;gap:6px;padding:8px;flex-wrap:wrap}nav button{flex:1;padding:10px;border:0;border-radius:8px;background:#333;color:#eee;font-size:15px}
+nav button.on{background:#2a7}p{margin:4px 10px;font-size:13px;color:#aaa}
+model-viewer{width:100vw;height:calc(100vh - 110px);background:#1b1b1b}</style></head><body>
+<nav id="n"></nav><p id="s"></p>
+<model-viewer id="m" camera-controls touch-action="pan-y" shadow-intensity="1" exposure="1.1" ar ar-modes="quick-look webxr scene-viewer"
+  camera-orbit="0deg 45deg auto" interaction-prompt="auto"></model-viewer>
+<script type="module">
+customElements.whenDefined('model-viewer').then(()=>{customElements.get('model-viewer').meshoptDecoderLocation='https://unpkg.com/meshoptimizer@0.21.0/meshopt_decoder.js';});
+const n=document.getElementById('n'),m=document.getElementById('m'),s=document.getElementById('s');
+// boards.json is written by tools/board_3d.sh: [{name, note}] with the gate line of each board.
+fetch('boards.json',{cache:'no-store'}).then(r=>r.json()).then(B=>{
+function show(i){[...n.children].forEach((b,j)=>b.className=j==i?'on':'');m.src=B[i].name+'.glb';m.poster=B[i].name+'-iso.png';s.textContent=B[i].name+': '+B[i].note+'. Drag to rotate, pinch to zoom, AR button for the room.';}
+B.forEach((b,i)=>{const e=document.createElement('button');e.textContent=b.name;e.onclick=()=>show(i);n.appendChild(e)});show(0);});
+</script></body></html>
