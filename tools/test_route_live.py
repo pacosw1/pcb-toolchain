@@ -28,7 +28,20 @@ class Handlers(unittest.TestCase):
                 f.write(json.dumps({'t': 'x', 't0': 0, 'elapsed_s': e, 'stage': st, 'pass': p, 'open': o, 'vias': None, 'best_open': b, 'eta_s': eta}) + '\n')
         with open(os.path.join(cls.rundir, 'snapshots', 'latest.png'), 'wb') as f:
             f.write(b'\x89PNG\r\n\x1a\nfake')
-        rl.Handler.runs = rl.Runs([cls.rundir], roots=())
+        cls.done = os.path.join(cls.tmp, 'run-8')          # finished run: outcome.json, two snapshots
+        os.makedirs(os.path.join(cls.done, 'snapshots'))
+        with open(os.path.join(cls.done, 'progress.jsonl'), 'w') as f:
+            f.write(json.dumps({'elapsed_s': 9.0, 'stage': 'route', 'pass': 2, 'open': 12, 'vias': None, 'best_open': 12, 'eta_s': None}) + '\n')
+        with open(os.path.join(cls.done, 'outcome.json'), 'w') as f:
+            json.dump({'status': 'stuck'}, f)
+        for n, (e, p_, o) in (('0001', (9.0, 2, 12)), ('0000', (4.5, 1, 30))):
+            with open(os.path.join(cls.done, 'snapshots', n + '.png'), 'wb') as f:
+                f.write(b'\x89PNG\r\n\x1a\nfake')
+            with open(os.path.join(cls.done, 'snapshots', n + '.json'), 'w') as f:
+                json.dump({'t': 'x', 'elapsed_s': e, 'pass': p_, 'open': o, 'stage': 'route'}, f)
+        with open(os.path.join(cls.done, 'snapshots', '0002.json'), 'w') as f:      # json without its png: not listed
+            json.dump({'elapsed_s': 12.0}, f)
+        rl.Handler.runs = rl.Runs([cls.rundir, cls.done], roots=())
         cls.srv = ThreadingHTTPServer(('127.0.0.1', 0), rl.Handler)
         cls.port = cls.srv.server_address[1]
         threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
@@ -147,6 +160,68 @@ class Handlers(unittest.TestCase):
         self.assertIn('text/event-stream', ctype)
         code, _, body = self.get('/run/x/run-7', 'HEAD')
         self.assertEqual((code, body), (200, b''))
+
+    def test_selector_and_no_meta_refresh(self):
+        for path in ('/run/x/run-7', '/'):
+            t = self.get(path)[2].decode()
+            self.assertIn('<select id="sel"', t)
+            self.assertIn('value="x/run-8"', t)
+            self.assertNotIn('<meta http-equiv="refresh"', t)
+        run = self.get('/run/x/run-8')[2].decode()
+        self.assertIn('class="taps"', run)
+        self.assertIn('history.pushState', run)
+        self.assertIn('id="strip"', run)
+        self.assertIn('FINISHED: STUCK 12 open', run)
+        self.assertIn('LIVE', self.get('/run/x/run-7')[2].decode())
+        self.assertNotIn('http-equiv', self.get('/')[2].decode())
+
+    def test_api_runs_split(self):
+        code, ctype, body = self.get('/api/runs')
+        self.assertEqual((code, ctype), (200, 'application/json'))
+        d = json.loads(body)
+        self.assertEqual([i['id'] for i in d['active']], ['x/run-7'])
+        self.assertEqual([i['id'] for i in d['recent']], ['x/run-8'])
+        self.assertTrue(d['active'][0]['live'])
+        self.assertEqual(d['active'][0]['open'], 44)
+        self.assertEqual(d['recent'][0]['banner'], 'FINISHED: STUCK 12 open')
+        self.assertEqual(self.get('/api/runs', 'POST')[0], 405)
+        self.assertEqual(self.get('/api/runs', 'HEAD')[1:], ('application/json', b''))
+
+    def test_finished_run_events_one_event_then_close(self):
+        sk = self.read_events('/run/x/run-8/events')
+        buf = self.frames(sk, lambda b: False, timeout=5)      # reads until the server closes the stream
+        sk.close()
+        self.assertEqual(buf.count(b'data: '), 1)
+        ev = json.loads(buf.split(b'data: ', 1)[1].split(b'\n\n')[0])
+        self.assertTrue(ev['finished'] and not ev['live'])
+        self.assertEqual(ev['banner'], 'FINISHED: STUCK 12 open')
+
+    def test_snapshots(self):
+        code, ctype, body = self.get('/run/x/run-8/snapshots.json')
+        self.assertEqual((code, ctype), (200, 'application/json'))
+        lst = json.loads(body)
+        self.assertEqual([e['i'] for e in lst], [0, 1])                 # ordered by elapsed_s; 0002 has no png
+        self.assertEqual(lst[1], {'i': 1, 'elapsed_s': 9.0, 'pass': 2, 'open': 12, 'stage': 'route', 'url': '/run/x/run-8/snapshots/0001.png'})
+        code, ctype, body = self.get(lst[0]['url'])
+        self.assertEqual((code, ctype), (200, 'image/png'))
+        self.assertEqual(json.loads(self.get('/run/x/run-7/snapshots.json')[2]), [])
+        for bad in ('/run/x/other/snapshots.json', '/run/x/run-8/snapshots/0009.png', '/run/x/run-8/snapshots/latest.png',
+                    '/run/x/run-8/../run-7/snapshots/0000.png', '/run/x/run-8/snapshots/../progress.jsonl', '/run/x/other/snapshots/0000.png'):
+            self.assertEqual(self.get(bad)[0], 404, bad)
+        t = self.get('/run/x/run-8')[2].decode()
+        for ident in ('id="scrub"', 'id="play"', 'id="speed"', 'id="golive"', 'id="hint"'):
+            self.assertIn(ident, t)
+
+    def test_log_structured(self):
+        j = json.loads(self.get('/run/x/run-7/log.json')[2])
+        self.assertTrue(j['records'] and j['start'] == 0)
+        self.assertEqual(j['records'][-1]['action'], j['records'][-1]['action'])
+        self.assertTrue(any(r['action'] == 'pass' for r in j['records']))
+        j2 = json.loads(self.get('/run/x/run-7/log.json?before=2')[2])
+        self.assertEqual(len(j2['records']), 2)
+        t = self.get('/run/x/run-7')[2].decode()
+        for ident in ('id="logbox"', 'id="lq"', 'data-f="decisions"', 'id="older"'):
+            self.assertIn(ident, t)
 
     def test_read_only(self):
         self.assertEqual(self.get('/run/x/run-7', 'POST')[0], 405)
