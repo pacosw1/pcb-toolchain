@@ -133,15 +133,25 @@ def write_pairs(pairs_json, dru, nets, out):
 
 
 def big_signal_via(text, dia_mm, classes, nets=()):
-    """A second via padstack "Via[0-3]_RP_um" (circle dia_mm on every layer of the class via padstack) for the nets of
-    the given DSN classes: (use_via ...) of those classes points to it."""
+    """Add a halo via with an attributable numeric diameter/drill and layer span.
+
+    The importer and replay guard require KiCad's numeric naming convention;
+    the former RP alias discarded the drill identity and failed after routing.
+    """
     m = re.search(r'\(padstack "(Via[^"]*)"\n(.*?)\n    \)', text, re.S)
     if not m:
         sys.exit("fastroute_job: no via padstack in the DSN")
     name, body = m.group(1), m.group(2)
+    source = re.fullmatch(r'Via\[0-(\d+)\]_(\d+):(\d+)_um', name)
+    diameter = float(dia_mm) * 1000
+    if not source or not diameter.is_integer() or diameter <= int(source[3]):
+        raise ValueError('halo requires a supported via and integral micrometre diameter above drill')
+    halo = f'Via[0-{source[1]}]_{int(diameter)}:{source[3]}_um'
+    if f'(padstack "{halo}"' in text:
+        raise ValueError('halo padstack already exists; ambiguous export')
     big = re.sub(r'\(circle (\S+) [\d.]+\)', lambda k: f'(circle {k.group(1)} {int(dia_mm * 1000)})', body)
-    text = text.replace(m.group(0), m.group(0) + f'\n    (padstack "Via[0-3]_RP_um"\n{big}\n    )', 1)
-    text = text.replace(f'(via "{name}")', f'(via "{name}" "Via[0-3]_RP_um")', 1)
+    text = text.replace(m.group(0), m.group(0) + f'\n    (padstack "{halo}"\n{big}\n    )', 1)
+    text = text.replace(f'(via "{name}")', f'(via "{name}" "{halo}")', 1)
     if nets:   # only these nets (fnmatch globs) get the big padstack: each class block loses them to a copy "<class>_RPV"
         add = []
 
@@ -152,7 +162,7 @@ def big_signal_via(text, dia_mm, classes, nets=()):
             if not hit:
                 return m.group(0)
             keep = [t for t in toks if t not in hit]
-            big_tail = re.sub(r'\(use_via "[^"]*"\)', '(use_via "Via[0-3]_RP_um")', tail)
+            big_tail = re.sub(r'\(use_via "[^"]*"\)', f'(use_via "{halo}")', tail)
             add.append(f"    (class {head}_RPV " + " ".join(hit) + "\n      " + big_tail.lstrip())
             return f"(class {head} " + " ".join(keep) + "\n      " + tail.lstrip()
         text = re.sub(r'\(class (\S+) ((?:"[^"]*"|[^()"])*?)(\(circuit.*?\n    \))', split_class, text, flags=re.S)
@@ -166,7 +176,7 @@ def big_signal_via(text, dia_mm, classes, nets=()):
             continue
         j = text.find("(use_via", i)
         k = text.find(")", j)
-        text = text[:j] + '(use_via "Via[0-3]_RP_um"' + text[k:]
+        text = text[:j] + f'(use_via "{halo}"' + text[k:]
     return text
 
 
