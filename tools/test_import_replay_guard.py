@@ -142,6 +142,14 @@ class ReplayGuardTests(unittest.TestCase):
         after=self.unlocked_after();after['old']=dict(geometry=self.geometry,policy=['segment',['locked','no']])
         with self.assertRaisesRegex(ValueError,'altered'):self.plan(after=after,preserved=set(),unlocked={'old'})
 
+    def test_preserved_source_offered_by_the_dsn_at_whole_um_is_accepted(self):
+        # POE-ETHERNET wide_exempt stage (2026-10-11): source and SES at y = 110801.7 um, the DSN at 110802.
+        shifted=('segment','P','F.Cu',200000,((1000,2300),(3000,2300)))
+        plan=self.plan(dsn={shifted:['fix']})
+        self.assertEqual((plan[0]['removed_uuid'],plan[0]['retained_uuid'],plan[0]['dsn_modes']),('new','old',['fix']))
+        far=('segment','P','F.Cu',200000,((1000,3500),(3000,3500)))
+        with self.assertRaisesRegex(ValueError,'provenance \\(preserved\\)'):self.plan(dsn={far:['fix']})
+
     def test_foreign_result_replay_still_rejected(self):
         # not offered unlocked by this job: the coincidence is a replay of a foreign result
         with self.assertRaisesRegex(ValueError,'outside preserved'):

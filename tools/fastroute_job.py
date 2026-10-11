@@ -26,7 +26,9 @@ ROUTE_FEATURES="name=1,..." last; tools/route_features.py show BOARD prints them
   rule_compiler      before routing: .kicad_dru (+ extra rules) -> per-net use_layer masks, via bans, class_class
   via_halo           the --signal-via padstack (size_mm) for the selected nets, also with no --signal-via argument
   triage_opens       after routing: tools/route_grid.py triage -> OUTDIR/open-triage.json (+ <board>/.gate/), "TRIAGE ..."
-  routing_rules      D-125 (tools/routing_rules.py): the router runs once per stage (pairs/clocks, fast, wide, rest; then a
+  routing_rules      D-125 (tools/routing_rules.py): the router runs once per stage (pairs/clocks, fast, escape (W10: Fastroute
+                     SMD fanout of the fine-pitch pads inside a belt keepout), wide_hot (W10: switch nodes in a corridor, one
+                     layer, raised via cost, max length), wide, rest; then a
                      last pass for the plane nets and the nets a stage left open, their stage copper ripped up; then at most
                      repair_iterations rip-up-and-repair passes over the nets still open and their immediate blockers),
                      each stage's copper locked for the next; via cost via_costs; DSN wire
@@ -158,6 +160,45 @@ def big_signal_via(text, dia_mm, classes, nets=()):
         k = text.find(")", j)
         text = text[:j] + '(use_via "Via[0-3]_RP_um"' + text[k:]
     return text
+
+
+def plane_via_clearance_repair(path, drc, plane_names):
+    """Delete each plane-net via (and its stub from the pad) that the DRC lists in a clearance violation against
+    copper of another net, and return {net: {"REF.PIN", ...}} of the pads to connect again. The board at path is
+    saved without those items. A via with no stub to a pad of its net is left alone (it is not a pad via)."""
+    hits = []
+    for v in drc.get("violations", []):
+        if v.get("severity") != "error" or v.get("type") != "clearance":
+            continue
+        for it in v.get("items", []):
+            m = re.match(r"Via \[([^\]]*)\]", it.get("description", ""))
+            if m and m.group(1) in plane_names and it.get("pos"):
+                hits.append((m.group(1), it["pos"]["x"], it["pos"]["y"]))
+    if not hits:
+        return {}
+    b = pcbnew.LoadBoard(path)
+    todo, gone = {}, []
+    for net, x, y in hits:
+        via = next((t for t in b.GetTracks() if t.GetClass() == "PCB_VIA" and t.GetNetname() == net
+                    and abs(t.GetPosition().x / 1e6 - x) < 1e-3 and abs(t.GetPosition().y / 1e6 - y) < 1e-3), None)
+        if via is None or via in gone:
+            continue
+        stub = [t for t in b.GetTracks() if t.GetClass() == "PCB_TRACK" and t.GetNetname() == net
+                and (t.GetStart() == via.GetPosition() or t.GetEnd() == via.GetPosition())]
+        if len(stub) != 1:
+            continue
+        far = stub[0].GetEnd() if stub[0].GetStart() == via.GetPosition() else stub[0].GetStart()
+        pad = next((f"{fp.GetReference()}.{p.GetNumber()}" for fp in b.GetFootprints() for p in fp.Pads()
+                    if p.GetNetname() == net and p.GetPosition() == far), None)
+        if pad is None:
+            continue
+        todo.setdefault(net, set()).add(pad)
+        gone += [via, stub[0]]
+    for t in gone:
+        b.Delete(t)
+    if gone:
+        pcbnew.SaveBoard(path, b)
+    return todo
 
 
 def _parse_args(argv=None):
@@ -357,9 +398,11 @@ def _main(a=None):
     # Routing rules (D-125, feature routing_rules): critical nets first in stages, each stage's copper locked for the
     # next; a high via cost; keepouts over the missing reference plane for the signal nets. Without the feature the
     # job is one pass over all nets, as before.
-    rules = route_features.on(feat, "routing_rules") and not base_b_cfg
-    passes = [("all", set(nets), False)]
+    # W10 (2026-10-10): the feature runs on BASE-PWR-B too; its mandatory layer masks apply in every pass (route_pass).
+    rules = route_features.on(feat, "routing_rules")
+    passes = [("all", set(nets), False, None)]
     rr_info, rr_plan, rr_spec, rr_cls = None, [], {}, {}
+    escape_info, hot_info = {}, {}
     if rules:
         rr_cfg = feat["routing_rules"]
         rr_info = routing_rules.board_info(feat["_board_dir"], rr_cfg)
@@ -371,15 +414,91 @@ def _main(a=None):
         dflt = next((c.get("track_width", 0) for c in pro if c["name"] == "Default"), 0)
         wide = {c["name"] for c in pro if c.get("track_width", 0) > dflt}
         rr_cls = {str(k): str(v.GetNetClassName()) for k, v in b.GetNetsByName().items() if str(k)}
-        rr_plan = routing_rules.stage_plan(sorted(nets), rr_info, rr_cls, wide, planes=plane_names)
+        job_layers = [l for l in a.layers.split(",") if l]
+        dflt_cls = next((c for c in pro if c["name"] == "Default"), {})
+        d_w, d_c, d_v = (float(dflt_cls.get(k, v)) for k, v in (("track_width", 0.2), ("clearance", 0.2), ("via_diameter", 0.6)))
+        bb = b.GetBoardEdgesBoundingBox()
+        board_box = (bb.GetLeft() / 1e6, bb.GetTop() / 1e6, bb.GetRight() / 1e6, bb.GetBottom() / 1e6)
+        # Fan-out (escape) stage, W10: the SMD pads of the fine-pitch footprints (IPC-7351B: pitch <= fine_pitch_mm)
+        # are fanned out by Fastroute's own SMD fanout stage before any wide copper, bounded by a keepout (wires and
+        # vias) outside a belt round each such courtyard: belt = one clearance + a via + a track with its clearance
+        # (the Default class). Fastroute cannot be told "only escapes": every other job net is an ignored class, and
+        # the far connections of the escape nets fail inside the belt (expected; the nets are routed again in their
+        # own stage from the locked escapes).
+        pads_by_ref, pad_rows, crt = {}, [], {}
+        lid = {L: b.GetLayerID(L) for L in job_layers}
+        for fp in b.GetFootprints():
+            ref = fp.GetReference()
+            for p in fp.Pads():
+                c = p.GetPosition()
+                pads_by_ref.setdefault(ref, []).append((c.x / 1e6, c.y / 1e6))
+                pad_rows.append((ref, p.GetNetname(), p.GetAttribute() == pcbnew.PAD_ATTRIB_SMD
+                                 and any(p.IsOnLayer(lid[L]) for L in job_layers)))
+            cy = fp.GetCourtyard(pcbnew.B_CrtYd if fp.IsFlipped() else pcbnew.F_CrtYd)
+            box = cy.BBox() if cy.OutlineCount() else fp.GetBoundingBox()
+            crt[ref] = (box.GetLeft() / 1e6, box.GetTop() / 1e6, box.GetRight() / 1e6, box.GetBottom() / 1e6)
+        fine = routing_rules.fine_pitch_refs(pads_by_ref, float(rr_cfg.get("fine_pitch_mm", routing_rules.FINE_PITCH_MM)))
+        before_escape = {n for n in nets if routing_rules.stage_of(n, rr_info, rr_cls, wide) in ("pairs_clocks", "fast")}
+        esc_nets = routing_rules.escape_nets(pad_rows, fine, nets, exclude=before_escape | plane_names)
+        belt = routing_rules.belt_margin(d_w, d_c, d_v)
+        belts = [routing_rules.grow(crt[r], belt) for r in sorted(fine)]
+        escape_extra = dict(name="iot_belt", flags=["--router.fanout.enabled=true"],
+                            max_time=int(rr_cfg.get("escape_max_time_s", 120)),
+                            keepouts={L: routing_rules.outside_rects(board_box, belts) for L in job_layers})
+        escape_info = dict(fine_pitch_mm=float(rr_cfg.get("fine_pitch_mm", routing_rules.FINE_PITCH_MM)),
+                           refs={r: dict(pitch_mm=fine[r], courtyard=crt[r], belt=routing_rules.grow(crt[r], belt)) for r in sorted(fine)},
+                           belt_mm=belt, pads=sum(1 for r, n, smd in pad_rows if smd and r in fine and n in esc_nets),
+                           nets=esc_nets)
+        # Hot loops, W10: each switch node (current-paths.json "switch_node", config switch_nodes) of the wide stage
+        # gets a corridor keepout round its pads, one layer (its SMD pads' layer, a use_layer mask), via cost x
+        # hot_loop_via_factor, and the bound max_mm = hot_loop_factor x the straight pad distance (checked after).
+        hot_extra, hot_info = {}, {}
+        for net_, loop_pads in sorted(rr_info["switch"].items()):
+            if net_ not in nets:
+                continue
+            pad_xy, pad_layers = {}, set()
+            for fp in b.GetFootprints():
+                for p in fp.Pads():
+                    if p.GetNetname() == net_:
+                        pad_xy[f"{fp.GetReference()}.{p.GetNumber()}"] = (p.GetPosition().x / 1e6, p.GetPosition().y / 1e6)
+                        pad_layers.add("*" if p.GetAttribute() != pcbnew.PAD_ATTRIB_SMD else p.GetLayerName())
+            h = routing_rules.hot_loop(pad_xy, loop_pads, float(rr_cfg.get("hot_loop_factor", 1.5)), d_w + d_c)
+            if not h:
+                continue
+            one = [L for L in pad_layers if L in job_layers] if "*" not in pad_layers and len(pad_layers) == 1 else []
+            hot_info[net_] = dict(h, layer=one[0] if one else None, loop_pads=loop_pads)
+            hot_extra[net_] = dict(name="iot_hot_loop", keepouts={L: routing_rules.outside_rects(board_box, [h["box"]]) for L in job_layers},
+                                   masks={net_: one} if one else {},
+                                   via_costs=int(rr_cfg.get("via_costs", 300)) * int(rr_cfg.get("hot_loop_via_factor", 10)))
+        rr_plan = routing_rules.stage_plan(sorted(nets), rr_info, rr_cls, wide, planes=plane_names,
+                                           escape=esc_nets, hot=set(hot_info))
         if not rr_cfg.get("keepouts", True) or not rr_spec.get("adjacent"):
             rr_plan = [(n, s, False) for n, s, _ in rr_plan]
         ks = rr_cfg.get("keepout_stages", list(routing_rules.STAGES))
-        rr_plan = [(n, s, k and n in ks) for n, s, k in rr_plan]
+        rr_plan = [(n, s, k and (n in ks or n.split("_")[0] in ks)) for n, s, k in rr_plan]
         if len(rr_plan) > 1 or (rr_plan and rr_plan[0][2]):
-            passes = [(n, set(s), k) for n, s, k in rr_plan] + [("final", set(nets), False)]
+            passes = []
+            for n, s_, k in rr_plan:
+                extra = None
+                if n == "escape":
+                    extra = escape_extra
+                elif n.startswith("wide_hot"):
+                    # one corridor and mask per net: a hot stage with several nets is split per net
+                    for net_ in s_:
+                        passes.append((f"{n}:{net_}", {net_}, k, hot_extra[net_]))
+                    continue
+                passes.append((n, set(s_), k, extra))
+            passes.append(("final", set(nets), False, None))
         print("STAGES " + " ".join(f"{n}={len(s)}{'K' if k else ''}" for n, s, k in rr_plan) +
               " final=rest (K = reference-plane keepouts)", flush=True)
+        if fine:
+            print(f"ESCAPE fine-pitch {len(fine)} refs (" + ", ".join(f"{r} {fine[r]:g}mm" for r in sorted(fine)) +
+                  f") pads {escape_info['pads']} nets {len(esc_nets)} belt {belt:g} mm (IPC-7351B fine pitch <= "
+                  f"{escape_info['fine_pitch_mm']:g} mm)", flush=True)
+        else:
+            print("ESCAPE no fine-pitch footprint: no escape stage", flush=True)
+        for net_, h in sorted(hot_info.items()):
+            print(f"HOT_LOOP {net_} straight {h['straight_mm']:g} mm max {h['max_mm']:g} mm layer {h['layer'] or 'any'}", flush=True)
     min_um = int(round(b.GetDesignSettings().m_TrackMinWidth / 1000))
     edge_um = int(round(b.GetDesignSettings().m_CopperEdgeClearance / 1000))
     sources = [os.environ.get('ROUTE_FEATURES_FILE') or route_features.DEFAULTS]
@@ -447,10 +566,12 @@ def _main(a=None):
         return routing_rules.layer_keepouts(rr_spec, job_layers, outline, fills, discs,
                                             float(feat["routing_rules"].get("keepout_grid_mm", 0.1)), fast)
 
-    def route_pass(tag, stage_nets, keep, rip=frozenset()):
+    def route_pass(tag, stage_nets, keep, rip=frozenset(), extra=None):
         """One router run over stage_nets (the other nets are ignored classes; existing copper stays locked).
-        rip: nets whose copper of this job (stage copper) is unlocked too (the repair pass)."""
-        sfx = "" if tag in ("all", "final") else "-" + tag
+        rip: nets whose copper of this job (stage copper) is unlocked too (the repair pass). extra (W10): per-stage
+        keepouts {layer: rects} of both kinds with their name, layer masks, router flags, via_costs, max_time."""
+        extra = extra or {}
+        sfx = "" if tag in ("all", "final") else "-" + tag.replace(":", "_").replace("/", "")
         free = (unlock & stage_nets) | (set(rip) & stage_nets)
         for t in b.GetTracks():
             u = t.m_Uuid.AsString()
@@ -502,9 +623,15 @@ def _main(a=None):
                         "".join(f"class_class {x} {y}: {v:g} mm\n" for (x, y), v in sorted(pairs.items())))
             print(f"RULES masks {len(masks)} class_class {len(pairs) if rc_cfg.get('class_class', True) else 0} "
                   f"notes {len(notes)} (see rules.log)", flush=True)
-        elif mandatory_masks:
-            text = route_features.apply_layer_masks(text, mandatory_masks)
-            route_features.verify_layer_masks(text, mandatory_masks)
+        else:
+            pass_masks = dict(mandatory_masks)
+            for n_, ls in (extra.get("masks") or {}).items():
+                keep_ls = [l for l in ls if l in pass_masks.get(n_, ls)]
+                if keep_ls:
+                    pass_masks[n_] = keep_ls
+            if pass_masks:
+                text = route_features.apply_layer_masks(text, pass_masks)
+                route_features.verify_layer_masks(text, pass_masks)
         if route_features.on(feat, "via_off_small_pads"):
             lim = pcbnew.FromMM(float(feat["via_off_small_pads"].get("max_pad_mm", 2.0)))
             polys = []
@@ -529,6 +656,9 @@ def _main(a=None):
             ko = stage_keepouts(stage_nets)
             n_keep = sum(len(v) for v in ko.values())
             text = routing_rules.add_wire_keepouts(text, ko)
+        if extra.get("keepouts"):
+            n_keep += sum(len(v) for v in extra["keepouts"].values())
+            text = routing_rules.add_keepouts(text, extra["keepouts"], ("wire_keepout", "via_keepout"), extra.get("name", "iot_stage"))
         text, ignored_classes = dsn_skip.exclude(text, stage_nets)
         if ignored_classes:
             help_result = lean.run_stage([BIN, '--help'], stage='net-class-capability', event_file=phases,
@@ -544,7 +674,8 @@ def _main(a=None):
         if rules and not any(k.split('=', 1)[0] == 'router.scoring.via_costs' for k in a.set):
             # Rule 2: a layer change costs much more than Freerouting's default (50), so the router changes layer
             # only where the detour is long. A caller's own --set router.scoring.via_costs wins.
-            cmd.append(f"--router.scoring.via_costs={int(feat['routing_rules'].get('via_costs', 300))}")
+            cmd.append(f"--router.scoring.via_costs={int(extra.get('via_costs') or feat['routing_rules'].get('via_costs', 300))}")
+        cmd += list(extra.get("flags") or [])
         if ignored_classes:
             cmd.append('--router.autorouter.ignore_net_classes=' + ','.join(ignored_classes))
         if a.neck_um:
@@ -559,6 +690,8 @@ def _main(a=None):
             cmd.append(f"--pairs={pairs_file}")
         if a.max_time:
             left = lean.remaining(deadline) if len(passes) > 1 else a.max_time
+            if extra.get("max_time"):
+                left = min(left, extra["max_time"])
             cmd.append(f"--max-time={max(1, int(left))}")
         # Bound both phases with the same remaining job budget, and cap both pools.
         if a.optimizer != 'always':
@@ -651,6 +784,21 @@ def _main(a=None):
                     seen.add(g)
             if dup:
                 print(f"fastroute_job: {len(dup)} duplicate new segments removed (identical copper), stage {tag}", flush=True)
+        # W10 (2026-10-10): a new segment shorter than the DSN unit (1 um) is no copper. Fastroute writes its result at
+        # 0.1 um and joins a point it rounded to a point it did not with such a stub (BASE-PWR repair pass: 45 stubs of
+        # 0.3-0.5 um); KiCad's DSN export writes whole um, so the next pass offers that stub as a one-point wire, the
+        # router returns it as copper, and the replay guard cannot match the two. Deleted here, listed in the audit.
+        sub_um = []
+        for t in list(b.GetTracks()):
+            if t.GetClass() != "PCB_TRACK" or t.m_Uuid.AsString() in was or t.IsLocked():
+                continue
+            s_, e_ = t.GetStart(), t.GetEnd()
+            if abs(s_.x - e_.x) < 1000 and abs(s_.y - e_.y) < 1000:
+                sub_um.append(dict(net=t.GetNetname(), layer=t.GetLayerName(), width_nm=t.GetWidth(),
+                                   ends_nm=[[s_.x, s_.y], [e_.x, e_.y]]))
+                b.Delete(t)
+        if sub_um:
+            print(f"fastroute_job: {len(sub_um)} new segments shorter than 1 um removed (no copper), stage {tag}", flush=True)
         try:
             restored = import_pose_guard.restore(b, poses_before, pose_grid)
             dedup = {}
@@ -669,6 +817,7 @@ def _main(a=None):
         with open(os.path.join(a.outdir, f'import-replay-audit{sfx}.json'), 'w') as audit:
             json.dump(dict(removed=replays, preserved_uuids=sorted(preserved),
                            duplicate_new_segments_removed=[{k: v for k, v in r.items() if k != 'geometry'} for r in dup],
+                           sub_um_new_segments_removed=sub_um,
                            exact_preserved_source_policy=True, qualified=False,
                            independent_native_gate_required=True,
                            dsn_sha256=lean.digest(dsn), ses_sha256=lean.digest(ses)),audit,indent=2)
@@ -710,7 +859,7 @@ def _main(a=None):
                                       vias=report['stats']['vias'], seconds=round(lean.now() - s0, 1))
 
     stage_log, staged, still_open = [], set(), set()
-    for tag, stage_nets, keep in passes:
+    for tag, stage_nets, keep, extra in passes:
         if tag == "final":
             # The last pass: the nets no stage routed (plane nets) and the nets a stage left open (their stage copper
             # unlocked). A finished stage net is an ignored class here: locked copper of a routed net made Fastroute
@@ -726,12 +875,25 @@ def _main(a=None):
                 print(f"STAGE final: {len(gone)} stage items of {len(still_open)} nets left open ripped up: "
                       f"{', '.join(sorted(still_open))}", flush=True)
             if not stage_nets:
-                last = passes[-2][0]
+                last = passes[-2][0].replace(":", "_").replace("/", "")
                 for n in ("board{}.dsn", "board{}.ses", "report{}.json"):
                     shutil.copy(os.path.join(a.outdir, n.format("-" + last)), os.path.join(a.outdir, n.format("")))
                 print("STAGE final nets 0: every stage net routed; report.json is the last stage report", flush=True)
                 break
-        report, imported_vias, left_open, row = route_pass(tag, stage_nets, keep)
+        report, imported_vias, left_open, row = route_pass(tag, stage_nets, keep, extra=extra)
+        if tag == "escape":
+            # Expected: the far connections of the escape nets cannot be made inside the belts; the escapes stay
+            # (locked stage copper) and the nets are routed again in their own stage.
+            rb_ = [t for t in b.GetTracks() if t.m_Uuid.AsString() not in was and t.GetNetname() in stage_nets]
+            n_v = sum(1 for t in rb_ if t.GetClass() == "PCB_VIA")
+            inside = sum(1 for t in rb_ if t.GetClass() == "PCB_VIA" and any(
+                c[0] <= t.GetPosition().x / 1e6 <= c[2] and c[1] <= t.GetPosition().y / 1e6 <= c[3]
+                for c in (escape_info["refs"][r]["courtyard"] for r in escape_info["refs"])))
+            escape_info.update(result=dict(items=len(rb_), vias=n_v, vias_inside_courtyard=inside,
+                                           router_unrouted=report["stats"]["unrouted"], seconds=row["seconds"]))
+            print(f"ESCAPE result: {len(rb_)} items, {n_v} vias ({inside} inside a fine-pitch courtyard) for "
+                  f"{escape_info['pads']} pads; router left {report['stats']['unrouted']} connections (far ends, expected)", flush=True)
+            left_open = set()   # the escape stage leaves nothing to the final pass: its nets have their own stage
         stage_log.append(dict(row, left_open=sorted(left_open)))
         staged |= stage_nets
         still_open = (still_open - stage_nets) | left_open
@@ -780,7 +942,8 @@ def _main(a=None):
                 break
     if rules:
         lean.atomic_json(os.path.join(a.outdir, 'stage-plan.json'),
-                         dict(stages=[dict(stage=n, nets=s, keepout=k) for n, s, k in rr_plan], runs=stage_log))
+                         dict(stages=[dict(stage=n, nets=s, keepout=k) for n, s, k in rr_plan], runs=stage_log,
+                              escape=escape_info, hot_loops=hot_info))
     secs = int(lean.now() - t0)
     after = vias()
     with _native_phase('native-zone-fill-save', phases):
@@ -825,6 +988,17 @@ def _main(a=None):
                 for name, pt in smd:
                     if poly.Contains(pt, i):
                         todo.setdefault(net, set()).add(name)
+    # W10 (2026-10-10, BASE-PWR-B preflight blocker: a GND pad via 0.186 mm from a 0.8 mm BACKUP_5V track, POWER class
+    # clearance 0.2 mm): Fastroute leaves a routed track too close to a plane via the job placed before routing (the
+    # DSN gives every class clearance 0.2 mm; the router's own report lists the violation as fixable and leaves it).
+    # The via and its stub are deleted and the pad goes to the repair list: gnd_pad_vias.py places the via again with
+    # the routed copper as the obstacle and the class clearance of each neighbour. No track is moved.
+    moved = plane_via_clearance_repair(out, d, plane_names)
+    for net, pads in moved.items():
+        todo.setdefault(net, set()).update(pads)
+    if moved:
+        print("fastroute_job: plane vias re-placed after a clearance violation with routed copper: " +
+              ", ".join(f"{net} {', '.join(sorted(p))}" for net, p in sorted(moved.items())), flush=True)
     if todo:
         for net, pads in todo.items():
             tmp = os.path.join(a.outdir, "repair.kicad_pcb")
@@ -887,8 +1061,12 @@ def _main(a=None):
                 anchors.append((c.x / 1e6, c.y / 1e6, min(bb.GetWidth(), bb.GetHeight()) / 2e6))
         net_stage = {n: s for s, ns, _ in rr_plan for n in ns}
         net_stage.update({n: 'plane' for n in plane_names})
+        hot_len = {}
+        for net_, h in hot_info.items():
+            L_ = sum(t.GetLength() / 1e6 for t in rb.GetTracks() if t.GetClass() != 'PCB_VIA' and t.GetNetname() == net_)
+            hot_len[net_] = dict(max_mm=h['max_mm'], straight_mm=h['straight_mm'], length_mm=round(L_, 3))
         vr = routing_rules.via_report(vl, net_stage, rr_cls, rr_info['fast'], grounds, anchors,
-                                      float(rr_spec.get('via_allow_mm', 0.6)))
+                                      float(rr_spec.get('via_allow_mm', 0.6)), hot=hot_len)
         lean.atomic_json(os.path.join(a.outdir, 'via-report.json'), vr)
         print(routing_rules.summary_line(vr), flush=True)
     print(f"UNROUTED {signal_open} GND_OPEN {gnd_open} ERRORS {errors} ROUTER_UNROUTED {report['stats']['unrouted']} "

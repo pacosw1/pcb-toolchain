@@ -118,6 +118,36 @@ def records(text, session=False):
     return dict(out)
 
 
+def describe(geometry):
+    """One line of a geometry record for an error message (nm)."""
+    if geometry[0] == 'segment':
+        return f"segment {geometry[1]} {geometry[2]} w{geometry[3]} {geometry[4][0]}-{geometry[4][1]}"
+    if geometry[0] == 'via':
+        return f"via {geometry[1]} at {geometry[2]}"
+    return str(geometry[:2])
+
+
+def dsn_offer(dsn, geometry, unit=1000):
+    """The DSN record of an unlocked source: exact, else the same net, layer, width (and drill) with every coordinate
+    within one DSN unit (KiCad 10 ExportSpecctraDSN writes whole um; a router result imported at 0.1 um, for example
+    y = 111972.5 um of a BASE-PWR repair pass, is offered as 111972). None when the DSN holds no such record."""
+    if geometry in dsn:
+        return geometry
+    kind = geometry[0]
+    def near(p, q):
+        return abs(p[0] - q[0]) <= unit and abs(p[1] - q[1]) <= unit
+    for cand in dsn:
+        if cand[0] != kind or cand[1] != geometry[1]:
+            continue
+        if kind == 'segment' and cand[2:4] == geometry[2:4]:
+            (a, b), (c, d) = geometry[4], cand[4]
+            if (near(a, c) and near(b, d)) or (near(a, d) and near(b, c)):
+                return cand
+        elif kind == 'via' and cand[3:] == geometry[3:] and near(geometry[2], cand[2]):
+            return cand
+    return None
+
+
 def removal_plan(before, after, preserved, dsn, ses, unlocked=(), deduplicated=None):
     """Validate everything before mutation. Rows contain geometry and full policy.
 
@@ -152,14 +182,16 @@ def removal_plan(before, after, preserved, dsn, ses, unlocked=(), deduplicated=N
                 continue
             # A coincident source outside the unlocked set is not eligible: foreign replay.
             if not set(sources) <= unlocked:
-                raise ValueError('source coincidence outside preserved policy')
+                raise ValueError('source coincidence outside preserved policy: ' + describe(geometry))
             if len(sources) != 1: raise ValueError('ambiguous unlocked source geometry')
-            if geometry not in dsn or geometry not in ses:
-                raise ValueError('missing source DSN/SES provenance')
-            if any(m != 'route' for m in dsn[geometry]):
+            offered = dsn_offer(dsn, geometry)
+            if offered is None or geometry not in ses:
+                raise ValueError('missing source DSN/SES provenance: ' + describe(geometry) +
+                                 f" (DSN offered {offered is not None}, SES returned {geometry in ses})")
+            if any(m != 'route' for m in dsn[offered]):
                 raise ValueError('unlocked source was not offered as unlocked wiring')
             if len(ses[geometry]) != len(ids) + deduplicated.get(geometry, 0):
-                raise ValueError('SES replay multiplicity does not match import')
+                raise ValueError('SES replay multiplicity does not match import: ' + describe(geometry))
             source = sources[0]
             if source not in after:
                 continue   # the import removed the unlocked copper; the router's copy is the copper now
@@ -171,9 +203,13 @@ def removal_plan(before, after, preserved, dsn, ses, unlocked=(), deduplicated=N
         originals = baseline[geometry]
         if len(originals) != 1 or sum(r['geometry']==geometry for r in before.values()) != 1:
             raise ValueError('ambiguous preserved source geometry')
-        if geometry not in dsn or geometry not in ses:
-            raise ValueError('missing source DSN/SES provenance')
-        if any(m not in ('fix','protect','route') for m in dsn[geometry]):
+        # The DSN offers a preserved source at whole um too (POE-ETHERNET wide_exempt stage, 2026-10-11: source and
+        # SES y = 110801.7 um, DSN -110802): the same one-unit match as for unlocked copper.
+        offered = dsn_offer(dsn, geometry)
+        if offered is None or geometry not in ses:
+            raise ValueError('missing source DSN/SES provenance (preserved): ' + describe(geometry) +
+                             f" (DSN offered {offered is not None}, SES returned {geometry in ses})")
+        if any(m not in ('fix','protect','route') for m in dsn[offered]):
             raise ValueError('unsupported DSN source mode')
         if any(m not in ('fix','protect') for m in ses[geometry]):
             raise ValueError('unprotected SES coincidence')
@@ -181,7 +217,7 @@ def removal_plan(before, after, preserved, dsn, ses, unlocked=(), deduplicated=N
             raise ValueError('SES replay multiplicity does not match import')
         for uid in ids:
             plan.append(dict(removed_uuid=uid,retained_uuid=originals[0],geometry=geometry,
-                             dsn_modes=dsn[geometry],ses_modes=ses[geometry]))
+                             dsn_modes=dsn[offered],ses_modes=ses[geometry]))
     return plan
 
 

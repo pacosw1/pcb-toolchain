@@ -9,8 +9,14 @@
 Route feature "routing_rules" (tools/route-features.json). No pcbnew import here: tools/fastroute_job.py gives the
 board data (ring point lists in mm, KiCad coordinates, Y down), so the geometry is testable without KiCad.
 
-Stages (stage_plan): pairs_clocks -> fast -> wide -> rest, then the job's last pass, with no keepout, routes the plane
-nets (--route-planes) and the nets that an earlier stage left open (their stage copper is ripped up first).
+Stages (stage_plan): pairs_clocks -> fast -> escape -> wide_hot -> wide -> rest, then the job's last pass, with no
+keepout, routes the plane nets (--route-planes) and the nets that an earlier stage left open (their stage copper is
+ripped up first). W10 (2026-10-10): "escape" fans out the SMD pads of the fine-pitch footprints (IPC-7351B fine pitch:
+pad pitch <= 0.65 mm) before any wide copper (the BGA fan-out practice; TI switch-node guidance): Fastroute's own
+SMD fanout stage, bounded by a keepout outside a belt round each fine-pitch courtyard (one clearance, a via, a track).
+"wide_hot" routes the switch nodes (current-paths.json "switch_node": true, or the config switch_nodes) as a
+minimum-area loop: a corridor keepout round the net's pads, one layer (use_layer mask), a raised via cost, and a
+maximum length = hot_loop_factor x the straight pad distance, checked after routing (via-report.json hot_loops).
 A stage that holds both keepout nets and exempt nets is split (keepout nets first): Fastroute 0.1.7 reads DSN
 keepouts for all nets (no net or class scope for a keepout in its DSN reader), so a stage with only signal nets is
 the least invasive way to scope the keepouts.
@@ -48,9 +54,10 @@ def board_info(board_dir, cfg=None):
     pairs = []
     for p in (_load(os.path.join(bd, 'diff-pairs.json')).get('pairs', []) if bd else []):
         pairs += [p['p'], p['n']]
-    current = sorted(_load(os.path.join(bd, 'current-paths.json')).get('nets', {})) if bd else []
-    return dict(spec=spec, fast=fast, pairs=pairs, current=current,
-                clocks=list(cfg.get('clock_patterns', DEFAULT_CLOCKS)))
+    raw = _load(os.path.join(bd, 'current-paths.json')).get('nets', {}) if bd else {}
+    return dict(spec=spec, fast=fast, pairs=pairs, current=sorted(raw),
+                clocks=list(cfg.get('clock_patterns', DEFAULT_CLOCKS)),
+                switch=switch_nodes(raw, cfg.get('switch_nodes', [])))
 
 
 def exempt(net, info, planes=()):
@@ -78,16 +85,28 @@ def stage_of(net, info, net_class=None, wide_classes=()):
     return 'rest'
 
 
-def stage_plan(nets, info, net_class=None, wide_classes=(), planes=()):
+def stage_plan(nets, info, net_class=None, wide_classes=(), planes=(), escape=(), hot=()):
     """[(name, sorted nets, keepout)] in routing order. Plane nets are left to the last pass. A stage with keepout
-    nets and exempt nets is split: the keepout part first (name), then the exempt part (name + "_exempt")."""
+    nets and exempt nets is split: the keepout part first (name), then the exempt part (name + "_exempt").
+    escape: nets of fine-pitch SMD pads; those of the wide and rest groups form the "escape" stage before "wide"
+    (no reference keepout: the belt keepout of the job bounds it) and are routed again in their own stage, from the
+    locked escapes. hot: switch nodes; those of the wide group form "wide_hot" (split like any stage) before "wide"."""
     groups = {k: [] for k in STAGES}
     for n in sorted(nets):
         if n in planes:
             continue
         groups[stage_of(n, info, net_class, wide_classes)].append(n)
+    esc = sorted(n for n in escape if n in groups['wide'] or n in groups['rest'])
+    hot_nets = [n for n in groups['wide'] if n in hot]
+    groups['wide'] = [n for n in groups['wide'] if n not in hot]
     plan = []
     for k in STAGES:
+        if k == 'wide':
+            if esc:
+                plan.append(('escape', esc, False))
+            sig = [n for n in hot_nets if not exempt(n, info, planes)]
+            pwr = [n for n in hot_nets if exempt(n, info, planes)]
+            plan += [p for p in (('wide_hot', sig, True), ('wide_hot_exempt', pwr, False)) if p[1]]
         sig = [n for n in groups[k] if not exempt(n, info, planes)]
         pwr = [n for n in groups[k] if exempt(n, info, planes)]
         plan += [p for p in ((k, sig, True), (k + '_exempt', pwr, False)) if p[1]]
@@ -236,13 +255,19 @@ def layer_keepouts(spec, layers, outline, fills, discs, grid=0.1, fast=False):
 
 
 def add_wire_keepouts(text, rects_by_layer):
-    """(wire_keepout "" (polygon LAYER 0 x y ...)) per rectangle in the DSN structure section (um, Y negated)."""
+    """(wire_keepout "iot_ref_void" (polygon LAYER 0 x y ...)) per rectangle in the DSN structure (um, Y negated)."""
+    return add_keepouts(text, rects_by_layer, ('wire_keepout',), 'iot_ref_void')
+
+
+def add_keepouts(text, rects_by_layer, kinds=('wire_keepout',), name='iot_ref_void'):
+    """One DSN keepout of each kind (wire_keepout, via_keepout) per rectangle, in the structure section."""
     out = []
     for layer, rects in sorted(rects_by_layer.items()):
         for (x0, y0, x1, y1) in rects:
             pts = [(x0, y0), (x1, y0), (x1, y1), (x0, y1), (x0, y0)]
             coords = '  '.join(f"{x * 1000:.0f} {-y * 1000:.0f}" for x, y in pts)
-            out.append(f'    (wire_keepout "iot_ref_void" (polygon {layer} 0  {coords}))')
+            for kind in kinds:
+                out.append(f'    ({kind} "{name}" (polygon {layer} 0  {coords}))')
     if not out:
         return text
     i = text.find('(structure')
@@ -254,10 +279,12 @@ def add_wire_keepouts(text, rects_by_layer):
 
 # ------------------------------------------------------------------ via report (rule 2)
 
-def via_report(vias, net_stage, net_class, fast, grounds, gnd_anchors, via_allow):
+def via_report(vias, net_stage, net_class, fast, grounds, gnd_anchors, via_allow, hot=None):
     """vias: [(net, x, y, r)]; gnd_anchors: [(x, y, r)] (ground vias and through-hole ground pads).
-    Returns {by_stage: {stage: {nets, vias, max, per_net}}, by_class: {...}, fast_no_gnd: [...]}. A fast-net via (a
-    layer change) with no ground via or through-hole pad within via_allow (edge to edge) is listed in fast_no_gnd."""
+    Returns {by_stage: {stage: {nets, vias, max, per_net}}, by_class: {...}, fast_no_gnd: [...], hot_loops: {...}}.
+    A fast-net via (a layer change) with no ground via or through-hole pad within via_allow (edge to edge) is listed
+    in fast_no_gnd. hot: {net: {max_mm, straight_mm, length_mm}} of the switch nodes; each gets its via count and
+    within = length_mm <= max_mm."""
     per_net = {}
     for net, *_ in vias:
         per_net[net] = per_net.get(net, 0) + 1
@@ -284,12 +311,118 @@ def via_report(vias, net_stage, net_class, fast, grounds, gnd_anchors, via_allow
         if best > via_allow:
             missing.append(dict(net=net, x=round(x, 3), y=round(y, 3),
                                 nearest_gnd_mm=None if best == math.inf else round(best, 3)))
-    return dict(by_stage=by_stage, by_class=by_class, fast_no_gnd=missing, via_allow_mm=via_allow)
+    loops = {}
+    for net, h in sorted((hot or {}).items()):
+        loops[net] = dict(h, vias=per_net.get(net, 0), within=bool(h['length_mm'] <= h['max_mm']))
+    return dict(by_stage=by_stage, by_class=by_class, fast_no_gnd=missing, via_allow_mm=via_allow, hot_loops=loops)
 
 
 def summary_line(rep):
     s = ' '.join(f"{k}={v['vias']}/{v['nets']}" for k, v in sorted(rep['by_stage'].items()))
-    return f"VIAS_BY_STAGE {s or '-'} (vias/nets) FAST_VIA_NO_GND {len(rep['fast_no_gnd'])}"
+    line = f"VIAS_BY_STAGE {s or '-'} (vias/nets) FAST_VIA_NO_GND {len(rep['fast_no_gnd'])}"
+    loops = rep.get('hot_loops') or {}
+    if loops:
+        ok = sum(1 for h in loops.values() if h['within'])
+        line += f" HOT_LOOPS {ok}/{len(loops)} within " + ' '.join(
+            f"{n}={h['length_mm']:g}/{h['max_mm']:g}mm,{h['vias']}via" for n, h in sorted(loops.items()))
+    return line
+
+# ------------------------------------------------------------------ fan-out stage (W10, 2026-10-10)
+
+FINE_PITCH_MM = 0.65   # IPC-7351B land pattern standard: "fine pitch" components have a pitch of 0.65 mm or less
+
+
+def footprint_pitch(points):
+    """Pad pitch of one footprint: the smallest centre distance between two of its pads (mm); None with one pad."""
+    pts = sorted(points)
+    best = math.inf
+    for i, p in enumerate(pts):
+        for q in pts[i + 1:]:
+            if q[0] - p[0] >= best:
+                break
+            best = min(best, math.dist(p, q))
+    return None if best == math.inf else best
+
+
+def fine_pitch_refs(pads_by_ref, limit=FINE_PITCH_MM):
+    """{ref: pitch} of the footprints whose pad pitch is at most limit (config fine_pitch_mm, IPC-7351B 0.65 mm)."""
+    out = {}
+    for ref, pts in pads_by_ref.items():
+        p = footprint_pitch(pts)
+        if p is not None and p <= limit + 1e-6:
+            out[ref] = round(p, 4)
+    return out
+
+
+def escape_nets(pads, fine, nets, exclude=()):
+    """pads: [(ref, net, smd)]. The nets of the SMD pads of the fine-pitch footprints that the job routes, minus
+    exclude (pair, clock and fast nets are routed before the escape stage; plane nets by the last pass)."""
+    return sorted({net for ref, net, smd in pads if smd and net and ref in fine and net in nets and net not in exclude})
+
+
+def belt_margin(width, clearance, via):
+    """Belt outside a fine-pitch courtyard, from the board's Default class: one clearance to the courtyard, two
+    staggered rows of fan-out vias (at a 0.5 mm pitch two 0.6 mm vias with their clearance do not fit in one row),
+    one track beside them with its clearance."""
+    return clearance + 2 * (via + clearance) + width + clearance
+
+
+def grow(box, m):
+    return (box[0] - m, box[1] - m, box[2] + m, box[3] + m)
+
+
+def outside_rects(board_box, boxes):
+    """Rectangles (x0, y0, x1, y1) that cover board_box minus the union of boxes: the keepout outside the belts
+    (or outside a hot-loop corridor). Scan bands between the box edges; equal bands merge."""
+    x0, y0, x1, y1 = board_box
+    ys = sorted({y0, y1} | {b[1] for b in boxes} | {b[3] for b in boxes})
+    ys = [y for y in ys if y0 <= y <= y1]
+    out = []
+    for ya, yb in zip(ys, ys[1:]):
+        active = [(b[0], b[2]) for b in boxes if b[1] < yb and b[3] > ya]
+        for a, c in _subtract([(x0, x1)], active):
+            if out and out[-1][0] == a and out[-1][2] == c and abs(out[-1][3] - ya) < 1e-9:
+                out[-1] = (a, out[-1][1], c, yb)
+            else:
+                out.append((a, ya, c, yb))
+    return out
+
+
+# ------------------------------------------------------------------ hot loop (W10, 2026-10-10)
+
+def switch_nodes(current, names=()):
+    """{net: loop pads} of the switch nodes: current-paths.json entries with "switch_node": true, plus the nets
+    named in the config (switch_nodes). The loop pads are the entry's pads (first chain of a chained entry)."""
+    out = {}
+    for net, e in (current or {}).items():
+        if e.get('switch_node') or net in names:
+            out[net] = list(e.get('pads') or (e.get('chains') or [{}])[0].get('pads') or [])
+    for n in names:
+        out.setdefault(n, [])
+    return out
+
+
+def hot_loop(pad_xy, loop_pads, factor, margin_min):
+    """The minimum-area loop bound of a switch node. pad_xy: {"REF.PIN": (x, y)} of every pad of the net;
+    loop_pads: the loop ends of current-paths.json (its first and last pad). straight_mm: the straight distance
+    between the ends (the longest pad distance of the net when the ends are unknown); max_mm = factor x straight
+    (TI SLVAES4 / the hot-loop guidance: the switch node as short and direct as possible; factor hot_loop_factor);
+    box: the bounding box of the net's pads grown by (max - straight) / 2, at least margin_min (one track and its
+    clearance): the corridor outside which the stage keeps out. None without pads."""
+    pts = list(pad_xy.values())
+    if not pts:
+        return None
+    ends = [loop_pads[0], loop_pads[-1]] if len(loop_pads) >= 2 else []
+    if ends and all(p in pad_xy for p in ends):
+        d = math.dist(pad_xy[ends[0]], pad_xy[ends[1]])
+    else:
+        d = max(math.dist(p, q) for p in pts for q in pts)
+    L = factor * d
+    m = max((L - d) / 2, margin_min)
+    xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+    return dict(straight_mm=round(d, 3), max_mm=round(L, 3), margin_mm=round(m, 3), ends=ends,
+                box=(min(xs) - m, min(ys) - m, max(xs) + m, max(ys) + m))
+
 
 # ------------------------------------------------------------------ repair pass (W9, 2026-10-10)
 
