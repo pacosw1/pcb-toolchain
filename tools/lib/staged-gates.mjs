@@ -8,6 +8,13 @@ import {gateInputs} from './gate-inputs.mjs';
 // an input of the board's gate in the staged snapshot, or an input recorded in the board's committed gate-metrics.json
 // (headInputs: board -> Set of provenance.inputs paths; catches deleted inputs). A board without committed metrics
 // falls back to the conservative rule: any tool or shared library asset (D-129).
+// The provenance.inputs paths of committed gate metrics, or null when they are
+// unreadable, missing, empty or malformed. Null keeps the conservative rule.
+export function recordedInputs(text) {
+  let inputs;try {inputs=JSON.parse(text)?.provenance?.inputs;} catch {return null;}
+  if(!Array.isArray(inputs) || !inputs.length || !inputs.every(i=>typeof i?.path==='string' && i.path)) return null;
+  return new Set(inputs.map(i=>i.path));
+}
 export function stagedGateMap(root, changed, oldConfigs = new Map(), headInputs = new Map()) {
   const dir=join(root,'hardware-design/boards');
   const names=new Set([...oldConfigs.keys(),...readdirSync(dir).filter(b=>existsSync(join(dir,b,'gate.json')))]);
@@ -26,7 +33,7 @@ export function stagedGateMap(root, changed, oldConfigs = new Map(), headInputs 
     const hits=changed.filter(p=>p===`hardware-design/boards/${board}/gate.json` ||
       (p.startsWith(`hardware-design/boards/${board}/`) && p.endsWith('.json')) ||
       projects.some(prefix=>p.startsWith(prefix)) || deps.includes(p) ||
-      (recorded ? recorded.has(p) : conservative(p)));
+      (recorded?.size ? recorded.has(p) : conservative(p)));
     for(const p of hits) reasons.set(p,[...(reasons.get(p) ?? []),board]);
     return hits.length>0;
   }).sort();
@@ -50,7 +57,8 @@ export function checkStaged(root) {
     for(const p of paths) oldConfigs.set(p.split('/')[2],JSON.parse(git(['show',`HEAD:${p}`])));
     const headInputs=new Map();
     for(const p of git(['ls-tree','-r','--name-only','HEAD','hardware-design/boards']).split('\n').filter(p=>/\/gate-metrics.json$/.test(p))) {
-      try {headInputs.set(p.split('/')[2],new Set((JSON.parse(git(['show',`HEAD:${p}`])).provenance?.inputs ?? []).map(i=>i.path)));} catch { /* unreadable metrics: conservative rule */ }
+      let text=null;try {text=git(['show',`HEAD:${p}`]);} catch { /* unreadable metrics: conservative rule */ }
+      const recorded=recordedInputs(text);if(recorded) headInputs.set(p.split('/')[2],recorded);
     }
     const {boards,reasons}=stagedGateMap(snapshot,changed,oldConfigs,headInputs);
     const because=[...reasons].map(([p,b])=>`${p} -> ${b.length} board${b.length===1?'':'s'}`);

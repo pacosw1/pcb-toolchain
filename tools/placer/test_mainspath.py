@@ -166,6 +166,21 @@ class BoardGapTest(unittest.TestCase):
         self.assertEqual(g('MAINS_K1', 'MAINS_K1'), 0.2)   # same class: the class clearance only
         self.assertEqual(g('MAINS_K1', 'HOLE:H2'), 9.65)   # rule "Mains to screw hole"
 
+    def test_compound_class_takes_the_strictest_member_gap(self):
+        # Audit #826: KiCad multi-netclass 'FIELD,POWER' is in the FIELD domain.
+        rules = {'domains': [('FIELD', 4.0, 0.0)], 'holes': [], 'pairs': []}
+        g = mr.board_gap(rules, {'FIELD': 0.2, 'POWER': 0.2, 'HOST': 0.2}, 0.5)
+        self.assertEqual(g('FIELD', 'HOST'), 4.0)
+        self.assertEqual(g('FIELD,POWER', 'HOST'), 4.0)
+        self.assertEqual(g('HOST', 'FIELD,POWER'), 4.0)
+        self.assertEqual(g('FIELD,POWER', 'FIELD'), 0.2)
+        self.assertEqual(g('FIELD,POWER', 'FIELD,POWER'), 0.2)
+
+    def test_domain_nets_include_compound_classes(self):
+        pr = {'route_rules': {'dru': {'domains': [('FIELD', 4.0, 0.0)]}},
+              'cu_nets': {'1': ('/A', 'FIELD,POWER'), '2': ('/B', 'HOST'), '3': ('/C', 'FIELD')}}
+        self.assertEqual(mr.domain_nets(pr), ['/A', '/C'])
+
 
 
 MAINS = ['/MAINS_COM1', '/MAINS_COM2', '/MAINS_COM3', '/MAINS_COM4', '/MAINS_NO1', '/MAINS_NO2', '/MAINS_NO3',

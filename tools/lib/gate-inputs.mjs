@@ -19,6 +19,28 @@ export function walkFiles(dir, accept = () => true) {
 // committed verdict, so they are not inputs. A named file that is absent is
 // still recorded (null hash) so a missing checker never looks unchanged.
 const STDLIB_LIKE=/^(?:sys|os|re|json|math|time|datetime|pathlib|collections|itertools|functools|typing|dataclasses|subprocess|hashlib|shutil|tempfile|csv|io|struct|copy|heapq|bisect|random|logging|enum|textwrap|contextlib|glob|traceback|statistics|fractions|decimal|operator|string|unicodedata|array|numbers|abc|warnings|atexit|fnmatch|signal|threading|importlib|xml|concurrent|argparse|pcbnew|numpy|wx)$/;
+// JS module dependencies: static import/export-from, side-effect imports and
+// dynamic import(), with '...', "..." or `...` (no ${} interpolation). Whole-line
+// and block comments are ignored. A dynamic import or tool() call whose argument
+// is not such a literal cannot be resolved, so it throws (fails closed).
+const QUOTED=String.raw`(?:'([^'\n]*)'|"([^"\n]*)"|\x60([^\x60$]*)\x60)`;
+const stripComments=text=>text.replace(/\/\*[\s\S]*?\*\//g,'').replace(/^\s*\/\/.*$/gm,'');
+const literal=m=>m[1] ?? m[2] ?? m[3];
+function literalCalls(file,text,name) {
+  const code=stripComments(text);const found=[];
+  for(const m of code.matchAll(new RegExp(String.raw`(?<![\w$.])${name}\s*\(`,'g'))) {
+    const arg=code.slice(m.index+m[0].length).match(new RegExp(String.raw`^\s*${QUOTED}\s*\)`));
+    if(!arg) throw new Error(`gate tool ${file} calls ${name}() with a non-literal argument; cannot resolve its dependency`);
+    found.push(literal(arg));
+  }
+  return found;
+}
+export function jsImports(file,text) {
+  const code=stripComments(text);
+  const specs=[...code.matchAll(new RegExp(String.raw`(?<![\w$.])(?:import|export)\b[^;'"\x60()]*?\bfrom\s*${QUOTED}`,'g'))].map(literal);
+  for(const m of code.matchAll(new RegExp(String.raw`(?<![\w$.])import\s*${QUOTED}`,'g'))) specs.push(literal(m));
+  return [...specs,...literalCalls(file,text,'import')];
+}
 export function gateTools(root) {
   const tools=join(root,'tools');
   const inside=p=>{const rel=relative(tools,p);return rel && !rel.startsWith('..') && !rel.includes('\\') && !/(^|\/)(test_[^/]*\.py|[^/]*\.test\.mjs)$/.test(rel);};
@@ -30,10 +52,17 @@ export function gateTools(root) {
     if(!existsSync(file)) continue;
     const text=readFileSync(file,'utf8');
     if(file.endsWith('.mjs')) {
-      for(const m of text.matchAll(/(?:from|import)\s*'(\.\.?\/[^']+)'/g)) queue.push(resolve(dirname(file),m[1]));
-      for(const m of text.matchAll(/\btool\('([^']+)'\)/g)) queue.push(join(tools,m[1]));
+      for(const spec of jsImports(file,text)) {
+        if(spec.startsWith('node:')) continue;
+        const target=resolve(dirname(file),spec);
+        // Fail closed: a dependency the collector cannot hash must stop the gate, not vanish.
+        if(!/^\.\.?\//.test(spec) || relative(tools,target).startsWith('..')) throw new Error(`gate tool ${relative(root,file)} imports unsupported module ${spec}; record it as a gate input`);
+        queue.push(target);
+      }
+      for(const name of literalCalls(file,text,'tool')) queue.push(join(tools,name));
     } else if(file.endsWith('.py')) {
       for(const line of text.split('\n')) {
+        if(/^\s*from\s+\./.test(line)) throw new Error(`gate tool ${relative(root,file)} uses a relative import; record it as a gate input`);
         const m=line.match(/^\s*(?:from\s+([\w.]+)\s+import\b|import\s+([\w.,\s]+?)\s*(?:#.*)?$)/);
         if(!m) continue;
         for(const name of (m[1] ? [m[1]] : m[2].split(',')).map(n=>n.trim().split(/\s+as\s+/)[0].split('.')[0])) {
@@ -42,7 +71,7 @@ export function gateTools(root) {
         }
       }
       // Modules loaded by file name (importlib.util.spec_from_file_location(..., 'NAME.py')).
-      for(const m of text.matchAll(/'(\w+\.py)'/g)) {const candidate=join(tools,m[1]);if(existsSync(candidate)) queue.push(candidate);}
+      for(const m of text.matchAll(/(['"])(\w+\.py)\1/g)) {const candidate=join(tools,m[2]);if(existsSync(candidate)) queue.push(candidate);}
     }
   }
   return [...files].sort();

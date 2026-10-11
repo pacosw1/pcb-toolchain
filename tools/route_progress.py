@@ -70,7 +70,13 @@ def last(path):
         rows = [l for l in open(path).read().splitlines() if l.strip()]
     except OSError:
         return None
-    return json.loads(rows[-1]) if rows else None
+    for i, r in enumerate(reversed(rows)):
+        try:
+            return json.loads(r)
+        except ValueError:
+            if i:          # only the last line may be an append in progress; an earlier bad line is corruption
+                raise
+    return None
 
 
 def line(row):

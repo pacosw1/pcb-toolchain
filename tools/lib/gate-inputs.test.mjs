@@ -137,3 +137,22 @@ test('the tool collector follows a new import added to a gate script',t=>{
  assert.equal(fingerprint(r,gateInputs(r,'X').files).input_sha256,before);
  put('tools/new_rule.py','changed rule');assert.notEqual(fingerprint(r,gateInputs(r,'X').files).input_sha256,before);
 });
+// Audit #802: every supported module syntax is followed; unresolvable dependencies fail closed.
+test('double-quoted, backtick, re-export and dynamic imports are gate inputs',t=>{
+ const r=mkdtempSync(join(tmpdir(),'gate-tools-quotes-'));t.after(()=>rmSync(r,{recursive:true,force:true}));
+ const put=(p,v)=>{mkdirSync(join(r,p,'..'),{recursive:true});writeFileSync(join(r,p),v);};
+ put('hardware-design/boards/X/gate.json',JSON.stringify({project:'cad/X'}));
+ put('tools/gate.mjs','import {verdict} from "./helper.mjs";\nimport `./side.mjs`;\nexport {x} from "./reexport.mjs";\nconst m=await import("./dynamic.mjs");\n// tool(name) in a comment is ignored\nconst a=[tool("rule.py")];\n');
+ for(const f of ['helper.mjs','side.mjs','reexport.mjs','dynamic.mjs']) put(`tools/${f}`,'');
+ put('tools/helper.mjs','export const verdict=true;');put('tools/rule.py','');
+ const rel=gateTools(r).map(p=>p.slice(r.length+1));
+ for(const f of ['helper.mjs','side.mjs','reexport.mjs','dynamic.mjs','rule.py']) assert.ok(rel.includes(`tools/${f}`),f);
+ const fp=()=>fingerprint(r,gateInputs(r,'X').files).input_sha256;
+ const before=fp();put('tools/helper.mjs','export const verdict=false;');assert.notEqual(fp(),before);
+ for(const bad of ['const m=await import(name);','import x from "../../outside.mjs";','import x from "/abs/x.mjs";','import x from "pkg";','import(`./x${n}.mjs`);','const a=tool(name);']) {
+  put('tools/gate.mjs',bad);assert.throws(()=>gateTools(r),/gate tool/,bad);
+ }
+ put('tools/gate.mjs',"const a=[tool('dq.py')];");put('tools/dq.py','import os\nspec_from_file_location("loaded", "loaded.py")\n');put('tools/loaded.py','');
+ assert.ok(gateTools(r).map(p=>p.slice(r.length+1)).includes('tools/loaded.py'));
+ put('tools/dq.py','from .sibling import f\n');assert.throws(()=>gateTools(r),/relative import/);
+});

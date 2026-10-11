@@ -8,10 +8,14 @@ Record: {"t": ISO time, "elapsed_s": seconds since the job start (null when unkn
 Writers (append): tools/lean_workflow.run_stage (one record per stage end, next to stages.jsonl),
 tools/fastroute_job.py (the configuration and feature flags at start, each routing_rules stage decision: keepout,
 lock, via cost, escape belt, hot loop), and sync() at job end. sync(OUTDIR) derives the records that no live writer
-owns from the files the job already writes, without duplicates: progress.jsonl (stage start/end), run.log (the
-router's pass lines: pass, open, violations, rip-ups; checkpoints; stop; skipped items; diagnosis), report.json
-(the router's end-of-run reason per failed connection), open-triage.json (the triage), outcome.json and stall.json
-(the STUCK/complete exit). So `python3 tools/run_record.py OUTDIR` (or tools/route_status.py --log OUTDIR) prints
+owns from the files the job already writes, without duplicates: progress.jsonl (stage start/end), every routing
+stage's run{sfx}.log and optimize{sfx}.log (the router's pass lines: pass, open, violations, rip-ups; checkpoints;
+stop; skipped items; diagnosis), report{sfx}.json (the router's end-of-run reason per failed connection) and
+stall{sfx}.json, open-triage.json (the triage), outcome.json (the STUCK/complete exit). A routing stage is 'route' plus
+the suffix fastroute_job.py gives its files ('' for the final stage, '-fast' for tag fast); each stage's router-relative
+log clock is offset by that stage's own 'route{sfx} start' row (optimize{sfx}.log: its 'route{sfx} end' row, where
+the optimizer starts), and its records carry the stage name and the attempt (count of its start rows).
+JSONL files are read with read_jsonl: an incomplete last line (a write in progress) is skipped, the rows before it kept. So `python3 tools/run_record.py OUTDIR` (or tools/route_status.py --log OUTDIR) prints
 the complete action log in order, with the why of each action, for a running job or a finished one.
 """
 import datetime as dt
@@ -82,18 +86,43 @@ def append(outdir, stage, action, inputs=None, evidence=None, result=None, why='
     return rec
 
 
-def read(outdir):
+def read_jsonl(p):
+    """The rows of a JSONL file; [] when it does not exist. An unparsable LAST line is an append in progress and is
+    skipped (the rows before it are kept); an unparsable line before the last one is corruption: ValueError."""
     try:
-        return [json.loads(l) for l in open(path(outdir)) if l.strip()]
+        lines = [l for l in open(p, errors='replace').read().split('\n') if l.strip()]
     except OSError:
         return []
+    out = []
+    for i, l in enumerate(lines):
+        try:
+            out.append(json.loads(l))
+        except ValueError as e:
+            if i == len(lines) - 1:
+                break
+            raise ValueError(f'{p}: line {i + 1} is not JSON: {e}') from e
+    return out
+
+
+def read(outdir):
+    return read_jsonl(path(outdir))
 
 
 # ------------------------------------------------------------------ the router's log and report
 
-def parse_log_line(line, offset=0.0):
+def parse_log_line(line, offset=0.0, stage='route', inputs=None):
     """One record for a Fastroute log line that is an action (pass, checkpoint, stop, stage end, skipped items,
-    diagnosis, fanout), else None. offset: job elapsed_s at the router start (the log clock is router-relative)."""
+    diagnosis, fanout), else None. offset: job elapsed_s at the router start (the log clock is router-relative).
+    stage: the routing stage that wrote the log; inputs: its identity (attempt, log file)."""
+    r = _parse_log_line(line, offset)
+    if r is not None:
+        r['stage'] = stage
+        if inputs:
+            r['inputs'] = dict(inputs)
+    return r
+
+
+def _parse_log_line(line, offset):
     m = PASS.match(line)
     if m:
         t, n, s, score, open_, viol, routed, failed, ripped = m.groups()
@@ -137,11 +166,11 @@ def parse_log_line(line, offset=0.0):
     return None
 
 
-def parse_log(text, offset=0.0):
-    return [r for r in (parse_log_line(l, offset) for l in text.splitlines()) if r]
+def parse_log(text, offset=0.0, stage='route', inputs=None):
+    return [r for r in (parse_log_line(l, offset, stage, inputs) for l in text.splitlines()) if r]
 
 
-def reasons(report, elapsed_s=None):
+def reasons(report, elapsed_s=None, stage='route', evidence='report.json', attempt=None):
     """One record per failed connection of a Fastroute report.json: the router's own reason (diagnosis class and the
     text of the connection routed alone)."""
     out = []
@@ -155,9 +184,11 @@ def reasons(report, elapsed_s=None):
         cls = d.get('class', 'unknown')
         why = {'blocked': 'no path exists on the loaded board (pins, keepouts or fixed wiring)',
                'congestion': 'routable alone; other copper took the space',
-               'ignored': 'its net class is ignored'}.get(cls, 'the router gave no class')
-        out.append(record('route', 'open', inputs={'net': u.get('net'), **ends, 'length_mm': u.get('length_mm')},
-                          evidence='report.json unrouted[]',
+               'ignored': 'its net class is ignored'}.get(cls, 'the router gave no class; the cause is unknown')
+        inp = {'net': u.get('net'), **ends, 'length_mm': u.get('length_mm')}
+        if attempt is not None:
+            inp['attempt'] = attempt
+        out.append(record(stage, 'open', inputs=inp, evidence=f'{evidence} unrouted[]',
                           result={'class': cls, 'router_text': alone.get('details', ''),
                                   'passes_failed': [c.get('pass') for c in d.get('in_context') or []]},
                           elapsed_s=elapsed_s, why=f'{cls}: {why}'))
@@ -174,10 +205,56 @@ def _load(outdir, name):
 
 
 def _rows(outdir, name):
+    return read_jsonl(os.path.join(outdir, name))
+
+
+STAGE_FILE = re.compile(r'^(?:run|optimize|report|stall)(-[^/]+)?\.(?:log|json)$')
+
+
+def _sfx(name):
+    m = STAGE_FILE.match(name)
+    return m.group(1) or '' if m else None
+
+
+def route_stages(outdir, progress):
+    """Every routing stage of the job with its own clock and files, in start order:
+    [{'stage': 'route'+sfx, 'sfx', 'attempt': number of its start rows, 'start_s', 'end_s': elapsed_s of its LAST
+    start/end rows (its files hold the last attempt: fastroute_job.py rewrites them), 'files': {kind: name}}].
+    Stages come from the progress start rows and from the stage files on disk (a stage whose rows are missing still
+    has its files read, with an unknown clock)."""
+    st = {}
+    for p in progress:
+        name = p.get('stage') or ''
+        m = re.match(r'^route(\S*) (start|end)$', name)
+        if not m:
+            continue
+        s = st.setdefault(m.group(1), dict(attempt=0, start_s=None, end_s=None))
+        if m.group(2) == 'start':
+            s.update(attempt=s['attempt'] + 1, start_s=p.get('elapsed_s'), end_s=None)
+        else:
+            s['end_s'] = p.get('elapsed_s')
     try:
-        return [json.loads(l) for l in open(os.path.join(outdir, name)) if l.strip()]
-    except (OSError, ValueError):
-        return []
+        names = sorted(os.listdir(outdir))
+    except OSError:
+        names = []
+    for n in names:
+        sfx = _sfx(n)
+        if sfx is not None and not n.startswith('run.json'):
+            st.setdefault(sfx, dict(attempt=None, start_s=None, end_s=None))
+    out = []
+    for sfx, s in st.items():
+        files = {k: f'{k}{sfx}.{ext}' for k, ext in (('run', 'log'), ('optimize', 'log'), ('report', 'json'), ('stall', 'json'))
+                 if os.path.isfile(os.path.join(outdir, f'{k}{sfx}.{ext}'))}
+        out.append(dict(stage='route' + sfx, sfx=sfx, files=files, **s))
+    out.sort(key=lambda s: (s['start_s'] is None, s['start_s'] or 0.0, s['sfx']))
+    return out
+
+
+def _text(outdir, name):
+    try:
+        return open(os.path.join(outdir, name), errors='replace').read()
+    except OSError:
+        return ''
 
 
 def _key(r):
@@ -185,6 +262,9 @@ def _key(r):
     inp = r.get('inputs') if isinstance(r.get('inputs'), dict) else {}
     return (r.get('stage'), r.get('action'), res.get('pass'), inp.get('net'), inp.get('from'), inp.get('to'),
             r.get('evidence') if r.get('action') in ('pass', 'checkpoint', 'stop', 'router end', 'skip', 'diagnosis', 'fanout') else None)
+
+
+TRIAGE_WHY = {'ENCLOSED': 'no legal path on the clearance grid', 'ROUTER_MISS': 'a path exists; the router missed it'}
 
 
 def derive(outdir):
@@ -198,25 +278,41 @@ def derive(outdir):
                           result={'features_on': on, 'command': eff.get('command')}, elapsed_s=0.0,
                           why='the inputs and feature flags bound at the job start'))
     progress = _rows(outdir, 'progress.jsonl')
-    route_t0 = None
     for p in progress:
         st = p.get('stage', '')
         if p.get('pass') is not None:
             continue
-        if st.startswith('route') and st.endswith(' start') and route_t0 is None:
-            route_t0 = p.get('elapsed_s') or 0.0
         out.append(record(st.split(' ')[0], st, evidence='progress.jsonl', elapsed_s=p.get('elapsed_s'), t=p.get('t'),
                           result={k: p.get(k) for k in ('open', 'best_open', 'vias', 'eta_s') if p.get(k) is not None} or None,
                           why='stage boundary of the job'))
-    try:
-        log = open(os.path.join(outdir, 'run.log'), errors='replace').read()
-    except OSError:
-        log = ''
-    out += parse_log(log, route_t0 or 0.0)
-    report = _load(outdir, 'report.json')
-    if report:
-        end = next((p.get('elapsed_s') for p in progress if p.get('stage', '').startswith('route') and p.get('stage', '').endswith(' end')), None)
-        out += reasons(report, end)
+    for s in route_stages(outdir, progress):
+        stage, f = s['stage'], s['files']
+        ident = {'attempt': s['attempt']}
+        passes = []
+        if 'run' in f:
+            # an unknown clock (no start row) gives router-relative times; the record says so in its inputs
+            passes = parse_log(_text(outdir, f['run']), s['start_s'] or 0.0, stage,
+                               dict(ident, log=f['run'], clock='stage start' if s['start_s'] is not None else 'unknown'))
+            out += passes
+        if not any(r['action'] == 'pass' for r in passes):
+            # no pass in the log (missing or cut): the live watcher's pass rows of this stage are the evidence
+            for p in progress:
+                if p.get('stage') == stage and p.get('pass') is not None:
+                    out.append(record(stage, 'pass', inputs=dict(ident, log='progress.jsonl'), evidence='progress.jsonl',
+                                      result={'pass': p.get('pass'), 'open': p.get('open')}, elapsed_s=p.get('elapsed_s'),
+                                      t=p.get('t'), why=f"autorouter pass {p.get('pass')}: {p.get('open')} open (live watcher)"))
+        if 'optimize' in f:
+            out += parse_log(_text(outdir, f['optimize']), s['end_s'] or 0.0, 'optimize' + s['sfx'],
+                             dict(ident, log=f['optimize'], clock='route end' if s['end_s'] is not None else 'unknown'))
+        report = _load(outdir, f['report']) if 'report' in f else None
+        if report:
+            out += reasons(report, s['end_s'], stage, f['report'], s['attempt'])
+        stall = _load(outdir, f['stall']) if 'stall' in f else None
+        if stall and stall.get('stopped'):
+            t0 = _t0(outdir)
+            out.append(record(stage, 'stall stop', inputs=ident, evidence=f['stall'], result=stall,
+                              elapsed_s=round(stall['seconds'] - t0, 1) if stall.get('seconds') and t0 else s['end_s'],
+                              why=f"{stall.get('stall_passes')} passes without a lower open count: fail fast"))
     for s in _rows(outdir, 'stages.jsonl'):
         out.append(record(s.get('stage'), 'stage ' + str(s.get('status')), inputs={'command': s.get('command')}, evidence='stages.jsonl',
                           result={k: s.get(k) for k in ('returncode', 'wall_s', 'cause') if k in s},
@@ -226,16 +322,13 @@ def derive(outdir):
         t_end = next((p.get('elapsed_s') for p in progress if p.get('stage') == 'triage end'), None)
         out.append(record('triage', 'triage', evidence='open-triage.json', elapsed_s=t_end,
                           result={k: tri.get(k) for k in ('open', 'enclosed', 'router_miss', 'unknown')},
-                          why='each open signal connection classed as ENCLOSED (no legal path) or ROUTER_MISS'))
+                          why='each open signal connection classed as ENCLOSED (no legal path), ROUTER_MISS (a path exists) '
+                              'or UNKNOWN (the cause is unknown)'))
         for c in tri.get('connections') or []:
             out.append(record('triage', 'open', inputs={'net': c.get('net'), 'from': c.get('a'), 'to': c.get('b')}, evidence='open-triage.json',
                               result={'class': c.get('class'), 'blockers': c.get('blockers')}, elapsed_s=t_end,
-                              why='no legal path on the clearance grid' if c.get('class') == 'ENCLOSED' else 'a path exists; the router missed it'))
-    stall = _load(outdir, 'stall.json')
-    if stall and stall.get('stopped'):
-        out.append(record('route', 'stall stop', evidence='stall.json', result=stall,
-                          elapsed_s=round(stall['seconds'] - (_t0(outdir) or stall['seconds']), 1) if stall.get('seconds') else None,
-                          why=f"{stall.get('stall_passes')} passes without a lower open count: fail fast"))
+                              why=TRIAGE_WHY.get(c.get('class'), f"{c.get('class') or 'no class'}: the cause is unknown; "
+                                                 'the triage did not establish whether a legal path exists')))
     outcome = _load(outdir, 'outcome.json')
     if outcome:
         last = progress[-1].get('elapsed_s') if progress else None

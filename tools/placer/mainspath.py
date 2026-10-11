@@ -284,24 +284,30 @@ def board_gap(dru_rules, classes, edge):
     'HOLE:<ref>' (NPTH hole, the dru hole rule for that ref, else the class clearance)."""
     import fnmatch
 
+    def members(c):
+        return [m.strip() for m in c.split(',') if m.strip()] or [c]
+
     def gap(a, b):
         if b == 'EDGE':
             return edge
         if b == 'KEEPOUT':
             return 0.0
-        base = max(classes.get(a, 0.0), classes.get(b, 0.0) if not b.startswith('HOLE:') else 0.0)
+        ma, mb = members(a), ([] if b.startswith('HOLE:') else members(b))
+        base = max([classes.get(m, 0.0) for m in ma] + [classes.get(m, 0.0) for m in mb])
         if b.startswith('HOLE:'):
             ref = b[5:]
-            return max([base] + [g for pat, refs, g in dru_rules['holes'] if fnmatch.fnmatch(a, pat) and ref in refs])
+            return max([base] + [g for pat, refs, g in dru_rules['holes']
+                                 if any(fnmatch.fnmatch(m, pat) for m in ma) and ref in refs])
         for pat, other, between in dru_rules['domains']:
-            am, bm = fnmatch.fnmatch(a, pat), fnmatch.fnmatch(b, pat)
-            if am != bm:
+            # A compound class ('A,B', KiCad multi-netclass) is in a domain when any member is (audit #826).
+            ia, ib = {m for m in ma if fnmatch.fnmatch(m, pat)}, {m for m in mb if fnmatch.fnmatch(m, pat)}
+            if bool(ia) != bool(ib):
                 base = max(base, other)
-            elif am and bm and a != b:
+            elif ia and ib and ia != ib:
                 base = max(base, between)
         for ap, bp, g in dru_rules['pairs']:
-            if (any(fnmatch.fnmatch(a, p) for p in ap) and any(fnmatch.fnmatch(b, p) for p in bp)) or \
-               (any(fnmatch.fnmatch(b, p) for p in ap) and any(fnmatch.fnmatch(a, p) for p in bp)):
+            if (any(fnmatch.fnmatch(m, p) for m in ma for p in ap) and any(fnmatch.fnmatch(m, p) for m in mb for p in bp)) or \
+               (any(fnmatch.fnmatch(m, p) for m in mb for p in ap) and any(fnmatch.fnmatch(m, p) for m in ma for p in bp)):
                 base = max(base, g)
         return base
     return gap
@@ -364,4 +370,6 @@ def domain_nets(pr):
     """The nets of the .kicad_dru domain classes (for RELAY-4: MAINS_K*, the tier-1 mains nets), sorted."""
     import fnmatch
     pats = [d[0] for d in pr['route_rules']['dru']['domains']]
-    return sorted(n for n, c in pr['cu_nets'].values() if any(fnmatch.fnmatchcase(c, q) for q in pats))
+    # A compound class ('A,B') belongs to the domain when any member does (audit #826).
+    return sorted(n for n, c in pr['cu_nets'].values()
+                  if any(fnmatch.fnmatchcase(m.strip(), q) for m in c.split(',') for q in pats))

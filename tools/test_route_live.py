@@ -4,6 +4,7 @@ import os
 import shutil
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -242,6 +243,83 @@ class Bind(unittest.TestCase):
         s = rl.trend_svg([(10, 50), (20, 30), (30, 10)])
         self.assertIn('polyline', s)
         self.assertIn('>10<', s)
+
+
+class Audit829(unittest.TestCase):
+    """CIP #829 audit (comment 2881): STALE is not terminal; a quiet interval over 60 s then renewed progress keeps one
+    stream live; only outcome.json or the exit record finishes; an incomplete trailing run.jsonl append is tolerated."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.prog = os.path.join(self.d, 'progress.jsonl')
+
+    def tearDown(self):
+        shutil.rmtree(self.d)
+
+    def row(self, e, stage, p=None, o=None):
+        with open(self.prog, 'a') as f:
+            f.write(json.dumps({'t': 'x', 't0': 0, 'elapsed_s': e, 'stage': stage, 'pass': p, 'open': o, 'vias': None,
+                                'best_open': o, 'eta_s': None}) + '\n')
+
+    def age(self, s):
+        t = time.time() - s
+        os.utime(self.prog, (t, t))
+
+    def test_quiet_over_60s_then_renewed_progress(self):
+        self.row(0.0, 'route start')
+        self.row(9.0, 'route', 1, 30)
+        st = rl.Stream('x/q', self.d)
+        self.assertEqual(st.event()['status'], 'ACTIVE')
+        self.age(61)
+        ev = st.event()
+        self.assertEqual(ev['status'], 'STALE')
+        self.assertFalse(ev['finished'])
+        self.assertNotIn('FINISHED', ev['banner'])
+        self.assertIn('still listening', ev['banner'])
+        self.assertEqual([i['id'] for i in rl.summary(_One(self.d))['recent']], ['x/q'])
+        self.row(80.0, 'route', 2, 20)                                   # progress resumes after the quiet interval
+        ev = st.event()
+        self.assertEqual((ev['status'], ev['finished'], ev['live'], ev['banner']), ('ACTIVE', False, True, 'LIVE'))
+        self.assertEqual(ev['passes'], [[2, 20]])
+        with open(os.path.join(self.d, 'outcome.json'), 'w') as f:
+            json.dump({'status': 'stuck'}, f)
+        ev = st.event()
+        self.assertTrue(ev['finished'])
+        self.assertEqual(ev['banner'], 'FINISHED: STUCK 20 open')
+
+    def test_no_progress_is_not_finished(self):
+        s = rl.status(self.d)
+        self.assertEqual((s['state'], s['finished']), ('NO PROGRESS', False))
+        self.assertNotIn('FINISHED', rl.banner_text(s))
+
+    def test_exit_record_finishes(self):
+        self.row(0.0, 'route start')
+        self.age(120)
+        with open(os.path.join(self.d, 'run.jsonl'), 'w') as f:
+            f.write(json.dumps(rl.run_record.record('job', 'exit FAILED', result={'returncode': 1}, why='x')) + '\n')
+        ev = rl.Stream('x/q', self.d).event()
+        self.assertTrue(ev['finished'])
+        self.assertEqual(ev['banner'], 'FINISHED: FAILED')
+
+    def test_incomplete_trailing_run_jsonl_append(self):
+        self.row(0.0, 'route start')
+        with open(os.path.join(self.d, 'run.jsonl'), 'w') as f:
+            f.write(json.dumps(rl.run_record.record('job', 'configure', why='bound', elapsed_s=0.0)) + '\n{"t": "x", "act')
+        ev = rl.Stream('x/q', self.d).event()                           # raised JSONDecodeError before the fix
+        self.assertIn('configure', [r['action'] for r in ev['log_tail']])
+        with open(self.prog, 'a') as f:
+            f.write('{"t": "x", "elap')
+        self.assertEqual(rl.status(self.d)['stage'], 'route start')
+        import route_progress
+        self.assertEqual(route_progress.last(self.prog)['stage'], 'route start')
+
+
+class _One:
+    def __init__(self, d):
+        self.d = d
+
+    def ids(self):
+        return {'x/q': self.d}
 
 
 if __name__ == '__main__':

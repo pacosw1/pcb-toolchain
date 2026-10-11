@@ -1306,10 +1306,27 @@ def main():
             if a.max_time:
                 budget_env['IOT_LEAN_DEADLINE'] = lean.encode_deadline(lean.deadline_after(a.max_time))
             with resources.environment(budget_env):
+                ended = {}
                 try:
-                    return _main(a)
+                    ended['rc'] = _main(a)
+                    return ended['rc']
+                except SystemExit as stop:
+                    ended['rc'] = stop.code
+                    raise
                 finally:   # W5: the run record gets the passes, reasons, triage and exit from the job's files
                     if outdir and os.path.isdir(outdir):
+                        # CIP #829: an exit without outcome.json still leaves terminal evidence for the live view (a
+                        # timeout or a cancel writes outcome.json in the handlers below, so they are not recorded here)
+                        if 'rc' in ended and not os.path.isfile(os.path.join(outdir, 'outcome.json')):
+                            code = ended['rc']
+                            ok = code in (0, None)
+                            try:
+                                run_record.append(outdir, 'job', 'exit OK' if ok else 'exit FAILED', evidence='fastroute_job exit',
+                                                  result={'returncode': code if isinstance(code, int) or code is None else 1,
+                                                          'message': None if isinstance(code, int) or code is None else str(code)},
+                                                  why='the job exited without outcome.json' + ('' if ok else ': it failed'))
+                            except OSError:
+                                pass
                         try:
                             run_record.sync(outdir)
                         except Exception:

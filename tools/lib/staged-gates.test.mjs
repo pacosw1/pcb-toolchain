@@ -4,7 +4,7 @@ import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,readdirSync} fro
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {execFileSync} from 'node:child_process';
-import {affectedGates,stagedGateMap,checkStaged} from './staged-gates.mjs';
+import {affectedGates,stagedGateMap,checkStaged,recordedInputs} from './staged-gates.mjs';
 const fixture=t=>{
  const root=mkdtempSync(join(tmpdir(),'staged-gate-test-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
  const put=(p,v)=>{mkdirSync(join(root,p,'..'),{recursive:true});writeFileSync(join(root,p),v);};
@@ -79,4 +79,18 @@ test('a changed path gates only the boards whose recorded inputs or own files in
  const {boards,reasons}=stagedGateMap(root,['tools/si_planes.py','docs/x.md','hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb'],new Map(),inputs);
  assert.deepEqual(boards,['BASE-PWR','BASE-PWR-B']);
  assert.deepEqual([...reasons],[['tools/si_planes.py',['BASE-PWR','BASE-PWR-B']],['hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb',['BASE-PWR']]]);
+});
+// Audit #802: metrics without a nonempty provenance.inputs list must not disable the conservative fallback.
+test('missing, empty or malformed provenance keeps the conservative rule for deleted shared inputs',t=>{
+ const {root}=fixture(t);const deleted='tools/lib/shared-helper.mjs';
+ for(const text of ['{"metrics":{}}','{"provenance":{}}','{"provenance":{"inputs":[]}}','{"provenance":{"inputs":[{"sha256":null}]}}','{"provenance":{"inputs":"tools/gate.mjs"}}','not json',null]) {
+  const recorded=recordedInputs(text);assert.equal(recorded,null,String(text));
+  const head=recorded ? new Map([['BASE-PWR',recorded]]) : new Map();
+  assert.deepEqual(affectedGates(root,[deleted],new Map(),head),['BASE-PWR','BASE-PWR-B']);
+ }
+ // An empty Set passed directly is also not a recorded input list.
+ assert.deepEqual(affectedGates(root,[deleted],new Map(),new Map([['BASE-PWR',new Set()],['BASE-PWR-B',new Set()]])),['BASE-PWR','BASE-PWR-B']);
+ const valid=recordedInputs(JSON.stringify({provenance:{inputs:[{path:'tools/gate.mjs',sha256:'x'}]}}));
+ assert.deepEqual([...valid],['tools/gate.mjs']);
+ assert.deepEqual(affectedGates(root,[deleted],new Map(),new Map([['BASE-PWR',valid],['BASE-PWR-B',valid]])),[]);
 });

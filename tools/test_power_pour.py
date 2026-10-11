@@ -361,5 +361,55 @@ class CutTest(unittest.TestCase):
             pp.parse_args(['plan', 'B', '--currents', 'c', '--fast', 'none', '--nets', 'A', '--region', 'A=1,2,3'])
 
 
+class MakeCutsTest(unittest.TestCase):
+    """Audit #823: a fast track crossing the net region cuts it even with both ends outside."""
+
+    @staticmethod
+    def board(a, e):
+        from types import SimpleNamespace as N
+        t = N(GetStart=lambda: N(x=a[0], y=a[1]), GetEnd=lambda: N(x=e[0], y=e[1]), GetWidth=lambda: 0.2,
+              GetLayerName=lambda: 'In2.Cu', GetNetname=lambda: 'FAST')
+        p = N(ToMM=lambda v: v, PCB_VIA=type('PCB_VIA', (), {}), PAD_ATTRIB_PTH=1, F_Cu=0)
+        b = N(GetLayerID=lambda name: 0, Zones=lambda: [], GetTracks=lambda: [t], GetFootprints=lambda: [])
+        return p, b
+
+    def cuts(self, a, e):
+        p, b = self.board(a, e)
+        cuts, _ = pp.make_cuts(p, b, ['FAST'], ['+5V'], {'+5V': (0, 0, 10, 10)}, {}, BOX, 0.3)
+        return cuts['+5V']
+
+    def test_crossing_track_with_both_ends_outside_cuts(self):
+        self.assertEqual(len(self.cuts((-5, 5), (15, 5))), 1)
+
+    def test_endpoint_inside_control_cuts(self):
+        self.assertEqual(len(self.cuts((5, 5), (15, 5))), 1)
+
+    def test_far_track_does_not_cut(self):
+        self.assertEqual(len(self.cuts((-5, 20), (15, 20))), 0)
+
+
+class In2CutsTest(unittest.TestCase):
+    """Audit #823: in2_cuts counts a track crossing the region even with both ends outside."""
+
+    @staticmethod
+    def count(a, e, net='OTHER'):
+        from types import SimpleNamespace as N
+        t = N(GetStart=lambda: N(x=a[0], y=a[1]), GetEnd=lambda: N(x=e[0], y=e[1]), GetWidth=lambda: 0.2,
+              GetLayer=lambda: 7, GetNetname=lambda: net)
+        p = N(ToMM=lambda v: v, PCB_VIA=type('PCB_VIA', (), {}))
+        b = N(GetLayerID=lambda name: 7, GetTracks=lambda: [t])
+        return pp.in2_cuts(p, b, {'+5V': pp.rect((0, 0, 10, 10))}, 'In2.Cu', 0.2)['+5V']
+
+    def test_crossing_track_with_both_ends_outside_counts(self):
+        self.assertEqual(self.count((-5, 5), (15, 5)), 1)
+
+    def test_endpoint_inside_control_counts(self):
+        self.assertEqual(self.count((5, 5), (15, 5)), 1)
+
+    def test_far_track_and_own_net_do_not_count(self):
+        self.assertEqual(self.count((-5, 20), (15, 20)), 0)
+        self.assertEqual(self.count((-5, 5), (15, 5), net='+5V'), 0)
+
+
 if __name__ == '__main__':
     unittest.main()

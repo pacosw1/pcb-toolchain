@@ -9,8 +9,11 @@
 Pages (GET only; no write endpoint, no secret, no directory listing outside the run roots):
   /                    index of active runs (progress.jsonl written in the last 60 s and no outcome.json) and recent ones
   /run/<id>            one run, updated in place by server-sent events (no reload; meta refresh only when the browser
-                       has no EventSource; a run selector switches runs in place with history.pushState; a LIVE/FINISHED
-                       banner; the stream sends the finished state once and closes): the route_status line, stage, elapsed, open, best, vias, ETA, the
+                       has no EventSource; a run selector switches runs in place with history.pushState; a LIVE/QUIET/
+                       FINISHED banner; the stream sends the finished state once and closes. Finished means terminal
+                       evidence only: outcome.json or the job's exit record in run.jsonl (stage job, action "exit ...").
+                       Progress older than 60 s without it is STALE, a nonterminal state: the stream stays open and
+                       resumes when progress resumes (a long first pass or a quiet phase)): the route_status line, stage, elapsed, open, best, vias, ETA, the
                        pass trend (inline SVG), the action log tail (tools/run_record.py, derived in memory, nothing
                        written), the latest board frame (OUTDIR/snapshots/latest.png from tools/board_frame.py; a
                        placeholder until the first one)
@@ -108,10 +111,25 @@ class Runs:
 
 
 def _rows(path):
+    """Rows of a JSONL file (an incomplete last line, an append in progress, is skipped); [] when unreadable."""
     try:
-        return [json.loads(l) for l in open(path) if l.strip()]
-    except (OSError, ValueError):
+        return run_record.read_jsonl(path)
+    except ValueError:
         return []
+
+
+def terminal(outdir):
+    """The job's terminal state from explicit evidence, else None: outcome.json's status, else the last exit record
+    of run.jsonl (stage 'job', action 'exit <STATUS>'; fastroute_job.py writes one when it exits without outcome.json)."""
+    try:
+        outcome = json.load(open(os.path.join(outdir, 'outcome.json')))
+        return str(outcome.get('status', 'ended')).upper() if isinstance(outcome, dict) else 'ENDED'
+    except (OSError, ValueError):
+        pass
+    for r in reversed(_rows(os.path.join(outdir, run_record.FILE))):
+        if r.get('stage') == 'job' and str(r.get('action', '')).startswith('exit'):
+            return str(r['action'])[5:].strip().upper() or 'ENDED'
+    return None
 
 
 def status(outdir):
@@ -121,19 +139,17 @@ def status(outdir):
     f = lambda v: '-' if v is None else v
     line = (f"{last['stage']} {last.get('elapsed_s')}s open={f(last.get('open'))} best={f(last.get('best_open'))} "
             f"vias={f(last.get('vias'))} eta={f(last.get('eta_s'))}") if last else 'no progress yet'
-    outcome = None
-    try:
-        outcome = json.load(open(os.path.join(outdir, 'outcome.json')))
-    except (OSError, ValueError):
-        pass
+    end = terminal(outdir)
     try:
         age = time.time() - os.path.getmtime(os.path.join(outdir, 'progress.jsonl'))
     except OSError:
         age = None
-    state = (outcome.get('status', 'ended').upper() if outcome else
+    # STALE and NO PROGRESS are not terminal: only outcome.json or an exit record finishes a run (CIP #829)
+    state = (end if end else
              'ACTIVE' if age is not None and age < ACTIVE_S else 'STALE' if age is not None else 'NO PROGRESS')
     return dict(line=line, stage=last.get('stage', '-'), elapsed_s=last.get('elapsed_s'), open=last.get('open'),
                 best=last.get('best_open'), vias=last.get('vias'), eta_s=last.get('eta_s'), state=state, age_s=age,
+                finished=end is not None,
                 passes=[(r['pass'], r['open']) for r in rows if r.get('pass') is not None and r.get('open') is not None])
 
 
@@ -254,8 +270,8 @@ class Stream:
         if f:
             mt = os.path.getmtime(f)
             frame = dict(url=f'/run/{self.rid}/frame.png?t={int(mt * 1000)}', mtime=mt)
-        fin = s['state'] != 'ACTIVE'
-        return dict(status=s['state'], live=not fin, finished=fin, banner=banner_text(s), line=s['line'], stage=s['stage'], elapsed_s=s['elapsed_s'], open=s['open'],
+        fin = s['finished']
+        return dict(status=s['state'], live=s['state'] == 'ACTIVE', finished=fin, banner=banner_text(s), line=s['line'], stage=s['stage'], elapsed_s=s['elapsed_s'], open=s['open'],
                     best_open=s['best'], vias=s['vias'], eta_s=s['eta_s'], npasses=len(s['passes']),
                     full=full, passes=[list(p) for p in passes], log_reset=log_reset, log_tail=new_log, log_start=log_start, log_total=len(lines), frame=frame)
 
@@ -271,15 +287,22 @@ def is_live(outdir):
 
 
 def finish_label(s):
-    """'STUCK 12 open' | 'COMPLETE' | 'TIMEOUT' | other outcome status | 'STALE' (no outcome, no recent progress)."""
+    """'STUCK 12 open' | 'COMPLETE' | 'TIMEOUT' | other terminal status (outcome.json or the exit record)."""
     st = s['state']
     if st == 'STUCK':
         return f"STUCK {s['open'] if s['open'] is not None else '?'} open"
-    return 'STALE' if st in ('STALE', 'NO PROGRESS') else st
+    return st
 
 
 def banner_text(s):
-    return 'LIVE' if s['state'] == 'ACTIVE' else 'FINISHED: ' + finish_label(s)
+    if s.get('finished'):
+        return 'FINISHED: ' + finish_label(s)
+    if s['state'] == 'ACTIVE':
+        return 'LIVE'
+    if s['state'] == 'STALE':
+        return f'QUIET: no progress for over {ACTIVE_S} s; not finished, still listening'
+    return 'WAITING: no progress yet; still listening'
+
 
 
 def summary(runs):

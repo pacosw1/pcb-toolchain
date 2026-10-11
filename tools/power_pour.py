@@ -454,7 +454,7 @@ def make_plan(p, b, pro, a):
     cuts, kinds = make_cuts(p, b, fast, list(pads), a.region, a.minus, box, clr + a.cut_margin, a.layer)
     reg, conf, plans, holes = plan_rails(pads, amps, via, rules, obst, smd_pads(p, b), box, a.margin, a.allow,
                                          a.region, cuts, a.layer)
-    in2 = in2_cuts(p, b, reg, a.layer)
+    in2 = in2_cuts(p, b, reg, a.layer, clr)
     layer = {q['name']: q['layer'] for ps in pads.values() for q in ps}
     used = {n: collections.Counter(kinds[n][id(c)] for c in holes[n]) for n in holes}
     return {'bad': bad, 'missing': missing, 'regions': reg, 'conflicts': conf, 'plans': plans, 'rules': rules,
@@ -479,7 +479,10 @@ def make_cuts(p, b, fast, nets, boxes, minus, board, r, layer='In2.Cu'):
     for n in nets:
         area = boxes.get(n, board)
         near = (area[0] - r - 1, area[1] - r - 1, area[2] + r + 1, area[3] + r + 1)
-        cs = [('fast track', cut_seg(a, e, w / 2 + r)) for a, e, w in segs if in_box(a, near) or in_box(e, near)]
+        # True overlap of the grown track with the area, not endpoint containment (audit #823: a track crossing the
+        # area with both ends outside cut nothing).
+        cs = [('fast track', cut_seg(a, e, w / 2 + r)) for a, e, w in segs
+              if pt.shape_seg_dist(('poly', rect(near)), a, e) <= w / 2 + r]
         cs += [('THT pad', grow(pad_corners({'c': c, 'size': sz, 'angle': ang}), r)) for net, c, sz, ang in tht
                if net != n and in_box(c, near) and layer == 'In2.Cu']   # an outer pour keeps the class clearance itself
         cs += [('minus box', rect(m)) for m in minus.get(n, [])]
@@ -505,14 +508,15 @@ def net_copper(p, b, net):
     return out
 
 
-def in2_cuts(p, b, reg, layer='In2.Cu'):
-    """{net: count of other-net track segments on the pour layer with an end inside its region} (they cut the pour)."""
+def in2_cuts(p, b, reg, layer='In2.Cu', r=0.0):
+    """{net: count of other-net track segments on the pour layer whose shape grown by r overlaps its region} (they cut
+    the pour). True overlap, not endpoint containment (audit #823: a crossing track with both ends outside counts)."""
     mm, out = p.ToMM, {}
     lay = b.GetLayerID(layer)
-    segs = [(t.GetNetname(), (mm(t.GetStart().x), mm(t.GetStart().y)), (mm(t.GetEnd().x), mm(t.GetEnd().y)))
+    segs = [(t.GetNetname(), (mm(t.GetStart().x), mm(t.GetStart().y)), (mm(t.GetEnd().x), mm(t.GetEnd().y)), mm(t.GetWidth()))
             for t in b.GetTracks() if t.GetLayer() == lay and not isinstance(t, p.PCB_VIA)]
     for n, poly in reg.items():
-        out[n] = sum(1 for m, s, e in segs if m != n and (pt.in_poly(s, poly) or pt.in_poly(e, poly)))
+        out[n] = sum(1 for m, s, e, w in segs if m != n and pt.shape_seg_dist(('poly', poly), s, e) <= w / 2 + r)
     return out
 
 

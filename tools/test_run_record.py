@@ -92,5 +92,90 @@ class Sync(unittest.TestCase):
             shutil.rmtree(d)
 
 
+def _pline(t, n, open_):
+    return (f'   {t:.3f} INFO  Auto-routing pass #{n} was completed in 1.00 seconds with score 10.0 '
+            f'({open_} unrouted and 0 violations) (routed 5, failed 1, ripped 2).\n')
+
+
+def _prow(e, stage, p=None, o=None, t0=1000.0):
+    return json.dumps({'t': 'x', 't0': t0, 'elapsed_s': e, 'stage': stage, 'pass': p, 'open': o, 'vias': None,
+                       'best_open': o, 'eta_s': None}) + '\n'
+
+
+def _unrouted(net):
+    return {'unrouted': [{'net': net, 'from': {'kind': 'pin', 'component': 'U1', 'pin': '1'},
+                          'to': {'kind': 'pin', 'component': 'U2', 'pin': '2'}, 'diagnosis': {'class': 'congestion'}}]}
+
+
+class Audit805(unittest.TestCase):
+    """CIP #805 audit (comment 2880): every routing stage's files, stage identity, per-stage clocks, UNKNOWN wording,
+    an incomplete trailing JSONL append."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.d)
+
+    def w(self, name, text):
+        with open(os.path.join(self.d, name), 'w') as f:
+            f.write(text)
+
+    def by(self, stage, action):
+        return [r for r in rr.derive(self.d) if r['stage'] == stage and r['action'] == action]
+
+    def test_fast_stage_files_and_clocks(self):
+        # route-fast twice (attempt 2 owns the files), then the final stage: each log on its own stage's clock
+        self.w('progress.jsonl', _prow(0.0, 'job start') + _prow(1.0, 'route-fast start') + _prow(2.0, 'route-fast end')
+               + _prow(5.0, 'route-fast start') + _prow(8.0, 'route-fast', 1, 12) + _prow(20.0, 'route-fast end')
+               + _prow(30.0, 'route start') + _prow(34.0, 'route', 1, 3) + _prow(50.0, 'route end'))
+        self.w('run-fast.log', _pline(2.5, 1, 12))
+        self.w('run.log', _pline(3.0, 1, 3))
+        self.w('report-fast.json', json.dumps(_unrouted('/FAST')))
+        self.w('report.json', json.dumps(_unrouted('/FINAL')))
+        self.w('stall-fast.json', json.dumps({'stopped': True, 'seconds': 1018.0, 'stall_passes': 4, 'stage': 'fast'}))
+        self.w('optimize-fast.log', _pline(1.5, 2, 11))
+        fast = self.by('route-fast', 'pass')
+        self.assertEqual(len(fast), 1)
+        self.assertEqual(fast[0]['elapsed_s'], 7.5)
+        self.assertEqual((fast[0]['inputs']['attempt'], fast[0]['inputs']['log']), (2, 'run-fast.log'))
+        final = self.by('route', 'pass')
+        self.assertEqual([r['elapsed_s'] for r in final], [33.0])      # the final stage's own start, not route-fast's
+        opens = {r['stage']: r for r in rr.derive(self.d) if r['action'] == 'open'}
+        self.assertEqual((opens['route-fast']['elapsed_s'], opens['route-fast']['inputs']['net']), (20.0, '/FAST'))
+        self.assertEqual((opens['route']['elapsed_s'], opens['route']['inputs']['net']), (50.0, '/FINAL'))
+        self.assertEqual(opens['route-fast']['evidence'], 'report-fast.json unrouted[]')
+        stall = self.by('route-fast', 'stall stop')
+        self.assertEqual((len(stall), stall[0]['evidence'], stall[0]['elapsed_s']), (1, 'stall-fast.json', 18.0))
+        opt = self.by('optimize-fast', 'pass')
+        self.assertEqual(opt[0]['elapsed_s'], 21.5)                    # optimizer starts at route-fast end
+        self.assertEqual([s['stage'] for s in rr.route_stages(self.d, rr._rows(self.d, 'progress.jsonl'))], ['route-fast', 'route'])
+
+    def test_progress_passes_when_the_log_has_none(self):
+        self.w('progress.jsonl', _prow(0.0, 'route-fast start') + _prow(8.0, 'route-fast', 1, 12) + _prow(9.0, 'route-fast end'))
+        p = self.by('route-fast', 'pass')
+        self.assertEqual([(r['result']['pass'], r['result']['open'], r['elapsed_s']) for r in p], [(1, 12, 8.0)])
+
+    def test_unknown_triage_says_cause_unknown(self):
+        self.w('open-triage.json', json.dumps({'open': 3, 'enclosed': 1, 'router_miss': 1, 'unknown': 1, 'connections': [
+            {'net': 'A', 'class': 'ENCLOSED'}, {'net': 'B', 'class': 'ROUTER_MISS'}, {'net': 'C', 'class': 'UNKNOWN'}]}))
+        why = {r['inputs']['net']: r['why'] for r in self.by('triage', 'open')}
+        self.assertEqual(why['B'], 'a path exists; the router missed it')
+        self.assertIn('cause is unknown', why['C'])
+        self.assertNotIn('router missed', why['C'])
+        self.assertIn('no legal path', why['A'])
+
+    def test_incomplete_last_append_keeps_valid_rows(self):
+        good = json.dumps(rr.record('job', 'configure', why='x', elapsed_s=0.0))
+        self.w('run.jsonl', good + '\n' + '{"t": "2026-10-11T00:00:00", "elapsed_s": 1.0, "stag')
+        self.assertEqual([r['action'] for r in rr.read(self.d)], ['configure'])
+        self.w('progress.jsonl', _prow(0.0, 'route start') + '{"t": "x", "elap')
+        self.assertTrue(rr.view(self.d))
+        self.assertEqual(rr.sync(self.d), 1)                            # the route start row; the partial line kept as is
+        self.w('run.jsonl', good + '\n{"broken\n' + good + '\n')
+        with self.assertRaises(ValueError):                             # a bad line before the last is corruption
+            rr.read(self.d)
+
+
 if __name__ == '__main__':
     unittest.main()
