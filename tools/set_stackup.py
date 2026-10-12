@@ -2,6 +2,9 @@
 """Write the physical stackup into a board file (KiCad Board Setup > Physical Stackup), as text.
 
   python3 tools/set_stackup.py BOARD.kicad_pcb [--outer-prepreg 0.2104] [--thickness 1.6]
+  python3 tools/set_stackup.py BOARD.kicad_pcb --dielectrics 0.2104,0.4,0.2028,0.4,0.2104
+        explicit dielectric thicknesses from the top (one per gap): prepreg / core alternate from the outside (outer
+        ones JLC 7628 prepreg Er 4.4, cores FR4 Er 4.6, inner prepregs 7628 Er 4.4), e.g. JLC06161H-7628 (D-142).
 
 The copper layer count comes from the (layers ...) list of the board. Dielectrics alternate prepreg / core from the
 outside: the two outer ones are JLC 7628 prepreg (--outer-prepreg, Er 4.4, as JLC04161H-7628 and the 7628 6-layer
@@ -15,9 +18,17 @@ import argparse
 import re
 
 
-def block(names, outer_pp, thickness):
+def block(names, outer_pp, thickness, dielectrics=None):
     n = len(names)
     cu = [0.035 if i in (0, n - 1) else 0.0152 for i in range(n)]
+    if dielectrics is not None:
+        if len(dielectrics) != n - 1:
+            raise ValueError(f'{len(dielectrics)} dielectrics for {n} copper layers (need {n - 1})')
+        diel = []
+        for k, th in enumerate(dielectrics):
+            core = k % 2 == 1          # from the outside: prepreg, core, prepreg, ...
+            diel.append((th, 'core', 'FR4', 4.6) if core else (th, 'prepreg', '7628', 4.4))
+        return _text(names, cu, diel), diel
     inner_count = n - 3
     rest = thickness - sum(cu) - 0.02 - 2 * outer_pp
     inner_t = round(rest / inner_count, 4) if inner_count > 0 else 0
@@ -30,6 +41,11 @@ def block(names, outer_pp, thickness):
                 diel.append((outer_pp, 'prepreg', '7628', 4.4))
             else:
                 diel.append((inner_t, 'core' if k % 2 else 'prepreg', 'FR4', 4.6))
+    return _text(names, cu, diel), diel
+
+
+def _text(names, cu, diel):
+    n = len(names)
     out = ['\t\t(stackup',
            '\t\t\t(layer "F.SilkS"\n\t\t\t\t(type "Top Silk Screen")\n\t\t\t)',
            '\t\t\t(layer "F.Paste"\n\t\t\t\t(type "Top Solder Paste")\n\t\t\t)',
@@ -44,7 +60,7 @@ def block(names, outer_pp, thickness):
             '\t\t\t(layer "B.Paste"\n\t\t\t\t(type "Bottom Solder Paste")\n\t\t\t)',
             '\t\t\t(layer "B.SilkS"\n\t\t\t\t(type "Bottom Silk Screen")\n\t\t\t)',
             '\t\t\t(copper_finish "ENIG")\n\t\t\t(dielectric_constraints no)', '\t\t)']
-    return '\n'.join(out), diel
+    return '\n'.join(out)
 
 
 def main():
@@ -52,13 +68,15 @@ def main():
     ap.add_argument('board')
     ap.add_argument('--outer-prepreg', type=float, default=0.2104)
     ap.add_argument('--thickness', type=float, default=1.6)
+    ap.add_argument('--dielectrics', default='', help='comma list of dielectric thicknesses (mm) from the top')
     a = ap.parse_args()
     s = open(a.board).read()
     layers = s[s.index('\n\t(layers'):s.index('\n\t)', s.index('\n\t(layers'))]
     names = re.findall(r'"((?:F|B|In\d+)\.Cu)"\s+(?:signal|power|mixed|jumper)', layers)
     order = {'F.Cu': -1, 'B.Cu': 99}
     names.sort(key=lambda x: order.get(x, int(x[2:-3]) if x.startswith('In') else 0))
-    text, diel = block(names, a.outer_prepreg, a.thickness)
+    dl = [float(x) for x in a.dielectrics.split(',')] if a.dielectrics else None
+    text, diel = block(names, a.outer_prepreg, a.thickness, dl)
     if '\n\t\t(stackup' in s:
         i = s.index('\n\t\t(stackup')
         depth, j = 0, i + 1
