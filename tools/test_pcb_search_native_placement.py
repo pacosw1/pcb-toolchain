@@ -28,6 +28,7 @@ class NativePlacementTest(unittest.TestCase):
         self.raw=dict(problem=self.problem,params=PARAMS,attachments=[])
         self.model=self.root/'placement.json';self.model.write_text(json.dumps(self.raw))
         self.manifest=dict(schema='iot-lab.native-export.v1',status='candidate',source_mutated=False,
+            native=dict(parity=0),drc_command=['kicad-cli','pcb','drc','--schematic-parity'],
             board=str(self.source),inputs=source_set(self.source),placement_sha256=digest(self.model))
         (self.root/'record.json').write_text(json.dumps(self.manifest))
         self.result=dict(schema='iot-lab.placement-quench.v1',status='candidate',qualified=False,
@@ -50,6 +51,12 @@ class NativePlacementTest(unittest.TestCase):
             with self.subTest(changes=changes):
                 self.proposal.write_text(json.dumps(dict(self.result,**changes)))
                 with self.assertRaises(ValueError):read_proposal(self.root,self.proposal)
+
+    def test_unchecked_or_failed_parity_cannot_enter_placement_import(self):
+        for change in (dict(native=dict(parity=1)),dict(native={}),dict(drc_command=[])):
+            (self.root/'record.json').write_text(json.dumps(dict(self.manifest,**change)))
+            with self.subTest(change=change),self.assertRaisesRegex(ValueError,'rejected'):
+                read_proposal(self.root,self.proposal)
 
     def test_rigid_translation_and_quarter_turn_keep_pad_definition_and_copper(self):
         for quarter in (0,1):

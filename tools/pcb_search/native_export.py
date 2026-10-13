@@ -56,8 +56,9 @@ def main():
                 if Path(binding['target']).resolve() != board:
                     raise ValueError('block binding targets another board')
         start = time.monotonic()
-        cmd = [args.cli, 'pcb', 'drc', '--refill-zones', '--severity-all', '--format', 'json',
+        cmd = [args.cli, 'pcb', 'drc', '--schematic-parity', '--refill-zones', '--severity-all', '--format', 'json',
                '--units', 'mm', '-o', str(out/'drc.json'), str(board)]
+        record['drc_command'] = cmd
         try:
             proc = subprocess.run(cmd, text=True, capture_output=True, timeout=args.drc_seconds)
         except subprocess.TimeoutExpired as error:
@@ -70,16 +71,17 @@ def main():
             record.update(status='native_error', reason='native DRC did not produce a complete report')
             return 3
         drc = json.loads((out/'drc.json').read_text())
-        if not isinstance(drc.get('violations'), list) or not isinstance(drc.get('unconnected_items'), list):
+        if any(not isinstance(drc.get(k),list) for k in ('violations','unconnected_items','schematic_parity')):
             raise ValueError('incomplete native DRC report')
         errors = [v for v in drc['violations'] if v['severity'] == 'error']
         record['native'] = dict(errors=len(errors), unconnected=len(drc['unconnected_items']),
+                                parity=len(drc['schematic_parity']),
                                 error_types=sorted({v['type'] for v in errors}))
         record['drc_sha256'] = digest(out/'drc.json')
         # Existing native faults stop before expensive search. Opens alone are
         # expected on a routing input and are not a geometry rejection.
-        if errors:
-            record.update(status='reject', reason='native input geometry/rules fail')
+        if errors or drc['schematic_parity']:
+            record.update(status='reject', reason='native input geometry/rules or schematic parity fail')
             return 3
         problem = read_problem(str(board), decap_tie=args.decap_tie_mm)
         if bindings:

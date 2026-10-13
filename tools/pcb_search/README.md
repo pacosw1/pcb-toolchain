@@ -71,7 +71,15 @@ separate experiments; their skips are not native acceptance evidence.
   board's full gates. It does not authorize dropping or weakening a rule.
 * `native_export.py` records native DRC and a fresh placement model. Coarse
   overlap/out-of-bounds conflicts request native reconciliation; they do not by
-  themselves prove a physical defect. Structural failures still reject.
+  themselves prove a physical defect. Native geometry and schematic parity
+  failures stop before model/search work. DRC commands and report fingerprints
+  remain attributable to the unchanged native source files.
+* `native_conflicts.py` selects one local via repair from that native evidence,
+  without manually supplied via or trace IDs. It ranks supported directions
+  away from all conflicting pad anchors, targeting more reported conflicts
+  before preferring a shorter bridge. This is a heuristic, never a clearance
+  proof. Unsupported errors/opens remain recorded, and expired diagnosis budgets
+  discard partial choices. Schematic parity failures stop repair entirely.
 * `native_placement.py` imports completed placement poses from that export,
   rechecks the original constraints, and invokes the existing KiCad writer with
   all copper retained. It verifies exact rigid transforms, unchanged footprint
@@ -184,6 +192,22 @@ tolerance. The via retains its net, diameter and drill. The added bridge uses
 the other source trace's width and layer, preserving both existing endpoints.
 No source file is edited. This pattern can avoid wholesale copper removal after
 a small placement change, but its measured benefit is specific to that case.
+
+To let the workflow select the via/incident trace from native conflicts:
+
+```sh
+PYTHONPATH=tools python3 -m pcb_search.native_export CANDIDATE.kicad_pcb NATIVE_CONFLICTS --drc-seconds 15
+PYTHONPATH=tools python3 -m pcb_search.native_conflicts NATIVE_CONFLICTS LOCAL_PROPOSAL --fraction 0.5 --budget-s 2
+```
+
+Inspect the export record first: a geometry rejection contains complete native
+evidence usable for repair, while a timeout, changed source or parity failure
+does not. Fractions and the diagnosis budget are explicit search policy. The
+selector only handles the existing two-layer via/straight-trace repair pattern
+against identified pad clearance/hole-clearance conflicts. Its output preserves
+all original tracks; native DRC/refill, connectivity and all board gates still
+decide acceptance. A byte-identical board/project/rules/schematic may reuse
+existing checks only when their runtime and every other gate input also match.
 
 Build TraceMaker only in an isolated server worker using `tracemaker/Dockerfile`.
 It pins upstream source and retains its license/source. The base distribution and

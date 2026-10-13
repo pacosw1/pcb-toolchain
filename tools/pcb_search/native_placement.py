@@ -45,6 +45,8 @@ def read_proposal(folder, proposal):
     if (manifest.get('schema')!='iot-lab.native-export.v1'
             or manifest.get('status') not in ('candidate','needs_native_check')
             or manifest.get('source_mutated') is not False
+            or manifest.get('native',{}).get('parity')!=0
+            or '--schematic-parity' not in manifest.get('drc_command',[])
             or manifest['inputs']!=source_set(source)
             or manifest['placement_sha256']!=digest(model)):
         raise ValueError('stale or rejected native placement export')

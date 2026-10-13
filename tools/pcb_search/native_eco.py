@@ -33,13 +33,12 @@ def locked(form):
     return 'locked' in form or child(form, 'locked', ['no']) != ['no']
 
 
-def shift_via(source, via_id, along_id, out, *, fraction):
+def prepare_shift(source, via_id, along_id, *, fraction):
+    """Validate one exact local topology and compute a move without writing."""
     number(fraction, 'fraction', positive=True)
     if fraction >= 1:
         raise ValueError('fraction must lie strictly inside the incident trace')
-    source, out = Path(source).resolve(), Path(out).resolve()
-    if out.exists() or out == source.parent:
-        raise ValueError('new separate output directory required')
+    source = Path(source).resolve()
     before = source_set(source)
     text, items = copper_items(source)
     forms = {uid: _tree(_tokens(text[a:b]))[0] for uid, row in items.items() for a, b in [row['span']]}
@@ -90,6 +89,15 @@ def shift_via(source, via_id, along_id, out, *, fraction):
     if ((anchor[0]-origin[0])*(destination[1]-origin[1])
             != (anchor[1]-origin[1])*(destination[0]-origin[0])):
         raise ValueError('quantized position is not on the incident centreline')
+    return before,text,items,forms,other_id,origin,destination
+
+
+def shift_via(source, via_id, along_id, out, *, fraction):
+    source,out=Path(source).resolve(),Path(out).resolve()
+    if out.exists() or out==source.parent:
+        raise ValueError('new separate output directory required')
+    before,text,items,forms,other_id,origin,destination=prepare_shift(source,via_id,along_id,fraction=fraction)
+    other=forms[other_id]
     fmt = lambda value: format(value, 'f')
     va, vb = items[via_id]['span']
     fields = [(a,b) for a,b in _spans(text,va,vb) if _tree(_tokens(text[a:b]))[0][0] == 'at']
