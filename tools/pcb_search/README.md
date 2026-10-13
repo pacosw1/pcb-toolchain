@@ -163,6 +163,27 @@ thresholds; full copper, thermal and release checks remain necessary afterward.
 Native tests cover the reference and a misplaced decoupler; a pipeline-order
 counterexample verifies the router never starts after that gate fails.
 
+`env_routing_rules.py` also shares the existing thermal-width selection and values
+between the ENV router, layout checker and experimental `regional.py` stage.
+The rule is explicitly based on a segment's midpoint, matching the existing
+source policy; it is not a generic polygon-intersection constraint. The native
+outline supplies coordinates, removing the router's separate hard-coded origin.
+Export a source-bound policy, then normalize only new native proposal segments:
+
+```sh
+PYTHONPATH=tools python3 -m pcb_search.regional export-env NEW_INPUT/input.kicad_pcb REGION.json
+PYTHONPATH=tools python3 -m pcb_search.regional normalize NEW_INPUT/input.kicad_pcb BACKEND.kicad_pcb REGION.json NEW_WIDTH_PROPOSAL
+```
+
+The default result remains `partial` with exit 3. `--completed` is only for a
+backend that completed; it still does not qualify a board. Policy geometry,
+widths and source hashes are recompiled and compared before use. Only width fields
+on new straight segments can change; original copper, centerlines, vias and all
+other native forms remain protected. New arcs abstain. Native DRC/refill,
+connectivity, current-path and thermal checks remain required. This stage handles
+the width of an existing path proposal; it cannot find a missing path or replace
+construction-time regional constraints inside a solver.
+
 Retrieve and bind existing blocks without editing CAD:
 
 ```sh
