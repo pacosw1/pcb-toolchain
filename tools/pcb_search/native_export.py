@@ -22,6 +22,7 @@ def main():
     ap.add_argument('outdir')
     ap.add_argument('--drc-seconds', required=True, type=float)
     ap.add_argument('--cli', default='kicad-cli')
+    ap.add_argument('--block-binding', action='append', default=[], help='exact hierarchical block binding JSON')
     args = ap.parse_args()
     if not 0 < args.drc_seconds < float('inf'):
         ap.error('finite positive DRC budget required')
@@ -39,6 +40,13 @@ def main():
         from .placement import screen_pose
         from placer import cost
         record['kicad_version'] = pcbnew.GetBuildVersion()
+        bindings = [json.loads(Path(p).read_text()) for p in args.block_binding]
+        if bindings:
+            from .block_bindings import verify_binding
+            for binding in bindings:
+                verify_binding(binding)
+                if Path(binding['target']).resolve() != board:
+                    raise ValueError('block binding targets another board')
         start = time.monotonic()
         cmd = [args.cli, 'pcb', 'drc', '--refill-zones', '--severity-all', '--format', 'json',
                '--units', 'mm', '-o', str(out/'drc.json'), str(board)]
@@ -66,6 +74,10 @@ def main():
             record.update(status='reject', reason='native input geometry/rules fail')
             return 3
         problem = read_problem(str(board))
+        if bindings:
+            from .block_bindings import attach_to_units
+            problem = attach_to_units(problem, bindings)
+            record['block_bindings'] = problem['block_bindings']
         payload = dict(problem=problem, params={}, attachments=[])
         (out/'placement.json').write_text(json.dumps(payload, indent=2))
         record['placement_sha256'] = digest(out/'placement.json')

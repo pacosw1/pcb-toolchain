@@ -49,6 +49,16 @@ none of these proposal stages qualifies a board.
 * `native_export.py` records native DRC and a fresh placement model. Coarse
   overlap/out-of-bounds conflicts request native reconciliation; they do not by
   themselves prove a physical defect. Structural failures still reject.
+* `block_bindings.py` checks a library block against one hierarchical schematic
+  instance before placement search: exact MPN/LCSC/value, footprint and side,
+  pad definitions, bijective component identity, injective net mapping, and one
+  rigid quarter-turn transform. A native export can require that instance to
+  remain one intact placement unit. Source/target changes invalidate the binding.
+  This does not authorize copper reuse or qualify a level-0 library block.
+* `tracemaker.py` runs an explicitly fingerprinted native TraceMaker binary with
+  the existing owned-process deadline/cleanup controller. `native_candidate.py`
+  rejects edits to any original native form and discards added copper outside
+  requested nets. Timeouts and unsuccessful backend exits admit no candidate.
 * `__main__.py` writes a separate, new JSON proposal with input and implementation
   fingerprints. Partial routes return `STUCK` and exit 3. `PASS` means a complete
   proposal in this model, never native acceptance. Existing output is refused.
@@ -112,6 +122,44 @@ PYTHONPATH=tools python3 -m pcb_search.native_srj repair NEW_INPUT SCOPED.json R
 
 Import a repaired proposal only if that stage returns `PASS`, then validate it
 with the same native gates. Repeated unsuccessful repairs require diagnosis.
+
+Build TraceMaker only in an isolated server worker using `tracemaker/Dockerfile`.
+It pins upstream source and retains its license/source. The base distribution and
+apt packages are not a reproducible lock: record the resulting image and binary
+hashes, as the benchmark does. Run the controller with networking disabled,
+read-only frozen input/tools, and a separate writable output directory:
+
+```sh
+PYTHONPATH=tools python3 -m pcb_search.tracemaker NEW_INPUT NEW_OUTPUT \
+  --binary /build/src/app/tracemaker --binary-sha256 APPROVED_SHA256 \
+  --search-s 5 --wall-s 15 --threads 1
+```
+
+This uses the same narrow frozen native export as the capacity experiment. All
+original copper remains protected. The backend's inferred component rules are
+disabled; supplied project rules and subsequent native gates retain authority.
+Via-in-pad is conservatively prohibited using the exported pad envelopes. Its
+own completion/refill counters are diagnostic only. Validate `NEW_OUTPUT/selected`
+with native and board-specific checks before ranking or adopting any candidate.
+
+Retrieve and bind existing blocks without editing CAD:
+
+```sh
+PYTHONPATH=tools python3 tools/blocks.py find 'buck' --mpn AP63203WU-7
+PYTHONPATH=tools python3 tools/blocks.py reuse BUCK-3V3-AP63203
+PYTHONPATH=tools python3 tools/blocks.py bind BUCK-3V3-AP63203 BOARD.kicad_pcb \
+  --instance /EXACT_SHEET_UUID > binding.json
+PYTHONPATH=tools python3 -m pcb_search.native_export BOARD.kicad_pcb NEW_MODEL \
+  --drc-seconds 30 --block-binding binding.json
+```
+
+`blocks.py plan ID TARGET_MANIFEST --mapping PRIOR_PLAN` also checks a source-
+and-target-bound port map. The manifest's explicit `inputs` list must cover the
+requirements and hierarchical dependencies relevant to that decision. A native
+binding covers the PCB and adjacent top-level project/rules/schematic, not every
+external library or target operating requirement. Missing source evidence and
+open items remain visible. Arbitrary-angle or mirrored reuse, duplicate-numbered
+pads and legacy numeric pad nets currently abstain.
 
 Placement input has exactly `problem`, `params` and `attachments`; `problem` is the
 existing `placer.cost` JSON model. An attachment has `id`, `owners`, `anchor_sha256`
@@ -235,5 +283,23 @@ board, a whole-board benchmark or an improvement percentage. The native positive
 control (strip and restore the known original routes) passes and preserves all
 other board forms. Evidence and exact artifact hashes are held in CIP 839, under
 `.bench/cip-839/cip839-env-native-20261013T065125Z/`. Latest KiCad 10.0.7 native
-validation, broader local repair, block reuse integration and comparative placement plus
+validation, broader local repair and comparative placement plus
 routing remain open.
+
+The same frozen `/V_GAS` input was then evaluated with TraceMaker at
+`c6fcb7b4912bdabefeb7f4191c011b1a086335e0`, built on the server. The backend spent
+5.02 seconds, added 17 requested-net items and 17 extra ground items, and still
+reported failed ground-to-zone searches although its final refill reported zero
+opens. Scope removed the extra ground items. KiCad 10.0.6 then reported zero
+errors/opens; `check-env-pcb.py`, power-path capacity/coverage and via-in-pad checks
+passed. The requested route is 10.147 mm, zero vias, 17 segments; the reference
+is 10.438 mm, zero vias, 15 segments. This is a 2.8% improvement in this net's
+length only, with more segments. It is **not** a whole-board speed or quality
+claim, and no production board was changed. Complete release gates remain open.
+
+The existing seven-part BUCK-3V3-AP63203 instance in DOOR-RELAY matched its source
+parts/pads/net mapping and one translation; the fresh native model retained it
+as one unit (`BLOCK9`). The overall placement screen still reported a coarse
+outline conflict and did not qualify the board. Source blocks remain level 0.
+Artifacts, runtime identities and hashes are under
+`.bench/cip-839/tracemaker-c6fcb7b/`, referenced in CIP 839.

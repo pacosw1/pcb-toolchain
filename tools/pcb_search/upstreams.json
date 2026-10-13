@@ -1,6 +1,6 @@
 {
   "observed_at_utc": "2026-10-13T06:26:58Z",
-  "purpose": "Source audit pins; packing and capacity routing are integrated experimentally, no backend is production qualified",
+  "purpose": "Source audit pins; packing, capacity routing, bounded native TraceMaker proposals and hierarchical block bindings are experimental; no backend is production qualified",
   "projects": [
     {
       "repository": "https://github.com/tscircuit/tscircuit-autorouter",
@@ -47,6 +47,11 @@
       "readme_release": "0.9.0",
       "license": "GPL-3.0",
       "read": ["README.md", "src/place/routable.cpp", "src/route/escape.cpp", "LICENSE"],
+      "tested_image_id": "sha256:b89827428c347646d32896ccf6506c39a3a7552080079de4e04176d1d299242a",
+      "tested_route_binary_sha256": "bc6a8616432c4a93c9284d86e883f9f78d1a82809b6afba0664618a200a874de",
+      "tested_place_binary_sha256": "18ca46bc416117fb0621ab85af56c384616db2d3ee7c9459c9a6d0781e39efa4",
+      "tested_clipper2_commit": "21ebba05db8894f0c7217ad35ea518080f324946",
+      "tested_runtime_note": "CPU-only isolated server build, GCC 15.2.0, Python 3.14.4; native selected-net routing exercised, placement binary built but not adopted",
       "evaluate": "Placement ranked by actual routes, bounded local ECO moves near failures, pitch-aware pin escapes; keep upstream license attribution"
     },
     {

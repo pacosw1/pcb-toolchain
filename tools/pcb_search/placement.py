@@ -30,6 +30,13 @@ def screen_pose(problem, pose, params, *, attachments=()):
     if len(set(names)) != len(names):
         raise ValueError('duplicate unit')
     errors = []
+    occupied_refs = set()
+    for binding in problem.get('block_bindings', []):
+        refs = set(binding['refs'])
+        matches = [u for u in problem['units'] if u['name'] == binding['unit'] and set(u['refs']) == refs]
+        if not refs or len(matches) != 1 or refs & occupied_refs:
+            errors.append('bound block is not one distinct intact unit: ' + binding['unit'])
+        occupied_refs.update(refs)
     move_box = box(problem['move_box']) if problem.get('move_box') else None
     cap = number(params.get('max_displacement', 0), 'max_displacement')
     for u, p in zip(problem['units'], pose):

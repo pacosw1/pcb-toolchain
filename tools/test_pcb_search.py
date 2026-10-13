@@ -158,6 +158,16 @@ class PatternTests(unittest.TestCase):
 
 
 class PlacementTests(unittest.TestCase):
+    def test_bound_block_cannot_be_split_or_assigned_twice(self):
+        pr = placement_problem()
+        pr['block_bindings'] = [dict(unit='B', refs=['B'], binding_sha256='0'*64)]
+        self.assertEqual(screen_pose(pr, cost.initial_pose(pr), PARAMS)['status'], 'candidate')
+        pr['block_bindings'][0]['refs'] = ['A','B']
+        self.assertEqual(screen_pose(pr, cost.initial_pose(pr), PARAMS)['status'], 'reject')
+        pr['block_bindings'][0]['refs'] = ['B']
+        pr['block_bindings'].append(copy.deepcopy(pr['block_bindings'][0]))
+        self.assertEqual(screen_pose(pr, cost.initial_pose(pr), PARAMS)['status'], 'reject')
+
     def test_fixed_fixed_collision_is_not_hidden_by_search_objective(self):
         pr = placement_problem()
         pr['units'][1].update(fixed=True, x=2.)
