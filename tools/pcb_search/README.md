@@ -49,6 +49,10 @@ separate experiments; their skips are not native acceptance evidence.
   A same-layer crossing screen rejects definite shorts before native import.
   NPTH hole clearances remain distinct from copper obstacle clearances; a larger
   mounting-hole clearance must not falsely seal an unrelated SMD pin escape.
+  Retained vias carry their exact layer transition, diameter and drill into the
+  preloaded graph. Native connectivity after removal supplies already-connected
+  pad groups, so a shared net name never substitutes for a physical connection.
+  Selected-net zones abstain because their fill/topology needs a richer adapter.
   This is not complete clearance, connectivity, plane or current-path validation.
 * `repair.py` tests one local waypoint shortcut around a crossing. It keeps
   widths, layers, vias and explicit connection anchors, requires elimination of

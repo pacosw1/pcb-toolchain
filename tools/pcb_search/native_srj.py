@@ -71,6 +71,37 @@ def netclass_rules(project, names):
     return result
 
 
+def native_connected_groups(board, pads, labels, nets):
+    """Native physical pad components, never inferred from a shared net name.
+
+    Only retained tracks/vias may establish this contract. Filled-zone topology
+    can be stale after removal and is not represented by this narrow SRJ export.
+    """
+    if any(not z.GetIsRuleArea() and z.GetNetname() in nets for z in board.Zones()):
+        raise ValueError('selected-net zone connectivity requires fresh fill and a richer adapter')
+    board.BuildConnectivity()
+    conn = board.GetConnectivity()
+    result = {}
+    for net in nets:
+        native = {p.m_Uuid.AsString(): p for p in pads if p.GetNetname() == net}
+        root = {uid: uid for uid in native}
+        def find(uid):
+            while root[uid] != uid:
+                root[uid] = root[root[uid]]
+                uid = root[uid]
+            return uid
+        for uid, pad in native.items():
+            for item in conn.GetConnectedItems(pad):
+                other = item.m_Uuid.AsString()
+                if other in root:
+                    root[find(other)] = find(uid)
+        groups = {}
+        for uid in native:
+            groups.setdefault(find(uid), []).append(labels[uid])
+        result[net] = sorted(sorted(group) for group in groups.values() if len(group) > 1)
+    return result
+
+
 def selected_route_proposal(srj, result, selected_nets):
     """Take only requested new copper from an unqualified solver response.
 
@@ -185,10 +216,11 @@ def export(board, out, nets):
         if t.GetNetname() in nets and not t.IsLocked():
             removed.append(t.m_Uuid.AsString())
             b.Remove(t)
-    obstacles, points = [], {n: [] for n in nets}
+    obstacles, points, labels = [], {n: [] for n in nets}, {}
     for f in footprints:
         for p in f.Pads():
             label = f.GetReference()+'.'+p.GetNumber()+':'+p.m_Uuid.AsString()
+            labels[p.m_Uuid.AsString()] = label
             hole = p.GetAttribute() == pcb.PAD_ATTRIB_NPTH
             net = p.GetNetname()
             ob = rect(p, label, [net] if net else [], hole)
@@ -213,9 +245,20 @@ def export(board, out, nets):
                      layer=layers[t.GetLayer()], width=pcb.ToMM(t.GetWidth()))
                 for q in (t.GetStart(), t.GetEnd())]))
         elif type(t) is pcb.PCB_VIA:
+            if not t.GetNetname() or ls(t) != ['top', 'bottom'] or t.GetViaType() != pcb.VIATYPE_THROUGH:
+                raise ValueError('retained via requires an assigned net and through-board layer pair')
             ob = rect(t, t.m_Uuid.AsString(), [t.GetNetname()] if t.GetNetname() else [])
             ob['shape'] = 'circle'
             obstacles.append(ob)
+            # A multilayer obstacle reserves space; it does not create a via
+            # primitive in Pipeline 9's preloaded route graph. Preserve both the
+            # physical envelope and the exact existing inter-layer transition.
+            q = t.GetPosition()
+            preloaded.append(dict(type='pcb_trace', pcb_trace_id=t.m_Uuid.AsString(),
+                connection_name=t.GetNetname(), route=[dict(route_type='via',
+                    x=pcb.ToMM(q.x), y=pcb.ToMM(q.y), from_layer='top', to_layer='bottom',
+                    layers=['top', 'bottom'], via_diameter=pcb.ToMM(t.GetWidth()),
+                    via_hole_diameter=pcb.ToMM(t.GetDrillValue()))]))
         else:
             raise ValueError('unsupported retained arc or unassigned copper')
     for z in b.Zones():
@@ -242,6 +285,7 @@ def export(board, out, nets):
     via_drill = max(c['via_drill'] for c in classes)
     via_diameter = max([rules['min_via_diameter'], via_drill + 2 * rules['min_via_annular_width']]
                        + [c['via_diameter'] for c in classes])
+    connected = native_connected_groups(b, pads, labels, nets)
     srj = dict(layerCount=2, minTraceWidth=rules['min_track_width'],
                minViaPadDiameter=via_diameter, minViaHoleDiameter=via_drill,
                defaultObstacleMargin=clearance, minTraceToPadEdgeClearance=clearance,
@@ -254,7 +298,7 @@ def export(board, out, nets):
                            minY=min(p['y'] for p in boundary), maxY=max(p['y'] for p in boundary)),
                outline=boundary, obstacles=obstacles, traces=preloaded,
                connections=[dict(name=n, nominalTraceWidth=class_rules[names[n]]['track_width'],
-                                 pointsToConnect=points[n]) for n in nets])
+                                 pointsToConnect=points[n], externallyConnectedPointIds=connected[n]) for n in nets])
     if any(len(c['pointsToConnect']) < 2 for c in srj['connections']):
         raise ValueError('selected net needs at least two physical terminals')
     out.mkdir(parents=True, exist_ok=False)
