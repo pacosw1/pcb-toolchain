@@ -46,8 +46,9 @@ separate experiments; their skips are not native acceptance evidence.
   the host enforces a process deadline. Input rule/geometry changes are rejected.
   A blocked-terminal screen avoids searching a contradictory obstacle model.
   Before detailed routing, a second screen compares planned channel endpoints
-  with exact retained straight-track capsules. `model_conflict` includes the
-  offending node, port, original trace UUID and measured/required distance;
+  with the actual board outline and exact retained straight-track capsules.
+  Edge distances include the proposed trace radius. `model_conflict` includes
+  the offending node, port, original trace UUID or edge and measured/required distance;
   repair topology or placement before spending more on that plan. This is a
   partial geometry screen, not proof that the board is unroutable. Same-net
   aliases and other-layer copper remain usable. Last-observed nested solver
@@ -57,6 +58,10 @@ separate experiments; their skips are not native acceptance evidence.
   planner and tries direct/L/Z local paths and exact existing-via paths before
   local grid search. Local visibility checks include copper radius, source
   board edges, foreign pads/tracks/vias and previously chosen local patterns.
+  Its global mesh reserves source edge clearance plus trace radius and the
+  swept clearance of adapter-created retained-track obstacles; terminal pads
+  and original design rules are preserved. Planning can still reject a source
+  under its reservation/access model; that is not physical unroutability proof.
   B01 receives derived board-edge barriers on the region's available layers;
   their broad-phase selection includes track/via radius. Only nearby barriers
   enter collision search, and square ends conservatively cover edge corners.
@@ -66,7 +71,7 @@ separate experiments; their skips are not native acceptance evidence.
   two layers and separate via-only source traces. It has produced a zero-open
   ENV proposal that native DRC rejected for geometry errors; it is not a default
   backend or a qualified board result. `--capture-stages` retains unqualified
-  node, local-route and stitched-route geometry so native findings can be
+  node, local-route and stitched-route geometry, including failed plans, so findings can be
   attributed without rerunning global planning. Regional fallback, cross-region
   copper interactions and stitching still require native checking; these local
   checks are not a complete construction-time clearance validator.

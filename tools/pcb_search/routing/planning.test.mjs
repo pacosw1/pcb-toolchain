@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { retainedTrackPortConflicts, solverWork } from './planning.mjs';
+import { retainedTrackPortConflicts, boardEdgePortConflicts, solverWork } from './planning.mjs';
 
 // Synthetic geometry in mm; these values are test inputs, not board rules.
 const input = { layerCount: 2, minTraceWidth: .2, defaultObstacleMargin: .2,
@@ -53,4 +53,24 @@ test('progress exposes nested solver names and is bounded even for a cycle', () 
   assert.equal(work.node_id, 'region');
   assert.equal(work.solved_nodes, 3);
   assert.equal(work.fallback_reason, 'blocked');
+});
+
+test('planned edge clearance includes copper radius and rejects even a one-nanometre intrusion',()=>{
+  const board={minTraceWidth:.15,minBoardEdgeClearance:.5,bounds:{minX:0,minY:0,maxX:10,maxY:10}};
+  assert.equal(boardEdgePortConflicts(board,node(5,.575)).length,0);
+  assert.equal(boardEdgePortConflicts(board,node(5,.575-.000001)).length,1);
+  const [witness]=boardEdgePortConflicts(board,node(5,.5725));
+  assert.equal(witness.required_centerline_distance_mm,.575);
+  assert.equal(witness.centerline_distance_mm,.5725);
+  assert.equal(witness.unroutable_proven,false);
+  assert.equal(boardEdgePortConflicts(board,node(5,-2))[0].inside,false);
+});
+
+test('planned edge clearance uses the concave outline instead of only rectangular bounds',()=>{
+  const board={minTraceWidth:.15,minBoardEdgeClearance:.5,
+    bounds:{minX:0,minY:0,maxX:10,maxY:10},
+    outline:[{x:0,y:0},{x:10,y:0},{x:10,y:10},{x:5,y:10},{x:5,y:5},{x:0,y:5}]};
+  assert.equal(boardEdgePortConflicts(board,node(4,7))[0].inside,false);
+  assert.equal(boardEdgePortConflicts(board,node(5.5725,7)).length,1);
+  assert.equal(boardEdgePortConflicts(board,node(6,7)).length,0);
 });

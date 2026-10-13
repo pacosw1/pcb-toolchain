@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { performance } from 'node:perf_hooks';
-import { retainedTrackPortConflicts, solverWork } from './planning.mjs';
+import { retainedTrackPortConflicts, boardEdgePortConflicts, solverWork } from './planning.mjs';
 import { retainedCopperPlanningInput, configureReusePipeline } from './reuse.mjs';
 
 const require = createRequire(import.meta.url);
@@ -49,7 +49,8 @@ while (!solver.solved && !solver.failed && performance.now() - start < request.b
   // is an invalid plan even if the backend could move the original trace.
   if (!planningChecked && solver.highDensityRouteSolver) {
     if (!Array.isArray(solver.highDensityNodePortPoints)) throw new Error('missing detailed planning nodes');
-    planningConflicts = retainedTrackPortConflicts(request.input, solver.highDensityNodePortPoints, solver.connMap);
+    planningConflicts = [...boardEdgePortConflicts(request.input,solver.highDensityNodePortPoints),
+      ...retainedTrackPortConflicts(request.input, solver.highDensityNodePortPoints, solver.connMap)];
     planningChecked = true;
     if (planningConflicts.length) { progress('planning_conflict', solver); break; }
   }
@@ -66,7 +67,7 @@ const output = {
     entry_sha256: createHash('sha256').update(readFileSync(require.resolve(pkg.name))).digest('hex') },
 };
 if (planningConflicts.length) {
-  output.reason = 'planned channel endpoint conflicts with retained copper; repair topology or placement before detailed routing';
+  output.reason = 'planned channel endpoint conflicts with source geometry; repair topology or placement before detailed routing';
   output.planning_conflicts = planningConflicts;
 }
 if (reuse) output.reuse= reuse;
@@ -77,11 +78,11 @@ if (status === 'candidate') {
     output.reason='stitched proposal; native validation required before optional polishing';
     output.output={...structuredClone(request.input),traces:[...structuredClone(request.input.traces??[]),...solver.getNewTracesBeforePowerExpansion()]};
   } else output.output = solver.getOutputSimpleRouteJson();
-  if (request.capture_stages) output.stage_geometry = {
+}
+if (request.capture_stages) output.stage_geometry = {
     qualified:false,
     node_inputs:solver.highDensityNodePortPoints,
     local_routes:solver.highDensityRouteSolver?.routes,
     stitched_routes:solver.highDensityStitchSolver?.mergedHdRoutes,
-  };
-}
+};
 process.stdout.write(JSON.stringify(output));

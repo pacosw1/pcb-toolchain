@@ -193,6 +193,25 @@ export function retainedCopperPlanningInput(input) {
   return result;
 }
 
+export function centerlinePlanningInput(planningInput,source) {
+  const result=structuredClone(planningInput);
+  // RectDiff carves regions for centerlines. Native edge clearance measures
+  // copper edges, so the planning exclusion also needs the trace radius.
+  result.minBoardEdgeClearance=source.minBoardEdgeClearance+source.minTraceWidth/2;
+  result.outline=structuredClone(source.outline??[
+    {x:source.bounds.minX,y:source.bounds.minY},{x:source.bounds.maxX,y:source.bounds.minY},
+    {x:source.bounds.maxX,y:source.bounds.maxY},{x:source.bounds.minX,y:source.bounds.maxY}]);
+  // Reserve the swept clearance of fixed tracks in the global mesh. Identify
+  // only capsules created by this adapter, including upstream rectangle slices;
+  // do not blanket-expand terminal pads and change their access topology.
+  const generated=new Set(retainedCopperPlanningInput(source).obstacles.slice(source.obstacles.length).map(o=>o.obstacleId));
+  const margin=source.defaultObstacleMargin+source.minTraceWidth/2;
+  for(const ob of result.obstacles)if(generated.has(ob.obstacleId?.replace(/_approx_\d+$/,''))) {
+    ob.width+=2*margin;ob.height+=2*margin;
+  }
+  return result;
+}
+
 export function detailedEdgeObstacles(input,availableZ=[0,1],node) {
   const clearance=input.defaultObstacleMargin,edge=input.minBoardEdgeClearance;
   if(!Number.isFinite(clearance)||clearance<0||!Number.isFinite(edge)||edge<0)
@@ -202,14 +221,20 @@ export function detailedEdgeObstacles(input,availableZ=[0,1],node) {
     {x:input.bounds.maxX,y:input.bounds.maxY},{x:input.bounds.minX,y:input.bounds.maxY}];
   // B01 adds copper clearance and the routed copper radius to these shapes.
   // Subtract that clearance once; square ends conservatively cover corners.
-  // A zero-height rectangle represents the exact edge when copper clearance
-  // already exceeds the edge rule. No design rule is reduced.
-  const radius=Math.max(0,edge-clearance);
+  // B01 rejects zero-height rectangles. When copper clearance is already at
+  // least the edge rule, put a positive strip outside the board instead: its
+  // inward face plus B01 clearance lies at the exact requested edge setback.
+  // The strip thickness is the supplied trace width, not a new design limit.
+  const radius=Math.max(0,edge-clearance),height=radius?2*radius:input.minTraceWidth;
+  const area2=polygon.reduce((sum,a,i)=>{const b=polygon[(i+1)%polygon.length];return sum+a.x*b.y-b.x*a.y;},0);
+  if(!area2)throw new Error('nondegenerate outline required for edge barriers');
   const obstacles=polygon.map((a,i)=>{
-    const b=polygon[(i+1)%polygon.length],dx=b.x-a.x,dy=b.y-a.y;
+    const b=polygon[(i+1)%polygon.length],dx=b.x-a.x,dy=b.y-a.y,length=Math.hypot(dx,dy);
+    if(!length)throw new Error('duplicate outline edge vertices');
+    const shift=radius?0:edge-clearance-height/2,sign=Math.sign(area2);
     return {type:'rect',connectionName:`iot_board_edge_${i}`,rootConnectionName:`iot_board_edge_${i}`,
-      center:{x:(a.x+b.x)/2,y:(a.y+b.y)/2},width:Math.hypot(dx,dy)+2*radius,
-      height:2*radius,ccwRotationDegrees:Math.atan2(dy,dx)*180/Math.PI,zLayers:[0,1].filter(z=>availableZ.includes(z))};
+      center:{x:(a.x+b.x)/2-sign*dy/length*shift,y:(a.y+b.y)/2+sign*dx/length*shift},width:length+2*radius,
+      height,ccwRotationDegrees:Math.atan2(dy,dx)*180/Math.PI,zLayers:[0,1].filter(z=>availableZ.includes(z))};
   });
   if(!node)return obstacles;
   // Keep the routed copper radius in the broad phase. Far-away outline edges
@@ -225,10 +250,28 @@ export function detailedEdgeObstacles(input,availableZ=[0,1],node) {
 }
 
 export function configureReusePipeline(solver,input,deadline) {
+  const topology=solver.pipelineDef.find(s=>s.solverName==='topologyPlanningSolver');
+  if(!topology)throw new Error('pinned topology pipeline interface changed');
+  const Topology=topology.solverClass;
+  topology.solverClass=class extends Topology {
+    constructor(params) {
+      super(params);
+      const global=this.pipelineDef.find(s=>s.solverName==='globalTopologySolver');
+      if(!global)throw new Error('pinned global topology interface changed');
+      const RectDiff=global.solverClass;
+      global.solverClass=class extends RectDiff {
+        constructor(problem) {
+          super({...problem,simpleRouteJson:centerlinePlanningInput(problem.simpleRouteJson,input)});
+        }
+      };
+    }
+  };
   const step=solver.pipelineDef.find(s=>s.solverName==='highDensityRouteSolver');
   if(!step)throw new Error('pinned high-density pipeline interface changed');
   const HD=step.solverClass;
-  const report={reused_nodes:[],pattern_nodes:[],elapsed_ms:0,constrained_b01_nodes:0};
+  const report={reused_nodes:[],pattern_nodes:[],elapsed_ms:0,constrained_b01_nodes:0,
+    planning_edge_centerline_clearance:input.minBoardEdgeClearance+input.minTraceWidth/2,
+    planning_retained_copper_centerline_clearance:input.defaultObstacleMargin+input.minTraceWidth/2};
   step.solverClass=class extends HD {
     constructor(params) {
       const start=performance.now(),remaining=[],routes=[];

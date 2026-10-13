@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { reuseExistingViaNode, retainedCopperPlanningInput, routeLocalNode, detailedEdgeObstacles } from './reuse.mjs';
+import { reuseExistingViaNode, retainedCopperPlanningInput, routeLocalNode, detailedEdgeObstacles, centerlinePlanningInput } from './reuse.mjs';
 function fixture() {
   const a={x:4.8,y:5,z:0,connectionName:'signal_1',rootConnectionName:'signal'};
   const b={...a,x:5.2,z:1};
@@ -106,7 +106,37 @@ test('edge barriers derive track and via centerline limits from the same sourced
   const nearEdge={center:{x:.6178,y:5},width:.15,height:1};
   assert.equal(detailedEdgeObstacles(input,[0],nearEdge).length,1);
   input.defaultObstacleMargin=.7;
-  assert.equal(detailedEdgeObstacles(input)[0].height,0);
+  const outside=detailedEdgeObstacles(input)[0];
+  assert.equal(outside.height,input.minTraceWidth);
+  assert.equal(outside.center.y+outside.height/2+input.defaultObstacleMargin,input.minBoardEdgeClearance);
+  input.outline=[{x:0,y:0},{x:0,y:10},{x:10,y:10},{x:10,y:0}];
+  const clockwise=detailedEdgeObstacles(input)[3];
+  assert.equal(clockwise.center.y,outside.center.y);
   input.minBoardEdgeClearance=undefined;
   assert.throws(()=>detailedEdgeObstacles(input),/explicit/);
+});
+
+test('centerline planning derives a separate envelope without changing source rules or pads',()=>{
+  const {input}=fixture(),before=JSON.stringify(input);
+  const planning=centerlinePlanningInput(input,input);
+  assert.equal(planning.minBoardEdgeClearance,.575);
+  assert.equal(input.minBoardEdgeClearance,.5);
+  assert.deepEqual(planning.traces,input.traces);
+  assert.deepEqual(planning.obstacles,input.obstacles);
+  assert.equal(planning.outline.length,4);
+  assert.equal(JSON.stringify(input),before);
+});
+
+test('global planning reserves fixed-track clearance while preserving terminal pad access',()=>{
+  const {input}=fixture();input.traces.push({pcb_trace_id:'fixed',connection_name:'other',route:[
+    {route_type:'wire',x:1,y:1,width:.2,layer:'top'},
+    {route_type:'wire',x:3,y:1,width:.2,layer:'top'}]});
+  input.obstacles=[{type:'rect',obstacleId:'pad',center:{x:4,y:4},width:.5,height:.5,layers:['top'],connectedTo:['signal']}];
+  const physical=retainedCopperPlanningInput(input),before=JSON.stringify(physical);
+  const planning=centerlinePlanningInput(physical,input);
+  const fixed=planning.obstacles.find(o=>o.obstacleId==='retained:fixed:1:body');
+  assert.equal(fixed.height,.2+2*(input.defaultObstacleMargin+input.minTraceWidth/2));
+  assert.deepEqual(fixed.connectedTo,['other']);
+  assert.deepEqual(planning.obstacles[0],input.obstacles[0]);
+  assert.equal(JSON.stringify(physical),before);
 });
