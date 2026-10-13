@@ -63,6 +63,12 @@ separate experiments; their skips are not native acceptance evidence.
   widths, layers, vias and explicit connection anchors, requires elimination of
   all known crossings, and leaves full acceptance to native checks. It does not
   rerun the router or touch protected copper.
+* `native_eco.py` proposes a local fix for a diagnosed via/placement conflict:
+  move one unlocked two-layer via along an incident straight trace and add a
+  bridge on the other layer. All original tracks and unrelated native content
+  stay unchanged. Branches, arcs, locked items and unsupported layer arrangements
+  abstain; this pattern still requires native clearance, connectivity and the
+  board's full gates. It does not authorize dropping or weakening a rule.
 * `native_export.py` records native DRC and a fresh placement model. Coarse
   overlap/out-of-bounds conflicts request native reconciliation; they do not by
   themselves prove a physical defect. Structural failures still reject.
@@ -139,6 +145,19 @@ PYTHONPATH=tools python3 -m pcb_search.native_srj repair NEW_INPUT SCOPED.json R
 
 Import a repaired proposal only if that stage returns `PASS`, then validate it
 with the same native gates. Repeated unsuccessful repairs require diagnosis.
+
+For a native via conflict, identify the via and its incident straight track from
+the native DRC/source, then produce a separate local proposal:
+
+```sh
+PYTHONPATH=tools python3 -m pcb_search.native_eco BOARD.kicad_pcb VIA_UUID TRACK_UUID NEW_OUTPUT --fraction 0.5
+```
+
+The fraction is a search policy along the source trace, not an electrical
+tolerance. The via retains its net, diameter and drill. The added bridge uses
+the other source trace's width and layer, preserving both existing endpoints.
+No source file is edited. This pattern can avoid wholesale copper removal after
+a small placement change, but its measured benefit is specific to that case.
 
 Build TraceMaker only in an isolated server worker using `tracemaker/Dockerfile`.
 It pins upstream source and retains its license/source. The base distribution and
