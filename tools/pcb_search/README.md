@@ -12,6 +12,10 @@ This package is an **experimental proposal kernel**, not the completed placer/ro
 or a production pipeline replacement. Native experiments write new copies only;
 none of these proposal stages qualifies a board.
 
+The CIP CPU unit-test job runs these contracts and regressions on every workflow
+check. Native and installed Node backend integration tests remain explicit,
+separate experiments; their skips are not native acceptance evidence.
+
 * `contracts.py` requires explicit trace widths, per-net and pair clearances, layer
   masks, obstacle envelopes, edge rules, sources and input fingerprints. Unknown
   fields are errors. Known but unrepresented requirements cause abstention.
