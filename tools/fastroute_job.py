@@ -377,7 +377,7 @@ def _main(a=None):
     # <board>/gate.json "plane_via_skip": {net: [REF.PAD, ...]}: pads that get no plane via (D-126: the U22 /CAN_GND pads
     # in the F.Cu island pour whose vias filled the CAN escape band). Merged with a --via-args --skip list.
     via_skip = {}
-    if feat["_board_dir"] and os.path.isfile(os.path.join(feat["_board_dir"], "gate.json")):
+    if feat.get("_board_dir") and os.path.isfile(os.path.join(feat["_board_dir"], "gate.json")):
         via_skip = json.load(open(os.path.join(feat["_board_dir"], "gate.json"))).get("plane_via_skip", {})
     progress.write('plane-vias start')
     for net in planes:

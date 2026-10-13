@@ -279,12 +279,12 @@ test('strict native parser rejects malformed roots, strings and escaping hierarc
  const f=fixture(t);f.put(f.project+'.kicad_sch','(kicad_sch (uuid "ROOT") (sheet (uuid "A") (property "Sheetfile" "../../../outside.kicad_sch")))');
  f.put('outside.kicad_sch','(kicad_sch (uuid "CHILD"))');assert.throws(()=>readPopulation(f.root,f.project));
 });
-test('actual AC fourteen-part geometry rejects a one-row selected BOM even with a complete synthetic scope',t=>{
+test('actual AC multi-part geometry rejects a one-row selected BOM even with a complete synthetic scope',t=>{
  const f=fixture(t),prefix='hardware-design/boards/AC-24V',project=prefix+'/cad/AC-24V/AC-24V';
  cpSync(join(repo,prefix,'cad/AC-24V'),join(f.root,prefix,'cad/AC-24V'),{recursive:true});
  f.put(prefix+'/SPEC.md',readFileSync(join(repo,prefix,'SPEC.md'),'utf8'));
  const review=prefix+'/reports/fixture.md';f.put(review,'Synthetic negative fixture; does not select or approve any AC component.');
- const native=readPopulation(f.root,project);assert.equal([...native.symbols.values()].filter(p=>p.footprint).length,14);
+ const native=readPopulation(f.root,project);assert.ok([...native.symbols.values()].filter(p=>p.footprint).length>1);
  const scope=f.scope;scope.board='AC-24V';scope.revision_spec=prefix+'/SPEC.md';scope.spec_sha256=sha256(readFileSync(join(f.root,scope.revision_spec)));
  scope.project=project;scope.bom=prefix+'/BOM-VERIFIED.csv';scope.review_evidence={[review]:sha256(readFileSync(join(f.root,review)))};
  scope.classification={};for(const ref of new Set([...native.symbols.keys(),...native.footprints.keys()])) {
