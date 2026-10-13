@@ -1,0 +1,66 @@
+{
+  "observed_at_utc": "2026-10-13T06:26:58Z",
+  "purpose": "Source audit pins, not installed or production-qualified dependencies",
+  "projects": [
+    {
+      "repository": "https://github.com/tscircuit/tscircuit-autorouter",
+      "commit": "46f4fdf941ad2ca641f6e090cf592012b35b3da6",
+      "version": "0.0.979",
+      "license": "MIT",
+      "read": [
+        "README.md",
+        "lib/autorouter-pipelines/AutoroutingPipeline9_PreloadedTraceGraph/AutoroutingPipelineSolver9_PreloadedTraceGraph.ts",
+        "lib/autorouter-pipelines/AutoroutingPipeline10_BgaFanout/AutoroutingPipelineSolver10_BgaFanout.ts",
+        "LICENSE"
+      ],
+      "evaluate": "Capacity mesh, topology planning, dense-region repair, coordinated fanout and width-preserving simplification"
+    },
+    {
+      "repository": "https://github.com/tscircuit/calculate-packing",
+      "commit": "c177bc54418b61441653c57079bdc435723fef72",
+      "version": "0.0.90",
+      "license": "MIT",
+      "read": ["README.md", "lib/types.ts", "lib/PackSolver2/PackSolver2.ts", "lib/SingleComponentPackSolver/SingleComponentPackSolver.ts", "LICENSE"],
+      "evaluate": "Connectivity-aware outline packing and allowed rotations inside fixed boundaries; guard against missing components"
+    },
+    {
+      "repository": "https://github.com/tscircuit/circuit-json-placement-analysis",
+      "commit": "c42d5a3a5dc28a364eba8feb466401544e3609e0",
+      "version": "0.0.15",
+      "license": "not verified in this audit",
+      "read": ["README.md", "lib/buildPlacementAnalysisReport.ts"],
+      "evaluate": "Per-component failure descriptions and orientation/channel diagnosis; advisory evidence, not electrical-rule authority"
+    },
+    {
+      "repository": "https://github.com/tscircuit/fanout-solver",
+      "commit": "39adfeb68c9ade6ea30ce5bd9f06ac5f208146d7",
+      "license": "not verified in this audit",
+      "read": ["README.md"],
+      "evaluate": "Coordinated BGA and peripheral bus escapes; source-level integration review remains pending"
+    },
+    {
+      "repository": "https://github.com/DingoOz/TraceMaker",
+      "commit": "c6fcb7b4912bdabefeb7f4191c011b1a086335e0",
+      "readme_release": "0.9.0",
+      "license": "GPL-3.0",
+      "read": ["README.md", "src/place/routable.cpp", "src/route/escape.cpp", "LICENSE"],
+      "evaluate": "Placement ranked by actual routes, bounded local ECO moves near failures, pitch-aware pin escapes; keep upstream license attribution"
+    },
+    {
+      "repository": "https://github.com/atopile/atopile",
+      "commit": "619eda7f777558a3e500dbad9cc2941712881495",
+      "license": "MIT",
+      "read": ["README.md", "src/atopile/layout.py", "LICENSE"],
+      "evaluate": "Typed interfaces, equation and tolerance constraints, hierarchical reusable layout modules and stable module identities"
+    },
+    {
+      "project": "KiCad",
+      "current_stable": "10.0.7",
+      "release_source": "https://www.kicad.org/blog/2026/10/KiCad-10.0.7-Release/",
+      "installed_mac_bundle": "10.0.6",
+      "verified_remote_runtime": "10.0.6",
+      "remote_image_id": "sha256:0409d0d8c4f3c01a1530a42920b9e2db46953ee5df52e534f3f06f3b75d5b7e8",
+      "evaluate": "CAD source of truth, native rule/clearance/connectivity validation and final manufacturing gates"
+    }
+  ]
+}
