@@ -18,7 +18,7 @@ def run():
     ap.add_argument('--steps-mm', type=float, nargs='+', help='placement search steps, not clearance rules')
     ap.add_argument('--backend', choices=('quench', 'packing'), default='quench', help='placement proposal backend')
     ap.add_argument('--rotation-quarters', type=int, nargs='+', default=[0], help='allowed packing rotations')
-    ap.add_argument('--pipeline', choices=('topology', 'fanout'), default='topology', help='capacity SRJ pipeline')
+    ap.add_argument('--pipeline', choices=('topology', 'fanout', 'reuse'), default='topology', help='capacity SRJ pipeline')
     a = ap.parse_args()
     if a.mode != 'place' and a.backend != 'quench':
         ap.error('--backend applies only to placement')

@@ -53,10 +53,20 @@ separate experiments; their skips are not native acceptance evidence.
   aliases and other-layer copper remain usable. Last-observed nested solver
   names, node counts and fallback causes survive a hard timeout, so the next
   decision can target the expensive stage. Partial stdout never admits a route.
+  Experimental `--pipeline reuse` adds rotated retained-copper capsules to the
+  planner and tries exact existing-via paths before local grid search. It stops
+  after stitching for native inspection, before optional geometry polishing;
+  `backend_solved: false` makes that stage boundary explicit. This mode requires
+  two layers and separate via-only source traces. It has produced a zero-open
+  ENV proposal that native DRC rejected for geometry errors; it is not a default
+  backend or a qualified board result.
 * `native_srj.py` supports a deliberately narrow two-layer, selected-net round
   trip. It preserves all placement and other native content by comparing parsed
   board forms. Retained diagonal traces use exact centerlines, not their AABBs.
   Scoped proposals restore original copper and discard any backend edits to it.
+  Exact existing-via transitions carry a source UUID; native import verifies
+  its net, location, layer span, diameter and drill and reuses it without adding
+  another via. An arbitrary multilayer obstacle is not sufficient evidence.
   A same-layer crossing screen rejects definite shorts before native import.
   NPTH hole clearances remain distinct from copper obstacle clearances; a larger
   mounting-hole clearance must not falsely seal an unrelated SMD pin escape.

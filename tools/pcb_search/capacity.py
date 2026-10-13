@@ -157,9 +157,37 @@ def progress_records(stderr):
     return rows[-32:]
 
 
+def resolve_existing_vias(srj, traces):
+    """Resolve only exact transitions through source-bound, via-only traces.
+
+    A multilayer obstacle or same net name alone is not connectivity evidence.
+    Native import checks the referenced original via again before adding copper.
+    """
+    vias = [(t['pcb_trace_id'], t['connection_name'], t['route'][0])
+            for t in srj.get('traces', []) if len(t['route']) == 1 and t['route'][0]['route_type'] == 'via']
+    output = copy.deepcopy(traces)
+    for trace in output:
+        for index, p in enumerate(trace['route']):
+            if p['route_type'] != 'through_obstacle':
+                continue
+            if p.get('start') != p.get('end') or not isinstance(p.get('start'), dict):
+                raise ValueError('unsupported transition through an obstacle; exact original via required')
+            matches = [(uid, old) for uid, net, old in vias
+                       if net == trace['connection_name'] and p['start'] == dict(x=old['x'], y=old['y'])
+                       and {p['from_layer'], p['to_layer']} == {old['from_layer'], old['to_layer']}
+                       and p['from_layer'] != p['to_layer']]
+            if len(matches) != 1:
+                raise ValueError('existing layer transition lacks one exact source via')
+            uid, old = matches[0]
+            trace['route'][index] = dict(route_type='via', x=old['x'], y=old['y'],
+                from_layer=p['from_layer'], to_layer=p['to_layer'], via_diameter=old['via_diameter'],
+                via_hole_diameter=old['via_hole_diameter'], reuse_via_id=uid)
+    return output
+
+
 def run(srj, *, budget_s, pipeline='topology', node='node'):
     budget_s = number(budget_s, 'budget_s', positive=True)
-    if pipeline not in ('topology', 'fanout'):
+    if pipeline not in ('topology', 'fanout', 'reuse'):
         raise ValueError('unknown capacity pipeline')
     source_sha = check_input(srj)
     conflicts = terminal_conflicts(srj)
@@ -169,7 +197,7 @@ def run(srj, *, budget_s, pipeline='topology', node='node'):
                     conflicts=conflicts, native_validation_required=True)
     request = dict(input=srj, input_sha256=source_sha, budget_ms=budget_s*1000, pipeline=pipeline)
     adapter_files = {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
-                     for p in (ROOT/'run.mjs', ROOT/'planning.mjs', ROOT/'package.json', ROOT/'package-lock.json')}
+                     for p in (ROOT/'run.mjs', ROOT/'planning.mjs', ROOT/'reuse.mjs', ROOT/'package.json', ROOT/'package-lock.json')}
     started = time.monotonic()
     try:
         # Current Node's permission mode denies network, subprocesses and writes.
@@ -197,7 +225,18 @@ def run(srj, *, budget_s, pipeline='topology', node='node'):
         # Reconstructed geometry comes from traces alone. Upstream may not alter
         # the original endpoints, layer masks, obstacles or rule declarations.
         changed = [key for key, value in srj.items() if key != 'traces' and not retains_fields(output.get(key), value)]
-        traces = output['traces']
+        try:
+            traces = resolve_existing_vias(srj, output['traces'])
+        except ValueError as error:
+            result.update(status='unsupported', reason=str(error))
+            # Keep costly solver evidence for offline reconciliation, while
+            # removing the admissible output field and candidate status.
+            result['backend_output'] = result.pop('output')
+            traces = None
+        if traces is None:
+            result.update(elapsed_s=time.monotonic()-started, adapter_files=adapter_files,
+                          progress=progress_records(proc.stderr))
+            return result
         for old in srj.get('traces', []):
             matches = [t for t in traces if t.get('pcb_trace_id') == old.get('pcb_trace_id')]
             if len(matches) != 1 or not retains_fields(matches[0], old):

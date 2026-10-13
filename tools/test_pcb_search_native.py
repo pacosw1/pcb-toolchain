@@ -74,6 +74,54 @@ class NativeContracts(unittest.TestCase):
                              max(c['clearance'] for c in project['net_settings']['classes']))
 
     @unittest.skipUnless(os.environ.get('PCB_NATIVE_FIXTURE'), 'explicit isolated native fixture required')
+    def test_reuse_native_via_without_duplicate_and_reject_bad_reference(self):
+        source = Path(os.environ['PCB_NATIVE_FIXTURE']).resolve()
+        before = source_set(source)
+        setup = '''import pcbnew as p,sys,json
+b=p.LoadBoard(sys.argv[1]);items=list(b.GetTracks())
+v=next(t for t in items if type(t) is p.PCB_VIA and t.GetNetname()=='/SDA')
+v.SetLocked(True);p.SaveBoard(sys.argv[2],b)
+print(json.dumps(dict(uid=v.m_Uuid.AsString(),x=p.ToMM(v.GetPosition().x),y=p.ToMM(v.GetPosition().y))))
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); board = root/'source.kicad_pcb'
+            for ext in ('.kicad_pro', '.kicad_dru', '.kicad_sch'):
+                shutil.copy2(source.with_suffix(ext), board.with_suffix(ext))
+            p = subprocess.run([sys.executable, '-c', setup, str(source), str(board)],
+                               capture_output=True, text=True, timeout=15)
+            self.assertEqual(p.returncode, 0, p.stdout+p.stderr)
+            via = json.loads(p.stdout)
+            frozen = root/'frozen'
+            p = subprocess.run([sys.executable, '-m', 'pcb_search.native_srj', 'export',
+                                str(board), str(frozen), '--net', '/SDA'], capture_output=True, text=True, timeout=15)
+            self.assertEqual(p.returncode, 0, p.stdout+p.stderr)
+            srj = json.loads((frozen/'srj.json').read_text())
+            old = next(t['route'][0] for t in srj['traces'] if t['pcb_trace_id']==via['uid'])
+            wire = lambda x, layer: dict(route_type='wire', x=x, y=via['y'], layer=layer, width=srj['minTraceWidth'])
+            transition = dict(old, reuse_via_id=via['uid'])
+            route = [wire(via['x']-.1, 'top'), wire(via['x'], 'top'), transition,
+                     wire(via['x']+.1, 'bottom')]
+            response = dict(status='candidate', qualified=False, input_sha256=fingerprint(srj),
+                output=dict(srj, traces=srj['traces']+[dict(pcb_trace_id='reuse-probe', connection_name='/SDA', route=route)]))
+            for name, field, value in [('wrong-id', 'reuse_via_id', 'missing'),
+                                       ('wrong-size', 'via_diameter', old['via_diameter']+.1),
+                                       ('valid', 'reuse_via_id', via['uid'])]:
+                trial = copy.deepcopy(response); trial['output']['traces'][-1]['route'][2][field] = value
+                path = root/(name+'.json'); path.write_text(json.dumps(trial)); dest = root/name
+                p = subprocess.run([sys.executable, '-m', 'pcb_search.native_srj', 'import',
+                                    str(frozen), str(path), str(dest)], capture_output=True, text=True, timeout=15)
+                self.assertEqual(p.returncode, 0 if name=='valid' else 3, p.stdout+p.stderr)
+                if name != 'valid':
+                    self.assertIn('reused via does not match original native copper', p.stdout)
+                    self.assertFalse(dest.exists())
+                else:
+                    record = json.loads((dest/'record.json').read_text())
+                    self.assertEqual(record['added'], 2)  # two stubs, zero vias
+                    self.assertEqual(record['reused_via_ids'], [via['uid']])
+                    self.assertEqual(record['protected_geometry_sha256'], geometry_digest(frozen/'input.kicad_pcb'))
+        self.assertEqual(source_set(source), before)
+
+    @unittest.skipUnless(os.environ.get('PCB_NATIVE_FIXTURE'), 'explicit isolated native fixture required')
     def test_retained_via_connects_layers_but_same_net_alone_does_not(self):
         # Two SMD pads on opposite layers join through retained tracks and one
         # via; a third same-net pad is physically isolated. Unlocking/removing

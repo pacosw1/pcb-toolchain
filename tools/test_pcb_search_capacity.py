@@ -5,7 +5,7 @@ import unittest
 from unittest import mock
 import subprocess
 
-from pcb_search.capacity import retains_fields, route_crossings, run, terminal_conflicts
+from pcb_search.capacity import retains_fields, route_crossings, run, terminal_conflicts, resolve_existing_vias
 from pcb_search.contracts import Problem
 from pcb_search.patterns import route_patterns
 from test_pcb_search import obstacle, routing_problem
@@ -22,6 +22,40 @@ def srj():
 
 
 class CapacityTests(unittest.TestCase):
+    def test_unsupported_transition_is_preserved_for_diagnosis_without_candidate_output(self):
+        p = srj()
+        from pcb_search.contracts import fingerprint
+        backend = dict(schema='iot-lab.capacity-route.v1', status='candidate', qualified=False,
+            input_sha256=fingerprint(p), native_validation_required=True,
+            output=dict(p, traces=[dict(pcb_trace_id='new', connection_name='A', route=[dict(
+                route_type='through_obstacle', start=dict(x=2,y=3), end=dict(x=2,y=3),
+                from_layer='top', to_layer='bottom', width=.2)])]))
+        proc = subprocess.CompletedProcess([], 0, stdout=json.dumps(backend), stderr='')
+        with mock.patch('pcb_search.capacity.subprocess.run', return_value=proc):
+            result = run(p, budget_s=1)
+        self.assertEqual(result['status'], 'unsupported')
+        self.assertNotIn('output', result)
+        self.assertEqual(result['backend_output'], backend['output'])
+        self.assertFalse(result['qualified'])
+
+    def test_existing_transition_requires_exact_native_via_identity_and_net(self):
+        via = dict(pcb_trace_id='native-via', connection_name='A', route=[dict(route_type='via',
+            x=2, y=3, from_layer='top', to_layer='bottom', via_diameter=.6, via_hole_diameter=.3)])
+        p = dict(route_type='through_obstacle', start=dict(x=2,y=3), end=dict(x=2,y=3),
+                 from_layer='bottom', to_layer='top', width=.2)
+        trace = dict(pcb_trace_id='new', connection_name='A', route=[p])
+        result = resolve_existing_vias(dict(traces=[via]), [trace])
+        self.assertEqual(result[0]['route'][0]['reuse_via_id'], 'native-via')
+        self.assertEqual(result[0]['route'][0]['from_layer'], 'bottom')
+        self.assertEqual(trace['route'][0]['route_type'], 'through_obstacle')
+        for changed in (dict(trace, connection_name='B'),
+                        dict(trace, route=[dict(p, end=dict(x=2.000001,y=3))])):
+            with self.assertRaises(ValueError):
+                resolve_existing_vias(dict(traces=[via]), [changed])
+        for originals in ([], [via, dict(via, pcb_trace_id='duplicate')]):
+            with self.assertRaises(ValueError):
+                resolve_existing_vias(dict(traces=originals), [trace])
+
     def test_crossing_checks_original_copper_even_when_solver_moves_it(self):
         def trace(tid,net,points,layer='bottom'):
             return dict(pcb_trace_id=tid, connection_name=net,
@@ -87,7 +121,7 @@ class CapacityTests(unittest.TestCase):
         self.assertFalse(result['qualified'])
         self.assertEqual(result['progress'], [phase])
         self.assertNotIn('output', result)
-        self.assertEqual(set(result['adapter_files']), {'run.mjs', 'planning.mjs', 'package.json', 'package-lock.json'})
+        self.assertEqual(set(result['adapter_files']), {'run.mjs', 'planning.mjs', 'reuse.mjs', 'package.json', 'package-lock.json'})
 
     @unittest.skipUnless(os.environ.get('PCB_CAPACITY_INTEGRATION') == '1', 'optional pinned Node backend')
     def test_topology_resolves_case_beyond_cheap_patterns(self):
@@ -103,6 +137,17 @@ class CapacityTests(unittest.TestCase):
         self.assertFalse(result['qualified'])
         self.assertEqual(result['progress'][0]['phase'], 'loading_backend')
         self.assertTrue(any(row['phase'] == 'initializing' for row in result['progress']))
+
+    @unittest.skipUnless(os.environ.get('PCB_CAPACITY_INTEGRATION') == '1', 'optional pinned Node backend')
+    def test_reuse_pipeline_returns_only_a_stitched_native_check_proposal(self):
+        result = run(srj(), budget_s=3, pipeline='reuse')
+        self.assertEqual(result['status'], 'candidate', result)
+        self.assertFalse(result['qualified'])
+        self.assertFalse(result['backend_solved'])
+        self.assertTrue(result['native_validation_required'])
+        self.assertEqual(result['completed_stage'], 'highDensityStitchSolver')
+        self.assertTrue(result['output']['traces'])
+        self.assertEqual(result['reuse']['reused_nodes'], [])
 
 
 if __name__ == '__main__':

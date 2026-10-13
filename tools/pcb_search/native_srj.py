@@ -340,7 +340,8 @@ def import_routes(folder, result_path, out):
     b = pcb.LoadBoard(str(native)); nets = b.GetNetsByName()
     layer_ids = {'top': pcb.F_Cu, 'bottom': pcb.B_Cu}
     preserved = {t['pcb_trace_id']: t for t in srj.get('traces', [])}
-    added_items, trace_ids = [], set()
+    original_vias = {t.m_Uuid.AsString(): t for t in b.GetTracks() if type(t) is pcb.PCB_VIA}
+    added_items, trace_ids, reused_vias = [], set(), set()
     # Keep newly created native proxies alive through SaveBoard as well.
     new_objects = []
     for trace in result['output']['traces']:
@@ -373,11 +374,23 @@ def import_routes(folder, result_path, out):
                     raise ValueError('unsupported via layer pair')
                 diameter = number(p.get('via_diameter', srj['minViaPadDiameter']), 'via diameter', True)
                 drill = number(p.get('via_hole_diameter', srj['minViaHoleDiameter']), 'via drill', True)
+                if last and (last[0].x != point.x or last[0].y != point.y or last[1] != p['from_layer']):
+                    raise ValueError('via is not at the current route endpoint')
+                reuse_id = p.get('reuse_via_id')
+                if reuse_id is not None:
+                    v = original_vias.get(reuse_id)
+                    if (reuse_id not in preserved or v is None or v.GetNetname() != name
+                            or v.GetViaType() != pcb.VIATYPE_THROUGH
+                            or not v.IsOnLayer(pcb.F_Cu) or not v.IsOnLayer(pcb.B_Cu)
+                            or v.GetPosition() != point or v.GetWidth() != pcb.FromMM(diameter)
+                            or v.GetDrillValue() != pcb.FromMM(drill)):
+                        raise ValueError('reused via does not match original native copper')
+                    last = (point, p['to_layer'], None)
+                    reused_vias.add(reuse_id)
+                    continue
                 if (pcb.FromMM(diameter) != pcb.FromMM(srj['minViaPadDiameter'])
                         or pcb.FromMM(drill) != pcb.FromMM(srj['minViaHoleDiameter'])):
                     raise ValueError('via geometry differs from sourced policy')
-                if last and (last[0].x != point.x or last[0].y != point.y or last[1] != p['from_layer']):
-                    raise ValueError('via is not at the current route endpoint')
                 v = pcb.PCB_VIA(b); v.SetPosition(point); v.SetWidth(pcb.FromMM(diameter)); v.SetDrill(pcb.FromMM(drill))
                 v.SetViaType(pcb.VIATYPE_THROUGH); v.SetLayerPair(pcb.F_Cu, pcb.B_Cu); v.SetNetCode(nets[name].GetNetCode())
                 b.Add(v); new_objects.append(v); added_items.append(v.m_Uuid.AsString()); last = (point, p['to_layer'], None)
@@ -407,6 +420,7 @@ def import_routes(folder, result_path, out):
     if protected != geometry_digest(target, added_items) or manifest['input_files'] != source_set(native):
         raise ValueError('import changed protected native geometry or its source')
     record = dict(status='candidate', qualified=False, added=len(added_items), added_items=added_items,
+                  reused_via_ids=sorted(reused_vias),
                   protected_geometry_sha256=protected, input_files=manifest['input_files'],
                   route_sha256=digest(result_path), output_files=source_set(target),
                   native_and_board_specific_gates_required=True)
