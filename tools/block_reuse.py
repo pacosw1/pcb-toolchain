@@ -142,3 +142,4 @@ def target_plan(library, iid, target, mapping=None):
             'qualification': 'unverified_for_target',
             'missing_block_files': row['missing_files'], 'facts_errors': row['facts_errors'],
             'open_items': row['open_items'], 'target_checks_required': row['target_checks_required']}
+

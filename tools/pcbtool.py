@@ -802,12 +802,13 @@ ESCAPE_MM = 2.5                 # pad escape: grid nodes this near a pad may end
 POUR_EXTRA = 2.0                # extra cost per mm in the own-domain ground pour (x3 length); other pours are blocked
 
 
-def astar(dims, free, via_ok, extra, s, s_layers, t, t_layers, via_cost, s_cost=None, t_cost=None):
+def astar(dims, free, via_ok, extra, s, s_layers, t, t_layers, via_cost, s_cost=None, t_cost=None, failure_detail=None):
     """Cheapest node path on a node grid (dims = cols, rows, cell) with 8 moves per layer and vias between layers.
     free[layer]: bytearray, 1 = a track centre may be on the node; via_ok: bytearray; extra[layer][node]: extra cost per mm.
     Cost = length * (1 + extra) + BEND_COST per turn + via_cost per via. No via on the start node or right after a via.
     s_cost / t_cost {(node, layer): cost}: start / goal states with a cost added (the exact leg to the pad centre), in
-    place of s, s_layers / t, t_layers. Returns ([(node, layer)], cost), or (None, set of reached nodes)."""
+    place of s, s_layers / t, t_layers. Returns ([(node, layer)], cost), or (None, set of reached nodes).
+    An optional failure_detail dict receives reached layer masks; only computed on failure."""
     import heapq
     cols, rows, cell = dims
     tc, tr = t % cols, t // cols
@@ -866,7 +867,30 @@ def astar(dims, free, via_ok, extra, s, s_layers, t, t_layers, via_cost, s_cost=
                 best[st2], prev[st2] = g2, st
                 heapq.heappush(heap, (g2 + h(st2[0]), g2, n, st2))
                 n += 1
+    if failure_detail is not None:
+        masks = {}
+        # On exhaustion all reachable queued states have been processed. Keep
+        # layer identity instead of implying that a point below an SMD pad has
+        # reached the pad. No added work on successful searches.
+        for i, L, _ in best:
+            if isinstance(i, int) and i in reached:
+                masks[i] = masks.get(i, 0) | (1 << L)
+        failure_detail['reached_layer_masks'] = masks
     return None, reached
+
+
+def closest_reach(masks, xy, target, target_layers, layers, via_ok):
+    """Geometric proximity, with the layer/access limits that make it useful."""
+    if not masks:
+        return dict(closest=None, target_layer_closest=None)
+    def row(i):
+        return dict(node=i, point=xy(i), distance_mm=math.dist(xy(i), target),
+                    layers=[name for L, name in enumerate(layers) if masks[i] & (1 << L)],
+                    via_allowed=bool(via_ok[i]))
+    closest=min(masks,key=lambda i:(math.dist(xy(i),target),i))
+    compatible=[i for i,m in masks.items() if any(m & (1 << L) for L in target_layers)]
+    return dict(closest=row(closest), target_layer_closest=(row(min(compatible,
+        key=lambda i:(math.dist(xy(i),target),i))) if compatible else None))
 
 
 def node_corners(path, cols):
@@ -2340,12 +2364,13 @@ def cmd_suggest(a):
     for _ in range(a.k * 2):
         if len(found) >= a.k:
             break
-        path, cost = astar((cols, rows, cell), free, via_ok, extra, s, s_layers, t, t_layers, a.via_cost, s_cost, t_cost)
+        failure_detail = {}
+        path, cost = astar((cols, rows, cell), free, via_ok, extra, s, s_layers, t, t_layers, a.via_cost, s_cost, t_cost, failure_detail)
         if path is None:
             if found:
                 break
-            far = min(cost, key=lambda i: math.dist(xy(i), sb))
-            fx, fy = xy(far)
+            reach=closest_reach(failure_detail['reached_layer_masks'],xy,sb,t_layers,layers,via_ok)
+            close=reach['closest'];same=reach['target_layer_closest'];far=close['node']
             near_labels = collections.Counter()
             for lb in lab + [via_lab]:
                 for dr in range(-band * 2, band * 2 + 1):
@@ -2354,8 +2379,11 @@ def cmd_suggest(a):
                         if 0 <= c < cols and 0 <= r < rows and lb[r * cols + c] >= 0:
                             near_labels[labels[lb[r * cols + c]]] += 1
             what = ', '.join(k for k, _ in near_labels.most_common(3)) or 'box edge'
-            print(f'no path: closest reach ({fx:.3f}, {fy:.3f}) is {math.dist((fx, fy), sb):.2f} mm from {nb}; '
-                  f'blocked there by {what}. Try a larger --box, --layers F.Cu,B.Cu or a lower --via-cost.')
+            access=(f"nearest reach on target layer {same['distance_mm']:.2f} mm" if same else 'target layer not reached')
+            print(f"STUCK: no path in this model; closest reach ({close['point'][0]:.3f}, {close['point'][1]:.3f}) "
+                  f"on {','.join(close['layers'])} is {close['distance_mm']:.2f} mm from {nb}; "
+                  f"pad requires {','.join(layers[L] for L in sorted(t_layers))}; {access}; "
+                  f"via at closest point {'allowed' if close['via_allowed'] else 'blocked'}; nearby blockers: {what}")
             sys.exit(1)
         L0 = layers[path[0][1]]
         vl = iter(via_layers(path))

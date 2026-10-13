@@ -572,11 +572,16 @@ def main():
     s = sp.add_parser('find'); s.add_argument('query'); s.add_argument('--mpn'); s.add_argument('--footprint')
     s = sp.add_parser('reuse'); s.add_argument('id'); s.add_argument('--expect-sha256')
     s = sp.add_parser('plan'); s.add_argument('id'); s.add_argument('target_manifest'); s.add_argument('--mapping')
+    s = sp.add_parser('bind'); s.add_argument('id'); s.add_argument('target'); s.add_argument('--instance', required=True)
     a = ap.parse_args()
-    if a.cmd in ('find', 'reuse', 'plan'):
+    if a.cmd in ('find', 'reuse', 'plan', 'bind'):
         import block_reuse
         try:
-            if a.cmd == 'plan':
+            if a.cmd == 'bind':
+                from pcb_search.block_bindings import bind_instance
+                row = block_reuse.reuse(LIB, a.id)
+                result = bind_instance(row['source_directory'], a.target, a.instance)
+            elif a.cmd == 'plan':
                 mapping = json.loads(Path(a.mapping).read_text()) if a.mapping else None
                 if mapping is not None and not isinstance(mapping, dict):
                     raise ValueError('mapping must be a plan object')
@@ -585,10 +590,10 @@ def main():
                 result = (block_reuse.find(LIB, a.query, a.mpn, a.footprint) if a.cmd == 'find'
                           else block_reuse.reuse(LIB, a.id, a.expect_sha256))
         except (ValueError, OSError) as exc:
-            print(f'FAIL — block retrieval: {exc}', file=sys.stderr)
+            print(f'FAIL: block retrieval: {exc}', file=sys.stderr)
             return 1
         print(json.dumps(result, indent=2))
-        print('PASS — discovery only; target qualification still required', file=sys.stderr)
+        print('PASS: discovery only; target qualification still required', file=sys.stderr)
         return 0
     if a.cmd == 'serve':
         return cmd_serve(a.port)

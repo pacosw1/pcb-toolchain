@@ -1,0 +1,74 @@
+{
+  "observed_at_utc": "2026-10-13T06:26:58Z",
+  "purpose": "Source audit pins; packing, capacity routing, bounded native TraceMaker proposals and hierarchical block bindings are experimental; no backend is production qualified",
+  "projects": [
+    {
+      "repository": "https://github.com/tscircuit/tscircuit-autorouter",
+      "commit": "46f4fdf941ad2ca641f6e090cf592012b35b3da6",
+      "version": "0.0.979",
+      "npm_git_head": "bbf5bf0f6df12d91fa1b8666da9300a4104ad01b",
+      "npm_entry_sha256": "ddca16ff3956df908b6d6441bbc22d6e45b8ebc4443ea528ada828510a3c4db0",
+      "npm_source_note": "Published package gitHead differs from the observed repository HEAD; lockfile and entry hash identify the tested code",
+      "license": "MIT",
+      "read": [
+        "README.md",
+        "lib/autorouter-pipelines/AutoroutingPipeline9_PreloadedTraceGraph/AutoroutingPipelineSolver9_PreloadedTraceGraph.ts",
+        "lib/autorouter-pipelines/AutoroutingPipeline10_BgaFanout/AutoroutingPipelineSolver10_BgaFanout.ts",
+        "LICENSE"
+      ],
+      "evaluate": "Capacity mesh, topology planning, dense-region repair, coordinated fanout and width-preserving simplification"
+    },
+    {
+      "repository": "https://github.com/tscircuit/calculate-packing",
+      "commit": "c177bc54418b61441653c57079bdc435723fef72",
+      "version": "0.0.90",
+      "license": "MIT",
+      "read": ["README.md", "lib/types.ts", "lib/PackSolver2/PackSolver2.ts", "lib/SingleComponentPackSolver/SingleComponentPackSolver.ts", "LICENSE"],
+      "evaluate": "Connectivity-aware outline packing and allowed rotations inside fixed boundaries; guard against missing components"
+    },
+    {
+      "repository": "https://github.com/tscircuit/circuit-json-placement-analysis",
+      "commit": "c42d5a3a5dc28a364eba8feb466401544e3609e0",
+      "version": "0.0.15",
+      "license": "not verified in this audit",
+      "read": ["README.md", "lib/buildPlacementAnalysisReport.ts"],
+      "evaluate": "Per-component failure descriptions and orientation/channel diagnosis; advisory evidence, not electrical-rule authority"
+    },
+    {
+      "repository": "https://github.com/tscircuit/fanout-solver",
+      "commit": "39adfeb68c9ade6ea30ce5bd9f06ac5f208146d7",
+      "license": "not verified in this audit",
+      "read": ["README.md"],
+      "evaluate": "Coordinated BGA and peripheral bus escapes; source-level integration review remains pending"
+    },
+    {
+      "repository": "https://github.com/DingoOz/TraceMaker",
+      "commit": "c6fcb7b4912bdabefeb7f4191c011b1a086335e0",
+      "readme_release": "0.9.0",
+      "license": "GPL-3.0",
+      "read": ["README.md", "src/place/routable.cpp", "src/route/escape.cpp", "LICENSE"],
+      "tested_image_id": "sha256:b89827428c347646d32896ccf6506c39a3a7552080079de4e04176d1d299242a",
+      "tested_route_binary_sha256": "bc6a8616432c4a93c9284d86e883f9f78d1a82809b6afba0664618a200a874de",
+      "tested_place_binary_sha256": "18ca46bc416117fb0621ab85af56c384616db2d3ee7c9459c9a6d0781e39efa4",
+      "tested_clipper2_commit": "21ebba05db8894f0c7217ad35ea518080f324946",
+      "tested_runtime_note": "CPU-only isolated server build, GCC 15.2.0, Python 3.14.4; native selected-net routing exercised, placement binary built but not adopted",
+      "evaluate": "Placement ranked by actual routes, bounded local ECO moves near failures, pitch-aware pin escapes; keep upstream license attribution"
+    },
+    {
+      "repository": "https://github.com/atopile/atopile",
+      "commit": "619eda7f777558a3e500dbad9cc2941712881495",
+      "license": "MIT",
+      "read": ["README.md", "src/atopile/layout.py", "LICENSE"],
+      "evaluate": "Typed interfaces, equation and tolerance constraints, hierarchical reusable layout modules and stable module identities"
+    },
+    {
+      "project": "KiCad",
+      "current_stable": "10.0.7",
+      "release_source": "https://www.kicad.org/blog/2026/10/KiCad-10.0.7-Release/",
+      "installed_mac_bundle": "10.0.6",
+      "verified_remote_runtime": "10.0.6",
+      "remote_image_id": "sha256:0409d0d8c4f3c01a1530a42920b9e2db46953ee5df52e534f3f06f3b75d5b7e8",
+      "evaluate": "CAD source of truth, native rule/clearance/connectivity validation and final manufacturing gates"
+    }
+  ]
+}
