@@ -574,13 +574,15 @@ def silk_and_brand(board, pcb, cfg, args):
 
 def info_lines(b, block, cfg):
     """The lines of one info_back block. Sources: the board itself (part values, test-point nets) and the config
-    (curated wording). kind 'text': its lines; 'parts': [ref, function] -> "REF VALUE  function" (VALUE from the
+    (curated wording). kind 'text': its lines; 'columns': its columns of lines; 'parts': [ref, function] -> "REF VALUE  function" (VALUE from the
     footprint); 'testpoints': every TPn with its net (from the pads), in columns of 'rows' lines."""
     kind = block.get('kind', 'text')
     if kind == 'text':   # "{date}": RENDER_DATE (the fab-set date of tools/fab-workflow.sh), else today
         import datetime
         date = os.environ.get('RENDER_DATE') or datetime.date.today().isoformat()
         return [[ln.replace('{date}', date) for ln in block['lines']]]
+    if kind == 'columns':   # curated lines in columns: {"columns": [[...], [...]]}
+        return [list(c) for c in block['columns']]
     if kind == 'parts':
         out = []
         for ent in block['parts']:   # [ref, function] -> "REF VALUE  function"; [ref, None, short] -> "REF short"
