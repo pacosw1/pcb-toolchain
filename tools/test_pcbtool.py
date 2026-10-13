@@ -957,6 +957,24 @@ class SuggestCoreTest(unittest.TestCase):
         self.assertIn(6, reached)
         self.assertNotIn(8, reached)
 
+    def test_failed_search_distinguishes_reaching_below_pad_from_its_layer(self):
+        # The lower layer reaches directly below the top-side target, but
+        # there is no legal via and the top layer is divided by a wall.
+        top=bytearray([1,1,0,1,1]);bottom=bytearray([1]*5);detail={}
+        path,reached=pt.astar((5,1,1.),[top,bottom],bytearray(5),[[0.]*5,[0.]*5],
+            0,{0},4,{0},via_cost=2,s_cost={(0,0):0.,(0,1):0.},failure_detail=detail)
+        self.assertIsNone(path);self.assertIn(4,reached)
+        report=pt.closest_reach(detail['reached_layer_masks'],lambda i:(i,0),(4,0),{0},
+                                ['F.Cu','B.Cu'],bytearray(5))
+        self.assertEqual(report['closest']['distance_mm'],0)
+        self.assertEqual(report['closest']['layers'],['B.Cu'])
+        self.assertFalse(report['closest']['via_allowed'])
+        self.assertEqual(report['target_layer_closest']['distance_mm'],3)
+
+    def test_failed_search_reports_no_access_when_target_layer_is_unreachable(self):
+        report=pt.closest_reach({1:2},lambda i:(i,0),(1,0),{0},['F.Cu','B.Cu'],bytearray(2))
+        self.assertIsNone(report['target_layer_closest'])
+
     def test_astar_ends_at_the_goal_node_with_the_lowest_total_cost(self):
         free = [bytearray([1] * 5)]
         path, cost = pt.astar((5, 1, 1.0), free, bytearray(5), [[0.0] * 5], 0, {0}, 4, {0}, via_cost=2,
