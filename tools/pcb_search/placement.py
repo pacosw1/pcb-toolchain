@@ -9,7 +9,7 @@ import math
 import time
 
 from placer import cost
-from .contracts import fingerprint, number
+from .contracts import box, fingerprint, number
 
 
 def anchor_fingerprint(problem, pose, owners):
@@ -30,12 +30,22 @@ def screen_pose(problem, pose, params, *, attachments=()):
     if len(set(names)) != len(names):
         raise ValueError('duplicate unit')
     errors = []
+    move_box = box(problem['move_box']) if problem.get('move_box') else None
+    cap = number(params.get('max_displacement', 0), 'max_displacement')
     for u, p in zip(problem['units'], pose):
         if (len(p) != 3 or any(isinstance(v, bool) or not isinstance(v, (int, float)) or
                               not math.isfinite(v) for v in p) or p[2] not in (0, 1, 2, 3)):
             raise ValueError('invalid placement pose')
         if u['fixed'] and tuple(p) != (u['x'], u['y'], 0):
             errors.append('fixed unit moved: ' + u['name'])
+        if not u.get('rotate', True) and p[2]:
+            errors.append('unit rotation forbidden: ' + u['name'])
+        if not u['fixed'] and move_box:
+            a, b, c, d = move_box
+            if not (a <= p[0] <= c and b <= p[1] <= d):
+                errors.append('movement region: ' + u['name'])
+        if cap and math.hypot(p[0]-u['x'], p[1]-u['y']) > cap:
+            errors.append('displacement cap: ' + u['name'])
     stale = []
     for a in attachments:
         if set(a) != {'id', 'owners', 'anchor_sha256', 'geometry_sha256'}:
@@ -56,7 +66,14 @@ def screen_pose(problem, pose, params, *, attachments=()):
     for term in ('overlap', 'oob'):
         if terms[term] > 0:
             errors.append(term)
+    for i, u in enumerate(problem['units']):
+        if cost.rule_miss(problem, pose, i) > 0:
+            errors.append('part rule: ' + u['name'])
     unsupported = list(problem.get('dru_ignored', []))
+    for name in set(problem.get('part_rules') or {}) - {'regions', 'min_dist'}:
+        unsupported.append('part rule type: ' + name)
+    if params.get('mains'):
+        unsupported.append('mains path diagnostic must be run separately')
     status = 'reject' if errors else 'needs_regeneration' if stale else 'unknown' if unsupported else 'candidate'
     return dict(schema='iot-lab.placement-screen.v1', status=status, qualified=False,
                 input_sha256=fingerprint(dict(problem=problem, pose=pose, params=params, attachments=attachments)),

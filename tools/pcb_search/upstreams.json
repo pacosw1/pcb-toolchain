@@ -1,6 +1,6 @@
 {
   "observed_at_utc": "2026-10-13T06:26:58Z",
-  "purpose": "Source audit pins, not installed or production-qualified dependencies",
+  "purpose": "Source audit pins; only calculate-packing is integrated experimentally, no backend is production qualified",
   "projects": [
     {
       "repository": "https://github.com/tscircuit/tscircuit-autorouter",

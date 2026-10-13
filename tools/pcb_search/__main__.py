@@ -2,20 +2,25 @@
 import argparse
 import json
 from pathlib import Path
+import sys
 
 import lean_workflow as lean
 from .contracts import Problem, fingerprint
 from .patterns import route_patterns
 
 
-def main():
+def run():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('mode', choices=('place', 'route'))
     ap.add_argument('input')
     ap.add_argument('--output', required=True)
     ap.add_argument('--budget-s', required=True, type=float)
     ap.add_argument('--steps-mm', type=float, nargs='+', help='placement search steps, not clearance rules')
+    ap.add_argument('--backend', choices=('quench', 'packing'), default='quench', help='placement proposal backend')
+    ap.add_argument('--rotation-quarters', type=int, nargs='+', default=[0], help='allowed packing rotations')
     a = ap.parse_args()
+    if a.mode == 'route' and a.backend != 'quench':
+        ap.error('--backend applies only to placement')
     source, dest = Path(a.input), Path(a.output)
     if dest.exists() or source.resolve() == dest.resolve():
         ap.error('output must be new and separate from input')
@@ -27,8 +32,13 @@ def main():
         from .placement import quench
         if set(raw) != {'problem', 'attachments', 'params'}:
             ap.error('placement input requires problem, attachments and params')
-        result = quench(raw['problem'], steps_mm=a.steps_mm, budget_s=a.budget_s,
-                        params=raw['params'], attachments=raw['attachments'])
+        if a.backend == 'packing':
+            from .packing import propose
+            result = propose(raw['problem'], budget_s=a.budget_s, params=raw['params'],
+                             attachments=raw['attachments'], rotations=a.rotation_quarters)
+        else:
+            result = quench(raw['problem'], steps_mm=a.steps_mm, budget_s=a.budget_s,
+                            params=raw['params'], attachments=raw['attachments'])
     if before != fingerprint(json.loads(source.read_text())):
         raise ValueError('input changed during computation; result not saved')
     result['source_sha256'] = before
@@ -45,6 +55,14 @@ def main():
     print(f"{'PASS' if complete else 'STUCK'}: {a.mode} {result['status']}; "
           f"{unresolved} unresolved; proposal only, native validation required; {dest}")
     return 0 if complete else 3
+
+
+def main():
+    try:
+        return run()
+    except (ValueError, OSError, KeyError, TypeError) as error:
+        print('FAIL: ' + str(error), file=sys.stderr)
+        return 2
 
 
 if __name__ == '__main__':

@@ -23,6 +23,14 @@ or a production pipeline replacement. It does not modify CAD or qualify a board.
   regressions in congestion, via-access and wirelength proxies. This small stage
   does not replace global placement or annealing. Derived fanout geometry is bound
   to owner geometry and pose; moving its owner requires regeneration.
+* `packing.py` invokes pinned `calculate-packing` 0.0.90 as an optional placement
+  proposal backend, with a subprocess deadline. It exports intact units with their
+  copper-pad envelopes, fixed state, allowed rotations and board boundary. It
+  imports positions only, verifies exact component identity/cardinality, converts
+  coordinate axes, and screens the original constraints. Fixed mechanical units
+  without pads remain obstacles; movable units without physical pad geometry fail
+  explicitly. Per-unit rotation, movement bounds, displacement caps and part rules
+  remain enforced after import.
 * `__main__.py` writes a separate, new JSON proposal with input and implementation
   fingerprints. Partial routes return `STUCK` and exit 3. `PASS` means a complete
   proposal in this model, never native acceptance. Existing output is refused.
@@ -34,6 +42,22 @@ PYTHONPATH=tools python3 -m unittest -v tools.test_pcb_search
 PYTHONPATH=tools python3 -m pcb_search route route-model.json --output new-route.json --budget-s 1
 PYTHONPATH=tools python3 -m pcb_search place placement-model.json --output new-placement.json --budget-s 1 --steps-mm 1 0.5
 ```
+
+Optional packing backend (Node is required):
+
+```sh
+npm ci --prefix tools/pcb_search/packing --ignore-scripts --no-audit --no-fund
+PCB_PACKING_INTEGRATION=1 PYTHONPATH=tools python3 -m unittest -v tools.test_pcb_search tools.test_pcb_search_packing
+PYTHONPATH=tools python3 -m pcb_search place placement-model.json --backend packing --output new-packed.json --budget-s 2
+```
+
+The packing adapter defaults to translations only. Supply `--rotation-quarters`
+explicitly to evaluate permitted quarter turns. Fixed parts and units marked
+`rotate: false` retain their orientation. The uniform packing gap is the largest
+input rect spacing: conservative but potentially inefficient for mixed domains.
+This backend is not the default and has no demonstrated real-board quality gain.
+Missing runtime imports in the published packer's dependency list are supplied by
+our explicit dependency pins; `package-lock.json` records the complete resolution.
 
 Placement input has exactly `problem`, `params` and `attachments`; `problem` is the
 existing `placer.cost` JSON model. An attachment has `id`, `owners`, `anchor_sha256`
@@ -90,7 +114,8 @@ validation, complete adapters and controlled real-board comparisons remain open.
 ## Source audit
 
 Exact observed revisions and files reviewed are in `upstreams.json`. These are
-audit pins, not claims that all dependencies are installed or integrated. The audit
+audit pins, not claims that all dependencies are installed or integrated. Only the
+optional packing adapter has an installed, locked dependency set here. The audit
 checked current upstream heads on 2026-10-13. Refresh and pin before benchmarking.
 
 * [tscircuit autorouter](https://github.com/tscircuit/tscircuit-autorouter/tree/46f4fdf941ad2ca641f6e090cf592012b35b3da6)
@@ -120,3 +145,12 @@ Claude's clean `ac24c-floorplan` worktree and this branch both started at
 `5482542cc382f99fd7b89fda81ecebce1649bfd7`. Newer uncommitted AC24C dogbones,
 pour protection and a clearance change were found in the primary checkout and
 preserved. Incorporation requires source evidence and a controlled comparison.
+
+Verification on 2026-10-13: 27 targeted tests passed, including the installed
+packing backend. A compatibility smoke on the historical `io6x6-prob.json` (59
+units) rejected both the seed and packed proposal under the geometric screen.
+The source fixture predates current pad-layer metadata and contains forbidden-area
+penalties, including fixed units. This is not evidence of a current-board defect,
+a fair baseline comparison, or packing improvement. Stop at this evidence and
+export fresh native inputs before spending time on routing. The attributed smoke
+record is `.bench/cip-839/io6x6-packing-smoke.json`, referenced in CIP 839.

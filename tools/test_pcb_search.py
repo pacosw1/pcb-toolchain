@@ -193,6 +193,27 @@ class PlacementTests(unittest.TestCase):
         self.assertEqual(screen_pose(pr, cost.initial_pose(pr), PARAMS, attachments=[attachment])['status'],
                          'needs_regeneration')
 
+    def test_movement_rotation_and_part_region_constraints(self):
+        pr = placement_problem()
+        pr['move_box'] = [6, 4, 9, 6]
+        pr['part_rules'] = {'regions': [{'refs': ['B'], 'box': [7, 4, 9, 6]}]}
+        pose = cost.initial_pose(pr)
+        pose[1] = (5., 5., 0)
+        report = screen_pose(pr, pose, dict(PARAMS, max_displacement=2))
+        self.assertIn('movement region: B', report['errors'])
+        self.assertIn('displacement cap: B', report['errors'])
+        self.assertIn('part rule: B', report['errors'])
+        pr['units'][1]['rotate'] = False
+        pose[1] = (8., 5., 1)
+        self.assertIn('unit rotation forbidden: B', screen_pose(pr, pose, PARAMS)['errors'])
+
+    def test_unknown_part_rule_or_mains_request_abstains(self):
+        pr = placement_problem()
+        pr['part_rules'] = {'a_future_rule': []}
+        self.assertEqual(screen_pose(pr, cost.initial_pose(pr), PARAMS)['status'], 'unknown')
+        pr.pop('part_rules')
+        self.assertEqual(screen_pose(pr, cost.initial_pose(pr), dict(PARAMS, mains=1))['status'], 'unknown')
+
     def test_quench_improves_wirelength_and_preserves_fixed_unit(self):
         pr = placement_problem()
         before = fingerprint(pr)
