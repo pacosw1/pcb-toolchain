@@ -19,9 +19,12 @@ def run():
     ap.add_argument('--backend', choices=('quench', 'packing'), default='quench', help='placement proposal backend')
     ap.add_argument('--rotation-quarters', type=int, nargs='+', default=[0], help='allowed packing rotations')
     ap.add_argument('--pipeline', choices=('topology', 'fanout', 'reuse'), default='topology', help='capacity SRJ pipeline')
+    ap.add_argument('--capture-stages', action='store_true', help='retain unqualified local/stitch geometry for diagnosis')
     a = ap.parse_args()
     if a.mode != 'place' and a.backend != 'quench':
         ap.error('--backend applies only to placement')
+    if a.capture_stages and a.mode != 'route-srj':
+        ap.error('--capture-stages applies only to route-srj')
     source, dest = Path(a.input), Path(a.output)
     if dest.exists() or source.resolve() == dest.resolve():
         ap.error('output must be new and separate from input')
@@ -29,7 +32,7 @@ def run():
     before = fingerprint(raw)
     if a.mode == 'route-srj':
         from .capacity import run as route_capacity
-        result = route_capacity(raw, budget_s=a.budget_s, pipeline=a.pipeline)
+        result = route_capacity(raw, budget_s=a.budget_s, pipeline=a.pipeline, capture_stages=a.capture_stages)
     elif a.mode == 'route':
         result = route_patterns(Problem.read(raw), budget_s=a.budget_s)
     else:

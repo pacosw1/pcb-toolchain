@@ -1,5 +1,5 @@
-// Cheap local routing through exact, already present through-vias. No new via
-// search, copper movement, or acceptance certificate. Native gates still apply.
+// Cheap local visibility routing, including exact existing through-vias. No
+// new-via search, copper movement, or acceptance certificate. Native gates apply.
 const layer = z => z === 0 ? 'top' : 'bottom';
 const orient = (a, b, c) => (b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x);
 function projection(p, a, b) {
@@ -34,12 +34,14 @@ function inside(p,polygon) {
   return yes;
 }
 
-export function reuseExistingViaNode(input,node,connMap,{deadline=Infinity,clock=()=>performance.now()}={}) {
-  const check=()=>{if(clock()>=deadline)throw new Error('existing-via reuse deadline');};
+export function routeLocalNode(input,node,connMap,{deadline=Infinity,clock=()=>performance.now(),priorRoutes=[]}={}) {
+  const check=()=>{if(clock()>=deadline)throw new Error('local visibility routing deadline');};
   const root=n=>connMap?.getNetConnectedToId?.(n)??n;
   const pairs=node.portPointsInPairs;
-  if(input.layerCount!==2||!pairs?.length||!pairs.some(([a,b])=>a.z!==b.z))return null;
+  if(input.layerCount!==2||!pairs?.length)return null;
   if(pairs.flat().some(p=>![0,1].includes(p.z)))return null;
+  const allowedZ=new Set(node.availableZ??pairs.flat().map(p=>p.z));
+  if(pairs.flat().some(p=>!allowedZ.has(p.z)))return null;
   const bounds={minX:node.center.x-node.width/2,maxX:node.center.x+node.width/2,
     minY:node.center.y-node.height/2,maxY:node.center.y+node.height/2};
   const inNode=p=>p.x>=bounds.minX&&p.x<=bounds.maxX&&p.y>=bounds.minY&&p.y<=bounds.maxY;
@@ -83,7 +85,7 @@ export function reuseExistingViaNode(input,node,connMap,{deadline=Infinity,clock
       if(t.layer===layer(a.z)&&t.net!==net&&segmentDistance(a,b,t.a,t.b)<clearance+(width+t.width)/2)return false;
     }
     for(const v of vias)if(v.net!==net&&pointDistance(v,a,b)<clearance+(width+v.via_diameter)/2)return false;
-    for(const route of chosen) {
+    for(const route of [...priorRoutes,...chosen]) {
       if(root(route.rootConnectionName)===net)continue;
       for(let i=1;i<route.route.length;i++) {
         const c=route.route[i-1],d=route.route[i];
@@ -97,8 +99,8 @@ export function reuseExistingViaNode(input,node,connMap,{deadline=Infinity,clock
     check();
     const net=root(a.rootConnectionName??a.connectionName);
     if(net!==root(b.rootConnectionName??b.connectionName)||a.connectionName!==b.connectionName)return null;
-    const eligible=vias.filter(v=>v.net===net&&inNode(v)&&v.via_diameter===input.minViaPadDiameter&&v.via_hole_diameter===input.minViaHoleDiameter);
-    if(!eligible.length)return null;
+    const eligible=vias.filter(v=>allowedZ.has(0)&&allowedZ.has(1)&&v.net===net&&inNode(v)&&v.via_diameter===input.minViaPadDiameter&&v.via_hole_diameter===input.minViaHoleDiameter);
+    if(a.z!==b.z&&!eligible.length)return null;
     const points=[],ids=new Map();
     const add=p=>{
       const key=JSON.stringify([p.x,p.y,p.z]);
@@ -106,10 +108,18 @@ export function reuseExistingViaNode(input,node,connMap,{deadline=Infinity,clock
       return ids.get(key);
     };
     const start=add(a),end=add(b),viaEdges=[];
+    if(a.z===b.z) {
+      // L and midline Z candidates, plus the direct edge in the visibility
+      // graph. Only geometry proven clear in this model enters the graph.
+      const mx=(a.x+b.x)/2,my=(a.y+b.y)/2;
+      for(const p of [{x:a.x,y:b.y},{x:b.x,y:a.y},{x:mx,y:a.y},{x:mx,y:b.y},
+                       {x:a.x,y:my},{x:b.x,y:my}])if(inNode(p))add({...p,z:a.z});
+    }
     for(const v of eligible)viaEdges.push({a:add({...v,z:0}),b:add({...v,z:1}),id:v.id});
     const ownTracks=tracks.filter(t=>t.net===net);
     for(const t of ownTracks) {
       const z=t.layer==='top'?0:1;
+      if(!allowedZ.has(z))continue;
       for(const p of [t.a,t.b])if(inNode(p))add({...p,z});
       // Project the requested ports onto existing copper, preserving exact
       // vertices for bends and exact via anchors for layer transitions.
@@ -147,6 +157,11 @@ export function reuseExistingViaNode(input,node,connMap,{deadline=Infinity,clock
   return {routes:chosen,reused_via_ids:[...usedVias],qualified:false};
 }
 
+export function reuseExistingViaNode(input,node,connMap,options={}) {
+  if(!node.portPointsInPairs?.some(([a,b])=>a.z!==b.z))return null;
+  return routeLocalNode(input,node,connMap,options);
+}
+
 export function retainedCopperPlanningInput(input) {
   if(input.layerCount!==2)throw new Error('retained-copper reuse pipeline supports two layers');
   const result=structuredClone(input),ids=new Set(result.obstacles.map(o=>o.obstacleId));
@@ -178,22 +193,78 @@ export function retainedCopperPlanningInput(input) {
   return result;
 }
 
+export function detailedEdgeObstacles(input,availableZ=[0,1],node) {
+  const clearance=input.defaultObstacleMargin,edge=input.minBoardEdgeClearance;
+  if(!Number.isFinite(clearance)||clearance<0||!Number.isFinite(edge)||edge<0)
+    throw new Error('explicit nonnegative copper and board-edge rules required');
+  const polygon=input.outline??[
+    {x:input.bounds.minX,y:input.bounds.minY},{x:input.bounds.maxX,y:input.bounds.minY},
+    {x:input.bounds.maxX,y:input.bounds.maxY},{x:input.bounds.minX,y:input.bounds.maxY}];
+  // B01 adds copper clearance and the routed copper radius to these shapes.
+  // Subtract that clearance once; square ends conservatively cover corners.
+  // A zero-height rectangle represents the exact edge when copper clearance
+  // already exceeds the edge rule. No design rule is reduced.
+  const radius=Math.max(0,edge-clearance);
+  const obstacles=polygon.map((a,i)=>{
+    const b=polygon[(i+1)%polygon.length],dx=b.x-a.x,dy=b.y-a.y;
+    return {type:'rect',connectionName:`iot_board_edge_${i}`,rootConnectionName:`iot_board_edge_${i}`,
+      center:{x:(a.x+b.x)/2,y:(a.y+b.y)/2},width:Math.hypot(dx,dy)+2*radius,
+      height:2*radius,ccwRotationDegrees:Math.atan2(dy,dx)*180/Math.PI,zLayers:[0,1].filter(z=>availableZ.includes(z))};
+  });
+  if(!node)return obstacles;
+  // Keep the routed copper radius in the broad phase. Far-away outline edges
+  // otherwise add collision work to every grid expansion without constraining
+  // this region. Rotated AABBs are only a conservative selection step.
+  const margin=clearance+Math.max(input.minTraceWidth,input.minViaPadDiameter)/2;
+  return obstacles.filter(ob=>{
+    const angle=ob.ccwRotationDegrees*Math.PI/180,c=Math.abs(Math.cos(angle)),s=Math.abs(Math.sin(angle));
+    const x=(ob.width*c+ob.height*s)/2,y=(ob.width*s+ob.height*c)/2;
+    return Math.abs(ob.center.x-node.center.x)<=x+node.width/2+margin&&
+      Math.abs(ob.center.y-node.center.y)<=y+node.height/2+margin;
+  });
+}
+
 export function configureReusePipeline(solver,input,deadline) {
   const step=solver.pipelineDef.find(s=>s.solverName==='highDensityRouteSolver');
   if(!step)throw new Error('pinned high-density pipeline interface changed');
-  const HD=step.solverClass,report={reused_nodes:[],elapsed_ms:0};
+  const HD=step.solverClass;
+  const report={reused_nodes:[],pattern_nodes:[],elapsed_ms:0,constrained_b01_nodes:0};
   step.solverClass=class extends HD {
     constructor(params) {
       const start=performance.now(),remaining=[],routes=[];
       for(const node of params.nodePortPoints) {
-        const reused=reuseExistingViaNode(input,node,params.connMap,{deadline});
-        if(reused){report.reused_nodes.push({node_id:node.capacityMeshNodeId,...reused});routes.push(...reused.routes);}
+        const reused=routeLocalNode(input,node,params.connMap,{deadline,priorRoutes:routes});
+        if(reused){
+          (reused.reused_via_ids.length?report.reused_nodes:report.pattern_nodes).push({node_id:node.capacityMeshNodeId,...reused});
+          routes.push(...reused.routes);
+        }
         else remaining.push(node);
       }
       super({...params,nodePortPoints:remaining});
       this.routes.push(...routes);
       this.stats.reusedNodeCount=report.reused_nodes.length;
+      this.stats.patternNodeCount=report.pattern_nodes.length;
       report.elapsed_ms=performance.now()-start;
+    }
+    _step() {
+      super._step();
+      const active=this.activeB01Solver;
+      if(!active||active===this.edgeConstrainedSolver)return;
+      if(active.iterations!==0||typeof active.getConstructorParams!=='function')
+        throw new Error('pinned B01 construction interface changed');
+      const [params]=active.getConstructorParams(),B01=active.constructor;
+      const availableZ=params.nodeWithPortPoints.availableZ??params.nodeWithPortPoints.portPoints.map(p=>p.z);
+      const edges=detailedEdgeObstacles(input,availableZ,params.nodeWithPortPoints);
+      if(!edges.length&&params.obstacleClearanceMargin===input.defaultObstacleMargin){
+        this.edgeConstrainedSolver=active;return;
+      }
+      // Supply edges directly: upstream's board-obstacle overlap filter omits
+      // the routed copper radius and can discard an edge that matters here.
+      this.activeB01Solver=new B01({...params,obstacleClearanceMargin:input.defaultObstacleMargin,
+        obstacles:[...params.obstacles,...edges]});
+      this.activeB01Solver.MAX_RIPS=active.MAX_RIPS;
+      this.edgeConstrainedSolver=this.activeB01Solver;
+      report.constrained_b01_nodes++;
     }
   };
   // First ask native checks whether the stitched proposal is usable. Optional

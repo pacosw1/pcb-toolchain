@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { reuseExistingViaNode, retainedCopperPlanningInput } from './reuse.mjs';
+import { reuseExistingViaNode, retainedCopperPlanningInput, routeLocalNode, detailedEdgeObstacles } from './reuse.mjs';
 function fixture() {
   const a={x:4.8,y:5,z:0,connectionName:'signal_1',rootConnectionName:'signal'};
   const b={...a,x:5.2,z:1};
@@ -72,4 +72,41 @@ test('unsupported width transitions and missing via geometry abstain',()=>{
     {route_type:'wire',x:4.9,y:5.3,width:.25,layer:'top'}]});
   assert.equal(reuseExistingViaNode(other.input,other.node),null);
   assert.throws(()=>retainedCopperPlanningInput(other.input),/unsupported retained segment/);
+});
+test('simple nodes use a direct segment with trace-radius board-edge clearance',()=>{
+  const {input,node}=fixture();input.traces=[];
+  node.center={x:.6178,y:5};node.width=.15;node.height=1;node.availableZ=[0];
+  const a={x:.6178,y:4.5,z:0,connectionName:'signal_1',rootConnectionName:'signal'};
+  const b={...a,y:5.5};node.portPoints=[a,b];node.portPointsInPairs=[[a,b]];
+  const result=routeLocalNode(input,node);
+  assert.deepEqual(result.routes[0].route,[{x:.6178,y:4.5,z:0},{x:.6178,y:5.5,z:0}]);
+  assert.deepEqual(result.reused_via_ids,[]);
+  // These endpoints are 0.5428 mm from the outline, but the copper edge is
+  // only 0.4678 mm away. Checking centerlines alone would incorrectly pass.
+  a.x=b.x=.5428;
+  assert.equal(routeLocalNode(input,node),null);
+});
+test('simple routing cannot cross foreign pads or already chosen neighboring copper',()=>{
+  const {input,node}=fixture();input.traces=[];
+  node.portPointsInPairs[0][1].z=0;node.availableZ=[0];
+  input.obstacles=[{type:'rect',center:{x:5,y:5},width:.1,height:1,layers:['top'],connectedTo:['foreign']}];
+  assert.equal(routeLocalNode(input,node),null);
+  input.obstacles=[];
+  const prior={rootConnectionName:'foreign',route:[{x:5,y:4.5,z:0},{x:5,y:5.5,z:0}]};
+  assert.equal(routeLocalNode(input,node,undefined,{priorRoutes:[prior]}),null);
+});
+test('edge barriers derive track and via centerline limits from the same sourced rule',()=>{
+  const {input}=fixture(),before=JSON.stringify(input);
+  const edge=detailedEdgeObstacles(input)[0];
+  assert.equal(edge.height/2+input.defaultObstacleMargin+input.minTraceWidth/2,.575);
+  assert.equal(edge.height/2+input.defaultObstacleMargin+input.minViaPadDiameter/2,.8);
+  assert.deepEqual(edge.zLayers,[0,1]);assert.equal(JSON.stringify(input),before);
+  assert.deepEqual(detailedEdgeObstacles(input,[0])[0].zLayers,[0]);
+  assert.equal(detailedEdgeObstacles(input,[0],fixture().node).length,0);
+  const nearEdge={center:{x:.6178,y:5},width:.15,height:1};
+  assert.equal(detailedEdgeObstacles(input,[0],nearEdge).length,1);
+  input.defaultObstacleMargin=.7;
+  assert.equal(detailedEdgeObstacles(input)[0].height,0);
+  input.minBoardEdgeClearance=undefined;
+  assert.throws(()=>detailedEdgeObstacles(input),/explicit/);
 });

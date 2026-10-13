@@ -77,5 +77,11 @@ if (status === 'candidate') {
     output.reason='stitched proposal; native validation required before optional polishing';
     output.output={...structuredClone(request.input),traces:[...structuredClone(request.input.traces??[]),...solver.getNewTracesBeforePowerExpansion()]};
   } else output.output = solver.getOutputSimpleRouteJson();
+  if (request.capture_stages) output.stage_geometry = {
+    qualified:false,
+    node_inputs:solver.highDensityNodePortPoints,
+    local_routes:solver.highDensityRouteSolver?.routes,
+    stitched_routes:solver.highDensityStitchSolver?.mergedHdRoutes,
+  };
 }
 process.stdout.write(JSON.stringify(output));

@@ -54,12 +54,22 @@ separate experiments; their skips are not native acceptance evidence.
   names, node counts and fallback causes survive a hard timeout, so the next
   decision can target the expensive stage. Partial stdout never admits a route.
   Experimental `--pipeline reuse` adds rotated retained-copper capsules to the
-  planner and tries exact existing-via paths before local grid search. It stops
+  planner and tries direct/L/Z local paths and exact existing-via paths before
+  local grid search. Local visibility checks include copper radius, source
+  board edges, foreign pads/tracks/vias and previously chosen local patterns.
+  B01 receives derived board-edge barriers on the region's available layers;
+  their broad-phase selection includes track/via radius. Only nearby barriers
+  enter collision search, and square ends conservatively cover edge corners.
+  It stops
   after stitching for native inspection, before optional geometry polishing;
   `backend_solved: false` makes that stage boundary explicit. This mode requires
   two layers and separate via-only source traces. It has produced a zero-open
   ENV proposal that native DRC rejected for geometry errors; it is not a default
-  backend or a qualified board result.
+  backend or a qualified board result. `--capture-stages` retains unqualified
+  node, local-route and stitched-route geometry so native findings can be
+  attributed without rerunning global planning. Regional fallback, cross-region
+  copper interactions and stitching still require native checking; these local
+  checks are not a complete construction-time clearance validator.
 * `native_srj.py` supports a deliberately narrow two-layer, selected-net round
   trip. It preserves all placement and other native content by comparing parsed
   board forms. Retained diagonal traces use exact centerlines, not their AABBs.

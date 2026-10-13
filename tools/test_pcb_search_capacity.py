@@ -140,7 +140,7 @@ class CapacityTests(unittest.TestCase):
 
     @unittest.skipUnless(os.environ.get('PCB_CAPACITY_INTEGRATION') == '1', 'optional pinned Node backend')
     def test_reuse_pipeline_returns_only_a_stitched_native_check_proposal(self):
-        result = run(srj(), budget_s=3, pipeline='reuse')
+        result = run(srj(), budget_s=3, pipeline='reuse', capture_stages=True)
         self.assertEqual(result['status'], 'candidate', result)
         self.assertFalse(result['qualified'])
         self.assertFalse(result['backend_solved'])
@@ -148,6 +148,10 @@ class CapacityTests(unittest.TestCase):
         self.assertEqual(result['completed_stage'], 'highDensityStitchSolver')
         self.assertTrue(result['output']['traces'])
         self.assertEqual(result['reuse']['reused_nodes'], [])
+        self.assertFalse(result['stage_geometry']['qualified'])
+        self.assertTrue(result['stage_geometry']['node_inputs'])
+        self.assertTrue(result['stage_geometry']['local_routes'])
+        self.assertTrue(result['stage_geometry']['stitched_routes'])
 
 
 if __name__ == '__main__':

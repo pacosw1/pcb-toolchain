@@ -185,17 +185,20 @@ def resolve_existing_vias(srj, traces):
     return output
 
 
-def run(srj, *, budget_s, pipeline='topology', node='node'):
+def run(srj, *, budget_s, pipeline='topology', node='node', capture_stages=False):
     budget_s = number(budget_s, 'budget_s', positive=True)
     if pipeline not in ('topology', 'fanout', 'reuse'):
         raise ValueError('unknown capacity pipeline')
+    if not isinstance(capture_stages, bool):
+        raise ValueError('capture_stages must be boolean')
     source_sha = check_input(srj)
     conflicts = terminal_conflicts(srj)
     if conflicts:
         return dict(status='model_conflict', qualified=False, input_sha256=source_sha,
                     reason='terminal blocked in supplied obstacle model; reconcile native geometry',
                     conflicts=conflicts, native_validation_required=True)
-    request = dict(input=srj, input_sha256=source_sha, budget_ms=budget_s*1000, pipeline=pipeline)
+    request = dict(input=srj, input_sha256=source_sha, budget_ms=budget_s*1000, pipeline=pipeline,
+                   capture_stages=capture_stages)
     adapter_files = {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
                      for p in (ROOT/'run.mjs', ROOT/'planning.mjs', ROOT/'reuse.mjs', ROOT/'package.json', ROOT/'package-lock.json')}
     started = time.monotonic()
