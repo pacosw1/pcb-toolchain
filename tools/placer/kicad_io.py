@@ -27,6 +27,8 @@ write_board(board, problem, pose, out) -> report dict
   Other tracks and vias: each copper cluster (connected by end points) that touches a pad of a
   moved unit is removed, and so is each cluster that now collides (own clearance rules) with a moved
   pad or moved block copper of another net. Zones stay (refill them in the DRC). The result goes to `out` only.
+  With retain_copper=True, every original track/via stays in place. This produces a proposal for
+  native checks and local repair; it does not assert that moved pads remain connected or legal.
 """
 import fnmatch
 import json
@@ -776,7 +778,7 @@ def _virtual_outline(board, outline, k, keep=()):
                 o.Append(_v(x, y))
 
 
-def write_board(path, pr, pose, out, outline_scale=1.0):
+def write_board(path, pr, pose, out, outline_scale=1.0, *, retain_copper=False):
     if os.path.abspath(path) == os.path.abspath(out):
         raise ValueError('write_board writes a copy only: out must differ from the input board')
     board = pcbnew.LoadBoard(path)
@@ -794,7 +796,7 @@ def write_board(path, pr, pose, out, outline_scale=1.0):
     tracks = list(board.GetTracks())
     internal = {}
     for i, u, *_ in moved:
-        if u['box']:
+        if u['box'] and not retain_copper:
             b = u['box']
             # Block copper = a track inside the block box, not locked, on a net of a pad of the block.
             # MC-MAIN 2026-10-04: the locked USB pair goes through the ENC0 and ENC1 block boxes; 4 of its
@@ -814,7 +816,7 @@ def write_board(path, pr, pose, out, outline_scale=1.0):
                     moved_pads.setdefault(p.GetNetname(), []).append(p)
 
     # copper clusters per net (end points and vias), not counting the rigid block copper
-    free = [t for t in tracks if t.m_Uuid.AsString() not in internal and not t.IsLocked()]  # locked: stays
+    free = [] if retain_copper else [t for t in tracks if t.m_Uuid.AsString() not in internal and not t.IsLocked()]
     find = _clusters(free)
     rects = [fp_rect(by_ref[r]) for i, u, *_ in moved for r in u['refs']]
     hit = _hit(free, find, moved_pads) | _owned(free, find, rects)

@@ -23,9 +23,17 @@ def main():
     ap.add_argument('--drc-seconds', required=True, type=float)
     ap.add_argument('--cli', default='kicad-cli')
     ap.add_argument('--block-binding', action='append', default=[], help='exact hierarchical block binding JSON')
+    ap.add_argument('--movable-ref', action='append', help='limit movement to these exact references; select entire rigid units')
+    ap.add_argument('--decap-tie-mm', type=float, default=0., help='explicit decoupler grouping distance from board policy')
+    ap.add_argument('--max-displacement-mm', type=float, help='search movement cap, not an electrical tolerance')
+    ap.add_argument('--no-rotate', action='store_true')
     args = ap.parse_args()
     if not 0 < args.drc_seconds < float('inf'):
         ap.error('finite positive DRC budget required')
+    if not 0 <= args.decap_tie_mm < float('inf'):
+        ap.error('finite nonnegative decoupler grouping distance required')
+    if args.max_displacement_mm is not None and not 0 < args.max_displacement_mm < float('inf'):
+        ap.error('finite positive movement cap required')
     board, out = Path(args.board).resolve(), Path(args.outdir).resolve()
     sources = [board.with_suffix(ext) for ext in ('.kicad_pcb', '.kicad_pro', '.kicad_dru', '.kicad_sch')]
     if any(not p.is_file() for p in sources):
@@ -73,15 +81,20 @@ def main():
         if errors:
             record.update(status='reject', reason='native input geometry/rules fail')
             return 3
-        problem = read_problem(str(board))
+        problem = read_problem(str(board), decap_tie=args.decap_tie_mm)
         if bindings:
             from .block_bindings import attach_to_units
             problem = attach_to_units(problem, bindings)
             record['block_bindings'] = problem['block_bindings']
-        payload = dict(problem=problem, params={}, attachments=[])
+        from .native_placement import restrict_movement
+        restrict_movement(problem, args.movable_ref, no_rotate=args.no_rotate)
+        params = {} if args.max_displacement_mm is None else dict(max_displacement=args.max_displacement_mm)
+        payload = dict(problem=problem, params=params, attachments=[])
+        record['movement_policy'] = dict(movable_refs=args.movable_ref, decap_tie_mm=args.decap_tie_mm,
+            max_displacement_mm=args.max_displacement_mm, no_rotate=args.no_rotate)
         (out/'placement.json').write_text(json.dumps(payload, indent=2))
         record['placement_sha256'] = digest(out/'placement.json')
-        record['screen'] = screen_pose(problem, cost.initial_pose(problem), {})
+        record['screen'] = screen_pose(problem, cost.initial_pose(problem), params)
         ready = record['screen']['status'] == 'candidate'
         status = 'candidate' if ready else ('needs_native_check' if record['screen']['status'] == 'needs_native_check' else 'model_rejected')
         record.update(status=status, units=len(problem['units']), nets=len(problem['nets']))

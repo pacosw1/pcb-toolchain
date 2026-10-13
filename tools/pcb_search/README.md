@@ -72,6 +72,13 @@ separate experiments; their skips are not native acceptance evidence.
 * `native_export.py` records native DRC and a fresh placement model. Coarse
   overlap/out-of-bounds conflicts request native reconciliation; they do not by
   themselves prove a physical defect. Structural failures still reject.
+* `native_placement.py` imports completed placement poses from that export,
+  rechecks the original constraints, and invokes the existing KiCad writer with
+  all copper retained. It verifies exact rigid transforms, unchanged footprint
+  definitions and every unrelated native form. Stale sources/models, fixed or
+  locked moves and changes to pad nets/shapes or retained tracks are rejected.
+  Units owning board drawings, cutouts or zones need a richer transform contract
+  and abstain. Moved pads may need local reconnection: import is not acceptance.
 * `block_bindings.py` checks a library block against one hierarchical schematic
   instance before placement search: exact MPN/LCSC/value, footprint and side,
   pad definitions, bijective component identity, injective net mapping, and one
@@ -122,6 +129,25 @@ Native helpers require KiCad Python; placement export also needs numpy. Run
 export and import in **separate short-lived processes**: the tested legacy SWIG
 runtime corrupts later bindings when detached objects are collected. Do not use
 these functions in a long-lived worker. The output directories must be new.
+
+Placement can now round-trip through the same proposal CLI:
+
+```sh
+PYTHONPATH=tools python3 -m pcb_search.native_export BOARD.kicad_pcb NEW_MODEL --drc-seconds 15
+PYTHONPATH=tools python3 -m pcb_search place NEW_MODEL/placement.json --output PLACEMENT.json --budget-s 2 --steps-mm 0.25
+PYTHONPATH=tools python3 -m pcb_search.native_placement NEW_MODEL PLACEMENT.json NEW_PLACEMENT
+```
+
+These budgets/steps are search policies. Export may return `needs_native_check`
+for conservative geometry while still producing a model; inspect its record
+before continuing. `--movable-ref` can restrict movement to exact references,
+but must include every member of a selected rigid unit and cannot unfix native
+fixed parts. `--no-rotate` and `--max-displacement-mm` further restrict search.
+Use `--decap-tie-mm` only with the board's sourced grouping policy. The importer
+accepts completed quench or packing proposals tied to the exact model and four
+native source files. Run native DRC/refill, connectivity and board-specific gates
+on its output before choosing a local repair or accepting the placement. The
+source board and existing writer's default copper-removal behavior are unchanged.
 
 ```sh
 PYTHONPATH=tools python3 -m pcb_search.native_srj export BOARD.kicad_pcb NEW_INPUT --net /V_GAS
