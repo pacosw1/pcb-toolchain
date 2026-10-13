@@ -4,6 +4,8 @@
   python3 tools/blocks.py serve [--port 8765]      viewer on http://127.0.0.1:8765
   python3 tools/blocks.py check [ID ...]           parts, datasheets and facts of blocks; exit 1 on an error
   python3 tools/blocks.py new ID "description" "keywords"   empty block folder (KiCad-native)
+  python3 tools/blocks.py find "USB" [--mpn MPN]   retrieve candidates without qualifying them
+  python3 tools/blocks.py reuse ID                inspect a fingerprinted reuse proposal
 
 Sources of truth (read at request time, never copied):
   hardware-design/blocks/iot-lab.kicad_blocks/<ID>.kicad_block/
