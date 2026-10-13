@@ -40,11 +40,15 @@ separate experiments; their skips are not native acceptance evidence.
   fanout pipelines. Node permission mode denies network, writes and subprocesses;
   the host enforces a process deadline. Input rule/geometry changes are rejected.
   A blocked-terminal screen avoids searching a contradictory obstacle model.
+  Last-observed phase/iteration records survive a hard timeout, so the next
+  decision can target the expensive stage. Partial stdout never admits a route.
 * `native_srj.py` supports a deliberately narrow two-layer, selected-net round
   trip. It preserves all placement and other native content by comparing parsed
   board forms. Retained diagonal traces use exact centerlines, not their AABBs.
   Scoped proposals restore original copper and discard any backend edits to it.
   A same-layer crossing screen rejects definite shorts before native import.
+  NPTH hole clearances remain distinct from copper obstacle clearances; a larger
+  mounting-hole clearance must not falsely seal an unrelated SMD pin escape.
   This is not complete clearance, connectivity, plane or current-path validation.
 * `repair.py` tests one local waypoint shortcut around a crossing. It keeps
   widths, layers, vias and explicit connection anchors, requires elimination of
@@ -145,6 +149,19 @@ disabled; supplied project rules and subsequent native gates retain authority.
 Via-in-pad is conservatively prohibited using the exported pad envelopes. Its
 own completion/refill counters are diagnostic only. Validate `NEW_OUTPUT/selected`
 with native and board-specific checks before ranking or adopting any candidate.
+
+Repeated `--priority-net NET` flags can test an explicit diagnosed net ordering;
+each must name a selected input net. This is an experiment policy, not a default
+quality improvement. On ENV-SENSE's four non-GND nets, both the default and
+SDA/SCL-first five-second searches left five router-reported opens. Neither
+partial output was admitted; shifting which connection fails is not progress.
+
+The existing ENV production pipeline now runs its mechanical, sensor-position,
+decoupling and connector checks with `check-env-pcb.py --placement-only` directly
+after placement. A failure stops before routing. It uses the same existing
+thresholds; full copper, thermal and release checks remain necessary afterward.
+Native tests cover the reference and a misplaced decoupler; a pipeline-order
+counterexample verifies the router never starts after that gate fails.
 
 Retrieve and bind existing blocks without editing CAD:
 

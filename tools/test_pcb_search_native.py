@@ -56,6 +56,23 @@ class NativeContracts(unittest.TestCase):
                 geometry_digest(a, ['f'])
 
     @unittest.skipUnless(os.environ.get('PCB_NATIVE_FIXTURE'), 'explicit isolated native ENV fixture required')
+    def test_hole_clearance_does_not_falsely_seal_sensor_escape(self):
+        from pcb_search.capacity import terminal_conflicts
+        board = Path(os.environ['PCB_NATIVE_FIXTURE']).resolve()
+        project = json.loads(board.with_suffix('.kicad_pro').read_text())
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)/'input'
+            p = subprocess.run([sys.executable, '-m', 'pcb_search.native_srj', 'export', str(board),
+                                str(folder), '--net', '/SCL'], capture_output=True, text=True, timeout=15)
+            self.assertEqual(p.returncode, 0, p.stdout+p.stderr)
+            srj = json.loads((folder/'srj.json').read_text())
+            self.assertFalse(terminal_conflicts(srj))
+            self.assertEqual(srj['minTraceToHoleEdgeClearance'],
+                             project['board']['design_settings']['rules']['min_hole_clearance'])
+            self.assertEqual(srj['defaultObstacleMargin'],
+                             max(c['clearance'] for c in project['net_settings']['classes']))
+
+    @unittest.skipUnless(os.environ.get('PCB_NATIVE_FIXTURE'), 'explicit isolated native ENV fixture required')
     def test_native_selected_net_round_trip_keeps_every_other_item(self):
         import pcbnew as pcb
         board = Path(os.environ['PCB_NATIVE_FIXTURE']).resolve()

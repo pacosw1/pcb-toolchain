@@ -45,6 +45,14 @@ class TraceMakerTest(unittest.TestCase):
         self.assertEqual(cmd[cmd.index('--component-rules')+1],'off')
         self.assertGreater(float(cmd[cmd.index('--vias-off-pads-below')+1]),3)
 
+    def test_priority_is_explicit_and_cannot_name_an_unselected_net(self):
+        srj=self.srj|{'connections':[{'name':'/SDA'},{'name':'/SCL'}]}
+        cmd=command('bin','in','out','summary',srj,search_s=1,threads=1,priority_nets=['/SDA','/SCL'])
+        self.assertIn('--first-nets=/SDA,/SCL',cmd)
+        for nets in (['GND'],['/SDA','/SDA'],['/SDA,/SCL']):
+            with self.assertRaises(ValueError):
+                command('bin','in','out','summary',srj,search_s=1,threads=1,priority_nets=nets)
+
     def test_timeout_with_output_cannot_admit_candidate(self):
         def timeout(*args,**kwargs):
             self.candidate(*args,**kwargs)

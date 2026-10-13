@@ -231,7 +231,14 @@ def export(board, out, nets):
     class_rules = netclass_rules(project, all_names | set(names.values()))
     classes = [class_rules[names[n]] for n in nets]
     clearance = max([rules['min_clearance']] + [c['clearance'] for c in class_rules.values()]
-                    + [pcb.ToMM(p.GetOwnClearance(pcb.F_Cu)) for p in pads])
+                    + [pcb.ToMM(p.GetOwnClearance(pcb.F_Cu)) for p in pads
+                       if p.GetAttribute() != pcb.PAD_ATTRIB_NPTH])
+    # An NPTH's local clearance applies to its hole, not every copper obstacle.
+    # Hole constraints remain explicit below; inflating all copper to the hole
+    # clearance can falsely seal a valid SMD escape near a rule-area boundary.
+    hole_clearance = max([rules['min_hole_clearance']]
+                         + [pcb.ToMM(p.GetOwnClearance(pcb.F_Cu)) for p in pads
+                            if p.GetAttribute() == pcb.PAD_ATTRIB_NPTH])
     via_drill = max(c['via_drill'] for c in classes)
     via_diameter = max([rules['min_via_diameter'], via_drill + 2 * rules['min_via_annular_width']]
                        + [c['via_diameter'] for c in classes])
@@ -239,7 +246,7 @@ def export(board, out, nets):
                minViaPadDiameter=via_diameter, minViaHoleDiameter=via_drill,
                defaultObstacleMargin=clearance, minTraceToPadEdgeClearance=clearance,
                minPadEdgeToPadEdgeClearance=clearance, minViaEdgeToPadEdgeClearance=clearance,
-               minTraceToHoleEdgeClearance=rules['min_hole_clearance'],
+               minTraceToHoleEdgeClearance=hole_clearance,
                minViaHoleEdgeToViaHoleEdgeClearance=rules['min_hole_to_hole'],
                minBoardEdgeClearance=rules['min_copper_edge_clearance'],
                allowViaInPad=False, allowJumpers=False, allowBlindAndBuriedVias=False,

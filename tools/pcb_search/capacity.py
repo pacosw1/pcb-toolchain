@@ -140,6 +140,23 @@ def route_crossings(srj, output_traces):
     return conflicts
 
 
+def progress_records(stderr):
+    """Last observed work only; never evidence that a timed-out route completed."""
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode('utf-8', errors='replace')
+    rows = []
+    for line in (stderr or '').splitlines():
+        if not line.startswith('IOT_CAPACITY_PROGRESS '):
+            continue
+        try:
+            row = json.loads(line.removeprefix('IOT_CAPACITY_PROGRESS '))
+        except (ValueError, TypeError):
+            continue
+        if isinstance(row, dict) and row.get('schema') == 'iot-lab.capacity-progress.v1':
+            rows.append(row)
+    return rows[-32:]
+
+
 def run(srj, *, budget_s, pipeline='topology', node='node'):
     budget_s = number(budget_s, 'budget_s', positive=True)
     if pipeline not in ('topology', 'fanout'):
@@ -151,18 +168,22 @@ def run(srj, *, budget_s, pipeline='topology', node='node'):
                     reason='terminal blocked in supplied obstacle model; reconcile native geometry',
                     conflicts=conflicts, native_validation_required=True)
     request = dict(input=srj, input_sha256=source_sha, budget_ms=budget_s*1000, pipeline=pipeline)
+    adapter_files = {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                     for p in (ROOT/'run.mjs', ROOT/'package.json', ROOT/'package-lock.json')}
     started = time.monotonic()
     try:
         # Current Node's permission mode denies network, subprocesses and writes.
         # Unknown permission options on an older runtime fail, never fall back.
         proc = subprocess.run([node, '--permission', '--allow-fs-read=' + str(ROOT), str(ROOT/'run.mjs')],
                               input=json.dumps(request), text=True, capture_output=True, timeout=budget_s)
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as error:
         return dict(status='timeout', qualified=False, input_sha256=source_sha,
-                    reason='capacity process deadline', elapsed_s=time.monotonic()-started)
+                    reason='capacity process deadline', elapsed_s=time.monotonic()-started,
+                    progress=progress_records(error.stderr), adapter_files=adapter_files)
     if proc.returncode:
         return dict(status='backend_error', qualified=False, input_sha256=source_sha,
-                    reason=proc.stderr[-2000:], elapsed_s=time.monotonic()-started)
+                    reason=proc.stderr[-2000:], elapsed_s=time.monotonic()-started,
+                    progress=progress_records(proc.stderr), adapter_files=adapter_files)
     result = json.loads(proc.stdout)
     if result.get('error') and not result.get('reason'):
         result['reason'] = result['error']
@@ -187,8 +208,8 @@ def run(srj, *, budget_s, pipeline='topology', node='node'):
         # geometry annotations and retain our exact original model.
         result['output'] = dict(copy.deepcopy(srj), traces=traces)
     result.update(elapsed_s=time.monotonic()-started, rule_coverage='caller model; native checks required')
-    result['adapter_files'] = {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
-                               for p in (ROOT/'run.mjs', ROOT/'package.json', ROOT/'package-lock.json')}
+    result['adapter_files'] = adapter_files
+    result['progress'] = progress_records(proc.stderr)
     if result['elapsed_s'] >= budget_s:
         result.update(status='timeout', reason='capacity response validation exceeded deadline')
     return result

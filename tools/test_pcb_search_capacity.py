@@ -1,5 +1,6 @@
 """Pinned backend tests; fixture dimensions are synthetic, not production rules."""
 import os
+import json
 import unittest
 from unittest import mock
 import subprocess
@@ -73,10 +74,20 @@ class CapacityTests(unittest.TestCase):
                 process.assert_not_called()
 
     def test_process_deadline_is_terminal_and_never_qualifies(self):
-        with mock.patch('pcb_search.capacity.subprocess.run', side_effect=subprocess.TimeoutExpired('node', 1)):
+        phase = dict(schema='iot-lab.capacity-progress.v1', phase='highDensityRouteSolver',
+                     iterations=42, elapsed_ms=900)
+        # TimeoutExpired exposes captured bytes even when text=True. An
+        # incomplete diagnostic line must not hide the last complete phase.
+        stderr = ('unrelated backend log\nIOT_CAPACITY_PROGRESS ' + json.dumps(phase)
+                  + '\nIOT_CAPACITY_PROGRESS {"phase":').encode()
+        error = subprocess.TimeoutExpired('node', 1, output=b'{"status":"candidate"}', stderr=stderr)
+        with mock.patch('pcb_search.capacity.subprocess.run', side_effect=error):
             result = run(srj(), budget_s=1)
         self.assertEqual(result['status'], 'timeout')
         self.assertFalse(result['qualified'])
+        self.assertEqual(result['progress'], [phase])
+        self.assertNotIn('output', result)
+        self.assertEqual(set(result['adapter_files']), {'run.mjs', 'package.json', 'package-lock.json'})
 
     @unittest.skipUnless(os.environ.get('PCB_CAPACITY_INTEGRATION') == '1', 'optional pinned Node backend')
     def test_topology_resolves_case_beyond_cheap_patterns(self):
@@ -90,6 +101,8 @@ class CapacityTests(unittest.TestCase):
         self.assertTrue(result['output']['traces'])
         self.assertEqual(result['backend']['version'], '0.0.979')
         self.assertFalse(result['qualified'])
+        self.assertEqual(result['progress'][0]['phase'], 'loading_backend')
+        self.assertTrue(any(row['phase'] == 'initializing' for row in result['progress']))
 
 
 if __name__ == '__main__':

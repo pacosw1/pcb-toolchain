@@ -15,23 +15,30 @@ from .native_candidate import scope_native
 from .native_srj import digest, frozen_srj, source_set
 
 
-def command(binary, source, output, summary, srj, *, search_s, threads):
+def command(binary, source, output, summary, srj, *, search_s, threads, priority_nets=()):
     number(search_s,'search_s',positive=True)
     if isinstance(threads,bool) or not isinstance(threads,int) or threads < 1:
         raise ValueError('positive worker thread count required')
+    names={c['name'] for c in srj.get('connections',[])}
+    if (len(set(priority_nets)) != len(priority_nets)
+            or any(not isinstance(n,str) or n not in names or ',' in n for n in priority_nets)):
+        raise ValueError('priority nets must uniquely name selected input connections without commas')
     # All native pads are exported as obstacles. Use a strict upper bound on
     # every envelope, so the upstream pad-width filter cannot permit via-in-pad.
     dimensions = [number(o[k],k,positive=True) for o in srj['obstacles'] for k in ('width','height')]
     if not dimensions:
         raise ValueError('native pad envelopes required for via-in-pad protection')
     bound = math.nextafter(max(dimensions),math.inf)
-    return [str(binary),'route',str(source),'-o',str(output),
+    args = [str(binary),'route',str(source),'-o',str(output),
             '--time',str(search_s),'--threads',str(threads),'--variants',str(threads),
             '--no-gpu','--no-kb','--soft-zones','--keep-vias-off-pads',
             '--vias-off-pads-below',str(bound),'--component-rules','off','--json',str(summary)]
+    if priority_nets:
+        args.append('--first-nets='+','.join(priority_nets))
+    return args
 
 
-def run(folder, out, *, binary, expected_sha256, search_s, wall_s, threads=1):
+def run(folder, out, *, binary, expected_sha256, search_s, wall_s, threads=1, priority_nets=()):
     number(wall_s,'wall_s',positive=True)
     number(search_s,'search_s',positive=True)
     if wall_s < search_s:
@@ -44,13 +51,14 @@ def run(folder, out, *, binary, expected_sha256, search_s, wall_s, threads=1):
     manifest,srj = frozen_srj(folder)
     source = folder/'input.kicad_pcb'
     cmd = command(binary,source,out/'backend.kicad_pcb',out/'backend-summary.json',srj,
-                  search_s=search_s,threads=threads)
+                  search_s=search_s,threads=threads,priority_nets=priority_nets)
     out.mkdir(parents=True,exist_ok=False)
     started = lean.now()
     record = dict(schema='iot-lab.tracemaker-run.v1',status='running',qualified=False,
                   executable_sha256=expected_sha256,input_files=manifest['input_files'],
                   srj_sha256=manifest['srj_sha256'],selected_nets=manifest['selected_nets'],
                   command=cmd,search_budget_s=search_s,wall_budget_s=wall_s,
+                  priority_nets=list(priority_nets),
                   native_and_board_specific_gates_required=True)
     try:
         with (out/'backend.log').open('w') as log:
@@ -89,10 +97,11 @@ def main():
     ap.add_argument('--binary',required=True);ap.add_argument('--binary-sha256',required=True)
     ap.add_argument('--search-s',required=True,type=float);ap.add_argument('--wall-s',required=True,type=float)
     ap.add_argument('--threads',type=int,default=1)
+    ap.add_argument('--priority-net',action='append',default=[],help='selected net to route first, based on diagnosed failures')
     args=ap.parse_args()
     try:
         r=run(args.input,args.output,binary=args.binary,expected_sha256=args.binary_sha256,
-              search_s=args.search_s,wall_s=args.wall_s,threads=args.threads)
+              search_s=args.search_s,wall_s=args.wall_s,threads=args.threads,priority_nets=args.priority_net)
         print(('PASS' if r['status']=='candidate' else 'STUCK')+': TraceMaker '+r['status']+
               '; '+r.get('reason','scoped proposal only; native gates required'))
         return 0 if r['status']=='candidate' else 3
