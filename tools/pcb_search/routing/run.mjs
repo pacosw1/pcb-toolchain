@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { performance } from 'node:perf_hooks';
+import { retainedTrackPortConflicts, solverWork } from './planning.mjs';
 
 const require = createRequire(import.meta.url);
 const pkg = require('@tscircuit/capacity-autorouter/package.json');
@@ -23,6 +24,7 @@ function progress(phase, solver) {
     iterations: solver?.iterations ?? 0,
     subsolver: solver?.activeSubSolver?.constructor?.name ?? null,
     subsolver_iterations: solver?.activeSubSolver?.iterations ?? null,
+    work: solverWork(solver),
   }) + '\n');
   lastPhase = phase; lastReport = elapsed;
 }
@@ -32,11 +34,21 @@ const Solver = { topology: AutoroutingPipelineSolver, fanout: AutoroutingPipelin
 if (!Solver) throw new Error('unknown routing pipeline');
 progress('initializing');
 const solver = new Solver(structuredClone(request.input), { cacheProvider: null });
+let planningChecked = false, planningConflicts = [];
 while (!solver.solved && !solver.failed && performance.now() - start < request.budget_ms) {
+  // The constructor sets these nodes before the first detailed routing step.
+  // Protected copper is restored by our importer, so a port through that copper
+  // is an invalid plan even if the backend could move the original trace.
+  if (!planningChecked && solver.highDensityRouteSolver) {
+    if (!Array.isArray(solver.highDensityNodePortPoints)) throw new Error('missing detailed planning nodes');
+    planningConflicts = retainedTrackPortConflicts(request.input, solver.highDensityNodePortPoints, solver.connMap);
+    planningChecked = true;
+    if (planningConflicts.length) { progress('planning_conflict', solver); break; }
+  }
   progress(solver.getCurrentPhase?.() ?? solver.constructor.name, solver);
   solver.step();
 }
-const status = performance.now() - start >= request.budget_ms ? 'timeout' : solver.solved ? 'candidate' : solver.failed ? 'backend_error' : 'timeout';
+const status = performance.now() - start >= request.budget_ms ? 'timeout' : planningConflicts.length ? 'model_conflict' : solver.solved ? 'candidate' : solver.failed ? 'backend_error' : 'timeout';
 const output = {
   schema: 'iot-lab.capacity-route.v1', status, qualified: false,
   input_sha256: request.input_sha256, native_validation_required: true,
@@ -45,5 +57,9 @@ const output = {
   backend: { name: pkg.name, version: pkg.version, node: process.version,
     entry_sha256: createHash('sha256').update(readFileSync(require.resolve(pkg.name))).digest('hex') },
 };
+if (planningConflicts.length) {
+  output.reason = 'planned channel endpoint conflicts with retained copper; repair topology or placement before detailed routing';
+  output.planning_conflicts = planningConflicts;
+}
 if (status === 'candidate') output.output = solver.getOutputSimpleRouteJson();
 process.stdout.write(JSON.stringify(output));

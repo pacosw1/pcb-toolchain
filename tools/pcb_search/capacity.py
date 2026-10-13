@@ -169,7 +169,7 @@ def run(srj, *, budget_s, pipeline='topology', node='node'):
                     conflicts=conflicts, native_validation_required=True)
     request = dict(input=srj, input_sha256=source_sha, budget_ms=budget_s*1000, pipeline=pipeline)
     adapter_files = {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
-                     for p in (ROOT/'run.mjs', ROOT/'package.json', ROOT/'package-lock.json')}
+                     for p in (ROOT/'run.mjs', ROOT/'planning.mjs', ROOT/'package.json', ROOT/'package-lock.json')}
     started = time.monotonic()
     try:
         # Current Node's permission mode denies network, subprocesses and writes.

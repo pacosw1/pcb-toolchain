@@ -45,7 +45,13 @@ separate experiments; their skips are not native acceptance evidence.
   fanout pipelines. Node permission mode denies network, writes and subprocesses;
   the host enforces a process deadline. Input rule/geometry changes are rejected.
   A blocked-terminal screen avoids searching a contradictory obstacle model.
-  Last-observed phase/iteration records survive a hard timeout, so the next
+  Before detailed routing, a second screen compares planned channel endpoints
+  with exact retained straight-track capsules. `model_conflict` includes the
+  offending node, port, original trace UUID and measured/required distance;
+  repair topology or placement before spending more on that plan. This is a
+  partial geometry screen, not proof that the board is unroutable. Same-net
+  aliases and other-layer copper remain usable. Last-observed nested solver
+  names, node counts and fallback causes survive a hard timeout, so the next
   decision can target the expensive stage. Partial stdout never admits a route.
 * `native_srj.py` supports a deliberately narrow two-layer, selected-net round
   trip. It preserves all placement and other native content by comparing parsed

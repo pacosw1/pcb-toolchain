@@ -87,7 +87,7 @@ class CapacityTests(unittest.TestCase):
         self.assertFalse(result['qualified'])
         self.assertEqual(result['progress'], [phase])
         self.assertNotIn('output', result)
-        self.assertEqual(set(result['adapter_files']), {'run.mjs', 'package.json', 'package-lock.json'})
+        self.assertEqual(set(result['adapter_files']), {'run.mjs', 'planning.mjs', 'package.json', 'package-lock.json'})
 
     @unittest.skipUnless(os.environ.get('PCB_CAPACITY_INTEGRATION') == '1', 'optional pinned Node backend')
     def test_topology_resolves_case_beyond_cheap_patterns(self):
