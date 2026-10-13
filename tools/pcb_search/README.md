@@ -9,7 +9,8 @@ limit the design to a scheduler.
 ## Current implementation
 
 This package is an **experimental proposal kernel**, not the completed placer/router
-or a production pipeline replacement. It does not modify CAD or qualify a board.
+or a production pipeline replacement. Native experiments write new copies only;
+none of these proposal stages qualifies a board.
 
 * `contracts.py` requires explicit trace widths, per-net and pair clearances, layer
   masks, obstacle envelopes, edge rules, sources and input fingerprints. Unknown
@@ -31,6 +32,23 @@ or a production pipeline replacement. It does not modify CAD or qualify a board.
   without pads remain obstacles; movable units without physical pad geometry fail
   explicitly. Per-unit rotation, movement bounds, displacement caps and part rules
   remain enforced after import.
+* `capacity.py` runs locked `@tscircuit/capacity-autorouter` 0.0.979 topology or
+  fanout pipelines. Node permission mode denies network, writes and subprocesses;
+  the host enforces a process deadline. Input rule/geometry changes are rejected.
+  A blocked-terminal screen avoids searching a contradictory obstacle model.
+* `native_srj.py` supports a deliberately narrow two-layer, selected-net round
+  trip. It preserves all placement and other native content by comparing parsed
+  board forms. Retained diagonal traces use exact centerlines, not their AABBs.
+  Scoped proposals restore original copper and discard any backend edits to it.
+  A same-layer crossing screen rejects definite shorts before native import.
+  This is not complete clearance, connectivity, plane or current-path validation.
+* `repair.py` tests one local waypoint shortcut around a crossing. It keeps
+  widths, layers, vias and explicit connection anchors, requires elimination of
+  all known crossings, and leaves full acceptance to native checks. It does not
+  rerun the router or touch protected copper.
+* `native_export.py` records native DRC and a fresh placement model. Coarse
+  overlap/out-of-bounds conflicts request native reconciliation; they do not by
+  themselves prove a physical defect. Structural failures still reject.
 * `__main__.py` writes a separate, new JSON proposal with input and implementation
   fingerprints. Partial routes return `STUCK` and exit 3. `PASS` means a complete
   proposal in this model, never native acceptance. Existing output is refused.
@@ -59,6 +77,42 @@ This backend is not the default and has no demonstrated real-board quality gain.
 Missing runtime imports in the published packer's dependency list are supplied by
 our explicit dependency pins; `package-lock.json` records the complete resolution.
 
+Optional capacity backend (current Node with permission mode is required):
+
+```sh
+npm ci --prefix tools/pcb_search/routing --ignore-scripts --no-audit --no-fund
+PCB_CAPACITY_INTEGRATION=1 PYTHONPATH=tools python3 -m unittest -v tools.test_pcb_search_capacity
+PYTHONPATH=tools python3 -m pcb_search route-srj srj.json --output new-capacity.json --budget-s 5
+```
+
+Native helpers require KiCad Python; placement export also needs numpy. Run
+export and import in **separate short-lived processes**: the tested legacy SWIG
+runtime corrupts later bindings when detached objects are collected. Do not use
+these functions in a long-lived worker. The output directories must be new.
+
+```sh
+PYTHONPATH=tools python3 -m pcb_search.native_srj export BOARD.kicad_pcb NEW_INPUT --net /V_GAS
+PYTHONPATH=tools python3 -m pcb_search route-srj NEW_INPUT/srj.json --output ROUTE.json --budget-s 5
+PYTHONPATH=tools python3 -m pcb_search.native_srj scope NEW_INPUT ROUTE.json SCOPED.json
+PYTHONPATH=tools python3 -m pcb_search.native_srj import NEW_INPUT SCOPED.json NEW_CANDIDATE
+```
+
+These are individual stages, not an unconditional script: a route error stops;
+only a completed response with changes limited to preloaded copper can be scoped
+for separate evaluation. A scoped geometry rejection stops before import. Every
+import requires native DRC/refill and the board's complete gates before adoption.
+PTH drill rules, composite netclasses, retained arcs, internal board holes and
+variable-width traces currently cause explicit abstention in the native adapter.
+
+For a scoped crossing rejection, one bounded local repair can be requested:
+
+```sh
+PYTHONPATH=tools python3 -m pcb_search.native_srj repair NEW_INPUT SCOPED.json REPAIRED.json --budget-s 0.5
+```
+
+Import a repaired proposal only if that stage returns `PASS`, then validate it
+with the same native gates. Repeated unsuccessful repairs require diagnosis.
+
 Placement input has exactly `problem`, `params` and `attachments`; `problem` is the
 existing `placer.cost` JSON model. An attachment has `id`, `owners`, `anchor_sha256`
 (from `anchor_fingerprint`) and `geometry_sha256`. These hashes describe bindings;
@@ -71,7 +125,7 @@ Route input uses schema `iot-lab.route-problem.v1`. See `routing_problem()` in
 in KiCad coordinates. Obstacles are conservative rectangular envelopes; mechanical
 obstacles use an empty net. A connection's layers must be accessible at **both**
 endpoints. `inputs` records SHA-256 values, not permission to trust an incomplete
-export. A CAD exporter and native round-trip validator are still required.
+export. The SRJ native helper does not yet export this cheap-pattern contract.
 
 ## Integration decisions and remaining work
 
@@ -114,8 +168,8 @@ validation, complete adapters and controlled real-board comparisons remain open.
 ## Source audit
 
 Exact observed revisions and files reviewed are in `upstreams.json`. These are
-audit pins, not claims that all dependencies are installed or integrated. Only the
-optional packing adapter has an installed, locked dependency set here. The audit
+audit pins, not claims that all dependencies are installed or integrated. Packing
+and capacity routing have installed, locked dependency sets here. The audit
 checked current upstream heads on 2026-10-13. Refresh and pin before benchmarking.
 
 * [tscircuit autorouter](https://github.com/tscircuit/tscircuit-autorouter/tree/46f4fdf941ad2ca641f6e090cf592012b35b3da6)
@@ -154,3 +208,32 @@ penalties, including fixed units. This is not evidence of a current-board defect
 a fair baseline comparison, or packing improvement. Stop at this evidence and
 export fresh native inputs before spending time on routing. The attributed smoke
 record is `.bench/cip-839/io6x6-packing-smoke.json`, referenced in CIP 839.
+
+Fresh ENV-SENSE experiment, 2026-10-13 (KiCad 10.0.6): baseline native DRC had
+zero errors/opens and the existing board layout checks passed. Its placement
+model reported a 0.74 mm² projected boundary conflict at U5's courtyard/cutout;
+this motivated native escalation rather than unconditional coarse rejection.
+Only `/V_GAS` was stripped and routed in isolated copies. A retained diagonal
+ground trace's AABB falsely covered C6.1, and the initial solver exhausted about
+two million iterations in 4.58 seconds. The new terminal check finds that model
+conflict without running the solver. Exact preloaded traces removed the false
+obstacle. The corrected solver response arrived in 3.42 seconds, with seven
+proposed edits to retained copper. Scoping preserved original copper; KiCad then
+found one `/V_GAS`–`/SCL` crossing and zero opens. **Candidate rejected.** The new
+crossing screen also rejects the cached candidate before native import.
+
+A bounded local shortcut removed one interior waypoint in 18 ms without rerunning
+the router. Its new native copy has zero DRC errors and zero opens; all original
+placement, rules and other copper remain identical. It is still unqualified
+pending all release gates. The committed reference route is better on the measured
+quality metrics: 10.438 mm and zero vias, versus 10.774 mm and four vias for this
+candidate. Keep the reference. This experiment demonstrates interoperability,
+failure localization and inexpensive repair, not grounds to replace the router.
+
+This is a diagnosed adapter/backend failure and regression case, not a released
+board, a whole-board benchmark or an improvement percentage. The native positive
+control (strip and restore the known original routes) passes and preserves all
+other board forms. Evidence and exact artifact hashes are held in CIP 839, under
+`.bench/cip-839/cip839-env-native-20261013T065125Z/`. Latest KiCad 10.0.7 native
+validation, broader local repair, block reuse integration and comparative placement plus
+routing remain open.

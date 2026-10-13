@@ -63,9 +63,11 @@ def screen_pose(problem, pose, params, *, attachments=()):
     terms = cost.components(all_units, pose, params)
     if any(not math.isfinite(v) for v in terms.values()):
         raise ValueError('nonfinite placement score')
-    for term in ('overlap', 'oob'):
-        if terms[term] > 0:
-            errors.append(term)
+    # Courtyard/pad bounding boxes and raster masks are conservative projections.
+    # A positive area can be a false conflict (e.g. an assembly courtyard over a
+    # cutout while the actual copper clears it). Escalate to exact native and
+    # board-specific checks; do not call this a proven input defect or waive it.
+    geometry_conflicts = [term for term in ('overlap', 'oob') if terms[term] > 0]
     for i, u in enumerate(problem['units']):
         if cost.rule_miss(problem, pose, i) > 0:
             errors.append('part rule: ' + u['name'])
@@ -74,10 +76,12 @@ def screen_pose(problem, pose, params, *, attachments=()):
         unsupported.append('part rule type: ' + name)
     if params.get('mains'):
         unsupported.append('mains path diagnostic must be run separately')
-    status = 'reject' if errors else 'needs_regeneration' if stale else 'unknown' if unsupported else 'candidate'
+    status = ('reject' if errors else 'needs_regeneration' if stale else 'unknown' if unsupported
+              else 'needs_native_check' if geometry_conflicts else 'candidate')
     return dict(schema='iot-lab.placement-screen.v1', status=status, qualified=False,
                 input_sha256=fingerprint(dict(problem=problem, pose=pose, params=params, attachments=attachments)),
-                errors=errors, stale_attachments=stale, unsupported=unsupported, components=terms,
+                errors=errors, geometry_conflicts=geometry_conflicts,
+                stale_attachments=stale, unsupported=unsupported, components=terms,
                 native_validation_required=True)
 
 

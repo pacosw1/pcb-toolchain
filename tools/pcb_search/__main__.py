@@ -11,22 +11,26 @@ from .patterns import route_patterns
 
 def run():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument('mode', choices=('place', 'route'))
+    ap.add_argument('mode', choices=('place', 'route', 'route-srj'))
     ap.add_argument('input')
     ap.add_argument('--output', required=True)
     ap.add_argument('--budget-s', required=True, type=float)
     ap.add_argument('--steps-mm', type=float, nargs='+', help='placement search steps, not clearance rules')
     ap.add_argument('--backend', choices=('quench', 'packing'), default='quench', help='placement proposal backend')
     ap.add_argument('--rotation-quarters', type=int, nargs='+', default=[0], help='allowed packing rotations')
+    ap.add_argument('--pipeline', choices=('topology', 'fanout'), default='topology', help='capacity SRJ pipeline')
     a = ap.parse_args()
-    if a.mode == 'route' and a.backend != 'quench':
+    if a.mode != 'place' and a.backend != 'quench':
         ap.error('--backend applies only to placement')
     source, dest = Path(a.input), Path(a.output)
     if dest.exists() or source.resolve() == dest.resolve():
         ap.error('output must be new and separate from input')
     raw = json.loads(source.read_text())
     before = fingerprint(raw)
-    if a.mode == 'route':
+    if a.mode == 'route-srj':
+        from .capacity import run as route_capacity
+        result = route_capacity(raw, budget_s=a.budget_s, pipeline=a.pipeline)
+    elif a.mode == 'route':
         result = route_patterns(Problem.read(raw), budget_s=a.budget_s)
     else:
         from .placement import quench

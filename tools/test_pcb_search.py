@@ -164,8 +164,9 @@ class PlacementTests(unittest.TestCase):
         pose = cost.initial_pose(pr)
         self.assertEqual(cost.components(pr, pose, PARAMS)['overlap'], 0)
         report = screen_pose(pr, pose, PARAMS)
-        self.assertEqual(report['status'], 'reject')
-        self.assertIn('overlap', report['errors'])
+        self.assertEqual(report['status'], 'needs_native_check')
+        self.assertIn('overlap', report['geometry_conflicts'])
+        self.assertFalse(report['qualified'])
 
     def test_fixed_move_and_out_of_bounds_rejected(self):
         pr = placement_problem()
@@ -174,7 +175,7 @@ class PlacementTests(unittest.TestCase):
         self.assertIn('fixed unit moved: A', screen_pose(pr, pose, PARAMS)['errors'])
         pose = cost.initial_pose(pr)
         pose[1] = (11., 5., 0)
-        self.assertIn('oob', screen_pose(pr, pose, PARAMS)['errors'])
+        self.assertIn('oob', screen_pose(pr, pose, PARAMS)['geometry_conflicts'])
         pose[1] = (8., 5., 45)
         with self.assertRaisesRegex(ValueError, 'pose'):
             screen_pose(pr, pose, PARAMS)

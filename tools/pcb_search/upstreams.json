@@ -1,11 +1,14 @@
 {
   "observed_at_utc": "2026-10-13T06:26:58Z",
-  "purpose": "Source audit pins; only calculate-packing is integrated experimentally, no backend is production qualified",
+  "purpose": "Source audit pins; packing and capacity routing are integrated experimentally, no backend is production qualified",
   "projects": [
     {
       "repository": "https://github.com/tscircuit/tscircuit-autorouter",
       "commit": "46f4fdf941ad2ca641f6e090cf592012b35b3da6",
       "version": "0.0.979",
+      "npm_git_head": "bbf5bf0f6df12d91fa1b8666da9300a4104ad01b",
+      "npm_entry_sha256": "ddca16ff3956df908b6d6441bbc22d6e45b8ebc4443ea528ada828510a3c4db0",
+      "npm_source_note": "Published package gitHead differs from the observed repository HEAD; lockfile and entry hash identify the tested code",
       "license": "MIT",
       "read": [
         "README.md",

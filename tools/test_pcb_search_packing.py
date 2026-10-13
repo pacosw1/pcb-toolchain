@@ -60,7 +60,7 @@ class PackingAdapterTests(unittest.TestCase):
         self.assertEqual(admit(p, prepared, raw, PARAMS)['status'], 'reject')
         raw = response(p, prepared)
         raw['components'][1]['x'] = 2.
-        self.assertIn('overlap', admit(p, prepared, raw, PARAMS)['final']['errors'])
+        self.assertIn('overlap', admit(p, prepared, raw, PARAMS)['final']['geometry_conflicts'])
         raw['components'][1]['x'] = float('nan')
         with self.assertRaises(ValueError):
             admit(p, prepared, raw, PARAMS)
