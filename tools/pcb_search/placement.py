@@ -113,7 +113,7 @@ seeds or remaining congestion. Derived-copper moves abstain until regenerated.
     if clock() - started >= budget_s:
         result.update(status='timeout', elapsed_s=clock() - started)
         return result
-    if incumbent['status'] != 'candidate':
+    if incumbent['status'] not in ('candidate', 'needs_native_check'):
         result['elapsed_s'] = clock() - started
         return result
 
@@ -123,6 +123,10 @@ seeds or remaining congestion. Derived-copper moves abstain until regenerated.
         # by a weighted wirelength improvement. Actual routing remains decisive.
         return c['cong'], c['via'], c['hpwl'], c['spacing']
 
+    def geometry(screen):
+        c = screen['components']
+        return c['overlap'], c['oob']
+
     old = rank(incumbent)
     timed_out = False
     for step in steps_mm:
@@ -130,6 +134,8 @@ seeds or remaining congestion. Derived-copper moves abstain until regenerated.
             if u['fixed']:
                 continue
             best = None
+            repairing = incumbent['status'] == 'needs_native_check'
+            old_geometry = geometry(incumbent)
             for dx, dy in ((step, 0), (-step, 0), (0, step), (0, -step)):
                 if clock() - started >= budget_s:
                     timed_out = True
@@ -143,16 +149,31 @@ seeds or remaining congestion. Derived-copper moves abstain until regenerated.
                     timed_out = True
                     break
                 r = rank(report)
-                if (report['status'] == 'candidate' and all(a <= b for a, b in zip(r[:3], old[:3]))
-                        and r < old and (best is None or r < best[0])):
-                    best = (r, candidate, report)
+                g = geometry(report)
+                # Repair a conservative geometry conflict without declaring it
+                # a proven native defect. Each move must reduce the conflict,
+                # worsen neither geometry term, and satisfy every structural,
+                # movement, part-rule and attachment constraint. Routing proxies
+                # rank legal placement only after geometry is cleared.
+                if repairing:
+                    admissible = (report['status'] in ('candidate', 'needs_native_check')
+                        and all(a <= b for a, b in zip(g, old_geometry)) and g != old_geometry)
+                    score = (sum(g), *g, *r)
+                else:
+                    admissible = (report['status'] == 'candidate'
+                        and all(a <= b for a, b in zip(r[:3], old[:3])) and r < old)
+                    score = r
+                if admissible and (best is None or score < best[0]):
+                    best = (score, candidate, report)
             if timed_out:
                 break  # do not admit a partially evaluated round
             if best:
-                old, pose, incumbent = best
-                result['moves'].append(dict(unit=u['name'], pose=pose[i], screen_sha256=incumbent['input_sha256']))
+                _, pose, incumbent = best
+                old = rank(incumbent)
+                result['moves'].append(dict(unit=u['name'], pose=pose[i], screen_sha256=incumbent['input_sha256'],
+                                           phase='geometry' if repairing else 'routing_proxies'))
         if timed_out:
             break
-    result.update(status='timeout' if timed_out else 'candidate', pose=pose,
+    result.update(status='timeout' if timed_out else incumbent['status'], pose=pose,
                   final=incumbent, elapsed_s=clock() - started)
     return result

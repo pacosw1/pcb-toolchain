@@ -28,6 +28,11 @@ separate experiments; their skips are not native acceptance evidence.
   regressions in congestion, via-access and wirelength proxies. This small stage
   does not replace global placement or annealing. Derived fanout geometry is bound
   to owner geometry and pose; moving its owner requires regeneration.
+  A seed with conservative geometry conflicts can enter bounded repair: each
+  move must reduce the conflict without worsening either overlap or board-edge
+  cost. Structural, part, movement and attachment constraints still apply. A
+  remaining conflict retains `needs_native_check`; even a cleared model only
+  yields an unqualified candidate for native and board-specific checks.
 * `packing.py` invokes pinned `calculate-packing` 0.0.90 as an optional placement
   proposal backend, with a subprocess deadline. It exports intact units with their
   copper-pad envelopes, fixed state, allowed rotations and board boundary. It

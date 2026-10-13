@@ -236,6 +236,50 @@ class PlacementTests(unittest.TestCase):
         self.assertFalse(result['qualified'])
         self.assertEqual(before, fingerprint(pr))
 
+    def test_geometry_repair_precedes_wirelength_but_does_not_qualify(self):
+        pr = placement_problem()
+        pr['units'][1]['x'] = 2.
+        before = fingerprint(pr)
+        result = quench(pr, steps_mm=[1.], budget_s=2, params=PARAMS)
+        self.assertEqual(result['initial']['status'], 'needs_native_check')
+        self.assertEqual(result['status'], 'candidate')
+        self.assertEqual(result['final']['components']['overlap'], 0)
+        self.assertGreater(result['final']['components']['hpwl'], result['initial']['components']['hpwl'])
+        self.assertEqual(result['pose'][0], [2., 5., 0])
+        self.assertEqual(result['moves'][0]['phase'], 'geometry')
+        self.assertFalse(result['qualified'])
+        self.assertTrue(result['final']['native_validation_required'])
+        self.assertEqual(before, fingerprint(pr))
+
+    def test_unrepairable_geometry_cannot_be_reported_as_candidate(self):
+        pr = placement_problem()
+        pr['units'][1].update(x=2., fixed=True)
+        result = quench(pr, steps_mm=[1.], budget_s=2, params=PARAMS)
+        self.assertEqual(result['status'], 'needs_native_check')
+        self.assertFalse(result['moves'])
+        pr['units'][1]['fixed'] = False
+        result = quench(pr, steps_mm=[1.], budget_s=2, params=dict(PARAMS, max_displacement=.1))
+        self.assertEqual(result['status'], 'needs_native_check')
+        self.assertFalse(result['moves'])
+
+    def test_geometry_repair_cannot_leave_attached_copper_behind(self):
+        pr = placement_problem()
+        pr['units'][1]['x'] = 2.
+        attachment = dict(id='fanout', owners=['B'], geometry_sha256='0'*64,
+                          anchor_sha256=anchor_fingerprint(pr, cost.initial_pose(pr), ['B']))
+        result = quench(pr, steps_mm=[1.], budget_s=2, params=PARAMS, attachments=[attachment])
+        self.assertEqual(result['status'], 'needs_native_check')
+        self.assertFalse(result['moves'])
+
+    def test_edge_repair_cannot_trade_out_of_bounds_for_an_overlap(self):
+        pr = placement_problem()
+        pr['units'][0]['x'] = 9.2
+        pr['units'][1]['x'] = 10.2
+        result = quench(pr, steps_mm=[1.], budget_s=2, params=PARAMS)
+        self.assertEqual(result['status'], 'needs_native_check')
+        self.assertFalse(result['moves'])
+        self.assertEqual(result['final']['components']['overlap'], 0)
+
     def test_quench_cannot_move_part_with_stale_fanout(self):
         pr = placement_problem()
         attachment = dict(id='fanout', owners=['B'], geometry_sha256='0' * 64,
