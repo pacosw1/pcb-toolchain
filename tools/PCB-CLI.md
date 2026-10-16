@@ -94,7 +94,7 @@ Build dispatch uses existing board pipelines; unsupported boards fail explicitly
 Placement specs use `{"place":{"R1":[x,y,degrees]}}`; routes use the existing
 `pcbtool.py` format. Commands run in a separate board/dependency snapshot without
 mutable links into canonical CAD. Historical runs/unrelated evidence are excluded.
-Source hashes detect concurrent edits. Parts, pad/net assignments, outline,
+Source hashes detect concurrent edits. Parts, locked footprint poses, pad/net assignments, outline,
 stackup and rules remain protected; changes require an explicit design revision.
 
 Candidates must pass fresh configured gates and applicable BASE/ENV semantic

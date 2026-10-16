@@ -38,6 +38,12 @@ layout/thermal checker. Its schematic checker currently repeats ERC; that keeps
 its semantic coverage intact. Native CPL rotation agreement does not establish
 the supplier's package orientation.
 
+For diagnostics only, the BASE audit accepts `--gate-observation-dir DIRECTORY`
+in place of `--gate-dir`. This verifies exact current input/tool/report identity
+and reuses the observed shared verdict, including failures. It still returns
+failure when the shared checks failed; the release path requires all targets
+and cannot accept a diagnostic failed verdict.
+
 Runtime overrides are `KICAD_CLI`, `KICAD_PYTHON` (legacy `KICAD_PY` accepted),
 `PYTHON_MODERN` and `GERBERCHECK_PY`. macOS/Linux and standard Python 3.9+/Node
 are required; the Gerber checker additionally needs its documented gerbonara

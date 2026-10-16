@@ -113,6 +113,7 @@ def pcb_identity(path):
     footprints = {}
     from pcb_search.block_bindings import footprints as native_footprints
     from pcb_search.native_placement import footprint_signature
+    from pcb_search.native_eco import locked
     native = {fp['props'].get('Reference'): fp for fp in native_footprints(path)}
     for form in forms[0][1:]:
         if not isinstance(form, list) or not form:
@@ -125,6 +126,8 @@ def pcb_identity(path):
             if not ref or ref in footprints:
                 raise ValueError('footprints need unique references')
             footprints[ref] = footprint_signature(native[ref])
+            if locked(native[ref]['form']):
+                footprints[ref] = dict(signature=footprints[ref], locked_pose=[str(v.normalize()) for v in native[ref]['pose']])
         elif tag == 'zone':
             protected.append(clean([v for v in form if not (isinstance(v, list) and v and v[0] in ('filled_polygon', 'fill_segments'))]))
         else:

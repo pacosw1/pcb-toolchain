@@ -181,6 +181,13 @@ print('candidate placement completed',flush=True)
             other.write_text(BOARD.replace(old, new))
             self.assertNotEqual(operations.pcb_identity(source), operations.pcb_identity(other))
 
+    def test_native_locked_footprint_pose_is_protected(self):
+        source = self.board / 'cad/X.kicad_pcb'
+        source.write_text(BOARD.replace('(layer "F.Cu") (at 10 10)', '(layer "F.Cu") (locked yes) (at 10 10)'))
+        candidate = self.root / 'locked.kicad_pcb'
+        candidate.write_text(source.read_text().replace('(at 10 10)', '(at 11 10)'))
+        self.assertNotEqual(operations.pcb_identity(source),operations.pcb_identity(candidate))
+
     def test_context_resolves_revision_owner_and_packet(self):
         alias = self.root / 'hardware-design/boards/X-B'
         alias.mkdir()
