@@ -8,6 +8,7 @@
 //   --strict (with --ratchet): a WARNING also gives exit 1
 //   --config NAME    use <board>/NAME in place of gate.json (for example gate-6layer.json for a candidate)
 //   node tools/gate.mjs --list              the boards that have a gate.json
+//   --evidence-dir NEW_DIR   isolated evidence; do not publish the board's latest pointer
 //
 // gate.json: {"project": "cad/MC-MAIN/MC-MAIN", "checks": {"erc": true, "drc": true, "planes": "reference-planes.json",
 //   "pairs": "diff-pairs.json", "paths": "current-paths.json", "viapads": {"allow": ["U1.9"]},
@@ -18,11 +19,11 @@
 
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import {readFileSync, writeFileSync, existsSync, readdirSync, renameSync} from 'node:fs';
+import {readFileSync, writeFileSync, existsSync, readdirSync, renameSync, mkdirSync} from 'node:fs';
 import {join, relative, dirname, resolve} from 'node:path';
 import {root, kicadCli, kicadPython, modernPython, kicadShared, kicadConfig, pinnedRepos} from './lib/env.mjs';
 import {METRICS, passes, ratchet, metricsText, countFrom, validateConfig, expectedMetrics, pathFailures} from './lib/gate-core.mjs';
-import {runDirectory, runTool, readReport, checkedText, readHappyResult} from './lib/gate-runtime.mjs';
+import {runDirectory, runTool, readReport, checkedText, readHappyResult, gateEvent} from './lib/gate-runtime.mjs';
 import {gateInputs, fingerprint} from './lib/gate-inputs.mjs';
 
 const args = process.argv.slice(2);
@@ -33,7 +34,7 @@ if (flag('--list')) {
   for (const b of readdirSync(boardsDir)) if (existsSync(join(boardsDir, b, 'gate.json'))) console.log(b);
   process.exit(0);
 }
-const board = args.find((a, i) => !a.startsWith('--') && args[i - 1] !== '--baseline' && args[i - 1] !== '--config');
+const board = args.find((a, i) => !a.startsWith('--') && !['--baseline','--config','--evidence-dir'].includes(args[i - 1]));
 // --config NAME: another gate file in the board folder (a candidate with another stackup). Default gate.json.
 const configName = args.includes('--config') ? args[args.indexOf('--config') + 1] : 'gate.json';
 const dir = join(boardsDir, board ?? '');
@@ -46,8 +47,15 @@ const configErrors = validateConfig(cfg);
 if (configErrors.length) { console.error(configErrors.join('\n')); process.exit(2); }
 const pcb = join(dir, `${cfg.project}.kicad_pcb`);
 const sch = join(dir, `${cfg.project}.kicad_sch`);
-const logDir = runDirectory(join(dir, '.gate'));
+const isolated = args.includes('--evidence-dir');
+const evidenceArg = args[args.indexOf('--evidence-dir') + 1];
+if (isolated && (!evidenceArg || evidenceArg.startsWith('--') || flag('--write'))) {
+  console.error('gate: --evidence-dir requires a new directory and cannot use --write'); process.exit(2);
+}
+const logDir = isolated ? resolve(evidenceArg) : runDirectory(join(dir, '.gate'));
+if (isolated) mkdirSync(logDir); // Refuse existing evidence, even an empty directory.
 console.log(`gate evidence: ${relative(root, logDir)}`);
+gateEvent(logDir, 'gate.start', {board, project: cfg.project, stage: 'preflight'});
 const tool = (name) => join(root, 'tools', name);
 const spec = (name) => join(dir, name);
 const sha = (file) => (existsSync(file) ? createHash('sha256').update(readFileSync(file)).digest('hex') : null);
@@ -80,7 +88,9 @@ for (const [name,cmd,args] of [['kicad',kicadCli,['--version']],['pcbnew',kicadP
   catch { versions[name] = null; }
 }
 versions.node=process.version;
-for(const repo of pinnedRepos) {
+// Optional router/advisory repositories are not executed by this gate. Probing
+// them adds unrelated latency/failures and invalidates otherwise identical runs.
+for(const repo of pinnedRepos.filter(r=>r.needed==='gate')) {
   try{versions[repo.name]=execFileSync('git',['-C',repo.dir,'rev-parse','HEAD'],{encoding:'utf8',stdio:['ignore','pipe','ignore'],env:Object.fromEntries(Object.entries(process.env).filter(([k])=>!k.startsWith('GIT_')))}).trim();}
   catch{if(repo.needed==='gate') versions[repo.name]=null;}
 }
@@ -142,7 +152,12 @@ if (unknown.length) {
   console.error(`gate: unknown check in gate.json: ${unknown.join(', ')}`);
   process.exit(2);
 }
-const results = await Promise.all(Object.keys(c).filter((k) => c[k]).map((k) => jobs[k]()));
+const results = await Promise.all(Object.keys(c).filter((k) => c[k]).map(async k => {
+  const metrics = await jobs[k]();
+  const verdict = passes(metrics, Object.keys(metrics));
+  gateEvent(logDir, 'check.end', {stage: k, status: verdict.ok ? 'passed' : 'failed', metrics, findings: verdict.open});
+  return metrics;
+}));
 const metrics = Object.assign({}, ...results);
 const provenance = fingerprint(root,gateInputs(root,board,configName,environment).files,versions,externalRoots);
 const changedDuringRun = provenance.input_sha256 !== start.input_sha256;
@@ -187,5 +202,6 @@ writeFileSync(join(logDir,'gate-metrics.json'),text);
 writeFileSync(join(logDir,'result.json'),JSON.stringify({exit,changedDuringRun,metrics,provenance},null,2)+'\n');
 const atomicWrite = (file,content) => { const temp=`${file}.${process.pid}.tmp`; writeFileSync(temp,content); renameSync(temp,file); };
 if (flag('--write') && !changedDuringRun) atomicWrite(metricsFile,text);
-atomicWrite(join(dir,'.gate/latest.json'),JSON.stringify({run:relative(join(dir,'.gate'),logDir),exit},null,2)+'\n');
+if (!isolated) atomicWrite(join(dir,'.gate/latest.json'),JSON.stringify({run:relative(join(dir,'.gate'),logDir),exit},null,2)+'\n');
+gateEvent(logDir, 'gate.end', {exit, changedDuringRun, metrics});
 process.exit(exit);

@@ -1,28 +1,37 @@
-import {mkdtempSync, mkdirSync, readFileSync, writeFileSync} from 'node:fs';
+import {mkdtempSync, mkdirSync, readFileSync, appendFileSync, openSync, writeSync, closeSync} from 'node:fs';
 import {join} from 'node:path';
 import {execFile} from 'node:child_process';
-import {promisify} from 'node:util';
-
-const run = promisify(execFile);
 export function runDirectory(parent) {
   mkdirSync(parent, {recursive: true});
   return mkdtempSync(join(parent, 'run-'));
 }
 
-// A report belongs to this invocation only. No shared JSON is used as fallback.
+// Single writer (this gate process). Output activity is not proof of progress.
+export function gateEvent(dir, type, data = {}) {
+  appendFileSync(join(dir, 'events.jsonl'), JSON.stringify({schema_version: 1, time: new Date().toISOString(), type, ...data}) + '\n');
+}
+
+// A report belongs to this invocation only. Logs are readable before exit;
+// the callback's complete output retains the existing parser/failure semantics.
 export async function runTool(dir, id, cmd, args) {
-  let stdout = '', stderr = '', code = null;
-  try {
-    const result = await run(cmd, args, {encoding: 'utf8', maxBuffer: 256 * 1024 * 1024});
-    ({stdout, stderr} = result);
-    code = 0;
-  } catch (e) {
-    stdout = e.stdout ?? '';
-    stderr = e.stderr ?? e.message;
-    code = Number.isInteger(e.code) ? e.code : null;
-  }
-  writeFileSync(join(dir, `${id}.log`), `${stdout}\n[exit ${code ?? 'launch failure'}] ${stderr}`);
-  return {stdout, stderr, code};
+  const log = openSync(join(dir, `${id}.log`), 'wx');
+  gateEvent(dir, 'tool.start', {stage: id, log: `${id}.log`});
+  return new Promise(resolve => {
+    const child = execFile(cmd, args, {encoding: 'utf8', maxBuffer: 256 * 1024 * 1024}, (error, stdout, stderr) => {
+      const code = error ? (Number.isInteger(error.code) ? error.code : null) : 0;
+      const diagnostic = stderr ?? error?.message ?? '';
+      // Both streams are already in the log. Only launch failures without
+      // stderr need an extra diagnostic in the exit footer.
+      writeSync(log, `\n[exit ${code ?? 'launch failure'}]${code === null && !diagnostic ? ` ${error?.message ?? ''}` : ''}`);
+      closeSync(log);
+      gateEvent(dir, 'tool.exit', {stage: id, code, signal: error?.signal ?? null, log: `${id}.log`});
+      resolve({stdout: stdout ?? '', stderr: diagnostic, code});
+    });
+    for (const stream of ['stdout', 'stderr']) child[stream]?.on('data', text => {
+      writeSync(log, text);
+      gateEvent(dir, 'tool.output', {stage: id, stream, bytes: Buffer.byteLength(text), text: text.slice(0, 1600), truncated: text.length > 1600});
+    });
+  });
 }
 
 export function readReport(file, kind, result) {

@@ -72,6 +72,39 @@ test('CLI cannot skip DRC at the default layout stage',t=>{
  put(base+'gate.json',JSON.stringify({project:'cad/X',checks:{erc:true}}));
  assert.equal(run(),2);assert.equal(existsSync(join(root,base,'gate-metrics.json')),false);
 });
+test('CLI does not probe or fingerprint unused optional repository versions',t=>{
+ const {run,result,env}=fixture(t);
+ // Point both optional tools at an existing git repo: an accidental probe would
+ // succeed and appear in provenance rather than silently fail as absent.
+ assert.equal(run({KRT_DIR:env.KICAD_HAPPY_DIR,KRPT_DIR:env.KICAD_HAPPY_DIR}),0);
+ assert.equal(result().provenance.tools.KiCadRoutingTools,undefined);
+ assert.equal(result().provenance.tools.KiCadRoutingPlacementTools,undefined);
+ assert.ok(result().provenance.tools['kicad-happy']);
+});
+test('isolated evidence preserves tracked metrics and the latest pointer',t=>{
+ const {root,put,base,env}=fixture(t);
+ put(base+'gate-metrics.json','prior metrics');put(base+'.gate/latest.json','prior latest');
+ const evidence=join(root,'isolated-evidence');
+ execFileSync(process.execPath,[join(root,'tools/gate.mjs'),'--evidence-dir',evidence,'X'],{cwd:root,env,stdio:'pipe'});
+ assert.equal(JSON.parse(readFileSync(join(evidence,'result.json'))).exit,0);
+ assert.equal(readFileSync(join(root,base,'gate-metrics.json'),'utf8'),'prior metrics');
+ assert.equal(readFileSync(join(root,base,'.gate/latest.json'),'utf8'),'prior latest');
+ const events=readFileSync(join(evidence,'events.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+ assert.equal(events[0].type,'gate.start');assert.equal(events.at(-1).type,'gate.end');
+ assert.ok(events.some(e=>e.type==='check.end' && e.stage==='drc' && e.status==='passed'));
+});
+test('isolated evidence rejects publishing metrics and reusing evidence',t=>{
+ const {root,put,base,env}=fixture(t);
+ put(base+'gate-metrics.json','prior metrics');put(base+'.gate/latest.json','prior latest');
+ const evidence=join(root,'isolated-evidence');
+ assert.throws(()=>execFileSync(process.execPath,[join(root,'tools/gate.mjs'),'X','--evidence-dir',evidence,'--write'],{cwd:root,env,stdio:'pipe'}),error=>error.status===2);
+ assert.equal(existsSync(evidence),false);
+ mkdirSync(evidence);writeFileSync(join(evidence,'sentinel'),'prior evidence');
+ assert.throws(()=>execFileSync(process.execPath,[join(root,'tools/gate.mjs'),'X','--evidence-dir',evidence],{cwd:root,env,stdio:'pipe'}));
+ assert.deepEqual(readdirSync(evidence),['sentinel']);
+ assert.equal(readFileSync(join(root,base,'gate-metrics.json'),'utf8'),'prior metrics');
+ assert.equal(readFileSync(join(root,base,'.gate/latest.json'),'utf8'),'prior latest');
+});
 test('CLI fingerprints library tables in the versioned configuration directory',t=>{
  const {root,put,base,run,result}=fixture(t);
  put(base+'cad/X.kicad_sch','(lib_id "Shared:Part")');
