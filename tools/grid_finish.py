@@ -33,60 +33,63 @@ SQ2 = math.sqrt(2.0)
 MOVES = [(1, 0, 1.0), (-1, 0, 1.0), (0, 1, 1.0), (0, -1, 1.0), (1, 1, SQ2), (1, -1, SQ2), (-1, 1, SQ2), (-1, -1, SQ2)]
 
 
-def astar(free, viaok, seeds, target, via_cost, turn_cost):
+def astar(free, viaok, seeds, target, via_cost, turn_cost, lcost=None, goal=None, hw=0.95):
+    """A* over (layer, row, col); the turn cost uses the move that reached a cell (not part of the state: near-optimal,
+    8x less memory than a direction state)."""
     nl = len(free)
     ny, nx = free[0].shape
     tg = np.argwhere(np.any(np.stack(target), axis=0))
     if not len(tg):
         return None
-    tj, ti = tg.mean(axis=0)
-
-    def h(j, i):
-        return math.hypot(j - tj, i - ti) * 0.9
-
+    tj, ti = goal if goal is not None else tg.mean(axis=0)
+    fr = [f.tolist() for f in free]
+    vo = viaok.tolist()
+    tgt = [t.tolist() for t in target]
     INF = float('inf')
-    best = {}
+    lcost = lcost or [1.0] * nl
+    best, came, mv = {}, {}, {}
     heap = []
     for l in range(nl):
         for j, i in np.argwhere(seeds[l] & free[l]):
-            s = (l, int(j), int(i), -1)
+            s = (l, int(j), int(i))
             best[s] = 0.0
-            heapq.heappush(heap, (h(j, i), 0.0, s, None))
-    prev = {}
+            mv[s] = -1
+            heapq.heappush(heap, (math.hypot(j - tj, i - ti) * hw, 0.0, s))
+    done = set()
     while heap:
-        f, g, s, p = heapq.heappop(heap)
-        if g > best.get(s, INF):
+        f, g, s = heapq.heappop(heap)
+        if s in done:
             continue
-        if s in prev and prev[s] is not p and p is not None:
-            pass
-        prev.setdefault(s, p)
-        l, j, i, d = s
-        if target[l][j, i]:
+        done.add(s)
+        l, j, i = s
+        if tgt[l][j][i]:
             path = [s]
-            while prev.get(path[-1]) is not None:
-                path.append(prev[path[-1]])
-            return path[::-1]
+            while path[-1] in came:
+                path.append(came[path[-1]])
+            return [(p[0], p[1], p[2], 0) for p in path[::-1]]
+        d = mv.get(s, -1)
+        row = fr[l]
         for k, (di, dj, c) in enumerate(MOVES):
             ii, jj = i + di, j + dj
-            if not (0 <= ii < nx and 0 <= jj < ny) or not free[l][jj, ii]:
+            if not (0 <= ii < nx and 0 <= jj < ny) or not row[jj][ii]:
                 continue
-            if di and dj and not (free[l][j, ii] and free[l][jj, i]):
+            if di and dj and not (row[j][ii] and row[jj][i]):
                 continue
-            ng = g + c + (turn_cost if d not in (-1, k) else 0.0)
-            ns = (l, jj, ii, k)
+            ns = (l, jj, ii)
+            if ns in done:
+                continue
+            ng = g + c * lcost[l] + (turn_cost if d not in (-1, k) else 0.0)
             if ng < best.get(ns, INF):
-                best[ns] = ng
-                prev[ns] = s
-                heapq.heappush(heap, (ng + h(jj, ii), ng, ns, s))
-        if viaok[j, i]:
+                best[ns], came[ns], mv[ns] = ng, s, k
+                heapq.heappush(heap, (ng + math.hypot(jj - tj, ii - ti) * hw, ng, ns))
+        if vo[j][i]:
             for m in range(nl):
-                if m != l and free[m][j, i]:
-                    ns = (m, j, i, -1)
+                ns = (m, j, i)
+                if m != l and fr[m][j][i] and ns not in done:
                     ng = g + via_cost
                     if ng < best.get(ns, INF):
-                        best[ns] = ng
-                        prev[ns] = s
-                        heapq.heappush(heap, (ng + h(j, i), ng, ns, s))
+                        best[ns], came[ns], mv[ns] = ng, s, -1
+                        heapq.heappush(heap, (ng + math.hypot(j - tj, i - ti) * hw, ng, ns))
     return None
 
 
@@ -115,6 +118,106 @@ def to_items(bd, path, w):
     return out
 
 
+def write_items(path_board, net, items, w, layers, via_d, via_drill):
+    b = pcbnew.LoadBoard(path_board)
+    have = {(v.GetPosition().x, v.GetPosition().y) for v in b.GetTracks()
+            if v.GetClass() == 'PCB_VIA' and v.GetNetname() == net}
+    n = b.GetNetsByName()[net]
+    for it in items:
+        if it[0] == 'seg':
+            t = pcbnew.PCB_TRACK(b)
+            t.SetStart(pcbnew.VECTOR2I(MM(it[2][0]), MM(it[2][1])))
+            t.SetEnd(pcbnew.VECTOR2I(MM(it[3][0]), MM(it[3][1])))
+            t.SetWidth(MM(w))
+            t.SetLayer(b.GetLayerID(layers[it[1]]))
+            t.SetNet(n)
+            t.SetLocked(True)
+            b.Add(t)
+        else:
+            xy = (MM(it[1][0]), MM(it[1][1]))
+            if any(abs(xy[0] - hx) < 1000 and abs(xy[1] - hy) < 1000 for hx, hy in have):
+                continue
+            have.add(xy)
+            v = pcbnew.PCB_VIA(b)
+            v.SetPosition(pcbnew.VECTOR2I(*xy))
+            v.SetWidth(MM(via_d))
+            v.SetDrill(MM(via_drill))
+            v.SetNet(n)
+            v.SetLocked(True)
+            b.Add(v)
+    pcbnew.SaveBoard(path_board, b)
+
+
+def escapes(a, layers):
+    """--escape REF: route every signal pad of REF that has no copper yet from the pad to the first free cell outside the
+    ring box (REF courtyard + --escape-ring mm), biased towards the nearest other pad of its net. The track end is left
+    open for the autorouter (Codex sol 2026-10-16: settle the package escape topology first, then autoroute)."""
+    skip = set(a.skip.split(',')) | set(x for x in a.escape_skip.split(',') if x)
+    b = pcbnew.LoadBoard(a.board)
+    M = pcbnew.ToMM
+    fp = [f for f in b.GetFootprints() if f.GetReference() == a.escape][0]
+    cy = fp.GetCourtyard(pcbnew.F_CrtYd).BBox()
+    rx0, ry0, rx1, ry1 = M(cy.GetX()) - a.escape_ring, M(cy.GetY()) - a.escape_ring, M(cy.GetRight()) + a.escape_ring, M(cy.GetBottom()) + a.escape_ring
+    cx, cyy = (rx0 + rx1) / 2, (ry0 + ry1) / 2
+    touched = set()
+    for t in b.GetTracks():
+        for q in ((t.GetStart(),) if t.GetClass() == 'PCB_VIA' else (t.GetStart(), t.GetEnd())):
+            touched.add((t.GetNetname(), round(M(q.x), 2), round(M(q.y), 2)))
+    pads = []
+    others = {}
+    for f in b.GetFootprints():
+        for p in f.Pads():
+            others.setdefault(p.GetNetname(), []).append((f.GetReference(), M(p.GetPosition().x), M(p.GetPosition().y)))
+    for p in fp.Pads():
+        net = p.GetNetname()
+        if not net or net in skip or net.startswith('unconnected'):
+            continue
+        x, y = M(p.GetPosition().x), M(p.GetPosition().y)
+        bb = p.GetBoundingBox()
+        if any(n == net and M(bb.GetX()) - 0.01 <= tx <= M(bb.GetRight()) + 0.01 and M(bb.GetY()) - 0.01 <= ty <= M(bb.GetBottom()) + 0.01
+               for n, tx, ty in touched):
+            continue   # already has copper (a hand route)
+        dest = [o for o in others.get(net, []) if o[0] != a.escape]
+        if not dest:
+            continue
+        dx, dy = min(((ox, oy) for _, ox, oy in dest), key=lambda q: math.hypot(q[0] - x, q[1] - y))
+        pads.append((math.atan2(y - cyy, x - cx), p.GetNumber(), net, x, y, dx, dy))
+    pads.sort()
+    done = 0
+    for _, num, net, x, y, dx, dy in pads:
+        bd = route_grid.Board(a.board, layers, a.grid)
+        for it in bd.items:
+            it.clr += bd.g
+        for k in list(bd.net_clr):
+            bd.net_clr[k] += bd.g
+        bd.edge_clr += bd.g
+        bd._cache.clear()
+        win = bd.win(rx0 - 3, ry0 - 3, rx1 + 3, ry1 + 3)
+        bd.win_i, bd.win_j = win[0], win[2]
+        free, viaok, _ = bd.net_grids(net, win)
+        own = [it for (it, pp, ff) in bd.net_pads[net] if ff.GetReference() == a.escape and pp.GetNumber() == num]
+        if not own:
+            continue
+        seeds = bd.item_seed(own[0], win)
+        px, py = bd.centres(*win)
+        outside = (px < rx0) | (px > rx1) | (py < ry0) | (py > ry1)
+        target = [outside & f for f in free]
+        goal = ((dy - bd.y0) / bd.g - win[2], (dx - bd.x0) / bd.g - win[0])
+        lc = dict(z.split('=') for z in a.layer_cost)
+        path = astar(free, viaok, seeds, target, a.via_cost / a.grid, a.turn_cost / a.grid,
+                     [float(lc.get(l, 1.0)) for l in layers], goal=goal, hw=0.4)
+        if path is None:
+            print(f'NOPATH escape {a.escape}.{num} {net}')
+            continue
+        items = to_items(bd, path, bd.wmin)
+        nv = sum(1 for it in items if it[0] == 'via')
+        print(f'ESCAPE {a.escape}.{num} {net}: {len(items) - nv} segments, {nv} vias')
+        if not a.dry_run:
+            write_items(a.board, net, items, bd.wmin, layers, bd.net_via.get(net, 0.6), a.via_drill)
+        done += 1
+    print(f'FINISH escapes {done} of {len(pads)}')
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('board')
@@ -125,10 +228,17 @@ def main():
     ap.add_argument('--via-cost', type=float, default=4.0, help='in mm of track')
     ap.add_argument('--turn-cost', type=float, default=0.3, help='in mm of track')
     ap.add_argument('--margin', type=float, default=10.0, help='search window around the two ends, mm')
+    ap.add_argument('--layer-cost', action='append', default=[], metavar='LAYER=X', help='move cost factor on a layer (default 1)')
     ap.add_argument('--via-drill', type=float, default=0.3)
+    ap.add_argument('--skip', default='GND,VDD_3V3', help='nets left to the planes / pours (comma list)')
     ap.add_argument('--dry-run', action='store_true')
+    ap.add_argument('--escape', default='', help='REF: route the pad escapes of this part (see escapes())')
+    ap.add_argument('--escape-ring', type=float, default=3.0)
+    ap.add_argument('--escape-skip', default='', help='more nets with no escape (power pins on planes)')
     a = ap.parse_args()
     layers = a.layers.split(',')
+    if a.escape:
+        return escapes(a, layers)
     widths = {k: float(v) for k, v in (x.split('=') for x in a.width)}
     nets = set(n for n in a.nets.split(',') if n)
     drc = os.path.splitext(a.board)[0] + '-finish-drc.json'
@@ -138,7 +248,8 @@ def main():
     for u in json.load(open(drc)).get('unconnected_items', []):
         its = u.get('items', [])
         m = re.search(r'\[([^\]]*)\]', its[0]['description']) if len(its) == 2 else None
-        if m and 'Zone' not in its[0]['description'] + its[1]['description'] and (not nets or m.group(1) in nets):
+        if m and 'Zone' not in its[0]['description'] + its[1]['description'] and (not nets or m.group(1) in nets) \
+                and m.group(1) not in a.skip.split(','):
             opens.append((m.group(1), its[0], its[1]))
     os.remove(drc)
     routed = 0
@@ -163,11 +274,16 @@ def main():
             continue
         xs = [ia['pos']['x'], ib['pos']['x']]
         ys = [ia['pos']['y'], ib['pos']['y']]
-        win = bd.win(min(xs) - a.margin, min(ys) - a.margin, max(xs) + a.margin, max(ys) + a.margin)
-        bd.win_i, bd.win_j = win[0], win[2]
-        free, viaok, _ = bd.net_grids(net, win)
-        sa, sb = bd.item_seed(A, win), bd.item_seed(B, win)
-        path = astar(free, viaok, sa, sb, a.via_cost / a.grid, a.turn_cost / a.grid)
+        path = None
+        for mg in [m for m in (4.0, 12.0, a.margin) if m <= a.margin] or [a.margin]:   # small windows first
+            win = bd.win(min(xs) - mg, min(ys) - mg, max(xs) + mg, max(ys) + mg)
+            bd.win_i, bd.win_j = win[0], win[2]
+            free, viaok, _ = bd.net_grids(net, win)
+            sa, sb = bd.item_seed(A, win), bd.item_seed(B, win)
+            lc = dict(x.split('=') for x in a.layer_cost)
+            path = astar(free, viaok, sa, sb, a.via_cost / a.grid, a.turn_cost / a.grid, [float(lc.get(l, 1.0)) for l in layers])
+            if path is not None:
+                break
         if path is None:
             print(f'NOPATH {net}: {ia["description"][:40]} -> {ib["description"][:40]}')
             continue
@@ -181,6 +297,8 @@ def main():
         vd = MM(bd.net_via.get(net, 0.6))   # route_grid read the class via size (GetNetClass breaks after a
         vh = MM(a.via_drill)                 # board edit in this pcbnew build, so it is read once there)
         b = pcbnew.LoadBoard(a.board)
+        have = {(v.GetPosition().x, v.GetPosition().y) for v in b.GetTracks()
+                if v.GetClass() == 'PCB_VIA' and v.GetNetname() == net}   # a via already there is reused, not doubled
         n = b.GetNetsByName()[net]
         for it in items:
             if it[0] == 'seg':
@@ -193,8 +311,12 @@ def main():
                 t.SetLocked(True)
                 b.Add(t)
             else:
+                xy = (MM(it[1][0]), MM(it[1][1]))
+                if any(abs(xy[0] - hx) < 1000 and abs(xy[1] - hy) < 1000 for hx, hy in have):
+                    continue
+                have.add(xy)
                 v = pcbnew.PCB_VIA(b)
-                v.SetPosition(pcbnew.VECTOR2I(MM(it[1][0]), MM(it[1][1])))
+                v.SetPosition(pcbnew.VECTOR2I(*xy))
                 v.SetWidth(vd)
                 v.SetDrill(vh)
                 v.SetNet(n)
