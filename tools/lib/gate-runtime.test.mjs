@@ -38,6 +38,16 @@ test('streamed stderr is recorded once and preserves checker results',async t=>{
  assert.equal(log.split('checker diagnostic').length-1,1);
  assert.match(log,/\[exit 2\]/);
 });
+test('tool timing binds monotonic duration and activity to one invocation',async t=>{
+ const root=mkdtempSync(join(tmpdir(),'gate-timing-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
+ await runTool(root,'drc',process.execPath,['-e',"console.log('activity')"]);
+ const rows=readFileSync(join(root,'events.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+ const start=rows.find(r=>r.type==='tool.start'),end=rows.find(r=>r.type==='tool.exit');
+ assert.equal(start.span_id,end.span_id);assert.equal(end.category,'kicad');
+ assert.equal(end.duration_source,'producer_monotonic');assert.ok(end.duration_s>=0);
+ assert.ok(end.ended_unix_s>=start.started_unix_s);assert.equal(end.status,'passed');
+ assert.ok(rows.filter(r=>r.type==='tool.output').every(r=>r.span_id===start.span_id));
+});
 test('malformed and incomplete KiCad JSON fail; complete reports pass',t=>{
  const root=mkdtempSync(join(tmpdir(),'gate-test-'));t.after(()=>rmSync(root,{recursive:true,force:true}));const p=join(root,'report.json');
  for(const content of ['{','{}','{"violations":[]}']) {writeFileSync(p,content);assert.equal(readReport(p,'drc',{code:0}),null);}

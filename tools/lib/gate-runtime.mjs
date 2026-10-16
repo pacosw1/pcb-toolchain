@@ -1,6 +1,7 @@
 import {mkdtempSync, mkdirSync, readFileSync, appendFileSync, openSync, writeSync, closeSync} from 'node:fs';
 import {join} from 'node:path';
 import {execFile} from 'node:child_process';
+import {randomUUID} from 'node:crypto';
 export function runDirectory(parent) {
   mkdirSync(parent, {recursive: true});
   return mkdtempSync(join(parent, 'run-'));
@@ -8,14 +9,22 @@ export function runDirectory(parent) {
 
 // Single writer (this gate process). Output activity is not proof of progress.
 export function gateEvent(dir, type, data = {}) {
-  appendFileSync(join(dir, 'events.jsonl'), JSON.stringify({schema_version: 1, time: new Date().toISOString(), type, ...data}) + '\n');
+  appendFileSync(join(dir, 'events.jsonl'), JSON.stringify({schema_version: 1, time: new Date().toISOString(), producer:'gate', type, ...data}) + '\n');
+}
+
+export function measuredSpan(stage, category) {
+  const started = process.hrtime.bigint();
+  const fields = {span_id:randomUUID(),stage,category,producer:'gate',started_unix_s:Date.now()/1000};
+  return {fields,end:(status='passed')=>({...fields,ended_unix_s:Date.now()/1000,
+    duration_s:Number(process.hrtime.bigint()-started)/1e9,duration_source:'producer_monotonic',status})};
 }
 
 // A report belongs to this invocation only. Logs are readable before exit;
 // the callback's complete output retains the existing parser/failure semantics.
 export async function runTool(dir, id, cmd, args) {
   const log = openSync(join(dir, `${id}.log`), 'wx');
-  gateEvent(dir, 'tool.start', {stage: id, log: `${id}.log`});
+  const span=measuredSpan(id,['erc','drc'].includes(id) ? 'kicad' : 'validation');
+  gateEvent(dir, 'tool.start', {...span.fields,log: `${id}.log`});
   return new Promise(resolve => {
     const child = execFile(cmd, args, {encoding: 'utf8', maxBuffer: 256 * 1024 * 1024}, (error, stdout, stderr) => {
       const code = error ? (Number.isInteger(error.code) ? error.code : null) : 0;
@@ -24,12 +33,12 @@ export async function runTool(dir, id, cmd, args) {
       // stderr need an extra diagnostic in the exit footer.
       writeSync(log, `\n[exit ${code ?? 'launch failure'}]${code === null && !diagnostic ? ` ${error?.message ?? ''}` : ''}`);
       closeSync(log);
-      gateEvent(dir, 'tool.exit', {stage: id, code, signal: error?.signal ?? null, log: `${id}.log`});
+      gateEvent(dir, 'tool.exit', {...span.end(code===0 ? 'passed' : code===null ? 'error' : 'failed'),code,signal: error?.signal ?? null,log: `${id}.log`});
       resolve({stdout: stdout ?? '', stderr: diagnostic, code});
     });
     for (const stream of ['stdout', 'stderr']) child[stream]?.on('data', text => {
       writeSync(log, text);
-      gateEvent(dir, 'tool.output', {stage: id, stream, bytes: Buffer.byteLength(text), text: text.slice(0, 1600), truncated: text.length > 1600});
+      gateEvent(dir, 'tool.output', {stage: id,span_id:span.fields.span_id,stream,bytes: Buffer.byteLength(text),text:text.slice(0,1600),truncated:text.length>1600});
     });
   });
 }

@@ -63,11 +63,11 @@ fi
 if [ "$mode" = release ]; then
   evidence=$(node tools/check-release-gate.mjs "$board" --gate-dir "$stage/gate")
   echo "START: $board staged fabrication export"
-  FAB_OUT="$stage/fab" RENDER_OUT="$stage/renders" sh "tools/$maker"
-  python3 tools/check-fab-zip.py "$stage/fab/$board-gerber.zip" "$stage/fab/gerber" > "$stage/fab-zip.json"
+  python3 tools/pcb_timing.py --events "$stage/stages.jsonl" --stage export --category export -- env FAB_OUT="$stage/fab" RENDER_OUT="$stage/renders" sh "tools/$maker"
+  python3 tools/pcb_timing.py --events "$stage/stages.jsonl" --stage fab-zip --category export -- python3 tools/check-fab-zip.py "$stage/fab/$board-gerber.zip" "$stage/fab/gerber" > "$stage/fab-zip.json"
   echo "START: $board Gerber connectivity reconstruction"
   net_status=0
-  GNC_ZIP="$stage/fab/$board-gerber.zip" "$GNC" tools/gerber_netcheck.py "$board" > "$stage/gerber-netcheck.log" 2>&1 || net_status=$?
+  python3 tools/pcb_timing.py --events "$stage/stages.jsonl" --stage gerber-netcheck --category validation -- env GNC_ZIP="$stage/fab/$board-gerber.zip" "$GNC" tools/gerber_netcheck.py "$board" > "$stage/gerber-netcheck.log" 2>&1 || net_status=$?
   cat "$stage/gerber-netcheck.log"
   [ "$net_status" -eq 0 ] || exit "$net_status"
   if [ "$board" = BASE-PWR ]; then

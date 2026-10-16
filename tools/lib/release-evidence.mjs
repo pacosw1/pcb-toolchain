@@ -96,7 +96,7 @@ export function verifyBoardChecks(board,stage) {
 export function releaseInputs(root,board) {
  const recipe=RELEASE_RECIPES[board];need(recipe,'unsupported board');
  const files=['tools/fab-workflow.sh','tools/check-release-gate.mjs','tools/check-release-fab.mjs','tools/lib/release-evidence.mjs',
-  'tools/lib/kicad-population.mjs','tools/lib/csv.mjs','tools/gerber_netcheck.py','tools/check-fab-zip.py','tools/pack-fab.py','tools/publish-release.py',`tools/${recipe.maker}`];
+  'tools/lib/kicad-population.mjs','tools/lib/csv.mjs','tools/gerber_netcheck.py','tools/check-fab-zip.py','tools/pack-fab.py','tools/publish-release.py','tools/pcb_timing.py',`tools/${recipe.maker}`];
  if(board==='BASE-PWR')files.push('tools/check-base-pwr-pcb.mjs','tools/check_base_pwr_pcb.py','tools/lib/base-pwr-mech.mjs','tools/check_pixel_art.py','tools/lib/pixel-art-checks.mjs');
  if(board==='ENV-SENSE')files.push('tools/env_fab_variants.py','tools/check-env-pcb.py','tools/check-env-schematic.py','tools/build-env-schematic.py','tools/build-pq-schematic.py');
  const closure=gateTools(root,files.map(p=>join(root,p)));
