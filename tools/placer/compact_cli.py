@@ -31,6 +31,22 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 NO_RESULT = 10 ** 6  # a router job without an UNROUTED line (transport error, timeout) never passes
 
 
+def engineering_route_check(problem, candidate, output):
+    """Screen the actual compact copy under the unchanged reviewed owner's policy."""
+    from pathlib import Path
+    from engineering_constraints import check_manifest, check_problem
+    contract = problem['engineering']
+    check_problem(problem)  # Stale sources stop before the native screen.
+    evidence = None
+    if any(rule['kind']=='escape' for rule in contract['rules']):
+        from route_decision import generate_escape_for_candidate
+        evidence = Path(output).with_name(Path(output).stem+'-escape.json')
+        generate_escape_for_candidate(contract['root'],contract['board'],candidate,evidence)
+    checked = check_manifest(contract['root'],contract['board'],contract['manifest'],candidate,escape_evidence=evidence)
+    lean.atomic_json(output,checked)
+    return checked
+
+
 def parse_unrouted(text):
     m = re.findall(r'^UNROUTED (\d+)', text, re.M)
     return int(m[-1]) if m else NO_RESULT
@@ -123,6 +139,9 @@ def main(argv=None):
     deadline = lean.deadline_after(a.budget)
     with open(a.prob) as problem_file:
         pr = json.load(problem_file)
+    if pr.get('engineering'):
+        from engineering_constraints import check_problem
+        check_problem(pr)  # Source/coverage errors stop before search or routing.
     if os.path.isdir(a.outdir) and os.listdir(a.outdir):
         raise ValueError('compaction output directory must be fresh')
     os.makedirs(a.outdir, exist_ok=True)
@@ -217,6 +236,10 @@ def main(argv=None):
             try:
                 report = placement_audit.candidate_report(q, c, res.get('params', {}),
                                                          a.seeded_policy, a.max_displacement)
+                if q.get('engineering'):
+                    checked = check_problem(q,c['pose'])
+                    report['engineering'] = checked
+                    report['illegal'] += ['engineering:'+b['id'] for b in checked['blockers']]
             except (ValueError, TypeError):
                 report = dict(illegal=['malformed placement evidence'], qualified=False)
             c['illegal'] = report['illegal']
@@ -230,6 +253,8 @@ def main(argv=None):
 
     def search(q, n):
         nonlocal deadline
+        if q.get('engineering'):
+            check_problem(q)  # In particular, a virtual outline cannot bypass the reviewed source.
         if a.max_routes and routes_done[0] >= a.max_routes:
             print('search step %d: skipped, router cap %d reached' % (n, a.max_routes), flush=True)
             return None
@@ -268,6 +293,8 @@ def main(argv=None):
         cmd = ['bash', 'tools/placer/remote_run.sh', 'run', 'in/prob.json', '-o', 'out/res.json',
                '--workers', str(a.workers), '--epochs', str(a.epochs), '--steps', str(a.steps),
                '--seed', str(a.seed), '--top', str(a.retain_candidates)] + (['--param'] + a.param if a.param else [])
+        if q.get('engineering'):
+            cmd += ['--engineering-frozen-model-sha256',lean.digest(os.path.join(d,'prob.json'))]
         rc, _ = _remote(a.board_dir, [os.path.join(d, 'prob.json'), wheel], os.path.join(d, 'search'), cmd,
                         a.workers, os.path.join(d, 'search.log'))
         res_path = os.path.join(d, 'search', 'res.json')
@@ -279,17 +306,35 @@ def main(argv=None):
     def write(q, pose, k, n):
         b = os.path.join(sdir(n), 'b')
         os.makedirs(b, exist_ok=True)
-        for ext in ('.kicad_pro', '.kicad_dru'):
+        for ext in ('.kicad_pro', '.kicad_dru', '.kicad_sch'):
             if os.path.exists(os.path.join(src, name + ext)):
                 shutil.copy(os.path.join(src, name + ext), b)
         out = os.path.join(b, name + '.kicad_pcb')
         kicad_io.write_board(a.board, q, [tuple(p) for p in pose], out, outline_scale=k)
         return out
 
+    routing_attempts = {}
+
     def route(path, n):
         d = sdir(n)
+        if pr.get('engineering'):
+            checked = engineering_route_check(pr,path,os.path.join(d,'engineering-pre-route.json'))
+            if checked['status']!='passed':
+                raise ValueError('reviewed placement blocks routing: '+str(checked['blockers']))
         if a.max_routes and routes_done[0] >= a.max_routes:
             return [NO_RESULT]
+        if a.router == 'fastroute':
+            import route_decision
+            attempt_key = route_decision.retry_key(path,dict(passes=a.passes,optimizer=a.optimizer,
+                route_args=a.route_args,gnd_vias=a.gnd_vias,router=a.router))
+            if attempt_key in routing_attempts:
+                prior = routing_attempts[attempt_key]
+                lean.atomic_json(os.path.join(d,'route-decision.json'),dict(prior,
+                    status='unchanged_failed_attempt',action='inspect_prior_diagnosis',
+                    reason='Identical source/rules/effort already failed in this loop; no blind reroute',
+                    prior_decision=prior['evidence']))
+                print('STUCK: unchanged failed routing input; inspect '+prior['evidence'],flush=True)
+                return [NO_RESULT]
         routes_done[0] += 1
         b = os.path.dirname(path)
         ins = [os.path.join(b, name + ext) for ext in ('.kicad_pcb', '.kicad_pro', '.kicad_dru')
@@ -301,7 +346,8 @@ def main(argv=None):
             cmd = [sys.executable, os.path.join(REPO, 'tools', 'fastroute_job.py'), path, os.path.join(d, 'route-0'),
                    '--passes', str(a.passes), '--optimizer', a.optimizer, '--render'] + (['--gnd-vias'] if a.gnd_vias else []) + shlex.split(a.route_args)
             p = run_stage(cmd, 'routing', cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-            open(os.path.join(d, 'route-0.log'), 'w').write(p.stdout)
+            with open(os.path.join(d, 'route-0.log'), 'w') as route_log:
+                route_log.write(p.stdout)
             # Exit 3 (fastroute_job STUCK_RC, route feature fail_fast): routed with opens, UNROUTED line and triage written.
             if p.returncode not in (0, 3):
                 receipt_path = os.path.join(d, 'route-0', 'mandatory-preflight.json')
@@ -319,6 +365,11 @@ def main(argv=None):
                     except (OSError, ValueError, KeyError, TypeError):
                         pass  # invalid/stale evidence is an ordinary failed candidate
                 return [NO_RESULT]
+            decision = route_decision.observe_route(path,os.path.join(d,'route-0'))
+            decision['evidence'] = os.path.join(d,'route-decision.json')
+            decision['attempt_sha256'] = attempt_key
+            lean.atomic_json(decision['evidence'],decision)
+            print('ROUTE_DECISION '+decision['action']+'; '+decision['reason']+'; evidence='+decision['evidence'],flush=True)
             hints, evidence = placement_audit.bounded_feedback(pr, os.path.join(d, 'route-0'),
                                                               lean.digest(path), escape_hint,
                                                               a.feedback_max_mm, a.congestion_feedback)
@@ -327,7 +378,10 @@ def main(argv=None):
             lean.atomic_json(os.path.join(d, 'feedback.json'), evidence)
             # A step passes on 0 open signal connections and 0 DRC errors (the plane-net opens are counted apart).
             m = re.findall(r'^UNROUTED (\d+) GND_OPEN \d+ ERRORS (\d+)', p.stdout, re.M)
-            return [int(m[-1][0]) + int(m[-1][1])] if m else [NO_RESULT]
+            score = int(m[-1][0]) + int(m[-1][1]) if m else NO_RESULT
+            if score or p.returncode == 3:
+                routing_attempts[attempt_key] = decision
+            return [score]
 
         def one(r):
             rc, text = _remote(a.board_dir, ins, os.path.join(d, 'route-%d' % r),

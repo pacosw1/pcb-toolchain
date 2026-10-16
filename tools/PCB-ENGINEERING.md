@@ -1,0 +1,77 @@
+# Engineering workflow
+
+Use the existing PCB CLI for parts, placement, routing, validation and adoption.
+KiCad remains authoritative. Original PDF evidence, reviewed engineering facts,
+current sourcing evidence and measured qualification are separate records.
+
+Start one observation cycle with one integration owner. Independent part and
+datasheet reviews can run concurrently; candidate edits remain isolated and
+adoption retains the existing single-writer lock and frozen-board defect check.
+
+```sh
+tools/pcb cycle start ENV-SENSE --owner integrator --json
+tools/pcb parts --cycle CYCLE_ID --json status ENV-SENSE
+tools/pcb parts --cycle CYCLE_ID --json inspect path/to/original.pdf --cache .gate/pdf-inspection
+tools/pcb parts --cycle CYCLE_ID --json verify ENV-SENSE --manifest REVIEW.json
+tools/pcb parts --cycle CYCLE_ID --json stock ENV-SENSE --candidate RELEASE_DIR --boards 5 --receipts NEW_STOCK_DIR
+tools/pcb placement --cycle CYCLE_ID --json check ENV-SENSE --manifest REVIEW.json
+tools/pcb edit ENV-SENSE --kind place --spec MOVE.json --engineering-manifest REVIEW.json --cycle CYCLE_ID --detach --json
+tools/pcb routing --from-run PLACEMENT_RUN --cycle CYCLE_ID --json diagnose ENV-SENSE --evidence PLACEMENT_GATE_RESULT.json
+tools/pcb routing --cycle CYCLE_ID --json diagnose ENV-SENSE --evidence DIAGNOSTICS.json
+tools/pcb repair ENV-SENSE --plan PLAN.json --engineering-manifest REVIEW.json --cycle CYCLE_ID --detach --json
+tools/pcb events RUN_ID --after 0 --wait 20 --json
+tools/pcb explain RUN_ID --json
+```
+
+Put supervisor options before the action for `parts`, `placement` and `routing`;
+arguments after the action belong to that backend. Every operation uses the
+existing journal, deadline, cancellation, process cleanup and evidence sealing.
+Each terminal receipt points to `operation/report.json` or its candidate guard
+and fresh gate evidence. Use that run ID as the handoff.
+
+Use `--from-run RUN_ID` to continue a sealed placement/routing candidate in a new
+isolated workspace. A candidate may have open connections while remaining a valid
+input for further work: its exact original source, protected identity, parent CAD
+and evidence must still match. Use the same parent on `routing diagnose` and
+`repair`. No failed or partial candidate can be adopted; the final candidate must
+pass all current checks. `next` recommends diagnosis for an otherwise valid
+candidate with native opens and a supported repair when diagnosis produces one.
+
+Part review and PDF inspection: [PART-EVIDENCE.md](PART-EVIDENCE.md).
+Supported placement requirements and block reuse: [PLACEMENT-CONSTRAINTS.md](PLACEMENT-CONSTRAINTS.md).
+Routing decisions and repair limits: [ROUTE-DECISIONS.md](ROUTE-DECISIONS.md).
+
+A candidate with a reviewed engineering manifest must pass exact part-evidence
+checks before editing, placement requirements before routing, and placement/block
+checks after edits. Geometric defects may be repaired by placement; stale or
+unsupported engineering evidence cannot justify a candidate. The original source
+and all reviewed dependencies must still match at adoption. Full configured native,
+electrical and reference-path gates remain necessary; passing a local screen never
+qualifies the board. No existing selected-part, stock or bench state is promoted.
+
+## Observe the whole cycle
+
+Owned commands linked with `--cycle` contribute their actual run outcome and
+timings automatically. Record engineering review intervals explicitly:
+
+```sh
+tools/pcb cycle begin CYCLE_ID --stage datasheets --owner reviewer --description 'Review exact ordering code and pin table' --json
+tools/pcb cycle end CYCLE_ID --activity ACTIVITY_ID --outcome blocked --evidence REVIEW.json --decision 'Package variant remains unresolved' --json
+tools/pcb cycle attach CYCLE_ID --run RUN_ID --stage schematic --json
+tools/pcb cycle status CYCLE_ID --json
+tools/pcb cycle finish CYCLE_ID --json
+```
+
+Stages are requirements, parts, datasheets, schematic, placement, routing,
+verification and release. The summary retains failures/rework, stage coverage,
+review intervals, owned run durations, active stages and evidence freshness.
+Covered elapsed time uses interval unions so parallel work is not counted twice.
+Review intervals measure recorded elapsed time; human attention and unrecorded work
+stay unknown. A cycle can close with recorded blockers once its activities and
+owned jobs settle. `status: recorded` means observation ended; it grants no design,
+release, procurement or bench qualification. Changed evidence is reported explicitly.
+
+Candidate operations automatically consume an existing
+`hardware-design/registry/part-reviews/BOARD.json`; `--engineering-manifest` selects
+another explicit reviewed input. Boards without a review retain their existing
+gate behavior and `parts status` reports the missing engineering coverage.

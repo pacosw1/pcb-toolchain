@@ -1,5 +1,8 @@
 # PCB workflow CLI
 
+For reviewed parts, sourced placement rules, diagnostic repairs and engineering
+cycle measurement, see [PCB-ENGINEERING.md](PCB-ENGINEERING.md).
+
 `tools/pcb` is the repository entrypoint for board context, builds, explicit
 placement/routing changes, checks, fabrication candidates and block evidence.
 It uses existing native tools and gate targets. Requirements: macOS/Linux,
@@ -33,8 +36,9 @@ run store is outside the default location.
 
 ## Execution contract
 
-`check`, `build`, `edit`, `route`, `release`, `doctor`, `blocks` and `readiness`
-share one owned supervisor and durable run record. They follow events by default.
+`check`, `build`, `edit`, `route`, `repair`, `release`, `doctor`, `blocks`,
+`readiness`, `parts`, `placement` and `routing` share one owned supervisor and
+durable run record. They follow events by default.
 `--detach --json` immediately returns one JSON object with a run ID. Following
 with `--json`, and `events --json`, stream JSON Lines. Put lifecycle options
 **before** arguments passed to the block/readiness tools:

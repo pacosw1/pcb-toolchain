@@ -281,7 +281,9 @@ def worker(folder):
                               cause=result['cause'] + '; owned process cleanup unconfirmed')
             result.setdefault('scope', {'check':'configured_board_gate', 'build':'candidate_board_gate',
                 'edit':'candidate_board_gate', 'route':'candidate_board_gate', 'release':'fabrication_candidate',
-                'doctor':'environment', 'blocks':'block_evidence', 'readiness':'assembly_readiness'}[manifest.get('operation','check')])
+                'repair':'candidate_board_gate', 'parts':'part_evidence', 'placement':'placement_constraints',
+                'routing':'routing_decision', 'doctor':'environment', 'blocks':'block_evidence',
+                'readiness':'assembly_readiness'}[manifest.get('operation','check')])
             result.update(schema_version=1, run_id=folder.name, board=manifest['board'], cleanup=cleanup,
                           operation=manifest.get('operation', 'check'), child_cpu_s=proc.child_cpu_s if proc else None,
                           cpu_scope=proc.cpu_scope if proc else None, gate_result=str(gate_directory(folder) / 'result.json'),
@@ -293,7 +295,7 @@ def worker(folder):
             except (OSError, ValueError) as error:
                 result.update(status='error', exit_code=2, cause='cannot bind run evidence: ' + str(error))
             result.update(elapsed_s=round(time.monotonic() - journal.started, 3),
-                          timing=journal.timeline.summary(terminal=True))
+                          timing=journal.timeline.summary(terminal=True), ended_unix_s=time.time())
             lean.atomic_json(folder / 'result.json', result)
             journal.state.update(result)
             journal.active.clear()
@@ -306,22 +308,55 @@ def worker(folder):
 def start_run(args, base):
     submitted_at = utc()
     operation = args.command
+    from_run = None
+    if getattr(args, 'from_run', None):
+        parent = run_dir(base, args.from_run)
+        from pcb_evidence import verify
+        verify(parent)
+        previous = read_json(parent / 'run.json')
+        from_run = dict(folder=str(parent), result_sha256=pcb_workflow.sha(parent / 'result.json'))
+        if operation in ('build', 'edit', 'route', 'repair') and not getattr(args, 'engineering_manifest', None):
+            if previous.get('engineering_manifest'):
+                args.engineering_manifest = Path(previous['engineering_manifest']['path'])
+    if operation in ('build', 'edit', 'route', 'repair') and not getattr(args, 'engineering_manifest', None):
+        default_review = ROOT / 'hardware-design/registry/part-reviews' / (args.board + '.json')
+        if default_review.is_file():
+            args.engineering_manifest = default_review
     spec = None
     if getattr(args, 'spec', None):
         spec = read_json(args.spec)
         if not isinstance(spec, dict):
             raise ValueError('candidate spec must be a JSON object')
+    cycle_folder = None
+    if getattr(args, 'cycle', None):
+        import pcb_cycle
+        cycle_folder = pcb_cycle.folder_for(base, args.cycle)
+        cycle = pcb_cycle.read(cycle_folder / 'cycle.json')
+        if cycle['status'] != 'open' or Path(cycle['root']).resolve() != ROOT:
+            raise ValueError('cycle must be open and belong to this checkout')
+    if operation in ('parts', 'placement', 'routing'):
+        if len(args.arguments) < 2:
+            raise ValueError(operation + ' requires an action and board/PDF; put supervisor options first')
+        action, subject = args.arguments[:2]
+        if operation == 'parts' and action == 'inspect':
+            args.board = cycle['board'] if cycle_folder else 'PARTS'
+        else:
+            args.board = subject
     baseline = None
     if getattr(args, 'baseline', None):
         baseline = run_dir(base, args.baseline) / 'gate/findings.json'
         if not baseline.is_file():
             raise ValueError('baseline has no structured findings')
-    if operation in ('doctor', 'blocks', 'readiness'):
-        args.board = {'doctor': 'ENVIRONMENT', 'blocks': 'BLOCKS', 'readiness': 'ASSEMBLY'}[operation]
+    if operation in ('doctor', 'blocks', 'readiness') or (operation == 'parts' and args.board == 'PARTS'):
+        args.board = {'doctor': 'ENVIRONMENT', 'blocks': 'BLOCKS', 'readiness': 'ASSEMBLY', 'parts':'PARTS'}[operation]
+        if cycle_folder and operation in ('doctor', 'blocks', 'readiness'):
+            args.board = args.arguments[0] if operation == 'readiness' else cycle['board']
         cfg, config = {'project': None}, None
     else:
         _, cfg, _ = pcb_workflow.board_config(ROOT, args.board)
         config = ROOT / 'hardware-design/boards' / args.board / 'gate.json'
+    if cycle_folder and args.board != cycle['board']:
+        raise ValueError('run belongs to another board than its engineering cycle')
     node = shutil.which(os.environ.get('NODE', 'node'))
     if not node:
         raise ValueError('Node.js is required to run the existing gate')
@@ -346,9 +381,25 @@ def start_run(args, base):
         manifest['spec_sha256'] = hashlib.sha256(Path(args.spec).read_bytes()).hexdigest()
     if getattr(args, 'kind', None):
         manifest['kind'] = args.kind
-    if operation in ('blocks', 'readiness'):
+    for key in ('plan', 'engineering_manifest'):
+        if getattr(args, key, None):
+            path = getattr(args, key).resolve()
+            value = read_json(path)
+            if not isinstance(value, dict):
+                raise ValueError(key + ' requires a JSON object')
+            manifest[key] = dict(path=str(path), sha256=pcb_workflow.sha(path), content=value)
+    if operation in ('blocks', 'readiness', 'parts', 'placement', 'routing'):
         manifest['arguments'] = args.arguments
+    if cycle_folder:
+        manifest['cycle'] = cycle_folder.name
+    if from_run:
+        manifest['from_run'] = from_run
     lean.atomic_json(folder / 'run.json', manifest)
+    if cycle_folder:
+        import pcb_cycle
+        pcb_cycle.attach(cycle_folder, folder,
+            'datasheets' if operation == 'parts' and args.arguments[0] == 'inspect' else
+            'routing' if operation == 'edit' and getattr(args, 'kind', None) == 'route' else None)
     lean.atomic_json(folder / 'state.json', dict(schema_version=1, run_id=folder.name, board=args.board,
                      status='starting', seq=0, updated_unix=time.time(), elapsed_s=0, active_stages=[]))
     # A detached run owns a fresh broker and deadline; no inherited broker capability.
@@ -494,13 +545,14 @@ def wait_seconds(value):
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Observable native board gates; see tools/PCB-CLI.md')
     sub = parser.add_subparsers(dest='command', required=True)
-    operations = ('check', 'build', 'edit', 'route', 'release', 'doctor', 'blocks', 'readiness')
-    for name in operations + ('list', 'context', 'next', 'status', 'events', 'explain', 'cancel', 'adopt', 'benchmark', 'note', '_worker'):
+    operations = ('check', 'build', 'edit', 'route', 'repair', 'release', 'doctor', 'blocks', 'readiness',
+                  'parts', 'placement', 'routing')
+    for name in operations + ('list', 'context', 'next', 'status', 'events', 'explain', 'cancel', 'adopt', 'benchmark', 'cycle', 'note', '_worker'):
         child = sub.add_parser(name)
         child.add_argument('--runs-dir', type=Path, default=Path(os.environ.get('PCB_RUNS_DIR', ROOT / '.gate/cli')))
         child.add_argument('--json', action='store_true', help='JSON; following/events emit JSON Lines')
         if name in operations:
-            if name in ('blocks', 'readiness'):
+            if name in ('blocks', 'readiness', 'parts', 'placement', 'routing'):
                 child.add_argument('arguments', nargs=argparse.REMAINDER)
             elif name != 'doctor':
                 child.add_argument('board')
@@ -509,6 +561,9 @@ def main(argv=None):
             mode.add_argument('--follow', action='store_true', help='stream events until finished (default)')
             child.add_argument('--timeout', type=positive, default=600, help='total run deadline in seconds (default 600)')
             child.add_argument('--heartbeat', type=positive, default=5, help='liveness interval in seconds (default 5)')
+            child.add_argument('--cycle', help='link this run to one engineering cycle')
+            if name in ('build', 'edit', 'route', 'repair', 'parts', 'placement', 'routing'):
+                child.add_argument('--from-run', help='continue/inspect a sealed isolated candidate')
             if name == 'check':
                 freshness = child.add_mutually_exclusive_group()
                 freshness.add_argument('--changed', action='store_true', help='reuse matching completed per-check receipts')
@@ -518,12 +573,28 @@ def main(argv=None):
                 child.add_argument('--spec', type=Path, required=True)
                 if name == 'edit':
                     child.add_argument('--kind', choices=['place', 'route'], required=True)
+            if name == 'repair':
+                child.add_argument('--plan', type=Path, required=True)
+            if name in ('build', 'edit', 'route', 'repair'):
+                child.add_argument('--engineering-manifest', type=Path,
+                                   help='reviewed part uses and sourced placement constraints')
         elif name == 'list':
             pass
         elif name in ('context', 'next'):
             child.add_argument('board')
         elif name == 'benchmark':
             child.add_argument('run_ids', nargs='+')
+        elif name == 'cycle':
+            child.add_argument('action', choices=['start', 'status', 'begin', 'end', 'finish', 'attach'])
+            child.add_argument('subject', help='board for start; cycle ID otherwise')
+            child.add_argument('--owner')
+            child.add_argument('--stage', choices=['requirements', 'parts', 'datasheets', 'schematic', 'placement', 'routing', 'verification', 'release'])
+            child.add_argument('--description')
+            child.add_argument('--activity')
+            child.add_argument('--outcome', choices=['passed', 'blocked', 'rework'])
+            child.add_argument('--evidence', action='append', type=Path)
+            child.add_argument('--decision')
+            child.add_argument('--run')
         else:
             child.add_argument('run_id')
         if name == 'adopt':
@@ -540,6 +611,31 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         base = args.runs_dir.resolve()
+        if args.command == 'cycle':
+            import pcb_cycle
+            if args.action == 'start':
+                if not args.owner:
+                    raise ValueError('cycle start requires --owner for integration ownership')
+                data = pcb_cycle.create(ROOT, base, args.subject, args.owner)
+            else:
+                cycle_folder = pcb_cycle.folder_for(base, args.subject)
+                if Path(pcb_cycle.read(cycle_folder / 'cycle.json')['root']).resolve() != ROOT:
+                    raise ValueError('cycle belongs to another checkout')
+                if args.action == 'begin':
+                    data = pcb_cycle.begin(cycle_folder, args.stage, args.owner or '', args.description or '')
+                elif args.action == 'end':
+                    data = pcb_cycle.end(cycle_folder, args.activity, args.outcome, args.evidence, args.decision or '')
+                elif args.action == 'finish':
+                    data = pcb_cycle.finish(cycle_folder)
+                elif args.action == 'attach':
+                    if not args.run:
+                        raise ValueError('cycle attach requires --run RUN_ID')
+                    pcb_cycle.attach(cycle_folder, run_dir(base, args.run), args.stage)
+                    data = pcb_cycle.summarize(cycle_folder)
+                else:
+                    data = pcb_cycle.summarize(cycle_folder)
+            print(json.dumps(data) if args.json else json.dumps(data, indent=2))
+            return 0
         if args.command == 'list':
             data = pcb_workflow.catalog(ROOT)
             print(json.dumps(data) if args.json else '\n'.join(row['board'] for row in data['boards']))
@@ -560,6 +656,11 @@ def main(argv=None):
         if args.command == 'readiness':
             if len(args.arguments) < 2:
                 raise ValueError('readiness requires BOARD CANDIDATE; put CLI --json/--detach before BOARD')
+        if args.command in ('parts', 'placement', 'routing'):
+            allowed = {'parts': ('status', 'inspect', 'verify', 'stock'), 'placement': ('check',),
+                       'routing': ('diagnose',)}[args.command]
+            if not args.arguments or args.arguments[0] not in allowed:
+                raise ValueError('choose ' + args.command + ' ' + '/'.join(allowed))
         if args.command == 'benchmark':
             from pcb_benchmark import summarize
             data = summarize([run_dir(base, item) for item in args.run_ids])

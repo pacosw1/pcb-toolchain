@@ -27,13 +27,25 @@ from placer import anneal, cost  # noqa: E402
 
 def cmd_read(a):
     from placer import kicad_io
+    engineering = None
+    groups = []
+    if getattr(a,'engineering_manifest',None):
+        from engineering_constraints import reviewed_contract
+        if not a.engineering_board:
+            raise ValueError('--engineering-board is required with a reviewed manifest')
+        engineering = reviewed_contract(a.engineering_root,a.engineering_board,a.engineering_manifest)
+        groups = [r['refs'] for r in engineering['rules'] if r['kind']=='rigid_group']
     pr = kicad_io.read_problem(a.board, fix=a.fix, skip=[x for x in a.skip_net.split(',') if x], edge_dist=a.edge_dist,
                                keepout_layers=a.keepout_layer, free_box=a.free_box,
                                region_refs=a.region_ref, region_weight=a.region_weight, region_box=a.region_box,
                                tie=a.tie, rigid_nets=[x for x in a.rigid_net.split(',') if x], decap_tie=a.decap_tie,
                                keepout_zones=a.keepout_zone, edges=parse_edges(a.edge),
                                zone_refs=dict(x.split('=', 1) for x in a.zone_ref),
-                               domains=parse_domains(a.domain) if a.domain else None, via_nets=a.via_net)
+                               domains=parse_domains(a.domain) if a.domain else None, via_nets=a.via_net,
+                               rigid_groups=groups)
+    if engineering:
+        from engineering_constraints import prepare_problem
+        pr = prepare_problem(a.engineering_root,a.engineering_board,a.engineering_manifest,pr)
     json.dump(pr, open(a.o, 'w'))
     mov = [u for u in pr['units'] if not u['fixed']]
     print('units %d (movable %d, blocks %d), nets %d, keepouts %d' % (
@@ -82,12 +94,31 @@ def parse_params(items):
 
 
 def cmd_run(a):
-    pr = json.load(open(a.prob))
+    with open(a.prob,'rb') as stream:
+        payload = stream.read()
+    pr = json.loads(payload)
+    from engineering_constraints import check_problem
+    frozen = getattr(a,'engineering_frozen_model_sha256',None)
+    if frozen:
+        import hashlib
+        transferred = hashlib.sha256(payload).hexdigest()
+        if transferred!=frozen or not pr.get('engineering'):
+            raise ValueError('transferred engineering model fingerprint differs from verified producer input')
+    check_problem(pr,verify_sources=not frozen)  # Invalid coverage fails before admission.
     with resources.reserve(a.workers, events=a.o + '.admission.jsonl', label='placement') as env:
         with resources.environment(env):
             res = anneal.optimize(pr, parse_params(a.param), workers=a.workers, epochs=a.epochs, steps=a.steps,
                                   seed=a.seed, top=a.top, log=lambda s: print(s, flush=True))
-    json.dump(res, open(a.o, 'w'))
+    if pr.get('engineering'):
+        for candidate in res['candidates']:
+            checked = check_problem(pr,candidate['pose'],verify_sources=not frozen)
+            candidate['engineering'] = checked
+            candidate['illegal'] += ['engineering:'+b['id'] for b in checked['blockers']]
+        res['candidates'].sort(key=anneal.final_key)
+        res['engineering_source_verification'] = ('frozen_model_only; producer must recheck original sources before writing'
+                                                 if frozen else 'current_source_inputs_verified')
+    with open(a.o,'w') as stream:
+        json.dump(res,stream)
     fmt = lambda c: 'cost %.1f hpwl %.1f cong %.1f overlap %.3f oob %.3f' % (  # noqa: E731
         c['cost'], c['components']['hpwl'], c['components']['cong'], c['components']['overlap'],
         c['components']['oob'])
@@ -104,13 +135,22 @@ def cmd_run(a):
 
 def cmd_write(a):
     from placer import kicad_io
-    pr = json.load(open(a.prob))
-    res = json.load(open(a.result))
+    with open(a.prob) as stream:
+        pr = json.load(stream)
+    with open(a.result) as stream:
+        res = json.load(stream)
+    if pr.get('engineering') and os.path.realpath(a.board)!=os.path.realpath(pr['board_file']):
+        raise ValueError('reviewed placement writer source differs from its native model')
     jobs = [('cand%d' % k, c['pose']) for k, c in enumerate(res['candidates'])]
     if a.initial:
         jobs.insert(0, ('initial', cost.initial_pose(pr)))
     src = os.path.dirname(os.path.abspath(a.board))
     for name, pose in jobs:
+        if pr.get('engineering'):
+            from engineering_constraints import check_problem
+            checked = check_problem(pr,pose)
+            if checked['status']!='passed':
+                raise ValueError('reviewed placement rejected before writing: '+str(checked['blockers']))
         d = os.path.join(a.outdir, name)
         if os.path.exists(d):
             shutil.rmtree(d)
@@ -192,6 +232,9 @@ def main(argv=None):
                    help='edge anchor: side N/S/E/W of the REF courtyard (as placed now) on a board edge in LRTB')
     r.add_argument('--via-net', nargs='*', default=[], metavar='NET',
                    help='nets (fnmatch) whose pads need a free via site nearby (via room cost), for example GND')
+    r.add_argument('--engineering-manifest',default=os.environ.get('PCB_ENGINEERING_MANIFEST'))
+    r.add_argument('--engineering-board',default=os.environ.get('PCB_ENGINEERING_BOARD'),help='exact configured board ID for the reviewed manifest')
+    r.add_argument('--engineering-root',default=os.environ.get('PCB_ENGINEERING_ROOT',os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
     r.set_defaults(f=cmd_read)
     r = sub.add_parser('run')
     r.add_argument('prob')
@@ -202,6 +245,7 @@ def main(argv=None):
     r.add_argument('--seed', type=int, default=1)
     r.add_argument('--top', type=int, default=3)
     r.add_argument('--param', nargs='*', default=[])
+    r.add_argument('--engineering-frozen-model-sha256',help='explicit producer-verified remote model; original sources must be rechecked at write')
     r.set_defaults(f=cmd_run)
     r = sub.add_parser('write')
     r.add_argument('board')
