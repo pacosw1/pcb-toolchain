@@ -236,7 +236,7 @@ def _decaps(fps, member, dist):
 
 def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), free_box=None,
                  region_refs=(), region_weight=1.0, region_box=None, spacing=(0.5, 1.0), tie=0.0,
-                 rigid_nets=(), decap_tie=0.0, keepout_zones=(), edges=None, zone_refs=None, domains=None, via_nets=()):
+                 rigid_nets=(), decap_tie=0.0, keepout_zones=(), edges=None, zone_refs=None, domains=None, via_nets=(), rigid_groups=()):
     board = pcbnew.LoadBoard(path)
     holes, pairs, ignored, members, nonet = [], [], [], [], []
     if domains is None:  # single source: the board .kicad_dru
@@ -305,6 +305,21 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
     decaps = _decaps(fps, member, decap_tie) if decap_tie > 0 else []
     if tie > 0:
         _tie(fps, member, tie, list(skip))
+    for number, refs in enumerate(rigid_groups):
+        wanted = set(refs)
+        if len(wanted) < 2 or len(wanted) != len(refs) or wanted-set(by_ref):
+            raise ValueError('reviewed rigid group needs distinct existing native refs')
+        previous = {member[r] for r in wanted if r in member}
+        if any(r not in wanted and key in previous for r,key in member.items()):
+            raise ValueError('reviewed rigid group would split an existing native/grouping unit')
+        if len(previous)==1 and all(member.get(r) in previous for r in wanted):
+            continue
+        if any(units.get(key,{}).get('box') or units.get(key,{}).get('borders') for key in previous):
+            raise ValueError('reviewed rigid group owns unsupported board-drawing transforms')
+        key = 'E:' + str(number)
+        units[key] = dict(name='reviewed:' + ','.join(sorted(wanted)),refs=[],borders=[],box=None)
+        for ref in wanted:
+            member[ref] = key
     for fp in fps:
         r = fp.GetReference()
         key = member.setdefault(r, 'F:' + r)
@@ -781,6 +796,14 @@ def _virtual_outline(board, outline, k, keep=()):
 def write_board(path, pr, pose, out, outline_scale=1.0, *, retain_copper=False):
     if os.path.abspath(path) == os.path.abspath(out):
         raise ValueError('write_board writes a copy only: out must differ from the input board')
+    if pr.get('engineering'):
+        from engineering_constraints import check_problem
+        if os.path.realpath(path)!=os.path.realpath(pr['board_file']):
+            raise ValueError('reviewed placement writer source differs from its native model')
+        checked = check_problem(pr,pose)
+        if checked['status'] != 'passed' or outline_scale != 1.0:
+            raise ValueError('reviewed engineering constraints reject placement: '+str(checked['blockers']))
+        retain_copper = True  # Preserve the reviewed source; reconnect only explicit affected nets later.
     board = pcbnew.LoadBoard(path)
     by_ref = {fp.GetReference(): fp for fp in board.GetFootprints()}
     by_id = {d.m_Uuid.AsString(): d for d in board.GetDrawings()}

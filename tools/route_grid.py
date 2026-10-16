@@ -21,6 +21,8 @@ escape: every SMD pad of a routed net with more than one pad: can a track leave 
 Idea from TraceMaker (doc 05 s13 exact reachability, s16 pin access); the code is our own.
 """
 import argparse
+import hashlib
+import importlib
 import collections
 import fnmatch
 import json
@@ -28,6 +30,8 @@ import os
 import re
 import subprocess
 import sys
+from pathlib import Path
+from placer.dru import _tree, _tokens
 
 import numpy as np
 import pcbnew
@@ -37,6 +41,26 @@ import route_features  # noqa: E402
 
 NM = 1e6
 KICAD_CLI = os.environ.get('KICAD_CLI', '/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli')
+
+
+def escape_generator_inputs():
+    base = Path(__file__).resolve().parent
+    return {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in
+            (base/'route_grid.py', base/'route_features.py', base/'route-features.json',
+             base/'placer/dru.py', base/'placer/__init__.py')}
+
+
+def escape_runtime():
+    native = getattr(pcbnew, '_pcbnew', None) or sys.modules.get('_pcbnew')
+    if native is None:
+        raise ValueError('loaded pcbnew extension identity unavailable')
+    numpy_native = importlib.import_module('numpy._core._multiarray_umath' if int(np.__version__.split('.')[0]) >= 2
+                                          else 'numpy.core._multiarray_umath')
+    paths = dict(python=sys.executable, pcbnew=pcbnew.__file__, pcbnew_native=native.__file__,
+                 numpy=np.__file__, numpy_native=numpy_native.__file__)
+    return dict(python_version=sys.version, pcbnew_version=pcbnew.Version(), numpy_version=np.__version__,
+                files={role:dict(path=str(Path(path).resolve()),
+                    sha256=hashlib.sha256(Path(path).read_bytes()).hexdigest()) for role,path in paths.items()})
 
 
 def poly_pts(ps):
@@ -387,7 +411,15 @@ def item_for(bd, desc, pos, uuid, by_uuid):
     return best[1] if best else None
 
 
+def bound_sources(board):
+    stem=os.path.splitext(os.path.abspath(board))[0]
+    paths=[stem+ext for ext in ('.kicad_pcb','.kicad_pro','.kicad_dru','.kicad_sch')]
+    if not all(os.path.isfile(path) for path in paths):return None
+    return {os.path.basename(path):hashlib.sha256(open(path,'rb').read()).hexdigest() for path in paths}
+
+
 def triage(a, cfg):
+    sources=bound_sources(a.board)
     bd = Board(a.board, a.layers, float(cfg.get('grid_mm', 0.1)))
     drc = a.drc
     if not drc:
@@ -446,7 +478,9 @@ def triage(a, cfg):
     enc = [r for r in res if r['class'] == 'ENCLOSED']
     miss = [r for r in res if r['class'] == 'ROUTER_MISS']
     top = collections.Counter(n for r in enc for n in r['blocking_nets'][:3])
-    out = {'board': os.path.abspath(a.board), 'layers': a.layers, 'grid_mm': bd.g, 'open': len(opens),
+    if sources!=bound_sources(a.board):raise ValueError('native sources changed during grid diagnosis')
+    out = {'schema':'iot-lab.open-triage-evidence.v1','source_inputs':sources,
+           'board': os.path.abspath(a.board), 'layers': a.layers, 'grid_mm': bd.g, 'open': len(opens),
            'enclosed': len(enc), 'router_miss': len(miss), 'unknown': len(res) - len(enc) - len(miss),
            'not_checked': max(0, len(opens) - len(res)), 'top_blockers': [n for n, _ in top.most_common(5)],
            'connections': res}
@@ -458,14 +492,21 @@ def triage(a, cfg):
 
 
 def escape(a, cfg):
+    sources=bound_sources(a.board)
+    generator_inputs, runtime = escape_generator_inputs(), escape_runtime()
     g = float(cfg.get('grid_mm', 0.05))
     reach = float(cfg.get('reach_mm', 2.0))
     bd = Board(a.board, a.layers, g)
+    if not np.isfinite(bd.wmin) or bd.wmin <= 0:
+        raise ValueError('escape minimum native track width is missing/nonpositive')
     skip = [s for s in a.skip.split(',') if s]
-    boxed, checked = [], 0
+    boxed, checked, screened, not_applicable = [], 0, [], []
     by_fp = collections.defaultdict(list)
     for net, lst in bd.net_pads.items():
-        if len(lst) < 2 or any(fnmatch.fnmatchcase(net, s) for s in skip):
+        if len(lst) < 2:
+            not_applicable.extend(dict(ref=fp.GetReference(),pad=p.GetNumber(),net=net,reason='native_single_pad_net') for _,p,fp in lst)
+            continue
+        if any(fnmatch.fnmatchcase(net, s) for s in skip):
             continue
         if a.nets_set is not None and net not in a.nets_set:
             continue
@@ -473,6 +514,7 @@ def escape(a, cfg):
             if p.GetDrillSize().x or p.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH:
                 continue   # a through-hole pad is on every layer
             if all(f2.GetReference() == fp.GetReference() for (_, _, f2) in lst):
+                not_applicable.append(dict(ref=fp.GetReference(),pad=p.GetNumber(),net=net,reason='native_single_part_net'))
                 continue   # a net inside one part only
             by_fp[fp.GetReference()].append((net, it, p, fp))
     for ref, pads in sorted(by_fp.items()):
@@ -483,6 +525,7 @@ def escape(a, cfg):
         outside = ~((px >= bx[0] - 0.3) & (px <= bx[2] + 0.3) & (py >= bx[1] - 0.3) & (py <= bx[3] + 0.3))
         for net, it, p, fp in pads:
             checked += 1
+            screened.append(dict(ref=ref,pad=p.GetNumber(),net=net))
             free, viaok, _ = bd.net_grids(net, w)
             seeds = bd.item_seed(it, w)
             target = [outside | viaok for _ in bd.layers]
@@ -491,7 +534,21 @@ def escape(a, cfg):
                 boxed.append({'pad': it.owner, 'net': net, 'ref': ref,
                               'free_cells_at_pad': int(sum((s & f).sum() for s, f in zip(seeds, free)))})
     refs = sorted({b['ref'] for b in boxed})
-    out = {'board': os.path.abspath(a.board), 'layers': a.layers, 'grid_mm': g, 'pads_checked': checked,
+    custom=os.path.splitext(a.board)[0]+'.kicad_dru'
+    forms=_tree(_tokens(open(custom).read())) if os.path.isfile(custom) else []
+    unsupported=[form[1] if len(form)>1 else form[0] for form in forms if form and form[0]!='version']
+    if sources!=bound_sources(a.board):raise ValueError('native sources changed during escape diagnosis')
+    if generator_inputs != escape_generator_inputs() or runtime != escape_runtime():
+        raise ValueError('native escape generator/runtime changed during diagnosis')
+    parameters = dict(grid_mm=g, reach_mm=reach, halo_hint_mm=float(cfg.get('halo_hint_mm', .5)),
+        pad_box_halo_mm=.3, layers=a.layers, skip_nets=skip, net_filter=sorted(a.nets_set) if a.nets_set is not None else None,
+        width_model='native_design_minimum', clearance_model='native_item_and_net_maximum')
+    out = {'schema':'iot-lab.pin-escape-evidence.v1','source_inputs':sources,
+           'board': os.path.abspath(a.board), 'layers': a.layers, 'grid_mm': g, 'pads_checked': checked,
+           'generator_inputs':generator_inputs,'runtime':runtime,'feature_config':cfg,'model_parameters':parameters,
+           'native_minimum_track_width_mm':bd.wmin,
+           'screened_pads':screened,'not_applicable':not_applicable,'unsupported_constraints':unsupported,
+           'not_checked':0,'scope':'native polygon/minimum-width grid diagnostic; no physical routability proof',
            'boxed_in': boxed, 'halo_hint': {r: float(cfg.get('halo_hint_mm', 0.5)) for r in refs}}
     if a.out:
         json.dump(out, open(a.out, 'w'), indent=1)

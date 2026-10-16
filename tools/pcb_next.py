@@ -11,13 +11,14 @@ import re
 import shlex
 import shutil
 import subprocess
+import uuid
 
 import lean_workflow as lean
 import pcb_evidence
 import pcb_workflow
 
 TERMINAL = {'passed', 'failed', 'error', 'cancelled', 'timeout'}
-OPERATIONS = {'check', 'edit', 'route', 'build', 'release', 'readiness'}
+OPERATIONS = {'check', 'edit', 'route', 'repair', 'build', 'release', 'readiness', 'parts', 'placement', 'routing'}
 
 
 def read(path):
@@ -234,6 +235,57 @@ def next_action(root, board, base=None):
         if operation == 'readiness':
             return finish('review', 'readiness_requires_current_review', 'Order-preparation evidence needs review of its recorded inputs and date',
                           'inspect', 'explain', folder.name, '--json', evidence=dict(path=str(folder / 'operation/readiness.log')))
+        if operation in {'parts', 'placement', 'routing'}:
+            phase = 'source'
+            if manifest.get('from_run'):
+                # Reports about an isolated candidate bind that candidate's
+                # files. Reuse continuation admission to also check the
+                # canonical source from which the parent was created.
+                from pcb_operations import parent_candidate
+                parent_candidate(root, board, manifest['from_run'])
+            inputs = result.get('engineering_inputs')
+            if not isinstance(inputs, dict) or not inputs:
+                raise ValueError('engineering observation lacks current input bindings')
+            for name, digest in inputs.items():
+                if not Path(name).is_file() or pcb_workflow.sha(name) != digest:
+                    raise ValueError('engineering observation input changed: ' + name)
+            report_path = folder / 'operation/report.json'
+            report = read(report_path)
+            if report.get('scope') == 'assembly_stock_observation':
+                from part_evidence import stock_population_current
+                if not stock_population_current(report):
+                    raise ValueError('assembly population source presence or contents changed since stock observation')
+            output['evidence'].update(freshness='current', report=str(report_path), report_sha256=pcb_workflow.sha(report_path))
+            if report.get('scope') == 'assembly_stock_observation':
+                today = dt.datetime.now(dt.timezone.utc).date().isoformat()
+                if report.get('order_day_utc') != today:
+                    output['evidence']['freshness'] = 'expired_stock_day'
+                    destination = root / '.gate/assembly-stock' / (board + '-' + today + '-' + uuid.uuid4().hex)
+                    candidate = report.get('candidate')
+                    boards = report.get('boards')
+                    if candidate and isinstance(boards, int) and boards > 0:
+                        return finish('needs_stock_refresh', 'stock_day_expired',
+                            'Assembly availability observation is from another UTC day',
+                            'refresh_stock', 'parts', '--json', 'stock', board, '--candidate', str(candidate),
+                            '--boards', str(boards), '--receipts', str(destination), evidence=dict(path=str(report_path)),
+                            stock_current=False)
+                    return finish('needs_stock_refresh', 'stock_day_expired',
+                        'Assembly availability observation is from another UTC day',
+                        'inspect_stock_context', 'explain', folder.name, '--json',
+                        evidence=dict(path=str(report_path)), stock_current=False)
+            if operation == 'routing' and report.get('status') == 'repairable':
+                continuation = ['--from-run', Path(manifest['from_run']['folder']).name] if manifest.get('from_run') else []
+                return finish('needs_repair', 'bounded_route_repair',
+                    'Current native evidence supports one bounded isolated repair',
+                    'repair', 'repair', board, '--plan', str(report_path), *continuation, '--follow', '--json',
+                    evidence=dict(path=str(report_path)), qualified=False)
+            blockers = report.get('blockers', []) or report.get('findings', [])
+            first = blockers[0] if blockers and isinstance(blockers[0], dict) else {}
+            return finish('review' if result['status'] == 'passed' else 'blocked',
+                first.get('code', operation + '_review'),
+                first.get('detail', first.get('message', report.get('cause', operation + ' evidence needs an engineering decision'))),
+                'inspect_engineering_evidence', 'explain', folder.name, '--json',
+                evidence=dict(path=str(report_path)), engineering_status=report.get('status'), qualified=False)
         phase = 'source'
         if manifest.get('gate_config_sha256') != pcb_workflow.sha(root / 'hardware-design/boards' / board / 'gate.json'):
             raise ValueError('configured board gate changed since the run')
@@ -254,24 +306,32 @@ def next_action(root, board, base=None):
                 or not raw.get('metrics') or any(value is None for value in raw['metrics'].values())):
             raise ValueError('passed gate lacks complete configured check verdicts')
         verification_root = root
-        if operation in {'build', 'edit', 'route'}:
+        if operation in {'build', 'edit', 'route', 'repair'}:
             phase = 'source'
             from pcb_operations import source_state
             sources = read(folder / 'operation/source.json')
-            if source_state(root, board) != sources:
+            if source_state(root, board, sources.get('extra_inputs')) != sources:
                 raise ValueError('canonical inputs changed since candidate creation')
             verification_root = folder / 'workspace'
         phase = 'freshness'
         verified = verify_current_inputs(verification_root, board, gate_dir)
         output['evidence'].update(freshness='current', input_sha256=verified['input_sha256'], gate=str(gate_dir))
         if raw.get('exit') == 1:
+            if (operation in {'build', 'edit', 'route', 'repair'}
+                    and result.get('identity_preserved') is True and result.get('source_unchanged') is True
+                    and all(raw.get('metrics', {}).get(key) == 0 for key in ('erc_errors', 'drc_errors', 'drc_parity'))
+                    and (raw.get('metrics', {}).get('drc_unconnected') or 0) > 0):
+                return finish('needs_diagnosis', 'candidate_connectivity_open',
+                    'Isolated candidate preserves design identity but needs routing diagnosis',
+                    'diagnose_candidate', 'routing', '--from-run', folder.name, '--json', 'diagnose', board,
+                    '--evidence', str(gate_dir / 'result.json'), evidence=dict(path=str(gate_dir / 'drc.json')))
             finding = current_finding(folder, gate_dir, raw, board, config['project'])
             return finish('blocked', finding.pop('code'), finding.pop('message'), 'inspect_finding',
                           'explain', folder.name, '--json', **finding)
         if raw.get('exit') != 0 or result.get('status') != 'passed':
             return finish('blocked', 'operation_failed', result.get('cause', 'Operation did not pass after its native gate'),
                           'inspect', 'explain', folder.name, '--json', evidence=dict(path=str(folder / 'operation' / (operation + '.log'))))
-        if operation in {'build', 'edit', 'route'}:
+        if operation in {'build', 'edit', 'route', 'repair'}:
             if not result.get('candidate_verified') or not result.get('identity_preserved'):
                 raise ValueError('candidate lacks verified design identity and gate evidence')
             if context['frozen']:

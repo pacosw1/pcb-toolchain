@@ -90,15 +90,26 @@ def context(root, board):
                root / 'hardware-design/REQUIREMENTS.md', root / 'hardware-design/INTERFACES.md',
                root / 'hardware-design/CONNECTORS.md', root / 'hardware-design/DECISIONS.md']
     sources.extend(packet / name for name in ('STATUS.md', 'DOC-RECONCILIATION.md', 'BOM-VERIFIED.csv', 'SCHEMATIC.md'))
+    engineering_manifest = root / 'hardware-design/registry/part-reviews' / (board + '.json')
+    engineering = dict(manifest=str(engineering_manifest.relative_to(root)),
+                       state='requires_native_instance_verification' if engineering_manifest.is_file() else 'missing_review',
+                       sha256=sha(engineering_manifest) if engineering_manifest.is_file() else None,
+                       qualified=False, stock_current=False,
+                       inspect_command=f'tools/pcb parts --json status {board}')
+    if engineering_manifest.is_file():
+        sources.append(engineering_manifest)
     blockers.extend(dict(rule='missing_context_source', path=str(p.relative_to(root))) for p in sources if not p.is_file())
     return dict(schema_version=1, board=board, revision=revision, project=str(project.relative_to(root)),
                 stage=cfg.get('stage', 'G4'), frozen=frozen, source_of_truth='KiCad',
-                configured_checks=checks, blockers=blockers, previous_gate=gate,
+                configured_checks=checks, blockers=blockers, previous_gate=gate, engineering=engineering,
                 commands=dict(check=f'tools/pcb check {board} --changed --follow',
                               fresh=f'tools/pcb check {board} --fresh --follow',
                               build=f'tools/pcb build {board} --follow' if pipeline(root, board) else None,
                               edit=f'tools/pcb edit {board} --kind place --spec SPEC.json --follow',
                               route=f'tools/pcb route {board} --spec ROUTES.json --follow',
+                              parts=f'tools/pcb parts --json status {board}',
+                              part_review=(f'tools/pcb parts --json verify {board} --manifest {engineering["manifest"]}'
+                                           if engineering_manifest.is_file() else None),
                               release=f'tools/pcb release {board} --follow'),
                 next_action=('restore missing native inputs' if missing else
                              'complete missing board packet evidence' if any(b['rule']=='missing_context_source' for b in blockers) else

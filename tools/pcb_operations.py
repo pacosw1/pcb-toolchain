@@ -19,7 +19,7 @@ from pcb_timing import MeasuredSpan, measured_stage
 IGNORED = {'.git', '.gate', '.claude', '.bench', '__pycache__', 'node_modules', 'fab', 'render', 'renders', 'reports'}
 
 
-def source_files(root, board=None):
+def source_files(root, board=None, extra_inputs=None):
     root = Path(root).resolve()
     found = []
     names = ['tools', 'hardware-design']
@@ -68,20 +68,28 @@ def source_files(root, board=None):
                         if pdf.is_file():
                             found.append(pdf)
     found.extend(root / name for name in ('FOCUS.md', 'AGENTS.md', 'CLAUDE.md') if (root / name).is_file())
+    for name in extra_inputs or []:
+        path = (root / name).resolve()
+        if not path.is_relative_to(root) or not path.is_file():
+            raise ValueError('explicit engineering dependency is missing or outside checkout: ' + str(name))
+        found.append(path)
     return sorted(set(found))
 
 
-def source_state(root, board=None):
+def source_state(root, board=None, extra_inputs=None):
     root = Path(root).resolve()
-    files = {str(p.relative_to(root)): sha(p) for p in source_files(root, board)}
-    return dict(board=board, files=files, sha256=hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest())
+    files = {str(p.relative_to(root)): sha(p) for p in source_files(root, board, extra_inputs)}
+    result = dict(board=board, files=files, sha256=hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest())
+    if extra_inputs:
+        result['extra_inputs'] = sorted(set(extra_inputs))
+    return result
 
 
-def snapshot(root, workspace, board=None):
+def snapshot(root, workspace, board=None, extra_inputs=None):
     root, workspace = Path(root).resolve(), Path(workspace).resolve()
     if workspace.exists():
         raise ValueError('candidate workspace must be new')
-    before = source_state(root, board)
+    before = source_state(root, board, extra_inputs)
     workspace.mkdir()
     for name in before['files']:
         source, dest = root / name, workspace / name
@@ -90,7 +98,7 @@ def snapshot(root, workspace, board=None):
         # into canonical CAD. Never hardlink mutable source files.
         shutil.copyfile(source, dest)
         shutil.copymode(source, dest)
-    if source_state(root, board) != before or any(sha(workspace / name) != digest for name, digest in before['files'].items()):
+    if source_state(root, board, extra_inputs) != before or any(sha(workspace / name) != digest for name, digest in before['files'].items()):
         raise ValueError('source changed while creating candidate workspace')
     return before
 
@@ -183,11 +191,93 @@ def execute(folder, stage, command, workspace, env):
     return code
 
 
+def parent_candidate(root, board, reference):
+    """Continue a sealed candidate; never use failed/partial tool output as CAD."""
+    from pcb_evidence import verify
+    root, parent = Path(root).resolve(), Path(reference['folder']).resolve()
+    if sha(parent / 'result.json') != reference['result_sha256']:
+        raise ValueError('parent candidate terminal receipt changed')
+    terminal = verify(parent)
+    manifest = json.loads((parent / 'run.json').read_text())
+    operation = json.loads((parent / 'operation/result.json').read_text())
+    if (Path(manifest['root']).resolve() != root or manifest['board'] != board
+            or operation.get('identity_preserved') is not True or operation.get('protected_source_changes')
+            or operation.get('source_unchanged') is not True or operation.get('continuation_allowed') is False
+            or terminal['status'] not in ('passed', 'failed')):
+        raise ValueError('parent lacks settled, source-preserving candidate evidence')
+    sources = json.loads((parent / 'operation/source.json').read_text())
+    if source_state(root, board, sources.get('extra_inputs')) != sources:
+        raise ValueError('canonical inputs changed since parent candidate creation')
+    _, _, project = board_config(parent / 'workspace', board)
+    candidate = Path(operation['candidate']).resolve()
+    if candidate != project.with_suffix('.kicad_pcb') or sha(candidate) != operation['candidate_sha256']:
+        raise ValueError('parent candidate differs from its sealed receipt')
+    _, _, original = board_config(root, board)
+    if pcb_identity(original.with_suffix('.kicad_pcb')) != pcb_identity(candidate):
+        raise ValueError('parent candidate changes protected board identity')
+    dependencies = {str(parent / name): digest for name, digest in terminal['evidence_sha256'].items()}
+    dependencies[str(parent / 'result.json')] = reference['result_sha256']
+    return candidate, dependencies
+
+
+def placement_check(root, board, manifest, candidate, output):
+    from engineering_constraints import check_manifest, reviewed_contract
+    contract = reviewed_contract(root, board, manifest)
+    evidence = None
+    if any(rule['kind'] == 'escape' for rule in contract['rules']):
+        from route_decision import generate_escape_evidence
+        evidence = Path(output).with_name(Path(output).stem + '-escape.json')
+        generate_escape_evidence(contract, candidate, evidence)
+    report = check_manifest(root, board, manifest, candidate=candidate, escape_evidence=evidence)
+    lean.atomic_json(output, report)
+    return report
+
+
 def run(folder):
     folder = Path(folder).resolve()
     manifest = json.loads((folder / 'run.json').read_text())
     root = Path(manifest['root']).resolve()
     operation = manifest['operation']
+    parent = None
+    parent_dependencies = {}
+    if manifest.get('from_run'):
+        parent, parent_dependencies = parent_candidate(root, manifest['board'], manifest['from_run'])
+    if operation in ('parts', 'placement', 'routing'):
+        backend_root = Path(manifest['from_run']['folder']) / 'workspace' if parent else root
+        backend = {'parts': 'part_evidence.py', 'placement': 'engineering_constraints.py',
+                   'routing': 'route_decision.py'}[operation]
+        output = folder / 'operation/report.json'
+        policies = list((root / 'tools').glob('*.py'))
+        policies += list((root / 'tools/lib').glob('*.mjs'))
+        policies += list((root / 'tools/placer').glob('*.py'))
+        policies += list((root / 'tools/pcb_search').glob('*.py'))
+        observed_inputs = {str(path): sha(path) for path in policies}
+        command = [os.environ.get('PYTHON_MODERN', 'python3'), str(root / 'tools' / backend)]
+        command += manifest['arguments'] + ['--root', str(backend_root), '--json', '--output', str(output)]
+        code = execute(folder, operation, command, root, dict(os.environ, IOT_LAB=str(backend_root)))
+        report = json.loads(output.read_text()) if output.is_file() else None
+        if not isinstance(report, dict) or not report.get('schema') or not report.get('status') or report.get('qualified') is not False:
+            raise ValueError('engineering backend did not produce a scoped, unqualified report')
+        for key in ('inputs', 'native_inputs', 'tool_inputs', 'source_inputs', 'implementation_sha256', 'evidence_sha256'):
+            for name, digest in report.get(key, {}).items():
+                if isinstance(digest, str) and len(digest) == 64:
+                    namespace = backend_root / 'tools' if key == 'implementation_sha256' else backend_root
+                    resolved = str((namespace / name).resolve())
+                    if resolved in observed_inputs and observed_inputs[resolved] != digest:
+                        raise ValueError('engineering backend reported a changed policy input: ' + name)
+                    observed_inputs[resolved] = digest
+        observed_inputs.update(parent_dependencies)
+        if any(not Path(name).is_file() or sha(name) != digest for name, digest in observed_inputs.items()):
+            raise ValueError('engineering evidence inputs changed while producing the report')
+        result = dict(status='passed' if code == 0 else 'error' if code == 2 else 'failed',
+                      exit_code=0 if code == 0 else 2 if code == 2 else 1,
+                      scope={'parts':'part_evidence', 'placement':'placement_constraints', 'routing':'routing_decision'}[operation],
+                      cause=(report or {}).get('cause', operation + (' completed' if code == 0 else ' blocked; inspect report.json')),
+                      operation=operation, tool_exit=code, report=str(output),
+                      engineering_status=(report or {}).get('status'), engineering_inputs=observed_inputs,
+                      qualified=False, release_approved=False)
+        lean.atomic_json(folder / 'operation/result.json', result)
+        return result['exit_code']
     if operation in ('doctor', 'release', 'blocks', 'readiness'):
         env = dict(os.environ)
         if operation == 'doctor':
@@ -210,27 +300,91 @@ def run(folder):
                       artifact_directory=str(folder / 'candidate') if operation == 'release' else None)
         lean.atomic_json(folder / 'operation/result.json', result)
         return result['exit_code']
+    extra_inputs = []
+    for name, expected in parent_dependencies.items():
+        path = Path(name).resolve()
+        if not path.is_relative_to(root) or sha(path) != expected:
+            raise ValueError('parent candidate dependency changed or escaped checkout')
+        extra_inputs.append(str(path.relative_to(root)))
+    if operation == 'repair':
+        from route_decision import plan_dependencies
+        plan = manifest['plan']
+        plan_path = Path(plan['path']).resolve()
+        dependencies = {str(plan_path): plan['sha256'], **plan_dependencies(plan['content'])}
+        for name, expected in dependencies.items():
+            path = Path(name).resolve()
+            if not path.is_relative_to(root) or sha(path) != expected:
+                raise ValueError('routing repair dependency is stale or outside checkout: ' + name)
+            extra_inputs.append(str(path.relative_to(root)))
+    engineering = manifest.get('engineering_manifest')
+    if engineering:
+        path = Path(engineering['path']).resolve()
+        if not path.is_relative_to(root) or sha(path) != engineering['sha256']:
+            raise ValueError('engineering manifest changed or is outside this checkout')
+        from part_evidence import verify_manifest
+        review = verify_manifest(root, manifest['board'], path)
+        lean.atomic_json(folder / 'operation/part-review.json', review)
+        if review['status'] != 'passed':
+            result = dict(status='failed', exit_code=1, scope='engineering_preflight', operation=operation,
+                          cause='reviewed part evidence is incomplete or stale', candidate_verified=False,
+                          report=str(folder / 'operation/part-review.json'))
+            lean.atomic_json(folder / 'operation/result.json', result)
+            return 1
+        extra_inputs.append(str(path.relative_to(root)))
+        for name in review.get('inputs', {}):
+            dependency = (root / name).resolve()
+            if not dependency.is_relative_to(root):
+                raise ValueError('review dependency escapes checkout: ' + name)
+            extra_inputs.append(str(dependency.relative_to(root)))
     workspace = folder / 'workspace'
     with measured_stage(lambda kind, **data: event(folder, kind, **data), 'snapshot', 'snapshot'):
-        sources = snapshot(root, workspace, manifest['board'])
+        sources = snapshot(root, workspace, manifest['board'], extra_inputs)
     lean.atomic_json(folder / 'operation/source.json', sources)
     board = manifest['board']
     _, cfg, source_project = board_config(root, board)
     _, _, candidate = board_config(workspace, board)
     native = candidate.with_suffix('.kicad_pcb')
     source_native = source_project.with_suffix('.kicad_pcb')
+    if parent:
+        # Materialize the prior isolated geometry into the new workspace; the
+        # source receipt still binds unchanged canonical CAD and parent evidence.
+        shutil.copyfile(parent, native)
+        if sha(native) != sha(parent):
+            raise ValueError('parent changed while continuing its candidate')
     if manifest.get('spec'):
         spec = folder / 'operation/spec.json'
         spec.write_text(json.dumps(manifest['spec']))
     else:
         spec = None
-    command = operation_command(workspace, board, operation, spec, manifest.get('kind'))
+    command = None if operation == 'repair' else operation_command(workspace, board, operation, spec, manifest.get('kind'))
     env = dict(os.environ, IOT_LAB=str(workspace))
     env.update(KICAD_PY=python_native(), KICAD_PYTHON=python_native())
+    if engineering:
+        env.update(PCB_ENGINEERING_MANIFEST=str(workspace / Path(engineering['path']).relative_to(root)),
+                   PCB_ENGINEERING_BOARD=board, PCB_ENGINEERING_ROOT=str(workspace))
     work = folder / 'operation/work'
     for key in ('ENV_WORK', 'BASEB_WORK', 'BASEC_WORK', 'AC24_WORK', 'AC24C_WORK', 'CELL_WORK', 'FIELD24B_WORK', 'AIO_WORK'):
         env[key] = str(work / key.lower())
-    code = execute(folder, operation, command, workspace, env)
+    if engineering and (operation in ('route', 'repair') or (operation == 'edit' and manifest.get('kind') == 'route')):
+        constraints = placement_check(root, board, Path(engineering['path']), native,
+                                      folder / 'operation/placement-preflight.json')
+        if constraints['status'] != 'passed':
+            result = dict(status='failed', exit_code=1, scope='engineering_preflight', operation=operation,
+                          cause='placement requirements block routing', candidate_verified=False,
+                          source_sha256=sources['sha256'], report=str(folder / 'operation/placement-preflight.json'))
+            lean.atomic_json(folder / 'operation/result.json', result)
+            return 1
+    if operation == 'repair':
+        from route_decision import apply_plan
+        plan = manifest['plan']
+        if sha(plan['path']) != plan['sha256']:
+            raise ValueError('routing repair plan changed after admission')
+        with measured_stage(lambda kind, **data: event(folder, kind, **data), 'bounded-route-repair', 'operation'):
+            repair = apply_plan(workspace, board, plan['content'], folder / 'operation/repair')
+        lean.atomic_json(folder / 'operation/repair-guard.json', repair)
+        code = 0 if repair.get('status') in ('passed', 'proposed') else 1
+    else:
+        code = execute(folder, operation, command, workspace, env)
     if code:
         result = dict(status='failed', exit_code=1, cause=operation + ' tool failed', tool_exit=code)
     else:
@@ -244,6 +398,21 @@ def run(folder):
             result.update(scope='candidate_board_gate', operation=operation, source_sha256=sources['sha256'])
             lean.atomic_json(folder / 'operation/result.json', result)
             return 1
+        if engineering:
+            constraints = placement_check(root, board, Path(engineering['path']), native,
+                                          folder / 'operation/placement-postcheck.json')
+            if constraints['status'] != 'passed':
+                repairable = bool(constraints.get('blockers')) and all(
+                    row.get('code') == 'constraint_violation' for row in constraints['blockers'])
+                result = dict(status='failed', exit_code=1, scope='candidate_engineering_screen', operation=operation,
+                              cause='candidate violates reviewed placement or block requirements', candidate_verified=False,
+                              source_sha256=sources['sha256'], report=str(folder / 'operation/placement-postcheck.json'),
+                              candidate=str(native), candidate_sha256=sha(native), identity_preserved=identity_ok,
+                              protected_source_changes=changed, continuation_allowed=repairable,
+                              source_unchanged=source_state(root, board, extra_inputs) == sources,
+                              workspace=str(workspace), board=board)
+                lean.atomic_json(folder / 'operation/result.json', result)
+                return 1
         gate = [manifest['node'], str(workspace / 'tools/gate.mjs'), board, '--fresh', '--evidence-dir', str(folder / 'gate')]
         code = execute(folder, 'validate', gate, workspace, env)
         report = json.loads((folder / 'gate/result.json').read_text()) if (folder / 'gate/result.json').exists() else None
@@ -276,7 +445,7 @@ def run(folder):
                       candidate=str(native), candidate_sha256=sha(native), metrics=report.get('metrics') if report else None,
                       input_sha256=report.get('provenance', {}).get('input_sha256') if report else None)
     result.update(scope='candidate_board_gate', operation=operation, board=board, source_sha256=sources['sha256'],
-                  source_unchanged=source_state(root, board) == sources, workspace=str(workspace))
+                  source_unchanged=source_state(root, board, extra_inputs) == sources, workspace=str(workspace))
     if not result['source_unchanged']:
         result.update(status='error', exit_code=2, cause='canonical source changed during candidate operation')
     result['artifacts'] = {str(p.relative_to(folder)): sha(p) for p in (folder / 'gate').glob('*') if p.is_file()}
@@ -341,7 +510,7 @@ def adopt(root, folder, defect=None, baseline=None):
     locks.mkdir(parents=True, exist_ok=True)
     with (locks / (board + '.lock')).open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        if source_state(root, board) != sources:
+        if source_state(root, board, sources.get('extra_inputs')) != sources:
             raise ValueError('canonical inputs changed since candidate creation; generate and verify a new candidate')
         check = subprocess.run([manifest['node'], str(root / 'tools/pcb_snapshot_inputs.mjs'), str(folder / 'workspace'), board,
                                 '--verify', str(folder / 'gate')], capture_output=True, text=True, timeout=90,
@@ -351,7 +520,7 @@ def adopt(root, folder, defect=None, baseline=None):
         # Native/library probes can take time. The original read before those
         # probes cannot authorize replacing a board edited in the meantime.
         verify(folder)
-        if source_state(root, board) != sources:
+        if source_state(root, board, sources.get('extra_inputs')) != sources:
             raise ValueError('canonical inputs changed during adoption verification')
         if pcb_identity(target) != pcb_identity(candidate):
             raise ValueError('candidate changes protected design identity')
@@ -370,7 +539,7 @@ def adopt(root, folder, defect=None, baseline=None):
                 stream.write(candidate_bytes)
                 stream.flush()
                 os.fsync(stream.fileno())
-            if source_state(root, board) != sources:
+            if source_state(root, board, sources.get('extra_inputs')) != sources:
                 raise ValueError('canonical inputs changed before atomic adoption')
             os.replace(name, target)
         finally:

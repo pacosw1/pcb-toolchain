@@ -102,6 +102,96 @@ class NextTests(unittest.TestCase):
     def next(self):
         return pcb_next.next_action(self.root, 'X', self.runs)
 
+    def test_dated_stock_expires_even_when_original_receipts_are_unchanged(self):
+        folder = self.make_run(operation='parts')
+        native = self.project.with_suffix('.kicad_pcb')
+        report = dict(schema='iot-lab.part-evidence.v1', board='X', scope='assembly_stock_observation',
+                      status='passed', qualified=False, stock_current=True, order_day_utc='2000-01-01',
+                      candidate=str(self.root / 'candidate'), boards=2,
+                      population_source=dict(path=str(self.board/'variants.json'),exists=False,sha256=None))
+        write(folder / 'operation/report.json', report)
+        terminal = json.loads((folder / 'result.json').read_text())
+        terminal.update(engineering_inputs={str(native): pcb_workflow.sha(native)})
+        self.seal(folder, terminal)
+        result = self.next()
+        self.assertEqual(result['state'], 'needs_stock_refresh')
+        self.assertFalse(result['blocker']['stock_current'])
+        argv = result['next_action']['argv']
+        self.assertIn('stock', argv)
+        self.assertEqual(argv[argv.index('--boards') + 1], '2')
+        self.assertNotEqual(argv[-1], str(self.root / 'candidate'))
+        self.verified.assert_not_called()
+
+    def test_new_variant_population_invalidates_unchanged_stock_observation(self):
+        folder=self.make_run(operation='parts')
+        native=self.project.with_suffix('.kicad_pcb')
+        population=self.board/'variants.json'
+        report=dict(schema='iot-lab.part-evidence.v1',board='X',scope='assembly_stock_observation',
+            status='observed',qualified=False,stock_current=True,
+            order_day_utc=pcb_next.dt.datetime.now(pcb_next.dt.timezone.utc).date().isoformat(),
+            population_source=dict(path=str(population),exists=False,sha256=None))
+        write(folder/'operation/report.json',report)
+        terminal=json.loads((folder/'result.json').read_text())
+        terminal['engineering_inputs']={str(native):pcb_workflow.sha(native)}
+        self.seal(folder,terminal)
+        self.assertEqual(self.next()['evidence']['freshness'],'current')
+        write(population,dict(variants=['FULL'],fit={'U1':['FULL']}))
+        result=self.next()
+        self.assertEqual(result['evidence']['freshness'],'stale')
+        self.assertIn('population source',result['evidence']['cause'])
+        self.assertNotEqual(result['state'],'review')
+        self.verified.assert_not_called()
+
+    def test_changed_engineering_input_cannot_recommend_a_repair(self):
+        folder = self.make_run(operation='routing')
+        native = self.project.with_suffix('.kicad_pcb')
+        write(folder / 'operation/report.json', dict(schema='iot-lab.route-decision.v1',
+              status='repairable', qualified=False))
+        terminal = json.loads((folder / 'result.json').read_text())
+        terminal.update(engineering_inputs={str(native): pcb_workflow.sha(native)})
+        self.seal(folder, terminal)
+        self.assertEqual(self.next()['next_action']['kind'], 'repair')
+        native.write_text('changed CAD')
+        result = self.next()
+        self.assertNotEqual(result['next_action']['kind'], 'repair')
+        self.assertEqual(result['evidence']['freshness'], 'stale')
+
+    def test_parent_diagnosis_cannot_recommend_repair_after_canonical_sources_change(self):
+        import pcb_operations
+        native=self.project.with_suffix('.kicad_pcb')
+        native.write_text('(kicad_pcb (version 20260101))')
+        def source_state(root,board,extra_inputs=None):
+            # Small exact input closure avoids the native dependency resolver;
+            # parent_candidate's receipt/identity/source checks remain real.
+            files={str(self.project.with_suffix(ext).relative_to(self.root)):pcb_workflow.sha(self.project.with_suffix(ext))
+                   for ext in ('.kicad_pcb','.kicad_pro','.kicad_dru','.kicad_sch')}
+            return dict(board=board,files=files,sha256=pcb_workflow.sha(native))
+        parent=self.make_run('run-parent',status='failed',operation='edit',created='2026-10-15T11:00:00Z')
+        candidate=parent/'workspace'/native.relative_to(self.root)
+        candidate.write_bytes(native.read_bytes())
+        write(parent/'workspace'/self.board.relative_to(self.root)/'gate.json',self.config)
+        write(parent/'operation/source.json',source_state(self.root,'X'))
+        write(parent/'operation/result.json',dict(candidate=str(candidate),candidate_sha256=pcb_workflow.sha(candidate),
+            identity_preserved=True,source_unchanged=True,protected_source_changes=[]))
+        self.seal(parent)
+        reference=dict(folder=str(parent),result_sha256=pcb_workflow.sha(parent/'result.json'))
+        diagnosis=self.make_run(operation='routing')
+        manifest=json.loads((diagnosis/'run.json').read_text());manifest['from_run']=reference
+        write(diagnosis/'run.json',manifest)
+        write(diagnosis/'operation/report.json',dict(schema='iot-lab.route-decision.v1',status='repairable',qualified=False))
+        observed={str(parent/name):digest for name,digest in pcb_evidence.evidence_files(parent).items()}
+        observed[str(parent/'result.json')]=reference['result_sha256']
+        terminal=json.loads((diagnosis/'result.json').read_text());terminal['engineering_inputs']=observed
+        self.seal(diagnosis,terminal)
+        with mock.patch.object(pcb_operations,'source_state',side_effect=source_state):
+            self.assertEqual(self.next()['next_action']['kind'],'repair')
+            self.project.with_suffix('.kicad_dru').write_text('changed canonical rule after diagnosis')
+            result=self.next()
+        self.assertNotEqual(result['next_action']['kind'],'repair')
+        self.assertEqual(result['evidence']['freshness'],'stale')
+        self.assertIn('canonical inputs changed',result['evidence']['cause'])
+        self.verified.assert_not_called()
+
     def test_missing_native_input_names_the_exact_path_without_a_tool_probe(self):
         self.project.with_suffix('.kicad_sch').unlink()
         report = self.next()
