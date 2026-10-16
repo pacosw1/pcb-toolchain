@@ -2,6 +2,8 @@
 import json
 from pathlib import Path
 
+from pcb_timing import from_events
+
 
 def summarize(folders):
     rows = []
@@ -35,6 +37,7 @@ def summarize(folders):
         row = dict(run_id=folder.name, board=manifest['board'], operation=manifest.get('operation', 'check'),
                    scope=result.get('scope'), status=result['status'], input_sha256=comparable_input,
                    elapsed_s=result.get('elapsed_s'), child_cpu_s=result.get('child_cpu_s'),
+                   timing=result.get('timing') or from_events(events, manifest.get('created_at'), terminal=True),
                    cpu_scope=result.get('cpu_scope'), evidence_verified=verified_evidence,
                    time_to_configured_targets_s=(result.get('elapsed_s') if completed and gate_scope and gate_valid and verified_evidence else None),
                    cache_hits=sum(e.get('type') == 'cache.hit' for e in events),

@@ -22,6 +22,7 @@ import time
 import lean_owned
 import lean_workflow as lean
 import pcb_workflow
+from pcb_timing import MeasuredSpan, Timeline, live_stages, measured_stage
 
 ROOT = Path(__file__).resolve().parent.parent
 TERMINAL = {'passed', 'failed', 'error', 'cancelled', 'timeout'}
@@ -74,6 +75,13 @@ def status(folder):
             state.update(status='error', exit_code=2, cause='supervisor did not start; inspect worker.log', cleanup=None)
     elif state['status'] not in TERMINAL and alive is False:
         state.update(status='error', exit_code=2, cause='supervisor stopped without a terminal result; cleanup unconfirmed', cleanup=None)
+    if state['status'] not in TERMINAL:
+        state['elapsed_s'] = round(state.get('elapsed_s', 0) + state['heartbeat_age_s'], 3)
+        state['elapsed_clock'] = 'supervisor_monotonic_plus_wall_since_update'
+        state['active_stage_timing'] = live_stages(state.get('active_stage_timing', []))
+        timing = state.get('timing')
+        if timing:
+            timing['active_stages'] = state['active_stage_timing']
     return state
 
 
@@ -84,29 +92,28 @@ class Journal:
         self.state = read_json(folder / 'state.json')
         self.seq = 0
         self.active = set()
+        self.timeline = Timeline(read_json(folder / 'run.json').get('created_at'))
 
     def emit(self, kind, **data):
         elapsed = round(time.monotonic() - self.started, 3)
         self.seq += 1
         event = dict(schema_version=1, run_id=self.folder.name, seq=self.seq,
                      time=utc(), elapsed_s=elapsed, type=kind, **data)
+        self.timeline.observe(event)
         with (self.folder / 'events.jsonl').open('a') as stream:
             stream.write(json.dumps(event, allow_nan=False) + '\n')
             stream.flush()
-        if kind == 'tool.start':
-            self.active.discard('preflight')
-            self.active.add(data['stage'])
-        if kind == 'gate.start':
-            self.active.add('preflight')
+        self.active = {span['stage'] for span in self.timeline.active.values()}
         if kind == 'check.end':
             self.active.discard(data['stage'])
             self.state['last_progress_s'] = elapsed
-        if kind == 'tool.exit':
-            self.active.discard(data['stage'])
-        if kind in {'tool.start', 'tool.exit', 'tool.output', 'check.end'}:
+        if kind in {'tool.start', 'tool.exit', 'tool.output', 'stage.start', 'stage.end', 'stage.activity', 'check.end'}:
             self.state['last_activity_s'] = elapsed
+        terminal = self.state['status'] in TERMINAL
+        timing = self.timeline.summary(terminal=terminal)
         self.state.update(seq=self.seq, elapsed_s=elapsed, updated_unix=time.time(),
-                          active_stages=sorted(self.active))
+                          active_stages=[] if terminal else sorted(self.active),
+                          active_stage_timing=timing['active_stages'], timing=timing)
         lean.atomic_json(self.folder / 'state.json', self.state)
         return event
 
@@ -119,9 +126,13 @@ def incoming(folder, offset):
     producer_paths = ['operation/events.jsonl', 'gate/events.jsonl']
     # Successful release atomically moves the work directory. Keep the same
     # cursor key so promotion cannot replay already observed gate events.
-    release_source = 'release-work/gate/events.jsonl' if (folder / 'release-work/gate/events.jsonl').exists() else 'candidate/gate/events.jsonl'
-    for name in producer_paths + [release_source]:
-        cursor_key = 'release/gate/events.jsonl' if name == release_source else name
+    release_sources = {}
+    for suffix in ('gate/events.jsonl', 'stages.jsonl'):
+        name = next((prefix + '/' + suffix for prefix in ('release-work', 'candidate')
+                     if (folder / prefix / suffix).exists()), 'release-work/' + suffix)
+        release_sources[name] = 'release/' + suffix
+    for name in producer_paths + list(release_sources):
+        cursor_key = release_sources.get(name, name)
         try:
             with (folder / name).open('rb') as stream:
                 stream.seek(offset.get(cursor_key, 0))
@@ -215,10 +226,11 @@ def worker(folder):
             else:
                 env = dict(os.environ, IOT_LEAN_DEADLINE=lean.encode_deadline(deadline))
                 with (folder / 'gate.log').open('wb') as log:
-                    proc = lean_owned.prepare(manifest['command'], dict(cwd=ROOT, env=env,
-                                              stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT))
-                    proc.start()
-                    proc.activate()
+                    with measured_stage(journal.emit, 'process-startup', 'startup', 'supervisor'):
+                        proc = lean_owned.prepare(manifest['command'], dict(cwd=ROOT, env=env,
+                                                  stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT))
+                        proc.start()
+                        proc.activate()
                     while True:
                         drain()
                         if interrupted or (folder / 'cancel.request').exists() or lean.remaining(deadline) <= 0:
@@ -246,12 +258,15 @@ def worker(folder):
                             pass
                         if time.monotonic() - heartbeat >= manifest['heartbeat_s']:
                             journal.emit('run.heartbeat', active_stages=sorted(journal.active), progress='unknown',
+                                         active_stage_timing=journal.timeline.summary()['active_stages'],
                                          last_activity_s=journal.state.get('last_activity_s'),
                                          last_progress_s=journal.state.get('last_progress_s'))
                             heartbeat = time.monotonic()
         except BaseException as error:
             result = dict(status='error', exit_code=2, cause=type(error).__name__ + ': ' + str(error), findings=findings)
         finally:
+            cleanup_span = MeasuredSpan('cleanup', 'cleanup')
+            journal.emit('stage.start', **cleanup_span.fields)
             if proc:
                 try:
                     if cleanup is None:
@@ -260,6 +275,7 @@ def worker(folder):
                         cleanup = dict(complete=False, errors=['owned broker did not settle'])
                 except Exception as error:
                     cleanup = dict(complete=False, errors=[str(error)])
+            journal.emit('stage.end', **cleanup_span.end('passed' if cleanup and cleanup.get('complete') else 'error'))
             if not cleanup or not cleanup.get('complete'):
                 result.update(status='error', exit_code=2,
                               cause=result['cause'] + '; owned process cleanup unconfirmed')
@@ -269,12 +285,15 @@ def worker(folder):
             result.update(schema_version=1, run_id=folder.name, board=manifest['board'], cleanup=cleanup,
                           operation=manifest.get('operation', 'check'), child_cpu_s=proc.child_cpu_s if proc else None,
                           cpu_scope=proc.cpu_scope if proc else None, gate_result=str(gate_directory(folder) / 'result.json'),
-                          evidence_dir=str(folder), elapsed_s=round(time.monotonic() - journal.started, 3))
+                          evidence_dir=str(folder))
             from pcb_evidence import evidence_files
             try:
-                result['evidence_sha256'] = evidence_files(folder)
+                with measured_stage(journal.emit, 'evidence-sealing', 'sealing', 'supervisor'):
+                    result['evidence_sha256'] = evidence_files(folder)
             except (OSError, ValueError) as error:
                 result.update(status='error', exit_code=2, cause='cannot bind run evidence: ' + str(error))
+            result.update(elapsed_s=round(time.monotonic() - journal.started, 3),
+                          timing=journal.timeline.summary(terminal=True))
             lean.atomic_json(folder / 'result.json', result)
             journal.state.update(result)
             journal.active.clear()
@@ -285,6 +304,7 @@ def worker(folder):
 
 
 def start_run(args, base):
+    submitted_at = utc()
     operation = args.command
     spec = None
     if getattr(args, 'spec', None):
@@ -318,7 +338,7 @@ def start_run(args, base):
     else:
         command = [sys.executable, str(ROOT / 'tools/pcb_operations.py'), str(folder)]
     manifest = dict(schema_version=1, run_id=folder.name, board=args.board, project=cfg['project'],
-                    created_at=utc(), root=str(ROOT), command=command, timeout_s=args.timeout,
+                    created_at=submitted_at, root=str(ROOT), command=command, timeout_s=args.timeout,
                     heartbeat_s=args.heartbeat, operation=operation, node=node,
                     gate_config_sha256=hashlib.sha256(config.read_bytes()).hexdigest() if config else None)
     if spec is not None:
@@ -374,6 +394,13 @@ def events(folder, cursor=0, limit=100):
     return rows
 
 
+def stage_status(rows):
+    return ', '.join(row['stage'] + ' elapsed=' +
+        (str(row['elapsed_s']) + 's' if row['elapsed_s'] is not None else 'unavailable') +
+        ' last-activity=' + (str(row['last_activity_age_s']) + 's ago'
+                            if row['last_activity_age_s'] is not None else 'unavailable') for row in rows)
+
+
 def print_event(event, machine):
     if machine:
         print(json.dumps(event, allow_nan=False), flush=True)
@@ -385,7 +412,10 @@ def print_event(event, machine):
     elif kind == 'check.end':
         detail = event['status'] + ' ' + json.dumps(event['metrics'])
     elif kind == 'run.heartbeat':
-        detail = 'alive; progress unknown; active=' + ','.join(event['active_stages'])
+        stages = event.get('active_stage_timing', [])
+        detail = 'alive; progress unknown; active=' + stage_status(stages)
+        if not stages:
+            detail += ','.join(event['active_stages'])
     elif kind in {'run.end', 'run.stopping'}:
         detail = event.get('status', '') + ': ' + event['cause']
     elif kind == 'tool.exit':
@@ -465,7 +495,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description='Observable native board gates; see tools/PCB-CLI.md')
     sub = parser.add_subparsers(dest='command', required=True)
     operations = ('check', 'build', 'edit', 'route', 'release', 'doctor', 'blocks', 'readiness')
-    for name in operations + ('list', 'context', 'status', 'events', 'explain', 'cancel', 'adopt', 'benchmark', 'note', '_worker'):
+    for name in operations + ('list', 'context', 'next', 'status', 'events', 'explain', 'cancel', 'adopt', 'benchmark', 'note', '_worker'):
         child = sub.add_parser(name)
         child.add_argument('--runs-dir', type=Path, default=Path(os.environ.get('PCB_RUNS_DIR', ROOT / '.gate/cli')))
         child.add_argument('--json', action='store_true', help='JSON; following/events emit JSON Lines')
@@ -490,7 +520,7 @@ def main(argv=None):
                     child.add_argument('--kind', choices=['place', 'route'], required=True)
         elif name == 'list':
             pass
-        elif name == 'context':
+        elif name in ('context', 'next'):
             child.add_argument('board')
         elif name == 'benchmark':
             child.add_argument('run_ids', nargs='+')
@@ -513,6 +543,12 @@ def main(argv=None):
         if args.command == 'list':
             data = pcb_workflow.catalog(ROOT)
             print(json.dumps(data) if args.json else '\n'.join(row['board'] for row in data['boards']))
+            return 0
+        if args.command == 'next':
+            from pcb_next import next_action
+            data = next_action(ROOT, args.board, base)
+            print(json.dumps(data) if args.json else
+                  data['blocker']['message'] + '\nNext: ' + data['next_action']['command'])
             return 0
         if args.command == 'context' or (args.command == 'status' and not RUN_ID.fullmatch(args.run_id)):
             data = pcb_workflow.context(ROOT, args.board if args.command == 'context' else args.run_id)
@@ -556,7 +592,8 @@ def main(argv=None):
             return worker(folder)
         if args.command == 'status':
             state = status(folder)
-            print(json.dumps(state) if args.json else f"{state['status'].upper()}: {folder.name} {state.get('cause', '')}; evidence={folder}")
+            print(json.dumps(state) if args.json else f"{state['status'].upper()}: {folder.name} {state.get('cause', '')}; elapsed={state.get('elapsed_s', 'unavailable')}s; " +
+                  ('active=' + stage_status(state['active_stage_timing']) + '; ' if state.get('active_stage_timing') else '') + f"evidence={folder}")
         elif args.command == 'cancel':
             state = status(folder)
             if state['status'] not in TERMINAL:

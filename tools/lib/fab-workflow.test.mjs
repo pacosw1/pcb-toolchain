@@ -12,6 +12,7 @@ function fixture(board,variables={}) {
  mkdirSync(join(root,parent),{recursive:true});
  copyFileSync(new URL('../fab-workflow.sh',import.meta.url),join(root,'tools/fab-workflow.sh'));
  copyFileSync(new URL('../publish-release.py',import.meta.url),join(root,'tools/publish-release.py'));
+ copyFileSync(new URL('../pcb_timing.py',import.meta.url),join(root,'tools/pcb_timing.py'));
  writeFileSync(join(root,'tools/check-env-schematic.py'),'import os,sys; sys.exit(int(os.environ.get("SCHEMATIC_STATUS", "0")))\n');
  writeFileSync(join(root,'tools/check-fab-zip.py'),'print("{\\"status\\":\\"passed\\"}")\n');
  writeFileSync(join(root,'bin/node'),`#!/bin/sh
@@ -63,4 +64,22 @@ test('ENV schematic semantic failure blocks the shared gate and export',()=>{
 });
 test('BASE staged audit failure blocks publication',()=>{
  const f=fixture('BASE-PWR',{CHECK_STATUS:'13'});try{assert.equal(f.run().status,13);assert.equal(existsSync(f.destination),false);}finally{rmSync(f.root,{recursive:true,force:true});}
+});
+test('export spans retain exact failure code and never record downstream stages',()=>{
+ const f=fixture('BASE-PWR',{EXPORT_STATUS:'19'});try{
+  assert.equal(f.run().status,19);
+  const stage=readdirSync(f.parent).find(n=>n.startsWith('.release-'));
+  const rows=readFileSync(join(f.parent,stage,'stages.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+  assert.deepEqual(rows.map(r=>r.type),['stage.start','stage.end']);assert.equal(rows[1].code,19);
+  assert.equal(rows[1].status,'failed');assert.equal(rows[1].span_id,rows[0].span_id);
+ }finally{rmSync(f.root,{recursive:true,force:true});}
+});
+test('published release carries actual export and reconstruction timing journal',()=>{
+ const f=fixture('BASE-PWR');try{
+  assert.equal(f.run().status,0);
+  const rows=readFileSync(join(f.destination,'stages.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+  assert.deepEqual(rows.filter(r=>r.type==='stage.end').map(r=>r.stage),['export','fab-zip','gerber-netcheck']);
+  assert.ok(rows.filter(r=>r.type==='stage.end').every(r=>r.duration_s>=0 && r.code===0));
+  assert.equal(readdirSync(f.parent).filter(n=>n.startsWith('.release-')).length,0);
+ }finally{rmSync(f.root,{recursive:true,force:true});}
 });

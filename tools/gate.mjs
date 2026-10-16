@@ -26,7 +26,7 @@ import {readFileSync, writeFileSync, existsSync, readdirSync, renameSync, mkdirS
 import {join, relative, dirname, resolve} from 'node:path';
 import {root, kicadCli, kicadPython, modernPython, kicadShared, kicadConfig, pinnedRepos} from './lib/env.mjs';
 import {METRICS, CHECK_METRICS, passes, ratchet, metricsText, countFrom, validateConfig, expectedMetrics, pathFailures} from './lib/gate-core.mjs';
-import {runDirectory, runTool, readReport, checkedText, readHappyResult, gateEvent} from './lib/gate-runtime.mjs';
+import {runDirectory, runTool, readReport, checkedText, readHappyResult, gateEvent, measuredSpan} from './lib/gate-runtime.mjs';
 import {gateInputs, fingerprint} from './lib/gate-inputs.mjs';
 import {checkInputs, checkKey, restoreCheck, storeCheck} from './lib/check-cache.mjs';
 import {loadFindingsBaseline, findingsDocument} from './lib/gate-findings.mjs';
@@ -65,6 +65,8 @@ const logDir = isolated ? resolve(evidenceArg) : runDirectory(join(dir, '.gate')
 if (isolated) mkdirSync(logDir); // Refuse existing evidence, even an empty directory.
 console.log(`gate evidence: ${relative(root, logDir)}`);
 gateEvent(logDir, 'gate.start', {board, project: cfg.project, stage: 'preflight'});
+const preflightSpan=measuredSpan('preflight','preflight');
+gateEvent(logDir,'stage.start',preflightSpan.fields);
 const tool = (name) => join(root, 'tools', name);
 const spec = (name) => join(dir, name);
 const sha = (file) => (existsSync(file) ? createHash('sha256').update(readFileSync(file)).digest('hex') : null);
@@ -113,8 +115,11 @@ const probes=[['kicad',kicadCli,['--version']],
   ...(c.kicad_happy ? [['python',modernPython,['--version']]] : [])];
 for (const [name,cmd,args] of preflightErrors.length ? [] : probes) {
   gateEvent(logDir,'preflight.probe',{stage:'preflight',tool:name});
+  const probeSpan=measuredSpan(`probe:${name}`,'startup');
+  gateEvent(logDir,'stage.start',probeSpan.fields);
   try { versions[name] = execFileSync(cmd,args,{encoding:'utf8',stdio:['ignore','pipe','ignore']}).trim(); }
   catch (error) { versions[name] = null;preflightErrors.push(`${name} version probe failed: ${error.message}`);break; }
+  finally { gateEvent(logDir,'stage.end',probeSpan.end(versions[name]===null ? 'failed' : 'passed')); }
 }
 versions.node=process.version;
 // Optional router/advisory repositories are not executed by this gate. Probing
@@ -125,6 +130,7 @@ for(const repo of preflightErrors.length || !c.kicad_happy ? [] : pinnedRepos.fi
   if (versions[repo.name] && !versions[repo.name].startsWith(repo.commit)) preflightErrors.push(`${repo.name} is not at pinned commit ${repo.commit}`);
 }
 gateEvent(logDir,'preflight.end',{stage:'preflight',status:preflightErrors.length ? 'failed' : 'passed',errors:preflightErrors});
+gateEvent(logDir,'stage.end',preflightSpan.end(preflightErrors.length ? 'failed' : 'passed'));
 const start = fingerprint(root,inputs.files,versions,externalRoots);
 const jobs = {
   async erc() {

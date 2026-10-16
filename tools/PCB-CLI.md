@@ -10,6 +10,7 @@ the required environment with bounded probes and live output.
 ```sh
 tools/pcb list --json
 tools/pcb context ENV-SENSE --json
+tools/pcb next ENV-SENSE --json
 tools/pcb check ENV-SENSE --changed --detach --json
 tools/pcb events RUN_ID --json --after CURSOR --wait 20
 tools/pcb status RUN_ID --json
@@ -21,6 +22,14 @@ tools/pcb cancel RUN_ID --json
 packet sources and commands from the registry, FOCUS and board files. Historical
 gates remain observations until dependencies are verified again. Missing context
 files remain explicit blockers.
+
+`next` returns the first actionable blocker, its original evidence, and a
+shell-safe `next_action.argv`/`command` with its working directory. It reads the
+latest matching unified run, checks source/tool dependencies and sealed evidence,
+and keeps stale, missing, running and candidate observations distinct. It never
+executes the recommendation. Missing packet inputs name the exact file to review;
+an old gate pointer cannot establish current readiness. Use `--runs-dir` when the
+run store is outside the default location.
 
 ## Execution contract
 
@@ -128,6 +137,13 @@ gets no compliance time. Comparisons require matching board, scope and source
 fingerprints. Interventions/rework are explicit notes, not guessed counts or a
 claim of zero human effort. Router proxy scores cannot substitute for gates.
 
+Run status and heartbeats expose each active stage's elapsed time and age of its
+last output. Terminal results and `benchmark` include measured startup, snapshot,
+preflight, native KiCad, export, validation, cleanup and evidence-sealing spans. Durations use the
+producer's monotonic clock; wall totals use interval unions so concurrent ERC/DRC
+and nested commands are not added twice. Missing queue boundaries or interrupted
+stages remain explicit unknowns. These measurements do not imply an ETA.
+
 Run state lives in `.gate/cli/RUN_ID/`: admission `run.json`, ordered events,
 atomic state, terminal result, original `gate/` reports and `operation/` logs and
 source manifests. Release candidates have their own manifest. Choose another
@@ -146,3 +162,12 @@ tools. [Mandatory native CI](../.cip/NATIVE.md) runs real KiCad ERC/DRC/parity/
 refill, placement and routing import, plus short/clearance/pad-net defect rejection
 on synthetic boards. Missing runtimes/unexecuted cases fail; no skip-as-pass.
 Neither fixture suite establishes shipping-board or measured qualification.
+
+The separate mandatory `real-board-regression` job runs
+`tools/real_board_regression.py --output NEW_DIRECTORY --json` using the pinned
+native runtime. It copies current ENV-SENSE, injects a C1 placement defect, detects
+it through the CLI, repairs the original pose, runs every configured gate and
+both ENV semantic checks, rejects evidence tampering, and adopts the named frozen
+defect only inside the copy. All original footprint poses and retained tracks/vias
+are compared independently, the backup is byte-exact, and shipping sources must
+remain unchanged. This tests the real workflow without qualifying a board.

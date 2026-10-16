@@ -13,6 +13,7 @@ import time
 
 import lean_workflow as lean
 from pcb_workflow import board_config, operation_command, python_native, sha
+from pcb_timing import MeasuredSpan, measured_stage
 
 
 IGNORED = {'.git', '.gate', '.claude', '.bench', '__pycache__', 'node_modules', 'fab', 'render', 'renders', 'reports'}
@@ -52,6 +53,20 @@ def source_files(root, board=None):
             if p.is_relative_to(root) and p.is_file():
                 found.append(p)
         found.extend(p for p in (root / 'hardware-design').glob('*') if p.is_file())
+        if board == 'ENV-SENSE':
+            # The configured candidate semantic checker also requires the exact
+            # original datasheets named by each native schematic instance. Its
+            # inputs must travel with the candidate and bind adoption freshness.
+            from placer.dru import _tree, _tokens
+            forms = _tree(_tokens(project.with_suffix('.kicad_sch').read_text()))
+            for symbol in forms[0][1:]:
+                if not isinstance(symbol, list) or not symbol or symbol[0] != 'symbol':
+                    continue
+                for prop in symbol:
+                    if isinstance(prop, list) and len(prop) > 2 and prop[:2] == ['property', 'Datasheet'] and prop[2]:
+                        pdf = root / 'hardware-design/registry/datasheets' / Path(prop[2]).name
+                        if pdf.is_file():
+                            found.append(pdf)
     found.extend(root / name for name in ('FOCUS.md', 'AGENTS.md', 'CLAUDE.md') if (root / name).is_file())
     return sorted(set(found))
 
@@ -145,20 +160,26 @@ def event(folder, kind, **data):
 
 def execute(folder, stage, command, workspace, env):
     log_path = folder / 'operation' / (stage + '.log')
-    event(folder, 'tool.start', stage=stage, log=str(log_path), command=command)
-    with log_path.open('wb') as log:
-        proc = subprocess.Popen(command, cwd=workspace, env=env, stdin=subprocess.DEVNULL,
-                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        while True:
-            chunk = os.read(proc.stdout.fileno(), 65536)
-            if not chunk:
-                break
-            log.write(chunk)
-            log.flush()
-            text = chunk.decode(errors='replace')
-            event(folder, 'tool.output', stage=stage, bytes=len(chunk), stream='stdout', text=text[:1600], truncated=len(text) > 1600)
-        code = proc.wait()
-    event(folder, 'tool.exit', stage=stage, code=code, log=str(log_path))
+    span = MeasuredSpan(stage, producer='operations')
+    event(folder, 'tool.start', **span.fields, log=str(log_path), command=command)
+    try:
+        with log_path.open('wb') as log:
+            proc = subprocess.Popen(command, cwd=workspace, env=env, stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            while True:
+                chunk = os.read(proc.stdout.fileno(), 65536)
+                if not chunk:
+                    break
+                log.write(chunk)
+                log.flush()
+                text = chunk.decode(errors='replace')
+                event(folder, 'tool.output', stage=stage, span_id=span.fields['span_id'], producer='operations',
+                      bytes=len(chunk), stream='stdout', text=text[:1600], truncated=len(text) > 1600)
+            code = proc.wait()
+    except BaseException:
+        event(folder, 'tool.exit', **span.end('error', code=None), log=str(log_path))
+        raise
+    event(folder, 'tool.exit', **span.end('passed' if code == 0 else 'failed', code=code), log=str(log_path))
     return code
 
 
@@ -190,7 +211,8 @@ def run(folder):
         lean.atomic_json(folder / 'operation/result.json', result)
         return result['exit_code']
     workspace = folder / 'workspace'
-    sources = snapshot(root, workspace, manifest['board'])
+    with measured_stage(lambda kind, **data: event(folder, kind, **data), 'snapshot', 'snapshot'):
+        sources = snapshot(root, workspace, manifest['board'])
     lean.atomic_json(folder / 'operation/source.json', sources)
     board = manifest['board']
     _, cfg, source_project = board_config(root, board)

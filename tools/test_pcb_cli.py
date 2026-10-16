@@ -20,7 +20,7 @@ class PcbCliTests(unittest.TestCase):
         self.runs = self.root / '.gate/cli'
         source = Path(__file__).resolve().parent.parent
         files = ['tools/pcb', 'tools/pcb_cli.py', 'tools/lean_owned.py', 'tools/lean_owned_exec.py', 'tools/lean_workflow.py',
-                 'tools/pcb_workflow.py', 'tools/pcb_operations.py', 'tools/pcb_evidence.py', 'tools/pcb_benchmark.py',
+                 'tools/pcb_workflow.py', 'tools/pcb_operations.py', 'tools/pcb_evidence.py', 'tools/pcb_benchmark.py', 'tools/pcb_timing.py',
                  'tools/gate.mjs', 'tools/lib/env.mjs', 'tools/lib/gate-core.mjs', 'tools/lib/gate-runtime.mjs', 'tools/lib/gate-inputs.mjs',
                  'tools/lib/check-cache.mjs', 'tools/lib/gate-findings.mjs', 'tools/lib/env-paths.mjs']
         for name in files:
@@ -131,9 +131,22 @@ else:
         self.assertIn('fixture DRC started', (folder / 'gate/drc.log').read_text())
         heartbeat = self.until(lambda: [r for r in pcb_cli.events(folder) if r['type'] == 'run.heartbeat'])
         self.assertEqual(heartbeat[-1]['progress'], 'unknown')
+        live = pcb_cli.status(folder)
+        active_drc = next(row for row in live['active_stage_timing'] if row['stage'] == 'drc')
+        self.assertGreaterEqual(active_drc['elapsed_s'], 0)
+        self.assertGreaterEqual(active_drc['last_activity_age_s'], 0)
         final = self.until(lambda: self.finished(folder))
         self.assertEqual(final['status'], 'passed', final)
         self.assertTrue(final['cleanup']['complete'])
+        timing = final['timing']
+        self.assertEqual(timing['coverage'], 'recorded_boundaries')
+        self.assertEqual(timing['incomplete_stages'], [])
+        self.assertIsNone(timing['queue_wait_s'])
+        self.assertIsNotNone(timing['supervisor_startup_s'])
+        native = [row for row in timing['spans'] if row['category'] == 'kicad']
+        self.assertEqual({row['stage'] for row in native}, {'erc', 'drc'})
+        self.assertTrue(all(row['duration_source'] == 'producer_monotonic' for row in native))
+        self.assertLessEqual(timing['busy_wall_s'], final['elapsed_s'] + .01)
         self.assertEqual((self.board / '.gate/latest.json').read_text(), 'prior latest pointer')
         self.assertEqual((self.board / 'gate-metrics.json').read_text(), 'prior tracked metrics')
         self.assertEqual((self.board / 'cad/X.kicad_pcb').read_text(), 'original PCB')
@@ -186,6 +199,8 @@ else:
         final = self.until(lambda: self.finished(folder))
         self.assertEqual(final['status'], 'cancelled', final)
         self.assertTrue(final['cleanup']['complete'])
+        self.assertEqual(final['timing']['coverage'], 'partial')
+        self.assertTrue(any(row['stage'] == 'drc' for row in final['timing']['incomplete_stages']))
         pid = int(pid_file.read_text())
         with self.assertRaises(ProcessLookupError):
             os.kill(pid, 0)
@@ -275,6 +290,31 @@ else:
             stream.write(b'2}\n')
         self.assertEqual([r['seq'] for r in pcb_cli.events(folder, rows[0]['cursor'])], [2])
 
+    def test_release_promotion_does_not_replay_gate_or_export_spans(self):
+        folder = self.root / 'promote'
+        for suffix in ('gate/events.jsonl', 'stages.jsonl'):
+            path = folder / 'release-work' / suffix
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(dict(schema_version=1, type='stage.start', stage=suffix)) + '\n')
+        rows, cursor = pcb_cli.incoming(folder, {})
+        self.assertEqual(len(rows), 2)
+        (folder / 'release-work').rename(folder / 'candidate')
+        self.assertEqual(pcb_cli.incoming(folder, cursor)[0], [])
+        with (folder / 'candidate/stages.jsonl').open('a') as stream:
+            stream.write(json.dumps(dict(schema_version=1, type='stage.end', stage='export')) + '\n')
+        self.assertEqual([row['type'] for row in pcb_cli.incoming(folder, cursor)[0]], ['stage.end'])
+
+    def test_live_status_refreshes_elapsed_for_operations_without_output(self):
+        folder = self.root / 'silent-operation'
+        folder.mkdir()
+        (folder / 'state.json').write_text(json.dumps(dict(status='running', updated_unix=18, elapsed_s=3,
+            operation='release', active_stage_timing=[dict(stage='export', started_unix_s=15, last_activity_unix_s=17)])))
+        with mock.patch.object(pcb_cli, 'controller_alive', return_value=True), mock.patch('time.time', return_value=20):
+            state = pcb_cli.status(folder)
+        self.assertEqual(state['elapsed_s'], 5)
+        self.assertEqual(state['active_stage_timing'][0]['elapsed_s'], 5)
+        self.assertEqual(state['active_stage_timing'][0]['last_activity_age_s'], 3)
+
     def test_changed_runs_reuse_evidence_and_benchmark_measures_complete_targets(self):
         folders = []
         for _ in range(2):
@@ -288,6 +328,7 @@ else:
         self.assertTrue(all(row['time_to_configured_targets_s'] is not None for row in summary['runs']))
         self.assertGreater(summary['runs'][1]['cache_hits'], 0)
         self.assertIsNotNone(summary['runs'][1]['child_cpu_s'])
+        self.assertEqual(summary['runs'][1]['timing'], json.loads((folders[1] / 'result.json').read_text())['timing'])
         (folders[1] / 'gate/drc.json').write_text('{}')
         invalid = summarize(folders)["runs"][1]
         self.assertFalse(invalid['evidence_verified'])
@@ -311,6 +352,8 @@ else:
         self.assertEqual(rows[-1]['operation'], 'blocks')
         self.assertEqual(rows[-1]['scope'], 'block_evidence')
         self.assertTrue(rows[-1]['cleanup']['complete'])
+        block_span = next(row for row in rows[-1]['timing']['spans'] if row['stage'] == 'blocks')
+        self.assertGreaterEqual(block_span['duration_s'], .3)
 
     def test_valid_native_defect_blocks_dependents_without_losing_actionable_failure(self):
         _, folder = self.start(PCB_FIXTURE_PARITY='1')
