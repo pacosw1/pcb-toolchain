@@ -218,6 +218,63 @@ def escapes(a, layers):
     print(f'FINISH escapes {done} of {len(pads)}')
 
 
+def prep_board(a, layers, w):
+    bd = route_grid.Board(a.board, layers, a.grid)
+    bd.wmin = w
+    for k in a.block:
+        x0, y0, x1, y1 = (float(v) for v in k.split(','))
+        bd.items.append(route_grid.Item('', 'keepout:block', set(layers), 0.0, kind='keep_track',
+                                        polys=[np.array([(x0, y0), (x1, y0), (x1, y1), (x0, y1)])]))
+    for it in bd.items:
+        it.clr += bd.g
+    for k in list(bd.net_clr):
+        bd.net_clr[k] += bd.g
+    bd.edge_clr += bd.g
+    bd.bbs = np.array([it.bb for it in bd.items])
+    bd._idx = {id(it): k for k, it in enumerate(bd.items)}
+    bd._cache.clear()
+    return bd
+
+
+def connect(a, layers, widths):
+    """--connect: route each named pad pair; the seeds are the pad and the copper already joined to it on its net is
+    not used (a direct pad-to-pad track, for power chains whose order matters: current-paths.json)."""
+    done = 0
+    for spec in a.connect:
+        pa, pb = spec.split(':')
+        ra, na = pa.split('.', 1)
+        rb, nb = pb.split('.', 1)
+        b = pcbnew.LoadBoard(a.board)
+        fa = [f for f in b.GetFootprints() if f.GetReference() == ra][0]
+        net = [p for p in fa.Pads() if p.GetNumber() == na][0].GetNetname()
+        w = widths.get(net, 0.15)
+        bd = prep_board(a, layers, w)
+        A = [it for (it, pp, ff) in bd.net_pads[net] if ff.GetReference() == ra and pp.GetNumber() == na]
+        Bp = [it for (it, pp, ff) in bd.net_pads[net] if ff.GetReference() == rb and pp.GetNumber() == nb]
+        if not A or not Bp:
+            print(f'SKIP {spec}: pad not on net {net}')
+            continue
+        xs = [A[0].bb[0], A[0].bb[2], Bp[0].bb[0], Bp[0].bb[2]]
+        ys = [A[0].bb[1], A[0].bb[3], Bp[0].bb[1], Bp[0].bb[3]]
+        win = bd.win(min(xs) - a.margin, min(ys) - a.margin, max(xs) + a.margin, max(ys) + a.margin)
+        bd.win_i, bd.win_j = win[0], win[2]
+        free, viaok, _ = bd.net_grids(net, win)
+        lc = dict(z.split('=') for z in a.layer_cost)
+        path = astar(free, viaok, bd.item_seed(A[0], win), bd.item_seed(Bp[0], win), a.via_cost / a.grid,
+                     a.turn_cost / a.grid, [float(lc.get(l, 1.0)) for l in layers])
+        if path is None:
+            print(f'NOPATH {net}: {spec}')
+            continue
+        items = to_items(bd, path, w)
+        nv = sum(1 for it in items if it[0] == 'via')
+        L = sum(math.dist(it[2], it[3]) for it in items if it[0] == 'seg')
+        print(f'ROUTED {net}: {spec} {len(items) - nv} segments, {nv} vias, {L:.2f} mm, width {w:.2f}')
+        if not a.dry_run:
+            write_items(a.board, net, items, w, layers, bd.net_via.get(net, 0.6), a.via_drill)
+        done += 1
+    print(f'FINISH routed {done} of {len(a.connect)}')
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('board')
@@ -232,6 +289,10 @@ def main():
     ap.add_argument('--via-drill', type=float, default=0.3)
     ap.add_argument('--skip', default='GND,VDD_3V3', help='nets left to the planes / pours (comma list)')
     ap.add_argument('--dry-run', action='store_true')
+    ap.add_argument('--connect', action='append', default=[], metavar='REF.PAD:REF.PAD',
+                    help='route these pad pairs (same net) in place of the DRC open list')
+    ap.add_argument('--block', action='append', default=[], metavar='X0,Y0,X1,Y1',
+                    help='temporary no-track box on every job layer, for this call only (keeps a corridor free)')
     ap.add_argument('--escape', default='', help='REF: route the pad escapes of this part (see escapes())')
     ap.add_argument('--escape-ring', type=float, default=3.0)
     ap.add_argument('--escape-skip', default='', help='more nets with no escape (power pins on planes)')
@@ -241,6 +302,8 @@ def main():
         return escapes(a, layers)
     widths = {k: float(v) for k, v in (x.split('=') for x in a.width)}
     nets = set(n for n in a.nets.split(',') if n)
+    if a.connect:
+        return connect(a, layers, widths)
     drc = os.path.splitext(a.board)[0] + '-finish-drc.json'
     subprocess.run([route_grid.KICAD_CLI, 'pcb', 'drc', '--format', 'json', '--units', 'mm', '-o', drc, a.board],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -258,6 +321,13 @@ def main():
         bd = route_grid.Board(a.board, layers, a.grid)
         w = widths.get(net, bd.wmin)
         bd.wmin = w
+        for k in a.block:
+            x0, y0, x1, y1 = (float(v) for v in k.split(','))
+            bd.items.append(route_grid.Item('', 'keepout:block', set(layers), 0.0, kind='keep_track',
+                                            polys=[np.array([(x0, y0), (x1, y0), (x1, y1), (x0, y1)])]))
+        if a.block:
+            bd.bbs = np.array([it.bb for it in bd.items])
+            bd._idx = {id(it): k for k, it in enumerate(bd.items)}
         # route_grid shrinks obstacles by half a cell (right for triage: no false ENCLOSED). A router must not: one
         # grid cell more on every clearance makes each kept cell clear by at least the rule plus half a cell.
         for it in bd.items:
