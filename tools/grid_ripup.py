@@ -73,8 +73,17 @@ def main():
     ap.add_argument('--via-cost', type=float, default=3.0)
     ap.add_argument('--grid', type=float, default=0.05)
     ap.add_argument('--width', type=float, default=0.15)
+    ap.add_argument('--accept-equal', action='store_true', help='keep a result with the same open count (a step of a chain)')
+    ap.add_argument('--protect', default='', help='comma list of nets (fnmatch) whose copper is never ripped; any other '
+                    'copper may be ripped, locked or not (the finisher writes locked tracks)')
     a = ap.parse_args()
     layers = a.layers.split(',')
+    import fnmatch
+    prot = [q for q in a.protect.split(',') if q]
+    if prot:
+        is_fixed = lambda t: any(fnmatch.fnmatchcase(t.GetNetname(), q) for q in prot)
+    else:
+        is_fixed = lambda t: t.IsLocked()
     B = os.path.abspath(a.board)
     before = opens(B)
     mine = [o for o in before if o[0] == a.net]
@@ -85,7 +94,7 @@ def main():
     # 1. the path on a copy without the other nets' unlocked copper
     tmp = B.replace('.kicad_pcb', '.ripup-tmp.kicad_pcb')
     b = pcbnew.LoadBoard(B)
-    keep = [t for t in b.GetTracks() if t.IsLocked() or t.GetNetname() == net or t.GetNetname() in SKIP]
+    keep = [t for t in b.GetTracks() if is_fixed(t) or t.GetNetname() == net or t.GetNetname() in SKIP]
     gone = [t for t in b.GetTracks() if t not in keep]
     for t in gone:
         b.Remove(t)
@@ -125,7 +134,7 @@ def main():
     clr = 0.2 + a.width / 2
     rip, ripped = [], set()
     for t in b.GetTracks():
-        if t.IsLocked() or t.GetNetname() in (net,) + SKIP:
+        if is_fixed(t) or t.GetNetname() in (net,) + SKIP:
             continue
         if t.GetClass() == 'PCB_VIA':
             q = (pcbnew.ToMM(t.GetPosition().x), pcbnew.ToMM(t.GetPosition().y))
@@ -152,7 +161,8 @@ def main():
                         '--margin', str(a.margin), '--via-cost', str(a.via_cost)],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     after = opens(B)
-    if len(after) < len(before):
+    if len(after) < len(before) or (a.accept_equal and len(after) == len(before) and
+                                     sum(1 for o in after if o[0] == net) < len(mine)):
         os.remove(backup)
         print(f'RIPUP PASS {net} opens {len(before)} -> {len(after)} ripped {",".join(sorted(ripped)) or "-"}')
     else:
