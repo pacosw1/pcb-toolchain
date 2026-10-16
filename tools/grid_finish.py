@@ -253,6 +253,18 @@ def prep_board(a, layers, w):
     return bd
 
 
+def in2_clear_of_b(bd, layers):
+    """B.Cu tracks of all nets as In2.Cu obstacles (net '' blocks every net): an In2 track then never lies under one."""
+    if 'In2.Cu' not in layers:
+        return
+    extra = [route_grid.Item('', 'keepout:b-over-in2', {'In2.Cu'}, 0.2, kind='cu', seg=it.seg, hw=it.hw)
+             for it in bd.items if it.owner == 'track' and 'B.Cu' in it.layers and it.seg is not None]
+    bd.items.extend(extra)
+    bd.bbs = np.array([it.bb for it in bd.items])
+    bd._idx = {id(it): k for k, it in enumerate(bd.items)}
+    bd._cache.clear()
+
+
 def connect(a, layers, widths):
     """--connect: route each named pad pair; the seeds are the pad and the copper already joined to it on its net is
     not used (a direct pad-to-pad track, for power chains whose order matters: current-paths.json)."""
@@ -266,6 +278,8 @@ def connect(a, layers, widths):
         net = [p for p in fa.Pads() if p.GetNumber() == na][0].GetNetname()
         w = widths.get(net, 0.15)
         bd = prep_board(a, layers, w)
+        if a.in2_clear_of_b:
+            in2_clear_of_b(bd, layers)
         A = [it for (it, pp, ff) in bd.net_pads[net] if ff.GetReference() == ra and pp.GetNumber() == na]
         Bp = [it for (it, pp, ff) in bd.net_pads[net] if ff.GetReference() == rb and pp.GetNumber() == nb]
         if not A or not Bp:
@@ -309,6 +323,7 @@ def main():
     ap.add_argument('--margin', type=float, default=10.0, help='search window around the two ends, mm')
     ap.add_argument('--layer-cost', action='append', default=[], metavar='LAYER=X', help='move cost factor on a layer (default 1)')
     ap.add_argument('--via-drill', type=float, default=0.3)
+    ap.add_argument('--in2-clear-of-b', action='store_true', help='In2.Cu tracks may not run under a B.Cu track of another net (the In2 slot would be under it: planes gate); B.Cu tracks become In2 obstacles with half width + 0.2 mm zone clearance')
     ap.add_argument('--via-halo', type=float, default=0.0, help='via sites need room for a via of this diameter (mm); the via is written at its class size (RP-001 room for a GND via)')
     ap.add_argument('--skip', default='GND,VDD_3V3', help='nets left to the planes / pours (comma list)')
     ap.add_argument('--dry-run', action='store_true')
@@ -359,6 +374,8 @@ def main():
             bd.net_clr[k] += bd.g
         bd.edge_clr += bd.g
         bd._cache.clear()
+        if a.in2_clear_of_b:
+            in2_clear_of_b(bd, layers)
         by_uuid = {p.m_Uuid.AsString(): x for lst in bd.net_pads.values() for (x, p, fp) in lst}
         A = route_grid.item_for(bd, ia['description'], ia['pos'], ia.get('uuid', ''), by_uuid)
         B = route_grid.item_for(bd, ib['description'], ib['pos'], ib.get('uuid', ''), by_uuid)
