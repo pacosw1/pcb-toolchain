@@ -55,6 +55,12 @@ def seg_dist(p, a, b):
 
 
 def segs_dist(a1, a2, b1, b2):
+    def cross(o, p, q):
+        return (p[0] - o[0]) * (q[1] - o[1]) - (p[1] - o[1]) * (q[0] - o[0])
+    d1, d2 = cross(b1, b2, a1), cross(b1, b2, a2)
+    d3, d4 = cross(a1, a2, b1), cross(a1, a2, b2)
+    if ((d1 > 0) != (d2 > 0)) and ((d3 > 0) != (d4 > 0)):
+        return 0.0   # the segments cross (2026-10-16: the endpoint distances missed a crossing, DRC tracks_crossing)
     return min(seg_dist(a1, b1, b2), seg_dist(a2, b1, b2), seg_dist(b1, a1, a2), seg_dist(b2, a1, a2))
 
 
@@ -101,6 +107,7 @@ def main():
     win = bd.win(min(xs) - a.margin, min(ys) - a.margin, max(xs) + a.margin, max(ys) + a.margin)
     bd.win_i, bd.win_j = win[0], win[2]
     free, viaok, _ = bd.net_grids(net, win)
+    viaok = grid_finish.no_via_in_pads(bd, net, win, viaok)
     path = grid_finish.astar(free, viaok, bd.item_seed(A, win), bd.item_seed(Bi, win), a.via_cost / a.grid,
                              0.3 / a.grid)
     for ext in ('.kicad_pcb', '.kicad_pro', '.kicad_dru'):

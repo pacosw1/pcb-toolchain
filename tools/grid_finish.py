@@ -218,6 +218,23 @@ def escapes(a, layers):
     print(f'FINISH escapes {done} of {len(pads)}')
 
 
+def no_via_in_pads(bd, net, win, viaok):
+    """Clear the via sites over the net's own SMD pads (other nets' pads are obstacles already): a via in an SMD pad is
+    a viapads gate failure (tools/pcbtool.py viapads)."""
+    r = bd.net_via.get(net, 0.6) / 2 + 0.05
+    i0, i1, j0, j1 = win
+    for (it, p, fp) in bd.net_pads.get(net, []):
+        if p.GetAttribute() != pcbnew.PAD_ATTRIB_SMD:
+            continue
+        (a0, a1, b0, b1), m = bd.item_mask(bd._idx[id(it)], r)
+        if m is None:
+            continue
+        c0, c1, d0, d1 = max(a0, i0), min(a1, i1), max(b0, j0), min(b1, j1)
+        if c1 > c0 and d1 > d0:
+            viaok[d0 - j0:d1 - j0, c0 - i0:c1 - i0] &= ~m[d0 - b0:d1 - b0, c0 - a0:c1 - a0]
+    return viaok
+
+
 def prep_board(a, layers, w):
     bd = route_grid.Board(a.board, layers, a.grid)
     bd.wmin = w
@@ -259,6 +276,7 @@ def connect(a, layers, widths):
         win = bd.win(min(xs) - a.margin, min(ys) - a.margin, max(xs) + a.margin, max(ys) + a.margin)
         bd.win_i, bd.win_j = win[0], win[2]
         free, viaok, _ = bd.net_grids(net, win)
+        viaok = no_via_in_pads(bd, net, win, viaok)
         lc = dict(z.split('=') for z in a.layer_cost)
         path = astar(free, viaok, bd.item_seed(A[0], win), bd.item_seed(Bp[0], win), a.via_cost / a.grid,
                      a.turn_cost / a.grid, [float(lc.get(l, 1.0)) for l in layers])
@@ -349,6 +367,7 @@ def main():
             win = bd.win(min(xs) - mg, min(ys) - mg, max(xs) + mg, max(ys) + mg)
             bd.win_i, bd.win_j = win[0], win[2]
             free, viaok, _ = bd.net_grids(net, win)
+            viaok = no_via_in_pads(bd, net, win, viaok)
             sa, sb = bd.item_seed(A, win), bd.item_seed(B, win)
             lc = dict(x.split('=') for x in a.layer_cost)
             path = astar(free, viaok, sa, sb, a.via_cost / a.grid, a.turn_cost / a.grid, [float(lc.get(l, 1.0)) for l in layers])
