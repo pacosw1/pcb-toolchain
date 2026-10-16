@@ -1,96 +1,148 @@
-# PCB CLI
+# PCB workflow CLI
 
-Run from any directory using the repository's `tools/pcb` executable. Examples
-below assume the repository root; elsewhere use its absolute path. Requires
-macOS or Linux, Python 3.9+, Node.js (CI uses 22), Git, and the same KiCad/tool
-environment as `tools/gate.mjs`. Owned cancellation uses native Unix process
-and socket support; Windows is not supported.
-No installation or service is needed. `node tools/doctor.mjs` diagnoses that
-environment. This first version observes **configured board gates**; it does not
-build, route, export, qualify a release, or change gate targets.
+`tools/pcb` is the repository entrypoint for board context, builds, explicit
+placement/routing changes, checks, fabrication candidates and block evidence.
+It uses existing native tools and gate targets. Requirements: macOS/Linux,
+Python 3.9+, Node (CI uses 22), Git and KiCad 10.0.6. Windows is unsupported.
+No CLI installation or service is needed. `tools/pcb doctor --follow` diagnoses
+the required environment with bounded probes and live output.
 
 ```sh
-tools/pcb check ENV-SENSE --follow
-tools/pcb check ENV-SENSE --detach --json
-tools/pcb status RUN_ID --json
-tools/pcb events RUN_ID --json --wait 20
+tools/pcb list --json
+tools/pcb context ENV-SENSE --json
+tools/pcb check ENV-SENSE --changed --detach --json
 tools/pcb events RUN_ID --json --after CURSOR --wait 20
-tools/pcb explain RUN_ID --json --limit 20
+tools/pcb status RUN_ID --json
+tools/pcb explain RUN_ID --json
 tools/pcb cancel RUN_ID --json
 ```
 
-`check` follows by default. `--detach` immediately returns a run ID; the owned
-supervisor continues after the invoking command exits. `--timeout 600` is the
-default total execution budget in seconds. `--heartbeat 5` is the default
-liveness interval. These are execution policies, not electrical thresholds.
-Ctrl-C while following requests cancellation and follows the cleanup result.
-`cancel` acknowledges a request; inspect status/events for confirmed termination.
-It does not signal a stored PID. Cancellation and deadlines use the existing
-`lean_owned` process-family broker; uncertain cleanup is an error.
+`context` derives revision ownership, frozen status, native project, gate policy,
+packet sources and commands from the registry, FOCUS and board files. Historical
+gates remain observations until dependencies are verified again. Missing context
+files remain explicit blockers.
 
-Each run lives in `.gate/cli/RUN_ID/` (ignored by Git):
+## Execution contract
 
-- `run.json`: operation, board/project, command, configuration hash and budgets.
-- `events.jsonl`: ordered events from one supervisor; reconnectable byte cursors.
-- `state.json`: atomic current status, active checks and last activity/progress.
-- `result.json`: terminal outcome, metrics, input fingerprint and cleanup evidence.
-- `gate/`: the gate's original native reports, provenance, live logs and events.
-- `gate.log`, `worker.log`: gate/controller diagnostics.
+`check`, `build`, `edit`, `route`, `release`, `doctor`, `blocks` and `readiness`
+share one owned supervisor and durable run record. They follow events by default.
+`--detach --json` immediately returns one JSON object with a run ID. Following
+with `--json`, and `events --json`, stream JSON Lines. Put lifecycle options
+**before** arguments passed to the block/readiness tools:
 
-Use `PCB_RUNS_DIR` or `--runs-dir` on each command to choose another run store.
-Run IDs belong to that store and checkout. A worker lost without a terminal
-result is reported as an error with cleanup unconfirmed. There is no automatic
-resume or checkpoint promotion.
+```sh
+tools/pcb blocks --detach --json native BLOCK-ID --output /absolute/new/evidence
+tools/pcb blocks --json inventory ENV-SENSE
+tools/pcb release BASE-PWR --detach --json
+tools/pcb readiness --json BASE-PWR /absolute/candidate --stock /absolute/stock
+```
 
-## Agent contract
+Each event includes schema version, run ID, sequence, time, elapsed seconds,
+type and a returned byte cursor. Reconnect using that cursor. Polling reads at
+most 100 events by default (`--limit 1..1000`) and waits at most 60 seconds. Partial
+trailing writes wait for the next read. Disconnecting a reader does not cancel.
+Inspection commands return 0 when inspection works; read the run's verdict.
 
-`check --detach --json`, `status --json`, `explain --json` and `cancel --json`
-return one JSON object. `check --json` while following and `events --json`
-stream JSON Lines. Each event includes `schema_version`, `run_id`, `seq`, `time`,
-`elapsed_s`, `type`, and a `cursor`. Pass the last returned **byte cursor**, not
-the sequence number, to `events --after`. Old events/logs are not rescanned.
-An incomplete trailing write is retried on the next read.
+Actual tool start/output/exit events, parsed check verdicts, cache hits/misses,
+dependency blocks, liveness heartbeats and one terminal event stay distinct.
+Heartbeats explicitly report unknown progress; no invented ETA. Output events
+carry at most 1600 characters per chunk; original logs stay live.
 
-`events --wait` waits at most 60 seconds and returns as soon as events arrive or
-the run is terminal. It returns at most 100 events by default; `--limit` accepts
-1–1000. An empty response means no new events; read `status` for the current
-state. A disconnected event reader does not cancel the run.
+`--timeout 600` and `--heartbeat 5` are execution policies in seconds. Ctrl-C
+requests cancellation and follows cleanup. `cancel` acknowledges the request;
+status confirms termination. The owned broker cleans the process family,
+including TERM-resistant descendants. Uncertain cleanup is an error. Stored
+PIDs are never blindly signalled; completed supervisors cannot be replayed.
 
-Events distinguish `tool.start`, `tool.output`, `tool.exit`, `check.end`,
-`run.heartbeat`, `run.stopping`, and `run.end`. Tool output events carry at most
-1600 characters per chunk; full output remains in the live tool log. Output
-activity is not proof of algorithmic progress. A heartbeat explicitly reports
-`progress: "unknown"`; native tools that expose no internal progress get no
-invented percentage or ETA. `tool.exit` reports process exit, while `check.end`
-reports the parsed gate verdict. Successful process exit alone cannot pass a
-check.
+Final codes: 0 passed for the stated scope, 1 findings/blocked, 2 infrastructure
+or invalid evidence, 124 deadline, 130 cancellation. Passing a configured gate,
+producing fabrication outputs, assembly readiness and measured qualification
+are separate scopes. The terminal result names its scope.
 
-The final `check` exit code is 0 for passed configured targets, 1 for findings,
-2 for infrastructure/evidence errors, 124 for deadline, and 130 for cancellation.
-Inspection commands return 0 when inspection succeeds, even for a failed run;
-inspect their JSON status. Invalid arguments/runs return 2.
+## Checks and findings
 
-The CLI passes `--evidence-dir NEW_DIRECTORY` to the existing gate. This refuses
-existing destinations and cannot combine with `--write`. It preserves tracked
-metrics, CAD and the board's `.gate/latest.json`, so concurrent board/release
-work does not consume or overwrite this observation run. The gate's source-change
-detection and full targets remain authoritative. Detailed native findings from
-`explain` retain the original report data and locations; other checks retain
-metric causes and original logs.
+Preflight checks required inputs/tools, then ERC/DRC run concurrently. Expensive
+dependent checks wait for valid native evidence. Malformed reports, failed
+invocations and parity defects block dependents. Editing also stops dependents
+on DRC errors. Blocked metrics remain null; valid native defects remain actionable.
+
+Default and `--fresh` run new checks. Editing-only `--changed` reuses per-check
+receipts bound to source, rules, libraries, checker code, tool binaries/versions,
+artifact hashes and parsed metrics. Corruption or changed inputs invalidate the
+affected receipt. G5 and tracked `--write` reject cached mode. Checks preserve
+canonical CAD, tracked metrics and the board's latest-gate pointer.
+
+```sh
+tools/pcb check ENV-SENSE --fresh --baseline PRIOR_RUN --json
+```
+
+`gate/findings.json` contains stable IDs, rule/severity, available refs/nets/pads,
+coordinates, measurements/requirements/sources and original evidence links.
+Missing thresholds are not invented. Deltas distinguish new, resolved, unchanged
+and unverified findings. Blocked checks cannot silently resolve prior findings.
+
+## Candidate changes
+
+```sh
+tools/pcb build BOARD --detach --json
+tools/pcb edit BOARD --kind place --spec /absolute/placement.json --json
+tools/pcb route BOARD --spec /absolute/routes.json --json
+tools/pcb adopt RUN_ID --json
+```
+
+Build dispatch uses existing board pipelines; unsupported boards fail explicitly.
+Placement specs use `{"place":{"R1":[x,y,degrees]}}`; routes use the existing
+`pcbtool.py` format. Commands run in a separate board/dependency snapshot without
+mutable links into canonical CAD. Historical runs/unrelated evidence are excluded.
+Source hashes detect concurrent edits. Parts, pad/net assignments, outline,
+stackup and rules remain protected; changes require an explicit design revision.
+
+Candidates must pass fresh configured gates and applicable BASE/ENV semantic
+checks. `adopt` verifies settled cleanup, candidate/evidence hashes, unchanged
+original inputs and current native dependencies. Under the board writer lock it
+backs up the original and atomically replaces only the canonical PCB. Frozen
+boards require `--baseline FAILED_RUN --defect FINDING_ID` from a currently
+verified failed check, with that error resolved by complete candidate evidence.
+Unexecuted dependent checks never count as passing baseline evidence.
+
+## Release, blocks and measurement
+
+[Release workflow](RELEASE-WORKFLOW.md) describes fresh staged fabrication,
+actual Gerber/BOM/CPL checks, atomic publication and separate current stock,
+complete-assembly and supplier-orientation readiness. Producing a fabrication
+candidate does not declare G5 approval or order boards.
+
+[Block qualification](BLOCK-QUALIFICATION.md) describes native inventory and
+source/target-bound receipts. Draft, verified applicability and measured bench
+proof remain different states. Missing native bindings/reviews stay draft.
+
+```sh
+tools/pcb note RUN_ID --kind intervention 'corrected upstream pin mapping'
+tools/pcb note RUN_ID --kind rework 'changed placement after native failure'
+tools/pcb benchmark COLD_RUN WARM_RUN --json
+```
+
+Measurements include wall time, observed child CPU with accounting scope, cache
+hits and time to complete configured targets. Failed/incomplete/tampered evidence
+gets no compliance time. Comparisons require matching board, scope and source
+fingerprints. Interventions/rework are explicit notes, not guessed counts or a
+claim of zero human effort. Router proxy scores cannot substitute for gates.
+
+Run state lives in `.gate/cli/RUN_ID/`: admission `run.json`, ordered events,
+atomic state, terminal result, original `gate/` reports and `operation/` logs and
+source manifests. Release candidates have their own manifest. Choose another
+store with `PCB_RUNS_DIR`/`--runs-dir`. Receipts detect file changes; they are
+local provenance, not third-party signatures. Preserve the run for handoff.
 
 ## Verification
 
 ```sh
-PYTHONPATH=tools python3 -m unittest -v test_pcb_cli
-node --test tools/lib/gate-runtime.test.mjs tools/lib/gate-cli.test.mjs
+PYTHONPATH=tools python3 -m unittest test_pcb_cli test_pcb_workflow test_block_qualification test_native_workflow_smoke
+node --test tools/lib/*.test.mjs
 ```
 
-The CLI integration fixtures execute the real gate with controlled fake external
-tools. They exercise live output before exit, cursor replay, findings, source
-changes, crash-after-clean-report, missing tools, deadlines, and cancellation
-including a TERM-resistant descendant. They do not establish native KiCad or
-shipping-board acceptance.
-
-CIP runs these Python fixtures in `lean-cpu-unit-tests`; the existing
-`tools/lib/*.test.mjs` glob in `workflow-unit-tests` includes the gate runtime
-and command tests above.
+Fast fixtures exercise real CLI/gate orchestration with controlled external
+tools. [Mandatory native CI](../.cip/NATIVE.md) runs real KiCad ERC/DRC/parity/
+refill, placement and routing import, plus short/clearance/pad-net defect rejection
+on synthetic boards. Missing runtimes/unexecuted cases fail; no skip-as-pass.
+Neither fixture suite establishes shipping-board or measured qualification.

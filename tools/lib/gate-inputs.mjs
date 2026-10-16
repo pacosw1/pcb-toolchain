@@ -41,10 +41,10 @@ export function jsImports(file,text) {
   for(const m of code.matchAll(new RegExp(String.raw`(?<![\w$.])import\s*${QUOTED}`,'g'))) specs.push(literal(m));
   return [...specs,...literalCalls(file,text,'import')];
 }
-export function gateTools(root) {
+export function gateTools(root, entries = [join(root,'tools/gate.mjs')]) {
   const tools=join(root,'tools');
   const inside=p=>{const rel=relative(tools,p);return rel && !rel.startsWith('..') && !rel.includes('\\') && !/(^|\/)(test_[^/]*\.py|[^/]*\.test\.mjs)$/.test(rel);};
-  const files=new Set();const queue=[join(tools,'gate.mjs')];
+  const files=new Set();const queue=[...entries];
   while(queue.length) {
     const file=resolve(queue.shift());
     if(files.has(file) || !inside(file)) continue;
@@ -93,6 +93,27 @@ export function gateInputs(root, board, configName = 'gate.json', environment = 
     add(join(root,source.path));
   }
   for (const ext of ['kicad_pcb','kicad_sch','kicad_pro','kicad_dru']) add(`${project}.${ext}`);
+  // Checker rules may live outside the board folder and can name further
+  // rules/sheets. Record declared file dependencies, including missing ones.
+  const rules=Object.values(cfg.checks ?? {}).filter(value=>typeof value==='string').map(value=>resolve(dir,value));
+  for (const key of ['exempt','return_planes']) if (typeof cfg.checks?.kicad_happy?.[key]==='string') rules.push(resolve(dir,cfg.checks.kicad_happy[key]));
+  const readRules=new Set();
+  for(let i=0;i<rules.length;i++) {
+    const file=rules[i];add(file);
+    if (!file.endsWith('.json') || readRules.has(file) || !existsSync(file)) continue;
+    readRules.add(file);
+    const references=[];
+    const visit=value=>{
+      if (typeof value==='string' && !/^[a-z]+:\/\//i.test(value) && /\.(?:json|kicad_sch|ibs|pdf)$/.test(value)) references.push(value);
+      else if (Array.isArray(value)) value.forEach(visit);
+      else if (value && typeof value==='object') Object.values(value).forEach(visit);
+    };
+    visit(JSON.parse(readFileSync(file,'utf8')));
+    for(const value of references) {
+      const expanded=value.replaceAll('${IOT_LAB}',root).replaceAll('${KIPRJMOD}',dirname(project));
+      if (!expanded.includes('${')) rules.push(resolve(/^(?:hardware-design|tools)\//.test(expanded) ? root : dirname(file),expanded));
+    }
+  }
   const sheets=[...files].filter(p=>p.endsWith('.kicad_sch'));const visited=new Set();
   for(let i=0;i<sheets.length;i++) {
     const sheet=sheets[i];if(visited.has(sheet) || !existsSync(sheet)) continue;

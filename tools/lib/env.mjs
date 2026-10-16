@@ -7,22 +7,19 @@ import {execFileSync} from 'node:child_process';
 import {homedir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {kiCadPaths} from './env-paths.mjs';
 
 const home = homedir();
 const first = (candidates) => candidates.find((p) => p && existsSync(p)) ?? candidates.find(Boolean);
 
 export const root = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/, '');
-export const kicadApp = process.env.KICAD_APP ?? '/Applications/KiCad/KiCad.app/Contents';
-export const kicadCli = process.env.KICAD_CLI ?? `${kicadApp}/MacOS/kicad-cli`;
-export const kicadPython = process.env.KICAD_PYTHON ?? `${kicadApp}/Frameworks/Python.framework/Versions/Current/bin/python3`;
-export const kicadShared = `${kicadApp}/SharedSupport`;
+export const {kicadApp,kicadCli,kicadPython,kicadShared,kicadConfig} = kiCadPaths(process.platform,home,process.env);
 export const KICAD_VERSION = '10.0';
 // KICAD_CONFIG_HOME is the base path: KiCad appends its major/minor version.
 // Fingerprint the same library tables that the CLI actually opens.
-export const kicadConfig = join(process.env.KICAD_CONFIG_HOME ?? join(home, 'Library/Preferences/kicad'), KICAD_VERSION);
 
 // Pinned tool repos (CLAUDE.md section 5). dir: env override, then ~/Documents/GitHub, then ~/code.
-const repo = (name, envName) => first([process.env[envName], join(home, 'Documents/GitHub', name), join(home, 'code', name)]);
+const repo = (name, envName) => process.env[envName] ?? first([join(home, 'Documents/GitHub', name), join(home, 'code', name)]);
 export const pinnedRepos = [
   {name: 'kicad-happy', env: 'KICAD_HAPPY_DIR', commit: 'a6bba1a', dir: repo('kicad-happy', 'KICAD_HAPPY_DIR'), needed: 'gate'},
   {name: 'KiCadRoutingTools', env: 'KRT_DIR', commit: '46c90458', dir: repo('KiCadRoutingTools', 'KRT_DIR'), needed: 'advisory'},

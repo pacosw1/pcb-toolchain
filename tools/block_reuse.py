@@ -90,7 +90,7 @@ def find(library, query, mpn=None, footprint=None):
     return results
 
 
-def reuse(library, iid, expected_sha256=None):
+def reuse(library, iid, expected_sha256=None, receipt=None):
     if not re.fullmatch(r'[A-Za-z0-9_-]+', iid):
         raise ValueError('invalid block ID')
     path = Path(library) / (iid + '.kicad_block')
@@ -99,6 +99,19 @@ def reuse(library, iid, expected_sha256=None):
     row = read_block(path)
     if expected_sha256 and row['source_sha256'] != expected_sha256:
         raise ValueError('stale block: source fingerprint changed; inspect again')
+    if receipt is not None:
+        import block_qualification
+        checked = block_qualification.status(receipt)
+        original = block_qualification.read(receipt)
+        binding = original.get('binding', {})
+        if (checked['status'] != 'current' or binding.get('block_id') != iid
+                or binding.get('source_sha256') != row['source_sha256']
+                or binding.get('source_directory') != row['source_directory']):
+            raise ValueError('stale or different block qualification receipt')
+        row.update(qualification=checked['qualification'], verified_level=checked['level'],
+                   qualification_receipt=str(Path(receipt).resolve()),
+                   qualification_target=dict(board=binding['target'], instance_path=binding['instance_path']),
+                   qualification_scope=original['scope'])
     return row
 
 

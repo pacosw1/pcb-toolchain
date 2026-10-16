@@ -1,4 +1,4 @@
-"""Observable board gates. One owned supervisor and durable journal per run.
+"""Observable board workflows. One owned supervisor and durable journal per run.
 
 The gate owns validation/provenance. This module owns observation and lifecycle;
 it never writes CAD, tracked metrics, or the board's latest-gate pointer.
@@ -21,6 +21,7 @@ import time
 
 import lean_owned
 import lean_workflow as lean
+import pcb_workflow
 
 ROOT = Path(__file__).resolve().parent.parent
 TERMINAL = {'passed', 'failed', 'error', 'cancelled', 'timeout'}
@@ -100,6 +101,8 @@ class Journal:
         if kind == 'check.end':
             self.active.discard(data['stage'])
             self.state['last_progress_s'] = elapsed
+        if kind == 'tool.exit':
+            self.active.discard(data['stage'])
         if kind in {'tool.start', 'tool.exit', 'tool.output', 'check.end'}:
             self.state['last_activity_s'] = elapsed
         self.state.update(seq=self.seq, elapsed_s=elapsed, updated_unix=time.time(),
@@ -111,21 +114,35 @@ class Journal:
 def incoming(folder, offset):
     """Read complete native events once; an unfinished final write stays unread."""
     rows = []
-    try:
-        with (folder / 'gate/events.jsonl').open('rb') as stream:
-            stream.seek(offset)
-            while True:
-                line = stream.readline()
-                if not line or not line.endswith(b'\n'):
-                    break
-                event = json.loads(line)
-                if event.get('schema_version') != 1 or not isinstance(event.get('type'), str):
-                    raise ValueError('invalid gate event')
-                rows.append(event)
-                offset = stream.tell()
-    except FileNotFoundError:
-        pass
+    if not isinstance(offset, dict):
+        offset = {'gate/events.jsonl': offset}
+    producer_paths = ['operation/events.jsonl', 'gate/events.jsonl']
+    # Successful release atomically moves the work directory. Keep the same
+    # cursor key so promotion cannot replay already observed gate events.
+    release_source = 'release-work/gate/events.jsonl' if (folder / 'release-work/gate/events.jsonl').exists() else 'candidate/gate/events.jsonl'
+    for name in producer_paths + [release_source]:
+        cursor_key = 'release/gate/events.jsonl' if name == release_source else name
+        try:
+            with (folder / name).open('rb') as stream:
+                stream.seek(offset.get(cursor_key, 0))
+                while True:
+                    line = stream.readline()
+                    if not line or not line.endswith(b'\n'):
+                        break
+                    event = json.loads(line)
+                    if event.get('schema_version') != 1 or not isinstance(event.get('type'), str):
+                        raise ValueError('invalid producer event')
+                    rows.append(event)
+                    offset[cursor_key] = stream.tell()
+        except FileNotFoundError:
+            pass
+    rows.sort(key=lambda row: row.get('time', ''))
     return rows, offset
+
+
+def gate_directory(folder):
+    return next((folder / name for name in ('gate', 'candidate/gate', 'release-work/gate')
+                 if (folder / name).is_dir()), folder / 'gate')
 
 
 def gate_outcome(folder, code, gate_ended, findings):
@@ -138,14 +155,20 @@ def gate_outcome(folder, code, gate_ended, findings):
         raise ValueError('gate exit and terminal evidence disagree')
     missing = [name for name, value in metrics.items() if value is None]
     missing_versions = [name for name, value in provenance['tools'].items() if value is None]
-    if report['changedDuringRun'] or missing or missing_versions:
+    checks = report.get('checks', {})
+    known_failure = any(c.get('status') == 'failed' and c.get('metrics') and all(v is not None for v in c['metrics'].values())
+                        for c in checks.values())
+    deliberately_blocked = bool(missing and known_failure and not report.get('preflightErrors') and
+        all(any(c.get('status') == 'blocked' and key in c.get('metrics', {}) for c in checks.values()) for key in missing))
+    if report['changedDuringRun'] or (missing and not deliberately_blocked) or missing_versions:
         cause = ('gate inputs changed during run; evidence is invalid' if report['changedDuringRun'] else
                  'required checker did not complete: ' + ', '.join(missing) if missing else
                  'required tool version unavailable: ' + ', '.join(missing_versions))
         return dict(status='error', exit_code=2, cause=cause, metrics=metrics,
                     input_sha256=provenance['input_sha256'], findings=findings)
     return dict(status='passed' if code == 0 else 'failed', exit_code=code,
-                cause='all configured gate targets met' if code == 0 else 'configured gate targets not met',
+                cause='all configured gate targets met' if code == 0 else
+                      'native findings block dependent checks' if deliberately_blocked else 'configured gate targets not met',
                 metrics=metrics, input_sha256=provenance['input_sha256'], findings=findings)
 
 
@@ -212,7 +235,12 @@ def worker(folder):
                             proc.communicate(timeout=0.1)
                             cleanup = proc.last_cleanup
                             drain()
-                            result = gate_outcome(folder, proc.returncode, gate_ended, findings)
+                            if manifest.get('operation', 'check') == 'check':
+                                result = gate_outcome(folder, proc.returncode, gate_ended, findings)
+                            else:
+                                result = read_json(folder / 'operation/result.json')
+                                if result.get('exit_code') != proc.returncode or result.get('status') not in TERMINAL:
+                                    raise ValueError('operation exit and terminal evidence disagree')
                             break
                         except subprocess.TimeoutExpired:
                             pass
@@ -235,9 +263,18 @@ def worker(folder):
             if not cleanup or not cleanup.get('complete'):
                 result.update(status='error', exit_code=2,
                               cause=result['cause'] + '; owned process cleanup unconfirmed')
+            result.setdefault('scope', {'check':'configured_board_gate', 'build':'candidate_board_gate',
+                'edit':'candidate_board_gate', 'route':'candidate_board_gate', 'release':'fabrication_candidate',
+                'doctor':'environment', 'blocks':'block_evidence', 'readiness':'assembly_readiness'}[manifest.get('operation','check')])
             result.update(schema_version=1, run_id=folder.name, board=manifest['board'], cleanup=cleanup,
-                          scope='configured_board_gate', gate_result=str(folder / 'gate/result.json'),
+                          operation=manifest.get('operation', 'check'), child_cpu_s=proc.child_cpu_s if proc else None,
+                          cpu_scope=proc.cpu_scope if proc else None, gate_result=str(gate_directory(folder) / 'result.json'),
                           evidence_dir=str(folder), elapsed_s=round(time.monotonic() - journal.started, 3))
+            from pcb_evidence import evidence_files
+            try:
+                result['evidence_sha256'] = evidence_files(folder)
+            except (OSError, ValueError) as error:
+                result.update(status='error', exit_code=2, cause='cannot bind run evidence: ' + str(error))
             lean.atomic_json(folder / 'result.json', result)
             journal.state.update(result)
             journal.active.clear()
@@ -248,19 +285,49 @@ def worker(folder):
 
 
 def start_run(args, base):
-    if not re.fullmatch(r'[A-Z0-9][A-Z0-9-]*', args.board):
-        raise ValueError('board must be a configured board ID, such as ENV-SENSE')
-    config = ROOT / 'hardware-design/boards' / args.board / 'gate.json'
-    cfg = read_json(config)
+    operation = args.command
+    spec = None
+    if getattr(args, 'spec', None):
+        spec = read_json(args.spec)
+        if not isinstance(spec, dict):
+            raise ValueError('candidate spec must be a JSON object')
+    baseline = None
+    if getattr(args, 'baseline', None):
+        baseline = run_dir(base, args.baseline) / 'gate/findings.json'
+        if not baseline.is_file():
+            raise ValueError('baseline has no structured findings')
+    if operation in ('doctor', 'blocks', 'readiness'):
+        args.board = {'doctor': 'ENVIRONMENT', 'blocks': 'BLOCKS', 'readiness': 'ASSEMBLY'}[operation]
+        cfg, config = {'project': None}, None
+    else:
+        _, cfg, _ = pcb_workflow.board_config(ROOT, args.board)
+        config = ROOT / 'hardware-design/boards' / args.board / 'gate.json'
     node = shutil.which(os.environ.get('NODE', 'node'))
     if not node:
         raise ValueError('Node.js is required to run the existing gate')
     base.mkdir(parents=True, exist_ok=True)
     folder = Path(tempfile.mkdtemp(prefix='run-', dir=base))
     command = [node, str(ROOT / 'tools/gate.mjs'), args.board, '--evidence-dir', str(folder / 'gate')]
+    if operation == 'check':
+        if getattr(args, 'changed', False):
+            command.append('--changed')
+        if getattr(args, 'fresh', False):
+            command.append('--fresh')
+        if baseline:
+            command.extend(['--findings-baseline', str(baseline)])
+    else:
+        command = [sys.executable, str(ROOT / 'tools/pcb_operations.py'), str(folder)]
     manifest = dict(schema_version=1, run_id=folder.name, board=args.board, project=cfg['project'],
                     created_at=utc(), root=str(ROOT), command=command, timeout_s=args.timeout,
-                    heartbeat_s=args.heartbeat, gate_config_sha256=hashlib.sha256(config.read_bytes()).hexdigest())
+                    heartbeat_s=args.heartbeat, operation=operation, node=node,
+                    gate_config_sha256=hashlib.sha256(config.read_bytes()).hexdigest() if config else None)
+    if spec is not None:
+        manifest['spec'] = spec
+        manifest['spec_sha256'] = hashlib.sha256(Path(args.spec).read_bytes()).hexdigest()
+    if getattr(args, 'kind', None):
+        manifest['kind'] = args.kind
+    if operation in ('blocks', 'readiness'):
+        manifest['arguments'] = args.arguments
     lean.atomic_json(folder / 'run.json', manifest)
     lean.atomic_json(folder / 'state.json', dict(schema_version=1, run_id=folder.name, board=args.board,
                      status='starting', seq=0, updated_unix=time.time(), elapsed_s=0, active_stages=[]))
@@ -355,10 +422,11 @@ def follow(folder, machine):
 
 def explain(folder, limit):
     state = status(folder)
+    gate = gate_directory(folder)
     details = []
     total = 0
     for name in ('erc', 'drc'):
-        path = folder / 'gate' / (name + '.json')
+        path = gate / (name + '.json')
         if not path.exists():
             continue
         try:
@@ -372,8 +440,11 @@ def explain(folder, limit):
                         details.append(dict(stage=name, category=category, report=str(path), finding=finding))
         except (ValueError, TypeError, AttributeError):
             details.append(dict(stage=name, report=str(path), cause='malformed report; inspect original evidence'))
-    return dict(run=state, details=details, omitted=max(0, total - len(details)),
-                logs=[str(p) for p in sorted((folder / 'gate').glob('*.log'))] + [str(folder / 'gate.log'), str(folder / 'worker.log')])
+    structured = gate / 'findings.json'
+    normalized = read_json(structured) if structured.exists() else None
+    return dict(run=state, details=details, findings=normalized, omitted=max(0, total - len(details)),
+                logs=[str(p) for directory in (gate, folder / 'operation') for p in sorted(directory.glob('*.log'))]
+                     + [str(folder / 'gate.log'), str(folder / 'worker.log')])
 
 
 def positive(value):
@@ -393,19 +464,44 @@ def wait_seconds(value):
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Observable native board gates; see tools/PCB-CLI.md')
     sub = parser.add_subparsers(dest='command', required=True)
-    for name in ('check', 'status', 'events', 'explain', 'cancel', '_worker'):
+    operations = ('check', 'build', 'edit', 'route', 'release', 'doctor', 'blocks', 'readiness')
+    for name in operations + ('list', 'context', 'status', 'events', 'explain', 'cancel', 'adopt', 'benchmark', 'note', '_worker'):
         child = sub.add_parser(name)
         child.add_argument('--runs-dir', type=Path, default=Path(os.environ.get('PCB_RUNS_DIR', ROOT / '.gate/cli')))
         child.add_argument('--json', action='store_true', help='JSON; following/events emit JSON Lines')
-        if name == 'check':
-            child.add_argument('board')
+        if name in operations:
+            if name in ('blocks', 'readiness'):
+                child.add_argument('arguments', nargs=argparse.REMAINDER)
+            elif name != 'doctor':
+                child.add_argument('board')
             mode = child.add_mutually_exclusive_group()
             mode.add_argument('--detach', action='store_true', help='return the durable run ID immediately')
             mode.add_argument('--follow', action='store_true', help='stream events until finished (default)')
             child.add_argument('--timeout', type=positive, default=600, help='total run deadline in seconds (default 600)')
             child.add_argument('--heartbeat', type=positive, default=5, help='liveness interval in seconds (default 5)')
+            if name == 'check':
+                freshness = child.add_mutually_exclusive_group()
+                freshness.add_argument('--changed', action='store_true', help='reuse matching completed per-check receipts')
+                freshness.add_argument('--fresh', action='store_true', help='require fresh native checks (default)')
+                child.add_argument('--baseline', help='prior run ID for a findings delta')
+            if name in ('edit', 'route'):
+                child.add_argument('--spec', type=Path, required=True)
+                if name == 'edit':
+                    child.add_argument('--kind', choices=['place', 'route'], required=True)
+        elif name == 'list':
+            pass
+        elif name == 'context':
+            child.add_argument('board')
+        elif name == 'benchmark':
+            child.add_argument('run_ids', nargs='+')
         else:
             child.add_argument('run_id')
+        if name == 'adopt':
+            child.add_argument('--baseline')
+            child.add_argument('--defect')
+        if name == 'note':
+            child.add_argument('message')
+            child.add_argument('--kind', choices=['intervention', 'decision', 'rework'], required=True)
         if name == 'events':
             child.add_argument('--after', type=int, default=0, help='byte cursor returned by an earlier event')
             child.add_argument('--wait', type=wait_seconds, default=0, help='bounded wait for new events, at most 60 seconds')
@@ -414,7 +510,26 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         base = args.runs_dir.resolve()
-        if args.command == 'check':
+        if args.command == 'list':
+            data = pcb_workflow.catalog(ROOT)
+            print(json.dumps(data) if args.json else '\n'.join(row['board'] for row in data['boards']))
+            return 0
+        if args.command == 'context' or (args.command == 'status' and not RUN_ID.fullmatch(args.run_id)):
+            data = pcb_workflow.context(ROOT, args.board if args.command == 'context' else args.run_id)
+            print(json.dumps(data) if args.json else json.dumps(data, indent=2))
+            return 0
+        if args.command == 'blocks':
+            if not args.arguments or args.arguments[0] not in ('inventory', 'native', 'qualify', 'status', 'find', 'reuse', 'plan'):
+                raise ValueError('choose blocks inventory/native/qualify/status/find/reuse/plan')
+        if args.command == 'readiness':
+            if len(args.arguments) < 2:
+                raise ValueError('readiness requires BOARD CANDIDATE; put CLI --json/--detach before BOARD')
+        if args.command == 'benchmark':
+            from pcb_benchmark import summarize
+            data = summarize([run_dir(base, item) for item in args.run_ids])
+            print(json.dumps(data) if args.json else json.dumps(data, indent=2))
+            return 0
+        if args.command in operations:
             folder = start_run(args, base)
             if args.detach:
                 state = status(folder)
@@ -426,6 +541,17 @@ def main(argv=None):
                 lean.atomic_json(folder / 'cancel.request', dict(requested_at=utc()))
                 return follow(folder, args.json)
         folder = run_dir(base, args.run_id)
+        if args.command == 'adopt':
+            from pcb_operations import adopt
+            data = adopt(ROOT, folder, args.defect, run_dir(base, args.baseline) if args.baseline else None)
+            print(json.dumps(data) if args.json else 'PASS: adopted verified candidate; backup=' + str(folder / 'backup'))
+            return 0
+        if args.command == 'note':
+            with (folder / 'notes.jsonl').open('a') as stream:
+                fcntl.flock(stream, fcntl.LOCK_EX)
+                stream.write(json.dumps(dict(time=utc(), kind=args.kind, message=args.message)) + '\n')
+            print(json.dumps(dict(recorded=True)) if args.json else 'PASS: run note recorded')
+            return 0
         if args.command == '_worker':
             return worker(folder)
         if args.command == 'status':

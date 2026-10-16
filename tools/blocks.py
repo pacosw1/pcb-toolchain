@@ -6,6 +6,10 @@
   python3 tools/blocks.py new ID "description" "keywords"   empty block folder (KiCad-native)
   python3 tools/blocks.py find "USB" [--mpn MPN]   retrieve candidates without qualifying them
   python3 tools/blocks.py reuse ID                inspect a fingerprinted reuse proposal
+  python3 tools/blocks.py inventory BOARD         native block identities and binding failures
+  python3 tools/blocks.py native ID --output DIR  fresh standalone ERC/DRC/parity evidence
+  python3 tools/blocks.py qualify ID --binding FILE --evidence FILE --output FILE
+  python3 tools/blocks.py status RECEIPT          recheck source-bound qualification
 
 Sources of truth (read at request time, never copied):
   hardware-design/blocks/iot-lab.kicad_blocks/<ID>.kicad_block/
@@ -17,7 +21,9 @@ Sources of truth (read at request time, never copied):
   hardware-design/registry/datasheets/<file>.pdf + .source.json   datasheets (sha256 checked live)
   hardware-design/registry/evidence/<date>/<C-number>.json        dated JLC catalog snapshots
 Renders (kicad-cli) go to a temp cache keyed by the sha256 of the source files, so a render is never stale.
-Levels: 0 = draft, 1 = passes the board gates, 2 = worked on a built board at bring-up.
+Declared facts levels remain historical. Qualification receipts derive levels:
+0 = draft/stale, 1 = source and target gates plus applicability reviews,
+2 = attributable measured bring-up evidence on that exact target instance.
 """
 import argparse
 from pathlib import Path
@@ -570,10 +576,42 @@ def main():
     s = sp.add_parser('check'); s.add_argument('ids', nargs='*')
     s = sp.add_parser('new'); s.add_argument('id'); s.add_argument('description'); s.add_argument('keywords')
     s = sp.add_parser('find'); s.add_argument('query'); s.add_argument('--mpn'); s.add_argument('--footprint')
-    s = sp.add_parser('reuse'); s.add_argument('id'); s.add_argument('--expect-sha256')
+    s = sp.add_parser('reuse'); s.add_argument('id'); s.add_argument('--expect-sha256'); s.add_argument('--receipt')
     s = sp.add_parser('plan'); s.add_argument('id'); s.add_argument('target_manifest'); s.add_argument('--mapping')
     s = sp.add_parser('bind'); s.add_argument('id'); s.add_argument('target'); s.add_argument('--instance', required=True)
+    s = sp.add_parser('inventory'); s.add_argument('board')
+    s = sp.add_parser('native'); s.add_argument('id'); s.add_argument('--output', required=True); s.add_argument('--timeout', type=float, default=600)
+    s = sp.add_parser('qualify'); s.add_argument('id'); s.add_argument('--binding', required=True); s.add_argument('--evidence', required=True)
+    s.add_argument('--output', required=True); s.add_argument('--bench')
+    s = sp.add_parser('status'); s.add_argument('receipt')
     a = ap.parse_args()
+    if a.cmd in ('inventory', 'native', 'qualify', 'status'):
+        import block_qualification as qualification
+        try:
+            if a.cmd == 'inventory':
+                result = qualification.inventory(ROOT, LIB, a.board)
+            elif a.cmd == 'native':
+                import block_reuse
+                row = block_reuse.reuse(LIB, a.id)
+                result = qualification.native(row['source_directory'], a.output, a.timeout)
+            elif a.cmd == 'qualify':
+                if Path(a.output).exists():
+                    raise ValueError('qualification receipt already exists; use a new output path')
+                result = qualification.qualify(LIB, a.id, a.binding, a.evidence, ROOT, a.bench)
+                Path(a.output).parent.mkdir(parents=True, exist_ok=True)
+                with Path(a.output).open('x') as stream:
+                    json.dump(result, stream, indent=2, allow_nan=False)
+                    stream.write('\n')
+            else:
+                result = qualification.status(a.receipt)
+        except (ValueError, OSError, KeyError, TypeError) as exc:
+            print(json.dumps(dict(status='error', level=0, qualification='draft', cause=str(exc))))
+            print(f'FAIL: block qualification: {exc}', file=sys.stderr)
+            return 2
+        print(json.dumps(result, indent=2, allow_nan=False))
+        failed = result.get('status') in {'error', 'stale'}
+        print(('FAIL: ' if failed else 'PASS: ') + result.get('cause', result.get('qualification', 'block command completed')), file=sys.stderr)
+        return 1 if failed else 0
     if a.cmd in ('find', 'reuse', 'plan', 'bind'):
         import block_reuse
         try:
@@ -588,12 +626,13 @@ def main():
                 result = block_reuse.target_plan(LIB, a.id, a.target_manifest, mapping)
             else:
                 result = (block_reuse.find(LIB, a.query, a.mpn, a.footprint) if a.cmd == 'find'
-                          else block_reuse.reuse(LIB, a.id, a.expect_sha256))
+                          else block_reuse.reuse(LIB, a.id, a.expect_sha256, a.receipt))
         except (ValueError, OSError) as exc:
             print(f'FAIL: block retrieval: {exc}', file=sys.stderr)
             return 1
         print(json.dumps(result, indent=2))
-        print('PASS: discovery only; target qualification still required', file=sys.stderr)
+        print(('PASS: qualification verified for the recorded target instance only'
+               if a.cmd == 'reuse' and a.receipt else 'PASS: discovery only; target qualification still required'), file=sys.stderr)
         return 0
     if a.cmd == 'serve':
         return cmd_serve(a.port)

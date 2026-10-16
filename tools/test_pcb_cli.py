@@ -20,7 +20,9 @@ class PcbCliTests(unittest.TestCase):
         self.runs = self.root / '.gate/cli'
         source = Path(__file__).resolve().parent.parent
         files = ['tools/pcb', 'tools/pcb_cli.py', 'tools/lean_owned.py', 'tools/lean_owned_exec.py', 'tools/lean_workflow.py',
-                 'tools/gate.mjs', 'tools/lib/env.mjs', 'tools/lib/gate-core.mjs', 'tools/lib/gate-runtime.mjs', 'tools/lib/gate-inputs.mjs']
+                 'tools/pcb_workflow.py', 'tools/pcb_operations.py', 'tools/pcb_evidence.py', 'tools/pcb_benchmark.py',
+                 'tools/gate.mjs', 'tools/lib/env.mjs', 'tools/lib/gate-core.mjs', 'tools/lib/gate-runtime.mjs', 'tools/lib/gate-inputs.mjs',
+                 'tools/lib/check-cache.mjs', 'tools/lib/gate-findings.mjs', 'tools/lib/env-paths.mjs']
         for name in files:
             target = self.root / name
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -55,14 +57,17 @@ if a[0] in ('sch', 'pcb'):
     if os.environ.get('PCB_FIXTURE_FINDING'):
         errors = [dict(type='clearance', severity='error', description='fixture clearance violation',
                        items=[dict(description='Pad 4 [SIG] of U3', pos=dict(x=12.5, y=8))])]
-    out.write_text(json.dumps(dict(violations=errors, schematic_parity=[], unconnected_items=[])))
+    parity = [dict(type='pad_net_mismatch', severity='error', description='fixture pad net mismatch', items=[])] if os.environ.get('PCB_FIXTURE_PARITY') else []
+    out.write_text(json.dumps(dict(violations=errors, schematic_parity=parity, unconnected_items=[])))
     if os.environ.get('PCB_FIXTURE_MUTATE'):
         pathlib.Path(a[-1]).write_text('changed source')
     if os.environ.get('PCB_FIXTURE_CRASH'):
         sys.exit(2)
     sys.exit(0)
 script = pathlib.Path(a[0]).name
-if script == 'kicad_happy_gate.py':
+if script == 'pcbtool.py' and a[1] == 'place':
+    sys.exit(subprocess.run([sys.executable] + a).returncode)
+elif script == 'kicad_happy_gate.py':
     pathlib.Path(a[a.index('--result') + 1]).write_text(json.dumps(dict(schema_version=1, completed=True, findings=0, stale_exemptions=0, exit=0)))
 elif script == 'port_labels.py':
     print('port_labels: 0 checked, 0 failures')
@@ -79,6 +84,9 @@ else:
         subprocess.run(['git', 'init', '-q', str(happy)], check=True)
         subprocess.run(['git', '-C', str(happy), '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
                         'commit', '--allow-empty', '-qm', 'fixture'], check=True)
+        pin = subprocess.check_output(['git', '-C', str(happy), 'rev-parse', 'HEAD'], text=True).strip()
+        environment = self.root / 'tools/lib/env.mjs'
+        environment.write_text(environment.read_text().replace("commit: 'a6bba1a'", 'commit: ' + repr(pin)))
         self.env = dict(os.environ, KICAD_CLI=str(fake), KICAD_PYTHON=str(fake), PYTHON_MODERN=str(fake),
                         KICAD_HAPPY_DIR=str(happy), KRT_DIR=str(self.root / 'absent'), KRPT_DIR=str(self.root / 'absent'),
                         KICAD_CONFIG_HOME=str(self.root / 'config'), PCB_RUNS_DIR=str(self.runs))
@@ -266,6 +274,55 @@ else:
         with path.open('ab') as stream:
             stream.write(b'2}\n')
         self.assertEqual([r['seq'] for r in pcb_cli.events(folder, rows[0]['cursor'])], [2])
+
+    def test_changed_runs_reuse_evidence_and_benchmark_measures_complete_targets(self):
+        folders = []
+        for _ in range(2):
+            response = self.cli('check', 'X', '--changed', '--json')
+            self.assertEqual(response.returncode, 0, response.stdout + response.stderr)
+            result = json.loads(response.stdout.splitlines()[-1])
+            folders.append(self.runs / result['run_id'])
+        from pcb_benchmark import summarize
+        summary = summarize(folders)
+        self.assertTrue(summary['comparable'])
+        self.assertTrue(all(row['time_to_configured_targets_s'] is not None for row in summary['runs']))
+        self.assertGreater(summary['runs'][1]['cache_hits'], 0)
+        self.assertIsNotNone(summary['runs'][1]['child_cpu_s'])
+        (folders[1] / 'gate/drc.json').write_text('{}')
+        invalid = summarize(folders)["runs"][1]
+        self.assertFalse(invalid['evidence_verified'])
+        self.assertIsNone(invalid['time_to_configured_targets_s'])
+
+    def test_baseline_flag_retains_explicit_findings_delta(self):
+        prior, folder = self.start(PCB_FIXTURE_FINDING='1')
+        self.until(lambda: self.finished(folder))
+        response = self.cli('check', 'X', '--fresh', '--baseline', prior, '--json')
+        self.assertEqual(response.returncode, 0, response.stdout + response.stderr)
+        final = json.loads(response.stdout.splitlines()[-1])
+        findings = json.loads((self.runs / final['run_id'] / 'gate/findings.json').read_text())
+        self.assertEqual(len(findings['delta']['resolved']), 1)
+
+    def test_blocks_uses_owned_streaming_lifecycle(self):
+        (self.root / 'tools/blocks.py').write_text('import time\nprint("block-native-start",flush=True)\ntime.sleep(0.3)\nprint("{}",flush=True)\n')
+        response = self.cli('blocks', '--json', '--heartbeat', '0.1', 'inventory', 'X', env=dict(self.env, PYTHON_MODERN=sys.executable))
+        self.assertEqual(response.returncode, 0, response.stdout + response.stderr)
+        rows = [json.loads(line) for line in response.stdout.splitlines()]
+        self.assertTrue(any(row['type'] == 'tool.output' and 'block-native-start' in row['text'] for row in rows))
+        self.assertEqual(rows[-1]['operation'], 'blocks')
+        self.assertEqual(rows[-1]['scope'], 'block_evidence')
+        self.assertTrue(rows[-1]['cleanup']['complete'])
+
+    def test_valid_native_defect_blocks_dependents_without_losing_actionable_failure(self):
+        _, folder = self.start(PCB_FIXTURE_PARITY='1')
+        final = self.until(lambda: self.finished(folder))
+        self.assertEqual(final['status'], 'failed', final)
+        self.assertEqual(final['metrics']['drc_parity'], 1)
+        self.assertIsNone(final['metrics']['paths_low'])
+        from pcb_benchmark import summarize
+        row = summarize([folder])['runs'][0]
+        self.assertEqual(row['completed_checks'], 2)
+        self.assertEqual(row['blocked_checks'], 4)
+        self.assertIsNone(row['time_to_configured_targets_s'])
 
 
 if __name__ == '__main__':

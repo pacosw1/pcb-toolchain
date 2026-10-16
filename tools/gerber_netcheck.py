@@ -33,8 +33,8 @@ from shapely import affinity
 from gerbonara import GerberFile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-KICAD_CLI = '/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli'
-KPY = '/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3'
+KICAD_CLI = os.environ.get('KICAD_CLI', '/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli')
+KPY = os.environ.get('KICAD_PYTHON', os.environ.get('KICAD_PY', '/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3'))
 LAYERS = ['F_Cu', 'In1_Cu', 'In2_Cu', 'In3_Cu', 'In4_Cu', 'B_Cu']
 KLAYER = {'F_Cu': 'F.Cu', 'In1_Cu': 'In1.Cu', 'In2_Cu': 'In2.Cu', 'In3_Cu': 'In3.Cu', 'In4_Cu': 'In4.Cu', 'B_Cu': 'B.Cu'}
 

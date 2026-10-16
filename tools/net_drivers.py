@@ -27,6 +27,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import hashlib
 import math
@@ -35,7 +36,8 @@ import xml.etree.ElementTree as ET
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TABLE_FILE = os.path.join(HERE, 'driver-edges.json')
-KICAD_CLI = os.environ.get('KICAD_CLI', '/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli')
+KICAD_CLI = os.environ.get('KICAD_CLI', '/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli'
+                           if sys.platform == 'darwin' else 'kicad-cli')
 PASSIVE = ('R', 'C', 'L', 'FB', 'D', 'TP', 'F', 'Y', 'SW', 'BT', 'H', 'MH', 'NT', 'JP')
 SERIES = ('R', 'FB')
 CONNECTOR = ('J', 'P', 'CN')

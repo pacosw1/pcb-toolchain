@@ -82,6 +82,27 @@ def fails(net, s, detour_mm, board_mm=300):
 
 
 class NetlistTest(unittest.TestCase):
+    def test_linux_export_finds_native_cli_on_path_and_honors_explicit_override(self):
+        for explicit in (False, True):
+            with self.subTest(explicit=explicit), tempfile.TemporaryDirectory() as tmp:
+                directory=pathlib.Path(tmp)
+                executable=directory / ('custom-native-cli' if explicit else 'kicad-cli')
+                executable.write_text('#!' + sys.executable + '\nimport pathlib,sys\n'
+                    'pathlib.Path(sys.argv[sys.argv.index("-o")+1]).write_text(' + repr(XML) + ')\n')
+                executable.chmod(0o755)
+                schematic=directory/'fixture.kicad_sch';schematic.write_text('fixture')
+                environment=dict(os.environ,PATH=str(directory)+os.pathsep+os.environ.get('PATH',''))
+                environment.pop('KICAD_CLI',None)
+                if explicit:environment['KICAD_CLI']=str(executable)
+                with mock.patch.dict(os.environ,environment,clear=True):
+                    module_spec=importlib.util.spec_from_file_location('net_drivers_portability',nd.__file__)
+                    module=importlib.util.module_from_spec(module_spec)
+                    with mock.patch.object(sys,'platform','linux'):
+                        module_spec.loader.exec_module(module)
+                    exported=module.export_netlist(str(schematic))
+                self.assertEqual(exported['comps']['U1'],'STM32H743VIT6')
+                self.assertIn(('U2','4','COL'),exported['nets']['/ALMn'])
+
     def test_parse_strips_the_pin_number_from_the_pin_name(self):
         nl = nd.parse_netlist(XML)
         self.assertIn(('U2', '4', 'COL'), nl['nets']['/ALMn'])

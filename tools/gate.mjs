@@ -9,6 +9,9 @@
 //   --config NAME    use <board>/NAME in place of gate.json (for example gate-6layer.json for a candidate)
 //   node tools/gate.mjs --list              the boards that have a gate.json
 //   --evidence-dir NEW_DIR   isolated evidence; do not publish the board's latest pointer
+//   --changed       editing only: reuse completed checks with matching hashed inputs
+//   --fresh         explicitly require fresh checks (the default); conflicts with --changed
+//   --findings-baseline FILE_OR_DIR   compare findings with explicit prior evidence
 //
 // gate.json: {"project": "cad/MC-MAIN/MC-MAIN", "checks": {"erc": true, "drc": true, "planes": "reference-planes.json",
 //   "pairs": "diff-pairs.json", "paths": "current-paths.json", "viapads": {"allow": ["U1.9"]},
@@ -22,9 +25,11 @@ import {createHash} from 'node:crypto';
 import {readFileSync, writeFileSync, existsSync, readdirSync, renameSync, mkdirSync} from 'node:fs';
 import {join, relative, dirname, resolve} from 'node:path';
 import {root, kicadCli, kicadPython, modernPython, kicadShared, kicadConfig, pinnedRepos} from './lib/env.mjs';
-import {METRICS, passes, ratchet, metricsText, countFrom, validateConfig, expectedMetrics, pathFailures} from './lib/gate-core.mjs';
+import {METRICS, CHECK_METRICS, passes, ratchet, metricsText, countFrom, validateConfig, expectedMetrics, pathFailures} from './lib/gate-core.mjs';
 import {runDirectory, runTool, readReport, checkedText, readHappyResult, gateEvent} from './lib/gate-runtime.mjs';
 import {gateInputs, fingerprint} from './lib/gate-inputs.mjs';
+import {checkInputs, checkKey, restoreCheck, storeCheck} from './lib/check-cache.mjs';
+import {loadFindingsBaseline, findingsDocument} from './lib/gate-findings.mjs';
 
 const args = process.argv.slice(2);
 const flag = (name) => args.includes(name);
@@ -34,7 +39,7 @@ if (flag('--list')) {
   for (const b of readdirSync(boardsDir)) if (existsSync(join(boardsDir, b, 'gate.json'))) console.log(b);
   process.exit(0);
 }
-const board = args.find((a, i) => !a.startsWith('--') && !['--baseline','--config','--evidence-dir'].includes(args[i - 1]));
+const board = args.find((a, i) => !a.startsWith('--') && !['--baseline','--config','--evidence-dir','--findings-baseline'].includes(args[i - 1]));
 // --config NAME: another gate file in the board folder (a candidate with another stackup). Default gate.json.
 const configName = args.includes('--config') ? args[args.indexOf('--config') + 1] : 'gate.json';
 const dir = join(boardsDir, board ?? '');
@@ -45,6 +50,10 @@ if (!board || !existsSync(join(dir, configName))) {
 const cfg = JSON.parse(readFileSync(join(dir, configName), 'utf8'));
 const configErrors = validateConfig(cfg);
 if (configErrors.length) { console.error(configErrors.join('\n')); process.exit(2); }
+const incremental = flag('--changed');
+if (incremental && (flag('--fresh') || flag('--write') || cfg.stage === 'G5')) {
+  console.error('gate: --changed is for editing; cannot combine with --fresh, --write or a G5 release gate'); process.exit(2);
+}
 const pcb = join(dir, `${cfg.project}.kicad_pcb`);
 const sch = join(dir, `${cfg.project}.kicad_sch`);
 const isolated = args.includes('--evidence-dir');
@@ -61,6 +70,7 @@ const spec = (name) => join(dir, name);
 const sha = (file) => (existsSync(file) ? createHash('sha256').update(readFileSync(file)).digest('hex') : null);
 // One hash for all the sheets of the project folder (a hierarchical schematic has more than one file).
 const shaSheets = (folder) => {
+  if (!existsSync(folder)) return null;
   const h = createHash('sha256');
   for (const f of readdirSync(folder).filter((n) => n.endsWith('.kicad_sch')).sort()) h.update(f).update(readFileSync(join(folder, f)));
   return h.digest('hex');
@@ -79,21 +89,42 @@ const bySeverity = (items, severity) => (items ?? []).filter((v) => v.severity =
 
 const c = cfg.checks ?? {};
 const required = expectedMetrics(cfg);
-const environment={configDir:kicadConfig,variables:{KICAD10_FOOTPRINT_DIR:join(kicadShared,'footprints'),KICAD10_SYMBOL_DIR:join(kicadShared,'symbols')},repositories:pinnedRepos.filter(r=>r.needed==='gate').map(r=>r.dir)};
+const environment={configDir:kicadConfig,variables:{KICAD10_FOOTPRINT_DIR:join(kicadShared,'footprints'),KICAD10_SYMBOL_DIR:join(kicadShared,'symbols')},repositories:c.kicad_happy ? pinnedRepos.filter(r=>r.needed==='gate').map(r=>r.dir) : []};
 const externalRoots={kicad:kicadShared,kicad_config:kicadConfig,...Object.fromEntries(pinnedRepos.map(r=>[r.name,r.dir]))};
-const inputs = gateInputs(root,board,configName,environment);
+const preflightErrors = [];
+let findingsBaseline;
+if (flag('--findings-baseline')) {
+  const path=args[args.indexOf('--findings-baseline')+1];
+  try {
+    if (!path || path.startsWith('--')) throw new Error('a prior findings file or evidence directory is required');
+    findingsBaseline=loadFindingsBaseline(path,board,cfg.project);
+  } catch (error) { preflightErrors.push(`findings baseline: ${error.message}`); }
+}
+for (const [enabled,file] of [[c.erc,sch],[c.drc,pcb],...['planes','pairs','paths','rf'].map(k=>[c[k],c[k] && spec(c[k])]),
+  ...['exempt','return_planes'].map(k=>[c.kicad_happy?.[k],c.kicad_happy?.[k] && spec(c.kicad_happy[k])])]) {
+  if (enabled && !existsSync(file)) preflightErrors.push(`missing required input: ${relative(root,file)}`);
+}
+let inputs;
+try { inputs=gateInputs(root,board,configName,environment); }
+catch (error) { preflightErrors.push(`input evidence: ${error.message}`);inputs={files:[]}; }
 const versions = {};
-for (const [name,cmd,args] of [['kicad',kicadCli,['--version']],['pcbnew',kicadPython,['-c','import pcbnew; print(pcbnew.Version())']],['python',modernPython,['--version']]]) {
+const probes=[['kicad',kicadCli,['--version']],
+  ...(Object.keys(c).some(k=>c[k] && !['erc','drc','kicad_happy'].includes(k)) ? [['pcbnew',kicadPython,['-c','import pcbnew; print(pcbnew.Version())']]] : []),
+  ...(c.kicad_happy ? [['python',modernPython,['--version']]] : [])];
+for (const [name,cmd,args] of preflightErrors.length ? [] : probes) {
+  gateEvent(logDir,'preflight.probe',{stage:'preflight',tool:name});
   try { versions[name] = execFileSync(cmd,args,{encoding:'utf8',stdio:['ignore','pipe','ignore']}).trim(); }
-  catch { versions[name] = null; }
+  catch (error) { versions[name] = null;preflightErrors.push(`${name} version probe failed: ${error.message}`);break; }
 }
 versions.node=process.version;
 // Optional router/advisory repositories are not executed by this gate. Probing
 // them adds unrelated latency/failures and invalidates otherwise identical runs.
-for(const repo of pinnedRepos.filter(r=>r.needed==='gate')) {
+for(const repo of preflightErrors.length || !c.kicad_happy ? [] : pinnedRepos.filter(r=>r.needed==='gate')) {
   try{versions[repo.name]=execFileSync('git',['-C',repo.dir,'rev-parse','HEAD'],{encoding:'utf8',stdio:['ignore','pipe','ignore'],env:Object.fromEntries(Object.entries(process.env).filter(([k])=>!k.startsWith('GIT_')))}).trim();}
-  catch{if(repo.needed==='gate') versions[repo.name]=null;}
+  catch{versions[repo.name]=null;preflightErrors.push(`required repository unavailable: ${repo.name}`);}
+  if (versions[repo.name] && !versions[repo.name].startsWith(repo.commit)) preflightErrors.push(`${repo.name} is not at pinned commit ${repo.commit}`);
 }
+gateEvent(logDir,'preflight.end',{stage:'preflight',status:preflightErrors.length ? 'failed' : 'passed',errors:preflightErrors});
 const start = fingerprint(root,inputs.files,versions,externalRoots);
 const jobs = {
   async erc() {
@@ -152,15 +183,62 @@ if (unknown.length) {
   console.error(`gate: unknown check in gate.json: ${unknown.join(', ')}`);
   process.exit(2);
 }
-const results = await Promise.all(Object.keys(c).filter((k) => c[k]).map(async k => {
-  const metrics = await jobs[k]();
-  const verdict = passes(metrics, Object.keys(metrics));
-  gateEvent(logDir, 'check.end', {stage: k, status: verdict.ok ? 'passed' : 'failed', metrics, findings: verdict.open});
-  return metrics;
-}));
-const metrics = Object.assign({}, ...results);
-const provenance = fingerprint(root,gateInputs(root,board,configName,environment).files,versions,externalRoots);
-const changedDuringRun = provenance.input_sha256 !== start.input_sha256;
+const checks = {};
+const cache = {enabled:incremental,hits:0,misses:0,rejected:0};
+const pendingCache = [];
+const cacheDir = join(dir,'.gate/check-cache');
+const scripts = {planes:'si_planes.py',pairs:'si_pairs.py',viapads:'pcbtool.py',paths:'pcbtool.py',kicad_happy:'kicad_happy_gate.py',rf:'rf_lines.py',port_labels:'port_labels.py'};
+function keyFor(k,files) {
+  const names=['node','kicad',...(k==='kicad_happy' ? ['python','kicad-happy'] : ['erc','drc'].includes(k) ? [] : ['pcbnew'])];
+  return checkKey({root,stage:k,files:checkInputs(root,files,k,scripts[k],environment.repositories),
+    config:{project:cfg.project,stage:cfg.stage ?? 'G4',options:c[k]},externalRoots,
+    versions:Object.fromEntries(names.filter(name=>name in versions).map(name=>[name,versions[name]])),
+    commands:['erc','drc'].includes(k) ? [kicadCli] : k==='kicad_happy' ? [modernPython,'git'] : [kicadPython,kicadCli]});
+}
+async function execute(k) {
+  let metrics,key,hit=false;
+  if (incremental) {
+    key=keyFor(k,inputs.files);
+    const restored=restoreCheck(cacheDir,k,key.key,logDir);
+    hit=restored.hit;
+    if (hit) { metrics=restored.metrics;cache.hits++; }
+    else { cache.misses++;if(restored.rejected) cache.rejected++; }
+    gateEvent(logDir,hit ? 'cache.hit' : restored.rejected ? 'cache.reject' : 'cache.miss',
+      {stage:k,key:key.key,...(restored.reason ? {cause:restored.reason} : {})});
+  }
+  if (!hit) metrics=await jobs[k]();
+  const valid=CHECK_METRICS[k].every(name=>Number.isSafeInteger(metrics[name]) && metrics[name]>=0);
+  const verdict=passes(metrics,CHECK_METRICS[k]);
+  checks[k]={status:!valid ? 'error' : verdict.ok ? 'passed' : 'failed',metrics,cached:hit,
+    ...(!valid ? {cause:'checker did not complete with valid evidence'} : {}),...(key ? {cache_key:key.key} : {})};
+  gateEvent(logDir,'check.end',{stage:k,...checks[k],findings:verdict.open});
+  if (incremental && valid && !hit) pendingCache.push({stage:k,key,metrics});
+}
+function block(k,cause) {
+  const metrics=Object.fromEntries(CHECK_METRICS[k].map(name=>[name,null]));
+  checks[k]={status:'blocked',metrics,cached:false,cause};
+  gateEvent(logDir,'dependency.blocked',{stage:k,cause});
+  gateEvent(logDir,'check.end',{stage:k,...checks[k],findings:[cause]});
+}
+const enabled=Object.keys(c).filter(k=>c[k]);
+if (preflightErrors.length) for (const k of enabled) block(k,`preflight failed: ${preflightErrors.join('; ')}`);
+else {
+  await Promise.all(enabled.filter(k=>['erc','drc'].includes(k)).map(execute));
+  const reasons=[];
+  for (const k of ['erc','drc']) if (checks[k]?.status==='error') reasons.push(`${k}: invalid native report or failed invocation`);
+  if (checks.drc?.metrics.drc_parity>0) reasons.push(`drc: ${checks.drc.metrics.drc_parity} schematic parity defects`);
+  if (incremental && checks.drc?.metrics.drc_errors>0) reasons.push(`drc: ${checks.drc.metrics.drc_errors} errors block dependent editing checks`);
+  const dependent=enabled.filter(k=>!['erc','drc'].includes(k));
+  if (reasons.length) for (const k of dependent) block(k,reasons.join('; '));
+  else await Promise.all(dependent.map(execute));
+}
+const metrics=Object.assign({},...enabled.map(k=>checks[k].metrics));
+let finalFiles=inputs.files;
+try { finalFiles=gateInputs(root,board,configName,environment).files; }
+catch (error) { preflightErrors.push(`final input evidence: ${error.message}`); }
+const provenance = fingerprint(root,finalFiles,versions,externalRoots);
+const checkInputsChanged=incremental && Object.entries(checks).some(([stage,check])=>check.cache_key && keyFor(stage,finalFiles).key!==check.cache_key);
+const changedDuringRun = provenance.input_sha256 !== start.input_sha256 || checkInputsChanged;
 if (changedDuringRun) console.error('gate: inputs changed during run; evidence is invalid');
 
 console.log(`gate ${board}  (${relative(root, pcb)})`);
@@ -197,11 +275,21 @@ if (flag('--ratchet')) {
   if (!p.ok) exit = 1;
   console.log(p.ok ? 'gate: PASS (all checks at target)' : `gate: NOT AT TARGET: ${p.open.join(', ')}`);
 }
-if (changedDuringRun || Object.values(versions).some(v=>v===null)) exit=1;
+if (changedDuringRun || preflightErrors.length || Object.values(versions).some(v=>v===null) ||
+    Object.values(checks).some(check=>check.status==='blocked' || check.status==='error') || checks.drc?.metrics.drc_parity>0) exit=1;
+if (incremental && !changedDuringRun && !preflightErrors.length && !Object.values(versions).some(v=>v===null)) {
+  for (const item of pendingCache) {
+    const stored=storeCheck(cacheDir,item.stage,item.key,item.metrics,logDir);
+    gateEvent(logDir,stored.stored ? 'cache.store' : 'cache.skip',{stage:item.stage,key:item.key.key,...stored});
+  }
+}
+const findings=findingsDocument({board,project:cfg.project,evidenceDir:logDir,checks,baseline:findingsBaseline,preflightErrors,
+  inputsValid:!changedDuringRun && !preflightErrors.length,inputSha256:provenance.input_sha256});
+writeFileSync(join(logDir,'findings.json'),JSON.stringify(findings,null,2)+'\n');
 writeFileSync(join(logDir,'gate-metrics.json'),text);
-writeFileSync(join(logDir,'result.json'),JSON.stringify({exit,changedDuringRun,metrics,provenance},null,2)+'\n');
+writeFileSync(join(logDir,'result.json'),JSON.stringify({exit,changedDuringRun,metrics,provenance,checks,cache,findings:'findings.json',preflightErrors},null,2)+'\n');
 const atomicWrite = (file,content) => { const temp=`${file}.${process.pid}.tmp`; writeFileSync(temp,content); renameSync(temp,file); };
-if (flag('--write') && !changedDuringRun) atomicWrite(metricsFile,text);
+if (flag('--write') && !changedDuringRun && !preflightErrors.length) atomicWrite(metricsFile,text);
 if (!isolated) atomicWrite(join(dir,'.gate/latest.json'),JSON.stringify({run:relative(join(dir,'.gate'),logDir),exit},null,2)+'\n');
 gateEvent(logDir, 'gate.end', {exit, changedDuringRun, metrics});
 process.exit(exit);
