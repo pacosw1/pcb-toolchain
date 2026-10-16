@@ -275,7 +275,11 @@ def connect(a, layers, widths):
         ys = [A[0].bb[1], A[0].bb[3], Bp[0].bb[1], Bp[0].bb[3]]
         win = bd.win(min(xs) - a.margin, min(ys) - a.margin, max(xs) + a.margin, max(ys) + a.margin)
         bd.win_i, bd.win_j = win[0], win[2]
+        real_via = bd.net_via.get(net, 0.6)
+        if a.via_halo:
+            bd.net_via[net] = a.via_halo
         free, viaok, _ = bd.net_grids(net, win)
+        bd.net_via[net] = real_via
         viaok = no_via_in_pads(bd, net, win, viaok)
         lc = dict(z.split('=') for z in a.layer_cost)
         path = astar(free, viaok, bd.item_seed(A[0], win), bd.item_seed(Bp[0], win), a.via_cost / a.grid,
@@ -305,6 +309,7 @@ def main():
     ap.add_argument('--margin', type=float, default=10.0, help='search window around the two ends, mm')
     ap.add_argument('--layer-cost', action='append', default=[], metavar='LAYER=X', help='move cost factor on a layer (default 1)')
     ap.add_argument('--via-drill', type=float, default=0.3)
+    ap.add_argument('--via-halo', type=float, default=0.0, help='via sites need room for a via of this diameter (mm); the via is written at its class size (RP-001 room for a GND via)')
     ap.add_argument('--skip', default='GND,VDD_3V3', help='nets left to the planes / pours (comma list)')
     ap.add_argument('--dry-run', action='store_true')
     ap.add_argument('--connect', action='append', default=[], metavar='REF.PAD:REF.PAD',
@@ -366,7 +371,11 @@ def main():
         for mg in [m for m in (4.0, 12.0, a.margin) if m <= a.margin] or [a.margin]:   # small windows first
             win = bd.win(min(xs) - mg, min(ys) - mg, max(xs) + mg, max(ys) + mg)
             bd.win_i, bd.win_j = win[0], win[2]
+            real_via = bd.net_via.get(net, 0.6)
+            if a.via_halo:
+                bd.net_via[net] = a.via_halo
             free, viaok, _ = bd.net_grids(net, win)
+            bd.net_via[net] = real_via
             viaok = no_via_in_pads(bd, net, win, viaok)
             sa, sb = bd.item_seed(A, win), bd.item_seed(B, win)
             lc = dict(x.split('=') for x in a.layer_cost)

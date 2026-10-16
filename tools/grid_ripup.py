@@ -73,6 +73,7 @@ def main():
     ap.add_argument('--via-cost', type=float, default=3.0)
     ap.add_argument('--grid', type=float, default=0.05)
     ap.add_argument('--width', type=float, default=0.15)
+    ap.add_argument('--via-halo', type=float, default=0.0)
     ap.add_argument('--accept-equal', action='store_true', help='keep a result with the same open count (a step of a chain)')
     ap.add_argument('--protect', default='', help='comma list of nets (fnmatch) whose copper is never ripped; any other '
                     'copper may be ripped, locked or not (the finisher writes locked tracks)')
@@ -115,7 +116,11 @@ def main():
     ys = [ia['pos']['y'], ib['pos']['y']]
     win = bd.win(min(xs) - a.margin, min(ys) - a.margin, max(xs) + a.margin, max(ys) + a.margin)
     bd.win_i, bd.win_j = win[0], win[2]
+    real_via = bd.net_via.get(net, 0.6)
+    if a.via_halo:
+        bd.net_via[net] = a.via_halo
     free, viaok, _ = bd.net_grids(net, win)
+    bd.net_via[net] = real_via
     viaok = grid_finish.no_via_in_pads(bd, net, win, viaok)
     path = grid_finish.astar(free, viaok, bd.item_seed(A, win), bd.item_seed(Bi, win), a.via_cost / a.grid,
                              0.3 / a.grid)
@@ -158,7 +163,8 @@ def main():
     # 3. re-route the ripped nets
     if ripped:
         subprocess.run([sys.executable, os.path.join(HERE, 'grid_finish.py'), B, '--nets', ','.join(sorted(ripped)),
-                        '--margin', str(a.margin), '--via-cost', str(a.via_cost)],
+                        '--margin', str(a.margin), '--via-cost', str(a.via_cost)]
+                       + (['--via-halo', str(a.via_halo)] if a.via_halo else []),
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     after = opens(B)
     if len(after) < len(before) or (a.accept_equal and len(after) == len(before) and
