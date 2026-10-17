@@ -10,6 +10,7 @@ step (s, k, router runs, epoch history, pose) and the verdict, for the viewer (v
 """
 import argparse
 import copy
+import fnmatch
 import json
 import os
 import re
@@ -50,6 +51,111 @@ def engineering_route_check(problem, candidate, output):
 def parse_unrouted(text):
     m = re.findall(r'^UNROUTED (\d+)', text, re.M)
     return int(m[-1]) if m else NO_RESULT
+
+
+def skipped_open_scope(counts, decision, folder, reported_counts):
+    """Source-bound skipped-net accounting for a routing step, never a full gate."""
+    from pathlib import Path
+    names = ('input-manifest.json', 'outcome.json', 'drc.json')
+    try:
+        if (decision.get('status') != 'diagnosed' or decision.get('action') != 'diagnose_selected_connections'
+                or {row.get('classification') for row in decision.get('findings', [])} != {'native_open'}):
+            return None
+        artifacts = decision['artifacts']
+        paths = {name:Path(folder)/'route-0'/name for name in names}
+        if any(name not in artifacts or lean.digest(path) != artifacts[name] for name, path in paths.items()):
+            return None
+        manifest, outcome, drc = (json.loads(paths[name].read_text()) for name in names)
+        if manifest['board_sha256'] != decision['source_board_sha256']:
+            return None
+        config = manifest['configuration']
+        if (not isinstance(config['skip_net'], str) or not isinstance(config['plane_nets'], str)
+                or type(config['gnd_vias']) is not bool or type(config['route_planes']) is not bool):
+            return None
+        if (not counts or any(type(count) is not int or count != 0 for count in counts)
+                or outcome.get('status') != 'complete'
+                or any(type(outcome.get(name)) is not int for name in ('signal_open','ground_open','errors'))
+                or outcome['signal_open'] != 0 or outcome['errors'] != 0
+                or reported_counts != {name:outcome[name] for name in ('signal_open','ground_open','errors')}
+                or any(not isinstance(drc.get(name),list) for name in ('violations','unconnected_items','schematic_parity'))
+                or drc['schematic_parity'] or any(row.get('severity')=='error' for row in drc['violations'])
+                or not drc['unconnected_items'] or outcome['ground_open'] != len(drc['unconnected_items'])):
+            return None
+        planes = [net for net in config['plane_nets'].split(',') if net]
+        if config['gnd_vias'] and 'GND' not in planes:
+            planes.append('GND')
+        skip = [pattern for pattern in config['skip_net'].split(',') if pattern]
+        if not config['route_planes']:
+            skip += planes
+        else:
+            skip = [pattern for pattern in skip if not any(fnmatch.fnmatchcase(net, pattern) for net in planes)]
+        nets = set()
+        for row in drc['unconnected_items']:
+            if not isinstance(row.get('items'), list) or len(row['items']) < 2:
+                return None
+            descriptions = [item.get('description','') for item in row['items']]
+            if any(not isinstance(text,str) or text.count('[') != 1 or text.count(']') != 1 for text in descriptions):
+                return None
+            endpoints = [re.findall(r'\[([^\[\]]+)\]', text) for text in descriptions]
+            if any(len(matches) != 1 or not matches[0] or matches[0] != matches[0].strip() for matches in endpoints):
+                return None
+            net = endpoints[0][0]
+            if (any(matches[0] != net for matches in endpoints)
+                    or not (net in planes or any(fnmatch.fnmatchcase(net, pattern) for pattern in skip))):
+                return None
+            nets.add(net)
+        return dict(scope='explicitly_skipped_or_plane_nets_only', status='routing_step_complete',
+            excluded_native_opens=len(drc['unconnected_items']), nets=sorted(nets),
+            configuration={key:config[key] for key in ('skip_net','plane_nets','gnd_vias','route_planes')},
+            qualified=False, native_verified=False, full_configured_gates_required=True)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+
+
+def route_handoff(counts, decision, folder, *, feedback=None, prior_hints=None, hints=None, reported_counts=None):
+    """Keep routed copper; never infer eligibility for an unconfigured repair."""
+    from pathlib import Path
+    folder = Path(folder)
+    candidate = None
+    routed, outcome = folder/'route-0/routed.kicad_pcb', folder/'route-0/outcome.json'
+    if decision.get('status') == 'diagnosed':
+        try:
+            if not decision.get('artifacts') or any(lean.digest(folder/'route-0'/name) != digest
+                    for name, digest in decision['artifacts'].items()):
+                raise ValueError('route evidence changed after diagnosis')
+            digest = lean.digest(routed)
+            if json.loads(outcome.read_text()).get('board_sha256') == digest:
+                candidate = dict(path=str(routed.resolve()), sha256=digest, qualified=False,
+                                 full_configured_gates_required=True, preserve_for_next_step=True)
+            else:
+                raise ValueError('retained candidate changed after routing diagnosis')
+        except (OSError, ValueError, TypeError) as error:
+            decision = dict(decision, status='unverified', action='inspect_evidence', reason=str(error))
+    changed = sorted(ref for ref, value in (hints or {}).items()
+                     if value > (prior_hints or {}).get(ref, 0))
+    geometry = bool(feedback and feedback.get('accepted') is True and feedback.get('sources')
+                    and feedback.get('source_board_sha256') == decision.get('source_board_sha256') and changed)
+    if geometry:
+        try:
+            geometry = all(lean.digest(path) == digest for path, digest in feedback['sources'].items())
+        except OSError:
+            geometry = False
+    decision = dict(decision, geometry_feedback=dict(accepted=geometry, changed_refs=changed,
+                        evidence=str((folder/'feedback.json').resolve()) if feedback else None),
+                    retained_candidate=candidate, qualified=False, full_configured_gates_required=True,
+                    repair_eligibility='Configured isolated workspace and source-bound native parity evidence required before apply_plan; this observation is not repair approval.')
+    scope = skipped_open_scope(counts, decision, folder, reported_counts) if candidate else None
+    if scope:
+        decision['routing_step_scope'] = scope
+    result = compact.RouteOutcome(counts, decision, candidate=candidate, geometry_feedback=geometry,
+                                  scoped_skipped_opens=bool(scope))
+    result.decision['geometry_feedback']['continue_search'] = not result.stop and not result.routing_step_clean
+    if result.stop:
+        result.decision['next_action'] = dict(kind=decision.get('action', 'inspect_evidence'),
+            evidence=decision.get('evidence'), candidate=candidate,
+            instruction='Inspect this retained candidate and diagnosis; use the configured repair workflow after its source/parity prerequisites pass.',
+            qualified=False, full_configured_gates_required=True)
+    return result
 
 
 def route_cmd(name, gnd_vias):
@@ -316,25 +422,35 @@ def main(argv=None):
     routing_attempts = {}
 
     def route(path, n):
+        from placer.compact_cli import route_handoff
         d = sdir(n)
         if pr.get('engineering'):
             checked = engineering_route_check(pr,path,os.path.join(d,'engineering-pre-route.json'))
             if checked['status']!='passed':
-                raise ValueError('reviewed placement blocks routing: '+str(checked['blockers']))
+                decision = dict(status='unverified', action='resolve_placement_requirements', qualified=False,
+                    reason='Reviewed placement blocks routing: '+str(checked['blockers']),
+                    evidence=os.path.join(d,'engineering-pre-route.json'))
+                return route_handoff([NO_RESULT], decision, d)
         if a.max_routes and routes_done[0] >= a.max_routes:
-            return [NO_RESULT]
+            return route_handoff([NO_RESULT], dict(status='unverified', action='inspect_route_budget',
+                reason='Router attempt cap reached; no further search/routing', qualified=False), d)
         if a.router == 'fastroute':
             import route_decision
             attempt_key = route_decision.retry_key(path,dict(passes=a.passes,optimizer=a.optimizer,
                 route_args=a.route_args,gnd_vias=a.gnd_vias,router=a.router))
             if attempt_key in routing_attempts:
                 prior = routing_attempts[attempt_key]
-                lean.atomic_json(os.path.join(d,'route-decision.json'),dict(prior,
+                decision = dict(prior,
                     status='unchanged_failed_attempt',action='inspect_prior_diagnosis',
                     reason='Identical source/rules/effort already failed in this loop; no blind reroute',
-                    prior_decision=prior['evidence']))
+                    prior_decision=prior['evidence'])
                 print('STUCK: unchanged failed routing input; inspect '+prior['evidence'],flush=True)
-                return [NO_RESULT]
+                result = route_handoff([NO_RESULT], decision, d)
+                result.candidate = prior.get('retained_candidate')
+                result.decision['retained_candidate'] = result.candidate
+                result.decision['next_action']['candidate'] = result.candidate
+                lean.atomic_json(os.path.join(d,'route-decision.json'), result.decision)
+                return result
         routes_done[0] += 1
         b = os.path.dirname(path)
         ins = [os.path.join(b, name + ext) for ext in ('.kicad_pcb', '.kicad_pro', '.kicad_dru')
@@ -364,12 +480,18 @@ def main(argv=None):
                             raise mandatory_preflight.ImmutableInputFailure(dict(receipt, faults=fatal), receipt_path)
                     except (OSError, ValueError, KeyError, TypeError):
                         pass  # invalid/stale evidence is an ordinary failed candidate
-                return [NO_RESULT]
+                decision = dict(status='unverified', action='inspect_evidence', qualified=False,
+                    evidence=os.path.join(d,'route-decision.json'),
+                    reason='Router/import/native check did not complete; inspect route-0.log', tool_exit=p.returncode)
+                result = route_handoff([NO_RESULT], decision, d)
+                lean.atomic_json(decision['evidence'], result.decision)
+                routing_attempts[attempt_key] = result.decision
+                return result
             decision = route_decision.observe_route(path,os.path.join(d,'route-0'))
             decision['evidence'] = os.path.join(d,'route-decision.json')
             decision['attempt_sha256'] = attempt_key
-            lean.atomic_json(decision['evidence'],decision)
             print('ROUTE_DECISION '+decision['action']+'; '+decision['reason']+'; evidence='+decision['evidence'],flush=True)
+            prior_hints = dict(escape_hint)
             hints, evidence = placement_audit.bounded_feedback(pr, os.path.join(d, 'route-0'),
                                                               lean.digest(path), escape_hint,
                                                               a.feedback_max_mm, a.congestion_feedback)
@@ -377,11 +499,15 @@ def main(argv=None):
             escape_hint.update(hints)
             lean.atomic_json(os.path.join(d, 'feedback.json'), evidence)
             # A step passes on 0 open signal connections and 0 DRC errors (the plane-net opens are counted apart).
-            m = re.findall(r'^UNROUTED (\d+) GND_OPEN \d+ ERRORS (\d+)', p.stdout, re.M)
-            score = int(m[-1][0]) + int(m[-1][1]) if m else NO_RESULT
+            m = re.findall(r'^UNROUTED (\d+) GND_OPEN (\d+) ERRORS (\d+)', p.stdout, re.M)
+            reported = dict(zip(('signal_open','ground_open','errors'), map(int,m[-1]))) if m else None
+            score = reported['signal_open'] + reported['errors'] if reported else NO_RESULT
+            result = route_handoff([score], decision, d, feedback=evidence, prior_hints=prior_hints,
+                                   hints=hints, reported_counts=reported)
+            lean.atomic_json(decision['evidence'], result.decision)
             if score or p.returncode == 3:
-                routing_attempts[attempt_key] = decision
-            return [score]
+                routing_attempts[attempt_key] = result.decision
+            return result
 
         def one(r):
             rc, text = _remote(a.board_dir, ins, os.path.join(d, 'route-%d' % r),
@@ -401,6 +527,9 @@ def main(argv=None):
     print('STOP', run['stop'])
     if run['stop'] == 'immutable input mandatory rules':
         raise SystemExit(5)
+    if run.get('next_action'):
+        print('STUCK: inspect retained candidate; evidence='+str(run['next_action'].get('evidence')), flush=True)
+        raise SystemExit(3)
     if run['best']:
         print('BEST board %s s %.3f k %.3f unrouted %d' % (run['best']['board'], run['best']['s'], run['best']['k'],
                                                           run['best']['unrouted']))
