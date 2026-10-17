@@ -551,6 +551,65 @@ def generate_escape_evidence(contract,candidate,output):
         return result
 
 
+class EscapeStageReceipts:
+    """Share sealed screens within one caller-owned stage, never across writers.
+
+    Every consumer still verifies its coverage and the observed runtime files.
+    This bounded runtime record does not certify every possible loader library.
+    """
+    def __init__(self, emit=None):
+        self.entries = {}
+        self.emit = emit
+        self.hits = 0
+        self.generated = 0
+
+    def key(self, contract, candidate):
+        root = Path(contract['root']).resolve() if contract.get('root') else escape_root(contract,candidate)
+        return fingerprint(dict(candidate=str(candidate),sources=source_set(candidate),contract=contract,
+            context=escape_context(root,contract['board']),implementations=implementations(root),
+            adapter_sha256=sha(Path(__file__).resolve()),
+            environment_sha256=fingerprint(dict(os.environ,ROUTE_BOARD=contract['board']))))
+
+    def get(self, contract, candidate, output):
+        candidate,output = Path(candidate).resolve(),Path(output).resolve()
+        for name,digest in contract.get('inputs',{}).items():
+            if sha(name)!=digest:raise ValueError('reviewed escape input changed before screen: '+name)
+        key = self.key(contract,candidate)
+        previous = self.entries.get(key)
+        if previous:
+            receipt = previous['path']
+            if not receipt.is_file() or sha(receipt)!=previous['sha256']:
+                raise ValueError('sealed stage escape receipt changed; inspect '+str(receipt))
+            raw = read(receipt)
+            if raw.get('cause'):
+                raise ValueError('same stage escape screen already failed: '+raw['cause'])
+            # A changed observed runtime needs a new screen. Corrupt evidence
+            # stays a hard failure instead of silently triggering more work.
+            try:
+                escape_runtime_valid(raw.get('runtime'))
+            except (OSError,ValueError,KeyError,TypeError):
+                previous = None
+            if previous:
+                blockers = verify_escape_evidence(contract,candidate,receipt)
+                if any(row['code']=='native_escape_evidence_invalid' for row in blockers):
+                    raise ValueError('stage escape receipt no longer verifies: '+str(blockers))
+                for name,digest in raw.get('inputs',{}).items():
+                    if sha(name)!=digest:raise ValueError('stage escape input changed: '+name)
+                if self.key(contract,candidate)!=key:raise ValueError('stage escape inputs changed during reuse')
+                if sha(receipt)!=previous['sha256']:raise ValueError('sealed stage escape receipt changed during reuse')
+                self.hits += 1
+                if self.emit:self.emit('cache.hit',check='escape',evidence=str(receipt),key=key)
+                return receipt
+        if output.exists():raise ValueError('new stage escape evidence file required')
+        self.generated += 1
+        if self.emit:self.emit('cache.miss',check='escape',evidence=str(output),key=key)
+        generate_escape_evidence(contract,candidate,output)
+        if self.key(contract,candidate)!=key:raise ValueError('stage escape inputs changed during generation')
+        if not output.is_file():raise ValueError('stage escape producer omitted its receipt')
+        self.entries[key] = dict(path=output,sha256=sha(output))
+        return output
+
+
 def generate_escape_for_candidate(root,board,candidate,output,timeout=30):
     """Screen a compact-loop copy using the reviewed owner's unchanged policy."""
     return generate_escape(root,board,output,timeout,candidate=candidate)

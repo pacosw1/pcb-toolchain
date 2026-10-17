@@ -153,6 +153,16 @@ or bench receipts. Candidate adoption requires a declared layout contract and DF
 plan, including initial builds; existing candidate identity and fresh native checks
 remain necessary alongside this scoped result.
 
+Owned candidate operations share an optional `EscapeStageReceipts` provider
+between engineering and design checks within each stage. It keeps the original
+sealed receipt and rechecks candidate/sidecar hashes, reviewed policy, producer
+code, environment and observed runtime before reuse. Reports distinguish generated
+from reused evidence; events name cache hits/misses. Preflight and post-writer
+checks use separate providers, and the final native/configured gate stays fresh.
+This is a bounded screen with recorded runtime files, not physical routability
+or complete runtime certification. Direct callers without a provider still
+produce fresh evidence in a new owned directory.
+
 ```sh
 PYTHONPATH=tools python3 -m unittest test_design_contract
 ```

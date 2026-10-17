@@ -224,6 +224,63 @@ class LifecycleCliTests(unittest.TestCase):
         self.assertEqual(blocked['status'], 'blocked')
         self.assertEqual(pcb_operations.sha(original), before)
 
+    def test_engineering_and_design_share_one_escape_screen_per_stage(self):
+        import part_evidence
+        import route_decision as route
+        from test_design_contract import ActualVerifierTests
+        fixture=ActualVerifierTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
+        fixture.layout_fixture()
+        parts=json.loads(fixture.part.read_text())
+        parts['parts'][0]['layout_constraints'].append(dict(id='fixture-escape',kind='escape',refs=['J1'],
+            pads=[dict(ref='J1',pad='1')],metric='native_minimum_track_escape',source=parts['parts'][0]['datasheets'][0]))
+        parts['review']['facts_sha256']=part_evidence.facts_digest(parts);fixture.part.write_text(json.dumps(parts))
+        root=fixture.root
+        for name in set(route.IMPLEMENTATIONS)|set(route.ESCAPE_POLICY_FILES):
+            target=root/'tools'/name;target.parent.mkdir(parents=True,exist_ok=True)
+            shutil.copyfile(Path(route.__file__).parent/name,target)
+        workspace=root/'candidate-workspace';shutil.copytree(root/'hardware-design',workspace/'hardware-design')
+        original=root/'hardware-design/boards/PART-FIXTURE/fixture.kicad_pcb'
+        candidate=workspace/original.relative_to(root)
+        folder=root/'owned-operation';(folder/'operation').mkdir(parents=True)
+        manifest=dict(board='PART-FIXTURE',design_contract=dict(path=str(fixture.path)))
+        runtime=root/'synthetic-runtime';runtime.write_text('SYNTHETIC CPU wiring fixture; no native proof')
+        original_hash=pcb_operations.sha(original)
+        def producer(policy,native,output):
+            context=route.escape_context(root,'PART-FIXTURE')
+            value=dict(schema='iot-lab.pin-escape-evidence.v1',status='screened',qualified=False,board=str(native),
+                source_inputs=route.source_set(native),screened_pads=[dict(ref='J1',pad='1')],
+                unsupported_constraints=[],not_checked=0,boxed_in=[],generator_context=context,
+                generator_inputs=context['files'],feature_config=context['feature_config'],model_parameters=context['model_parameters'],
+                runtime=dict(python_version='synthetic',pcbnew_version='synthetic',numpy_version='synthetic',
+                    files={role:dict(path=str(runtime),sha256=route.sha(runtime)) for role in
+                        ('python','pcbnew','pcbnew_native','numpy','numpy_native')}),
+                inputs={str(native):route.sha(native)},native_validation='not_run; fresh parent configured gate required')
+            route.lean.atomic_json(output,value)
+        with mock.patch.object(part_evidence,'pdf_pages',return_value=1), \
+                mock.patch.object(route,'python_native',return_value=sys.executable), \
+                mock.patch.object(route,'generate_escape_evidence',side_effect=producer) as generate:
+            for stage in ('preflight','postcheck'):
+                screens=route.EscapeStageReceipts()
+                placement=pcb_operations.placement_check(root,'PART-FIXTURE',fixture.part,candidate,
+                    folder/('operation/'+stage+'-engineering.json'),escape_screens=screens)
+                layout=pcb_operations.candidate_layout_check(root,workspace,folder,manifest,
+                    folder/('operation/'+stage+'-design.json'),escape_screens=screens)
+                self.assertEqual(placement['status'],'passed',placement['blockers'])
+                self.assertEqual(layout['status'],'passed',layout['blockers'])
+                self.assertEqual((screens.generated,screens.hits),(1,1))
+                self.assertEqual(layout['reused_evidence'],[placement['escape_evidence']])
+                self.assertEqual(layout['inputs'][placement['escape_evidence']],route.sha(placement['escape_evidence']))
+                for name,digest in route.source_set(candidate).items():
+                    self.assertEqual(layout['inputs'][str(candidate.parent/name)],digest)
+            self.assertEqual(generate.call_count,2)
+            changed=candidate.read_text().replace('(size 0.8 0.8)','(size 0.9 0.8)',1)
+            self.assertNotEqual(changed,candidate.read_text());candidate.write_text(changed)
+            rejected=pcb_operations.candidate_layout_check(root,workspace,folder,manifest,
+                folder/'operation/identity-invalid.json',escape_screens=route.EscapeStageReceipts())
+            self.assertEqual(rejected['status'],'stale',rejected['blockers'])
+            self.assertIn('candidate part identity',str(rejected['blockers']))
+        self.assertEqual(pcb_operations.sha(original),original_hash)
+
 
 if __name__ == '__main__':
     unittest.main()
