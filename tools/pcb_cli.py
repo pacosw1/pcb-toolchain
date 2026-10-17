@@ -400,7 +400,7 @@ def start_run(args, base):
         baseline = run_dir(base, args.baseline) / 'gate/findings.json'
         if not baseline.is_file():
             raise ValueError('baseline has no structured findings')
-    if operation in ('design', 'outcomes'):
+    if operation in ('design', 'outcomes') or (operation=='parts' and action=='selection'):
         cfg, config = {'project': None}, None
     elif operation in ('doctor', 'blocks', 'readiness') or (operation == 'parts' and args.board == 'PARTS'):
         args.board = {'doctor': 'ENVIRONMENT', 'blocks': 'BLOCKS', 'readiness': 'ASSEMBLY', 'parts':'PARTS'}[operation]
@@ -413,7 +413,7 @@ def start_run(args, base):
     if cycle_folder and args.board != cycle['board']:
         raise ValueError('run belongs to another board than its engineering cycle')
     node = shutil.which(os.environ.get('NODE', 'node'))
-    if not node and operation not in ('design', 'outcomes'):
+    if not node and operation not in ('design', 'outcomes') and not (operation=='parts' and action=='selection'):
         raise ValueError('Node.js is required to run the existing gate')
     base.mkdir(parents=True, exist_ok=True)
     folder = Path(tempfile.mkdtemp(prefix='run-', dir=base))
@@ -722,7 +722,7 @@ def main(argv=None):
             if len(args.arguments) < 2:
                 raise ValueError('readiness requires BOARD CANDIDATE; put CLI --json/--detach before BOARD')
         if args.command in OBSERVATIONS:
-            allowed = {'parts': ('status', 'inspect', 'verify', 'stock'), 'placement': ('check',),
+            allowed = {'parts': ('status', 'inspect', 'selection', 'verify', 'stock'), 'placement': ('check',),
                        'routing': ('diagnose',), 'design': ('check',), 'schematic': ('check',),
                        'outcomes': ('evaluate',)}[args.command]
             if not args.arguments or args.arguments[0] not in allowed:

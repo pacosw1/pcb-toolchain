@@ -347,11 +347,13 @@ def check_contract(root, board, contract_path, output=None):
                     connected={ref for ref,part in native.items() if part['in_bom'] and row['variant'] in fits[ref] and row['net'] in part['pad_net_map'].values()}
                     loads=set();excluded=set();total_lo=Decimal(0);total_hi=Decimal(0);bindings=[]
                     for load in row['loads']:
-                        keys(load,('reference','demand','conditions','reviewed_demand'),('reference','demand','conditions','reviewed_demand'))
+                        keys(load,('reference','demand','conditions','reviewed_demand'),('reference','conditions','reviewed_demand'))
                         ref=load['reference'];need(ref in connected and ref not in loads,'budget load is absent, unfitted, unconnected or duplicated')
-                        low,high,dim=interval(load['demand']);need(dim==base and low>=0,'budget load physical units/range differ')
                         original,binding=reviewed_demand(load['reviewed_demand'],ref,row['net'])
-                        need((low,high,dim)==interval(original),'schematic load demand differs from exact reviewed part-use demand')
+                        required=interval(original)
+                        low,high,dim=interval(load['demand']) if 'demand' in load else required
+                        need(dim==base and low>=0,'budget load physical units/range differ')
+                        need((low,high,dim)==required,'schematic load demand differs from exact reviewed part-use demand')
                         scoped=scoped_demands(ref,row['net'])
                         need(all(dim==units and low<=required_lo and required_hi<=high for _,(required_lo,required_hi,units) in scoped),
                              'load would understate another scoped reviewed net demand')

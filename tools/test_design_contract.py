@@ -11,6 +11,7 @@ from unittest import mock
 
 import design_contract as design
 import part_evidence
+import part_native
 from test_part_evidence import make_fixture
 
 
@@ -34,6 +35,80 @@ def idea_fixture(root, board=None):
         unknowns=[],checks=[dict(id='MEASURE',stage='prototype',kind='bench',requirements=['OUTPUT'],path='bench/results.json',plan='bench/plan.json')],production={})
     path=root/'design.json';path.write_text(json.dumps(value,indent=2)+'\n')
     return path
+
+
+def selection_fixture(root):
+    """Reviewed synthetic demands, before any native assets are available."""
+    root=Path(root)
+    part=make_fixture(root)
+    value=json.loads(part.read_text())
+    for row in value['parts']:row['native']={}
+    value['budgets']=[]
+    value['review']['facts_sha256']=part_evidence.facts_digest(value)
+    part.write_text(json.dumps(value))
+    for path in (root/'hardware-design/boards/PART-FIXTURE').iterdir():
+        if path.name!='SPEC.md':path.unlink()
+    contract=idea_fixture(root)
+    value=json.loads(contract.read_text())
+    value['identity']['design_id']='PART-FIXTURE'
+    value['checks'].append(dict(id='SELECT',stage='parts',kind='part_selection',requirements=['OUTPUT'],
+        path=part.relative_to(root).as_posix(),references=['J1']))
+    contract.write_text(json.dumps(value))
+    return contract,part
+
+
+class PreCadSelectionTests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name).resolve()
+        self.path,self.part=selection_fixture(self.root)
+        self.pages=mock.patch.object(part_evidence,'pdf_pages',return_value=1)
+        self.pages.start();self.addCleanup(self.pages.stop)
+
+    def test_reviewed_selection_passes_before_cad_without_native_or_stock_claims(self):
+        with mock.patch.object(part_native,'read_board',side_effect=AssertionError('native reader forbidden before CAD')):
+            result=design.evaluate_contract(self.root,self.path,'parts')
+        self.assertEqual(result['status'],'passed',result['blockers'])
+        checked=result['check_results']['SELECT']
+        self.assertEqual(checked['kind'],'part_selection')
+        for flag in ('native_verified','cad_verified','stock_current'):self.assertFalse(checked[flag])
+        self.assertFalse(result['qualified']);self.assertIsNone(result['board'])
+        self.assertTrue(design.current_assessment(result))
+        (self.root/'hardware-design/boards/PART-FIXTURE/SPEC.md').write_text('Changed demand')
+        self.assertFalse(design.current_assessment(result))
+
+    def test_wrong_design_owner_and_unreviewed_reference_block_selection(self):
+        value=json.loads(self.path.read_text())
+        value['identity']['design_id']='OTHER-IDEA'
+        self.path.write_text(json.dumps(value))
+        self.assertEqual(design.evaluate_contract(self.root,self.path,'parts')['status'],'blocked')
+        value['identity']['design_id']='PART-FIXTURE'
+        value['checks'][-1]['references']=['U-NOT-REVIEWED']
+        self.path.write_text(json.dumps(value))
+        result=design.evaluate_contract(self.root,self.path,'parts')
+        self.assertEqual(result['status'],'blocked')
+        self.assertIn('exact reviewed planned references',str(result['blockers']))
+
+    def test_previous_planned_revision_cannot_supply_the_parts_decision(self):
+        value=json.loads(self.path.read_text())
+        value['identity']['revision']='synthetic-2'
+        self.path.write_text(json.dumps(value))
+        result=design.evaluate_contract(self.root,self.path,'parts')
+        self.assertEqual(result['status'],'blocked')
+        self.assertIn('exact design revision',str(result['blockers']))
+
+    def test_early_selection_cannot_supply_native_or_numeric_final_acceptance(self):
+        value=json.loads(self.path.read_text())
+        value['identity']['board']='PART-FIXTURE'
+        value['checks'][-1]['kind']='part_use'
+        self.path.write_text(json.dumps(value))
+        self.assertEqual(design.evaluate_contract(self.root,self.path,'parts')['status'],'blocked')
+        value['checks'][-1]['kind']='part_selection'
+        value['requirements'][0]['verification_stage']='parts'
+        self.path.write_text(json.dumps(value))
+        result=design.evaluate_contract(self.root,self.path,'parts')
+        self.assertEqual(result['status'],'blocked')
+        self.assertIn('cannot establish numeric functional acceptance',str(result['blockers']))
 
 
 class ContractTests(unittest.TestCase):

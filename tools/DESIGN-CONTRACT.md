@@ -22,7 +22,7 @@ status plus its exact path and SHA-256. Without `--output`, JSON stdout is the f
 | --- | --- |
 | requirements | Sourced named requirements, explicit acceptance and intended verification stage. A recorded plan grants no functional claim. |
 | architecture | Sourced interfaces/decisions and failure-condition links to named tests. Explicit unknowns name owner and blocking stage. |
-| parts | Existing exact native part-use verifier, including actual installed pin/land/rating evidence. |
+| parts | Reviewed part applicability before CAD, or exact native part-use evidence once CAD exists. The check kind records which scope passed. |
 | schematic | Functional schematic contract with named requirement results, plus successful native ERC-stage evidence. An unrelated clean ERC cannot prove functional acceptance. |
 | placement | Existing reviewed native placement verifier and named measured rules; test plans and actual native signal access must be present before layout. |
 | routing | Current sealed native run, every configured check successful, actual source/tool dependency verification and original artifacts. |
@@ -87,6 +87,7 @@ files and the actual invoked verifier/source closure.
 
 | Kind | Additional fields and actual evaluation |
 | --- | --- |
+| `part_selection` | `references`: exact planned references; invokes `part_evidence.verify_selection` on reviewed profiles, limits, operating demands and applicability conditions without native files. Manifest revision must equal `identity.revision`; board must equal `identity.board`, or `identity.design_id` while board is null. Reports CAD/native/stock verification as false. |
 | `part_use` | `references`: exact native references; invokes `part_evidence.verify_manifest`. It contributes reviewed part facts, not later physical numeric acceptance. |
 | `schematic` | Path names a functional schematic manifest. Calls `schematic_contract.check_contract`, requires passing entries for every named requirement and its exact design-contract hash binding. |
 | `placement` | Path names the reviewed part manifest; `constraint_ids` and `selectors: {requirement_id: rule_id}` bind actual measured rules. Optional `escape_evidence`. Numeric acceptance supports measured millimetres only. |
@@ -96,6 +97,9 @@ files and the actual invoked verifier/source closure.
 | `block_qualification` | Path names a reference receipt, but `library`, `block_id`, `binding`, `proof` and `bench` must name all original inputs. Replays `block_qualification.qualify`; an editable receipt's level/pass field is insufficient. |
 
 Numeric final acceptance cannot be satisfied by a part/gate/release status.
+Use `part_selection` for the early parts decision, then `part_use` to bind reviewed
+facts to installed symbols, pins and land patterns. Passing an early selection
+check does not establish actual connectivity or current assembly availability.
 Final prototype/production review acceptance also remains unsupported; a CAD review
 cannot close a physical requirement even when a different bench measurement passes.
 Earlier checks can contribute evidence toward a future requirement, but its
