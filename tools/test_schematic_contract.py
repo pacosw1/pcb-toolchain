@@ -1,8 +1,10 @@
 """Functional mutations use real native identity/review readers and isolated CAD.
 
-Only the KiCad export process is replaced in CPU tests. The small fixture export
-reads current placed values, fields and attached labels independently of the
-functional contract; it makes no native-runtime or production-part claim.
+CPU tests replace the KiCad export process and the PDF page-count boundary
+(the synthetic PDF has one page). The small fixture export reads current placed
+values, fields and attached labels independently of the functional contract;
+these tests make no native-runtime or original-PDF-inspection claim. The public
+native-proof fixture builder installs neither boundary replacement.
 """
 import copy
 from decimal import Decimal
@@ -86,6 +88,8 @@ class SchematicContractTests(unittest.TestCase):
                     exclusions=[],conditions=[dict(mode='MODE',value='low')])])
         self.save()
         if mock_export:
+            pages=mock.patch.object(part_evidence,'pdf_pages',return_value=1)
+            pages.start();self.addCleanup(pages.stop)
             patch=mock.patch.object(contract,'export_native',side_effect=self.fixture_export)
             self.export=patch.start();self.addCleanup(patch.stop)
 
@@ -326,11 +330,22 @@ class SchematicContractTests(unittest.TestCase):
 
 
 def make_functional_fixture(root):
-    """Build only synthetic authored inputs; do not mock the actual exporter."""
+    """Build synthetic inputs with the native exporter and PDF boundary unmocked."""
     fixture=SchematicContractTests()
     fixture.setUp(fixture_root=root,mock_export=False)
     return dict(board=fixture.board,contract=fixture.path,design_contract=fixture.design_path,
                 part_review=fixture.part_manifest,schematic=fixture.schematic,pcb=fixture.pcb)
+
+
+class FixtureBoundaryTests(unittest.TestCase):
+    def test_native_proof_builder_installs_no_export_or_pdf_page_count_stubs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            # Fail before any replacement starts if the native builder enters
+            # the CPU-only branch, including a future accidental PDF stub.
+            with mock.patch.object(mock.patch,'object',side_effect=AssertionError('native proof must not patch a boundary')):
+                fixture=make_functional_fixture(Path(folder)/'native-source')
+            self.assertTrue(fixture['schematic'].is_file())
+            self.assertTrue(fixture['part_review'].is_file())
 
 
 if __name__=='__main__':unittest.main()
