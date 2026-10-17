@@ -104,7 +104,8 @@ PYTHONPATH=tools python3 -m unittest test_schematic_contract
 ```
 
 Fixtures are synthetic and isolated. They keep the actual native identity,
-review and design readers, replacing only the native export process. Wrong
+review and design readers, replacing the native export process and the synthetic
+PDF page-count boundary. Original PDF inspection remains separate native proof. Wrong
 values, pin nets, DNP, modes, aggregate loads, missing branches and stale inputs
 must fail independently of the circuit generator. Actual exporter compatibility
 requires the separately recorded bounded native copy proof.
