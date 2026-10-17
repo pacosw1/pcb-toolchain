@@ -1,0 +1,1 @@
+SYNTHETIC TEST IDEA. Output requirement3.0..3.6V. Explicit interface and architecture decision. Use test access P1. Failure: output outside sourced interval. Bench numbers are fixture data, never measured production hardware.

@@ -120,6 +120,18 @@ test('a real board fingerprints the executed gate tools and no tests, viewers or
  assert.deepEqual(paths.filter(p=>/(^|\/)test_[^/]*\.py$|\.test\.mjs$|\/test-/.test(p)),[]);
  assert.ok(paths.filter(p=>p.startsWith('tools/')).length<40,'tools inputs stay a short executed closure');
 });
+test('external checker rules and their nested JSON and schematic dependencies invalidate evidence',t=>{
+ const r=mkdtempSync(join(tmpdir(),'gate-rules-'));t.after(()=>rmSync(r,{recursive:true,force:true}));
+ const put=(p,v)=>{mkdirSync(join(r,p,'..'),{recursive:true});writeFileSync(join(r,p),v);};
+ put('hardware-design/boards/X/gate.json',JSON.stringify({project:'cad/X',checks:{planes:'../../shared/planes.json'}}));
+ put('hardware-design/shared/planes.json',JSON.stringify({fast_file:'fast.json',schematic:'source.kicad_sch'}));
+ put('hardware-design/shared/fast.json','{}');put('hardware-design/shared/source.kicad_sch','schematic');
+ const fp=()=>fingerprint(r,gateInputs(r,'X').files);
+ let before=fp();assert.ok(before.inputs.some(row=>row.path==='hardware-design/shared/fast.json'));
+ assert.ok(before.inputs.some(row=>row.path==='hardware-design/shared/source.kicad_sch'));
+ put('hardware-design/shared/fast.json','{"fast":["CLK"]}');assert.notEqual(fp().input_sha256,before.input_sha256);
+ before=fp();put('hardware-design/shared/source.kicad_sch','changed schematic');assert.notEqual(fp().input_sha256,before.input_sha256);
+});
 test('the tool collector follows a new import added to a gate script',t=>{
  const r=mkdtempSync(join(tmpdir(),'gate-tools-'));t.after(()=>rmSync(r,{recursive:true,force:true}));
  const put=(p,v)=>{mkdirSync(join(r,p,'..'),{recursive:true});writeFileSync(join(r,p),v);};

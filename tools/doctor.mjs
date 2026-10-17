@@ -14,11 +14,15 @@ import {hookCheck} from './lib/doctor-checks.mjs';
 import {homedir} from 'node:os';
 
 const fix = process.argv.includes('--fix');
+const gateOnly = process.argv.includes('--gate-only');
+const probeTimeout = Number(process.env.DOCTOR_PROBE_TIMEOUT_MS ?? 10000);
+if (!Number.isSafeInteger(probeTimeout) || probeTimeout <= 0) throw new Error('DOCTOR_PROBE_TIMEOUT_MS must be a positive execution budget');
 const rows = [];
 const add = (level, name, ok, detail) => rows.push({level, name, ok, detail});
 const run = (cmd, args) => {
+  console.log(`probe: ${cmd} ${args.join(' ')}`);
   try {
-    return execFileSync(cmd, args, {encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']}).trim();
+    return execFileSync(cmd, args, {encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: probeTimeout}).trim();
   } catch (e) {
     return null;
   }
@@ -49,6 +53,7 @@ for (const table of ['fp-lib-table', 'sym-lib-table']) {
 
 // Pinned tool repositories
 for (const r of pinnedRepos) {
+  if (gateOnly && r.needed !== 'gate') continue;
   const head = existsSync(r.dir) ? run('git', ['-C', r.dir, 'rev-parse', 'HEAD']) : null;
   const ok = Boolean(head?.startsWith(r.commit));
   const detail = !head ? `not found: ${r.dir} (set ${r.env})` : ok ? `${r.commit} at ${r.dir}` : `HEAD ${head.slice(0, 8)} is not the pin ${r.commit}: ${r.dir}`;
@@ -68,6 +73,7 @@ const hook=hookCheck(root,hooks);
 add('REQUIRED', 'git hooks path (gate ratchet)', hook.ok, hook.detail);
 
 // Routing
+if (!gateOnly) {
 const fastroute=process.env.FASTROUTE_BIN ?? join(homedir(),'opt/fastroute/fastroute-0.1.7-macos-arm64/fastroute');
 const routeVersion=existsSync(fastroute) ? run(fastroute,['--version']) : null;
 add('REQUIRED','Fastroute 0.1.7 (primary router)',Boolean(routeVersion?.includes('0.1.7')),routeVersion ?? `not found: ${fastroute}`);
@@ -78,8 +84,10 @@ const tracemaker=process.env.TRACEMAKER_BIN ?? join(homedir(),'opt/tracemaker/bu
 const tmVersion=existsSync(tracemaker)?run(tracemaker,['--version']):null;
 add('OPTIONAL','TraceMaker 0.9.0 (benchmark only)',Boolean(tmVersion?.includes('0.9.0')),tmVersion ? `${tmVersion} at ${tracemaker}` : `not found or version unavailable: ${tracemaker}`);
 
+}
 // Other tools from CLAUDE.md section 5
 for (const [cmd, use] of [['node', 'checkers'], ['uv', 'easyeda2kicad'], ['docling', 'datasheet to Markdown'], ['ngspice', 'simulation'], ['git-lfs', 'not used yet']]) {
+  if (gateOnly && cmd !== 'node') continue;
   const p = which(cmd);
   add(cmd === 'node' ? 'REQUIRED' : 'OPTIONAL', `${cmd} (${use})`, Boolean(p), p ?? 'not on PATH');
 }

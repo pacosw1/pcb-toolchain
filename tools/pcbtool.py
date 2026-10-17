@@ -52,7 +52,8 @@ import re
 import subprocess
 import sys
 
-KICAD_CLI = '/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli'
+KICAD_CLI = os.environ.get('KICAD_CLI', '/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli'
+                           if sys.platform == 'darwin' else 'kicad-cli')
 OTHER = {'F.Cu': 'B.Cu', 'B.Cu': 'F.Cu'}
 
 

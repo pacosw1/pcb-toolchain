@@ -657,14 +657,17 @@ def part_centre(u, pose_u, ref):
 def rule_miss(pr, pose, i):
     """Part rules of unit i in mm (0 = legal): pr['part_rules'] regions [{refs, box}] (the part centre in the box)
     and min_dist [{a, b, d}] (each centre of a keeps d or more to each centre of b, a pair counts once)."""
+    miss = 0.0
+    if pr.get('engineering'):
+        from engineering_constraints import pose_miss
+        miss = pose_miss(pr, pose, i)
     rules = pr.get('part_rules')
     if not rules:
-        return 0.0
+        return miss
     units = pr['units']
     where = {r: j for j, u in enumerate(units) for r in u['refs']}
     at = lambda r: part_centre(units[where[r]], pose[where[r]], r)
     mine = set(units[i]['refs'])
-    miss = 0.0
     for g in rules.get('regions', []):
         x0, y0, x1, y1 = g['box']
         for r in mine.intersection(g['refs']):
