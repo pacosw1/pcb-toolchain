@@ -16,6 +16,24 @@ import pcb_operations as operations
 
 
 class RealBoardRegressionTests(unittest.TestCase):
+    def test_terminal_output_links_exact_full_inventory_without_dumping_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            result = dict(schema='iot-lab.real-board-regression.v1', status='passed', board='X',
+                scope='isolated native replay', cause='all cases passed', elapsed_s=1,
+                cases=[dict(case=name, status='passed') for name in regression.CASES],
+                skipped=0, shipping_sources_unchanged=True,
+                shipping_inputs={'files': {str(i): 'a' * 64 for i in range(3000)}})
+            report = folder / 'summary.json'
+            report.write_text(json.dumps(result))
+            summary = regression.terminal_summary(result, folder)
+            self.assertLess(len(json.dumps(summary)), 2000)
+            self.assertEqual(summary['summary_sha256'], regression.sha(report))
+            self.assertEqual(summary['summary_json'], str(report.resolve()))
+            self.assertEqual(len(summary['cases']), len(regression.CASES))
+            self.assertNotIn('shipping_inputs', summary)
+            self.assertEqual(json.loads(report.read_text()), result)
+
     def test_first_exception_settles_actual_detached_cli_worker(self):
         self.assert_detached_failure_settles_worker(False)
 

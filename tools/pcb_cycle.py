@@ -18,12 +18,13 @@ from pcb_timing import union_seconds
 from pcb_workflow import board_config
 
 
-STAGES = ('requirements', 'parts', 'datasheets', 'schematic', 'placement',
-          'routing', 'verification', 'release')
+STAGES = ('requirements', 'architecture', 'parts', 'datasheets', 'schematic', 'placement',
+          'routing', 'verification', 'release', 'prototype', 'production')
 OPERATION_STAGE = {'parts': 'parts', 'placement': 'placement', 'routing': 'routing',
                    'repair': 'routing', 'edit': 'placement', 'route': 'routing',
                    'check': 'verification', 'release': 'release', 'readiness': 'release',
-                   'blocks': 'schematic', 'build': 'placement', 'doctor': 'verification'}
+                   'blocks': 'schematic', 'build': 'placement', 'doctor': 'verification',
+                   'schematic': 'schematic', 'design': 'requirements', 'outcomes': 'placement'}
 CYCLE_ID = re.compile(r'cycle-[A-Za-z0-9_-]+\Z')
 
 
@@ -47,18 +48,33 @@ def folder_for(base, cycle):
     return folder
 
 
-def create(root, base, board, owner):
+def create(root, base, board, owner, contract=None):
     root, base = Path(root).resolve(), Path(base).resolve()
-    _, _, project = board_config(root, board)
+    design = None
+    if contract:
+        from design_contract import load_contract
+        contract = Path(contract).resolve()
+        raw = load_contract(root, contract)
+        if (raw['identity']['board'] or raw['identity']['design_id']) != board:
+            raise ValueError('cycle subject differs from its exact design contract identity')
+        design = dict(path=str(contract), sha256=sha(contract), design_id=raw['identity']['design_id'])
+    if (root / 'hardware-design/boards' / board / 'gate.json').is_file():
+        _, _, project = board_config(root, board)
+    elif design:
+        project = None
+    else:
+        raise ValueError('a cycle before native CAD requires an explicit design contract')
     if not owner.strip():
         raise ValueError('one integration owner is required')
     base.mkdir(parents=True, exist_ok=True)
     folder = Path(tempfile.mkdtemp(prefix='cycle-', dir=base))
     data = dict(schema='iot-lab.engineering-cycle.v1', cycle_id=folder.name,
-                root=str(root), board=board, project=str(project.relative_to(root)),
+                root=str(root), board=board, project=str(project.relative_to(root)) if project else None,
                 owner=owner, scope='engineering_observation', status='open',
                 started_unix_s=time.time(), activities=[], runs=[], qualified=False,
                 release_approved=False)
+    if design:
+        data['design_contract'] = design
     lean.atomic_json(folder / 'cycle.json', data)
     return summarize(folder)
 
@@ -106,7 +122,7 @@ def end(folder, activity_id, outcome, evidence, decision):
 def attach(folder, run_folder, stage=None):
     run_folder = Path(run_folder).resolve()
     manifest = read(run_folder / 'run.json')
-    stage = stage or OPERATION_STAGE.get(manifest['operation'])
+    stage = stage or (manifest.get('design_stage') if manifest['operation'] == 'design' else None) or OPERATION_STAGE.get(manifest['operation'])
     if stage not in STAGES:
         raise ValueError('operation requires an explicit engineering stage')
     def update(data):
@@ -123,6 +139,10 @@ def summarize(folder):
     folder = Path(folder).resolve()
     data = read(folder / 'cycle.json')
     result = dict(data)
+    if data.get('design_contract'):
+        binding = data['design_contract']
+        contract = Path(binding['path'])
+        result['design_context_current'] = contract.is_file() and sha(contract) == binding['sha256']
     rows, issues, intervals = [], [], []
     for activity in data['activities']:
         row = dict(activity)
@@ -159,6 +179,12 @@ def summarize(folder):
                 report_path = run_folder / 'operation/report.json'
                 if report_path.is_file():
                     observation = read(report_path)
+                    if observation.get('schema') == 'iot-lab.design-assessment.v1':
+                        from design_contract import current_assessment
+                        row.update(assessment_current=current_assessment(observation),
+                                   assessment_status=observation.get('status'),
+                                   assessment_through=observation.get('through'),
+                                   blockers=observation.get('blockers', []))
                     if observation.get('scope') == 'assembly_stock_observation':
                         from part_evidence import stock_population_current
                         row['order_day_utc'] = observation.get('order_day_utc')
@@ -205,7 +231,18 @@ def summarize(folder):
                                    'partial' if any('observed_interval_unix_s' in r for r in jobs) else 'unavailable'),
             runs=len(jobs), rework=sum(r['status'] == 'rework' for r in reviews),
             blocked=sum(r['status'] in ('blocked', 'failed', 'error', 'timeout') for r in reviews + jobs))
+    recorded_causes = []
+    for row in rows + runs:
+        if row['status'] not in ('blocked', 'failed', 'error', 'timeout', 'rework'):
+            continue
+        causes = row.get('blockers') or [dict(detail=row.get('decision') or row.get('cause') or 'Cause unrecorded')]
+        for cause in causes:
+            recorded_causes.append(dict(stage=row['stage'], outcome=row['status'],
+                run_id=row.get('run_id'), activity_id=row.get('activity_id'),
+                code=cause.get('code'), cause=cause.get('detail'), requirement=cause.get('requirement'),
+                check=cause.get('check')))
     result.update(activities=rows, runs=runs, stages=stage_summary, evidence_issues=issues,
+                  recorded_failure_rework_causes=recorded_causes,
                   covered_elapsed_s=union_seconds(intervals),
                   unobserved_stages=[stage for stage in STAGES if stage not in observed_stages],
                   elapsed_s=max(0, data.get('ended_unix_s', time.time()) - data['started_unix_s']),

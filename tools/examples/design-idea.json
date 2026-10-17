@@ -1,0 +1,132 @@
+{
+  "schema": "iot-lab.design-contract.v1",
+  "identity": {
+    "design_id": "NEW-IDEA",
+    "board": null,
+    "revision": "synthetic-1"
+  },
+  "current_stage": "architecture",
+  "requirements": [
+    {
+      "id": "OUTPUT",
+      "statement": "Synthetic output interval",
+      "source": {
+        "path": "tools/examples/design-idea.md",
+        "sha256": "a2bc59b7051420aee08ee3b2d1df1d53b77e6b74ccc21036e522b80d983a450c",
+        "section": "Output"
+      },
+      "verification_stage": "prototype",
+      "acceptance": {
+        "kind": "interval",
+        "min": 3,
+        "max": 3.6,
+        "unit": "V",
+        "source": {
+          "path": "tools/examples/design-idea.md",
+          "sha256": "a2bc59b7051420aee08ee3b2d1df1d53b77e6b74ccc21036e522b80d983a450c",
+          "section": "Output requirement"
+        }
+      }
+    }
+  ],
+  "architecture": {
+    "source": {
+      "path": "tools/examples/design-idea.md",
+      "sha256": "a2bc59b7051420aee08ee3b2d1df1d53b77e6b74ccc21036e522b80d983a450c",
+      "section": "Architecture"
+    },
+    "interfaces": [
+      {
+        "id": "OUTPUT-PORT",
+        "requirements": [
+          "OUTPUT"
+        ],
+        "source": {
+          "path": "tools/examples/design-idea.md",
+          "sha256": "a2bc59b7051420aee08ee3b2d1df1d53b77e6b74ccc21036e522b80d983a450c",
+          "section": "Interface"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "id": "TOPOLOGY",
+        "requirements": [
+          "OUTPUT"
+        ],
+        "source": {
+          "path": "tools/examples/design-idea.md",
+          "sha256": "a2bc59b7051420aee08ee3b2d1df1d53b77e6b74ccc21036e522b80d983a450c",
+          "section": "Architecture choice"
+        }
+      }
+    ]
+  },
+  "test_plans": [
+    {
+      "id": "OUTPUT-TEST",
+      "requirements": [
+        "OUTPUT"
+      ],
+      "stage": "prototype",
+      "method": "Measure output under sourced operating condition",
+      "procedure": {
+        "path": "tools/examples/design-idea.md",
+        "sha256": "a2bc59b7051420aee08ee3b2d1df1d53b77e6b74ccc21036e522b80d983a450c",
+        "section": "Procedure"
+      },
+      "access": {
+        "path": "tools/examples/design-idea.md",
+        "sha256": "a2bc59b7051420aee08ee3b2d1df1d53b77e6b74ccc21036e522b80d983a450c",
+        "section": "Test access"
+      },
+      "equipment": {
+        "path": "tools/examples/design-idea.md",
+        "sha256": "a2bc59b7051420aee08ee3b2d1df1d53b77e6b74ccc21036e522b80d983a450c",
+        "section": "Instrument capability"
+      },
+      "failure_conditions": {
+        "path": "tools/examples/design-idea.md",
+        "sha256": "a2bc59b7051420aee08ee3b2d1df1d53b77e6b74ccc21036e522b80d983a450c",
+        "section": "Failure response"
+      },
+      "signals": [
+        {
+          "net": "/A",
+          "ref": "J1",
+          "pad": "1"
+        }
+      ],
+      "check": "MEASURE"
+    }
+  ],
+  "failure_conditions": [
+    {
+      "id": "OUTSIDE-OUTPUT",
+      "requirements": [
+        "OUTPUT"
+      ],
+      "source": {
+        "path": "tools/examples/design-idea.md",
+        "sha256": "a2bc59b7051420aee08ee3b2d1df1d53b77e6b74ccc21036e522b80d983a450c",
+        "section": "Failure"
+      },
+      "condition": "Output outside reviewed interval",
+      "test_plan": "OUTPUT-TEST"
+    }
+  ],
+  "unknowns": [],
+  "checks": [
+    {
+      "id": "MEASURE",
+      "stage": "prototype",
+      "kind": "bench",
+      "requirements": [
+        "OUTPUT"
+      ],
+      "path": "tools/examples/design-idea-bench/results.json",
+      "plan": "tools/examples/design-idea-bench/plan.json"
+    }
+  ],
+  "production": {}
+}

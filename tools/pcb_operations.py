@@ -17,6 +17,46 @@ from pcb_timing import MeasuredSpan, measured_stage
 
 
 IGNORED = {'.git', '.gate', '.claude', '.bench', '__pycache__', 'node_modules', 'fab', 'render', 'renders', 'reports'}
+OBSERVATION_BACKENDS = {
+    'parts': ('part_evidence.py', 'part_evidence'),
+    'placement': ('engineering_constraints.py', 'placement_constraints'),
+    'routing': ('route_decision.py', 'routing_decision'),
+    'design': ('design_contract.py', 'design_assessment'),
+    'schematic': ('schematic_contract.py', 'schematic_function'),
+    'outcomes': ('placement_outcomes.py', 'placement_outcomes'),
+}
+
+
+def design_admission(root, folder, manifest):
+    """Check the previous engineering stage before spending on a candidate.
+
+    Native candidate guards preserve schematic and protected part identity;
+    the subsequent fresh configured gate still judges the changed layout.
+    """
+    binding = manifest.get('design_contract')
+    if not binding:
+        return None
+    path = Path(binding['path']).resolve()
+    if not path.is_relative_to(root) or sha(path) != binding['sha256']:
+        raise ValueError('design contract changed or escaped its checkout after admission')
+    declared = json.loads(path.read_text()).get('identity', {})
+    if declared.get('board') != manifest['board']:
+        raise ValueError('candidate design contract must name this exact native board')
+    operation = manifest['operation']
+    through = ('routing' if operation == 'release' else 'architecture' if operation == 'build' else
+               'placement' if operation in ('route', 'repair') or manifest.get('kind') == 'route' else 'schematic')
+    from design_contract import evaluate_contract
+    with measured_stage(lambda kind, **data: event(folder, kind, **data), 'design-prerequisites', 'operation'):
+        report = evaluate_contract(root, path, through=through)
+    lean.atomic_json(folder / 'operation/design-preflight.json', report)
+    if report.get('status') != 'passed':
+        first = next(iter(report.get('blockers', [])), {})
+        result = dict(status='failed', exit_code=1, scope='design_preflight', operation=operation,
+            cause=first.get('detail', 'design prerequisites are incomplete or stale'),
+            candidate_verified=False, qualified=False, release_approved=False,
+            report=str(folder / 'operation/design-preflight.json'), design_stage=through)
+        lean.atomic_json(folder / 'operation/result.json', result)
+    return report
 
 
 def source_files(root, board=None, extra_inputs=None):
@@ -233,31 +273,69 @@ def placement_check(root, board, manifest, candidate, output):
     return report
 
 
+def candidate_layout_check(root, workspace, folder, manifest, output):
+    from design_contract import evaluate_candidate_layout
+    # Reviewed fixed/rigid poses belong to the original source. Rebuilding
+    # that baseline from the edited workspace would compare a pose to itself.
+    path = Path(manifest['design_contract']['path'])
+    _, _, candidate = board_config(workspace, manifest['board'])
+    with measured_stage(lambda kind, **data: event(folder, kind, **data), output.stem, 'operation'):
+        report = evaluate_candidate_layout(root, path, candidate=candidate.with_suffix('.kicad_pcb'),
+                                           evidence_directory=output.parent / (output.stem + '-evidence'))
+    lean.atomic_json(output, report)
+    return report
+
+
 def run(folder):
     folder = Path(folder).resolve()
     manifest = json.loads((folder / 'run.json').read_text())
     root = Path(manifest['root']).resolve()
     operation = manifest['operation']
+    design = None
+    if operation in ('build', 'edit', 'route', 'repair', 'release') and manifest.get('design_contract'):
+        design = design_admission(root, folder, manifest)
+        if design.get('status') != 'passed':
+            return 1
     parent = None
     parent_dependencies = {}
     if manifest.get('from_run'):
         parent, parent_dependencies = parent_candidate(root, manifest['board'], manifest['from_run'])
-    if operation in ('parts', 'placement', 'routing'):
+    if operation in OBSERVATION_BACKENDS:
         backend_root = Path(manifest['from_run']['folder']) / 'workspace' if parent else root
-        backend = {'parts': 'part_evidence.py', 'placement': 'engineering_constraints.py',
-                   'routing': 'route_decision.py'}[operation]
+        backend, scope = OBSERVATION_BACKENDS[operation]
         output = folder / 'operation/report.json'
         policies = list((root / 'tools').glob('*.py'))
         policies += list((root / 'tools/lib').glob('*.mjs'))
         policies += list((root / 'tools/placer').glob('*.py'))
         policies += list((root / 'tools/pcb_search').glob('*.py'))
         observed_inputs = {str(path): sha(path) for path in policies}
+        for key in ('design_contract',):
+            if manifest.get(key):
+                binding = manifest[key]
+                if sha(binding['path']) != binding['sha256']:
+                    raise ValueError(key + ' changed after admission')
+                observed_inputs[binding['path']] = binding['sha256']
         command = [os.environ.get('PYTHON_MODERN', 'python3'), str(root / 'tools' / backend)]
         command += manifest['arguments'] + ['--root', str(backend_root), '--json', '--output', str(output)]
         code = execute(folder, operation, command, root, dict(os.environ, IOT_LAB=str(backend_root)))
         report = json.loads(output.read_text()) if output.is_file() else None
         if not isinstance(report, dict) or not report.get('schema') or not report.get('status') or report.get('qualified') is not False:
             raise ValueError('engineering backend did not produce a scoped, unqualified report')
+        typed = {'design': 'iot-lab.design-assessment.v1',
+                 'schematic': 'iot-lab.schematic-contract-result.v1',
+                 'outcomes': 'iot-lab.placement-outcome-comparison.v1'}
+        if operation in typed:
+            if report['schema'] != typed[operation] or report['status'] not in ('passed', 'blocked', 'stale'):
+                raise ValueError('engineering backend returned an incompatible report type')
+            if (code == 0) != (report['status'] == 'passed'):
+                raise ValueError('engineering backend exit disagrees with its evidence verdict')
+            if operation == 'design' and (report.get('design_id') != manifest.get('design_id')
+                    or report.get('through') != manifest.get('design_stage')):
+                raise ValueError('design assessment belongs to another design or requested stage')
+            if operation == 'schematic' and report.get('board') != manifest['board']:
+                raise ValueError('schematic assessment belongs to another board')
+            if operation == 'outcomes' and report.get('study_id') != manifest['arguments'][1]:
+                raise ValueError('outcome assessment belongs to another study')
         for key in ('inputs', 'native_inputs', 'tool_inputs', 'source_inputs', 'implementation_sha256', 'evidence_sha256'):
             for name, digest in report.get(key, {}).items():
                 if isinstance(digest, str) and len(digest) == 64:
@@ -267,14 +345,21 @@ def run(folder):
                         raise ValueError('engineering backend reported a changed policy input: ' + name)
                     observed_inputs[resolved] = digest
         observed_inputs.update(parent_dependencies)
+        absent = []
+        for name in report.get('absent_inputs', []):
+            path = (backend_root / name).resolve()
+            if not path.is_relative_to(backend_root) or path.exists() or path.is_symlink():
+                raise ValueError('engineering absent input appeared or escaped its checkout: ' + name)
+            absent.append(str(path))
         if any(not Path(name).is_file() or sha(name) != digest for name, digest in observed_inputs.items()):
             raise ValueError('engineering evidence inputs changed while producing the report')
         result = dict(status='passed' if code == 0 else 'error' if code == 2 else 'failed',
                       exit_code=0 if code == 0 else 2 if code == 2 else 1,
-                      scope={'parts':'part_evidence', 'placement':'placement_constraints', 'routing':'routing_decision'}[operation],
+                      scope=scope,
                       cause=(report or {}).get('cause', operation + (' completed' if code == 0 else ' blocked; inspect report.json')),
                       operation=operation, tool_exit=code, report=str(output),
                       engineering_status=(report or {}).get('status'), engineering_inputs=observed_inputs,
+                      engineering_absent_inputs=absent,
                       qualified=False, release_approved=False)
         lean.atomic_json(folder / 'operation/result.json', result)
         return result['exit_code']
@@ -301,6 +386,17 @@ def run(folder):
         lean.atomic_json(folder / 'operation/result.json', result)
         return result['exit_code']
     extra_inputs = []
+    if design:
+        from design_contract import dependency_files
+        # The changed layout must obey its declared future constraints too.
+        # Collect their sources without rerunning native/physical stage checks.
+        extra_inputs.extend(dependency_files(root, Path(manifest['design_contract']['path']), through='placement'))
+        for name, digest in {**design.get('inputs', {}), **design.get('tool_inputs', {})}.items():
+            path = (root / name).resolve()
+            if path.is_relative_to(root):
+                if not path.is_file() or sha(path) != digest:
+                    raise ValueError('design prerequisite dependency changed: ' + name)
+                extra_inputs.append(str(path.relative_to(root)))
     for name, expected in parent_dependencies.items():
         path = Path(name).resolve()
         if not path.is_relative_to(root) or sha(path) != expected:
@@ -374,6 +470,14 @@ def run(folder):
                           source_sha256=sources['sha256'], report=str(folder / 'operation/placement-preflight.json'))
             lean.atomic_json(folder / 'operation/result.json', result)
             return 1
+    if design and (operation in ('route', 'repair') or (operation == 'edit' and manifest.get('kind') == 'route')):
+        output = folder / 'operation/design-layout-preflight.json'
+        checked = candidate_layout_check(root, workspace, folder, manifest, output)
+        if checked['status'] != 'passed':
+            lean.atomic_json(folder / 'operation/result.json', dict(status='failed', exit_code=1,
+                scope='design_layout_screen', operation=operation, candidate_verified=False, qualified=False,
+                cause='candidate placement or test access blocks routing', source_sha256=sources['sha256'], report=str(output)))
+            return 1
     if operation == 'repair':
         from route_decision import apply_plan
         plan = manifest['plan']
@@ -412,6 +516,18 @@ def run(folder):
                               source_unchanged=source_state(root, board, extra_inputs) == sources,
                               workspace=str(workspace), board=board)
                 lean.atomic_json(folder / 'operation/result.json', result)
+                return 1
+        if design:
+            output = folder / 'operation/design-layout-postcheck.json'
+            checked = candidate_layout_check(root, workspace, folder, manifest, output)
+            if checked['status'] != 'passed':
+                lean.atomic_json(folder / 'operation/result.json', dict(status='failed', exit_code=1,
+                    scope='design_layout_screen', operation=operation, candidate_verified=False, qualified=False,
+                    cause='candidate violates declared placement or test access requirements', report=str(output),
+                    source_sha256=sources['sha256'], candidate=str(native), candidate_sha256=sha(native),
+                    identity_preserved=identity_ok, protected_source_changes=changed,
+                    source_unchanged=source_state(root, board, extra_inputs) == sources,
+                    workspace=str(workspace), board=board, continuation_allowed=False))
                 return 1
         gate = [manifest['node'], str(workspace / 'tools/gate.mjs'), board, '--fresh', '--evidence-dir', str(folder / 'gate')]
         code = execute(folder, 'validate', gate, workspace, env)

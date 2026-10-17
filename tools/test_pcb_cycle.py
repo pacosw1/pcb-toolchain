@@ -77,6 +77,7 @@ class CycleTests(unittest.TestCase):
         cycle.end(self.folder, activity['activity_id'], 'rework', [self.evidence], 'correct pin mapping')
         state = cycle.finish(self.folder)
         self.assertEqual(state['stages']['schematic']['rework'], 1)
+        self.assertEqual(state['recorded_failure_rework_causes'][0]['cause'], 'correct pin mapping')
         with self.assertRaisesRegex(ValueError, 'closed'):
             cycle.begin(self.folder, 'routing', 'designer', 'late work')
 

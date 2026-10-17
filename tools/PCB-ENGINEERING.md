@@ -1,6 +1,7 @@
 # Engineering workflow
 
-Use the existing PCB CLI for parts, placement, routing, validation and adoption.
+Use the existing PCB CLI from requirements and architecture through parts,
+schematic, placement, routing, prototype and production evidence.
 KiCad remains authoritative. Original PDF evidence, reviewed engineering facts,
 current sourcing evidence and measured qualification are separate records.
 
@@ -24,7 +25,8 @@ tools/pcb explain RUN_ID --json
 ```
 
 Put supervisor options before the action for `parts`, `placement` and `routing`;
-arguments after the action belong to that backend. Every operation uses the
+arguments after the action belong to that backend. This also applies to `design`,
+`schematic` and `outcomes`. Every operation uses the
 existing journal, deadline, cancellation, process cleanup and evidence sealing.
 Each terminal receipt points to `operation/report.json` or its candidate guard
 and fresh gate evidence. Use that run ID as the handoff.
@@ -40,6 +42,9 @@ candidate with native opens and a supported repair when diagnosis produces one.
 Part review and PDF inspection: [PART-EVIDENCE.md](PART-EVIDENCE.md).
 Supported placement requirements and block reuse: [PLACEMENT-CONSTRAINTS.md](PLACEMENT-CONSTRAINTS.md).
 Routing decisions and repair limits: [ROUTE-DECISIONS.md](ROUTE-DECISIONS.md).
+Idea-to-production intent and test plans: [DESIGN-CONTRACT.md](DESIGN-CONTRACT.md).
+Native schematic function assertions: [SCHEMATIC-CONTRACT.md](SCHEMATIC-CONTRACT.md).
+Placement judged by actual routing outcomes: [PLACEMENT-OUTCOMES.md](PLACEMENT-OUTCOMES.md).
 
 A candidate with a reviewed engineering manifest must pass exact part-evidence
 checks before editing, placement requirements before routing, and placement/block
@@ -62,10 +67,12 @@ tools/pcb cycle status CYCLE_ID --json
 tools/pcb cycle finish CYCLE_ID --json
 ```
 
-Stages are requirements, parts, datasheets, schematic, placement, routing,
-verification and release. The summary retains failures/rework, stage coverage,
+Stages are requirements, architecture, parts, datasheets, schematic, placement,
+routing, verification, release, prototype and production. The summary retains failures/rework, stage coverage,
 review intervals, owned run durations, active stages and evidence freshness.
 Covered elapsed time uses interval unions so parallel work is not counted twice.
+Recorded failure and rework causes link back to the exact run or review activity;
+current assessment freshness is reported separately from its preserved history.
 Review intervals measure recorded elapsed time; human attention and unrecorded work
 stay unknown. A cycle can close with recorded blockers once its activities and
 owned jobs settle. `status: recorded` means observation ended; it grants no design,
@@ -75,3 +82,22 @@ Candidate operations automatically consume an existing
 `hardware-design/registry/part-reviews/BOARD.json`; `--engineering-manifest` selects
 another explicit reviewed input. Boards without a review retain their existing
 gate behavior and `parts status` reports the missing engineering coverage.
+
+An explicit `--design-contract FILE`, or an existing
+`hardware-design/registry/design-contracts/BOARD.json`, adds lifecycle prerequisite
+checks to candidate operations. Build requires architecture evidence, placement
+edits require schematic evidence, routing/repair requires placement evidence, and
+release requires routing evidence. Missing or stale prerequisites stop before
+candidate generation. The consumed source and checker dependencies stay bound
+through adoption. Routing also checks the actual continued candidate's layout;
+all edited candidates must pass declared placement and test-access constraints
+before the fresh native gate. A native candidate's contract must name its exact
+board. A design contract can start with `board: null`; its requirements
+and architecture remain reviewable before a KiCad project exists.
+
+`next DESIGN_ID --design-contract FILE --through STAGE --json` reads a sealed
+assessment and checks its input fingerprints. It does not repeat native checks.
+Two identical current failures produce `stuck` and a cited cause to resolve before
+another attempt. Missing inputs becoming present expire the old blocker. No
+lifecycle assessment promotes stock, procurement, physical qualification or
+production approval.
