@@ -9,6 +9,7 @@ part or changes an existing selection ledger.
 pcb parts --json status ENV-SENSE
 pcb parts --json inspect hardware-design/registry/datasheets/ISM330DHCXTR_C2655101.pdf --render-pages 1
 pcb parts --json verify ENV-SENSE --manifest hardware-design/registry/part-reviews/ENV-SENSE.json
+pcb parts --json selection NEW-IDEA --manifest hardware-design/registry/part-reviews/NEW-IDEA.json
 pcb parts --json stock ENV-SENSE --candidate /path/to/candidate --boards 3 --receipts /path/to/new-stock-receipts
 ```
 
@@ -138,6 +139,37 @@ supplier orientation and reservation still require the existing release-readines
 checks. A dated observation expires with its day/candidate/quantity context. No
 order, upload, supplier contact or purchase is performed.
 
+## Reviewed selection before CAD
+
+`selection BOARD --manifest FILE` uses the same profile, review, source, rating,
+operating-condition, assembly-dependency and unresolved-item validation as native
+`verify`. It needs the planned board/design ID, its owned requirements/specification
+and planned project path, but no gate configuration, schematic, PCB, Node or KiCad.
+The manifest still uses `iot-lab.part-use.v1`; shared profiles remain source-hashed.
+
+Native declarations may be partial or `{}`. A shared-profile use may omit its
+planned `pad_net_map`. The structural schemas allow those early declarations;
+`verify_manifest` still requires all installed symbol/pin/footprint/land/pad-net
+bindings and fitted-reference coverage. Schema validity never grants a CAD verdict.
+Declared current/power budgets require planned pad maps for all listed selections
+and report `declared_planned_net_only`, without proving actual connectivity.
+
+A passing result has scope `reviewed_part_selection`, `selections` keyed by planned
+reference, exact revision/project and complete source hashes. `bindings` and
+`native_inputs` stay empty; `native_verified`, `cad_verified`,
+`connectivity_verified`, `layout_verified`, `stock_verified`, `stock_current`,
+`qualified` and `release_approved` stay false. Only explicitly listed selections
+are covered; a complete actual assembly cannot be established before CAD. Reviewed
+facts remain attributable authored claims; the PDF parser checks original identity
+and page locations, not semantic truth. Its actual executable hash is retained.
+
+```sh
+python3 tools/part_evidence.py selection NEW-IDEA --manifest review.json --root /path/to/project --json --output selection.json
+```
+
+With `--output`, this command retains the full report and prints a compact JSON
+receipt naming its path and SHA-256. It creates no selection ledger or approval.
+
 ## Integration and focused verification
 
 `verify_manifest(root, board, path)` returns schema `iot-lab.part-evidence.v1`,
@@ -147,6 +179,10 @@ returns the repository-relative source closure, including referenced profile/PDF
 review/spec files and native hierarchy, for isolated operation snapshots. Relative
 paths resolve within the supplied project root, so a source-bound manifest works
 inside a copied workspace. Sources are rehashed before accepting a verification.
+
+`verify_selection(root, board, path, output=None)` returns the distinct pre-CAD
+scope described above. `dependency_files(root, manifest, include_native=False)`
+collects its exact profile/PDF/review/spec closure without touching native CAD.
 
 ```sh
 PYTHONPATH=tools python3 -m unittest test_part_evidence

@@ -196,6 +196,29 @@ class SchematicContractTests(unittest.TestCase):
         report=self.check();self.assertEqual(report['requirement_results']['REQ-BUDGET']['status'],'blocked')
         self.assertTrue(any('exact reviewed part-use demand' in row.get('cause','') for row in report['assertions']))
 
+    def test_omitted_load_demands_use_the_selected_reviewed_budget_intervals(self):
+        for load in self.value['assertions'][-1]['loads']:load.pop('demand')
+        self.save();report=self.check();self.assertEqual(report['status'],'passed',report['blockers'])
+        rail=next(row for row in report['assertions'] if row['id']=='RAIL')
+        self.assertEqual(contract.number(rail['actual']['max']),Decimal('.04'))
+        self.assertEqual(rail['actual']['unit'],'A')
+        self.assertEqual([row['budget'] for row in rail['reviewed_demand_bindings']],['rail','rail'])
+        parts=json.loads(self.part_manifest.read_text())
+        for load in parts['budgets'][0]['loads']:load['required']['max']=.03
+        parts['review']['facts_sha256']=part_evidence.facts_digest(parts);self.part_manifest.write_text(json.dumps(parts))
+        self.value['part_review']=self.bound(self.part_manifest);self.save()
+        report=self.check();self.assertEqual(report['status'],'passed',report['blockers'])
+        rail=next(row for row in report['assertions'] if row['id']=='RAIL')
+        self.assertEqual(contract.number(rail['actual']['max']),Decimal('.06'))
+
+    def test_optional_explicit_demand_remains_exact_after_unit_normalization(self):
+        for load in self.value['assertions'][-1]['loads']:load['demand']=self.interval(0,.02,'A')
+        self.save();self.assertEqual(self.check()['status'],'passed')
+        self.value['assertions'][-1]['loads'][0]['demand']=self.interval(0,21,'mA')
+        self.save();report=self.check()
+        self.assertEqual(report['requirement_results']['REQ-BUDGET']['status'],'blocked')
+        self.assertTrue(any('exact reviewed part-use demand' in row.get('cause','') for row in report['assertions']))
+
     def test_missing_or_wrong_reviewed_demand_binding_is_not_a_budget_pass(self):
         load=self.value['assertions'][-1]['loads'][0]
         for selector in (None,dict(budget='unknown'),dict(budget='rail',rating='supply')):
@@ -221,8 +244,12 @@ class SchematicContractTests(unittest.TestCase):
         self.value['part_review']=self.bound(self.part_manifest)
         for load in self.value['assertions'][-1]['loads']:
             load.update(reviewed_demand=dict(rating='other-current'),demand=self.interval(0,1,'mA'))
-        self.save();report=self.check();self.assertEqual(report['requirement_results']['REQ-BUDGET']['status'],'blocked')
-        self.assertTrue(any('another scoped reviewed net demand' in row.get('cause','') for row in report['assertions']))
+        for explicit in (True,False):
+            if not explicit:
+                for load in self.value['assertions'][-1]['loads']:load.pop('demand')
+            with self.subTest(explicit_demand=explicit):
+                self.save();report=self.check();self.assertEqual(report['requirement_results']['REQ-BUDGET']['status'],'blocked')
+                self.assertTrue(any('another scoped reviewed net demand' in row.get('cause','') for row in report['assertions']))
 
     def test_actual_part_rating_required_current_can_bind_a_load(self):
         parts=json.loads(self.part_manifest.read_text())
@@ -233,9 +260,14 @@ class SchematicContractTests(unittest.TestCase):
         parts['review']['facts_sha256']=part_evidence.facts_digest(parts);self.part_manifest.write_text(json.dumps(parts))
         self.value['part_review']=self.bound(self.part_manifest)
         for load in self.value['assertions'][-1]['loads']:load['reviewed_demand']=dict(rating='load-current')
-        self.save();report=self.check();self.assertEqual(report['status'],'passed',report['blockers'])
-        rail=next(row for row in report['assertions'] if row['id']=='RAIL')
-        self.assertEqual([row['rating'] for row in rail['reviewed_demand_bindings']],['load-current','load-current'])
+        for explicit in (True,False):
+            if not explicit:
+                for load in self.value['assertions'][-1]['loads']:load.pop('demand')
+            with self.subTest(explicit_demand=explicit):
+                self.save();report=self.check();self.assertEqual(report['status'],'passed',report['blockers'])
+                rail=next(row for row in report['assertions'] if row['id']=='RAIL')
+                self.assertEqual([row['rating'] for row in rail['reviewed_demand_bindings']],['load-current','load-current'])
+                self.assertEqual(contract.number(rail['actual']['max']),Decimal('.04'))
 
     def test_native_export_only_adapter_has_explicit_narrow_scope_without_pdf_checks(self):
         import schematic_contract_smoke as smoke

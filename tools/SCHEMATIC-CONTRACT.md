@@ -62,13 +62,15 @@ boolean quantities fail.
 
 A condition is `{mode:ASSERTION_ID,value:EXACT_STATE}`. Mode assertions are
 evaluated before dependent values and budgets. Budgets also require the mode's
-variant to match. Each load is `{reference,demand:INTERVAL,conditions:[...]}`.
-Each load also supplies `reviewed_demand:{budget:ID}` or
-`reviewed_demand:{rating:ID}`. The former selects this exact reference and net
+variant to match. Each load supplies `reference`, explicit `conditions:[...]`,
+and `reviewed_demand:{budget:ID}` or `reviewed_demand:{rating:ID}`.
+The former selects this exact reference and net
 from the reviewed part-use budget; the latter selects this part/profile's
-required operating interval and applicability conditions. The local demand
-must match that reviewed interval after unit normalization. Lower duplicate
-current estimates cannot make an inadequate aggregate budget pass.
+required operating interval and applicability conditions. The selected reviewed
+interval supplies the load demand directly. An optional `demand:INTERVAL` remains
+supported for existing manifests and must match that reviewed interval after
+unit normalization. Lower duplicate current estimates cannot make an inadequate
+aggregate budget pass.
 The selected demand must also cover every already reviewed demand for the same
 net and reference. A positive reviewed load cannot be reclassified as a non-load.
 

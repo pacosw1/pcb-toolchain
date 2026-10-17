@@ -21,6 +21,14 @@ tools/pcb explain RUN_ID --json
 tools/pcb cancel RUN_ID --json
 ```
 
+Before native CAD exists, check a reviewed part-use manifest with
+`tools/pcb parts --json selection PLANNED-BOARD --manifest FILE`. This evaluates
+sourced limits, demands and applicability conditions and streams the usual run
+events. Its result explicitly leaves native assets, CAD and current assembly
+stock unverified. `parts verify` remains the strict installed-native check.
+Use a design `part_selection` check to include this early decision in
+`tools/pcb design --json check DESIGN --contract FILE --through parts`.
+
 `context` derives revision ownership, frozen status, native project, gate policy,
 packet sources and commands from the registry, FOCUS and board files. Historical
 gates remain observations until dependencies are verified again. Missing context
