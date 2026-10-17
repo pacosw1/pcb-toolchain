@@ -18,7 +18,7 @@ import pcb_evidence
 import pcb_workflow
 
 TERMINAL = {'passed', 'failed', 'error', 'cancelled', 'timeout'}
-OPERATIONS = {'check', 'edit', 'route', 'repair', 'build', 'release', 'readiness', 'parts', 'placement', 'routing'}
+OPERATIONS = {'check', 'edit', 'route', 'repair', 'build', 'release', 'readiness', 'parts', 'placement', 'routing', 'schematic'}
 
 
 def read(path):
@@ -35,7 +35,7 @@ def timestamp(value):
     return parsed
 
 
-def latest_run(root, board, project, base):
+def latest_run(root, board, project, base, operations=None):
     matches, rejected = [], []
     for folder in Path(base).glob('run-*'):
         if not folder.is_dir() or folder.is_symlink():
@@ -44,7 +44,7 @@ def latest_run(root, board, project, base):
             manifest = read(folder / 'run.json')
             operation = manifest.get('operation', 'check')
             requested = manifest.get('arguments', [None])[0] if operation == 'readiness' else manifest.get('board')
-            if requested != board or operation not in OPERATIONS:
+            if requested != board or operation not in (OPERATIONS if operations is None else operations):
                 continue
             if Path(manifest.get('root', '')).resolve() != root:
                 rejected.append(dict(path=str(folder), cause='run belongs to a different checkout'))
@@ -158,9 +158,109 @@ def current_finding(folder, gate_dir, raw, board, project):
     raise ValueError('failed gate has no attributable completed-stage finding')
 
 
-def next_action(root, board, base=None):
+def design_next(root, identifier, contract, base, through=None):
+    """Observe a sealed stage assessment, including ideas without native CAD.
+
+    Checking freshness reads files only. Native verifiers belong to the owned
+    design operation and are never repeated to render a next-action response.
+    """
+    contract = Path(contract).resolve()
+    value = read(contract)
+    identity = value.get('identity', {})
+    if identity.get('design_id') != identifier:
+        raise ValueError('next design subject differs from its contract identity')
+    from design_contract import STAGES
+    stage = through or value.get('current_stage')
+    if stage not in STAGES:
+        raise ValueError('next needs a declared lifecycle stage')
+    board = identity.get('board') or identifier
+    selected, rejected = latest_run(root, board, None, base, operations={'design'})
+    output = dict(schema_version=1, design_id=identifier, board=board, through=stage,
+        scope='next_design_decision_only', qualified=False, readiness_verified=False,
+        observed_run=None, ignored_observations=rejected, evidence=dict(freshness='missing'))
+
+    def finish(state, code, message, argv, **details):
+        output.update(state=state, blocker=dict(code=code, message=message, **details),
+            next_action=dict(argv=argv, command=shlex.join(argv), cwd=str(root)))
+        return output
+
+    prefix = ['tools/pcb', 'design', '--runs-dir', str(base), '--json']
+    check = prefix + ['check', identifier, '--contract', str(contract), '--through', stage]
+    if not selected:
+        return finish('needs_check', 'design_assessment_missing', 'No owned assessment for this design stage', check)
+    folder, manifest = selected
+    from pcb_cli import status
+    state = status(folder)
+    output['observed_run'] = dict(run_id=folder.name, operation='design', status=state['status'])
+    if state.get('controller_alive') or state['status'] in {'starting', 'running', 'stopping'}:
+        output['evidence']['freshness'] = 'running'
+        return finish('observe', 'run_in_progress', 'Current design assessment must settle',
+            ['tools/pcb', 'events', '--runs-dir', str(base), folder.name, '--json', '--wait', '20'])
+    try:
+        result = pcb_evidence.verify(folder)
+        binding = manifest.get('design_contract', {})
+        if (Path(binding.get('path', '')).resolve() != contract or binding.get('sha256') != pcb_workflow.sha(contract)
+                or manifest.get('design_stage') != stage):
+            raise ValueError('design contract or requested stage changed')
+        inputs = result.get('engineering_inputs')
+        if not isinstance(inputs, dict) or not inputs:
+            raise ValueError('design assessment lacks source bindings')
+        if any(not Path(name).is_file() or pcb_workflow.sha(name) != digest for name, digest in inputs.items()):
+            raise ValueError('design assessment source or tool changed')
+        if any(Path(name).exists() or Path(name).is_symlink() for name in result.get('engineering_absent_inputs', [])):
+            raise ValueError('a previously absent design input appeared')
+        report_path = folder / 'operation/report.json'
+        report = read(report_path)
+        if report.get('design_id') != identifier or report.get('through') != stage:
+            raise ValueError('assessment report belongs to another design or stage')
+        from design_contract import current_assessment
+        if not current_assessment(report):
+            raise ValueError('design assessment inputs or dated release context expired')
+        output['evidence'] = dict(freshness='current', report=str(report_path), report_sha256=pcb_workflow.sha(report_path),
+            receipt=str(folder / 'result.json'))
+        output['readiness_verified'] = result['status'] == 'passed' and report.get('status') == 'passed'
+        output['assessment'] = dict(status=report.get('status'), stages=report.get('stages'),
+            next_stage=report.get('next_stage'), requirement_results=report.get('requirement_results'))
+        first = next(iter(report.get('blockers', [])), {})
+        code = first.get('code', 'design_stage_review')
+        message = first.get('detail', report.get('cause', 'Review current stage evidence and the next engineering decision'))
+        repeated = 0
+        if result['status'] == 'failed':
+            for other in base.glob('run-*'):
+                try:
+                    prior = read(other / 'run.json')
+                    if (prior.get('operation') != 'design' or prior.get('board') != board or prior.get('design_stage') != stage
+                            or prior.get('design_contract') != binding or Path(prior.get('root', '')).resolve() != root):
+                        continue
+                    observation = pcb_evidence.verify(other)
+                    old_report = read(other / 'operation/report.json')
+                    if (observation.get('status') == 'failed' and observation.get('engineering_inputs') == inputs
+                            and observation.get('engineering_absent_inputs', []) == result.get('engineering_absent_inputs', [])
+                            and old_report.get('blockers') == report.get('blockers')):
+                        repeated += 1
+                except (OSError, ValueError, KeyError, TypeError):
+                    continue
+        if repeated >= 2:
+            code, message = 'repeated_unchanged_failure', 'Same current failure recorded twice; resolve its cited cause before retrying'
+        return finish('stuck' if repeated >= 2 else 'review' if output['readiness_verified'] else 'blocked', code, message,
+            ['tools/pcb', 'explain', '--runs-dir', str(base), folder.name, '--json'],
+            stage=stage, requirement_id=first.get('requirement_id', first.get('requirement')), evidence=first.get('evidence'), repeated_failures=repeated,
+            engineering_next_action=report.get('next_action'))
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
+        output['evidence'] = dict(freshness='stale_or_invalid', cause=str(error))
+        return finish('needs_check', 'design_assessment_stale', str(error), check)
+
+
+def next_action(root, board, base=None, design_contract=None, through=None):
     root = Path(root).resolve()
     base = Path(base if base is not None else os.environ.get('PCB_RUNS_DIR', root / '.gate/cli')).resolve()
+    default_design = root / 'hardware-design/registry/design-contracts' / (board + '.json')
+    if design_contract or default_design.is_file():
+        path = Path(design_contract) if design_contract else default_design
+        identifier = read(path).get('identity', {}).get('design_id')
+        if design_contract and identifier != board:
+            raise ValueError('explicit design next subject must be its design_id')
+        return design_next(root, identifier, path, base, through)
     context = pcb_workflow.context(root, board)
     _, config, _ = pcb_workflow.board_config(root, board)
     check_mode = '--fresh' if config.get('stage') == 'G5' else '--changed'
@@ -235,7 +335,7 @@ def next_action(root, board, base=None):
         if operation == 'readiness':
             return finish('review', 'readiness_requires_current_review', 'Order-preparation evidence needs review of its recorded inputs and date',
                           'inspect', 'explain', folder.name, '--json', evidence=dict(path=str(folder / 'operation/readiness.log')))
-        if operation in {'parts', 'placement', 'routing'}:
+        if operation in {'parts', 'placement', 'routing', 'schematic'}:
             phase = 'source'
             if manifest.get('from_run'):
                 # Reports about an isolated candidate bind that candidate's
@@ -249,6 +349,8 @@ def next_action(root, board, base=None):
             for name, digest in inputs.items():
                 if not Path(name).is_file() or pcb_workflow.sha(name) != digest:
                     raise ValueError('engineering observation input changed: ' + name)
+            if any(Path(name).exists() or Path(name).is_symlink() for name in result.get('engineering_absent_inputs', [])):
+                raise ValueError('a previously absent engineering input appeared')
             report_path = folder / 'operation/report.json'
             report = read(report_path)
             if report.get('scope') == 'assembly_stock_observation':

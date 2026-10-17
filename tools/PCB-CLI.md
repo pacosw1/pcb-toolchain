@@ -37,7 +37,7 @@ run store is outside the default location.
 ## Execution contract
 
 `check`, `build`, `edit`, `route`, `repair`, `release`, `doctor`, `blocks`,
-`readiness`, `parts`, `placement` and `routing` share one owned supervisor and
+`readiness`, `parts`, `placement`, `routing`, `design`, `schematic` and `outcomes` share one owned supervisor and
 durable run record. They follow events by default.
 `--detach --json` immediately returns one JSON object with a run ID. Following
 with `--json`, and `events --json`, stream JSON Lines. Put lifecycle options
@@ -60,6 +60,8 @@ Actual tool start/output/exit events, parsed check verdicts, cache hits/misses,
 dependency blocks, liveness heartbeats and one terminal event stay distinct.
 Heartbeats explicitly report unknown progress; no invented ETA. Output events
 carry at most 1600 characters per chunk; original logs stay live.
+Terminal events, status and explain retain compact inventory counts and the exact
+`result.json` path/hash. Full source/artifact hash maps remain in that sealed file.
 
 `--timeout 600` and `--heartbeat 5` are execution policies in seconds. Ctrl-C
 requests cancellation and follows cleanup. `cancel` acknowledges the request;

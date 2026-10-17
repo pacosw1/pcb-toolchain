@@ -27,10 +27,40 @@ from pcb_timing import MeasuredSpan, Timeline, live_stages, measured_stage
 ROOT = Path(__file__).resolve().parent.parent
 TERMINAL = {'passed', 'failed', 'error', 'cancelled', 'timeout'}
 RUN_ID = re.compile(r'run-[A-Za-z0-9_-]+\Z')
+OBSERVATIONS = ('parts', 'placement', 'routing', 'design', 'schematic', 'outcomes')
+
+
+def backend_option(arguments, name):
+    values = []
+    for index, arg in enumerate(arguments):
+        if arg == name:
+            if index + 1 >= len(arguments):
+                raise ValueError(name + ' requires a value')
+            values.append(arguments[index + 1])
+        elif arg.startswith(name + '='):
+            values.append(arg.split('=', 1)[1])
+    if len(values) > 1:
+        raise ValueError('duplicate backend option: ' + name)
+    return values[0] if values else None
 
 
 def utc():
     return dt.datetime.now(dt.timezone.utc).isoformat(timespec='milliseconds')
+
+
+def compact_terminal(result, folder):
+    """Keep inventories in the sealed receipt instead of every streamed event."""
+    view = dict(result)
+    counts = {}
+    for name in ('engineering_inputs', 'engineering_absent_inputs', 'evidence_sha256', 'artifacts'):
+        if name in view:
+            counts[name] = len(view.pop(name))
+    if counts:
+        view['inventory_counts'] = counts
+    receipt = Path(folder) / 'result.json'
+    if receipt.is_file():
+        view['receipt'] = dict(path=str(receipt), sha256=pcb_workflow.sha(receipt))
+    return view
 
 
 def read_json(path):
@@ -282,7 +312,8 @@ def worker(folder):
             result.setdefault('scope', {'check':'configured_board_gate', 'build':'candidate_board_gate',
                 'edit':'candidate_board_gate', 'route':'candidate_board_gate', 'release':'fabrication_candidate',
                 'repair':'candidate_board_gate', 'parts':'part_evidence', 'placement':'placement_constraints',
-                'routing':'routing_decision', 'doctor':'environment', 'blocks':'block_evidence',
+                'routing':'routing_decision', 'design':'design_assessment', 'schematic':'schematic_function',
+                'outcomes':'placement_outcomes', 'doctor':'environment', 'blocks':'block_evidence',
                 'readiness':'assembly_readiness'}[manifest.get('operation','check')])
             result.update(schema_version=1, run_id=folder.name, board=manifest['board'], cleanup=cleanup,
                           operation=manifest.get('operation', 'check'), child_cpu_s=proc.child_cpu_s if proc else None,
@@ -299,7 +330,8 @@ def worker(folder):
             lean.atomic_json(folder / 'result.json', result)
             journal.state.update(result)
             journal.active.clear()
-            journal.emit('run.end', **{k: v for k, v in result.items() if k not in {'schema_version', 'run_id', 'elapsed_s'}})
+            journal.emit('run.end', **{k: v for k, v in compact_terminal(result, folder).items()
+                                       if k not in {'schema_version', 'run_id', 'elapsed_s'}})
             for sig, handler in prior.items():
                 signal.signal(sig, handler)
         return result['exit_code']
@@ -318,6 +350,13 @@ def start_run(args, base):
         if operation in ('build', 'edit', 'route', 'repair') and not getattr(args, 'engineering_manifest', None):
             if previous.get('engineering_manifest'):
                 args.engineering_manifest = Path(previous['engineering_manifest']['path'])
+        if operation in ('build', 'edit', 'route', 'repair') and not getattr(args, 'design_contract', None):
+            if previous.get('design_contract'):
+                args.design_contract = Path(previous['design_contract']['path'])
+    if operation in ('build', 'edit', 'route', 'repair', 'release') and not getattr(args, 'design_contract', None):
+        default_contract = ROOT / 'hardware-design/registry/design-contracts' / (args.board + '.json')
+        if default_contract.is_file():
+            args.design_contract = default_contract
     if operation in ('build', 'edit', 'route', 'repair') and not getattr(args, 'engineering_manifest', None):
         default_review = ROOT / 'hardware-design/registry/part-reviews' / (args.board + '.json')
         if default_review.is_file():
@@ -334,7 +373,8 @@ def start_run(args, base):
         cycle = pcb_cycle.read(cycle_folder / 'cycle.json')
         if cycle['status'] != 'open' or Path(cycle['root']).resolve() != ROOT:
             raise ValueError('cycle must be open and belong to this checkout')
-    if operation in ('parts', 'placement', 'routing'):
+    design = None
+    if operation in OBSERVATIONS:
         if len(args.arguments) < 2:
             raise ValueError(operation + ' requires an action and board/PDF; put supervisor options first')
         action, subject = args.arguments[:2]
@@ -342,12 +382,27 @@ def start_run(args, base):
             args.board = cycle['board'] if cycle_folder else 'PARTS'
         else:
             args.board = subject
+        if operation == 'design':
+            contract_path = backend_option(args.arguments, '--contract')
+            if not contract_path:
+                raise ValueError('design check requires --contract FILE')
+            args.design_contract = Path(contract_path).resolve()
+            design = read_json(args.design_contract)
+            if not isinstance(design, dict) or not isinstance(design.get('identity'), dict):
+                raise ValueError('design contract requires an identity object')
+            if design['identity'].get('design_id') != subject:
+                raise ValueError('design action subject differs from its exact contract identity')
+            args.board = design['identity'].get('board') or subject
+        elif operation == 'outcomes' and cycle_folder:
+            args.board = cycle['board']
     baseline = None
     if getattr(args, 'baseline', None):
         baseline = run_dir(base, args.baseline) / 'gate/findings.json'
         if not baseline.is_file():
             raise ValueError('baseline has no structured findings')
-    if operation in ('doctor', 'blocks', 'readiness') or (operation == 'parts' and args.board == 'PARTS'):
+    if operation in ('design', 'outcomes'):
+        cfg, config = {'project': None}, None
+    elif operation in ('doctor', 'blocks', 'readiness') or (operation == 'parts' and args.board == 'PARTS'):
         args.board = {'doctor': 'ENVIRONMENT', 'blocks': 'BLOCKS', 'readiness': 'ASSEMBLY', 'parts':'PARTS'}[operation]
         if cycle_folder and operation in ('doctor', 'blocks', 'readiness'):
             args.board = args.arguments[0] if operation == 'readiness' else cycle['board']
@@ -358,7 +413,7 @@ def start_run(args, base):
     if cycle_folder and args.board != cycle['board']:
         raise ValueError('run belongs to another board than its engineering cycle')
     node = shutil.which(os.environ.get('NODE', 'node'))
-    if not node:
+    if not node and operation not in ('design', 'outcomes'):
         raise ValueError('Node.js is required to run the existing gate')
     base.mkdir(parents=True, exist_ok=True)
     folder = Path(tempfile.mkdtemp(prefix='run-', dir=base))
@@ -381,15 +436,18 @@ def start_run(args, base):
         manifest['spec_sha256'] = hashlib.sha256(Path(args.spec).read_bytes()).hexdigest()
     if getattr(args, 'kind', None):
         manifest['kind'] = args.kind
-    for key in ('plan', 'engineering_manifest'):
+    for key in ('plan', 'engineering_manifest', 'design_contract'):
         if getattr(args, key, None):
             path = getattr(args, key).resolve()
             value = read_json(path)
             if not isinstance(value, dict):
                 raise ValueError(key + ' requires a JSON object')
             manifest[key] = dict(path=str(path), sha256=pcb_workflow.sha(path), content=value)
-    if operation in ('blocks', 'readiness', 'parts', 'placement', 'routing'):
+    if operation in ('blocks', 'readiness') + OBSERVATIONS:
         manifest['arguments'] = args.arguments
+    if design:
+        manifest['design_id'] = design['identity']['design_id']
+        manifest['design_stage'] = backend_option(args.arguments, '--through') or design.get('current_stage', 'requirements')
     if cycle_folder:
         manifest['cycle'] = cycle_folder.name
     if from_run:
@@ -496,7 +554,7 @@ def follow(folder, machine):
                     if row['type'] == 'run.end':
                         return row['exit_code']
                 continue
-            print(json.dumps(state) if machine else f"STUCK: {state.get('cause', 'supervisor ended without events')}", flush=True)
+            print(json.dumps(compact_terminal(state, folder)) if machine else f"STUCK: {state.get('cause', 'supervisor ended without events')}", flush=True)
             return state.get('exit_code', 2)
         time.sleep(0.1)
 
@@ -546,13 +604,13 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description='Observable native board gates; see tools/PCB-CLI.md')
     sub = parser.add_subparsers(dest='command', required=True)
     operations = ('check', 'build', 'edit', 'route', 'repair', 'release', 'doctor', 'blocks', 'readiness',
-                  'parts', 'placement', 'routing')
+                  'parts', 'placement', 'routing', 'design', 'schematic', 'outcomes')
     for name in operations + ('list', 'context', 'next', 'status', 'events', 'explain', 'cancel', 'adopt', 'benchmark', 'cycle', 'note', '_worker'):
         child = sub.add_parser(name)
         child.add_argument('--runs-dir', type=Path, default=Path(os.environ.get('PCB_RUNS_DIR', ROOT / '.gate/cli')))
         child.add_argument('--json', action='store_true', help='JSON; following/events emit JSON Lines')
         if name in operations:
-            if name in ('blocks', 'readiness', 'parts', 'placement', 'routing'):
+            if name in ('blocks', 'readiness') + OBSERVATIONS:
                 child.add_argument('arguments', nargs=argparse.REMAINDER)
             elif name != 'doctor':
                 child.add_argument('board')
@@ -578,17 +636,24 @@ def main(argv=None):
             if name in ('build', 'edit', 'route', 'repair'):
                 child.add_argument('--engineering-manifest', type=Path,
                                    help='reviewed part uses and sourced placement constraints')
+            if name in ('build', 'edit', 'route', 'repair', 'release'):
+                child.add_argument('--design-contract', type=Path, help='sourced idea-to-production contract')
         elif name == 'list':
             pass
         elif name in ('context', 'next'):
             child.add_argument('board')
+            if name == 'next':
+                child.add_argument('--design-contract', type=Path, help='observe a design before native CAD exists')
+                child.add_argument('--through', help='lifecycle stage to assess')
         elif name == 'benchmark':
             child.add_argument('run_ids', nargs='+')
         elif name == 'cycle':
             child.add_argument('action', choices=['start', 'status', 'begin', 'end', 'finish', 'attach'])
             child.add_argument('subject', help='board for start; cycle ID otherwise')
             child.add_argument('--owner')
-            child.add_argument('--stage', choices=['requirements', 'parts', 'datasheets', 'schematic', 'placement', 'routing', 'verification', 'release'])
+            import pcb_cycle
+            child.add_argument('--stage', choices=pcb_cycle.STAGES)
+            child.add_argument('--contract', type=Path, help='design contract for a cycle before native CAD exists')
             child.add_argument('--description')
             child.add_argument('--activity')
             child.add_argument('--outcome', choices=['passed', 'blocked', 'rework'])
@@ -616,7 +681,7 @@ def main(argv=None):
             if args.action == 'start':
                 if not args.owner:
                     raise ValueError('cycle start requires --owner for integration ownership')
-                data = pcb_cycle.create(ROOT, base, args.subject, args.owner)
+                data = pcb_cycle.create(ROOT, base, args.subject, args.owner, contract=args.contract)
             else:
                 cycle_folder = pcb_cycle.folder_for(base, args.subject)
                 if Path(pcb_cycle.read(cycle_folder / 'cycle.json')['root']).resolve() != ROOT:
@@ -642,7 +707,7 @@ def main(argv=None):
             return 0
         if args.command == 'next':
             from pcb_next import next_action
-            data = next_action(ROOT, args.board, base)
+            data = next_action(ROOT, args.board, base, design_contract=args.design_contract, through=args.through)
             print(json.dumps(data) if args.json else
                   data['blocker']['message'] + '\nNext: ' + data['next_action']['command'])
             return 0
@@ -656,9 +721,10 @@ def main(argv=None):
         if args.command == 'readiness':
             if len(args.arguments) < 2:
                 raise ValueError('readiness requires BOARD CANDIDATE; put CLI --json/--detach before BOARD')
-        if args.command in ('parts', 'placement', 'routing'):
+        if args.command in OBSERVATIONS:
             allowed = {'parts': ('status', 'inspect', 'verify', 'stock'), 'placement': ('check',),
-                       'routing': ('diagnose',)}[args.command]
+                       'routing': ('diagnose',), 'design': ('check',), 'schematic': ('check',),
+                       'outcomes': ('evaluate',)}[args.command]
             if not args.arguments or args.arguments[0] not in allowed:
                 raise ValueError('choose ' + args.command + ' ' + '/'.join(allowed))
         if args.command == 'benchmark':
@@ -693,6 +759,8 @@ def main(argv=None):
             return worker(folder)
         if args.command == 'status':
             state = status(folder)
+            if state['status'] in TERMINAL:
+                state = compact_terminal(state, folder)
             print(json.dumps(state) if args.json else f"{state['status'].upper()}: {folder.name} {state.get('cause', '')}; elapsed={state.get('elapsed_s', 'unavailable')}s; " +
                   ('active=' + stage_status(state['active_stage_timing']) + '; ' if state.get('active_stage_timing') else '') + f"evidence={folder}")
         elif args.command == 'cancel':
@@ -700,11 +768,15 @@ def main(argv=None):
             if state['status'] not in TERMINAL:
                 lean.atomic_json(folder / 'cancel.request', dict(requested_at=utc()))
                 state = dict(state, cancellation_requested=True)
+            if state['status'] in TERMINAL:
+                state = compact_terminal(state, folder)
             print(json.dumps(state) if args.json else f"{state['status'].upper()}: {folder.name}; cancellation_requested={state.get('cancellation_requested', False)}")
         elif args.command == 'explain':
             if not 1 <= args.limit <= 1000:
                 raise ValueError('--limit must be between 1 and 1000')
             report = explain(folder, args.limit)
+            if report['run']['status'] in TERMINAL:
+                report['run'] = compact_terminal(report['run'], folder)
             if args.json:
                 print(json.dumps(report))
             else:

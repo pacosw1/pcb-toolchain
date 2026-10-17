@@ -306,6 +306,16 @@ def read_last_json(log):
     return json.loads(Path(log).read_text().splitlines()[-1])
 
 
+def terminal_summary(result, output):
+    """Keep the full inventory in its sealed file, not one giant log line."""
+    path = Path(output).resolve() / 'summary.json'
+    return dict(schema=result['schema'], status=result['status'], board=result['board'],
+        scope=result['scope'], cause=result['cause'], elapsed_s=result.get('elapsed_s'),
+        cases=[dict(case=row['case'], status=row['status']) for row in result['cases']],
+        skipped=result['skipped'], shipping_sources_unchanged=result.get('shipping_sources_unchanged'),
+        summary_json=str(path), summary_sha256=sha(path))
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] == '_inject':
@@ -324,7 +334,9 @@ def main(argv=None):
     except (OSError, ValueError) as error:
         print('FAIL: ' + str(error), file=sys.stderr)
         return 2
-    print(json.dumps(result) if args.json else ('PASS: ' if result['status'] == 'passed' else 'FAIL: ') + result['cause'])
+    print(json.dumps(terminal_summary(result, args.output)) if args.json else
+          ('PASS: ' if result['status'] == 'passed' else 'FAIL: ') + result['cause'] +
+          '; evidence=' + str(args.output.resolve() / 'summary.json'))
     return 0 if result['status'] == 'passed' else 1
 
 
