@@ -265,6 +265,33 @@ def in2_clear_of_b(bd, layers):
     bd._cache.clear()
 
 
+def island_seed(bd, it, win):
+    """Seed cells of the end item plus all same-net copper joined to it (touching cells on a shared layer; a via joins
+    its layers). 2026-10-16 H7-CORE v2: a seed of the DRC end item alone (a fan-out stub on F.Cu) made the router
+    drop a second via 0.1-0.3 mm from the stub's own via."""
+    seed = [s.copy() for s in bd.item_seed(it, win)]
+    cand = [x for x in bd.items if x.net == it.net and x is not it and x.kind in ('cu', 'pad')]
+    used = set()
+    grown = True
+    while grown:
+        grown = False
+        dil = []
+        for s in seed:
+            d = s.copy()
+            d[1:, :] |= s[:-1, :]; d[:-1, :] |= s[1:, :]; d[:, 1:] |= s[:, :-1]; d[:, :-1] |= s[:, 1:]
+            dil.append(d)
+        for k, x in enumerate(cand):
+            if k in used:
+                continue
+            xs = bd.item_seed(x, win)
+            if any((xs[l] & dil[l]).any() for l in range(len(seed))):
+                used.add(k)
+                grown = True
+                for l in range(len(seed)):
+                    seed[l] |= xs[l]
+    return seed
+
+
 def connect(a, layers, widths):
     """--connect: route each named pad pair; the seeds are the pad and the copper already joined to it on its net is
     not used (a direct pad-to-pad track, for power chains whose order matters: current-paths.json)."""
@@ -394,7 +421,7 @@ def main():
             free, viaok, _ = bd.net_grids(net, win)
             bd.net_via[net] = real_via
             viaok = no_via_in_pads(bd, net, win, viaok)
-            sa, sb = bd.item_seed(A, win), bd.item_seed(B, win)
+            sa, sb = island_seed(bd, A, win), island_seed(bd, B, win)
             lc = dict(x.split('=') for x in a.layer_cost)
             path = astar(free, viaok, sa, sb, a.via_cost / a.grid, a.turn_cost / a.grid, [float(lc.get(l, 1.0)) for l in layers])
             if path is not None:
