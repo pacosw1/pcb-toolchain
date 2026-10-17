@@ -266,6 +266,73 @@ class RouteDecisionTests(unittest.TestCase):
         candidate.with_suffix('.kicad_dru').write_text('new candidate rule')
         self.assertTrue(route.verify_escape_evidence(contract,candidate,output))
 
+    def stage_fixture(self):
+        contract,proof,_=self.escape_fixture();contract['root']=str(self.root)
+        candidate=self.base/'candidate/native.kicad_pcb';candidate.parent.mkdir()
+        for suffix in ('.kicad_pcb','.kicad_sch','.kicad_pro','.kicad_dru'):
+            shutil.copyfile(self.board.with_suffix(suffix),candidate.with_suffix(suffix))
+        runtime=self.base/'synthetic-runtime.bin'
+        def producer(policy,native,output):
+            context=route.escape_context(self.root,'X')
+            value=copy.deepcopy(proof)
+            value.update(board=str(native),source_inputs=source_set(native),generator_context=context,
+                generator_inputs=context['files'],feature_config=context['feature_config'],model_parameters=context['model_parameters'])
+            for item in value['runtime']['files'].values():item['sha256']=route.sha(runtime)
+            value['inputs']={str(native.with_suffix(Path(name).suffix)):digest for name,digest in source_set(native).items()}
+            route.lean.atomic_json(output,value)
+            return value
+        return contract,candidate,producer
+
+    def test_same_stage_shares_verified_receipt_and_separate_post_stage_generates_again(self):
+        contract,candidate,producer=self.stage_fixture();events=[]
+        screens=route.EscapeStageReceipts(lambda kind,**data:events.append((kind,data)))
+        first=self.base/'pre-engineering.json';second=self.base/'pre-design.json';post=self.base/'post.json'
+        with mock.patch.object(route,'generate_escape_evidence',side_effect=producer) as generate:
+            self.assertEqual(screens.get(contract,candidate,first),first)
+            self.assertEqual(screens.get(contract,candidate,second),first)
+            self.assertFalse(second.exists());self.assertEqual(generate.call_count,1)
+            self.assertEqual(route.EscapeStageReceipts().get(contract,candidate,post),post)
+            self.assertEqual(generate.call_count,2)
+        self.assertEqual((screens.generated,screens.hits),(1,1))
+        self.assertEqual([kind for kind,_ in events],['cache.miss','cache.hit'])
+
+    def test_stage_receipt_invalidates_for_candidate_policy_code_environment_and_observed_runtime(self):
+        contract,candidate,producer=self.stage_fixture()
+        targets=[candidate.with_suffix(suffix) for suffix in ('.kicad_pcb','.kicad_sch','.kicad_pro','.kicad_dru')]
+        targets += [self.root/'tools/route_grid.py',self.root/'tools/route_decision.py',
+                    self.board.parent/'gate.json',self.base/'synthetic-runtime.bin']
+        with mock.patch.object(route,'generate_escape_evidence',side_effect=producer) as generate:
+            for n,target in enumerate(targets):
+                with self.subTest(target=str(target)):
+                    screens=route.EscapeStageReceipts();first=self.base/('first-'+str(n)+'.json');next_file=self.base/('next-'+str(n)+'.json')
+                    screens.get(contract,candidate,first);before=generate.call_count
+                    original=target.read_bytes();target.write_bytes(original+b' ')
+                    try:self.assertEqual(screens.get(contract,candidate,next_file),next_file)
+                    finally:target.write_bytes(original)
+                    self.assertEqual(generate.call_count,before+1);self.assertEqual(screens.hits,0)
+            screens=route.EscapeStageReceipts();screens.get(contract,candidate,self.base/'env-first.json')
+            with mock.patch.dict(os.environ,LD_PRELOAD='synthetic-cache-key-only'):
+                self.assertEqual(screens.get(contract,candidate,self.base/'env-next.json'),self.base/'env-next.json')
+            screens=route.EscapeStageReceipts();screens.get(contract,candidate,self.base/'policy-first.json')
+            changed=copy.deepcopy(contract);changed['rules'][0]['id']='changed-reviewed-rule'
+            self.assertEqual(screens.get(changed,candidate,self.base/'policy-next.json'),self.base/'policy-next.json')
+
+    def test_sealed_receipt_tamper_and_unchanged_failed_screen_never_trigger_another_producer(self):
+        contract,candidate,producer=self.stage_fixture();screens=route.EscapeStageReceipts()
+        first=self.base/'sealed.json'
+        with mock.patch.object(route,'generate_escape_evidence',side_effect=producer) as generate:
+            screens.get(contract,candidate,first);first.write_text(first.read_text()+' ')
+            with self.assertRaisesRegex(ValueError,'sealed stage escape receipt changed'):
+                screens.get(contract,candidate,self.base/'tampered-next.json')
+            self.assertEqual(generate.call_count,1)
+        def failed(policy,native,output):route.lean.atomic_json(output,dict(status='blocked',cause='fixture missing runtime'))
+        screens=route.EscapeStageReceipts()
+        with mock.patch.object(route,'generate_escape_evidence',side_effect=failed) as generate:
+            screens.get(contract,candidate,self.base/'failed.json')
+            with self.assertRaisesRegex(ValueError,'already failed'):
+                screens.get(contract,candidate,self.base/'failed-next.json')
+            self.assertEqual(generate.call_count,1)
+
     def test_compaction_does_not_repeat_identical_failed_route_but_allows_changed_policy(self):
         source=Path(route.__file__).with_name('placer')/'compact_cli.py'
         main=next(node for node in ast.parse(source.read_text()).body if isinstance(node,ast.FunctionDef) and node.name=='main')

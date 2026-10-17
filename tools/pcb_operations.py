@@ -260,20 +260,27 @@ def parent_candidate(root, board, reference):
     return candidate, dependencies
 
 
-def placement_check(root, board, manifest, candidate, output):
+def placement_check(root, board, manifest, candidate, output, *, escape_screens=None):
     from engineering_constraints import check_manifest, reviewed_contract
     contract = reviewed_contract(root, board, manifest)
     evidence = None
     if any(rule['kind'] == 'escape' for rule in contract['rules']):
         from route_decision import generate_escape_evidence
         evidence = Path(output).with_name(Path(output).stem + '-escape.json')
-        generate_escape_evidence(contract, candidate, evidence)
+        if escape_screens is None:generate_escape_evidence(contract, candidate, evidence)
+        else:evidence=escape_screens.get(contract,candidate,evidence)
     report = check_manifest(root, board, manifest, candidate=candidate, escape_evidence=evidence)
+    if evidence is not None:
+        report['escape_evidence']=str(evidence)
+        report['inputs'].update(json.loads(Path(evidence).read_text()).get('inputs',{}))
+        report['inputs'][str(evidence)]=sha(evidence)
+    if escape_screens is not None:
+        report['escape_screens']=dict(generated=escape_screens.generated,reused=escape_screens.hits)
     lean.atomic_json(output, report)
     return report
 
 
-def candidate_layout_check(root, workspace, folder, manifest, output):
+def candidate_layout_check(root, workspace, folder, manifest, output, *, escape_screens=None):
     from design_contract import evaluate_candidate_layout
     # Reviewed fixed/rigid poses belong to the original source. Rebuilding
     # that baseline from the edited workspace would compare a pose to itself.
@@ -281,7 +288,8 @@ def candidate_layout_check(root, workspace, folder, manifest, output):
     _, _, candidate = board_config(workspace, manifest['board'])
     with measured_stage(lambda kind, **data: event(folder, kind, **data), output.stem, 'operation'):
         report = evaluate_candidate_layout(root, path, candidate=candidate.with_suffix('.kicad_pcb'),
-                                           evidence_directory=output.parent / (output.stem + '-evidence'))
+                                           evidence_directory=output.parent / (output.stem + '-evidence'),
+                                           escape_screens=escape_screens)
     lean.atomic_json(output, report)
     return report
 
@@ -461,9 +469,11 @@ def run(folder):
     work = folder / 'operation/work'
     for key in ('ENV_WORK', 'BASEB_WORK', 'BASEC_WORK', 'AC24_WORK', 'AC24C_WORK', 'CELL_WORK', 'FIELD24B_WORK', 'AIO_WORK'):
         env[key] = str(work / key.lower())
+    from route_decision import EscapeStageReceipts
+    pre_screens=EscapeStageReceipts(lambda kind,**data:event(folder,kind,stage='placement-preflight',**data))
     if engineering and (operation in ('route', 'repair') or (operation == 'edit' and manifest.get('kind') == 'route')):
         constraints = placement_check(root, board, Path(engineering['path']), native,
-                                      folder / 'operation/placement-preflight.json')
+                                      folder / 'operation/placement-preflight.json',escape_screens=pre_screens)
         if constraints['status'] != 'passed':
             result = dict(status='failed', exit_code=1, scope='engineering_preflight', operation=operation,
                           cause='placement requirements block routing', candidate_verified=False,
@@ -472,7 +482,7 @@ def run(folder):
             return 1
     if design and (operation in ('route', 'repair') or (operation == 'edit' and manifest.get('kind') == 'route')):
         output = folder / 'operation/design-layout-preflight.json'
-        checked = candidate_layout_check(root, workspace, folder, manifest, output)
+        checked = candidate_layout_check(root, workspace, folder, manifest, output,escape_screens=pre_screens)
         if checked['status'] != 'passed':
             lean.atomic_json(folder / 'operation/result.json', dict(status='failed', exit_code=1,
                 scope='design_layout_screen', operation=operation, candidate_verified=False, qualified=False,
@@ -502,9 +512,10 @@ def run(folder):
             result.update(scope='candidate_board_gate', operation=operation, source_sha256=sources['sha256'])
             lean.atomic_json(folder / 'operation/result.json', result)
             return 1
+        post_screens=EscapeStageReceipts(lambda kind,**data:event(folder,kind,stage='placement-postcheck',**data))
         if engineering:
             constraints = placement_check(root, board, Path(engineering['path']), native,
-                                          folder / 'operation/placement-postcheck.json')
+                                          folder / 'operation/placement-postcheck.json',escape_screens=post_screens)
             if constraints['status'] != 'passed':
                 repairable = bool(constraints.get('blockers')) and all(
                     row.get('code') == 'constraint_violation' for row in constraints['blockers'])
@@ -519,7 +530,7 @@ def run(folder):
                 return 1
         if design:
             output = folder / 'operation/design-layout-postcheck.json'
-            checked = candidate_layout_check(root, workspace, folder, manifest, output)
+            checked = candidate_layout_check(root, workspace, folder, manifest, output,escape_screens=post_screens)
             if checked['status'] != 'passed':
                 lean.atomic_json(folder / 'operation/result.json', dict(status='failed', exit_code=1,
                     scope='design_layout_screen', operation=operation, candidate_verified=False, qualified=False,
