@@ -173,10 +173,34 @@ def outline_s(pr, k, best, k_floor):
 K_TOL = 0.02  # the outline phase stops when the board scale gap is below 2 %
 
 
+class RouteOutcome(list):
+    """Counts plus a diagnostic handoff; list compatibility keeps old benches usable.
+
+    A clean routing-step count may advance the schedule. A failed route may advance
+    only when its driver has attributed a concrete bounded geometry update.
+    This is routing-search evidence, never a configured gate or qualification.
+    """
+    def __init__(self, counts, decision, *, candidate=None, geometry_feedback=False, scoped_skipped_opens=False):
+        super().__init__(counts)
+        self.decision = copy.deepcopy(decision)
+        self.candidate = copy.deepcopy(candidate)
+        hard = {'schematic_parity', 'constraints_unknown', 'native_geometry', 'native_router_disagreement'}
+        kinds = {row.get('classification') for row in decision.get('findings', [])}
+        known = (decision.get('status') == 'diagnosed' and bool(kinds) and not kinds & hard
+                 and kinds <= {'native_open', 'escape_failure', 'model_enclosed', 'router_miss', 'no_routing_defect'})
+        complete = kinds == {'no_routing_defect'} and decision.get('action') == 'continue_native_validation'
+        scoped = (scoped_skipped_opens and kinds == {'native_open'}
+                  and decision.get('action') == 'diagnose_selected_connections')
+        self.routing_step_clean = bool(self) and min(self) == 0 and known and (complete or scoped)
+        feedback = (geometry_feedback and known and decision.get('action') in
+                    ('inspect_escape', 'diagnose_selected_connections'))
+        self.stop = not (self.routing_step_clean or feedback)
+
+
 def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, target=0, shrink=0.85, tol=0.05,
              log=None, s_min=0.05, real_first=False, diagnostic_budget=None):
     """Easy-to-hard loop. Injected effects: search(problem, step) -> optimize() result;
-    write(problem, pose, k, step) -> board path; route(path, step) -> [unrouted per router run].
+    write(problem, pose, k, step) -> board path; route(path, step) -> counts or RouteOutcome.
     Halo phase: s from s0, board scale k from the grown area (larger on an illegal result). A step passes when
     the best router run leaves <= target unrouted. Outline phase (when the best pass has k > 1): the real board
     (k = 1) first, then bisect k between the last fail and the best pass; s = outline_s. When the bare parts
@@ -227,9 +251,17 @@ def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, 
             try:
                 if over():
                     raise subprocess.TimeoutExpired('routing', 0)
-                t['runs'] = route(t['board'], n)
+                outcome = route(t['board'], n)
+                t['runs'] = list(outcome)
                 t['unrouted'] = min(t['runs'])
                 t['passed'] = t['unrouted'] <= target
+                if isinstance(outcome, RouteOutcome):
+                    t['route_decision'] = outcome.decision
+                    t['routed_candidate'] = outcome.candidate
+                    t['passed'] = t['passed'] and outcome.routing_step_clean
+                    if outcome.stop:
+                        t.update(status='routing-decision', passed=False,
+                                 next_action=outcome.decision)
             except subprocess.TimeoutExpired:
                 t.update(runs=[], unrouted=None, passed=False, status='timeout')
             except ImmutableInputFailure as exc:
@@ -240,6 +272,26 @@ def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, 
             log('step %d %s s %.3f k %.3f cost %.1f illegal %d runs %s -> %s' % (
                 n, phase, s, k, c['cost'], len(c['illegal']), t['runs'], 'PASS' if t['passed'] else 'FAIL'))
         return t
+
+    def terminal_stop(result):
+        if result.get('status') == 'immutable-input':
+            return 'immutable input mandatory rules'
+        if result.get('status') == 'routing-decision':
+            return 'routing diagnosis: ' + result['route_decision'].get('action', 'inspect_evidence')
+        return None
+
+    def finish(stop):
+        ok = [t for t in steps if t['passed']]
+        summary = [{kk: t[kk] for kk in ('s', 'k', 'unrouted', 'passed')} for t in steps]
+        for row in summary:
+            row['unrouted'] = -1 if row['unrouted'] is None else row['unrouted']
+        handoff = next((t for t in reversed(steps) if t.get('status') == 'routing-decision'), None)
+        return dict(steps=steps,
+            best=min(ok, key=lambda t: (t['k'], t['s'])) if ok and stop != 'immutable input mandatory rules' else None,
+            verdict=stop if handoff or stop == 'immutable input mandatory rules' else verdict(summary, size), stop=stop,
+            next_action=handoff.get('next_action') if handoff else None,
+            retained_candidate=handoff.get('routed_candidate') if handoff else None,
+            qualified=False)
 
     stop = 'schedule done'
     if real_first:
@@ -252,18 +304,14 @@ def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, 
                 stop = 'time budget %.0f s' % budget
                 break
             result = step(s1, 1.0, False, 'real')
-            if result.get('status') == 'immutable-input':
-                stop = 'immutable input mandatory rules'
+            if terminal_stop(result):
+                stop = terminal_stop(result)
                 break
             if result['passed']:
                 break
         ok = [t for t in steps if t['passed']]
         if ok or stop != 'schedule done':
-            summary = [{kk: t[kk] for kk in ('s', 'k', 'unrouted', 'passed')} for t in steps]
-            for t in summary:
-                t['unrouted'] = -1 if t['unrouted'] is None else t['unrouted']
-            return {'steps': steps, 'best': min(ok, key=lambda t: (t['k'], t['s'])) if ok and stop != 'immutable input mandatory rules' else None,
-                    'verdict': stop if stop == 'immutable input mandatory rules' else verdict(summary, size), 'stop': stop}
+            return finish(stop)
     # Retain low-density/virtual diagnostics, with their own explicit budget.
     # The injected driver also bounds each child, so a step cannot overrun it.
     if diagnostic_budget is not None:
@@ -274,8 +322,8 @@ def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, 
             stop = 'time budget %.0f s' % budget
             break
         result = step(sch.s, board_scale(with_halos(pr, sch.s)), True, 'halo')
-        if result.get('status') == 'immutable-input':
-            stop = 'immutable input mandatory rules'
+        if terminal_stop(result):
+            stop = terminal_stop(result)
             break
         sch.report(result['passed'])
     passed = [t for t in steps if t['passed']]
@@ -289,17 +337,12 @@ def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, 
                 stop = 'time budget %.0f s' % budget
                 break
             t = step(outline_s(pr, k, best, k_floor), k, False, 'outline')
-            if t.get('status') == 'immutable-input':
-                stop = 'immutable input mandatory rules'
+            if terminal_stop(t):
+                stop = terminal_stop(t)
                 break
             if t['passed']:
                 hi = k
             else:
                 lo = k
             k = (lo + hi) / 2
-    ok = [t for t in steps if t['passed']]
-    summary = [{kk: t[kk] for kk in ('s', 'k', 'unrouted', 'passed')} for t in steps]
-    for t in summary:
-        t['unrouted'] = -1 if t['unrouted'] is None else t['unrouted']
-    return {'steps': steps, 'best': min(ok, key=lambda t: (t['k'], t['s'])) if ok and stop != 'immutable input mandatory rules' else None,
-            'verdict': stop if stop == 'immutable input mandatory rules' else verdict(summary, size), 'stop': stop}
+    return finish(stop)
