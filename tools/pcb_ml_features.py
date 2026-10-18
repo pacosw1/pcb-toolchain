@@ -7,10 +7,18 @@ net, in millimeters; interior motion can change it while HPWL stays constant.
 """
 from collections import Counter
 from decimal import Decimal
+from functools import lru_cache
 from itertools import combinations
+import _imp
+import hashlib
+from importlib.machinery import BuiltinImporter, ExtensionFileLoader
 import math
+import os
 from pathlib import Path
+import platform
 import re
+import sys
+import sysconfig
 
 from pcb_ml_data import artifact_identity
 from placer.dru import _tokens, _tree
@@ -45,20 +53,157 @@ QUANTITY_CONTRACTS = {
 }
 
 
+@lru_cache(maxsize=16)
+def _runtime_digest(path, identity):
+    """Hash each unchanged runtime artifact once, without caching path changes."""
+    source = Path(path)
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    if _runtime_stat(source) != identity:
+        raise ValueError("numeric producer runtime changed while hashing: " + str(source))
+    return digest
+
+
+def _runtime_stat(path):
+    info = path.stat()
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def _builtin_python_runtime(executable):
+    """Resolve actual Linux libpython mapping, not a build-time linker alias.
+
+    Debian can expose Py_ENABLE_SHARED=1 while embedding builtins in the
+    executable. A development-library filename alone cannot establish where
+    this running interpreter's built-in math implementation resides.
+    """
+    try:
+        records = Path('/proc/self/maps').read_text().splitlines()
+    except OSError as error:
+        raise ValueError('built-in math containing runtime is unresolved: process mappings unavailable') from error
+    libraries, main_seen = set(), False
+    for record in records:
+        fields = record.split(None, 5)
+        if len(fields) < 5:
+            raise ValueError('built-in math containing runtime has malformed process mappings')
+        if len(fields) != 6 or not fields[5].startswith('/'):
+            continue
+        name = fields[5]
+        is_python = 'libpython' in Path(name).name and '.so' in Path(name).name
+        if ('\\' in name or name.endswith(' (deleted)')) and (is_python or name.startswith(str(executable))):
+            raise ValueError('built-in math containing runtime has an unresolved mapped file')
+        path = Path(name).resolve()
+        main_seen |= path == executable
+        if is_python:
+            libraries.add(path)
+    if not main_seen or len(libraries) > 1:
+        raise ValueError('built-in math containing runtime is missing or ambiguous in process mappings')
+    if libraries:
+        return libraries.pop(), dict(status='content_bound', source='actual Linux process libpython mapping')
+    return None, dict(status='embedded_in_interpreter', source='actual Linux process mappings contain the interpreter and no shared libpython')
+
+
+def numeric_producer():
+    """Attribute host arithmetic; this is not a portable bitwise guarantee.
+
+    CPython's sum/distance implementations and host C math can change across
+    builds. Compared contracts therefore bind the actual Python/math files,
+    available shared Python runtime and OS build, without embedding host paths.
+    This is deliberately not a transitive shared-library loader attestation.
+    Frozen execution context and exact source replay remain necessary.
+    """
+    if sys.implementation.name != "cpython":
+        raise ValueError("numeric producer is unsupported: expected attributable CPython")
+
+    def artifact(path, component):
+        if not path or not Path(path).is_file():
+            raise ValueError("numeric producer " + component + " content is unavailable")
+        path = Path(path).resolve()
+        try:
+            return dict(sha256=_runtime_digest(str(path), _runtime_stat(path)))
+        except OSError as error:
+            raise ValueError("numeric producer " + component + " content is unreadable") from error
+
+    system = os.uname()
+    context = dict(system=system.sysname, release=system.release,
+                   build=system.version, architecture=system.machine)
+    if any(not isinstance(value, str) or not value for value in context.values()):
+        raise ValueError("numeric producer OS build/architecture is unresolved")
+    binaries = dict(interpreter=artifact(sys.executable, "interpreter"))
+    spec, math_file = getattr(math, '__spec__', None), getattr(math, '__file__', None)
+    builtin = (spec is not None and spec.name == 'math' and spec.origin == 'built-in'
+               and spec.loader is BuiltinImporter and 'math' in sys.builtin_module_names
+               and bool(_imp.is_builtin('math')))
+    if math_file is None and builtin:
+        math_module = dict(kind='built-in', origin='built-in', loader=BuiltinImporter.__module__ + '.' + BuiltinImporter.__qualname__,
+                           source='CPython builtin import table and BuiltinImporter module spec')
+    elif (spec is not None and spec.name == 'math' and type(spec.loader) is ExtensionFileLoader
+          and math_file is not None and isinstance(spec.origin, str)
+          and Path(math_file).resolve() == Path(spec.origin).resolve()):
+        binaries['math_extension'] = artifact(math_file, 'math extension')
+        math_module = dict(kind='extension', loader=ExtensionFileLoader.__module__ + '.' + ExtensionFileLoader.__qualname__)
+    else:
+        raise ValueError('numeric producer math origin is neither a verified builtin nor an attributable extension')
+    shared = bool(sysconfig.get_config_var("Py_ENABLE_SHARED"))
+    framework = sysconfig.get_config_var("PYTHONFRAMEWORK")
+    library = sysconfig.get_config_var("LDLIBRARY")
+    directory = sysconfig.get_config_var("PYTHONFRAMEWORKPREFIX" if framework else "LIBDIR")
+    if builtin and math_file is None and system.sysname == 'Linux':
+        candidate, shared_runtime = _builtin_python_runtime(Path(sys.executable).resolve())
+        if candidate is not None:
+            binaries['shared_python_runtime'] = artifact(candidate, 'shared Python runtime')
+    elif shared or framework:
+        candidate = Path(directory) / library if directory and library else None
+        if candidate is not None and candidate.is_file():
+            binaries["shared_python_runtime"] = artifact(candidate, "shared Python runtime")
+            shared_runtime = dict(status="content_bound")
+        else:
+            shared_runtime = dict(status="unknown", cause="configured shared Python runtime file cannot be resolved")
+    else:
+        shared_runtime = dict(status="not_separately_linked", source="CPython build configuration")
+    if math_module['kind'] == 'built-in':
+        if shared_runtime['status'] == 'unknown':
+            raise ValueError('built-in math containing shared Python runtime cannot be resolved')
+        math_module['containing_binaries'] = [name for name in ('interpreter', 'shared_python_runtime') if name in binaries]
+    # Apple system math may be delivered in a dyld shared cache. Attribute its
+    # OS build rather than pretending that a guessed libm filename was hashed.
+    provider = dict(scope="OS-build context; transitive C math libraries are not individually attested")
+    if system.sysname == "Darwin":
+        version_file = Path("/System/Library/CoreServices/SystemVersion.plist")
+        if version_file.is_file():
+            provider["system_version"] = artifact(version_file, "OS system-version record")
+        else:
+            provider["cause"] = "OS system-version record is unavailable; only kernel build is attributed"
+    elif system.sysname == "Linux":
+        name, version = platform.libc_ver()
+        provider["libc"] = dict(name=name or None, version=version or None)
+        if not name or not version:
+            provider["cause"] = "C runtime name/version could not be resolved; only OS build is attributed"
+    else:
+        provider["cause"] = "C math provider context is unresolved on this OS"
+    return dict(id="iot-lab.pcb-ml-host-numeric-producer.v1", version=1,
+        scope="runtime-bound attribution, not portable bitwise equivalence; require frozen runtime and exact replay",
+        implementation=sys.implementation.name, python_build=sys.version,
+        float_abi={name:getattr(sys.float_info, name) for name in
+                   ("radix", "mant_dig", "dig", "epsilon", "rounds", "max_exp", "min_exp")},
+        byteorder=sys.byteorder, os=context, binaries=binaries, math_module=math_module,
+        shared_python_runtime=shared_runtime, c_math_provider=provider,
+        operations=dict(coordinates="float parsing; math.radians/sin/cos in native source order",
+            distances="math.dist and math.hypot", reductions="builtins.sum and math.fsum in native source order"))
+
+
 def feature_contract(adapter):
     if adapter not in ("routing", "workflow"):
         raise ValueError("unsupported feature adapter: " + str(adapter))
-    import hashlib
     tools = Path(__file__).resolve().parent
     columns = ROUTING_FEATURES if adapter == "routing" else WORKFLOW_FEATURES
     result = dict(id="iot-lab.pcb-ml-predecision." + adapter,
-                version=3 if adapter == "routing" else 1, adapter=adapter,
+                version=4 if adapter == "routing" else 1, adapter=adapter,
                 features=[dict(name=name, unit=unit) for name, unit in columns],
                 implementation_sha256={"tools/" + name: hashlib.sha256((tools / name).read_bytes()).hexdigest()
                                        for name in IMPLEMENTATIONS})
     if adapter == "routing":
         # Static measurement semantics only: no outcome values enter features.
         result["quantity_contracts"] = {name:dict(value) for name,value in QUANTITY_CONTRACTS.items()}
+        result["numeric_producer"] = numeric_producer()
     return result
 
 
