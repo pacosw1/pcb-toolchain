@@ -180,7 +180,7 @@ class RoutingTrialTests(unittest.TestCase):
         self.native.parent.mkdir(parents=True,exist_ok=True)
         for extension in ('.kicad_pcb','.kicad_sch','.kicad_pro','.kicad_dru'):
             self.native.with_suffix(extension).write_text('synthetic protocol input '+extension)
-        for name in ('fastroute_job.py','route_features.py'):
+        for name in ('fastroute_job.py','route_features.py','route_rule_coverage.py'):
             path=self.root/'tools'/name;path.parent.mkdir(parents=True,exist_ok=True)
             path.write_text('# synthetic producer identity; never executed\n')
         self.json_file(self.root/'tools/route-features.json',dict(features=dict(routing_rules=dict(on=True,repair_iterations=2))))
@@ -220,7 +220,7 @@ class RoutingTrialTests(unittest.TestCase):
         return routing_trial.prepare(self.root,self.native,self.root/f'run-{self.counter}/operation/router',
             self.config if config is None else config,20,board='TRIAL')
 
-    def router_output(self,prepared,status='complete'):
+    def router_output(self,prepared,status='complete',*,coverage_status='passed',solver_launched=True):
         output=Path(prepared['output']);output.mkdir()
         config=prepared['config']
         configuration=dict(board=str(self.native),outdir=str(output),passes=config['passes'],
@@ -230,7 +230,31 @@ class RoutingTrialTests(unittest.TestCase):
         self.json_file(output/'input-manifest.json',dict(configuration=configuration,
             board_sha256=pcb_operations.sha(self.native),router_sha256=pcb_operations.sha(self.executables['router']),
             features=prepared['policy']['effort']['feature_policy']))
+        # Exercise the receipt protocol, not native/DSN semantic coverage. The
+        # real pure coverage checker has its own source/model counterexamples.
+        dsn=output/'router-model.dsn';dsn.write_text('(pcb "synthetic receipt protocol model")\n')
+        # board.dsn is a replaceable compatibility view; stage evidence and the
+        # actual -de argument bind the immutable router-model snapshot instead.
+        shutil.copyfile(dsn,output/'board.dsn')
+        coverage_inputs=[dsn,self.native,self.native.with_suffix('.kicad_dru'),
+            self.native.with_suffix('.kicad_pro'),self.native.parent.parent/'gate.json',
+            self.root/'tools/route_rule_coverage.py',self.root/'tools/route_features.py']
+        coverage=dict(schema='iot-lab.route-rule-coverage.v1',status=coverage_status,
+            solver_launch_allowed=coverage_status=='passed',qualified=False,
+            cause='synthetic admitted coverage' if coverage_status=='passed' else 'RP-001: stitching unsupported',
+            active_nets=config['only_nets'],job_layers=config['layers'],requirements=[],
+            inputs={str(p):pcb_operations.sha(p) for p in coverage_inputs},
+            dsn=dict(path=str(dsn),sha256=pcb_operations.sha(dsn)))
+        coverage_path=self.json_file(output/'rule-coverage.json',coverage)
+        if not solver_launched:
+            self.json_file(output/'outcome.json',dict(status='blocked',cause=coverage['cause'],
+                coverage=str(coverage_path),coverage_sha256=pcb_operations.sha(coverage_path),
+                blocked_stage='rest',stage_solver_launched=False,solver_launched=False,qualified=False))
+            return output
         self.json_file(output/'effective-configuration.json',dict(configuration=configuration,
+            command=[str(self.executables['router']),'-de',str(dsn),'-do',str(output/'router.ses')],
+            dsn_sha256=pcb_operations.sha(dsn),
+            rule_coverage=dict(path=str(coverage_path),sha256=pcb_operations.sha(coverage_path)),
             backend_resources=dict(global_rayon_threads=2,autorouter_workers=2,optimizer_workers=2)))
         candidate=output/'routed.kicad_pcb';candidate.write_text('synthetic routed candidate; requires native gate\n')
         self.json_file(output/'outcome.json',dict(status=status,board_sha256=pcb_operations.sha(candidate),optimizer=config['optimizer']))
@@ -269,6 +293,8 @@ class RoutingTrialTests(unittest.TestCase):
         self.assertEqual(policy['effort']['router_timeout_s'],8)
         self.assertEqual(policy['effort']['timeout_s'],20)
         self.assertFalse(policy['effort']['feature_policy']['routing_rules']['on'])
+        coverage=self.root/'tools/route_rule_coverage.py'
+        self.assertEqual(policy['inputs'][str(coverage)],pcb_operations.sha(coverage))
         self.assertFalse(policy['controls']['effective_configuration_verified'])
         self.assertEqual(json.loads(Path(prepared['policy_path']).read_text()),policy)
         self.assertEqual((Path(prepared['output']).parent/'execution-context.json').read_bytes(),self.context.read_bytes())
@@ -316,7 +342,7 @@ class RoutingTrialTests(unittest.TestCase):
 
     def test_finalize_rejects_output_configuration_tool_and_context_mutations(self):
         for target in ('input-manifest.json','effective-configuration.json','missing-effective',
-                       'routed.kicad_pcb','router','original-context','retained-context'):
+                       'routed.kicad_pcb','router','coverage-tool','original-context','retained-context'):
             with self.subTest(target=target):
                 prepared=self.prepare();output=self.router_output(prepared)
                 if target in ('input-manifest.json','effective-configuration.json'):
@@ -327,13 +353,108 @@ class RoutingTrialTests(unittest.TestCase):
                 elif target=='missing-effective':
                     (output/'effective-configuration.json').unlink();original=None;path=None
                 else:
-                    path=(self.executables['router'] if target=='router' else self.context if target=='original-context'
+                    path=(self.executables['router'] if target=='router' else self.root/'tools/route_rule_coverage.py' if target=='coverage-tool'
+                          else self.context if target=='original-context'
                           else output.parent/'execution-context.json' if target=='retained-context' else output/target)
                     original=path.read_bytes();path.write_bytes(original+b'changed bytes')
                 try:
                     with self.assertRaises(ValueError):routing_trial.finalize(prepared,returncode=0)
                 finally:
                     if original is not None:path.write_bytes(original)
+
+    def test_finalize_rejects_missing_or_tampered_stage_coverage_seal(self):
+        for mutation in ('missing-binding','missing-receipt','tampered-receipt','additional-unsealed-stage'):
+            with self.subTest(mutation=mutation):
+                prepared=self.prepare();output=self.router_output(prepared)
+                effective=output/'effective-configuration.json'
+                if mutation in ('missing-binding','additional-unsealed-stage'):
+                    value=json.loads(effective.read_text());value.pop('rule_coverage')
+                    self.json_file(output/'effective-configuration-fast.json' if mutation=='additional-unsealed-stage' else effective,value)
+                elif mutation=='missing-receipt':
+                    (output/'rule-coverage.json').unlink()
+                else:
+                    coverage=output/'rule-coverage.json'
+                    value=json.loads(coverage.read_text());value['cause']='changed after stage admission'
+                    self.json_file(coverage,value)
+                with self.assertRaisesRegex(ValueError,'sealed rule-coverage admission'):
+                    routing_trial.finalize(prepared,returncode=0)
+
+    def test_finalize_requires_the_exact_admitted_router_dsn(self):
+        for mutation in ('dsn-bytes','effective-dsn-hash'):
+            with self.subTest(mutation=mutation):
+                prepared=self.prepare();output=self.router_output(prepared)
+                if mutation=='dsn-bytes':
+                    (output/'router-model.dsn').write_text('(pcb "different actual router model")\n')
+                else:
+                    path=output/'effective-configuration.json';value=json.loads(path.read_text())
+                    value['dsn_sha256']='0'*64;self.json_file(path,value)
+                with self.assertRaisesRegex(ValueError,'actual router model'):
+                    routing_trial.finalize(prepared,returncode=0)
+
+    def test_compatibility_dsn_replacement_preserves_immutable_stage_binding(self):
+        prepared=self.prepare();output=self.router_output(prepared)
+        model=output/'router-model.dsn';original=pcb_operations.sha(model)
+        (output/'board.dsn').write_text('(pcb "later repair compatibility export")\n')
+        result=routing_trial.finalize(prepared,returncode=0)
+        self.assertEqual(result['status'],'passed');self.assertTrue(result['controls_verified'])
+        self.assertEqual(pcb_operations.sha(model),original)
+        self.assertNotEqual(pcb_operations.sha(output/'board.dsn'),original)
+        self.assertTrue(result['native_gate_required']);self.assertFalse(result['qualified'])
+
+    def test_actual_command_must_use_exact_admitted_dsn_path_even_with_identical_bytes(self):
+        prepared=self.prepare();output=self.router_output(prepared)
+        effective=output/'effective-configuration.json';value=json.loads(effective.read_text())
+        self.assertEqual(pcb_operations.sha(output/'board.dsn'),value['dsn_sha256'])
+        value['command'][value['command'].index('-de')+1]=str(output/'board.dsn')
+        self.json_file(effective,value)
+        with self.assertRaisesRegex(ValueError,'command does not use its admitted model'):
+            routing_trial.finalize(prepared,returncode=0)
+
+    def test_pre_solver_coverage_block_preserves_cause_and_unknown_controls(self):
+        prepared=self.prepare()
+        output=self.router_output(prepared,coverage_status='blocked',solver_launched=False)
+        original=(output/'outcome.json').read_bytes()
+        result=routing_trial.finalize(prepared,returncode=4)
+        self.assertEqual(result['status'],'failed');self.assertFalse(result['controls_verified'])
+        self.assertFalse(result['solver_launched']);self.assertIsNone(result['candidate'])
+        self.assertFalse(result['qualified']);self.assertIn('RP-001: stitching unsupported',result['cause'])
+        self.assertEqual((output/'outcome.json').read_bytes(),original)
+        self.assertFalse((output/'routed.kicad_pcb').exists())
+        self.assertFalse(list(output.glob('effective-configuration*.json')))
+        policy=json.loads(Path(prepared['policy_path']).read_text())
+        self.assertEqual(policy['controls']['status'],'blocked')
+        self.assertFalse(policy['controls']['effective_configuration_verified'])
+        self.assertFalse(policy['controls']['solver_launched'])
+        self.assertEqual(policy['controls']['rule_coverage'][0]['sha256'],pcb_operations.sha(output/'rule-coverage.json'))
+        self.assertNotIn('routed_track_length_mm',json.loads(original))
+        self.assertNotIn('routed_via_count',json.loads(original))
+
+    def test_later_stage_block_retains_whole_job_solver_history_without_candidate_promotion(self):
+        prepared=self.prepare();output=self.router_output(prepared)
+        model=output/'router-model-rest.dsn';model.write_text('(pcb "later blocked stage model")\n')
+        coverage=json.loads((output/'rule-coverage.json').read_text())
+        coverage['inputs'].pop(str(output/'router-model.dsn'))
+        coverage['inputs'][str(model)]=pcb_operations.sha(model)
+        coverage.update(status='blocked',solver_launch_allowed=False,cause='later stage unsupported',
+            dsn=dict(path=str(model),sha256=pcb_operations.sha(model)))
+        coverage_path=self.json_file(output/'rule-coverage-rest.json',coverage)
+        outcome=self.json_file(output/'outcome.json',dict(status='blocked',cause=coverage['cause'],
+            coverage=str(coverage_path),coverage_sha256=pcb_operations.sha(coverage_path),
+            blocked_stage='rest',stage_solver_launched=False,solver_launched=True,qualified=False))
+        original=outcome.read_bytes()
+        result=routing_trial.finalize(prepared,returncode=4)
+        self.assertEqual(result['status'],'failed');self.assertFalse(result['controls_verified'])
+        self.assertTrue(result['solver_launched']);self.assertIsNone(result['candidate'])
+        self.assertTrue((output/'routed.kicad_pcb').is_file())
+        self.assertEqual(outcome.read_bytes(),original)
+        self.assertFalse(json.loads(original)['stage_solver_launched'])
+        self.assertTrue(json.loads(original)['solver_launched'])
+
+    def test_success_exit_cannot_promote_blocked_rule_coverage(self):
+        prepared=self.prepare()
+        self.router_output(prepared,coverage_status='blocked',solver_launched=False)
+        with self.assertRaisesRegex(ValueError,'success contradicts blocked rule coverage'):
+            routing_trial.finalize(prepared,returncode=0)
 
     def test_explicit_route_keeps_the_existing_writer_without_solver_context(self):
         flow=workflows.WorkflowTests();flow.setUp();self.addCleanup(flow.tearDown)

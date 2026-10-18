@@ -108,7 +108,7 @@ def run(args):
     paths = set(workflow_runtime_files(ROOT / 'tools'))
     paths.update(ROOT / 'tools' / name for name in (
         'pcb_ml_smoke.py', 'native_workflow_smoke.py', 'routing_trial_smoke.py',
-        'real_board_regression.py', 'pcb_test_fixture.py', 'pcbtool.py'))
+        'real_board_regression.py', 'pcb_test_fixture.py', 'pcbtool.py', 'route_rule_coverage.py'))
     result = dict(schema=SCHEMA, status='failed', qualified=False, adopt_model=False,
                   cause='proof incomplete', cases=[], ml_runs=[], cleanup=[],
                   scope='synthetic actual-CAD/router and ML integration; no routing improvement or physical qualification',
@@ -181,7 +181,10 @@ def run(args):
                     shutil.copy2(source.with_suffix(ext), native.with_suffix(ext))
                 before = {str(native.with_suffix(ext)): sha(native.with_suffix(ext)) for ext in
                           ('.kicad_pcb', '.kicad_sch', '.kicad_pro', '.kicad_dru')}
-                policy = dict(schema='iot-lab.routing-policy.v1', layers=['F.Cu', 'B.Cu'],
+                # All four pads remain the front-only SMD pads from
+                # native_workflow_smoke.generate; fixture() removes every track
+                # and zone. These planar passive topologies need no transition.
+                policy = dict(schema='iot-lab.routing-policy.v1', layers=['F.Cu'],
                               only_nets=selected, passes=40, threads=1, timeout_s=30,
                               optimizer='if-routed', max_repairs=0)
                 lean.atomic_json(workspace / 'policy.json', policy)

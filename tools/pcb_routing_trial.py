@@ -217,7 +217,7 @@ def prepare(root, native, output, config, total_timeout_s, *, board=None):
     if not script.is_file():
         raise ValueError('existing fastroute job producer is missing from the snapshot')
     features = _features(root, board)
-    inputs = {str(path): sha(path) for path in (script, root/'tools/route_features.py', root/'tools/route-features.json',
+    inputs = {str(path): sha(path) for path in (script, root/'tools/route_features.py', root/'tools/route_rule_coverage.py', root/'tools/route-features.json',
               root/'hardware-design/boards'/board/'gate.json', Path(__file__).resolve(), python, router, kicad)}
     inputs.update(gate['inputs'])
     for extension in ('.kicad_pcb', '.kicad_sch', '.kicad_pro', '.kicad_dru'):
@@ -316,6 +316,23 @@ def finalize(prepared, *, returncode):
     if features != policy['effort']['feature_policy']:
         raise ValueError('actual route features differ from the source-bound policy')
     configurations = sorted(output.glob('effective-configuration*.json'))
+    blocked = []
+    for coverage_path in sorted(output.glob('rule-coverage*.json')):
+        coverage = json.loads(coverage_path.read_text())
+        if coverage.get('status') == 'blocked' and coverage.get('solver_launch_allowed') is False:
+            for name, digest in coverage.get('inputs', {}).items():
+                if (sha(name) if Path(name).is_file() else None) != digest:
+                    raise ValueError('rule coverage input changed after admission: ' + name)
+            blocked.append(dict(path=str(coverage_path), sha256=sha(coverage_path), cause=coverage.get('cause')))
+    if blocked:
+        if returncode == 0:
+            raise ValueError('solver success contradicts blocked rule coverage')
+        policy['controls'].update(status='blocked', effective_configuration_verified=False, tool_exit=returncode,
+            rule_coverage=blocked, solver_launched=bool(configurations))
+        lean.atomic_json(prepared['policy_path'], policy)
+        return dict(status='failed', controls_verified=False, candidate=None, qualified=False,
+                    cause='router rule coverage blocked before solver: ' + '; '.join(str(x['cause']) for x in blocked),
+                    rule_coverage=blocked, solver_launched=bool(configurations))
     if not configurations:
         if returncode == 0:
             raise ValueError('successful solver lacks actual backend worker-cap evidence')
@@ -331,6 +348,24 @@ def finalize(prepared, *, returncode):
         if any(resources.get(key) != config['threads'] for key in
                ('global_rayon_threads', 'autorouter_workers', 'optimizer_workers')):
             raise ValueError('actual router worker caps differ from the controlled policy')
+        binding = value.get('rule_coverage', {})
+        coverage_path = Path(binding.get('path', ''))
+        if (coverage_path.parent != output or not coverage_path.is_file()
+                or sha(coverage_path) != binding.get('sha256')):
+            raise ValueError('router stage lacks sealed rule-coverage admission')
+        coverage = json.loads(coverage_path.read_text())
+        if coverage.get('status') != 'passed' or coverage.get('solver_launch_allowed') is not True:
+            raise ValueError('router stage ran without passing rule coverage')
+        dsn = coverage.get('dsn', {})
+        if not Path(dsn.get('path', '')).is_file() or sha(dsn['path']) != dsn.get('sha256') or dsn.get('sha256') != value.get('dsn_sha256'):
+            raise ValueError('rule coverage differs from actual router model')
+        command = value.get('command', [])
+        if (not isinstance(command, list) or command.count('-de') != 1
+                or command.index('-de') + 1 >= len(command) or command[command.index('-de') + 1] != dsn['path']):
+            raise ValueError('router command does not use its admitted model')
+        for name, digest in coverage.get('inputs', {}).items():
+            if (sha(name) if Path(name).is_file() else None) != digest:
+                raise ValueError('router rule-coverage input changed: ' + name)
     outcome_path = output/'outcome.json'
     outcome = json.loads(outcome_path.read_text()) if outcome_path.is_file() else None
     candidate = output/'routed.kicad_pcb'

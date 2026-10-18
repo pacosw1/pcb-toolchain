@@ -60,6 +60,7 @@ import pcbnew
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import freeroute  # noqa: E402  (restrict_dsn)
 import route_features  # noqa: E402  (feature switches, tools/route-features.json)
+import route_rule_coverage  # mandatory actual-DSN admission, independent of feature flags
 import run_record  # noqa: E402  (W5 run record: OUTDIR/run.jsonl, one action per line; tools/run_record.py OUTDIR)
 import route_snapshots  # noqa: E402  (W12 checkpoint snapshots: OUTDIR/snapshots/NNNN.ses + .json + .png)
 import lean_workflow as lean
@@ -651,6 +652,8 @@ def _main(a=None):
         return routing_rules.layer_keepouts(rr_spec, job_layers, outline, fills, discs,
                                             float(feat["routing_rules"].get("keepout_grid_mm", 0.1)), fast)
 
+    solver_launches = []
+
     def route_pass(tag, stage_nets, keep, rip=frozenset(), extra=None):
         """One router run over stage_nets (the other nets are ignored classes; existing copper stays locked).
         rip: nets whose copper of this job (stage copper) is unlocked too (the repair pass). extra (W10): per-stage
@@ -745,15 +748,51 @@ def _main(a=None):
             n_keep += sum(len(v) for v in extra["keepouts"].values())
             text = routing_rules.add_keepouts(text, extra["keepouts"], ("wire_keepout", "via_keepout"), extra.get("name", "iot_stage"))
         text, ignored_classes = dsn_skip.exclude(text, stage_nets)
+        with open(dsn, "w") as f:
+            f.write(text)
+        # Compatibility board.dsn may later become the latest repair model.
+        # The exact bytes used by each invocation keep their own immutable path.
+        model_dsn = os.path.join(a.outdir, f'router-model{sfx}.dsn')
+        with open(model_dsn, 'x') as f:
+            f.write(text)
+        native_classes = {str(n): str(v.GetNetClassName()) for n, v in b.GetNetsByName().items()}
+        native_classes.setdefault('', 'Default')
+        obstacle_set = set()
+        for fp in b.GetFootprints():
+            for pad in fp.Pads():
+                kind = ('SMD' if pad.GetAttribute() == pcbnew.PAD_ATTRIB_SMD else
+                        'NPTH, mechanical' if pad.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH else 'Through-hole')
+                obstacle_set.add((str(pad.GetNetname()), 'Pad', kind))
+        for track in b.GetTracks():
+            obstacle_set.add((str(track.GetNetname()), 'Via' if track.GetClass() == 'PCB_VIA' else 'Track', ''))
+        for zone in b.Zones():
+            obstacle_set.add((str(zone.GetNetname()), 'Zone', ''))
+        obstacles = [dict(NetName=n, Type=t, Pad_Type=p) for n, t, p in sorted(obstacle_set)]
+        gate_path = os.path.join(feat['_board_dir'], 'gate.json') if feat.get('_board_dir') else None
+        coverage_path = os.path.join(a.outdir, f'rule-coverage{sfx}.json')
+        try:
+            coverage = route_rule_coverage.check_files(a.board, base, model_dsn, active_nets=stage_nets,
+                net_classes=native_classes, obstacles=obstacles, layers=a.layers.split(','), gate=gate_path)
+        except (ValueError, OSError) as error:
+            coverage = dict(schema=route_rule_coverage.SCHEMA, status='blocked', solver_launch_allowed=False,
+                cause=str(error), qualified=False)
+        lean.atomic_json(coverage_path, coverage)
+        if not coverage['solver_launch_allowed']:
+            progress.write('rule coverage blocked: ' + coverage['cause'])
+            lean.atomic_json(os.path.join(a.outdir, 'outcome.json'), dict(status='blocked',
+                cause='router rule coverage: ' + coverage['cause'], coverage=coverage_path,
+                coverage_sha256=lean.digest(coverage_path), blocked_stage=tag,
+                stage_solver_launched=False, solver_launched=bool(solver_launches), qualified=False))
+            print('STUCK router rule coverage: ' + coverage['cause'] + '; see ' + coverage_path, flush=True)
+            sys.exit(4)
+        print('PASS router rule coverage; evidence=' + coverage_path, flush=True)
         if ignored_classes:
             help_result = lean.run_stage([BIN, '--help'], stage='net-class-capability', event_file=phases,
                                          deadline=lean.deadline_after(10), stdout=subprocess.PIPE,
                                          stderr=subprocess.PIPE, text=True)
             if help_result.returncode or 'router.autorouter.ignore_net_classes' not in help_result.stdout:
                 sys.exit('fastroute_job: backend does not support safe net-class exclusion')
-        with open(dsn, "w") as f:
-            f.write(text)
-        cmd = [BIN, "-de", dsn, "-do", ses, "-mp", str(a.passes), f"--router.min_trace_width_um={min_um}",
+        cmd = [BIN, "-de", model_dsn, "-do", ses, "-mp", str(a.passes), f"--router.min_trace_width_um={min_um}",
                f"--router.copper_to_edge_clearance_um={edge_um}",
                f"--report={rep}", "--diagnose"] + [f"--{kv}" for kv in a.set]
         if rules and not any(k.split('=', 1)[0] == 'router.scoring.via_costs' for k in a.set):
@@ -783,7 +822,8 @@ def _main(a=None):
             cmd += lean.optimizer_options(a.optimizer)
         if a.threads:
             cmd += [f'--router.autorouter.max_threads={a.threads}', f'--router.optimizer.max_threads={a.threads}']
-        effective = dict(configuration=vars(a), features=feat, command=cmd, dsn_sha256=lean.digest(dsn),
+        effective = dict(configuration=vars(a), features=feat, command=cmd, dsn_sha256=lean.digest(model_dsn),
+                         rule_coverage=dict(path=coverage_path, sha256=lean.digest(coverage_path)),
                          backend_policy=backend_policy,
                          feature_sources={p: lean.digest(p) for p in sources if os.path.isfile(p)},
                          environment={k: os.environ.get(k) for k in ('ROUTE_FEATURES','ROUTE_BOARD','ROUTE_FEATURES_FILE')},
@@ -806,11 +846,14 @@ def _main(a=None):
         watcher.start()
         # W12 snapshots: the router's checkpoint SES every --snapshot-interval-s seconds (route_snapshots.Watcher)
         snap = route_snapshots.Watcher(ses, a.outdir, os.path.join(a.outdir, f"run{sfx}.log"), a.snapshot_interval_s,
-                                       stage='route' + sfx, t0=run_record.clock(a.outdir), dsn=dsn).start()
+                                       stage='route' + sfx, t0=run_record.clock(a.outdir), dsn=model_dsn).start()
+        def solver_started(proc):
+            owner['proc'] = proc
+            solver_launches.append(tag)
         with open(os.path.join(a.outdir, f"run{sfx}.log"), "w") as lf:
             rc = lean.run_stage(cmd, stage=('router-screen' if a.optimizer != 'always' else 'router') + sfx,
                                 event_file=phases, deadline=deadline, env=router_env,
-                                on_start=lambda p: owner.__setitem__('proc', p),
+                                on_start=solver_started,
                                 stdout=lf, stderr=subprocess.STDOUT).returncode
         stall_stop.set()
         watcher.join(5)
