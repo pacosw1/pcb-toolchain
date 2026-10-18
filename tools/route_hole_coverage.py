@@ -1,4 +1,4 @@
-"""Prove a narrow PTH hole rule from actual exported circular pin obstacles.
+"""Prove a narrow PTH hole rule from actual exported pin obstacles.
 
 This is a model-containment check, never a native electrical acceptance. It
 covers new other-net tracks only. The caller must independently preserve all
@@ -12,9 +12,10 @@ import re
 from pcb_search.block_bindings import child, footprints
 import route_features
 
-SCHEMA = 'iot-lab.route-hole-coverage.v1'
+SCHEMA = 'iot-lab.route-hole-coverage.v2'
 PAD_FIELDS = {'reference','pad','net','side','footprint_position_mm','footprint_rotation_deg',
               'position_mm','size_mm','drill_mm','drill_offset_mm','shape','layers'}
+PHYSICAL_FIELDS = {'identity','rotation_deg','export_pin'}
 UNITS = {'mm':Decimal(1),'um':Decimal('0.001'),'mil':Decimal('0.0254'),'inch':Decimal('25.4'),'in':Decimal('25.4')}
 
 
@@ -73,7 +74,7 @@ def _parse(text):
 
 
 def native_pth_pads(native_path):
-    """Exact native source rows for the supported front, circular PTH subset.
+    """Exact native source rows for front circular-drill circle/rectangle PTH.
 
     Unsupported PTH geometry raises; NPTH pads are deliberately outside this
     collector's scope. A broader selector must not be certified using it.
@@ -92,27 +93,46 @@ def native_pth_pads(native_path):
     result=[];seen=set()
     with localcontext() as ctx:
         ctx.prec=max(50,len(text));ctx.traps[Inexact]=True;ctx.traps[Rounded]=True
-        for fp in footprints(native_path):
-            for pad in _children(fp['form'],'pad'):
+        for fp_index,fp in enumerate(footprints(native_path)):
+            occurrences={};electrical_nets={}
+            for pad_index,pad in enumerate(_children(fp['form'],'pad')):
                 if len(pad)<4:raise ValueError('malformed native pad')
                 if pad[2] not in ('smd','thru_hole','np_thru_hole','connect'):
                     raise ValueError('unknown native pad type cannot establish hole coverage')
+                # Actual KiCad10 export names repeated numbered physical pads
+                # N,N@1,... in native pad order, including intervening SMD EPs.
+                # Position, copper and network membership are checked below;
+                # the generated suffix alone never establishes identity.
+                number=pad[1];ordinal=occurrences.get(number,0)
+                occurrences[number]=ordinal+1
+                export_pin=number+('@'+str(ordinal) if ordinal else '')
+                if number and pad[2]!='np_thru_hole':
+                    net=child(pad,'net')
+                    if number in electrical_nets and electrical_nets[number]!=net:
+                        raise ValueError('repeated native pad number has conflicting electrical membership')
+                    electrical_nets[number]=net
                 if pad[2]!='thru_hole':continue
                 ref=fp['props'].get('Reference');number=pad[1]
-                if not ref or not number or (ref,number) in seen:raise ValueError('ambiguous native PTH identity')
-                seen.add((ref,number))
+                uuid=child(pad,'uuid')
+                if uuid is not None and (len(uuid)!=1 or not isinstance(uuid[0],str) or not uuid[0]):
+                    raise ValueError('ambiguous native physical pad UUID')
+                identity=uuid[0] if uuid else 'index:'+str(fp_index)+':'+str(pad_index)
+                if not ref or not number or identity in seen:raise ValueError('ambiguous native PTH identity')
+                seen.add(identity)
                 if child(fp['form'],'layer')!=['F.Cu']:raise ValueError('mirrored/backside PTH placement is unsupported')
-                if pad[3]!='circle':raise ValueError('only circular native PTH copper is supported')
+                if pad[3] not in ('circle','rect'):raise ValueError('only circle/rectangle native PTH copper is supported')
                 drill=child(pad,'drill')
                 if not isinstance(drill,list) or len(drill)!=1:raise ValueError('slots or offset PTH drills are unsupported')
-                if any(_children(pad,key) for key in ('offset','primitives','options')):
+                if any(_children(pad,key) for key in ('offset','primitives','options','rect_delta',
+                        'chamfer_ratio','chamfer','roundrect_rratio')):
                     raise ValueError('custom or offset native PTH geometry is unsupported')
                 size=_pair(child(pad,'size'));diameter=_d(drill[0])
-                if size[0]!=size[1] or diameter<=0 or size[0]<=diameter:raise ValueError('invalid circular native PTH dimensions')
+                if (pad[3]=='circle' and size[0]!=size[1]) or diameter<=0 or min(size)<=diameter:
+                    raise ValueError('invalid native PTH dimensions')
                 at=child(pad,'at')
                 if not isinstance(at,list) or len(at) not in (2,3):raise ValueError('missing native PTH position')
                 local=_pair(at[:2]);rotation=_angle(fp['pose'][2])
-                if len(at)==3:_angle(at[2])
+                pad_rotation=_angle(at[2] if len(at)==3 else 0)
                 dx,dy=_rotate(local[0],-local[1],rotation)
                 position=[fp['pose'][0]+dx,fp['pose'][1]-dy]
                 names=child(pad,'layers')
@@ -128,6 +148,7 @@ def native_pth_pads(native_path):
                     footprint_rotation_deg=str(rotation),position_mm=[format(v,'f') for v in position],
                     size_mm=[format(v,'f') for v in size],drill_mm=[format(diameter,'f')]*2,
                     drill_offset_mm=['0','0'],shape='circle',layers=list(layers)))
+                result[-1].update(identity=identity,rotation_deg=str(pad_rotation),shape=pad[3],export_pin=export_pin)
     return result
 
 
@@ -154,15 +175,20 @@ def _pins(image):
 
 
 def inspect(dsn_text, *, pads, active_nets, layers, required_mm, clearance_floor_mm):
-    """Return covered/blocked using actual circular copper containment, no tolerance.
+    """Return covered/blocked using exact copper-plus-clearance containment.
 
     `pads` is native_pth_pads() output. Its identity/unchanged source proof and
     the DSN clearance floor come from the owning rule-coverage caller. The
-    actual circle must enclose the drill expanded by required_mm, without
-    relying on clearance to rescue insufficient annular copper.
+    The caller establishes a conservative actual wire-to-pin clearance floor
+    for every applicable DSN declaration (never a pad-only clearance). Thus an
+    expanded native circular drill must fit inside the actual pin obstacle
+    Minkowski-summed with that floor. Rectangle proofs use an inscribed disk
+    about the drill center; no rounded-corner approximation is used. V2 adds
+    physical identity and explicit clearance credit; the legacy circle-only
+    containment_slack_radius_mm remains copper-only for prior report readers.
     """
     result=dict(schema=SCHEMA,status='blocked',qualified=False,covered_pads=[],
-        scope='other-net circular PTH holes versus new tracks; preserved native source and final fresh gate required')
+        scope='other-net circular PTH drills in circle/rectangle copper versus new tracks; preserved native source and final fresh gate required')
     try:
         if not isinstance(pads,list) or not pads:raise ValueError('missing native PTH geometry')
         if (not isinstance(active_nets,list) or not active_nets or len(set(active_nets))!=len(active_nets)
@@ -211,24 +237,50 @@ def inspect(dsn_text, *, pads, active_nets, layers, required_mm, clearance_floor
                 memberships[token]=net[1]
         if not set(active_nets).issubset({v[1] for v in _children(_one(root,'network'),'net')}):
             raise ValueError('active net missing from actual DSN')
-        seen=set()
+        seen=set();physical_seen=set();export_seen=set()
+        counts={}
+        for pad in pads:
+            if isinstance(pad,dict):
+                key=(pad.get('reference'),pad.get('pad'))
+                counts[key]=counts.get(key,0)+1
         with localcontext() as ctx:
             ctx.prec=max(50,len(dsn_text)+len(str(pads)));ctx.traps[Inexact]=True;ctx.traps[Rounded]=True
             for pad in pads:
-                if not isinstance(pad,dict) or set(pad)!=PAD_FIELDS:raise ValueError('unknown native PTH geometry fields')
+                if not isinstance(pad,dict) or set(pad) not in (PAD_FIELDS,PAD_FIELDS|PHYSICAL_FIELDS):
+                    raise ValueError('unknown native PTH geometry fields')
                 key=(pad['reference'],pad['pad'])
-                if any(not isinstance(v,str) or not v for v in (*key,pad['net'])) or key in seen:
+                if any(not isinstance(v,str) or not v for v in (*key,pad['net'])):
                     raise ValueError('ambiguous native PTH reference/pad/net')
+                physical=PHYSICAL_FIELDS<=set(pad)
+                identity=pad.get('identity')
+                if physical:
+                    if not isinstance(identity,str) or not identity or identity in physical_seen:
+                        raise ValueError('missing or duplicate physical PTH identity')
+                    physical_seen.add(identity)
+                    export_pin=pad['export_pin']
+                    if (not isinstance(export_pin,str) or not re.fullmatch(re.escape(pad['pad'])+r'(?:@[1-9][0-9]*)?',export_pin)
+                            or (pad['reference'],export_pin) in export_seen):
+                        raise ValueError('ambiguous physical exported PTH pin')
+                else:
+                    if key in seen or counts[key]!=1:raise ValueError('repeated PTH requires physical source identity')
+                    export_pin=pad['pad']
+                export_seen.add((pad['reference'],export_pin))
                 seen.add(key)
                 if pad['net'] in active_nets:raise ValueError('active same-net PTH requires a different proof')
-                if pad['side']!='front' or pad['shape']!='circle':raise ValueError('mirrored or noncircular PTH is unsupported')
+                if pad['side']!='front' or pad['shape'] not in ('circle','rect'):
+                    raise ValueError('mirrored or unsupported native PTH copper')
+                if pad['shape']=='rect' and not physical:raise ValueError('rectangle requires explicit native pad rotation')
                 size=_pair(pad['size_mm']);drill=_pair(pad['drill_mm']);offset=_pair(pad['drill_offset_mm'])
-                if size[0]!=size[1] or drill[0]!=drill[1] or offset!=[0,0] or drill[0]<=0 or size[0]<=drill[0]:
-                    raise ValueError('slot, offset or malformed circular native PTH')
-                if not isinstance(pad['layers'],list) or layers[0] not in pad['layers']:
+                if ((pad['shape']=='circle' and size[0]!=size[1]) or drill[0]!=drill[1]
+                        or offset!=[0,0] or drill[0]<=0 or min(size)<=drill[0]):
+                    raise ValueError('slot, offset or malformed native PTH')
+                if (not isinstance(pad['layers'],list) or layers[0] not in pad['layers']
+                        or len(set(pad['layers']))!=len(pad['layers'])
+                        or any(v not in actual_layers for v in pad['layers'])):
                     raise ValueError('native PTH lacks routing-layer copper')
                 fp_position=_pair(pad['footprint_position_mm']);position=_pair(pad['position_mm'])
                 fp_rotation=_angle(pad['footprint_rotation_deg'])
+                native_rotation=_angle(pad['rotation_deg']) if physical else 0
                 if pad['reference'] not in places:raise ValueError('native PTH missing from DSN placement')
                 image_name,place=places[pad['reference']]
                 if (place[4]!='front' or _angle(place[5])!=fp_rotation
@@ -243,9 +295,9 @@ def inspect(dsn_text, *, pads, active_nets, layers, required_mm, clearance_floor
                 for alias,other in images.items():
                     if re.sub(r'::[0-9]+$','',alias).casefold()==base and _pins(other)!=pins:
                         raise ValueError('ambiguous importer-normalized DSN package pins')
-                if pad['pad'] not in pins:raise ValueError('native PTH missing from DSN image pins')
-                stack_name,pin_xy,_=pins[pad['pad']]
-                if memberships.get(pad['reference']+'-'+pad['pad'])!=pad['net']:
+                if export_pin not in pins:raise ValueError('native physical PTH missing from DSN image pins')
+                stack_name,pin_xy,pin_rotation=pins[export_pin]
+                if memberships.get(pad['reference']+'-'+export_pin)!=pad['net']:
                     raise ValueError('DSN PTH electrical membership differs from native')
                 if stack_name not in stacks:raise ValueError('missing DSN PTH padstack')
                 shapes=[]
@@ -254,26 +306,56 @@ def inspect(dsn_text, *, pads, active_nets, layers, required_mm, clearance_floor
                         raise ValueError('malformed DSN padstack shape')
                     form=shape[1]
                     if form[1] in (layers[0],'signal','pcb'):shapes.append(form)
-                if len(shapes)!=1 or shapes[0][0]!='circle' or len(shapes[0]) not in (3,5):
-                    raise ValueError('missing or ambiguous circular PTH obstacle on routing layer')
-                circle=shapes[0]
-                if len(circle)==5 and [_d(v) for v in circle[3:]]!=[0,0]:
-                    raise ValueError('offset DSN PTH circle is unsupported')
-                diameter=_d(circle[2])*scale
-                if diameter<=0:raise ValueError('nonpositive DSN circle')
+                if len(shapes)!=1 or shapes[0][0]!=pad['shape']:
+                    raise ValueError('missing or ambiguous source-matched PTH obstacle on routing layer')
+                shape=shapes[0]
                 dx,dy=_rotate(_d(pin_xy[0])*scale,_d(pin_xy[1])*scale,fp_rotation)
                 dsn_center=[_d(place[2])*scale+dx,-(_d(place[3])*scale+dy)]
                 displacement2=sum((a-b)**2 for a,b in zip(dsn_center,position))
-                remaining=diameter/2-drill[0]/2-required
-                if remaining<0 or displacement2>remaining**2:
-                    raise ValueError('actual exported PTH circle does not contain the expanded native drill: '+pad['reference']+'.'+pad['pad'])
+                radius=drill[0]/2+required
+                record={}
+                if shape[0]=='circle':
+                    if len(shape) not in (3,5):raise ValueError('malformed DSN PTH circle')
+                    if len(shape)==5 and [_d(v) for v in shape[3:]]!=[0,0]:
+                        raise ValueError('offset DSN PTH circle is unsupported')
+                    diameter=_d(shape[2])*scale
+                    if diameter<=0:raise ValueError('nonpositive DSN circle')
+                    remaining=diameter/2-radius
+                    effective=remaining+floor
+                    if counts[key]>1 and (diameter!=size[0] or dsn_center!=position):
+                        raise ValueError('repeated exported PTH alias does not match exact native copper geometry')
+                    covered=effective>=0 and displacement2<=effective**2
+                    record.update(dsn_radius_mm=format(diameter/2,'f'))
+                else:
+                    if len(shape)!=6:raise ValueError('malformed DSN PTH rectangle')
+                    x0,y0,x1,y1=[_d(v)*scale for v in shape[2:]]
+                    if x0>=x1 or y0>=y1 or x0!=-x1 or y0!=-y1:
+                        raise ValueError('offset or invalid DSN PTH rectangle')
+                    rotation=(fp_rotation+pin_rotation)%360
+                    # Require the actual rectangle to be exactly the source
+                    # copper, accounting for both pin and footprint rotation.
+                    w,h=x1-x0,y1-y0
+                    if ((rotation-native_rotation)%180==90):w,h=h,w
+                    if [w,h]!=size or dsn_center!=position:
+                        raise ValueError('DSN PTH rectangle differs from native copper geometry')
+                    lx,ly=_rotate(position[0]-dsn_center[0],-(position[1]-dsn_center[1]),(-rotation)%360)
+                    margin=min(lx-x0,x1-lx,ly-y0,y1-ly)
+                    remaining=margin-radius
+                    effective=remaining+floor
+                    covered=margin>=0 and effective>=0
+                    record.update(dsn_rectangle_mm=[format(v,'f') for v in (x0,y0,x1,y1)],
+                        dsn_rotation_deg=rotation,inscribed_radius_mm=format(margin,'f'))
+                if not covered:
+                    raise ValueError('actual exported PTH copper plus verified clearance does not contain the expanded native drill: '+pad['reference']+'.'+pad['pad'])
                 result['covered_pads'].append(dict(reference=pad['reference'],pad=pad['pad'],net=pad['net'],
+                    identity=identity,dsn_pin=export_pin,dsn_shape=shape[0],
                     layer=layers[0],dsn_image=image_name,dsn_padstack=stack_name,
                     dsn_center_mm=[format(v,'f') for v in dsn_center],native_center_mm=[format(v,'f') for v in position],
-                    dsn_radius_mm=format(diameter/2,'f'),native_drill_radius_mm=format(drill[0]/2,'f'),
+                    native_drill_radius_mm=format(drill[0]/2,'f'),
                     required_mm=format(required,'f'),center_displacement_squared_mm2=format(displacement2,'f'),
-                    containment_slack_radius_mm=format(remaining,'f')))
-        result.update(status='covered',cause='every other-net circular PTH expanded drill is contained in its actual DSN copper obstacle',
+                    containment_slack_radius_mm=format(remaining,'f'),credited_clearance_mm=format(floor,'f'),
+                    effective_containment_slack_mm=format(effective,'f'),**record))
+        result.update(status='covered',cause='every physical other-net PTH expanded drill is contained in its actual DSN copper obstacle plus verified wire-to-pin clearance',
             required_mm=format(required,'f'),clearance_floor_mm=format(floor,'f'))
     except (ValueError,TypeError,KeyError,ArithmeticError) as error:
         result.update(status='blocked',cause=str(error) or type(error).__name__)

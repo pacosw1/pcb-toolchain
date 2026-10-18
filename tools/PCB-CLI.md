@@ -120,6 +120,10 @@ Placement specs use `{"place":{"R1":[x,y,degrees]}}`; routes use the existing
 mutable links into canonical CAD. Historical runs/unrelated evidence are excluded.
 Source hashes detect concurrent edits. Parts, locked footprint poses, pad/net assignments, outline,
 stackup and rules remain protected; changes require an explicit design revision.
+Identity checks tolerate serialization reordering of complete keepout rule areas
+among their existing slots while preserving every area, UUID, name, geometry,
+multiplicity and nested order. Copper-zone order and other protected forms
+remain significant.
 
 For an actual bounded solver invocation, opt in with
 `tools/pcb route BOARD --router fastroute --spec POLICY.json --detach --json`.
@@ -142,12 +146,20 @@ Incomplete or unsupported applicable constraints block the solver with an
 actionable cause. Enabling the rule compiler alone does not establish coverage.
 Passing this admission check still requires the complete fresh native,
 configured and applicable semantic checks on the resulting candidate.
-Circular plated-hole clearance can be admitted only when the exact native
-pad/drill geometry and actual final DSN export prove the required containment.
-Unsupported hole shapes, same-net PTH applicability, unrepresented creepage,
-spatial selectors and rule precedence remain blocked. This admission proof
-does not replace the final native/configured checks. With configured RP-001
-checks and no stitching producer,
+For rules involving new copper, an exact layer present in the actual DSN is
+inactive only when every active net's effective layer mask excludes it. Unknown
+or wildcard layer selectors remain unsupported.
+PTH coverage supports front-side, quarter-turn pads with centred circular drills
+and circular or true rectangular copper. Each physical hole must match its
+actual final DSN pin, position, net and shape, including repeated-number thermal
+pads. The proof requires the expanded drill to fit inside the actual exported
+copper plus a conservative verified wire-to-pin clearance floor. It grants no
+same-net PTH coverage. Slots, offsets, mirrored placements, unsupported shapes,
+unrepresented creepage, spatial selectors and rule precedence remain blocked.
+Silkscreen-only constraints are unchanged only when the actual active-net masks
+permit no new vias and source/import identity guards preserve the existing
+footprints, graphics and outline. Final native/configured checks remain
+mandatory. With configured RP-001 checks and no stitching producer,
 the actual active-net layer masks must prevent new layer transitions.
 
 Controlled execution requires a host-recorded original `docker inspect` receipt

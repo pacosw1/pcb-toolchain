@@ -193,6 +193,23 @@ class CoverageTests(unittest.TestCase):
         self.assert_passed(result)
         self.assertEqual(result['requirements'][0]['disposition'], 'immutable_unchanged')
 
+    def test_exact_inactive_layer_is_irrelevant_but_active_unknown_and_wildcard_layers_block(self):
+        for layer, passed in (('B.Cu', True), ('F.Cu', False), ('In1.Cu', False), ('*.Cu', False)):
+            rules = '(version 1) (rule "no tracks" (layer "'+layer+'") (condition "A.Type == \'Track\'") (constraint disallow track))'
+            result = self.inspect(rules, dsn(mask=['F.Cu']), layers=['F.Cu'])
+            with self.subTest(layer=layer):
+                (self.assert_passed if passed else self.assert_blocked)(result)
+        rule_text = '(version 1) (rule "inner" (layer "B.Cu") (constraint disallow track))'
+        self.assert_blocked(self.inspect(rule_text, dsn(mask=['F.Cu', 'B.Cu'])))
+
+    def test_silkscreen_rules_are_immutable_while_copper_clearance_still_blocks(self):
+        silk = '(rule "silk" (condition "A.memberOfFootprint(\'J1\') && B.Layer == \'Edge.Cuts\'") (constraint silk_clearance (min -10mm)))'
+        result = self.inspect('(version 1) '+silk, dsn(mask=['F.Cu']), layers=['F.Cu'])
+        self.assert_passed(result)
+        self.assertEqual(result['requirements'][0]['disposition'], 'immutable_unchanged')
+        self.assert_blocked(self.inspect(rule()+' '+silk))
+        self.assert_blocked(self.inspect('(version 1) (rule "silk to mask" (constraint silk_clearance (min 1mm)))'))
+
     def test_reference_stitching_requires_actual_single_layer_active_net_mask(self):
         self.assert_blocked(self.inspect('', dsn(), require_stitching=True))
         self.assert_blocked(self.inspect('', dsn(mask=['F.Cu', 'B.Cu']), require_stitching=True))

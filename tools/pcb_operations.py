@@ -175,6 +175,7 @@ def pcb_identity(path):
         return [clean(v) for v in value]
 
     protected = []
+    keepout_positions = []
     footprints = {}
     from pcb_search.block_bindings import footprints as native_footprints
     from pcb_search.native_placement import footprint_signature
@@ -194,9 +195,18 @@ def pcb_identity(path):
             if locked(native[ref]['form']):
                 footprints[ref] = dict(signature=footprints[ref], locked_pose=[str(v.normalize()) for v in native[ref]['pose']])
         elif tag == 'zone':
+            if any(isinstance(v, list) and v[:1] == ['keepout'] for v in form):
+                keepout_positions.append(len(protected))
             protected.append(clean([v for v in form if not (isinstance(v, list) and v and v[0] in ('filled_polygon', 'fill_segments'))]))
         else:
             protected.append(clean(form))
+    # KiCad can reorder independent rule areas, including areas whose source
+    # UUIDs coincide. Preserve every full form and its multiplicity; only their
+    # order among keepout slots is immaterial. Copper zones and unknown forms
+    # retain their original order and every nested authored value.
+    keepouts = sorted((protected[i] for i in keepout_positions), key=lambda v: json.dumps(v, sort_keys=True))
+    for i, area in zip(keepout_positions, keepouts):
+        protected[i] = area
     return dict(footprints=footprints, protected=protected)
 
 

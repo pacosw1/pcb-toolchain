@@ -224,6 +224,28 @@ print('candidate placement completed',flush=True)
         candidate.write_text(source.read_text().replace('(at 10 10)', '(at 11 10)'))
         self.assertNotEqual(operations.pcb_identity(source),operations.pcb_identity(candidate))
 
+    def test_keepout_order_ignores_only_outer_order_and_preserves_authored_multiset(self):
+        source = self.board / 'cad/X.kicad_pcb'
+        other = self.root / 'area-order.kicad_pcb'
+        def area(name, x):
+            return '(zone (uuid same) (name "'+name+'") (keepout (tracks not_allowed)) (polygon (pts (xy '+str(x)+' 1) (xy 2 2) (xy 3 1))))'
+        a, b = area('H3', 1), area('H5', 4)
+        text = BOARD[:-1]+a+b+')'
+        source.write_text(text)
+        other.write_text(BOARD[:-1]+b+a+')')
+        self.assertEqual(operations.pcb_identity(source),operations.pcb_identity(other))
+        for mutation in (a+a, a+b.replace('(xy 4 1)', '(xy 5 1)'), a,
+                         a+b.replace('not_allowed','allowed'), a+b.replace('(uuid same)','(uuid changed)')):
+            other.write_text(BOARD[:-1]+mutation+')')
+            self.assertNotEqual(operations.pcb_identity(source),operations.pcb_identity(other))
+        # Copper-zone priority/order and nested polygon vertex order remain
+        # strict; this exception applies only to full immutable rule areas.
+        other.write_text(BOARD[:-1]+a+b.replace('(xy 4 1) (xy 2 2)', '(xy 2 2) (xy 4 1)')+')')
+        self.assertNotEqual(operations.pcb_identity(source),operations.pcb_identity(other))
+        ca, cb = a.replace('(keepout (tracks not_allowed))','(priority 1)'), b.replace('(keepout (tracks not_allowed))','(priority 1)')
+        source.write_text(BOARD[:-1]+ca+cb+')');other.write_text(BOARD[:-1]+cb+ca+')')
+        self.assertNotEqual(operations.pcb_identity(source),operations.pcb_identity(other))
+
     def test_context_resolves_revision_owner_and_packet(self):
         alias = self.root / 'hardware-design/boards/X-B'
         alias.mkdir()

@@ -86,10 +86,14 @@ Unknown controls or incomplete native evidence never become invented labels.
 Rule-coverage admission can block a trial before the solver starts. Retain that
 cause and its source/DSN-bound report; it supplies neither route completion nor
 accepted copper-quality labels.
-Circular PTH containment support is bound to the actual native geometry and
-final exported DSN. Unsupported shapes or same-net PTH applicability, creepage
-and spatial constraints remain blockers. Coverage support alone supplies no
-successful routing label; complete fresh candidate acceptance is still required.
+PTH containment support binds each physical front-side circular drill to actual
+exported circular or true rectangular copper, including repeated-number thermal
+pads. It can credit only the conservative verified wire-to-pin clearance floor.
+Unsupported geometry, same-net PTH applicability, creepage and spatial
+constraints remain blockers. Exact inactive-layer and unchanged-silkscreen
+decisions use the actual active-net masks; silkscreen immutability requires no
+new vias and preserved source/import geometry. Coverage support alone supplies
+no successful routing label; complete fresh candidate acceptance is required.
 Repeated-failure decisions must bind the exact placement and execution policy
 and use `placement_outcomes.native_diagnostic_fingerprint` for native findings.
 It ignores diagnostic UUIDs and finding/item order while preserving every
