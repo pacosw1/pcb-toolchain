@@ -34,7 +34,7 @@ AUDITED = {
     "lean_owned.py": "9034a7b33d37fb78a0e3f6cd3efe0f9ce95ae29b411ea38ae2bc47f242a1d78e",
     "lean_owned_exec.py": "dbee0c764a174ea3bae49f429d836d50b0d632bf828f20469a785d8268bc83ba",
     "lib/kicad-population.mjs": "0aebb28a1409de93200b081dc2226dede1225db367f72abdb156822e2de95040",
-    "run_record.py": "d1883db948eba94c8956ec74bdd370daf3813a1caadeed6274c2cf2983a83971"
+    "run_record.py": "015c92d8eb27ae21b98cc19e9ad9e7d48d83127618c31091978aff42c81031a6"
 }
 def _sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()

@@ -42,6 +42,23 @@ The wrapper retains this log even when its deadline prevents final reporting;
 its run manifest binds the loaded DSN hash. No baseline promotion, hash dependency,
 or extra final-report diagnosis is needed to preserve this evidence.
 
+Trace connectivity also recognizes an exact integer endpoint on the bounded
+centerline of another same-net, same-layer trace. Forward and reverse graph
+contacts agree, and a contact point is returned only when it is unique. Contact
+queries preserve retained trace geometry, IDs, fixed state and multiplicity;
+they never split fixed source copper. Rational contact points remain unsupported.
+Reverse queries use indexed overlapping tiles; their performance on dense, long
+polylines is unmeasured, so no speed improvement is claimed.
+
+Five `trace_tjunction` regressions cover symmetric contacts, negative geometry,
+ambiguous junctions and cache invalidation after insert/remove. One instrumented
+attempt on the captured FIELD DSN resolved its connection through insertion,
+optimization and tail cleanup, preserving all 83 imported traces exactly.
+This diagnostic is not a native-accepted route or training label. Native
+artifact verification remains pending. Existing build-provenance artifacts
+predate this extension; a new artifact must bind the complete updated patch,
+exact upstream source, build and its own validation evidence.
+
 ## Repeatable isolated build
 
 Start a new upstream checkout and verify its exact commit before applying:
@@ -54,6 +71,7 @@ git -C /tmp/fastroute-quality-source apply "$PWD/quality-first.patch"
 cd /tmp/fastroute-quality-source
 CARGO_BUILD_JOBS=2 cargo test --locked -p fr-engine pipeline::quality --lib
 CARGO_BUILD_JOBS=2 cargo test --locked -p fr-engine --test quality_identity
+CARGO_BUILD_JOBS=2 cargo test --locked -p fr-engine --test trace_tjunction -- --test-threads=1
 CARGO_BUILD_JOBS=2 cargo build --locked -p fastroute
 ```
 
