@@ -429,6 +429,62 @@ class DrilledCoverageTests(unittest.TestCase):
         self.blocked(self.check(active_nets=['GND','/LED_A'],applicability='kicad10_project_track'))
         self.blocked(self.check(applicability='assume_exempt'))
 
+    def test_custom_pth_minimum_does_not_expand_npth_or_via_requirement(self):
+        # The .36 custom PTH minimum fits every plated pad, but exceeds the
+        # NPTH's .28 keepout margin and the via's .35 copper+clearance margin.
+        self.blocked(self.check(required_mm='.36'))
+        result=self.check(required_mm='.36',applicability='custom_pth_track')
+        self.assertEqual(result['status'],'covered',result)
+        self.assertEqual(result['native_hole_count'],6)
+        for row in result['covered_holes']:
+            if row['kind']=='pth':
+                self.assertEqual(row['disposition'],'covered')
+                self.assertEqual(row['required_mm'],'0.36')
+            else:
+                self.assertEqual(row['disposition'],'custom_not_applicable')
+                self.assertEqual(row['required_mm'],'0')
+                self.assertEqual(row['credited_clearance_mm'],'0')
+        # Project applicability is separate: NPTH keeps the actual project
+        # minimum, and cannot inherit the custom PTH scope's exclusion.
+        self.blocked(self.check(required_mm='.36',applicability='kicad10_project_track'))
+        self.blocked(self.check(required_mm='.4500000000001',applicability='custom_pth_track'))
+
+    def test_custom_non_pth_exclusion_keeps_every_physical_binding_and_backend_proof(self):
+        options=dict(required_mm='.36',applicability='custom_pth_track')
+        via='(via "Via[0-1]_600:300_um" 140000 -100000 (net GND) (type fix))'
+        for old,new in (
+                ('(keepout "" (circle F.Cu 3760))',''),
+                ('(circle F.Cu 3760)','(circle F.Cu 3199)'),
+                ('(circle F.Cu 3760)','(circle F.Cu 3760 1 0)'),
+                ('(circle F.Cu 3760)','(circle F.Cu 3760.000001)'),
+                ('140000 -100000 (net GND)','140001 -100000 (net GND)'),
+                ('(circle F.Cu 600)','(circle F.Cu 601)'),
+                (via,''), (via,via+via)):
+            with self.subTest(change=new):
+                self.blocked(self.check(self.model.replace(old,new),**options))
+        self.blocked(self.check(holes=self.holes[:-1],**options))
+        holes=copy.deepcopy(self.holes);holes[-1]['identity']=holes[0]['identity']
+        self.blocked(self.check(holes=holes,**options))
+        holes=copy.deepcopy(self.holes);holes[2]['supported']=False;holes[2]['cause']='unknown NPTH'
+        self.blocked(self.check(holes=holes,**options))
+        self.blocked(self.check(backend_policy=None,**options))
+
+    def test_custom_pth_same_net_remains_blocked_but_non_pth_via_stays_bound(self):
+        self.blocked(self.check(active_nets=['/POWER'],applicability='custom_pth_track'))
+        self.blocked(self.check(active_nets=['GND'],applicability='custom_pth_track'))
+        self.path.write_text(self.native.replace(
+            '(layers "F.Cu" "B.Cu") (net "GND") (uuid via1)',
+            '(layers "F.Cu" "B.Cu") (net "/LED_A") (uuid via1)'))
+        holes=coverage.native_drilled_geometry(self.path)
+        model=self.model.replace('140000 -100000 (net GND)','140000 -100000 (net /LED_A)')
+        result=self.check(model,holes,applicability='custom_pth_track')
+        self.assertEqual(result['status'],'covered',result)
+        via=next(r for r in result['covered_holes'] if r['kind']=='via')
+        self.assertEqual(via['disposition'],'custom_not_applicable')
+        self.assertNotIn('applicability_source',via)
+        self.blocked(self.check(model.replace('140000 -100000 (net /LED_A)',
+            '140001 -100000 (net /LED_A)'),holes,applicability='custom_pth_track'))
+
     def test_mutated_native_slot_changes_inventory_and_cannot_reuse_old_export(self):
         self.path.write_text(self.native.replace('(at 1 2 180)','(at 1.001 2 180)',1))
         changed=coverage.native_drilled_geometry(self.path)

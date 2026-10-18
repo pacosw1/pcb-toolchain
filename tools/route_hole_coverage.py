@@ -677,6 +677,11 @@ def inspect_drilled(dsn_text, *, holes, active_nets, layers, required_mm, cleara
     The explicit kicad10_project_track scope implements the native track
     visitor's same-net connected-item exclusion before hole tests. It still
     binds every physical hole/model instance, and records each exclusion.
+    The custom_pth_track scope requires the caller to prove that every
+    applicable custom-rule pair is a new track and a retained PTH pad. It
+    conservatively applies the custom minimum to ALL PTH pads. NPTH and via
+    instances remain fully bound, with zero custom distance and no clearance
+    credit; the independent project all-hole minimum remains required.
     Actual backend oval paths remain unsupported: the integer importer uses
     rounded octagons which need not contain the ideal source capsule. Positive
     circle/rectangle proofs require the independently rebound quality backend
@@ -691,7 +696,7 @@ def inspect_drilled(dsn_text, *, holes, active_nets, layers, required_mm, cleara
         exporter_source=EXPORTER_SOURCE,inputs={})
     try:
         if not isinstance(holes,list):raise ValueError('missing complete native drilled inventory')
-        if applicability not in ('reject_same_net','kicad10_project_track'):
+        if applicability not in ('reject_same_net','kicad10_project_track','custom_pth_track'):
             raise ValueError('unknown native drilled applicability')
         if (not isinstance(active_nets,list) or not active_nets or len(set(active_nets))!=len(active_nets)
                 or any(not isinstance(n,str) or not n for n in active_nets)):raise ValueError('unknown active drilled nets')
@@ -724,8 +729,9 @@ def inspect_drilled(dsn_text, *, holes, active_nets, layers, required_mm, cleara
                 identities.add(identity)
                 if not isinstance(hole['net'],str):raise ValueError('unknown native drilled net')
                 if kind!='npth' and not hole['net']:raise ValueError('unassigned plated drill lacks a bound exported obstacle')
+                custom_not_applicable=applicability=='custom_pth_track' and kind!='pth'
                 same_net=kind!='npth' and hole['net'] in active_nets
-                if same_net and applicability!='kicad10_project_track':
+                if same_net and applicability!='kicad10_project_track' and not custom_not_applicable:
                     raise ValueError('active same-net plated drill requires native applicability proof')
                 if (not isinstance(hole['hole_layers'],list) or layers[0] not in hole['hole_layers']
                         or len(set(hole['hole_layers']))!=len(hole['hole_layers'])
@@ -736,7 +742,9 @@ def inspect_drilled(dsn_text, *, holes, active_nets, layers, required_mm, cleara
                 if (min(size)<=0 or min(drill_size)<=0 or _pair(hole['drill_offset_mm'])!=[0,0]
                         or hole['drill_shape'] not in ('circle','oval') or (hole['drill_shape']=='circle' and drill_size[0]!=drill_size[1])):
                     raise ValueError('invalid/offset physical drill')
-                drill=_capsule(position,drill_size,rotation);credited=floor;record={}
+                applied_required=Decimal(0) if custom_not_applicable else required
+                drill=_capsule(position,drill_size,rotation)
+                credited=Decimal(0) if custom_not_applicable else floor;record={}
                 if kind=='npth':
                     if hole['net'] or hole['shape']!='circle' or hole['drill_shape']!='circle' or size[0]!=size[1]:
                         raise ValueError('unsupported NPTH circle contract')
@@ -753,7 +761,7 @@ def inspect_drilled(dsn_text, *, holes, active_nets, layers, required_mm, cleara
                             matches.append((ki,dict(kind='capsule',ends=(tuple(center),tuple(center)),radius=diameter/2),xy))
                     # A keepout is a universal wire obstacle; unlike electrical
                     # copper its declared radius alone must cover the hole.
-                    matches=[m for m in matches if _contains_drill(m[1],drill,required,Decimal(0))]
+                    matches=[m for m in matches if _contains_drill(m[1],drill,applied_required,Decimal(0))]
                     if len(matches)!=1:raise ValueError('missing or ambiguous source-bound NPTH wire keepout')
                     ki,obstacle,xy=matches[0];used_keepouts.add((hole['reference'],ki));credited=Decimal(0)
                     record.update(dsn_image=image_name,dsn_keepout_index=ki)
@@ -791,11 +799,11 @@ def inspect_drilled(dsn_text, *, holes, active_nets, layers, required_mm, cleara
                             expected=_capsule(position,size,rotation)
                         record.update(dsn_image=image_name,dsn_pin=pin,dsn_padstack=stack)
                     if obstacle!=expected:raise ValueError('actual DSN copper differs from native drilled geometry')
-                    if not same_net and shape[0]=='path':
+                    if not same_net and not custom_not_applicable and shape[0]=='path':
                         raise ValueError('oval/path backend integer-octagon containment is unsupported; ideal capsule is not an actual backend proof')
-                    if not same_net and not _contains_drill(obstacle,drill,required,credited):
+                    if not same_net and not custom_not_applicable and not _contains_drill(obstacle,drill,required,credited):
                         raise ValueError('actual DSN copper plus verified clearance does not contain expanded native drill')
-                if not same_net:
+                if not same_net or custom_not_applicable:
                     if grid is None:grid=_verified_grid(model,backend_command,backend_policy,result['inputs'])
                     _grid_mm(model,floor)
                     _grid_mm(model,credited)
@@ -812,7 +820,10 @@ def inspect_drilled(dsn_text, *, holes, active_nets, layers, required_mm, cleara
                         for value in obstacle['bounds']:_grid_mm(model,value)
                     if kind=='npth':
                         for value in xy:_grid_mm(model,value)
-                if same_net:
+                if custom_not_applicable:
+                    record.update(disposition='custom_not_applicable',
+                        reason='caller-proved Track/PTH custom scope excludes this bound non-PTH instance; independent project minimum remains required')
+                elif same_net:
                     record.update(disposition='native_not_applicable',
                         reason='KiCad10 track visitor excludes connected items on the same nonzero net before testing hole clearance',
                         applicability_source=TRACK_HOLE_APPLICABILITY_SOURCE)
@@ -820,7 +831,7 @@ def inspect_drilled(dsn_text, *, holes, active_nets, layers, required_mm, cleara
                 else:record['disposition']='covered'
                 result['covered_holes'].append(dict(kind=kind,identity=identity,net=hole['net'],layer=layers[0],
                     native_center_mm=hole['position_mm'],native_drill_mm=hole['drill_mm'],
-                    native_rotation_deg=rotation,required_mm=format(required,'f'),credited_clearance_mm=format(credited,'f'),**record))
+                    native_rotation_deg=rotation,required_mm=format(applied_required,'f'),credited_clearance_mm=format(credited,'f'),**record))
         if len(used_vias)!=len(model.vias):raise ValueError('unmatched exported retained via inventory')
         result.update(status='covered',cause='every physical drill is bound; every applicable expanded drill is protected by its actual DSN obstacle',
             required_mm=format(required,'f'),clearance_floor_mm=format(floor,'f'),native_hole_count=len(holes),

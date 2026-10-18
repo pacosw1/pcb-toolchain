@@ -327,7 +327,7 @@ def inspect(dru_text, dsn_text, *, active_nets, net_classes, obstacles,
                                 uncertain = True
                             elif value:
                                 applicable.append((new, other))
-                    if applicable and kind != 'clearance':
+                    if applicable and kind not in ('clearance', 'hole_clearance'):
                         break
                 if uncertain:
                     row['reason'] = 'native selector applicability cannot be proved (spatial/unsupported terms are not compiled coverage)'
@@ -488,7 +488,7 @@ def check_files(board, base, dsn, *, active_nets, net_classes, obstacles, layers
             proof = route_hole_coverage.inspect_drilled(dsn.read_text(), holes=holes,
                 active_nets=sorted(active_nets), layers=layers,
                 required_mm=row['required_mm'], clearance_floor_mm=str(floor),
-                backend_command=command, backend_policy=policy)
+                applicability='custom_pth_track', backend_command=command, backend_policy=policy)
             row.update(hole_geometry=proof,
                 disposition='covered' if proof.get('status') == 'covered' else 'unsupported',
                 reason=proof.get('cause', 'actual backend drilled containment proof'))
