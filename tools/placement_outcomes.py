@@ -159,6 +159,101 @@ def native_observation(evidence, folder, gate, candidate):
     return result
 
 
+def retained_copper(forms):
+    """Keep the exact authored copper multiset; zone fill geometry is a cache."""
+    copper=[[item for item in form if not (isinstance(item,list) and item
+                and item[0] in ('filled_polygon','fill_segments'))] if form[0]=='zone' else form
+            for form in forms[1:] if isinstance(form,list) and form
+            and form[0] in ('segment','arc','via','zone')]
+    # KiCad may reorder standalone items on save. Sort only top-level forms;
+    # preserve every authored value, UUID, nested order and duplicate item.
+    return sorted(copper,key=lambda form:json.dumps(form,separators=(',',':')))
+
+
+def routed_quality(evidence, candidate):
+    """Measure the already accepted, source-bound final native PCB in millimetres.
+
+    This is the whole candidate's track centreline length and via count, not
+    newly routed copper, pad/zone copper, vertical via length or electrical merit.
+    Unsupported track geometry invalidates length independently of via count.
+    """
+    from placer.dru import _tree,_tokens
+    path=evidence.file(candidate);expected=evidence.inputs[str(path)]
+    result=dict(routed_track_length_mm=None,routed_via_count=None,
+                candidate=dict(path=str(path),sha256=expected),
+                scope='entire final native candidate; retained copper included; pad/zone and vertical via length excluded',
+                units=dict(routed_track_length_mm='mm',routed_via_count='count'),unknowns={})
+    names=('routed_track_length_mm','routed_via_count')
+    try:
+        tokens=_tokens(path.read_text());depth=0
+        for token in tokens:
+            depth+=(token=='(')-(token==')')
+            if depth<0:raise ValueError('unbalanced native PCB')
+        if depth:raise ValueError('unbalanced native PCB')
+        roots=_tree(tokens)
+        if len(roots)!=1 or not roots[0] or roots[0][0]!='kicad_pcb':
+            raise ValueError('expected one native PCB')
+        forms=roots[0][1:]
+        if any(not isinstance(form,list) or not form or not isinstance(form[0],str) for form in forms):
+            raise ValueError('malformed native PCB form')
+    except (ValueError,IndexError,TypeError) as error:
+        result['unknowns']={name:str(error) for name in names}
+    else:
+        def field(form,key,count):
+            values=[item[1:] for item in form[1:] if isinstance(item,list) and item and item[0]==key]
+            if len(values)!=1 or len(values[0])!=count or any(not isinstance(value,str) for value in values[0]):
+                raise ValueError('missing or malformed '+form[0]+'.'+key)
+            return values[0]
+
+        def number(value):
+            if not re.fullmatch(r'[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?',value):
+                raise ValueError('invalid native numeric coordinate or dimension')
+            value=float(value)
+            if not math.isfinite(value):raise ValueError('nonfinite native coordinate or dimension')
+            return value
+
+        def positive(form,key):
+            value=number(field(form,key,1)[0])
+            if value<=0:raise ValueError('nonpositive '+form[0]+'.'+key)
+            return value
+
+        def point(form,key):return [number(value) for value in field(form,key,2)]
+        def copper_layer(value):return bool(re.fullmatch(r'(?:F|B|In[1-9]\d*)\.Cu',value))
+
+        try:
+            lengths=[]
+            for form in forms:
+                if form[0]=='arc':raise ValueError('copper arc centreline measurement is unsupported')
+                if form[0]!='segment':continue
+                start,end=point(form,'start'),point(form,'end')
+                positive(form,'width')
+                if not copper_layer(field(form,'layer',1)[0]):raise ValueError('unsupported segment copper layer')
+                length=math.hypot(end[0]-start[0],end[1]-start[1])
+                if not math.isfinite(length):raise ValueError('nonfinite segment length')
+                lengths.append(length)
+            length=math.fsum(lengths)
+            if not math.isfinite(length):raise ValueError('nonfinite total track length')
+            result['routed_track_length_mm']=length
+        except (ValueError,OverflowError) as error:
+            result['unknowns'][names[0]]=str(error)
+        try:
+            count=0
+            for form in forms:
+                if form[0]!='via':continue
+                point(form,'at');diameter=positive(form,'size');drill=positive(form,'drill')
+                if drill>diameter:raise ValueError('via drill exceeds diameter')
+                layers=field(form,'layers',2)
+                if layers[0]==layers[1] or not all(copper_layer(value) for value in layers):
+                    raise ValueError('unsupported via copper layers')
+                count+=1
+            result['routed_via_count']=count
+        except (ValueError,OverflowError) as error:
+            result['unknowns'][names[1]]=str(error)
+    # Mutated sealed input is an evidence failure, never merely an unknown metric.
+    evidence.file(path,expected)
+    return result
+
+
 def cli_observation(evidence, trial):
     folder,terminal,manifest,operation,candidate=sealed_run(evidence,trial['path'],trial['sha256'])
     if manifest.get('operation') not in ('route','repair') and not (manifest.get('operation')=='edit' and manifest.get('kind')=='route'):
@@ -191,8 +286,7 @@ def cli_observation(evidence, trial):
         from pcb_operations import pcb_identity
         from pcb_search.block_bindings import footprints
         from placer.dru import _tree,_tokens
-        copper=[form for form in _tree(_tokens(input_path.read_text()))[0][1:]
-                if isinstance(form,list) and form and form[0] in ('segment','arc','via','zone')]
+        copper=retained_copper(_tree(_tokens(input_path.read_text()))[0])
         sidecars={ext:source.get('files',{}).get(relative[:-len('.kicad_pcb')]+ext) for ext in ('.kicad_sch','.kicad_pro','.kicad_dru')}
         if any(not digest for digest in sidecars.values()):unknowns.append('original native sidecar identities are incomplete')
         case_fingerprint=identity(dict(identity=pcb_identity(input_path),retained_copper=copper,sidecars=sidecars))
@@ -202,6 +296,10 @@ def cli_observation(evidence, trial):
     else:unknowns.append('original placement input artifact is absent')
     policy,missing=execution_policy(evidence,folder,trial,manifest,source,gate)
     if missing:unknowns.append(missing)
+    quality=(routed_quality(evidence,candidate) if full and policy else
+             dict(routed_track_length_mm=None,routed_via_count=None,
+                  unknowns={name:'complete fresh native acceptance and verified execution controls are required'
+                            for name in ('routed_track_length_mm','routed_via_count')}))
     status=terminal['status'];cause=terminal.get('cause') or operation.get('cause')
     interval=None
     try:
@@ -214,7 +312,7 @@ def cli_observation(evidence, trial):
              else 'configured_or_electrical_check' if status=='failed' and checks else 'tool_or_preflight' if status!='passed' else None)
     return dict(status=status,evidence_valid=True,board=manifest['board'],run_id=manifest['run_id'],
         evidence_directory=str(folder),failed_checks=sorted(name for name,check in checks.items() if check.get('status')!='passed'),
-        full_gate_success=full,native=native,electrical_metrics=gate.get('metrics') or None,
+        full_gate_success=full,native=native,electrical_metrics=gate.get('metrics') or None,routed_quality=quality,
         elapsed_s=terminal.get('elapsed_s') if finite(terminal.get('elapsed_s')) else None,
         observed_interval_unix_s=interval,
         timing_scope='owned route/repair and verification run; unrecorded engineering effort unknown',

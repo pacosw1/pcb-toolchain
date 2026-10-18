@@ -77,11 +77,30 @@ Rebuild datasets and models after an extractor-contract change.
 
 Routing targets are `accepted_within_budget`, `owned_elapsed_s`,
 `successful_completion_elapsed_s`, `native_errors`, `native_opens` and
-`native_parity`. Acceptance uses full fresh-gate success within the owned run's
+`native_parity`, plus accepted-only `routed_track_length_mm` and
+`routed_via_count`. Acceptance uses full fresh-gate success within the owned run's
 `run.json:timeout_s`; the solver's separate time limit remains recorded.
 `owned_elapsed_s` measures time to any terminal outcome. Successful completion
 time stays unknown for a failure or timeout, with censoring recorded explicitly.
 Unknown controls or incomplete native evidence never become invented labels.
+
+The two copper labels measure the exact sealed final native candidate bound to
+the fresh gate, only after acceptance within the owned budget with verified
+execution controls. Length is the sum of straight copper-segment centreline
+lengths in millimetres across all nets and copper layers. Via count counts native
+via objects, including blind/microvias when their required geometry is supported.
+Both include retained input copper. Length excludes pad/zone copper and vertical
+via length; it is not a measure of electrical quality or newly routed copper.
+Copper arcs or malformed/nonfinite segment geometry leave length unknown with a
+cause; a well-formed via count can remain independently known. Failed, timed-out
+or control-unknown runs receive neither successful quality label. These are
+post-route targets and never pre-decision features or engineering qualification.
+
+Routing-case identity preserves authored zone boundaries, settings, UUIDs and
+connectivity, and all retained segments, arcs and vias. Only derived zone
+`filled_polygon` and `fill_segments` caches are excluded, so zone refill alone
+does not turn placement alternatives into separate cases. All alternatives and
+repeats of a case still belong to one split.
 
 The `workflow` adapter accepts the same sealed run descriptors without
 `placement_input` or `execution_policy`. It supports operations across the PCB
