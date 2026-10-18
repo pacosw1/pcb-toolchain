@@ -83,6 +83,29 @@ the extractor and label adapter. This includes the added-length definition and
 version without putting outcome values in features. Changed quantity semantics
 therefore reject even when the numeric columns are identical.
 
+Routing contract v4 also binds `numeric_producer`: the actual CPython build,
+interpreter, verified math-module origin and a resolvable shared Python runtime,
+float ABI, OS build/architecture and available C-math provider context. An
+extension needs its own content hash; built-in math binds the interpreter or
+actual mapped shared runtime that contains it. A missing extension cannot use
+the built-in branch. Build-time linker filenames do not prove loaded code.
+Host file paths are excluded from this compared identity. Workflow count and
+indicator features remain contract v1 without this routing runtime restriction.
+The measurements and targets are unchanged. Python versions can implement
+summation and distance differently: the same board produced different final
+bits under CPython 3.9.6 and 3.13.5 despite identical v3 source hashes.
+
+Create routing datasets, feature packets and source-verified predictions in the
+same frozen numerical runtime. A different producer rejects even a resealed
+feature packet; no rounding or tolerance makes it compatible. A matching profile
+attributes the producer; it does not attest every transitively loaded C library
+or guarantee portable bitwise results. Unresolved shared-runtime/provider
+details retain their explicit cause. Keep the actual execution image/toolchain
+evidence and verify exact replay before reusing cached measurements.
+Keep old v3 artifacts immutable. Re-extract their original sealed pre-decision
+sources for a new v4 dataset/model; record the new fit and previously inspected
+exposure. Re-extraction does not require rerunning native gates or routing.
+
 Routing targets are `accepted_within_budget`, `owned_elapsed_s`,
 `successful_completion_elapsed_s`, `native_errors`, `native_opens` and
 `native_parity`, plus accepted-only `routed_track_length_mm`,

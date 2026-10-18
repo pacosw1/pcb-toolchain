@@ -1,14 +1,24 @@
 """Real parsers and sealed-run protocol fixtures; no KiCad/router execution."""
 import copy
+import hashlib
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest import mock
 
 import pcb_ml_adapters as adapters
 import pcb_ml_data as data
 import pcb_ml_features as features
 import test_placement_outcomes as history
+
+
+_NATIVE_BUILTIN_QUERY = features._imp.is_builtin
+_NATIVE_BUILTIN_NAMES = sys.builtin_module_names
 
 
 NATIVE = '''(kicad_pcb (version 20260101)
@@ -32,6 +42,18 @@ def write(path, value):
 
 
 class FeatureTests(unittest.TestCase):
+    def builtin_status(self, name):
+        return 1 if name == 'math' else _NATIVE_BUILTIN_QUERY(name)
+
+    def math_module(self, path=None, builtin=False):
+        loader = features.BuiltinImporter if builtin else features.ExtensionFileLoader('math', str(path))
+        spec = SimpleNamespace(name='math', origin='built-in' if builtin else str(path), loader=loader)
+        return SimpleNamespace(__file__=None if builtin else str(path), __spec__=spec)
+
+    def linux_context(self):
+        return SimpleNamespace(sysname='Linux', release='synthetic-kernel-release',
+                               version='synthetic-kernel-build', machine='synthetic-architecture')
+
     def without_legacy_nets(self):
         return NATIVE.replace(' (net 0 "") (net 1 "/A")\n', '')
 
@@ -41,8 +63,195 @@ class FeatureTests(unittest.TestCase):
         values, causes = features.routing_features(native)
         self.assertEqual(values['declared_net_count'], 2)
         self.assertEqual(causes, [])
-        self.assertEqual(features.feature_contract('routing')['version'], 3)
+        self.assertEqual(features.feature_contract('routing')['version'], 4)
         self.assertEqual(features.feature_contract('workflow')['version'], 1)
+
+    def test_numeric_producer_attributes_actual_runtime_without_host_paths(self):
+        contract = features.feature_contract('routing')
+        producer = contract['numeric_producer']
+        self.assertEqual(producer['implementation'], sys.implementation.name)
+        self.assertEqual(producer['python_build'], sys.version)
+        self.assertEqual(producer['binaries']['interpreter']['sha256'],
+                         hashlib.sha256(Path(sys.executable).resolve().read_bytes()).hexdigest())
+        math_file = getattr(features.math, '__file__', None)
+        if math_file is not None:
+            self.assertEqual(producer['math_module']['kind'], 'extension')
+            self.assertEqual(producer['binaries']['math_extension']['sha256'],
+                             hashlib.sha256(Path(math_file).read_bytes()).hexdigest())
+            self.assertNotIn(str(Path(math_file).parent), json.dumps(contract))
+        else:
+            self.assertEqual(producer['math_module']['kind'], 'built-in')
+            self.assertIn('interpreter', producer['math_module']['containing_binaries'])
+            self.assertNotIn('math_extension', producer['binaries'])
+        self.assertEqual(producer['float_abi']['mant_dig'], sys.float_info.mant_dig)
+        self.assertEqual(producer['os']['architecture'], os.uname().machine)
+        self.assertIn('not portable bitwise equivalence', producer['scope'])
+        self.assertNotIn(str(Path(sys.executable).parent), json.dumps(contract))
+
+    def test_same_path_runtime_content_change_changes_producer_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            interpreter = Path(directory) / 'test-interpreter'
+            interpreter.write_bytes(b'explicit synthetic runtime identity A')
+            extension = Path(directory) / 'synthetic-math.so'
+            extension.write_bytes(b'explicit file-backed math identity boundary, never loaded')
+            with mock.patch.object(features.sys, 'executable', str(interpreter)), \
+                    mock.patch.object(features, 'math', self.math_module(extension)):
+                before = features.feature_contract('routing')
+                interpreter.write_bytes(b'explicit synthetic runtime identity B, changed')
+                after = features.feature_contract('routing')
+        self.assertNotEqual(before['numeric_producer'], after['numeric_producer'])
+        self.assertEqual(before['features'], after['features'])
+        self.assertEqual(before['quantity_contracts'], after['quantity_contracts'])
+
+    def test_workflow_v1_has_no_numeric_runtime_restriction(self):
+        with mock.patch.object(features, 'numeric_producer', side_effect=AssertionError('routing arithmetic only')):
+            contract = features.feature_contract('workflow')
+            self.assertEqual(contract['version'], 1)
+            self.assertNotIn('numeric_producer', contract)
+            values, reasons = features.workflow_features(dict(operation='parts', timeout_s=30))
+        self.assertFalse(reasons)
+        self.assertEqual(values['operation_parts'], 1)
+
+    def test_missing_runtime_artifact_fails_with_cause_instead_of_a_guessed_identity(self):
+        with mock.patch.object(features.sys, 'executable', '/missing-numeric-producer'):
+            with self.assertRaisesRegex(ValueError, 'interpreter content is unavailable'):
+                features.feature_contract('routing')
+
+    def test_unresolved_configured_shared_runtime_keeps_an_explicit_cause(self):
+        configuration = dict(Py_ENABLE_SHARED=1, PYTHONFRAMEWORK='',
+                             LIBDIR='/missing-runtime-directory', LDLIBRARY='libpython-missing.so')
+        with tempfile.TemporaryDirectory() as directory:
+            extension = Path(directory) / 'synthetic-math.so'
+            extension.write_bytes(b'synthetic extension attribution boundary, never loaded')
+            with mock.patch.object(features.sysconfig, 'get_config_var', side_effect=configuration.get), \
+                    mock.patch.object(features, 'math', self.math_module(extension)):
+                producer = features.numeric_producer()
+        self.assertEqual(producer['shared_python_runtime']['status'], 'unknown')
+        self.assertIn('cannot be resolved', producer['shared_python_runtime']['cause'])
+        self.assertNotIn('shared_python_runtime', producer['binaries'])
+
+    def test_builtin_math_binds_actual_embedded_interpreter_not_unmapped_linker_alias(self):
+        executable = Path(sys.executable).resolve()
+        mappings = '1000-2000 r-xp 00000000 00:00 1 ' + str(executable) + '\n'
+        with mock.patch.object(features, 'math', self.math_module(builtin=True)), \
+                mock.patch.object(features.sys, 'builtin_module_names', _NATIVE_BUILTIN_NAMES + ('math',)), \
+                mock.patch.object(features._imp, 'is_builtin', side_effect=self.builtin_status), \
+                mock.patch.object(features.os, 'uname', return_value=self.linux_context()), \
+                mock.patch.object(features.platform, 'libc_ver', return_value=('glibc', 'synthetic')), \
+                mock.patch.object(Path, 'read_text', return_value=mappings):
+            producer = features.numeric_producer()
+        self.assertEqual(producer['math_module']['kind'], 'built-in')
+        self.assertEqual(producer['math_module']['containing_binaries'], ['interpreter'])
+        self.assertEqual(producer['shared_python_runtime']['status'], 'embedded_in_interpreter')
+        self.assertNotIn('shared_python_runtime', producer['binaries'])
+        self.assertNotIn('math_extension', producer['binaries'])
+
+    def test_builtin_math_binds_mapped_shared_runtime_content_and_rejects_missing_file(self):
+        executable = Path(sys.executable).resolve()
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / 'libpython-synthetic.so.1.0'
+            library.write_bytes(b'explicit mapped runtime boundary A')
+            mappings = ('1000-2000 r-xp 00000000 00:00 1 ' + str(executable) + '\n'
+                        '2000-3000 r-xp 00000000 00:00 2 ' + str(library) + '\n')
+            with mock.patch.object(features, 'math', self.math_module(builtin=True)), \
+                    mock.patch.object(features.sys, 'builtin_module_names', _NATIVE_BUILTIN_NAMES + ('math',)), \
+                    mock.patch.object(features._imp, 'is_builtin', side_effect=self.builtin_status), \
+                    mock.patch.object(features.os, 'uname', return_value=self.linux_context()), \
+                    mock.patch.object(features.platform, 'libc_ver', return_value=('glibc', 'synthetic')), \
+                    mock.patch.object(Path, 'read_text', return_value=mappings):
+                before = features.numeric_producer()
+                self.assertEqual(before['binaries']['shared_python_runtime']['sha256'],
+                                 hashlib.sha256(library.read_bytes()).hexdigest())
+                library.write_bytes(b'explicit mapped runtime boundary B changed')
+                after = features.numeric_producer()
+                self.assertNotEqual(before['binaries'], after['binaries'])
+                self.assertEqual(after['math_module']['containing_binaries'], ['interpreter', 'shared_python_runtime'])
+                library.unlink()
+                with self.assertRaisesRegex(ValueError, 'shared Python runtime content is unavailable'):
+                    features.numeric_producer()
+
+    def test_builtin_metadata_cannot_substitute_for_the_actual_import_table(self):
+        module = self.math_module(builtin=True)
+        variants = [dict(origin='unknown'), dict(loader=None), dict(native_builtin=0), dict(names=())]
+        for variant in variants:
+            with self.subTest(variant=variant):
+                module.__spec__.origin = variant.get('origin', 'built-in')
+                module.__spec__.loader = variant.get('loader', features.BuiltinImporter)
+                with mock.patch.object(features, 'math', module), \
+                        mock.patch.object(features.sys, 'builtin_module_names', variant.get('names', _NATIVE_BUILTIN_NAMES + ('math',))), \
+                        mock.patch.object(features._imp, 'is_builtin', return_value=variant.get('native_builtin', 1)):
+                    with self.assertRaisesRegex(ValueError, 'neither a verified builtin nor an attributable extension'):
+                        features.numeric_producer()
+
+    def test_builtin_runtime_unknown_or_ambiguous_mappings_reject(self):
+        executable = Path(sys.executable).resolve()
+        variants = ['', 'malformed', '1000-2000 r-xp 0 00:00 1 /missing-interpreter\n',
+                    '1000-2000 r-xp 0 00:00 1 ' + str(executable) + '\n'
+                    '2000-3000 r-xp 0 00:00 2 /tmp/libpython-a.so\n'
+                    '3000-4000 r-xp 0 00:00 3 /tmp/libpython-b.so\n']
+        for mappings in variants:
+            with self.subTest(mappings=mappings), \
+                    mock.patch.object(features, 'math', self.math_module(builtin=True)), \
+                    mock.patch.object(features.sys, 'builtin_module_names', _NATIVE_BUILTIN_NAMES + ('math',)), \
+                    mock.patch.object(features._imp, 'is_builtin', side_effect=self.builtin_status), \
+                    mock.patch.object(features.os, 'uname', return_value=self.linux_context()), \
+                    mock.patch.object(Path, 'read_text', return_value=mappings):
+                with self.assertRaisesRegex(ValueError, 'containing runtime'):
+                    features.numeric_producer()
+
+    def test_builtin_required_shared_runtime_unresolved_is_rejected(self):
+        configuration = dict(Py_ENABLE_SHARED=1, PYTHONFRAMEWORK='SyntheticPython',
+            PYTHONFRAMEWORKPREFIX='/missing-runtime', LDLIBRARY='missing-python')
+        darwin = SimpleNamespace(sysname='Darwin', release='synthetic', version='synthetic', machine='synthetic')
+        with mock.patch.object(features, 'math', self.math_module(builtin=True)), \
+                mock.patch.object(features.sys, 'builtin_module_names', _NATIVE_BUILTIN_NAMES + ('math',)), \
+                mock.patch.object(features._imp, 'is_builtin', side_effect=self.builtin_status), \
+                mock.patch.object(features.os, 'uname', return_value=darwin), \
+                mock.patch.object(features.sysconfig, 'get_config_var', side_effect=configuration.get):
+            with self.assertRaisesRegex(ValueError, 'containing shared Python runtime cannot be resolved'):
+                features.numeric_producer()
+
+    def test_missing_or_unreadable_extension_is_not_reclassified_as_builtin(self):
+        with tempfile.TemporaryDirectory() as directory:
+            extension = Path(directory) / 'synthetic-math.so'
+            with mock.patch.object(features, 'math', self.math_module(extension)):
+                with self.assertRaisesRegex(ValueError, 'math extension content is unavailable'):
+                    features.numeric_producer()
+                extension.write_bytes(b'explicit unreadable extension boundary, never loaded')
+                original = features._runtime_digest
+                def unreadable(path, identity):
+                    if Path(path) == extension.resolve():
+                        raise PermissionError('synthetic unreadable module boundary')
+                    return original(path, identity)
+                with mock.patch.object(features, '_runtime_digest', side_effect=unreadable):
+                    with self.assertRaisesRegex(ValueError, 'math extension content is unreadable'):
+                        features.numeric_producer()
+
+    def test_python_build_and_float_abi_are_exact_contract_fields(self):
+        producer = features.numeric_producer()
+        with mock.patch.object(features.sys, 'version', 'synthetic different CPython build'):
+            changed = features.numeric_producer()
+        self.assertNotEqual(changed, producer)
+        self.assertEqual(changed['binaries'], producer['binaries'])
+        self.assertEqual(set(producer['float_abi']),
+                         {'radix', 'mant_dig', 'dig', 'epsilon', 'rounds', 'max_exp', 'min_exp'})
+
+    def test_numeric_contract_and_values_repeat_exactly_across_process_hash_seeds(self):
+        script = ('import json,sys; import pcb_ml_features as f; '
+                  'v,r=f.routing_features(sys.stdin.read()); '
+                  'print(json.dumps({"contract":f.feature_contract("routing"),"values":v,"reasons":r},sort_keys=True))')
+        rows = []
+        for seed in ('1', '191'):
+            environment = dict(os.environ, PYTHONHASHSEED=seed,
+                PYTHONPATH=str(Path(features.__file__).resolve().parent), PYTHONDONTWRITEBYTECODE='1')
+            process = subprocess.run([sys.executable, '-c', script], input=NATIVE,
+                env=environment, text=True, capture_output=True, timeout=10)
+            self.assertEqual(process.returncode, 0, process.stderr)
+            rows.append(json.loads(process.stdout))
+        self.assertEqual(rows[0], rows[1])
+        measured, reasons = features.routing_features(NATIVE)
+        self.assertEqual(rows[0]['values'], measured)
+        self.assertEqual(rows[0]['reasons'], reasons)
 
     def test_legacy_numeric_references_and_later_explicit_pad_declarations_resolve(self):
         legacy = NATIVE.replace('(net 1 "/A")', '(net 1)').replace('(net 1)', '(net 1 "/A")', 1)
@@ -591,15 +800,37 @@ class AdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "source artifact changed"):
             adapters.load_feature_packet(self.root, path)
 
-    def test_resealed_legacy_feature_contract_cannot_be_accepted_as_v3(self):
+    def test_resealed_legacy_feature_contract_cannot_be_accepted_as_v4(self):
         source = self.root / 'native.kicad_pcb'
         source.write_text(NATIVE)
         packet = self.packet(source)
-        self.assertEqual(packet['feature_contract']['version'], 3)
+        self.assertEqual(packet['feature_contract']['version'], 4)
         self.assertIn('retained_track_length_mm', packet['feature_names'])
-        packet['feature_contract']['version'] = 2
+        packet['feature_contract']['version'] = 3
+        packet['feature_contract'].pop('numeric_producer')
         packet['content_sha256'] = data.artifact_identity({key:value for key,value in packet.items() if key != 'content_sha256'})
         path = self.root / 'old-packet.json'
+        write(path, packet)
+        with self.assertRaisesRegex(ValueError, 'extractor contract changed'):
+            adapters.load_feature_packet(self.root, path)
+
+    def test_changed_numeric_producer_rejects_exact_values_before_extraction(self):
+        source = self.root / 'native.kicad_pcb'
+        source.write_text(NATIVE)
+        packet = self.packet(source)
+        path = self.root / 'old-runtime-packet.json'
+        write(path, packet)
+        other = copy.deepcopy(packet['feature_contract']['numeric_producer'])
+        other['python_build'] = 'explicit different synthetic CPython build'
+        with mock.patch.object(features, 'numeric_producer', return_value=other):
+            current = features.feature_contract('routing')
+            self.assertNotEqual(current, packet['feature_contract'])
+            self.assertEqual(current['features'], packet['feature_contract']['features'])
+            with mock.patch.object(features, 'routing_features', side_effect=AssertionError('must reject before re-extraction')):
+                with self.assertRaisesRegex(ValueError, 'extractor contract changed'):
+                    adapters.load_feature_packet(self.root, path)
+        packet['feature_contract']['numeric_producer'] = other
+        packet['content_sha256'] = data.artifact_identity({key:value for key,value in packet.items() if key != 'content_sha256'})
         write(path, packet)
         with self.assertRaisesRegex(ValueError, 'extractor contract changed'):
             adapters.load_feature_packet(self.root, path)
@@ -623,7 +854,7 @@ class AdapterTests(unittest.TestCase):
                     adapters.load_feature_packet(self.root, path)
         self.assertEqual(features.feature_contract('routing'), original['feature_contract'])
 
-    def test_legacy_v2_numeric_model_rejects_current_v3_feature_packet(self):
+    def test_legacy_v2_numeric_model_rejects_current_v4_feature_packet(self):
         import pcb_ml_models as models
         _, trial = self.trial()
         current = self.corpus([trial])
