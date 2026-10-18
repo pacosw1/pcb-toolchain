@@ -234,7 +234,7 @@ def run(args):
     paths = set(workflow_runtime_files(ROOT / 'tools'))
     paths.update(ROOT / 'tools' / name for name in ('routing_trial_smoke.py', 'native_workflow_smoke.py',
         'real_board_regression.py', 'placement_outcomes.py', 'pcb_test_fixture.py', 'pcbtool.py',
-        'route_rule_coverage.py'))
+        'route_rule_coverage.py', 'route_hole_coverage.py'))
     sources = {str(path): sha(path) for path in sorted(paths)}
     result = dict(schema=SCHEMA, status='failed', board=BOARD, qualified=False,
         scope='one synthetic actual-router development pair; no ranking, holdout, release or physical qualification',

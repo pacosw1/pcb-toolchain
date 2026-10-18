@@ -180,7 +180,7 @@ class RoutingTrialTests(unittest.TestCase):
         self.native.parent.mkdir(parents=True,exist_ok=True)
         for extension in ('.kicad_pcb','.kicad_sch','.kicad_pro','.kicad_dru'):
             self.native.with_suffix(extension).write_text('synthetic protocol input '+extension)
-        for name in ('fastroute_job.py','route_features.py','route_rule_coverage.py'):
+        for name in ('fastroute_job.py','route_features.py','route_rule_coverage.py','route_hole_coverage.py'):
             path=self.root/'tools'/name;path.parent.mkdir(parents=True,exist_ok=True)
             path.write_text('# synthetic producer identity; never executed\n')
         self.json_file(self.root/'tools/route-features.json',dict(features=dict(routing_rules=dict(on=True,repair_iterations=2))))
@@ -293,8 +293,9 @@ class RoutingTrialTests(unittest.TestCase):
         self.assertEqual(policy['effort']['router_timeout_s'],8)
         self.assertEqual(policy['effort']['timeout_s'],20)
         self.assertFalse(policy['effort']['feature_policy']['routing_rules']['on'])
-        coverage=self.root/'tools/route_rule_coverage.py'
-        self.assertEqual(policy['inputs'][str(coverage)],pcb_operations.sha(coverage))
+        for name in ('route_rule_coverage.py','route_hole_coverage.py'):
+            coverage=self.root/'tools'/name
+            self.assertEqual(policy['inputs'][str(coverage)],pcb_operations.sha(coverage))
         self.assertFalse(policy['controls']['effective_configuration_verified'])
         self.assertEqual(json.loads(Path(prepared['policy_path']).read_text()),policy)
         self.assertEqual((Path(prepared['output']).parent/'execution-context.json').read_bytes(),self.context.read_bytes())
