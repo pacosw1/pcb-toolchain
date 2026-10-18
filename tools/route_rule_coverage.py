@@ -145,6 +145,7 @@ class Model:
                 signal_layers.append(layer[1])
         if not signal_layers or not set(layers) <= set(signal_layers):
             raise ValueError('requested layers absent from actual DSN signal layers')
+        self.actual_layers = seen_layers
         self.classes, self.membership, self.pairs = {}, {}, {}
         self.defaults = self.clearances(structures[0])
         if not self.defaults:
@@ -258,11 +259,20 @@ def inspect(dru_text, dsn_text, *, active_nets, net_classes, obstacles,
                 kind = constraint[1]
                 row = dict(rule=rule, constraint=kind, disposition='unsupported')
                 rows.append(row)
+                if kind == 'silk_clearance' and not any(v['Type'] == 'Via' for v in moving):
+                    row.update(disposition='immutable_unchanged',
+                        reason='single-layer router adds covered tracks, no new holes; source and import/final identity guards preserve masks, silk and outline')
+                    continue
                 if kind == 'disallow' and constraint[2:] == ['pad']:
                     row.update(disposition='immutable_unchanged', reason='router does not modify footprint/pad geometry; import identity guard remains required')
                     continue
                 if kind in ('hole_to_hole', 'hole_size', 'annular_width', 'via_diameter') and not any(v['Type'] == 'Via' for v in moving):
                     row.update(disposition='immutable_unchanged', reason='verified single-layer model introduces no new via/hole transitions')
+                    continue
+                if (rule_layers and rule_layers[0][1] in model.actual_layers
+                        and all(rule_layers[0][1] not in model.allowed(n) for n in active_nets)):
+                    row.update(disposition='not_applicable',
+                        reason='exact native layer cannot receive new copper under every actual active-net mask')
                     continue
                 applicable, uncertain = [], False
                 binary = kind in ('clearance', 'creepage', 'hole_clearance', 'hole_to_hole')

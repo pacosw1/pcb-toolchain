@@ -1,4 +1,5 @@
 import copy
+from decimal import Decimal
 from pathlib import Path
 import tempfile
 import unittest
@@ -68,15 +69,89 @@ class HoleCoverageTests(unittest.TestCase):
         self.assertEqual(result['covered_pads'][0]['native_drill_radius_mm'],'0.6999985')
         self.assertEqual(result['covered_pads'][0]['containment_slack_radius_mm'],'0.0700015')
 
-    def test_containment_uses_squared_displacement_without_rounding_or_clearance_rescue(self):
+    def test_containment_uses_squared_displacement_without_rounding(self):
         pads=copy.deepcopy(self.pads[:1])
         pads[0]['drill_mm']=['1.4']*2
         model=dsn().replace('1 -1750 0','1 -1708 -56')
         # 0.042**2+0.056**2 == 0.07**2, exactly tangent.
-        self.assertEqual(self.check(model,pads)['status'],'covered')
-        self.blocked(self.check(model.replace('-1708 -56','-1707.999999 -56'),pads))
+        self.assertEqual(self.check(model,pads,clearance_floor_mm='0')['status'],'covered')
+        self.blocked(self.check(model.replace('-1708 -56','-1707.999999 -56'),pads,clearance_floor_mm='0'))
         self.blocked(self.check(dsn().replace('(circle F.Cu 2100)','(circle F.Cu 1900)'),pads,
-            clearance_floor_mm='100'))
+            clearance_floor_mm='0'))
+
+    def test_only_verified_floor_is_credited_with_exact_boundary(self):
+        pads=copy.deepcopy(self.pads[:1]);pads[0]['size_mm']=['0.6']*2;pads[0]['drill_mm']=['0.3']*2
+        model=dsn().replace('(circle F.Cu 2100)','(circle F.Cu 600)')
+        result=self.check(model,pads,clearance_floor_mm='0.13')
+        self.assertEqual(result['status'],'covered',result)
+        proof=result['covered_pads'][0]
+        self.assertEqual(Decimal(proof['containment_slack_radius_mm']),Decimal('-0.13'))
+        self.assertEqual(proof['credited_clearance_mm'],'0.13')
+        self.assertEqual(Decimal(proof['effective_containment_slack_mm']),0)
+        self.blocked(self.check(model,pads,clearance_floor_mm='0.129999999999'))
+
+    def test_six_repeated_physical_drills_bind_actual_export_aliases_not_one_pad_number(self):
+        # Actual KiCad10 CELLULAR/PWR export pattern: six thermal PTHs and
+        # intervening SMD EP share number9; the EP consumes the @3 suffix.
+        pads=[];pins=[];members=[]
+        coordinates=[(-1.3,-.65),(-1.3,.65),(0,-.65),(0,0),(0,.65),(1.3,-.65),(1.3,.65)]
+        for index,(x,y) in enumerate(coordinates):
+            smd=index==3;name='9'+('@'+str(index) if index else '')
+            geometry='smd rect' if smd else 'thru_hole circle'
+            size='3.1 2.4' if smd else '0.6 0.6'
+            drill='' if smd else '(drill 0.3)'
+            pads.append(f'(pad "9" {geometry} (at {x} {y} 180) (size {size}) {drill} (layers "*.Cu") (net "GND") (uuid "physical-{index}"))')
+            pins.append(f'(pin Round[A]Pad_600_um {name} {x*1000:g} {-y*1000:g})')
+            members.append('U1-'+name)
+        self.path.write_text('(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal)) '
+            '(footprint "EP" (layer "F.Cu") (at 100 100 180) (property "Reference" "U1") '+''.join(pads)+'))')
+        native_pads=coverage.native_pth_pads(self.path)
+        self.assertEqual(len(native_pads),6)
+        self.assertEqual(len({p['identity'] for p in native_pads}),6)
+        self.assertEqual([p['export_pin'] for p in native_pads],['9','9@1','9@2','9@4','9@5','9@6'])
+        model='''(pcb fixture (resolution um 10) (unit um)
+          (structure (layer F.Cu (type signal)) (layer B.Cu (type power)))
+          (placement (component EP (place U1 100000 -100000 front 180)))
+          (library (image EP '''+''.join(pins)+''')
+          (padstack Round[A]Pad_600_um (shape (circle F.Cu 600))))
+          (network (net GND (pins '''+' '.join(members)+''')) (net /LED_A (pins D1-1 R1-1))))'''
+        result=self.check(model,native_pads)
+        self.assertEqual(result['status'],'covered',result)
+        self.assertEqual(len(result['covered_pads']),6)
+        self.assertEqual(len({p['dsn_pin'] for p in result['covered_pads']}),6)
+        for changed in (model.replace('U1-9@5','U1-MISSING'),
+                model.replace('9@5 1300 650','9@5 1301 650'),
+                model.replace('9@5 1300 650','9@5 -1300 650')):
+            self.blocked(self.check(changed,native_pads))
+        forged=copy.deepcopy(native_pads);forged[1]['identity']=forged[0]['identity']
+        self.blocked(self.check(model,forged))
+        forged=copy.deepcopy(native_pads);forged[1]['export_pin']=forged[0]['export_pin']
+        self.blocked(self.check(model,forged))
+        legacy=[{k:v for k,v in p.items() if k not in coverage.PHYSICAL_FIELDS} for p in native_pads]
+        self.blocked(self.check(model,legacy))
+
+    def test_true_rectangle_uses_composed_rotation_and_exact_inscribed_disk(self):
+        self.path.write_text(native().replace('(at 100 100 0)','(at 100 100 90)',1)
+            .replace('thru_hole circle (at -1.75 0) (size 2.1 2.1)',
+                     'thru_hole rect (at -1.75 0 180) (size 3 2)',1))
+        pads=coverage.native_pth_pads(self.path)[:1]
+        self.assertEqual(pads[0]['position_mm'],['100','101.75'])
+        model=dsn().replace('front 0','front 90',1).replace(
+            '(pin Round[A]Pad_2100.000000_um 1 -1750 0)',
+            '(pin Round[A]Pad_2100.000000_um (rotate 90) 1 -1750 0)').replace(
+            '(circle F.Cu 2100)','(rect F.Cu -1500 -1000 1500 1000)')
+        result=self.check(model,pads)
+        self.assertEqual(result['status'],'covered',result)
+        self.assertEqual(result['covered_pads'][0]['dsn_rotation_deg'],180)
+        self.blocked(self.check(model.replace('(rotate 90)','(rotate 0)'),pads))
+        self.blocked(self.check(model.replace('-1500 -1000 1500 1000','-1499 -1000 1500 1000'),pads))
+        pads[0]['size_mm']=['1.6','2'];pads[0]['drill_mm']=['1.2']*2
+        model=model.replace('-1500 -1000 1500 1000','-800 -1000 800 1000')
+        self.assertEqual(self.check(model,pads,clearance_floor_mm='0.08')['status'],'covered')
+        self.blocked(self.check(model,pads,clearance_floor_mm='0.079999999999'))
+        self.path.write_text(native().replace('thru_hole circle (at -1.75 0) (size 2.1 2.1)',
+            'thru_hole rect (at -1.75 0) (size 2.1 2.1) (chamfer_ratio 0.2)',1))
+        with self.assertRaises(ValueError):coverage.native_pth_pads(self.path)
 
     def test_empty_missing_same_net_and_invalid_clearance_are_not_proofs(self):
         for pads in ([],None):
@@ -99,6 +174,26 @@ class HoleCoverageTests(unittest.TestCase):
             with self.subTest(native=text):
                 self.path.write_text(text)
                 with self.assertRaises(ValueError):coverage.native_pth_pads(self.path)
+
+    def test_physical_ids_and_numbered_aliases_cannot_hide_conflicting_native_membership(self):
+        duplicate='''(pad "1" thru_hole circle (at 1.75 0) (size 2.1 2.1)
+          (drill 1.399997) (layers "*.Cu") (net "/WRONG") (uuid "other"))'''
+        self.path.write_text(native().replace('(property "Reference" "J1")',
+            '(property "Reference" "J1") '+duplicate,1))
+        with self.assertRaises(ValueError):coverage.native_pth_pads(self.path)
+        pads=copy.deepcopy(self.pads)
+        pads[0]['rotation_deg']='45'
+        self.blocked(self.check(pads=pads))
+        pads=copy.deepcopy(self.pads);pads[0]['layers'].append('Unknown.Cu')
+        self.blocked(self.check(pads=pads))
+        pads=copy.deepcopy(self.pads);pads[0]['export_pin']='1@0'
+        self.blocked(self.check(pads=pads))
+
+    def test_legacy_unique_circular_source_rows_remain_usable_without_physical_aliases(self):
+        pads=[{k:v for k,v in p.items() if k not in coverage.PHYSICAL_FIELDS} for p in self.pads]
+        result=self.check(pads=pads,clearance_floor_mm='0')
+        self.assertEqual(result['status'],'covered',result)
+        self.assertEqual(len(result['covered_pads']),2)
 
     def test_model_identity_pose_mirror_membership_and_duplicates_fail_closed(self):
         variants=(dsn().replace('(place J1','(place J9',1),
