@@ -84,3 +84,32 @@ KiCad can return effective DRC-engine clearance, and the measured ENV 10.0.6
 probe returned 0.15 mm on all 11 nets with no zero-clearance nets. A future
 inherited/default/custom-rule differential audit should compare exact native
 evidence before changing the model. This backend changes no clearance policy.
+
+The bounded historical ranking audit found no equal-control selection-regret
+measurement. In the [four-pose BASE-B table](../hardware-design/reports/2026-10-09-base-b-placement-audit.md),
+the two poses with zero recorded native errors have costs 4002.69 and 4022.45,
+but respectively 9 and 7 opens. Their halos differ, only one route per pose is
+recorded, and neither completed. The [accounting JSON](../hardware-design/reports/2026-10-09-lean-archive-accounting.json)
+records zero completions in four real-outline attempts. Its optimizer windows
+are nested within backend time. The common-halo exercise was a rescore without
+new routing or a holdout; it does not establish a routing improvement or failure
+of a new scoring policy.
+
+The later [six-pose native-screen record](../hardware-design/reports/2026-10-09-placement-native-screen.json)
+contains no routed outcomes: all six retain an inherited native error and 308
+opens, and one introduces two additional native errors despite an empty internal
+illegal list. These are a different source revision from the four-pose archive.
+Their costs do not establish an actual routed selection rank. The original raw
+BASE-B archives were not recovered by the bounded local/server pointer search;
+tracked summary hashes attribute these observations but do not replay the absent
+native artifacts.
+
+The task-local evidence is retained under
+`.gate/pcb-lifecycle-20261016/invalidation-placement-audit/placement/`.
+Its corrected `audit.json` and `rebuild_audit.py` bind the exact four-pose table
+and accounting source separately from the later seed table. The next useful
+handoff is an attributable raw-archive location; otherwise a separately
+authorized nonproduction comparison needs the selected pose and a native-legal
+alternative with matching source, runtime, resources and router effort, original
+failures, and route/repair/verification receipts. This audit ran no routes and
+provides no basis for changing weights or claiming a speedup.

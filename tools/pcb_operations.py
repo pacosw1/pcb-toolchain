@@ -312,18 +312,19 @@ def run(folder):
         backend_root = Path(manifest['from_run']['folder']) / 'workspace' if parent else root
         backend, scope = OBSERVATION_BACKENDS[operation]
         output = folder / 'operation/report.json'
-        policies = list((root / 'tools').glob('*.py'))
-        policies += list((root / 'tools/lib').glob('*.mjs'))
-        policies += list((root / 'tools/placer').glob('*.py'))
-        policies += list((root / 'tools/pcb_search').glob('*.py'))
-        observed_inputs = {str(path): sha(path) for path in policies}
+        from pcb_observation_inputs import collect, current
+        python_command = os.environ.get('PYTHON_MODERN', 'python3')
+        policy_operation = operation + '-from-run' if manifest.get('from_run') else operation
+        implementation = collect(root, policy_operation, manifest['arguments'], python_command=python_command)
+        observed_inputs = dict(implementation['files'])
+        absent = list(implementation['absent'])
         for key in ('design_contract',):
             if manifest.get(key):
                 binding = manifest[key]
                 if sha(binding['path']) != binding['sha256']:
                     raise ValueError(key + ' changed after admission')
                 observed_inputs[binding['path']] = binding['sha256']
-        command = [os.environ.get('PYTHON_MODERN', 'python3'), str(root / 'tools' / backend)]
+        command = [python_command, str(root / 'tools' / backend)]
         command += manifest['arguments'] + ['--root', str(backend_root), '--json', '--output', str(output)]
         code = execute(folder, operation, command, root, dict(os.environ, IOT_LAB=str(backend_root)))
         report = json.loads(output.read_text()) if output.is_file() else None
@@ -353,12 +354,15 @@ def run(folder):
                         raise ValueError('engineering backend reported a changed policy input: ' + name)
                     observed_inputs[resolved] = digest
         observed_inputs.update(parent_dependencies)
-        absent = []
         for name in report.get('absent_inputs', []):
-            path = (backend_root / name).resolve()
-            if not path.is_relative_to(backend_root) or path.exists() or path.is_symlink():
+            path = (backend_root / name).absolute()
+            if not path.resolve().is_relative_to(backend_root) or path.exists() or path.is_symlink():
                 raise ValueError('engineering absent input appeared or escaped its checkout: ' + name)
             absent.append(str(path))
+        if not current(implementation['policy']):
+            raise ValueError('engineering code resolution changed while producing the report')
+        if any(Path(name).exists() or Path(name).is_symlink() for name in absent):
+            raise ValueError('a previously absent engineering input appeared while producing the report')
         if any(not Path(name).is_file() or sha(name) != digest for name, digest in observed_inputs.items()):
             raise ValueError('engineering evidence inputs changed while producing the report')
         result = dict(status='passed' if code == 0 else 'error' if code == 2 else 'failed',
@@ -367,7 +371,7 @@ def run(folder):
                       cause=(report or {}).get('cause', operation + (' completed' if code == 0 else ' blocked; inspect report.json')),
                       operation=operation, tool_exit=code, report=str(output),
                       engineering_status=(report or {}).get('status'), engineering_inputs=observed_inputs,
-                      engineering_absent_inputs=absent,
+                      engineering_absent_inputs=sorted(set(absent)), engineering_policy=implementation['policy'],
                       qualified=False, release_approved=False)
         lean.atomic_json(folder / 'operation/result.json', result)
         return result['exit_code']

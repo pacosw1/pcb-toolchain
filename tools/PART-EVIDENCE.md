@@ -55,6 +55,24 @@ still validated. With `--json --output FILE`, inspect writes the full evidence
 report once and prints a compact receipt with cache status and report path/hash.
 Without `--output`, JSON stdout remains the full report.
 
+Owned `parts inspect`, `selection`, `verify` and `status` observations can use an
+audited code boundary rather than every engineering tool and test. Their terminal
+`engineering_policy` records the chosen mode and execution context. Relevant
+Python imports, native-reader code, the resolved Python launcher and all backend
+source/tool/artifact inputs remain bound; missing local import candidates are
+recorded so a newly appearing module also invalidates the observation.
+
+The narrow boundary is certified for reviewed producer and supervisor source
+revisions. A changed producer, unsupported execution path or candidate continuation
+uses the conservative policy inventory. Other observation backends and stock
+retain that boundary too. Unrelated test or checker edits preserve a certified
+parts observation, while changed consumed files, tools, import resolution or
+missing inputs expire it. Existing historical receipts keep their original
+bindings. New production-module filenames conservatively expire observations;
+unreviewed compiled or sourceless import shadows use the broad boundary.
+Candidate checks, adoption and fresh release gates retain their own
+verification paths.
+
 PDFs must retain their existing `.pdf.source.json` source/time/hash attribution.
 A review cites exact original PDF paths, hashes, document identity/revision and
 one-based pages. A text hit for a package name provides no engineering approval.

@@ -22,6 +22,7 @@ class PcbCliTests(unittest.TestCase):
         source = Path(__file__).resolve().parent.parent
         files = ['tools/pcb', 'tools/pcb_cli.py', 'tools/lean_owned.py', 'tools/lean_owned_exec.py', 'tools/lean_workflow.py',
                  'tools/pcb_workflow.py', 'tools/pcb_operations.py', 'tools/pcb_evidence.py', 'tools/pcb_benchmark.py', 'tools/pcb_timing.py', 'tools/pcb_cycle.py',
+                 'tools/pcb_observation_inputs.py',
                  'tools/gate.mjs', 'tools/lib/env.mjs', 'tools/lib/gate-core.mjs', 'tools/lib/gate-runtime.mjs', 'tools/lib/gate-inputs.mjs',
                  'tools/lib/check-cache.mjs', 'tools/lib/gate-findings.mjs', 'tools/lib/env-paths.mjs']
         for name in files:

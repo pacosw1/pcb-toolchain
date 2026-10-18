@@ -156,6 +156,90 @@ class NextTests(unittest.TestCase):
         self.assertNotEqual(result['next_action']['kind'], 'repair')
         self.assertEqual(result['evidence']['freshness'], 'stale')
 
+    def scoped_parts_run(self):
+        """A sealed failed observation still needs exact current checker inputs."""
+        import pcb_observation_inputs
+        source = Path(__file__).resolve().parent
+        for name in (*pcb_observation_inputs.COMMON, 'run_record.py', 'part_evidence.py', 'part_native.py', 'lib/kicad-population.mjs'):
+            target = self.root / 'tools' / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((source / name).read_bytes())
+        for name in ('test_unrelated.py', 'unrelated_checker.py'):
+            (self.root / 'tools' / name).write_text('# unrelated source\n')
+        launcher = self.root / 'fixture-python'
+        launcher.write_text('fixture Python executable identity\n')
+        launcher.chmod(0o755)
+        collected = pcb_observation_inputs.collect(self.root, 'parts', ['status', 'X'], str(launcher))
+        self.assertEqual(collected['policy']['mode'], 'audited_parts', collected)
+        folder = self.make_run(operation='parts', status='failed')
+        manifest = json.loads((folder / 'run.json').read_text())
+        manifest['arguments'] = ['status', 'X']
+        write(folder / 'run.json', manifest)
+        missing_review = self.root / 'hardware-design/registry/part-reviews/X.json'
+        write(folder / 'operation/report.json', dict(schema='iot-lab.part-evidence.v1', status='blocked',
+            qualified=False, absent_inputs=[missing_review.relative_to(self.root).as_posix()],
+            blockers=[dict(code='missing_part_review', detail='Review is still required')]))
+        native = self.project.with_suffix('.kicad_pcb')
+        terminal = json.loads((folder / 'result.json').read_text())
+        terminal.update(engineering_inputs={**collected['files'], str(native): pcb_workflow.sha(native)},
+                        engineering_absent_inputs=collected['absent'] + [str(missing_review)],
+                        engineering_policy=collected['policy'])
+        self.seal(folder, terminal)
+        return folder, launcher
+
+    def test_parts_observation_survives_unrelated_edits_but_rejects_consumed_source_changes(self):
+        folder, launcher = self.scoped_parts_run()
+        self.assertEqual(self.next()['evidence']['freshness'], 'current')
+        for name in ('test_unrelated.py', 'unrelated_checker.py'):
+            (self.root / 'tools' / name).write_text('# unrelated edit after observation\n')
+        result = self.next()
+        self.assertEqual(result['evidence']['freshness'], 'current', result)
+        self.assertEqual(result['state'], 'blocked')
+        self.assertEqual(result['blocker']['code'], 'missing_part_review')
+        for path in (self.root / 'tools/part_evidence.py', self.root / 'tools/part_native.py',
+                     self.root / 'tools/lib/kicad-population.mjs', launcher):
+            original = path.read_bytes()
+            with self.subTest(consumed=str(path.relative_to(self.root))):
+                path.write_bytes(original + b'\n# changed consumed implementation\n')
+                result = self.next()
+                self.assertEqual(result['evidence']['freshness'], 'stale', result)
+                self.assertNotEqual(result['state'], 'review')
+            path.write_bytes(original)
+        self.assertEqual(self.next()['evidence']['freshness'], 'current')
+        self.verified.assert_not_called()
+
+    def test_new_import_candidate_and_dangling_symlink_invalidate_parts_observation(self):
+        self.scoped_parts_run()
+        shadow = self.root / 'tools/decimal.py'
+        shadow.write_text('class Decimal: pass\n')
+        self.assertEqual(self.next()['evidence']['freshness'], 'stale')
+        shadow.unlink()
+        self.assertEqual(self.next()['evidence']['freshness'], 'current')
+        shadow.symlink_to(self.root / 'missing-decimal-target.py')
+        result = self.next()
+        self.assertEqual(result['evidence']['freshness'], 'stale', result)
+        self.verified.assert_not_called()
+
+    def test_narrow_parts_policy_does_not_accept_a_tampered_sealed_report(self):
+        folder, _ = self.scoped_parts_run()
+        write(folder / 'operation/report.json', dict(schema='iot-lab.part-evidence.v1', status='passed',
+            qualified=False, blockers=[]))
+        result = self.next()
+        self.assertEqual(result['evidence']['freshness'], 'invalid', result)
+        self.assertIn('evidence changed', result['evidence']['cause'])
+        self.assertNotEqual(result['state'], 'review')
+        self.verified.assert_not_called()
+
+    def test_creating_missing_part_review_invalidates_the_old_status_observation(self):
+        self.scoped_parts_run()
+        self.assertEqual(self.next()['blocker']['code'], 'missing_part_review')
+        write(self.root / 'hardware-design/registry/part-reviews/X.json',
+              dict(schema='iot-lab.part-use.v1', board='X', review=dict(verdict='pending')))
+        result = self.next()
+        self.assertEqual(result['evidence']['freshness'], 'stale', result)
+        self.assertNotEqual(result['state'], 'review')
+        self.verified.assert_not_called()
+
     def test_parent_diagnosis_cannot_recommend_repair_after_canonical_sources_change(self):
         import pcb_operations
         native=self.project.with_suffix('.kicad_pcb')

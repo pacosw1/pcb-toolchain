@@ -205,6 +205,10 @@ def design_next(root, identifier, contract, base, through=None):
         inputs = result.get('engineering_inputs')
         if not isinstance(inputs, dict) or not inputs:
             raise ValueError('design assessment lacks source bindings')
+        if 'engineering_policy' in result:
+            from pcb_observation_inputs import current
+            if not current(result['engineering_policy']):
+                raise ValueError('engineering code resolution changed since the assessment')
         if any(not Path(name).is_file() or pcb_workflow.sha(name) != digest for name, digest in inputs.items()):
             raise ValueError('design assessment source or tool changed')
         if any(Path(name).exists() or Path(name).is_symlink() for name in result.get('engineering_absent_inputs', [])):
@@ -346,6 +350,10 @@ def next_action(root, board, base=None, design_contract=None, through=None):
             inputs = result.get('engineering_inputs')
             if not isinstance(inputs, dict) or not inputs:
                 raise ValueError('engineering observation lacks current input bindings')
+            if 'engineering_policy' in result:
+                from pcb_observation_inputs import current
+                if not current(result['engineering_policy']):
+                    raise ValueError('engineering code resolution changed since the observation')
             for name, digest in inputs.items():
                 if not Path(name).is_file() or pcb_workflow.sha(name) != digest:
                     raise ValueError('engineering observation input changed: ' + name)

@@ -1,16 +1,169 @@
 """Unified engineering adapters reject missing proof and preserve run ownership."""
+import hashlib
+from importlib.machinery import EXTENSION_SUFFIXES
 import json
+import os
 from pathlib import Path
+import py_compile
 import shutil
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
 import pcb_cli
 import pcb_cycle
 import pcb_operations
+import pcb_observation_inputs as inputs
 import test_pcb_cli as fixtures
 import test_pcb_workflow as workflows
+
+
+class ObservationPolicyTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix='pcb-observation-inputs-')
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
+        self.tools = self.root / 'tools'
+        source = Path(__file__).resolve().parent
+        for name in (*inputs.COMMON, 'run_record.py', 'part_evidence.py', 'part_native.py', 'lib/kicad-population.mjs'):
+            path = self.tools / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source / name, path)
+        self.launcher = self.root / 'runtime/python3'
+        self.launcher.parent.mkdir()
+        self.launcher.write_text('An executable identity; collection must not launch it.\n')
+        self.launcher.chmod(0o755)
+        self.write('test_unrelated.py', 'raise AssertionError("test must not run")\n')
+        self.write('unrelated_checker.py', 'raise AssertionError("checker must not run")\n')
+
+    def write(self, name, text):
+        path = self.tools / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        return path
+
+    def collect(self, action='inspect', operation='parts'):
+        return inputs.collect(self.root, operation, [action, 'fixture'], str(self.launcher))
+
+    def test_parts_scope_ignores_unrelated_edits_but_keeps_entry_parser_js_and_launcher(self):
+        before = self.collect()
+        self.assertEqual(before['policy']['mode'], 'audited_parts', before)
+        for name in ('part_evidence.py', 'part_native.py', 'lib/kicad-population.mjs'):
+            path = self.tools / name
+            self.assertEqual(before['files'][str(path)], hashlib.sha256(path.read_bytes()).hexdigest())
+        self.assertEqual(before['files'][str(self.launcher)], hashlib.sha256(self.launcher.read_bytes()).hexdigest())
+        self.write('test_unrelated.py', '# changed test only\n')
+        self.write('unrelated_checker.py', '# changed different checker only\n')
+        after = self.collect()
+        self.assertEqual(before['files'], after['files'])
+        self.assertEqual(before['absent'], after['absent'])
+        self.assertTrue(inputs.current(before['policy']))
+        for name in ('part_evidence.py', 'part_native.py', 'lib/kicad-population.mjs'):
+            path = self.tools / name
+            original = path.read_bytes()
+            with self.subTest(consumed=name):
+                path.write_bytes(original + b'\n# changed consumed implementation\n')
+                self.assertNotEqual(self.collect()['files'][str(path)], before['files'][str(path)])
+            path.write_bytes(original)
+
+    def test_uncertified_local_import_keeps_the_conservative_boundary(self):
+        # part_native already imports decimal. A local module can shadow that
+        # import without any change to the audited producer's source bytes.
+        parser = self.write('decimal.py', 'from evidence_shapes.decoder import decode\nclass Decimal: pass\n')
+        self.write('evidence_shapes/__init__.py', 'SCHEMA = 1\n')
+        self.write('evidence_shapes/decoder.py', 'def decode(value): return value\n')
+        bound = self.collect('verify')
+        self.assertEqual(bound['policy']['mode'], 'conservative', bound)
+        self.assertIn(str(parser), bound['files'])
+        self.assertIn(str(self.tools / 'unrelated_checker.py'), bound['files'])
+
+    def test_new_local_import_candidates_have_absence_bindings(self):
+        bound = self.collect('selection')
+        self.assertEqual(bound['policy']['mode'], 'audited_parts', bound)
+        for name in ('decimal.py', 'decimal/__init__.py', 'json.py', 'json/__init__.py'):
+            self.assertIn(str(self.tools / name), bound['absent'])
+        new = self.write('decimal.py', 'class Decimal: pass\n')
+        fresh = self.collect('selection')
+        self.assertEqual(fresh['policy']['mode'], 'conservative', fresh)
+        self.assertIn(str(new), fresh['files'])
+        self.assertNotIn(str(new), fresh['absent'])
+
+    def test_existing_compiled_import_shadows_force_conservative_scope_and_bind_bytes(self):
+        self.assertEqual(self.collect()['policy']['mode'], 'audited_parts')
+        source = self.root / 'compiled-source.py'
+        source.write_text('class Decimal: pass\n')
+        names = ('decimal.pyc', 'decimal' + EXTENSION_SUFFIXES[0], 'decimal/__init__.pyc')
+        for name in names:
+            with self.subTest(shadow=name):
+                path = self.tools / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if path.suffix == '.pyc':
+                    py_compile.compile(str(source), cfile=str(path), doraise=True)
+                else:
+                    path.write_bytes(b'Unsupported local compiled loader candidate\n')
+                try:
+                    observed = self.collect()
+                    self.assertEqual(observed['policy']['mode'], 'conservative', observed)
+                    original = observed['files'][str(path)]
+                    self.assertEqual(original, hashlib.sha256(path.read_bytes()).hexdigest())
+                    path.write_bytes(path.read_bytes() + b'changed candidate bytes')
+                    changed = self.collect()
+                    self.assertNotEqual(changed['files'][str(path)], original)
+                finally:
+                    path.unlink()
+
+    def test_unknown_execution_or_operation_keeps_conservative_inventory(self):
+        entry = self.tools / 'part_evidence.py'
+        original = entry.read_text()
+        for mechanism in ("__import__(os.environ['PART_PLUGIN'])", "exec(os.environ['PART_CODE'])",
+                          "subprocess.run(['unreviewed-helper'])"):
+            with self.subTest(mechanism=mechanism):
+                entry.write_text(original + '\n' + mechanism + '\n')
+                result = self.collect()
+                self.assertEqual(result['policy']['mode'], 'conservative', result)
+                self.assertIn(str(self.tools / 'unrelated_checker.py'), result['files'])
+                self.assertIn(str(self.tools / 'test_unrelated.py'), result['files'])
+        entry.write_text(original)
+        # Also exercise the resolver, rather than only the producer's exact
+        # audit certificate: a newly imported module can execute more code.
+        for mechanism in ("__import__(os.environ['PART_PLUGIN'])", "exec(os.environ['PART_CODE'])",
+                          "subprocess.run(['unreviewed-helper'])"):
+            with self.subTest(imported_mechanism=mechanism):
+                self.write('decimal.py', mechanism + '\nclass Decimal: pass\n')
+                result = self.collect()
+                self.assertEqual(result['policy']['mode'], 'conservative', result)
+                self.assertIn(str(self.tools / 'unrelated_checker.py'), result['files'])
+        (self.tools / 'decimal.py').unlink()
+        for operation, action in (('parts', 'stock'), ('routing', 'diagnose')):
+            with self.subTest(operation=operation, action=action):
+                result = self.collect(action, operation)
+                self.assertEqual(result['policy']['mode'], 'conservative', result)
+                self.assertIn(str(self.tools / 'unrelated_checker.py'), result['files'])
+        (self.tools / 'pcb_workflow.py').unlink()
+        self.assertEqual(self.collect()['policy']['mode'], 'conservative')
+
+    def test_current_policy_detects_python_resolution_and_environment_changes(self):
+        with mock.patch.dict(os.environ, {'PATH': str(self.launcher.parent)}):
+            bound = inputs.collect(self.root, 'parts', ['status', 'X'], 'python3')
+            self.assertEqual(bound['policy']['mode'], 'audited_parts', bound)
+            self.assertTrue(inputs.current(bound['policy']))
+            other = self.root / 'different-runtime'
+            other.mkdir()
+            replacement = other / 'python3'
+            replacement.write_text('different resolved Python launcher\n')
+            replacement.chmod(0o755)
+            with mock.patch.dict(os.environ, {'PATH': str(other)}):
+                self.assertFalse(inputs.current(bound['policy']))
+            with mock.patch.dict(os.environ, {'PYTHONPATH': str(self.root / 'new-import-root')}):
+                self.assertFalse(inputs.current(bound['policy']))
+            with mock.patch.dict(os.environ, {'PDFINFO': str(self.root / 'different-pdfinfo')}):
+                self.assertFalse(inputs.current(bound['policy']))
+            self.write('selectors.py', '# can shadow a common-envelope stdlib import\n')
+            self.assertFalse(inputs.current(bound['policy']))
+        self.assertFalse(inputs.current({}))
+        self.assertFalse(inputs.current(None))
+
 
 
 class EngineeringCliTests(unittest.TestCase):
@@ -98,6 +251,66 @@ class EngineeringCliTests(unittest.TestCase):
         result = json.loads((folder / 'operation/result.json').read_text())
         self.assertEqual(result['engineering_inputs'][str(policy)], pcb_operations.sha(policy))
         self.assertNotIn(str(self.root / 'pcb_workflow.py'), result['engineering_inputs'])
+
+    def parts_sources(self):
+        source = Path(__file__).resolve().parent
+        for name in (*inputs.COMMON, 'run_record.py', 'part_evidence.py', 'part_native.py', 'lib/kicad-population.mjs'):
+            target = self.root / 'tools' / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source / name, target)
+
+    def parts_operation(self, name):
+        self.parts_sources()
+        folder = self.root / name
+        (folder / 'operation').mkdir(parents=True)
+        (folder / 'run.json').write_text(json.dumps(dict(root=str(self.root), operation='parts',
+            board='X', arguments=['status', 'X'])))
+        return folder
+
+    def test_parts_policy_keeps_backend_sources_and_absence_without_unrelated_checkers(self):
+        folder = self.parts_operation('operation-scoped-parts')
+        unrelated = self.root / 'tools/unrelated_checker.py'
+        unrelated.write_text('# unrelated checker\n')
+        review = self.root / 'review.json'
+        review.write_text('{"reviewed":false}\n')
+        def blocked(*args):
+            (folder / 'operation/report.json').write_text(json.dumps(dict(schema='iot-lab.part-evidence.v1',
+                status='blocked', qualified=False, inputs={'review.json': pcb_operations.sha(review)},
+                absent_inputs=['optional-review.json'], blockers=[dict(code='missing_part_review')])))
+            return 1
+        with mock.patch.object(pcb_operations, 'execute', side_effect=blocked):
+            self.assertEqual(pcb_operations.run(folder), 1)
+        result = json.loads((folder / 'operation/result.json').read_text())
+        self.assertEqual(result['engineering_policy']['mode'], 'audited_parts', result)
+        self.assertEqual(result['engineering_inputs'][str(review.resolve())], pcb_operations.sha(review))
+        self.assertIn(str(self.root.resolve() / 'optional-review.json'), result['engineering_absent_inputs'])
+        self.assertIn(str((self.root / 'tools/part_native.py').resolve()), result['engineering_inputs'])
+        self.assertNotIn(str(unrelated.resolve()), result['engineering_inputs'])
+        self.assertEqual(result['status'], 'failed')
+        self.assertFalse(result['qualified'])
+
+    def test_backend_cannot_override_a_bound_parser_hash(self):
+        folder = self.parts_operation('operation-conflicting-parser')
+        def conflicts(*args):
+            (folder / 'operation/report.json').write_text(json.dumps(dict(schema='iot-lab.part-evidence.v1',
+                status='blocked', qualified=False, tool_inputs={'tools/part_native.py': '0' * 64})))
+            return 1
+        with mock.patch.object(pcb_operations, 'execute', side_effect=conflicts):
+            with self.assertRaisesRegex(ValueError, 'changed policy input'):
+                pcb_operations.run(folder)
+        self.assertFalse((folder / 'operation/result.json').exists())
+
+    def test_new_import_shadow_during_backend_execution_cannot_be_sealed(self):
+        folder = self.parts_operation('operation-import-race')
+        def appeared(*args):
+            (self.root / 'tools/decimal.py').write_text('class Decimal: pass\n')
+            (folder / 'operation/report.json').write_text(json.dumps(dict(schema='iot-lab.part-evidence.v1',
+                status='blocked', qualified=False)))
+            return 1
+        with mock.patch.object(pcb_operations, 'execute', side_effect=appeared):
+            with self.assertRaisesRegex(ValueError, 'absent|appeared|resolution changed'):
+                pcb_operations.run(folder)
+        self.assertFalse((folder / 'operation/result.json').exists())
 
 
 class CandidateContinuationTests(unittest.TestCase):
