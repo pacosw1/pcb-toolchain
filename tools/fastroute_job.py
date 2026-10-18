@@ -46,6 +46,7 @@ import contextlib
 import fnmatch
 import json
 import os
+from pathlib import Path
 import re
 import resource
 import shlex
@@ -62,6 +63,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import freeroute  # noqa: E402  (restrict_dsn)
 import route_features  # noqa: E402  (feature switches, tools/route-features.json)
 import route_rule_coverage  # mandatory actual-DSN admission, independent of feature flags
+import route_native_thermals
 import run_record  # noqa: E402  (W5 run record: OUTDIR/run.jsonl, one action per line; tools/run_record.py OUTDIR)
 import route_snapshots  # noqa: E402  (W12 checkpoint snapshots: OUTDIR/snapshots/NNNN.ses + .json + .png)
 import lean_workflow as lean
@@ -108,6 +110,106 @@ def _native_phase(stage, event_file):
                 child_cpu_s=(after_child.ru_utime+after_child.ru_stime)-(before_child.ru_utime+before_child.ru_stime),
                 accounting='process deltas; nested/whole-job intervals are non-additive',
                 blocking_native=True))+'\n')
+
+
+def _thermal_inputs(board):
+    paths = [Path(board).resolve(), Path(board).with_suffix('.kicad_pro').resolve(),
+             Path(board).with_suffix('.kicad_dru').resolve(), Path(__file__).resolve(),
+             Path(route_native_thermals.__file__).resolve()]
+    return {str(path): lean.digest(path) if path.is_file() else None for path in paths}
+
+
+def _capture_thermal_source(source, directory):
+    """Promotion replaces the workspace input; keep its exact original files."""
+    source = Path(source).resolve()
+    folder = Path(directory).resolve()/'native-thermal-source'
+    folder.mkdir()
+    captured = folder/source.name
+    inputs, originals = {}, {}
+    for suffix in ('.kicad_pcb', '.kicad_pro', '.kicad_dru', '.kicad_sch'):
+        original, target = source.with_suffix(suffix), captured.with_suffix(suffix)
+        before = lean.digest(original) if original.is_file() else None
+        if before is not None:
+            shutil.copyfile(original, target)
+        after = lean.digest(original) if original.is_file() else None
+        actual = lean.digest(target) if target.is_file() else None
+        if before != after or actual != before:
+            raise ValueError('native thermal source changed during capture')
+        inputs[str(target)] = actual
+        originals[str(original)] = before
+    receipt = dict(schema='iot-lab.native-thermal-source.v1', qualified=False,
+        original=dict(path=str(source), sha256=originals[str(source)]),
+        captured=dict(path=str(captured), sha256=inputs[str(captured)]),
+        original_files=originals, inputs=inputs)
+    lean.atomic_json(Path(directory)/'native-thermal-source.json', receipt)
+    return str(captured)
+
+
+def _checked_thermal_fill(board, path, receipt_path, phases, stage):
+    """KiCad's CLI ignores FillAllZones' result; retain the actual checked save."""
+    path = str(Path(path).resolve())
+    before = _thermal_inputs(path)
+    executable = str(Path(sys.executable).resolve())
+    receipt = dict(schema='iot-lab.native-thermal-fill.v1', qualified=False,
+                   candidate=dict(path=path, sha256=before[path]), inputs=before,
+                   fill_result=None, tool=dict(path=executable, sha256=lean.digest(executable)),
+                   pcbnew_version=pcbnew.Version(), invocation=dict(operation='ZONE_FILLER.Fill', saved=False))
+    try:
+        with _native_phase(stage, phases):
+            filled = pcbnew.ZONE_FILLER(board).Fill(board.Zones())
+            receipt['fill_result'] = filled if type(filled) is bool else None
+            if filled is not True:
+                raise ValueError('native thermal zone fill did not return True')
+            # SaveProjectAs would normalize the copied .pro under a new board
+            # basename. Keep the authored project exact while saving the PCB.
+            if pcbnew.SaveBoard(path, board, True) is not True:
+                raise ValueError('native thermal board save did not return True')
+        for name, expected in before.items():
+            if name != path and (lean.digest(name) if os.path.isfile(name) else None) != expected:
+                raise ValueError('native thermal fill policy or implementation changed')
+        receipt['candidate']['sha256'] = lean.digest(path)
+        receipt['inputs'][path] = receipt['candidate']['sha256']
+        receipt['invocation']['saved'] = True
+    except BaseException as error:
+        receipt['cause'] = str(error)
+        raise
+    finally:
+        lean.atomic_json(receipt_path, receipt)
+    return receipt
+
+
+def _thermal_drc(path, directory, phases, label):
+    """Validate the explicitly filled saved board, without a second hidden fill."""
+    path = str(Path(path).resolve())
+    report = os.path.join(directory, label + '-report.json')
+    receipt_path = os.path.join(directory, label + '-drc.json')
+    executable = shutil.which(KICAD_CLI)
+    if executable is None:
+        raise ValueError('native thermal DRC executable is unavailable')
+    executable = str(Path(executable).resolve())
+    command = [executable, 'pcb', 'drc', '--severity-all', '--format', 'json', '--units', 'mm', '-o', report, path]
+    receipt = dict(schema='iot-lab.native-thermal-drc.v1', qualified=False,
+        candidate=dict(path=path, sha256=lean.digest(path)), inputs=_thermal_inputs(path),
+        command=command, returncode=None, tool=dict(path=executable, sha256=lean.digest(executable)),
+        report=dict(path=os.path.abspath(report), sha256=None))
+    try:
+        run = lean.run_stage(command, stage=label+'-drc', event_file=phases,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        receipt['returncode'] = run.returncode
+        Path(os.path.join(directory, label+'.log')).write_text(run.stdout+run.stderr)
+        if os.path.isfile(report):
+            receipt['report']['sha256'] = lean.digest(report)
+        if run.returncode or not receipt['report']['sha256']:
+            raise ValueError('native thermal DRC did not produce successful independent evidence')
+        for name, expected in receipt['inputs'].items():
+            if (lean.digest(name) if os.path.isfile(name) else None) != expected:
+                raise ValueError('native thermal DRC input changed during execution')
+        return lean.validate_drc(json.loads(Path(report).read_text())), receipt_path
+    except BaseException as error:
+        receipt['cause'] = str(error)
+        raise
+    finally:
+        lean.atomic_json(receipt_path, receipt)
 
 
 @contextlib.contextmanager
@@ -346,6 +448,8 @@ def _parse_args(argv=None):
                     help='if-routed screens without polishing, then optimizes the checkpoint only at zero router opens')
     ap.add_argument('--preflight', action='store_true',
                     help='stop on native DRC existing-copper shorts/clearance faults before routing')
+    ap.add_argument('--native-thermal-checkback', action='store_true',
+                    help='explicit pending thermal obligation; checked native fill/DRC before and after routing')
     ap.add_argument("--render", action="store_true", help="write OUTDIR/routed.png (kicad-cli pcb render, top view)")
     ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE")
     ap.add_argument("--signal-via", type=float, default=0.0, help="routing padstack diameter (mm) of the vias of the "
@@ -365,6 +469,9 @@ def _parse_args(argv=None):
         ap.error('use --threads for admitted autorouter and optimizer caps')
     if a.optimizer != 'always' and any(k.split('=', 1)[0] == 'router.optimizer.enabled' for k in a.set):
         ap.error('--optimizer conflicts with --set router.optimizer.enabled')
+    if a.native_thermal_checkback and (not a.preflight or not a.only_nets or a.plane_nets or a.gnd_vias
+            or a.route_planes or a.unlock_nets or a.neck_um):
+        ap.error('native thermal checkback needs preflight, exact selected nets and no plane/unlock/repair operation')
     return a
 
 
@@ -389,6 +496,9 @@ def _main(a=None):
     lean.atomic_json(os.path.join(a.outdir, 'backend-policy.json'), backend_policy)
     stem = os.path.splitext(a.board)[0]
     feat = route_features.load(a.board)
+    if a.native_thermal_checkback and route_features.on(feat, 'routing_rules'):
+        sys.exit('native thermal checkback prohibits internal routing/repair stages')
+    thermal_source = _capture_thermal_source(a.board, a.outdir) if a.native_thermal_checkback else None
     print("FEATURES " + route_features.summary(feat), flush=True)
     run_record.start(a.outdir)
     run_record.append(a.outdir, 'job', 'configure', inputs=vars(a), evidence='input-manifest.json',
@@ -485,18 +595,30 @@ def _main(a=None):
         return f
 
     b = pcbnew.LoadBoard(base)
+    native_thermal_capability = None
     if a.preflight:
         progress.write('preflight start')
         check = os.path.join(a.outdir, 'preflight.json')
-        p = lean.run_stage([KICAD_CLI, 'pcb', 'drc', '--refill-zones', '--severity-all', '--format', 'json',
-                            '--units', 'mm', '-o', check, base], stage='native-preflight',
-                           event_file=os.path.join(a.outdir, 'stages.jsonl'),
-                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
-        if p.returncode or not os.path.isfile(check):
-            sys.exit('preflight failed to produce independent native evidence')
-        d = lean.validate_drc(json.load(open(check)))
-        d, thermal = thermal_repair.repair(base, a.board, d, planes, shlex.split(a.via_args),
-                                          KICAD_CLI, os.path.join(a.outdir, 'stages.jsonl'), 'preflight-thermal')
+        if a.native_thermal_checkback:
+            fill = os.path.join(a.outdir, 'native-thermal-initial-fill.json')
+            _checked_thermal_fill(b, base, fill, phases, 'native-thermal-initial-fill')
+            d, drc_receipt = _thermal_drc(base, a.outdir, phases, 'native-thermal-initial')
+            native_thermal_capability = route_native_thermals.admit(thermal_source, base,
+                enabled=True,
+                selected_nets=[name for name in a.only_nets.split(',') if name],
+                initial_fill_receipt=fill, initial_drc_receipt=drc_receipt)
+            lean.atomic_json(os.path.join(a.outdir, 'native-thermal-initial.json'), native_thermal_capability)
+            thermal = dict(accepted=False, reason='explicit native checkback never performs thermal repairs')
+        else:
+            p = lean.run_stage([KICAD_CLI, 'pcb', 'drc', '--refill-zones', '--severity-all', '--format', 'json',
+                                '--units', 'mm', '-o', check, base], stage='native-preflight',
+                               event_file=os.path.join(a.outdir, 'stages.jsonl'),
+                               stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+            if p.returncode or not os.path.isfile(check):
+                sys.exit('preflight failed to produce independent native evidence')
+            d = lean.validate_drc(json.load(open(check)))
+            d, thermal = thermal_repair.repair(base, a.board, d, planes, shlex.split(a.via_args),
+                                              KICAD_CLI, os.path.join(a.outdir, 'stages.jsonl'), 'preflight-thermal')
         progress.write('preflight end')
         lean.atomic_json(check, d)
         lean.atomic_json(os.path.join(a.outdir, 'preflight-thermal.json'), thermal)
@@ -911,7 +1033,8 @@ def _main(a=None):
         try:
             coverage = route_rule_coverage.check_files(a.board, base, model_dsn, active_nets=stage_nets,
                 net_classes=native_classes, obstacles=obstacles, layers=a.layers.split(','), gate=gate_path,
-                backend_command=cmd, backend_policy=backend_policy)
+                backend_command=cmd, backend_policy=backend_policy,
+                native_thermal_capability=native_thermal_capability)
         except (ValueError, OSError) as error:
             coverage = dict(schema=route_rule_coverage.SCHEMA, status='blocked', solver_launch_allowed=False,
                 cause=str(error), qualified=False)
@@ -933,7 +1056,10 @@ def _main(a=None):
                 stage_solver_launched=False, solver_launched=bool(solver_launches), qualified=False))
             print('STUCK router rule coverage: ' + coverage['cause'] + '; see ' + coverage_path, flush=True)
             sys.exit(4)
-        print('PASS router rule coverage; evidence=' + coverage_path, flush=True)
+        if coverage.get('status') == 'pending_native':
+            print('ADMITTED router model with pending native thermal obligation; evidence=' + coverage_path, flush=True)
+        else:
+            print('PASS router rule coverage; evidence=' + coverage_path, flush=True)
         effective = dict(configuration=vars(a), features=feat, command=cmd, dsn_sha256=lean.digest(model_dsn),
                          rule_coverage=dict(path=coverage_path, sha256=lean.digest(coverage_path)),
                          backend_policy=backend_policy,
@@ -1213,17 +1339,28 @@ def _main(a=None):
                               escape=escape_info, hot_loops=hot_info))
     secs = int(lean.now() - t0)
     after = vias()
-    with _native_phase('native-zone-fill-save', phases):
-        pcbnew.ZONE_FILLER(b).Fill(b.Zones())
-        pcbnew.SaveBoard(out, b)
+    if a.native_thermal_checkback:
+        _checked_thermal_fill(b, out, os.path.join(a.outdir, 'native-thermal-final-fill.json'),
+                              phases, 'native-thermal-final-fill')
+    else:
+        with _native_phase('native-zone-fill-save', phases):
+            pcbnew.ZONE_FILLER(b).Fill(b.Zones())
+            pcbnew.SaveBoard(out, b)
     drc = os.path.join(a.outdir, "drc.json")
     progress.write('drc start')
-    p = lean.run_stage([KICAD_CLI, "pcb", "drc", "--refill-zones", "--severity-all", "--format", "json", "--units", "mm", "-o", drc, out],
-                       stage='native-drc', event_file=phases, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-    if p.returncode:
-        sys.exit('native DRC failed; result is not verified')
+    if a.native_thermal_checkback:
+        d, final_drc = _thermal_drc(out, a.outdir, phases, 'native-thermal-final')
+        final_thermal = route_native_thermals.discharge(native_thermal_capability, out,
+            fill_receipt=os.path.join(a.outdir, 'native-thermal-final-fill.json'), drc_receipt=final_drc)
+        lean.atomic_json(os.path.join(a.outdir, 'native-thermal-final.json'), final_thermal)
+        lean.atomic_json(drc, d)
+    else:
+        p = lean.run_stage([KICAD_CLI, "pcb", "drc", "--refill-zones", "--severity-all", "--format", "json", "--units", "mm", "-o", drc, out],
+                           stage='native-drc', event_file=phases, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        if p.returncode:
+            sys.exit('native DRC failed; result is not verified')
+        d = lean.validate_drc(json.load(open(drc)))
     progress.write('drc end')
-    d = lean.validate_drc(json.load(open(drc)))
     # Repair: a plane-net pad that is open after routing (no via, or the pour to its via is cut) gets its own
     # stub and via now, with the routed copper as the obstacle. Then DRC runs again.
     todo = {}
@@ -1269,6 +1406,8 @@ def _main(a=None):
     if moved:
         print("fastroute_job: plane vias re-placed after a clearance violation with routed copper: " +
               ", ".join(f"{net} {', '.join(sorted(p))}" for net, p in sorted(moved.items())), flush=True)
+    if a.native_thermal_checkback and todo:
+        sys.exit('native thermal checkback prohibits post-import copper repairs')
     if todo:
         for net, pads in todo.items():
             tmp = os.path.join(a.outdir, "repair.kicad_pcb")
@@ -1285,8 +1424,11 @@ def _main(a=None):
             sys.exit('native repair DRC failed; result is not verified')
         d = lean.validate_drc(json.load(open(drc)))
         after = sum(1 for t in pcbnew.LoadBoard(out).GetTracks() if t.GetClass() == "PCB_VIA")
-    d, thermal = thermal_repair.repair(out, a.board, d, planes, shlex.split(a.via_args),
-                                      KICAD_CLI, phases, 'postroute-thermal')
+    if a.native_thermal_checkback:
+        thermal = dict(accepted=False, reason='explicit native checkback never performs thermal repairs')
+    else:
+        d, thermal = thermal_repair.repair(out, a.board, d, planes, shlex.split(a.via_args),
+                                          KICAD_CLI, phases, 'postroute-thermal')
     lean.atomic_json(drc, d)
     lean.atomic_json(os.path.join(a.outdir, 'thermal-repair.json'), thermal)
     # Audit #815: every post-import repair (plane vias, thermal) is done; the input board's copper must all be there,

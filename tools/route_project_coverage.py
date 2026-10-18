@@ -130,7 +130,8 @@ def command_floor(command, name):
 
 def evaluate(text, *, source, model, dsn_text, active_nets, net_classes, obstacles,
              layers, holes, holes_preserved, immutable_geometry_preserved,
-             backend_command, thermal=None, backend_policy=None):
+             backend_command, thermal=None, backend_policy=None,
+             native_thermal_capability=None):
     rows = []
 
     def row(name, pointer, value=None):
@@ -261,6 +262,20 @@ def evaluate(text, *, source, model, dsn_text, active_nets, net_classes, obstacl
             elif (name == 'min_resolved_spokes' and thermal is not None
                     and thermal.get('thermal_connections_possible') is False and immutable_geometry_preserved):
                 item_row.update(disposition='not_applicable', thermal_applicability=thermal, reason=thermal['reason'])
+            elif name == 'min_resolved_spokes' and native_thermal_capability is not None:
+                # check_files revalidates the native input evidence before
+                # supplying this capability. It does not model spokes in DSN.
+                capability = native_thermal_capability
+                if (capability.get('schema') != 'iot-lab.native-thermal-capability.v1'
+                        or capability.get('status') != 'pending_native'
+                        or type(capability.get('required_count')) is not int
+                        or capability['required_count'] != value
+                        or not immutable_geometry_preserved):
+                    raise ValueError('native thermal capability differs from the authored count or immutable scope')
+                item_row.update(disposition='native_postcondition',
+                    native_obligation=dict(constraint=name, required_count=str(value),
+                        capability_sha256=capability['content_sha256']),
+                    reason='explicit native input capability; resolved spokes remain pending until exact final native verification')
             else:
                 raise ValueError('applicable project constraint has no proven router-model enforcement')
         except (ValueError, KeyError, TypeError, ArithmeticError) as error:

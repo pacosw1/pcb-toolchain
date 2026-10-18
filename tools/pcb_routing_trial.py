@@ -13,10 +13,12 @@ import subprocess
 
 import lean_workflow as lean
 import backend_quality
+import route_native_thermals
 from pcb_workflow import board_config, python_native, sha
 
 
 SCHEMA = 'iot-lab.routing-policy.v1'
+THERMAL_SCHEMA = 'iot-lab.routing-policy.v2'
 EXECUTION = 'iot-lab.placement-outcome-execution.v1'
 FIELDS = {'schema', 'layers', 'only_nets', 'passes', 'threads', 'timeout_s', 'optimizer', 'max_repairs'}
 
@@ -35,8 +37,13 @@ def _backend_effort(policy):
 
 
 def validate(config, total_timeout_s):
-    if not isinstance(config, dict) or set(config) != FIELDS or config.get('schema') != SCHEMA:
-        raise ValueError('controlled routing requires exactly the routing-policy.v1 fields')
+    if not isinstance(config, dict):
+        raise ValueError('controlled routing requires an explicit routing policy')
+    thermal = config.get('schema') == THERMAL_SCHEMA
+    if (set(config) != (FIELDS | {'thermal_verification'} if thermal else FIELDS)
+            or config.get('schema') not in (SCHEMA, THERMAL_SCHEMA)
+            or (thermal and config.get('thermal_verification') != 'native-checkback')):
+        raise ValueError('controlled routing requires exactly the routing-policy.v1 fields or explicit v2 native-checkback fields')
     for key in ('passes', 'threads', 'timeout_s'):
         if type(config[key]) is not int or config[key] <= 0:
             raise ValueError(key + ' must be a positive integer')
@@ -231,9 +238,17 @@ def prepare(root, native, output, config, total_timeout_s, *, board=None):
     if not script.is_file():
         raise ValueError('existing fastroute job producer is missing from the snapshot')
     features = _features(root, board)
+    thermal = config.get('thermal_verification') == 'native-checkback'
+    if thermal and features.get('routing_rules', {}).get('on'):
+        raise ValueError('native thermal checkback requires internal routing/repair stages disabled')
     inputs = {str(path): sha(path) for path in (script, root/'tools/route_features.py', root/'tools/route_rule_coverage.py', root/'tools/route_project_coverage.py', root/'tools/route_hole_coverage.py', root/'tools/backend_quality.py', root/'tools/route-features.json',
               root/'hardware-design/boards'/board/'gate.json', Path(__file__).resolve(), python, router, kicad)}
     inputs.update(gate['inputs'])
+    if thermal:
+        helper = root/'tools/route_native_thermals.py'
+        if not helper.is_file():
+            raise ValueError('native thermal verifier is missing from the snapshot')
+        inputs[str(helper)] = sha(helper)
     for extension in ('.kicad_pcb', '.kicad_sch', '.kicad_pro', '.kicad_dru'):
         path = native.with_suffix(extension)
         if not path.is_file():
@@ -265,6 +280,8 @@ def prepare(root, native, output, config, total_timeout_s, *, board=None):
                '--layers', ','.join(config['layers']), '--passes', str(config['passes']),
                '--threads', str(config['threads']), '--max-time', str(config['timeout_s']),
                '--optimizer', config['optimizer'], '--snapshot-interval-s', '0']
+    if thermal:
+        command.append('--native-thermal-checkback')
     output.parent.mkdir(parents=True, exist_ok=True)
     receipt = output.parent / 'execution-policy.json'
     original = output.parent / 'execution-context.json'
@@ -292,6 +309,8 @@ def prepare(root, native, output, config, total_timeout_s, *, board=None):
              'KICAD_CLI','KICAD_PYTHON','PYTHONPATH','IOT_CPU_BUDGET','IOT_RESOURCE_CPU',
              'IOT_MEMORY_BUDGET_GIB','IOT_JOB_MEMORY_GIB')},
         controls=dict(status='prepared', effective_configuration_verified=False), qualified=False)
+    if thermal:
+        policy['effort']['thermal_verification'] = 'native-checkback'
     lean.atomic_json(output.parent/'runtime-probes.json', probes)
     lean.atomic_json(receipt, policy)
     return dict(command=command, env=env, policy=policy, policy_path=str(receipt),
@@ -321,11 +340,16 @@ def finalize(prepared, *, returncode):
                     cause='router did not record its effective input configuration')
     actual = json.loads(path.read_text())
     config = prepared['config']
+    thermal = config.get('thermal_verification') == 'native-checkback'
     expected = dict(board=prepared['native'], outdir=prepared['output'], passes=config['passes'],
         layers=','.join(config['layers']), only_nets=','.join(config['only_nets']),
         threads=config['threads'], max_time=config['timeout_s'], optimizer=config['optimizer'],
         preflight=True, skip_net='', plane_nets='', gnd_vias=False, route_planes=False,
         unlock_nets='', set=[], neck_um=0)
+    if thermal:
+        expected['native_thermal_checkback'] = True
+    elif actual.get('configuration', {}).get('native_thermal_checkback'):
+        raise ValueError('strict v1 routing cannot activate native thermal checkback')
     if any(actual.get('configuration', {}).get(key) != value for key, value in expected.items()):
         raise ValueError('router effective configuration differs from the controlled policy')
     if actual.get('board_sha256') != policy['inputs'][prepared['native']]:
@@ -363,6 +387,29 @@ def finalize(prepared, *, returncode):
         lean.atomic_json(prepared['policy_path'], policy)
         return dict(status='failed', controls_verified=False, candidate=None,
                     cause='no observed backend invocation/worker caps; inspect retained failure evidence')
+    thermal_capabilities = []
+    initial_thermal = None
+    if thermal and configurations:
+        snapshot_path = output/'native-thermal-source.json'
+        snapshot = json.loads(snapshot_path.read_text()) if snapshot_path.is_file() else None
+        captured = output/'native-thermal-source'/Path(prepared['native']).name
+        expected_originals = {str(Path(prepared['native']).with_suffix(suffix)):
+                              policy['inputs'][str(Path(prepared['native']).with_suffix(suffix))]
+                              for suffix in ('.kicad_pcb', '.kicad_pro', '.kicad_dru', '.kicad_sch')}
+        expected_copies = {str(captured.with_suffix(Path(name).suffix)):digest
+                           for name,digest in expected_originals.items()}
+        if (not isinstance(snapshot, dict) or snapshot.get('schema') != 'iot-lab.native-thermal-source.v1'
+                or snapshot.get('original') != dict(path=prepared['native'], sha256=policy['inputs'][prepared['native']])
+                or snapshot.get('captured') != dict(path=str(captured), sha256=policy['inputs'][prepared['native']])
+                or snapshot.get('original_files') != expected_originals or snapshot.get('inputs') != expected_copies
+                or any(not Path(name).is_file() or Path(name).is_symlink() or sha(name) != digest
+                       for name,digest in expected_copies.items())):
+            raise ValueError('native thermal original snapshot differs from the controlled input')
+        initial_path = output/'native-thermal-initial.json'
+        if not initial_path.is_file():
+            raise ValueError('native thermal execution lacks the initial capability')
+        initial_thermal = route_native_thermals.validate_capability(json.loads(initial_path.read_text()),
+            captured, output/'base.kicad_pcb', selected_nets=config['only_nets'])
     for path in configurations:
         value = json.loads(path.read_text())
         if any(value.get('configuration', {}).get(key) != item for key,item in expected.items()):
@@ -379,8 +426,19 @@ def finalize(prepared, *, returncode):
                 or sha(coverage_path) != binding.get('sha256')):
             raise ValueError('router stage lacks sealed rule-coverage admission')
         coverage = json.loads(coverage_path.read_text())
-        if coverage.get('status') != 'passed' or coverage.get('solver_launch_allowed') is not True:
+        pending = coverage.get('status') == 'pending_native'
+        if ((coverage.get('status') != 'passed' and not (thermal and pending))
+                or coverage.get('solver_launch_allowed') is not True):
             raise ValueError('router stage ran without passing rule coverage')
+        if pending:
+            capability = coverage.get('native_thermal_capability')
+            if not isinstance(capability, dict) or capability != initial_thermal:
+                raise ValueError('pending thermal coverage lacks its initial native capability')
+            obligations = [dict(constraint='min_resolved_spokes', required_count=str(capability['required_count']),
+                                capability_sha256=capability['content_sha256'])]
+            if coverage.get('model_status') != 'partial' or coverage.get('native_postconditions') != obligations:
+                raise ValueError('pending thermal coverage has missing or different native obligations')
+            thermal_capabilities.append(capability)
         dsn = coverage.get('dsn', {})
         if not Path(dsn.get('path', '')).is_file() or sha(dsn['path']) != dsn.get('sha256') or dsn.get('sha256') != value.get('dsn_sha256'):
             raise ValueError('rule coverage differs from actual router model')
@@ -404,6 +462,27 @@ def finalize(prepared, *, returncode):
     if outcome and outcome.get('status') in ('complete','stuck'):
         if not candidate.is_file() or outcome.get('board_sha256') != sha(candidate) or outcome.get('optimizer') != config['optimizer']:
             raise ValueError('router outcome is not bound to the actual candidate/optimizer')
+    if thermal:
+        final_path = output/'native-thermal-final.json'
+        if returncode == 0:
+            if initial_thermal is None or not final_path.is_file():
+                raise ValueError('native thermal obligation was not discharged before completion')
+            final = json.loads(final_path.read_text())
+            for capability in thermal_capabilities or [initial_thermal]:
+                checked = route_native_thermals.discharge(capability, candidate,
+                    fill_receipt=output/'native-thermal-final-fill.json',
+                    drc_receipt=output/'native-thermal-final-drc.json')
+                if checked != final:
+                    raise ValueError('final thermal receipt differs from actual native discharge')
+            run_root = Path(prepared['policy_path']).parent.parent
+            def retained(path):
+                return dict(path=str(path.relative_to(run_root)), sha256=sha(path))
+            policy['controls']['native_thermal_obligations'] = dict(status='passed',
+                initial=retained(initial_path), final=retained(final_path),
+                source_snapshot=retained(snapshot_path), candidate=retained(candidate))
+        else:
+            policy['controls']['native_thermal_obligations'] = dict(status='unfulfilled',
+                cause='producer did not complete with a discharged native obligation')
     phase_path = output/'stages.jsonl'
     phases = [json.loads(line) for line in phase_path.read_text().splitlines() if line.strip()] if phase_path.is_file() else []
     repairs = [row for row in phases if any(word in str(row.get('stage','')).lower() for word in ('repair','thermal'))]

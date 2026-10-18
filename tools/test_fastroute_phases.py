@@ -291,6 +291,103 @@ class RouterStopEvidenceTests(unittest.TestCase):
 
 
 class NativePhaseAccountingTests(unittest.TestCase):
+    def test_thermal_source_capture_remains_exact_after_workspace_promotion(self):
+        job=load_job()
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder).resolve();source=root/'input.kicad_pcb';output=root/'router';output.mkdir()
+            for suffix in ('.kicad_pcb','.kicad_pro','.kicad_dru','.kicad_sch'):
+                source.with_suffix(suffix).write_text('original '+suffix)
+            captured=Path(job._capture_thermal_source(source,output))
+            receipt=json.loads((output/'native-thermal-source.json').read_text())
+            self.assertEqual(receipt['captured']['sha256'],lean.digest(source))
+            for suffix in ('.kicad_pcb','.kicad_pro','.kicad_dru','.kicad_sch'):
+                self.assertEqual(captured.with_suffix(suffix).read_bytes(),source.with_suffix(suffix).read_bytes())
+            source.write_text('promoted routed candidate')
+            self.assertEqual(captured.read_text(),'original .kicad_pcb')
+            self.assertNotIn(str(source),receipt['inputs'])
+            with self.assertRaises(FileExistsError):job._capture_thermal_source(source,output)
+
+    def test_checked_thermal_fill_requires_true_and_durably_retains_failure(self):
+        job=load_job()
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder).resolve();board=root/'base.kicad_pcb';board.write_text('original native fixture bytes')
+            board.with_suffix('.kicad_pro').write_text('{}');board.with_suffix('.kicad_dru').write_text('(version 1)')
+            native=mock.Mock();native.Zones.return_value=[]
+            for returned in (False,None,1):
+                receipt=root/f'fill-{returned}.json';events=root/f'events-{returned}.jsonl'
+                with mock.patch.object(job.pcbnew,'Version',return_value='10.0.6',create=True), \
+                     mock.patch.object(job.pcbnew,'ZONE_FILLER',return_value=mock.Mock(Fill=mock.Mock(return_value=returned)),create=True), \
+                     mock.patch.object(job.pcbnew,'SaveBoard',create=True) as save, \
+                     self.assertRaisesRegex(ValueError,'did not return True'):
+                    job._checked_thermal_fill(native,board,receipt,events,'controlled-fill')
+                save.assert_not_called()
+                value=json.loads(receipt.read_text());self.assertFalse(value['invocation']['saved'])
+                self.assertIsNot(value['fill_result'],True)
+                self.assertEqual(board.read_text(),'original native fixture bytes')
+                self.assertEqual(json.loads(events.read_text())['status'],'failed')
+
+    def test_checked_fill_saved_hash_and_no_hidden_refill_drc_bind_actual_outputs(self):
+        job=load_job()
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder).resolve();board=root/'base.kicad_pcb';board.write_text('before fill')
+            board.with_suffix('.kicad_pro').write_text('{}');board.with_suffix('.kicad_dru').write_text('(version 1)')
+            native=mock.Mock();native.Zones.return_value=[];events=root/'events.jsonl';fill=root/'fill.json'
+            def save(path,board,skip_settings):
+                self.assertIs(skip_settings,True)
+                Path(path).write_text('saved filled native')
+                return True
+            with mock.patch.object(job.pcbnew,'Version',return_value='10.0.6',create=True), \
+                 mock.patch.object(job.pcbnew,'ZONE_FILLER',return_value=mock.Mock(Fill=mock.Mock(return_value=True)),create=True), \
+                 mock.patch.object(job.pcbnew,'SaveBoard',side_effect=save,create=True) as saved:
+                value=job._checked_thermal_fill(native,board,fill,events,'controlled-fill')
+            saved.assert_called_once_with(str(board),native,True)
+            self.assertIs(value['fill_result'],True);self.assertTrue(value['invocation']['saved'])
+            self.assertEqual(value['candidate']['sha256'],lean.digest(board))
+            self.assertEqual(value['inputs'][str(board)],lean.digest(board))
+            def run(command,**kwargs):
+                self.assertNotIn('--refill-zones',command)
+                Path(command[command.index('-o')+1]).write_text(json.dumps(dict(violations=[],unconnected_items=[])))
+                return types.SimpleNamespace(returncode=0,stdout='native completed',stderr='')
+            with mock.patch.object(job,'KICAD_CLI',sys.executable),mock.patch.object(job.lean,'run_stage',side_effect=run):
+                raw,receipt=job._thermal_drc(board,root,events,'controlled-native')
+            proof=json.loads(Path(receipt).read_text());self.assertEqual(proof['returncode'],0)
+            self.assertEqual(proof['report']['sha256'],lean.digest(proof['report']['path']))
+            self.assertEqual(proof['candidate']['sha256'],lean.digest(board))
+            self.assertEqual(proof['tool']['sha256'],lean.digest(Path(sys.executable).resolve()))
+            self.assertEqual(raw,dict(violations=[],unconnected_items=[]))
+
+    def test_checked_thermal_save_requires_true_and_preserves_failure_receipt(self):
+        job=load_job()
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder).resolve();board=root/'base.kicad_pcb';board.write_text('original native fixture bytes')
+            board.with_suffix('.kicad_pro').write_text('exact authored project')
+            board.with_suffix('.kicad_dru').write_text('(version 1)')
+            native=mock.Mock();native.Zones.return_value=[]
+            for returned in (False,None,1):
+                receipt=root/f'save-{returned}.json';events=root/f'events-save-{returned}.jsonl'
+                with mock.patch.object(job.pcbnew,'Version',return_value='10.0.6',create=True), \
+                     mock.patch.object(job.pcbnew,'ZONE_FILLER',return_value=mock.Mock(Fill=mock.Mock(return_value=True)),create=True), \
+                     mock.patch.object(job.pcbnew,'SaveBoard',return_value=returned,create=True) as save, \
+                     self.assertRaisesRegex(ValueError,'board save did not return True'):
+                    job._checked_thermal_fill(native,board,receipt,events,'controlled-save')
+                save.assert_called_once_with(str(board),native,True)
+                value=json.loads(receipt.read_text());self.assertTrue(value['fill_result'])
+                self.assertFalse(value['invocation']['saved'])
+                self.assertEqual(board.with_suffix('.kicad_pro').read_text(),'exact authored project')
+                self.assertEqual(json.loads(events.read_text())['status'],'failed')
+
+    def test_native_thermal_drc_nonzero_retains_raw_receipt_and_stops(self):
+        job=load_job()
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);board=root/'base.kicad_pcb';board.write_text('saved filled native')
+            with mock.patch.object(job,'KICAD_CLI',sys.executable), \
+                 mock.patch.object(job.lean,'run_stage',return_value=types.SimpleNamespace(returncode=2,stdout='',stderr='native failed')), \
+                 self.assertRaisesRegex(ValueError,'did not produce successful'):
+                job._thermal_drc(board,root,root/'events.jsonl','failed-native')
+            receipt=json.loads((root/'failed-native-drc.json').read_text())
+            self.assertEqual(receipt['returncode'],2);self.assertIsNone(receipt['report']['sha256'])
+            self.assertIn('cause',receipt)
+
     def test_inline_work_reports_distinct_cpu_scopes_and_failure(self):
         job = load_job()
         with tempfile.TemporaryDirectory() as folder:

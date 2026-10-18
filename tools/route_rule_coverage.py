@@ -389,12 +389,15 @@ def inspect(dru_text, dsn_text, *, active_nets, net_classes, obstacles,
 
 
 def check_files(board, base, dsn, *, active_nets, net_classes, obstacles, layers, gate=None,
-                backend_command=None, backend_policy=None):
+                backend_command=None, backend_policy=None, native_thermal_capability=None):
     """Bind the pure decision to exact original inputs and final transformed DSN."""
     board, base, dsn = Path(board), Path(base), Path(dsn)
     rules, base_rules = board.with_suffix('.kicad_dru'), base.with_suffix('.kicad_dru')
     paths = [board, base, dsn, Path(__file__).resolve(), Path(route_features.__file__).resolve(),
              Path(route_hole_coverage.__file__).resolve(), Path(route_project_coverage.__file__).resolve()]
+    if native_thermal_capability is not None:
+        import route_native_thermals
+        paths.append(Path(route_native_thermals.__file__).resolve())
     project, base_project = board.with_suffix('.kicad_pro'), base.with_suffix('.kicad_pro')
     paths.extend([rules, base_rules, project, base_project])
     command = list(backend_command) if isinstance(backend_command, list) else backend_command
@@ -472,6 +475,23 @@ def check_files(board, base, dsn, *, active_nets, net_classes, obstacles, layers
         holes, holes_preserved, drilled_error = None, False, str(error)
     if drilled_error:
         result['native_drilled_geometry_unknown'] = drilled_error
+    native_capability = None
+    if native_thermal_capability is not None:
+        try:
+            supplied = json.loads(json.dumps(native_thermal_capability, allow_nan=False))
+            native_capability = route_native_thermals.validate_capability(
+                supplied, board, base, selected_nets=sorted(active_nets))
+            for name, digest in native_capability['inputs'].items():
+                if (not isinstance(name, str) or not (digest is None or
+                        isinstance(digest, str) and re.fullmatch(r'[0-9a-f]{64}', digest))):
+                    raise ValueError('native thermal evidence has an invalid input binding')
+                if name in before and before[name] != digest:
+                    raise ValueError('native thermal input changed during admission: ' + name)
+                before[name] = digest
+        except (OSError, ValueError, KeyError, TypeError, ArithmeticError) as error:
+            native_capability = None
+            result['requirements'].append(dict(rule='native thermal capability',
+                constraint='native_thermal_evidence', disposition='unsupported', reason=str(error)))
     # Pure inspect retains its historical analytic subset for callers. Actual
     # solver admission must additionally prove the backend's physical obstacle
     # transform, even when the project has a smaller (or zero) hole minimum.
@@ -500,7 +520,8 @@ def check_files(board, base, dsn, *, active_nets, net_classes, obstacles, layers
             source=project, model=model, dsn_text=dsn.read_text(), active_nets=active_nets,
             net_classes=net_classes, obstacles=obstacles, layers=layers, holes=holes,
             holes_preserved=holes_preserved, immutable_geometry_preserved=fixed_preserved,
-            backend_command=command, thermal=thermal, backend_policy=policy)
+            backend_command=command, thermal=thermal, backend_policy=policy,
+            native_thermal_capability=native_capability)
     except (ValueError, KeyError, TypeError, ArithmeticError) as error:
         project_rows = [dict(rule='native project', constraint='project_model', disposition='unsupported', reason=str(error))]
     result['requirements'].extend(project_rows)
@@ -538,10 +559,18 @@ def check_files(board, base, dsn, *, active_nets, net_classes, obstacles, layers
             separators=(',', ':'), ensure_ascii=True).encode()).hexdigest() if serializable_command is not None else None),
         backend_policy=policy if isinstance(policy, dict) else None,
         drilled_geometry_preserved=holes_preserved, fixed_geometry_preserved=fixed_preserved)
-    blockers = [r for r in result['requirements'] if r['disposition'] not in ('covered', 'immutable_unchanged', 'not_applicable')]
-    result.update(status='blocked' if blockers else 'passed', solver_launch_allowed=not blockers,
+    obligations = [r['native_obligation'] for r in result['requirements']
+                   if r['disposition'] == 'native_postcondition']
+    blockers = [r for r in result['requirements'] if r['disposition'] not in
+                ('covered', 'immutable_unchanged', 'not_applicable', 'native_postcondition')]
+    result.update(status='blocked' if blockers else ('pending_native' if obligations else 'passed'),
+        solver_launch_allowed=not blockers,
+        model_status='blocked' if blockers else ('partial' if obligations else 'complete'),
         cause='; '.join(str(r['rule']) + ': ' + r['constraint'] + ' ' + r['disposition'] + ': ' + r.get('reason', '')
-            for r in blockers) or 'applicable native custom/project requirements covered by final DSN and exact backend controls')
+            for r in blockers) or ('model admission complete except explicit pending native thermal postconditions'
+                if obligations else 'applicable native custom/project requirements covered by final DSN and exact backend controls'))
+    if native_capability is not None:
+        result.update(native_thermal_capability=native_capability, native_postconditions=obligations)
     result.update(inputs=before, dsn=dict(path=str(dsn), sha256=before[str(dsn)]),
         native_classes=net_classes, footprint_scope_sha256=hashlib.sha256(json.dumps(source_footprints, sort_keys=True).encode()).hexdigest(),
         obstacle_scope_sha256=hashlib.sha256(json.dumps(obstacles, sort_keys=True).encode()).hexdigest())

@@ -11,6 +11,7 @@ import unittest
 from unittest import mock
 
 import placement_outcomes as outcomes
+import test_route_native_thermals as thermal_fixtures
 from pcb_workflow import sha
 from test_engineering_constraints import fp
 
@@ -145,6 +146,141 @@ class OutcomeTests(unittest.TestCase):
         paths.append(folder/'workspace'/Path(operation['candidate']).relative_to(operation['workspace']))
         write(folder/'result.json',dict(status=status,cleanup=dict(complete=True),elapsed_s=2.0,ended_unix_s=1792108802.0,
             cause='fixture '+status,evidence_sha256={str(p.relative_to(folder)):sha(p) for p in paths}))
+
+    def thermal_fixture(self,from_parent=False):
+        """Synthetic receipts exercise the real consumer; no CAD executable runs."""
+        folder,trial=self.run_fixture('development','DEV','baseline',1)
+        manifest=json.loads((folder/'run.json').read_text())
+        manifest.update(router='fastroute',spec=dict(schema='iot-lab.routing-policy.v2',thermal_verification='native-checkback'))
+        write(folder/'run.json',manifest)
+        source=json.loads((folder/'operation/source.json').read_text())
+        relative='hardware-design/boards/DEV/native'
+        original=folder/'workspace'/(relative+'.kicad_pcb')
+        if from_parent:
+            parent,parent_trial=self.run_fixture('development','DEV','proposal',2)
+            text=Path(trial['placement_input']['path']).read_text().replace('(at 10 10)','(at 11 10)',1)
+            self.update_native(parent,parent_trial,text)
+            Path(trial['placement_input']['path']).write_text(text)
+            trial['placement_input']['sha256']=sha(Path(trial['placement_input']['path']))
+            original.write_text(text)
+            manifest['from_run']=dict(result_sha256=parent_trial['sha256'])
+            trial['parent_run']=dict(path=str(parent),sha256=parent_trial['sha256'])
+            write(folder/'run.json',manifest)
+        router=folder/'operation/router';router.mkdir(parents=True)
+        fixture=thermal_fixtures.NativeThermalTests()
+        fixture.root=router
+        fixture.source=router/'native-thermal-source/native.kicad_pcb'
+        fixture.source.parent.mkdir()
+        fixture.base=router/'base.kicad_pcb';fixture.final=router/'routed.kicad_pcb'
+        fixture.python=router/'recorded-python';fixture.cli=router/'recorded-kicad-cli'
+        fixture.python.write_text('synthetic recorded Python binary identity')
+        fixture.cli.write_text('synthetic recorded KiCad binary identity')
+        write(original.with_suffix('.kicad_pro'),dict(board=dict(design_settings=dict(
+            rules=dict(min_resolved_spokes=2),rule_severities=dict(starved_thermal='error'),drc_exclusions=[]))))
+        original.with_suffix('.kicad_dru').write_text('(version 1)\n')
+        extensions=('.kicad_pcb','.kicad_pro','.kicad_dru','.kicad_sch')
+        for extension in extensions:
+            if not from_parent or extension!='.kicad_pcb':
+                source['files'][relative+extension]=sha(original.with_suffix(extension))
+            for path in (fixture.source,fixture.base,fixture.final):
+                path.with_suffix(extension).write_bytes(original.with_suffix(extension).read_bytes())
+        # The workspace input is promoted after producer finalization. The
+        # immutable captured source, not that now-changed alias, owns admission.
+        fixture.final.write_text(fixture.final.read_text()+'\n')
+        fixture.initial_fill,fixture.initial_drc,_=fixture.evidence(fixture.base,'native-thermal-initial',opens=False)
+        fixture.final_fill,fixture.final_drc,fixture.final_report=fixture.evidence(fixture.final,'native-thermal-final',opens=False)
+        for receipt in (fixture.initial_fill,fixture.final_fill):
+            value=json.loads(receipt.read_text());value['inputs'][str(router/'absent-optional-input')]=None
+            write(receipt,value)
+        initial=fixture.admit(selected_nets=['N']);final=fixture.discharge(initial)
+        write(router/'native-thermal-initial.json',initial)
+        write(router/'native-thermal-final.json',final)
+        write(router/'native-thermal-source.json',dict(schema='iot-lab.native-thermal-source.v1',qualified=False,
+            original=dict(path=str(original),sha256=trial['placement_input']['sha256']),captured=fixture.descriptor(fixture.source),
+            original_files={str(original.with_suffix(ext)):sha(fixture.source.with_suffix(ext)) for ext in extensions},
+            inputs={str(fixture.source.with_suffix(ext)):sha(fixture.source.with_suffix(ext)) for ext in extensions}))
+        original.write_bytes(fixture.final.read_bytes())
+        operation=json.loads((folder/'operation/result.json').read_text());operation['candidate_sha256']=sha(original)
+        write(folder/'operation/result.json',operation)
+        gate=json.loads((folder/'gate/result.json').read_text());gate['provenance']['inputs'][0]['sha256']=sha(original)
+        write(folder/'gate/result.json',gate);write(folder/'operation/source.json',source)
+        context=folder/'operation/execution-context.json';write(context,dict(fixture='archived host context'))
+        effective=router/'effective-configuration.json';write(effective,dict(fixture='observed controls'))
+        actual=router/'input-manifest.json';write(actual,dict(fixture='observed input'))
+        policy=json.loads((folder/trial['execution_policy']).read_text())
+        policy['effort']['thermal_verification']='native-checkback'
+        policy['command']=['python3','/recorded/tools/fastroute_job.py',str(original),str(router),'--native-thermal-checkback']
+        policy['execution_context']=dict(path='operation/execution-context.json',sha256=sha(context))
+        retained=lambda path:dict(path=str(path.relative_to(folder)),sha256=sha(path))
+        policy['controls']=dict(effective_configuration_verified=True,
+            effective_configurations={effective.name:sha(effective)},input_manifest_sha256=sha(actual),
+            native_thermal_obligations=dict(status='passed',initial=retained(router/'native-thermal-initial.json'),
+                final=retained(router/'native-thermal-final.json'),source_snapshot=retained(router/'native-thermal-source.json'),
+                candidate=retained(fixture.final)))
+        write(folder/trial['execution_policy'],policy)
+        write(folder/'operation/events.jsonl',dict(type='tool.start',command=policy['command']))
+        self.reseal(folder);trial['sha256']=sha(folder/'result.json')
+        return folder,trial,fixture,policy
+
+    def test_native_thermal_consumer_reopens_raw_proof_after_workspace_promotion(self):
+        folder,trial,fixture,policy=self.thermal_fixture()
+        with mock.patch.object(outcomes,'routed_quality',return_value=dict(routed_track_length_mm=1.0,routed_via_count=0)):
+            report=self.evaluate();observed=report['observations'][0]
+        self.assertTrue(observed['evidence_valid']);self.assertTrue(observed['full_gate_success'])
+        self.assertIsNotNone(observed['policy_fingerprint']);self.assertEqual(observed['unknowns'],[])
+        self.assertNotEqual(sha(Path(policy['command'][2])),trial['placement_input']['sha256'])
+        for path in (fixture.source,fixture.base,fixture.final,fixture.final_report,fixture.cli,fixture.python):
+            self.assertEqual(report['inputs'][str(path)],sha(path))
+        self.assertIsNone(report['inputs'][str(fixture.root/'absent-optional-input')])
+
+    def test_pending_native_thermal_obligation_cannot_expose_quality_labels(self):
+        folder,trial,fixture,policy=self.thermal_fixture()
+        policy['controls']['native_thermal_obligations']['status']='pending_native'
+        write(folder/trial['execution_policy'],policy);self.reseal(folder);trial['sha256']=sha(folder/'result.json')
+        with mock.patch.object(outcomes,'routed_quality') as quality:
+            row=outcomes.cli_observation(outcomes.Evidence(self.root),trial)
+        quality.assert_not_called();self.assertIsNone(row['policy_fingerprint'])
+        self.assertIsNone(row['routed_quality']['routed_track_length_mm'])
+        self.assertIn('unfulfilled',row['unknowns'][0])
+
+    def test_native_thermal_continued_placement_binds_the_sealed_parent_not_canonical_cad(self):
+        folder,trial,fixture,policy=self.thermal_fixture(from_parent=True)
+        source=json.loads((folder/'operation/source.json').read_text())
+        self.assertNotEqual(source['files']['hardware-design/boards/DEV/native.kicad_pcb'],trial['placement_input']['sha256'])
+        with mock.patch.object(outcomes,'routed_quality',return_value=dict(routed_track_length_mm=1.0,routed_via_count=0)):
+            row=outcomes.cli_observation(outcomes.Evidence(self.root),trial)
+        self.assertIsNotNone(row['policy_fingerprint']);self.assertEqual(row['unknowns'],[])
+
+    def test_native_thermal_raw_error_is_rejected_even_with_a_resealed_pass_receipt(self):
+        folder,trial,fixture,policy=self.thermal_fixture()
+        fixture.report_mutation(fixture.final_report,fixture.final_drc,
+            lambda raw:raw.update(violations=[dict(type='starved_thermal',severity='error')]))
+        self.reseal(folder);trial['sha256']=sha(folder/'result.json')
+        report=self.evaluate();row=report['observations'][0]
+        self.assertFalse(row['evidence_valid']);self.assertIn('thermal',row['cause'])
+
+    def test_native_thermal_malformed_or_mismatched_bindings_fail_closed(self):
+        folder,trial,fixture,original=self.thermal_fixture()
+        bad=[]
+        for key,value in (('candidate',[]),('initial',dict(path='operation/router/native-thermal-initial.json',sha256=123))):
+            policy=copy.deepcopy(original);policy['controls']['native_thermal_obligations'][key]=value;bad.append(policy)
+        missing_flag=copy.deepcopy(original);missing_flag['command'].remove('--native-thermal-checkback');bad.append(missing_flag)
+        wrong_candidate=copy.deepcopy(original);wrong_candidate['controls']['native_thermal_obligations']['candidate']['sha256']='a'*64;bad.append(wrong_candidate)
+        for index,policy in enumerate(bad):
+            with self.subTest(case=index):
+                write(folder/trial['execution_policy'],policy)
+                self.reseal(folder);trial['sha256']=sha(folder/'result.json')
+                row=self.evaluate()['observations'][0]
+                self.assertFalse(row['evidence_valid']);self.assertFalse(row['full_gate_success'])
+        write(folder/trial['execution_policy'],original)
+        path=folder/'run.json';manifest=json.loads(path.read_text());manifest['spec']['schema']='iot-lab.routing-policy.v1'
+        write(path,manifest);self.reseal(folder);trial['sha256']=sha(folder/'result.json')
+        self.assertIn('specification',self.evaluate()['observations'][0]['cause'])
+        manifest['spec'].pop('thermal_verification');write(path,manifest)
+        hidden=copy.deepcopy(original);hidden['effort'].pop('thermal_verification')
+        hidden['controls'].pop('native_thermal_obligations')
+        write(folder/trial['execution_policy'],hidden);self.reseal(folder);trial['sha256']=sha(folder/'result.json')
+        self.assertIn('explicitly selected',self.evaluate()['observations'][0]['cause'])
 
     def evaluate(self):
         write(self.manifest,self.study)
