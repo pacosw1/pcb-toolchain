@@ -222,7 +222,10 @@ def worker(folder):
     except FileExistsError:
         raise ValueError('run supervisor was already admitted; start a new check') from None
     with lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        # Exclusive creation already admitted this sole supervisor. A liveness
+        # probe may briefly hold the new file before we acquire it; wait for
+        # that observer rather than abandoning the run before its first event.
+        fcntl.flock(lock, fcntl.LOCK_EX)
         journal = Journal(folder)
         interrupted = []
         prior = {}
