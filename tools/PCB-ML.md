@@ -65,7 +65,7 @@ Copies, variants and all placement/repeat arms of a case belong in one split.
 Independent repeats remain observations; aliases of the same run count once.
 
 Routing features are counts of footprints, pads, declared nets, copper layers
-and retained copper; all-net pad-centre HPWL and pairwise distance sum; two-pad distances; and the board
+and retained copper; pre-decision retained straight-track length; all-net pad-centre HPWL and pairwise distance sum; two-pad distances; and the board
 outline's bounding-box area. HPWL is a geometric measurement, not routed length
 or the production placer's weighted score. Unsupported geometry remains unknown.
 Feature values, units and extractor hashes form a versioned contract.
@@ -74,11 +74,19 @@ KiCad 10 pad-local declarations; unresolved numeric net references stay unknown.
 The pairwise sum measures unordered pad-centre pairs within each named net, in
 millimetres. It can distinguish interior pad movements that leave HPWL unchanged.
 Rebuild datasets and models after an extractor-contract change.
+Routing contract v3 adds `retained_track_length_mm`, measured only from the
+original placement PCB. Copper arcs or malformed/nonfinite segment geometry
+leave this feature unknown. Via geometry does not change straight-track length.
+Old v2 feature packets and models cannot silently use v3 columns or semantics.
+The routing feature contract also binds static `quantity_contracts` shared by
+the extractor and label adapter. This includes the added-length definition and
+version without putting outcome values in features. Changed quantity semantics
+therefore reject even when the numeric columns are identical.
 
 Routing targets are `accepted_within_budget`, `owned_elapsed_s`,
 `successful_completion_elapsed_s`, `native_errors`, `native_opens` and
-`native_parity`, plus accepted-only `routed_track_length_mm` and
-`routed_via_count`. Acceptance uses full fresh-gate success within the owned run's
+`native_parity`, plus accepted-only `routed_track_length_mm`,
+`routed_via_count` and `added_route_track_length_mm`. Acceptance uses full fresh-gate success within the owned run's
 `run.json:timeout_s`; the solver's separate time limit remains recorded.
 `owned_elapsed_s` measures time to any terminal outcome. Successful completion
 time stays unknown for a failure or timeout, with censoring recorded explicitly.
@@ -111,6 +119,27 @@ Copper arcs or malformed/nonfinite segment geometry leave length unknown with a
 cause; a well-formed via count can remain independently known. Failed, timed-out
 or control-unknown runs receive neither successful quality label. These are
 post-route targets and never pre-decision features or engineering qualification.
+
+`added_route_track_length_mm` uses the versioned definition
+`iot-lab.native-added-straight-track-length.v1`: accepted final straight-track
+length minus the original retained straight-track length. It additionally
+requires a native geometry multiset proof that every original track and via
+remains, with multiplicity, net, layers and dimensions preserved. Item order,
+equivalent decimal notation, straight-segment direction, UUIDs and locking do
+not change copper geometry; other native attributes remain exact. Arcs,
+unsupported geometry, changed/missing source copper or an invalid difference
+leave the new target unknown with a cause; no zero clamp or assumed tolerance
+is applied. Whole-board length retains its existing meaning independently.
+Each row binds both original native files and records the source/final lengths
+and preservation verdict. Re-extracting historical accepted receipts requires
+no repeated native gates, while source hashes and original seals are checked.
+
+The residual removes fixed board copper from the learning target. It does not
+change ranking within a case whose retained copper is constant, or establish
+that the current global geometric features explain local routing detours.
+Already-inspected validation cases can become development data only in a new
+dataset/model with explicit lineage; they cannot then be claimed as unseen
+validation or test cases. Independent repeats do not create extra board cases.
 
 Routing-case identity preserves authored zone boundaries, settings, UUIDs and
 connectivity, and all retained segments, arcs and vias. Only derived zone

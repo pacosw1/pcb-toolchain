@@ -32,6 +32,7 @@ ROUTING_TARGETS = {
     "owned_elapsed_s": {"type": "regression", "direction": "min", "unit": "s"},
     "successful_completion_elapsed_s": {"type": "regression", "direction": "min", "unit": "s"},
     "routed_track_length_mm": {"type": "regression", "direction": "min", "unit": "mm"},
+    "added_route_track_length_mm": {"type": "regression", "direction": "min", "unit": "mm"},
     "routed_via_count": {"type": "regression", "direction": "min", "unit": "count"},
     "native_errors": {"type": "regression", "direction": "min", "unit": "count"},
     "native_opens": {"type": "regression", "direction": "min", "unit": "count"},
@@ -39,6 +40,7 @@ ROUTING_TARGETS = {
 }
 WORKFLOW_TARGETS = {"run_passed": {"type": "binary", "direction": "max"},
                     "owned_elapsed_s": {"type": "regression", "direction": "min", "unit": "s"}}
+ADDED_LENGTH_DEFINITION = features.ADDED_LENGTH_DEFINITION
 
 
 def _sha(path):
@@ -216,6 +218,41 @@ def _workflow_source_context(evidence, folder, manifest):
     return [dict(path=name, sha256=digest) for name, digest in sorted(result)]
 
 
+def _added_track_length(evidence, source, source_sha256, quality):
+    """Derive a new label from immutable native inputs, never a router statistic."""
+    result = dict(definition=ADDED_LENGTH_DEFINITION["id"], added_route_track_length_mm=None,
+        retained_track_length_mm=None, final_track_length_mm=None, retained_copper_preserved=None,
+        missing_source_items=None, source=None, candidate=None, unknowns={})
+    source = evidence.file(source, source_sha256)
+    descriptor = quality.get("candidate", {})
+    candidate = evidence.file(descriptor["path"], descriptor["sha256"])
+    result.update(source=dict(path=str(source), sha256=source_sha256), candidate=descriptor)
+    try:
+        before = features.native_copper_metrics(source.read_text())
+        after = features.native_copper_metrics(candidate.read_text())
+        result.update(retained_track_length_mm=before["track_length_mm"], final_track_length_mm=after["track_length_mm"])
+        if before["copper"] is None or after["copper"] is None:
+            raise ValueError("retained copper proof unavailable: " + str(before["unknowns"] or after["unknowns"]))
+        missing = before["copper"] - after["copper"]
+        result.update(retained_copper_preserved=not missing, missing_source_items=sum(missing.values()))
+        if missing:
+            raise ValueError("source track/via geometry missing or changed; net subtraction is not proven added copper")
+        if not _finite(before["track_length_mm"]) or not _finite(after["track_length_mm"]):
+            raise ValueError("source/final straight length unknown: " + str(before["unknowns"] or after["unknowns"]))
+        if after["track_length_mm"] != quality.get("routed_track_length_mm"):
+            raise ValueError("final native measurement disagrees with accepted whole-board quality")
+        delta = math.fsum([after["track_length_mm"], -before["track_length_mm"]])
+        if not _finite(delta) or delta < 0:
+            raise ValueError("negative or nonfinite added length; no zero clamp or assumed tolerance")
+        result["added_route_track_length_mm"] = delta
+    except (ValueError, TypeError, IndexError, OverflowError) as error:
+        result["unknowns"]["added_route_track_length_mm"] = str(error)
+    # An input mutation is an evidence failure, not merely an unknown metric.
+    evidence.file(source, source_sha256)
+    evidence.file(candidate, descriptor["sha256"])
+    return result
+
+
 def _row(root, trial, adapter, evidence):
     folder = _resolve(root, trial["path"])
     original = trial.get("placement_input") if adapter == "routing" else {"path": str(folder / "run.json"), "sha256": None}
@@ -274,9 +311,14 @@ def _row(root, trial, adapter, evidence):
                        native_parity=native["parity"] if native else None)
         targets.update({name: quality.get(name) if accepted else None
                         for name in ("routed_track_length_mm", "routed_via_count")})
+        added = (_added_track_length(evidence, source_path, source_sha, quality) if accepted and valid else
+                 dict(definition=ADDED_LENGTH_DEFINITION["id"], added_route_track_length_mm=None,
+                      unknowns={"added_route_track_length_mm": "complete within-budget acceptance and known effective controls required"}))
+        targets["added_route_track_length_mm"] = added["added_route_track_length_mm"]
         case = observation.get("case_fingerprint") if observation else None
         pose = observation.get("placement_pose_fingerprint") if observation else None
-        details = dict(observation=observation or {}, controls_known=known_controls, owned_run_budget_s=budget,
+        details = dict(observation=observation or {}, added_route_quality=added,
+                       controls_known=known_controls, owned_run_budget_s=budget,
                        solver_timeout_s=solver_budget, acceptance_budget_source="run.json:timeout_s",
                        completion_censoring=dict(observed=bool(full and elapsed is not None),
                            elapsed_to_terminal_s=elapsed, terminal_status=terminal.get("status"),
@@ -319,6 +361,8 @@ def build_dataset(root, manifest, dataset_id=None):
                     source_manifest=dict(path=str(path), sha256=inputs[str(path)]),
                     absent_inputs=[name for name, digest in closure.items() if digest is None],
                     qualification="advisory observations only; no CAD or physical qualification")
+    if adapter == "routing":
+        metadata["derived_targets"] = {"added_route_track_length_mm": ADDED_LENGTH_DEFINITION}
     result = data.finalize_dataset(root, dataset_id=dataset_id or value.get("dataset_id"), task=_task(adapter),
                                    feature_names=[column["name"] for column in contract["features"]],
                                    target_specs=ROUTING_TARGETS if adapter == "routing" else WORKFLOW_TARGETS,
