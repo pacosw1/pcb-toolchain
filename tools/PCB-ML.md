@@ -191,3 +191,9 @@ inspection receipt in `PCB_EXECUTION_CONTEXT`, KiCad 10.0.6 and Fastroute 0.1.7.
 Use a fresh owned output folder and bounded server execution. The six tiny
 routing trials verify integration and split wiring; they do not establish
 generalisation, optimal placement or improved routing on production boards.
+
+The bounded real-board family comparison and its retained stop condition are
+recorded in [the 2026-10-18 study result](../hardware-design/reports/placement-ml-family-study-2026-10-18.json).
+It preserves the pre-label prediction seal, actual production-score selections,
+accepted validation routes and the unlabelled PWR identity blocker. The model
+remains advisory; the complete held-out test was not reached.
