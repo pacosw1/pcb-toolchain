@@ -23,8 +23,8 @@ COMMON = ('pcb_cli.py', 'pcb_operations.py', 'pcb_evidence.py', 'pcb_workflow.py
 AUDITED = {
     "part_evidence.py": "9177b0ac5c3e038f69e38f144e0795fae485b87c1fb9338b2bf1b03ac227fca0",
     "part_native.py": "9a21ded435da26ccedcb6da845bd9c7cc87b959d5d0a848d325e177b4a400287",
-    "pcb_cli.py": "5384e38e656e50a4e37183cf5f4a49212baf164689d99c3f09485ae560212267",
-    "pcb_operations.py": "63c7fe3fbe395435034feb86ba779a1f5ceae2ba6b2fd174c5bfb4106e96c250",
+    "pcb_cli.py": "099b7991af3df3169e4ec2b871bbe5fb976fc37a7e56bc6f1da27ee6efec663a",
+    "pcb_operations.py": "b2624beb6b94c245b82764cf099f46caf4d5dfaf25bff1ce6149fb999b30c34b",
     "pcb_evidence.py": "9d929244915407bddefd096f8a981113652e2706ea8785cf5ddb70061330687f",
     "pcb_workflow.py": "befb1e2b7660acc3a3422913c1df2e16b4a9673f1a8fa629bc315102aaf9135c",
     "pcb_timing.py": "07ed104072e56166625ffc36e774892c3761832cf00fe72b6abef2d967f05ddd",

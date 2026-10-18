@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -24,6 +25,7 @@ OBSERVATION_BACKENDS = {
     'design': ('design_contract.py', 'design_assessment'),
     'schematic': ('schematic_contract.py', 'schematic_function'),
     'outcomes': ('placement_outcomes.py', 'placement_outcomes'),
+    'ml': ('pcb_ml.py', 'ml_observation'),
 }
 
 
@@ -318,6 +320,28 @@ def run(folder):
         implementation = collect(root, policy_operation, manifest['arguments'], python_command=python_command)
         observed_inputs = dict(implementation['files'])
         absent = list(implementation['absent'])
+        ml_absent = set()
+        if operation == 'ml':
+            from pcb_ml import dependencies
+            declared = dependencies(backend_root, manifest['arguments'])
+            if not isinstance(declared, dict):
+                raise ValueError('ML dependency collector must return a file/hash mapping')
+            for name, digest in declared.items():
+                path = (backend_root / name).absolute()
+                if digest is None:
+                    if path.exists() or path.is_symlink():
+                        raise ValueError('declared absent ML input appeared: ' + str(path))
+                    ml_absent.add(str(path))
+                    absent.append(str(path))
+                else:
+                    resolved = str(path.resolve())
+                    if not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest):
+                        raise ValueError('ML dependency collector returned an invalid input hash')
+                    if not path.is_file() or sha(path) != digest:
+                        raise ValueError('ML input changed before backend execution: ' + str(path))
+                    if resolved in observed_inputs and observed_inputs[resolved] != digest:
+                        raise ValueError('ML input differs from its implementation binding: ' + str(path))
+                    observed_inputs[resolved] = digest
         for key in ('design_contract',):
             if manifest.get(key):
                 binding = manifest[key]
@@ -332,9 +356,11 @@ def run(folder):
             raise ValueError('engineering backend did not produce a scoped, unqualified report')
         typed = {'design': 'iot-lab.design-assessment.v1',
                  'schematic': 'iot-lab.schematic-contract-result.v1',
-                 'outcomes': 'iot-lab.placement-outcome-comparison.v1'}
+                 'outcomes': 'iot-lab.placement-outcome-comparison.v1',
+                 'ml': 'iot-lab.pcb-ml-result.v1'}
         if operation in typed:
-            if report['schema'] != typed[operation] or report['status'] not in ('passed', 'blocked', 'stale'):
+            statuses = ('passed', 'blocked', 'failed') if operation == 'ml' else ('passed', 'blocked', 'stale')
+            if report['schema'] != typed[operation] or report['status'] not in statuses:
                 raise ValueError('engineering backend returned an incompatible report type')
             if (code == 0) != (report['status'] == 'passed'):
                 raise ValueError('engineering backend exit disagrees with its evidence verdict')
@@ -345,6 +371,26 @@ def run(folder):
                 raise ValueError('schematic assessment belongs to another board')
             if operation == 'outcomes' and report.get('study_id') != manifest['arguments'][1]:
                 raise ValueError('outcome assessment belongs to another study')
+            if operation == 'ml':
+                if (report.get('action'), report.get('id')) != tuple(manifest['arguments'][:2]):
+                    raise ValueError('ML assessment belongs to another action or ID')
+                if report.get('adopt_model') is not False or code not in (0, 1, 2):
+                    raise ValueError('ML assessment must remain non-adopting with a valid exit')
+                if report['status'] == 'passed' and ml_absent:
+                    raise ValueError('ML assessment passed with an absent requested input')
+                for key in ('inputs', 'tool_inputs', 'artifacts'):
+                    if not isinstance(report.get(key), dict) or any(
+                            not isinstance(value, str) or not re.fullmatch(r'[0-9a-f]{64}', value)
+                            for value in report[key].values()):
+                        raise ValueError('ML assessment has an invalid ' + key + ' inventory')
+                if report['status'] == 'passed' and not report['artifacts']:
+                    raise ValueError('passed ML assessment has no owned output artifact')
+                for name, digest in report['artifacts'].items():
+                    path = (output.parent / name).absolute()
+                    if (path.is_symlink() or not path.resolve().is_relative_to(output.parent.resolve())
+                            or path.resolve() in (output.resolve(), (output.parent / 'result.json').resolve())
+                            or not path.is_file() or sha(path) != digest):
+                        raise ValueError('ML artifact is missing, changed or outside its owned operation: ' + name)
         for key in ('inputs', 'native_inputs', 'tool_inputs', 'source_inputs', 'implementation_sha256', 'evidence_sha256'):
             for name, digest in report.get(key, {}).items():
                 if isinstance(digest, str) and len(digest) == 64:
@@ -356,7 +402,8 @@ def run(folder):
         observed_inputs.update(parent_dependencies)
         for name in report.get('absent_inputs', []):
             path = (backend_root / name).absolute()
-            if not path.resolve().is_relative_to(backend_root) or path.exists() or path.is_symlink():
+            allowed = str(path) in ml_absent if operation == 'ml' else path.resolve().is_relative_to(backend_root)
+            if not allowed or path.exists() or path.is_symlink():
                 raise ValueError('engineering absent input appeared or escaped its checkout: ' + name)
             absent.append(str(path))
         if not current(implementation['policy']):
@@ -373,6 +420,9 @@ def run(folder):
                       engineering_status=(report or {}).get('status'), engineering_inputs=observed_inputs,
                       engineering_absent_inputs=sorted(set(absent)), engineering_policy=implementation['policy'],
                       qualified=False, release_approved=False)
+        if operation == 'ml':
+            result.update(adopt_model=False, ml_action=report['action'], ml_id=report['id'],
+                          artifacts=report['artifacts'])
         lean.atomic_json(folder / 'operation/result.json', result)
         return result['exit_code']
     if operation in ('doctor', 'release', 'blocks', 'readiness'):
@@ -611,6 +661,8 @@ def adopt(root, folder, defect=None, baseline=None):
     result = verify(folder)
     operation = json.loads((folder / 'operation/result.json').read_text())
     manifest = json.loads((folder / 'run.json').read_text())
+    if manifest.get('operation') == 'ml':
+        raise ValueError('ML observations cannot adopt native CAD')
     if Path(manifest['root']).resolve() != root or result['status'] != 'passed' or not result.get('cleanup', {}).get('complete'):
         raise ValueError('only a successful, settled candidate from this checkout can be adopted')
     if not operation.get('candidate_verified') or not operation.get('identity_preserved') or operation.get('protected_source_changes'):

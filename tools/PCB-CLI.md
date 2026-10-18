@@ -2,6 +2,7 @@
 
 For reviewed parts, sourced placement rules, diagnostic repairs and engineering
 cycle measurement, see [PCB-ENGINEERING.md](PCB-ENGINEERING.md).
+For source-bound datasets and small advisory models, see [PCB-ML.md](PCB-ML.md).
 
 `tools/pcb` is the repository entrypoint for board context, builds, explicit
 placement/routing changes, checks, fabrication candidates and block evidence.
@@ -45,7 +46,7 @@ run store is outside the default location.
 ## Execution contract
 
 `check`, `build`, `edit`, `route`, `repair`, `release`, `doctor`, `blocks`,
-`readiness`, `parts`, `placement`, `routing`, `design`, `schematic` and `outcomes` share one owned supervisor and
+`readiness`, `parts`, `placement`, `routing`, `design`, `schematic`, `outcomes` and `ml` share one owned supervisor and
 durable run record. They follow events by default.
 `--detach --json` immediately returns one JSON object with a run ID. Following
 with `--json`, and `events --json`, stream JSON Lines. Put lifecycle options
