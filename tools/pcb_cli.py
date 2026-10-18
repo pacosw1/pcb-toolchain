@@ -27,7 +27,7 @@ from pcb_timing import MeasuredSpan, Timeline, live_stages, measured_stage
 ROOT = Path(__file__).resolve().parent.parent
 TERMINAL = {'passed', 'failed', 'error', 'cancelled', 'timeout'}
 RUN_ID = re.compile(r'run-[A-Za-z0-9_-]+\Z')
-OBSERVATIONS = ('parts', 'placement', 'routing', 'design', 'schematic', 'outcomes')
+OBSERVATIONS = ('parts', 'placement', 'routing', 'design', 'schematic', 'outcomes', 'ml')
 
 
 def backend_option(arguments, name):
@@ -316,7 +316,7 @@ def worker(folder):
                 'edit':'candidate_board_gate', 'route':'candidate_board_gate', 'release':'fabrication_candidate',
                 'repair':'candidate_board_gate', 'parts':'part_evidence', 'placement':'placement_constraints',
                 'routing':'routing_decision', 'design':'design_assessment', 'schematic':'schematic_function',
-                'outcomes':'placement_outcomes', 'doctor':'environment', 'blocks':'block_evidence',
+                'outcomes':'placement_outcomes', 'ml':'ml_observation', 'doctor':'environment', 'blocks':'block_evidence',
                 'readiness':'assembly_readiness'}[manifest.get('operation','check')])
             result.update(schema_version=1, run_id=folder.name, board=manifest['board'], cleanup=cleanup,
                           operation=manifest.get('operation', 'check'), child_cpu_s=proc.child_cpu_s if proc else None,
@@ -381,6 +381,12 @@ def start_run(args, base):
         if len(args.arguments) < 2:
             raise ValueError(operation + ' requires an action and board/PDF; put supervisor options first')
         action, subject = args.arguments[:2]
+        if operation == 'ml':
+            if action not in ('dataset', 'features', 'train', 'evaluate', 'predict'):
+                raise ValueError('ml action must be dataset, features, train, evaluate or predict')
+            for reserved in ('--root', '--output'):
+                if any(value == reserved or value.startswith(reserved + '=') for value in args.arguments):
+                    raise ValueError('ml ' + reserved + ' is owned by the run supervisor')
         if operation == 'parts' and action == 'inspect':
             args.board = cycle['board'] if cycle_folder else 'PARTS'
         else:
@@ -396,14 +402,14 @@ def start_run(args, base):
             if design['identity'].get('design_id') != subject:
                 raise ValueError('design action subject differs from its exact contract identity')
             args.board = design['identity'].get('board') or subject
-        elif operation == 'outcomes' and cycle_folder:
+        elif operation in ('outcomes', 'ml') and cycle_folder:
             args.board = cycle['board']
     baseline = None
     if getattr(args, 'baseline', None):
         baseline = run_dir(base, args.baseline) / 'gate/findings.json'
         if not baseline.is_file():
             raise ValueError('baseline has no structured findings')
-    if operation in ('design', 'outcomes') or (operation=='parts' and action=='selection'):
+    if operation in ('design', 'outcomes', 'ml') or (operation=='parts' and action=='selection'):
         cfg, config = {'project': None}, None
     elif operation in ('doctor', 'blocks', 'readiness') or (operation == 'parts' and args.board == 'PARTS'):
         args.board = {'doctor': 'ENVIRONMENT', 'blocks': 'BLOCKS', 'readiness': 'ASSEMBLY', 'parts':'PARTS'}[operation]
@@ -416,7 +422,7 @@ def start_run(args, base):
     if cycle_folder and args.board != cycle['board']:
         raise ValueError('run belongs to another board than its engineering cycle')
     node = shutil.which(os.environ.get('NODE', 'node'))
-    if not node and operation not in ('design', 'outcomes') and not (operation=='parts' and action=='selection'):
+    if not node and operation not in ('design', 'outcomes', 'ml') and not (operation=='parts' and action=='selection'):
         raise ValueError('Node.js is required to run the existing gate')
     base.mkdir(parents=True, exist_ok=True)
     folder = Path(tempfile.mkdtemp(prefix='run-', dir=base))
@@ -462,6 +468,7 @@ def start_run(args, base):
         import pcb_cycle
         pcb_cycle.attach(cycle_folder, folder,
             'datasheets' if operation == 'parts' and args.arguments[0] == 'inspect' else
+            'verification' if operation == 'ml' else
             'routing' if operation == 'edit' and getattr(args, 'kind', None) == 'route' else None)
     lean.atomic_json(folder / 'state.json', dict(schema_version=1, run_id=folder.name, board=args.board,
                      status='starting', seq=0, updated_unix=time.time(), elapsed_s=0, active_stages=[]))
@@ -609,7 +616,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description='Observable native board gates; see tools/PCB-CLI.md')
     sub = parser.add_subparsers(dest='command', required=True)
     operations = ('check', 'build', 'edit', 'route', 'repair', 'release', 'doctor', 'blocks', 'readiness',
-                  'parts', 'placement', 'routing', 'design', 'schematic', 'outcomes')
+                  'parts', 'placement', 'routing', 'design', 'schematic', 'outcomes', 'ml')
     for name in operations + ('list', 'context', 'next', 'status', 'events', 'explain', 'cancel', 'adopt', 'benchmark', 'cycle', 'note', '_worker'):
         child = sub.add_parser(name)
         child.add_argument('--runs-dir', type=Path, default=Path(os.environ.get('PCB_RUNS_DIR', ROOT / '.gate/cli')))
@@ -732,7 +739,7 @@ def main(argv=None):
         if args.command in OBSERVATIONS:
             allowed = {'parts': ('status', 'inspect', 'selection', 'verify', 'stock'), 'placement': ('check',),
                        'routing': ('diagnose',), 'design': ('check',), 'schematic': ('check',),
-                       'outcomes': ('evaluate',)}[args.command]
+                       'outcomes': ('evaluate',), 'ml': ('dataset', 'features', 'train', 'evaluate', 'predict')}[args.command]
             if not args.arguments or args.arguments[0] not in allowed:
                 raise ValueError('choose ' + args.command + ' ' + '/'.join(allowed))
         if args.command == 'benchmark':
