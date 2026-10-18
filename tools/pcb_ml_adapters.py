@@ -257,7 +257,7 @@ def _row(root, trial, adapter, evidence):
     if adapter == "routing":
         known_controls = bool(observation and observation.get("policy_fingerprint"))
         policy = evidence.read(folder / trial["execution_policy"]) if known_controls else {}
-        solver_budget = policy.get("effort", {}).get("timeout_s")
+        solver_budget = policy.get("effort", {}).get("router_timeout_s")
         budget = manifest.get("timeout_s")
         budget = budget if _finite(budget) and budget > 0 else None
         full = observation.get("full_gate_success") if observation else False

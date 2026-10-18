@@ -173,16 +173,21 @@ class AdapterTests(unittest.TestCase):
 
     def test_acceptance_budget_is_the_whole_run_not_the_solver_phase(self):
         folder, trial = self.trial()
+        manifest_path = folder / "run.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["timeout_s"] = 120
+        write(manifest_path, manifest)
         policy_path = folder / "operation/execution-policy.json"
         policy = json.loads(policy_path.read_text())
-        policy["effort"]["timeout_s"] = 1
+        policy["effort"]["timeout_s"] = 120
+        policy["effort"]["router_timeout_s"] = 30
         write(policy_path, policy)
         self.fixture.reseal(folder)
         trial["sha256"] = adapters._sha(folder / "result.json")
         row = self.corpus([trial])["rows"][0]
         self.assertEqual(row["targets"]["owned_elapsed_s"], 2)
-        self.assertEqual(row["owned_run_budget_s"], 30)
-        self.assertEqual(row["solver_timeout_s"], 1)
+        self.assertEqual(row["owned_run_budget_s"], 120)
+        self.assertEqual(row["solver_timeout_s"], 30)
         self.assertEqual(row["targets"]["accepted_within_budget"], 1)
 
     def test_corrupt_seal_and_substituted_original_remain_ineligible(self):
