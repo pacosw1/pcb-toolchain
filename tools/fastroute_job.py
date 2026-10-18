@@ -12,10 +12,11 @@ Steps:
   2. Existing copper is locked and kept. The DSN gets only --layers as signal layers; nets that match
      --skip-net (comma list of fnmatch patterns) are not routed.
   3. fastroute -mp PASSES --router.min_trace_width_um=<board minimum>
-     --router.copper_to_edge_clearance_um=<board setting> --report --diagnose.
+     --router.copper_to_edge_clearance_um=<board setting> --report.
   4. tools/import_ses.py rule: import with locked copper; via count must equal the router report.
   5. kicad-cli pcb drc on OUTDIR/routed.kicad_pcb (the .kicad_pro and .kicad_dru of BOARD are copied).
 Prints "UNROUTED <signal> GND_OPEN <n> ERRORS <n> ROUTER_UNROUTED <n> CONGESTION <n> BLOCKED <n> TRACK_MM <n> VIAS <n> SECONDS <n>".
+CONGESTION and BLOCKED are "unknown" when the optional backend diagnosis was not measured.
 UNROUTED counts the open connections of the routed nets only; GND_OPEN counts those of the --skip-net nets.
 Exit code 4: the result is not verified (do not use the board).
 
@@ -107,6 +108,53 @@ def _native_phase(stage, event_file):
                 child_cpu_s=(after_child.ru_utime+after_child.ru_stime)-(before_child.ru_utime+before_child.ru_stime),
                 accounting='process deltas; nested/whole-job intervals are non-additive',
                 blocking_native=True))+'\n')
+
+
+@contextlib.contextmanager
+def _router_observers(watcher, stop, result, snapshot, stall_path, stall_passes, tag):
+    """Settle observers and retain an actual stall even when the solver raises."""
+    try:
+        watcher.start()
+        snapshot.start()
+        yield
+    finally:
+        original = sys.exc_info()[1]
+        errors = []
+        for name, cleanup in (('watcher stop', stop.set),
+                              ('watcher join', lambda: watcher.join(5) if watcher.ident is not None else None),
+                              ('snapshot stop', snapshot.stop)):
+            try:
+                cleanup()
+            except BaseException as error:
+                errors.append(dict(operation=name, type=type(error).__name__, error=str(error)))
+        if watcher.is_alive():
+            errors.append(dict(operation='watcher join', error='observer did not settle'))
+        thread = getattr(snapshot, 'thread', None)
+        if thread is not None and thread.is_alive():
+            errors.append(dict(operation='snapshot stop', error='observer did not settle'))
+        if result:
+            try:
+                lean.atomic_json(stall_path, dict(result, stall_passes=stall_passes, stage=tag,
+                    observer_cleanup=dict(complete=not errors, errors=errors)))
+                print(f"STALL interrupt attempt at pass {result['pass_no']} "
+                      f"(acknowledged={result['interrupt_acknowledged']}): {stall_passes} passes "
+                      f"without a lower open count (best {result['best']}, last {result['unrouted']}); "
+                      f"see {stall_path}", flush=True)
+            except BaseException as error:
+                errors.append(dict(operation='stall evidence', type=type(error).__name__, error=str(error)))
+        if errors:
+            # A secondary observer/evidence error must never replace the actual
+            # timeout/cancellation and its owned child-cleanup receipt.
+            if original is not None:
+                print('fastroute_job: observer cleanup/evidence failed: '+str(errors), file=sys.stderr, flush=True)
+            else:
+                raise RuntimeError('router observer cleanup/evidence failed: '+str(errors))
+
+
+def _diagnosis_count(report, name):
+    diagnosis = report.get('diagnosis')
+    value = diagnosis.get(name) if isinstance(diagnosis, dict) else None
+    return value if type(value) is int and value >= 0 else 'unknown'
 
 
 def _strengthen_clearance_model(text, project, before_path, model_path, receipt_path, **scope):
@@ -830,7 +878,7 @@ def _main(a=None):
                 sys.exit('fastroute_job: backend does not support safe net-class exclusion')
         cmd = [BIN, "-de", model_dsn, "-do", ses, "-mp", str(a.passes), f"--router.min_trace_width_um={min_um}",
                f"--router.copper_to_edge_clearance_um={edge_um}",
-               f"--report={rep}", "--diagnose"] + [f"--{kv}" for kv in a.set]
+               f"--report={rep}"] + [f"--{kv}" for kv in a.set]
         if rules and not any(k.split('=', 1)[0] == 'router.scoring.via_costs' for k in a.set):
             # Rule 2: a layer change costs much more than Freerouting's default (50), so the router changes layer
             # only where the detour is long. A caller's own --set router.scoring.via_costs wins.
@@ -907,54 +955,50 @@ def _main(a=None):
         watcher = threading.Thread(target=_router_watch, args=(os.path.join(a.outdir, f"run{sfx}.log"), stall_n, owner,
                                                                 stall_stop, stall_result, progress, 'route' + sfx), daemon=True)
         progress.write('route' + sfx + ' start')
-        watcher.start()
         # W12 snapshots: the router's checkpoint SES every --snapshot-interval-s seconds (route_snapshots.Watcher)
         snap = route_snapshots.Watcher(ses, a.outdir, os.path.join(a.outdir, f"run{sfx}.log"), a.snapshot_interval_s,
-                                       stage='route' + sfx, t0=run_record.clock(a.outdir), dsn=model_dsn).start()
+                                       stage='route' + sfx, t0=run_record.clock(a.outdir), dsn=model_dsn)
         def solver_started(proc):
             owner['proc'] = proc
             solver_launches.append(tag)
-        with open(os.path.join(a.outdir, f"run{sfx}.log"), "w") as lf:
-            rc = lean.run_stage(cmd, stage=('router-screen' if a.optimizer != 'always' else 'router') + sfx,
-                                event_file=phases, deadline=deadline, env=router_env,
-                                on_start=solver_started,
-                                stdout=lf, stderr=subprocess.STDOUT).returncode
-        stall_stop.set()
-        watcher.join(5)
-        progress.write('route' + sfx + ' end')
-        if stall_result.get('stopped'):
-            lean.atomic_json(os.path.join(a.outdir, f'stall{sfx}.json'), dict(stall_result, stall_passes=stall_n, stage=tag))
-            print(f"STALL router stopped after pass {stall_result['pass_no']}: {stall_n} passes without a lower open count "
-                  f"(best {stall_result['best']}, last {stall_result['unrouted']}); the router wrote its best board", flush=True)
-        if rc == 0 and a.optimizer == 'if-routed' and os.path.isfile(rep) and os.path.isfile(ses):
-            screen = json.load(open(rep))
-            if dsn_skip.routable_open(screen) == 0:
-                checkpoint = os.path.join(a.outdir, f'screen{sfx}.ses')
-                shutil.copy(ses, checkpoint)
-                shutil.copy(rep, os.path.join(a.outdir, f'screen-report{sfx}.json'))
-                optimize = [x for x in cmd if not x.startswith('--router.optimizer.enabled=')
-                            and not x.startswith('--max-time=')]
-                optimize += ['--router.optimizer.enabled=true', f'--initial-session={checkpoint}']
-                left = lean.remaining(deadline)
-                if left is not None:
-                    optimize.append(f'--max-time={max(1, int(left))}')
-                with open(os.path.join(a.outdir, f'optimize{sfx}.log'), 'w') as lf:
-                    rc = lean.run_stage(optimize, stage='router-optimize' + sfx, event_file=phases, deadline=deadline,
-                                        env=router_env, stdout=lf, stderr=subprocess.STDOUT).returncode
-                # W16 (AC-24V 2026-10-11): the optimizer, started from the checkpoint, moved mains tracks into the 3 mm
-                # clearance at J1 (2.68 mm, 2.98 mm) where the screen result had none. Keep the screen result when the
-                # optimizer adds fixable violations or opens: polish never trades a rule for track length.
-                def _bad(r):
-                    st = r.get('stats', {})
-                    return (st.get('violations', 0) - st.get('violations_unfixable', 0), dsn_skip.routable_open(r))
-                if rc == 0 and os.path.isfile(rep) and any(x > y for x, y in zip(_bad(json.load(open(rep))), _bad(screen))):
-                    print(f'OPTIMIZER rejected: violations/opens {_bad(json.load(open(rep)))} > screen {_bad(screen)}; '
-                          'the screen result is kept', flush=True)
-                    shutil.copy(checkpoint, ses)
-                    shutil.copy(os.path.join(a.outdir, f'screen-report{sfx}.json'), rep)
-            else:
-                print('OPTIMIZER deferred: screening result still has open connections', flush=True)
-        snap.stop()
+        with _router_observers(watcher, stall_stop, stall_result, snap,
+                os.path.join(a.outdir, f'stall{sfx}.json'), stall_n, tag):
+            with open(os.path.join(a.outdir, f"run{sfx}.log"), "w") as lf:
+                rc = lean.run_stage(cmd, stage=('router-screen' if a.optimizer != 'always' else 'router') + sfx,
+                                    event_file=phases, deadline=deadline, env=router_env,
+                                    on_start=solver_started,
+                                    stdout=lf, stderr=subprocess.STDOUT).returncode
+            stall_stop.set()
+            watcher.join(5)
+            progress.write('route' + sfx + ' end')
+            if rc == 0 and a.optimizer == 'if-routed' and os.path.isfile(rep) and os.path.isfile(ses):
+                screen = json.load(open(rep))
+                if dsn_skip.routable_open(screen) == 0:
+                    checkpoint = os.path.join(a.outdir, f'screen{sfx}.ses')
+                    shutil.copy(ses, checkpoint)
+                    shutil.copy(rep, os.path.join(a.outdir, f'screen-report{sfx}.json'))
+                    optimize = [x for x in cmd if not x.startswith('--router.optimizer.enabled=')
+                                and not x.startswith('--max-time=')]
+                    optimize += ['--router.optimizer.enabled=true', f'--initial-session={checkpoint}']
+                    left = lean.remaining(deadline)
+                    if left is not None:
+                        optimize.append(f'--max-time={max(1, int(left))}')
+                    with open(os.path.join(a.outdir, f'optimize{sfx}.log'), 'w') as lf:
+                        rc = lean.run_stage(optimize, stage='router-optimize' + sfx, event_file=phases, deadline=deadline,
+                                            env=router_env, stdout=lf, stderr=subprocess.STDOUT).returncode
+                    # W16 (AC-24V 2026-10-11): the optimizer, started from the checkpoint, moved mains tracks into the 3 mm
+                    # clearance at J1 (2.68 mm, 2.98 mm) where the screen result had none. Keep the screen result when the
+                    # optimizer adds fixable violations or opens: polish never trades a rule for track length.
+                    def _bad(r):
+                        st = r.get('stats', {})
+                        return (st.get('violations', 0) - st.get('violations_unfixable', 0), dsn_skip.routable_open(r))
+                    if rc == 0 and os.path.isfile(rep) and any(x > y for x, y in zip(_bad(json.load(open(rep))), _bad(screen))):
+                        print(f'OPTIMIZER rejected: violations/opens {_bad(json.load(open(rep)))} > screen {_bad(screen)}; '
+                              'the screen result is kept', flush=True)
+                        shutil.copy(checkpoint, ses)
+                        shutil.copy(os.path.join(a.outdir, f'screen-report{sfx}.json'), rep)
+                else:
+                    print('OPTIMIZER deferred: screening result still has open connections', flush=True)
         if rc != 0 or not os.path.isfile(ses) or not os.path.isfile(rep):
             sys.exit(f"fastroute_job: fastroute failed (rc {rc}), see {a.outdir}/run{sfx}.log")
         report = json.load(open(rep))
@@ -1254,7 +1298,6 @@ def _main(a=None):
                  f"repairs (first {lost[0][:3]}); the result is not used")
     after = sum(1 for t in pcbnew.LoadBoard(out).GetTracks() if t.GetClass() == 'PCB_VIA')
     errors = sum(1 for v in d.get("violations", []) if v.get("severity") == "error")
-    diag = report.get("diagnosis", {})
     # Open connections of the skipped (ground) nets are a ground-via matter (gnd_pad_vias.py, a thermal pad via),
     # not a routing result: they are counted apart, so one ground pad cannot decide a placement step.
     # W16: a staged job (--only-nets, AC-24V stage M) leaves the nets of the later stages open by design; only opens on
@@ -1310,7 +1353,7 @@ def _main(a=None):
         print(routing_rules.summary_line(vr), flush=True)
     progress.write('triage end', open_=signal_open)
     print(f"UNROUTED {signal_open} GND_OPEN {gnd_open} ERRORS {errors} ROUTER_UNROUTED {report['stats']['unrouted']} "
-          f"CONGESTION {diag.get('congestion', 0)} BLOCKED {diag.get('blocked', 0)} "
+          f"CONGESTION {_diagnosis_count(report, 'congestion')} BLOCKED {_diagnosis_count(report, 'blocked')} "
           f"TRACK_MM {report['stats']['trace_length_mm']:.0f} VIAS {after} SECONDS {secs}", flush=True)
     if imported_vias != report["stats"]["vias"]:
         print(f"fastroute_job: RESULT NOT VERIFIED: {imported_vias} vias on the board, {report['stats']['vias']} in the router report", flush=True)
@@ -1384,17 +1427,20 @@ def _router_watch(log_path, stall_passes, owner, stop, result, progress, stage):
                 # Audit #803 (CIP 830): stop only the router this job owns, through its owned-stage handle (one
                 # SIGTERM to its registered process group: Fastroute writes its best board). No process search by
                 # name: pgrep -f DSN also matched unrelated processes whose command line contains that text.
-                proc, how = owner.get('proc'), 'owned-stage interrupt'
+                proc, how = owner.get('proc'), 'no owned router handle'
+                attempted, acknowledged = False, None
                 try:
-                    if proc is None:
-                        raise RuntimeError('router not started as an owned stage yet')
-                    proc.interrupt()
+                    if proc is not None:
+                        attempted = True
+                        answer = proc.interrupt()
+                        acknowledged = answer if type(answer) is bool else None
+                        how = 'owned-stage interrupt requested'
                 except Exception as e:
-                    how = f'not stopped: {type(e).__name__}: {e}'
-                result.update(stopped=proc is not None and how == 'owned-stage interrupt', pass_no=pass_no, unrouted=n,
-                              best=best, how=how, seconds=round(time.time(), 1))
-                if not result['stopped']:
-                    continue
+                    # A socket timeout can follow delivery to the broker. Never
+                    # send a second stop because its acknowledgment was lost.
+                    how = f'interrupt acknowledgment unknown: {type(e).__name__}: {e}'
+                result.update(interrupt_attempted=attempted, interrupt_acknowledged=acknowledged,
+                              pass_no=pass_no, unrouted=n, best=best, how=how, seconds=round(time.time(), 1))
                 stop.set()
                 return   # W15: one stop signal only; a second one (more stale pass lines in the same read) made Fastroute
                          # exit 130 without its best board ("second stop signal, exiting", run-escape.log of /tmp/w15/run-1)

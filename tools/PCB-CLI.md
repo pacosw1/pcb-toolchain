@@ -166,6 +166,10 @@ including any neck-width option. Missing, duplicate or weaker controls block.
 The admitted immutable `router-model*.dsn`, exact argv, executable and backend
 policy are bound to the effective configuration; a later repair cannot replace
 an earlier stage's admitted model.
+Normal router jobs retain the base report without automatic connection-search
+diagnosis. Missing diagnosis counts remain unknown. A stall receipt survives a
+later timeout and records the single interrupt attempt and its acknowledgment;
+the owned stage terminal and cleanup establish process exit separately.
 For rules involving new copper, an exact layer present in the actual DSN is
 inactive only when every active net's effective layer mask excludes it. Unknown
 or wildcard layer selectors remain unsupported.

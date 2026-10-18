@@ -308,11 +308,31 @@ def derive(outdir):
         if report:
             out += reasons(report, s['end_s'], stage, f['report'], s['attempt'])
         stall = _load(outdir, f['stall']) if 'stall' in f else None
-        if stall and stall.get('stopped'):
+        if stall and ('interrupt_attempted' in stall or stall.get('stopped')):
+            if 'interrupt_attempted' in stall:
+                attempted, acknowledged = stall['interrupt_attempted'], stall.get('interrupt_acknowledged')
+                if attempted is True:
+                    action = 'stall interrupt attempted'
+                    acknowledgment = ('broker acknowledged the request' if acknowledged is True else
+                                      'broker did not acknowledge the request' if acknowledged is False else
+                                      'broker acknowledgment is unknown')
+                elif attempted is False:
+                    action, acknowledgment = 'stall interrupt not attempted', 'no owned router handle'
+                else:
+                    action, acknowledgment = 'stall interrupt unknown', 'attempt status is unknown'
+                why = (f"{stall.get('stall_passes')} passes without a lower open count: {acknowledgment}; "
+                       'this receipt does not confirm process exit')
+                receipt_format = 'interrupt_request'
+            else:
+                # Historical producers used 'stopped' for a successful request,
+                # without independently confirming that the process had exited.
+                action, receipt_format = 'stall stop', 'historical_stopped'
+                why = (f"{stall.get('stall_passes')} passes without a lower open count: historical stop receipt; "
+                       'independent process-exit confirmation is unavailable')
             t0 = _t0(outdir)
-            out.append(record(stage, 'stall stop', inputs=ident, evidence=f['stall'], result=stall,
+            out.append(record(stage, action, inputs=dict(ident, receipt_format=receipt_format), evidence=f['stall'], result=stall,
                               elapsed_s=round(stall['seconds'] - t0, 1) if stall.get('seconds') and t0 else s['end_s'],
-                              why=f"{stall.get('stall_passes')} passes without a lower open count: fail fast"))
+                              why=why))
     for s in _rows(outdir, 'stages.jsonl'):
         out.append(record(s.get('stage'), 'stage ' + str(s.get('status')), inputs={'command': s.get('command')}, evidence='stages.jsonl',
                           result={k: s.get(k) for k in ('returncode', 'wall_s', 'cause') if k in s},
