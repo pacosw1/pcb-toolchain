@@ -18,6 +18,9 @@ its keep-vias-off-pads option, s26; this code is our own):
 No pcbnew import here: the caller gives the board data.
 """
 import fnmatch
+from collections import namedtuple
+from decimal import Decimal
+from fractions import Fraction
 import hashlib
 import json
 import os
@@ -276,6 +279,148 @@ def dsn_classes(text):
         for t in re.findall(r'"[^"]*"|\S+', m.group(2)):
             out[t.strip('"')] = m.group(1)
     return out
+
+
+_DsnToken = namedtuple('_DsnToken', 'value start end quoted')
+
+
+def _dsn_spans(text):
+    """Balanced DSN reader retaining atom offsets; strings/comments stay opaque."""
+    stack, position = [[]], 0
+    quoted = re.compile(r'"(?:[^"\\]|\\.)*"')
+    atom = re.compile(r'[^\s()"]+')
+    while position < len(text):
+        char = text[position]
+        if char.isspace():
+            position += 1
+            continue
+        if char == '#' and not text[text.rfind('\n', 0, position) + 1:position].strip():
+            end = text.find('\n', position)
+            position = len(text) if end < 0 else end
+            continue
+        if char == '(':
+            stack.append([]); position += 1; continue
+        if char == ')':
+            if len(stack) == 1:
+                raise ValueError('unbalanced DSN parentheses')
+            form = stack.pop()
+            if not form or not isinstance(form[0], _DsnToken):
+                raise ValueError('empty or malformed DSN form')
+            stack[-1].append(form); position += 1; continue
+        # Specctra's bare quote directive is recognized by parse context,
+        # never by a global replacement inside a quoted string.
+        directive = (char == '"' and len(stack[-1]) == 1
+                     and isinstance(stack[-1][0], _DsnToken)
+                     and stack[-1][0].value == 'string_quote'
+                     and text[position + 1:].lstrip().startswith(')'))
+        if directive:
+            stack[-1].append(_DsnToken('"', position, position + 1, False))
+            position += 1
+            continue
+        match = (quoted if char == '"' else atom).match(text, position)
+        if match is None:
+            raise ValueError('invalid or unterminated DSN token')
+        raw = match[0]
+        stack[-1].append(_DsnToken(raw[1:-1] if char == '"' else raw,
+                                  position, match.end(), char == '"'))
+        position = match.end()
+    if len(stack) != 1 or len(stack[0]) != 1 or not isinstance(stack[0][0], list):
+        raise ValueError('expected one complete DSN PCB')
+    return stack[0][0]
+
+
+def _finite_decimal_text(value):
+    """Serialize an exact rational only when it has a finite decimal form."""
+    denominator, twos, fives = value.denominator, 0, 0
+    while denominator % 2 == 0:
+        denominator //= 2; twos += 1
+    while denominator % 5 == 0:
+        denominator //= 5; fives += 1
+    if denominator != 1:
+        raise ValueError('required clearance has no exact finite DSN-unit representation')
+    places = max(twos, fives)
+    numerator = value.numerator * 2 ** (places - twos) * 5 ** (places - fives)
+    digits = str(numerator).zfill(places + 1)
+    return (digits[:-places] + '.' + digits[-places:]).rstrip('0').rstrip('.') if places else digits
+
+
+def strengthen_project_clearance(text, project_text, *, source, active_nets, net_classes, obstacles, layers):
+    """Raise existing DSN clearance atoms to the applicable authored floor.
+
+    No geometry, membership, settings or pad-only exceptions are rewritten.
+    Unrepresentable values abstain; no rounding/precedence assumption is used.
+    """
+    # Local import keeps route_rule_coverage's existing reader dependency acyclic
+    # at module initialization. Its actual admission decision is unchanged.
+    import route_rule_coverage as coverage
+    try:
+        model = coverage.Model(text, layers)
+    except (ValueError, TypeError, IndexError, KeyError, AttributeError, ArithmeticError) as error:
+        raise ValueError('invalid source DSN model: ' + str(error)) from error
+    requirement = coverage.project_clearance_requirement(project_text, source=source,
+        active_nets=active_nets, net_classes=net_classes, obstacles=obstacles)
+    if any(net and net not in model.membership for net in requirement['counterparts']):
+        raise ValueError('native active/retained net is absent from the DSN model')
+    floor = Fraction(Decimal(requirement['required_mm']))
+    root = _dsn_spans(text)
+    direct = lambda name: [v for v in root[1:] if isinstance(v, list) and v[0].value == name]
+    units, resolutions = direct('unit'), direct('resolution')
+    if (root[0].value != 'pcb' or len(units) != 1 or len(resolutions) != 1
+            or any(v.quoted for v in units[0]) or any(v.quoted for v in resolutions[0])):
+        raise ValueError('ambiguous DSN unit/resolution declaration')
+    unit, resolution = model.unit, int(resolutions[0][2].value)
+    unit_mm = Fraction(coverage.UNITS[unit])
+    edits = []
+    pad_only = {'smd_smd', 'pin_pin', 'pin_smd'}
+    known_types = pad_only | {'wire_wire', 'wire_pin', 'wire_smd', 'wire_via', 'via_via', 'via_pin', 'via_smd'}
+
+    def walk(form, path):
+        head = form[0]
+        if head.quoted:
+            raise ValueError('quoted DSN form keyword is unsupported')
+        if head.value in ('unit', 'resolution') and form not in units + resolutions:
+            raise ValueError('nested DSN unit/resolution overrides are unsupported')
+        if head.value == 'clearance':
+            if (len(form) not in (2, 3) or not isinstance(form[1], _DsnToken)
+                    or form[1].quoted or not re.fullmatch(r'[+]?(?:\d+(?:\.\d*)?|\.\d+)', form[1].value)):
+                raise ValueError('malformed/nonfinite DSN clearance or inline units')
+            types = []
+            if len(form) == 3:
+                qualifier = form[2]
+                if (not isinstance(qualifier, list) or qualifier[0].value != 'type'
+                        or len(qualifier) < 2 or any(not isinstance(v, _DsnToken) or v.quoted for v in qualifier)
+                        or any(v.value not in known_types for v in qualifier[1:])):
+                    raise ValueError('unknown or malformed DSN clearance qualifier')
+                types = [v.value for v in qualifier[1:]]
+                if len(set(types)) != len(types):
+                    raise ValueError('duplicated DSN clearance types')
+            current = Fraction(Decimal(form[1].value)) * unit_mm
+            if (current / unit_mm * resolution).denominator != 1:
+                raise ValueError('DSN clearance is not exactly representable at declared resolution')
+            if not (len(types) == 1 and types[0] in pad_only) and current < floor:
+                required = floor / unit_mm
+                if (required * resolution).denominator != 1:
+                    raise ValueError('required clearance is not exactly representable at DSN resolution')
+                replacement = _finite_decimal_text(required)
+                token = form[1]
+                edits.append(dict(start=token.start, end=token.end, before=token.value,
+                                  after=replacement, types=types, location=path))
+        for index, child in enumerate(form[1:], 1):
+            if isinstance(child, list):
+                walk(child, path + '/' + str(index))
+    walk(root, '')
+    strengthened = text
+    for edit in reversed(edits):
+        strengthened = strengthened[:edit['start']] + edit['after'] + strengthened[edit['end']:]
+    actual = coverage.Model(strengthened, layers)
+    if any(value < Decimal(requirement['required_mm']) for value in actual.all_clearances):
+        raise ValueError('strengthened DSN still has a weaker new-copper declaration')
+    return strengthened, dict(schema='iot-lab.dsn-clearance-strengthening.v1', status='passed',
+        scope='conservative model strengthening only; complete fresh native/configured gates remain required',
+        project=dict(path=str(source), sha256=hashlib.sha256(project_text.encode()).hexdigest()),
+        before_sha256=hashlib.sha256(text.encode()).hexdigest(),
+        after_sha256=hashlib.sha256(strengthened.encode()).hexdigest(),
+        unit=unit, resolution=resolution, changes=edits, **requirement, qualified=False)
 
 
 def apply_layer_masks(text, masks):

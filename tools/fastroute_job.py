@@ -109,6 +109,37 @@ def _native_phase(stage, event_file):
                 blocking_native=True))+'\n')
 
 
+def _strengthen_clearance_model(text, project, before_path, model_path, receipt_path, **scope):
+    """Retain exact pre/post model lineage; never write the native project."""
+    project = os.path.abspath(project)
+    report = dict(schema='iot-lab.dsn-clearance-strengthening.v1', status='blocked',
+                  cause='clearance strengthening incomplete', qualified=False, inputs={})
+    with open(before_path, 'xb') as stream:
+        stream.write(text.encode())
+    report['inputs'][os.path.abspath(before_path)] = lean.digest(before_path)
+    report['inputs'][project] = lean.digest(project) if os.path.isfile(project) else None
+    try:
+        with open(project, 'rb') as stream:
+            project_text = stream.read().decode('utf-8')
+        strengthened, derived = route_features.strengthen_project_clearance(text, project_text,
+            source=project, **scope)
+        if report['inputs'][project] != derived['project']['sha256'] or lean.digest(project) != derived['project']['sha256']:
+            raise ValueError('authored project changed during clearance strengthening')
+        if (report['inputs'][os.path.abspath(before_path)] != derived['before_sha256']
+                or lean.digest(before_path) != derived['before_sha256']):
+            raise ValueError('pre-strengthening DSN changed during clearance strengthening')
+        report.update(derived, before=dict(path=os.path.abspath(before_path), sha256=derived['before_sha256']),
+                      after=dict(path=os.path.abspath(model_path), sha256=derived['after_sha256']))
+        for module in (route_features, route_rule_coverage, route_rule_coverage.route_project_coverage):
+            report['inputs'][os.path.abspath(module.__file__)] = lean.digest(module.__file__)
+        lean.atomic_json(receipt_path, report)
+        return strengthened, report
+    except (ValueError, OSError, UnicodeError) as error:
+        report.update(status='blocked', cause=str(error))
+        lean.atomic_json(receipt_path, report)
+        raise
+
+
 def write_pairs(pairs_json, dru, nets, out):
     """fastroute pairs file from <board>/diff-pairs.json: one line "pair P N gap=G" for each pair whose two nets
     are routed. G = the diff_pair_gap opt value (mm) of the pair's .kicad_dru rule; no gap when the rule has none.
@@ -748,13 +779,7 @@ def _main(a=None):
             n_keep += sum(len(v) for v in extra["keepouts"].values())
             text = routing_rules.add_keepouts(text, extra["keepouts"], ("wire_keepout", "via_keepout"), extra.get("name", "iot_stage"))
         text, ignored_classes = dsn_skip.exclude(text, stage_nets)
-        with open(dsn, "w") as f:
-            f.write(text)
-        # Compatibility board.dsn may later become the latest repair model.
-        # The exact bytes used by each invocation keep their own immutable path.
         model_dsn = os.path.join(a.outdir, f'router-model{sfx}.dsn')
-        with open(model_dsn, 'x') as f:
-            f.write(text)
         native_classes = {str(n): str(v.GetNetClassName()) for n, v in b.GetNetsByName().items()}
         native_classes.setdefault('', 'Default')
         obstacle_set = set()
@@ -770,6 +795,33 @@ def _main(a=None):
         obstacles = [dict(NetName=n, Type=t, Pad_Type=p) for n, t, p in sorted(obstacle_set)]
         gate_path = os.path.join(feat['_board_dir'], 'gate.json') if feat.get('_board_dir') else None
         coverage_path = os.path.join(a.outdir, f'rule-coverage{sfx}.json')
+        floor_path = os.path.join(a.outdir, f'clearance-floor{sfx}.json')
+        before_floor = os.path.join(a.outdir, f'clearance-input{sfx}.dsn')
+        try:
+            text, floor = _strengthen_clearance_model(text, stem + '.kicad_pro', before_floor,
+                model_dsn, floor_path, active_nets=stage_nets, net_classes=native_classes,
+                obstacles=obstacles, layers=a.layers.split(','))
+        except (ValueError, OSError, UnicodeError) as error:
+            floor = json.load(open(floor_path)) if os.path.isfile(floor_path) else {}
+            coverage = dict(schema=route_rule_coverage.SCHEMA, status='blocked', solver_launch_allowed=False,
+                cause='project clearance strengthening: ' + str(error), qualified=False,
+                clearance_strengthening=dict(path=floor_path, sha256=lean.digest(floor_path) if floor else None),
+                inputs=floor.get('inputs', {}))
+            lean.atomic_json(coverage_path, coverage)
+            lean.atomic_json(os.path.join(a.outdir, 'outcome.json'), dict(status='blocked',
+                cause='router rule coverage: ' + coverage['cause'], coverage=coverage_path,
+                coverage_sha256=lean.digest(coverage_path), blocked_stage=tag,
+                stage_solver_launched=False, solver_launched=bool(solver_launches), qualified=False))
+            progress.write('rule coverage blocked: ' + coverage['cause'])
+            print('STUCK router rule coverage: ' + coverage['cause'] + '; see ' + coverage_path, flush=True)
+            sys.exit(4)
+        with open(dsn, "w") as f:
+            f.write(text)
+        # Each invocation retains its exact model after every transformation.
+        with open(model_dsn, 'x') as f:
+            f.write(text)
+        if lean.digest(model_dsn) != floor['after_sha256']:
+            raise ValueError('strengthened final DSN differs from its recorded bytes')
         if ignored_classes:
             help_result = lean.run_stage([BIN, '--help'], stage='net-class-capability', event_file=phases,
                                          deadline=lean.deadline_after(10), stdout=subprocess.PIPE,
@@ -815,6 +867,15 @@ def _main(a=None):
         except (ValueError, OSError) as error:
             coverage = dict(schema=route_rule_coverage.SCHEMA, status='blocked', solver_launch_allowed=False,
                 cause=str(error), qualified=False)
+        coverage['clearance_strengthening'] = dict(path=floor_path, sha256=lean.digest(floor_path))
+        bound = coverage.setdefault('inputs', {})
+        for name, digest in floor['inputs'].items():
+            actual = lean.digest(name) if os.path.isfile(name) else None
+            if actual != digest or (name in bound and bound[name] != digest):
+                coverage.update(status='blocked', solver_launch_allowed=False,
+                    cause='clearance strengthening input changed before admission: ' + name)
+            bound[name] = digest
+        bound[os.path.abspath(floor_path)] = lean.digest(floor_path)
         lean.atomic_json(coverage_path, coverage)
         if not coverage['solver_launch_allowed']:
             progress.write('rule coverage blocked: ' + coverage['cause'])
