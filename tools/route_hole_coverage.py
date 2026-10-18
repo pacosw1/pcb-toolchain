@@ -25,9 +25,11 @@ EXPORTER_SOURCE = ('https://gitlab.com/kicad/code/kicad/-/blob/10.0.6/'
 TRACK_HOLE_APPLICABILITY_SOURCE = ('https://gitlab.com/kicad/code/kicad/-/blob/10.0.6/'
     'pcbnew/drc/drc_test_provider_copper_clearance.cpp#L582-587')
 BACKEND_SOURCE = 'https://github.com/parisxmas/fastroute/tree/e5d52c4544795422b8b28077acc0605fdf11265a'
-# This reviewed patch changes pipeline quality selection, not DSN/geometry
-# import. A different patch requires a new source review, never auto-certifies.
-GEOMETRY_PATCH_SHA256 = 'be7144adb240f4b4f08f28d8bba46374a3974e493f6c6f21d6e1aee3f073e2f2'
+# Reviewed T-junction extension changes trace contact queries only. All 126
+# fr-io/fr-geom source files, drill obstacles and coordinate transforms are
+# unchanged; exact fixed-trace preservation was checked on the captured DSN.
+# A different patch requires a new source review, never auto-certifies.
+GEOMETRY_PATCH_SHA256 = 'bbf6d0d06a6ddd4b6b1dc027ecd99d1b74f490991316b8bdf3f3e6550a47dd1f'
 
 
 def _d(value):

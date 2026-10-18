@@ -352,7 +352,8 @@ class DrilledCoverageTests(unittest.TestCase):
         good=self.check();self.assertEqual(good['status'],'covered',good)
         self.assertIn(str(self.binary),good['inputs']);self.assertIn(str(self.manifest.resolve()),good['inputs'])
         self.assertIn(str(self.native_evidence),good['inputs'])
-        for policy in (None,{'mode':'legacy-unverified'},dict(self.policy,binary_sha256='0'*64)):
+        for policy in (None,{'mode':'legacy-unverified'},dict(self.policy,binary_sha256='0'*64),
+                       dict(self.policy,patch_sha256='0'*64)):
             self.blocked(self.check(backend_policy=policy))
         self.blocked(self.check(backend_command=[str(self.binary)]))
         self.blocked(self.check(clearance_floor_mm='0.200000001'))
