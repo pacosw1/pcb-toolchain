@@ -41,7 +41,7 @@ class FeatureTests(unittest.TestCase):
         values, causes = features.routing_features(native)
         self.assertEqual(values['declared_net_count'], 2)
         self.assertEqual(causes, [])
-        self.assertEqual(features.feature_contract('routing')['version'], 2)
+        self.assertEqual(features.feature_contract('routing')['version'], 3)
         self.assertEqual(features.feature_contract('workflow')['version'], 1)
 
     def test_legacy_numeric_references_and_later_explicit_pad_declarations_resolve(self):
@@ -86,6 +86,7 @@ class FeatureTests(unittest.TestCase):
         self.assertEqual(values["copper_layer_count"], 2)
         self.assertEqual(values["declared_net_count"], 1)
         self.assertEqual(values["retained_track_count"], 1)
+        self.assertEqual(values["retained_track_length_mm"], 1)
         self.assertEqual(values["retained_via_count"], 1)
         self.assertEqual(values["retained_zone_count"], 1)
         self.assertEqual(values["two_pad_net_count"], 1)
@@ -130,6 +131,36 @@ class FeatureTests(unittest.TestCase):
         self.assertTrue(causes)
         with self.assertRaisesRegex(ValueError, "unbalanced"):
             features.routing_features(NATIVE[:-1])
+
+    def test_retained_length_uses_exact_segments_and_keeps_copper_arcs_unknown(self):
+        extra = '(segment (start 0 0) (end 3 4) (width 0.2) (layer "B.Cu") (net 1))'
+        values, causes = features.routing_features(NATIVE[:-1] + extra + ')')
+        self.assertEqual(values['retained_track_length_mm'], 6)
+        self.assertEqual(causes, [])
+        arc = '(arc (start 0 0) (mid 1 1) (end 2 0) (width 0.2) (layer "F.Cu") (net 1))'
+        values, causes = features.routing_features(NATIVE[:-1] + arc + ')')
+        self.assertIsNone(values['retained_track_length_mm'])
+        self.assertEqual(values['retained_track_count'], 2)
+        self.assertIn('retained_track_length_mm', {row.get('feature') for row in causes})
+        for bad in ('nan', '1e999', '3mm'):
+            with self.subTest(coordinate=bad):
+                values, _ = features.routing_features(NATIVE[:-1] + extra.replace('3 4', bad + ' 4') + ')')
+                self.assertIsNone(values['retained_track_length_mm'])
+
+    def test_geometry_multiset_canonicalizes_order_numbers_and_direction_without_losing_duplicates(self):
+        segment = '(segment (start 0 0) (end 3 4) (width 0.2) (layer "F.Cu") (net 1) (uuid "first"))'
+        other = '(segment locked (net "/A") (layer "F.Cu") (width 0.20) (end 0.0 0) (start 3.0 4.00) (uuid "other"))'
+        base = '(kicad_pcb (net 1 "/A") ' + segment + segment + ')'
+        same = '(kicad_pcb ' + other + other + ')'
+        before, after = features.native_copper_metrics(base), features.native_copper_metrics(same)
+        self.assertEqual(before['track_length_mm'], 10)
+        self.assertEqual(before['copper'], after['copper'])
+        lost = features.native_copper_metrics('(kicad_pcb ' + other + ')')
+        self.assertEqual(sum((before['copper'] - lost['copper']).values()), 1)
+        for changed in (other.replace('0.20', '0.21'), other.replace('F.Cu', 'B.Cu'), other.replace('/A', '/OTHER')):
+            with self.subTest(change=changed):
+                different = features.native_copper_metrics('(kicad_pcb ' + changed + changed + ')')
+                self.assertEqual(sum((before['copper'] - different['copper']).values()), 2)
 
     def test_workflow_features_read_only_predecision_fields(self):
         original = dict(operation="parts", timeout_s=30, project="cad/X", arguments=["inspect"],
@@ -240,6 +271,7 @@ class AdapterTests(unittest.TestCase):
         self.update_native(folder,trial,candidate_text=routed)
         dataset=self.corpus([trial]);row=dataset['rows'][0]
         self.assertEqual(row['targets']['routed_track_length_mm'],8)
+        self.assertEqual(row['targets']['added_route_track_length_mm'],8)
         self.assertEqual(row['targets']['routed_via_count'],1)
         self.assertTrue(row['eligibility']['targets']['routed_track_length_mm'])
         self.assertTrue(row['eligibility']['targets']['routed_via_count'])
@@ -253,6 +285,61 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(dataset['inputs'][str(candidate)],quality['candidate']['sha256'])
         self.assertEqual(quality['unknowns'],{})
         self.assertIn('retained copper included',quality['scope'])
+
+    def test_added_length_subtracts_only_proven_retained_source_without_feature_leakage(self):
+        folder, trial = self.trial()
+        original = Path(trial['placement_input']['path'])
+        retained = '(segment (start 0 0) (end 6 8) (width 0.2) (layer "F.Cu") (net 1))'
+        via = '(via (at 6 8) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1))'
+        added = '(segment (start 6 8) (end 9 8) (width 0.2) (layer "F.Cu") (net 1))'
+        source = original.read_text()[:-1] + retained + via + ')'
+        self.update_native(folder, trial, source, source[:-1] + added + ')')
+        dataset = self.corpus([trial]); row = dataset['rows'][0]
+        self.assertEqual(row['features']['retained_track_length_mm'], 10)
+        self.assertEqual(row['features'], self.packet(original)['rows'][0]['features'])
+        self.assertEqual(row['targets']['routed_track_length_mm'], 13)
+        self.assertEqual(row['targets']['added_route_track_length_mm'], 3)
+        self.assertTrue(row['eligibility']['targets']['added_route_track_length_mm'])
+        self.assertTrue(row['added_route_quality']['retained_copper_preserved'])
+        self.assertEqual(row['added_route_quality']['missing_source_items'], 0)
+        self.assertEqual(row['added_route_quality']['source']['sha256'], adapters._sha(original))
+        self.assertEqual(dataset['target_specs']['added_route_track_length_mm'], dict(type='regression', direction='min', unit='mm'))
+        self.assertEqual(dataset['metadata']['derived_targets']['added_route_track_length_mm']['version'], 1)
+
+    def test_changed_removed_or_duplicate_lost_retained_copper_has_no_added_label(self):
+        retained = '(segment (start 0 0) (end 6 8) (width 0.2) (layer "F.Cu") (net 1))'
+        via = '(via (at 6 8) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1))'
+        added = '(segment (start 6 8) (end 9 8) (width 0.2) (layer "F.Cu") (net 1))'
+        cases = [('width', retained + via, retained.replace('0.2', '0.3') + via),
+                 ('removed', retained + via, via),
+                 ('duplicate', retained + retained + via, retained + via),
+                 ('via-drill', retained + via, retained + via.replace('drill 0.3', 'drill 0.4'))]
+        for name, source_copper, final_copper in cases:
+            with self.subTest(mutation=name):
+                folder, trial = self.trial(arm=name)
+                original = Path(trial['placement_input']['path'])
+                root = original.read_text()[:-1]
+                self.update_native(folder, trial, root + source_copper + ')', root + final_copper + added + ')')
+                row = self.corpus([trial])['rows'][0]
+                self.assertEqual(row['targets']['accepted_within_budget'], 1)
+                self.assertIsNotNone(row['targets']['routed_track_length_mm'])
+                self.assertIsNone(row['targets']['added_route_track_length_mm'])
+                self.assertFalse(row['eligibility']['targets']['added_route_track_length_mm'])
+                self.assertFalse(row['added_route_quality']['retained_copper_preserved'])
+                self.assertIn('missing or changed', row['added_route_quality']['unknowns']['added_route_track_length_mm'])
+
+    def test_source_arc_preserves_attempt_but_no_retained_length_or_added_label(self):
+        folder, trial = self.trial()
+        original = Path(trial['placement_input']['path'])
+        arc = '(arc (start 0 0) (mid 1 1) (end 2 0) (width 0.2) (layer "F.Cu") (net 1))'
+        source = original.read_text()[:-1] + arc + ')'
+        self.update_native(folder, trial, source, source)
+        row = self.corpus([trial])['rows'][0]
+        self.assertTrue(row['evidence_valid'])
+        self.assertIsNone(row['features']['retained_track_length_mm'])
+        self.assertFalse(row['eligibility']['features'])
+        self.assertIsNone(row['targets']['added_route_track_length_mm'])
+        self.assertIn('arc', row['added_route_quality']['unknowns']['added_route_track_length_mm'])
 
     def test_unsupported_or_nonfinite_track_geometry_never_becomes_zero_length(self):
         segment='(segment (start 0 0) (end 3 4) (width 0.2) (layer "F.Cu") (net 1))'
@@ -284,6 +371,7 @@ class AdapterTests(unittest.TestCase):
         row=self.corpus([trial])['rows'][0]
         self.assertEqual(row['targets']['routed_track_length_mm'],5)
         self.assertIsNone(row['targets']['routed_via_count'])
+        self.assertIsNone(row['targets']['added_route_track_length_mm'])
         self.assertTrue(row['observation']['routed_quality']['unknowns']['routed_via_count'])
 
     def test_failed_timeout_and_control_unknown_rows_have_no_successful_quality_labels(self):
@@ -297,6 +385,8 @@ class AdapterTests(unittest.TestCase):
                 row=self.corpus([trial])['rows'][0]
                 self.assertIsNone(row['targets']['routed_track_length_mm'])
                 self.assertIsNone(row['targets']['routed_via_count'])
+                self.assertIsNone(row['targets']['added_route_track_length_mm'])
+                self.assertTrue(row['added_route_quality']['unknowns']['added_route_track_length_mm'])
                 self.assertTrue(row['observation']['routed_quality']['unknowns'])
 
     def test_quality_requires_sealed_candidate_and_exact_fresh_native_binding(self):
@@ -500,6 +590,62 @@ class AdapterTests(unittest.TestCase):
         source.write_text(NATIVE.replace("(at 20 10)", "(at 21 10)"))
         with self.assertRaisesRegex(ValueError, "source artifact changed"):
             adapters.load_feature_packet(self.root, path)
+
+    def test_resealed_legacy_feature_contract_cannot_be_accepted_as_v3(self):
+        source = self.root / 'native.kicad_pcb'
+        source.write_text(NATIVE)
+        packet = self.packet(source)
+        self.assertEqual(packet['feature_contract']['version'], 3)
+        self.assertIn('retained_track_length_mm', packet['feature_names'])
+        packet['feature_contract']['version'] = 2
+        packet['content_sha256'] = data.artifact_identity({key:value for key,value in packet.items() if key != 'content_sha256'})
+        path = self.root / 'old-packet.json'
+        write(path, packet)
+        with self.assertRaisesRegex(ValueError, 'extractor contract changed'):
+            adapters.load_feature_packet(self.root, path)
+
+    def test_changed_static_quantity_semantics_rejected_with_the_same_numeric_columns(self):
+        source = self.root / 'native.kicad_pcb'
+        source.write_text(NATIVE)
+        original = self.packet(source)
+        self.assertEqual(original['feature_contract']['quantity_contracts']['added_route_track_length_mm'],
+                         adapters.ADDED_LENGTH_DEFINITION)
+        for field, value in [('version', 2), ('formula', 'arbitrary different length target')]:
+            with self.subTest(quantity_field=field):
+                packet = copy.deepcopy(original)
+                packet['feature_contract']['quantity_contracts']['added_route_track_length_mm'][field] = value
+                self.assertEqual(packet['feature_names'], original['feature_names'])
+                self.assertEqual(packet['rows'], original['rows'])
+                packet['content_sha256'] = data.artifact_identity({key:item for key,item in packet.items() if key != 'content_sha256'})
+                path = self.root / 'changed-quantity.json'
+                write(path, packet)
+                with self.assertRaisesRegex(ValueError, 'extractor contract changed'):
+                    adapters.load_feature_packet(self.root, path)
+        self.assertEqual(features.feature_contract('routing'), original['feature_contract'])
+
+    def test_legacy_v2_numeric_model_rejects_current_v3_feature_packet(self):
+        import pcb_ml_models as models
+        _, trial = self.trial()
+        current = self.corpus([trial])
+        names = [name for name in current['feature_names'] if name != 'retained_track_length_mm']
+        contract = copy.deepcopy(current['metadata']['feature_contract'])
+        contract['version'] = 2
+        contract.pop('quantity_contracts')
+        contract['features'] = [column for column in contract['features'] if column['name'] in names]
+        rows = copy.deepcopy(current['rows'])
+        for row in rows:
+            row['features'] = {name:row['features'][name] for name in names}
+        legacy = data.finalize_dataset(self.root, dataset_id='legacy-column-fixture', task=current['task'],
+            feature_names=names, target_specs=current['target_specs'], rows=rows, inputs=current['inputs'],
+            metadata=dict(feature_contract=contract))
+        dataset_path, model_path = self.root / 'v2-dataset.json', self.root / 'v2-model.json'
+        write(dataset_path, legacy)
+        source_root = Path(__file__).resolve().parent.parent
+        models.train_model(source_root, dataset_path, model_id='synthetic-v2-fixture', target='routed_track_length_mm', output=model_path)
+        packet = self.packet(Path(trial['placement_input']['path']))
+        with self.assertRaisesRegex(ValueError, 'columns/order differ'):
+            models.predict_rows(source_root, model_path, packet['rows'], feature_names=packet['feature_names'],
+                                feature_contract=packet['feature_contract'], task=packet['task'])
 
 
 if __name__ == "__main__":
