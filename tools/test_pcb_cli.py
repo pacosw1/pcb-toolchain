@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -260,9 +261,53 @@ else:
         with mock.patch.object(pcb_cli, 'controller_alive', side_effect=finished_during_probe):
             self.assertEqual(pcb_cli.status(folder)['status'], 'passed')
 
+    def test_liveness_probe_contention_does_not_abort_worker_admission(self):
+        folder=self.root/'probe-contention';folder.mkdir()
+        (folder/'run.json').write_text('{}')
+        real_flock=pcb_cli.fcntl.flock
+        released=threading.Event()
+
+        class JournalReached(Exception):
+            pass
+
+        def contended_acquisition(fd,operation):
+            # worker() has created its permanent admission file. Hold the same
+            # real exclusive lock that controller_alive() briefly probes.
+            with (folder/'worker.lock').open('rb') as probe:
+                real_flock(probe.fileno(),pcb_cli.fcntl.LOCK_EX|pcb_cli.fcntl.LOCK_NB)
+                release=threading.Event()
+                def release_probe():
+                    release.wait()
+                    real_flock(probe.fileno(),pcb_cli.fcntl.LOCK_UN)
+                    released.set()
+                helper=threading.Thread(target=release_probe,daemon=True);helper.start()
+                try:
+                    # A nonblocking acquisition must actually encounter the
+                    # held probe before release, making the old failure exact.
+                    if not operation & pcb_cli.fcntl.LOCK_NB:
+                        release.set()
+                    return real_flock(fd,operation)
+                finally:
+                    release.set()
+                    self.until(released.is_set)
+                    helper.join()
+
+        def journal_after_lock(_):
+            self.assertTrue(released.is_set())
+            raise JournalReached()
+
+        with mock.patch.object(pcb_cli.fcntl,'flock',side_effect=contended_acquisition) as acquire, \
+                mock.patch.object(pcb_cli,'Journal',side_effect=journal_after_lock):
+            with self.assertRaises(JournalReached):
+                pcb_cli.worker(folder)
+        self.assertEqual(acquire.call_count,1)
+        self.assertTrue(acquire.call_args.args[1] & pcb_cli.fcntl.LOCK_EX)
+
     def test_completed_supervisor_cannot_be_replayed(self):
         run_id, folder = self.start()
-        self.until(lambda: self.finished(folder))
+        final=self.until(lambda: self.finished(folder))
+        self.assertEqual(final['status'],'passed',dict(state=final,
+            worker_log=(folder/'worker.log').read_text() if (folder/'worker.log').is_file() else 'missing worker.log'))
         self.until(lambda: pcb_cli.controller_alive(folder) is False)
         original = {name: (folder / name).read_bytes() for name in ('events.jsonl', 'state.json', 'result.json')}
         replay = self.cli('_worker', run_id, '--json')
