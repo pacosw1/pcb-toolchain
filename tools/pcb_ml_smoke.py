@@ -108,7 +108,7 @@ def run(args):
     paths = set(workflow_runtime_files(ROOT / 'tools'))
     paths.update(ROOT / 'tools' / name for name in (
         'pcb_ml_smoke.py', 'native_workflow_smoke.py', 'routing_trial_smoke.py',
-        'real_board_regression.py', 'pcb_test_fixture.py', 'pcbtool.py', 'route_rule_coverage.py',
+        'real_board_regression.py', 'pcb_test_fixture.py', 'pcbtool.py', 'route_rule_coverage.py', 'route_project_coverage.py',
         'route_hole_coverage.py'))
     result = dict(schema=SCHEMA, status='failed', qualified=False, adopt_model=False,
                   cause='proof incomplete', cases=[], ml_runs=[], cleanup=[],

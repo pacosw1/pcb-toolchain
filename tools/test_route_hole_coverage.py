@@ -1,5 +1,7 @@
 import copy
 from decimal import Decimal
+import hashlib
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -236,6 +238,217 @@ class HoleCoverageTests(unittest.TestCase):
         model=dsn().replace('(library ',
             '(library (padstack round[a]pad_2100.000000_um (shape (circle F.Cu 100))) ',1)
         self.blocked(self.check(model))
+
+
+class DrilledCoverageTests(unittest.TestCase):
+    """Native circle/oval + real exporter pin, keepout and via descriptors."""
+    def setUp(self):
+        temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup)
+        self.path=Path(temp.name)/'fixture.kicad_pcb'
+        extra='''(footprint "USB" (layer "F.Cu") (at 130 100 90)
+          (property "Reference" "J3")
+          (pad "7" thru_hole rect (at 1 2 180) (size 1.1 1.9)
+            (drill oval 0.6 1.3) (layers "*.Cu") (net "GND") (uuid slot1))
+          (pad "7" thru_hole rect (at -1 2 180) (size 1.1 1.9)
+            (drill oval 0.6 1.3) (layers "*.Cu") (net "GND") (uuid slot2)))
+          (via (at 140 100) (size 0.6) (drill 0.3)
+            (layers "F.Cu" "B.Cu") (net "GND") (uuid via1))'''
+        self.native=native()[:-1]+extra+')';self.path.write_text(self.native)
+        self.model=dsn().replace('''(place J2 110000 -100000 front 180 (PN connector))))''',
+            '''(place J2 110000 -100000 front 180 (PN connector)))
+              (component MOUNT (place H1 120000 -100000 front 0))
+              (component USB (place J3 130000 -100000 front 90)))''').replace(
+            '(library (image "TERM"', '''(library
+              (image MOUNT (keepout "" (circle F.Cu 3760)))
+              (image USB (pin OVAL (rotate 90) 7 1000 -2000)
+                (pin OVAL (rotate 90) 7@1 -1000 -2000))
+              (padstack OVAL (shape (rect F.Cu -550 -950 550 950)))
+              (padstack "Via[0-1]_600:300_um" (shape (circle F.Cu 600))
+                (shape (circle B.Cu 600)))
+              (image "TERM"''').replace(
+            '(network (net /POWER', '(network (net GND (pins J3-7 J3-7@1)) (net /POWER')
+        self.model=self.model[:-1]+'''(wiring
+          (via "Via[0-1]_600:300_um" 140000 -100000 (net GND) (type fix))))'''
+        self.model=self.model.replace('(structure ',
+            '(structure (boundary (path pcb 0 0 0 200000 0 200000 -200000 0 -200000 0 0)) ',1)
+        self.holes=coverage.native_drilled_geometry(self.path)
+        # Protocol fixtures exercise the real binder and actual file hashes;
+        # these bytes do not claim a native-tested production executable.
+        import backend_quality
+        self.binary=self.path.parent/'backend';self.binary.write_bytes(b'unit fixture binary')
+        self.native_evidence=self.path.parent/'native-evidence.json';self.native_evidence.write_bytes(b'{"fixture":true}')
+        digest=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+        manifest=dict(schema=1,upstream_commit=backend_quality.UPSTREAM,
+            cargo_lock_sha256=backend_quality.LOCK,patch_sha256=digest(backend_quality.PATCH),
+            binary_sha256=digest(self.binary),native_validation=dict(status='passed',
+                evidence=[dict(path=str(self.native_evidence),sha256=digest(self.native_evidence))]))
+        self.manifest=self.path.parent/'backend-manifest.json';self.manifest.write_text(json.dumps(manifest))
+        self.policy=backend_quality.bind(self.binary,self.manifest)
+        self.command=[str(self.binary),'--quality-first']
+
+    def check(self,model=None,holes=None,**options):
+        return coverage.inspect_drilled(self.model if model is None else model,
+            holes=self.holes if holes is None else holes,active_nets=options.pop('active_nets',['/LED_A']),
+            layers=options.pop('layers',['F.Cu']),required_mm=options.pop('required_mm','0.28'),
+            clearance_floor_mm=options.pop('clearance_floor_mm','0.2'),
+            backend_command=options.pop('backend_command',self.command),
+            backend_policy=options.pop('backend_policy',self.policy),**options)
+
+    def blocked(self,result):
+        self.assertEqual(result['status'],'blocked',result)
+        self.assertFalse(result['qualified']);self.assertTrue(result['cause'])
+
+    def test_complete_inventory_keeps_pth_npth_slots_and_retained_via(self):
+        self.assertEqual(len(self.holes),6)
+        self.assertTrue(all(h['supported'] for h in self.holes),self.holes)
+        self.assertEqual([h['kind'] for h in self.holes],['pth','pth','npth','pth','pth','via'])
+        slots=[h for h in self.holes if h.get('reference')=='J3']
+        self.assertEqual([h['export_pin'] for h in slots],['7','7@1'])
+        self.assertEqual([h['position_mm'] for h in slots],[['132','99'],['132','101']])
+        self.assertEqual(slots[0]['rotation_deg'],'180')
+        self.assertEqual(slots[0]['drill_mm'],['0.6','1.3'])
+        result=self.check();self.assertEqual(result['status'],'covered',result)
+        self.assertEqual(result['native_hole_count'],6)
+        self.assertEqual(len({h['identity'] for h in result['covered_holes']}),6)
+        npth=next(h for h in result['covered_holes'] if h['kind']=='npth')
+        self.assertEqual(npth['credited_clearance_mm'],'0')
+
+    def test_slot_capsule_and_rectangle_proofs_use_exact_boundary_and_rotation(self):
+        slots=[h for h in self.holes if h.get('reference')=='J3']
+        # Remove instantiated via so this test isolates slot containment.
+        model=self.model[:self.model.index('(wiring')]+')'
+        result=self.check(model,slots,clearance_floor_mm='0.03')
+        self.assertEqual(result['status'],'covered',result)
+        self.blocked(self.check(model,slots,clearance_floor_mm='0.029999999999999'))
+        self.blocked(self.check(model.replace('(rotate 90)','(rotate 0)'),slots))
+        self.blocked(self.check(model.replace('-550 -950 550 950','-549 -950 550 950'),slots))
+        self.blocked(self.check(model.replace('7@1 -1000 -2000','7@1 -1001 -2000'),slots))
+        self.blocked(self.check(model.replace('J3-7@1','J3-wrong'),slots))
+        self.path.write_text(self.native.replace('(size 1.1 1.9)','(size 1.2 2)',2).replace('thru_hole oval','thru_hole rect',2))
+        rects=[h for h in coverage.native_drilled_geometry(self.path) if h.get('reference')=='J3']
+        rect_model=model.replace('(rect F.Cu -550 -950 550 950)','(rect F.Cu -600 -1000 600 1000)')
+        self.assertEqual(self.check(rect_model,rects,clearance_floor_mm='0')['status'],'covered')
+        self.blocked(self.check(rect_model,rects,required_mm='0.300000000001',clearance_floor_mm='0'))
+
+    def test_npth_requires_actual_wire_keepout_without_pin_clearance_credit(self):
+        npth=next(h for h in self.holes if h['kind']=='npth')
+        self.assertEqual(npth['net'],'')
+        self.blocked(self.check(self.model.replace('(circle F.Cu 3760)','(circle F.Cu 3759.999999999)'),
+            clearance_floor_mm='100'))
+        self.blocked(self.check(self.model.replace('(keepout ""','(via_keepout ""')))
+        self.blocked(self.check(self.model.replace('(circle F.Cu 3760)','(circle F.Cu 3760 1 0)')))
+        self.blocked(self.check(self.model.replace('(keepout "" (circle F.Cu 3760))','')))
+        self.assertEqual(self.check(self.model.replace('(keepout ""','(wire_keepout ""'))['status'],'covered')
+
+    def test_oval_ideal_capsule_never_claims_actual_integer_backend_coverage(self):
+        self.path.write_text(self.native.replace('(pad "7" thru_hole rect','(pad "7" thru_hole oval'))
+        holes=coverage.native_drilled_geometry(self.path)
+        self.assertTrue(all(h['supported'] for h in holes))
+        model=self.model.replace('(rect F.Cu -550 -950 550 950)','(path F.Cu 1100 0 -400 0 400)')
+        result=self.check(model,holes)
+        self.blocked(result);self.assertIn('integer-octagon',result['cause'])
+
+    def test_exact_grid_and_actual_policy_bindings_are_required_for_positive_geometry(self):
+        good=self.check();self.assertEqual(good['status'],'covered',good)
+        self.assertIn(str(self.binary),good['inputs']);self.assertIn(str(self.manifest.resolve()),good['inputs'])
+        self.assertIn(str(self.native_evidence),good['inputs'])
+        for policy in (None,{'mode':'legacy-unverified'},dict(self.policy,binary_sha256='0'*64)):
+            self.blocked(self.check(backend_policy=policy))
+        self.blocked(self.check(backend_command=[str(self.binary)]))
+        self.blocked(self.check(clearance_floor_mm='0.200000001'))
+        self.blocked(self.check(self.model.replace('(circle F.Cu 3760)','(circle F.Cu 3760.000001)')))
+        self.path.write_text(self.native.replace('(via (at 140 100)','(via (at 140.000001 100)'))
+        holes=coverage.native_drilled_geometry(self.path)
+        self.blocked(self.check(self.model.replace('140000 -100000 (net GND)','140000.001 -100000 (net GND)'),holes))
+        self.blocked(self.check(self.model.replace('200000','700000')))
+        self.binary.write_bytes(b'changed binary');self.blocked(self.check())
+        self.binary.write_bytes(b'unit fixture binary')
+        self.native_evidence.write_bytes(b'changed native evidence');self.blocked(self.check())
+
+    def test_npth_offset_position_uses_footprint_transform_and_multiplicity(self):
+        self.path.write_text(self.native.replace('(at 120 100)','(at 120 100 90)').replace(
+            'np_thru_hole circle (at 0 0)','np_thru_hole circle (at 1 2)'))
+        holes=coverage.native_drilled_geometry(self.path)
+        npth=next(h for h in holes if h['kind']=='npth')
+        self.assertEqual(npth['position_mm'],['122','99'])
+        model=self.model.replace('H1 120000 -100000 front 0','H1 120000 -100000 front 90').replace(
+            '(circle F.Cu 3760)','(circle F.Cu 3760 1000 -2000)')
+        self.assertEqual(self.check(model,holes)['status'],'covered')
+        self.blocked(self.check(model.replace('3760 1000 -2000','3760 1000 2000'),holes))
+
+    def test_via_requires_exact_fixed_physical_instance_net_and_copper(self):
+        for old,new in (
+                ('140000 -100000 (net GND)','140001 -100000 (net GND)'),
+                ('140000 -100000 (net GND)','140000 -100000 (net /POWER)'),
+                ('(type fix)','(type route)'),
+                ('(circle F.Cu 600)','(circle F.Cu 601)'),
+                ('(via "Via[0-1]_600:300_um" 140000 -100000 (net GND) (type fix))','')):
+            with self.subTest(change=new):self.blocked(self.check(self.model.replace(old,new)))
+        via=[h for h in self.holes if h['kind']=='via']
+        model=self.model
+        # Pin/NPTH obstacles may remain; every instantiated via must be bound.
+        self.assertEqual(self.check(model,via,clearance_floor_mm='0.13')['status'],'covered')
+        self.blocked(self.check(model,via,clearance_floor_mm='0.129999999999'))
+        self.blocked(self.check(model,[],clearance_floor_mm='0.2'))
+
+    def test_unknown_native_drills_are_retained_and_block_instead_of_vanishing(self):
+        variants=(self.native.replace('(drill 3.2)','(drill oval 3.2 3.4)'),
+            self.native.replace('(drill oval 0.6 1.3)','(drill oval 0.6 1.3 (offset 0.1 0))',1),
+            self.native.replace('(layer "F.Cu") (at 130','(layer "B.Cu") (at 130'),
+            self.native.replace('(via (at','(via blind (at'),
+            self.native.replace('(size 0.6) (drill 0.3)','(size 0.6) (drill 0.3) (padstack custom)'),
+            self.native.replace('(drill oval 0.6 1.3)','',1))
+        for text in variants:
+            with self.subTest(native=text):
+                self.path.write_text(text);holes=coverage.native_drilled_geometry(self.path)
+                self.assertEqual(len(holes),6)
+                self.assertTrue(any(not h['supported'] for h in holes),holes)
+                self.blocked(self.check(holes=holes))
+
+    def test_same_net_holes_and_ambiguous_multiplicity_never_get_obstacle_credit(self):
+        self.blocked(self.check(active_nets=['/LED_A','GND']))
+        self.blocked(self.check(active_nets=['/LED_A','/POWER']))
+        holes=copy.deepcopy(self.holes);holes[-1]['identity']=holes[0]['identity'];self.blocked(self.check(holes=holes))
+        holes=copy.deepcopy(self.holes);holes[-1]['supported']=1;self.blocked(self.check(holes=holes))
+        duplicate='(via "Via[0-1]_600:300_um" 140000 -100000 (net GND) (type fix))'
+        self.blocked(self.check(self.model.replace(duplicate,duplicate+duplicate)))
+        self.blocked(self.check(self.model.replace('(keepout "" (circle F.Cu 3760))',
+            '(keepout "" (circle F.Cu 3760)) (keepout "" (circle F.Cu 3760))')))
+
+    def test_project_native_same_net_scope_still_binds_all_instances_and_never_exempts_npth(self):
+        result=self.check(active_nets=['GND'],clearance_floor_mm='0',applicability='kicad10_project_track')
+        self.assertEqual(result['status'],'covered',result)
+        self.assertEqual(len(result['covered_holes']),6)
+        excluded=[r for r in result['covered_holes'] if r['disposition']=='native_not_applicable']
+        self.assertEqual({r['identity'] for r in excluded},{'slot1','slot2','via1'})
+        self.assertTrue(all(r['credited_clearance_mm']=='0' and r['applicability_source'] for r in excluded))
+        self.blocked(self.check(self.model.replace('140000 -100000 (net GND)','140001 -100000 (net GND)'),
+            active_nets=['GND'],applicability='kicad10_project_track'))
+        self.blocked(self.check(self.model.replace('(circle F.Cu 3760)','(circle F.Cu 3200)'),
+            active_nets=['GND'],applicability='kicad10_project_track'))
+        self.blocked(self.check(active_nets=['GND','/LED_A'],applicability='kicad10_project_track'))
+        self.blocked(self.check(applicability='assume_exempt'))
+
+    def test_mutated_native_slot_changes_inventory_and_cannot_reuse_old_export(self):
+        self.path.write_text(self.native.replace('(at 1 2 180)','(at 1.001 2 180)',1))
+        changed=coverage.native_drilled_geometry(self.path)
+        self.assertNotEqual(changed,self.holes)
+        before=next(h for h in self.holes if h['identity']=='slot1')
+        after=next(h for h in changed if h['identity']=='slot1')
+        self.assertNotEqual(before['native_form_sha256'],after['native_form_sha256'])
+        self.blocked(self.check(holes=changed))
+
+    def test_malformed_units_layers_inventory_and_numerics_fail_closed(self):
+        for model in (self.model.replace('(resolution um 10)','(resolution mm 10)'),
+                self.model.replace('(type power)','(type signal)'),
+                self.model.replace('(rect F.Cu -550 -950 550 950)','(path F.Cu 1100 1 -400 -1 400)'),
+                self.model.replace('(circle F.Cu 600)','(circle F.Cu NaN)'),
+                self.model.replace('(network ','(network (net gnd (pins X-1)) '),
+                self.model.replace('J3-7 J3-7@1','J3-7 j3-7 J3-7@1')):
+            self.blocked(self.check(model))
+        self.blocked(coverage.inspect_drilled(self.model,holes=None,active_nets=['/LED_A'],layers=['F.Cu'],required_mm='.28',clearance_floor_mm='.2'))
+        for key,value in [('required_mm',True),('clearance_floor_mm','nan'),('required_mm','-.1')]:
+            self.blocked(self.check(**{key:value}))
 
 
 if __name__=='__main__':unittest.main()

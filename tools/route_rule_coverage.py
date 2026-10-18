@@ -14,6 +14,7 @@ import re
 
 import route_features
 import route_hole_coverage
+import route_project_coverage
 
 SCHEMA = 'iot-lab.route-rule-coverage.v1'
 UNKNOWN = object()
@@ -345,13 +346,22 @@ def inspect(dru_text, dsn_text, *, active_nets, net_classes, obstacles,
     return result
 
 
-def check_files(board, base, dsn, *, active_nets, net_classes, obstacles, layers, gate=None):
+def check_files(board, base, dsn, *, active_nets, net_classes, obstacles, layers, gate=None,
+                backend_command=None, backend_policy=None):
     """Bind the pure decision to exact original inputs and final transformed DSN."""
     board, base, dsn = Path(board), Path(base), Path(dsn)
-    rules = board.with_suffix('.kicad_dru')
+    rules, base_rules = board.with_suffix('.kicad_dru'), base.with_suffix('.kicad_dru')
     paths = [board, base, dsn, Path(__file__).resolve(), Path(route_features.__file__).resolve(),
-             Path(route_hole_coverage.__file__).resolve()]
-    paths.extend([rules, board.with_suffix('.kicad_pro')])
+             Path(route_hole_coverage.__file__).resolve(), Path(route_project_coverage.__file__).resolve()]
+    project, base_project = board.with_suffix('.kicad_pro'), base.with_suffix('.kicad_pro')
+    paths.extend([rules, base_rules, project, base_project])
+    command = list(backend_command) if isinstance(backend_command, list) else backend_command
+    try:
+        policy = json.loads(json.dumps(backend_policy,allow_nan=False)) if isinstance(backend_policy, dict) else backend_policy
+    except (ValueError, TypeError) as error:
+        raise ValueError('backend policy is not finite attributable JSON') from error
+    if isinstance(command, list) and command and isinstance(command[0], str):
+        paths.append(Path(command[0]))
     from pcb_search import block_bindings, native_placement, contracts
     from placer import dru
     paths.extend([Path(m.__file__) for m in (block_bindings, native_placement, contracts, dru)])
@@ -370,6 +380,30 @@ def check_files(board, base, dsn, *, active_nets, net_classes, obstacles, layers
     source_footprints = footprint_identity(board)
     if source_footprints != footprint_identity(base):
         raise ValueError('footprint/pad definitions or poses changed before routing admission')
+
+    def fixed_geometry(path):
+        roots = _forms(path.read_text())
+        if len(roots) != 1 or roots[0][:1] != ['kicad_pcb']:
+            raise ValueError('expected one complete native PCB for project applicability')
+        values = []
+        for form in roots[0][1:]:
+            if not isinstance(form, list) or not form:
+                raise ValueError('malformed native board geometry')
+            if form[0] in ('segment', 'arc', 'via', 'footprint'):
+                continue
+            if form[0] == 'zone':
+                form = [v for v in form if not (isinstance(v, list) and v
+                    and v[0] in ('filled_polygon', 'fill_segments'))]
+            values.append(json.dumps(form, sort_keys=True))
+        return sorted(values)
+
+    fixed_preserved = fixed_geometry(board) == fixed_geometry(base)
+    try:
+        thermal = route_project_coverage.thermal_scope(
+            [root for path in (board, base) for root in _forms(path.read_text())],
+            _forms(rules.read_text()) if rules.is_file() else [])
+    except ValueError as error:
+        thermal = dict(thermal_connections_possible=True, reason=str(error))
     config = json.loads(Path(gate).read_text()) if gate is not None else {}
     if not isinstance(config, dict) or not isinstance(config.get('checks', {}), dict):
         raise ValueError('invalid configured board gate')
@@ -387,9 +421,125 @@ def check_files(board, base, dsn, *, active_nets, net_classes, obstacles, layers
         native_pads=native_pads)
     if pad_error:
         result['native_pth_geometry_unknown'] = pad_error
+    drilled_error = None
+    try:
+        original_holes = route_hole_coverage.native_drilled_geometry(board)
+        holes = route_hole_coverage.native_drilled_geometry(base)
+        holes_preserved = sorted(original_holes, key=lambda h: h['identity']) == sorted(holes, key=lambda h: h['identity'])
+    except (ValueError, ArithmeticError) as error:
+        holes, holes_preserved, drilled_error = None, False, str(error)
+    if drilled_error:
+        result['native_drilled_geometry_unknown'] = drilled_error
+    # Pure inspect retains its historical analytic subset for callers. Actual
+    # solver admission must additionally prove the backend's physical obstacle
+    # transform, even when the project has a smaller (or zero) hole minimum.
+    for row in result['requirements']:
+        if row.get('constraint') != 'hole_clearance' or row.get('disposition') != 'covered':
+            continue
+        row['analytical_hole_geometry'] = row.get('hole_geometry')
+        try:
+            if holes is None or not holes_preserved:
+                raise ValueError('custom hole clearance requires complete unchanged drilled geometry')
+            model = Model(dsn.read_text(), layers)
+            floor = min((model.clearance_floor(net, hole.get('net') or None)
+                for net in active_nets for hole in holes), default=Decimal(0))
+            proof = route_hole_coverage.inspect_drilled(dsn.read_text(), holes=holes,
+                active_nets=sorted(active_nets), layers=layers,
+                required_mm=row['required_mm'], clearance_floor_mm=str(floor),
+                backend_command=command, backend_policy=policy)
+            row.update(hole_geometry=proof,
+                disposition='covered' if proof.get('status') == 'covered' else 'unsupported',
+                reason=proof.get('cause', 'actual backend drilled containment proof'))
+        except (ValueError, KeyError, TypeError, ArithmeticError) as error:
+            row.update(disposition='unsupported', reason=str(error))
+    try:
+        model = Model(dsn.read_text(), layers)
+        project_rows = route_project_coverage.evaluate(project.read_text() if project.is_file() else None,
+            source=project, model=model, dsn_text=dsn.read_text(), active_nets=active_nets,
+            net_classes=net_classes, obstacles=obstacles, layers=layers, holes=holes,
+            holes_preserved=holes_preserved, immutable_geometry_preserved=fixed_preserved,
+            backend_command=command, thermal=thermal, backend_policy=policy)
+    except (ValueError, KeyError, TypeError, ArithmeticError) as error:
+        project_rows = [dict(rule='native project', constraint='project_model', disposition='unsupported', reason=str(error))]
+    result['requirements'].extend(project_rows)
+    for row in result['requirements']:
+        geometry = row.get('hole_geometry', [])
+        proofs = [geometry] if isinstance(geometry, dict) else [item.get('proof', {}) for item in geometry]
+        for proof in proofs:
+            for name, digest in proof.get('inputs', {}).items():
+                if not isinstance(name, str) or not (digest is None or isinstance(digest,str) and re.fullmatch(r'[0-9a-f]{64}',digest)):
+                    raise ValueError('invalid backend proof input binding')
+                if name in before and before[name] != digest:
+                    raise ValueError('backend proof input changed during admission')
+                before[name] = digest
+    if before[str(project)] is None or before[str(project)] != before[str(base_project)]:
+        result['requirements'].append(dict(rule='native project', constraint='project_source', disposition='unsupported',
+            reason='actual base project is absent or differs from the original authored project',
+            source=dict(path=str(project)), base_project=str(base_project)))
+    if before[str(rules)] != before[str(base_rules)]:
+        result['requirements'].append(dict(rule='native custom rules', constraint='rule_source', disposition='unsupported',
+            reason='actual base custom-rule presence/bytes differ from the original authored rules',
+            source=dict(path=str(rules)), base_rules=str(base_rules)))
+    command_error = None
+    if command is not None:
+        try:
+            _validate_backend_command(command, dsn)
+            if not Path(command[0]).is_file():
+                raise ValueError('planned backend executable is not an attributable file')
+        except (ValueError, TypeError, IndexError) as error:
+            command_error = str(error)
+            result['requirements'].append(dict(rule='native project', constraint='backend_command',
+                disposition='unsupported', reason=command_error))
+    serializable_command = command if isinstance(command, list) and all(isinstance(v, str) for v in command) else None
+    result.update(scope='native custom/project rule model coverage; final fresh native/configured gates remain mandatory',
+        backend_command=serializable_command, backend_command_sha256=(hashlib.sha256(json.dumps(serializable_command,
+            separators=(',', ':'), ensure_ascii=True).encode()).hexdigest() if serializable_command is not None else None),
+        backend_policy=policy if isinstance(policy, dict) else None,
+        drilled_geometry_preserved=holes_preserved, fixed_geometry_preserved=fixed_preserved)
+    blockers = [r for r in result['requirements'] if r['disposition'] not in ('covered', 'immutable_unchanged', 'not_applicable')]
+    result.update(status='blocked' if blockers else 'passed', solver_launch_allowed=not blockers,
+        cause='; '.join(str(r['rule']) + ': ' + r['constraint'] + ' ' + r['disposition'] + ': ' + r.get('reason', '')
+            for r in blockers) or 'applicable native custom/project requirements covered by final DSN and exact backend controls')
     result.update(inputs=before, dsn=dict(path=str(dsn), sha256=before[str(dsn)]),
         native_classes=net_classes, footprint_scope_sha256=hashlib.sha256(json.dumps(source_footprints, sort_keys=True).encode()).hexdigest(),
         obstacle_scope_sha256=hashlib.sha256(json.dumps(obstacles, sort_keys=True).encode()).hexdigest())
     if any((hashlib.sha256(Path(p).read_bytes()).hexdigest() if Path(p).is_file() else None) != wanted for p, wanted in before.items()):
         result.update(status='blocked', solver_launch_allowed=False, cause='coverage input changed during admission')
+    if backend_command != command:
+        result.update(status='blocked', solver_launch_allowed=False, cause='backend command changed during admission')
+    if backend_policy != policy:
+        result.update(status='blocked', solver_launch_allowed=False, cause='backend policy changed during admission')
     return result
+
+
+def _validate_backend_command(command, dsn):
+    if not isinstance(command, list) or not command or any(not isinstance(v, str) or not v for v in command):
+        raise ValueError('final backend argv is missing or malformed')
+    # All supported switches are explicit and cannot load an alternate config.
+    # Unknown switches abstain rather than guessing whether they weaken rules.
+    values = {'-de', '-do', '-mp'}
+    switches = {'--diagnose', '--quality-first'}
+    options = {'--report', '--max-time', '--router.min_trace_width_um',
+        '--router.copper_to_edge_clearance_um', '--router.neck_width_um',
+        '--router.autorouter.ignore_net_classes', '--router.optimizer.enabled',
+        '--router.autorouter.max_threads', '--router.optimizer.max_threads',
+        '--router.scoring.via_costs'}
+    seen, index = set(), 1
+    while index < len(command):
+        value = command[index]
+        name = value.split('=', 1)[0]
+        if name in seen:
+            raise ValueError('duplicate backend argv option: ' + name)
+        seen.add(name)
+        if name in values and value == name and index + 1 < len(command):
+            if name == '-de' and command[index + 1] != str(dsn):
+                raise ValueError('final backend argv targets a different DSN')
+            index += 2
+        elif value in switches:
+            index += 1
+        elif name in options and value.startswith(name + '=') and value[len(name) + 1:]:
+            index += 1
+        else:
+            raise ValueError('unknown or malformed backend argv option: ' + value)
+    if '-de' not in seen:
+        raise ValueError('final backend argv does not name its admitted DSN')

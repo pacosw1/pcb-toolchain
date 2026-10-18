@@ -44,6 +44,24 @@ def native():
         (pad "2" smd rect (at 1 0 180) (size 1 1) (layers "F.Cu" "F.Mask") (net "/POE_V2N") (uuid "R10-2"))))'''
 
 
+def project(*, rules=None, realistic=False):
+    # Explicit authored protocol fixture values, never defaults for real CAD.
+    values = {name: 0 for name in coverage.route_project_coverage.REQUIRED}
+    if realistic:
+        values.update(min_clearance=0, min_track_width=0.15,
+            min_copper_edge_clearance=0.5, min_hole_clearance=0.25,
+            min_hole_to_hole=0.25, min_microvia_diameter=0.2,
+            min_microvia_drill=0.1, min_through_hole_diameter=0.2,
+            min_via_annular_width=0.1, min_via_diameter=0.45,
+            min_connection=0, min_resolved_spokes=2, min_silk_clearance=0,
+            min_text_height=0.8, min_text_thickness=0.08,
+            solder_mask_to_copper_clearance=0, max_error=0.005,
+            min_groove_width=0, use_height_for_length_calcs=True)
+    values.update(rules or {})
+    return dict(board=dict(design_settings=dict(rules=values)), net_settings=dict(classes=[
+        dict(name='Default', clearance=0.2), dict(name='POE', clearance=0.2)]))
+
+
 class CoverageTests(unittest.TestCase):
     def inspect(self, rules=None, model=None, **kwargs):
         return coverage.inspect(rule() if rules is None else rules, dsn() if model is None else model,
@@ -255,7 +273,9 @@ class FileCoverageTests(unittest.TestCase):
         self.board = self.root/'source.kicad_pcb'; self.board.write_text(native())
         self.base = self.root/'base.kicad_pcb'; self.base.write_text(native())
         self.rules = self.board.with_suffix('.kicad_dru'); self.rules.write_text(rule())
-        self.project = self.board.with_suffix('.kicad_pro'); self.project.write_text('{}')
+        self.base_rules = self.base.with_suffix('.kicad_dru'); self.base_rules.write_bytes(self.rules.read_bytes())
+        self.project = self.board.with_suffix('.kicad_pro'); self.project.write_text(json.dumps(project()))
+        self.base_project = self.base.with_suffix('.kicad_pro'); self.base_project.write_bytes(self.project.read_bytes())
         self.model = self.root/'board.dsn'; self.model.write_text(dsn('3000'))
         self.gate = self.root/'gate.json'; self.gate.write_text(json.dumps(dict(checks=dict(drc=True))))
 
@@ -266,7 +286,7 @@ class FileCoverageTests(unittest.TestCase):
     def test_receipt_binds_original_base_rules_project_gate_and_exact_dsn(self):
         result = self.check()
         self.assertEqual(result['status'], 'passed', result)
-        for path in (self.board, self.base, self.rules, self.project, self.model, self.gate,
+        for path in (self.board, self.base, self.rules, self.base_rules, self.project, self.base_project, self.model, self.gate,
                      Path(coverage.__file__).resolve(), Path(coverage.route_features.__file__).resolve()):
             self.assertEqual(result['inputs'][str(path)], hashlib.sha256(path.read_bytes()).hexdigest())
         self.assertEqual(result['dsn'], dict(path=str(self.model), sha256=result['inputs'][str(self.model)]))
@@ -274,6 +294,7 @@ class FileCoverageTests(unittest.TestCase):
 
     def test_pads_only_disposition_cannot_hide_moved_or_changed_base_footprints(self):
         self.rules.write_text('(version 1) (rule "pads fixed" (constraint disallow pad))')
+        self.base_rules.write_bytes(self.rules.read_bytes())
         for label, text in (('pose', native().replace('(at 10 10 180)', '(at 11 10 180)')),
                             ('pad', native().replace('(size 1 1)', '(size 2 1)', 1)),
                             ('net', native().replace('(net "/LED_LINK_K")', '(net "/OTHER")', 1))):
@@ -283,7 +304,7 @@ class FileCoverageTests(unittest.TestCase):
 
     def test_input_changed_during_admission_is_blocked_even_when_decision_was_passed(self):
         original = coverage.inspect
-        for path in (self.board, self.base, self.rules, self.project, self.model, self.gate):
+        for path in (self.board, self.base, self.rules, self.base_rules, self.project, self.base_project, self.model, self.gate):
             before = path.read_bytes()
             def mutate(*args, **kwargs):
                 result = original(*args, **kwargs)
@@ -300,6 +321,7 @@ class FileCoverageTests(unittest.TestCase):
         self.model.write_text(dsn('200'))
         self.assertEqual(self.check()['status'], 'blocked')
         self.rules.write_text('(version 1)')
+        self.base_rules.write_bytes(self.rules.read_bytes())
         self.gate.write_text(json.dumps(dict(checks=dict(drc=True, kicad_happy=True))))
         self.assertEqual(self.check()['status'], 'blocked')
         self.model.write_text(dsn('200', mask=['F.Cu']))
@@ -313,11 +335,344 @@ class FileCoverageTests(unittest.TestCase):
             self.assertEqual(unrelated['native_pth_geometry_unknown'], 'unsupported offset drill')
             self.rules.write_text(rule('hole_clearance', '0.28mm',
                 "A.Pad_Type == 'Through-hole' || B.Pad_Type == 'Through-hole'"))
+            self.base_rules.write_bytes(self.rules.read_bytes())
             relevant = self.check()
             self.assertEqual(relevant['status'], 'blocked', relevant)
             self.assertFalse(relevant['solver_launch_allowed'])
             self.assertEqual(relevant['requirements'][0]['disposition'], 'unsupported')
             self.assertEqual(relevant['native_pth_geometry_unknown'], 'unsupported offset drill')
+
+    def test_malformed_custom_rules_keep_the_blocked_receipts_source_bindings(self):
+        self.rules.write_text('(rule "unterminated)')
+        self.base_rules.write_bytes(self.rules.read_bytes())
+        result=self.check()
+        self.assertEqual(result['status'],'blocked',result)
+        self.assertFalse(result['solver_launch_allowed'])
+        self.assertEqual(result['inputs'][str(self.rules)],hashlib.sha256(self.rules.read_bytes()).hexdigest())
+
+
+class ProjectCoverageTests(unittest.TestCase):
+    def setUp(self):
+        FileCoverageTests.setUp(self)
+        self.rules.unlink()
+        self.base_rules.unlink()
+        self.authored = project(realistic=True)
+        self.save_project()
+        self.model.write_text(self.single_layer_model())
+        self.router = self.root / 'router'
+        self.router.write_bytes(b'attributed backend fixture; never executed')
+        self.command = [str(self.router), '-de', str(self.model), '-do', str(self.root/'routed.ses'),
+            '-mp', '40', '--router.min_trace_width_um=150', '--router.copper_to_edge_clearance_um=500',
+            '--report='+str(self.root/'report.json'), '--diagnose', '--max-time=30',
+            '--router.optimizer.enabled=false', '--router.autorouter.max_threads=1',
+            '--router.optimizer.max_threads=1']
+
+    def save_project(self):
+        self.project.write_text(json.dumps(self.authored))
+        self.base_project.write_bytes(self.project.read_bytes())
+
+    def single_layer_model(self, clearance='200'):
+        # Match actual restrict_dsn output: non-routing copper is power type,
+        # in addition to the active net's explicit one-layer mask.
+        text=dsn(clearance,mask=['F.Cu']).replace('(layer "B.Cu" (type signal))','(layer "B.Cu" (type power))')
+        return text[:-1]+' (library) (placement))'
+
+    def write_native(self, text):
+        self.board.write_text(text)
+        self.base.write_text(text)
+
+    def check(self, command='default', backend_policy=None):
+        return coverage.check_files(self.board, self.base, self.model, active_nets=[LED],
+            net_classes=CLASSES, obstacles=OBSTACLES, layers=['F.Cu'], gate=self.gate,
+            backend_command=self.command if command == 'default' else command,backend_policy=backend_policy)
+
+    def row(self, result, name):
+        return next(r for r in result['requirements'] if r['rule']=='native project' and r['constraint']==name)
+
+    def test_actual_project_minima_without_dru_are_bound_to_model_and_final_argv(self):
+        result = self.check()
+        self.assertEqual(result['status'], 'passed', result)
+        self.assertIsNone(result['inputs'][str(self.rules)])
+        self.assertEqual(result['backend_command'], self.command)
+        self.assertEqual(result['backend_command_sha256'], hashlib.sha256(json.dumps(self.command,
+            separators=(',', ':'), ensure_ascii=True).encode()).hexdigest())
+        self.assertEqual(result['inputs'][str(self.router)], hashlib.sha256(self.router.read_bytes()).hexdigest())
+        for key, expected in [('min_track_width','0.15'), ('min_copper_edge_clearance','0.5')]:
+            item = self.row(result,key)
+            self.assertEqual(item['disposition'],'covered')
+            self.assertEqual(Decimal(item['required_mm']),Decimal(expected))
+            self.assertEqual(Decimal(item['model_floor_mm']),Decimal(expected))
+            self.assertEqual(item['source'],dict(path=str(self.project),pointer='/board/design_settings/rules/'+key,exists=True))
+        self.assertEqual(self.row(result,'min_resolved_spokes')['disposition'],'not_applicable')
+
+    def test_missing_malformed_unresolved_and_untyped_project_rules_fail_closed(self):
+        original = self.project.read_bytes()
+        documents = ['{}', '[]', '{', '{"board":{},"board":{}}',
+            json.dumps(project(rules={'min_track_width':True},realistic=True)),
+            json.dumps(project(rules={'min_track_width':'0.15'},realistic=True)),
+            json.dumps(project(rules={'min_track_width':-0.15},realistic=True)),
+            json.dumps(project(rules={'min_track_width':float('nan')},realistic=True)),
+            json.dumps(project(rules={'min_track_width':float('inf')},realistic=True))]
+        del self.authored['board']['design_settings']['rules']['min_hole_clearance']
+        documents.append(json.dumps(self.authored))
+        for text in documents:
+            with self.subTest(project=text[:80]):
+                self.project.write_text(text);self.base_project.write_text(text)
+                result = self.check()
+                self.assertEqual(result['status'],'blocked',result)
+                self.assertFalse(result['solver_launch_allowed'])
+        self.project.write_bytes(original);self.base_project.write_bytes(original)
+        self.project.unlink();self.base_project.unlink()
+        result=self.check()
+        self.assertEqual(result['status'],'blocked',result)
+        self.assertIsNone(result['inputs'][str(self.project)])
+        self.assertIn('missing',self.row(result,'project_document')['reason'])
+
+    def test_unknown_project_keys_and_positive_unproved_constraints_do_not_disappear(self):
+        for name,value in [('future_constraint',0),('min_connection',0.1),
+                ('solder_mask_to_copper_clearance',0.1),('min_resolved_spokes',2.5)]:
+            with self.subTest(name=name):
+                self.authored=project(realistic=True,rules={name:value});self.save_project()
+                result=self.check()
+                self.assertEqual(result['status'],'blocked',result)
+                self.assertEqual(self.row(result,name)['disposition'],'unsupported')
+
+    def test_project_clearance_and_only_relevant_netclasses_compare_actual_dsn(self):
+        self.authored['net_settings']['classes'].append(dict(name='unused',clearance=100))
+        self.save_project()
+        self.assertEqual(self.check()['status'],'passed')
+        for key in ('global','active','retained'):
+            with self.subTest(scope=key):
+                self.authored=project(realistic=True)
+                if key=='global':self.authored['board']['design_settings']['rules']['min_clearance']=0.25
+                else:self.authored['net_settings']['classes'][0 if key=='active' else 1]['clearance']=0.25
+                self.save_project()
+                result=self.check()
+                self.assertEqual(result['status'],'blocked',result)
+                self.assertTrue(any(r['disposition']=='weaker_than_native' and Decimal(r['required_mm'])==Decimal('.25')
+                    for r in result['requirements']))
+        self.model.write_text(self.single_layer_model('250'))
+        self.assertEqual(self.check()['status'],'passed')
+        self.authored['net_settings']['classes'].pop()
+        self.save_project()
+        self.assertEqual(self.check()['status'],'blocked')
+
+    def test_width_edge_missing_weaker_duplicated_unknown_and_neck_overrides_block(self):
+        changes=[None,[],[True],self.command[:-1]+['--config=unknown.json'],
+            [v for v in self.command if not v.startswith('--router.min_trace_width_um=')],
+            [v.replace('width_um=150','width_um=149') for v in self.command],
+            [v.replace('clearance_um=500','clearance_um=499') for v in self.command],
+            self.command+['--router.min_trace_width_um=151'],
+            self.command+['--router.copper_to_edge_clearance_um=501'],
+            self.command+['--router.neck_width_um=149'],
+            self.command+['--router.neck_width_um=150','--router.neck_width_um=150'],
+            [v.replace('width_um=150','width_um=nan') for v in self.command],
+            [v.replace(str(self.model),str(self.root/'other.dsn')) for v in self.command]]
+        for command in changes:
+            with self.subTest(command=command):
+                result=self.check(command)
+                self.assertEqual(result['status'],'blocked',result)
+                self.assertFalse(result['solver_launch_allowed'])
+                json.dumps(result,allow_nan=False)
+        self.assertEqual(self.check(self.command+['--router.neck_width_um=150'])['status'],'passed')
+
+    def test_absent_dru_does_not_skip_native_slotted_pth_hole_requirement(self):
+        slot='''(footprint "USB" (layer "F.Cu") (at 20 20 180)
+          (property "Reference" "J2")
+          (pad "7" thru_hole oval (at -4.32 -1.78 180) (size 1.1 1.9)
+            (drill oval 0.599998 1.299997) (layers "*.Cu" "*.Mask") (net "/POE_V2N") (uuid "usb-slot")))'''
+        self.write_native(native()[:-1]+slot+')')
+        result=self.check()
+        self.assertEqual(result['status'],'blocked',result)
+        item=self.row(result,'min_hole_clearance')
+        self.assertEqual(Decimal(item['required_mm']),Decimal('.25'))
+        self.assertEqual(item['disposition'],'unsupported')
+        self.assertTrue(item['hole_geometry'])
+        self.assertEqual(item['hole_geometry'][0]['proof']['status'],'blocked')
+        self.assertIn('DSN',item['reason'])
+
+    def test_all_drilled_pads_npth_and_retained_vias_reach_the_project_proof(self):
+        items='''(footprint "Holes" (layer "F.Cu") (at 20 20)
+          (property "Reference" "J2")
+          (pad "1" thru_hole circle (at 0 0) (size 1 1) (drill 0.3) (layers "*.Cu") (net "/POE_V2N") (uuid "pth"))
+          (pad "" np_thru_hole circle (at 2 0) (size 1 1) (drill 1) (layers "*.Cu") (uuid "npth")))
+          (via (at 25 25) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net "/POE_V2N") (uuid "via"))'''
+        self.write_native(native()[:-1]+items+')')
+        with mock.patch.object(coverage.route_hole_coverage,'inspect_drilled',return_value=dict(status='covered')) as proof:
+            result=self.check()
+            self.assertEqual(result['status'],'passed',result)
+        proof.assert_called_once()
+        holes=proof.call_args.kwargs['holes']
+        self.assertEqual({h['kind'] for h in holes},{'pth','npth','via'})
+        self.assertEqual(len(holes),3)
+        self.assertEqual(proof.call_args.kwargs['active_nets'],[LED])
+        self.assertEqual(Decimal(proof.call_args.kwargs['required_mm']),Decimal('.25'))
+
+    def test_same_net_holes_are_excluded_only_from_the_same_net_clearance_scope(self):
+        hole='''(via (at 25 25) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net "/LED_LINK_K") (uuid "own-via"))'''
+        self.write_native(native()[:-1]+hole+')')
+        with mock.patch.object(coverage.route_hole_coverage,'inspect_drilled',
+                return_value=dict(status='covered',native_not_applicable=[dict(identity='own-via')])) as proof:
+            result=self.check()
+        self.assertEqual(result['status'],'passed',result)
+        self.assertEqual(self.row(result,'min_hole_clearance')['disposition'],'covered')
+        self.assertEqual(len(proof.call_args.kwargs['holes']),1)
+        self.assertEqual(proof.call_args.kwargs['holes'][0]['identity'],'own-via')
+        self.assertEqual(proof.call_args.kwargs['applicability'],'kicad10_project_track')
+
+    def test_new_vias_or_changed_drills_do_not_get_immutable_dimension_credit(self):
+        self.model.write_text(dsn('200'))
+        result=coverage.check_files(self.board,self.base,self.model,active_nets=[LED],net_classes=CLASSES,
+            obstacles=OBSTACLES,layers=['F.Cu','B.Cu'],gate=self.gate,backend_command=self.command)
+        self.assertEqual(result['status'],'blocked',result)
+        self.assertEqual(self.row(result,'min_hole_to_hole')['disposition'],'unsupported')
+        self.model.write_text(self.single_layer_model())
+        via='''(via (at 25 25) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net "/LED_LINK_K") (uuid "via"))'''
+        self.write_native(native()[:-1]+via+')')
+        self.base.write_text(self.base.read_text().replace('(drill 0.3)','(drill 0.31)'))
+        result=self.check()
+        self.assertEqual(result['status'],'blocked',result)
+        self.assertFalse(result['drilled_geometry_preserved'])
+
+    def test_positive_spoke_requirement_is_not_covered_by_identical_authored_zone(self):
+        zone='(zone (net "/POE_V2N") (net_name "/POE_V2N") (layer "F.Cu") (connect_pads (clearance 0.2)))'
+        self.write_native(native()[:-1]+zone+')')
+        result=self.check()
+        self.assertEqual(result['status'],'blocked',result)
+        item=self.row(result,'min_resolved_spokes')
+        self.assertEqual(item['required_count'],'2')
+        self.assertEqual(item['disposition'],'unsupported')
+        self.assertTrue(result['fixed_geometry_preserved'])
+
+    def test_all_solid_thermal_inapplicability_includes_overrides_and_missing_threshold(self):
+        zone='(zone (net "/POE_V2N") (net_name "/POE_V2N") (layer "F.Cu") (connect_pads yes (clearance 0.2)))'
+        solid=native()[:-1]+zone+')'
+        for override in ('', '(zone_connect 2)', '(zone_connect -1)', '(zone_connect 0)'):
+            with self.subTest(nonthermal_override=override):
+                text=solid.replace('(property "Reference" "R10")','(property "Reference" "R10") '+override)
+                self.write_native(text)
+                result=self.check()
+                self.assertEqual(result['status'],'passed',result)
+                item=self.row(result,'min_resolved_spokes')
+                self.assertEqual(item['disposition'],'not_applicable')
+                self.assertFalse(item['thermal_applicability']['thermal_connections_possible'])
+        del self.authored['board']['design_settings']['rules']['min_resolved_spokes'];self.save_project()
+        result=self.check()
+        self.assertEqual(result['status'],'passed',result)
+        item=self.row(result,'min_resolved_spokes')
+        self.assertFalse(item['source']['exists'])
+        self.assertNotIn('required_count',item)
+        for override in ('(zone_connect 1)','(zone_connect 3)','(zone_connect 9)'):
+            with self.subTest(thermal_override=override):
+                self.write_native(solid.replace('(property "Reference" "R10")','(property "Reference" "R10") '+override))
+                result=self.check()
+                self.assertEqual(result['status'],'blocked',result)
+                self.assertEqual(self.row(result,'min_resolved_spokes')['disposition'],'unsupported')
+        self.write_native(solid)
+        self.rules.write_text('(version 1) (rule "thermal pads" (condition "A.Type == \'Pad\'") (constraint zone_connection thermal_reliefs))')
+        self.base_rules.write_bytes(self.rules.read_bytes())
+        result=self.check()
+        self.assertEqual(result['status'],'blocked',result)
+        self.assertEqual(self.row(result,'min_resolved_spokes')['disposition'],'unsupported')
+
+    def test_base_project_fixed_geometry_and_command_races_are_bound(self):
+        self.base_project.write_text('{}')
+        result=self.check();self.assertEqual(result['status'],'blocked',result)
+        self.assertEqual(self.row(result,'project_source')['disposition'],'unsupported')
+        self.save_project()
+        self.base_rules.write_text('(version 1) (rule "unexpected base policy" (constraint clearance (min 1mm)))')
+        result=self.check();self.assertEqual(result['status'],'blocked',result)
+        self.assertTrue(any(r['constraint']=='rule_source' for r in result['requirements']))
+        self.base_rules.unlink()
+        self.base.write_text(native()[:-1]+'(gr_text "changed" (at 0 0) (layer "F.SilkS")))')
+        result=self.check();self.assertEqual(result['status'],'blocked',result)
+        self.assertFalse(result['fixed_geometry_preserved'])
+        self.write_native(native())
+        original=coverage.route_project_coverage.evaluate
+        for target in ('source','base','backend','command','missing-dru'):
+            with self.subTest(target=target):
+                paths={'source':self.project,'base':self.base_project,'backend':self.router}
+                previous={p:p.read_bytes() for p in paths.values()}
+                command=list(self.command)
+                def mutate(*args,**kwargs):
+                    result=original(*args,**kwargs)
+                    if target=='command':command.append('--router.min_trace_width_um=100')
+                    elif target=='missing-dru':self.rules.write_text('(version 1)')
+                    else:paths[target].write_bytes(previous[paths[target]]+b'\n')
+                    return result
+                with mock.patch.object(coverage.route_project_coverage,'evaluate',side_effect=mutate):
+                    result=self.check(command)
+                self.assertEqual(result['status'],'blocked',result)
+                self.assertIn('changed during admission',result['cause'])
+                for p,b in previous.items():p.write_bytes(b)
+                if self.rules.exists():self.rules.unlink()
+
+    def test_backend_profile_proof_is_passed_bound_and_rechecked_without_inventing_one(self):
+        evidence=self.root/'native-backend-evidence.json';evidence.write_text('{"source":"fixture"}')
+        expected=hashlib.sha256(evidence.read_bytes()).hexdigest()
+        policy=dict(mode='quality-first',manifest='fixture-only-not-a-real-profile')
+        def proof(*args,**kwargs):
+            self.assertEqual(kwargs['backend_policy'],policy)
+            self.assertIsNot(kwargs['backend_policy'],policy)
+            self.assertEqual(kwargs['backend_command'],self.command)
+            return dict(status='covered',inputs={str(evidence):expected})
+        with mock.patch.object(coverage.route_hole_coverage,'inspect_drilled',side_effect=proof):
+            result=self.check(backend_policy=policy)
+        self.assertEqual(result['status'],'passed',result)
+        self.assertEqual(result['backend_policy'],policy)
+        self.assertEqual(result['inputs'][str(evidence)],expected)
+        def changed(*args,**kwargs):
+            result=proof(*args,**kwargs)
+            evidence.write_text('{"source":"changed"}')
+            return result
+        with mock.patch.object(coverage.route_hole_coverage,'inspect_drilled',side_effect=changed):
+            result=self.check(backend_policy=policy)
+        self.assertEqual(result['status'],'blocked',result)
+        self.assertIn('changed during admission',result['cause'])
+        evidence.write_text('{"source":"fixture"}')
+        def mutate_policy(*args,**kwargs):
+            result=proof(*args,**kwargs)
+            policy['mode']='changed'
+            return result
+        with mock.patch.object(coverage.route_hole_coverage,'inspect_drilled',side_effect=mutate_policy):
+            result=self.check(backend_policy=policy)
+        self.assertEqual(result['status'],'blocked',result)
+        self.assertIn('backend policy changed',result['cause'])
+
+    def test_custom_hole_limit_cannot_bypass_actual_backend_proof_with_zero_project_minimum(self):
+        self.authored['board']['design_settings']['rules']['min_hole_clearance']=0
+        self.save_project()
+        hole='''(footprint "PTH" (layer "F.Cu") (at 20 20)
+          (property "Reference" "J2")
+          (pad "1" thru_hole circle (at 0 0) (size 1 1) (drill 0.3)
+            (layers "*.Cu") (net "/POE_V2N") (uuid "pth")))'''
+        self.write_native(native()[:-1]+hole+')')
+        self.rules.write_text(rule('hole_clearance','0.4mm',
+            "A.Pad_Type == 'Through-hole' || B.Pad_Type == 'Through-hole'"))
+        self.base_rules.write_bytes(self.rules.read_bytes())
+        evidence=self.root/'actual-backend-proof.json';evidence.write_text('{}')
+        digest=hashlib.sha256(evidence.read_bytes()).hexdigest()
+        policy=dict(mode='fixture-only-boundary')
+        with mock.patch.object(coverage.route_hole_coverage,'inspect',
+                return_value=dict(status='covered',cause='legacy analytic subset')):
+            rejected=self.check(backend_policy=policy)
+            self.assertEqual(rejected['status'],'blocked',rejected)
+            custom=next(r for r in rejected['requirements'] if r['rule']=='PoE isolation')
+            self.assertEqual(custom['disposition'],'unsupported')
+            self.assertEqual(Decimal(custom['required_mm']),Decimal('.4'))
+            self.assertEqual(custom['analytical_hole_geometry']['status'],'covered')
+            with mock.patch.object(coverage.route_hole_coverage,'inspect_drilled',
+                    return_value=dict(status='covered',inputs={str(evidence):digest})) as actual:
+                admitted=self.check(backend_policy=policy)
+            self.assertEqual(admitted['status'],'passed',admitted)
+            self.assertEqual(admitted['inputs'][str(evidence)],digest)
+            self.assertEqual(actual.call_count,1)
+            kwargs=actual.call_args.kwargs
+            self.assertEqual(kwargs['required_mm'],'0.4')
+            self.assertEqual(kwargs['backend_policy'],policy)
+            self.assertEqual(kwargs['backend_command'],self.command)
+            self.assertEqual(len(kwargs['holes']),1)
+            self.assertNotIn('applicability',kwargs) # No assumed custom same-net exemption.
 
 
 if __name__ == '__main__':
