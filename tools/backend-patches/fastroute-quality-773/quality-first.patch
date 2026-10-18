@@ -716,3 +716,170 @@ index 0000000..02a1ffd
 +    assert!(record.contains("\"state\":\"InsertError\""));
 +    assert!(record.contains("\"dsn_bounds\":"));
 +}
+diff --git a/crates/fr-engine/src/board/connectivity.rs b/crates/fr-engine/src/board/connectivity.rs
+--- a/crates/fr-engine/src/board/connectivity.rs
++++ b/crates/fr-engine/src/board/connectivity.rs
+@@ -89,7 +89,8 @@
+                 continue;
+             }
+             let contact = match &other.kind {
+-                ItemKind::Trace(_) => *point == other.first_corner() || *point == other.last_corner(),
++                ItemKind::Trace(_) => *point == other.first_corner() || *point == other.last_corner()
++                    || (other.shares_net(this) && other.trace().polyline.contains(point)),
+                 ItemKind::Pin(_) | ItemKind::Via(_) => *point == other.center(self),
+                 ItemKind::ConductionArea(c) => c.area.get_area(self).contains(point),
+                 _ => false,
+@@ -145,6 +146,22 @@
+                 let mut result = ItemSet::new();
+                 result.extend_from(&self.trace_normal_contacts_at(key, &this.first_corner(), false));
+                 result.extend_from(&self.trace_normal_contacts_at(key, &this.last_corner(), false));
++                // The reverse edge of an endpoint-to-interior junction must
++                // exist as well, without splitting a retained fixed trace.
++                for i in 0..self.tile_shape_count(key) {
++                    let Some(shape) = self.tile_shape(key, i) else { continue };
++                    for object in self.overlapping_objects(&ConvexShape::Tile(shape), this.trace().layer) {
++                        let TreeObject::Item { key: other_key, id } = object else { continue };
++                        if other_key == key { continue; }
++                        let other = self.item(other_key);
++                        if !other.is_trace() || !other.shares_net(this) || !other.shares_layer(this, self) { continue; }
++                        if this.trace().polyline.contains(&other.first_corner())
++                            || this.trace().polyline.contains(&other.last_corner())
++                        {
++                            result.insert(ItemId(id), other_key);
++                        }
++                    }
++                }
+                 result
+             }
+             ItemKind::Pin(_) | ItemKind::Via(_) => self.drill_normal_contacts(key),
+@@ -639,13 +656,18 @@
+     let tl = this.last_corner();
+     let of = other.first_corner();
+     let ol = other.last_corner();
+-    let at_first = tf == of || tf == ol;
+-    let at_last = tl == of || tl == ol;
+-    if !(at_first || at_last) || (at_first && at_last) {
+-        None
+-    } else if at_first {
+-        Some(tf)
+-    } else {
+-        Some(tl)
+-    }
++    let mut points = Vec::new();
++    for point in [tf, tl] {
++        if point == of || point == ol
++            || (this.shares_net(other) && other.trace().polyline.contains(&point))
++        {
++            if !points.contains(&point) { points.push(point); }
++        }
++    }
++    if this.shares_net(other) {
++        for point in [of, ol] {
++            if this.trace().polyline.contains(&point) && !points.contains(&point) { points.push(point); }
++        }
++    }
++    if points.len() == 1 { points.pop() } else { None }
+ }
+diff --git a/crates/fr-engine/tests/trace_tjunction.rs b/crates/fr-engine/tests/trace_tjunction.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/fr-engine/tests/trace_tjunction.rs
+@@ -0,0 +1,98 @@
++use fr_engine::board::*;
++use fr_engine::datastructures::ItemIdGenerator;
++use fr_engine::ids::FixedState;
++use fr_engine::library::{BoardLibrary, Packages, Padstacks};
++use fr_engine::rules::{BoardRules, ClearanceMatrix};
++use fr_engine::structure::{Communication, Components, CoordinateTransform, Layer, LayerStructure, SpecctraParserInfo, Unit};
++use fr_geom::*;
++
++fn board() -> BasicBoard {
++    let ls = LayerStructure::new(vec![Layer::new("F.Cu", true), Layer::new("B.Cu", true)]);
++    let matrix = ClearanceMatrix::get_default_instance(&ls, 200);
++    let mut rules = BoardRules::new(ls.clone(), matrix);
++    let class = rules.net_classes.append("default", &ls, false);
++    for name in ["a", "b"] { rules.nets.add(name, 1, false, class); }
++    let comm = Communication::new(Unit::Mil, 1, Some(SpecctraParserInfo::default()), CoordinateTransform::new(1.0, 0.0, 0.0), ItemIdGenerator::new());
++    BasicBoard::new(IntBox::new(-1000, -1000, 11000, 11000), ls.clone(),
++        vec![PolylineShape::Tile(TileShape::IntBox(IntBox::new(0, 0, 10000, 10000)))],
++        1, rules, BoardLibrary::new(Padstacks::new(&ls), Packages::new()), Components::new(), comm)
++}
++
++fn trace(b: &mut BasicBoard, points: &[(i32,i32)], layer: i32, net: i32, fixed: FixedState) -> ItemKey {
++    let corners: Vec<_> = points.iter().map(|&(x,y)| IntPoint::new(x,y)).collect();
++    b.insert_trace_without_cleaning(Polyline::from_int_points(&corners),layer,100,&[net],1,fixed).unwrap()
++}
++
++#[test]
++fn retained_t_junction_is_symmetric_and_preserves_every_fixed_item_field() {
++    let mut b=board();
++    let fixed=trace(&mut b,&[(1000,4000),(9000,4000)],0,1,FixedState::UserFixed);
++    let new=trace(&mut b,&[(5000,1000),(5000,4000)],0,1,FixedState::Unfixed);
++    let before=format!("{:?}",b.item(fixed));let original_id=b.item(fixed).id();
++    let count=b.get_items().len();let point=Point::Int(IntPoint::new(5000,4000));
++    assert!(b.normal_contacts(new).contains(original_id));
++    assert!(b.normal_contacts(fixed).contains(b.item(new).id()));
++    assert_eq!(b.connected_set(new,1,false).len(),2);
++    assert_eq!(b.connected_set(fixed,1,false).len(),2);
++    assert_eq!(b.get_connected_sets(1).len(),1);
++    assert_eq!(b.normal_contact_point(new,fixed),Some(point.clone()));
++    assert_eq!(b.normal_contact_point(fixed,new),Some(point));
++    assert_eq!(b.item(fixed).id(),original_id);
++    assert_eq!(b.item(fixed).fixed_state(),FixedState::UserFixed);
++    assert_eq!(format!("{:?}",b.item(fixed)),before);
++    assert_eq!(b.get_items().len(),count,"contact query must never split/add source traces");
++}
++
++#[test]
++fn different_net_layer_or_exact_centerline_gap_never_becomes_a_t_junction() {
++    for (points,layer,net) in [
++        (vec![(5000,1000),(5000,4000)],0,2),
++        (vec![(5000,1000),(5000,4000)],1,1),
++        (vec![(5000,1000),(5000,3999)],0,1),
++        (vec![(10000,1000),(10000,4000)],0,1),
++        (vec![(5000,1000),(5000,7000)],0,1),
++    ] {
++        let mut b=board();let fixed=trace(&mut b,&[(1000,4000),(9000,4000)],0,1,FixedState::UserFixed);
++        let new=trace(&mut b,&points,layer,net,FixedState::Unfixed);
++        assert!(b.normal_contacts(new).is_empty(),"{points:?}, layer{layer}, net{net}");
++        assert!(b.normal_contacts(fixed).is_empty());
++        assert_eq!(b.connected_set(new,net,false).len(),1);
++        assert_eq!(b.connected_set(fixed,1,false).len(),1);
++        assert!(b.normal_contact_point(new,fixed).is_none());
++        assert!(b.normal_contact_point(fixed,new).is_none());
++    }
++}
++
++#[test]
++fn ordinary_endpoint_contact_and_ambiguous_multiple_points_keep_existing_semantics() {
++    let mut b=board();let fixed=trace(&mut b,&[(1000,4000),(9000,4000)],0,1,FixedState::UserFixed);
++    let new=trace(&mut b,&[(9000,4000),(9000,7000)],0,1,FixedState::Unfixed);
++    assert_eq!(b.connected_set(fixed,1,false).len(),2);
++    assert_eq!(b.normal_contact_point(fixed,new),Some(Point::Int(IntPoint::new(9000,4000))));
++    let duplicate=trace(&mut b,&[(1000,4000),(9000,4000)],0,1,FixedState::UserFixed);
++    assert!(b.normal_contacts(fixed).contains(b.item(duplicate).id()));
++    assert!(b.normal_contact_point(fixed,duplicate).is_none(),"multiple contact points must not invent one chosen junction");
++}
++
++#[test]
++fn exact_diagonal_centerline_and_bent_trace_contacts_are_symmetric() {
++    let mut b=board();let fixed=trace(&mut b,&[(1000,1000),(5000,5000),(9000,5000)],0,1,FixedState::UserFixed);
++    let new=trace(&mut b,&[(3000,1000),(3000,3000)],0,1,FixedState::Unfixed);
++    assert_eq!(b.connected_set(new,1,false).len(),2);
++    assert_eq!(b.connected_set(fixed,1,false).len(),2);
++    assert_eq!(b.normal_contact_point(new,fixed),Some(Point::Int(IntPoint::new(3000,3000))));
++    let miss=trace(&mut b,&[(7000,7000),(7001,5001)],0,1,FixedState::Unfixed);
++    assert!(b.normal_contacts(miss).is_empty(),"copper overlap without an exact centerline junction is insufficient");
++}
++
++#[test]
++fn cached_contacts_follow_insert_and_remove_without_mutating_retained_geometry() {
++    let mut b=board();let fixed=trace(&mut b,&[(1000,4000),(9000,4000)],0,1,FixedState::UserFixed);
++    let before=format!("{:?}",b.item(fixed));assert!(b.normal_contacts(fixed).is_empty());
++    let new=trace(&mut b,&[(5000,1000),(5000,4000)],0,1,FixedState::Unfixed);
++    assert_eq!(b.normal_contacts(fixed).len(),1);
++    assert_eq!(b.connected_set(fixed,1,false).len(),2);
++    b.remove_item(new);
++    assert!(b.normal_contacts(fixed).is_empty());
++    assert_eq!(format!("{:?}",b.item(fixed)),before);
++}
