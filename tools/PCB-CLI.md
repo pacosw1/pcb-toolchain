@@ -185,6 +185,11 @@ obstacles, offsets, mirrored or off-grid geometry remain unsupported for this
 positive proof. Custom PTH rules grant no same-net exemption; only the explicit
 KiCad 10 project track rule can record its sourced same-nonzero-net exclusion,
 after binding every physical drilled item.
+A custom hole minimum receives PTH coverage only after every active selector
+pair is proved to be a new track and a retained PTH pad. The minimum then applies
+conservatively to all PTH pads. NPTH and via instances remain physically bound
+with an explicit `custom_not_applicable` disposition; the independent project
+hole minimum still covers the complete inventory with its own applicability.
 `min_resolved_spokes` is not guaranteed by running a fill. The narrow inactive
 proof requires no copper zones or explicit solid/none connections, with no
 thermal pad/footprint/custom-rule override. Applicable thermal requirements,

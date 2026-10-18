@@ -265,6 +265,28 @@ class CoverageTests(unittest.TestCase):
                 else:
                     proof.assert_not_called()
 
+    def test_custom_pth_selector_checks_every_active_net_before_using_the_pth_subset(self):
+        later = '/ZZ_AFTER'
+        model = dsn(mask=['F.Cu']).replace('(network ', '(network (net "'+later+'" (pins R9-1)) ', 1)
+        model = model.replace('(class "DEFAULT" "'+LED+'"', '(class "DEFAULT" "'+LED+'" "'+later+'"', 1)
+        classes = dict(CLASSES, **{later: 'Default', '': 'Default'})
+        obstacles = OBSTACLES + [dict(NetName='', Type='Pad', Pad_Type='NPTH, mechanical')]
+        first = "(A.NetName == '"+LED+"' && B.Pad_Type == 'Through-hole')"
+        later_cases = {
+            'unresolved': "(A.NetName == '"+later+"' && B.Pad_Type == 'Through-hole' && B.intersectsArea('critical'))",
+            'broader': "(A.NetName == '"+later+"' && B.Pad_Type == 'NPTH, mechanical')",
+        }
+        for label, extra in later_cases.items():
+            with self.subTest(later_selector=label), mock.patch.object(coverage.route_hole_coverage, 'inspect',
+                    return_value=dict(status='covered')) as geometry:
+                result = self.inspect(rule('hole_clearance', '0.28mm', first+' || '+extra), model,
+                    active_nets=[LED, later], net_classes=classes, obstacles=obstacles,
+                    layers=['F.Cu'], native_pads=[dict(net=POE)])
+                self.assert_blocked(result)
+                geometry.assert_not_called()
+                row = result['requirements'][0]
+                self.assertIn('selector applicability' if label=='unresolved' else 'PTH geometry and tracks only', row['reason'])
+
 
 class FileCoverageTests(unittest.TestCase):
     def setUp(self):
@@ -672,7 +694,71 @@ class ProjectCoverageTests(unittest.TestCase):
             self.assertEqual(kwargs['backend_policy'],policy)
             self.assertEqual(kwargs['backend_command'],self.command)
             self.assertEqual(len(kwargs['holes']),1)
-            self.assertNotIn('applicability',kwargs) # No assumed custom same-net exemption.
+            self.assertEqual(kwargs['applicability'],'custom_pth_track')
+            self.assertNotEqual(kwargs['applicability'],'kicad10_project_track')
+
+    def test_joint_custom_and_project_hole_proofs_keep_the_full_inventory_and_separate_minima(self):
+        mixed='''(footprint "PTH" (layer "F.Cu") (at 20 20)
+          (property "Reference" "J2")
+          (pad "1" thru_hole circle (at 0 0) (size 1 1) (drill 0.3)
+            (layers "*.Cu") (net "/POE_V2N") (uuid "pth"))
+          (pad "" np_thru_hole circle (at 2 0) (size 1 1) (drill 1)
+            (layers "*.Cu") (uuid "npth")))
+          (via (at 25 25) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu")
+            (net "/LED_LINK_K") (uuid "kept-via"))'''
+        self.write_native(native()[:-1]+mixed+')')
+        self.rules.write_text(rule('hole_clearance','0.28mm',
+            "A.Pad_Type == 'Through-hole' || B.Pad_Type == 'Through-hole'"))
+        self.base_rules.write_bytes(self.rules.read_bytes())
+        for project_fails in (False,True):
+            calls=[]
+            def actual(*args,**kwargs):
+                calls.append(kwargs)
+                self.assertEqual({h['identity'] for h in kwargs['holes']},{'pth','npth','kept-via'})
+                self.assertEqual({h['kind'] for h in kwargs['holes']},{'pth','npth','via'})
+                if kwargs['applicability']=='custom_pth_track':
+                    self.assertEqual(Decimal(kwargs['required_mm']),Decimal('.28'))
+                    return dict(status='covered',cause='fixture PTH scope with every physical instance bound')
+                self.assertEqual(kwargs['applicability'],'kicad10_project_track')
+                self.assertEqual(Decimal(kwargs['required_mm']),Decimal('.25'))
+                return dict(status='blocked' if project_fails else 'covered',
+                    cause='fixture NPTH project obstacle too small' if project_fails else 'fixture all-hole project proof')
+            with self.subTest(project_failure=project_fails), mock.patch.object(coverage.route_hole_coverage,'inspect',
+                    return_value=dict(status='covered',cause='legacy analytical PTH subset')), \
+                    mock.patch.object(coverage.route_hole_coverage,'inspect_drilled',side_effect=actual):
+                result=self.check()
+            self.assertEqual(len(calls),2)
+            self.assertEqual(result['status'],'blocked' if project_fails else 'passed',result)
+            self.assertEqual(result['solver_launch_allowed'],not project_fails)
+            custom=next(r for r in result['requirements'] if r['rule']=='PoE isolation')
+            self.assertEqual(custom['disposition'],'covered')
+            self.assertEqual(self.row(result,'min_hole_clearance')['disposition'],'unsupported' if project_fails else 'covered')
+
+    def test_joint_hole_proofs_block_missing_or_changed_retained_vias_before_distance_proof(self):
+        pth='''(footprint "PTH" (layer "F.Cu") (at 20 20)
+          (property "Reference" "J2")
+          (pad "1" thru_hole circle (at 0 0) (size 1 1) (drill 0.3)
+            (layers "*.Cu") (net "/POE_V2N") (uuid "pth")))'''
+        via='''(via (at 25 25) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu")
+          (net "/LED_LINK_K") (uuid "kept-via"))'''
+        text=native()[:-1]+pth+via+')';self.write_native(text)
+        self.rules.write_text(rule('hole_clearance','0.28mm',
+            "A.Pad_Type == 'Through-hole' || B.Pad_Type == 'Through-hole'"))
+        self.base_rules.write_bytes(self.rules.read_bytes())
+        for label,changed in (('missing',text.replace(via,'')),
+                ('moved',text.replace('(at 25 25)','(at 25.1 25)'))):
+            self.base.write_text(changed)
+            with self.subTest(via_change=label), mock.patch.object(coverage.route_hole_coverage,'inspect',
+                    return_value=dict(status='covered',cause='legacy analytical PTH subset')), \
+                    mock.patch.object(coverage.route_hole_coverage,'inspect_drilled',return_value=dict(status='covered')) as actual:
+                result=self.check()
+            self.assertEqual(result['status'],'blocked',result)
+            self.assertFalse(result['solver_launch_allowed'])
+            self.assertFalse(result['drilled_geometry_preserved'])
+            actual.assert_not_called()
+            custom=next(r for r in result['requirements'] if r['rule']=='PoE isolation')
+            self.assertEqual(custom['disposition'],'unsupported')
+            self.assertEqual(self.row(result,'min_hole_clearance')['disposition'],'unsupported')
 
 
 class ClearanceStrengtheningTests(unittest.TestCase):
