@@ -24,7 +24,9 @@ AUDITED = {
     "part_evidence.py": "9177b0ac5c3e038f69e38f144e0795fae485b87c1fb9338b2bf1b03ac227fca0",
     "part_native.py": "9a21ded435da26ccedcb6da845bd9c7cc87b959d5d0a848d325e177b4a400287",
     "pcb_cli.py": "099b7991af3df3169e4ec2b871bbe5fb976fc37a7e56bc6f1da27ee6efec663a",
-    "pcb_operations.py": "b2624beb6b94c245b82764cf099f46caf4d5dfaf25bff1ce6149fb999b30c34b",
+    # 2026-10-18 review: only pcb_identity keepout ordering changed;
+    # parts execution, imports and external input boundaries are unchanged.
+    "pcb_operations.py": "75ec69fc815e84a7427bf5cf37dd70ba395c7c78f97c03329445a9c49195c600",
     "pcb_evidence.py": "9d929244915407bddefd096f8a981113652e2706ea8785cf5ddb70061330687f",
     "pcb_workflow.py": "befb1e2b7660acc3a3422913c1df2e16b4a9673f1a8fa629bc315102aaf9135c",
     "pcb_timing.py": "07ed104072e56166625ffc36e774892c3761832cf00fe72b6abef2d967f05ddd",
