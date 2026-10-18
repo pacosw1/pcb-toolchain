@@ -31,13 +31,29 @@ not require starting KiCad or loading `pcbnew`.
 
 ## Extract once, review attributable pages
 
-`inspect` keys its persistent cache by the original PDF SHA-256, resolved extractor
-paths, executable SHA-256/version, and exact text/render options. Text is stored
-as `pages/0001.txt` and optional renders as `renders/0001.png`. The receipt records
-actual page count and artifact hashes. Cache publication is locked and atomic;
-missing/corrupt artifacts force extraction, and concurrent source/tool changes
-refuse acceptance. Original PDFs remain unchanged. Extracted text and renders
-always report `reviewed:false` and `qualified:false`.
+`inspect` keeps two source-bound cache identities. The shared text entry under
+`text/<text_cache_key>` binds the original PDF SHA-256, resolved `pdfinfo` and
+`pdftotext` executable hashes/versions, and exact text options. A full inspection
+entry additionally binds requested render pages, DPI and `pdftoppm` when used.
+Changing render pages or DPI can miss the full entry while reusing the same text
+extraction; changing the PDF or text tools invalidates the text identity.
+
+Text remains available as `pages/0001.txt` and requested images as
+`renders/0001.png` in the full inspection entry. Its receipt retains actual page
+count and artifact hashes. Locked, atomic publication and hash validation apply
+to both layers. Missing/corrupt artifacts regenerate the affected entry; a valid
+matching full entry can also seed the shared text entry without another extraction.
+Concurrent source/tool changes refuse acceptance. Original PDFs remain unchanged.
+Extracted text and renders always report `reviewed:false` and `qualified:false`.
+
+`cache_hit` describes the exact full request. `text_cache_hit` is true when text
+is reused from either the canonical text entry or a valid matching legacy full
+entry. Reports retain `text_cache_key`, `text_cache_directory` and the full entry's
+key/directory. Regenerating a missing/corrupt full artifact from verified canonical
+text does not require `pdftotext`; final full-entry artifacts, source and tools are
+still validated. With `--json --output FILE`, inspect writes the full evidence
+report once and prints a compact receipt with cache status and report path/hash.
+Without `--output`, JSON stdout remains the full report.
 
 PDFs must retain their existing `.pdf.source.json` source/time/hash attribution.
 A review cites exact original PDF paths, hashes, document identity/revision and
@@ -95,6 +111,22 @@ explicitly electrical or mechanical. Translation/rotation alone leaves static
 package evidence reusable; every report still hashes current native source files.
 Whole schematic paths are excluded from reusable symbol hashes, allowing the same
 exact symbol to be used on different boards.
+
+Native `verify` blocks `unspecified_pin_type` when an explicitly reviewed symbol
+contains actual pins with electrical type `unspecified`, even if their stored
+hashes match. This is our reviewed-symbol completeness rule. KiCad 10's default
+pin-conflict map warns for many unspecified-pin connections; its configured ERC
+rules determine the actual result. The [KiCad 10 pin-type documentation](https://docs.kicad.org/10.0/en/eeschema/eeschema.html#pin-electrical-types)
+distinguishes unspecified types, unconnected types and schematic no-connect flags.
+[KLC S4.4](https://klc.kicad.org/symbol/s4/s4.4/) requires electrical types to match
+their function, including appropriate power/ground and logic types.
+
+The guard checks actual symbol `pin_map` entries. Mechanical-only pads are covered
+by the separate electrical/mechanical pad classification, and cannot hide an
+electrical pin. An explicitly reviewed DNP part receives the same guard; automatic
+required-part coverage remains limited to fitted parts. Pre-CAD `selection` does
+not inspect native pins. Assign types from reviewed function and mode; do not
+automatically relabel pins as passive or unconnected to silence the blocker.
 
 Rating demand and applicability ranges must use identical explicit units and lie
 inside their sourced limits. Demands must cite that board's requirements; limits
