@@ -2,7 +2,10 @@
 
 Pad-center HPWL is a new all-net geometric measurement. It is neither routed
 length nor the production placer's weighted proxy. No rule limits are inferred.
+Pairwise distance sums each unordered pair of pad centers within each named
+net, in millimeters; interior motion can change it while HPWL stays constant.
 """
+from itertools import combinations
 import math
 from pathlib import Path
 
@@ -15,6 +18,7 @@ ROUTING_FEATURES = (
     ("declared_net_count", "count"), ("copper_layer_count", "count"),
     ("retained_track_count", "count"), ("retained_via_count", "count"),
     ("retained_zone_count", "count"), ("all_net_pad_hpwl_mm", "mm"),
+    ("all_net_pairwise_distance_sum_mm", "mm"),
     ("two_pad_net_count", "count"), ("two_pad_distance_sum_mm", "mm"),
     ("two_pad_distance_max_mm", "mm"), ("edge_bbox_area_mm2", "mm2"),
 )
@@ -34,7 +38,8 @@ def feature_contract(adapter):
     import hashlib
     tools = Path(__file__).resolve().parent
     columns = ROUTING_FEATURES if adapter == "routing" else WORKFLOW_FEATURES
-    return dict(id="iot-lab.pcb-ml-predecision." + adapter, version=1, adapter=adapter,
+    return dict(id="iot-lab.pcb-ml-predecision." + adapter,
+                version=2 if adapter == "routing" else 1, adapter=adapter,
                 features=[dict(name=name, unit=unit) for name, unit in columns],
                 implementation_sha256={"tools/" + name: hashlib.sha256((tools / name).read_bytes()).hexdigest()
                                        for name in IMPLEMENTATIONS})
@@ -82,28 +87,46 @@ def routing_features(text):
         if len(net) != 3 or net[1] in nets:
             raise ValueError("unsupported or ambiguous native net table")
         nets[net[1]] = net[2]
+    pad_nets = [(fp, pad, _child(pad, "net")) for fp, pad in pads]
+    declared_names = {name for name in nets.values() if name}
+    # KiCad 10 can omit the legacy table and name nets on individual pads.
+    # Resolve all explicit declarations before numeric references, regardless
+    # of footprint order, while retaining unused legacy net declarations.
+    for _, _, net in pad_nets:
+        if not net:
+            continue
+        if len(net) == 2:
+            code, name = net
+            if code in nets and nets[code] != name:
+                raise ValueError("pad net differs from native table or another pad declaration")
+            nets[code] = name
+            if name:
+                declared_names.add(name)
+        elif len(net) == 1:
+            if net[0] and not net[0].isdecimal():
+                declared_names.add(net[0])
+        else:
+            raise ValueError("unsupported pad net")
     layers = _child(board, "layers")
     values = dict(footprint_count=len(fps), pad_count=len(pads),
-                  declared_net_count=len({net for net in nets.values() if net}),
+                  declared_net_count=len(declared_names),
                   copper_layer_count=sum(isinstance(row, list) and len(row) > 1 and row[1].endswith(".Cu") for row in layers) if layers is not None else None,
                   retained_track_count=len(_forms(board, "segment")) + len(_forms(board, "arc")),
                   retained_via_count=len(_forms(board, "via")), retained_zone_count=len(_forms(board, "zone")))
     reasons = []
     points = {}
     geometry_known = True
-    for fp, pad in pads:
-        net = _child(pad, "net")
+    for fp, pad, net in pad_nets:
         if not net:
             continue
         if len(net) == 2:
             name = net[1]
-            if net[0] in nets and nets[net[0]] != name:
-                raise ValueError("pad net differs from native table")
         elif len(net) == 1:
             name = nets.get(net[0], net[0] if not net[0].isdecimal() else None)
         else:
             raise ValueError("unsupported pad net")
         if name is None:
+            values["declared_net_count"] = None
             geometry_known = False
             reasons.append(dict(code="native_net_unknown", cause="numeric pad net lacks a native net name"))
             continue
@@ -127,6 +150,8 @@ def routing_features(text):
     values.update(all_net_pad_hpwl_mm=sum(max(x for x, _ in group) - min(x for x, _ in group) +
                                         max(y for _, y in group) - min(y for _, y in group)
                                         for group in points.values() if group) if geometry_known else None,
+                  all_net_pairwise_distance_sum_mm=sum(math.dist(a, b) for group in points.values()
+                                                       for a, b in combinations(group, 2)) if geometry_known else None,
                   two_pad_net_count=sum(len(group) == 2 for group in points.values()) if geometry_known else None,
                   two_pad_distance_sum_mm=sum(distances) if geometry_known else None,
                   two_pad_distance_max_mm=max(distances, default=0) if geometry_known else None)
