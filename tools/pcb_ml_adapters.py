@@ -31,6 +31,8 @@ ROUTING_TARGETS = {
     "accepted_within_budget": {"type": "binary", "direction": "max"},
     "owned_elapsed_s": {"type": "regression", "direction": "min", "unit": "s"},
     "successful_completion_elapsed_s": {"type": "regression", "direction": "min", "unit": "s"},
+    "routed_track_length_mm": {"type": "regression", "direction": "min", "unit": "mm"},
+    "routed_via_count": {"type": "regression", "direction": "min", "unit": "count"},
     "native_errors": {"type": "regression", "direction": "min", "unit": "count"},
     "native_opens": {"type": "regression", "direction": "min", "unit": "count"},
     "native_parity": {"type": "regression", "direction": "min", "unit": "count"},
@@ -262,12 +264,16 @@ def _row(root, trial, adapter, evidence):
         budget = budget if _finite(budget) and budget > 0 else None
         full = observation.get("full_gate_success") if observation else False
         native = observation.get("native") if observation else None
+        accepted = bool(known_controls and full and elapsed is not None and budget is not None and elapsed <= budget)
+        quality = observation.get("routed_quality", {}) if observation else {}
         targets = dict(accepted_within_budget=int(bool(full and elapsed <= budget)) if known_controls and elapsed is not None and budget is not None else None,
                        owned_elapsed_s=elapsed,
                        successful_completion_elapsed_s=elapsed if full else None,
                        native_errors=native["errors"] if native else None,
                        native_opens=native["opens"] if native else None,
                        native_parity=native["parity"] if native else None)
+        targets.update({name: quality.get(name) if accepted else None
+                        for name in ("routed_track_length_mm", "routed_via_count")})
         case = observation.get("case_fingerprint") if observation else None
         pose = observation.get("placement_pose_fingerprint") if observation else None
         details = dict(observation=observation or {}, controls_known=known_controls, owned_run_budget_s=budget,

@@ -230,6 +230,100 @@ class AdapterTests(unittest.TestCase):
         self.assertFalse(row["completion_censoring"]["observed"])
         self.assertEqual(len(dataset["rows"]), 1)
 
+    def test_quality_labels_measure_exact_final_native_copper_without_feature_leakage(self):
+        folder,trial=self.trial()
+        original=Path(trial['placement_input']['path'])
+        routed=original.read_text()[:-1]+'''
+            (segment (start -1 -1) (end 2 3) (width 0.2) (layer "F.Cu") (net 1))
+            (segment (start 2 3) (end 5 3) (width 0.2) (layer "B.Cu") (net 1))
+            (via (at 2 3) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1)))'''
+        self.update_native(folder,trial,candidate_text=routed)
+        dataset=self.corpus([trial]);row=dataset['rows'][0]
+        self.assertEqual(row['targets']['routed_track_length_mm'],8)
+        self.assertEqual(row['targets']['routed_via_count'],1)
+        self.assertTrue(row['eligibility']['targets']['routed_track_length_mm'])
+        self.assertTrue(row['eligibility']['targets']['routed_via_count'])
+        self.assertEqual(row['features']['retained_track_count'],0)
+        self.assertEqual(row['features']['retained_via_count'],0)
+        self.assertEqual(row['features'],self.packet(original)['rows'][0]['features'])
+        self.assertNotIn('routed_track_length_mm',dataset['feature_names'])
+        quality=row['observation']['routed_quality']
+        candidate=Path(quality['candidate']['path'])
+        self.assertEqual(quality['candidate']['sha256'],adapters._sha(candidate))
+        self.assertEqual(dataset['inputs'][str(candidate)],quality['candidate']['sha256'])
+        self.assertEqual(quality['unknowns'],{})
+        self.assertIn('retained copper included',quality['scope'])
+
+    def test_unsupported_or_nonfinite_track_geometry_never_becomes_zero_length(self):
+        segment='(segment (start 0 0) (end 3 4) (width 0.2) (layer "F.Cu") (net 1))'
+        via='(via (at 3 4) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1))'
+        changes=[('arc','(arc (start 0 0) (mid 1 1) (end 2 0) (width 0.2) (layer "F.Cu") (net 1))'),
+                 ('nan',segment.replace('3 4','nan 4')),('infinite',segment.replace('3 4','1e999 4')),
+                 ('wrong_unit',segment.replace('3 4','3mm 4')),('missing_endpoint',segment.replace('(end 3 4)','')),
+                 ('duplicate_endpoint',segment.replace('(end 3 4)','(end 3 4) (end 5 6)')),
+                 ('noncopper',segment.replace('F.Cu','F.SilkS'))]
+        for name,track in changes:
+            with self.subTest(geometry=name):
+                folder,trial=self.trial(arm=name)
+                original=Path(trial['placement_input']['path'])
+                self.update_native(folder,trial,candidate_text=original.read_text()[:-1]+track+via+')')
+                row=self.corpus([trial])['rows'][0]
+                self.assertEqual(row['targets']['accepted_within_budget'],1)
+                self.assertIsNone(row['targets']['routed_track_length_mm'])
+                self.assertFalse(row['eligibility']['targets']['routed_track_length_mm'])
+                self.assertEqual(row['targets']['routed_via_count'],1)
+                self.assertTrue(row['observation']['routed_quality']['unknowns']['routed_track_length_mm'])
+
+    def test_malformed_via_does_not_hide_valid_segment_length(self):
+        folder,trial=self.trial()
+        original=Path(trial['placement_input']['path'])
+        routed=original.read_text()[:-1]+'''
+            (segment (start 0 0) (end 3 4) (width 0.2) (layer "F.Cu") (net 1))
+            (via (at 3 nan) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1)))'''
+        self.update_native(folder,trial,candidate_text=routed)
+        row=self.corpus([trial])['rows'][0]
+        self.assertEqual(row['targets']['routed_track_length_mm'],5)
+        self.assertIsNone(row['targets']['routed_via_count'])
+        self.assertTrue(row['observation']['routed_quality']['unknowns']['routed_via_count'])
+
+    def test_failed_timeout_and_control_unknown_rows_have_no_successful_quality_labels(self):
+        for name,status,controlled in (('failure','failed',True),('timeout','timeout',True),
+                                       ('unknown','passed',False)):
+            with self.subTest(outcome=name):
+                folder,trial=self.trial(arm=name,status=status,controlled=controlled)
+                original=Path(trial['placement_input']['path'])
+                self.update_native(folder,trial,candidate_text=original.read_text()[:-1]+'''
+                    (segment (start 0 0) (end 3 4) (width 0.2) (layer "F.Cu") (net 1)))''')
+                row=self.corpus([trial])['rows'][0]
+                self.assertIsNone(row['targets']['routed_track_length_mm'])
+                self.assertIsNone(row['targets']['routed_via_count'])
+                self.assertTrue(row['observation']['routed_quality']['unknowns'])
+
+    def test_quality_requires_sealed_candidate_and_exact_fresh_native_binding(self):
+        for change in ('candidate_bytes','binding','cached','units','over_budget'):
+            with self.subTest(change=change):
+                folder,trial=self.trial(arm=change)
+                operation=json.loads((folder/'operation/result.json').read_text())
+                candidate=folder/'workspace'/Path(operation['candidate']).relative_to(operation['workspace'])
+                if change=='candidate_bytes':
+                    candidate.write_text(candidate.read_text()[:-1]+'''
+                        (segment (start 0 0) (end 3 4) (width 0.2) (layer "F.Cu") (net 1)))''')
+                else:
+                    gate_path=folder/'gate/result.json';gate=json.loads(gate_path.read_text())
+                    if change=='binding':gate['provenance']['inputs'][0]['sha256']='0'*64
+                    if change=='cached':gate['checks']['drc']['cached']=True
+                    if change=='units':
+                        path=folder/'gate/drc.json';raw=json.loads(path.read_text());raw['coordinate_units']='in';write(path,raw)
+                    write(gate_path,gate)
+                    if change=='over_budget':
+                        manifest=json.loads((folder/'run.json').read_text());manifest['timeout_s']=1;write(folder/'run.json',manifest)
+                    self.fixture.reseal(folder);trial['sha256']=adapters._sha(folder/'result.json')
+                row=self.corpus([trial])['rows'][0]
+                self.assertIsNone(row['targets']['routed_track_length_mm'])
+                self.assertIsNone(row['targets']['routed_via_count'])
+                if change!='over_budget':self.assertFalse(row['evidence_valid'])
+                else:self.assertEqual(row['targets']['accepted_within_budget'],0)
+
     def test_controlled_failure_has_zero_acceptance_but_never_zero_completion_time(self):
         _, trial = self.trial(status="failed")
         row = self.corpus([trial])["rows"][0]

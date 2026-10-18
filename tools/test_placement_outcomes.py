@@ -88,6 +88,89 @@ class OutcomeTests(unittest.TestCase):
             for arm in self.study['arms']:
                 for rep in (1,2):self.run_fixture(split,family,arm,rep)
 
+    def update_native(self,folder,trial,text):
+        original=Path(trial['placement_input']['path']);original.write_text(text)
+        trial['placement_input']['sha256']=sha(original)
+        operation_path=folder/'operation/result.json';operation=json.loads(operation_path.read_text())
+        relative=Path(operation['candidate']).relative_to(operation['workspace'])
+        candidate=folder/'workspace'/relative;candidate.write_text(text)
+        operation['candidate_sha256']=sha(candidate);write(operation_path,operation)
+        source_path=folder/'operation/source.json';source=json.loads(source_path.read_text())
+        source['files'][str(relative)]=sha(original);write(source_path,source)
+        gate_path=folder/'gate/result.json';gate=json.loads(gate_path.read_text())
+        gate['provenance']['inputs'][0]['sha256']=sha(candidate);write(gate_path,gate)
+        self.reseal(folder);trial['sha256']=sha(folder/'result.json')
+
+    def test_zone_fill_cache_does_not_split_the_same_authored_routing_case(self):
+        first,a=self.run_fixture('development','DEV','baseline',1)
+        second,b=self.run_fixture('development','DEV','proposal',1)
+        base=Path(a['placement_input']['path']).read_text()[:-1]
+        zone='''(zone (net 1) (net_name "N") (layer "F.Cu") (uuid "zone-1")
+            (connect_pads (clearance 0.2)) (fill yes (thermal_gap 0.3))
+            (polygon (pts (xy 0 0) (xy 5 0) (xy 5 5) (xy 0 5)))
+            CACHE)'''
+        self.update_native(first,a,base+zone.replace('CACHE','''
+            (filled_polygon (layer "F.Cu") (pts (xy 0 0) (xy 4 0) (xy 4 4)))
+            (fill_segments (layer "F.Cu") (pts (xy 0 0) (xy 1 1)))''')+')')
+        self.update_native(second,b,base+zone.replace('CACHE','''
+            (filled_polygon (layer "F.Cu") (pts (xy 0.1 0) (xy 3 0) (xy 3 3)))''')+')')
+        rows=self.evaluate()['observations']
+        self.assertTrue(all(row['evidence_valid'] for row in rows))
+        self.assertNotEqual(rows[0]['placement_input_sha256'],rows[1]['placement_input_sha256'])
+        self.assertEqual(rows[0]['case_fingerprint'],rows[1]['case_fingerprint'])
+
+    def test_authored_zone_and_retained_copper_changes_still_change_case_identity(self):
+        first,a=self.run_fixture('development','DEV','baseline',1)
+        second,b=self.run_fixture('development','DEV','proposal',1)
+        base=Path(a['placement_input']['path']).read_text()[:-1]+'''
+            (zone (net 1) (net_name "N") (layer "F.Cu") (uuid "zone-1")
+                (connect_pads (clearance 0.2)) (fill yes (thermal_gap 0.3))
+                (polygon (pts (xy 0 0) (xy 5 0) (xy 5 5) (xy 0 5))))
+            (segment (start 0 0) (end 1 0) (width 0.2) (layer "F.Cu") (net 1))
+            (arc (start 1 0) (mid 2 1) (end 3 0) (width 0.2) (layer "F.Cu") (net 1))
+            (via (at 1 0) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1)))'''
+        self.update_native(first,a,base)
+        for old,new in (('(net 1)','(net 2)'),('zone-1','zone-2'),
+                        ('clearance 0.2','clearance 0.3'),('thermal_gap 0.3','thermal_gap 0.4'),
+                        ('xy 5 5','xy 5 6'),('(start 0 0)','(start 0.1 0)'),
+                        ('(mid 2 1)','(mid 2 2)'),('(at 1 0)','(at 1 0.1)')):
+            with self.subTest(changed=old):
+                self.update_native(second,b,base.replace(old,new,1))
+                rows=self.evaluate()['observations']
+                self.assertTrue(all(row['evidence_valid'] for row in rows))
+                self.assertNotEqual(rows[0]['case_fingerprint'],rows[1]['case_fingerprint'])
+
+    def test_retained_copper_order_is_irrelevant_but_exact_multiset_is_preserved(self):
+        first,a=self.run_fixture('development','DEV','baseline',1)
+        second,b=self.run_fixture('development','DEV','proposal',1)
+        base=Path(a['placement_input']['path']).read_text()[:-1]
+        copper=[
+            '(segment (start 0 0) (end 1 0) (width 0.2) (layer "F.Cu") (net 1) (uuid "segment-1"))',
+            '(arc (start 1 0) (mid 2 1) (end 3 0) (width 0.2) (layer "F.Cu") (net 1) (uuid "arc-1"))',
+            '(via (at 1 0) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1) (uuid "via-1"))',
+            '(via (at 3 0) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1) (uuid "via-2"))',
+        ]
+        self.update_native(first,a,base+' '.join(copper)+')')
+        self.update_native(second,b,base+' '.join(reversed(copper))+')')
+        rows=self.evaluate()['observations']
+        self.assertTrue(all(row['evidence_valid'] for row in rows))
+        self.assertNotEqual(rows[0]['placement_input_sha256'],rows[1]['placement_input_sha256'])
+        self.assertEqual(rows[0]['case_fingerprint'],rows[1]['case_fingerprint'])
+        changes={
+            'duplicate':copper+[copper[-1]],
+            'added':copper+[copper[-1].replace('via-2','via-3')],
+            'removed':copper[:-1],
+            'uuid_changed':copper[:-1]+[copper[-1].replace('via-2','via-3')],
+            'coordinate_changed':copper[:-1]+[copper[-1].replace('(at 3 0)','(at 3.000001 0)')],
+            'nested_order_changed':[copper[0].replace('(start 0 0) (end 1 0)','(end 1 0) (start 0 0)')]+copper[1:],
+        }
+        for name,changed in changes.items():
+            with self.subTest(change=name):
+                self.update_native(second,b,base+' '.join(changed)+')')
+                rows=self.evaluate()['observations']
+                self.assertTrue(all(row['evidence_valid'] for row in rows))
+                self.assertNotEqual(rows[0]['case_fingerprint'],rows[1]['case_fingerprint'])
+
     def test_equal_paired_disjoint_trials_allow_review_but_never_weight_adoption(self):
         self.controlled_study();report=self.evaluate()
         self.assertEqual(report['status'],'passed');self.assertTrue(report['comparative_readiness'])
