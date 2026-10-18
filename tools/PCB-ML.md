@@ -65,10 +65,15 @@ Copies, variants and all placement/repeat arms of a case belong in one split.
 Independent repeats remain observations; aliases of the same run count once.
 
 Routing features are counts of footprints, pads, declared nets, copper layers
-and retained copper; all-net pad-centre HPWL; two-pad distances; and the board
+and retained copper; all-net pad-centre HPWL and pairwise distance sum; two-pad distances; and the board
 outline's bounding-box area. HPWL is a geometric measurement, not routed length
 or the production placer's weighted score. Unsupported geometry remains unknown.
 Feature values, units and extractor hashes form a versioned contract.
+Routing contract v2 counts unique nonempty names in both legacy net tables and
+KiCad 10 pad-local declarations; unresolved numeric net references stay unknown.
+The pairwise sum measures unordered pad-centre pairs within each named net, in
+millimetres. It can distinguish interior pad movements that leave HPWL unchanged.
+Rebuild datasets and models after an extractor-contract change.
 
 Routing targets are `accepted_within_budget`, `owned_elapsed_s`,
 `successful_completion_elapsed_s`, `native_errors`, `native_opens` and

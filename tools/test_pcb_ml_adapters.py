@@ -32,6 +32,52 @@ def write(path, value):
 
 
 class FeatureTests(unittest.TestCase):
+    def without_legacy_nets(self):
+        return NATIVE.replace(' (net 0 "") (net 1 "/A")\n', '')
+
+    def test_kicad10_pad_local_named_nets_are_counted_without_a_legacy_table(self):
+        native = self.without_legacy_nets().replace('(net 1 "/A")', '(net "/A")')
+        native = native.replace('(net "/A")', '(net "/B")', 1)
+        values, causes = features.routing_features(native)
+        self.assertEqual(values['declared_net_count'], 2)
+        self.assertEqual(causes, [])
+        self.assertEqual(features.feature_contract('routing')['version'], 2)
+        self.assertEqual(features.feature_contract('workflow')['version'], 1)
+
+    def test_legacy_numeric_references_and_later_explicit_pad_declarations_resolve(self):
+        legacy = NATIVE.replace('(net 1 "/A")', '(net 1)').replace('(net 1)', '(net 1 "/A")', 1)
+        named = self.without_legacy_nets().replace('(net 1 "/A")', '(net 7 "/A")')
+        named = named.replace('(net 7 "/A")', '(net 7)', 1)
+        for native in (legacy, named):
+            with self.subTest(native=native):
+                values, causes = features.routing_features(native)
+                self.assertEqual(values['declared_net_count'], 1)
+                self.assertEqual(values['all_net_pad_hpwl_mm'], 12)
+                self.assertEqual(causes, [])
+
+    def test_mixed_declarations_deduplicate_names_and_exclude_empty_names(self):
+        native = NATIVE.replace('(net 0 "")', '(net 0 "") (net 2 "/A") (net 3 "/UNUSED")')
+        native = native.replace('(net 1 "/A")))', '(net "/B")))', 1)
+        native = native.replace('(net 1 "/A")))', '(net "")))', 1)
+        values, causes = features.routing_features(native)
+        self.assertEqual(values['declared_net_count'], 3)
+        self.assertEqual(causes, [])
+
+    def test_unresolved_numeric_pad_net_keeps_net_count_and_geometry_unknown(self):
+        native = self.without_legacy_nets().replace('(net 1 "/A")', '(net 7)')
+        values, causes = features.routing_features(native)
+        self.assertIsNone(values['declared_net_count'])
+        self.assertIsNone(values['all_net_pad_hpwl_mm'])
+        self.assertIsNone(values['all_net_pairwise_distance_sum_mm'])
+        self.assertIn('native_net_unknown', {row['code'] for row in causes})
+        self.assertIn('declared_net_count', {row.get('feature') for row in causes})
+
+    def test_named_pad_declarations_cannot_contradict_table_or_each_other(self):
+        for native in (NATIVE, self.without_legacy_nets()):
+            changed = native.replace('(net 1 "/A")))', '(net 1 "/CONFLICT")))', 1)
+            with self.subTest(native=native), self.assertRaisesRegex(ValueError, 'pad net differs'):
+                features.routing_features(changed)
+
     def test_native_pad_rotation_counts_and_all_net_measurements(self):
         values, causes = features.routing_features(NATIVE)
         self.assertEqual(causes, [])
@@ -45,10 +91,30 @@ class FeatureTests(unittest.TestCase):
         self.assertEqual(values["two_pad_net_count"], 1)
         self.assertAlmostEqual(values["all_net_pad_hpwl_mm"], 12)
         self.assertAlmostEqual(values["two_pad_distance_sum_mm"], 104 ** 0.5)
+        self.assertAlmostEqual(values["all_net_pairwise_distance_sum_mm"], 104 ** 0.5)
         self.assertEqual(values["edge_bbox_area_mm2"], 600)
         moved, _ = features.routing_features(NATIVE.replace("(at 20 10)", "(at 25 10)"))
         self.assertAlmostEqual(moved["all_net_pad_hpwl_mm"], 17)
         self.assertEqual(moved["retained_track_count"], values["retained_track_count"])
+
+    def test_interior_pad_motion_changes_pairwise_distance_without_changing_hpwl(self):
+        native = '''(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+          (footprint "A" (at 0 0) (pad "1" (at 0 0) (net "/A")))
+          (footprint "B" (at 10 10) (pad "1" (at 0 0) (net "/A")))
+          (footprint "C" (at 5 6 90) (pad "1" (at 1 0) (net "/A")))
+          (footprint "D" (at 1000 1000) (pad "1" (at 0 0) (net "/OTHER")))
+          (gr_rect (start 0 0) (end 1010 1010) (layer "Edge.Cuts")))'''
+        before, causes = features.routing_features(native)
+        after, moved_causes = features.routing_features(native.replace('(at 5 6 90)', '(at 5.5 6 90)'))
+        self.assertEqual(causes, [])
+        self.assertEqual(moved_causes, [])
+        self.assertEqual(before['all_net_pad_hpwl_mm'], 20)
+        self.assertEqual(after['all_net_pad_hpwl_mm'], before['all_net_pad_hpwl_mm'])
+        self.assertAlmostEqual(before['all_net_pairwise_distance_sum_mm'], 2 * 200 ** .5)
+        self.assertGreater(after['all_net_pairwise_distance_sum_mm'], before['all_net_pairwise_distance_sum_mm'])
+        column = next(row for row in features.feature_contract('routing')['features']
+                      if row['name'] == 'all_net_pairwise_distance_sum_mm')
+        self.assertEqual(column['unit'], 'mm')
 
     def test_unsupported_geometry_is_unknown_not_an_approximation(self):
         native = NATIVE.replace('(gr_rect (start 0 0) (end 30 20) (layer "Edge.Cuts"))',
@@ -60,6 +126,7 @@ class FeatureTests(unittest.TestCase):
         values, causes = features.routing_features(NATIVE.replace("(at 2 0)", ""))
         self.assertIsNone(values["all_net_pad_hpwl_mm"])
         self.assertIsNone(values["two_pad_distance_sum_mm"])
+        self.assertIsNone(values["all_net_pairwise_distance_sum_mm"])
         self.assertTrue(causes)
         with self.assertRaisesRegex(ValueError, "unbalanced"):
             features.routing_features(NATIVE[:-1])
