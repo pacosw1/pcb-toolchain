@@ -1,11 +1,13 @@
 """Unified engineering adapters reject missing proof and preserve run ownership."""
 import hashlib
 from importlib.machinery import EXTENSION_SUFFIXES
+from fractions import Fraction
 import json
 import os
 from pathlib import Path
 import py_compile
 import shutil
+import socket
 import sys
 import tempfile
 import unittest
@@ -15,6 +17,7 @@ import pcb_cli
 import pcb_cycle
 import pcb_operations
 import pcb_observation_inputs as inputs
+import pcb_routing_trial as routing_trial
 import test_pcb_cli as fixtures
 import test_pcb_workflow as workflows
 
@@ -164,6 +167,185 @@ class ObservationPolicyTests(unittest.TestCase):
         self.assertFalse(inputs.current({}))
         self.assertFalse(inputs.current(None))
 
+
+
+class RoutingTrialTests(unittest.TestCase):
+    """Synthetic runtime protocol; separate real-Node gate admission coverage."""
+    def setUp(self):
+        temporary=tempfile.TemporaryDirectory(prefix='controlled-routing-')
+        self.addCleanup(temporary.cleanup);self.root=Path(temporary.name).resolve()
+        self.native=self.root/'hardware-design/boards/TRIAL/cad/TRIAL.kicad_pcb'
+        self.json_file(self.native.parent.parent/'gate.json',dict(project='cad/TRIAL',checks=dict(drc=True),
+            route_features=dict(routing_rules=dict(on=False))))
+        self.native.parent.mkdir(parents=True,exist_ok=True)
+        for extension in ('.kicad_pcb','.kicad_sch','.kicad_pro','.kicad_dru'):
+            self.native.with_suffix(extension).write_text('synthetic protocol input '+extension)
+        for name in ('fastroute_job.py','route_features.py'):
+            path=self.root/'tools'/name;path.parent.mkdir(parents=True,exist_ok=True)
+            path.write_text('# synthetic producer identity; never executed\n')
+        self.json_file(self.root/'tools/route-features.json',dict(features=dict(routing_rules=dict(on=True,repair_iterations=2))))
+        self.executables={}
+        for name in ('python','router','kicad'):
+            path=self.root/'bin'/name;path.parent.mkdir(parents=True,exist_ok=True)
+            path.write_text('synthetic executable identity; version probe is stubbed\n');path.chmod(0o755)
+            self.executables[name]=path
+        self.context=self.root/'host-context/inspect.json'
+        self.context_value=dict(Id='c'*64,Image='sha256:'+'a'*64,Config=dict(Hostname=socket.gethostname()),
+            Mounts=[dict(Destination=str(self.context.parent),RW=False)],
+            HostConfig=dict(NetworkMode='none',NanoCpus=2000000000,Memory=2147483648))
+        self.json_file(self.context,self.context_value)
+        environment=dict(PCB_EXECUTION_CONTEXT=str(self.context),PCB_EXECUTION_IMAGE_ID='sha256:'+'b'*64,
+            KICAD_PYTHON=str(self.executables['python']),FASTROUTE_BIN=str(self.executables['router']),
+            KICAD_CLI=str(self.executables['kicad']),HOME=str(self.root),PATH=os.environ.get('PATH',os.defpath))
+        patch=mock.patch.dict(os.environ,environment,clear=True);patch.start();self.addCleanup(patch.stop)
+        patch=mock.patch.object(routing_trial,'_cgroups',return_value=dict(cpus=Fraction(2),memory_bytes=2147483648,affinity_cpus=2))
+        self.cgroups=patch.start();self.addCleanup(patch.stop)
+        def probe(command,env,probes):
+            probes.append(dict(command=command,returncode=0,output='synthetic fixture version'))
+            return 'synthetic fixture version'
+        patch=mock.patch.object(routing_trial,'_probe',side_effect=probe)
+        self.probe=patch.start();self.addCleanup(patch.stop)
+        patch=mock.patch.object(routing_trial,'_gate_admission',return_value=dict(stage='G4',inputs={}))
+        patch.start();self.addCleanup(patch.stop)
+        self.config=dict(schema=routing_trial.SCHEMA,layers=['F.Cu','B.Cu'],only_nets=['/A','/B'],
+            passes=2,threads=2,timeout_s=8,optimizer='off',max_repairs=0)
+        self.counter=0
+
+    def json_file(self,path,value):
+        path.parent.mkdir(parents=True,exist_ok=True);path.write_text(json.dumps(value))
+        return path
+
+    def prepare(self,config=None):
+        self.counter+=1
+        return routing_trial.prepare(self.root,self.native,self.root/f'run-{self.counter}/operation/router',
+            self.config if config is None else config,20,board='TRIAL')
+
+    def router_output(self,prepared,status='complete'):
+        output=Path(prepared['output']);output.mkdir()
+        config=prepared['config']
+        configuration=dict(board=str(self.native),outdir=str(output),passes=config['passes'],
+            layers=','.join(config['layers']),only_nets=','.join(config['only_nets']),threads=config['threads'],
+            max_time=config['timeout_s'],optimizer=config['optimizer'],preflight=True,skip_net='',plane_nets='',
+            gnd_vias=False,route_planes=False,unlock_nets='',set=[],neck_um=0)
+        self.json_file(output/'input-manifest.json',dict(configuration=configuration,
+            board_sha256=pcb_operations.sha(self.native),router_sha256=pcb_operations.sha(self.executables['router']),
+            features=prepared['policy']['effort']['feature_policy']))
+        self.json_file(output/'effective-configuration.json',dict(configuration=configuration,
+            backend_resources=dict(global_rayon_threads=2,autorouter_workers=2,optimizer_workers=2)))
+        candidate=output/'routed.kicad_pcb';candidate.write_text('synthetic routed candidate; requires native gate\n')
+        self.json_file(output/'outcome.json',dict(status=status,board_sha256=pcb_operations.sha(candidate),optimizer=config['optimizer']))
+        return output
+
+    def test_inspect_context_must_match_actual_hostname_mount_and_resource_limits(self):
+        observed=routing_trial.execution_context()
+        self.assertEqual(observed['image_id'],self.context_value['Image'])
+        self.assertEqual(observed['cpus'],2);self.assertEqual(observed['memory_bytes'],2147483648)
+        with mock.patch.dict(os.environ,{'PCB_EXECUTION_CONTEXT':''}):
+            with self.assertRaisesRegex(ValueError,'host-recorded Docker inspect'):
+                self.prepare()
+        for change,cause in ((dict(Image='mutable:image-tag'),'immutable actual image'),
+                             (dict(Config=dict(Hostname='another-container')),'another container hostname'),
+                             (dict(Mounts=[dict(Destination=str(self.context.parent),RW=True)]),'read-only'),
+                             (dict(HostConfig=dict(NetworkMode='bridge',NanoCpus=2000000000,Memory=2147483648)),'network-none')):
+            with self.subTest(change=change):
+                self.json_file(self.context,dict(self.context_value,**change))
+                with self.assertRaisesRegex(ValueError,cause):self.prepare()
+        self.json_file(self.context,self.context_value)
+        for observed in (dict(cpus=Fraction(1),memory_bytes=2147483648),dict(cpus=None,memory_bytes=2147483648)):
+            with self.subTest(cgroup=observed):
+                self.cgroups.return_value=observed
+                with self.assertRaisesRegex(ValueError,'cgroup limits differ'):self.prepare()
+        self.probe.assert_not_called()
+
+    def test_prepare_binds_normalized_configuration_and_observed_controls_before_launch(self):
+        prepared=self.prepare();command=prepared['command'];policy=prepared['policy']
+        self.assertEqual(prepared['config'],self.config);self.assertIsNot(prepared['config'],self.config)
+        for name,value in (('--threads','2'),('--max-time','8'),('--passes','2'),('--optimizer','off'),
+                           ('--layers','F.Cu,B.Cu'),('--only-nets','/A,/B'),('--skip-net',''),('--plane-nets','')):
+            self.assertEqual(command[command.index(name)+1],value)
+        self.assertIn('--preflight',command);self.assertFalse(Path(prepared['output']).exists())
+        self.assertEqual(policy['runtime']['image_id'],self.context_value['Image'])
+        self.assertEqual(policy['resources'],dict(cpus=2,memory_bytes=2147483648,threads=2))
+        self.assertEqual(policy['effort']['router_timeout_s'],8)
+        self.assertEqual(policy['effort']['timeout_s'],20)
+        self.assertFalse(policy['effort']['feature_policy']['routing_rules']['on'])
+        self.assertFalse(policy['controls']['effective_configuration_verified'])
+        self.assertEqual(json.loads(Path(prepared['policy_path']).read_text()),policy)
+        self.assertEqual((Path(prepared['output']).parent/'execution-context.json').read_bytes(),self.context.read_bytes())
+        self.assertEqual(self.probe.call_count,3)
+
+    def test_out_of_budget_or_unsupported_configuration_fails_before_runtime_probes(self):
+        for change,cause in ((dict(threads=3),'CPU quota'),(dict(timeout_s=21),'complete CLI deadline'),
+                             (dict(unlock_nets=['/A']),'exactly the routing-policy')):
+            with self.subTest(change=change):
+                with self.assertRaisesRegex(ValueError,cause):self.prepare(dict(self.config,**change))
+        self.probe.assert_not_called()
+
+    def test_actual_gate_validator_rejects_incomplete_or_g3_policy_before_runtime_admission(self):
+        core=self.root/'tools/lib/gate-core.mjs';core.parent.mkdir(parents=True)
+        shutil.copyfile(Path(routing_trial.__file__).resolve().parent/'lib/gate-core.mjs',core)
+        config=self.native.parent.parent/'gate.json'
+        with mock.patch.object(routing_trial,'_gate_admission',routing_trial.validate_gate), \
+                mock.patch.object(routing_trial,'execution_context') as context:
+            with self.assertRaisesRegex(ValueError,'required check disabled or absent: paths'):
+                self.prepare()
+            self.json_file(config,dict(project='cad/TRIAL',stage='G3',checks=dict(erc=True)))
+            with self.assertRaisesRegex(ValueError,'requires a G4 or G5 gate'):
+                self.prepare()
+            context.assert_not_called();self.probe.assert_not_called()
+        self.json_file(config,dict(project='cad/TRIAL',checks=dict(erc=True,drc=True,paths='current-paths.json',
+            viapads=dict(allow=[]),kicad_happy={},port_labels=True)))
+        admitted=routing_trial.validate_gate(self.root,'TRIAL')
+        self.assertEqual(admitted['stage'],'G4')
+        self.assertEqual(admitted['inputs'][str(config)],pcb_operations.sha(config))
+        self.assertEqual(admitted['inputs'][str(core)],pcb_operations.sha(core))
+
+    def test_finalize_preserves_failure_and_requires_fresh_native_acceptance(self):
+        prepared=self.prepare();self.router_output(prepared)
+        result=routing_trial.finalize(prepared,returncode=0)
+        self.assertEqual(result['status'],'passed');self.assertTrue(result['controls_verified'])
+        self.assertTrue(result['native_gate_required']);self.assertFalse(result['qualified'])
+        prepared=self.prepare();self.router_output(prepared,'stuck')
+        result=routing_trial.finalize(prepared,returncode=3)
+        self.assertEqual(result['status'],'failed');self.assertTrue(result['controls_verified'])
+        self.assertTrue(Path(result['candidate']).is_file())
+        prepared=self.prepare()
+        result=routing_trial.finalize(prepared,returncode=124)
+        self.assertEqual(result['status'],'failed');self.assertFalse(result['controls_verified'])
+        self.assertIsNone(result['candidate'])
+
+    def test_finalize_rejects_output_configuration_tool_and_context_mutations(self):
+        for target in ('input-manifest.json','effective-configuration.json','missing-effective',
+                       'routed.kicad_pcb','router','original-context','retained-context'):
+            with self.subTest(target=target):
+                prepared=self.prepare();output=self.router_output(prepared)
+                if target in ('input-manifest.json','effective-configuration.json'):
+                    path=output/target;value=json.loads(path.read_text())
+                    if target=='input-manifest.json':value['configuration']['threads']=3
+                    else:value['backend_resources']['autorouter_workers']=3
+                    self.json_file(path,value);original=None
+                elif target=='missing-effective':
+                    (output/'effective-configuration.json').unlink();original=None;path=None
+                else:
+                    path=(self.executables['router'] if target=='router' else self.context if target=='original-context'
+                          else output.parent/'execution-context.json' if target=='retained-context' else output/target)
+                    original=path.read_bytes();path.write_bytes(original+b'changed bytes')
+                try:
+                    with self.assertRaises(ValueError):routing_trial.finalize(prepared,returncode=0)
+                finally:
+                    if original is not None:path.write_bytes(original)
+
+    def test_explicit_route_keeps_the_existing_writer_without_solver_context(self):
+        flow=workflows.WorkflowTests();flow.setUp();self.addCleanup(flow.tearDown)
+        (flow.root/'tools/pcbtool.py').write_text('import sys\nprint("explicit-route-writer",sys.argv[1],flush=True)\n')
+        spec=flow.root/'explicit-routes.json';spec.write_text('{"routes":[]}')
+        response=flow.fixture.cli('route','X','--spec',str(spec),'--json',
+            env=dict(flow.env,PCB_EXECUTION_CONTEXT=''))
+        self.assertEqual(response.returncode,0,response.stdout+response.stderr)
+        result=json.loads(response.stdout.splitlines()[-1]);folder=flow.runs/result['run_id']
+        self.assertTrue(result['candidate_verified'])
+        self.assertIn('explicit-route-writer route',(folder/'operation/route.log').read_text())
+        self.assertFalse((folder/'operation/execution-policy.json').exists())
 
 
 class EngineeringCliTests(unittest.TestCase):

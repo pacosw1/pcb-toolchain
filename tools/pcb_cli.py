@@ -437,6 +437,8 @@ def start_run(args, base):
     if spec is not None:
         manifest['spec'] = spec
         manifest['spec_sha256'] = hashlib.sha256(Path(args.spec).read_bytes()).hexdigest()
+    if operation == 'route':
+        manifest['router'] = getattr(args, 'router', 'explicit')
     if getattr(args, 'kind', None):
         manifest['kind'] = args.kind
     for key in ('plan', 'engineering_manifest', 'design_contract'):
@@ -634,6 +636,9 @@ def main(argv=None):
                 child.add_argument('--spec', type=Path, required=True)
                 if name == 'edit':
                     child.add_argument('--kind', choices=['place', 'route'], required=True)
+                else:
+                    child.add_argument('--router', choices=['explicit', 'fastroute'], default='explicit',
+                                       help='explicit track proposal or controlled solver candidate')
             if name == 'repair':
                 child.add_argument('--plan', type=Path, required=True)
             if name in ('build', 'edit', 'route', 'repair'):

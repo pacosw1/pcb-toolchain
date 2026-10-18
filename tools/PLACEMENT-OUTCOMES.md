@@ -63,6 +63,24 @@ data or statistical generalization: unrecorded model-selection access is unknown
 Two repetitions establish repetition, not a confidence or quality threshold.
 No score changes are adopted automatically, including after a complete comparison.
 
+Each independent CLI trial must refer to a distinct sealed run. Aliases,
+relabelled arms/repetitions and copied archives cannot count the same execution
+again. Observations expose both `placement_input_sha256` and
+`placement_pose_fingerprint`; their shared `case_fingerprint` intentionally
+excludes unlocked poses while retaining electrical identity and existing copper.
+Controlled Fastroute trials also need finalized, sealed effective-configuration
+and original executor receipts. A prepared or incomplete receipt remains an
+unknown control; its failed execution stays in the study inventory.
+
+`python3 tools/routing_trial_smoke.py --output NEW --json` exercises one native
+four-pad development pair using the real controlled solver option. Run it in the
+admitted container described in [PCB-CLI.md](PCB-CLI.md), with the original host
+inspect receipt and actual solver available. It retains input legality checks,
+two owned route/gate results, per-arm cycles and the evaluated study. No substitute
+proxy score is invented when the production scorer is unavailable. A successful
+smoke proves this execution/evidence path; one synthetic pair leaves comparative
+readiness, ranking quality and weight adoption unproved.
+
 Existing `placer.placement_audit.archive` evidence is also readable through
 `kind: "placement_archive"`, with the archive folder and expected `run.json` hash.
 Its original source/hash attribution and proxy scores are retained. Legacy

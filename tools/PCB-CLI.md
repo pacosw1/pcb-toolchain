@@ -120,6 +120,30 @@ mutable links into canonical CAD. Historical runs/unrelated evidence are exclude
 Source hashes detect concurrent edits. Parts, locked footprint poses, pad/net assignments, outline,
 stackup and rules remain protected; changes require an explicit design revision.
 
+For an actual bounded solver invocation, opt in with
+`tools/pcb route BOARD --router fastroute --spec POLICY.json --detach --json`.
+The default `--router explicit` keeps the existing track/via proposal behavior.
+The controlled policy has these exact fields:
+
+```json
+{"schema":"iot-lab.routing-policy.v1","layers":["F.Cu","B.Cu"],"only_nets":["/A"],"passes":40,"threads":1,"timeout_s":30,"optimizer":"if-routed","max_repairs":0}
+```
+
+Passes, threads and engine time are explicit operational budgets, not design
+acceptance thresholds. The total CLI deadline also covers verification.
+`max_repairs: 0` permits zero separate CLI repair operations; the effective
+existing internal routing/repair feature policy is retained and recorded.
+Only exact selected net names and `off`/`if-routed` optimizer modes are accepted.
+
+Controlled execution requires a host-recorded original `docker inspect` receipt
+at `PCB_EXECUTION_CONTEXT`, mounted read-only in the matching network-none
+container with explicit CPU/memory limits. The actual immutable image, resolved
+tool identities, resource limits and effective configuration are sealed under
+`operation/`. A supplied image-name string cannot establish those controls.
+Missing or contradictory runtime evidence stops before routing. Solver output
+stays in the isolated candidate, then must pass the same complete fresh native,
+configured and applicable semantic checks before adoption is possible.
+
 Candidates must pass fresh configured gates and applicable BASE/ENV semantic
 checks. `adopt` verifies settled cleanup, candidate/evidence hashes, unchanged
 original inputs and current native dependencies. Under the board writer lock it

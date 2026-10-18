@@ -5,6 +5,7 @@ import datetime as dt
 import io
 import json
 from pathlib import Path
+import shutil
 import tempfile
 import unittest
 from unittest import mock
@@ -106,6 +107,83 @@ class OutcomeTests(unittest.TestCase):
         self.assertEqual(report['arms']['baseline']['full_gate_successes'],0)
         self.assertIn('trial_controls_unknown',{b['code'] for b in report['blockers']})
 
+    def test_prepared_solver_policy_stays_unknown_and_retains_the_failed_trial(self):
+        folder,trial=self.run_fixture('development','DEV','baseline',1,status='timeout')
+        manifest=json.loads((folder/'run.json').read_text());manifest['router']='fastroute';write(folder/'run.json',manifest)
+        path=folder/trial['execution_policy'];policy=json.loads(path.read_text())
+        policy['controls']=dict(status='prepared',effective_configuration_verified=False);write(path,policy)
+        self.reseal(folder,'timeout');trial['sha256']=sha(folder/'result.json')
+        report=self.evaluate();row=report['observations'][0]
+        self.assertTrue(row['evidence_valid']);self.assertEqual(row['failure_class'],'timeout')
+        self.assertIsNone(row['policy_fingerprint']);self.assertFalse(report['comparative_readiness'])
+        self.assertEqual(report['arms']['baseline']['trials'],1)
+        self.assertIn('trial_controls_unknown',{value['code'] for value in report['blockers']})
+        context=folder/'operation/execution-context.json';write(context,dict(fixture='archived host context'))
+        effective=folder/'operation/router/effective-configuration.json';write(effective,dict(fixture='observed controls'))
+        actual=folder/'operation/router/input-manifest.json';write(actual,dict(fixture='observed input'))
+        policy['execution_context']=dict(path='operation/execution-context.json',sha256=sha(context))
+        policy['controls'].update(effective_configuration_verified=True,
+            effective_configurations={effective.name:sha(effective)},input_manifest_sha256=sha(actual))
+        write(path,policy);self.reseal(folder,'timeout');trial['sha256']=sha(folder/'result.json')
+        self.assertIsNotNone(self.evaluate()['observations'][0]['policy_fingerprint'])
+        write(context,dict(fixture='changed host context'))
+        self.reseal(folder,'timeout');trial['sha256']=sha(folder/'result.json')
+        report=self.evaluate()
+        self.assertFalse(report['observations'][0]['evidence_valid'])
+        self.assertIn('evidence changed',report['observations'][0]['cause'])
+
+    def test_aliases_and_reformatted_archive_copies_cannot_supply_independent_trials(self):
+        folder,original=self.run_fixture('development','DEV','baseline',1)
+        alias=self.root/'run-alias';alias.symlink_to(folder,target_is_directory=True)
+        archived=self.root/'copied-run';shutil.copytree(folder,archived)
+        # Formatting changes its result hash, but not the identity of the
+        # original sealed run admission represented by run.json.
+        result=archived/'result.json'
+        result.write_text(json.dumps(json.loads(result.read_text()),indent=2)+'\n')
+        self.assertNotEqual(sha(result),original['sha256'])
+        for change in (dict(id='reused-arm',arm='proposal',path=str(alias)),
+                       dict(id='reused-replicate',replicate=2,path=str(alias)),
+                       dict(id='reformatted-copy',arm='proposal',path=str(archived),sha256=sha(archived/'result.json'))):
+            with self.subTest(trial=change['id']):
+                duplicate=dict(copy.deepcopy(original),**change)
+                self.study['trials']=[original,duplicate]
+                report=self.evaluate()
+                self.assertFalse(report['comparative_readiness'])
+                self.assertEqual(len(report['observations']),2)
+                self.assertEqual(sum(row['full_gate_success'] for row in report['observations']),1)
+                invalid=report['observations'][1]
+                self.assertFalse(invalid['evidence_valid'])
+                self.assertEqual(invalid['failure_class'],'evidence_invalid')
+                self.assertIn('same sealed run reused',invalid['cause'])
+                self.assertEqual(sum(arm['full_gate_successes'] for arm in report['arms'].values()),1)
+
+    def test_distinct_attributed_poses_share_case_identity_without_claiming_comparative_readiness(self):
+        _,baseline=self.run_fixture('development','DEV','baseline',1)
+        folder,proposal=self.run_fixture('development','DEV','proposal',1)
+        original=Path(proposal['placement_input']['path'])
+        original.write_text(original.read_text().replace('(at 10 10)','(at 11 10)',1))
+        source_path=folder/'operation/source.json';source=json.loads(source_path.read_text())
+        relative='hardware-design/boards/DEV/native.kicad_pcb'
+        source['files'][relative]=sha(original);write(source_path,source)
+        candidate=folder/'workspace'/relative;candidate.write_bytes(original.read_bytes())
+        operation_path=folder/'operation/result.json';operation=json.loads(operation_path.read_text())
+        operation['candidate_sha256']=sha(candidate);write(operation_path,operation)
+        gate_path=folder/'gate/result.json';gate=json.loads(gate_path.read_text())
+        gate['provenance']['inputs'][0]['sha256']=sha(candidate);write(gate_path,gate)
+        self.reseal(folder);proposal['sha256']=sha(folder/'result.json')
+        proposal['placement_input']['sha256']=sha(original)
+        report=self.evaluate();a,b=report['observations']
+        self.assertTrue(a['evidence_valid']);self.assertTrue(b['evidence_valid'])
+        self.assertEqual(a['placement_input_sha256'],baseline['placement_input']['sha256'])
+        self.assertEqual(b['placement_input_sha256'],proposal['placement_input']['sha256'])
+        self.assertNotEqual(a['placement_input_sha256'],b['placement_input_sha256'])
+        self.assertNotEqual(a['placement_pose_fingerprint'],b['placement_pose_fingerprint'])
+        self.assertEqual(a['case_fingerprint'],b['case_fingerprint'])
+        self.assertEqual(a['policy_fingerprint'],b['policy_fingerprint'])
+        self.assertTrue(report['observational_ready']);self.assertFalse(report['comparative_readiness'])
+        self.assertFalse(report['adopt_weights']);self.assertFalse(report['qualified'])
+        self.assertEqual({row['code'] for row in report['blockers']},{'repetition_missing'})
+
     def test_rehashed_trial_pointer_does_not_hide_a_tampered_native_report(self):
         folder,trial=self.run_fixture('development','DEV','baseline',1)
         path=folder/'gate/drc.json';raw=json.loads(path.read_text());raw['unconnected_items']=[dict(type='open')];write(path,raw)
@@ -124,7 +202,11 @@ class OutcomeTests(unittest.TestCase):
 
     def test_equal_claimed_policy_cannot_hide_different_actual_route_spec(self):
         self.controlled_study();trial=self.study['trials'][-1];folder=Path(trial['path'])
-        path=folder/'run.json';manifest=json.loads(path.read_text());manifest['spec']['route']['passes']=900;write(path,manifest)
+        path=folder/'run.json';original=json.loads(path.read_text());manifest=copy.deepcopy(original)
+        manifest['spec']['route']['passes']=900;write(path,manifest)
+        self.reseal(folder);trial['sha256']=sha(folder/'result.json')
+        self.assertIn('unequal_case_or_execution',{b['code'] for b in self.evaluate()['blockers']})
+        original['router']='fastroute';write(path,original)
         self.reseal(folder);trial['sha256']=sha(folder/'result.json')
         self.assertIn('unequal_case_or_execution',{b['code'] for b in self.evaluate()['blockers']})
 

@@ -464,7 +464,8 @@ def run(folder):
         spec.write_text(json.dumps(manifest['spec']))
     else:
         spec = None
-    command = None if operation == 'repair' else operation_command(workspace, board, operation, spec, manifest.get('kind'))
+    solver = operation == 'route' and manifest.get('router', 'explicit') == 'fastroute'
+    command = None if operation == 'repair' or solver else operation_command(workspace, board, operation, spec, manifest.get('kind'))
     env = dict(os.environ, IOT_LAB=str(workspace))
     env.update(KICAD_PY=python_native(), KICAD_PYTHON=python_native())
     if engineering:
@@ -492,6 +493,7 @@ def run(folder):
                 scope='design_layout_screen', operation=operation, candidate_verified=False, qualified=False,
                 cause='candidate placement or test access blocks routing', source_sha256=sources['sha256'], report=str(output)))
             return 1
+    solver_report = None
     if operation == 'repair':
         from route_decision import apply_plan
         plan = manifest['plan']
@@ -501,10 +503,25 @@ def run(folder):
             repair = apply_plan(workspace, board, plan['content'], folder / 'operation/repair')
         lean.atomic_json(folder / 'operation/repair-guard.json', repair)
         code = 0 if repair.get('status') in ('passed', 'proposed') else 1
+    elif solver:
+        from pcb_routing_trial import prepare, finalize
+        solver_output = folder / 'operation/router'
+        prepared = prepare(workspace, native, solver_output, manifest['spec'], manifest['timeout_s'], board=board)
+        code = execute(folder, 'route', prepared['command'], workspace, dict(env, **prepared['env']))
+        solver_report = finalize(prepared, returncode=code)
+        lean.atomic_json(folder / 'operation/router-summary.json', solver_report)
+        if not code and solver_report.get('status') != 'passed':
+            raise ValueError('solver completion lacks verified execution controls')
+        if not code:
+            routed = solver_output / 'routed.kicad_pcb'
+            if not routed.is_file():
+                raise ValueError('solver returned success without its routed native candidate')
+            shutil.copyfile(routed, native)
     else:
         code = execute(folder, operation, command, workspace, env)
     if code:
-        result = dict(status='failed', exit_code=1, cause=operation + ' tool failed', tool_exit=code)
+        result = dict(status='failed', exit_code=1,
+                      cause=(solver_report or {}).get('cause') or operation + ' tool failed', tool_exit=code)
     else:
         changed = [name for name, digest in sources['files'].items()
                    if name != str(source_native.relative_to(root)) and
