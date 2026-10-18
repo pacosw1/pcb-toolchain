@@ -103,13 +103,32 @@ def execution_policy(evidence, folder, trial, manifest, source, gate):
             or any(not finite(effort.get(k)) or effort[k]<=0 for k in ('timeout_s','passes'))
             or not finite(effort.get('max_repairs')) or not effort.get('optimizer')):
         raise ValueError('execution policy lacks actual runtime/resource/effort controls')
+    if manifest.get('router')=='fastroute':
+        controls=value.get('controls',{})
+        if controls.get('effective_configuration_verified') is not True:
+            return None,'solver effective execution controls are incomplete or unverified'
+        context=value.get('execution_context',{})
+        retained=(folder/context.get('path','')).resolve()
+        configurations=controls.get('effective_configurations')
+        if (not retained.is_relative_to(folder/'operation')
+                or not re.fullmatch(r'[0-9a-f]{64}',context.get('sha256',''))
+                or not re.fullmatch(r'[0-9a-f]{64}',controls.get('input_manifest_sha256',''))
+                or not isinstance(configurations,dict) or not configurations):
+            raise ValueError('solver controls lack sealed execution context or effective configuration bindings')
+        evidence.file(retained,context['sha256'])
+        evidence.file(folder/'operation/router/input-manifest.json',controls['input_manifest_sha256'])
+        for name,digest in configurations.items():
+            if (not isinstance(name,str) or Path(name).name!=name
+                    or not re.fullmatch(r'[0-9a-f]{64}',digest)):
+                raise ValueError('solver effective configuration binding is malformed')
+            evidence.file(folder/'operation/router'/name,digest)
     events=folder/'operation/events.jsonl'
     starts=[json.loads(line) for line in evidence.file(events).read_text().splitlines() if line.strip()]
     if not any(row.get('type')=='tool.start' and row.get('command')==value.get('command') for row in starts):
         raise ValueError('execution policy command differs from the recorded actual invocation')
     # The claimed budget cannot hide a different actual route spec or tool
     # implementation. Placement poses differ; routing policy must not.
-    actual=dict(operation=manifest.get('operation'),kind=manifest.get('kind'),spec=manifest.get('spec'),
+    actual=dict(operation=manifest.get('operation'),kind=manifest.get('kind'),router=manifest.get('router','explicit'),spec=manifest.get('spec'),
         repair_strategy=manifest.get('plan',{}).get('content',{}).get('choice',{}).get('strategy'),
         source_tools={name:digest for name,digest in source.get('files',{}).items() if name.startswith('tools/')},
         gate_tools=gate.get('provenance',{}).get('tools'),gate_policy=manifest.get('gate_config_sha256'),
@@ -156,8 +175,10 @@ def cli_observation(evidence, trial):
     if terminal['status']=='passed' and not full:raise ValueError('passed run lacks complete fresh native/configured acceptance')
     source=evidence.read(folder/'operation/source.json') if (folder/'operation/source.json').is_file() else {}
     input_ref=trial.get('placement_input');case_fingerprint=None;unknowns=[]
+    input_sha256=None;pose_fingerprint=None
     if input_ref:
         input_path=evidence.file(input_ref['path'],input_ref['sha256'])
+        input_sha256=evidence.inputs[str(input_path)]
         relative='hardware-design/boards/'+manifest['board']+'/'+manifest['project']+'.kicad_pcb'
         expected=source.get('files',{}).get(relative)
         if manifest.get('from_run'):
@@ -166,14 +187,18 @@ def cli_observation(evidence, trial):
             _,_,_,parent_operation,parent_candidate=sealed_run(evidence,parent['path'],parent['sha256'])
             if parent['sha256']!=manifest['from_run']['result_sha256']:raise ValueError('continued input parent differs from the admitted run')
             expected=parent_operation.get('candidate_sha256')
-        if expected!=sha(input_path):raise ValueError('placement input differs from the original route input')
+        if expected!=input_sha256:raise ValueError('placement input differs from the original route input')
         from pcb_operations import pcb_identity
+        from pcb_search.block_bindings import footprints
         from placer.dru import _tree,_tokens
         copper=[form for form in _tree(_tokens(input_path.read_text()))[0][1:]
                 if isinstance(form,list) and form and form[0] in ('segment','arc','via','zone')]
         sidecars={ext:source.get('files',{}).get(relative[:-len('.kicad_pcb')]+ext) for ext in ('.kicad_sch','.kicad_pro','.kicad_dru')}
         if any(not digest for digest in sidecars.values()):unknowns.append('original native sidecar identities are incomplete')
         case_fingerprint=identity(dict(identity=pcb_identity(input_path),retained_copper=copper,sidecars=sidecars))
+        canonical=lambda value:str(value.normalize()) if value else '0'
+        pose_fingerprint=identity({fp['props']['Reference']:[canonical(fp['pose'][0]),canonical(fp['pose'][1]),
+            canonical((fp['pose'][2]%360+360)%360)] for fp in footprints(input_path)})
     else:unknowns.append('original placement input artifact is absent')
     policy,missing=execution_policy(evidence,folder,trial,manifest,source,gate)
     if missing:unknowns.append(missing)
@@ -194,6 +219,7 @@ def cli_observation(evidence, trial):
         observed_interval_unix_s=interval,
         timing_scope='owned route/repair and verification run; unrecorded engineering effort unknown',
         timing=terminal.get('timing'),failure_class=failure,cause=cause,case_fingerprint=case_fingerprint,
+        placement_input_sha256=input_sha256,placement_pose_fingerprint=pose_fingerprint,
         policy_fingerprint=policy,unknowns=unknowns,qualified=False)
 
 
@@ -219,7 +245,7 @@ def evaluate_study(root, manifest, study_id=None):
     if not isinstance(arms,list) or len(arms)!=2 or len(set(arms))!=2:raise ValueError('study needs distinct baseline/proposal arms')
     development,holdout=(set(value.get(k,[])) for k in ('development_families','holdout_families'))
     if not development or not holdout or development&holdout:blockers.append(dict(code='holdout_not_disjoint',detail='declare nonempty board-family development/holdout sets with no overlap'))
-    ids=set();pairs=collections.defaultdict(dict)
+    ids=set();pairs=collections.defaultdict(dict);used_runs=set()
     for trial in value.get('trials',[]):
         base={k:trial.get(k) for k in ('id','arm','split','family','case','replicate')}
         try:
@@ -228,19 +254,28 @@ def evaluate_study(root, manifest, study_id=None):
                     or not base['case'] or not isinstance(base['replicate'],int) or isinstance(base['replicate'],bool) or base['replicate']<1):
                 raise ValueError('trial identity, partition or repetition is invalid')
             ids.add(base['id'])
+            run_keys=set()
+            if trial.get('kind')=='cli_run':
+                folder=(evidence.root/trial['path']).resolve()
+                run_keys={('folder',str(folder)),('result',trial['sha256'])}
+                if run_keys&used_runs:raise ValueError('same sealed run reused as an independent trial')
             observations=(archive_observations(evidence,trial) if trial.get('kind')=='placement_archive'
                           else [cli_observation(evidence,trial)] if trial.get('kind')=='cli_run' else [])
             if not observations:raise ValueError('unknown observation adapter')
             for observation in observations:
-                row=dict(base,**observation);rows.append(row)
+                row=dict(base,**observation)
                 if trial.get('kind')=='placement_archive':
                     row['id']=str(base['id'])+':step-'+str(row['step'])
+                    rows.append(row)
                     blockers.append(dict(code='legacy_observational_only',trial=row['id'],detail='; '.join(row['unknowns'])))
                     continue  # Legacy rows are observations, never controlled paired trials.
-                if row['unknowns']:blockers.append(dict(code='trial_controls_unknown',trial=base['id'],detail='; '.join(row['unknowns'])))
+                run_keys.add(('manifest',evidence.inputs[str(folder/'run.json')]))
+                if run_keys&used_runs:raise ValueError('same sealed run reused as an independent trial')
                 key=(base['split'],base['family'],base['case'],base['replicate'])
                 if base['arm'] in pairs[key]:raise ValueError('duplicate arm within paired repetition')
                 pairs[key][base['arm']]=row
+                used_runs.update(run_keys);rows.append(row)
+                if row['unknowns']:blockers.append(dict(code='trial_controls_unknown',trial=base['id'],detail='; '.join(row['unknowns'])))
         except (OSError,ValueError,KeyError,TypeError) as error:
             rows.append(dict(base,status='unknown',evidence_valid=False,full_gate_success=False,elapsed_s=None,failure_class='evidence_invalid',cause=str(error),unknowns=[str(error)]))
             blockers.append(dict(code='trial_evidence_invalid',trial=base['id'],detail=str(error)))
