@@ -249,16 +249,30 @@ class MlCliTests(unittest.TestCase):
         self.assertEqual(response.returncode, 0, response.stdout + response.stderr)
         folder = self.runs / json.loads(response.stdout)['run_id']
         self.until(lambda:(self.root/'child.pid').is_file())
+        pid = int((self.root/'child.pid').read_text())
+        def stopped():
+            if sys.platform.startswith('linux'):
+                try:
+                    status = Path(f'/proc/{pid}/status').read_text()
+                except FileNotFoundError:
+                    return True
+                state = next(line.split()[1] for line in status.splitlines()
+                             if line.startswith('State:'))
+                return state in ('Z', 'X', 'x')
+            process = subprocess.run(['/bin/ps','-o','stat=','-p',str(pid)],
+                                     capture_output=True,text=True,timeout=1)
+            if process.returncode == 1 and not process.stdout.strip() and not process.stderr.strip():
+                return True
+            self.assertEqual(process.returncode, 0, process.stderr)
+            self.assertTrue(process.stdout.strip(), 'ps returned no process state')
+            return process.stdout.strip().startswith('Z')
+        self.assertFalse(stopped(), 'cleanup observer must detect the live descendant')
         self.until(lambda:any(row['type']=='tool.output' and 'progress' in row.get('text','')
                               for row in pcb_cli.events(folder)))
         self.assertNotIn(pcb_cli.status(folder)['status'], pcb_cli.TERMINAL)
         result = self.until(lambda:pcb_cli.status(folder) if pcb_cli.status(folder)['status'] in pcb_cli.TERMINAL else None)
         self.assertEqual(result['status'], 'timeout', result)
         self.assertTrue(result['cleanup']['complete'])
-        pid = int((self.root/'child.pid').read_text())
-        def stopped():
-            state = subprocess.run(['ps','-o','stat=','-p',str(pid)],capture_output=True,text=True).stdout.strip()
-            return not state or state.startswith('Z')
         self.until(stopped)
 
 
