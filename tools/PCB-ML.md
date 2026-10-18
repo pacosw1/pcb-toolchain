@@ -83,6 +83,14 @@ Routing targets are `accepted_within_budget`, `owned_elapsed_s`,
 `owned_elapsed_s` measures time to any terminal outcome. Successful completion
 time stays unknown for a failure or timeout, with censoring recorded explicitly.
 Unknown controls or incomplete native evidence never become invented labels.
+Rule-coverage admission can block a trial before the solver starts. Retain that
+cause and its source/DSN-bound report; it supplies neither route completion nor
+accepted copper-quality labels.
+Repeated-failure decisions must bind the exact placement and execution policy
+and use `placement_outcomes.native_diagnostic_fingerprint` for native findings.
+It ignores diagnostic UUIDs and finding/item order while preserving every
+semantic value. Unknown diagnostics have no fingerprint. Stop collection as
+soon as the declared fit-admission requirements can no longer be met.
 
 The two copper labels measure the exact sealed final native candidate bound to
 the fresh gate, only after acceptance within the owned budget with verified

@@ -136,6 +136,16 @@ acceptance thresholds. The total CLI deadline also covers verification.
 existing internal routing/repair feature policy is retained and recorded.
 Only exact selected net names and `off`/`if-routed` optimizer modes are accepted.
 
+Before each actual Fastroute call, the producer checks effective rule coverage
+and retains a source/DSN-bound `rule-coverage*.json` report in the router evidence.
+Incomplete or unsupported applicable constraints block the solver with an
+actionable cause. Enabling the rule compiler alone does not establish coverage.
+Passing this admission check still requires the complete fresh native,
+configured and applicable semantic checks on the resulting candidate.
+The current coverage subset blocks unrepresented creepage, spatial selectors
+and rule precedence. With configured RP-001 checks and no stitching producer,
+the actual active-net layer masks must prevent new layer transitions.
+
 Controlled execution requires a host-recorded original `docker inspect` receipt
 at `PCB_EXECUTION_CONTEXT`, mounted read-only in the matching network-none
 container with explicit CPU/memory limits. The actual immutable image, resolved

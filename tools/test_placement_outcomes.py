@@ -20,6 +20,73 @@ def write(path,value):
     path.write_text(json.dumps(value)+'\n')
 
 
+class NativeDiagnosticTests(unittest.TestCase):
+    def diagnostic(self):
+        return dict(violations=[
+            dict(type='creepage',severity='error',
+                 description="Creepage violation (rule 'PoE isolation' creepage 3.0000 mm; actual 0.4730 mm)",
+                 items=[dict(description='Track [/LED_LINK_K] on F.Cu, length 5.2932 mm',
+                             pos=dict(x=115.8143,y=127.2951),uuid='first-track'),
+                        dict(description='PTH pad 10 [/POE_V2N] of J1',
+                             pos=dict(x=117.147333,y=122.715),uuid='fixed-pad')]),
+            dict(type='clearance',severity='error',
+                 description="Clearance violation (rule 'PoE isolation inside J1' clearance 1.2500 mm; actual 0.4730 mm)",
+                 items=[dict(description='PTH pad 10 [/POE_V2N] of J1',
+                             pos=dict(x=117.147333,y=122.715),uuid='fixed-pad'),
+                        dict(description='Track [/LED_LINK_K] on F.Cu, length 5.2932 mm',
+                             pos=dict(x=115.8143,y=127.2951),uuid='first-track')])],
+            unconnected_items=[],schematic_parity=[])
+
+    def test_generated_uuids_and_finding_item_order_do_not_change_native_diagnostic(self):
+        first=self.diagnostic();original=copy.deepcopy(first);second=copy.deepcopy(first)
+        second['violations'].reverse()
+        for finding in second['violations']:
+            finding['items'].reverse()
+            for item in finding['items']:item['uuid']='new-generated-'+item['uuid']
+        self.assertEqual(outcomes.native_diagnostic_fingerprint(first),outcomes.native_diagnostic_fingerprint(second))
+        self.assertEqual(first,original) # Source objects/CAD identity are never normalized in place.
+        for section in ('unconnected_items','schematic_parity'):
+            a=self.diagnostic();a[section]=copy.deepcopy(a['violations'])
+            b=copy.deepcopy(a);b[section].reverse();b[section][0]['items'].reverse()
+            self.assertEqual(outcomes.native_diagnostic_fingerprint(a),outcomes.native_diagnostic_fingerprint(b))
+
+    def test_semantic_numbers_nets_rules_and_meaningful_list_order_remain_distinct(self):
+        original=self.diagnostic();base=outcomes.native_diagnostic_fingerprint(original)
+        numeric=copy.deepcopy(original);numeric['violations'][0]['items'][0]['pos']['x']+=0.000000000001
+        net=copy.deepcopy(original);net['violations'][0]['items'][0]['description']=net['violations'][0]['items'][0]['description'].replace('/LED_LINK_K','/OTHER')
+        rule=copy.deepcopy(original);rule['violations'][0]['description']=rule['violations'][0]['description'].replace('PoE isolation','another rule')
+        threshold=copy.deepcopy(original);threshold['violations'][0]['description']=threshold['violations'][0]['description'].replace('3.0000','3.0001')
+        severity=copy.deepcopy(original);severity['violations'][0]['severity']='warning'
+        duplicate=copy.deepcopy(original);duplicate['violations'].append(copy.deepcopy(duplicate['violations'][0]))
+        removed=copy.deepcopy(original);removed['violations'].pop()
+        section=copy.deepcopy(original);section['schematic_parity'].append(section['violations'].pop())
+        for name,value in (('coordinate',numeric),('net',net),('rule',rule),('threshold',threshold),
+                           ('severity',severity),('duplicate',duplicate),('removed',removed),('section',section)):
+            with self.subTest(change=name):self.assertNotEqual(base,outcomes.native_diagnostic_fingerprint(value))
+        nested=self.diagnostic()
+        nested['violations'][0]['items'][0]['geometry']={'ordered_path':[dict(x=1,y=2),dict(x=3,y=4)]}
+        reversed_path=copy.deepcopy(nested)
+        reversed_path['violations'][0]['items'][0]['geometry']['ordered_path'].reverse()
+        self.assertNotEqual(outcomes.native_diagnostic_fingerprint(nested),outcomes.native_diagnostic_fingerprint(reversed_path))
+
+    def test_malformed_or_unknown_diagnostic_data_has_no_fallback_fingerprint(self):
+        invalid=[None,[],{},dict(self.diagnostic(),extra='unbound report metadata')]
+        for section in ('violations','unconnected_items','schematic_parity'):
+            value=self.diagnostic();value[section]=None;invalid.append(value)
+        for field,value in (('severity','unknown'),('type',None),('description',''),('items',[None]),('items',[])):
+            bad=self.diagnostic();bad['violations'][0][field]=value;invalid.append(bad)
+        for position in ({'x':True,'y':1},{'x':float('nan'),'y':1},{'x':1,'y':float('inf')},
+                         {'x':'unknown','y':1},{'x':1},{'x':1,'y':2,'z':3}):
+            bad=self.diagnostic();bad['violations'][0]['items'][0]['pos']=position;invalid.append(bad)
+        for value in (123, None):
+            bad=self.diagnostic();bad['violations'][0]['items'][0]['uuid']=value;invalid.append(bad)
+        for value in (object(),{1:'non-string key'},float('nan'),{'not-a-JSON-set'}):
+            bad=self.diagnostic();bad['violations'][0]['metadata']=value;invalid.append(bad)
+        circular=self.diagnostic();circular['violations'][0]['metadata']=circular;invalid.append(circular)
+        for index,value in enumerate(invalid):
+            with self.subTest(case=index),self.assertRaises(ValueError):outcomes.native_diagnostic_fingerprint(value)
+
+
 class OutcomeTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)

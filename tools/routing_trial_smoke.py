@@ -23,7 +23,9 @@ from pcb_workflow import sha
 ROOT = Path(__file__).resolve().parent.parent
 BOARD = 'TRIAL'
 SCHEMA = 'iot-lab.routing-trial-smoke.v1'
-POLICY = dict(schema='iot-lab.routing-policy.v1', layers=['F.Cu', 'B.Cu'],
+# native_workflow_smoke.generate creates four front-only SMD pads and F.Cu
+# tracks/zone. This task removes only /A; neither pose needs a layer transition.
+POLICY = dict(schema='iot-lab.routing-policy.v1', layers=['F.Cu'],
               only_nets=['/A'], passes=40, threads=1, timeout_s=30,
               optimizer='if-routed', max_repairs=0)
 REQUIRED_CHECKS = {'erc', 'drc', 'paths', 'viapads', 'kicad_happy', 'port_labels'}
@@ -231,7 +233,8 @@ def run(args):
     started = lean.now()
     paths = set(workflow_runtime_files(ROOT / 'tools'))
     paths.update(ROOT / 'tools' / name for name in ('routing_trial_smoke.py', 'native_workflow_smoke.py',
-        'real_board_regression.py', 'placement_outcomes.py', 'pcb_test_fixture.py', 'pcbtool.py'))
+        'real_board_regression.py', 'placement_outcomes.py', 'pcb_test_fixture.py', 'pcbtool.py',
+        'route_rule_coverage.py'))
     sources = {str(path): sha(path) for path in sorted(paths)}
     result = dict(schema=SCHEMA, status='failed', board=BOARD, qualified=False,
         scope='one synthetic actual-router development pair; no ranking, holdout, release or physical qualification',

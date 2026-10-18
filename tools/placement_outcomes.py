@@ -29,6 +29,60 @@ def identity(value):
     return placement_audit.identity(value)
 
 
+def native_diagnostic_fingerprint(diagnostic):
+    """Fingerprint native findings, independently of source/CAD identity.
+
+    The caller supplies exactly the three diagnostic arrays from a bound native
+    report. Report metadata/provenance remains separately bound by its receipt.
+    Only UUID fields and finding/direct-item order are ignored. Extra semantic
+    JSON fields are retained; arbitrary nested list order and numbers are exact.
+    Unknown representations or malformed native findings have no fingerprint.
+    """
+    sections={'violations','unconnected_items','schematic_parity'}
+    if not isinstance(diagnostic,dict) or set(diagnostic)!=sections:
+        raise ValueError('native diagnostic requires exactly the three finding arrays')
+
+    def normalized(value):
+        if isinstance(value,dict):
+            if any(not isinstance(key,str) for key in value):
+                raise ValueError('native diagnostic keys must be strings')
+            if 'uuid' in value and (not isinstance(value['uuid'],str) or not value['uuid']):
+                raise ValueError('malformed native diagnostic UUID')
+            return {key:normalized(item) for key,item in value.items() if key!='uuid'}
+        if isinstance(value,list):return [normalized(item) for item in value]
+        if value is None or isinstance(value,(str,bool,int)):return value
+        if isinstance(value,float) and math.isfinite(value):return value
+        raise ValueError('unknown or nonfinite native diagnostic value')
+
+    canonical=lambda value:json.dumps(value,sort_keys=True,allow_nan=False,separators=(',',':'))
+    result={}
+    try:
+        for section in sections:
+            findings=diagnostic[section]
+            if not isinstance(findings,list):raise ValueError('native diagnostic findings must be arrays')
+            rows=[]
+            for finding in findings:
+                if (not isinstance(finding,dict) or finding.get('severity') not in ('error','warning','exclusion')
+                        or any(not isinstance(finding.get(key),str) or not finding[key].strip()
+                               for key in ('type','description'))
+                        or not isinstance(finding.get('items'),list) or not finding['items']):
+                    raise ValueError('malformed or unknown native diagnostic finding')
+                for item in finding['items']:
+                    if (not isinstance(item,dict) or not isinstance(item.get('description'),str)
+                            or not item['description'].strip() or not isinstance(item.get('pos'),dict)
+                            or set(item['pos'])!={'x','y'}
+                            or any(not isinstance(value,(int,float)) or isinstance(value,bool)
+                                   or not math.isfinite(value) for value in item['pos'].values())):
+                        raise ValueError('malformed or unknown native diagnostic item position')
+                row=normalized(finding)
+                row['items']=sorted(row['items'],key=canonical)
+                rows.append(row)
+            result[section]=sorted(rows,key=canonical)
+        return identity(result)
+    except (OverflowError,RecursionError) as error:
+        raise ValueError('unsupported native diagnostic value') from error
+
+
 def loaded_tool_inputs():
     """Attribute the repository Python sources actually loaded by this observer."""
     tools=Path(__file__).resolve().parent
