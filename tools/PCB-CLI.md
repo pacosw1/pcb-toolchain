@@ -150,7 +150,17 @@ Incomplete or unsupported applicable constraints block the solver with an
 actionable cause. Enabling the rule compiler alone does not establish coverage.
 Passing this admission check still requires the complete fresh native,
 configured and applicable semantic checks on the resulting candidate.
-Clearance floors come from the actual final DSN declarations. Track-width and
+Clearance floors come from the actual final DSN declarations.
+Before sealing that model, the producer raises every weaker non-pad-only DSN
+clearance to the maximum authored project/netclass floor applicable to the
+actual active/retained net pairs. Unused classes do not set that floor. Exact
+unit/resolution conversion is required; unrepresentable or malformed models
+block. Pad-only exceptions and all other model bytes stay unchanged. The
+`clearance-input*.dsn` and `clearance-floor*.json` retain source-project hashes,
+applicability witnesses and the exact before/after model identity. This can
+conservatively constrain routing more than per-class precedence would; it does
+not weaken the native project or replace the final admission/native checks.
+Track-width and
 copper-to-edge minima are compared with the complete final backend argv,
 including any neck-width option. Missing, duplicate or weaker controls block.
 The admitted immutable `router-model*.dsn`, exact argv, executable and backend

@@ -675,5 +675,131 @@ class ProjectCoverageTests(unittest.TestCase):
             self.assertNotIn('applicability',kwargs) # No assumed custom same-net exemption.
 
 
+class ClearanceStrengtheningTests(unittest.TestCase):
+    def project_text(self, floor=.3, unused=99):
+        value = project()
+        value['net_settings']['classes'][1]['clearance'] = floor
+        value['net_settings']['classes'].append(dict(name='UNUSED', clearance=unused))
+        return json.dumps(value)
+
+    def strengthen(self, model=None, project_text=None, **kwargs):
+        return coverage.route_features.strengthen_project_clearance(
+            dsn() if model is None else model,
+            self.project_text() if project_text is None else project_text,
+            source='actual-project.kicad_pro', active_nets=[LED], net_classes=CLASSES,
+            obstacles=OBSTACLES, layers=['F.Cu', 'B.Cu'], **kwargs)
+
+    def test_applicable_power_class_raises_every_weak_declaration_without_using_unused_class(self):
+        extra = '''(rule (clearance 50 (type smd_smd)))
+          (region "nested" (rule (clearance 100 (type wire_wire))))'''
+        pairs = '(class_class (classes "DEFAULT" "POE") (rule (clearance 600)))'
+        model = '# comment (clearance 200)\n' + dsn(extra=extra, pairs=pairs).replace(
+            '"coverage-fixture"', '"literal (clearance 200)"')
+        actual, receipt = self.strengthen(model)
+        expected = '# comment (clearance 200)\n' + dsn('300',
+            extra=extra.replace('clearance 100', 'clearance 300'), pairs=pairs).replace(
+                '"coverage-fixture"', '"literal (clearance 200)"')
+        self.assertEqual(actual, expected)
+        self.assertEqual(len(receipt['changes']), 4)
+        self.assertEqual(receipt['required_mm'], '0.3')
+        self.assertEqual({r.get('netclass') for r in receipt['requirements'] if 'netclass' in r}, {'Default', 'POE'})
+        self.assertNotIn('UNUSED', json.dumps(receipt['requirements']))
+        self.assertEqual(receipt['before_sha256'], hashlib.sha256(model.encode()).hexdigest())
+        self.assertEqual(receipt['after_sha256'], hashlib.sha256(actual.encode()).hexdigest())
+        self.assertEqual(receipt['project']['sha256'], hashlib.sha256(self.project_text().encode()).hexdigest())
+        self.assertFalse(receipt['qualified'])
+
+    def test_pad_only_exceptions_and_all_nonclearance_bytes_stay_exact(self):
+        extra = ''.join('(rule (clearance 50 (type '+kind+')))' for kind in ('smd_smd','pin_pin','pin_smd'))
+        model = dsn('200', extra=extra)
+        changed, receipt = self.strengthen(model)
+        self.assertEqual(changed, dsn('300', extra=extra))
+        cursor = 0
+        pieces = []
+        for edit in receipt['changes']:
+            self.assertEqual(model[edit['start']:edit['end']], edit['before'])
+            pieces += [model[cursor:edit['start']], edit['after']]
+            cursor = edit['end']
+        self.assertEqual(''.join(pieces) + model[cursor:], changed)
+        self.assertEqual(coverage.Model(changed, ['F.Cu']).membership, coverage.Model(model, ['F.Cu']).membership)
+
+    def test_stronger_model_is_unchanged_and_strengthening_is_idempotent(self):
+        model = dsn('600')
+        same, receipt = self.strengthen(model)
+        self.assertEqual(same, model); self.assertEqual(receipt['changes'], [])
+        once, _ = self.strengthen()
+        twice, report = self.strengthen(once)
+        self.assertEqual(twice, once); self.assertEqual(report['changes'], [])
+
+    def test_exact_known_unit_conversions_and_nonrepresentable_values_abstain(self):
+        for unit, initial, target, floor, resolution in (
+                ('mm', '0.2', '0.3', .3, 10), ('mil', '5', '10', .254, 10),
+                ('in', '0.05', '0.1', 2.54, 100)):
+            with self.subTest(unit=unit):
+                model = dsn(initial, unit=unit).replace('(resolution um 10)', '(resolution '+unit+' '+str(resolution)+')')
+                changed, _ = self.strengthen(model, self.project_text(floor))
+                self.assertEqual(changed, model.replace('(clearance '+initial+')', '(clearance '+target+')'))
+        for model, floor in ((dsn('0.2', unit='mm').replace('(resolution um 10)', '(resolution mm 10)'), .25),
+                             (dsn('5', unit='mil').replace('(resolution um 10)', '(resolution mil 127)'), .3)):
+            with self.subTest(model=model), self.assertRaisesRegex(ValueError, 'exact|represent'):
+                self.strengthen(model, self.project_text(floor))
+
+    def test_unknown_malformed_units_qualifiers_numbers_and_tokens_fail_closed(self):
+        variants = [dsn(unit='unknown'), dsn().replace('(unit um)', '(unit um) (unit mm)'),
+            dsn().replace('(resolution um 10)', '(resolution mm 10)'), dsn('nan'), dsn('-1'),
+            dsn(extra='(rule (clearance 50 (type unsupported)))'),
+            dsn(extra='(rule (clearance 50 (type smd_smd) (type pin_pin)))'),
+            dsn(extra='(rule (clearance 50 (type smd_smd smd_smd)))'),
+            dsn(extra='(rule (clearance 50 (type smd_smd) unknown))'),
+            dsn(extra='(region x (unit mm))'), dsn('200um'), dsn()[:-1],
+            dsn().replace('(unit um)', '(unit (unknown))'),
+            dsn().replace('"coverage-fixture"', '"unterminated')]
+        for model in variants:
+            with self.subTest(model=model), self.assertRaises(ValueError):
+                self.strengthen(model)
+
+    def test_used_class_or_native_membership_unknown_blocks_instead_of_dropping_obstacle(self):
+        value = json.loads(self.project_text())
+        value['net_settings']['classes'] = value['net_settings']['classes'][:1]
+        with self.assertRaisesRegex(ValueError, 'netclass clearance is unresolved'):
+            self.strengthen(project_text=json.dumps(value))
+        membership = '(class "'+POE+'" "'+POE+'"'
+        self.assertIn(membership, dsn())
+        model = dsn().replace(membership, '(class "'+POE+'"', 1)
+        with self.assertRaisesRegex(ValueError, 'absent from the DSN'):
+            self.strengthen(model)
+
+    def test_unused_native_mapping_without_dsn_membership_does_not_set_the_floor(self):
+        classes = dict(CLASSES, UNUSED_DECLARATION='UNUSED')
+        changed, receipt = coverage.route_features.strengthen_project_clearance(dsn(), self.project_text(),
+            source='actual-project.kicad_pro', active_nets=[LED],net_classes=classes,
+            obstacles=OBSTACLES,layers=['F.Cu','B.Cu'])
+        self.assertEqual(changed,dsn('300'))
+        self.assertEqual(receipt['required_mm'],'0.3')
+        self.assertNotIn('UNUSED_DECLARATION',receipt['counterparts'])
+        self.assertNotIn('UNUSED',json.dumps(receipt['requirements']))
+
+    def test_existing_strict_file_guard_rejects_before_and_accepts_after_model_change(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); source, base, model = [root/name for name in ('source.kicad_pcb','base.kicad_pcb','model.dsn')]
+            project_text = self.project_text()
+            for path in (source, base):
+                path.write_text(native()); path.with_suffix('.kicad_dru').write_text('(version 1)')
+                path.with_suffix('.kicad_pro').write_text(project_text)
+            model.write_text(dsn())
+            scope = dict(active_nets=[LED],net_classes=CLASSES,obstacles=OBSTACLES,layers=['F.Cu','B.Cu'])
+            before = coverage.check_files(source,base,model,**scope)
+            self.assertEqual(before['status'],'blocked')
+            self.assertTrue(any(r.get('constraint')=='netclass_clearance' and r['disposition']=='weaker_than_native'
+                                for r in before['requirements']))
+            original = {p:hashlib.sha256(p.read_bytes()).hexdigest() for p in (source,base,source.with_suffix('.kicad_pro'),base.with_suffix('.kicad_pro'))}
+            changed, _ = self.strengthen(model.read_text(), project_text)
+            model.write_text(changed)
+            after = coverage.check_files(source,base,model,**scope)
+            self.assertEqual(after['status'],'passed',after['cause'])
+            self.assertTrue(after['solver_launch_allowed'])
+            self.assertTrue(all(hashlib.sha256(p.read_bytes()).hexdigest()==digest for p,digest in original.items()))
+
+
 if __name__ == '__main__':
     unittest.main()

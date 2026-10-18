@@ -281,5 +281,56 @@ class NestedCleanupTests(unittest.TestCase):
             self.assertFalse(marker.exists())
 
 
+class ClearanceModelPhaseTests(unittest.TestCase):
+    def test_actual_file_phase_binds_project_before_and_after_models_without_native_writes(self):
+        from test_route_rule_coverage import dsn, project, CLASSES, OBSTACLES, LED
+        job = load_job()
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder); source=root/'source.kicad_pro'; before=root/'before.dsn'; model=root/'final.dsn'; receipt=root/'floor.json'
+            value=project();value['net_settings']['classes'][1]['clearance']=.3
+            source.write_text(json.dumps(value)); original=source.read_bytes()
+            changed, report=job._strengthen_clearance_model(dsn(),source,before,model,receipt,
+                active_nets=[LED],net_classes=CLASSES,obstacles=OBSTACLES,layers=['F.Cu','B.Cu'])
+            self.assertEqual(source.read_bytes(),original)
+            self.assertEqual(before.read_text(),dsn());self.assertEqual(changed,dsn('300'))
+            self.assertFalse(model.exists()) # The phase precedes final model sealing.
+            self.assertEqual(report,json.loads(receipt.read_text()))
+            self.assertEqual(report['inputs'][str(source)],lean.digest(source))
+            self.assertEqual(report['before']['sha256'],lean.digest(before))
+            self.assertEqual(report['after']['path'],str(model))
+
+    def test_malformed_project_retains_blocked_receipt_and_exact_pretransform_model(self):
+        from test_route_rule_coverage import dsn, CLASSES, OBSTACLES, LED
+        job=load_job()
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder); source=root/'source.kicad_pro';before=root/'before.dsn';model=root/'final.dsn';receipt=root/'floor.json'
+            source.write_text('{"duplicated":1,"duplicated":2}')
+            with self.assertRaisesRegex(ValueError,'duplicate project field'):
+                job._strengthen_clearance_model(dsn(),source,before,model,receipt,
+                    active_nets=[LED],net_classes=CLASSES,obstacles=OBSTACLES,layers=['F.Cu','B.Cu'])
+            self.assertEqual(before.read_text(),dsn());self.assertFalse(model.exists())
+            report=json.loads(receipt.read_text());self.assertEqual(report['status'],'blocked')
+            self.assertEqual(report['inputs'][str(source)],lean.digest(source))
+
+    def test_project_or_before_model_mutation_blocks_the_file_phase(self):
+        from test_route_rule_coverage import dsn, project, CLASSES, OBSTACLES, LED
+        job=load_job(); original=job.route_features.strengthen_project_clearance
+        for target in ('project','before'):
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as folder:
+                root=Path(folder);source=root/'source.kicad_pro';before=root/'before.dsn';model=root/'final.dsn';receipt=root/'floor.json'
+                value=project();value['net_settings']['classes'][1]['clearance']=.3
+                source.write_text(json.dumps(value))
+                def changed(*args,**kwargs):
+                    result=original(*args,**kwargs)
+                    (source if target=='project' else before).write_text('changed after reading')
+                    return result
+                with mock.patch.object(job.route_features,'strengthen_project_clearance',side_effect=changed):
+                    with self.assertRaisesRegex(ValueError,'changed during clearance strengthening'):
+                        job._strengthen_clearance_model(dsn(),source,before,model,receipt,
+                            active_nets=[LED],net_classes=CLASSES,obstacles=OBSTACLES,layers=['F.Cu','B.Cu'])
+                self.assertFalse(model.exists())
+                self.assertEqual(json.loads(receipt.read_text())['status'],'blocked')
+
+
 if __name__ == '__main__':
     unittest.main()

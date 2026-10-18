@@ -216,6 +216,48 @@ class Model:
         return min(values + self.all_clearances)
 
 
+def project_clearance_requirement(text, *, source, active_nets, net_classes, obstacles):
+    """Extract only authored clearances applicable to this new-copper scope.
+
+    Reuses the project parser and the active/retained pair semantics of
+    route_project_coverage.evaluate. This does not certify any router model.
+    """
+    rules, classes = route_project_coverage._load(text)
+    active = set(active_nets)
+    if (not active or any(not isinstance(n, str) or not n for n in active)
+            or not isinstance(net_classes, dict) or not active <= set(net_classes)):
+        raise ValueError('clearance strengthening requires exact active native nets/classes')
+    counterparts = set(active)
+    for obj in obstacles:
+        if (not isinstance(obj, dict) or not isinstance(obj.get('NetName'), str)
+                or obj['NetName'] not in net_classes):
+            raise ValueError('clearance strengthening has an unknown retained native net')
+        counterparts.add(obj['NetName'])
+    if any(not isinstance(net_classes[n], str) or not net_classes[n] for n in counterparts):
+        raise ValueError('clearance strengthening has an unknown native class')
+    pairs = [(a, b) for a in sorted(active) for b in sorted(counterparts) if a != b]
+    requirements = []
+    for name in sorted({net_classes[n] for n in counterparts}):
+        index, item = classes.get(name, (None, None))
+        if item is None or 'clearance' not in item:
+            raise ValueError('actual native netclass clearance is unresolved: ' + name)
+        value = route_project_coverage._number(item['clearance'])
+        relevant = [(a, b) for a, b in pairs if name in (net_classes[a], net_classes[b])]
+        if relevant:
+            requirements.append(dict(constraint='netclass_clearance', netclass=name,
+                source=dict(path=str(source), pointer='/net_settings/classes/' + str(index) + '/clearance'),
+                required_mm=str(value), witness=dict(active=relevant[0][0], obstacle=relevant[0][1])))
+    if 'min_clearance' not in rules:
+        raise ValueError('native project min_clearance is absent; no default is inferred')
+    value = route_project_coverage._number(rules['min_clearance'])
+    if pairs:
+        requirements.append(dict(constraint='min_clearance',
+            source=dict(path=str(source), pointer='/board/design_settings/rules/min_clearance'),
+            required_mm=str(value), witness=dict(active=pairs[0][0], obstacle=pairs[0][1])))
+    return dict(required_mm=str(max([Decimal(0)] + [Decimal(r['required_mm']) for r in requirements])),
+                requirements=requirements, active_nets=sorted(active), counterparts=sorted(counterparts))
+
+
 def inspect(dru_text, dsn_text, *, active_nets, net_classes, obstacles,
             layers, require_stitching=False, native_pads=None):
     result = dict(schema=SCHEMA, status='blocked', solver_launch_allowed=False,
