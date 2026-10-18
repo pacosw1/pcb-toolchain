@@ -142,7 +142,90 @@ def sealed_run(evidence, folder, expected):
     return folder,terminal,manifest,operation,candidate
 
 
-def execution_policy(evidence, folder, trial, manifest, source, gate):
+def native_thermal_controls(evidence, folder, trial, manifest, source, policy, candidate, placement_sha256):
+    """Revalidate the sealed opt-in obligation before exposing a routing label."""
+    spec=manifest.get('spec',{})
+    requested=isinstance(spec,dict) and spec.get('thermal_verification')=='native-checkback'
+    effort,controls=(policy.get(key,{}) for key in ('effort','controls'))
+    if not isinstance(effort,dict) or not isinstance(controls,dict):
+        raise ValueError('native thermal execution controls are malformed')
+    declared=effort.get('thermal_verification')
+    obligation=controls.get('native_thermal_obligations')
+    if isinstance(spec,dict) and ('thermal_verification' in spec or spec.get('schema')=='iot-lab.routing-policy.v2') and not requested:
+        raise ValueError('unknown native thermal route specification')
+    if not requested:
+        if (declared is not None or obligation is not None
+                or isinstance(policy.get('command'),list) and '--native-thermal-checkback' in policy['command']):
+            raise ValueError('native thermal execution was not explicitly selected by the route spec')
+        return None
+    if spec.get('schema')!='iot-lab.routing-policy.v2' or declared!='native-checkback':
+        raise ValueError('native thermal route specification and execution policy differ')
+    if not isinstance(obligation,dict) or obligation.get('status')!='passed':
+        return 'native thermal obligation is pending, missing or unfulfilled'
+    if candidate is None:
+        raise ValueError('native thermal discharge has no exact configured-gate candidate')
+    command=policy.get('command',[])
+    if (not isinstance(command,list) or len(command)<4 or any(not isinstance(item,str) for item in command)
+            or command.count('--native-thermal-checkback')!=1):
+        raise ValueError('native thermal producer invocation is missing')
+    recorded_router=Path(command[3])
+    if not recorded_router.is_absolute():
+        raise ValueError('native thermal router evidence owner is unresolved')
+    router=folder/'operation/router'
+    def record(key,name):
+        descriptor=obligation.get(key,{})
+        if (not isinstance(descriptor,dict) or descriptor.get('path')!='operation/router/'+name
+                or not isinstance(descriptor.get('sha256'),str)
+                or not re.fullmatch(r'[0-9a-f]{64}',descriptor['sha256'])):
+            raise ValueError('native thermal '+key+' lacks an owned sealed binding')
+        return evidence.read(router/name,descriptor['sha256'])
+    initial=record('initial','native-thermal-initial.json')
+    final=record('final','native-thermal-final.json')
+    snapshot=record('source_snapshot','native-thermal-source.json')
+    descriptor=obligation.get('candidate',{})
+    if (not isinstance(descriptor,dict) or descriptor.get('path')!='operation/router/routed.kicad_pcb'
+            or descriptor.get('sha256')!=sha(candidate)):
+        raise ValueError('native thermal candidate differs from the configured gate candidate')
+    evidence.file(router/'routed.kicad_pcb',descriptor['sha256'])
+    relative='hardware-design/boards/'+manifest['board']+'/'+manifest['project']
+    expected={extension:source.get('files',{}).get(relative+extension)
+              for extension in ('.kicad_pcb','.kicad_pro','.kicad_dru','.kicad_sch')}
+    # cli_observation resolves and seals a continued parent before this call.
+    # source.json intentionally still describes the canonical CAD snapshot.
+    expected['.kicad_pcb']=placement_sha256
+    placement=trial.get('placement_input',{})
+    if (any(not isinstance(digest,str) or not re.fullmatch(r'[0-9a-f]{64}',digest) for digest in expected.values())
+            or not isinstance(placement,dict) or expected['.kicad_pcb']!=placement.get('sha256')):
+        raise ValueError('native thermal source lacks the original four-file placement binding')
+    captured=recorded_router/'native-thermal-source'/Path(relative+'.kicad_pcb').name
+    original=Path(command[2])
+    if (snapshot.get('schema')!='iot-lab.native-thermal-source.v1'
+            or snapshot.get('original')!=dict(path=str(original),sha256=expected['.kicad_pcb'])
+            or snapshot.get('captured')!=dict(path=str(captured),sha256=expected['.kicad_pcb'])
+            or snapshot.get('original_files')!={str(original.with_suffix(ext)):digest for ext,digest in expected.items()}
+            or snapshot.get('inputs')!={str(captured.with_suffix(ext)):digest for ext,digest in expected.items()}
+            or initial.get('source')!=snapshot['captured']
+            or not isinstance(initial.get('base'),dict)
+            or initial['base'].get('path')!=str(recorded_router/'base.kicad_pcb')
+            or final.get('candidate')!=dict(path=str(recorded_router/'routed.kicad_pcb'),sha256=descriptor['sha256'])):
+        raise ValueError('native thermal captured source or candidate lineage differs from the actual trial')
+    import route_native_thermals
+    checked=route_native_thermals.discharge(initial,recorded_router/'routed.kicad_pcb',
+        fill_receipt=recorded_router/'native-thermal-final-fill.json',
+        drc_receipt=recorded_router/'native-thermal-final-drc.json')
+    if checked!=final:
+        raise ValueError('native thermal final receipt differs from independent raw-evidence validation')
+    for name,digest in checked['inputs'].items():
+        if digest is None:
+            if Path(name).exists() or Path(name).is_symlink():
+                raise ValueError('absent native thermal input appeared')
+            evidence.inputs[name]=None
+        else:
+            evidence.file(name,digest)
+    return None
+
+
+def execution_policy(evidence, folder, trial, manifest, source, gate, candidate=None, placement_sha256=None):
     name=trial.get('execution_policy')
     if not name:return None,'execution policy/runtime/resource evidence is absent'
     path=(folder/name).resolve()
@@ -176,6 +259,8 @@ def execution_policy(evidence, folder, trial, manifest, source, gate):
                     or not re.fullmatch(r'[0-9a-f]{64}',digest)):
                 raise ValueError('solver effective configuration binding is malformed')
             evidence.file(folder/'operation/router'/name,digest)
+        missing=native_thermal_controls(evidence,folder,trial,manifest,source,value,candidate,placement_sha256)
+        if missing:return None,missing
     events=folder/'operation/events.jsonl'
     starts=[json.loads(line) for line in evidence.file(events).read_text().splitlines() if line.strip()]
     if not any(row.get('type')=='tool.start' and row.get('command')==value.get('command') for row in starts):
@@ -348,7 +433,7 @@ def cli_observation(evidence, trial):
         pose_fingerprint=identity({fp['props']['Reference']:[canonical(fp['pose'][0]),canonical(fp['pose'][1]),
             canonical((fp['pose'][2]%360+360)%360)] for fp in footprints(input_path)})
     else:unknowns.append('original placement input artifact is absent')
-    policy,missing=execution_policy(evidence,folder,trial,manifest,source,gate)
+    policy,missing=execution_policy(evidence,folder,trial,manifest,source,gate,candidate,input_sha256)
     if missing:unknowns.append(missing)
     quality=(routed_quality(evidence,candidate) if full and policy else
              dict(routed_track_length_mm=None,routed_via_count=None,
@@ -454,7 +539,8 @@ def evaluate_study(root, manifest, study_id=None):
                 if group and all(r.get('observed_interval_unix_s') for r in group) else None),
             unknown_duration_count=len(group)-len(durations))
     for name,digest in evidence.inputs.items():
-        if sha(name)!=digest:raise ValueError('study evidence changed during evaluation')
+        changed=(Path(name).exists() or Path(name).is_symlink()) if digest is None else sha(name)!=digest
+        if changed:raise ValueError('study evidence changed during evaluation')
     ready=not blockers
     next_kind=('diagnose_failed_heldout_trials' if ready and any(r['split']=='holdout' and not r['full_gate_success'] for r in rows)
                else 'review_controlled_outcomes' if ready else 'complete_comparison_evidence')

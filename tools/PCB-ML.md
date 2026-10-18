@@ -130,10 +130,17 @@ Slots, oval/path obstacles, offsets, mirrored or off-grid geometry and opaque
 legacy backend geometry remain unsupported. Custom PTH rules still reject
 same-net coverage; the KiCad 10 project track rule has only its explicit sourced
 same-nonzero-net exclusion after full drilled-inventory binding.
-Filling zones does not prove `min_resolved_spokes`. Only the complete no-zone or
-explicit solid/none/no-thermal-override subset can establish inactivity;
-applicable thermal requirements, creepage and spatial constraints remain
-blockers. Exact inactive-layer and unchanged-silkscreen decisions use actual
+Filling zones does not prove `min_resolved_spokes`. The complete no-zone or
+explicit solid/none/no-thermal-override subset can establish inactivity. Strict
+model-only routing still blocks applicable thermal requirements. The explicit
+`routing-policy.v2` native-checkback mode can leave only the authored project
+spoke minimum pending after a source-bound fresh native input check. Such an
+admission is not DSN coverage. The exact saved final candidate must satisfy the
+native obligation with checked successful fill, raw DRC, unchanged rule/count
+and error/exclusion policy, and actual runtime bindings before an observation
+can become training eligible. Pending or missing proof supplies no accepted
+quality label. All fresh configured gates remain required. Creepage and spatial
+constraints remain blockers. Exact inactive-layer and unchanged-silkscreen decisions use actual
 active-net masks; silkscreen immutability requires no new vias and preserved
 source/import geometry. Complete fresh candidate gates remain required for any
 new accepted label. Earlier sealed native outcomes stay immutable historical

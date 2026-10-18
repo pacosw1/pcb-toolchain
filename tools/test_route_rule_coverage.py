@@ -403,10 +403,11 @@ class ProjectCoverageTests(unittest.TestCase):
         self.board.write_text(text)
         self.base.write_text(text)
 
-    def check(self, command='default', backend_policy=None):
+    def check(self, command='default', backend_policy=None, native_thermal_capability=None):
         return coverage.check_files(self.board, self.base, self.model, active_nets=[LED],
             net_classes=CLASSES, obstacles=OBSTACLES, layers=['F.Cu'], gate=self.gate,
-            backend_command=self.command if command == 'default' else command,backend_policy=backend_policy)
+            backend_command=self.command if command == 'default' else command,backend_policy=backend_policy,
+            native_thermal_capability=native_thermal_capability)
 
     def row(self, result, name):
         return next(r for r in result['requirements'] if r['rule']=='native project' and r['constraint']==name)
@@ -565,6 +566,46 @@ class ProjectCoverageTests(unittest.TestCase):
         self.assertEqual(item['required_count'],'2')
         self.assertEqual(item['disposition'],'unsupported')
         self.assertTrue(result['fixed_geometry_preserved'])
+
+    def test_verified_native_capability_leaves_only_a_pending_thermal_obligation(self):
+        import route_native_thermals
+        zone='(zone (net "/POE_V2N") (net_name "/POE_V2N") (layer "F.Cu") (connect_pads (clearance 0.2)))'
+        self.write_native(native()[:-1]+zone+')')
+        capability=dict(schema=route_native_thermals.CAPABILITY_SCHEMA, status='pending_native',
+            required_count=2, content_sha256='c'*64, inputs={str(self.rules):None})
+        with mock.patch.object(route_native_thermals, 'validate_capability', return_value=capability) as validate:
+            result=self.check(native_thermal_capability=capability)
+        validate.assert_called_once_with(capability,self.board,self.base,selected_nets=[LED])
+        self.assertEqual(result['status'],'pending_native',result)
+        self.assertTrue(result['solver_launch_allowed'])
+        self.assertEqual(result['model_status'],'partial')
+        self.assertEqual(self.row(result,'min_resolved_spokes')['disposition'],'native_postcondition')
+        self.assertEqual(result['native_postconditions'],[dict(constraint='min_resolved_spokes',
+            required_count='2',capability_sha256='c'*64)])
+        self.assertIsNone(result['inputs'][str(self.rules)])
+
+    def test_native_capability_cannot_cover_a_different_count_or_unrelated_requirement(self):
+        import route_native_thermals
+        zone='(zone (net "/POE_V2N") (net_name "/POE_V2N") (layer "F.Cu") (connect_pads (clearance 0.2)))'
+        self.write_native(native()[:-1]+zone+')')
+        for count,connection in ((1,0),(2,0.1)):
+            with self.subTest(count=count,connection=connection):
+                self.authored['board']['design_settings']['rules']['min_connection']=connection
+                self.save_project()
+                capability=dict(schema=route_native_thermals.CAPABILITY_SCHEMA,status='pending_native',
+                    required_count=count,content_sha256='c'*64,inputs={})
+                with mock.patch.object(route_native_thermals,'validate_capability',return_value=capability):
+                    result=self.check(native_thermal_capability=capability)
+                self.assertEqual(result['status'],'blocked',result)
+                self.assertFalse(result['solver_launch_allowed'])
+
+    def test_invalid_native_capability_blocks_even_when_thermal_requirement_is_inactive(self):
+        import route_native_thermals
+        with mock.patch.object(route_native_thermals,'validate_capability',side_effect=ValueError('missing native input evidence')):
+            result=self.check(native_thermal_capability={})
+        self.assertEqual(result['status'],'blocked',result)
+        self.assertFalse(result['solver_launch_allowed'])
+        self.assertIn('missing native input evidence',result['cause'])
 
     def test_all_solid_thermal_inapplicability_includes_overrides_and_missing_threshold(self):
         zone='(zone (net "/POE_V2N") (net_name "/POE_V2N") (layer "F.Cu") (connect_pads yes (clearance 0.2)))'

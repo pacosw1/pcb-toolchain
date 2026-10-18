@@ -180,7 +180,7 @@ class RoutingTrialTests(unittest.TestCase):
         self.native.parent.mkdir(parents=True,exist_ok=True)
         for extension in ('.kicad_pcb','.kicad_sch','.kicad_pro','.kicad_dru'):
             self.native.with_suffix(extension).write_text('synthetic protocol input '+extension)
-        for name in ('fastroute_job.py','route_features.py','route_rule_coverage.py','route_project_coverage.py','route_hole_coverage.py','backend_quality.py'):
+        for name in ('fastroute_job.py','route_features.py','route_rule_coverage.py','route_project_coverage.py','route_hole_coverage.py','route_native_thermals.py','backend_quality.py'):
             path=self.root/'tools'/name;path.parent.mkdir(parents=True,exist_ok=True)
             path.write_text('# synthetic producer identity; never executed\n')
         self.json_file(self.root/'tools/route-features.json',dict(features=dict(routing_rules=dict(on=True,repair_iterations=2))))
@@ -227,6 +227,7 @@ class RoutingTrialTests(unittest.TestCase):
             layers=','.join(config['layers']),only_nets=','.join(config['only_nets']),threads=config['threads'],
             max_time=config['timeout_s'],optimizer=config['optimizer'],preflight=True,skip_net='',plane_nets='',
             gnd_vias=False,route_planes=False,unlock_nets='',set=[],neck_um=0)
+        configuration['native_thermal_checkback'] = config.get('thermal_verification') == 'native-checkback'
         self.json_file(output/'input-manifest.json',dict(configuration=configuration,
             board_sha256=pcb_operations.sha(self.native),router_sha256=pcb_operations.sha(self.executables['router']),
             features=prepared['policy']['effort']['feature_policy']))
@@ -244,7 +245,7 @@ class RoutingTrialTests(unittest.TestCase):
             self.root/'tools/route_features.py']
         backend_command=[str(self.executables['router']),'-de',str(dsn),'-do',str(output/'router.ses')]
         coverage=dict(schema='iot-lab.route-rule-coverage.v1',status=coverage_status,
-            solver_launch_allowed=coverage_status=='passed',qualified=False,
+            solver_launch_allowed=coverage_status in ('passed','pending_native'),qualified=False,
             cause='synthetic admitted coverage' if coverage_status=='passed' else 'RP-001: stitching unsupported',
             active_nets=config['only_nets'],job_layers=config['layers'],requirements=[],
             backend_command=backend_command,
@@ -266,6 +267,94 @@ class RoutingTrialTests(unittest.TestCase):
         candidate=output/'routed.kicad_pcb';candidate.write_text('synthetic routed candidate; requires native gate\n')
         self.json_file(output/'outcome.json',dict(status=status,board_sha256=pcb_operations.sha(candidate),optimizer=config['optimizer']))
         return output
+
+    def thermal_output(self):
+        config=dict(self.config,schema=routing_trial.THERMAL_SCHEMA,thermal_verification='native-checkback')
+        prepared=self.prepare(config)
+        output=self.router_output(prepared,coverage_status='pending_native')
+        captured=output/'native-thermal-source'/self.native.name
+        captured.parent.mkdir()
+        originals={}
+        copies={}
+        for suffix in ('.kicad_pcb','.kicad_pro','.kicad_dru','.kicad_sch'):
+            original=self.native.with_suffix(suffix);target=captured.with_suffix(suffix)
+            shutil.copyfile(original,target)
+            originals[str(original)]=pcb_operations.sha(original);copies[str(target)]=pcb_operations.sha(target)
+        self.json_file(output/'native-thermal-source.json',dict(schema='iot-lab.native-thermal-source.v1',
+            original=dict(path=str(self.native),sha256=pcb_operations.sha(self.native)),
+            captured=dict(path=str(captured),sha256=pcb_operations.sha(captured)),original_files=originals,inputs=copies))
+        capability=dict(schema='iot-lab.native-thermal-capability.v1',status='pending_native',required_count=2,
+                        content_sha256='a'*64)
+        self.json_file(output/'native-thermal-initial.json',capability)
+        coverage_path=output/'rule-coverage.json';coverage=json.loads(coverage_path.read_text())
+        coverage['native_thermal_capability']=capability
+        coverage['model_status']='partial'
+        coverage['native_postconditions']=[dict(constraint='min_resolved_spokes',required_count='2',capability_sha256='a'*64)]
+        self.json_file(coverage_path,coverage)
+        effective_path=output/'effective-configuration.json';effective=json.loads(effective_path.read_text())
+        effective['rule_coverage']['sha256']=pcb_operations.sha(coverage_path)
+        self.json_file(effective_path,effective)
+        final=dict(schema='iot-lab.native-thermal-discharge.v1',status='passed',qualified=False)
+        self.json_file(output/'native-thermal-final.json',final)
+        return prepared,output,capability,final
+
+    def test_thermal_mode_is_exact_opt_in_and_disables_internal_repairs_before_probes(self):
+        for config in (dict(self.config,thermal_verification='native-checkback'),
+                       dict(self.config,schema=routing_trial.THERMAL_SCHEMA),
+                       dict(self.config,schema=routing_trial.THERMAL_SCHEMA,thermal_verification='ignore')):
+            with self.subTest(config=config),self.assertRaises(ValueError):self.prepare(config)
+        config=dict(self.config,schema=routing_trial.THERMAL_SCHEMA,thermal_verification='native-checkback')
+        prepared=self.prepare(config)
+        self.assertIn('--native-thermal-checkback',prepared['command'])
+        self.assertEqual(prepared['policy']['effort']['thermal_verification'],'native-checkback')
+        self.assertIn(str(self.root/'tools/route_native_thermals.py'),prepared['policy']['inputs'])
+        legacy=self.prepare()
+        self.assertNotIn('--native-thermal-checkback',legacy['command'])
+        self.assertNotIn('thermal_verification',legacy['policy']['effort'])
+        gate=self.native.parent.parent/'gate.json';value=json.loads(gate.read_text())
+        value['route_features']['routing_rules']['on']=True;self.json_file(gate,value)
+        probes=self.probe.call_count
+        with self.assertRaisesRegex(ValueError,'internal routing/repair'):self.prepare(config)
+        self.assertEqual(self.probe.call_count,probes)
+
+    def test_pending_thermal_mode_requires_revalidated_initial_and_exact_final_discharge(self):
+        prepared,output,capability,final=self.thermal_output()
+        with mock.patch.object(routing_trial.route_native_thermals,'validate_capability',return_value=capability) as initial, \
+             mock.patch.object(routing_trial.route_native_thermals,'discharge',return_value=final) as discharge:
+            result=routing_trial.finalize(prepared,returncode=0)
+        self.assertEqual(result['status'],'passed')
+        initial.assert_called_once_with(capability,output/'native-thermal-source'/self.native.name,output/'base.kicad_pcb',
+                                        selected_nets=prepared['config']['only_nets'])
+        discharge.assert_called_once_with(capability,output/'routed.kicad_pcb',
+            fill_receipt=output/'native-thermal-final-fill.json',drc_receipt=output/'native-thermal-final-drc.json')
+        controls=json.loads(Path(prepared['policy_path']).read_text())['controls']
+        self.assertEqual(controls['native_thermal_obligations']['status'],'passed')
+        self.assertEqual(controls['native_thermal_obligations']['candidate']['sha256'],pcb_operations.sha(output/'routed.kicad_pcb'))
+
+    def test_pending_thermal_receipt_missing_changed_or_invalid_cannot_complete(self):
+        for broken in ('initial','final','capability','raw-discharge','final-result','obligation','source-snapshot','source-copy'):
+            with self.subTest(broken=broken):
+                prepared,output,capability,final=self.thermal_output()
+                if broken in ('initial','final'):(output/f'native-thermal-{broken}.json').unlink()
+                if broken=='capability':self.json_file(output/'native-thermal-initial.json',dict(capability,required_count=1))
+                if broken=='final-result':self.json_file(output/'native-thermal-final.json',dict(final,status='blocked'))
+                if broken=='source-snapshot':(output/'native-thermal-source.json').unlink()
+                if broken=='source-copy':(output/'native-thermal-source'/self.native.name).write_text('different original')
+                if broken=='obligation':
+                    path=output/'rule-coverage.json';value=json.loads(path.read_text());value['native_postconditions']=[]
+                    self.json_file(path,value)
+                    path2=output/'effective-configuration.json';value=json.loads(path2.read_text())
+                    value['rule_coverage']['sha256']=pcb_operations.sha(path);self.json_file(path2,value)
+                def validate(value,*args,**kwargs):return value
+                with mock.patch.object(routing_trial.route_native_thermals,'validate_capability',side_effect=validate), \
+                     mock.patch.object(routing_trial.route_native_thermals,'discharge',
+                        **({'side_effect':ValueError('raw native thermal evidence invalid')} if broken=='raw-discharge' else {'return_value':final})), \
+                     self.assertRaises(ValueError):routing_trial.finalize(prepared,returncode=0)
+
+    def test_v1_cannot_accept_pending_native_coverage(self):
+        prepared=self.prepare();self.router_output(prepared,coverage_status='pending_native')
+        with self.assertRaisesRegex(ValueError,'without passing rule coverage'):
+            routing_trial.finalize(prepared,returncode=0)
 
     def test_inspect_context_must_match_actual_hostname_mount_and_resource_limits(self):
         observed=routing_trial.execution_context()

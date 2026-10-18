@@ -140,6 +140,14 @@ acceptance thresholds. The total CLI deadline also covers verification.
 existing internal routing/repair feature policy is retained and recorded.
 Only exact selected net names and `off`/`if-routed` optimizer modes are accepted.
 
+The optional `iot-lab.routing-policy.v2` policy adds exactly one field,
+`"thermal_verification":"native-checkback"`. Version 1 keeps strict model-only
+admission. Version 2 still checks every other applicable requirement against the
+actual model and backend controls; it can leave only the project thermal-spoke
+minimum pending for native verification. This mode requires an explicit authored
+positive integer minimum, error severity for `starved_thermal`, no DRC exclusions,
+unchanged project/rules, and a fresh native input check before routing.
+
 Before each actual Fastroute call, the producer checks effective custom rules
 and typed `.kicad_pro` project/netclass minima, then retains a source/DSN-bound
 `rule-coverage*.json` report in the router evidence. Hashing a project file alone
@@ -196,8 +204,19 @@ with an explicit `custom_not_applicable` disposition; the independent project
 hole minimum still covers the complete inventory with its own applicability.
 `min_resolved_spokes` is not guaranteed by running a fill. The narrow inactive
 proof requires no copper zones or explicit solid/none connections, with no
-thermal pad/footprint/custom-rule override. Applicable thermal requirements,
-unrepresented creepage, spatial selectors and rule precedence remain blocked.
+thermal pad/footprint/custom-rule override. Applicable thermal requirements stay
+blocked in model-only mode. With the explicit version 2 mode, a verified native
+input capability may instead produce `pending_native` admission with a typed
+thermal obligation. This is partial model coverage, not proof that the router
+enforces thermal spokes. A checked successful native fill and a fresh raw native
+DRC report must discharge that obligation for the exact saved final candidate.
+Failed, incomplete, excluded, downgraded, stale or changed evidence prevents
+completion and training eligibility. Filling alone is insufficient: the native
+[zone-connection checker](https://raw.githubusercontent.com/KiCad/kicad-source-mirror/10.0.6/pcbnew/drc/drc_test_provider_zone_connections.cpp)
+evaluates the resolved spokes. Unrepresented creepage, spatial selectors and
+rule precedence remain blocked in both modes.
+This check follows KiCad's native applicability and connectivity semantics; it
+does not independently count spokes on every pad.
 Silkscreen-only constraints are unchanged only when the actual active-net masks
 permit no new vias and source/import identity guards preserve the existing
 footprints, graphics and outline. Final native/configured checks remain
