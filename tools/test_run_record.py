@@ -147,9 +147,37 @@ class Audit805(unittest.TestCase):
         self.assertEqual(opens['route-fast']['evidence'], 'report-fast.json unrouted[]')
         stall = self.by('route-fast', 'stall stop')
         self.assertEqual((len(stall), stall[0]['evidence'], stall[0]['elapsed_s']), (1, 'stall-fast.json', 18.0))
+        self.assertEqual(stall[0]['inputs']['receipt_format'], 'historical_stopped')
+        self.assertIn('historical stop receipt', stall[0]['why'])
+        self.assertIn('confirmation is unavailable', stall[0]['why'])
         opt = self.by('optimize-fast', 'pass')
         self.assertEqual(opt[0]['elapsed_s'], 21.5)                    # optimizer starts at route-fast end
         self.assertEqual([s['stage'] for s in rr.route_stages(self.d, rr._rows(self.d, 'progress.jsonl'))], ['route-fast', 'route'])
+
+    def test_stall_interrupt_attempts_and_unknown_ack_are_retained_without_exit_claim(self):
+        for attempted, acknowledged, action, explanation in (
+                (True, True, 'stall interrupt attempted', 'broker acknowledged the request'),
+                (True, False, 'stall interrupt attempted', 'broker did not acknowledge the request'),
+                (True, None, 'stall interrupt attempted', 'broker acknowledgment is unknown'),
+                (False, None, 'stall interrupt not attempted', 'no owned router handle')):
+            with self.subTest(attempted=attempted, acknowledged=acknowledged), tempfile.TemporaryDirectory() as folder:
+                with open(os.path.join(folder, 'progress.jsonl'), 'w') as stream:
+                    stream.write(_prow(2.0, 'route-fast start'))
+                receipt = dict(interrupt_attempted=attempted, interrupt_acknowledged=acknowledged,
+                               pass_no=6, best=1, unrouted=1, seconds=1012.0, stall_passes=5, stage='fast')
+                with open(os.path.join(folder, 'stall-fast.json'), 'w') as stream:
+                    json.dump(receipt, stream)
+                rows = [row for row in rr.derive(folder) if row['evidence'] == 'stall-fast.json']
+                self.assertEqual(len(rows), 1)
+                row = rows[0]
+                self.assertEqual((row['stage'], row['action'], row['elapsed_s']), ('route-fast', action, 12.0))
+                self.assertEqual(row['result'], receipt)
+                self.assertEqual(row['inputs']['receipt_format'], 'interrupt_request')
+                self.assertIn(explanation, row['why'])
+                self.assertIn('does not confirm process exit', row['why'])
+                self.assertNotIn('stopped', row['result'])
+                self.assertEqual(rr.sync(folder), 2)  # one stage boundary and one interrupt receipt
+                self.assertEqual(rr.sync(folder), 0)
 
     def test_progress_passes_when_the_log_has_none(self):
         self.w('progress.jsonl', _prow(0.0, 'route-fast start') + _prow(8.0, 'route-fast', 1, 12) + _prow(9.0, 'route-fast end'))

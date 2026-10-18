@@ -154,16 +154,19 @@ class Stall803(unittest.TestCase):
 
     def test_stall_interrupts_only_the_owned_handle_once(self):
         proc = mock.Mock()
+        proc.interrupt.return_value = True
         result, run, kill = self.watch({'proc': proc}, self.lines())
-        self.assertTrue(result.get('stopped'))
-        self.assertEqual(result.get('how'), 'owned-stage interrupt')
+        self.assertTrue(result['interrupt_attempted'])
+        self.assertIs(result['interrupt_acknowledged'], True)
+        self.assertEqual(result.get('how'), 'owned-stage interrupt requested')
         proc.interrupt.assert_called_once()
         run.assert_not_called()      # no pgrep / process search
         kill.assert_not_called()     # no PID signalled directly
 
     def test_no_owned_handle_signals_nothing(self):
         result, run, kill = self.watch({}, self.lines())
-        self.assertFalse(result.get('stopped'))
+        self.assertFalse(result['interrupt_attempted'])
+        self.assertIsNone(result['interrupt_acknowledged'])
         run.assert_not_called()
         kill.assert_not_called()
 
