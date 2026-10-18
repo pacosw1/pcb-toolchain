@@ -180,7 +180,7 @@ class RoutingTrialTests(unittest.TestCase):
         self.native.parent.mkdir(parents=True,exist_ok=True)
         for extension in ('.kicad_pcb','.kicad_sch','.kicad_pro','.kicad_dru'):
             self.native.with_suffix(extension).write_text('synthetic protocol input '+extension)
-        for name in ('fastroute_job.py','route_features.py','route_rule_coverage.py','route_hole_coverage.py'):
+        for name in ('fastroute_job.py','route_features.py','route_rule_coverage.py','route_project_coverage.py','route_hole_coverage.py','backend_quality.py'):
             path=self.root/'tools'/name;path.parent.mkdir(parents=True,exist_ok=True)
             path.write_text('# synthetic producer identity; never executed\n')
         self.json_file(self.root/'tools/route-features.json',dict(features=dict(routing_rules=dict(on=True,repair_iterations=2))))
@@ -230,6 +230,8 @@ class RoutingTrialTests(unittest.TestCase):
         self.json_file(output/'input-manifest.json',dict(configuration=configuration,
             board_sha256=pcb_operations.sha(self.native),router_sha256=pcb_operations.sha(self.executables['router']),
             features=prepared['policy']['effort']['feature_policy']))
+        backend_policy=dict(mode='legacy-unverified',qualified=False)
+        self.json_file(output/'backend-policy.json',backend_policy)
         # Exercise the receipt protocol, not native/DSN semantic coverage. The
         # real pure coverage checker has its own source/model counterexamples.
         dsn=output/'router-model.dsn';dsn.write_text('(pcb "synthetic receipt protocol model")\n')
@@ -238,11 +240,15 @@ class RoutingTrialTests(unittest.TestCase):
         shutil.copyfile(dsn,output/'board.dsn')
         coverage_inputs=[dsn,self.native,self.native.with_suffix('.kicad_dru'),
             self.native.with_suffix('.kicad_pro'),self.native.parent.parent/'gate.json',
-            self.root/'tools/route_rule_coverage.py',self.root/'tools/route_features.py']
+            self.root/'tools/route_rule_coverage.py',self.root/'tools/route_project_coverage.py',
+            self.root/'tools/route_features.py']
+        backend_command=[str(self.executables['router']),'-de',str(dsn),'-do',str(output/'router.ses')]
         coverage=dict(schema='iot-lab.route-rule-coverage.v1',status=coverage_status,
             solver_launch_allowed=coverage_status=='passed',qualified=False,
             cause='synthetic admitted coverage' if coverage_status=='passed' else 'RP-001: stitching unsupported',
             active_nets=config['only_nets'],job_layers=config['layers'],requirements=[],
+            backend_command=backend_command,
+            backend_command_sha256=hashlib.sha256(json.dumps(backend_command,separators=(',',':'),ensure_ascii=True).encode()).hexdigest(),
             inputs={str(p):pcb_operations.sha(p) for p in coverage_inputs},
             dsn=dict(path=str(dsn),sha256=pcb_operations.sha(dsn)))
         coverage_path=self.json_file(output/'rule-coverage.json',coverage)
@@ -252,7 +258,8 @@ class RoutingTrialTests(unittest.TestCase):
                 blocked_stage='rest',stage_solver_launched=False,solver_launched=False,qualified=False))
             return output
         self.json_file(output/'effective-configuration.json',dict(configuration=configuration,
-            command=[str(self.executables['router']),'-de',str(dsn),'-do',str(output/'router.ses')],
+            command=backend_command,
+            backend_policy=backend_policy,
             dsn_sha256=pcb_operations.sha(dsn),
             rule_coverage=dict(path=str(coverage_path),sha256=pcb_operations.sha(coverage_path)),
             backend_resources=dict(global_rayon_threads=2,autorouter_workers=2,optimizer_workers=2)))
@@ -293,10 +300,11 @@ class RoutingTrialTests(unittest.TestCase):
         self.assertEqual(policy['effort']['router_timeout_s'],8)
         self.assertEqual(policy['effort']['timeout_s'],20)
         self.assertFalse(policy['effort']['feature_policy']['routing_rules']['on'])
-        for name in ('route_rule_coverage.py','route_hole_coverage.py'):
+        for name in ('route_rule_coverage.py','route_project_coverage.py','route_hole_coverage.py'):
             coverage=self.root/'tools'/name
             self.assertEqual(policy['inputs'][str(coverage)],pcb_operations.sha(coverage))
         self.assertFalse(policy['controls']['effective_configuration_verified'])
+        self.assertEqual(policy['effort']['backend_policy'],{'mode':'legacy-unverified'})
         self.assertEqual(json.loads(Path(prepared['policy_path']).read_text()),policy)
         self.assertEqual((Path(prepared['output']).parent/'execution-context.json').read_bytes(),self.context.read_bytes())
         self.assertEqual(self.probe.call_count,3)
@@ -343,7 +351,7 @@ class RoutingTrialTests(unittest.TestCase):
 
     def test_finalize_rejects_output_configuration_tool_and_context_mutations(self):
         for target in ('input-manifest.json','effective-configuration.json','missing-effective',
-                       'routed.kicad_pcb','router','coverage-tool','original-context','retained-context'):
+                       'routed.kicad_pcb','router','coverage-tool','project-coverage-tool','original-context','retained-context'):
             with self.subTest(target=target):
                 prepared=self.prepare();output=self.router_output(prepared)
                 if target in ('input-manifest.json','effective-configuration.json'):
@@ -355,6 +363,7 @@ class RoutingTrialTests(unittest.TestCase):
                     (output/'effective-configuration.json').unlink();original=None;path=None
                 else:
                     path=(self.executables['router'] if target=='router' else self.root/'tools/route_rule_coverage.py' if target=='coverage-tool'
+                          else self.root/'tools/route_project_coverage.py' if target=='project-coverage-tool'
                           else self.context if target=='original-context'
                           else output.parent/'execution-context.json' if target=='retained-context' else output/target)
                     original=path.read_bytes();path.write_bytes(original+b'changed bytes')
@@ -362,6 +371,42 @@ class RoutingTrialTests(unittest.TestCase):
                     with self.assertRaises(ValueError):routing_trial.finalize(prepared,returncode=0)
                 finally:
                     if original is not None:path.write_bytes(original)
+
+    def test_final_command_must_match_project_admission_even_when_receipts_are_resealed(self):
+        for target in ('coverage', 'effective', 'missing'):
+            with self.subTest(target=target):
+                prepared=self.prepare();output=self.router_output(prepared)
+                coverage_path=output/'rule-coverage.json';effective_path=output/'effective-configuration.json'
+                coverage=json.loads(coverage_path.read_text());effective=json.loads(effective_path.read_text())
+                if target=='coverage':
+                    coverage['backend_command'].append('--router.min_trace_width_um=1')
+                    coverage['backend_command_sha256']=hashlib.sha256(json.dumps(coverage['backend_command'],separators=(',',':'),ensure_ascii=True).encode()).hexdigest()
+                elif target=='effective':
+                    effective['command'].append('--router.copper_to_edge_clearance_um=1')
+                else:
+                    del coverage['backend_command'];del coverage['backend_command_sha256']
+                self.json_file(coverage_path,coverage)
+                effective['rule_coverage']['sha256']=pcb_operations.sha(coverage_path)
+                self.json_file(effective_path,effective)
+                with self.assertRaisesRegex(ValueError,'command differs from project-rule admission'):
+                    routing_trial.finalize(prepared,returncode=0)
+
+    def test_legacy_and_quality_modes_cannot_share_controlled_algorithm_identity(self):
+        quality=dict(mode='quality-first',binary_sha256='a'*64,manifest_sha256='b'*64,
+                     patch_sha256='c'*64,upstream_commit='d'*40)
+        self.assertNotEqual(routing_trial._backend_effort(quality),routing_trial._backend_effort({'mode':'legacy-unverified'}))
+        for target in ('stage', 'job', 'flag'):
+            with self.subTest(target=target):
+                prepared=self.prepare();output=self.router_output(prepared)
+                effective_path=output/'effective-configuration.json';effective=json.loads(effective_path.read_text())
+                if target=='job':
+                    self.json_file(output/'backend-policy.json',quality)
+                elif target=='stage':
+                    effective['backend_policy']=quality;self.json_file(effective_path,effective)
+                else:
+                    effective['command'].append('--quality-first');self.json_file(effective_path,effective)
+                with self.assertRaisesRegex(ValueError,'backend algorithm'):
+                    routing_trial.finalize(prepared,returncode=0)
 
     def test_finalize_rejects_missing_or_tampered_stage_coverage_seal(self):
         for mutation in ('missing-binding','missing-receipt','tampered-receipt','additional-unsealed-stage'):

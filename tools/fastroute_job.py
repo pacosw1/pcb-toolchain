@@ -770,22 +770,6 @@ def _main(a=None):
         obstacles = [dict(NetName=n, Type=t, Pad_Type=p) for n, t, p in sorted(obstacle_set)]
         gate_path = os.path.join(feat['_board_dir'], 'gate.json') if feat.get('_board_dir') else None
         coverage_path = os.path.join(a.outdir, f'rule-coverage{sfx}.json')
-        try:
-            coverage = route_rule_coverage.check_files(a.board, base, model_dsn, active_nets=stage_nets,
-                net_classes=native_classes, obstacles=obstacles, layers=a.layers.split(','), gate=gate_path)
-        except (ValueError, OSError) as error:
-            coverage = dict(schema=route_rule_coverage.SCHEMA, status='blocked', solver_launch_allowed=False,
-                cause=str(error), qualified=False)
-        lean.atomic_json(coverage_path, coverage)
-        if not coverage['solver_launch_allowed']:
-            progress.write('rule coverage blocked: ' + coverage['cause'])
-            lean.atomic_json(os.path.join(a.outdir, 'outcome.json'), dict(status='blocked',
-                cause='router rule coverage: ' + coverage['cause'], coverage=coverage_path,
-                coverage_sha256=lean.digest(coverage_path), blocked_stage=tag,
-                stage_solver_launched=False, solver_launched=bool(solver_launches), qualified=False))
-            print('STUCK router rule coverage: ' + coverage['cause'] + '; see ' + coverage_path, flush=True)
-            sys.exit(4)
-        print('PASS router rule coverage; evidence=' + coverage_path, flush=True)
         if ignored_classes:
             help_result = lean.run_stage([BIN, '--help'], stage='net-class-capability', event_file=phases,
                                          deadline=lean.deadline_after(10), stdout=subprocess.PIPE,
@@ -822,6 +806,25 @@ def _main(a=None):
             cmd += lean.optimizer_options(a.optimizer)
         if a.threads:
             cmd += [f'--router.autorouter.max_threads={a.threads}', f'--router.optimizer.max_threads={a.threads}']
+        # Admission binds the complete argv, including caller/feature overrides.
+        # This exact command is retained below and passed to the solver.
+        try:
+            coverage = route_rule_coverage.check_files(a.board, base, model_dsn, active_nets=stage_nets,
+                net_classes=native_classes, obstacles=obstacles, layers=a.layers.split(','), gate=gate_path,
+                backend_command=cmd, backend_policy=backend_policy)
+        except (ValueError, OSError) as error:
+            coverage = dict(schema=route_rule_coverage.SCHEMA, status='blocked', solver_launch_allowed=False,
+                cause=str(error), qualified=False)
+        lean.atomic_json(coverage_path, coverage)
+        if not coverage['solver_launch_allowed']:
+            progress.write('rule coverage blocked: ' + coverage['cause'])
+            lean.atomic_json(os.path.join(a.outdir, 'outcome.json'), dict(status='blocked',
+                cause='router rule coverage: ' + coverage['cause'], coverage=coverage_path,
+                coverage_sha256=lean.digest(coverage_path), blocked_stage=tag,
+                stage_solver_launched=False, solver_launched=bool(solver_launches), qualified=False))
+            print('STUCK router rule coverage: ' + coverage['cause'] + '; see ' + coverage_path, flush=True)
+            sys.exit(4)
+        print('PASS router rule coverage; evidence=' + coverage_path, flush=True)
         effective = dict(configuration=vars(a), features=feat, command=cmd, dsn_sha256=lean.digest(model_dsn),
                          rule_coverage=dict(path=coverage_path, sha256=lean.digest(coverage_path)),
                          backend_policy=backend_policy,

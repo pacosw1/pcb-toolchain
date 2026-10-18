@@ -140,27 +140,53 @@ acceptance thresholds. The total CLI deadline also covers verification.
 existing internal routing/repair feature policy is retained and recorded.
 Only exact selected net names and `off`/`if-routed` optimizer modes are accepted.
 
-Before each actual Fastroute call, the producer checks effective rule coverage
-and retains a source/DSN-bound `rule-coverage*.json` report in the router evidence.
+Before each actual Fastroute call, the producer checks effective custom rules
+and typed `.kicad_pro` project/netclass minima, then retains a source/DSN-bound
+`rule-coverage*.json` report in the router evidence. Hashing a project file alone
+does not establish rule coverage. Missing, malformed or unknown applicable
+requirements block; an unchanged or inapplicable requirement needs an explicit
+source/geometry/control proof.
 Incomplete or unsupported applicable constraints block the solver with an
 actionable cause. Enabling the rule compiler alone does not establish coverage.
 Passing this admission check still requires the complete fresh native,
 configured and applicable semantic checks on the resulting candidate.
+Clearance floors come from the actual final DSN declarations. Track-width and
+copper-to-edge minima are compared with the complete final backend argv,
+including any neck-width option. Missing, duplicate or weaker controls block.
+The admitted immutable `router-model*.dsn`, exact argv, executable and backend
+policy are bound to the effective configuration; a later repair cannot replace
+an earlier stage's admitted model.
 For rules involving new copper, an exact layer present in the actual DSN is
 inactive only when every active net's effective layer mask excludes it. Unknown
 or wildcard layer selectors remain unsupported.
-PTH coverage supports front-side, quarter-turn pads with centred circular drills
-and circular or true rectangular copper. Each physical hole must match its
-actual final DSN pin, position, net and shape, including repeated-number thermal
-pads. The proof requires the expanded drill to fit inside the actual exported
-copper plus a conservative verified wire-to-pin clearance floor. It grants no
-same-net PTH coverage. Slots, offsets, mirrored placements, unsupported shapes,
+Project hole admission inventories unchanged PTH, NPTH and retained vias.
+Positive containment is limited to a source-verified quality-first backend:
+the binary, reviewed patch, manifest and original native-validation evidence
+must rebind, and the actual command must select `--quality-first`. Supported
+geometry uses one actual routing layer, front-side quarter-turn PTH with centred
+circular drills and circular or true rectangular copper, circular NPTH keepouts
+and circular retained vias. Actual DSN positions, nets and physical identities
+must match, including repeated pad numbers. Every credited coordinate, radius,
+corner and clearance must be exactly representable on the verified DSN
+`um`/`resolution um 10` grid (0.1 micrometre), within its supported range.
+Plated obstacles can use only a conservative actual clearance floor; NPTH
+keepouts receive no wire-to-pin credit. Opaque legacy backends, slots, oval/path
+obstacles, offsets, mirrored or off-grid geometry remain unsupported for this
+positive proof. Custom PTH rules grant no same-net exemption; only the explicit
+KiCad 10 project track rule can record its sourced same-nonzero-net exclusion,
+after binding every physical drilled item.
+`min_resolved_spokes` is not guaranteed by running a fill. The narrow inactive
+proof requires no copper zones or explicit solid/none connections, with no
+thermal pad/footprint/custom-rule override. Applicable thermal requirements,
 unrepresented creepage, spatial selectors and rule precedence remain blocked.
 Silkscreen-only constraints are unchanged only when the actual active-net masks
 permit no new vias and source/import identity guards preserve the existing
 footprints, graphics and outline. Final native/configured checks remain
 mandatory. With configured RP-001 checks and no stitching producer,
 the actual active-net layer masks must prevent new layer transitions.
+Earlier sealed native results remain historical facts under their recorded
+inputs and controls; expanded admission does not rewrite them or certify a new
+run from old evidence.
 
 Controlled execution requires a host-recorded original `docker inspect` receipt
 at `PCB_EXECUTION_CONTEXT`, mounted read-only in the matching network-none

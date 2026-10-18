@@ -6,6 +6,8 @@ source footprints/holes, establish actual routing layers and clearance floor,
 bind these inputs, and run the final fresh configured gate.
 """
 from decimal import Decimal, Inexact, Rounded, localcontext
+import hashlib
+import json
 from pathlib import Path
 import re
 
@@ -17,6 +19,15 @@ PAD_FIELDS = {'reference','pad','net','side','footprint_position_mm','footprint_
               'position_mm','size_mm','drill_mm','drill_offset_mm','shape','layers'}
 PHYSICAL_FIELDS = {'identity','rotation_deg','export_pin'}
 UNITS = {'mm':Decimal(1),'um':Decimal('0.001'),'mil':Decimal('0.0254'),'inch':Decimal('25.4'),'in':Decimal('25.4')}
+DRILLED_SCHEMA = 'iot-lab.route-drilled-coverage.v1'
+EXPORTER_SOURCE = ('https://gitlab.com/kicad/code/kicad/-/blob/10.0.6/'
+                   'pcbnew/specctra_import_export/specctra_export.cpp')
+TRACK_HOLE_APPLICABILITY_SOURCE = ('https://gitlab.com/kicad/code/kicad/-/blob/10.0.6/'
+    'pcbnew/drc/drc_test_provider_copper_clearance.cpp#L582-587')
+BACKEND_SOURCE = 'https://github.com/parisxmas/fastroute/tree/e5d52c4544795422b8b28077acc0605fdf11265a'
+# This reviewed patch changes pipeline quality selection, not DSN/geometry
+# import. A different patch requires a new source review, never auto-certifies.
+GEOMETRY_PATCH_SHA256 = 'be7144adb240f4b4f08f28d8bba46374a3974e493f6c6f21d6e1aee3f073e2f2'
 
 
 def _d(value):
@@ -150,6 +161,118 @@ def native_pth_pads(native_path):
                     drill_offset_mm=['0','0'],shape='circle',layers=list(layers)))
                 result[-1].update(identity=identity,rotation_deg=str(pad_rotation),shape=pad[3],export_pin=export_pin)
     return result
+
+
+def native_drilled_geometry(native_path):
+    """Inventory every physical drilled pad and via, including unsupported rows.
+
+    No host paths are emitted. UUID (or explicit source index), exact raw-form
+    hash and geometry retain physical multiplicity for source/base comparison.
+    Supported pads are front, centered, quarter-turn circle/rect/oval copper
+    with circular/oval drills. NPTH support is intentionally circular only.
+    Unsupported geometry never disappears from the inventory.
+    """
+    text=Path(native_path).read_text();roots=route_features.sexpr(text)
+    if len(roots)!=1 or roots[0][:1]!=['kicad_pcb']:raise ValueError('expected native PCB')
+    root=roots[0];copper=[]
+    for row in child(root,'layers',[]):
+        if isinstance(row,list) and len(row)>=2 and re.fullmatch(r'(?:F|B|In\d+)\.Cu',str(row[1])):
+            if row[1] in copper:raise ValueError('duplicate native copper layer')
+            copper.append(row[1])
+    if not copper or copper[0]!='F.Cu' or copper[-1]!='B.Cu':raise ValueError('missing native copper stack')
+    rows=[];identities=set();references=set()
+    def base(form,kind,index):
+        uid=child(form,'uuid');identity=uid[0] if uid and len(uid)==1 and isinstance(uid[0],str) and uid[0] else 'index:'+index
+        if identity in identities:raise ValueError('duplicate physical drilled identity')
+        identities.add(identity)
+        net=child(form,'net',[])
+        row=dict(kind=kind,identity=identity,net=net[-1] if net and isinstance(net[-1],str) else '',
+            supported=False,cause=None,native_form_sha256=hashlib.sha256(
+                json.dumps(form,ensure_ascii=False,separators=(',',':')).encode()).hexdigest())
+        rows.append(row)
+        if uid is not None and (len(uid)!=1 or not isinstance(uid[0],str) or not uid[0]):
+            row['cause']='ambiguous native drilled UUID'
+        return row
+    with localcontext() as ctx:
+        ctx.prec=max(50,len(text)*2);ctx.traps[Inexact]=True;ctx.traps[Rounded]=True
+        for fi,fp in enumerate(footprints(native_path)):
+            ref=fp['props'].get('Reference')
+            if not ref or ref.casefold() in references:raise ValueError('ambiguous native drilled reference')
+            references.add(ref.casefold());occurrences={};net_numbers={}
+            for pi,pad in enumerate(_children(fp['form'],'pad')):
+                if len(pad)<4:raise ValueError('malformed native pad')
+                kind={'thru_hole':'pth','np_thru_hole':'npth'}.get(pad[2])
+                drill=child(pad,'drill')
+                if pad[1] and pad[2]!='np_thru_hole':
+                    net=child(pad,'net',[])
+                    if pad[1] in net_numbers and net_numbers[pad[1]]!=net:
+                        raise ValueError('conflicting repeated native electrical membership')
+                    net_numbers[pad[1]]=net
+                if kind is None and drill is None and pad[2] in ('smd','connect'):
+                    # Round copper-less holes do not consume exported aliases.
+                    number=pad[1];occurrences[number]=occurrences.get(number,0)+1
+                    continue
+                row=base(pad,kind or 'unknown',str(fi)+':'+str(pi));row.update(reference=ref,pad=pad[1])
+                try:
+                    if row['cause']:raise ValueError(row['cause'])
+                    if kind is None:raise ValueError('unknown drilled pad type')
+                    if child(fp['form'],'layer')!=['F.Cu']:raise ValueError('mirrored/backside drilled footprint is unsupported')
+                    if pad[3] not in ('circle','rect','oval'):raise ValueError('unsupported drilled pad copper shape')
+                    if any(_children(pad,k) for k in ('offset','primitives','options','rect_delta','chamfer_ratio','chamfer','roundrect_rratio','padstack')):
+                        raise ValueError('custom or offset drilled pad geometry is unsupported')
+                    if not isinstance(drill,list):raise ValueError('missing physical drill')
+                    if len(drill)==1:drill_size=[_d(drill[0])]*2;drill_shape='circle'
+                    elif len(drill)==3 and drill[0]=='oval':drill_size=_pair(drill[1:]);drill_shape='oval'
+                    else:raise ValueError('offset or unknown drill geometry is unsupported')
+                    size=_pair(child(pad,'size'));at=child(pad,'at')
+                    if min(size)<=0 or min(drill_size)<=0 or (pad[3]=='circle' and size[0]!=size[1]):
+                        raise ValueError('invalid drilled pad dimensions')
+                    if not isinstance(at,list) or len(at) not in (2,3):raise ValueError('missing drilled pad position')
+                    rotation=_angle(fp['pose'][2]);pad_rotation=_angle(at[2] if len(at)==3 else 0)
+                    local=_pair(at[:2]);dx,dy=_rotate(local[0],-local[1],rotation)
+                    position=[fp['pose'][0]+dx,fp['pose'][1]-dy]
+                    names=child(pad,'layers')
+                    if not isinstance(names,list) or len(set(names))!=len(names):raise ValueError('ambiguous drilled pad layers')
+                    layers=copper if '*.Cu' in names else [v for v in names if v in copper]
+                    if any(v.endswith('.Cu') and v not in copper and v!='*.Cu' for v in names):raise ValueError('unknown drilled copper layer')
+                    net=child(pad,'net',[])
+                    if kind=='pth':
+                        if not pad[1] or len(net)!=1 or not isinstance(net[0],str) or not net[0] or net[0].isdecimal():
+                            raise ValueError('missing exact drilled electrical membership')
+                        if not layers:raise ValueError('PTH has no exported copper')
+                        if pad[3]=='circle' and drill_size[0]>=size[0]:raise ValueError('copper-less plated drill requires keepout-specific binding')
+                        ordinal=occurrences.get(pad[1],0);export_pin=pad[1]+('@'+str(ordinal) if ordinal else '')
+                        occurrences[pad[1]]=ordinal+1
+                    else:
+                        if net or pad[3]!='circle' or drill_shape!='circle' or size[0]>drill_size[0]:
+                            raise ValueError('only copper-less circular NPTH exporter keepouts are supported')
+                        export_pin=None
+                    row.update(side='front',footprint_position_mm=[format(v,'f') for v in fp['pose'][:2]],
+                        footprint_rotation_deg=str(rotation),position_mm=[format(v,'f') for v in position],
+                        size_mm=[format(v,'f') for v in size],drill_mm=[format(v,'f') for v in drill_size],
+                        drill_shape=drill_shape,drill_offset_mm=['0','0'],shape=pad[3],layers=list(layers),
+                        hole_layers=list(copper),rotation_deg=str(pad_rotation),export_pin=export_pin,supported=True)
+                except (ValueError,TypeError,KeyError,ArithmeticError) as error:
+                    row.update(supported=False,cause=str(error) or type(error).__name__)
+        for vi,via in enumerate(_children(root,'via')):
+            row=base(via,'via','via:'+str(vi))
+            try:
+                if row['cause']:raise ValueError(row['cause'])
+                if any(isinstance(v,str) and v not in ('via','locked') for v in via):raise ValueError('blind/micro via is unsupported')
+                if any(_children(via,k) for k in ('padstack','remove_unused_layers','zone_layer_connections')):
+                    raise ValueError('custom via padstack is unsupported')
+                size=child(via,'size');drill=child(via,'drill');names=child(via,'layers');net=child(via,'net')
+                if (not size or len(size)!=1 or not drill or len(drill)!=1 or names!=[copper[0],copper[-1]]
+                        or not net or len(net)!=1 or not isinstance(net[0],str) or not net[0] or net[0].isdecimal()):
+                    raise ValueError('unknown via dimensions/layers/electrical membership')
+                diameter=_d(size[0]);hole=_d(drill[0]);position=_pair(child(via,'at'))
+                if hole<=0 or diameter<=hole:raise ValueError('invalid via annulus')
+                row.update(position_mm=[format(v,'f') for v in position],size_mm=[format(diameter,'f')]*2,
+                    drill_mm=[format(hole,'f')]*2,drill_shape='circle',drill_offset_mm=['0','0'],shape='circle',
+                    layers=list(copper),hole_layers=list(copper),rotation_deg='0',supported=True)
+            except (ValueError,TypeError,KeyError,ArithmeticError) as error:
+                row.update(supported=False,cause=str(error) or type(error).__name__)
+    return rows
 
 
 def _index(forms,kind):
@@ -358,5 +481,350 @@ def inspect(dsn_text, *, pads, active_nets, layers, required_mm, clearance_floor
         result.update(status='covered',cause='every physical other-net PTH expanded drill is contained in its actual DSN copper obstacle plus verified wire-to-pin clearance',
             required_mm=format(required,'f'),clearance_floor_mm=format(floor,'f'))
     except (ValueError,TypeError,KeyError,ArithmeticError) as error:
+        result.update(status='blocked',cause=str(error) or type(error).__name__)
+    return result
+
+
+def _capsule(center, size, rotation):
+    """Centered native oval/circular drill, in the board's Y-down frame."""
+    radius=min(size)/2;half=(max(size)-min(size))/2
+    points=((-half,Decimal(0)),(half,Decimal(0))) if size[0]>=size[1] else ((Decimal(0),-half),(Decimal(0),half))
+    ends=[]
+    for x,y in points:
+        dx,dy=_rotate(x,-y,rotation);ends.append((center[0]+dx,center[1]-dy))
+    return dict(kind='capsule',ends=tuple(sorted(ends)),radius=radius)
+
+
+def _obstacle(shape,scale,center,rotation):
+    """Exact DSN circle, centered rectangle or one straight round path."""
+    def world(x,y):
+        dx,dy=_rotate(x*scale,y*scale,rotation)
+        return center[0]+dx,center[1]-dy
+    if shape[0]=='circle':
+        if len(shape) not in (3,5):raise ValueError('malformed drilled DSN circle')
+        offset=[Decimal(0),Decimal(0)] if len(shape)==3 else [_d(v) for v in shape[3:]]
+        radius=_d(shape[2])*scale/2
+        if radius<=0 or offset!=[0,0]:raise ValueError('offset/nonpositive drilled DSN circle')
+        p=world(*offset);return dict(kind='capsule',ends=(p,p),radius=radius)
+    if shape[0]=='path':
+        if len(shape)!=7:raise ValueError('only one straight oval DSN path is supported')
+        width=_d(shape[2])*scale;a=[_d(v) for v in shape[3:5]];b=[_d(v) for v in shape[5:7]]
+        if width<=0 or a!=[-v for v in b] or (a[0]!=b[0] and a[1]!=b[1]):
+            raise ValueError('offset/non-axis DSN capsule is unsupported')
+        return dict(kind='capsule',ends=tuple(sorted((world(*a),world(*b)))),radius=width/2)
+    if shape[0]=='rect':
+        if len(shape)!=6:raise ValueError('malformed drilled DSN rectangle')
+        x0,y0,x1,y1=[_d(v) for v in shape[2:]]
+        if x0>=x1 or y0>=y1 or x0!=-x1 or y0!=-y1:raise ValueError('offset drilled DSN rectangle')
+        points=[world(x,y) for x in (x0,x1) for y in (y0,y1)]
+        return dict(kind='rect',bounds=(min(x for x,y in points),min(y for x,y in points),
+                                       max(x for x,y in points),max(y for x,y in points)))
+    raise ValueError('unsupported actual DSN drilled obstacle')
+
+
+def _contains_drill(obstacle,drill,required,floor):
+    """Analytic sufficient containment, with no polygon sampling or rounding.
+
+    A capsule is the convex hull of its two endpoint disks. Squared distance
+    to an axis-aligned segment bounds each disk inside an expanded capsule.
+    For a rectangle, each endpoint disk fits its exact inscribed disk plus
+    the verified clearance. The latter is conservative near rounded corners.
+    """
+    radius=drill['radius']+required
+    if obstacle['kind']=='capsule':
+        slack=obstacle['radius']+floor-radius
+        if slack<0:return False
+        a,b=obstacle['ends']
+        if a[0]!=b[0] and a[1]!=b[1]:raise ValueError('non-axis obstacle capsule')
+        for x,y in drill['ends']:
+            dx=max(min(a[0],b[0])-x,Decimal(0),x-max(a[0],b[0]))
+            dy=max(min(a[1],b[1])-y,Decimal(0),y-max(a[1],b[1]))
+            if dx*dx+dy*dy>slack*slack:return False
+        return True
+    x0,y0,x1,y1=obstacle['bounds']
+    for x,y in drill['ends']:
+        margin=min(x-x0,x1-x,y-y0,y1-y)
+        if margin<0 or margin+floor<radius:return False
+    return True
+
+
+class _DrilledModel:
+    def __init__(self,text,layers):
+        self.root=_parse(text);unit=_one(self.root,'unit');resolution=_one(self.root,'resolution')
+        if (len(unit)!=2 or unit[1] not in ('mm','um','mil','inch') or len(resolution)!=3
+                or resolution[1]!=unit[1] or not re.fullmatch(r'[1-9][0-9]*',str(resolution[2]))
+                or int(resolution[2])>2147483647):raise ValueError('ambiguous DSN drilled unit/resolution')
+        self.scale=UNITS[unit[1]];self.layers={}
+        for form in _children(_one(self.root,'structure'),'layer'):
+            kind=_one(form,'type')
+            if len(form)<3 or form[1] in self.layers or len(kind)!=2 or kind[1] not in ('signal','power'):
+                raise ValueError('ambiguous actual drilled DSN layer')
+            self.layers[form[1]]=kind[1]
+        if (self.layers.get(layers[0])!='signal' or any(v=='signal' and k not in layers for k,v in self.layers.items())):
+            raise ValueError('actual DSN routing layers differ from drilled proof')
+        library=_one(self.root,'library');self.images=_index(library,'image');self.stacks=_index(library,'padstack')
+        for collection,normalize in ((self.images,lambda n:n.casefold()),
+                (self.stacks,lambda n:re.sub(r'\.\d+','',n).casefold())):
+            keys=[normalize(k) for k in collection]
+            if len(set(keys))!=len(keys):raise ValueError('ambiguous importer-normalized drilled names')
+        self.places={}
+        for component in _children(_one(self.root,'placement'),'component'):
+            if len(component)<3 or component[1] not in self.images:raise ValueError('missing drilled DSN image')
+            for place in _children(component,'place'):
+                if len(place)<6 or not isinstance(place[1],str) or place[1].casefold() in self.places:
+                    raise ValueError('ambiguous drilled component placement')
+                self.places[place[1].casefold()]=(component[1],place)
+        self.members={};self.nets=set();net_keys=set();member_keys=set()
+        for net in _children(_one(self.root,'network'),'net'):
+            if len(net)<3 or not isinstance(net[1],str) or net[1].casefold() in net_keys:raise ValueError('ambiguous drilled DSN net')
+            self.nets.add(net[1]);net_keys.add(net[1].casefold())
+            for token in _one(net,'pins')[1:]:
+                if not isinstance(token,str) or token.casefold() in member_keys:raise ValueError('ambiguous drilled pin membership')
+                self.members[token]=net[1];member_keys.add(token.casefold())
+        self.vias=[]
+        wiring=_children(self.root,'wiring')
+        if len(wiring)>1:raise ValueError('ambiguous DSN wiring')
+        for via in _children(wiring[0] if wiring else [],'via'):
+            if len(via)!=6 or not isinstance(via[1],str) or len(_one(via,'net'))!=2 or _one(via,'type')!=['type','fix']:
+                raise ValueError('retained DSN via is not a fixed, single-center obstacle')
+            self.vias.append((via[1],[_d(via[2])*self.scale,-_d(via[3])*self.scale],_one(via,'net')[1]))
+
+    def image(self,hole):
+        name=hole['reference'];image_name,place=self.places.get(name.casefold(),(None,None))
+        if (place is None or place[1]!=name or place[4]!='front'
+                or _angle(place[5])!=_angle(hole['footprint_rotation_deg'])
+                or [_d(place[2])*self.scale,-_d(place[3])*self.scale]!=_pair(hole['footprint_position_mm'])):
+            raise ValueError('DSN drilled component pose/mirror differs from native')
+        image=self.images[image_name]
+        if _children(image,'side'):raise ValueError('mirrored drilled image is unsupported')
+        signature=lambda f:(_pins(f),_children(f,'keepout'),_children(f,'wire_keepout'))
+        base=re.sub(r'::[0-9]+$','',image_name).casefold()
+        for alias,other in self.images.items():
+            if re.sub(r'::[0-9]+$','',alias).casefold()==base and signature(other)!=signature(image):
+                raise ValueError('ambiguous importer-normalized drilled package')
+        return image_name,image,place
+
+    def shape(self,stack,layer):
+        if stack not in self.stacks:raise ValueError('missing actual drilled padstack')
+        shapes=[]
+        for row in _children(self.stacks[stack],'shape'):
+            if len(row)!=2 or not isinstance(row[1],list) or len(row[1])<3:raise ValueError('malformed drilled padstack')
+            if row[1][1] in (layer,'signal','pcb'):shapes.append(row[1])
+        if len(shapes)!=1:raise ValueError('missing or ambiguous drilled obstacle on routing layer')
+        return shapes[0]
+
+
+def _grid_mm(model,value):
+    """Exact upstream integer-grid subset; never round a source coordinate."""
+    scaled=value/model.scale*10
+    # Upstream fr-geom/limits.rs CRIT_INT and fr-io/structure.rs 397-413:
+    # the board scale remains resolution10 only below this sourced limit.
+    if scaled!=scaled.to_integral_value() or abs(scaled)*5>=33554432:
+        raise ValueError('drilled model coordinate/radius/clearance is not exactly representable on the verified backend grid')
+
+
+def _verified_grid(model,command,policy,inputs):
+    """Reuse actual quality-backend provenance; opaque legacy policy blocks."""
+    import backend_quality
+    if (not isinstance(command,list) or not command or not all(isinstance(v,str) for v in command)
+            or '--quality-first' not in command or not Path(command[0]).is_absolute()
+            or not isinstance(policy,dict) or policy.get('mode')!='quality-first'):
+        raise ValueError('drilled model needs an attributable quality-first backend policy; legacy/unknown geometry is unsupported')
+    if policy.get('patch_sha256')!=GEOMETRY_PATCH_SHA256:
+        raise ValueError('backend patch geometry transform has not been reviewed')
+    paths=[Path(command[0]),Path(backend_quality.__file__).resolve(),backend_quality.PATCH.resolve()]
+    manifest=Path(policy.get('manifest',''))
+    if not manifest.is_absolute():raise ValueError('actual backend manifest path is required')
+    paths.append(manifest)
+    def capture():
+        for path in paths:
+            inputs[str(path)]=hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+    capture()
+    data=json.loads(manifest.read_text())
+    if not isinstance(data,dict) or not isinstance(data.get('native_validation'),dict):
+        raise ValueError('invalid backend native validation manifest')
+    for item in data.get('native_validation',{}).get('evidence',[]):
+        if not isinstance(item,dict) or not isinstance(item.get('path'),str):raise ValueError('invalid backend native evidence')
+        paths.append(Path(item['path']))
+    capture();before=dict(inputs)
+    if backend_quality.bind(command[0],manifest)!=policy:raise ValueError('actual backend policy differs from its binary/manifest/evidence bindings')
+    capture()
+    if before!=inputs:raise ValueError('backend policy inputs changed during drilled admission')
+    root=model.root;unit=_one(root,'unit');resolution=_one(root,'resolution')
+    if unit!=['unit','um'] or resolution!=['resolution','um','10']:
+        raise ValueError('only the source-verified um/resolution10 backend grid is supported')
+    boundary=_one(_one(root,'structure'),'boundary')
+    if (len(boundary)!=2 or not isinstance(boundary[1],list) or boundary[1][:3]!=['path','pcb','0']
+            or len(boundary[1])<11 or (len(boundary[1])-3)%2):
+        raise ValueError('backend coordinate scale requires one exact closed zero-width PCB boundary')
+    values=[_d(v) for v in boundary[1][3:]]
+    if values[:2]!=values[-2:] or max(map(abs,values))*50>=33554432:
+        raise ValueError('backend board boundary does not establish unchanged resolution10 coordinate scale')
+    return dict(source=BACKEND_SOURCE,coordinate_scale=10,unit='um',policy=policy['mode'],
+        binary_sha256=policy['binary_sha256'],manifest_sha256=policy['manifest_sha256'])
+
+
+def inspect_drilled(dsn_text, *, holes, active_nets, layers, required_mm, clearance_floor_mm,
+                    applicability='reject_same_net',backend_command=None,backend_policy=None):
+    """Prove a project hole-to-new-track minimum for the complete inventory.
+
+    Actual KiCad10.0.6 representations are source-documented at EXPORTER_SOURCE:
+    makePADSTACK exports oval copper as a two-point path with round aperture;
+    makeIMAGE exports circular copper-less holes as image keepout circles;
+    instantiated vias use wiring/via plus circular library padstacks. NPTH
+    keepouts receive NO wire-to-pin clearance credit. Same-net plated drills
+    are blocked by default: electrical copper is not a same-net wire keepout.
+    The explicit kicad10_project_track scope implements the native track
+    visitor's same-net connected-item exclusion before hole tests. It still
+    binds every physical hole/model instance, and records each exclusion.
+    Actual backend oval paths remain unsupported: the integer importer uses
+    rounded octagons which need not contain the ideal source capsule. Positive
+    circle/rectangle proofs require the independently rebound quality backend
+    policy and exactly representable centers/radii/corners/clearance. Legacy
+    source-opaque backends never receive an assumed transform certificate.
+    The supplied clearance floor must conservatively cover both wire-to-pin
+    and wire-to-via declarations; hashing a declaration does not prove a floor.
+    Source/base identity and final fresh native/configured gates remain required.
+    """
+    result=dict(schema=DRILLED_SCHEMA,status='blocked',qualified=False,covered_holes=[],
+        scope='all retained physical drilled geometry versus new other-net tracks; final native gate required',
+        exporter_source=EXPORTER_SOURCE,inputs={})
+    try:
+        if not isinstance(holes,list):raise ValueError('missing complete native drilled inventory')
+        if applicability not in ('reject_same_net','kicad10_project_track'):
+            raise ValueError('unknown native drilled applicability')
+        if (not isinstance(active_nets,list) or not active_nets or len(set(active_nets))!=len(active_nets)
+                or any(not isinstance(n,str) or not n for n in active_nets)):raise ValueError('unknown active drilled nets')
+        if applicability=='kicad10_project_track' and len(active_nets)!=1:
+            raise ValueError('native project hole applicability requires one exact active net')
+        if not isinstance(layers,list) or len(layers)!=1 or layers[0] not in ('F.Cu','B.Cu'):
+            raise ValueError('drilled proof requires one exact actual outer routing layer')
+        required=_d(required_mm);floor=_d(clearance_floor_mm)
+        if required<0 or floor<0:raise ValueError('negative drilled clearance')
+        with localcontext() as ctx:
+            ctx.prec=max(50,2*(len(dsn_text)+len(str(holes))));ctx.traps[Inexact]=True;ctx.traps[Rounded]=True
+            model=_DrilledModel(dsn_text,layers)
+        if not set(active_nets)<=model.nets:raise ValueError('active drilled net missing from actual DSN')
+        identities=set();used_pins=set();used_keepouts=set();used_vias=set();grid=None
+        common={'kind','identity','net','supported','cause','native_form_sha256','position_mm','size_mm',
+                'drill_mm','drill_shape','drill_offset_mm','shape','layers','hole_layers','rotation_deg'}
+        pad_fields={'reference','pad','side','footprint_position_mm','footprint_rotation_deg','export_pin'}
+        with localcontext() as ctx:
+            ctx.prec=max(50,2*(len(dsn_text)+len(str(holes))));ctx.traps[Inexact]=True;ctx.traps[Rounded]=True
+            for hole in holes:
+                if not isinstance(hole,dict) or hole.get('supported') is not True:
+                    raise ValueError('unsupported retained drilled geometry: '+str(hole.get('cause') if isinstance(hole,dict) else hole))
+                kind=hole.get('kind')
+                if kind not in ('pth','npth','via') or set(hole)!=(common if kind=='via' else common|pad_fields):
+                    raise ValueError('unknown native drilled fields')
+                identity=hole['identity']
+                if (not isinstance(identity,str) or not identity or identity in identities
+                        or not re.fullmatch(r'[0-9a-f]{64}',str(hole['native_form_sha256'])) or hole['cause'] is not None):
+                    raise ValueError('missing or duplicate native physical drill identity')
+                identities.add(identity)
+                if not isinstance(hole['net'],str):raise ValueError('unknown native drilled net')
+                if kind!='npth' and not hole['net']:raise ValueError('unassigned plated drill lacks a bound exported obstacle')
+                same_net=kind!='npth' and hole['net'] in active_nets
+                if same_net and applicability!='kicad10_project_track':
+                    raise ValueError('active same-net plated drill requires native applicability proof')
+                if (not isinstance(hole['hole_layers'],list) or layers[0] not in hole['hole_layers']
+                        or len(set(hole['hole_layers']))!=len(hole['hole_layers'])
+                        or set(hole['hole_layers'])!=set(model.layers)):
+                    raise ValueError('unknown physical drill layer extent')
+                size=_pair(hole['size_mm']);drill_size=_pair(hole['drill_mm']);position=_pair(hole['position_mm'])
+                rotation=_angle(hole['rotation_deg'])
+                if (min(size)<=0 or min(drill_size)<=0 or _pair(hole['drill_offset_mm'])!=[0,0]
+                        or hole['drill_shape'] not in ('circle','oval') or (hole['drill_shape']=='circle' and drill_size[0]!=drill_size[1])):
+                    raise ValueError('invalid/offset physical drill')
+                drill=_capsule(position,drill_size,rotation);credited=floor;record={}
+                if kind=='npth':
+                    if hole['net'] or hole['shape']!='circle' or hole['drill_shape']!='circle' or size[0]!=size[1]:
+                        raise ValueError('unsupported NPTH circle contract')
+                    image_name,image,place=model.image(hole);matches=[]
+                    for ki,keepout in enumerate(_children(image,'keepout')+_children(image,'wire_keepout')):
+                        if (len(keepout)!=3 or keepout[1]!='' or not isinstance(keepout[2],list)
+                                or keepout[2][:2]!=['circle',layers[0]]):continue
+                        shape=keepout[2]
+                        if len(shape) not in (3,5):raise ValueError('malformed NPTH circle keepout')
+                        xy=[Decimal(0),Decimal(0)] if len(shape)==3 else [_d(v)*model.scale for v in shape[3:]]
+                        dx,dy=_rotate(*xy,_angle(place[5]));center=[_d(place[2])*model.scale+dx,-_d(place[3])*model.scale-dy]
+                        diameter=_d(shape[2])*model.scale
+                        if center==position and diameter>0 and (hole['reference'],ki) not in used_keepouts:
+                            matches.append((ki,dict(kind='capsule',ends=(tuple(center),tuple(center)),radius=diameter/2),xy))
+                    # A keepout is a universal wire obstacle; unlike electrical
+                    # copper its declared radius alone must cover the hole.
+                    matches=[m for m in matches if _contains_drill(m[1],drill,required,Decimal(0))]
+                    if len(matches)!=1:raise ValueError('missing or ambiguous source-bound NPTH wire keepout')
+                    ki,obstacle,xy=matches[0];used_keepouts.add((hole['reference'],ki));credited=Decimal(0)
+                    record.update(dsn_image=image_name,dsn_keepout_index=ki)
+                else:
+                    if (not isinstance(hole['layers'],list) or layers[0] not in hole['layers']
+                            or len(set(hole['layers']))!=len(hole['layers']) or not set(hole['layers'])<=set(model.layers)):
+                        raise ValueError('plated drill lacks routing-layer copper')
+                    if kind=='via':
+                        if hole['shape']!='circle' or size[0]!=size[1] or hole['drill_shape']!='circle':raise ValueError('unsupported retained via geometry')
+                        matches=[(i,v) for i,v in enumerate(model.vias) if i not in used_vias and v[1]==position and v[2]==hole['net']]
+                        if len(matches)!=1:raise ValueError('missing or ambiguous fixed exported via instance')
+                        vi,(stack,center,net)=matches[0];used_vias.add(vi);shape=model.shape(stack,layers[0])
+                        obstacle=_obstacle(shape,model.scale,position,0)
+                        expected=_capsule(position,size,0);record.update(dsn_via_index=vi,dsn_padstack=stack)
+                    else:
+                        if hole['side']!='front' or hole['shape'] not in ('circle','rect','oval'):raise ValueError('unsupported plated pad copper')
+                        image_name,image,place=model.image(hole);pin=hole['export_pin'];key=(hole['reference'],pin)
+                        if (not isinstance(pin,str) or not re.fullmatch(re.escape(hole['pad'])+r'(?:@[1-9][0-9]*)?',pin)
+                                or key in used_pins):raise ValueError('ambiguous physical plated pin alias')
+                        used_pins.add(key);pins=_pins(image)
+                        if pin not in pins or model.members.get(hole['reference']+'-'+pin)!=hole['net']:
+                            raise ValueError('actual plated pin/net membership differs from native')
+                        stack,xy,pin_rotation=pins[pin];fp_rotation=_angle(place[5]);dx,dy=_rotate(_d(xy[0])*model.scale,_d(xy[1])*model.scale,fp_rotation)
+                        center=[_d(place[2])*model.scale+dx,-_d(place[3])*model.scale-dy]
+                        if center!=position:raise ValueError('actual physical pin center differs from native')
+                        shape=model.shape(stack,layers[0]);obstacle=_obstacle(shape,model.scale,center,(fp_rotation+pin_rotation)%360)
+                        if hole['shape']=='rect':
+                            w,h=size;points=[]
+                            for x in (-w/2,w/2):
+                                for y in (-h/2,h/2):
+                                    dx,dy=_rotate(x,-y,rotation);points.append((position[0]+dx,position[1]-dy))
+                            expected=dict(kind='rect',bounds=(min(x for x,y in points),min(y for x,y in points),max(x for x,y in points),max(y for x,y in points)))
+                        else:
+                            if hole['shape']=='circle' and size[0]!=size[1]:raise ValueError('noncircular native circle copper')
+                            expected=_capsule(position,size,rotation)
+                        record.update(dsn_image=image_name,dsn_pin=pin,dsn_padstack=stack)
+                    if obstacle!=expected:raise ValueError('actual DSN copper differs from native drilled geometry')
+                    if not same_net and shape[0]=='path':
+                        raise ValueError('oval/path backend integer-octagon containment is unsupported; ideal capsule is not an actual backend proof')
+                    if not same_net and not _contains_drill(obstacle,drill,required,credited):
+                        raise ValueError('actual DSN copper plus verified clearance does not contain expanded native drill')
+                if not same_net:
+                    if grid is None:grid=_verified_grid(model,backend_command,backend_policy,result['inputs'])
+                    _grid_mm(model,floor)
+                    _grid_mm(model,credited)
+                    for value in position:_grid_mm(model,value)
+                    if kind!='via':
+                        for value in _pair(hole['footprint_position_mm']):_grid_mm(model,value)
+                    if kind=='pth':
+                        for value in xy:_grid_mm(model,_d(value)*model.scale)
+                    if obstacle['kind']=='capsule':
+                        _grid_mm(model,obstacle['radius'])
+                        for point in obstacle['ends']:
+                            for value in point:_grid_mm(model,value)
+                    else:
+                        for value in obstacle['bounds']:_grid_mm(model,value)
+                    if kind=='npth':
+                        for value in xy:_grid_mm(model,value)
+                if same_net:
+                    record.update(disposition='native_not_applicable',
+                        reason='KiCad10 track visitor excludes connected items on the same nonzero net before testing hole clearance',
+                        applicability_source=TRACK_HOLE_APPLICABILITY_SOURCE)
+                    credited=Decimal(0)
+                else:record['disposition']='covered'
+                result['covered_holes'].append(dict(kind=kind,identity=identity,net=hole['net'],layer=layers[0],
+                    native_center_mm=hole['position_mm'],native_drill_mm=hole['drill_mm'],
+                    native_rotation_deg=rotation,required_mm=format(required,'f'),credited_clearance_mm=format(credited,'f'),**record))
+        if len(used_vias)!=len(model.vias):raise ValueError('unmatched exported retained via inventory')
+        result.update(status='covered',cause='every physical drill is bound; every applicable expanded drill is protected by its actual DSN obstacle',
+            required_mm=format(required,'f'),clearance_floor_mm=format(floor,'f'),native_hole_count=len(holes),
+            applicability=applicability,backend_geometry=grid)
+    except (ValueError,TypeError,KeyError,ArithmeticError,IndexError,OSError) as error:
         result.update(status='blocked',cause=str(error) or type(error).__name__)
     return result

@@ -12,12 +12,26 @@ import socket
 import subprocess
 
 import lean_workflow as lean
+import backend_quality
 from pcb_workflow import board_config, python_native, sha
 
 
 SCHEMA = 'iot-lab.routing-policy.v1'
 EXECUTION = 'iot-lab.placement-outcome-execution.v1'
 FIELDS = {'schema', 'layers', 'only_nets', 'passes', 'threads', 'timeout_s', 'optimizer', 'max_repairs'}
+
+
+def _backend_effort(policy):
+    """Compare algorithm identity independently of local manifest paths."""
+    if not isinstance(policy, dict) or policy.get('mode') not in ('legacy-unverified', 'quality-first'):
+        raise ValueError('actual backend algorithm policy is missing or unknown')
+    result = dict(mode=policy['mode'])
+    if policy['mode'] == 'quality-first':
+        for name in ('binary_sha256', 'manifest_sha256', 'patch_sha256', 'upstream_commit'):
+            if not isinstance(policy.get(name), str) or not policy[name]:
+                raise ValueError('quality backend algorithm identity is incomplete')
+            result[name] = policy[name]
+    return result
 
 
 def validate(config, total_timeout_s):
@@ -217,7 +231,7 @@ def prepare(root, native, output, config, total_timeout_s, *, board=None):
     if not script.is_file():
         raise ValueError('existing fastroute job producer is missing from the snapshot')
     features = _features(root, board)
-    inputs = {str(path): sha(path) for path in (script, root/'tools/route_features.py', root/'tools/route_rule_coverage.py', root/'tools/route_hole_coverage.py', root/'tools/route-features.json',
+    inputs = {str(path): sha(path) for path in (script, root/'tools/route_features.py', root/'tools/route_rule_coverage.py', root/'tools/route_project_coverage.py', root/'tools/route_hole_coverage.py', root/'tools/backend_quality.py', root/'tools/route-features.json',
               root/'hardware-design/boards'/board/'gate.json', Path(__file__).resolve(), python, router, kicad)}
     inputs.update(gate['inputs'])
     for extension in ('.kicad_pcb', '.kicad_sch', '.kicad_pro', '.kicad_dru'):
@@ -241,6 +255,11 @@ def prepare(root, native, output, config, total_timeout_s, *, board=None):
             raise ValueError('selected quality backend manifest is unavailable')
         inputs[str(path)] = sha(path)
         env['FASTROUTE_QUALITY_MANIFEST'] = str(path)
+    backend_policy = backend_quality.bind(router, str(path) if quality else None)
+    if quality:
+        inputs[str(backend_quality.PATCH)] = sha(backend_quality.PATCH)
+        for evidence in json.loads(path.read_text())['native_validation']['evidence']:
+            inputs[evidence['path']] = evidence['sha256']
     command = [str(python), str(script), str(native), str(output), '--preflight',
                '--skip-net', '', '--plane-nets', '', '--only-nets', ','.join(config['only_nets']),
                '--layers', ','.join(config['layers']), '--passes', str(config['passes']),
@@ -260,6 +279,7 @@ def prepare(root, native, output, config, total_timeout_s, *, board=None):
         resources=dict(cpus=context['cpus'], memory_bytes=context['memory_bytes'], threads=config['threads']),
         effort=dict(timeout_s=total_timeout_s, router_timeout_s=config['timeout_s'], passes=config['passes'],
                     max_repairs=0, optimizer=config['optimizer'],
+                    backend_policy=_backend_effort(backend_policy),
                     max_repairs_scope='separate CLI repair operations only',
                     internal_repair_iterations=rules.get('repair_iterations', 2) if rules.get('on') else 0,
                     feature_policy=features),
@@ -312,6 +332,9 @@ def finalize(prepared, *, returncode):
         raise ValueError('router operated on another placement input')
     if actual.get('router_sha256') != policy['runtime']['tools']['router']['sha256']:
         raise ValueError('router binary differs from the recorded runtime')
+    backend_path = output/'backend-policy.json'
+    if not backend_path.is_file() or _backend_effort(json.loads(backend_path.read_text())) != policy['effort']['backend_policy']:
+        raise ValueError('router backend algorithm differs from the controlled policy')
     features = {key:value for key,value in actual.get('features', {}).items() if key != '_board_dir'}
     if features != policy['effort']['feature_policy']:
         raise ValueError('actual route features differ from the source-bound policy')
@@ -344,6 +367,8 @@ def finalize(prepared, *, returncode):
         value = json.loads(path.read_text())
         if any(value.get('configuration', {}).get(key) != item for key,item in expected.items()):
             raise ValueError('a router stage changed the controlled configuration')
+        if _backend_effort(value.get('backend_policy')) != policy['effort']['backend_policy']:
+            raise ValueError('a router stage changed the backend algorithm')
         resources = value.get('backend_resources', {})
         if any(resources.get(key) != config['threads'] for key in
                ('global_rayon_threads', 'autorouter_workers', 'optimizer_workers')):
@@ -363,6 +388,11 @@ def finalize(prepared, *, returncode):
         if (not isinstance(command, list) or command.count('-de') != 1
                 or command.index('-de') + 1 >= len(command) or command[command.index('-de') + 1] != dsn['path']):
             raise ValueError('router command does not use its admitted model')
+        if command.count('--quality-first') != int(policy['effort']['backend_policy']['mode'] == 'quality-first'):
+            raise ValueError('router command backend algorithm differs from the controlled policy')
+        command_sha = hashlib.sha256(json.dumps(command, separators=(',', ':'), ensure_ascii=True).encode()).hexdigest()
+        if coverage.get('backend_command') != command or coverage.get('backend_command_sha256') != command_sha:
+            raise ValueError('router command differs from project-rule admission')
         for name, digest in coverage.get('inputs', {}).items():
             if (sha(name) if Path(name).is_file() else None) != digest:
                 raise ValueError('router rule-coverage input changed: ' + name)

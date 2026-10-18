@@ -91,17 +91,31 @@ Routing targets are `accepted_within_budget`, `owned_elapsed_s`,
 `owned_elapsed_s` measures time to any terminal outcome. Successful completion
 time stays unknown for a failure or timeout, with censoring recorded explicitly.
 Unknown controls or incomplete native evidence never become invented labels.
-Rule-coverage admission can block a trial before the solver starts. Retain that
-cause and its source/DSN-bound report; it supplies neither route completion nor
-accepted copper-quality labels.
-PTH containment support binds each physical front-side circular drill to actual
-exported circular or true rectangular copper, including repeated-number thermal
-pads. It can credit only the conservative verified wire-to-pin clearance floor.
-Unsupported geometry, same-net PTH applicability, creepage and spatial
-constraints remain blockers. Exact inactive-layer and unchanged-silkscreen
-decisions use the actual active-net masks; silkscreen immutability requires no
-new vias and preserved source/import geometry. Coverage support alone supplies
-no successful routing label; complete fresh candidate acceptance is required.
+Rule-coverage admission checks custom rules and typed native project/netclass
+minima before the solver. Retain any blocked cause and its source/DSN-bound
+report; it supplies neither route completion nor accepted copper-quality labels.
+Project hashes alone do not prove coverage: actual final DSN clearance floors,
+complete final width/edge/neck argv controls, executable and backend policy are
+bound to the immutable per-stage model. Missing, duplicate, weaker or unknown
+applicable controls stop admission.
+Positive drilled-obstacle containment requires the reviewed quality-first
+binary/patch/manifest/native-evidence bindings and actual `--quality-first`
+command. It supports the exact one-layer circle/rectangle subset, including
+physical pad aliases, circular NPTH keepouts and retained vias, on the verified
+`um`/`resolution um 10` grid (0.1 micrometre). NPTH gets no wire-to-pin credit.
+Slots, oval/path obstacles, offsets, mirrored or off-grid geometry and opaque
+legacy backend geometry remain unsupported. Custom PTH rules still reject
+same-net coverage; the KiCad 10 project track rule has only its explicit sourced
+same-nonzero-net exclusion after full drilled-inventory binding.
+Filling zones does not prove `min_resolved_spokes`. Only the complete no-zone or
+explicit solid/none/no-thermal-override subset can establish inactivity;
+applicable thermal requirements, creepage and spatial constraints remain
+blockers. Exact inactive-layer and unchanged-silkscreen decisions use actual
+active-net masks; silkscreen immutability requires no new vias and preserved
+source/import geometry. Complete fresh candidate gates remain required for any
+new accepted label. Earlier sealed native outcomes stay immutable historical
+facts under their recorded controls, not proof of current admission or a new
+successful route.
 Repeated-failure decisions must bind the exact placement and execution policy
 and use `placement_outcomes.native_diagnostic_fingerprint` for native findings.
 It ignores diagnostic UUIDs and finding/item order while preserving every
