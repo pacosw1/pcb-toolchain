@@ -417,8 +417,9 @@ def _verify_part_review(root, board, path, *, native_required):
         exact_keys(manifest, ('schema', 'board', 'revision', 'project', 'spec', 'review', 'parts', 'budgets'), 'manifest')
         report['manifest_sha256'] = part_native.digest(raw)
         report['manifest'] = str(path)
+        manifest_input = str(path) if native_required else path.relative_to(root).as_posix()
+        report['inputs'][manifest_input] = report['manifest_sha256']
         if not native_required:
-            report['inputs'][path.relative_to(root).as_posix()] = report['manifest_sha256']
             report.update(revision=manifest.get('revision'), project=manifest.get('project'))
         if native_required:
             native = part_native.read_board(root, board)
@@ -612,7 +613,8 @@ def _verify_part_review(root, board, path, *, native_required):
             except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
                 block('invalid_budget', str(error))
         for name, expected in report['inputs'].items():
-            if sha(part_native.owned(root, name)) != expected:
+            target = path if name == manifest_input else part_native.owned(root, name)
+            if sha(target) != expected:
                 block('stale_source', 'source changed during verification: ' + name)
         if sha(path) != report['manifest_sha256']:
             block('stale_source', 'manifest changed during verification')
@@ -635,6 +637,7 @@ def status_board(root, board):
     native = part_native.read_board(root, board)
     return {'schema': SCHEMA, 'scope': 'reviewed_part_use', 'board': board, 'status': 'blocked',
             'qualified': False, 'stock_current': False, 'release_approved': False,
+            'absent_inputs': [path.relative_to(root).as_posix()],
             'inputs': native['native_inputs'], 'native_inputs': native['native_inputs'], 'tool_inputs': native['reader_inputs'], 'bindings': native['parts'],
             'constraints': {'schema': 'iot-lab.engineering-constraints.v1', 'rules': []},
             'blockers': native['blockers'] + [{'code': 'missing_part_review', 'detail': 'no reviewed native part-use manifest',

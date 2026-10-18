@@ -336,6 +336,21 @@ class PartContractTests(unittest.TestCase):
         self.manifest.unlink()
         self.assertEqual(evidence.status_board(self.root, 'PART-FIXTURE')['status'], 'blocked')
 
+    def test_missing_status_manifest_is_an_explicit_absent_input_until_review_created(self):
+        original = self.manifest.read_bytes()
+        self.manifest.unlink()
+        missing = evidence.status_board(self.root, 'PART-FIXTURE')
+        self.assertEqual(missing['status'], 'blocked')
+        self.assertIn('missing_part_review', self.codes(missing))
+        relative = self.manifest.relative_to(self.root).as_posix()
+        self.assertIn(relative, missing['absent_inputs'])
+        self.assertNotIn(relative, missing['inputs'])
+        self.manifest.write_bytes(original)
+        present = evidence.status_board(self.root, 'PART-FIXTURE')
+        self.assertEqual(present['status'], 'passed', present['blockers'])
+        self.assertNotIn(relative, present.get('absent_inputs', []))
+        self.assertEqual(present['inputs'][str(self.manifest.resolve())], evidence.sha(self.manifest))
+
     def shared_profile(self):
         value = json.loads(self.manifest.read_text())
         part = value['parts'][0]
