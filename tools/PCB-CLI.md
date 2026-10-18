@@ -142,8 +142,12 @@ Incomplete or unsupported applicable constraints block the solver with an
 actionable cause. Enabling the rule compiler alone does not establish coverage.
 Passing this admission check still requires the complete fresh native,
 configured and applicable semantic checks on the resulting candidate.
-The current coverage subset blocks unrepresented creepage, spatial selectors
-and rule precedence. With configured RP-001 checks and no stitching producer,
+Circular plated-hole clearance can be admitted only when the exact native
+pad/drill geometry and actual final DSN export prove the required containment.
+Unsupported hole shapes, same-net PTH applicability, unrepresented creepage,
+spatial selectors and rule precedence remain blocked. This admission proof
+does not replace the final native/configured checks. With configured RP-001
+checks and no stitching producer,
 the actual active-net layer masks must prevent new layer transitions.
 
 Controlled execution requires a host-recorded original `docker inspect` receipt

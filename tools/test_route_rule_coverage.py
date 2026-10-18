@@ -164,6 +164,14 @@ class CoverageTests(unittest.TestCase):
         mixed = mixed.replace('(rule (clearance 3000)))', '(rule (clearance 200)))', 1)
         self.assert_blocked(self.inspect(model=mixed))
 
+    def test_backend_resolution_unit_cannot_disagree_with_the_coverage_unit(self):
+        for declaration in ('', '(resolution mm 10)', '(resolution um 0)',
+                '(resolution um nan)', '(resolution um -1)', '(resolution um 2147483648)',
+                '(resolution um 10) (resolution um 100)'):
+            with self.subTest(resolution=declaration):
+                self.assert_blocked(self.inspect(model=dsn('3000').replace('(resolution um 10)', declaration)))
+        self.assert_passed(self.inspect(model=dsn('3', unit='mm').replace('(resolution um 10)', '(resolution mm 10)')))
+
     def test_typed_or_nested_weak_track_via_rules_cannot_fool_coverage(self):
         for extra in ('(rule (clearance 200 (type wire_wire)))',
                       '(rule (clearance 200 (type via_pin)))',
@@ -206,6 +214,21 @@ class CoverageTests(unittest.TestCase):
                 ('duplicate', model.replace(front, front+' '+front))):
             with self.subTest(change=label):
                 self.assert_blocked(self.inspect('', changed, layers=['F.Cu'], require_stitching=True))
+
+    def test_hole_proof_rejection_is_retained_and_cannot_admit_the_solver(self):
+        rules = rule('hole_clearance', '0.28mm', "A.Pad_Type == 'Through-hole' || B.Pad_Type == 'Through-hole'")
+        for pads in (None, [], [dict(net=POE)]):
+            with self.subTest(pads=pads), mock.patch.object(coverage.route_hole_coverage, 'inspect',
+                    return_value=dict(status='blocked', cause='fixture containment rejected')) as proof:
+                result = self.inspect(rules, dsn(mask=['F.Cu']), layers=['F.Cu'], native_pads=pads)
+                self.assert_blocked(result)
+                row = result['requirements'][0]
+                self.assertEqual(row['disposition'], 'unsupported')
+                if pads:
+                    self.assertEqual(row['reason'], 'fixture containment rejected')
+                    proof.assert_called_once()
+                else:
+                    proof.assert_not_called()
 
 
 class FileCoverageTests(unittest.TestCase):
@@ -264,6 +287,20 @@ class FileCoverageTests(unittest.TestCase):
         self.assertEqual(self.check()['status'], 'blocked')
         self.model.write_text(dsn('200', mask=['F.Cu']))
         self.assertEqual(self.check()['status'], 'passed')
+
+    def test_unknown_native_hole_geometry_cannot_be_silently_omitted(self):
+        with mock.patch.object(coverage.route_hole_coverage, 'native_pth_pads',
+                side_effect=ValueError('unsupported offset drill')):
+            unrelated = self.check()
+            self.assertEqual(unrelated['status'], 'passed', unrelated)
+            self.assertEqual(unrelated['native_pth_geometry_unknown'], 'unsupported offset drill')
+            self.rules.write_text(rule('hole_clearance', '0.28mm',
+                "A.Pad_Type == 'Through-hole' || B.Pad_Type == 'Through-hole'"))
+            relevant = self.check()
+            self.assertEqual(relevant['status'], 'blocked', relevant)
+            self.assertFalse(relevant['solver_launch_allowed'])
+            self.assertEqual(relevant['requirements'][0]['disposition'], 'unsupported')
+            self.assertEqual(relevant['native_pth_geometry_unknown'], 'unsupported offset drill')
 
 
 if __name__ == '__main__':

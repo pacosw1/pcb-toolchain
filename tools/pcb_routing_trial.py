@@ -217,7 +217,7 @@ def prepare(root, native, output, config, total_timeout_s, *, board=None):
     if not script.is_file():
         raise ValueError('existing fastroute job producer is missing from the snapshot')
     features = _features(root, board)
-    inputs = {str(path): sha(path) for path in (script, root/'tools/route_features.py', root/'tools/route_rule_coverage.py', root/'tools/route-features.json',
+    inputs = {str(path): sha(path) for path in (script, root/'tools/route_features.py', root/'tools/route_rule_coverage.py', root/'tools/route_hole_coverage.py', root/'tools/route-features.json',
               root/'hardware-design/boards'/board/'gate.json', Path(__file__).resolve(), python, router, kicad)}
     inputs.update(gate['inputs'])
     for extension in ('.kicad_pcb', '.kicad_sch', '.kicad_pro', '.kicad_dru'):

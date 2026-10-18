@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 
 import route_features
+import route_hole_coverage
 
 SCHEMA = 'iot-lab.route-rule-coverage.v1'
 UNKNOWN = object()
@@ -124,6 +125,12 @@ class Model:
         unit = _children(root, 'unit')
         if len(unit) != 1 or len(unit[0]) != 2 or unit[0][1] not in UNITS:
             raise ValueError('unknown or ambiguous DSN units')
+        resolution = _children(root, 'resolution')
+        if (len(resolution) != 1 or len(resolution[0]) != 3
+                or resolution[0][1] != unit[0][1]
+                or not re.fullmatch(r'[1-9][0-9]*', str(resolution[0][2]))
+                or int(resolution[0][2]) > 2147483647):
+            raise ValueError('DSN resolution and unit must agree unambiguously')
         self.unit = unit[0][1]
         networks, structures = _children(root, 'network'), _children(root, 'structure')
         if len(networks) != 1 or len(structures) != 1:
@@ -208,7 +215,7 @@ class Model:
 
 
 def inspect(dru_text, dsn_text, *, active_nets, net_classes, obstacles,
-            layers, require_stitching=False):
+            layers, require_stitching=False, native_pads=None):
     result = dict(schema=SCHEMA, status='blocked', solver_launch_allowed=False,
         active_nets=sorted(active_nets), job_layers=list(layers), requirements=[], qualified=False,
         scope='native custom-rule model coverage only; final fresh native/configured gates remain mandatory')
@@ -288,6 +295,27 @@ def inspect(dru_text, dsn_text, *, active_nets, net_classes, obstacles,
                     row.update(required_mm=str(required), model_floor_mm=str(min(floors)))
                     row.update(disposition='covered' if min(floors) >= required else 'weaker_than_native',
                                reason='conservative lower bound of actual final DSN declarations; no override precedence assumed')
+                elif kind == 'hole_clearance':
+                    bounds = constraint[2:]
+                    if (len(bounds) != 1 or not isinstance(bounds[0], list)
+                            or len(bounds[0]) != 2 or bounds[0][0] != 'min'):
+                        row['reason'] = 'only a native minimum hole clearance is covered'
+                        continue
+                    if (native_pads is None or not native_pads
+                            or any(a['Type'] != 'Track' or b.get('Type') != 'Pad'
+                                   or b.get('Pad_Type') != 'Through-hole' for a, b in applicable)
+                            or not {b['NetName'] for _, b in applicable}
+                                   <= {p.get('net') for p in native_pads}):
+                        row['reason'] = 'hole coverage requires exact retained PTH geometry and tracks only'
+                        continue
+                    required = _number(bounds[0][1])
+                    floors = [model.clearance_floor(a['NetName'], b['NetName']) for a, b in applicable]
+                    proof = route_hole_coverage.inspect(dsn_text, pads=native_pads,
+                        active_nets=sorted(active_nets), layers=layers,
+                        required_mm=str(required), clearance_floor_mm=str(min(floors)))
+                    row.update(required_mm=str(required), hole_geometry=proof,
+                        disposition='covered' if proof.get('status') == 'covered' else 'unsupported',
+                        reason=proof.get('cause', 'actual exported PTH copper containment was not proved'))
                 elif kind == 'disallow' and set(constraint[2:]) <= {'via'} and constraint[2:]:
                     row.update(disposition='covered' if all(len(model.allowed(a['NetName'])) == 1 for a, _ in applicable) else 'weaker_than_native',
                                reason='native via prohibition requires verified single-layer routing for every applicable active net')
@@ -311,7 +339,8 @@ def check_files(board, base, dsn, *, active_nets, net_classes, obstacles, layers
     """Bind the pure decision to exact original inputs and final transformed DSN."""
     board, base, dsn = Path(board), Path(base), Path(dsn)
     rules = board.with_suffix('.kicad_dru')
-    paths = [board, base, dsn, Path(__file__).resolve(), Path(route_features.__file__).resolve()]
+    paths = [board, base, dsn, Path(__file__).resolve(), Path(route_features.__file__).resolve(),
+             Path(route_hole_coverage.__file__).resolve()]
     paths.extend([rules, board.with_suffix('.kicad_pro')])
     from pcb_search import block_bindings, native_placement, contracts
     from placer import dru
@@ -335,9 +364,19 @@ def check_files(board, base, dsn, *, active_nets, net_classes, obstacles, layers
     if not isinstance(config, dict) or not isinstance(config.get('checks', {}), dict):
         raise ValueError('invalid configured board gate')
     checks = config.get('checks', {})
+    # Unsupported PTH geometry must block a hole proof, without hiding the
+    # more specific diagnostics for unrelated rules on other boards.
+    pad_error = None
+    try:
+        native_pads = route_hole_coverage.native_pth_pads(base)
+    except (ValueError, ArithmeticError) as error:
+        native_pads, pad_error = None, str(error)
     result = inspect(rules.read_text() if rules.is_file() else '', dsn.read_text(),
         active_nets=active_nets, net_classes=net_classes, obstacles=obstacles, layers=layers,
-        require_stitching='kicad_happy' in checks and checks['kicad_happy'] is not False)
+        require_stitching='kicad_happy' in checks and checks['kicad_happy'] is not False,
+        native_pads=native_pads)
+    if pad_error:
+        result['native_pth_geometry_unknown'] = pad_error
     result.update(inputs=before, dsn=dict(path=str(dsn), sha256=before[str(dsn)]),
         native_classes=net_classes, footprint_scope_sha256=hashlib.sha256(json.dumps(source_footprints, sort_keys=True).encode()).hexdigest(),
         obstacle_scope_sha256=hashlib.sha256(json.dumps(obstacles, sort_keys=True).encode()).hexdigest())
