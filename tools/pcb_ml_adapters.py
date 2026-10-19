@@ -19,7 +19,7 @@ import placement_outcomes as outcomes
 CORPUS = "iot-lab.pcb-ml-corpus.v1"
 REQUEST = "iot-lab.pcb-ml-features-request.v1"
 PACKET = "iot-lab.pcb-ml-features.v1"
-_OBSERVER_CODE = ("placement_outcomes.py", "pcb_workflow.py", "pcb_timing.py",
+_OBSERVER_CODE = ("placement_outcomes.py", "route_native_thermals.py", "pcb_workflow.py", "pcb_timing.py",
                   "lean_workflow.py", "lean_owned.py", "pcb_operations.py",
                   "pcb_search/block_bindings.py", "pcb_search/contracts.py",
                   "pcb_search/native_srj.py", "pcb_search/native_placement.py",
@@ -41,6 +41,12 @@ ROUTING_TARGETS = {
 WORKFLOW_TARGETS = {"run_passed": {"type": "binary", "direction": "max"},
                     "owned_elapsed_s": {"type": "regression", "direction": "min", "unit": "s"}}
 ADDED_LENGTH_DEFINITION = features.ADDED_LENGTH_DEFINITION
+ACCEPTANCE_DEFINITION = dict(id='iot-lab.accepted-within-owned-budget.v2',
+    positive='complete fresh native/configured acceptance within run.json:timeout_s with verified controls',
+    verified_failure='zero for an unsuccessful attempt requires a sealed verified-routing-execution-attempt.v1 terminal failure',
+    deadline_failure='a fully accepted native/configured outcome after the owned budget has acceptance-within-budget zero',
+    unknown='missing or ambiguous execution evidence is not a negative label',
+    quality='failure never supplies successful completion time, routed copper quality or added length')
 
 
 def _sha(path):
@@ -294,7 +300,8 @@ def _row(root, trial, adapter, evidence):
     valid = valid and source_sha is not None and not any(reason.startswith("pre-decision source invalid") for reason in reasons)
     elapsed = terminal.get("elapsed_s") if _finite(terminal.get("elapsed_s")) else None
     if adapter == "routing":
-        known_controls = bool(observation and observation.get("policy_fingerprint"))
+        verified_failure = bool(observation and observation.get('execution_attempt',{}).get('status')=='verified')
+        known_controls = bool(observation and observation.get("policy_fingerprint")) or verified_failure
         policy = evidence.read(folder / trial["execution_policy"]) if known_controls else {}
         solver_budget = policy.get("effort", {}).get("router_timeout_s")
         budget = manifest.get("timeout_s")
@@ -303,7 +310,9 @@ def _row(root, trial, adapter, evidence):
         native = observation.get("native") if observation else None
         accepted = bool(known_controls and full and elapsed is not None and budget is not None and elapsed <= budget)
         quality = observation.get("routed_quality", {}) if observation else {}
-        targets = dict(accepted_within_budget=int(bool(full and elapsed <= budget)) if known_controls and elapsed is not None and budget is not None else None,
+        acceptance=(int(elapsed<=budget) if full and known_controls and elapsed is not None and budget is not None
+                    else 0 if verified_failure else None)
+        targets = dict(accepted_within_budget=acceptance,
                        owned_elapsed_s=elapsed,
                        successful_completion_elapsed_s=elapsed if full else None,
                        native_errors=native["errors"] if native else None,
@@ -318,6 +327,7 @@ def _row(root, trial, adapter, evidence):
         case = observation.get("case_fingerprint") if observation else None
         pose = observation.get("placement_pose_fingerprint") if observation else None
         details = dict(observation=observation or {}, added_route_quality=added,
+                       acceptance_target_contract=ACCEPTANCE_DEFINITION,
                        controls_known=known_controls, owned_run_budget_s=budget,
                        solver_timeout_s=solver_budget, acceptance_budget_source="run.json:timeout_s",
                        completion_censoring=dict(observed=bool(full and elapsed is not None),
@@ -362,7 +372,8 @@ def build_dataset(root, manifest, dataset_id=None):
                     absent_inputs=[name for name, digest in closure.items() if digest is None],
                     qualification="advisory observations only; no CAD or physical qualification")
     if adapter == "routing":
-        metadata["derived_targets"] = {"added_route_track_length_mm": ADDED_LENGTH_DEFINITION}
+        metadata["derived_targets"] = {"added_route_track_length_mm": ADDED_LENGTH_DEFINITION,
+                                      "accepted_within_budget": ACCEPTANCE_DEFINITION}
     result = data.finalize_dataset(root, dataset_id=dataset_id or value.get("dataset_id"), task=_task(adapter),
                                    feature_names=[column["name"] for column in contract["features"]],
                                    target_specs=ROUTING_TARGETS if adapter == "routing" else WORKFLOW_TARGETS,

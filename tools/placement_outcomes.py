@@ -22,6 +22,7 @@ from placer import placement_audit
 STUDY = 'iot-lab.placement-outcome-study.v1'
 REPORT = 'iot-lab.placement-outcome-comparison.v1'
 POLICY = 'iot-lab.placement-outcome-execution.v1'
+ATTEMPT = 'iot-lab.verified-routing-execution-attempt.v1'
 TERMINAL = {'passed','failed','error','timeout','cancelled'}
 
 
@@ -225,7 +226,8 @@ def native_thermal_controls(evidence, folder, trial, manifest, source, policy, c
     return None
 
 
-def execution_policy(evidence, folder, trial, manifest, source, gate, candidate=None, placement_sha256=None):
+def execution_policy(evidence, folder, trial, manifest, source, gate, candidate=None, placement_sha256=None,
+                     *, _verify_acceptance=True):
     name=trial.get('execution_policy')
     if not name:return None,'execution policy/runtime/resource evidence is absent'
     path=(folder/name).resolve()
@@ -259,8 +261,9 @@ def execution_policy(evidence, folder, trial, manifest, source, gate, candidate=
                     or not re.fullmatch(r'[0-9a-f]{64}',digest)):
                 raise ValueError('solver effective configuration binding is malformed')
             evidence.file(folder/'operation/router'/name,digest)
-        missing=native_thermal_controls(evidence,folder,trial,manifest,source,value,candidate,placement_sha256)
-        if missing:return None,missing
+        if _verify_acceptance:
+            missing=native_thermal_controls(evidence,folder,trial,manifest,source,value,candidate,placement_sha256)
+            if missing:return None,missing
     events=folder/'operation/events.jsonl'
     starts=[json.loads(line) for line in evidence.file(events).read_text().splitlines() if line.strip()]
     if not any(row.get('type')=='tool.start' and row.get('command')==value.get('command') for row in starts):
@@ -275,6 +278,180 @@ def execution_policy(evidence, folder, trial, manifest, source, gate, candidate=
     if (not actual['source_tools'] or not actual['gate_policy'] or (gate and not actual['gate_tools'])):
         return None,'actual source-tool, gate policy or native-tool identities are absent'
     return identity(dict(runtime=runtime,resources=resources,effort=effort,actual=actual)),None
+
+
+def verified_failed_attempt(evidence, folder, trial, terminal, manifest, source, operation, placement_sha256):
+    """Verify an unsuccessful execution, without asserting native acceptance.
+
+    Only finalized controlled Fastroute failures qualify. Prepared, prelaunch,
+    cancelled and ambiguous runs remain unknown. The legacy accepted-policy
+    fingerprint and all native/quality postconditions are independent.
+    """
+    result=dict(schema=ATTEMPT,status='unknown',fingerprint=None,qualified=False)
+    if terminal.get('status')!='failed' or manifest.get('router')!='fastroute':
+        return dict(result,cause='not a finalized failed controlled routing attempt')
+    try:
+        if (not placement_sha256 or terminal.get('source_unchanged') is not True
+                or operation.get('status')!='failed' or terminal.get('cleanup',{}).get('complete') is not True):
+            raise ValueError('failed attempt lacks intact source, terminal failure or confirmed cleanup')
+        _,missing=execution_policy(evidence,folder,trial,manifest,source,{},
+                                  placement_sha256=placement_sha256,_verify_acceptance=False)
+        if missing:raise ValueError(missing)
+        policy=evidence.read(folder/trial['execution_policy'])
+        controls=policy.get('controls',{});effort=policy['effort'];runtime=policy['runtime'];resources=policy['resources']
+        code=controls.get('tool_exit');command=policy.get('command')
+        if (controls.get('status')!='observed' or type(code) is not int or code==0
+                or operation.get('tool_exit')!=code or not isinstance(command,list) or len(command)<4
+                or type(operation.get('exit_code')) is not int or operation['exit_code']==0
+                or terminal.get('exit_code')!=operation['exit_code']
+                or any(not isinstance(item,str) for item in command)):
+            raise ValueError('failed attempt lacks finalized observed controls and a matching nonzero tool exit')
+        native,recorded_router=Path(command[2]),Path(command[3])
+        if not native.is_absolute() or not recorded_router.is_absolute():
+            raise ValueError('failed attempt evidence owners are unresolved')
+        router=folder/'operation/router'
+        def owned(name,expected=None):
+            path=Path(name)
+            if not path.is_relative_to(recorded_router):raise ValueError('execution evidence escapes its router owner')
+            local=(router/path.relative_to(recorded_router)).resolve()
+            if not local.is_relative_to(router.resolve()):raise ValueError('execution evidence escapes its archive')
+            return evidence.file(local,expected)
+        def recorded(name):return str(recorded_router/name)
+        spec=manifest.get('spec',{});budget=manifest.get('timeout_s')
+        if (not isinstance(spec,dict) or spec.get('schema') not in ('iot-lab.routing-policy.v1','iot-lab.routing-policy.v2')
+                or not finite(budget) or budget<=0 or effort.get('timeout_s')!=budget
+                or not finite(terminal.get('elapsed_s'))
+                or any(spec.get(key)!=effort.get(key) for key in ('passes','max_repairs','optimizer'))
+                or spec.get('threads')!=resources['threads'] or spec.get('timeout_s')!=effort.get('router_timeout_s')
+                or any(not isinstance(spec.get(key),list) or not spec[key]
+                       or any(not isinstance(item,str) or not item for item in spec[key]) for key in ('layers','only_nets'))):
+            raise ValueError('failed attempt budget/specification differs from its observed controls')
+        relative='hardware-design/boards/'+manifest['board']+'/'+manifest['project']
+        inputs=policy.get('inputs',{});files=source.get('files',{})
+        expected_files={str(native.with_suffix(ext)):(placement_sha256 if ext=='.kicad_pcb' else files.get(relative+ext))
+                        for ext in ('.kicad_pcb','.kicad_sch','.kicad_pro','.kicad_dru')}
+        if (any(not isinstance(digest,str) or not re.fullmatch(r'[0-9a-f]{64}',digest)
+                or inputs.get(name)!=digest for name,digest in expected_files.items())
+                or inputs.get(command[1])!=files.get('tools/fastroute_job.py')
+                or not files.get('tools/fastroute_job.py')
+                or files.get('hardware-design/boards/'+manifest['board']+'/gate.json')!=manifest.get('gate_config_sha256')):
+            raise ValueError('failed attempt source/tool/gate-policy binding differs from the original input')
+        context=json.loads(evidence.file(folder/policy['execution_context']['path'],policy['execution_context']['sha256']).read_text())
+        if isinstance(context,list) and len(context)==1:context=context[0]
+        if not isinstance(context,dict):raise ValueError('failed attempt execution context is ambiguous')
+        if isinstance(context.get('HostConfig'),dict):
+            host=context['HostConfig']
+        else:raise ValueError('failed attempt lacks the original container resource receipt')
+        if (context.get('Image')!=runtime['image_id'] or context.get('Id')!=policy['execution_context'].get('container_id')
+                or host.get('NetworkMode')!='none' or host.get('Memory')!=resources['memory_bytes']
+                or host.get('NanoCpus')!=resources['cpus']*1000000000):
+            raise ValueError('failed attempt runtime/resources differ from the retained execution context')
+        events=[json.loads(line) for line in evidence.file(folder/'operation/events.jsonl').read_text().splitlines() if line.strip()]
+        starts=[row for row in events if row.get('type')=='tool.start' and row.get('command')==command]
+        if len(starts)!=1 or not starts[0].get('span_id'):raise ValueError('failed attempt actual launch is missing or ambiguous')
+        exits=[row for row in events if row.get('type')=='tool.exit' and row.get('span_id')==starts[0]['span_id']]
+        start=starts[0].get('started_unix_s');end=exits[0].get('ended_unix_s') if len(exits)==1 else None
+        created=dt.datetime.fromisoformat(manifest['created_at'].replace('Z','+00:00'))
+        if (len(exits)!=1 or exits[0].get('code')!=code or exits[0].get('status')!='failed'
+                or not created.tzinfo or not finite(start) or not finite(end) or end<start
+                or not finite(terminal.get('ended_unix_s')) or not created.timestamp()<=start<=end<=terminal['ended_unix_s']):
+            raise ValueError('failed attempt termination is missing, ambiguous or outside its owned run')
+        actual=evidence.read(router/'input-manifest.json',controls['input_manifest_sha256'])
+        expected=dict(board=str(native),outdir=str(recorded_router),passes=spec['passes'],layers=','.join(spec['layers']),
+            only_nets=','.join(spec['only_nets']),threads=spec['threads'],max_time=spec['timeout_s'],optimizer=spec['optimizer'],
+            preflight=True,skip_net='',plane_nets='',gnd_vias=False,route_planes=False,unlock_nets='',set=[],neck_um=0)
+        thermal=spec.get('thermal_verification')=='native-checkback'
+        expected['native_thermal_checkback']=thermal
+        backend=effort.get('backend_policy',{})
+        if (actual.get('board_sha256')!=placement_sha256 or actual.get('router_sha256')!=runtime['tools'].get('router',{}).get('sha256')
+                or backend.get('binary_sha256')!=actual.get('router_sha256')
+                or not backend or any(actual.get('configuration',{}).get(key,False if key=='native_thermal_checkback' else None)!=value
+                                      for key,value in expected.items())
+                or {key:value for key,value in actual.get('features',{}).items() if key!='_board_dir'}!=effort.get('feature_policy')):
+            raise ValueError('failed attempt effective input/backend configuration differs from its policy')
+        backend_receipt=evidence.read(router/'backend-policy.json')
+        if any(backend_receipt.get(key)!=value for key,value in backend.items()):
+            raise ValueError('failed attempt backend algorithm differs from its policy')
+        stages=[json.loads(line) for line in evidence.file(router/'stages.jsonl').read_text().splitlines() if line.strip()]
+        configured=[]
+        for name,digest in controls['effective_configurations'].items():
+            effective=evidence.read(router/name,digest);cfg=effective.get('configuration',{});worker=effective.get('backend_resources',{})
+            if (any(cfg.get(key,False if key=='native_thermal_checkback' else None)!=value for key,value in expected.items())
+                    or any(effective.get('backend_policy',{}).get(key)!=value for key,value in backend.items())
+                    or any(worker.get(key)!=spec['threads'] for key in ('global_rayon_threads','autorouter_workers','optimizer_workers'))):
+                raise ValueError('failed attempt backend stage changed its effective controls')
+            invocation=effective.get('command');binding=effective.get('rule_coverage',{})
+            coverage=json.loads(owned(binding.get('path',''),binding.get('sha256')).read_text())
+            pending=coverage.get('status')=='pending_native'
+            if (coverage.get('solver_launch_allowed') is not True
+                    or not (coverage.get('status')=='passed' or thermal and pending)
+                    or coverage.get('active_nets')!=spec['only_nets'] or coverage.get('job_layers')!=spec['layers']
+                    or coverage.get('backend_command')!=invocation
+                    or coverage.get('backend_command_sha256')!=identity_command(invocation)):
+                raise ValueError('failed attempt backend stage lacks exact rule admission')
+            if pending:
+                initial=evidence.read(router/'native-thermal-initial.json')
+                import route_native_thermals
+                checked=route_native_thermals.validate_capability(initial,owned(initial['source']['path']),
+                    owned(initial['base']['path']),selected_nets=spec['only_nets'])
+                for name,digest in checked['inputs'].items():
+                    if digest is None:
+                        if Path(name).exists() or Path(name).is_symlink():raise ValueError('absent native admission input appeared')
+                        evidence.inputs[name]=None
+                    else:evidence.file(name,digest)
+                if (initial.get('schema')!='iot-lab.native-thermal-capability.v1' or initial.get('status')!='pending_native'
+                        or initial.get('selected_nets')!=sorted(spec['only_nets'])
+                        or coverage.get('native_thermal_capability')!=initial or coverage.get('model_status')!='partial'
+                        or initial.get('source',{}).get('sha256')!=placement_sha256
+                        or coverage.get('native_postconditions')!=[dict(constraint='min_resolved_spokes',
+                            required_count=str(initial.get('required_count')),capability_sha256=initial.get('content_sha256'))]):
+                    raise ValueError('failed attempt pending rule admission lacks its original native capability')
+            dsn=coverage.get('dsn',{})
+            owned(dsn.get('path',''),dsn.get('sha256'))
+            if (effective.get('dsn_sha256')!=dsn.get('sha256') or not isinstance(invocation,list)
+                    or invocation.count('-de')!=1 or invocation.index('-de')+1>=len(invocation)
+                    or invocation[invocation.index('-de')+1]!=dsn.get('path')):
+                raise ValueError('failed attempt backend did not use its admitted DSN')
+            binary=policy.get('environment',{}).get('FASTROUTE_BIN')
+            if (not invocation or invocation[0]!=binary or inputs.get(binary)!=actual['router_sha256']
+                    or invocation.count('--quality-first')!=int(backend.get('mode')=='quality-first')):
+                raise ValueError('failed attempt actual backend executable differs from its recorded runtime')
+            def option(key):
+                values=[invocation[index+1] for index,item in enumerate(invocation[:-1]) if item==key]
+                values.extend(item[len(key)+1:] for item in invocation if item.startswith(key+'='))
+                if len(values)!=1:raise ValueError('failed attempt backend option is missing or ambiguous: '+key)
+                return values[0]
+            if (int(option('-mp'))!=spec['passes'] or float(option('--max-time'))!=spec['timeout_s']
+                    or any(int(option(key))!=spec['threads'] for key in
+                           ('--router.autorouter.max_threads','--router.optimizer.max_threads'))
+                    or spec['optimizer']=='off' and option('--router.optimizer.enabled')!='false'):
+                raise ValueError('failed attempt actual backend argv differs from its effort/worker budget')
+            configured.append(invocation)
+            ran=[row for row in stages if row.get('command')==invocation]
+            if (len(ran)!=1 or ran[0].get('status')!='complete' or type(ran[0].get('returncode')) is not int
+                    or ran[0].get('cleanup',{}).get('complete') is not True):
+                raise ValueError('failed attempt backend launch/termination/cleanup is unconfirmed')
+        actual_commands=[row.get('command') for row in stages
+            if str(row.get('stage','')).startswith('router') or
+            (isinstance(row.get('command'),list) and row['command'] and row['command'][0]==binary
+             and row['command']!=[binary,'--help'])]
+        if (len(actual_commands)!=len(configured) or
+                sorted(map(identity_command,actual_commands))!=sorted(map(identity_command,configured))):
+            raise ValueError('failed attempt has unconfigured or duplicate actual backend stages')
+        fingerprint=identity(dict(schema=ATTEMPT,runtime=runtime,resources=resources,effort=effort,
+            operation=manifest.get('operation'),router=manifest['router'],spec=spec,
+            source_tools={name:digest for name,digest in files.items() if name.startswith('tools/')},
+            gate_policy=manifest['gate_config_sha256']))
+        return dict(result,status='verified',fingerprint=fingerprint,
+                    cause='verified execution terminated unsuccessfully; native acceptance remains unproved')
+    except (OSError,ValueError,KeyError,TypeError,IndexError,AttributeError,OverflowError) as error:
+        return dict(result,cause=str(error))
+
+
+def identity_command(command):
+    # The producer's argv hash uses ordered JSON, unlike object identities.
+    import hashlib
+    return hashlib.sha256(json.dumps(command,separators=(',',':'),ensure_ascii=True).encode()).hexdigest()
 
 
 def native_observation(evidence, folder, gate, candidate):
@@ -434,7 +611,14 @@ def cli_observation(evidence, trial):
             canonical((fp['pose'][2]%360+360)%360)] for fp in footprints(input_path)})
     else:unknowns.append('original placement input artifact is absent')
     policy,missing=execution_policy(evidence,folder,trial,manifest,source,gate,candidate,input_sha256)
-    if missing:unknowns.append(missing)
+    attempt=verified_failed_attempt(evidence,folder,trial,terminal,manifest,source,operation,
+                                   input_sha256 if not unknowns else None)
+    acceptance_unknowns=[]
+    if missing:
+        if attempt['status']=='verified':acceptance_unknowns.append(missing)
+        else:
+            unknowns.append(missing)
+            if terminal['status']=='failed':unknowns.append('failed attempt execution is unverified: '+attempt['cause'])
     quality=(routed_quality(evidence,candidate) if full and policy else
              dict(routed_track_length_mm=None,routed_via_count=None,
                   unknowns={name:'complete fresh native acceptance and verified execution controls are required'
@@ -457,7 +641,8 @@ def cli_observation(evidence, trial):
         timing_scope='owned route/repair and verification run; unrecorded engineering effort unknown',
         timing=terminal.get('timing'),failure_class=failure,cause=cause,case_fingerprint=case_fingerprint,
         placement_input_sha256=input_sha256,placement_pose_fingerprint=pose_fingerprint,
-        policy_fingerprint=policy,unknowns=unknowns,qualified=False)
+        policy_fingerprint=policy,execution_attempt=attempt,acceptance_unknowns=acceptance_unknowns,
+        unknowns=unknowns,qualified=False)
 
 
 def archive_observations(evidence, trial):

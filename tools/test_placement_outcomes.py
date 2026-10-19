@@ -143,9 +143,190 @@ class OutcomeTests(unittest.TestCase):
     def reseal(self,folder,status='passed'):
         operation=json.loads((folder/'operation/result.json').read_text())
         paths=[folder/'run.json']+[p for directory in ('operation','gate') for p in (folder/directory).rglob('*') if p.is_file()]
-        paths.append(folder/'workspace'/Path(operation['candidate']).relative_to(operation['workspace']))
+        if operation.get('candidate'):
+            paths.append(folder/'workspace'/Path(operation['candidate']).relative_to(operation['workspace']))
         write(folder/'result.json',dict(status=status,cleanup=dict(complete=True),elapsed_s=2.0,ended_unix_s=1792108802.0,
             cause='fixture '+status,evidence_sha256={str(p.relative_to(folder)):sha(p) for p in paths}))
+
+    def failed_execution_fixture(self,arm='baseline'):
+        """Finalized v2 failure before a configured candidate gate; no programs run."""
+        folder,trial=self.run_fixture('development','DEV',arm,1,status='failed')
+        shutil.rmtree(folder/'gate')
+        write(folder/'operation/result.json',dict(status='failed',exit_code=1,tool_exit=1,source_unchanged=True))
+        original=Path(trial['placement_input']['path']);router=folder/'operation/router'
+        router.mkdir();script='/recorded/tools/fastroute_job.py'
+        source=json.loads((folder/'operation/source.json').read_text())
+        original.write_text(original.read_text().replace('(kicad_pcb',
+            '(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal)) (net 1 "N") '
+            '(gr_rect (start 0 0) (end 30 20) (layer "Edge.Cuts"))',1))
+        source['files']['hardware-design/boards/DEV/native.kicad_pcb']=sha(original)
+        trial['placement_input']['sha256']=sha(original)
+        fixture=thermal_fixtures.NativeThermalTests();fixture.root=router
+        fixture.source=router/'native-thermal-source/native.kicad_pcb';fixture.source.parent.mkdir()
+        fixture.base=router/'base.kicad_pcb'
+        fixture.python=router/'recorded-python';fixture.cli=router/'recorded-kicad-cli'
+        fixture.python.write_text('synthetic recorded Python identity');fixture.cli.write_text('synthetic recorded KiCad identity')
+        for ext in ('.kicad_pcb','.kicad_sch','.kicad_pro','.kicad_dru'):
+            if ext=='.kicad_pcb':content=original.read_bytes()
+            elif ext=='.kicad_pro':content=json.dumps(dict(board=dict(design_settings=dict(rules=dict(min_resolved_spokes=2),
+                    rule_severities=dict(starved_thermal='error'),drc_exclusions=[])))).encode()
+            elif ext=='.kicad_dru':content=b'(version 1)\n'
+            else:content=b'original schematic\n'
+            for target in (original,fixture.source,fixture.base):target.with_suffix(ext).write_bytes(content)
+            source['files']['hardware-design/boards/DEV/native'+ext]=sha(original.with_suffix(ext))
+        source['files']['tools/fastroute_job.py']='e'*64
+        source['files']['hardware-design/boards/DEV/gate.json']='d'*64
+        write(folder/'operation/source.json',source)
+        run=json.loads((folder/'run.json').read_text())
+        spec=dict(schema='iot-lab.routing-policy.v2',layers=['F.Cu'],only_nets=['N'],passes=40,
+                  threads=1,timeout_s=30,optimizer='off',max_repairs=0,thermal_verification='native-checkback')
+        run.update(router='fastroute',timeout_s=120,spec=spec);write(folder/'run.json',run)
+        policy=json.loads((folder/trial['execution_policy']).read_text())
+        backend=dict(mode='quality-first',binary_sha256='b'*64,manifest_sha256='f'*64,patch_sha256='1'*64,upstream_commit='2'*40)
+        policy.update(command=['/recorded/python',script,str(original),str(router),'--native-thermal-checkback'],
+            effort=dict(timeout_s=120,router_timeout_s=30,passes=40,max_repairs=0,optimizer='off',
+                        thermal_verification='native-checkback',backend_policy=backend,feature_policy={}),
+            inputs={str(original.with_suffix(ext)):digest for ext,digest in
+                    [(ext,source['files']['hardware-design/boards/DEV/native'+ext])
+                     for ext in ('.kicad_pcb','.kicad_sch','.kicad_pro','.kicad_dru')]})
+        policy['inputs'][script]='e'*64
+        policy['environment']=dict(FASTROUTE_BIN='/recorded/fastroute')
+        policy['inputs']['/recorded/fastroute']='b'*64
+        context=folder/'operation/execution-context.json'
+        write(context,dict(Id='3'*64,Image=policy['runtime']['image_id'],
+            HostConfig=dict(NetworkMode='none',Memory=policy['resources']['memory_bytes'],NanoCpus=2000000000)))
+        policy['execution_context']=dict(path='operation/execution-context.json',sha256=sha(context),container_id='3'*64)
+        config=dict(board=str(original),outdir=str(router),passes=40,layers='F.Cu',only_nets='N',threads=1,max_time=30,
+            optimizer='off',preflight=True,skip_net='',plane_nets='',gnd_vias=False,route_planes=False,
+            unlock_nets='',set=[],neck_um=0,native_thermal_checkback=True)
+        actual=router/'input-manifest.json'
+        write(actual,dict(board_sha256=sha(original),router_sha256='b'*64,configuration=config,features={'_board_dir':'ignored owner path'}))
+        dsn=router/'router-model.dsn';dsn.write_text('synthetic source-bound DSN\n')
+        invocation=['/recorded/fastroute','-de',str(dsn),'-mp','40','--quality-first','--max-time=30',
+            '--router.autorouter.max_threads=1','--router.optimizer.max_threads=1','--router.optimizer.enabled=false']
+        fixture.initial_fill,fixture.initial_drc,_=fixture.evidence(fixture.base,'native-thermal-initial',opens=False)
+        capability=fixture.admit(selected_nets=['N'])
+        write(router/'native-thermal-initial.json',capability)
+        coverage=router/'rule-coverage.json'
+        write(coverage,dict(status='pending_native',solver_launch_allowed=True,active_nets=['N'],job_layers=['F.Cu'],
+            model_status='partial',native_thermal_capability=capability,
+            native_postconditions=[dict(constraint='min_resolved_spokes',required_count='2',capability_sha256=capability['content_sha256'])],
+            backend_command=invocation,backend_command_sha256=outcomes.identity_command(invocation),
+            dsn=dict(path=str(dsn),sha256=sha(dsn))))
+        effective=router/'effective-configuration.json'
+        write(effective,dict(configuration=config,backend_policy=backend,
+            backend_resources=dict(global_rayon_threads=1,autorouter_workers=1,optimizer_workers=1),command=invocation,
+            dsn_sha256=sha(dsn),rule_coverage=dict(path=str(coverage),sha256=sha(coverage))))
+        write(router/'backend-policy.json',backend)
+        write(router/'stages.jsonl',dict(stage='router-screen',command=invocation,status='complete',returncode=0,cleanup=dict(complete=True)))
+        policy['controls']=dict(status='observed',effective_configuration_verified=True,tool_exit=1,
+            effective_configurations={effective.name:sha(effective)},input_manifest_sha256=sha(actual),
+            native_thermal_obligations=dict(status='unfulfilled',cause='native candidate still has an open'))
+        write(folder/trial['execution_policy'],policy)
+        start=dt.datetime.fromisoformat(run['created_at'].replace('Z','+00:00')).timestamp()
+        events=[dict(type='tool.start',span_id='route',command=policy['command'],started_unix_s=start),
+                dict(type='tool.exit',span_id='route',code=1,status='failed',ended_unix_s=start+1)]
+        (folder/'operation/events.jsonl').write_text(''.join(json.dumps(row)+'\n' for row in events))
+        self.reseal_failure(folder,trial)
+        return folder,trial
+
+    def reseal_failure(self,folder,trial):
+        self.reseal(folder,'failed')
+        terminal=json.loads((folder/'result.json').read_text());terminal['source_unchanged']=True
+        terminal['exit_code']=1
+        write(folder/'result.json',terminal);trial['sha256']=sha(folder/'result.json')
+
+    def test_verified_failed_attempt_separates_execution_from_native_acceptance(self):
+        folder,trial=self.failed_execution_fixture()
+        with mock.patch.object(outcomes,'routed_quality') as quality:
+            row=outcomes.cli_observation(outcomes.Evidence(self.root),trial)
+        self.assertEqual(row['execution_attempt']['schema'],outcomes.ATTEMPT)
+        self.assertEqual(row['execution_attempt']['status'],'verified')
+        self.assertIsNotNone(row['execution_attempt']['fingerprint'])
+        self.assertIsNone(row['policy_fingerprint']);self.assertFalse(row['full_gate_success'])
+        self.assertIsNone(row['native']);self.assertEqual(row['unknowns'],[])
+        self.assertIn('unfulfilled',row['acceptance_unknowns'][0]);quality.assert_not_called()
+
+    def test_failed_execution_control_mutations_remain_unknown(self):
+        mutations={
+            'unfinalized':('operation/execution-policy.json',lambda v:v['controls'].update(status='prepared')),
+            'budget':('operation/execution-policy.json',lambda v:v['effort'].update(timeout_s=119)),
+            'runtime':('operation/execution-context.json',lambda v:v.update(Image='sha256:'+'0'*64)),
+            'backend':('operation/router/backend-policy.json',lambda v:v.update(binary_sha256='0'*64)),
+            'input':('operation/router/input-manifest.json',lambda v:v.update(board_sha256='0'*64)),
+            'effective':('operation/router/effective-configuration.json',lambda v:v['configuration'].update(only_nets='OTHER')),
+            'admission':('operation/router/rule-coverage.json',lambda v:v.update(solver_launch_allowed=False)),
+            'dsn':('operation/router/router-model.dsn',None),
+            'launch':('operation/events.jsonl',lambda v:v.update(span_id='unrelated')),
+            'prelaunch':('operation/router/stages.jsonl',lambda v:v.update(command=['never launched'])),
+            'cleanup':('operation/router/stages.jsonl',lambda v:v.update(cleanup=dict(complete=False))),
+            'ambiguous':('operation/router/stages.jsonl',lambda v:v.update(status='running')),
+            'extra_stage':('operation/router/stages.jsonl',None),
+            'capability':('operation/router/native-thermal-initial.json',None),
+            'actual_budget':('operation/router/effective-configuration.json',None),
+        }
+        for name,(relative,mutate) in mutations.items():
+            with self.subTest(change=name):
+                folder,trial=self.failed_execution_fixture(arm=name);path=folder/relative
+                if name=='dsn':path.write_text('changed DSN\n')
+                elif name=='extra_stage':
+                    value=json.loads(path.read_text());extra=dict(value,stage='router-extra',command=['/recorded/fastroute','unconfigured'])
+                    path.write_text(json.dumps(value)+'\n'+json.dumps(extra)+'\n')
+                elif name=='capability':
+                    value=json.loads(path.read_text());value['implementation']['roles']['helper']['sha256']='0'*64
+                    value['content_sha256']=thermal_fixtures.thermal._identity({k:v for k,v in value.items() if k!='content_sha256'})
+                    write(path,value)
+                    coverage_path=folder/'operation/router/rule-coverage.json';coverage=json.loads(coverage_path.read_text())
+                    coverage['native_thermal_capability']=value
+                    coverage['native_postconditions'][0]['capability_sha256']=value['content_sha256'];write(coverage_path,coverage)
+                elif name=='actual_budget':
+                    value=json.loads(path.read_text());value['command']=[item.replace('--max-time=30','--max-time=60') for item in value['command']]
+                    write(path,value)
+                    coverage_path=folder/'operation/router/rule-coverage.json';coverage=json.loads(coverage_path.read_text())
+                    coverage['backend_command']=value['command'];coverage['backend_command_sha256']=outcomes.identity_command(value['command'])
+                    write(coverage_path,coverage)
+                    stage_path=folder/'operation/router/stages.jsonl';stage=json.loads(stage_path.read_text())
+                    stage['command']=value['command'];write(stage_path,stage)
+                elif name=='launch':
+                    rows=[json.loads(line) for line in path.read_text().splitlines()]
+                    mutate(rows[-1]);path.write_text(''.join(json.dumps(row)+'\n' for row in rows))
+                else:
+                    value=json.loads(path.read_text());mutate(value);write(path,value)
+                # Refresh outer hashes so the semantic guard, not a stale seal,
+                # rejects mutations to declared execution controls.
+                policy=json.loads((folder/trial['execution_policy']).read_text())
+                for control,key in [('operation/router/input-manifest.json','input_manifest_sha256')]:
+                    policy['controls'][key]=sha(folder/control)
+                policy['execution_context']['sha256']=sha(folder/'operation/execution-context.json')
+                policy['controls']['effective_configurations']['effective-configuration.json']=sha(folder/'operation/router/effective-configuration.json')
+                effective=json.loads((folder/'operation/router/effective-configuration.json').read_text())
+                effective['rule_coverage']['sha256']=sha(folder/'operation/router/rule-coverage.json')
+                write(folder/'operation/router/effective-configuration.json',effective)
+                policy['controls']['effective_configurations']['effective-configuration.json']=sha(folder/'operation/router/effective-configuration.json')
+                write(folder/trial['execution_policy'],policy);self.reseal_failure(folder,trial)
+                row=outcomes.cli_observation(outcomes.Evidence(self.root),trial)
+                self.assertEqual(row['execution_attempt']['status'],'unknown')
+                self.assertIsNone(row['execution_attempt']['fingerprint'])
+
+    def test_failed_execution_does_not_relax_passed_or_missing_source_cleanup(self):
+        for name in ('passed','source','cleanup','cancelled','terminal_exit','operation_exit'):
+            with self.subTest(change=name):
+                folder,trial=self.failed_execution_fixture(arm=name)
+                terminal=json.loads((folder/'result.json').read_text())
+                if name in ('passed','cancelled'):terminal['status']=name
+                elif name=='source':terminal['source_unchanged']=False
+                elif name=='cleanup':terminal['cleanup']['complete']=False
+                elif name=='terminal_exit':terminal['exit_code']=0
+                else:
+                    path=folder/'operation/result.json';operation=json.loads(path.read_text());operation['exit_code']=2
+                    write(path,operation);self.reseal_failure(folder,trial)
+                    terminal=json.loads((folder/'result.json').read_text())
+                write(folder/'result.json',terminal);trial['sha256']=sha(folder/'result.json')
+                if name in ('passed','cleanup'):
+                    with self.assertRaises(ValueError):outcomes.cli_observation(outcomes.Evidence(self.root),trial)
+                else:
+                    row=outcomes.cli_observation(outcomes.Evidence(self.root),trial)
+                    self.assertEqual(row['execution_attempt']['status'],'unknown')
 
     def thermal_fixture(self,from_parent=False):
         """Synthetic receipts exercise the real consumer; no CAD executable runs."""
