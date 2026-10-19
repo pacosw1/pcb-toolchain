@@ -1,10 +1,15 @@
 """Receipt validation only; these fixtures do not claim actual native checks."""
 import copy
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
+import shutil
+import sys
 import tempfile
+import types
 import unittest
+from unittest import mock
 
 import route_native_thermals as thermal
 
@@ -88,6 +93,118 @@ class NativeThermalTests(unittest.TestCase):
     def discharge(self, capability):
         return thermal.discharge(capability, self.final,
             fill_receipt=self.final_fill, drc_receipt=self.final_drc)
+
+    def module_copy(self, label):
+        """Identical code in another checkout; no recorded code is executed."""
+        tools = self.root/label/'tools'
+        (tools/'placer').mkdir(parents=True)
+        helper, parser = tools/'route_native_thermals.py', tools/'placer/dru.py'
+        shutil.copyfile(thermal.__file__, helper)
+        shutil.copyfile(thermal.native_parser.__file__, parser)
+        def load(name, path):
+            spec = importlib.util.spec_from_file_location(name, path)
+            value = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(value)
+            return value
+        native_parser = load(label+'_parser', parser)
+        package = types.ModuleType('placer')
+        package.__path__ = [str(parser.parent)]
+        package.dru = native_parser
+        with mock.patch.dict(sys.modules, {'placer': package, 'placer.dru': native_parser}):
+            return load(label+'_thermal', helper)
+
+    def origin_capability(self, producer):
+        return producer.admit(self.source, self.base, enabled=True, selected_nets=['/FB'],
+            initial_fill_receipt=self.initial_fill, initial_drc_receipt=self.initial_drc)
+
+    def test_identical_separated_origins_preserve_capability_and_final_provenance(self):
+        producer, consumer = self.module_copy('producer'), self.module_copy('consumer')
+        capability = self.origin_capability(producer)
+        original = copy.deepcopy(capability)
+        actual = consumer.validate_capability(capability, self.source, self.base, selected_nets=['/FB'])
+        self.assertEqual(actual, original)
+        self.assertEqual(capability, original)
+        self.assertEqual(actual['implementation']['schema'], thermal.IMPLEMENTATION_SCHEMA)
+        self.assertEqual(actual['implementation']['roles']['helper'], self.descriptor(Path(producer.__file__)))
+        self.assertEqual(actual['implementation']['roles']['parser'], self.descriptor(Path(producer.native_parser.__file__)))
+        kwargs = dict(fill_receipt=self.final_fill, drc_receipt=self.final_drc)
+        final = producer.discharge(capability, self.final, **kwargs)
+        self.assertEqual(consumer.discharge(capability, self.final, **kwargs), final)
+        for module in (consumer, consumer.native_parser):
+            self.assertNotIn(str(Path(module.__file__).resolve()), actual['inputs'])
+            self.assertNotIn(str(Path(module.__file__).resolve()), final['inputs'])
+        for descriptor in actual['implementation']['roles'].values():
+            self.assertEqual(final['inputs'][descriptor['path']], descriptor['sha256'])
+
+    def test_recorded_producer_implementation_path_and_bytes_remain_required(self):
+        for role in ('helper', 'parser'):
+            with self.subTest(role=role):
+                producer, consumer = self.module_copy('producer_'+role), self.module_copy('consumer_'+role)
+                capability = self.origin_capability(producer)
+                path = Path(capability['implementation']['roles'][role]['path'])
+                original = path.read_bytes()
+                path.write_bytes(original+b'\n# changed original producer bytes\n')
+                with self.assertRaisesRegex(ValueError, 'stale|changed'):
+                    consumer.validate_capability(capability, self.source, self.base, selected_nets=['/FB'])
+                path.write_bytes(original)
+                path.rename(path.with_suffix('.missing'))
+                with self.assertRaisesRegex(ValueError, 'missing evidence file'):
+                    consumer.validate_capability(capability, self.source, self.base, selected_nets=['/FB'])
+
+    def test_changed_consuming_helper_or_parser_cannot_use_original_capability(self):
+        producer, consumer = self.module_copy('producer'), self.module_copy('consumer')
+        capability = self.origin_capability(producer)
+        for role, module in (('helper', consumer), ('parser', consumer.native_parser)):
+            with self.subTest(role=role):
+                path = Path(module.__file__)
+                original = path.read_bytes()
+                path.write_bytes(original+b'\n# changed consuming implementation\n')
+                try:
+                    with self.assertRaisesRegex(ValueError, 'consumer native thermal '+role+' implementation differs'):
+                        consumer.validate_capability(capability, self.source, self.base, selected_nets=['/FB'])
+                finally:
+                    path.write_bytes(original)
+
+    def test_versioned_role_records_cannot_drop_or_rebind_original_implementation_inputs(self):
+        capability = self.admit()
+        def reseal(value):
+            value.pop('content_sha256')
+            value['content_sha256'] = thermal._identity(value)
+            return value
+        legacy = copy.deepcopy(capability)
+        legacy.pop('implementation')
+        with self.assertRaisesRegex(ValueError, 'legacy.*historical only'):
+            thermal.validate_capability(reseal(legacy), self.source, self.base, selected_nets=['/FB'])
+        aliases = self.root/'identical-helper.py'
+        aliases.write_bytes(Path(thermal.__file__).read_bytes())
+        mutations = [
+            lambda c: c['implementation'].update(schema='iot-lab.native-thermal-implementation.v2'),
+            lambda c: c['implementation'].update(unreviewed=True),
+            lambda c: c['implementation']['roles'].update(extra=c['implementation']['roles']['helper']),
+            lambda c: c['implementation']['roles']['helper'].update(extra=True),
+            lambda c: c['implementation']['roles'].update(parser=c['implementation']['roles']['helper']),
+            lambda c: c['implementation']['roles']['helper'].update(path=str(aliases)),
+            lambda c: c['implementation']['roles']['helper'].update(
+                path=str(Path(thermal.__file__).parent/'..'/Path(thermal.__file__).parent.name/Path(thermal.__file__).name)),
+            lambda c: c['inputs'].pop(c['implementation']['roles']['helper']['path']),
+        ]
+        for mutate in mutations:
+            with self.subTest(mutation=mutate):
+                changed = copy.deepcopy(capability)
+                mutate(changed)
+                with self.assertRaises(ValueError):
+                    thermal.validate_capability(reseal(changed), self.source, self.base, selected_nets=['/FB'])
+
+    def test_every_recorded_input_is_checked_before_cross_origin_replay(self):
+        extra = self.root/'original-reviewed-input.txt'
+        extra.write_text('original retained input')
+        self.mutate(self.initial_fill, lambda d: d['inputs'].update({str(extra): self.sha(extra)}))
+        producer, consumer = self.module_copy('producer'), self.module_copy('consumer')
+        capability = self.origin_capability(producer)
+        self.assertEqual(capability['inputs'][str(extra)], self.sha(extra))
+        extra.write_text('changed original retained input')
+        with self.assertRaisesRegex(ValueError, 'evidence input changed'):
+            consumer.validate_capability(capability, self.source, self.base, selected_nets=['/FB'])
 
     def test_initial_capability_and_final_discharge_are_distinct_and_deterministic(self):
         capability = self.admit()

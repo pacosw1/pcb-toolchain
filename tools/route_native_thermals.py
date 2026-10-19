@@ -17,6 +17,7 @@ from placer.dru import _tokens, _tree
 
 CAPABILITY_SCHEMA = 'iot-lab.native-thermal-capability.v1'
 DISCHARGE_SCHEMA = 'iot-lab.native-thermal-discharge.v1'
+IMPLEMENTATION_SCHEMA = 'iot-lab.native-thermal-implementation.v1'
 VERSION = '10.0.6'
 _HEX = re.compile(r'[0-9a-f]{64}')
 
@@ -107,6 +108,34 @@ def _descriptor(value):
     return dict(path=str(path), sha256=value['sha256'])
 
 
+def _implementation(recorded=None):
+    """Keep producer origins while checking the executing logical roles.
+
+    The enclosing capability remains v1. The required versioned subrecord is
+    deliberately absent from historical capabilities: those are not silently
+    upgraded or rebound to a different checkout. No recorded code is executed.
+    """
+    current = {role: dict(path=str(path), sha256=_hash(path)) for role, path in (
+        ('helper', Path(__file__).resolve()), ('parser', Path(native_parser.__file__).resolve()))}
+    if recorded is None:
+        return dict(schema=IMPLEMENTATION_SCHEMA, roles=current)
+    if (not isinstance(recorded, dict) or set(recorded) != {'schema', 'roles'}
+            or recorded.get('schema') != IMPLEMENTATION_SCHEMA
+            or not isinstance(recorded.get('roles'), dict) or set(recorded['roles']) != set(current)):
+        raise ValueError('unsupported native thermal implementation roles/version')
+    roles = {}
+    for role, descriptor in recorded['roles'].items():
+        checked = _descriptor(descriptor)
+        if checked != descriptor:
+            raise ValueError('native thermal implementation path must be canonical')
+        if checked['sha256'] != current[role]['sha256']:
+            raise ValueError('consumer native thermal '+role+' implementation differs from producer')
+        roles[role] = checked
+    if len({row['path'] for row in roles.values()}) != len(roles):
+        raise ValueError('native thermal implementation roles must have distinct paths')
+    return dict(schema=IMPLEMENTATION_SCHEMA, roles=roles)
+
+
 def _forms(text):
     tokens = _tokens(text)
     depth = 0
@@ -124,11 +153,10 @@ def _forms(text):
     return _tree(tokens)
 
 
-def _policy(source, base):
+def _policy(source, base, implementation):
     source, base = _path(source), _path(base)
-    inputs = {str(source): _hash(source), str(base): _hash(base),
-        str(Path(__file__).resolve()): _hash(Path(__file__).resolve()),
-        str(Path(native_parser.__file__).resolve()): _hash(Path(native_parser.__file__).resolve())}
+    inputs = _merge({str(source): _hash(source), str(base): _hash(base)},
+        {row['path']: row['sha256'] for row in implementation['roles'].values()})
     schematic = source.with_suffix('.kicad_sch')
     if schematic.is_symlink():
         raise ValueError('captured native schematic symlinks are unsupported')
@@ -320,8 +348,8 @@ def _native_evidence(candidate, fill_path, drc_path, selected_nets, final):
         raise ValueError('malformed or unavailable native thermal evidence: '+str(error)) from error
 
 
-def admit(source, base, *, enabled=False, selected_nets, initial_fill_receipt, initial_drc_receipt):
-    """Validate checked initial native evidence; only thermal count stays pending."""
+def _admit(source, base, *, enabled=False, selected_nets, initial_fill_receipt,
+           initial_drc_receipt, implementation=None):
     if enabled is not True:
         raise ValueError('native thermal checkback requires explicit opt-in')
     if (not isinstance(selected_nets, (list, tuple, set)) or not selected_nets
@@ -329,17 +357,25 @@ def admit(source, base, *, enabled=False, selected_nets, initial_fill_receipt, i
             or len(set(selected_nets)) != len(selected_nets)):
         raise ValueError('exact selected native nets are required')
     selected_nets = sorted(selected_nets)
-    source, base, count, policy_inputs = _policy(source, base)
+    implementation = _implementation(implementation)
+    source, base, count, policy_inputs = _policy(source, base, implementation)
     evidence = _native_evidence(base, initial_fill_receipt, initial_drc_receipt, selected_nets, False)
     inputs = _merge(policy_inputs, evidence['inputs'])
     _check_inputs(inputs)
     result = dict(schema=CAPABILITY_SCHEMA, status='pending_native', enabled=True,
         enforcement='native-checkback', required_count=count, selected_nets=selected_nets,
         source=dict(path=str(source), sha256=inputs[str(source)]), base=evidence['candidate'],
-        initial=evidence, inputs=inputs, qualified=False, dsn_covered=False,
+        initial=evidence, implementation=implementation, inputs=inputs, qualified=False, dsn_covered=False,
         scope='project minimum resolved spokes only; final native discharge and full configured gate required')
     result['content_sha256'] = _identity(result)
+    _implementation(implementation)
     return result
+
+
+def admit(source, base, *, enabled=False, selected_nets, initial_fill_receipt, initial_drc_receipt):
+    """Validate checked initial evidence with the actual producer code origins."""
+    return _admit(source, base, enabled=enabled, selected_nets=selected_nets,
+        initial_fill_receipt=initial_fill_receipt, initial_drc_receipt=initial_drc_receipt)
 
 
 def validate_capability(capability, source, base, *, selected_nets, required_count=None):
@@ -352,6 +388,12 @@ def validate_capability(capability, source, base, *, selected_nets, required_cou
     seal = original.pop('content_sha256', None)
     if seal != _identity(original):
         raise ValueError('native thermal capability content changed')
+    if 'implementation' not in capability:
+        raise ValueError('legacy native thermal capability lacks versioned implementation roles; historical only')
+    implementation = _implementation(capability['implementation'])
+    recorded_inputs = _check_inputs(capability.get('inputs'))
+    if any(recorded_inputs.get(row['path']) != row['sha256'] for row in implementation['roles'].values()):
+        raise ValueError('native thermal implementation role is absent from original inputs')
     try:
         captured = _descriptor(capability['source'])
         captured_path, caller_path = _path(captured['path']), _path(source)
@@ -365,9 +407,9 @@ def validate_capability(capability, source, base, *, selected_nets, required_cou
             new_hash = _hash(new) if new.exists() else None
             if old_hash != new_hash:
                 raise ValueError('caller native source sidecars differ from immutable capture')
-        actual = admit(captured_path, base, enabled=capability.get('enabled'), selected_nets=selected_nets,
+        actual = _admit(captured_path, base, enabled=capability.get('enabled'), selected_nets=selected_nets,
             initial_fill_receipt=capability['initial']['fill_receipt']['path'],
-            initial_drc_receipt=capability['initial']['drc_receipt']['path'])
+            initial_drc_receipt=capability['initial']['drc_receipt']['path'], implementation=implementation)
     except (KeyError, TypeError) as error:
         raise ValueError('native thermal capability is incomplete') from error
     if actual != capability:
@@ -389,7 +431,8 @@ def discharge(capability, candidate, *, fill_receipt, drc_receipt):
     except (KeyError, TypeError) as error:
         raise ValueError('native thermal capability is incomplete') from error
     candidate = _path(candidate)
-    _, _, count, final_inputs = _policy(initial['source']['path'], candidate)
+    implementation = _implementation(initial['implementation'])
+    _, _, count, final_inputs = _policy(initial['source']['path'], candidate, implementation)
     if count != initial['required_count']:
         raise ValueError('final native thermal minimum changed')
     evidence = _native_evidence(candidate, fill_receipt, drc_receipt, initial['selected_nets'], True)
@@ -403,4 +446,5 @@ def discharge(capability, candidate, *, fill_receipt, drc_receipt):
         qualified=False, dsn_covered=False, configured_gate_required=True,
         scope='native project thermal minimum discharged only; protected inputs and full configured gate still required')
     result['content_sha256'] = _identity(result)
+    _implementation(implementation)
     return result
