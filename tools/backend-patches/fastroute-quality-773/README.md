@@ -19,10 +19,20 @@ this rejection remains visible and is not a waiver of native rules.
 The same frontier guards multistart candidates, checkpoints, routing/history
 restores, optimizer incumbents/greedy winners and final output. An initial
 feasible fallback is checkpointed before routing. Among eligible candidates,
-clearance count precedes opens, stage and score. A retained best candidate is
-isolated from later mutations. The normal engine continues routing from that
+distinct clearance identity count precedes opens, stage and score. A retained
+best candidate is isolated from later mutations. The normal engine continues routing from that
 frontier after a rejected pass. This changes search behavior and may leave more
 opens; it does not guarantee completion or improve routing speed.
+
+The guard, checkpoint callback and multistart comparison use the same admitted
+distinct-identity key. Raw duplicate reports remain visible in statistics and
+the checkpoint log; they cannot discard improved connectivity when the actual
+fault identity set is unchanged. Geometry regressions use real unrouted pins to
+check duplicate-report ranking, same-count new-fault rejection and the priority
+of removing an existing fault. A captured-DSN zero-connection probe confirms
+that the stored and restored board retain an accepted enhancement. This is
+software verification; a new binary still needs its own native artifact QA.
+Historical build-provenance artifacts below do not certify the updated source.
 
 Pre-routing enhancements are also transactional against that original frontier.
 After accepting an initial SES, the CLI clones its whole board, applies the
