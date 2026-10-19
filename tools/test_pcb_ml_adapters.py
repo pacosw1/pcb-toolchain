@@ -624,12 +624,79 @@ class AdapterTests(unittest.TestCase):
                 else:self.assertEqual(row['targets']['accepted_within_budget'],0)
 
     def test_controlled_failure_has_zero_acceptance_but_never_zero_completion_time(self):
-        _, trial = self.trial(status="failed")
+        _, trial = self.fixture.failed_execution_fixture();trial['split']='train'
         row = self.corpus([trial])["rows"][0]
         self.assertEqual(row["targets"]["accepted_within_budget"], 0)
-        self.assertEqual(row["targets"]["native_errors"], 1)
+        self.assertIsNone(row["targets"]["native_errors"])
         self.assertIsNone(row["targets"]["successful_completion_elapsed_s"])
         self.assertTrue(row["eligibility"]["targets"]["owned_elapsed_s"])
+
+    def test_legacy_failed_start_without_verified_execution_is_not_promoted(self):
+        _,trial=self.trial(status='failed')
+        row=self.corpus([trial])['rows'][0]
+        self.assertIsNotNone(row['observation']['policy_fingerprint'])
+        self.assertEqual(row['observation']['execution_attempt']['status'],'unknown')
+        self.assertIsNone(row['targets']['accepted_within_budget'])
+        self.assertFalse(row['eligibility']['targets']['accepted_within_budget'])
+        self.assertEqual(row['targets']['native_errors'],1)
+
+    def test_verified_v2_failure_without_final_gate_has_only_failure_and_elapsed_labels(self):
+        folder,trial=self.fixture.failed_execution_fixture()
+        trial['split']='train'
+        dataset=self.corpus([trial]);row=dataset['rows'][0]
+        self.assertTrue(row['evidence_valid']);self.assertTrue(row['eligibility']['features'])
+        self.assertTrue(row['controls_known'])
+        self.assertEqual(row['observation']['execution_attempt']['schema'],history.outcomes.ATTEMPT)
+        self.assertIsNone(row['observation']['policy_fingerprint'])
+        self.assertFalse(row['observation']['full_gate_success'])
+        self.assertEqual(row['targets']['accepted_within_budget'],0)
+        self.assertTrue(row['eligibility']['targets']['accepted_within_budget'])
+        self.assertEqual(row['targets']['owned_elapsed_s'],2)
+        for name in ('successful_completion_elapsed_s','native_errors','native_opens','native_parity',
+                     'routed_track_length_mm','routed_via_count','added_route_track_length_mm'):
+            self.assertIsNone(row['targets'][name],name)
+            self.assertFalse(row['eligibility']['targets'][name],name)
+        self.assertFalse(row['completion_censoring']['observed'])
+        self.assertEqual(row['acceptance_target_contract'],adapters.ACCEPTANCE_DEFINITION)
+        self.assertEqual(dataset['metadata']['derived_targets']['accepted_within_budget'],adapters.ACCEPTANCE_DEFINITION)
+        original=Path(trial['placement_input']['path'])
+        self.assertEqual(row['features'],self.packet(original)['rows'][0]['features'])
+        # Different failure-output geometry never enters source features or
+        # turns the unknown quality target into a zero-length route.
+        (folder/'operation/router/routed.kicad_pcb').write_text(original.read_text()+'\n; unusable failure output\n')
+        self.fixture.reseal_failure(folder,trial)
+        repeated=self.corpus([trial])['rows'][0]
+        self.assertEqual(repeated['features'],row['features'])
+        self.assertEqual(repeated['observation']['execution_attempt']['fingerprint'],row['observation']['execution_attempt']['fingerprint'])
+        self.assertIsNone(repeated['targets']['added_route_track_length_mm'])
+
+    def test_v2_failure_missing_execution_source_or_seal_cannot_supply_zero(self):
+        for name in ('prelaunch','unverified','source','seal'):
+            with self.subTest(change=name):
+                folder,trial=self.fixture.failed_execution_fixture(arm=name);trial['split']='train'
+                if name=='prelaunch':
+                    write(folder/'operation/router/stages.jsonl',dict(stage='preflight',status='blocked'))
+                elif name=='unverified':
+                    path=folder/trial['execution_policy'];policy=json.loads(path.read_text())
+                    policy['controls']['effective_configuration_verified']=False;write(path,policy)
+                elif name=='source':
+                    replacement=self.root/(name+'.kicad_pcb');replacement.write_text(NATIVE)
+                    trial['placement_input']=dict(path=str(replacement),sha256=adapters._sha(replacement))
+                else:(folder/'operation/source.json').write_text('{}\n')
+                if name!='seal':self.fixture.reseal_failure(folder,trial)
+                row=self.corpus([trial])['rows'][0]
+                self.assertIsNone(row['targets']['accepted_within_budget'])
+                self.assertFalse(row['eligibility']['targets']['accepted_within_budget'])
+                self.assertTrue(row['ineligible_reasons'])
+
+    def test_verified_failure_still_rejects_run_alias_and_cross_split_leakage(self):
+        _,trial=self.fixture.failed_execution_fixture();trial['split']='train'
+        alias=copy.deepcopy(trial);alias['id']='failure-alias'
+        dataset=self.corpus([trial,alias])
+        self.assertEqual(len(data.split_rows(dataset,'train','accepted_within_budget')),1)
+        alias['split']='test';alias['family']='renamed-history'
+        with self.assertRaisesRegex(ValueError,'cross-split'):
+            self.corpus([trial,alias])
 
     def test_acceptance_budget_is_the_whole_run_not_the_solver_phase(self):
         folder, trial = self.trial()

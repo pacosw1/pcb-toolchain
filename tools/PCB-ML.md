@@ -114,6 +114,18 @@ Routing targets are `accepted_within_budget`, `owned_elapsed_s`,
 `owned_elapsed_s` measures time to any terminal outcome. Successful completion
 time stays unknown for a failure or timeout, with censoring recorded explicitly.
 Unknown controls or incomplete native evidence never become invented labels.
+New observations record acceptance target contract
+`iot-lab.accepted-within-owned-budget.v2`. A finalized failed route may supply
+acceptance `0` through `iot-lab.verified-routing-execution-attempt.v1`: the sealed
+original source, runtime, resources, budgets, admitted DSN, effective backend
+configuration, actual launch and termination, and owned cleanup must all agree.
+This means that the declared attempt failed to achieve acceptance; it does not
+prove that the placement is unroutable. Missing or ambiguous execution evidence
+stays unknown. Unfulfilled native obligations remain unfulfilled, and an
+unreached final gate remains unreached. Failed attempts supply no accepted
+copper quality or successful-completion time; terminal duration stays separate.
+Reobserve original evidence under the new contract without rewriting earlier
+datasets, model inputs or outcomes. No routing retry is needed for this readback.
 Rule-coverage admission checks custom rules and typed native project/netclass
 minima before the solver. Retain any blocked cause and its source/DSN-bound
 report; it supplies neither route completion nor accepted copper-quality labels.
@@ -137,8 +149,8 @@ model-only routing still blocks applicable thermal requirements. The explicit
 spoke minimum pending after a source-bound fresh native input check. Such an
 admission is not DSN coverage. The exact saved final candidate must satisfy the
 native obligation with checked successful fill, raw DRC, unchanged rule/count
-and error/exclusion policy, and actual runtime bindings before an observation
-can become training eligible. Pending or missing proof supplies no accepted
+and error/exclusion policy, and actual runtime bindings before positive
+acceptance or accepted-quality targets can become training eligible. Pending or missing proof supplies no accepted
 quality label. All fresh configured gates remain required. Creepage and spatial
 constraints remain blockers. Exact inactive-layer and unchanged-silkscreen decisions use actual
 active-net masks; silkscreen immutability requires no new vias and preserved
