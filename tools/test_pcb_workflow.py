@@ -4,11 +4,13 @@ import os
 from pathlib import Path
 import shutil
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
 import pcb_operations as operations
 import pcb_workflow as workflow
+from pcb_test_fixture import workflow_runtime_files
 import test_pcb_cli as fixtures
 
 
@@ -21,6 +23,31 @@ BOARD = '''(kicad_pcb (version 20260101) (generator pcbnew)
   (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "SIG"))))'''
 
 
+class RuntimeFixtureClosureTests(unittest.TestCase):
+    def test_relative_nested_imports_and_named_hash_dependencies_are_kept(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder).resolve()
+            files = {
+                'pcb_cli.py': 'import pkg.api\n',
+                'pcb_operations.py': 'POLICY=("backend.py", "rules.json")\n',
+                'pcb_snapshot_inputs.mjs': '',
+                'pkg/__init__.py': '',
+                'pkg/api.py': 'def guard():\n from . import native\n',
+                'pkg/native.py': 'from blocks import footprints\n',
+                'blocks.py': 'def footprints(): pass\n',
+                'backend.py': 'from pkg.native import locked\n',
+                'rules.json': '{}',
+                'lib/runtime.mjs': '',
+                'lib/unconsumed.test.mjs': '',
+                'unconsumed.py': '',
+                'test_unconsumed.py': '',
+            }
+            for name, content in files.items():
+                path = source / name;path.parent.mkdir(parents=True, exist_ok=True);path.write_text(content)
+            actual = {p.relative_to(source).as_posix() for p in workflow_runtime_files(source)}
+            self.assertEqual(actual, set(files) - {'lib/unconsumed.test.mjs', 'unconsumed.py', 'test_unconsumed.py'})
+
+
 class WorkflowTests(unittest.TestCase):
     def setUp(self):
         self.fixture = fixtures.PcbCliTests()
@@ -29,17 +56,14 @@ class WorkflowTests(unittest.TestCase):
         # The native parser/identity helpers run unchanged; only the external
         # native executable and candidate writer are controlled fixture tools.
         source = Path(__file__).resolve().parent
-        for directory in ('placer', 'pcb_search'):
-            shutil.copytree(source / directory, self.root / 'tools' / directory,
-                            ignore=shutil.ignore_patterns('__pycache__', 'node_modules'), dirs_exist_ok=True)
-        # Keep the actual transitive Python parser dependencies together. A
-        # partial hand-maintained copy hid required block/native-eco imports.
-        for p in source.glob('*.py'):
-            shutil.copyfile(p, self.root / 'tools' / p.name)
-        shutil.copyfile(source / 'pcb_snapshot_inputs.mjs', self.root / 'tools/pcb_snapshot_inputs.mjs')
-        for p in (source / 'lib').glob('*.mjs'):
-            if p.name != 'env.mjs':
-                shutil.copyfile(p, self.root / 'tools/lib' / p.name)
+        # Resolve transitive/relative imports and named backends mechanically;
+        # previous hand-maintained lists missed block/native-eco dependencies.
+        # Do not recopy PcbCliTests' files, including its rewritten happy pin.
+        for path in workflow_runtime_files(source):
+            target = self.root / 'tools' / path.relative_to(source)
+            if not target.exists():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(path, target)
         (self.board / 'gate.json').write_text(json.dumps(dict(project='cad/X', stage='G3', checks=dict(erc=True, drc=True))))
         (self.board / 'cad/X.kicad_pcb').write_text(BOARD)
         (self.board / 'cad/X.kicad_pro').write_text('{}')
@@ -72,6 +96,18 @@ print('candidate placement completed',flush=True)
         self.assertNotEqual(receipt['before_sha256'], receipt['after_sha256'])
         self.assertIn('(at 11 10)', target.read_text())
         self.assertEqual((folder / 'backup/X.kicad_pcb').read_text(), BOARD)
+
+    def test_runtime_fixture_retains_transitive_guards_without_copying_tests(self):
+        source = Path(__file__).resolve().parent
+        for name in ('blocks.py', 'pcb_search/native_eco.py', 'pcb_search/native_placement.py', 'placer/dru.py'):
+            target = self.root / 'tools' / name
+            self.assertEqual(target.read_bytes(), (source / name).read_bytes())
+            self.assertNotEqual(target.stat().st_ino, (source / name).stat().st_ino)
+        self.assertFalse(list((self.root / 'tools').rglob('test_*.py')))
+        self.assertFalse(list((self.root / 'tools/lib').glob('*.test.mjs')))
+        original = (source / 'pcbtool.py').read_bytes()
+        (self.root / 'tools/pcbtool.py').write_text('fixture-only writer mutation')
+        self.assertEqual((source / 'pcbtool.py').read_bytes(), original)
 
     def test_source_or_evidence_mutation_prevents_adoption(self):
         folder = self.candidate()
@@ -187,6 +223,28 @@ print('candidate placement completed',flush=True)
         candidate = self.root / 'locked.kicad_pcb'
         candidate.write_text(source.read_text().replace('(at 10 10)', '(at 11 10)'))
         self.assertNotEqual(operations.pcb_identity(source),operations.pcb_identity(candidate))
+
+    def test_keepout_order_ignores_only_outer_order_and_preserves_authored_multiset(self):
+        source = self.board / 'cad/X.kicad_pcb'
+        other = self.root / 'area-order.kicad_pcb'
+        def area(name, x):
+            return '(zone (uuid same) (name "'+name+'") (keepout (tracks not_allowed)) (polygon (pts (xy '+str(x)+' 1) (xy 2 2) (xy 3 1))))'
+        a, b = area('H3', 1), area('H5', 4)
+        text = BOARD[:-1]+a+b+')'
+        source.write_text(text)
+        other.write_text(BOARD[:-1]+b+a+')')
+        self.assertEqual(operations.pcb_identity(source),operations.pcb_identity(other))
+        for mutation in (a+a, a+b.replace('(xy 4 1)', '(xy 5 1)'), a,
+                         a+b.replace('not_allowed','allowed'), a+b.replace('(uuid same)','(uuid changed)')):
+            other.write_text(BOARD[:-1]+mutation+')')
+            self.assertNotEqual(operations.pcb_identity(source),operations.pcb_identity(other))
+        # Copper-zone priority/order and nested polygon vertex order remain
+        # strict; this exception applies only to full immutable rule areas.
+        other.write_text(BOARD[:-1]+a+b.replace('(xy 4 1) (xy 2 2)', '(xy 2 2) (xy 4 1)')+')')
+        self.assertNotEqual(operations.pcb_identity(source),operations.pcb_identity(other))
+        ca, cb = a.replace('(keepout (tracks not_allowed))','(priority 1)'), b.replace('(keepout (tracks not_allowed))','(priority 1)')
+        source.write_text(BOARD[:-1]+ca+cb+')');other.write_text(BOARD[:-1]+cb+ca+')')
+        self.assertNotEqual(operations.pcb_identity(source),operations.pcb_identity(other))
 
     def test_context_resolves_revision_owner_and_packet(self):
         alias = self.root / 'hardware-design/boards/X-B'

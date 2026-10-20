@@ -2,6 +2,7 @@
 
 For reviewed parts, sourced placement rules, diagnostic repairs and engineering
 cycle measurement, see [PCB-ENGINEERING.md](PCB-ENGINEERING.md).
+For source-bound datasets and small advisory models, see [PCB-ML.md](PCB-ML.md).
 
 `tools/pcb` is the repository entrypoint for board context, builds, explicit
 placement/routing changes, checks, fabrication candidates and block evidence.
@@ -21,6 +22,14 @@ tools/pcb explain RUN_ID --json
 tools/pcb cancel RUN_ID --json
 ```
 
+Before native CAD exists, check a reviewed part-use manifest with
+`tools/pcb parts --json selection PLANNED-BOARD --manifest FILE`. This evaluates
+sourced limits, demands and applicability conditions and streams the usual run
+events. Its result explicitly leaves native assets, CAD and current assembly
+stock unverified. `parts verify` remains the strict installed-native check.
+Use a design `part_selection` check to include this early decision in
+`tools/pcb design --json check DESIGN --contract FILE --through parts`.
+
 `context` derives revision ownership, frozen status, native project, gate policy,
 packet sources and commands from the registry, FOCUS and board files. Historical
 gates remain observations until dependencies are verified again. Missing context
@@ -37,7 +46,7 @@ run store is outside the default location.
 ## Execution contract
 
 `check`, `build`, `edit`, `route`, `repair`, `release`, `doctor`, `blocks`,
-`readiness`, `parts`, `placement`, `routing`, `design`, `schematic` and `outcomes` share one owned supervisor and
+`readiness`, `parts`, `placement`, `routing`, `design`, `schematic`, `outcomes` and `ml` share one owned supervisor and
 durable run record. They follow events by default.
 `--detach --json` immediately returns one JSON object with a run ID. Following
 with `--json`, and `events --json`, stream JSON Lines. Put lifecycle options
@@ -111,6 +120,120 @@ Placement specs use `{"place":{"R1":[x,y,degrees]}}`; routes use the existing
 mutable links into canonical CAD. Historical runs/unrelated evidence are excluded.
 Source hashes detect concurrent edits. Parts, locked footprint poses, pad/net assignments, outline,
 stackup and rules remain protected; changes require an explicit design revision.
+Identity checks tolerate serialization reordering of complete keepout rule areas
+among their existing slots while preserving every area, UUID, name, geometry,
+multiplicity and nested order. Copper-zone order and other protected forms
+remain significant.
+
+For an actual bounded solver invocation, opt in with
+`tools/pcb route BOARD --router fastroute --spec POLICY.json --detach --json`.
+The default `--router explicit` keeps the existing track/via proposal behavior.
+The controlled policy has these exact fields:
+
+```json
+{"schema":"iot-lab.routing-policy.v1","layers":["F.Cu","B.Cu"],"only_nets":["/A"],"passes":40,"threads":1,"timeout_s":30,"optimizer":"if-routed","max_repairs":0}
+```
+
+Passes, threads and engine time are explicit operational budgets, not design
+acceptance thresholds. The total CLI deadline also covers verification.
+`max_repairs: 0` permits zero separate CLI repair operations; the effective
+existing internal routing/repair feature policy is retained and recorded.
+Only exact selected net names and `off`/`if-routed` optimizer modes are accepted.
+
+The optional `iot-lab.routing-policy.v2` policy adds exactly one field,
+`"thermal_verification":"native-checkback"`. Version 1 keeps strict model-only
+admission. Version 2 still checks every other applicable requirement against the
+actual model and backend controls; it can leave only the project thermal-spoke
+minimum pending for native verification. This mode requires an explicit authored
+positive integer minimum, error severity for `starved_thermal`, no DRC exclusions,
+unchanged project/rules, and a fresh native input check before routing.
+
+Before each actual Fastroute call, the producer checks effective custom rules
+and typed `.kicad_pro` project/netclass minima, then retains a source/DSN-bound
+`rule-coverage*.json` report in the router evidence. Hashing a project file alone
+does not establish rule coverage. Missing, malformed or unknown applicable
+requirements block; an unchanged or inapplicable requirement needs an explicit
+source/geometry/control proof.
+Incomplete or unsupported applicable constraints block the solver with an
+actionable cause. Enabling the rule compiler alone does not establish coverage.
+Passing this admission check still requires the complete fresh native,
+configured and applicable semantic checks on the resulting candidate.
+Clearance floors come from the actual final DSN declarations.
+Before sealing that model, the producer raises every weaker non-pad-only DSN
+clearance to the maximum authored project/netclass floor applicable to the
+actual active/retained net pairs. Unused classes do not set that floor. Exact
+unit/resolution conversion is required; unrepresentable or malformed models
+block. Pad-only exceptions and all other model bytes stay unchanged. The
+`clearance-input*.dsn` and `clearance-floor*.json` retain source-project hashes,
+applicability witnesses and the exact before/after model identity. This can
+conservatively constrain routing more than per-class precedence would; it does
+not weaken the native project or replace the final admission/native checks.
+Track-width and
+copper-to-edge minima are compared with the complete final backend argv,
+including any neck-width option. Missing, duplicate or weaker controls block.
+The admitted immutable `router-model*.dsn`, exact argv, executable and backend
+policy are bound to the effective configuration; a later repair cannot replace
+an earlier stage's admitted model.
+Normal router jobs retain the base report without automatic connection-search
+diagnosis. Missing diagnosis counts remain unknown. A stall receipt survives a
+later timeout and records the single interrupt attempt and its acknowledgment;
+the owned stage terminal and cleanup establish process exit separately.
+For rules involving new copper, an exact layer present in the actual DSN is
+inactive only when every active net's effective layer mask excludes it. Unknown
+or wildcard layer selectors remain unsupported.
+Project hole admission inventories unchanged PTH, NPTH and retained vias.
+Positive containment is limited to a source-verified quality-first backend:
+the binary, reviewed patch, manifest and original native-validation evidence
+must rebind, and the actual command must select `--quality-first`. Supported
+geometry uses one actual routing layer, front-side quarter-turn PTH with centred
+circular drills and circular or true rectangular copper, circular NPTH keepouts
+and circular retained vias. Actual DSN positions, nets and physical identities
+must match, including repeated pad numbers. Every credited coordinate, radius,
+corner and clearance must be exactly representable on the verified DSN
+`um`/`resolution um 10` grid (0.1 micrometre), within its supported range.
+Plated obstacles can use only a conservative actual clearance floor; NPTH
+keepouts receive no wire-to-pin credit. Opaque legacy backends, slots, oval/path
+obstacles, offsets, mirrored or off-grid geometry remain unsupported for this
+positive proof. Custom PTH rules grant no same-net exemption; only the explicit
+KiCad 10 project track rule can record its sourced same-nonzero-net exclusion,
+after binding every physical drilled item.
+A custom hole minimum receives PTH coverage only after every active selector
+pair is proved to be a new track and a retained PTH pad. The minimum then applies
+conservatively to all PTH pads. NPTH and via instances remain physically bound
+with an explicit `custom_not_applicable` disposition; the independent project
+hole minimum still covers the complete inventory with its own applicability.
+`min_resolved_spokes` is not guaranteed by running a fill. The narrow inactive
+proof requires no copper zones or explicit solid/none connections, with no
+thermal pad/footprint/custom-rule override. Applicable thermal requirements stay
+blocked in model-only mode. With the explicit version 2 mode, a verified native
+input capability may instead produce `pending_native` admission with a typed
+thermal obligation. This is partial model coverage, not proof that the router
+enforces thermal spokes. A checked successful native fill and a fresh raw native
+DRC report must discharge that obligation for the exact saved final candidate.
+Failed, incomplete, excluded, downgraded, stale or changed evidence prevents
+completion and training eligibility. Filling alone is insufficient: the native
+[zone-connection checker](https://raw.githubusercontent.com/KiCad/kicad-source-mirror/10.0.6/pcbnew/drc/drc_test_provider_zone_connections.cpp)
+evaluates the resolved spokes. Unrepresented creepage, spatial selectors and
+rule precedence remain blocked in both modes.
+This check follows KiCad's native applicability and connectivity semantics; it
+does not independently count spokes on every pad.
+Silkscreen-only constraints are unchanged only when the actual active-net masks
+permit no new vias and source/import identity guards preserve the existing
+footprints, graphics and outline. Final native/configured checks remain
+mandatory. With configured RP-001 checks and no stitching producer,
+the actual active-net layer masks must prevent new layer transitions.
+Earlier sealed native results remain historical facts under their recorded
+inputs and controls; expanded admission does not rewrite them or certify a new
+run from old evidence.
+
+Controlled execution requires a host-recorded original `docker inspect` receipt
+at `PCB_EXECUTION_CONTEXT`, mounted read-only in the matching network-none
+container with explicit CPU/memory limits. The actual immutable image, resolved
+tool identities, resource limits and effective configuration are sealed under
+`operation/`. A supplied image-name string cannot establish those controls.
+Missing or contradictory runtime evidence stops before routing. Solver output
+stays in the isolated candidate, then must pass the same complete fresh native,
+configured and applicable semantic checks before adoption is possible.
 
 Candidates must pass fresh configured gates and applicable BASE/ENV semantic
 checks. `adopt` verifies settled cleanup, candidate/evidence hashes, unchanged

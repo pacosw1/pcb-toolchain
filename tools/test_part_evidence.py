@@ -237,6 +237,24 @@ class PartContractTests(unittest.TestCase):
         path.write_text(cad.dump(tree))
         self.assertIn('pin_map_mismatch', self.codes(self.verify()))
 
+    def test_matching_review_hashes_cannot_approve_unspecified_actual_pin_types(self):
+        path=self.root/'hardware-design/boards/PART-FIXTURE/fixture.kicad_sch'
+        tree=cad.parse(path.read_text());pin=next(cad.walk(cad.item(tree,'lib_symbols'),'pin'))
+        pin[1]=cad.Atom('unspecified');path.write_text(cad.dump(tree))
+        actual=native.read_board(self.root,'PART-FIXTURE')
+        value=json.loads(self.manifest.read_text())
+        for part in value['parts']:
+            ref=part['reference']
+            for field in ('symbol_sha256','pin_map'):
+                part['native'][field]=copy.deepcopy(actual['parts'][ref][field])
+        value['review']['facts_sha256']=evidence.facts_digest(value);self.manifest.write_text(json.dumps(value))
+        checked=self.verify();self.assertEqual(checked['status'],'blocked')
+        self.assertEqual(self.codes(checked),{'unspecified_pin_type'})
+        self.assertEqual({row['reference'] for row in checked['blockers']},{part['reference'] for part in value['parts']})
+        planned=evidence.verify_selection(self.root,'PART-FIXTURE',self.manifest)
+        self.assertEqual(planned['status'],'passed',planned['blockers'])
+        self.assertFalse(planned['native_verified']);self.assertEqual(planned['bindings'],{})
+
     def test_changed_installed_land_geometry_blocks(self):
         path = self.root / 'hardware-design/boards/PART-FIXTURE/fixture.kicad_pcb'
         tree = cad.parse(path.read_text()); pad = next(cad.walk(tree, 'pad')); cad.item(pad, 'size')[1] = '0.1'
@@ -247,6 +265,12 @@ class PartContractTests(unittest.TestCase):
         path = self.root / 'hardware-design/boards/PART-FIXTURE/fixture.kicad_pcb'
         path.write_text(path.read_text().replace('SYNTHETIC-TP', 'WRONG-MPN', 1))
         self.assertIn('native_identity_mismatch', self.codes(self.verify()))
+
+    def test_partial_planned_native_declaration_cannot_certify_installed_assets(self):
+        self.change(lambda v:v['parts'][0].update(native={}),True)
+        result=self.verify()
+        self.assertNotEqual(result['status'],'passed')
+        self.assertIn('native_asset_mismatch',self.codes(result));self.assertIn('pin_pad_coverage',self.codes(result))
 
     def test_unmatched_fitted_footprint_and_bom_mismatch_are_blocked(self):
         path = self.root / 'hardware-design/boards/PART-FIXTURE/fixture.kicad_pcb'
@@ -311,6 +335,21 @@ class PartContractTests(unittest.TestCase):
         self.assertIn('review_pending', self.codes(self.verify()))
         self.manifest.unlink()
         self.assertEqual(evidence.status_board(self.root, 'PART-FIXTURE')['status'], 'blocked')
+
+    def test_missing_status_manifest_is_an_explicit_absent_input_until_review_created(self):
+        original = self.manifest.read_bytes()
+        self.manifest.unlink()
+        missing = evidence.status_board(self.root, 'PART-FIXTURE')
+        self.assertEqual(missing['status'], 'blocked')
+        self.assertIn('missing_part_review', self.codes(missing))
+        relative = self.manifest.relative_to(self.root).as_posix()
+        self.assertIn(relative, missing['absent_inputs'])
+        self.assertNotIn(relative, missing['inputs'])
+        self.manifest.write_bytes(original)
+        present = evidence.status_board(self.root, 'PART-FIXTURE')
+        self.assertEqual(present['status'], 'passed', present['blockers'])
+        self.assertNotIn(relative, present.get('absent_inputs', []))
+        self.assertEqual(present['inputs'][str(self.manifest.resolve())], evidence.sha(self.manifest))
 
     def shared_profile(self):
         value = json.loads(self.manifest.read_text())
@@ -409,6 +448,145 @@ class PartContractTests(unittest.TestCase):
         result = json.loads(output.read_text())
         self.assertEqual(code, 1); self.assertFalse(result['qualified'])
         self.assertIn('missing.pdf', result['blockers'][0]['detail'])
+
+
+class SelectionContractTests(unittest.TestCase):
+    """Pre-CAD review reuses source/rating checks without consulting native CAD."""
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
+        self.root=Path(self.tmp.name);self.manifest=make_fixture(self.root)
+        self.value=json.loads(self.manifest.read_text())
+        self.pdf=self.root/self.value['parts'][0]['datasheets'][0]['path']
+        for path in (self.root/'hardware-design/boards/PART-FIXTURE').iterdir():
+            if path.name!='SPEC.md':path.unlink()
+        self.real_pdf_pages=evidence.pdf_pages
+        pages=mock.patch.object(evidence,'pdf_pages',return_value=1);pages.start();self.addCleanup(pages.stop)
+        reader=mock.patch.object(native,'read_board',side_effect=AssertionError('selection must not inspect native CAD'))
+        self.reader=reader.start();self.addCleanup(reader.stop)
+
+    def write(self,value,reviewed=True):
+        if reviewed:value['review']['facts_sha256']=evidence.facts_digest(value)
+        self.manifest.write_text(json.dumps(value));return value
+
+    def verify(self,output=None):return evidence.verify_selection(self.root,'PART-FIXTURE',self.manifest,output)
+
+    def codes(self,result):return {row['code'] for row in result['blockers']}
+
+    def partial_profile(self):
+        self.write(copy.deepcopy(self.value));profile=PartContractTests.shared_profile(self)
+        static=json.loads(profile.read_text());static['native']={};static['review']['facts_sha256']=evidence.facts_digest(static)
+        profile.write_text(json.dumps(static))
+        value=json.loads(self.manifest.read_text());value['parts'][0]['profile']['sha256']=evidence.sha(profile)
+        value['parts'][0]['use'].pop('pad_net_map');value['budgets']=[]
+        for part in value['parts'][1:]:part['native']={}
+        self.write(value);return profile,value
+
+    def test_reviewed_selection_passes_without_any_cad_and_retains_source_closure(self):
+        output=self.root/'selection-report.json';result=self.verify(output)
+        self.assertEqual(result['status'],'passed',result['blockers']);self.reader.assert_not_called()
+        self.assertEqual(result['scope'],'reviewed_part_selection');self.assertEqual(set(result['selections']),{'J1','J2','J3','J4'})
+        self.assertEqual(result['bindings'],{});self.assertEqual(result['native_inputs'],{})
+        for flag in ('native_verified','cad_verified','connectivity_verified','layout_verified','stock_verified','stock_current','qualified','release_approved'):
+            self.assertIs(result[flag],False,flag)
+        self.assertEqual(result['checked_budgets'][0]['scope'],'declared_planned_net_only')
+        self.assertEqual(json.loads(output.read_text()),result)
+        self.assertEqual(result['inputs'][self.manifest.relative_to(self.root).as_posix()],evidence.sha(self.manifest))
+        self.assertEqual(result['inputs'][self.pdf.relative_to(self.root).as_posix()],evidence.sha(self.pdf))
+        self.assertFalse(any(name.endswith(('.kicad_pcb','.kicad_sch','gate.json')) for name in result['inputs']))
+        closure=evidence.dependency_files(self.root,self.manifest,include_native=False)
+        self.assertEqual(set(closure),set(result['inputs']));self.reader.assert_not_called()
+
+    def test_no_planned_assets_are_needed_for_applicability_but_budgets_need_planned_nets(self):
+        value=copy.deepcopy(self.value)
+        for part in value['parts']:part['native']={}
+        self.write(value);result=self.verify()
+        self.assertIn('planned_budget_scope',self.codes(result))
+        value['budgets']=[];self.write(value);result=self.verify()
+        self.assertEqual(result['status'],'passed',result['blockers'])
+        self.assertEqual(result['selections']['J1']['planned_native'],{});self.reader.assert_not_called()
+        self.partial_profile();result=self.verify()
+        self.assertEqual(result['status'],'passed',result['blockers'])
+
+    def test_underspecified_rating_conditions_identity_and_unresolved_items_block(self):
+        cases=[('invalid_part_evidence',lambda v:v['parts'][0]['ratings'][0].pop('conditions')),
+               ('invalid_part_evidence',lambda v:v['parts'][0]['ratings'][0]['required'].pop('unit')),
+               ('rating_exceeded',lambda v:v['parts'][0]['ratings'][0]['required'].update(max=6)),
+               ('rating_conditions',lambda v:v['parts'][0]['ratings'][0]['conditions'][0]['required'].update(max=100)),
+               ('part_identity',lambda v:v['parts'][0].update(mpn='')),
+               ('package_identity',lambda v:v['parts'][0]['package'].update(variant='')),
+               ('unresolved_part_use',lambda v:v['parts'][0]['unresolved'].append('maximum duty cycle not reviewed'))]
+        for expected,mutate in cases:
+            with self.subTest(expected=expected):
+                value=copy.deepcopy(self.value);mutate(value);self.write(value)
+                result=self.verify();self.assertNotEqual(result['status'],'passed');self.assertIn(expected,self.codes(result))
+                if expected=='unresolved_part_use':self.assertIn('maximum duty cycle',str(result['blockers']))
+        self.reader.assert_not_called()
+
+    def test_board_ownership_review_and_changed_original_source_are_enforced_before_cad(self):
+        for expected,mutate,reviewed in [
+                ('manifest_identity',lambda v:v.update(board='ANOTHER-DESIGN'),True),
+                ('manifest_identity',lambda v:v.update(project='hardware-design/boards/ANOTHER-DESIGN/project'),True),
+                ('review_pending',lambda v:v['review'].update(verdict='pending'),False),
+                ('stale_review',lambda v:v['parts'][0]['ratings'][0]['limit'].update(max=8),False)]:
+            with self.subTest(expected=expected):
+                value=copy.deepcopy(self.value);mutate(value);self.write(value,reviewed)
+                self.assertIn(expected,self.codes(self.verify()))
+        self.write(copy.deepcopy(self.value));self.pdf.write_bytes(self.pdf.read_bytes()+b'\nchanged original\n')
+        self.assertEqual(self.verify()['status'],'stale');self.assertIn('stale_source',self.codes(self.verify()))
+
+    def test_demand_cannot_borrow_an_unrelated_boards_requirement(self):
+        other=self.root/'hardware-design/boards/OTHER/SPEC.md';other.parent.mkdir();other.write_text('Unrelated board requirement')
+        value=copy.deepcopy(self.value)
+        value['parts'][0]['ratings'][0]['required']['source']=dict(path=other.relative_to(self.root).as_posix(),sha256=evidence.sha(other),section='Other board')
+        self.write(value);self.assertIn('use_conditions_owner',self.codes(self.verify()))
+
+    def test_actual_pdfinfo_descriptor_is_bound_and_binary_change_invalidates_observation(self):
+        binary=self.root/'fixture-pdfinfo'
+        binary.write_text('#!'+sys.executable+'\nimport sys\nprint("fixture pdfinfo 1" if "-v" in sys.argv else "Pages: 1")\n')
+        binary.chmod(0o755)
+        with mock.patch.dict(os.environ,{'PDFINFO':str(binary)}),mock.patch.object(evidence,'pdf_pages',wraps=self.real_pdf_pages):
+            result=self.verify()
+        self.assertEqual(result['status'],'passed',result['blockers'])
+        self.assertEqual(result['tool_inputs'][str(binary.resolve())],evidence.sha(binary))
+        import design_contract
+        observation=dict(schema=design_contract.REPORT,inputs={str(self.root/k):v for k,v in result['inputs'].items()},tool_inputs=result['tool_inputs'])
+        self.assertTrue(design_contract.current_assessment(observation))
+        binary.write_text(binary.read_text()+'# changed binary at the same path\n')
+        self.assertFalse(design_contract.current_assessment(observation))
+
+    def test_structural_schemas_allow_early_partial_declarations_without_native_approval(self):
+        profile,value=self.partial_profile()
+        folder=REPO/'hardware-design/registry/part-reviews'
+        for name,instance in [('part-use.schema.json',value),('part-profile.schema.json',json.loads(profile.read_text()))]:
+            schema=json.loads((folder/name).read_text())
+            self.assertFalse(schema['$defs']['native'].get('required'))
+            self.assertNotIn('pad_net_map',schema['$defs']['use']['required'])
+            if importlib.util.find_spec('jsonschema'):
+                import jsonschema
+                jsonschema.Draft202012Validator(schema).validate(instance)
+        result=self.verify();self.assertEqual(result['status'],'passed',result['blockers']);self.assertFalse(result['cad_verified'])
+
+    def test_shared_profile_reuse_keeps_exact_review_conditions_and_hashes_without_cad(self):
+        profile=PartContractTests.shared_profile(self)
+        result=self.verify();self.assertEqual(result['status'],'passed',result['blockers'])
+        key=profile.relative_to(self.root).as_posix();self.assertEqual(result['profiles'][key],evidence.sha(profile))
+        self.assertIn(key,evidence.dependency_files(self.root,self.manifest,include_native=False))
+        value=json.loads(self.manifest.read_text());value['parts'][0]['use']['conditions'].clear();self.write(value)
+        self.assertIn('invalid_part_evidence',self.codes(self.verify()))
+        self.write(copy.deepcopy(self.value));profile=PartContractTests.shared_profile(self)
+        static=json.loads(profile.read_text());static['ratings'][0]['limit']['max']=8;profile.write_text(json.dumps(static))
+        value=json.loads(self.manifest.read_text());value['parts'][0]['profile']['sha256']=evidence.sha(profile);self.write(value)
+        self.assertIn('stale_profile_review',self.codes(self.verify()));self.reader.assert_not_called()
+
+    def test_selection_cli_retains_full_report_and_prints_compact_receipt(self):
+        output=self.root/'operation/report.json';stdout=io.StringIO()
+        with contextlib.redirect_stdout(stdout),mock.patch.object(sys,'argv',['part_evidence.py','selection','PART-FIXTURE',
+                '--manifest',str(self.manifest),'--root',str(self.root),'--output',str(output),'--json']):
+            code=evidence.main()
+        self.assertEqual(code,0);receipt=json.loads(stdout.getvalue());full=json.loads(output.read_text())
+        self.assertEqual(receipt['scope'],'reviewed_part_selection');self.assertNotIn('inputs',receipt)
+        self.assertTrue(full['inputs']);self.assertFalse(full['cad_verified'])
+        self.assertEqual(receipt['report'],dict(path=str(output.resolve()),sha256=evidence.sha(output)))
 
 
 class StockObservationTests(unittest.TestCase):
@@ -548,17 +726,26 @@ class PdfCacheTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name); self.pdf = self.root / 'document.pdf'; synthetic_pdf(self.pdf)
+        self.call_log = self.root / 'extractor-calls.jsonl'
         self.commands = {}
         scripts = {'pdfinfo': "print('Pages: 2')", 'pdftotext': "sys.stdout.write('FIRST PAGE\\fSECOND PAGE\\f')",
-                   'pdftoppm': "from pathlib import Path; Path(sys.argv[-1]+'.png').write_bytes(b'fixture PNG')"}
+                   'pdftoppm': "Path(sys.argv[-1]+'.png').write_bytes(b'fixture PNG '+json.dumps(sys.argv[1:]).encode())"}
         for name, body in scripts.items():
             path = self.root / name
-            path.write_text('#!' + sys.executable + '\nimport sys\nif sys.argv[1:] == ["-v"]:\n print("synthetic extractor v1"); sys.exit(0)\n' + body + '\n')
+            path.write_text('#!' + sys.executable + '\nimport json,sys\nfrom pathlib import Path\n'
+                'if sys.argv[1:] == ["-v"]:\n print("synthetic extractor v1"); sys.exit(0)\n'
+                'with Path('+repr(str(self.call_log))+').open("a") as log:\n'
+                ' log.write(json.dumps({"tool":'+repr(name)+',"args":sys.argv[1:]})+"\\n")\n' + body + '\n')
             path.chmod(0o755); self.commands[name] = str(path)
 
     def inspect(self, **options):
         with contextlib.redirect_stderr(io.StringIO()):
             return evidence.inspect_pdf(self.pdf, self.root / 'cache', extractors=self.commands, **options)
+
+    def content_calls(self, name):
+        # Version probes still bind the current executable descriptor; these
+        # count only real PDF reads/extractions/renders by the fake processes.
+        return [row['args'] for row in map(json.loads,self.call_log.read_text().splitlines()) if row['tool']==name]
 
     def test_cold_warm_pages_and_identical_pdf_different_path(self):
         first = self.inspect(); second = self.inspect()
@@ -584,6 +771,86 @@ class PdfCacheTests(unittest.TestCase):
         first = self.inspect(); (Path(first['cache_directory'])/'pages/0001.txt').write_text('corrupted')
         second = self.inspect(); self.assertFalse(second['cache_hit'])
         self.assertEqual((Path(second['cache_directory'])/'pages/0001.txt').read_text(), 'FIRST PAGE')
+
+    def test_new_render_pages_and_dpi_reuse_text_without_reading_pdf_again(self):
+        first=self.inspect();one=self.inspect(render_pages=[1]);two=self.inspect(render_pages=[2],dpi=288)
+        self.assertFalse(first['text_cache_hit'])
+        renderer=Path(self.commands['pdftoppm']);renderer.write_text(renderer.read_text()+'# changed renderer; same version\n')
+        three=self.inspect(render_pages=[2],dpi=288)
+        self.assertEqual(len({row['cache_key'] for row in (first,one,two,three)}),4)
+        for row,page,dpi in ((one,1,144),(two,2,288),(three,2,288)):
+            self.assertFalse(row['cache_hit']);self.assertTrue(row['text_cache_hit'])
+            self.assertEqual(row['receipt']['schema'],1)
+            self.assertEqual(row['receipt']['options']['render_pages'],[page])
+            self.assertEqual(row['receipt']['options']['dpi'],dpi)
+            self.assertIn('renders/%04d.png'%page,row['receipt']['artifacts'])
+            self.assertEqual((Path(row['cache_directory'])/'pages/0002.txt').read_text(),'SECOND PAGE')
+        self.assertEqual(len(self.content_calls('pdftotext')),1)
+        self.assertEqual(len(self.content_calls('pdfinfo')),1)
+        renders=self.content_calls('pdftoppm');self.assertEqual(len(renders),3)
+        for args,page,dpi in zip(renders,('1','2','2'),('144','288','288')):
+            self.assertEqual(args[args.index('-f')+1],page)
+            self.assertEqual(args[args.index('-l')+1],page)
+            self.assertEqual(args[args.index('-r')+1],dpi)
+
+    def test_changed_text_or_page_count_tool_cannot_reuse_extracted_text(self):
+        first=self.inspect()
+        text=Path(self.commands['pdftotext']);text.write_text(text.read_text().replace('FIRST PAGE','UPDATED FIRST PAGE'))
+        second=self.inspect(render_pages=[1]);self.assertFalse(second['text_cache_hit'])
+        self.assertNotEqual(first['cache_key'],second['cache_key'])
+        self.assertEqual((Path(second['cache_directory'])/'pages/0001.txt').read_text(),'UPDATED FIRST PAGE')
+        info=Path(self.commands['pdfinfo']);info.write_text(info.read_text()+'# changed executable; same version\n')
+        third=self.inspect(render_pages=[2]);self.assertFalse(third['text_cache_hit'])
+        self.assertEqual(len(self.content_calls('pdftotext')),3)
+        self.assertEqual(len(self.content_calls('pdfinfo')),3)
+
+    def test_corrupt_text_entry_is_not_copied_into_a_new_render_request(self):
+        first=self.inspect()
+        text=Path(first['text_cache_directory'])/'pages'
+        for number,options in ((2,dict(render_pages=[2])),(1,dict(render_pages=[1],dpi=288))):
+            if number==2:(text/'0002.txt').write_text('corrupted second canonical page')
+            else:(text/'0001.txt').unlink()
+            self.assertEqual((Path(first['cache_directory'])/'pages/0002.txt').read_text(),'SECOND PAGE')
+            rendered=self.inspect(**options);self.assertFalse(rendered['text_cache_hit'])
+            for page,expected in ((1,'FIRST PAGE'),(2,'SECOND PAGE')):
+                self.assertEqual((Path(rendered['cache_directory'])/('pages/%04d.txt'%page)).read_text(),expected)
+        self.assertEqual(len(self.content_calls('pdftotext')),3)
+        self.assertEqual(len(self.content_calls('pdfinfo')),3)
+
+    def test_legacy_v1_full_receipt_hit_seeds_text_for_later_render_reuse(self):
+        first=self.inspect();folder=Path(first['cache_directory'])
+        # Keep exactly the original full-request v1 receipt and page artifacts;
+        # remove all new text-cache state, as on an upgrade from existing data.
+        keys=('schema','pdf_sha256','tools','options','key','scope','page_count','reviewed','artifacts')
+        receipt={key:first['receipt'][key] for key in keys}
+        raw=evidence.part_native.encoded(receipt)+b'\n';(folder/'receipt.json').write_bytes(raw)
+        (folder/'receipt.sha256').write_text(evidence.part_native.digest(raw)+'\n')
+        shutil.rmtree(self.root/'cache/text')
+        existing=self.inspect();self.assertTrue(existing['cache_hit'])
+        self.assertEqual(existing['receipt'],receipt)
+        rendered=self.inspect(render_pages=[1],dpi=288)
+        self.assertFalse(rendered['cache_hit']);self.assertTrue(rendered['text_cache_hit'])
+        self.assertEqual(len(self.content_calls('pdftotext')),1)
+        self.assertEqual(len(self.content_calls('pdfinfo')),1)
+        self.assertEqual(len(self.content_calls('pdftoppm')),1)
+
+    def test_inspect_cli_output_keeps_full_report_and_prints_compact_bound_receipt(self):
+        output=self.root/'inspection/report.json';stdout=io.StringIO()
+        arguments=['part_evidence.py','inspect',str(self.pdf),'--cache',str(self.root/'cache'),'--json']
+        environment={name.upper():path for name,path in self.commands.items()}
+        with mock.patch.dict(os.environ,environment),contextlib.redirect_stderr(io.StringIO()):
+            with contextlib.redirect_stdout(stdout),mock.patch.object(sys,'argv',arguments+['--output',str(output)]):
+                self.assertEqual(evidence.main(),0)
+            terminal=json.loads(stdout.getvalue());full=json.loads(output.read_text())
+            self.assertEqual(terminal['scope'],'pdf_inspection');self.assertEqual(terminal['status'],'inspected')
+            self.assertFalse(terminal['qualified']);self.assertNotIn('inputs',terminal)
+            self.assertNotIn('receipt',terminal)
+            self.assertTrue(full['inputs']);self.assertEqual(full['receipt']['page_count'],2)
+            self.assertEqual(terminal['report'],dict(path=str(output.resolve()),sha256=evidence.sha(output)))
+            stdout=io.StringIO()
+            with contextlib.redirect_stdout(stdout),mock.patch.object(sys,'argv',arguments):
+                self.assertEqual(evidence.main(),0)
+            self.assertTrue(json.loads(stdout.getvalue())['inputs'])
 
     def test_rewritten_receipt_with_wrong_identity_cannot_reuse_key(self):
         first=self.inspect(); folder=Path(first['cache_directory'])

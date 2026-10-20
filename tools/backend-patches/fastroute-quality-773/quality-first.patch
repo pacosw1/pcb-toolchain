@@ -27,10 +27,10 @@ index 0000000..2501b81
 +    if args.len()>2 { std::fs::write(&args[2],safe).unwrap(); }
 +}
 diff --git a/crates/fastroute/src/main.rs b/crates/fastroute/src/main.rs
-index a474456..a703710 100644
+index a474456..ab7d8f7 100644
 --- a/crates/fastroute/src/main.rs
 +++ b/crates/fastroute/src/main.rs
-@@ -40,6 +40,7 @@ struct Args {
+@@ -40,6 +40,7 @@
      design_out: Option<String>,
      parity: bool,
      no_enhancements: bool,
@@ -38,7 +38,7 @@ index a474456..a703710 100644
      multi_start: usize,
      no_time_limits: bool,
      optimizer_mode: Option<String>,
-@@ -62,6 +63,7 @@ fn parse_args() -> Result<Args, String> {
+@@ -62,6 +63,7 @@
          design_out: None,
          parity: false,
          no_enhancements: false,
@@ -46,7 +46,7 @@ index a474456..a703710 100644
          multi_start: 4,
          no_time_limits: false,
          optimizer_mode: None,
-@@ -101,6 +103,7 @@ fn parse_args() -> Result<Args, String> {
+@@ -101,6 +103,7 @@
                  i += 1;
                  continue;
              }
@@ -54,7 +54,7 @@ index a474456..a703710 100644
              _ if a.starts_with("--multi-start=") => {
                  args.multi_start = a["--multi-start=".len()..]
                      .parse::<usize>()
-@@ -202,6 +205,7 @@ options:
+@@ -202,6 +205,7 @@
                             lengths count in length matching as in KiCad
    --tune=FILE              length matching after routing (groups of nets, see below)
    --max-time=SECONDS       stop after this wall-clock time and write the best result
@@ -62,7 +62,7 @@ index a474456..a703710 100644
                             (Ctrl+C / SIGTERM / Ctrl+Break do the same; a second one exits)
    --initial-session=FILE   start from the wiring of a session (.ses), e.g. a checkpoint of an
                             earlier run, instead of the wiring in the design
-@@ -349,6 +353,9 @@ fn run() -> Result<(), String> {
+@@ -349,6 +353,9 @@
          b.get_items().into_iter().filter(|&k| b.item(k).is_trace() || b.item(k).is_via()).map(|k| b.item(k).id()).collect()
      };
      let before = wiring_ids(&board);
@@ -72,7 +72,7 @@ index a474456..a703710 100644
      if let Some(summary) = fr_io::post_load::prepare_for_routing(&mut board, &mut settings, initial.as_deref()) {
          // the session reader fixes what it imports (as Freerouting does); here the session is
          // a starting point that may be ripped and optimized like routed wiring
-@@ -364,14 +371,26 @@ fn run() -> Result<(), String> {
+@@ -364,14 +371,26 @@
          );
      }
      pipeline::deferred_post_load_processing(&mut board);
@@ -103,7 +103,7 @@ index a474456..a703710 100644
              log::info!(target: "fastroute", "{n} trace ends inside a pad but off its center joined to the center");
          }
      }
-@@ -406,12 +425,13 @@ fn run() -> Result<(), String> {
+@@ -406,22 +425,29 @@
          None => OptimizerMode::Parallel { threads: optimizer_threads },
      };
      let design_name = std::path::Path::new(&path).file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -118,12 +118,31 @@ index a474456..a703710 100644
                  return;
              }
              match write_ses_atomically(&out, &fr_io::ses_writer::ses_bytes(board, &name)) {
-@@ -432,7 +452,13 @@ fn run() -> Result<(), String> {
+                 Ok(()) => {
+                     *best = Some(key);
++                    let raw_violations = if quality_first {
++                        fr_engine::drc::all_clearance_violations(board).len().to_string()
++                    } else { key.violations.to_string() };
++                    let quality_note = if quality_first {
++                        format!(" (quality-first distinct clearance identities={})", key.violations)
++                    } else { String::new() };
+                     log::info!(
+                         target: "fastroute",
+-                        "checkpoint: best board so far ({} unrouted, {} violations) written to '{out}'",
++                        "checkpoint: best board so far ({} unrouted, {} violations) written to '{out}'{quality_note}",
+                         key.incomplete,
+-                        key.violations
++                        raw_violations
+                     );
+                 }
+                 Err(e) => log::warn!(target: "fastroute", "checkpoint: cannot write '{out}': {e}"),
+@@ -432,7 +458,13 @@
          enhancements: !args.parity && !args.no_enhancements,
          multi_start: args.multi_start,
          checkpoint,
+-    };
 +        quality,
-     };
++    };
 +    if ctx.quality.is_some() {
 +        let s = pipeline::StatsCache::new().score(&board, &settings);
 +        ctx.checkpoint(&board, CheckpointKey { incomplete: s.incomplete_count,
@@ -132,7 +151,7 @@ index a474456..a703710 100644
      {
          // First signal: stop and write the best result; second: exit at once.
          let stop = ctx.stop.clone();
-@@ -560,6 +586,12 @@ fn run() -> Result<(), String> {
+@@ -560,6 +592,12 @@
          }
          log::info!(target: "fastroute", "length tuning finished in {:.2} s", t.elapsed().as_secs_f64());
      }
@@ -274,10 +293,10 @@ index 0c9159a..3310b46 100644
          // Java skips the final tail removal when the autorouter was stopped (also by its own
          // stagnation rule), leaving unused fanout escapes (via + stub) on the board.
 diff --git a/crates/fr-engine/src/pipeline/mod.rs b/crates/fr-engine/src/pipeline/mod.rs
-index cf92b57..691eab9 100644
+index cf92b57..3c83b77 100644
 --- a/crates/fr-engine/src/pipeline/mod.rs
 +++ b/crates/fr-engine/src/pipeline/mod.rs
-@@ -35,6 +35,7 @@ pub mod history;
+@@ -35,6 +35,7 @@
  pub mod optimizer;
  mod parallel_pass;
  pub mod stats;
@@ -285,7 +304,7 @@ index cf92b57..691eab9 100644
  
  use fr_settings::{RouterSettings, ALGORITHM_CURRENT};
  
-@@ -67,6 +68,7 @@ pub struct PipelineContext {
+@@ -67,6 +68,7 @@
      /// [`CheckpointKey`]); the CLI writes it as the session file, so a run that is stopped or
      /// killed still leaves its best result behind.
      pub checkpoint: Option<Checkpoint>,
@@ -293,7 +312,15 @@ index cf92b57..691eab9 100644
  }
  
  /// Callback for [`PipelineContext::checkpoint`].
-@@ -85,6 +87,10 @@ pub struct CheckpointKey {
+@@ -78,6 +80,7 @@
+ #[derive(Clone, Copy, Debug, PartialEq)]
+ pub struct CheckpointKey {
+     pub incomplete: i32,
++    /// Raw records for legacy selection; distinct admitted identities for quality-first selection.
+     pub violations: i32,
+     /// 0 = routing, 1 = optimizer.
+     pub stage: u8,
+@@ -85,6 +88,10 @@
  }
  
  impl CheckpointKey {
@@ -304,28 +331,40 @@ index cf92b57..691eab9 100644
      /// True if `self` is a better board than `other`.
      pub fn better_than(&self, other: &CheckpointKey) -> bool {
          (other.incomplete, other.violations, self.stage, ordered_f32(self.score))
-@@ -105,8 +111,20 @@ impl std::fmt::Debug for PipelineContext {
+@@ -105,8 +112,31 @@
  }
  
  impl PipelineContext {
+-    /// Reports a board to the checkpoint callback, if any.
 +    pub fn quality_allows(&self, board: &RoutingBoard) -> bool {
 +        self.quality.as_ref().map_or(true, |g| g.lock().unwrap().accepts(board))
 +    }
 +    pub fn quality_restore(&self, board: &mut RoutingBoard) {
 +        if let Some(g) = &self.quality { *board = g.lock().unwrap().best(); }
 +    }
-     /// Reports a board to the checkpoint callback, if any.
-     pub fn checkpoint(&self, board: &RoutingBoard, key: CheckpointKey) {
-+        if let Some(g) = &self.quality {
-+            if !g.lock().unwrap().observe(board, key) {
-+                log::warn!("quality-first: rejected checkpoint with new clearance identity");
-+                return;
-+            }
++    /// Normalize quality-first selection using this board's actual admitted identities.
++    /// Legacy callers retain their raw key.
++    pub fn quality_key(&self, board: &RoutingBoard, key: CheckpointKey) -> Option<CheckpointKey> {
++        match &self.quality {
++            Some(g) => g.lock().unwrap().admitted_key(board, key),
++            None => Some(key),
 +        }
++    }
++    /// Reports a board to the checkpoint callback, using the stored incumbent's exact key.
+     pub fn checkpoint(&self, board: &RoutingBoard, key: CheckpointKey) {
++        let key = if let Some(g) = &self.quality {
++            match g.lock().unwrap().observe(board, key) {
++                Some(admitted) => admitted,
++                None => {
++                    log::warn!("quality-first: rejected checkpoint with new clearance identity");
++                    return;
++                }
++            }
++        } else { key };
          if let Some(cb) = &self.checkpoint {
              cb(board, key);
          }
-@@ -122,6 +140,7 @@ impl Default for PipelineContext {
+@@ -122,6 +152,7 @@
              enhancements: false,
              multi_start: 1,
              checkpoint: None,
@@ -333,7 +372,7 @@ index cf92b57..691eab9 100644
          }
      }
  }
-@@ -186,6 +205,7 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
+@@ -186,6 +217,7 @@
      }
      outcome.fanout_timed_out = autorouter.fanout_timed_out;
      board.finish_autoroute();
@@ -341,7 +380,7 @@ index cf92b57..691eab9 100644
      if ctx.enhancements {
          // The autorouter's own stop rules (stagnation, max passes) request a stop of the
          // autorouter; in Java that request stays set, so every optimizer candidate fails to
-@@ -206,6 +226,7 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
+@@ -206,6 +238,7 @@
          optimizer.run_batch_loop(board, settings, ctx, &mut stats);
          outcome.optimizer_timed_out = optimizer.timed_out;
      }
@@ -349,7 +388,7 @@ index cf92b57..691eab9 100644
      outcome
  }
  
-@@ -233,6 +254,7 @@ fn multi_start(board: &mut RoutingBoard, start: &RoutingBoard, settings: &Router
+@@ -233,6 +266,7 @@
                  enhancements: true,
                  multi_start: 1,
                  checkpoint: ctx.checkpoint.clone(),
@@ -357,11 +396,16 @@ index cf92b57..691eab9 100644
              };
              let mut router = BatchAutorouter::for_job(&b, settings);
              router.order_seed = Some(0x5eed_0000 + v as i64);
-@@ -246,16 +268,21 @@ fn multi_start(board: &mut RoutingBoard, start: &RoutingBoard, settings: &Router
+@@ -244,19 +278,26 @@
+         })
+         .collect();
      let key = |s: &stats::Score| (s.incomplete_count, s.clearance_violation_count, std::cmp::Reverse(ordered_f32(s.router_score)));
++    let score_key = |s: &stats::Score| CheckpointKey { incomplete: s.incomplete_count,
++        violations: s.clearance_violation_count, stage: 0, score: s.router_score };
++    let mut best_quality_key = ctx.quality_key(board, score_key(&first));
      let mut best: Option<(usize, RoutingBoard, stats::Score)> = None;
      for (v, b, s) in variants {
-+        if !ctx.quality_allows(&b) { continue; }
++        let Some(candidate_quality_key) = ctx.quality_key(&b, score_key(&s)) else { continue; };
          log::info!(
              "Multi-start variant {v}: {} unrouted, {} violations, router score {:.2}.",
              s.incomplete_count,
@@ -370,17 +414,17 @@ index cf92b57..691eab9 100644
          );
 -        let better = match &best {
 +        let better = if ctx.quality.is_some() {
-+            let score_key = |s: &stats::Score| CheckpointKey { incomplete: s.incomplete_count,
-+                violations: s.clearance_violation_count, stage: 0, score: s.router_score };
-+            score_key(&s).quality_better_than(&score_key(best.as_ref().map_or(&first, |(_,_,bs)| bs)))
++            best_quality_key.map_or(true, |old| candidate_quality_key.quality_better_than(&old))
 +        } else { match &best {
              None => key(&s) < key(&first),
              Some((_, _, bs)) => key(&s) < key(bs),
 -        };
 +        }};
          if better {
++            best_quality_key = Some(candidate_quality_key);
              best = Some((v, b, s));
          }
+     }
 diff --git a/crates/fr-engine/src/pipeline/optimizer.rs b/crates/fr-engine/src/pipeline/optimizer.rs
 index ecc8a16..4400f21 100644
 --- a/crates/fr-engine/src/pipeline/optimizer.rs
@@ -415,10 +459,10 @@ index ecc8a16..4400f21 100644
                      *board = w.board.expect("improved candidate without board");
 diff --git a/crates/fr-engine/src/pipeline/quality.rs b/crates/fr-engine/src/pipeline/quality.rs
 new file mode 100644
-index 0000000..479e754
+index 0000000..8c85d52
 --- /dev/null
 +++ b/crates/fr-engine/src/pipeline/quality.rs
-@@ -0,0 +1,101 @@
+@@ -0,0 +1,112 @@
 +//! Opt-in safety frontier: no new clearance identities relative to loaded DSN.
 +//! Counts cannot distinguish removal of an old fault from introduction of a new one.
 +use std::collections::BTreeSet;
@@ -470,8 +514,10 @@ index 0000000..479e754
 +impl QualityGuard {
 +    pub fn new(board: &RoutingBoard, settings: &RouterSettings) -> Self {
 +        let score = StatsCache::new().score(board, settings);
-+        Self { baseline: identities(board), best: board.clone(), key: CheckpointKey {
-+            incomplete: score.incomplete_count, violations: score.clearance_violation_count,
++        let baseline = identities(board);
++        let distinct = i32::try_from(baseline.len()).expect("clearance identity count exceeds i32");
++        Self { baseline, best: board.clone(), key: CheckpointKey {
++            incomplete: score.incomplete_count, violations: distinct,
 +            stage: 0, score: score.router_score,
 +        }}
 +    }
@@ -491,12 +537,21 @@ index 0000000..479e754
 +        if !accepted { *board = accepted_input; }
 +        (accepted, result)
 +    }
-+    pub fn observe(&mut self, board: &RoutingBoard, key: CheckpointKey) -> bool {
-+        if !self.accepts(board) { return false; }
++    /// A quality key is admitted by the immutable geometric identity frontier.
++    /// Report multiplicity is not an additional electrical fault; raw statistics stay raw.
++    pub fn admitted_key(&self, board: &RoutingBoard, mut key: CheckpointKey) -> Option<CheckpointKey> {
++        let candidate = identities(board);
++        if !allowed(&self.baseline, &candidate) { return None; }
++        key.violations = i32::try_from(candidate.len()).expect("clearance identity count exceeds i32");
++        Some(key)
++    }
++    /// Return the same admitted key used by both the stored incumbent and its callback.
++    pub fn observe(&mut self, board: &RoutingBoard, key: CheckpointKey) -> Option<CheckpointKey> {
++        let key = self.admitted_key(board, key)?;
 +        if key.quality_better_than(&self.key) {
 +            self.best = board.clone(); self.key = key;
 +        }
-+        true
++        Some(key)
 +    }
 +    pub fn best(&self) -> RoutingBoard { self.best.deep_copy() }
 +}
@@ -522,10 +577,10 @@ index 0000000..479e754
 +}
 diff --git a/crates/fr-engine/tests/quality_identity.rs b/crates/fr-engine/tests/quality_identity.rs
 new file mode 100644
-index 0000000..02a1ffd
+index 0000000..ba44b67
 --- /dev/null
 +++ b/crates/fr-engine/tests/quality_identity.rs
-@@ -0,0 +1,190 @@
+@@ -0,0 +1,300 @@
 +use fr_engine::board::*;
 +use fr_engine::datastructures::ItemIdGenerator;
 +use fr_engine::ids::FixedState;
@@ -603,7 +658,7 @@ index 0000000..02a1ffd
 +    source.assign_net_no(second,3);
 +    assert_eq!(identities(&guard.best()),expected,"baseline clone must remain isolated");
 +    source.remove_item(second);
-+    assert!(guard.observe(&source,CheckpointKey { incomplete:0,violations:0,stage:1,score:100. }));
++    assert!(guard.observe(&source,CheckpointKey { incomplete:0,violations:0,stage:1,score:100. }).is_some());
 +    let retained_items=guard.best().get_items().len();
 +    let remaining:Vec<_>=source.get_items().into_iter().filter(|k| source.item(*k).is_trace()).collect();
 +    source.remove_items(remaining);
@@ -715,4 +770,281 @@ index 0000000..02a1ffd
 +    assert!(record.contains("\"layers\":[\"F.Cu\"]"));
 +    assert!(record.contains("\"state\":\"InsertError\""));
 +    assert!(record.contains("\"dsn_bounds\":"));
++}
++// An existing two-trace fault and an independent, initially disconnected pin pair.
++// NetIncompletes excludes isolated vias as tails; real pins remain unrouted terminals.
++// Duplicating the offending trace produces duplicate reporter rows for one identity.
++fn checkpoint_board() -> (RoutingBoard, ItemKey) {
++    use fr_engine::library::PackagePin;
++    let mut b=board(); segment(&mut b,1000,1); let offending=segment(&mut b,1200,2);
++    let shapes=vec![Some(ConvexShape::Circle(Circle::new(IntPoint::new(0,0),300)));2];
++    let library=std::sync::Arc::make_mut(&mut b.library);
++    let stack=library.padstacks.add("checkpoint",shapes,true,false);
++    let package=library.packages.add("checkpoint",vec![
++        PackagePin::new("1",stack,Vector::get_instance(0,0),0.),
++        PackagePin::new("2",stack,Vector::get_instance(5000,0),0.),
++    ],None,None,None,vec![],vec![],vec![],true);
++    let component=std::sync::Arc::make_mut(&mut b.components).add("CHECKPOINT",
++        Some(Point::Int(IntPoint::new(10000,10000))),0.,true,package,package,true,None);
++    for (index,name,x) in [(0,"1",10000),(1,"2",15000)] {
++        let k=b.insert_pin(component,index,&[3],1,FixedState::UserFixed);
++        let item=b.item(k); let p=item.as_pin().expect("fixture endpoint must be a pin");
++        assert_eq!(item.component_no(),component); assert_eq!(p.pin_index,index);
++        assert_eq!(item.net_numbers(),&[3]); assert_eq!(item.fixed_state(),FixedState::UserFixed);
++        assert_eq!(b.library.packages.get(package).get_pin(index).unwrap().name,name);
++        assert_eq!(item.center(&b),Point::Int(IntPoint::new(x,10000)));
++        assert!(!b.is_tail(k)); assert!(b.normal_contacts(k).is_empty());
++    }
++    assert_eq!(b.get_pins().len(),2); assert_eq!(b.get_connectable_items(3).len(),2);
++    let initial=fr_engine::drc::NetIncompletes::new(&b,3,&b.get_connectable_items(3));
++    assert_eq!(initial.connected_group_count(),2); assert_eq!(initial.count(),1);
++    (RoutingBoard::from_basic(b),offending)
++}
++fn net_opens(b: &RoutingBoard, net:i32) -> i32 {
++    fr_engine::drc::NetIncompletes::new(b,net,&b.get_connectable_items(net)).count()
++}
++fn actual_key(b:&RoutingBoard) -> fr_engine::pipeline::CheckpointKey {
++    let s=fr_engine::pipeline::StatsCache::new().score(b,&fr_settings::defaults::default_settings(2));
++    fr_engine::pipeline::CheckpointKey{incomplete:s.incomplete_count,violations:s.clearance_violation_count,stage:0,score:s.router_score}
++}
++fn connected_duplicate(b:&RoutingBoard) -> RoutingBoard {
++    let mut candidate=b.clone(); segment(&mut candidate.basic,1200,2);
++    candidate.insert_trace_without_cleaning(Polyline::from_int_points(&[
++        IntPoint::new(10000,10000),IntPoint::new(15000,10000)]),0,100,&[3],1,FixedState::Unfixed).unwrap();
++    let pins=candidate.get_pins();
++    assert_eq!(pins.len(),2);
++    assert!(candidate.connected_set(pins[0],3,false).iter().any(|k|k==pins[1]));
++    let connected=fr_engine::drc::NetIncompletes::new(&candidate,3,&candidate.get_connectable_items(3));
++    assert_eq!(connected.connected_group_count(),1); assert_eq!(connected.count(),0);
++    candidate
++}
++
++#[test]
++fn duplicate_geometry_reports_do_not_discard_connected_guard_or_callback_incumbent() {
++    use std::sync::{Arc,Mutex};
++    use fr_engine::pipeline::{CheckpointKey,PipelineContext,quality::QualityGuard};
++    let (baseline,_)=checkpoint_board(); let candidate=connected_duplicate(&baseline);
++    let original=identities(&baseline);
++    assert!(!original.is_empty()); assert_eq!(identities(&candidate),original);
++    assert!(fr_engine::drc::all_clearance_violations(&candidate).len()>fr_engine::drc::all_clearance_violations(&baseline).len());
++    assert_eq!(net_opens(&baseline,3),1); assert_eq!(net_opens(&candidate,3),0);
++    let settings=fr_settings::defaults::default_settings(2);
++    let guard=Arc::new(Mutex::new(QualityGuard::new(&baseline,&settings)));
++    let callback=Arc::new(Mutex::new(None::<(CheckpointKey,i32,usize)>)); let saved=callback.clone();
++    let ctx=PipelineContext{quality:Some(guard.clone()),checkpoint:Some(Arc::new(move |b,k| {
++        let mut best=saved.lock().unwrap();
++        if best.as_ref().map_or(true,|old|k.quality_better_than(&old.0)) {
++            *best=Some((k,net_opens(b,3),fr_engine::drc::all_clearance_violations(b).len()));
++        }
++    })),..Default::default()};
++    ctx.checkpoint(&baseline,actual_key(&baseline));
++    ctx.checkpoint(&candidate,actual_key(&candidate));
++    let restored=guard.lock().unwrap().best(); assert_eq!(net_opens(&restored,3),0);
++    assert_eq!(identities(&restored),original);
++    let (callback_key,callback_opens,raw)=callback.lock().unwrap().unwrap();
++    assert_eq!(callback_opens,0); assert_eq!(callback_key.violations,original.len() as i32);
++    assert_eq!(callback_key,ctx.quality_key(&candidate,actual_key(&candidate)).unwrap());
++    assert_eq!(raw,fr_engine::drc::all_clearance_violations(&candidate).len());
++    assert!(raw>callback_key.violations as usize,"raw reporter count remains raw");
++    let mut forged=actual_key(&candidate); forged.violations=i32::MIN;
++    assert_eq!(ctx.quality_key(&candidate,forged).unwrap(),callback_key,"raw count is never a quality-key authority");
++}
++
++#[test]
++fn same_count_replacement_identity_cannot_enter_any_quality_selector() {
++    use std::sync::{Arc,Mutex};
++    use std::sync::atomic::{AtomicUsize,Ordering};
++    use fr_engine::pipeline::{PipelineContext,quality::QualityGuard};
++    let (baseline,offending)=checkpoint_board(); let mut changed=baseline.clone();
++    changed.remove_item(offending); segment(&mut changed.basic,1250,2);
++    assert_eq!(identities(&changed).len(),identities(&baseline).len());
++    assert_ne!(identities(&changed),identities(&baseline));
++    let guard=Arc::new(Mutex::new(QualityGuard::new(&baseline,&fr_settings::defaults::default_settings(2))));
++    let writes=Arc::new(AtomicUsize::new(0)); let observed=writes.clone();
++    let ctx=PipelineContext{quality:Some(guard.clone()),checkpoint:Some(Arc::new(move |_,_| { observed.fetch_add(1,Ordering::SeqCst); })),..Default::default()};
++    let mut forged=actual_key(&changed); forged.incomplete=0; forged.violations=i32::MIN; forged.score=f32::MAX;
++    assert!(ctx.quality_key(&changed,forged).is_none());
++    ctx.checkpoint(&changed,forged); assert_eq!(writes.load(Ordering::SeqCst),0);
++    assert_eq!(identities(&guard.lock().unwrap().best()),identities(&baseline));
++}
++
++#[test]
++fn removing_an_identity_keeps_safety_priority_and_does_not_rebase_the_frontier() {
++    use fr_engine::pipeline::quality::QualityGuard;
++    let (baseline,offending)=checkpoint_board(); let connected=connected_duplicate(&baseline);
++    let mut no_fault=baseline.clone(); no_fault.remove_item(offending);
++    assert!(identities(&no_fault).is_empty()); assert_eq!(net_opens(&no_fault,3),1);
++    let mut guard=QualityGuard::new(&baseline,&fr_settings::defaults::default_settings(2));
++    guard.observe(&connected,actual_key(&connected)).unwrap(); assert_eq!(net_opens(&guard.best(),3),0);
++    let normalized=guard.observe(&no_fault,actual_key(&no_fault)).unwrap();
++    assert_eq!(normalized.violations,0); assert_eq!(net_opens(&guard.best(),3),1);
++    assert!(identities(&guard.best()).is_empty(),"distinct electrical faults still precede connectivity");
++    assert!(guard.admitted_key(&baseline,actual_key(&baseline)).is_some(),"the original frontier is immutable, not replaced by the incumbent");
++}
+diff --git a/crates/fr-engine/src/board/connectivity.rs b/crates/fr-engine/src/board/connectivity.rs
+--- a/crates/fr-engine/src/board/connectivity.rs
++++ b/crates/fr-engine/src/board/connectivity.rs
+@@ -89,7 +89,8 @@
+                 continue;
+             }
+             let contact = match &other.kind {
+-                ItemKind::Trace(_) => *point == other.first_corner() || *point == other.last_corner(),
++                ItemKind::Trace(_) => *point == other.first_corner() || *point == other.last_corner()
++                    || (other.shares_net(this) && other.trace().polyline.contains(point)),
+                 ItemKind::Pin(_) | ItemKind::Via(_) => *point == other.center(self),
+                 ItemKind::ConductionArea(c) => c.area.get_area(self).contains(point),
+                 _ => false,
+@@ -145,6 +146,22 @@
+                 let mut result = ItemSet::new();
+                 result.extend_from(&self.trace_normal_contacts_at(key, &this.first_corner(), false));
+                 result.extend_from(&self.trace_normal_contacts_at(key, &this.last_corner(), false));
++                // The reverse edge of an endpoint-to-interior junction must
++                // exist as well, without splitting a retained fixed trace.
++                for i in 0..self.tile_shape_count(key) {
++                    let Some(shape) = self.tile_shape(key, i) else { continue };
++                    for object in self.overlapping_objects(&ConvexShape::Tile(shape), this.trace().layer) {
++                        let TreeObject::Item { key: other_key, id } = object else { continue };
++                        if other_key == key { continue; }
++                        let other = self.item(other_key);
++                        if !other.is_trace() || !other.shares_net(this) || !other.shares_layer(this, self) { continue; }
++                        if this.trace().polyline.contains(&other.first_corner())
++                            || this.trace().polyline.contains(&other.last_corner())
++                        {
++                            result.insert(ItemId(id), other_key);
++                        }
++                    }
++                }
+                 result
+             }
+             ItemKind::Pin(_) | ItemKind::Via(_) => self.drill_normal_contacts(key),
+@@ -639,13 +656,18 @@
+     let tl = this.last_corner();
+     let of = other.first_corner();
+     let ol = other.last_corner();
+-    let at_first = tf == of || tf == ol;
+-    let at_last = tl == of || tl == ol;
+-    if !(at_first || at_last) || (at_first && at_last) {
+-        None
+-    } else if at_first {
+-        Some(tf)
+-    } else {
+-        Some(tl)
+-    }
++    let mut points = Vec::new();
++    for point in [tf, tl] {
++        if point == of || point == ol
++            || (this.shares_net(other) && other.trace().polyline.contains(&point))
++        {
++            if !points.contains(&point) { points.push(point); }
++        }
++    }
++    if this.shares_net(other) {
++        for point in [of, ol] {
++            if this.trace().polyline.contains(&point) && !points.contains(&point) { points.push(point); }
++        }
++    }
++    if points.len() == 1 { points.pop() } else { None }
+ }
+diff --git a/crates/fr-engine/tests/trace_tjunction.rs b/crates/fr-engine/tests/trace_tjunction.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/fr-engine/tests/trace_tjunction.rs
+@@ -0,0 +1,98 @@
++use fr_engine::board::*;
++use fr_engine::datastructures::ItemIdGenerator;
++use fr_engine::ids::FixedState;
++use fr_engine::library::{BoardLibrary, Packages, Padstacks};
++use fr_engine::rules::{BoardRules, ClearanceMatrix};
++use fr_engine::structure::{Communication, Components, CoordinateTransform, Layer, LayerStructure, SpecctraParserInfo, Unit};
++use fr_geom::*;
++
++fn board() -> BasicBoard {
++    let ls = LayerStructure::new(vec![Layer::new("F.Cu", true), Layer::new("B.Cu", true)]);
++    let matrix = ClearanceMatrix::get_default_instance(&ls, 200);
++    let mut rules = BoardRules::new(ls.clone(), matrix);
++    let class = rules.net_classes.append("default", &ls, false);
++    for name in ["a", "b"] { rules.nets.add(name, 1, false, class); }
++    let comm = Communication::new(Unit::Mil, 1, Some(SpecctraParserInfo::default()), CoordinateTransform::new(1.0, 0.0, 0.0), ItemIdGenerator::new());
++    BasicBoard::new(IntBox::new(-1000, -1000, 11000, 11000), ls.clone(),
++        vec![PolylineShape::Tile(TileShape::IntBox(IntBox::new(0, 0, 10000, 10000)))],
++        1, rules, BoardLibrary::new(Padstacks::new(&ls), Packages::new()), Components::new(), comm)
++}
++
++fn trace(b: &mut BasicBoard, points: &[(i32,i32)], layer: i32, net: i32, fixed: FixedState) -> ItemKey {
++    let corners: Vec<_> = points.iter().map(|&(x,y)| IntPoint::new(x,y)).collect();
++    b.insert_trace_without_cleaning(Polyline::from_int_points(&corners),layer,100,&[net],1,fixed).unwrap()
++}
++
++#[test]
++fn retained_t_junction_is_symmetric_and_preserves_every_fixed_item_field() {
++    let mut b=board();
++    let fixed=trace(&mut b,&[(1000,4000),(9000,4000)],0,1,FixedState::UserFixed);
++    let new=trace(&mut b,&[(5000,1000),(5000,4000)],0,1,FixedState::Unfixed);
++    let before=format!("{:?}",b.item(fixed));let original_id=b.item(fixed).id();
++    let count=b.get_items().len();let point=Point::Int(IntPoint::new(5000,4000));
++    assert!(b.normal_contacts(new).contains(original_id));
++    assert!(b.normal_contacts(fixed).contains(b.item(new).id()));
++    assert_eq!(b.connected_set(new,1,false).len(),2);
++    assert_eq!(b.connected_set(fixed,1,false).len(),2);
++    assert_eq!(b.get_connected_sets(1).len(),1);
++    assert_eq!(b.normal_contact_point(new,fixed),Some(point.clone()));
++    assert_eq!(b.normal_contact_point(fixed,new),Some(point));
++    assert_eq!(b.item(fixed).id(),original_id);
++    assert_eq!(b.item(fixed).fixed_state(),FixedState::UserFixed);
++    assert_eq!(format!("{:?}",b.item(fixed)),before);
++    assert_eq!(b.get_items().len(),count,"contact query must never split/add source traces");
++}
++
++#[test]
++fn different_net_layer_or_exact_centerline_gap_never_becomes_a_t_junction() {
++    for (points,layer,net) in [
++        (vec![(5000,1000),(5000,4000)],0,2),
++        (vec![(5000,1000),(5000,4000)],1,1),
++        (vec![(5000,1000),(5000,3999)],0,1),
++        (vec![(10000,1000),(10000,4000)],0,1),
++        (vec![(5000,1000),(5000,7000)],0,1),
++    ] {
++        let mut b=board();let fixed=trace(&mut b,&[(1000,4000),(9000,4000)],0,1,FixedState::UserFixed);
++        let new=trace(&mut b,&points,layer,net,FixedState::Unfixed);
++        assert!(b.normal_contacts(new).is_empty(),"{points:?}, layer{layer}, net{net}");
++        assert!(b.normal_contacts(fixed).is_empty());
++        assert_eq!(b.connected_set(new,net,false).len(),1);
++        assert_eq!(b.connected_set(fixed,1,false).len(),1);
++        assert!(b.normal_contact_point(new,fixed).is_none());
++        assert!(b.normal_contact_point(fixed,new).is_none());
++    }
++}
++
++#[test]
++fn ordinary_endpoint_contact_and_ambiguous_multiple_points_keep_existing_semantics() {
++    let mut b=board();let fixed=trace(&mut b,&[(1000,4000),(9000,4000)],0,1,FixedState::UserFixed);
++    let new=trace(&mut b,&[(9000,4000),(9000,7000)],0,1,FixedState::Unfixed);
++    assert_eq!(b.connected_set(fixed,1,false).len(),2);
++    assert_eq!(b.normal_contact_point(fixed,new),Some(Point::Int(IntPoint::new(9000,4000))));
++    let duplicate=trace(&mut b,&[(1000,4000),(9000,4000)],0,1,FixedState::UserFixed);
++    assert!(b.normal_contacts(fixed).contains(b.item(duplicate).id()));
++    assert!(b.normal_contact_point(fixed,duplicate).is_none(),"multiple contact points must not invent one chosen junction");
++}
++
++#[test]
++fn exact_diagonal_centerline_and_bent_trace_contacts_are_symmetric() {
++    let mut b=board();let fixed=trace(&mut b,&[(1000,1000),(5000,5000),(9000,5000)],0,1,FixedState::UserFixed);
++    let new=trace(&mut b,&[(3000,1000),(3000,3000)],0,1,FixedState::Unfixed);
++    assert_eq!(b.connected_set(new,1,false).len(),2);
++    assert_eq!(b.connected_set(fixed,1,false).len(),2);
++    assert_eq!(b.normal_contact_point(new,fixed),Some(Point::Int(IntPoint::new(3000,3000))));
++    let miss=trace(&mut b,&[(7000,7000),(7001,5001)],0,1,FixedState::Unfixed);
++    assert!(b.normal_contacts(miss).is_empty(),"copper overlap without an exact centerline junction is insufficient");
++}
++
++#[test]
++fn cached_contacts_follow_insert_and_remove_without_mutating_retained_geometry() {
++    let mut b=board();let fixed=trace(&mut b,&[(1000,4000),(9000,4000)],0,1,FixedState::UserFixed);
++    let before=format!("{:?}",b.item(fixed));assert!(b.normal_contacts(fixed).is_empty());
++    let new=trace(&mut b,&[(5000,1000),(5000,4000)],0,1,FixedState::Unfixed);
++    assert_eq!(b.normal_contacts(fixed).len(),1);
++    assert_eq!(b.connected_set(fixed,1,false).len(),2);
++    b.remove_item(new);
++    assert!(b.normal_contacts(fixed).is_empty());
++    assert_eq!(format!("{:?}",b.item(fixed)),before);
 +}

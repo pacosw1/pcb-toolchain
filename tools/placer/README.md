@@ -254,3 +254,37 @@ pad. Regenerate the snapshot to avoid these conservative restrictions. Explicit
 empty membership denotes a pad without copper; malformed alignment is rejected.
 This uses the existing pad-box/raster approximation and does not replace native
 KiCad DRC or establish same-net connectivity or electrical qualification.
+
+## Compaction routing decisions
+
+The Fastroute compaction driver consumes `route-decision.json` before starting
+another placement search. Native geometry/parity failures, unsupported or missing
+evidence, and local connection gaps stop the schedule with exit 3. The loop
+preserves `route-0/routed.kicad_pcb` and its observed hash in `run.json` under
+`retained_candidate`; `next_action` names the diagnosis and original evidence.
+An earlier passing `best` remains separate from the candidate needing attention.
+An identical failed source/rules/effort fingerprint stops without another route.
+
+A failed candidate may continue when the existing source-bound, native-error-clean
+`bounded_feedback` supplies an actual positive spacing change for movable parts.
+The update retains its existing per-reference/cumulative bounds. Unchanged,
+unattributed, stale or capped-out hints do not authorize another broad search;
+native/rule/evidence blockers cannot be overridden by a hint. The driver still
+uses the existing Fastroute bounded repairs within a routing job.
+
+Signal-routing step success preserves the existing explicit skipped-net/plane
+policy. It requires hashed configuration and native reports, zero signal opens
+and errors, and exact agreement between stdout, outcome and native-open counts.
+Every remaining open must name one unambiguous net on every endpoint and match
+the recorded skip/plane policy. Unknown, mixed-net, parity, native-error or escape
+diagnostics still stop. `routing_step_scope` records the remaining native opens;
+this narrow scheduling result is unqualified and final gates still reject them.
+
+The flat compaction step directory does not establish eligibility for
+`route_decision.apply_plan`: that requires a configured isolated workspace and
+source-bound native evidence including schematic parity. Local repair therefore
+hands off the exact retained copper for inspection instead of fabricating a
+repair plan or routing again from the original placement. Native/grid findings
+do not prove physical impossibility. Every result remains `qualified:false`;
+fresh complete configured checks and explicit adoption remain necessary. Legacy
+Freerouting benchmark callbacks retain their count-only behavior.

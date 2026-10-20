@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -24,6 +25,7 @@ OBSERVATION_BACKENDS = {
     'design': ('design_contract.py', 'design_assessment'),
     'schematic': ('schematic_contract.py', 'schematic_function'),
     'outcomes': ('placement_outcomes.py', 'placement_outcomes'),
+    'ml': ('pcb_ml.py', 'ml_observation'),
 }
 
 
@@ -173,6 +175,7 @@ def pcb_identity(path):
         return [clean(v) for v in value]
 
     protected = []
+    keepout_positions = []
     footprints = {}
     from pcb_search.block_bindings import footprints as native_footprints
     from pcb_search.native_placement import footprint_signature
@@ -192,9 +195,18 @@ def pcb_identity(path):
             if locked(native[ref]['form']):
                 footprints[ref] = dict(signature=footprints[ref], locked_pose=[str(v.normalize()) for v in native[ref]['pose']])
         elif tag == 'zone':
+            if any(isinstance(v, list) and v[:1] == ['keepout'] for v in form):
+                keepout_positions.append(len(protected))
             protected.append(clean([v for v in form if not (isinstance(v, list) and v and v[0] in ('filled_polygon', 'fill_segments'))]))
         else:
             protected.append(clean(form))
+    # KiCad can reorder independent rule areas, including areas whose source
+    # UUIDs coincide. Preserve every full form and its multiplicity; only their
+    # order among keepout slots is immaterial. Copper zones and unknown forms
+    # retain their original order and every nested authored value.
+    keepouts = sorted((protected[i] for i in keepout_positions), key=lambda v: json.dumps(v, sort_keys=True))
+    for i, area in zip(keepout_positions, keepouts):
+        protected[i] = area
     return dict(footprints=footprints, protected=protected)
 
 
@@ -260,20 +272,27 @@ def parent_candidate(root, board, reference):
     return candidate, dependencies
 
 
-def placement_check(root, board, manifest, candidate, output):
+def placement_check(root, board, manifest, candidate, output, *, escape_screens=None):
     from engineering_constraints import check_manifest, reviewed_contract
     contract = reviewed_contract(root, board, manifest)
     evidence = None
     if any(rule['kind'] == 'escape' for rule in contract['rules']):
         from route_decision import generate_escape_evidence
         evidence = Path(output).with_name(Path(output).stem + '-escape.json')
-        generate_escape_evidence(contract, candidate, evidence)
+        if escape_screens is None:generate_escape_evidence(contract, candidate, evidence)
+        else:evidence=escape_screens.get(contract,candidate,evidence)
     report = check_manifest(root, board, manifest, candidate=candidate, escape_evidence=evidence)
+    if evidence is not None:
+        report['escape_evidence']=str(evidence)
+        report['inputs'].update(json.loads(Path(evidence).read_text()).get('inputs',{}))
+        report['inputs'][str(evidence)]=sha(evidence)
+    if escape_screens is not None:
+        report['escape_screens']=dict(generated=escape_screens.generated,reused=escape_screens.hits)
     lean.atomic_json(output, report)
     return report
 
 
-def candidate_layout_check(root, workspace, folder, manifest, output):
+def candidate_layout_check(root, workspace, folder, manifest, output, *, escape_screens=None):
     from design_contract import evaluate_candidate_layout
     # Reviewed fixed/rigid poses belong to the original source. Rebuilding
     # that baseline from the edited workspace would compare a pose to itself.
@@ -281,7 +300,8 @@ def candidate_layout_check(root, workspace, folder, manifest, output):
     _, _, candidate = board_config(workspace, manifest['board'])
     with measured_stage(lambda kind, **data: event(folder, kind, **data), output.stem, 'operation'):
         report = evaluate_candidate_layout(root, path, candidate=candidate.with_suffix('.kicad_pcb'),
-                                           evidence_directory=output.parent / (output.stem + '-evidence'))
+                                           evidence_directory=output.parent / (output.stem + '-evidence'),
+                                           escape_screens=escape_screens)
     lean.atomic_json(output, report)
     return report
 
@@ -304,18 +324,41 @@ def run(folder):
         backend_root = Path(manifest['from_run']['folder']) / 'workspace' if parent else root
         backend, scope = OBSERVATION_BACKENDS[operation]
         output = folder / 'operation/report.json'
-        policies = list((root / 'tools').glob('*.py'))
-        policies += list((root / 'tools/lib').glob('*.mjs'))
-        policies += list((root / 'tools/placer').glob('*.py'))
-        policies += list((root / 'tools/pcb_search').glob('*.py'))
-        observed_inputs = {str(path): sha(path) for path in policies}
+        from pcb_observation_inputs import collect, current
+        python_command = os.environ.get('PYTHON_MODERN', 'python3')
+        policy_operation = operation + '-from-run' if manifest.get('from_run') else operation
+        implementation = collect(root, policy_operation, manifest['arguments'], python_command=python_command)
+        observed_inputs = dict(implementation['files'])
+        absent = list(implementation['absent'])
+        ml_absent = set()
+        if operation == 'ml':
+            from pcb_ml import dependencies
+            declared = dependencies(backend_root, manifest['arguments'])
+            if not isinstance(declared, dict):
+                raise ValueError('ML dependency collector must return a file/hash mapping')
+            for name, digest in declared.items():
+                path = (backend_root / name).absolute()
+                if digest is None:
+                    if path.exists() or path.is_symlink():
+                        raise ValueError('declared absent ML input appeared: ' + str(path))
+                    ml_absent.add(str(path))
+                    absent.append(str(path))
+                else:
+                    resolved = str(path.resolve())
+                    if not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest):
+                        raise ValueError('ML dependency collector returned an invalid input hash')
+                    if not path.is_file() or sha(path) != digest:
+                        raise ValueError('ML input changed before backend execution: ' + str(path))
+                    if resolved in observed_inputs and observed_inputs[resolved] != digest:
+                        raise ValueError('ML input differs from its implementation binding: ' + str(path))
+                    observed_inputs[resolved] = digest
         for key in ('design_contract',):
             if manifest.get(key):
                 binding = manifest[key]
                 if sha(binding['path']) != binding['sha256']:
                     raise ValueError(key + ' changed after admission')
                 observed_inputs[binding['path']] = binding['sha256']
-        command = [os.environ.get('PYTHON_MODERN', 'python3'), str(root / 'tools' / backend)]
+        command = [python_command, str(root / 'tools' / backend)]
         command += manifest['arguments'] + ['--root', str(backend_root), '--json', '--output', str(output)]
         code = execute(folder, operation, command, root, dict(os.environ, IOT_LAB=str(backend_root)))
         report = json.loads(output.read_text()) if output.is_file() else None
@@ -323,9 +366,11 @@ def run(folder):
             raise ValueError('engineering backend did not produce a scoped, unqualified report')
         typed = {'design': 'iot-lab.design-assessment.v1',
                  'schematic': 'iot-lab.schematic-contract-result.v1',
-                 'outcomes': 'iot-lab.placement-outcome-comparison.v1'}
+                 'outcomes': 'iot-lab.placement-outcome-comparison.v1',
+                 'ml': 'iot-lab.pcb-ml-result.v1'}
         if operation in typed:
-            if report['schema'] != typed[operation] or report['status'] not in ('passed', 'blocked', 'stale'):
+            statuses = ('passed', 'blocked', 'failed') if operation == 'ml' else ('passed', 'blocked', 'stale')
+            if report['schema'] != typed[operation] or report['status'] not in statuses:
                 raise ValueError('engineering backend returned an incompatible report type')
             if (code == 0) != (report['status'] == 'passed'):
                 raise ValueError('engineering backend exit disagrees with its evidence verdict')
@@ -336,6 +381,26 @@ def run(folder):
                 raise ValueError('schematic assessment belongs to another board')
             if operation == 'outcomes' and report.get('study_id') != manifest['arguments'][1]:
                 raise ValueError('outcome assessment belongs to another study')
+            if operation == 'ml':
+                if (report.get('action'), report.get('id')) != tuple(manifest['arguments'][:2]):
+                    raise ValueError('ML assessment belongs to another action or ID')
+                if report.get('adopt_model') is not False or code not in (0, 1, 2):
+                    raise ValueError('ML assessment must remain non-adopting with a valid exit')
+                if report['status'] == 'passed' and ml_absent:
+                    raise ValueError('ML assessment passed with an absent requested input')
+                for key in ('inputs', 'tool_inputs', 'artifacts'):
+                    if not isinstance(report.get(key), dict) or any(
+                            not isinstance(value, str) or not re.fullmatch(r'[0-9a-f]{64}', value)
+                            for value in report[key].values()):
+                        raise ValueError('ML assessment has an invalid ' + key + ' inventory')
+                if report['status'] == 'passed' and not report['artifacts']:
+                    raise ValueError('passed ML assessment has no owned output artifact')
+                for name, digest in report['artifacts'].items():
+                    path = (output.parent / name).absolute()
+                    if (path.is_symlink() or not path.resolve().is_relative_to(output.parent.resolve())
+                            or path.resolve() in (output.resolve(), (output.parent / 'result.json').resolve())
+                            or not path.is_file() or sha(path) != digest):
+                        raise ValueError('ML artifact is missing, changed or outside its owned operation: ' + name)
         for key in ('inputs', 'native_inputs', 'tool_inputs', 'source_inputs', 'implementation_sha256', 'evidence_sha256'):
             for name, digest in report.get(key, {}).items():
                 if isinstance(digest, str) and len(digest) == 64:
@@ -345,12 +410,16 @@ def run(folder):
                         raise ValueError('engineering backend reported a changed policy input: ' + name)
                     observed_inputs[resolved] = digest
         observed_inputs.update(parent_dependencies)
-        absent = []
         for name in report.get('absent_inputs', []):
-            path = (backend_root / name).resolve()
-            if not path.is_relative_to(backend_root) or path.exists() or path.is_symlink():
+            path = (backend_root / name).absolute()
+            allowed = str(path) in ml_absent if operation == 'ml' else path.resolve().is_relative_to(backend_root)
+            if not allowed or path.exists() or path.is_symlink():
                 raise ValueError('engineering absent input appeared or escaped its checkout: ' + name)
             absent.append(str(path))
+        if not current(implementation['policy']):
+            raise ValueError('engineering code resolution changed while producing the report')
+        if any(Path(name).exists() or Path(name).is_symlink() for name in absent):
+            raise ValueError('a previously absent engineering input appeared while producing the report')
         if any(not Path(name).is_file() or sha(name) != digest for name, digest in observed_inputs.items()):
             raise ValueError('engineering evidence inputs changed while producing the report')
         result = dict(status='passed' if code == 0 else 'error' if code == 2 else 'failed',
@@ -359,8 +428,11 @@ def run(folder):
                       cause=(report or {}).get('cause', operation + (' completed' if code == 0 else ' blocked; inspect report.json')),
                       operation=operation, tool_exit=code, report=str(output),
                       engineering_status=(report or {}).get('status'), engineering_inputs=observed_inputs,
-                      engineering_absent_inputs=absent,
+                      engineering_absent_inputs=sorted(set(absent)), engineering_policy=implementation['policy'],
                       qualified=False, release_approved=False)
+        if operation == 'ml':
+            result.update(adopt_model=False, ml_action=report['action'], ml_id=report['id'],
+                          artifacts=report['artifacts'])
         lean.atomic_json(folder / 'operation/result.json', result)
         return result['exit_code']
     if operation in ('doctor', 'release', 'blocks', 'readiness'):
@@ -452,7 +524,8 @@ def run(folder):
         spec.write_text(json.dumps(manifest['spec']))
     else:
         spec = None
-    command = None if operation == 'repair' else operation_command(workspace, board, operation, spec, manifest.get('kind'))
+    solver = operation == 'route' and manifest.get('router', 'explicit') == 'fastroute'
+    command = None if operation == 'repair' or solver else operation_command(workspace, board, operation, spec, manifest.get('kind'))
     env = dict(os.environ, IOT_LAB=str(workspace))
     env.update(KICAD_PY=python_native(), KICAD_PYTHON=python_native())
     if engineering:
@@ -461,9 +534,11 @@ def run(folder):
     work = folder / 'operation/work'
     for key in ('ENV_WORK', 'BASEB_WORK', 'BASEC_WORK', 'AC24_WORK', 'AC24C_WORK', 'CELL_WORK', 'FIELD24B_WORK', 'AIO_WORK'):
         env[key] = str(work / key.lower())
+    from route_decision import EscapeStageReceipts
+    pre_screens=EscapeStageReceipts(lambda kind,**data:event(folder,kind,stage='placement-preflight',**data))
     if engineering and (operation in ('route', 'repair') or (operation == 'edit' and manifest.get('kind') == 'route')):
         constraints = placement_check(root, board, Path(engineering['path']), native,
-                                      folder / 'operation/placement-preflight.json')
+                                      folder / 'operation/placement-preflight.json',escape_screens=pre_screens)
         if constraints['status'] != 'passed':
             result = dict(status='failed', exit_code=1, scope='engineering_preflight', operation=operation,
                           cause='placement requirements block routing', candidate_verified=False,
@@ -472,12 +547,13 @@ def run(folder):
             return 1
     if design and (operation in ('route', 'repair') or (operation == 'edit' and manifest.get('kind') == 'route')):
         output = folder / 'operation/design-layout-preflight.json'
-        checked = candidate_layout_check(root, workspace, folder, manifest, output)
+        checked = candidate_layout_check(root, workspace, folder, manifest, output,escape_screens=pre_screens)
         if checked['status'] != 'passed':
             lean.atomic_json(folder / 'operation/result.json', dict(status='failed', exit_code=1,
                 scope='design_layout_screen', operation=operation, candidate_verified=False, qualified=False,
                 cause='candidate placement or test access blocks routing', source_sha256=sources['sha256'], report=str(output)))
             return 1
+    solver_report = None
     if operation == 'repair':
         from route_decision import apply_plan
         plan = manifest['plan']
@@ -487,10 +563,25 @@ def run(folder):
             repair = apply_plan(workspace, board, plan['content'], folder / 'operation/repair')
         lean.atomic_json(folder / 'operation/repair-guard.json', repair)
         code = 0 if repair.get('status') in ('passed', 'proposed') else 1
+    elif solver:
+        from pcb_routing_trial import prepare, finalize
+        solver_output = folder / 'operation/router'
+        prepared = prepare(workspace, native, solver_output, manifest['spec'], manifest['timeout_s'], board=board)
+        code = execute(folder, 'route', prepared['command'], workspace, dict(env, **prepared['env']))
+        solver_report = finalize(prepared, returncode=code)
+        lean.atomic_json(folder / 'operation/router-summary.json', solver_report)
+        if not code and solver_report.get('status') != 'passed':
+            raise ValueError('solver completion lacks verified execution controls')
+        if not code:
+            routed = solver_output / 'routed.kicad_pcb'
+            if not routed.is_file():
+                raise ValueError('solver returned success without its routed native candidate')
+            shutil.copyfile(routed, native)
     else:
         code = execute(folder, operation, command, workspace, env)
     if code:
-        result = dict(status='failed', exit_code=1, cause=operation + ' tool failed', tool_exit=code)
+        result = dict(status='failed', exit_code=1,
+                      cause=(solver_report or {}).get('cause') or operation + ' tool failed', tool_exit=code)
     else:
         changed = [name for name, digest in sources['files'].items()
                    if name != str(source_native.relative_to(root)) and
@@ -502,9 +593,10 @@ def run(folder):
             result.update(scope='candidate_board_gate', operation=operation, source_sha256=sources['sha256'])
             lean.atomic_json(folder / 'operation/result.json', result)
             return 1
+        post_screens=EscapeStageReceipts(lambda kind,**data:event(folder,kind,stage='placement-postcheck',**data))
         if engineering:
             constraints = placement_check(root, board, Path(engineering['path']), native,
-                                          folder / 'operation/placement-postcheck.json')
+                                          folder / 'operation/placement-postcheck.json',escape_screens=post_screens)
             if constraints['status'] != 'passed':
                 repairable = bool(constraints.get('blockers')) and all(
                     row.get('code') == 'constraint_violation' for row in constraints['blockers'])
@@ -519,7 +611,7 @@ def run(folder):
                 return 1
         if design:
             output = folder / 'operation/design-layout-postcheck.json'
-            checked = candidate_layout_check(root, workspace, folder, manifest, output)
+            checked = candidate_layout_check(root, workspace, folder, manifest, output,escape_screens=post_screens)
             if checked['status'] != 'passed':
                 lean.atomic_json(folder / 'operation/result.json', dict(status='failed', exit_code=1,
                     scope='design_layout_screen', operation=operation, candidate_verified=False, qualified=False,
@@ -579,6 +671,8 @@ def adopt(root, folder, defect=None, baseline=None):
     result = verify(folder)
     operation = json.loads((folder / 'operation/result.json').read_text())
     manifest = json.loads((folder / 'run.json').read_text())
+    if manifest.get('operation') == 'ml':
+        raise ValueError('ML observations cannot adopt native CAD')
     if Path(manifest['root']).resolve() != root or result['status'] != 'passed' or not result.get('cleanup', {}).get('complete'):
         raise ValueError('only a successful, settled candidate from this checkout can be adopted')
     if not operation.get('candidate_verified') or not operation.get('identity_preserved') or operation.get('protected_source_changes'):

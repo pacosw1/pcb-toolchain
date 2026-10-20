@@ -19,10 +19,20 @@ this rejection remains visible and is not a waiver of native rules.
 The same frontier guards multistart candidates, checkpoints, routing/history
 restores, optimizer incumbents/greedy winners and final output. An initial
 feasible fallback is checkpointed before routing. Among eligible candidates,
-clearance count precedes opens, stage and score. A retained best candidate is
-isolated from later mutations. The normal engine continues routing from that
+distinct clearance identity count precedes opens, stage and score. A retained
+best candidate is isolated from later mutations. The normal engine continues routing from that
 frontier after a rejected pass. This changes search behavior and may leave more
 opens; it does not guarantee completion or improve routing speed.
+
+The guard, checkpoint callback and multistart comparison use the same admitted
+distinct-identity key. Raw duplicate reports remain visible in statistics and
+the checkpoint log; they cannot discard improved connectivity when the actual
+fault identity set is unchanged. Geometry regressions use real unrouted pins to
+check duplicate-report ranking, same-count new-fault rejection and the priority
+of removing an existing fault. A captured-DSN zero-connection probe confirms
+that the stored and restored board retain an accepted enhancement. This is
+software verification; a new binary still needs its own native artifact QA.
+Historical build-provenance artifacts below do not certify the updated source.
 
 Pre-routing enhancements are also transactional against that original frontier.
 After accepting an initial SES, the CLI clones its whole board, applies the
@@ -42,6 +52,23 @@ The wrapper retains this log even when its deadline prevents final reporting;
 its run manifest binds the loaded DSN hash. No baseline promotion, hash dependency,
 or extra final-report diagnosis is needed to preserve this evidence.
 
+Trace connectivity also recognizes an exact integer endpoint on the bounded
+centerline of another same-net, same-layer trace. Forward and reverse graph
+contacts agree, and a contact point is returned only when it is unique. Contact
+queries preserve retained trace geometry, IDs, fixed state and multiplicity;
+they never split fixed source copper. Rational contact points remain unsupported.
+Reverse queries use indexed overlapping tiles; their performance on dense, long
+polylines is unmeasured, so no speed improvement is claimed.
+
+Five `trace_tjunction` regressions cover symmetric contacts, negative geometry,
+ambiguous junctions and cache invalidation after insert/remove. One instrumented
+attempt on the captured FIELD DSN resolved its connection through insertion,
+optimization and tail cleanup, preserving all 83 imported traces exactly.
+This diagnostic is not a native-accepted route or training label. Native
+artifact verification remains pending. Existing build-provenance artifacts
+predate this extension; a new artifact must bind the complete updated patch,
+exact upstream source, build and its own validation evidence.
+
 ## Repeatable isolated build
 
 Start a new upstream checkout and verify its exact commit before applying:
@@ -54,6 +81,7 @@ git -C /tmp/fastroute-quality-source apply "$PWD/quality-first.patch"
 cd /tmp/fastroute-quality-source
 CARGO_BUILD_JOBS=2 cargo test --locked -p fr-engine pipeline::quality --lib
 CARGO_BUILD_JOBS=2 cargo test --locked -p fr-engine --test quality_identity
+CARGO_BUILD_JOBS=2 cargo test --locked -p fr-engine --test trace_tjunction -- --test-threads=1
 CARGO_BUILD_JOBS=2 cargo build --locked -p fastroute
 ```
 

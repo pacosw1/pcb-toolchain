@@ -9,6 +9,7 @@ part or changes an existing selection ledger.
 pcb parts --json status ENV-SENSE
 pcb parts --json inspect hardware-design/registry/datasheets/ISM330DHCXTR_C2655101.pdf --render-pages 1
 pcb parts --json verify ENV-SENSE --manifest hardware-design/registry/part-reviews/ENV-SENSE.json
+pcb parts --json selection NEW-IDEA --manifest hardware-design/registry/part-reviews/NEW-IDEA.json
 pcb parts --json stock ENV-SENSE --candidate /path/to/candidate --boards 3 --receipts /path/to/new-stock-receipts
 ```
 
@@ -30,13 +31,47 @@ not require starting KiCad or loading `pcbnew`.
 
 ## Extract once, review attributable pages
 
-`inspect` keys its persistent cache by the original PDF SHA-256, resolved extractor
-paths, executable SHA-256/version, and exact text/render options. Text is stored
-as `pages/0001.txt` and optional renders as `renders/0001.png`. The receipt records
-actual page count and artifact hashes. Cache publication is locked and atomic;
-missing/corrupt artifacts force extraction, and concurrent source/tool changes
-refuse acceptance. Original PDFs remain unchanged. Extracted text and renders
-always report `reviewed:false` and `qualified:false`.
+`inspect` keeps two source-bound cache identities. The shared text entry under
+`text/<text_cache_key>` binds the original PDF SHA-256, resolved `pdfinfo` and
+`pdftotext` executable hashes/versions, and exact text options. A full inspection
+entry additionally binds requested render pages, DPI and `pdftoppm` when used.
+Changing render pages or DPI can miss the full entry while reusing the same text
+extraction; changing the PDF or text tools invalidates the text identity.
+
+Text remains available as `pages/0001.txt` and requested images as
+`renders/0001.png` in the full inspection entry. Its receipt retains actual page
+count and artifact hashes. Locked, atomic publication and hash validation apply
+to both layers. Missing/corrupt artifacts regenerate the affected entry; a valid
+matching full entry can also seed the shared text entry without another extraction.
+Concurrent source/tool changes refuse acceptance. Original PDFs remain unchanged.
+Extracted text and renders always report `reviewed:false` and `qualified:false`.
+
+`cache_hit` describes the exact full request. `text_cache_hit` is true when text
+is reused from either the canonical text entry or a valid matching legacy full
+entry. Reports retain `text_cache_key`, `text_cache_directory` and the full entry's
+key/directory. Regenerating a missing/corrupt full artifact from verified canonical
+text does not require `pdftotext`; final full-entry artifacts, source and tools are
+still validated. With `--json --output FILE`, inspect writes the full evidence
+report once and prints a compact receipt with cache status and report path/hash.
+Without `--output`, JSON stdout remains the full report.
+
+Owned `parts inspect`, `selection`, `verify` and `status` observations can use an
+audited code boundary rather than every engineering tool and test. Their terminal
+`engineering_policy` records the chosen mode and execution context. Relevant
+Python imports, native-reader code, the resolved Python launcher and all backend
+source/tool/artifact inputs remain bound; missing local import candidates are
+recorded so a newly appearing module also invalidates the observation.
+
+The narrow boundary is certified for reviewed producer and supervisor source
+revisions. A changed producer, unsupported execution path or candidate continuation
+uses the conservative policy inventory. Other observation backends and stock
+retain that boundary too. Unrelated test or checker edits preserve a certified
+parts observation, while changed consumed files, tools, import resolution or
+missing inputs expire it. Existing historical receipts keep their original
+bindings. New production-module filenames conservatively expire observations;
+unreviewed compiled or sourceless import shadows use the broad boundary.
+Candidate checks, adoption and fresh release gates retain their own
+verification paths.
 
 PDFs must retain their existing `.pdf.source.json` source/time/hash attribution.
 A review cites exact original PDF paths, hashes, document identity/revision and
@@ -95,6 +130,22 @@ package evidence reusable; every report still hashes current native source files
 Whole schematic paths are excluded from reusable symbol hashes, allowing the same
 exact symbol to be used on different boards.
 
+Native `verify` blocks `unspecified_pin_type` when an explicitly reviewed symbol
+contains actual pins with electrical type `unspecified`, even if their stored
+hashes match. This is our reviewed-symbol completeness rule. KiCad 10's default
+pin-conflict map warns for many unspecified-pin connections; its configured ERC
+rules determine the actual result. The [KiCad 10 pin-type documentation](https://docs.kicad.org/10.0/en/eeschema/eeschema.html#pin-electrical-types)
+distinguishes unspecified types, unconnected types and schematic no-connect flags.
+[KLC S4.4](https://klc.kicad.org/symbol/s4/s4.4/) requires electrical types to match
+their function, including appropriate power/ground and logic types.
+
+The guard checks actual symbol `pin_map` entries. Mechanical-only pads are covered
+by the separate electrical/mechanical pad classification, and cannot hide an
+electrical pin. An explicitly reviewed DNP part receives the same guard; automatic
+required-part coverage remains limited to fitted parts. Pre-CAD `selection` does
+not inspect native pins. Assign types from reviewed function and mode; do not
+automatically relabel pins as passive or unconnected to silence the blocker.
+
 Rating demand and applicability ranges must use identical explicit units and lie
 inside their sourced limits. Demands must cite that board's requirements; limits
 must cite that part's exact PDF. Net current/power budgets cover all fitted native
@@ -138,6 +189,37 @@ supplier orientation and reservation still require the existing release-readines
 checks. A dated observation expires with its day/candidate/quantity context. No
 order, upload, supplier contact or purchase is performed.
 
+## Reviewed selection before CAD
+
+`selection BOARD --manifest FILE` uses the same profile, review, source, rating,
+operating-condition, assembly-dependency and unresolved-item validation as native
+`verify`. It needs the planned board/design ID, its owned requirements/specification
+and planned project path, but no gate configuration, schematic, PCB, Node or KiCad.
+The manifest still uses `iot-lab.part-use.v1`; shared profiles remain source-hashed.
+
+Native declarations may be partial or `{}`. A shared-profile use may omit its
+planned `pad_net_map`. The structural schemas allow those early declarations;
+`verify_manifest` still requires all installed symbol/pin/footprint/land/pad-net
+bindings and fitted-reference coverage. Schema validity never grants a CAD verdict.
+Declared current/power budgets require planned pad maps for all listed selections
+and report `declared_planned_net_only`, without proving actual connectivity.
+
+A passing result has scope `reviewed_part_selection`, `selections` keyed by planned
+reference, exact revision/project and complete source hashes. `bindings` and
+`native_inputs` stay empty; `native_verified`, `cad_verified`,
+`connectivity_verified`, `layout_verified`, `stock_verified`, `stock_current`,
+`qualified` and `release_approved` stay false. Only explicitly listed selections
+are covered; a complete actual assembly cannot be established before CAD. Reviewed
+facts remain attributable authored claims; the PDF parser checks original identity
+and page locations, not semantic truth. Its actual executable hash is retained.
+
+```sh
+python3 tools/part_evidence.py selection NEW-IDEA --manifest review.json --root /path/to/project --json --output selection.json
+```
+
+With `--output`, this command retains the full report and prints a compact JSON
+receipt naming its path and SHA-256. It creates no selection ledger or approval.
+
 ## Integration and focused verification
 
 `verify_manifest(root, board, path)` returns schema `iot-lab.part-evidence.v1`,
@@ -147,6 +229,10 @@ returns the repository-relative source closure, including referenced profile/PDF
 review/spec files and native hierarchy, for isolated operation snapshots. Relative
 paths resolve within the supplied project root, so a source-bound manifest works
 inside a copied workspace. Sources are rehashed before accepting a verification.
+
+`verify_selection(root, board, path, output=None)` returns the distinct pre-CAD
+scope described above. `dependency_files(root, manifest, include_native=False)`
+collects its exact profile/PDF/review/spec closure without touching native CAD.
 
 ```sh
 PYTHONPATH=tools python3 -m unittest test_part_evidence

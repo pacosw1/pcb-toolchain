@@ -63,6 +63,24 @@ data or statistical generalization: unrecorded model-selection access is unknown
 Two repetitions establish repetition, not a confidence or quality threshold.
 No score changes are adopted automatically, including after a complete comparison.
 
+Each independent CLI trial must refer to a distinct sealed run. Aliases,
+relabelled arms/repetitions and copied archives cannot count the same execution
+again. Observations expose both `placement_input_sha256` and
+`placement_pose_fingerprint`; their shared `case_fingerprint` intentionally
+excludes unlocked poses while retaining electrical identity and existing copper.
+Controlled Fastroute trials also need finalized, sealed effective-configuration
+and original executor receipts. A prepared or incomplete receipt remains an
+unknown control; its failed execution stays in the study inventory.
+
+`python3 tools/routing_trial_smoke.py --output NEW --json` exercises one native
+four-pad development pair using the real controlled solver option. Run it in the
+admitted container described in [PCB-CLI.md](PCB-CLI.md), with the original host
+inspect receipt and actual solver available. It retains input legality checks,
+two owned route/gate results, per-arm cycles and the evaluated study. No substitute
+proxy score is invented when the production scorer is unavailable. A successful
+smoke proves this execution/evidence path; one synthetic pair leaves comparative
+readiness, ranking quality and weight adoption unproved.
+
 Existing `placer.placement_audit.archive` evidence is also readable through
 `kind: "placement_archive"`, with the archive folder and expected `run.json` hash.
 Its original source/hash attribution and proxy scores are retained. Legacy
@@ -84,3 +102,32 @@ KiCad can return effective DRC-engine clearance, and the measured ENV 10.0.6
 probe returned 0.15 mm on all 11 nets with no zero-clearance nets. A future
 inherited/default/custom-rule differential audit should compare exact native
 evidence before changing the model. This backend changes no clearance policy.
+
+The bounded historical ranking audit found no equal-control selection-regret
+measurement. In the [four-pose BASE-B table](../hardware-design/reports/2026-10-09-base-b-placement-audit.md),
+the two poses with zero recorded native errors have costs 4002.69 and 4022.45,
+but respectively 9 and 7 opens. Their halos differ, only one route per pose is
+recorded, and neither completed. The [accounting JSON](../hardware-design/reports/2026-10-09-lean-archive-accounting.json)
+records zero completions in four real-outline attempts. Its optimizer windows
+are nested within backend time. The common-halo exercise was a rescore without
+new routing or a holdout; it does not establish a routing improvement or failure
+of a new scoring policy.
+
+The later [six-pose native-screen record](../hardware-design/reports/2026-10-09-placement-native-screen.json)
+contains no routed outcomes: all six retain an inherited native error and 308
+opens, and one introduces two additional native errors despite an empty internal
+illegal list. These are a different source revision from the four-pose archive.
+Their costs do not establish an actual routed selection rank. The original raw
+BASE-B archives were not recovered by the bounded local/server pointer search;
+tracked summary hashes attribute these observations but do not replay the absent
+native artifacts.
+
+The task-local evidence is retained under
+`.gate/pcb-lifecycle-20261016/invalidation-placement-audit/placement/`.
+Its corrected `audit.json` and `rebuild_audit.py` bind the exact four-pose table
+and accounting source separately from the later seed table. The next useful
+handoff is an attributable raw-archive location; otherwise a separately
+authorized nonproduction comparison needs the selected pose and a native-legal
+alternative with matching source, runtime, resources and router effort, original
+failures, and route/repair/verification receipts. This audit ran no routes and
+provides no basis for changing weights or claiming a speedup.

@@ -1,5 +1,8 @@
 """Pure process-control regressions: no native board/router jobs are launched."""
+import ast
+import contextlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -135,7 +138,256 @@ class HelperDeadlineTests(unittest.TestCase):
         self.assert_reaped()
 
 
+class RouterStopEvidenceTests(unittest.TestCase):
+    def test_summary_preserves_unknown_diagnosis_and_real_measured_zero(self):
+        job = load_job()
+        tree = ast.parse(Path(__file__).with_name('fastroute_job.py').read_text())
+        main = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == '_main')
+        summary = next(node for node in ast.walk(main) if isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == 'print' and node.value.args
+            and isinstance(node.value.args[0], ast.JoinedStr)
+            and isinstance(node.value.args[0].values[0], ast.Constant)
+            and node.value.args[0].values[0].value == 'UNROUTED ')
+        for extra, expected in (({}, 'CONGESTION unknown BLOCKED unknown'),
+                ({'diagnosis':None}, 'CONGESTION unknown BLOCKED unknown'),
+                ({'diagnosis':{'congestion':0,'blocked':1}}, 'CONGESTION 0 BLOCKED 1'),
+                ({'diagnosis':{'congestion':None,'blocked':True}}, 'CONGESTION unknown BLOCKED unknown')):
+            with self.subTest(report=extra):
+                report = dict(stats=dict(unrouted=1,trace_length_mm=13.5), **extra)
+                stream = io.StringIO()
+                with contextlib.redirect_stdout(stream):
+                    exec(compile(ast.Module(body=[summary], type_ignores=[]), '<production summary>', 'exec'),
+                        dict(report=report,signal_open=1,gnd_open=0,errors=0,after=5,secs=2,
+                             _diagnosis_count=job._diagnosis_count))
+                self.assertIn(expected, stream.getvalue())
+                self.assertTrue(stream.getvalue().startswith('UNROUTED 1 GND_OPEN 0 ERRORS 0 ROUTER_UNROUTED 1 '))
+                self.assertIn('VIAS 5 SECONDS 2', stream.getvalue())
+
+    def test_normal_producer_argv_keeps_report_without_automatic_diagnosis(self):
+        # Execute the actual production argv expression without any native work.
+        tree = ast.parse(Path(__file__).with_name('fastroute_job.py').read_text())
+        main = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == '_main')
+        command = next(node for node in ast.walk(main) if isinstance(node, ast.Assign)
+                       and any(isinstance(t, ast.Name) and t.id == 'cmd' for t in node.targets)
+                       and isinstance(node.value, ast.BinOp)
+                       and any(isinstance(v, ast.Constant) and v.value == '-de' for v in ast.walk(node.value)))
+        values = dict(BIN='/reviewed/fastroute', model_dsn='/owned/router-model.dsn', ses='/owned/board.ses',
+                      rep='/owned/report.json', min_um=150, edge_um=500,
+                      a=types.SimpleNamespace(passes=40, set=['router.autorouter.max_threads=1']))
+        exec(compile(ast.Module(body=[command], type_ignores=[]), '<production router argv>', 'exec'), values)
+        self.assertNotIn('--diagnose', values['cmd'])
+        self.assertIn('--report=/owned/report.json', values['cmd'])
+        self.assertEqual(values['cmd'][:7], ['/reviewed/fastroute', '-de', '/owned/router-model.dsn',
+                                         '-do', '/owned/board.ses', '-mp', '40'])
+        self.assertIn('--router.min_trace_width_um=150', values['cmd'])
+        self.assertIn('--router.copper_to_edge_clearance_um=500', values['cmd'])
+        # Both actual solver calls remain inside the observer lifetime.
+        guarded = [node for node in ast.walk(main) if isinstance(node, ast.With)
+                   and any(isinstance(item.context_expr, ast.Call)
+                           and isinstance(item.context_expr.func, ast.Name)
+                           and item.context_expr.func.id == '_router_observers' for item in node.items)]
+        self.assertEqual(len(guarded), 1)
+        phases = [kw.value for call in ast.walk(guarded[0]) if isinstance(call, ast.Call)
+                  and isinstance(call.func, ast.Attribute) and call.func.attr == 'run_stage'
+                  for kw in call.keywords if kw.arg == 'stage']
+        self.assertEqual(len(phases), 2)
+
+    def test_actual_timeout_retains_single_owned_stall_and_settles_observers(self):
+        job = load_job()
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); log = root/'run.log'; marker = root/'stop-count'; result = {}; owner = {}
+            stop = threading.Event(); progress = job.route_progress.Progress(root/'progress.jsonl')
+            watcher = threading.Thread(target=job._router_watch,
+                args=(str(log), 2, owner, stop, result, progress, 'route'), daemon=True)
+            snapshot = types.SimpleNamespace(thread=None, start=mock.Mock(), stop=mock.Mock())
+            snapshot.start.return_value = snapshot
+            code = ('import pathlib,signal,sys,time\n'
+                    'path=pathlib.Path(sys.argv[1]); count=0\n'
+                    'def stopped(*args):\n'
+                    ' global count\n'
+                    ' count+=1; path.write_text(str(count))\n'
+                    ' if count>1: sys.exit(0)\n'
+                    'signal.signal(signal.SIGTERM,stopped)\n'
+                    'print("Auto-routing stage started with baseline score 1 for 1 unrouted item.",flush=True)\n'
+                    'for i in range(1,4):\n'
+                    ' print(f"Auto-routing pass #{i} was completed in 0.01 seconds with score 1 '
+                    '(1 unrouted and 0 violations) (routed 0, failed 1, ripped 0).",flush=True)\n'
+                    'time.sleep(30)\n')
+            def started(proc):
+                owner['proc'] = mock.Mock(wraps=proc)
+            with self.assertRaises(subprocess.TimeoutExpired) as caught:
+                with job._router_observers(watcher, stop, result, snapshot, root/'stall.json', 2, 'all'):
+                    with log.open('w') as stream:
+                        lean.run_stage([sys.executable, '-c', code, str(marker)], stage='router-screen',
+                            event_file=root/'stages.jsonl', deadline=lean.deadline_after(2), on_start=started,
+                            stdout=stream, stderr=subprocess.STDOUT)
+            owner['proc'].interrupt.assert_called_once()
+            self.assertTrue(stop.is_set()); self.assertFalse(watcher.is_alive())
+            snapshot.start.assert_called_once(); snapshot.stop.assert_called_once()
+            self.assertTrue(caught.exception.cleanup['complete'])
+            stage = json.loads((root/'stages.jsonl').read_text())
+            self.assertEqual(stage['status'], 'timeout'); self.assertTrue(stage['cleanup']['child_reaped'])
+            receipt = json.loads((root/'stall.json').read_text())
+            self.assertTrue(receipt['interrupt_attempted'])
+            self.assertIs(receipt['interrupt_acknowledged'], True)
+            self.assertNotIn('stopped', receipt)
+            self.assertEqual(receipt['pass_no'], 3); self.assertEqual(receipt['stage'], 'all')
+            self.assertTrue(receipt['observer_cleanup']['complete'])
+            self.assertTrue(marker.is_file(), 'the owned child must observe its stop signal')
+
+    def test_secondary_snapshot_error_does_not_replace_original_exception_or_stall(self):
+        job = load_job()
+        for original in (subprocess.TimeoutExpired(['controlled-solver'], 1), KeyboardInterrupt('controlled cancel')):
+            with self.subTest(error=type(original).__name__), tempfile.TemporaryDirectory() as folder:
+                stop = threading.Event()
+                watcher = threading.Thread(target=stop.wait)
+                snapshot = types.SimpleNamespace(thread=None, start=mock.Mock(),
+                    stop=mock.Mock(side_effect=RuntimeError('controlled snapshot failure')))
+                result = dict(interrupt_attempted=True, interrupt_acknowledged=True,
+                              how='owned-stage interrupt requested', pass_no=6, best=1, unrouted=1)
+                with self.assertRaises(type(original)) as caught:
+                    with job._router_observers(watcher, stop, result, snapshot, Path(folder)/'stall.json', 5, 'all'):
+                        raise original
+                self.assertIs(caught.exception, original)
+                self.assertFalse(watcher.is_alive()); snapshot.stop.assert_called_once()
+                receipt = json.loads((Path(folder)/'stall.json').read_text())
+                self.assertTrue(receipt['interrupt_attempted']); self.assertFalse(receipt['observer_cleanup']['complete'])
+                self.assertEqual(receipt['observer_cleanup']['errors'][0]['operation'], 'snapshot stop')
+
+    def test_normal_completion_stops_observers_without_fabricating_stall(self):
+        job = load_job()
+        with tempfile.TemporaryDirectory() as folder:
+            stop = threading.Event(); watcher = threading.Thread(target=stop.wait)
+            snapshot = types.SimpleNamespace(thread=None, start=mock.Mock(), stop=mock.Mock())
+            path = Path(folder)/'stall.json'
+            with job._router_observers(watcher, stop, {}, snapshot, path, 5, 'all'):
+                pass
+            self.assertTrue(stop.is_set()); self.assertFalse(watcher.is_alive())
+            snapshot.stop.assert_called_once(); self.assertFalse(path.exists())
+
+    def test_unknown_or_false_interrupt_ack_is_not_retried_and_remains_durable(self):
+        job = load_job()
+        for answer in (False, TimeoutError('broker reply timed out after possible delivery')):
+            with self.subTest(answer=str(answer)), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder); log = root/'run.log'; result = {}; proc = mock.Mock()
+                if isinstance(answer, BaseException):proc.interrupt.side_effect = answer
+                else:proc.interrupt.return_value = answer
+                log.write_text('\n'.join(f'Auto-routing pass #{i} was completed in 0.1 seconds '
+                    'with score 1 (1 unrouted and 0 violations).' for i in range(1,10))+'\n')
+                stop = mock.Mock(); stop.wait.return_value = False
+                with mock.patch.object(job.subprocess, 'run') as run, mock.patch('os.kill') as kill:
+                    job._router_watch(str(log), 2, {'proc':proc}, stop, result, mock.Mock(), 'route')
+                proc.interrupt.assert_called_once(); run.assert_not_called(); kill.assert_not_called()
+                self.assertTrue(result['interrupt_attempted']); self.assertNotIn('stopped', result)
+                self.assertIs(result['interrupt_acknowledged'], None if isinstance(answer, BaseException) else False)
+                settled = threading.Event(); watcher = threading.Thread(target=settled.wait)
+                snapshot = types.SimpleNamespace(thread=None, start=mock.Mock(), stop=mock.Mock())
+                with job._router_observers(watcher, settled, result, snapshot, root/'stall.json', 2, 'all'):
+                    pass
+                receipt = json.loads((root/'stall.json').read_text())
+                self.assertEqual(receipt['interrupt_acknowledged'], result['interrupt_acknowledged'])
+                self.assertTrue(receipt['observer_cleanup']['complete'])
+
+
 class NativePhaseAccountingTests(unittest.TestCase):
+    def test_thermal_source_capture_remains_exact_after_workspace_promotion(self):
+        job=load_job()
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder).resolve();source=root/'input.kicad_pcb';output=root/'router';output.mkdir()
+            for suffix in ('.kicad_pcb','.kicad_pro','.kicad_dru','.kicad_sch'):
+                source.with_suffix(suffix).write_text('original '+suffix)
+            captured=Path(job._capture_thermal_source(source,output))
+            receipt=json.loads((output/'native-thermal-source.json').read_text())
+            self.assertEqual(receipt['captured']['sha256'],lean.digest(source))
+            for suffix in ('.kicad_pcb','.kicad_pro','.kicad_dru','.kicad_sch'):
+                self.assertEqual(captured.with_suffix(suffix).read_bytes(),source.with_suffix(suffix).read_bytes())
+            source.write_text('promoted routed candidate')
+            self.assertEqual(captured.read_text(),'original .kicad_pcb')
+            self.assertNotIn(str(source),receipt['inputs'])
+            with self.assertRaises(FileExistsError):job._capture_thermal_source(source,output)
+
+    def test_checked_thermal_fill_requires_true_and_durably_retains_failure(self):
+        job=load_job()
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder).resolve();board=root/'base.kicad_pcb';board.write_text('original native fixture bytes')
+            board.with_suffix('.kicad_pro').write_text('{}');board.with_suffix('.kicad_dru').write_text('(version 1)')
+            native=mock.Mock();native.Zones.return_value=[]
+            for returned in (False,None,1):
+                receipt=root/f'fill-{returned}.json';events=root/f'events-{returned}.jsonl'
+                with mock.patch.object(job.pcbnew,'Version',return_value='10.0.6',create=True), \
+                     mock.patch.object(job.pcbnew,'ZONE_FILLER',return_value=mock.Mock(Fill=mock.Mock(return_value=returned)),create=True), \
+                     mock.patch.object(job.pcbnew,'SaveBoard',create=True) as save, \
+                     self.assertRaisesRegex(ValueError,'did not return True'):
+                    job._checked_thermal_fill(native,board,receipt,events,'controlled-fill')
+                save.assert_not_called()
+                value=json.loads(receipt.read_text());self.assertFalse(value['invocation']['saved'])
+                self.assertIsNot(value['fill_result'],True)
+                self.assertEqual(board.read_text(),'original native fixture bytes')
+                self.assertEqual(json.loads(events.read_text())['status'],'failed')
+
+    def test_checked_fill_saved_hash_and_no_hidden_refill_drc_bind_actual_outputs(self):
+        job=load_job()
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder).resolve();board=root/'base.kicad_pcb';board.write_text('before fill')
+            board.with_suffix('.kicad_pro').write_text('{}');board.with_suffix('.kicad_dru').write_text('(version 1)')
+            native=mock.Mock();native.Zones.return_value=[];events=root/'events.jsonl';fill=root/'fill.json'
+            def save(path,board,skip_settings):
+                self.assertIs(skip_settings,True)
+                Path(path).write_text('saved filled native')
+                return True
+            with mock.patch.object(job.pcbnew,'Version',return_value='10.0.6',create=True), \
+                 mock.patch.object(job.pcbnew,'ZONE_FILLER',return_value=mock.Mock(Fill=mock.Mock(return_value=True)),create=True), \
+                 mock.patch.object(job.pcbnew,'SaveBoard',side_effect=save,create=True) as saved:
+                value=job._checked_thermal_fill(native,board,fill,events,'controlled-fill')
+            saved.assert_called_once_with(str(board),native,True)
+            self.assertIs(value['fill_result'],True);self.assertTrue(value['invocation']['saved'])
+            self.assertEqual(value['candidate']['sha256'],lean.digest(board))
+            self.assertEqual(value['inputs'][str(board)],lean.digest(board))
+            def run(command,**kwargs):
+                self.assertNotIn('--refill-zones',command)
+                Path(command[command.index('-o')+1]).write_text(json.dumps(dict(violations=[],unconnected_items=[])))
+                return types.SimpleNamespace(returncode=0,stdout='native completed',stderr='')
+            with mock.patch.object(job,'KICAD_CLI',sys.executable),mock.patch.object(job.lean,'run_stage',side_effect=run):
+                raw,receipt=job._thermal_drc(board,root,events,'controlled-native')
+            proof=json.loads(Path(receipt).read_text());self.assertEqual(proof['returncode'],0)
+            self.assertEqual(proof['report']['sha256'],lean.digest(proof['report']['path']))
+            self.assertEqual(proof['candidate']['sha256'],lean.digest(board))
+            self.assertEqual(proof['tool']['sha256'],lean.digest(Path(sys.executable).resolve()))
+            self.assertEqual(raw,dict(violations=[],unconnected_items=[]))
+
+    def test_checked_thermal_save_requires_true_and_preserves_failure_receipt(self):
+        job=load_job()
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder).resolve();board=root/'base.kicad_pcb';board.write_text('original native fixture bytes')
+            board.with_suffix('.kicad_pro').write_text('exact authored project')
+            board.with_suffix('.kicad_dru').write_text('(version 1)')
+            native=mock.Mock();native.Zones.return_value=[]
+            for returned in (False,None,1):
+                receipt=root/f'save-{returned}.json';events=root/f'events-save-{returned}.jsonl'
+                with mock.patch.object(job.pcbnew,'Version',return_value='10.0.6',create=True), \
+                     mock.patch.object(job.pcbnew,'ZONE_FILLER',return_value=mock.Mock(Fill=mock.Mock(return_value=True)),create=True), \
+                     mock.patch.object(job.pcbnew,'SaveBoard',return_value=returned,create=True) as save, \
+                     self.assertRaisesRegex(ValueError,'board save did not return True'):
+                    job._checked_thermal_fill(native,board,receipt,events,'controlled-save')
+                save.assert_called_once_with(str(board),native,True)
+                value=json.loads(receipt.read_text());self.assertTrue(value['fill_result'])
+                self.assertFalse(value['invocation']['saved'])
+                self.assertEqual(board.with_suffix('.kicad_pro').read_text(),'exact authored project')
+                self.assertEqual(json.loads(events.read_text())['status'],'failed')
+
+    def test_native_thermal_drc_nonzero_retains_raw_receipt_and_stops(self):
+        job=load_job()
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);board=root/'base.kicad_pcb';board.write_text('saved filled native')
+            with mock.patch.object(job,'KICAD_CLI',sys.executable), \
+                 mock.patch.object(job.lean,'run_stage',return_value=types.SimpleNamespace(returncode=2,stdout='',stderr='native failed')), \
+                 self.assertRaisesRegex(ValueError,'did not produce successful'):
+                job._thermal_drc(board,root,root/'events.jsonl','failed-native')
+            receipt=json.loads((root/'failed-native-drc.json').read_text())
+            self.assertEqual(receipt['returncode'],2);self.assertIsNone(receipt['report']['sha256'])
+            self.assertIn('cause',receipt)
+
     def test_inline_work_reports_distinct_cpu_scopes_and_failure(self):
         job = load_job()
         with tempfile.TemporaryDirectory() as folder:
@@ -279,6 +531,57 @@ class NestedCleanupTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('invalid/excessive owned stage depth', result.stderr)
             self.assertFalse(marker.exists())
+
+
+class ClearanceModelPhaseTests(unittest.TestCase):
+    def test_actual_file_phase_binds_project_before_and_after_models_without_native_writes(self):
+        from test_route_rule_coverage import dsn, project, CLASSES, OBSTACLES, LED
+        job = load_job()
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder); source=root/'source.kicad_pro'; before=root/'before.dsn'; model=root/'final.dsn'; receipt=root/'floor.json'
+            value=project();value['net_settings']['classes'][1]['clearance']=.3
+            source.write_text(json.dumps(value)); original=source.read_bytes()
+            changed, report=job._strengthen_clearance_model(dsn(),source,before,model,receipt,
+                active_nets=[LED],net_classes=CLASSES,obstacles=OBSTACLES,layers=['F.Cu','B.Cu'])
+            self.assertEqual(source.read_bytes(),original)
+            self.assertEqual(before.read_text(),dsn());self.assertEqual(changed,dsn('300'))
+            self.assertFalse(model.exists()) # The phase precedes final model sealing.
+            self.assertEqual(report,json.loads(receipt.read_text()))
+            self.assertEqual(report['inputs'][str(source)],lean.digest(source))
+            self.assertEqual(report['before']['sha256'],lean.digest(before))
+            self.assertEqual(report['after']['path'],str(model))
+
+    def test_malformed_project_retains_blocked_receipt_and_exact_pretransform_model(self):
+        from test_route_rule_coverage import dsn, CLASSES, OBSTACLES, LED
+        job=load_job()
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder); source=root/'source.kicad_pro';before=root/'before.dsn';model=root/'final.dsn';receipt=root/'floor.json'
+            source.write_text('{"duplicated":1,"duplicated":2}')
+            with self.assertRaisesRegex(ValueError,'duplicate project field'):
+                job._strengthen_clearance_model(dsn(),source,before,model,receipt,
+                    active_nets=[LED],net_classes=CLASSES,obstacles=OBSTACLES,layers=['F.Cu','B.Cu'])
+            self.assertEqual(before.read_text(),dsn());self.assertFalse(model.exists())
+            report=json.loads(receipt.read_text());self.assertEqual(report['status'],'blocked')
+            self.assertEqual(report['inputs'][str(source)],lean.digest(source))
+
+    def test_project_or_before_model_mutation_blocks_the_file_phase(self):
+        from test_route_rule_coverage import dsn, project, CLASSES, OBSTACLES, LED
+        job=load_job(); original=job.route_features.strengthen_project_clearance
+        for target in ('project','before'):
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as folder:
+                root=Path(folder);source=root/'source.kicad_pro';before=root/'before.dsn';model=root/'final.dsn';receipt=root/'floor.json'
+                value=project();value['net_settings']['classes'][1]['clearance']=.3
+                source.write_text(json.dumps(value))
+                def changed(*args,**kwargs):
+                    result=original(*args,**kwargs)
+                    (source if target=='project' else before).write_text('changed after reading')
+                    return result
+                with mock.patch.object(job.route_features,'strengthen_project_clearance',side_effect=changed):
+                    with self.assertRaisesRegex(ValueError,'changed during clearance strengthening'):
+                        job._strengthen_clearance_model(dsn(),source,before,model,receipt,
+                            active_nets=[LED],net_classes=CLASSES,obstacles=OBSTACLES,layers=['F.Cu','B.Cu'])
+                self.assertFalse(model.exists())
+                self.assertEqual(json.loads(receipt.read_text())['status'],'blocked')
 
 
 if __name__ == '__main__':

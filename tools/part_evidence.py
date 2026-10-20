@@ -62,13 +62,19 @@ def tool(name, override=None):
     return {'path': str(path), 'sha256': sha(path), 'version': (result.stdout + result.stderr).strip()}
 
 
-def pdf_pages(path, info=None):
+def pdf_pages(path, info=None, *, tool_inputs=None):
     info = info or tool('pdfinfo')
     result = subprocess.run([info['path'], str(path)], text=True, capture_output=True,
                             env=dict(os.environ, LC_ALL='C'), timeout=30)
     match = re.search(r'^Pages:\s*([1-9][0-9]*)\s*$', result.stdout, re.M)
     if result.returncode or not match:
         raise ValueError('cannot read actual PDF page count: ' + result.stderr[-500:])
+    if sha(info['path']) != info['sha256']:
+        raise ValueError('pdfinfo changed during page inspection')
+    if tool_inputs is not None:
+        previous = tool_inputs.setdefault(info['path'], info['sha256'])
+        if previous != info['sha256']:
+            raise ValueError('pdfinfo changed during verification')
     return int(match[1])
 
 
@@ -82,7 +88,7 @@ def cache_files(directory):
     return files
 
 
-def read_cache(directory, key, options):
+def read_cache(directory, key, options, scope='pdf_inspection'):
     try:
         if directory.is_symlink():
             return None
@@ -97,13 +103,39 @@ def read_cache(directory, key, options):
         if part_native.digest(part_native.encoded(identity)) != key:
             return None
         expected = {'pages/%04d.txt' % i for i in range(1, count + 1)}
-        expected.update('renders/%04d.png' % i for i in options['render_pages'])
-        if (receipt['key'] != key or receipt['scope'] != 'pdf_inspection' or receipt['reviewed'] is not False
+        expected.update('renders/%04d.png' % i for i in options.get('render_pages', []))
+        if (receipt['key'] != key or receipt['scope'] != scope or receipt['reviewed'] is not False
                 or set(receipt['artifacts']) != expected or cache_files(directory) != receipt['artifacts']):
             return None
         return receipt
     except (OSError, ValueError, KeyError, TypeError):
         return None
+
+
+def publish_pdf_cache(staging, destination, identity, key, scope, count):
+    receipt = {**identity, 'key': key, 'scope': scope, 'page_count': count,
+               'reviewed': False, 'artifacts': cache_files(staging)}
+    raw = part_native.encoded(receipt) + b'\n'
+    (staging / 'receipt.json').write_bytes(raw)
+    (staging / 'receipt.sha256').write_text(part_native.digest(raw) + '\n')
+    staging.chmod(0o755)
+    if destination.is_symlink():
+        raise ValueError('refusing symlink PDF cache entry')
+    if destination.exists():
+        shutil.rmtree(destination)
+    os.replace(staging, destination)
+    return receipt
+
+
+def copy_pdf_text(source, staging, receipt):
+    """Keep independently mutable entries; accept only the validated page bytes."""
+    (staging / 'pages').mkdir()
+    for number in range(1, receipt['page_count'] + 1):
+        name = 'pages/%04d.txt' % number
+        target = staging / name
+        shutil.copyfile(source / name, target)
+        if sha(target) != receipt['artifacts'][name]:
+            raise ValueError('PDF text cache changed during reuse')
 
 
 def inspect_pdf(pdf, cache, render_pages=(), dpi=144, extractors=None):
@@ -123,61 +155,90 @@ def inspect_pdf(pdf, cache, render_pages=(), dpi=144, extractors=None):
     options = {'text': ['-layout', '-enc', 'UTF-8'], 'render_pages': pages, 'dpi': dpi}
     identity = {'schema': 1, 'pdf_sha256': original_hash, 'tools': tools, 'options': options}
     key = part_native.digest(part_native.encoded(identity))
+    text_options = {'text': options['text']}
+    text_identity = {'schema': 1, 'pdf_sha256': original_hash,
+                     'tools': {name: tools[name] for name in ('pdftotext', 'pdfinfo')}, 'options': text_options}
+    text_key = part_native.digest(part_native.encoded(text_identity))
     cache.mkdir(parents=True, exist_ok=True)
+    text_cache = cache / 'text'
+    if text_cache.is_symlink():
+        raise ValueError('refusing symlink PDF text cache')
+    text_cache.mkdir(exist_ok=True)
+    text_directory = text_cache / text_key
     destination = cache / key
     with (cache / (key + '.lock')).open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         receipt = read_cache(destination, key, options)
         hit = receipt is not None
-        if receipt is None:
-            print('START: PDF extraction ' + key, file=sys.stderr, flush=True)
-            count = pdf_pages(pdf, tools['pdfinfo'])
+        # Render pages, DPI and pdftoppm do not change text extraction. Keep its
+        # exact PDF/tool/options identity separately, while retaining existing
+        # full inspection keys and receipts for callers and older cache entries.
+        with (text_cache / (text_key + '.lock')).open('a') as text_lock:
+            fcntl.flock(text_lock, fcntl.LOCK_EX)
+            text_receipt = read_cache(text_directory, text_key, text_options, 'pdf_text_extraction')
+            text_hit = text_receipt is not None or hit
+            if text_receipt is None:
+                staging = Path(tempfile.mkdtemp(prefix='.pdf-', dir=text_cache))
+                try:
+                    if receipt is not None:
+                        count = receipt['page_count']
+                        copy_pdf_text(destination, staging, receipt)
+                    else:
+                        print('START: PDF extraction ' + text_key, file=sys.stderr, flush=True)
+                        count = pdf_pages(pdf, tools['pdfinfo'])
+                        if any(p > count for p in pages):
+                            raise ValueError('render page is outside actual PDF')
+                        result = subprocess.run([tools['pdftotext']['path'], *text_options['text'], str(pdf), '-'],
+                                                capture_output=True, timeout=120)
+                        if result.returncode:
+                            raise RuntimeError('PDF extraction failed: ' + result.stderr.decode(errors='replace')[-1000:])
+                        text = result.stdout.decode('utf-8', errors='strict').split('\f')
+                        if text and not text[-1].strip():
+                            text.pop()
+                        if len(text) != count:
+                            raise ValueError('extracted page boundaries differ from actual PDF page count')
+                        (staging / 'pages').mkdir()
+                        for number, content in enumerate(text, 1):
+                            (staging / 'pages' / ('%04d.txt' % number)).write_text(content, encoding='utf-8')
+                    if sha(pdf) != original_hash or any(sha(info['path']) != info['sha256'] for info in tools.values()):
+                        raise ValueError('PDF or extractor changed during extraction')
+                    text_receipt = publish_pdf_cache(staging, text_directory, text_identity, text_key,
+                                                     'pdf_text_extraction', count)
+                finally:
+                    if staging.exists():
+                        shutil.rmtree(staging)
+            count = text_receipt['page_count']
             if any(p > count for p in pages):
                 raise ValueError('render page is outside actual PDF')
-            result = subprocess.run([tools['pdftotext']['path'], *options['text'], str(pdf), '-'],
-                                    capture_output=True, timeout=120)
-            if result.returncode:
-                raise RuntimeError('PDF extraction failed: ' + result.stderr.decode(errors='replace')[-1000:])
-            text = result.stdout.decode('utf-8', errors='strict').split('\f')
-            if text and not text[-1].strip():
-                text.pop()
-            if len(text) != count:
-                raise ValueError('extracted page boundaries differ from actual PDF page count')
-            staging = Path(tempfile.mkdtemp(prefix='.pdf-', dir=cache))
-            try:
-                (staging / 'pages').mkdir()
-                for number, content in enumerate(text, 1):
-                    (staging / 'pages' / ('%04d.txt' % number)).write_text(content, encoding='utf-8')
-                if pages:
-                    (staging / 'renders').mkdir()
-                    for number in pages:
-                        prefix = staging / 'renders' / ('%04d' % number)
-                        result = subprocess.run([tools['pdftoppm']['path'], '-f', str(number), '-l', str(number),
-                            '-singlefile', '-png', '-r', str(dpi), str(pdf), str(prefix)], capture_output=True, timeout=120)
-                        if result.returncode or not prefix.with_suffix('.png').is_file():
-                            raise RuntimeError('PDF page render failed')
-                if sha(pdf) != original_hash or any(sha(info['path']) != info['sha256'] for info in tools.values()):
-                    raise ValueError('PDF or extractor changed during inspection')
-                receipt = {**identity, 'key': key, 'scope': 'pdf_inspection', 'page_count': count,
-                           'reviewed': False, 'artifacts': cache_files(staging)}
-                raw = part_native.encoded(receipt) + b'\n'
-                (staging / 'receipt.json').write_bytes(raw)
-                (staging / 'receipt.sha256').write_text(part_native.digest(raw) + '\n')
-                staging.chmod(0o755)
-                if destination.exists():
-                    if destination.is_symlink():
-                        raise ValueError('refusing symlink PDF cache entry')
-                    shutil.rmtree(destination)
-                os.replace(staging, destination)
-            finally:
-                if staging.exists():
-                    shutil.rmtree(staging)
+            if receipt is None:
+                staging = Path(tempfile.mkdtemp(prefix='.pdf-', dir=cache))
+                try:
+                    copy_pdf_text(text_directory, staging, text_receipt)
+                    # Rendering only uses this private copy. Let another request
+                    # reuse the same text while these pages are being rendered.
+                    fcntl.flock(text_lock, fcntl.LOCK_UN)
+                    if pages:
+                        (staging / 'renders').mkdir()
+                        for number in pages:
+                            print('START: PDF render page %s at %s DPI' % (number, dpi), file=sys.stderr, flush=True)
+                            prefix = staging / 'renders' / ('%04d' % number)
+                            result = subprocess.run([tools['pdftoppm']['path'], '-f', str(number), '-l', str(number),
+                                '-singlefile', '-png', '-r', str(dpi), str(pdf), str(prefix)], capture_output=True, timeout=120)
+                            if result.returncode or not prefix.with_suffix('.png').is_file():
+                                raise RuntimeError('PDF page render failed')
+                    if sha(pdf) != original_hash or any(sha(info['path']) != info['sha256'] for info in tools.values()):
+                        raise ValueError('PDF or extractor changed during inspection')
+                    receipt = publish_pdf_cache(staging, destination, identity, key, 'pdf_inspection', count)
+                finally:
+                    if staging.exists():
+                        shutil.rmtree(staging)
         if sha(pdf) != original_hash or any(sha(info['path']) != info['sha256'] for info in tools.values()):
             raise ValueError('PDF or extractor changed before accepting inspection')
         if read_cache(destination, key, options) != receipt:
             raise ValueError('PDF inspection cache changed before acceptance')
     return {'schema': SCHEMA, 'scope': 'pdf_inspection', 'status': 'inspected', 'cache_hit': hit,
             'cache_key': key, 'cache_directory': str(destination), 'pdf': str(pdf),
+            'text_cache_hit': text_hit, 'text_cache_key': text_key, 'text_cache_directory': str(text_directory),
             'inputs': {str(pdf): original_hash, str(destination/'receipt.json'): sha(destination/'receipt.json'),
                        str(destination/'receipt.sha256'): sha(destination/'receipt.sha256'),
                        **{str(destination/name): value for name,value in receipt['artifacts'].items()}},
@@ -185,7 +246,7 @@ def inspect_pdf(pdf, cache, render_pages=(), dpi=144, extractors=None):
             'receipt': receipt, 'qualified': False, 'stock_current': False, 'release_approved': False}
 
 
-def dependency_files(root, manifest):
+def dependency_files(root, manifest, *, include_native=True):
     """Return exact repository-relative evidence paths for snapshot closure."""
     root = Path(root).resolve()
     value = json.loads(Path(manifest).read_text()) if not isinstance(manifest, dict) else manifest
@@ -214,20 +275,39 @@ def dependency_files(root, manifest):
             paths.add(Path(manifest).resolve().relative_to(root).as_posix())
         except ValueError:
             pass
-    board = value.get('board')
-    native = part_native.read_board(root, board)
-    paths.update(native['native_inputs'])
+    if include_native:
+        native = part_native.read_board(root, value.get('board'))
+        paths.update(native['native_inputs'])
     if (root / 'hardware-design/registry/boards.json').is_file():
         paths.add('hardware-design/registry/boards.json')
     return sorted(paths)
 
 
 def verify_manifest(root, board, path):
+    """Verify reviewed facts against every required actual native instance."""
+    return _verify_part_review(root, board, path, native_required=True)
+
+
+def verify_selection(root, board, path, output=None):
+    """Verify reviewed applicability before CAD; planned native facts stay unverified."""
+    report = _verify_part_review(root, board, path, native_required=False)
+    if output is not None:
+        atomic_json(output, report)
+    return report
+
+
+def _verify_part_review(root, board, path, *, native_required):
     root, path = Path(root).resolve(), Path(path).resolve()
     report = {'schema': SCHEMA, 'scope': 'reviewed_part_use', 'board': board, 'status': 'blocked',
               'qualified': False, 'stock_current': False, 'release_approved': False, 'blockers': [],
               'constraints': {'schema': 'iot-lab.engineering-constraints.v1', 'rules': []},
               'bindings': {}, 'inputs': {}, 'native_inputs': {}, 'checked_ratings': [], 'checked_budgets': []}
+    if not native_required:
+        report.update(scope='reviewed_part_selection', selections={}, native_verified=False, cad_verified=False, stock_verified=False,
+                      connectivity_verified=False, layout_verified=False,
+                      limits=['Only declared reviewed selections and applicability are checked; selection completeness is unknown before CAD.',
+                              'Native descriptors, planned pad nets and layout rules are declarations, not installed CAD evidence.',
+                              'Original PDF identity/page attribution is checked; reviewed facts are not automatically inferred from PDF text.'])
     def block(code, detail, reference=None):
         report['blockers'].append({'code': code, 'detail': detail, **({'reference': reference} if reference else {})})
     def need(ok, code, detail, ref=None):
@@ -253,7 +333,7 @@ def verify_manifest(root, board, path):
     def document_pages(target):
         identity = sha(target)
         if identity not in page_counts:
-            page_counts[identity] = pdf_pages(target)
+            page_counts[identity] = pdf_pages(target, tool_inputs=report.setdefault('tool_inputs', {}))
         return page_counts[identity]
     def finite(value):
         return not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(value)
@@ -295,7 +375,7 @@ def verify_manifest(root, board, path):
         result['reference'] = entry['reference']
         if 'pad_net_map' in result['native']:
             raise ValueError('shared profile must not contain board-specific pad nets')
-        result['native']['pad_net_map'] = use['pad_net_map']
+        result['native']['pad_net_map'] = use['pad_net_map'] if native_required else use.get('pad_net_map', {})
         ratings = result['ratings']
         if set(use.get('required', {})) != {rating['id'] for rating in ratings}:
             raise ValueError('board use must cover every shared rating exactly')
@@ -337,15 +417,31 @@ def verify_manifest(root, board, path):
         exact_keys(manifest, ('schema', 'board', 'revision', 'project', 'spec', 'review', 'parts', 'budgets'), 'manifest')
         report['manifest_sha256'] = part_native.digest(raw)
         report['manifest'] = str(path)
-        native = part_native.read_board(root, board)
-        report['native_inputs'] = native['native_inputs']
-        report['tool_inputs'] = {**native['reader_inputs'], str(Path(__file__).resolve()): sha(Path(__file__).resolve())}
-        report['inputs'].update(native['native_inputs'])
-        report['bindings'] = native['parts']
-        report['blockers'].extend(native['blockers'])
+        manifest_input = str(path) if native_required else path.relative_to(root).as_posix()
+        report['inputs'][manifest_input] = report['manifest_sha256']
+        if not native_required:
+            report.update(revision=manifest.get('revision'), project=manifest.get('project'))
+        if native_required:
+            native = part_native.read_board(root, board)
+            report['native_inputs'] = native['native_inputs']
+            report['tool_inputs'] = {**native['reader_inputs'], str(Path(__file__).resolve()): sha(Path(__file__).resolve())}
+            report['inputs'].update(native['native_inputs'])
+            report['bindings'] = native['parts']
+            report['blockers'].extend(native['blockers'])
+            project_matches = manifest.get('project') == native['project']
+        else:
+            if not isinstance(board, str) or not re.fullmatch(r'[A-Z0-9][A-Z0-9-]*', board):
+                raise ValueError('selection requires an exact planned board/design ID')
+            project = manifest.get('project')
+            prefix = 'hardware-design/boards/' + board + '/'
+            project_matches = isinstance(project, str) and project.startswith(prefix) and all(
+                item and item not in ('.', '..') and '\\' not in item for item in project.split('/'))
+            report['tool_inputs'] = {str(Path(__file__).resolve()): sha(Path(__file__).resolve()),
+                                    str(Path(part_native.__file__).resolve()): sha(Path(part_native.__file__).resolve())}
+            native = {'parts': {}}
         need(manifest.get('schema') == MANIFEST and manifest.get('board') == board and
-             manifest.get('project') == native['project'] and isinstance(manifest.get('revision'), str) and manifest['revision'],
-             'manifest_identity', 'exact board/revision/native project required')
+             project_matches and isinstance(manifest.get('revision'), str) and manifest['revision'],
+             'manifest_identity', 'exact board/revision/owned project identity required')
         source(manifest.get('spec'))
         board_prefix = 'hardware-design/boards/' + board + '/'
         need(manifest['spec']['path'].startswith(board_prefix), 'spec_owner', 'part use requires this board\'s specification')
@@ -379,13 +475,13 @@ def verify_manifest(root, board, path):
                 part = expand_part(part)
                 exact_keys(part, ('reference', 'mpn', 'lcsc', 'manufacturer', 'package', 'datasheets', 'native',
                                   'ratings', 'layout_constraints', 'assembly_dependencies', 'unresolved'), 'part')
-                if not isinstance(ref, str) or ref in seen or ref not in native['parts']:
-                    raise ValueError('duplicate or unknown native reference')
+                if not isinstance(ref, str) or not ref.strip() or ref in seen or (native_required and ref not in native['parts']):
+                    raise ValueError('duplicate, missing or unknown native/planned reference')
                 seen.add(ref)
-                actual = native['parts'][ref]
-                need(bool(part.get('mpn')) and bool(re.fullmatch(r'C[0-9]+', part.get('lcsc', ''))) and
-                     part['mpn'] == actual['mpn'] and part['lcsc'] == actual['lcsc'],
-                     'part_identity', 'exact native MPN/LCSC differs or is missing', ref)
+                identity = isinstance(part.get('mpn'), str) and bool(part['mpn'].strip()) and part['mpn'] == part['mpn'].strip() and bool(re.fullmatch(r'C[0-9]+', part.get('lcsc', '')))
+                actual = native['parts'][ref] if native_required else None
+                need(identity and (not native_required or (part['mpn'] == actual['mpn'] and part['lcsc'] == actual['lcsc'])),
+                     'part_identity', 'exact native/planned MPN/LCSC differs or is missing', ref)
                 package = part.get('package', {})
                 if not isinstance(package, dict):
                     raise ValueError('package identity must be an object')
@@ -407,14 +503,27 @@ def verify_manifest(root, board, path):
                 expected = part.get('native', {})
                 if not isinstance(expected, dict):
                     raise ValueError('native part binding must be an object')
-                for field in ('symbol_sha256', 'pin_map', 'footprint', 'footprint_sha256', 'land_geometry_sha256', 'pad_net_map'):
-                    need(field in expected and expected[field] == actual.get(field),
-                         {'pin_map': 'pin_map_mismatch', 'land_geometry_sha256': 'land_geometry_mismatch'}.get(field, 'native_asset_mismatch'),
-                         'installed native ' + field + ' differs from reviewed facts', ref)
-                mechanical = expected.get('non_electrical_pads')
-                need(isinstance(mechanical, list) and len(set(mechanical)) == len(mechanical) and
-                     set(actual['pad_numbers']) == set(actual['pin_map']) | set(mechanical or []) and
-                     not set(actual['pin_map']) & set(mechanical or []), 'pin_pad_coverage', 'all physical pad numbers need exact pin/mechanical classification', ref)
+                if native_required:
+                    unspecified = sorted(number for number, pin in actual['pin_map'].items()
+                                         if pin['type'] == 'unspecified')
+                    need(not unspecified, 'unspecified_pin_type',
+                         'reviewed native symbol needs functional electrical pin types; unspecified pins: '
+                         + ', '.join(unspecified), ref)
+                    for field in ('symbol_sha256', 'pin_map', 'footprint', 'footprint_sha256', 'land_geometry_sha256', 'pad_net_map'):
+                        need(field in expected and expected[field] == actual.get(field),
+                             {'pin_map': 'pin_map_mismatch', 'land_geometry_sha256': 'land_geometry_mismatch'}.get(field, 'native_asset_mismatch'),
+                             'installed native ' + field + ' differs from reviewed facts', ref)
+                    mechanical = expected.get('non_electrical_pads')
+                    need(isinstance(mechanical, list) and len(set(mechanical)) == len(mechanical) and
+                         set(actual['pad_numbers']) == set(actual['pin_map']) | set(mechanical or []) and
+                         not set(actual['pin_map']) & set(mechanical or []), 'pin_pad_coverage', 'all physical pad numbers need exact pin/mechanical classification', ref)
+                else:
+                    planned_nets = expected.get('pad_net_map', {})
+                    if not isinstance(planned_nets, dict) or any(not isinstance(k, str) or not k or not isinstance(v, str) or not v for k, v in planned_nets.items()):
+                        raise ValueError('planned pad nets require explicit string pad/net identities')
+                    native['parts'][ref] = dict(required=True, pad_net_map=planned_nets)
+                    report['selections'][ref] = dict(mpn=part['mpn'], lcsc=part['lcsc'], manufacturer=part['manufacturer'],
+                        package=copy.deepcopy(package), planned_native=copy.deepcopy(expected), native_verified=False)
                 ratings = part.get('ratings')
                 if not isinstance(ratings, list) or not ratings:
                     raise ValueError('at least one sourced applicable rating/operating range required')
@@ -465,18 +574,25 @@ def verify_manifest(root, board, path):
                          'assembly_dependency', 'exact assembly dependency identity/quantity missing', ref)
                     source(dependency.get('source'))
                 unresolved = part.get('unresolved')
-                need(isinstance(unresolved, list) and not unresolved, 'unresolved_part_use', 'unresolved part engineering items remain', ref)
+                detail = 'unresolved part engineering items remain'
+                if not native_required and unresolved:
+                    detail += ': ' + json.dumps(unresolved)
+                need(isinstance(unresolved, list) and not unresolved, 'unresolved_part_use', detail, ref)
             except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
                 block('invalid_part_evidence', str(error), ref)
-        missing = sorted(ref for ref, value in native['parts'].items() if value['required'] and ref not in seen)
-        need(not missing, 'unreviewed_native_parts', 'fitted native references lack reviewed evidence: ' + ', '.join(missing))
+        if native_required:
+            missing = sorted(ref for ref, value in native['parts'].items() if value['required'] and ref not in seen)
+            need(not missing, 'unreviewed_native_parts', 'fitted native references lack reviewed evidence: ' + ', '.join(missing))
         ids = [rule['id'] for rule in report['constraints']['rules'] if isinstance(rule.get('id'), str)]
         need(len(ids) == len(set(ids)), 'constraint_identity', 'layout constraint IDs must be unique')
         for budget in manifest.get('budgets', []):
             try:
                 connected = {ref for ref, value in native['parts'].items() if value['required'] and budget['net'] in value['pad_net_map'].values()}
                 limit = interval(budget['limit'])
-                need(bool(connected) and limit['unit'] in ('A', 'W'), 'budget_scope', 'budget needs actual native net and current/power units')
+                need(bool(connected) and limit['unit'] in ('A', 'W'), 'budget_scope', 'budget needs declared net and current/power units')
+                if not native_required:
+                    need(all(part['pad_net_map'] for part in native['parts'].values()), 'planned_budget_scope',
+                         'every selection needs planned pad nets before declared budget coverage can be checked')
                 loads, excluded, total = set(), set(), 0.0
                 for load in budget['loads']:
                     required = interval(load['required'])
@@ -490,14 +606,21 @@ def verify_manifest(root, board, path):
                     excluded.add(exclusion['reference'])
                 need(not loads & excluded and loads | excluded == connected and total <= limit['max'],
                      'budget_exceeded', 'native net coverage incomplete or summed worst-case loads exceed sourced budget')
-                report['checked_budgets'].append({'id': budget['id'], 'net': budget['net'], 'total': total, 'unit': limit['unit']})
+                result = {'id': budget['id'], 'net': budget['net'], 'total': total, 'unit': limit['unit']}
+                if not native_required:
+                    result['scope'] = 'declared_planned_net_only'
+                report['checked_budgets'].append(result)
             except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
                 block('invalid_budget', str(error))
         for name, expected in report['inputs'].items():
-            if sha(part_native.owned(root, name)) != expected:
+            target = path if name == manifest_input else part_native.owned(root, name)
+            if sha(target) != expected:
                 block('stale_source', 'source changed during verification: ' + name)
         if sha(path) != report['manifest_sha256']:
             block('stale_source', 'manifest changed during verification')
+        for name, expected in report.get('tool_inputs', {}).items():
+            if sha(name) != expected:
+                block('stale_tool', 'verification tool changed: ' + name)
     except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.SubprocessError) as error:
         block('invalid_manifest', str(error))
     report['status'] = 'passed' if not report['blockers'] else ('stale' if any(b['code'].startswith('stale_') for b in report['blockers']) else 'blocked')
@@ -514,6 +637,7 @@ def status_board(root, board):
     native = part_native.read_board(root, board)
     return {'schema': SCHEMA, 'scope': 'reviewed_part_use', 'board': board, 'status': 'blocked',
             'qualified': False, 'stock_current': False, 'release_approved': False,
+            'absent_inputs': [path.relative_to(root).as_posix()],
             'inputs': native['native_inputs'], 'native_inputs': native['native_inputs'], 'tool_inputs': native['reader_inputs'], 'bindings': native['parts'],
             'constraints': {'schema': 'iot-lab.engineering-constraints.v1', 'rules': []},
             'blockers': native['blockers'] + [{'code': 'missing_part_review', 'detail': 'no reviewed native part-use manifest',
@@ -671,13 +795,13 @@ def main():
     parser.add_argument('--output')
     parser.add_argument('--json', action='store_true')
     commands = parser.add_subparsers(dest='command', required=True)
-    for name in ('status', 'verify', 'inspect', 'stock'):
+    for name in ('status', 'verify', 'selection', 'inspect', 'stock'):
         command = commands.add_parser(name)
         command.add_argument('target')
         command.add_argument('--root', default=argparse.SUPPRESS)
         command.add_argument('--output', default=argparse.SUPPRESS)
         command.add_argument('--json', action='store_true', default=argparse.SUPPRESS)
-        if name == 'verify':
+        if name in ('verify', 'selection'):
             command.add_argument('--manifest', required=True)
         if name == 'inspect':
             command.add_argument('--cache', default=str(Path.home() / '.cache/iot-lab/part-evidence'))
@@ -695,6 +819,8 @@ def main():
             result = status_board(args.root, args.target)
         elif args.command == 'stock':
             result = stock_board(args.root, args.target, args.candidate, args.boards, args.receipts)
+        elif args.command == 'selection':
+            result = verify_selection(args.root, args.target, args.manifest)
         else:
             result = verify_manifest(args.root, args.target, args.manifest)
     except Exception as error:
@@ -702,7 +828,13 @@ def main():
                   'stock_current': False, 'release_approved': False, 'blockers': [{'code': 'runtime', 'detail': str(error)}]}
     if args.output:
         atomic_json(args.output, result)
-    print(json.dumps(result, sort_keys=True, allow_nan=False) if args.json else '%s parts: %s' % (result['status'].upper(), result.get('board', result.get('pdf'))))
+    display=result
+    if args.command in ('selection', 'inspect') and args.output and args.json:
+        display={key:result.get(key) for key in ('schema','scope','status','board','qualified','native_verified','cad_verified','stock_verified','stock_current')}
+        if args.command == 'inspect':
+            display.update({key:result.get(key) for key in ('pdf','cache_hit','text_cache_hit','cache_key','text_cache_key','cache_directory','text_cache_directory')})
+        display.update(blockers=len(result.get('blockers',[])),report=dict(path=str(Path(args.output).resolve()),sha256=sha(args.output)))
+    print(json.dumps(display, sort_keys=True, allow_nan=False) if args.json else '%s parts: %s' % (result['status'].upper(), result.get('board', result.get('pdf'))))
     return 0 if result['status'] in ('passed', 'inspected', 'observed') else 1
 
 

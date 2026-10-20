@@ -22,7 +22,7 @@ import lean_workflow as lean
 SCHEMA = 'iot-lab.design-contract.v1'
 REPORT = 'iot-lab.design-assessment.v1'
 STAGES = ('requirements','architecture','parts','schematic','placement','routing','prototype','production')
-KINDS = {'part_use','schematic','placement','native_gate','release','bench','block_qualification'}
+KINDS = {'part_selection','part_use','schematic','placement','native_gate','release','bench','block_qualification'}
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -226,8 +226,8 @@ def dependency_files(root, path, through=None):
                         if original.is_relative_to(root) and original.is_file():files.add(original)
         if not target.is_file():continue
         files.add(target)
-        if row['kind'] in ('part_use','placement'):
-            files.update(root/name for name in part_evidence.dependency_files(root,target))
+        if row['kind'] in ('part_selection','part_use','placement'):
+            files.update(root/name for name in part_evidence.dependency_files(root,target,include_native=row['kind']!='part_selection'))
         elif row['kind']=='schematic':
             # Source clauses of the actual schematic manifest, including its
             # exact design descriptor, travel with the candidate.
@@ -309,9 +309,9 @@ def _gate_closure(root, board, report):
 
 def _adapter(root, contract, row, report, *, candidate=None, escape_evidence=None):
     board = contract['identity']['board']
-    if not board:raise ValueError('this verifier requires configured native CAD')
-    path = relative_file(root,row['path']);report['inputs'][str(path)] = sha(path)
     kind = row['kind']
+    if not board and kind!='part_selection':raise ValueError('this verifier requires configured native CAD')
+    path = relative_file(root,row['path']);report['inputs'][str(path)] = sha(path)
     requirements={r['id']:r for r in contract['requirements']}
     for identifier in row['requirements']:
         req=requirements[identifier]
@@ -321,7 +321,14 @@ def _adapter(root, contract, row, report, *, candidate=None, escape_evidence=Non
     if kind not in ('schematic','placement','bench') and any(requirements[i]['acceptance']['kind']=='interval'
             and requirements[i]['verification_stage']==row['stage'] for i in row['requirements']):
         raise ValueError('this verifier cannot establish numeric functional acceptance; use sourced schematic/placement/raw bench evidence')
-    if kind=='part_use':
+    if kind=='part_selection':
+        planned_board = board or contract['identity']['design_id']
+        if read(path).get('revision')!=contract['identity']['revision']:
+            raise ValueError('part selection must bind this exact design revision')
+        result = _invoke(report,part_evidence.verify_selection,root,planned_board,path)
+        refs = set(row.get('references',[]))
+        if not refs or refs-set(result.get('selections',{})):raise ValueError('part selection needs exact reviewed planned references')
+    elif kind=='part_use':
         result = _invoke(report,part_evidence.verify_manifest,root,board,path)
         refs = set(row.get('references',[]))
         if not refs or refs-set(result.get('bindings',{})):raise ValueError('part check needs exact reviewed native references')
@@ -341,9 +348,18 @@ def _adapter(root, contract, row, report, *, candidate=None, escape_evidence=Non
         escape=Path(escape_evidence).resolve() if escape_evidence is not None else (root/row['escape_evidence'] if row.get('escape_evidence') else None)
         result = _invoke(report,check_manifest,root,board,path,candidate=candidate,
             escape_evidence=escape)
+        if result.get('status')!='passed':
+            _merge(report,root,result)
+            raise ValueError('actual placement verifier blocked: '+json.dumps(result.get('blockers',[])))
         if escape is not None:
             report['inputs'][str(escape)]=sha(escape)
-            _merge(report,root,read(escape))
+            screen=read(escape)
+            # source_set uses basenames beside the actual screened PCB;
+            # they are not paths relative to the canonical project root.
+            native_parent=Path(result['native']).parent
+            screen.setdefault('inputs',{}).update({str(native_parent/name):digest
+                for name,digest in screen.pop('source_inputs',{}).items()})
+            _merge(report,root,screen)
         ids = {m['id'] for m in result.get('measurements',[])}
         requested = row.get('constraint_ids',[])
         if not requested or set(requested)-ids:raise ValueError('placement check lacks exact measured rule IDs')
@@ -424,8 +440,11 @@ def _adapter(root, contract, row, report, *, candidate=None, escape_evidence=Non
     _merge(report,root,result)
     if result.get('status')!='passed':
         raise ValueError('actual '+kind+' verifier blocked: '+json.dumps(result.get('blockers',[])))
-    return dict(status='passed',kind=kind,path=row['path'],requirements=row['requirements'],
-                scope=('current_raw_measurements' if kind in ('bench','block_qualification') else 'current_'+kind+'_evidence'))
+    checked = dict(status='passed',kind=kind,path=row['path'],requirements=row['requirements'],
+                   scope=('current_raw_measurements' if kind in ('bench','block_qualification') else 'current_'+kind+'_evidence'))
+    if kind=='part_selection':
+        checked.update(native_verified=False,cad_verified=False,stock_current=False)
+    return checked
 
 
 def production_controls(contract):
@@ -457,7 +476,7 @@ def _dft_access(root, contract, report):
     return blockers
 
 
-def evaluate_candidate_layout(root, path, candidate=None, evidence_directory=None):
+def evaluate_candidate_layout(root, path, candidate=None, evidence_directory=None, *, escape_screens=None):
     """Replay canonical reviewed layout/DFT against optional candidate geometry.
 
     Canonical root/path retain original fixed/rigid poses. An edited workspace
@@ -466,7 +485,7 @@ def evaluate_candidate_layout(root, path, candidate=None, evidence_directory=Non
     root,path=Path(root).resolve(),Path(path).resolve()
     report=dict(schema='iot-lab.design-candidate-layout.v1',scope='candidate_declared_layout_and_dft_only',status='blocked',
         design_id=None,board=None,qualified=False,production_approved=False,release_approved=False,
-        inputs={},tool_inputs={},absent_inputs=[],blockers=[],check_results={},schematic_contracts=[],generated_evidence=[])
+        inputs={},tool_inputs={},absent_inputs=[],blockers=[],check_results={},schematic_contracts=[],generated_evidence=[],reused_evidence=[])
     try:
         initial=sha(path);report.update(contract=str(path),contract_sha256=initial)
         report['inputs'][str(path)]=initial
@@ -497,8 +516,13 @@ def evaluate_candidate_layout(root, path, candidate=None, evidence_directory=Non
                             owned.mkdir(parents=True,exist_ok=False)
                         escape=owned/(row['id']+'-escape.json')
                         from route_decision import generate_escape_evidence
-                        _invoke(report,generate_escape_evidence,policy,candidate,escape)
-                        report['generated_evidence'].append(str(escape))
+                        if escape_screens is None:
+                            _invoke(report,generate_escape_evidence,policy,candidate,escape)
+                            report['generated_evidence'].append(str(escape))
+                        else:
+                            requested=escape
+                            escape=_invoke(report,escape_screens.get,policy,candidate,requested)
+                            report['generated_evidence' if escape==requested else 'reused_evidence'].append(str(escape))
                 report['check_results'][row['id']]=_adapter(root,value,row,report,candidate=candidate,escape_evidence=escape)
         if any(sha(name)!=digest for name,digest in report['inputs'].items()):raise ValueError('stale candidate design source changed during layout evaluation')
         _capture_tools(report)
@@ -561,8 +585,10 @@ def evaluate_contract(root, path, through=None):
             required_kind={'parts':'part_use','schematic':'schematic','placement':'placement','routing':'native_gate','prototype':'bench'}
             if name in required_kind:
                 kinds={r['kind'] for r in checks.values() if r['stage']==name}
-                allowed={required_kind[name]}|({'block_qualification'} if name=='prototype' else set())
-                if not kinds&allowed:block('stage_evidence_missing','Stage requires actual '+required_kind[name]+' evidence',name)
+                allowed={required_kind[name]}|({'part_selection'} if name=='parts' else {'block_qualification'} if name=='prototype' else set())
+                if not kinds&allowed:
+                    expected='part_selection or part_use' if name=='parts' else required_kind[name]
+                    block('stage_evidence_missing','Stage requires actual '+expected+' evidence',name)
                 if name=='schematic' and 'native_gate' not in kinds:
                     block('stage_evidence_missing','Schematic stage also requires actual successful native ERC evidence',name)
             for check in checks.values():

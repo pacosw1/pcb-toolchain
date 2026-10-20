@@ -66,6 +66,8 @@ def schematic():
 
 def generate(folder):
     import pcbnew as p
+    if p.Version() != '10.0.6':
+        raise ValueError('synthetic native policy defaults require admitted KiCad 10.0.6')
     folder.mkdir(parents=True)
     board = p.BOARD()
     board.SetCopperLayerCount(2)
@@ -130,6 +132,25 @@ def generate(folder):
     rules = dict(min_clearance=.2, min_track_width=.2, min_via_diameter=.6,
                  min_via_annular_width=.15, min_hole_clearance=.25,
                  min_hole_to_hole=.25, min_copper_edge_clearance=.2)
+    # Project-rule admission must not infer absent fields as zero. Read the
+    # actual pinned native defaults and emit them explicitly, with attribution.
+    settings = board.GetDesignSettings()
+    defaults = {}
+    for name, member in (('min_connection', 'm_MinConn'),
+                         ('solder_mask_to_copper_clearance', 'm_SolderMaskToCopperClearance')):
+        value = getattr(settings, member)
+        if type(value) is not int or value < 0:
+            raise ValueError('native fixture default is unresolved: ' + member)
+        defaults[name] = dict(member=member, raw_iu=value, mm=p.ToMM(value))
+        rules[name] = defaults[name]['mm']
+    write(folder / 'fixture-native-defaults.json', dict(
+        schema='iot-lab.synthetic-native-project-defaults.v1', native_version=p.Version(),
+        fields=defaults, source='actual new BOARD design settings; explicit fixture policy, not a production requirement',
+        primary_sources=[dict(
+            url='https://gitlab.com/kicad/code/kicad/-/raw/10.0.6/include/board_design_settings.h',
+            sha256='c48d122eee792289e3e677713c824ea229a9c6adb4091b57787e5987a05902b6'), dict(
+            url='https://gitlab.com/kicad/code/kicad/-/raw/10.0.6/pcbnew/board_design_settings.cpp',
+            sha256='d21742c98036a6b64b4fff48d15f02a724f85efc337b78f26ff7f9558aedd217')] ))
     write(folder / 'fixture.kicad_pro', dict(meta=dict(filename='fixture.kicad_pro', version=1),
           board=dict(design_settings=dict(rules=rules)), net_settings=dict(classes=[dict(name='Default',
           clearance=.2, track_width=.25, via_diameter=.6, via_drill=.3)], meta=dict(version=4))))
