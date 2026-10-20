@@ -1,0 +1,45 @@
+{
+  "schema": "iot-lab.pcb-engine-public-corpus.v1",
+  "repository": "https://gitlab.com/kicad/code/kicad",
+  "mirror": "https://github.com/KiCad/kicad-source-mirror",
+  "revision": "0feeca2a807f428ad2b3fa7c1e39625cb769f02c",
+  "release": "10.0.0",
+  "purpose": "Original public source corpus only. No routing outcome labels or engineering qualification.",
+  "family": "KICAD-DEMO-ECC83",
+  "exposure": "Development source; do not claim unseen test data after inspection.",
+  "license_evidence": [
+    {
+      "path": "LICENSE.README",
+      "url": "https://raw.githubusercontent.com/KiCad/kicad-source-mirror/0feeca2a807f428ad2b3fa7c1e39625cb769f02c/LICENSE.README",
+      "sha256": "837b45ba5235fd506f60f906b2f68820ccb16a154568eac19f5d3615cb9ee05d"
+    },
+    {
+      "path": "LICENSE.CC-BY-SA-4.0",
+      "url": "https://raw.githubusercontent.com/KiCad/kicad-source-mirror/0feeca2a807f428ad2b3fa7c1e39625cb769f02c/LICENSE.CC-BY-SA-4.0",
+      "sha256": "00ba11b9a22d453aed299954eaca389d8efef441a4673d84e2dc4ae10ebc7ca5"
+    }
+  ],
+  "sources": [
+    {
+      "path": "ecc83-pp.kicad_pcb",
+      "url": "https://raw.githubusercontent.com/KiCad/kicad-source-mirror/0feeca2a807f428ad2b3fa7c1e39625cb769f02c/demos/ecc83/ecc83-pp.kicad_pcb",
+      "sha256": "0ab45f4f8c90ac877e3313a1888d875107f2be3fc2b2f40cfb7927873b35260c",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "KiCad project and ECC83 demo contributors; original source attribution is retained unchanged."
+    },
+    {
+      "path": "ecc83-pp.kicad_sch",
+      "url": "https://raw.githubusercontent.com/KiCad/kicad-source-mirror/0feeca2a807f428ad2b3fa7c1e39625cb769f02c/demos/ecc83/ecc83-pp.kicad_sch",
+      "sha256": "8a2d0359a0f3e647378034d84ab72b09dd7aa42f8b1f5e7fa0ff28ae369beee9",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "KiCad project and ECC83 demo contributors; original source attribution is retained unchanged."
+    },
+    {
+      "path": "ecc83-pp.kicad_pro",
+      "url": "https://raw.githubusercontent.com/KiCad/kicad-source-mirror/0feeca2a807f428ad2b3fa7c1e39625cb769f02c/demos/ecc83/ecc83-pp.kicad_pro",
+      "sha256": "8a943fac4b0cc3ed4fa83ccc83a6e15b9326178845ada0aa906df63f0672e975",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "KiCad project and ECC83 demo contributors; original source attribution is retained unchanged."
+    }
+  ]
+}

@@ -68,12 +68,13 @@ def write_junit(output,result):
     return path
 
 
-def gap_candidate(native):
+def gap_candidate(native, *, exclude_nets=(), rejected_ids=(), min_length_width=0):
     """Select one original interior 0/45/90-degree segment with exact neighbours."""
     text,items=copper_items(native)
     rows={uid:_tree(_tokens(text[slice(*row['span'])]))[0] for uid,row in items.items() if row['kind']=='segment'}
     candidates=[]
     for uid,form in rows.items():
+        if uid in rejected_ids or items[uid]['net'] in exclude_nets:continue
         if 'locked' in form or child(form,'locked',['no'])!=['no']:continue
         a,b=point(form,'start'),point(form,'end')
         dx,dy=(abs(y-x) for x,y in zip(a,b))
@@ -88,6 +89,7 @@ def gap_candidate(native):
             neighbours+=hits
         if len(neighbours)==2 and len(set(neighbours))==2:
             distance2=sum((x-y)**2 for x,y in zip(a,b))
+            if distance2 <= (Decimal(str(min_length_width))*Decimal(width[0]))**2:continue
             candidates.append((items[uid]['net']!='/V_GAS',items[uid]['net'],distance2,uid,neighbours))
     if not candidates:raise ValueError('real board has no supported exact interior segment-gap specimen')
     for _,net,_,uid,neighbours in sorted(candidates):

@@ -326,6 +326,8 @@ def run(folder):
         output = folder / 'operation/report.json'
         from pcb_observation_inputs import collect, current
         python_command = os.environ.get('PYTHON_MODERN', 'python3')
+        if operation == 'ml' and manifest['arguments'][0].startswith('engine-'):
+            python_command = os.environ.get('PCB_ENGINE_ML_PYTHON', python_command)
         policy_operation = operation + '-from-run' if manifest.get('from_run') else operation
         implementation = collect(root, policy_operation, manifest['arguments'], python_command=python_command)
         observed_inputs = dict(implementation['files'])
@@ -458,6 +460,9 @@ def run(folder):
         lean.atomic_json(folder / 'operation/result.json', result)
         return result['exit_code']
     extra_inputs = []
+    if operation == 'route' and manifest.get('router') == 'engine':
+        from pcb_engine.policy import dependencies
+        extra_inputs.extend(dependencies(root, manifest['spec']))
     if design:
         from design_contract import dependency_files
         # The changed layout must obey its declared future constraints too.
@@ -525,7 +530,8 @@ def run(folder):
     else:
         spec = None
     solver = operation == 'route' and manifest.get('router', 'explicit') == 'fastroute'
-    command = None if operation == 'repair' or solver else operation_command(workspace, board, operation, spec, manifest.get('kind'))
+    engine = operation == 'route' and manifest.get('router') == 'engine'
+    command = None if operation == 'repair' or solver or engine else operation_command(workspace, board, operation, spec, manifest.get('kind'))
     env = dict(os.environ, IOT_LAB=str(workspace))
     env.update(KICAD_PY=python_native(), KICAD_PYTHON=python_native())
     if engineering:
@@ -554,7 +560,20 @@ def run(folder):
                 cause='candidate placement or test access blocks routing', source_sha256=sources['sha256'], report=str(output)))
             return 1
     solver_report = None
-    if operation == 'repair':
+    if engine:
+        from pcb_engine import run_engine
+        with measured_stage(lambda kind, **data: event(folder, kind, **data), 'engine', 'operation'):
+            solver_report = run_engine(folder, workspace, board, manifest['spec'],
+                timeout_s=manifest['timeout_s'], node=manifest['node'], env=env,
+                emit=lambda kind, **data: event(folder, kind, **data), execute=execute)
+        lean.atomic_json(folder / 'operation/engine-summary.json', solver_report)
+        # Native acceptance is owned by the same outer guard/gate as legacy
+        # operations. A partial candidate must get that check and a failed receipt.
+        candidate_path = solver_report.get('candidate')
+        if candidate_path and Path(candidate_path).resolve() != native.resolve():
+            raise ValueError('engine candidate must be the configured isolated native board')
+        code = 0 if candidate_path and native.is_file() else 1
+    elif operation == 'repair':
         from route_decision import apply_plan
         plan = manifest['plan']
         if sha(plan['path']) != plan['sha256']:

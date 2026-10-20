@@ -14,7 +14,8 @@ import pcb_ml_models as models
 
 
 SCHEMA = 'iot-lab.pcb-ml-result.v1'
-ACTIONS = ('dataset', 'features', 'train', 'evaluate', 'predict')
+ACTIONS = ('dataset', 'features', 'train', 'evaluate', 'predict',
+           'engine-train', 'engine-evaluate', 'engine-export', 'engine-dataset', 'engine-public-corpus')
 _SHA = re.compile(r'[a-f0-9]{64}\Z')
 
 
@@ -35,6 +36,9 @@ def arguments(values):
         parser.add_argument('--' + name)
     parser.add_argument('--algorithm', choices=('mean', 'ridge'))
     parser.add_argument('--regularization', type=float)
+    parser.add_argument('--epochs', type=int)
+    parser.add_argument('--device', choices=('auto', 'cpu', 'mps'))
+    parser.add_argument('--precision', choices=('float16', 'float32'))
     parser.add_argument('--root', type=Path, default=Path(os.environ.get('IOT_LAB', Path(__file__).resolve().parent.parent)))
     parser.add_argument('--output', type=Path)
     parser.add_argument('--json', action='store_true')
@@ -42,9 +46,15 @@ def arguments(values):
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', args.id):
         raise ValueError('ML ID must be a plain identifier')
     required = {'dataset': {'manifest'}, 'features': {'manifest'}, 'train': {'dataset', 'target'},
-                'evaluate': {'dataset', 'model'}, 'predict': {'model', 'features'}}[args.action]
-    allowed = required | ({'algorithm', 'regularization'} if args.action == 'train' else set())
-    supplied = {name for name in ('manifest', 'dataset', 'model', 'features', 'target', 'algorithm', 'regularization')
+                'evaluate': {'dataset', 'model'}, 'predict': {'model', 'features'},
+                'engine-train': {'dataset', 'target'}, 'engine-evaluate': {'dataset', 'model'},
+                'engine-export': {'model'}, 'engine-dataset': {'manifest'},
+                'engine-public-corpus': {'manifest'}}[args.action]
+    allowed = required | {'train': {'algorithm', 'regularization'},
+                          'engine-train': {'epochs', 'device'},
+                          'engine-export': {'precision'}}.get(args.action, set())
+    supplied = {name for name in ('manifest', 'dataset', 'model', 'features', 'target', 'algorithm', 'regularization',
+                                 'epochs', 'device', 'precision')
                 if getattr(args, name) is not None}
     if required - supplied:
         raise ValueError(args.action + ' requires ' + ', '.join('--' + name for name in sorted(required - supplied)))
@@ -67,6 +77,10 @@ def _implementation():
     adapter = Path(__file__).resolve().with_name('pcb_ml_adapters.py')
     if adapter.is_file():
         paths.append(adapter)
+    engine = Path(__file__).resolve().parent / 'pcb_engine' / 'ml.py'
+    if engine.is_file():
+        paths.append(engine)
+        paths.append(engine.with_name('learning.py'))
     return {str(path): sha(path) for path in paths}
 
 
@@ -120,7 +134,12 @@ def dependencies(root, values):
                 # logs and binaries can be members; do not reinterpret their bytes.
                 bind(nested, inventory=False)
 
-    if args.action in ('dataset', 'features'):
+    if args.action == 'engine-public-corpus':
+        bind(args.manifest, inventory=False)
+    elif args.action == 'engine-dataset':
+        from pcb_engine.learning import dependencies as engine_dependencies
+        found.update(engine_dependencies(root, args.manifest))
+    elif args.action in ('dataset', 'features'):
         bind(args.manifest, inventory=False)
         path = (root / args.manifest).absolute()
         if path.is_file():
@@ -213,7 +232,10 @@ def execute(root, values, output):
             raise ValueError('requested ML source is missing: ' + missing[0])
         artifact = output.parent / {'dataset':'dataset.json', 'features':'features.json',
                                    'train':'model.json', 'evaluate':'evaluation.json',
-                                   'predict':'predictions.json'}[args.action]
+                                   'predict':'predictions.json', 'engine-train':'model.json',
+                                   'engine-evaluate':'evaluation.json',
+                                   'engine-export':'export.json', 'engine-dataset':'dataset.json',
+                                   'engine-public-corpus':'public-corpus.json'}[args.action]
         if (artifact.resolve() == output.resolve() or artifact.resolve() in
                 {Path(name).resolve() for name in protected} or artifact.exists() or artifact.is_symlink()):
             raise ValueError('artifact output would overwrite an input or existing artifact')
@@ -231,6 +253,35 @@ def execute(root, values, output):
                 algorithm=args.algorithm or 'ridge', hyperparameters=options, output=artifact)
         elif args.action == 'evaluate':
             payload = models.evaluate_model(root, args.model, args.dataset, output=artifact)
+        elif args.action.startswith('engine-'):
+            from pcb_engine import ml as engine
+            if args.action == 'engine-public-corpus':
+                from pcb_engine.learning import ingest_public_corpus
+                payload = ingest_public_corpus(root / args.manifest, output.parent / 'public-corpus')
+                _write(artifact, payload, protected)
+                for member in sorted((output.parent / 'public-corpus').rglob('*')):
+                    if member.is_file():
+                        report['artifacts'][str(member)] = sha(member)
+            elif args.action == 'engine-dataset':
+                from pcb_engine.learning import build_dataset
+                payload = build_dataset(root, args.manifest, dataset_id=args.id)
+                _write(artifact, payload, protected)
+            elif args.action == 'engine-train':
+                payload = engine.train(root, args.dataset, model_id=args.id, target=args.target,
+                    epochs=args.epochs if args.epochs is not None else 200,
+                    device=args.device or 'auto', output=artifact)
+            elif args.action == 'engine-evaluate':
+                payload = engine.evaluate(root, root / args.model, args.dataset, output=artifact)
+            else:
+                package = output.parent / 'ranker.mlpackage'
+                payload = engine.export_coreml(root, root / args.model, package,
+                                               precision=args.precision or 'float16')
+                _write(artifact, payload, protected)
+                for member in sorted(package.rglob('*')):
+                    if member.is_file():
+                        report['artifacts'][str(member)] = sha(member)
+                registry = package.with_suffix('.registry.json')
+                report['artifacts'][str(registry)] = sha(registry)
         else:
             from pcb_ml_adapters import load_feature_packet
             packet = load_feature_packet(root, root / args.features)
@@ -257,7 +308,7 @@ def execute(root, values, output):
         _current(tool_inputs)
         if missing:
             raise ValueError('declared historical ML source is missing; ineligible rows retained: ' + missing[0])
-        if args.action == 'evaluate':
+        if args.action in ('evaluate', 'engine-evaluate'):
             missing = [split for split in ('validation', 'test')
                        if not payload['folds'][split]['counts']['target_eligible']]
             if missing:

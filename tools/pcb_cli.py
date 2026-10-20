@@ -76,6 +76,61 @@ def run_dir(base, run_id):
     return path
 
 
+def request_cancel(folder):
+    """Shared CLI/viewer control; cancellation is owned by the supervisor."""
+    state = status(folder)
+    if state['status'] not in TERMINAL:
+        lean.atomic_json(Path(folder) / 'cancel.request', dict(requested_at=utc()))
+        state = dict(state, cancellation_requested=True)
+    return state
+
+
+def continue_engine(folder):
+    """Idempotently continue a sealed engine candidate through normal admission."""
+    folder = Path(folder).resolve()
+    original = read_json(folder / 'run.json')
+    if Path(original['root']).resolve() != ROOT or original.get('router') != 'engine':
+        raise ValueError('continuation requires an engine run from this checkout')
+    from pcb_evidence import verify
+    verify(folder)
+    requests = folder.parent / '.continuations'
+    requests.mkdir(exist_ok=True)
+    with (requests / (folder.name + '.lock')).open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        receipt = requests / (folder.name + '.json')
+        if receipt.exists():
+            previous = read_json(receipt)
+            if previous.get('run_id'):
+                child = run_dir(folder.parent, previous['run_id'])
+                manifest = read_json(child / 'run.json')
+                if manifest.get('from_run', {}).get('folder') != str(folder):
+                    raise ValueError('continuation receipt does not match its parent')
+                return status(child)
+            token = previous['token']
+        else:
+            token = hashlib.sha256((str(folder) + pcb_workflow.sha(folder / 'result.json')).encode()).hexdigest()
+            lean.atomic_json(receipt, dict(token=token, status='submitted'))
+        # A supervisor may have started before the UI process crashed. Recover
+        # its durable identity rather than launching the same continuation twice.
+        for path in sorted(folder.parent.glob('run-*/run.json')):
+            manifest = read_json(path)
+            if manifest.get('continuation_key') == token:
+                if manifest.get('from_run', {}).get('folder') != str(folder):
+                    raise ValueError('continuation key belongs to another parent')
+                lean.atomic_json(receipt, dict(token=token, run_id=path.parent.name))
+                return status(path.parent)
+        spec = requests / (folder.name + '-policy.json')
+        lean.atomic_json(spec, original['spec'])
+        args = argparse.Namespace(command='route', board=original['board'],
+            router='engine', spec=spec, from_run=folder.name,
+            timeout=original['timeout_s'], heartbeat=original['heartbeat_s'],
+            engineering_manifest=None, design_contract=None, cycle=None, baseline=None,
+            continuation_key=token)
+        child = start_run(args, folder.parent)
+        lean.atomic_json(receipt, dict(token=token, run_id=child.name))
+        return status(child)
+
+
 def controller_alive(folder):
     try:
         with (folder / 'worker.lock').open('rb') as lock:
@@ -369,6 +424,9 @@ def start_run(args, base):
         spec = read_json(args.spec)
         if not isinstance(spec, dict):
             raise ValueError('candidate spec must be a JSON object')
+        if operation == 'route' and getattr(args, 'router', None) == 'engine':
+            from pcb_engine.policy import validate_policy
+            spec = validate_policy(spec, args.timeout)
     cycle_folder = None
     if getattr(args, 'cycle', None):
         import pcb_cycle
@@ -382,8 +440,9 @@ def start_run(args, base):
             raise ValueError(operation + ' requires an action and board/PDF; put supervisor options first')
         action, subject = args.arguments[:2]
         if operation == 'ml':
-            if action not in ('dataset', 'features', 'train', 'evaluate', 'predict'):
-                raise ValueError('ml action must be dataset, features, train, evaluate or predict')
+            if action not in ('dataset', 'features', 'train', 'evaluate', 'predict',
+                              'engine-dataset', 'engine-train', 'engine-evaluate', 'engine-export', 'engine-public-corpus'):
+                raise ValueError('unknown ML action; use dataset/features/train/evaluate/predict or engine-dataset/train/evaluate/export')
             for reserved in ('--root', '--output'):
                 if any(value == reserved or value.startswith(reserved + '=') for value in args.arguments):
                     raise ValueError('ml ' + reserved + ' is owned by the run supervisor')
@@ -435,7 +494,10 @@ def start_run(args, base):
         if baseline:
             command.extend(['--findings-baseline', str(baseline)])
     else:
-        command = [sys.executable, str(ROOT / 'tools/pcb_operations.py'), str(folder)]
+        operation_python = sys.executable
+        if operation == 'route' and getattr(args, 'router', None) == 'engine' and spec.get('ranking'):
+            operation_python = os.environ.get('PCB_ENGINE_ML_PYTHON', operation_python)
+        command = [operation_python, str(ROOT / 'tools/pcb_operations.py'), str(folder)]
     manifest = dict(schema_version=1, run_id=folder.name, board=args.board, project=cfg['project'],
                     created_at=submitted_at, root=str(ROOT), command=command, timeout_s=args.timeout,
                     heartbeat_s=args.heartbeat, operation=operation, node=node,
@@ -445,6 +507,10 @@ def start_run(args, base):
         manifest['spec_sha256'] = hashlib.sha256(Path(args.spec).read_bytes()).hexdigest()
     if operation == 'route':
         manifest['router'] = getattr(args, 'router', 'explicit')
+    if getattr(args, 'continuation_key', None):
+        if not re.fullmatch(r'[0-9a-f]{64}', args.continuation_key):
+            raise ValueError('invalid continuation identity')
+        manifest['continuation_key'] = args.continuation_key
     if getattr(args, 'kind', None):
         manifest['kind'] = args.kind
     for key in ('plan', 'engineering_manifest', 'design_contract'):
@@ -617,7 +683,7 @@ def main(argv=None):
     sub = parser.add_subparsers(dest='command', required=True)
     operations = ('check', 'build', 'edit', 'route', 'repair', 'release', 'doctor', 'blocks', 'readiness',
                   'parts', 'placement', 'routing', 'design', 'schematic', 'outcomes', 'ml')
-    for name in operations + ('list', 'context', 'next', 'status', 'events', 'explain', 'cancel', 'adopt', 'benchmark', 'cycle', 'note', '_worker'):
+    for name in operations + ('list', 'context', 'next', 'status', 'events', 'explain', 'cancel', 'adopt', 'benchmark', 'cycle', 'note', 'view', '_worker'):
         child = sub.add_parser(name)
         child.add_argument('--runs-dir', type=Path, default=Path(os.environ.get('PCB_RUNS_DIR', ROOT / '.gate/cli')))
         child.add_argument('--json', action='store_true', help='JSON; following/events emit JSON Lines')
@@ -644,8 +710,8 @@ def main(argv=None):
                 if name == 'edit':
                     child.add_argument('--kind', choices=['place', 'route'], required=True)
                 else:
-                    child.add_argument('--router', choices=['explicit', 'fastroute'], default='explicit',
-                                       help='explicit track proposal or controlled solver candidate')
+                    child.add_argument('--router', choices=['explicit', 'fastroute', 'engine'], default='explicit',
+                                       help='explicit tracks, controlled Fastroute, or integrated engine search')
             if name == 'repair':
                 child.add_argument('--plan', type=Path, required=True)
             if name in ('build', 'edit', 'route', 'repair'):
@@ -662,6 +728,9 @@ def main(argv=None):
                 child.add_argument('--through', help='lifecycle stage to assess')
         elif name == 'benchmark':
             child.add_argument('run_ids', nargs='+')
+        elif name == 'view':
+            child.add_argument('run_id')
+            child.add_argument('--port', type=int, default=0, help='localhost port; 0 selects a free port')
         elif name == 'cycle':
             child.add_argument('action', choices=['start', 'status', 'begin', 'end', 'finish', 'attach'])
             child.add_argument('subject', help='board for start; cycle ID otherwise')
@@ -738,8 +807,9 @@ def main(argv=None):
                 raise ValueError('readiness requires BOARD CANDIDATE; put CLI --json/--detach before BOARD')
         if args.command in OBSERVATIONS:
             allowed = {'parts': ('status', 'inspect', 'selection', 'verify', 'stock'), 'placement': ('check',),
-                       'routing': ('diagnose',), 'design': ('check',), 'schematic': ('check',),
-                       'outcomes': ('evaluate',), 'ml': ('dataset', 'features', 'train', 'evaluate', 'predict')}[args.command]
+                       'routing': ('diagnose', 'compute-status', 'compute-calibrate'), 'design': ('check',), 'schematic': ('check',),
+                       'outcomes': ('evaluate',), 'ml': ('dataset', 'features', 'train', 'evaluate', 'predict',
+                           'engine-dataset', 'engine-train', 'engine-evaluate', 'engine-export', 'engine-public-corpus')}[args.command]
             if not args.arguments or args.arguments[0] not in allowed:
                 raise ValueError('choose ' + args.command + ' ' + '/'.join(allowed))
         if args.command == 'benchmark':
@@ -759,6 +829,10 @@ def main(argv=None):
                 lean.atomic_json(folder / 'cancel.request', dict(requested_at=utc()))
                 return follow(folder, args.json)
         folder = run_dir(base, args.run_id)
+        if args.command == 'view':
+            from pcb_engine.viewer import serve
+            serve(folder, port=args.port)
+            return 0
         if args.command == 'adopt':
             from pcb_operations import adopt
             data = adopt(ROOT, folder, args.defect, run_dir(base, args.baseline) if args.baseline else None)
@@ -779,10 +853,7 @@ def main(argv=None):
             print(json.dumps(state) if args.json else f"{state['status'].upper()}: {folder.name} {state.get('cause', '')}; elapsed={state.get('elapsed_s', 'unavailable')}s; " +
                   ('active=' + stage_status(state['active_stage_timing']) + '; ' if state.get('active_stage_timing') else '') + f"evidence={folder}")
         elif args.command == 'cancel':
-            state = status(folder)
-            if state['status'] not in TERMINAL:
-                lean.atomic_json(folder / 'cancel.request', dict(requested_at=utc()))
-                state = dict(state, cancellation_requested=True)
+            state = request_cancel(folder)
             if state['status'] in TERMINAL:
                 state = compact_terminal(state, folder)
             print(json.dumps(state) if args.json else f"{state['status'].upper()}: {folder.name}; cancellation_requested={state.get('cancellation_requested', False)}")
