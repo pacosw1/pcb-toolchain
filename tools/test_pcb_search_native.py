@@ -173,6 +173,25 @@ p.SaveBoard(sys.argv[1],b)
                             via_diameter=.6, via_hole_diameter=.3))
 
     @unittest.skipUnless(os.environ.get('PCB_NATIVE_FIXTURE'), 'explicit isolated native ENV fixture required')
+    def test_retained_selected_copper_is_not_removed_and_native_groups_are_exported(self):
+        board = Path(os.environ['PCB_NATIVE_FIXTURE']).resolve()
+        before = source_set(board)
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory) / 'retained'
+            run = subprocess.run([sys.executable, '-m', 'pcb_search.native_srj', 'export', str(board),
+                str(folder), '--net', '/V_GAS', '--retain-selected-copper'],
+                capture_output=True, text=True, timeout=20)
+            self.assertEqual(run.returncode, 0, run.stdout+run.stderr)
+            receipt = json.loads((folder / 'record.json').read_text())
+            model = json.loads((folder / 'srj.json').read_text())
+            self.assertEqual(receipt['copper_policy'], 'retain')
+            self.assertEqual(receipt['removed_items'], [])
+            self.assertEqual(geometry_digest(board), geometry_digest(folder / 'input.kicad_pcb'))
+            self.assertTrue(any(t['connection_name'] == '/V_GAS' for t in model['traces']))
+            self.assertTrue(model['connections'][0]['externallyConnectedPointIds'])
+        self.assertEqual(before, source_set(board))
+
+    @unittest.skipUnless(os.environ.get('PCB_NATIVE_FIXTURE'), 'explicit isolated native ENV fixture required')
     def test_native_selected_net_round_trip_keeps_every_other_item(self):
         import pcbnew as pcb
         board = Path(os.environ['PCB_NATIVE_FIXTURE']).resolve()

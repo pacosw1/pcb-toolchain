@@ -162,7 +162,7 @@ def scope_routes(folder, result_path, output, *, repair_budget=None):
                 discarded_backend_changes=len(proposal.get('discarded_backend_changes', [])))
 
 
-def export(board, out, nets):
+def export(board, out, nets, *, retain_selected_copper=False):
     import pcbnew as pcb
     from placer.dru import _tree, _tokens
     board, out = Path(board).resolve(), Path(out).resolve()
@@ -213,7 +213,7 @@ def export(board, out, nets):
                     **({'isNonPlatedHole': True} if hole else {}))
     removed = []
     for t in tracks:
-        if t.GetNetname() in nets and not t.IsLocked():
+        if t.GetNetname() in nets and not t.IsLocked() and not retain_selected_copper:
             removed.append(t.m_Uuid.AsString())
             b.Remove(t)
     obstacles, points, labels = [], {n: [] for n in nets}, {}
@@ -313,6 +313,7 @@ def export(board, out, nets):
     record = dict(schema='iot-lab.native-srj.v1', qualified=False, sources=before,
                   input_files=source_set(target), srj_sha256=fingerprint(srj), selected_nets=nets,
                   removed_items=removed, kicad_version=pcb.GetBuildVersion(),
+                  copper_policy='retain' if retain_selected_copper else 'reroute_selected_unlocked',
                   protected_geometry_sha256=protected,
                   approximation='pad/keepout envelopes; exact retained track centerlines; native validation required',
                   native_and_board_specific_gates_required=True)
@@ -432,6 +433,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     subs = ap.add_subparsers(dest='mode', required=True)
     e = subs.add_parser('export'); e.add_argument('board'); e.add_argument('out'); e.add_argument('--net', action='append', required=True)
+    e.add_argument('--retain-selected-copper', action='store_true',
+                   help='preserve selected-net copper and route native-disconnected terminal groups')
     i = subs.add_parser('import'); i.add_argument('folder'); i.add_argument('result'); i.add_argument('out')
     s = subs.add_parser('scope'); s.add_argument('folder'); s.add_argument('result'); s.add_argument('out')
     r = subs.add_parser('repair'); r.add_argument('folder'); r.add_argument('result'); r.add_argument('out')
@@ -439,7 +442,7 @@ def main():
     a = ap.parse_args()
     try:
         if a.mode == 'export':
-            result = export(a.board, a.out, a.net)
+            result = export(a.board, a.out, a.net, retain_selected_copper=a.retain_selected_copper)
         elif a.mode == 'scope':
             result = scope_routes(a.folder, a.result, a.out)
         elif a.mode == 'repair':

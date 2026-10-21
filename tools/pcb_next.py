@@ -427,6 +427,16 @@ def next_action(root, board, base=None, design_contract=None, through=None):
         verified = verify_current_inputs(verification_root, board, gate_dir)
         output['evidence'].update(freshness='current', input_sha256=verified['input_sha256'], gate=str(gate_dir))
         if raw.get('exit') == 1:
+            if operation == 'route' and manifest.get('router') == 'engine':
+                summary_path = folder / 'operation/engine-summary.json'
+                if result.get('evidence_sha256', {}).get('operation/engine-summary.json') != pcb_workflow.sha(summary_path):
+                    raise ValueError('engine decision is not bound to sealed run evidence')
+                engine = read(summary_path)
+                return finish('stuck', 'engine_search_exhausted',
+                    engine.get('cause', 'Engine search ended without a fully accepted candidate'),
+                    'inspect_engine_decision', 'explain', folder.name, '--json',
+                    evidence=dict(path=str(summary_path)), findings=engine.get('findings', []),
+                    retry_unchanged_inputs=False)
             if (operation in {'build', 'edit', 'route', 'repair'}
                     and result.get('identity_preserved') is True and result.get('source_unchanged') is True
                     and all(raw.get('metrics', {}).get(key) == 0 for key in ('erc_errors', 'drc_errors', 'drc_parity'))

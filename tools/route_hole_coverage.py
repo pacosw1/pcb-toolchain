@@ -590,7 +590,7 @@ class _DrilledModel:
         for via in _children(wiring[0] if wiring else [],'via'):
             if len(via)!=6 or not isinstance(via[1],str) or len(_one(via,'net'))!=2 or _one(via,'type')!=['type','fix']:
                 raise ValueError('retained DSN via is not a fixed, single-center obstacle')
-            self.vias.append((via[1],[_d(via[2])*self.scale,-_d(via[3])*self.scale],_one(via,'net')[1]))
+            self.vias.append((via[1],[_d(via[2])*self.scale,-_d(via[3])*self.scale],_one(via,'net')[1],(via[2],via[3])))
 
     def image(self,hole):
         name=hole['reference'];image_name,place=self.places.get(name.casefold(),(None,None))
@@ -774,11 +774,15 @@ def inspect_drilled(dsn_text, *, holes, active_nets, layers, required_mm, cleara
                         raise ValueError('plated drill lacks routing-layer copper')
                     if kind=='via':
                         if hole['shape']!='circle' or size[0]!=size[1] or hole['drill_shape']!='circle':raise ValueError('unsupported retained via geometry')
-                        matches=[(i,v) for i,v in enumerate(model.vias) if i not in used_vias and v[1]==position and v[2]==hole['net']]
+                        # The exporter writes via points with "%.6g" (specctra.h:2980), so a center
+                        # can lose its last digit. Bind that exact text; the drill keeps the native
+                        # center, so the containment proof below pays for the offset.
+                        text=tuple('%.6g'%float(v) for v in (position[0]/model.scale,-position[1]/model.scale))
+                        matches=[(i,v) for i,v in enumerate(model.vias) if i not in used_vias and v[3]==text and v[2]==hole['net']]
                         if len(matches)!=1:raise ValueError('missing or ambiguous fixed exported via instance')
-                        vi,(stack,center,net)=matches[0];used_vias.add(vi);shape=model.shape(stack,layers[0])
-                        obstacle=_obstacle(shape,model.scale,position,0)
-                        expected=_capsule(position,size,0);record.update(dsn_via_index=vi,dsn_padstack=stack)
+                        vi,(stack,center,net,_)=matches[0];used_vias.add(vi);shape=model.shape(stack,layers[0])
+                        obstacle=_obstacle(shape,model.scale,center,0)
+                        expected=_capsule(center,size,0);record.update(dsn_via_index=vi,dsn_padstack=stack)
                     else:
                         if hole['side']!='front' or hole['shape'] not in ('circle','rect','oval'):raise ValueError('unsupported plated pad copper')
                         image_name,image,place=model.image(hole);pin=hole['export_pin'];key=(hole['reference'],pin)

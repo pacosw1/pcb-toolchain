@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 import os
+import platform
 from pathlib import Path
 import re
 import shutil
@@ -66,11 +67,13 @@ def validate(config, total_timeout_s):
     return copy.deepcopy(config)
 
 
-def _executable(name):
+def _executable(name, resolve=True):
     path = shutil.which(name)
     if not path:
         raise ValueError('controlled routing executable is unavailable: ' + str(name))
-    return Path(path).resolve()
+    # A multi-call shim (vite-plus, Volta) dispatches on its invoked name, so
+    # some callers must run the PATH link itself, not its target.
+    return Path(path).resolve() if resolve else Path(path).absolute()
 
 
 def _probe(command, env, probes):
@@ -157,6 +160,29 @@ def execution_context():
                 observed_cgroup={k: float(v) if isinstance(v, Fraction) else v for k, v in observed.items()})
 
 
+def native_execution_context():
+    """Describe the local executor honestly; cooperative budgets are not quotas.
+
+    This is explicitly selected by the engine. Legacy controlled trials still
+    require their original container receipt and enforceable limits.
+    """
+    import lean_resources
+    cpus, memory_gib = lean_resources.limits()
+    physical = os.cpu_count() or 1
+    if cpus > physical:
+        raise ValueError('native CPU budget exceeds available logical processors')
+    value = dict(schema='iot-lab.native-execution-context.v1',
+                 system=platform.system(), release=platform.release(),
+                 machine=platform.machine(), logical_cpus=physical,
+                 cpus=cpus, memory_bytes=int(memory_gib * 1073741824),
+                 enforcement='cooperative-reservation-and-backend-worker-caps',
+                 memory_is_hard_limit=False, network_isolated=False)
+    raw = (json.dumps(value, sort_keys=True, separators=(',', ':')) + '\n').encode()
+    return dict(path=None, raw=raw, image_id=None, container_id=None,
+                cpus=cpus, memory_bytes=value['memory_bytes'], observed_cgroup={},
+                kind='native', identity=hashlib.sha256(raw).hexdigest())
+
+
 def _board(root, native, board):
     if board:
         _, _, project = board_config(root, board)
@@ -177,7 +203,7 @@ def validate_gate(root, board):
     root = Path(root).resolve()
     config = root / 'hardware-design/boards' / board / 'gate.json'
     core = root / 'tools/lib/gate-core.mjs'
-    node = _executable(os.environ.get('NODE', 'node'))
+    node = _executable(os.environ.get('NODE', 'node'), resolve=False)
     before = {str(path): sha(path) for path in (config, core, node)}
     program = ('import {readFileSync} from "node:fs"; import {validateConfig} from '
         + json.dumps(core.as_uri()) + ';'
@@ -213,7 +239,7 @@ def _features(root, board):
     return value
 
 
-def prepare(root, native, output, config, total_timeout_s, *, board=None):
+def prepare(root, native, output, config, total_timeout_s, *, board=None, runtime='container'):
     root, native, output = Path(root).resolve(), Path(native).resolve(), Path(output).resolve()
     config = validate(config, total_timeout_s)
     if not native.is_relative_to(root) or not native.is_file():
@@ -228,12 +254,17 @@ def prepare(root, native, output, config, total_timeout_s, *, board=None):
         raise ValueError('route environment belongs to another board')
     if any(os.environ.get(key) for key in ('PYTHONHOME', 'LD_PRELOAD', 'LD_LIBRARY_PATH', 'DYLD_LIBRARY_PATH')):
         raise ValueError('external runtime loader overrides are unsupported in controlled trials')
-    context = execution_context()
+    if runtime not in ('container', 'native'):
+        raise ValueError('runtime must be container or explicitly selected native')
+    context = native_execution_context() if runtime == 'native' else execution_context()
     if config['threads'] > context['cpus']:
-        raise ValueError('router threads exceed the actual container CPU quota')
+        raise ValueError('router threads exceed the actual container CPU quota' if runtime == 'container'
+                         else 'router threads exceed the admitted native CPU budget')
     python = _executable(python_native())
     router = _executable(os.environ.get('FASTROUTE_BIN') or os.path.expanduser('~/opt/fastroute/fastroute-0.1.7-macos-arm64/fastroute'))
-    kicad = _executable(os.environ.get('KICAD_CLI', 'kicad-cli'))
+    default_kicad = ('/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli'
+                     if platform.system() == 'Darwin' else 'kicad-cli')
+    kicad = _executable(os.environ.get('KICAD_CLI', default_kicad))
     script = root / 'tools/fastroute_job.py'
     if not script.is_file():
         raise ValueError('existing fastroute job producer is missing from the snapshot')
@@ -260,6 +291,11 @@ def prepare(root, native, output, config, total_timeout_s, *, board=None):
                IOT_RESOURCE_CPU=str(config['threads']),
                IOT_MEMORY_BUDGET_GIB=str(context['memory_bytes'] / 1073741824),
                IOT_JOB_MEMORY_GIB=str(context['memory_bytes'] / 1073741824))
+    if runtime == 'native':
+        import lean_resources
+        # Leave room for the persistent compute worker and cooperating jobs.
+        # The router itself acquires/records this reservation before launching.
+        env['IOT_JOB_MEMORY_GIB'] = str(min(lean_resources.job_memory(), context['memory_bytes'] / 1073741824))
     probes = []
     versions = {name: _probe([str(path), '--version'], env, probes)
                 for name, path in (('python', python), ('router', router), ('kicad', kicad))}
@@ -290,7 +326,8 @@ def prepare(root, native, output, config, total_timeout_s, *, board=None):
     original.write_bytes(context['raw'])
     source_context_sha256 = hashlib.sha256(context['raw']).hexdigest()
     rules = features.get('routing_rules', {})
-    policy = dict(schema=EXECUTION, command=command,
+    policy = dict(schema=EXECUTION if runtime == 'container' else 'iot-lab.placement-outcome-execution.v2',
+        command=command,
         runtime=dict(image_id=context['image_id'], tools={name:dict(version=versions[name], sha256=sha(path))
                      for name, path in (('python', python), ('router', router), ('kicad', kicad))}),
         resources=dict(cpus=context['cpus'], memory_bytes=context['memory_bytes'], threads=config['threads']),
@@ -309,13 +346,20 @@ def prepare(root, native, output, config, total_timeout_s, *, board=None):
              'KICAD_CLI','KICAD_PYTHON','PYTHONPATH','IOT_CPU_BUDGET','IOT_RESOURCE_CPU',
              'IOT_MEMORY_BUDGET_GIB','IOT_JOB_MEMORY_GIB')},
         controls=dict(status='prepared', effective_configuration_verified=False), qualified=False)
+    if runtime == 'native':
+        policy['runtime'].update(kind='native', host_identity=context['identity'])
+        policy['resources'].update(enforcement='cooperative-reservation-and-backend-worker-caps',
+                                   memory_is_hard_limit=False, network_isolated=False)
+        policy['execution_context'].update(kind='native',
+            attribution='locally observed OS and cooperative resource budget; no container isolation')
     if thermal:
         policy['effort']['thermal_verification'] = 'native-checkback'
     lean.atomic_json(output.parent/'runtime-probes.json', probes)
     lean.atomic_json(receipt, policy)
     return dict(command=command, env=env, policy=policy, policy_path=str(receipt),
                 output=str(output), native=str(native), config=config,
-                context_path=str(context['path']), context_sha256=source_context_sha256)
+                context_path=str(context['path']) if context['path'] is not None else str(original),
+                context_sha256=source_context_sha256, runtime_kind=runtime)
 
 
 def finalize(prepared, *, returncode):
@@ -330,6 +374,10 @@ def finalize(prepared, *, returncode):
     copied_context = Path(prepared['policy_path']).with_name('execution-context.json')
     if not copied_context.is_file() or sha(copied_context) != prepared['context_sha256']:
         raise ValueError('retained original execution context differs from the host receipt')
+    if prepared.get('runtime_kind') == 'native':
+        current = native_execution_context()
+        if current['raw'] != copied_context.read_bytes():
+            raise ValueError('native host or resource policy changed during routing')
     path = output / 'input-manifest.json'
     if not path.is_file():
         if returncode == 0:

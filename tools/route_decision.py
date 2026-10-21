@@ -738,11 +738,13 @@ def retry_key(source_board,configuration):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='mode',required=True)
-    for name in ('diagnose','repair','escape'):
+    for name in ('diagnose','repair','escape','compute-status','compute-calibrate'):
         p=sub.add_parser(name);p.add_argument('board');p.add_argument('--json',action='store_true');p.add_argument('--output',type=Path)
         p.add_argument('--root',type=Path,default=ROOT)
-        if name!='escape':p.add_argument('--evidence' if name=='diagnose' else '--plan',type=Path,required=True)
+        if name in ('diagnose','repair'):p.add_argument('--evidence' if name=='diagnose' else '--plan',type=Path,required=True)
         if name in ('repair','escape'):p.add_argument('--timeout',type=float,default=120 if name=='repair' else 30)
+        if name.startswith('compute-'):p.add_argument('--timeout',type=float,default=60)
+        if name=='compute-calibrate':p.add_argument('--request',type=Path,required=True)
     args=parser.parse_args(argv)
     try:
         if args.mode=='diagnose':
@@ -751,6 +753,11 @@ def main(argv=None):
                 if args.output.exists():raise ValueError('decision output already exists')
                 lean.atomic_json(args.output,result)
             code=0
+        elif args.mode.startswith('compute-'):
+            if not args.output:raise ValueError('--output evidence file required')
+            from pcb_engine.acceleration import observe
+            result=observe(args.root,args.board,args.output,request_path=getattr(args,'request',None),timeout=args.timeout)
+            code=0 if result['status']=='passed' else 3
         elif args.mode=='escape':
             if not args.output:raise ValueError('--output evidence file required')
             result=generate_escape(args.root,args.board,args.output,args.timeout)

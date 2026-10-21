@@ -107,6 +107,13 @@ and unverified findings. Blocked checks cannot silently resolve prior findings.
 
 ## Candidate changes
 
+For a stateful placement/routing session, use
+`tools/pcb route BOARD --router engine --spec JOB.json --detach --json`.
+The engine owns diagnosis, bounded repairs, declared placement moves and
+candidate selection. `tools/pcb view RUN_ID` opens its localhost observation
+interface. See [PCB-ENGINE.md](PCB-ENGINE.md) for policy, Metal/Core ML and
+experimental rollout status. Existing policies retain their original semantics.
+
 ```sh
 tools/pcb build BOARD --detach --json
 tools/pcb edit BOARD --kind place --spec /absolute/placement.json --json
