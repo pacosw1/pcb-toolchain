@@ -67,9 +67,9 @@ def validate_request(op, data):
             for pair in candidate:
                 if len(pair) != 2 or any(
                     isinstance(v, bool) or not isinstance(v, (int, float))
-                    or not math.isfinite(v) or abs(v) > 1e9 for v in pair
+                    or not math.isfinite(v) or abs(v) > 1e9 or not float(2 * v).is_integer() for v in pair
                 ):
-                    raise ValueError("positions must be finite bounded XY pairs")
+                    raise ValueError("positions must be bounded XY pairs on the 0.5 grid")
         for net in nets:
             for pin in net:
                 _integer(pin, 0, pins - 1, "pin")
@@ -89,8 +89,9 @@ def validate_request(op, data):
                     for axis, value in enumerate(entry[1:]):
                         if (isinstance(value, bool) or not isinstance(value, (int, float))
                                 or not math.isfinite(value) or abs(value) > 1e9
+                                or not float(2 * value).is_integer()
                                 or abs(candidates[0][pin][axis] + value) > 1e9):
-                            raise ValueError("delta exceeds finite coordinate bounds")
+                            raise ValueError("delta must be bounded and on the 0.5 grid")
     elif op in ("congestion", "cost_field"):
         width = _integer(data["width"], 1, MAX_CELLS, "width")
         height = _integer(data["height"], 1, MAX_CELLS, "height")
@@ -129,12 +130,13 @@ def cpu_reference(op, data):
     validate_request(op, data)
     if op == "placement_hpwl":
         data = _materialize(data)
-        return {"scores": [
-            sum((max(candidate[i][0] for i in net) - min(candidate[i][0] for i in net)
-                 + max(candidate[i][1] for i in net) - min(candidate[i][1] for i in net))
-                for net in data["nets"] if net)
-            for candidate in data["candidates"]
-        ], "primitive": "hpwl", "complete_objective": False}
+        scores = []
+        for candidate in data["candidates"]:
+            half = [(int(2 * x), int(2 * y)) for x, y in candidate]  # exact half-unit integers
+            total = sum(max(half[i][a] for i in net) - min(half[i][a] for i in net)
+                        for net in data["nets"] if net for a in (0, 1))
+            scores.append(total // 2 if total % 2 == 0 else total / 2)
+        return {"scores": scores, "primitive": "hpwl", "complete_objective": False}
     if op == "congestion":
         width, height = data["width"], data["height"]
         counts = [0] * (width * height)
@@ -412,8 +414,7 @@ class ComputeWorker:
         result_key = {"placement_hpwl": "scores", "congestion": "counts", "cost_field": "distances"}[op]
         a, b = results["cpu"][result_key], results["metal"][result_key]
         parity = len(a) == len(b) and all(
-            math.isclose(x, y, rel_tol=2e-6, abs_tol=0.01) if op == "placement_hpwl" else x == y
-            for x, y in zip(a, b))
+            x == y for x, y in zip(a, b))
         medians = {backend: statistics.median(values) for backend, values in samples.items()}
         p90 = {backend: sorted(values)[math.ceil(len(values)*0.9)-1] for backend, values in samples.items()}
         profile = dict(id=key, binding=binding, created_at=time.time(), op=op,

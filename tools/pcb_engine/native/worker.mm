@@ -29,11 +29,13 @@ static uint32_t integer(id value,uint32_t low,uint32_t high) {
     require(std::isfinite(d)&&d>=low&&d<=high&&std::floor(d)==d,"integer outside bounds");
     return (uint32_t)d;
 }
-static float number(id value) {
+// Coordinates lie on a 0.5 grid; they are held exactly as int32 half-units.
+static int32_t half(id value) {
     require([value isKindOfClass:[NSNumber class]],"expected number");
     require(CFGetTypeID((__bridge CFTypeRef)value)!=CFBooleanGetTypeID(),"boolean is not a coordinate");
     double d=[value doubleValue]; require(std::isfinite(d)&&std::abs(d)<=1e9,"coordinate outside bounds");
-    return (float)d;
+    require(std::floor(2*d)==2*d,"coordinate is not on the 0.5 grid");
+    return (int32_t)(2*d);
 }
 template<typename T> static NSArray* numbers(const std::vector<T>& values) {
     NSMutableArray* out=[NSMutableArray arrayWithCapacity:values.size()];
@@ -168,19 +170,19 @@ template<typename T> static NSArray* numbers(const std::vector<T>& values) {
         NSUInteger pinCount=array(candidates[0]).count;
         require(pinCount>0&&pinCount<=MAX_VALUES&&candidates.count<=MAX_VALUES/(2*pinCount),"candidate allocation exceeds budget");
         NSUInteger candidateCount=candidates.count;
-        std::vector<float> xy; std::vector<uint32_t> pins,offsets{0};
+        std::vector<int32_t> xy; std::vector<uint32_t> pins,offsets{0};
         for(NSArray* candidateValue in candidates) {
             NSArray* candidate=array(candidateValue); require(candidate.count==pinCount,"candidate pin counts differ");
             for(id pairValue in candidate) {
                 NSArray* pair=array(pairValue); require(pair.count==2,"positions must be XY pairs");
-                xy.push_back(number(pair[0]));xy.push_back(number(pair[1]));
+                xy.push_back(half(pair[0]));xy.push_back(half(pair[1]));
             }
         }
         if(r[@"candidate_deltas"]) {
             NSArray* deltas=array(r[@"candidate_deltas"]);
             require(candidates.count==1&&deltas.count>0&&deltas.count<=MAX_VALUES/(2*pinCount),"sparse proposals exceed budget");
             candidateCount=deltas.count;
-            const std::vector<float> base=xy;
+            const std::vector<int32_t> base=xy;
             xy.resize(candidateCount*pinCount*2);
             for(NSUInteger c=0;c<candidateCount;c++) {
                 std::copy(base.begin(),base.end(),xy.begin()+c*pinCount*2);
@@ -190,8 +192,9 @@ template<typename T> static NSArray* numbers(const std::vector<T>& values) {
                     uint32_t pin=integer(entry[0],0,(uint32_t)pinCount-1);
                     require(!seen[pin],"duplicate delta pin");seen[pin]=true;
                     size_t index=(c*pinCount+pin)*2;
-                    xy[index]+=number(entry[1]);xy[index+1]+=number(entry[2]);
-                    require(std::abs(xy[index])<=1e9&&std::abs(xy[index+1])<=1e9,"delta coordinate exceeds bounds");
+                    int64_t nx=(int64_t)xy[index]+half(entry[1]),ny=(int64_t)xy[index+1]+half(entry[2]);
+                    require(std::llabs(nx)<=2000000000&&std::llabs(ny)<=2000000000,"delta coordinate exceeds bounds");
+                    xy[index]=(int32_t)nx;xy[index+1]=(int32_t)ny;
                 }
             }
         }
@@ -203,28 +206,30 @@ template<typename T> static NSArray* numbers(const std::vector<T>& values) {
         }
         require(nets.count<=MAX_VALUES,"net count exceeds budget");
         require((uint64_t)candidateCount*(pins.size()+nets.count)<=100000000,"placement work exceeds budget");
-        std::vector<float> scores(candidateCount,0);
+        std::vector<int64_t> scores(candidateCount,0);
         if(gpu) {
             id<MTLBuffer> p=[self buffer:0 length:xy.size()*4],n=[self buffer:1 length:pins.size()*4],
-                o=[self buffer:2 length:offsets.size()*4],s=[self buffer:3 length:scores.size()*4];
+                o=[self buffer:2 length:offsets.size()*4],s=[self buffer:3 length:scores.size()*8];
             memcpy(p.contents,xy.data(),xy.size()*4); memcpy(n.contents,pins.data(),pins.size()*4); memcpy(o.contents,offsets.data(),offsets.size()*4);
             uint32_t dims[4]={(uint32_t)candidateCount,(uint32_t)pinCount,(uint32_t)nets.count,0};
             id<MTLCommandBuffer> command=[self.queue commandBuffer];
             [self dispatch:@"hpwl" count:candidateCount buffers:@[p,n,o,s] dims:dims command:command];
             gpuMs+=[self finish:command];dispatches++;
-            memcpy(scores.data(),s.contents,scores.size()*4);
+            memcpy(scores.data(),s.contents,scores.size()*8);
         } else {
             for(NSUInteger c=0;c<candidateCount;c++) for(NSUInteger n=0;n<nets.count;n++) {
-                float loX=INFINITY,loY=INFINITY,hiX=-INFINITY,hiY=-INFINITY;
+                int32_t loX=INT32_MAX,loY=INT32_MAX,hiX=INT32_MIN,hiY=INT32_MIN;
                 for(uint32_t j=offsets[n];j<offsets[n+1];j++) {
                     size_t index=(c*pinCount+pins[j])*2;
                     loX=std::min(loX,xy[index]);hiX=std::max(hiX,xy[index]);
                     loY=std::min(loY,xy[index+1]);hiY=std::max(hiY,xy[index+1]);
                 }
-                if(offsets[n]!=offsets[n+1]) scores[c]+=(hiX-loX)+(hiY-loY);
+                if(offsets[n]!=offsets[n+1]) scores[c]+=((int64_t)hiX-loX)+((int64_t)hiY-loY);
             }
         }
-        result=@{@"scores":numbers(scores),@"primitive":@"hpwl",@"complete_objective":@NO};
+        NSMutableArray* exact=[NSMutableArray arrayWithCapacity:scores.size()];
+        for(int64_t total:scores) [exact addObject:total%2==0?@(total/2):@((double)total/2)];
+        result=@{@"scores":exact,@"primitive":@"hpwl",@"complete_objective":@NO};
     } else if([op isEqual:@"congestion"]||[op isEqual:@"cost_field"]) {
         uint32_t w=integer(r[@"width"],1,MAX_CELLS),h=integer(r[@"height"],1,MAX_CELLS),
             layers=r[@"layers"]?integer(r[@"layers"],1,64):1;

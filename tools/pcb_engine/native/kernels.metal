@@ -1,19 +1,20 @@
 #include <metal_stdlib>
 using namespace metal;
-kernel void hpwl(device const float2* xy [[buffer(0)]],
+// Exact integer HPWL: int32 half-unit coordinates, int64 sum.
+kernel void hpwl(device const int2* xy [[buffer(0)]],
                  device const uint* pins [[buffer(1)]],
                  device const uint* offsets [[buffer(2)]],
-                 device float* scores [[buffer(3)]],
+                 device long* scores [[buffer(3)]],
                  constant uint4& dims [[buffer(4)]], uint candidate [[thread_position_in_grid]]) {
     if (candidate >= dims.x) return;
-    float total = 0;
+    long total = 0;
     for (uint net = 0; net < dims.z; ++net) {
-        float2 lo = float2(INFINITY), hi = float2(-INFINITY);
+        int2 lo = int2(INT_MAX), hi = int2(INT_MIN);
         for (uint j = offsets[net]; j < offsets[net+1]; ++j) {
-            float2 p = xy[candidate*dims.y + pins[j]];
+            int2 p = xy[candidate*dims.y + pins[j]];
             lo = min(lo,p); hi = max(hi,p);
         }
-        if (offsets[net] != offsets[net+1]) total += (hi.x-lo.x)+(hi.y-lo.y);
+        if (offsets[net] != offsets[net+1]) total += (long(hi.x)-long(lo.x))+(long(hi.y)-long(lo.y));
     }
     scores[candidate] = total;
 }

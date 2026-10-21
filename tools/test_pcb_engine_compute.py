@@ -34,6 +34,15 @@ class CPUReferenceTests(unittest.TestCase):
             self.assertEqual(reply["metrics"]["backend"], "cpu")
             self.assertTrue(reply["metrics"]["fallback_reason"])
 
+    def test_hpwl_is_exact_on_half_nanometre_grid(self):
+        base = [[149_999_999, 3], [0, 99_999_998.5], [150_000_000, 0]]
+        data = dict(candidates=[base], nets=[[0, 1, 2]], candidate_deltas=[[[2, d, 0]] for d in range(64)])
+        scores = cpu_reference("placement_hpwl", data)["scores"]
+        self.assertEqual(scores[0], 150_000_000 + 99_999_998.5)
+        self.assertEqual(len(set(scores)), 64)
+        with self.assertRaisesRegex(ValueError, "0.5"):
+            cpu_reference("placement_hpwl", dict(candidates=[[[0.3, 0], [1, 1]]], nets=[[0, 1]]))
+
     def test_unconverged_is_explicit(self):
         result = cpu_reference("cost_field", dict(width=8, height=1, blocked=[], targets=[0], max_sweeps=1))
         self.assertFalse(result["converged"])
@@ -123,13 +132,28 @@ class MetalParityTests(unittest.TestCase):
 
     def test_hpwl_random_batches_and_empty_nets(self):
         rng = random.Random(741)
-        data = dict(candidates=[[[rng.uniform(-100, 100), rng.uniform(-100, 100)]
+        data = dict(candidates=[[[rng.randint(-10**9, 10**9) / 2, rng.randint(-10**9, 10**9)]
                                  for _ in range(40)] for _ in range(48)],
                     nets=[[rng.randrange(40) for _ in range(5)] for _ in range(60)] + [[], [0]])
         expected = cpu_reference("placement_hpwl", data)["scores"]
-        actual = self.metal("placement_hpwl", **data)["scores"]
-        for a, b in zip(expected, actual):
-            self.assertAlmostEqual(a, b, delta=max(0.01, abs(a) * 2e-6))
+        self.assertEqual(self.metal("placement_hpwl", **data)["scores"], expected)
+
+    def test_hpwl_exact_at_nanometre_scale_on_cpu_worker_and_metal(self):
+        rng = random.Random(5)
+        pins = 400
+        nets = [[rng.randrange(pins) for _ in range(rng.randint(2, 6))] for _ in range(300)] + [[0, 1]]
+        data = dict(candidates=[[[rng.randint(0, 150_000_000), rng.randint(0, 100_000_000)]
+                                 for _ in range(pins)] for _ in range(16)], nets=nets)
+        sparse = dict(candidates=data["candidates"][:1], nets=nets,
+                      candidate_deltas=[[[0, 200_000_000 + d, 0]] for d in range(64)])
+        for case in (data, sparse):
+            expected = cpu_reference("placement_hpwl", case)["scores"]
+            cpu = self.worker.request("placement_hpwl", backend="cpu", revision="nm", **case)
+            self.assertEqual(cpu["metrics"]["backend"], "cpu")
+            self.assertIsNone(cpu["metrics"]["fallback_reason"])
+            self.assertEqual(cpu["result"]["scores"], expected)
+            self.assertEqual(self.metal("placement_hpwl", **case)["scores"], expected)
+        self.assertEqual(len(set(cpu_reference("placement_hpwl", sparse)["scores"])), 64)
 
     def test_congestion_exact_integer_parity(self):
         data = dict(width=37, height=19, segments=[[0, 0, 36, 18], [5, 4, 1, 2],

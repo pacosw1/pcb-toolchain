@@ -19,7 +19,7 @@ rule compliance or board acceptance.
 | --- | --- | --- |
 | `capabilities` | None | Metal device and availability, compilation time, limits |
 | `snapshot.put` | Immutable source revision, operation and input data | Snapshot identity for later sparse requests |
-| `placement_hpwl` | Candidate arrays of XY pad positions; nets of pad indices | One float HPWL per candidate, explicitly an incomplete objective |
+| `placement_hpwl` | Candidate arrays of XY pad positions on a 0.5 grid (nm); nets of pad indices | One exact HPWL per candidate, explicitly an incomplete objective |
 | `congestion` | Width, height, integer-coordinate segments | Integer bounding-box demand map |
 | `cost_field` | Width, height, optional layers, blocked and target flat indices, optional max_sweeps | Integer six-neighbor relaxed field, convergence status |
 | `coreml.*` | See `coreml.hpp` and the ML adapter | Model lifecycle, advisory inference and anticipated compute placement |
@@ -41,9 +41,11 @@ certify reachability or be called admissible under unrelated routing rules.
 The CPU field implementation uses linear-time bounded BFS, so calibration compares
 against an appropriate CPU algorithm rather than scalar copies of GPU sweeps.
 
-CPU and Metal HPWL use float32 in the native worker; the Python reference uses
-Python floats. Small rounding differences are expected. Complete CPU rescoring
-and native geometry verification remain required for acceptance.
+HPWL is exact integer arithmetic on every path. Coordinates must be multiples of
+0.5 (pad centres in nm); they are held as int32 half-units and each candidate sum
+is int64. The Python reference, the CPU worker and Metal return identical scores,
+and calibration parity requires exact equality. Complete CPU rescoring and native
+geometry verification remain required for acceptance.
 
 `metal` explicitly requests real GPU dispatch and falls back to CPU if Metal
 initialization is unavailable. `auto` uses CPU until a matching promoted workload
