@@ -146,8 +146,17 @@ def snapshot(root, workspace, board=None, extra_inputs=None):
     return before
 
 
-def pcb_identity(path):
+def declared_pours(manifest):
+    """(name, net, layer) of the pours an admitted route.json lets route.py create or replace."""
+    if manifest.get('operation') != 'route' or manifest.get('router') != 'route-json':
+        return frozenset()
+    return frozenset((p['name'], p['net'], p['layer']) for p in manifest['spec'].get('pours', []))
+
+
+def pcb_identity(path, pours=frozenset()):
     """Protect part/pad/net/outline/rule identity, allowing placement and copper.
+
+    Zones in `pours` (see declared_pours) are left out on both sides of a comparison.
 
     KiCad's parser handles quoted strings and nesting. Filled zone caches and
     generator metadata do not define the source electrical/mechanical contract.
@@ -196,6 +205,9 @@ def pcb_identity(path):
             if locked(native[ref]['form']):
                 footprints[ref] = dict(signature=footprints[ref], locked_pose=[str(v.normalize()) for v in native[ref]['pose']])
         elif tag == 'zone':
+            fields = {v[0]: v[1] for v in form if isinstance(v, list) and len(v) == 2 and isinstance(v[1], str)}
+            if (fields.get('name'), fields.get('net'), fields.get('layer')) in pours:
+                continue
             if any(isinstance(v, list) and v[:1] == ['keepout'] for v in form):
                 keepout_positions.append(len(protected))
             protected.append(clean([v for v in form if not (isinstance(v, list) and v and v[0] in ('filled_polygon', 'fill_segments'))]))
@@ -266,7 +278,8 @@ def parent_candidate(root, board, reference):
     if candidate != project.with_suffix('.kicad_pcb') or sha(candidate) != operation['candidate_sha256']:
         raise ValueError('parent candidate differs from its sealed receipt')
     _, _, original = board_config(root, board)
-    if pcb_identity(original.with_suffix('.kicad_pcb')) != pcb_identity(candidate):
+    pours = declared_pours(manifest)
+    if pcb_identity(original.with_suffix('.kicad_pcb'), pours) != pcb_identity(candidate, pours):
         raise ValueError('parent candidate changes protected board identity')
     dependencies = {str(parent / name): digest for name, digest in terminal['evidence_sha256'].items()}
     dependencies[str(parent / 'result.json')] = reference['result_sha256']
@@ -532,7 +545,8 @@ def run(folder):
         spec = None
     solver = operation == 'route' and manifest.get('router', 'explicit') == 'fastroute'
     engine = operation == 'route' and manifest.get('router') == 'engine'
-    command = None if operation == 'repair' or solver or engine else operation_command(workspace, board, operation, spec, manifest.get('kind'))
+    route_json = operation == 'route' and manifest.get('router') == 'route-json'
+    command = None if operation == 'repair' or solver or engine or route_json else operation_command(workspace, board, operation, spec, manifest.get('kind'))
     env = dict(os.environ, IOT_LAB=str(workspace))
     env.update(KICAD_PY=python_native(), KICAD_PYTHON=python_native())
     if engineering:
@@ -600,6 +614,19 @@ def run(folder):
             if not routed.is_file():
                 raise ValueError('solver returned success without its routed native candidate')
             shutil.copyfile(routed, native)
+    elif route_json:
+        # tools/route.py from the snapshot; it reads the candidate and writes only its own folder.
+        solver_output = folder / 'operation/router'
+        command = [python_native(), 'tools/route.py', board, str(solver_output),
+                   '--input', str(native), '--config', str(spec)]
+        code = execute(folder, 'route', command, workspace, env)
+        solver_report = json.loads((solver_output / 'result.json').read_text())
+        lean.atomic_json(folder / 'operation/router-summary.json', solver_report)
+        if not code:
+            routed = Path(solver_report.get('board_file') or '')
+            if not solver_report.get('board_file') or not routed.is_file():
+                raise ValueError('route.py returned success without its board_file')
+            shutil.copyfile(routed, native)
     else:
         code = execute(folder, operation, command, workspace, env)
     if code:
@@ -609,7 +636,8 @@ def run(folder):
         changed = [name for name, digest in sources['files'].items()
                    if name != str(source_native.relative_to(root)) and
                    (not (workspace / name).is_file() or sha(workspace / name) != digest)]
-        identity_ok = pcb_identity(source_native) == pcb_identity(native)
+        pours = declared_pours(manifest)
+        identity_ok = pcb_identity(source_native, pours) == pcb_identity(native, pours)
         if not identity_ok or changed:
             result = dict(status='failed', exit_code=1, cause='candidate changed protected design inputs; explicit design revision required',
                           identity_preserved=identity_ok, protected_source_changes=changed, candidate_verified=False)
@@ -755,7 +783,8 @@ def adopt(root, folder, defect=None, baseline=None):
         verify(folder)
         if source_state(root, board, sources.get('extra_inputs')) != sources:
             raise ValueError('canonical inputs changed during adoption verification')
-        if pcb_identity(target) != pcb_identity(candidate):
+        pours = declared_pours(manifest)
+        if pcb_identity(target, pours) != pcb_identity(candidate, pours):
             raise ValueError('candidate changes protected design identity')
         candidate_bytes = candidate.read_bytes()
         if hashlib.sha256(candidate_bytes).hexdigest() != operation['candidate_sha256']:

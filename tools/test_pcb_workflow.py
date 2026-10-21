@@ -246,6 +246,28 @@ print('candidate placement completed',flush=True)
         source.write_text(BOARD[:-1]+ca+cb+')');other.write_text(BOARD[:-1]+cb+ca+')')
         self.assertNotEqual(operations.pcb_identity(source),operations.pcb_identity(other))
 
+    def test_declared_route_json_pours_are_exempt_and_other_zones_stay_protected(self):
+        source = self.board / 'cad/X.kicad_pcb'
+        other = self.root / 'poured.kicad_pcb'
+        def pour(name, net='"/A"', layer='"F.Cu"', x=1):
+            return ('(zone (net '+net+') (layer '+layer+') (uuid u'+name+') (name "'+name+'")'
+                    ' (polygon (pts (xy '+str(x)+' 1) (xy 2 2) (xy 3 1))))')
+        manifest = dict(operation='route', router='route-json',
+                        spec=dict(schema='iot-lab.route.v1', pours=[dict(name='P', net='/A', layer='F.Cu')]))
+        pours = operations.declared_pours(manifest)
+        source.write_text(BOARD[:-1]+pour('P')+')')
+        for candidate in (BOARD, BOARD[:-1]+pour('P', x=5)+')'):
+            other.write_text(candidate)
+            self.assertEqual(operations.pcb_identity(source, pours), operations.pcb_identity(other, pours))
+        for undeclared in (pour('Q'), pour('P', net='"/B"'), pour('P', layer='"B.Cu"')):
+            other.write_text(BOARD[:-1]+pour('P')+undeclared+')')
+            self.assertNotEqual(operations.pcb_identity(source, pours), operations.pcb_identity(other, pours))
+        other.write_text(BOARD)
+        self.assertNotEqual(operations.pcb_identity(source), operations.pcb_identity(other))
+        for router in ('fastroute', 'explicit', 'engine'):
+            self.assertEqual(operations.declared_pours(dict(manifest, router=router)), frozenset())
+        self.assertEqual(operations.declared_pours(dict(manifest, operation='edit')), frozenset())
+
     def test_context_resolves_revision_owner_and_packet(self):
         alias = self.root / 'hardware-design/boards/X-B'
         alias.mkdir()

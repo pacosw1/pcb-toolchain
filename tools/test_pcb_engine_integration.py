@@ -62,6 +62,72 @@ class PublicAdmissionTests(unittest.TestCase):
                         pcb_operations.run(folder)
                 self.assertEqual(prepare.call_args.kwargs.get('runtime'), expected)
 
+    def route_args(self, spec, router='route-json'):
+        return argparse.Namespace(command='route', spec=spec, router=router, timeout=60, board='FIELD-24V-BUS',
+                                  from_run=None, engineering_manifest=None, design_contract=None)
+
+    def test_route_json_spec_defaults_to_the_board_route_json(self):
+        args = self.route_args(None)
+        with tempfile.TemporaryDirectory() as d, patch('pcb_cli.shutil.which', return_value=None):
+            with self.assertRaisesRegex(ValueError, 'Node.js'):
+                pcb_cli.start_run(args, Path(d) / 'runs')
+        self.assertEqual(args.spec, pcb_cli.ROOT / 'hardware-design/boards/FIELD-24V-BUS/route.json')
+
+    def test_route_without_spec_rejected_for_other_routers(self):
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaisesRegex(ValueError, 'spec'):
+                pcb_cli.start_run(self.route_args(None, 'fastroute'), Path(d) / 'runs')
+            self.assertFalse((Path(d) / 'runs').exists())
+
+    def test_route_json_wrong_schema_rejected_before_creating_run(self):
+        with tempfile.TemporaryDirectory() as d:
+            spec = Path(d) / 'route.json'
+            spec.write_text('{"schema":"iot-lab.routing-policy.v1"}')
+            with self.assertRaisesRegex(ValueError, 'iot-lab.route.v1'):
+                pcb_cli.start_run(self.route_args(spec), Path(d) / 'runs')
+            self.assertFalse((Path(d) / 'runs').exists())
+
+    def route_json_run(self, d, board_file=True):
+        import pcb_operations
+        folder = Path(d) / 'run'
+        (folder / 'operation').mkdir(parents=True)
+        (folder / 'run.json').write_text(json.dumps(dict(root=d, board='X', operation='route',
+            router='route-json', spec={'schema': 'iot-lab.route.v1'}, timeout_s=60)))
+        calls = []
+
+        def execute(folder_, stage, command, workspace, env):
+            calls.append(command)
+            out = Path(command[command.index('tools/route.py') + 2])
+            out.mkdir(parents=True)
+            (out / 'X.kicad_pcb').write_text('routed')
+            result = dict(board_file=str(out / 'X.kicad_pcb')) if board_file else {}
+            (out / 'result.json').write_text(json.dumps(result))
+            return 0
+        with patch.object(pcb_operations, 'snapshot', return_value={}), \
+                patch.object(pcb_operations, 'board_config', return_value=(None, {}, Path(d) / 'X.kicad_sch')), \
+                patch.object(pcb_operations, 'execute', side_effect=execute):
+            try:
+                pcb_operations.run(folder)
+            except KeyError:
+                pass  # the stubbed snapshot has no files; the route stage is done by then
+        return folder, calls
+
+    def test_route_json_router_runs_route_py_on_the_candidate(self):
+        with tempfile.TemporaryDirectory() as d:
+            folder, calls = self.route_json_run(d)
+            native = Path(d) / 'X.kicad_pcb'
+            command = calls[0]
+            self.assertEqual(command[1:4], ['tools/route.py', 'X', str(folder.resolve() / 'operation/router')])
+            self.assertEqual(command[command.index('--input') + 1], str(native))
+            config = Path(command[command.index('--config') + 1])
+            self.assertEqual(json.loads(config.read_text())['schema'], 'iot-lab.route.v1')
+            self.assertEqual(native.read_text(), 'routed')
+            self.assertTrue((folder / 'operation/router-summary.json').is_file())
+
+    def test_route_json_success_without_board_file_fails_closed(self):
+        with tempfile.TemporaryDirectory() as d, self.assertRaisesRegex(ValueError, 'board_file'):
+            self.route_json_run(d, board_file=False)
+
     def test_cancel_uses_one_shared_control(self):
         with tempfile.TemporaryDirectory() as d, patch('pcb_cli.status', return_value={'status': 'running'}):
             self.assertTrue(pcb_cli.request_cancel(Path(d))['cancellation_requested'])

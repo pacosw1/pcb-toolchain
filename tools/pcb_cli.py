@@ -420,6 +420,11 @@ def start_run(args, base):
         if default_review.is_file():
             args.engineering_manifest = default_review
     spec = None
+    router = getattr(args, 'router', 'explicit')
+    if operation == 'route' and not getattr(args, 'spec', None):
+        if router != 'route-json':
+            raise ValueError('route --router ' + router + ' requires --spec')
+        args.spec = pcb_workflow.board_config(ROOT, args.board)[0] / 'route.json'
     if getattr(args, 'spec', None):
         spec = read_json(args.spec)
         if not isinstance(spec, dict):
@@ -427,6 +432,10 @@ def start_run(args, base):
         if operation == 'route' and getattr(args, 'router', None) == 'engine':
             from pcb_engine.policy import validate_policy
             spec = validate_policy(spec, args.timeout)
+        if operation == 'route' and router == 'route-json':
+            from route_plan import SCHEMA
+            if spec.get('schema') != SCHEMA:
+                raise ValueError('route --router route-json requires a ' + SCHEMA + ' spec')
     cycle_folder = None
     if getattr(args, 'cycle', None):
         import pcb_cycle
@@ -706,12 +715,15 @@ def main(argv=None):
                 freshness.add_argument('--fresh', action='store_true', help='require fresh native checks (default)')
                 child.add_argument('--baseline', help='prior run ID for a findings delta')
             if name in ('edit', 'route'):
-                child.add_argument('--spec', type=Path, required=True)
+                child.add_argument('--spec', type=Path, required=name == 'edit',
+                                   help='route: required, except --router route-json (default: the board route.json)')
                 if name == 'edit':
                     child.add_argument('--kind', choices=['place', 'route'], required=True)
                 else:
-                    child.add_argument('--router', choices=['explicit', 'fastroute', 'engine'], default='explicit',
-                                       help='explicit tracks, controlled Fastroute, or integrated engine search')
+                    child.add_argument('--router', choices=['explicit', 'fastroute', 'engine', 'route-json'],
+                                       default='explicit',
+                                       help='explicit tracks, controlled Fastroute, integrated engine search, '
+                                            'or tools/route.py driven by route.json')
             if name == 'repair':
                 child.add_argument('--plan', type=Path, required=True)
             if name in ('build', 'edit', 'route', 'repair'):
