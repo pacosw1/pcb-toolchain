@@ -10,8 +10,9 @@ and host architecture. Reuse requires a matching build receipt and binary hash;
 changed or corrupted executables are rebuilt.
 
 The worker accepts bounded JSON objects, one per line, with `id`, `revision`,
-`op`, and `backend` (`cpu`, `metal`, `auto`). Responses echo identity and contain
-`ok`, `result` and `metrics`, or `ok: false` and `error`. Unsupported custom-rule
+`op`, and `backend` (`cpu` or `metal`; the adapter resolves `auto` before it
+sends a compute operation). Responses echo identity and contain `ok`, `result`
+and `metrics`, or `ok: false` and `error`. Unsupported custom-rule
 metadata does not disable mathematical jobs; none of these operations establishes
 rule compliance or board acceptance.
 
@@ -34,8 +35,14 @@ JSON. The worker expands sparse proposals into reusable Metal buffers.
 The snapshot cache holds at most eight inputs and 16 MiB. Congestion and field
 snapshots reuse unchanged JSON inputs; the first version recomputes their entire
 bounded output region rather than maintaining a mutable global map.
-Field sweeps are submitted in groups of 32, with explicit dependencies between
-encoders. A field that has not converged remains marked as such. Distances assume
+Field sweeps are submitted in groups of up to 32: one command buffer per group and
+one compute encoder per sweep. The encoders run in submission order, and Metal's
+default hazard tracking on the shared buffers makes each sweep read the previous
+sweep's output. After each group the CPU compares the last two fields to detect
+convergence. A field that has not converged remains marked as such. The result's
+`sweeps` is the same on CPU and Metal: levels reached, min(max distance + 1,
+max_sweeps). Metal's executed sweeps (a multiple of 32 or the limit) are
+`metrics.dispatches`. Distances assume
 unit planar/layer moves; they are guidance only and must not prune exact routes,
 certify reachability or be called admissible under unrelated routing rules.
 The CPU field implementation uses linear-time bounded BFS, so calibration compares

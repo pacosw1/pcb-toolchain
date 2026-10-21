@@ -155,12 +155,11 @@ template<typename T> static NSArray* numbers(const std::vector<T>& values) {
             @"compilation_ms":@(self.compilationMs)},
             @"metrics":@{@"backend":@"cpu",@"dispatches":@0,@"fallback_reason":self.unavailable?:[NSNull null]}};
     }
-    NSString* requested=r[@"backend"]?:@"auto";
-    require([@[@"cpu",@"metal",@"auto"] containsObject:requested],"invalid backend");
+    // The adapter resolves `auto` from calibration; the worker accepts only a concrete backend.
+    NSString* requested=r[@"backend"];
+    require([@[@"cpu",@"metal"] containsObject:requested?:@""],"invalid backend");
     bool gpu=[requested isEqual:@"metal"]&&self.queue&&self.unavailable==nil;
-    NSString* fallback=(![requested isEqual:@"cpu"]&&!gpu)?self.unavailable:nil;
-    if([requested isEqual:@"auto"]&&self.queue&&self.unavailable==nil)
-        fallback=@"automatic Metal selection awaits end-to-end workload calibration";
+    NSString* fallback=([requested isEqual:@"metal"]&&!gpu)?self.unavailable:nil;
     NSUInteger dispatches=0; double gpuMs=0;
     NSDictionary* result=nil;
     if([op isEqual:@"placement_hpwl"]) {
@@ -283,6 +282,9 @@ template<typename T> static NSArray* numbers(const std::vector<T>& values) {
                     converged=memcmp(a.contents,b.contents,size*4)==0;
                 }
                 memcpy(values.data(),a.contents,size*4);
+                // Report sweeps as the CPU does (levels reached); executed sweeps are `dispatches`.
+                uint32_t maximum=0;for(uint32_t v:values) if(v!=INF) maximum=std::max(maximum,v);
+                performed=std::min(maximum+1,sweeps);
             } else {
                 // Unit weights admit linear-time BFS. Compare Metal against a
                 // competent CPU algorithm, not a deliberately scalar GPU sweep.

@@ -176,6 +176,7 @@ class MetalParityTests(unittest.TestCase):
             dict(width=4, height=4, layers=3, blocked=[1, 2, 17, 18], targets=[0, 47]),
             dict(width=4, height=4, blocked=list(range(16)), targets=[0]),
             dict(width=8, height=8, blocked=[], targets=[0], max_sweeps=2),
+            dict(width=8, height=8, blocked=[], targets=[0], max_sweeps=100),
         ]
         for data in cases:
             with self.subTest(data=data):
@@ -183,6 +184,7 @@ class MetalParityTests(unittest.TestCase):
                 actual = self.metal("cost_field", **data)
                 self.assertEqual(expected["distances"], actual["distances"])
                 self.assertEqual(expected["converged"], actual["converged"])
+                self.assertEqual(expected["sweeps"], actual["sweeps"])
 
     def test_native_default_sweeps_accept_200x200(self):
         data = dict(width=200, height=200, blocked=[], targets=[0])
@@ -203,6 +205,16 @@ class MetalParityTests(unittest.TestCase):
         reply = json.loads(self.worker.process.stdout.readline())
         self.assertFalse(reply["ok"])
         self.assertIn("budget", reply["error"])
+
+    def test_native_worker_rejects_unresolved_auto_backend(self):
+        import json
+        request = dict(id="direct", revision="auto", op="cost_field", backend="auto",
+                       width=2, height=2, blocked=[], targets=[0])
+        self.worker.process.stdin.write(json.dumps(request) + "\n")
+        self.worker.process.stdin.flush()
+        reply = json.loads(self.worker.process.stdout.readline())
+        self.assertFalse(reply["ok"])
+        self.assertIn("invalid backend", reply["error"])
 
     def test_sparse_snapshot_metal_and_immutable_revision(self):
         data = dict(candidates=[[[0, 0], [3, 4], [10, 10]]], nets=[[0, 1], [1, 2]])
