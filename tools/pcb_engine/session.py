@@ -73,6 +73,10 @@ class Session:
                 elif file_digest(self.native) not in ({old.get('initial_sha256')} |
                         {row['board']['sha256'] for row in old.get('attempts', [])}):
                     raise ValueError('native board differs from every recorded session revision')
+                # Terminal phases stay terminal. Interrupted work was rolled back
+                # above, so a non-terminal session restarts from 'admitted'.
+                if old.get('phase') in ('complete', 'blocked'):
+                    self.phase = old['phase']
                 self.initial_sha256 = old['initial_sha256']
                 self.seen = set(old.get('seen', []))
                 self.attempt_count = old.get('attempt_count', len(self.seen))

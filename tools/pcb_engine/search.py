@@ -116,6 +116,16 @@ def run_engine(folder, workspace, board, policy, *, timeout_s, node='node', env=
     with Session(output, native, rules, policy, emit) as session, ExitStack() as stack:
         count = session.attempt_count
         initial_sha = session.initial_sha256
+        if session.phase in ('complete', 'blocked'):
+            # A terminal session never searches again; it returns its receipt.
+            receipt = output / 'result.json'
+            if not receipt.is_file():
+                raise ValueError('terminal engine session has no result receipt')
+            result = json.loads(receipt.read_text())
+            if file_digest(native) != (result.get('candidate_sha256') or result.get('initial_sha256')):
+                raise ValueError('terminal engine session board differs from its result receipt')
+            session.event('engine.terminal_resume', phase=session.phase)
+            return result
         # CLI's parent_candidate verifies its source/evidence before copying.
         # Reuse retry fingerprints only when the complete rule/policy binding
         # agrees; differing rules constitute a different experiment.
@@ -368,12 +378,13 @@ def run_engine(folder, workspace, board, policy, *, timeout_s, node='node', env=
                             findings, candidate_verified=verified)
         else:
             state = Outcome('blocked', terminal_cause, count, findings=findings)
-        if session.phase not in ('complete', 'blocked'):
-            session.transition('complete' if selected else 'blocked')
         result = state.to_dict()
         result.update(initial_sha256=initial_sha, improved=bool(selected and selected.strategy.get('kind') != 'baseline'
                       and selected.board.sha256 != initial_sha),
                       selected_strategy=selected.strategy if selected else None,
                       state=str(output / 'state.json'), runtime=policy.runtime, compute=policy.compute)
+        # Receipt first: a terminal phase always has its result.json.
         atomic_json(output / 'result.json', result)
+        if session.phase not in ('complete', 'blocked'):
+            session.transition('complete' if selected else 'blocked')
         return result

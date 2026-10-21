@@ -138,6 +138,37 @@ class EngineTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'invalid engine transition'):
                 session.transition('complete')
 
+    def test_phase_is_restored_terminal_and_interrupted_work_restarts_admitted(self):
+        folder = self.root / 'session'
+        with Session(folder, self.native, self.rules, self.policy) as session:
+            session.transition('searching')
+        with Session(folder, self.native, self.rules, self.policy) as session:
+            self.assertEqual(session.phase, 'admitted')
+            session.transition('searching')
+            session.transition('blocked')
+        with Session(folder, self.native, self.rules, self.policy) as session:
+            self.assertEqual(session.phase, 'blocked')
+            with self.assertRaisesRegex(ValueError, 'invalid engine transition'):
+                session.transition('searching')
+
+    def test_resumed_terminal_session_does_not_search_again(self):
+        first = run_engine(self.root, self.workspace, 'TEST', policy(max_attempts=1), timeout_s=120,
+                           backend_factory=FakeBackend)
+        class Never(FakeBackend):
+            def verify(self, directory):
+                raise AssertionError('terminal session verified again')
+            def route(self, directory):
+                raise AssertionError('terminal session searched again')
+        second = run_engine(self.root, self.workspace, 'TEST', policy(max_attempts=1), timeout_s=120,
+                            backend_factory=Never)
+        self.assertEqual(second, json.loads(json.dumps(first)))
+        state = json.loads((self.root / 'operation/engine/state.json').read_text())
+        self.assertEqual(state['phase'], 'complete')
+        self.native.write_text(BOARD)
+        with self.assertRaisesRegex(ValueError, 'terminal engine session'):
+            run_engine(self.root, self.workspace, 'TEST', policy(max_attempts=1), timeout_s=120,
+                       backend_factory=Never)
+
     def test_verified_incumbent_cannot_be_displaced_by_better_proxy(self):
         with Session(self.root / 'session', self.native, self.rules, self.policy) as session:
             state = BoardState.capture('TEST', self.native, self.rules)

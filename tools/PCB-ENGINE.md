@@ -95,6 +95,9 @@ placement from scratch. It can stop without a fully accepted board. `next`
 reports the recorded engine decision instead of recommending the same blind
 retry. `--from-run RUN_ID` continues a sealed candidate with source revalidation.
 Interrupted transactions have a durable rollback image.
+The session phase is persisted. A resumed `complete` or `blocked` session does
+not search again: it returns its recorded `result.json` when the board agrees
+with it, and fails closed otherwise. An interrupted session resumes as `admitted`.
 
 Internal configured gates rank candidates. The engine summary has status
 `candidate` and `candidate_verified: true` only for a candidate that passed its
