@@ -116,6 +116,25 @@ class LoadTests(unittest.TestCase):
         cfg['stages'][0]['require']['vias'] = True
         self.assertRejects(cfg, 'vias')
 
+    def test_features_become_the_fastroute_environment(self):
+        cfg = config()
+        cfg['features'] = {'via_off_small_pads': True, 'triage_opens': False}
+        p = plan.load(cfg, COPPER)
+        self.assertEqual(plan.feature_env(p), 'triage_opens=0,via_off_small_pads=1')
+        self.assertEqual(plan.feature_env(plan.load(config(), COPPER)), '')
+
+    def test_unknown_feature_is_rejected(self):
+        cfg = config()
+        cfg['features'] = {'via_off_small_pad': True}
+        with self.assertRaises(ValueError) as e:
+            plan.load(cfg, COPPER, known_features={'via_off_small_pads'})
+        self.assertIn('unknown feature via_off_small_pad', str(e.exception))
+
+    def test_feature_must_be_on_or_off(self):
+        cfg = config()
+        cfg['features'] = {'via_off_small_pads': 'yes'}
+        self.assertRejects(cfg, 'features.via_off_small_pads')
+
     def test_input_is_not_changed(self):
         cfg = config()
         before = copy.deepcopy(cfg)

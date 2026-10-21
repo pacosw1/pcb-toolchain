@@ -123,8 +123,8 @@ def drc(pcb, out, parity):
     return json.loads(Path(out).read_text())
 
 
-def route_fastroute(stage, src, work, board_id):
-    env = dict(os.environ, ROUTE_BOARD=board_id)
+def route_fastroute(stage, src, work, board_id, features):
+    env = dict(os.environ, ROUTE_BOARD=board_id, ROUTE_FEATURES=features)
     p = run([sys.executable, ROOT / 'tools/fastroute_job.py', src, work] + plan.fastroute_args(stage),
             work.parent / 'router.log', env)
     routed = work / 'routed.kicad_pcb'
@@ -147,7 +147,7 @@ def route_tracemaker(stage, src, work, board_id, copper):
     return routed
 
 
-def run_stage(i, stage, current, outdir, backend, board_id, name):
+def run_stage(i, stage, current, outdir, backend, board_id, name, features=''):
     d = outdir / f'{i + 1}-{stage["name"]}'
     src = d / 'in' / f'{name}.kicad_pcb'
     copy_project(current, src)
@@ -162,7 +162,7 @@ def run_stage(i, stage, current, outdir, backend, board_id, name):
     tm_kept = plan.tracemaker_kept(stage, net_names(b))
     before_ids, before_vias = copper_ids(b), vias_on(b, kept)
     if backend == 'fastroute':
-        routed = route_fastroute(stage, src, d / 'router', board_id)
+        routed = route_fastroute(stage, src, d / 'router', board_id, features)
     else:
         routed = route_tracemaker(stage, src, d / 'router', board_id, copper)
     b = pcbnew.LoadBoard(str(routed))
@@ -249,11 +249,14 @@ def main():
     name = project.name
     start = outdir / 'input' / f'{name}.kicad_pcb'
     copy_project(source, start, sidecar_src=project.with_suffix('.kicad_pcb'))
-    p = plan.load(cfg, copper_layers(pcbnew.LoadBoard(str(start))))
+    known = json.loads((ROOT / 'tools/route-features.json').read_text())['features']
+    p = plan.load(cfg, copper_layers(pcbnew.LoadBoard(str(start))), known_features=set(known))
+    if p['features'] and (a.backend or p['backend']) != 'fastroute':
+        raise SystemExit('route: features are Fastroute switches; the tracemaker backend cannot apply them')
     backend = a.backend or p['backend']
     current, stages = start, []
     for i, stage in enumerate(p['stages']):
-        current, record = run_stage(i, stage, current, outdir, backend, a.board, name)
+        current, record = run_stage(i, stage, current, outdir, backend, a.board, name, plan.feature_env(p))
         stages.append(record)
         print(json.dumps(record), flush=True)
         if record['failures']:

@@ -15,7 +15,8 @@
        "keepouts": [{"name": "SELV", "inside" | "outside": [x0, y0, x1, y1], "layers": [...]}],   this stage only;
                                                     no tracks, vias or fills; default layers: all copper
        "require": {"open": 0, "vias": null}}],     fail the run above these counts on the stage nets
-   "pours": [{"name", "net", "layer", "shape": "board" | "around", "grow_mm", "priority", "connection"}]}
+   "pours": [{"name", "net", "layer", "shape": "board" | "around", "grow_mm", "priority", "connection"}],
+   "features": {"via_off_small_pads": true}}        Fastroute only: tools/route-features.json switches
 
 Boxes are in mm, board coordinates. "around" pours cover the pads and copper of the net grown by grow_mm.
 """
@@ -27,7 +28,7 @@ SCHEMA = 'iot-lab.route.v1'
 DRC_UNCONNECTED_CAP = 499
 NET_RE = re.compile(r'\[([^\]]+)\]')
 BACKENDS = ('fastroute', 'tracemaker')
-TOP_KEYS = {'schema', 'about', 'backend', 'layers', 'budget', 'stages', 'pours'}
+TOP_KEYS = {'schema', 'about', 'backend', 'layers', 'budget', 'stages', 'pours', 'features'}
 BUDGET_KEYS = {'passes', 'time_s', 'threads'}
 STAGE_KEYS = {'name', 'only_nets', 'skip_nets', 'layers', 'plane_nets', 'route_planes', 'neck_um', 'unlock_nets',
               'via_skip', 'remove_zones', 'keepouts', 'require'} | BUDGET_KEYS
@@ -91,9 +92,9 @@ def _budget(obj, base, where, errors):
     return out
 
 
-def load(cfg, copper):
-    """Validate a route.json object against the board copper layers; return the normalized plan or raise ValueError
-    with every error found."""
+def load(cfg, copper, known_features=None):
+    """Validate a route.json object against the board copper layers (and the known route feature names, which
+    fastroute_job would otherwise ignore); return the normalized plan or raise ValueError with every error found."""
     cfg = copy.deepcopy(cfg)
     errors = []
     if not _keys(cfg, TOP_KEYS, 'route.json', errors):
@@ -187,10 +188,24 @@ def load(cfg, copper):
                       'shape': raw.get('shape'), 'grow_mm': grow,
                       'priority': _count(raw.get('priority', 0), f'{where}.priority', errors),
                       'connection': raw.get('connection', 'full')})
+    features = cfg.get('features', {})
+    if not isinstance(features, dict):
+        errors.append('features must be an object')
+        features = {}
+    for key, value in sorted(features.items()):
+        if known_features is not None and key not in known_features:
+            errors.append(f'unknown feature {key}')
+        elif not isinstance(value, bool):
+            errors.append(f'features.{key} must be true or false')
     if errors:
         raise ValueError('; '.join(errors))
     return {'backend': cfg['backend'], 'about': cfg.get('about', ''), 'layers': layers, 'stages': stages,
-            'pours': pours}
+            'pours': pours, 'features': dict(features)}
+
+
+def feature_env(p):
+    """ROUTE_FEATURES value for tools/fastroute_job.py."""
+    return ','.join(f'{k}={int(v)}' for k, v in sorted(p['features'].items()))
 
 
 def fastroute_args(stage):
