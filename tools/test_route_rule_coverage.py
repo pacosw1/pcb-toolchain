@@ -226,11 +226,37 @@ class CoverageTests(unittest.TestCase):
         self.assert_passed(result)
         self.assertEqual(result['requirements'][0]['disposition'], 'immutable_unchanged')
         self.assert_blocked(self.inspect(rule()+' '+silk))
-        self.assert_blocked(self.inspect('(version 1) (rule "silk to mask" (constraint silk_clearance (min 1mm)))'))
+        # New vias can touch silk; the exact final native DRC decides that rule.
+        pending = self.inspect('(version 1) (rule "silk to mask" (constraint silk_clearance (min 1mm)))')
+        self.assert_pending(pending, dict(rule='silk to mask', constraint='silk_clearance',
+            enforcement='native-drc', drc_types=['silk_overlap', 'silk_over_copper']))
+
+    def assert_pending(self, result, obligation):
+        self.assertEqual(result['status'], 'pending_native', result)
+        self.assertTrue(result['solver_launch_allowed'], result)
+        self.assertFalse(result['qualified'])
+        rows = [r for r in result['requirements'] if r['disposition'] == 'native_postcondition']
+        self.assertIn(obligation, [r['native_obligation'] for r in rows])
+
+    def test_new_via_hole_rules_are_native_obligations_but_track_only_proof_is_kept(self):
+        either = "A.Pad_Type == 'Through-hole' || B.Pad_Type == 'Through-hole'"
+        self.assert_pending(self.inspect(rule('hole_clearance', '0.28mm', either)), dict(rule='PoE isolation',
+            constraint='hole_clearance', required_mm='0.28', enforcement='native-drc', drc_types=['hole_clearance']))
+        self.assert_pending(self.inspect(rule('hole_to_hole', '0.45mm', 'True')), dict(rule='PoE isolation',
+            constraint='hole_to_hole', required_mm='0.45', enforcement='native-drc', drc_types=['hole_to_hole', 'holes_co_located']))
+        # PTH-to-PTH only: the new via has no pad type, so the rule cannot apply.
+        both = "A.Pad_Type == 'Through-hole' && B.Pad_Type == 'Through-hole'"
+        self.assert_passed(self.inspect(rule('hole_to_hole', '0.45mm', both)))
+        # One layer: no new via, so the old exact track proof is still the only route.
+        self.assert_blocked(self.inspect(rule('hole_clearance', '0.28mm', either), dsn(mask=['F.Cu']), layers=['F.Cu']))
+        self.assert_blocked(self.inspect(rule('hole_clearance', '0.28mm (max 1mm)', either)))
 
     def test_reference_stitching_requires_actual_single_layer_active_net_mask(self):
-        self.assert_blocked(self.inspect('', dsn(), require_stitching=True))
-        self.assert_blocked(self.inspect('', dsn(mask=['F.Cu', 'B.Cu']), require_stitching=True))
+        # The configured gate runs RP-001 on the final board; admission records it as a typed gate obligation.
+        gate = dict(rule='configured kicad_happy RP-001', constraint='reference_stitching',
+                    enforcement='configured-gate', nets=[LED])
+        self.assert_pending(self.inspect('', dsn(), require_stitching=True), gate)
+        self.assert_pending(self.inspect('', dsn(mask=['F.Cu', 'B.Cu']), require_stitching=True), gate)
         passed = self.inspect('', dsn(mask=['F.Cu']), require_stitching=True)
         self.assert_passed(passed)
         self.assertEqual(passed['requirements'][0]['disposition'], 'covered')
@@ -345,7 +371,9 @@ class FileCoverageTests(unittest.TestCase):
         self.rules.write_text('(version 1)')
         self.base_rules.write_bytes(self.rules.read_bytes())
         self.gate.write_text(json.dumps(dict(checks=dict(drc=True, kicad_happy=True))))
-        self.assertEqual(self.check()['status'], 'blocked')
+        pending = self.check()
+        self.assertEqual(pending['status'], 'pending_native', pending)
+        self.assertEqual([o['enforcement'] for o in pending['native_postconditions']], ['configured-gate'])
         self.model.write_text(dsn('200', mask=['F.Cu']))
         self.assertEqual(self.check()['status'], 'passed')
 
@@ -358,6 +386,8 @@ class FileCoverageTests(unittest.TestCase):
             self.rules.write_text(rule('hole_clearance', '0.28mm',
                 "A.Pad_Type == 'Through-hole' || B.Pad_Type == 'Through-hole'"))
             self.base_rules.write_bytes(self.rules.read_bytes())
+            # Tracks only: with new vias the exact final native DRC decides this rule instead.
+            self.model.write_text(dsn('3000', mask=['F.Cu']))
             relevant = self.check()
             self.assertEqual(relevant['status'], 'blocked', relevant)
             self.assertFalse(relevant['solver_launch_allowed'])
@@ -548,7 +578,10 @@ class ProjectCoverageTests(unittest.TestCase):
         result=coverage.check_files(self.board,self.base,self.model,active_nets=[LED],net_classes=CLASSES,
             obstacles=OBSTACLES,layers=['F.Cu','B.Cu'],gate=self.gate,backend_command=self.command)
         self.assertEqual(result['status'],'blocked',result)
-        self.assertEqual(self.row(result,'min_hole_to_hole')['disposition'],'unsupported')
+        # No via padstack library in the actual DSN: the via dimensions are unknown.
+        self.assertEqual(self.row(result,'min_via_diameter')['disposition'],'unsupported')
+        self.assertIn('DSN library',self.row(result,'min_via_diameter')['reason'])
+        self.assertEqual(self.row(result,'min_hole_to_hole')['disposition'],'native_postcondition')
         self.model.write_text(self.single_layer_model())
         via='''(via (at 25 25) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net "/LED_LINK_K") (uuid "via"))'''
         self.write_native(native()[:-1]+via+')')
@@ -556,6 +589,78 @@ class ProjectCoverageTests(unittest.TestCase):
         result=self.check()
         self.assertEqual(result['status'],'blocked',result)
         self.assertFalse(result['drilled_geometry_preserved'])
+
+    def via_check(self, stack='600:300', drill=0.3):
+        # KiCad 10 specctra export: "Via[top-bottom]_<DSN diameter>:<drill um>_um".
+        name='Via[0-1]_'+stack+'_um'; size=stack.split(':')[0]
+        text=dsn('200',extra='(via "'+name+'")')
+        self.model.write_text(text[:-1]+' (library (padstack "'+name+'" (shape (circle F.Cu '+size+
+            ')) (shape (circle B.Cu '+size+')) (attach off))) (placement))')
+        for item in self.authored['net_settings']['classes']:
+            item.update(via_diameter=0.6, via_drill=drill)
+        self.save_project()
+        return coverage.check_files(self.board,self.base,self.model,active_nets=[LED],net_classes=CLASSES,
+            obstacles=OBSTACLES,layers=['F.Cu','B.Cu'],gate=self.gate,backend_command=self.command)
+
+    def test_new_via_padstacks_meeting_minima_are_covered_and_hole_rules_stay_native(self):
+        result=self.via_check()
+        self.assertEqual(result['status'],'pending_native',result)
+        self.assertTrue(result['solver_launch_allowed'])
+        for name in ('min_via_diameter','min_through_hole_diameter','min_via_annular_width'):
+            self.assertEqual(self.row(result,name)['disposition'],'covered',name)
+        witness=self.row(result,'min_via_diameter')['via_padstacks']
+        self.assertIn(dict(source='dsn padstack Via[0-1]_600:300_um',diameter_mm='0.6',drill_mm='0.3',
+            annular_mm='0.15',through=True),witness)
+        for name in ('min_microvia_diameter','min_microvia_drill'):
+            self.assertEqual(self.row(result,name)['disposition'],'not_applicable',name)
+        for name in ('min_text_height','min_text_thickness'):
+            self.assertEqual(self.row(result,name)['disposition'],'immutable_unchanged',name)
+        for name,types in (('min_hole_to_hole',['hole_to_hole','holes_co_located']),('min_hole_clearance',['hole_clearance'])):
+            item=self.row(result,name)
+            self.assertEqual(item['disposition'],'native_postcondition',name)
+            self.assertEqual(item['native_obligation'],dict(constraint=name,required_mm=item['required_mm'],
+                enforcement='native-drc',drc_types=types))
+            self.assertIn(item['native_obligation'],result['native_postconditions'])
+
+    def test_new_via_padstack_below_a_project_minimum_blocks_with_its_cause(self):
+        for stack,drill,name in (('400:200',0.3,'min_via_diameter'),('500:150',0.3,'min_through_hole_diameter'),
+                                 ('500:320',0.3,'min_via_annular_width'),('600:300',0.1,'min_through_hole_diameter')):
+            with self.subTest(stack=stack,drill=drill):
+                result=self.via_check(stack,drill)
+                self.assertEqual(result['status'],'blocked',result)
+                self.assertFalse(result['solver_launch_allowed'])
+                item=self.row(result,name)
+                self.assertEqual(item['disposition'],'weaker_than_native')
+                self.assertIn('Via[0-1]_'+stack+'_um' if drill==0.3 else 'netclass Default',item['reason'])
+
+    def test_job_added_base_vias_are_measured_but_a_changed_source_hole_still_blocks(self):
+        # fastroute_job places plane vias on the base before routing; they are fixed router input.
+        via='(via (at 25 25) (size SIZE) (drill 0.3) (layers "F.Cu" "B.Cu") (net "/POE_V2N") (uuid "plane-via"))'
+        self.base.write_text(native()[:-1]+via.replace('SIZE','0.6')+')')
+        result=self.via_check()
+        self.assertEqual(result['status'],'pending_native',result)
+        self.assertFalse(result['drilled_geometry_preserved'])
+        self.assertIn('base via plane-via',[v['source'] for v in self.row(result,'min_via_diameter')['via_padstacks']])
+        self.base.write_text(native()[:-1]+via.replace('SIZE','0.48')+')')
+        result=self.via_check()
+        self.assertEqual(result['status'],'blocked',result)
+        self.assertIn('base via plane-via',self.row(result,'min_via_annular_width')['reason'])
+        self.write_native(native()[:-1]+via.replace('SIZE','0.6')+')')
+        self.base.write_text(native())
+        result=self.via_check()
+        self.assertEqual(result['status'],'blocked',result)
+        self.assertEqual(self.row(result,'min_via_diameter')['disposition'],'unsupported')
+
+    def test_unknown_or_absent_rule_still_blocks_when_new_vias_are_possible(self):
+        self.authored['board']['design_settings']['rules']['min_new_feature']=1
+        result=self.via_check()
+        self.assertEqual(result['status'],'blocked',result)
+        self.assertEqual(self.row(result,'min_new_feature')['disposition'],'unsupported')
+        del self.authored['board']['design_settings']['rules']['min_new_feature']
+        del self.authored['board']['design_settings']['rules']['min_via_diameter']
+        result=self.via_check()
+        self.assertEqual(result['status'],'blocked',result)
+        self.assertEqual(self.row(result,'min_via_diameter')['disposition'],'unsupported')
 
     def test_positive_spoke_requirement_is_not_covered_by_identical_authored_zone(self):
         zone='(zone (net "/POE_V2N") (net_name "/POE_V2N") (layer "F.Cu") (connect_pads (clearance 0.2)))'
@@ -800,6 +905,41 @@ class ProjectCoverageTests(unittest.TestCase):
             custom=next(r for r in result['requirements'] if r['rule']=='PoE isolation')
             self.assertEqual(custom['disposition'],'unsupported')
             self.assertEqual(self.row(result,'min_hole_clearance')['disposition'],'unsupported')
+
+
+class NativePostconditionTests(unittest.TestCase):
+    HOLES = dict(constraint='min_hole_to_hole', required_mm='0.25', enforcement='native-drc',
+                 drc_types=['hole_to_hole', 'holes_co_located'])
+    GATE = dict(rule='configured kicad_happy RP-001', constraint='reference_stitching',
+                enforcement='configured-gate', nets=[LED])
+    THERMAL = dict(constraint='min_resolved_spokes', required_count='2', capability_sha256='c'*64)
+
+    def report(self, violations=(), ignored=(), severities=('error', 'warning', 'exclusion')):
+        return dict(violations=list(violations), unconnected_items=[], schematic_parity=[],
+                    ignored_checks=[dict(key=k) for k in ignored], included_severities=list(severities))
+
+    def test_clean_native_drc_discharges_and_gate_and_thermal_obligations_stay_typed(self):
+        result = coverage.discharge_native([self.HOLES, self.GATE, self.THERMAL],
+            self.report([dict(type='clearance', severity='error')]))
+        self.assertEqual(result['status'], 'passed', result)
+        self.assertEqual(result['native_drc'], [dict(self.HOLES, violations=0)])
+        self.assertEqual(result['configured_gate'], [self.GATE])
+        self.assertEqual(result['native_checkback'], [self.THERMAL])
+        self.assertFalse(result['qualified'])
+
+    def test_violation_ignored_check_or_incomplete_report_fails_the_obligation(self):
+        cases = dict(warning=self.report([dict(type='hole_to_hole', severity='warning')]),
+                     excluded=self.report([dict(type='holes_co_located', severity='exclusion', excluded=True)]),
+                     ignored=self.report(ignored=['hole_to_hole']),
+                     severities=self.report(severities=('error',)),
+                     malformed=dict(violations=[]))
+        for label, report in cases.items():
+            with self.subTest(report=label):
+                result = coverage.discharge_native([self.HOLES], report)
+                self.assertEqual(result['status'], 'failed', result)
+                self.assertTrue(result['cause'])
+        unknown = coverage.discharge_native([dict(constraint='min_hole_to_hole')], self.report())
+        self.assertEqual(unknown['status'], 'failed', unknown)
 
 
 class ClearanceStrengtheningTests(unittest.TestCase):

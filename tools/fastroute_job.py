@@ -854,6 +854,7 @@ def _main(a=None):
                                             float(feat["routing_rules"].get("keepout_grid_mm", 0.1)), fast)
 
     solver_launches = []
+    native_obligations = []   # admitted pending obligations; discharged by the final native DRC below
 
     def route_pass(tag, stage_nets, keep, rip=frozenset(), extra=None):
         """One router run over stage_nets (the other nets are ignored classes; existing copper stays locked).
@@ -1057,7 +1058,10 @@ def _main(a=None):
             print('STUCK router rule coverage: ' + coverage['cause'] + '; see ' + coverage_path, flush=True)
             sys.exit(4)
         if coverage.get('status') == 'pending_native':
-            print('ADMITTED router model with pending native thermal obligation; evidence=' + coverage_path, flush=True)
+            native_obligations.extend(o for o in coverage.get('native_postconditions', []) if o not in native_obligations)
+            print('ADMITTED router model with pending native obligations (' + ', '.join(
+                o['constraint'] + ' ' + o.get('enforcement', 'native-checkback') for o in coverage.get('native_postconditions', []))
+                + '); evidence=' + coverage_path, flush=True)
         else:
             print('PASS router rule coverage; evidence=' + coverage_path, flush=True)
         effective = dict(configuration=vars(a), features=feat, command=cmd, dsn_sha256=lean.digest(model_dsn),
@@ -1509,6 +1513,16 @@ def _main(a=None):
         print(f"STUCK {job_open} open signal connections after routing (fail_fast): no optimizer, exit {STUCK_RC}; "
               f"see {os.path.join(a.outdir, 'open-triage.json')}", flush=True)
         sys.exit(STUCK_RC)
+    # Pending admission obligations: the final native DRC of the saved board must show none of their types.
+    post = route_rule_coverage.discharge_native(native_obligations, d) if native_obligations else None
+    if post is not None:
+        lean.atomic_json(os.path.join(a.outdir, 'native-postconditions.json'), post)
+    if post is not None and post['status'] != 'passed':
+        lean.atomic_json(os.path.join(a.outdir, 'outcome.json'), dict(status='blocked', qualified=False,
+            cause='native postcondition: ' + post['cause'], board_sha256=lean.digest(out),
+            native_postconditions=os.path.join(a.outdir, 'native-postconditions.json')))
+        print('STUCK native postcondition: ' + post['cause'], flush=True)
+        sys.exit(4)
     if base_b_cfg:
         rb = pcbnew.LoadBoard(out)
         faults = base_b_route_rules.layer_faults([(t.GetNetname(), t.GetLayerName()) for t in rb.GetTracks()
@@ -1531,6 +1545,7 @@ def _main(a=None):
     lean.atomic_json(os.path.join(a.outdir, 'outcome.json'),
                      dict(status='complete', qualified=False, optimizer=a.optimizer, signal_open=signal_open,
                           ground_open=gnd_open, errors=errors, board_sha256=lean.digest(out),
+                          configured_gate_obligations=post['configured_gate'] if post else [],
                           note='import verified; full final board gate remains required'))
 
 

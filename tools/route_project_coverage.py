@@ -6,6 +6,7 @@ supplies the final command that will be used, then runs the native gate.
 """
 from decimal import Decimal
 import json
+import re
 
 import route_hole_coverage
 
@@ -21,6 +22,64 @@ HOLE_DIMENSIONS = {'min_hole_to_hole', 'min_microvia_diameter',
                    'min_via_annular_width', 'min_via_diameter'}
 FIXED_GEOMETRY = {'min_groove_width', 'min_silk_clearance', 'min_text_height',
                   'min_text_thickness'}
+TEXT = {'min_text_height', 'min_text_thickness'}
+# Rules that only the final native DRC can decide when new vias are possible:
+# rule/constraint name -> KiCad 10 DRC item types (kicad_pro rule_severities keys).
+NATIVE_DRC = {'min_hole_to_hole': ['hole_to_hole', 'holes_co_located'],
+              'hole_to_hole': ['hole_to_hole', 'holes_co_located'],
+              'min_hole_clearance': ['hole_clearance'], 'hole_clearance': ['hole_clearance'],
+              'min_silk_clearance': ['silk_overlap', 'silk_over_copper'],
+              'silk_clearance': ['silk_overlap', 'silk_over_copper']}
+VIA_NAME = re.compile(r'Via\[(\d+)-(\d+)\]_(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)_um')
+
+
+def native_drc(constraint, **extra):
+    """Pending obligation: the final native DRC must report none of these types."""
+    return dict(disposition='native_postcondition',
+        native_obligation=dict(extra, constraint=constraint, enforcement='native-drc',
+                               drc_types=list(NATIVE_DRC[constraint])),
+        reason='new vias are possible; the final native DRC of the saved candidate must show zero findings of these types')
+
+
+def via_sizes(dsn_text, model, active_nets, classes, net_classes):
+    """Every via the active nets can get, from the actual DSN and the job's via source.
+
+    KiCad 10 specctra_export.cpp makeVia names a via padstack
+    "Via[%d-%d]_%.6g:%.6g_um" (DSN copper diameter, drill in um) and
+    specctra_import.cpp makeVIA reads the drill back from that name. The
+    router can place only the padstacks of the structure via list and of the
+    active class use_via. fastroute_job --signal-via sets new vias to the
+    project netclass via size, so those sizes are included too."""
+    hc = route_hole_coverage
+    root = hc._parse(dsn_text)
+    structure, network, library = hc._one(root, 'structure'), hc._one(root, 'network'), hc._one(root, 'library')
+    stacks, copper = hc._index(library, 'padstack'), [l[1] for l in hc._children(structure, 'layer')]
+    names = {v for form in hc._children(structure, 'via') for v in form[1:] if isinstance(v, str)}
+    dsn_classes = hc._index(network, 'class')
+    for net in active_nets:
+        for circuit in hc._children(dsn_classes[model.membership[net]], 'circuit'):
+            names |= {v for use in hc._children(circuit, 'use_via') for v in use[1:] if isinstance(v, str)}
+    if not names:
+        raise ValueError('active nets may change layer, but the actual DSN declares no via padstack')
+    result = []
+    for name in sorted(names):
+        match = VIA_NAME.fullmatch(name)
+        if not match or name not in stacks:
+            raise ValueError('via padstack is missing or not the exact KiCad DSN via encoding: ' + name)
+        top, bottom = int(match[1]), int(match[2])
+        shapes = hc._children(stacks[name], 'shape')
+        if (bottom >= len(copper) or top > bottom
+                or any(len(s) != 2 or not isinstance(s[1], list) or len(s[1]) != 3 or s[1][0] != 'circle'
+                       or hc._d(s[1][2]) != Decimal(match[3]) for s in shapes)
+                or sorted(s[1][1] for s in shapes) != sorted(copper[top:bottom + 1])):
+            raise ValueError('via padstack copper differs from its exact name encoding: ' + name)
+        result.append(dict(source='dsn padstack ' + name, diameter=Decimal(match[3]) * hc.UNITS[model.unit],
+            drill=Decimal(match[4]) / 1000, through=top == 0 and bottom == len(copper) - 1))
+    for name in sorted({net_classes[net] for net in active_nets}):
+        item = classes.get(name, (None, {}))[1]
+        result.append(dict(source='netclass ' + name, diameter=_number(item.get('via_diameter')),
+            drill=_number(item.get('via_drill')), through=True))
+    return result
 KNOWN = set(REQUIRED) | FIXED_GEOMETRY | {'min_connection', 'min_resolved_spokes',
                                        'max_error', 'use_height_for_length_calcs',
                                        'solder_mask_to_copper_clearance'}
@@ -131,7 +190,7 @@ def command_floor(command, name):
 def evaluate(text, *, source, model, dsn_text, active_nets, net_classes, obstacles,
              layers, holes, holes_preserved, immutable_geometry_preserved,
              backend_command, thermal=None, backend_policy=None,
-             native_thermal_capability=None):
+             native_thermal_capability=None, added_vias=None):
     rows = []
 
     def row(name, pointer, value=None):
@@ -149,6 +208,17 @@ def evaluate(text, *, source, model, dsn_text, active_nets, net_classes, obstacl
         return rows
 
     moving_vias = any(len(model.allowed(net)) != 1 for net in active_nets)
+    vias, via_error = None, None
+    if moving_vias:
+        try:
+            # Through vias the job added to the base before routing are fixed router input.
+            vias = via_sizes(dsn_text, model, active_nets, classes, net_classes) + [dict(
+                source='base via ' + h['identity'], diameter=Decimal(h['size_mm'][0]),
+                drill=Decimal(h['drill_mm'][0]), through=True) for h in added_vias or []]
+            for item in vias:
+                item['annular'] = (item['diameter'] - item['drill']) / 2
+        except (ValueError, KeyError, TypeError, IndexError, ArithmeticError) as error:
+            via_error = str(error)
     counterparts = {obj['NetName'] for obj in obstacles} | set(active_nets)
     pairs = [(left, right) for left in sorted(active_nets) for right in sorted(counterparts) if left != right]
     # Every actual class used by active/retained objects must resolve against
@@ -190,7 +260,7 @@ def evaluate(text, *, source, model, dsn_text, active_nets, net_classes, obstacl
                     item_row.update(disposition='not_applicable', thermal_applicability=thermal,
                         reason='undeclared threshold is not invented; exact native scope has no possible thermal connections')
                     continue
-                if (name in FIXED_GEOMETRY or name in HOLE_DIMENSIONS) and not moving_vias and (
+                if (name in FIXED_GEOMETRY or name in HOLE_DIMENSIONS) and (not moving_vias or name in TEXT) and (
                         immutable_geometry_preserved if name in FIXED_GEOMETRY else holes_preserved):
                     item_row.update(disposition='immutable_unchanged',
                         reason='undeclared threshold is unknown but its exact native geometry cannot change under this scope')
@@ -231,7 +301,8 @@ def evaluate(text, *, source, model, dsn_text, active_nets, net_classes, obstacl
                     reason='exact final backend command control compared to authored project minimum')
             elif name == 'min_hole_clearance':
                 if moving_vias:
-                    raise ValueError('new via/hole transitions lack a proven project hole-clearance model')
+                    item_row.update(native_drc(name, required_mm=str(value)))
+                    continue
                 if holes is None or not holes_preserved:
                     raise ValueError('complete unchanged original/base drilled geometry is required')
                 proofs = []
@@ -251,14 +322,41 @@ def evaluate(text, *, source, model, dsn_text, active_nets, net_classes, obstacl
                     raise ValueError('; '.join(failures))
                 item_row.update(disposition='covered' if proofs else 'not_applicable',
                     reason='all applicable original drilled items have exact final DSN containment' if proofs else 'complete native inventory has no different-net drilled item')
-            elif name in HOLE_DIMENSIONS:
-                if moving_vias or not holes_preserved:
+            elif name in HOLE_DIMENSIONS and not moving_vias:
+                if not holes_preserved:
                     raise ValueError('hole-only dimensions require verified no-new-via masks and unchanged original/base holes')
                 item_row.update(disposition='immutable_unchanged', reason='actual active-net masks forbid new holes; exact source/base drilled geometry remains fixed')
+            elif name in HOLE_DIMENSIONS:
+                if not holes_preserved and added_vias is None:
+                    raise ValueError('new vias are possible; source drilled geometry must be unchanged in the base, with only added through vias')
+                if name == 'min_hole_to_hole':
+                    item_row.update(native_drc(name, required_mm=str(value)))
+                    continue
+                if via_error is not None:
+                    raise ValueError(via_error)
+                if name.startswith('min_microvia_'):
+                    if not all(v['through'] for v in vias):
+                        raise ValueError('a blind/buried/micro via padstack can be placed; microvia minimum is unproved')
+                    item_row.update(disposition='not_applicable', reason='every via the active nets can get is a through via; original holes unchanged')
+                    continue
+                key = dict(min_via_diameter='diameter', min_through_hole_diameter='drill', min_via_annular_width='annular')[name]
+                low = min(vias, key=lambda v: v[key])
+                text = lambda v: '{:f}'.format(v.normalize())
+                item_row.update(model_floor_mm=text(low[key]), via_padstacks=[dict(source=v['source'],
+                    diameter_mm=text(v['diameter']), drill_mm=text(v['drill']), annular_mm=text(v['annular']),
+                    through=v['through']) for v in vias])
+                if low[key] >= value:
+                    item_row.update(disposition='covered', reason='every via the active nets can get meets the minimum: exact DSN padstacks and netclass via sizes; original holes unchanged')
+                else:
+                    item_row.update(disposition='weaker_than_native',
+                        reason=low['source'] + ' ' + key + ' ' + text(low[key]) + ' mm is below the project minimum')
+            elif name == 'min_silk_clearance' and moving_vias and immutable_geometry_preserved:
+                item_row.update(native_drc(name, required_mm=str(value)))
             elif name in FIXED_GEOMETRY:
-                if moving_vias or not immutable_geometry_preserved:
+                if (moving_vias and name not in TEXT) or not immutable_geometry_preserved:
                     raise ValueError('fixed text/mask/outline rule needs unchanged geometry and no new holes')
-                item_row.update(disposition='immutable_unchanged', reason='source/base fixed text, mask, outline and footprint geometry preserved; model introduces tracks only')
+                item_row.update(disposition='immutable_unchanged', reason='router adds only tracks and vias, never text; source/base text preserved'
+                    if name in TEXT else 'source/base fixed text, mask, outline and footprint geometry preserved; model introduces tracks only')
             elif (name == 'min_resolved_spokes' and thermal is not None
                     and thermal.get('thermal_connections_possible') is False and immutable_geometry_preserved):
                 item_row.update(disposition='not_applicable', thermal_applicability=thermal, reason=thermal['reason'])
