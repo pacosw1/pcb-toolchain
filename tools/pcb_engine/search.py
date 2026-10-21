@@ -337,6 +337,18 @@ def run_engine(folder, workspace, board, policy, *, timeout_s, node='node', env=
                     # Each alternative performs its own admission. A rejected
                     # Fastroute model does not certify or reject the separately
                     # source-bound local/native model.
+                except Exception as error:
+                    # The environment may be inconsistent: record, stop searching,
+                    # and still select from already checked candidates.
+                    cause = 'unexpected engine error in ' + attempt.name + ': ' + type(error).__name__ + ': ' + str(error)
+                    findings = findings + (Finding('engine_error', cause),)
+                    atomic_json(attempt / 'failed.json', dict(status='failed', cause=cause,
+                                                              error_type=type(error).__name__))
+                    session.event('engine.failed_attempt', attempt_id=attempt.name, cause=cause)
+                    terminal_cause = cause
+                    if session.phase in ('diagnosing', 'verifying'):
+                        session.transition('searching')
+                    break
                 if session.phase in ('diagnosing', 'verifying'):
                     session.transition('searching')
                 successors(strategy)

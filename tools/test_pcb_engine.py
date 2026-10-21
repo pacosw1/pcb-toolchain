@@ -162,6 +162,29 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(result['selected_strategy']['kind'], 'baseline')
         self.assertIn('missing runtime', result['cause'])
 
+    def test_unexpected_attempt_error_stops_search_and_keeps_verified_incumbent(self):
+        self.native.write_text(BOARD[:-1] + SEGMENT + ')')
+        class Broken(FakeBackend):
+            def route(self, directory):
+                self.native.write_text('corrupt')
+                raise ValueError('finalize could not read export')
+            def local_repair(self, directory, worker):
+                raise AssertionError('search continued after an unexpected error')
+        result = run_engine(self.root, self.workspace, 'TEST', policy(max_attempts=3), timeout_s=30,
+                            backend_factory=Broken)
+        output = self.root / 'operation/engine'
+        self.assertEqual(json.loads((output / 'result.json').read_text())['cause'], result['cause'])
+        self.assertEqual(result['selected_strategy']['kind'], 'baseline')
+        self.assertEqual(result['attempts'], 1)
+        self.assertIn('finalize could not read export', result['cause'])
+        self.assertIn('engine_error', [f['classification'] for f in result['findings']])
+        self.assertEqual(self.native.read_text(), BOARD[:-1] + SEGMENT + ')')
+        failed = list(output.glob('attempt-*/failed.json'))
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(json.loads(failed[0].read_text())['error_type'], 'ValueError')
+        events = [json.loads(line)['type'] for line in (output / 'events.jsonl').read_text().splitlines()]
+        self.assertIn('engine.failed_attempt', events)
+
     def test_diagnosed_gap_uses_cheap_guarded_repair_before_solver(self):
         class Repair(FakeBackend):
             def diagnose(self, evidence):
