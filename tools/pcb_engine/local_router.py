@@ -182,7 +182,9 @@ def route_srj(srj, *, compute=None, backend='cpu', budget_s=30, emit=None, pitch
                         continue
                     extra = srj.get('minTraceToHoleEdgeClearance', margin) + width/2 if obstacle.get('isNonPlatedHole') else margin
                     cx, cy = obstacle['center']['x'], obstacle['center']['y']
-                    if abs(x-cx) <= obstacle['width']/2+extra+sampling_margin and abs(y-cy) <= obstacle['height']/2+extra+sampling_margin:
+                    # Euclidean distance to the obstacle rectangle, as native clearance: the
+                    # grown zone has round corners. It still contains every rounded pad shape.
+                    if math.hypot(max(abs(x-cx)-obstacle['width']/2, 0), max(abs(y-cy)-obstacle['height']/2, 0)) <= extra+sampling_margin:
                         blocked.add(cell)
                         break
                 if cell in blocked:

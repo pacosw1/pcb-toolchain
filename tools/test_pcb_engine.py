@@ -528,6 +528,21 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(blocked['status'], 'blocked')
         self.assertEqual(blocked['unresolved_nets'], ['N'])
 
+    def test_pad_clearance_has_round_corners_like_native_drc(self):
+        # Terminal (2.8, 2.8) is 0.42 mm from the corner of the other-net pad; it needs
+        # 0.25 + 0.07 sampling. A square-grown box (up to 2.82 on both axes) blocks it.
+        srj = dict(bounds=dict(minX=0, minY=0, maxX=6, maxY=6),
+            minTraceWidth=.2, minViaPadDiameter=.6, defaultObstacleMargin=.15,
+            obstacles=[dict(type='rect', layers=['top'], center=dict(x=2., y=2.), width=1., height=1.,
+                            connectedTo=['OTHER'])],
+            traces=[], connections=[dict(name='N', nominalTraceWidth=.2,
+                pointsToConnect=[dict(x=2.8, y=2.8, layers=['top']), dict(x=5., y=5., layers=['top'])])])
+        result = route_srj(srj, budget_s=3, allowed_layers=['top'])
+        self.assertEqual(result['status'], 'candidate', result['reason'])
+        # Inside the true clearance it stays blocked.
+        srj['connections'][0]['pointsToConnect'][0].update(x=2.7, y=2.7)
+        self.assertEqual(route_srj(srj, budget_s=3, allowed_layers=['top'])['status'], 'blocked')
+
     def test_complete_board_reports_no_copper_instead_of_a_proposal(self):
         srj = dict(bounds=dict(minX=0, minY=0, maxX=4, maxY=4),
             minTraceWidth=.2, minViaPadDiameter=.6, defaultObstacleMargin=.2,
