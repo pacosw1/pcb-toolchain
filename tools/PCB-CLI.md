@@ -227,8 +227,31 @@ does not independently count spokes on every pad.
 Silkscreen-only constraints are unchanged only when the actual active-net masks
 permit no new vias and source/import identity guards preserve the existing
 footprints, graphics and outline. Final native/configured checks remain
-mandatory. With configured RP-001 checks and no stitching producer,
-the actual active-net layer masks must prevent new layer transitions.
+mandatory.
+When the active-net masks permit new vias, admission uses these dispositions:
+- Via dimensions (`min_via_diameter`, `min_through_hole_diameter`,
+  `min_via_annular_width`) are `covered` only by an exact proof. The proof reads
+  every via padstack in the structure `via` list and in the active class
+  `use_via`. KiCad 10 writes the name `Via[top-bottom]_<diameter>:<drill um>_um`,
+  and its SES import reads the drill from that name. The proof also reads the
+  active netclass via size (`--signal-via` uses it) and each through via that the
+  job added to the base. A size below a minimum blocks and names its source.
+  Microvia minima are `not_applicable` only when every possible via is a through
+  via. All source holes must stay unchanged in the base.
+- Text height and thickness stay `immutable_unchanged`. The router adds only
+  tracks and vias, and the identity guards keep the existing text.
+- Hole-to-hole, hole clearance (project and custom) and silkscreen clearance
+  become `native_postcondition` obligations of type `native-drc`. Admission is
+  `pending_native`. The final native DRC (with refill) of the saved candidate must
+  show zero new findings of each obligation type, with all severities and no ignored
+  check of that type. A finding is not new when the native DRC of the input board
+  (`input-drc.json`, same flags) has a finding with the same type and item UUIDs;
+  one input finding excuses one final finding. Otherwise the job stops with `STUCK native postcondition`,
+  exit 4. The result is in `native-postconditions.json`.
+- Configured RP-001 with no stitching producer becomes an obligation of type
+  `configured-gate`. The job does not run the board gate, so `outcome.json`
+  lists it in `configured_gate_obligations`. The configured gate must pass.
+Unknown, absent or malformed rules still block.
 Earlier sealed native results remain historical facts under their recorded
 inputs and controls; expanded admission does not rewrite them or certify a new
 run from old evidence.

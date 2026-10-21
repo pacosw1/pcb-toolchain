@@ -5,6 +5,7 @@ semantics (including creepage and spatial selectors) block, even with the rule
 compiler enabled. No flags bypass the check. Final native gates still apply.
 """
 import ast
+import collections
 from decimal import Decimal, InvalidOperation
 import fnmatch
 import hashlib
@@ -306,6 +307,9 @@ def inspect(dru_text, dsn_text, *, active_nets, net_classes, obstacles,
                     row.update(disposition='immutable_unchanged',
                         reason='single-layer router adds covered tracks, no new holes; source and import/final identity guards preserve masks, silk and outline')
                     continue
+                if kind == 'silk_clearance':
+                    row.update(route_project_coverage.native_drc(kind, rule=rule))
+                    continue
                 if kind == 'disallow' and constraint[2:] == ['pad']:
                     row.update(disposition='immutable_unchanged', reason='router does not modify footprint/pad geometry; import identity guard remains required')
                     continue
@@ -354,6 +358,9 @@ def inspect(dru_text, dsn_text, *, active_nets, net_classes, obstacles,
                             or len(bounds[0]) != 2 or bounds[0][0] != 'min'):
                         row['reason'] = 'only a native minimum hole clearance is covered'
                         continue
+                    if any(a['Type'] == 'Via' for a, _ in applicable):
+                        row.update(route_project_coverage.native_drc(kind, rule=rule, required_mm=str(_number(bounds[0][1]))))
+                        continue
                     if (native_pads is None or not native_pads
                             or any(a['Type'] != 'Track' or b.get('Type') != 'Pad'
                                    or b.get('Pad_Type') != 'Through-hole' for a, b in applicable)
@@ -369,6 +376,12 @@ def inspect(dru_text, dsn_text, *, active_nets, net_classes, obstacles,
                     row.update(required_mm=str(required), hole_geometry=proof,
                         disposition='covered' if proof.get('status') == 'covered' else 'unsupported',
                         reason=proof.get('cause', 'actual exported PTH copper containment was not proved'))
+                elif kind == 'hole_to_hole' and any(v['Type'] == 'Via' for v in moving):
+                    bounds = constraint[2:]
+                    if len(bounds) != 1 or not isinstance(bounds[0], list) or len(bounds[0]) != 2 or bounds[0][0] != 'min':
+                        row['reason'] = 'only a native minimum hole-to-hole distance is covered'
+                        continue
+                    row.update(route_project_coverage.native_drc(kind, rule=rule, required_mm=str(_number(bounds[0][1]))))
                 elif kind == 'disallow' and set(constraint[2:]) <= {'via'} and constraint[2:]:
                     row.update(disposition='covered' if all(len(model.allowed(a['NetName'])) == 1 for a, _ in applicable) else 'weaker_than_native',
                                reason='native via prohibition requires verified single-layer routing for every applicable active net')
@@ -376,11 +389,17 @@ def inspect(dru_text, dsn_text, *, active_nets, net_classes, obstacles,
                     row['reason'] = 'applicable native constraint has no proven enforcement in the actual DSN model'
         if require_stitching:
             multilevel = [n for n in sorted(active_nets) if len(model.allowed(n)) != 1]
-            rows.append(dict(rule='configured kicad_happy RP-001', constraint='reference_stitching',
-                disposition='unsupported' if multilevel else 'covered',
-                reason='no bound stitching producer; active net masks must prevent new layer transitions', nets=multilevel))
-        blockers = [r for r in rows if r['disposition'] not in ('covered', 'immutable_unchanged', 'not_applicable')]
-        result.update(status='blocked' if blockers else 'passed', solver_launch_allowed=not blockers,
+            row = dict(rule='configured kicad_happy RP-001', constraint='reference_stitching', disposition='covered',
+                reason='active net masks prevent new layer transitions', nets=multilevel)
+            if multilevel:
+                # No stitching producer here; the configured board gate runs RP-001 on the final board.
+                row.update(disposition='native_postcondition', native_obligation=dict(rule=row['rule'],
+                    constraint=row['constraint'], enforcement='configured-gate', nets=multilevel),
+                    reason='new layer transitions are possible; the configured gate must pass RP-001 on the final board')
+            rows.append(row)
+        blockers = [r for r in rows if r['disposition'] not in ('covered', 'immutable_unchanged', 'not_applicable', 'native_postcondition')]
+        pending = any(r['disposition'] == 'native_postcondition' for r in rows)
+        result.update(status='blocked' if blockers else ('pending_native' if pending else 'passed'), solver_launch_allowed=not blockers,
             cause='; '.join(str(r['rule']) + ': ' + r['constraint'] + ' ' + r['disposition'] for r in blockers) or 'applicable native requirements covered by final DSN model')
     except (ValueError, KeyError, IndexError, TypeError, InvalidOperation) as error:
         result.update(cause=str(error))
@@ -471,8 +490,13 @@ def check_files(board, base, dsn, *, active_nets, net_classes, obstacles, layers
         original_holes = route_hole_coverage.native_drilled_geometry(board)
         holes = route_hole_coverage.native_drilled_geometry(base)
         holes_preserved = sorted(original_holes, key=lambda h: h['identity']) == sorted(holes, key=lambda h: h['identity'])
+        # A base that only adds supported through vias (job plane vias) keeps every source hole.
+        same = lambda h: json.dumps(h, sort_keys=True)
+        added = [h for h in holes if same(h) not in {same(o) for o in original_holes}]
+        added_vias = None if holes_preserved or {same(o) for o in original_holes} - {same(h) for h in holes} or any(
+            h['kind'] != 'via' or not h['supported'] for h in added) else added
     except (ValueError, ArithmeticError) as error:
-        holes, holes_preserved, drilled_error = None, False, str(error)
+        holes, holes_preserved, drilled_error, added_vias = None, False, str(error), None
     if drilled_error:
         result['native_drilled_geometry_unknown'] = drilled_error
     native_capability = None
@@ -521,7 +545,7 @@ def check_files(board, base, dsn, *, active_nets, net_classes, obstacles, layers
             net_classes=net_classes, obstacles=obstacles, layers=layers, holes=holes,
             holes_preserved=holes_preserved, immutable_geometry_preserved=fixed_preserved,
             backend_command=command, thermal=thermal, backend_policy=policy,
-            native_thermal_capability=native_capability)
+            native_thermal_capability=native_capability, added_vias=added_vias)
     except (ValueError, KeyError, TypeError, ArithmeticError) as error:
         project_rows = [dict(rule='native project', constraint='project_model', disposition='unsupported', reason=str(error))]
     result['requirements'].extend(project_rows)
@@ -558,7 +582,8 @@ def check_files(board, base, dsn, *, active_nets, net_classes, obstacles, layers
         backend_command=serializable_command, backend_command_sha256=(hashlib.sha256(json.dumps(serializable_command,
             separators=(',', ':'), ensure_ascii=True).encode()).hexdigest() if serializable_command is not None else None),
         backend_policy=policy if isinstance(policy, dict) else None,
-        drilled_geometry_preserved=holes_preserved, fixed_geometry_preserved=fixed_preserved)
+        drilled_geometry_preserved=holes_preserved, fixed_geometry_preserved=fixed_preserved,
+        added_base_vias=len(added_vias) if added_vias else 0)
     obligations = [r['native_obligation'] for r in result['requirements']
                    if r['disposition'] == 'native_postcondition']
     blockers = [r for r in result['requirements'] if r['disposition'] not in
@@ -567,10 +592,12 @@ def check_files(board, base, dsn, *, active_nets, net_classes, obstacles, layers
         solver_launch_allowed=not blockers,
         model_status='blocked' if blockers else ('partial' if obligations else 'complete'),
         cause='; '.join(str(r['rule']) + ': ' + r['constraint'] + ' ' + r['disposition'] + ': ' + r.get('reason', '')
-            for r in blockers) or ('model admission complete except explicit pending native thermal postconditions'
+            for r in blockers) or ('model admission complete except explicit pending native/configured-gate postconditions'
                 if obligations else 'applicable native custom/project requirements covered by final DSN and exact backend controls'))
     if native_capability is not None:
-        result.update(native_thermal_capability=native_capability, native_postconditions=obligations)
+        result.update(native_thermal_capability=native_capability)
+    if native_capability is not None or obligations:
+        result.update(native_postconditions=obligations)
     result.update(inputs=before, dsn=dict(path=str(dsn), sha256=before[str(dsn)]),
         native_classes=net_classes, footprint_scope_sha256=hashlib.sha256(json.dumps(source_footprints, sort_keys=True).encode()).hexdigest(),
         obstacle_scope_sha256=hashlib.sha256(json.dumps(obstacles, sort_keys=True).encode()).hexdigest())
@@ -580,6 +607,88 @@ def check_files(board, base, dsn, *, active_nets, net_classes, obstacles, layers
         result.update(status='blocked', solver_launch_allowed=False, cause='backend command changed during admission')
     if backend_policy != policy:
         result.update(status='blocked', solver_launch_allowed=False, cause='backend policy changed during admission')
+    return result
+
+
+def _complete_drc(report, label):
+    if (not isinstance(report, dict) or any(not isinstance(report.get(k), list)
+            for k in ('violations', 'ignored_checks', 'included_severities'))
+            or sorted(report['included_severities']) != ['error', 'exclusion', 'warning']):
+        raise ValueError(label + ' native DRC report is incomplete: all severities, findings and ignored checks are required')
+    if any(not isinstance(i, dict) or not isinstance(i.get('key'), str) for i in report['ignored_checks']):
+        raise ValueError('malformed ignored native DRC check')
+    if any(not isinstance(f, dict) or not isinstance(f.get('type'), str) for f in report['violations']):
+        raise ValueError('malformed native DRC finding')
+
+
+def _finding_id(finding):
+    """Type plus the UUIDs of its items; None when an item has no UUID."""
+    items = finding.get('items')
+    if not isinstance(items, list) or not items or any(not isinstance(i, dict) or not isinstance(i.get('uuid'), str)
+                                                        for i in items):
+        return None
+    return (finding['type'], tuple(sorted(i['uuid'] for i in items)))
+
+
+def discharge_native(obligations, report, baseline=None):
+    """Discharge the pending native-DRC obligations from the final native DRC report.
+
+    One finding of an obligation type (any severity, also an exclusion) or an
+    ignored check of that type fails it. With baseline (the native DRC of the
+    input board, same flags), a finding with the same type and item UUIDs as an
+    input finding was not made by the route and does not count; each input
+    finding excuses one final finding only. Items of new copper have new UUIDs.
+    The thermal obligation has its own native-checkback discharge.
+    Configured-gate obligations stay typed for the configured board gate. No
+    native tool is executed here."""
+    result = dict(status='failed', native_drc=[], configured_gate=[], native_checkback=[],
+                  qualified=False, configured_gate_required=True)
+    try:
+        _complete_drc(report, 'final')
+        types = {t for o in obligations if isinstance(o, dict) for t in o.get('drc_types') or []}
+        before = collections.Counter()
+        if baseline is not None:
+            _complete_drc(baseline, 'input')
+            for f in baseline['violations']:
+                if f['type'] in types:
+                    key = _finding_id(f)
+                    if key is None:
+                        raise ValueError('input native DRC finding without item UUIDs: ' + f['type'])
+                    before[key] += 1
+        ignored = {i['key'] for i in report['ignored_checks']}
+        failures = []
+        for item in obligations:
+            if not isinstance(item, dict):
+                raise ValueError('malformed native obligation')
+            if item.get('enforcement') == 'native-drc' and item.get('drc_types') == route_project_coverage.NATIVE_DRC.get(item.get('constraint')):
+                left, new, old = collections.Counter(before), 0, 0
+                for f in report['violations']:
+                    if f['type'] in item['drc_types']:
+                        key = _finding_id(f)
+                        if key is not None and left[key] > 0:
+                            left[key] -= 1
+                            old += 1
+                        else:
+                            new += 1
+                row = dict(item, violations=new)
+                if baseline is not None:
+                    row['preexisting'] = old
+                if ignored & set(item['drc_types']):
+                    row['ignored'] = sorted(ignored & set(item['drc_types']))
+                if row['violations'] or row.get('ignored'):
+                    failures.append(str(item.get('rule', 'native project')) + ': ' + item['constraint'] + ' has '
+                        + str(row['violations']) + ' native findings' + (', ignored check ' + ','.join(row['ignored']) if row.get('ignored') else ''))
+                result['native_drc'].append(row)
+            elif item.get('enforcement') == 'configured-gate' and item.get('constraint') == 'reference_stitching':
+                result['configured_gate'].append(item)
+            elif 'enforcement' not in item and item.get('constraint') == 'min_resolved_spokes' and item.get('capability_sha256'):
+                result['native_checkback'].append(item)
+            else:
+                raise ValueError('unknown native obligation: ' + json.dumps(item, sort_keys=True))
+        result.update(status='failed' if failures else 'passed', cause='; '.join(failures)
+            or 'final native DRC has zero findings of every pending type; configured gate still required')
+    except (ValueError, TypeError) as error:
+        result.update(status='failed', cause=str(error))
     return result
 
 
