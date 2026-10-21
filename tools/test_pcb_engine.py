@@ -1,5 +1,6 @@
 """Engine contracts and recovery tests; no real CAD is adopted."""
 import json
+import math
 from pathlib import Path
 import tempfile
 import unittest
@@ -443,10 +444,16 @@ class EngineTests(unittest.TestCase):
         self.assertNotEqual(result['selected_strategy']['kind'], 'move')
 
     def test_infinite_gpu_guidance_does_not_prune_a_legal_path(self):
-        path = astar(5, 5, {6, 7, 8}, 0, 24, field=[1_000_000_000] * 25)
+        # A wall on row 2 leaves one gap (cell 14). Guidance is infinite on the
+        # only legal corridor and zero elsewhere: it may order, never prune.
+        corridor = {4, 9, 14, 19}
+        field = [math.inf if i in corridor else 0 for i in range(25)]
+        path = astar(5, 5, {10, 11, 12, 13}, 0, 20, field=field)
         self.assertIsNotNone(path)
-        self.assertEqual((path[0], path[-1]), (0, 24))
-        self.assertFalse(set(path) & {6, 7, 8})
+        self.assertEqual((path[0], path[-1]), (0, 20))
+        self.assertIn(14, path)
+        self.assertFalse(set(path) & {10, 11, 12, 13})
+        self.assertEqual(len(path) - 1, 12)  # still the shortest legal path
 
     def test_local_route_consumes_gpu_field_but_remains_unqualified(self):
         class Compute:
