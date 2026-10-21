@@ -5,7 +5,7 @@ import json
 import math
 from pathlib import Path
 
-from .backends import Blocked, NativeBackend, move_proposals, verify_movement
+from .backends import Blocked, NativeBackend, copper_outside_authority, move_proposals, verify_movement
 from .model import BoardState, Candidate, Finding, Outcome, RuleContext, file_digest, fingerprint
 from .policy import JobPolicy, dependencies
 from .session import Session, atomic_copy, atomic_json
@@ -191,6 +191,9 @@ def run_engine(folder, workspace, board, policy, *, timeout_s, node='node', env=
             from pcb_operations import pcb_identity
             if pcb_identity(initial) != pcb_identity(native):
                 raise Blocked('candidate changed protected design identity')
+            scope = (policy.routing['only_nets'], policy.routing['layers'])
+            if copper_outside_authority(initial, *scope) != copper_outside_authority(native, *scope):
+                raise Blocked('candidate changed copper outside routing authority (only_nets/layers)')
             if file_digest(movement_origin) != expected_origin:
                 raise ValueError('sealed movement origin changed')
             verify_movement(movement_origin, native, policy, baseline=initial)

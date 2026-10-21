@@ -62,6 +62,10 @@ routing `timeout_s` does not fit in the remaining search time.
 Movement requires an explicit reference list and displacement bound.
 All incident nets and affected copper layers must be within routing authority.
 Locked geometry, fixed units and reviewed groups remain protected.
+Before its gate, each candidate is compared with the session input board.
+Tracks, arcs and vias on a net outside `only_nets`, or with a layer outside
+`layers`, must be unchanged; otherwise the attempt is blocked. Zones are
+protected by the design identity check, except their fill caches.
 
 The native Mac runtime uses the existing cooperating resource ledger and
 backend worker caps. These are declared reservations, not OS memory/CPU quotas

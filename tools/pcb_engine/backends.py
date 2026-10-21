@@ -307,6 +307,38 @@ def strip_moved_nets(native, refs, allowed_nets, *, allowed_layers):
     return sorted(nets)
 
 
+def copper_outside_authority(path, nets, layers):
+    """Tracks/arcs/vias a scoped job may not add, remove or edit (zones: pcb_identity)."""
+    from pcb_search.block_bindings import child
+    from placer.dru import _tree, _tokens
+    from .model import fingerprint
+    root = _tree(_tokens(Path(path).read_text()))[0]
+    table = {f[1]: f[2] for f in root if isinstance(f, list) and f[:1] == ['net'] and len(f) == 3}
+
+    def clean(value):
+        # A native re-save may rewrite number format or net codes, not meaning.
+        if isinstance(value, list):
+            if value[:1] == ['net'] and len(value) == 2:
+                return ['net', table.get(value[1], value[1])]
+            return [clean(v) for v in value]
+        try:
+            return str(Decimal(value).normalize())
+        except ArithmeticError:
+            return value
+    rows = []
+    for form in root[1:]:
+        if not isinstance(form, list) or form[:1] not in (['segment'], ['arc'], ['via']):
+            continue
+        net = (child(form, 'net') or [''])[-1]
+        net = table.get(net, net)
+        used = child(form, 'layer') or child(form, 'layers') or []
+        # A via is inside authority only when every declared layer is authorized.
+        if net in nets and used and set(used) <= set(layers):
+            continue
+        rows.append(fingerprint(clean(form)))
+    return sorted(rows)
+
+
 def move_proposals(raw, findings, policy):
     """Complete CPU scoring remains authoritative; only diagnosed units move."""
     from placer import cost

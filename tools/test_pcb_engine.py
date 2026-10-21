@@ -246,6 +246,45 @@ class EngineTests(unittest.TestCase):
         events = [json.loads(line)['type'] for line in (output / 'events.jsonl').read_text().splitlines()]
         self.assertIn('engine.failed_attempt', events)
 
+    def test_candidate_copper_outside_routing_authority_is_blocked(self):
+        zone = ('(zone (net 2) (net_name "OTHER") (layer "B.Cu") (uuid "z1") '
+                '(polygon (pts (xy 0 0) (xy 5 0) (xy 5 5))) (filled_polygon (layer "B.Cu") (pts (xy 0 0))))')
+        # Zones are already protected by pcb_identity; this covers tracks and vias.
+        via = '(via (at 1 1) (size .6) (drill .3) (layers "F.Cu" "In1.Cu") (net 1) (uuid "via-1"))'
+        cases = {'net': SEGMENT.replace('(net 1)', '(net 2)').replace('seg-1', 'seg-2'),
+                 'layer': SEGMENT.replace('"F.Cu"', '"In1.Cu"').replace('seg-1', 'seg-2'), 'via': via}
+        for name, added in cases.items():
+            with self.subTest(change=name):
+                root = self.root / name
+                workspace = root / 'workspace'
+                workspace.mkdir(parents=True)
+                (workspace / 'board.kicad_dru').write_text('(version 1)')
+                (workspace / 'board.kicad_pcb').write_text(BOARD[:-1] + zone + ')')
+                class Outside(FakeBackend):
+                    def route(self, directory):
+                        self.native.write_text(self.native.read_text()[:-1] + added + SEGMENT + ')')
+                        return {}, ()
+                    def verify(self, directory):
+                        _, metrics, evidence = super().verify(directory)
+                        return True, metrics, evidence
+                result = run_engine(root, workspace, 'TEST', policy(max_attempts=1), timeout_s=120,
+                                    backend_factory=Outside)
+                self.assertIn('outside routing authority', result['cause'])
+                self.assertEqual(result['selected_strategy']['kind'], 'baseline')
+        # A refill of an unrelated zone is not an authority change.
+        root = self.root / 'refill'
+        workspace = root / 'workspace'
+        workspace.mkdir(parents=True)
+        (workspace / 'board.kicad_dru').write_text('(version 1)')
+        (workspace / 'board.kicad_pcb').write_text(BOARD[:-1] + zone + ')')
+        class Refill(FakeBackend):
+            def route(self, directory):
+                text = self.native.read_text().replace('(pts (xy 0 0)))', '(pts (xy 1 1)))')
+                self.native.write_text(text[:-1] + SEGMENT + ')')
+                return {}, ()
+        result = run_engine(root, workspace, 'TEST', policy(max_attempts=1), timeout_s=120, backend_factory=Refill)
+        self.assertEqual(result['selected_strategy']['kind'], 'route')
+
     def test_diagnosed_gap_uses_cheap_guarded_repair_before_solver(self):
         class Repair(FakeBackend):
             def diagnose(self, evidence):
