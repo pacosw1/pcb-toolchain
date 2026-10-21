@@ -67,11 +67,13 @@ def validate(config, total_timeout_s):
     return copy.deepcopy(config)
 
 
-def _executable(name):
+def _executable(name, resolve=True):
     path = shutil.which(name)
     if not path:
         raise ValueError('controlled routing executable is unavailable: ' + str(name))
-    return Path(path).resolve()
+    # A multi-call shim (vite-plus, Volta) dispatches on its invoked name, so
+    # some callers must run the PATH link itself, not its target.
+    return Path(path).resolve() if resolve else Path(path).absolute()
 
 
 def _probe(command, env, probes):
@@ -201,7 +203,7 @@ def validate_gate(root, board):
     root = Path(root).resolve()
     config = root / 'hardware-design/boards' / board / 'gate.json'
     core = root / 'tools/lib/gate-core.mjs'
-    node = _executable(os.environ.get('NODE', 'node'))
+    node = _executable(os.environ.get('NODE', 'node'), resolve=False)
     before = {str(path): sha(path) for path in (config, core, node)}
     program = ('import {readFileSync} from "node:fs"; import {validateConfig} from '
         + json.dumps(core.as_uri()) + ';'

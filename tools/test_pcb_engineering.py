@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import py_compile
+import shlex
 import shutil
 import socket
 import sys
@@ -423,6 +424,23 @@ class RoutingTrialTests(unittest.TestCase):
         self.assertEqual(admitted['stage'],'G4')
         self.assertEqual(admitted['inputs'][str(config)],pcb_operations.sha(config))
         self.assertEqual(admitted['inputs'][str(core)],pcb_operations.sha(core))
+
+    def test_gate_validator_runs_node_by_its_path_name_through_a_multicall_shim(self):
+        # Version managers (vite-plus, Volta) link `node` to one binary that
+        # dispatches on its invoked name; running the link target is not node.
+        core=self.root/'tools/lib/gate-core.mjs';core.parent.mkdir(parents=True)
+        shutil.copyfile(Path(routing_trial.__file__).resolve().parent/'lib/gate-core.mjs',core)
+        shims=self.root/'shims';shims.mkdir()
+        multicall=shims/'multicall'
+        multicall.write_text('#!/bin/sh\ncase "${0##*/}" in node) exec '+shlex.quote(shutil.which('node'))
+            +' "$@";; *) echo "Unexpected argument" >&2; exit 2;; esac\n');multicall.chmod(0o755)
+        (shims/'node').symlink_to(multicall)
+        self.json_file(self.native.parent.parent/'gate.json',dict(project='cad/TRIAL',checks=dict(erc=True,drc=True,
+            paths='current-paths.json',viapads=dict(allow=[]),kicad_happy={},port_labels=True)))
+        with mock.patch.dict(os.environ,PATH=str(shims)+os.pathsep+os.environ['PATH']):
+            admitted=routing_trial.validate_gate(self.root,'TRIAL')
+        self.assertEqual(admitted['stage'],'G4')
+        self.assertEqual(admitted['inputs'][str(shims/'node')],pcb_operations.sha(multicall))
 
     def test_finalize_preserves_failure_and_requires_fresh_native_acceptance(self):
         prepared=self.prepare();self.router_output(prepared)
