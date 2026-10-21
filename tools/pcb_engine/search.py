@@ -360,8 +360,12 @@ def run_engine(folder, workspace, board, policy, *, timeout_s, node='node', env=
             if file_digest(selected.path) != selected.board.sha256:
                 raise ValueError('selected candidate changed after verification')
             atomic_copy(selected.path, native)
-            state = Outcome('candidate', terminal_cause, count, str(native), file_digest(native),
-                            session.best_verified.path if session.best_verified else None, findings)
+            # Only a candidate that passed its configured gate is 'candidate'. An
+            # unverified best still goes to the outer gate for its failed receipt.
+            verified = selected is session.best_verified
+            state = Outcome('candidate' if verified else 'unverified', terminal_cause, count, str(native),
+                            file_digest(native), session.best_verified.path if session.best_verified else None,
+                            findings, candidate_verified=verified)
         else:
             state = Outcome('blocked', terminal_cause, count, findings=findings)
         if session.phase not in ('complete', 'blocked'):

@@ -93,8 +93,12 @@ reports the recorded engine decision instead of recommending the same blind
 retry. `--from-run RUN_ID` continues a sealed candidate with source revalidation.
 Interrupted transactions have a durable rollback image.
 
-Internal configured gates rank candidates. Only the outer fresh native,
-configured and board-specific semantic checks can set `candidate_verified`.
+Internal configured gates rank candidates. The engine summary has status
+`candidate` and `candidate_verified: true` only for a candidate that passed its
+internal configured gate. An unverified best candidate has status `unverified`
+and exit 1; it still gets the outer gate and its failed receipt. Only the outer
+fresh native, configured and board-specific semantic checks can set
+`candidate_verified` in the operation result.
 `tools/pcb adopt` remains separate, including frozen-board named-defect rules.
 
 ## Apple compute

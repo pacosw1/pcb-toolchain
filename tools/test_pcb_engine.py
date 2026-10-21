@@ -139,10 +139,27 @@ class EngineTests(unittest.TestCase):
             self.assertEqual(session.best_verified.candidate_id, 'good')
 
     def test_router_success_alone_never_certifies_candidate(self):
+        class GateFails(FakeBackend):
+            def verify(self, directory):
+                _, metrics, evidence = super().verify(directory)
+                return False, dict(metrics, drc_errors=1), evidence
+        result = run_engine(self.root, self.workspace, 'TEST', policy(max_attempts=1), timeout_s=30,
+                            backend_factory=GateFails)
+        self.assertEqual(result['status'], 'unverified')
+        self.assertFalse(result['candidate_verified'])
+        self.assertEqual(result['exit_code'], 1)
+        self.assertIsNone(result['best_gate_candidate'])
+        # The outer native gate still receives the best partial candidate.
+        self.assertEqual(result['candidate'], str(self.native.resolve()))
+        self.assertEqual(result['selected_strategy']['kind'], 'route')
+        self.assertIn('segment', self.native.read_text())
+
+    def test_gate_passed_candidate_is_marked_verified(self):
         result = run_engine(self.root, self.workspace, 'TEST', policy(), timeout_s=30,
                             backend_factory=FakeBackend)
         self.assertEqual(result['status'], 'candidate')
-        self.assertFalse(result['candidate_verified'])
+        self.assertTrue(result['candidate_verified'])
+        self.assertEqual(result['exit_code'], 0)
         self.assertTrue(result['improved'])
         self.assertTrue(result['native_and_board_specific_gates_required'])
         state = json.loads((self.root / 'operation/engine/state.json').read_text())
@@ -199,7 +216,7 @@ class EngineTests(unittest.TestCase):
                             backend_factory=Repair)
         self.assertEqual(result['selected_strategy']['kind'], 'repair')
         self.assertEqual(result['attempts'], 1)
-        self.assertFalse(result['candidate_verified'])
+        self.assertTrue(result['candidate_verified'])
 
     def test_unsafe_movement_cannot_remove_other_net(self):
         footprint = '(footprint "R" (at 1 1) (property "Reference" "R1") (pad "1" smd rect (at 0 0) (net 2 "OTHER")))'
