@@ -528,6 +528,18 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(blocked['status'], 'blocked')
         self.assertEqual(blocked['unresolved_nets'], ['N'])
 
+    def test_complete_board_reports_no_copper_instead_of_a_proposal(self):
+        srj = dict(bounds=dict(minX=0, minY=0, maxX=4, maxY=4),
+            minTraceWidth=.2, minViaPadDiameter=.6, defaultObstacleMargin=.2,
+            obstacles=[], traces=[], connections=[dict(name='N', nominalTraceWidth=.2,
+                pointsToConnect=[dict(x=1., y=1., layers=['top'], pointId='A'),
+                                 dict(x=3., y=3., layers=['top'], pointId='B')],
+                externallyConnectedPointIds=[['A', 'B']])])
+        result = route_srj(srj, budget_s=3)
+        self.assertEqual((result['status'], result['routed_connections']), ('blocked', 0))
+        self.assertNotIn('proposal', result['reason'])
+        self.assertIn('no connection', result['reason'])
+
     def test_compute_refusal_falls_back_to_cpu_search(self):
         class Compute:
             def request(self, *args, **kwargs):

@@ -238,7 +238,8 @@ def route_srj(srj, *, compute=None, backend='cpu', budget_s=30, emit=None, pitch
         result['unresolved_nets'] = incomplete
         return result
     result.update(status='candidate' if routed else 'blocked',
-                  reason='local grid copper proposal; full native and configured gates required',
+                  reason='local grid copper proposal; full native and configured gates required' if routed
+                  else 'no copper proposed: no connection was open in the selected nets',
                   routed_connections=routed, grid=dict(width=nx, height=ny, pitch_mm=pitch_mm,
                                                        bounds=bounds, search_halo_mm=search_halo_mm))
     return result
