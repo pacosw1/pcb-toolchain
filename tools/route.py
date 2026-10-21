@@ -216,20 +216,40 @@ def add_pour(board, pour):
         ps.Inflate(pcbnew.FromMM(pour['grow_mm']), pcbnew.CORNER_STRATEGY_ROUND_ALL_CORNERS, pcbnew.FromMM(0.05))
         ps.BooleanIntersection(outline(board))
         ps.Simplify()
+    for x0, y0, x1, y1 in pour['minus']:
+        box = pcbnew.SHAPE_POLY_SET()
+        box.NewOutline()
+        for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1)):
+            box.Append(pcbnew.FromMM(x), pcbnew.FromMM(y))
+        ps.BooleanSubtract(box)
     z = pcbnew.ZONE(board)
     z.SetLayerSet(layer_set(board, [pour['layer']]))
     z.SetZoneName(pour['name'])
     z.SetAssignedPriority(pour['priority'])
     z.SetNet(net)
     z.SetMinThickness(pcbnew.FromMM(0.25))
-    z.SetLocalClearance(pcbnew.FromMM(0.3))
-    z.SetThermalReliefGap(pcbnew.FromMM(0.4))
-    z.SetThermalReliefSpokeWidth(pcbnew.FromMM(1.0))
+    z.SetLocalClearance(pcbnew.FromMM(pour['clearance_mm']))
+    z.SetThermalReliefGap(pcbnew.FromMM(pour['thermal_gap_mm']))
+    z.SetThermalReliefSpokeWidth(pcbnew.FromMM(pour['spoke_mm']))
     z.SetPadConnection(pcbnew.ZONE_CONNECTION_FULL if pour['connection'] == 'full' else pcbnew.ZONE_CONNECTION_THERMAL)
     z.SetIslandRemovalMode(pcbnew.ISLAND_REMOVAL_MODE_ALWAYS)
     z.Outline().Append(ps)
     board.Add(z)
     return True
+
+
+def set_widths(board, rules):
+    """Count of tracks per width rule that get the rule width (route_plan.width_applies)."""
+    counts = {r['name']: 0 for r in rules}
+    for t in board.GetTracks():
+        if t.GetClass() == 'PCB_VIA':
+            continue
+        ends = [(pcbnew.ToMM(p.x), pcbnew.ToMM(p.y)) for p in (t.GetStart(), t.GetEnd())]
+        for r in rules:
+            if plan.width_applies(r, *ends, board.GetLayerName(t.GetLayer()), pcbnew.ToMM(t.GetWidth())):
+                t.SetWidth(pcbnew.FromMM(r['width_mm']))
+                counts[r['name']] += 1
+    return counts
 
 
 def main():
@@ -267,6 +287,7 @@ def main():
         final = outdir / f'{name}.kicad_pcb'
         copy_project(current, final, sidecar_src=start)
         b = pcbnew.LoadBoard(str(final))
+        result['widths'] = set_widths(b, p['widths'])
         skipped = [pour['name'] for pour in p['pours'] if not add_pour(b, pour)]
         pcbnew.ZONE_FILLER(b).Fill(b.Zones())
         pcbnew.SaveBoard(str(final), b)

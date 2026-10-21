@@ -135,6 +135,52 @@ class LoadTests(unittest.TestCase):
         cfg['features'] = {'via_off_small_pads': 'yes'}
         self.assertRejects(cfg, 'features.via_off_small_pads')
 
+    def test_pour_defaults_keep_the_existing_zone_settings(self):
+        pour = plan.load(config(), COPPER)['pours'][0]
+        self.assertEqual(pour['minus'], [])
+        self.assertEqual((pour['clearance_mm'], pour['thermal_gap_mm'], pour['spoke_mm']), (0.3, 0.4, 1.0))
+
+    def test_pour_minus_boxes_and_zone_settings_are_read(self):
+        cfg = config()
+        cfg['pours'][0].update(minus=[[1, 2, 3, 4]], clearance_mm=0.25, thermal_gap_mm=0.3, spoke_mm=0.4)
+        pour = plan.load(cfg, COPPER)['pours'][0]
+        self.assertEqual(pour['minus'], [[1.0, 2.0, 3.0, 4.0]])
+        self.assertEqual((pour['clearance_mm'], pour['thermal_gap_mm'], pour['spoke_mm']), (0.25, 0.3, 0.4))
+
+    def test_pour_minus_box_must_have_positive_size(self):
+        cfg = config()
+        cfg['pours'][0]['minus'] = [[3, 2, 1, 4]]
+        self.assertRejects(cfg, 'minus')
+
+    def test_pour_zone_setting_must_be_positive(self):
+        cfg = config()
+        cfg['pours'][0]['spoke_mm'] = 0
+        self.assertRejects(cfg, 'spoke_mm')
+
+    def test_widths_are_read_with_board_layers_by_default(self):
+        cfg = config()
+        cfg['widths'] = [{'name': 'ISLAND', 'box': [0, 0, 10, 5], 'width_mm': 0.15}]
+        self.assertEqual(plan.load(cfg, COPPER)['widths'],
+                         [{'name': 'ISLAND', 'box': [0.0, 0.0, 10.0, 5.0], 'layers': ['F.Cu', 'In2.Cu', 'B.Cu'],
+                           'width_mm': 0.15}])
+        self.assertEqual(plan.load(config(), COPPER)['widths'], [])
+
+    def test_width_needs_a_positive_width_and_known_keys(self):
+        cfg = config()
+        cfg['widths'] = [{'name': 'ISLAND', 'box': [0, 0, 10, 5], 'width_mm': 0}]
+        self.assertRejects(cfg, 'width_mm')
+        cfg['widths'] = [{'name': 'ISLAND', 'box': [0, 0, 10, 5], 'width_mm': 0.15, 'max': 1}]
+        self.assertRejects(cfg, 'max')
+
+    def test_width_applies_by_segment_midpoint_layer_and_current_width(self):
+        rule = {'name': 'I', 'box': [0.0, 0.0, 10.0, 5.0], 'layers': ['F.Cu'], 'width_mm': 0.15}
+        # The midpoint (5, 4) is inside although the end is outside.
+        self.assertTrue(plan.width_applies(rule, (5, 3), (5, 5), 'F.Cu', 0.25))
+        self.assertTrue(plan.width_applies(rule, (0, 0), (0, 0), 'F.Cu', 0.25))  # the box edge is inside
+        self.assertFalse(plan.width_applies(rule, (5, 4), (5, 8), 'F.Cu', 0.25))  # midpoint y = 6
+        self.assertFalse(plan.width_applies(rule, (5, 3), (5, 3), 'B.Cu', 0.25))
+        self.assertFalse(plan.width_applies(rule, (5, 3), (5, 3), 'F.Cu', 0.15))  # never wider
+
     def test_input_is_not_changed(self):
         cfg = config()
         before = copy.deepcopy(cfg)
