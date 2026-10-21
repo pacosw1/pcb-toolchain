@@ -47,6 +47,21 @@ class PublicAdmissionTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'Docker inspect'):
                 pcb_routing_trial.execution_context()
 
+    def test_plain_fastroute_route_uses_the_engine_host_runtime(self):
+        import pcb_operations
+        for platform, expected in (('darwin', 'native'), ('linux', 'container')):
+            with self.subTest(platform=platform), tempfile.TemporaryDirectory() as d:
+                folder = Path(d) / 'run'
+                (folder / 'operation').mkdir(parents=True)
+                (folder / 'run.json').write_text(json.dumps(dict(root=d, board='X', operation='route',
+                    router='fastroute', spec={}, timeout_s=60)))
+                with patch('sys.platform', platform), patch.object(pcb_operations, 'snapshot', return_value={}), \
+                        patch.object(pcb_operations, 'board_config', return_value=(None, {}, Path(d) / 'X.kicad_sch')), \
+                        patch.object(pcb_routing_trial, 'prepare', side_effect=LookupError('stop')) as prepare:
+                    with self.assertRaises(LookupError):
+                        pcb_operations.run(folder)
+                self.assertEqual(prepare.call_args.kwargs.get('runtime'), expected)
+
     def test_cancel_uses_one_shared_control(self):
         with tempfile.TemporaryDirectory() as d, patch('pcb_cli.status', return_value={'status': 'running'}):
             self.assertTrue(pcb_cli.request_cancel(Path(d))['cancellation_requested'])

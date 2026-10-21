@@ -27,7 +27,9 @@ AUDITED = {
     # view, and engine-* ML actions. Parts submission, interpreter selection,
     # external commands and dependency boundaries are unchanged.
     "pcb_cli.py": "3591b47daaebcf6986d7f3870e20a78744da12014c2142c31cff82a32d9fdce5",
-    "pcb_operations.py": "855c6296fc16c3a6080cdcb71430ce68d4bbe443efcceee65a3839a91bbccda7",
+    # 2026-10-21 review: plain Fastroute route passes the host runtime; adds
+    # stdlib `import sys` (builtin, cannot be shadowed). Parts branch unchanged.
+    "pcb_operations.py": "276cfaa347fb150ea6a26973a131beb87e7ee05e8bf558ae672046cc2761e8ab",
     "pcb_evidence.py": "9d929244915407bddefd096f8a981113652e2706ea8785cf5ddb70061330687f",
     "pcb_workflow.py": "befb1e2b7660acc3a3422913c1df2e16b4a9673f1a8fa629bc315102aaf9135c",
     "pcb_timing.py": "07ed104072e56166625ffc36e774892c3761832cf00fe72b6abef2d967f05ddd",

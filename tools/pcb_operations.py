@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -585,7 +586,10 @@ def run(folder):
     elif solver:
         from pcb_routing_trial import prepare, finalize
         solver_output = folder / 'operation/router'
-        prepared = prepare(workspace, native, solver_output, manifest['spec'], manifest['timeout_s'], board=board)
+        # Same host default as the engine policy (pcb_engine/policy.py): native on the Mac.
+        runtime = 'native' if sys.platform == 'darwin' else 'container'
+        prepared = prepare(workspace, native, solver_output, manifest['spec'], manifest['timeout_s'], board=board,
+                           runtime=runtime)
         code = execute(folder, 'route', prepared['command'], workspace, dict(env, **prepared['env']))
         solver_report = finalize(prepared, returncode=code)
         lean.atomic_json(folder / 'operation/router-summary.json', solver_report)
