@@ -532,7 +532,8 @@ def run(folder):
         spec = None
     solver = operation == 'route' and manifest.get('router', 'explicit') == 'fastroute'
     engine = operation == 'route' and manifest.get('router') == 'engine'
-    command = None if operation == 'repair' or solver or engine else operation_command(workspace, board, operation, spec, manifest.get('kind'))
+    route_json = operation == 'route' and manifest.get('router') == 'route-json'
+    command = None if operation == 'repair' or solver or engine or route_json else operation_command(workspace, board, operation, spec, manifest.get('kind'))
     env = dict(os.environ, IOT_LAB=str(workspace))
     env.update(KICAD_PY=python_native(), KICAD_PYTHON=python_native())
     if engineering:
@@ -599,6 +600,19 @@ def run(folder):
             routed = solver_output / 'routed.kicad_pcb'
             if not routed.is_file():
                 raise ValueError('solver returned success without its routed native candidate')
+            shutil.copyfile(routed, native)
+    elif route_json:
+        # tools/route.py from the snapshot; it reads the candidate and writes only its own folder.
+        solver_output = folder / 'operation/router'
+        command = [python_native(), 'tools/route.py', board, str(solver_output),
+                   '--input', str(native), '--config', str(spec)]
+        code = execute(folder, 'route', command, workspace, env)
+        solver_report = json.loads((solver_output / 'result.json').read_text())
+        lean.atomic_json(folder / 'operation/router-summary.json', solver_report)
+        if not code:
+            routed = Path(solver_report.get('board_file') or '')
+            if not solver_report.get('board_file') or not routed.is_file():
+                raise ValueError('route.py returned success without its board_file')
             shutil.copyfile(routed, native)
     else:
         code = execute(folder, operation, command, workspace, env)
