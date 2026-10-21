@@ -392,6 +392,19 @@ class DrilledCoverageTests(unittest.TestCase):
         self.blocked(self.check(model,via,clearance_floor_mm='0.129999999999'))
         self.blocked(self.check(model,[],clearance_floor_mm='0.2'))
 
+    def test_via_binds_the_exporter_six_digit_center_and_proves_the_offset(self):
+        # KiCad 10.0.6 specctra.h:2980 writes via points with "%.6g": 140000.4 um -> 140000.
+        self.path.write_text(self.native.replace('(via (at 140 100)','(via (at 140.0004 100)'))
+        via=[h for h in coverage.native_drilled_geometry(self.path) if h['kind']=='via']
+        self.assertEqual(self.check(self.model,via,clearance_floor_mm='0.1304')['status'],'covered')
+        # The 0.4 um offset between the router obstacle and the native drill is not free.
+        self.blocked(self.check(self.model,via,clearance_floor_mm='0.1303'))
+        # Only the exporter's exact text binds; a near or unrounded center does not.
+        for center in ('140000.4 -100000','140001 -100000'):
+            with self.subTest(center=center):
+                self.blocked(self.check(self.model.replace('140000 -100000 (net GND)',center+' (net GND)'),via,
+                                        clearance_floor_mm='0.1304'))
+
     def test_unknown_native_drills_are_retained_and_block_instead_of_vanishing(self):
         variants=(self.native.replace('(drill 3.2)','(drill oval 3.2 3.4)'),
             self.native.replace('(drill oval 0.6 1.3)','(drill oval 0.6 1.3 (offset 0.1 0))',1),
