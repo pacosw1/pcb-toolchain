@@ -21,7 +21,7 @@ rule compliance or board acceptance.
 | `snapshot.put` | Immutable source revision, operation and input data | Snapshot identity for later sparse requests |
 | `placement_hpwl` | Candidate arrays of XY pad positions on a 0.5 grid (nm); nets of pad indices | One exact HPWL per candidate, explicitly an incomplete objective |
 | `congestion` | Width, height, integer-coordinate segments | Integer bounding-box demand map |
-| `cost_field` | Width, height, optional layers, blocked and target flat indices, optional max_sweeps | Integer six-neighbor relaxed field, convergence status |
+| `cost_field` | Width, height, optional layers, blocked and target flat indices, optional max_sweeps (default min(cells, 4096, 1e8 / cells)) | Integer six-neighbor relaxed field, convergence status |
 | `coreml.*` | See `coreml.hpp` and the ML adapter | Model lifecycle, advisory inference and anticipated compute placement |
 
 Metal pipelines and shared buffer allocations are retained across requests.

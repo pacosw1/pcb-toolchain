@@ -259,7 +259,7 @@ template<typename T> static NSArray* numbers(const std::vector<T>& values) {
             }
             result=@{@"counts":numbers(values),@"primitive":@"bounding_box_demand"};
         } else {
-            uint32_t sweeps=r[@"max_sweeps"]?integer(r[@"max_sweeps"],1,4096):std::min(size,4096u);
+            uint32_t sweeps=r[@"max_sweeps"]?integer(r[@"max_sweeps"],1,4096):std::min({size,4096u,100000000u/size});
             require((uint64_t)size*sweeps<=100000000,"field work exceeds budget");
             std::fill(values.begin(),values.end(),INF);
             std::vector<uint32_t> blocked(size,0),next(size,INF);

@@ -43,6 +43,12 @@ class CPUReferenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "0.5"):
             cpu_reference("placement_hpwl", dict(candidates=[[[0.3, 0], [1, 1]]], nets=[[0, 1]]))
 
+    def test_default_sweeps_accept_every_advertised_grid(self):
+        for width, height in ((200, 200), (1024, 1024)):
+            with self.subTest(width=width):
+                result = cpu_reference("cost_field", dict(width=width, height=height, blocked=[], targets=[0]))
+                self.assertEqual(result["distances"][1], 1)
+
     def test_unconverged_is_explicit(self):
         result = cpu_reference("cost_field", dict(width=8, height=1, blocked=[], targets=[0], max_sweeps=1))
         self.assertFalse(result["converged"])
@@ -176,6 +182,15 @@ class MetalParityTests(unittest.TestCase):
                 actual = self.metal("cost_field", **data)
                 self.assertEqual(expected["distances"], actual["distances"])
                 self.assertEqual(expected["converged"], actual["converged"])
+
+    def test_native_default_sweeps_accept_200x200(self):
+        data = dict(width=200, height=200, blocked=[], targets=[0])
+        expected = cpu_reference("cost_field", data)
+        cpu = self.worker.request("cost_field", backend="cpu", revision="grid", **data)
+        self.assertTrue(cpu["ok"], cpu)
+        self.assertIsNone(cpu["metrics"]["fallback_reason"])
+        self.assertEqual(cpu["result"]["distances"], expected["distances"])
+        self.assertEqual(self.metal("cost_field", **data)["distances"], expected["distances"])
 
     def test_native_bounds_independent_of_python(self):
         # Deliberately bypass adapter validation: native service must reject too.

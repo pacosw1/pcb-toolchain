@@ -40,6 +40,11 @@ def _materialize(data):
     return dict(data, candidates=candidates)
 
 
+def _default_sweeps(cells):
+    """Largest default that every admitted grid accepts under the 1e8 work budget."""
+    return min(cells, 4096, 100_000_000 // cells)
+
+
 def _integer(value, low, high, name):
     if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
         raise ValueError(f"{name} must be an integer in [{low}, {high}]")
@@ -110,7 +115,7 @@ def validate_request(op, data):
             if cells * len(data["segments"]) > 100_000_000:
                 raise ValueError("congestion work exceeds budget")
         else:
-            sweeps = _integer(data.get("max_sweeps", min(cells, 4096)), 1, 4096, "max_sweeps")
+            sweeps = _integer(data.get("max_sweeps", _default_sweeps(cells)), 1, 4096, "max_sweeps")
             if cells * sweeps > 100_000_000:
                 raise ValueError("field work exceeds budget")
             for name in ("blocked", "targets"):
@@ -153,7 +158,7 @@ def cpu_reference(op, data):
         for target in data["targets"]:
             if target not in blocked:
                 values[target] = 0
-        sweeps = data.get("max_sweeps", min(size, 4096))
+        sweeps = data.get("max_sweeps", _default_sweeps(size))
         queue = list(dict.fromkeys(t for t in data["targets"] if t not in blocked))
         head, maximum = 0, 0
         while head < len(queue):
