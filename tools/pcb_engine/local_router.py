@@ -74,6 +74,62 @@ def _segment_distance(x, y, a, b):
     return math.hypot(x-a['x']-t*dx, y-a['y']-t*dy)
 
 
+def _with_stub_ends(srj, connection):
+    """Add each open end of a retained same-net track chain that reaches a pad.
+
+    The end joins that pad's native group, so a new route can close the gap at
+    the stub instead of leaving it dangling. Chains that reach no pad are left out.
+    """
+    name, pads = connection['name'], connection['pointsToConnect']
+    key = lambda p: (round(p['x'], 4), round(p['y'], 4))
+    root = {}
+    def find(k):
+        root.setdefault(k, k)
+        while root[k] != k:
+            root[k] = root[root[k]]
+            k = root[k]
+        return k
+    ends, degree = [], {}
+    for trace in srj.get('traces', []):
+        route = trace['route']
+        if trace.get('connection_name') != name or not route:
+            continue
+        for a, b in zip(route, route[1:]):
+            root[find(key(a))] = find(key(b))
+        for p in route:
+            find(key(p))
+        for p in (route[0], route[-1]):
+            degree[key(p)] = degree.get(key(p), 0) + 1
+            ends.append(p)
+    rects = [o for o in srj.get('obstacles', []) if name in o.get('connectedTo', [])]
+    inside = lambda p, o: (abs(p['x']-o['center']['x']) <= o['width']/2 and abs(p['y']-o['center']['y']) <= o['height']/2
+                           and (p.get('layer') is None or p['layer'] in o['layers']))
+    pad_of = {}
+    for k in list(root):
+        p = dict(x=k[0], y=k[1])
+        for i, pad in enumerate(pads):
+            if any(inside(p, o) and inside(pad, o) for o in rects):
+                pad_of.setdefault(find(k), i)
+    groups = [list(g) for g in connection.get('externallyConnectedPointIds', [])]
+    ids = [p.get('pointId', str(i)) for i, p in enumerate(pads)]
+    points, seen = list(pads), set()
+    for p in ends:
+        k = key(p)
+        if (p['route_type'] != 'wire' or degree[k] != 1 or k in seen or find(k) not in pad_of
+                or any(inside(p, o) for o in rects)):
+            continue
+        seen.add(k)
+        stub = 'stub:%s:%s' % k
+        points.append(dict(x=p['x'], y=p['y'], layers=[p['layer']], pointId=stub))
+        pad_id = ids[pad_of[find(k)]]
+        group = next((g for g in groups if pad_id in g), None)
+        if group is None:
+            groups.append([pad_id, stub])
+        else:
+            group.append(stub)
+    return dict(connection, pointsToConnect=points, externallyConnectedPointIds=groups)
+
+
 def route_srj(srj, *, compute=None, backend='cpu', budget_s=30, emit=None, pitch_mm=.1, max_cells=250000,
               allowed_layers=('top', 'bottom'), search_halo_mm=2.):
     """Connect native-disconnected terminal groups without adding vias.
@@ -93,7 +149,8 @@ def route_srj(srj, *, compute=None, backend='cpu', budget_s=30, emit=None, pitch
                   qualified=False, status='blocked', native_validation_required=True,
                   changed_fields=[], output=copy.deepcopy(srj), reason='')
     board_bounds = srj['bounds']
-    endpoints = [p for c in srj['connections'] for p in c['pointsToConnect']]
+    connections = [_with_stub_ends(srj, c) for c in srj['connections']]
+    endpoints = [p for c in connections for p in c['pointsToConnect']]
     if not endpoints:
         result['reason'] = 'no selected terminals'
         return result
@@ -119,7 +176,7 @@ def route_srj(srj, *, compute=None, backend='cpu', budget_s=30, emit=None, pitch
         return item
     def union(net, a, b):
         roots[net][find(net, a)] = find(net, b)
-    for connection in sorted(srj['connections'], key=lambda c: c['name']):
+    for connection in sorted(connections, key=lambda c: c['name']):
         terminals, name = connection['pointsToConnect'], connection['name']
         if len(terminals) < 2 or len(terminals) > 64 or name in roots:
             result['reason'] = 'distinct selected nets with at least two terminals required'

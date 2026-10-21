@@ -528,6 +528,25 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(blocked['status'], 'blocked')
         self.assertEqual(blocked['unresolved_nets'], ['N'])
 
+    def test_open_stub_ends_join_their_pad_group_so_no_stub_dangles(self):
+        wire = lambda *pts: dict(type='pcb_trace', connection_name='N', route=[
+            dict(route_type='wire', x=x, y=y, layer='top', width=.2) for x, y in pts])
+        pad = lambda x: dict(type='rect', layers=['top'], center=dict(x=x, y=1.), width=.6, height=.6,
+                             connectedTo=['N'])
+        srj = dict(bounds=dict(minX=0, minY=0, maxX=6, maxY=3),
+            minTraceWidth=.2, minViaPadDiameter=.6, defaultObstacleMargin=.15,
+            obstacles=[pad(1.), pad(5.)], traces=[wire((1., 1.), (2.5, 1.)), wire((3.5, 1.), (5., 1.))],
+            connections=[dict(name='N', nominalTraceWidth=.2, pointsToConnect=[
+                dict(x=1., y=1., layers=['top'], pointId='A'), dict(x=5., y=1., layers=['top'], pointId='B')])])
+        result = route_srj(srj, budget_s=3, allowed_layers=['top'])
+        self.assertEqual(result['status'], 'candidate', result['reason'])
+        new = result['output']['traces'][2:]
+        self.assertEqual(len(new), 1)
+        ends = {(p['x'], p['y']) for p in (new[0]['route'][0], new[0]['route'][-1])}
+        self.assertEqual(ends, {(2.5, 1.), (3.5, 1.)})
+        # The input terminals stay unchanged; only the proposal uses the stub ends.
+        self.assertEqual(len(srj['connections'][0]['pointsToConnect']), 2)
+
     def test_pad_clearance_has_round_corners_like_native_drc(self):
         # Terminal (2.8, 2.8) is 0.42 mm from the corner of the other-net pad; it needs
         # 0.25 + 0.07 sampling. A square-grown box (up to 2.82 on both axes) blocks it.
