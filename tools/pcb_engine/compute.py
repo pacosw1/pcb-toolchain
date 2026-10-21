@@ -446,12 +446,17 @@ class ComputeWorker:
 
     def _stop_process(self):
         if self.process:
-            self.process.terminate()
+            # EOF first: the worker unloads Core ML models and removes their compiled copies.
             try:
-                self.process.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-                self.process.wait()
+                self.process.stdin.close()
+                self.process.wait(timeout=2)
+            except (OSError, subprocess.TimeoutExpired):
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    self.process.wait()
             for stream in (self.process.stdin, self.process.stdout, self.process.stderr):
                 if stream:
                     stream.close()

@@ -1,4 +1,5 @@
 """Correctness tests against actual Metal when present; no board acceptance claims."""
+import importlib.util
 import math
 import platform
 import random
@@ -254,6 +255,35 @@ class MetalParityTests(unittest.TestCase):
             self.assertFalse(rebuilt.read_bytes().endswith(b"corrupt cache"))
             refreshed = json.loads(rebuilt.with_name("build.json").read_text())
             self.assertEqual(refreshed["binary_sha256"], rebuilt_sha)
+
+
+@unittest.skipUnless(platform.system() == "Darwin" and importlib.util.find_spec("coremltools"),
+                     "Core ML lifecycle requires macOS and coremltools")
+class CoreMLLifecycleTests(unittest.TestCase):
+    def test_closing_worker_removes_compiled_models(self):
+        from pathlib import Path
+        import tempfile
+        import coremltools as ct
+        from coremltools.converters.mil import Builder as mb
+
+        @mb.program(input_specs=[mb.TensorSpec(shape=(1, 4))])
+        def program(features):
+            return mb.reduce_sum(x=features, axes=[1], keep_dims=True)
+
+        with tempfile.TemporaryDirectory() as directory:
+            package = Path(directory) / "ranker.mlpackage"
+            ct.convert(program, convert_to="mlprogram",
+                       minimum_deployment_target=ct.target.macOS13).save(str(package))
+            worker, compiled = ComputeWorker(), []
+            try:
+                for _ in range(2):
+                    reply = worker.request("coreml.load", model_path=str(package))
+                    self.assertTrue(reply["ok"], reply)
+                    compiled.append(Path(reply["result"]["compiled_path"]))
+                self.assertTrue(all(path.is_dir() for path in compiled))
+            finally:
+                worker.close()
+            self.assertEqual([path for path in compiled if path.exists()], [])
 
 
 if __name__ == "__main__":

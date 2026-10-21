@@ -343,6 +343,9 @@ int main(int argc,char** argv) {
                 std::cout.write((const char*)encoded.bytes,encoded.length);std::cout<<std::endl;
             }
         }
+#ifdef PCB_COREML
+        pcb_coreml_unload_all();  // EOF: remove compiled copies of models never unloaded
+#endif
     }
     return 0;
 }

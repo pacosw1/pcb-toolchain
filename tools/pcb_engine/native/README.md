@@ -64,7 +64,9 @@ The adapter reserves one CPU and an estimated 0.5 GiB from the existing cooperat
 resource ledger for its lifetime, reusing a live inherited reservation. This is
 shared-memory admission, not an OS memory limit. The native worker separately
 bounds grid cells, request work and retained Metal buffers (128 MiB). Core ML
-applies its own model cache/source-size bounds. Callers can request a larger
+applies its own model cache/source-size bounds. Stopping the worker closes its
+input first: on EOF it unloads every Core ML model and removes the compiled copies.
+A worker that does not exit within 2 s is terminated, then killed. Callers can request a larger
 memory reservation for their surrounding workload.
 
 Run `PYTHONPATH=tools python3 -m unittest tools/test_pcb_engine_compute.py -v`

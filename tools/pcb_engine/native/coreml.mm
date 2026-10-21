@@ -82,7 +82,11 @@ NSDictionary *pcb_coreml_request(NSDictionary *request) {
                 url = [MLModel compileModelAtURL:url error:&error];
             if (!url) return failure(error.localizedDescription);
             MLModel *model = [MLModel modelWithContentsOfURL:url configuration:configuration error:&error];
-            if (!model) return failure(error.localizedDescription);
+            if (!model) {
+                if (![path.pathExtension isEqual:@"mlmodelc"])
+                    [[NSFileManager defaultManager] removeItemAtURL:url error:nil];
+                return failure(error.localizedDescription);
+            }
             NSDictionary *inputDescriptions = model.modelDescription.inputDescriptionsByName;
             NSDictionary *outputDescriptions = model.modelDescription.outputDescriptionsByName;
             if (inputDescriptions.count != 1 || !inputDescriptions[@"features"]
@@ -99,6 +103,7 @@ NSDictionary *pcb_coreml_request(NSDictionary *request) {
             return @{@"ok": @YES, @"result": @{@"model_id": identity, @"requested_compute_units": units,
                 @"inputs": model.modelDescription.inputDescriptionsByName.allKeys,
                 @"outputs": model.modelDescription.outputDescriptionsByName.allKeys,
+                @"compiled_path": url.path,
                 @"source_bytes": @(sourceBytes), @"memory_estimate_bytes": @(sourceBytes * 8),
                 @"measured_placement": @"unknown"}};
         }
@@ -193,4 +198,11 @@ NSDictionary *pcb_coreml_request(NSDictionary *request) {
     } @catch (NSException *exception) {
         return failure(exception.reason);
     }
+}
+
+void pcb_coreml_unload_all(void) {
+    for (NSDictionary *entry in models.allValues)
+        if ([entry[@"temporary"] boolValue])
+            [[NSFileManager defaultManager] removeItemAtURL:entry[@"url"] error:nil];
+    [models removeAllObjects];
 }
