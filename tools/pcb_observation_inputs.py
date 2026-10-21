@@ -26,10 +26,14 @@ AUDITED = {
     # 2026-10-19 review: engine/viewer dispatch is lazy and confined to route,
     # view, and engine-* ML actions. Parts submission, interpreter selection,
     # external commands and dependency boundaries are unchanged.
-    "pcb_cli.py": "3591b47daaebcf6986d7f3870e20a78744da12014c2142c31cff82a32d9fdce5",
+    # 2026-10-21 review: route --router route-json; optional route spec and a lazy
+    # route_plan import on that route path only. Parts branch unchanged.
+    "pcb_cli.py": "a3926fe1032bab3e3f2e46fc8526e7fa7dfad2dd06934f7a13c1224069b69ab5",
     # 2026-10-21 review: plain Fastroute route passes the host runtime; adds
     # stdlib `import sys` (builtin, cannot be shadowed). Parts branch unchanged.
-    "pcb_operations.py": "276cfaa347fb150ea6a26973a131beb87e7ee05e8bf558ae672046cc2761e8ab",
+    # 2026-10-21 review: route-json route branch runs tools/route.py; pcb_identity
+    # takes optional declared pours (default unchanged). Parts branch unchanged.
+    "pcb_operations.py": "d95cde904f78d590c6a76d4b8252c15bbfefe76c3fae69c62470add6bbbfc49d",
     "pcb_evidence.py": "9d929244915407bddefd096f8a981113652e2706ea8785cf5ddb70061330687f",
     "pcb_workflow.py": "befb1e2b7660acc3a3422913c1df2e16b4a9673f1a8fa629bc315102aaf9135c",
     "pcb_timing.py": "07ed104072e56166625ffc36e774892c3761832cf00fe72b6abef2d967f05ddd",
