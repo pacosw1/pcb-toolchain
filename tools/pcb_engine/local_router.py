@@ -241,7 +241,11 @@ def route_srj(srj, *, compute=None, backend='cpu', budget_s=30, emit=None, pitch
                     cx, cy = obstacle['center']['x'], obstacle['center']['y']
                     # Euclidean distance to the obstacle rectangle, as native clearance: the
                     # grown zone has round corners. It still contains every rounded pad shape.
-                    if math.hypot(max(abs(x-cx)-obstacle['width']/2, 0), max(abs(y-cy)-obstacle['height']/2, 0)) <= extra+sampling_margin:
+                    if obstacle.get('shape') == 'circle' and obstacle['width'] == obstacle['height']:
+                        gap = math.hypot(x-cx, y-cy) - obstacle['width']/2  # a via: its box is only an envelope
+                    else:
+                        gap = math.hypot(max(abs(x-cx)-obstacle['width']/2, 0), max(abs(y-cy)-obstacle['height']/2, 0))
+                    if gap <= extra+sampling_margin:
                         blocked.add(cell)
                         break
                 if cell in blocked:
