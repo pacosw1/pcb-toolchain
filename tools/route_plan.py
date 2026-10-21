@@ -15,7 +15,11 @@
        "keepouts": [{"name": "SELV", "inside" | "outside": [x0, y0, x1, y1], "layers": [...]}],   this stage only;
                                                     no tracks, vias or fills; default layers: all copper
        "require": {"open": 0, "vias": null}}],     fail the run above these counts on the stage nets
-   "pours": [{"name", "net", "layer", "shape": "board" | "around", "grow_mm", "priority", "connection"}],
+   "pours": [{"name", "net", "layer", "shape": "board" | "around", "grow_mm", "priority", "connection",
+              "minus": [[x0, y0, x1, y1]],         boxes cut out of the pour
+              "clearance_mm": 0.3, "thermal_gap_mm": 0.4, "spoke_mm": 1.0}],
+   "widths": [{"name", "box": [x0, y0, x1, y1], "layers": [...], "width_mm"}],   after the route, before the pours:
+                                                    a track whose midpoint is in the box gets width_mm (never wider)
    "features": {"via_off_small_pads": true}}        Fastroute only: tools/route-features.json switches
 
 Boxes are in mm, board coordinates. "around" pours cover the pads and copper of the net grown by grow_mm.
@@ -28,13 +32,16 @@ SCHEMA = 'iot-lab.route.v1'
 DRC_UNCONNECTED_CAP = 499
 NET_RE = re.compile(r'\[([^\]]+)\]')
 BACKENDS = ('fastroute', 'tracemaker')
-TOP_KEYS = {'schema', 'about', 'backend', 'layers', 'budget', 'stages', 'pours', 'features'}
+TOP_KEYS = {'schema', 'about', 'backend', 'layers', 'budget', 'stages', 'pours', 'widths', 'features'}
 BUDGET_KEYS = {'passes', 'time_s', 'threads'}
 STAGE_KEYS = {'name', 'only_nets', 'skip_nets', 'layers', 'plane_nets', 'route_planes', 'neck_um', 'unlock_nets',
               'via_skip', 'remove_zones', 'keepouts', 'require'} | BUDGET_KEYS
 KEEPOUT_KEYS = {'name', 'inside', 'outside', 'layers'}
 REQUIRE_KEYS = {'open', 'vias'}
-POUR_KEYS = {'name', 'net', 'layer', 'shape', 'grow_mm', 'priority', 'connection'}
+POUR_KEYS = {'name', 'net', 'layer', 'shape', 'grow_mm', 'priority', 'connection', 'minus', 'clearance_mm',
+             'thermal_gap_mm', 'spoke_mm'}
+POUR_MM = {'clearance_mm': 0.3, 'thermal_gap_mm': 0.4, 'spoke_mm': 1.0}
+WIDTH_KEYS = {'name', 'box', 'layers', 'width_mm'}
 DEFAULT_BUDGET = {'passes': 60, 'time_s': 300, 'threads': 0}
 
 
@@ -83,6 +90,13 @@ def _box(value, where, errors):
         errors.append(f'{where} needs x0 < x1 and y0 < y1')
         return None
     return [float(v) for v in value]
+
+
+def _mm(value, where, errors):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        errors.append(f'{where} must be a number > 0 (mm)')
+        return None
+    return float(value)
 
 
 def _budget(obj, base, where, errors):
@@ -184,10 +198,31 @@ def load(cfg, copper, known_features=None):
             errors.append(f'{where}.grow_mm must be > 0 for an around pour')
         if raw.get('connection', 'full') not in ('full', 'thermal'):
             errors.append(f'{where}.connection must be full or thermal')
+        minus = raw.get('minus', [])
+        if not isinstance(minus, list):
+            errors.append(f'{where}.minus must be a list of boxes')
+            minus = []
         pours.append({'name': raw.get('name'), 'net': raw.get('net'), 'layer': raw.get('layer'),
                       'shape': raw.get('shape'), 'grow_mm': grow,
                       'priority': _count(raw.get('priority', 0), f'{where}.priority', errors),
-                      'connection': raw.get('connection', 'full')})
+                      'connection': raw.get('connection', 'full'),
+                      'minus': [_box(b, f'{where}.minus[{j}]', errors) for j, b in enumerate(minus)],
+                      **{k: _mm(raw.get(k, v), f'{where}.{k}', errors) for k, v in POUR_MM.items()}})
+    widths = []
+    widths_in = cfg.get('widths', [])
+    if not isinstance(widths_in, list):
+        errors.append('widths must be a list')
+        widths_in = []
+    for i, raw in enumerate(widths_in):
+        where = f'widths[{i}]'
+        if not _keys(raw, WIDTH_KEYS, where, errors):
+            continue
+        if not isinstance(raw.get('name'), str) or not raw.get('name'):
+            errors.append(f'{where}.name is required')
+        widths.append({'name': raw.get('name'), 'box': _box(raw.get('box'), f'{where}.box', errors),
+                       'layers': _layers(raw['layers'], copper, f'{where}.layers', errors) if 'layers' in raw
+                       else list(layers),
+                       'width_mm': _mm(raw.get('width_mm'), f'{where}.width_mm', errors)})
     features = cfg.get('features', {})
     if not isinstance(features, dict):
         errors.append('features must be an object')
@@ -200,7 +235,14 @@ def load(cfg, copper, known_features=None):
     if errors:
         raise ValueError('; '.join(errors))
     return {'backend': cfg['backend'], 'about': cfg.get('about', ''), 'layers': layers, 'stages': stages,
-            'pours': pours, 'features': dict(features)}
+            'pours': pours, 'widths': widths, 'features': dict(features)}
+
+
+def width_applies(rule, start, end, layer, width_mm):
+    """A track gets rule['width_mm'] when its midpoint is in the box, its layer is listed and it is wider."""
+    x, y = (start[0] + end[0]) / 2, (start[1] + end[1]) / 2
+    x0, y0, x1, y1 = rule['box']
+    return layer in rule['layers'] and x0 <= x <= x1 and y0 <= y <= y1 and width_mm > rule['width_mm']
 
 
 def feature_env(p):
