@@ -242,14 +242,31 @@ def run_engine(folder, workspace, board, policy, *, timeout_s, node='node', env=
                 for proposal in proposals:
                     key = fingerprint(proposal['strategy'])
                     path = output / ('rank-' + key[:16])
-                    path.mkdir(exist_ok=False)
-                    with session.transaction(path.name):
-                        backend.apply_move(placement_export, proposal, path / 'placement')
-                        features, reasons = routing_features(native.read_text())
-                        input_receipt(path, proposal['strategy'])
+                    if path.exists():
+                        # Resume: reuse only a complete ranking input that agrees
+                        # with this session; otherwise fail closed, never reorder.
+                        try:
+                            stored = json.loads((path / 'input.json').read_text())
+                            saved = json.loads((path / 'features.json').read_text())
+                            board_text = (path / 'input.kicad_pcb').read_text()
+                            features, reasons = routing_features(board_text)
+                        except (OSError, ValueError) as error:
+                            raise Blocked('stored ranking input is incomplete: ' + path.name + ': ' + str(error)) from error
+                        if (stored.get('strategy') != proposal['strategy'] or stored.get('rules_revision') != rules.revision
+                                or stored.get('policy') != policy.to_dict()
+                                or stored.get('board_sha256') != file_digest(path / 'input.kicad_pcb')
+                                or saved != json.loads(json.dumps(dict(feature_contract=contract, features=features,
+                                                                       reasons=reasons, predecision=True)))):
+                            raise Blocked('stored ranking input differs from this session: ' + path.name)
+                    else:
+                        path.mkdir()
+                        with session.transaction(path.name):
+                            backend.apply_move(placement_export, proposal, path / 'placement')
+                            features, reasons = routing_features(native.read_text())
+                            input_receipt(path, proposal['strategy'])
+                        atomic_json(path / 'features.json', dict(feature_contract=contract, features=features,
+                                                                 reasons=reasons, predecision=True))
                     row = dict(id=key, features=features, production_score=proposal['production_score'])
-                    atomic_json(path / 'features.json', dict(feature_contract=contract, features=features,
-                                                             reasons=reasons, predecision=True))
                     rows.append(row)
                     by_id[key] = proposal
                 ordered = ranker.rank(rows, contract, budget=max(0, policy.max_attempts-count-1))
@@ -258,6 +275,8 @@ def run_engine(folder, workspace, board, policy, *, timeout_s, node='node', env=
                     exploration=ordered['deterministic_exploration_ids'], fallback=ordered['fallback'],
                     inference=getattr(ranker, 'last_metrics', {}))
                 return [by_id[row['id']] for row in ordered['candidates']]
+            except Blocked:
+                raise
             except (OSError, ValueError, RuntimeError) as error:
                 session.event('engine.ranking_fallback', reason=str(error))
                 return proposals

@@ -373,6 +373,75 @@ class EngineTests(unittest.TestCase):
         self.assertIn('segment', self.native.read_text())
         self.assertNotIn('(at 8 5)', self.native.read_text())
 
+    def _ranked_move_run(self, interrupt):
+        from test_pcb_search import placement_problem, PARAMS
+        self.native.write_text('(kicad_pcb (version 20260101) (net 1 "N") (footprint "R" (at 8 5) (property "Reference" "B") (uuid "b")))')
+        model = self.workspace / 'model.json'
+        if not model.is_file():
+            model.write_text('{}')
+        class Moves(FakeBackend):
+            def route(self, directory):
+                if '(at 8 5)' in self.native.read_text():
+                    return {}, (Finding('escape_failure', 'pin blocked', refs=('B',), nets=('N',)),)
+                if interrupt:
+                    raise KeyboardInterrupt('simulated interrupted move')
+                self.native.write_text(self.native.read_text()[:-1] + SEGMENT + ')')
+                return {}, ()
+            def local_repair(self, directory, compute):
+                raise Blocked('local adapter unsupported for fixture')
+            def export_placement(self, output):
+                return dict(problem=placement_problem(), params=PARAMS, attachments=[])
+            def apply_move(self, export, proposal, output):
+                x, y, _ = proposal['pose'][1]
+                self.native.write_text(self.native.read_text().replace('(at 8 5)', f'(at {x} {y})'))
+        class Compute:
+            def __init__(self, **kwargs): pass
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def prepare(self, op, **kwargs): return 'fixture'
+            def request(self, op, **kwargs):
+                return dict(result={'scores': [0]*len(kwargs['candidate_deltas'])}, metrics={})
+        class Ranker:
+            enabled, model_sha256 = True, '0'*64
+            def __init__(self, *args, **kwargs): pass
+            def rank(self, rows, contract, budget=None):
+                return dict(candidates=rows, deterministic_exploration_ids=[], fallback=None)
+        features = lambda text: ({'moved': float('(at 8 5)' not in text)}, [])
+        config = policy(max_attempts=4, movement=dict(refs=['B'], max_displacement_mm=.5, step_mm=.5),
+                        ranking=dict(model_path='model.json', model_sha256=file_digest(model)))
+        with patch('pcb_engine.compute.ComputeWorker', Compute), patch('pcb_engine.ml.FrozenRanker', Ranker), \
+                patch('pcb_ml_features.routing_features', features), \
+                patch('pcb_ml_features.feature_contract', lambda name: {'adapter': name}):
+            return run_engine(self.root, self.workspace, 'TEST', config, timeout_s=120, backend_factory=Moves)
+
+    def _events(self):
+        return [json.loads(line) for line in (self.root / 'operation/engine/events.jsonl').read_text().splitlines()]
+
+    def test_resume_reuses_matching_ranking(self):
+        with self.assertRaises(KeyboardInterrupt):
+            self._ranked_move_run(interrupt=True)
+        start = len(self._events())
+        result = self._ranked_move_run(interrupt=False)
+        kinds = [row['type'] for row in self._events()[start:]]
+        self.assertIn('engine.ranking', kinds)
+        self.assertNotIn('engine.ranking_fallback', kinds)
+        self.assertEqual(result['selected_strategy']['kind'], 'move')
+
+    def test_resume_with_changed_ranking_fails_closed(self):
+        with self.assertRaises(KeyboardInterrupt):
+            self._ranked_move_run(interrupt=True)
+        stored = sorted((self.root / 'operation/engine').glob('rank-*/features.json'))[0]
+        row = json.loads(stored.read_text())
+        row['features'] = {'moved': 0.0}
+        stored.write_text(json.dumps(row))
+        start = len(self._events())
+        result = self._ranked_move_run(interrupt=False)
+        rows = self._events()[start:]
+        self.assertNotIn('engine.ranking_fallback', [r['type'] for r in rows])
+        blocked = [r for r in rows if r['type'] == 'engine.placement_blocked']
+        self.assertTrue(blocked and 'ranking' in blocked[0]['cause'])
+        self.assertNotEqual(result['selected_strategy']['kind'], 'move')
+
     def test_infinite_gpu_guidance_does_not_prune_a_legal_path(self):
         path = astar(5, 5, {6, 7, 8}, 0, 24, field=[1_000_000_000] * 25)
         self.assertIsNotNone(path)
