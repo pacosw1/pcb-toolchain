@@ -248,19 +248,23 @@ class ComputeWorker:
             1, memory_gib, wait_s=min(timeout_s, 30), label="pcb-engine-compute"
         )
         self._environment = self._reservation.__enter__()
-        if native and platform.system() == "Darwin":
-            try:
-                binary = build_worker()
-                self.binary_receipt = json.loads(binary.with_name("build.json").read_text())
-                self.process = subprocess.Popen(
-                    [str(binary), str(Path(__file__).parent / "native" / "kernels.metal")],
-                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                    text=True, bufsize=1, env=self._environment,
-                )
-            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
-                self.fallback_reason = str(error)
-        else:
-            self.fallback_reason = "native worker disabled" if not native else "Metal requires macOS"
+        try:
+            if native and platform.system() == "Darwin":
+                try:
+                    binary = build_worker()
+                    self.binary_receipt = json.loads(binary.with_name("build.json").read_text())
+                    self.process = subprocess.Popen(
+                        [str(binary), str(Path(__file__).parent / "native" / "kernels.metal")],
+                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                        text=True, bufsize=1, env=self._environment,
+                    )
+                except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                    self.fallback_reason = str(error)
+            else:
+                self.fallback_reason = "native worker disabled" if not native else "Metal requires macOS"
+        except BaseException:
+            self.close()
+            raise
 
     def request(self, op, *, revision="", backend="auto", **data):
         if self._closed:
@@ -286,13 +290,7 @@ class ComputeWorker:
         with self.lock:
             if self.process:
                 try:
-                    self.process.stdin.write(json.dumps(payload, allow_nan=False) + "\n")
-                    self.process.stdin.flush()
-                    if not select.select([self.process.stdout], [], [], self.timeout_s)[0]:
-                        raise TimeoutError("native compute request timed out")
-                    line = self.process.stdout.readline()
-                    if not line:
-                        raise RuntimeError("native compute worker exited")
+                    line = self._exchange(json.dumps(payload, allow_nan=False) + "\n", start + self.timeout_s)
                     result = json.loads(line)
                     if result.get("id") != request_id or result.get("revision") != str(revision):
                         raise RuntimeError("native compute response identity mismatch")
@@ -304,10 +302,7 @@ class ComputeWorker:
                     if requested_backend == "auto" and backend == "cpu":
                         result["metrics"]["fallback_reason"] = "no matching promoted workload calibration"
                     return result
-                except TimeoutError:
-                    self._stop_process()
-                    raise
-                except (OSError, ValueError, RuntimeError) as error:
+                except (OSError, ValueError, RuntimeError) as error:  # includes TimeoutError
                     self.fallback_reason = str(error)
                     self._stop_process()
             result = cpu_reference(op, data)
@@ -315,6 +310,33 @@ class ComputeWorker:
                     "metrics": {"backend": "cpu", "dispatches": 0,
                                 "fallback_reason": self.fallback_reason,
                                 "round_trip_ms": (time.monotonic() - start) * 1000}}
+
+    def _exchange(self, text, deadline):
+        """Write one request and read one response line under a single deadline."""
+        pending, response = memoryview(text.encode()), bytearray()
+        stdin, stdout = self.process.stdin.fileno(), self.process.stdout.fileno()
+        os.set_blocking(stdin, False)
+        try:
+            while not response.endswith(b"\n"):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("native compute request timed out")
+                readable, writable, _ = select.select([stdout], [stdin] if pending else [], [], remaining)
+                if writable:
+                    try:
+                        pending = pending[os.write(stdin, pending):]
+                    except BlockingIOError:
+                        pass
+                if readable:
+                    chunk = os.read(stdout, 1 << 20)
+                    if not chunk:
+                        raise RuntimeError("native compute worker exited")
+                    response += chunk
+        finally:
+            os.set_blocking(stdin, True)
+        if pending or response.count(b"\n") != 1:
+            raise RuntimeError("native compute protocol error")
+        return response.decode()
 
     def prepare(self, op, *, revision, **data):
         """Register one immutable revision-bound input; later requests send overrides."""

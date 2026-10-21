@@ -52,6 +52,44 @@ class CPUReferenceTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "closed"):
             worker.request("capabilities")
 
+    def test_deadline_covers_whole_exchange_with_stalled_worker(self):
+        import subprocess
+        import sys
+        # A worker that sends half a line, and one that never reads its input.
+        stalls = {"mid-line": "import sys\nsys.stdin.readline()\nsys.stdout.write('{\"id\"')\n"
+                              "sys.stdout.flush()\nsys.stdin.read()\n",
+                  "write": "import signal\nsignal.pause()\n"}
+        data = dict(candidates=[[[0, 0], [2, 5]] + [[1, 1]] * 200_000], nets=[[0, 1]])
+        for name, script in stalls.items():
+            with self.subTest(stall=name), ComputeWorker(native=False, timeout_s=0.5) as worker:
+                fake = subprocess.Popen([sys.executable, "-c", script], stdin=subprocess.PIPE,
+                                        stdout=subprocess.PIPE, text=True, bufsize=1)
+                worker.process = fake
+                reply = worker.request("placement_hpwl", backend="metal", revision="r", **data)
+                self.assertEqual(reply["result"]["scores"], [7])
+                self.assertEqual(reply["metrics"]["backend"], "cpu")
+                self.assertIn("timed out", reply["metrics"]["fallback_reason"])
+                self.assertIsNone(worker.process)
+                self.assertIsNotNone(fake.poll())
+
+    def test_startup_error_releases_resource_reservation(self):
+        from unittest.mock import patch
+        released = []
+
+        class Reservation:
+            def __enter__(self):
+                return {}
+
+            def __exit__(self, *_):
+                released.append(True)
+
+        with patch("pcb_engine.compute.lean_resources.reserve", return_value=Reservation()), \
+                patch("pcb_engine.compute.platform.system", return_value="Darwin"), \
+                patch("pcb_engine.compute.build_worker", side_effect=ValueError("corrupt build.json")):
+            with self.assertRaisesRegex(ValueError, "corrupt build.json"):
+                ComputeWorker()
+        self.assertEqual(released, [True])
+
     def test_calibration_cannot_promote_cpu_fallback(self):
         with ComputeWorker(native=False) as worker:
             profile = worker.calibrate("placement_hpwl", revision="cpu-only", save=False,
