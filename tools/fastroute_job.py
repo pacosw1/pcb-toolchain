@@ -1513,8 +1513,18 @@ def _main(a=None):
         print(f"STUCK {job_open} open signal connections after routing (fail_fast): no optimizer, exit {STUCK_RC}; "
               f"see {os.path.join(a.outdir, 'open-triage.json')}", flush=True)
         sys.exit(STUCK_RC)
-    # Pending admission obligations: the final native DRC of the saved board must show none of their types.
-    post = route_rule_coverage.discharge_native(native_obligations, d) if native_obligations else None
+    # Pending admission obligations: the final native DRC of the saved board must show no finding of their types
+    # that the input board (same DRC flags) does not already have.
+    baseline = None
+    if any(o.get('enforcement') == 'native-drc' for o in native_obligations):
+        input_drc = os.path.join(a.outdir, 'input-drc.json')
+        p = lean.run_stage([KICAD_CLI, "pcb", "drc", "--refill-zones", "--severity-all", "--format", "json", "--units", "mm",
+                            "-o", input_drc, a.board], stage='native-input-drc', event_file=phases,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        if p.returncode or not os.path.isfile(input_drc):
+            sys.exit('native DRC of the input board failed; pending obligations are not verified')
+        baseline = lean.validate_drc(json.load(open(input_drc)))
+    post = route_rule_coverage.discharge_native(native_obligations, d, baseline=baseline) if native_obligations else None
     if post is not None:
         lean.atomic_json(os.path.join(a.outdir, 'native-postconditions.json'), post)
     if post is not None and post['status'] != 'passed':

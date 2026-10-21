@@ -941,6 +941,40 @@ class NativePostconditionTests(unittest.TestCase):
         unknown = coverage.discharge_native([dict(constraint='min_hole_to_hole')], self.report())
         self.assertEqual(unknown['status'], 'failed', unknown)
 
+    SILK = dict(constraint='min_silk_clearance', required_mm='0.15', enforcement='native-drc',
+                drc_types=['silk_overlap', 'silk_over_copper'])
+
+    def finding(self, kind, *uuids):
+        return dict(type=kind, severity='warning', items=[dict(description='item', uuid=u) for u in uuids])
+
+    def test_finding_already_on_the_input_board_does_not_fail_the_obligation(self):
+        old = self.finding('silk_over_copper', 'text-1', 'pad-1')
+        result = coverage.discharge_native([self.SILK], self.report([old]), baseline=self.report([old]))
+        self.assertEqual(result['status'], 'passed', result)
+        self.assertEqual(result['native_drc'][0]['violations'], 0)
+        self.assertEqual(result['native_drc'][0]['preexisting'], 1)
+
+    def test_finding_that_touches_new_copper_fails_the_obligation(self):
+        old = self.finding('silk_over_copper', 'text-1', 'pad-1')
+        new = self.finding('silk_over_copper', 'text-1', 'new-via')
+        result = coverage.discharge_native([self.SILK], self.report([old, new]), baseline=self.report([old]))
+        self.assertEqual(result['status'], 'failed', result)
+        self.assertEqual(result['native_drc'][0]['violations'], 1)
+
+    def test_a_repeated_input_finding_counts_once_only(self):
+        old = self.finding('silk_over_copper', 'text-1', 'pad-1')
+        result = coverage.discharge_native([self.SILK], self.report([old, old]), baseline=self.report([old]))
+        self.assertEqual(result['status'], 'failed', result)
+
+    def test_incomplete_or_unidentified_baseline_fails(self):
+        cases = dict(severities=self.report(severities=('error',)),
+                     no_uuid=self.report([dict(type='silk_over_copper', severity='warning',
+                                               items=[dict(description='item')])]))
+        for label, baseline in cases.items():
+            with self.subTest(baseline=label):
+                result = coverage.discharge_native([self.SILK], self.report(), baseline=baseline)
+                self.assertEqual(result['status'], 'failed', result)
+
 
 class ClearanceStrengtheningTests(unittest.TestCase):
     def project_text(self, floor=.3, unused=99):

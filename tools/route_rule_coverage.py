@@ -5,6 +5,7 @@ semantics (including creepage and spatial selectors) block, even with the rule
 compiler enabled. No flags bypass the check. Final native gates still apply.
 """
 import ast
+import collections
 from decimal import Decimal, InvalidOperation
 import fnmatch
 import hashlib
@@ -609,31 +610,69 @@ def check_files(board, base, dsn, *, active_nets, net_classes, obstacles, layers
     return result
 
 
-def discharge_native(obligations, report):
+def _complete_drc(report, label):
+    if (not isinstance(report, dict) or any(not isinstance(report.get(k), list)
+            for k in ('violations', 'ignored_checks', 'included_severities'))
+            or sorted(report['included_severities']) != ['error', 'exclusion', 'warning']):
+        raise ValueError(label + ' native DRC report is incomplete: all severities, findings and ignored checks are required')
+    if any(not isinstance(i, dict) or not isinstance(i.get('key'), str) for i in report['ignored_checks']):
+        raise ValueError('malformed ignored native DRC check')
+    if any(not isinstance(f, dict) or not isinstance(f.get('type'), str) for f in report['violations']):
+        raise ValueError('malformed native DRC finding')
+
+
+def _finding_id(finding):
+    """Type plus the UUIDs of its items; None when an item has no UUID."""
+    items = finding.get('items')
+    if not isinstance(items, list) or not items or any(not isinstance(i, dict) or not isinstance(i.get('uuid'), str)
+                                                        for i in items):
+        return None
+    return (finding['type'], tuple(sorted(i['uuid'] for i in items)))
+
+
+def discharge_native(obligations, report, baseline=None):
     """Discharge the pending native-DRC obligations from the final native DRC report.
 
     One finding of an obligation type (any severity, also an exclusion) or an
-    ignored check of that type fails it. The thermal obligation has its own
-    native-checkback discharge. Configured-gate obligations stay typed for the
-    configured board gate. No native tool is executed here."""
+    ignored check of that type fails it. With baseline (the native DRC of the
+    input board, same flags), a finding with the same type and item UUIDs as an
+    input finding was not made by the route and does not count; each input
+    finding excuses one final finding only. Items of new copper have new UUIDs.
+    The thermal obligation has its own native-checkback discharge.
+    Configured-gate obligations stay typed for the configured board gate. No
+    native tool is executed here."""
     result = dict(status='failed', native_drc=[], configured_gate=[], native_checkback=[],
                   qualified=False, configured_gate_required=True)
     try:
-        if (not isinstance(report, dict) or any(not isinstance(report.get(k), list)
-                for k in ('violations', 'ignored_checks', 'included_severities'))
-                or sorted(report['included_severities']) != ['error', 'exclusion', 'warning']):
-            raise ValueError('final native DRC report is incomplete: all severities, findings and ignored checks are required')
-        if any(not isinstance(i, dict) or not isinstance(i.get('key'), str) for i in report['ignored_checks']):
-            raise ValueError('malformed ignored native DRC check')
-        if any(not isinstance(f, dict) or not isinstance(f.get('type'), str) for f in report['violations']):
-            raise ValueError('malformed native DRC finding')
+        _complete_drc(report, 'final')
+        types = {t for o in obligations if isinstance(o, dict) for t in o.get('drc_types') or []}
+        before = collections.Counter()
+        if baseline is not None:
+            _complete_drc(baseline, 'input')
+            for f in baseline['violations']:
+                if f['type'] in types:
+                    key = _finding_id(f)
+                    if key is None:
+                        raise ValueError('input native DRC finding without item UUIDs: ' + f['type'])
+                    before[key] += 1
         ignored = {i['key'] for i in report['ignored_checks']}
         failures = []
         for item in obligations:
             if not isinstance(item, dict):
                 raise ValueError('malformed native obligation')
             if item.get('enforcement') == 'native-drc' and item.get('drc_types') == route_project_coverage.NATIVE_DRC.get(item.get('constraint')):
-                row = dict(item, violations=sum(f['type'] in item['drc_types'] for f in report['violations']))
+                left, new, old = collections.Counter(before), 0, 0
+                for f in report['violations']:
+                    if f['type'] in item['drc_types']:
+                        key = _finding_id(f)
+                        if key is not None and left[key] > 0:
+                            left[key] -= 1
+                            old += 1
+                        else:
+                            new += 1
+                row = dict(item, violations=new)
+                if baseline is not None:
+                    row['preexisting'] = old
                 if ignored & set(item['drc_types']):
                     row['ignored'] = sorted(ignored & set(item['drc_types']))
                 if row['violations'] or row.get('ignored'):

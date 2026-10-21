@@ -243,8 +243,10 @@ When the active-net masks permit new vias, admission uses these dispositions:
 - Hole-to-hole, hole clearance (project and custom) and silkscreen clearance
   become `native_postcondition` obligations of type `native-drc`. Admission is
   `pending_native`. The final native DRC (with refill) of the saved candidate must
-  show zero findings of each obligation type, with all severities and no ignored
-  check of that type. Otherwise the job stops with `STUCK native postcondition`,
+  show zero new findings of each obligation type, with all severities and no ignored
+  check of that type. A finding is not new when the native DRC of the input board
+  (`input-drc.json`, same flags) has a finding with the same type and item UUIDs;
+  one input finding excuses one final finding. Otherwise the job stops with `STUCK native postcondition`,
   exit 4. The result is in `native-postconditions.json`.
 - Configured RP-001 with no stitching producer becomes an obligation of type
   `configured-gate`. The job does not run the board gate, so `outcome.json`
