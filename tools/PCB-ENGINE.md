@@ -56,6 +56,9 @@ An engine policy has schema `iot-lab.engine-policy.v1`:
 The nested routing policy keeps its existing v1/v2 meaning. Its zero
 `max_repairs` forbids separate repairs inside that controlled backend policy;
 the outer engine's explicit `max_attempts` bounds engine transactions.
+The engine search deadline is the run `--timeout` less a reserve for the outer
+native gate: max(60 s, 25 % of the timeout). Admission rejects a policy whose
+routing `timeout_s` does not fit in the remaining search time.
 Movement requires an explicit reference list and displacement bound.
 All incident nets and affected copper layers must be within routing authority.
 Locked geometry, fixed units and reviewed groups remain protected.

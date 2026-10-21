@@ -15,6 +15,11 @@ def validate_policy(raw, total_timeout_s):
     return JobPolicy.parse(raw, total_timeout_s).to_dict()
 
 
+def verification_reserve(timeout_s):
+    """Seconds of the run deadline kept for the outer native gate, not search."""
+    return max(60., .25 * timeout_s)
+
+
 def dependencies(root, normalized_policy):
     """Current inference inputs only; historical training artifacts are lineage."""
     from .model import file_digest
@@ -74,6 +79,10 @@ class JobPolicy:
         if set(value) - {'schema', 'routing', 'max_attempts', 'movement', 'compute', 'runtime', 'ranking'}:
             raise ValueError('unknown engine policy field')
         routing = validate(value.get('routing'), timeout_s)
+        reserve = verification_reserve(timeout_s)
+        if routing['timeout_s'] > timeout_s - reserve:
+            raise ValueError(f'router timeout {routing["timeout_s"]} s does not fit the engine budget: '
+                             f'{timeout_s} s total less {reserve:g} s outer verification reserve')
         attempts = value.get('max_attempts', 1)
         if type(attempts) is not int or not 1 <= attempts <= 128:
             raise ValueError('max_attempts must be an integer between 1 and 128')

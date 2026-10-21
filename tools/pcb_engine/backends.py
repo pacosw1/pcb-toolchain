@@ -55,7 +55,9 @@ class NativeBackend:
         self.env['PYTHONPATH'] = str(self.workspace / 'tools')
         self.emit = emit or (lambda *a, **k: None)
         self.execute = execute
-        self.deadline = time.monotonic() + timeout_s
+        from .policy import verification_reserve
+        # The rest of the run deadline belongs to the outer native gate.
+        self.deadline = time.monotonic() + timeout_s - verification_reserve(timeout_s)
 
     def remaining(self):
         remaining = self.deadline - time.monotonic()

@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from pcb_engine.backends import Blocked, move_proposals, strip_moved_nets, verify_movement
+from pcb_engine.backends import Blocked, NativeBackend, move_proposals, strip_moved_nets, verify_movement
 from pcb_engine.local_router import astar, route_srj
 from pcb_engine.model import BoardState, Candidate, Finding, RuleContext, file_digest
 from pcb_engine.policy import JobPolicy, validate_policy
@@ -60,7 +60,7 @@ class EngineTests(unittest.TestCase):
         self.rule = self.workspace / 'board.kicad_dru'
         self.rule.write_text('(version 1)')
         self.rules = RuleContext({str(self.rule): file_digest(self.rule)}, {}, str(self.workspace))
-        self.policy = JobPolicy.parse(policy(), 30)
+        self.policy = JobPolicy.parse(policy(), 120)
 
     def tearDown(self):
         self.temp.cleanup()
@@ -70,12 +70,24 @@ class EngineTests(unittest.TestCase):
                        dict(compute='neural-engine'), dict(runtime='magic'),
                        dict(max_attempts=True), dict(unrecognized=True)):
             with self.subTest(update=update), self.assertRaises(ValueError):
-                validate_policy(policy(**update), 30)
+                validate_policy(policy(**update), 120)
 
     def test_policy_accepts_native_explicitly_and_preserves_rules(self):
-        parsed = validate_policy(policy(runtime='native'), 30)
+        parsed = validate_policy(policy(runtime='native'), 120)
         self.assertEqual(parsed['runtime'], 'native')
         self.assertEqual(parsed['routing'], policy()['routing'])
+
+    def test_engine_deadline_reserves_outer_verification_time(self):
+        # Reserve = max(60 s, 25 % of timeout_s); the router timeout must fit the rest.
+        with self.assertRaisesRegex(ValueError, 'outer verification'):
+            validate_policy(policy(), 69)
+        validate_policy(policy(), 70)
+        with patch('pcb_workflow.board_config', return_value=(None, None, self.native)), \
+                patch('pcb_workflow.python_native', return_value='python3'), \
+                patch('pcb_engine.backends.time.monotonic', return_value=1000.):
+            for total, search in ((120, 60), (400, 300)):
+                backend = NativeBackend(self.root, self.workspace, 'TEST', self.policy, total)
+                self.assertEqual(backend.remaining(), search)
 
     def test_model_paths_and_hash_are_required(self):
         for ranking in ({'model_path': '/tmp/model.json', 'model_sha256': '0'*64},
@@ -83,7 +95,7 @@ class EngineTests(unittest.TestCase):
                         {'model_path': 'model.json', 'model_sha256': 'bad'},
                         {'model_path': 'model.json', 'model_sha256': '0'*64, 'allow_experimental': 'yes'}):
             with self.subTest(ranking=ranking), self.assertRaises(ValueError):
-                validate_policy(policy(ranking=ranking), 30)
+                validate_policy(policy(ranking=ranking), 120)
 
     def test_transaction_rolls_back_exception_and_keeps_pending_through_state_updates(self):
         folder = self.root / 'session'
@@ -143,7 +155,7 @@ class EngineTests(unittest.TestCase):
             def verify(self, directory):
                 _, metrics, evidence = super().verify(directory)
                 return False, dict(metrics, drc_errors=1), evidence
-        result = run_engine(self.root, self.workspace, 'TEST', policy(max_attempts=1), timeout_s=30,
+        result = run_engine(self.root, self.workspace, 'TEST', policy(max_attempts=1), timeout_s=120,
                             backend_factory=GateFails)
         self.assertEqual(result['status'], 'unverified')
         self.assertFalse(result['candidate_verified'])
@@ -155,7 +167,7 @@ class EngineTests(unittest.TestCase):
         self.assertIn('segment', self.native.read_text())
 
     def test_gate_passed_candidate_is_marked_verified(self):
-        result = run_engine(self.root, self.workspace, 'TEST', policy(), timeout_s=30,
+        result = run_engine(self.root, self.workspace, 'TEST', policy(), timeout_s=120,
                             backend_factory=FakeBackend)
         self.assertEqual(result['status'], 'candidate')
         self.assertTrue(result['candidate_verified'])
@@ -172,7 +184,7 @@ class EngineTests(unittest.TestCase):
             def route(self, directory):
                 self.native.write_text('corrupt')
                 raise Blocked('controlled routing admission: missing runtime')
-        result = run_engine(self.root, self.workspace, 'TEST', policy(max_attempts=1), timeout_s=30,
+        result = run_engine(self.root, self.workspace, 'TEST', policy(max_attempts=1), timeout_s=120,
                             backend_factory=Failing)
         self.assertEqual(self.native.read_text(), BOARD)
         self.assertFalse(result['improved'])
@@ -187,7 +199,7 @@ class EngineTests(unittest.TestCase):
                 raise ValueError('finalize could not read export')
             def local_repair(self, directory, worker):
                 raise AssertionError('search continued after an unexpected error')
-        result = run_engine(self.root, self.workspace, 'TEST', policy(max_attempts=3), timeout_s=30,
+        result = run_engine(self.root, self.workspace, 'TEST', policy(max_attempts=3), timeout_s=120,
                             backend_factory=Broken)
         output = self.root / 'operation/engine'
         self.assertEqual(json.loads((output / 'result.json').read_text())['cause'], result['cause'])
@@ -212,7 +224,7 @@ class EngineTests(unittest.TestCase):
                 return ()
             def route(self, directory):
                 raise AssertionError('cheap supported repair should avoid broad routing')
-        result = run_engine(self.root, self.workspace, 'TEST', policy(max_attempts=1), timeout_s=30,
+        result = run_engine(self.root, self.workspace, 'TEST', policy(max_attempts=1), timeout_s=120,
                             backend_factory=Repair)
         self.assertEqual(result['selected_strategy']['kind'], 'repair')
         self.assertEqual(result['attempts'], 1)
@@ -250,7 +262,7 @@ class EngineTests(unittest.TestCase):
                 return {}, ()
         result = run_engine(self.root, self.workspace, 'TEST',
             policy(max_attempts=1, movement=dict(refs=['R1'], max_displacement_mm=.5, step_mm=.2)),
-            timeout_s=30, backend_factory=Moving)
+            timeout_s=120, backend_factory=Moving)
         self.assertIn('original movement envelope', result['cause'])
         self.assertIn('(at .4 0)', self.native.read_text())
         state = json.loads((self.root / 'operation/engine/state.json').read_text())
@@ -265,7 +277,7 @@ class EngineTests(unittest.TestCase):
             def route(self, directory):
                 raise KeyboardInterrupt('simulated interrupted solver')
         with self.assertRaises(KeyboardInterrupt):
-            run_engine(self.root, self.workspace, 'TEST', policy(), timeout_s=30, backend_factory=First)
+            run_engine(self.root, self.workspace, 'TEST', policy(), timeout_s=120, backend_factory=First)
         class Next(FakeBackend):
             def route(self, directory):
                 raise AssertionError('same unchanged route was repeated')
@@ -276,10 +288,10 @@ class EngineTests(unittest.TestCase):
             def __enter__(self): return self
             def __exit__(self, *args): pass
         with patch('pcb_engine.compute.ComputeWorker', Compute):
-            second = run_engine(self.root, self.workspace, 'TEST', policy(), timeout_s=30, backend_factory=Next)
+            second = run_engine(self.root, self.workspace, 'TEST', policy(), timeout_s=120, backend_factory=Next)
         self.assertEqual(second['attempts'], 2)
         self.assertEqual(second['selected_strategy']['kind'], 'local')
-        third = run_engine(self.root, self.workspace, 'TEST', policy(), timeout_s=30, backend_factory=Next)
+        third = run_engine(self.root, self.workspace, 'TEST', policy(), timeout_s=120, backend_factory=Next)
         self.assertEqual(third['attempts'], 2)
         self.assertEqual(third['candidate_sha256'], second['candidate_sha256'])
 
@@ -287,7 +299,7 @@ class EngineTests(unittest.TestCase):
         from test_pcb_search import placement_problem, PARAMS
         from placer import cost
         raw = dict(problem=placement_problem(), params=PARAMS, attachments=[])
-        movement = JobPolicy.parse(policy(movement=dict(refs=['B'], max_displacement_mm=.5, step_mm=.5)), 30)
+        movement = JobPolicy.parse(policy(movement=dict(refs=['B'], max_displacement_mm=.5, step_mm=.5)), 120)
         self.assertEqual(move_proposals(raw, [Finding('native_open', 'unknown')], movement), [])
         proposals = move_proposals(raw, [Finding('escape_failure', 'blocked pin', refs=('B',))], movement)
         self.assertTrue(proposals)
@@ -324,7 +336,7 @@ class EngineTests(unittest.TestCase):
                 return dict(result={'scores': [0]*len(kwargs['candidate_deltas'])}, metrics={'backend': 'cpu'})
         config = policy(max_attempts=3, movement=dict(refs=['B'], max_displacement_mm=.5, step_mm=.5))
         with patch('pcb_engine.compute.ComputeWorker', Compute):
-            result = run_engine(self.root, self.workspace, 'TEST', config, timeout_s=30, backend_factory=Repair)
+            result = run_engine(self.root, self.workspace, 'TEST', config, timeout_s=120, backend_factory=Repair)
         self.assertEqual(result['selected_strategy']['kind'], 'move')
         self.assertEqual(result['attempts'], 3)
         self.assertIn('segment', self.native.read_text())
