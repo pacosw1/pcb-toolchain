@@ -1,8 +1,18 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-import type { AppApi, EngineNotification, EngineStatus } from './types'
+import type { AgentEvent, AppApi, EngineNotification, EngineStatus } from './types'
 
 const api: AppApi = {
+  agent: {
+    send: (text, ctx) => ipcRenderer.invoke('agent:send', text, ctx),
+    cancel: () => ipcRenderer.invoke('agent:cancel'),
+    reset: () => ipcRenderer.invoke('agent:reset'),
+    onEvent: (cb) => {
+      const listener = (_e: Electron.IpcRendererEvent, ev: AgentEvent): void => cb(ev)
+      ipcRenderer.on('agent:event', listener)
+      return () => ipcRenderer.removeListener('agent:event', listener)
+    }
+  },
   openProjectDialog: () => ipcRenderer.invoke('dialog:openProject'),
   defaultProject: () => ipcRenderer.invoke('app:defaultProject'),
   setProjectRoot: (root) => ipcRenderer.invoke('app:setProjectRoot', root),

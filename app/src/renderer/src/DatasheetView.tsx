@@ -8,7 +8,9 @@ export function DatasheetView({ bom, initial }: { bom: Bom; initial: BomLine | n
   const [url, setUrl] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
 
-  useEffect(() => setCur(initial ?? docs[0] ?? null), [initial]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    setCur(initial ?? docs[0] ?? null)
+  }, [initial]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     setUrl(null)

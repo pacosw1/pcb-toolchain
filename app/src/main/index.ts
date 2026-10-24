@@ -5,6 +5,7 @@ import { pathToFileURL } from 'url'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { EngineSupervisor } from './engine'
+import { AgentHost, type AgentContext } from './agent'
 
 // Dev: the engine project sits next to the app folder. A packaged .app lives elsewhere, so it falls back to the repo
 // checkout until the engine is bundled.
@@ -18,6 +19,9 @@ function findEngineDir(): string {
 }
 const engineDir = findEngineDir()
 const engine = new EngineSupervisor(engineDir)
+const agent = new AgentHost(engine, (e) =>
+  BrowserWindow.getAllWindows().forEach((w) => w.webContents.send('agent:event', e))
+)
 
 // pcbfile://local/<absolute path> serves files of the open project only (datasheet PDFs for Chromium's viewer).
 let projectRoot: string | null = null
@@ -78,6 +82,11 @@ app.whenReady().then(() => {
   ipcMain.handle('engine:call', (_e, method: string, params?: unknown) => engine.call(method, params))
   ipcMain.handle('engine:status', () => engine.status)
   ipcMain.handle('engine:kill', () => engine.kill())
+  ipcMain.handle('agent:send', (_e, text: string, ctx: AgentContext) => {
+    void agent.send(text, ctx)
+  })
+  ipcMain.handle('agent:cancel', () => agent.cancel())
+  ipcMain.handle('agent:reset', () => agent.reset())
   ipcMain.handle('app:defaultProject', () => process.env.PCBSTUDIO_PROJECT || null)
   ipcMain.handle('app:setProjectRoot', (_e, root: string) => {
     projectRoot = resolve(root)

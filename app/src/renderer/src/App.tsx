@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { EngineStatus } from '../../preload/types'
 import { BoardView, type Selection } from './BoardView'
+import { ChatPanel } from './ChatPanel'
 import { ChecksView } from './ChecksView'
 import { DatasheetView } from './DatasheetView'
 import { PartsView } from './PartsView'
@@ -110,6 +111,9 @@ function App(): React.JSX.Element {
   const [focus, setFocus] = useState<{ ref: string } | null>(null)
   const [findings, setFindings] = useState<Finding[]>([])
   const [focusPoint, setFocusPoint] = useState<{ x: number; y: number; span?: number } | null>(null)
+  const mention = selection
+    ? `@${selection.ref}.${selection.pad.num}${selection.pad.net ? ` #${selection.pad.net}` : ''}`
+    : null
   const gate =
     project?.boards.flatMap((b) => b.revisions).find((r) => r.pcb === pcb)?.gate ?? null
 
@@ -265,17 +269,15 @@ function App(): React.JSX.Element {
           )}
           <EnginePanel status={status} />
         </main>
-        <aside className="chat" aria-label="Claude">
-          <h2 style={{ fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--dim)' }}>
-            Claude
-          </h2>
-          {selection ? (
-            <p style={{ fontFamily: 'var(--mono)', color: 'var(--text)' }}>
-              @{selection.ref}.{selection.pad.num} {selection.pad.net ? `#${selection.pad.net}` : ''}
-            </p>
-          ) : null}
-          <p>Agent chat arrives in phase 4. Pads you click show up here as mentions.</p>
-        </aside>
+        <ChatPanel
+          ctx={{ projectRoot: project?.root ?? null, pcb, gate, selection: mention }}
+          mention={mention}
+          onViewer={(v) => {
+            setTab('board')
+            if (v.ref) setFocus({ ref: v.ref })
+            else if (v.x != null && v.y != null) setFocusPoint({ x: v.x, y: v.y })
+          }}
+        />
       </div>
     </div>
   )
