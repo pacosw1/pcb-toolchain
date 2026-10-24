@@ -1,6 +1,7 @@
 // Claude agent host (phase 4): Claude Agent SDK in the main process, with the engine's commands as MCP tools.
-// One conversation per window; each user turn resumes the same session. Read-only for now: the agent can look at
-// boards, BOMs, datasheets and run the gate, and it can steer the viewer; file edits wait for candidates (phase 5).
+// One conversation per window; each user turn resumes the same session. The agent can look at boards, BOMs,
+// datasheets, run the gate, make build/route candidates (phase 5) and steer the viewer. It has no adopt tool and no
+// file-writing tools: replacing a board file stays a user click in the Runs section.
 import { z } from 'zod'
 import type { EngineSupervisor } from './engine'
 
@@ -24,8 +25,11 @@ The user sees a live board view, a parts/BOM table, datasheets and gate runs nex
 Use the pcb tools to answer from real data: never guess part numbers, counts or gate results.
 - pcb.board_parts / pcb.bom read the board; pcb.run_gate runs the real board gate and waits for the verdict;
   pcb.findings lists DRC findings of a run; pcb.show_on_board moves the user's board view to a part or point.
+- pcb.build / pcb.route make an isolated candidate board (tools/pcb build, or Fastroute with an explicit routing policy),
+  gate it fresh and return the verdict, the candidate path and its gate metrics. They never change the board file.
+- You cannot adopt a candidate or edit CAD files. Adopting replaces the board file; only the user does it, with the
+  Adopt button in the Runs section. Tell the user which run to review and why; never claim it is adopted.
 - After you name a part or a finding, call pcb.show_on_board so the user sees it.
-- You cannot edit files yet (edits arrive with candidate runs). Say what you would change instead.
 - Quote gate counts from the tool output. Keep answers short.
 User messages start with a [context] line: open project, board, gate and the user's board selection.`
 
@@ -68,6 +72,33 @@ export class AgentHost {
       const v = p || ctx.pcb
       if (!v) throw new Error('no board selected; pass pcb (project-relative .kicad_pcb path)')
       return v
+    }
+    // A run ends with a run.state notification whose state is not 'running'.
+    const waitEnd = (id: string): Promise<Record<string, unknown>> =>
+      new Promise((resolve) => {
+        const on = (n: { method: string; params: Record<string, unknown> }): void => {
+          if (n.method === 'run.state' && n.params.id === id && n.params.state !== 'running') {
+            engine.off('notify', on)
+            resolve(n.params)
+          }
+        }
+        engine.on('notify', on)
+      })
+    // Build/route result for the agent: verdict, cause and the candidate (path, target, gate metrics). No adopt.
+    const candidateSummary = async (id: string): Promise<Record<string, unknown>> => {
+      const { state, cause, run_id, elapsed_s, candidate, policy } = await waitEnd(id)
+      return {
+        run: id,
+        run_id,
+        state,
+        cause,
+        elapsed_s,
+        policy,
+        candidate: candidate ?? null,
+        next: candidate
+          ? 'The user reviews the candidate in the Runs section and adopts it there (only a passed, gate-verified candidate).'
+          : 'No candidate board was produced; report the cause.'
+      }
     }
     return createSdkMcpServer({
       name: 'pcb',
@@ -116,17 +147,41 @@ export class AgentHost {
             const gate = board || ctx.gate
             if (!gate) throw new Error('this board revision has no gate')
             const started = (await engine.call('gate.check', { board: gate, fresh })) as { id: string }
-            const end = await new Promise<Record<string, unknown>>((resolve) => {
-              const on = (n: { method: string; params: Record<string, unknown> }): void => {
-                if (n.method === 'run.state' && n.params.id === started.id && n.params.state !== 'running') {
-                  engine.off('notify', on)
-                  resolve(n.params)
-                }
-              }
-              engine.on('notify', on)
-            })
+            const end = await waitEnd(started.id)
             const f = (await engine.call('run.findings', { id: started.id })) as { items: unknown[] }
             return json({ ...end, findings: f.items.slice(0, 40), findings_total: f.items.length })
+          }
+        ),
+        tool(
+          'build',
+          "Run the board's own build pipeline (tools/pcb build) into an isolated candidate, gate it fresh and wait for the verdict. Canonical CAD is not changed. Boards without a pipeline fail with a cause.",
+          { board: z.string().optional().describe('gate name; default: the open board') },
+          async ({ board }) => {
+            const gate = board || ctx.gate
+            if (!gate) throw new Error('this board revision has no gate')
+            const started = (await engine.call('op.build', { board: gate })) as { id: string }
+            return json(await candidateSummary(started.id))
+          }
+        ),
+        tool(
+          'route',
+          'Autoroute the board with Fastroute (tools/pcb route --router fastroute, policy iot-lab.routing-policy.v1) into an isolated candidate, gate it fresh and wait for the verdict. Canonical CAD is not changed. Returns the candidate path and its gate metrics.',
+          {
+            board: z.string().optional().describe('gate name; default: the open board'),
+            layers: z.array(z.string()).default(['F.Cu', 'B.Cu']).describe('copper layers the router may use'),
+            nets: z.array(z.string()).optional().describe('exact net names; default: every net on the board'),
+            passes: z.number().int().positive().default(40),
+            timeout_s: z.number().int().positive().default(300).describe('router time budget (verification is extra)'),
+            threads: z.number().int().positive().default(1)
+          },
+          async ({ board, layers, nets, passes, timeout_s, threads }) => {
+            const gate = board || ctx.gate
+            if (!gate) throw new Error('this board revision has no gate')
+            const started = (await engine.call('op.route', {
+              board: gate,
+              policy: { layers, nets: nets ?? [], passes, timeout_s, threads }
+            })) as { id: string }
+            return json(await candidateSummary(started.id))
           }
         ),
         tool('findings', 'DRC findings (with positions) of an earlier gate run by its id.', { run: z.string() }, async ({ run }) =>

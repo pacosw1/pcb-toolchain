@@ -7,10 +7,11 @@ import { ChatPanel } from './ChatPanel'
 import { ChecksView } from './ChecksView'
 import { DatasheetView } from './DatasheetView'
 import { PartsView } from './PartsView'
+import { RunsView } from './RunsView'
 import { Viewer3D } from './Viewer3D'
 import type { Bom, BomLine, Finding, Geometry, ProjectInfo } from './types'
 
-type Tab = 'board' | '3d' | 'parts' | 'datasheets' | 'checks'
+type Tab = 'board' | '3d' | 'parts' | 'datasheets' | 'checks' | 'runs'
 
 const STATE_COLOR: Record<EngineStatus['state'], string> = {
   ready: 'var(--ok)',
@@ -132,6 +133,7 @@ function App(): React.JSX.Element {
   const [focus, setFocus] = useState<{ ref: string } | null>(null)
   const [findings, setFindings] = useState<Finding[]>([])
   const [focusPoint, setFocusPoint] = useState<{ x: number; y: number; span?: number } | null>(null)
+  const [reload, setReload] = useState(0) // bumped after an adopt replaced the board file
   const mention = selection
     ? `@${selection.ref}.${selection.pad.num}${selection.pad.net ? ` #${selection.pad.net}` : ''}`
     : null
@@ -184,7 +186,7 @@ function App(): React.JSX.Element {
       .call('board.bom', { pcb })
       .then((b) => setBom(b as Bom))
       .catch((e) => setError(String(e)))
-  }, [pcb, ready, project])
+  }, [pcb, ready, project, reload])
 
   const pickProject = async (): Promise<void> => {
     const root = await window.api.openProjectDialog()
@@ -196,7 +198,8 @@ function App(): React.JSX.Element {
     ['3d', '3D', 'cube', null],
     ['parts', 'Parts / BOM', 'list', bom ? `${bom.summary.lines} lines` : null],
     ['datasheets', 'Datasheets', 'doc', bom ? String(bom.lines.filter((l) => l.datasheet).length) : null],
-    ['checks', 'Checks', 'check', gate ? null : 'no gate']
+    ['checks', 'Checks', 'check', gate ? null : 'no gate'],
+    ['runs', 'Runs', 'runs', gate ? null : 'no gate']
   ]
 
   return (
@@ -320,6 +323,8 @@ function App(): React.JSX.Element {
                 setTab('board')
               }}
             />
+          ) : geo && tab === 'runs' ? (
+            <RunsView gate={gate} current={geo} onAdopted={() => setReload((n) => n + 1)} />
           ) : (
             <section className="panel placeholder" aria-label="Board view">
               {busy ? 'Loading board…' : project ? 'Choose a board on the left.' : 'No project open.'}

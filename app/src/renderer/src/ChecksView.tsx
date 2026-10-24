@@ -1,45 +1,7 @@
 // Gate runs for the selected board revision: start (fresh / changed), live events, final metrics and verdict.
 import { useEffect, useMemo, useState } from 'react'
+import { isWarning, line, STATE_COLOR, type Ev, type RunSummary } from './runs'
 import type { Finding } from './types'
-
-export interface RunSummary {
-  id: string
-  board: string
-  mode: string
-  state: 'running' | 'passed' | 'failed' | 'error' | 'cancelled'
-  started: number
-  exit_code: number | null
-  run_id: string | null
-  cause: string | null
-  metrics: Record<string, number> | null
-  findings: number
-  events: number
-  elapsed_s: number | null
-}
-
-type Ev = Record<string, unknown> & { type?: string; seq?: number }
-
-const STATE_COLOR: Record<RunSummary['state'], string> = {
-  running: 'var(--warn)',
-  passed: 'var(--ok)',
-  failed: 'var(--err)',
-  error: 'var(--err)',
-  cancelled: 'var(--dim)'
-}
-
-function isWarning(metric: string): boolean {
-  return metric.endsWith('warnings')
-}
-
-function line(e: Ev): string {
-  const t = e.type ?? '?'
-  const bits = [t]
-  for (const k of ['stage', 'check', 'tool', 'status', 'verdict', 'text', 'message', 'cause']) {
-    const v = e[k]
-    if (typeof v === 'string' && v) bits.push(v)
-  }
-  return bits.join('  ')
-}
 
 export function ChecksView({
   gate,
@@ -69,7 +31,11 @@ export function ChecksView({
     })
   }, [])
 
-  const mine = useMemo(() => runs.filter((r) => r.board === gate).sort((a, b) => b.started - a.started), [runs, gate])
+  // Gate checks only; build/route candidate runs live in the Runs section.
+  const mine = useMemo(
+    () => runs.filter((r) => r.board === gate && (r.op ?? 'check') === 'check').sort((a, b) => b.started - a.started),
+    [runs, gate]
+  )
   const run = mine.find((r) => r.id === cur) ?? mine[0] ?? null
 
   useEffect(() => {
