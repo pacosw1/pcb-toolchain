@@ -4,13 +4,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import platform
-import shutil
 from pathlib import Path
-import subprocess
 import time
 
 from . import __version__, parts
 from .kicad import board as kboard
+from .kicad import cli as kcli
 from .project import Project
 from .rpc import Registry
 from .runs import routing_policy as route_policy, runs
@@ -28,7 +27,7 @@ def ping() -> dict:
 @registry.method('engine.info')
 def info() -> dict:
     return {'version': __version__, 'python': platform.python_version(), 'methods': registry.names(),
-            'kicad_cli': _kicad_cli_version()}
+            'kicad_cli': kcli.version()}
 
 
 @registry.method('project.open')
@@ -59,7 +58,7 @@ def board_bom(pcb: str) -> dict:
 
 @registry.method('board.glb')
 async def board_glb(pcb: str, out_dir: str) -> dict:
-    """3D model (binary glTF) of a board with its part models, via kicad-cli; cached by the board file hash."""
+    """3D model (binary glTF) of a board with its part models (kicad.cli.export_glb); cached by the board file hash."""
     if _project is None:
         raise RuntimeError('no project open')
     path = _project.resolve(pcb)
@@ -67,20 +66,9 @@ async def board_glb(pcb: str, out_dir: str) -> dict:
     out = Path(out_dir).expanduser() / f'{path.stem}-{digest}.glb'
     if out.is_file() and out.stat().st_size > 0:
         return {'path': str(out), 'cached': True, 'size': out.stat().st_size}
-    out.parent.mkdir(parents=True, exist_ok=True)
-    exe = shutil.which('kicad-cli') or '/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli'
-    tmp = out.with_suffix('.tmp.glb')
-    proc = await asyncio.create_subprocess_exec(
-        exe, 'pcb', 'export', 'glb', '--force', '--subst-models', '--include-tracks', '--include-pads',
-        '--include-zones', '--include-silkscreen', '--include-soldermask', '--no-dnp',
-        '-D', f'IOT_LAB={_project.root}', '-D', f'KIPRJMOD={path.parent}', '-o', str(tmp), str(path),
-        cwd=str(path.parent), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-    log, _ = await proc.communicate()
-    if proc.returncode != 0 or not tmp.is_file():
-        raise RuntimeError(f'kicad-cli glb export failed ({proc.returncode}): {log.decode(errors="replace")[-800:]}')
-    tmp.replace(out)
-    missing = [ln for ln in log.decode(errors='replace').splitlines() if 'not found' in ln.lower() or 'could not' in ln.lower()]
-    return {'path': str(out), 'cached': False, 'size': out.stat().st_size, 'warnings': missing[:30]}
+    res = await asyncio.to_thread(kcli.export_glb, path, out,
+                                  defines={'IOT_LAB': str(_project.root), 'KIPRJMOD': str(path.parent)})
+    return {**res, 'cached': False}
 
 
 @registry.method('file.resolve')
@@ -175,13 +163,3 @@ def run_findings(id: str) -> dict:
 @registry.method('run.cancel')
 def run_cancel(id: str) -> dict:
     return runs.cancel(id)
-
-
-def _kicad_cli_version() -> str | None:
-    exe = shutil.which('kicad-cli')
-    if not exe:
-        return None
-    try:
-        return subprocess.run([exe, 'version'], capture_output=True, text=True, timeout=10).stdout.strip() or None
-    except (OSError, subprocess.TimeoutExpired):
-        return None

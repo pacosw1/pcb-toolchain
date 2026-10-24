@@ -188,7 +188,6 @@ def _serve() -> None:
                             'type': attrs.get(pad.GetAttribute(), str(pad.GetAttribute())),
                             'drill': [mm(drill.x), mm(drill.y)] if pad.HasHole() else None,
                             'drill_shape': 'oval' if pad.GetDrillShape() == pcbnew.PAD_DRILL_SHAPE_OBLONG else 'circle',
-                            'primitives': len(pad.GetPrimitives(pcbnew.F_Cu)),
                             'bbox': [mm(bb.GetX()), mm(bb.GetY()), mm(bb.GetRight()), mm(bb.GetBottom())]})
         return out
 
