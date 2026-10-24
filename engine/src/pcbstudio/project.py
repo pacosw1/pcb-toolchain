@@ -54,7 +54,9 @@ class Project:
                     named.add(rel)
                 revs.append({'revision': r.get('revision'), 'state': r.get('state'), 'pcb': rel,
                              'spec': r.get('spec')})
-            for pcb in sorted(d.glob('cad/**/*.kicad_pcb')):
+            # Files the registry does not name show only for a board without a registered PCB (candidate and
+            # placement copies beside a registered revision are not revisions).
+            for pcb in ([] if named else sorted(d.glob('cad/**/*.kicad_pcb'))):
                 rel = str(pcb.relative_to(self.root))
                 if rel not in named and not any(part.startswith('.') for part in pcb.relative_to(d).parts):
                     revs.append({'revision': None, 'state': 'unregistered', 'pcb': rel, 'spec': None})

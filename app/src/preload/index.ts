@@ -2,7 +2,13 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import type { EngineApi, EngineStatus } from './types'
 
-const api: { engine: EngineApi } = {
+const api: {
+  engine: EngineApi
+  openProjectDialog: () => Promise<string | null>
+  defaultProject: () => Promise<string | null>
+} = {
+  openProjectDialog: () => ipcRenderer.invoke('dialog:openProject'),
+  defaultProject: () => ipcRenderer.invoke('app:defaultProject'),
   engine: {
     call: (method, params) => ipcRenderer.invoke('engine:call', method, params),
     status: () => ipcRenderer.invoke('engine:status'),

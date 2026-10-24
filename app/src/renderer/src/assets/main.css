@@ -184,3 +184,117 @@ button:disabled {
   overflow: auto;
   white-space: pre-wrap;
 }
+
+.sidebar {
+  overflow-y: auto;
+  flex-basis: 240px;
+}
+
+.boardlist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.boardlist li {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.boardname {
+  font-weight: 600;
+}
+
+.lifecycle {
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.rev {
+  text-align: left;
+  padding: 3px 8px;
+  font-size: 12px;
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+
+.rev:hover {
+  border-color: var(--border);
+}
+
+.rev.on {
+  background: var(--raised);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+details.panel summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.boardview {
+  flex: 1 1 auto;
+  min-height: 360px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  overflow: hidden;
+}
+
+.boardview-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  background: transparent;
+}
+
+.toggle.on {
+  background: var(--raised);
+}
+
+.swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.boardview-canvas {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.selbox {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  font-family: var(--mono);
+  font-size: 12px;
+}

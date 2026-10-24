@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
 import { join, resolve } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -48,6 +48,13 @@ app.whenReady().then(() => {
   ipcMain.handle('engine:call', (_e, method: string, params?: unknown) => engine.call(method, params))
   ipcMain.handle('engine:status', () => engine.status)
   ipcMain.handle('engine:kill', () => engine.kill())
+  ipcMain.handle('app:defaultProject', () => process.env.PCBSTUDIO_PROJECT ?? null)
+  ipcMain.handle('dialog:openProject', async (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const opts = { title: 'Open hardware project', properties: ['openDirectory' as const] }
+    const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+    return r.canceled ? null : r.filePaths[0]
+  })
   engine.on('status', (s) => BrowserWindow.getAllWindows().forEach((w) => w.webContents.send('engine:status', s)))
   engine.on('log', (line: string) => console.log('[engine]', line))
   engine.start()
