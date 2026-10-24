@@ -3,7 +3,7 @@
 // info, Shift+drag to measure, search a reference. Geometry is cached as Path2D per layer (boardCache.ts), so
 // pan and zoom only replay paths. WebGL comes when boards outgrow Canvas 2D.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Finding, Geometry, Pad, Footprint, Track } from './types'
+import type { Finding, Geometry, Pad, Footprint, Pt, Track } from './types'
 import {
   buildCache,
   buildNetCache,
@@ -74,8 +74,6 @@ interface View {
   ox: number // screen px of board x=0
   oy: number
 }
-
-type Pt = [number, number]
 
 function pickNet(p: Pick | null): string | null {
   if (!p) return null

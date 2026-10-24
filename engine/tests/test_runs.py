@@ -31,10 +31,10 @@ def test_gate_check_streams_events(tmp_path):
     p = subprocess.Popen([sys.executable, '-m', 'pcbstudio', 'serve'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                          text=True, env={**os.environ})
     try:
-        port = json.loads(p.stdout.readline()[6:])['port']
+        ready = json.loads(p.stdout.readline()[6:])
 
         async def go():
-            async with connect(f'ws://127.0.0.1:{port}') as ws:
+            async with connect(f'ws://127.0.0.1:{ready["port"]}/?t={ready["token"]}') as ws:
                 async def call(i, method, **params):
                     await ws.send(json.dumps({'jsonrpc': '2.0', 'id': i, 'method': method, 'params': params}))
                 await call(1, 'project.open', root=str(root))

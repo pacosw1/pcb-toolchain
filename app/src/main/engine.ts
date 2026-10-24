@@ -1,32 +1,29 @@
 // Engine supervisor: starts `pcbstudio serve` (uv), reads its READY line, keeps one WebSocket JSON-RPC
 // connection, restarts the engine with backoff when it exits. The renderer reaches it only through IPC.
+// Each engine process gets a new random token in its environment (not on the command line); the socket refuses
+// connections without it (engine server.py).
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
+import { randomBytes } from 'crypto'
 import { EventEmitter } from 'events'
 import { existsSync } from 'fs'
-import { delimiter, join } from 'path'
-
-export type EngineState = 'starting' | 'ready' | 'restarting' | 'stopped'
-export interface EngineStatus {
-  state: EngineState
-  port: number | null
-  pid: number | null
-  restarts: number
-  lastError: string | null
-}
+import { join } from 'path'
+import type { EngineStatus } from '../preload/types'
+import { findTool, toolPath } from './config'
 
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }
 
-const EXTRA_PATH = ['/opt/homebrew/bin', '/usr/local/bin', join(process.env.HOME ?? '', '.local/bin')]
-
-function findUv(): string {
-  if (process.env.PCBSTUDIO_UV) return process.env.PCBSTUDIO_UV
-  const dirs = (process.env.PATH ?? '').split(delimiter).concat(EXTRA_PATH)
-  for (const d of dirs) {
-    const p = join(d, 'uv')
-    if (d && existsSync(p)) return p
-  }
-  throw new Error('uv not found (set PCBSTUDIO_UV)')
+// Reply deadlines per method. Run starts (gate.check, op.*) return at once and finish through run.state
+// notifications; these deadlines cover only work the engine does before it replies.
+const DEFAULT_TIMEOUT_MS = 30_000
+export const METHOD_TIMEOUT_MS: Record<string, number> = {
+  'run.adopt': 30 * 60_000, // tools/pcb adopt re-verifies the sealed candidate before it replaces the board
+  'board.glb': 10 * 60_000, // kicad-cli 3D export of a large board
+  'board.geometry': 2 * 60_000,
+  'board.bom': 2 * 60_000,
+  'project.open': 60_000,
+  'op.route': 2 * 60_000 // reads the board nets before the run starts
 }
+export const timeoutFor = (method: string): number => METHOD_TIMEOUT_MS[method] ?? DEFAULT_TIMEOUT_MS
 
 export class EngineSupervisor extends EventEmitter {
   private proc: ChildProcessWithoutNullStreams | null = null
@@ -35,9 +32,13 @@ export class EngineSupervisor extends EventEmitter {
   private pending = new Map<number, Pending>()
   private stopping = false
   private backoffMs = 500
+  private token = ''
+  /** Increments each time a new engine process is connected: a run id is only meaningful in its project, and a
+   * waiter for a run of an older engine generation knows that engine is gone. */
+  generation = 0
   status: EngineStatus = { state: 'stopped', port: null, pid: null, restarts: 0, lastError: null }
 
-  constructor(private engineDir: string) {
+  constructor(private engineDir: string | null) {
     super()
   }
 
@@ -46,8 +47,14 @@ export class EngineSupervisor extends EventEmitter {
     this.setStatus({ state: this.status.restarts ? 'restarting' : 'starting', port: null, pid: null })
     let proc: ChildProcessWithoutNullStreams
     try {
-      proc = spawn(findUv(), ['run', '--project', this.engineDir, 'pcbstudio', 'serve'], {
-        env: { ...process.env, PATH: [process.env.PATH ?? '', ...EXTRA_PATH].join(delimiter) }
+      if (!this.engineDir || !existsSync(join(this.engineDir, 'pyproject.toml'))) {
+        throw new Error('engine project not found (set PCBSTUDIO_ENGINE_DIR)')
+      }
+      const uv = findTool('uv', 'PCBSTUDIO_UV')
+      if (!uv) throw new Error('uv not found on PATH (set PCBSTUDIO_UV or PCBSTUDIO_PATH)')
+      this.token = randomBytes(32).toString('base64url')
+      proc = spawn(uv, ['run', '--project', this.engineDir, 'pcbstudio', 'serve'], {
+        env: { ...process.env, PATH: toolPath(), PCBSTUDIO_ENGINE_TOKEN: this.token }
       })
     } catch (e) {
       this.setStatus({ state: 'stopped', lastError: String(e) })
@@ -84,10 +91,11 @@ export class EngineSupervisor extends EventEmitter {
   }
 
   private connect(port: number): void {
-    const ws = new WebSocket(`ws://127.0.0.1:${port}`)
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/?t=${encodeURIComponent(this.token)}`)
     ws.onopen = () => {
       this.ws = ws
       this.backoffMs = 500
+      this.generation++
       this.setStatus({ state: 'ready', port })
     }
     ws.onmessage = (ev) => {
@@ -106,14 +114,14 @@ export class EngineSupervisor extends EventEmitter {
     ws.onerror = () => this.setStatus({ lastError: 'engine socket error' })
   }
 
-  call(method: string, params?: unknown, timeoutMs = 30_000): Promise<unknown> {
+  call(method: string, params?: unknown, timeoutMs = timeoutFor(method)): Promise<unknown> {
     const ws = this.ws
     if (!ws || this.status.state !== 'ready') return Promise.reject(new Error(`engine not ready (${this.status.state})`))
     const id = this.nextId++
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id)
-        reject(new Error(`engine call ${method} timed out`))
+        reject(new Error(`engine call ${method} timed out after ${Math.round(timeoutMs / 1000)} s`))
       }, timeoutMs)
       this.pending.set(id, { resolve, reject, timer })
       ws.send(JSON.stringify({ jsonrpc: '2.0', id, method, params }))

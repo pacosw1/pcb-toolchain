@@ -11,26 +11,39 @@ operation/result.json (tools/pcb_operations.py run()) plus supervisor fields (to
 `candidate` (absolute path of the isolated native board under `evidence_dir`/workspace/), `candidate_sha256`,
 `candidate_verified`, `identity_preserved` and `metrics` (the candidate's own gate result). The iot-lab run record
 (.gate/cli/RUN_ID) stays the durable evidence; this module only supervises and relays it.
+
+Studio runs are durable too: each run has a random id (`r-` + 16 hex digits, unique across engine restarts) and a
+folder `<project>/.gate/studio/runs/<id>/` with `run.json` (the record, rewritten atomically at each state change)
+and `events.jsonl` (every event, appended). `load(root)` (on project.open) brings back the runs of earlier engine
+processes; a run still `running` in its record lost its supervisor when that engine died and becomes `interrupted`.
 """
 from __future__ import annotations
 
 import asyncio
-import itertools
 import json
 import os
 import signal
 import tempfile
+import sys
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import events
+from .model.runs import Candidate, Findings, RunSummary
 
 MAX_EVENTS = 2000
 OPS = ('check', 'build', 'route')
 POLICY_SCHEMA = 'iot-lab.routing-policy.v1'
 POLICY_FIELDS = {'schema', 'layers', 'only_nets', 'passes', 'threads', 'timeout_s', 'optimizer', 'max_repairs'}
-_ids = itertools.count(1)
+STORE = Path('.gate/studio/runs')
+RECORD_FIELDS = ('id', 'op', 'board', 'mode', 'argv', 'policy', 'started', 'state', 'exit_code', 'run_id', 'end',
+                 'adoption', 'stderr')
+
+
+def new_id() -> str:
+    return f'r-{uuid.uuid4().hex[:16]}'
 
 
 @dataclass
@@ -43,7 +56,7 @@ class Run:
     root: Path | None = None
     policy: dict | None = None        # route: the exact routing policy given to the CLI
     started: float = field(default_factory=time.time)
-    state: str = 'running'            # running | passed | failed | error | cancelled
+    state: str = 'running'            # running | passed | failed | error | cancelled | interrupted
     exit_code: int | None = None
     run_id: str | None = None         # iot-lab run id (run-…)
     end: dict | None = None
@@ -51,9 +64,41 @@ class Run:
     stderr: list[str] = field(default_factory=list)
     proc: asyncio.subprocess.Process | None = None
     adoption: dict | None = None      # the adopt receipt (target, before/after sha256) once adopted
+    adopting: bool = False            # a `tools/pcb adopt` of this run is in progress
+    cancel_requested: bool = False    # run.cancel sent SIGTERM; the state becomes cancelled when the process exits
+
+    def dir(self) -> Path | None:
+        return self.root / STORE / self.id if self.root is not None else None
+
+    def record(self) -> dict:
+        return {k: getattr(self, k) for k in RECORD_FIELDS}
+
+    def persist(self) -> None:
+        """Write run.json atomically. A project that cannot be written keeps the run in memory only."""
+        d = self.dir()
+        if d is None:
+            return
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            tmp = d / 'run.json.tmp'
+            tmp.write_text(json.dumps(self.record()))
+            tmp.replace(d / 'run.json')
+        except OSError as e:
+            print(f'pcbstudio: cannot persist run {self.id}: {e}', file=sys.stderr, flush=True)
+
+    def append_event(self, ev: dict) -> None:
+        d = self.dir()
+        if d is None:
+            return
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            with open(d / 'events.jsonl', 'a') as f:
+                f.write(json.dumps(ev) + '\n')
+        except OSError as e:
+            print(f'pcbstudio: cannot persist an event of run {self.id}: {e}', file=sys.stderr, flush=True)
 
     def candidate(self) -> dict | None:
-        """The isolated candidate board of a build/route run, project-relative, or None.
+        """A model.Candidate dump: the isolated candidate board of a build/route run, project-relative, or None.
 
         `target` is the canonical board file adopt replaces: the run workspace is a snapshot of the checkout, so the
         candidate's path inside it is the same project-relative path in the checkout."""
@@ -68,9 +113,9 @@ class Run:
             ws = Path(e['evidence_dir']).resolve() / 'workspace'
             if ws in cand.parents:
                 target = str(cand.relative_to(ws))
-        return {'pcb': str(cand.relative_to(rp)), 'target': target, 'exists': cand.is_file(),
-                'sha256': e.get('candidate_sha256'), 'verified': bool(e.get('candidate_verified')),
-                'identity_preserved': e.get('identity_preserved'), 'metrics': e.get('metrics')}
+        return Candidate(pcb=str(cand.relative_to(rp)), target=target, exists=cand.is_file(),
+                         sha256=e.get('candidate_sha256'), verified=bool(e.get('candidate_verified')),
+                         identity_preserved=e.get('identity_preserved'), metrics=e.get('metrics')).model_dump()
 
     def adoptable(self) -> str | None:
         """Why this run cannot be adopted, or None. The CLI re-verifies everything; this only refuses early."""
@@ -78,6 +123,8 @@ class Run:
             return 'a gate check has no candidate'
         if self.adoption:
             return 'already adopted'
+        if self.adopting:
+            return 'an adoption of this run is in progress'
         if self.state != 'passed':
             return f'run is {self.state}, not passed'
         c = self.candidate()
@@ -88,18 +135,55 @@ class Run:
         return None
 
     def summary(self) -> dict:
+        """A model.RunSummary dump."""
         e = self.end or {}
-        return {'id': self.id, 'op': self.op, 'board': self.board, 'mode': self.mode, 'state': self.state,
-                'started': self.started, 'exit_code': self.exit_code, 'run_id': self.run_id,
-                'cause': e.get('cause'), 'metrics': e.get('metrics'), 'findings': len(e.get('findings') or []),
-                'events': len(self.events), 'elapsed_s': e.get('elapsed_s'),
-                'candidate': self.candidate(), 'policy': self.policy, 'adoption': self.adoption,
-                'adoptable': self.op != 'check' and self.adoptable() is None}
+        return RunSummary(id=self.id, op=self.op, board=self.board, mode=self.mode, state=self.state,
+                          started=self.started, exit_code=self.exit_code, run_id=self.run_id,
+                          cause=e.get('cause'), metrics=e.get('metrics'), findings=len(e.get('findings') or []),
+                          events=len(self.events), elapsed_s=e.get('elapsed_s'),
+                          candidate=self.candidate(), policy=self.policy, adoption=self.adoption,
+                          adoptable=self.op != 'check' and self.adoptable() is None).model_dump()
 
 
 class Runs:
     def __init__(self) -> None:
         self.runs: dict[str, Run] = {}
+
+    def load(self, root: Path) -> int:
+        """Bring back the runs of earlier engine processes from <root>/.gate/studio/runs. Returns how many."""
+        store = root / STORE
+        if not store.is_dir():
+            return 0
+        n = 0
+        for d in sorted(store.iterdir()):
+            if d.name in self.runs or not (d / 'run.json').is_file():
+                continue
+            try:
+                rec = json.loads((d / 'run.json').read_text())
+                run = Run(**{k: rec[k] for k in RECORD_FIELDS if k in rec}, root=root)
+            except (OSError, ValueError, TypeError) as e:
+                print(f'pcbstudio: skip unreadable run record {d}: {e}', file=sys.stderr, flush=True)
+                continue
+            if run.id != d.name:
+                continue
+            ev_file = d / 'events.jsonl'
+            if ev_file.is_file():
+                for ln in ev_file.read_text(errors='replace').splitlines()[-MAX_EVENTS:]:
+                    try:
+                        run.events.append(json.loads(ln))
+                    except json.JSONDecodeError:
+                        pass
+            if run.state == 'running':          # its engine died: nobody supervises it any more
+                run.state = 'interrupted'
+                run.stderr.append('interrupted: the engine that supervised this run stopped')
+                run.persist()
+            self.runs[run.id] = run
+            n += 1
+        return n
+
+    def list(self, root: Path | None = None) -> list[Run]:
+        rs = [r for r in self.runs.values() if root is None or (r.root is not None and r.root.resolve() == root.resolve())]
+        return sorted(rs, key=lambda r: r.started)
 
     def start_check(self, root: Path, board: str, fresh: bool = True) -> Run:
         return self.start(root, 'check', board, fresh=fresh)
@@ -132,9 +216,10 @@ class Runs:
                 json.dump(policy, f)
             mode = 'fastroute'
             argv = [str(tool), 'route', board, '--router', 'fastroute', '--spec', spec, '--timeout', str(total), '--json']
-        run = Run(id=f'r{next(_ids)}', op=op, board=board, mode=mode, argv=argv, root=root,
+        run = Run(id=new_id(), op=op, board=board, mode=mode, argv=argv, root=root,
                   policy=policy if op == 'route' else None)
         self.runs[run.id] = run
+        run.persist()
         asyncio.get_running_loop().create_task(self._supervise(run, root))
         events.publish('run.state', run.summary())
         return run
@@ -144,17 +229,22 @@ class Runs:
             run.proc = await asyncio.create_subprocess_exec(
                 *run.argv, cwd=str(root), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 start_new_session=True, env={**os.environ})
+            if run.cancel_requested:                    # cancelled while the process was starting
+                _killpg(run.proc.pid)
             await asyncio.gather(self._read_events(run), self._read_stderr(run))
             run.exit_code = await run.proc.wait()
         except Exception as e:  # noqa: BLE001 - reported on the run, never swallowed
             run.stderr.append(f'{type(e).__name__}: {e}')
             run.state = 'error'
-        if run.state == 'running':
+        if run.state == 'running' and run.cancel_requested:
+            run.state = 'cancelled'
+        elif run.state == 'running':
             status = (run.end or {}).get('status')
             run.state = 'passed' if status == 'passed' and run.exit_code == 0 else (
                 'failed' if run.end and status != 'error' else 'error')
         if run.op == 'route':              # the CLI keeps its own copy of the spec in the sealed run.json
             Path(run.argv[run.argv.index('--spec') + 1]).unlink(missing_ok=True)
+        run.persist()
         events.publish('run.state', run.summary())
 
     async def _read_events(self, run: Run) -> None:
@@ -176,6 +266,7 @@ class Runs:
                 # Admission errors (bad spec, unknown board) print one bare {status, exit_code, cause} object.
                 ev = run.end = {**ev, 'type': 'run.end'}
             run.events.append(ev)
+            run.append_event(ev)
             if len(run.events) > MAX_EVENTS:
                 del run.events[: len(run.events) - MAX_EVENTS]
             events.publish('run.event', {'id': run.id, 'event': _compact(ev)})
@@ -191,11 +282,11 @@ class Runs:
         run = self.runs[run_id]
         gate_result = (run.end or {}).get('gate_result')
         if not gate_result:
-            return {'id': run_id, 'items': [], 'source': None}
+            return Findings(id=run_id, items=[], source=None).model_dump()
         drc = Path(gate_result).parent / 'drc.json'
         rp = root.resolve()
         if not drc.is_file() or rp not in drc.resolve().parents:
-            return {'id': run_id, 'items': [], 'source': None}
+            return Findings(id=run_id, items=[], source=None).model_dump()
         data = json.loads(drc.read_text())
         items = []
         for kind, rows in (('violation', data.get('violations') or []), ('unconnected', data.get('unconnected_items') or [])):
@@ -210,7 +301,7 @@ class Runs:
                                         for i in v.get('items', []) if i.get('pos')]})
         order = {'error': 0, 'warning': 1}
         items.sort(key=lambda f: (order.get(f['severity'], 2), f['type']))
-        return {'id': run_id, 'items': items, 'source': str(drc.relative_to(rp))}
+        return Findings(id=run_id, items=items, source=str(drc.relative_to(rp))).model_dump()
 
     async def adopt(self, run_id: str) -> dict:
         """`tools/pcb adopt RUN_ID --json`. The CLI re-verifies the sealed candidate, its evidence and the unchanged
@@ -223,10 +314,19 @@ class Runs:
         assert run.root is not None
         if not run.run_id:
             raise ValueError(f'cannot adopt {run_id}: no iot-lab run id')
-        proc = await asyncio.create_subprocess_exec(
-            str(_tool(run.root)), 'adopt', run.run_id, '--json', cwd=str(run.root),
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env={**os.environ})
-        out, err = await proc.communicate()
+        target = (run.candidate() or {}).get('target')
+        busy = [r.id for r in self.runs.values() if r.adopting and r.root == run.root
+                and (r.candidate() or {}).get('target') == target]
+        if busy:
+            raise ValueError(f'cannot adopt {run_id}: run {busy[0]} is adopting into {target} now')
+        run.adopting = True                     # set before the first await: a second adopt is refused
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                str(_tool(run.root)), 'adopt', run.run_id, '--json', cwd=str(run.root),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env={**os.environ})
+            out, err = await proc.communicate()
+        finally:
+            run.adopting = False
         lines = [ln for ln in out.decode(errors='replace').splitlines() if ln.strip()]
         try:
             data = json.loads(lines[-1]) if lines else {}
@@ -237,15 +337,25 @@ class Runs:
                 or (lines[-1] if lines else '')
             raise RuntimeError(f'tools/pcb adopt refused (exit {proc.returncode}): {cause}')
         run.adoption = data
+        run.persist()
         events.publish('run.state', run.summary())
         return data
 
     def cancel(self, run_id: str) -> dict:
+        """Ask a running run to stop. The state becomes `cancelled` only when its process has exited."""
         run = self.runs[run_id]
-        if run.proc and run.proc.returncode is None:
-            os.killpg(run.proc.pid, signal.SIGTERM)       # the iot-lab supervisor cleans its process family
-            run.state = 'cancelled'
+        if run.state == 'running':
+            run.cancel_requested = True
+            if run.proc and run.proc.returncode is None:
+                _killpg(run.proc.pid)                  # the iot-lab supervisor cleans its process family
         return run.summary()
+
+
+def _killpg(pid: int) -> None:
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except ProcessLookupError:                         # the process group has exited already
+        pass
 
 
 def _tool(root: Path) -> Path:

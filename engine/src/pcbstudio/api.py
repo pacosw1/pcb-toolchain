@@ -35,6 +35,7 @@ def info() -> dict:
 def project_open(root: str) -> dict:
     global _project
     _project = Project(root)
+    runs.load(_project.root)                    # runs of earlier engine processes (durable run records)
     return _project.info().model_dump()
 
 
@@ -169,7 +170,8 @@ async def run_adopt(id: str) -> dict:
 
 @registry.method('run.list')
 def run_list() -> list[dict]:
-    return [r.summary() for r in runs.runs.values()]
+    """Runs of the open project (this engine's and earlier engines'), oldest first."""
+    return [r.summary() for r in runs.list(_project.root if _project else None)]
 
 
 @registry.method('run.get')

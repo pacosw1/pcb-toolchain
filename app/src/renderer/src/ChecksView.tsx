@@ -1,7 +1,7 @@
 // Gate runs for the selected board revision: start (fresh / changed), live events, final metrics and verdict.
 import { useEffect, useMemo, useState } from 'react'
 import { isWarning, line, STATE_COLOR, type Ev, type RunSummary } from './runs'
-import type { Finding } from './types'
+import type { Finding, Findings } from './types'
 
 export function ChecksView({
   gate,
@@ -67,7 +67,7 @@ export function ChecksView({
     window.api.engine
       .call('run.findings', { id: run.id })
       .then((r) => {
-        const items = (r as { items: Finding[] }).items
+        const items = (r as Findings).items
         setFindings(items)
         onFindings(items)
       })

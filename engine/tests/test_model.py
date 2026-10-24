@@ -38,7 +38,7 @@ def test_generated_typescript_is_current():
 def test_generated_typescript_shapes():
     ts = generate()
     assert 'export type Pt = [number, number]' in ts
-    assert "  state: 'running' | 'passed' | 'failed' | 'error' | 'cancelled'\n" in ts
+    assert "  state: 'running' | 'passed' | 'failed' | 'error' | 'cancelled' | 'interrupted'\n" in ts
     assert '  bbox: [number, number, number, number]\n' in ts
     assert '  revisions: Revision[]\n' in ts and '  drill: number | null\n' in ts
 

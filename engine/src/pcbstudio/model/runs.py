@@ -1,11 +1,12 @@
-"""Run shapes, as runs.py emits them today (Run.summary, Run.candidate, Runs.findings). runs.py (agent A) adopts them."""
+"""Run shapes: runs.py builds Run.summary, Run.candidate and Runs.findings through these models."""
 from __future__ import annotations
 
 from typing import Any, Literal
 
 from .base import Model
 
-RunState = Literal['running', 'passed', 'failed', 'error', 'cancelled']
+# interrupted: a run whose supervising engine stopped (found `running` in its durable record at load).
+RunState = Literal['running', 'passed', 'failed', 'error', 'cancelled', 'interrupted']
 RunOp = Literal['check', 'build', 'route']
 
 

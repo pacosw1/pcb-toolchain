@@ -40,10 +40,10 @@ def test_serve_end_to_end_and_exit_on_stdin_close():
     try:
         line = p.stdout.readline()
         assert line.startswith('READY ')
-        port = json.loads(line[6:])['port']
+        ready = json.loads(line[6:])
 
         async def go():
-            async with connect(f'ws://127.0.0.1:{port}') as ws:
+            async with connect(f'ws://127.0.0.1:{ready["port"]}/?t={ready["token"]}') as ws:
                 await ws.send(json.dumps({'jsonrpc': '2.0', 'id': 7, 'method': 'engine.ping'}))
                 return json.loads(await ws.recv())
         assert asyncio.run(go())['result']['ok'] is True

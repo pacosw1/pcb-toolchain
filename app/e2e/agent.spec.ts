@@ -28,6 +28,19 @@ test('Claude answers from the board with engine tools', async () => {
   await expect(log.locator('.toolchip', { hasText: 'pcb.' }).first()).toBeVisible({ timeout: 120_000 })
   await expect(log.locator('.meta').last()).toContainText(/turns|\$/, { timeout: 180_000 })
   await expect(log.locator('.bubble.claude').last()).toContainText('40')
+
+  // The sandbox (agentPolicy.ts) still lets Claude read files of the open project and call board_parts.
+  await win
+    .getByLabel('Message')
+    .fill(
+      'Call pcb.board_parts once for this board. Then use the Read tool on hardware-design/boards/POE-ETHERNET/gate.json ' +
+        'and name the ground nets listed under kicad_happy grounds.'
+    )
+  await win.getByRole('button', { name: 'Send' }).click()
+  await expect(log.locator('.bubble.claude').last()).toContainText('PHY_GND', { timeout: 180_000 })
+  await expect(log.locator('.toolchip', { hasText: 'pcb.board_parts' }).first()).toBeVisible()
+  await expect(log.locator('.toolchip', { hasText: /^Read$/ }).first()).toBeVisible()
+  await expect(log.locator('.bubble.claude').last()).toContainText('ISO_GND')
   await win.screenshot({ path: join(APP, 'test-results', 'agent.png') })
   await app.close()
 })

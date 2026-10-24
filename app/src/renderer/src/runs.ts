@@ -10,7 +10,8 @@ export const STATE_COLOR: Record<RunSummary['state'], string> = {
   passed: 'var(--ok)',
   failed: 'var(--err)',
   error: 'var(--err)',
-  cancelled: 'var(--dim)'
+  cancelled: 'var(--dim)',
+  interrupted: 'var(--dim)' // its engine stopped while it ran (engine runs.py load)
 }
 
 export function isWarning(metric: string): boolean {

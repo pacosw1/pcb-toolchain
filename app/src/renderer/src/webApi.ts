@@ -1,6 +1,6 @@
 // Browser (web viewer) implementation of window.api: JSON-RPC over the engine's /rpc WebSocket on the same origin.
 // Read-only: the server pins the project and allows only viewing methods; chat runs in the desktop app.
-import type { AppApi, EngineNotification, EngineStatus } from '../../preload/types'
+import type { AppApi, EngineNotification, EngineStatus, GlbResult } from '../../preload/types'
 
 export function installWebApi(): void {
   let ws: WebSocket | null = null
@@ -85,7 +85,7 @@ export function installWebApi(): void {
       window.open(url, '_blank', 'noopener')
     },
     boardGlb: async (pcb) => {
-      const r = (await call('board.glb', { pcb })) as { path: string; cached: boolean; size: number }
+      const r = (await call('board.glb', { pcb })) as GlbResult
       return { ...r, url: fileUrl(r.path) }
     }
   }

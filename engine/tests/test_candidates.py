@@ -101,6 +101,21 @@ def test_route_candidate_review_and_adopt(project):
     asyncio.run(go())
 
 
+def test_concurrent_adopt_runs_once(project):
+    """Two adopt clicks at the same time: the engine runs `tools/pcb adopt` once and refuses the second."""
+    async def go():
+        await call('project.open', root=str(project))
+        s = await finish(await call('op.build', board='DEMO'))
+        a, b = await asyncio.gather(call('run.adopt', id=s['id']), call('run.adopt', id=s['id']),
+                                    return_exceptions=True)
+        assert isinstance(a, dict) and a['candidate_run'] == 'run-build-DEMO'
+        assert isinstance(b, ValueError) and 'in progress' in str(b)
+        assert not api.runs.runs[s['id']].adopting
+        rec = json.loads((project / '.gate/studio/runs' / s['id'] / 'run.json').read_text())
+        assert rec['adoption'] == a                                 # the receipt is in the durable record
+    asyncio.run(go())
+
+
 def test_build_failed_candidate_is_not_adoptable(project):
     async def go():
         await call('project.open', root=str(project))

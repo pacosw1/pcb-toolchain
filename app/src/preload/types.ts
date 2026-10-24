@@ -17,7 +17,7 @@ export interface AgentContext {
   projectRoot: string | null
   pcb: string | null
   gate: string | null
-  selection: string | null
+  selection: string | null // "@U101.41 #FSPI_D0"
 }
 
 export type AgentEvent =

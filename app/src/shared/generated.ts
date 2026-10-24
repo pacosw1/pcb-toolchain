@@ -309,7 +309,7 @@ export interface RunSummary {
   op: 'check' | 'build' | 'route'
   board: string
   mode: string
-  state: 'running' | 'passed' | 'failed' | 'error' | 'cancelled'
+  state: 'running' | 'passed' | 'failed' | 'error' | 'cancelled' | 'interrupted'
   started: number
   exit_code: number | null
   run_id: string | null
