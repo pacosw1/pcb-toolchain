@@ -2,7 +2,12 @@
 // One conversation per window; each user turn resumes the same session. The agent can look at boards, BOMs,
 // datasheets, run the gate, make build/route candidates (phase 5) and steer the viewer. It has no adopt tool and no
 // file-writing tools: replacing a board file stays a user click in the Runs section.
+// Tools: the pcb MCP tools, WebSearch, and Read/Grep/Glob inside the open project only (agentPolicy.ts). The project
+// root comes from main (the engine's project.open result), never from the renderer's context.
+import { availableParallelism } from 'os'
 import { z } from 'zod'
+import { checkToolUse } from './agentPolicy'
+import { toolPath } from './config'
 import type { EngineSupervisor } from './engine'
 
 export interface AgentContext {
@@ -18,6 +23,53 @@ export type AgentEvent =
   | { kind: 'viewer'; ref?: string; x?: number; y?: number }
   | { kind: 'done'; costUsd?: number; durationMs?: number; turns?: number }
   | { kind: 'error'; message: string }
+
+// Agent route limits: bound one agent request (the CLI deadline is timeout_s + 600 s of verification).
+export const ROUTE_LIMITS = { passes: 200, timeout_s: 3600, threads: Math.max(1, availableParallelism()) }
+const VERIFY_S = 600 // engine runs.py: default CLI deadline = router timeout_s + 600 s for the fresh gate
+const GATE_WAIT_MS = 60 * 60_000
+const BUILD_WAIT_MS = 2 * 60 * 60_000
+
+type Notify = { method: string; params: Record<string, unknown> }
+
+/** Resolve with the final run.state of run `id`; reject on timeout or when the engine restarts (the run is then
+ * interrupted). The listeners are always removed. */
+export function waitRunEnd(engine: EngineSupervisor, id: string, timeoutMs: number): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const generation = engine.generation
+    let done = false
+    const finish = (settle: () => void): void => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      engine.off('notify', onNotify)
+      engine.off('status', onStatus)
+      settle()
+    }
+    const onNotify = (n: Notify): void => {
+      if (n.method === 'run.state' && n.params.id === id && n.params.state !== 'running') finish(() => resolve(n.params))
+    }
+    const onStatus = (s: { state: string }): void => {
+      if (s.state !== 'ready' || engine.generation !== generation) {
+        finish(() => reject(new Error(`the engine restarted while run ${id} was running; the run is interrupted`)))
+      }
+    }
+    const timer = setTimeout(
+      () => finish(() => reject(new Error(`run ${id} did not end within ${Math.round(timeoutMs / 1000)} s`))),
+      timeoutMs
+    )
+    engine.on('notify', onNotify)
+    engine.on('status', onStatus)
+    // The run may have ended before the listener was attached: ask once.
+    engine
+      .call('run.get', { id, after: 1_000_000_000 })
+      .then((r) => {
+        const s = (r as { summary?: Record<string, unknown> }).summary
+        if (s && s.id === id && s.state !== 'running') finish(() => resolve(s))
+      })
+      .catch(() => undefined)
+  })
+}
 
 const PROMPT_APPEND = `
 You are the PCB design agent inside PCB Studio, a desktop app for building PCBs (KiCad 10, JLCPCB parts).
@@ -40,7 +92,8 @@ export class AgentHost {
 
   constructor(
     private engine: EngineSupervisor,
-    private emit: (e: AgentEvent) => void
+    private emit: (e: AgentEvent) => void,
+    private projectRoot: () => string | null
   ) {}
 
   get busy(): boolean {
@@ -74,19 +127,10 @@ export class AgentHost {
       return v
     }
     // A run ends with a run.state notification whose state is not 'running'.
-    const waitEnd = (id: string): Promise<Record<string, unknown>> =>
-      new Promise((resolve) => {
-        const on = (n: { method: string; params: Record<string, unknown> }): void => {
-          if (n.method === 'run.state' && n.params.id === id && n.params.state !== 'running') {
-            engine.off('notify', on)
-            resolve(n.params)
-          }
-        }
-        engine.on('notify', on)
-      })
+    const waitEnd = (id: string, timeoutMs: number): Promise<Record<string, unknown>> => waitRunEnd(engine, id, timeoutMs)
     // Build/route result for the agent: verdict, cause and the candidate (path, target, gate metrics). No adopt.
-    const candidateSummary = async (id: string): Promise<Record<string, unknown>> => {
-      const { state, cause, run_id, elapsed_s, candidate, policy } = await waitEnd(id)
+    const candidateSummary = async (id: string, timeoutMs: number): Promise<Record<string, unknown>> => {
+      const { state, cause, run_id, elapsed_s, candidate, policy } = await waitEnd(id, timeoutMs)
       return {
         run: id,
         run_id,
@@ -147,7 +191,7 @@ export class AgentHost {
             const gate = board || ctx.gate
             if (!gate) throw new Error('this board revision has no gate')
             const started = (await engine.call('gate.check', { board: gate, fresh })) as { id: string }
-            const end = await waitEnd(started.id)
+            const end = await waitEnd(started.id, GATE_WAIT_MS)
             const f = (await engine.call('run.findings', { id: started.id })) as { items: unknown[] }
             return json({ ...end, findings: f.items.slice(0, 40), findings_total: f.items.length })
           }
@@ -160,7 +204,7 @@ export class AgentHost {
             const gate = board || ctx.gate
             if (!gate) throw new Error('this board revision has no gate')
             const started = (await engine.call('op.build', { board: gate })) as { id: string }
-            return json(await candidateSummary(started.id))
+            return json(await candidateSummary(started.id, BUILD_WAIT_MS))
           }
         ),
         tool(
@@ -170,9 +214,15 @@ export class AgentHost {
             board: z.string().optional().describe('gate name; default: the open board'),
             layers: z.array(z.string()).default(['F.Cu', 'B.Cu']).describe('copper layers the router may use'),
             nets: z.array(z.string()).optional().describe('exact net names; default: every net on the board'),
-            passes: z.number().int().positive().default(40),
-            timeout_s: z.number().int().positive().default(300).describe('router time budget (verification is extra)'),
-            threads: z.number().int().positive().default(1)
+            passes: z.number().int().positive().max(ROUTE_LIMITS.passes).default(40),
+            timeout_s: z
+              .number()
+              .int()
+              .positive()
+              .max(ROUTE_LIMITS.timeout_s)
+              .default(300)
+              .describe('router time budget (verification is extra)'),
+            threads: z.number().int().positive().max(ROUTE_LIMITS.threads).default(1)
           },
           async ({ board, layers, nets, passes, timeout_s, threads }) => {
             const gate = board || ctx.gate
@@ -181,7 +231,7 @@ export class AgentHost {
               board: gate,
               policy: { layers, nets: nets ?? [], passes, timeout_s, threads }
             })) as { id: string }
-            return json(await candidateSummary(started.id))
+            return json(await candidateSummary(started.id, (timeout_s + VERIFY_S + 300) * 1000))
           }
         ),
         tool('findings', 'DRC findings (with positions) of an earlier gate run by its id.', { run: z.string() }, async ({ run }) =>
@@ -202,6 +252,8 @@ export class AgentHost {
 
   async send(text: string, ctx: AgentContext): Promise<void> {
     if (this.abort) throw new Error('the agent is still answering')
+    ctx = { ...ctx, projectRoot: this.projectRoot() } // main's verified root, not the renderer's
+    const root = ctx.projectRoot
     const sdk = await this.load()
     this.abort = new AbortController()
     const contextLine = `[context] project=${ctx.projectRoot ?? 'none'} board=${ctx.pcb ?? 'none'} gate=${ctx.gate ?? 'none'} selection=${ctx.selection ?? 'none'}`
@@ -210,20 +262,41 @@ export class AgentHost {
         prompt: `${contextLine}\n${text}`,
         options: {
           // In Electron, process.execPath is the Electron binary: run the Claude Code CLI with real Node, and give a
-          // Finder-launched app the Homebrew PATH.
+          // Finder-launched app the user's tool PATH (config.ts).
           executable: 'node',
-          env: {
-            ...process.env,
-            PATH: [process.env.PATH ?? '', '/opt/homebrew/bin', '/usr/local/bin'].join(':')
-          },
+          env: { ...process.env, PATH: toolPath() },
           stderr: (d: string) => console.error('[agent]', d.trimEnd()),
           abortController: this.abort,
-          cwd: ctx.projectRoot ?? undefined,
+          cwd: root ?? undefined,
           resume: this.sessionId ?? undefined,
           mcpServers: { pcb: this.tools(sdk, ctx) },
-          allowedTools: ['mcp__pcb__*', 'Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch'],
-          disallowedTools: ['Bash', 'Write', 'Edit', 'NotebookEdit'],
-          permissionMode: 'dontAsk',
+          // Built-in tools: only these exist in the session. Read/Grep/Glob are checked per call (agentPolicy.ts).
+          tools: ['Read', 'Grep', 'Glob', 'WebSearch'],
+          allowedTools: ['mcp__pcb__*', 'WebSearch'],
+          disallowedTools: ['Bash', 'Write', 'Edit', 'NotebookEdit', 'WebFetch'],
+          permissionMode: 'default',
+          canUseTool: async (name, input) => checkToolUse(name, input, root),
+          hooks: {
+            PreToolUse: [
+              {
+                hooks: [
+                  async (h) => {
+                    const i = h as { tool_name: string; tool_input: unknown }
+                    const r = checkToolUse(i.tool_name, (i.tool_input ?? {}) as Record<string, unknown>, root)
+                    return r.behavior === 'deny'
+                      ? {
+                          hookSpecificOutput: {
+                            hookEventName: 'PreToolUse' as const,
+                            permissionDecision: 'deny' as const,
+                            permissionDecisionReason: r.message
+                          }
+                        }
+                      : {}
+                  }
+                ]
+              }
+            ]
+          },
           settingSources: ['project'],
           systemPrompt: { type: 'preset', preset: 'claude_code', append: PROMPT_APPEND }
         }

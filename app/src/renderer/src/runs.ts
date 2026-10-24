@@ -16,7 +16,7 @@ export interface RunSummary {
   op?: 'check' | 'build' | 'route'
   board: string
   mode: string
-  state: 'running' | 'passed' | 'failed' | 'error' | 'cancelled'
+  state: 'running' | 'passed' | 'failed' | 'error' | 'cancelled' | 'interrupted'
   started: number
   exit_code: number | null
   run_id: string | null
@@ -38,7 +38,8 @@ export const STATE_COLOR: Record<RunSummary['state'], string> = {
   passed: 'var(--ok)',
   failed: 'var(--err)',
   error: 'var(--err)',
-  cancelled: 'var(--dim)'
+  cancelled: 'var(--dim)',
+  interrupted: 'var(--dim)' // its engine stopped while it ran (engine runs.py load)
 }
 
 export function isWarning(metric: string): boolean {

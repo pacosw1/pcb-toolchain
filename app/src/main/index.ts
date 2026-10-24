@@ -1,30 +1,40 @@
 import { app, shell, BrowserWindow, ipcMain, dialog, protocol, net } from 'electron'
 import { join, resolve, sep } from 'path'
-import { existsSync } from 'fs'
+import { realpathSync } from 'fs'
 import { pathToFileURL } from 'url'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { EngineSupervisor } from './engine'
 import { AgentHost, type AgentContext } from './agent'
-
-// Dev: the engine project sits next to the app folder. A packaged .app lives elsewhere, so it falls back to the repo
-// checkout until the engine is bundled.
-function findEngineDir(): string {
-  const candidates = [
-    process.env.PCBSTUDIO_ENGINE_DIR,
-    resolve(app.getAppPath(), '..', 'engine'),
-    join(app.getPath('home'), 'code', 'pcb-studio', 'engine')
-  ].filter((p): p is string => !!p)
-  return candidates.find((p) => existsSync(join(p, 'pyproject.toml'))) ?? candidates[candidates.length - 1]
-}
-const engineDir = findEngineDir()
-const engine = new EngineSupervisor(engineDir)
-const agent = new AgentHost(engine, (e) =>
-  BrowserWindow.getAllWindows().forEach((w) => w.webContents.send('agent:event', e))
-)
+import { engineDir } from './config'
 
 // pcbfile://local/<absolute path> serves files of the open project only (datasheet PDFs for Chromium's viewer).
+// The open project is the root of the engine's last project.open result: main reads it from the engine reply,
+// never from a renderer argument.
 let projectRoot: string | null = null
+const engine = new EngineSupervisor(engineDir(app.getAppPath(), process.resourcesPath))
+const agent = new AgentHost(
+  engine,
+  (e) => BrowserWindow.getAllWindows().forEach((w) => w.webContents.send('agent:event', e)),
+  () => projectRoot
+)
+
+async function engineCall(method: string, params?: unknown): Promise<unknown> {
+  const result = await engine.call(method, params)
+  if (method === 'project.open') {
+    const root = (result as { root?: unknown }).root
+    if (typeof root === 'string') projectRoot = realpathSync(root)
+  }
+  return result
+}
+
+function realOrNull(p: string): string | null {
+  try {
+    return realpathSync(p)
+  } catch {
+    return null
+  }
+}
 const glbDir = (): string => join(app.getPath('userData'), 'glb')
 protocol.registerSchemesAsPrivileged([
   { scheme: 'pcbfile', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } }
@@ -70,9 +80,10 @@ app.whenReady().then(() => {
 
   protocol.handle('pcbfile', async (req) => {
     const cors = { 'Access-Control-Allow-Origin': '*' }
-    const path = resolve(decodeURIComponent(new URL(req.url).pathname))
-    const inside = (root: string | null): boolean => !!root && (path === root || path.startsWith(root + sep))
-    if (!inside(projectRoot) && !inside(glbDir())) {
+    const path = realOrNull(resolve(decodeURIComponent(new URL(req.url).pathname)))
+    if (!path) return new Response('not found', { status: 404, headers: cors })
+    const inside = (root: string | null): boolean => !!root && path.startsWith(root + sep)
+    if (!inside(projectRoot) && !inside(realOrNull(glbDir()))) {
       return new Response('outside the open project', { status: 403, headers: cors })
     }
     const r = await net.fetch(pathToFileURL(path).toString())
@@ -83,7 +94,7 @@ app.whenReady().then(() => {
     return new Response(r.body, { status: r.status, headers })
   })
 
-  ipcMain.handle('engine:call', (_e, method: string, params?: unknown) => engine.call(method, params))
+  ipcMain.handle('engine:call', (_e, method: string, params?: unknown) => engineCall(method, params))
   ipcMain.handle('engine:status', () => engine.status)
   ipcMain.handle('engine:kill', () => engine.kill())
   ipcMain.handle('agent:send', (_e, text: string, ctx: AgentContext) => {
@@ -92,12 +103,16 @@ app.whenReady().then(() => {
   ipcMain.handle('agent:cancel', () => agent.cancel())
   ipcMain.handle('agent:reset', () => agent.reset())
   ipcMain.handle('board:glb', async (_e, pcb: string) => {
-    const r = (await engine.call('board.glb', { pcb, out_dir: glbDir() }, 600_000)) as { path: string; cached: boolean; size: number }
+    const r = (await engine.call('board.glb', { pcb, out_dir: glbDir() })) as { path: string; cached: boolean; size: number }
     return { ...r, url: 'pcbfile://local' + encodeURI(r.path) }
   })
   ipcMain.handle('app:defaultProject', () => process.env.PCBSTUDIO_PROJECT || null)
+  // Kept for the renderer API: main already took the root from the engine's project.open reply. A different root is
+  // refused (the renderer cannot widen pcbfile://).
   ipcMain.handle('app:setProjectRoot', (_e, root: string) => {
-    projectRoot = resolve(root)
+    if (realOrNull(resolve(String(root))) !== projectRoot) {
+      throw new Error('setProjectRoot: not the project the engine opened')
+    }
   })
   ipcMain.handle('shell:openExternal', (_e, url: string) => {
     if (/^https?:\/\//.test(url)) return shell.openExternal(url)
