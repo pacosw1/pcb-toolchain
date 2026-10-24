@@ -25,14 +25,18 @@ class Registry:
     def names(self) -> list[str]:
         return sorted(self._methods)
 
-    async def call(self, name: str, params: Any) -> Any:
-        fn = self._methods[name]
+    def bind(self, name: str, params: Any) -> inspect.BoundArguments:
+        """Raises TypeError when the params do not fit the method signature (-> INVALID_PARAMS)."""
+        sig = inspect.signature(self._methods[name])
         if isinstance(params, dict):
-            result = fn(**params)
-        elif isinstance(params, list):
-            result = fn(*params)
-        else:
-            result = fn()
+            return sig.bind(**params)
+        if isinstance(params, list):
+            return sig.bind(*params)
+        return sig.bind()
+
+    async def call(self, name: str, params: Any) -> Any:
+        b = self.bind(name, params)
+        result = self._methods[name](*b.args, **b.kwargs)
         return await result if inspect.isawaitable(result) else result
 
     async def handle(self, raw: str) -> str | None:
@@ -47,9 +51,11 @@ class Registry:
         if name not in self._methods:
             return _error(rid, METHOD_NOT_FOUND, f'method not found: {name}')
         try:
-            result = await self.call(name, params)
+            self.bind(name, params)
         except TypeError as e:
             return _error(rid, INVALID_PARAMS, str(e))
+        try:
+            result = await self.call(name, params)
         except Exception as e:  # noqa: BLE001 - reported to the caller, never swallowed
             return _error(rid, INTERNAL_ERROR, f'{type(e).__name__}: {e}')
         if rid is None:
