@@ -6,6 +6,12 @@
   },
   {
    "path": "hardware-design/registry/datasheets/TPS259251DRCR.pdf"
+  },
+  {
+   "path": "hardware-design/registry/datasheets/TPS2116DRLR_C3235557.pdf"
+  },
+  {
+   "path": "hardware-design/registry/datasheets/TPS631000DRLR_C5219190.pdf"
   }
  ],
  "parts": {
@@ -124,6 +130,62 @@
      "amps": 5.58,
      "statistic": "min",
      "source": "TPS2663x datasheet SLVSE94G (Sep 2018, revised Jun 2024), section 6.5 Electrical Characteristics, I(LIM) overload current limit with R(ILIM) = 3 kOhm: 6 A typ, 5.58 A min (page 7); pins 1-2 = IN, 17-18 = OUT of the RGE VQFN-24 (Table 5-1, page 3); https://www.ti.com/lit/ds/symlink/tps2663.pdf, local copy hardware-design/registry/datasheets/TPS26632RGER_C1850278.pdf [P]. The power path through IN and OUT is designed for the 6 A setting; AC-24V sets 3.5 A (D-133)."
+    }
+   }
+  },
+  "TPS2116": {
+   "mpn": [
+    "TPS2116*"
+   ],
+   "pins": {
+    "2": {
+     "name": "VOUT",
+     "amps": 2.5,
+     "statistic": "rated",
+     "source": "TPS2116 datasheet SLVSFG1A (Jan 2021, revised May 2021), section 1 Features, page 1: 'Maximum continuous current: 2.5 A'; pins 2, 7 = VOUT and pin 3 = VIN1 (Table 5-1 Pin Functions, page 3; the two VOUT pins are one terminal, and the 2.5 A is the device rating at that terminal, not a per-pin figure); https://www.ti.com/lit/ds/symlink/tps2116.pdf, local copy hardware-design/registry/datasheets/TPS2116DRLR_C3235557.pdf (sha256 5babd88a...) [P]. Added 2026-10-15 for ESP32-CORE rev B (U2)."
+    },
+    "7": {
+     "name": "VOUT",
+     "amps": 2.5,
+     "statistic": "rated",
+     "source": "TPS2116 datasheet SLVSFG1A (Jan 2021, revised May 2021), section 1 Features, page 1: 'Maximum continuous current: 2.5 A'; pins 2, 7 = VOUT and pin 3 = VIN1 (Table 5-1 Pin Functions, page 3; the two VOUT pins are one terminal, and the 2.5 A is the device rating at that terminal, not a per-pin figure); https://www.ti.com/lit/ds/symlink/tps2116.pdf, local copy hardware-design/registry/datasheets/TPS2116DRLR_C3235557.pdf (sha256 5babd88a...) [P]. Added 2026-10-15 for ESP32-CORE rev B (U2)."
+    },
+    "3": {
+     "name": "VIN1",
+     "amps": 2.5,
+     "statistic": "rated",
+     "source": "TPS2116 datasheet SLVSFG1A (Jan 2021, revised May 2021), section 1 Features, page 1: 'Maximum continuous current: 2.5 A'; pins 2, 7 = VOUT and pin 3 = VIN1 (Table 5-1 Pin Functions, page 3; the two VOUT pins are one terminal, and the 2.5 A is the device rating at that terminal, not a per-pin figure); https://www.ti.com/lit/ds/symlink/tps2116.pdf, local copy hardware-design/registry/datasheets/TPS2116DRLR_C3235557.pdf (sha256 5babd88a...) [P]. Added 2026-10-15 for ESP32-CORE rev B (U2)."
+    }
+   }
+  },
+  "TPS631000": {
+   "mpn": [
+    "TPS631000*"
+   ],
+   "pins": {
+    "1": {
+     "name": "VOUT",
+     "amps": 2.0,
+     "statistic": "rated",
+     "source": "TPS631000 datasheet SLVSFH3C (Oct 2021, revised Aug 2026), section 1 Features, page 1: '2A output current for VIN >= 3V, VOUT = 3.3V' (1.5 A for VIN >= 2.7 V); pin 1 = VOUT (Table 4-1, page 3); local copy hardware-design/registry/datasheets/TPS631000DRLR_C5219190.pdf [P]."
+    },
+    "2": {
+     "name": "LX2",
+     "amps": 2.6,
+     "statistic": "min",
+     "source": "TPS631000 datasheet SLVSFH3C (Oct 2021, revised Aug 2026), section 5.5 Electrical Characteristics, CURRENT LIMIT, IL(PEAK) switch peak current limit Q1, output sourcing current 2.6 A min, 3 A typ, 3.35 A max (VO = 3.3 V), page 5; pins 2 = LX2, 3 = LX1 (Table 4-1 Pin Functions, page 3). The inductor current through LX1 and LX2 reaches the peak current limit before current limiting acts, so each pin is designed to carry at least 2.6 A; the same current flows through the VIN pin 4 when the buck high-side switch Q1 is on (section 6.1); https://www.ti.com/lit/ds/symlink/tps631000.pdf, local copy hardware-design/registry/datasheets/TPS631000DRLR_C5219190.pdf (sha256 b52a4064...) [P]. Added 2026-10-15 for ESP32-CORE rev B (U3)."
+    },
+    "3": {
+     "name": "LX1",
+     "amps": 2.6,
+     "statistic": "min",
+     "source": "TPS631000 datasheet SLVSFH3C (Oct 2021, revised Aug 2026), section 5.5 Electrical Characteristics, CURRENT LIMIT, IL(PEAK) switch peak current limit Q1, output sourcing current 2.6 A min, 3 A typ, 3.35 A max (VO = 3.3 V), page 5; pins 2 = LX2, 3 = LX1 (Table 4-1 Pin Functions, page 3). The inductor current through LX1 and LX2 reaches the peak current limit before current limiting acts, so each pin is designed to carry at least 2.6 A; the same current flows through the VIN pin 4 when the buck high-side switch Q1 is on (section 6.1); https://www.ti.com/lit/ds/symlink/tps631000.pdf, local copy hardware-design/registry/datasheets/TPS631000DRLR_C5219190.pdf (sha256 b52a4064...) [P]. Added 2026-10-15 for ESP32-CORE rev B (U3)."
+    },
+    "4": {
+     "name": "VIN",
+     "amps": 2.6,
+     "statistic": "min",
+     "source": "TPS631000 datasheet SLVSFH3C (Oct 2021, revised Aug 2026), section 5.5 Electrical Characteristics, CURRENT LIMIT, IL(PEAK) switch peak current limit Q1, output sourcing current 2.6 A min, 3 A typ, 3.35 A max (VO = 3.3 V), page 5; pins 2 = LX2, 3 = LX1 (Table 4-1 Pin Functions, page 3). The inductor current through LX1 and LX2 reaches the peak current limit before current limiting acts, so each pin is designed to carry at least 2.6 A; the same current flows through the VIN pin 4 when the buck high-side switch Q1 is on (section 6.1); https://www.ti.com/lit/ds/symlink/tps631000.pdf, local copy hardware-design/registry/datasheets/TPS631000DRLR_C5219190.pdf (sha256 b52a4064...) [P]. Added 2026-10-15 for ESP32-CORE rev B (U3)."
     }
    }
   }
