@@ -812,6 +812,32 @@
           "role": "input"
         }
       ]
+    },
+    "FM25V02A": {
+      "mpn": [
+        "FM25V02A*"
+      ],
+      "pin_c": {
+        "pf": 6,
+        "source": "Infineon/Cypress FM25V02A datasheet, Document Number 001-90865 Rev. *E (2015-08-11), hardware-design/registry/datasheets/FM25V02A-GTR_C66029.pdf, Capacitance table p. 14: CI input pin capacitance 6 pF max (CO output pin capacitance SO 8 pF max) [P]"
+      },
+      "ibis_search": "not searched; the datasheet AC Switching Characteristics (p. 15) give no output rise or fall time (tR/tF there are data-IN rise/fall limits, 50 ns max)",
+      "pins": [
+        {
+          "match": "~\\{CS\\}|/CS|CS|SI|SCK|~\\{WP\\}|/WP|WP|~\\{HOLD\\}|/HOLD|HOLD|VDD|VSS",
+          "role": "input"
+        },
+        {
+          "match": "SO",
+          "role": "push_pull",
+          "bound": {
+            "i_ma": 15,
+            "i_source": "Infineon/Cypress FM25V02A datasheet, Document Number 001-90865 Rev. *E (2015-08-11), hardware-design/registry/datasheets/FM25V02A-GTR_C66029.pdf, Maximum Ratings p. 13: DC output current (1 output at a time, 1 s duration) 15 mA [P]",
+            "supply_pin": "VDD"
+          },
+          "source": "bound: C*dV/I (no output rise/fall time published, AC Switching Characteristics p. 15; no IBIS model searched); SO is the only output (pin 2, SPI MISO)"
+        }
+      ]
     }
   },
   "evidence_files": [
@@ -882,6 +908,10 @@
     {
       "path": "hardware-design/registry/ibis/SN74LVC1G123/sn74lvc1g123.ibs",
       "sha256": "8f6e3372451ce224885675ac29d77eb126031f4be9f8018ab9b18195d3cd9ffa"
+    },
+    {
+      "path": "hardware-design/registry/datasheets/FM25V02A-GTR_C66029.pdf",
+      "sha256": "3993f988368aa8dc94b79a888234274959b7e4e091c693535530f3f4dddafefd"
     }
   ]
 }

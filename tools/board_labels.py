@@ -574,13 +574,15 @@ def silk_and_brand(board, pcb, cfg, args):
 
 def info_lines(b, block, cfg):
     """The lines of one info_back block. Sources: the board itself (part values, test-point nets) and the config
-    (curated wording). kind 'text': its lines; 'parts': [ref, function] -> "REF VALUE  function" (VALUE from the
+    (curated wording). kind 'text': its lines; 'columns': its columns of lines; 'parts': [ref, function] -> "REF VALUE  function" (VALUE from the
     footprint); 'testpoints': every TPn with its net (from the pads), in columns of 'rows' lines."""
     kind = block.get('kind', 'text')
     if kind == 'text':   # "{date}": RENDER_DATE (the fab-set date of tools/fab-workflow.sh), else today
         import datetime
         date = os.environ.get('RENDER_DATE') or datetime.date.today().isoformat()
         return [[ln.replace('{date}', date) for ln in block['lines']]]
+    if kind == 'columns':   # curated lines in columns: {"columns": [[...], [...]]}
+        return [list(c) for c in block['columns']]
     if kind == 'parts':
         out = []
         for ent in block['parts']:   # [ref, function] -> "REF VALUE  function"; [ref, None, short] -> "REF short"
@@ -603,7 +605,8 @@ def info_lines(b, block, cfg):
             m = re.match(r'^TP(\d+)$', fp.GetReference())
             if m:
                 nets = sorted({p.GetNetname() for p in fp.Pads() if p.GetNetname()})
-                tps.append((int(m.group(1)), f"TP{m.group(1)} {(nets[0] if nets else '-').lstrip('/').replace('PWR-24V/', '')}"))
+                tps.append((int(m.group(1)), f"{'' if block.get('bare') else 'TP'}{m.group(1)} "   # bare: no TP prefix
+                                              f"{(nets[0] if nets else '-').lstrip('/').replace('PWR-24V/', '')}"))
         lines = [t for _, t in sorted(tps)]
         rows = int(block.get('rows', 10))
         return [lines[i:i + rows] for i in range(0, len(lines), rows)]
@@ -653,6 +656,16 @@ def info_pass(board, pcb, cfg):
         laid = {i for row in lay['rows'] for i in row}
         blocks = [bl for bl in blocks if bl.get('id') not in laid]
     for block in blocks:
+        if block.get('kind') == 'panel' and block.get('rect'):   # fixed panel box (alignment): checked, no search
+            r = tuple(block['rect'])
+            win = (r[0] - 0.5, r[1] - 0.5, r[2] + 0.5, r[3] + 0.5)
+            loc = [o for o, w_ in zip(B.obs, B.why) if hit(o, win) and not (tented and w_.startswith('via '))]
+            if B.free(r, loc, 'title') and info_panel(b, B, block, group, tented, (X0, Y0, X1, Y1), rect=r):
+                placed += 1
+                print(f"  info {block.get('id')}: panel at fixed rect {r}")
+            else:
+                skipped.append(f"{block.get('id')}: fixed rect {r} not free")
+            continue
         if block.get('kind') == 'panel':
             r_ = info_panel(b, B, block, group, tented, (X0, Y0, X1, Y1))
             if r_:
@@ -818,12 +831,15 @@ def info_grid(b, B, blocks, lay, group, tented, outline, skipped):
     panel of a row the same height (the tallest of the row), gutter mm between columns, row_gap between rows. The grid
     origin (its top left corner seen from below) snaps to snap mm and goes to the free position nearest to "near"
     (board centre by default) where every cell is free (the info_panel rules: tented vias allowed, pads, holes, screw
-    heads, other silk and the outline clear). Returns the number of panels drawn."""
+    heads, other silk and the outline clear). "span_single": a one-panel row spans the grid width. "at": [xr, yt] a fixed
+    origin (checked, no search). Returns the number of panels drawn. A panel block outside the grid may give a fixed
+    "rect" [x0, y0, x1, y1] (board mm; checked like a grid cell)."""
     by_id = {bl.get('id'): bl for bl in blocks}
     rows = [[by_id[i] for i in row] for row in lay['rows']]
     size = {bl['id']: info_panel(b, B, bl, group, tented, outline, measure=True) for row in rows for bl in row}
     ncol = max(len(r) for r in rows)
-    col_w = max([float(lay.get('col_w', 0))] + [w for w, _ in size.values()])
+    spans = {r[0]['id'] for r in rows if len(r) == 1 and lay.get('span_single')}   # full-width rows: not in col_w
+    col_w = max([float(lay.get('col_w', 0))] + [w for i, (w, _) in size.items() if i not in spans])
     gut, rgap, snap = float(lay.get('gutter', 3.0)), float(lay.get('row_gap', 3.0)), float(lay.get('snap', 0.5))
     row_h = [max(size[bl['id']][1] for bl in r) for r in rows]
     GW, GH = ncol * col_w + (ncol - 1) * gut, sum(row_h) + (len(rows) - 1) * rgap
@@ -832,9 +848,12 @@ def info_grid(b, B, blocks, lay, group, tented, outline, skipped):
     def cells(xr, yt):   # xr: board x of the grid's left edge seen from below (= its right edge on the board)
         out, v = [], yt
         for ri, r in enumerate(rows):
-            for ci, bl in enumerate(r):
-                u0 = ci * (col_w + gut)
-                out.append((bl, (xr - u0 - col_w, v, xr - u0, v + row_h[ri])))
+            if len(r) == 1 and lay.get('span_single'):   # a one-panel row spans the whole grid width
+                out.append((r[0], (xr - GW, v, xr, v + row_h[ri])))
+            else:
+                for ci, bl in enumerate(r):
+                    u0 = ci * (col_w + gut)
+                    out.append((bl, (xr - u0 - col_w, v, xr - u0, v + row_h[ri])))
             v += row_h[ri] + rgap
         return out
     def free(r):
@@ -842,7 +861,20 @@ def info_grid(b, B, blocks, lay, group, tented, outline, skipped):
         loc = [o for o, w_ in zip(B.obs, B.why) if hit(o, win) and not (tented and w_.startswith('via '))]
         return B.free(r, loc, 'title')
     best = None
-    k0 = math.ceil((X0 + GW) / snap)
+    if lay.get('at'):   # fixed grid origin [xr, yt] (xr: board x of the grid's left edge seen from below): checked, no search
+        xr, yt = lay['at']
+        if all(free(r) for _, r in cells(xr, yt)):
+            best = (0.0, xr, yt)
+        else:
+            for bl_, r_ in cells(xr, yt):
+                win = (r_[0] - 0.5, r_[1] - 0.5, r_[2] + 0.5, r_[3] + 0.5)
+                bad = [(w_, tuple(round(v, 1) for v in o)) for o, w_ in zip(B.obs, B.why)
+                       if hit(o, win) and not (tented and w_.startswith('via '))][:4]
+                if not free(r_):
+                    skipped.append(f"info_layout: cell {bl_.get('id')} {tuple(round(v, 1) for v in r_)} blocked by {bad}")
+            skipped.append(f"info_layout: the grid at {lay['at']} is not free")
+            return 0
+    k0 = math.ceil((X0 + GW) / snap) if best is None else int(X1 / snap) + 1
     for ky in range(math.ceil(Y0 / snap), int((Y1 - GH) / snap) + 1):
         for kx in range(k0, int(X1 / snap) + 1):
             xr, yt = kx * snap, ky * snap
