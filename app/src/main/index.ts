@@ -1,12 +1,22 @@
 import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
 import { join, resolve } from 'path'
+import { existsSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { EngineSupervisor } from './engine'
 
 // Dev: the engine project sits next to the app folder. A packaged build sets PCBSTUDIO_ENGINE_DIR (phase 1 ships
 // the engine source beside the app; bundling it is a later step).
-const engineDir = process.env.PCBSTUDIO_ENGINE_DIR ?? resolve(app.getAppPath(), '..', 'engine')
+// A packaged .app lives elsewhere, so it falls back to the repo checkout until the engine is bundled.
+function findEngineDir(): string {
+  const candidates = [
+    process.env.PCBSTUDIO_ENGINE_DIR,
+    resolve(app.getAppPath(), '..', 'engine'),
+    join(app.getPath('home'), 'code', 'pcb-studio', 'engine')
+  ].filter((p): p is string => !!p)
+  return candidates.find((p) => existsSync(join(p, 'pyproject.toml'))) ?? candidates[candidates.length - 1]
+}
+const engineDir = findEngineDir()
 const engine = new EngineSupervisor(engineDir)
 
 function createWindow(): BrowserWindow {
