@@ -60,6 +60,8 @@ function makeProject(): string {
       ]
     })
   )
+  // Gate names come from gate.json (the engine ignores the registry gate field).
+  writeFileSync(join(root, 'hardware-design/boards/DEMO/gate.json'), JSON.stringify({ project: 'cad/DEMO/DEMO' }))
   writeFileSync(join(root, 'tools/pcb'), FAKE_PCB)
   chmodSync(join(root, 'tools/pcb'), 0o755)
   return root

@@ -1,35 +1,7 @@
-// Run shapes from the engine (engine/src/pcbstudio/runs.py Run.summary) and helpers shared by Checks and Runs.
+// Run shapes (generated from engine/src/pcbstudio/model/runs.py) and helpers shared by Checks and Runs.
+import type { RunSummary } from '../../shared/generated'
 
-/** A candidate board of a build/route run (engine runs.py Run.candidate). */
-export interface Candidate {
-  pcb: string // project-relative, under .gate/cli/RUN_ID/workspace/
-  target: string | null // the canonical board file adopt replaces
-  exists: boolean
-  sha256: string | null
-  verified: boolean
-  identity_preserved: boolean | null
-  metrics: Record<string, number> | null
-}
-
-export interface RunSummary {
-  id: string
-  op?: 'check' | 'build' | 'route'
-  board: string
-  mode: string
-  state: 'running' | 'passed' | 'failed' | 'error' | 'cancelled'
-  started: number
-  exit_code: number | null
-  run_id: string | null
-  cause: string | null
-  metrics: Record<string, number> | null
-  findings: number
-  events: number
-  elapsed_s: number | null
-  candidate?: Candidate | null
-  policy?: Record<string, unknown> | null
-  adoption?: Record<string, unknown> | null
-  adoptable?: boolean
-}
+export type { Candidate, RunSummary } from '../../shared/generated'
 
 export type Ev = Record<string, unknown> & { type?: string; seq?: number }
 

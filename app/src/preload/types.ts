@@ -1,4 +1,8 @@
-// Types shared by main, preload and renderer for the engine bridge.
+// Types shared by main, preload and renderer for the engine bridge. Engine result shapes come from
+// ../shared/generated (generated from the engine models); the ones here are app-side (process state, agent).
+import type { GlbResult } from '../shared/generated'
+
+export type * from '../shared/generated'
 export type EngineState = 'starting' | 'ready' | 'restarting' | 'stopped'
 
 export interface EngineStatus {
@@ -43,7 +47,7 @@ export interface AppApi {
   setProjectRoot: (root: string) => Promise<void>
   openExternal: (url: string) => Promise<void>
   /** Export (or reuse) the board's 3D model; returns a pcbfile:// URL. */
-  boardGlb: (pcb: string) => Promise<{ url: string; cached: boolean; size: number }>
+  boardGlb: (pcb: string) => Promise<Pick<GlbResult, 'cached' | 'size'> & { url: string }>
 }
 
 export interface EngineApi {

@@ -35,6 +35,13 @@ export function PartsView({
         <span className={s.missing_lcsc ? 'warn' : 'okc'}>{s.missing_lcsc} without C-number</span>
         <span className={s.missing_datasheet ? 'warn' : 'okc'}>{s.missing_datasheet} without local datasheet</span>
         <span className={s.missing_cad_asset ? 'warn' : 'okc'}>{s.missing_cad_asset} without CAD asset</span>
+        {bom.source ? (
+          <span className={s.lcsc_mismatches ? 'warn' : 'okc'} title={bom.source.path}>
+            {s.lcsc_mismatches} BOM CSV / PCB C-number mismatches
+          </span>
+        ) : (
+          <span style={{ color: 'var(--dim)' }}>no BOM CSV for this revision</span>
+        )}
         <span style={{ flex: '1 1 auto' }} />
         <label htmlFor="parts-filter" style={{ color: 'var(--dim)', fontSize: 12 }}>
           Filter
@@ -75,7 +82,14 @@ export function PartsView({
                     {l.value}
                     {l.dnp ? <span className="tag">DNP</span> : null}
                   </td>
-                  <td className="mono">{l.lcsc ?? no}</td>
+                  <td className="mono">
+                    {l.lcsc ?? no}
+                    {l.lcsc_mismatch_refs.length ? (
+                      <span className="tag" title={`BOM CSV states ${l.csv_lcsc} for ${l.lcsc_mismatch_refs.join(', ')}`}>
+                        CSV {l.csv_lcsc}
+                      </span>
+                    ) : null}
+                  </td>
                   <td>{l.mpn ?? '—'}</td>
                   <td>{l.assembly}</td>
                   <td>{l.datasheet ? yes : l.datasheet_url ? <span style={{ color: 'var(--dim)' }}>web</span> : no}</td>
