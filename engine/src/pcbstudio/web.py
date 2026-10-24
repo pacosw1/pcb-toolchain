@@ -15,8 +15,8 @@ from . import api, events
 
 READ_ONLY = {
     'engine.ping', 'engine.info', 'project.open', 'board.geometry', 'board.bom', 'board.glb', 'file.resolve',
-    'run.list', 'run.get', 'run.findings',
-}
+    'run.list', 'run.get', 'run.findings', 'run.candidate',
+}   # never op.build, op.route, run.adopt, gate.check or run.cancel
 
 
 def make_app(static_dir: Path, project_root: Path, glb_dir: Path) -> web.Application:

@@ -13,7 +13,7 @@ from . import __version__, parts
 from .kicad import board as kboard
 from .project import Project
 from .rpc import Registry
-from .runs import runs
+from .runs import routing_policy as route_policy, runs
 
 registry = Registry()
 _started = time.time()
@@ -100,6 +100,58 @@ def gate_check(board: str, fresh: bool = True) -> dict:
     if _project is None:
         raise RuntimeError('no project open')
     return runs.start_check(_project.root, board, fresh).summary()
+
+
+@registry.method('op.build')
+def op_build(board: str, timeout_s: int | None = None) -> dict:
+    """`tools/pcb build BOARD`: the board's own pipeline makes an isolated candidate and gates it. Canonical CAD
+    changes only in run.adopt."""
+    if _project is None:
+        raise RuntimeError('no project open')
+    return runs.start(_project.root, 'build', board, timeout_s=timeout_s).summary()
+
+
+@registry.method('op.route')
+def op_route(board: str, policy: dict, timeout_s: int | None = None) -> dict:
+    """`tools/pcb route BOARD --router fastroute --spec POLICY.json`: Fastroute on an isolated candidate, then the
+    complete fresh gate on it. `policy` is a full iot-lab.routing-policy.v1 object, or the short form
+    {layers, nets?, passes, timeout_s, threads?, optimizer?}; no nets = every named net with pads on the board.
+    `timeout_s` is the total CLI deadline (solver + verification), default router timeout + 600 s."""
+    if _project is None:
+        raise RuntimeError('no project open')
+    if 'schema' not in policy:
+        nets = list(policy.get('nets') or []) or _board_nets(board)
+        policy = route_policy(layers=policy.get('layers') or ['F.Cu', 'B.Cu'], nets=nets,
+                              passes=int(policy.get('passes', 40)), timeout_s=int(policy.get('timeout_s', 300)),
+                              threads=int(policy.get('threads', 1)), optimizer=policy.get('optimizer', 'if-routed'))
+    return runs.start(_project.root, 'route', board, policy=policy, timeout_s=timeout_s).summary()
+
+
+def _board_nets(gate: str) -> list[str]:
+    assert _project is not None
+    pcbs = [r['pcb'] for b in _project.boards() for r in b['revisions'] if r.get('gate') == gate and r.get('pcb')]
+    if not pcbs:
+        raise ValueError(f'no board revision with gate {gate!r}; pass policy.nets')
+    geo = kboard.load(_project.resolve(pcbs[0]))
+    return sorted({p['net'] for f in geo['footprints'] for p in f['pads'] if p.get('net')})
+
+
+@registry.method('run.candidate')
+def run_candidate(id: str) -> dict:
+    """The candidate board of a build/route run: project-relative `pcb` (load it with board.geometry), the canonical
+    `target` file adopt would replace, its gate `metrics`, `verified`, and whether run.adopt would be accepted."""
+    r = runs.runs[id]
+    c = r.candidate()
+    if c is None:
+        raise ValueError(f'run {id} has no candidate board ({r.op}, {r.state})')
+    return {**c, 'id': id, 'run_id': r.run_id, 'state': r.state, 'adoptable': r.adoptable() is None,
+            'not_adoptable_because': r.adoptable(), 'adoption': r.adoption}
+
+
+@registry.method('run.adopt')
+async def run_adopt(id: str) -> dict:
+    """`tools/pcb adopt RUN_ID --json` (desktop only, on a user click; never in the web viewer or the agent)."""
+    return await runs.adopt(id)
 
 
 @registry.method('run.list')
