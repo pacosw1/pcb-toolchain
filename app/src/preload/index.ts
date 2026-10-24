@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-import type { AppApi, EngineStatus } from './types'
+import type { AppApi, EngineNotification, EngineStatus } from './types'
 
 const api: AppApi = {
   openProjectDialog: () => ipcRenderer.invoke('dialog:openProject'),
@@ -15,6 +15,11 @@ const api: AppApi = {
       const listener = (_e: Electron.IpcRendererEvent, s: EngineStatus): void => cb(s)
       ipcRenderer.on('engine:status', listener)
       return () => ipcRenderer.removeListener('engine:status', listener)
+    },
+    onNotify: (cb) => {
+      const listener = (_e: Electron.IpcRendererEvent, n: EngineNotification): void => cb(n)
+      ipcRenderer.on('engine:notify', listener)
+      return () => ipcRenderer.removeListener('engine:notify', listener)
     }
   }
 }

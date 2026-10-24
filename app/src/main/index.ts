@@ -93,6 +93,7 @@ app.whenReady().then(() => {
     return r.canceled ? null : r.filePaths[0]
   })
   engine.on('status', (s) => BrowserWindow.getAllWindows().forEach((w) => w.webContents.send('engine:status', s)))
+  engine.on('notify', (n) => BrowserWindow.getAllWindows().forEach((w) => w.webContents.send('engine:notify', n)))
   engine.on('log', (line: string) => console.log('[engine]', line))
   engine.start()
 

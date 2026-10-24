@@ -10,6 +10,7 @@ from . import __version__, parts
 from .kicad import board as kboard
 from .project import Project
 from .rpc import Registry
+from .runs import runs
 
 registry = Registry()
 _started = time.time()
@@ -62,6 +63,30 @@ def file_resolve(path: str) -> dict:
     if not p.is_file():
         raise FileNotFoundError(path)
     return {'path': str(p), 'size': p.stat().st_size}
+
+
+@registry.method('gate.check')
+def gate_check(board: str, fresh: bool = True) -> dict:
+    """Start `tools/pcb check BOARD` in the project; progress arrives as run.event / run.state notifications."""
+    if _project is None:
+        raise RuntimeError('no project open')
+    return runs.start_check(_project.root, board, fresh).summary()
+
+
+@registry.method('run.list')
+def run_list() -> list[dict]:
+    return [r.summary() for r in runs.runs.values()]
+
+
+@registry.method('run.get')
+def run_get(id: str, after: int = 0) -> dict:
+    r = runs.runs[id]
+    return {'summary': r.summary(), 'events': r.events[after:], 'stderr': r.stderr[-50:], 'end': r.end}
+
+
+@registry.method('run.cancel')
+def run_cancel(id: str) -> dict:
+    return runs.cancel(id)
 
 
 def _kicad_cli_version() -> str | None:

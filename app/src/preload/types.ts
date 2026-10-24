@@ -23,4 +23,11 @@ export interface EngineApi {
   status: () => Promise<EngineStatus>
   kill: () => Promise<void>
   onStatus: (cb: (s: EngineStatus) => void) => () => void
+  /** Engine notifications (run.event, run.state, ...). */
+  onNotify: (cb: (n: EngineNotification) => void) => () => void
+}
+
+export interface EngineNotification {
+  method: string
+  params: Record<string, unknown>
 }

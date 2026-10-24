@@ -7,14 +7,24 @@ import sys
 
 from websockets.asyncio.server import ServerConnection, serve
 
+from . import events
 from .api import registry
 
 
 async def _session(ws: ServerConnection) -> None:
-    async for message in ws:
-        reply = await registry.handle(message if isinstance(message, str) else message.decode())
-        if reply is not None:
-            await ws.send(reply)
+    events.subscribe(ws.send)
+    try:
+        async for message in ws:
+            # Each request runs as its own task so a slow method does not block notifications or other calls.
+            asyncio.get_running_loop().create_task(_answer(ws, message))
+    finally:
+        events.unsubscribe(ws.send)
+
+
+async def _answer(ws: ServerConnection, message: str | bytes) -> None:
+    reply = await registry.handle(message if isinstance(message, str) else message.decode())
+    if reply is not None:
+        await ws.send(reply)
 
 
 async def _stdin_closed() -> None:

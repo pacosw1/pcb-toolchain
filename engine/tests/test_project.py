@@ -27,7 +27,7 @@ def test_small_project(tmp_path):
     boards = Project(tmp_path).boards()
     assert boards == [{'id': 'DEMO', 'directory': 'DEMO', 'lifecycle': 'unregistered', 'revisions': [
         {'revision': None, 'state': 'unregistered', 'pcb': 'hardware-design/boards/DEMO/cad/DEMO/DEMO.kicad_pcb',
-         'spec': None}]}]
+         'spec': None, 'gate': None}]}]
     with pytest.raises(ProjectError):
         Project(tmp_path).resolve('../outside.kicad_pcb')
 

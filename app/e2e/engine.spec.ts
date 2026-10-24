@@ -48,6 +48,20 @@ test('opens iot-lab and draws a board', async () => {
   await app.close()
 })
 
+test('runs the real gate from the Checks tab', async () => {
+  test.skip(!existsSync(join(CORPUS, 'tools', 'pcb')), 'iot-lab corpus missing')
+  const app = await openPoe()
+  const win = await app.firstWindow()
+  await win.getByRole('button', { name: 'Checks' }).click()
+  await win.getByRole('button', { name: 'Run changed checks' }).click()
+  const state = win.getByRole('status', { name: 'Run state' })
+  await expect(state).toHaveText(/passed|failed/, { timeout: 180_000 })
+  await expect(win.getByRole('region', { name: 'Run events' })).toContainText('run.end')
+  await expect(win.locator('table.metrics')).toContainText('drc errors')
+  await win.screenshot({ path: join(APP, 'test-results', 'checks.png') })
+  await app.close()
+})
+
 test('parts / BOM and a datasheet PDF', async () => {
   test.skip(!existsSync(CORPUS), 'iot-lab corpus missing')
   const app = await openPoe()

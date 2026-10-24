@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { EngineStatus } from '../../preload/types'
 import { BoardView, type Selection } from './BoardView'
+import { ChecksView } from './ChecksView'
 import { DatasheetView } from './DatasheetView'
 import { PartsView } from './PartsView'
 import type { Bom, BomLine, Geometry, ProjectInfo } from './types'
 
-type Tab = 'board' | 'parts' | 'datasheets'
+type Tab = 'board' | 'parts' | 'datasheets' | 'checks'
 
 const STATE_COLOR: Record<EngineStatus['state'], string> = {
   ready: 'var(--ok)',
@@ -107,6 +108,8 @@ function App(): React.JSX.Element {
   const [bom, setBom] = useState<Bom | null>(null)
   const [sheet, setSheet] = useState<BomLine | null>(null)
   const [focus, setFocus] = useState<{ ref: string } | null>(null)
+  const gate =
+    project?.boards.flatMap((b) => b.revisions).find((r) => r.pcb === pcb)?.gate ?? null
 
   const openProject = useCallback(async (root: string) => {
     setError(null)
@@ -211,7 +214,8 @@ function App(): React.JSX.Element {
                 [
                   ['board', 'Board'],
                   ['parts', `Parts / BOM${bom ? ` (${bom.summary.refs})` : ''}`],
-                  ['datasheets', 'Datasheets']
+                  ['datasheets', 'Datasheets'],
+                  ['checks', 'Checks']
                 ] as [Tab, string][]
               ).map(([k, label]) => (
                 <button key={k} type="button" className={tab === k ? 'tab on' : 'tab'} aria-pressed={tab === k} onClick={() => setTab(k)}>
@@ -236,6 +240,8 @@ function App(): React.JSX.Element {
             />
           ) : geo && tab === 'datasheets' && bom ? (
             <DatasheetView bom={bom} initial={sheet} />
+          ) : geo && tab === 'checks' ? (
+            <ChecksView gate={gate} />
           ) : geo ? (
             <section className="panel placeholder">Loading…</section>
           ) : (

@@ -69,6 +69,7 @@ export interface Revision {
   state: string | null
   pcb: string | null
   spec: string | null
+  gate: string | null
 }
 
 export interface Board {

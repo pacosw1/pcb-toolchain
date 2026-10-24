@@ -92,6 +92,10 @@ export class EngineSupervisor extends EventEmitter {
     }
     ws.onmessage = (ev) => {
       const msg = JSON.parse(String(ev.data))
+      if (msg.id === undefined && typeof msg.method === 'string') {
+        this.emit('notify', { method: msg.method, params: msg.params })
+        return
+      }
       const p = this.pending.get(msg.id)
       if (!p) return
       this.pending.delete(msg.id)
