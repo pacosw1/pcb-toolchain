@@ -1,0 +1,115 @@
+/* Runs section (phase 5): run list, candidate review, board compare, route form, adopt dialog. */
+.runsview .parts-body {
+  flex-wrap: wrap;
+}
+
+.runsview .runsummary {
+  flex: 0 0 260px;
+  overflow-y: auto;
+}
+
+.runsview .runsummary .rev {
+  width: 100%;
+}
+
+.runsview .candidate {
+  flex: 0 0 360px;
+  min-width: 0;
+}
+
+.runsview .candidate .kv {
+  grid-template-columns: 100px 1fr;
+}
+
+.candview {
+  flex: 1 1 420px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.metrics thead td {
+  color: var(--dim);
+}
+
+.routeform {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 640px;
+}
+
+.routeform h2 {
+  margin: 0;
+}
+
+.routeform fieldset {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.routeform label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.routeform label.check {
+  flex-direction: row;
+  align-items: center;
+}
+
+.routeform input[type='number'],
+.routeform textarea {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+}
+
+.routeform input[type='number'] {
+  width: 120px;
+}
+
+.routeform .hint {
+  margin: 0;
+  color: var(--dim);
+  font-size: 12px;
+}
+
+.routeform button[type='submit'] {
+  align-self: flex-start;
+}
+
+button.danger:not(:disabled) {
+  border-color: var(--err);
+  color: var(--err);
+}
+
+.modal-back {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: grid;
+  place-items: center;
+  z-index: 50;
+}
+
+.modal {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.modal .target {
+  padding: 6px 8px;
+  background: var(--bg);
+  border-radius: 6px;
+  word-break: break-all;
+}

@@ -90,8 +90,11 @@ export function ChatPanel({
       <div className="chathead">
         <span className="claude-mark" aria-hidden="true">✳</span>
         <strong>Claude</strong>
-        <span className="chip-ro" title="Claude reads boards, BOMs and datasheets and runs the gate. File edits arrive with candidate runs.">
-          read-only
+        <span
+          className="chip-ro"
+          title="Claude reads boards, BOMs and datasheets, runs the gate and makes build/route candidates. It cannot change board files: you adopt a candidate in Runs."
+        >
+          no adopt
         </span>
         <span style={{ flex: '1 1 auto' }} />
         <button
