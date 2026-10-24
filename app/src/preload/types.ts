@@ -9,6 +9,15 @@ export interface EngineStatus {
   lastError: string | null
 }
 
+export interface AppApi {
+  engine: EngineApi
+  openProjectDialog: () => Promise<string | null>
+  defaultProject: () => Promise<string | null>
+  /** Tells main which folder pcbfile:// may serve. */
+  setProjectRoot: (root: string) => Promise<void>
+  openExternal: (url: string) => Promise<void>
+}
+
 export interface EngineApi {
   call: (method: string, params?: unknown) => Promise<unknown>
   status: () => Promise<EngineStatus>

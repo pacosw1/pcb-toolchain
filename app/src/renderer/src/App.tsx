@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { EngineStatus } from '../../preload/types'
 import { BoardView, type Selection } from './BoardView'
-import type { Geometry, ProjectInfo } from './types'
+import { DatasheetView } from './DatasheetView'
+import { PartsView } from './PartsView'
+import type { Bom, BomLine, Geometry, ProjectInfo } from './types'
+
+type Tab = 'board' | 'parts' | 'datasheets'
 
 const STATE_COLOR: Record<EngineStatus['state'], string> = {
   ready: 'var(--ok)',
@@ -99,12 +103,17 @@ function App(): React.JSX.Element {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [selection, setSelection] = useState<Selection | null>(null)
+  const [tab, setTab] = useState<Tab>('board')
+  const [bom, setBom] = useState<Bom | null>(null)
+  const [sheet, setSheet] = useState<BomLine | null>(null)
+  const [focus, setFocus] = useState<{ ref: string } | null>(null)
 
   const openProject = useCallback(async (root: string) => {
     setError(null)
     try {
       const p = (await window.api.engine.call('project.open', { root })) as ProjectInfo
       setProject(p)
+      await window.api.setProjectRoot(p.root)
       try {
         localStorage.setItem(LAST_PROJECT, p.root)
       } catch {
@@ -134,6 +143,10 @@ function App(): React.JSX.Element {
       .then((g) => setGeo(g as Geometry))
       .catch((e) => setError(String(e)))
       .finally(() => setBusy(false))
+    window.api.engine
+      .call('board.bom', { pcb })
+      .then((b) => setBom(b as Bom))
+      .catch((e) => setError(String(e)))
   }, [pcb, ready, project])
 
   const pick = async (): Promise<void> => {
@@ -193,7 +206,38 @@ function App(): React.JSX.Element {
             </div>
           ) : null}
           {geo ? (
-            <BoardView geo={geo} onSelect={setSelection} />
+            <nav className="tabs" aria-label="Workspace tabs">
+              {(
+                [
+                  ['board', 'Board'],
+                  ['parts', `Parts / BOM${bom ? ` (${bom.summary.refs})` : ''}`],
+                  ['datasheets', 'Datasheets']
+                ] as [Tab, string][]
+              ).map(([k, label]) => (
+                <button key={k} type="button" className={tab === k ? 'tab on' : 'tab'} aria-pressed={tab === k} onClick={() => setTab(k)}>
+                  {label}
+                </button>
+              ))}
+            </nav>
+          ) : null}
+          {geo && tab === 'board' ? (
+            <BoardView geo={geo} onSelect={setSelection} focusRef={focus} />
+          ) : geo && tab === 'parts' && bom ? (
+            <PartsView
+              bom={bom}
+              onDatasheet={(l) => {
+                setSheet(l)
+                setTab('datasheets')
+              }}
+              onShowRef={(ref) => {
+                setFocus({ ref })
+                setTab('board')
+              }}
+            />
+          ) : geo && tab === 'datasheets' && bom ? (
+            <DatasheetView bom={bom} initial={sheet} />
+          ) : geo ? (
+            <section className="panel placeholder">Loading…</section>
           ) : (
             <section className="panel placeholder" aria-label="Board view">
               {busy ? 'Loading board…' : project ? 'Pick a board revision on the left.' : 'No project open.'}

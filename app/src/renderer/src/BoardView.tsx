@@ -29,10 +29,13 @@ function padOnLayer(p: Pad, layer: string): boolean {
 
 export function BoardView({
   geo,
-  onSelect
+  onSelect,
+  focusRef
 }: {
   geo: Geometry
   onSelect?: (s: Selection | null) => void
+  /** Zoom to this footprint and select its first pad (a new object each time = focus again). */
+  focusRef?: { ref: string } | null
 }): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -58,6 +61,23 @@ export function BoardView({
     setSel(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [geo])
+
+  useEffect(() => {
+    if (!focusRef) return
+    const fp = geo.footprints.find((f) => f.ref === focusRef.ref)
+    if (!fp || !fp.pads.length) return
+    const xs = fp.pads.flatMap((p) => [p.x - p.w, p.x + p.w])
+    const ys = fp.pads.flatMap((p) => [p.y - p.h, p.y + p.h])
+    const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys), 2) * 4
+    const scale = Math.min(size.w, size.h) / span
+    const cx = (Math.max(...xs) + Math.min(...xs)) / 2
+    const cy = (Math.max(...ys) + Math.min(...ys)) / 2
+    setView({ scale, ox: size.w / 2 - cx * scale, oy: size.h / 2 - cy * scale })
+    const s = { ref: fp.ref, pad: fp.pads[0] }
+    setSel(s)
+    onSelect?.(s)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusRef])
 
   useEffect(() => {
     const el = wrapRef.current

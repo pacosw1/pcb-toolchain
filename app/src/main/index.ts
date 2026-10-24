@@ -1,13 +1,13 @@
-import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
-import { join, resolve } from 'path'
+import { app, shell, BrowserWindow, ipcMain, dialog, protocol, net } from 'electron'
+import { join, resolve, sep } from 'path'
 import { existsSync } from 'fs'
+import { pathToFileURL } from 'url'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { EngineSupervisor } from './engine'
 
-// Dev: the engine project sits next to the app folder. A packaged build sets PCBSTUDIO_ENGINE_DIR (phase 1 ships
-// the engine source beside the app; bundling it is a later step).
-// A packaged .app lives elsewhere, so it falls back to the repo checkout until the engine is bundled.
+// Dev: the engine project sits next to the app folder. A packaged .app lives elsewhere, so it falls back to the repo
+// checkout until the engine is bundled.
 function findEngineDir(): string {
   const candidates = [
     process.env.PCBSTUDIO_ENGINE_DIR,
@@ -18,6 +18,12 @@ function findEngineDir(): string {
 }
 const engineDir = findEngineDir()
 const engine = new EngineSupervisor(engineDir)
+
+// pcbfile://local/<absolute path> serves files of the open project only (datasheet PDFs for Chromium's viewer).
+let projectRoot: string | null = null
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'pcbfile', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } }
+])
 
 function createWindow(): BrowserWindow {
   const mainWindow = new BrowserWindow({
@@ -32,14 +38,15 @@ function createWindow(): BrowserWindow {
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false
+      sandbox: false,
+      plugins: true // Chromium PDF viewer for datasheets
     }
   })
 
   mainWindow.on('ready-to-show', () => mainWindow.show())
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    if (details.url.startsWith('http')) shell.openExternal(details.url)
     return { action: 'deny' }
   })
 
@@ -55,10 +62,30 @@ app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.pcbstudio.app')
   app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
 
+  protocol.handle('pcbfile', async (req) => {
+    const cors = { 'Access-Control-Allow-Origin': '*' }
+    const path = resolve(decodeURIComponent(new URL(req.url).pathname))
+    if (!projectRoot || !(path === projectRoot || path.startsWith(projectRoot + sep))) {
+      return new Response('outside the open project', { status: 403, headers: cors })
+    }
+    const r = await net.fetch(pathToFileURL(path).toString())
+    const headers = new Headers(r.headers)
+    headers.set('Access-Control-Allow-Origin', '*')
+    if (path.toLowerCase().endsWith('.pdf')) headers.set('Content-Type', 'application/pdf')
+    return new Response(r.body, { status: r.status, headers })
+  })
+
   ipcMain.handle('engine:call', (_e, method: string, params?: unknown) => engine.call(method, params))
   ipcMain.handle('engine:status', () => engine.status)
   ipcMain.handle('engine:kill', () => engine.kill())
-  ipcMain.handle('app:defaultProject', () => process.env.PCBSTUDIO_PROJECT ?? null)
+  ipcMain.handle('app:defaultProject', () => process.env.PCBSTUDIO_PROJECT || null)
+  ipcMain.handle('app:setProjectRoot', (_e, root: string) => {
+    projectRoot = resolve(root)
+  })
+  ipcMain.handle('shell:openExternal', (_e, url: string) => {
+    if (/^https?:\/\//.test(url)) return shell.openExternal(url)
+    return undefined
+  })
   ipcMain.handle('dialog:openProject', async (e) => {
     const win = BrowserWindow.fromWebContents(e.sender)
     const opts = { title: 'Open hardware project', properties: ['openDirectory' as const] }

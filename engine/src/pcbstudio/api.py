@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import time
 
-from . import __version__
+from . import __version__, parts
 from .kicad import board as kboard
 from .project import Project
 from .rpc import Registry
@@ -44,6 +44,24 @@ def board_geometry(pcb: str) -> dict:
     geo['bbox'] = kboard.bbox(geo)
     geo['pcb'] = pcb
     return geo
+
+
+@registry.method('board.bom')
+def board_bom(pcb: str) -> dict:
+    if _project is None:
+        raise RuntimeError('no project open')
+    return parts.bom(_project, pcb)
+
+
+@registry.method('file.resolve')
+def file_resolve(path: str) -> dict:
+    """Absolute path of a project file (for the app's PDF viewer), refusing anything outside the project."""
+    if _project is None:
+        raise RuntimeError('no project open')
+    p = _project.resolve(path)
+    if not p.is_file():
+        raise FileNotFoundError(path)
+    return {'path': str(p), 'size': p.stat().st_size}
 
 
 def _kicad_cli_version() -> str | None:

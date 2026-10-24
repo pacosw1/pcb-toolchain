@@ -82,9 +82,14 @@ def _footprints(root) -> list[dict]:
         fx, fy = _xy(at)
         fa = _f(at[3]) if len(at) > 3 else 0.0
         ref = ''
+        props: dict[str, str] = {}
         for prop in children(fp, 'property'):
+            if len(prop) > 2 and isinstance(prop[1], str):
+                props[str(prop[1])] = str(prop[2])
             if len(prop) > 2 and prop[1] == 'Reference':
                 ref = str(prop[2])
+        attr = child(fp, 'attr')
+        attrs = [str(a) for a in attr[1:]] if attr else []
         if not ref:                                 # older files: (fp_text reference "R1")
             for t in children(fp, 'fp_text'):
                 if len(t) > 2 and t[1] == 'reference':
@@ -110,7 +115,7 @@ def _footprints(root) -> list[dict]:
             })
         fps.append({'ref': ref, 'lib': str(fp[1]) if len(fp) > 1 else '', 'x': fx, 'y': fy, 'rot': fa,
                     'layer': str(value(fp, 'layer', '')), 'locked': any(c == 'locked' for c in fp[1:3]) or value(fp, 'locked') == 'yes',
-                    'pads': pads})
+                    'props': props, 'attrs': attrs, 'pads': pads})
     return fps
 
 

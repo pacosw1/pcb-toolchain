@@ -298,3 +298,181 @@ details.panel summary {
   font-family: var(--mono);
   font-size: 12px;
 }
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+}
+
+.tab {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+
+.tab.on {
+  background: var(--raised);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.mono {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.warn {
+  color: var(--warn);
+}
+
+.okc {
+  color: var(--ok);
+}
+
+input[type='search'] {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  width: 220px;
+  font: inherit;
+}
+
+.partsview,
+.dsview {
+  flex: 1 1 auto;
+  min-height: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.parts-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+}
+
+.parts-body {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.tablewrap {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  max-height: 100%;
+}
+
+.tablewrap table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.tablewrap th {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  text-align: left;
+  font-weight: 500;
+  color: var(--dim);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tablewrap td {
+  padding: 6px 10px;
+  border-bottom: 1px solid #222833;
+}
+
+.tablewrap tr {
+  cursor: pointer;
+}
+
+.tablewrap tr.on {
+  background: #1c2330;
+}
+
+.tablewrap tr.dnp td {
+  color: var(--dim);
+}
+
+.linkish {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #7fb4ff;
+  font: inherit;
+}
+
+.tag {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: #2b210f;
+  color: #ffc46b;
+  font-size: 11px;
+}
+
+.partdetail {
+  flex: 0 0 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.partdetail h3 {
+  margin: 0;
+}
+
+.dsview {
+  flex-direction: row;
+}
+
+.dslist {
+  flex: 0 0 260px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dslist .rev {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.dsdoc {
+  flex: 1 1 auto;
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #0a0d12;
+}
+
+.dsdoc iframe {
+  flex: 1 1 auto;
+  border: none;
+  background: #fff;
+}
+
+.dsdoc .placeholder {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}

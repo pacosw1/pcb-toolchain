@@ -78,6 +78,37 @@ export interface Board {
   revisions: Revision[]
 }
 
+export interface BomLine {
+  refs: string[]
+  qty: number
+  value: string
+  lcsc: string | null
+  mpn: string | null
+  manufacturer: string | null
+  footprint: string
+  description: string | null
+  dnp: boolean
+  assembly: string
+  datasheet: string | null
+  datasheet_url: string | null
+  cad_asset: boolean
+  stock_status: string | null
+  assembly_status: string | null
+}
+
+export interface Bom {
+  pcb: string
+  lines: BomLine[]
+  summary: {
+    refs: number
+    lines: number
+    dnp_refs: number
+    missing_lcsc: number
+    missing_datasheet: number
+    missing_cad_asset: number
+  }
+}
+
 export interface ProjectInfo {
   root: string
   boards: Board[]
