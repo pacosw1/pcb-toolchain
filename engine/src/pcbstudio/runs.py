@@ -153,6 +153,8 @@ class Runs:
             status = (run.end or {}).get('status')
             run.state = 'passed' if status == 'passed' and run.exit_code == 0 else (
                 'failed' if run.end and status != 'error' else 'error')
+        if run.op == 'route':              # the CLI keeps its own copy of the spec in the sealed run.json
+            Path(run.argv[run.argv.index('--spec') + 1]).unlink(missing_ok=True)
         events.publish('run.state', run.summary())
 
     async def _read_events(self, run: Run) -> None:
