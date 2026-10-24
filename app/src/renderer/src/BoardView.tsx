@@ -1,4 +1,4 @@
-// Canvas 2D board viewer: zones, tracks, pads, vias and outline from engine geometry. Pan (drag), zoom (wheel,
+// Canvas 2D board viewer: zones, tracks, pads, vias, silk, courtyard and outline from engine geometry. Pan (drag), zoom (wheel,
 // about the cursor), layer toggles (1..4), fit (F), click a pad or track to highlight its net, hover for pad
 // info, Shift+drag to measure, search a reference. Geometry is cached as Path2D per layer (boardCache.ts), so
 // pan and zoom only replay paths. WebGL comes when boards outgrow Canvas 2D.
@@ -35,6 +35,28 @@ const ZONE_ALPHA: Record<string, number> = {
   'F.Cu': 0.22
 }
 const DIM = 0.22 // alpha factor of everything outside the highlighted net
+type GfxKind = 'silk' | 'courtyard'
+// silk and courtyard layers: toggle, colour; a B-side layer shows only while B.Cu is visible
+const GFX: { kind: GfxKind; label: string; color: string; layers: [string, string, string][] }[] = [
+  {
+    kind: 'silk',
+    label: 'Silk',
+    color: '#e8e8e8',
+    layers: [
+      ['B.SilkS', '#8f9bc4', 'B.Cu'],
+      ['F.SilkS', '#e8e8e8', 'F.Cu']
+    ]
+  },
+  {
+    kind: 'courtyard',
+    label: 'Courtyard',
+    color: '#d36cff',
+    layers: [
+      ['B.CrtYd', '#9a6cd3', 'B.Cu'],
+      ['F.CrtYd', '#d36cff', 'F.Cu']
+    ]
+  }
+]
 
 export interface Selection {
   ref: string
@@ -98,6 +120,7 @@ export function BoardView({
   })
   const [pick, setPick] = useState<Pick | null>(null)
   const [showDrc, setShowDrc] = useState(true)
+  const [showGfx, setShowGfx] = useState<Record<GfxKind, boolean>>({ silk: true, courtyard: false })
   const [hilite, setHilite] = useState<{ x: number; y: number } | null>(null)
   const [hover, setHover] = useState<{ x: number; y: number; text: string; net: string } | null>(
     null
@@ -246,6 +269,24 @@ export function BoardView({
     g.fillStyle = '#0a0d12'
     g.fill(cache.viaHoles)
 
+    // silk and courtyard
+    for (const gx of GFX) {
+      if (!showGfx[gx.kind]) continue
+      for (const [layer, col, side] of gx.layers) {
+        const gl = cache.graphics.get(layer)
+        if (!gl || !visible[side]) continue
+        g.globalAlpha = 0.85 * k
+        g.fillStyle = col
+        g.fill(gl.fill)
+        g.strokeStyle = col
+        for (const [w, path] of gl.strokes) {
+          g.lineWidth = Math.max(w, px)
+          g.stroke(path)
+        }
+      }
+    }
+    g.globalAlpha = 1
+
     // highlighted net: drawn bright over the dimmed board
     if (netCache) {
       for (const layer of copperLayers) {
@@ -371,6 +412,7 @@ export function BoardView({
     copperLayers,
     findings,
     showDrc,
+    showGfx,
     hilite,
     cache,
     netCache,
@@ -534,6 +576,19 @@ export function BoardView({
           >
             <span className="swatch" style={{ background: LAYER_COLOR[l] }} />
             {l}
+          </button>
+        ))}
+        {GFX.filter((gx) => gx.layers.some(([l]) => cache.graphics.has(l))).map((gx) => (
+          <button
+            key={gx.kind}
+            type="button"
+            aria-pressed={showGfx[gx.kind]}
+            className={showGfx[gx.kind] ? 'toggle on' : 'toggle'}
+            title={`${gx.label} (F/B side follows the copper layer toggles)`}
+            onClick={() => setShowGfx((v) => ({ ...v, [gx.kind]: !v[gx.kind] }))}
+          >
+            <span className="swatch" style={{ background: gx.color }} />
+            {gx.label}
           </button>
         ))}
         <button
