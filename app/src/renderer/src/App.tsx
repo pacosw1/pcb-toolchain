@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { EngineStatus } from '../../preload/types'
 import { BoardView, type Selection } from './BoardView'
+import { BoardPicker } from './BoardPicker'
 import { ChatPanel } from './ChatPanel'
 import { ChecksView } from './ChecksView'
 import { DatasheetView } from './DatasheetView'
 import { PartsView } from './PartsView'
+import { Viewer3D } from './Viewer3D'
 import type { Bom, BomLine, Finding, Geometry, ProjectInfo } from './types'
 
-type Tab = 'board' | 'parts' | 'datasheets' | 'checks'
+type Tab = 'board' | '3d' | 'parts' | 'datasheets' | 'checks'
 
 const STATE_COLOR: Record<EngineStatus['state'], string> = {
   ready: 'var(--ok)',
@@ -96,6 +98,24 @@ function EnginePanel({ status }: { status: EngineStatus | null }): React.JSX.Ele
   )
 }
 
+const LAST_PCB = 'pcbstudio.lastPcb'
+
+function remember(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    /* per-viewer convenience only */
+  }
+}
+
+function recall(key: string): string | null {
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
 function App(): React.JSX.Element {
   const status = useEngineStatus()
   const ready = status?.state === 'ready'
@@ -114,8 +134,14 @@ function App(): React.JSX.Element {
   const mention = selection
     ? `@${selection.ref}.${selection.pad.num}${selection.pad.net ? ` #${selection.pad.net}` : ''}`
     : null
-  const gate =
-    project?.boards.flatMap((b) => b.revisions).find((r) => r.pcb === pcb)?.gate ?? null
+  const board = project?.boards.find((b) => b.revisions.some((r) => r.pcb && r.pcb === pcb)) ?? null
+  const revision = board?.revisions.find((r) => r.pcb === pcb) ?? null
+  const gate = revision?.gate ?? null
+
+  const choosePcb = (p: string | null): void => {
+    setPcb(p)
+    if (p) remember(LAST_PCB, p)
+  }
 
   const openProject = useCallback(async (root: string) => {
     setError(null)
@@ -123,11 +149,9 @@ function App(): React.JSX.Element {
       const p = (await window.api.engine.call('project.open', { root })) as ProjectInfo
       setProject(p)
       await window.api.setProjectRoot(p.root)
-      try {
-        localStorage.setItem(LAST_PROJECT, p.root)
-      } catch {
-        /* per-viewer convenience only */
-      }
+      remember(LAST_PROJECT, p.root)
+      const last = recall(LAST_PCB)
+      if (last && p.boards.some((b) => b.revisions.some((r) => r.pcb === last))) setPcb((cur) => cur ?? last)
     } catch (e) {
       setError(String(e))
     }
@@ -147,6 +171,7 @@ function App(): React.JSX.Element {
     if (!pcb || !ready || !project) return
     setFindings([])
     setFocusPoint(null)
+    setSelection(null)
     setBusy(true)
     setError(null)
     window.api.engine
@@ -160,10 +185,18 @@ function App(): React.JSX.Element {
       .catch((e) => setError(String(e)))
   }, [pcb, ready, project])
 
-  const pick = async (): Promise<void> => {
+  const pickProject = async (): Promise<void> => {
     const root = await window.api.openProjectDialog()
     if (root) await openProject(root)
   }
+
+  const sections: [Tab, string, string | null][] = [
+    ['board', 'Board', geo ? `${geo.footprints.length} parts` : null],
+    ['3d', '3D', null],
+    ['parts', 'Parts / BOM', bom ? `${bom.summary.lines} lines` : null],
+    ['datasheets', 'Datasheets', bom ? String(bom.lines.filter((l) => l.datasheet).length) : null],
+    ['checks', 'Checks', gate ? null : 'no gate']
+  ]
 
   return (
     <div className="shell">
@@ -171,10 +204,11 @@ function App(): React.JSX.Element {
         <span className="brand">PCB Studio</span>
         <span style={{ color: 'var(--muted)' }}>
           {project ? project.root.split('/').pop() : 'No project open'}
-          {pcb ? ` ▸ ${pcb.split('/').pop()}` : ''}
+          {board ? ` ▸ ${board.id}` : ''}
+          {revision?.revision ? ` rev ${revision.revision}` : ''}
         </span>
         <span style={{ flex: '1 1 auto' }} />
-        <button type="button" onClick={pick} disabled={!ready}>
+        <button type="button" onClick={pickProject} disabled={!ready}>
           Open project…
         </button>
         <span className="pill" role="status" aria-label="Engine status">
@@ -183,32 +217,61 @@ function App(): React.JSX.Element {
         </span>
       </header>
       <div className="body">
-        <nav className="sidebar" aria-label="Boards">
-          <h2>Boards</h2>
+        <nav className="sidebar" aria-label="Board">
           {!project ? (
             <p style={{ color: 'var(--dim)', margin: 0 }}>Open a hardware project (for example iot-lab).</p>
           ) : (
-            <ul className="boardlist">
-              {project.boards.map((b) => (
-                <li key={b.directory}>
-                  <span className="boardname">{b.id}</span>
-                  <span className="lifecycle">{b.lifecycle}</span>
-                  {b.revisions
-                    .filter((r) => r.pcb)
-                    .map((r) => (
+            <>
+              <BoardPicker
+                boards={project.boards}
+                current={board}
+                onPick={(_b, p) => {
+                  choosePcb(p)
+                  setTab('board')
+                }}
+              />
+              {board && board.revisions.filter((r) => r.pcb).length > 1 ? (
+                <label className="revpick">
+                  <span>Revision</span>
+                  <select value={pcb ?? ''} onChange={(e) => choosePcb(e.target.value)}>
+                    {board.revisions
+                      .filter((r) => r.pcb)
+                      .map((r) => (
+                        <option key={r.pcb!} value={r.pcb!}>
+                          {r.revision ? `rev ${r.revision}` : r.pcb!.split('/').pop()} · {r.state ?? '—'}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+              ) : revision ? (
+                <div className="revpick">
+                  <span>Revision</span>
+                  <span style={{ color: 'var(--text)' }}>
+                    {revision.revision ? `rev ${revision.revision}` : 'unregistered'} · {revision.state ?? '—'}
+                  </span>
+                </div>
+              ) : null}
+              {geo ? (
+                <ul className="sections" aria-label="Sections">
+                  {sections.map(([k, label, note]) => (
+                    <li key={k}>
                       <button
-                        key={r.pcb!}
                         type="button"
-                        className={r.pcb === pcb ? 'rev on' : 'rev'}
-                        onClick={() => setPcb(r.pcb)}
+                        className={tab === k ? 'section on' : 'section'}
+                        aria-current={tab === k ? 'page' : undefined}
+                        onClick={() => setTab(k)}
                       >
-                        {r.revision ? `rev ${r.revision}` : r.pcb!.split('/').pop()} · {r.state ?? '—'}
+                        <span>{label}</span>
+                        {note ? <span className="note">{note}</span> : null}
                       </button>
-                    ))}
-                </li>
-              ))}
-            </ul>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </>
           )}
+          <div style={{ flex: '1 1 auto' }} />
+          <EnginePanel status={status} />
         </nav>
         <main className="main">
           {error ? (
@@ -216,24 +279,10 @@ function App(): React.JSX.Element {
               {error}
             </div>
           ) : null}
-          {geo ? (
-            <nav className="tabs" aria-label="Workspace tabs">
-              {(
-                [
-                  ['board', 'Board'],
-                  ['parts', `Parts / BOM${bom ? ` (${bom.summary.refs})` : ''}`],
-                  ['datasheets', 'Datasheets'],
-                  ['checks', 'Checks']
-                ] as [Tab, string][]
-              ).map(([k, label]) => (
-                <button key={k} type="button" className={tab === k ? 'tab on' : 'tab'} aria-pressed={tab === k} onClick={() => setTab(k)}>
-                  {label}
-                </button>
-              ))}
-            </nav>
-          ) : null}
           {geo && tab === 'board' ? (
             <BoardView geo={geo} onSelect={setSelection} focusRef={focus} findings={findings} focusPoint={focusPoint} />
+          ) : geo && tab === '3d' && pcb ? (
+            <Viewer3D pcb={pcb} />
           ) : geo && tab === 'parts' && bom ? (
             <PartsView
               bom={bom}
@@ -260,14 +309,11 @@ function App(): React.JSX.Element {
                 setTab('board')
               }}
             />
-          ) : geo ? (
-            <section className="panel placeholder">Loading…</section>
           ) : (
             <section className="panel placeholder" aria-label="Board view">
-              {busy ? 'Loading board…' : project ? 'Pick a board revision on the left.' : 'No project open.'}
+              {busy ? 'Loading board…' : project ? 'Choose a board on the left.' : 'No project open.'}
             </section>
           )}
-          <EnginePanel status={status} />
         </main>
         <ChatPanel
           ctx={{ projectRoot: project?.root ?? null, pcb, gate, selection: mention }}

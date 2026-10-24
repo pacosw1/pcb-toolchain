@@ -1,8 +1,11 @@
 """Engine API methods. The desktop app and (phase 4) the agent's MCP server call the same registry."""
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import platform
 import shutil
+from pathlib import Path
 import subprocess
 import time
 
@@ -52,6 +55,32 @@ def board_bom(pcb: str) -> dict:
     if _project is None:
         raise RuntimeError('no project open')
     return parts.bom(_project, pcb)
+
+
+@registry.method('board.glb')
+async def board_glb(pcb: str, out_dir: str) -> dict:
+    """3D model (binary glTF) of a board with its part models, via kicad-cli; cached by the board file hash."""
+    if _project is None:
+        raise RuntimeError('no project open')
+    path = _project.resolve(pcb)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()[:20]
+    out = Path(out_dir).expanduser() / f'{path.stem}-{digest}.glb'
+    if out.is_file() and out.stat().st_size > 0:
+        return {'path': str(out), 'cached': True, 'size': out.stat().st_size}
+    out.parent.mkdir(parents=True, exist_ok=True)
+    exe = shutil.which('kicad-cli') or '/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli'
+    tmp = out.with_suffix('.tmp.glb')
+    proc = await asyncio.create_subprocess_exec(
+        exe, 'pcb', 'export', 'glb', '--force', '--subst-models', '--include-tracks', '--include-pads',
+        '--include-zones', '--include-silkscreen', '--include-soldermask', '--no-dnp',
+        '-D', f'IOT_LAB={_project.root}', '-D', f'KIPRJMOD={path.parent}', '-o', str(tmp), str(path),
+        cwd=str(path.parent), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    log, _ = await proc.communicate()
+    if proc.returncode != 0 or not tmp.is_file():
+        raise RuntimeError(f'kicad-cli glb export failed ({proc.returncode}): {log.decode(errors="replace")[-800:]}')
+    tmp.replace(out)
+    missing = [ln for ln in log.decode(errors='replace').splitlines() if 'not found' in ln.lower() or 'could not' in ln.lower()]
+    return {'path': str(out), 'cached': False, 'size': out.stat().st_size, 'warnings': missing[:30]}
 
 
 @registry.method('file.resolve')

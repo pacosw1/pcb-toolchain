@@ -25,6 +25,7 @@ const agent = new AgentHost(engine, (e) =>
 
 // pcbfile://local/<absolute path> serves files of the open project only (datasheet PDFs for Chromium's viewer).
 let projectRoot: string | null = null
+const glbDir = (): string => join(app.getPath('userData'), 'glb')
 protocol.registerSchemesAsPrivileged([
   { scheme: 'pcbfile', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } }
 ])
@@ -69,13 +70,15 @@ app.whenReady().then(() => {
   protocol.handle('pcbfile', async (req) => {
     const cors = { 'Access-Control-Allow-Origin': '*' }
     const path = resolve(decodeURIComponent(new URL(req.url).pathname))
-    if (!projectRoot || !(path === projectRoot || path.startsWith(projectRoot + sep))) {
+    const inside = (root: string | null): boolean => !!root && (path === root || path.startsWith(root + sep))
+    if (!inside(projectRoot) && !inside(glbDir())) {
       return new Response('outside the open project', { status: 403, headers: cors })
     }
     const r = await net.fetch(pathToFileURL(path).toString())
     const headers = new Headers(r.headers)
     headers.set('Access-Control-Allow-Origin', '*')
     if (path.toLowerCase().endsWith('.pdf')) headers.set('Content-Type', 'application/pdf')
+    if (path.toLowerCase().endsWith('.glb')) headers.set('Content-Type', 'model/gltf-binary')
     return new Response(r.body, { status: r.status, headers })
   })
 
@@ -87,6 +90,10 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('agent:cancel', () => agent.cancel())
   ipcMain.handle('agent:reset', () => agent.reset())
+  ipcMain.handle('board:glb', async (_e, pcb: string) => {
+    const r = (await engine.call('board.glb', { pcb, out_dir: glbDir() }, 600_000)) as { path: string; cached: boolean; size: number }
+    return { ...r, url: 'pcbfile://local' + encodeURI(r.path) }
+  })
   ipcMain.handle('app:defaultProject', () => process.env.PCBSTUDIO_PROJECT || null)
   ipcMain.handle('app:setProjectRoot', (_e, root: string) => {
     projectRoot = resolve(root)

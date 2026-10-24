@@ -31,9 +31,10 @@ async function openPoe(): Promise<Awaited<ReturnType<typeof electron.launch>>> {
   const app = await electron.launch({ args: [APP], env: { ...process.env, PCBSTUDIO_PROJECT: CORPUS } })
   const win = await app.firstWindow()
   await expect(win.getByRole('status', { name: 'Engine status' })).toContainText('engine ready', { timeout: 30_000 })
-  const boards = win.getByRole('navigation', { name: 'Boards' })
-  await expect(boards).toContainText('POE-ETHERNET', { timeout: 15_000 })
-  await boards.locator('li', { hasText: 'POE-ETHERNET' }).getByRole('button').first().click()
+  await win.getByRole('button', { name: 'Choose board' }).click({ timeout: 15_000 })
+  await win.getByRole('dialog', { name: 'Boards' }).getByRole('searchbox').fill('POE-ETH')
+  await win.getByRole('option', { name: /POE-ETHERNET/ }).click()
+  await expect(win.getByRole('img', { name: /POE-ETHERNET\.kicad_pcb/ })).toBeVisible({ timeout: 15_000 })
   return app
 }
 
@@ -41,10 +42,21 @@ test('opens iot-lab and draws a board', async () => {
   test.skip(!existsSync(CORPUS), 'iot-lab corpus missing')
   const app = await openPoe()
   const win = await app.firstWindow()
-  await expect(win.getByRole('img', { name: /POE-ETHERNET\.kicad_pcb/ })).toBeVisible({ timeout: 15_000 })
   await expect(win.locator('.boardview-bar')).toContainText(/\d+ parts · \d+ tracks · \d+ vias/)
   await win.waitForTimeout(300)
   await win.screenshot({ path: join(APP, 'test-results', 'board.png') })
+  await app.close()
+})
+
+test('3D view of the board', async () => {
+  test.skip(!existsSync(CORPUS), 'iot-lab corpus missing')
+  test.setTimeout(240_000)
+  const app = await openPoe()
+  const win = await app.firstWindow()
+  await win.getByRole('navigation', { name: 'Board' }).getByRole('button', { name: /^3D/ }).click()
+  await expect(win.getByLabel('3D model info')).toContainText(/meshes/, { timeout: 180_000 })
+  await win.waitForTimeout(800)
+  await win.screenshot({ path: join(APP, 'test-results', '3d.png') })
   await app.close()
 })
 

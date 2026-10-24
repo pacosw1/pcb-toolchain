@@ -38,6 +38,8 @@ export interface AppApi {
   /** Tells main which folder pcbfile:// may serve. */
   setProjectRoot: (root: string) => Promise<void>
   openExternal: (url: string) => Promise<void>
+  /** Export (or reuse) the board's 3D model; returns a pcbfile:// URL. */
+  boardGlb: (pcb: string) => Promise<{ url: string; cached: boolean; size: number }>
 }
 
 export interface EngineApi {
