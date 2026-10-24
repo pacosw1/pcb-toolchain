@@ -13,6 +13,7 @@ from .kicad import cli as kcli
 from .project import Project
 from .rpc import Registry
 from .runs import routing_policy as route_policy, runs
+from .store.parts_index import index_for
 
 registry = Registry()
 _started = time.time()
@@ -34,7 +35,7 @@ def info() -> dict:
 def project_open(root: str) -> dict:
     global _project
     _project = Project(root)
-    return {'root': str(_project.root), 'boards': _project.boards()}
+    return _project.info().model_dump()
 
 
 @registry.method('board.geometry')
@@ -50,10 +51,34 @@ def board_geometry(pcb: str) -> dict:
 
 
 @registry.method('board.bom')
-def board_bom(pcb: str) -> dict:
+def board_bom(pcb: str, bom: str | None = None) -> dict:
+    """BOM of a board revision joined to that revision's own BOM CSV (`bom` overrides it, project-relative)."""
+    return parts.bom(_need_project(), pcb, bom).model_dump()
+
+
+@registry.method('board.parts')
+def board_parts(pcb: str) -> dict:
+    """Footprints with the engine's C-number rule (parts.footprint_c_number), position, rotation and pad count."""
+    return parts.board_parts(_need_project(), pcb).model_dump()
+
+
+@registry.method('part.get')
+def part_get(c_number: str) -> dict | None:
+    """Part record of a C-number from the parts index: datasheets with sha256, MPN, CAD asset, evidence."""
+    rec = index_for(_need_project()).part(c_number)
+    return rec.model_dump() if rec else None
+
+
+@registry.method('parts.index')
+def parts_index() -> dict:
+    """Build the parts index if its inputs changed (else reuse it) and return its coverage counts."""
+    return index_for(_need_project()).ensure().model_dump()
+
+
+def _need_project() -> Project:
     if _project is None:
         raise RuntimeError('no project open')
-    return parts.bom(_project, pcb)
+    return _project
 
 
 @registry.method('board.glb')
@@ -117,7 +142,7 @@ def op_route(board: str, policy: dict, timeout_s: int | None = None) -> dict:
 
 def _board_nets(gate: str) -> list[str]:
     assert _project is not None
-    pcbs = [r['pcb'] for b in _project.boards() for r in b['revisions'] if r.get('gate') == gate and r.get('pcb')]
+    pcbs = [r.pcb for b in _project.boards() for r in b.revisions if r.gate == gate and r.pcb]
     if not pcbs:
         raise ValueError(f'no board revision with gate {gate!r}; pass policy.nets')
     geo = kboard.load(_project.resolve(pcbs[0]))

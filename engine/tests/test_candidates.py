@@ -53,6 +53,7 @@ def project(tmp_path):
     (tmp_path / 'hardware-design/registry').mkdir(parents=True)
     (tmp_path / 'hardware-design/registry/boards.json').write_text(json.dumps({'boards': [
         {'id': 'DEMO', 'directory': 'DEMO', 'revisions': [{'revision': 'A', 'project': 'cad/DEMO/DEMO', 'gate': 'DEMO'}]}]}))
+    (tmp_path / 'hardware-design/boards/DEMO/gate.json').write_text(json.dumps({'project': 'cad/DEMO/DEMO'}))
     (tmp_path / 'tools').mkdir()
     tool = tmp_path / 'tools/pcb'
     tool.write_text(FAKE_PCB)

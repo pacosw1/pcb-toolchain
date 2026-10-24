@@ -1,153 +1,31 @@
-// Shapes returned by the engine (engine/src/pcbstudio/kicad/board.py, project.py).
-export type Pt = [number, number]
-
-export interface Pad {
-  num: string
-  type: string
-  shape: string
-  x: number
-  y: number
-  rot: number
-  w: number
-  h: number
-  layers: string[]
-  net: string
-  drill: number | null
-  /** Second drill dimension (= drill for a round hole). */
-  drill_h: number | null
-  drill_shape: 'circle' | 'oval' | null
-  rratio: number
-  /** Custom pads only: anchor shape and primitives (board coordinates). */
-  anchor?: string
-  prims?: { pts: Pt[]; w: number; fill: boolean; closed: boolean }[]
-}
-
-/** A silk or courtyard line/shape in board coordinates (ref '' = board graphic). */
-export interface Graphic {
-  layer: string
-  ref: string
-  pts: Pt[]
-  closed: boolean
-  w: number
-  fill: boolean
-}
-
-export interface Footprint {
-  ref: string
-  lib: string
-  x: number
-  y: number
-  rot: number
-  layer: string
-  pads: Pad[]
-}
-
-export interface Track {
-  x1: number
-  y1: number
-  x2: number
-  y2: number
-  w: number
-  layer: string
-  net: string
-}
-
-export interface Via {
-  x: number
-  y: number
-  d: number
-  drill: number
-  net: string
-}
-
-export interface Zone {
-  net: string
-  name: string
-  layers: string[]
-  rule_area: boolean
-  /** Rule area that forbids at least one item. */
-  keepout: boolean
-  /** Rule areas only: what may go inside. */
-  allow: { tracks: boolean; vias: boolean; pads: boolean; copperpour: boolean; footprints: boolean } | null
-  /** First outline polygon (= polygons[0]). */
-  outline: Pt[]
-  polygons: Pt[][]
-  filled: { layer: string; pts: Pt[] }[]
-}
-
-export interface Geometry {
-  pcb: string
-  layers: string[]
-  /** Edge.Cuts chains; a closed loop has last point = first. */
-  outline: Pt[][]
-  /** Chains that do not close (0 on a good board). */
-  outline_open: number
-  footprints: Footprint[]
-  tracks: Track[]
-  vias: Via[]
-  zones: Zone[]
-  /** F/B silk and courtyard. */
-  graphics: Graphic[]
-  bbox: [number, number, number, number]
-}
-
-export interface Revision {
-  revision: string | null
-  state: string | null
-  pcb: string | null
-  spec: string | null
-  gate: string | null
-}
-
-export interface Board {
-  id: string
-  directory: string
-  lifecycle: string
-  revisions: Revision[]
-}
-
-export interface Finding {
-  kind: 'violation' | 'unconnected'
-  type: string
-  severity: string
-  description: string
-  x: number
-  y: number
-  items: { description: string; x: number; y: number }[]
-}
-
-export interface BomLine {
-  refs: string[]
-  qty: number
-  value: string
-  lcsc: string | null
-  mpn: string | null
-  manufacturer: string | null
-  footprint: string
-  description: string | null
-  dnp: boolean
-  assembly: string
-  datasheet: string | null
-  datasheet_url: string | null
-  cad_asset: boolean
-  stock_status: string | null
-  assembly_status: string | null
-}
-
-export interface Bom {
-  pcb: string
-  lines: BomLine[]
-  summary: {
-    refs: number
-    lines: number
-    dnp_refs: number
-    missing_lcsc: number
-    missing_datasheet: number
-    missing_cad_asset: number
-  }
-}
-
-export interface ProjectInfo {
-  root: string
-  boards: Board[]
-}
+// Engine shapes, generated from the engine models (engine/src/pcbstudio/model) into src/shared/generated.ts.
+export type {
+  Board,
+  BoardParts,
+  Bom,
+  BomLine,
+  BomSource,
+  BomSummary,
+  DatasheetRef,
+  Finding,
+  FindingItem,
+  Findings,
+  Footprint,
+  GateRef,
+  Geometry,
+  GlbResult,
+  Graphic,
+  IdentityConflict,
+  Pad,
+  PadPrim,
+  PartRecord,
+  PartsIndexStats,
+  ProjectInfo,
+  Pt,
+  Revision,
+  Track,
+  Via,
+  Zone,
+  ZoneAllow,
+  ZoneFill
+} from '../../shared/generated'
