@@ -1,7 +1,7 @@
 // Canvas 2D board viewer: zones, tracks, pads, vias and outline from engine geometry. Pan (drag), zoom (wheel,
 // about the cursor), layer toggles, click a pad to select it. WebGL comes when boards outgrow Canvas 2D.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Geometry, Pad, Footprint } from './types'
+import type { Finding, Geometry, Pad, Footprint } from './types'
 
 const LAYER_COLOR: Record<string, string> = {
   'F.Cu': '#d14b4b',
@@ -30,12 +30,18 @@ function padOnLayer(p: Pad, layer: string): boolean {
 export function BoardView({
   geo,
   onSelect,
-  focusRef
+  focusRef,
+  findings = [],
+  focusPoint
 }: {
   geo: Geometry
   onSelect?: (s: Selection | null) => void
   /** Zoom to this footprint and select its first pad (a new object each time = focus again). */
   focusRef?: { ref: string } | null
+  /** Gate findings drawn as markers (DRC layer). */
+  findings?: Finding[]
+  /** Zoom to this board point (a new object each time = focus again). */
+  focusPoint?: { x: number; y: number; span?: number } | null
 }): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -48,6 +54,8 @@ export function BoardView({
     'B.Cu': true
   })
   const [sel, setSel] = useState<Selection | null>(null)
+  const [showDrc, setShowDrc] = useState(true)
+  const [hilite, setHilite] = useState<{ x: number; y: number } | null>(null)
   const drag = useRef<{ x: number; y: number; ox: number; oy: number; moved: boolean } | null>(null)
 
   const copperLayers = useMemo(() => DRAW_ORDER.filter((l) => geo.layers.includes(l)), [geo])
@@ -61,6 +69,14 @@ export function BoardView({
     setSel(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [geo])
+
+  useEffect(() => {
+    if (!focusPoint) return
+    const scale = Math.min(size.w, size.h) / Math.max(8, (focusPoint.span ?? 0) * 1.4) // at least 8 mm across
+    setView({ scale, ox: size.w / 2 - focusPoint.x * scale, oy: size.h / 2 - focusPoint.y * scale })
+    setHilite(focusPoint)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusPoint])
 
   useEffect(() => {
     if (!focusRef) return
@@ -194,6 +210,35 @@ export function BoardView({
       g.stroke()
     }
 
+    // gate findings: unconnected = dashed line between its items; violation = ring at each item
+    if (showDrc) {
+      for (const f of findings) {
+        const col = f.kind === 'unconnected' ? '#f5f5a0' : f.severity === 'error' ? '#ff6b6b' : '#f5a524'
+        g.strokeStyle = col
+        g.lineWidth = Math.max(0.05, 1.5 * px)
+        if (f.kind === 'unconnected' && f.items.length > 1) {
+          g.setLineDash([4 * px, 3 * px])
+          g.beginPath()
+          f.items.forEach((it, i) => (i ? g.lineTo(it.x, it.y) : g.moveTo(it.x, it.y)))
+          g.stroke()
+          g.setLineDash([])
+        }
+        const r = Math.max(0.4, 7 * px)
+        for (const it of f.items.length ? f.items : [f]) {
+          g.beginPath()
+          g.arc(it.x, it.y, r, 0, 2 * Math.PI)
+          g.stroke()
+        }
+      }
+    }
+    if (hilite) {
+      g.strokeStyle = '#ffffff'
+      g.lineWidth = 2 * px
+      g.beginPath()
+      g.arc(hilite.x, hilite.y, 14 * px, 0, 2 * Math.PI)
+      g.stroke()
+    }
+
     // reference labels when zoomed in
     if (view.scale > 6) {
       g.fillStyle = '#e8e8e8'
@@ -201,7 +246,7 @@ export function BoardView({
       g.textAlign = 'center'
       for (const fp of geo.footprints) g.fillText(fp.ref, fp.x, fp.y)
     }
-  }, [geo, view, size, visible, sel, copperLayers])
+  }, [geo, view, size, visible, sel, copperLayers, findings, showDrc, hilite])
 
   useEffect(() => {
     const id = requestAnimationFrame(draw)
@@ -274,6 +319,16 @@ export function BoardView({
             {l}
           </button>
         ))}
+        <button
+          type="button"
+          aria-pressed={showDrc}
+          className={showDrc ? 'toggle on' : 'toggle'}
+          onClick={() => setShowDrc((v) => !v)}
+          disabled={!findings.length}
+        >
+          <span className="swatch" style={{ background: '#ff6b6b' }} />
+          DRC {findings.length}
+        </button>
         <span style={{ flex: '1 1 auto' }} />
         <span style={{ color: 'var(--dim)', fontSize: 12 }}>
           {geo.footprints.length} parts · {geo.tracks.length} tracks · {geo.vias.length} vias

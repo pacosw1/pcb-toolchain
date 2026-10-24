@@ -59,6 +59,13 @@ test('runs the real gate from the Checks tab', async () => {
   await expect(win.getByRole('region', { name: 'Run events' })).toContainText('run.end')
   await expect(win.locator('table.metrics')).toContainText('drc errors')
   await win.screenshot({ path: join(APP, 'test-results', 'checks.png') })
+  // Findings (POE-ETHERNET has DRC warnings with positions) -> jump to the board with markers.
+  const findings = win.getByRole('region', { name: 'Findings' })
+  await expect(findings).toBeVisible({ timeout: 10_000 })
+  await findings.getByRole('button').first().click()
+  await expect(win.getByRole('button', { name: /DRC \d+/ })).toBeVisible()
+  await win.waitForTimeout(300)
+  await win.screenshot({ path: join(APP, 'test-results', 'drc.png') })
   await app.close()
 })
 

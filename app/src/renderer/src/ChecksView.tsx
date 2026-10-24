@@ -1,5 +1,6 @@
 // Gate runs for the selected board revision: start (fresh / changed), live events, final metrics and verdict.
 import { useEffect, useMemo, useState } from 'react'
+import type { Finding } from './types'
 
 export interface RunSummary {
   id: string
@@ -40,7 +41,16 @@ function line(e: Ev): string {
   return bits.join('  ')
 }
 
-export function ChecksView({ gate }: { gate: string | null }): React.JSX.Element {
+export function ChecksView({
+  gate,
+  onFindings,
+  onShowFinding
+}: {
+  gate: string | null
+  onFindings: (f: Finding[]) => void
+  onShowFinding: (f: Finding) => void
+}): React.JSX.Element {
+  const [findings, setFindings] = useState<Finding[]>([])
   const [runs, setRuns] = useState<RunSummary[]>([])
   const [cur, setCur] = useState<string | null>(null)
   const [events, setEvents] = useState<Record<string, Ev[]>>({})
@@ -81,6 +91,23 @@ export function ChecksView({ gate }: { gate: string | null }): React.JSX.Element
       setErr(String(e))
     }
   }
+
+  // Findings of the shown run, once it has ended.
+  useEffect(() => {
+    if (!run || run.state === 'running') {
+      setFindings([])
+      return
+    }
+    window.api.engine
+      .call('run.findings', { id: run.id })
+      .then((r) => {
+        const items = (r as { items: Finding[] }).items
+        setFindings(items)
+        onFindings(items)
+      })
+      .catch(() => setFindings([]))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run?.id, run?.state])
 
   const running = mine.some((r) => r.state === 'running')
   const evs = run ? (events[run.id] ?? []) : []
@@ -153,6 +180,23 @@ export function ChecksView({ gate }: { gate: string | null }): React.JSX.Element
               </div>
             ) : null}
           </section>
+          {findings.length ? (
+            <section className="panel findings" aria-label="Findings">
+              <h2>Findings ({findings.length})</h2>
+              <ul>
+                {findings.map((f, i) => (
+                  <li key={i}>
+                    <button type="button" className="rev" onClick={() => onShowFinding(f)}>
+                      <span style={{ color: f.kind === 'unconnected' ? '#f5f5a0' : f.severity === 'error' ? 'var(--err)' : 'var(--warn)' }}>
+                        ●
+                      </span>{' '}
+                      <span className="mono">{f.type}</span> {f.description}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
           <section className="panel runlog" aria-label="Run events">
             <h2>Events ({evs.length})</h2>
             <pre className="log" style={{ maxHeight: 'none', flex: '1 1 auto' }}>

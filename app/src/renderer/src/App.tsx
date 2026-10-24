@@ -4,7 +4,7 @@ import { BoardView, type Selection } from './BoardView'
 import { ChecksView } from './ChecksView'
 import { DatasheetView } from './DatasheetView'
 import { PartsView } from './PartsView'
-import type { Bom, BomLine, Geometry, ProjectInfo } from './types'
+import type { Bom, BomLine, Finding, Geometry, ProjectInfo } from './types'
 
 type Tab = 'board' | 'parts' | 'datasheets' | 'checks'
 
@@ -108,6 +108,8 @@ function App(): React.JSX.Element {
   const [bom, setBom] = useState<Bom | null>(null)
   const [sheet, setSheet] = useState<BomLine | null>(null)
   const [focus, setFocus] = useState<{ ref: string } | null>(null)
+  const [findings, setFindings] = useState<Finding[]>([])
+  const [focusPoint, setFocusPoint] = useState<{ x: number; y: number; span?: number } | null>(null)
   const gate =
     project?.boards.flatMap((b) => b.revisions).find((r) => r.pcb === pcb)?.gate ?? null
 
@@ -139,6 +141,8 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     if (!pcb || !ready || !project) return
+    setFindings([])
+    setFocusPoint(null)
     setBusy(true)
     setError(null)
     window.api.engine
@@ -225,7 +229,7 @@ function App(): React.JSX.Element {
             </nav>
           ) : null}
           {geo && tab === 'board' ? (
-            <BoardView geo={geo} onSelect={setSelection} focusRef={focus} />
+            <BoardView geo={geo} onSelect={setSelection} focusRef={focus} findings={findings} focusPoint={focusPoint} />
           ) : geo && tab === 'parts' && bom ? (
             <PartsView
               bom={bom}
@@ -241,7 +245,17 @@ function App(): React.JSX.Element {
           ) : geo && tab === 'datasheets' && bom ? (
             <DatasheetView bom={bom} initial={sheet} />
           ) : geo && tab === 'checks' ? (
-            <ChecksView gate={gate} />
+            <ChecksView
+              gate={gate}
+              onFindings={setFindings}
+              onShowFinding={(f) => {
+                const xs = f.items.map((i) => i.x)
+                const ys = f.items.map((i) => i.y)
+                const span = xs.length ? Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) : 0
+                setFocusPoint({ x: f.x, y: f.y, span })
+                setTab('board')
+              }}
+            />
           ) : geo ? (
             <section className="panel placeholder">Loading…</section>
           ) : (

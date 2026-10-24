@@ -79,6 +79,16 @@ export interface Board {
   revisions: Revision[]
 }
 
+export interface Finding {
+  kind: 'violation' | 'unconnected'
+  type: string
+  severity: string
+  description: string
+  x: number
+  y: number
+  items: { description: string; x: number; y: number }[]
+}
+
 export interface BomLine {
   refs: string[]
   qty: number

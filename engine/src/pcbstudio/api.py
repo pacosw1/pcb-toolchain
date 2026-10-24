@@ -84,6 +84,13 @@ def run_get(id: str, after: int = 0) -> dict:
     return {'summary': r.summary(), 'events': r.events[after:], 'stderr': r.stderr[-50:], 'end': r.end}
 
 
+@registry.method('run.findings')
+def run_findings(id: str) -> dict:
+    if _project is None:
+        raise RuntimeError('no project open')
+    return runs.findings(id, _project.root)
+
+
 @registry.method('run.cancel')
 def run_cancel(id: str) -> dict:
     return runs.cancel(id)

@@ -511,3 +511,20 @@ input[type='search'] {
 .metrics td:last-child {
   text-align: right;
 }
+
+.findings {
+  flex: 0 0 340px;
+  max-height: 100%;
+  overflow-y: auto;
+}
+
+.findings ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.findings .rev {
+  width: 100%;
+  font-size: 12px;
+}

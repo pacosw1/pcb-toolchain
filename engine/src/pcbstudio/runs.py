@@ -101,6 +101,32 @@ class Runs:
             run.stderr.append(raw.decode(errors='replace').rstrip())
             del run.stderr[:-200]
 
+    def findings(self, run_id: str, root: Path) -> dict:
+        """DRC violations and unconnected items of a finished run, with board positions (mm), from its drc.json."""
+        run = self.runs[run_id]
+        gate_result = (run.end or {}).get('gate_result')
+        if not gate_result:
+            return {'id': run_id, 'items': [], 'source': None}
+        drc = Path(gate_result).parent / 'drc.json'
+        rp = root.resolve()
+        if not drc.is_file() or rp not in drc.resolve().parents:
+            return {'id': run_id, 'items': [], 'source': None}
+        data = json.loads(drc.read_text())
+        items = []
+        for kind, rows in (('violation', data.get('violations') or []), ('unconnected', data.get('unconnected_items') or [])):
+            for v in rows:
+                pts = [i.get('pos') for i in v.get('items', []) if i.get('pos')]
+                if not pts:
+                    continue
+                items.append({'kind': kind, 'type': v.get('type', kind), 'severity': v.get('severity', 'error'),
+                              'description': v.get('description', ''),
+                              'x': sum(p['x'] for p in pts) / len(pts), 'y': sum(p['y'] for p in pts) / len(pts),
+                              'items': [{'description': i.get('description', ''), 'x': i['pos']['x'], 'y': i['pos']['y']}
+                                        for i in v.get('items', []) if i.get('pos')]})
+        order = {'error': 0, 'warning': 1}
+        items.sort(key=lambda f: (order.get(f['severity'], 2), f['type']))
+        return {'id': run_id, 'items': items, 'source': str(drc.relative_to(rp))}
+
     def cancel(self, run_id: str) -> dict:
         run = self.runs[run_id]
         if run.proc and run.proc.returncode is None:

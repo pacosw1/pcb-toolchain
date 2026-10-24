@@ -64,6 +64,26 @@ def test_gate_check_streams_events(tmp_path):
         p.wait(timeout=10)
 
 
+def test_findings_from_drc_report(tmp_path):
+    from pcbstudio.runs import Run, Runs
+    gate = tmp_path / '.gate/cli/run-x/gate'
+    gate.mkdir(parents=True)
+    (gate / 'drc.json').write_text(json.dumps({
+        'violations': [{'type': 'clearance', 'severity': 'error', 'description': 'Clearance violation',
+                        'items': [{'description': 'Track', 'pos': {'x': 10, 'y': 20}},
+                                  {'description': 'Pad', 'pos': {'x': 12, 'y': 22}}]},
+                       {'type': 'silk_overlap', 'severity': 'warning', 'description': 'Silk', 'items': [{'pos': {'x': 1, 'y': 1}}]}],
+        'unconnected_items': [{'description': 'Missing connection', 'items': [{'pos': {'x': 5, 'y': 5}}]}]}))
+    r = Runs()
+    r.runs['r1'] = Run(id='r1', board='B', mode='fresh', argv=[], end={'gate_result': str(gate / 'result.json')})
+    f = r.findings('r1', tmp_path)
+    assert [i['type'] for i in f['items']] == ['clearance', 'unconnected', 'silk_overlap']
+    assert (f['items'][0]['x'], f['items'][0]['y']) == (11, 21)
+    # A report outside the project is not read.
+    r.runs['r2'] = Run(id='r2', board='B', mode='fresh', argv=[], end={'gate_result': '/etc/result.json'})
+    assert r.findings('r2', tmp_path)['items'] == []
+
+
 def test_rejects_bad_board_names(tmp_path):
     from pcbstudio.runs import Runs
 
