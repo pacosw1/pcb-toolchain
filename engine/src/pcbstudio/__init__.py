@@ -21,10 +21,12 @@ def main() -> None:
     w.add_argument('--glb-dir', default='~/Library/Caches/pcbstudio/glb')
     w.add_argument('--host', default='127.0.0.1')
     w.add_argument('--port', type=int, default=8787)
+    w.add_argument('--token-file', default='~/Library/Application Support/pcbstudio/web-token',
+                   help='viewer token file (made with mode 600 when missing)')
     a = ap.parse_args()
     if a.cmd == 'serve':
         from .server import run
         asyncio.run(run(a.port, watch_stdin=not a.no_stdin_watch))
     elif a.cmd == 'web':
         from .web import serve
-        serve(a.static, a.project, a.glb_dir, a.host, a.port)
+        serve(a.static, a.project, a.glb_dir, a.host, a.port, a.token_file)
