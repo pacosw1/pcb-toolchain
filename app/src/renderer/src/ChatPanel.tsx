@@ -1,6 +1,7 @@
 // Claude chat beside the board. The agent runs in the main process (Claude Agent SDK) with the engine as tools.
 import { useEffect, useRef, useState } from 'react'
 import type { AgentContext, AgentEvent } from '../../preload/types'
+import { Markdown } from './Markdown'
 
 type Msg =
   | { who: 'you'; text: string }
@@ -56,8 +57,8 @@ export function ChatPanel({
     end.current?.scrollIntoView({ block: 'end' })
   }, [msgs])
 
-  const send = async (): Promise<void> => {
-    const text = draft.trim()
+  const send = async (override?: string): Promise<void> => {
+    const text = (override ?? draft).trim()
     if (!text || busy) return
     setDraft('')
     setBusy(true)
@@ -70,15 +71,32 @@ export function ChatPanel({
     }
   }
 
+  // Consecutive tool calls render as one row of chips.
+  const rows: (Msg | { who: 'tools'; items: { name: string; input: unknown }[] })[] = []
+  for (const m of msgs) {
+    const last = rows[rows.length - 1]
+    if (m.who === 'tool') {
+      if (last && last.who === 'tools') last.items.push({ name: m.name, input: m.input })
+      else rows.push({ who: 'tools', items: [{ name: m.name, input: m.input }] })
+    } else rows.push(m)
+  }
+
+  const quick = ctx.pcb
+    ? ['Summarize this board', 'What is missing in the BOM?', 'Run the gate and explain the result']
+    : ['Which boards are in this project?']
+
   return (
     <aside className="chat chatpanel" aria-label="Claude">
       <div className="chathead">
+        <span className="claude-mark" aria-hidden="true">✳</span>
         <strong>Claude</strong>
-        <span style={{ color: 'var(--dim)', fontSize: 12 }}>read-only tools · edits come with candidates</span>
+        <span className="chip-ro" title="Claude reads boards, BOMs and datasheets and runs the gate. File edits arrive with candidate runs.">
+          read-only
+        </span>
         <span style={{ flex: '1 1 auto' }} />
         <button
           type="button"
-          className="tab"
+          className="ghost"
           onClick={() => {
             void window.api.agent.reset()
             setMsgs([])
@@ -90,27 +108,45 @@ export function ChatPanel({
       </div>
       <div className="chatlog" role="log" aria-label="Conversation">
         {msgs.length === 0 ? (
-          <p style={{ color: 'var(--dim)' }}>
-            Ask about the open board: parts, datasheets, gate results. Click a pad on the board to mention it.
-          </p>
+          <div className="chat-empty">
+            <p>Ask about the open board: parts, datasheets, gate results. Click a pad on the board to mention it.</p>
+            <div className="quick">
+              {quick.map((q) => (
+                <button key={q} type="button" className="ghost" onClick={() => void send(q)} disabled={busy}>
+                  {q}
+                </button>
+              ))}
+            </div>
+          </div>
         ) : null}
-        {msgs.map((m, i) =>
-          m.who === 'tool' ? (
-            <div key={i} className="toolchip mono" title={JSON.stringify(m.input)}>
-              ⚙ {toolLabel(m.name)}
+        {rows.map((m, i) =>
+          m.who === 'tools' ? (
+            <div key={i} className="toolrow">
+              {m.items.map((t, j) => (
+                <span key={j} className="toolchip mono" title={JSON.stringify(t.input)}>
+                  {toolLabel(t.name)}
+                </span>
+              ))}
             </div>
           ) : m.who === 'meta' ? (
-            <div key={i} className="meta" style={{ color: m.error ? 'var(--err)' : 'var(--dim)' }}>
+            <div key={i} className="meta" style={{ color: m.error ? 'var(--err)' : undefined }}>
               {m.text}
             </div>
-          ) : (
-            <div key={i} className={m.who === 'you' ? 'bubble you' : 'bubble claude'}>
-              <span className="who">{m.who === 'you' ? 'You' : 'Claude'}</span>
-              <span style={{ whiteSpace: 'pre-wrap' }}>{m.text}</span>
+          ) : m.who === 'you' ? (
+            <div key={i} className="bubble you">
+              {m.text}
             </div>
-          )
+          ) : m.who === 'claude' ? (
+            <div key={i} className="bubble claude">
+              <Markdown text={m.text} />
+            </div>
+          ) : null
         )}
-        {busy ? <div className="meta">Claude is working…</div> : null}
+        {busy ? (
+          <div className="meta working">
+            <span className="spinner" aria-hidden="true" /> Claude is working…
+          </div>
+        ) : null}
         <div ref={end} />
       </div>
       <form
@@ -121,36 +157,40 @@ export function ChatPanel({
         }}
       >
         {mention ? (
-          <button type="button" className="tab mono" onClick={() => setDraft((d) => (d ? `${d} ${mention} ` : `${mention} `))}>
+          <button type="button" className="mention mono" onClick={() => setDraft((d) => (d ? `${d} ${mention} ` : `${mention} `))}>
             + {mention}
           </button>
         ) : null}
-        <label htmlFor="chat-input" className="sr-only">
-          Message
-        </label>
-        <textarea
-          id="chat-input"
-          rows={3}
-          value={draft}
-          placeholder="Ask Claude about this board…"
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault()
-              void send()
-            }
-          }}
-        />
-        <div className="row" style={{ justifyContent: 'flex-end' }}>
+        <div className="composer">
+          <label htmlFor="chat-input" className="sr-only">
+            Message
+          </label>
+          <textarea
+            id="chat-input"
+            rows={2}
+            value={draft}
+            placeholder="Ask Claude about this board…"
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                void send()
+              }
+            }}
+          />
           {busy ? (
-            <button type="button" onClick={() => window.api.agent.cancel()}>
+            <button type="button" className="ghost" onClick={() => window.api.agent.cancel()}>
               Stop
             </button>
-          ) : null}
-          <button type="submit" className="primary" disabled={busy || !draft.trim()}>
-            Send
-          </button>
+          ) : (
+            <button type="submit" className="primary send" aria-label="Send" disabled={!draft.trim()}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" aria-hidden="true">
+                <path d="M12 19V5M5 12l7-7 7 7" />
+              </svg>
+            </button>
+          )}
         </div>
+        <div className="hint">Enter to send · Shift+Enter for a new line</div>
       </form>
     </aside>
   )

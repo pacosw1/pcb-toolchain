@@ -17,9 +17,9 @@ test('Claude answers from the board with engine tools', async () => {
   win.on('console', (m) => console.log('[renderer]', m.type(), m.text()))
   win.on('pageerror', (e) => console.log('[pageerror]', e.message))
   await expect(win.getByRole('status', { name: 'Engine status' })).toContainText('engine ready', { timeout: 30_000 })
-  const boards = win.getByRole('navigation', { name: 'Boards' })
-  await expect(boards).toContainText('POE-ETHERNET', { timeout: 15_000 })
-  await boards.locator('li', { hasText: 'POE-ETHERNET' }).getByRole('button').first().click()
+  await win.getByRole('button', { name: 'Choose board' }).click({ timeout: 15_000 })
+  await win.getByRole('dialog', { name: 'Boards' }).getByRole('searchbox').fill('POE-ETH')
+  await win.getByRole('option', { name: /POE-ETHERNET/ }).click()
   await expect(win.getByRole('img', { name: /POE-ETHERNET/ })).toBeVisible({ timeout: 15_000 })
 
   await win.getByLabel('Message').fill('How many parts does this board have in its BOM, and how many BOM lines? Use the tools.')

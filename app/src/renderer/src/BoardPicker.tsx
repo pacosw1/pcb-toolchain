@@ -61,7 +61,11 @@ export function BoardPicker({
         onClick={() => setOpen((o) => !o)}
       >
         <span className="picker-name">{current?.id ?? 'Choose a board'}</span>
-        <span className="picker-sub">{current ? `${current.lifecycle} · ${boards.length} boards` : `${boards.length} boards`}</span>
+        <span className="picker-sub">
+          {current
+            ? `${current.lifecycle} · ${current.revisions.filter((r) => r.pcb).length} revision${current.revisions.filter((r) => r.pcb).length === 1 ? '' : 's'}`
+            : `${boards.length} boards`}
+        </span>
         <span aria-hidden="true" className="chev">
           ▾
         </span>

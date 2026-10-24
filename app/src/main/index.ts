@@ -40,6 +40,7 @@ function createWindow(): BrowserWindow {
     title: 'PCB Studio',
     backgroundColor: '#0e1014',
     autoHideMenuBar: true,
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),

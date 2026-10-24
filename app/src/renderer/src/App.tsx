@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { EngineStatus } from '../../preload/types'
 import { BoardView, type Selection } from './BoardView'
 import { BoardPicker } from './BoardPicker'
+import { Icon } from './Icon'
 import { ChatPanel } from './ChatPanel'
 import { ChecksView } from './ChecksView'
 import { DatasheetView } from './DatasheetView'
@@ -190,23 +191,28 @@ function App(): React.JSX.Element {
     if (root) await openProject(root)
   }
 
-  const sections: [Tab, string, string | null][] = [
-    ['board', 'Board', geo ? `${geo.footprints.length} parts` : null],
-    ['3d', '3D', null],
-    ['parts', 'Parts / BOM', bom ? `${bom.summary.lines} lines` : null],
-    ['datasheets', 'Datasheets', bom ? String(bom.lines.filter((l) => l.datasheet).length) : null],
-    ['checks', 'Checks', gate ? null : 'no gate']
+  const sections: [Tab, string, string, string | null][] = [
+    ['board', 'Board', 'board', geo ? `${geo.footprints.length} parts` : null],
+    ['3d', '3D', 'cube', null],
+    ['parts', 'Parts / BOM', 'list', bom ? `${bom.summary.lines} lines` : null],
+    ['datasheets', 'Datasheets', 'doc', bom ? String(bom.lines.filter((l) => l.datasheet).length) : null],
+    ['checks', 'Checks', 'check', gate ? null : 'no gate']
   ]
 
   return (
     <div className="shell">
       <header className="topbar">
         <span className="brand">PCB Studio</span>
-        <span style={{ color: 'var(--muted)' }}>
-          {project ? project.root.split('/').pop() : 'No project open'}
-          {board ? ` ▸ ${board.id}` : ''}
-          {revision?.revision ? ` rev ${revision.revision}` : ''}
-        </span>
+        <nav className="crumbs" aria-label="Location">
+          <span>{project ? project.root.split('/').pop() : 'No project open'}</span>
+          {board ? (
+            <>
+              <span className="sep">/</span>
+              <span className="cur">{board.id}</span>
+            </>
+          ) : null}
+          {revision ? <span className="statechip">{revision.revision ? `rev ${revision.revision}` : 'unregistered'} · {revision.state ?? '—'}</span> : null}
+        </nav>
         <span style={{ flex: '1 1 auto' }} />
         <button type="button" onClick={pickProject} disabled={!ready}>
           Open project…
@@ -253,7 +259,7 @@ function App(): React.JSX.Element {
               ) : null}
               {geo ? (
                 <ul className="sections" aria-label="Sections">
-                  {sections.map(([k, label, note]) => (
+                  {sections.map(([k, label, icon, note]) => (
                     <li key={k}>
                       <button
                         type="button"
@@ -261,7 +267,8 @@ function App(): React.JSX.Element {
                         aria-current={tab === k ? 'page' : undefined}
                         onClick={() => setTab(k)}
                       >
-                        <span>{label}</span>
+                        <Icon name={icon} />
+                        <span className="label">{label}</span>
                         {note ? <span className="note">{note}</span> : null}
                       </button>
                     </li>
