@@ -31,6 +31,10 @@ export interface AgentApi {
 }
 
 export interface AppApi {
+  /** 'desktop' in Electron, 'web' in the read-only browser viewer. */
+  mode: 'desktop' | 'web'
+  /** URL the renderer can load for an absolute project (or 3D cache) file path. */
+  fileUrl: (path: string) => string
   engine: EngineApi
   agent: AgentApi
   openProjectDialog: () => Promise<string | null>

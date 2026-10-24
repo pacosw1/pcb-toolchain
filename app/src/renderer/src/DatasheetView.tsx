@@ -18,7 +18,7 @@ export function DatasheetView({ bom, initial }: { bom: Bom; initial: BomLine | n
     if (!cur?.datasheet) return
     window.api.engine
       .call('file.resolve', { path: cur.datasheet })
-      .then((r) => setUrl('pcbfile://local' + encodeURI((r as { path: string }).path)))
+      .then((r) => setUrl(window.api.fileUrl((r as { path: string }).path)))
       .catch((e) => setErr(String(e)))
   }, [cur])
 

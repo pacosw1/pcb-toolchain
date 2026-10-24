@@ -214,9 +214,13 @@ function App(): React.JSX.Element {
           {revision ? <span className="statechip">{revision.revision ? `rev ${revision.revision}` : 'unregistered'} · {revision.state ?? '—'}</span> : null}
         </nav>
         <span style={{ flex: '1 1 auto' }} />
-        <button type="button" onClick={pickProject} disabled={!ready}>
-          Open project…
-        </button>
+        {window.api.mode === 'desktop' ? (
+          <button type="button" onClick={pickProject} disabled={!ready}>
+            Open project…
+          </button>
+        ) : (
+          <span className="statechip">web viewer · read-only</span>
+        )}
         <span className="pill" role="status" aria-label="Engine status">
           <span className="dot" style={{ background: status ? STATE_COLOR[status.state] : 'var(--dim)' }} />
           engine {status?.state ?? '…'}
@@ -322,6 +326,7 @@ function App(): React.JSX.Element {
             </section>
           )}
         </main>
+        {window.api.mode === 'web' ? null : (
         <ChatPanel
           ctx={{ projectRoot: project?.root ?? null, pcb, gate, selection: mention }}
           mention={mention}
@@ -331,6 +336,7 @@ function App(): React.JSX.Element {
             else if (v.x != null && v.y != null) setFocusPoint({ x: v.x, y: v.y })
           }}
         />
+        )}
       </div>
     </div>
   )

@@ -118,12 +118,18 @@ export function ChecksView({
         <strong>Gate</strong>
         <span className="mono">{gate ?? 'no gate for this revision'}</span>
         <span style={{ flex: '1 1 auto' }} />
-        <button type="button" disabled={!gate || running} onClick={() => start(true)}>
-          Run gate (fresh)
-        </button>
-        <button type="button" disabled={!gate || running} onClick={() => start(false)}>
-          Run changed checks
-        </button>
+        {window.api.mode === 'desktop' ? (
+          <>
+            <button type="button" disabled={!gate || running} onClick={() => start(true)}>
+              Run gate (fresh)
+            </button>
+            <button type="button" disabled={!gate || running} onClick={() => start(false)}>
+              Run changed checks
+            </button>
+          </>
+        ) : (
+          <span style={{ color: 'var(--dim)', fontSize: 12 }}>Gate runs start from the desktop app</span>
+        )}
         {run?.state === 'running' ? (
           <button type="button" onClick={() => window.api.engine.call('run.cancel', { id: run.id })}>
             Cancel

@@ -3,6 +3,8 @@ import { electronAPI } from '@electron-toolkit/preload'
 import type { AgentEvent, AppApi, EngineNotification, EngineStatus } from './types'
 
 const api: AppApi = {
+  mode: 'desktop',
+  fileUrl: (path) => 'pcbfile://local' + encodeURI(path),
   agent: {
     send: (text, ctx) => ipcRenderer.invoke('agent:send', text, ctx),
     cancel: () => ipcRenderer.invoke('agent:cancel'),
