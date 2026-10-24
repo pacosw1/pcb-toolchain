@@ -52,6 +52,15 @@ test('opens iot-lab and draws a board', async () => {
   await expect(win.locator('.boardview-bar')).toContainText(/\d+ parts · \d+ tracks · \d+ vias/)
   await win.waitForTimeout(300)
   await win.screenshot({ path: join(APP, 'test-results', 'board.png') })
+  // Silk (on) and courtyard (off) are toggleable layers.
+  const silk = win.getByRole('button', { name: 'Silk' })
+  const crtyd = win.getByRole('button', { name: 'Courtyard' })
+  await expect(silk).toHaveAttribute('aria-pressed', 'true')
+  await expect(crtyd).toHaveAttribute('aria-pressed', 'false')
+  await crtyd.click()
+  await expect(crtyd).toHaveAttribute('aria-pressed', 'true')
+  await win.waitForTimeout(200)
+  await win.screenshot({ path: join(APP, 'test-results', 'board-courtyard.png') })
   await app.close()
 })
 

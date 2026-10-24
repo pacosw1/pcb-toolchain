@@ -13,6 +13,15 @@ export function padOnLayer(p: Pad, layer: string): boolean {
 /** One pad outline in board coordinates (rotation applied). */
 export function padPath(p: Pad, into?: Path2D): Path2D {
   const local = new Path2D()
+  if (p.shape === 'custom') {
+    // anchor in the pad frame; primitives are already in board coordinates
+    if (p.anchor === 'circle') local.arc(0, 0, p.w / 2, 0, 2 * Math.PI)
+    else local.rect(-p.w / 2, -p.h / 2, p.w, p.h)
+    const out = into ?? new Path2D()
+    out.addPath(local, new DOMMatrix().translate(p.x, p.y).rotate(-p.rot))
+    for (const prim of p.prims ?? []) if (prim.closed && prim.pts.length > 2) polygon(out, prim.pts)
+    return out
+  }
   if (p.shape === 'circle') {
     local.arc(0, 0, p.w / 2, 0, 2 * Math.PI)
   } else {
@@ -54,6 +63,13 @@ export interface BoardCache {
   vias: Path2D
   viaHoles: Path2D
   netPads: Map<string, number>
+  graphics: Map<string, GraphicLayer> // F/B.SilkS, F/B.CrtYd
+}
+
+/** Silk or courtyard of one layer: strokes grouped by width, plus filled shapes. */
+export interface GraphicLayer {
+  strokes: TrackGroups
+  fill: Path2D
 }
 
 export function buildCache(geo: Geometry): BoardCache {
@@ -86,10 +102,7 @@ export function buildCache(geo: Geometry): BoardCache {
       let g = padGroups.get(key)
       if (!g) padGroups.set(key, (g = { onF, onB, hasNet: !!p.net, path: new Path2D() }))
       padPath(p, g.path)
-      if (p.drill) {
-        drills.moveTo(p.x + p.drill / 2, p.y)
-        drills.arc(p.x, p.y, p.drill / 2, 0, 2 * Math.PI)
-      }
+      if (p.drill) drillPath(p, drills)
     }
   }
   const vias = new Path2D()
@@ -100,7 +113,33 @@ export function buildCache(geo: Geometry): BoardCache {
     viaHoles.moveTo(v.x + v.drill / 2, v.y)
     viaHoles.arc(v.x, v.y, v.drill / 2, 0, 2 * Math.PI)
   }
-  return { tracks, zones, pads: [...padGroups.values()], drills, vias, viaHoles, netPads }
+  const graphics = new Map<string, GraphicLayer>()
+  for (const gr of geo.graphics ?? []) {
+    if (gr.pts.length < 2) continue
+    let gl = graphics.get(gr.layer)
+    if (!gl) graphics.set(gr.layer, (gl = { strokes: new Map(), fill: new Path2D() }))
+    if (gr.fill && gr.closed && gr.pts.length > 2) polygon(gl.fill, gr.pts)
+    const w = gr.w || 0.05
+    let s = gl.strokes.get(w)
+    if (!s) gl.strokes.set(w, (s = new Path2D()))
+    s.moveTo(gr.pts[0][0], gr.pts[0][1])
+    for (let i = 1; i < gr.pts.length; i++) s.lineTo(gr.pts[i][0], gr.pts[i][1])
+  }
+  return { tracks, zones, pads: [...padGroups.values()], drills, vias, viaHoles, netPads, graphics }
+}
+
+/** A pad's hole: a circle, or a slot (drill x drill_h) turned with the pad. */
+function drillPath(p: Pad, into: Path2D): void {
+  const w = p.drill ?? 0
+  const h = p.drill_h ?? w
+  if (p.drill_shape !== 'oval' || Math.abs(w - h) < 1e-6) {
+    into.moveTo(p.x + w / 2, p.y)
+    into.arc(p.x, p.y, w / 2, 0, 2 * Math.PI)
+    return
+  }
+  const local = new Path2D()
+  local.roundRect(-w / 2, -h / 2, w, h, Math.min(w, h) / 2)
+  into.addPath(local, new DOMMatrix().translate(p.x, p.y).rotate(-p.rot))
 }
 
 function polygon(p: Path2D, pts: [number, number][]): void {

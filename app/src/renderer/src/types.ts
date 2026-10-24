@@ -13,7 +13,23 @@ export interface Pad {
   layers: string[]
   net: string
   drill: number | null
+  /** Second drill dimension (= drill for a round hole). */
+  drill_h: number | null
+  drill_shape: 'circle' | 'oval' | null
   rratio: number
+  /** Custom pads only: anchor shape and primitives (board coordinates). */
+  anchor?: string
+  prims?: { pts: Pt[]; w: number; fill: boolean; closed: boolean }[]
+}
+
+/** A silk or courtyard line/shape in board coordinates (ref '' = board graphic). */
+export interface Graphic {
+  layer: string
+  ref: string
+  pts: Pt[]
+  closed: boolean
+  w: number
+  fill: boolean
 }
 
 export interface Footprint {
@@ -49,18 +65,29 @@ export interface Zone {
   name: string
   layers: string[]
   rule_area: boolean
+  /** Rule area that forbids at least one item. */
+  keepout: boolean
+  /** Rule areas only: what may go inside. */
+  allow: { tracks: boolean; vias: boolean; pads: boolean; copperpour: boolean; footprints: boolean } | null
+  /** First outline polygon (= polygons[0]). */
   outline: Pt[]
+  polygons: Pt[][]
   filled: { layer: string; pts: Pt[] }[]
 }
 
 export interface Geometry {
   pcb: string
   layers: string[]
+  /** Edge.Cuts chains; a closed loop has last point = first. */
   outline: Pt[][]
+  /** Chains that do not close (0 on a good board). */
+  outline_open: number
   footprints: Footprint[]
   tracks: Track[]
   vias: Via[]
   zones: Zone[]
+  /** F/B silk and courtyard. */
+  graphics: Graphic[]
   bbox: [number, number, number, number]
 }
 
