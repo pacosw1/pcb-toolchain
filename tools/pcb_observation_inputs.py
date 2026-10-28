@@ -35,7 +35,7 @@ AUDITED = {
     # takes optional declared pours (default unchanged). Parts branch unchanged.
     "pcb_operations.py": "d95cde904f78d590c6a76d4b8252c15bbfefe76c3fae69c62470add6bbbfc49d",
     "pcb_evidence.py": "9d929244915407bddefd096f8a981113652e2706ea8785cf5ddb70061330687f",
-    "pcb_workflow.py": "befb1e2b7660acc3a3422913c1df2e16b4a9673f1a8fa629bc315102aaf9135c",
+    "pcb_workflow.py": "b556dd585683b8c3afe412a4b347c11ba872ff5ecb867fcfc345dd6079516a51",
     "pcb_timing.py": "07ed104072e56166625ffc36e774892c3761832cf00fe72b6abef2d967f05ddd",
     "lean_workflow.py": "926caceb8697718d86e279e114a7c9a57b5f78f20afa635109460601c27f1bb8",
     "lean_owned.py": "9034a7b33d37fb78a0e3f6cd3efe0f9ce95ae29b411ea38ae2bc47f242a1d78e",
