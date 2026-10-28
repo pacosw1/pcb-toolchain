@@ -17,6 +17,7 @@ export const RELEASE_RECIPES={
  'CELLULAR':{maker:'make-cell-fab.sh'},'AC-24V':{maker:'make-ac24-fab.sh'},
  'FIELD-24V-BUS':{maker:'make-field-24v-bus-fab.sh'},'BASE-PWR-B':{maker:'make-base-pwr-b-fab.sh'},
  'BASE-PWR-C':{maker:'make-base-pwr-c-fab.sh'},'AC-24V-C':{maker:'make-ac24-c-fab.sh'},
+ 'H7-CORE':{maker:'make-h7-core-fab.sh',revision:'A',copper:['F_Cu','In1_Cu','In2_Cu','B_Cu']},
 };
 
 export function probeReleaseTools(paths) {
