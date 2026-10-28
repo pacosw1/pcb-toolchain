@@ -133,6 +133,11 @@
         {
           "match": "VCAP|VDD.*|VSS.*|VREF.*|VBAT",
           "role": "input"
+        },
+        {
+          "match": "BOOT0",
+          "role": "input",
+          "source": "ST DS12110 Rev 7 (STM32H742xI/G STM32H743xI/G), Table 9 Pin/ball definition, p. 86: LQFP100 pin 94 BOOT0, pin type I, I/O structure B; Table 8 legend, p. 63: I = input only pin, B = dedicated BOOT0 pin, hardware-design/registry/datasheets/STM32H743VIT6_C114409.pdf [P]"
         }
       ]
     },

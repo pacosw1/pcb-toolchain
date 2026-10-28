@@ -86,7 +86,8 @@ def context(root, board):
             blockers.append(dict(rule='invalid_latest_gate', evidence=str(latest)))
     spec = root / 'hardware-design/boards' / revision.get('directory', board) / revision.get('spec', 'SPEC.md')
     packet = spec.parent
-    sources = [root / 'AGENTS.md', focus, spec, folder / 'gate.json', root / 'hardware-design/STATUS.md',
+    # FOCUS.md is optional (removed by the user 2026-10-20); when present it can still freeze a board.
+    sources = [root / 'AGENTS.md'] + ([focus] if focus.exists() else []) + [spec, folder / 'gate.json', root / 'hardware-design/STATUS.md',
                root / 'hardware-design/REQUIREMENTS.md', root / 'hardware-design/INTERFACES.md',
                root / 'hardware-design/CONNECTORS.md', root / 'hardware-design/DECISIONS.md']
     sources.extend(packet / name for name in ('STATUS.md', 'DOC-RECONCILIATION.md', 'BOM-VERIFIED.csv', 'SCHEMATIC.md'))

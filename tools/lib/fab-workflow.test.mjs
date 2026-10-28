@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {spawnSync} from 'node:child_process';
 
-const boards={'BASE-PWR':'base-pwr',CELLULAR:'cell','AC-24V':'ac24','ENV-SENSE':'env','FIELD-24V-BUS':'field-24v-bus','BASE-PWR-B':'base-pwr-b','BASE-PWR-C':'base-pwr-c','AC-24V-C':'ac24-c'};
+const boards={'BASE-PWR':'base-pwr',CELLULAR:'cell','AC-24V':'ac24','ENV-SENSE':'env','FIELD-24V-BUS':'field-24v-bus','BASE-PWR-B':'base-pwr-b','BASE-PWR-C':'base-pwr-c','AC-24V-C':'ac24-c','H7-CORE':'h7-core'};
 function fixture(board,variables={}) {
  const root=mkdtempSync(join(tmpdir(),'fab-workflow-'));mkdirSync(join(root,'tools'));mkdirSync(join(root,'bin'));
  const parent=board.startsWith('BASE-PWR-')?'hardware-design/boards/BASE-PWR/cad/'+board:board==='AC-24V-C'?'hardware-design/boards/AC-24V/cad/AC-24V-C':'hardware-design/boards/'+board+'/cad';

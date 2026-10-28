@@ -128,6 +128,12 @@ print('candidate placement completed',flush=True)
         with self.assertRaisesRegex(ValueError, 'FOCUS.md freezes'):
             operations.adopt(self.root, folder)
 
+    def test_missing_focus_is_not_a_context_blocker(self):
+        (self.root / 'FOCUS.md').unlink()
+        info = workflow.context(self.root, 'X')
+        self.assertFalse(info['frozen'])
+        self.assertNotIn('FOCUS.md', [b.get('path') for b in info['blockers']])
+
     def test_concurrent_copper_edit_during_adoption_is_preserved(self):
         folder = self.candidate()
         target = self.board / 'cad/X.kicad_pcb'
