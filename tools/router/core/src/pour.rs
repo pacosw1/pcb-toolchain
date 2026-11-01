@@ -19,8 +19,14 @@
 //! `proxy_spokes`; 0 = never starved). island_removal_mode only removes pieces with no item: it does not change this
 //! rule, and is reported only.
 //!
+//! v6 (KiCad 10 zone_filler.cpp fillCopperZone, read 2026-11-01): the spokes are added to the fill before the
+//! min-width deflate, so the model erodes the union (a cell is fill when its min_thickness / 2 disk has no point in the
+//! raw relief outside the raw spokes), and the drill hole of each thermal pad is cut after the re-inflation
+//! (addHoleKnockout( pad, 0 )), which splits the spoke cross at the pad centre.
+//!
 //! Checked against KiCad 10 DRC (iotroute --check): NET-CORE v4 failing board: only C46.2 (1 spoke, 2 to an island, as
-//! the KiCad message); v4 board of 1faf8ad8 and both v5 boards (KiCad DRC 0): no fault.
+//! the KiCad message); v4 board of 1faf8ad8, both v5 boards and the M2 NET-CORE regression (KiCad DRC 0): no fault.
+//! H7-CORE M2 run 1: only J2.16 (1 + 1 ignored), run 6: only J2.18 (1 + 2 ignored), runs 2 and 4 (DRC 0): no fault.
 use crate::*;
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -46,6 +52,8 @@ pub(crate) struct PourPad {
     pub name: String,
     /// custom pad: its number of proxy spoke segments (KiCad: the spokes it needs; 0 = never starved)
     pub proxy: Option<usize>,
+    /// drilled pad: hole centre and radius (KiCad cuts the hole out of the fill after the spokes)
+    pub hole: Option<(f64, f64, f64)>,
 }
 
 #[derive(Clone)]
@@ -292,17 +300,64 @@ fn fill(bd: &Board, pr: &Pour) -> Filled {
             }
         }
     }
-    for &(_, d, len, hw, (cx, cy)) in &tips {
-        // eroded strip: the min-width opening keeps the cells within half width - min_thickness / 2 of the axis; one
-        // pitch longer so the strip meets the eroded fill cells beyond the relief on the grid
-        let (len, ew) = (len + p, hw - h);
-        let (ex, ey) = (cx + d.0 * len, cy + d.1 * len);
-        let bb = (cx.min(ex) - hw, cy.min(ey) - hw, cx.max(ex) + hw, cy.max(ey) + hw);
-        r.stamp(bb, SPOKE, &|x, y| {
-            let (ux, uy) = (x - cx, y - cy);
-            let t = ux * d.0 + uy * d.1;
-            t >= 0.0 && t <= len && (-ux * d.1 + uy * d.0).abs() <= ew + 1e-9
-        });
+    // spokes in the eroded model. KiCad adds the spokes to the fill and then deflates the union (fillCopperZone), so
+    // the eroded set near a pad is: the cells whose min_thickness / 2 disk has no point in the raw relief (pad grown by
+    // the gap) outside the raw spokes of that pad. Eroding the spoke and the fill each alone (v5) lost the junction where
+    // the fill beyond the relief meets the spoke tip at a slant (M2 run 6, J2.18 NE spoke: one cell short).
+    let disk: Vec<(f64, f64)> = {
+        let st = p / 2.0;
+        let n = (h / st).ceil() as i32;
+        let mut v = Vec::new();
+        for a in -n..=n {
+            for b in -n..=n {
+                let (dx, dy) = (a as f64 * st, b as f64 * st);
+                if dx * dx + dy * dy <= h * h {
+                    v.push((dx, dy));
+                }
+            }
+        }
+        for k in 0..32 {
+            let t = k as f64 * std::f64::consts::PI / 16.0;
+            v.push((h * t.cos(), h * t.sin()));
+        }
+        v
+    };
+    for (k, pd) in pr.pads.iter().enumerate() {
+        let mine: Vec<&(usize, (f64, f64), f64, f64, (f64, f64))> = tips.iter().filter(|t| t.0 == k).collect();
+        if mine.is_empty() {
+            continue;
+        }
+        // raw spoke strip: from the pad centre to the test point, half width hw
+        let in_strip = |x: f64, y: f64| {
+            mine.iter().any(|&&(_, d, len, hw, (cx, cy))| {
+                let (ux, uy) = (x - cx, y - cy);
+                let t = ux * d.0 + uy * d.1;
+                t >= 0.0 && t <= len && (-ux * d.1 + uy * d.0).abs() <= hw + 1e-9
+            })
+        };
+        for &&(_, d, len, hw, (cx, cy)) in &mine {
+            let (ex, ey) = (cx + d.0 * len, cy + d.1 * len);
+            let e = hw + h + p;
+            let bb = (cx.min(ex) - e, cy.min(ey) - e, cx.max(ex) + e, cy.max(ey) + e);
+            r.stamp(bb, SPOKE, &|x, y| {
+                let (ux, uy) = (x - cx, y - cy);
+                let t = ux * d.0 + uy * d.1;
+                t >= -h && t <= len + h && (-ux * d.1 + uy * d.0).abs() <= hw + h
+                    && disk.iter().all(|&(dx, dy)| pd.geo.dist(x + dx, y + dy) >= pr.gap || in_strip(x + dx, y + dy))
+            });
+        }
+    }
+    // drill holes of the thermal pads (KiCad fillCopperZone: addHoleKnockout( pad, 0 ) after the re-inflation). The spokes
+    // start at the pad centre and join through it unless the hole cuts them. In the eroded model a re-inflated cross of
+    // half width hw is cut where the hole radius reaches its inner corner (hw * sqrt 2); its eroded corner is at
+    // (hw - h) * sqrt 2, so the hole blocks the eroded cells within radius - h * sqrt 2 (exact for the 4-spoke cross).
+    for pd in pr.pads.iter().filter(|pd| pd.conn == 0) {
+        if let Some((hx, hy, hr)) = pd.hole {
+            let rb = hr - h * std::f64::consts::SQRT_2;
+            if rb > 0.0 {
+                r.stamp((hx - rb, hy - rb, hx + rb, hy + rb), FIX, &|x, y| (x - hx).powi(2) + (y - hy).powi(2) < rb * rb);
+            }
+        }
     }
     // pieces: 4-connected components of the fill cells
     let mut next = 0u32;
@@ -411,6 +466,22 @@ pub(crate) fn check(bd: &Board) -> Vec<Fault> {
     for (pi, pr) in bd.pours.iter().enumerate() {
         let f = fill(bd, pr);
         let lbit = 1u8 << pr.layer;
+        if let Ok(v) = std::env::var("IOTROUTE_POUR_DUMP") {
+            // debug: "layer,x0,y0,x1,y1,file": the piece label of each cell in the box (one row per line)
+            let a: Vec<&str> = v.split(',').collect();
+            if a.len() == 6 && a[0].parse::<usize>().ok() == Some(pr.layer) {
+                let b: Vec<f64> = a[1..5].iter().map(|s| s.parse().unwrap()).collect();
+                if let Some((i0, j0, i1, j1)) = f.r.range((b[0], b[1], b[2], b[3])) {
+                    let mut s = format!("{} {} {} {} {}\n", f.r.x0 + i0 as f64 * f.r.p, f.r.y0 + j0 as f64 * f.r.p, f.r.p, i1 - i0 + 1, j1 - j0 + 1);
+                    for j in j0..=j1 {
+                        let row: Vec<String> = (i0..=i1).map(|i| f.r.lab[j * f.r.nx + i].to_string()).collect();
+                        s.push_str(&row.join(" "));
+                        s.push('\n');
+                    }
+                    std::fs::write(a[5], s).unwrap();
+                }
+            }
+        }
         for (k, pd) in pr.pads.iter().enumerate() {
             if pd.conn != 0 {
                 continue;
@@ -437,7 +508,7 @@ pub(crate) fn check(bd: &Board) -> Vec<Fault> {
                 // spokes, no island fallback
                 if good < px {
                     let mut fl = Fault { pour: pi, layer: pr.layer, pad: pd.name.clone(), good, ignored, door: Vec::new(), path: Vec::new(), walls: Vec::new(), fixed: true };
-                    door(bd, pr, pd, &f, &mut fl);
+                    door(bd, pr, pd, &f, &f.ring[k], &mut fl);
                     out.push(fl);
                 }
                 continue;
@@ -469,7 +540,7 @@ pub(crate) fn check(bd: &Board) -> Vec<Fault> {
                 continue;
             }
             let mut fl = Fault { pour: pi, layer: pr.layer, pad: pd.name.clone(), good, ignored, door: Vec::new(), path: Vec::new(), walls: Vec::new(), fixed: true };
-            door(bd, pr, pd, &f, &mut fl);
+            door(bd, pr, pd, &f, &f.ring[k], &mut fl);
             out.push(fl);
         }
     }
@@ -481,7 +552,9 @@ pub(crate) fn check(bd: &Board) -> Vec<Fault> {
 /// its KiCad test point (pad extent + gap + max error + min_thickness / 2) with the cost of the routed cells on its axis
 /// from the ring to the test point (a spoke that routed copper removed can come back: KiCad adds a spoke only when its
 /// test point lies in the fill, so the door must clear the test point, not only some cells of the strip).
-fn door(bd: &Board, pr: &Pour, pd: &PourPad, f: &Filled, fl: &mut Fault) {
+/// ring: the piece label at each spoke's ring point; a spoke already in a connected piece (2 or more items) is no seed
+/// (v6: with one good pour spoke the search ended at once on that piece and reported no door).
+fn door(bd: &Board, pr: &Pour, pd: &PourPad, f: &Filled, ring: &[u32], fl: &mut Fault) {
     let r = &f.r;
     let (cx, cy) = centre(&pd.geo);
     let enter = |k: usize| -> Option<u32> {
@@ -498,7 +571,10 @@ fn door(bd: &Board, pr: &Pour, pd: &PourPad, f: &Filled, fl: &mut Fault) {
     let mut dq: VecDeque<usize> = VecDeque::new();
     // seed (test point cell) -> its axis cells, ring first
     let mut axis: HashMap<usize, Vec<usize>> = HashMap::new();
-    'd: for &d in &pd.dirs {
+    'd: for (si, &d) in pd.dirs.iter().enumerate() {
+        if ring.get(si).map(|&l| l > 0 && f.count.get(&l).copied().unwrap_or(0) >= 2).unwrap_or(false) {
+            continue;
+        }
         let (t0, t1) = (extent(&pd.geo, d) + pr.gap / 2.0, extent(&pd.geo, d) + pr.gap + MAX_ERROR + pr.mt / 2.0);
         let mut cells: Vec<usize> = Vec::new();
         let mut t = t0;
@@ -642,7 +718,8 @@ pub(crate) fn load_pours(bd: &mut Board, model: &Value, lid: &dyn Fn(&str) -> Op
                 let (dx, dy) = (a.cos(), -a.sin()); // KiCad angles are counterclockwise on screen (y down)
                 ((dx * 1e9).round() / 1e9, (dy * 1e9).round() / 1e9)
             }).collect();
-            pads.push(PourPad { geo, conn: pc, dirs, proxy: if p["shape"].as_str() == Some("custom") { Some(p["proxy_spokes"].as_u64().unwrap_or(0) as usize) } else { None }, name: format!("{}.{}", p["ref"].as_str().unwrap_or("?"), p["num"].as_str().unwrap_or("?")) });
+            pads.push(PourPad { geo, conn: pc, dirs, proxy: if p["shape"].as_str() == Some("custom") { Some(p["proxy_spokes"].as_u64().unwrap_or(0) as usize) } else { None },
+                                  hole: if drill > 0.0 { Some((p["x"].as_f64().unwrap_or(cx), p["y"].as_f64().unwrap_or(cy), drill / 2.0)) } else { None }, name: format!("{}.{}", p["ref"].as_str().unwrap_or("?"), p["num"].as_str().unwrap_or("?")) });
         }
         bd.pours.push(Pour { net, layer: l, clr: f(&z["clearance"]), gap: f(&z["thermal_gap"]), sw: f(&z["spoke_width"]), mt: f(&z["min_thickness"]), bbox,
                              min_spokes: min_sp, pads, net_clr, island_mode: z["island_removal_mode"].as_i64().unwrap_or(0) });

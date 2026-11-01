@@ -2153,6 +2153,24 @@ fn return_via(bd: &Board, cli: Option<(f64, f64)>) -> (f64, f64, &'static str) {
     (0.45, 0.2, "default")
 }
 
+/// Add the tracks and vias of a router result as routed copper of their nets (pour check of a routed board, --check).
+pub(crate) fn add_result(bd: &mut Board, r: &Value) {
+    let names_v: Vec<String> = bd.nets.iter().map(|q| q.name.clone()).collect();
+    let ni = |n: &str| names_v.iter().position(|q| q == n).map(|i| i as i32).unwrap_or(-1);
+    let all = (1u8 << bd.layer_names.len()) - 1;
+    for t in r["tracks"].as_array().unwrap() {
+        let net = ni(t["net"].as_str().unwrap());
+        let l = bd.layer_names.iter().position(|q| q == t["layer"].as_str().unwrap()).unwrap();
+        let clr = if net >= 0 { bd.nets[net as usize].clr } else { 0.15 };
+        bd.add(Shape { net, geo: Geo::Seg(f(&t["a"][0]), f(&t["a"][1]), f(&t["b"][0]), f(&t["b"][1]), f(&t["w"]) / 2.0), clr, layers: 1 << l, drill: 0.0, kind: Kind::Track, owner: net.max(0), alive: true });
+    }
+    for v in r["vias"].as_array().unwrap() {
+        let net = ni(v["net"].as_str().unwrap());
+        let clr = if net >= 0 { bd.nets[net as usize].clr } else { 0.15 };
+        bd.add(Shape { net, geo: Geo::Circ(f(&v["x"]), f(&v["y"]), f(&v["d"]) / 2.0), clr, layers: all, drill: f(&v["drill"]), kind: Kind::Via, owner: net.max(0), alive: true });
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
@@ -2226,20 +2244,7 @@ fn main() {
     if let Some(res) = check_only {
         // pour check of a routed result (no routing): its tracks and vias are added as routed copper of their nets
         let r: Value = serde_json::from_str(&std::fs::read_to_string(&res).expect("result")).expect("json");
-        let names_v: Vec<String> = bd.nets.iter().map(|q| q.name.clone()).collect();
-        let ni = |n: &str| names_v.iter().position(|q| q == n).map(|i| i as i32).unwrap_or(-1);
-        let all = (1u8 << bd.layer_names.len()) - 1;
-        for t in r["tracks"].as_array().unwrap() {
-            let net = ni(t["net"].as_str().unwrap());
-            let l = bd.layer_names.iter().position(|q| q == t["layer"].as_str().unwrap()).unwrap();
-            let clr = if net >= 0 { bd.nets[net as usize].clr } else { 0.15 };
-            bd.add(Shape { net, geo: Geo::Seg(f(&t["a"][0]), f(&t["a"][1]), f(&t["b"][0]), f(&t["b"][1]), f(&t["w"]) / 2.0), clr, layers: 1 << l, drill: 0.0, kind: Kind::Track, owner: net.max(0), alive: true });
-        }
-        for v in r["vias"].as_array().unwrap() {
-            let net = ni(v["net"].as_str().unwrap());
-            let clr = if net >= 0 { bd.nets[net as usize].clr } else { 0.15 };
-            bd.add(Shape { net, geo: Geo::Circ(f(&v["x"]), f(&v["y"]), f(&v["d"]) / 2.0), clr, layers: all, drill: f(&v["drill"]), kind: Kind::Via, owner: net.max(0), alive: true });
-        }
+        add_result(&mut bd, &r);
         let tp = std::time::Instant::now();
         let faults = pour::check(&bd);
         for fl in &faults {

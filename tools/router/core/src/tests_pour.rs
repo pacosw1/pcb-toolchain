@@ -34,7 +34,7 @@ fn pocket_board() -> Board {
     bd.add(fixed(2, Geo::Circ(8.5, 5.0, 0.225), Kind::Via, 0b111, 0.2));
     let dirs = vec![(1.0, 0.0), (0.0, -1.0), (-1.0, 0.0), (0.0, 1.0)];
     bd.pours.push(pour::Pour { net: 2, layer: 0, clr: 0.25, gap: 0.3, sw: 0.4, mt: 0.1, bbox: [0.0, 0.0, 10.0, 10.0], min_spokes: 2,
-                               pads: vec![pour::PourPad { geo: Geo::Rect(4.7, 4.7, 5.3, 5.3), conn: 0, dirs, name: "U1.1".into(), proxy: None }],
+                               pads: vec![pour::PourPad { geo: Geo::Rect(4.7, 4.7, 5.3, 5.3), conn: 0, dirs, name: "U1.1".into(), proxy: None, hole: None }],
                                net_clr: HashMap::new(), island_mode: 0 });
     bd
 }
@@ -89,4 +89,70 @@ fn walled_in_pour_piece_is_found_and_resolved() {
     assert!(ctx.bd.shapes.iter().any(|s| s.alive && s.owner == 0 && s.kind == Kind::Track), "A stays routed");
     let au = ctx.audit(0.0);
     assert_eq!((au.pairs, au.hard), (0, 0), "the copper stays legal");
+}
+
+/// v6 (M2 J2.18): KiCad cuts the drill hole of a thermal pad out of the fill after the spokes are added
+/// (zone_filler.cpp fillCopperZone: addHoleKnockout( pad, 0 ) into clearanceHoles, subtracted after the re-inflation).
+/// The spokes start at the pad centre, so without the hole they join every spoke into one fill polygon; with a hole
+/// wider than the spoke cross (drill / 2 >= spoke width / sqrt 2) each spoke stays in the piece it reaches.
+/// Board: THT GND pad J.1 at (5, 5), r 0.85, drill 1.0, spokes 0.35 at 45 degrees. Fixed net-B walls from the relief ring
+/// to the board edge (north at x = 5, east at y = 5) cut off the NE quadrant; a GND via at (8, 2) is in it. KiCad: NE
+/// spoke good (pad + via), the 3 others go into an island with only the pad: starved_thermal "3 spokes connected to
+/// isolated island".
+#[test]
+fn tht_hole_splits_the_spokes_of_a_thermal_pad() {
+    let nets = vec![n("A", false), n("B", false), Net { via_d: 0.45, via_drill: 0.2, ..n("GND", true) }];
+    let mut bd = Board { layer_names: vec!["F.Cu".into(), "In1.Cu".into(), "B.Cu".into()], routable: vec![0, 2], nets, shapes: Vec::new(),
+                         idx: Index::new(-1.0, -1.0, 11.0, 11.0, 3), sidx: Index::new(-1.0, -1.0, 11.0, 11.0, 3), maxc: 0.25,
+                         edge: (0.0, 0.0, 10.0, 10.0), edge_clr: 0.3, gnd: 2, plane_clr: 0.25, eps: EPS, hole_clr: 0.28,
+                         spoke_notes: Vec::new(), attach: Vec::new(), adj: 0, pad_need: Vec::new(), gnd_fixed: vec![(8.0, 2.0)],
+                         pours: Vec::new(), circ: HashMap::new(), vip: Vec::new() };
+    let fixed = |net: i32, geo: Geo, kind: Kind, layers: u8, drill: f64| Shape { net, geo, clr: 0.15, layers, drill, kind, owner: -1, alive: true };
+    bd.add(fixed(2, Geo::Rect(4.15, 4.15, 5.85, 5.85), Kind::Pad, 0b111, 1.0));
+    bd.circ.insert((50000, 50000), 0.85);
+    bd.add(fixed(1, Geo::Seg(5.0, 0.0, 5.0, 3.7, 0.1), Kind::Track, 1, 0.0));
+    bd.add(fixed(1, Geo::Seg(6.3, 5.0, 10.0, 5.0, 0.1), Kind::Track, 1, 0.0));
+    bd.add(fixed(2, Geo::Circ(8.0, 2.0, 0.225), Kind::Via, 0b111, 0.2));
+    let s = std::f64::consts::FRAC_1_SQRT_2;
+    let dirs = vec![(s, -s), (-s, -s), (-s, s), (s, s)];
+    let pad = |hole| pour::PourPad { geo: Geo::Circ(5.0, 5.0, 0.85), conn: 0, dirs: dirs.clone(), name: "J.1".into(), proxy: None, hole };
+    let pour = |hole| pour::Pour { net: 2, layer: 0, clr: 0.2, gap: 0.3, sw: 0.35, mt: 0.1, bbox: [0.0, 0.0, 10.0, 10.0], min_spokes: 2,
+                                   pads: vec![pad(hole)], net_clr: HashMap::new(), island_mode: 0 };
+    // SMD pad (no hole): the spoke cross joins the island to the NE piece: no fault (as KiCad)
+    bd.pours.push(pour(None));
+    assert!(pour::check(&bd).is_empty(), "{:?}", pour::check(&bd));
+    // THT pad: the hole splits the cross
+    bd.pours[0] = pour(Some((5.0, 5.0, 0.5)));
+    let f = pour::check(&bd);
+    assert_eq!(f.len(), 1, "{f:?}");
+    assert_eq!((f[0].good, f[0].ignored), (1, 3), "{f:?}");
+    assert!(f[0].fixed, "fixed copper alone makes the island");
+}
+
+/// Pour check of a cropped M2 board (fixtures/: crop of the RouteModel and the router result around J2, made with the
+/// scratch crop.py) -> the faults as (pad, good, ignored, walls).
+fn fixture_faults(js: &str) -> Vec<(String, usize, usize, Vec<String>)> {
+    let v: Value = serde_json::from_str(js).unwrap();
+    let (hole, _, _) = hole_rules(&v["model"]);
+    let mut bd = load(&v["model"], hole.unwrap_or(DEF_HOLE_CLR));
+    add_result(&mut bd, &v["result"]);
+    pour::check(&bd).into_iter().map(|f| (f.pad, f.good, f.ignored, f.walls.iter().map(|&w| bd.nets[w].name.clone()).collect())).collect()
+}
+
+/// KiCad 10 DRC on the M2 run 6 board: J2.18 B.Cu "2 spokes connected to isolated island" (1 spoke reaches the piece
+/// with the GND via at (134.6, 184.2), 2 reach an island with only the pad). v5 passed it: the NE spoke ends one cell
+/// short of the fill because the model eroded the spoke and the fill each alone; KiCad erodes their union
+/// (fillCopperZone: spokes added, then Deflate( min_width / 2 )), which keeps the junction.
+#[test]
+fn m2_run6_j2_18_is_starved_as_kicad() {
+    let f = fixture_faults(include_str!("fixtures/m2_j2_18.json"));
+    assert_eq!(f, vec![("J2.18".to_string(), 1, 2, vec!["/SPI_SCK".to_string()])], "the door crosses routed copper");
+}
+
+/// KiCad 10 DRC on the M2 run 1 board: J2.16 B.Cu "1 spokes connected to isolated island" (1 good spoke). v5 passed it:
+/// the spokes joined through the pad centre (no drill hole cut).
+#[test]
+fn m2_run1_j2_16_is_starved_as_kicad() {
+    let f = fixture_faults(include_str!("fixtures/m2_j2_16.json"));
+    assert_eq!(f, vec![("J2.16".to_string(), 1, 1, vec!["/UART_RX".to_string()])], "the door crosses routed copper");
 }
