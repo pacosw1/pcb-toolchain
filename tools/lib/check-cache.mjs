@@ -1,6 +1,6 @@
 import {createHash, randomUUID} from 'node:crypto';
 import {copyFileSync, constants, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync} from 'node:fs';
-import {basename, delimiter, join, resolve} from 'node:path';
+import {basename, delimiter, dirname, isAbsolute, join, resolve} from 'node:path';
 import {CHECK_METRICS, countFrom, pathFailures} from './gate-core.mjs';
 import {fingerprint, gateTools} from './gate-inputs.mjs';
 import {checkedText, readReport, readHappyResult} from './gate-runtime.mjs';
@@ -62,9 +62,25 @@ export function checkKey({root,files,stage,config,versions,externalRoots,command
   const inputs = fingerprint(root,files,versions,externalRoots);
   // Native library resolution, Python import resolution and subprocess lookup
   // are executable inputs too. Never key on elapsed time or evidence paths.
-  const environment = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+  // The checkout path is not an input (the commit hook gates a temporary snapshot): file contents are keyed above.
+  const rawEnvironment = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
     /^(KICAD|IOT_LAB$|PYTHON|PATH$|LANG$|LC_|DYLD_|LD_LIBRARY_PATH$)/.test(key)).sort(([a],[b]) => a.localeCompare(b)));
-  const descriptor = {schema_version:1,stage,config,inputs,environment,executables:commands.map(executable)};
+  // Paths are compared in real form (macOS /var vs /private/var), part by part for PATH-like values.
+  const real = path => {
+    if (!isAbsolute(path)) return path;
+    let base = path, rest = '';
+    while (!existsSync(base) && dirname(base) !== base) { rest = join(basename(base), rest); base = dirname(base); }
+    return existsSync(base) ? join(realpathSync(base), rest) : path;
+  };
+  const realRoot = real(root);
+  // Whole path components only: /tmp/a-modules must not alias to <root>-modules for root /tmp/a.
+  const unroot = value => value.split(delimiter).map(part => {
+    const path = real(part);
+    return path === realRoot ? '<root>' : path.startsWith(realRoot + '/') ? '<root>' + path.slice(realRoot.length) : path;
+  }).join(delimiter);
+  const environment = Object.fromEntries(Object.entries(rawEnvironment).map(([key,value]) => [key,unroot(value)]));
+  const executables = commands.map(executable).map(e => e.path ? {...e,path:unroot(e.path)} : e);
+  const descriptor = {schema_version:1,stage,config,inputs,environment,executables};
   return {key:digest(encode(descriptor)),descriptor};
 }
 

@@ -58,3 +58,11 @@ test('a checker key excludes unrelated Python implementations but retains its ow
  put('tools/helper.py','rule=2');assert.notEqual(key(),first);const second=key();
  put('shared.kicad_sym','library changed');assert.notEqual(key(),second);
 });
+test('checkout root is not a key input, but sibling paths outside the root are',t=>{
+ const parent=mkdtempSync(join(tmpdir(),'check-roots-'));t.after(()=>rmSync(parent,{recursive:true,force:true}));
+ for(const d of ['a','b','a-modules','b-modules']) mkdirSync(join(parent,d));
+ const saved=process.env.PYTHONPATH;t.after(()=>{if(saved===undefined) delete process.env.PYTHONPATH;else process.env.PYTHONPATH=saved;});
+ const key=(r,py)=>{process.env.PYTHONPATH=py;return checkKey({root:join(parent,r),files:[],stage:'erc',config:{},versions:{},externalRoots:{},commands:[]}).key;};
+ assert.equal(key('a',join(parent,'a','lib')),key('b',join(parent,'b','lib')));
+ assert.notEqual(key('a',join(parent,'a-modules')),key('b',join(parent,'b-modules')));
+});
