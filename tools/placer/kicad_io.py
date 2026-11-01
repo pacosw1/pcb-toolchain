@@ -178,8 +178,10 @@ def block_borders(board):
     for t in texts:
         q = t.GetPosition()
         x, y = mm(q.x), mm(q.y)
-        dist = [max(b[0] - x, x - b[2], b[1] - y, y - b[3], 0.0) for b, _, _ in out]
-        if dist and min(dist) <= LABEL_DIST:
+        # a label inside several (overlapping) borders goes to the border whose top-left corner is nearest:
+        # the builders put the label just inside that corner
+        dist = [(max(b[0] - x, x - b[2], b[1] - y, y - b[3], 0.0), math.hypot(x - b[0], y - b[1])) for b, _, _ in out]
+        if dist and min(dist)[0] <= LABEL_DIST:
             k = dist.index(min(dist))
             out[k][1].append(t.m_Uuid.AsString())
             if out[k][2] is None:
@@ -274,10 +276,91 @@ def _decaps(fps, member, dist):
     return out
 
 
+def locked_on_pad(fp, locked):
+    """True when a locked track or via of a pad's net meets the pad (the route is fixed)."""
+    return any(t.GetNetCode() == p.GetNetCode() and (t.HitTest(p.GetPosition()) or any(p.HitTest(q) for q in _ends(t)))
+               for p in fp.Pads() if p.GetNetname() for t in locked)
+
+
+def private_locked(locked, net_refs, refs, box):
+    """uuids of the locked tracks and vias that belong to one block: every end point inside its border box and
+    a net whose pads are all on parts of the block (a crystal route: OSC24_IN on U1, Y1, C28). Such copper moves
+    with the block (the copper and its pads translate together, so the route stays as it was). A locked route to
+    another unit (a diff pair to a connector) stays fixed copper and keeps its end units fixed."""
+    rs = set(refs)
+    return {t.m_Uuid.AsString() for t in locked
+            if net_refs.get(t.GetNetname(), {None}) <= rs
+            and all(inside_box(mm(q.x), mm(q.y), box) for q in _ends(t))}
+
+
+def part_fixed(fp, rc, outline, fix_pat, locked, edge_dist):
+    """A part that the problem keeps fixed: locked, a mounting hole, not on F.Cu, in `fix`, a connector at the
+    edge (rc = its rect), or a pad on locked copper of its net."""
+    r = fp.GetReference()
+    if (fp.IsLocked() or is_mounting_hole(fp) or fp.GetLayer() != pcbnew.F_Cu
+            or any(fnmatch.fnmatchcase(r, p) for p in fix_pat)):
+        return True
+    if ref_prefix(r) in ('J', 'P', 'CN'):
+        g = edge_dist
+        corners = [(rc[0] - g, rc[1] - g), (rc[2] + g, rc[1] - g), (rc[2] + g, rc[3] + g), (rc[0] - g, rc[3] + g)]
+        inside = sum(1 for x, y in corners if cost.point_in_poly(_a(x), _a(y), outline)[0])
+        if 0 < inside < 4:  # at the edge; wholly outside = staged for placement, movable
+            return True
+    return locked_on_pad(fp, locked)
+
+
+def load_members(blocks):
+    """Membership JSON (tools/placer/membership.py) or dict -> dict with 'blocks' and 'components'."""
+    if isinstance(blocks, str):
+        with open(blocks) as f:
+            blocks = json.load(f)
+    return {'blocks': dict(blocks.get('blocks') or {}), 'components': dict(blocks.get('components') or {})}
+
+
+def cohesion_nets(units, member_of, members, w_block, w_comp):
+    """Virtual nets that keep a group together (cost: the half perimeter of the group box, as HPWL; no RUDY
+    demand, no halo fan-out). Soft block = a block with a fixed part (its parts stay single units): one net over
+    the units of its parts, weight w_block. Component: one net over the units of its blocks and loose parts,
+    weight w_comp. A pin box = the courtyard box of the unit (local). A group in one unit or of fixed units only
+    has no net."""
+    out = []
+
+    def pins(refs):
+        us = sorted({member_of[r] for r in refs if r in member_of})
+        if len(us) < 2 or all(units[i]['fixed'] for i in us):
+            return None
+        rows = []
+        for i in us:
+            rs = units[i]['rects']
+            core = [rs[k] for k in range(len(rs)) if k not in set(units[i].get('border', []))
+                    and k not in set(units[i].get('ko', []))] or rs
+            rows.append([i, min(r[0] for r in core), min(r[1] for r in core), max(r[2] for r in core),
+                         max(r[3] for r in core)])
+        return rows
+    if w_block > 0:
+        for name, refs in sorted(members['blocks'].items()):
+            p = pins(refs)
+            if p and len({q[0] for q in p}) > 1 and any(units[q[0]]['name'] != name for q in p):
+                out.append({'name': '~block:' + name, 'weight': w_block, 'pins': p, 'track': 0.0, 'cohesion': True})
+    if w_comp > 0:
+        for name, items in sorted(members['components'].items()):
+            refs = [r for x in items for r in (members['blocks'].get(x) or [x])]
+            p = pins(refs)
+            if p:
+                out.append({'name': '~comp:' + name, 'weight': w_comp, 'pins': p, 'track': 0.0, 'cohesion': True})
+    return out
+
+
 def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), free_box=None,
                  region_refs=(), region_weight=1.0, region_box=None, spacing=(0.5, 1.0), tie=0.0,
-                 rigid_nets=(), decap_tie=0.0, keepout_zones=(), edges=None, zone_refs=None, domains=None, via_nets=(), rigid_groups=()):
+                 rigid_nets=(), decap_tie=0.0, keepout_zones=(), edges=None, zone_refs=None, domains=None, via_nets=(),
+                 rigid_groups=(), blocks=None, w_block=0.0, w_comp=0.0):
+    """blocks: explicit membership (membership.py JSON path or dict). A User.1 border whose label is a block name
+    holds exactly those parts (not the parts whose anchor is inside it), when no part of the block is fixed: a rigid
+    unit. A block with a fixed part is soft: its parts stay single units, tied by a cohesion net (w_block).
+    Components get cohesion nets (w_comp). Without blocks, the borders hold the parts inside them (as before)."""
     board = pcbnew.LoadBoard(path)
+    mship = load_members(blocks) if blocks is not None else None
     holes, pairs, ignored, members, nonet = [], [], [], [], []
     if domains is None:  # single source: the board .kicad_dru
         dp = os.path.splitext(path)[0] + '.kicad_dru'
@@ -320,7 +403,35 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
                           'group': g.m_Uuid.AsString()}
             for r in refs:
                 member[r] = key
+    if mship is not None:
+        by_ref0 = {fp.GetReference(): fp for fp in fps}
+        missing = sorted({r for refs in mship['blocks'].values() for r in refs} - set(by_ref0))
+        if missing:
+            raise ValueError('block membership names parts not on the board: ' + ', '.join(missing[:8]))
+        net_refs = {}
+        for fp in fps:
+            for p in fp.Pads():
+                if p.GetNetname():
+                    net_refs.setdefault(p.GetNetname(), set()).add(fp.GetReference())
+        mship['soft'] = set()
+    private = {}  # block unit key -> uuids of its private locked copper (moves with the block)
     for k, (box, ids, label) in enumerate(block_borders(board)):
+        if mship is not None:  # explicit membership: the label names the block
+            refs = mship['blocks'].get(label)
+            if not refs or any(r in member for r in refs):
+                continue
+            own = private_locked(locked, net_refs, refs, box)
+            rest = [t for t in locked if t.m_Uuid.AsString() not in own]
+            if any(part_fixed(by_ref0[r], pads_box(by_ref0[r], fp_rect(by_ref0[r])), outline, list(fix), rest,
+                              edge_dist) for r in refs):
+                mship['soft'].add(label)  # a fixed part: soft block (cohesion net), its parts stay single units
+                continue
+            key = 'B:%d' % k
+            units[key] = {'name': label, 'refs': [], 'borders': ids, 'box': list(box)}
+            private[key] = own
+            for r in refs:
+                member[r] = key
+            continue
         inside = []
         for fp in fps:
             q = fp.GetPosition()
@@ -410,15 +521,8 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
                     if pc > clr:
                         bb = p.GetBoundingBox()
                         hv.append(((mm(bb.GetX()), mm(bb.GetY()), mm(bb.GetRight()), mm(bb.GetBottom())), pc))
-            if (fp.IsLocked() or is_mounting_hole(fp) or fp.GetLayer() != pcbnew.F_Cu
-                    or any(fnmatch.fnmatchcase(r, p) for p in fix_pat)):
+            if part_fixed(fp, rc, outline, fix_pat, (), edge_dist):  # locked copper: below, once per unit
                 fixed = True
-            if ref_prefix(r) in ('J', 'P', 'CN'):
-                g = edge_dist
-                corners = [(rc[0] - g, rc[1] - g), (rc[2] + g, rc[1] - g), (rc[2] + g, rc[3] + g), (rc[0] - g, rc[3] + g)]
-                inside = sum(1 for x, y in corners if cost.point_in_poly(_a(x), _a(y), outline)[0])
-                if 0 < inside < 4:  # at the edge; wholly outside = staged for placement, movable
-                    fixed = True
         if u['box']:
             b = u['box']
         else:
@@ -427,8 +531,9 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
         ox, oy = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
         if free_box and not inside_box(ox, oy, free_box):
             fixed = True
-        if any(t.GetNetCode() == p.GetNetCode() and (t.HitTest(p.GetPosition()) or any(p.HitTest(q) for q in _ends(t)))
-               for r in u['refs'] for p in by_ref[r].Pads() if p.GetNetname() for t in locked):
+        own = private.get(key, set())
+        if not fixed and any(locked_on_pad(by_ref[r], [t for t in locked if t.m_Uuid.AsString() not in own])
+                             for r in u['refs']):
             fixed = True  # a locked track of its net meets its pad: the route is fixed
         index[key] = len(out_units)
         border = []
@@ -461,6 +566,8 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
             out_units[-1]['rho'] = rho
         if border:  # DRC does not check a block border: its overlap is a soft cost
             out_units[-1]['border'] = border
+        if own and not fixed:  # private locked copper (a crystal route) moves with the block: not fixed copper
+            out_units[-1]['locked_cu'] = sorted(own)
         pad_boxes = [
             [round(mm(bb.GetX()) - ox, 6), round(mm(bb.GetY()) - oy, 6),
              round(mm(bb.GetRight()) - ox, 6), round(mm(bb.GetBottom()) - oy, 6)]
@@ -510,6 +617,9 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
         nets.append({'name': n, 'weight': region_weight if n in region_nets else 1.0,
                      'pins': [[i] + [round(v, 6) for v in us[i]] for i in sorted(us)],
                      'track': max(tracks.get(c, tracks['Default']) for c in ncls[n].split(','))})
+    if mship is not None:
+        nets += cohesion_nets(out_units, {r: index[member[r]] for r in member if member[r] in index}, mship,
+                              w_block, w_comp)
     region = None
     if region_refs:
         if region_box is None:
@@ -518,6 +628,8 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
                           max(r[2] for r in rs) + 15, max(r[3] for r in rs) + 15]
         region = {'box': list(region_box), 'weight': region_weight, 'refs': sorted(region_refs)}
     copper = kept_copper(board, out_units, by_ref)
+    moving = {i for u in out_units for i in u.get('locked_cu', [])}
+    locked = [t for t in locked if t.m_Uuid.AsString() not in moving]
     fixed_copper = [_copper_row(board, t) for t in locked]
     fixed_copper_layers = [row for t in locked for row in _layer_copper_rows(board, t)]
     return {'board_file': os.path.abspath(path), 'units': out_units, 'nets': nets,
@@ -867,7 +979,11 @@ def write_board(path, pr, pose, out, outline_scale=1.0, *, retain_copper=False):
             # MC-MAIN 2026-10-04: the locked USB pair goes through the ENC0 and ENC1 block boxes; 4 of its
             # items moved with those blocks and the pair was cut. Locked copper is fixed copper: it never moves.
             own = {p.GetNetname() for r in u['refs'] for p in by_ref[r].Pads() if p.GetNetname()}
+            mine = set(u.get('locked_cu', []))  # private locked copper of an explicit block (read_problem)
             for t in tracks:
+                if t.m_Uuid.AsString() in mine:
+                    internal[t.m_Uuid.AsString()] = i
+                    continue
                 if t.IsLocked() or t.GetNetname() not in own:
                     continue
                 pts = [t.GetPosition()] if t.GetClass() == 'PCB_VIA' else [t.GetStart(), t.GetEnd()]

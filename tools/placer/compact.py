@@ -24,6 +24,8 @@ def halo(fanout, s, pitch=None):
 def fanout(pr):
     n = [0] * len(pr['units'])
     for net in pr['nets']:
+        if net.get('cohesion'):  # a virtual group net is not an escaping track
+            continue
         us = {q[0] for q in net['pins']}
         if len(us) > 1:
             for u in us:
