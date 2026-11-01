@@ -90,6 +90,22 @@ def return_rule(pcb, cfg, bdir):
     return {'radius': max(2 * h, 1.0), 'pads': False, 'source': f'kicad-happy a6bba1a: max(2 x first dielectric {h} mm, 1.0), GND vias only'}
 
 
+def via_length(pcb):
+    """Length KiCad adds for one through via in the DRC length rule (length_out_of_range): the stackup height from F.Cu
+    to B.Cu, copper layers included. H7-CORE rev A, /ETH_TX_EN (v6 m3): 46.24 mm of track + 4 vias, KiCad 52.565 mm =
+    4 x 1.586 (the JLC04161H-7628 stackup sum) less 0.02 mm of track inside the pads. None when the board has no stackup."""
+    m = re.search(r"\(stackup(.*?)\(copper_finish", open(pcb).read(), re.S)
+    tot, on = 0.0, False
+    for name, body in (re.findall(r'\(layer "([^"]+)"(.*?)(?=\(layer "|\Z)', m.group(1), re.S) if m else []):
+        on = on or name == 'F.Cu'
+        th = re.search(r"\(thickness ([0-9.]+)", body)
+        if on and th:
+            tot += float(th.group(1))
+        if name == 'B.Cu':
+            return round(tot, 4) if on else None
+    return None
+
+
 def load_cfg(bdir):
     for name in ('gate.json', 'gate.pending.json'):
         p = os.path.join(bdir, name)
@@ -331,7 +347,7 @@ def main():
              'setup': {'min_via': rules_setup.get('min_via_diameter'), 'min_drill': rules_setup.get('min_through_hole_diameter'),
                        'min_clearance': rules_setup.get('min_clearance'), 'min_track': rules_setup.get('min_track_width'), 'edge_clearance': rules_setup.get('min_copper_edge_clearance'),
                        'min_spokes': rules_setup.get('min_resolved_spokes', 2)},
-             'return_rule': return_rule(pcb, cfg, bdir),
+             'return_rule': return_rule(pcb, cfg, bdir), 'via_length': via_length(pcb),
              'classes': classes, 'nets': nets, 'pairs': pairs, 'zones': zones, 'hole_rules': hole_rules, 'pads': pads, 'copper': copper, 'rules': report}
     states = {}
     for r in report:
