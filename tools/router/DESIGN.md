@@ -79,7 +79,9 @@ The Codex hand finish of NET-CORE reached DRC 0 but left gate findings. The rout
 | --- | --- | --- |
 | 2026-10-31 | core v0: exact-geometry A*, plane fan-out, return vias, sequential + reorder passes | NET-CORE from hand.kicad_pcb (pairs + crystals locked, zones copied from the canonical board): 576 tracks, 244 vias in 37 s; DRC 2 (starved_thermal), unconnected 45 (18 nets not finished), parity 0 |
 
-Next: negotiated congestion (PathFinder: shared cells with present + history cost, rip-up of all nets per pass) to
+| 2026-10-31 | core v1: PathFinder (soft routed copper, present cost capped at 8, history 0.3/iteration, rip-up of involved nets only), plane fan-out negotiated per plane net, enclosed start component reported and skipped | NET-CORE: not converged after 30 iterations (806 s): conflicts plateau at 3-4k, all in the PHY / RMII field (ETH_*, CH_DVDDK, J2 LEDs, VDD_CORE). Input defects found: C14.1 (VCC_1V8) is walled in by the hand-routed OSC24 crystal loop (0.65 mm gap, a via needs 0.9 mm); the GND exposed pads of U7/U8 at (131, 140) and (149, 140) have no fan-out site (they need vias in the pad, a viapads exemption) |
+
+Next (was): negotiated congestion (PathFinder: shared cells with present + history cost, rip-up of all nets per pass) to
 finish the 18 nets; F.Cu spoke channels at GND pads (starved_thermal); read hole clearance from the model rules.
 
 ## 6. Not in scope (first version)

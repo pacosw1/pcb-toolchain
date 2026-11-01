@@ -83,6 +83,10 @@ struct Shape {
     layers: u8,
     drill: f64,
     kind: Kind,
+    /// -1: fixed (pads, locked copper, plane fan-out): a hard obstacle. >= 0: routed by that net in this run: other
+    /// nets may cross it at the negotiated cost (PathFinder) until the run converges.
+    owner: i32,
+    alive: bool,
 }
 
 #[derive(Clone)]
@@ -216,7 +220,8 @@ impl Board {
         for j in j0..=j1 {
             for i in i0..=i1 {
                 for &id in &ix.cells[l][j * ix.nx + i] {
-                    if f(&self.shapes[id as usize]) {
+                    let s = &self.shapes[id as usize];
+                    if s.alive && f(s) {
                         return true;
                     }
                 }
@@ -229,19 +234,23 @@ impl Board {
         let m = self.edge_clr + r;
         x - m >= a && x + m <= c && y - m >= b && y + m <= d
     }
-    /// A track of `net` with half width hw may have its centre at (x, y) on copper layer l.
-    fn track_ok(&self, net: usize, l: usize, x: f64, y: f64, hw: f64, plane_clr: f64) -> bool {
+    /// Track centre of `net` (half width hw) at (x, y) on copper layer l: -1 = blocked by fixed copper or the edge,
+    /// k >= 0 = number of routed items of other nets it conflicts with. `owners` collects their owner nets.
+    fn track_cost(&self, net: usize, l: usize, x: f64, y: f64, hw: f64, plane_clr: f64, owners: Option<&mut Vec<i32>>) -> i32 {
         if !self.inside(x, y, hw) {
-            return false;
+            return -1;
         }
         let n = &self.nets[net];
         let (clr, fast) = (n.clr, n.fast);
-        let r = hw + self.maxc + EPS;
-        !self.near(l, x, y, r, &mut |s| {
+        let r = hw + self.maxc.max(plane_clr).max(HOLE_CLR) + 0.6;
+        let mut k = 0;
+        let mut own = owners;
+        let hard = self.near(l, x, y, r, &mut |s| {
             if s.net == net as i32 {
                 return false;
             }
             let mut need = hw + clr.max(s.clr);
+            let mut hit = false;
             if s.drill > 0.0 {
                 if fast {
                     need = need.max(hw + plane_clr);
@@ -252,23 +261,41 @@ impl Board {
                     Geo::Rect(a, b, c, d) => ((a + c) / 2.0, (b + d) / 2.0),
                     Geo::Seg(..) => (f64::MAX, f64::MAX),
                 };
-                if ((x - cx).powi(2) + (y - cy).powi(2)).sqrt() - s.drill / 2.0 < hw + HOLE_CLR + EPS {
-                    return true;
+                hit = ((x - cx).powi(2) + (y - cy).powi(2)).sqrt() - s.drill / 2.0 < hw + HOLE_CLR + EPS;
+            }
+            hit = hit || s.geo.dist(x, y) < need + EPS;
+            if !hit {
+                return false;
+            }
+            if s.owner < 0 {
+                return true;
+            }
+            k += 1;
+            if let Some(o) = own.as_deref_mut() {
+                if !o.contains(&s.owner) {
+                    o.push(s.owner);
                 }
             }
-            s.geo.dist(x, y) < need + EPS
-        })
+            false
+        });
+        if hard { -1 } else { k }
     }
-    /// A through via of `net` (diameter d, drill) may stand at (x, y).
-    fn via_ok(&self, net: usize, x: f64, y: f64, d: f64, drill: f64, hth: f64) -> bool {
+    fn track_ok(&self, net: usize, l: usize, x: f64, y: f64, hw: f64, plane_clr: f64) -> bool {
+        self.track_cost(net, l, x, y, hw, plane_clr, None) == 0
+    }
+    /// Through via of `net` (diameter d, drill) at (x, y): -1 blocked, k >= 0 soft conflicts (as track_cost).
+    fn via_cost(&self, net: usize, x: f64, y: f64, d: f64, drill: f64, hth: f64, owners: Option<&mut Vec<i32>>) -> i32 {
         let vr = d / 2.0;
         if !self.inside(x, y, vr) {
-            return false;
+            return -1;
         }
         let clr = self.nets[net].clr;
         let r = vr + self.maxc.max(hth) + 1.0;
+        let mut k = 0;
+        let mut own = owners;
         for l in 0..self.layer_names.len() {
-            let hit = self.near(l, x, y, r, &mut |s| {
+            let hard = self.near(l, x, y, r, &mut |s| {
+                let mut hit = false;
                 if s.drill > 0.0 {
                     let (cx, cy) = match s.geo {
                         Geo::Circ(cx, cy, _) => (cx, cy),
@@ -276,21 +303,52 @@ impl Board {
                         Geo::Seg(..) => (x + 99.0, y),
                     };
                     let cd = ((x - cx).powi(2) + (y - cy).powi(2)).sqrt();
-                    if cd - s.drill / 2.0 - drill / 2.0 < hth {
-                        return true; // hole to hole, any net
+                    hit = cd - s.drill / 2.0 - drill / 2.0 < hth; // hole to hole, any net
+                }
+                if !hit {
+                    if s.net == net as i32 {
+                        // never a via in an own SMD pad (tools/pcbtool.py viapads)
+                        if s.kind == Kind::Pad && s.drill == 0.0 && s.geo.dist(x, y) < vr + 0.05 {
+                            return true;
+                        }
+                        return false;
+                    }
+                    hit = s.geo.dist(x, y) < vr + clr.max(s.clr) + EPS;
+                }
+                if !hit {
+                    return false;
+                }
+                if s.owner < 0 {
+                    return true;
+                }
+                k += 1;
+                if let Some(o) = own.as_deref_mut() {
+                    if !o.contains(&s.owner) {
+                        o.push(s.owner);
                     }
                 }
-                if s.net == net as i32 {
-                    // never a via in an own SMD pad (tools/pcbtool.py viapads)
-                    return s.kind == Kind::Pad && s.drill == 0.0 && s.geo.dist(x, y) < vr + 0.05;
-                }
-                s.geo.dist(x, y) < vr + clr.max(s.clr) + EPS
+                false
             });
-            if hit {
-                return false;
+            if hard {
+                return -1;
             }
         }
-        true
+        k
+    }
+    fn via_ok(&self, net: usize, x: f64, y: f64, d: f64, drill: f64, hth: f64) -> bool {
+        self.via_cost(net, x, y, d, drill, hth, None) == 0
+    }
+    /// Rebuild the spatial index without the dead (ripped-up) items.
+    fn compact(&mut self) {
+        let shapes: Vec<Shape> = self.shapes.drain(..).filter(|s| s.alive).collect();
+        for l in self.idx.cells.iter_mut() {
+            for c in l.iter_mut() {
+                c.clear();
+            }
+        }
+        for s in shapes {
+            self.add(s);
+        }
     }
 }
 
@@ -318,8 +376,11 @@ struct Grid {
     nx: usize,
     ny: usize,
     nr: usize,
-    cache: Vec<u8>,
-    vcache: Vec<u8>,
+    cache: Vec<u8>,  // 0 unknown, 1 blocked, 2 + k: k soft conflicts (capped)
+    vcache: Vec<u8>, // same, for a via at (ix, iy)
+    hist: Vec<f32>,  // PathFinder history cost per routable cell
+    vhist: Vec<f32>,
+    pres: f32,       // PathFinder present-congestion factor
     g: Vec<f32>,
     from: Vec<u32>,
     seen: Vec<u32>,
@@ -353,32 +414,41 @@ struct Ctx<'a> {
     o: &'a Opts,
 }
 
+fn code(k: i32) -> u8 {
+    if k < 0 { 1 } else { 2 + (k.min(200) as u8) }
+}
+
 impl<'a> Ctx<'a> {
-    fn free(&mut self, net: usize, i: usize, hw: f64) -> bool {
-        let c = self.gr.cache[i];
-        if c != 0 {
-            return c == 1;
+    /// None: blocked; Some(k): k soft conflicts.
+    fn cost(&mut self, net: usize, i: usize, hw: f64) -> Option<u32> {
+        let mut c = self.gr.cache[i];
+        if c == 0 {
+            let (r, iy, ix) = self.gr.cell(i);
+            let (x, y) = self.gr.xy(ix, iy);
+            c = code(self.bd.track_cost(net, self.bd.routable[r], x, y, hw, self.o.plane_clr, None));
+            self.gr.cache[i] = c;
         }
-        let (r, iy, ix) = self.gr.cell(i);
-        let (x, y) = self.gr.xy(ix, iy);
-        let ok = self.bd.track_ok(net, self.bd.routable[r], x, y, hw, self.o.plane_clr);
-        self.gr.cache[i] = if ok { 1 } else { 2 };
-        ok
+        if c == 1 { None } else { Some((c - 2) as u32) }
+    }
+    fn free(&mut self, net: usize, i: usize, hw: f64) -> bool {
+        self.cost(net, i, hw) == Some(0)
+    }
+    fn vcost(&mut self, net: usize, ix: usize, iy: usize) -> Option<u32> {
+        let k = iy * self.gr.nx + ix;
+        let mut c = self.gr.vcache[k];
+        if c == 0 {
+            let (x, y) = self.gr.xy(ix, iy);
+            let n = &self.bd.nets[net];
+            c = code(self.bd.via_cost(net, x, y, n.via_d, n.via_drill, self.o.hth, None));
+            self.gr.vcache[k] = c;
+        }
+        if c == 1 { None } else { Some((c - 2) as u32) }
     }
     fn vfree(&mut self, net: usize, ix: usize, iy: usize) -> bool {
-        let k = iy * self.gr.nx + ix;
-        let c = self.gr.vcache[k];
-        if c != 0 {
-            return c == 1;
-        }
-        let (x, y) = self.gr.xy(ix, iy);
-        let n = &self.bd.nets[net];
-        let ok = self.bd.via_ok(net, x, y, n.via_d, n.via_drill, self.o.hth);
-        self.gr.vcache[k] = if ok { 1 } else { 2 };
-        ok
+        self.vcost(net, ix, iy) == Some(0)
     }
 
-    /// Mark the cells an item covers on the routable layers (as source or target).
+    /// The cells an item covers on the routable layers (as source or target).
     fn cells_of(&self, s: &Shape, net_layers: u8) -> Vec<usize> {
         let mut v = Vec::new();
         let (a, b, c, d) = s.geo.bbox();
@@ -392,11 +462,7 @@ impl<'a> Ctx<'a> {
             for j in j0..=j1 {
                 for i in i0..=i1 {
                     let (x, y) = self.gr.xy(i, j);
-                    let inside = match s.geo {
-                        Geo::Rect(..) => s.geo.dist(x, y) <= 0.0,
-                        _ => s.geo.dist(x, y) <= -0.0 + 1e-9,
-                    };
-                    if inside {
+                    if s.geo.dist(x, y) <= 1e-9 {
                         v.push(r * n + j * self.gr.nx + i);
                     }
                 }
@@ -405,19 +471,20 @@ impl<'a> Ctx<'a> {
         v
     }
 
-    /// Multi-source A* from `src` cells to any cell marked in tgt (generation tgen). Returns the cell path.
-    fn search(&mut self, net: usize, hw: f64, src: &[usize], anchors: &[(f64, f64)], allow_via: bool) -> Option<Vec<usize>> {
-        let gr = &mut self.gr;
-        gr.sgen += 1;
-        let sgen = gr.sgen;
-        let (nx, ny, nr, p) = (gr.nx, gr.ny, gr.nr, gr.p);
+    /// Multi-source A* from `src` cells to any cell marked in tgt (generation tgen). Step cost = length x layer
+    /// factor x (1 + history) x (1 + pres x soft conflicts). With strict, soft conflicts block (fan-out stage).
+    fn search(&mut self, net: usize, hw: f64, src: &[usize], anchors: &[(f64, f64)], allow_via: bool, strict: bool) -> Result<Vec<usize>, bool> {
+        self.gr.sgen += 1;
+        let sgen = self.gr.sgen;
+        let (nx, ny, nr, p) = (self.gr.nx, self.gr.ny, self.gr.nr, self.gr.p);
         let n = nx * ny;
         let lmask = self.bd.nets[net].layers;
         let lcost: Vec<f64> = self.bd.routable.iter().map(|&l| {
             let name = &self.bd.layer_names[l];
             if lmask & (1 << l) == 0 { f64::INFINITY } else if name == "F.Cu" { 1.0 } else if name == "B.Cu" { 1.05 } else { 1.15 }
         }).collect();
-        let via_cost = 3.0 + if self.bd.nets[net].max_vias.is_some() { 6.0 } else { 0.0 };
+        let via_base = 3.0 + if self.bd.nets[net].max_vias.is_some() { 6.0 } else { 0.0 };
+        let pres = self.gr.pres as f64;
         let (x0, y0) = (self.gr.x0, self.gr.y0);
         let h = |ix: usize, iy: usize| -> f32 {
             let (x, y) = (x0 + ix as f64 * p, y0 + iy as f64 * p);
@@ -433,25 +500,26 @@ impl<'a> Ctx<'a> {
         };
         let mut heap = BinaryHeap::new();
         for &s in src {
-            if !self.free(net, s, hw) {
+            match self.cost(net, s, hw) {
+                None => continue,
+                Some(k) if strict && k > 0 => continue,
+                _ => {}
+            }
+            if self.gr.seen[s] == sgen {
                 continue;
             }
-            let gr = &mut self.gr;
-            if gr.seen[s] == sgen {
-                continue;
-            }
-            gr.seen[s] = sgen;
-            gr.g[s] = 0.0;
-            gr.from[s] = u32::MAX;
-            let (_, iy, ix) = gr.cell(s);
+            self.gr.seen[s] = sgen;
+            self.gr.g[s] = 0.0;
+            self.gr.from[s] = u32::MAX;
+            let (_, iy, ix) = self.gr.cell(s);
             heap.push(Node { f: h(ix, iy), i: s as u32 });
         }
         let mut pops = 0usize;
         while let Some(Node { f: _, i }) = heap.pop() {
             let i = i as usize;
             pops += 1;
-            if pops > 6_000_000 {
-                return None;
+            if pops > 8_000_000 {
+                return Err(true);
             }
             if self.gr.tgt[i] == self.gr.tgen {
                 let mut path = vec![i];
@@ -461,43 +529,52 @@ impl<'a> Ctx<'a> {
                     path.push(c);
                 }
                 path.reverse();
-                return Some(path);
+                return Ok(path);
             }
             let gi = self.gr.g[i];
             let (r, iy, ix) = self.gr.cell(i);
-            let mut nb: Vec<(usize, f64)> = Vec::with_capacity(10);
+            let mut nb: Vec<(usize, f64, bool)> = Vec::with_capacity(10);
             for (dx, dy) in [(-1i32, 0i32), (1, 0), (0, -1), (0, 1), (-1, -1), (1, -1), (-1, 1), (1, 1)] {
                 let (jx, jy) = (ix as i32 + dx, iy as i32 + dy);
                 if jx < 0 || jy < 0 || jx >= nx as i32 || jy >= ny as i32 {
                     continue;
                 }
                 let step = if dx != 0 && dy != 0 { SQ2 } else { 1.0 } * p * lcost[r];
-                nb.push((r * n + jy as usize * nx + jx as usize, step));
+                nb.push((r * n + jy as usize * nx + jx as usize, step, false));
             }
-            if allow_via && nr > 1 && self.vfree(net, ix, iy) {
-                for r2 in 0..nr {
-                    if r2 != r && lcost[r2].is_finite() {
-                        nb.push((r2 * n + iy * nx + ix, via_cost));
+            if allow_via && nr > 1 {
+                if let Some(kv) = self.vcost(net, ix, iy) {
+                    if !(strict && kv > 0) {
+                        let vc = (via_base + self.gr.vhist[iy * nx + ix] as f64) * (1.0 + pres * kv as f64);
+                        for r2 in 0..nr {
+                            if r2 != r && lcost[r2].is_finite() {
+                                nb.push((r2 * n + iy * nx + ix, vc, true));
+                            }
+                        }
                     }
                 }
             }
-            for (j, c) in nb {
+            for (j, c, is_via) in nb {
+                let k = match self.cost(net, j, hw) {
+                    None => continue,
+                    Some(k) => k,
+                };
+                if strict && k > 0 {
+                    continue;
+                }
+                let c = if is_via { c } else { c * (1.0 + self.gr.hist[j] as f64) * (1.0 + pres * k as f64) };
                 let gj = gi + c as f32;
                 if self.gr.seen[j] == sgen && self.gr.g[j] <= gj {
                     continue;
                 }
-                if !self.free(net, j, hw) {
-                    continue;
-                }
-                let gr = &mut self.gr;
-                gr.seen[j] = sgen;
-                gr.g[j] = gj;
-                gr.from[j] = i as u32;
-                let (_, jy, jx) = gr.cell(j);
+                self.gr.seen[j] = sgen;
+                self.gr.g[j] = gj;
+                self.gr.from[j] = i as u32;
+                let (_, jy, jx) = self.gr.cell(j);
                 heap.push(Node { f: gj + h(jx, jy), i: j as u32 });
             }
         }
-        None
+        Err(false)
     }
 
     fn seg_clear(&self, net: usize, l: usize, a: (f64, f64), b: (f64, f64), hw: f64) -> bool {
@@ -509,7 +586,7 @@ impl<'a> Ctx<'a> {
         })
     }
 
-    /// Cell path -> (tracks, vias) with greedy string pulling per layer run.
+    /// Cell path -> (tracks, vias) with greedy string pulling per layer run (only over conflict-free samples).
     fn geometry(&self, net: usize, path: &[usize], hw: f64) -> (Vec<(usize, (f64, f64), (f64, f64))>, Vec<(f64, f64)>) {
         let mut tracks = Vec::new();
         let mut vias = Vec::new();
@@ -632,125 +709,138 @@ fn load(model: &Value) -> Board {
         let drill = f(&p["drill"]);
         if layers == 0 && drill > 0.0 {
             // NPTH: no copper, but the hole keeps the JLC hole-to-copper clearance on every layer (.kicad_dru 0.28 mm)
-            let s = Shape { net: -1, geo: Geo::Circ(f(&p["x"]), f(&p["y"]), drill / 2.0), clr: 0.28, layers: (1u8 << cu.len()) - 1, drill, kind: Kind::Pad };
+            let s = Shape { net: -1, geo: Geo::Circ(f(&p["x"]), f(&p["y"]), drill / 2.0), clr: 0.28, layers: (1u8 << cu.len()) - 1, drill, kind: Kind::Pad, owner: -1, alive: true };
             bd.add(s);
             continue;
         }
-        let s = Shape { net, geo: Geo::Rect(f(&bb[0]), f(&bb[1]), f(&bb[2]), f(&bb[3])), clr: clr_of(&bd, net), layers, drill, kind: Kind::Pad };
+        let s = Shape { net, geo: Geo::Rect(f(&bb[0]), f(&bb[1]), f(&bb[2]), f(&bb[3])), clr: clr_of(&bd, net), layers, drill, kind: Kind::Pad, owner: -1, alive: true };
         bd.add(s);
     }
     for c in model["copper"].as_array().unwrap() {
         let net = net_of(c["net"].as_str().unwrap_or(""));
         let clr = clr_of(&bd, net);
         if c["kind"] == "via" {
-            let s = Shape { net, geo: Geo::Circ(f(&c["x"]), f(&c["y"]), f(&c["d"]) / 2.0), clr, layers: (1u8 << cu.len()) - 1, drill: f(&c["drill"]), kind: Kind::Via };
+            let s = Shape { net, geo: Geo::Circ(f(&c["x"]), f(&c["y"]), f(&c["d"]) / 2.0), clr, layers: (1u8 << cu.len()) - 1, drill: f(&c["drill"]), kind: Kind::Via, owner: -1, alive: true };
             bd.add(s);
         } else {
             let (a, b) = (c["a"].as_array().unwrap(), c["b"].as_array().unwrap());
             let l = lid(c["layer"].as_str().unwrap()).unwrap();
-            let s = Shape { net, geo: Geo::Seg(f(&a[0]), f(&a[1]), f(&b[0]), f(&b[1]), f(&c["w"]) / 2.0), clr, layers: 1 << l, drill: 0.0, kind: Kind::Track };
+            let s = Shape { net, geo: Geo::Seg(f(&a[0]), f(&a[1]), f(&b[0]), f(&b[1]), f(&c["w"]) / 2.0), clr, layers: 1 << l, drill: 0.0, kind: Kind::Track, owner: -1, alive: true };
             bd.add(s);
         }
     }
     bd
 }
 
-struct Result {
-    tracks: Vec<OutTrack>,
-    vias: Vec<OutVia>,
-    failed: Vec<Fail>,
-    notes: Vec<String>,
-}
-
-fn route_all(ctx: &mut Ctx, order: &[usize]) -> Result {
-    let mut res = Result { tracks: vec![], vias: vec![], failed: vec![], notes: vec![] };
-    let nl = ctx.bd.layer_names.len();
-    let all = (1u8 << nl) - 1;
-    // 1. plane fan-out
-    for net in 0..ctx.bd.nets.len() {
-        if !ctx.bd.nets[net].plane {
+/// Plane fan-out of one plane net: a via (plus a short track) for every SMD pad of the net, unless a fixed via of the
+/// net is already within 1 mm. The fan-out is owned by the plane net, so it takes part in the negotiation: when a
+/// signal net conflicts with it, the whole fan-out of that plane net is ripped up and placed again at the present
+/// costs (it is not a hard wall that can enclose pins).
+fn fanout_net(ctx: &mut Ctx, net: usize) -> NetResult {
+    for s in ctx.bd.shapes.iter_mut() {
+        if s.owner == net as i32 {
+            s.alive = false;
+        }
+    }
+    let mut out = NetResult { hard_fail: None, limit: false, conflicts: 0, owners: vec![], cells: vec![], vias: vec![] };
+    let all = (1u8 << ctx.bd.layer_names.len()) - 1;
+    let pads: Vec<Shape> = ctx.bd.shapes.iter().filter(|s| s.alive && s.net == net as i32 && s.kind == Kind::Pad && s.drill == 0.0).cloned().collect();
+    let mut misses = Vec::new();
+    let pres = ctx.gr.pres as f64;
+    for pad in pads {
+        let (cx, cy) = match pad.geo { Geo::Rect(a, b, c, d) => ((a + c) / 2.0, (b + d) / 2.0), _ => continue };
+        let has = ctx.bd.shapes.iter().any(|s| s.alive && s.net == net as i32 && s.kind == Kind::Via && s.geo.dist(cx, cy) < 1.0);
+        if has {
             continue;
         }
-        let pads: Vec<Shape> = ctx.bd.shapes.iter().filter(|s| s.net == net as i32 && s.kind == Kind::Pad && s.drill == 0.0).cloned().collect();
-        for pad in pads {
-            let (cx, cy) = match pad.geo { Geo::Rect(a, b, c, d) => ((a + c) / 2.0, (b + d) / 2.0), _ => continue };
-            let has = ctx.bd.shapes.iter().any(|s| s.net == net as i32 && s.kind == Kind::Via && s.geo.dist(cx, cy) < 1.0);
-            if has {
+        let (pw, ph) = match pad.geo { Geo::Rect(a, b, c, d) => (c - a, d - b), _ => (0.3, 0.3) };
+        let mut done = false;
+        for w in [ctx.bd.nets[net].width.min(0.3).min(pw.min(ph)), 0.15] {
+            let hw = w / 2.0;
+            ctx.gr.reset_cache();
+            let src = ctx.cells_of(&pad, pad.layers);
+            ctx.gr.tgen += 1;
+            let tg = ctx.gr.tgen;
+            let (i0, j0) = ctx.gr.at(cx - 2.0, cy - 2.0);
+            let (i1, j1) = ctx.gr.at(cx + 2.0, cy + 2.0);
+            let r = ctx.bd.routable.iter().position(|&l| pad.layers & (1 << l) != 0).unwrap_or(0);
+            let n = ctx.gr.nx * ctx.gr.ny;
+            let mut cands = Vec::new();
+            for j in j0..=j1 {
+                for i in i0..=i1 {
+                    let (x, y) = ctx.gr.xy(i, j);
+                    if pad.geo.dist(x, y) < 0.35 {
+                        continue;
+                    }
+                    let (Some(kv), Some(kt)) = (ctx.vcost(net, i, j), ctx.cost(net, r * n + j * ctx.gr.nx + i, hw)) else { continue };
+                    ctx.gr.tgt[r * n + j * ctx.gr.nx + i] = tg;
+                    cands.push((pad.geo.dist(x, y) * (1.0 + pres * (kv + kt) as f64), x, y));
+                }
+            }
+            if cands.is_empty() {
                 continue;
             }
-            let (pw, ph) = match pad.geo { Geo::Rect(a, b, c, d) => (c - a, d - b), _ => (0.3, 0.3) };
-            let mut done = false;
-            for w in [ctx.bd.nets[net].width.min(0.4).min(pw.min(ph)), 0.25, 0.15] {
-                let hw = w / 2.0;
-                ctx.gr.reset_cache();
-                let src = ctx.cells_of(&pad, pad.layers);
-                // targets: free via sites within 2 mm on the pad layer
-                ctx.gr.tgen += 1;
-                let tg = ctx.gr.tgen;
-                let (i0, j0) = ctx.gr.at(cx - 2.0, cy - 2.0);
-                let (i1, j1) = ctx.gr.at(cx + 2.0, cy + 2.0);
-                let r = ctx.bd.routable.iter().position(|&l| pad.layers & (1 << l) != 0).unwrap_or(0);
-                let n = ctx.gr.nx * ctx.gr.ny;
-                let mut cands = Vec::new();
-                for j in j0..=j1 {
-                    for i in i0..=i1 {
-                        let (x, y) = ctx.gr.xy(i, j);
-                        if pad.geo.dist(x, y) < 0.35 { continue; }
-                        if ctx.vfree(net, i, j) && ctx.free(net, r * n + j * ctx.gr.nx + i, hw) {
-                            ctx.gr.tgt[r * n + j * ctx.gr.nx + i] = tg;
-                            cands.push((x, y));
-                        }
+            cands.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+            let anchors = vec![(cands[0].1, cands[0].2)];
+            if let Ok(path) = ctx.search(net, hw, &src, &anchors, false, false) {
+                let last = *path.last().unwrap();
+                let (_, iy, ix) = ctx.gr.cell(last);
+                let (vx, vy) = ctx.gr.xy(ix, iy);
+                let mut k: u32 = 0;
+                for &c in &path {
+                    let (rr, iy2, ix2) = ctx.gr.cell(c);
+                    let (x, y) = ctx.gr.xy(ix2, iy2);
+                    let mut own = Vec::new();
+                    let kc = ctx.bd.track_cost(net, ctx.bd.routable[rr], x, y, hw, ctx.o.plane_clr, Some(&mut own));
+                    if kc > 0 {
+                        k += kc as u32;
+                        out.cells.push(c);
+                        for o in own { if !out.owners.contains(&o) { out.owners.push(o); } }
                     }
                 }
-                if cands.is_empty() {
-                    continue;
+                let n_ = ctx.bd.nets[net].clone();
+                let mut own = Vec::new();
+                let kv = ctx.bd.via_cost(net, vx, vy, n_.via_d, n_.via_drill, ctx.o.hth, Some(&mut own));
+                if kv > 0 {
+                    k += kv as u32;
+                    ctx.gr.vhist[iy * ctx.gr.nx + ix] += 0.3;
+                    for o in own { if !out.owners.contains(&o) { out.owners.push(o); } }
                 }
-                cands.sort_by(|a, b| pad.geo.dist(a.0, a.1).partial_cmp(&pad.geo.dist(b.0, b.1)).unwrap());
-                let anchors = vec![cands[0]];
-                if let Some(path) = ctx.search(net, hw, &src, &anchors, false) {
-                    let (ix, iy) = { let (_, iy, ix) = ctx.gr.cell(*path.last().unwrap()); (ix, iy) };
-                    let (vx, vy) = ctx.gr.xy(ix, iy);
-                    let (tr, _) = ctx.geometry(net, &path, hw);
-                    commit(ctx, net, &tr, &[], hw, &mut res);
-                    let n_ = &ctx.bd.nets[net];
-                    let (d, dr, clr) = (n_.via_d, n_.via_drill, n_.clr);
-                    ctx.bd.add(Shape { net: net as i32, geo: Geo::Circ(vx, vy, d / 2.0), clr, layers: all, drill: dr, kind: Kind::Via });
-                    res.vias.push(OutVia { net: ctx.bd.nets[net].name.clone(), x: vx, y: vy, d, drill: dr, role: "plane".into() });
-                    done = true;
-                    break;
-                }
-            }
-            if !done {
-                res.failed.push(Fail { net: ctx.bd.nets[net].name.clone(), stage: "plane".into(), reason: format!("no via site within 2 mm of pad at ({cx:.2}, {cy:.2})") });
+                out.conflicts += k;
+                let (tr, _) = ctx.geometry(net, &path, hw);
+                add_copper(ctx, net, net as i32, &tr, &[], hw);
+                ctx.bd.add(Shape { net: net as i32, geo: Geo::Circ(vx, vy, n_.via_d / 2.0), clr: n_.clr, layers: all, drill: n_.via_drill, kind: Kind::Via, owner: net as i32, alive: true });
+                done = true;
+                break;
             }
         }
+        if !done {
+            misses.push(format!("({cx:.2}, {cy:.2})"));
+        }
     }
-    // 2. routed nets
-    for &net in order {
-        route_net(ctx, net, &mut res);
+    if !misses.is_empty() {
+        out.hard_fail = Some(format!("no via site within 2 mm of {} pad(s): {}", misses.len(), misses.join(" ")));
     }
-    res
+    out
 }
 
-fn commit(ctx: &mut Ctx, net: usize, tracks: &[(usize, (f64, f64), (f64, f64))], vias: &[(f64, f64)], hw: f64, res: &mut Result) {
+fn add_copper(ctx: &mut Ctx, net: usize, owner: i32, tracks: &[(usize, (f64, f64), (f64, f64))], vias: &[(f64, f64)], hw: f64) {
     let clr = ctx.bd.nets[net].clr;
-    let name = ctx.bd.nets[net].name.clone();
     for &(l, a, b) in tracks {
         if (a.0 - b.0).abs() < 1e-9 && (a.1 - b.1).abs() < 1e-9 {
             continue;
         }
-        ctx.bd.add(Shape { net: net as i32, geo: Geo::Seg(a.0, a.1, b.0, b.1, hw), clr, layers: 1 << l, drill: 0.0, kind: Kind::Track });
-        res.tracks.push(OutTrack { net: name.clone(), layer: ctx.bd.layer_names[l].clone(), a: [a.0, a.1], b: [b.0, b.1], w: hw * 2.0 });
+        ctx.bd.add(Shape { net: net as i32, geo: Geo::Seg(a.0, a.1, b.0, b.1, hw), clr, layers: 1 << l, drill: 0.0, kind: Kind::Track, owner, alive: true });
     }
     let all = (1u8 << ctx.bd.layer_names.len()) - 1;
     for &(x, y) in vias {
         let (d, dr) = (ctx.bd.nets[net].via_d, ctx.bd.nets[net].via_drill);
-        ctx.bd.add(Shape { net: net as i32, geo: Geo::Circ(x, y, d / 2.0), clr, layers: all, drill: dr, kind: Kind::Via });
-        res.vias.push(OutVia { net: name.clone(), x, y, d, drill: dr, role: "signal".into() });
+        ctx.bd.add(Shape { net: net as i32, geo: Geo::Circ(x, y, d / 2.0), clr, layers: all, drill: dr, kind: Kind::Via, owner, alive: true });
     }
 }
 
-fn return_via(ctx: &mut Ctx, x: f64, y: f64, res: &mut Result) -> bool {
+/// GND via within --return-r of a new signal via, owned by that signal net; only a conflict-free site counts.
+fn return_via(ctx: &mut Ctx, owner: usize, x: f64, y: f64) -> bool {
     let g = ctx.bd.gnd;
     if g < 0 {
         return false;
@@ -773,18 +863,33 @@ fn return_via(ctx: &mut Ctx, x: f64, y: f64, res: &mut Result) -> bool {
     let clr = ctx.bd.nets[g as usize].clr;
     for (_, px, py) in c {
         if ctx.bd.via_ok(g as usize, px, py, d, dr, ctx.o.hth) {
-            ctx.bd.add(Shape { net: g, geo: Geo::Circ(px, py, d / 2.0), clr, layers: all, drill: dr, kind: Kind::Via });
-            res.vias.push(OutVia { net: "GND".into(), x: px, y: py, d, drill: dr, role: "return".into() });
+            ctx.bd.add(Shape { net: g, geo: Geo::Circ(px, py, d / 2.0), clr, layers: all, drill: dr, kind: Kind::Via, owner: owner as i32, alive: true });
             return true;
         }
     }
     false
 }
 
-fn route_net(ctx: &mut Ctx, net: usize, res: &mut Result) {
-    let items: Vec<usize> = (0..ctx.bd.shapes.len()).filter(|&i| ctx.bd.shapes[i].net == net as i32).collect();
+struct NetResult {
+    hard_fail: Option<String>,
+    limit: bool,
+    conflicts: u32,
+    owners: Vec<i32>,
+    cells: Vec<usize>,
+    vias: Vec<(f64, f64)>,
+}
+
+/// Rip up the copper this net routed before, then join its components again against the present congestion.
+fn route_net(ctx: &mut Ctx, net: usize) -> NetResult {
+    for s in ctx.bd.shapes.iter_mut() {
+        if s.owner == net as i32 {
+            s.alive = false;
+        }
+    }
+    let mut out = NetResult { hard_fail: None, limit: false, conflicts: 0, owners: vec![], cells: vec![], vias: vec![] };
+    let items: Vec<usize> = (0..ctx.bd.shapes.len()).filter(|&i| { let s = &ctx.bd.shapes[i]; s.alive && s.net == net as i32 && s.owner < 0 }).collect();
     if items.len() < 2 {
-        return;
+        return out;
     }
     let mut par: Vec<usize> = (0..items.len()).collect();
     for a in 0..items.len() {
@@ -802,15 +907,15 @@ fn route_net(ctx: &mut Ctx, net: usize, res: &mut Result) {
         let k = *root_of.entry(r).or_insert_with(|| { comps.push(vec![]); comps.len() - 1 });
         comps[k].push(items[a]);
     }
-    // pads only count: a component without a pad of the net is a dangling piece and is joined like the others
     let nmask = ctx.bd.nets[net].layers;
-    let name = ctx.bd.nets[net].name.clone();
     let base_w = ctx.bd.nets[net].width;
     let widths: Vec<f64> = if ctx.bd.nets[net].power { vec![base_w, 0.3, 0.2, 0.15] } else { vec![base_w] };
     let mut tree = comps.remove(0);
-    let mut new_vias = Vec::new();
+    let mut trapped: Vec<String> = Vec::new();
     while !comps.is_empty() {
-        let mut ok = false;
+        // best width: the widest with the fewest conflicts (power nets neck only when it removes conflicts)
+        let mut best: Option<(u32, f64, Vec<usize>)> = None;
+        let mut limit = false;
         for (wi, &w) in widths.iter().enumerate() {
             if wi > 0 && w >= base_w {
                 continue;
@@ -836,59 +941,107 @@ fn route_net(ctx: &mut Ctx, net: usize, res: &mut Result) {
                     }
                 }
             }
-            if let Some(path) = ctx.search(net, hw, &src, &anchors, true) {
-                let last = *path.last().unwrap();
-                let (_, iy, ix) = ctx.gr.cell(last);
-                let (gx, gy) = ctx.gr.xy(ix, iy);
-                let (tr, vs) = ctx.geometry(net, &path, hw);
-                let first_new = ctx.bd.shapes.len();
-                commit(ctx, net, &tr, &vs, hw, res);
-                new_vias.extend(vs.iter().cloned());
-                if w < base_w {
-                    res.notes.push(format!("{name}: neck {w:.2} mm (class {base_w:.2})"));
+            let found = ctx.search(net, hw, &src, &anchors, true, false);
+            if let Err(true) = found {
+                limit = true;
+            }
+            if let Ok(path) = found {
+                let k: u32 = path.iter().map(|&c| ctx.cost(net, c, hw).unwrap_or(0)).sum();
+                if best.as_ref().map(|b| k < b.0).unwrap_or(true) {
+                    best = Some((k, w, path));
                 }
-                // which component did we reach
-                let ci = comps.iter().position(|comp| comp.iter().any(|&s| ctx.bd.shapes[s].geo.dist(gx, gy) <= 1e-6 + match ctx.bd.shapes[s].geo { Geo::Seg(..) | Geo::Circ(..) => 0.0, _ => 0.0 })).unwrap_or(0);
-                let reached = comps.remove(ci);
-                tree.extend(reached);
-                tree.extend(first_new..ctx.bd.shapes.len());
-                ok = true;
-                break;
+                if k == 0 {
+                    break;
+                }
             }
         }
-        if !ok {
-            res.failed.push(Fail { net: name.clone(), stage: "route".into(), reason: format!("{} component(s) not reached", comps.len()) });
+        let Some((k, w, path)) = best else {
+            if limit {
+                out.conflicts += 1000; // search limit: not proven blocked, try again next iteration
+                out.limit = true;
+            } else if tree_pads(ctx, &tree).len() > 0 && !comps.is_empty() && trapped.len() < 4 {
+                // the start component is walled in by fixed copper: record it, start again from the next component
+                trapped.push(tree_pads(ctx, &tree).join(","));
+                tree = comps.remove(0);
+                continue;
+            } else {
+                out.hard_fail = Some(format!("{} component(s) not reachable past fixed copper", comps.len()));
+                if std::env::var("IOTROUTE_DEBUG").is_ok() {
+                    let hw = widths.last().unwrap() / 2.0;
+                    ctx.gr.reset_cache();
+                    for (ci, comp) in std::iter::once(&tree).chain(comps.iter()).enumerate() {
+                        for &s in comp {
+                            let sh = ctx.bd.shapes[s].clone();
+                            let cells = ctx.cells_of(&sh, nmask);
+                            let free = cells.iter().filter(|&&c| ctx.cost(net, c, hw).is_some()).count();
+                            eprintln!("  {} comp {ci} {:?} {:?}: {} cells, {} not hard-blocked at w {:.2}",
+                                      ctx.bd.nets[net].name, sh.kind as u8, sh.geo.bbox(), cells.len(), free, hw * 2.0);
+                        }
+                    }
+                }
+            }
             break;
+        };
+        let hw = w / 2.0;
+        let last = *path.last().unwrap();
+        let (_, iy, ix) = ctx.gr.cell(last);
+        let (gx, gy) = ctx.gr.xy(ix, iy);
+        if k > 0 {
+            let n = ctx.gr.nx * ctx.gr.ny;
+            for &c in &path {
+                let (r, iy, ix) = ctx.gr.cell(c);
+                let (x, y) = ctx.gr.xy(ix, iy);
+                let mut own = Vec::new();
+                if ctx.bd.track_cost(net, ctx.bd.routable[r], x, y, hw, ctx.o.plane_clr, Some(&mut own)) > 0 {
+                    out.cells.push(c);
+                    for o in own {
+                        if !out.owners.contains(&o) {
+                            out.owners.push(o);
+                        }
+                    }
+                }
+                let _ = n;
+            }
         }
+        out.conflicts += k;
+        let (tr, vs) = ctx.geometry(net, &path, hw);
+        let first_new = ctx.bd.shapes.len();
+        add_copper(ctx, net, net as i32, &tr, &vs, hw);
+        out.vias.extend(vs.iter().cloned());
+        let ci = comps.iter().position(|comp| comp.iter().any(|&s| ctx.bd.shapes[s].geo.dist(gx, gy) <= 1e-6)).unwrap_or(0);
+        let reached = comps.remove(ci);
+        tree.extend(reached);
+        tree.extend(first_new..ctx.bd.shapes.len());
     }
-    let n = ctx.bd.nets[net].clone();
-    if let Some(mv) = n.max_vias {
-        let total = ctx.bd.shapes.iter().filter(|s| s.net == net as i32 && s.kind == Kind::Via).count();
-        if total as f64 > mv {
-            res.notes.push(format!("{name}: {total} vias over the DRU via_count max {mv}"));
+    if !trapped.is_empty() && out.hard_fail.is_none() {
+        out.hard_fail = Some(format!("walled in by fixed copper (input placement / locked routes): pad(s) at {}", trapped.join("; ")));
+    }
+    out
+}
+
+fn tree_pads(ctx: &Ctx, items: &[usize]) -> Vec<String> {
+    items.iter().filter_map(|&s| {
+        let sh = &ctx.bd.shapes[s];
+        match (sh.kind == Kind::Pad, sh.geo) {
+            (true, Geo::Rect(a, b, c, d)) => Some(format!("({:.2}, {:.2})", (a + c) / 2.0, (b + d) / 2.0)),
+            _ => None,
         }
-    }
-    let _ = n.max_len;
-    for (x, y) in new_vias {
-        if !return_via(ctx, x, y, res) {
-            res.notes.push(format!("{name}: no GND return via within {} mm of ({x:.2}, {y:.2})", ctx.o.return_r));
-        }
-    }
+    }).collect()
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
-        eprintln!("usage: iotroute MODEL.json OUT.json [--pitch 0.05] [--passes 4] [--plane-clr 0.25] [--hole-to-hole 0.45] [--return-r 2.0] [--return-via 0.45,0.2]");
+        eprintln!("usage: iotroute MODEL.json OUT.json [--pitch 0.05] [--iters 40] [--plane-clr 0.25] [--hole-to-hole 0.45] [--return-r 2.0] [--return-via 0.45,0.2]");
         std::process::exit(2);
     }
-    let mut o = Opts { pitch: 0.05, passes: 4, plane_clr: 0.25, hth: 0.45, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2 };
+    let mut o = Opts { pitch: 0.05, passes: 40, plane_clr: 0.25, hth: 0.45, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2 };
     let mut i = 3;
     while i + 1 < args.len() {
         let v = &args[i + 1];
         match args[i].as_str() {
             "--pitch" => o.pitch = v.parse().unwrap(),
-            "--passes" => o.passes = v.parse().unwrap(),
+            "--iters" | "--passes" => o.passes = v.parse().unwrap(),
             "--plane-clr" => o.plane_clr = v.parse().unwrap(),
             "--hole-to-hole" => o.hth = v.parse().unwrap(),
             "--return-r" => o.return_r = v.parse().unwrap(),
@@ -904,17 +1057,18 @@ fn main() {
         }
         i += 2;
     }
+    let t0 = std::time::Instant::now();
     let model: Value = serde_json::from_str(&std::fs::read_to_string(&args[1]).expect("model")).expect("json");
     let mut bd = load(&model);
-    let base = bd.shapes.len();
+    let base0 = bd.shapes.len();
     let (e0, e1, e2, e3) = bd.edge;
     let nx = ((e2 - e0) / o.pitch).ceil() as usize + 1;
     let ny = ((e3 - e1) / o.pitch).ceil() as usize + 1;
     let nr = bd.routable.len();
     let tot = nx * ny * nr;
-    let gr = Grid { x0: e0, y0: e1, p: o.pitch, nx, ny, nr, cache: vec![0; tot], vcache: vec![0; nx * ny], g: vec![0.0; tot], from: vec![0; tot], seen: vec![0; tot], tgt: vec![0; tot], sgen: 0, tgen: 0 };
-    // order: power, fast, slow; inside a group the smallest pin bounding box first
-    let mut order: Vec<usize> = (0..bd.nets.len()).filter(|&n| !bd.nets[n].plane).collect();
+    let gr = Grid { x0: e0, y0: e1, p: o.pitch, nx, ny, nr, cache: vec![0; tot], vcache: vec![0; nx * ny], hist: vec![0.0; tot], vhist: vec![0.0; nx * ny], pres: 0.5,
+                    g: vec![0.0; tot], from: vec![0; tot], seen: vec![0; tot], tgt: vec![0; tot], sgen: 0, tgen: 0 };
+    let mut order: Vec<usize> = (0..bd.nets.len()).collect();
     let spread = |bd: &Board, n: usize| -> f64 {
         let (mut a, mut b, mut c, mut d) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
         for s in bd.shapes.iter().filter(|s| s.net == n as i32 && s.kind == Kind::Pad) {
@@ -923,34 +1077,110 @@ fn main() {
         }
         if a == f64::MAX { 0.0 } else { (c - a) + (d - b) }
     };
-    let group = |bd: &Board, n: usize| if bd.nets[n].power { 0 } else if bd.nets[n].fast { 1 } else { 2 };
+    let group = |bd: &Board, n: usize| if bd.nets[n].plane { 0 } else if bd.nets[n].power { 1 } else if bd.nets[n].fast { 2 } else { 3 };
     order.sort_by(|&a, &b| group(&bd, a).cmp(&group(&bd, b)).then(spread(&bd, a).partial_cmp(&spread(&bd, b)).unwrap()));
     let mut ctx = Ctx { bd: &mut bd, gr, o: &o };
-    let mut best: Option<Result> = None;
-    let mut passes = 0;
-    for pass in 0..o.passes {
-        passes = pass + 1;
-        ctx.bd.truncate(base);
-        let res = route_all(&mut ctx, &order);
-        let nf = res.failed.len();
-        eprintln!("pass {}: {} tracks, {} vias, {} failed: {}", pass + 1, res.tracks.len(), res.vias.len(), nf,
-                  res.failed.iter().map(|f| f.net.as_str()).collect::<Vec<_>>().join(" "));
-        let failed: Vec<String> = res.failed.iter().map(|f| f.net.clone()).collect();
-        let better = best.as_ref().map(|b| nf < b.failed.len()).unwrap_or(true);
-        if better {
-            best = Some(res);
+    let fan_fail: Vec<Fail> = Vec::new();
+    let nn = ctx.bd.nets.len();
+    let mut todo: Vec<usize> = order.clone();
+    let mut state: Vec<(Option<String>, u32)> = vec![(None, 0); nn];
+    let mut iters = 0;
+    let mut converged = false;
+    for it in 0..o.passes {
+        iters = it + 1;
+        ctx.bd.compact();
+        let mut involved: Vec<usize> = Vec::new();
+        let mut total = 0u32;
+        let mut hard = 0;
+        for &net in &todo {
+            let r = if ctx.bd.nets[net].plane { fanout_net(&mut ctx, net) } else { route_net(&mut ctx, net) };
+            for &c in &r.cells {
+                ctx.gr.hist[c] += 0.3;
+            }
+            if r.conflicts > 0 {
+                involved.push(net);
+                for &ow in &r.owners {
+                    if ow >= 0 && !involved.contains(&(ow as usize)) {
+                        involved.push(ow as usize);
+                    }
+                }
+            }
+            if r.hard_fail.is_some() {
+                hard += 1;
+            }
+            total += r.conflicts;
+            state[net] = (r.hard_fail.clone(), r.conflicts);
+            let _ = r.vias;
         }
-        if nf == 0 {
+        // nets whose own conflicts were counted earlier but are now involved again are re-routed next iteration
+        let hard_nets: Vec<usize> = order.iter().cloned().filter(|&n| state[n].0.is_some()).collect();
+        eprintln!("iter {:2}: routed {:3}, conflicts {:5}, involved {:3}, hard fails {:2}, pres {:.2}, {:.1} s  hard: {}  involved: {}",
+                  it + 1, todo.len(), total, involved.len(), hard, ctx.gr.pres, t0.elapsed().as_secs_f64(),
+                  hard_nets.iter().map(|&n| ctx.bd.nets[n].name.as_str()).collect::<Vec<_>>().join(" "),
+                  if involved.len() <= 12 { involved.iter().map(|&n| ctx.bd.nets[n].name.as_str()).collect::<Vec<_>>().join(" ") } else { String::from("...") });
+        if involved.is_empty() {
+            converged = true;
             break;
         }
-        // failed nets go first in the next pass
-        let (mut first, rest): (Vec<usize>, Vec<usize>) = order.iter().partition(|&&n| failed.contains(&ctx.bd.nets[n].name));
-        first.extend(rest);
-        order = first;
+        ctx.gr.pres = (ctx.gr.pres * 1.5).min(8.0);
+        todo = order.iter().cloned().filter(|n| involved.contains(n) || hard_nets.contains(n)).collect();
     }
-    let r = best.unwrap();
-    let out = Out { schema: "iot-lab.route-result.v0".into(), tracks: r.tracks, vias: r.vias, failed: r.failed.clone(), notes: r.notes, passes };
+    // return vias, once the copper is legal (strict sites; a missing site is a note for the gate to judge)
+    let mut notes = Vec::new();
+    let sig_vias: Vec<(usize, f64, f64)> = ctx.bd.shapes.iter().filter(|s| s.alive && s.owner >= 0 && s.kind == Kind::Via && s.net == s.owner && !ctx.bd.nets[s.net as usize].plane)
+        .filter_map(|s| match s.geo { Geo::Circ(x, y, _) => Some((s.owner as usize, x, y)), _ => None }).collect();
+    for (net, x, y) in sig_vias {
+        if !return_via(&mut ctx, net, x, y) {
+            notes.push(format!("{}: no GND return via within {} mm of ({x:.2}, {y:.2})", ctx.bd.nets[net].name, o.return_r));
+        }
+    }
+    // output: every live routed item plus the plane fan-out (fixed, added after the input copper)
+    let mut tracks = Vec::new();
+    let mut vias = Vec::new();
+    let mut via_count = vec![0usize; nn];
+    for (i, s) in ctx.bd.shapes.iter().enumerate() {
+        if !s.alive || (s.owner < 0 && i < base0) {
+            continue;
+        }
+        let name = if s.net >= 0 { ctx.bd.nets[s.net as usize].name.clone() } else { continue };
+        match s.geo {
+            Geo::Seg(ax, ay, bx, by, hw) => {
+                let l = (0..ctx.bd.layer_names.len()).find(|&l| s.layers & (1 << l) != 0).unwrap();
+                if s.owner >= 0 && ctx.bd.nets[s.net as usize].power && hw * 2.0 < ctx.bd.nets[s.net as usize].width - 1e-6 {
+                    notes.push(format!("{name}: neck {:.2} mm (class {:.2})", hw * 2.0, ctx.bd.nets[s.net as usize].width));
+                }
+                tracks.push(OutTrack { net: name, layer: ctx.bd.layer_names[l].clone(), a: [ax, ay], b: [bx, by], w: hw * 2.0 });
+            }
+            Geo::Circ(x, y, r) => {
+                let role = if s.owner < 0 || ctx.bd.nets[s.net as usize].plane && s.net == s.owner { "plane" } else if s.net == s.owner { "signal" } else { "return" };
+                if role == "signal" {
+                    via_count[s.net as usize] += 1;
+                }
+                vias.push(OutVia { net: name, x, y, d: r * 2.0, drill: s.drill, role: role.into() });
+            }
+            _ => {}
+        }
+    }
+    for n in 0..nn {
+        if let Some(mv) = ctx.bd.nets[n].max_vias {
+            if via_count[n] as f64 > mv {
+                notes.push(format!("{}: {} new vias over the DRU via_count max {mv}", ctx.bd.nets[n].name, via_count[n]));
+            }
+        }
+    }
+    notes.sort();
+    notes.dedup();
+    let mut failed = fan_fail;
+    for n in 0..nn {
+        if let Some(r) = &state[n].0 {
+            failed.push(Fail { net: ctx.bd.nets[n].name.clone(), stage: "route".into(), reason: r.clone() });
+        } else if !converged && state[n].1 > 0 {
+            failed.push(Fail { net: ctx.bd.nets[n].name.clone(), stage: "route".into(), reason: format!("{} conflicts left", state[n].1) });
+        }
+    }
+    let out = Out { schema: "iot-lab.route-result.v0".into(), tracks, vias, failed, notes, passes: iters };
     std::fs::write(&args[2], serde_json::to_string_pretty(&out).unwrap()).expect("write");
     let status = if out.failed.is_empty() { "PASS" } else { "FAIL" };
-    println!("ROUTE {status} tracks {} vias {} failed {} notes {} passes {} -> {}", out.tracks.len(), out.vias.len(), out.failed.len(), out.notes.len(), passes, args[2]);
+    println!("ROUTE {status} converged {converged} iters {iters} tracks {} vias {} failed {} notes {} {:.0} s -> {}",
+             out.tracks.len(), out.vias.len(), out.failed.len(), out.notes.len(), t0.elapsed().as_secs_f64(), args[2]);
 }
