@@ -64,6 +64,7 @@ export function checkStaged(root) {
     const because=[...reasons].map(([p,b])=>`${p} -> ${b.length} board${b.length===1?'':'s'}`);
     console.log(`staged gates: ${boards.join(', ') || 'none'}${because.length ? ` (because ${because.slice(0,8).join('; ')}${because.length>8 ? `; +${because.length-8} more` : ''})` : ''}`);
     const results=[];
+    const cacheRoot=resolve(root,git(['rev-parse','--git-common-dir']).trim(),'iot-lab-gate-cache');
     // Git exports repository variables inside hooks. They must not leak into
     // tools checking independent pinned repositories or the staged snapshot.
     const gateEnv={...process.env,IOT_LAB:snapshot};
@@ -74,7 +75,13 @@ export function checkStaged(root) {
       let before='{"metrics":{}}';
       try {before=git(['show',`HEAD:${path}`]);} catch { /* new gate */ }
       writeFileSync(baseline,before);
-      execFileSync(process.execPath,[join(snapshot,'tools/gate.mjs'),board,'--ratchet','--write','--baseline',baseline],{cwd:snapshot,stdio:'inherit',env:gateEnv});
+      // Checks whose own hashed inputs did not change are reused (content-addressed receipts, verified on restore);
+      // only the affected checks run. One cache in the git common dir serves every worktree.
+      // A G5 release gate always runs fresh.
+      const config=join(snapshot,`hardware-design/boards/${board}/gate.json`);
+      const stage=existsSync(config) ? JSON.parse(readFileSync(config,'utf8')).stage : 'G5';
+      const cache=stage==='G5' ? [] : ['--cache-dir',join(cacheRoot,board)];
+      execFileSync(process.execPath,[join(snapshot,'tools/gate.mjs'),board,'--ratchet','--write','--baseline',baseline,...cache],{cwd:snapshot,stdio:'inherit',env:gateEnv});
       results.push({path,text:readFileSync(join(snapshot,path),'utf8')});
     }
     // Stage only metrics derived from the index. Do not git-add working files.

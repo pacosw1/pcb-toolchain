@@ -10,7 +10,9 @@
 //   node tools/gate.mjs --list              the boards that have a gate.json
 //   --evidence-dir NEW_DIR   isolated evidence; do not publish the board's latest pointer
 //   --changed       editing only: reuse completed checks with matching hashed inputs
-//   --fresh         explicitly require fresh checks (the default); conflicts with --changed
+//   --fresh         explicitly require fresh checks (the default); conflicts with --changed and --cache-dir
+//   --cache-dir DIR commit hook: reuse and store completed checks whose per-check hashed inputs match (any mode
+//                   but G5 and --fresh); a check reruns only when one of its own inputs changed
 //   --findings-baseline FILE_OR_DIR   compare findings with explicit prior evidence
 //
 // gate.json: {"project": "cad/MC-MAIN/MC-MAIN", "checks": {"erc": true, "drc": true, "planes": "reference-planes.json",
@@ -39,7 +41,7 @@ if (flag('--list')) {
   for (const b of readdirSync(boardsDir)) if (existsSync(join(boardsDir, b, 'gate.json'))) console.log(b);
   process.exit(0);
 }
-const board = args.find((a, i) => !a.startsWith('--') && !['--baseline','--config','--evidence-dir','--findings-baseline'].includes(args[i - 1]));
+const board = args.find((a, i) => !a.startsWith('--') && !['--baseline','--config','--evidence-dir','--findings-baseline','--cache-dir'].includes(args[i - 1]));
 // --config NAME: another gate file in the board folder (a candidate with another stackup). Default gate.json.
 const configName = args.includes('--config') ? args[args.indexOf('--config') + 1] : 'gate.json';
 const dir = join(boardsDir, board ?? '');
@@ -54,6 +56,12 @@ const incremental = flag('--changed');
 if (incremental && (flag('--fresh') || flag('--write') || cfg.stage === 'G5')) {
   console.error('gate: --changed is for editing; cannot combine with --fresh, --write or a G5 release gate'); process.exit(2);
 }
+const cacheDirArg = args.includes('--cache-dir') ? args[args.indexOf('--cache-dir') + 1] : null;
+if (args.includes('--cache-dir') && (!cacheDirArg || cacheDirArg.startsWith('--') || flag('--fresh') || cfg.stage === 'G5')) {
+  console.error('gate: --cache-dir needs a directory and cannot combine with --fresh or a G5 release gate'); process.exit(2);
+}
+// Hashed check reuse: --changed (editing, board cache) or --cache-dir (commit hook, given cache).
+const reuse = incremental || Boolean(cacheDirArg);
 const pcb = join(dir, `${cfg.project}.kicad_pcb`);
 const sch = join(dir, `${cfg.project}.kicad_sch`);
 const isolated = args.includes('--evidence-dir');
@@ -190,9 +198,9 @@ if (unknown.length) {
   process.exit(2);
 }
 const checks = {};
-const cache = {enabled:incremental,hits:0,misses:0,rejected:0};
+const cache = {enabled:reuse,hits:0,misses:0,rejected:0};
 const pendingCache = [];
-const cacheDir = join(dir,'.gate/check-cache');
+const cacheDir = cacheDirArg ? resolve(cacheDirArg) : join(dir,'.gate/check-cache');
 const scripts = {planes:'si_planes.py',pairs:'si_pairs.py',viapads:'pcbtool.py',paths:'pcbtool.py',kicad_happy:'kicad_happy_gate.py',rf:'rf_lines.py',port_labels:'port_labels.py'};
 function keyFor(k,files) {
   const names=['node','kicad',...(k==='kicad_happy' ? ['python','kicad-happy'] : ['erc','drc'].includes(k) ? [] : ['pcbnew'])];
@@ -203,7 +211,7 @@ function keyFor(k,files) {
 }
 async function execute(k) {
   let metrics,key,hit=false;
-  if (incremental) {
+  if (reuse) {
     key=keyFor(k,inputs.files);
     const restored=restoreCheck(cacheDir,k,key.key,logDir);
     hit=restored.hit;
@@ -218,7 +226,7 @@ async function execute(k) {
   checks[k]={status:!valid ? 'error' : verdict.ok ? 'passed' : 'failed',metrics,cached:hit,
     ...(!valid ? {cause:'checker did not complete with valid evidence'} : {}),...(key ? {cache_key:key.key} : {})};
   gateEvent(logDir,'check.end',{stage:k,...checks[k],findings:verdict.open});
-  if (incremental && valid && !hit) pendingCache.push({stage:k,key,metrics});
+  if (reuse && valid && !hit) pendingCache.push({stage:k,key,metrics});
 }
 function block(k,cause) {
   const metrics=Object.fromEntries(CHECK_METRICS[k].map(name=>[name,null]));
@@ -243,7 +251,7 @@ let finalFiles=inputs.files;
 try { finalFiles=gateInputs(root,board,configName,environment).files; }
 catch (error) { preflightErrors.push(`final input evidence: ${error.message}`); }
 const provenance = fingerprint(root,finalFiles,versions,externalRoots);
-const checkInputsChanged=incremental && Object.entries(checks).some(([stage,check])=>check.cache_key && keyFor(stage,finalFiles).key!==check.cache_key);
+const checkInputsChanged=reuse && Object.entries(checks).some(([stage,check])=>check.cache_key && keyFor(stage,finalFiles).key!==check.cache_key);
 const changedDuringRun = provenance.input_sha256 !== start.input_sha256 || checkInputsChanged;
 if (changedDuringRun) console.error('gate: inputs changed during run; evidence is invalid');
 
@@ -283,7 +291,7 @@ if (flag('--ratchet')) {
 }
 if (changedDuringRun || preflightErrors.length || Object.values(versions).some(v=>v===null) ||
     Object.values(checks).some(check=>check.status==='blocked' || check.status==='error') || checks.drc?.metrics.drc_parity>0) exit=1;
-if (incremental && !changedDuringRun && !preflightErrors.length && !Object.values(versions).some(v=>v===null)) {
+if (reuse && !changedDuringRun && !preflightErrors.length && !Object.values(versions).some(v=>v===null)) {
   for (const item of pendingCache) {
     const stored=storeCheck(cacheDir,item.stage,item.key,item.metrics,logDir);
     gateEvent(logDir,stored.stored ? 'cache.store' : 'cache.skip',{stage:item.stage,key:item.key.key,...stored});

@@ -219,3 +219,18 @@ test('native-only gates require no happy clone; enabled happy checks retain the 
  assert.equal(native.result.provenance.inputs.some(row=>row.path.startsWith('external/kicad-happy/')),false);
  assert.deepEqual(native.events.filter(row=>row.type==='preflight.probe').map(row=>row.tool),['kicad']);
 });
+test('commit hook cache: --cache-dir reuses checks across checkout paths and reruns only a changed checker',t=>{
+ const cacheDir=mkdtempSync(join(tmpdir(),'gate-cache-'));t.after(()=>rmSync(cacheDir,{recursive:true,force:true}));
+ const a=fixture(t),b=fixture(t);
+ for(const f of [a,b]) f.put('tools/port_labels.py','first implementation');
+ const first=isolatedRunner(a)(['--cache-dir',cacheDir]);assert.equal(first.code,0);
+ assert.equal(first.result.cache.enabled,true);assert.equal(first.result.cache.hits,0);
+ assert.equal(first.events.filter(e=>e.type==='cache.store').length,6);
+ const go=isolatedRunner(b);
+ const moved=go(['--cache-dir',cacheDir]);assert.equal(moved.code,0);assert.equal(moved.result.cache.hits,6);
+ assert.equal(moved.events.filter(e=>e.type==='tool.start').length,0);
+ b.put('tools/port_labels.py','changed implementation');
+ const scoped=go(['--cache-dir',cacheDir]);assert.equal(scoped.code,0);assert.equal(scoped.result.cache.hits,5);
+ assert.deepEqual(scoped.events.filter(e=>e.type==='tool.start').map(e=>e.stage),['port_labels']);
+ assert.equal(go(['--cache-dir',cacheDir,'--fresh']).code,2);assert.equal(go(['--cache-dir']).code,2);
+});
