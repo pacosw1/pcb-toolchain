@@ -63,6 +63,25 @@ Return vias: after a fast-net via is placed, the core searches a GND via site wi
 | M2 comparison | re-route H7-CORE or ESP32-CORE from placement; gate all 0; compare vias / length / time with the hand + Fastroute result |
 | M3 default | `tools/pcb route --router iotlab`; Fastroute kept as a cross-check only |
 
+## 5a. NET-CORE requirements (from the hand-finished route, 2026-10-31)
+
+The Codex hand finish of NET-CORE reached DRC 0 but left gate findings. The router must not produce them:
+- a fast net keeps the plane clearance (0.25 mm) from every foreign via and PTH pad, so it never runs over a plane
+  antipad (si_planes fast-crossing: 6 findings on the hand route);
+- every signal via gets a GND return via within the RP-001 radius (16 kicad-happy RP-001 findings); GND vias go
+  through the In3 VDD_3V3 plane (antipad), only copper items block them;
+- every SMD pad of a plane net gets its own fan-out via (VDD_3V3 has no other path to In3);
+- power nets route at the class width and neck only near fine-pitch pads (current-paths.json is the gate).
+
+## 5b. Status
+
+| Date | Step | Result (DRC with parity on a copy, tools/router/write.py) |
+| --- | --- | --- |
+| 2026-10-31 | core v0: exact-geometry A*, plane fan-out, return vias, sequential + reorder passes | NET-CORE from hand.kicad_pcb (pairs + crystals locked, zones copied from the canonical board): 576 tracks, 244 vias in 37 s; DRC 2 (starved_thermal), unconnected 45 (18 nets not finished), parity 0 |
+
+Next: negotiated congestion (PathFinder: shared cells with present + history cost, rip-up of all nets per pass) to
+finish the 18 nets; F.Cu spoke channels at GND pads (starved_thermal); read hole clearance from the model rules.
+
 ## 6. Not in scope (first version)
 
 Length matching by meanders, BGA escape, push-and-shove interactive editing. Added only when a board needs them.
