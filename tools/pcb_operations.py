@@ -18,7 +18,8 @@ from pcb_workflow import board_config, operation_command, python_native, sha
 from pcb_timing import MeasuredSpan, measured_stage
 
 
-IGNORED = {'.git', '.gate', '.claude', '.bench', '__pycache__', 'node_modules', 'fab', 'render', 'renders', 'reports'}
+IGNORED = {'.git', '.gate', '.claude', '.bench', '__pycache__', 'node_modules', 'fab', 'render', 'renders', 'reports',
+           'target'}  # target: cargo build output (tools/router/core), not a source
 OBSERVATION_BACKENDS = {
     'parts': ('part_evidence.py', 'part_evidence'),
     'placement': ('engineering_constraints.py', 'placement_constraints'),
@@ -546,7 +547,8 @@ def run(folder):
     solver = operation == 'route' and manifest.get('router', 'explicit') == 'fastroute'
     engine = operation == 'route' and manifest.get('router') == 'engine'
     route_json = operation == 'route' and manifest.get('router') == 'route-json'
-    command = None if operation == 'repair' or solver or engine or route_json else operation_command(workspace, board, operation, spec, manifest.get('kind'))
+    iotroute = operation == 'route' and manifest.get('router') == 'iotroute'
+    command = None if operation == 'repair' or solver or engine or route_json or iotroute else operation_command(workspace, board, operation, spec, manifest.get('kind'))
     env = dict(os.environ, IOT_LAB=str(workspace))
     env.update(KICAD_PY=python_native(), KICAD_PYTHON=python_native())
     if engineering:
@@ -626,6 +628,28 @@ def run(folder):
             routed = Path(solver_report.get('board_file') or '')
             if not solver_report.get('board_file') or not routed.is_file():
                 raise ValueError('route.py returned success without its board_file')
+            shutil.copyfile(routed, native)
+    elif iotroute:
+        # tools/router/run.py from the snapshot (the same flow as route-json): it reads the candidate, writes only
+        # its own folder and gives its verdict from KiCad DRC with parity; then the normal gate runs on the copy.
+        from router.run import policy_args
+        solver_output = folder / 'operation/router'
+        solver_output.mkdir(parents=True, exist_ok=True)
+        out = solver_output / native.name
+        command = [python_native(), 'tools/router/run.py', board, str(out), '--pcb', str(native),
+                   '--json'] + policy_args(manifest.get('spec'), native)
+        code = execute(folder, 'route', command, workspace, env)
+        record = Path(str(out) + '.iotroute') / 'result.json'
+        solver_report = json.loads(record.read_text()) if record.is_file() else dict(
+            status='ERROR', cause='tools/router/run.py wrote no result.json')
+        if solver_report.get('status') == 'FAIL':
+            solver_report['cause'] = 'iotroute DRC not clean: errors %s unconnected %s parity %s' % (
+                solver_report.get('drc_errors'), solver_report.get('unconnected'), solver_report.get('parity'))
+        lean.atomic_json(folder / 'operation/router-summary.json', solver_report)
+        if not code:
+            routed = Path(solver_report.get('board_file') or '')
+            if solver_report.get('status') != 'PASS' or not routed.is_file():
+                raise ValueError('run.py returned success without a PASS record and its board_file')
             shutil.copyfile(routed, native)
     else:
         code = execute(folder, operation, command, workspace, env)

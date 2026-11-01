@@ -201,10 +201,12 @@ def parser():
                     'leaves GND pads open when the GND plane is on an inner layer')
     ap.add_argument('--snapshots', metavar='DIR', help='after the run: viewer.html, frames.json, timelapse '
                     '(PNG frames, run.gif, run.mp4) and one routed render per step in DIR (scratch, not committed)')
-    ap.add_argument('--router', choices=['freerouting', 'fastroute'], default='fastroute',
+    ap.add_argument('--router', choices=['freerouting', 'fastroute', 'iotroute'], default='fastroute',
                     help='fastroute: tools/fastroute_job.py on this computer (default). freerouting: 2.1.0 on Hetzner '
-                    '(its timed-out runs lost most of the result, 2026-10-03; kept for old benchmarks only)')
-    ap.add_argument('--passes', type=int, default=40, help='router passes per step (fastroute)')
+                    '(its timed-out runs lost most of the result, 2026-10-03; kept for old benchmarks only). '
+                    'iotroute: tools/router/run.py on this computer; step score = DRC errors + unconnected + parity '
+                    '+ board gate (placer/iotroute_step.py), never the router claim')
+    ap.add_argument('--passes', type=int, default=40, help='router passes per step (fastroute; iotroute --iters)')
     ap.add_argument('--diagnostic-budget', type=float, default=None,
                     help='seconds reserved for virtual diagnostics after real-outline failures')
     ap.add_argument('--optimizer', choices=['always', 'off', 'if-routed'], default='always')
@@ -420,6 +422,10 @@ def main(argv=None):
         return out
 
     routing_attempts = {}
+    if a.router == 'iotroute':
+        from placer import iotroute_step
+        iotroute_board = iotroute_step.board_id(a.board_dir)
+        iotroute_gate = iotroute_step.GateWorkspace(a.outdir, iotroute_board)
 
     def route(path, n):
         from placer.compact_cli import route_handoff
@@ -455,6 +461,11 @@ def main(argv=None):
         b = os.path.dirname(path)
         ins = [os.path.join(b, name + ext) for ext in ('.kicad_pcb', '.kicad_pro', '.kicad_dru')
                if os.path.exists(os.path.join(b, name + ext))]
+
+        if a.router == 'iotroute':
+            # Plain counts, as the Freerouting path: a failed step bisects the halo, it does not stop the loop.
+            return iotroute_step.route_step(path, d, iotroute_board, iotroute_gate, a.passes,
+                                            shlex.split(a.route_args), run_stage)
 
         if a.router == 'fastroute':
             # Fastroute runs here (many cores, user rule 2026-10-03); it is deterministic, so one run per step.
