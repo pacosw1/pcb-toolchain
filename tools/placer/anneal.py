@@ -40,7 +40,8 @@ def params_all(params):
 
 
 EPS_N = 1e-9
-SOFT = (('w_wl', 'hpwl'), ('w_cong', 'cong'), ('w_via', 'via'), ('w_x', 'crossing'), ('w_row', 'row'))
+SOFT = (('w_wl', 'hpwl'), ('w_cong', 'cong'), ('w_via', 'via'), ('w_x', 'crossing'), ('w_row', 'row'),
+        ('w_esc', 'escape'))
 
 
 def normalized(p, comp):
