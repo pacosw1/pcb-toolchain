@@ -629,6 +629,9 @@ struct Ctx<'a> {
     rcache: Vec<u8>,
     /// via grid sites banned for the net being routed (its return via could not be placed there)
     ban: Vec<usize>,
+    /// pad-entry neck zones of the net being routed (v6 fix 4): (layer mask, pad, zone radius from the pad edge, neck
+    /// half width). Outside them a track keeps its full width.
+    neck: Vec<(u8, Geo, f64, f64)>,
 }
 
 /// Exact clearance audit of all routed copper at the end of an iteration (the PathFinder "overuse").
@@ -651,6 +654,32 @@ fn code(k: i32) -> u8 {
 }
 
 impl<'a> Ctx<'a> {
+    /// Half width of a track of the net being routed at (x, y) on layer l: the neck half width inside a pad-entry zone
+    /// (v6 fix 4), else hw.
+    fn hw_at(&self, l: usize, x: f64, y: f64, hw: f64) -> f64 {
+        let mut h = hw;
+        for &(lm, g, zone, nh) in &self.neck {
+            if nh < h && lm & (1 << l) != 0 && g.dist(x, y) <= zone {
+                h = nh;
+            }
+        }
+        h
+    }
+    /// Pad-entry neck zones for `net` at half width hw (v6 fix 4: no power neckdown). A pad narrower than the track
+    /// gets a neck of the pad's narrower side (never below the net's current width min_w) for the length the pad
+    /// geometry needs: up to hw + clearance (+ one pitch for the grid) from the pad edge, where a full-width track no
+    /// longer meets the neighbours of a pad row.
+    fn set_neck(&mut self, net: usize, hw: f64) {
+        self.neck.clear();
+        let (clr, floor) = (self.bd.nets[net].clr, self.bd.nets[net].min_w / 2.0);
+        for s in self.bd.shapes.iter().filter(|s| s.alive && s.net == net as i32 && s.kind == Kind::Pad && s.owner < 0) {
+            let (a, b, c, d) = s.geo.bbox();
+            let nh = ((c - a).min(d - b) / 2.0).max(floor);
+            if nh < hw - 1e-9 {
+                self.neck.push((s.layers, s.geo, hw + clr + self.gr.p, nh));
+            }
+        }
+    }
     /// None: blocked; Some(k): k soft conflicts.
     fn cost(&mut self, net: usize, i: usize, hw: f64) -> Option<u32> {
         let mut c = self.gr.cache[i];
@@ -658,6 +687,7 @@ impl<'a> Ctx<'a> {
             let (r, iy, ix) = self.gr.cell(i);
             let (x, y) = self.gr.xy(ix, iy);
             let l = self.bd.routable[r];
+            let hw = self.hw_at(l, x, y, hw);
             let (clr, pf) = (self.bd.nets[net].clr, self.bd.pflags(net));
             let pc = self.o.plane_clr;
             let fixed = match self.memo_slot(0, (hw.to_bits(), clr.to_bits(), pf as u64)) {
@@ -684,6 +714,7 @@ impl<'a> Ctx<'a> {
             let (x, y) = self.gr.xy(ix, iy);
             let (x, y) = (x + self.gr.p / 2.0, y + self.gr.p / 2.0);
             let l = self.bd.routable[r];
+            let hw = self.hw_at(l, x, y, hw);
             let (clr, pf) = (self.bd.nets[net].clr, self.bd.pflags(net));
             let pc = self.o.plane_clr;
             let fixed = match self.memo_slot(1, (hw.to_bits(), clr.to_bits(), pf as u64)) {
@@ -1286,7 +1317,8 @@ impl<'a> Ctx<'a> {
         let k = (len / (self.gr.p * 0.5)).ceil().max(1.0) as usize;
         (0..=k).all(|t| {
             let f = t as f64 / k as f64;
-            self.bd.track_ok(net, l, a.0 + (b.0 - a.0) * f, a.1 + (b.1 - a.1) * f, hw, self.o.plane_clr)
+            let (x, y) = (a.0 + (b.0 - a.0) * f, a.1 + (b.1 - a.1) * f);
+            self.bd.track_ok(net, l, x, y, self.hw_at(l, x, y, hw), self.o.plane_clr)
         })
     }
 
@@ -1303,8 +1335,8 @@ impl<'a> Ctx<'a> {
     /// Cell path -> (tracks, vias). Greedy string pulling per layer run, octilinear (v6): a pull from point i to point k
     /// is a 0/45/90 elbow (straight + 45-degree leg) whose legs are conflict-free; the grid steps (8 directions) are the
     /// fallback. Collinear neighbours are merged. Every segment is at 0, 45 or 90 degrees.
-    fn geometry(&self, net: usize, path: &[usize], hw: f64) -> (Vec<(usize, (f64, f64), (f64, f64))>, Vec<(f64, f64)>) {
-        let mut tracks: Vec<(usize, (f64, f64), (f64, f64))> = Vec::new();
+    fn geometry(&self, net: usize, path: &[usize], hw: f64) -> (Vec<(usize, (f64, f64), (f64, f64), f64)>, Vec<(f64, f64)>) {
+        let mut tracks: Vec<(usize, (f64, f64), (f64, f64), f64)> = Vec::new();
         let mut vias = Vec::new();
         let mut runs: Vec<(usize, Vec<(f64, f64)>)> = Vec::new();
         for &c in path {
@@ -1386,8 +1418,32 @@ impl<'a> Ctx<'a> {
                 }
                 i = j;
             }
+            // widths: a segment is split where it enters or leaves a pad-entry neck zone; the narrow piece reaches to
+            // the first full-width sample on each side (a sample checked at full width is legal at the neck width)
             for w in poly.windows(2) {
-                tracks.push((l, w[0], w[1]));
+                let (a, b) = (w[0], w[1]);
+                let len = ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
+                let k = (len / (self.gr.p * 0.5)).ceil().max(1.0) as usize;
+                let at = |t: usize| { let f = t as f64 / k as f64; (a.0 + (b.0 - a.0) * f, a.1 + (b.1 - a.1) * f) };
+                let hs: Vec<f64> = (0..=k).map(|t| { let (x, y) = at(t); self.hw_at(l, x, y, hw) }).collect();
+                let mut t0 = 0;
+                while t0 < k {
+                    let narrow = hs[t0] < hw - 1e-9 || hs[t0 + 1] < hw - 1e-9;
+                    let mut t1 = t0 + 1;
+                    if narrow {
+                        while t1 < k && hs[t1] < hw - 1e-9 {
+                            t1 += 1;
+                        }
+                        let h = hs[t0..=t1].iter().cloned().fold(hw, f64::min);
+                        tracks.push((l, at(t0), at(t1), h));
+                    } else {
+                        while t1 < k && hs[t1 + 1] >= hw - 1e-9 {
+                            t1 += 1;
+                        }
+                        tracks.push((l, at(t0), at(t1), hw));
+                    }
+                    t0 = t1;
+                }
             }
         }
         (tracks, vias)
@@ -1684,6 +1740,12 @@ fn reserve_spokes(bd: &mut Board, model: &Value, lid: &dyn Fn(&str) -> Option<us
 /// signal net conflicts with it, the whole fan-out of that plane net is ripped up and placed again at the present
 /// costs (it is not a hard wall that can enclose pins).
 fn fanout_net(ctx: &mut Ctx, net: usize) -> NetResult {
+    let r = fanout_net_inner(ctx, net);
+    ctx.neck.clear();
+    r
+}
+
+fn fanout_net_inner(ctx: &mut Ctx, net: usize) -> NetResult {
     for s in ctx.bd.shapes.iter_mut() {
         if s.owner == net as i32 {
             s.alive = false;
@@ -1711,10 +1773,15 @@ fn fanout_net(ctx: &mut Ctx, net: usize) -> NetResult {
         let mut limited = false;
         // a pad of a power chain (current-paths.json) keeps the width its current needs on its fan-out track
         let need = ctx.bd.pad_need.iter().filter(|q| (q.0 - cx).abs() < 1e-6 && (q.1 - cy).abs() < 1e-6).map(|q| q.2).fold(0.0, f64::max);
-        let mut ws = vec![ctx.bd.nets[net].width.min(0.3).min(pw.min(ph)).max(need), 0.15f64.max(need)];
+        // v6 fix 4: the class width (raised to the pad's current need) with a neck only at the pad entry; narrower
+        // widths only when the full width has no path past fixed copper
+        let _ = (pw, ph);
+        let mut ws = vec![ctx.bd.nets[net].width.max(need), 0.3f64.max(need), 0.15f64.max(need)];
+        ws.retain(|&w| w <= ctx.bd.nets[net].width.max(need) + 1e-9);
         ws.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
         for w in ws {
             let hw = w / 2.0;
+            ctx.set_neck(net, hw);
             ctx.gr.reset_cache();
             let src = ctx.cells_of(&pad, pad.layers);
             ctx.gr.tgen += 1;
@@ -1772,7 +1839,7 @@ fn fanout_net(ctx: &mut Ctx, net: usize) -> NetResult {
                 k += ctx.vcost(net, ix, iy).unwrap_or(0);
                 out.conflicts += k;
                 let (tr, _) = ctx.geometry(net, &path, hw);
-                add_copper(ctx, net, net as i32, &tr, &[], hw);
+                add_copper(ctx, net, net as i32, &tr, &[]);
                 ctx.bd.add(Shape { net: net as i32, geo: Geo::Circ(vx, vy, n_.via_d / 2.0), clr: n_.clr, layers: all, drill: n_.via_drill, kind: Kind::Via, owner: net as i32, alive: true });
                 done = true;
                 break;
@@ -1792,9 +1859,9 @@ fn fanout_net(ctx: &mut Ctx, net: usize) -> NetResult {
     out
 }
 
-fn add_copper(ctx: &mut Ctx, net: usize, owner: i32, tracks: &[(usize, (f64, f64), (f64, f64))], vias: &[(f64, f64)], hw: f64) {
+fn add_copper(ctx: &mut Ctx, net: usize, owner: i32, tracks: &[(usize, (f64, f64), (f64, f64), f64)], vias: &[(f64, f64)]) {
     let clr = ctx.bd.nets[net].clr;
-    for &(l, a, b) in tracks {
+    for &(l, a, b, hw) in tracks {
         if (a.0 - b.0).abs() < 1e-9 && (a.1 - b.1).abs() < 1e-9 {
             continue;
         }
@@ -1815,6 +1882,12 @@ struct NetResult {
 
 /// Rip up the copper this net routed before, then join its components again against the present congestion.
 fn route_net(ctx: &mut Ctx, net: usize) -> NetResult {
+    let r = route_net_inner(ctx, net);
+    ctx.neck.clear(); // the neck zones belong to this net only
+    r
+}
+
+fn route_net_inner(ctx: &mut Ctx, net: usize) -> NetResult {
     for s in ctx.bd.shapes.iter_mut() {
         if s.owner == net as i32 {
             s.alive = false;
@@ -1891,6 +1964,7 @@ fn route_net(ctx: &mut Ctx, net: usize) -> NetResult {
                 continue;
             }
             let hw = w / 2.0;
+            ctx.set_neck(net, hw);
             ctx.gr.reset_cache();
             let mut src = Vec::new();
             for &s in &tree {
@@ -1944,12 +2018,10 @@ fn route_net(ctx: &mut Ctx, net: usize) -> NetResult {
             }
             if let Ok(path) = found {
                 let k: u32 = path.iter().map(|&c| ctx.cost(net, c, hw).unwrap_or(0)).sum();
-                if best.as_ref().map(|b| k < b.0).unwrap_or(true) {
-                    best = Some((k, w, path));
-                }
-                if k == 0 {
-                    break;
-                }
+                // v6 fix 4: the widest width with a path, conflicts or not (the negotiation moves the other nets); v5
+                // took a narrower width whenever it had fewer conflicts (133 power segments necked to 0.3 mm on M2)
+                best = Some((k, w, path));
+                break;
             }
         }
         if best.is_none() && over_budget && !limit {
@@ -1999,12 +2071,13 @@ fn route_net(ctx: &mut Ctx, net: usize) -> NetResult {
             break;
         };
         let hw = w / 2.0;
+        ctx.set_neck(net, hw);
         let last = *path.last().unwrap();
         let (_, iy, ix) = ctx.gr.cell(last);
         let (gx, gy) = ctx.gr.xy(ix, iy);
         let (tr, vs) = ctx.geometry(net, &path, hw);
         let first_new = ctx.bd.shapes.len();
-        add_copper(ctx, net, net as i32, &tr, &vs, hw);
+        add_copper(ctx, net, net as i32, &tr, &vs);
         // RP-001 (DESIGN 4): every new layer change gets a GND return via within --return-r; no site = the
         // transition is rejected and the join is searched again
         let mut rejected = Vec::new();
@@ -2337,7 +2410,7 @@ fn main() {
     memo_w.sort_by(|a, b| a.partial_cmp(b).unwrap());
     memo_w.dedup();
     let mut ctx = Ctx { bd: &mut bd, gr, o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nets_n], memo: Vec::new(), memo_w,
-                        rcache: vec![0; nx * ny], ban: Vec::new() };
+                        rcache: vec![0; nx * ny], ban: Vec::new(), neck: Vec::new() };
     let fan_fail: Vec<Fail> = Vec::new();
     let nn = ctx.bd.nets.len();
     let mut todo: Vec<usize> = order.clone();
@@ -2800,7 +2873,7 @@ mod tests {
         let gr = Grid { x0: 0.0, y0: 0.0, p: 0.05, nx, ny, nr, cache: vec![0; tot], vcache: vec![0; nx * ny], dcache: vec![0; tot], hist: vec![0.0; tot], vhist: vec![0.0; nx * ny], pres: 0.5,
                         g: vec![0.0; tot], from: vec![0; tot], seen: vec![0; tot], closed: vec![0; tot], tgt: vec![0; tot], sgen: 0, tgen: 0 };
         let nn = bd.nets.len();
-        let mut ctx = Ctx { bd: &mut bd, gr, o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w: vec![0.15], rcache: vec![0; nx * ny], ban: Vec::new() };
+        let mut ctx = Ctx { bd: &mut bd, gr, o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w: vec![0.15], rcache: vec![0; nx * ny], ban: Vec::new(), neck: Vec::new() };
         let a = ctx.audit(0.3);
         assert_eq!(a.pairs, 1, "one crossing = one pair");
         assert_eq!(a.hard, 0);
@@ -2820,7 +2893,7 @@ mod tests {
         let gr = Grid { x0: 0.0, y0: 0.0, p: 0.05, nx, ny, nr, cache: vec![0; tot], vcache: vec![0; nx * ny], dcache: vec![0; tot], hist: vec![0.0; tot], vhist: vec![0.0; nx * ny], pres: 0.5,
                         g: vec![0.0; tot], from: vec![0; tot], seen: vec![0; tot], closed: vec![0; tot], tgt: vec![0; tot], sgen: 0, tgen: 0 };
         let nn = bd.nets.len();
-        let mut ctx = Ctx { bd: &mut bd, gr, o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w: vec![0.15], rcache: vec![0; nx * ny], ban: Vec::new() };
+        let mut ctx = Ctx { bd: &mut bd, gr, o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w: vec![0.15], rcache: vec![0; nx * ny], ban: Vec::new(), neck: Vec::new() };
         let base = ctx.audit(0.0).pairs;
         let mut seed: u64 = 777;
         let mut rnd = || {

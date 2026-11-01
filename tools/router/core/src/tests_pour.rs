@@ -56,7 +56,7 @@ fn walled_in_pour_piece_is_found_and_resolved() {
     let nn = bd.nets.len();
     let memo_w = bd.nets.iter().flat_map(|n| net_widths(n)).collect();
     let mut ctx = Ctx { bd: &mut bd, gr: grid(), o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w,
-                        rcache: vec![0; 201 * 201], ban: Vec::new() };
+                        rcache: vec![0; 201 * 201], ban: Vec::new(), neck: Vec::new() };
     assert!(route_net(&mut ctx, 0).hard_fail.is_none());
     // detection: the straight route of A closes the pocket; 1 track spoke, 4 pour spokes into the island (KiCad does
     // not fold the island spokes back in when the pad has another spoke)

@@ -32,7 +32,7 @@ fn ctx_of<'a>(bd: &'a mut Board, o: &'a Opts) -> Ctx<'a> {
     let nn = bd.nets.len();
     let memo_w = bd.nets.iter().flat_map(|n| net_widths(n)).collect();
     Ctx { bd, gr: grid(), o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w, rcache: vec![0; 201 * 201],
-          ban: Vec::new() }
+          ban: Vec::new(), neck: Vec::new() }
 }
 
 pub(crate) fn pad(net: i32, x: f64, y: f64, layers: u8) -> Shape {
@@ -67,4 +67,41 @@ fn every_segment_is_octilinear() {
     }
     let au = ctx.audit(0.0);
     assert_eq!((au.pairs, au.hard), (0, 0), "the copper stays legal");
+}
+
+/// v6 fix 4: a power net keeps its class width end to end and necks only at a pad entry where the pad is narrower,
+/// for at most hw + clearance (+ one pitch) from the pad edge. Net P (power, 0.5 mm, current width 0.2 mm) joins
+/// P.1 (0.3 mm wide pad at (1.5, 5)) to P.2 (1 mm pad at (8.5, 5)). Routed copper of net B walls x = 5 except a gap
+/// of 0.9 mm between track centres: 0.3 mm passes with no conflict, 0.5 mm only with a conflict. v5 took 0.3 mm (fewer
+/// conflicts); v6 keeps 0.5 mm and leaves the conflict to the negotiation.
+#[test]
+fn power_net_keeps_its_width_and_necks_only_at_the_pad() {
+    let o = opts();
+    let p = Net { power: true, width: 0.5, min_w: 0.2, ..n("P", false, 0b101) };
+    let mut bd = empty_board(vec![p, n("B", false, 0b101), Net { via_d: 0.45, via_drill: 0.2, ..n("GND", true, 0b101) }]);
+    bd.add(Shape { net: 0, geo: Geo::Rect(1.35, 4.5, 1.65, 5.5), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true });
+    bd.add(Shape { net: 0, geo: Geo::Rect(8.0, 4.5, 9.0, 5.5), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true });
+    for (y0, y1) in [(0.3, 4.55), (5.45, 9.7)] {
+        bd.add(Shape { net: 1, geo: Geo::Seg(5.0, y0, 5.0, y1, 0.075), clr: 0.15, layers: 0b101, drill: 0.0, kind: Kind::Track, owner: 1, alive: true });
+    }
+    let mut ctx = ctx_of(&mut bd, &o);
+    ctx.bd.nets[0].layers = 0b001; // one layer: no way around by a via
+    let r = route_net(&mut ctx, 0);
+    assert!(r.hard_fail.is_none(), "{:?}", r.hard_fail);
+    let pad1 = Geo::Rect(1.35, 4.5, 1.65, 5.5);
+    let zone = 0.25 + 0.15 + 0.05;
+    let segs: Vec<(f64, f64, f64, f64, f64)> = ctx.bd.shapes.iter().filter(|s| s.alive && s.owner == 0 && s.kind == Kind::Track)
+        .filter_map(|s| if let Geo::Seg(ax, ay, bx, by, hw) = s.geo { Some((ax, ay, bx, by, hw)) } else { None }).collect();
+    let mut neck_len = 0.0;
+    for &(ax, ay, bx, by, hw) in &segs {
+        if (hw - 0.25).abs() < 1e-9 {
+            continue;
+        }
+        // a narrow piece lies in the neck zone of P.1 (its end may be the first full-width sample, half a pitch out)
+        assert!((hw - 0.15).abs() < 1e-9, "neck width = the pad's narrower side: {segs:?}");
+        assert!(pad1.dist(ax, ay) <= zone + 0.026 && pad1.dist(bx, by) <= zone + 0.026, "neck outside the pad entry: {segs:?}");
+        neck_len += ((bx - ax).powi(2) + (by - ay).powi(2)).sqrt();
+    }
+    assert!(neck_len > 0.0 && neck_len <= zone + 0.75 + 0.026, "neck length {neck_len}: {segs:?}");
+    assert!(segs.iter().any(|s| (s.4 - 0.25).abs() < 1e-9 && s.0.min(s.2) < 5.0 && s.0.max(s.2) > 5.0), "full width through the wall gap: {segs:?}");
 }
