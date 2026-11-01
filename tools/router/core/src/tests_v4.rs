@@ -39,7 +39,7 @@ fn ctx_of<'a>(bd: &'a mut Board, o: &'a Opts) -> Ctx<'a> {
     let nn = bd.nets.len();
     let memo_w = bd.nets.iter().flat_map(|n| net_widths(n)).collect();
     Ctx { bd, gr: grid(), o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w, rcache: vec![0; 201 * 201],
-          ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false }
+          ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false, ret_soft: true }
 }
 
 fn vias_of(ctx: &Ctx, net: usize) -> usize {

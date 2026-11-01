@@ -1,4 +1,4 @@
-//! Unit checks of the v7 fixes (cargo test --release): standoff history, fair rip-up order, DRU length bound.
+//! Unit checks of the v7 fixes (cargo test --release): standoff history, DRU length bound, third-net repair, strict returns.
 use super::*;
 use super::tests_v6::{opts, pad};
 
@@ -30,7 +30,7 @@ fn ctx_of<'a>(bd: &'a mut Board, o: &'a Opts) -> Ctx<'a> {
     let g = grid();
     let k = g.nx * g.ny;
     Ctx { bd, gr: g, o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w, rcache: vec![0; k],
-          ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false }
+          ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false, ret_soft: true }
 }
 
 fn track(net: i32, a: (f64, f64), b: (f64, f64), owner: i32) -> Shape {
@@ -107,4 +107,51 @@ fn length_limit_bounds_the_path() {
             assert!(len > 17.0, "without the limit the path goes round B: {len:.2}");
         }
     }
+}
+
+/// v7 fix 4: third-net repair in the end step. A fixed wall (net W) at x = 10 leaves one F.Cu gap at y = 5 (one track
+/// fits). Routed B (F.Cu and B.Cu) goes through the gap; A (F.Cu only) has no other way, so A has no strict route.
+/// The repair removes B, routes A through the gap, and B goes under the wall on B.Cu.
+#[test]
+fn third_net_repair_moves_the_net_that_blocks_the_only_way() {
+    let o = opts();
+    let mut bd = board();
+    bd.nets.push(n("W", false));
+    bd.nets[0].layers = 0b001;
+    for (y0, y1) in [(0.0, 4.6), (5.4, 10.0)] {
+        bd.add(Shape { net: 3, geo: Geo::Seg(10.0, y0, 10.0, y1, 0.1), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Track, owner: -1, alive: true });
+    }
+    bd.add(pad(0, 2.0, 5.0, 1));
+    bd.add(pad(0, 18.0, 5.0, 1));
+    bd.add(pad(1, 8.0, 3.0, 1));
+    bd.add(pad(1, 12.0, 3.0, 1));
+    for (a, b) in [((8.0, 3.0), (8.0, 5.0)), ((8.0, 5.0), (12.0, 5.0)), ((12.0, 5.0), (12.0, 3.0))] {
+        bd.add(track(1, a, b, 1));
+    }
+    let mut ctx = ctx_of(&mut bd, &o);
+    ctx.strict = true;
+    assert!(route_net(&mut ctx, 0).hard_fail.is_some(), "A has no strict route while B holds the gap");
+    ctx.strict = false;
+    let order = vec![0, 1, 2, 3];
+    assert_eq!(third_net_repair(&mut ctx, 0, &order), Some(1));
+    assert!(ctx.bd.shapes.iter().any(|s| s.alive && s.owner == 0 && s.kind == Kind::Track), "A is routed");
+    assert!(ctx.bd.shapes.iter().any(|s| s.alive && s.owner == 1 && s.net == 1 && s.kind == Kind::Via), "B changed layer");
+    assert_eq!(ctx.audit(0.0).pairs, 0);
+    assert!(ctx.ret_missing().is_empty());
+}
+
+/// v7 fix 5: in route_net a return via must be conflict-free (H7-CORE a2 diag: the return vias of /ETH_TXD0 and
+/// /LIMIT0_P hole to hole, and a /PHY_LED2 return on the only escape of /PHY_LED1; the owners had conflict-free
+/// routes). Signal via of A at (10, 5); routed copper of B covers every GND site within the 2 mm return radius.
+/// v6 (and ret_soft) took a conflicting site; v7 rejects the layer change.
+#[test]
+fn return_via_must_be_conflict_free() {
+    let o = opts();
+    let mut bd = board();
+    bd.add(Shape { net: 1, geo: Geo::Seg(7.0, 5.0, 13.0, 5.0, 2.5), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Track, owner: 1, alive: true });
+    let mut ctx = ctx_of(&mut bd, &o);
+    ctx.ret_soft = false;
+    assert!(!ctx.place_return(0, 10.0, 5.0, &[]), "no conflict-free return site: the layer change is rejected");
+    ctx.ret_soft = true;
+    assert!(ctx.place_return(0, 10.0, 5.0, &[]), "ret_soft (v6 rule): a conflicting site is taken");
 }
