@@ -9,7 +9,7 @@ fn n(name: &str, plane: bool, layers: u8) -> Net {
 
 pub(crate) fn opts() -> Opts {
     Opts { pitch: 0.05, passes: 1, plane_clr: 0.25, hth: 0.45, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2, pres_mult: 1.5, pres_max: 1000.0,
-           hist: 0.3, max_time: 0.0, door_hist: 2.0 }
+           hist: 0.3, max_time: 0.0, door_hist: 2.0, via_cost: DEF_VIA_COST, ret_cost: DEF_RET_COST }
 }
 
 fn grid() -> Grid {
@@ -25,7 +25,7 @@ fn empty_board(nets: Vec<Net>) -> Board {
             idx: Index::new(-1.0, -1.0, 11.0, 11.0, 3), sidx: Index::new(-1.0, -1.0, 11.0, 11.0, 3), maxc: 0.15,
             edge: (0.0, 0.0, 10.0, 10.0), edge_clr: 0.3, gnd: 2, plane_clr: 0.25, eps: EPS, hole_clr: 0.28,
             spoke_notes: Vec::new(), attach: Vec::new(), adj: 0b101, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(),
-            circ: std::collections::HashMap::new(), vip: Vec::new() }
+            circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0 }
 }
 
 fn ctx_of<'a>(bd: &'a mut Board, o: &'a Opts) -> Ctx<'a> {
@@ -104,4 +104,89 @@ fn power_net_keeps_its_width_and_necks_only_at_the_pad() {
     }
     assert!(neck_len > 0.0 && neck_len <= zone + 0.75 + 0.026, "neck length {neck_len}: {segs:?}");
     assert!(segs.iter().any(|s| (s.4 - 0.25).abs() < 1e-9 && s.0.min(s.2) < 5.0 && s.0.max(s.2) > 5.0), "full width through the wall gap: {segs:?}");
+}
+
+/// Board of the via tests: a fixed 0.5 mm track of net W cuts F.Cu at x = 5 from y = -1 to y_end. Nets A and C have
+/// pads on F.Cu left and right of it; GND is index 2.
+fn wall(y_end: f64) -> Board {
+    let mut bd = empty_board(vec![n("A", false, 0b101), n("C", false, 0b101), Net { via_d: 0.45, via_drill: 0.2, ..n("GND", true, 0b101) },
+                                  n("W", false, 0b101)]);
+    bd.add(Shape { net: 3, geo: Geo::Seg(5.0, -1.0, 5.0, y_end, 0.25), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Track, owner: -1, alive: true });
+    bd
+}
+
+fn vias(ctx: &Ctx, net: i32, owner: Option<i32>) -> Vec<(f64, f64)> {
+    ctx.bd.shapes.iter().filter(|s| s.alive && s.kind == Kind::Via && s.net == net && owner.map_or(true, |o| s.owner == o))
+        .filter_map(|s| if let Geo::Circ(x, y, _) = s.geo { Some((x, y)) } else { None }).collect()
+}
+
+/// v6 fix 3a: a return via serves the signal vias of several nets, and it stays when the net that placed it is
+/// ripped up (v5 removed it with that net; the other net then had a via with no return). A and C cross the wall side
+/// by side (pads 0.8 mm apart): C uses the returns of A; A is routed again; every signal via keeps a return and the
+/// returns are fewer than the signal vias.
+#[test]
+fn return_vias_are_shared_and_survive_a_rip_up() {
+    let mut o = opts();
+    o.return_r = 1.0;
+    o.ret_cost = 3.0; // a new return costs more: C changes layer next to the returns of A
+    let mut bd = wall(11.0);
+    for (net, y) in [(0, 3.0), (1, 3.8)] {
+        bd.add(pad(net, 2.0, y, 1));
+        bd.add(pad(net, 8.0, y, 1));
+    }
+    let mut ctx = ctx_of(&mut bd, &o);
+    for net in [0, 1] {
+        let r = route_net(&mut ctx, net);
+        assert!(r.hard_fail.is_none(), "{:?}", r.hard_fail);
+    }
+    assert!(vias(&ctx, 2, Some(1)).is_empty() && !vias(&ctx, 2, Some(0)).is_empty(), "C uses the returns that A placed: {:?} {:?} {:?}",
+            vias(&ctx, 0, None), vias(&ctx, 1, None), vias(&ctx, 2, None));
+    // rip-up of A as the negotiation does it (route_net kills the copper the net owns)
+    release_returns(&mut ctx, 0);
+    for s in ctx.bd.shapes.iter_mut().filter(|s| s.owner == 0) {
+        s.alive = false;
+    }
+    assert!(ctx.ret_missing().is_empty(), "C keeps its returns after A is ripped up: {:?}", ctx.ret_missing());
+    let r = route_net(&mut ctx, 0);
+    assert!(r.hard_fail.is_none(), "{:?}", r.hard_fail);
+    assert!(ctx.ret_missing().is_empty(), "every signal via keeps a return: {:?}", ctx.ret_missing());
+    let sig = vias(&ctx, 0, None).len() + vias(&ctx, 1, None).len();
+    let pruned = prune_returns(&mut ctx);
+    let ret = vias(&ctx, 2, None).len();
+    assert!(ctx.ret_missing().is_empty(), "prune keeps a return for every via");
+    assert_eq!(sig, 4);
+    assert!(ret < sig, "shared: {ret} returns for {sig} signal vias (pruned {pruned})");
+}
+
+/// v6 fix 3b: the via cost is a parameter: a net takes a one-layer detour when two layer changes cost more. Wall to
+/// y = 7.5 (end cap 7.75; the join box ends 5 mm past the pads, y = 8.2): the detour from (2, 3) to (8, 3) round the
+/// wall end is about 12.5 mm, the route with 2 vias about 5.5 mm + 2 vias.
+#[test]
+fn via_cost_sets_when_a_layer_change_pays_off() {
+    for (cost, want) in [(3.0, 2usize), (6.0, 0)] {
+        let mut o = opts();
+        o.via_cost = cost;
+        let mut bd = wall(7.5);
+        bd.add(pad(0, 2.0, 3.0, 1));
+        bd.add(pad(0, 8.0, 3.0, 1));
+        let mut ctx = ctx_of(&mut bd, &o);
+        assert!(route_net(&mut ctx, 0).hard_fail.is_none());
+        let segs: Vec<String> = ctx.bd.shapes.iter().filter(|s| s.alive && s.owner >= 0).map(|s| format!("{} {:?}", s.net, s.geo)).collect();
+        assert_eq!(vias(&ctx, 0, Some(0)).len(), want, "via cost {cost}: {segs:?}");
+    }
+}
+
+/// v6 fix 3c: two drilled items of different signal nets keep the antipad web (Board::web = 2 x plane zone clearance
+/// + zone min_thickness) between their copper; a GND (plane net) via is not limited by it.
+#[test]
+fn signal_vias_keep_the_plane_antipad_web() {
+    let mut bd = wall(-0.5);
+    bd.web = 2.0 * 0.2 + 0.2;
+    bd.add(Shape { net: 1, geo: Geo::Circ(5.0, 5.0, 0.3), clr: 0.15, layers: 0b111, drill: 0.3, kind: Kind::Via, owner: -1, alive: true });
+    // copper edge gap 0.25 mm at x = 5.85: legal for clearance and hole-to-hole, not for the web (0.6)
+    assert_eq!(bd.via_cost(0, 5.85, 5.0, 0.6, 0.3, 0.45, None), -1, "signal via inside the web");
+    assert_eq!(bd.via_cost(0, 6.25, 5.0, 0.6, 0.3, 0.45, None), 0, "edge gap 0.65 mm: outside the web");
+    assert_eq!(bd.via_cost(2, 5.85, 5.0, 0.6, 0.3, 0.45, None), 0, "a GND via is not limited by the web");
+    bd.web = 0.0;
+    assert_eq!(bd.via_cost(0, 5.85, 5.0, 0.6, 0.3, 0.45, None), 0, "web off: v5 rule");
 }
