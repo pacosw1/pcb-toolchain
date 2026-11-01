@@ -24,7 +24,7 @@ fn empty_board(nets: Vec<Net>) -> Board {
     Board { layer_names: vec!["F.Cu".into(), "In1.Cu".into(), "B.Cu".into()], routable: vec![0, 2], nets, shapes: Vec::new(),
             idx: Index::new(-1.0, -1.0, 11.0, 11.0, 3), sidx: Index::new(-1.0, -1.0, 11.0, 11.0, 3), maxc: 0.15,
             edge: (0.0, 0.0, 10.0, 10.0), edge_clr: 0.3, gnd: 2, plane_clr: 0.25, eps: EPS, hole_clr: 0.28,
-            spoke_notes: Vec::new(), attach: Vec::new(), adj: 0b101, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(),
+            spoke_notes: Vec::new(), attach: Vec::new(), spoke_sites: std::collections::HashSet::new(), adj: 0b101, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(),
             circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false }
 }
 
@@ -196,4 +196,45 @@ fn signal_vias_keep_the_plane_antipad_web() {
     assert_eq!(ctx.web_items(0, 5.85, 5.0), 1, "one foreign signal via inside the web");
     assert_eq!(ctx.web_items(0, 6.25, 5.0), 0);
     assert_eq!(ctx.web_items(1, 5.85, 5.0), 0, "own net");
+}
+
+/// v6 (coordinator item t1: committed compact NET-CORE, only pairs + crystal copper locked; main's router gave KiCad
+/// DRC starved_thermal U8.6 and /CH_DVDDK open). Crop of the RouteModel around U8 (fixtures/t1_u8.json).
+/// 1. The GND return of the locked USB1_DP via goes to the site with the most room, not into the 0.1 mm escape
+///    corridor of U8.9 /CH_DVDDK (v5: nearest site, the pad was walled in: "not reachable past fixed copper").
+/// 2. U8.6 (GND) is starved by fixed copper alone in the pour model; its forced fan-out is one straight segment to a
+///    via in the fill, a KiCad track spoke (v5: the via sat on the U8 exposed pad, no spoke).
+#[test]
+fn t1_u8_escape_and_track_spoke() {
+    let v: Value = serde_json::from_str(include_str!("fixtures/t1_u8.json")).unwrap();
+    let mut o = opts();
+    let (hole, hth, plane) = hole_rules(&v["model"]);
+    o.hth = hth.unwrap();
+    o.plane_clr = plane.unwrap();
+    let mut bd = load(&v["model"], hole.unwrap());
+    bd.plane_clr = o.plane_clr;
+    let (rd, rdr, _) = return_via(&bd, None);
+    o.ret_d = rd;
+    o.ret_drill = rdr;
+    o.return_r = v["model"]["return_rule"]["radius"].as_f64().unwrap_or(2.0);
+    fixed_returns(&mut bd, &o);
+    pre_attach(&mut bd, o.pitch); // without it U8.6 stays starved (checked)
+    assert!(bd.pours.iter().any(|p| p.pads.iter().any(|q| q.name == "U8.6")), "U8.6 is a pour pad of the crop");
+    let (e0, e1, e2, e3) = bd.edge;
+    let (nx, ny) = (((e2 - e0) / 0.05).ceil() as usize + 1, ((e3 - e1) / 0.05).ceil() as usize + 1);
+    let nr = bd.routable.len();
+    let tot = nx * ny * nr;
+    let gr = Grid { x0: e0, y0: e1, p: 0.05, nx, ny, nr, cache: vec![0; tot], vcache: vec![0; nx * ny], dcache: vec![0; tot], hist: vec![0.0; tot],
+                    vhist: vec![0.0; nx * ny], pres: 0.5, g: vec![0.0; tot], from: vec![0; tot], seen: vec![0; tot], closed: vec![0; tot], tgt: vec![0; tot], sgen: 0, tgen: 0 };
+    let nn = bd.nets.len();
+    let memo_w = bd.nets.iter().flat_map(|n| net_widths(n)).collect();
+    let net = |bd: &Board, s: &str| bd.nets.iter().position(|n| n.name == s).unwrap();
+    let (dvddk, gnd) = (net(&bd, "/CH_DVDDK"), net(&bd, "GND"));
+    let mut ctx = Ctx { bd: &mut bd, gr, o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w,
+                        rcache: vec![0; nx * ny], ban: Vec::new(), neck: Vec::new() };
+    let r = route_net(&mut ctx, dvddk);
+    assert!(r.hard_fail.is_none(), "/CH_DVDDK: {:?}", r.hard_fail);
+    fanout_net(&mut ctx, gnd);
+    let f: Vec<String> = pour::check(ctx.bd).into_iter().map(|f| f.pad).collect();
+    assert!(!f.contains(&"U8.6".to_string()), "U8.6 starved: {f:?}");
 }

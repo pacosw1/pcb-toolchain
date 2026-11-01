@@ -263,6 +263,9 @@ struct Board {
     spoke_notes: Vec<String>,
     /// SMD pads of a plane net that need their own fan-out track (it counts as one spoke): forced even when a via is near
     attach: Vec<(f64, f64)>,
+    /// via sites (x, y in um) of forced fan-outs that lie in the pour fill of the fixed copper (pre_attach): the via
+    /// of a forced fan-out must be one of them (its track is then a KiCad track spoke)
+    spoke_sites: std::collections::HashSet<(i64, i64)>,
     /// layers with an adjacent reference plane (model `adjacent`, si_planes): the plane rule of `pref` nets applies there
     adj: u8,
     /// pad centre -> width its power chain needs (model power_chains): the plane fan-out of that pad keeps it
@@ -1627,7 +1630,7 @@ fn load(model: &Value, hole_clr: f64) -> Board {
     // layers with an adjacent reference plane (reference-planes.json 'adjacent' via the model)
     let adj = model["adjacent"].as_object().map(|o| o.keys().filter_map(|k| lid(k)).fold(0u8, |m, l| m | (1 << l))).unwrap_or(0);
     let mut bd = Board { layer_names: cu.clone(), routable, nets, shapes: Vec::new(), idx, sidx, maxc, edge, edge_clr, gnd, plane_clr: DEF_PLANE_CLR, eps: EPS, hole_clr,
-                         spoke_notes: Vec::new(), attach: Vec::new(), adj, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false };
+                         spoke_notes: Vec::new(), attach: Vec::new(), spoke_sites: std::collections::HashSet::new(), adj, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false };
     // antipad web (v6 fix 3c): from the zones on the plane layers (their own clearance and min_thickness)
     for z in model["zones"].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
         if planes.iter().any(|p| Some(p.as_str()) == z["layer"].as_str()) {
@@ -1864,10 +1867,75 @@ fn fanout_net_inner(ctx: &mut Ctx, net: usize) -> NetResult {
             continue;
         }
         let (pw, ph) = match pad.geo { Geo::Rect(a, b, c, d) => (c - a, d - b), _ => (0.3, 0.3) };
+        let via_r = ctx.bd.nets[net].via_d / 2.0;
+        let relief = ctx.bd.pours.iter().filter(|p| p.net == net as i32).map(|p| p.gap + p.mt / 2.0).fold(0.0, f64::max);
+        let others: Vec<Geo> = if forced {
+            ctx.bd.shapes.iter().filter(|s| s.alive && s.net == net as i32 && s.kind == Kind::Pad && s.owner < 0 && s.geo.bbox() != pad.geo.bbox()
+                && s.geo.dist(cx, cy) < 3.0).map(|s| s.geo).collect()
+        } else { Vec::new() };
         let mut done = false;
         let mut limited = false;
         // a pad of a power chain (current-paths.json) keeps the width its current needs on its fan-out track
         let need = ctx.bd.pad_need.iter().filter(|q| (q.0 - cx).abs() < 1e-6 && (q.1 - cy).abs() < 1e-6).map(|q| q.2).fold(0.0, f64::max);
+        // v6 (t1, U8.6): a forced fan-out is one straight 0/45/90 segment from the pad centre to a via in the fill. KiCad
+        // counts a track spoke per segment that starts in the pad and ends in the fill; a pulled path or a neck split
+        // ended its first segment in the relief gap (no spoke). One width: the pad's narrower side (never below the
+        // current width), the pad-entry neck of fix 4 over the short stub.
+        if forced && !ctx.bd.spoke_sites.is_empty() {
+            let l = ctx.bd.routable.iter().cloned().find(|&l| pad.layers & (1 << l) != 0).unwrap_or(0);
+            let full = ctx.bd.nets[net].width.max(need) / 2.0;
+            let h0 = ((pw.min(ph)) / 2.0).max(need / 2.0).max(ctx.bd.nets[net].min_w / 2.0).min(full);
+            let (d, dr, hth) = (ctx.bd.nets[net].via_d, ctx.bd.nets[net].via_drill, ctx.o.hth);
+            let p = ctx.gr.p;
+            let mut best: Option<(f64, f64, f64)> = None;
+            let s2 = std::f64::consts::FRAC_1_SQRT_2;
+            for (dx, dy) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0), (s2, s2), (s2, -s2), (-s2, s2), (-s2, -s2)] {
+                let mut t = 0.35 + pw.max(ph) / 2.0;
+                while t <= 2.0 + pw.max(ph) / 2.0 {
+                    let (x, y) = (cx + dx * t, cy + dy * t);
+                    t += p;
+                    if pad.geo.dist(x, y) < 0.35 || others.iter().any(|g| g.dist(x, y) < via_r + relief) {
+                        continue;
+                    }
+                    let (gi, gj) = ctx.gr.at(x, y);
+                    let (gx, gy) = ctx.gr.xy(gi, gj);
+                    if !ctx.bd.spoke_sites.contains(&((gx * 1e3).round() as i64, (gy * 1e3).round() as i64)) {
+                        continue;
+                    }
+                    let kv = ctx.bd.via_cost(net, x, y, d, dr, hth, None);
+                    if kv < 0 || (ctx.strict && kv > 0) {
+                        continue;
+                    }
+                    let len = (x - cx).hypot(y - cy);
+                    let n = (len / (p * 0.5)).ceil().max(1.0) as usize;
+                    let mut kt = 0;
+                    let mut ok = true;
+                    for q in 0..=n {
+                        let f = q as f64 / n as f64;
+                        let c = ctx.bd.track_cost(net, l, cx + (x - cx) * f, cy + (y - cy) * f, h0, ctx.o.plane_clr, None);
+                        if c < 0 || (ctx.strict && c > 0) {
+                            ok = false;
+                            break;
+                        }
+                        kt += c;
+                    }
+                    if !ok {
+                        continue;
+                    }
+                    let score = len * (1.0 + pres * (kv + kt) as f64);
+                    if best.map(|b| score < b.0).unwrap_or(true) {
+                        best = Some((score, x, y));
+                    }
+                    break; // the nearest legal site on this ray
+                }
+            }
+            if let Some((_, x, y)) = best {
+                add_copper(ctx, net, net as i32, &[(l, (cx, cy), (x, y), h0)], &[]);
+                let n_ = ctx.bd.nets[net].clone();
+                ctx.bd.add(Shape { net: net as i32, geo: Geo::Circ(x, y, n_.via_d / 2.0), clr: n_.clr, layers: all, drill: n_.via_drill, kind: Kind::Via, owner: net as i32, alive: true });
+                continue;
+            }
+        }
         // v6 fix 4: the class width (raised to the pad's current need) with a neck only at the pad entry; narrower
         // widths only when the full width has no path past fixed copper
         let _ = (pw, ph);
@@ -1890,6 +1958,13 @@ fn fanout_net_inner(ctx: &mut Ctx, net: usize) -> NetResult {
                 for i in i0..=i1 {
                     let (x, y) = ctx.gr.xy(i, j);
                     if pad.geo.dist(x, y) < 0.35 && !vip {
+                        continue;
+                    }
+                    // a forced fan-out is a track spoke: KiCad counts it only when its far end (the via) lies in the
+                    // pour fill, so the via keeps the relief gap from every other pad of the net (v6, t1: U8.6 got a via
+                    // on the U8 exposed pad, no spoke, starved_thermal)
+                    if forced && (others.iter().any(|g| g.dist(x, y) < via_r + relief)
+                        || (!ctx.bd.spoke_sites.is_empty() && !ctx.bd.spoke_sites.contains(&((x * 1e3).round() as i64, (y * 1e3).round() as i64)))) {
                         continue;
                     }
                     let (Some(kv), Some(kt)) = (ctx.vcost(net, i, j), ctx.cost(net, r * n + j * ctx.gr.nx + i, hw)) else { continue };
@@ -2223,6 +2298,54 @@ fn route_net_inner(ctx: &mut Ctx, net: usize) -> NetResult {
     out
 }
 
+/// The via of each forced fan-out must lie in the fill (Board::spoke_sites).
+/// v6 (t1, committed compact NET-CORE, U8.6): the spoke heuristic of reserve_spokes (N/S/E/W strips, zone clearance
+/// only) found 2 free channels, but the pour model (spoke angle, DRU zone clearance of the locked pairs) gives 1, and
+/// KiCad reported starved_thermal. The pour check of the fixed copper alone decides: each SMD pad of a plane net that
+/// it finds starved gets a forced fan-out track, which KiCad counts as a spoke. Returns the number of pads added.
+fn pre_attach(bd: &mut Board, pitch: f64) -> usize {
+    let mut n = 0;
+    let faults = pour::check(bd);
+    for fl in &faults {
+        let pr = &bd.pours[fl.pour];
+        let Some(pd) = pr.pads.iter().find(|p| p.name == fl.pad) else { continue };
+        if pd.hole.is_some() || pd.proxy.is_some() {
+            continue;
+        }
+        let Geo::Rect(a, b, c, d) = pd.geo else { continue };
+        let (cx, cy) = ((a + c) / 2.0, (b + d) / 2.0);
+        if !bd.attach.iter().any(|&(x, y)| (x - cx).abs() < 1e-6 && (y - cy).abs() < 1e-6) {
+            bd.attach.push((cx, cy));
+            n += 1;
+        }
+    }
+    // the via sites of every forced fan-out (grid points within 2 mm, as fanout_net searches) that lie in the fill
+    for pi in 0..bd.pours.len() {
+        let (x0, y0) = (bd.edge.0, bd.edge.1);
+        let mut pts = Vec::new();
+        for &(cx, cy) in &bd.attach {
+            if !bd.pours[pi].pads.iter().any(|p| { let (a, b, c, d) = p.geo.bbox(); ((a + c) / 2.0 - cx).abs() < 1e-6 && ((b + d) / 2.0 - cy).abs() < 1e-6 }) {
+                continue;
+            }
+            let (i0, j0) = (((cx - 2.0 - x0) / pitch).floor() as i64, ((cy - 2.0 - y0) / pitch).floor() as i64);
+            for j in j0..=j0 + (4.0 / pitch).ceil() as i64 + 1 {
+                for i in i0..=i0 + (4.0 / pitch).ceil() as i64 + 1 {
+                    pts.push((x0 + i as f64 * pitch, y0 + j as f64 * pitch));
+                }
+            }
+        }
+        if pts.is_empty() {
+            continue;
+        }
+        for (q, ok) in pts.iter().zip(pour::in_fill(bd, pi, &pts)) {
+            if ok {
+                bd.spoke_sites.insert(((q.0 * 1e3).round() as i64, (q.1 * 1e3).round() as i64));
+            }
+        }
+    }
+    n
+}
+
 /// RP-001 for the locked input vias (M2: the H7-CORE MDI RX pair vias kept from the existing board, whose GND stitching
 /// vias were not kept: 2 kicad-happy findings). Each fixed signal via (not a plane net) with no GND via or counted GND
 /// through-hole pad within --return-r gets a GND via of the return size at the nearest site that the fixed copper
@@ -2259,12 +2382,32 @@ fn fixed_returns(bd: &mut Board, o: &Opts) -> Vec<String> {
                 }
             }
         }
-        sites.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
         let clr = bd.nets[g].clr;
-        let site = sites.into_iter().find(|&(_, px, py)| {
+        // v6 (t1, committed compact NET-CORE): the nearest legal site took the only escape channel of U8.9 /CH_DVDDK
+        // (a 0.1 mm wide corridor of track centres) and walled the pad in. Take the legal site with the most free room
+        // to foreign copper (the edge distance to the nearest non-GND item, counted up to SPACE_CAP), then the nearest.
+        const SPACE_CAP: f64 = 1.5;
+        let mut best: Option<(f64, f64, f64, f64)> = None; // (-room, dd, x, y)
+        for (dd, px, py) in sites {
             let code = bd.via_fixed_code(px, py, gd, gdr, clr, o.hth, false);
-            !bd.via_code_blocks(code, g, px, py, gd, gdr, o.hth)
-        });
+            if bd.via_code_blocks(code, g, px, py, gd, gdr, o.hth) {
+                continue;
+            }
+            let mut room = SPACE_CAP;
+            for l in 0..bd.layer_names.len() {
+                bd.near_in(&bd.idx, l, px, py, SPACE_CAP + gd, &mut |_, s| {
+                    if s.net != g as i32 && s.kind != Kind::Spoke {
+                        room = room.min((s.geo.dist(px, py) - gd / 2.0).max(0.0));
+                    }
+                    false
+                });
+            }
+            let key = (-((room / p).round() * p), dd, px, py);
+            if best.map(|b| (key.0, key.1) < (b.0, b.1)).unwrap_or(true) {
+                best = Some(key);
+            }
+        }
+        let site = best.map(|b| (b.1, b.2, b.3));
         match site {
             Some((_, px, py)) => {
                 bd.add(Shape { net: g as i32, geo: Geo::Circ(px, py, gd / 2.0), clr, layers: all, drill: gdr, kind: Kind::Via, owner: -1, alive: true });
@@ -2603,11 +2746,44 @@ fn main() {
         println!("POUR {} faults {} pours {} ({}) {:.2} s", if faults.is_empty() { "PASS" } else { "FAIL" }, faults.len(), bd.pours.len(), modes.join(", "), tp.elapsed().as_secs_f64());
         return;
     }
+    if let Ok(v) = std::env::var("IOTROUTE_DUMP_FIXED") {
+        // debug: fixed shapes in the box "x0,y0,x1,y1" (net, kind, layers, geo)
+        let b: Vec<f64> = v.split(',').map(|q| q.parse().unwrap()).collect();
+        for s in bd.shapes.iter().filter(|s| s.alive) {
+            let (a, c, d, e) = s.geo.bbox();
+            if d >= b[0] && a <= b[2] && e >= b[1] && c <= b[3] {
+                eprintln!("fixed {} {:?} L{:b} {:?}", if s.net >= 0 { bd.nets[s.net as usize].name.as_str() } else { "-" }, s.kind as u8, s.layers, s.geo);
+            }
+        }
+    }
+    if let Ok(v) = std::env::var("IOTROUTE_PROBE") {
+        // debug: "NET,x0,y0,x1,y1": fixed-copper map of a track centre of NET at its width on F.Cu (0.05 grid): # blocked
+        let a: Vec<&str> = v.split(',').collect();
+        let net = bd.nets.iter().position(|n| n.name == a[0]).unwrap();
+        let b: Vec<f64> = a[1..].iter().map(|q| q.parse().unwrap()).collect();
+        let hw = bd.nets[net].width / 2.0;
+        let mut y = b[1];
+        while y <= b[3] + 1e-9 {
+            let mut row = format!("{y:8.2} ");
+            let mut x = b[0];
+            while x <= b[2] + 1e-9 {
+                let c = bd.track_fixed_code(0, x, y, hw, bd.nets[net].clr, bd.pflags(net), bd.plane_clr);
+                row.push(if blocks(c, net as i32) { '#' } else if c == net as i32 { 'o' } else { '.' });
+                x += 0.05;
+            }
+            eprintln!("{row}");
+            y += 0.05;
+        }
+    }
     let base0 = bd.shapes.len();
     // RP-001 for the locked input vias (pairs): a return via is placed now as fixed copper (written with the result)
     let in_ret_notes = fixed_returns(&mut bd, &o);
     for m in &in_ret_notes {
         eprintln!("{m}");
+    }
+    let pre = pre_attach(&mut bd, o.pitch);
+    if pre > 0 {
+        eprintln!("pour model before routing: {pre} SMD pad(s) starved by fixed copper alone get a forced fan-out track (a track spoke)");
     }
     let (e0, e1, e2, e3) = bd.edge;
     let nx = ((e2 - e0) / o.pitch).ceil() as usize + 1;
@@ -2990,7 +3166,7 @@ mod tests {
         let mut bd = Board { layer_names: vec!["F.Cu".into(), "In1.Cu".into(), "B.Cu".into()], routable: vec![0, 2], nets, shapes: Vec::new(),
                              idx: Index::new(x0 - 1.0, y0 - 1.0, x1 + 1.0, y1 + 1.0, 3), sidx: Index::new(x0 - 1.0, y0 - 1.0, x1 + 1.0, y1 + 1.0, 3),
                              maxc: 0.2, edge: (x0, y0, x1, y1), edge_clr: 0.3, gnd: -1, plane_clr: 0.25, eps: EPS, hole_clr: 0.28,
-                             spoke_notes: Vec::new(), attach: Vec::new(), adj: 0, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false };
+                             spoke_notes: Vec::new(), attach: Vec::new(), spoke_sites: std::collections::HashSet::new(), adj: 0, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false };
         let sh = |net: i32, geo: Geo, clr: f64, layers: u8, drill: f64, kind: Kind, owner: i32| Shape { net, geo, clr, layers, drill, kind, owner, alive: true };
         bd.add(sh(0, Geo::Rect(2.0, 2.0, 2.6, 2.4), 0.15, 1, 0.0, Kind::Pad, -1));
         bd.add(sh(0, Geo::Rect(2.0, 2.9, 2.6, 3.3), 0.15, 1, 0.0, Kind::Pad, -1));

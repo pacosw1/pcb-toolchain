@@ -27,7 +27,7 @@ fn wall_board() -> Board {
     let mut bd = Board { layer_names: vec!["F.Cu".into(), "In1.Cu".into(), "B.Cu".into()], routable: vec![0, 2], nets, shapes: Vec::new(),
                          idx: Index::new(-1.0, -1.0, 11.0, 11.0, 3), sidx: Index::new(-1.0, -1.0, 11.0, 11.0, 3), maxc: 0.15,
                          edge: (0.0, 0.0, 10.0, 10.0), edge_clr: 0.3, gnd: 2, plane_clr: 0.25, eps: EPS, hole_clr: 0.28,
-                         spoke_notes: Vec::new(), attach: Vec::new(), adj: 0b101, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false };
+                         spoke_notes: Vec::new(), attach: Vec::new(), spoke_sites: std::collections::HashSet::new(), adj: 0b101, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false };
     let pad = |x: f64| Shape { net: 0, geo: Geo::Rect(x - 0.3, 2.8, x + 0.3, 3.2), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true };
     bd.add(pad(2.0));
     bd.add(pad(8.0));

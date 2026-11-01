@@ -461,6 +461,12 @@ fn fill(bd: &Board, pr: &Pour) -> Filled {
     Filled { r, count, ring, item }
 }
 
+/// For each point: it lies in the (eroded) fill of pour `pi` with the present copper (nearest raster cell).
+pub(crate) fn in_fill(bd: &Board, pi: usize, pts: &[(f64, f64)]) -> Vec<bool> {
+    let f = fill(bd, &bd.pours[pi]);
+    pts.iter().map(|&(x, y)| f.r.cell(x, y).map(|k| f.r.lab[k] > 0).unwrap_or(false)).collect()
+}
+
 /// KiCad starved_thermal on the pours of the board; every fault carries its cheapest door (see Fault).
 pub(crate) fn check(bd: &Board) -> Vec<Fault> {
     let mut out = Vec::new();
