@@ -38,7 +38,9 @@ process.exit(2);
 `);
  chmodSync(join(root,'bin/fake-tool'),0o755);
  mkdirSync(join(root,'happy'),{recursive:true});
- const git=args=>execFileSync('git',['-C',join(root,'happy'),...args],{stdio:'ignore'});
+ // A fixed commit date gives every fixture the same pin (and the same env.mjs): two fixtures made in different
+ // seconds must share cache keys.
+ const git=args=>execFileSync('git',['-C',join(root,'happy'),...args],{stdio:'ignore',env:{...process.env,GIT_AUTHOR_DATE:'2026-01-01T00:00:00Z',GIT_COMMITTER_DATE:'2026-01-01T00:00:00Z'}});
  git(['init','-q']);git(['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-qm','fixture']);
  const pin=execFileSync('git',['-C',join(root,'happy'),'rev-parse','HEAD'],{encoding:'utf8'}).trim();
  const envModule=join(root,'tools/lib/env.mjs');writeFileSync(envModule,readFileSync(envModule,'utf8').replace("commit: 'a6bba1a'",`commit: '${pin}'`));

@@ -1,5 +1,5 @@
 import {createHash, randomUUID} from 'node:crypto';
-import {copyFileSync, constants, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync} from 'node:fs';
+import {existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync} from 'node:fs';
 import {basename, delimiter, dirname, isAbsolute, join, resolve} from 'node:path';
 import {CHECK_METRICS, countFrom, pathFailures} from './gate-core.mjs';
 import {fingerprint, gateTools} from './gate-inputs.mjs';
@@ -93,24 +93,32 @@ function receiptAt(folder, stage, key) {
   if (digest(encode(receipt.descriptor)) !== key) throw new Error('receipt input key mismatch');
   const names = receipt.artifacts.map(a => a.name);
   if (new Set(names).size !== names.length || requiredArtifacts(stage).some(name => !names.includes(name))) throw new Error('missing required artifact');
+  const verified = new Map();
   for (const artifact of receipt.artifacts) {
     if (!safeName(artifact.name)) throw new Error('invalid artifact path');
     const bytes = readFileSync(join(folder,artifact.name));
     if (bytes.length !== artifact.bytes || digest(bytes) !== artifact.sha256) throw new Error(`artifact hash mismatch: ${artifact.name}`);
+    verified.set(artifact.name,bytes);
   }
   const derived=artifactMetrics(folder,stage);
   if (!counts(stage,derived) || CHECK_METRICS[stage].some(name=>derived[name]!==receipt.metrics[name])) throw new Error('artifact verdict does not match receipt');
-  return receipt;
+  return {receipt,verified};
 }
 
 export function restoreCheck(cacheDir, stage, key, evidenceDir) {
   const folder = join(cacheDir,stage,key);
   if (!existsSync(folder)) return {hit:false,reason:'no completed receipt'};
+  // Concurrent hooks (boards in parallel, other worktrees) share the cache. Write the verified bytes, not a second
+  // read of the cache folder; a failed restore removes what it wrote, so the check can run fresh in the same folder.
+  const written = [];
   try {
-    const receipt = receiptAt(folder,stage,key);
-    for (const artifact of receipt.artifacts) copyFileSync(join(folder,artifact.name),join(evidenceDir,artifact.name),constants.COPYFILE_EXCL);
+    const {receipt,verified} = receiptAt(folder,stage,key);
+    for (const [name,bytes] of verified) { writeFileSync(join(evidenceDir,name),bytes,{flag:'wx'});written.push(name); }
     return {hit:true,metrics:receipt.metrics,receipt:join(folder,'receipt.json')};
-  } catch (error) { return {hit:false,rejected:true,reason:error.message}; }
+  } catch (error) {
+    for (const name of written) rmSync(join(evidenceDir,name),{force:true});
+    return {hit:false,rejected:true,reason:error.message};
+  }
 }
 
 // Publication happens only after the gate confirms its inputs stayed stable.
@@ -131,8 +139,14 @@ export function storeCheck(cacheDir, stage, {key,descriptor}, metrics, evidenceD
     receiptAt(pending,stage,key);
     if (existsSync(target)) {
       try { receiptAt(target,stage,key); return {stored:false,reason:'receipt already published'}; }
-      catch { rmSync(target,{recursive:true,force:true}); }
+      catch {
+        // Move an invalid receipt away in one atomic step; never delete files in place under a concurrent reader.
+        const stale = join(parent,`.stale-${randomUUID()}`);
+        try { renameSync(target,stale); } catch { /* another writer moved it first */ }
+        rmSync(stale,{recursive:true,force:true});
+      }
     }
+    // A concurrent writer can publish the same key first: rename then fails (directory not empty) and its receipt stays.
     renameSync(pending,target);
     return {stored:true,receipt:join(target,'receipt.json')};
   } catch (error) { return {stored:false,reason:error.message}; }

@@ -20,7 +20,7 @@ test('rev B maps to its separate gate; deleted/shared assets map conservatively'
  rmSync(join(root,'hardware-design/boards/BASE-PWR/gate.json'));
  assert.ok(affectedGates(root,['hardware-design/boards/BASE-PWR/gate.json'],old).includes('BASE-PWR'));
 });
-test('partial staging checks the index and preserves unrelated edits',t=>{
+test('partial staging checks the index and preserves unrelated edits',async t=>{
  const {root,put}=fixture(t);
  const git=args=>execFileSync('git',['-C',root,...args],{encoding:'utf8'});
  git(['init','-q']);git(['config','user.email','test@example.invalid']);git(['config','user.name','Test']);
@@ -30,12 +30,12 @@ test('partial staging checks the index and preserves unrelated edits',t=>{
  git(['add','.']);git(['commit','-qm','initial']);
  put('hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb','staged');git(['add','hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb']);
  put('hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb','unstaged');put('unrelated.txt','keep');
- checkStaged(root);
+ await checkStaged(root);
  assert.equal(readFileSync(join(root,'hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb'),'utf8'),'unstaged');
  assert.equal(JSON.parse(git(['show',':hardware-design/boards/BASE-PWR/gate-metrics.json'])).checked,'staged');
  assert.ok(!git(['diff','--cached','--name-only']).includes('unrelated.txt'));
 });
-test('failure retains logs and leaves the index unchanged',t=>{
+test('failure retains logs and leaves the index unchanged',async t=>{
  const {root,put}=fixture(t);
  const git=args=>execFileSync('git',['-C',root,...args],{encoding:'utf8'});
  git(['init','-q']);git(['config','user.email','test@example.invalid']);git(['config','user.name','Test']);
@@ -44,19 +44,19 @@ test('failure retains logs and leaves the index unchanged',t=>{
  git(['add','.']);git(['commit','-qm','initial']);
  put('hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb','staged');git(['add','.']);
  const before=git(['write-tree']).trim();
- assert.throws(()=>checkStaged(root));assert.equal(git(['write-tree']).trim(),before);
+ await assert.rejects(checkStaged(root));assert.equal(git(['write-tree']).trim(),before);
  const evidence=join(root,'.gate',readdirSync(join(root,'.gate'))[0]);
  assert.equal(readFileSync(join(evidence,'BASE-PWR/drc.log'),'utf8'),'checker failed');
  assert.equal(JSON.parse(readFileSync(join(evidence,'snapshot.json'),'utf8')).indexTree,before);
 });
-test('index changes during validation stop metric staging',t=>{
+test('index changes during validation stop metric staging',async t=>{
  const {root,put}=fixture(t);
  const git=args=>execFileSync('git',['-C',root,...args],{encoding:'utf8'});
  git(['init','-q']);git(['config','user.email','test@example.invalid']);git(['config','user.name','Test']);
  put('tools/gate.mjs',`import {writeFileSync} from 'node:fs';import {execFileSync} from 'node:child_process';const root=${JSON.stringify(root)};writeFileSync(root+'/concurrent.txt','another agent');execFileSync('git',['-C',root,'add','concurrent.txt']);writeFileSync('hardware-design/boards/'+process.argv[2]+'/gate-metrics.json','{}');`);
  put('hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb','initial');git(['add','.']);git(['commit','-qm','initial']);
  put('hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb','staged');git(['add','.']);
- assert.throws(()=>checkStaged(root),/index changed during gate checks/);
+ await assert.rejects(checkStaged(root),/index changed during gate checks/);
  assert.ok(git(['diff','--cached','--name-only']).includes('concurrent.txt'));
  assert.ok(!git(['diff','--cached','--name-only']).includes('gate-metrics.json'));
 });
@@ -93,4 +93,49 @@ test('missing, empty or malformed provenance keeps the conservative rule for del
  const valid=recordedInputs(JSON.stringify({provenance:{inputs:[{path:'tools/gate.mjs',sha256:'x'}]}}));
  assert.deepEqual([...valid],['tools/gate.mjs']);
  assert.deepEqual(affectedGates(root,[deleted],new Map(),new Map([['BASE-PWR',valid],['BASE-PWR-B',valid]])),[]);
+});
+// Boards run in a bounded pool. The staged metrics are the same bytes as a serial run; a failed board stops new boards.
+test('parallel boards give the same staged metrics as serial; a failure names the board and stages nothing',async t=>{
+ const {root,put}=fixture(t);
+ const git=args=>execFileSync('git',['-C',root,...args],{encoding:'utf8'});
+ git(['init','-q']);git(['config','user.email','test@example.invalid']);git(['config','user.name','Test']);
+ put('hardware-design/boards/C/gate.json',JSON.stringify({project:'cad/C/C',checks:{erc:true}}));
+ put('hardware-design/boards/D/gate.json',JSON.stringify({project:'cad/D/D',checks:{erc:true}}));
+ // Fake gate: record overlap with other boards, fail when the board file says so.
+ put('tools/gate.mjs',`import {readFileSync,writeFileSync,mkdirSync,readdirSync,rmSync} from 'node:fs';const b=process.argv[2];const p='hardware-design/boards/'+b+'/';
+  const live=process.env.LIVE;mkdirSync(live,{recursive:true});writeFileSync(live+'/'+b,'');writeFileSync(live+'-started-'+b,'');const seen=readdirSync(live).length;
+  await new Promise(r=>setTimeout(r,300));let wait=0;// BARRIER: wait (at most 10 s) until that many boards started.
+  const started=()=>readdirSync(live+'/..').filter(n=>n.startsWith(live.split('/').pop()+'-started-')).length;
+  while(started()<Number(process.env.BARRIER ?? 0) && wait++<500) await new Promise(r=>setTimeout(r,20));
+  writeFileSync(live+'-max-'+b,String(Math.max(seen,readdirSync(live).length)));rmSync(live+'/'+b);
+  const c=JSON.parse(readFileSync(p+'gate.json'));const text=readFileSync(p+c.project+'.kicad_pcb','utf8');
+  if(text.includes('fail')) {writeFileSync(process.env.LIVE+'-failed',String(process.pid));process.exit(1);}
+  // In the failure case a passing board is still in progress when the other board fails: it finishes only after
+  // the hook has reaped the failed gate, so the pool knows the failure before a lane is free (deterministic order).
+  if(process.env.WAIT_FAIL) {
+   const mark=process.env.LIVE+'-failed';let pid=0;
+   while(!pid) {try{pid=Number(readFileSync(mark,'utf8'));}catch{} await new Promise(r=>setTimeout(r,20));}
+   const alive=()=>{try{process.kill(pid,0);return true;}catch{return false;}};
+   while(alive()) await new Promise(r=>setTimeout(r,20));
+   await new Promise(r=>setTimeout(r,200));
+  }
+  writeFileSync(p+'gate-metrics.json',JSON.stringify({metrics:{erc_errors:0},board:b,checked:text})+'\\n');`);
+ for(const b of ['A','B','C','D']) put(`hardware-design/boards/${b==='A'?'BASE-PWR':b==='B'?'BASE-PWR-B':b}/${b==='A'?'cad/A/A':b==='B'?'../BASE-PWR/cad/B/B':`cad/${b}/${b}`}.kicad_pcb`,'initial');
+ git(['add','.']);git(['commit','-qm','initial']);
+ put('tools/gate.mjs',readFileSync(join(root,'tools/gate.mjs'),'utf8')+'\n');git(['add','.']);// a shared tool change gates every board
+ const env={...process.env};t.after(()=>{for(const k of ['IOT_LAB_GATE_JOBS','LIVE','IOT_LAB_GATE_CACHE','WAIT_FAIL','BARRIER']) if(env[k]===undefined) delete process.env[k];else process.env[k]=env[k];});
+ process.env.IOT_LAB_GATE_CACHE=join(root,'.cache');
+ const staged=()=>['BASE-PWR','BASE-PWR-B','C','D'].map(b=>git(['show',`:hardware-design/boards/${b}/gate-metrics.json`]));
+ const maxOverlap=live=>Math.max(...['BASE-PWR','BASE-PWR-B','C','D'].map(b=>Number(readFileSync(`${live}-max-${b}`,'utf8'))));
+ const base=git(['write-tree']).trim();
+ process.env.IOT_LAB_GATE_JOBS='1';process.env.LIVE=join(root,'.live1');await checkStaged(root);const serial=staged();
+ assert.equal(maxOverlap(process.env.LIVE),1);
+ git(['read-tree',base]);
+ process.env.IOT_LAB_GATE_JOBS='3';process.env.LIVE=join(root,'.live3');process.env.BARRIER='3';await checkStaged(root);
+ assert.deepEqual(staged(),serial);assert.equal(maxOverlap(process.env.LIVE),3);delete process.env.BARRIER;
+ git(['read-tree',base]);
+ put('hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb','fail');git(['add','.']);const before=git(['write-tree']).trim();
+ process.env.IOT_LAB_GATE_JOBS='2';process.env.LIVE=join(root,'.live2');process.env.WAIT_FAIL='1';
+ await assert.rejects(checkStaged(root),/gate failed: BASE-PWR \(exit 1\); not run: C, D/);
+ assert.equal(git(['write-tree']).trim(),before);
 });
