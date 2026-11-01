@@ -200,7 +200,7 @@ class RouteOutcome(list):
 
 
 def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, target=0, shrink=0.85, tol=0.05,
-             log=None, s_min=0.05, real_first=False, diagnostic_budget=None):
+             log=None, s_min=0.05, real_first=False, diagnostic_budget=None, k_cap=None):
     """Easy-to-hard loop. Injected effects: search(problem, step) -> optimize() result;
     write(problem, pose, k, step) -> board path; route(path, step) -> counts or RouteOutcome.
     Halo phase: s from s0, board scale k from the grown area (larger on an illegal result). A step passes when
@@ -208,6 +208,9 @@ def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, 
     (k = 1) first, then bisect k between the last fail and the best pass; s = outline_s. When the bare parts
     do not fit the real board (bare_scale > 1), the bisection starts between bare_scale and the best pass.
     Stops when both phases are done or when `budget` seconds have passed before a step starts.
+    k_cap (2026-11-01): the halo phase uses at most this board scale and does not grow it (k_cap 1: every step on
+    the real outline). Reason: a rigid block counts its whole border box in the area model, so NET-CORE with its
+    spread blocks got k 1.02-1.05 at every halo, and a virtual-board step is not a candidate for the real board.
     real_first (2026-10-03): a real phase goes first. It places on the real outline (k = 1) with the largest
     halo that gives a legal placement (s_fit, then REAL_S) and routes it. The first step that routes ends the
     loop (no virtual board). If no step routes, the halo and outline phases follow and tell how much larger
@@ -323,7 +326,8 @@ def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, 
         if over():
             stop = 'time budget %.0f s' % budget
             break
-        result = step(sch.s, board_scale(with_halos(pr, sch.s)), True, 'halo')
+        k = board_scale(with_halos(pr, sch.s))
+        result = step(sch.s, k if k_cap is None else min(k, k_cap), k_cap is None, 'halo')
         if terminal_stop(result):
             stop = terminal_stop(result)
             break

@@ -228,6 +228,14 @@ class LoopTest(unittest.TestCase):
         self.assertLess(run['best']['s'], 2.2)
         self.assertIn('verdict', run)
 
+    def test_k_cap_keeps_every_halo_step_on_the_real_outline(self):
+        calls, search, write, route, clock = self.fakes(routes_below=compact.halo(4, 2.0))
+        self.assertGreater(compact.board_scale(compact.with_halos(self.problem(), 12.0)), 1.0)  # uncapped: virtual
+        run = compact.run_loop(self.problem(), (10, 10), search, write, route, s0=12.0, budget=1e9, clock=clock,
+                               k_cap=1.0)
+        halo = [t for t in run['steps'] if t['phase'] == 'halo']
+        self.assertTrue(halo and all(t['k'] == 1.0 for t in halo))
+
     def test_an_illegal_search_retries_the_same_scale_on_a_larger_virtual_board(self):
         seen = []
 
