@@ -49,6 +49,7 @@ const SQ2: f64 = std::f64::consts::SQRT_2;
 /// experiment in reports/2026-11-01-v6-h7-core.md (not rule thresholds)
 const DEF_VIA_COST: f64 = 3.0;
 const DEF_RET_COST: f64 = 0.0;
+const DEF_WEB_COST: f64 = 3.0;
 /// a join is searched first inside the bounding box of the net's items grown by this margin (mm)
 const JOIN_MARGIN: f64 = 5.0;
 /// a track end lies at least this far inside the copper it joins (pad, track, via): see cells_of
@@ -199,6 +200,8 @@ struct Opts {
     via_cost: f64,
     /// extra A* cost of a layer change at a site with no GND via within the RP-001 radius (a new return via is needed)
     ret_cost: f64,
+    /// extra A* cost of a layer change per foreign signal drilled item inside the antipad web (Board::web, not hard)
+    web_cost: f64,
 }
 
 struct Index {
@@ -277,6 +280,10 @@ struct Board {
     /// the plane then stay at least min_thickness apart, so the KiCad zone fill keeps the copper web between them
     /// (fillCopperZone prunes a web below min_thickness, and the antipads merge into one slot). 0 = off.
     web: f64,
+    /// web as a hard rule (--web-hard): drilled items of two signal nets inside the web conflict. Default: a priced
+    /// limit (A* via cost + web_cost per foreign signal drilled item inside the web), reported as web pairs. The hard
+    /// rule did not converge on NET-CORE (RMII field, 80 iterations, twice): reports/2026-11-01-v6-h7-core.md.
+    web_hard: bool,
 }
 
 /// Fixed-copper verdict of a grid site for one rule profile, shared by all nets: FREE, MULTI (blocked for every net),
@@ -354,7 +361,7 @@ impl Board {
             let l = (0..8).find(|&l| s.layers & (1 << l) != 0).unwrap_or(0);
             self.plane_rule(self.pflags(s.net as usize), l)
         };
-        let web = if sig && s.net >= 0 && !self.nets[s.net as usize].plane { self.web } else { 0.0 };
+        let web = if self.web_hard && sig && s.net >= 0 && !self.nets[s.net as usize].plane { self.web } else { 0.0 };
         let h = via_hit(s, x, y, vr, drill, clr, hth, s_fast, self.plane_clr, self.hole_clr, self.eps, web);
         // an own-net via inside a viapads-allowed pad is legal (3 -> 0, 4 -> 2): the gate allow list names the pad
         if h >= 3 && self.is_vip(s) { if h == 4 { 2 } else { 0 } } else { h }
@@ -848,6 +855,23 @@ impl<'a> Ctx<'a> {
         }
         false
     }
+    /// Foreign signal drilled items (fixed or routed) whose copper is inside the antipad web of a via of `net` at (x, y).
+    fn web_items(&self, net: usize, x: f64, y: f64) -> usize {
+        let vr = self.bd.nets[net].via_d / 2.0;
+        let r = vr + self.bd.web + 2.0;
+        let mut seen: Vec<u32> = Vec::new();
+        let l = self.bd.routable[0];
+        for ix in [&self.bd.idx, &self.bd.sidx] {
+            self.bd.near_in(ix, l, x, y, r, &mut |id, s| {
+                if s.drill > 0.0 && s.net >= 0 && s.net != net as i32 && !self.bd.nets[s.net as usize].plane && s.kind != Kind::Spoke
+                    && s.geo.dist(x, y) < vr + self.bd.web && !seen.contains(&id) {
+                    seen.push(id);
+                }
+                false
+            });
+        }
+        seen.len()
+    }
     /// A GND via (any owner) or a fixed GND through-hole pad within --return-r of (x, y).
     fn has_return(&self, x: f64, y: f64) -> bool {
         let r = self.o.return_r;
@@ -1134,6 +1158,8 @@ impl<'a> Ctx<'a> {
         // a layer change where no GND via is within the RP-001 radius needs a new return via: it costs ret_cost more
         let need_ret = !self.bd.nets[net].plane && self.bd.gnd >= 0 && self.o.ret_cost > 0.0;
         let mut ret_memo: std::collections::HashMap<usize, bool> = std::collections::HashMap::new();
+        let web_soft = !self.bd.web_hard && self.bd.web > 0.0 && !self.bd.nets[net].plane && self.o.web_cost > 0.0;
+        let mut web_memo: std::collections::HashMap<usize, f64> = std::collections::HashMap::new();
         let pres = self.gr.pres as f64;
         let (x0, y0) = (self.gr.x0, self.gr.y0);
         let h = |ix: usize, iy: usize| -> f32 {
@@ -1228,7 +1254,19 @@ impl<'a> Ctx<'a> {
                             };
                             if has { 0.0 } else { self.o.ret_cost * via_mult }
                         } else { 0.0 };
-                        let vc = (via_base + extra + self.gr.vhist[iy * nx + ix] as f64) * (1.0 + pres * kv as f64);
+                        let webc = if web_soft {
+                            let k = iy * nx + ix;
+                            match web_memo.get(&k) {
+                                Some(&c) => c,
+                                None => {
+                                    let (x, y) = (x0 + ix as f64 * p, y0 + iy as f64 * p);
+                                    let c = self.web_items(net, x, y) as f64 * self.o.web_cost * via_mult;
+                                    web_memo.insert(k, c);
+                                    c
+                                }
+                            }
+                        } else { 0.0 };
+                        let vc = (via_base + extra + webc + self.gr.vhist[iy * nx + ix] as f64) * (1.0 + pres * kv as f64);
                         via_pops += 1;
                         for r2 in 0..nr {
                             if r2 != r && lcost[r2].is_finite() {
@@ -1589,7 +1627,7 @@ fn load(model: &Value, hole_clr: f64) -> Board {
     // layers with an adjacent reference plane (reference-planes.json 'adjacent' via the model)
     let adj = model["adjacent"].as_object().map(|o| o.keys().filter_map(|k| lid(k)).fold(0u8, |m, l| m | (1 << l))).unwrap_or(0);
     let mut bd = Board { layer_names: cu.clone(), routable, nets, shapes: Vec::new(), idx, sidx, maxc, edge, edge_clr, gnd, plane_clr: DEF_PLANE_CLR, eps: EPS, hole_clr,
-                         spoke_notes: Vec::new(), attach: Vec::new(), adj, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0 };
+                         spoke_notes: Vec::new(), attach: Vec::new(), adj, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false };
     // antipad web (v6 fix 3c): from the zones on the plane layers (their own clearance and min_thickness)
     for z in model["zones"].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
         if planes.iter().any(|p| Some(p.as_str()) == z["layer"].as_str()) {
@@ -2474,11 +2512,12 @@ fn main() {
         std::process::exit(2);
     }
     let mut o = Opts { pitch: 0.05, passes: 40, plane_clr: DEF_PLANE_CLR, hth: DEF_HOLE_TO_HOLE, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2,
-                       pres_mult: 1.5, pres_max: 1000.0, hist: 0.3, max_time: 0.0, door_hist: 2.0, via_cost: DEF_VIA_COST, ret_cost: DEF_RET_COST };
+                       pres_mult: 1.5, pres_max: 1000.0, hist: 0.3, max_time: 0.0, door_hist: 2.0, via_cost: DEF_VIA_COST, ret_cost: DEF_RET_COST, web_cost: DEF_WEB_COST };
     // CLI flags override the model's hole rules, which override the defaults
     let (mut cli_plane, mut cli_hth, mut cli_hole): (Option<f64>, Option<f64>, Option<f64>) = (None, None, None);
     let mut check_only: Option<String> = None;
     let mut cli_web: Option<f64> = None;
+    let mut web_hard = false;
     let mut cli_ret = false;
     let mut cli_rr = false;
     let mut i = 3;
@@ -2501,6 +2540,8 @@ fn main() {
             "--door-hist" => o.door_hist = v.parse().unwrap(),
             "--check" => check_only = Some(v.clone()),
             "--web" => cli_web = Some(v.parse().unwrap()),
+            "--web-hard" => web_hard = v == "1",
+            "--web-cost" => o.web_cost = v.parse().unwrap(),
             "--via-cost" => o.via_cost = v.parse().unwrap(),
             "--ret-cost" => o.ret_cost = v.parse().unwrap(),
             "--return-via" => {
@@ -2530,8 +2571,9 @@ fn main() {
     if let Some(w) = cli_web {
         bd.web = w;
     }
-    eprintln!("antipad web {:.3} mm ({}), via cost {:.1}, new-return surcharge {:.1}", bd.web, if cli_web.is_some() { "cli" } else { "model plane zones: 2 x clearance + min_thickness" },
-              o.via_cost, o.ret_cost);
+    bd.web_hard = web_hard;
+    eprintln!("antipad web {:.3} mm ({}, {}), via cost {:.1}, new-return surcharge {:.1}", bd.web, if cli_web.is_some() { "cli" } else { "model plane zones: 2 x clearance + min_thickness" },
+              if web_hard { "hard rule".to_string() } else { format!("priced {:.1} per item", o.web_cost) }, o.via_cost, o.ret_cost);
     let (rd, rdr, rsrc) = return_via(&bd, if cli_ret { Some((o.ret_d, o.ret_drill)) } else { None });
     o.ret_d = rd;
     o.ret_drill = rdr;
@@ -2779,8 +2821,9 @@ fn main() {
         ctx.strict = true;
         // v6 fix 3c: the antipad web is a limit of the negotiation; when it did not converge, the strict end step
         // routes the ripped nets with the web off (the copper rules stay), and the web pairs left are reported
-        web_relaxed = ctx.bd.web;
+        web_relaxed = if ctx.bd.web_hard { ctx.bd.web } else { 0.0 };
         if web_relaxed > 0.0 {
+            ctx.bd.web_hard = false;
             ctx.bd.web = 0.0;
             ctx.memo.clear();
             ctx.gr.reset_cache();
@@ -2808,6 +2851,10 @@ fn main() {
     // RP-001 check of the final copper: a net with a signal via and no GND return within --return-r (its return via
     // was the one of a net ripped at the end) is routed again strictly, which places its returns; up to 3 rounds
     let mut notes = Vec::new();
+    if ctx.bd.web > 0.0 && web_relaxed == 0.0 {
+        notes.push(format!("antipad web {:.2} mm ({}): {} signal via pair(s) closer", ctx.bd.web, if ctx.bd.web_hard { "hard rule" } else { "priced" }, web_pairs(ctx.bd, ctx.bd.web)));
+        eprintln!("{}", notes.last().unwrap());
+    }
     if web_relaxed > 0.0 {
         let n = web_pairs(ctx.bd, web_relaxed);
         notes.push(format!("antipad web {web_relaxed:.2} mm relaxed in the strict end step (negotiation not converged): {n} signal via pair(s) closer"));
@@ -2943,7 +2990,7 @@ mod tests {
         let mut bd = Board { layer_names: vec!["F.Cu".into(), "In1.Cu".into(), "B.Cu".into()], routable: vec![0, 2], nets, shapes: Vec::new(),
                              idx: Index::new(x0 - 1.0, y0 - 1.0, x1 + 1.0, y1 + 1.0, 3), sidx: Index::new(x0 - 1.0, y0 - 1.0, x1 + 1.0, y1 + 1.0, 3),
                              maxc: 0.2, edge: (x0, y0, x1, y1), edge_clr: 0.3, gnd: -1, plane_clr: 0.25, eps: EPS, hole_clr: 0.28,
-                             spoke_notes: Vec::new(), attach: Vec::new(), adj: 0, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0 };
+                             spoke_notes: Vec::new(), attach: Vec::new(), adj: 0, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false };
         let sh = |net: i32, geo: Geo, clr: f64, layers: u8, drill: f64, kind: Kind, owner: i32| Shape { net, geo, clr, layers, drill, kind, owner, alive: true };
         bd.add(sh(0, Geo::Rect(2.0, 2.0, 2.6, 2.4), 0.15, 1, 0.0, Kind::Pad, -1));
         bd.add(sh(0, Geo::Rect(2.0, 2.9, 2.6, 3.3), 0.15, 1, 0.0, Kind::Pad, -1));
@@ -3064,7 +3111,7 @@ mod tests {
         let mut bd = board();
         // a routed track of A crossing the routed track of C on F.Cu
         bd.add(Shape { net: 0, geo: Geo::Seg(2.0, 3.8, 2.0, 5.5, 0.075), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Track, owner: 0, alive: true });
-        let o = Opts { pitch: 0.05, passes: 1, plane_clr: 0.25, hth: 0.45, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2, pres_mult: 1.5, pres_max: 1000.0, hist: 0.3, max_time: 0.0, door_hist: 2.0, via_cost: DEF_VIA_COST, ret_cost: DEF_RET_COST };
+        let o = Opts { pitch: 0.05, passes: 1, plane_clr: 0.25, hth: 0.45, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2, pres_mult: 1.5, pres_max: 1000.0, hist: 0.3, max_time: 0.0, door_hist: 2.0, via_cost: DEF_VIA_COST, ret_cost: DEF_RET_COST, web_cost: DEF_WEB_COST };
         let (nx, ny, nr) = (201, 201, 2);
         let tot = nx * ny * nr;
         let gr = Grid { x0: 0.0, y0: 0.0, p: 0.05, nx, ny, nr, cache: vec![0; tot], vcache: vec![0; nx * ny], dcache: vec![0; tot], hist: vec![0.0; tot], vhist: vec![0.0; nx * ny], pres: 0.5,
@@ -3084,7 +3131,7 @@ mod tests {
     #[test]
     fn free_sites_stay_legal_from_both_sides() {
         let mut bd = board();
-        let o = Opts { pitch: 0.05, passes: 1, plane_clr: 0.25, hth: 0.45, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2, pres_mult: 1.5, pres_max: 1000.0, hist: 0.3, max_time: 0.0, door_hist: 2.0, via_cost: DEF_VIA_COST, ret_cost: DEF_RET_COST };
+        let o = Opts { pitch: 0.05, passes: 1, plane_clr: 0.25, hth: 0.45, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2, pres_mult: 1.5, pres_max: 1000.0, hist: 0.3, max_time: 0.0, door_hist: 2.0, via_cost: DEF_VIA_COST, ret_cost: DEF_RET_COST, web_cost: DEF_WEB_COST };
         let (nx, ny, nr) = (201, 201, 2);
         let tot = nx * ny * nr;
         let gr = Grid { x0: 0.0, y0: 0.0, p: 0.05, nx, ny, nr, cache: vec![0; tot], vcache: vec![0; nx * ny], dcache: vec![0; tot], hist: vec![0.0; tot], vhist: vec![0.0; nx * ny], pres: 0.5,

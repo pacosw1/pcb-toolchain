@@ -9,7 +9,7 @@ fn n(name: &str, plane: bool, layers: u8) -> Net {
 
 pub(crate) fn opts() -> Opts {
     Opts { pitch: 0.05, passes: 1, plane_clr: 0.25, hth: 0.45, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2, pres_mult: 1.5, pres_max: 1000.0,
-           hist: 0.3, max_time: 0.0, door_hist: 2.0, via_cost: DEF_VIA_COST, ret_cost: DEF_RET_COST }
+           hist: 0.3, max_time: 0.0, door_hist: 2.0, via_cost: DEF_VIA_COST, ret_cost: DEF_RET_COST, web_cost: DEF_WEB_COST }
 }
 
 fn grid() -> Grid {
@@ -25,7 +25,7 @@ fn empty_board(nets: Vec<Net>) -> Board {
             idx: Index::new(-1.0, -1.0, 11.0, 11.0, 3), sidx: Index::new(-1.0, -1.0, 11.0, 11.0, 3), maxc: 0.15,
             edge: (0.0, 0.0, 10.0, 10.0), edge_clr: 0.3, gnd: 2, plane_clr: 0.25, eps: EPS, hole_clr: 0.28,
             spoke_notes: Vec::new(), attach: Vec::new(), adj: 0b101, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(),
-            circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0 }
+            circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false }
 }
 
 fn ctx_of<'a>(bd: &'a mut Board, o: &'a Opts) -> Ctx<'a> {
@@ -177,16 +177,23 @@ fn via_cost_sets_when_a_layer_change_pays_off() {
 }
 
 /// v6 fix 3c: two drilled items of different signal nets keep the antipad web (Board::web = 2 x plane zone clearance
-/// + zone min_thickness) between their copper; a GND (plane net) via is not limited by it.
+/// + zone min_thickness) between their copper; a GND (plane net) via is not limited by it. --web-hard: a rule;
+/// default: each foreign item inside the web prices the layer change (web_items).
 #[test]
 fn signal_vias_keep_the_plane_antipad_web() {
     let mut bd = wall(-0.5);
     bd.web = 2.0 * 0.2 + 0.2;
+    bd.web_hard = true;
     bd.add(Shape { net: 1, geo: Geo::Circ(5.0, 5.0, 0.3), clr: 0.15, layers: 0b111, drill: 0.3, kind: Kind::Via, owner: -1, alive: true });
     // copper edge gap 0.25 mm at x = 5.85: legal for clearance and hole-to-hole, not for the web (0.6)
     assert_eq!(bd.via_cost(0, 5.85, 5.0, 0.6, 0.3, 0.45, None), -1, "signal via inside the web");
     assert_eq!(bd.via_cost(0, 6.25, 5.0, 0.6, 0.3, 0.45, None), 0, "edge gap 0.65 mm: outside the web");
     assert_eq!(bd.via_cost(2, 5.85, 5.0, 0.6, 0.3, 0.45, None), 0, "a GND via is not limited by the web");
-    bd.web = 0.0;
-    assert_eq!(bd.via_cost(0, 5.85, 5.0, 0.6, 0.3, 0.45, None), 0, "web off: v5 rule");
+    bd.web_hard = false;
+    assert_eq!(bd.via_cost(0, 5.85, 5.0, 0.6, 0.3, 0.45, None), 0, "priced web: no rule hit");
+    let o = opts();
+    let ctx = ctx_of(&mut bd, &o);
+    assert_eq!(ctx.web_items(0, 5.85, 5.0), 1, "one foreign signal via inside the web");
+    assert_eq!(ctx.web_items(0, 6.25, 5.0), 0);
+    assert_eq!(ctx.web_items(1, 5.85, 5.0), 0, "own net");
 }
