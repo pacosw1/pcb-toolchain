@@ -28,7 +28,8 @@
 //! the KiCad message); v4 board of 1faf8ad8, both v5 boards and the M2 NET-CORE regression (KiCad DRC 0): no fault.
 //! H7-CORE M2 run 1: only J2.16 (1 + 1 ignored), run 6: only J2.18 (1 + 2 ignored), runs 2 and 4 (DRC 0): no fault.
 use crate::*;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, HashSet};
 
 /// grid pitch of the pour model (mm): a channel is seen as fill when it is at least min_thickness + this wide
 pub(crate) const POUR_PITCH: f64 = 0.025;
@@ -557,18 +558,21 @@ pub(crate) fn check(bd: &Board) -> Vec<Fault> {
 fn door(bd: &Board, pr: &Pour, pd: &PourPad, f: &Filled, ring: &[u32], fl: &mut Fault) {
     let r = &f.r;
     let (cx, cy) = centre(&pd.geo);
-    let enter = |k: usize| -> Option<u32> {
+    const DOOR_W: u64 = 1 << 32;
+    let enter = |k: usize| -> Option<u64> {
         let m = r.m[k];
         if m & (FIX | OUT) != 0 || (m & RELIEF != 0 && m & SPOKE == 0) {
             None
         } else if m & ROUT != 0 {
-            Some(1)
+            Some(DOOR_W + 1)
         } else {
-            Some(0)
+            Some(1)
         }
     };
-    let mut dist: HashMap<usize, (u32, usize)> = HashMap::new();
-    let mut dq: VecDeque<usize> = VecDeque::new();
+    let mut dist: HashMap<usize, (u64, usize)> = HashMap::new();
+    // v6: Dijkstra on (routed cells x DOOR_W + steps): the fewest routed cells, then the shortest way. The 0-1 search of
+    // v5 broke ties in any order; its paths wandered through the fill (M2 v6 run: a 37068-cell hard door at J2.18).
+    let mut dq: BinaryHeap<Reverse<(u64, usize)>> = BinaryHeap::new();
     // seed (test point cell) -> its axis cells, ring first
     let mut axis: HashMap<usize, Vec<usize>> = HashMap::new();
     'd: for (si, &d) in pd.dirs.iter().enumerate() {
@@ -595,11 +599,11 @@ fn door(bd: &Board, pr: &Pour, pd: &PourPad, f: &Filled, ring: &[u32], fl: &mut 
         if r.m[seed] & RELIEF != 0 && r.m[seed] & SPOKE == 0 && r.m[seed] & ROUT == 0 {
             continue; // the test point is in another pad's relief
         }
-        let c = cells.iter().filter(|&&k| r.m[k] & ROUT != 0).count() as u32;
+        let c = cells.iter().filter(|&&k| r.m[k] & ROUT != 0).count() as u64 * DOOR_W;
         if dist.get(&seed).map(|e| c < e.0).unwrap_or(true) {
             dist.insert(seed, (c, usize::MAX));
             axis.insert(seed, cells[..cells.len() - 1].to_vec());
-            if c == 0 { dq.push_front(seed) } else { dq.push_back(seed) }
+            dq.push(Reverse((c, seed)));
         }
     }
     // target: a fill cell on a via or track end of the net. Joined to it, the island has 2 items, and a wall net that
@@ -608,7 +612,7 @@ fn door(bd: &Board, pr: &Pour, pd: &PourPad, f: &Filled, ring: &[u32], fl: &mut 
     let target = |k: usize| r.lab[k] > 0 && f.item.contains(&k);
     let mut done = HashSet::new();
     let mut hit = None;
-    while let Some(k) = dq.pop_front() {
+    while let Some(Reverse((_, k))) = dq.pop() {
         if !done.insert(k) {
             continue;
         }
@@ -634,7 +638,7 @@ fn door(bd: &Board, pr: &Pour, pd: &PourPad, f: &Filled, ring: &[u32], fl: &mut 
             let nd = dk + c;
             if dist.get(&q).map(|e| nd < e.0).unwrap_or(true) {
                 dist.insert(q, (nd, k));
-                if c == 0 { dq.push_front(q) } else { dq.push_back(q) }
+                dq.push(Reverse((nd, q)));
             }
         }
     }

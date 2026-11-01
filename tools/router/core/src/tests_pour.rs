@@ -132,11 +132,16 @@ fn tht_hole_splits_the_spokes_of_a_thermal_pad() {
 /// Pour check of a cropped M2 board (fixtures/: crop of the RouteModel and the router result around J2, made with the
 /// scratch crop.py) -> the faults as (pad, good, ignored, walls).
 fn fixture_faults(js: &str) -> Vec<(String, usize, usize, Vec<String>)> {
+    fixture_full(js).into_iter().map(|f| (f.0, f.1, f.2, f.3)).collect()
+}
+
+/// as fixture_faults, plus the door path (cells) of each fault
+fn fixture_full(js: &str) -> Vec<(String, usize, usize, Vec<String>, Vec<(f64, f64)>)> {
     let v: Value = serde_json::from_str(js).unwrap();
     let (hole, _, _) = hole_rules(&v["model"]);
     let mut bd = load(&v["model"], hole.unwrap_or(DEF_HOLE_CLR));
     add_result(&mut bd, &v["result"]);
-    pour::check(&bd).into_iter().map(|f| (f.pad, f.good, f.ignored, f.walls.iter().map(|&w| bd.nets[w].name.clone()).collect())).collect()
+    pour::check(&bd).into_iter().map(|f| (f.pad, f.good, f.ignored, f.walls.iter().map(|&w| bd.nets[w].name.clone()).collect(), f.path)).collect()
 }
 
 /// KiCad 10 DRC on the M2 run 6 board: J2.18 B.Cu "2 spokes connected to isolated island" (1 spoke reaches the piece
@@ -155,4 +160,20 @@ fn m2_run6_j2_18_is_starved_as_kicad() {
 fn m2_run1_j2_16_is_starved_as_kicad() {
     let f = fixture_faults(include_str!("fixtures/m2_j2_16.json"));
     assert_eq!(f, vec![("J2.16".to_string(), 1, 1, vec!["/UART_RX".to_string()])], "the door crosses routed copper");
+}
+
+/// v6: the door path is the shortest way among those that cross the fewest routed cells (v5 0-1 search: any of them;
+/// the hard door reserved the whole path as pour, and on the v6 H7-CORE run it was 37068 cells long at J2.18). Each
+/// step of a 4-connected path is one pitch: the path is at most the Manhattan distance + 2 x (detour) long; here the
+/// bound is 4 x the Manhattan distance of its ends.
+#[test]
+fn door_path_is_short() {
+    for js in [include_str!("fixtures/m2_j2_18.json"), include_str!("fixtures/m2_j2_16.json")] {
+        for f in fixture_full(js) {
+            let (a, b) = (f.4[0], *f.4.last().unwrap());
+            let man = ((b.0 - a.0).abs() + (b.1 - a.1).abs()) / pour::POUR_PITCH;
+            eprintln!("{}: path {} cells, manhattan {:.0}", f.0, f.4.len(), man);
+            assert!((f.4.len() as f64) <= 4.0 * man + 40.0, "{}: path {} cells, ends {:?} {:?}", f.0, f.4.len(), a, b);
+        }
+    }
 }
