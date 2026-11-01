@@ -262,6 +262,8 @@ struct Board {
     pours: Vec<pour::Pour>,
     /// round pads (kept as their bounding box elsewhere): centre (1e-4 mm) -> radius, for the pour model
     circ: std::collections::HashMap<(i64, i64), f64>,
+    /// SMD pads (bbox) on the gate viapads allow list (model pad `via_in_pad`): an own-net via may sit inside them
+    vip: Vec<(f64, f64, f64, f64)>,
 }
 
 /// Fixed-copper verdict of a grid site for one rule profile, shared by all nets: FREE, MULTI (blocked for every net),
@@ -334,7 +336,17 @@ impl Board {
             let l = (0..8).find(|&l| s.layers & (1 << l) != 0).unwrap_or(0);
             self.plane_rule(self.pflags(s.net as usize), l)
         };
-        via_hit(s, x, y, vr, drill, clr, hth, s_fast, self.plane_clr, self.hole_clr, self.eps)
+        let h = via_hit(s, x, y, vr, drill, clr, hth, s_fast, self.plane_clr, self.hole_clr, self.eps);
+        // an own-net via inside a viapads-allowed pad is legal (3 -> 0, 4 -> 2): the gate allow list names the pad
+        if h >= 3 && self.is_vip(s) { if h == 4 { 2 } else { 0 } } else { h }
+    }
+    fn is_vip(&self, s: &Shape) -> bool {
+        match s.geo {
+            Geo::Rect(a, b, c, d) if s.kind == Kind::Pad && s.drill == 0.0 => self.vip.iter().any(|v| {
+                (v.0 - a).abs() < 1e-6 && (v.1 - b).abs() < 1e-6 && (v.2 - c).abs() < 1e-6 && (v.3 - d).abs() < 1e-6
+            }),
+            _ => false,
+        }
     }
     fn add(&mut self, s: Shape) -> usize {
         let id = self.shapes.len();
@@ -1418,7 +1430,7 @@ fn load(model: &Value, hole_clr: f64) -> Board {
     // layers with an adjacent reference plane (reference-planes.json 'adjacent' via the model)
     let adj = model["adjacent"].as_object().map(|o| o.keys().filter_map(|k| lid(k)).fold(0u8, |m, l| m | (1 << l))).unwrap_or(0);
     let mut bd = Board { layer_names: cu.clone(), routable, nets, shapes: Vec::new(), idx, sidx, maxc, edge, edge_clr, gnd, plane_clr: DEF_PLANE_CLR, eps: EPS, hole_clr,
-                         spoke_notes: Vec::new(), attach: Vec::new(), adj, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new() };
+                         spoke_notes: Vec::new(), attach: Vec::new(), adj, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new(), vip: Vec::new() };
     // width per power-chain pad (model power_chains): the plane fan-out of that pad keeps it
     let mut need_of: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
     for (_, v) in model["nets"].as_object().unwrap() {
@@ -1445,6 +1457,9 @@ fn load(model: &Value, hole_clr: f64) -> Board {
         }
         let s = Shape { net, geo: Geo::Rect(f(&bb[0]), f(&bb[1]), f(&bb[2]), f(&bb[3])), clr: clr_of(&bd, net), layers, drill, kind: Kind::Pad, owner: -1, alive: true };
         bd.add(s);
+        if p["via_in_pad"].as_bool() == Some(true) && drill == 0.0 {
+            bd.vip.push((f(&bb[0]), f(&bb[1]), f(&bb[2]), f(&bb[3])));
+        }
         let (cx, cy) = ((f(&bb[0]) + f(&bb[2])) / 2.0, (f(&bb[1]) + f(&bb[3])) / 2.0);
         if p["shape"].as_str() == Some("circle") {
             bd.circ.insert(((cx * 1e4).round() as i64, (cy * 1e4).round() as i64), (f(&bb[2]) - f(&bb[0])) / 2.0);
@@ -1452,7 +1467,9 @@ fn load(model: &Value, hole_clr: f64) -> Board {
         if let Some(&w) = need_of.get(&format!("{}.{}", p["ref"].as_str().unwrap_or(""), p["num"].as_str().unwrap_or(""))) {
             bd.pad_need.push((cx, cy, w));
         }
-        if net == gnd && gnd >= 0 && drill > 0.0 {
+        // a GND through-hole pad is a return only where the gate counts it (model return_rule.pads; kicad-happy alone
+        // counts GND vias only: H7-CORE M2, 26 RP-001 findings)
+        if net == gnd && gnd >= 0 && drill > 0.0 && model["return_rule"]["pads"].as_bool().unwrap_or(true) {
             bd.gnd_fixed.push((f(&p["x"]), f(&p["y"])));
         }
     }
@@ -1626,6 +1643,7 @@ fn fanout_net(ctx: &mut Ctx, net: usize) -> NetResult {
     let mut misses = Vec::new();
     let pres = ctx.gr.pres as f64;
     for pad in pads {
+        let vip = ctx.bd.is_vip(&pad);
         let (cx, cy) = match pad.geo { Geo::Rect(a, b, c, d) => ((a + c) / 2.0, (b + d) / 2.0), _ => continue };
         // a fixed via within 1 mm counts (input copper); a routed via counts only when it touches this pad: the
         // fan-out via of a neighbour pad has no copper to it (DESIGN 5a: every plane-net SMD pad gets its own via)
@@ -1657,7 +1675,7 @@ fn fanout_net(ctx: &mut Ctx, net: usize) -> NetResult {
             for j in j0..=j1 {
                 for i in i0..=i1 {
                     let (x, y) = ctx.gr.xy(i, j);
-                    if pad.geo.dist(x, y) < 0.35 {
+                    if pad.geo.dist(x, y) < 0.35 && !vip {
                         continue;
                     }
                     let (Some(kv), Some(kt)) = (ctx.vcost(net, i, j), ctx.cost(net, r * n + j * ctx.gr.nx + i, hw)) else { continue };
@@ -1936,19 +1954,27 @@ fn route_net(ctx: &mut Ctx, net: usize) -> NetResult {
         let first_new = ctx.bd.shapes.len();
         add_copper(ctx, net, net as i32, &tr, &vs, hw);
         // RP-001 (DESIGN 4): every new layer change gets a GND return via within --return-r; no site = the
-        // transition is rejected (its via site banned for this net) and the join is searched again
+        // transition is rejected and the join is searched again
         let mut rejected = Vec::new();
         for &(vx, vy) in &vs {
             if !ctx.place_return(net, vx, vy) {
-                let (ix, iy) = ctx.gr.at(vx, vy);
-                rejected.push(iy * ctx.gr.nx + ix);
+                rejected.push((vx, vy));
             }
         }
         if !rejected.is_empty() {
             for i in first_new..ctx.bd.shapes.len() {
                 ctx.bd.shapes[i].alive = false;
             }
-            ctx.ban.extend(rejected);
+            // reserve, then route (M2, H7-CORE at the 1.0 mm gate radius): the path's own tracks often take the free
+            // part of the small return ring. With the path removed, a site that has a return now gets it reserved
+            // (a GND via of this net's return set), and the search routes around it; a site with no return even then
+            // is banned for this net. Unused reserved vias are removed at the end of the net.
+            for (vx, vy) in rejected {
+                if !ctx.place_return(net, vx, vy) {
+                    let (ix, iy) = ctx.gr.at(vx, vy);
+                    ctx.ban.push(iy * ctx.gr.nx + ix);
+                }
+            }
             ret_rejects += 1;
             if ret_rejects > 40 {
                 let pads: Vec<String> = comps.iter().flat_map(|c| tree_pads(ctx, c)).collect();
@@ -1972,7 +1998,77 @@ fn route_net(ctx: &mut Ctx, net: usize) -> NetResult {
             ctx.dead[net].1 = out.hard_fail.clone().unwrap();
         }
     }
+    drop_unused_returns(ctx, net);
     out
+}
+
+/// RP-001 for the locked input vias (M2: the H7-CORE MDI RX pair vias kept from the existing board, whose GND stitching
+/// vias were not kept: 2 kicad-happy findings). Each fixed signal via (not a plane net) with no GND via or counted GND
+/// through-hole pad within --return-r gets a GND via of the return size at the nearest site that the fixed copper
+/// leaves legal, as fixed copper (before any routing, so the memoized fixed-copper verdicts include it). A via with no
+/// such site is returned as a note (an input defect).
+fn fixed_returns(bd: &mut Board, o: &Opts) -> Vec<String> {
+    let mut notes = Vec::new();
+    if bd.gnd < 0 {
+        return notes;
+    }
+    let g = bd.gnd as usize;
+    let (gd, gdr, r) = (o.ret_d, o.ret_drill, o.return_r);
+    let all = (1u8 << bd.layer_names.len()) - 1;
+    let sig: Vec<(f64, f64, f64, f64, usize)> = bd.shapes.iter()
+        .filter(|s| s.alive && s.owner < 0 && s.kind == Kind::Via && s.net >= 0 && s.net != bd.gnd && !bd.nets[s.net as usize].plane)
+        .filter_map(|s| match s.geo { Geo::Circ(x, y, vr) => Some((x, y, vr, s.drill, s.net as usize)), _ => None }).collect();
+    for (x, y, vr, dr, net) in sig {
+        let has = bd.gnd_fixed.iter().any(|&(a, b)| (a - x).powi(2) + (b - y).powi(2) <= r * r)
+            || bd.near_in(&bd.idx, 0, x, y, r, &mut |_, s| s.net == g as i32 && s.kind == Kind::Via
+                && matches!(s.geo, Geo::Circ(a, b, _) if (a - x).powi(2) + (b - y).powi(2) <= r * r));
+        if has {
+            continue;
+        }
+        let sep = (dr / 2.0 + gdr / 2.0 + o.hth).max(vr + gd / 2.0 + bd.maxc.max(bd.nets[g].clr));
+        let p = o.pitch;
+        let k = (r / p).ceil() as i64;
+        let mut sites: Vec<(f64, f64, f64)> = Vec::new();
+        for j in -k..=k {
+            for i in -k..=k {
+                let (px, py) = (x + i as f64 * p, y + j as f64 * p);
+                let dd = ((px - x).powi(2) + (py - y).powi(2)).sqrt();
+                if dd <= r - 1e-9 && dd >= sep {
+                    sites.push((dd, px, py));
+                }
+            }
+        }
+        sites.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        let clr = bd.nets[g].clr;
+        let site = sites.into_iter().find(|&(_, px, py)| {
+            let code = bd.via_fixed_code(px, py, gd, gdr, clr, o.hth);
+            !bd.via_code_blocks(code, g, px, py, gd, gdr, o.hth)
+        });
+        match site {
+            Some((_, px, py)) => {
+                bd.add(Shape { net: g as i32, geo: Geo::Circ(px, py, gd / 2.0), clr, layers: all, drill: gdr, kind: Kind::Via, owner: -1, alive: true });
+                bd.gnd_fixed.push((px, py));
+            }
+            None => notes.push(format!("RP-001: locked via of {} at ({x:.2}, {y:.2}) has no GND return site within {r} mm (input)", bd.nets[net].name)),
+        }
+    }
+    notes
+}
+
+/// Remove the return vias of `net` (GND vias it owns) with no signal via of `net` within --return-r: reserved for a
+/// layer change that the final path does not use.
+fn drop_unused_returns(ctx: &mut Ctx, net: usize) {
+    let g = ctx.bd.gnd;
+    let r2 = ctx.o.return_r * ctx.o.return_r;
+    let sig: Vec<(f64, f64)> = ctx.bd.shapes.iter().filter(|s| s.alive && s.owner == net as i32 && s.net == net as i32 && s.kind == Kind::Via)
+        .filter_map(|s| match s.geo { Geo::Circ(x, y, _) => Some((x, y)), _ => None }).collect();
+    for s in ctx.bd.shapes.iter_mut().filter(|s| s.alive && s.owner == net as i32 && s.net == g && g != net as i32 && s.kind == Kind::Via) {
+        if let Geo::Circ(x, y, _) = s.geo {
+            if !sig.iter().any(|&(a, b)| (a - x).powi(2) + (b - y).powi(2) <= r2) {
+                s.alive = false;
+            }
+        }
+    }
 }
 
 /// Track widths a net may use, widest first: the class width (raised to the width of its design current); a power
@@ -2043,6 +2139,20 @@ fn tree_pads(ctx: &Ctx, items: &[usize]) -> Vec<String> {
     }).collect()
 }
 
+/// Return via (RP-001) diameter and drill: the flag, else the GND net's own via from the model (its class via and the
+/// DRU via rules that select GND, as for its fan-out vias), else the old fixed 0.45 / 0.2. M2: the fixed default put 131
+/// return vias under the H7-CORE DRU 0.6 / 0.3 minimum; NET-CORE has a GND-only 0.45 / 0.2 rule, so it keeps 0.45 / 0.2.
+fn return_via(bd: &Board, cli: Option<(f64, f64)>) -> (f64, f64, &'static str) {
+    if let Some((d, dr)) = cli {
+        return (d, dr, "cli");
+    }
+    if bd.gnd >= 0 {
+        let g = &bd.nets[bd.gnd as usize];
+        return (g.via_d, g.via_drill, "GND net");
+    }
+    (0.45, 0.2, "default")
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
@@ -2054,6 +2164,8 @@ fn main() {
     // CLI flags override the model's hole rules, which override the defaults
     let (mut cli_plane, mut cli_hth, mut cli_hole): (Option<f64>, Option<f64>, Option<f64>) = (None, None, None);
     let mut check_only: Option<String> = None;
+    let mut cli_ret = false;
+    let mut cli_rr = false;
     let mut i = 3;
     while i + 1 < args.len() {
         let v = &args[i + 1];
@@ -2063,7 +2175,10 @@ fn main() {
             "--plane-clr" => cli_plane = Some(v.parse().unwrap()),
             "--hole-to-hole" => cli_hth = Some(v.parse().unwrap()),
             "--hole-clr" => cli_hole = Some(v.parse().unwrap()),
-            "--return-r" => o.return_r = v.parse().unwrap(),
+            "--return-r" => {
+                o.return_r = v.parse().unwrap();
+                cli_rr = true;
+            }
             "--pres-mult" => o.pres_mult = v.parse().unwrap(),
             "--pres-max" => o.pres_max = v.parse().unwrap(),
             "--hist" => o.hist = v.parse().unwrap(),
@@ -2074,6 +2189,7 @@ fn main() {
                 let p: Vec<f64> = v.split(',').map(|s| s.parse().unwrap()).collect();
                 o.ret_d = p[0];
                 o.ret_drill = p[1];
+                cli_ret = true;
             }
             a => {
                 eprintln!("unknown option {a}");
@@ -2093,6 +2209,20 @@ fn main() {
               src(cli_hth, m_hth), o.plane_clr, src(cli_plane, m_plane));
     let mut bd = load(&model, hole_clr);
     bd.plane_clr = o.plane_clr;
+    let (rd, rdr, rsrc) = return_via(&bd, if cli_ret { Some((o.ret_d, o.ret_drill)) } else { None });
+    o.ret_d = rd;
+    o.ret_drill = rdr;
+    // RP-001 radius as the board gate checks it (model return_rule: kicad-happy formula from the stackup); the flag
+    // overrides; 2.0 mm only when the model has none (H7-CORE: 1.0 mm, the fixed 2.0 left 26 RP-001 findings)
+    let m_rr = model["return_rule"]["radius"].as_f64().filter(|&r| r > 0.0);
+    if !cli_rr {
+        if let Some(r) = m_rr {
+            o.return_r = r;
+        }
+    }
+    eprintln!("return via: {rd:.2} / {rdr:.2} ({rsrc}), radius {:.3} ({}), GND through-hole pads {}", o.return_r,
+              if cli_rr { "cli" } else if m_rr.is_some() { "model" } else { "default" },
+              if model["return_rule"]["pads"].as_bool().unwrap_or(true) { "count" } else { "do not count" });
     if let Some(res) = check_only {
         // pour check of a routed result (no routing): its tracks and vias are added as routed copper of their nets
         let r: Value = serde_json::from_str(&std::fs::read_to_string(&res).expect("result")).expect("json");
@@ -2122,6 +2252,11 @@ fn main() {
         return;
     }
     let base0 = bd.shapes.len();
+    // RP-001 for the locked input vias (pairs): a return via is placed now as fixed copper (written with the result)
+    let in_ret_notes = fixed_returns(&mut bd, &o);
+    for m in &in_ret_notes {
+        eprintln!("{m}");
+    }
     let (e0, e1, e2, e3) = bd.edge;
     let nx = ((e2 - e0) / o.pitch).ceil() as usize + 1;
     let ny = ((e3 - e1) / o.pitch).ceil() as usize + 1;
@@ -2445,6 +2580,7 @@ fn main() {
         }
     }
     notes.extend(ctx.bd.spoke_notes.iter().cloned());
+    notes.extend(in_ret_notes.iter().cloned());
     notes.sort();
     notes.dedup();
     let mut failed = fan_fail;
@@ -2480,7 +2616,7 @@ mod tests {
         let mut bd = Board { layer_names: vec!["F.Cu".into(), "In1.Cu".into(), "B.Cu".into()], routable: vec![0, 2], nets, shapes: Vec::new(),
                              idx: Index::new(x0 - 1.0, y0 - 1.0, x1 + 1.0, y1 + 1.0, 3), sidx: Index::new(x0 - 1.0, y0 - 1.0, x1 + 1.0, y1 + 1.0, 3),
                              maxc: 0.2, edge: (x0, y0, x1, y1), edge_clr: 0.3, gnd: -1, plane_clr: 0.25, eps: EPS, hole_clr: 0.28,
-                             spoke_notes: Vec::new(), attach: Vec::new(), adj: 0, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new() };
+                             spoke_notes: Vec::new(), attach: Vec::new(), adj: 0, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new(), vip: Vec::new() };
         let sh = |net: i32, geo: Geo, clr: f64, layers: u8, drill: f64, kind: Kind, owner: i32| Shape { net, geo, clr, layers, drill, kind, owner, alive: true };
         bd.add(sh(0, Geo::Rect(2.0, 2.0, 2.6, 2.4), 0.15, 1, 0.0, Kind::Pad, -1));
         bd.add(sh(0, Geo::Rect(2.0, 2.9, 2.6, 3.3), 0.15, 1, 0.0, Kind::Pad, -1));

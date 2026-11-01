@@ -21,6 +21,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, os.path.join(ROOT, 'tools'))
 import route_rule_coverage as rrc  # noqa: E402  (DRU s-expression parser + three-valued selector evaluation)
 import pcbtool  # noqa: E402  (the power path gate: IPC formula and stackup copper thickness)
+import kicad_happy_gate as khg  # noqa: E402  (the RP-001 gate: return_radius from the reference planes)
 
 import pcbnew  # noqa: E402
 import fnmatch  # noqa: E402
@@ -61,6 +62,32 @@ def hole_scope(cond):
     if re.fullmatch(TH.replace('(?:A|B)', 'A') + r'\s*&&\s*' + TH.replace('(?:A|B)', 'B'), c):
         return 'both_th'
     return None
+
+
+def return_rule(pcb, cfg, bdir):
+    """RP-001 as the board gate checks it (tools/kicad_happy_gate.py): with gate kicad_happy.return_planes the radius
+    is khg.return_radius (max(2 h, 1.0 mm), h = the dielectric between the reference planes) and GND through-hole pads
+    count as returns (take_return_stitched); without it kicad-happy a6bba1a decides alone (emc_rules.py RP-001):
+    h = the first core / prepreg of the stackup (0.2 mm if none), radius max(2 h, 1.0 mm), GND vias only. None when the
+    gate has no kicad_happy check (the router keeps its default)."""
+    kh = (cfg.get('checks') or {}).get('kicad_happy')
+    if not kh:
+        return None
+    rp = kh.get('return_planes') if isinstance(kh, dict) else None
+    if rp:
+        rr = khg.return_radius(pcb, os.path.join(bdir, rp))
+        if rr is None:
+            raise SystemExit('kicad_happy return_planes set but no radius from ' + rp)
+        return {'radius': rr[0], 'pads': True, 'source': f'gate return_planes: max(2 x {rr[1]:.4f} mm ({rr[2][0]}-{rr[2][1]}), 1.0), GND vias and through-hole pads'}
+    h = 0.2
+    m = re.search(r"\(stackup(.*?)\(copper_finish", open(pcb).read(), re.S)
+    for _, body in (re.findall(r'\(layer "([^"]+)"(.*?)(?=\(layer "|\Z)', m.group(1), re.S) if m else []):
+        t = re.search(r'\(type "([^"]+)"\)', body)
+        th = re.search(r"\(thickness ([0-9.]+)", body)
+        if t and t.group(1) in ('core', 'prepreg') and th and float(th.group(1)) > 0:
+            h = float(th.group(1))
+            break
+    return {'radius': max(2 * h, 1.0), 'pads': False, 'source': f'kicad-happy a6bba1a: max(2 x first dielectric {h} mm, 1.0), GND vias only'}
 
 
 def load_cfg(bdir):
@@ -122,6 +149,10 @@ def main():
                 info['layers'] = [l for l in info['layers'] if l not in e.get('deny_layers', [])]
     pads = []
     pcb_text = None
+    # gate viapads allow list (REF.PAD, each with a datasheet reason in gate.json): the router may put the pad's own
+    # plane fan-out via inside this pad (for example an exposed pad that the datasheet connects with vias)
+    vp = cfg.get('checks', {}).get('viapads')
+    vip_allow = set(vp.get('allow', [])) if isinstance(vp, dict) else set()
     for fp in b.GetFootprints():
         for p in fp.Pads():
             bb = p.GetBoundingBox()
@@ -130,6 +161,8 @@ def main():
                  'bbox': [T(bb.GetLeft()), T(bb.GetTop()), T(bb.GetRight()), T(bb.GetBottom())],
                  'layers': [l for l in cu if p.IsOnLayer(lid[l])],
                  'drill': T(p.GetDrillSize().x) if p.GetDrillSize().x else 0.0}
+            if f"{d['ref']}.{d['num']}" in vip_allow:
+                d['via_in_pad'] = True
             if p.GetLocalZoneConnection() != pcbnew.ZONE_CONNECTION_INHERITED:
                 d['zone_conn'] = ZC_NAMES.get(p.GetLocalZoneConnection(), 'unknown')
             # pour model (v5): KiCad spoke directions = pad orientation + thermal spoke angle + k x 90 degrees
@@ -298,6 +331,7 @@ def main():
              'setup': {'min_via': rules_setup.get('min_via_diameter'), 'min_drill': rules_setup.get('min_through_hole_diameter'),
                        'min_clearance': rules_setup.get('min_clearance'), 'min_track': rules_setup.get('min_track_width'), 'edge_clearance': rules_setup.get('min_copper_edge_clearance'),
                        'min_spokes': rules_setup.get('min_resolved_spokes', 2)},
+             'return_rule': return_rule(pcb, cfg, bdir),
              'classes': classes, 'nets': nets, 'pairs': pairs, 'zones': zones, 'hole_rules': hole_rules, 'pads': pads, 'copper': copper, 'rules': report}
     states = {}
     for r in report:

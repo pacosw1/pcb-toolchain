@@ -20,7 +20,7 @@ fn pocket_board() -> Board {
                          idx: Index::new(-1.0, -1.0, 11.0, 11.0, 3), sidx: Index::new(-1.0, -1.0, 11.0, 11.0, 3), maxc: 0.25,
                          edge: (0.0, 0.0, 10.0, 10.0), edge_clr: 0.3, gnd: 2, plane_clr: 0.25, eps: EPS, hole_clr: 0.28,
                          spoke_notes: Vec::new(), attach: Vec::new(), adj: 0, pad_need: Vec::new(), gnd_fixed: vec![(8.5, 5.0)],
-                         pours: Vec::new(), circ: HashMap::new() };
+                         pours: Vec::new(), circ: HashMap::new(), vip: Vec::new() };
     let fixed = |net: i32, geo: Geo, kind: Kind, layers: u8, drill: f64| Shape { net, geo, clr: 0.15, layers, drill, kind, owner: -1, alive: true };
     bd.add(fixed(0, Geo::Rect(6.8, 1.3, 7.2, 1.7), Kind::Pad, 1, 0.0));
     bd.add(fixed(0, Geo::Rect(6.8, 8.3, 7.2, 8.7), Kind::Pad, 1, 0.0));
