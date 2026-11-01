@@ -20,8 +20,24 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(ROOT, 'tools'))
 import route_rule_coverage as rrc  # noqa: E402  (DRU s-expression parser + three-valued selector evaluation)
+import pcbtool  # noqa: E402  (the power path gate: IPC formula and stackup copper thickness)
 
 import pcbnew  # noqa: E402
+import fnmatch  # noqa: E402
+import math  # noqa: E402
+
+
+def ipc_width(amps, thick, dT):
+    """Smallest track width (mm, rounded up to 0.01 mm) whose IPC current (tools/pcbtool.py ipc_amps, the formula of
+    the paths gate) is at least amps. 0 for no current."""
+    if amps <= 0:
+        return 0.0
+    # ipc_amps = k dT^0.44 (w t / 0.0254^2)^0.725, solved for w; then checked with the gate function itself
+    w = (amps / (pcbtool.IPC_K * dT ** 0.44)) ** (1 / 0.725) * 0.0254 ** 2 / thick
+    w = math.ceil(w * 100 - 1e-9) / 100
+    while pcbtool.ipc_amps(w, thick, dT) < amps:
+        w += 0.01
+    return round(w, 2)
 
 T = pcbnew.ToMM
 ROUTED_KINDS = {'clearance', 'track_width', 'via_count', 'length', 'disallow', 'hole_clearance', 'hole_to_hole'}
@@ -212,15 +228,41 @@ def main():
     plane_clr = max([z['clearance'] for z in zones if z['layer'] in plane_layers and z['net']] or [0.0])
     hole_rules['plane_clearance'] = {'min': plane_clr, 'source': 'max local clearance of the zones on ' + ', '.join(sorted(plane_layers))}
     hole_rules['board_min'] = {'hole_clearance': rules_setup.get('min_hole_clearance'), 'hole_to_hole': rules_setup.get('min_hole_to_hole')}
+    # current-paths.json: the width each power pin pair needs, by the formula of the gate (tools/pcbtool.py paths:
+    # IPC-2221 external k on every layer, dT and copper thickness of the board stackup). The gate gives a neck credit
+    # only from end evidence (a same-net plane or a wider track) and a pin escape only from tools/pin-ratings.json,
+    # so the router routes every piece of the net at the IPC width (no neck credit is assumed).
+    dT = float(jload(bdir, 'current-paths.json', {}).get('dT', 10.0))
+    thick = pcbtool.copper_thickness(pcb)
     for name, chain in paths.items():
-        if name in nets:
-            amps = max([c.get('amps', 0) for c in chain.get('chains', [])] + [chain.get('amps', 0)])
-            nets[name]['limits']['amps'] = amps
+        if name not in nets:
+            continue
+        chains = []
+        for c in chain.get('chains', [chain]):
+            need = 0.0
+            for l in nets[name]['layers']:
+                need = max(need, ipc_width(c.get('amps', 0), thick.get(l, 0.035), dT))
+            chains.append({'pads': c.get('pads', []), 'amps': c.get('amps', 0), 'min_width': need})
+        nets[name]['limits']['amps'] = max([c['amps'] for c in chains] + [0])
+        nets[name]['power_chains'] = chains
+        nets[name]['min_width'] = max([c['min_width'] for c in chains] + [0.0])
+    # si_planes (D-124c screen): a checked net (not a ground, not exempt, not power) on a layer of 'adjacent' must run
+    # over the copper of its reference plane: the router keeps it off the plane voids (antipads of foreign drilled items)
+    pwr_pats = list(planes.get('power') or []) + [q for m in (planes.get('mixed_layers') or {}).values() for q in m.get('power', [])]
+    exempt_nets = set((planes.get('exempt') or {}).get('nets', {}))
+    for name, info in nets.items():
+        info['plane_ref'] = (name not in set(planes.get('grounds', [])) and name not in exempt_nets
+                             and not any(fnmatch.fnmatchcase(name, q) for q in pwr_pats))
+    # locked input vias of each net: they count in the DRU via_count of the net (KiCad too_many_vias)
+    for c in copper:
+        if c['kind'] == 'via' and c['net'] in nets:
+            nets[c['net']]['input_vias'] = nets[c['net']].get('input_vias', 0) + 1
     o = b.GetBoardEdgesBoundingBox()
     model = {'schema': 'iot-lab.route-model.v0', 'board': os.path.basename(bdir), 'pcb': pcb, 'copper_layers': cu,
-             'plane_layers': sorted(plane_layers), 'outline_bbox': [T(o.GetLeft()), T(o.GetTop()), T(o.GetRight()), T(o.GetBottom())],
+             'plane_layers': sorted(plane_layers), 'adjacent': planes.get('adjacent', {}),
+             'grounds': planes.get('grounds', []), 'current_dT': dT, 'copper_thickness': thick, 'outline_bbox': [T(o.GetLeft()), T(o.GetTop()), T(o.GetRight()), T(o.GetBottom())],
              'setup': {'min_via': rules_setup.get('min_via_diameter'), 'min_drill': rules_setup.get('min_through_hole_diameter'),
-                       'min_clearance': rules_setup.get('min_clearance'), 'edge_clearance': rules_setup.get('min_copper_edge_clearance'),
+                       'min_clearance': rules_setup.get('min_clearance'), 'min_track': rules_setup.get('min_track_width'), 'edge_clearance': rules_setup.get('min_copper_edge_clearance'),
                        'min_spokes': rules_setup.get('min_resolved_spokes', 2)},
              'classes': classes, 'nets': nets, 'pairs': pairs, 'zones': zones, 'hole_rules': hole_rules, 'pads': pads, 'copper': copper, 'rules': report}
     states = {}

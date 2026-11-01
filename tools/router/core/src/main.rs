@@ -10,10 +10,16 @@
 //!      fixed via of the net is already within 1 mm (CLAUDE.md: a ground via next to each ground pad).
 //!   2. routed nets: power class first, then fast nets, then slow nets; shortest first inside a group. A net is a set
 //!      of components (pads + existing copper that touch); the search joins them one by one (multi-source A*).
-//!   3. return vias: each new signal via gets a GND via within --return-r (kicad-happy RP-001).
+//!   3. return vias: each new signal via gets a GND via within --return-r (kicad-happy RP-001) when its join is
+//!      routed; a via site with no possible GND site is no legal layer change, and a rejected transition reroutes.
+//! Hard rules (v4): DRU via_count per net, locked input vias included (max 0 = one layer); RP-001 as above; power nets
+//! never narrower than the width of their design current (model min_width, the paths gate formula); track ends
+//! END_IN inside the copper they join.
 //! NET-CORE lessons (2026-10-31) built in: a fast net keeps --plane-clr from every foreign drilled item, so it never
-//! runs over a plane antipad (si_planes fast-crossing); a GND via may go through a foreign plane (antipad), it is
-//! checked only against copper items.
+//! runs over a plane antipad (si_planes fast-crossing); since v4 every si_planes checked net (model plane_ref) does the
+//! same on the layers with an adjacent plane (model adjacent); a GND via may go through a foreign plane (antipad), it
+//! is checked only against copper items. The negotiation stops when the copper is legal and the open nets are hard
+//! fails that did not change for STALL iterations.
 //! Negotiation (PathFinder): routed copper is soft. Step cost = length x (1 + history) x (1 + pres x distinct items hit).
 //! After each iteration an exact audit of all routed copper (plain rule, no margin) gives the overuse: history grows on
 //! every conflicting item of both nets, the nets still in conflict (and search-limited ones) are ripped up, pres grows
@@ -34,6 +40,10 @@ const DEF_PLANE_CLR: f64 = 0.25; // local clearance of the inner GND / power zon
 const SQ2: f64 = std::f64::consts::SQRT_2;
 /// a join is searched first inside the bounding box of the net's items grown by this margin (mm)
 const JOIN_MARGIN: f64 = 5.0;
+/// a track end lies at least this far inside the copper it joins (pad, track, via): see cells_of
+const END_IN: f64 = 0.01;
+/// iterations with the same hard fails and no conflict before the negotiation stops
+const STALL: usize = 3;
 
 #[derive(Clone, Copy, Debug)]
 enum Geo {
@@ -116,6 +126,13 @@ struct Net {
     via_drill: f64,
     max_vias: Option<f64>,
     max_len: Option<f64>,
+    /// si_planes checked net (not ground, power or exempt): on a layer with an adjacent plane (model `adjacent`) the
+    /// track keeps --plane-clr from foreign drilled items, so it never runs over a plane void (D-124c crossing)
+    pref: bool,
+    /// smallest width the net's design current needs (model `min_width`, the paths gate formula); 0 = no current
+    min_w: f64,
+    /// locked input vias of the net: they count in the DRU via_count
+    in_vias: usize,
 }
 
 #[derive(Serialize, Clone)]
@@ -224,6 +241,12 @@ struct Board {
     spoke_notes: Vec<String>,
     /// SMD pads of a plane net that need their own fan-out track (it counts as one spoke): forced even when a via is near
     attach: Vec<(f64, f64)>,
+    /// layers with an adjacent reference plane (model `adjacent`, si_planes): the plane rule of `pref` nets applies there
+    adj: u8,
+    /// pad centre -> width its power chain needs (model power_chains): the plane fan-out of that pad keeps it
+    pad_need: Vec<(f64, f64, f64)>,
+    /// centres of the fixed GND vias and GND through-hole pads: a return for any signal via within --return-r (RP-001)
+    gnd_fixed: Vec<(f64, f64)>,
 }
 
 /// Fixed-copper verdict of a grid site for one rule profile, shared by all nets: FREE, MULTI (blocked for every net),
@@ -292,7 +315,10 @@ fn via_hit(s: &Shape, x: f64, y: f64, vr: f64, drill: f64, clr: f64, hth: f64, s
 
 impl Board {
     fn vhit(&self, s: &Shape, x: f64, y: f64, vr: f64, drill: f64, clr: f64, hth: f64) -> u8 {
-        let s_fast = s.kind == Kind::Track && s.net >= 0 && self.nets[s.net as usize].fast;
+        let s_fast = s.kind == Kind::Track && s.net >= 0 && {
+            let l = (0..8).find(|&l| s.layers & (1 << l) != 0).unwrap_or(0);
+            self.plane_rule(self.pflags(s.net as usize), l)
+        };
         via_hit(s, x, y, vr, drill, clr, hth, s_fast, self.plane_clr, self.hole_clr, self.eps)
     }
     fn add(&mut self, s: Shape) -> usize {
@@ -328,11 +354,21 @@ impl Board {
     fn track_r(&self, hw: f64, plane_clr: f64) -> f64 {
         hw + self.maxc.max(plane_clr).max(self.hole_clr) + 0.01
     }
-    /// Fixed-copper verdict (FREE / MULTI / n) of a track centre for the profile (hw, clr, fast).
-    fn track_fixed_code(&self, l: usize, x: f64, y: f64, hw: f64, clr: f64, fast: bool, plane_clr: f64) -> i32 {
+    /// Plane-rule flags of a net: bit 0 fast (plane clearance on every layer), bit 1 pref (on the layers in `adj`).
+    fn pflags(&self, net: usize) -> u8 {
+        let n = &self.nets[net];
+        n.fast as u8 | (n.pref as u8) << 1
+    }
+    /// The plane clearance to foreign drilled items applies to a track with flags pf on copper layer l.
+    fn plane_rule(&self, pf: u8, l: usize) -> bool {
+        pf & 1 != 0 || (pf & 2 != 0 && self.adj & (1 << l) != 0)
+    }
+    /// Fixed-copper verdict (FREE / MULTI / n) of a track centre for the profile (hw, clr, plane flags pf).
+    fn track_fixed_code(&self, l: usize, x: f64, y: f64, hw: f64, clr: f64, pf: u8, plane_clr: f64) -> i32 {
         if !self.inside(x, y, hw) {
             return MULTI;
         }
+        let fast = self.plane_rule(pf, l);
         let mut code = FREE;
         self.near_in(&self.idx, l, x, y, self.track_r(hw, plane_clr), &mut |_, s| {
             if !track_hit(s, x, y, hw, clr, fast, plane_clr, self.hole_clr, self.eps) {
@@ -349,8 +385,7 @@ impl Board {
     }
     /// Number of distinct routed items of other nets that a track centre conflicts with; `hits` collects their ids.
     fn track_soft(&self, net: usize, l: usize, x: f64, y: f64, hw: f64, plane_clr: f64, hits: Option<&mut Vec<u32>>) -> i32 {
-        let n = &self.nets[net];
-        let (clr, fast) = (n.clr, n.fast);
+        let (clr, fast) = (self.nets[net].clr, self.plane_rule(self.pflags(net), l));
         let mut seen: Vec<u32> = Vec::new();
         self.near_in(&self.sidx, l, x, y, self.track_r(hw, plane_clr), &mut |id, s| {
             if s.net != net as i32 && !seen.contains(&id) && track_hit(s, x, y, hw, clr, fast, plane_clr, self.hole_clr, self.eps) {
@@ -371,7 +406,7 @@ impl Board {
     /// k >= 0 = number of distinct routed items of other nets it conflicts with. `hits` collects their shape ids.
     fn track_cost(&self, net: usize, l: usize, x: f64, y: f64, hw: f64, plane_clr: f64, hits: Option<&mut Vec<u32>>) -> i32 {
         let n = &self.nets[net];
-        if blocks(self.track_fixed_code(l, x, y, hw, n.clr, n.fast, plane_clr), net as i32) {
+        if blocks(self.track_fixed_code(l, x, y, hw, n.clr, self.pflags(net), plane_clr), net as i32) {
             return -1;
         }
         self.track_soft(net, l, x, y, hw, plane_clr, hits)
@@ -471,9 +506,6 @@ impl Board {
         }
         self.via_soft(net, x, y, d, drill, hth, hits)
     }
-    fn via_ok(&self, net: usize, x: f64, y: f64, d: f64, drill: f64, hth: f64) -> bool {
-        self.via_cost(net, x, y, d, drill, hth, None) == 0
-    }
     /// Rebuild the spatial indexes without the dead (ripped-up) items.
     fn compact(&mut self) {
         let shapes: Vec<Shape> = self.shapes.drain(..).filter(|s| s.alive).collect();
@@ -524,6 +556,11 @@ struct Grid {
     g: Vec<f32>,
     from: Vec<u32>,
     seen: Vec<u32>,
+    /// expanded in search generation sgen: a weighted A* (h = 1.15 x octile) does not reopen an expanded cell, so a
+    /// search expands each cell at most once (v3 reopened cells about 28 times each: /J2_LEDG_A hit 8 M pops on 0.3 M
+    /// cells). The path cost stays within the heuristic weight of the optimum; a failed search still visited every
+    /// reachable cell, so Err(false) stays a proof.
+    closed: Vec<u32>,
     tgt: Vec<u32>,
     sgen: u32,
     tgen: u32,
@@ -561,6 +598,10 @@ struct Ctx<'a> {
     dead: Vec<(Vec<usize>, String)>,
     memo: Vec<((u8, (u64, u64, u64)), Vec<i32>)>,
     memo_w: Vec<f64>,
+    /// per via grid site: 0 unknown, 1 a GND return is possible within --return-r (fixed copper only), 2 not possible
+    rcache: Vec<u8>,
+    /// via grid sites banned for the net being routed (its return via could not be placed there)
+    ban: Vec<usize>,
 }
 
 /// Exact clearance audit of all routed copper at the end of an iteration (the PathFinder "overuse").
@@ -590,16 +631,16 @@ impl<'a> Ctx<'a> {
             let (r, iy, ix) = self.gr.cell(i);
             let (x, y) = self.gr.xy(ix, iy);
             let l = self.bd.routable[r];
-            let (clr, fast) = (self.bd.nets[net].clr, self.bd.nets[net].fast);
+            let (clr, pf) = (self.bd.nets[net].clr, self.bd.pflags(net));
             let pc = self.o.plane_clr;
-            let fixed = match self.memo_slot(0, (hw.to_bits(), clr.to_bits(), fast as u64)) {
+            let fixed = match self.memo_slot(0, (hw.to_bits(), clr.to_bits(), pf as u64)) {
                 Some(m) => {
                     if self.memo[m].1[i] == UNKNOWN {
-                        self.memo[m].1[i] = self.bd.track_fixed_code(l, x, y, hw, clr, fast, pc);
+                        self.memo[m].1[i] = self.bd.track_fixed_code(l, x, y, hw, clr, pf, pc);
                     }
                     self.memo[m].1[i]
                 }
-                None => self.bd.track_fixed_code(l, x, y, hw, clr, fast, pc),
+                None => self.bd.track_fixed_code(l, x, y, hw, clr, pf, pc),
             };
             c = if blocks(fixed, net as i32) { 1 } else { code(self.bd.track_soft(net, l, x, y, hw, pc, None)) };
             self.gr.cache[i] = c;
@@ -616,16 +657,16 @@ impl<'a> Ctx<'a> {
             let (x, y) = self.gr.xy(ix, iy);
             let (x, y) = (x + self.gr.p / 2.0, y + self.gr.p / 2.0);
             let l = self.bd.routable[r];
-            let (clr, fast) = (self.bd.nets[net].clr, self.bd.nets[net].fast);
+            let (clr, pf) = (self.bd.nets[net].clr, self.bd.pflags(net));
             let pc = self.o.plane_clr;
-            let fixed = match self.memo_slot(1, (hw.to_bits(), clr.to_bits(), fast as u64)) {
+            let fixed = match self.memo_slot(1, (hw.to_bits(), clr.to_bits(), pf as u64)) {
                 Some(m) => {
                     if self.memo[m].1[mi] == UNKNOWN {
-                        self.memo[m].1[mi] = self.bd.track_fixed_code(l, x, y, hw, clr, fast, pc);
+                        self.memo[m].1[mi] = self.bd.track_fixed_code(l, x, y, hw, clr, pf, pc);
                     }
                     self.memo[m].1[mi]
                 }
-                None => self.bd.track_fixed_code(l, x, y, hw, clr, fast, pc),
+                None => self.bd.track_fixed_code(l, x, y, hw, clr, pf, pc),
             };
             c = if blocks(fixed, net as i32) { 1 } else { code(self.bd.track_soft(net, l, x, y, hw, pc, None)) };
             self.gr.dcache[mi] = c;
@@ -653,6 +694,140 @@ impl<'a> Ctx<'a> {
         }
         if c == 1 { None } else { Some((c - 2) as u32) }
     }
+    /// A layer change of `net` may use the via site (ix, iy): not banned for this net, and (RP-001, DESIGN 4) a GND
+    /// return is possible within --return-r: a fixed GND via or GND through-hole pad, or a GND via site that fixed
+    /// copper leaves free and that keeps the rules to this signal via. Plane nets need no return.
+    fn via_site_ok(&mut self, net: usize, ix: usize, iy: usize) -> bool {
+        let k = iy * self.gr.nx + ix;
+        if self.ban.contains(&k) {
+            return false;
+        }
+        if self.bd.nets[net].plane || self.bd.gnd < 0 {
+            return true;
+        }
+        if self.rcache[k] == 0 {
+            let (x, y) = self.gr.xy(ix, iy);
+            self.rcache[k] = if self.ret_possible(x, y) { 1 } else { 2 };
+        }
+        self.rcache[k] == 1
+    }
+    /// The candidate GND via sites for a signal via at (x, y): grid points (every second grid cell) within
+    /// --return-r, at least the hole-to-hole and clearance distance from the signal via, nearest first.
+    fn ret_sites(&self, x: f64, y: f64) -> Vec<(f64, usize, usize)> {
+        let g = self.bd.gnd as usize;
+        let (gd, gdr) = (self.o.ret_d, self.o.ret_drill);
+        // the largest signal via of the board (conservative for every net)
+        let (sd, sdr) = self.bd.nets.iter().filter(|n| !n.plane).fold((0.0f64, 0.0f64), |a, n| (a.0.max(n.via_d), a.1.max(n.via_drill)));
+        let sep = (sdr / 2.0 + gdr / 2.0 + self.o.hth).max(sd / 2.0 + gd / 2.0 + self.bd.maxc.max(self.bd.nets[g].clr));
+        let p = self.gr.p;
+        let k = (self.o.return_r / p).ceil() as i64;
+        let (cx, cy) = self.gr.at(x, y);
+        let mut v = Vec::new();
+        for j in (-k..=k).step_by(2) {
+            for i in (-k..=k).step_by(2) {
+                let (ix, iy) = (cx as i64 + i, cy as i64 + j);
+                if ix < 0 || iy < 0 || ix >= self.gr.nx as i64 || iy >= self.gr.ny as i64 {
+                    continue;
+                }
+                let (px, py) = self.gr.xy(ix as usize, iy as usize);
+                let dd = ((px - x).powi(2) + (py - y).powi(2)).sqrt();
+                if dd <= self.o.return_r - 1e-9 && dd >= sep {
+                    v.push((dd, ix as usize, iy as usize));
+                }
+            }
+        }
+        v.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        v
+    }
+    fn ret_fixed_code(&mut self, ix: usize, iy: usize) -> i32 {
+        let g = self.bd.gnd as usize;
+        let (d, dr, clr, hth) = (self.o.ret_d, self.o.ret_drill, self.bd.nets[g].clr, self.o.hth);
+        let k = iy * self.gr.nx + ix;
+        let (x, y) = self.gr.xy(ix, iy);
+        match self.memo_slot(2, (d.to_bits(), dr.to_bits(), clr.to_bits())) {
+            Some(m) => {
+                if self.memo[m].1[k] == UNKNOWN {
+                    self.memo[m].1[k] = self.bd.via_fixed_code(x, y, d, dr, clr, hth);
+                }
+                self.memo[m].1[k]
+            }
+            None => self.bd.via_fixed_code(x, y, d, dr, clr, hth),
+        }
+    }
+    fn ret_possible(&mut self, x: f64, y: f64) -> bool {
+        let r = self.o.return_r;
+        if self.bd.gnd_fixed.iter().any(|&(gx, gy)| (gx - x).powi(2) + (gy - y).powi(2) <= r * r) {
+            return true;
+        }
+        let g = self.bd.gnd as usize;
+        let (d, dr, hth) = (self.o.ret_d, self.o.ret_drill, self.o.hth);
+        for (_, ix, iy) in self.ret_sites(x, y) {
+            let code = self.ret_fixed_code(ix, iy);
+            let (px, py) = self.gr.xy(ix, iy);
+            if !self.bd.via_code_blocks(code, g, px, py, d, dr, hth) {
+                return true;
+            }
+        }
+        false
+    }
+    /// A GND via (any owner) or a fixed GND through-hole pad within --return-r of (x, y).
+    fn has_return(&self, x: f64, y: f64) -> bool {
+        let r = self.o.return_r;
+        if self.bd.gnd_fixed.iter().any(|&(gx, gy)| (gx - x).powi(2) + (gy - y).powi(2) <= r * r) {
+            return true;
+        }
+        let g = self.bd.gnd;
+        let l = self.bd.routable[0];
+        let mut f = |_: u32, s: &Shape| s.net == g && s.kind == Kind::Via && match s.geo { Geo::Circ(cx, cy, _) => (cx - x).powi(2) + (cy - y).powi(2) <= r * r, _ => false };
+        self.bd.near_in(&self.bd.idx, l, x, y, r, &mut f) || self.bd.near_in(&self.bd.sidx, l, x, y, r, &mut f)
+    }
+    /// Return via (RP-001) for the new signal via of `net` at (x, y): an existing GND via within --return-r counts;
+    /// else a new GND via, owned by `net`, at the cheapest site (fewest soft conflicts, then nearest; strict: no
+    /// conflict). A site that touches the net's own copper is never taken. false: no site (the transition is rejected).
+    fn place_return(&mut self, net: usize, x: f64, y: f64) -> bool {
+        if self.bd.nets[net].plane || self.bd.gnd < 0 || self.has_return(x, y) {
+            return true;
+        }
+        let g = self.bd.gnd as usize;
+        let (d, dr, hth) = (self.o.ret_d, self.o.ret_drill, self.o.hth);
+        let mut best: Option<(i32, f64, f64, f64)> = None;
+        let mut hits = Vec::new();
+        for (dd, ix, iy) in self.ret_sites(x, y) {
+            let code = self.ret_fixed_code(ix, iy);
+            let (px, py) = self.gr.xy(ix, iy);
+            if self.bd.via_code_blocks(code, g, px, py, d, dr, hth) {
+                continue;
+            }
+            hits.clear();
+            let k = self.bd.via_soft(g, px, py, d, dr, hth, Some(&mut hits));
+            if (self.strict && k > 0) || hits.iter().any(|&h| { let s = &self.bd.shapes[h as usize]; s.owner == net as i32 || s.net == net as i32 }) {
+                continue;
+            }
+            if best.map(|b| (k, dd) < (b.0, b.1)).unwrap_or(true) {
+                best = Some((k, dd, px, py));
+                if k == 0 {
+                    break; // sites come nearest first
+                }
+            }
+        }
+        let Some((_, _, px, py)) = best else { return false };
+        let all = (1u8 << self.bd.layer_names.len()) - 1;
+        let clr = self.bd.nets[g].clr;
+        self.bd.add(Shape { net: g as i32, geo: Geo::Circ(px, py, d / 2.0), clr, layers: all, drill: dr, kind: Kind::Via, owner: net as i32, alive: true });
+        true
+    }
+    /// Signal vias with no GND via or GND through-hole pad within --return-r (RP-001): (net, x, y).
+    fn ret_missing(&self) -> Vec<(usize, f64, f64)> {
+        let mut v = Vec::new();
+        for s in self.bd.shapes.iter().filter(|s| s.alive && s.owner >= 0 && s.kind == Kind::Via && s.net == s.owner && !self.bd.nets[s.net as usize].plane) {
+            if let Geo::Circ(x, y, _) = s.geo {
+                if self.bd.gnd >= 0 && !self.has_return(x, y) {
+                    v.push((s.net as usize, x, y));
+                }
+            }
+        }
+        v
+    }
     /// Memo of the fixed-copper verdict per rule profile (track: hw, clr, fast; via: d, drill, clr). Fixed copper
     /// does not change during a run, so each grid site is evaluated once per profile instead of once per search.
     /// Only the profiles of the net widths (and the power necks) get a memo; others are evaluated directly.
@@ -675,7 +850,7 @@ impl<'a> Ctx<'a> {
 
     /// Flood fill with the moves and blocking rules of the search (vias allowed, diagonal midpoints checked, soft
     /// conflicts block only when strict): is any cell marked in tgt reachable from src inside bx?
-    fn reachable(&mut self, net: usize, hw: f64, src: &[usize], strict: bool, bx: (usize, usize, usize, usize)) -> bool {
+    fn reachable(&mut self, net: usize, hw: f64, src: &[usize], strict: bool, allow_via: bool, bx: (usize, usize, usize, usize)) -> bool {
         self.gr.sgen += 1;
         let sgen = self.gr.sgen;
         let (nx, nr) = (self.gr.nx, self.gr.nr);
@@ -710,7 +885,7 @@ impl<'a> Ctx<'a> {
                 self.gr.seen[j] = sgen;
                 stack.push(j);
             }
-            if nr > 1 && ok(self.vcost(net, ix, iy)) {
+            if allow_via && nr > 1 && ok(self.vcost(net, ix, iy)) && self.via_site_ok(net, ix, iy) {
                 for r2 in 0..nr {
                     let j = r2 * n + iy * nx + ix;
                     if r2 != r && allowed[r2] && self.gr.seen[j] != sgen && ok(self.cost(net, j, hw)) {
@@ -741,11 +916,15 @@ impl<'a> Ctx<'a> {
                     // a pad is known only by its bounding box: a track may end only inside the inscribed ellipse,
                     // which lies inside a rectangular, round, oval or rounded pad (a bbox corner of a round pad is
                     // bare board: KiCad reported such ends as unconnected)
+                    // The end must lie strictly inside the copper, END_IN from its edge: an end on the pad edge is
+                    // connected for KiCad but not for the paths gate (tools/pcbtool.py: pad.HitTest of the end
+                    // node, rounded to 1 um, excludes the edge: v3 "no copper path" at U4.3, U1.30, L2.2)
                     let in_pad = match (s.kind, s.geo) {
                         (Kind::Pad, Geo::Rect(..)) => {
-                            let (ex, ey) = (((c - a) / 2.0).max(1e-9), ((d - b) / 2.0).max(1e-9));
+                            let (ex, ey) = (((c - a) / 2.0 - END_IN).max(1e-9), ((d - b) / 2.0 - END_IN).max(1e-9));
                             ((x - (a + c) / 2.0) / ex).powi(2) + ((y - (b + d) / 2.0) / ey).powi(2) <= 1.0
                         }
+                        (_, Geo::Seg(..)) | (_, Geo::Circ(..)) => s.geo.dist(x, y) <= -END_IN,
                         _ => true,
                     };
                     if s.geo.dist(x, y) <= 1e-9 {
@@ -765,7 +944,7 @@ impl<'a> Ctx<'a> {
     /// cost = length x layer factor x (1 + history) x (1 + pres x soft conflicts); a diagonal step also pays its
     /// midpoint. With strict, soft conflicts block. Err(true): max_pops expansions reached (not a proof);
     /// Err(false): no path inside bx.
-    fn search_n(&mut self, net: usize, hw: f64, src: &[usize], anchors: &[(f64, f64)], allow_via: bool, strict: bool, max_pops: usize,
+    fn search_n(&mut self, net: usize, hw: f64, src: &[usize], anchors: &[(f64, f64)], allow_via: bool, via_mult: f64, strict: bool, max_pops: usize,
                 bx: (usize, usize, usize, usize)) -> Result<Vec<usize>, bool> {
         self.gr.sgen += 1;
         let sgen = self.gr.sgen;
@@ -776,7 +955,7 @@ impl<'a> Ctx<'a> {
             let name = &self.bd.layer_names[l];
             if lmask & (1 << l) == 0 { f64::INFINITY } else if name == "F.Cu" { 1.0 } else if name == "B.Cu" { 1.05 } else { 1.15 }
         }).collect();
-        let via_base = 3.0 + if self.bd.nets[net].max_vias.is_some() { 6.0 } else { 0.0 };
+        let via_base = (3.0 + if self.bd.nets[net].max_vias.is_some() { 6.0 } else { 0.0 }) * via_mult;
         let pres = self.gr.pres as f64;
         let (x0, y0) = (self.gr.x0, self.gr.y0);
         let h = |ix: usize, iy: usize| -> f32 {
@@ -808,13 +987,28 @@ impl<'a> Ctx<'a> {
             heap.push(Node { f: h(ix, iy), g: 0.0, i: s as u32 });
         }
         let mut pops = 0usize;
+        let dbg = std::env::var("IOTROUTE_DEBUG").is_ok() && max_pops >= 1_000_000;
+        let mut expd: Vec<bool> = if dbg { vec![false; self.gr.g.len()] } else { Vec::new() };
+        let (mut distinct, mut via_pops) = (0usize, 0usize);
         while let Some(Node { f: _, g: gpush, i }) = heap.pop() {
             let i = i as usize;
-            if gpush > self.gr.g[i] {
-                continue; // stale entry: the cell was reached cheaper after this push (expanding it again adds nothing)
+            if gpush > self.gr.g[i] || self.gr.closed[i] == sgen {
+                continue; // stale entry, or the cell is already expanded (no reopening)
             }
+            self.gr.closed[i] = sgen;
             pops += 1;
+            if dbg && !expd[i] {
+                expd[i] = true;
+                distinct += 1;
+            }
             if pops > max_pops {
+                if dbg {
+                    let (r, iy, ix) = self.gr.cell(i);
+                    eprintln!("    search limit {}: {} pops, {} distinct cells, box {}x{} x {} layers, via moves {}, last g {:.1} at ({:.2}, {:.2}) r {}, h0 {:.1}",
+                              self.bd.nets[net].name, pops, distinct, bx.2 - bx.0 + 1, bx.3 - bx.1 + 1, nr, via_pops, gpush,
+                              self.gr.x0 + ix as f64 * p, self.gr.y0 + iy as f64 * p, r,
+                              src.first().map(|&s| { let (_, y, x) = self.gr.cell(s); h(x, y) }).unwrap_or(0.0));
+                }
                 return Err(true);
             }
             if self.gr.tgt[i] == self.gr.tgen {
@@ -841,9 +1035,10 @@ impl<'a> Ctx<'a> {
                 nb.push((r * n + jy as usize * nx + jx as usize, step, false, mid));
             }
             if allow_via && nr > 1 {
-                if let Some(kv) = self.vcost(net, ix, iy) {
+                if let Some(kv) = self.vcost(net, ix, iy).filter(|_| self.via_site_ok(net, ix, iy)) {
                     if !(strict && kv > 0) {
                         let vc = (via_base + self.gr.vhist[iy * nx + ix] as f64) * (1.0 + pres * kv as f64);
+                        via_pops += 1;
                         for r2 in 0..nr {
                             if r2 != r && lcost[r2].is_finite() {
                                 nb.push((r2 * n + iy * nx + ix, vc, true, usize::MAX));
@@ -868,7 +1063,7 @@ impl<'a> Ctx<'a> {
                 }
                 let c = if is_via { c } else { c * (1.0 + self.gr.hist[j] as f64) * (1.0 + pres * k as f64) };
                 let gj = gi + c as f32;
-                if self.gr.seen[j] == sgen && self.gr.g[j] <= gj {
+                if self.gr.closed[j] == sgen || (self.gr.seen[j] == sgen && self.gr.g[j] <= gj) {
                     continue;
                 }
                 self.gr.seen[j] = sgen;
@@ -1093,6 +1288,7 @@ fn load(model: &Value, hole_clr: f64) -> Board {
     let edge = (f(&ob[0]) + 0.05, f(&ob[1]) + 0.05, f(&ob[2]) - 0.05, f(&ob[3]) - 0.05);
     let edge_clr = model["setup"]["edge_clearance"].as_f64().unwrap_or(0.5);
     let classes = &model["classes"];
+    let min_track = model["setup"]["min_track"].as_f64().unwrap_or(0.0);
     let mut nets = Vec::new();
     let mut names = std::collections::HashMap::new();
     for (name, v) in model["nets"].as_object().unwrap() {
@@ -1110,6 +1306,10 @@ fn load(model: &Value, hole_clr: f64) -> Board {
             via_drill: via["hole_size"].as_f64().or(cls["drill"].as_f64()).unwrap_or(0.3),
             max_vias: v["limits"]["via_count"].as_f64(),
             max_len: v["limits"]["length"].as_f64(),
+            pref: v["plane_ref"].as_bool().unwrap_or(false),
+            // never below the board setup minimum track width (KiCad DRC track_width; v4 first run: 0.06 mm necks)
+            min_w: v["min_width"].as_f64().filter(|&w| w > 0.0).map(|w| w.max(min_track)).unwrap_or(0.0),
+            in_vias: v["input_vias"].as_u64().unwrap_or(0) as usize,
         };
         names.insert(name.clone(), nets.len());
         nets.push(n);
@@ -1118,7 +1318,21 @@ fn load(model: &Value, hole_clr: f64) -> Board {
     let idx = Index::new(edge.0 - 1.0, edge.1 - 1.0, edge.2 + 1.0, edge.3 + 1.0, cu.len());
     let gnd = names.get("GND").map(|&i| i as i32).unwrap_or(-1);
     let sidx = Index::new(edge.0 - 1.0, edge.1 - 1.0, edge.2 + 1.0, edge.3 + 1.0, cu.len());
-    let mut bd = Board { layer_names: cu.clone(), routable, nets, shapes: Vec::new(), idx, sidx, maxc, edge, edge_clr, gnd, plane_clr: DEF_PLANE_CLR, eps: EPS, hole_clr, spoke_notes: Vec::new(), attach: Vec::new() };
+    // layers with an adjacent reference plane (reference-planes.json 'adjacent' via the model)
+    let adj = model["adjacent"].as_object().map(|o| o.keys().filter_map(|k| lid(k)).fold(0u8, |m, l| m | (1 << l))).unwrap_or(0);
+    let mut bd = Board { layer_names: cu.clone(), routable, nets, shapes: Vec::new(), idx, sidx, maxc, edge, edge_clr, gnd, plane_clr: DEF_PLANE_CLR, eps: EPS, hole_clr,
+                         spoke_notes: Vec::new(), attach: Vec::new(), adj, pad_need: Vec::new(), gnd_fixed: Vec::new() };
+    // width per power-chain pad (model power_chains): the plane fan-out of that pad keeps it
+    let mut need_of: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+    for (_, v) in model["nets"].as_object().unwrap() {
+        for c in v["power_chains"].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
+            let w = c["min_width"].as_f64().unwrap_or(0.0);
+            for p in c["pads"].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
+                let e = need_of.entry(p.as_str().unwrap_or("").to_string()).or_insert(0.0);
+                *e = e.max(w);
+            }
+        }
+    }
     let net_of = |n: &str| names.get(n).map(|&i| i as i32).unwrap_or(-1);
     let clr_of = |bd: &Board, n: i32| if n >= 0 { bd.nets[n as usize].clr } else { 0.15 };
     for p in model["pads"].as_array().unwrap() {
@@ -1134,6 +1348,13 @@ fn load(model: &Value, hole_clr: f64) -> Board {
         }
         let s = Shape { net, geo: Geo::Rect(f(&bb[0]), f(&bb[1]), f(&bb[2]), f(&bb[3])), clr: clr_of(&bd, net), layers, drill, kind: Kind::Pad, owner: -1, alive: true };
         bd.add(s);
+        let (cx, cy) = ((f(&bb[0]) + f(&bb[2])) / 2.0, (f(&bb[1]) + f(&bb[3])) / 2.0);
+        if let Some(&w) = need_of.get(&format!("{}.{}", p["ref"].as_str().unwrap_or(""), p["num"].as_str().unwrap_or(""))) {
+            bd.pad_need.push((cx, cy, w));
+        }
+        if net == gnd && gnd >= 0 && drill > 0.0 {
+            bd.gnd_fixed.push((f(&p["x"]), f(&p["y"])));
+        }
     }
     for c in model["copper"].as_array().unwrap() {
         let net = net_of(c["net"].as_str().unwrap_or(""));
@@ -1141,6 +1362,9 @@ fn load(model: &Value, hole_clr: f64) -> Board {
         if c["kind"] == "via" {
             let s = Shape { net, geo: Geo::Circ(f(&c["x"]), f(&c["y"]), f(&c["d"]) / 2.0), clr, layers: (1u8 << cu.len()) - 1, drill: f(&c["drill"]), kind: Kind::Via, owner: -1, alive: true };
             bd.add(s);
+            if net == gnd && gnd >= 0 {
+                bd.gnd_fixed.push((f(&c["x"]), f(&c["y"])));
+            }
         } else {
             let (a, b) = (c["a"].as_array().unwrap(), c["b"].as_array().unwrap());
             let l = lid(c["layer"].as_str().unwrap()).unwrap();
@@ -1314,7 +1538,11 @@ fn fanout_net(ctx: &mut Ctx, net: usize) -> NetResult {
         let (pw, ph) = match pad.geo { Geo::Rect(a, b, c, d) => (c - a, d - b), _ => (0.3, 0.3) };
         let mut done = false;
         let mut limited = false;
-        for w in [ctx.bd.nets[net].width.min(0.3).min(pw.min(ph)), 0.15] {
+        // a pad of a power chain (current-paths.json) keeps the width its current needs on its fan-out track
+        let need = ctx.bd.pad_need.iter().filter(|q| (q.0 - cx).abs() < 1e-6 && (q.1 - cy).abs() < 1e-6).map(|q| q.2).fold(0.0, f64::max);
+        let mut ws = vec![ctx.bd.nets[net].width.min(0.3).min(pw.min(ph)).max(need), 0.15f64.max(need)];
+        ws.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+        for w in ws {
             let hw = w / 2.0;
             ctx.gr.reset_cache();
             let src = ctx.cells_of(&pad, pad.layers);
@@ -1356,9 +1584,9 @@ fn fanout_net(ctx: &mut Ctx, net: usize) -> NetResult {
             // cost); no path there = whole board; a search stopped by its pop cap is not a proof (limit, not a miss)
             let full = (0, 0, ctx.gr.nx - 1, ctx.gr.ny - 1);
             let (b0, b1) = (ctx.gr.at(cx - 3.0, cy - 3.0), ctx.gr.at(cx + 3.0, cy + 3.0));
-            let mut found = ctx.search_n(net, hw, &src, &anchors, false, ctx.strict, 2_000_000, (b0.0, b0.1, b1.0, b1.1));
+            let mut found = ctx.search_n(net, hw, &src, &anchors, false, 1.0, ctx.strict, 2_000_000, (b0.0, b0.1, b1.0, b1.1));
             if found == Err(false) {
-                found = ctx.search_n(net, hw, &src, &anchors, false, ctx.strict, 2_000_000, full);
+                found = ctx.search_n(net, hw, &src, &anchors, false, 1.0, ctx.strict, 2_000_000, full);
             }
             if found == Err(true) {
                 limited = true;
@@ -1408,37 +1636,6 @@ fn add_copper(ctx: &mut Ctx, net: usize, owner: i32, tracks: &[(usize, (f64, f64
     }
 }
 
-/// GND via within --return-r of a new signal via, owned by that signal net; only a conflict-free site counts.
-fn return_via(ctx: &mut Ctx, owner: usize, x: f64, y: f64) -> bool {
-    let g = ctx.bd.gnd;
-    if g < 0 {
-        return false;
-    }
-    let all = (1u8 << ctx.bd.layer_names.len()) - 1;
-    let (d, dr) = (ctx.o.ret_d, ctx.o.ret_drill);
-    let p = ctx.gr.p;
-    let k = (ctx.o.return_r / p) as i32;
-    let mut c: Vec<(f64, f64, f64)> = Vec::new();
-    for j in -k..=k {
-        for i in -k..=k {
-            let (px, py) = (x + i as f64 * p, y + j as f64 * p);
-            let dd = ((px - x).powi(2) + (py - y).powi(2)).sqrt();
-            if dd <= ctx.o.return_r && dd > 0.5 {
-                c.push((dd, px, py));
-            }
-        }
-    }
-    c.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-    let clr = ctx.bd.nets[g as usize].clr;
-    for (_, px, py) in c {
-        if ctx.bd.via_ok(g as usize, px, py, d, dr, ctx.o.hth) {
-            ctx.bd.add(Shape { net: g, geo: Geo::Circ(px, py, d / 2.0), clr, layers: all, drill: dr, kind: Kind::Via, owner: owner as i32, alive: true });
-            return true;
-        }
-    }
-    false
-}
-
 struct NetResult {
     hard_fail: Option<String>,
     limit: bool,
@@ -1474,8 +1671,12 @@ fn route_net(ctx: &mut Ctx, net: usize) -> NetResult {
         comps[k].push(items[a]);
     }
     let nmask = ctx.bd.nets[net].layers;
-    let base_w = ctx.bd.nets[net].width;
-    let widths: Vec<f64> = if ctx.bd.nets[net].power { vec![base_w, 0.3, 0.2, 0.15] } else { vec![base_w] };
+    let widths = net_widths(&ctx.bd.nets[net]);
+    let base_w = widths[0];
+    ctx.ban.clear();
+    // DRU via_count: the locked input vias of the net count too (KiCad too_many_vias counts every via of the net)
+    let mut used_vias = ctx.bd.nets[net].in_vias;
+    let max_vias = ctx.bd.nets[net].max_vias;
     if !ctx.dead[net].0.is_empty() {
         let dead = ctx.dead[net].0.clone();
         comps.retain(|c| !c.iter().any(|s| dead.contains(s)));
@@ -1499,8 +1700,19 @@ fn route_net(ctx: &mut Ctx, net: usize) -> NetResult {
     };
     let mut tree = comps.remove(0);
     let mut trapped: Vec<String> = Vec::new();
+    let mut ret_rejects = 0usize;
     while !comps.is_empty() {
-        // best width: the widest with the fewest conflicts (power nets neck only when it removes conflicts)
+        // via budget of this join (None: no DRU via_count for the net)
+        let budget: Option<usize> = max_vias.map(|m| (m.floor() as i64 - used_vias as i64).max(0) as usize);
+        // via tries: free vias; then vias priced up (x10, x100) and none, until the path keeps the budget
+        let tries: Vec<(bool, f64)> = match budget {
+            None => vec![(true, 1.0)],
+            Some(0) => vec![(false, 1.0)],
+            Some(_) => vec![(true, 1.0), (true, 10.0), (true, 100.0), (false, 1.0)],
+        };
+        let mut over_budget = false;
+        // best width: the widest with the fewest conflicts (power nets neck only when it removes conflicts, never below
+        // the width of their design current)
         let mut best: Option<(u32, f64, Vec<usize>)> = None;
         let mut limit = false;
         for (wi, &w) in widths.iter().enumerate() {
@@ -1537,22 +1749,24 @@ fn route_net(ctx: &mut Ctx, net: usize) -> NetResult {
             if !open {
                 continue;
             }
-            let cap = if last && !ctx.strict { 8_000_000 } else if last { 1_000_000 } else { 300_000 };
-            // search first inside the net's box + JOIN_MARGIN: once every way to a target crosses congested copper,
-            // an unbounded search floods the whole board before it pays that cost. No path in the box (fixed walls,
-            // or strict mode) = search the whole board, so a failure is still a proof
-            let full = (0, 0, ctx.gr.nx - 1, ctx.gr.ny - 1);
-            let mut found = ctx.search_n(net, hw, &src, &anchors, true, ctx.strict, cap, nbox);
-            if found.is_err() && last {
-                // (a wider try only gives up: the narrowest width follows) a flood fill proves "no path" in one visit per cell; only a reachable target is worth a
-                // whole-board A* (which may re-expand cells past its cap)
-                found = if !ctx.reachable(net, hw, &src, ctx.strict, full) {
-                    Err(false)
-                } else if found == Err(false) && nbox != full {
-                    ctx.search_n(net, hw, &src, &anchors, true, ctx.strict, cap, full)
-                } else {
-                    found
-                };
+            let mut found = Err(false);
+            for &(allow_via, vm) in &tries {
+                found = join_search(ctx, net, hw, &src, &anchors, allow_via, vm, last, nbox);
+                match &found {
+                    Ok(path) if budget.map(|b| path_vias(&ctx.gr, path) > b).unwrap_or(false) => {
+                        over_budget = true;
+                        found = Err(false);
+                    }
+                    Ok(_) => break,
+                    // no path even with free vias: fewer vias cannot help
+                    Err(false) if allow_via && vm == 1.0 => break,
+                    Err(_) => {}
+                }
+            }
+            if found == Err(false) && budget.is_some() && !over_budget && last {
+                // no path within the budget: say so when a path with more vias exists (a via_count fail, not a wall)
+                let full = (0, 0, ctx.gr.nx - 1, ctx.gr.ny - 1);
+                over_budget = ctx.reachable(net, hw, &src, ctx.strict, true, full);
             }
             if let Err(true) = found {
                 limit = limit || last;
@@ -1566,6 +1780,12 @@ fn route_net(ctx: &mut Ctx, net: usize) -> NetResult {
                     break;
                 }
             }
+        }
+        if best.is_none() && over_budget && !limit {
+            let pads: Vec<String> = comps.iter().flat_map(|c| tree_pads(ctx, c)).collect();
+            out.hard_fail = Some(format!("DRU via_count max {} (locked input vias {}): no path with at most {} via(s) to pad(s) at {}",
+                                         max_vias.unwrap_or(0.0), ctx.bd.nets[net].in_vias, budget.unwrap_or(0), pads.join(",")));
+            break;
         }
         let Some((k, w, path)) = best else {
             if limit {
@@ -1611,14 +1831,39 @@ fn route_net(ctx: &mut Ctx, net: usize) -> NetResult {
         let last = *path.last().unwrap();
         let (_, iy, ix) = ctx.gr.cell(last);
         let (gx, gy) = ctx.gr.xy(ix, iy);
-        out.conflicts += k;
         let (tr, vs) = ctx.geometry(net, &path, hw);
         let first_new = ctx.bd.shapes.len();
         add_copper(ctx, net, net as i32, &tr, &vs, hw);
+        // RP-001 (DESIGN 4): every new layer change gets a GND return via within --return-r; no site = the
+        // transition is rejected (its via site banned for this net) and the join is searched again
+        let mut rejected = Vec::new();
+        for &(vx, vy) in &vs {
+            if !ctx.place_return(net, vx, vy) {
+                let (ix, iy) = ctx.gr.at(vx, vy);
+                rejected.push(iy * ctx.gr.nx + ix);
+            }
+        }
+        if !rejected.is_empty() {
+            for i in first_new..ctx.bd.shapes.len() {
+                ctx.bd.shapes[i].alive = false;
+            }
+            ctx.ban.extend(rejected);
+            ret_rejects += 1;
+            if ret_rejects > 40 {
+                let pads: Vec<String> = comps.iter().flat_map(|c| tree_pads(ctx, c)).collect();
+                out.hard_fail = Some(format!("RP-001: no layer change with a GND return via within {} mm found (40 tries) to pad(s) at {}",
+                                             ctx.o.return_r, pads.join(",")));
+                break;
+            }
+            continue;
+        }
+        used_vias += vs.len();
+        out.conflicts += k;
         let ci = comps.iter().position(|comp| comp.iter().any(|&s| ctx.bd.shapes[s].geo.dist(gx, gy) <= 1e-6)).unwrap_or(0);
         let reached = comps.remove(ci);
         tree.extend(reached);
-        tree.extend(first_new..ctx.bd.shapes.len());
+        // the net's own new copper joins the tree (its return vias are GND copper: not part of the net)
+        tree.extend((first_new..ctx.bd.shapes.len()).filter(|&i| ctx.bd.shapes[i].net == net as i32));
     }
     if !trapped.is_empty() && out.hard_fail.is_none() {
         out.hard_fail = Some(format!("walled in by fixed copper (input placement / locked routes): pad(s) at {}", trapped.join("; ")));
@@ -1627,6 +1872,64 @@ fn route_net(ctx: &mut Ctx, net: usize) -> NetResult {
         }
     }
     out
+}
+
+/// Track widths a net may use, widest first: the class width (raised to the width of its design current); a power
+/// net may neck to 0.3 / 0.2 / 0.15 mm, never below the width its current needs (current-paths.json via the model).
+fn net_widths(n: &Net) -> Vec<f64> {
+    let base = n.width.max(n.min_w);
+    if !n.power {
+        return vec![base];
+    }
+    let mut v: Vec<f64> = [base, 0.3, 0.2, 0.15, n.min_w].iter().cloned()
+        .filter(|&w| w > 0.0 && w <= base + 1e-9 && w >= n.min_w - 1e-9).collect();
+    v.sort_by(|a, b| b.partial_cmp(a).unwrap());
+    v.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+    v
+}
+
+/// Layer changes (vias) along a cell path.
+fn path_vias(gr: &Grid, path: &[usize]) -> usize {
+    path.windows(2).filter(|w| gr.cell(w[0]).0 != gr.cell(w[1]).0).count()
+}
+
+/// One join search of `net` at half width hw: first inside the net's box + JOIN_MARGIN (once every way to a target
+/// crosses congested copper, an unbounded search floods the whole board before it pays that cost); no path in the box
+/// = the whole board, after a flood fill proves a target reachable (so a failure is still a proof). Err(true): search
+/// limit, Err(false): no path. A wider try (last = false) is only a preference: its search is bounded.
+fn join_search(ctx: &mut Ctx, net: usize, hw: f64, src: &[usize], anchors: &[(f64, f64)], allow_via: bool, vm: f64, last: bool,
+               nbox: (usize, usize, usize, usize)) -> Result<Vec<usize>, bool> {
+    let cap = if last && !ctx.strict { 8_000_000 } else if last { 1_000_000 } else { 300_000 };
+    let full = (0, 0, ctx.gr.nx - 1, ctx.gr.ny - 1);
+    let mut found = ctx.search_n(net, hw, src, anchors, allow_via, vm, ctx.strict, cap, nbox);
+    if found.is_err() && last {
+        found = if !ctx.reachable(net, hw, src, ctx.strict, allow_via, full) {
+            Err(false)
+        } else if found == Err(false) && nbox != full {
+            ctx.search_n(net, hw, src, anchors, allow_via, vm, ctx.strict, cap, full)
+        } else {
+            found
+        };
+        if found == Err(true) && !ctx.strict {
+            // search limit at a high present cost (v3: /J2_LEDG_A from iteration 4 on, pres 1.7 .. 1000): a
+            // conflict-free path, when one exists, is found by a strict search (routed copper blocks); else the present
+            // cost is capped for this one search, so the path pays its crossings and the negotiation moves the others
+            found = if ctx.reachable(net, hw, src, true, allow_via, full) {
+                ctx.search_n(net, hw, src, anchors, allow_via, vm, true, 30_000_000, full)
+            } else {
+                let p = ctx.gr.pres;
+                ctx.gr.pres = p.min(4.0);
+                let r = ctx.search_n(net, hw, src, anchors, allow_via, vm, false, cap, full);
+                ctx.gr.pres = p;
+                r
+            };
+            if std::env::var("IOTROUTE_DEBUG").is_ok() {
+                eprintln!("  {}: search limit at pres {:.1}; fallback {}", ctx.bd.nets[net].name, ctx.gr.pres,
+                          match &found { Ok(_) => "found", Err(true) => "limit", Err(false) => "no path" });
+            }
+        }
+    }
+    found
 }
 
 fn tree_pads(ctx: &Ctx, items: &[usize]) -> Vec<String> {
@@ -1693,7 +1996,7 @@ fn main() {
     let nr = bd.routable.len();
     let tot = nx * ny * nr;
     let gr = Grid { x0: e0, y0: e1, p: o.pitch, nx, ny, nr, cache: vec![0; tot], vcache: vec![0; nx * ny], dcache: vec![0; tot], hist: vec![0.0; tot], vhist: vec![0.0; nx * ny], pres: 0.5,
-                    g: vec![0.0; tot], from: vec![0; tot], seen: vec![0; tot], tgt: vec![0; tot], sgen: 0, tgen: 0 };
+                    g: vec![0.0; tot], from: vec![0; tot], seen: vec![0; tot], closed: vec![0; tot], tgt: vec![0; tot], sgen: 0, tgen: 0 };
     let mut order: Vec<usize> = (0..bd.nets.len()).collect();
     let spread = |bd: &Board, n: usize| -> f64 {
         let (mut a, mut b, mut c, mut d) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
@@ -1706,10 +2009,11 @@ fn main() {
     let group = |bd: &Board, n: usize| if bd.nets[n].plane { 0 } else if bd.nets[n].power { 1 } else if bd.nets[n].fast { 2 } else { 3 };
     order.sort_by(|&a, &b| group(&bd, a).cmp(&group(&bd, b)).then(spread(&bd, a).partial_cmp(&spread(&bd, b)).unwrap()));
     let nets_n = bd.nets.len();
-    let mut memo_w: Vec<f64> = bd.nets.iter().map(|n| n.width).chain([0.3, 0.2, 0.15]).collect();
+    let mut memo_w: Vec<f64> = bd.nets.iter().flat_map(|n| net_widths(n)).chain([0.3, 0.2, 0.15]).collect();
     memo_w.sort_by(|a, b| a.partial_cmp(b).unwrap());
     memo_w.dedup();
-    let mut ctx = Ctx { bd: &mut bd, gr, o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nets_n], memo: Vec::new(), memo_w };
+    let mut ctx = Ctx { bd: &mut bd, gr, o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nets_n], memo: Vec::new(), memo_w,
+                        rcache: vec![0; nx * ny], ban: Vec::new() };
     let fan_fail: Vec<Fail> = Vec::new();
     let nn = ctx.bd.nets.len();
     let mut todo: Vec<usize> = order.clone();
@@ -1720,6 +2024,7 @@ fn main() {
     // best iteration so far: (nets in conflict, conflicting pairs) -> its copper and state, restored when not converged
     let mut best: Option<((usize, usize), usize, Vec<Shape>, Vec<(Option<String>, u32)>)> = None;
     let mut limited_prev: Vec<usize> = Vec::new();
+    let (mut stall, mut stall_sig): (usize, Option<Vec<(usize, Option<String>)>>) = (0, None);
     for it in 0..o.passes {
         iters = it + 1;
         ctx.bd.compact();
@@ -1749,11 +2054,16 @@ fn main() {
         // of both nets, and the rip-up set = every net that is still in conflict (not the stale routing-time count)
         let au = ctx.audit(o.hist);
         let mut involved: Vec<usize> = (0..nn).filter(|&n| au.per_net[n] > 0 || !au.partners[n].is_empty()).collect();
-        for &n in &limited {
+        // RP-001: a signal via whose GND return went away (the return via of another net that moved) re-routes its net
+        let mut ret_nets: Vec<usize> = ctx.ret_missing().into_iter().map(|m| m.0).collect();
+        ret_nets.sort();
+        ret_nets.dedup();
+        for &n in limited.iter().chain(ret_nets.iter()) {
             if !involved.contains(&n) {
                 involved.push(n);
             }
         }
+        limited.extend(ret_nets.iter().cloned());
         limited_prev = limited;
         let hard_nets: Vec<usize> = order.iter().cloned().filter(|&n| state[n].0.is_some()).collect();
         eprintln!("iter {:2}: routed {:3}, conflicts {:5}, audit pairs {:4} samples {:5} hard {}, involved {:3}, hard fails {:2}, pres {:.2}, {:.1} s  hard: {}  involved: {}",
@@ -1777,6 +2087,19 @@ fn main() {
             eprintln!("time limit {:.0} s reached", o.max_time);
             break;
         }
+        // stop early: the copper is legal and every net still open is a hard fail whose reason has not changed for
+        // STALL iterations (v3 ran iterations 20-80 on one unchanged hard fail)
+        let sig: Vec<(usize, Option<String>)> = involved.iter().map(|&n| (n, state[n].0.clone())).collect();
+        if au.pairs == 0 && involved.iter().all(|&n| state[n].0.is_some()) && stall_sig.as_ref() == Some(&sig) {
+            stall += 1;
+            if stall >= STALL {
+                eprintln!("stopped: {} hard fail(s) unchanged for {} iterations, no conflicts", involved.len(), STALL + 1);
+                break;
+            }
+        } else {
+            stall = 0;
+        }
+        stall_sig = Some(sig);
         ctx.gr.pres = (ctx.gr.pres * o.pres_mult).min(o.pres_max);
         // hard fails are walls of fixed copper: they do not change, so a hard-failed net is routed again only when it
         // is in conflict
@@ -1848,14 +2171,26 @@ fn main() {
             state[n].1 = au.per_net[n];
         }
     }
-    // return vias, once the copper is legal (strict sites; a missing site is a note for the gate to judge)
+    // RP-001 check of the final copper: a net with a signal via and no GND return within --return-r (its return via
+    // was the one of a net ripped at the end) is routed again strictly, which places its returns; up to 3 rounds
     let mut notes = Vec::new();
-    let sig_vias: Vec<(usize, f64, f64)> = ctx.bd.shapes.iter().filter(|s| s.alive && s.owner >= 0 && s.kind == Kind::Via && s.net == s.owner && !ctx.bd.nets[s.net as usize].plane)
-        .filter_map(|s| match s.geo { Geo::Circ(x, y, _) => Some((s.owner as usize, x, y)), _ => None }).collect();
-    for (net, x, y) in sig_vias {
-        if !return_via(&mut ctx, net, x, y) {
-            notes.push(format!("{}: no GND return via within {} mm of ({x:.2}, {y:.2})", ctx.bd.nets[net].name, o.return_r));
+    ctx.strict = true;
+    for _round in 0..3 {
+        let mut miss: Vec<usize> = ctx.ret_missing().into_iter().map(|m| m.0).collect();
+        miss.sort();
+        miss.dedup();
+        if miss.is_empty() {
+            break;
         }
+        for &net in order.iter().filter(|n| miss.contains(n)) {
+            let r = route_net(&mut ctx, net);
+            state[net].0 = r.hard_fail.map(|m| format!("RP-001 strict re-route: {m}"));
+        }
+    }
+    ctx.strict = false;
+    for (net, x, y) in ctx.ret_missing() {
+        let m = format!("RP-001: no GND return via within {} mm of the via at ({x:.2}, {y:.2})", o.return_r);
+        state[net].0 = Some(match &state[net].0 { Some(r) => format!("{r}; {m}"), None => m });
     }
     // output: every live routed item plus the plane fan-out (fixed, added after the input copper)
     let mut tracks = Vec::new();
@@ -1884,10 +2219,12 @@ fn main() {
             _ => {}
         }
     }
+    // DRU via_count is a hard limit (input vias of the net included): a guard, route_net keeps it
     for n in 0..nn {
         if let Some(mv) = ctx.bd.nets[n].max_vias {
-            if via_count[n] as f64 > mv {
-                notes.push(format!("{}: {} new vias over the DRU via_count max {mv}", ctx.bd.nets[n].name, via_count[n]));
+            if (via_count[n] + ctx.bd.nets[n].in_vias) as f64 > mv {
+                let m = format!("DRU via_count max {mv}: {} new + {} locked vias", via_count[n], ctx.bd.nets[n].in_vias);
+                state[n].0 = Some(match &state[n].0 { Some(r) => format!("{r}; {m}"), None => m });
             }
         }
     }
@@ -1916,7 +2253,8 @@ mod tests {
     use super::*;
 
     fn net(name: &str, clr: f64, fast: bool) -> Net {
-        Net { name: name.into(), width: 0.15, clr, fast, plane: false, power: false, layers: 0b101, via_d: 0.6, via_drill: 0.3, max_vias: None, max_len: None }
+        Net { name: name.into(), width: 0.15, clr, fast, plane: false, power: false, layers: 0b101, via_d: 0.6, via_drill: 0.3, max_vias: None, max_len: None,
+              pref: false, min_w: 0.0, in_vias: 0 }
     }
 
     fn board() -> Board {
@@ -1925,7 +2263,7 @@ mod tests {
         let mut bd = Board { layer_names: vec!["F.Cu".into(), "In1.Cu".into(), "B.Cu".into()], routable: vec![0, 2], nets, shapes: Vec::new(),
                              idx: Index::new(x0 - 1.0, y0 - 1.0, x1 + 1.0, y1 + 1.0, 3), sidx: Index::new(x0 - 1.0, y0 - 1.0, x1 + 1.0, y1 + 1.0, 3),
                              maxc: 0.2, edge: (x0, y0, x1, y1), edge_clr: 0.3, gnd: -1, plane_clr: 0.25, eps: EPS, hole_clr: 0.28,
-                             spoke_notes: Vec::new(), attach: Vec::new() };
+                             spoke_notes: Vec::new(), attach: Vec::new(), adj: 0, pad_need: Vec::new(), gnd_fixed: Vec::new() };
         let sh = |net: i32, geo: Geo, clr: f64, layers: u8, drill: f64, kind: Kind, owner: i32| Shape { net, geo, clr, layers, drill, kind, owner, alive: true };
         bd.add(sh(0, Geo::Rect(2.0, 2.0, 2.6, 2.4), 0.15, 1, 0.0, Kind::Pad, -1));
         bd.add(sh(0, Geo::Rect(2.0, 2.9, 2.6, 3.3), 0.15, 1, 0.0, Kind::Pad, -1));
@@ -2024,7 +2362,7 @@ mod tests {
                         let r = ref_track(&bd, net, l, x, y, hw, 0.25);
                         let n = bd.track_cost(net, l, x, y, hw, 0.25, None);
                         assert_eq!(r.signum(), n.signum(), "track net {net} l {l} ({x}, {y}) hw {hw}");
-                        let code = bd.track_fixed_code(l, x, y, hw, bd.nets[net].clr, bd.nets[net].fast, 0.25);
+                        let code = bd.track_fixed_code(l, x, y, hw, bd.nets[net].clr, bd.pflags(net), 0.25);
                         assert_eq!(r < 0, blocks(code, net as i32), "track memo net {net} ({x}, {y})");
                         match r.signum() {
                             -1 => n_block += 1,
@@ -2050,9 +2388,9 @@ mod tests {
         let (nx, ny, nr) = (201, 201, 2);
         let tot = nx * ny * nr;
         let gr = Grid { x0: 0.0, y0: 0.0, p: 0.05, nx, ny, nr, cache: vec![0; tot], vcache: vec![0; nx * ny], dcache: vec![0; tot], hist: vec![0.0; tot], vhist: vec![0.0; nx * ny], pres: 0.5,
-                        g: vec![0.0; tot], from: vec![0; tot], seen: vec![0; tot], tgt: vec![0; tot], sgen: 0, tgen: 0 };
+                        g: vec![0.0; tot], from: vec![0; tot], seen: vec![0; tot], closed: vec![0; tot], tgt: vec![0; tot], sgen: 0, tgen: 0 };
         let nn = bd.nets.len();
-        let mut ctx = Ctx { bd: &mut bd, gr, o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w: vec![0.15] };
+        let mut ctx = Ctx { bd: &mut bd, gr, o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w: vec![0.15], rcache: vec![0; nx * ny], ban: Vec::new() };
         let a = ctx.audit(0.3);
         assert_eq!(a.pairs, 1, "one crossing = one pair");
         assert_eq!(a.hard, 0);
@@ -2070,9 +2408,9 @@ mod tests {
         let (nx, ny, nr) = (201, 201, 2);
         let tot = nx * ny * nr;
         let gr = Grid { x0: 0.0, y0: 0.0, p: 0.05, nx, ny, nr, cache: vec![0; tot], vcache: vec![0; nx * ny], dcache: vec![0; tot], hist: vec![0.0; tot], vhist: vec![0.0; nx * ny], pres: 0.5,
-                        g: vec![0.0; tot], from: vec![0; tot], seen: vec![0; tot], tgt: vec![0; tot], sgen: 0, tgen: 0 };
+                        g: vec![0.0; tot], from: vec![0; tot], seen: vec![0; tot], closed: vec![0; tot], tgt: vec![0; tot], sgen: 0, tgen: 0 };
         let nn = bd.nets.len();
-        let mut ctx = Ctx { bd: &mut bd, gr, o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w: vec![0.15] };
+        let mut ctx = Ctx { bd: &mut bd, gr, o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w: vec![0.15], rcache: vec![0; nx * ny], ban: Vec::new() };
         let base = ctx.audit(0.0).pairs;
         let mut seed: u64 = 777;
         let mut rnd = || {
@@ -2111,3 +2449,6 @@ mod tests {
 
 #[cfg(test)]
 mod tests_model;
+
+#[cfg(test)]
+mod tests_v4;
