@@ -14,6 +14,7 @@ guessed. Prints one line: MODEL ok|FAIL nets N pads N rules applied/stage/plane/
 import argparse
 import json
 import os
+import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -25,6 +26,23 @@ import pcbnew  # noqa: E402
 T = pcbnew.ToMM
 ROUTED_KINDS = {'clearance', 'track_width', 'via_count', 'length', 'disallow', 'hole_clearance', 'hole_to_hole'}
 PAIR_KINDS = {'diff_pair_gap', 'diff_pair_uncoupled', 'skew'}
+ZC_NAMES = {pcbnew.ZONE_CONNECTION_NONE: 'none', pcbnew.ZONE_CONNECTION_THERMAL: 'thermal',
+            pcbnew.ZONE_CONNECTION_FULL: 'full', pcbnew.ZONE_CONNECTION_THT_THERMAL: 'tht_thermal'}
+HOLE_KINDS = {'hole_clearance', 'hole_to_hole'}
+TH = r"(?:A|B)\.Pad_Type\s*==\s*'Through-hole'"
+
+
+def hole_scope(cond):
+    """Which item pairs a hole rule covers, from its condition text: 'all' (no condition), 'either_th' (A or B is a
+    through-hole pad), 'both_th' (A and B are), or None (not recognised: reported, never guessed)."""
+    c = ' '.join(str(cond or '').split())
+    if c in ('', 'True'):
+        return 'all'
+    if re.fullmatch(TH.replace('(?:A|B)', 'A') + r'\s*\|\|\s*' + TH.replace('(?:A|B)', 'B'), c):
+        return 'either_th'
+    if re.fullmatch(TH.replace('(?:A|B)', 'A') + r'\s*&&\s*' + TH.replace('(?:A|B)', 'B'), c):
+        return 'both_th'
+    return None
 
 
 def load_cfg(bdir):
@@ -93,6 +111,8 @@ def main():
                  'bbox': [T(bb.GetLeft()), T(bb.GetTop()), T(bb.GetRight()), T(bb.GetBottom())],
                  'layers': [l for l in cu if p.IsOnLayer(lid[l])],
                  'drill': T(p.GetDrillSize().x) if p.GetDrillSize().x else 0.0}
+            if p.GetLocalZoneConnection() != pcbnew.ZONE_CONNECTION_INHERITED:
+                d['zone_conn'] = ZC_NAMES.get(p.GetLocalZoneConnection(), 'unknown')
             pads.append(d)
             if d['net'] in nets:
                 nets[d['net']]['pins'].append(f"{d['ref']}.{d['num']}")
@@ -112,6 +132,7 @@ def main():
     # DRU: every constraint -> applied | stage | plane | checked | unknown
     dru_path = proj + '.kicad_dru'
     report = []
+    hole_rules = {}
     pair_nets = {p['p'] for p in pairs} | {p['n'] for p in pairs}
     for form in rrc._forms(open(dru_path).read()) if os.path.exists(dru_path) else []:
         if form == ['version', '1']:
@@ -130,6 +151,17 @@ def main():
                     elif v:
                         hits.append(name)
             hits = sorted(set(hits))
+            if kind in HOLE_KINDS:
+                vals = {c[0]: c[1] for c in con[2:] if isinstance(c, list) and len(c) == 2}
+                scope = hole_scope(cond)
+                if scope is None or 'min' not in vals:
+                    report.append({'rule': rule, 'constraint': kind, 'state': 'unknown', 'nets': [],
+                                   'why': f'hole rule condition not recognised: {cond}'})
+                    continue
+                hole_rules.setdefault(kind, []).append({'rule': rule, 'min': float(rrc._number(vals['min'])), 'scope': scope})
+                report.append({'rule': rule, 'constraint': kind, 'state': 'applied', 'nets': [],
+                               'why': f'router hole rule (scope {scope}; the core applies it to every drilled item, a superset)'})
+                continue
             if kind in ('hole_size', 'via_diameter', 'annular_width'):
                 vals = {c[0]: c[1] for c in con[2:] if isinstance(c, list) and len(c) == 2}
                 state, why = 'applied', 'router via geometry'
@@ -165,6 +197,21 @@ def main():
             else:
                 state, why = 'checked', f'{kind}: KiCad DRC after routing'
             report.append({'rule': rule, 'constraint': kind, 'state': state, 'nets': hits[:8] + (['...'] if len(hits) > 8 else []), 'why': why})
+    zones = []
+    for z in b.Zones():
+        if z.GetIsRuleArea():
+            continue
+        zb = z.GetBoundingBox()
+        for l in z.GetLayerSet().CuStack():
+            zones.append({'net': z.GetNetname(), 'layer': b.GetLayerName(l),
+                          'clearance': T(z.GetLocalClearance() or 0),
+                          'thermal_gap': T(z.GetThermalReliefGap()), 'spoke_width': T(z.GetThermalReliefSpokeWidth()),
+                          'pad_connection': ZC_NAMES.get(z.GetPadConnection(), 'inherited'),
+                          'min_thickness': T(z.GetMinThickness()),
+                          'bbox': [T(zb.GetLeft()), T(zb.GetTop()), T(zb.GetRight()), T(zb.GetBottom())]})
+    plane_clr = max([z['clearance'] for z in zones if z['layer'] in plane_layers and z['net']] or [0.0])
+    hole_rules['plane_clearance'] = {'min': plane_clr, 'source': 'max local clearance of the zones on ' + ', '.join(sorted(plane_layers))}
+    hole_rules['board_min'] = {'hole_clearance': rules_setup.get('min_hole_clearance'), 'hole_to_hole': rules_setup.get('min_hole_to_hole')}
     for name, chain in paths.items():
         if name in nets:
             amps = max([c.get('amps', 0) for c in chain.get('chains', [])] + [chain.get('amps', 0)])
@@ -173,8 +220,9 @@ def main():
     model = {'schema': 'iot-lab.route-model.v0', 'board': os.path.basename(bdir), 'pcb': pcb, 'copper_layers': cu,
              'plane_layers': sorted(plane_layers), 'outline_bbox': [T(o.GetLeft()), T(o.GetTop()), T(o.GetRight()), T(o.GetBottom())],
              'setup': {'min_via': rules_setup.get('min_via_diameter'), 'min_drill': rules_setup.get('min_through_hole_diameter'),
-                       'min_clearance': rules_setup.get('min_clearance'), 'edge_clearance': rules_setup.get('min_copper_edge_clearance')},
-             'classes': classes, 'nets': nets, 'pairs': pairs, 'pads': pads, 'copper': copper, 'rules': report}
+                       'min_clearance': rules_setup.get('min_clearance'), 'edge_clearance': rules_setup.get('min_copper_edge_clearance'),
+                       'min_spokes': rules_setup.get('min_resolved_spokes', 2)},
+             'classes': classes, 'nets': nets, 'pairs': pairs, 'zones': zones, 'hole_rules': hole_rules, 'pads': pads, 'copper': copper, 'rules': report}
     states = {}
     for r in report:
         states[r['state']] = states.get(r['state'], 0) + 1

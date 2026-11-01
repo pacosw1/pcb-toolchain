@@ -1,6 +1,6 @@
 //! iotroute: rule-native grid router core (tools/router/DESIGN.md, M1).
 //!
-//!   iotroute MODEL.json OUT.json [--pitch 0.05] [--iters 40] [--plane-clr 0.25] [--hole-to-hole 0.45]
+//!   iotroute MODEL.json OUT.json [--pitch 0.05] [--iters 40] [--plane-clr 0.25] [--hole-to-hole 0.45] [--hole-clr 0.28]
 //!            [--return-r 2.0] [--return-via 0.45,0.2] [--pres-mult 1.5] [--pres-max 1000] [--hist 0.3] [--max-time S]
 //!
 //! MODEL.json comes from tools/router/model.py (schema iot-lab.route-model.v0). Every clearance is checked against
@@ -27,7 +27,10 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
 const EPS: f64 = 0.002;
-const HOLE_CLR: f64 = 0.28; // .kicad_dru "JLC PTH hole to copper"; TODO read it from the model rules
+// Defaults when the model has no `hole_rules` key (an old model.json); a model value and then a CLI flag override them.
+const DEF_HOLE_CLR: f64 = 0.28; // .kicad_dru "JLC PTH hole to copper"
+const DEF_HOLE_TO_HOLE: f64 = 0.45; // .kicad_dru "JLC PTH hole to hole"
+const DEF_PLANE_CLR: f64 = 0.25; // local clearance of the inner GND / power zones
 const SQ2: f64 = std::f64::consts::SQRT_2;
 /// a join is searched first inside the bounding box of the net's items grown by this margin (mm)
 const JOIN_MARGIN: f64 = 5.0;
@@ -81,6 +84,9 @@ enum Kind {
     Pad,
     Track,
     Via,
+    /// reserved thermal spoke channel of a plane-net pad: fixed copper of the pad's net for the clearance checks (a hard
+    /// obstacle for other nets, memoized with the rest of the fixed copper), never a pin or a component
+    Spoke,
 }
 
 #[derive(Clone)]
@@ -212,6 +218,12 @@ struct Board {
     plane_clr: f64,
     /// margin of every clearance test: EPS while routing (conservative), 0 in the audit (the plain rule)
     eps: f64,
+    /// hole edge to foreign copper (.kicad_dru hole_clearance), from the model
+    hole_clr: f64,
+    /// pads with fewer spoke channels than the zone needs (fixed copper already blocks them): reported in the notes
+    spoke_notes: Vec<String>,
+    /// SMD pads of a plane net that need their own fan-out track (it counts as one spoke): forced even when a via is near
+    attach: Vec<(f64, f64)>,
 }
 
 /// Fixed-copper verdict of a grid site for one rule profile, shared by all nets: FREE, MULTI (blocked for every net),
@@ -227,19 +239,19 @@ fn blocks(code: i32, net: i32) -> bool {
 
 /// Track centre (half width hw, rule clearance clr, fast net) at (x, y) violates the clearance to item s. The same
 /// predicate for fixed and routed items (exact geometry, .kicad_dru values).
-fn track_hit(s: &Shape, x: f64, y: f64, hw: f64, clr: f64, fast: bool, plane_clr: f64, eps: f64) -> bool {
+fn track_hit(s: &Shape, x: f64, y: f64, hw: f64, clr: f64, fast: bool, plane_clr: f64, hole_clr: f64, eps: f64) -> bool {
     let mut need = hw + clr.max(s.clr);
     if s.drill > 0.0 {
         if fast {
             need = need.max(hw + plane_clr);
         }
-        // hole to copper (.kicad_dru "JLC PTH hole to copper" 0.28 mm), measured from the hole edge
+        // hole to copper (.kicad_dru hole_clearance, from the model), measured from the hole edge
         let (cx, cy) = match s.geo {
             Geo::Circ(cx, cy, _) => (cx, cy),
             Geo::Rect(a, b, c, d) => ((a + c) / 2.0, (b + d) / 2.0),
             Geo::Seg(..) => (f64::MAX, f64::MAX),
         };
-        if ((x - cx).powi(2) + (y - cy).powi(2)).sqrt() - s.drill / 2.0 < hw + HOLE_CLR + eps {
+        if ((x - cx).powi(2) + (y - cy).powi(2)).sqrt() - s.drill / 2.0 < hw + hole_clr + eps {
             return true;
         }
     }
@@ -251,7 +263,7 @@ fn track_hit(s: &Shape, x: f64, y: f64, hw: f64, clr: f64, fast: bool, plane_clr
 /// tools/pcbtool.py viapads), 4 = 2 and 3. The clearance hit mirrors every rule track_hit applies from the other
 /// side, so a via that passes here never puts an existing track in violation: the plane clearance of a fast track to
 /// a foreign drilled item (s_fast) and the hole-to-copper clearance of the via hole.
-fn via_hit(s: &Shape, x: f64, y: f64, vr: f64, drill: f64, clr: f64, hth: f64, s_fast: bool, plane_clr: f64, eps: f64) -> u8 {
+fn via_hit(s: &Shape, x: f64, y: f64, vr: f64, drill: f64, clr: f64, hth: f64, s_fast: bool, plane_clr: f64, hole_clr: f64, eps: f64) -> u8 {
     if s.drill > 0.0 {
         let (cx, cy) = match s.geo {
             Geo::Circ(cx, cy, _) => (cx, cy),
@@ -268,7 +280,7 @@ fn via_hit(s: &Shape, x: f64, y: f64, vr: f64, drill: f64, clr: f64, hth: f64, s
     if s_fast {
         need = need.max(vr + plane_clr);
     }
-    let other = dd < need + eps || dd < drill / 2.0 + HOLE_CLR + eps;
+    let other = dd < need + eps || dd < drill / 2.0 + hole_clr + eps;
     let own = s.kind == Kind::Pad && s.drill == 0.0 && dd < vr + 0.05;
     match (other, own) {
         (false, false) => 0,
@@ -281,7 +293,7 @@ fn via_hit(s: &Shape, x: f64, y: f64, vr: f64, drill: f64, clr: f64, hth: f64, s
 impl Board {
     fn vhit(&self, s: &Shape, x: f64, y: f64, vr: f64, drill: f64, clr: f64, hth: f64) -> u8 {
         let s_fast = s.kind == Kind::Track && s.net >= 0 && self.nets[s.net as usize].fast;
-        via_hit(s, x, y, vr, drill, clr, hth, s_fast, self.plane_clr, self.eps)
+        via_hit(s, x, y, vr, drill, clr, hth, s_fast, self.plane_clr, self.hole_clr, self.eps)
     }
     fn add(&mut self, s: Shape) -> usize {
         let id = self.shapes.len();
@@ -314,7 +326,7 @@ impl Board {
         x - m >= a && x + m <= c && y - m >= b && y + m <= d
     }
     fn track_r(&self, hw: f64, plane_clr: f64) -> f64 {
-        hw + self.maxc.max(plane_clr).max(HOLE_CLR) + 0.01
+        hw + self.maxc.max(plane_clr).max(self.hole_clr) + 0.01
     }
     /// Fixed-copper verdict (FREE / MULTI / n) of a track centre for the profile (hw, clr, fast).
     fn track_fixed_code(&self, l: usize, x: f64, y: f64, hw: f64, clr: f64, fast: bool, plane_clr: f64) -> i32 {
@@ -323,7 +335,7 @@ impl Board {
         }
         let mut code = FREE;
         self.near_in(&self.idx, l, x, y, self.track_r(hw, plane_clr), &mut |_, s| {
-            if !track_hit(s, x, y, hw, clr, fast, plane_clr, self.eps) {
+            if !track_hit(s, x, y, hw, clr, fast, plane_clr, self.hole_clr, self.eps) {
                 return false;
             }
             if s.net < 0 || (code >= 0 && code != s.net) {
@@ -341,7 +353,7 @@ impl Board {
         let (clr, fast) = (n.clr, n.fast);
         let mut seen: Vec<u32> = Vec::new();
         self.near_in(&self.sidx, l, x, y, self.track_r(hw, plane_clr), &mut |id, s| {
-            if s.net != net as i32 && !seen.contains(&id) && track_hit(s, x, y, hw, clr, fast, plane_clr, self.eps) {
+            if s.net != net as i32 && !seen.contains(&id) && track_hit(s, x, y, hw, clr, fast, plane_clr, self.hole_clr, self.eps) {
                 seen.push(id);
             }
             false
@@ -368,7 +380,7 @@ impl Board {
         self.track_cost(net, l, x, y, hw, plane_clr, None) == 0
     }
     fn via_r(&self, d: f64, hth: f64) -> f64 {
-        d / 2.0 + self.maxc.max(self.plane_clr).max(hth).max(HOLE_CLR) + 0.01
+        d / 2.0 + self.maxc.max(self.plane_clr).max(hth).max(self.hole_clr) + 0.01
     }
     /// Fixed-copper verdict of a via site for the profile (d, drill, clr): see FREE / MULTI / n / ONLY / COMPUTE.
     fn via_fixed_code(&self, x: f64, y: f64, d: f64, drill: f64, clr: f64, hth: f64) -> i32 {
@@ -1052,7 +1064,25 @@ fn f(v: &Value) -> f64 {
     v.as_f64().unwrap_or(0.0)
 }
 
-fn load(model: &Value) -> Board {
+/// Hole rules of the model (tools/router/model.py `hole_rules`): (hole_clearance, hole_to_hole, plane_clearance).
+/// hole_clearance / hole_to_hole = the largest minimum of the DRU rules and the board minimum (the core applies them to
+/// every drilled item, a superset of the DRU scope 'either / both items are through-hole pads'); a missing key = None.
+fn hole_rules(model: &Value) -> (Option<f64>, Option<f64>, Option<f64>) {
+    let hr = &model["hole_rules"];
+    let big = |kind: &str| -> Option<f64> {
+        let mut v: Vec<f64> = hr[kind].as_array().map(|a| a.iter().filter_map(|r| r["min"].as_f64()).collect()).unwrap_or_default();
+        if v.is_empty() {
+            return None;
+        }
+        if let Some(b) = hr["board_min"][kind].as_f64() {
+            v.push(b);
+        }
+        Some(v.into_iter().fold(0.0, f64::max))
+    };
+    (big("hole_clearance"), big("hole_to_hole"), hr["plane_clearance"]["min"].as_f64())
+}
+
+fn load(model: &Value, hole_clr: f64) -> Board {
     let cu: Vec<String> = model["copper_layers"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
     let planes: Vec<String> = model["plane_layers"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
     let lid = |n: &str| cu.iter().position(|c| c == n);
@@ -1088,7 +1118,7 @@ fn load(model: &Value) -> Board {
     let idx = Index::new(edge.0 - 1.0, edge.1 - 1.0, edge.2 + 1.0, edge.3 + 1.0, cu.len());
     let gnd = names.get("GND").map(|&i| i as i32).unwrap_or(-1);
     let sidx = Index::new(edge.0 - 1.0, edge.1 - 1.0, edge.2 + 1.0, edge.3 + 1.0, cu.len());
-    let mut bd = Board { layer_names: cu.clone(), routable, nets, shapes: Vec::new(), idx, sidx, maxc, edge, edge_clr, gnd, plane_clr: 0.25, eps: EPS };
+    let mut bd = Board { layer_names: cu.clone(), routable, nets, shapes: Vec::new(), idx, sidx, maxc, edge, edge_clr, gnd, plane_clr: DEF_PLANE_CLR, eps: EPS, hole_clr, spoke_notes: Vec::new(), attach: Vec::new() };
     let net_of = |n: &str| names.get(n).map(|&i| i as i32).unwrap_or(-1);
     let clr_of = |bd: &Board, n: i32| if n >= 0 { bd.nets[n as usize].clr } else { 0.15 };
     for p in model["pads"].as_array().unwrap() {
@@ -1097,8 +1127,8 @@ fn load(model: &Value) -> Board {
         let layers = mask(&p["layers"]);
         let drill = f(&p["drill"]);
         if layers == 0 && drill > 0.0 {
-            // NPTH: no copper, but the hole keeps the JLC hole-to-copper clearance on every layer (.kicad_dru 0.28 mm)
-            let s = Shape { net: -1, geo: Geo::Circ(f(&p["x"]), f(&p["y"]), drill / 2.0), clr: 0.28, layers: (1u8 << cu.len()) - 1, drill, kind: Kind::Pad, owner: -1, alive: true };
+            // NPTH: no copper, but the hole keeps the hole-to-copper clearance on every layer (.kicad_dru hole_clearance)
+            let s = Shape { net: -1, geo: Geo::Circ(f(&p["x"]), f(&p["y"]), drill / 2.0), clr: hole_clr, layers: (1u8 << cu.len()) - 1, drill, kind: Kind::Pad, owner: -1, alive: true };
             bd.add(s);
             continue;
         }
@@ -1118,9 +1148,142 @@ fn load(model: &Value) -> Board {
             bd.add(s);
         }
     }
+    reserve_spokes(&mut bd, model, &lid, &net_of);
     bd.maxc = bd.shapes.iter().map(|s| s.clr).fold(bd.maxc, f64::max); // query reach: the largest clearance of any item
     bd
 }
+
+/// Thermal spoke channels (KiCad `starved_thermal`): a pad of a plane net on an outer layer with a thermal-relief pour
+/// of its net (model `zones`) needs `setup.min_spokes` spokes that reach the pour. A spoke is a strip of the pour from
+/// the pad edge outward, `spoke_width` wide and `thermal_gap + spoke_width` long; a foreign track within the zone
+/// clearance of it cuts it. Per pad the strips (east / west / north / south of the pad bbox) are scanned against the
+/// fixed copper; the `min_spokes` free ones with the most free room behind them are reserved as hard obstacles of the
+/// pad's net (Kind::Spoke, clearance = zone clearance), so other nets keep out. A pad with fewer free strips gets all
+/// of them and a note. Own-net copper (the fan-out track and via) never blocks a strip.
+fn reserve_spokes(bd: &mut Board, model: &Value, lid: &dyn Fn(&str) -> Option<usize>, net_of: &dyn Fn(&str) -> i32) {
+    let min_sp = model["setup"]["min_spokes"].as_u64().unwrap_or(2) as usize;
+    let zones = match model["zones"].as_array() {
+        Some(z) => z,
+        None => return,
+    };
+    // (net, layer, clearance, gap, spoke width, tht only, bbox)
+    let mut zr: Vec<(i32, usize, f64, f64, f64, bool, [f64; 4])> = Vec::new();
+    for z in zones {
+        let conn = z["pad_connection"].as_str().unwrap_or("");
+        let (Some(l), true) = (lid(z["layer"].as_str().unwrap_or("")), conn == "thermal" || conn == "tht_thermal") else { continue };
+        let net = net_of(z["net"].as_str().unwrap_or(""));
+        let bb = &z["bbox"];
+        if net < 0 || !bd.routable.contains(&l) {
+            continue;
+        }
+        zr.push((net, l, f(&z["clearance"]), f(&z["thermal_gap"]), f(&z["spoke_width"]), conn == "tht_thermal", [f(&bb[0]), f(&bb[1]), f(&bb[2]), f(&bb[3])]));
+    }
+    let step = 0.1;
+    let mut count = 0;
+    let mut short = 0;
+    for p in model["pads"].as_array().unwrap() {
+        let net = net_of(p["net"].as_str().unwrap_or(""));
+        let bb = p["bbox"].as_array().unwrap();
+        let (x0, y0, x1, y1) = (f(&bb[0]), f(&bb[1]), f(&bb[2]), f(&bb[3]));
+        let (cx, cy) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+        let drill = f(&p["drill"]);
+        if net < 0 || p["layers"].as_array().map(|a| a.is_empty()).unwrap_or(true) {
+            continue;
+        }
+        if matches!(p["zone_conn"].as_str(), Some("none") | Some("full")) {
+            continue;
+        }
+        for &(zn, l, zclr, gap, sw, tht, zb) in &zr {
+            let on = p["layers"].as_array().unwrap().iter().any(|v| lid(v.as_str().unwrap_or("")) == Some(l));
+            if zn != net || !on || (tht && drill == 0.0) || cx < zb[0] || cx > zb[2] || cy < zb[1] || cy > zb[3] {
+                continue;
+            }
+            let (hw, len) = (sw / 2.0, gap + sw);
+            let reach = len + 1.0;
+            // KiCad also counts a spoke whose pour is trimmed behind the relief gap (checked on NET-CORE: C13.2, C14.2)
+            let partial = (gap + 0.1).min(len);
+            // blocked(x, y): the pour is absent at this point of a spoke strip
+            let blocked = |bd: &Board, x: f64, y: f64| -> bool {
+                if !bd.inside(x, y, 0.0) {
+                    return true;
+                }
+                bd.near_in(&bd.idx, l, x, y, 1.0, &mut |_, s| {
+                    if s.kind == Kind::Spoke || s.owner >= 0 {
+                        return false;
+                    }
+                    if s.net == net {
+                        // another pad of the net: its own relief gap is a hole in the pour
+                        let (a, b, c, d) = s.geo.bbox();
+                        let me = (a - x0).abs() < 1e-6 && (b - y0).abs() < 1e-6 && (c - x1).abs() < 1e-6 && (d - y1).abs() < 1e-6;
+                        return s.kind == Kind::Pad && !me && s.geo.dist(x, y) < gap;
+                    }
+                    s.geo.dist(x, y) < zclr.max(s.clr)
+                })
+            };
+            // free length of each direction: 0 east, 1 west, 2 north, 3 south
+            let mut cand: Vec<(f64, usize)> = Vec::new();
+            for dir in 0..4 {
+                let mut free = 0.0;
+                let mut t = step;
+                while t <= reach + 1e-9 {
+                    let mut ok = true;
+                    let mut k = -hw;
+                    while k <= hw + 1e-9 {
+                        let (x, y) = match dir {
+                            0 => (x1 + t, cy + k),
+                            1 => (x0 - t, cy + k),
+                            2 => (cx + k, y0 - t),
+                            _ => (cx + k, y1 + t),
+                        };
+                        if blocked(bd, x, y) {
+                            ok = false;
+                            break;
+                        }
+                        k += step;
+                    }
+                    if !ok {
+                        break;
+                    }
+                    free = t;
+                    t += step;
+                }
+                if free + 1e-9 >= partial {
+                    cand.push((free.min(len), dir));
+                }
+            }
+            cand.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap().then(a.1.cmp(&b.1)));
+            let free_of = |d: usize| cand.iter().find(|c| c.1 == d).map(|c| c.0).unwrap_or(len);
+            for &(_, dir) in cand.iter().take(min_sp) {
+                let ln = free_of(dir);
+                let g = match dir {
+                    0 => Geo::Rect(x1, cy - hw, x1 + ln, cy + hw),
+                    1 => Geo::Rect(x0 - ln, cy - hw, x0, cy + hw),
+                    2 => Geo::Rect(cx - hw, y0 - ln, cx + hw, y0),
+                    _ => Geo::Rect(cx - hw, y1, cx + hw, y1 + ln),
+                };
+                bd.add(Shape { net, geo: g, clr: zclr, layers: 1 << l, drill: 0.0, kind: Kind::Spoke, owner: -1, alive: true });
+                count += 1;
+            }
+            if cand.len() < min_sp {
+                // KiCad counts a pad copper connection (the pad's own fan-out track) as one spoke (checked on NET-CORE:
+                // C14.2 passes with one pour spoke and its track, starves without the track). An SMD pad with no
+                // track yet gets a forced fan-out in the plane stage.
+                let attached = bd.shapes.iter().any(|s| s.net == net && s.kind == Kind::Track && s.owner < 0 && s.layers & (1 << l) != 0
+                    && match s.geo { Geo::Seg(ax, ay, bx, by, h) => Geo::Rect(x0, y0, x1, y1).dist(ax, ay) <= h + 1e-3 || Geo::Rect(x0, y0, x1, y1).dist(bx, by) <= h + 1e-3, _ => false });
+                if drill == 0.0 && !attached && cand.len() + 1 >= min_sp {
+                    bd.attach.push((cx, cy));
+                } else if cand.len() + (attached as usize) < min_sp {
+                    short += 1;
+                    bd.spoke_notes.push(format!("{}.{} ({:.2}, {:.2}) on {}: {} free spoke channel(s){}, the zone needs {} (fixed copper blocks the rest)",
+                                                p["ref"].as_str().unwrap_or("?"), p["num"].as_str().unwrap_or("?"), cx, cy, bd.layer_names[l], cand.len(),
+                                                if attached { " + a fixed fan-out track" } else { "" }, min_sp));
+                }
+            }
+        }
+    }
+    eprintln!("spoke channels: {count} reserved, {} pad(s) get a forced fan-out track, {short} pad(s) stay below {min_sp} (fixed copper)", bd.attach.len());
+}
+
 
 /// Plane fan-out of one plane net: a via (plus a short track) for every SMD pad of the net, unless a fixed via of the
 /// net is already within 1 mm. The fan-out is owned by the plane net, so it takes part in the negotiation: when a
@@ -1143,7 +1306,9 @@ fn fanout_net(ctx: &mut Ctx, net: usize) -> NetResult {
         // fan-out via of a neighbour pad has no copper to it (DESIGN 5a: every plane-net SMD pad gets its own via)
         let has = ctx.bd.shapes.iter().any(|s| s.alive && s.net == net as i32 && s.kind == Kind::Via
             && (if s.owner < 0 { s.geo.dist(cx, cy) < 1.0 } else { touch(s, &pad) }));
-        if has {
+        // a pad short of thermal spokes gets its own fan-out track even next to a fixed via (the track is one spoke)
+        let forced = ctx.bd.attach.iter().any(|&(ax, ay)| (ax - cx).abs() < 1e-6 && (ay - cy).abs() < 1e-6);
+        if has && !forced {
             continue;
         }
         let (pw, ph) = match pad.geo { Geo::Rect(a, b, c, d) => (c - a, d - b), _ => (0.3, 0.3) };
@@ -1288,7 +1453,7 @@ fn route_net(ctx: &mut Ctx, net: usize) -> NetResult {
         }
     }
     let mut out = NetResult { hard_fail: None, limit: false, conflicts: 0 };
-    let items: Vec<usize> = (0..ctx.bd.shapes.len()).filter(|&i| { let s = &ctx.bd.shapes[i]; s.alive && s.net == net as i32 && s.owner < 0 }).collect();
+    let items: Vec<usize> = (0..ctx.bd.shapes.len()).filter(|&i| { let s = &ctx.bd.shapes[i]; s.alive && s.net == net as i32 && s.owner < 0 && s.kind != Kind::Spoke }).collect();
     if items.len() < 2 {
         return out;
     }
@@ -1477,19 +1642,22 @@ fn tree_pads(ctx: &Ctx, items: &[usize]) -> Vec<String> {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
-        eprintln!("usage: iotroute MODEL.json OUT.json [--pitch 0.05] [--iters 40] [--plane-clr 0.25] [--hole-to-hole 0.45] [--return-r 2.0] [--return-via 0.45,0.2] [--pres-mult 1.5] [--pres-max 1000] [--hist 0.3] [--max-time S]");
+        eprintln!("usage: iotroute MODEL.json OUT.json [--pitch 0.05] [--iters 40] [--plane-clr 0.25] [--hole-to-hole 0.45] [--hole-clr 0.28] [--return-r 2.0] [--return-via 0.45,0.2] [--pres-mult 1.5] [--pres-max 1000] [--hist 0.3] [--max-time S]");
         std::process::exit(2);
     }
-    let mut o = Opts { pitch: 0.05, passes: 40, plane_clr: 0.25, hth: 0.45, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2,
+    let mut o = Opts { pitch: 0.05, passes: 40, plane_clr: DEF_PLANE_CLR, hth: DEF_HOLE_TO_HOLE, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2,
                        pres_mult: 1.5, pres_max: 1000.0, hist: 0.3, max_time: 0.0 };
+    // CLI flags override the model's hole rules, which override the defaults
+    let (mut cli_plane, mut cli_hth, mut cli_hole): (Option<f64>, Option<f64>, Option<f64>) = (None, None, None);
     let mut i = 3;
     while i + 1 < args.len() {
         let v = &args[i + 1];
         match args[i].as_str() {
             "--pitch" => o.pitch = v.parse().unwrap(),
             "--iters" | "--passes" => o.passes = v.parse().unwrap(),
-            "--plane-clr" => o.plane_clr = v.parse().unwrap(),
-            "--hole-to-hole" => o.hth = v.parse().unwrap(),
+            "--plane-clr" => cli_plane = Some(v.parse().unwrap()),
+            "--hole-to-hole" => cli_hth = Some(v.parse().unwrap()),
+            "--hole-clr" => cli_hole = Some(v.parse().unwrap()),
             "--return-r" => o.return_r = v.parse().unwrap(),
             "--pres-mult" => o.pres_mult = v.parse().unwrap(),
             "--pres-max" => o.pres_max = v.parse().unwrap(),
@@ -1509,7 +1677,14 @@ fn main() {
     }
     let t0 = std::time::Instant::now();
     let model: Value = serde_json::from_str(&std::fs::read_to_string(&args[1]).expect("model")).expect("json");
-    let mut bd = load(&model);
+    let (m_hole, m_hth, m_plane) = hole_rules(&model);
+    let hole_clr = cli_hole.or(m_hole).unwrap_or(DEF_HOLE_CLR);
+    o.hth = cli_hth.or(m_hth).unwrap_or(DEF_HOLE_TO_HOLE);
+    o.plane_clr = cli_plane.or(m_plane).unwrap_or(DEF_PLANE_CLR);
+    let src = |c: Option<f64>, m: Option<f64>| if c.is_some() { "cli" } else if m.is_some() { "model" } else { "default" };
+    eprintln!("hole rules: hole-clr {:.3} ({}), hole-to-hole {:.3} ({}), plane-clr {:.3} ({})", hole_clr, src(cli_hole, m_hole), o.hth,
+              src(cli_hth, m_hth), o.plane_clr, src(cli_plane, m_plane));
+    let mut bd = load(&model, hole_clr);
     bd.plane_clr = o.plane_clr;
     let base0 = bd.shapes.len();
     let (e0, e1, e2, e3) = bd.edge;
@@ -1716,6 +1891,7 @@ fn main() {
             }
         }
     }
+    notes.extend(ctx.bd.spoke_notes.iter().cloned());
     notes.sort();
     notes.dedup();
     let mut failed = fan_fail;
@@ -1748,7 +1924,8 @@ mod tests {
         let (x0, y0, x1, y1) = (0.0, 0.0, 10.0, 10.0);
         let mut bd = Board { layer_names: vec!["F.Cu".into(), "In1.Cu".into(), "B.Cu".into()], routable: vec![0, 2], nets, shapes: Vec::new(),
                              idx: Index::new(x0 - 1.0, y0 - 1.0, x1 + 1.0, y1 + 1.0, 3), sidx: Index::new(x0 - 1.0, y0 - 1.0, x1 + 1.0, y1 + 1.0, 3),
-                             maxc: 0.2, edge: (x0, y0, x1, y1), edge_clr: 0.3, gnd: -1, plane_clr: 0.25, eps: EPS };
+                             maxc: 0.2, edge: (x0, y0, x1, y1), edge_clr: 0.3, gnd: -1, plane_clr: 0.25, eps: EPS, hole_clr: 0.28,
+                             spoke_notes: Vec::new(), attach: Vec::new() };
         let sh = |net: i32, geo: Geo, clr: f64, layers: u8, drill: f64, kind: Kind, owner: i32| Shape { net, geo, clr, layers, drill, kind, owner, alive: true };
         bd.add(sh(0, Geo::Rect(2.0, 2.0, 2.6, 2.4), 0.15, 1, 0.0, Kind::Pad, -1));
         bd.add(sh(0, Geo::Rect(2.0, 2.9, 2.6, 3.3), 0.15, 1, 0.0, Kind::Pad, -1));
@@ -1760,6 +1937,8 @@ mod tests {
         bd.add(sh(2, Geo::Seg(1.0, 5.0, 4.0, 4.0, 0.075), 0.15, 0b001, 0.0, Kind::Track, 2));
         bd.add(sh(0, Geo::Circ(6.0, 2.5, 0.3), 0.15, 0b111, 0.3, Kind::Via, 0));
         bd.add(sh(1, Geo::Seg(6.5, 7.0, 8.5, 9.0, 0.1), 0.2, 0b100, 0.0, Kind::Track, 1));
+        // a reserved spoke strip of net A (zone clearance 0.25): fixed copper of A for the memo and the rule
+        bd.add(sh(0, Geo::Rect(1.3, 2.1, 2.0, 2.3), 0.25, 1, 0.0, Kind::Spoke, -1));
         bd.maxc = bd.shapes.iter().map(|s| s.clr).fold(bd.maxc, f64::max); // as load()
         bd
     }
@@ -1779,7 +1958,7 @@ mod tests {
                     need = need.max(hw + pc);
                 }
                 let (cx, cy) = match s.geo { Geo::Circ(cx, cy, _) => (cx, cy), Geo::Rect(a, b, c, d) => ((a + c) / 2.0, (b + d) / 2.0), Geo::Seg(..) => (f64::MAX, f64::MAX) };
-                hit = ((x - cx).powi(2) + (y - cy).powi(2)).sqrt() - s.drill / 2.0 < hw + HOLE_CLR + EPS;
+                hit = ((x - cx).powi(2) + (y - cy).powi(2)).sqrt() - s.drill / 2.0 < hw + bd.hole_clr + EPS;
             }
             if hit || s.geo.dist(x, y) < need + EPS {
                 if s.owner < 0 {
@@ -1816,7 +1995,7 @@ mod tests {
                 // a drilled item and hole to copper
                 let dd = s.geo.dist(x, y);
                 let fast_track = s.kind == Kind::Track && s.net >= 0 && bd.nets[s.net as usize].fast;
-                hit = dd < vr + clr.max(s.clr) + EPS || (fast_track && dd < vr + bd.plane_clr + EPS) || dd < drill / 2.0 + HOLE_CLR + EPS;
+                hit = dd < vr + clr.max(s.clr) + EPS || (fast_track && dd < vr + bd.plane_clr + EPS) || dd < drill / 2.0 + bd.hole_clr + EPS;
             }
             if hit {
                 if s.owner < 0 {
@@ -1929,3 +2108,6 @@ mod tests {
         assert!(vias > 200 && tracks > 200, "coverage {vias} {tracks}");
     }
 }
+
+#[cfg(test)]
+mod tests_model;
