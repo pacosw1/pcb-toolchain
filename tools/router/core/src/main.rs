@@ -1,7 +1,7 @@
 //! iotroute: rule-native grid router core (tools/router/DESIGN.md, M1).
 //!
 //!   iotroute MODEL.json OUT.json [--pitch 0.05] [--iters 40] [--plane-clr 0.25] [--hole-to-hole 0.45] [--hole-clr 0.28]
-//!            [--return-r 2.0] [--return-via 0.45,0.2] [--pres-mult 1.5] [--pres-max 1000] [--hist 0.3] [--max-time S]
+//!            [--return-r 2.0] [--return-via 0.45,0.2] [--pres-mult 1.5] [--pres-max 1000] [--hist 0.3] [--max-time S] [--door-hist 2.0] [--check RESULT.json]
 //!
 //! MODEL.json comes from tools/router/model.py (schema iot-lab.route-model.v0). Every clearance is checked against
 //! exact geometry (pads as their bounding rectangle, tracks as capsules, vias as circles) with the per-net width and
@@ -26,11 +26,18 @@
 //! by --pres-mult up to --pres-max. Not converged after --iters / --max-time: the best iteration is restored, the
 //! fewest nets are ripped until the copper is legal, they are routed again with soft conflicts blocking, and what
 //! stays open is reported as failed (graceful end: the written copper is always clearance-legal).
+//! Pour (v5, pour.rs): after each iteration the outer-layer pours are filled on a 0.025 mm grid as KiCad fills them and
+//! the KiCad starved_thermal rule is applied; a thermal pad whose spokes reach only an island (a piece with no other item)
+//! is a conflict of the routed nets that wall it in: door history on their cells and they are routed again; after
+//! DOOR_STALL iterations the door (its path from the spoke test point to a via or track end of the net) is reserved as
+//! pour. --check RESULT.json runs only the pour check on a routed result (verification against KiCad DRC).
 //! The output is a proposal: KiCad DRC with parity and tools/gate.mjs decide. Last line: ROUTE PASS|FAIL ... summary.
 use serde::Serialize;
 use serde_json::Value;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
+
+mod pour;
 
 const EPS: f64 = 0.002;
 // Defaults when the model has no `hole_rules` key (an old model.json); a model value and then a CLI flag override them.
@@ -44,6 +51,8 @@ const JOIN_MARGIN: f64 = 5.0;
 const END_IN: f64 = 0.01;
 /// iterations with the same hard fails and no conflict before the negotiation stops
 const STALL: usize = 3;
+/// iterations a pour fault may stay under door history before its door is reserved as pour (hard door)
+const DOOR_STALL: usize = 3;
 
 #[derive(Clone, Copy, Debug)]
 enum Geo {
@@ -180,6 +189,8 @@ struct Opts {
     pres_max: f32,
     hist: f32,
     max_time: f64,
+    /// history added per iteration on the routing cells of a pour door (see pour.rs, Ctx::door_cells)
+    door_hist: f32,
 }
 
 struct Index {
@@ -247,6 +258,10 @@ struct Board {
     pad_need: Vec<(f64, f64, f64)>,
     /// centres of the fixed GND vias and GND through-hole pads: a return for any signal via within --return-r (RP-001)
     gnd_fixed: Vec<(f64, f64)>,
+    /// outer-layer pours with thermal pads (model `zones`): the starved-thermal rule of pour.rs
+    pours: Vec<pour::Pour>,
+    /// round pads (kept as their bounding box elsewhere): centre (1e-4 mm) -> radius, for the pour model
+    circ: std::collections::HashMap<(i64, i64), f64>,
 }
 
 /// Fixed-copper verdict of a grid site for one rule profile, shared by all nets: FREE, MULTI (blocked for every net),
@@ -828,6 +843,88 @@ impl<'a> Ctx<'a> {
         }
         v
     }
+    /// Routing cells (track centres on the pour layer) and via sites from which copper of a wall net would block the
+    /// door of a pour fault (pour.rs): they get the door history, so the ripped wall nets route around the door.
+    fn door_cells(&self, fl: &pour::Fault, cells: &mut std::collections::HashSet<usize>, vcells: &mut std::collections::HashSet<usize>) {
+        let pr = &self.bd.pours[fl.pour];
+        let Some(r) = self.bd.routable.iter().position(|&l| l == fl.layer) else { return };
+        let walls = fl.walls.iter().map(|&w| &self.bd.nets[w]);
+        let (hw, vr) = walls.fold((0.075f64, 0.3f64), |a, n| (a.0.max(n.width.max(n.min_w) / 2.0), a.1.max(n.via_d / 2.0)));
+        let reach = self.bd.maxc.max(pr.clr) + pr.mt / 2.0 + pour::POUR_PITCH;
+        let (rt, rv) = (hw + reach, vr + reach);
+        let n = self.gr.nx * self.gr.ny;
+        for &(x, y) in &fl.door {
+            let (i0, j0) = self.gr.at(x - rv, y - rv);
+            let (i1, j1) = self.gr.at(x + rv, y + rv);
+            for j in j0..=j1 {
+                for i in i0..=i1 {
+                    let (cx, cy) = self.gr.xy(i, j);
+                    let d2 = (cx - x).powi(2) + (cy - y).powi(2);
+                    if d2 <= rt * rt {
+                        cells.insert(r * n + j * self.gr.nx + i);
+                    }
+                    if d2 <= rv * rv {
+                        vcells.insert(j * self.gr.nx + i);
+                    }
+                }
+            }
+        }
+    }
+    /// Pour faults of the present copper; the door history goes on the routing cells of every fixable door. Returns
+    /// (faults, wall nets to rip up, faults that fixed copper alone makes).
+    fn pour_pass(&mut self, amount: f32) -> (Vec<pour::Fault>, Vec<usize>, usize) {
+        let faults = pour::check(self.bd);
+        let (mut cells, mut vcells) = (std::collections::HashSet::new(), std::collections::HashSet::new());
+        let mut walls: Vec<usize> = Vec::new();
+        let mut fixed = 0;
+        for fl in &faults {
+            if fl.fixed {
+                fixed += 1;
+                continue;
+            }
+            self.door_cells(fl, &mut cells, &mut vcells);
+            for &w in &fl.walls {
+                if !walls.contains(&w) {
+                    walls.push(w);
+                }
+            }
+        }
+        if amount > 0.0 {
+            for c in cells {
+                self.gr.hist[c] += amount;
+            }
+            for c in vcells {
+                self.gr.vhist[c] += amount;
+            }
+        }
+        (faults, walls, fixed)
+    }
+    /// Hard door (last resort): the whole path of the fault becomes a reserved pour strip (Kind::Spoke of the pour
+    /// net, min_thickness + 2 pitch wide, zone clearance), so no net routes over it again. The fixed-copper memo is
+    /// cleared (fixed copper grew); walled-in proofs stay true (more fixed copper never opens a path).
+    fn reserve_door(&mut self, fl: &pour::Fault) {
+        let pr = self.bd.pours[fl.pour].clone();
+        let hw = pr.mt / 2.0 + pour::POUR_PITCH;
+        // the largest clearance any item keeps to this pour (DRU zone rules included)
+        let clr = pr.net_clr.values().fold(pr.clr, |a, v| a.max(v.0).max(v.1).max(v.2));
+        let mut k = 0;
+        while k + 1 < fl.path.len() {
+            // one segment per straight run of the 4-connected path
+            let (a, b) = (fl.path[k], fl.path[k + 1]);
+            let d = (b.0 - a.0, b.1 - a.1);
+            let mut e = k + 1;
+            while e + 1 < fl.path.len() && ((fl.path[e + 1].0 - fl.path[e].0 - d.0).abs() < 1e-9 && (fl.path[e + 1].1 - fl.path[e].1 - d.1).abs() < 1e-9) {
+                e += 1;
+            }
+            let b = fl.path[e];
+            self.bd.add(Shape { net: pr.net, geo: Geo::Seg(a.0, a.1, b.0, b.1, hw), clr, layers: 1 << pr.layer, drill: 0.0, kind: Kind::Spoke, owner: -1, alive: true });
+            k = e;
+        }
+        self.bd.maxc = self.bd.maxc.max(clr); // query reach
+        self.memo.clear();
+        self.rcache.iter_mut().for_each(|c| *c = 0);
+        self.gr.reset_cache();
+    }
     /// Memo of the fixed-copper verdict per rule profile (track: hw, clr, fast; via: d, drill, clr). Fixed copper
     /// does not change during a run, so each grid site is evaluated once per profile instead of once per search.
     /// Only the profiles of the net widths (and the power necks) get a memo; others are evaluated directly.
@@ -1321,7 +1418,7 @@ fn load(model: &Value, hole_clr: f64) -> Board {
     // layers with an adjacent reference plane (reference-planes.json 'adjacent' via the model)
     let adj = model["adjacent"].as_object().map(|o| o.keys().filter_map(|k| lid(k)).fold(0u8, |m, l| m | (1 << l))).unwrap_or(0);
     let mut bd = Board { layer_names: cu.clone(), routable, nets, shapes: Vec::new(), idx, sidx, maxc, edge, edge_clr, gnd, plane_clr: DEF_PLANE_CLR, eps: EPS, hole_clr,
-                         spoke_notes: Vec::new(), attach: Vec::new(), adj, pad_need: Vec::new(), gnd_fixed: Vec::new() };
+                         spoke_notes: Vec::new(), attach: Vec::new(), adj, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new() };
     // width per power-chain pad (model power_chains): the plane fan-out of that pad keeps it
     let mut need_of: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
     for (_, v) in model["nets"].as_object().unwrap() {
@@ -1349,6 +1446,9 @@ fn load(model: &Value, hole_clr: f64) -> Board {
         let s = Shape { net, geo: Geo::Rect(f(&bb[0]), f(&bb[1]), f(&bb[2]), f(&bb[3])), clr: clr_of(&bd, net), layers, drill, kind: Kind::Pad, owner: -1, alive: true };
         bd.add(s);
         let (cx, cy) = ((f(&bb[0]) + f(&bb[2])) / 2.0, (f(&bb[1]) + f(&bb[3])) / 2.0);
+        if p["shape"].as_str() == Some("circle") {
+            bd.circ.insert(((cx * 1e4).round() as i64, (cy * 1e4).round() as i64), (f(&bb[2]) - f(&bb[0])) / 2.0);
+        }
         if let Some(&w) = need_of.get(&format!("{}.{}", p["ref"].as_str().unwrap_or(""), p["num"].as_str().unwrap_or(""))) {
             bd.pad_need.push((cx, cy, w));
         }
@@ -1373,6 +1473,7 @@ fn load(model: &Value, hole_clr: f64) -> Board {
         }
     }
     reserve_spokes(&mut bd, model, &lid, &net_of);
+    pour::load_pours(&mut bd, model, &lid, &net_of);
     bd.maxc = bd.shapes.iter().map(|s| s.clr).fold(bd.maxc, f64::max); // query reach: the largest clearance of any item
     bd
 }
@@ -1945,13 +2046,14 @@ fn tree_pads(ctx: &Ctx, items: &[usize]) -> Vec<String> {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
-        eprintln!("usage: iotroute MODEL.json OUT.json [--pitch 0.05] [--iters 40] [--plane-clr 0.25] [--hole-to-hole 0.45] [--hole-clr 0.28] [--return-r 2.0] [--return-via 0.45,0.2] [--pres-mult 1.5] [--pres-max 1000] [--hist 0.3] [--max-time S]");
+        eprintln!("usage: iotroute MODEL.json OUT.json [--pitch 0.05] [--iters 40] [--plane-clr 0.25] [--hole-to-hole 0.45] [--hole-clr 0.28] [--return-r 2.0] [--return-via 0.45,0.2] [--pres-mult 1.5] [--pres-max 1000] [--hist 0.3] [--max-time S] [--door-hist 2.0] [--check RESULT.json]");
         std::process::exit(2);
     }
     let mut o = Opts { pitch: 0.05, passes: 40, plane_clr: DEF_PLANE_CLR, hth: DEF_HOLE_TO_HOLE, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2,
-                       pres_mult: 1.5, pres_max: 1000.0, hist: 0.3, max_time: 0.0 };
+                       pres_mult: 1.5, pres_max: 1000.0, hist: 0.3, max_time: 0.0, door_hist: 2.0 };
     // CLI flags override the model's hole rules, which override the defaults
     let (mut cli_plane, mut cli_hth, mut cli_hole): (Option<f64>, Option<f64>, Option<f64>) = (None, None, None);
+    let mut check_only: Option<String> = None;
     let mut i = 3;
     while i + 1 < args.len() {
         let v = &args[i + 1];
@@ -1966,6 +2068,8 @@ fn main() {
             "--pres-max" => o.pres_max = v.parse().unwrap(),
             "--hist" => o.hist = v.parse().unwrap(),
             "--max-time" => o.max_time = v.parse().unwrap(),
+            "--door-hist" => o.door_hist = v.parse().unwrap(),
+            "--check" => check_only = Some(v.clone()),
             "--return-via" => {
                 let p: Vec<f64> = v.split(',').map(|s| s.parse().unwrap()).collect();
                 o.ret_d = p[0];
@@ -1989,6 +2093,34 @@ fn main() {
               src(cli_hth, m_hth), o.plane_clr, src(cli_plane, m_plane));
     let mut bd = load(&model, hole_clr);
     bd.plane_clr = o.plane_clr;
+    if let Some(res) = check_only {
+        // pour check of a routed result (no routing): its tracks and vias are added as routed copper of their nets
+        let r: Value = serde_json::from_str(&std::fs::read_to_string(&res).expect("result")).expect("json");
+        let names_v: Vec<String> = bd.nets.iter().map(|q| q.name.clone()).collect();
+        let ni = |n: &str| names_v.iter().position(|q| q == n).map(|i| i as i32).unwrap_or(-1);
+        let all = (1u8 << bd.layer_names.len()) - 1;
+        for t in r["tracks"].as_array().unwrap() {
+            let net = ni(t["net"].as_str().unwrap());
+            let l = bd.layer_names.iter().position(|q| q == t["layer"].as_str().unwrap()).unwrap();
+            let clr = if net >= 0 { bd.nets[net as usize].clr } else { 0.15 };
+            bd.add(Shape { net, geo: Geo::Seg(f(&t["a"][0]), f(&t["a"][1]), f(&t["b"][0]), f(&t["b"][1]), f(&t["w"]) / 2.0), clr, layers: 1 << l, drill: 0.0, kind: Kind::Track, owner: net.max(0), alive: true });
+        }
+        for v in r["vias"].as_array().unwrap() {
+            let net = ni(v["net"].as_str().unwrap());
+            let clr = if net >= 0 { bd.nets[net as usize].clr } else { 0.15 };
+            bd.add(Shape { net, geo: Geo::Circ(f(&v["x"]), f(&v["y"]), f(&v["d"]) / 2.0), clr, layers: all, drill: f(&v["drill"]), kind: Kind::Via, owner: net.max(0), alive: true });
+        }
+        let tp = std::time::Instant::now();
+        let faults = pour::check(&bd);
+        for fl in &faults {
+            let walls: Vec<&str> = fl.walls.iter().map(|&w| bd.nets[w].name.as_str()).collect();
+            println!("  {} on {}: spokes {} ignored {}; door {} cells ({}), walls {}", fl.pad, bd.layer_names[fl.layer], fl.good, fl.ignored, fl.door.len(),
+                     if fl.fixed { "none: fixed copper" } else { "routed copper" }, walls.join(" "));
+        }
+        let modes: Vec<String> = bd.pours.iter().map(|p| format!("{} island_removal_mode {}", bd.layer_names[p.layer], p.island_mode)).collect();
+        println!("POUR {} faults {} pours {} ({}) {:.2} s", if faults.is_empty() { "PASS" } else { "FAIL" }, faults.len(), bd.pours.len(), modes.join(", "), tp.elapsed().as_secs_f64());
+        return;
+    }
     let base0 = bd.shapes.len();
     let (e0, e1, e2, e3) = bd.edge;
     let nx = ((e2 - e0) / o.pitch).ceil() as usize + 1;
@@ -2025,6 +2157,9 @@ fn main() {
     let mut best: Option<((usize, usize), usize, Vec<Shape>, Vec<(Option<String>, u32)>)> = None;
     let mut limited_prev: Vec<usize> = Vec::new();
     let (mut stall, mut stall_sig): (usize, Option<Vec<(usize, Option<String>)>>) = (0, None);
+    // pour faults by pad: consecutive iterations seen; hard doors reserved in the negotiation
+    let mut pour_seen: Vec<(String, usize)> = Vec::new();
+    let mut hard_doors = 0usize;
     for it in 0..o.passes {
         iters = it + 1;
         ctx.bd.compact();
@@ -2064,11 +2199,41 @@ fn main() {
             }
         }
         limited.extend(ret_nets.iter().cloned());
+        // pour (v5): a thermal pad whose spokes reach only an island (KiCad starved_thermal) is a conflict of the
+        // routed nets that wall the island in: door history on their cells, and they are routed again
+        let (pf, pour_nets, pour_fixed) = ctx.pour_pass(o.door_hist);
+        // a fault that the door history did not remove in DOOR_STALL iterations gets a hard door now (its path is
+        // reserved as pour, the walls are routed again around it in the next iteration)
+        let mut seen_now: Vec<(String, usize)> = Vec::new();
+        for fl in pf.iter().filter(|fl| !fl.fixed) {
+            let c = pour_seen.iter().find(|e| e.0 == fl.pad).map(|e| e.1).unwrap_or(0) + 1;
+            if c >= DOOR_STALL {
+                ctx.reserve_door(fl);
+                hard_doors += 1;
+                eprintln!("  pour: hard door for {} ({} iterations), path {} cells, walls {}", fl.pad, c, fl.path.len(), names(ctx.bd, &fl.walls));
+            } else {
+                seen_now.push((fl.pad.clone(), c));
+            }
+        }
+        pour_seen = seen_now;
+        for &n in &pour_nets {
+            if !involved.contains(&n) {
+                involved.push(n);
+            }
+            if !limited.contains(&n) {
+                limited.push(n);
+            }
+        }
         limited_prev = limited;
         let hard_nets: Vec<usize> = order.iter().cloned().filter(|&n| state[n].0.is_some()).collect();
-        eprintln!("iter {:2}: routed {:3}, conflicts {:5}, audit pairs {:4} samples {:5} hard {}, involved {:3}, hard fails {:2}, pres {:.2}, {:.1} s  hard: {}  involved: {}",
-                  it + 1, todo.len() - kept, total, au.pairs, au.samples, au.hard, involved.len(), hard_nets.len(), ctx.gr.pres, t0.elapsed().as_secs_f64(),
+        eprintln!("iter {:2}: routed {:3}, conflicts {:5}, audit pairs {:4} samples {:5} hard {}, pour faults {} (walls {}, fixed {}), involved {:3}, hard fails {:2}, pres {:.2}, {:.1} s  hard: {}  involved: {}",
+                  it + 1, todo.len() - kept, total, au.pairs, au.samples, au.hard, pf.len(), pour_nets.len(), pour_fixed, involved.len(), hard_nets.len(), ctx.gr.pres, t0.elapsed().as_secs_f64(),
                   names(ctx.bd, &hard_nets), if involved.len() <= 16 { names(ctx.bd, &involved) } else { String::from("...") });
+        if std::env::var("IOTROUTE_DEBUG").is_ok() {
+            for fl in &pf {
+                eprintln!("  pour fault {} on {}: spokes {} ignored {}, door {} cells, walls {}", fl.pad, ctx.bd.layer_names[fl.layer], fl.good, fl.ignored, fl.door.len(), names(ctx.bd, &fl.walls));
+            }
+        }
         if std::env::var("IOTROUTE_DEBUG").is_ok() && involved.len() <= 3 {
             for &(p, q) in au.pair_ids.iter().take(8) {
                 let (a, b) = (&ctx.bd.shapes[p as usize], &ctx.bd.shapes[q as usize]);
@@ -2109,8 +2274,23 @@ fn main() {
         // graceful end: take the best iteration, rip up nets until the copper is legal (most conflicts first), then
         // route the ripped nets again with soft conflicts blocking; what stays open is reported as failed
         let (score, bit, shapes, st) = best.take().unwrap();
+        // the hard doors reserved so far stay (fixed copper of this run): replace the snapshot's doors by the present
+        let doors_now: Vec<Shape> = ctx.bd.shapes.iter().enumerate().filter(|(i, s)| *i >= base0 && s.alive && s.kind == Kind::Spoke).map(|(_, s)| s.clone()).collect();
         ctx.bd.shapes = shapes;
+        if hard_doors > 0 {
+            for (i, s) in ctx.bd.shapes.iter_mut().enumerate() {
+                if i >= base0 && s.kind == Kind::Spoke {
+                    s.alive = false;
+                }
+            }
+            ctx.bd.shapes.extend(doors_now);
+        }
         ctx.bd.compact();
+        if hard_doors > 0 {
+            ctx.memo.clear();
+            ctx.rcache.iter_mut().for_each(|c| *c = 0);
+            ctx.gr.reset_cache();
+        }
         state = st;
         let mut ripped: Vec<usize> = Vec::new();
         loop {
@@ -2174,20 +2354,56 @@ fn main() {
     // RP-001 check of the final copper: a net with a signal via and no GND return within --return-r (its return via
     // was the one of a net ripped at the end) is routed again strictly, which places its returns; up to 3 rounds
     let mut notes = Vec::new();
-    ctx.strict = true;
-    for _round in 0..3 {
-        let mut miss: Vec<usize> = ctx.ret_missing().into_iter().map(|m| m.0).collect();
-        miss.sort();
-        miss.dedup();
-        if miss.is_empty() {
+    // then the pour check of the final copper: a fault left after the negotiation (or made by a re-route here) gets a
+    // hard door (pour strip reserved as fixed copper) and its wall nets are routed again strictly; up to 3 rounds
+    let mut doors = 0;
+    for round in 0..4 {
+        ctx.strict = true;
+        for _round in 0..3 {
+            let mut miss: Vec<usize> = ctx.ret_missing().into_iter().map(|m| m.0).collect();
+            miss.sort();
+            miss.dedup();
+            if miss.is_empty() {
+                break;
+            }
+            for &net in order.iter().filter(|n| miss.contains(n)) {
+                let r = route_net(&mut ctx, net);
+                state[net].0 = r.hard_fail.map(|m| format!("RP-001 strict re-route: {m}"));
+            }
+        }
+        ctx.strict = false;
+        let (pf, walls, _) = ctx.pour_pass(0.0);
+        let act: Vec<pour::Fault> = pf.into_iter().filter(|fl| !fl.fixed).collect();
+        if act.is_empty() || round == 3 {
             break;
         }
-        for &net in order.iter().filter(|n| miss.contains(n)) {
-            let r = route_net(&mut ctx, net);
-            state[net].0 = r.hard_fail.map(|m| format!("RP-001 strict re-route: {m}"));
+        eprintln!("pour: {} fault(s) after the negotiation ({}); hard door round {}, walls re-routed strictly: {}", act.len(),
+                  act.iter().map(|fl| fl.pad.as_str()).collect::<Vec<_>>().join(" "), round + 1, names(ctx.bd, &walls));
+        for fl in &act {
+            ctx.reserve_door(fl);
+            doors += 1;
+        }
+        ctx.strict = true;
+        for &net in order.iter().filter(|n| walls.contains(n)) {
+            let r = if ctx.bd.nets[net].plane { fanout_net(&mut ctx, net) } else { route_net(&mut ctx, net) };
+            state[net].0 = r.hard_fail.map(|m| format!("pour door strict re-route: {m}"));
+        }
+        ctx.strict = false;
+    }
+    if doors + hard_doors > 0 {
+        notes.push(format!("pour: {hard_doors} hard door(s) reserved in the negotiation, {doors} after it"));
+    }
+    let mut pour_fails: Vec<Fail> = Vec::new();
+    for fl in pour::check(ctx.bd) {
+        let pr = &ctx.bd.pours[fl.pour];
+        let m = format!("{} on {}: {} spoke(s) reach a connected pour piece, {} reach an island (KiCad starved_thermal){}", fl.pad,
+                        ctx.bd.layer_names[fl.layer], fl.good, fl.ignored, if fl.fixed { "; fixed copper alone walls it in (input)" } else { "" });
+        if fl.fixed {
+            notes.push(format!("pour: {m}"));
+        } else {
+            pour_fails.push(Fail { net: ctx.bd.nets[pr.net as usize].name.clone(), stage: "pour".into(), reason: m });
         }
     }
-    ctx.strict = false;
     for (net, x, y) in ctx.ret_missing() {
         let m = format!("RP-001: no GND return via within {} mm of the via at ({x:.2}, {y:.2})", o.return_r);
         state[net].0 = Some(match &state[net].0 { Some(r) => format!("{r}; {m}"), None => m });
@@ -2197,7 +2413,7 @@ fn main() {
     let mut vias = Vec::new();
     let mut via_count = vec![0usize; nn];
     for (i, s) in ctx.bd.shapes.iter().enumerate() {
-        if !s.alive || (s.owner < 0 && i < base0) {
+        if !s.alive || (s.owner < 0 && i < base0) || s.kind == Kind::Spoke {
             continue;
         }
         let name = if s.net >= 0 { ctx.bd.nets[s.net as usize].name.clone() } else { continue };
@@ -2239,6 +2455,7 @@ fn main() {
             failed.push(Fail { net: ctx.bd.nets[n].name.clone(), stage: "route".into(), reason: format!("{} conflicts left", state[n].1) });
         }
     }
+    failed.extend(pour_fails);
     let out = Out { schema: "iot-lab.route-result.v0".into(), tracks, vias, failed, notes, passes: iters };
     std::fs::write(&args[2], serde_json::to_string_pretty(&out).unwrap()).expect("write");
     let status = if out.failed.is_empty() { "PASS" } else { "FAIL" };
@@ -2263,7 +2480,7 @@ mod tests {
         let mut bd = Board { layer_names: vec!["F.Cu".into(), "In1.Cu".into(), "B.Cu".into()], routable: vec![0, 2], nets, shapes: Vec::new(),
                              idx: Index::new(x0 - 1.0, y0 - 1.0, x1 + 1.0, y1 + 1.0, 3), sidx: Index::new(x0 - 1.0, y0 - 1.0, x1 + 1.0, y1 + 1.0, 3),
                              maxc: 0.2, edge: (x0, y0, x1, y1), edge_clr: 0.3, gnd: -1, plane_clr: 0.25, eps: EPS, hole_clr: 0.28,
-                             spoke_notes: Vec::new(), attach: Vec::new(), adj: 0, pad_need: Vec::new(), gnd_fixed: Vec::new() };
+                             spoke_notes: Vec::new(), attach: Vec::new(), adj: 0, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new() };
         let sh = |net: i32, geo: Geo, clr: f64, layers: u8, drill: f64, kind: Kind, owner: i32| Shape { net, geo, clr, layers, drill, kind, owner, alive: true };
         bd.add(sh(0, Geo::Rect(2.0, 2.0, 2.6, 2.4), 0.15, 1, 0.0, Kind::Pad, -1));
         bd.add(sh(0, Geo::Rect(2.0, 2.9, 2.6, 3.3), 0.15, 1, 0.0, Kind::Pad, -1));
@@ -2384,7 +2601,7 @@ mod tests {
         let mut bd = board();
         // a routed track of A crossing the routed track of C on F.Cu
         bd.add(Shape { net: 0, geo: Geo::Seg(2.0, 3.8, 2.0, 5.5, 0.075), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Track, owner: 0, alive: true });
-        let o = Opts { pitch: 0.05, passes: 1, plane_clr: 0.25, hth: 0.45, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2, pres_mult: 1.5, pres_max: 1000.0, hist: 0.3, max_time: 0.0 };
+        let o = Opts { pitch: 0.05, passes: 1, plane_clr: 0.25, hth: 0.45, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2, pres_mult: 1.5, pres_max: 1000.0, hist: 0.3, max_time: 0.0, door_hist: 2.0 };
         let (nx, ny, nr) = (201, 201, 2);
         let tot = nx * ny * nr;
         let gr = Grid { x0: 0.0, y0: 0.0, p: 0.05, nx, ny, nr, cache: vec![0; tot], vcache: vec![0; nx * ny], dcache: vec![0; tot], hist: vec![0.0; tot], vhist: vec![0.0; nx * ny], pres: 0.5,
@@ -2404,7 +2621,7 @@ mod tests {
     #[test]
     fn free_sites_stay_legal_from_both_sides() {
         let mut bd = board();
-        let o = Opts { pitch: 0.05, passes: 1, plane_clr: 0.25, hth: 0.45, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2, pres_mult: 1.5, pres_max: 1000.0, hist: 0.3, max_time: 0.0 };
+        let o = Opts { pitch: 0.05, passes: 1, plane_clr: 0.25, hth: 0.45, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2, pres_mult: 1.5, pres_max: 1000.0, hist: 0.3, max_time: 0.0, door_hist: 2.0 };
         let (nx, ny, nr) = (201, 201, 2);
         let tot = nx * ny * nr;
         let gr = Grid { x0: 0.0, y0: 0.0, p: 0.05, nx, ny, nr, cache: vec![0; tot], vcache: vec![0; nx * ny], dcache: vec![0; tot], hist: vec![0.0; tot], vhist: vec![0.0; nx * ny], pres: 0.5,
@@ -2452,3 +2669,6 @@ mod tests_model;
 
 #[cfg(test)]
 mod tests_v4;
+
+#[cfg(test)]
+mod tests_pour;

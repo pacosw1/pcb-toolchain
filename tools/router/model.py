@@ -45,6 +45,8 @@ PAIR_KINDS = {'diff_pair_gap', 'diff_pair_uncoupled', 'skew'}
 ZC_NAMES = {pcbnew.ZONE_CONNECTION_NONE: 'none', pcbnew.ZONE_CONNECTION_THERMAL: 'thermal',
             pcbnew.ZONE_CONNECTION_FULL: 'full', pcbnew.ZONE_CONNECTION_THT_THERMAL: 'tht_thermal'}
 HOLE_KINDS = {'hole_clearance', 'hole_to_hole'}
+PAD_SHAPES = {pcbnew.PAD_SHAPE_CIRCLE: 'circle', pcbnew.PAD_SHAPE_RECTANGLE: 'rect', pcbnew.PAD_SHAPE_OVAL: 'oval',
+              pcbnew.PAD_SHAPE_ROUNDRECT: 'roundrect', pcbnew.PAD_SHAPE_CUSTOM: 'custom'}
 TH = r"(?:A|B)\.Pad_Type\s*==\s*'Through-hole'"
 
 
@@ -119,6 +121,7 @@ def main():
             if info['class'] in e.get('classes', []):
                 info['layers'] = [l for l in info['layers'] if l not in e.get('deny_layers', [])]
     pads = []
+    pcb_text = None
     for fp in b.GetFootprints():
         for p in fp.Pads():
             bb = p.GetBoundingBox()
@@ -129,6 +132,18 @@ def main():
                  'drill': T(p.GetDrillSize().x) if p.GetDrillSize().x else 0.0}
             if p.GetLocalZoneConnection() != pcbnew.ZONE_CONNECTION_INHERITED:
                 d['zone_conn'] = ZC_NAMES.get(p.GetLocalZoneConnection(), 'unknown')
+            # pour model (v5): KiCad spoke directions = pad orientation + thermal spoke angle + k x 90 degrees
+            d['shape'] = PAD_SHAPES.get(p.GetShape(pcbnew.F_Cu), 'other')
+            d['spoke_deg'] = round((p.GetOrientationDegrees() + p.GetThermalSpokeAngleDegrees()) % 360.0, 3)
+            if d['shape'] == 'custom':
+                # KiCad starved_thermal: a custom pad needs as many spokes as it has proxy segment primitives (0 = none)
+                # (SWIG gives no access to the primitives: count the proxy segments, written as gr_vector, in the pad's
+                # block of the board file, found by the pad uuid)
+                if pcb_text is None:
+                    pcb_text = open(pcb).read()
+                u = pcb_text.find('(uuid "%s")' % p.m_Uuid.AsString())
+                block = pcb_text[pcb_text.rfind('(pad ', 0, u):u] if u >= 0 else ''
+                d['proxy_spokes'] = block.count('(gr_vector')
             pads.append(d)
             if d['net'] in nets:
                 nets[d['net']]['pins'].append(f"{d['ref']}.{d['num']}")
@@ -149,7 +164,8 @@ def main():
     dru_path = proj + '.kicad_dru'
     report = []
     hole_rules = {}
-    pair_nets = {p['p'] for p in pairs} | {p['n'] for p in pairs}
+    zone_clr_rules = []  # (rule, condition, min) of DRU clearance rules that name a zone: the pour model of the core
+    pair_nets ={p['p'] for p in pairs} | {p['n'] for p in pairs}
     for form in rrc._forms(open(dru_path).read()) if os.path.exists(dru_path) else []:
         if form == ['version', '1']:
             continue
@@ -158,6 +174,10 @@ def main():
         layer = (rrc._children(form, 'layer') or [[None, None]])[0][1]
         for con in rrc._children(form, 'constraint'):
             kind = con[1]
+            if kind == 'clearance' and 'Zone' in str(cond):
+                vals = {c[0]: c[1] for c in con[2:] if isinstance(c, list) and len(c) == 2}
+                if 'min' in vals:
+                    zone_clr_rules.append((rule, cond, float(rrc._number(vals['min']))))
             hits, unknown = [], False
             for name, info in nets.items():
                 for typ in ('Track', 'Via'):
@@ -224,7 +244,21 @@ def main():
                           'thermal_gap': T(z.GetThermalReliefGap()), 'spoke_width': T(z.GetThermalReliefSpokeWidth()),
                           'pad_connection': ZC_NAMES.get(z.GetPadConnection(), 'inherited'),
                           'min_thickness': T(z.GetMinThickness()),
+                          'island_removal_mode': int(z.GetIslandRemovalMode()),
+                          'min_island_area_mm2': z.GetMinIslandArea() / 1e12,
                           'bbox': [T(zb.GetLeft()), T(zb.GetTop()), T(zb.GetRight()), T(zb.GetBottom())]})
+            # DRU clearance of an item to this zone (rules with B.Type == 'Zone', both rule orders): per net and item
+            # type, only where a rule is true (an unknown selector is left to KiCad DRC, as in the rule report)
+            zc = {}
+            zctx = {'Type': 'Zone', 'NetName': z.GetNetname(), 'NetClass': 'Default', 'Pad_Type': ''}
+            for rule, cond, mn in zone_clr_rules:
+                for name, info in nets.items():
+                    for typ in ('Track', 'Via', 'Pad'):
+                        item = {'NetName': name, 'NetClass': info['class'], 'Type': typ, 'Pad_Type': ''}
+                        if rrc._condition(cond, item, zctx) is True or rrc._condition(cond, zctx, item) is True:
+                            e = zc.setdefault(name, {})
+                            e[typ.lower()] = max(e.get(typ.lower(), 0.0), mn)
+            zones[-1]['net_clearance'] = zc
     plane_clr = max([z['clearance'] for z in zones if z['layer'] in plane_layers and z['net']] or [0.0])
     hole_rules['plane_clearance'] = {'min': plane_clr, 'source': 'max local clearance of the zones on ' + ', '.join(sorted(plane_layers))}
     hole_rules['board_min'] = {'hole_clearance': rules_setup.get('min_hole_clearance'), 'hole_to_hole': rules_setup.get('min_hole_to_hole')}
