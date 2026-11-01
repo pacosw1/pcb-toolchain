@@ -42,7 +42,7 @@ def cmd_read(a):
                                keepout_zones=a.keepout_zone, edges=parse_edges(a.edge),
                                zone_refs=dict(x.split('=', 1) for x in a.zone_ref),
                                domains=parse_domains(a.domain) if a.domain else None, via_nets=a.via_net,
-                               rigid_groups=groups)
+                               rigid_groups=groups, blocks=a.blocks, w_block=a.w_block, w_comp=a.w_comp)
     if engineering:
         from engineering_constraints import prepare_problem
         pr = prepare_problem(a.engineering_root,a.engineering_board,a.engineering_manifest,pr)
@@ -232,6 +232,10 @@ def main(argv=None):
                    help='edge anchor: side N/S/E/W of the REF courtyard (as placed now) on a board edge in LRTB')
     r.add_argument('--via-net', nargs='*', default=[], metavar='NET',
                    help='nets (fnmatch) whose pads need a free via site nearby (via room cost), for example GND')
+    r.add_argument('--blocks', metavar='MEMBERS.json', help='explicit block/component membership (membership.py): '
+                   'a labelled User.1 border holds exactly its block parts; a block with a fixed part is soft')
+    r.add_argument('--w-block', type=float, default=4.0, help='cohesion weight of a soft block (with --blocks)')
+    r.add_argument('--w-comp', type=float, default=1.0, help='cohesion weight of a component (with --blocks)')
     r.add_argument('--engineering-manifest',default=os.environ.get('PCB_ENGINEERING_MANIFEST'))
     r.add_argument('--engineering-board',default=os.environ.get('PCB_ENGINEERING_BOARD'),help='exact configured board ID for the reviewed manifest')
     r.add_argument('--engineering-root',default=os.environ.get('PCB_ENGINEERING_ROOT',os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))

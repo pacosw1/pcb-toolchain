@@ -544,6 +544,8 @@ def fixed_grid(pr, params):
 def track_factor(net, p):
     """RUDY demand factor of a net: with params tracks = 1, its track (net-class width + clearance) over the
     routing pitch; 1 without a track or with tracks = 0 (the default)."""
+    if net.get('cohesion'):  # a virtual group net (kicad_io.cohesion_nets): no wire, no RUDY demand
+        return 0.0
     return net['track'] / p['pitch'] if p.get('tracks') and 'track' in net else 1.0
 
 

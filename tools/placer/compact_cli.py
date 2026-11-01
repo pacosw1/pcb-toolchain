@@ -225,6 +225,8 @@ def parser():
                     'the real outline first, at the largest halo that fits; the halo decreases only after a pass')
     ap.add_argument('--max-routes', type=int, default=0, help='hard cap on router runs in this call (0 = no cap): '
                     'when reached, later steps get no search and no route (fail fast, user rule 2026-10-11)')
+    ap.add_argument('--k-cap', type=float, default=None, help='largest board scale of the halo phase (1: real '
+                    'outline only, no growth); with --virtual-first')
     ap.add_argument('--shrink', type=float, default=0.85, help='halo scale factor after a pass')
     ap.add_argument('--tol', type=float, default=0.05, help='halo bisection stops at this relative gap')
     return ap
@@ -555,7 +557,7 @@ def main(argv=None):
     run = compact.run_loop(pr, tuple(a.size), search, write, route, s0=a.s0,
                            budget=max(0., deadline-lean.now()), target=a.target,
                            shrink=a.shrink, tol=a.tol, log=lambda s: print(s, flush=True),
-                           real_first=not a.virtual_first, diagnostic_budget=a.diagnostic_budget)
+                           real_first=not a.virtual_first, diagnostic_budget=a.diagnostic_budget, k_cap=a.k_cap)
     run['problem'] = pr
     run['size'] = list(a.size)
     json.dump(run, open(os.path.join(a.outdir, 'run.json'), 'w'))
