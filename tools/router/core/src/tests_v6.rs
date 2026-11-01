@@ -238,3 +238,21 @@ fn t1_u8_escape_and_track_spoke() {
     let f: Vec<String> = pour::check(ctx.bd).into_iter().map(|f| f.pad).collect();
     assert!(!f.contains(&"U8.6".to_string()), "U8.6 starved: {f:?}");
 }
+
+/// v6 (t1, NET-CORE U1.129): a pad on the gate viapads allow list gets a via inside it, also when a routed via of the
+/// net already touches its edge (the gate reports an allowed pad with no via in it as stale: exit 2).
+#[test]
+fn allowed_pad_gets_its_own_via_inside() {
+    let o = opts();
+    let mut bd = empty_board(vec![n("A", false, 0b101), n("B", false, 0b101), Net { via_d: 0.45, via_drill: 0.2, ..n("GND", true, 0b101) }]);
+    let ep = (3.7, 3.7, 6.3, 6.3);
+    bd.add(Shape { net: 2, geo: Geo::Rect(ep.0, ep.1, ep.2, ep.3), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true });
+    bd.vip.push(ep);
+    // a routed GND via (the return via of net A) that touches the exposed pad edge
+    bd.add(Shape { net: 2, geo: Geo::Circ(6.4, 5.0, 0.225), clr: 0.15, layers: 0b111, drill: 0.2, kind: Kind::Via, owner: 0, alive: true });
+    let mut ctx = ctx_of(&mut bd, &o);
+    let r = fanout_net(&mut ctx, 2);
+    assert!(r.hard_fail.is_none(), "{:?}", r.hard_fail);
+    let inside = vias(&ctx, 2, None).into_iter().filter(|&(x, y)| x > ep.0 && x < ep.2 && y > ep.1 && y < ep.3).count();
+    assert_eq!(inside, 1, "one via inside the allowed pad: {:?}", vias(&ctx, 2, None));
+}

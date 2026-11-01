@@ -1859,8 +1859,11 @@ fn fanout_net_inner(ctx: &mut Ctx, net: usize) -> NetResult {
         let (cx, cy) = match pad.geo { Geo::Rect(a, b, c, d) => ((a + c) / 2.0, (b + d) / 2.0), _ => continue };
         // a fixed via within 1 mm counts (input copper); a routed via counts only when it touches this pad: the
         // fan-out via of a neighbour pad has no copper to it (DESIGN 5a: every plane-net SMD pad gets its own via)
+        // a pad on the gate viapads allow list needs a via inside it (the gate reports an allow entry with no via as
+        // stale, exit 2: v6 t1, U1.129 got its via beside the pad; the datasheets ask for vias in these exposed pads)
         let has = ctx.bd.shapes.iter().any(|s| s.alive && s.net == net as i32 && s.kind == Kind::Via
-            && (if s.owner < 0 { s.geo.dist(cx, cy) < 1.0 } else { touch(s, &pad) }));
+            && (if vip { matches!(s.geo, Geo::Circ(x, y, _) if pad.geo.dist(x, y) <= 0.0) }
+                else if s.owner < 0 { s.geo.dist(cx, cy) < 1.0 } else { touch(s, &pad) }));
         // a pad short of thermal spokes gets its own fan-out track even next to a fixed via (the track is one spoke)
         let forced = ctx.bd.attach.iter().any(|&(ax, ay)| (ax - cx).abs() < 1e-6 && (ay - cy).abs() < 1e-6);
         if has && !forced {
@@ -1959,6 +1962,9 @@ fn fanout_net_inner(ctx: &mut Ctx, net: usize) -> NetResult {
                     let (x, y) = ctx.gr.xy(i, j);
                     if pad.geo.dist(x, y) < 0.35 && !vip {
                         continue;
+                    }
+                    if vip && !matches!(pad.geo, Geo::Rect(a, b, c, d) if x >= a + via_r && x <= c - via_r && y >= b + via_r && y <= d - via_r) {
+                        continue; // the via lies inside the allowed pad
                     }
                     // a forced fan-out is a track spoke: KiCad counts it only when its far end (the via) lies in the
                     // pour fill, so the via keeps the relief gap from every other pad of the net (v6, t1: U8.6 got a via
