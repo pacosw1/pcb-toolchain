@@ -249,7 +249,10 @@ def evaluate_paths(paths, boundaries, ref_at, domain, anchors, s, net, caps=None
     for ref, cfg in s['alt_refs'].items():
         if 'cap_mm' in cfg:
             circles.extend((c, cfg['cap_mm']) for c in (caps or {}).get(ref, []))
-    edges = list(boundaries)
+    # An indexed boundary set (one per adjacent layer, built once) stays indexed; the
+    # few per-net edges below are added unindexed (always tested, as a plain list).
+    indexed = boundaries if isinstance(boundaries, SpatialCandidates) else None
+    edges = [] if indexed is not None else list(boundaries)
     areas = [a['box'] for a in s['exempt']['areas'] if net in a['nets']]
     for x0, y0, x1, y1 in areas:
         ring = [(x0,y0),(x1,y0),(x1,y1),(x0,y1)]
@@ -272,6 +275,8 @@ def evaluate_paths(paths, boundaries, ref_at, domain, anchors, s, net, caps=None
                 uy = ((ax*ax+ay*ay)*(cx-bx)+(bx*bx+by*by)*(ax-cx)+(cx*cx+cy*cy)*(bx-ax))/den
                 circles.append(((ux,uy),math.dist((ux,uy),path[0])))
         circles.extend((endpoint,0.0) for endpoint in (path[0],path[-1]))
+    if indexed is not None:
+        edges = CandidateUnion(indexed, edges)
     length = unref = cross = 0.0
     cross_nets = collections.Counter()
     bad, terminals = [], collections.defaultdict(list)
@@ -738,6 +743,51 @@ class SpatialCandidates:
             return box, (), build(ids[:mid]), build(ids[mid:])
         self.boxes = boxes
         self.tree = build(list(range(len(boxes))))
+        self.grid = self._build_grid(boxes)
+
+    GRID_MIN_ITEMS = 64     # fewer items: the tree alone is fast enough
+    GRID_MAX_ITEM_CELLS = 4096   # an item that covers more cells goes into `wide`
+    GRID_MAX_QUERY_CELLS = 16    # a query that covers more cells uses the tree
+    GRID_DIVISIONS = 256    # the cell is at least 1/256 of the index extent
+
+    @classmethod
+    def _build_grid(cls, boxes):
+        """Uniform grid over the boxes: a fast path for small queries (A* edges, points).
+
+        The grid only finds candidates; the same inclusive overlap test as the tree
+        then selects them, so a query gives the same ids as the tree. An item that
+        covers many cells, an empty (inverted) box or a non-finite box goes into
+        `wide`, which every grid query tests.
+        """
+        if len(boxes) < cls.GRID_MIN_ITEMS:
+            return None
+        finite = [b for b in boxes if all(math.isfinite(v) for v in b) and b[0] <= b[2] and b[1] <= b[3]]
+        if not finite:
+            return None
+        x0, y0 = min(b[0] for b in finite), min(b[1] for b in finite)
+        x1, y1 = max(b[2] for b in finite), max(b[3] for b in finite)
+        sizes = sorted(max(b[2] - b[0], b[3] - b[1]) for b in finite)
+        cell = max(sizes[len(sizes) // 2], max(x1 - x0, y1 - y0) / cls.GRID_DIVISIONS)
+        if not (math.isfinite(cell) and cell > 0):
+            return None
+        cells, wide = collections.defaultdict(list), []
+        for i, b in enumerate(boxes):
+            if not (all(math.isfinite(v) for v in b) and b[0] <= b[2] and b[1] <= b[3]):
+                wide.append(i)
+                continue
+            ix0, iy0 = math.floor((b[0] - x0) / cell), math.floor((b[1] - y0) / cell)
+            ix1, iy1 = math.floor((b[2] - x0) / cell), math.floor((b[3] - y0) / cell)
+            if (ix1 - ix0 + 1) * (iy1 - iy0 + 1) > cls.GRID_MAX_ITEM_CELLS:
+                wide.append(i)
+                continue
+            for ix in range(ix0, ix1 + 1):
+                for iy in range(iy0, iy1 + 1):
+                    cells[(ix, iy)].append(i)
+        if not cells:
+            return None
+        lo_x, lo_y = min(k[0] for k in cells), min(k[1] for k in cells)
+        hi_x, hi_y = max(k[0] for k in cells), max(k[1] for k in cells)
+        return x0, y0, cell, dict(cells), tuple(wide), (lo_x, lo_y, hi_x, hi_y)
 
     def __iter__(self):
         return iter(self.values)
@@ -745,6 +795,20 @@ class SpatialCandidates:
     def candidates(self, query):
         def overlaps(box):
             return box[0] <= query[2] and query[0] <= box[2] and box[1] <= query[3] and query[1] <= box[3]
+        grid = self.grid
+        if grid is not None and all(math.isfinite(v) for v in query) and query[0] <= query[2] and query[1] <= query[3]:
+            # IEEE subtraction and division by a positive cell are monotonic, so a box that
+            # overlaps the query shares at least one cell index with it.
+            x0, y0, cell, cells, wide, (lo_x, lo_y, hi_x, hi_y) = grid
+            ix0, iy0 = max(lo_x, math.floor((query[0] - x0) / cell)), max(lo_y, math.floor((query[1] - y0) / cell))
+            ix1, iy1 = min(hi_x, math.floor((query[2] - x0) / cell)), min(hi_y, math.floor((query[3] - y0) / cell))
+            if ix1 < ix0 or iy1 < iy0 or (ix1 - ix0 + 1) * (iy1 - iy0 + 1) <= self.GRID_MAX_QUERY_CELLS:
+                found = set(wide)
+                for ix in range(ix0, ix1 + 1):
+                    for iy in range(iy0, iy1 + 1):
+                        found.update(cells.get((ix, iy), ()))
+                boxes = self.boxes
+                return (self.values[i] for i in sorted(i for i in found if overlaps(boxes[i])))
         ids = []
         def visit(node):
             if node is None or not overlaps(node[0]):
@@ -755,6 +819,21 @@ class SpatialCandidates:
                 visit(node[2]); visit(node[3])
         visit(self.tree)
         return (self.values[i] for i in sorted(ids))
+
+
+class CandidateUnion(SpatialCandidates):
+    """An indexed set plus a short plain list. Iteration gives the indexed values, then the list.
+    A query gives the indexed candidates, then every list item (no filter, as for a plain list)."""
+    def __init__(self, indexed, extra):
+        self.indexed, self.extra = indexed, tuple(extra)
+
+    def __iter__(self):
+        yield from self.indexed
+        yield from self.extra
+
+    def candidates(self, query):
+        yield from self.indexed.candidates(query)
+        yield from self.extra
 
 
 def segment_candidates(boundaries):
@@ -898,12 +977,15 @@ def detour_mm(ok, terminals, budget, cell, portals=(), edge_ok=None,
                     if not (dx or dy):
                         continue
                     n = (c[0], c[1] + dx, c[2] + dy)
+                    nd = d + (1.4142135623730951 if dx and dy else 1.0)
+                    # The distance test first: free() and the edge check are pure, so
+                    # skipping them for a neighbour that cannot improve changes nothing.
+                    if nd >= dist.get(n, math.inf) - 1e-12:
+                        continue
                     if not free(n) or not edge_predicates[c[0]]((c[1] * cell, c[2] * cell), (n[1] * cell, n[2] * cell)):
                         continue
-                    nd = d + (1.4142135623730951 if dx and dy else 1.0)
-                    if nd < dist.get(n, math.inf) - 1e-12:
-                        dist[n] = nd
-                        heapq.heappush(heap, (nd + h(n), nd, n))
+                    dist[n] = nd
+                    heapq.heappush(heap, (nd + h(n), nd, n))
             # One layered graph, not O(portals**2) independent A* searches.
             for k in at_port.get(c[1:], ()):
                 start = (c[1] * cell, c[2] * cell)
@@ -914,11 +996,11 @@ def detour_mm(ok, terminals, budget, cell, portals=(), edge_ok=None,
                 other = 1 - c[0]
                 for n in ((other, qi[0] + i, qi[1] + j) for i in (-1, 0, 1) for j in (-1, 0, 1)):
                     end = (n[1] * cell, n[2] * cell)
-                    if free(n) and edge_predicates[other](q, end):
-                        nd = d + (math.dist(start, q) + math.dist(q, end)) / cell
-                        if nd < dist.get(n, math.inf) - 1e-12 and nd * cell <= budget + 1e-9:
-                            dist[n] = nd
-                            heapq.heappush(heap, (nd + h(n), nd, n))
+                    nd = d + (math.dist(start, q) + math.dist(q, end)) / cell
+                    if nd < dist.get(n, math.inf) - 1e-12 and nd * cell <= budget + 1e-9 \
+                            and free(n) and edge_predicates[other](q, end):
+                        dist[n] = nd
+                        heapq.heappush(heap, (nd + h(n), nd, n))
         if found is None or found * cell > budget + 1e-9:
             return None
         worst = max(worst, found * cell)
@@ -1129,20 +1211,20 @@ def d124c_detour_mm(ok, terminals, budget, cell, portals=()):
                     if not (dx or dy):
                         continue
                     n = (c[0] + dx, c[1] + dy)
+                    nd = d + (1.4142135623730951 if dx and dy else 1.0)
+                    if nd >= dist.get(n, math.inf) - 1e-12:   # free() is pure: test the distance first
+                        continue
                     if not free(n) or (dx and dy and not (free((c[0] + dx, c[1])) and free((c[0], c[1] + dy)))):
                         continue
-                    nd = d + (1.4142135623730951 if dx and dy else 1.0)
-                    if nd < dist.get(n, math.inf) - 1e-12:
-                        dist[n] = nd
-                        heapq.heappush(heap, (nd + h(n), nd, n))
+                    dist[n] = nd
+                    heapq.heappush(heap, (nd + h(n), nd, n))
             for k in at_port.get(c, ()):   # down a ground via, along the solid plane, up another
                 for q in ports:
                     for n in ((q[0] + i, q[1] + j) for i in (-1, 0, 1) for j in (-1, 0, 1)):
-                        if free(n):
-                            nd = d + math.dist(c, n)
-                            if nd < dist.get(n, math.inf) - 1e-12 and nd * cell <= budget + 1e-9:
-                                dist[n] = nd
-                                heapq.heappush(heap, (nd + h(n), nd, n))
+                        nd = d + math.dist(c, n)
+                        if nd < dist.get(n, math.inf) - 1e-12 and nd * cell <= budget + 1e-9 and free(n):
+                            dist[n] = nd
+                            heapq.heappush(heap, (nd + h(n), nd, n))
         if found is None or found * cell > budget + 1e-9:
             return None
         worst = max(worst, found * cell)
@@ -1302,7 +1384,7 @@ def ground_pieces(p, polys):
     """The copper pieces of one ground on one layer. Fills of two zones of the same net that touch are one piece."""
     u = p.SHAPE_POLY_SET()
     for poly in polys:
-        u.BooleanAdd(poly)
+        u.BooleanAdd(getattr(poly, 'native', poly))
     return [p.SHAPE_LINE_CHAIN(u.Outline(k)) for k in range(u.OutlineCount())]
 
 
@@ -1350,6 +1432,58 @@ def pcb():
 
 def mm(v):
     return v / 1e6
+
+
+class CellContainsPoly:
+    """A filled SHAPE_POLY_SET with an exact cell memo for Contains(point, -1, 0, True).
+
+    KiCad Contains with accuracy 0 is the even-odd ray test of the outline and the
+    holes; it can be wrong only for a point within about 1 nm of an edge. A grid cell
+    is "clean" when no edge bounding box, enlarged by MARGIN_NM, touches it. A clean
+    cell holds no polygon point and every point in it is far from each edge, so all
+    its points have the same Contains result: the memo asks KiCad once per clean cell.
+    The levels go from coarse to fine; a point uses the first level where its cell is
+    clean. A point that is in a dirty cell at every level always goes to KiCad. Other
+    calls and attributes go to the native polygon (`native`).
+    """
+    LEVELS_NM = (3200000, 800000, 200000, 50000)   # 3.2, 0.8, 0.2, 0.05 mm
+    MARGIN_NM = 1000        # 1 um, far above the 1 nm rounding of the ray test
+
+    def __init__(self, poly, levels_nm=LEVELS_NM, margin_nm=MARGIN_NM):
+        self.native = poly
+        self.levels = tuple(levels_nm)
+        boxes = []
+        for k in range(poly.OutlineCount()):
+            for ring in [poly.COutline(k)] + [poly.CHole(k, h) for h in range(poly.HoleCount(k))]:
+                pts = [ring.CPoint(j) for j in range(ring.PointCount())]
+                pts = [(q.x, q.y) for q in pts]
+                boxes.extend((min(ax, bx) - margin_nm, min(ay, by) - margin_nm, max(ax, bx) + margin_nm,
+                              max(ay, by) + margin_nm) for (ax, ay), (bx, by) in zip(pts, pts[1:] + pts[:1]))
+        self.dirty = []
+        for cell in self.levels:
+            dirty = set()
+            for x0, y0, x1, y1 in boxes:
+                for ix in range(x0 // cell, x1 // cell + 1):
+                    for iy in range(y0 // cell, y1 // cell + 1):
+                        dirty.add((ix, iy))
+            self.dirty.append(frozenset(dirty))
+        self.known = {}
+
+    def Contains(self, point, subpoly=-1, accuracy=0, use_bbox_caches=False):
+        if (subpoly, accuracy, use_bbox_caches) != (-1, 0, True):
+            return self.native.Contains(point, subpoly, accuracy, use_bbox_caches)
+        x, y = point.x, point.y
+        for level, cell in enumerate(self.levels):
+            key = (level, x // cell, y // cell)
+            if key[1:] not in self.dirty[level]:
+                result = self.known.get(key)
+                if result is None:
+                    result = self.known[key] = bool(self.native.Contains(point, -1, 0, True))
+                return result
+        return self.native.Contains(point, -1, 0, True)
+
+    def __getattr__(self, name):
+        return getattr(self.native, name)
 
 
 def native_reference_geometry(p, fills, layer, domain, s, caps, copper_items=()):
@@ -1542,7 +1676,7 @@ def analyse(board_path, s, verbose, sch_path=None):
         for l in z.GetLayerSet().Seq():
             poly = z.GetFilledPolysList(l)
             poly.BuildBBoxCaches()
-            fills[l].append((z.GetNetname(), poly))
+            fills[l].append((z.GetNetname(), CellContainsPoly(poly)))
 
     def ref_fn(lid):
         def ref_at(x, y):
@@ -1610,7 +1744,7 @@ def analyse(board_path, s, verbose, sch_path=None):
                 for ring in [poly.COutline(index)] + [poly.CHole(index, h) for h in range(poly.HoleCount(index))]:
                     vertices = [(mm(ring.CPoint(i).x), mm(ring.CPoint(i).y)) for i in range(ring.PointCount())]
                     edges.extend(zip(vertices, vertices[1:]+vertices[:1]))
-        projection_boundaries[lname] = edges
+        projection_boundaries[lname] = segment_candidates(edges)
     results = {}
     for lname, net in paths:
         if not _checked(net, s):
