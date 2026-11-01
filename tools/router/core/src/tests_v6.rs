@@ -218,6 +218,7 @@ fn t1_u8_escape_and_track_spoke() {
     o.ret_drill = rdr;
     o.return_r = v["model"]["return_rule"]["radius"].as_f64().unwrap_or(2.0);
     fixed_returns(&mut bd, &o);
+    fixed_vip_vias(&mut bd, &o);
     pre_attach(&mut bd, o.pitch); // without it U8.6 stays starved (checked)
     assert!(bd.pours.iter().any(|p| p.pads.iter().any(|q| q.name == "U8.6")), "U8.6 is a pour pad of the crop");
     let (e0, e1, e2, e3) = bd.edge;
@@ -234,7 +235,9 @@ fn t1_u8_escape_and_track_spoke() {
                         rcache: vec![0; nx * ny], ban: Vec::new(), neck: Vec::new() };
     let r = route_net(&mut ctx, dvddk);
     assert!(r.hard_fail.is_none(), "/CH_DVDDK: {:?}", r.hard_fail);
-    fanout_net(&mut ctx, gnd);
+    fanout_net(&mut ctx, gnd); // (pads on the crop border have no site: crop artefact)
+    let ep = (131.6, 120.61, 134.4, 123.41);
+    assert_eq!(vias(&ctx, gnd as i32, None).iter().filter(|v| v.0 > ep.0 && v.0 < ep.2 && v.1 > ep.1 && v.1 < ep.3).count(), 1, "one via in the U8.25 exposed pad");
     let f: Vec<String> = pour::check(ctx.bd).into_iter().map(|f| f.pad).collect();
     assert!(!f.contains(&"U8.6".to_string()), "U8.6 starved: {f:?}");
 }

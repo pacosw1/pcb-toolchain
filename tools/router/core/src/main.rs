@@ -2304,6 +2304,54 @@ fn route_net_inner(ctx: &mut Ctx, net: usize) -> NetResult {
     out
 }
 
+/// v6 (t1, NET-CORE U1.129 / U7.25 / U8.25): each pad on the gate viapads allow list (model via_in_pad) of a plane net
+/// gets one via of its net inside it before routing, as fixed copper: at the legal grid site nearest the pad centre.
+/// The gate reports an allowed pad with no via as stale (exit 2), and the datasheets ask for vias in these exposed
+/// pads. In the negotiation the in-pad via met routed copper on the inner layers, and the strict end step found no
+/// site. Returns notes (an allowed pad with no legal site inside: input).
+fn fixed_vip_vias(bd: &mut Board, o: &Opts) -> Vec<String> {
+    let mut notes = Vec::new();
+    let all = (1u8 << bd.layer_names.len()) - 1;
+    for &(a, b, c, d) in bd.vip.clone().iter() {
+        let Some(pad) = bd.shapes.iter().find(|s| s.alive && s.kind == Kind::Pad && s.owner < 0 && s.geo.bbox() == (a, b, c, d)).cloned() else { continue };
+        if pad.net < 0 || !bd.nets[pad.net as usize].plane {
+            continue;
+        }
+        let net = pad.net as usize;
+        let (vd, vdr, clr) = (bd.nets[net].via_d, bd.nets[net].via_drill, bd.nets[net].clr);
+        let vr = vd / 2.0;
+        if bd.shapes.iter().any(|s| s.alive && s.net == net as i32 && s.kind == Kind::Via && matches!(s.geo, Geo::Circ(x, y, _) if x >= a && x <= c && y >= b && y <= d)) {
+            continue;
+        }
+        let (cx, cy) = ((a + c) / 2.0, (b + d) / 2.0);
+        let (x0, y0, p) = (bd.edge.0, bd.edge.1, o.pitch);
+        let mut sites: Vec<(f64, f64, f64)> = Vec::new();
+        let (i0, i1) = (((a + vr - x0) / p).ceil() as i64, ((c - vr - x0) / p).floor() as i64);
+        let (j0, j1) = (((b + vr - y0) / p).ceil() as i64, ((d - vr - y0) / p).floor() as i64);
+        for j in j0..=j1 {
+            for i in i0..=i1 {
+                let (x, y) = (x0 + i as f64 * p, y0 + j as f64 * p);
+                sites.push(((x - cx).hypot(y - cy), x, y));
+            }
+        }
+        sites.sort_by(|q, r| q.0.partial_cmp(&r.0).unwrap());
+        let site = sites.into_iter().find(|&(_, x, y)| {
+            let code = bd.via_fixed_code(x, y, vd, vdr, clr, o.hth, false);
+            !bd.via_code_blocks(code, net, x, y, vd, vdr, o.hth)
+        });
+        match site {
+            Some((_, x, y)) => {
+                bd.add(Shape { net: net as i32, geo: Geo::Circ(x, y, vr), clr, layers: all, drill: vdr, kind: Kind::Via, owner: -1, alive: true });
+                if net as i32 == bd.gnd {
+                    bd.gnd_fixed.push((x, y));
+                }
+            }
+            None => notes.push(format!("viapads: allowed pad at ({cx:.2}, {cy:.2}) of {} has no legal via site inside (input)", bd.nets[net].name)),
+        }
+    }
+    notes
+}
+
 /// The via of each forced fan-out must lie in the fill (Board::spoke_sites).
 /// v6 (t1, committed compact NET-CORE, U8.6): the spoke heuristic of reserve_spokes (N/S/E/W strips, zone clearance
 /// only) found 2 free channels, but the pour model (spoke angle, DRU zone clearance of the locked pairs) gives 1, and
@@ -2785,6 +2833,9 @@ fn main() {
     // RP-001 for the locked input vias (pairs): a return via is placed now as fixed copper (written with the result)
     let in_ret_notes = fixed_returns(&mut bd, &o);
     for m in &in_ret_notes {
+        eprintln!("{m}");
+    }
+    for m in fixed_vip_vias(&mut bd, &o) {
         eprintln!("{m}");
     }
     let pre = pre_attach(&mut bd, o.pitch);
