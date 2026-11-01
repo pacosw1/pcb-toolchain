@@ -139,6 +139,22 @@ snapshot on the candidate board, then the normal gate, seal and `pcb adopt` flow
 Give it an unrouted candidate: `route.py` adds the `route.json` pours, and on a routed board
 they overlap the pours already there (`zones_intersect`).
 
+For the in-house router (tools/router/DESIGN.md), use
+`tools/pcb route BOARD --router iotroute [--spec POLICY.json] --detach --json`. The run executes
+`tools/router/run.py` from the snapshot on the candidate board (model, iotroute, write, KiCad DRC with
+parity on the saved fill), the same way as `route-json`. Then the normal gate, seal and `pcb adopt` flow
+applies. A run.py FAIL (DRC, unconnected or parity not 0) is a failed route and the candidate is not
+replaced. The router's own counts are never the verdict. `--spec` is optional; the policy has only these fields:
+
+```json
+{"schema":"iot-lab.iotroute-policy.v1","iters":80,"max_time_s":null,"keep":"lock-nets"}
+```
+
+`keep: lock-nets` (default) removes all tracks and vias of the candidate and keeps only the copper of the
+diff-pair nets and the DRU `via_count 0` nets (crystals), locked. `keep: all` keeps and locks all copper and
+routes only the open connections. The binary comes from a cache folder per sha256 of the core sources
+(`~/Library/Caches/iot-lab/iotroute/<sha>`); cargo builds it there when it is missing.
+
 For an actual bounded solver invocation, opt in with
 `tools/pcb route BOARD --router fastroute --spec POLICY.json --detach --json`.
 The default `--router explicit` keeps the existing track/via proposal behavior.

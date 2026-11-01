@@ -1419,6 +1419,14 @@ def cmd_viapads(a):
     except ValueError as e:
         print(f'FAIL {e}')
         sys.exit(2)
+    if a.filled:   # filled + capped via-in-pad (JLC POFV, free on 6+ layers; user 2026-10-29): no solder wicking
+        if b.GetCopperLayerCount() < 6:
+            print(f'FAIL --filled needs a 6+ layer board (JLC POFV), board has {b.GetCopperLayerCount()} layers')
+            sys.exit(2)
+        for line in sorted(hits):
+            print('INFO filled via in pad', line)
+        print(f'0 vias in SMD pads ({len(hits)} filled + capped via-in-pad, fab note POFV)')
+        sys.exit(0)
     for line in sorted(hits):
         print('FAIL via in pad', line)
     print(f'{len(hits)} vias in SMD pads')
@@ -2847,6 +2855,7 @@ def main():
     s.add_argument('--verbose', action='store_true'); s.set_defaults(f=cmd_paths)
     s = sp.add_parser('viapads'); s.add_argument('board')
     s.add_argument('--allow', nargs='*', default=[], help='REF.PAD with a datasheet-required via (tented), e.g. U1.9')
+    s.add_argument('--filled', action='store_true', help='board is ordered with filled + capped via-in-pad (JLC POFV, 6+ layers)')
     s.set_defaults(f=cmd_viapads)
     s = sp.add_parser('widths'); s.add_argument('board'); s.add_argument('--limit', type=int, default=4); s.set_defaults(f=cmd_widths)
     s = sp.add_parser('render'); s.add_argument('board'); s.add_argument('outdir'); s.set_defaults(f=cmd_render)
