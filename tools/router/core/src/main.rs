@@ -2932,6 +2932,11 @@ fn diag_standoff(ctx: &mut Ctx, au: &Audit, involved: &[usize], order: &[usize])
 /// return; else restore and try the next q. Returns the net that moved. The diagnosis (IOTROUTE_DIAG, spread NET-CORE
 /// iteration 50) found such a single opener for every open net (/ETH_TX_EN: /PHY_RSTn or /ETH_TXD0).
 fn third_net_repair(ctx: &mut Ctx, net: usize, order: &[usize]) -> Option<usize> {
+    // a net proved walled in by fixed copper (Ctx::dead) cannot be opened by moving routed copper (ESP32-CORE a4: 5
+    // walled power nets, 17 min of useless repair tries)
+    if !ctx.dead[net].0.is_empty() {
+        return None;
+    }
     let snap: Vec<Shape> = ctx.bd.shapes.clone();
     let (mut a, mut b, mut c, mut d) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
     for s in snap.iter().filter(|s| s.alive && s.net == net as i32 && s.owner < 0) {
@@ -2959,7 +2964,8 @@ fn third_net_repair(ctx: &mut Ctx, net: usize, order: &[usize]) -> Option<usize>
         }
         ctx.bd.compact();
         ctx.gr.reset_cache();
-        let ok = route_net(ctx, net).hard_fail.is_none()
+        // a plane net is fanned out, not joined (ESP32-CORE a4: route_net on GND)
+        let ok = (if ctx.bd.nets[net].plane { fanout_net(ctx, net) } else { route_net(ctx, net) }).hard_fail.is_none()
             && (if ctx.bd.nets[q].plane { fanout_net(ctx, q) } else { route_net(ctx, q) }).hard_fail.is_none();
         if ok && ctx.audit(0.0).pairs == 0 && ctx.ret_missing().is_empty() {
             done = Some(q);
