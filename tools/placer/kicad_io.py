@@ -641,10 +641,31 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
             'dru_ignored': ignored, 'class_gaps': _class_gaps(dom_ids, domains, pairs) if dom_ids else None,
             'domain_areas': _domain_areas(dom_ids, domains),
             'route_rules': {'dru': rules, 'classes': class_rules(os.path.splitext(path)[0] + '.kicad_pro')},
+            'escape_rules': escape_rules(board, os.path.splitext(path)[0]),
             'cu_nets': {str(c): [n.GetNetname(), n.GetNetClassName()] for c in sorted(
                 {q[4] for u in out_units for q in u.get('cu', ()) if q[4] > 0}) for n in [board.FindNet(c)]},
             'via_nets': sorted(n.GetNetCode() for name, n in board.GetNetsByName().items()
                                if any(fnmatch.fnmatchcase(str(name), q) for q in via_nets))}
+
+
+def escape_rules(board, base):
+    """Pin-escape corridor rules (escape.py): the Default net class track width and clearance (.kicad_pro) and the
+    largest of the Default via diameter, the board minimum via diameter and the .kicad_dru via_diameter minimums."""
+    pro, dp = base + '.kicad_pro', base + '.kicad_dru'
+    cls = {}
+    if os.path.exists(pro):
+        with open(pro) as f:
+            cls = {c['name']: c for c in json.load(f)['net_settings']['classes']}.get('Default', {})
+    ds = board.GetDesignSettings()
+    vias = [float(cls.get('via_diameter', 0.0)), mm(ds.m_ViasMinSize)]
+    src = ['Default class (.kicad_pro)', 'board minimum via diameter']
+    if os.path.exists(dp):
+        found = [float(v) for v in re.findall(r'via_diameter\s*\(min\s+([0-9.]+)\s*mm\)', open(dp).read())]
+        if found:
+            vias.append(max(found))
+            src.append('.kicad_dru via_diameter min')
+    return {'track': float(cls.get('track_width', mm(ds.m_TrackMinWidth))),
+            'clearance': float(cls.get('clearance', mm(ds.m_MinClearance))), 'via_d': max(vias), 'sources': src}
 
 
 def class_rules(pro):

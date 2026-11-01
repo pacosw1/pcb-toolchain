@@ -50,7 +50,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from placer import anneal, cost, iotroute_step  # noqa: E402
+from placer import anneal, cost, escape, iotroute_step  # noqa: E402
 
 REPO = iotroute_step.REPO
 NO_RESULT = iotroute_step.NO_RESULT
@@ -318,6 +318,133 @@ def rank(c):
             c['x'], c['y'], c['r'])
 
 
+# ---------- escape-aware proposals ----------
+
+ESC_W = 20.0  # w_esc of the evaluator that ranks escape moves (the compaction runs use the same weight)
+
+
+def failed_pins(pr, fails, model):
+    """[(unit, pin index)] of the IC escape pins (escape.py) that an unconnected item names."""
+    by_ref = ref_units(pr)
+    out = set()
+    for f in fails:
+        if f['kind'] != 'unconnected':
+            continue
+        for it in f['items']:
+            i = by_ref.get(it['ref'])
+            if i is None or model.pins[i] is None:
+                continue
+            q, meta = model.pins[i], pr['units'][i].get('cu_pads') or []
+            for a, row in enumerate(q['rows']):
+                if q['names'][a][0] == it['ref'] and row < len(meta) and str(meta[row][2]) == str(it['pad']):
+                    out.add((i, a))
+    return sorted(out)
+
+
+def corridor_blockers(pr, pose, model, pins, slack=None):
+    """Movable units whose copper is within the corridor radius (+ slack, default the track radius) of a ray of
+    one of the pins: the units that wall the pin in. Nearest first."""
+    import numpy as np
+    cu, cu_unit, cu_part = escape.world_cu(pr, pose, model)
+    best = {}
+    for i, a in pins:
+        q = model.pins[i]
+        x, y, r = pose[i]
+        S = q['off'][r % 4][a] + q['toe'][r % 4][a] + (x, y)  # (3, k, 2)
+        sl = q['rt'][a] if slack is None else slack
+        dx = np.maximum(np.maximum(cu[:, 0] - S[..., 0, None], S[..., 0, None] - cu[:, 2]), 0.0)
+        dy = np.maximum(np.maximum(cu[:, 1] - S[..., 1, None], S[..., 1, None] - cu[:, 3]), 0.0)
+        m = (np.sqrt(dx * dx + dy * dy) - q['rad'][a][None, :, None]).min(axis=(0, 1))  # (Q,)
+        skip = ((cu_unit == i) & (cu_part == q['part'][a])) | ((cu[:, 4] == q['net'][a]) & (q['net'][a] > 0))
+        for k in np.nonzero((m < sl) & ~skip)[0]:
+            j = int(cu_unit[k])
+            if j != i and movable(pr, j):
+                best[j] = min(best.get(j, math.inf), float(m[k]))
+    return [j for j, _ in sorted(best.items(), key=lambda t: (t[1], t[0]))]
+
+
+def escape_proposals(pr, pose, fails, params=None, rotate=True, tag='main', allowed=None):
+    """Legal single-unit moves of the units that wall in a failed IC pin (an unconnected item at an escape pin),
+    best first. term = sum of blocked(pin) over the failed pins (escape.py), it must decrease; dcost from an
+    evaluator with the escape term (w_esc ESC_W), so a move that walls in another pin ranks lower."""
+    p = anneal.params_all(dict(params or {}, w_esc=(params or {}).get('w_esc') or ESC_W))
+    model = escape.Model(pr, p)
+    pins = failed_pins(pr, fails, model)
+    if not pins:
+        return []
+    step, radius = float(p['legal_step']), float(p['legal_radius'])
+    pose = [tuple(q) for q in pose]
+    ev = cost.Evaluator(pr, p, pose=pose)
+
+    def term(ps):
+        cu = escape.world_cu(pr, ps, model)
+        return sum(float(model.blocked(i, ps[i], [a], *cu)[0]) for i, a in pins)
+    f0 = term(pose)
+    if f0 <= EPS:
+        return []
+    rings = int(radius / step + EPS)
+    best = {}
+    for j in corridor_blockers(pr, pose, model, pins):
+        x0, y0, r0 = pose[j]
+        turns = [r0] + ([r for r in range(4) if r != r0] if rotate and pr['units'][j].get('rotate', True) else [])
+        for a, b in [(0, 0)] + [ab for k in range(1, rings + 1) for ab in anneal.ring(k)]:
+            x, y = x0 + a * step, y0 + b * step
+            if math.hypot(x - x0, y - y0) > radius + EPS:
+                continue
+            for r in turns:
+                if a == 0 and b == 0 and r == r0:
+                    continue
+                trial = list(pose)
+                trial[j] = (x, y, r)
+                t = term(trial)
+                if t >= f0 - EPS:
+                    continue
+                if ev.legal_penalty_at(j, x, y, r) > EPS:
+                    continue
+                if allowed is not None and not allowed(j, x, y, r):
+                    continue
+                dcost = ev.propose([(j, x, y, r)])
+                ev.revert()
+                disp = math.hypot(x - x0, y - y0)
+                key = (j, octant(a, b) if (a or b) else -1, r)
+                cand = dict(problem=tag, kind='escape', unit=j, name=pr['units'][j]['name'], x=round(x, 6),
+                            y=round(y, 6), r=r, term=round(t, 6), term0=round(f0, 6), dcost=round(dcost, 6),
+                            disp=round(disp, 6))
+                if key not in best or rank(cand) < rank(best[key]):
+                    best[key] = cand
+    return interleave(best.values())
+
+
+def escape_loose(pr, loose, fails, tie, rotate=True):
+    """escape_proposals in the loose problem (read with --decap-tie 0): a tied decap that walls in the pin may move
+    when its decap tie stays true (decap_slides rule); other units move as in the main problem."""
+    ties = tied_decaps(pr, loose)
+    pose = cost.initial_pose(loose)
+    gnd = gnd_codes(loose)
+
+    def allowed(i, x, y, r):
+        if i not in ties:
+            return True
+        trial = list(pose)
+        trial[i] = (x, y, r)
+        return decap_gap(loose, trial, i, ties[i], gnd) <= tie + EPS
+    return escape_proposals(loose, pose, fails, rotate=rotate, tag='loose', allowed=allowed)
+
+
+def alternate(first, second):
+    """first[0], second[0], first[1], second[1], ... (no duplicate unit pose)."""
+    out, seen = [], set()
+    for k in range(max(len(first), len(second))):
+        for lst in (first, second):
+            if k < len(lst):
+                c = lst[k]
+                key = (c.get('problem', 'main'), c['unit'], c['x'], c['y'], c['r'])
+                if key not in seen:
+                    seen.add(key)
+                    out.append(c)
+    return out
+
+
 # ---------- decap slides ----------
 
 def world_box(box, pose_u):
@@ -515,7 +642,7 @@ def drc_of(routed):
 
 def run(board, place, routed, outdir, mode='local', max_routes=8, per_round=4, iters=80, seed=1, rotate=True,
         read_args=(), gate=None, log=print, route_fn=None, read_fn=None, write_fn=None, rip_fn=None,
-        start_summary=None, decaps=True):
+        start_summary=None, decaps=True, escape_moves=True):
     """Repair loop (see the module text). The effects are injectable for tests. -> record dict."""
     outdir = os.path.abspath(outdir)   # the gate runs in its snapshot folder: evidence paths must be absolute
     os.makedirs(outdir, exist_ok=True)
@@ -576,8 +703,16 @@ def run(board, place, routed, outdir, mode='local', max_routes=8, per_round=4, i
             probs['loose'] = read_fn(state['place'], os.path.join(outdir, 'round-%d-loose.json' % rnd),
                                      list(read_args) + ['--decap-tie', '0'])
             props = interleave(props + decap_slides(pr, probs['loose'], fails, tie, rotate=rotate))
+        esc = []
+        if escape_moves:
+            esc = escape_proposals(pr, pose, fails, rotate=rotate)
+            if 'loose' in probs:
+                esc = interleave(esc + escape_loose(pr, probs['loose'], fails, tie, rotate=rotate))
+        props = alternate(esc, props)
         rinfo = dict(round=rnd, failures=fails, candidates=[pr['units'][i]['name'] for i in
-                     candidates(pr, pose, fails, radius)], proposals=len(props))
+                     candidates(pr, pose, fails, radius)], proposals=len(props),
+                     escape=[dict(name=c['name'], x=c['x'], y=c['y'], r=c['r'], term=c['term'], term0=c['term0'])
+                             for c in esc[:per_round]])
         rec['rounds'].append(rinfo)
         log('REPAIR round %d failures %d candidates %s proposals %d' % (
             rnd, len(fails), ','.join(rinfo['candidates']), len(props)))
@@ -607,7 +742,8 @@ def run(board, place, routed, outdir, mode='local', max_routes=8, per_round=4, i
                        accepted=better(key, state['key']))
             rec['attempts'].append(att)
             log('REPAIR r%d p%d %s%s -> (%.2f, %.2f, %d) key %s %s' % (
-                rnd, k, c['name'], ' (decap slide)' if c.get('problem') == 'loose' else '', c['x'], c['y'], c['r'],
+                rnd, k, c['name'], ' (decap slide)' if c.get('problem') == 'loose' else
+                ' (escape)' if c.get('kind') == 'escape' else '', c['x'], c['y'], c['r'],
                 key, 'ACCEPT' if att['accepted'] else 'reject'))
             if att['accepted']:
                 accepted = att

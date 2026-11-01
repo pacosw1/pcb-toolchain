@@ -383,3 +383,56 @@ does not beat the hand board. Steps at s 0.54-0.61 routed 1534-1569 mm with 1 op
 west pins 1-3, a pin escape walled in by the ETH1 parts); the repair found no legal move that opens it (also v7 on
 the s 0.54 placement: 1 open). The run without tighten (v7 judge) failed the same way at s 0.637 and was stopped. The hand board puts R26 west of the Y2 / R20 field for that escape. Next: a pin-escape
 term for a fixed IC side (escape channel per used pin) before more halo shrink.
+
+## Pin-escape term (`escape.py`, `--param w_esc=W [esc_hard=1]`, 2026-11-01)
+
+Cause (PR #73): compaction steps at halo 0.54-0.61 left PHY_LED1 / PHY_LED2 open at U7 (LAN8742A) pads 2-3. C47 sat
+0.97 mm below their pad toes, R20 below pads 3-4 and C49 to the east: no fan-out room. The hand board has no part in
+that place; its PHY_LED1 via is 1.66 mm from the pad 3 toe.
+
+Model. IC = reference U with more than 3 copper pads. Pin = a pad on the outer edge of the pad box of its part (not
+the exposed pad). Each pin has three rays from its pad toe: the outward normal and +-45 degrees. Ray = a track to one
+via: track radius rt = track / 2 + clearance, via radius rv = via_d / 2 + clearance, length L = clearance + via_d / 2
++ n (via_d + clearance), n = ceil((via_d + clearance) / pitch) when the side pitch is smaller than the via pitch, else 0
+(the vias of the neighbour pins on the same ray). Sources (NET-CORE): Default class track 0.15 mm and clearance 0.15
+mm (`.kicad_pro`), via 0.6 mm (`.kicad_dru` "via size", board minimum via diameter); `cli.py read` writes them to
+`pr['escape_rules']`. LAN8742A pitch 0.5 mm: rt 0.225, rv 0.45, L 1.95 mm. Obstacles = copper pads of other nets (all
+units; the pads of the pin's own part do not count). A partner pad (same net) never blocks, and a partner pad within
+L of the toe on the outer side frees the pin (decap, series resistor). blocked(ray) = penetration / rt in [0, 1];
+blocked(pin) = the smallest of its three rays. Side deficit = max(0, pins whose net has a pad on another part - sum of
+(1 - blocked) over all pins of the side). escape = sum of deficits; cost w_esc x escape. `esc_hard=1`: a side with
+need > 0 and every pin blocked is illegal (legal_penalty of the IC and of each unit whose copper meets its rays).
+Evaluator: incremental (only the pins whose ray box meets the old or new copper box of a moved unit); NET-CORE
+1350 moves/s against 1900 without the term. Not modelled: the board edge, kept tracks, the via-to-via conflict
+between pins (only through n in L).
+
+Check (NET-CORE, the three boards of PR #73, w_esc term values): hand board U7 pads 2/3 blocked 0 / 0; step 4 of
+the PR #73 run (1 open at U7 pad 3) 0.36 / 0.16 (C47, R20, C49).
+
+Repair (`repair.py`): an unconnected item at an escape pin gives `escape_proposals`: legal single-unit moves of the
+units whose copper is within rt of a ray of that pin (`corridor_blockers`), ranked by the sum of blocked(pin) after
+the move (must decrease), then the cost with w_esc 20, then displacement. A tied decap moves in the loose problem
+when its tie stays true. These proposals alternate with the failure-point proposals. PR #73 step 4: the old repair
+proposed only R27 (no gain); the new one proposes C47 0.75 mm south (blocked 0.16 -> 0) and C49 moves.
+
+CPU tokens: an iotroute routing stage reserves `iotroute_step.router_cpu()` = 1 (the router core has no thread or
+parallel crate) + 1 (the kicad-cli DRC phase of run.py) instead of the whole budget. The 16 GiB declared memory with
+8 GiB per job still limits the Mac to 2 compaction runs side by side (a third run waits 30 s, then stops).
+
+Result (2026-11-01, NET-CORE from the spread placement 1faf8ad8, blocks, router v7 judge, scratch only). Run A
+`--param w_esc=20`, run C `w_esc=60`; 4 workers, 10 x 15000 steps, `--repair`. Every step passed (DRC 0/0/0 + gate)
+down to s 0.333 (A) and 0.283 (C); PR #73 left 1 open at s 0.54-0.61. The routed length does not fall with the halo
+below s 0.54 (A: 1580 / 1937 / 1661 / 1914 mm at s 0.542 / 0.461 / 0.392 / 0.333): the router makes detours on the
+denser board. The escape repair moved C47 (the PR #73 blocker) once in run C step 1 and passed at once.
+
+| Board | length mm | vias | box sum mm2 | DRC / unconn / parity | gate |
+| --- | --- | --- | --- | --- | --- |
+| hand compaction (committed, router v4) | 1495 | 280 | 2242 | 0 / 0 / 0 | PASS |
+| same placement, router v7 | 1558 | 287 | 2242 | 0 / 0 / 0 | PASS |
+| PR #73 best (blocks + tighten, v6) | 1645 | 286 | 2284 | 0 / 0 / 0 | PASS |
+| escape A step 2, s 0.542 (v7) | 1580 | 296 | 2407 | 0 / 0 / 0 | PASS |
+| escape C step 4, s 0.392 (v7, router claim) | 1583 | 304 | - | 0 / 0 / 0 (router) | PASS (step) |
+
+A step 2 is better than PR #73 (-65 mm) but 22 mm / 9 vias worse than the hand placement routed by the same judge.
+U7 pads 2-3 have blocked 0 on it. Next: rank the passing steps by routed length (not the smallest halo), and add a
+length-aware term: the placement cost (HPWL) is flat at 1656-1711 over all steps, so it does not predict the route.

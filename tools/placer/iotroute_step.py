@@ -21,6 +21,29 @@ INFO_METRICS = {'erc_warnings', 'drc_warnings'}         # tools/lib/gate-core.mj
 DRC_METRICS = {'drc_errors', 'drc_unconnected', 'drc_parity'}  # measured by run.py on the saved board
 
 
+THREAD_MARKS = ('std::thread', 'thread::spawn', 'thread::scope', 'rayon', 'available_parallelism', 'crossbeam')
+DRC_TOKENS = 1  # run.py ends with kicad-cli pcb drc on the saved board: one more token for that phase
+
+
+def router_cpu(core=os.path.join(REPO, 'tools', 'router', 'core'), full=None):
+    """CPU tokens for one run.py job from the router's real thread use: 1 + DRC_TOKENS when the core sources
+    (Cargo.toml and src/) use no thread or parallel crate (the binary runs on one thread), else `full` (the
+    resource default). A core that cannot be read gets `full` (fail safe)."""
+    if full is None:
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        import lean_resources
+        full = lean_resources.default_cpu()
+    files = [os.path.join(core, 'Cargo.toml')] + [os.path.join(b, n) for b, _, ns in os.walk(os.path.join(core, 'src'))
+                                                  for n in ns if n.endswith('.rs')]
+    try:
+        text = '\n'.join(open(f).read() for f in files)
+    except OSError:
+        return full
+    if len(files) < 2 or any(m in text for m in THREAD_MARKS):
+        return full
+    return min(full, 1 + DRC_TOKENS)
+
+
 def board_id(board_dir):
     """hardware-design/boards/<ID>[/cad/...] -> ID."""
     parts = os.path.abspath(board_dir).split(os.sep)

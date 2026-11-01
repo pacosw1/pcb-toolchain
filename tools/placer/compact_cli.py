@@ -323,6 +323,8 @@ def main(argv=None):
             raise SystemExit(5)
     def run_stage(cmd, stage, **kwargs):
         cpu = a.workers if stage == 'placement' else resources.default_cpu()
+        if stage == 'routing' and a.router == 'iotroute':  # the router's real thread use, not the whole budget
+            cpu = iotroute_step.router_cpu(full=resources.default_cpu())
         if stage == 'routing':
             args = shlex.split(a.route_args)
             for i, arg in enumerate(args):
