@@ -207,6 +207,15 @@ def parser():
                     'iotroute: tools/router/run.py on this computer; step score = DRC errors + unconnected + parity '
                     '+ board gate (placer/iotroute_step.py), never the router claim')
     ap.add_argument('--passes', type=int, default=40, help='router passes per step (fastroute; iotroute --iters)')
+    ap.add_argument('--repair', action='store_true', help='iotroute only: a failed step with located DRC failures '
+                    'runs the failure-driven repair (placer/repair.py) on its routed board; the step passes when the '
+                    'repair reaches DRC 0/0/0 + gate at target')
+    ap.add_argument('--repair-mode', choices=['local', 'full'], default='local', help='repair re-route: local (rip '
+                    'the failure region and the moved-part copper, keep the rest) or full')
+    ap.add_argument('--repair-routes', type=int, default=8, help='router runs per step for the repair (cap)')
+    ap.add_argument('--repair-per-round', type=int, default=4, help='proposals routed per repair round')
+    ap.add_argument('--read-args', default='', help='cli.py read arguments of PROB.json, one string (the repair reads '
+                    'the problem again from each repaired board)')
     ap.add_argument('--diagnostic-budget', type=float, default=None,
                     help='seconds reserved for virtual diagnostics after real-outline failures')
     ap.add_argument('--optimizer', choices=['always', 'off', 'if-routed'], default='always')
@@ -244,6 +253,8 @@ def main(argv=None):
         if not a.seeded_policy:
             raise ValueError('displacement cap requires seeded policy')
         a.param += ['max_displacement=%s' % a.max_displacement]
+    if a.repair and a.router != 'iotroute':
+        raise ValueError('--repair needs --router iotroute')
     deadline = lean.deadline_after(a.budget)
     with open(a.prob) as problem_file:
         pr = json.load(problem_file)
@@ -464,8 +475,22 @@ def main(argv=None):
 
         if a.router == 'iotroute':
             # Plain counts, as the Freerouting path: a failed step bisects the halo, it does not stop the loop.
-            return iotroute_step.route_step(path, d, iotroute_board, iotroute_gate, a.passes,
-                                            shlex.split(a.route_args), run_stage)
+            counts = iotroute_step.route_step(path, d, iotroute_board, iotroute_gate, a.passes,
+                                              shlex.split(a.route_args), run_stage)
+            if a.repair and 0 < counts[0] < NO_RESULT:
+                from placer import repair
+                routed = os.path.join(d, 'route-0', os.path.basename(path))
+                rec = repair.run(iotroute_board, path, routed, os.path.join(d, 'repair'), a.repair_mode,
+                                 a.repair_routes, a.repair_per_round, a.passes, a.seed,
+                                 not a.seeded_policy, shlex.split(a.read_args), iotroute_gate,
+                                 log=lambda m: print(m, flush=True))
+                routes_done[0] += len(rec['attempts'])
+                print('REPAIR step %d %s key %s board %s' % (n, 'PASS' if rec['passed'] else 'FAIL',
+                      rec['best']['key'], rec['best']['routed']), flush=True)
+                if repair.better(rec['best']['key'], rec['start']['key']):
+                    best = rec['best']['key']
+                    counts = [0 if rec['passed'] else (best[0] or best[1])]
+            return counts
 
         if a.router == 'fastroute':
             # Fastroute runs here (many cores, user rule 2026-10-03); it is deterministic, so one run per step.

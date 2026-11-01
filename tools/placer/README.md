@@ -288,3 +288,58 @@ repair plan or routing again from the original placement. Native/grid findings
 do not prove physical impossibility. Every result remains `qualified:false`;
 fresh complete configured checks and explicit adoption remain necessary. Legacy
 Freerouting benchmark callbacks retain their count-only behavior.
+
+## Failure-driven repair (`repair.py`, `compact_cli.py --repair`)
+
+The in-house router is the judge (idea: TraceMaker `src/place/routable.cpp` at c6fcb7b, `tools/pcb_search/README.md`
+"Repair locally"). Run with the KiCad Python:
+
+```sh
+$PY tools/placer/repair.py prepare SRC.kicad_pcb PLACE.kicad_pcb --board NET-CORE [--keep lock-nets|locked]
+$PY tools/router/run.py NET-CORE ROUTED.kicad_pcb --pcb PLACE.kicad_pcb              # the failed full route
+$PY tools/placer/repair.py run NET-CORE PLACE.kicad_pcb ROUTED.kicad_pcb --outdir DIR [--mode local|full]
+    [--max-routes 8] [--per-round 4] [--no-rotate] [--no-decap-slide] [--read ARG ...]
+```
+
+- prepare: all footprints unlocked; `lock-nets` (default) keeps only the pair + crystal copper (as run.py
+  `--lock-from`); `locked` also keeps every other locked track and via of SRC (hand geometry). NET-CORE needs
+  `locked`: its 15 locked GND items include the stubs of U8.6 and U3.2. Without them the router reports
+  "fixed copper alone walls it in (input)" and KiCad reports starved_thermal on those pads.
+- Failures = the KiCad DRC errors, unconnected items and parity items of ROUTED (`ROUTED.iotroute/drc.json`),
+  with their locations. A zone item has no location.
+- Candidates = movable units near a failure (within `legal_radius`, 5 mm) or with a failure pad. A unit is a whole
+  block (User.1 border) or a decap-tie group: its internal layout does not change. Connectors and fixed units
+  (locked copper on a pad, mounting holes, edge connectors) do not move.
+- Proposals = legal places on the legalizer grid (`legal_step` 0.25 mm, out to `legal_radius`) and 4 turns
+  (`Evaluator.legal_penalty_at` = 0: courtyard, pad clearance, domain gaps, keepouts, board edge; all parts on top).
+  A proposal must decrease the failure term: unconnected pad-to-pad distance, minus the free room around each
+  located item. Rank: term decrease, placement cost, displacement; round-robin over the units. Deterministic.
+- Decap slide: a decap tied to its IC (`cli.py read --decap-tie`, 3 mm) may move alone when the tie stays true
+  (pad-edge gap to the IC pin <= the tie distance).
+- Route: `local` (default) rips the copper that the moved pads meet and the unlocked clusters within `legal_radius`
+  of a failure or on a failed net, keeps and locks the rest, and routes only what is open (NET-CORE: 40 s against
+  270 s for a full route). `full` routes the moved placement board again.
+- Accept only a strictly lower key: (DRC errors + unconnected + parity, gate metrics, length, vias), measured by
+  `iotroute_step` (kicad-cli DRC with parity on the saved board, then the board gate). The previous candidate stays
+  until then.
+- Stop: score 0, no proposal, a round without a better route, `--max-routes`, or only failures that no move can
+  repair: a DRC item on a pad of a fixed unit that the full start route reports as "fixed copper alone walls it in
+  (input)". `DIR/repair.json` has every attempt and the cause. Results are scratch candidates (`qualified: false`).
+
+Compaction: `compact_cli.py ... --router iotroute --repair [--repair-mode local] [--repair-routes 8]
+[--repair-per-round 4] [--read-args '...']` runs the repair on each failed step that has located DRC failures.
+The step passes when the repair reaches score 0; `step-N/repair/repair.json` names the repaired board.
+`--read-args` must be the `cli.py read` arguments of PROB.json (the repair reads the problem again from each board).
+
+Result (2026-11-01, router v6, scratch only): NET-CORE compaction from the spread placement (1faf8ad8, lock-net
+copper), halo 1.04 -> 0.61, 7 steps. Step 3 (s 0.64) failed on 1 clearance (C50 GND pad 0.13 mm from a locked
+ETH_RXP via; rule 0.15 mm, below the 0.1 mm mask raster); one decap slide of C50 (0.5 mm) gave DRC 0/0/0 + gate PASS
+in one 40 s local route. Steps 4 and 5 left one PHY_LED net open; 4 and 1 proposals did not repair them. Best step
+(s 0.615): 1567 mm, 291 vias, gate PASS (spread 1888 mm / 301 vias with v6; hand compaction d6bbe911 1495 mm / 280
+vias). The HPWL search does not keep functional groups together: the sum of the reference block boxes grew from 4626
+to 6302 mm2 (reference 2652 mm2). Next: block borders on the spread board before compaction.
+
+Problem reader changes (2026-11-01, `kicad_io.py`): a User.1 border drawn as 4 lines is a block border, like a
+rectangle shape (NET-CORE draws its borders as lines; before, it had 0 blocks). A part rect covers its copper pads
+when they go beyond the courtyard (NET-CORE J1 USB-C: pad A1B12 is 0.8 mm outside; a compaction step put D3 on it:
+shorting_items + solder_mask_bridge).
