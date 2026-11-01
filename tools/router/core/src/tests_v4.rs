@@ -27,7 +27,7 @@ fn wall_board() -> Board {
     let mut bd = Board { layer_names: vec!["F.Cu".into(), "In1.Cu".into(), "B.Cu".into()], routable: vec![0, 2], nets, shapes: Vec::new(),
                          idx: Index::new(-1.0, -1.0, 11.0, 11.0, 3), sidx: Index::new(-1.0, -1.0, 11.0, 11.0, 3), maxc: 0.15,
                          edge: (0.0, 0.0, 10.0, 10.0), edge_clr: 0.3, gnd: 2, plane_clr: 0.25, eps: EPS, hole_clr: 0.28,
-                         spoke_notes: Vec::new(), attach: Vec::new(), adj: 0b101, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new() };
+                         spoke_notes: Vec::new(), attach: Vec::new(), adj: 0b101, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new(), vip: Vec::new() };
     let pad = |x: f64| Shape { net: 0, geo: Geo::Rect(x - 0.3, 2.8, x + 0.3, 3.2), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true };
     bd.add(pad(2.0));
     bd.add(pad(8.0));
@@ -159,4 +159,109 @@ fn track_ends_lie_inside_the_pad() {
         let edge = (x - a).min(c - x).min(y - b).min(d - y);
         assert!(edge >= END_IN - 1e-9, "end ({x}, {y}) {edge} mm from the pad edge");
     }
+}
+
+/// Exposed pad (M2, H7-CORE U5.25): a GND pad walled in by foreign pads on F.Cu has no fan-out site outside it. On the
+/// gate viapads allow list (model `via_in_pad`) the own-net via may sit inside the pad; off the list it may not.
+#[test]
+fn allowed_exposed_pad_gets_a_via_in_the_pad() {
+    let o = opts();
+    let walled = |vip: bool| {
+        let mut bd = wall_board();
+        let ep = (3.7, 3.7, 6.3, 6.3);
+        bd.add(Shape { net: 2, geo: Geo::Rect(ep.0, ep.1, ep.2, ep.3), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true });
+        // frame of net C pads, 0.3 mm from the exposed pad, 0.5 mm wide (no via fits the gap, none outside within 2 mm)
+        for g in [Geo::Rect(3.0, 3.0, 7.0, 3.4), Geo::Rect(3.0, 6.6, 7.0, 7.0), Geo::Rect(3.0, 3.4, 3.4, 6.6), Geo::Rect(6.6, 3.4, 7.0, 6.6)] {
+            bd.add(Shape { net: 1, geo: g, clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true });
+        }
+        if vip {
+            bd.vip.push(ep);
+        }
+        bd
+    };
+    let mut bd = walled(false);
+    let mut ctx = ctx_of(&mut bd, &o);
+    let r = fanout_net(&mut ctx, 2);
+    assert!(r.hard_fail.unwrap_or_default().contains("no via site"), "not allowed: no via in the pad");
+    let mut bd = walled(true);
+    let mut ctx = ctx_of(&mut bd, &o);
+    let r = fanout_net(&mut ctx, 2);
+    assert!(r.hard_fail.is_none(), "allowed: {:?}", r.hard_fail);
+    let v: Vec<(f64, f64)> = ctx.bd.shapes.iter().filter(|s| s.alive && s.net == 2 && s.kind == Kind::Via)
+        .map(|s| match s.geo { Geo::Circ(x, y, _) => (x, y), _ => (0.0, 0.0) }).collect();
+    assert_eq!(v.len(), 1);
+    assert!(v[0].0 > 3.7 && v[0].0 < 6.3 && v[0].1 > 3.7 && v[0].1 < 6.3, "via {:?} inside the pad", v[0]);
+    assert_eq!(ctx.audit(0.0).pairs, 0, "the via keeps the clearance to the frame");
+    // the allow list is per pad: an own-net pad off the list keeps the own-pad verdict (3 or 4), the allowed one drops it
+    let own = Shape { net: 0, geo: Geo::Rect(1.7, 2.8, 2.3, 3.2), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true };
+    assert!(matches!(ctx.bd.vhit(&own, 2.0, 3.0, 0.3, 0.3, 0.15, 0.45), 3 | 4));
+    let ep = Shape { net: 2, geo: Geo::Rect(3.7, 3.7, 6.3, 6.3), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true };
+    assert!(!matches!(ctx.bd.vhit(&ep, 5.0, 5.0, 0.3, 0.3, 0.15, 0.45), 3 | 4));
+}
+
+/// The return via is the GND net's own via (model class + DRU rules for GND); the flag overrides it.
+#[test]
+fn return_via_follows_the_gnd_net_rule() {
+    let mut bd = wall_board();
+    assert_eq!(return_via(&bd, None), (0.45, 0.2, "GND net"));
+    bd.nets[2].via_d = 0.6;
+    bd.nets[2].via_drill = 0.3;
+    assert_eq!(return_via(&bd, None), (0.6, 0.3, "GND net"));
+    assert_eq!(return_via(&bd, Some((0.7, 0.35))), (0.7, 0.35, "cli"));
+    bd.gnd = -1;
+    assert_eq!(return_via(&bd, None), (0.45, 0.2, "default"));
+}
+
+/// M2 (H7-CORE, RP-001 radius 1.0 mm, return via 0.6 / 0.3): the return ring is 0.75 .. 1.0 mm from the signal via,
+/// and the path's own tracks often cover its free part. The rejected site gets its return reserved and the join routes
+/// around it: every layer change has its return, no return via is left without a signal via, and the audit is clean.
+#[test]
+fn small_return_ring_is_reserved_before_the_route() {
+    let mut o = opts();
+    o.return_r = 1.0;
+    o.ret_d = 0.6;
+    o.ret_drill = 0.3;
+    // the corridor: fixed net C copper on both layers leaves a 1.9 mm wide channel at y = 2.05 .. 3.95 around the pads
+    let mut bd = wall_board();
+    for g in [Geo::Rect(-1.0, -1.0, 11.0, 2.05), Geo::Rect(-1.0, 3.95, 11.0, 11.0)] {
+        bd.add(Shape { net: 1, geo: g, clr: 0.15, layers: 0b100, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true });
+    }
+    let mut ctx = ctx_of(&mut bd, &o);
+    let r = route_net(&mut ctx, 0);
+    assert!(r.hard_fail.is_none(), "{:?}", r.hard_fail);
+    assert_eq!(vias_of(&ctx, 0), 2);
+    assert!(ctx.ret_missing().is_empty(), "missing returns: {:?}", ctx.ret_missing());
+    let sig: Vec<(f64, f64)> = ctx.bd.shapes.iter().filter(|s| s.alive && s.owner == 0 && s.net == 0 && s.kind == Kind::Via)
+        .filter_map(|s| match s.geo { Geo::Circ(x, y, _) => Some((x, y)), _ => None }).collect();
+    for s in ctx.bd.shapes.iter().filter(|s| s.alive && s.owner == 0 && s.net == 2 && s.kind == Kind::Via) {
+        let Geo::Circ(x, y, _) = s.geo else { panic!() };
+        assert!(sig.iter().any(|&(a, b)| ((a - x).powi(2) + (b - y).powi(2)).sqrt() <= 1.0 + 1e-9), "unused return via at ({x}, {y})");
+    }
+    assert_eq!(ctx.audit(0.0).pairs, 0);
+}
+
+/// M2: a locked input signal via with no GND via within --return-r gets a fixed GND return via before routing (H7-CORE
+/// MDI RX pair vias); a locked via that already has one gets none.
+#[test]
+fn locked_input_vias_get_a_return() {
+    let mut o = opts();
+    o.return_r = 1.0;
+    o.ret_d = 0.6;
+    o.ret_drill = 0.3;
+    let mut bd = wall_board();
+    let via = |x: f64, y: f64, net: i32| Shape { net, geo: Geo::Circ(x, y, 0.3), clr: 0.15, layers: 0b111, drill: 0.3, kind: Kind::Via, owner: -1, alive: true };
+    bd.add(via(2.0, 7.0, 0)); // net A, alone
+    bd.add(via(8.0, 7.0, 0)); // net A, with a GND via 0.9 mm away
+    bd.add(via(8.9, 7.0, 2));
+    let n0 = bd.shapes.len();
+    let notes = fixed_returns(&mut bd, &o);
+    assert!(notes.is_empty(), "{notes:?}");
+    let new: Vec<&Shape> = bd.shapes[n0..].iter().collect();
+    assert_eq!(new.len(), 1, "one return, for the via at (2, 7) only");
+    let Geo::Circ(x, y, _) = new[0].geo else { panic!() };
+    let d = ((x - 2.0).powi(2) + (y - 7.0).powi(2)).sqrt();
+    assert!(new[0].net == 2 && new[0].owner < 0 && d <= 1.0 && d >= 0.75 - 1e-9, "GND fixed via at ({x}, {y}), {d} mm");
+    let o2 = opts();
+    let mut ctx = ctx_of(&mut bd, &o2);
+    assert_eq!(ctx.audit(0.0).pairs, 0, "the return keeps the clearance");
 }

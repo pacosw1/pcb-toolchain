@@ -42,3 +42,25 @@ fn hole_clearance_value_changes_behaviour() {
     assert!(blocked_at(&model(0.8, 0.45, 0.25), 10.8), "hole rule 0.8 must block at 10.8");
     assert!(!blocked_at(&model(0.8, 0.45, 0.25), 11.3), "hole rule 0.8 must free x = 11.3");
 }
+
+/// M2 (H7-CORE): the model's return_rule decides whether a GND through-hole pad is an RP-001 return (the gate with
+/// return_planes counts it; kicad-happy alone does not), and a pad with via_in_pad is on the viapads allow list.
+#[test]
+fn return_rule_and_via_in_pad_are_read() {
+    let with = |pads: Option<bool>| {
+        let mut m = model(0.28, 0.45, 0.25);
+        m["nets"]["GND"] = serde_json::json!({"class": "Default", "plane": true, "layers": ["F.Cu", "B.Cu"]});
+        m["pads"].as_array_mut().unwrap().push(serde_json::json!({"ref": "J1", "num": "2", "net": "GND", "x": 20.0, "y": 10.0,
+            "bbox": [19.5, 9.5, 20.5, 10.5], "layers": ["F.Cu", "B.Cu"], "drill": 0.6}));
+        m["pads"].as_array_mut().unwrap().push(serde_json::json!({"ref": "U1", "num": "9", "net": "GND", "x": 20.0, "y": 20.0,
+            "bbox": [19.0, 19.0, 21.0, 21.0], "layers": ["F.Cu"], "drill": 0.0, "via_in_pad": true}));
+        if let Some(p) = pads {
+            m["return_rule"] = serde_json::json!({"radius": 1.0, "pads": p});
+        }
+        load(&m, 0.28)
+    };
+    assert_eq!(with(Some(false)).gnd_fixed.len(), 0, "kicad-happy alone: a GND through-hole pad is no return");
+    assert_eq!(with(Some(true)).gnd_fixed, vec![(20.0, 10.0)], "gate return_planes: it is one");
+    assert_eq!(with(None).gnd_fixed.len(), 1, "no rule in the model: as before (counts)");
+    assert_eq!(with(None).vip, vec![(19.0, 19.0, 21.0, 21.0)]);
+}
