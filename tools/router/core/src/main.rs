@@ -3072,10 +3072,75 @@ fn main() {
                 None => state[net] = (None, 0),
             }
         }
+        // v6: rip-up cascade for a net that the strict re-route left open (NET-CORE RMII standoffs: /ETH_TX_EN,
+        // /ETH_TXD0): route it once with conflicts allowed, rip the nets it now crosses and route those strictly;
+        // up to 4 rounds, kept only when fewer nets stay open and the copper is legal (else restored)
+        let mut cascade_note = String::new();
+        if !reopened.is_empty() {
+            let snap: Vec<Shape> = ctx.bd.shapes.clone();
+            let st0 = state.clone();
+            let open0 = reopened.len();
+            let mut open = reopened.clone();
+            for _round in 0..4 {
+                if open.is_empty() {
+                    break;
+                }
+                let mut next: Vec<usize> = Vec::new();
+                for &net in &open {
+                    ctx.strict = false;
+                    let r = route_net(&mut ctx, net);
+                    if r.hard_fail.is_some() {
+                        next.push(net);
+                        continue;
+                    }
+                    state[net] = (None, 0);
+                    let au = ctx.audit_of(0.0, Some(net));
+                    let partners: Vec<usize> = au.partners[net].clone();
+                    for s in ctx.bd.shapes.iter_mut() {
+                        if s.owner >= 0 && partners.contains(&(s.owner as usize)) {
+                            s.alive = false;
+                        }
+                    }
+                    ctx.strict = true;
+                    for &q in order.iter().filter(|q| partners.contains(q)) {
+                        let r = if ctx.bd.nets[q].plane { fanout_net(&mut ctx, q) } else { route_net(&mut ctx, q) };
+                        match r.hard_fail {
+                            Some(m) => {
+                                state[q] = (Some(format!("negotiation did not converge; cascade re-route (routed copper blocks): {m}")), 0);
+                                next.push(q);
+                            }
+                            None => state[q] = (None, 0),
+                        }
+                    }
+                }
+                ctx.strict = false;
+                let au = ctx.audit(0.0);
+                for n in 0..nn {
+                    if au.per_net[n] > 0 && !next.contains(&n) {
+                        next.push(n);
+                    }
+                }
+                next.sort();
+                next.dedup();
+                open = next;
+            }
+            ctx.strict = false;
+            let legal = ctx.audit(0.0).pairs == 0;
+            if open.len() < open0 && legal {
+                cascade_note = format!("; cascade: open {} -> {}", open0, open.len());
+                reopened = open;
+            } else {
+                ctx.bd.shapes = snap;
+                ctx.bd.compact();
+                ctx.gr.reset_cache();
+                state = st0;
+                cascade_note = format!("; cascade did not help ({} open, legal {}), restored", open.len(), legal);
+            }
+        }
         ctx.strict = false;
         let au = ctx.audit(0.0);
-        eprintln!("best iteration {bit} (nets in conflict {}, pairs {}); ripped {}: {}; strict re-route open {}: {}; audit pairs {}",
-                  score.0, score.1, ripped.len(), names(ctx.bd, &ripped), reopened.len(), names(ctx.bd, &reopened), au.pairs);
+        eprintln!("best iteration {bit} (nets in conflict {}, pairs {}); ripped {}: {}; strict re-route open {}: {}; audit pairs {}{}",
+                  score.0, score.1, ripped.len(), names(ctx.bd, &ripped), reopened.len(), names(ctx.bd, &reopened), au.pairs, cascade_note);
         // the output keeps "N conflicts left" only for copper that is still illegal (a guard: should be none)
         for n in 0..nn {
             state[n].1 = au.per_net[n];
