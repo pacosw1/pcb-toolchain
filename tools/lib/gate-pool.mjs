@@ -62,9 +62,11 @@ export async function runPool(items, limit, worker, {shouldStop = () => false} =
 }
 
 // Child processes in their own process group, so that one signal stops a gate and all its kicad-cli/pcbnew children.
-// A group that still has members after its gate process closed is killed at once (no orphans).
+// A group that still has members 1 s after its gate process closed is killed and reported (no orphans).
+const groupAlive = pgid => { try { process.kill(-pgid, 0); return true; } catch { return false; } };
+
 export class ProcessGroups {
-  constructor() { this.running = new Set(); }
+  constructor({graceMs = 1000} = {}) { this.running = new Set(); this.graceMs = graceMs; }
   run(cmd, args, options = {}) {
     const started = Date.now();
     return new Promise(resolve => {
@@ -73,9 +75,18 @@ export class ProcessGroups {
       const done = (code, signal, error) => {
         if (settled) return; settled = true;
         this.running.delete(child);
-        let orphans = false;
-        if (child.pid) try { process.kill(-child.pid, 0); orphans = true; process.kill(-child.pid, 'SIGKILL'); } catch { /* group is empty */ }
-        resolve({code, signal, output: output + (error ? `${error.message}\n` : ''), seconds: (Date.now() - started) / 1000, orphans});
+        const finish = orphans => resolve({code, signal, output: output + (error ? `${error.message}\n` : ''), seconds: (Date.now() - started) / 1000, orphans});
+        if (!child.pid) return finish(false);
+        // A member that is exiting (or a zombie not yet reaped) can still be in the group just after close.
+        // Re-check for a grace time; kill and report only members that remain.
+        const until = Date.now() + this.graceMs;
+        const check = () => {
+          if (!groupAlive(child.pid)) return finish(false);
+          if (Date.now() < until) return setTimeout(check, 25);
+          try { process.kill(-child.pid, 'SIGKILL'); } catch { /* exited at the last moment */ }
+          finish(true);
+        };
+        check();
       };
       if (child.pid) this.running.add(child);
       for (const stream of [child.stdout, child.stderr]) { stream?.setEncoding('utf8'); stream?.on('data', text => { output += text; }); }

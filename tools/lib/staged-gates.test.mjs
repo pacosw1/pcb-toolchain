@@ -109,9 +109,16 @@ test('parallel boards give the same staged metrics as serial; a failure names th
   while(started()<Number(process.env.BARRIER ?? 0) && wait++<500) await new Promise(r=>setTimeout(r,20));
   writeFileSync(live+'-max-'+b,String(Math.max(seen,readdirSync(live).length)));rmSync(live+'/'+b);
   const c=JSON.parse(readFileSync(p+'gate.json'));const text=readFileSync(p+c.project+'.kicad_pcb','utf8');
-  if(text.includes('fail')) {writeFileSync(process.env.LIVE+'-failed','');process.exit(1);}
-  // In the failure case a passing board is still in progress when the other board fails (deterministic order).
-  if(process.env.WAIT_FAIL) while(!readdirSync(process.env.LIVE+'/..').includes(process.env.LIVE.split('/').pop()+'-failed')) await new Promise(r=>setTimeout(r,20));
+  if(text.includes('fail')) {writeFileSync(process.env.LIVE+'-failed',String(process.pid));process.exit(1);}
+  // In the failure case a passing board is still in progress when the other board fails: it finishes only after
+  // the hook has reaped the failed gate, so the pool knows the failure before a lane is free (deterministic order).
+  if(process.env.WAIT_FAIL) {
+   const mark=process.env.LIVE+'-failed';let pid=0;
+   while(!pid) {try{pid=Number(readFileSync(mark,'utf8'));}catch{} await new Promise(r=>setTimeout(r,20));}
+   const alive=()=>{try{process.kill(pid,0);return true;}catch{return false;}};
+   while(alive()) await new Promise(r=>setTimeout(r,20));
+   await new Promise(r=>setTimeout(r,200));
+  }
   writeFileSync(p+'gate-metrics.json',JSON.stringify({metrics:{erc_errors:0},board:b,checked:text})+'\\n');`);
  for(const b of ['A','B','C','D']) put(`hardware-design/boards/${b==='A'?'BASE-PWR':b==='B'?'BASE-PWR-B':b}/${b==='A'?'cad/A/A':b==='B'?'../BASE-PWR/cad/B/B':`cad/${b}/${b}`}.kicad_pcb`,'initial');
  git(['add','.']);git(['commit','-qm','initial']);

@@ -65,6 +65,13 @@ test('a grandchild left behind after the gate process exits is killed and report
   assert.equal(groups.running.size, 0);
 });
 
+test('a group member that exits within the grace time is not an orphan', async () => {
+  const groups = new ProcessGroups();
+  // The gate exits at once; its child (same group) exits 0.2 s later, as an exiting or unreaped member does.
+  const run = await groups.run(process.execPath, ['-e', "const {spawn}=require('node:child_process');spawn('sleep',['0.2'],{stdio:'ignore'}).unref();"]);
+  assert.equal(run.code, 0); assert.equal(run.orphans, false);
+});
+
 test('kill stops the whole process group of a running gate', async t => {
   const groups = new ProcessGroups();
   const dir = mkdtempSync(join(tmpdir(), 'gate-pool-')); t.after(() => rmSync(dir, {recursive: true, force: true}));
