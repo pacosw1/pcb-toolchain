@@ -9,7 +9,7 @@ fn n(name: &str, plane: bool, layers: u8) -> Net {
 
 fn opts() -> Opts {
     Opts { pitch: 0.05, passes: 1, plane_clr: 0.25, hth: 0.45, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2, pres_mult: 1.5, pres_max: 1000.0,
-           hist: 0.3, max_time: 0.0, door_hist: 2.0 }
+           hist: 0.3, max_time: 0.0, door_hist: 2.0, via_cost: DEF_VIA_COST, ret_cost: DEF_RET_COST, web_cost: DEF_WEB_COST }
 }
 
 fn grid() -> Grid {
@@ -27,7 +27,7 @@ fn wall_board() -> Board {
     let mut bd = Board { layer_names: vec!["F.Cu".into(), "In1.Cu".into(), "B.Cu".into()], routable: vec![0, 2], nets, shapes: Vec::new(),
                          idx: Index::new(-1.0, -1.0, 11.0, 11.0, 3), sidx: Index::new(-1.0, -1.0, 11.0, 11.0, 3), maxc: 0.15,
                          edge: (0.0, 0.0, 10.0, 10.0), edge_clr: 0.3, gnd: 2, plane_clr: 0.25, eps: EPS, hole_clr: 0.28,
-                         spoke_notes: Vec::new(), attach: Vec::new(), adj: 0b101, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new(), vip: Vec::new() };
+                         spoke_notes: Vec::new(), attach: Vec::new(), spoke_sites: std::collections::HashSet::new(), adj: 0b101, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false };
     let pad = |x: f64| Shape { net: 0, geo: Geo::Rect(x - 0.3, 2.8, x + 0.3, 3.2), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true };
     bd.add(pad(2.0));
     bd.add(pad(8.0));
@@ -39,7 +39,7 @@ fn ctx_of<'a>(bd: &'a mut Board, o: &'a Opts) -> Ctx<'a> {
     let nn = bd.nets.len();
     let memo_w = bd.nets.iter().flat_map(|n| net_widths(n)).collect();
     Ctx { bd, gr: grid(), o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w, rcache: vec![0; 201 * 201],
-          ban: Vec::new() }
+          ban: Vec::new(), neck: Vec::new() }
 }
 
 fn vias_of(ctx: &Ctx, net: usize) -> usize {
@@ -194,9 +194,9 @@ fn allowed_exposed_pad_gets_a_via_in_the_pad() {
     assert_eq!(ctx.audit(0.0).pairs, 0, "the via keeps the clearance to the frame");
     // the allow list is per pad: an own-net pad off the list keeps the own-pad verdict (3 or 4), the allowed one drops it
     let own = Shape { net: 0, geo: Geo::Rect(1.7, 2.8, 2.3, 3.2), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true };
-    assert!(matches!(ctx.bd.vhit(&own, 2.0, 3.0, 0.3, 0.3, 0.15, 0.45), 3 | 4));
+    assert!(matches!(ctx.bd.vhit(&own, 2.0, 3.0, 0.3, 0.3, 0.15, 0.45, true), 3 | 4));
     let ep = Shape { net: 2, geo: Geo::Rect(3.7, 3.7, 6.3, 6.3), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true };
-    assert!(!matches!(ctx.bd.vhit(&ep, 5.0, 5.0, 0.3, 0.3, 0.15, 0.45), 3 | 4));
+    assert!(!matches!(ctx.bd.vhit(&ep, 5.0, 5.0, 0.3, 0.3, 0.15, 0.45, true), 3 | 4));
 }
 
 /// The return via is the GND net's own via (model class + DRU rules for GND); the flag overrides it.

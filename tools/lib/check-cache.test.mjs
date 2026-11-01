@@ -66,3 +66,32 @@ test('checkout root is not a key input, but sibling paths outside the root are',
  assert.equal(key('a',join(parent,'a','lib')),key('b',join(parent,'b','lib')));
  assert.notEqual(key('a',join(parent,'a-modules')),key('b',join(parent,'b-modules')));
 });
+test('a restore that cannot write all artifacts removes what it wrote, so the check can run in the same folder',t=>{
+ const {root,key,metrics,cache,evidence}=fixture(t);const first=key();
+ storeCheck(cache,'erc',first,metrics,evidence);
+ const next=join(root,'next');mkdirSync(next);writeFileSync(join(next,'erc.json'),'from this run');
+ const restored=restoreCheck(cache,'erc',first.key,next);
+ assert.equal(restored.hit,false);assert.match(restored.reason,/EEXIST/);
+ assert.deepEqual(readdirSync(next),['erc.json']);assert.equal(readFileSync(join(next,'erc.json'),'utf8'),'from this run');
+});
+// Parallel boards and other worktrees share one cache: publication is temp folder + rename; an invalid receipt is
+// moved away in one step. Readers see a complete receipt or a miss, never a partial evidence folder.
+test('concurrent writers and readers of one key never corrupt the cache or the evidence',async t=>{
+ const {root,key,metrics,cache,evidence}=fixture(t);const first=key();
+ storeCheck(cache,'erc',first,metrics,evidence);
+ writeFileSync(join(cache,'erc',first.key,'erc.json'),'corrupt');
+ const module=new URL('./check-cache.mjs',import.meta.url).href;
+ const writer=`const {storeCheck}=await import(${JSON.stringify(module)});console.log(JSON.stringify(storeCheck(${JSON.stringify(cache)},'erc',${JSON.stringify(first)},${JSON.stringify(metrics)},${JSON.stringify(evidence)})));`;
+ const reader=n=>`const {restoreCheck}=await import(${JSON.stringify(module)});const fs=await import('node:fs');const out=[];
+  for(let i=0;i<40;i++){const d=${JSON.stringify(join(root,'read'))}+'-${n}-'+i;fs.mkdirSync(d,{recursive:true});const r=restoreCheck(${JSON.stringify(cache)},'erc',${JSON.stringify(first.key)},d);
+   out.push({hit:r.hit,files:fs.readdirSync(d).sort()});}console.log(JSON.stringify(out));`;
+ const {spawn}=await import('node:child_process');
+ const run=code=>new Promise((resolve,reject)=>{let out='';const c=spawn(process.execPath,['--input-type=module','-e',code]);
+  c.stdout.on('data',d=>out+=d);c.stderr.on('data',d=>out+=d);c.on('close',code=>code===0 ? resolve(JSON.parse(out)) : reject(new Error(out)));});
+ const results=await Promise.all([...Array.from({length:6},()=>run(writer)),...Array.from({length:3},(_,n)=>run(reader(n)))]);
+ const writes=results.slice(0,6),reads=results.slice(6).flat();
+ assert.ok(writes.some(w=>w.stored),JSON.stringify(writes));
+ for(const r of reads) assert.deepEqual(r.files,r.hit ? ['erc.json','erc.log'] : [],JSON.stringify(r));
+ assert.deepEqual(readdirSync(join(cache,'erc')),[first.key]);
+ const next=join(root,'next');mkdirSync(next);assert.equal(restoreCheck(cache,'erc',first.key,next).hit,true);
+});
