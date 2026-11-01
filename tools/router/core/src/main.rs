@@ -1290,9 +1290,21 @@ impl<'a> Ctx<'a> {
         })
     }
 
-    /// Cell path -> (tracks, vias) with greedy string pulling per layer run (only over conflict-free samples).
+    /// The 0/45/90 elbow from a to b: one straight leg and one 45-degree leg (straight first or diagonal first).
+    /// None of the legs is empty only when a and b are not on one octilinear line.
+    fn elbow(a: (f64, f64), b: (f64, f64), straight_first: bool) -> [(f64, f64); 3] {
+        let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+        let d = dx.abs().min(dy.abs());
+        let (sx, sy) = (d * dx.signum(), d * dy.signum());
+        let m = if straight_first { (b.0 - sx, b.1 - sy) } else { (a.0 + sx, a.1 + sy) };
+        [a, m, b]
+    }
+
+    /// Cell path -> (tracks, vias). Greedy string pulling per layer run, octilinear (v6): a pull from point i to point k
+    /// is a 0/45/90 elbow (straight + 45-degree leg) whose legs are conflict-free; the grid steps (8 directions) are the
+    /// fallback. Collinear neighbours are merged. Every segment is at 0, 45 or 90 degrees.
     fn geometry(&self, net: usize, path: &[usize], hw: f64) -> (Vec<(usize, (f64, f64), (f64, f64))>, Vec<(f64, f64)>) {
-        let mut tracks = Vec::new();
+        let mut tracks: Vec<(usize, (f64, f64), (f64, f64))> = Vec::new();
         let mut vias = Vec::new();
         let mut runs: Vec<(usize, Vec<(f64, f64)>)> = Vec::new();
         for &c in path {
@@ -1308,23 +1320,42 @@ impl<'a> Ctx<'a> {
                 }
             }
         }
+        let tol = self.gr.p * 1e-3;
         for (r, pts) in runs {
             let l = self.bd.routable[r];
             if pts.len() < 2 {
                 continue;
             }
+            let mut poly: Vec<(f64, f64)> = vec![pts[0]];
             let mut i = 0;
             while i < pts.len() - 1 {
-                let mut j = i + 1;
-                let mut k = i + 2;
+                let mut best: Option<(usize, [(f64, f64); 3])> = None;
+                let mut k = i + 1;
                 let mut misses = 0;
                 while k < pts.len() {
                     let dl = ((pts[k].0 - pts[i].0).powi(2) + (pts[k].1 - pts[i].1).powi(2)).sqrt();
                     if dl > 12.0 {
                         break;
                     }
-                    if self.seg_clear(net, l, pts[i], pts[k], hw) {
-                        j = k;
+                    // prefer the elbow whose first leg goes on in the direction of the last segment (fewer bends)
+                    let prev = if poly.len() >= 2 { Some((poly[poly.len() - 1].0 - poly[poly.len() - 2].0, poly[poly.len() - 1].1 - poly[poly.len() - 2].1)) } else { None };
+                    let mut opts = [Self::elbow(pts[i], pts[k], true), Self::elbow(pts[i], pts[k], false)];
+                    if let Some((px, py)) = prev {
+                        let d1 = (opts[1][1].0 - opts[1][0].0, opts[1][1].1 - opts[1][0].1);
+                        if (d1.0.abs() > tol || d1.1.abs() > tol) && (px * d1.1 - py * d1.0).abs() < tol * (px.abs() + py.abs() + 1.0) && px * d1.0 + py * d1.1 > 0.0 {
+                            opts.swap(0, 1);
+                        }
+                    }
+                    let mut hit = None;
+                    for e in opts {
+                        let leg = |u: (f64, f64), v: (f64, f64)| (v.0 - u.0).abs() < tol && (v.1 - u.1).abs() < tol || self.seg_clear(net, l, u, v, hw);
+                        if leg(e[0], e[1]) && leg(e[1], e[2]) {
+                            hit = Some(e);
+                            break;
+                        }
+                    }
+                    if let Some(e) = hit {
+                        best = Some((k, e));
                         misses = 0;
                     } else {
                         misses += 1;
@@ -1334,8 +1365,29 @@ impl<'a> Ctx<'a> {
                     }
                     k += if pts.len() - k > 40 { 3 } else { 1 };
                 }
-                tracks.push((l, pts[i], pts[j]));
+                // fallback: the grid step itself (0/45/90 by construction)
+                let (j, e) = best.unwrap_or((i + 1, [pts[i], pts[i + 1], pts[i + 1]]));
+                for q in [e[1], e[2]] {
+                    let last = *poly.last().unwrap();
+                    if (q.0 - last.0).abs() < tol && (q.1 - last.1).abs() < tol {
+                        continue;
+                    }
+                    // merge with the last segment when collinear and in the same direction
+                    if poly.len() >= 2 {
+                        let a = poly[poly.len() - 2];
+                        let (ux, uy) = (last.0 - a.0, last.1 - a.1);
+                        let (vx, vy) = (q.0 - last.0, q.1 - last.1);
+                        if (ux * vy - uy * vx).abs() < tol * (ux.abs() + uy.abs() + vx.abs() + vy.abs()) && ux * vx + uy * vy > 0.0 {
+                            *poly.last_mut().unwrap() = q;
+                            continue;
+                        }
+                    }
+                    poly.push(q);
+                }
                 i = j;
+            }
+            for w in poly.windows(2) {
+                tracks.push((l, w[0], w[1]));
             }
         }
         (tracks, vias)
@@ -2813,3 +2865,5 @@ mod tests_v4;
 
 #[cfg(test)]
 mod tests_pour;
+#[cfg(test)]
+mod tests_v6;
