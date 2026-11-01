@@ -100,6 +100,18 @@ def fp_rect(fp):
     return (min(xs) - .25, min(ys) - .25, max(xs) + .25, max(ys) + .25)
 
 
+def pads_box(fp, rc):
+    """rc grown to cover the copper pads of fp (an NPTH hole has no copper)."""
+    x0, y0, x1, y1 = rc
+    for p in fp.Pads():
+        if p.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH:
+            continue
+        bb = p.GetBoundingBox()
+        x0, y0 = min(x0, mm(bb.GetX())), min(y0, mm(bb.GetY()))
+        x1, y1 = max(x1, mm(bb.GetRight())), max(y1, mm(bb.GetBottom()))
+    return (x0, y0, x1, y1)
+
+
 def _round_courtyard(fp):
     """(centre x, centre y, radius) when the courtyard is one circle (a test point), else None."""
     g = [d for d in fp.GraphicalItems() if d.GetLayer() == pcbnew.F_CrtYd]
@@ -121,10 +133,34 @@ def outline_of(board):
     return poly_points(ps.Outline(0)), holes
 
 
+def line_rectangles(segs, tol=1e-3):
+    """Axis-aligned rectangles closed by 4 line segments: segs [(x0, y0, x1, y1, id)] -> [(box, [id x 4])].
+    A border drawn as 4 User.1 lines (NET-CORE) is a block border like a rectangle shape."""
+    def key(v):
+        return round(v / tol)
+    hor, ver = {}, {}
+    for x0, y0, x1, y1, i in segs:
+        if abs(y0 - y1) <= tol and abs(x0 - x1) > tol:
+            hor[(key(min(x0, x1)), key(max(x0, x1)), key(y0))] = (min(x0, x1), max(x0, x1), y0, i)
+        elif abs(x0 - x1) <= tol and abs(y0 - y1) > tol:
+            ver[(key(x0), key(min(y0, y1)), key(max(y0, y1)))] = i
+    out, rows = [], sorted(hor.items())
+    for a, (ka, (xa, xb, ya, ia)) in enumerate(rows):
+        for kb, (_, _, yb, ib) in rows[a + 1:]:
+            if kb[:2] != ka[:2] or kb[2] == ka[2]:
+                continue
+            lo, hi = sorted((ka[2], kb[2]))
+            left, right = ver.get((ka[0], lo, hi)), ver.get((ka[1], lo, hi))
+            if left is not None and right is not None:
+                out.append(((xa, min(ya, yb), xb, max(ya, yb)), [ia, ib, left, right]))
+    return out
+
+
 def block_borders(board):
-    """User.1 closed shapes -> [(box, [uuid, ...])] with the User.1 texts inside each box."""
+    """User.1 closed shapes, and rectangles closed by 4 User.1 lines -> [(box, [uuid, ...], label)] with the
+    User.1 texts inside each box."""
     lay = board.GetLayerID('User.1')
-    shapes, texts = [], []
+    shapes, texts, segs = [], [], []
     for d in board.GetDrawings():
         if d.GetLayer() != lay:
             continue
@@ -132,9 +168,13 @@ def block_borders(board):
             poly = shape_polygon(d)
             if poly:
                 shapes.append((bbox_of(poly), d))
+            elif d.GetShape() == pcbnew.SHAPE_T_SEGMENT:
+                a, b = d.GetStart(), d.GetEnd()
+                segs.append((mm(a.x), mm(a.y), mm(b.x), mm(b.y), d.m_Uuid.AsString()))
         elif 'TEXT' in d.GetClass():
             texts.append(d)
     out = [(box, [d.m_Uuid.AsString()], None) for box, d in shapes]
+    out += [(box, ids, None) for box, ids in line_rectangles(segs)]
     for t in texts:
         q = t.GetPosition()
         x, y = mm(q.x), mm(q.y)
@@ -341,6 +381,8 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
             rr = _round_courtyard(fp)
             if rr:  # the circle, not its polygon
                 rc = (rr[0] - rr[2], rr[1] - rr[2], rr[0] + rr[2], rr[1] + rr[2])
+            else:  # copper pads beyond the courtyard (NET-CORE J1 USB-C: A1B12 0.8 mm out) belong to the part rect
+                rc = pads_box(fp, rc)
             rects.append((rc, clr))
             if rr:
                 rho.append([len(rects) - 1, rr[2]])
