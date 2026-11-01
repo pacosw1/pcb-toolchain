@@ -177,3 +177,32 @@ fn door_path_is_short() {
         }
     }
 }
+
+/// v6: a hard door reserves the path only up to its last routed-copper cell + min_thickness + zone clearance (v5: the
+/// whole path to a via of the net; on the v6 H7-CORE run 1718 cells through existing fill at J2.16 / J2.18).
+#[test]
+fn hard_door_reserves_only_the_blocked_part() {
+    let v: Value = serde_json::from_str(include_str!("fixtures/m2_j2_16.json")).unwrap();
+    let (hole, _, _) = hole_rules(&v["model"]);
+    let mut bd = load(&v["model"], hole.unwrap_or(DEF_HOLE_CLR));
+    add_result(&mut bd, &v["result"]);
+    let f = pour::check(&bd);
+    assert_eq!(f.len(), 1);
+    let fl = f[0].clone();
+    let o = super::tests_v6::opts();
+    let n0 = bd.shapes.len();
+    let nn = bd.nets.len();
+    let (e0, e1, e2, e3) = bd.edge;
+    let (nx, ny) = (((e2 - e0) / 0.05).ceil() as usize + 1, ((e3 - e1) / 0.05).ceil() as usize + 1);
+    let tot = nx * ny * 2;
+    let gr = Grid { x0: e0, y0: e1, p: 0.05, nx, ny, nr: 2, cache: vec![0; tot], vcache: vec![0; nx * ny], dcache: vec![0; tot], hist: vec![0.0; tot],
+                    vhist: vec![0.0; nx * ny], pres: 0.5, g: vec![0.0; tot], from: vec![0; tot], seen: vec![0; tot], closed: vec![0; tot], tgt: vec![0; tot], sgen: 0, tgen: 0 };
+    let mut ctx = Ctx { bd: &mut bd, gr, o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w: vec![0.15],
+                        rcache: vec![0; nx * ny], ban: Vec::new(), neck: Vec::new() };
+    ctx.reserve_door(&fl);
+    let len: f64 = ctx.bd.shapes[n0..].iter().filter_map(|s| if let Geo::Seg(ax, ay, bx, by, _) = s.geo { Some((bx - ax).hypot(by - ay)) } else { None }).sum();
+    let last = fl.path.iter().rposition(|p| fl.door.contains(p)).unwrap();
+    let bound = (last + 1 + 16) as f64 * pour::POUR_PITCH;
+    assert!(len <= bound + 1e-6, "strip {len:.2} mm, bound {bound:.2} mm (path {} cells)", fl.path.len());
+    assert!(len < fl.path.len() as f64 * pour::POUR_PITCH * 0.5, "strip {len:.2} mm vs path {} cells", fl.path.len());
+}

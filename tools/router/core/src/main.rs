@@ -968,24 +968,31 @@ impl<'a> Ctx<'a> {
         }
         (faults, walls, fixed)
     }
-    /// Hard door (last resort): the whole path of the fault becomes a reserved pour strip (Kind::Spoke of the pour
-    /// net, min_thickness + 2 pitch wide, zone clearance), so no net routes over it again. The fixed-copper memo is
-    /// cleared (fixed copper grew); walled-in proofs stay true (more fixed copper never opens a path).
+    /// Hard door (last resort): the part of the fault's path that routed copper blocks becomes a reserved pour strip
+    /// (Kind::Spoke of the pour net, min_thickness + 2 pitch wide, zone clearance), so no net routes over it again: from
+    /// the spoke ring to the last blocked cell, plus min_thickness + zone clearance into the fill beyond it (v6; v5
+    /// reserved the whole path to a via of the net, up to tens of mm through existing fill, which walled off routing
+    /// channels: M2 v6 run, J2.18, 1718 cells). The fixed-copper memo is cleared (fixed copper grew); walled-in proofs
+    /// stay true (more fixed copper never opens a path).
     fn reserve_door(&mut self, fl: &pour::Fault) {
         let pr = self.bd.pours[fl.pour].clone();
         let hw = pr.mt / 2.0 + pour::POUR_PITCH;
         // the largest clearance any item keeps to this pour (DRU zone rules included)
         let clr = pr.net_clr.values().fold(pr.clr, |a, v| a.max(v.0).max(v.1).max(v.2));
+        let last = fl.path.iter().rposition(|p| fl.door.iter().any(|d| (d.0 - p.0).abs() < 1e-9 && (d.1 - p.1).abs() < 1e-9));
+        let extra = ((pr.mt + pr.clr) / pour::POUR_PITCH).ceil() as usize;
+        let end = last.map(|e| (e + extra + 1).min(fl.path.len())).unwrap_or(fl.path.len());
+        let path = &fl.path[..end];
         let mut k = 0;
-        while k + 1 < fl.path.len() {
+        while k + 1 < path.len() {
             // one segment per straight run of the 4-connected path
-            let (a, b) = (fl.path[k], fl.path[k + 1]);
+            let (a, b) = (path[k], path[k + 1]);
             let d = (b.0 - a.0, b.1 - a.1);
             let mut e = k + 1;
-            while e + 1 < fl.path.len() && ((fl.path[e + 1].0 - fl.path[e].0 - d.0).abs() < 1e-9 && (fl.path[e + 1].1 - fl.path[e].1 - d.1).abs() < 1e-9) {
+            while e + 1 < path.len() && ((path[e + 1].0 - path[e].0 - d.0).abs() < 1e-9 && (path[e + 1].1 - path[e].1 - d.1).abs() < 1e-9) {
                 e += 1;
             }
-            let b = fl.path[e];
+            let b = path[e];
             self.bd.add(Shape { net: pr.net, geo: Geo::Seg(a.0, a.1, b.0, b.1, hw), clr, layers: 1 << pr.layer, drill: 0.0, kind: Kind::Spoke, owner: -1, alive: true });
             k = e;
         }
