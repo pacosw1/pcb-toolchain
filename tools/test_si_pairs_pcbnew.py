@@ -60,7 +60,45 @@ def test_a_zone_on_another_layer_does_not_count():
     assert round(r, 3) == 0.25, vias
 
 
+def _pad(board, fp, net, attr, size_mm, at_mm):
+    pad = pcbnew.PAD(fp)
+    pad.SetAttribute(attr)
+    pad.SetShape(pcbnew.PAD_SHAPE_CIRCLE)
+    pad.SetSize(pcbnew.VECTOR2I(pcbnew.FromMM(size_mm), pcbnew.FromMM(size_mm)))
+    if attr == pcbnew.PAD_ATTRIB_PTH:
+        pad.SetDrillSize(pcbnew.VECTOR2I(pcbnew.FromMM(1.0), pcbnew.FromMM(1.0)))
+        pad.SetLayerSet(pcbnew.PAD.PTHMask())
+    else:
+        pad.SetLayerSet(pcbnew.PAD.SMDMask())
+    pad.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(at_mm[0]), pcbnew.FromMM(at_mm[1])))
+    pad.SetNet(net)
+    fp.Add(pad)
+
+
+def test_pth_pad_counts_as_via_and_smd_pad_does_not():
+    # An RJ45 pin: 1.6 mm PTH pad under a GND zone with 0.25 mm clearance -> radius 0.8 + 0.25 = 1.05 mm.
+    # A same-net SMD pad cuts no plane, so it gives no allowance.
+    board = pcbnew.BOARD()
+    sig = pcbnew.NETINFO_ITEM(board, 'SIG')
+    board.Add(sig)
+    gnd = pcbnew.NETINFO_ITEM(board, 'GND')
+    board.Add(gnd)
+    zone = pcbnew.ZONE(board)
+    zone.SetLayer(pcbnew.In1_Cu)
+    zone.SetNet(gnd)
+    zone.SetLocalClearance(pcbnew.FromMM(0.25))
+    board.Add(zone)
+    fp = pcbnew.FOOTPRINT(board)
+    board.Add(fp)
+    _pad(board, fp, sig, pcbnew.PAD_ATTRIB_PTH, 1.6, (10, 20))
+    _pad(board, fp, sig, pcbnew.PAD_ATTRIB_SMD, 1.0, (30, 40))
+
+    vias = sp.collect_vias(board, pcbnew)
+    assert [(round(x, 3), round(y, 3), round(r, 3)) for x, y, r in vias['SIG']] == [(10.0, 20.0, 1.05)], vias
+
+
 if __name__ == '__main__':
     test_collect_vias_radius_is_via_width_plus_zone_clearance()
     test_a_zone_on_another_layer_does_not_count()
+    test_pth_pad_counts_as_via_and_smd_pad_does_not()
     print('ok')
