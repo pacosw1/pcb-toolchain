@@ -418,3 +418,21 @@ proposed only R27 (no gain); the new one proposes C47 0.75 mm south (blocked 0.1
 CPU tokens: an iotroute routing stage reserves `iotroute_step.router_cpu()` = 1 (the router core has no thread or
 parallel crate) + 1 (the kicad-cli DRC phase of run.py) instead of the whole budget. The 16 GiB declared memory with
 8 GiB per job still limits the Mac to 2 compaction runs side by side (a third run waits 30 s, then stops).
+
+Result (2026-11-01, NET-CORE from the spread placement 1faf8ad8, blocks, router v7 judge, scratch only). Run A
+`--param w_esc=20`, run C `w_esc=60`; 4 workers, 10 x 15000 steps, `--repair`. Every step passed (DRC 0/0/0 + gate)
+down to s 0.333 (A) and 0.283 (C); PR #73 left 1 open at s 0.54-0.61. The routed length does not fall with the halo
+below s 0.54 (A: 1580 / 1937 / 1661 / 1914 mm at s 0.542 / 0.461 / 0.392 / 0.333): the router makes detours on the
+denser board. The escape repair moved C47 (the PR #73 blocker) once in run C step 1 and passed at once.
+
+| Board | length mm | vias | box sum mm2 | DRC / unconn / parity | gate |
+| --- | --- | --- | --- | --- | --- |
+| hand compaction (committed, router v4) | 1495 | 280 | 2242 | 0 / 0 / 0 | PASS |
+| same placement, router v7 | 1558 | 287 | 2242 | 0 / 0 / 0 | PASS |
+| PR #73 best (blocks + tighten, v6) | 1645 | 286 | 2284 | 0 / 0 / 0 | PASS |
+| escape A step 2, s 0.542 (v7) | 1580 | 296 | 2407 | 0 / 0 / 0 | PASS |
+| escape C step 4, s 0.392 (v7, router claim) | 1583 | 304 | - | 0 / 0 / 0 (router) | PASS (step) |
+
+A step 2 is better than PR #73 (-65 mm) but 22 mm / 9 vias worse than the hand placement routed by the same judge.
+U7 pads 2-3 have blocked 0 on it. Next: rank the passing steps by routed length (not the smallest halo), and add a
+length-aware term: the placement cost (HPWL) is flat at 1656-1711 over all steps, so it does not predict the route.
