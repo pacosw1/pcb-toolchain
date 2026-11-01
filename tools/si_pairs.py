@@ -23,7 +23,9 @@ Two opt-in keys, on a pair entry or at the spec top level (a pair entry override
     An area that removes no length from any pair is stale: the tool stops with exit 2.
   "via_antipad_allowance": true
     Track length within (via pad radius + the plane zone clearance to the via) of a via of the
-    same net does not count as uncovered (it still counts as track length). A WARN line prints
+    same net does not count as uncovered (it still counts as track length). A plated through-hole
+    pad of the same net (for example an RJ45 pin) counts as a via: its antipad cuts the planes too
+    (NET-CORE 2026-10-31). A WARN line prints
     when this removes more than 1.5 mm of a single via's own allowance.
 """
 import argparse
@@ -449,17 +451,26 @@ def collect_vias(bd, p):
     mm = p.ToMM
     zones = list(bd.Zones())
     vias = {}
+
+    def add(item, net, width_mm):
+        layers = set(item.GetLayerSet().Seq())
+        clearances = [mm(z.GetLocalClearance()) for z in zones if any(z.IsOnLayer(lid) for lid in layers)]
+        pos = item.GetPosition()
+        vias.setdefault(net, []).append((mm(pos.x), mm(pos.y), via_antipad_radius(width_mm, clearances)))
+
     for t in bd.GetTracks():
         if t.GetClass() != 'PCB_VIA':
             continue
-        net = t.GetNetname()
-        if not net:
-            continue
-        layers = set(t.GetLayerSet().Seq())
-        clearances = [mm(z.GetLocalClearance()) for z in zones if any(z.IsOnLayer(lid) for lid in layers)]
-        r = via_antipad_radius(mm(t.GetWidth(p.F_Cu)), clearances)
-        pos = t.GetPosition()
-        vias.setdefault(net, []).append((mm(pos.x), mm(pos.y), r))
+        if t.GetNetname():
+            add(t, t.GetNetname(), mm(t.GetWidth(p.F_Cu)))
+    # A plated through-hole pad cuts the planes like a via: a track that ends on it crosses its antipad.
+    # Width = the larger pad dimension (round pads: the diameter). SMD pads do not cut the planes.
+    for fp in bd.GetFootprints():
+        for pad in fp.Pads():
+            if pad.GetAttribute() != p.PAD_ATTRIB_PTH or not pad.GetNetname():
+                continue
+            size = pad.GetSize(p.F_Cu) if hasattr(pad, 'GetSize') else pad.GetSize()
+            add(pad, pad.GetNetname(), mm(max(size.x, size.y)))
     return vias
 
 
