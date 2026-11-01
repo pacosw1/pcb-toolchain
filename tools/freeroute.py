@@ -82,15 +82,21 @@ def main():
     ap.add_argument("--no-verify", action="store_true", help="do not fail on an unverified result (Freerouting 2.1.0 logs have no COMPLETED line)")
     ap.add_argument("--jar", default=JAR)
     ap.add_argument("--no-live", action="store_true", help="Disable optional visual-stage snapshots")
+    ap.add_argument("--unlock-nets-file", default="", help="file with nets whose existing tracks/vias stay unlocked: the "
+                    "router may rip them up and reroute them (rip-up finish; everything else stays fixed wiring)")
     a = ap.parse_args()
     if not os.path.isfile(a.jar):
         sys.exit(f"freeroute: jar not found: {a.jar}")
 
     board = pcbnew.LoadBoard(a.board)
     was_locked = {}
+    unlock = set()
+    if a.unlock_nets_file:
+        with open(a.unlock_nets_file) as f:
+            unlock = set(line.strip() for line in f if line.strip())
     for t in board.GetTracks():
         was_locked[t.m_Uuid.AsString()] = t.IsLocked()
-        t.SetLocked(True)
+        t.SetLocked(t.GetNetname() not in unlock)
 
     work = tempfile.mkdtemp(prefix="freeroute-")
     dsn, ses, log = (os.path.join(work, n) for n in ("board.dsn", "board.ses", "freerouting.log"))
@@ -133,7 +139,8 @@ def main():
             route_preview.finish(*live, 'failed')
         sys.exit(f"freeroute: Freerouting failed (rc {rc}), log: {log}")
 
-    vias_before = sum(1 for t in board.GetTracks() if t.GetClass() == "PCB_VIA")
+    # Locked vias stay; the vias of --unlock-nets-file nets are replaced by the SES routes of those nets.
+    vias_before = sum(1 for t in board.GetTracks() if t.GetClass() == "PCB_VIA" and t.GetNetname() not in unlock)
     if not pcbnew.ImportSpecctraSES(board, ses):
         if live:
             route_preview.finish(*live, 'import failed')

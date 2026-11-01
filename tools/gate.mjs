@@ -169,7 +169,8 @@ const jobs = {
   },
   async viapads() {
     const allow = c.viapads?.allow ?? [];
-    const out = await output('viapads', kicadPython, [tool('pcbtool.py'), 'viapads', pcb, ...(allow.length ? ['--allow', ...allow] : [])]);
+    const out = await output('viapads', kicadPython, [tool('pcbtool.py'), 'viapads', pcb, ...(allow.length ? ['--allow', ...allow] : []),
+      ...(c.viapads?.filled ? ['--filled'] : [])]);   // filled + capped via-in-pad (JLC POFV, 6+ layers; user 2026-10-29)
     return {viapads: countFrom(out, /(\d+) vias in SMD pads/)};
   },
   async paths() {
