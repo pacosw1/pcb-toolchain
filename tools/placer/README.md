@@ -331,6 +331,14 @@ Compaction: `compact_cli.py ... --router iotroute --repair [--repair-mode local]
 The step passes when the repair reaches score 0; `step-N/repair/repair.json` names the repaired board.
 `--read-args` must be the `cli.py read` arguments of PROB.json (the repair reads the problem again from each board).
 
+Result (2026-11-01, router v6, scratch only): NET-CORE compaction from the spread placement (1faf8ad8, lock-net
+copper), halo 1.04 -> 0.61, 7 steps. Step 3 (s 0.64) failed on 1 clearance (C50 GND pad 0.13 mm from a locked
+ETH_RXP via; rule 0.15 mm, below the 0.1 mm mask raster); one decap slide of C50 (0.5 mm) gave DRC 0/0/0 + gate PASS
+in one 40 s local route. Steps 4 and 5 left one PHY_LED net open; 4 and 1 proposals did not repair them. Best step
+(s 0.615): 1567 mm, 291 vias, gate PASS (spread 1888 mm / 301 vias with v6; hand compaction d6bbe911 1495 mm / 280
+vias). The HPWL search does not keep functional groups together: the sum of the reference block boxes grew from 4626
+to 6302 mm2 (reference 2652 mm2). Next: block borders on the spread board before compaction.
+
 Problem reader changes (2026-11-01, `kicad_io.py`): a User.1 border drawn as 4 lines is a block border, like a
 rectangle shape (NET-CORE draws its borders as lines; before, it had 0 blocks). A part rect covers its copper pads
 when they go beyond the courtyard (NET-CORE J1 USB-C: pad A1B12 is 0.8 mm outside; a compaction step put D3 on it:

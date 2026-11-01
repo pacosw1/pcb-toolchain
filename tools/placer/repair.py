@@ -517,6 +517,7 @@ def run(board, place, routed, outdir, mode='local', max_routes=8, per_round=4, i
         read_args=(), gate=None, log=print, route_fn=None, read_fn=None, write_fn=None, rip_fn=None,
         start_summary=None, decaps=True):
     """Repair loop (see the module text). The effects are injectable for tests. -> record dict."""
+    outdir = os.path.abspath(outdir)   # the gate runs in its snapshot folder: evidence paths must be absolute
     os.makedirs(outdir, exist_ok=True)
     route_fn = route_fn or route
     read_fn = read_fn or read_problem
