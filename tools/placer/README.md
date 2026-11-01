@@ -343,3 +343,43 @@ Problem reader changes (2026-11-01, `kicad_io.py`): a User.1 border drawn as 4 l
 rectangle shape (NET-CORE draws its borders as lines; before, it had 0 blocks). A part rect covers its copper pads
 when they go beyond the courtyard (NET-CORE J1 USB-C: pad A1B12 is 0.8 mm outside; a compaction step put D3 on it:
 shorting_items + solder_mask_bridge).
+
+## Block-aware compaction (`membership.py`, `cli.py read --blocks`, 2026-11-01)
+
+Membership source (before placement, so the spread board gets it): `membership.py derive SCH PCB -o members.json
+[--tighten] --draw OUT.kicad_pcb [--reference-builder tools/build-<board>-pcb.py]`. Component = the schematic
+`Group` field. Block = one IC (U, > 3 pads) + the passives that its schematic Description names, else by net
+affinity in the same group (signal nets first; rails only for a part on rails only, a decap). Connector support
+(Description names a connector, no IC), indicator LEDs, switches, test points and holes are not in a block. `--draw`
+writes the User.1 / User.2 borders + labels (the viewer source); `--tighten` moves block passives toward their IC on
+their own centre line (same side, same turn) to TIGHT_GAP 0.25 mm.
+Reader (`--blocks members.json`): a labelled User.1 border holds exactly its block parts: a rigid unit (internal
+layout fixed, the halo spaces blocks, not parts in a block). A block with a fixed part is soft: its parts stay
+single units with a cohesion net (`--w-block`, default 4). Each component has a cohesion net (`--w-comp`, default
+1). A cohesion net = the half perimeter of the group box in the HPWL term, with no RUDY demand and no halo fan-out.
+Locked copper private to a block (every end inside its border, a net only on block parts: a crystal route) moves
+with the block; locked copper to another unit (a diff pair to a connector) stays fixed and fixes its end units.
+`compact_cli.py --k-cap 1` keeps every halo step on the real outline (a rigid block counts its border box in the
+area model; NET-CORE got k 1.02-1.05, and a virtual step is no candidate for the real board).
+
+Result (2026-11-01, NET-CORE from the spread placement 1faf8ad8, lock-net copper, scratch only, each board checked
+with `kicad-cli pcb drc --schematic-parity` + `gate.mjs`). Membership from the schematic: 8 blocks (U1-U8), 5
+components; vs the builder BLOCKS of the hand board: U4, U5, U6, U8 Jaccard 1.0, U1 0.94 (R3 / C30 are in the SoC
+group of the schematic, the builder puts them in U2 RESET), U7 0.73 (MDI terminations and FB1 / C49 join U7; the
+builder splits J2 MDI / ETH1 SUPPLY). Soft blocks (pair or crystal copper on a part): U1, U3, U7, U8. Rigid: U2, U4,
+U5, U6. Box sum = the builder BLOCKS courtyard boxes (hand board 2242 mm2, spread 2535).
+
+| Board | length mm | vias | box sum mm2 | DRC / unconn / parity | gate |
+| --- | --- | --- | --- | --- | --- |
+| hand compaction (committed, router v4) | 1495 | 280 | 2242 | 0 / 0 / 0 | PASS |
+| same placement, router v7 (lock-from) | 1558 | 287 | 2242 | 0 / 0 / 0 | PASS |
+| PR #71 best, no blocks (v6) | 1567 | 291 | 4096 | 0 / 0 / 0 | PASS |
+| blocks + tighten, s 0.637 (v6) | 1645 | 286 | 2284 | 0 / 0 / 0 | PASS |
+| same placement, router v7 | 1689 | 296 | 2284 | 0 / 0 / 0 | PASS |
+| blocks, no tighten, s 0.75 (v7 judge) | 1704 | 310 | - | 0 / 0 / 0 (router) | PASS (step) |
+
+The blocks keep the functional groups together (box sum 2284 vs 4096 without blocks, 2242 by hand), but the length
+does not beat the hand board. Steps at s 0.54-0.61 routed 1534-1569 mm with 1 open each (PHY_LED2 / PHY_LED1 at the U7
+west pins 1-3, a pin escape walled in by the ETH1 parts); the repair found no legal move that opens it (also v7 on
+the s 0.54 placement: 1 open). The run without tighten (v7 judge) failed the same way at s 0.637 and was stopped. The hand board puts R26 west of the Y2 / R20 field for that escape. Next: a pin-escape
+term for a fixed IC side (escape channel per used pin) before more halo shrink.
