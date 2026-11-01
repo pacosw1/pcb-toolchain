@@ -977,8 +977,10 @@ impl<'a> Ctx<'a> {
     fn reserve_door(&mut self, fl: &pour::Fault) {
         let pr = self.bd.pours[fl.pour].clone();
         let hw = pr.mt / 2.0 + pour::POUR_PITCH;
-        // the largest clearance any item keeps to this pour (DRU zone rules included)
-        let clr = pr.net_clr.values().fold(pr.clr, |a, v| a.max(v.0).max(v.1).max(v.2));
+        // the zone clearance (v6: v5 took the largest DRU zone clearance of any net, 0.5 mm of the locked H7-CORE pairs,
+        // for every net: the strip then closed the 2.54 mm J2 pin channels). A net with a larger DRU zone clearance keeps
+        // it from the real fill, which the pour check models.
+        let clr = pr.clr;
         let last = fl.path.iter().rposition(|p| fl.door.iter().any(|d| (d.0 - p.0).abs() < 1e-9 && (d.1 - p.1).abs() < 1e-9));
         let extra = ((pr.mt + pr.clr) / pour::POUR_PITCH).ceil() as usize;
         let end = last.map(|e| (e + extra + 1).min(fl.path.len())).unwrap_or(fl.path.len());
@@ -2238,6 +2240,24 @@ fn fixed_returns(bd: &mut Board, o: &Opts) -> Vec<String> {
 
 /// Remove the return vias of `net` (GND vias it owns) with no signal via of `net` within --return-r: reserved for a
 /// layer change that the final path does not use.
+/// Pairs of drilled items of two different signal nets (at least one routed) closer than the antipad web.
+fn web_pairs(bd: &Board, web: f64) -> usize {
+    let items: Vec<&Shape> = bd.shapes.iter().filter(|s| s.alive && s.drill > 0.0 && s.net >= 0 && !bd.nets[s.net as usize].plane && s.kind != Kind::Spoke).collect();
+    let mut n = 0;
+    for (i, a) in items.iter().enumerate() {
+        if a.owner < 0 || a.kind != Kind::Via {
+            continue;
+        }
+        let Geo::Circ(x, y, r) = a.geo else { continue };
+        for (j, b) in items.iter().enumerate() {
+            if b.net != a.net && (b.owner < 0 || j > i) && b.geo.dist(x, y) < r + web - 1e-9 {
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
 /// Live signal vias (routed, not of a plane net) of nets other than `except`, within --return-r of (x, y): the nearest
 /// one's net.
 fn ret_user(ctx: &Ctx, x: f64, y: f64, except: usize) -> Option<usize> {
@@ -2695,6 +2715,7 @@ fn main() {
         // is in conflict
         todo = order.iter().cloned().filter(|n| involved.contains(n)).collect();
     }
+    let mut web_relaxed = 0.0f64;
     if !converged {
         // graceful end: take the best iteration, rip up nets until the copper is legal (most conflicts first), then
         // route the ripped nets again with soft conflicts blocking; what stays open is reported as failed
@@ -2756,6 +2777,14 @@ fn main() {
             ripped.extend((0..nn).filter(|&n| cut[n]));
         }
         ctx.strict = true;
+        // v6 fix 3c: the antipad web is a limit of the negotiation; when it did not converge, the strict end step
+        // routes the ripped nets with the web off (the copper rules stay), and the web pairs left are reported
+        web_relaxed = ctx.bd.web;
+        if web_relaxed > 0.0 {
+            ctx.bd.web = 0.0;
+            ctx.memo.clear();
+            ctx.gr.reset_cache();
+        }
         let mut reopened = Vec::new();
         for &net in order.iter().filter(|n| ripped.contains(n)) {
             let r = if ctx.bd.nets[net].plane { fanout_net(&mut ctx, net) } else { route_net(&mut ctx, net) };
@@ -2779,6 +2808,11 @@ fn main() {
     // RP-001 check of the final copper: a net with a signal via and no GND return within --return-r (its return via
     // was the one of a net ripped at the end) is routed again strictly, which places its returns; up to 3 rounds
     let mut notes = Vec::new();
+    if web_relaxed > 0.0 {
+        let n = web_pairs(ctx.bd, web_relaxed);
+        notes.push(format!("antipad web {web_relaxed:.2} mm relaxed in the strict end step (negotiation not converged): {n} signal via pair(s) closer"));
+        eprintln!("{}", notes.last().unwrap());
+    }
     // then the pour check of the final copper: a fault left after the negotiation (or made by a re-route here) gets a
     // hard door (pour strip reserved as fixed copper) and its wall nets are routed again strictly; up to 3 rounds
     let mut doors = 0;
