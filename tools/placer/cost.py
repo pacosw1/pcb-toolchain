@@ -46,6 +46,9 @@ the intersection of both boxes grown by g / 2 (0 when the gap is g or more). Box
 Forbidden area = courtyard area on cells outside the outline shrunk by edge_clearance or inside a keepout.
 Region box (opt-in): u['in_box'] = [x0, y0, x1, y1] (world) must hold the courtyard rects of the unit (box_miss); the
 miss in mm counts as forbidden area (a cost in the search, illegal in legal_penalty).
+Near rule (opt-in): u['near'] = [[lx, ly, wx, wy, d], ...]: the local pad point (lx, ly) of the unit stays within d mm
+of the world point (wx, wy), a pad of a fixed unit (near_miss; a protection part at its connector pin). The miss in mm
+counts like the region box miss.
 """
 import math
 import json
@@ -641,13 +644,14 @@ def edge_pads(u, pose_u):
 
 
 def edge_miss(u, pose_u, board, box=None):
-    """Edge anchor: u['edge'] = {'at': local point, 'sides': subset of 'LRTB', 'tol'} must lie on one of the
-    sides (inner line = outline box minus edge_clearance; T = smaller y). Returns the miss in mm beyond tol."""
+    """Edge anchor: u['edge'] = {'at': local point, 'sides': subset of 'LRTB', 'tol', 'inset' (optional)} must lie on
+    one of the sides (line = outline box minus `inset`, default edge_clearance; T = smaller y). Returns the miss in mm
+    beyond tol."""
     e = u.get('edge')
     if not e:
         return 0.0
     x0, y0, x1, y1 = box or outline_box(board)
-    c = board.get('edge_clearance', 0.0)
+    c = e.get('inset', board.get('edge_clearance', 0.0))
     ax, ay = rot_pt(e['at'][0], e['at'][1], pose_u[2])
     ax, ay = ax + pose_u[0], ay + pose_u[1]
     d = {'L': abs(ax - x0 - c), 'R': abs(x1 - c - ax), 'T': abs(ay - y0 - c), 'B': abs(y1 - c - ay)}
@@ -675,6 +679,16 @@ def part_centre(u, pose_u, ref):
     lx, ly = u.get('centres', {}).get(ref, (0.0, 0.0))
     x, y = rot_pt(lx, ly, pose_u[2])
     return x + pose_u[0], y + pose_u[1]
+
+
+def near_miss(u, pose_u):
+    """Near rule: u['near'] rows [lx, ly, wx, wy, d] (cli.py read --near). Returns the sum over the rows of the distance
+    in mm beyond d from the turned and moved local point (lx, ly) to the fixed world point (wx, wy)."""
+    miss = 0.0
+    for lx, ly, wx, wy, d in u.get('near') or ():
+        ax, ay = rot_pt(lx, ly, pose_u[2])
+        miss += max(0.0, math.hypot(pose_u[0] + ax - wx, pose_u[1] + ay - wy) - d)
+    return miss
 
 
 def rule_miss(pr, pose, i):
@@ -711,7 +725,7 @@ def forbidden(pr, pose, mask, i):
     return (mask.unit_area(w, pads, set(u.get('ko', [])), epads)
             + mask.fixed_area(epads, u.get('pad_copper_layers'))
             + mask.gap_area(w, u.get('dom', [])) + edge_miss(u, pose[i], pr['board'])
-            + box_miss(u, w, set(u.get('ko', []))))
+            + box_miss(u, w, set(u.get('ko', []))) + near_miss(u, pose[i]))
 
 
 VIA_EXTRA = (0.2, 0.5)  # via site distance beyond the pad edge + via radius (tools/gnd_pad_vias.py)
@@ -1150,7 +1164,8 @@ class Evaluator:
                 + self.mask.fixed_area(epads, self.units[i].get('pad_copper_layers'))
                 + self.mask.gap_area(w, self.units[i].get('dom', []))
                 + edge_miss(self.units[i], (self.X[i], self.Y[i], self.R[i]), self.board, self.obox)
-                + box_miss(self.units[i], w, self.kos[i]))
+                + box_miss(self.units[i], w, self.kos[i])
+                + near_miss(self.units[i], (self.X[i], self.Y[i], self.R[i])))
 
     def _pen(self, i, j):
         """(hard, soft) of units i and j."""
@@ -1277,6 +1292,7 @@ class Evaluator:
                 + self.mask.gap_area(w, self.units[i].get('dom', []))
                 + edge_miss(self.units[i], (self.X[i], self.Y[i], self.R[i]), self.board, self.obox)
                 + box_miss(self.units[i], w, self.kos[i])
+                + near_miss(self.units[i], (self.X[i], self.Y[i], self.R[i]))
                 + rule_miss(self._pr, self.pose(), i)
                 + (self._esc_hard(i) if self.p['esc_hard'] and self.esc else 0))
 

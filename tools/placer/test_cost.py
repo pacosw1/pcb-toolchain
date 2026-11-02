@@ -411,6 +411,59 @@ class EdgeAnchorTest(unittest.TestCase):
         d = ev.propose([(0, 2.0, 10.0, 0)])
         self.assertAlmostEqual(d, -2.5)
 
+    def test_inset_sets_an_exact_line(self):
+        """cli.py read --edge J2=B:S:0 (FW-IO 2026-11-02): inset 0 = the courtyard side flush on the outline, tol 0.05.
+        The default line (edge_clearance 1.0, tol 0.5) leaves the flush pose 0.5 mm out of tolerance."""
+        flush = self.pr(1.0)
+        self.assertAlmostEqual(cost.components(flush, [(1.0, 10.0, 0)], P)['oob'], 0.5)
+        flush['units'][0]['edge'].update(inset=0.0, tol=0.05)
+        self.assertAlmostEqual(cost.edge_miss(flush['units'][0], (1.0, 10.0, 0), flush['board']), 0.0)
+        self.assertAlmostEqual(cost.edge_miss(flush['units'][0], (1.5, 10.0, 0), flush['board']), 0.45)
+        ev = cost.Evaluator(flush, P)
+        self.assertAlmostEqual(ev.legal_penalty_at(0, 1.0, 10.0, 0), 0.0)
+        self.assertGreater(ev.legal_penalty_at(0, 2.0, 10.0, 0), 0.9)
+
+
+    def test_parse_edges_inset_and_tol(self):
+        from placer import cli
+        self.assertEqual(cli.parse_edges(['J1=TB:S']), {'J1': ('TB', 'S')})
+        self.assertEqual(cli.parse_edges(['J2=B:S:0']), {'J2': ('B', 'S', 0.0, 0.05)})
+        self.assertEqual(cli.parse_edges(['J4=R:E:0.2:0.1']), {'J4': ('R', 'E', 0.2, 0.1)})
+        for bad in ('J2=B:S:x', 'J2=B:S:-1', 'J2=B:S:0:0:0', 'J2=Q:S'):
+            with self.assertRaises(SystemExit):
+                cli.parse_edges([bad])
+
+
+class NearRuleTest(unittest.TestCase):
+    """u['near'] rows [lx, ly, wx, wy, d] (cli.py read --near): the local pad point stays within d mm of a fixed world
+    point (FW-IO 2026-11-02: the TVS pads at the J1 pins). The miss in mm is forbidden area and illegal."""
+
+    def pr(self, x, y):
+        u = unit('D1', x, y, [[-1, -1, 1, 1, 0.5]])
+        u['near'] = [[1.0, 0.0, 10.0, 2.0, 3.0]]  # pad at the right end of the unit, within 3 mm of (10, 2)
+        return problem([u], [], square_board(20.0, edge=0.5))
+
+    def test_inside_is_free_beyond_counts_its_mm_and_a_turn_moves_the_pad(self):
+        u = self.pr(9.0, 5.0)['units'][0]
+        self.assertAlmostEqual(cost.near_miss(u, (9.0, 5.0, 0)), 0.0)        # pad (10, 5): 3.0 mm
+        self.assertAlmostEqual(cost.near_miss(u, (9.0, 7.0, 0)), 2.0)        # pad (10, 7): 5.0 mm
+        self.assertAlmostEqual(cost.near_miss(u, (11.0, 5.0, 2)), 0.0)       # r 2: pad (10, 5)
+        self.assertAlmostEqual(cost.components(self.pr(9.0, 7.0), [(9.0, 7.0, 0)], P)['oob'], 2.0)
+
+    def test_evaluator_and_legality_agree_with_the_full_cost(self):
+        ev = cost.Evaluator(self.pr(9.0, 7.0), P)
+        self.assertAlmostEqual(ev.components()['oob'], 2.0)
+        self.assertAlmostEqual(ev.legal_penalty(0), 2.0)
+        self.assertAlmostEqual(ev.legal_penalty_at(0, 9.0, 5.0, 0), 0.0)
+        self.assertAlmostEqual(ev.propose([(0, 9.0, 5.0, 0)]), -2.0)
+
+    def test_parse_near(self):
+        from placer import cli
+        self.assertEqual(cli.parse_near(['D1.1=J1.1:7', 'U2.A1=J1.3:5.5']),
+                         [('D1', '1', 'J1', '1', 7.0), ('U2', 'A1', 'J1', '3', 5.5)])
+        for bad in ('D1.1=J1.1', 'D1=J1.1:7', 'D1.1=J1.1:x'):
+            with self.assertRaises(SystemExit):
+                cli.parse_near([bad])
 
 
 class RegionBoxTest(unittest.TestCase):

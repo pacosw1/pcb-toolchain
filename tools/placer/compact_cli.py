@@ -456,11 +456,11 @@ def main(argv=None):
     def write(q, pose, k, n):
         b = os.path.join(sdir(n), 'b')
         os.makedirs(b, exist_ok=True)
-        for ext in ('.kicad_pro', '.kicad_dru', '.kicad_sch'):
-            if os.path.exists(os.path.join(src, name + ext)):
-                shutil.copy(os.path.join(src, name + ext), b)
         out = os.path.join(b, name + '.kicad_pcb')
         kicad_io.write_board(a.board, q, [tuple(p) for p in pose], out, outline_scale=k)
+        # after the save (SaveBoard rewrites the .kicad_pro): project files, lib tables and the sub-sheets
+        from placer import repair
+        repair.copy_sidecars(a.board, out)
         return out
 
     routing_attempts = {}

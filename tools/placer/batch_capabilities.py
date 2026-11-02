@@ -11,6 +11,8 @@ def check_cost(problem, params):
             raise ValueError('batch: %s = %s is not supported (use the scalar path)' % (key, params[key]))
     if any(u.get('in_box') for u in problem.get('units', ())):
         raise ValueError('batch: region boxes (in_box, cli.py read --in-box) are not supported (use the scalar path)')
+    if any(u.get('near') for u in problem.get('units', ())):
+        raise ValueError('batch: near rules (cli.py read --near) are not supported (use the scalar path)')
     if problem.get('via_nets'):
         raise ValueError('batch: via nets (via room term) are not supported (use the scalar path)')
 

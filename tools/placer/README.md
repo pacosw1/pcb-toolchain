@@ -659,3 +659,22 @@ slide, dhot -0.10, 1486.9 mm; step 2 s 0.542 repaired by C51, dhot 0, 1507.7 mm;
 same proposal first in both repairs, so the run does not show a gain; the rank stays opt-in. Chosen board: DRC 0 / 0 / 0
 with parity and gate PASS (detached origin/main worktree); SW1, SW2, D1, D2 at the fixed positions and TP1-TP10 in the
 box.
+
+## Flush edge anchors and near rules (`--edge REF=SIDES:SIDE:INSET[:TOL]`, `--near`, 2026-11-02)
+
+Cause (FW-IO 100 x 60 compaction, a9aafcd6, lead review): the default edge anchor puts the courtyard side on the
+copper-to-edge line (0.5 mm) with tol 0.5, so connectors ended 0-1 mm inside the edge (J4/J5 0.9 mm, J3 0.1 mm out),
+and nothing kept the 24 V protection at its connector (SMCJ33A 50 mm from J1 against 5 mm on the 100 x 80 board).
+
+- `--edge J2=B:S:0` sets the line `INSET` mm from the outline (0 = flush) with tol 0.05 mm (`:TOL` sets it):
+  `u['edge']['inset']`, used by `cost.edge_miss` and the gplace projection; the batch path rejects it.
+- `--near D1.1=J1.1:9`: pad 1 of D1 stays within 9 mm (centre to centre) of pad 1 of J1, a part of a FIXED unit
+  (`u['near']` rows [lx, ly, wx, wy, d], `cost.near_miss`): forbidden area in the search, illegal in legal_penalty.
+  A movable target is an error (the term depends on one unit, so the incremental cost stays exact); the batch path
+  rejects it.
+- Free silk strip in front of a connector: a footprint-only F.Cu rule area `Jn_SILK` with `--zone-ref Jn_SILK=Jn`
+  (moves with the connector, keeps parts out; KiCad DRC checks it on the board).
+
+Result (FW-IO, scratch): near rules for D1 / D3 / R3 at the J1 pins (9-12 mm) with s 1.0 / 0.5 / 0.25 gave no legal
+candidate: the search left 24V IN and U2 TJA1051 1.4-2.3 mm beyond the limits and turned them (the legalizer timed
+out). The committed board fixes those parts at their 100 x 80 places under J1 (`--fix`) instead.

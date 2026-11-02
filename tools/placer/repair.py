@@ -568,6 +568,13 @@ def copy_sidecars(src_pcb, dst_pcb):
     for t in TABLES:
         if os.path.isfile(os.path.join(sd, t)):
             shutil.copyfile(os.path.join(sd, t), os.path.join(dd, t))
+    # sub-sheets of a hierarchical schematic (FW-IO blocks/X.kicad_sch): without them the parity check of the copy
+    # reads a partial netlist (FW-IO compaction step 0: 55 extra_footprint items on a board with parity 0)
+    from router.run import referenced_sheets
+    if os.path.isfile(os.path.join(sd, ss + '.kicad_sch')) and sd != dd:
+        for rel in referenced_sheets(os.path.join(sd, ss + '.kicad_sch'), sd):
+            os.makedirs(os.path.dirname(os.path.join(dd, rel)) or dd, exist_ok=True)
+            shutil.copyfile(os.path.join(sd, rel), os.path.join(dd, rel))
 
 
 def rip_region(pcb, points, radius, nets):

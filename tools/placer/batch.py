@@ -226,6 +226,8 @@ class BatchCost:
         self.edge = []
         for i, u in enumerate(pr['units']):
             e = u.get('edge')
+            if e and 'inset' in e:
+                raise ValueError('batch: an edge anchor with its own inset is not supported (cost.edge_miss)')
             if e:
                 at = np.array([cost.rot_pt(e['at'][0], e['at'][1], r) for r in range(4)], dtype=float)
                 self.edge.append((i, self._t(at), list(e['sides']), e.get('tol', 0.5)))

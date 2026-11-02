@@ -354,7 +354,7 @@ def cohesion_nets(units, member_of, members, w_block, w_comp):
 def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), free_box=None,
                  region_refs=(), region_weight=1.0, region_box=None, spacing=(0.5, 1.0), tie=0.0,
                  rigid_nets=(), decap_tie=0.0, keepout_zones=(), edges=None, zone_refs=None, domains=None, via_nets=(),
-                 rigid_groups=(), blocks=None, w_block=0.0, w_comp=0.0, tp_pins=False, in_boxes=()):
+                 rigid_groups=(), blocks=None, w_block=0.0, w_comp=0.0, tp_pins=False, in_boxes=(), near=()):
     """in_boxes: [(fnmatch pattern of refs, [x0, y0, x1, y1])]: each movable unit with a matching part keeps its
     courtyard rects inside the box (u['in_box'], cost.box_miss; illegal outside). A pattern that matches no part, a
     unit with two different boxes, or a box smaller than the unit is an error.
@@ -591,6 +591,7 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
 
     _edges_and_block_zones(board, out_units, index, member, by_ref, edges or {}, zone_refs or {})
     _in_boxes(out_units, in_boxes)
+    _near(out_units, member, index, by_ref, near)
     keepouts = _block_cuts(board, out_units, keepouts)
 
     skip_pat = list(skip)
@@ -777,6 +778,34 @@ def _block_cuts(board, units, keepouts):
     return rest
 
 
+def _near(units, member, index, by_ref, near):
+    """u['near'] rows [lx, ly, wx, wy, d] from near [(ref, pad, target ref, target pad, d)] (cli.py read --near): the
+    pad of a movable part stays within d mm (centre to centre) of the pad of a part in a fixed unit (FW-IO 2026-11-02:
+    the SMCJ33A at the J1 24 V / 0 V pins). A movable target, a missing part or pad, a part in a fixed unit or d <= 0
+    is an error (the rule depends on one unit only, so the incremental cost stays exact)."""
+    def pad_at(ref, num):
+        if ref not in by_ref:
+            raise ValueError('near: no part %s' % ref)
+        ps = [p for p in by_ref[ref].Pads() if p.GetNumber() == num]
+        if not ps:
+            raise ValueError('near: %s has no pad %s' % (ref, num))
+        q = ps[0].GetPosition()
+        return mm(q.x), mm(q.y)
+    for ref, num, tref, tnum, d in near or ():
+        if d <= 0:
+            raise ValueError('near %s.%s: distance %s must be > 0' % (ref, num, d))
+        if ref not in member:
+            raise ValueError('near: no part %s' % ref)
+        u, t = units[index[member[ref]]], (units[index[member[tref]]] if tref in member else None)
+        if t is None or not t['fixed']:
+            raise ValueError('near %s.%s: target %s must be a part of a fixed unit' % (ref, num, tref))
+        if u['fixed']:
+            raise ValueError('near %s.%s: %s is in a fixed unit' % (ref, num, ref))
+        x, y = pad_at(ref, num)
+        wx, wy = pad_at(tref, tnum)
+        u.setdefault('near', []).append([x - u['x'], y - u['y'], wx, wy, float(d)])
+
+
 def _in_boxes(units, in_boxes):
     """u['in_box'] for each movable unit with a part that matches a pattern of in_boxes (read_problem)."""
     for pat, box in in_boxes or ():
@@ -805,7 +834,7 @@ def _edges_and_block_zones(board, units, index, member, by_ref, edges, zone_refs
     it moves with it and is a keepout rect (u['ko']) of class 0, cut at the anchor line when the unit has an
     anchor (the part beyond lies off the board). Other rule areas stay where they are."""
     cut = {}
-    for ref, (sides, side) in edges.items():
+    for ref, (sides, side, *exact) in edges.items():
         i = index[member[ref]]
         u = units[i]
         rc = fp_rect(by_ref[ref])
@@ -814,6 +843,8 @@ def _edges_and_block_zones(board, units, index, member, by_ref, edges, zone_refs
             rc = u['box']
         ax, ay = {'N': (mx, rc[1]), 'S': (mx, rc[3]), 'W': (rc[0], my), 'E': (rc[2], my)}[side]
         u['edge'] = {'at': [ax - u['x'], ay - u['y']], 'sides': sides, 'tol': 0.5}
+        if exact:  # an exact line: inset mm from the outline (0 = flush), tol (cli.parse_edges)
+            u['edge'].update(inset=float(exact[0]), tol=float(exact[1]))
         cut[i] = (side, ax, ay)
     for z in board.Zones():
         if not z.GetIsRuleArea() or z.GetZoneName() not in zone_refs:

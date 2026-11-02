@@ -259,6 +259,7 @@ class Model:
             e = self.edges[i]
             if not e:
                 continue
+            c = e.get('inset', self.board.get('edge_clearance', 0.0))
             ax, ay = cost.rot_pt(e['at'][0], e['at'][1], self.R[i])
             px, py = x[i] + ax, y[i] + ay
             opts = {'L': (bx0 + c - px, 0.0), 'R': (bx1 - c - px, 0.0), 'T': (0.0, by0 + c - py),

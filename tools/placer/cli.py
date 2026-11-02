@@ -44,7 +44,7 @@ def cmd_read(a):
                                zone_refs=dict(x.split('=', 1) for x in a.zone_ref),
                                domains=parse_domains(a.domain) if a.domain else None, via_nets=a.via_net,
                                rigid_groups=groups, blocks=a.blocks, w_block=a.w_block, w_comp=a.w_comp,
-                               tp_pins=a.tp_pins, in_boxes=parse_in_boxes(a.in_box))
+                               tp_pins=a.tp_pins, in_boxes=parse_in_boxes(a.in_box), near=parse_near(a.near))
     if engineering:
         from engineering_constraints import prepare_problem
         pr = prepare_problem(a.engineering_root,a.engineering_board,a.engineering_manifest,pr)
@@ -73,14 +73,42 @@ def parse_domains(items):
 
 
 def parse_edges(items):
-    """['J1=TB:S', ...] -> {'J1': ('TB', 'S')}: the S side of the J1 courtyard (as placed now) on the T or B edge."""
+    """['J1=TB:S', 'J2=B:S:0', ...] -> {'J1': ('TB', 'S'), 'J2': ('B', 'S', 0.0, 0.05)}: the S side of the J1
+    courtyard (as placed now) on the T or B edge. Default line: the outline minus the copper-to-edge clearance, tol
+    0.5 mm. An optional INSET (mm from the outline; 0 = flush, as a connector body at the board edge) and TOL
+    (default 0.05 mm with an inset) set the line exactly (FW-IO 2026-11-02: the default put the connectors 0-1 mm in)."""
     out = {}
     for it in items:
         ref, v = it.split('=', 1)
-        sides, side = v.split(':')
+        f = v.split(':')
+        if len(f) not in (2, 3, 4):
+            raise SystemExit('bad --edge %s: use REF=<sides from LRTB>:<N|S|E|W>[:INSET[:TOL]]' % it)
+        sides, side = f[0], f[1]
         if not sides or set(sides) - set('LRTB') or side not in ('N', 'S', 'E', 'W'):
-            raise SystemExit('bad --edge %s: use REF=<sides from LRTB>:<N|S|E|W>' % it)
-        out[ref] = (sides, side)
+            raise SystemExit('bad --edge %s: use REF=<sides from LRTB>:<N|S|E|W>[:INSET[:TOL]]' % it)
+        try:
+            extra = tuple(float(x) for x in f[2:])
+        except ValueError:
+            raise SystemExit('bad --edge %s: INSET and TOL are mm' % it)
+        if extra and (extra[0] < 0 or (len(extra) > 1 and extra[1] < 0)):
+            raise SystemExit('bad --edge %s: INSET and TOL must be >= 0' % it)
+        out[ref] = (sides, side) + (extra + (0.05,) if len(extra) == 1 else extra)
+    return out
+
+
+def parse_near(items):
+    """['D1.1=J1.1:7', ...] -> [('D1', '1', 'J1', '1', 7.0)]: pad 1 of D1 stays within 7 mm (centre to centre) of pad 1
+    of J1, a part of a fixed unit (cost.near_miss)."""
+    out = []
+    for it in items:
+        try:
+            a, rest = it.split('=', 1)
+            b, d = rest.rsplit(':', 1)
+            ref, pad = a.rsplit('.', 1)
+            tref, tpad = b.rsplit('.', 1)
+            out.append((ref, pad, tref, tpad, float(d)))
+        except ValueError:
+            raise SystemExit('bad --near %s: use REF.PAD=REF.PAD:MM' % it)
     return out
 
 
@@ -246,8 +274,10 @@ def main(argv=None):
                    help='rule area that moves with the unit of REF (antenna, mains keepout of a block)')
     r.add_argument('--domain', nargs='*', default=[], metavar='CLASS:GAP:CLASS_GAP',
                    help="override of the domain rules read from the board .kicad_dru, for example 'MAINS_K*:8:3'")
-    r.add_argument('--edge', nargs='*', default=[], metavar='REF=SIDES:SIDE',
-                   help='edge anchor: side N/S/E/W of the REF courtyard (as placed now) on a board edge in LRTB')
+    r.add_argument('--edge', nargs='*', default=[], metavar='REF=SIDES:SIDE[:INSET[:TOL]]',
+                   help='edge anchor: side N/S/E/W of the REF courtyard (as placed now) on a board edge in LRTB; '
+                        'INSET mm from the outline (0 = flush; default the copper-to-edge clearance, tol 0.5), '
+                        'TOL mm (default 0.05 with an inset)')
     r.add_argument('--via-net', nargs='*', default=[], metavar='NET',
                    help='nets (fnmatch) whose pads need a free via site nearby (via room cost), for example GND')
     r.add_argument('--blocks', metavar='MEMBERS.json', help='explicit block/component membership (membership.py): '
@@ -258,6 +288,9 @@ def main(argv=None):
     r.add_argument('--in-box', nargs='*', default=[], metavar='PATTERN=X0,Y0,X1,Y1',
                    help='the movable units with a part matching PATTERN (fnmatch) keep their courtyards in the box '
                         '(board mm); illegal outside (cost.box_miss)')
+    r.add_argument('--near', nargs='*', default=[], metavar='REF.PAD=REF.PAD:MM',
+                   help='pad of a movable part within MM (centre to centre) of a pad of a fixed part, for example a TVS '
+                        'at its connector pin; illegal beyond (cost.near_miss)')
     r.add_argument('--w-comp', type=float, default=1.0, help='cohesion weight of a component (with --blocks)')
     r.add_argument('--engineering-manifest',default=os.environ.get('PCB_ENGINEERING_MANIFEST'))
     r.add_argument('--engineering-board',default=os.environ.get('PCB_ENGINEERING_BOARD'),help='exact configured board ID for the reviewed manifest')
