@@ -23,6 +23,8 @@ class BatchCapabilitiesTests(unittest.TestCase):
             self.assertEqual(p, before)
         with self.assertRaisesRegex(ValueError, 'via room'):
             check_cost({'via_nets': ['GND']}, anneal.params_all({}))
+        with self.assertRaisesRegex(ValueError, 'in_box'):
+            check_cost({'units': [{'name': 'TP1', 'in_box': [0, 0, 1, 1]}]}, anneal.params_all({}))
 
     def test_lam_cost_can_be_scored_but_search_is_rejected(self):
         p = anneal.params_all({'schedule': 'lam'})

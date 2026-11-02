@@ -4,6 +4,7 @@
 Run with the KiCad bundled Python ($PY; it has numpy and pcbnew):
   $PY tools/placer/cli.py read  BOARD -o prob.json [--fix REF ...] [--skip-net=GND,+3V3,...] [--keepout-layer User.Comments]
                                  [--free-box X0 Y0 X1 Y1] [--region-ref U1 --region-weight 3 [--region-box ...]]
+                                 [--in-box 'TP*=X0,Y0,X1,Y1' ...]
   $PY tools/placer/cli.py run   prob.json -o result.json [--workers 16 --epochs 20 --steps 20000 --seed 1 --top 3]
                                  [--param w_ov=20 ...]
   $PY tools/placer/cli.py write BOARD prob.json result.json --outdir DIR [--initial]
@@ -43,7 +44,7 @@ def cmd_read(a):
                                zone_refs=dict(x.split('=', 1) for x in a.zone_ref),
                                domains=parse_domains(a.domain) if a.domain else None, via_nets=a.via_net,
                                rigid_groups=groups, blocks=a.blocks, w_block=a.w_block, w_comp=a.w_comp,
-                               tp_pins=a.tp_pins)
+                               tp_pins=a.tp_pins, in_boxes=parse_in_boxes(a.in_box))
     if engineering:
         from engineering_constraints import prepare_problem
         pr = prepare_problem(a.engineering_root,a.engineering_board,a.engineering_manifest,pr)
@@ -80,6 +81,22 @@ def parse_edges(items):
         if not sides or set(sides) - set('LRTB') or side not in ('N', 'S', 'E', 'W'):
             raise SystemExit('bad --edge %s: use REF=<sides from LRTB>:<N|S|E|W>' % it)
         out[ref] = (sides, side)
+    return out
+
+
+def parse_in_boxes(items):
+    """['TP*=169,120,171.5,153', ...] -> [('TP*', [169.0, 120.0, 171.5, 153.0])]: the movable units with a part
+    that matches the pattern keep their courtyards inside the box (board mm; cost.box_miss)."""
+    out = []
+    for it in items:
+        pat, _, v = it.partition('=')
+        try:
+            box = [float(x) for x in v.split(',')]
+        except ValueError:
+            box = []
+        if not pat or len(box) != 4:
+            raise SystemExit('bad --in-box %s: use PATTERN=X0,Y0,X1,Y1' % it)
+        out.append((pat, box))
     return out
 
 
@@ -238,6 +255,9 @@ def main(argv=None):
     r.add_argument('--w-block', type=float, default=4.0, help='cohesion weight of a soft block (with --blocks)')
     r.add_argument('--tp-pins', action='store_true', help='a test point pad is a pin of its net (README '
                    '"Test-point pins"); default: test points have no pins in the cost')
+    r.add_argument('--in-box', nargs='*', default=[], metavar='PATTERN=X0,Y0,X1,Y1',
+                   help='the movable units with a part matching PATTERN (fnmatch) keep their courtyards in the box '
+                        '(board mm); illegal outside (cost.box_miss)')
     r.add_argument('--w-comp', type=float, default=1.0, help='cohesion weight of a component (with --blocks)')
     r.add_argument('--engineering-manifest',default=os.environ.get('PCB_ENGINEERING_MANIFEST'))
     r.add_argument('--engineering-board',default=os.environ.get('PCB_ENGINEERING_BOARD'),help='exact configured board ID for the reviewed manifest')

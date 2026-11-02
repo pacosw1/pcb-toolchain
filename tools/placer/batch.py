@@ -13,7 +13,7 @@ Delta per move: pair penalties of the moved rects against all rects (static gap 
 the same rules as cost._pen / _domain_gap), forbidden area of the moved units (summed-area lookups), and a full
 recompute of HPWL, RUDY (difference array + 2-D cumsum) and the domain-area penalty (convex hull per chain).
 Not supported (ValueError, fail closed): crossings (w_x), rows (w_row), pin_demand, pin escape (w_esc), wire length
-(w_mst), via nets, the Lam schedule.
+(w_mst), region boxes (in_box), via nets, the Lam schedule.
 Positions are integer grid steps from the start pose, so float32 does not drift.
 """
 import math

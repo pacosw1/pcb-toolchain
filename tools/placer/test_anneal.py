@@ -81,6 +81,45 @@ class MoveBoxTest(unittest.TestCase):
             ev.commit()
 
 
+class RegionBoxMoveTest(unittest.TestCase):
+    """u['in_box'] (cli.py read --in-box): a translate keeps the courtyard in the box; a unit outside moves in;
+    the legalizer puts a unit back into the box."""
+
+    def pr(self):
+        pr = chain()
+        for u in pr['units'][:3]:
+            u['in_box'] = [24.0, 4.0, 29.0, 26.0]
+        return pr
+
+    def test_translate_keeps_the_courtyard_in_the_box(self):
+        pr = self.pr()
+        ev = cost.Evaluator(pr, P)
+        mv = anneal.Mover(pr, ev, dict(P, p_swap=0, p_rot=0))
+        rng = random.Random(3)
+        seen = set()
+        for _ in range(3000):
+            moves, _ = mv.propose(rng, window=15.0)
+            for i, x, y, r in moves:
+                if i < 3:
+                    seen.add(i)
+                    self.assertTrue(24 + 1 - 1e-9 <= x <= 29 - 1 + 1e-9 and 4 + .6 - 1e-9 <= y <= 26 - .6 + 1e-9, (i, x, y))
+            ev.propose(moves)
+            ev.commit()
+        self.assertEqual(seen, {0, 1, 2})
+        self.assertEqual([round(cost.box_miss(pr['units'][i], ev._world(i).tolist()), 9) for i in range(3)], [0, 0, 0])
+
+    def test_legalizer_moves_a_unit_back_into_the_box(self):
+        pr = self.pr()
+        ev = cost.Evaluator(pr, P)
+        ev.propose([(0, 22.0, 15.0, ev.R[0])])  # 1 mm left of the box
+        ev.commit()
+        self.assertGreater(ev.legal_penalty(0), 0)
+        bad = anneal.legalize(ev, dict(P, legal_rotate=0))
+        self.assertNotIn(0, bad)
+        self.assertAlmostEqual(ev.legal_penalty(0), 0.0)
+        self.assertGreaterEqual(ev.X[0] - 1, 24 - 1e-9)
+
+
 class DeterminismTest(unittest.TestCase):
     def test_profile_accounts_for_setup_epochs_and_finish(self):
         result = anneal.optimize(two_units(), P, workers=1, epochs=2, steps=20, seed=11, top=1)

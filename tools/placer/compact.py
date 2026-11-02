@@ -72,7 +72,8 @@ def board_scale(pr):
 
 
 def virtual(pr, k):
-    """Copy of the problem with the outline and move box scaled by k about the outline centre."""
+    """Copy of the problem with the outline, move box and unit region boxes (in_box) scaled by k about the outline
+    centre."""
     if k == 1.0:
         return pr
     q = copy.deepcopy(pr)
@@ -86,6 +87,10 @@ def virtual(pr, k):
     if pr.get('move_box'):
         b = pr['move_box']
         q['move_box'] = sc(b[0], b[1]) + sc(b[2], b[3])
+    for u in q['units']:  # a region box at the edge stays at the scaled edge (its size grows by k too)
+        if u.get('in_box'):
+            b = u['in_box']
+            u['in_box'] = sc(b[0], b[1]) + sc(b[2], b[3])
     return q
 
 

@@ -354,8 +354,11 @@ def cohesion_nets(units, member_of, members, w_block, w_comp):
 def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), free_box=None,
                  region_refs=(), region_weight=1.0, region_box=None, spacing=(0.5, 1.0), tie=0.0,
                  rigid_nets=(), decap_tie=0.0, keepout_zones=(), edges=None, zone_refs=None, domains=None, via_nets=(),
-                 rigid_groups=(), blocks=None, w_block=0.0, w_comp=0.0, tp_pins=False):
-    """tp_pins: the pad of each test point is a pin of its net (README "Test-point pins"); without it a test point
+                 rigid_groups=(), blocks=None, w_block=0.0, w_comp=0.0, tp_pins=False, in_boxes=()):
+    """in_boxes: [(fnmatch pattern of refs, [x0, y0, x1, y1])]: each movable unit with a matching part keeps its
+    courtyard rects inside the box (u['in_box'], cost.box_miss; illegal outside). A pattern that matches no part, a
+    unit with two different boxes, or a box smaller than the unit is an error.
+    tp_pins: the pad of each test point is a pin of its net (README "Test-point pins"); without it a test point
     has no pin in the cost and goes anywhere (its track length is not in the cost).
     blocks: explicit membership (membership.py JSON path or dict). A User.1 border whose label is a block name
     holds exactly those parts (not the parts whose anchor is inside it), when no part of the block is fixed: a rigid
@@ -587,6 +590,7 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
             out_units[-1]['pad_rects'] = pad_boxes
 
     _edges_and_block_zones(board, out_units, index, member, by_ref, edges or {}, zone_refs or {})
+    _in_boxes(out_units, in_boxes)
     keepouts = _block_cuts(board, out_units, keepouts)
 
     skip_pat = list(skip)
@@ -771,6 +775,27 @@ def _block_cuts(board, units, keepouts):
         u['rects'].append([hb[0] - u['x'], hb[1] - u['y'], hb[2] - u['x'], hb[3] - u['y'], 0.0])
         u.setdefault('cuts', []).extend(d.m_Uuid.AsString() for d, bb in cuts if inside(bb, hb))
     return rest
+
+
+def _in_boxes(units, in_boxes):
+    """u['in_box'] for each movable unit with a part that matches a pattern of in_boxes (read_problem)."""
+    for pat, box in in_boxes or ():
+        box = [float(v) for v in box]
+        if len(box) != 4 or box[0] >= box[2] or box[1] >= box[3]:
+            raise ValueError('in_box %s: box %s is not x0 y0 x1 y1 with x0 < x1, y0 < y1' % (pat, box))
+        hit = [u for u in units if any(fnmatch.fnmatchcase(r, pat) for r in u['refs'])]
+        if not hit:
+            raise ValueError('in_box %s: no part matches' % pat)
+        for u in hit:
+            if u['fixed']:
+                continue
+            if u.get('in_box') not in (None, box):
+                raise ValueError('in_box: unit %s has two boxes %s and %s' % (u['name'], u['in_box'], box))
+            rs = [r for k, r in enumerate(u['rects']) if k not in set(u.get('ko', []))]
+            w, h = max(r[2] for r in rs) - min(r[0] for r in rs), max(r[3] for r in rs) - min(r[1] for r in rs)
+            if w > box[2] - box[0] + 1e-9 or h > box[3] - box[1] + 1e-9:
+                raise ValueError('in_box %s: unit %s (%.3f x %.3f mm) does not fit the box %s' % (pat, u['name'], w, h, box))
+            u['in_box'] = box
 
 
 def _edges_and_block_zones(board, units, index, member, by_ref, edges, zone_refs):

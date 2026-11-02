@@ -44,6 +44,8 @@ Spacing overlap of two courtyard boxes with classes ca, cb: g = max(ca, cb), pen
 the intersection of both boxes grown by g / 2 (0 when the gap is g or more). Boxes of the same unit
 (rigid block layout) and pairs of two fixed units do not count.
 Forbidden area = courtyard area on cells outside the outline shrunk by edge_clearance or inside a keepout.
+Region box (opt-in): u['in_box'] = [x0, y0, x1, y1] (world) must hold the courtyard rects of the unit (box_miss); the
+miss in mm counts as forbidden area (a cost in the search, illegal in legal_penalty).
 """
 import math
 import json
@@ -652,6 +654,21 @@ def edge_miss(u, pose_u, board, box=None):
     return max(0.0, min(d[s] for s in e['sides']) - e.get('tol', 0.5))
 
 
+def box_miss(u, rects, ko=()):
+    """Region box: u['in_box'] = [x0, y0, x1, y1] (world) must hold the world courtyard rects of the unit (spacing not
+    included; keepout rects, indices ko, do not count). Returns the miss in mm: the sum of the four overshoots of the
+    rect box (0 = inside). The unit set comes from cli.py read --in-box PATTERN=BOX (kicad_io)."""
+    b = u.get('in_box')
+    if not b:
+        return 0.0
+    rs = [r for k, r in enumerate(rects) if k not in ko]
+    if not rs:
+        return 0.0
+    x0, y0 = min(r[0] for r in rs), min(r[1] for r in rs)
+    x1, y1 = max(r[2] for r in rs), max(r[3] for r in rs)
+    return max(0.0, b[0] - x0) + max(0.0, b[1] - y0) + max(0.0, x1 - b[2]) + max(0.0, y1 - b[3])
+
+
 
 def part_centre(u, pose_u, ref):
     """World centre of one part of a unit: u['centres'][ref] (local, r = 0), else the unit origin."""
@@ -693,7 +710,8 @@ def forbidden(pr, pose, mask, i):
     epads = pads or world_pads(u, pose[i], 'edge_pads')
     return (mask.unit_area(w, pads, set(u.get('ko', [])), epads)
             + mask.fixed_area(epads, u.get('pad_copper_layers'))
-            + mask.gap_area(w, u.get('dom', [])) + edge_miss(u, pose[i], pr['board']))
+            + mask.gap_area(w, u.get('dom', [])) + edge_miss(u, pose[i], pr['board'])
+            + box_miss(u, w, set(u.get('ko', []))))
 
 
 VIA_EXTRA = (0.2, 0.5)  # via site distance beyond the pad edge + via radius (tools/gnd_pad_vias.py)
@@ -1131,7 +1149,8 @@ class Evaluator:
         return (self.mask.unit_area(w, pads, self.kos[i], epads)
                 + self.mask.fixed_area(epads, self.units[i].get('pad_copper_layers'))
                 + self.mask.gap_area(w, self.units[i].get('dom', []))
-                + edge_miss(self.units[i], (self.X[i], self.Y[i], self.R[i]), self.board, self.obox))
+                + edge_miss(self.units[i], (self.X[i], self.Y[i], self.R[i]), self.board, self.obox)
+                + box_miss(self.units[i], w, self.kos[i]))
 
     def _pen(self, i, j):
         """(hard, soft) of units i and j."""
@@ -1257,6 +1276,7 @@ class Evaluator:
                 + self.mask.fixed_area(epads, self.units[i].get('pad_copper_layers'))
                 + self.mask.gap_area(w, self.units[i].get('dom', []))
                 + edge_miss(self.units[i], (self.X[i], self.Y[i], self.R[i]), self.board, self.obox)
+                + box_miss(self.units[i], w, self.kos[i])
                 + rule_miss(self._pr, self.pose(), i)
                 + (self._esc_hard(i) if self.p['esc_hard'] and self.esc else 0))
 

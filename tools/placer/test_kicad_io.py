@@ -150,6 +150,21 @@ class RoundTripTest(unittest.TestCase):
         cli.main(['read', self.board, '-o', out, '--via-net', 'GND', 'NOPE*'])
         self.assertEqual(json.load(open(out))['via_nets'], [pcbnew.LoadBoard(self.board).FindNet('GND').GetNetCode()])
 
+    def test_cli_read_in_box_gives_the_matching_movable_units_their_region_box(self):
+        from placer import cli
+        out = os.path.join(self.tmp, 'p.json')
+        cli.main(['read', self.board, '-o', out, '--in-box', 'R2=0,0,500,500'])
+        with open(out) as f:
+            pr = json.load(f)
+        self.assertEqual(pr['units'][self.unit(pr, 'R2')]['in_box'], [0.0, 0.0, 500.0, 500.0])
+        self.assertEqual([u['name'] for u in pr['units'] if u.get('in_box')], [pr['units'][self.unit(pr, 'R2')]['name']])
+        with self.assertRaisesRegex(ValueError, 'no part matches'):
+            kicad_io.read_problem(self.board, in_boxes=[('NOPE*', [0, 0, 500, 500])])
+        with self.assertRaisesRegex(ValueError, 'does not fit'):
+            kicad_io.read_problem(self.board, in_boxes=[('R2', [0, 0, 0.1, 500])])
+        with self.assertRaises(SystemExit):
+            cli.main(['read', self.board, '-o', out, '--in-box', 'R2=0,0,1'])
+
     def test_a_locked_track_is_fixed_copper_and_the_writer_keeps_it(self):
         b = pcbnew.LoadBoard(self.board)
         t = next(t for t in b.GetTracks() if t.GetClass() == 'PCB_TRACK')

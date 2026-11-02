@@ -557,3 +557,48 @@ moved: the RST / FEL buttons (SW1, SW2) left the right edge next to their silksc
 bottom edge. The hand board keeps these user-facing parts at the edge. The problem file gave them no edge or fixed
 constraint, so the search moved them freely. Before a placer result is adopted, buttons, LEDs and edge test points
 need a constraint (`fix` or an edge region); then compare the length again.
+
+## Fixed user-facing parts and a test-point region (`cli.py read --in-box PATTERN=X0,Y0,X1,Y1`, 2026-11-01)
+
+Cause: the w_mst run above gave the user-facing parts no constraint. The search moved the RST / FEL buttons, the LEDs
+and the test points. User decision (2026-11-01): buttons and LEDs stay at their hand-board positions; the test
+points make one group in a region along the right edge, in any order.
+
+Change. `--in-box 'TP*=X0,Y0,X1,Y1'` (`read_problem(in_boxes=...)`): each movable unit with a matching part keeps its
+courtyard rects (spacing not included) inside the box. `cost.box_miss` = the sum of the four overshoots in mm: forbidden
+area in the search cost, illegal in `legal_penalty` (legalizer, repair). A translate move keeps the unit in its box
+(a unit outside moves in). `compact.virtual` scales the box with the outline. The batch path rejects it. A pattern with
+no match, two boxes on one unit or a box smaller than the unit is an error. Without the option the problem file does
+not change (NET-CORE probA_tp: the same sha256 84a58409...).
+
+NET-CORE constraints (spread placement f9fcd2ed; SW1, SW2, D1, D2 are already at the hand positions in it):
+- `--fix SW1 SW2 D1 D2`: SW1 RESET (166.5, 158.0) r 90, SW2 FEL (166.5, 166.0) r 90 (silkscreen RST at y 162.6 and FEL
+  at y 170.6 under them), D1 STATUS (155.0, 177.0), D2 PWR (161.0, 177.0). D3 (SMF5.0A) is a TVS diode, not an LED.
+- `--in-box 'TP*=168.5,123.5,171.5,152.5'` (TP1-TP10). Hand-board right-edge group TP3/4/5/8/9: courtyard box x
+  169.0-171.6, y 138.3-152.5. Right side: the placer edge line 171.5 (outline 172.0 minus edge clearance 0.5); the
+  hand x 170.3 is 0.05 mm over it in the placer model. Left side: 169.0 minus 0.5 mm (the `--edge` anchor tolerance),
+  so a test point has 0.5 mm of x play. Bottom: the hand group bottom 152.5 (SW1 spacing below it). Height: 10 test
+  points at the hand pitch 2.9 mm = 29.0 mm, so top 123.5. A short search on the s 0.75 problem was legal with it.
+- Same run parameters as the w_mst run (blocks membersA.json, `--tp-pins`, `--param w_esc=20 w_mst=1`, `--repair`,
+  4 workers, 10 x 15000 steps, `--virtual-first --k-cap 1`, rank length, router iotroute), plus the two options in
+  the problem and in `--read-args`. Router v9 (current main).
+
+| Step | s | result | length mm | vias |
+| --- | --- | --- | --- | --- |
+| 0 | 0.750 | PASS, chosen | 1485.6 | 286 |
+| 1 | 0.637 | FAIL after repair: 1 open, /NAND_WP U6 pad 3 - U1 pad 15 | 1465.6 | 297 |
+| 2 | 0.694 | FAIL after repair: 1 open, ETH_AVDD at U7 / R22 | 1525.3 | 310 |
+| 3 | 0.722 | PASS | 1530.5 | 306 |
+
+| Board | length mm | vias | DRC / unconn / parity | gate |
+| --- | --- | --- | --- | --- |
+| hand placement (`run.py --lock-from`, v9) | 1558.6 | 280 | 0 / 0 / 0 | PASS |
+| w_mst run step 1, no constraints (v8) | 1390.9 | 287 | 0 / 0 / 0 | PASS |
+| this run step 0, constraints (v9) | 1485.6 | 286 | 0 / 0 / 0 | PASS |
+
+Independent check of step 0 (scratch copy, sha256 2f5c7ffb...): `kicad-cli pcb drc --schematic-parity` 0 / 0 / 0,
+`node tools/gate.mjs NET-CORE --fresh` PASS (detached origin/main worktree). By coordinates: SW1, SW2, D1, D2 at the
+hand positions and rotations; all 10 test points in one column, pad x 169.75-170.25, y 125.95-151.25, model rects in
+the box. The KiCad courtyard (1.297 mm radius with the line, model 1.25 mm) goes up to 0.05 mm past the box.
+The constraints cost 95 mm against the unconstrained run. The result stays 73 mm shorter than the hand placement
+with 6 more vias. The halo shrink failed at s 0.694 and below on interior escapes, not at the constrained parts.

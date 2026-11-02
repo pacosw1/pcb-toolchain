@@ -77,6 +77,12 @@ class VirtualBoardTest(unittest.TestCase):
         self.assertEqual(q['move_box'], [-1.0, 0.0, 3.0, 4.0])
         self.assertIs(compact.virtual(pr, 1.0), pr)
 
+    def test_virtual_board_scales_the_unit_region_box(self):
+        pr = {'units': [{'name': 'TP1', 'in_box': [8, 1, 10, 3]}], 'nets': [], 'board': board(10, 4)}
+        q = compact.virtual(pr, 2.0)
+        self.assertEqual(q['units'][0]['in_box'], [11.0, 0.0, 15.0, 4.0])  # on the scaled right edge x 15
+        self.assertEqual(pr['units'][0]['in_box'], [8, 1, 10, 3])
+
 
 class ScheduleTest(unittest.TestCase):
     def test_shrinks_on_pass_and_bisects_after_the_first_fail(self):

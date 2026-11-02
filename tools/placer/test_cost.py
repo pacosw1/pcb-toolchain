@@ -413,6 +413,41 @@ class EdgeAnchorTest(unittest.TestCase):
 
 
 
+class RegionBoxTest(unittest.TestCase):
+    """u['in_box'] = [x0, y0, x1, y1]: the courtyard rects of the unit stay in the box (cli.py read --in-box). The miss
+    in mm (the sum of the four overshoots) is forbidden area in the cost and illegal in legal_penalty."""
+
+    def pr(self, x, y):
+        u = unit('TP1', x, y, [[-1, -1, 1, 1, 0.3]])
+        u['in_box'] = [16.0, 2.0, 19.0, 12.0]
+        return problem([u, unit('R1', 5.0, 5.0, [[-1, -1, 1, 1, 0.5]])], [], square_board(20.0, edge=0.5))
+
+    def test_inside_is_free_and_each_overshoot_counts_its_mm(self):
+        self.assertAlmostEqual(cost.box_miss(self.pr(17.5, 6)['units'][0], [[16.5, 5, 18.5, 7, 0.3]]), 0.0)
+        self.assertAlmostEqual(cost.components(self.pr(17.5, 6), [(17.5, 6.0, 0), (5, 5, 0)], P)['oob'], 0.0)
+        # x 15.5: left side 14.5 (1.5 out); y 12.5: bottom 13.5 (1.5 out)
+        self.assertAlmostEqual(cost.components(self.pr(15.5, 12.5), [(15.5, 12.5, 0), (5, 5, 0)], P)['oob'], 3.0)
+        # spacing (0.3) is not in the box test: the courtyard may touch the box side
+        self.assertAlmostEqual(cost.components(self.pr(17.0, 3.0), [(17.0, 3.0, 0), (5, 5, 0)], P)['oob'], 0.0)
+
+    def test_a_unit_without_in_box_is_not_constrained(self):
+        pr = self.pr(17.5, 6)
+        self.assertAlmostEqual(cost.box_miss(pr['units'][1], [[100, 100, 102, 102, 0.5]]), 0.0)
+
+    def test_legal_penalty_is_positive_outside_the_box_and_the_evaluator_agrees_with_the_full_cost(self):
+        pr = self.pr(5.0, 15.0)  # left side x 4 is 12 mm left of x0 16; bottom y 16 is 4 mm below y1 12
+        ev = cost.Evaluator(pr, P)
+        self.assertAlmostEqual(ev.legal_penalty(0), 12.0 + 4.0)
+        self.assertAlmostEqual(ev.components()['oob'], cost.components(pr, ev.pose(), P)['oob'])
+        self.assertAlmostEqual(ev.legal_penalty_at(0, 17.5, 6.0, 0), 0.0)
+        self.assertGreater(ev.legal_penalty_at(0, 17.5, 1.5, 0), 0.0)  # top 0.5 < 2.0
+        d = ev.propose([(0, 17.5, 6.0, 0)])
+        self.assertAlmostEqual(d, -16.0 * P['w_oob'])
+        ev.commit()
+        self.assertAlmostEqual(ev.legal_penalty(0), 0.0)
+        self.assertAlmostEqual(ev.cost, cost.total(pr, ev.pose(), P), places=6)
+
+
 class PartRuleTest(unittest.TestCase):
     """pr['part_rules']: regions [{refs, box}] (the part centre must be in the box) and min_dist [{a, b, d}]
     (each part centre of a keeps d mm or more to each part centre of b). u['centres'] = {ref: local point at

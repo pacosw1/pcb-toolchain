@@ -15,7 +15,7 @@ optimize(problem, params, workers, epochs, steps, seed, top) -> result dict
      restart from the global best pose. The exchange is synchronous, so a seed gives one result.
   3. The best pose of each worker is legalized (legalize()) and ranked: illegal unit count, then cost.
 Moves: translate (dx, dy multiples of params['grid'], unit origin inside problem['move_box'] (region mode)
-or else the outline box), rotate 90/180/270 deg,
+or else the outline box; a unit with u['in_box'] also keeps its courtyard in that box), rotate 90/180/270 deg,
 swap the places of two units whose courtyard areas differ by at most swap_ratio.
 """
 import copy
@@ -99,6 +99,19 @@ class Mover:
         self.anchors = [(u['x'], u['y']) for u in pr['units']]
         self.max_displacement = float(p['max_displacement'])
         self.rot = [i for i in self.mov if pr['units'][i].get('rotate', True)]
+        # region box (u['in_box'], cost.box_miss): the origin range that keeps the courtyard rects in the box, per turn
+        self.inbox = {}
+        for i in self.mov:
+            u = pr['units'][i]
+            if u.get('in_box'):
+                ko = set(u.get('ko', []))
+                lim = []
+                for r in range(4):
+                    rs = [cost.rot_rect(rc, r) for k, rc in enumerate(u['rects']) if k not in ko]
+                    b = u['in_box']
+                    lim.append((b[0] - min(q[0] for q in rs), b[1] - min(q[1] for q in rs),
+                                b[2] - max(q[2] for q in rs), b[3] - max(q[3] for q in rs)))
+                self.inbox[i] = lim
         q = p['swap_ratio']
         a = ev.area
         self.partners = {i: [j for j in self.mov if j != i and max(a[i], a[j]) <= q * max(min(a[i], a[j]), 1e-9)]
@@ -128,6 +141,11 @@ class Mover:
         i = rng.choice(self.mov)
         x, y = ev.X[i], ev.Y[i]
         bx0, by0, bx1, by1 = self.box
+        if i in self.inbox:  # translate inside the region box (a unit outside it moves into it)
+            lx0, ly0, lx1, ly1 = self.inbox[i][ev.R[i]]
+            c = max(bx0, lx0), max(by0, ly0), min(bx1, lx1), min(by1, ly1)
+            if c[0] <= c[2] and c[1] <= c[3]:
+                bx0, by0, bx1, by1 = c
         w = window * self.sc[i]
         dx = self._off(rng.uniform(-w, w), bx0 - x, bx1 - x)
         dy = self._off(rng.uniform(-w, w), by0 - y, by1 - y)
