@@ -63,4 +63,22 @@ fn return_rule_and_via_in_pad_are_read() {
     assert_eq!(with(Some(true)).gnd_fixed, vec![(20.0, 10.0)], "gate return_planes: it is one");
     assert_eq!(with(None).gnd_fixed.len(), 1, "no rule in the model: as before (counts)");
     assert_eq!(with(None).vip, vec![(19.0, 19.0, 21.0, 21.0)]);
+    assert!(with(None).tvia.is_empty(), "no thermal_vias key: no array");
+}
+
+/// model pad thermal_vias (model.py thermal_via_spec) -> Board::tvia: the via centres, diameter and drill as written.
+#[test]
+fn thermal_vias_are_read() {
+    let mut m = model(0.28, 0.45, 0.25);
+    m["nets"]["GND"] = serde_json::json!({"class": "Default", "plane": true, "layers": ["F.Cu", "B.Cu"]});
+    m["pads"].as_array_mut().unwrap().push(serde_json::json!({"ref": "U4", "num": "9", "net": "GND", "x": 20.0, "y": 20.0,
+        "bbox": [18.75, 18.4, 21.25, 21.6], "layers": ["F.Cu"], "drill": 0.0, "via_in_pad": true,
+        "thermal_vias": {"vias": [[19.45, 19.365], [20.55, 19.365], [19.45, 20.635], [20.55, 20.635]], "d": 0.6, "drill": 0.3,
+                         "long": 2, "short": 2, "pitch": [1.27, 1.1], "source": "test"}}));
+    let bd = load(&m, 0.28);
+    assert_eq!(bd.tvia.len(), 1);
+    let (bb, pts, d, dr, name) = &bd.tvia[0];
+    assert_eq!(*bb, (18.75, 18.4, 21.25, 21.6));
+    assert_eq!(pts, &vec![(19.45, 19.365), (20.55, 19.365), (19.45, 20.635), (20.55, 20.635)]);
+    assert_eq!((*d, *dr, name.as_str()), (0.6, 0.3, "U4.9"));
 }

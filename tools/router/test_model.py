@@ -150,5 +150,70 @@ class IsolationBoards(unittest.TestCase):
         self.assertTrue(inside(130.0, 110.0, rf['layers']['F.Cu']['domains']['GND']))
 
 
+class ThermalVias(unittest.TestCase):
+    """thermal-vias.json -> pad thermal_vias (model.thermal_via_spec) on the committed FW-IO U4.9 (LM5164 EP, 3.2 x 2.5
+    mm at 90 degrees: the long side runs along board y)."""
+    @classmethod
+    def setUpClass(cls):
+        bdir = os.path.join(model.ROOT, 'hardware-design', 'boards', 'FW-IO')
+        cfg = model.load_cfg(bdir)
+        cls.b = model.pcbnew.LoadBoard(os.path.join(bdir, cfg['project']) + '.kicad_pcb')
+        pro = json.load(open(os.path.join(bdir, cfg['project']) + '.kicad_pro'))
+        cls.classes = {c['name']: {'via': c.get('via_diameter'), 'drill': c.get('via_drill')} for c in pro['net_settings']['classes']}
+        cls.setup = pro['board']['design_settings']['rules']
+
+    def run_spec(self, spec, allow=('U4.9',), hth=0.45):
+        import tempfile
+        fp = self.b.FindFootprintByReference('U4')
+        pad = [p for p in fp.Pads() if p.GetNumber() == '9'][0]
+        bb = pad.GetBoundingBox()
+        T = model.T
+        d = {'ref': 'U4', 'num': '9', 'net': 'GND', 'x': T(pad.GetPosition().x), 'y': T(pad.GetPosition().y), 'drill': 0.0,
+             'bbox': [T(bb.GetLeft()), T(bb.GetTop()), T(bb.GetRight()), T(bb.GetBottom())]}
+        tmp = tempfile.mkdtemp()
+        if spec is not None:
+            with open(os.path.join(tmp, 'thermal-vias.json'), 'w') as fh:
+                json.dump({'pads': {'U4.9': spec}}, fh)
+        n = model.thermal_via_spec(tmp, {('U4', '9'): (fp, pad, d)}, {'GND': {'plane': True, 'class': 'PWR'}}, self.classes,
+                                   self.setup, {'hole_to_hole': [{'min': hth, 'scope': 'all'}]}, set(allow))
+        return n, d
+
+    SPEC = {'long': 2, 'short': 2, 'pitch_long': 1.27, 'pitch_short': 1.10, 'drill': 0.3, 'diameter': 0.6, 'source': 'LM5164 Fig. 28'}
+
+    def test_array_centred_long_side_along_y(self):
+        n, d = self.run_spec(dict(self.SPEC))
+        self.assertEqual(n, 4)
+        tv = d['thermal_vias']
+        self.assertEqual((tv['d'], tv['drill'], tv['source']), (0.6, 0.3, 'LM5164 Fig. 28'))
+        xs = sorted({v[0] for v in tv['vias']})
+        ys = sorted({v[1] for v in tv['vias']})
+        self.assertAlmostEqual(xs[1] - xs[0], 1.10, places=4)   # short side (2.5 mm) along x
+        self.assertAlmostEqual(ys[1] - ys[0], 1.27, places=4)   # long side (3.2 mm) along y
+        self.assertAlmostEqual(sum(xs) / 2, d['x'], places=4)
+        self.assertAlmostEqual(sum(ys) / 2, d['y'], places=4)
+
+    def test_no_file_no_key(self):
+        n, d = self.run_spec(None)
+        self.assertEqual(n, 0)
+        self.assertNotIn('thermal_vias', d)
+
+    def test_refusals(self):
+        cases = [({'source': ' '}, 'empty source'), ({'drill': 0.25, 'diameter': 0.55}, 'net class PWR via drill'),
+                 ({'pitch_short': 0.7}, 'hole-to-hole'), ({'pitch_long': 3.0}, 'not inside the pad copper'),
+                 ({'short': 3}, 'not inside the pad copper')]
+        for change, why in cases:
+            with self.assertRaises(SystemExit) as e:
+                self.run_spec(dict(self.SPEC, **change))
+            self.assertIn(why, str(e.exception), change)
+        spec = dict(self.SPEC)
+        del spec['source']
+        with self.assertRaises(SystemExit) as e:
+            self.run_spec(spec)
+        self.assertIn('missing source', str(e.exception))
+        with self.assertRaises(SystemExit) as e:
+            self.run_spec(dict(self.SPEC), allow=())
+        self.assertIn('viapads.allow', str(e.exception))
+
+
 if __name__ == '__main__':
     unittest.main()

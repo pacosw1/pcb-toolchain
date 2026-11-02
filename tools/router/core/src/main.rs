@@ -384,6 +384,9 @@ struct Board {
     circ: std::collections::HashMap<(i64, i64), f64>,
     /// SMD pads (bbox) on the gate viapads allow list (model pad `via_in_pad`): an own-net via may sit inside them
     vip: Vec<(f64, f64, f64, f64)>,
+    /// thermal via arrays (model pad `thermal_vias`, from the board's thermal-vias.json with a datasheet source):
+    /// (pad bbox, via centres, via diameter, drill, pad name). fixed_vip_vias places them before routing.
+    tvia: Vec<((f64, f64, f64, f64), Vec<(f64, f64)>, f64, f64, String)>,
     /// v6 fix 3c: plane antipad web. Two drilled items of different signal (non-plane) nets keep their copper this far
     /// apart: 2 x the plane zone clearance + the zone min_thickness (max over the plane-layer zones). Their antipads on
     /// the plane then stay at least min_thickness apart, so the KiCad zone fill keeps the copper web between them
@@ -2462,7 +2465,7 @@ fn load(model: &Value, hole_clr: f64) -> Board {
     // layers with an adjacent reference plane (reference-planes.json 'adjacent' via the model)
     let adj = model["adjacent"].as_object().map(|o| o.keys().filter_map(|k| lid(k)).fold(0u8, |m, l| m | (1 << l))).unwrap_or(0);
     let mut bd = Board { layer_names: cu.clone(), routable, nets, shapes: Vec::new(), idx, sidx, maxc, edge, edge_clr, gnd, plane_clr: DEF_PLANE_CLR, eps: EPS, hole_clr,
-                         spoke_notes: Vec::new(), attach: Vec::new(), spoke_sites: std::collections::HashSet::new(), adj, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false, via_len: DEF_VIA_LEN, keep: Vec::new(), esc: Vec::new(), edges: Vec::new(), fvia: Vec::new(), iso: None, niv: Vec::new(), ppoly: Vec::new(), twin: Vec::new(), gnds: Vec::new(), pidx: Vec::new(), prad: Vec::new(), noret: Vec::new(), rgn: Vec::new(), rfill: Default::default() };
+                         spoke_notes: Vec::new(), attach: Vec::new(), spoke_sites: std::collections::HashSet::new(), adj, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new(), vip: Vec::new(), tvia: Vec::new(), web: 0.0, web_hard: false, via_len: DEF_VIA_LEN, keep: Vec::new(), esc: Vec::new(), edges: Vec::new(), fvia: Vec::new(), iso: None, niv: Vec::new(), ppoly: Vec::new(), twin: Vec::new(), gnds: Vec::new(), pidx: Vec::new(), prad: Vec::new(), noret: Vec::new(), rgn: Vec::new(), rfill: Default::default() };
     bd.ppoly = ppoly;
     bd.gnds = gnds;
     bd.noret = model["return_exempt"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().and_then(|n| names.get(n)).map(|&i| i as i32)).collect()).unwrap_or_default();
@@ -2531,6 +2534,11 @@ fn load(model: &Value, hole_clr: f64) -> Board {
         bd.add(s);
         if p["via_in_pad"].as_bool() == Some(true) && drill == 0.0 {
             bd.vip.push((f(&bb[0]), f(&bb[1]), f(&bb[2]), f(&bb[3])));
+            if let Some(t) = p["thermal_vias"].as_object() {
+                let pts: Vec<(f64, f64)> = t["vias"].as_array().map(|a| a.iter().map(|q| (f(&q[0]), f(&q[1]))).collect()).unwrap_or_default();
+                let name = format!("{}.{}", p["ref"].as_str().unwrap_or(""), p["num"].as_str().unwrap_or(""));
+                bd.tvia.push(((f(&bb[0]), f(&bb[1]), f(&bb[2]), f(&bb[3])), pts, f(&t["d"]), f(&t["drill"]), name));
+            }
         }
         let (cx, cy) = ((f(&bb[0]) + f(&bb[2])) / 2.0, (f(&bb[1]) + f(&bb[3])) / 2.0);
         if p["shape"].as_str() == Some("circle") {
@@ -3444,6 +3452,26 @@ fn fixed_vip_vias(bd: &mut Board, o: &Opts) -> Vec<String> {
             continue;
         }
         let net = pad.net as usize;
+        // thermal via array (model pad thermal_vias): every via of the spec at its exact place, as fixed copper of the
+        // pad's net; a via that the fixed copper does not allow there is a note (input), never moved
+        if let Some((_, pts, td, tdr, name)) = bd.tvia.iter().find(|t| t.0 == (a, b, c, d)).cloned() {
+            let clr = bd.nets[net].clr;
+            for (x, y) in pts {
+                if bd.shapes.iter().any(|s| s.alive && s.net == net as i32 && s.kind == Kind::Via && matches!(s.geo, Geo::Circ(vx, vy, _) if (vx - x).abs() < 1e-6 && (vy - y).abs() < 1e-6)) {
+                    continue;
+                }
+                let code = bd.via_fixed_code(x, y, td, tdr, clr, o.hth, false, bd.iv(net as i32));
+                if bd.via_code_blocks(code, net, x, y, td, tdr, o.hth) {
+                    notes.push(format!("thermal vias: {name} via ({x:.3}, {y:.3}) {td}/{tdr} mm is not legal against the fixed copper (input)"));
+                    continue;
+                }
+                bd.add(Shape { net: net as i32, geo: Geo::Circ(x, y, td / 2.0), clr, layers: all, drill: tdr, kind: Kind::Via, owner: -1, alive: true, grp: 0 });
+                if bd.is_ret_net(net as i32) {
+                    bd.gnd_fixed.push((x, y));
+                }
+            }
+            continue;
+        }
         let (vd, vdr, clr) = (bd.nets[net].via_d, bd.nets[net].via_drill, bd.nets[net].clr);
         let vr = vd / 2.0;
         if bd.shapes.iter().any(|s| s.alive && s.net == net as i32 && s.kind == Kind::Via && matches!(s.geo, Geo::Circ(x, y, _) if x >= a && x <= c && y >= b && y <= d)) {
@@ -4862,7 +4890,7 @@ mod tests {
         let mut bd = Board { layer_names: vec!["F.Cu".into(), "In1.Cu".into(), "B.Cu".into()], routable: vec![0, 2], nets, shapes: Vec::new(),
                              idx: Index::new(x0 - 1.0, y0 - 1.0, x1 + 1.0, y1 + 1.0, 3), sidx: Index::new(x0 - 1.0, y0 - 1.0, x1 + 1.0, y1 + 1.0, 3),
                              maxc: 0.2, edge: (x0, y0, x1, y1), edge_clr: 0.3, gnd: -1, plane_clr: 0.25, eps: EPS, hole_clr: 0.28,
-                             spoke_notes: Vec::new(), attach: Vec::new(), spoke_sites: std::collections::HashSet::new(), adj: 0, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false, via_len: DEF_VIA_LEN, keep: Vec::new(), esc: Vec::new(), edges: Vec::new(), fvia: Vec::new(), iso: None, niv: Vec::new(), ppoly: Vec::new(), twin: Vec::new(), gnds: Vec::new(), pidx: Vec::new(), prad: Vec::new(), noret: Vec::new(), rgn: Vec::new(), rfill: Default::default() };
+                             spoke_notes: Vec::new(), attach: Vec::new(), spoke_sites: std::collections::HashSet::new(), adj: 0, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new(), vip: Vec::new(), tvia: Vec::new(), web: 0.0, web_hard: false, via_len: DEF_VIA_LEN, keep: Vec::new(), esc: Vec::new(), edges: Vec::new(), fvia: Vec::new(), iso: None, niv: Vec::new(), ppoly: Vec::new(), twin: Vec::new(), gnds: Vec::new(), pidx: Vec::new(), prad: Vec::new(), noret: Vec::new(), rgn: Vec::new(), rfill: Default::default() };
         let sh = |net: i32, geo: Geo, clr: f64, layers: u8, drill: f64, kind: Kind, owner: i32| Shape { net, geo, clr, layers, drill, kind, owner, alive: true, grp: 0 };
         bd.add(sh(0, Geo::Rect(2.0, 2.0, 2.6, 2.4), 0.15, 1, 0.0, Kind::Pad, -1));
         bd.add(sh(0, Geo::Rect(2.0, 2.9, 2.6, 3.3), 0.15, 1, 0.0, Kind::Pad, -1));

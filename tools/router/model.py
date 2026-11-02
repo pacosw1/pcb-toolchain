@@ -480,6 +480,95 @@ def pair_table(b, forms, nets, pairs, pads, pad_list, zones, zone_objs, report):
             'rules': [f'{a} / {c}' for a, c in sorted(used | trig)], 'reps': res['reps']}
 
 
+TV_KEYS = {'long', 'short', 'pitch_long', 'pitch_short', 'drill', 'diameter', 'source'}
+
+
+def thermal_via_spec(bdir, pad_obj, nets, classes, rules_setup, hole_rules, vip_allow):
+    """thermal-vias.json (optional, board folder): an array of vias in an exposed / thermal pad, each number from a
+    datasheet. {"pads": {"U4.9": {"long": n, "short": n, "pitch_long": mm, "pitch_short": mm, "drill": mm,
+    "diameter": mm, "source": "datasheet, section, page"}}}. long / short = vias along the pad's long / short side,
+    the array centred on the pad. Sets pad `thermal_vias` {vias: [[x, y]], d, drill, source}; the core places exactly
+    these vias as fixed copper of the pad's net. Refused (SystemExit, nothing guessed): a missing key or source, a pad
+    that is not an SMD pad of a plane net, a pad not on the gate viapads allow list (the gate would fail the vias), a
+    pad not at 0 / 90 / 180 / 270 degrees or with an offset, a via below the board minimums (setup, net class via, DRU
+    via rules of the net), two vias closer than the hole-to-hole rule, a via not inside the pad copper. Returns the
+    number of vias (0 when the file does not exist: the model is then unchanged)."""
+    p = os.path.join(bdir, 'thermal-vias.json')
+    if not os.path.exists(p):
+        return 0
+    spec = json.load(open(p)).get('pads') or {}
+    n_all = 0
+    for key, s in sorted(spec.items()):
+        def bad(why):
+            raise SystemExit(f'thermal-vias.json {key}: {why}')
+        miss = TV_KEYS - set(s)
+        if miss:
+            bad('missing ' + ', '.join(sorted(miss)))
+        if not str(s['source']).strip():
+            bad('empty source (every number needs its datasheet source)')
+        ref, _, num = key.partition('.')
+        if (ref, num) not in pad_obj:
+            bad('no such pad on the board')
+        fp, pad, d = pad_obj[(ref, num)]
+        info = nets.get(d['net'])
+        if d['drill'] > 0 or not info or not info.get('plane'):
+            bad(f"not an SMD pad of a plane net (net {d['net'] or '-'})")
+        if key not in vip_allow:
+            bad('not on gate.json checks.viapads.allow (the viapads gate would fail every via in it)')
+        nl, ns = int(s['long']), int(s['short'])
+        pl, ps, dr, dia = float(s['pitch_long']), float(s['pitch_short']), float(s['drill']), float(s['diameter'])
+        if nl < 1 or ns < 1 or (nl > 1 and pl <= 0) or (ns > 1 and ps <= 0):
+            bad('counts must be >= 1 and pitches > 0')
+        # minimums: board setup, the net class via (the board's standard via), DRU via rules of the net
+        c = classes.get(info['class']) or classes['Default']
+        v = info.get('via') or {}
+        mins = [('drill', dr, rules_setup.get('min_through_hole_diameter'), 'board min drill'),
+                ('diameter', dia, rules_setup.get('min_via_diameter'), 'board min via'),
+                ('annular', (dia - dr) / 2, rules_setup.get('min_via_annular_width'), 'board min annular ring'),
+                ('drill', dr, c.get('drill'), f"net class {info['class']} via drill"),
+                ('diameter', dia, c.get('via'), f"net class {info['class']} via diameter"),
+                ('drill', dr, v.get('hole_size'), 'DRU hole_size'), ('diameter', dia, v.get('via_diameter'), 'DRU via_diameter'),
+                ('annular', (dia - dr) / 2, v.get('annular_width'), 'DRU annular_width')]
+        for what, val, mn, src in mins:
+            if mn is not None and val < float(mn) - 1e-9:
+                bad(f'{what} {val:g} mm < {src} {float(mn):g} mm')
+        hth = max([float(rules_setup.get('min_hole_to_hole') or 0)]
+                  + [r['min'] for r in hole_rules.get('hole_to_hole', []) if r['scope'] == 'all'])
+        for n_, pitch, side in ((nl, pl, 'long'), (ns, ps, 'short')):
+            if n_ > 1 and pitch - dr < hth - 1e-9:
+                bad(f'pitch_{side} {pitch:g} - drill {dr:g} < hole-to-hole {hth:g} mm')
+        o = pad.GetOrientationDegrees()
+        if abs(o - 90 * round(o / 90)) > 1e-6:
+            bad(f'pad orientation {o} is not a multiple of 90 degrees')
+        ang = int(90 * round(o / 90)) % 360
+        sz = pad.GetSize(pcbnew.F_Cu)
+        sx, sy = T(sz.x), T(sz.y)
+        bb = d['bbox']
+        cx, cy = d['x'], d['y']
+        if abs((bb[0] + bb[2]) / 2 - cx) > 1e-3 or abs((bb[1] + bb[3]) / 2 - cy) > 1e-3:
+            bad('pad with an offset (centre is not the bbox centre): not modelled')
+        # the long side in board axes: pad x size along board x at 0 / 180 degrees, along board y at 90 / 270
+        long_x = (sx >= sy) == (ang % 180 == 0)
+        offs = [(i - (nl - 1) / 2) * pl for i in range(nl)]
+        offs_s = [(j - (ns - 1) / 2) * ps for j in range(ns)]
+        vias = []
+        for u in offs:
+            for w in offs_s:
+                x, y = (cx + u, cy + w) if long_x else (cx + w, cy + u)
+                vias.append([round(x, 4), round(y, 4)])
+        # each via disc inside the pad copper (32 points on its rim, KiCad's own hit test with accuracy 0)
+        for x, y in vias:
+            for k in range(32):
+                t = 2 * math.pi * k / 32
+                q = pcbnew.VECTOR2I(pcbnew.FromMM(x + dia / 2 * math.cos(t)), pcbnew.FromMM(y + dia / 2 * math.sin(t)))
+                if not pad.HitTest(q, 0):
+                    bad(f'via ({x:.3f}, {y:.3f}) d {dia:g} mm is not inside the pad copper')
+        d['thermal_vias'] = {'vias': vias, 'd': dia, 'drill': dr, 'long': nl, 'short': ns,
+                             'pitch': [pl, ps], 'source': s['source']}
+        n_all += len(vias)
+    return n_all
+
+
 def modern_python():
     """The gate's interpreter for kicad-happy (tools/lib/env.mjs findModernPython): env PYTHON_MODERN, else the first
     python3.13 ... python3.10 / python3 that is 3.10 or later."""
@@ -791,6 +880,8 @@ def main():
         if f'{ref}.{num}' in fvias and d.get('drill', 0) == 0:
             dr, dd, amps = fvias[f'{ref}.{num}']
             d['fanout_via'] = {'hole_size': dr, 'via_diameter': dd, 'amps': amps}
+    # thermal via arrays (thermal-vias.json, datasheet numbers): only written when the file exists
+    thermal_via_spec(bdir, pad_obj, nets, classes, rules_setup, hole_rules, vip_allow)
     ratings = pcbtool.load_pin_ratings()
     for (ref, num), (fp, p, d) in sorted(pad_obj.items()):
         amps = (nets.get(d['net']) or {}).get('limits', {}).get('amps', 0)

@@ -27,7 +27,7 @@ fn wall_board() -> Board {
     let mut bd = Board { layer_names: vec!["F.Cu".into(), "In1.Cu".into(), "B.Cu".into()], routable: vec![0, 2], nets, shapes: Vec::new(),
                          idx: Index::new(-1.0, -1.0, 11.0, 11.0, 3), sidx: Index::new(-1.0, -1.0, 11.0, 11.0, 3), maxc: 0.15,
                          edge: (0.0, 0.0, 10.0, 10.0), edge_clr: 0.3, gnd: 2, plane_clr: 0.25, eps: EPS, hole_clr: 0.28,
-                         spoke_notes: Vec::new(), attach: Vec::new(), spoke_sites: std::collections::HashSet::new(), adj: 0b101, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false, via_len: DEF_VIA_LEN, keep: Vec::new(), esc: Vec::new(), edges: Vec::new(), fvia: Vec::new(), iso: None, niv: Vec::new(), ppoly: Vec::new(), twin: Vec::new(), gnds: Vec::new(), pidx: Vec::new(), prad: Vec::new(), noret: Vec::new(), rgn: Vec::new(), rfill: Default::default() };
+                         spoke_notes: Vec::new(), attach: Vec::new(), spoke_sites: std::collections::HashSet::new(), adj: 0b101, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new(), vip: Vec::new(), tvia: Vec::new(), web: 0.0, web_hard: false, via_len: DEF_VIA_LEN, keep: Vec::new(), esc: Vec::new(), edges: Vec::new(), fvia: Vec::new(), iso: None, niv: Vec::new(), ppoly: Vec::new(), twin: Vec::new(), gnds: Vec::new(), pidx: Vec::new(), prad: Vec::new(), noret: Vec::new(), rgn: Vec::new(), rfill: Default::default() };
     let pad = |x: f64| Shape { net: 0, geo: Geo::Rect(x - 0.3, 2.8, x + 0.3, 3.2), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true, grp: 0 };
     bd.add(pad(2.0));
     bd.add(pad(8.0));
@@ -197,6 +197,58 @@ fn allowed_exposed_pad_gets_a_via_in_the_pad() {
     assert!(matches!(ctx.bd.vhit(&own, 2.0, 3.0, 0.3, 0.3, 0.15, 0.45, true, 0), 3 | 4));
     let ep = Shape { net: 2, geo: Geo::Rect(3.7, 3.7, 6.3, 6.3), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true, grp: 0 };
     assert!(!matches!(ctx.bd.vhit(&ep, 5.0, 5.0, 0.3, 0.3, 0.15, 0.45, true, 0), 3 | 4));
+}
+
+/// Thermal via array (model pad thermal_vias, FW-IO U4.9 LM5164 EP): every via of the spec is placed at its exact place
+/// as fixed copper of the pad's net before routing (a GND return site too); a spec via that the fixed copper does not
+/// allow is a note, never moved; the plane fan-out then adds no via to the pad. Without a spec: one via, as before.
+#[test]
+fn thermal_via_array_is_fixed_copper_of_the_pad_net() {
+    let o = opts();
+    let board = |spec: bool| {
+        let mut bd = wall_board();
+        // no net C wall across the EP here (shape 2 of wall_board)
+        bd.shapes[2].alive = false;
+        bd.compact();
+        let ep = (3.7, 3.7, 6.3, 6.3);
+        bd.add(Shape { net: 2, geo: Geo::Rect(ep.0, ep.1, ep.2, ep.3), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true, grp: 0 });
+        // net C pad 0.3 mm east of the EP
+        bd.add(Shape { net: 1, geo: Geo::Rect(6.6, 3.7, 7.0, 6.3), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true, grp: 0 });
+        bd.vip.push(ep);
+        if spec {
+            // 2 x 2 at 1.2 mm plus one via 0.4 mm from the net C pad (below via radius + clearance 0.45 mm)
+            let pts = vec![(4.4, 4.4), (5.6, 4.4), (4.4, 5.6), (5.6, 5.6), (6.2, 5.0)];
+            bd.tvia.push((ep, pts, 0.6, 0.3, "U4.9".into()));
+        }
+        bd
+    };
+    let vias = |bd: &Board| -> Vec<(f64, f64, f64, f64)> {
+        bd.shapes.iter().filter(|s| s.alive && s.net == 2 && s.kind == Kind::Via)
+            .map(|s| match s.geo { Geo::Circ(x, y, r) => (x, y, r * 2.0, s.drill), _ => (0.0, 0.0, 0.0, 0.0) }).collect()
+    };
+    let mut bd = board(true);
+    let notes = fixed_vip_vias(&mut bd, &o);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contains("thermal vias: U4.9 via (6.200, 5.000)"), "{notes:?}");
+    let v = vias(&bd);
+    assert_eq!(v, vec![(4.4, 4.4, 0.6, 0.3), (5.6, 4.4, 0.6, 0.3), (4.4, 5.6, 0.6, 0.3), (5.6, 5.6, 0.6, 0.3)]);
+    assert!(bd.shapes.iter().filter(|s| s.kind == Kind::Via).all(|s| s.owner < 0), "fixed copper");
+    assert_eq!(bd.gnd_fixed.len(), 4, "each array via is a GND return site");
+    // a second call (reuse / repeated setup) adds nothing
+    assert_eq!(fixed_vip_vias(&mut bd, &o).len(), 1);
+    assert_eq!(vias(&bd).len(), 4);
+    let mut ctx = ctx_of(&mut bd, &o);
+    let r = fanout_net(&mut ctx, 2);
+    assert!(r.hard_fail.is_none(), "{:?}", r.hard_fail);
+    assert_eq!(vias(ctx.bd).len(), 4, "the plane fan-out finds the pad's vias and adds none");
+    assert_eq!(ctx.audit(0.0).pairs, 0);
+    // a via of another net cannot use the array's place: the array blocks it like any via
+    let code = ctx.bd.via_fixed_code(5.0, 4.4, 0.6, 0.3, 0.15, o.hth, true, ctx.bd.iv(0));
+    assert!(ctx.bd.via_code_blocks(code, 0, 5.0, 4.4, 0.6, 0.3, o.hth));
+
+    let mut bd = board(false);
+    assert!(fixed_vip_vias(&mut bd, &o).is_empty());
+    assert_eq!(vias(&bd).len(), 1, "no spec: one via in the allowed pad, as before");
 }
 
 /// The return via is the GND net's own via (model class + DRU rules for GND); the flag overrides it.
