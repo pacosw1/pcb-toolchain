@@ -1,6 +1,7 @@
 """Unit tests of tools/router/model.py helpers. Needs the KiCad Python (model.py imports pcbnew):
   /Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3 -m unittest test_model
 """
+import json
 import os
 import sys
 import unittest
@@ -30,6 +31,53 @@ class ViaCurrent(unittest.TestCase):
     def test_disallow_types(self):
         self.assertEqual(model.disallow_types(['constraint', 'disallow', 'track', 'via']), {'track', 'via'})
         self.assertEqual(model.disallow_types(['constraint', 'disallow', 'pad']), {'pad'})
+
+
+
+class IsolationBoards(unittest.TestCase):
+    """model.py on committed isolation boards (isolation work, reports/2026-11-01-isolation.md). Each case failed before:
+    the model stopped (MODEL FAIL, unknown creepage / pair selectors) or had no such key."""
+    models = {}
+
+    @classmethod
+    def model_of(cls, board):
+        if board not in cls.models:
+            import subprocess
+            import tempfile
+            out = os.path.join(tempfile.mkdtemp(), 'model.json')
+            p = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'model.py'),
+                                os.path.join(model.ROOT, 'hardware-design', 'boards', board), '--out', out], capture_output=True, text=True)
+            assert 'MODEL ok' in p.stdout, p.stdout + p.stderr
+            with open(out) as fh:
+                cls.models[board] = json.load(fh)
+        return cls.models[board]
+
+    def test_poe_pair_rules_and_plane_reach(self):
+        m = self.model_of('POE-ETHERNET')
+        states = {(r['rule'], r['constraint']): r['state'] for r in m['rules']}
+        self.assertEqual(states[('PoE isolation', 'creepage')], 'applied')
+        self.assertEqual(states[('PoE creepage J1 pin pitch', 'creepage')], 'applied')
+        self.assertEqual(m['iso']['max'], 3.0)
+        self.assertEqual([r['key'] for r in m['iso']['regions']], ['intersectsCourtyard:J1'])
+        # ISO_GND has no plane on this board; the VDD_3V3 In2 zones do not reach J1.11 / J1.13; PHY_GND is a plane
+        self.assertFalse(m['nets']['ISO_GND']['plane'])
+        self.assertFalse(m['nets']['VDD_3V3']['plane'])
+        self.assertTrue(m['nets']['PHY_GND']['plane'] and m['nets']['PHY_GND']['plane_polys'])
+        self.assertEqual((m['return_net'], m['return_nets']), ('PHY_GND', ['PHY_GND', 'ISO_GND']))
+
+    def test_relay_parallel_mains_copy(self):
+        m = self.model_of('RELAY-4')
+        n = m['nets']['/MAINS_COM1']
+        self.assertEqual((n['layers'], n['twin']), (['F.Cu'], ['F.Cu', 'B.Cu']))
+        # 10 A over two equal copies: each copy carries 5 A (IPC-2221 width of the paths gate, 2 oz, dT 10 K)
+        self.assertEqual(n['min_width_layers']['F.Cu'], model.ipc_width(5.0, model.pcbtool.copper_thickness(m['pcb'])['F.Cu'], 10))
+        self.assertEqual(max(m['iso']['table']), 9.65)  # 'Mains to screw hole'
+
+    def test_input_barrier_band_keeps_its_hole(self):
+        m = self.model_of('INPUT-4D2A')
+        band = [k for k in m['keepouts'] if k['name'] == 'BARRIER_BAND'][0]
+        self.assertFalse(band['rect'])
+        self.assertEqual(len(band['holes']), 1)
 
 
 if __name__ == '__main__':

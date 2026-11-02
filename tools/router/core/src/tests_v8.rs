@@ -27,10 +27,10 @@ fn board() -> Board {
             idx: Index::new(-1.0, -1.0, 21.0, 11.0, 3), sidx: Index::new(-1.0, -1.0, 21.0, 11.0, 3), maxc: 0.15,
             edge: (0.0, 0.0, 20.0, 10.0), edge_clr: 0.3, gnd: 3, plane_clr: 0.25, eps: EPS, hole_clr: 0.28,
             spoke_notes: Vec::new(), attach: Vec::new(), spoke_sites: std::collections::HashSet::new(), adj: 0, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(),
-            circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false, via_len: DEF_VIA_LEN, keep: Vec::new(), esc: Vec::new(), edges: Vec::new(), fvia: Vec::new() }
+            circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false, via_len: DEF_VIA_LEN, keep: Vec::new(), esc: Vec::new(), edges: Vec::new(), fvia: Vec::new(), iso: None, niv: Vec::new(), ppoly: Vec::new(), twin: Vec::new(), gnds: Vec::new(), pidx: Vec::new(), prad: Vec::new(), noret: Vec::new(), rgn: Vec::new() }
 }
 
-fn ctx_of<'a>(bd: &'a mut Board, o: &'a Opts) -> Ctx<'a> {
+pub(crate) fn ctx_of<'a>(bd: &'a mut Board, o: &'a Opts) -> Ctx<'a> {
     let nn = bd.nets.len();
     let memo_w = bd.nets.iter().flat_map(|n| net_widths(n)).collect();
     let g = grid();
@@ -41,7 +41,7 @@ fn ctx_of<'a>(bd: &'a mut Board, o: &'a Opts) -> Ctx<'a> {
 
 /// A SOT-583 pin: 0.28 x 0.68 mm, long side along y, centre (x, y), on F.Cu.
 fn pin(net: i32, x: f64, y: f64) -> Shape {
-    Shape { net, geo: Geo::Rect(x - 0.14, y - 0.34, x + 0.14, y + 0.34), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true }
+    Shape { net, geo: Geo::Rect(x - 0.14, y - 0.34, x + 0.14, y + 0.34), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true, grp: 0 }
 }
 
 /// Fix 2 (ESP32-CORE L1_NO_TRACKS, 10 items_not_allowed in v7): a rule area that does not allow tracks on F.Cu and
@@ -49,7 +49,7 @@ fn pin(net: i32, x: f64, y: f64) -> Shape {
 #[test]
 fn rule_area_blocks_tracks_and_vias_of_every_net() {
     let mut bd = board();
-    bd.keep.push(Keep { r: (9.0, 4.0, 10.0, 6.0), tl: 0b011, via: true });
+    bd.keep.push(Keep { r: (9.0, 4.0, 10.0, 6.0), tl: 0b011, via: true, poly: Vec::new(), holes: Vec::new(), pl: 0 });
     for net in [0usize, 1, 3] {
         assert_eq!(bd.track_cost(net, 0, 9.5, 5.0, 0.075, 0.25, None), -1, "track inside, F.Cu");
         assert_eq!(bd.track_cost(net, 1, 9.5, 5.0, 0.075, 0.25, None), -1, "track inside, In2.Cu");
@@ -140,8 +140,8 @@ fn plane_repair_looks_only_near_the_open_pads() {
     let g = 3;
     bd.add(pin(g, 3.0, 5.0)); // open: no via
     bd.add(pin(g, 17.0, 5.0)); // has a fixed via beside it
-    bd.add(Shape { net: g, geo: Geo::Circ(17.0, 6.0, 0.225), clr: 0.15, layers: 0b111, drill: 0.2, kind: Kind::Via, owner: -1, alive: true });
-    let tr = |net: i32, x: f64| Shape { net, geo: Geo::Seg(x, 2.0, x, 8.0, 0.075), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Track, owner: net, alive: true };
+    bd.add(Shape { net: g, geo: Geo::Circ(17.0, 6.0, 0.225), clr: 0.15, layers: 0b111, drill: 0.2, kind: Kind::Via, owner: -1, alive: true, grp: 0 });
+    let tr = |net: i32, x: f64| Shape { net, geo: Geo::Seg(x, 2.0, x, 8.0, 0.075), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Track, owner: net, alive: true, grp: 0 };
     bd.add(tr(1, 4.0)); // A: 1 mm from the open pad
     bd.add(tr(2, 16.0)); // B: near the pad that has its via, far from the open one
     bd.add(tr(0, 10.0)); // P: in the middle of the board
@@ -160,7 +160,7 @@ fn ringed_plane_pad_finds_a_via_site_past_2_mm() {
     let mut bd = board();
     let g = 3;
     let sq = |net: i32, x: f64, y: f64| Shape { net, geo: Geo::Rect(x - 0.45, y - 0.45, x + 0.45, y + 0.45), clr: 0.15, layers: 1, drill: 0.0,
-                                               kind: Kind::Pad, owner: -1, alive: true };
+                                               kind: Kind::Pad, owner: -1, alive: true, grp: 0 };
     for i in -1..=1 {
         for j in -1..=1 {
             bd.add(sq(if i == 0 && j == 0 { g } else { 1 }, 10.0 + 1.4 * i as f64, 5.0 + 1.4 * j as f64));
@@ -218,7 +218,7 @@ fn stub_through_routed_copper_is_priced_and_strict_refuses_it() {
     bd.add(pin(0, 5.0, 5.0));
     bd.esc.push(((4.86, 4.66, 5.14, 5.34), 0.28, 0.68, true));
     // routed track of net A across the north side of the pin, 0.3 mm above the pad end
-    bd.add(Shape { net: 1, geo: Geo::Seg(4.0, 4.36, 6.0, 4.36, 0.075), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Track, owner: 1, alive: true });
+    bd.add(Shape { net: 1, geo: Geo::Seg(4.0, 4.36, 6.0, 4.36, 0.075), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Track, owner: 1, alive: true, grp: 0 });
     let mut ctx = ctx_of(&mut bd, &o);
     let st = ctx.escape_stubs(0, 0);
     let north = st.iter().find(|s| s.b.1 < 4.3 && (s.b.0 - s.a.0).abs() < 1e-9).expect("a straight north stub");
@@ -273,7 +273,7 @@ fn rated_pin_is_joined_through_one_straight_escape() {
         bd.add(pin(net, x, y));
     }
     bd.esc.push(((4.86, 5.94, 5.14, 6.62), 0.28, 0.68, true));
-    bd.add(Shape { net: 0, geo: Geo::Rect(7.5, 5.1, 8.5, 6.1), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true });
+    bd.add(Shape { net: 0, geo: Geo::Rect(7.5, 5.1, 8.5, 6.1), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true, grp: 0 });
     bd.pad_need.push((5.0, 6.28, 0.35));
     bd.pad_need.push((8.0, 5.6, 0.35));
     let mut ctx = ctx_of(&mut bd, &o);
@@ -297,8 +297,8 @@ fn adjacent_lx_pins_both_route_through_any_angle_stubs() {
     }
     bd.esc.push(((5.36, 6.16, 5.64, 6.84), 0.28, 0.68, true));
     bd.esc.push(((5.86, 6.16, 6.14, 6.84), 0.28, 0.68, true));
-    bd.add(Shape { net: 0, geo: Geo::Rect(3.35, 0.89, 4.95, 4.39), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true });
-    bd.add(Shape { net: 1, geo: Geo::Rect(6.55, 0.89, 8.15, 4.39), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true });
+    bd.add(Shape { net: 0, geo: Geo::Rect(3.35, 0.89, 4.95, 4.39), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true, grp: 0 });
+    bd.add(Shape { net: 1, geo: Geo::Rect(6.55, 0.89, 8.15, 4.39), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true, grp: 0 });
     for q in [(5.5, 6.5), (6.0, 6.5), (4.15, 2.64), (7.35, 2.64)] {
         bd.pad_need.push((q.0, q.1, 0.55));
     }
@@ -345,11 +345,11 @@ fn plane_pad_with_no_free_site_shares_a_via_of_its_net() {
     let o = opts();
     let mut bd = board();
     let g = 3;
-    bd.add(Shape { net: g, geo: Geo::Rect(9.85, 4.8, 10.15, 5.2), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true });
+    bd.add(Shape { net: g, geo: Geo::Rect(9.85, 4.8, 10.15, 5.2), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true, grp: 0 });
     // a GND via of the net 1.5 mm away (fixed here; in the router also the fan-out via of a neighbour pad placed
     // before in the same fan-out) and routed copper of net A on In2.Cu over every via site
-    bd.add(Shape { net: g, geo: Geo::Circ(10.0, 6.5, 0.225), clr: 0.15, layers: 0b111, drill: 0.2, kind: Kind::Via, owner: -1, alive: true });
-    bd.add(Shape { net: 1, geo: Geo::Seg(6.0, 5.0, 14.0, 5.0, 3.6), clr: 0.15, layers: 0b010, drill: 0.0, kind: Kind::Track, owner: 1, alive: true });
+    bd.add(Shape { net: g, geo: Geo::Circ(10.0, 6.5, 0.225), clr: 0.15, layers: 0b111, drill: 0.2, kind: Kind::Via, owner: -1, alive: true, grp: 0 });
+    bd.add(Shape { net: 1, geo: Geo::Seg(6.0, 5.0, 14.0, 5.0, 3.6), clr: 0.15, layers: 0b010, drill: 0.0, kind: Kind::Track, owner: 1, alive: true, grp: 0 });
     let mut ctx = ctx_of(&mut bd, &o);
     ctx.strict = true;
     let r = fanout_net(&mut ctx, g as usize);
@@ -366,7 +366,7 @@ fn forced_fanouts_in_one_column_do_not_break_hole_to_hole() {
     let o = opts();
     let mut bd = board();
     let g = 3;
-    let pad = |net: i32, a: f64, b: f64, c: f64, d: f64| Shape { net, geo: Geo::Rect(a, b, c, d), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true };
+    let pad = |net: i32, a: f64, b: f64, c: f64, d: f64| Shape { net, geo: Geo::Rect(a, b, c, d), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true, grp: 0 };
     bd.add(pad(g, 9.85, 4.8, 10.15, 5.2));
     bd.add(pad(g, 9.85, 5.45, 10.15, 5.85));
     bd.add(pad(1, 10.45, 3.0, 12.0, 5.9)); // walls of another net: only the south ray is open

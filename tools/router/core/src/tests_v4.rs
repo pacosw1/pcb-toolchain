@@ -27,11 +27,11 @@ fn wall_board() -> Board {
     let mut bd = Board { layer_names: vec!["F.Cu".into(), "In1.Cu".into(), "B.Cu".into()], routable: vec![0, 2], nets, shapes: Vec::new(),
                          idx: Index::new(-1.0, -1.0, 11.0, 11.0, 3), sidx: Index::new(-1.0, -1.0, 11.0, 11.0, 3), maxc: 0.15,
                          edge: (0.0, 0.0, 10.0, 10.0), edge_clr: 0.3, gnd: 2, plane_clr: 0.25, eps: EPS, hole_clr: 0.28,
-                         spoke_notes: Vec::new(), attach: Vec::new(), spoke_sites: std::collections::HashSet::new(), adj: 0b101, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false, via_len: DEF_VIA_LEN, keep: Vec::new(), esc: Vec::new(), edges: Vec::new(), fvia: Vec::new() };
-    let pad = |x: f64| Shape { net: 0, geo: Geo::Rect(x - 0.3, 2.8, x + 0.3, 3.2), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true };
+                         spoke_notes: Vec::new(), attach: Vec::new(), spoke_sites: std::collections::HashSet::new(), adj: 0b101, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false, via_len: DEF_VIA_LEN, keep: Vec::new(), esc: Vec::new(), edges: Vec::new(), fvia: Vec::new(), iso: None, niv: Vec::new(), ppoly: Vec::new(), twin: Vec::new(), gnds: Vec::new(), pidx: Vec::new(), prad: Vec::new(), noret: Vec::new(), rgn: Vec::new() };
+    let pad = |x: f64| Shape { net: 0, geo: Geo::Rect(x - 0.3, 2.8, x + 0.3, 3.2), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true, grp: 0 };
     bd.add(pad(2.0));
     bd.add(pad(8.0));
-    bd.add(Shape { net: 1, geo: Geo::Seg(5.0, -1.0, 5.0, 11.0, 0.25), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Track, owner: -1, alive: true });
+    bd.add(Shape { net: 1, geo: Geo::Seg(5.0, -1.0, 5.0, 11.0, 0.25), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Track, owner: -1, alive: true, grp: 0 });
     bd
 }
 
@@ -90,7 +90,7 @@ fn every_layer_change_has_a_return_via() {
     // there is no GND site within 2 mm, so (8, 8) is no legal layer change; a fixed GND via 1.5 mm away makes it one
     let mut bd = wall_board();
     for g in [Geo::Rect(-1.0, -1.0, 11.0, 7.5), Geo::Rect(-1.0, 8.5, 11.0, 11.0), Geo::Rect(-1.0, 7.5, 7.5, 8.5), Geo::Rect(8.5, 7.5, 11.0, 8.5)] {
-        bd.add(Shape { net: 1, geo: g, clr: 0.15, layers: 0b010, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true });
+        bd.add(Shape { net: 1, geo: g, clr: 0.15, layers: 0b010, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true, grp: 0 });
     }
     let mut ctx = ctx_of(&mut bd, &o);
     let (ix, iy) = ctx.gr.at(8.0, 8.0);
@@ -108,7 +108,7 @@ fn every_layer_change_has_a_return_via() {
 fn checked_nets_stay_off_plane_voids() {
     let mut bd = wall_board();
     bd.adj = 0b001; // F.Cu has an adjacent plane, B.Cu not (for this test)
-    bd.add(Shape { net: 1, geo: Geo::Circ(5.0, 7.0, 0.3), clr: 0.15, layers: 0b111, drill: 0.3, kind: Kind::Via, owner: -1, alive: true });
+    bd.add(Shape { net: 1, geo: Geo::Circ(5.0, 7.0, 0.3), clr: 0.15, layers: 0b111, drill: 0.3, kind: Kind::Via, owner: -1, alive: true, grp: 0 });
     // track centre 0.27 mm from the via edge: copper clearance needs 0.075 + 0.15, the plane rule 0.075 + 0.25
     let (x, y) = (5.57, 7.0);
     assert!(bd.track_cost(0, 0, x, y, 0.075, 0.25, None) >= 0, "no flag: free");
@@ -117,7 +117,7 @@ fn checked_nets_stay_off_plane_voids() {
     assert!(bd.track_cost(0, 2, x, y, 0.075, 0.25, None) >= 0, "pref on a layer with no adjacent plane: free");
     assert!(bd.track_cost(0, 0, 5.65, y, 0.075, 0.25, None) >= 0, "0.35 mm from the via edge: free");
     // mirror: a routed pref track on F.Cu, a new via of net C beside it
-    bd.add(Shape { net: 0, geo: Geo::Seg(2.0, 9.0, 4.0, 9.0, 0.075), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Track, owner: 0, alive: true });
+    bd.add(Shape { net: 0, geo: Geo::Seg(2.0, 9.0, 4.0, 9.0, 0.075), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Track, owner: 0, alive: true, grp: 0 });
     let vy = 9.0 - 0.075 - 0.3 - 0.2; // via edge 0.2 mm from the track edge
     assert!(bd.via_cost(1, 3.0, vy, 0.6, 0.3, 0.45, None) > 0, "a via beside a pref track opens a void under it");
     bd.nets[0].pref = false;
@@ -169,10 +169,10 @@ fn allowed_exposed_pad_gets_a_via_in_the_pad() {
     let walled = |vip: bool| {
         let mut bd = wall_board();
         let ep = (3.7, 3.7, 6.3, 6.3);
-        bd.add(Shape { net: 2, geo: Geo::Rect(ep.0, ep.1, ep.2, ep.3), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true });
+        bd.add(Shape { net: 2, geo: Geo::Rect(ep.0, ep.1, ep.2, ep.3), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true, grp: 0 });
         // frame of net C pads, 0.3 mm from the exposed pad, 0.5 mm wide (no via fits the gap, none outside within 2 mm)
         for g in [Geo::Rect(3.0, 3.0, 7.0, 3.4), Geo::Rect(3.0, 6.6, 7.0, 7.0), Geo::Rect(3.0, 3.4, 3.4, 6.6), Geo::Rect(6.6, 3.4, 7.0, 6.6)] {
-            bd.add(Shape { net: 1, geo: g, clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true });
+            bd.add(Shape { net: 1, geo: g, clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true, grp: 0 });
         }
         if vip {
             bd.vip.push(ep);
@@ -193,10 +193,10 @@ fn allowed_exposed_pad_gets_a_via_in_the_pad() {
     assert!(v[0].0 > 3.7 && v[0].0 < 6.3 && v[0].1 > 3.7 && v[0].1 < 6.3, "via {:?} inside the pad", v[0]);
     assert_eq!(ctx.audit(0.0).pairs, 0, "the via keeps the clearance to the frame");
     // the allow list is per pad: an own-net pad off the list keeps the own-pad verdict (3 or 4), the allowed one drops it
-    let own = Shape { net: 0, geo: Geo::Rect(1.7, 2.8, 2.3, 3.2), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true };
-    assert!(matches!(ctx.bd.vhit(&own, 2.0, 3.0, 0.3, 0.3, 0.15, 0.45, true), 3 | 4));
-    let ep = Shape { net: 2, geo: Geo::Rect(3.7, 3.7, 6.3, 6.3), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true };
-    assert!(!matches!(ctx.bd.vhit(&ep, 5.0, 5.0, 0.3, 0.3, 0.15, 0.45, true), 3 | 4));
+    let own = Shape { net: 0, geo: Geo::Rect(1.7, 2.8, 2.3, 3.2), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true, grp: 0 };
+    assert!(matches!(ctx.bd.vhit(&own, 2.0, 3.0, 0.3, 0.3, 0.15, 0.45, true, 0), 3 | 4));
+    let ep = Shape { net: 2, geo: Geo::Rect(3.7, 3.7, 6.3, 6.3), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true, grp: 0 };
+    assert!(!matches!(ctx.bd.vhit(&ep, 5.0, 5.0, 0.3, 0.3, 0.15, 0.45, true, 0), 3 | 4));
 }
 
 /// The return via is the GND net's own via (model class + DRU rules for GND); the flag overrides it.
@@ -224,7 +224,7 @@ fn small_return_ring_is_reserved_before_the_route() {
     // the corridor: fixed net C copper on both layers leaves a 1.9 mm wide channel at y = 2.05 .. 3.95 around the pads
     let mut bd = wall_board();
     for g in [Geo::Rect(-1.0, -1.0, 11.0, 2.05), Geo::Rect(-1.0, 3.95, 11.0, 11.0)] {
-        bd.add(Shape { net: 1, geo: g, clr: 0.15, layers: 0b100, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true });
+        bd.add(Shape { net: 1, geo: g, clr: 0.15, layers: 0b100, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true, grp: 0 });
     }
     let mut ctx = ctx_of(&mut bd, &o);
     let r = route_net(&mut ctx, 0);
@@ -249,7 +249,7 @@ fn locked_input_vias_get_a_return() {
     o.ret_d = 0.6;
     o.ret_drill = 0.3;
     let mut bd = wall_board();
-    let via = |x: f64, y: f64, net: i32| Shape { net, geo: Geo::Circ(x, y, 0.3), clr: 0.15, layers: 0b111, drill: 0.3, kind: Kind::Via, owner: -1, alive: true };
+    let via = |x: f64, y: f64, net: i32| Shape { net, geo: Geo::Circ(x, y, 0.3), clr: 0.15, layers: 0b111, drill: 0.3, kind: Kind::Via, owner: -1, alive: true, grp: 0 };
     bd.add(via(2.0, 7.0, 0)); // net A, alone
     bd.add(via(8.0, 7.0, 0)); // net A, with a GND via 0.9 mm away
     bd.add(via(8.9, 7.0, 2));

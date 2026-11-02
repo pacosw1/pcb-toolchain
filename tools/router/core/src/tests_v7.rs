@@ -21,7 +21,7 @@ fn board() -> Board {
             idx: Index::new(-1.0, -1.0, 21.0, 11.0, 3), sidx: Index::new(-1.0, -1.0, 21.0, 11.0, 3), maxc: 0.15,
             edge: (0.0, 0.0, 20.0, 10.0), edge_clr: 0.3, gnd: 2, plane_clr: 0.25, eps: EPS, hole_clr: 0.28,
             spoke_notes: Vec::new(), attach: Vec::new(), spoke_sites: std::collections::HashSet::new(), adj: 0b101, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(),
-            circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false, via_len: DEF_VIA_LEN, keep: Vec::new(), esc: Vec::new(), edges: Vec::new(), fvia: Vec::new() }
+            circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false, via_len: DEF_VIA_LEN, keep: Vec::new(), esc: Vec::new(), edges: Vec::new(), fvia: Vec::new(), iso: None, niv: Vec::new(), ppoly: Vec::new(), twin: Vec::new(), gnds: Vec::new(), pidx: Vec::new(), prad: Vec::new(), noret: Vec::new(), rgn: Vec::new() }
 }
 
 fn ctx_of<'a>(bd: &'a mut Board, o: &'a Opts) -> Ctx<'a> {
@@ -34,7 +34,7 @@ fn ctx_of<'a>(bd: &'a mut Board, o: &'a Opts) -> Ctx<'a> {
 }
 
 fn track(net: i32, a: (f64, f64), b: (f64, f64), owner: i32) -> Shape {
-    Shape { net, geo: Geo::Seg(a.0, a.1, b.0, b.1, 0.075), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Track, owner, alive: true }
+    Shape { net, geo: Geo::Seg(a.0, a.1, b.0, b.1, 0.075), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Track, owner, alive: true, grp: 0 }
 }
 
 /// v7 fix 1: the audit puts the history on the keep-out of the conflicting copper. Routed A (y = 5.0) and B
@@ -64,8 +64,8 @@ fn return_via_conflict_prices_the_owner_layer_change() {
     let o = opts();
     let mut bd = board();
     let all = 0b111;
-    bd.add(Shape { net: 0, geo: Geo::Circ(10.0, 5.0, 0.3), clr: 0.15, layers: all, drill: 0.3, kind: Kind::Via, owner: 0, alive: true });
-    bd.add(Shape { net: 2, geo: Geo::Circ(11.0, 5.0, 0.225), clr: 0.15, layers: all, drill: 0.2, kind: Kind::Via, owner: 0, alive: true });
+    bd.add(Shape { net: 0, geo: Geo::Circ(10.0, 5.0, 0.3), clr: 0.15, layers: all, drill: 0.3, kind: Kind::Via, owner: 0, alive: true, grp: 0 });
+    bd.add(Shape { net: 2, geo: Geo::Circ(11.0, 5.0, 0.225), clr: 0.15, layers: all, drill: 0.2, kind: Kind::Via, owner: 0, alive: true, grp: 0 });
     bd.add(track(1, (11.3, 3.0), (11.3, 7.0), 1));
     let mut ctx = ctx_of(&mut bd, &o);
     let au = ctx.audit(0.3);
@@ -119,7 +119,7 @@ fn third_net_repair_moves_the_net_that_blocks_the_only_way() {
     bd.nets.push(n("W", false));
     bd.nets[0].layers = 0b001;
     for (y0, y1) in [(0.0, 4.6), (5.4, 10.0)] {
-        bd.add(Shape { net: 3, geo: Geo::Seg(10.0, y0, 10.0, y1, 0.1), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Track, owner: -1, alive: true });
+        bd.add(Shape { net: 3, geo: Geo::Seg(10.0, y0, 10.0, y1, 0.1), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Track, owner: -1, alive: true, grp: 0 });
     }
     bd.add(pad(0, 2.0, 5.0, 1));
     bd.add(pad(0, 18.0, 5.0, 1));
@@ -148,7 +148,7 @@ fn third_net_repair_moves_the_net_that_blocks_the_only_way() {
 fn return_via_must_be_conflict_free() {
     let o = opts();
     let mut bd = board();
-    bd.add(Shape { net: 1, geo: Geo::Seg(7.0, 5.0, 13.0, 5.0, 2.5), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Track, owner: 1, alive: true });
+    bd.add(Shape { net: 1, geo: Geo::Seg(7.0, 5.0, 13.0, 5.0, 2.5), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Track, owner: 1, alive: true, grp: 0 });
     let mut ctx = ctx_of(&mut bd, &o);
     ctx.ret_soft = false;
     assert!(!ctx.place_return(0, 10.0, 5.0, &[]), "no conflict-free return site: the layer change is rejected");

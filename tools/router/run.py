@@ -456,8 +456,8 @@ def run(a, rec, t0):
 
     # 3. model, core, write
     model = os.path.join(work, 'model.json')
-    rc, text = step([py, os.path.join(HERE, 'model.py'), bdir, '--pcb', route_in, '--out', model],
-                    os.path.join(work, 'model.log'))
+    rc, text = step([py, os.path.join(HERE, 'model.py'), bdir, '--pcb', route_in, '--out', model]
+                    + (['--return-exempt'] if getattr(a, 'return_exempt', False) else []), os.path.join(work, 'model.log'))
     if rc:
         raise StepError('model.py failed: ' + (text.strip().splitlines() or ['no output'])[-1][:300])
     rec['stages']['model'] = dict(line=(text.strip().splitlines() or [''])[-1], sha256=sha_file(model))
@@ -556,6 +556,8 @@ def parser():
                     help='full (default): a reuse result that is not PASS is compared with the full route; none: no full route')
     ap.add_argument('--congestion', action='store_true', default=os.environ.get('IOTROUTE_CONGESTION') == '1',
                     help='also write OUT.iotroute/congestion.json (DESIGN.md 5d; default off, env IOTROUTE_CONGESTION=1)')
+    ap.add_argument('--return-exempt', action='store_true',
+                    help='the nets of the gate kicad-happy RP-001 exemptions need no return via (model.py --return-exempt)')
     ap.add_argument('--bin', help='use this iotroute binary (must not be older than its sources)')
     ap.add_argument('--json', action='store_true', help='also print the JSON record')
     return ap

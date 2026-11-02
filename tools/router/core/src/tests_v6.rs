@@ -25,7 +25,7 @@ fn empty_board(nets: Vec<Net>) -> Board {
             idx: Index::new(-1.0, -1.0, 11.0, 11.0, 3), sidx: Index::new(-1.0, -1.0, 11.0, 11.0, 3), maxc: 0.15,
             edge: (0.0, 0.0, 10.0, 10.0), edge_clr: 0.3, gnd: 2, plane_clr: 0.25, eps: EPS, hole_clr: 0.28,
             spoke_notes: Vec::new(), attach: Vec::new(), spoke_sites: std::collections::HashSet::new(), adj: 0b101, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(),
-            circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false, via_len: DEF_VIA_LEN, keep: Vec::new(), esc: Vec::new(), edges: Vec::new(), fvia: Vec::new() }
+            circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false, via_len: DEF_VIA_LEN, keep: Vec::new(), esc: Vec::new(), edges: Vec::new(), fvia: Vec::new(), iso: None, niv: Vec::new(), ppoly: Vec::new(), twin: Vec::new(), gnds: Vec::new(), pidx: Vec::new(), prad: Vec::new(), noret: Vec::new(), rgn: Vec::new() }
 }
 
 fn ctx_of<'a>(bd: &'a mut Board, o: &'a Opts) -> Ctx<'a> {
@@ -36,7 +36,7 @@ fn ctx_of<'a>(bd: &'a mut Board, o: &'a Opts) -> Ctx<'a> {
 }
 
 pub(crate) fn pad(net: i32, x: f64, y: f64, layers: u8) -> Shape {
-    Shape { net, geo: Geo::Rect(x - 0.3, y - 0.2, x + 0.3, y + 0.2), clr: 0.15, layers, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true }
+    Shape { net, geo: Geo::Rect(x - 0.3, y - 0.2, x + 0.3, y + 0.2), clr: 0.15, layers, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true, grp: 0 }
 }
 
 /// angle of a segment off the nearest multiple of 45 degrees
@@ -55,7 +55,7 @@ fn every_segment_is_octilinear() {
     bd.add(pad(0, 1.0, 1.0, 1));
     bd.add(pad(0, 6.0, 3.35, 1));
     bd.add(pad(0, 2.2, 8.15, 1));
-    bd.add(Shape { net: 1, geo: Geo::Seg(3.5, 0.0, 3.5, 2.6, 0.1), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Track, owner: -1, alive: true });
+    bd.add(Shape { net: 1, geo: Geo::Seg(3.5, 0.0, 3.5, 2.6, 0.1), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Track, owner: -1, alive: true, grp: 0 });
     let mut ctx = ctx_of(&mut bd, &o);
     let r = route_net(&mut ctx, 0);
     assert!(r.hard_fail.is_none(), "{:?}", r.hard_fail);
@@ -79,10 +79,10 @@ fn power_net_keeps_its_width_and_necks_only_at_the_pad() {
     let o = opts();
     let p = Net { power: true, width: 0.5, min_w: 0.2, ..n("P", false, 0b101) };
     let mut bd = empty_board(vec![p, n("B", false, 0b101), Net { via_d: 0.45, via_drill: 0.2, ..n("GND", true, 0b101) }]);
-    bd.add(Shape { net: 0, geo: Geo::Rect(1.35, 4.5, 1.65, 5.5), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true });
-    bd.add(Shape { net: 0, geo: Geo::Rect(8.0, 4.5, 9.0, 5.5), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true });
+    bd.add(Shape { net: 0, geo: Geo::Rect(1.35, 4.5, 1.65, 5.5), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true, grp: 0 });
+    bd.add(Shape { net: 0, geo: Geo::Rect(8.0, 4.5, 9.0, 5.5), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true, grp: 0 });
     for (y0, y1) in [(0.3, 4.55), (5.45, 9.7)] {
-        bd.add(Shape { net: 1, geo: Geo::Seg(5.0, y0, 5.0, y1, 0.075), clr: 0.15, layers: 0b101, drill: 0.0, kind: Kind::Track, owner: 1, alive: true });
+        bd.add(Shape { net: 1, geo: Geo::Seg(5.0, y0, 5.0, y1, 0.075), clr: 0.15, layers: 0b101, drill: 0.0, kind: Kind::Track, owner: 1, alive: true, grp: 0 });
     }
     let mut ctx = ctx_of(&mut bd, &o);
     ctx.bd.nets[0].layers = 0b001; // one layer: no way around by a via
@@ -111,7 +111,7 @@ fn power_net_keeps_its_width_and_necks_only_at_the_pad() {
 fn wall(y_end: f64) -> Board {
     let mut bd = empty_board(vec![n("A", false, 0b101), n("C", false, 0b101), Net { via_d: 0.45, via_drill: 0.2, ..n("GND", true, 0b101) },
                                   n("W", false, 0b101)]);
-    bd.add(Shape { net: 3, geo: Geo::Seg(5.0, -1.0, 5.0, y_end, 0.25), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Track, owner: -1, alive: true });
+    bd.add(Shape { net: 3, geo: Geo::Seg(5.0, -1.0, 5.0, y_end, 0.25), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Track, owner: -1, alive: true, grp: 0 });
     bd
 }
 
@@ -184,7 +184,7 @@ fn signal_vias_keep_the_plane_antipad_web() {
     let mut bd = wall(-0.5);
     bd.web = 2.0 * 0.2 + 0.2;
     bd.web_hard = true;
-    bd.add(Shape { net: 1, geo: Geo::Circ(5.0, 5.0, 0.3), clr: 0.15, layers: 0b111, drill: 0.3, kind: Kind::Via, owner: -1, alive: true });
+    bd.add(Shape { net: 1, geo: Geo::Circ(5.0, 5.0, 0.3), clr: 0.15, layers: 0b111, drill: 0.3, kind: Kind::Via, owner: -1, alive: true, grp: 0 });
     // copper edge gap 0.25 mm at x = 5.85: legal for clearance and hole-to-hole, not for the web (0.6)
     assert_eq!(bd.via_cost(0, 5.85, 5.0, 0.6, 0.3, 0.45, None), -1, "signal via inside the web");
     assert_eq!(bd.via_cost(0, 6.25, 5.0, 0.6, 0.3, 0.45, None), 0, "edge gap 0.65 mm: outside the web");
@@ -249,10 +249,10 @@ fn allowed_pad_gets_its_own_via_inside() {
     let o = opts();
     let mut bd = empty_board(vec![n("A", false, 0b101), n("B", false, 0b101), Net { via_d: 0.45, via_drill: 0.2, ..n("GND", true, 0b101) }]);
     let ep = (3.7, 3.7, 6.3, 6.3);
-    bd.add(Shape { net: 2, geo: Geo::Rect(ep.0, ep.1, ep.2, ep.3), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true });
+    bd.add(Shape { net: 2, geo: Geo::Rect(ep.0, ep.1, ep.2, ep.3), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true, grp: 0 });
     bd.vip.push(ep);
     // a routed GND via (the return via of net A) that touches the exposed pad edge
-    bd.add(Shape { net: 2, geo: Geo::Circ(6.4, 5.0, 0.225), clr: 0.15, layers: 0b111, drill: 0.2, kind: Kind::Via, owner: 0, alive: true });
+    bd.add(Shape { net: 2, geo: Geo::Circ(6.4, 5.0, 0.225), clr: 0.15, layers: 0b111, drill: 0.2, kind: Kind::Via, owner: 0, alive: true, grp: 0 });
     let mut ctx = ctx_of(&mut bd, &o);
     let r = fanout_net(&mut ctx, 2);
     assert!(r.hard_fail.is_none(), "{:?}", r.hard_fail);

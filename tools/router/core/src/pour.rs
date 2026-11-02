@@ -667,7 +667,7 @@ fn door(bd: &Board, pr: &Pour, pd: &PourPad, f: &Filled, ring: &[u32], fl: &mut 
         fl.path.push((x, y));
         if r.m[k] & ROUT != 0 {
             fl.door.push((x, y));
-            let rr = bd.maxc.max(pr.clr).max(bd.hole_clr) + pr.mt / 2.0 + 0.6;
+            let rr = bd.reach().max(pr.clr).max(bd.hole_clr) + pr.mt / 2.0 + 0.6;
             bd.near_in(&bd.sidx, pr.layer, x, y, rr, &mut |_, s| {
                 if s.owner >= 0 && s.net != pr.net && s.kind != Kind::Spoke && s.layers & lbit != 0 && blocks_fill(bd, pr, s, x, y)
                     && !fl.walls.contains(&(s.owner as usize)) {

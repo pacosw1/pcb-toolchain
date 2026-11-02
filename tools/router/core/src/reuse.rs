@@ -45,7 +45,7 @@ fn seed_shapes(bd: &Board, seed: &Value) -> (Vec<(usize, Shape, String)>, usize)
             continue;
         };
         let s = Shape { net: n as i32, geo: Geo::Seg(f(&t["a"][0]), f(&t["a"][1]), f(&t["b"][0]), f(&t["b"][1]), f(&t["w"]) / 2.0), clr: bd.nets[n].clr,
-                        layers: 1 << l, drill: 0.0, kind: Kind::Track, owner: n as i32, alive: true };
+                        layers: 1 << l, drill: 0.0, kind: Kind::Track, owner: n as i32, alive: true, grp: 0 };
         v.push((n, s, String::from("track")));
     }
     for t in seed["vias"].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
@@ -54,7 +54,7 @@ fn seed_shapes(bd: &Board, seed: &Value) -> (Vec<(usize, Shape, String)>, usize)
             continue;
         };
         let s = Shape { net: n as i32, geo: Geo::Circ(f(&t["x"]), f(&t["y"]), f(&t["d"]) / 2.0), clr: bd.nets[n].clr, layers: all, drill: f(&t["drill"]),
-                        kind: Kind::Via, owner: n as i32, alive: true };
+                        kind: Kind::Via, owner: n as i32, alive: true, grp: 0 };
         v.push((n, s, t["role"].as_str().unwrap_or("signal").to_string()));
     }
     (v, unknown)
@@ -74,7 +74,7 @@ fn fixed_conflict(bd: &Board, s: &Shape, hth: f64, pitch: f64) -> bool {
             })
         }
         Geo::Circ(x, y, r) => {
-            let code = bd.via_fixed_code(x, y, r * 2.0, s.drill, s.clr, hth, !bd.nets[net].plane);
+            let code = bd.via_fixed_code(x, y, r * 2.0, s.drill, s.clr, hth, !bd.nets[net].plane, bd.iv(net as i32));
             bd.via_code_blocks(code, net, x, y, r * 2.0, s.drill, hth)
         }
         _ => false,

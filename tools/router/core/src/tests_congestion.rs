@@ -5,7 +5,7 @@ use super::tests_v6::{opts, pad};
 use super::tests_v9::{board, ctx_of};
 
 fn tr(net: i32, a: (f64, f64), b: (f64, f64)) -> Shape {
-    Shape { net, geo: Geo::Seg(a.0, a.1, b.0, b.1, 0.075), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Track, owner: net, alive: true }
+    Shape { net, geo: Geo::Seg(a.0, a.1, b.0, b.1, 0.075), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Track, owner: net, alive: true, grp: 0 }
 }
 
 #[test]

@@ -26,6 +26,7 @@ import kicad_happy_gate as khg  # noqa: E402  (the RP-001 gate: return_radius fr
 import pcbnew  # noqa: E402
 import fnmatch  # noqa: E402
 import math  # noqa: E402
+import pairrules  # noqa: E402  (DRU pair rules: clearance groups and their table, isolation boards)
 
 
 def ipc_width(amps, thick, dT):
@@ -46,6 +47,12 @@ PAIR_KINDS = {'diff_pair_gap', 'diff_pair_uncoupled', 'skew'}
 ZC_NAMES = {pcbnew.ZONE_CONNECTION_NONE: 'none', pcbnew.ZONE_CONNECTION_THERMAL: 'thermal',
             pcbnew.ZONE_CONNECTION_FULL: 'full', pcbnew.ZONE_CONNECTION_THT_THERMAL: 'tht_thermal'}
 HOLE_KINDS = {'hole_clearance', 'hole_to_hole'}
+# DRU constraints on items the router does not make (silk, courtyard, zone connection): KiCad DRC after routing, also
+# when the selector is not evaluable
+NOT_ROUTED = {'silk_clearance', 'courtyard_clearance', 'zone_connection', 'thermal_relief_gap', 'thermal_spoke_width',
+              'text_height', 'text_thickness'}
+PAD_TYPES = {pcbnew.PAD_ATTRIB_PTH: 'Through-hole', pcbnew.PAD_ATTRIB_SMD: 'SMD', pcbnew.PAD_ATTRIB_CONN: 'Edge connector',
+             pcbnew.PAD_ATTRIB_NPTH: 'NPTH, mechanical'}
 PAD_SHAPES = {pcbnew.PAD_SHAPE_CIRCLE: 'circle', pcbnew.PAD_SHAPE_RECTANGLE: 'rect', pcbnew.PAD_SHAPE_OVAL: 'oval',
               pcbnew.PAD_SHAPE_ROUNDRECT: 'roundrect', pcbnew.PAD_SHAPE_CUSTOM: 'custom'}
 TH = r"(?:A|B)\.Pad_Type\s*==\s*'Through-hole'"
@@ -158,17 +165,20 @@ def rule_areas(b, cu):
         if not (tr or vi or po):
             continue
         ol = z.Outline()
-        pts = []
+        pts, holes = [], []
         for k in range(ol.OutlineCount()):
             c = ol.Outline(k)
             pts.append([[T(c.CPoint(i).x), T(c.CPoint(i).y)] for i in range(c.PointCount())])
+            for h in range(ol.HoleCount(k)):
+                c = ol.Hole(k, h)
+                holes.append([[T(c.CPoint(i).x), T(c.CPoint(i).y)] for i in range(c.PointCount())])
         flat = [q for c in pts for q in c]
         xs, ys = sorted({round(q[0], 4) for q in flat}), sorted({round(q[1], 4) for q in flat})
         rect = len(pts) == 1 and len(xs) == 2 and len(ys) == 2 and len(flat) == 4 and ol.HoleCount(0) == 0
         bb = z.GetBoundingBox()
         out.append({'name': z.GetZoneName(), 'footprint': ref, 'layers': [l for l in cu if z.IsOnLayer(b.GetLayerID(l))],
                     'tracks': tr, 'vias': vi, 'pour': po, 'rect': rect,
-                    'bbox': [T(bb.GetLeft()), T(bb.GetTop()), T(bb.GetRight()), T(bb.GetBottom())], 'pts': pts})
+                    'bbox': [T(bb.GetLeft()), T(bb.GetTop()), T(bb.GetRight()), T(bb.GetBottom())], 'pts': pts, 'holes': holes})
     return out
 
 
@@ -215,6 +225,164 @@ def edge_segments(b):
     return out
 
 
+def plane_reach(b, nets, pads, pad_list, zone_objs, zones, plane_layers):
+    """A ground / alt-ref net (reference-planes.json) is a plane net only where its plane exists. A pad of it is reached
+    when its copper touches a zone of the net on one of its layers (a through-hole pad: also on a plane layer), or, for
+    an SMD pad, when the net's plane outline is within the 3 mm fan-out reach of the core. A net with no plane-layer
+    zone, or with a pad not reached, is routed with tracks like a signal net ('plane_off' gives the reason).
+    POE-ETHERNET (isolation run 1): ISO_GND is a ground with no plane on the board ('no plane on this board'), and the
+    VDD_3V3 In2 zones do not reach the J1.11 / J1.13 through-hole pads (the committed board routes VDD_3V3 with
+    tracks); as plane nets they stayed unconnected. A plane net gets its plane outlines ('plane_polys'): the core puts
+    its fan-out vias inside them (TP1.1 got a via 0.4 mm outside the In2 zone)."""
+    for name, info in nets.items():
+        if not info['plane']:
+            continue
+        zs, pzs = [], []
+        for z, zd in zip(zone_objs, zones):
+            if zd['net'] == name and z not in zs:
+                zs.append(z)
+            if zd['net'] == name and zd['layer'] in plane_layers and z not in pzs:
+                pzs.append(z)
+        off = []
+        for (fp, p), d in zip(pad_list, pads):
+            if d['net'] != name:
+                continue
+            hit = False
+            for z in zs:
+                for ln in d['layers'] + (sorted(plane_layers) if d['drill'] > 0 else []):
+                    lid = b.GetLayerID(ln)
+                    if z.IsOnLayer(lid) and z.Outline().Collide(p.GetEffectiveShape(lid if ln in d['layers'] else b.GetLayerID(d['layers'][0]))):
+                        hit = True
+            if not hit and d['drill'] == 0:
+                c = pcbnew.VECTOR2I(pcbnew.FromMM(d['x']), pcbnew.FromMM(d['y']))
+                hit = any(z.Outline().Collide(c, pcbnew.FromMM(3.0)) for z in pzs)
+            if not hit:
+                off.append(f"{d['ref']}.{d['num']}")
+        if not pzs or off:
+            info['plane'] = False
+            info['plane_off'] = 'no zone of the net on a plane layer' if not pzs else 'pads its zones do not reach: ' + ' '.join(off[:8])
+            continue
+        polys = []
+        for z in pzs:
+            ol = z.Outline()
+            for k in range(ol.OutlineCount()):
+                o = ol.Outline(k)
+                polys.append([[round(T(o.CPoint(i).x), 4), round(T(o.CPoint(i).y), 4)] for i in range(o.PointCount())])
+        info['plane_polys'] = polys
+
+
+def region_polys(b, key):
+    """A region atom 'fn:arg' of the pair rules: (pcbnew polygon sets, outlines in mm for the core). Courtyards of the
+    footprints whose reference matches arg (front and / or back), or the zones and rule areas named arg. A polygon
+    with a hole is refused (the core tests the outline only)."""
+    fn, arg = key.split(':', 1)
+    sets = []
+    if 'Courtyard' in fn:
+        sides = {'intersectsCourtyard': (pcbnew.F_CrtYd, pcbnew.B_CrtYd), 'intersectsFrontCourtyard': (pcbnew.F_CrtYd,),
+                 'intersectsBackCourtyard': (pcbnew.B_CrtYd,)}[fn]
+        for fp in b.GetFootprints():
+            if fnmatch.fnmatchcase(fp.GetReference(), arg):
+                sets += [fp.GetCourtyard(side) for side in sides]
+    else:
+        for z in list(b.Zones()) + [z for fp in b.GetFootprints() for z in fp.Zones()]:
+            if fnmatch.fnmatchcase(z.GetZoneName(), arg):
+                sets.append(z.Outline())
+    polys = []
+    for ps in sets:
+        for k in range(ps.OutlineCount()):
+            if ps.HoleCount(k):
+                raise ValueError(f'region {key}: a polygon with a hole is not modelled')
+            o = ps.Outline(k)
+            polys.append([[round(T(o.CPoint(i).x), 4), round(T(o.CPoint(i).y), 4)] for i in range(o.PointCount())])
+    if not polys:
+        raise ValueError(f'region {key}: no courtyard / area of that name on the board')
+    return [ps for ps in sets if ps.OutlineCount()], polys
+
+
+def poly_hits(sets, shape=None, poly=None):
+    """The item (a pcbnew SHAPE, or a SHAPE_POLY_SET) touches one of the region polygon sets."""
+    for ps in sets:
+        if shape is not None and ps.Collide(shape):
+            return True
+        if poly is not None:
+            c = pcbnew.SHAPE_POLY_SET(ps)
+            c.BooleanIntersection(poly)
+            if c.OutlineCount():
+                return True
+    return False
+
+
+def pair_table(b, forms, nets, pairs, pads, pad_list, zones, zone_objs, report):
+    """DRU pair rules (tools/router/pairrules.py): clearance, creepage (safe form: a straight clearance) and hole
+    clearance rules that read both items. Returns the model `iso` section, or None when the board has no pair rule (the
+    model is then byte-for-byte as before). Sets pad `iso_grp`, adds the zone-to-net clearance of the pair rules to the
+    zones' `net_clearance` (the pour model) and marks the rules applied. A pair that cannot be decided marks the
+    rules unknown (MODEL FAIL), never guessed."""
+    rules = pairrules.Rules(forms)
+    trig = set(rules.trigger(hole_scope))
+    if not trig:
+        return None
+    pair_of = {}
+    for p in pairs:
+        pair_of[p['p']] = pair_of[p['n']] = p['p']
+    try:
+        keys = pairrules.region_keys(rules)
+        regs = [region_polys(b, k) for k in keys]
+        routed = {n: {'NetName': n, 'NetClass': info['class'], 'Type': 'Track', 'Pad_Type': '', 'Pair': pair_of.get(n),
+                      'kind': 'track'} for n, info in nets.items()}
+        routed[''] = {'NetName': '', 'NetClass': 'Default', 'Type': 'Track', 'Pad_Type': '', 'kind': 'track'}
+        pad_items = []
+        for (fp, p), d in zip(pad_list, pads):
+            attr = p.GetAttribute()
+            kind = 'npth' if attr == pcbnew.PAD_ATTRIB_NPTH else 'pad_pth' if d['drill'] > 0 else 'pad_smd'
+            lay = b.GetLayerID(d['layers'][0]) if d['layers'] else pcbnew.F_Cu
+            sh = p.GetEffectiveShape(lay)
+            pad_items.append({'NetName': d['net'], 'NetClass': p.GetNetClassName(), 'Type': 'Pad',
+                              'Pad_Type': PAD_TYPES.get(attr, ''), 'Reference': d['ref'], 'Pad_Number': d['num'],
+                              'Pair': pair_of.get(d['net']), 'kind': kind,
+                              'regions': {k: poly_hits(sets, shape=sh) for k, (sets, _) in zip(keys, regs)}})
+        zone_items = [{'NetName': z.GetNetname(), 'NetClass': (nets.get(z.GetNetname()) or {}).get('class', 'Default'),
+                       'Type': 'Zone', 'Pad_Type': '', 'kind': 'zone',
+                       'regions': {k: poly_hits(sets, poly=z.Outline()) for k, (sets, _) in zip(keys, regs)}}
+                      for z in zone_objs]
+        res = pairrules.build(rules, hole_scope, routed, pad_items, zone_items, keys)
+    except ValueError as e:
+        for r in report:
+            if (r['rule'], r['constraint']) in trig:
+                r['state'], r['why'] = 'unknown', f'pair rule not modelled: {e}'
+        return None
+    n, clr = res['groups'], res['clearance']
+    for d, g in zip(pads, res['pad_groups']):
+        d['iso_grp'] = g
+    by_net = {}
+    for d, g in zip(pads, res['pad_groups']):
+        if d['net']:
+            by_net.setdefault(d['net'], []).append(g)
+    for zi, zg in enumerate(res['zone_groups']):
+        for name, kv in res['var'].items():
+            if not name or name == zones[zi]['net']:
+                continue
+            t = max(clr[zg * n + g] for g in kv['track'])
+            v = max(clr[zg * n + g] for g in kv['via'])
+            pd = max([clr[zg * n + g] for g in by_net.get(name, [])] or [0.0])
+            if max(t, v, pd) > 0:
+                e = zones[zi]['net_clearance'].setdefault(name, {})
+                for typ, val in (('track', t), ('via', v), ('pad', pd)):
+                    if val > 0:
+                        e[typ] = max(e.get(typ, 0.0), val)
+    used = set(res['rules'])
+    for r in report:
+        key = (r['rule'], r['constraint'])
+        if key in trig or (key in used and r['state'] == 'unknown'):
+            r['state'] = 'applied'
+            r['why'] = ('pair table (KiCad: last matching rule wins, both orders); creepage as a straight clearance on '
+                        'every layer (safe form, KiCad DRC creepage judges)' if r['constraint'] == 'creepage'
+                        else 'pair table (KiCad: last matching rule wins, both orders)')
+    return {'groups': n, 'table': res['table'], 'var': res['var'], 'max': max(res['table'] + [0.0]),
+            'regions': [{'key': k, 'polys': polys} for k, (_, polys) in zip(keys, regs)],
+            'rules': [f'{a} / {c}' for a, c in sorted(used | trig)], 'reps': res['reps']}
+
+
 def load_cfg(bdir):
     for name in ('gate.json', 'gate.pending.json'):
         p = os.path.join(bdir, name)
@@ -233,6 +401,8 @@ def main():
     ap.add_argument('board_dir')
     ap.add_argument('--pcb')
     ap.add_argument('--out')
+    ap.add_argument('--return-exempt', action='store_true',
+                    help="the nets of the gate's kicad-happy RP-001 exemptions (checks.kicad_happy.exempt) need no return via")
     a = ap.parse_args()
     bdir = os.path.abspath(a.board_dir)
     cfg = load_cfg(bdir)
@@ -274,6 +444,7 @@ def main():
                 info['layers'] = [l for l in info['layers'] if l not in e.get('deny_layers', [])]
     pads = []
     pad_obj = {}   # (ref, num) -> (footprint, pad): the pin-escape step below reads the pin rating of the part
+    pad_list = []  # (footprint, pad) in the order of `pads` (pair rules: the clearance group of each pad)
     pcb_text = None
     # gate viapads allow list (REF.PAD, each with a datasheet reason in gate.json): the router may put the pad's own
     # plane fan-out via inside this pad (for example an exposed pad that the datasheet connects with vias)
@@ -304,6 +475,7 @@ def main():
                 block = pcb_text[pcb_text.rfind('(pad ', 0, u):u] if u >= 0 else ''
                 d['proxy_spokes'] = block.count('(gr_vector')
             pads.append(d)
+            pad_list.append((fp, p))
             pad_obj[(d['ref'], d['num'])] = (fp, p, d)
             if d['net'] in nets:
                 nets[d['net']]['pins'].append(f"{d['ref']}.{d['num']}")
@@ -326,7 +498,8 @@ def main():
     hole_rules = {}
     zone_clr_rules = []  # (rule, condition, min) of DRU clearance rules that name a zone: the pour model of the core
     pair_nets ={p['p'] for p in pairs} | {p['n'] for p in pairs}
-    for form in rrc._forms(open(dru_path).read()) if os.path.exists(dru_path) else []:
+    dru_forms = rrc._forms(open(dru_path).read()) if os.path.exists(dru_path) else []
+    for form in dru_forms:
         if form == ['version', '1']:
             continue
         rule = form[1]
@@ -367,7 +540,9 @@ def main():
                         v[kind] = max(v.get(kind, 0), float(rrc._number(vals['min'])))
                 report.append({'rule': rule, 'constraint': kind, 'state': state, 'nets': hits[:8] + (['...'] if len(hits) > 8 else []), 'why': why})
                 continue
-            if not hits and unknown and 'inDiffPair' in str(cond) and 'intersectsArea' in str(cond):
+            if kind in NOT_ROUTED and not hits and unknown:
+                state, why = 'checked', f'{kind}: not a router item, KiCad DRC after routing'
+            elif not hits and unknown and 'inDiffPair' in str(cond) and 'intersectsArea' in str(cond):
                 state, why = 'stage', 'pairs stage: pad-field gap window (spatial selector, rule areas around the pad fields)'
             elif layer in plane_layers:
                 state, why = 'plane', f'{layer} is a plane layer: no tracks'
@@ -402,11 +577,13 @@ def main():
             report.append({'rule': rule, 'constraint': kind, 'state': state, 'nets': hits[:8] + (['...'] if len(hits) > 8 else []), 'why': why})
     keepouts = rule_areas(b, cu)
     zones = []
+    zone_objs = []  # the pcbnew zone of each `zones` entry (pair rules)
     for z in b.Zones():
         if z.GetIsRuleArea():
             continue
         zb = z.GetBoundingBox()
         for l in z.GetLayerSet().CuStack():
+            zone_objs.append(z)
             zones.append({'net': z.GetNetname(), 'layer': b.GetLayerName(l),
                           'clearance': T(z.GetLocalClearance() or 0),
                           'thermal_gap': T(z.GetThermalReliefGap()), 'spoke_width': T(z.GetThermalReliefSpokeWidth()),
@@ -427,6 +604,8 @@ def main():
                             e = zc.setdefault(name, {})
                             e[typ.lower()] = max(e.get(typ.lower(), 0.0), mn)
             zones[-1]['net_clearance'] = zc
+    plane_reach(b, nets, pads, pad_list, zone_objs, zones, plane_layers)
+    iso = pair_table(b, dru_forms, nets, pairs, pads, pad_list, zones, zone_objs, report)
     plane_clr = max([z['clearance'] for z in zones if z['layer'] in plane_layers and z['net']] or [0.0])
     hole_rules['plane_clearance'] = {'min': plane_clr, 'source': 'max local clearance of the zones on ' + ', '.join(sorted(plane_layers))}
     hole_rules['board_min'] = {'hole_clearance': rules_setup.get('min_hole_clearance'), 'hole_to_hole': rules_setup.get('min_hole_to_hole')}
@@ -436,20 +615,35 @@ def main():
     # so the router routes every piece of the net at the IPC width (no neck credit is assumed).
     dT = float(jload(bdir, 'current-paths.json', {}).get('dT', 10.0))
     thick = pcbtool.copper_thickness(pcb)
+    pad_at = {f"{d['ref']}.{d['num']}": d for d in pads}
     for name, chain in paths.items():
         if name not in nets:
             continue
         chains = []
+        # parallel chain (current-paths.json 'parallel': the paths gate rates it by max flow over its copies): when every
+        # pad of the net is a through-hole pad on F.Cu and B.Cu, the net is routed once on F.Cu and written on both outer
+        # layers (model 'twin'); each copy carries half the current (equal copies share it; max flow = the sum)
+        share = 1.0
+        outer = [l for l in ('F.Cu', 'B.Cu') if l in nets[name]['layers']]
+        if (chain.get('parallel') or any(c.get('parallel') for c in chain.get('chains', []))) and len(outer) == 2 \
+                and nets[name]['pins'] and all(pad_at[q]['drill'] > 0 and set(outer) <= set(pad_at[q]['layers'])
+                                               for q in nets[name]['pins'] if q in pad_at):
+            share = 0.5
+            nets[name]['twin'] = outer
+            nets[name]['layers'] = outer[:1]
         for c in chain.get('chains', [chain]):
             # v8: the width per copper layer (the gate rates each piece with the copper of its own layer)
-            per = {l: ipc_width(c.get('amps', 0), thick.get(l, 0.035), dT) for l in nets[name]['layers']}
+            per = {l: ipc_width(c.get('amps', 0) * share, thick.get(l, 0.035), dT) for l in nets[name]['layers']}
+            if share < 1:
+                w = max(ipc_width(c.get('amps', 0) * share, thick.get(l, 0.035), dT) for l in nets[name]['twin'])
+                per = {l: w for l in nets[name]['twin']}
             chains.append({'pads': c.get('pads', []), 'amps': c.get('amps', 0), 'min_width': max(per.values(), default=0.0),
                            'min_width_layers': per})
         nets[name]['limits']['amps'] = max([c['amps'] for c in chains] + [0])
         nets[name]['power_chains'] = chains
         nets[name]['min_width'] = max([c['min_width'] for c in chains] + [0.0])
         nets[name]['min_width_layers'] = {l: max([c['min_width_layers'].get(l, 0.0) for c in chains] + [0.0])
-                                          for l in nets[name]['layers']}
+                                          for l in nets[name].get('twin') or nets[name]['layers']}
     # v8: via current (the paths gate rates a via by its barrel, pcbtool.via_amps / via_group_amps, plating from
     # current-paths.json as the gate reads it). The core places one via per layer change, so the via of a routed power
     # net gets the smallest drill (0.05 mm steps, same annular ring) whose barrel carries the net current. ESP32-CORE
@@ -507,6 +701,24 @@ def main():
                        'min_spokes': rules_setup.get('min_resolved_spokes', 2)},
              'return_rule': return_rule(pcb, cfg, bdir), 'via_length': via_length(pcb),
              'classes': classes, 'nets': nets, 'pairs': pairs, 'zones': zones, 'keepouts': keepouts, 'edges': edge_segments(b), 'hole_rules': hole_rules, 'pads': pads, 'copper': copper, 'rules': report}
+    if iso:
+        model['iso'] = iso
+    # return vias (RP-001): kicad-happy counts a via of any ground net (gate kicad_happy grounds, names GND / *GND /
+    # 0V). The core places returns of one net: the first ground of reference-planes.json that is a plane net here;
+    # the other grounds' fixed vias and through-hole pads count too, and their own vias need no return. Only written
+    # when it is not the old default (GND alone), so the other boards' models stay as they were.
+    kh = (cfg.get('checks') or {}).get('kicad_happy')
+    gl = [g for g in list(planes.get('grounds', [])) + list((kh or {}).get('grounds', []) if isinstance(kh, dict) else [])
+          if g in nets]
+    gl = list(dict.fromkeys(gl))
+    ret = next((g for g in gl if nets[g]['plane']), None)
+    if ret and (ret != 'GND' or len(gl) > 1):
+        model['return_net'], model['return_nets'] = ret, gl
+    # opt-in: the nets the gate exempts from RP-001 (each with a user-approved reason in the exempt file) need no
+    # return via in the router either (POE-ETHERNET /SCSn: no PHY_GND via fits within 1.0 mm in the W5500 field)
+    if a.return_exempt and isinstance(kh, dict) and kh.get('exempt'):
+        ex = json.load(open(os.path.join(bdir, kh['exempt'])))
+        model['return_exempt'] = sorted({e['net'] for e in ex if e.get('rule') == 'RP-001' and e.get('net') in nets})
     states = {}
     for r in report:
         states[r['state']] = states.get(r['state'], 0) + 1

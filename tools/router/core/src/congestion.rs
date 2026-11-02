@@ -140,7 +140,7 @@ pub(crate) fn cells(ctx: &Ctx, cell: f64) -> (usize, usize, Vec<CLayer>, Vec<u32
                     if !blocks(code, -1) {
                         nf[c] += 1;
                         if bd.near_in(&bd.sidx, l, x, y, bd.track_r(hw, bd.plane_clr), &mut |_, s| {
-                            track_hit(s, x, y, hw, clr, false, bd.plane_clr, bd.hole_clr, 0.0)
+                            track_hit(s, x, y, hw, clr, false, bd.plane_clr, bd.hole_clr, 0.0, 0.0)
                         }) {
                             no[c] += 1;
                         }
