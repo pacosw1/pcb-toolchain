@@ -132,6 +132,25 @@ class Files(unittest.TestCase):
             self.assertEqual(sorted(os.listdir(os.path.dirname(out))),
                              ['ETH.kicad_sch', 'PWR-24V.kicad_sch', 'routed.kicad_pro', 'routed.kicad_sch'])
 
+    def test_sub_sheets_in_subfolders_are_copied_recursively(self):
+        # v9: INPUT-4D2A / FW-IO keep their sub-sheets in blocks/; a sub-sheet may name another one next to itself
+        sheet = '(sheet (property "Sheetfile" "%s"))'
+        with tempfile.TemporaryDirectory() as t:
+            src = os.path.join(t, 'a')
+            os.makedirs(os.path.join(src, 'blocks', 'deep'))
+            files = {'B.kicad_pcb': '', 'B.kicad_pro': 'pro', 'B.kicad_sch': sheet % 'blocks/X.kicad_sch',
+                     'blocks/X.kicad_sch': sheet % 'deep/Y.kicad_sch', 'blocks/deep/Y.kicad_sch': 'y',
+                     'blocks/unused.kicad_sch': 'unused'}
+            for n, c in files.items():
+                open(os.path.join(src, n), 'w').write(c)
+            out = os.path.join(t, 'o', 'routed.kicad_pcb')
+            os.makedirs(os.path.dirname(out))
+            run.place_sidecars(os.path.join(src, 'B.kicad_pcb'), out)
+            got = sorted(os.path.relpath(os.path.join(r, f), os.path.dirname(out))
+                         for r, _, fs in os.walk(os.path.dirname(out)) for f in fs)
+            self.assertEqual(got, ['blocks/X.kicad_sch', 'blocks/deep/Y.kicad_sch', 'routed.kicad_pro', 'routed.kicad_sch'])
+            self.assertEqual(open(os.path.join(os.path.dirname(out), 'blocks', 'deep', 'Y.kicad_sch')).read(), 'y')
+
 
 class Output(unittest.TestCase):
     def test_drc_counts_errors_only(self):

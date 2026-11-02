@@ -167,7 +167,35 @@ def project_files(pcb):
     for f in sorted(os.listdir(d)):
         if f.endswith('.kicad_sch') and f != proj + '.kicad_sch':
             out[f] = os.path.join(d, f)
+    # v9: sub-sheets in a subfolder (blocks/X.kicad_sch): follow every (property "Sheetfile" ...) from the root sheet,
+    # recursively, and keep the relative path (INPUT-4D2A copy: parity 75, RELAY-4 copy: 42, project: 0)
+    for rel in referenced_sheets(os.path.join(d, proj + '.kicad_sch'), d):
+        out.setdefault(rel, os.path.join(d, rel))
     return out
+
+
+def referenced_sheets(root_sch, base):
+    """Relative paths (to base, '/' separated) of all sheet files that root_sch references, recursively. A path is
+    read relative to the sheet that names it, else relative to base; a missing or outside file is skipped."""
+    found, todo, seen = [], [root_sch], set()
+    base = os.path.realpath(base)
+    while todo:
+        cur = todo.pop()
+        if cur in seen or not os.path.isfile(cur):
+            continue
+        seen.add(cur)
+        with open(cur, encoding='utf-8', errors='replace') as fh:
+            names = re.findall(r'\(property\s+"Sheetfile"\s+"([^"]+)"', fh.read())
+        for n in names:
+            for start in (os.path.dirname(cur), base):
+                p = os.path.realpath(os.path.join(start, n))
+                if os.path.isfile(p) and os.path.commonpath([p, base]) == base:
+                    rel = os.path.relpath(p, base).replace(os.sep, '/')
+                    if rel not in found:
+                        found.append(rel)
+                    todo.append(p)
+                    break
+    return sorted(found)
 
 
 def place_sidecars(src_pcb, out_pcb):
@@ -179,6 +207,7 @@ def place_sidecars(src_pcb, out_pcb):
         if os.path.exists(dst) and sha_file(dst) != sha_file(src):
             raise StepError(f'{dst} exists and differs from {src}')
         if not os.path.exists(dst):
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
             shutil.copyfile(src, dst)
         placed[key] = dst
     return placed
