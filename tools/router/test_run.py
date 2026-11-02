@@ -164,5 +164,53 @@ class Output(unittest.TestCase):
             self.assertEqual(os.listdir(t), ['X.kicad_pcb'])
 
 
+
+KPY = run.python_native()
+NET_CORE = os.path.join(run.ROOT, 'hardware-design', 'boards', 'NET-CORE', 'cad', 'NET-CORE', 'NET-CORE.kicad_pcb')
+
+
+@unittest.skipUnless(os.path.exists(KPY) and os.path.exists(NET_CORE), 'needs the KiCad Python (pcbnew) and NET-CORE')
+class Determinism(unittest.TestCase):
+    """v9: the same input gives byte-identical files (v8b: ESP32-CORE, same copper, GND vias in another order)."""
+
+    def kpy(self, code):
+        p = subprocess.run([KPY, '-c', code], capture_output=True, text=True, cwd=os.path.dirname(run.__file__))
+        self.assertEqual(p.returncode, 0, p.stderr[-2000:])
+        return p.stdout
+
+    def test_locked_input_is_byte_identical_and_keeps_the_source_kiids(self):
+        with tempfile.TemporaryDirectory() as t:
+            out = self.kpy(f"""
+import run, pcbnew
+nets = {{'/USB0_DP', '/USB0_DN', '/ETH_TXP', '/ETH_TXN'}}
+for d in ('a', 'b'):
+    run.make_locked_input({NET_CORE!r}, {NET_CORE!r}, nets, {t!r} + '/' + d + '/NET-CORE.kicad_pcb')
+src = sorted(x.m_Uuid.AsString() for x in pcbnew.LoadBoard({NET_CORE!r}).GetTracks() if x.GetNetname() in nets)
+cp = sorted(x.m_Uuid.AsString() for x in pcbnew.LoadBoard({t!r} + '/a/NET-CORE.kicad_pcb').GetTracks())
+print(len(src), src == cp)
+""")
+            self.assertTrue(out.strip().endswith('True'), out)
+            self.assertEqual(open(os.path.join(t, 'a', 'NET-CORE.kicad_pcb'), 'rb').read(),
+                             open(os.path.join(t, 'b', 'NET-CORE.kicad_pcb'), 'rb').read())
+
+    def test_write_gives_a_byte_identical_board(self):
+        with tempfile.TemporaryDirectory() as t:
+            self.kpy(f"""
+import pcbnew
+b = pcbnew.BOARD()
+b.Save({t!r} + '/T.kicad_pcb')
+""")
+            open(os.path.join(t, 'T.kicad_pro'), 'w').write('{}')
+            res = {'tracks': [{'net': '', 'layer': 'F.Cu', 'a': [10 + i, 10], 'b': [10 + i, 20], 'w': 0.2} for i in range(12)],
+                   'vias': [{'net': '', 'x': 30 + i, 'y': 30, 'd': 0.6, 'drill': 0.3} for i in range(6)]}
+            json.dump(res, open(os.path.join(t, 'r.json'), 'w'))
+            w = os.path.join(os.path.dirname(run.__file__), 'write.py')
+            for d in ('a', 'b'):
+                subprocess.run([KPY, w, os.path.join(t, 'T.kicad_pcb'), os.path.join(t, 'r.json'), os.path.join(t, d)],
+                               capture_output=True, text=True)
+            self.assertEqual(open(os.path.join(t, 'a', 'T.kicad_pcb'), 'rb').read(),
+                             open(os.path.join(t, 'b', 'T.kicad_pcb'), 'rb').read())
+
+
 if __name__ == '__main__':
     unittest.main()

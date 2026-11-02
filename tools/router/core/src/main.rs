@@ -222,6 +222,8 @@ struct Opts {
     ret_cost: f64,
     /// extra A* cost of a layer change per foreign signal drilled item inside the antipad web (Board::web, not hard)
     web_cost: f64,
+    /// v9: skip the length recovery after a legal end state (`--recover 0`, for comparison runs)
+    no_recover: bool,
 }
 
 struct Index {
@@ -736,6 +738,11 @@ struct Ctx<'a> {
     /// target stub end cell -> cost added to the step into it (a target cell is never expanded, so only a path that
     /// ends there pays it)
     stub_cost: (std::collections::HashMap<usize, f32>, std::collections::HashMap<usize, f32>),
+    /// v9 length recovery (recover_length): the search prices only the routing objective (track length x layer cost,
+    /// via cost, antipad web, stubs), with no PathFinder history, and its heuristic is admissible (octile distance to
+    /// the nearest target box, weight 1). The negotiation terms only resolve conflicts; once the copper is legal they
+    /// leave detours that nothing removes (v8, NET-CORE: /ETH_TXD0 40.7 mm against 19.5 mm in v4).
+    recover: bool,
 }
 
 /// v8b: one straight pin escape of a rated pad: routable layer index, start (a grid cell inside the pad, END_IN from its
@@ -891,7 +898,8 @@ impl<'a> Ctx<'a> {
             if soft > 0 && self.strict {
                 return None;
             }
-            cost += seg * (1.0 + self.gr.hist[c] as f64) * (1.0 + pres * soft as f64);
+            let hc = if self.recover { 0.0 } else { self.gr.hist[c] as f64 };
+            cost += seg * (1.0 + hc) * (1.0 + pres * soft as f64);
         }
         Some(cost as f32)
     }
@@ -1344,10 +1352,7 @@ impl<'a> Ctx<'a> {
         let (nx, ny, nr, p) = (self.gr.nx, self.gr.ny, self.gr.nr, self.gr.p);
         let n = nx * ny;
         let lmask = self.bd.nets[net].layers;
-        let lcost: Vec<f64> = self.bd.routable.iter().map(|&l| {
-            let name = &self.bd.layer_names[l];
-            if lmask & (1 << l) == 0 { f64::INFINITY } else if name == "F.Cu" { 1.0 } else if name == "B.Cu" { 1.05 } else { 1.15 }
-        }).collect();
+        let lcost: Vec<f64> = self.bd.routable.iter().map(|&l| if lmask & (1 << l) == 0 { f64::INFINITY } else { layer_cost(self.bd, l) }).collect();
         let via_base = (self.o.via_cost + if self.bd.nets[net].max_vias.is_some() { 6.0 } else { 0.0 }) * via_mult;
         // a layer change where no GND via is within the RP-001 radius needs a new return via: it costs ret_cost more
         let need_ret = !self.bd.nets[net].plane && self.bd.gnd >= 0 && self.o.ret_cost > 0.0;
@@ -1370,9 +1375,24 @@ impl<'a> Ctx<'a> {
         if self.gr.glen.len() != self.gr.g.len() {
             self.gr.glen = vec![0.0; self.gr.g.len()];
         }
+        // v9 recover: admissible heuristic, the octile distance to the nearest target box grown by the longest escape
+        // stub of the board (a stub end cell lies outside its pad's box, at most the stub length away)
+        let recover = self.recover;
+        let grow = if recover { self.bd.esc.iter().map(|e| e.2).fold(0.0f64, f64::max) } else { 0.0 };
+        let rboxes: Vec<(f64, f64, f64, f64)> = boxes.iter().map(|&(a, b, c, d)| (a - grow, b - grow, c + grow, d + grow)).collect();
+        let rb = |ix: usize, iy: usize| -> f64 {
+            let (x, y) = (x0 + ix as f64 * p, y0 + iy as f64 * p);
+            rboxes.iter().map(|&(a, b, c, d)| {
+                let (dx, dy) = ((a - x).max(0.0).max(x - c), (b - y).max(0.0).max(y - d));
+                dx.max(dy) + (SQ2 - 1.0) * dx.min(dy)
+            }).fold(f64::INFINITY, f64::min)
+        };
         let h = |ix: usize, iy: usize| -> f32 {
             if len_mode {
                 return lb(ix, iy) as f32;
+            }
+            if recover && !rboxes.is_empty() {
+                return rb(ix, iy) as f32;
             }
             let (x, y) = (x0 + ix as f64 * p, y0 + iy as f64 * p);
             let mut m = f64::INFINITY;
@@ -1482,7 +1502,8 @@ impl<'a> Ctx<'a> {
                                 }
                             }
                         } else { 0.0 };
-                        let vc = (via_base + extra + webc + self.gr.vhist[iy * nx + ix] as f64) * (1.0 + pres * kv as f64);
+                        let vh = if recover { 0.0 } else { self.gr.vhist[iy * nx + ix] as f64 };
+                        let vc = (via_base + extra + webc + vh) * (1.0 + pres * kv as f64);
                         via_pops += 1;
                         for r2 in 0..nr {
                             if r2 != r && lcost[r2].is_finite() {
@@ -1514,7 +1535,8 @@ impl<'a> Ctx<'a> {
                 if strict && k > 0 {
                     continue;
                 }
-                let mut c = if len_mode { glen } else if is_via { c } else { c * (1.0 + self.gr.hist[j] as f64) * (1.0 + pres * k as f64) };
+                let hj = if recover { 0.0 } else { self.gr.hist[j] as f64 };
+                let mut c = if len_mode { glen } else if is_via { c } else { c * (1.0 + hj) * (1.0 + pres * k as f64) };
                 if !stub_t.is_empty() && self.gr.tgt[j] == self.gr.tgen {
                     c += stub_t.get(&j).copied().unwrap_or(0.0) as f64;
                 }
@@ -3300,6 +3322,143 @@ fn rip_order(order: &[usize], involved: &[usize], moves: &[u32]) -> Vec<usize> {
     v.into_iter().map(|e| e.2).collect()
 }
 
+/// Step cost factor of copper layer l in the A* (F.Cu 1.0, B.Cu 1.05, inner layers 1.15).
+fn layer_cost(bd: &Board, l: usize) -> f64 {
+    let name = &bd.layer_names[l];
+    if name == "F.Cu" { 1.0 } else if name == "B.Cu" { 1.05 } else { 1.15 }
+}
+
+/// v9: the routing objective of the live routed copper of `net`, in the units of the A* (Ctx::search_n without the
+/// negotiation terms): track length x layer cost + per signal via the via cost (DRU via_count surcharge included) and the
+/// priced antipad web items. Escape stubs are tracks.
+fn net_cost(ctx: &Ctx, net: usize) -> f64 {
+    let n = &ctx.bd.nets[net];
+    let via_base = ctx.o.via_cost + if n.max_vias.is_some() { 6.0 } else { 0.0 };
+    let web_soft = !ctx.bd.web_hard && ctx.bd.web > 0.0 && !n.plane && ctx.o.web_cost > 0.0;
+    let mut c = 0.0;
+    for s in ctx.bd.shapes.iter().filter(|s| s.alive && s.owner == net as i32 && s.net == net as i32) {
+        match (s.kind, s.geo) {
+            (Kind::Track, Geo::Seg(ax, ay, bx, by, _)) => {
+                let l = (0..ctx.bd.layer_names.len()).find(|&l| s.layers & (1 << l) != 0).unwrap_or(0);
+                c += (bx - ax).hypot(by - ay) * layer_cost(ctx.bd, l);
+            }
+            (Kind::Via, Geo::Circ(x, y, _)) => {
+                c += via_base + if web_soft { ctx.web_items(net, x, y) as f64 * ctx.o.web_cost } else { 0.0 };
+            }
+            _ => {}
+        }
+    }
+    c
+}
+
+/// v9 length recovery. Cause (v8, hand NET-CORE placement, 1593 mm against 1495 mm for v4 on the same placement): the
+/// nets that fought in the negotiation (/ETH_TXD0, /ETH_TXD1, /ETH_TX_EN, /PHY_RSTn, ...) keep the detours that the
+/// PathFinder history and present cost pushed them into, and the nets that settled early keep routes made before the
+/// later nets were there; once the copper is legal nothing removes a detour. After a legal end state (audit pairs 0),
+/// each routed signal / power net is routed again strictly (routed copper of the other nets blocks) with the history
+/// off and an admissible heuristic (Ctx::recover). The new route is kept only when it is legal (no hard fail, no
+/// conflict of the net in the exact audit), no signal via loses its RP-001 return, the pour faults do not grow, and its
+/// routing objective (net_cost) is lower by more than one grid pitch (the resolution of the route). Else the old copper
+/// is put back. Rounds go on until a round keeps nothing. Returns (nets improved, objective saved).
+fn recover_length(ctx: &mut Ctx, order: &[usize], state: &[(Option<String>, u32)]) -> (usize, f64) {
+    let (mut kept, mut saved) = (0usize, 0.0f64);
+    let pour_n = |ctx: &Ctx| pour::check(ctx.bd).iter().filter(|f| !f.fixed).count();
+    let mut pf0 = pour_n(ctx);
+    let mut miss0 = ctx.ret_missing().len();
+    let p = ctx.gr.p;
+    loop {
+        let mut round = 0usize;
+        for &net in order {
+            if ctx.bd.nets[net].plane || state[net].0.is_some() || !ctx.bd.shapes.iter().any(|s| s.alive && s.owner == net as i32 && s.net == net as i32) {
+                continue;
+            }
+            let c0 = net_cost(ctx, net);
+            let snap = ctx.bd.shapes.clone();
+            ctx.strict = true;
+            ctx.recover = true;
+            let r = route_net(ctx, net);
+            ctx.recover = false;
+            ctx.strict = false;
+            let c1 = net_cost(ctx, net);
+            let mut ok = r.hard_fail.is_none() && c1 < c0 - p && !ctx.net_in_conflict(net);
+            let (mut miss, mut pf) = (miss0, pf0);
+            if ok {
+                miss = ctx.ret_missing().len();
+                ok = miss <= miss0;
+            }
+            if ok {
+                pf = pour_n(ctx);
+                ok = pf <= pf0;
+            }
+            if ok {
+                round += 1;
+                saved += c0 - c1;
+                miss0 = miss;
+                pf0 = pf;
+                if std::env::var("IOTROUTE_DEBUG").is_ok() {
+                    eprintln!("  recover {}: objective {c0:.2} -> {c1:.2}", ctx.bd.nets[net].name);
+                }
+            } else {
+                ctx.bd.shapes = snap;
+                ctx.bd.compact();
+            }
+            ctx.gr.reset_cache();
+        }
+        kept += round;
+        if round == 0 {
+            break;
+        }
+    }
+    (kept, saved)
+}
+
+/// v9 debug (IOTROUTE_LENDIAG=all or net,net): for each routed net, its objective now, the objective of a strict
+/// recover route with the other copper in place, and of a recover route with no other routed copper (fixed copper only),
+/// and the nets whose copper the free route meets. Free << now: other routed nets hold the short way. The copper is put
+/// back after each net.
+fn diag_length(ctx: &mut Ctx, order: &[usize], which: &str) {
+    for &net in order {
+        let name = ctx.bd.nets[net].name.clone();
+        if ctx.bd.nets[net].plane || !ctx.bd.shapes.iter().any(|s| s.alive && s.owner == net as i32 && s.net == net as i32) {
+            continue;
+        }
+        if which != "all" && !which.split(',').any(|w| w == name) {
+            continue;
+        }
+        let c0 = net_cost(ctx, net);
+        let snap = ctx.bd.shapes.clone();
+        ctx.strict = true;
+        ctx.recover = true;
+        let r1 = route_net(ctx, net);
+        let c1 = net_cost(ctx, net);
+        ctx.bd.shapes = snap.clone();
+        ctx.bd.compact();
+        ctx.gr.reset_cache();
+        let killed: Vec<usize> = (0..ctx.bd.shapes.len()).filter(|&i| { let s = &ctx.bd.shapes[i]; s.alive && s.owner >= 0 && s.owner != net as i32 }).collect();
+        for &i in &killed {
+            ctx.bd.shapes[i].alive = false;
+        }
+        ctx.gr.reset_cache();
+        let r2 = route_net(ctx, net);
+        let c2 = net_cost(ctx, net);
+        for &i in &killed {
+            ctx.bd.shapes[i].alive = true;
+        }
+        ctx.recover = false;
+        ctx.strict = false;
+        let au = ctx.audit_of(0.0, Some(net));
+        let mut bl: Vec<usize> = au.partners[net].clone();
+        bl.sort();
+        bl.dedup();
+        eprintln!("lendiag {name}: now {c0:.2} strict {} free {} blockers: {}", if r1.hard_fail.is_some() { "fail".into() } else { format!("{c1:.2}") },
+                  if r2.hard_fail.is_some() { "fail".into() } else { format!("{c2:.2}") },
+                  bl.iter().map(|&n| ctx.bd.nets[n].name.as_str()).collect::<Vec<_>>().join(" "));
+        ctx.bd.shapes = snap;
+        ctx.bd.compact();
+        ctx.gr.reset_cache();
+    }
+}
+
 /// Layer changes (vias) along a cell path.
 fn path_vias(gr: &Grid, path: &[usize]) -> usize {
     path.windows(2).filter(|w| gr.cell(w[0]).0 != gr.cell(w[1]).0).count()
@@ -3559,7 +3718,7 @@ fn main() {
         std::process::exit(2);
     }
     let mut o = Opts { pitch: 0.05, passes: 40, plane_clr: DEF_PLANE_CLR, hth: DEF_HOLE_TO_HOLE, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2,
-                       pres_mult: 1.5, pres_max: 1000.0, hist: 0.3, max_time: 0.0, door_hist: 2.0, via_cost: DEF_VIA_COST, ret_cost: DEF_RET_COST, web_cost: DEF_WEB_COST };
+                       pres_mult: 1.5, pres_max: 1000.0, hist: 0.3, max_time: 0.0, door_hist: 2.0, via_cost: DEF_VIA_COST, ret_cost: DEF_RET_COST, web_cost: DEF_WEB_COST, no_recover: false };
     // CLI flags override the model's hole rules, which override the defaults
     let (mut cli_plane, mut cli_hth, mut cli_hole): (Option<f64>, Option<f64>, Option<f64>) = (None, None, None);
     let mut check_only: Option<String> = None;
@@ -3590,6 +3749,7 @@ fn main() {
             "--web-hard" => web_hard = v == "1",
             "--web-cost" => o.web_cost = v.parse().unwrap(),
             "--via-cost" => o.via_cost = v.parse().unwrap(),
+            "--recover" => o.no_recover = v == "0",
             "--ret-cost" => o.ret_cost = v.parse().unwrap(),
             "--return-via" => {
                 let p: Vec<f64> = v.split(',').map(|s| s.parse().unwrap()).collect();
@@ -3718,7 +3878,7 @@ fn main() {
     memo_w.sort_by(|a, b| a.partial_cmp(b).unwrap());
     memo_w.dedup();
     let mut ctx = Ctx { bd: &mut bd, gr, o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nets_n], memo: Vec::new(), memo_w,
-                        rcache: vec![0; nx * ny], ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false, ret_soft: true, lfloor: Vec::new(), leaf_necks: false, stubs: std::collections::HashMap::new(), stub_cost: Default::default() };
+                        rcache: vec![0; nx * ny], ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false, ret_soft: true, lfloor: Vec::new(), leaf_necks: false, stubs: std::collections::HashMap::new(), stub_cost: Default::default(), recover: false };
     let fan_fail: Vec<Fail> = Vec::new();
     let nn = ctx.bd.nets.len();
     let mut todo: Vec<usize> = order.clone();
@@ -4023,9 +4183,26 @@ fn main() {
             state[n].1 = au.per_net[n];
         }
     }
+    if let Ok(w) = std::env::var("IOTROUTE_LENDIAG") {
+        eprintln!("lendiag before the length recovery");
+        diag_length(&mut ctx, &order, &w);
+    }
+    // v9: length recovery on a legal end state (see recover_length)
+    let mut notes = Vec::new();
+    if ctx.audit(0.0).pairs == 0 && !o.no_recover {
+        let tr = std::time::Instant::now();
+        let len0: f64 = net_lengths(ctx.bd).iter().sum();
+        let (k, saved) = recover_length(&mut ctx, &order, &state);
+        let len1: f64 = net_lengths(ctx.bd).iter().sum();
+        notes.push(format!("length recovery: {k} re-route(s) kept, objective -{saved:.1}, net length {len0:.1} -> {len1:.1} mm (vias at {:.3} mm)", ctx.bd.via_len));
+        eprintln!("{} {:.1} s", notes.last().unwrap(), tr.elapsed().as_secs_f64());
+    }
+    if let Ok(w) = std::env::var("IOTROUTE_LENDIAG") {
+        eprintln!("lendiag after the length recovery");
+        diag_length(&mut ctx, &order, &w);
+    }
     // RP-001 check of the final copper: a net with a signal via and no GND return within --return-r (its return via
     // was the one of a net ripped at the end) is routed again strictly, which places its returns; up to 3 rounds
-    let mut notes = Vec::new();
     if ctx.bd.web > 0.0 && web_relaxed == 0.0 {
         notes.push(format!("antipad web {:.2} mm ({}): {} signal via pair(s) closer", ctx.bd.web, if ctx.bd.web_hard { "hard rule" } else { "priced" }, web_pairs(ctx.bd, ctx.bd.web)));
         eprintln!("{}", notes.last().unwrap());
@@ -4303,13 +4480,13 @@ mod tests {
         let mut bd = board();
         // a routed track of A crossing the routed track of C on F.Cu
         bd.add(Shape { net: 0, geo: Geo::Seg(2.0, 3.8, 2.0, 5.5, 0.075), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Track, owner: 0, alive: true });
-        let o = Opts { pitch: 0.05, passes: 1, plane_clr: 0.25, hth: 0.45, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2, pres_mult: 1.5, pres_max: 1000.0, hist: 0.3, max_time: 0.0, door_hist: 2.0, via_cost: DEF_VIA_COST, ret_cost: DEF_RET_COST, web_cost: DEF_WEB_COST };
+        let o = Opts { pitch: 0.05, passes: 1, plane_clr: 0.25, hth: 0.45, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2, pres_mult: 1.5, pres_max: 1000.0, hist: 0.3, max_time: 0.0, door_hist: 2.0, via_cost: DEF_VIA_COST, ret_cost: DEF_RET_COST, web_cost: DEF_WEB_COST, no_recover: false };
         let (nx, ny, nr) = (201, 201, 2);
         let tot = nx * ny * nr;
         let gr = Grid { x0: 0.0, y0: 0.0, p: 0.05, nx, ny, nr, cache: vec![0; tot], vcache: vec![0; nx * ny], dcache: vec![0; tot], hist: vec![0.0; tot], vhist: vec![0.0; nx * ny], pres: 0.5,
                         g: vec![0.0; tot], from: vec![0; tot], seen: vec![0; tot], closed: vec![0; tot], tgt: vec![0; tot], sgen: 0, tgen: 0, glen: Vec::new() };
         let nn = bd.nets.len();
-        let mut ctx = Ctx { bd: &mut bd, gr, o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w: vec![0.15], rcache: vec![0; nx * ny], ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false, ret_soft: true, lfloor: Vec::new(), leaf_necks: false, stubs: std::collections::HashMap::new(), stub_cost: Default::default() };
+        let mut ctx = Ctx { bd: &mut bd, gr, o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w: vec![0.15], rcache: vec![0; nx * ny], ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false, ret_soft: true, lfloor: Vec::new(), leaf_necks: false, stubs: std::collections::HashMap::new(), stub_cost: Default::default(), recover: false };
         let a = ctx.audit(0.3);
         assert_eq!(a.pairs, 1, "one crossing = one pair");
         assert_eq!(a.hard, 0);
@@ -4323,13 +4500,13 @@ mod tests {
     #[test]
     fn free_sites_stay_legal_from_both_sides() {
         let mut bd = board();
-        let o = Opts { pitch: 0.05, passes: 1, plane_clr: 0.25, hth: 0.45, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2, pres_mult: 1.5, pres_max: 1000.0, hist: 0.3, max_time: 0.0, door_hist: 2.0, via_cost: DEF_VIA_COST, ret_cost: DEF_RET_COST, web_cost: DEF_WEB_COST };
+        let o = Opts { pitch: 0.05, passes: 1, plane_clr: 0.25, hth: 0.45, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2, pres_mult: 1.5, pres_max: 1000.0, hist: 0.3, max_time: 0.0, door_hist: 2.0, via_cost: DEF_VIA_COST, ret_cost: DEF_RET_COST, web_cost: DEF_WEB_COST, no_recover: false };
         let (nx, ny, nr) = (201, 201, 2);
         let tot = nx * ny * nr;
         let gr = Grid { x0: 0.0, y0: 0.0, p: 0.05, nx, ny, nr, cache: vec![0; tot], vcache: vec![0; nx * ny], dcache: vec![0; tot], hist: vec![0.0; tot], vhist: vec![0.0; nx * ny], pres: 0.5,
                         g: vec![0.0; tot], from: vec![0; tot], seen: vec![0; tot], closed: vec![0; tot], tgt: vec![0; tot], sgen: 0, tgen: 0, glen: Vec::new() };
         let nn = bd.nets.len();
-        let mut ctx = Ctx { bd: &mut bd, gr, o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w: vec![0.15], rcache: vec![0; nx * ny], ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false, ret_soft: true, lfloor: Vec::new(), leaf_necks: false, stubs: std::collections::HashMap::new(), stub_cost: Default::default() };
+        let mut ctx = Ctx { bd: &mut bd, gr, o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w: vec![0.15], rcache: vec![0; nx * ny], ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false, ret_soft: true, lfloor: Vec::new(), leaf_necks: false, stubs: std::collections::HashMap::new(), stub_cost: Default::default(), recover: false };
         let base = ctx.audit(0.0).pairs;
         let mut seed: u64 = 777;
         let mut rnd = || {
@@ -4380,3 +4557,5 @@ mod tests_v6;
 mod tests_v7;
 #[cfg(test)]
 mod tests_v8;
+#[cfg(test)]
+mod tests_v9;

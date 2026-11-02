@@ -11,6 +11,7 @@ WRITE PASS|FAIL drc <errors by type> unconnected N parity N -> OUT.
 """
 import collections
 import glob
+import hashlib
 import json
 import os
 import shutil
@@ -41,6 +42,11 @@ def main():
             shutil.copy(os.path.join(src_dir, f), out_dir)
     pro_keep = open(os.path.join(src_dir, proj + '.kicad_pro')).read()
 
+    # v9 determinism: the KIIDs of the new items come from a generator seeded by the input board and the result bytes
+    # (KiCad saves tracks sorted by KIID; random KIIDs gave a new item order in each file). A different input gives a
+    # different sequence, so a re-route of a board that this tool wrote does not repeat the KIIDs already in it.
+    h = hashlib.sha256(open(pcb, 'rb').read() + b'\0' + open(result, 'rb').read()).digest()
+    pcbnew.KIID.SeedGenerator(int.from_bytes(h[:4], 'big'))
     b = pcbnew.LoadBoard(pcb)
     r = json.load(open(result))
     nets = b.GetNetsByName()

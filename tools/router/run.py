@@ -233,6 +233,10 @@ def make_locked_input(in_pcb, src_pcb, nets, out_pcb):
     for t in s.GetTracks():
         if t.GetNetname() in nets:
             c = t.Duplicate()
+            # v9 determinism: keep the source KIID. Duplicate() gives a random one, and KiCad saves the tracks sorted by
+            # KIID, so the copper order of the copy (and of the model and the route) changed from run to run (v8b:
+            # ESP32-CORE, same copper, 10 GND vias in another order)
+            c.SetUuid(t.m_Uuid)
             b.Add(c)
             c.SetNet(bn[t.GetNetname()])
             c.SetLocked(True)
