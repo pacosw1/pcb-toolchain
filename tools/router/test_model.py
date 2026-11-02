@@ -65,6 +65,41 @@ class IsolationBoards(unittest.TestCase):
         self.assertTrue(m['nets']['PHY_GND']['plane'] and m['nets']['PHY_GND']['plane_polys'])
         self.assertEqual((m['return_net'], m['return_nets']), ('PHY_GND', ['PHY_GND', 'ISO_GND']))
 
+    def test_return_scope_is_the_gate_rp001_scope(self):
+        """RP-001 scope (2026-11-02): the nets the gate's kicad-happy RP-001 never checks (power / ground by name and
+        schematic power rails, rpscope.py) need no return via; a signal net still does. Before: no return_scope key."""
+        m = self.model_of('POE-ETHERNET')
+        skip = m['return_scope']['skip']
+        for n in ('VDD_3V3', 'VDD_3V3A', 'PHY_GND', 'ISO_GND', 'PRIMARY_5V'):
+            self.assertIn(n, skip)
+            self.assertIn(n, m['return_exempt'])
+        for n in ('/ETH_CT', '/MOSI', '/SCSn', '/POE_V1N', '/LED_LINK_K'):
+            self.assertNotIn(n, skip)
+        # the gate's own functions decide (no copied list): kicad-happy sees /1V2O as a rail (nnVn after the sheet path)
+        self.assertEqual(model.rp_scope(m['pcb'], ['/1V2O', '/XI', 'VDD_3V3A'])['skip'], ['/1V2O', 'VDD_3V3A'])
+
+    def test_exempt_area_is_reference_for_its_nets(self):
+        """si_planes exempt.areas (2026-11-02): the J1 box is no reference rule for /LED_*_K and /MAG_* (they were walled
+        in at J1), and stays one for /ETH_CT (not listed). The box and the fill are one union: no seam at x = 122.5."""
+        m = self.model_of('POE-ETHERNET')
+        d = m['nets']['/LED_LINK_K']['ref_domain']
+        self.assertTrue(d.startswith('PHY_GND+exempt:'))
+        self.assertEqual(m['nets']['/MAG_TXP']['ref_domain'], d)
+        self.assertEqual(m['nets']['/ETH_CT']['ref_domain'], 'PHY_GND')
+
+        def inside(x, y, polys):
+            def odd(ring):
+                c = False
+                for (ax, ay), (bx, by) in zip(ring, ring[-1:] + ring[:-1]):
+                    if (ay > y) != (by > y) and x < (bx - ax) * (y - ay) / (by - ay) + ax:
+                        c = not c
+                return c
+            return any(odd(p[0]) and not any(odd(h) for h in p[1:]) for p in polys)
+        doms = m['ref_fill']['layers']['B.Cu']['domains']
+        for x in (110.0, 121.0, 122.5, 125.0):
+            self.assertTrue(inside(x, 113.0, doms[d]), x)
+        self.assertFalse(inside(121.0, 113.0, doms['PHY_GND']))
+
     def test_relay_parallel_mains_copy(self):
         m = self.model_of('RELAY-4')
         n = m['nets']['/MAINS_COM1']

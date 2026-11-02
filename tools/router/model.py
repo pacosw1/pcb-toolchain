@@ -15,6 +15,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -283,7 +284,8 @@ def reference_fill(b, planes, nets, pad_list):
     ISO_5V 0.1-0.2 mm from the H1 / H2 screw-hole areas, where the In1 / In2 fill stops).
     Domains as si_planes.net_domain (spec "domains" patterns, else the ground zone outline that holds most pads). A
     reference area of domain d = the fill of ground d plus alt_refs of domain d with no cap_mm and not slow_only (a
-    smaller area than the gate's: safe). Exempt areas are not modelled (safe). Must run after every other read of b."""
+    smaller area than the gate's: safe). A net listed in an exempt area gets its own domain: its ground's fill plus the
+    boxes. Must run after every other read of b."""
     import si_planes
     if not planes.get('adjacent'):
         return None
@@ -306,10 +308,19 @@ def reference_fill(b, planes, nets, pad_list):
             c = t.GetPosition()
             anchors.append([round(T(c.x), 4), round(T(c.y), 4), round(T(t.GetWidth(pcbnew.F_Cu)) / 2, 4), t.GetNetname()])
     doms = set()
+    # exempt areas (spec exempt.areas, si_planes: a sample of a listed net inside the box is not checked): such a net
+    # gets its own domain = the fill of its ground plus the boxes (never stricter than the gate; POE-ETHERNET: /LED_*_K
+    # leave J1 through the J1 box that has no plane, WIZnet rule, and were walled in without it)
+    syn = {}
     for name, info in nets.items():
         if info.get('plane_ref'):
             d = si_planes.net_domain(name, pad_refs.get(name, []), s)
             if d is not None:
+                boxes = [a['box'] for a in s['exempt']['areas'] if name in a['nets']]
+                if boxes:
+                    k = d + '+exempt:' + ';'.join(','.join('%g' % v for v in b) for b in boxes)
+                    syn[k] = (d, boxes)
+                    d = k
                 info['ref_domain'] = d
                 doms.add(d)
     member = {g: [g] + [n for n, a in s['alt_refs'].items() if a['domain'] == g and 'cap_mm' not in a and not a.get('slow_only')]
@@ -320,10 +331,25 @@ def reference_fill(b, planes, nets, pad_list):
         per = {}
         for g in sorted(doms):
             polys = []
+            # an exempt-area domain: one exact union of the fill and the boxes (pcbnew boolean), so the box edge that
+            # meets the fill edge (POE J1 box at x = 122.5) leaves no seam that the core's edge margin would close
+            sets = []
             for z in zones:
-                if z.GetNetname() not in member[g] or not z.IsOnLayer(lid):
+                if z.GetNetname() not in member[syn[g][0] if g in syn else g] or not z.IsOnLayer(lid):
                     continue
-                fill = z.GetFilledPolysList(lid)
+                sets.append(z.GetFilledPolysList(lid))
+            if g in syn:
+                u = pcbnew.SHAPE_POLY_SET()
+                for f in sets:
+                    u.BooleanAdd(f)
+                for x0, y0, x1, y1 in syn[g][1]:
+                    r = pcbnew.SHAPE_POLY_SET()
+                    r.NewOutline()
+                    for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1)):
+                        r.Append(pcbnew.FromMM(x), pcbnew.FromMM(y))
+                    u.BooleanAdd(r)
+                sets = [u]
+            for fill in sets:
                 for k in range(fill.OutlineCount()):
                     rings = [fill.COutline(k)] + [fill.CHole(k, h) for h in range(fill.HoleCount(k))]
                     polys.append([[[round(T(r.CPoint(i).x), 4), round(T(r.CPoint(i).y), 4)] for i in range(r.PointCount())]
@@ -445,6 +471,30 @@ def pair_table(b, forms, nets, pairs, pads, pad_list, zones, zone_objs, report):
     return {'groups': n, 'table': res['table'], 'var': res['var'], 'max': max(res['table'] + [0.0]),
             'regions': [{'key': k, 'polys': polys} for k, (_, polys) in zip(keys, regs)],
             'rules': [f'{a} / {c}' for a, c in sorted(used | trig)], 'reps': res['reps']}
+
+
+def modern_python():
+    """The gate's interpreter for kicad-happy (tools/lib/env.mjs findModernPython): env PYTHON_MODERN, else the first
+    python3.13 ... python3.10 / python3 that is 3.10 or later."""
+    if os.environ.get('PYTHON_MODERN'):
+        return os.environ['PYTHON_MODERN']
+    for name in ('python3.13', 'python3.12', 'python3.11', 'python3.10', 'python3'):
+        try:
+            out = subprocess.run([name, '-c', 'import sys; print(sys.version_info >= (3, 10))'], capture_output=True, text=True)
+        except OSError:
+            continue
+        if out.stdout.strip() == 'True':
+            return name
+    raise SystemExit('rpscope: no Python 3.10+ for kicad-happy (set PYTHON_MODERN)')
+
+
+def rp_scope(pcb, names):
+    """The nets of `names` whose layer changes the gate's RP-001 never checks (rpscope.py)."""
+    p = subprocess.run([modern_python(), os.path.join(os.path.dirname(os.path.abspath(__file__)), 'rpscope.py'), pcb], input=json.dumps(names),
+                       capture_output=True, text=True, env={k: v for k, v in os.environ.items() if not k.startswith('GIT_')})
+    if p.returncode != 0:
+        raise SystemExit('rpscope failed: ' + (p.stderr or p.stdout).strip()[-500:])
+    return json.loads(p.stdout)
 
 
 def load_cfg(bdir):
@@ -787,6 +837,15 @@ def main():
     if a.return_exempt and isinstance(kh, dict) and kh.get('exempt'):
         ex = json.load(open(os.path.join(bdir, kh['exempt'])))
         model['return_exempt'] = sorted({e['net'] for e in ex if e.get('rule') == 'RP-001' and e.get('net') in nets})
+    # RP-001 scope (lead decision 2026-11-02: never stricter than the gate): the gate never checks the layer changes of
+    # the power / ground nets that kicad-happy names so (rpscope.py runs the gate's own functions on the project board
+    # and its schematic); they need no return via in the router either. A board with no kicad_happy check: unchanged.
+    if isinstance(kh, dict):
+        sc = rp_scope(proj + '.kicad_pcb', sorted(nets))
+        if sc['skip']:
+            model['return_scope'] = {'source': 'tools/router/rpscope.py (kicad-happy a6bba1a RP-001 net filter)',
+                                     'power_rails': sc['power_rails'], 'skip': sc['skip']}
+            model['return_exempt'] = sorted(set(model.get('return_exempt', [])) | set(sc['skip']))
     states = {}
     for r in report:
         states[r['state']] = states.get(r['state'], 0) + 1

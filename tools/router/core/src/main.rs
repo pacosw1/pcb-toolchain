@@ -39,6 +39,7 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
 mod congestion;
+mod layers;
 mod pour;
 mod reffill;
 mod reuse;
@@ -911,6 +912,10 @@ struct Grid {
     /// v7: track length (mm, vias at Board::via_len) of the best path to each cell in the present search: the DRU length
     /// bound (Ctx::len_cap) prunes a step whose length plus the distance to the nearest target box is over the cap
     glen: Vec<f32>,
+    /// layer negotiation: PathFinder history of the layer choice of a one-layer net (Ctx::layer_choice), per net x
+    /// routable layer index (sized on first use). Each iteration that ends with the net in conflict adds --hist to the
+    /// layer its copper is on; route_one_layer prices a layer at its A* cost x (1 + this history).
+    lhist: Vec<f32>,
 }
 
 impl Grid {
@@ -2707,7 +2712,7 @@ fn fanout_net_inner(ctx: &mut Ctx, net: usize) -> NetResult {
             }
         }
     }
-    let mut out = NetResult { hard_fail: None, limit: false, conflicts: 0 };
+    let mut out = NetResult { hard_fail: None, limit: false, conflicts: 0, cost: 0.0 };
     let all = (1u8 << ctx.bd.layer_names.len()) - 1;
     let pads: Vec<Shape> = ctx.bd.shapes.iter().filter(|s| s.alive && s.net == net as i32 && s.kind == Kind::Pad && s.drill == 0.0).cloned().collect();
     let mut misses = Vec::new();
@@ -2974,13 +2979,18 @@ struct NetResult {
     hard_fail: Option<String>,
     limit: bool,
     conflicts: u32,
+    /// A* cost (g at the target) of the joins routed, summed: the price of the route in the search units
+    cost: f64,
 }
 
 /// Rip up the copper this net routed before, then join its components again against the present congestion.
 fn route_net(ctx: &mut Ctx, net: usize) -> NetResult {
     release_returns(ctx, net);
     ctx.ret_soft = false;
-    let r = route_net_inner(ctx, net);
+    let r = match ctx.layer_choice(net) {
+        Some(cands) => layers::route_one_layer(ctx, net, &cands),
+        None => route_net_inner(ctx, net),
+    };
     ctx.ret_soft = true;
     ctx.neck.clear(); // the neck zones belong to this net only
     ctx.stub_cost = Default::default();
@@ -2995,7 +3005,7 @@ fn route_net_inner(ctx: &mut Ctx, net: usize) -> NetResult {
             s.alive = false;
         }
     }
-    let mut out = NetResult { hard_fail: None, limit: false, conflicts: 0 };
+    let mut out = NetResult { hard_fail: None, limit: false, conflicts: 0, cost: 0.0 };
     let items: Vec<usize> = (0..ctx.bd.shapes.len()).filter(|&i| { let s = &ctx.bd.shapes[i]; s.alive && s.net == net as i32 && s.owner < 0 && s.kind != Kind::Spoke }).collect();
     if items.len() < 2 {
         return out;
@@ -3085,6 +3095,7 @@ fn route_net_inner(ctx: &mut Ctx, net: usize) -> NetResult {
         // best width: the widest with the fewest conflicts (power nets neck only when it removes conflicts, never below
         // the width of their design current)
         let mut best: Option<(u32, f64, Vec<usize>)> = None;
+        let mut best_g = 0.0f64;
         // v8b: the escape stubs of the best try: source stubs (end cell -> stub) and target stubs (end cell -> stub, pad)
         let mut best_stubs: (std::collections::HashMap<usize, Stub>, std::collections::HashMap<usize, (Stub, usize)>) = Default::default();
         let mut limit = false;
@@ -3197,6 +3208,7 @@ fn route_net_inner(ctx: &mut Ctx, net: usize) -> NetResult {
                 limit = limit || last;
             }
             if let Ok(path) = found {
+                best_g = ctx.gr.g[*path.last().unwrap()] as f64;
                 let k: u32 = path.iter().map(|&c| ctx.cost(net, c, hw).unwrap_or(0)).sum();
                 // v6 fix 4: the widest width with a path, conflicts or not (the negotiation moves the other nets); v5
                 // took a narrower width whenever it had fewer conflicts (133 power segments necked to 0.3 mm on M2)
@@ -3340,6 +3352,7 @@ fn route_net_inner(ctx: &mut Ctx, net: usize) -> NetResult {
         used_vias += vs.len();
         len_used += tr.iter().map(|&(_, a, b, _)| (b.0 - a.0).hypot(b.1 - a.1)).sum::<f64>() + vs.len() as f64 * via_len;
         out.conflicts += k;
+        out.cost += best_g;
         let ci = match end_pad {
             Some(pad) => comps.iter().position(|comp| comp.contains(&pad)).unwrap_or(0),
             None => comps.iter().position(|comp| comp.iter().any(|&s| ctx.bd.shapes[s].geo.dist(gx, gy) <= 1e-6)).unwrap_or(0),
@@ -4259,7 +4272,7 @@ fn main() {
     let nr = bd.routable.len();
     let tot = nx * ny * nr;
     let gr = Grid { x0: e0, y0: e1, p: o.pitch, nx, ny, nr, cache: vec![0; tot], vcache: vec![0; nx * ny], dcache: vec![0; tot], hist: vec![0.0; tot], vhist: vec![0.0; nx * ny], pres: 0.5,
-                    g: vec![0.0; tot], from: vec![0; tot], seen: vec![0; tot], closed: vec![0; tot], tgt: vec![0; tot], sgen: 0, tgen: 0, glen: Vec::new() };
+                    g: vec![0.0; tot], from: vec![0; tot], seen: vec![0; tot], closed: vec![0; tot], tgt: vec![0; tot], sgen: 0, tgen: 0, glen: Vec::new(), lhist: Vec::new() };
     let mut order: Vec<usize> = (0..bd.nets.len()).collect();
     let spread = |bd: &Board, n: usize| -> f64 {
         let (mut a, mut b, mut c, mut d) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
@@ -4341,6 +4354,8 @@ fn main() {
         // of both nets, and the rip-up set = every net that is still in conflict (not the stale routing-time count)
         let au = ctx.audit(o.hist);
         let mut involved: Vec<usize> = (0..nn).filter(|&n| au.per_net[n] > 0 || !au.partners[n].is_empty()).collect();
+        // layer negotiation (layers.rs): a one-layer net in conflict gets history on the layer it is on
+        ctx.layer_hist(&involved, o.hist);
         // RP-001: a signal via whose GND return went away (the return via of another net that moved) re-routes its net
         let mut ret_nets: Vec<usize> = ctx.ret_missing().into_iter().map(|m| m.0).collect();
         ret_nets.sort();
@@ -4916,7 +4931,7 @@ mod tests {
         let (nx, ny, nr) = (201, 201, 2);
         let tot = nx * ny * nr;
         let gr = Grid { x0: 0.0, y0: 0.0, p: 0.05, nx, ny, nr, cache: vec![0; tot], vcache: vec![0; nx * ny], dcache: vec![0; tot], hist: vec![0.0; tot], vhist: vec![0.0; nx * ny], pres: 0.5,
-                        g: vec![0.0; tot], from: vec![0; tot], seen: vec![0; tot], closed: vec![0; tot], tgt: vec![0; tot], sgen: 0, tgen: 0, glen: Vec::new() };
+                        g: vec![0.0; tot], from: vec![0; tot], seen: vec![0; tot], closed: vec![0; tot], tgt: vec![0; tot], sgen: 0, tgen: 0, glen: Vec::new(), lhist: Vec::new() };
         let nn = bd.nets.len();
         let mut ctx = Ctx { bd: &mut bd, gr, o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w: vec![0.15], rcache: vec![0; nx * ny], ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false, ret_soft: true, lfloor: Vec::new(), leaf_necks: false, stubs: std::collections::HashMap::new(), stub_cost: Default::default(), recover: false, fan_keep: false };
         let a = ctx.audit(0.3);
@@ -4936,7 +4951,7 @@ mod tests {
         let (nx, ny, nr) = (201, 201, 2);
         let tot = nx * ny * nr;
         let gr = Grid { x0: 0.0, y0: 0.0, p: 0.05, nx, ny, nr, cache: vec![0; tot], vcache: vec![0; nx * ny], dcache: vec![0; tot], hist: vec![0.0; tot], vhist: vec![0.0; nx * ny], pres: 0.5,
-                        g: vec![0.0; tot], from: vec![0; tot], seen: vec![0; tot], closed: vec![0; tot], tgt: vec![0; tot], sgen: 0, tgen: 0, glen: Vec::new() };
+                        g: vec![0.0; tot], from: vec![0; tot], seen: vec![0; tot], closed: vec![0; tot], tgt: vec![0; tot], sgen: 0, tgen: 0, glen: Vec::new(), lhist: Vec::new() };
         let nn = bd.nets.len();
         let mut ctx = Ctx { bd: &mut bd, gr, o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w: vec![0.15], rcache: vec![0; nx * ny], ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false, ret_soft: true, lfloor: Vec::new(), leaf_necks: false, stubs: std::collections::HashMap::new(), stub_cost: Default::default(), recover: false, fan_keep: false };
         let base = ctx.audit(0.0).pairs;
@@ -4999,3 +5014,5 @@ mod tests_congestion;
 mod tests_iso;
 #[cfg(test)]
 mod tests_reffill;
+#[cfg(test)]
+mod tests_layers;
