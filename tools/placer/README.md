@@ -476,3 +476,84 @@ kept step 4 (+48 mm). Independent check of the step 2 routed board (scratch copy
 1597.5 mm / 304 vias (the same as the run.py measure). Against the table above: the same placement routed 1580 mm /
 296 vias with v7; the hand placement routed 1558 mm / 287 vias with v7 (not routed again with v8 here). The rank
 choice and the stop worked; the length gap to the hand placement is the next problem (a length-aware term).
+
+## Wire-length term and test-point pins (`wirelen.py`, `--param w_mst=W`, `cli.py read --tp-pins`, 2026-11-01)
+
+Cause (data, router v8, scratch only). 23 routed NET-CORE placements with 0 unconnected: escape A steps 0-5, escape
+C steps 0-7, PR #73 run A steps 0-1, PR #73 run B7 step 0, PR #71 run 4 steps 0-3 and 6, and the hand placement
+(`run.py --lock-from`). 18 are DRC 0 / 0 / 0; 5 have 1-2 DRC items and 0 unconnected (C1, C3, C6, BA0, R4_3). 6 more
+routes left 1 open and are not in the data. Escape A steps 0-4 are the rank-by-length run boards; the others were
+routed again with v8 (`run.py BOARD OUT --pcb PLACE --iters 80`).
+Each placement metric comes from the pads of the routed board (repair moves included). Spearman with the routed length:
+
+| Metric (signal nets: not GND, not VDD_3V3) | Spearman | n |
+| --- | --- | --- |
+| MST of all pad centres per net, test-point pads included | **0.82** (0.84 on the 18 PASS boards) | 23 |
+| rectilinear MST, same pads | 0.76 | 23 |
+| test-point attach length (MST with TP - MST without TP) | 0.73 | 23 |
+| HPWL of the pads, TP included | 0.72 | 23 |
+| RUDY demand, sum of squares of demand / capacity (1 mm cells, 3 signal layers, pitch 0.3 mm) | 0.66 | 23 |
+| search problem MST of the pad points, TP pins (same as row 1 minus a constant per run) | 0.75 | 23 |
+| search problem HPWL, TP pins | 0.68 | 23 |
+| crossings of the net MST edges | 0.28 | 23 |
+| MST without test-point pads | 0.35 | 23 |
+| search problem HPWL as before (no TP pins, cohesion nets excluded) | -0.07 | 23 |
+
+Linear fit: routed = 1.11 x MST + 236 mm (Pearson 0.84). Per net (excess = routed - MST): the nets with the largest
+spread of routed length over the boards are VBUS, /SOC_RSTn, VCC_DRAM, /UART0_TX, VCC_1V8, /UART0_RX and VDD_CORE
+(sd 12-19 mm). Each has a test point (TP2, TP10, TP9, TP4, TP8, TP5, TP7), and its routed length follows its MST
+(r 0.95-0.99, VDD_CORE 0.55). The reader gave a test point no pin ("spacing 0, no pads or pins in the cost", for the
+MC-MAIN TP203 case), so the search moved the test points at random: TP1 went from x 114 to x 159 in escape A. The
+test-point attach length was 160-250 mm on the compaction steps and 66 mm on the hand board. Example: escape A step 3
+routed 100 mm more than step 2; 75 mm of it is MST, and VBUS (+43 mm, TP2), VCC_1V8 (+24 mm, TP8) and UART0 (+17 mm,
+TP4 / TP5) make most of it. The nets with the largest mean excess are the RMII nets between U1 and U7 (/ETH_TXD0,
+/ETH_TXD1, /ETH_TX_EN: MST 14 mm, routed 29-30 mm) and the locked pair copper (USB0, ETH_RX): both ends are fixed, so
+a placement term cannot change them. The search HPWL did not see the test points, used one box per unit and net, and
+the cohesion nets (weight 4 per soft block) were half of it: it ranked the routed length at -0.07.
+
+Change.
+- `cli.py read --tp-pins` (`read_problem(tp_pins=True)`): the pad of a test point is a pin of its net (HPWL and MST).
+  Default off (the old behaviour).
+- The reader writes `net['pts']` (the pad centres of the net on each unit, local) and `pr['plane_nets']` (nets with a
+  copper zone; NET-CORE: GND, VDD_3V3).
+- `wirelen.py`: cost term `w_mst` x the sum over the signal nets (not cohesion, not plane nets) of the Euclidean MST of
+  the pad centres (Prim). Evaluator: incremental, the MST of the nets of the moved units only (the same net list as
+  the HPWL update); NET-CORE 1050 moves/s against 1120 without the term. A problem without `pts` uses the pin box
+  centres. The batch (torch) path rejects `w_mst` (fail closed).
+- Weight source: the fit slope 1.11 mm of route per mm of MST, so w_mst 1 (the HPWL term stays at w_wl 1 for the
+  cohesion nets).
+
+Result (2026-11-01, router v8, scratch only). Same input and parameters as escape A / the rank-by-length run (spread
+placement f9fcd2ed, blocks membersA.json, `--param w_esc=20`, `--repair`, 4 workers, 10 x 15000 steps,
+`--virtual-first --k-cap 1`, default `--rank length`, `--length-patience 2`) plus `--tp-pins` (problem and
+`--read-args`) and `--param w_mst=1`. 4 steps in about 25 min:
+
+| Step | s | length mm | vias | MST mm (pads, TP) | TP attach mm | note |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0 | 0.750 | 1421.6 | 293 | 1073.6 | 34.5 | |
+| 1 | 0.637 | 1390.9 | 287 | 1051.1 | 14.6 | chosen |
+| 2 | 0.542 | 1490.8 | 294 | 1076.5 | 29.0 | ranks after step 1 (1 of 2) |
+| 3 | 0.461 | 1490.6 | 286 | 1088.9 | 24.8 | ranks after step 1 (2 of 2): length stop |
+
+Independent check of the step 1 routed board (scratch copy, sha256 75a473f9...): `kicad-cli pcb drc
+--schematic-parity` 0 / 0 / 0, `node tools/gate.mjs NET-CORE --fresh` PASS (detached origin/main worktree); pcbnew
+1390.9 mm / 287 vias. Against the same router (v8):
+
+| Board | length mm | vias | DRC / unconn / parity | gate |
+| --- | --- | --- | --- | --- |
+| hand placement (`run.py --lock-from`, v8) | 1592.9 | 285 | 0 / 0 / 0 | - (router PASS) |
+| rank-by-length run, step 2 (no TP pins, w_mst 0) | 1597.5 | 304 | 0 / 0 / 0 | PASS |
+| this run, step 1 (TP pins + w_mst 1) | 1390.9 | 287 | 0 / 0 / 0 | PASS |
+
+-206.6 mm against 1597.5 mm and -202.0 mm (2 vias more) against the hand placement. Most of the gain is the test
+points: their attach length fell from 161 mm (step 2 before) to 15 mm (the hand board has 66 mm), and the MST without
+test points fell by 31 mm (1068 -> 1037). This run does not separate `--tp-pins` alone from `w_mst`. The test points
+now sit next to their nets, not on the board edge as on the hand board (UART0, rails at x 170.3): review the test
+access before an order. Below s 0.64 the routed length still rises more than the MST (step 2: +25 mm MST, +100 mm
+routed): the MST does not model the detours of a dense board. Next: a detour or congestion term for the dense steps.
+
+Lead review (render of step 1 against the hand board): the comparison is not like for like. Not only the test points
+moved: the RST / FEL buttons (SW1, SW2) left the right edge next to their silkscreen labels, and the two LEDs left the
+bottom edge. The hand board keeps these user-facing parts at the edge. The problem file gave them no edge or fixed
+constraint, so the search moved them freely. Before a placer result is adopted, buttons, LEDs and edge test points
+need a constraint (`fix` or an edge region); then compare the length again.

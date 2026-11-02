@@ -31,7 +31,8 @@ Problem (a dict, JSON-able; tools/placer/kicad_io.py writes it from a board):
 Pose: [(x, y, r), ...] per unit.
 
 Cost = w_wl * sum(weight * HPWL) + w_cong * RUDY overflow + w_ov * hard overlap + w_oob * forbidden area
-       + w_sp * soft spacing + w_esc * pin-escape deficit (escape.py; not computed at weight 0).
+       + w_sp * soft spacing + w_esc * pin-escape deficit (escape.py; not computed at weight 0)
+       + w_mst * net MST length (wirelen.py; not computed at weight 0).
 Hard overlap (illegal) = what KiCad DRC enforces: courtyard over courtyard, and the gap of a rect in u['hard'] (a pad
 with its net-class or .kicad_dru clearance), domain gaps and keepouts. The D-040 halo (clr of a courtyard) is the
 soft spacing: the halo overlap beyond the hard overlap.
@@ -49,14 +50,14 @@ import json
 
 import numpy as np
 
-from . import escape
+from . import escape, wirelen
 
 # RUDY default: the old term (tracks 0, limit 0.1), the cost of P2 and P2R. Track RUDY (tracks 1) at 0.3 ranked the 9
 # bench v5 poses best (Spearman 0.60), but its holdout P5 routed median 8 vs P2R 7; at 0.7 a search drove it to 0.
 DEFAULTS = {'rudy_cell': 1.0, 'mask_cell': 0.1, 'layers': 2, 'pitch': 0.4, 'limit': 0.1, 'pin_demand': 0.0, 'gap': 0.2,
             'w_wl': 1.0, 'w_cong': 1.0, 'w_ov': 20.0, 'w_oob': 20.0, 'w_sp': 2.0,
             'via_d': 0.6, 'via_clr': 0.2, 'w_via': 10.0, 'w_x': 0.0, 'w_row': 0.0, 'row_pitch': 1.0, 'tracks': 0.0,
-            'w_esc': 0.0, 'esc_hard': 0}  # pin escape (escape.py): weight per missing pin slot; 1 = blocked side illegal  # via 0.6/0.3 mm, clearance 0.2 mm (default net class)
+            'w_esc': 0.0, 'esc_hard': 0, 'w_mst': 0.0}  # pin escape (escape.py): weight per missing pin slot; 1 = blocked side illegal  # via 0.6/0.3 mm, clearance 0.2 mm (default net class)
 EPS = 1e-9
 ROUTE_LAYERS = ('F.Cu', 'B.Cu')  # the `layers` routing layers; copper on other layers uses no RUDY capacity
 OBSTACLE_LAYERS = ('F.Cu', 'via')  # kept copper that a top-side part must not cover
@@ -886,7 +887,8 @@ def components(pr, pose, params, *, mask=None):
             'via': via_room(pr, pose, p),
             'crossing': crossings(pr, pose) if p['w_x'] else 0.0,  # not computed at weight 0 (speed)
             'row': rows(pr, pose, p['row_pitch']) if p['w_row'] else 0.0,
-            'escape': escape.escape(pr, pose, p)[0] if (p['w_esc'] or p['esc_hard']) else 0.0}
+            'escape': escape.escape(pr, pose, p)[0] if (p['w_esc'] or p['esc_hard']) else 0.0,
+            'wirelen': wirelen.wirelen(pr, pose)[0] if p['w_mst'] else 0.0}
 
 
 def weighted(comp, params):
@@ -894,7 +896,7 @@ def weighted(comp, params):
     return (p['w_wl'] * comp['hpwl'] + p['w_cong'] * comp['cong'] + p['w_ov'] * comp['overlap']
             + p['w_oob'] * comp['oob'] + p['w_sp'] * comp.get('spacing', 0.0) + p['w_via'] * comp.get('via', 0)
             + p['w_x'] * comp.get('crossing', 0.0) + p['w_row'] * comp.get('row', 0.0)
-            + p['w_esc'] * comp.get('escape', 0.0))
+            + p['w_esc'] * comp.get('escape', 0.0) + p['w_mst'] * comp.get('wirelen', 0.0))
 
 
 def total(pr, pose, params):
@@ -1015,6 +1017,10 @@ class Evaluator:
             self.eb[e] = self._esc_blocked(e, np.arange(self.esc.pins[e]['n']))
             self.eval[e] = self.esc.side_cost(e, self.eb[e])
         self.comp.append(sum(v[0] for v in self.eval.values()))
+        # wire length: net MST (wirelen.py; not computed at weight 0)
+        self.wl = wirelen.Model(pr) if p['w_mst'] else None
+        self.wv = {k: self.wl.value(k, self.X, self.Y, self.R) for k in self.wl.nets} if self.wl else {}
+        self.comp.append(sum(self.wv.values()))
         self.cost = self._weighted(self.comp)
         self.pending = None
 
@@ -1022,7 +1028,7 @@ class Evaluator:
     def _weighted(self, c):
         p = self.p
         return (p['w_wl'] * c[0] + p['w_cong'] * c[1] + p['w_ov'] * c[2] + p['w_oob'] * c[3] + p['w_sp'] * c[4]
-                + p['w_via'] * c[5] + p['w_x'] * c[6] + p['w_row'] * c[7] + p['w_esc'] * c[8])
+                + p['w_via'] * c[5] + p['w_x'] * c[6] + p['w_row'] * c[7] + p['w_esc'] * c[8] + p['w_mst'] * c[9])
 
     def _esc_blocked(self, e, idx, pb=None):
         """blocked(pin) of the pins idx of escape unit e at the current pose (escape.Model.blocked)."""
@@ -1236,7 +1242,7 @@ class Evaluator:
     def components(self):
         return {'hpwl': self.comp[0], 'cong': self.comp[1], 'overlap': self.comp[2], 'oob': self.comp[3],
                 'spacing': self.comp[4], 'via': self.comp[5], 'crossing': self.comp[6], 'row': self.comp[7],
-                'escape': self.comp[8]}
+                'escape': self.comp[8], 'wirelen': self.comp[9]}
 
     def unit_penalty(self, i):
         """Spacing overlap + forbidden area of one unit (0 = legal)."""
@@ -1378,12 +1384,20 @@ class Evaluator:
                     self.eb[e] = nb
                 self.eval[e] = self.esc.side_cost(e, self.eb[e])
                 desc += self.eval[e][0] - old_esc[-1][2][0]
-        d = [dwl, dcong, ov1 - ov0, fb1 - fb0, sp1 - sp0, dvia, dx_, drow, desc]
+        old_wl, dmst = [], 0.0
+        if self.wl:
+            for k in nets:
+                if k in self.wl.member:
+                    v = self.wl.value(k, self.X, self.Y, self.R)
+                    old_wl.append((k, self.wv[k]))
+                    dmst += v - self.wv[k]
+                    self.wv[k] = v
+        d = [dwl, dcong, ov1 - ov0, fb1 - fb0, sp1 - sp0, dvia, dx_, drow, desc, dmst]
         delta = self._weighted(d)
         self.pending = (old_pose, old_forb, old_nets, saved, list(self.comp), self.cost, old_vb, old_seg, old_rv, old_area,
-                        old_esc)
+                        old_esc, old_wl)
         self.last_old = [(i, x, y, r) for i, x, y, r in old_pose]
-        for a in range(9):
+        for a in range(10):
             self.comp[a] += d[a]
         self.cost += delta
         return delta
@@ -1392,7 +1406,9 @@ class Evaluator:
         self.pending = None
 
     def revert(self):
-        old_pose, old_forb, old_nets, saved, comp, c, old_vb, old_seg, old_rv, old_area, old_esc = self.pending
+        old_pose, old_forb, old_nets, saved, comp, c, old_vb, old_seg, old_rv, old_area, old_esc, old_wl = self.pending
+        for k, v in old_wl:
+            self.wv[k] = v
         self.hulls, self.apen = old_area
         for e, b, v, pb in old_esc:
             self.eb[e], self.eval[e], self.PB[e] = b, v, pb

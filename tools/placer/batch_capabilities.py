@@ -6,7 +6,7 @@ Cost evaluation is schedule-independent; search is geometric only.
 
 
 def check_cost(problem, params):
-    for key in ('w_x', 'w_row', 'pin_demand', 'w_esc', 'esc_hard'):
+    for key in ('w_x', 'w_row', 'pin_demand', 'w_esc', 'esc_hard', 'w_mst'):
         if params.get(key):
             raise ValueError('batch: %s = %s is not supported (use the scalar path)' % (key, params[key]))
     if problem.get('via_nets'):

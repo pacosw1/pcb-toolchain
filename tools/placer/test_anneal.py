@@ -262,7 +262,8 @@ class EndToEndTest(unittest.TestCase):
         self.assertEqual([x['epoch'] for x in h], [1, 2, 3])
         for x in h:
             self.assertEqual(len(x['pose']), len(pr['units']))
-            self.assertEqual(set(x['components']), {'hpwl', 'cong', 'overlap', 'oob', 'spacing', 'via', 'crossing', 'row', 'escape'})
+            self.assertEqual(set(x['components']), {'hpwl', 'cong', 'overlap', 'oob', 'spacing', 'via', 'crossing', 'row', 'escape',
+                                                     'wirelen'})
             self.assertAlmostEqual(x['components']['hpwl'], cost.hpwl(pr, x['pose']), places=6)
 
     def test_beats_initial_and_random_placement(self):

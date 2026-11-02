@@ -42,7 +42,8 @@ def cmd_read(a):
                                keepout_zones=a.keepout_zone, edges=parse_edges(a.edge),
                                zone_refs=dict(x.split('=', 1) for x in a.zone_ref),
                                domains=parse_domains(a.domain) if a.domain else None, via_nets=a.via_net,
-                               rigid_groups=groups, blocks=a.blocks, w_block=a.w_block, w_comp=a.w_comp)
+                               rigid_groups=groups, blocks=a.blocks, w_block=a.w_block, w_comp=a.w_comp,
+                               tp_pins=a.tp_pins)
     if engineering:
         from engineering_constraints import prepare_problem
         pr = prepare_problem(a.engineering_root,a.engineering_board,a.engineering_manifest,pr)
@@ -235,6 +236,8 @@ def main(argv=None):
     r.add_argument('--blocks', metavar='MEMBERS.json', help='explicit block/component membership (membership.py): '
                    'a labelled User.1 border holds exactly its block parts; a block with a fixed part is soft')
     r.add_argument('--w-block', type=float, default=4.0, help='cohesion weight of a soft block (with --blocks)')
+    r.add_argument('--tp-pins', action='store_true', help='a test point pad is a pin of its net (README '
+                   '"Test-point pins"); default: test points have no pins in the cost')
     r.add_argument('--w-comp', type=float, default=1.0, help='cohesion weight of a component (with --blocks)')
     r.add_argument('--engineering-manifest',default=os.environ.get('PCB_ENGINEERING_MANIFEST'))
     r.add_argument('--engineering-board',default=os.environ.get('PCB_ENGINEERING_BOARD'),help='exact configured board ID for the reviewed manifest')

@@ -354,8 +354,10 @@ def cohesion_nets(units, member_of, members, w_block, w_comp):
 def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), free_box=None,
                  region_refs=(), region_weight=1.0, region_box=None, spacing=(0.5, 1.0), tie=0.0,
                  rigid_nets=(), decap_tie=0.0, keepout_zones=(), edges=None, zone_refs=None, domains=None, via_nets=(),
-                 rigid_groups=(), blocks=None, w_block=0.0, w_comp=0.0):
-    """blocks: explicit membership (membership.py JSON path or dict). A User.1 border whose label is a block name
+                 rigid_groups=(), blocks=None, w_block=0.0, w_comp=0.0, tp_pins=False):
+    """tp_pins: the pad of each test point is a pin of its net (README "Test-point pins"); without it a test point
+    has no pin in the cost and goes anywhere (its track length is not in the cost).
+    blocks: explicit membership (membership.py JSON path or dict). A User.1 border whose label is a block name
     holds exactly those parts (not the parts whose anchor is inside it), when no part of the block is fixed: a rigid
     unit. A block with a fixed part is soft: its parts stay single units, tied by a cohesion net (w_block).
     Components get cohesion nets (w_comp). Without blocks, the borders hold the parts inside them (as before)."""
@@ -590,10 +592,11 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
     skip_pat = list(skip)
     region_refs = set(region_refs)
     pins = {}  # net -> {unit: [x0, y0, x1, y1]}
+    pts = {}  # net -> {unit: [[x, y], ...]} pad centres (wirelen.py: the net MST)
     ncls = {}  # net -> net class name
     region_nets = set()
     for fp in fps:
-        if is_test_point(fp.GetReference()):
+        if is_test_point(fp.GetReference()) and not tp_pins:
             continue
         ui = index[member[fp.GetReference()]]
         u = out_units[ui]
@@ -606,6 +609,7 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
             ncls[n] = p.GetNetClassName()
             b = pins.setdefault(n, {}).setdefault(ui, [x, y, x, y])
             b[0], b[1], b[2], b[3] = min(b[0], x), min(b[1], y), max(b[2], x), max(b[3], y)
+            pts.setdefault(n, {}).setdefault(ui, []).append([round(x, 6), round(y, 6)])
             if fp.GetReference() in region_refs:
                 region_nets.add(n)
     nets = []
@@ -616,6 +620,7 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
             continue
         nets.append({'name': n, 'weight': region_weight if n in region_nets else 1.0,
                      'pins': [[i] + [round(v, 6) for v in us[i]] for i in sorted(us)],
+                     'pts': [pts[n][i] for i in sorted(us)],
                      'track': max(tracks.get(c, tracks['Default']) for c in ncls[n].split(','))})
     if mship is not None:
         nets += cohesion_nets(out_units, {r: index[member[r]] for r in member if member[r] in index}, mship,
@@ -645,7 +650,9 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
             'cu_nets': {str(c): [n.GetNetname(), n.GetNetClassName()] for c in sorted(
                 {q[4] for u in out_units for q in u.get('cu', ()) if q[4] > 0}) for n in [board.FindNet(c)]},
             'via_nets': sorted(n.GetNetCode() for name, n in board.GetNetsByName().items()
-                               if any(fnmatch.fnmatchcase(str(name), q) for q in via_nets))}
+                               if any(fnmatch.fnmatchcase(str(name), q) for q in via_nets)),
+            # nets with a copper zone (a plane or pour): their pads go to the zone by a via (wirelen.py)
+            'plane_nets': sorted({z.GetNetname() for z in board.Zones() if not z.GetIsRuleArea() and z.GetNetname()})}
 
 
 def escape_rules(board, base):
