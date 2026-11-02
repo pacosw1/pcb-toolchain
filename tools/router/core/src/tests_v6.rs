@@ -4,7 +4,7 @@ use super::*;
 
 fn n(name: &str, plane: bool, layers: u8) -> Net {
     Net { name: name.into(), width: 0.15, clr: 0.15, fast: false, plane, power: false, layers, via_d: 0.6, via_drill: 0.3, max_vias: None,
-          max_len: None, pref: false, min_w: 0.0, in_vias: 0 }
+          max_len: None, pref: false, min_w: 0.0, min_wl: Vec::new(), in_vias: 0 }
 }
 
 pub(crate) fn opts() -> Opts {
@@ -25,14 +25,14 @@ fn empty_board(nets: Vec<Net>) -> Board {
             idx: Index::new(-1.0, -1.0, 11.0, 11.0, 3), sidx: Index::new(-1.0, -1.0, 11.0, 11.0, 3), maxc: 0.15,
             edge: (0.0, 0.0, 10.0, 10.0), edge_clr: 0.3, gnd: 2, plane_clr: 0.25, eps: EPS, hole_clr: 0.28,
             spoke_notes: Vec::new(), attach: Vec::new(), spoke_sites: std::collections::HashSet::new(), adj: 0b101, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(),
-            circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false, via_len: DEF_VIA_LEN }
+            circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false, via_len: DEF_VIA_LEN, keep: Vec::new(), esc: Vec::new(), edges: Vec::new(), fvia: Vec::new() }
 }
 
 fn ctx_of<'a>(bd: &'a mut Board, o: &'a Opts) -> Ctx<'a> {
     let nn = bd.nets.len();
     let memo_w = bd.nets.iter().flat_map(|n| net_widths(n)).collect();
     Ctx { bd, gr: grid(), o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w, rcache: vec![0; 201 * 201],
-          ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false, ret_soft: true }
+          ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false, ret_soft: true, lfloor: Vec::new(), leaf_necks: false, stubs: std::collections::HashMap::new(), stub_cost: Default::default() }
 }
 
 pub(crate) fn pad(net: i32, x: f64, y: f64, layers: u8) -> Shape {
@@ -232,7 +232,7 @@ fn t1_u8_escape_and_track_spoke() {
     let net = |bd: &Board, s: &str| bd.nets.iter().position(|n| n.name == s).unwrap();
     let (dvddk, gnd) = (net(&bd, "/CH_DVDDK"), net(&bd, "GND"));
     let mut ctx = Ctx { bd: &mut bd, gr, o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w,
-                        rcache: vec![0; nx * ny], ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false, ret_soft: true };
+                        rcache: vec![0; nx * ny], ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false, ret_soft: true, lfloor: Vec::new(), leaf_necks: false, stubs: std::collections::HashMap::new(), stub_cost: Default::default() };
     let r = route_net(&mut ctx, dvddk);
     assert!(r.hard_fail.is_none(), "/CH_DVDDK: {:?}", r.hard_fail);
     fanout_net(&mut ctx, gnd); // (pads on the crop border have no site: crop artefact)

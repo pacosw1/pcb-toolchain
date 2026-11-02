@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 fn n(name: &str, plane: bool) -> Net {
     Net { name: name.into(), width: 0.15, clr: 0.15, fast: false, plane, power: false, layers: 0b101, via_d: 0.6, via_drill: 0.3, max_vias: None,
-          max_len: None, pref: false, min_w: 0.0, in_vias: 0 }
+          max_len: None, pref: false, min_w: 0.0, min_wl: Vec::new(), in_vias: 0 }
 }
 
 /// 10 x 10 mm, F.Cu / In1.Cu (plane) / B.Cu, a GND pour on F.Cu (clearance 0.25, relief 0.3, spokes 0.4, min width 0.1).
@@ -20,7 +20,7 @@ fn pocket_board() -> Board {
                          idx: Index::new(-1.0, -1.0, 11.0, 11.0, 3), sidx: Index::new(-1.0, -1.0, 11.0, 11.0, 3), maxc: 0.25,
                          edge: (0.0, 0.0, 10.0, 10.0), edge_clr: 0.3, gnd: 2, plane_clr: 0.25, eps: EPS, hole_clr: 0.28,
                          spoke_notes: Vec::new(), attach: Vec::new(), spoke_sites: std::collections::HashSet::new(), adj: 0, pad_need: Vec::new(), gnd_fixed: vec![(8.5, 5.0)],
-                         pours: Vec::new(), circ: HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false, via_len: DEF_VIA_LEN };
+                         pours: Vec::new(), circ: HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false, via_len: DEF_VIA_LEN, keep: Vec::new(), esc: Vec::new(), edges: Vec::new(), fvia: Vec::new() };
     let fixed = |net: i32, geo: Geo, kind: Kind, layers: u8, drill: f64| Shape { net, geo, clr: 0.15, layers, drill, kind, owner: -1, alive: true };
     bd.add(fixed(0, Geo::Rect(6.8, 1.3, 7.2, 1.7), Kind::Pad, 1, 0.0));
     bd.add(fixed(0, Geo::Rect(6.8, 8.3, 7.2, 8.7), Kind::Pad, 1, 0.0));
@@ -56,7 +56,7 @@ fn walled_in_pour_piece_is_found_and_resolved() {
     let nn = bd.nets.len();
     let memo_w = bd.nets.iter().flat_map(|n| net_widths(n)).collect();
     let mut ctx = Ctx { bd: &mut bd, gr: grid(), o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w,
-                        rcache: vec![0; 201 * 201], ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false, ret_soft: true };
+                        rcache: vec![0; 201 * 201], ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false, ret_soft: true, lfloor: Vec::new(), leaf_necks: false, stubs: std::collections::HashMap::new(), stub_cost: Default::default() };
     assert!(route_net(&mut ctx, 0).hard_fail.is_none());
     // detection: the straight route of A closes the pocket; 1 track spoke, 4 pour spokes into the island (KiCad does
     // not fold the island spokes back in when the pad has another spoke)
@@ -106,7 +106,7 @@ fn tht_hole_splits_the_spokes_of_a_thermal_pad() {
                          idx: Index::new(-1.0, -1.0, 11.0, 11.0, 3), sidx: Index::new(-1.0, -1.0, 11.0, 11.0, 3), maxc: 0.25,
                          edge: (0.0, 0.0, 10.0, 10.0), edge_clr: 0.3, gnd: 2, plane_clr: 0.25, eps: EPS, hole_clr: 0.28,
                          spoke_notes: Vec::new(), attach: Vec::new(), spoke_sites: std::collections::HashSet::new(), adj: 0, pad_need: Vec::new(), gnd_fixed: vec![(8.0, 2.0)],
-                         pours: Vec::new(), circ: HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false, via_len: DEF_VIA_LEN };
+                         pours: Vec::new(), circ: HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false, via_len: DEF_VIA_LEN, keep: Vec::new(), esc: Vec::new(), edges: Vec::new(), fvia: Vec::new() };
     let fixed = |net: i32, geo: Geo, kind: Kind, layers: u8, drill: f64| Shape { net, geo, clr: 0.15, layers, drill, kind, owner: -1, alive: true };
     bd.add(fixed(2, Geo::Rect(4.15, 4.15, 5.85, 5.85), Kind::Pad, 0b111, 1.0));
     bd.circ.insert((50000, 50000), 0.85);
@@ -198,7 +198,7 @@ fn hard_door_reserves_only_the_blocked_part() {
     let gr = Grid { x0: e0, y0: e1, p: 0.05, nx, ny, nr: 2, cache: vec![0; tot], vcache: vec![0; nx * ny], dcache: vec![0; tot], hist: vec![0.0; tot],
                     vhist: vec![0.0; nx * ny], pres: 0.5, g: vec![0.0; tot], from: vec![0; tot], seen: vec![0; tot], closed: vec![0; tot], tgt: vec![0; tot], sgen: 0, tgen: 0, glen: Vec::new() };
     let mut ctx = Ctx { bd: &mut bd, gr, o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w: vec![0.15],
-                        rcache: vec![0; nx * ny], ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false, ret_soft: true };
+                        rcache: vec![0; nx * ny], ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false, ret_soft: true, lfloor: Vec::new(), leaf_necks: false, stubs: std::collections::HashMap::new(), stub_cost: Default::default() };
     ctx.reserve_door(&fl);
     let len: f64 = ctx.bd.shapes[n0..].iter().filter_map(|s| if let Geo::Seg(ax, ay, bx, by, _) = s.geo { Some((bx - ax).hypot(by - ay)) } else { None }).sum();
     let last = fl.path.iter().rposition(|p| fl.door.contains(p)).unwrap();

@@ -106,6 +106,115 @@ def via_length(pcb):
     return None
 
 
+def via_for_current(dr0, d0, amps, plating, dT):
+    """(drill, diameter) of the smallest via (drill in 0.05 mm steps from dr0, same annular ring) whose barrel carries
+    amps by the paths gate rule (pcbtool.via_amps); (dr0, d0) when that via already does."""
+    dr = dr0
+    while pcbtool.via_amps(dr, plating, dT) < amps and dr < 1.0:
+        dr = round(dr + 0.05, 2)
+    return dr, round(d0 + dr - dr0, 2)
+
+
+def plane_fanout_vias(nets, classes, plating, dT):
+    """v8b: {'REF.NUM': (drill, diameter, amps)} for the pads of a plane net in a power chain whose current one via of
+    the net cannot carry (pcbtool.via_amps, the paths gate rule). The core fans each plane-net pad out through ONE via,
+    and the gate rates the chain by its widest single path: ESP32-CORE c1, GND J2.4 -> U3.6 2.1 A through the 0.3 mm
+    fan-out via of U3.6 (1.92 A at dT 20 K). Only these pads get the larger via; the net keeps its own via elsewhere."""
+    out = {}
+    for name, info in sorted(nets.items()):
+        if not info.get('plane'):
+            continue
+        c = classes.get(info['class']) or classes['Default']
+        v = info.get('via') or {}
+        dr0, d0 = v.get('hole_size') or c['drill'], v.get('via_diameter') or c['via']
+        if not dr0 or not d0:
+            continue
+        for ch in info.get('power_chains', []):
+            amps = ch.get('amps', 0)
+            if not amps or pcbtool.via_amps(dr0, plating, dT) >= amps:
+                continue
+            dr, d = via_for_current(dr0, d0, amps, plating, dT)
+            for pad in ch.get('pads', []):
+                if pad not in out or out[pad][0] < dr:
+                    out[pad] = (dr, d, amps)
+    return out
+
+
+def disallow_types(con):
+    """Item types of a DRU (constraint disallow ...) form: ['constraint', 'disallow', 'track', 'via'] -> {'track', 'via'}."""
+    return {str(x) for x in con[2:] if isinstance(x, str)}
+
+
+def rule_areas(b, cu):
+    """Every KiCad rule area (board zones and footprint zones) that keeps router items out: {name, layers, tracks,
+    vias, pour, rect, bbox, pts}. tracks / vias / pour = True when that item is NOT allowed. rect = the outline is one
+    axis-parallel rectangle (the core then uses it exactly; else it uses the bbox, which is conservative)."""
+    out = []
+    zs = [(z, '') for z in b.Zones()] + [(z, fp.GetReference()) for fp in b.GetFootprints() for z in fp.Zones()]
+    for z, ref in zs:
+        if not z.GetIsRuleArea():
+            continue
+        tr, vi, po = bool(z.GetDoNotAllowTracks()), bool(z.GetDoNotAllowVias()), bool(z.GetDoNotAllowZoneFills())
+        if not (tr or vi or po):
+            continue
+        ol = z.Outline()
+        pts = []
+        for k in range(ol.OutlineCount()):
+            c = ol.Outline(k)
+            pts.append([[T(c.CPoint(i).x), T(c.CPoint(i).y)] for i in range(c.PointCount())])
+        flat = [q for c in pts for q in c]
+        xs, ys = sorted({round(q[0], 4) for q in flat}), sorted({round(q[1], 4) for q in flat})
+        rect = len(pts) == 1 and len(xs) == 2 and len(ys) == 2 and len(flat) == 4 and ol.HoleCount(0) == 0
+        bb = z.GetBoundingBox()
+        out.append({'name': z.GetZoneName(), 'footprint': ref, 'layers': [l for l in cu if z.IsOnLayer(b.GetLayerID(l))],
+                    'tracks': tr, 'vias': vi, 'pour': po, 'rect': rect,
+                    'bbox': [T(bb.GetLeft()), T(bb.GetTop()), T(bb.GetRight()), T(bb.GetBottom())], 'pts': pts})
+    return out
+
+
+def edge_segments(b):
+    """Edge.Cuts as line segments (centre line, mm): segments, rectangles, polygons, arcs and circles (arcs and circles
+    as chords of at most 10 degrees: the chord lies inside the arc, so the segments are a slightly smaller outline at
+    the curves, within 0.4 % of the radius), board and footprint graphics. The core keeps the board edge clearance from
+    them (KiCad copper_edge_clearance); the outline bbox alone missed a notch (BASE-PWR-C)."""
+    out = []
+    items = list(b.GetDrawings()) + [g for fp in b.GetFootprints() for g in fp.GraphicalItems()]
+    for g in items:
+        if g.GetLayer() != pcbnew.Edge_Cuts or not hasattr(g, 'GetShape'):
+            continue
+        sh = g.GetShape()
+        pts = []
+        if sh == pcbnew.SHAPE_T_SEGMENT:
+            pts = [g.GetStart(), g.GetEnd()]
+        elif sh == pcbnew.SHAPE_T_RECTANGLE:
+            c = list(g.GetCorners())
+            pts = c + c[:1]
+        elif sh == pcbnew.SHAPE_T_POLY:
+            ps = g.GetPolyShape()
+            for k in range(ps.OutlineCount()):
+                o = ps.Outline(k)
+                q = [o.CPoint(i) for i in range(o.PointCount())]
+                for a, c in zip(q, q[1:] + q[:1]):
+                    out.append([round(T(a.x), 4), round(T(a.y), 4), round(T(c.x), 4), round(T(c.y), 4)])
+            continue
+        elif sh in (pcbnew.SHAPE_T_ARC, pcbnew.SHAPE_T_CIRCLE):
+            cx, cy, r = T(g.GetCenter().x), T(g.GetCenter().y), T(g.GetRadius())
+            if sh == pcbnew.SHAPE_T_CIRCLE:
+                a0, sweep = 0.0, 360.0
+            else:
+                a0 = math.degrees(math.atan2(T(g.GetStart().y) - cy, T(g.GetStart().x) - cx))
+                sweep = g.GetArcAngle().AsDegrees()
+            n = max(2, int(math.ceil(abs(sweep) / 10.0)))
+            ang = [math.radians(a0 + sweep * i / n) for i in range(n + 1)]
+            q = [(cx + r * math.cos(t), cy + r * math.sin(t)) for t in ang]
+            for a, c in zip(q, q[1:]):
+                out.append([round(a[0], 4), round(a[1], 4), round(c[0], 4), round(c[1], 4)])
+            continue
+        for a, c in zip(pts, pts[1:]):
+            out.append([round(T(a.x), 4), round(T(a.y), 4), round(T(c.x), 4), round(T(c.y), 4)])
+    return out
+
+
 def load_cfg(bdir):
     for name in ('gate.json', 'gate.pending.json'):
         p = os.path.join(bdir, name)
@@ -164,6 +273,7 @@ def main():
             if info['class'] in e.get('classes', []):
                 info['layers'] = [l for l in info['layers'] if l not in e.get('deny_layers', [])]
     pads = []
+    pad_obj = {}   # (ref, num) -> (footprint, pad): the pin-escape step below reads the pin rating of the part
     pcb_text = None
     # gate viapads allow list (REF.PAD, each with a datasheet reason in gate.json): the router may put the pad's own
     # plane fan-out via inside this pad (for example an exposed pad that the datasheet connects with vias)
@@ -194,6 +304,7 @@ def main():
                 block = pcb_text[pcb_text.rfind('(pad ', 0, u):u] if u >= 0 else ''
                 d['proxy_spokes'] = block.count('(gr_vector')
             pads.append(d)
+            pad_obj[(d['ref'], d['num'])] = (fp, p, d)
             if d['net'] in nets:
                 nets[d['net']]['pins'].append(f"{d['ref']}.{d['num']}")
     copper = []
@@ -277,11 +388,19 @@ def main():
                         nets[name]['clearance'] = max(nets[name]['clearance'] or 0, float(rrc._number(vals['min'])))
                     elif kind in ('via_count', 'length') and 'max' in vals:
                         lim[kind] = float(rrc._number(vals['max']))
-                    elif kind == 'disallow' and layer:
-                        nets[name]['layers'] = [l for l in nets[name]['layers'] if l != layer]
+                    elif kind == 'disallow':
+                        # KiCad disallow names item types: 'track' takes the layer (or every layer) from the net, 'via'
+                        # sets via_count 0 (a through via touches every layer). Other types (pad, zone, footprint,
+                        # ...) are not router items: KiCad DRC checks them after routing.
+                        types = disallow_types(con)
+                        if 'track' in types:
+                            nets[name]['layers'] = [l for l in nets[name]['layers'] if layer and l != layer]
+                        if 'via' in types:
+                            lim['via_count'] = 0.0
             else:
                 state, why = 'checked', f'{kind}: KiCad DRC after routing'
             report.append({'rule': rule, 'constraint': kind, 'state': state, 'nets': hits[:8] + (['...'] if len(hits) > 8 else []), 'why': why})
+    keepouts = rule_areas(b, cu)
     zones = []
     for z in b.Zones():
         if z.GetIsRuleArea():
@@ -322,13 +441,52 @@ def main():
             continue
         chains = []
         for c in chain.get('chains', [chain]):
-            need = 0.0
-            for l in nets[name]['layers']:
-                need = max(need, ipc_width(c.get('amps', 0), thick.get(l, 0.035), dT))
-            chains.append({'pads': c.get('pads', []), 'amps': c.get('amps', 0), 'min_width': need})
+            # v8: the width per copper layer (the gate rates each piece with the copper of its own layer)
+            per = {l: ipc_width(c.get('amps', 0), thick.get(l, 0.035), dT) for l in nets[name]['layers']}
+            chains.append({'pads': c.get('pads', []), 'amps': c.get('amps', 0), 'min_width': max(per.values(), default=0.0),
+                           'min_width_layers': per})
         nets[name]['limits']['amps'] = max([c['amps'] for c in chains] + [0])
         nets[name]['power_chains'] = chains
         nets[name]['min_width'] = max([c['min_width'] for c in chains] + [0.0])
+        nets[name]['min_width_layers'] = {l: max([c['min_width_layers'].get(l, 0.0) for c in chains] + [0.0])
+                                          for l in nets[name]['layers']}
+    # v8: via current (the paths gate rates a via by its barrel, pcbtool.via_amps / via_group_amps, plating from
+    # current-paths.json as the gate reads it). The core places one via per layer change, so the via of a routed power
+    # net gets the smallest drill (0.05 mm steps, same annular ring) whose barrel carries the net current. ESP32-CORE
+    # b4: VIN_REG 2.1 A through one 0.3 mm via (1.92 A at dT 20 K): paths_low. Plane nets are left as they are: their
+    # current flows through the planes and many vias (the gate passed GND on b4).
+    plating = float(jload(bdir, 'current-paths.json', {}).get('via_plating_mm', 0.018))
+    for name, info in nets.items():
+        amps = info.get('limits', {}).get('amps', 0)
+        if not amps or info['plane']:
+            continue
+        c = classes.get(info['class']) or classes['Default']
+        v = info.get('via') or {}
+        dr0, d0 = v.get('hole_size') or c['drill'], v.get('via_diameter') or c['via']
+        if not dr0 or not d0 or pcbtool.via_amps(dr0, plating, dT) >= amps:
+            continue
+        dr, d = via_for_current(dr0, d0, amps, plating, dT)
+        info['via'] = dict(v, hole_size=dr, via_diameter=d,
+                           current=f'{amps} A > {pcbtool.via_amps(dr0, plating, dT):.2f} A of a {dr0} mm via (pcbtool.via_amps, dT {dT} K)')
+    # v8: pin escape (the paths gate rule D-124c (b), tools/pcbtool.py pin_escape + tools/pin-ratings.json): a pad of a
+    # power net whose part pin rating is at least the net current may be left by one track piece as narrow as the pad's
+    # narrow side and as long as the pad's long side. Same data and the same function as the gate.
+    fvias = plane_fanout_vias(nets, classes, plating, dT)
+    for (ref, num), (fp, p, d) in sorted(pad_obj.items()):
+        if f'{ref}.{num}' in fvias and d.get('drill', 0) == 0:
+            dr, dd, amps = fvias[f'{ref}.{num}']
+            d['fanout_via'] = {'hole_size': dr, 'via_diameter': dd, 'amps': amps}
+    ratings = pcbtool.load_pin_ratings()
+    for (ref, num), (fp, p, d) in sorted(pad_obj.items()):
+        amps = (nets.get(d['net']) or {}).get('limits', {}).get('amps', 0)
+        if not amps or not d['layers']:
+            continue
+        pin_a, src = pcbtool.footprint_pin_rating(ratings, fp, num)
+        sz = p.GetSize(lid[d['layers'][0]])
+        minor, major = T(min(sz.x, sz.y)), T(max(sz.x, sz.y))
+        if pin_a is not None and pcbtool.pin_escape(0.0, minor, minor, major, pin_a, amps):
+            d['escape'] = {'width': round(minor, 4), 'length': round(major, 4), 'pin_amps': pin_a, 'net_amps': amps,
+                           'source': src[:200]}
     # si_planes (D-124c screen): a checked net (not a ground, not exempt, not power) on a layer of 'adjacent' must run
     # over the copper of its reference plane: the router keeps it off the plane voids (antipads of foreign drilled items)
     pwr_pats = list(planes.get('power') or []) + [q for m in (planes.get('mixed_layers') or {}).values() for q in m.get('power', [])]
@@ -348,7 +506,7 @@ def main():
                        'min_clearance': rules_setup.get('min_clearance'), 'min_track': rules_setup.get('min_track_width'), 'edge_clearance': rules_setup.get('min_copper_edge_clearance'),
                        'min_spokes': rules_setup.get('min_resolved_spokes', 2)},
              'return_rule': return_rule(pcb, cfg, bdir), 'via_length': via_length(pcb),
-             'classes': classes, 'nets': nets, 'pairs': pairs, 'zones': zones, 'hole_rules': hole_rules, 'pads': pads, 'copper': copper, 'rules': report}
+             'classes': classes, 'nets': nets, 'pairs': pairs, 'zones': zones, 'keepouts': keepouts, 'edges': edge_segments(b), 'hole_rules': hole_rules, 'pads': pads, 'copper': copper, 'rules': report}
     states = {}
     for r in report:
         states[r['state']] = states.get(r['state'], 0) + 1

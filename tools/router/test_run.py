@@ -119,6 +119,19 @@ class Files(unittest.TestCase):
             with self.assertRaisesRegex(run.StepError, 'differs'):
                 run.place_sidecars(os.path.join(src, 'B.kicad_pcb'), out)
 
+    def test_hierarchical_sub_sheets_are_copied(self):
+        # v8: BASE-PWR-C: the root sheet alone gave parity 80 on the copy (sub-sheets ETH, PWR-24V missing)
+        with tempfile.TemporaryDirectory() as t:
+            src = os.path.join(t, 'a')
+            os.makedirs(src)
+            for n in ('B.kicad_pcb', 'B.kicad_pro', 'B.kicad_sch', 'ETH.kicad_sch', 'PWR-24V.kicad_sch'):
+                open(os.path.join(src, n), 'w').write(n)
+            out = os.path.join(t, 'o', 'routed.kicad_pcb')
+            os.makedirs(os.path.dirname(out))
+            run.place_sidecars(os.path.join(src, 'B.kicad_pcb'), out)
+            self.assertEqual(sorted(os.listdir(os.path.dirname(out))),
+                             ['ETH.kicad_sch', 'PWR-24V.kicad_sch', 'routed.kicad_pro', 'routed.kicad_sch'])
+
 
 class Output(unittest.TestCase):
     def test_drc_counts_errors_only(self):

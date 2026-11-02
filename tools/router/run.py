@@ -152,6 +152,11 @@ def project_files(pcb):
     for t in TABLES:
         if os.path.isfile(os.path.join(d, t)):
             out[t] = os.path.join(d, t)
+    # v8: the sub-sheets of a hierarchical schematic (KiCad finds them next to the root sheet): without them the
+    # parity check of the copy reads a partial netlist (BASE-PWR-C: parity 80 on a copy, 0 on the project)
+    for f in sorted(os.listdir(d)):
+        if f.endswith('.kicad_sch') and f != proj + '.kicad_sch':
+            out[f] = os.path.join(d, f)
     return out
 
 
