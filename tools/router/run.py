@@ -2,7 +2,8 @@
 """One entry point for the in-house router: model -> iotroute -> board copy -> KiCad DRC (tools/router/DESIGN.md).
 
   $PY tools/router/run.py BOARD OUT.kicad_pcb [--pcb IN.kicad_pcb] [--iters N] [--max-time S]
-                          [--lock-from SRC.kicad_pcb] [--bin PATH] [--json]
+                          [--lock-from SRC.kicad_pcb] [--reuse PREV.kicad_pcb [--reuse-fallback full|none]]
+                          [--bin PATH] [--json]
 
 BOARD is the board ID (hardware-design/boards/<BOARD>, gate.json or gate.pending.json names the project) or that
 folder. The input is --pcb, else the project board. The input is only read.
@@ -20,6 +21,14 @@ Steps (each step stops the run at its first failure):
   4. OUT gets the board and the project files of the input. run.py checks that OUT's .kicad_pro is byte-identical
      to the input's .kicad_pro (pcbnew save rewrites it) and puts it back when it is not.
   5. kicad-cli pcb drc --schematic-parity on OUT (the saved zone fill, no --refill-zones: a stale fill shows here).
+
+--reuse PREV (partial re-route, DESIGN.md 5c): PREV is an earlier run.py result (PREV.iotroute/route.json, bound to
+PREV by the board_sha256 of PREV.iotroute/result.json). The seed (work/seed.json) = the copper of that route, the parts
+that moved between PREV and the route input (position, orientation or side) and the nets that PREV left open or in a
+DRC error (route.json failed + PREV.iotroute/drc.json). The core keeps the copper of the nets that the moves do not
+touch and routes the rest (core reuse.rs). --reuse-fallback full (default): when the reuse result is not PASS, the full
+route of the same input runs too and the better result is kept (DRC errors + unconnected + parity, then the core's
+failed count; a tie keeps the full route); result.json `reuse` names both. none: the reuse result is the result.
 
 The router's own counts are never the verdict; the DRC on OUT is. Output, one line:
   PASS|FAIL <drc errors> <unconnected> <parity> <tracks> <vias> <seconds>
@@ -288,6 +297,74 @@ def summary_line(rec):
                                        rec['tracks'], rec['vias'], rec['seconds'])
 
 
+# ---------- reuse (partial re-route) ----------
+
+REUSE_SCHEMA = 'iot-lab.route-seed.v0'
+
+
+def footprint_poses(board):
+    """{reference: (x nm, y nm, orientation in 0.1 degree, layer)} of a pcbnew board."""
+    out = {}
+    for fp in board.GetFootprints():
+        p = fp.GetPosition()
+        out[fp.GetReference()] = (p.x, p.y, round(fp.GetOrientationDegrees() * 10) % 3600, fp.GetLayer())
+    return out
+
+
+def moved_refs(prev, new, tol=100):
+    """References whose position (tol nm), orientation or side differ between two pose maps; a reference in only one
+    map stops (not the same board)."""
+    if set(prev) != set(new):
+        raise StepError('--reuse: the earlier board has other parts: ' + ', '.join(sorted(set(prev) ^ set(new))[:8]))
+    return sorted(r for r in new if abs(prev[r][0] - new[r][0]) > tol or abs(prev[r][1] - new[r][1]) > tol
+                  or prev[r][2:] != new[r][2:])
+
+
+def drc_nets(report):
+    """Nets named in the error violations and unconnected items of a KiCad DRC JSON report (the '[NET]' text)."""
+    nets = set()
+    items = [v for v in report.get('violations', []) if v.get('severity') == 'error'] + report.get('unconnected_items', [])
+    for v in items:
+        for it in v.get('items', []):
+            nets.update(re.findall(r'\[([^\]]+)\]', it.get('description', '')))
+    return nets
+
+
+def reuse_seed(prev, route_in, out_json):
+    """Write the seed of a reuse route (see the module text) -> its summary dict."""
+    import pcbnew
+    pw = os.path.abspath(prev) + '.iotroute'
+    res, route, drc = (os.path.join(pw, n) for n in ('result.json', 'route.json', 'drc.json'))
+    if not os.path.isfile(res) or not os.path.isfile(route):
+        raise StepError('--reuse: %s has no run.py work folder with result.json and route.json' % prev)
+    rec = json.load(open(res))
+    if rec.get('board_sha256') != sha_file(prev):
+        raise StepError('--reuse: %s is not the board of its result.json (sha256 differs)' % prev)
+    r = json.load(open(route))
+    moved = moved_refs(footprint_poses(pcbnew.LoadBoard(prev)), footprint_poses(pcbnew.LoadBoard(route_in)))
+    failed = {f['net'] for f in r.get('failed', [])}
+    # the core starts the present cost where the earlier negotiation ended (0.5 x 1.5^(passes - 1)); an earlier reuse
+    # route itself started at its seed's passes, so its end equals passes_seed + passes - 1 iterations from 0.5
+    passes = int(r.get('passes', 0))
+    prev_reuse = rec.get('reuse') or {}
+    if prev_reuse.get('chosen') == 'reuse' and prev_reuse.get('passes'):
+        passes = int(prev_reuse['passes']) + passes - 1
+    if os.path.isfile(drc):
+        failed |= drc_nets(json.load(open(drc)))
+    seed = dict(schema=REUSE_SCHEMA, source=os.path.abspath(prev), source_sha256=rec['board_sha256'], moved_refs=moved,
+                failed_nets=sorted(failed), passes=passes, tracks=r['tracks'], vias=r['vias'])
+    with open(out_json, 'w') as fh:
+        json.dump(seed, fh, sort_keys=True)
+    return dict(source=seed['source'], source_sha256=seed['source_sha256'], moved_refs=moved,
+                failed_nets=seed['failed_nets'], passes=passes, tracks=len(r['tracks']), vias=len(r['vias']), seed_sha256=sha_file(out_json))
+
+
+def better_attempt(a, b):
+    """True when attempt a is better than b: fewer DRC errors + unconnected + parity, then fewer core failed nets."""
+    key = lambda t: (t['drc_errors'] + t['unconnected'] + t['parity'], (t.get('claim') or {}).get('failed', 10 ** 6))
+    return key(a) < key(b)
+
+
 def parse_route_line(text):
     m = re.findall(r'^ROUTE (PASS|FAIL) converged (\w+) iters (\d+) tracks (\d+) vias (\d+) failed (\d+)', text, re.M)
     if not m:
@@ -383,12 +460,54 @@ def run(a, rec, t0):
     if rc:
         raise StepError('model.py failed: ' + (text.strip().splitlines() or ['no output'])[-1][:300])
     rec['stages']['model'] = dict(line=(text.strip().splitlines() or [''])[-1], sha256=sha_file(model))
+    if not a.reuse:
+        stages = route_attempt(a, exe, py, model, route_in, src, out, work)
+        rec['stages'].update(stages)
+        return finish(rec, out, work)
+
+    # reuse: the partial route first; the full route only as the fallback (--reuse-fallback full) of a result that is
+    # not PASS. Each attempt in its own folder; the chosen one's files go to work/ and its board to OUT.
+    seed = os.path.join(work, 'seed.json')
+    rec['reuse'] = dict(reuse_seed(a.reuse, route_in, seed), fallback=a.reuse_fallback, attempts={})
+    tries = [('reuse', ['--reuse', seed])] + ([('full', [])] if a.reuse_fallback == 'full' else [])
+    chosen = None
+    for name, extra in tries:
+        d = os.path.join(work, 'a-' + name)
+        os.makedirs(d)
+        cand = os.path.join(d, os.path.basename(out))
+        st = route_attempt(a, exe, py, model, route_in, src, cand, d, extra)
+        st.pop('pro_restored', None)
+        att = dict(stages=st, claim=st['core']['claim'])
+        rec['reuse']['attempts'][name] = att
+        if len(tries) == 1:   # no fallback: the verdict DRC on OUT is the only one
+            chosen = name
+            break
+        errors, unc, par, kinds = run_drc(cand, os.path.join(d, 'drc.json'))
+        att.update(drc_errors=errors, unconnected=unc, parity=par, drc_by_type=kinds)
+        if chosen is None or better_attempt(att, rec['reuse']['attempts'][chosen]) or (name == 'full' and not better_attempt(rec['reuse']['attempts'][chosen], att)):
+            chosen = name
+        if errors == 0 and unc == 0 and par == 0:
+            break
+    rec['reuse']['chosen'] = chosen
+    d = os.path.join(work, 'a-' + chosen)
+    for n in ('route.json', 'route.log', 'write.log'):
+        shutil.copyfile(os.path.join(d, n), os.path.join(work, n))
+    rec['stages'].update(rec['reuse']['attempts'][chosen]['stages'])
+    shutil.copyfile(os.path.join(d, os.path.basename(out)), out)
+    place_sidecars(src, out)
+    rec['pro_restored'] = restore_pro(src, out)
+    return finish(rec, out, work)
+
+
+def route_attempt(a, exe, py, model, route_in, src, out, work, extra=()):
+    """iotroute (+ extra flags) -> write.py -> OUT with its project files; -> stages {core, write}."""
+    stages = {}
     route = os.path.join(work, 'route.json')
-    cmd = [exe, model, route, '--iters', str(a.iters)] + (['--max-time', str(a.max_time)] if a.max_time else [])
+    cmd = [exe, model, route, '--iters', str(a.iters)] + (['--max-time', str(a.max_time)] if a.max_time else []) + list(extra)
     tc = time.monotonic()
     rc, text = step(cmd, os.path.join(work, 'route.log'))
     claim = parse_route_line(text)
-    rec['stages']['core'] = dict(exit=rc, seconds=round(time.monotonic() - tc, 1), claim=claim)
+    stages['core'] = dict(exit=rc, seconds=round(time.monotonic() - tc, 1), claim=claim)
     if not os.path.isfile(route) or claim is None:
         raise StepError(f'iotroute wrote no result (exit {rc}), see {os.path.join(work, "route.log")}')
     wdir = os.path.join(work, 'write')
@@ -396,14 +515,19 @@ def run(a, rec, t0):
     written = os.path.join(wdir, os.path.splitext(os.path.basename(project_files(route_in)['.kicad_pro']))[0] + '.kicad_pcb')
     if not os.path.isfile(written):
         raise StepError(f'write.py wrote no board (exit {rc}), see {os.path.join(work, "write.log")}')
-    rec['stages']['write'] = dict(exit=rc, line=(text.strip().splitlines() or [''])[-1])
+    stages['write'] = dict(exit=rc, line=(text.strip().splitlines() or [''])[-1])
 
     # 4. OUT + project files
     shutil.copyfile(written, out)
     place_sidecars(src, out)
-    rec['pro_restored'] = restore_pro(src, out)
+    stages['pro_restored'] = restore_pro(src, out)
+    return stages
 
-    # 5. verdict: KiCad DRC with parity on OUT
+
+def finish(rec, out, work):
+    """5. verdict: KiCad DRC with parity on OUT."""
+    if 'pro_restored' in rec['stages']:
+        rec['pro_restored'] = rec['stages'].pop('pro_restored')
     errors, unc, par, kinds = run_drc(out, os.path.join(work, 'drc.json'))
     tracks, vias, length = copper_counts(out)
     rec.update(drc_errors=errors, drc_by_type=kinds, unconnected=unc, parity=par, tracks=tracks, vias=vias,
@@ -420,6 +544,10 @@ def parser():
     ap.add_argument('--iters', type=int, default=80, help='negotiation iterations (default 80, as M2)')
     ap.add_argument('--max-time', type=float, help='iotroute --max-time seconds')
     ap.add_argument('--lock-from', help='keep only the lock-net copper (pairs + via_count 0 nets) of this board')
+    ap.add_argument('--reuse', help='partial re-route from this earlier run.py result board (keeps the copper that the '
+                    'moved parts do not touch; DESIGN.md 5c)')
+    ap.add_argument('--reuse-fallback', choices=['full', 'none'], default='full',
+                    help='full (default): a reuse result that is not PASS is compared with the full route; none: no full route')
     ap.add_argument('--bin', help='use this iotroute binary (must not be older than its sources)')
     ap.add_argument('--json', action='store_true', help='also print the JSON record')
     return ap

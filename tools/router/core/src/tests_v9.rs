@@ -26,7 +26,7 @@ fn ctx_of<'a>(bd: &'a mut Board, o: &'a Opts) -> Ctx<'a> {
                    vhist: vec![0.0; nx * ny], pres: 0.5, g: vec![0.0; tot], from: vec![0; tot], seen: vec![0; tot], closed: vec![0; tot], tgt: vec![0; tot], sgen: 0, tgen: 0, glen: Vec::new() };
     Ctx { bd, gr: g, o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w, rcache: vec![0; nx * ny],
           ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false, ret_soft: true, lfloor: Vec::new(), leaf_necks: false,
-          stubs: std::collections::HashMap::new(), stub_cost: Default::default(), recover: false }
+          stubs: std::collections::HashMap::new(), stub_cost: Default::default(), recover: false, fan_keep: false }
 }
 
 fn routed_len(ctx: &Ctx, net: usize) -> f64 {

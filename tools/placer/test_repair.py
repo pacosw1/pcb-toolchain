@@ -164,6 +164,7 @@ class Loop(unittest.TestCase):
         tmp = tempfile.mkdtemp()
         pr = board_problem()
         calls = []
+        extras = self.extras = []
 
         def fake_files(path, drc_report):
             os.makedirs(path + '.iotroute', exist_ok=True)
@@ -185,9 +186,10 @@ class Loop(unittest.TestCase):
             os.makedirs(os.path.dirname(out), exist_ok=True)
             open(out, 'w').write('board')
 
-        def route_fn(path, d, board, gate, iters):
+        def route_fn(path, d, board, gate, iters, extra=()):
             s, report = outcomes[len(calls)]
             calls.append(path)
+            extras.append(tuple(extra))
             out = os.path.join(d, 'route-0', os.path.basename(path))
             fake_files(out, report)
             return s, out
@@ -212,6 +214,16 @@ class Loop(unittest.TestCase):
         self.assertEqual(rec['best']['routed'], rec['start']['routed'])
         self.assertEqual(len(calls), 3)
         self.assertIn('no routed proposal is strictly better', rec['stop'])
+
+    def test_reuse_mode_routes_the_moved_placement_from_the_present_route(self):
+        rec, calls = self.go([(summary(1, length=90.0), drc([OPEN])), (summary(0, GATE_OK), drc())], per_round=1)
+        self.assertEqual(rec['mode'], 'reuse')
+        # each proposal: the moved placement board (PLACE + move), reuse from the routed board of the candidate
+        self.assertTrue(all(c.endswith(os.path.join('place', 'X.kicad_pcb')) for c in calls))
+        self.assertEqual(self.extras[0], ('--reuse', rec['start']['routed'], '--reuse-fallback', 'none'))
+        self.assertEqual(self.extras[1], ('--reuse', rec['attempts'][0]['routed'], '--reuse-fallback', 'none'))
+        rec, calls = self.go([(summary(0, GATE_OK), drc())], per_round=1, mode='local')
+        self.assertEqual(self.extras, [()])
 
     def test_route_cap(self):
         rec, calls = self.go([(summary(1, length=90.0 - k), drc([OPEN])) for k in range(5)], max_routes=2,
@@ -294,7 +306,7 @@ class Driver(unittest.TestCase):
         from placer import compact_cli
         base = ['p.json', 'b.kicad_pcb', '--board-dir', 'hardware-design/boards/X', '--outdir', 'o', '--size', '1', '1']
         a = compact_cli.parser().parse_args(base + ['--router', 'iotroute', '--repair', '--repair-routes', '3'])
-        self.assertEqual((a.repair, a.repair_mode, a.repair_routes, a.repair_per_round), (True, 'local', 3, 4))
+        self.assertEqual((a.repair, a.repair_mode, a.repair_routes, a.repair_per_round), (True, 'reuse', 3, 4))
         self.assertFalse(compact_cli.parser().parse_args(base).repair)
         with self.assertRaisesRegex(ValueError, 'needs --router iotroute'):
             compact_cli.main(base + ['--repair'])

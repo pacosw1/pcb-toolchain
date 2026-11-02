@@ -170,6 +170,36 @@ NET_CORE = os.path.join(run.ROOT, 'hardware-design', 'boards', 'NET-CORE', 'cad'
 
 
 @unittest.skipUnless(os.path.exists(KPY) and os.path.exists(NET_CORE), 'needs the KiCad Python (pcbnew) and NET-CORE')
+class Reuse(unittest.TestCase):
+    def test_moved_refs_by_position_turn_and_side(self):
+        prev = {'C1': (100, 200, 0, 0), 'C2': (100, 200, 900, 0), 'U1': (5000, 5000, 0, 0), 'R1': (0, 0, 0, 0)}
+        new = {'C1': (150, 200, 0, 0), 'C2': (100, 200, 0, 0), 'U1': (505000, 5000, 0, 0), 'R1': (0, 0, 0, 31)}
+        self.assertEqual(run.moved_refs(prev, new), ['C2', 'R1', 'U1'])   # C1 moved 50 nm: under the 100 nm tolerance
+        with self.assertRaisesRegex(run.StepError, 'other parts: C9'):
+            run.moved_refs(prev, dict(new, C9=(0, 0, 0, 0)))
+
+    def test_drc_nets_from_errors_and_unconnected_items(self):
+        rep = {'violations': [{'severity': 'error', 'items': [{'description': 'Track [/A] on F.Cu'}, {'description': 'Pad 1 [GND] of C1'}]},
+                              {'severity': 'warning', 'items': [{'description': 'Track [/W] on F.Cu'}]}],
+               'unconnected_items': [{'items': [{'description': 'Pad 3 [/NAND_WP] of U6 on F.Cu'}, {'description': 'Pad 15 [/NAND_WP] of U1'}]}]}
+        self.assertEqual(run.drc_nets(rep), {'/A', 'GND', '/NAND_WP'})
+
+    def test_fallback_keeps_the_better_attempt_and_a_tie_keeps_the_full_route(self):
+        reuse = dict(drc_errors=0, unconnected=1, parity=0, claim=dict(failed=1))
+        full = dict(drc_errors=0, unconnected=0, parity=0, claim=dict(failed=0))
+        self.assertTrue(run.better_attempt(full, reuse))
+        self.assertFalse(run.better_attempt(reuse, full))
+        same = dict(reuse)
+        self.assertFalse(run.better_attempt(reuse, same) or run.better_attempt(same, reuse))   # tie: run() takes full
+        fewer_failed = dict(drc_errors=0, unconnected=1, parity=0, claim=dict(failed=0))
+        self.assertTrue(run.better_attempt(fewer_failed, reuse))
+
+    def test_reuse_options(self):
+        a = run.parser().parse_args(['NET-CORE', 'o.kicad_pcb', '--reuse', 'p.kicad_pcb'])
+        self.assertEqual((a.reuse, a.reuse_fallback), ('p.kicad_pcb', 'full'))
+        self.assertIsNone(run.parser().parse_args(['NET-CORE', 'o.kicad_pcb']).reuse)
+
+
 class Determinism(unittest.TestCase):
     """v9: the same input gives byte-identical files (v8b: ESP32-CORE, same copper, GND vias in another order)."""
 

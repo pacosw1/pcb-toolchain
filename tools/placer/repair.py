@@ -4,7 +4,7 @@ c6fcb7b, tools/pcb_search/README.md "Repair locally").
 
   $PY tools/placer/repair.py prepare SRC.kicad_pcb PLACE.kicad_pcb --board BOARD [--keep lock-nets|locked]
   $PY tools/placer/repair.py run BOARD PLACE.kicad_pcb ROUTED.kicad_pcb --outdir DIR
-        [--mode local|full] [--max-routes 8] [--per-round 4] [--iters 80] [--seed 1] [--no-rotate] [--read ARG ...]
+        [--mode reuse|local|full] [--max-routes 8] [--per-round 4] [--iters 80] [--seed 1] [--no-rotate] [--read ARG ...]
 
 prepare: a copy of SRC with all tracks and vias removed except the lock-net copper (diff pairs + DRU via_count 0
 nets, as tools/router/run.py --lock-from), locked, and all footprints unlocked. --keep locked keeps all locked copper
@@ -27,6 +27,9 @@ run: ROUTED is a tools/router/run.py result of PLACE (FAIL, with ROUTED.iotroute
      again with --decap-tie 0) when the tie stays true (pad-edge gap to its IC pin <= the tie distance).
      Deterministic (no random state; --seed is recorded).
   4. Each proposal is written (kicad_io.write_board) and routed with run.py:
+     reuse (default): the moved placement (PLACE + the move) routed with run.py --reuse ROUTED --reuse-fallback
+            none: the router keeps the copper of the nets that the move does not touch and routes the rest
+            (tools/router/DESIGN.md 5c); ROUTED = the present candidate's routed board.
      local: on a copy of ROUTED; the writer rips the copper that the moved pads meet, and the unlocked copper
             clusters within legal_radius of a failure point or on a failed net are ripped too. run.py keeps and
             locks all other copper and routes only what is open.
@@ -628,9 +631,9 @@ def prepare(src, out, board, keep='lock-nets'):
 
 # ---------- the loop ----------
 
-def route(path, d, board, gate, iters):
+def route(path, d, board, gate, iters, extra=()):
     os.makedirs(d, exist_ok=True)
-    iotroute_step.route_step(path, d, board, gate, iters)
+    iotroute_step.route_step(path, d, board, gate, iters, extra)
     summary = load(os.path.join(d, 'route-0', 'score.json'))
     routed = os.path.join(d, 'route-0', os.path.basename(path))
     return summary, routed
@@ -640,7 +643,7 @@ def drc_of(routed):
     return load(routed + '.iotroute/drc.json')
 
 
-def run(board, place, routed, outdir, mode='local', max_routes=8, per_round=4, iters=80, seed=1, rotate=True,
+def run(board, place, routed, outdir, mode='reuse', max_routes=8, per_round=4, iters=80, seed=1, rotate=True,
         read_args=(), gate=None, log=print, route_fn=None, read_fn=None, write_fn=None, rip_fn=None,
         start_summary=None, decaps=True, escape_moves=True):
     """Repair loop (see the module text). The effects are injectable for tests. -> record dict."""
@@ -735,7 +738,13 @@ def run(board, place, routed, outdir, mode='local', max_routes=8, per_round=4, i
                 copy_sidecars(state['place'], route_in)
             else:
                 route_in, ripped = new_place, 0
-            summary, out = route_fn(route_in, d, board, gate, iters)
+            if mode == 'reuse':
+                # partial re-route from the present candidate's route (run.py --reuse, no full-route fallback: a
+                # proposal that the reuse route does not repair is rejected like any other)
+                summary, out = route_fn(route_in, d, board, gate, iters,
+                                        extra=('--reuse', state['routed'], '--reuse-fallback', 'none'))
+            else:
+                summary, out = route_fn(route_in, d, board, gate, iters)
             routes += 1
             key = list(score_key(summary))
             att = dict(round=rnd, index=k, move=c, ripped=ripped, key=key, routed=out, place=new_place,
@@ -770,7 +779,7 @@ def main(argv=None):
     r.add_argument('place', help='placement board (repair.py prepare)')
     r.add_argument('routed', help='run.py result of PLACE (with ROUTED.iotroute/)')
     r.add_argument('--outdir', required=True)
-    r.add_argument('--mode', choices=['local', 'full'], default='local')
+    r.add_argument('--mode', choices=['reuse', 'local', 'full'], default='reuse')
     r.add_argument('--max-routes', type=int, default=8)
     r.add_argument('--per-round', type=int, default=4)
     r.add_argument('--iters', type=int, default=80)

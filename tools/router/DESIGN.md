@@ -92,8 +92,61 @@ The Codex hand finish of NET-CORE reached DRC 0 but left gate findings. The rout
 | 2026-11-01 | core v8b (branch claude/router-v8): pin escape by construction. A rated pin (model pad escape, tools/pin-ratings.json) has no neck zone; its only narrower entry is one straight stub from inside the pad (any angle, at most the pad's long side, the pad's narrow width, legal against fixed copper), offered to the A* as extra source / target cells and priced like the cells under it (the paths gate pin_escape rule by construction). Leaf phase offers no source stubs. model.py: a plane-net pad of a chain that one net via cannot carry gets a larger fan-out via (pcbtool.via_amps). Fan-out: a forced fan-out ray goes on past a site in via conflict and may end on a via of the net that stays; a normal fan-out with no free site may end on such a via (IOTROUTE_DIAG: the ESP32-CORE GND standoff was two forced U12 fan-out vias in one column, GND against GND, no other net named). 49 unit tests | **Acceptance met with one binary (c6), except ESP32-CORE byte determinism (2 runs: same copper, via list order differs)**: ESP32-CORE (unseen, lock-from) converged it 31, DRC 0 / 0 / 0, gate PASS with empty kicad-happy exemptions (committed board: 9 RP-001); H7-CORE rev A converged it 27, 549 vias, DRC 0 / 0 / 0, gate PASS (v8 b7 paths_low 2), deterministic; spread NET-CORE (it 18, 254 vias) and NET-CORE t1 DRC 0 / 0 / 0, gate PASS; BASE-PWR-C route byte-identical to v8 b7 (routing checks 0). reports/2026-11-01-v8.md section v8b |
 | 2026-11-01 | core v9 (branch claude/router-v9): length recovery. Diagnosis tool `IOTROUTE_LENDIAG` (per net: objective now / strict / with fixed copper only, and the blocking nets). Cause: a net keeps a detour (around a net that later moved, or around history) once the copper is legal; nothing re-routes it. Fix: after a legal end state each routed net is routed again strictly with the history off and an admissible heuristic, kept only when legal (audit, RP-001 returns, pour faults) and its A* objective falls by more than one grid pitch (`--recover 0` skips it). Determinism: run.py `--lock-from` kept random KIIDs from `Duplicate()` (KiCad saves tracks sorted by KIID: the copper order changed per run); now the source KIID; write.py seeds the KIID generator from the input and result bytes. 51 unit tests | **Partly met.** Same binary, all DRC 0 / 0 / 0 and the v8 gate result, all shorter: hand NET-CORE 1592.9 -> 1558.6 mm, 285 -> 280 vias (target 1495 not reached: RMII nets held by other nets, antipad web price, model rules after v4); dense placer step A4 1645.2 -> 1614.8 mm; ESP32-CORE 4007.9 -> 3898.2 mm, 488 -> 459 vias; H7-CORE 4773.9 -> 4648.0 mm, 553 -> 517 vias; spread NET-CORE 1568.5 -> 1529.6 mm; BASE-PWR-C 2387.0 -> 2336.5 mm (kicad_happy 2 = DC-002 design exemptions, as v8). ESP32-CORE and hand NET-CORE twice: input copy, route.json and board byte-identical. Recovery costs 405-484 s on H7 / ESP32. reports/2026-11-01-v9.md |
 
+| 2026-11-01 | partial re-route (branch claude/router-reuse): `run.py --reuse PREV` starts from the copper of an earlier route and routes only what the moved parts affect (section 5c); placer repair mode `reuse` (default) | NET-CORE, 4 repair-like cases on the passing PR #79 step 0 board (1-2 parts / one 8-part block moved 0.5-1.0 mm): all 4 reuse routes DRC 0 / 0 / 0 + gate PASS, core 14-48 s against 148-188 s for the full route of the same moved board (run.py total 36-66 s against 158-206 s, 9 processes on the Mac); length +2.4 to +15.7 mm (+0.2 to +1.1 %), 2-9 vias fewer. Same input 3 times: byte-identical route.json and board. `--reuse` off: hand NET-CORE and ESP32-CORE lock-from byte-identical to main (v9). PR #79 placer run with the reuse repair: 14.0 min (PR #79 21.6 min by file times), steps s 0.637 and s 0.542 pass with their first repair proposal (PR #79: s 0.637 and s 0.694 failed), gate PASS on the chosen and repaired boards; compaction steps keep the full route (50-63 % of parts move). reports/2026-11-01-reuse.md |
+
 Next (was): negotiated congestion (PathFinder: shared cells with present + history cost, rip-up of all nets per pass) to
 finish the 18 nets; F.Cu spoke channels at GND pads (starved_thermal); read hole clearance from the model rules.
+
+## 5c. Partial re-route (`run.py --reuse`, core `reuse.rs`, user-approved 2026-11-01)
+
+Why: every placer loop routed the whole board (NET-CORE 1-3 min, cores 25-30 min), but a repair proposal moves only
+1-2 parts. A person fixes a board after a part move by re-routing the nets the move broke, not the board.
+
+Input. `run.py BOARD OUT --pcb MOVED --reuse PREV [--reuse-fallback full|none]`. PREV is an earlier run.py result
+(PREV.iotroute/route.json, bound to PREV by the board_sha256 of PREV.iotroute/result.json). run.py writes the seed
+(work/seed.json, schema iot-lab.route-seed.v0): the tracks and vias of that route (with their roles), `moved_refs` (the
+footprints whose position (> 100 nm), orientation or side differ between PREV and the route input; another part set
+stops), `failed_nets` (route.json failed + the nets named in the error violations and unconnected items of
+PREV.iotroute/drc.json) and `passes` (iterations of the earlier negotiation; for a PREV that was itself a reuse route,
+seed passes + passes - 1).
+
+Selection (core `reuse::load_seed`, after the fixed setup of the run: fixed returns, via-in-pad vias, forced fan-outs):
+- a signal / power net is ripped up when it has a pad on a moved part, is in `failed_nets`, has a seed item that breaks
+  a rule against the fixed copper of the new board (pads, locked copper, spoke channels, keepouts, board edge; the
+  audit's plain rule, eps 0), or when its fixed items and seed copper do not form one component (open);
+- every other net keeps its seed copper as routed copper of the net (owner = net). It is soft: when a ripped net
+  conflicts with it, the negotiation rips it up like any routed copper. This is the step-by-step fallback;
+- a plane net keeps each fan-out cluster (seed items that touch) that touches a pad of the net, touches no moved pad
+  and breaks no fixed rule; iteration 1 fans out only the pads with no own copper (`Ctx::fan_keep`); later iterations
+  re-fan the whole net when it is in conflict, as a full route does;
+- a return via goes to the nearest kept signal via within the RP-001 radius (then the lower net index), else it is
+  dropped; a signal via that lost its return makes its net re-route after iteration 1 (ret_missing, as before);
+- seed vias that the fixed setup made again are not loaded twice; a lone plane-net via that touches no pad (a fixed
+  return of a locked via that moved) is dropped.
+
+Negotiation. Iteration 1 routes only the ripped nets and the plane re-fans. The present cost starts where the earlier
+negotiation ended (0.5 x --pres-mult^(passes - 1), capped at --pres-max): the kept copper is the legal end state of
+that negotiation. With the start price 0.5 the ripped nets crossed the kept copper and the conflicts spread (NET-CORE
+C24 case: 4 ripped nets, 21 nets in conflict at iteration 4, core 90 s); with the end price: 4 iterations, 26 s. A
+strict first route of each ripped net (kept copper blocks) was measured and removed: a failed strict search cost 20 s
+for one net (PHY_LED2) and gave the same result. History starts at 0. Everything after the negotiation (graceful end,
+cascade, third-net repair, RP-001 and pour end steps, return pruning) is the full-route code.
+
+Length recovery: only the nets routed in this run and the nets with routed copper within `--reuse-near` (default
+1.0 mm, a scope choice, not a rule) of a change box (moved pads, seed copper not loaded, new copper of a routed net).
+
+Fallback (run.py). `--reuse-fallback full` (CLI default): a reuse result that is not PASS (KiCad DRC on the written
+board) is compared with the full route of the same input; the result with fewer DRC errors + unconnected + parity
+(then fewer core failed nets) is kept, a tie keeps the full route; result.json `reuse.attempts` and `reuse.chosen`
+name both. `none` (the placer repair): the reuse result is the result; the repair rejects a proposal that is not
+better, as before.
+
+Acceptance is unchanged (section 2): DRC 0 / 0 / 0 with parity + gate on the written board. Same input = byte-identical
+output (Vec order, seed order; the seed file is written with sorted keys). Without `--reuse` the core path is unchanged.
+
+Not used for compaction steps: between NET-CORE compaction steps 50-63 % of all parts move (every movable unit; PR #79
+run and the rank-by-length run), and 22-30 % of all nets (most routed nets) have a pad on a moved part; see
+reports/2026-11-01-reuse.md.
 
 ## 6. Not in scope (first version)
 

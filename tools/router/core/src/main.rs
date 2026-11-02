@@ -38,6 +38,7 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
 mod pour;
+mod reuse;
 
 const EPS: f64 = 0.002;
 // Defaults when the model has no `hole_rules` key (an old model.json); a model value and then a CLI flag override them.
@@ -743,6 +744,9 @@ struct Ctx<'a> {
     /// the nearest target box, weight 1). The negotiation terms only resolve conflicts; once the copper is legal they
     /// leave detours that nothing removes (v8, NET-CORE: /ETH_TXD0 40.7 mm against 19.5 mm in v4).
     recover: bool,
+    /// reuse (reuse.rs): a plane net keeps its routed fan-out copper and fans out only the pads that no own routed copper
+    /// touches (iteration 1 of a reuse route); false: fanout_net rips the net's copper and fans out every pad
+    fan_keep: bool,
 }
 
 /// v8b: one straight pin escape of a rated pad: routable layer index, start (a grid cell inside the pad, END_IN from its
@@ -2333,9 +2337,11 @@ fn fanout_net(ctx: &mut Ctx, net: usize) -> NetResult {
 }
 
 fn fanout_net_inner(ctx: &mut Ctx, net: usize) -> NetResult {
-    for s in ctx.bd.shapes.iter_mut() {
-        if s.owner == net as i32 {
-            s.alive = false;
+    if !ctx.fan_keep {
+        for s in ctx.bd.shapes.iter_mut() {
+            if s.owner == net as i32 {
+                s.alive = false;
+            }
         }
     }
     let mut out = NetResult { hard_fail: None, limit: false, conflicts: 0 };
@@ -2368,6 +2374,10 @@ fn fanout_net_inner(ctx: &mut Ctx, net: usize) -> NetResult {
         // a pad short of thermal spokes gets its own fan-out track even next to a fixed via (the track is one spoke)
         let forced = ctx.bd.attach.iter().any(|&(ax, ay)| (ax - cx).abs() < 1e-6 && (ay - cy).abs() < 1e-6);
         if has && !forced {
+            continue;
+        }
+        // reuse: a kept fan-out (own routed copper that touches the pad, forced fan-out tracks included) stays
+        if ctx.fan_keep && ctx.bd.shapes.iter().any(|s| s.alive && s.owner == net as i32 && s.net == net as i32 && touch(s, &pad)) {
             continue;
         }
         let (pw, ph) = match pad.geo { Geo::Rect(a, b, c, d) => (c - a, d - b), _ => (0.3, 0.3) };
@@ -3361,6 +3371,11 @@ fn net_cost(ctx: &Ctx, net: usize) -> f64 {
 /// routing objective (net_cost) is lower by more than one grid pitch (the resolution of the route). Else the old copper
 /// is put back. Rounds go on until a round keeps nothing. Returns (nets improved, objective saved).
 fn recover_length(ctx: &mut Ctx, order: &[usize], state: &[(Option<String>, u32)]) -> (usize, f64) {
+    recover_length_in(ctx, order, state, None)
+}
+
+/// recover_length on the nets with `only[net]` (reuse: reuse::recover_scope); None = every net.
+fn recover_length_in(ctx: &mut Ctx, order: &[usize], state: &[(Option<String>, u32)], only: Option<&[bool]>) -> (usize, f64) {
     let (mut kept, mut saved) = (0usize, 0.0f64);
     let pour_n = |ctx: &Ctx| pour::check(ctx.bd).iter().filter(|f| !f.fixed).count();
     let mut pf0 = pour_n(ctx);
@@ -3369,7 +3384,7 @@ fn recover_length(ctx: &mut Ctx, order: &[usize], state: &[(Option<String>, u32)
     loop {
         let mut round = 0usize;
         for &net in order {
-            if ctx.bd.nets[net].plane || state[net].0.is_some() || !ctx.bd.shapes.iter().any(|s| s.alive && s.owner == net as i32 && s.net == net as i32) {
+            if ctx.bd.nets[net].plane || state[net].0.is_some() || only.map_or(false, |v| !v[net]) || !ctx.bd.shapes.iter().any(|s| s.alive && s.owner == net as i32 && s.net == net as i32) {
                 continue;
             }
             let c0 = net_cost(ctx, net);
@@ -3726,6 +3741,8 @@ fn main() {
     let mut web_hard = false;
     let mut cli_ret = false;
     let mut cli_rr = false;
+    let mut reuse_path: Option<String> = None;
+    let mut reuse_near = 1.0f64;
     let mut i = 3;
     while i + 1 < args.len() {
         let v = &args[i + 1];
@@ -3750,6 +3767,8 @@ fn main() {
             "--web-cost" => o.web_cost = v.parse().unwrap(),
             "--via-cost" => o.via_cost = v.parse().unwrap(),
             "--recover" => o.no_recover = v == "0",
+            "--reuse" => reuse_path = Some(v.clone()),
+            "--reuse-near" => reuse_near = v.parse().unwrap(),
             "--ret-cost" => o.ret_cost = v.parse().unwrap(),
             "--return-via" => {
                 let p: Vec<f64> = v.split(',').map(|s| s.parse().unwrap()).collect();
@@ -3852,6 +3871,17 @@ fn main() {
     if pre > 0 {
         eprintln!("pour model before routing: {pre} SMD pad(s) starved by fixed copper alone get a forced fan-out track (a track spoke)");
     }
+    // reuse (reuse.rs): the kept copper of the earlier route is loaded as routed copper; only the ripped nets are routed
+    // in iteration 1
+    let plan: Option<reuse::SeedPlan> = reuse_path.as_ref().map(|p| {
+        let seed: Value = serde_json::from_str(&std::fs::read_to_string(p).expect("seed")).expect("seed json");
+        reuse::load_seed(&mut bd, &o, &model, &seed)
+    });
+    if let Some(pl) = &plan {
+        let why: Vec<String> = pl.why.iter().map(|(n, w)| format!("{} ({w})", bd.nets[*n].name)).collect();
+        eprintln!("REUSE kept {} nets ({} items), ripped {} nets ({} items dropped), plane re-fan {} (clusters dropped {}): {}", pl.kept_nets, pl.items_kept,
+                  pl.rip.len(), pl.items_dropped, pl.fan.iter().map(|&n| bd.nets[n].name.as_str()).collect::<Vec<_>>().join(" "), pl.fan_dropped, why.join(", "));
+    }
     let (e0, e1, e2, e3) = bd.edge;
     let nx = ((e2 - e0) / o.pitch).ceil() as usize + 1;
     let ny = ((e3 - e1) / o.pitch).ceil() as usize + 1;
@@ -3878,10 +3908,23 @@ fn main() {
     memo_w.sort_by(|a, b| a.partial_cmp(b).unwrap());
     memo_w.dedup();
     let mut ctx = Ctx { bd: &mut bd, gr, o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nets_n], memo: Vec::new(), memo_w,
-                        rcache: vec![0; nx * ny], ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false, ret_soft: true, lfloor: Vec::new(), leaf_necks: false, stubs: std::collections::HashMap::new(), stub_cost: Default::default(), recover: false };
+                        rcache: vec![0; nx * ny], ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false, ret_soft: true, lfloor: Vec::new(), leaf_necks: false, stubs: std::collections::HashMap::new(), stub_cost: Default::default(), recover: false, fan_keep: false };
     let fan_fail: Vec<Fail> = Vec::new();
     let nn = ctx.bd.nets.len();
-    let mut todo: Vec<usize> = order.clone();
+    let mut todo: Vec<usize> = match &plan {
+        Some(pl) => order.iter().cloned().filter(|n| pl.rip.contains(n) || pl.fan.contains(n)).collect(),
+        None => order.clone(),
+    };
+    ctx.fan_keep = plan.is_some();
+    // reuse: the kept copper is the legal end state of an earlier negotiation, so the present cost starts where that
+    // negotiation ended (pres after its iteration count, seed `passes`: start 0.5, x --pres-mult per iteration, capped at
+    // --pres-max), not at the start price 0.5 (with 0.5 the ripped nets crossed kept copper and the conflicts spread)
+    if let Some(pl) = &plan {
+        if pl.passes > 1 {
+            ctx.gr.pres = (0.5 * o.pres_mult.powi(pl.passes as i32 - 1)).min(o.pres_max);
+        }
+        eprintln!("reuse: present cost starts at {:.2} (earlier route: {} iteration(s))", ctx.gr.pres, pl.passes);
+    }
     let mut state: Vec<(Option<String>, u32)> = vec![(None, 0); nn];
     let mut iters = 0;
     let mut converged = false;
@@ -3921,6 +3964,7 @@ fn main() {
             total += r.conflicts;
             state[net] = (r.hard_fail.clone(), r.conflicts);
         }
+        ctx.fan_keep = false;
         // PathFinder overuse = exact audit of the final copper of this iteration: history on every conflicting item
         // of both nets, and the rip-up set = every net that is still in conflict (not the stale routing-time count)
         let au = ctx.audit(o.hist);
@@ -4192,7 +4236,11 @@ fn main() {
     if ctx.audit(0.0).pairs == 0 && !o.no_recover {
         let tr = std::time::Instant::now();
         let len0: f64 = net_lengths(ctx.bd).iter().sum();
-        let (k, saved) = recover_length(&mut ctx, &order, &state);
+        let scope = plan.as_ref().map(|pl| reuse::recover_scope(ctx.bd, pl, &moves, reuse_near));
+        if let Some(sc) = &scope {
+            notes.push(format!("reuse: length recovery on {} of {} nets (routed now or within {reuse_near} mm of a change)", sc.iter().filter(|&&b| b).count(), nn));
+        }
+        let (k, saved) = match &scope { Some(sc) => recover_length_in(&mut ctx, &order, &state, Some(sc)), None => recover_length(&mut ctx, &order, &state) };
         let len1: f64 = net_lengths(ctx.bd).iter().sum();
         notes.push(format!("length recovery: {k} re-route(s) kept, objective -{saved:.1}, net length {len0:.1} -> {len1:.1} mm (vias at {:.3} mm)", ctx.bd.via_len));
         eprintln!("{} {:.1} s", notes.last().unwrap(), tr.elapsed().as_secs_f64());
@@ -4321,6 +4369,9 @@ fn main() {
                 state[n].0 = Some(match &state[n].0 { Some(r) => format!("{r}; {m}"), None => m });
             }
         }
+    }
+    if let Some(pl) = &plan {
+        notes.push(format!("reuse: kept {} nets ({} items), ripped {} nets, plane re-fan {}, {} iteration(s)", pl.kept_nets, pl.items_kept, pl.rip.len(), pl.fan.len(), iters));
     }
     notes.extend(ctx.bd.spoke_notes.iter().cloned());
     notes.extend(in_ret_notes.iter().cloned());
@@ -4486,7 +4537,7 @@ mod tests {
         let gr = Grid { x0: 0.0, y0: 0.0, p: 0.05, nx, ny, nr, cache: vec![0; tot], vcache: vec![0; nx * ny], dcache: vec![0; tot], hist: vec![0.0; tot], vhist: vec![0.0; nx * ny], pres: 0.5,
                         g: vec![0.0; tot], from: vec![0; tot], seen: vec![0; tot], closed: vec![0; tot], tgt: vec![0; tot], sgen: 0, tgen: 0, glen: Vec::new() };
         let nn = bd.nets.len();
-        let mut ctx = Ctx { bd: &mut bd, gr, o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w: vec![0.15], rcache: vec![0; nx * ny], ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false, ret_soft: true, lfloor: Vec::new(), leaf_necks: false, stubs: std::collections::HashMap::new(), stub_cost: Default::default(), recover: false };
+        let mut ctx = Ctx { bd: &mut bd, gr, o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w: vec![0.15], rcache: vec![0; nx * ny], ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false, ret_soft: true, lfloor: Vec::new(), leaf_necks: false, stubs: std::collections::HashMap::new(), stub_cost: Default::default(), recover: false, fan_keep: false };
         let a = ctx.audit(0.3);
         assert_eq!(a.pairs, 1, "one crossing = one pair");
         assert_eq!(a.hard, 0);
@@ -4506,7 +4557,7 @@ mod tests {
         let gr = Grid { x0: 0.0, y0: 0.0, p: 0.05, nx, ny, nr, cache: vec![0; tot], vcache: vec![0; nx * ny], dcache: vec![0; tot], hist: vec![0.0; tot], vhist: vec![0.0; nx * ny], pres: 0.5,
                         g: vec![0.0; tot], from: vec![0; tot], seen: vec![0; tot], closed: vec![0; tot], tgt: vec![0; tot], sgen: 0, tgen: 0, glen: Vec::new() };
         let nn = bd.nets.len();
-        let mut ctx = Ctx { bd: &mut bd, gr, o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w: vec![0.15], rcache: vec![0; nx * ny], ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false, ret_soft: true, lfloor: Vec::new(), leaf_necks: false, stubs: std::collections::HashMap::new(), stub_cost: Default::default(), recover: false };
+        let mut ctx = Ctx { bd: &mut bd, gr, o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w: vec![0.15], rcache: vec![0; nx * ny], ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false, ret_soft: true, lfloor: Vec::new(), leaf_necks: false, stubs: std::collections::HashMap::new(), stub_cost: Default::default(), recover: false, fan_keep: false };
         let base = ctx.audit(0.0).pairs;
         let mut seed: u64 = 777;
         let mut rnd = || {
@@ -4559,3 +4610,5 @@ mod tests_v7;
 mod tests_v8;
 #[cfg(test)]
 mod tests_v9;
+#[cfg(test)]
+mod tests_reuse;

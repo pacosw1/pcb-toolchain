@@ -219,8 +219,9 @@ def parser():
     ap.add_argument('--repair', action='store_true', help='iotroute only: a failed step with located DRC failures '
                     'runs the failure-driven repair (placer/repair.py) on its routed board; the step passes when the '
                     'repair reaches DRC 0/0/0 + gate at target')
-    ap.add_argument('--repair-mode', choices=['local', 'full'], default='local', help='repair re-route: local (rip '
-                    'the failure region and the moved-part copper, keep the rest) or full')
+    ap.add_argument('--repair-mode', choices=['reuse', 'local', 'full'], default='reuse', help='repair re-route: reuse '
+                    '(run.py --reuse from the failed route: keep the copper of the nets the move does not touch, route the '
+                    'rest; default), local (rip the failure region and the moved-part copper, lock the rest) or full')
     ap.add_argument('--repair-routes', type=int, default=8, help='router runs per step for the repair (cap)')
     ap.add_argument('--repair-per-round', type=int, default=4, help='proposals routed per repair round')
     ap.add_argument('--read-args', default='', help='cli.py read arguments of PROB.json, one string (the repair reads '

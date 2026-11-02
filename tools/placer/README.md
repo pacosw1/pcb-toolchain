@@ -316,7 +316,8 @@ $PY tools/placer/repair.py run NET-CORE PLACE.kicad_pcb ROUTED.kicad_pcb --outdi
   located item. Rank: term decrease, placement cost, displacement; round-robin over the units. Deterministic.
 - Decap slide: a decap tied to its IC (`cli.py read --decap-tie`, 3 mm) may move alone when the tie stays true
   (pad-edge gap to the IC pin <= the tie distance).
-- Route: `local` (default) rips the copper that the moved pads meet and the unlocked clusters within `legal_radius`
+- Route: `reuse` (default since 2026-11-01, see the last section) routes the moved placement with `run.py --reuse` from
+  the present candidate's route. `local` rips the copper that the moved pads meet and the unlocked clusters within `legal_radius`
   of a failure or on a failed net, keeps and locks the rest, and routes only what is open (NET-CORE: 40 s against
   270 s for a full route). `full` routes the moved placement board again.
 - Accept only a strictly lower key: (DRC errors + unconnected + parity, gate metrics, length, vias), measured by
@@ -326,8 +327,8 @@ $PY tools/placer/repair.py run NET-CORE PLACE.kicad_pcb ROUTED.kicad_pcb --outdi
   repair: a DRC item on a pad of a fixed unit that the full start route reports as "fixed copper alone walls it in
   (input)". `DIR/repair.json` has every attempt and the cause. Results are scratch candidates (`qualified: false`).
 
-Compaction: `compact_cli.py ... --router iotroute --repair [--repair-mode local] [--repair-routes 8]
-[--repair-per-round 4] [--read-args '...']` runs the repair on each failed step that has located DRC failures.
+Compaction: `compact_cli.py ... --router iotroute --repair [--repair-mode reuse|local|full] [--repair-routes 8]
+[--repair-per-round 4] [--read-args '...']` (`--repair-mode reuse` is the default since 2026-11-01) runs the repair on each failed step that has located DRC failures.
 The step passes when the repair reaches score 0; `step-N/repair/repair.json` names the repaired board.
 `--read-args` must be the `cli.py read` arguments of PROB.json (the repair reads the problem again from each board).
 
@@ -602,3 +603,37 @@ hand positions and rotations; all 10 test points in one column, pad x 169.75-170
 the box. The KiCad courtyard (1.297 mm radius with the line, model 1.25 mm) goes up to 0.05 mm past the box.
 The constraints cost 95 mm against the unconstrained run. The result stays 73 mm shorter than the hand placement
 with 6 more vias. The halo shrink failed at s 0.694 and below on interior escapes, not at the constrained parts.
+
+## Repair with a partial re-route (`--repair-mode reuse`, router `run.py --reuse`, 2026-11-01)
+
+Cause: each repair proposal moves 1-2 parts, but it was routed as a whole board (`full`) or with the copper locked
+around a ripped region (`local`). `local` cannot move the kept copper, and its rip left pieces: PR #79 step 1 (s 0.637),
+proposal C13: 1 unconnected item, a 0.05 mm VCC_DRAM track stub at C25.1 (in all 4 local attempts).
+
+Change. `repair.run(..., mode='reuse')` (default; `compact_cli.py --repair-mode reuse`) writes the moved placement
+(PLACE + the move, lock-net copper only) and routes it with `run.py --reuse <present candidate's routed board>
+--reuse-fallback none`. The router keeps the copper of the nets that the move does not touch and routes the rest
+(tools/router/DESIGN.md 5c); the negotiation may still move kept copper. The key and the accept rule do not change.
+
+Compaction steps do not use reuse: between steps 50-63 % of all parts move (every movable unit), and most routed nets
+have a pad on a moved part. Measured on PR #79 step 1 from step 0: core 131 s (full 119 s), 1555 mm against 1466 mm.
+
+Result (2026-11-01, scratch only). The PR #79 command (same inputs and parameters, router v9 + reuse) with
+`--repair-mode reuse --repair-per-round 8 --repair-routes 16`:
+
+| Step | s | PR #79 (`local` repair) | this run (`reuse` repair) |
+| --- | --- | --- | --- |
+| 0 | 0.750 | PASS 1485.6 mm / 286 vias, chosen | PASS, the same board (sha256 2f5c7ffb...), chosen |
+| 1 | 0.637 | FAIL: 1 open /NAND_WP; 4 local proposals, each 1 open (VCC_DRAM stub) | **PASS** after 1 proposal (C13 decap slide, the PR #79 first proposal): 1486.9 mm / 298 vias, route 20 s |
+| 2 | 0.694 / 0.542 | s 0.694 FAIL: ETH_AVDD at U7 / R22 (2 local proposals, round 1 no proposal) | s 0.542 **PASS** after 1 proposal (C51 0.5 mm): 1507.7 mm / 303 vias, route 18 s |
+| 3 | 0.722 | PASS 1530.5 mm | not run: length stop (steps 1 and 2 rank after step 0) |
+
+Wall time 839 s (14.0 min) against 1297 s (21.6 min, run1.raw file times) for PR #79; the user noted about 34 min.
+Searches 358 s, step routes 381 s, repair routes 38 s. Every failed step now passes with its first proposal, so the
+higher proposal caps were not used. The PR #79 s 0.694 step was not visited (the halo went 0.637 -> 0.542); its
+repair run alone with reuse (`repair.run` on PR #79 step-2 board, same parameters): the same first proposal as PR #79
+(C49 -> 127.80, 134.95) gives DRC 0 / 0 / 0 + gate PASS, 1499.8 mm / 292 vias, route 53 s (PR #79 local: 2 open,
+105 s). Independent checks (detached origin/main worktree, `node tools/gate.mjs NET-CORE --fresh`, which runs KiCad
+DRC with parity): chosen step 0 board, the repaired step 1 and step 2 boards and the s 0.694 repair board: gate PASS,
+DRC 0 / 0 / 0. The chosen board did not change (step 0 stays the shortest: 1485.6 mm); the repair made the smaller
+halos legal, but they route longer.
