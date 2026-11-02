@@ -86,5 +86,41 @@ class Cli(unittest.TestCase):
         self.assertEqual(compact_cli.parser().parse_args(base + ['--router', 'iotroute']).router, 'iotroute')
 
 
+class Measure(unittest.TestCase):
+    def test_measure_reads_the_saved_board_counts_of_run_py(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, 'route-0'))
+            rec = dict(CLEAN, track_length_mm=1580.26, vias=296, board_file='/x/route-0/B.kicad_pcb')
+            json.dump(dict(run=rec), open(os.path.join(d, 'route-0', 'score.json'), 'w'))
+            m = s.measure(d)
+            self.assertEqual((m['length_mm'], m['vias'], m['routed']), (1580.3, 296, '/x/route-0/B.kicad_pcb'))
+            self.assertIn('copper_counts', m['source'])
+            json.dump(dict(run={'status': 'ERROR'}), open(os.path.join(d, 'route-0', 'score.json'), 'w'))
+            self.assertIsNone(s.measure(d))
+        self.assertIsNone(s.measure('/nonexistent'))
+
+    def test_measure_from_a_repair_key(self):
+        m = s.measure_key([0, 0, 1567.04, 291], '/r/routed.kicad_pcb', 'repair')
+        self.assertEqual((m['length_mm'], m['vias']), (1567.0, 291))
+        self.assertTrue(m['source'].startswith('repair'))
+        self.assertIsNone(s.measure_key([1, 0, float('inf'), 0], 'x'))
+
+    def test_best_line_names_step_halo_length_vias_and_reason(self):
+        run = dict(best=dict(board='/o/step-2/b/NET-CORE.kicad_pcb', s=0.542, k=1.0, unrouted=0, box_sum=2407.0,
+                             measure=dict(length_mm=1580.3, vias=296, routed='/o/step-2/route-0/NET-CORE.kicad_pcb')),
+                   best_step=2, best_reason='shortest routed length of 4 measured passing steps')
+        line = compact_cli.best_line(run)
+        self.assertRegex(line, r'^BEST board .*?/step-(\d+)/')   # tools/design_sweep.py parses this
+        for part in ('step 2', 's 0.542', 'length 1580.3 mm', 'vias 296', 'shortest routed length'):
+            self.assertIn(part, line)
+
+    def test_rank_length_needs_iotroute(self):
+        a = compact_cli.parser().parse_args(['p', 'b', '--board-dir', 'x', '--outdir', 'o', '--size', '1', '1'])
+        self.assertIsNone(a.rank)
+        self.assertEqual(a.length_patience, 2)
+        with self.assertRaises(ValueError):
+            compact_cli.main(['p', 'b', '--board-dir', 'x', '--outdir', 'o', '--size', '1', '1', '--rank', 'length'])
+
+
 if __name__ == '__main__':
     unittest.main()

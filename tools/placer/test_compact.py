@@ -570,5 +570,88 @@ class DriverDecisionTest(unittest.TestCase):
         self.assertEqual(Path(first.candidate['path']).read_bytes(), before)
 
 
+def step_row(s, length=None, vias=None, box=None, passed=True, k=1.0):
+    t = dict(s=s, k=k, passed=passed, unrouted=0 if passed else 3)
+    if length is not None:
+        t['measure'] = dict(length_mm=length, vias=vias, routed='r.kicad_pcb')
+        t['box_sum'] = box
+    return t
+
+
+class RankTest(unittest.TestCase):
+    """Rank of the passing steps by routed length and the length stop rule (no routing)."""
+
+    def test_length_rank_takes_the_shortest_route_not_the_smallest_halo(self):
+        # README pin-escape run A: 1580 / 1937 / 1661 / 1914 mm at s 0.542 / 0.461 / 0.392 / 0.333
+        steps = [step_row(.542, 1580, 296, 2407), step_row(.461, 1937, 310, 2300),
+                 step_row(.392, 1661, 300, 2200), step_row(.333, 1914, 320, 2100)]
+        best, why = compact.choose(steps, 'length')
+        self.assertIs(best, steps[0])
+        self.assertIn('shortest routed length of 4', why)
+        self.assertIs(compact.choose(steps, 'halo')[0], steps[3])
+
+    def test_ties_go_to_fewer_vias_then_to_the_smaller_box_sum(self):
+        a, b, c = step_row(.6, 1500, 290, 2500), step_row(.5, 1500, 280, 2600), step_row(.4, 1500, 280, 2400)
+        self.assertIs(compact.choose([a, b], 'length')[0], b)
+        self.assertIs(compact.choose([a, b, c], 'length')[0], c)
+
+    def test_failed_virtual_and_unmeasured_steps(self):
+        fail = step_row(.3, 1000, 100, 1000, passed=False)
+        virt = step_row(.9, 1100, 100, 1000, k=1.2)
+        real = step_row(.5, 1600, 300, 2400)
+        bare = step_row(.4)
+        self.assertIs(compact.choose([fail, virt, real, bare], 'length')[0], real)
+        self.assertEqual(compact.choose([fail], 'length'), (None, 'no passing step'))
+        best, why = compact.choose([step_row(.5), step_row(.4)], 'length')
+        self.assertEqual(best['s'], .4)
+        self.assertIn('fallback', why)
+
+    def test_length_stop_after_k_passing_steps_that_rank_after_the_best(self):
+        a = step_row(.6, 1600, 300)
+        b = step_row(.54, 1580, 296)
+        worse1, worse2 = step_row(.46, 1937, 310), step_row(.39, 1661, 300)
+        failed = step_row(.35, passed=False)
+        self.assertFalse(compact.length_stop([a, b], 2))
+        self.assertFalse(compact.length_stop([a, b, worse1], 2))
+        self.assertFalse(compact.length_stop([a, b, worse1, failed], 2))  # a failed step does not count
+        self.assertTrue(compact.length_stop([a, b, worse1, failed, worse2], 2))
+        self.assertTrue(compact.length_stop([a, b, worse1], 1))
+        self.assertFalse(compact.length_stop([a, b, worse1, worse2], 0))  # 0 = no stop
+        self.assertFalse(compact.length_stop([a, b, worse1, step_row(.4, 1570, 290)], 2))  # a new best resets
+
+    def test_block_box_sum_counts_rigid_borders_and_soft_block_boxes(self):
+        pr = {'units': [dict(unit('B1', 0, 0, [[-1, -1, 1, 1, 0]]), box=[-2, -2, 2, 3]),
+                        unit('R1', 0, 0, [[-1, -1, 1, 1, 0]]), unit('C1', 0, 0, [[-1, -1, 1, 1, 0]])],
+              'nets': [{'name': '~block:U9', 'weight': 4, 'cohesion': True, 'pins': [[1, -1, -1, 1, 1], [2, -1, -1, 1, 1]]},
+                       {'name': '~comp:X', 'weight': 1, 'cohesion': True, 'pins': [[0, 0, 0, 0, 0], [1, 0, 0, 0, 0]]}]}
+        pose = [(10, 10, 0), (0, 0, 0), (4, 0, 0)]
+        self.assertAlmostEqual(compact.block_box_sum(pr, pose), 4 * 5 + 6 * 2)
+
+    def test_loop_ranks_by_length_and_stops_after_k_worse_passing_steps(self):
+        pr = {'units': [unit('A', 2, 2, [[-1, -1, 1, 1, .5]]), unit('B', 8, 8, [[-1, -1, 1, 1, .5]])],
+              'nets': [net('N%d' % k, 0, 1) for k in range(4)], 'board': board()}
+        lengths = [1700, 1580, 1937, 1661, 1500, 1600, 1650, 1700]   # every step passes
+
+        def search(q, n):
+            return {'candidates': [{'pose': [[2, 2, 0], [8, 8, 0]], 'cost': 1.0, 'illegal': []}]}
+
+        def route(b, n):
+            return compact.Measured([0], dict(length_mm=lengths[n], vias=300, routed='step-%d' % n))
+        for patience, n_steps in ((2, 4), (3, 8)):
+            with self.subTest(patience=patience):
+                run = compact.run_loop(pr, (10, 10), search, lambda q, p, k, n: 'step-%d' % n, route, s0=0.5,
+                                       budget=1e9, clock=lambda: 0.0, k_cap=1.0, rank='length',
+                                       length_patience=patience)
+                self.assertEqual(len(run['steps']), n_steps)
+                self.assertTrue(run['stop'].startswith('length stop'))
+                self.assertEqual(run['best_step'], 1 if patience == 2 else 4)
+                self.assertIn('shortest routed length', run['best_reason'])
+                self.assertEqual(run['steps'][1]['measure']['length_mm'], 1580)
+        run = compact.run_loop(pr, (10, 10), search, lambda q, p, k, n: 'b', route, s0=0.5, budget=1e9,
+                               clock=lambda: 0.0, k_cap=1.0, s_min=0.2)   # old default: rank halo, no stop
+        self.assertEqual(run['rank'], 'halo')
+        self.assertEqual(run['best_step'], len(run['steps']) - 1)
+
+
 if __name__ == '__main__':
     unittest.main()

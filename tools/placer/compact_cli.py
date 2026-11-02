@@ -158,6 +158,15 @@ def route_handoff(counts, decision, folder, *, feedback=None, prior_hints=None, 
     return result
 
 
+def best_line(run):
+    """Summary line of the chosen step: board, step, halo, measured length and vias, and why it was chosen."""
+    b = run['best']
+    m = b.get('measure') or {}
+    return 'BEST board %s step %s s %.3f k %.3f unrouted %d length %s mm vias %s box %s mm2 routed %s: %s' % (
+        b['board'], run.get('best_step'), b['s'], b['k'], b['unrouted'], m.get('length_mm', 'n/a'),
+        m.get('vias', 'n/a'), b.get('box_sum', 'n/a'), m.get('routed', 'n/a'), run.get('best_reason'))
+
+
 def route_cmd(name, gnd_vias):
     cmd = ['bash', 'tools/placer/fr_job.sh', name]
     return ['env', 'GNDVIAS=1'] + cmd if gnd_vias else cmd
@@ -229,6 +238,12 @@ def parser():
                     'outline only, no growth); with --virtual-first')
     ap.add_argument('--shrink', type=float, default=0.85, help='halo scale factor after a pass')
     ap.add_argument('--tol', type=float, default=0.05, help='halo bisection stops at this relative gap')
+    ap.add_argument('--rank', choices=compact.RANKS, default=None, help='result = the passing step with: length = '
+                    'the shortest routed length (ties: fewer vias, smaller block box sum; needs --router iotroute, '
+                    'its default), halo = the smallest halo (maximum compaction; default for the other routers)')
+    ap.add_argument('--length-patience', type=int, default=compact.LENGTH_PATIENCE, metavar='K',
+                    help='rank length: stop the halo shrink when K consecutive passing steps rank after the best '
+                    'step so far (default %d, 0 = no stop; README "Rank by routed length")' % compact.LENGTH_PATIENCE)
     return ap
 
 
@@ -257,6 +272,12 @@ def main(argv=None):
         a.param += ['max_displacement=%s' % a.max_displacement]
     if a.repair and a.router != 'iotroute':
         raise ValueError('--repair needs --router iotroute')
+    if a.rank is None:
+        a.rank = 'length' if a.router == 'iotroute' else 'halo'
+    if a.rank == 'length' and a.router != 'iotroute':
+        raise ValueError('--rank length needs --router iotroute (the only router step that measures the routed board)')
+    if a.length_patience < 0:
+        raise ValueError('--length-patience must be 0 or more')
     deadline = lean.deadline_after(a.budget)
     with open(a.prob) as problem_file:
         pr = json.load(problem_file)
@@ -481,6 +502,7 @@ def main(argv=None):
             # Plain counts, as the Freerouting path: a failed step bisects the halo, it does not stop the loop.
             counts = iotroute_step.route_step(path, d, iotroute_board, iotroute_gate, a.passes,
                                               shlex.split(a.route_args), run_stage)
+            measure = iotroute_step.measure(d)
             if a.repair and 0 < counts[0] < NO_RESULT:
                 from placer import repair
                 routed = os.path.join(d, 'route-0', os.path.basename(path))
@@ -494,7 +516,8 @@ def main(argv=None):
                 if repair.better(rec['best']['key'], rec['start']['key']):
                     best = rec['best']['key']
                     counts = [0 if rec['passed'] else (best[0] or best[1])]
-            return counts
+                    measure = iotroute_step.measure_key(best, rec['best']['routed'], 'repair')
+            return compact.Measured(counts, measure)
 
         if a.router == 'fastroute':
             # Fastroute runs here (many cores, user rule 2026-10-03); it is deterministic, so one run per step.
@@ -559,7 +582,8 @@ def main(argv=None):
     run = compact.run_loop(pr, tuple(a.size), search, write, route, s0=a.s0,
                            budget=max(0., deadline-lean.now()), target=a.target,
                            shrink=a.shrink, tol=a.tol, log=lambda s: print(s, flush=True),
-                           real_first=not a.virtual_first, diagnostic_budget=a.diagnostic_budget, k_cap=a.k_cap)
+                           real_first=not a.virtual_first, diagnostic_budget=a.diagnostic_budget, k_cap=a.k_cap,
+                           rank=a.rank, length_patience=a.length_patience if a.rank == 'length' else None)
     run['problem'] = pr
     run['size'] = list(a.size)
     json.dump(run, open(os.path.join(a.outdir, 'run.json'), 'w'))
@@ -571,8 +595,7 @@ def main(argv=None):
         print('STUCK: inspect retained candidate; evidence='+str(run['next_action'].get('evidence')), flush=True)
         raise SystemExit(3)
     if run['best']:
-        print('BEST board %s s %.3f k %.3f unrouted %d' % (run['best']['board'], run['best']['s'], run['best']['k'],
-                                                          run['best']['unrouted']))
+        print(best_line(run), flush=True)
     if a.snapshots:
         from placer import movie, viewer
         rj = os.path.join(a.outdir, 'run.json')

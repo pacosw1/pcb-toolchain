@@ -436,3 +436,43 @@ denser board. The escape repair moved C47 (the PR #73 blocker) once in run C ste
 A step 2 is better than PR #73 (-65 mm) but 22 mm / 9 vias worse than the hand placement routed by the same judge.
 U7 pads 2-3 have blocked 0 on it. Next: rank the passing steps by routed length (not the smallest halo), and add a
 length-aware term: the placement cost (HPWL) is flat at 1656-1711 over all steps, so it does not predict the route.
+
+## Rank by routed length (`compact.choose`, `--rank`, `--length-patience`, 2026-11-01)
+
+Cause: the halo rank kept the passing step with the smallest halo. On NET-CORE (escape A) that is s 0.333 with
+1914 mm, but s 0.542 routed 1580 mm. Below s 0.54 the routed length does not fall, and HPWL does not predict it.
+
+- Measure: each `--router iotroute` step records `measure` = {length_mm, vias, routed} in `run.json`. Source: the
+  `run.py --json` record (`copper_counts`: pcbnew track lengths and via count of the saved routed board, not the
+  router core claim). A step that passes through the repair takes the measure of the repaired board (the repair
+  key, from the same run.py record). `box_sum` = the block box sum of the search pose in the problem model (rigid
+  block border boxes + the box of each soft block cohesion net; a repair move is not in it).
+- Rank (`--rank length`, default for `--router iotroute`): a real-outline step first, then the shortest routed
+  length, then fewer vias, then the smaller box sum. `--rank halo` = the old rule (smallest halo, maximum
+  compaction; default for the other routers, which give no measure). No measured passing step: the halo rule.
+- Stop (`--length-patience K`, default 2, 0 = off): the halo shrink stops when the last K measured passing steps all
+  rank after the best step so far. A failed step does not count and does not reset the count. Why K = 2: one longer
+  step is not a trend (escape A: 1663 mm at s 0.637 came between 1622 and 1580 mm), and the router is
+  deterministic, so a second longer step at a smaller halo is a repeat, not noise. Each extra step costs one search
+  plus one route (NET-CORE: 6-7 min in escape A, 4 min in the run below). With K = 2 escape A would stop after s 0.392 (5 steps, not 7) and keep
+  s 0.542. The outline phase (a virtual best step) still runs after a length stop.
+- Summary line: `BEST board ... step N s ... length ... mm vias ... box ... mm2 routed ...: <reason>`.
+
+Result (2026-11-01, router v8, scratch only). Same input and parameters as escape A (spread placement f9fcd2ed, blocks,
+`--param w_esc=20`, `--repair`, 4 workers, 10 x 15000 steps, `--virtual-first --k-cap 1`). The search is deterministic:
+the placement costs of steps 0-4 are the same as in escape A; only the router changed (v7 -> v8). 5 steps in 20 min:
+
+| Step | s | length mm | vias | box mm2 (problem model) | note |
+| --- | --- | --- | --- | --- | --- |
+| 0 | 0.750 | 1686.4 | 319 | 1614 | passed through the repair |
+| 1 | 0.637 | 1649.8 | 304 | 1633 | |
+| 2 | 0.542 | 1597.5 | 304 | 1654 | chosen |
+| 3 | 0.461 | 1696.2 | 293 | 1564 | ranks after step 2 (1 of 2) |
+| 4 | 0.392 | 1645.2 | 304 | 1604 | ranks after step 2 (2 of 2): length stop |
+
+`STOP length stop: the 2 passing steps after step 2 (s 0.542, 1597.5 mm) rank after it`. The halo rank would have
+kept step 4 (+48 mm). Independent check of the step 2 routed board (scratch copy): `kicad-cli pcb drc
+--schematic-parity` 0 / 0 / 0, `node tools/gate.mjs NET-CORE --fresh` PASS (detached origin/main worktree), pcbnew
+1597.5 mm / 304 vias (the same as the run.py measure). Against the table above: the same placement routed 1580 mm /
+296 vias with v7; the hand placement routed 1558 mm / 287 vias with v7 (not routed again with v8 here). The rank
+choice and the stop worked; the length gap to the hand placement is the next problem (a length-aware term).

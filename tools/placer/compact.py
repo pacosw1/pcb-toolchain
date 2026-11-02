@@ -199,8 +199,85 @@ class RouteOutcome(list):
         self.stop = not (self.routing_step_clean or feedback)
 
 
+class Measured(list):
+    """Router counts plus the copper measured on the routed board of the step (a driver with a measure, for
+    example iotroute: run.py counts the tracks and vias of the saved board with pcbnew).
+    measure = {length_mm, vias, routed, source}."""
+    def __init__(self, counts, measure=None):
+        super().__init__(counts)
+        self.measure = dict(measure) if measure else None
+
+
+def block_box_sum(pr, pose):
+    """Sum of the block box areas (mm2) of a pose, problem model: a rigid block unit counts its border box; a soft
+    block counts the box of its '~block:' cohesion net (the courtyard boxes of its part units)."""
+    from placer.cost import net_box
+    total = 0.0
+    for u in pr['units']:
+        b = u.get('box')
+        if b:
+            total += (b[2] - b[0]) * (b[3] - b[1])
+    for net in pr['nets']:
+        if net.get('cohesion') and net['name'].startswith('~block:'):
+            b = net_box(net, pose)
+            total += (b[2] - b[0]) * (b[3] - b[1])
+    return total
+
+
+RANKS = ('halo', 'length')
+LENGTH_PATIENCE = 2  # see rank_key / length_stop and README "Rank by routed length"
+
+
+def rank_key(t, rank='length'):
+    """Sort key of a passing step (lower is better). Both ranks put a real-outline step (k <= 1) first.
+    halo: the smallest board scale, then the smallest halo scale (maximum compaction, the old rule).
+    length: the shortest routed length, then fewer vias, then the smaller block box sum, then the smaller halo.
+    A step without a measure ranks after every measured step."""
+    virtual_step = t['k'] > 1.0 + 1e-9
+    if rank == 'halo':
+        return (virtual_step, t['k'], t['s'])
+    m = t.get('measure') or {}
+    inf = float('inf')
+    length = m.get('length_mm')
+    vias = m.get('vias')
+    box = t.get('box_sum')
+    return (virtual_step, inf if length is None else float(length), inf if vias is None else int(vias),
+            inf if box is None else float(box), t['s'])
+
+
+def choose(steps, rank='length'):
+    """(best passing step or None, reason). rank length falls back to halo when no passing step has a measure."""
+    ok = [t for t in steps if t['passed']]
+    if not ok:
+        return None, 'no passing step'
+    if rank == 'length':
+        measured = [t for t in ok if (t.get('measure') or {}).get('length_mm') is not None]
+        if measured:
+            best = min(measured, key=lambda t: rank_key(t, 'length'))
+            return best, ('shortest routed length of %d measured passing steps (rank length; ties: fewer vias, then '
+                          'smaller block box sum)' % len(measured))
+        best = min(ok, key=lambda t: rank_key(t, 'halo'))
+        return best, 'no passing step has a routed-length measure: smallest halo (rank halo fallback)'
+    best = min(ok, key=lambda t: rank_key(t, 'halo'))
+    return best, 'smallest halo scale on the smallest board scale of %d passing steps (rank halo)' % len(ok)
+
+
+def length_stop(steps, patience=LENGTH_PATIENCE):
+    """True when the last `patience` measured passing steps all rank after the best measured step so far (the
+    halo shrink makes the route longer, not shorter). Failed steps do not count and do not reset the count.
+    patience 0 or None: never stop."""
+    if not patience:
+        return False
+    measured = [t for t in steps if t['passed'] and (t.get('measure') or {}).get('length_mm') is not None]
+    if len(measured) <= patience:
+        return False
+    best = min(range(len(measured)), key=lambda i: rank_key(measured[i], 'length'))
+    return len(measured) - 1 - best >= patience
+
+
 def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, target=0, shrink=0.85, tol=0.05,
-             log=None, s_min=0.05, real_first=False, diagnostic_budget=None, k_cap=None):
+             log=None, s_min=0.05, real_first=False, diagnostic_budget=None, k_cap=None, rank='halo',
+             length_patience=None):
     """Easy-to-hard loop. Injected effects: search(problem, step) -> optimize() result;
     write(problem, pose, k, step) -> board path; route(path, step) -> counts or RouteOutcome.
     Halo phase: s from s0, board scale k from the grown area (larger on an illegal result). A step passes when
@@ -260,6 +337,12 @@ def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, 
                 t['runs'] = list(outcome)
                 t['unrouted'] = min(t['runs'])
                 t['passed'] = t['unrouted'] <= target
+                if getattr(outcome, 'measure', None):
+                    t['measure'] = outcome.measure
+                    try:
+                        t['box_sum'] = round(block_box_sum(q, c['pose']), 1)
+                    except (KeyError, IndexError, TypeError, ValueError):
+                        t['box_sum'] = None
                 if isinstance(outcome, RouteOutcome):
                     t['route_decision'] = outcome.decision
                     t['routed_candidate'] = outcome.candidate
@@ -274,8 +357,11 @@ def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, 
                          failure_receipt=exc.path, immutable_faults=exc.receipt['faults'])
         steps.append(t)
         if log:
-            log('step %d %s s %.3f k %.3f cost %.1f illegal %d runs %s -> %s' % (
-                n, phase, s, k, c['cost'], len(c['illegal']), t['runs'], 'PASS' if t['passed'] else 'FAIL'))
+            m = t.get('measure') or {}
+            log('step %d %s s %.3f k %.3f cost %.1f illegal %d runs %s -> %s%s' % (
+                n, phase, s, k, c['cost'], len(c['illegal']), t['runs'], 'PASS' if t['passed'] else 'FAIL',
+                ' length %s mm vias %s box %s mm2' % (m.get('length_mm'), m.get('vias'), t.get('box_sum'))
+                if m else ''))
         return t
 
     def terminal_stop(result):
@@ -291,8 +377,11 @@ def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, 
         for row in summary:
             row['unrouted'] = -1 if row['unrouted'] is None else row['unrouted']
         handoff = next((t for t in reversed(steps) if t.get('status') == 'routing-decision'), None)
-        return dict(steps=steps,
-            best=min(ok, key=lambda t: (t['k'], t['s'])) if ok and stop != 'immutable input mandatory rules' else None,
+        best, reason = choose(steps, rank)
+        if stop == 'immutable input mandatory rules':
+            best, reason = None, stop
+        return dict(steps=steps, best=best, best_step=next(i for i, t in enumerate(steps) if t is best) if best else None, best_reason=reason,
+            rank=rank,
             verdict=stop if handoff or stop == 'immutable input mandatory rules' else verdict(summary, size), stop=stop,
             next_action=handoff.get('next_action') if handoff else None,
             retained_candidate=handoff.get('routed_candidate') if handoff else None,
@@ -332,8 +421,14 @@ def run_loop(pr, size, search, write, route, s0=4.0, budget=2700.0, clock=None, 
             stop = terminal_stop(result)
             break
         sch.report(result['passed'])
+        if result['passed'] and not sch.done and length_stop(steps, length_patience):
+            best, _ = choose(steps, 'length')
+            n_best = next(i for i, t in enumerate(steps) if t is best)
+            stop = ('length stop: the %d passing steps after step %d (s %.3f, %s mm) rank after it'
+                    % (length_patience, n_best, best['s'], best['measure']['length_mm']))
+            break
     passed = [t for t in steps if t['passed']]
-    if passed and stop == 'schedule done':
+    if passed and (stop == 'schedule done' or stop.startswith('length stop')):
         best = min(passed, key=lambda t: (t['k'], t['s']))
         k_floor = bare_scale(pr)
         hi, lo = best['k'], max(1.0, k_floor)

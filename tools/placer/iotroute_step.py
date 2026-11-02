@@ -112,6 +112,34 @@ class GateWorkspace:
         return json.load(open(result)).get('metrics')
 
 
+MEASURE_SOURCE = 'tools/router/run.py copper_counts: pcbnew track lengths and via count of the saved board'
+
+
+def measure_key(key, routed, source='route'):
+    """Measure from a repair score key (DRC part, gate part, length, vias) of the board `routed`; None without a
+    finite length."""
+    try:
+        length, vias = float(key[2]), int(key[3])
+    except (IndexError, TypeError, ValueError, OverflowError):
+        return None
+    if length != length or length in (float('inf'), float('-inf')):
+        return None
+    return dict(length_mm=round(length, 1), vias=vias, routed=routed, source=source + ': ' + MEASURE_SOURCE)
+
+
+def measure(d):
+    """Measure of the step route d/route-0/score.json: the routed length (mm) and via count that run.py measured
+    on the saved board (never the router core claim). None when the record has no measure."""
+    try:
+        with open(os.path.join(d, 'route-0', 'score.json')) as fh:
+            rec = json.load(fh).get('run') or {}
+    except (OSError, ValueError):
+        return None
+    if rec.get('status') not in ('PASS', 'FAIL') or rec.get('track_length_mm') is None or rec.get('vias') is None:
+        return None
+    return measure_key((None, None, rec['track_length_mm'], rec['vias']), rec.get('board_file'), 'route')
+
+
 def route_step(path, d, board, gate, iters, extra=(), run_stage=None):
     """Route the step board `path` into d/route-0 with run.py, gate it, write d/route-0/score.json; -> [score]."""
     name = os.path.splitext(os.path.basename(path))[0]
