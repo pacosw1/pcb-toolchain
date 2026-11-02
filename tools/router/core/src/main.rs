@@ -55,6 +55,9 @@ const SQ2: f64 = std::f64::consts::SQRT_2;
 const DEF_VIA_COST: f64 = 3.0;
 const DEF_RET_COST: f64 = 0.0;
 const DEF_WEB_COST: f64 = 3.0;
+/// gate scope (reffill.rs RefFill::soft): an A* step of a soft net off its reference costs (1 + this) times more. A
+/// search preference only (as DEF_VIA_COST): which off-reference runs are legal is decided by si_planes in run.py.
+pub(crate) const DEF_REF_COST: f64 = 3.0;
 /// a join is searched first inside the bounding box of the net's items grown by this margin (mm)
 const JOIN_MARGIN: f64 = 5.0;
 /// a track end lies at least this far inside the copper it joins (pad, track, via): see cells_of
@@ -669,11 +672,13 @@ impl Board {
         }
         false
     }
-    /// Plane-rule flags of a net: bit 0 fast (plane clearance on every layer), bit 1 pref (on the layers in `adj`).
+    /// Plane-rule flags of a net: bit 0 fast (plane clearance on every layer), bit 1 pref (on the layers in `adj`),
+    /// bits 2..6 the reference domain (reffill.rs), bit 7 soft reference (priced in search_n, not blocked here).
     /// Bits 8 and up: the isolation var entry of the net (0 without pair rules), so the fixed-copper memo is per entry.
     fn pflags(&self, net: usize) -> u32 {
         let n = &self.nets[net];
-        n.fast as u32 | (n.pref as u32) << 1 | (self.rfill.dom.get(net).copied().unwrap_or(0) as u32 & 0x3f) << 2 | self.iv(net as i32) << 8
+        n.fast as u32 | (n.pref as u32) << 1 | (self.rfill.dom.get(net).copied().unwrap_or(0) as u32 & 0x1f) << 2
+            | (self.rfill.soft.get(net).copied().unwrap_or(false) as u32) << 7 | self.iv(net as i32) << 8
     }
     /// The plane clearance to foreign drilled items applies to a track with flags pf on copper layer l.
     fn plane_rule(&self, pf: u32, l: usize) -> bool {
@@ -693,8 +698,9 @@ impl Board {
         // the reference-plane fill edge (reffill.rs, si_planes D-124c): the centre of a net with a domain (bits 2..7)
         // stays on the filled reference of its domain on the adjacent plane, or in its own pad / via anchor discs
         let mut code = FREE;
-        if pf & 0xfc != 0 && self.adj & (1 << l) != 0 {
-            code = self.rfill.code(l, ((pf >> 2) & 0x3f) as u8, x, y, self.eps);
+        // (gate scope 2026-11-02: a soft net, bit 7, is not blocked here; search_n prices its off-reference steps)
+        if pf & 0x7c != 0 && pf & 0x80 == 0 && self.adj & (1 << l) != 0 {
+            code = self.rfill.code(l, ((pf >> 2) & 0x1f) as u8, x, y, self.eps);
             if code == MULTI {
                 return MULTI;
             }
@@ -1638,6 +1644,10 @@ impl<'a> Ctx<'a> {
         let mut ret_memo: std::collections::HashMap<usize, bool> = std::collections::HashMap::new();
         let web_soft = !self.bd.web_hard && self.bd.web > 0.0 && !self.bd.nets[net].plane && self.o.web_cost > 0.0;
         let mut web_memo: std::collections::HashMap<usize, f64> = std::collections::HashMap::new();
+        // gate scope: off-reference steps of a soft net (reffill.rs) are priced, not blocked
+        let ref_soft = self.bd.rfill.soft.get(net).copied().unwrap_or(false);
+        let ref_price = self.bd.rfill.cost.get(net).copied().unwrap_or(DEF_REF_COST);
+        let mut ref_memo: std::collections::HashMap<usize, bool> = std::collections::HashMap::new();
         let pres = self.gr.pres as f64;
         let (x0, y0) = (self.gr.x0, self.gr.y0);
         // v7 DRU length bound: the octile distance to the nearest target box is a lower bound of the length still to go
@@ -1816,6 +1826,16 @@ impl<'a> Ctx<'a> {
                 }
                 let hj = if recover { 0.0 } else { self.gr.hist[j] as f64 };
                 let mut c = if len_mode { glen } else if is_via { c } else { c * (1.0 + hj) * (1.0 + pres * k as f64) };
+                if ref_soft && !is_via && !len_mode {
+                    let off = *ref_memo.entry(j).or_insert_with(|| {
+                        let (rj, jy, jx) = self.gr.cell(j);
+                        let l = self.bd.routable[rj];
+                        self.bd.adj & (1 << l) != 0 && self.bd.rfill.off_ref(l, net, x0 + jx as f64 * p, y0 + jy as f64 * p, self.bd.eps)
+                    });
+                    if off {
+                        c *= 1.0 + ref_price;
+                    }
+                }
                 if !stub_t.is_empty() && self.gr.tgt[j] == self.gr.tgen {
                     c += stub_t.get(&j).copied().unwrap_or(0.0) as f64;
                 }
@@ -2016,6 +2036,42 @@ impl<'a> Ctx<'a> {
             }
         }
         let tol = self.gr.p * 1e-3;
+        // gate scope (reffill.rs RefFill::soft): string pulling must not move a soft net off its reference where the
+        // A* path (which paid --ref-cost there) stayed on it: an off-reference sample of a pulled leg is allowed only
+        // within one cell of an off-reference cell of the path on that layer
+        let soft = self.bd.rfill.soft.get(net).copied().unwrap_or(false);
+        let mut off_cells: std::collections::HashSet<(usize, i64, i64)> = std::collections::HashSet::new();
+        if soft {
+            for &c in path {
+                let (r, iy, ix) = self.gr.cell(c);
+                let l = self.bd.routable[r];
+                let (x, y) = self.gr.xy(ix, iy);
+                if self.bd.adj & (1 << l) != 0 && self.bd.rfill.off_ref(l, net, x, y, self.bd.eps) {
+                    for dj in -1..=1 {
+                        for di in -1..=1 {
+                            off_cells.insert((r, ix as i64 + di, iy as i64 + dj));
+                        }
+                    }
+                }
+            }
+        }
+        let ref_leg = |r: usize, u: (f64, f64), v: (f64, f64)| -> bool {
+            let l = self.bd.routable[r];
+            if !soft || self.bd.adj & (1 << l) == 0 {
+                return true;
+            }
+            let len = (v.0 - u.0).hypot(v.1 - u.1);
+            let k = (len / (self.gr.p * 0.5)).ceil().max(1.0) as usize;
+            (0..=k).all(|t| {
+                let f = t as f64 / k as f64;
+                let (x, y) = (u.0 + (v.0 - u.0) * f, u.1 + (v.1 - u.1) * f);
+                if !self.bd.rfill.off_ref(l, net, x, y, self.bd.eps) {
+                    return true;
+                }
+                let (ix, iy) = self.gr.at(x, y);
+                off_cells.contains(&(r, ix as i64, iy as i64))
+            })
+        };
         for (r, pts) in runs {
             let l = self.bd.routable[r];
             if pts.len() < 2 {
@@ -2045,7 +2101,7 @@ impl<'a> Ctx<'a> {
                     }
                     let mut hit = None;
                     for e in opts {
-                        let leg = |u: (f64, f64), v: (f64, f64)| (v.0 - u.0).abs() < tol && (v.1 - u.1).abs() < tol || self.seg_clear(net, l, u, v, hw);
+                        let leg = |u: (f64, f64), v: (f64, f64)| (v.0 - u.0).abs() < tol && (v.1 - u.1).abs() < tol || (self.seg_clear(net, l, u, v, hw) && ref_leg(r, u, v));
                         if leg(e[0], e[1]) && leg(e[1], e[2]) {
                             hit = Some(e);
                             break;

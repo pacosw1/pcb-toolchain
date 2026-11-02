@@ -76,3 +76,44 @@ fn bucket_classes_agree_with_the_exact_test() {
     }
     assert!(n > 400_000);
 }
+
+/// Gate scope (2026-11-02, model net `ref_soft`): a soft net is not blocked over the void (the gate's D-124c screen
+/// may accept the run; run.py lets si_planes judge it) but each off-reference step is priced; a hard net stays blocked.
+/// Before: ref_soft was not read, the void blocked every checked net.
+#[test]
+fn soft_reference_is_priced_not_blocked() {
+    let mut m = model(true);
+    m["nets"]["SIG"]["ref_soft"] = serde_json::json!(true);
+    let bd = load(&m, 0.28);
+    let (sig, sig2) = (id(&bd, "SIG"), id(&bd, "SIG2"));
+    assert!(bd.track_cost(sig, 0, 12.0, 10.0, 0.075, 0.25, None) >= 0, "soft SIG over the void: not blocked");
+    assert!(bd.track_cost(sig2, 0, 12.0, 10.0, 0.075, 0.25, None) < 0, "hard SIG2 over the void: blocked");
+    assert!(bd.rfill.off_ref(0, sig, 12.0, 10.0, 0.0), "the void is off the reference");
+    assert!(!bd.rfill.off_ref(0, sig, 5.0, 10.0, 0.0), "the fill is not");
+    assert!(!bd.rfill.off_ref(0, sig, 13.6, 10.0, 0.0), "own anchor disc is not");
+    assert!(!bd.rfill.off_ref(0, sig2, 12.0, 10.0, 0.0), "a hard net is never priced (it is blocked)");
+    assert_ne!(bd.pflags(sig), bd.pflags(sig2), "soft and hard nets keep separate fixed-copper memo profiles");
+    // the A*: SIG from (8, 10) to (16, 10) on F.Cu only. Straight through the void is 8 mm; around it (y 7.9 or 12.1)
+    // about 12.3 mm. The off-reference price (1 + DEF_REF_COST per step) makes the route go around.
+    let o = Opts { pitch: 0.05, passes: 1, plane_clr: 0.25, hth: 0.45, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2, pres_mult: 1.5,
+                   pres_max: 1000.0, hist: 0.3, max_time: 0.0, door_hist: 2.0, via_cost: DEF_VIA_COST, ret_cost: DEF_RET_COST,
+                   web_cost: DEF_WEB_COST, no_recover: false };
+    let mut bd = load(&m, 0.28);
+    bd.nets[sig].layers = 1;
+    let pad = |x: f64| Shape { net: sig as i32, geo: Geo::Rect(x - 0.3, 9.7, x + 0.3, 10.3), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Pad, owner: -1, alive: true, grp: 0 };
+    bd.add(pad(6.0));
+    bd.add(pad(18.0));
+    let (nx, ny, nr) = (601, 401, 2);
+    let tot = nx * ny * nr;
+    let gr = Grid { x0: 0.0, y0: 0.0, p: 0.05, nx, ny, nr, cache: vec![0; tot], vcache: vec![0; nx * ny], dcache: vec![0; tot], hist: vec![0.0; tot],
+                    vhist: vec![0.0; nx * ny], pres: 0.5, g: vec![0.0; tot], from: vec![0; tot], seen: vec![0; tot], closed: vec![0; tot], tgt: vec![0; tot], sgen: 0, tgen: 0, glen: Vec::new(), lhist: Vec::new() };
+    let nn = bd.nets.len();
+    let memo_w = bd.nets.iter().flat_map(|n| net_widths(n)).collect();
+    let mut ctx = Ctx { bd: &mut bd, gr, o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w, rcache: vec![0; nx * ny],
+                        ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false, ret_soft: true, lfloor: Vec::new(), leaf_necks: false, stubs: std::collections::HashMap::new(), stub_cost: Default::default(), recover: false, fan_keep: false };
+    assert!(route_net(&mut ctx, sig).hard_fail.is_none());
+    let off: f64 = ctx.bd.shapes.iter().filter(|s| s.alive && s.owner == sig as i32 && s.kind == Kind::Track).map(|s| match s.geo {
+        Geo::Seg(ax, ay, bx, by, _) => { let k = 40; (0..k).filter(|&i| { let f = (i as f64 + 0.5) / k as f64; ctx.bd.rfill.off_ref(0, sig, ax + (bx - ax) * f, ay + (by - ay) * f, 0.0) }).count() as f64 / k as f64 * (bx - ax).hypot(by - ay) }
+        _ => 0.0 }).sum();
+    assert!(off < 0.5, "soft SIG goes around the void: {off:.2} mm off the reference");
+}

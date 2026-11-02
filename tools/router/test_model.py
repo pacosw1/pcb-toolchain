@@ -78,6 +78,15 @@ class IsolationBoards(unittest.TestCase):
         # the gate's own functions decide (no copied list): kicad-happy sees /1V2O as a rail (nnVn after the sheet path)
         self.assertEqual(model.rp_scope(m['pcb'], ['/1V2O', '/XI', 'VDD_3V3A'])['skip'], ['/1V2O', 'VDD_3V3A'])
 
+    def test_soft_reference_nets_follow_si_planes(self):
+        """Gate scope of the reference rule (2026-11-02): a checked net that si_planes.is_fast calls fast stays hard
+        (a fast net may cross no gap); every other checked net is soft (the D-124c screen may accept its run)."""
+        m = self.model_of('NET-CORE')
+        self.assertFalse(m['nets']['/ETH_REF_CLK']['ref_soft'])   # rp001-fast-nets.json
+        self.assertTrue(m['nets']['/CH_LED0']['ref_soft'])
+        p = self.model_of('POE-ETHERNET')
+        self.assertTrue(p['nets']['/ETH_CT']['ref_soft'])
+
     def test_exempt_area_is_reference_for_its_nets(self):
         """si_planes exempt.areas (2026-11-02): the J1 box is no reference rule for /LED_*_K and /MAG_* (they were walled
         in at J1), and stays one for /ETH_CT (not listed). The box and the fill are one union: no seam at x = 122.5."""

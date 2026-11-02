@@ -125,6 +125,15 @@ pub(crate) struct RefFill {
     areas: Vec<((usize, u8), Area)>,
     /// own-net exemption discs: centre, radius (pad or via radius + via_allow), net
     anchors: Vec<(f64, f64, f64, i32)>,
+    /// gate scope (2026-11-02, model net `ref_soft`): a net whose off-reference run the gate may accept (si_planes
+    /// D-124c: a stub, a run whose terminal snap discs meet in reference copper, a return detour within the edge budget,
+    /// or no rule above the board perimeter) is not blocked off the reference: each step there costs more
+    /// (Ctx::search_n, --ref-cost), and run.py checks the written board with si_planes itself; a net the gate fails
+    /// is routed again with ref_soft false (blocked, as before). Fast nets stay blocked (D-124 fast-crossing).
+    pub(crate) soft: Vec<bool>,
+    /// per net: the off-reference step price (model net `ref_cost`, default crate::DEF_REF_COST); run.py raises it for
+    /// a soft net whose run the gate failed, before it sets the net hard
+    pub(crate) cost: Vec<f64>,
 }
 
 impl RefFill {
@@ -140,6 +149,16 @@ impl RefFill {
                     doms.push(d.to_string());
                 }
                 out.dom[i] = doms.iter().position(|q| q == d).unwrap() as u8 + 1;
+            }
+            if let (Some(true), Some(&i)) = (v["ref_soft"].as_bool(), names.get(name)) {
+                if out.soft.len() < names.len() {
+                    out.soft.resize(names.len(), false);
+                }
+                out.soft[i] = true;
+                if out.cost.len() < names.len() {
+                    out.cost.resize(names.len(), crate::DEF_REF_COST);
+                }
+                out.cost[i] = v["ref_cost"].as_f64().unwrap_or(crate::DEF_REF_COST);
             }
         }
         let ob = model["outline_bbox"].as_array().unwrap();
@@ -168,6 +187,16 @@ impl RefFill {
             }
         }
         out
+    }
+    /// A soft net (RefFill::soft) with domain d: the track centre at (x, y) on copper layer l is off its reference
+    /// (outside the area and outside its own anchor discs), so the A* step there pays --ref-cost.
+    pub(crate) fn off_ref(&self, l: usize, net: usize, x: f64, y: f64, m: f64) -> bool {
+        let d = self.dom.get(net).copied().unwrap_or(0);
+        if d == 0 || !self.soft.get(net).copied().unwrap_or(false) {
+            return false;
+        }
+        let c = self.code(l, d, x, y, m);
+        c != crate::FREE && c != net as i32
     }
     /// Fixed code of a track centre of a net with domain d (1-based) on copper layer l: FREE (inside the area, or no
     /// area for this layer), n (outside; only net n's anchor discs hold the point), MULTI (outside, no or two nets).

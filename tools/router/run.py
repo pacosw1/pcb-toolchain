@@ -493,6 +493,7 @@ def run(a, rec, t0):
     if not a.reuse:
         stages = route_attempt(a, exe, py, model, route_in, src, out, work)
         rec['stages'].update(stages)
+        rec['stages']['ref_gate'] = ref_gate_rounds(a, exe, py, model, route_in, src, out, work, bdir)
         return finish(rec, out, work)
 
     # reuse: the partial route first; the full route only as the fallback (--reuse-fallback full) of a result that is
@@ -528,6 +529,73 @@ def run(a, rec, t0):
     place_sidecars(src, out)
     rec['pro_restored'] = restore_pro(src, out)
     return finish(rec, out, work)
+
+
+PLANES_FAIL = re.compile(r'^FAIL (?:domain-cross|fast-crossing|unknown-driver|detour) \S+ (\S+?):')
+REF_ROUNDS = 4
+# search preferences of the reference price (the legality is si_planes'): core DEF_REF_COST, x10 per failed round, at
+# most two raises, then the net is hard
+REF_COST0 = 3.0
+REF_RAISE = 10.0
+REF_RAISES = 2
+
+
+def planes_fail_nets(py, bdir, board, log):
+    """The gate's planes check itself (tools/si_planes.py with the gate.json checks.planes spec, as tools/gate.mjs runs
+    it) on a written board -> (nets with a D-124c reference FAIL line, total FAIL lines), or None: no planes check."""
+    cfg = json.load(open(next(os.path.join(bdir, n) for n in ('gate.json', 'gate.pending.json') if os.path.isfile(os.path.join(bdir, n)))))
+    spec = (cfg.get('checks') or {}).get('planes')
+    if not spec:
+        return None
+    rc, text = step([py, os.path.join(ROOT, 'tools', 'si_planes.py'), board, os.path.join(bdir, spec)], log)
+    lines = [ln for ln in text.splitlines() if ln.startswith('FAIL ')]
+    return sorted({m.group(1) for m in map(PLANES_FAIL.match, lines) if m}), len(lines)
+
+
+def ref_gate_rounds(a, exe, py, model, route_in, src, out, work, bdir):
+    """Gate scope of the reference rule (DESIGN 5b, 2026-11-02). The core prices the off-reference runs of the soft
+    nets (model ref_soft); which of them are legal is decided by the gate's own si_planes D-124c screen on the written
+    board, never by a copy of its thresholds. A soft net with a FAIL line gets a higher off-reference price (x REF_RAISE, at most
+    REF_RAISES times), then it is set hard (ref_soft false: blocked, the PR #94 rule); the board is routed again, at most
+    REF_ROUNDS times. -> the record of the rounds."""
+    m = json.load(open(model))
+    if not any(v.get('ref_soft') for v in m['nets'].values()):
+        return dict(rounds=[], note='no soft reference net')
+    rounds = []
+    for k in range(REF_ROUNDS + 1):
+        res = planes_fail_nets(py, bdir, out, os.path.join(work, f'planes-r{k + 1}.log'))
+        if res is None:
+            return dict(rounds=rounds, note='no planes check in gate.json')
+        nets, nfail = res
+        m = json.load(open(model))
+        soft = [n for n in nets if m['nets'].get(n, {}).get('ref_soft')]
+        # a failed soft net: its off-reference price x REF_RAISE (the router then takes the shortest off-reference run,
+        # which the gate may accept: J1.3 /ETH_CT); after REF_RAISES raises it is set hard (blocked, the PR #94 rule)
+        raised, hard = [], []
+        for n in soft:
+            c = m['nets'][n].get('ref_cost', REF_COST0)
+            if c < REF_COST0 * REF_RAISE ** REF_RAISES:
+                m['nets'][n]['ref_cost'] = c * REF_RAISE
+                raised.append(n)
+            else:
+                m['nets'][n]['ref_soft'] = False
+                hard.append(n)
+        rounds.append(dict(round=k + 1, planes_fail_lines=nfail, fail_nets=nets, raised=raised, set_hard=hard))
+        if not soft or k == REF_ROUNDS:
+            break
+        json.dump(m, open(model, 'w'), indent=1)
+        d = os.path.join(work, f'ref-r{k + 2}')
+        os.makedirs(d)
+        cand = os.path.join(d, os.path.basename(out))
+        st = route_attempt(a, exe, py, model, route_in, src, cand, d)
+        rounds[-1]['next_core'] = st['core']['claim']
+        for n in ('route.json', 'route.log', 'write.log'):
+            if os.path.isfile(os.path.join(d, n)):
+                shutil.copyfile(os.path.join(d, n), os.path.join(work, n))
+        shutil.copyfile(cand, out)
+        place_sidecars(src, out)
+        restore_pro(src, out)
+    return dict(rounds=rounds)
 
 
 def route_attempt(a, exe, py, model, route_in, src, out, work, extra=()):

@@ -207,6 +207,30 @@ NET_CORE = os.path.join(run.ROOT, 'hardware-design', 'boards', 'NET-CORE', 'cad'
 
 
 @unittest.skipUnless(os.path.exists(KPY) and os.path.exists(NET_CORE), 'needs the KiCad Python (pcbnew) and NET-CORE')
+class RefGate(unittest.TestCase):
+    """Gate scope of the reference rule (2026-11-02): run.py reads the net of each D-124c reference FAIL line of the
+    gate's own si_planes.py output (formats of tools/si_planes.py d124c_reference_failures); other lines are not nets."""
+
+    def test_fail_lines_name_their_net(self):
+        lines = {
+            'FAIL unknown-driver B.Cu /ETH_CT: 1 of 1 crossings need an edge time (longest run 1.5 mm at (121.8, 113.8))': '/ETH_CT',
+            'FAIL detour F.Cu /SPI_SCK: 1 of 2 crossings with a return detour > 13.4 mm or no reference path': '/SPI_SCK',
+            'FAIL domain-cross F.Cu /AI1: 0.6 mm over ISO_0V (domain GND)': '/AI1',
+            'FAIL fast-crossing F.Cu /ETH_TXP: 1 crossings, longest 0.40 mm at (1.0, 2.0)': '/ETH_TXP',
+        }
+        for ln, net in lines.items():
+            self.assertEqual(run.PLANES_FAIL.match(ln).group(1), net, ln)
+        for ln in ('FAIL no-domain /X: no pad in a ground zone outline; set "domains" or "exempt"',
+                   'WARN D-124d-proposed unknown-driver B.Cu /ETH_CT: report-only', '0 reference-plane failures'):
+            self.assertIsNone(run.PLANES_FAIL.match(ln), ln)
+
+    def test_no_soft_net_means_no_round(self):
+        with tempfile.TemporaryDirectory() as d:
+            m = os.path.join(d, 'model.json')
+            json.dump({'nets': {'A': {'ref_domain': 'GND', 'ref_soft': False}}}, open(m, 'w'))
+            self.assertEqual(run.ref_gate_rounds(None, None, None, m, None, None, None, d, d)['rounds'], [])
+
+
 class Reuse(unittest.TestCase):
     def test_moved_refs_by_position_turn_and_side(self):
         prev = {'C1': (100, 200, 0, 0), 'C2': (100, 200, 900, 0), 'U1': (5000, 5000, 0, 0), 'R1': (0, 0, 0, 0)}

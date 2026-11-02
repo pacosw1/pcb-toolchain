@@ -272,7 +272,7 @@ def plane_reach(b, nets, pads, pad_list, zone_objs, zones, plane_layers):
         info['plane_polys'] = polys
 
 
-def reference_fill(b, planes, nets, pad_list):
+def reference_fill(b, planes, nets, pad_list, spec_dir=None):
     """The reference rule of the planes gate (tools/si_planes.py, D-124c screen) as router data: model `ref_fill` and
     net `ref_domain`. The gate samples the centre line of each track of a checked net on an outer layer and fails a run
     of samples that are not inside the filled copper of the net's domain on the adjacent plane layer (ref_at:
@@ -290,6 +290,8 @@ def reference_fill(b, planes, nets, pad_list):
     if not planes.get('adjacent'):
         return None
     s = si_planes.load_spec(dict(planes))
+    if spec_dir:
+        si_planes.load_fast(s, spec_dir)   # the fast net patterns (fast_file / mixed_layers), as si_planes main does
     pcbnew.ZONE_FILLER(b).Fill(b.Zones())   # in memory only, as si_planes.analyse
     zones = [z for z in b.Zones() if not z.GetIsRuleArea()]
     refs = set(s['grounds']) | set(s['alt_refs'])
@@ -322,6 +324,11 @@ def reference_fill(b, planes, nets, pad_list):
                     syn[k] = (d, boxes)
                     d = k
                 info['ref_domain'] = d
+                # gate scope (2026-11-02): the D-124c screen may accept an off-reference run of a net that is not fast
+                # (a stub, terminal snap discs that meet in reference copper, a detour within the edge budget, no rule
+                # above the board perimeter): the core prices it and run.py lets si_planes judge the written board.
+                # A fast net may cross no gap (si_planes.is_fast): blocked as before.
+                info['ref_soft'] = not si_planes.is_fast(name, s)
                 doms.add(d)
     member = {g: [g] + [n for n, a in s['alt_refs'].items() if a['domain'] == g and 'cap_mm' not in a and not a.get('slow_only')]
               for g in s['grounds']}
@@ -818,7 +825,7 @@ def main():
     if iso:
         model['iso'] = iso
     # the filled reference planes (si_planes reference rule): refills the zones of b in memory, so it comes last
-    rf = reference_fill(b, planes, nets, pad_list)
+    rf = reference_fill(b, planes, nets, pad_list, bdir)
     if rf:
         model['ref_fill'] = rf
     # return vias (RP-001): kicad-happy counts a via of any ground net (gate kicad_happy grounds, names GND / *GND /
