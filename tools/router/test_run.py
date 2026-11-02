@@ -146,6 +146,24 @@ class Output(unittest.TestCase):
                                                           vias=248, failed=0))
         self.assertIsNone(run.parse_route_line('thread panicked'))
 
+    def test_core_writes_the_congestion_map_next_to_route_json(self):
+        seen = []
+        old = run.step
+        run.step = lambda cmd, log: (seen.append(cmd), (0, ''))[1]
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                with self.assertRaises(run.StepError):  # default: no map
+                    run.route_attempt(SimpleNamespace(iters=80, max_time=None), 'exe', 'py', 'm.json', 'in.kicad_pcb', 'src', 'out', d)
+                self.assertNotIn('--congestion', seen[0])
+                with self.assertRaises(run.StepError):  # the fake core writes no route.json
+                    run.route_attempt(SimpleNamespace(iters=80, max_time=None, congestion=True), 'exe', 'py', 'm.json', 'in.kicad_pcb', 'src', 'out', d)
+                cmd = seen[1]
+                self.assertEqual(cmd[:5], ['exe', 'm.json', os.path.join(d, 'route.json'), '--iters', '80'])
+                self.assertEqual(cmd[cmd.index('--congestion') + 1], os.path.join(d, 'congestion.json'))
+                self.assertEqual(cmd[cmd.index('--cong-free') + 1], '1')
+        finally:
+            run.step = old
+
     def test_summary_line(self):
         rec = dict(status='FAIL', drc_errors=1, unconnected=0, parity=0, tracks=10, vias=2, seconds=61.4)
         self.assertEqual(run.summary_line(rec), 'FAIL 1 0 0 10 2 61')

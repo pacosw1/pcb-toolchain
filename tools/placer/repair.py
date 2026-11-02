@@ -321,6 +321,24 @@ def rank(c):
             c['x'], c['y'], c['r'])
 
 
+def hot_order(props, probs, routed):
+    """Rank 'hot' (README "Repair rank by router congestion"): the proposals that take the most PathFinder history of the
+    present route away from the unit's signal pins first (dhot = history at the pins after - before, congest.py), then
+    the 'term' order. No congestion map next to the route: the 'term' order."""
+    from placer import congest
+    path = routed + '.iotroute/congestion.json'
+    if not os.path.isfile(path):
+        return props
+    cmap = congest.from_route(path)
+    models = {k: (congest.Model(q, cmap), cost.initial_pose(q)) for k, q in probs.items()}
+    out = []
+    for k, c in enumerate(props):
+        m, pose = models[c.get('problem', 'main')]
+        c = dict(c, dhot=round(m.value(c['unit'], c['x'], c['y'], c['r']) - m.value(c['unit'], *pose[c['unit']]), 6))
+        out.append((c['dhot'], k, c))
+    return [c for _, _, c in sorted(out, key=lambda t: (t[0], t[1]))]
+
+
 # ---------- escape-aware proposals ----------
 
 ESC_W = 20.0  # w_esc of the evaluator that ranks escape moves (the compaction runs use the same weight)
@@ -645,10 +663,12 @@ def drc_of(routed):
 
 def run(board, place, routed, outdir, mode='reuse', max_routes=8, per_round=4, iters=80, seed=1, rotate=True,
         read_args=(), gate=None, log=print, route_fn=None, read_fn=None, write_fn=None, rip_fn=None,
-        start_summary=None, decaps=True, escape_moves=True):
+        start_summary=None, decaps=True, escape_moves=True, rank_mode='term'):
     """Repair loop (see the module text). The effects are injectable for tests. -> record dict."""
     outdir = os.path.abspath(outdir)   # the gate runs in its snapshot folder: evidence paths must be absolute
     os.makedirs(outdir, exist_ok=True)
+    if rank_mode == 'hot':  # the next rounds rank on the map of the repair's own routes: run.py writes it (opt-in)
+        os.environ['IOTROUTE_CONGESTION'] = '1'
     route_fn = route_fn or route
     read_fn = read_fn or read_problem
     write_fn = write_fn or write_pose
@@ -669,7 +689,7 @@ def run(board, place, routed, outdir, mode='reuse', max_routes=8, per_round=4, i
     state['key'] = list(score_key(start_summary))
     notes = routed + '.iotroute/route.json'
     walled = walled_pads(load(notes).get('notes')) if os.path.isfile(notes) else set()
-    rec = dict(schema='iot-lab.placer-repair.v1', board=board, mode=mode, seed=seed, rotate=rotate,
+    rec = dict(schema='iot-lab.placer-repair.v1', board=board, mode=mode, seed=seed, rotate=rotate, rank=rank_mode,
                legal_step=p['legal_step'], legal_radius=radius, start=dict(state), attempts=[], rounds=[],
                qualified=False)
     routes, rnd = 0, 0
@@ -712,6 +732,8 @@ def run(board, place, routed, outdir, mode='reuse', max_routes=8, per_round=4, i
             if 'loose' in probs:
                 esc = interleave(esc + escape_loose(pr, probs['loose'], fails, tie, rotate=rotate))
         props = alternate(esc, props)
+        if rank_mode == 'hot':
+            props = hot_order(props, probs, state['routed'])
         rinfo = dict(round=rnd, failures=fails, candidates=[pr['units'][i]['name'] for i in
                      candidates(pr, pose, fails, radius)], proposals=len(props),
                      escape=[dict(name=c['name'], x=c['x'], y=c['y'], r=c['r'], term=c['term'], term0=c['term0'])
@@ -786,6 +808,8 @@ def main(argv=None):
     r.add_argument('--seed', type=int, default=1)
     r.add_argument('--no-rotate', action='store_true')
     r.add_argument('--no-decap-slide', action='store_true', help='do not move single tied decaps')
+    r.add_argument('--rank', choices=['term', 'hot'], default='term',
+                   help='hot: proposals that take the most router history away from the unit pins first (congest.py)')
     r.add_argument('--read', nargs='*', default=[], help='more cli.py read arguments (use --read=--x=y form)')
     args = ap.parse_args(argv)
     if args.cmd == 'prepare':
@@ -794,7 +818,7 @@ def main(argv=None):
     if os.path.isdir(args.outdir) and os.listdir(args.outdir):
         raise SystemExit('outdir must be new or empty')
     res = run(args.board, args.place, args.routed, args.outdir, args.mode, args.max_routes, args.per_round,
-              args.iters, args.seed, not args.no_rotate, args.read, decaps=not args.no_decap_slide)
+              args.iters, args.seed, not args.no_rotate, args.read, decaps=not args.no_decap_slide, rank_mode=args.rank)
     print('REPAIR %s key %s moves %d stop: %s' % ('PASS' if res['passed'] else 'FAIL', res['best']['key'],
                                                   len(res['best']['moves']), res['stop']), flush=True)
     return 0 if res['passed'] else 1

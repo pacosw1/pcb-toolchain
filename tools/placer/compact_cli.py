@@ -222,6 +222,9 @@ def parser():
     ap.add_argument('--repair-mode', choices=['reuse', 'local', 'full'], default='reuse', help='repair re-route: reuse '
                     '(run.py --reuse from the failed route: keep the copper of the nets the move does not touch, route the '
                     'rest; default), local (rip the failure region and the moved-part copper, lock the rest) or full')
+    ap.add_argument('--repair-rank', choices=['term', 'hot'], default='term', help='repair proposal order: term '
+                    '(failure term decrease; default) or hot (first the moves that take the most PathFinder history of '
+                    'the failed route away from the unit pins, router congestion map; placer/congest.py)')
     ap.add_argument('--repair-routes', type=int, default=8, help='router runs per step for the repair (cap)')
     ap.add_argument('--repair-per-round', type=int, default=4, help='proposals routed per repair round')
     ap.add_argument('--read-args', default='', help='cli.py read arguments of PROB.json, one string (the repair reads '
@@ -250,6 +253,8 @@ def parser():
 
 def main(argv=None):
     a = parser().parse_args(argv)
+    if getattr(a, 'repair_rank', 'term') == 'hot':  # rank 'hot' reads the map of the failed route: run.py writes it
+        os.environ['IOTROUTE_CONGESTION'] = '1'
     from placer import kicad_io
     if not math.isfinite(a.budget) or a.budget <= 0:
         raise ValueError('budget must be positive')
@@ -510,7 +515,7 @@ def main(argv=None):
                 rec = repair.run(iotroute_board, path, routed, os.path.join(d, 'repair'), a.repair_mode,
                                  a.repair_routes, a.repair_per_round, a.passes, a.seed,
                                  not a.seeded_policy, shlex.split(a.read_args), iotroute_gate,
-                                 log=lambda m: print(m, flush=True))
+                                 log=lambda m: print(m, flush=True), rank_mode=a.repair_rank)
                 routes_done[0] += len(rec['attempts'])
                 print('REPAIR step %d %s key %s board %s' % (n, 'PASS' if rec['passed'] else 'FAIL',
                       rec['best']['key'], rec['best']['routed']), flush=True)

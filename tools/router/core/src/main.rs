@@ -2,6 +2,7 @@
 //!
 //!   iotroute MODEL.json OUT.json [--pitch 0.05] [--iters 40] [--plane-clr 0.25] [--hole-to-hole 0.45] [--hole-clr 0.28]
 //!            [--return-r 2.0] [--return-via 0.45,0.2] [--pres-mult 1.5] [--pres-max 1000] [--hist 0.3] [--max-time S] [--door-hist 2.0] [--check RESULT.json]
+//!            [--congestion MAP.json [--cong-cell 1.0] [--cong-free 0|1]] (congestion.rs: the map for the placer)
 //!
 //! MODEL.json comes from tools/router/model.py (schema iot-lab.route-model.v0). Every clearance is checked against
 //! exact geometry (pads as their bounding rectangle, tracks as capsules, vias as circles) with the per-net width and
@@ -37,6 +38,7 @@ use serde_json::Value;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
+mod congestion;
 mod pour;
 mod reuse;
 
@@ -3729,7 +3731,7 @@ pub(crate) fn add_result(bd: &mut Board, r: &Value) {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
-        eprintln!("usage: iotroute MODEL.json OUT.json [--pitch 0.05] [--iters 40] [--plane-clr 0.25] [--hole-to-hole 0.45] [--hole-clr 0.28] [--return-r 2.0] [--return-via 0.45,0.2] [--pres-mult 1.5] [--pres-max 1000] [--hist 0.3] [--max-time S] [--door-hist 2.0] [--check RESULT.json]");
+        eprintln!("usage: iotroute MODEL.json OUT.json [--pitch 0.05] [--iters 40] [--plane-clr 0.25] [--hole-to-hole 0.45] [--hole-clr 0.28] [--return-r 2.0] [--return-via 0.45,0.2] [--pres-mult 1.5] [--pres-max 1000] [--hist 0.3] [--max-time S] [--door-hist 2.0] [--check RESULT.json] [--congestion MAP.json [--cong-cell 1.0] [--cong-free 0|1]]");
         std::process::exit(2);
     }
     let mut o = Opts { pitch: 0.05, passes: 40, plane_clr: DEF_PLANE_CLR, hth: DEF_HOLE_TO_HOLE, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2,
@@ -3743,6 +3745,9 @@ fn main() {
     let mut cli_rr = false;
     let mut reuse_path: Option<String> = None;
     let mut reuse_near = 1.0f64;
+    let mut cong_path: Option<String> = None;
+    let mut cong_cell = 1.0f64;
+    let mut cong_free = false;
     let mut i = 3;
     while i + 1 < args.len() {
         let v = &args[i + 1];
@@ -3769,6 +3774,9 @@ fn main() {
             "--recover" => o.no_recover = v == "0",
             "--reuse" => reuse_path = Some(v.clone()),
             "--reuse-near" => reuse_near = v.parse().unwrap(),
+            "--congestion" => cong_path = Some(v.clone()),
+            "--cong-cell" => cong_cell = v.parse().unwrap(),
+            "--cong-free" => cong_free = v == "1",
             "--ret-cost" => o.ret_cost = v.parse().unwrap(),
             "--return-via" => {
                 let p: Vec<f64> = v.split(',').map(|s| s.parse().unwrap()).collect();
@@ -4388,9 +4396,17 @@ fn main() {
     failed.extend(pour_fails);
     let out = Out { schema: "iot-lab.route-result.v0".into(), tracks, vias, failed, notes, passes: iters };
     std::fs::write(&args[2], serde_json::to_string_pretty(&out).unwrap()).expect("write");
+    let route_s = t0.elapsed().as_secs_f64();
+    if let Some(cp) = &cong_path {
+        // congestion map (congestion.rs): after OUT.json, so it never changes the routed result
+        let tc = std::time::Instant::now();
+        let failed: Vec<bool> = (0..nn).map(|n| out.failed.iter().any(|f| f.net == ctx.bd.nets[n].name)).collect();
+        let fs = congestion::write_map(&mut ctx, cp, cong_cell, &failed, cong_free);
+        eprintln!("congestion map: {cp} (cell {cong_cell} mm, free routes {}) {:.1} s, free routes {fs:.1} s", if cong_free { "on" } else { "off" }, tc.elapsed().as_secs_f64());
+    }
     let status = if out.failed.is_empty() { "PASS" } else { "FAIL" };
     println!("ROUTE {status} converged {converged} iters {iters} tracks {} vias {} failed {} notes {} {:.0} s -> {}",
-             out.tracks.len(), out.vias.len(), out.failed.len(), out.notes.len(), t0.elapsed().as_secs_f64(), args[2]);
+             out.tracks.len(), out.vias.len(), out.failed.len(), out.notes.len(), route_s, args[2]);
 }
 
 #[cfg(test)]
@@ -4612,3 +4628,5 @@ mod tests_v8;
 mod tests_v9;
 #[cfg(test)]
 mod tests_reuse;
+#[cfg(test)]
+mod tests_congestion;

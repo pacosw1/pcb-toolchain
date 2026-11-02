@@ -637,3 +637,25 @@ repair run alone with reuse (`repair.run` on PR #79 step-2 board, same parameter
 DRC with parity): chosen step 0 board, the repaired step 1 and step 2 boards and the s 0.694 repair board: gate PASS,
 DRC 0 / 0 / 0. The chosen board did not change (step 0 stays the shortest: 1485.6 mm); the repair made the smaller
 halos legal, but they route longer.
+
+## Repair rank by router congestion (`--repair-rank hot`, `congest.py`, 2026-11-01)
+
+Cause: the router now writes a congestion map with each route (`OUT.iotroute/congestion.json`, tools/router/DESIGN.md
+5d). Data (tools/router/reports/2026-11-01-congestion.md, 35 NET-CORE routes): the PathFinder history of a failed
+route is highest at its open (7 of 8 opens at a signal pad in the top 9 % of the board's pads, 1-2 mm cells; the 8th
+was walled in by fixed copper). No map quantity ranks the routed-length residual of the w_mst fit at 0.5 or more, and
+the previous step's map does not rank it either, so there is no search cost term.
+
+Change. `congest.py`: `from_route(congestion.json)` = the history per cell summed over the layers; `Model(pr, map).value(
+unit, x, y, r)` = the history at the unit's signal pins (net `pts`, no cohesion or plane nets) at that pose.
+`repair.hot_order` (`repair.run(..., rank_mode='hot')`, `repair.py run --rank hot`, `compact_cli.py --repair-rank hot`):
+each proposal gets `dhot` = history at the pins after the move - before, from the map of the route being repaired; the
+proposals go in the order (dhot, old order): first the moves that take the most history away from the pins. No map:
+the old order. Default `term` (the old rank).
+
+Result (2026-11-01, scratch only, router with the map). The PR #80 command plus `--repair-rank hot`: 747 s, the same
+steps and boards as the PR #80 run (step 0 PASS 1485.6 mm / 286 vias, chosen; step 1 s 0.637 repaired by the C13 decap
+slide, dhot -0.10, 1486.9 mm; step 2 s 0.542 repaired by C51, dhot 0, 1507.7 mm; length stop). The hot order put the
+same proposal first in both repairs, so the run does not show a gain; the rank stays opt-in. Chosen board: DRC 0 / 0 / 0
+with parity and gate PASS (detached origin/main worktree); SW1, SW2, D1, D2 at the fixed positions and TP1-TP10 in the
+box.

@@ -8,7 +8,7 @@ fn n(name: &str) -> Net {
 }
 
 /// 20 x 10 mm, F.Cu / In1.Cu / B.Cu; signal nets A, B on F.Cu only (no vias, no returns), GND index 2.
-fn board() -> Board {
+pub(crate) fn board() -> Board {
     let nets = vec![n("A"), n("B"), Net { plane: true, layers: 0b101, via_d: 0.45, via_drill: 0.2, ..n("GND") }];
     Board { layer_names: vec!["F.Cu".into(), "In1.Cu".into(), "B.Cu".into()], routable: vec![0, 2], nets, shapes: Vec::new(),
             idx: Index::new(-1.0, -1.0, 21.0, 11.0, 3), sidx: Index::new(-1.0, -1.0, 21.0, 11.0, 3), maxc: 0.15,
@@ -17,7 +17,7 @@ fn board() -> Board {
             circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false, via_len: DEF_VIA_LEN, keep: Vec::new(), esc: Vec::new(), edges: Vec::new(), fvia: Vec::new() }
 }
 
-fn ctx_of<'a>(bd: &'a mut Board, o: &'a Opts) -> Ctx<'a> {
+pub(crate) fn ctx_of<'a>(bd: &'a mut Board, o: &'a Opts) -> Ctx<'a> {
     let nn = bd.nets.len();
     let memo_w = bd.nets.iter().flat_map(|n| net_widths(n)).collect();
     let (nx, ny, nr) = (401, 201, 2);

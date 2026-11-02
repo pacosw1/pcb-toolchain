@@ -93,6 +93,7 @@ The Codex hand finish of NET-CORE reached DRC 0 but left gate findings. The rout
 | 2026-11-01 | core v9 (branch claude/router-v9): length recovery. Diagnosis tool `IOTROUTE_LENDIAG` (per net: objective now / strict / with fixed copper only, and the blocking nets). Cause: a net keeps a detour (around a net that later moved, or around history) once the copper is legal; nothing re-routes it. Fix: after a legal end state each routed net is routed again strictly with the history off and an admissible heuristic, kept only when legal (audit, RP-001 returns, pour faults) and its A* objective falls by more than one grid pitch (`--recover 0` skips it). Determinism: run.py `--lock-from` kept random KIIDs from `Duplicate()` (KiCad saves tracks sorted by KIID: the copper order changed per run); now the source KIID; write.py seeds the KIID generator from the input and result bytes. 51 unit tests | **Partly met.** Same binary, all DRC 0 / 0 / 0 and the v8 gate result, all shorter: hand NET-CORE 1592.9 -> 1558.6 mm, 285 -> 280 vias (target 1495 not reached: RMII nets held by other nets, antipad web price, model rules after v4); dense placer step A4 1645.2 -> 1614.8 mm; ESP32-CORE 4007.9 -> 3898.2 mm, 488 -> 459 vias; H7-CORE 4773.9 -> 4648.0 mm, 553 -> 517 vias; spread NET-CORE 1568.5 -> 1529.6 mm; BASE-PWR-C 2387.0 -> 2336.5 mm (kicad_happy 2 = DC-002 design exemptions, as v8). ESP32-CORE and hand NET-CORE twice: input copy, route.json and board byte-identical. Recovery costs 405-484 s on H7 / ESP32. reports/2026-11-01-v9.md |
 
 | 2026-11-01 | partial re-route (branch claude/router-reuse): `run.py --reuse PREV` starts from the copper of an earlier route and routes only what the moved parts affect (section 5c); placer repair mode `reuse` (default) | NET-CORE, 4 repair-like cases on the passing PR #79 step 0 board (1-2 parts / one 8-part block moved 0.5-1.0 mm): all 4 reuse routes DRC 0 / 0 / 0 + gate PASS, core 14-48 s against 148-188 s for the full route of the same moved board (run.py total 36-66 s against 158-206 s, 9 processes on the Mac); length +2.4 to +15.7 mm (+0.2 to +1.1 %), 2-9 vias fewer. Same input 3 times: byte-identical route.json and board. `--reuse` off: hand NET-CORE and ESP32-CORE lock-from byte-identical to main (v9). PR #79 placer run with the reuse repair: 14.0 min (PR #79 21.6 min by file times), steps s 0.637 and s 0.542 pass with their first repair proposal (PR #79: s 0.637 and s 0.694 failed), gate PASS on the chosen and repaired boards; compaction steps keep the full route (50-63 % of parts move). reports/2026-11-01-reuse.md |
+| 2026-11-01 | congestion map (branch claude/congestion-map): `--congestion MAP.json [--cong-cell 1.0] [--cong-free 0|1]` (core congestion.rs), written after OUT.json; run.py writes `OUT.iotroute/congestion.json` (free routes on) only with `--congestion` or env `IOTROUTE_CONGESTION=1` (lead review: opt-in, about 4 s per call; placer repair rank `hot` turns it on). Section 5d | 36 NET-CORE routes (placer steps of PR #76-#80 + hand + spread): map 4 s median (<= 2.8 % of the route), the 6 v9 routes byte-identical with the map on. Step 2 diagnosis: no map quantity ranks the residual of the PR #78 MST fit at 0.5 or more (n 27; best: track length over capacity, squared, 0.35-0.44; the previous step's history at the pads 0.05-0.32); the PathFinder history at the open is in the top 9 % of the signal pads in 7 of 8 failed routes (1-2 mm cells; the 8th: walled in by fixed copper). No search cost term; placer repair rank `hot` (opt-in). NET-CORE PR #80 placer run + `--repair-rank hot`: the same proposals and boards as PR #80, chosen step 0 1485.6 mm / 286 vias, DRC 0 / 0 / 0 + gate PASS: **not shorter**. Hand NET-CORE t1: route.json and board byte-identical to main. reports/2026-11-01-congestion.md |
 
 Next (was): negotiated congestion (PathFinder: shared cells with present + history cost, rip-up of all nets per pass) to
 finish the 18 nets; F.Cu spoke channels at GND pads (starved_thermal); read hole clearance from the model rules.
@@ -147,6 +148,37 @@ output (Vec order, seed order; the seed file is written with sorted keys). Witho
 Not used for compaction steps: between NET-CORE compaction steps 50-63 % of all parts move (every movable unit; PR #79
 run and the rank-by-length run), and 22-30 % of all nets (most routed nets) have a pad on a moved part; see
 reports/2026-11-01-reuse.md.
+
+## 5d. Congestion map (`--congestion`, core `congestion.rs`, user-approved plan 2026-11-01 step 2)
+
+Why: the placer cost `w_mst` ranks the routed length (Spearman 0.82), but on dense steps the routed length grows more
+than the MST, and dense steps fail in the board interior. The router knows where it negotiated; the placer did not.
+
+Output (schema `iot-lab.route-congestion.v0`, JSON, written after OUT.json; it never changes OUT.json: the free routes
+put the copper back). Square cells of `--cong-cell` mm (default 1.0) from the outline box corner (`origin`), row-major
+(`nx` x `ny`). Per routable layer (`layers[]`, arrays of nx * ny):
+- `free`: fraction of the sample points (step 2 x pitch = 0.1 mm, finer than the 0.15 mm narrowest track) where a
+  default track (the most common signal width / clearance of the model: `track_w`, `track_clr`) is not blocked by
+  fixed copper (pads, locked copper, keepouts, board edge);
+- `occ`: fraction of the free points where routed copper (any net, plane fan-out included) blocks that track;
+- `len`: routed track length in the cell (mm); `cap`: free x cell area / (track_w + track_clr), the length of parallel
+  default tracks that fit (mm);
+- `hist`: mean PathFinder history of the routing grid cells in the cell, summed over all iterations (0 when the run
+  converged in iteration 1; a reuse route starts it at 0).
+Per cell: `vias` (routed vias), `vhist` (mean via history). Per non-plane net with 2 or more pads (`nets[]`): pads,
+pad bbox, routed track length and vias, the A* objective (`cost`, v9 net_cost), the Euclidean MST of the pad centres and,
+with `--cong-free 1`, `free_cost` / `free_len` of the net routed alone (other routed copper off, history off, the v9
+recover search) and `detour` = cost - free_cost; `failed` names a net in OUT.json failed. The alone route is one strict
+A* per net: NET-CORE 4 s median under load, so run.py turns it on.
+
+Cell size: 1 mm by data (reports/2026-11-01-congestion.md): the open signal holds at 1 and 2 mm (7 / 8 opens in the top
+9 % of the pads) and is lost at 4 mm (0 / 8 over the 90th percentile): a 4 mm cell averages the hot area of a 0.5 mm
+pitch IC with its quiet neighbours. The placer reads the history only (`tools/placer/congest.py`).
+
+Use (data, n 27 routed placer steps + 8 failed routes): the map explains where a route fails (history), not the length
+residual; the previous step's map does not rank the residual and marks the next step's open only in part (4-6 / 8). So
+there is no placer search term (no data source for its weight); the repair can rank its proposals by the history they
+take away from the unit pins (`compact_cli.py --repair-rank hot`).
 
 ## 6. Not in scope (first version)
 

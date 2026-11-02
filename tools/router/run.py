@@ -17,7 +17,8 @@ Steps (each step stops the run at its first failure):
      folder per sha256 of the core sources (~/Library/Caches/iot-lab/iotroute/<sha>, env IOTROUTE_CACHE); cargo
      builds it there when it is missing. The stamp file binds the binary to the exact source bytes.
   3. tools/router/model.py, then iotroute MODEL ROUTE --iters N, then tools/router/write.py (adds the result to a
-     copy, refills every zone, saves, puts back the .kicad_pro that pcbnew overwrites).
+     copy, refills every zone, saves, puts back the .kicad_pro that pcbnew overwrites). With --congestion the core
+     also writes OUT.iotroute/congestion.json (the congestion map for the placer, DESIGN.md 5d; it does not change ROUTE).
   4. OUT gets the board and the project files of the input. run.py checks that OUT's .kicad_pro is byte-identical
      to the input's .kicad_pro (pcbnew save rewrites it) and puts it back when it is not.
   5. kicad-cli pcb drc --schematic-parity on OUT (the saved zone fill, no --refill-zones: a stale fill shows here).
@@ -490,8 +491,9 @@ def run(a, rec, t0):
             break
     rec['reuse']['chosen'] = chosen
     d = os.path.join(work, 'a-' + chosen)
-    for n in ('route.json', 'route.log', 'write.log'):
-        shutil.copyfile(os.path.join(d, n), os.path.join(work, n))
+    for n in ('route.json', 'route.log', 'write.log', 'congestion.json'):
+        if os.path.isfile(os.path.join(d, n)):
+            shutil.copyfile(os.path.join(d, n), os.path.join(work, n))
     rec['stages'].update(rec['reuse']['attempts'][chosen]['stages'])
     shutil.copyfile(os.path.join(d, os.path.basename(out)), out)
     place_sidecars(src, out)
@@ -503,7 +505,11 @@ def route_attempt(a, exe, py, model, route_in, src, out, work, extra=()):
     """iotroute (+ extra flags) -> write.py -> OUT with its project files; -> stages {core, write}."""
     stages = {}
     route = os.path.join(work, 'route.json')
+    # the congestion map (core congestion.rs, DESIGN.md 5d) is an opt-in side file for the placer repair rank 'hot'
+    # (about 4 s per call); it never changes route.json
     cmd = [exe, model, route, '--iters', str(a.iters)] + (['--max-time', str(a.max_time)] if a.max_time else []) + list(extra)
+    if getattr(a, 'congestion', False):
+        cmd += ['--congestion', os.path.join(work, 'congestion.json'), '--cong-free', '1']
     tc = time.monotonic()
     rc, text = step(cmd, os.path.join(work, 'route.log'))
     claim = parse_route_line(text)
@@ -548,6 +554,8 @@ def parser():
                     'moved parts do not touch; DESIGN.md 5c)')
     ap.add_argument('--reuse-fallback', choices=['full', 'none'], default='full',
                     help='full (default): a reuse result that is not PASS is compared with the full route; none: no full route')
+    ap.add_argument('--congestion', action='store_true', default=os.environ.get('IOTROUTE_CONGESTION') == '1',
+                    help='also write OUT.iotroute/congestion.json (DESIGN.md 5d; default off, env IOTROUTE_CONGESTION=1)')
     ap.add_argument('--bin', help='use this iotroute binary (must not be older than its sources)')
     ap.add_argument('--json', action='store_true', help='also print the JSON record')
     return ap
