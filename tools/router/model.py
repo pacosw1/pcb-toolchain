@@ -271,6 +271,70 @@ def plane_reach(b, nets, pads, pad_list, zone_objs, zones, plane_layers):
         info['plane_polys'] = polys
 
 
+def reference_fill(b, planes, nets, pad_list):
+    """The reference rule of the planes gate (tools/si_planes.py, D-124c screen) as router data: model `ref_fill` and
+    net `ref_domain`. The gate samples the centre line of each track of a checked net on an outer layer and fails a run
+    of samples that are not inside the filled copper of the net's domain on the adjacent plane layer (ref_at:
+    SHAPE_POLY_SET.Contains, accuracy 0: margin 0), except within pad / via radius + via_allow_mm of the net's own pads
+    and vias. The fill is KiCad's own: the zones are refilled here in memory (ZONE_FILLER, as si_planes does; the board
+    is never saved), on the router input, so the fill edge includes the zone clearance, thermal / antipad setback and
+    min-width removal around holes, keepouts and the fixed copper. Routed vias add antipads later: the plane clearance
+    rule of `plane_ref` nets keeps the tracks off them. Isolation work 2026-11-01: INPUT-4D2A planes 3 (/AI1, /AI2,
+    ISO_5V 0.1-0.2 mm from the H1 / H2 screw-hole areas, where the In1 / In2 fill stops).
+    Domains as si_planes.net_domain (spec "domains" patterns, else the ground zone outline that holds most pads). A
+    reference area of domain d = the fill of ground d plus alt_refs of domain d with no cap_mm and not slow_only (a
+    smaller area than the gate's: safe). Exempt areas are not modelled (safe). Must run after every other read of b."""
+    import si_planes
+    if not planes.get('adjacent'):
+        return None
+    s = si_planes.load_spec(dict(planes))
+    pcbnew.ZONE_FILLER(b).Fill(b.Zones())   # in memory only, as si_planes.analyse
+    zones = [z for z in b.Zones() if not z.GetIsRuleArea()]
+    refs = set(s['grounds']) | set(s['alt_refs'])
+    # domain of each net: the si_planes code path (analyse: pad_refs from the zone outlines of the reference nets)
+    outlines = [(z.GetNetname(), z.Outline()) for z in zones if z.GetNetname() in refs]
+    pad_refs = {}
+    anchors = []
+    for fp, p in pad_list:
+        c = p.GetPosition()
+        pad_refs.setdefault(p.GetNetname(), []).append(next((n for n, o in outlines if o.Contains(pcbnew.VECTOR2I(c.x, c.y))), None))
+        sz = p.GetSize(pcbnew.F_Cu)
+        if p.GetNetname() in nets:
+            anchors.append([round(T(c.x), 4), round(T(c.y), 4), round(T(max(sz.x, sz.y)) / 2, 4), p.GetNetname()])
+    for t in b.GetTracks():
+        if t.GetClass() == 'PCB_VIA' and t.GetNetname() in nets:
+            c = t.GetPosition()
+            anchors.append([round(T(c.x), 4), round(T(c.y), 4), round(T(t.GetWidth(pcbnew.F_Cu)) / 2, 4), t.GetNetname()])
+    doms = set()
+    for name, info in nets.items():
+        if info.get('plane_ref'):
+            d = si_planes.net_domain(name, pad_refs.get(name, []), s)
+            if d is not None:
+                info['ref_domain'] = d
+                doms.add(d)
+    member = {g: [g] + [n for n, a in s['alt_refs'].items() if a['domain'] == g and 'cap_mm' not in a and not a.get('slow_only')]
+              for g in s['grounds']}
+    layers = {}
+    for outer, plane in sorted(s['adjacent'].items()):
+        lid = b.GetLayerID(plane)
+        per = {}
+        for g in sorted(doms):
+            polys = []
+            for z in zones:
+                if z.GetNetname() not in member[g] or not z.IsOnLayer(lid):
+                    continue
+                fill = z.GetFilledPolysList(lid)
+                for k in range(fill.OutlineCount()):
+                    rings = [fill.COutline(k)] + [fill.CHole(k, h) for h in range(fill.HoleCount(k))]
+                    polys.append([[[round(T(r.CPoint(i).x), 4), round(T(r.CPoint(i).y), 4)] for i in range(r.PointCount())]
+                                  for r in rings])
+            per[g] = polys
+        layers[outer] = {'plane': plane, 'domains': per}
+    return {'source': 'tools/si_planes.py D-124c: track centre sample inside the filled reference of its domain on the '
+                      'adjacent layer (margin 0), own pads / vias within radius + via_allow_mm exempt',
+            'via_allow': s['via_allow_mm'], 'layers': layers, 'anchors': anchors}
+
+
 def region_polys(b, key):
     """A region atom 'fn:arg' of the pair rules: (pcbnew polygon sets, outlines in mm for the core). Courtyards of the
     footprints whose reference matches arg (front and / or back), or the zones and rule areas named arg. A polygon
@@ -703,6 +767,10 @@ def main():
              'classes': classes, 'nets': nets, 'pairs': pairs, 'zones': zones, 'keepouts': keepouts, 'edges': edge_segments(b), 'hole_rules': hole_rules, 'pads': pads, 'copper': copper, 'rules': report}
     if iso:
         model['iso'] = iso
+    # the filled reference planes (si_planes reference rule): refills the zones of b in memory, so it comes last
+    rf = reference_fill(b, planes, nets, pad_list)
+    if rf:
+        model['ref_fill'] = rf
     # return vias (RP-001): kicad-happy counts a via of any ground net (gate kicad_happy grounds, names GND / *GND /
     # 0V). The core places returns of one net: the first ground of reference-planes.json that is a plane net here;
     # the other grounds' fixed vias and through-hole pads count too, and their own vias need no return. Only written

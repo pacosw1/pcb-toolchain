@@ -40,6 +40,7 @@ use std::collections::BinaryHeap;
 
 mod congestion;
 mod pour;
+mod reffill;
 mod reuse;
 
 const EPS: f64 = 0.002;
@@ -427,6 +428,9 @@ struct Board {
     /// isolation: the return ground of each net (the ground whose via has the smallest pair value with the net's vias:
     /// a field net returns on the field ground). Empty = gnd for every net (no pair rules, or one ground)
     rgn: Vec<i32>,
+    /// reference-plane fill edge (model `ref_fill`, reffill.rs): the filled reference of each domain per outer layer
+    /// and the domain of each net (si_planes D-124c). Default = no rule.
+    rfill: reffill::RefFill,
 }
 
 /// Fixed-copper verdict of a grid site for one rule profile, shared by all nets: FREE, MULTI (blocked for every net),
@@ -668,7 +672,7 @@ impl Board {
     /// Bits 8 and up: the isolation var entry of the net (0 without pair rules), so the fixed-copper memo is per entry.
     fn pflags(&self, net: usize) -> u32 {
         let n = &self.nets[net];
-        n.fast as u32 | (n.pref as u32) << 1 | self.iv(net as i32) << 8
+        n.fast as u32 | (n.pref as u32) << 1 | (self.rfill.dom.get(net).copied().unwrap_or(0) as u32 & 0x3f) << 2 | self.iv(net as i32) << 8
     }
     /// The plane clearance to foreign drilled items applies to a track with flags pf on copper layer l.
     fn plane_rule(&self, pf: u32, l: usize) -> bool {
@@ -685,8 +689,16 @@ impl Board {
         if fast && self.keep.iter().any(|k| k.pl & self.plane_mask() != 0 && k.touches(x, y, hw + self.eps)) {
             return MULTI;
         }
-        let g = self.grp_at(pf >> 8, false, (x, y), (x, y), hw);
+        // the reference-plane fill edge (reffill.rs, si_planes D-124c): the centre of a net with a domain (bits 2..7)
+        // stays on the filled reference of its domain on the adjacent plane, or in its own pad / via anchor discs
         let mut code = FREE;
+        if pf & 0xfc != 0 && self.adj & (1 << l) != 0 {
+            code = self.rfill.code(l, ((pf >> 2) & 0x3f) as u8, x, y, self.eps);
+            if code == MULTI {
+                return MULTI;
+            }
+        }
+        let g = self.grp_at(pf >> 8, false, (x, y), (x, y), hw);
         self.near_iso(false, g, l, x, y, self.track_r(hw, plane_clr), hw, &mut |_, s| {
             if !track_hit(s, x, y, hw, clr, fast, plane_clr, self.hole_clr, self.eps, self.pc(g, s)) {
                 return false;
@@ -2389,7 +2401,7 @@ fn load(model: &Value, hole_clr: f64) -> Board {
     // layers with an adjacent reference plane (reference-planes.json 'adjacent' via the model)
     let adj = model["adjacent"].as_object().map(|o| o.keys().filter_map(|k| lid(k)).fold(0u8, |m, l| m | (1 << l))).unwrap_or(0);
     let mut bd = Board { layer_names: cu.clone(), routable, nets, shapes: Vec::new(), idx, sidx, maxc, edge, edge_clr, gnd, plane_clr: DEF_PLANE_CLR, eps: EPS, hole_clr,
-                         spoke_notes: Vec::new(), attach: Vec::new(), spoke_sites: std::collections::HashSet::new(), adj, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false, via_len: DEF_VIA_LEN, keep: Vec::new(), esc: Vec::new(), edges: Vec::new(), fvia: Vec::new(), iso: None, niv: Vec::new(), ppoly: Vec::new(), twin: Vec::new(), gnds: Vec::new(), pidx: Vec::new(), prad: Vec::new(), noret: Vec::new(), rgn: Vec::new() };
+                         spoke_notes: Vec::new(), attach: Vec::new(), spoke_sites: std::collections::HashSet::new(), adj, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false, via_len: DEF_VIA_LEN, keep: Vec::new(), esc: Vec::new(), edges: Vec::new(), fvia: Vec::new(), iso: None, niv: Vec::new(), ppoly: Vec::new(), twin: Vec::new(), gnds: Vec::new(), pidx: Vec::new(), prad: Vec::new(), noret: Vec::new(), rgn: Vec::new(), rfill: Default::default() };
     bd.ppoly = ppoly;
     bd.gnds = gnds;
     bd.noret = model["return_exempt"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().and_then(|n| names.get(n)).map(|&i| i as i32)).collect()).unwrap_or_default();
@@ -2398,6 +2410,7 @@ fn load(model: &Value, hole_clr: f64) -> Board {
     }
     bd.twin = twin;
     load_iso(&mut bd, model, &names);
+    bd.rfill = reffill::RefFill::load(model, &cu, &names);
     // isolation: the return ground of each net = the ground (gnd first, then the other grounds) whose via has the
     // smallest pair value with the net's vias (INPUT-4D2A: a FIELD net returns on ISO_0V; GND is 4 mm away by rule)
     if let (Some(i), false) = (&bd.iso, bd.gnds.is_empty()) {
@@ -4778,7 +4791,7 @@ mod tests {
         let mut bd = Board { layer_names: vec!["F.Cu".into(), "In1.Cu".into(), "B.Cu".into()], routable: vec![0, 2], nets, shapes: Vec::new(),
                              idx: Index::new(x0 - 1.0, y0 - 1.0, x1 + 1.0, y1 + 1.0, 3), sidx: Index::new(x0 - 1.0, y0 - 1.0, x1 + 1.0, y1 + 1.0, 3),
                              maxc: 0.2, edge: (x0, y0, x1, y1), edge_clr: 0.3, gnd: -1, plane_clr: 0.25, eps: EPS, hole_clr: 0.28,
-                             spoke_notes: Vec::new(), attach: Vec::new(), spoke_sites: std::collections::HashSet::new(), adj: 0, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false, via_len: DEF_VIA_LEN, keep: Vec::new(), esc: Vec::new(), edges: Vec::new(), fvia: Vec::new(), iso: None, niv: Vec::new(), ppoly: Vec::new(), twin: Vec::new(), gnds: Vec::new(), pidx: Vec::new(), prad: Vec::new(), noret: Vec::new(), rgn: Vec::new() };
+                             spoke_notes: Vec::new(), attach: Vec::new(), spoke_sites: std::collections::HashSet::new(), adj: 0, pad_need: Vec::new(), gnd_fixed: Vec::new(), pours: Vec::new(), circ: std::collections::HashMap::new(), vip: Vec::new(), web: 0.0, web_hard: false, via_len: DEF_VIA_LEN, keep: Vec::new(), esc: Vec::new(), edges: Vec::new(), fvia: Vec::new(), iso: None, niv: Vec::new(), ppoly: Vec::new(), twin: Vec::new(), gnds: Vec::new(), pidx: Vec::new(), prad: Vec::new(), noret: Vec::new(), rgn: Vec::new(), rfill: Default::default() };
         let sh = |net: i32, geo: Geo, clr: f64, layers: u8, drill: f64, kind: Kind, owner: i32| Shape { net, geo, clr, layers, drill, kind, owner, alive: true, grp: 0 };
         bd.add(sh(0, Geo::Rect(2.0, 2.0, 2.6, 2.4), 0.15, 1, 0.0, Kind::Pad, -1));
         bd.add(sh(0, Geo::Rect(2.0, 2.9, 2.6, 3.3), 0.15, 1, 0.0, Kind::Pad, -1));
@@ -4984,3 +4997,5 @@ mod tests_reuse;
 mod tests_congestion;
 #[cfg(test)]
 mod tests_iso;
+#[cfg(test)]
+mod tests_reffill;

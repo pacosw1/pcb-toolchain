@@ -79,6 +79,32 @@ class IsolationBoards(unittest.TestCase):
         self.assertFalse(band['rect'])
         self.assertEqual(len(band['holes']), 1)
 
+    def test_input_reference_fill(self):
+        """Plane fill edge (DESIGN 5b, reports/2026-11-02-plane-edge.md): the filled reference per outer layer and
+        domain, from KiCad's own fill. The isolation run's /AI1 F.Cu run at (108.12, 104.0) (gate planes, unknown
+        driver) lies in the void beside the H1 screw-hole area; (140, 130) lies on the ISO_0V In1 fill and (130, 110) on the
+        host-side GND island, not on ISO_0V."""
+        m = self.model_of('INPUT-4D2A')
+        rf = m['ref_fill']
+        self.assertEqual(rf['via_allow'], 0.6)
+        self.assertEqual({k: v['plane'] for k, v in rf['layers'].items()}, {'F.Cu': 'In1.Cu', 'B.Cu': 'In2.Cu'})
+        self.assertEqual((m['nets']['/AI1']['ref_domain'], m['nets']['ISO_5V']['ref_domain']), ('ISO_0V', 'ISO_0V'))
+        self.assertNotIn('ref_domain', m['nets']['ISO_0V'])   # a ground: not a checked net
+
+        def inside(x, y, polys):
+            def odd(ring):
+                c = False
+                for (ax, ay), (bx, by) in zip(ring, ring[-1:] + ring[:-1]):
+                    if (ay > y) != (by > y) and x < (bx - ax) * (y - ay) / (by - ay) + ax:
+                        c = not c
+                return c
+            return any(odd(p[0]) and not any(odd(h) for h in p[1:]) for p in polys)
+        iso = rf['layers']['F.Cu']['domains']['ISO_0V']
+        self.assertFalse(inside(108.12, 104.0, iso))
+        self.assertTrue(inside(140.0, 130.0, iso))
+        self.assertFalse(inside(130.0, 110.0, iso))
+        self.assertTrue(inside(130.0, 110.0, rf['layers']['F.Cu']['domains']['GND']))
+
 
 if __name__ == '__main__':
     unittest.main()
