@@ -55,8 +55,8 @@ def multi(tmp_path):
     write(b / 'MAIN/gate.json', json.dumps({'project': 'cad/MAIN/MAIN'}))
     write(b / 'MAIN/gate-6layer.json', json.dumps({'project': 'cad/MAIN/MAIN'}))
     write(b / 'MAIN/gate-metrics.json', '{}')
-    write(b / 'MAIN-B/gate.json', json.dumps({'project': '../MAIN/cad/MAIN-B/MAIN-B'}))
-    write(b / 'NEW/gate.json', json.dumps({'project': 'cad/NEW/NEW'}))
+    write(b / 'MAIN-B/gate.json', json.dumps({'project': '../MAIN/cad/MAIN-B/MAIN-B', 'pipeline': 'tools/main_b_pipeline.sh'}))
+    write(b / 'NEW/gate.json', json.dumps({'project': 'cad/NEW/NEW', 'pipeline': 'tools/missing.sh'}))
     write(tmp_path / 'tools/main_b_pipeline.sh', '#!/bin/sh\n')
     write(tmp_path / 'hardware-design/registry/boards.json', json.dumps({'boards': [
         {'id': 'MAIN', 'directory': 'MAIN', 'lifecycle': 'active', 'kind': 'board', 'revisions': [
@@ -165,3 +165,19 @@ def test_iot_lab_migrate_round_trip(tmp_path):
     legacy = Project(CORPUS).info()
     assert all(b.identity == 'board.yaml' for b in again.boards)
     assert [b.model_dump(exclude={'identity'}) for b in again.boards] == [b.model_dump(exclude={'identity'}) for b in legacy.boards]
+
+
+def test_pipeline_comes_from_gate_json(multi):
+    """No guessing from the gate name: a named file that does not exist is no pipeline."""
+    write(multi / 'tools/new_pipeline.sh', '#!/bin/sh\n')
+    revisions = {b.id: b.revisions[0] for b in Project(multi).boards()}
+    assert revisions['NEW'].gate == 'NEW' and revisions['NEW'].pipeline is None
+
+
+@pytest.mark.skipif(not CORPUS.is_dir(), reason='iot-lab corpus not present')
+def test_iot_lab_pipelines_match_gate_json():
+    for b in Project(CORPUS).boards():
+        for r in b.revisions:
+            if r.gate:
+                named = json.loads((CORPUS / 'hardware-design/boards' / r.gate / 'gate.json').read_text()).get('pipeline')
+                assert r.pipeline == named, (b.directory, r.gate)

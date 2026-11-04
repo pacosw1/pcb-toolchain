@@ -19,8 +19,6 @@ class ProjectLayout(Model):
     gate_file: str = 'gate.json'
     gate_variant_glob: str = 'gate-*.json'
     gate_reserved: list[str] = Field(default_factory=lambda: ['gate-metrics.json', 'gate-waivers.json'])
-    pipeline: str = 'tools/{alias}_pipeline.sh'
-    pipeline_aliases: str = 'tools/pcb_workflow.py'   # read only: its ALIASES dict (legacy derivation)
 
 
 class GateRef(Model):

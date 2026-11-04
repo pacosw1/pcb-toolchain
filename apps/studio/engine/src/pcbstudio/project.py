@@ -12,7 +12,6 @@ kind `gate-only`, for example BASE-PWR-B) is not a board: its gate shows on the 
 """
 from __future__ import annotations
 
-import ast
 import json
 from pathlib import Path
 
@@ -132,24 +131,15 @@ class Project:
         self.conflicts.append(IdentityConflict(board=board, kind=kind, message=message))
 
     def _pipeline(self, gate: str | None) -> str | None:
+        """The "pipeline" key of the gate's gate.json, when that file exists (as tools/pcb_workflow.py `pipeline`)."""
         if not gate:
             return None
-        alias = self._aliases().get(gate, gate.lower().replace('-', '_'))
-        return self.existing(self.root, self.layout.pipeline.format(alias=alias))
-
-    def _aliases(self) -> dict[str, str]:
-        """The legacy `ALIASES` dict of the project's workflow module (parsed, never imported)."""
-        f = self.path(self.layout.pipeline_aliases)
-        if not f.is_file():
-            return {}
         try:
-            for node in ast.parse(f.read_text()).body:
-                if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'ALIASES' for t in node.targets):
-                    v = ast.literal_eval(node.value)
-                    return {str(k): str(x) for k, x in v.items()} if isinstance(v, dict) else {}
-        except (SyntaxError, ValueError):
-            pass
-        return {}
+            data = json.loads((self.boards_path / gate / self.layout.gate_file).read_text())
+        except (OSError, ValueError):
+            return None
+        name = data.get('pipeline') if isinstance(data, dict) else None
+        return self.existing(self.root, name) if isinstance(name, str) else None
 
     def legacy_boards(self) -> list[Board]:
         reg = self.registry()
