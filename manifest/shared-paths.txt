@@ -188,6 +188,8 @@ tools/lib/lean-resources.ts
 tools/lib/lean-workflow.test.ts
 tools/lib/lean-workflow.ts
 tools/lib/native-board.ts
+tools/lib/owned-stage.test.ts
+tools/lib/owned-stage.ts
 tools/lib/pack-fab.test.ts
 tools/lib/part-native.test.ts
 tools/lib/part-native.ts
