@@ -32,5 +32,7 @@ export function jsonLoad(path: string): unknown;
 export function pyStr(value: unknown): string;
 export function compare(a: string, b: string): number;
 export function splitlines(text: string): string[];
+/** str.strip(): Python's whitespace, which is not the set of String.prototype.trim. */
+export function strip(text: string): string;
 /** csv.DictReader over text from open(path). */
 export function dictRows(text: string): Map<string, string | null>[];
