@@ -376,6 +376,10 @@ pub fn read_pin_ratings(tools: &Path) -> Result<PinRatings, String> {
     read_json(&tools.join("pin-ratings.json"))
 }
 
+pub fn read_plane_spec(path: &Path) -> Result<PlaneSpec, String> {
+    read_json(path)
+}
+
 pub fn read_exempt(path: &Path) -> Result<Vec<ExemptEntry>, String> {
     read_json(path)
 }

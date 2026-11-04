@@ -4208,6 +4208,7 @@ fn main() {
     match args.get(1).map(String::as_str) {
         Some("write") => std::process::exit(write::cli(&args[2..])),
         Some("board-json") => std::process::exit(iotroute::kicad::cli(&args[2..])),
+        Some("model") => std::process::exit(iotroute::model::cli::cli(&args[2..])),
         _ => {}
     }
     route_cli(&args);

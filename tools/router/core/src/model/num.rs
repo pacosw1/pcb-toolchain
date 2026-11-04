@@ -27,6 +27,14 @@ impl Num {
         if other.get() > self.get() { other } else { self }
     }
 
+    /// As the file wrote it: an integer stays one, a float keeps its point.
+    pub fn text(self) -> String {
+        match self {
+            Num::Int(i) => i.to_string(),
+            Num::Float(f) => format!("{f:?}"),
+        }
+    }
+
     /// As C's %g: six significant digits, no trailing zeros.
     pub fn short(self) -> String {
         short_float(self.get())
