@@ -83,7 +83,7 @@ pub struct Proposal {
 }
 
 /// The number of a port pin name: PA12 -> 12.
-fn port_line(name: &str) -> Option<u32> {
+pub fn port_line(name: &str) -> Option<u32> {
     let rest = name.strip_prefix('P')?;
     let mut chars = rest.chars();
     if !matches!(chars.next(), Some('A'..='K')) {
@@ -97,7 +97,7 @@ fn base_name(name: &str) -> &str {
     name.split(['-', '_']).next().unwrap_or(name)
 }
 
-fn usable(s: &Slot) -> bool {
+pub fn usable(s: &Slot) -> bool {
     let note = s.note.to_lowercase();
     !s.pin_type.contains("ANA") && !note.contains("not usable") && !note.contains("reserved")
 }
@@ -110,7 +110,7 @@ pub struct Chip<'a> {
 }
 
 impl Chip<'_> {
-    fn allowed(&self, n: &str, pin: &str, assign: &Assign) -> bool {
+    pub fn allowed(&self, n: &str, pin: &str, assign: &Assign) -> bool {
         let (net, s) = (&self.nets[n], &self.slots[pin]);
         if pin != net.pin && !usable(s) {
             return false;

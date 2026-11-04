@@ -78,7 +78,7 @@ impl WirelenModel {
 
 /// MST length per net of the current layout.
 pub struct WirelenState {
-    values: BTreeMap<usize, f64>,
+    pub values: BTreeMap<usize, f64>,
     undo: Vec<(usize, f64)>,
 }
 
