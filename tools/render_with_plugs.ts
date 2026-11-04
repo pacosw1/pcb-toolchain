@@ -118,7 +118,7 @@ export function plugTransform([, y0, , y1]: Box, padX: number[], zBottom: number
 
 /** The text with one more (model ...) at the end of the footprint. */
 export function addModel(text: string, footprint: HeaderFootprint, path: string, { offset, rotation }: PlugPose): string {
-  const model = `\t(model "${path}" (offset (xyz ${offset.map(formatG).join(' ')})) `
+  const model = `\t(model "${path}" (offset (xyz ${offset.map(value => formatG(value)).join(' ')})) `
     + `(scale (xyz 1 1 1)) (rotate (xyz 0 0 ${formatG(rotation)})))\n\t`;
   return `${text.slice(0, footprint.end).trimEnd()}\n\t${model}${text.slice(footprint.end)}`;
 }
