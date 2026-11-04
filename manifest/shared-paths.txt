@@ -185,6 +185,8 @@ tools/lib/krt-planes-advisory.test.ts
 tools/lib/lean-clock.ts
 tools/lib/lean-resources.test.ts
 tools/lib/lean-resources.ts
+tools/lib/lean-stage.test.ts
+tools/lib/lean-stage.ts
 tools/lib/lean-workflow.test.ts
 tools/lib/lean-workflow.ts
 tools/lib/native-board.ts

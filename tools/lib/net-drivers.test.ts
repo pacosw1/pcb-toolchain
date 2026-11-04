@@ -8,9 +8,12 @@ import { join } from 'node:path';
 import { after, beforeEach, test, type TestContext } from 'node:test';
 import { loadTable, minimumRecordHash, ReviewedMinimumProof, TableError, timingEvidence, verifyEvidence, type DriverTable } from './driver-table.ts';
 import { edgeBoundNs, microstripPfPerMm, netEdge, pinCPf, railVolts, rValue, seriesLimitMa, type EdgeOptions, type Geometry, type NetEdge } from './net-drivers.ts';
+import { iotrouteMissing } from './iotroute-bin.ts';
 import { exportNetlist, parseNetlist, pinName, type Netlist, type Node } from './netlist.ts';
 import { jsonLoads } from './py-compat.mjs';
 import type { Dict } from './py-dict.ts';
+
+const needsBinary = { skip: iotrouteMissing() };   // runs for real in CI job tools-iotroute
 
 const XML = `<export version="E">
 <components>
@@ -77,7 +80,7 @@ test('parsing strips the pin number from the pin name', () => {
   assert.equal(pinName('7', 'X_7_7'), 'X_7');
 });
 
-test('the export finds the CLI by KICAD_CLI and a missing schematic never looks like success', (t: TestContext) => {
+test('the export finds the CLI by KICAD_CLI and a missing schematic never looks like success', needsBinary, (t: TestContext) => {
   const folder = mkdtempSync(join(tmpdir(), 'nd-'));
   t.after(() => rmSync(folder, { recursive: true, force: true }));
   const cli = join(folder, 'custom-cli');
