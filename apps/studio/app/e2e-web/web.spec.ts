@@ -1,11 +1,11 @@
-// Web viewer (PWA) smoke test against a running `pcbstudio web` (PCBSTUDIO_WEB_URL, default http://127.0.0.1:8787).
+// Web viewer (PWA) smoke test against a running `npm run web -- --project DIR` (PCBSTUDIO_WEB_URL, default http://127.0.0.1:8787).
 import { test, expect, devices } from '@playwright/test'
 import { existsSync, readFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 
 const URL = process.env.PCBSTUDIO_WEB_URL ?? 'http://127.0.0.1:8787'
-// The viewer token (engine web.py): PCBSTUDIO_WEB_TOKEN, else the server's token file.
+// The viewer token (src/main/web.ts): PCBSTUDIO_WEB_TOKEN, else the server's token file.
 const TOKEN_FILE = join(homedir(), 'Library', 'Application Support', 'pcbstudio', 'web-token')
 const TOKEN = process.env.PCBSTUDIO_WEB_TOKEN ?? (existsSync(TOKEN_FILE) ? readFileSync(TOKEN_FILE, 'utf8').trim() : '')
 

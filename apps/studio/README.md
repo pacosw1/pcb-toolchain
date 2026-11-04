@@ -11,14 +11,14 @@ which the app opens as a project.
   Claude Agent SDK host. Renderer: the UI. The engine itself is `src/main/engineMain.ts`: a separate process on the app's
   own binary, WebSocket JSON-RPC on 127.0.0.1; it prints `READY {"port": N}` and exits when its stdin closes (the app
   owns it).
-- `engine/` — the old Python engine. The app no longer runs it. It stays for the web viewer (`pcbstudio web`),
-  `pcbstudio migrate`, `kicad/pcbnew_worker.py` (the one part that stays Python: it uses pcbnew) and the type generator.
+- `engine/` — the old Python engine. Nothing runs it now. It stays for `kicad/pcbnew_worker.py` (the one part that stays Python: it uses pcbnew) and the type generator.
 
 ## Develop
 ```sh
 cd app && npm install && npm run dev            # app (starts the engine itself)
 node --no-warnings --test test/*.test.ts        # engine tests
 npx electron-vite build && npx playwright test  # e2e: start, crash + restart, gate, route + adopt
+npm run build:web && npm run web -- --project DIR   # read-only web viewer (publish with: tailscale serve --bg 8787)
 ```
 
 ## Phases
