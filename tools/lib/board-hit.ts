@@ -7,6 +7,20 @@ import { NM_PER_MM, type Pad, type PadCopper, type Polygon, type Pt, type Track,
 /** pcbnew.FromMM: cut toward zero, not rounded. */
 export const fromMm = (mm: number): number => Math.trunc(mm * NM_PER_MM);
 
+/** KiCad's KiROUND: to the nearest, half away from zero. */
+const kiRound = (v: number): number => Math.sign(v) * Math.round(Math.abs(v));
+
+/** The point turned about the origin, as KiCad's RotatePoint: quarter turns are exact. */
+export function rotated(p: Pt, degrees: number): Pt {
+  const angle = ((degrees % 360) + 360) % 360;
+  if (angle === 0) return p;
+  if (angle === 90) return { x: p.y, y: -p.x };
+  if (angle === 180) return { x: -p.x, y: -p.y };
+  if (angle === 270) return { x: -p.y, y: p.x };
+  const radians = angle * Math.PI / 180;
+  return { x: kiRound(p.y * Math.sin(radians) + p.x * Math.cos(radians)), y: kiRound(p.y * Math.cos(radians) - p.x * Math.sin(radians)) };
+}
+
 /** `a * b / c` rounded to the nearest, as KiCad's rescale. The product passes 2^53 on a board, so it is exact here. */
 function rescale(a: number, b: number, c: number): number {
   const n = BigInt(a) * BigInt(b);
@@ -144,11 +158,8 @@ function holeHit(pad: Pad, p: Pt, accuracy: number): boolean {
   const { x, y } = pad.drill;
   if (x <= 0 && y <= 0) return false;
   const half = Math.trunc(Math.min(x, y) / 2);
-  const angle = pad.orientation * Math.PI / 180;
-  const legX = Math.trunc(x / 2) - half;
-  const legY = Math.trunc(y / 2) - half;
-  const leg = { x: Math.round(legY * Math.sin(angle) + legX * Math.cos(angle)), y: Math.round(legY * Math.cos(angle) - legX * Math.sin(angle)) };
-  const a = { x: pad.position.x - leg.x, y: pad.position.y - leg.y };
+  const leg = rotated({ x: Math.trunc(x / 2) - half, y: Math.trunc(y / 2) - half }, pad.orientation);
+  const a ={ x: pad.position.x - leg.x, y: pad.position.y - leg.y };
   const b = { x: pad.position.x + leg.x, y: pad.position.y + leg.y };
   const distance = pointSegmentSq(p, a, b);
   return distance === 0 || distance < (half + accuracy) ** 2;
@@ -177,7 +188,8 @@ function circleCentre(a: Pt, b: Pt, c: Pt): Pt {
 }
 
 const angleOf = (v: Pt): number => Math.atan2(v.y, v.x) * 180 / Math.PI;
-const normalize180 = (deg: number): number => { const d = ((deg % 360) + 360) % 360; return d > 180 ? d - 360 : d; };
+/** EDA_ANGLE::Normalize180, into (-180, 180]: pcbnew's GetOrientationDegrees gives -90 where the document holds 270. */
+export const normalize180 = (deg: number): number => { const d = ((deg % 360) + 360) % 360; return d > 180 ? d - 360 : d; };
 const normalize360 = (deg: number): number => ((deg % 360) + 360) % 360;
 
 /** PCB_ARC::HitTest. */

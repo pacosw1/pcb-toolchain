@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { copperContains, fromMm, padHit, polygonCollides, polygonContains, polygonNear, polygonNearSegment, polygonsOverlap, ringContains, trackHit, viaHit } from './board-hit.ts';
+import { copperContains, fromMm, normalize180, padHit, polygonCollides, polygonContains, polygonNear, polygonNearSegment, polygonsOverlap, ringContains, rotated, trackHit, viaHit } from './board-hit.ts';
 import type { Pad, PadCopper, Polygon, Pt, Track, Via } from './board-types.ts';
 
 const pt = (x: number, y: number): Pt => ({ x, y });
@@ -19,6 +19,21 @@ test('FromMM cuts toward zero', () => {
   assert.equal(fromMm(1.0000009), 1_000_000);
   assert.equal(fromMm(-1.0000009), -1_000_000);
   assert.equal(fromMm(0.1 + 0.2), 300_000);
+});
+
+test('quarter turns are exact, as RotatePoint', () => {
+  assert.deepEqual(rotated(pt(3, 1), 90), pt(1, -3));
+  assert.deepEqual(rotated(pt(3, 1), -90), pt(-1, 3));
+  assert.deepEqual(rotated(pt(3, 1), 180), pt(-3, -1));
+  assert.deepEqual(rotated(pt(3, 1), 450), pt(1, -3));
+  assert.deepEqual(rotated(pt(1000, 0), 45), pt(707, -707));
+});
+
+test('orientations read as pcbnew gives them', () => {
+  assert.equal(normalize180(270), -90);
+  assert.equal(normalize180(180), 180);
+  assert.equal(normalize180(-180), 180);
+  assert.equal(normalize180(0), 0);
 });
 
 test('contains follows KiCad edges', () => {
