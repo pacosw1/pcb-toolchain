@@ -18,6 +18,7 @@ type ObjectData = Record<string, unknown>;
 export interface RunState { status: string; elapsed_s?: number; active_stages?: unknown[]; cause?: string; controller_alive?: boolean | null }
 export interface ObservationReport extends ObjectData {
   schema?: string; scope?: string; status?: string; through?: string; blockers?: ObjectData[];
+  board?: string; population_source?: { path: unknown; exists: unknown; sha256: unknown };
   inputs?: Record<string, string>; order_day_utc?: string; stock_current?: boolean;
 }
 // These readers are the owning CLI's shared implementations, never subprocesses hidden in a report renderer.
