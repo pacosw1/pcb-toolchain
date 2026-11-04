@@ -200,6 +200,8 @@ function main(argv: string[]): number {
     const { lines, failed } = check(board, layers, parseDrill(drill.toString('utf8')), pads, pinNets);
     for (const line of lines) console.log(line);
     return failed ? 1 : 0;
+  } catch (error) {
+    throw new UsageError(`FAIL gerber_netcheck ${board}: ${(error as Error).message}`, 1);
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
