@@ -128,7 +128,7 @@ export function parse(text: string): SList {
 const quote = (s: string): string => '"' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n') + '"'
 
 /** toFixed(6), except that an exact tie rounds to even as Python does (toFixed rounds it away from zero). */
-function fixed6(v: number): string {
+export function fixed6(v: number): string {
   const exact = v.toFixed(30)
   const dot = exact.indexOf('.')
   if (/^50*$/.test(exact.slice(dot + 7))) {
