@@ -2,7 +2,7 @@
 //   joinPath keeps '..' (Node's join collapses it, which changes a recorded path).
 //   resolvePath is Path.resolve(): non-strict, follows symlinks, and a '..' after a symlink is physical.
 //   textOf is Path.read_text(): universal newlines. Node's readFileSync keeps \r\n.
-import { readlinkSync, statSync } from 'node:fs';
+import { accessSync, constants, readlinkSync, statSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 import { jsonLoads, osError, PyError, readText, typeName } from './py-compat.mjs';
 
@@ -79,6 +79,24 @@ const stat = (path: string) => {
 export const pathExists = (path: string): boolean => stat(path) !== null;
 export const isFile = (path: string): boolean => stat(path)?.isFile() ?? false;
 export const isDirectory = (path: string): boolean => stat(path)?.isDirectory() ?? false;
+
+/** shutil.which: a path with a slash is taken as it is, a name is searched on PATH; null when nothing can run. */
+export function which(command: string, env: NodeJS.ProcessEnv = process.env): string | null {
+  const runnable = (path: string): boolean => {
+    try {
+      accessSync(path, constants.X_OK);
+      return isFile(path);
+    } catch {
+      return false;
+    }
+  };
+  if (command.includes('/')) return runnable(command) ? command : null;
+  for (const folder of (env.PATH ?? '').split(':')) {
+    const path = `${folder || '.'}/${command}`;
+    if (runnable(path)) return path;
+  }
+  return null;
+}
 
 export const textOf = (path: string): string => readText(path).replace(/\r\n?/g, '\n');
 export const jsonOf = (path: string): unknown => jsonLoads(textOf(path));

@@ -45,5 +45,14 @@ export function parseArgs(spec: { prog: string; positionals: string[]; options: 
 export function globNames(folder: string): string[];
 /** str.strip(): Python's whitespace, which is not the set of String.prototype.trim. */
 export function strip(text: string): string;
+/** bytes.decode(): strict UTF-8, UnicodeDecodeError as Python words it. */
+export function decode(data: Uint8Array): string;
+/** Text of a subprocess run with text=True: strict UTF-8, universal newlines. */
+export function processText(data: Uint8Array): string;
+/** text[-n:], by code point. */
+export function tail(text: string, n: number): string;
+export interface RunResult { status: number | null; stdout: Buffer; stderr: Buffer }
+/** subprocess.run with captured output; a timeout raises subprocess.TimeoutExpired, check=True a CalledProcessError. */
+export function run(command: string, args: string[], options?: { check?: boolean; stdio?: unknown; timeout?: number; env?: NodeJS.ProcessEnv }): RunResult;
 /** csv.DictReader over text from open(path). */
 export function dictRows(text: string): Map<string, string | null>[];
