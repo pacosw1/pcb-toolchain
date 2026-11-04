@@ -48,6 +48,11 @@ export class Decimal {
 
   sub(other: Decimal): Decimal { return this.add(new Decimal(other.digits, other.exponent, !other.negative)); }
 
+  /** Exact, and the exponents add: 10 x 1E-6 is 0.000010, not 0.00001. */
+  mul(other: Decimal): Decimal {
+    return new Decimal(this.digits * other.digits, this.exponent + other.exponent, this.negative !== other.negative);
+  }
+
   /** Python's Decimal %: the sign of the dividend, unlike % on a float. */
   mod(other: Decimal): Decimal {
     const exponent = Math.min(this.exponent, other.exponent);
