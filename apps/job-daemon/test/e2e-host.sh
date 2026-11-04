@@ -253,7 +253,7 @@ check 'exit 75' $? 75
 check 'held on a real reading' "$(grep -c -E 'failed: queued for (9|10) s: host cpu: [0-9]+ % busy, job adds 3 %, limit 0 %' "$STAGE/r14.log")" 1
 check 'reason shown while it waits' "$(grep -c -m1 -E '\] queued for [0-9]+ s: host cpu' "$STAGE/r14.log")" 1
 check 'reason in the journal' "$(r "grep -c -m1 'queued for [0-9]* s: host cpu' $RDIR/daemon.log")" 1
-ID=$(pcb list | tail -1 | cut -d' ' -f1)
+ID=$(pcb list | head -1 | cut -d' ' -f1)
 check 'never started' "$(attempts "$ID")" 0
 check 'outcome' "$(outcome "$ID")" queue
 r "kill \$(cat $RDIR/daemon.pid)"
