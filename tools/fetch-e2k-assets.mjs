@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Capture JLC/EasyEDA CAD for C-numbers with easyeda2kicad (fallback when the EasyEDA Pro bridge of
-// tools/fetch-pq-bridge-assets.py is not running). Same output layout as the bridge captures:
+// tools/fetch-pq-bridge-assets.ts is not running). Same output layout as the bridge captures:
 //
 //   registry/cad-assets/<C>/<C>.kicad_sym, <C>.pretty/*.kicad_mod, <C>.3dshapes/*, PQ-BRIDGE-MANIFEST.json
 //   blocks/iot-lab.pretty/<C>.kicad_mod -> symlink to the captured footprint
