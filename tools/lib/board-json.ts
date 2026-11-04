@@ -1,20 +1,18 @@
 // Board JSON for Mac-side tools. Reads go through the KiCad API on Hetzner only, on one pinned nightly, so a board goes there
 // once: `iotroute board-json` runs as a small daemon job and the result is kept by content. Any change to the board, its
 // project or rules, the JSON schema or the pinned KiCad commit misses the cache.
-import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { projectName, saveBoard } from './board-edit.ts';
 import type { BoardDocument } from './board-types.ts';
+import { cacheFolder, cachedWhole, contentKey, runDaemonJob, type DaemonJob } from './daemon-job.ts';
+import { PINNED_IMAGE } from './env.mjs';
 import { sha256File } from './json-file.ts';
-import { fileRoot, projectRoot } from './project-root.mjs';
+import { fileRoot } from './project-root.mjs';
 
 /** The schema this code reads, as `iotroute board-json` names it. */
 export const BOARD_JSON_SCHEMA = 'iot-lab.board.v1';
-/** KiCad 10 and the pinned nightly in one image: tools/remote-route-nightly.Dockerfile. */
-const BOARD_JSON_IMAGE = 'iot-lab-route:10.0-nightly-4fe1ca2060';
 
 /** Goes up when the document gains fields under the same schema, so a cached copy without them is not used. */
 const DOCUMENT_REVISION = 2;
@@ -38,9 +36,6 @@ export interface BoardJsonOptions {
   refiller?: (pcb: string, outDir: string) => string;
 }
 
-const defaultCacheDir = (): string =>
-  join(process.env.XDG_CACHE_HOME || join(homedir(), '.cache'), 'pcb-toolchain', 'board-json');
-
 /** The KiCad commit the protos are pinned to: the one source of what the API server must be. */
 export function pinnedKicadCommit(toolchain = fileRoot): string {
   const pin = readFileSync(join(toolchain, 'tools/router/core/proto/PIN'), 'utf8');
@@ -62,7 +57,7 @@ export function cacheKey(pcb: string, schema: string, kicadCommit: string, refil
     return `${suffix}=${file ? sha256File(file) : 'absent'}`;
   };
   const parts = [`.kicad_pcb=${sha256File(pcb)}`, fileHash('.kicad_pro'), fileHash('.kicad_dru'), `schema=${schema}`, `kicad=${kicadCommit}`, `refill=${refill}`, `revision=${DOCUMENT_REVISION}`];
-  return createHash('sha256').update(parts.join('\n')).digest('hex');
+  return contentKey(parts);
 }
 
 function checkedDocument(text: string, schema: string, kicadCommit: string, source: string): BoardDocument {
@@ -79,68 +74,34 @@ function refilledCopy(pcb: string, outDir: string): string {
 
 /** The board's JSON, from the cache when nothing in the key changed. A file that fails the check is never kept. */
 export function boardJson(pcb: string, options: BoardJsonOptions = {}): BoardDocument {
-  const { cacheDir = defaultCacheDir(), schema = BOARD_JSON_SCHEMA, kicadCommit = pinnedKicadCommit(), fetcher = fetchThroughDaemon } = options;
+  const { cacheDir = cacheFolder('board-json'), schema = BOARD_JSON_SCHEMA, kicadCommit = pinnedKicadCommit(), fetcher = fetchThroughDaemon } = options;
   const { refill = false, refiller = refilledCopy } = options;
   const cached = join(cacheDir, `${cacheKey(pcb, schema, kicadCommit, refill)}.json`);
-  if (existsSync(cached)) return checkedDocument(readFileSync(cached, 'utf8'), schema, kicadCommit, cached);
-  mkdirSync(cacheDir, { recursive: true });
-  const fresh = `${cached}.${process.pid}`;
-  const work = mkdtempSync(join(tmpdir(), 'board-refill-'));
-  try {
-    const source = refill ? refiller(pcb, work) : pcb;
-    fetcher({ pcb: source, project: projectFiles(source), kicadCommit }, fresh);
-    const document = checkedDocument(readFileSync(fresh, 'utf8'), schema, kicadCommit, pcb);
-    if (document.board_sha256 !== sha256File(source)) throw new Error(`${pcb}: the board JSON is of another file`);
-    renameSync(fresh, cached);
-    return document;
-  } finally {
-    rmSync(fresh, { force: true });
-    rmSync(work, { recursive: true, force: true });
-  }
+  const read = (file: string) => checkedDocument(readFileSync(file, 'utf8'), schema, kicadCommit, file);
+  return cachedWhole(cached, read, fresh => {
+    const work = mkdtempSync(join(tmpdir(), 'board-refill-'));
+    try {
+      const source = refill ? refiller(pcb, work) : pcb;
+      fetcher({ pcb: source, project: projectFiles(source), kicadCommit }, fresh);
+      const document = checkedDocument(readFileSync(fresh, 'utf8'), schema, kicadCommit, pcb);
+      if (document.board_sha256 !== sha256File(source)) throw new Error(`${pcb}: the board JSON is of another file`);
+      return document;
+    } finally {
+      rmSync(work, { recursive: true, force: true });
+    }
+  });
 }
 
-/** The client arguments of the job. Files reach it through --in, so a scratch copy outside the project works too. */
-export function jobArguments(input: FetchInput, binary: string, image: string, results: string): string[] {
+/** The read as a job: the board files and the binary, and nothing else. */
+export function boardJob(input: FetchInput, binary: string, image: string): DaemonJob {
   const script = `mkdir -p out && chmod +x in/${BINARY} && exec in/${BINARY} board-json "in/$1" > out/${DOCUMENT}`;
-  return ['run', 'job', ...[input.pcb, ...input.project, binary].flatMap(file => ['--in', file]), '--image', image,
-    '--timeout', String(JOB_TIMEOUT_S), '--cpus', String(JOB_CPUS), '--mem', String(JOB_MEM_GB), '--results', results,
-    '--', 'sh', '-c', script, '_', basename(input.pcb)];
+  return { label: `board JSON job of ${input.pcb}`, inputs: [input.pcb, ...input.project, binary], image,
+    timeoutS: JOB_TIMEOUT_S, cpus: JOB_CPUS, memGb: JOB_MEM_GB, command: ['sh', '-c', script, '_', basename(input.pcb)] };
 }
 
-/** The daemon settings of the environment, else of the project's .pcb-toolchain.env, as tools/router/route-dispatch.mjs reads them. */
-export function daemonSettings(env: NodeJS.ProcessEnv, project: string, home = homedir()): { JOBD_URL: string; JOBD_TOKEN_FILE: string } {
-  const file = join(project, '.pcb-toolchain.env');
-  const lines = existsSync(file) ? readFileSync(file, 'utf8').split('\n') : [];
-  const url = env.JOBD_URL || lines.filter(line => line.startsWith('JOBD_URL=')).at(-1)?.slice('JOBD_URL='.length);
-  if (!url) throw new Error(`board JSON: no JOBD_URL in the environment or in ${file}`);
-  return { JOBD_URL: url, JOBD_TOKEN_FILE: env.JOBD_TOKEN_FILE || join(home, '.config/pcb-job/token') };
-}
-
-function jobClient(toolchain: string): string {
-  const client = [join(toolchain, 'tools/pcb-job/client.ts'), join(toolchain, 'apps/job-daemon/src/client.ts')].find(file => existsSync(file));
-  if (!client) throw new Error(`no job client under ${toolchain}`);
-  return client;
-}
-
-/**
- * One daemon job. The client stages a project and its tools; here they are an empty stand-in, because the read needs only the
- * board files and the binary. An error stops the tool: a read never falls back to the Mac.
- */
+/** One small daemon job. An error stops the tool: a read never falls back to the Mac. */
 export function fetchThroughDaemon(input: FetchInput, file: string): void {
-  const toolchain = process.env.PCB_TOOLCHAIN_ROOT || fileRoot;
-  const binary = join(toolchain, 'bin', BINARY);
+  const binary = join(process.env.PCB_TOOLCHAIN_ROOT || fileRoot, 'bin', BINARY);
   if (!existsSync(binary)) throw new Error(`board JSON: no ${binary}`);
-  const standIn = mkdtempSync(join(tmpdir(), 'board-json-'));
-  try {
-    mkdirSync(join(standIn, 'tools'));
-    mkdirSync(join(standIn, 'job'));
-    const results = join(standIn, 'results');
-    const run = spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', jobClient(toolchain),
-      ...jobArguments(input, binary, BOARD_JSON_IMAGE, results)],
-      { encoding: 'utf8', env: { ...process.env, ...daemonSettings(process.env, projectRoot()), IOT_LAB: standIn, PCB_TOOLCHAIN_ROOT: standIn } });
-    if (run.status !== 0) throw new Error(`board JSON job of ${input.pcb} ended with ${run.status}: ${run.stderr.slice(-500)}`);
-    copyFileSync(join(results, 'out', DOCUMENT), file);
-  } finally {
-    rmSync(standIn, { recursive: true, force: true });
-  }
+  runDaemonJob(boardJob(input, binary, PINNED_IMAGE), out => copyFileSync(join(out, DOCUMENT), file));
 }

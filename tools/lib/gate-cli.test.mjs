@@ -232,6 +232,19 @@ test('native-only gates require no happy clone; enabled happy checks retain the 
  assert.equal(native.result.provenance.inputs.some(row=>row.path.startsWith('external/kicad-happy/')),false);
  assert.deepEqual(native.events.filter(row=>row.type==='preflight.probe').map(row=>row.tool),['kicad']);
 });
+test('the kicad-happy runtime is provenance: another runtime misses the cached check',t=>{
+ const runner=isolatedRunner(fixture(t));
+ const go=extra=>runner(['--changed'],{PCB_HOST_PLATFORM:'darwin',REMOTE_NO_DAEMON:'',...extra});
+ const first=go({});assert.equal(first.code,0);
+ assert.match(first.result.provenance.tools.kicad_happy_runtime,/^iot-lab-route:\S+ Python \d/);
+ assert.equal('python' in first.result.provenance.tools,false);
+ assert.equal(go({}).result.cache.hits,6);
+ const local=go({REMOTE_NO_DAEMON:'1'});assert.equal(local.code,0);
+ assert.equal(local.result.provenance.tools.kicad_happy_runtime,'local 10.0.6');
+ assert.equal(local.result.cache.hits,5);
+ assert.equal(local.result.checks.kicad_happy.cached,false);
+});
+
 test('commit hook cache: --cache-dir reuses checks across checkout paths and reruns only a changed checker',t=>{
  const cacheDir=mkdtempSync(join(tmpdir(),'gate-cache-'));t.after(()=>rmSync(cacheDir,{recursive:true,force:true}));
  const a=fixture(t),b=fixture(t);

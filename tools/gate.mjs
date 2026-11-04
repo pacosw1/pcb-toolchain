@@ -26,7 +26,7 @@ import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {readFileSync, writeFileSync, existsSync, readdirSync, renameSync, mkdirSync} from 'node:fs';
 import {join, relative, dirname, resolve} from 'node:path';
-import {root, kicadCli, kicadPython, modernPython, kicadShared, kicadConfig, pinnedRepos, TS_NODE} from './lib/env.mjs';
+import {root, kicadCli, kicadPython, happyRuntime, kicadShared, kicadConfig, pinnedRepos, TS_NODE} from './lib/env.mjs';
 import {METRICS, CHECK_METRICS, passes, ratchet, metricsText, countFrom, validateConfig, expectedMetrics, pathFailures} from './lib/gate-core.mjs';
 import {runDirectory, runTool, readReport, checkedText, readHappyResult, gateEvent, measuredSpan} from './lib/gate-runtime.mjs';
 import {gateInputs, fingerprint} from './lib/gate-inputs.mjs';
@@ -122,8 +122,7 @@ try { inputs=gateInputs(root,board,configName,environment); }
 catch (error) { preflightErrors.push(`input evidence: ${error.message}`);inputs={files:[]}; }
 const versions = {};
 const probes=[['kicad',kicadCli,['--version']],
-  ...(Object.keys(c).some(k=>c[k] && !['erc','drc','kicad_happy','port_labels',...boardChecks].includes(k)) ? [['pcbnew',kicadPython,['-c','import pcbnew; print(pcbnew.Version())']]] : []),
-  ...(c.kicad_happy ? [['python',modernPython(),['--version']]] : [])];
+  ...(Object.keys(c).some(k=>c[k] && !['erc','drc','kicad_happy','port_labels',...boardChecks].includes(k)) ? [['pcbnew',kicadPython,['-c','import pcbnew; print(pcbnew.Version())']]] : [])];
 for (const [name,cmd,args] of preflightErrors.length ? [] : probes) {
   gateEvent(logDir,'preflight.probe',{stage:'preflight',tool:name});
   const probeSpan=measuredSpan(`probe:${name}`,'startup');
@@ -133,6 +132,10 @@ for (const [name,cmd,args] of preflightErrors.length ? [] : probes) {
   finally { gateEvent(logDir,'stage.end',probeSpan.end(versions[name]===null ? 'failed' : 'passed')); }
 }
 versions.node=process.version;
+if(c.kicad_happy && !preflightErrors.length) {
+  try{versions.kicad_happy_runtime=happyRuntime();}
+  catch(error){preflightErrors.push(`kicad-happy runtime probe failed: ${error.message}`);}
+}
 // Optional router/advisory repositories are not executed by this gate. Probing
 // them adds unrelated latency/failures and invalidates otherwise identical runs.
 for(const repo of preflightErrors.length || !c.kicad_happy ? [] : pinnedRepos.filter(r=>r.needed==='gate')) {
@@ -207,11 +210,11 @@ const pendingCache = [];
 const cacheDir = cacheDirArg ? resolve(cacheDirArg) : join(dir,'.gate/check-cache');
 const scripts = {planes:'si_planes.py',pairs:'si_pairs.py',viapads:'pcbtool.py',paths:'pcbtool.py',kicad_happy:'kicad_happy_gate.ts',rf:'rf_lines.ts',port_labels:'port_labels.ts'};
 function keyFor(k,files) {
-  const names=['node','kicad',...(k==='kicad_happy' ? ['python','kicad-happy'] : ['erc','drc','port_labels',...boardChecks].includes(k) ? [] : ['pcbnew'])];
+  const names=['node','kicad',...(k==='kicad_happy' ? ['kicad_happy_runtime','kicad-happy'] : ['erc','drc','port_labels',...boardChecks].includes(k) ? [] : ['pcbnew'])];
   return checkKey({root,stage:k,files:checkInputs(root,files,k,scripts[k],environment.repositories),
     config:{project:cfg.project,stage:cfg.stage ?? 'G4',options:c[k]},externalRoots,
     versions:Object.fromEntries(names.filter(name=>name in versions).map(name=>[name,versions[name]])),
-    commands:['erc','drc'].includes(k) ? [kicadCli] : k==='kicad_happy' ? [process.execPath,modernPython(),'git'] : k==='port_labels' ? [process.execPath] : boardChecks.includes(k) ? [process.execPath,kicadCli,...(existsSync(boardReader) ? [boardReader] : [])] : [kicadPython,kicadCli]});
+    commands:['erc','drc'].includes(k) ? [kicadCli] : k==='kicad_happy' ? [process.execPath,'git'] : k==='port_labels' ? [process.execPath] : boardChecks.includes(k) ? [process.execPath,kicadCli,...(existsSync(boardReader) ? [boardReader] : [])] : [kicadPython,kicadCli]});
 }
 async function execute(k) {
   let metrics,key,hit=false;

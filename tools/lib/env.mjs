@@ -30,7 +30,24 @@ export const pinnedRepos = [
   {name: 'KiCadRoutingPlacementTools', env: 'KRPT_DIR', commit: '409d53e', dir: repo('KiCadRoutingPlacementTools', 'KRPT_DIR'), needed: 'optional'},
 ];
 
-// kicad-happy needs Python 3.10 or later. The macOS python3 and the KiCad Python are 3.9.
+// KiCad 10 and the pinned nightly in one image (tools/remote-route-nightly.Dockerfile): board reads and kicad-happy run in it.
+export const PINNED_IMAGE = 'iot-lab-route:10.0-nightly-4fe1ca2060';
+const PINNED_IMAGE_PYTHON = 'Python 3.13.5';
+
+// On macOS kicad-happy runs in a daemon job and never here. Local runs are REMOTE_NO_DAEMON=1 and other hosts: CI and the native
+// release image. tools/router/route-dispatch.mjs has the same rule. PCB_HOST_PLATFORM: what tests pass to cover another host.
+export const happyRunsLocally = () => process.env.REMOTE_NO_DAEMON === '1' || (process.env.PCB_HOST_PLATFORM ?? process.platform) !== 'darwin';
+
+// What runs kicad-happy, for the phase cache and the gate's provenance: a change of it invalidates both. tools/lib/kicad-happy-phases.ts
+// compares it with what a run reports. In a job it is a fixed value, so the Mac starts no Python to ask.
+let localRuntime;
+export function happyRuntime() {
+  if (!happyRunsLocally()) return `${PINNED_IMAGE} ${PINNED_IMAGE_PYTHON}`;
+  localRuntime ??= `local ${execFileSync(modernPython(), ['--version'], {encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore']}).trim()}`;
+  return localRuntime;
+}
+
+// A local run of kicad-happy needs Python 3.10 or later. The macOS python3 and the KiCad Python are 3.9.
 // modernPython(): env PYTHON_MODERN, else the first python3.1x on PATH, else 'python3' (doctor.mjs then reports it). A call, not
 // a value: importing this module must not start Python, and most tools that import it never need kicad-happy.
 function findModernPython() {

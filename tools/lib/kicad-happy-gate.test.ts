@@ -1,20 +1,18 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { checkPinned, resolveBoard } from '../kicad_happy_gate.ts';
 import { creditOwnHoles, markGroundVias, plainJson, returnRadius, takeExemptTransitions, takeReturnStitched, type Pad, type Sample, type Tree } from './kicad-happy-board.ts';
 import { applyExemptions, evaluate, filterFindings, formatFinding, loadExemptFile, parseExemptArgs, type Finding } from './kicad-happy-findings.ts';
+import { designFiles, checkReport } from './kicad-happy-phases.ts';
 import { jsonDumps, jsonLoads } from './py-compat.mjs';
 
 const TOOLS = dirname(dirname(fileURLToPath(import.meta.url)));
 const PROGRAM = join(TOOLS, 'kicad_happy_gate.ts');
-
-// Set before the import: env.mjs otherwise looks for a Python by running it.
-process.env.PYTHON_MODERN = 'not-run';
-const { checkPinned, checkReport, resolveBoard } = await import('../kicad_happy_gate.ts');
 
 const RULES = ['GP-001', 'RP-001', 'VP-001', 'DC-002', 'UC-001'];
 const fixture = (name: string) => JSON.parse(readFileSync(join(TOOLS, 'fixtures', name), 'utf8')) as { findings: Finding[] };
@@ -213,8 +211,28 @@ test('a missing clone is reported', () => {
   assert.match(checkPinned('/no/such/clone') ?? '', /kicad-happy clone not found at \/no\/such\/clone/);
 });
 
+test('the design is every schematic and project of the folder and the board\'s own files', () => {
+  const dir = folder();
+  mkdirSync(join(dir, 'sheets/deep'), { recursive: true });
+  mkdirSync(join(dir, '.history'));
+  for (const name of ['x.kicad_pcb', 'x.kicad_pro', 'x.kicad_dru', 'x.kicad_prl', 'y.kicad_pcb', 'y.kicad_dru', 'other.kicad_pro', 'sheets/deep/s.kicad_sch', '.history/old.kicad_sch', 'notes.md']) {
+    writeFileSync(join(dir, name), '');
+  }
+  writeFileSync(join(dir, 'x.kicad_sch'), '(sheet (property "Sheetfile" "sheets/deep/s.kicad_sch"))');
+  assert.deepEqual(designFiles({ pcb: join(dir, 'x.kicad_pcb'), sch: join(dir, 'x.kicad_sch') }),
+    ['other.kicad_pro', 'sheets/deep/s.kicad_sch', 'x.kicad_dru', 'x.kicad_pcb', 'x.kicad_pro', 'x.kicad_sch']);
+});
+
+test('a sheet outside the project folder cannot be shipped and stops the check', () => {
+  const dir = folder();
+  writeFileSync(join(dir, 'x.kicad_pcb'), '');
+  writeFileSync(join(dir, 'x.kicad_sch'), '(sheet (property "Sheetfile" "../shared/s.kicad_sch"))');
+  assert.throws(() => designFiles({ pcb: join(dir, 'x.kicad_pcb'), sch: join(dir, 'x.kicad_sch') }), /sheet \.\.\/shared\/s\.kicad_sch is outside the project folder/);
+});
+
 // Whole runs with a fake python and a fake git: nothing of kicad-happy, and no Python, runs here.
 const FAKE_PYTHON = `#!/bin/sh
+if [ "$1" = --version ]; then echo Python 3.99.0; exit 0; fi
 echo "$@" >> "$FAKE_DIR/calls"
 if [ "$1" = -c ]; then printf '[]' > "$5"; exit 0; fi
 script=$(basename "$1")
@@ -228,25 +246,40 @@ case "$script" in
 esac
 `;
 
-function fakeRun(emc: Finding[], args: string[] = [], env: Record<string, string> = {}) {
+const script = (file: string, text: string) => {
+  writeFileSync(file, text);
+  chmodSync(file, 0o755);
+};
+
+/** A board, a clone with a fake git, and a cache of its own: a real tar of the empty clone must not reach the real cache. */
+function fakeProject() {
   const dir = folder();
   mkdirSync(join(dir, 'bin'));
   mkdirSync(join(dir, 'happy'));
   mkdirSync(join(dir, 'board'));
   writeFileSync(join(dir, 'board/x.kicad_pcb'), '(kicad_pcb)\n');
-  writeFileSync(join(dir, 'emc.json'), JSON.stringify({ findings: emc }));
-  writeFileSync(join(dir, 'bin/python'), FAKE_PYTHON);
-  writeFileSync(join(dir, 'bin/git'), '#!/bin/sh\necho a6bba1a0000000000000000000000000000000\n');
-  chmodSync(join(dir, 'bin/python'), 0o755);
-  chmodSync(join(dir, 'bin/git'), 0o755);
+  script(join(dir, 'bin/git'), '#!/bin/sh\necho a6bba1a0000000000000000000000000000000\n');
+  return dir;
+}
+
+function gate(dir: string, args: string[], env: Record<string, string>) {
   const result = join(dir, 'result.json');
+  const { PYTHON_MODERN: _unset, ...base } = process.env;
   const run = spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', PROGRAM, join(dir, 'board'), '--result', result, ...args], {
     encoding: 'utf8',
-    env: { ...process.env, PATH: `${join(dir, 'bin')}:${process.env.PATH}`, PYTHON_MODERN: join(dir, 'bin/python'),
-      KICAD_HAPPY_DIR: join(dir, 'happy'), FAKE_DIR: dir, ...env },
+    env: { ...base, PATH: `${join(dir, 'bin')}:${process.env.PATH}`, KICAD_HAPPY_DIR: join(dir, 'happy'), XDG_CACHE_HOME: join(dir, 'cache'), ...env },
   });
   return { run, dir, result };
 }
+
+/** The local path: REMOTE_NO_DAEMON=1 on any host. */
+function fakeLocal(dir: string, emc: Finding[], args: string[] = [], env: Record<string, string> = {}) {
+  writeFileSync(join(dir, 'emc.json'), JSON.stringify({ findings: emc }));
+  script(join(dir, 'bin/python'), FAKE_PYTHON);
+  return gate(dir, args, { REMOTE_NO_DAEMON: '1', PYTHON_MODERN: join(dir, 'bin/python'), FAKE_DIR: dir, ...env });
+}
+
+const fakeRun = (emc: Finding[], args: string[] = [], env: Record<string, string> = {}) => fakeLocal(fakeProject(), emc, args, env);
 
 test('a clean run exits 0 and writes the completion report', () => {
   const { run, result, dir } = fakeRun([]);
@@ -282,4 +315,110 @@ test('a bad exempt file exits 2 before any analysis', () => {
 
 test('a bad severity is a usage error', () => {
   assert.equal(fakeRun([], ['--min-severity', 'loud']).run.status, 2);
+});
+
+test('a local phase is kept by content: a second run starts no Python, an edited board reruns it', () => {
+  const dir = fakeProject();
+  const calls = () => readFileSync(join(dir, 'calls'), 'utf8').trim().split('\n').length;
+  assert.equal(fakeLocal(dir, []).run.status, 0);
+  const first = calls();
+  assert.equal(fakeLocal(dir, []).run.status, 0);
+  assert.equal(calls(), first);
+  writeFileSync(join(dir, 'board/x.kicad_pcb'), '(kicad_pcb edited)\n');
+  assert.equal(fakeLocal(dir, []).run.status, 0);
+  assert.ok(calls() > first);
+});
+
+test('a failed phase is not kept', () => {
+  const dir = fakeProject();
+  assert.equal(fakeLocal(dir, [], [], { FAKE_CRASH: 'analyze_pcb.py' }).run.status, 2);
+  assert.deepEqual(readdirSync(join(dir, 'cache/pcb-toolchain/kicad-happy')), []);
+  assert.equal(fakeLocal(dir, []).run.status, 0);
+});
+
+// The daemon path: a stand-in client plays the jobs, and python3.x stand-ins on PATH log each start. The second run of a
+// fixture must not reach the client, so the calls file counts jobs.
+const FAKE_CLIENT = `import fs from 'node:fs';
+import path from 'node:path';
+const args = process.argv.slice(2);
+if (process.env.FAKE_DOWN) { console.error('pcb-job: TypeError: fetch failed'); process.exit(1); }
+const phase = args[args.indexOf('_') + 1];
+const inputs = args.flatMap((arg, index) => (arg === '--in' ? [path.basename(args[index + 1])] : []));
+const image = args[args.indexOf('--image') + 1];
+fs.appendFileSync(process.env.FAKE_JOBS, JSON.stringify({ phase, inputs, image }) + '\\n');
+const out = path.join(args[args.indexOf('--results') + 1], 'out');
+fs.mkdirSync(out, { recursive: true });
+const put = (name, text) => fs.writeFileSync(path.join(out, name), text);
+const step = (name, code = 0, stderr = '') => { put(name + '.code', code + '\\n'); put(name + '.stderr', stderr); };
+put('python.txt', (process.env.FAKE_JOB_PYTHON ?? 'Python 3.13.5') + '\\n');
+if (phase === 'a') {
+  step('pcb');
+  step('pads');
+  put('pcb.json', JSON.stringify({ findings: [], nets: { 1: '/A' }, vias: { vias: [{ x: 0, y: 0, net: 1 }] }, layer_transitions: [{ net: '/A', via_positions: [{ x: 0, y: 0 }] }] }));
+  put('pads.json', '[]');
+  put('gp001_debug.json', '{"samples": []}');
+} else if (process.env.FAKE_EMC_CRASH) {
+  step('emc', 3, 'crashed');
+} else {
+  step('emc');
+  put('emc.json', '{"findings": []}');
+}
+`;
+const PYTHONS = ['python3.13', 'python3.12', 'python3.11', 'python3.10', 'python3'];
+
+function fakeDaemon() {
+  const dir = fakeProject();
+  mkdirSync(join(dir, 'toolchain/tools/pcb-job'), { recursive: true });
+  writeFileSync(join(dir, 'toolchain/tools/pcb-job/client.ts'), FAKE_CLIENT);
+  for (const name of PYTHONS) script(join(dir, 'bin', name), `#!/bin/sh\necho ${name} >> "${join(dir, 'started')}"\necho True\n`);
+  const jobs = () => (existsSync(join(dir, 'jobs')) ? readFileSync(join(dir, 'jobs'), 'utf8').trim().split('\n').map(line => JSON.parse(line) as { phase: string; inputs: string[]; image: string }) : []);
+  const run = (args: string[] = [], env: Record<string, string> = {}) => gate(dir, args, { PCB_HOST_PLATFORM: 'darwin', REMOTE_NO_DAEMON: '', PCB_TOOLCHAIN_ROOT: join(dir, 'toolchain'),
+    JOBD_URL: 'http://daemon', JOBD_TOKEN_FILE: join(dir, 'token'), FAKE_JOBS: join(dir, 'jobs'), ...env }).run;
+  return { dir, jobs, run };
+}
+
+test('on macOS the phases go to the daemon, a second run sends no job, and no Python starts', () => {
+  const { dir, jobs, run } = fakeDaemon();
+  assert.equal(run().status, 0);
+  const sent = jobs();
+  assert.deepEqual(sent.map(job => job.phase), ['a', 'b']);
+  assert.deepEqual(sent[0]!.inputs, ['design.tar', 'kicad-happy-a6bba1a.tar.gz']);
+  assert.deepEqual(sent[1]!.inputs, ['pcb.json', 'kicad-happy-a6bba1a.tar.gz']);
+  assert.match(sent[0]!.image, /^iot-lab-route:/);
+  assert.equal(run().status, 0);
+  assert.equal(jobs().length, 2);
+  assert.equal(existsSync(join(dir, 'started')), false);
+});
+
+test('an edited RP-001 exemption reruns only phase b', () => {
+  const { jobs, run } = fakeDaemon();
+  assert.equal(run().status, 0);
+  assert.equal(run(['--exempt', 'RP-001:/A']).status, 0);
+  assert.deepEqual(jobs().map(job => job.phase), ['a', 'b', 'b']);
+});
+
+test('an unreachable daemon stops the check with exit 2 and nothing falls back to this Mac', () => {
+  const { dir, run } = fakeDaemon();
+  const down = run([], { FAKE_DOWN: '1' });
+  assert.equal(down.status, 2);
+  assert.match(down.stderr, /^ERROR: kicad-happy phase a job ended with 1: pcb-job: TypeError: fetch failed\n/);
+  assert.equal(existsSync(join(dir, 'started')), false);
+  assert.equal(existsSync(join(dir, 'result.json')), false);
+});
+
+test('a phase that fails in the job gives the same error and goes again next time', () => {
+  const { jobs, run } = fakeDaemon();
+  const crash = run([], { FAKE_EMC_CRASH: '1' });
+  assert.equal(crash.status, 2);
+  assert.equal(crash.stderr, 'ERROR: skills/emc/scripts/analyze_emc.py failed (exit 3): crashed\n');
+  assert.equal(run().status, 0);
+  assert.deepEqual(jobs().map(job => job.phase), ['a', 'b', 'b']);
+});
+
+test('a job on another Python than the pinned runtime counts for nothing', () => {
+  const { dir, run } = fakeDaemon();
+  const other = run([], { FAKE_JOB_PYTHON: 'Python 3.14.0' });
+  assert.equal(other.status, 2);
+  assert.match(other.stderr, /^ERROR: kicad-happy ran on Python 3\.14\.0, not on iot-lab-route:.* Python /);
+  assert.deepEqual(readdirSync(join(dir, 'cache/pcb-toolchain/kicad-happy')), []);
 });
