@@ -50,7 +50,7 @@ tools/check-reviews.mjs
 tools/check-staged-gates.mjs
 tools/check_pixel_art.py
 tools/congestion.py
-tools/datasheet_audit.py
+tools/datasheet_audit.mjs
 tools/design_contract.py
 tools/design_sweep.py
 tools/doctor.mjs
@@ -120,6 +120,7 @@ tools/lib/check-fab-zip.test.mjs
 tools/lib/consistency-offline.test.mjs
 tools/lib/csv.mjs
 tools/lib/current-paths-check.mjs
+tools/lib/datasheet-audit.test.mjs
 tools/lib/doctor-checks.mjs
 tools/lib/doctor-checks.test.mjs
 tools/lib/env-paths.mjs
