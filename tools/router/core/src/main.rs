@@ -4282,17 +4282,27 @@ fn route_cli(args: &[String]) {
         }
         i += 2;
     }
-    let t0 = std::time::Instant::now();
-    let mut ckpt = ckpt_path.as_ref().map(|p| checkpoint::Writer::new(p, t0, seed, o.passes));
-    let model_text = std::fs::read_to_string(&args[1]).expect("model");
     if (resume_path.is_some() || resume_save.is_some()) && (reuse_path.is_some() || check_only.is_some()) {
         eprintln!("resume does not support --reuse or --check");
         std::process::exit(2);
     }
-    if ckpt_path.is_some() && (ckpt_path == resume_path || ckpt_path == resume_save) {
-        eprintln!("progress and resume checkpoint paths must differ");
+    if resume_path.is_some() && o.max_time > 0.0 {
+        eprintln!("resume: --max-time cannot enforce a total deadline across checkpoint writes and finalization; use an external deadline");
         std::process::exit(2);
     }
+    if resume_path.is_some() || resume_save.is_some() {
+        let progress_tmp = ckpt_path.as_ref().map(|p| format!("{p}.tmp"));
+        let save_tmp = resume_save.as_ref().map(|p| format!("{p}.tmp.{}", std::process::id()));
+        let mut paths = vec![("model", args[1].as_str()), ("output", args[2].as_str())];
+        for (role, path) in [("progress", ckpt_path.as_ref()), ("progress temporary", progress_tmp.as_ref()),
+            ("resume input", resume_path.as_ref()), ("resume output", resume_save.as_ref()), ("resume temporary", save_tmp.as_ref())] {
+            if let Some(p) = path { paths.push((role, p.as_str())); }
+        }
+        resume::check_paths(&paths).unwrap_or_else(|e| { eprintln!("resume paths: {e}"); std::process::exit(2) });
+    }
+    let t0 = std::time::Instant::now();
+    let mut ckpt = ckpt_path.as_ref().map(|p| checkpoint::Writer::new(p, t0, seed, o.passes));
+    let model_text = std::fs::read_to_string(&args[1]).expect("model");
     let resume_binding = if resume_path.is_some() || resume_save.is_some() {
         Some(resume::binding(&model_text, &args[3..]).unwrap_or_else(|e| { eprintln!("resume binding: {e}"); std::process::exit(2) }))
     } else { None };
@@ -4472,10 +4482,6 @@ fn route_cli(args: &[String]) {
         let saved = resume::Snapshot::load(path, resume_binding.as_ref().unwrap(), &ctx, o.passes)
             .unwrap_or_else(|e| { eprintln!("resume {path}: {e}"); std::process::exit(2) });
         (start_pass, prior_elapsed, prior_cpu, todo, state, best, limited_prev, stall, stall_sig, pour_seen, hard_doors, moves, since_best) = saved.restore(&mut ctx);
-        if o.max_time > 0.0 && prior_elapsed + t0.elapsed().as_secs_f64() >= o.max_time {
-            eprintln!("resume: cumulative --max-time is exhausted; increase the limit");
-            std::process::exit(2);
-        }
         ctx.fan_keep = false;
         eprintln!("resumed after pass {start_pass}");
     }
@@ -4581,6 +4587,9 @@ fn route_cli(args: &[String]) {
             w.pass(&ctx, &checkpoint::Pass { pass: it + 1, au: &au, involved: &involved, state: &state, pour_faults: pf.len(), search_limited, best: best.as_ref().map(|b| (b.1, b.0)), since_best });
         }
         if involved.is_empty() {
+            if let Some(path) = &resume_save {
+                resume::Snapshot::terminal(path, "converged").unwrap_or_else(|e| { eprintln!("resume checkpoint {path}: {e}"); std::process::exit(2) });
+            }
             converged = true;
             stop = "converged";
             break;
@@ -4598,11 +4607,17 @@ fn route_cli(args: &[String]) {
         let prior_pres = ctx.gr.pres;
         ctx.gr.pres = (ctx.gr.pres * o.pres_mult).min(o.pres_max);
         todo = rip_order(&order, &involved, &moves);
-        if let Some(path) = resume_save.as_ref().filter(|_| !hard_stalled) {
+        let terminal_hard = hard_stalled && !timed_out && !cancelled && !stalled;
+        if let Some(path) = resume_save.as_ref().filter(|_| !terminal_hard) {
             let cpu_s = resume::cpu_seconds().unwrap_or_else(|e| { eprintln!("resume accounting: {e}"); std::process::exit(2) });
             let s = resume::Snapshot::capture(resume_binding.as_ref().unwrap(), it + 1, prior_elapsed + t0.elapsed().as_secs_f64(), prior_cpu + cpu_s, &ctx, &todo, &state, &best,
                 &limited_prev, stall, &stall_sig, &pour_seen, hard_doors, &moves, since_best);
             if let Err(e) = s.save(path) { eprintln!("resume checkpoint {path}: {e}"); std::process::exit(2); }
+        }
+        if terminal_hard {
+            if let Some(path) = &resume_save {
+                resume::Snapshot::terminal(path, "hard-fails").unwrap_or_else(|e| { eprintln!("resume checkpoint {path}: {e}"); std::process::exit(2) });
+            }
         }
         if timed_out || cancelled || stalled || hard_stalled { ctx.gr.pres = prior_pres; }
         if timed_out {
