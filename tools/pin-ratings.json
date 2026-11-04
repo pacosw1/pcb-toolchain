@@ -12,6 +12,15 @@
   },
   {
    "path": "hardware-design/registry/datasheets/TPS631000DRLR_C5219190.pdf"
+  },
+  {
+   "path": "hardware-design/registry/datasheets/KF128-5.08-3P-AA_C474953.pdf"
+  },
+  {
+   "path": "hardware-design/registry/datasheets/HF32FV-16_12-HLTF(590)_C2976828.pdf"
+  },
+  {
+   "path": "hardware-design/registry/datasheets/HoJLR2512-3W-10mR_C2903468.pdf"
   }
  ],
  "parts": {
@@ -186,6 +195,69 @@
      "amps": 2.6,
      "statistic": "min",
      "source": "TPS631000 datasheet SLVSFH3C (Oct 2021, revised Aug 2026), section 5.5 Electrical Characteristics, CURRENT LIMIT, IL(PEAK) switch peak current limit Q1, output sourcing current 2.6 A min, 3 A typ, 3.35 A max (VO = 3.3 V), page 5; pins 2 = LX2, 3 = LX1 (Table 4-1 Pin Functions, page 3). The inductor current through LX1 and LX2 reaches the peak current limit before current limiting acts, so each pin is designed to carry at least 2.6 A; the same current flows through the VIN pin 4 when the buck high-side switch Q1 is on (section 6.1); https://www.ti.com/lit/ds/symlink/tps631000.pdf, local copy hardware-design/registry/datasheets/TPS631000DRLR_C5219190.pdf (sha256 b52a4064...) [P]. Added 2026-10-15 for ESP32-CORE rev B (U3)."
+    }
+   }
+  },
+  "KF128-5.08": {
+   "mpn": [
+    "KF128-5.08*"
+   ],
+   "pins": {
+    "1": {
+     "name": "pole 1",
+     "amps": 10.0,
+     "statistic": "min",
+     "source": "KEFA KF128-5.08 drawing rev A (2021-03-13), Technical Data table: UL/cUL rated current 10 A (use groups B, D), IEC rated current 24 A; statistic: the lower (UL) value; page 1; local copy hardware-design/registry/datasheets/KF128-5.08-3P-AA_C474953.pdf (sha256 d21b22b3cf38d6ba...) [P]"
+    },
+    "2": {
+     "name": "pole 2",
+     "amps": 10.0,
+     "statistic": "min",
+     "source": "KEFA KF128-5.08 drawing rev A (2021-03-13), Technical Data table: UL/cUL rated current 10 A (use groups B, D), IEC rated current 24 A; statistic: the lower (UL) value; page 1; local copy hardware-design/registry/datasheets/KF128-5.08-3P-AA_C474953.pdf (sha256 d21b22b3cf38d6ba...) [P]"
+    },
+    "3": {
+     "name": "pole 3",
+     "amps": 10.0,
+     "statistic": "min",
+     "source": "KEFA KF128-5.08 drawing rev A (2021-03-13), Technical Data table: UL/cUL rated current 10 A (use groups B, D), IEC rated current 24 A; statistic: the lower (UL) value; page 1; local copy hardware-design/registry/datasheets/KF128-5.08-3P-AA_C474953.pdf (sha256 d21b22b3cf38d6ba...) [P]"
+    }
+   }
+  },
+  "HF32FV-16": {
+   "mpn": [
+    "HF32FV-16*"
+   ],
+   "pins": {
+    "2": {
+     "name": "contact",
+     "amps": 16.0,
+     "statistic": "rated",
+     "source": "Hongfa HF32FV-16 datasheet (2021 rev 1.00) p.157, contact data: contact load 16 A 250 VAC (resistive), max switching current 16 A; pins 2 / 3 = contacts (footprint: 1.8 mm drill, coil pins 1 / 4 0.9 mm); local copy hardware-design/registry/datasheets/HF32FV-16_12-HLTF(590)_C2976828.pdf [P]"
+    },
+    "3": {
+     "name": "contact",
+     "amps": 16.0,
+     "statistic": "rated",
+     "source": "Hongfa HF32FV-16 datasheet (2021 rev 1.00) p.157, contact data: contact load 16 A 250 VAC (resistive), max switching current 16 A; pins 2 / 3 = contacts (footprint: 1.8 mm drill, coil pins 1 / 4 0.9 mm); local copy hardware-design/registry/datasheets/HF32FV-16_12-HLTF(590)_C2976828.pdf [P]"
+    }
+   }
+  },
+  "HoJLR2512-3W": {
+   "mpn": [
+    "HoJLR2512-3W-10mR*"
+   ],
+   "pins": {
+    "1": {
+     "name": "terminal",
+     "amps": 17.3,
+     "statistic": "rated",
+     "source": "HoJLR2512-3W-10mR datasheet (local copy hardware-design/registry/datasheets/HoJLR2512-3W-10mR_C2903468.pdf), rated power 3 W (2512, 0.5-500 mR); rated current = sqrt(P / R) = sqrt(3 / 0.010) = 17.3 A (the datasheet gives 2.45-77.45 A over the value range) [P]"
+    },
+    "2": {
+     "name": "terminal",
+     "amps": 17.3,
+     "statistic": "rated",
+     "source": "HoJLR2512-3W-10mR datasheet (local copy hardware-design/registry/datasheets/HoJLR2512-3W-10mR_C2903468.pdf), rated power 3 W (2512, 0.5-500 mR); rated current = sqrt(P / R) = sqrt(3 / 0.010) = 17.3 A (the datasheet gives 2.45-77.45 A over the value range) [P]"
     }
    }
   }
