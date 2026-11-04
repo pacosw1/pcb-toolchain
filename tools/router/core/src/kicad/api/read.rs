@@ -76,11 +76,11 @@ fn missing(what: &str) -> ApiError {
     ApiError::from(format!("KiCad sent no {what}"))
 }
 
-fn pt(v: &Option<ct::Vector2>) -> Pt {
+pub(super) fn pt(v: &Option<ct::Vector2>) -> Pt {
     v.as_ref().map_or(Pt::default(), |v| Pt::new(v.x_nm, v.y_nm))
 }
 
-fn nm(d: &Option<ct::Distance>) -> i64 {
+pub(super) fn nm(d: &Option<ct::Distance>) -> i64 {
     d.as_ref().map_or(0, |d| d.value_nm)
 }
 
@@ -92,7 +92,7 @@ fn id(k: &Option<ct::Kiid>) -> String {
     k.as_ref().map_or(String::new(), |k| k.value.clone())
 }
 
-fn net(n: &Option<bt::Net>) -> String {
+pub(super) fn net(n: &Option<bt::Net>) -> String {
     n.as_ref().map_or(String::new(), |n| n.name.clone())
 }
 
@@ -183,6 +183,7 @@ fn read_footprint(f: &bt::FootprintInstance, copper_layers: &[String], board_mas
     let mask = |o: &Option<bt::SolderMaskOverrides>| o.as_ref().and_then(|m| m.solder_mask_margin.as_ref()).map(|d| d.value_nm);
     let footprint_mask = mask(&f.overrides.as_ref().and_then(|o| o.solder_mask.clone()));
     let definition = f.definition.as_ref().ok_or_else(|| missing("footprint definition"))?;
+    let clearance_override = f.overrides.as_ref().and_then(|o| o.copper_clearance.as_ref()).map(|d| d.value_nm);
     let mut out = Footprint {
         id: id(&f.id),
         reference: field_text(&f.reference_field),
@@ -198,6 +199,7 @@ fn read_footprint(f: &bt::FootprintInstance, copper_layers: &[String], board_mas
         zones: Vec::new(),
         courtyard_front: Vec::new(),
         courtyard_back: Vec::new(),
+        clearance_override,
     };
     for item in &definition.items {
         if let Some(p) = decode::<bt::Pad>(item) {
@@ -286,6 +288,7 @@ fn read_pad(p: &bt::Pad) -> Result<Pad, ApiError> {
         copper,
         polygons: BTreeMap::new(),
         solder_mask_expansion: 0,
+        clearance_override: p.copper_clearance_override.as_ref().map(|d| d.value_nm),
     })
 }
 

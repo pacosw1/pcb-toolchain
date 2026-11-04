@@ -1,7 +1,8 @@
 //! A board as typed data, in KiCad's units and order. `kicad::api::read_board` fills it.
+use super::geom::outline::arc_points;
 use super::geom::{Iu, Polygon, Pt, Rect, to_mm};
-use super::pad::{Pad, ZoneConnection};
-use super::shape::Graphic;
+use super::pad::{Copper, Pad, ZoneConnection};
+use super::shape::{Arc, Graphic};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -28,6 +29,16 @@ pub struct Board {
 }
 
 impl Board {
+    /// Tracks and arcs, in KiCad's order.
+    pub fn tracks(&self) -> impl Iterator<Item = &Track> {
+        self.copper.iter().filter_map(|c| if let RoutedCopper::Track(t) = c { Some(t) } else { None })
+    }
+
+    /// Vias, in KiCad's order.
+    pub fn vias(&self) -> impl Iterator<Item = &Via> {
+        self.copper.iter().filter_map(|c| if let RoutedCopper::Via(v) = c { Some(v) } else { None })
+    }
+
     /// Every pad with its footprint, footprint by footprint.
     pub fn pads(&self) -> impl Iterator<Item = (&Footprint, &Pad)> {
         self.footprints.iter().flat_map(|f| f.pads.iter().map(move |p| (f, p)))
@@ -85,6 +96,9 @@ pub struct Footprint {
     /// GetCourtyard of each side: empty when the side has none or it does not close.
     pub courtyard_front: Vec<Polygon>,
     pub courtyard_back: Vec<Polygon>,
+    /// The footprint's copper clearance, for its pads with none of their own. Not part of iot-lab.board.v1.
+    #[serde(skip)]
+    pub clearance_override: Option<Iu>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -114,6 +128,22 @@ pub struct Via {
     pub drill: Iu,
     pub net: String,
     pub locked: bool,
+}
+
+impl Track {
+    /// GetEffectiveShape: a segment, or an arc as its chords at the track width.
+    pub fn copper(&self) -> Vec<Copper> {
+        let Some(mid) = self.mid else { return vec![Copper::Segment { a: self.start, b: self.end, width: self.width }] };
+        let points = arc_points(&Arc::through(self.start, mid, self.end), self.width);
+        points.windows(2).map(|w| Copper::Segment { a: w[0], b: w[1], width: self.width }).collect()
+    }
+}
+
+impl Via {
+    /// GetEffectiveShape on a layer it flashes on.
+    pub fn copper(&self) -> Copper {
+        Copper::Circle { center: self.at, radius: self.size / 2 }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

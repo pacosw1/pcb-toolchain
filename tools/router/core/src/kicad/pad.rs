@@ -87,6 +87,9 @@ pub struct Pad {
     pub polygons: BTreeMap<String, Polygon>,
     /// GetSolderMaskExpansion, without DRU solder_mask_expansion rules.
     pub solder_mask_expansion: Iu,
+    /// The pad's own copper clearance, for GetOwnClearance. Not part of iot-lab.board.v1.
+    #[serde(skip)]
+    pub clearance_override: Option<Iu>,
 }
 
 /// PAD::GetSolderMaskExpansion: the pad's margin, else the footprint's, else the board's. A shrink stops at half the narrow side.

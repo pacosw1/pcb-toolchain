@@ -303,7 +303,7 @@ fn pad(kind: PadKind, size: i64, at: Pt, layers: &[&str]) -> Pad {
     Pad {
         id: String::new(), number: "1".to_string(), kind, shape: PadShape::Circle, net: "SIG".to_string(), position: at, orientation: 0.0,
         size: Pt::new(size, size), drill: Pt::default(), layers: layers.iter().map(|l| l.to_string()).collect(), bbox: crate::kicad::geom::Rect::around(at),
-        zone_connection: None, thermal_spoke_angle: 0.0, spoke_templates: 0, copper: Vec::new(), polygons: BTreeMap::new(), solder_mask_expansion: 0,
+        zone_connection: None, thermal_spoke_angle: 0.0, spoke_templates: 0, copper: Vec::new(), polygons: BTreeMap::new(), solder_mask_expansion: 0, clearance_override: None,
     }
 }
 

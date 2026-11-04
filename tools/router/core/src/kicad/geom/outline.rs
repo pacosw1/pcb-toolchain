@@ -28,7 +28,7 @@ fn delta_radius(radius: f64, segments: i64) -> f64 {
 }
 
 /// SHAPE_ARC::ConvertToPolyline: the ends stay on the arc and the chords share the error on both sides of it.
-fn arc_points(arc: &Arc, width: Iu) -> Vec<Pt> {
+pub fn arc_points(arc: &Arc, width: Iu) -> Vec<Pt> {
     let (start_deg, sweep) = (arc.start_angle(), arc.sweep());
     let r = arc.radius() as f64;
     let n = arc_segments(r + width as f64 / 2.0, MAX_ERROR, sweep);

@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::ops::{Add, Sub};
 
 pub mod boolean;
+pub mod collide;
 pub mod outline;
 pub mod index;
 pub mod polygon;

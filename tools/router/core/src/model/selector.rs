@@ -100,6 +100,13 @@ impl Selector {
         self.expr.as_ref().map_or(Value::Unknown, |e| eval(e, scope)).as_bool()
     }
 
+    /// As KiCad evaluates a condition with no second item (GetOwnClearance): anything read of B is undefined, so a comparison with
+    /// it is false whichever way it is written, and so is a call on it. isCoupledDiffPair needs B too.
+    pub fn eval_alone(&self, a: &Item) -> Option<bool> {
+        let alone = self.expr.as_ref().map(without_b)?;
+        eval(&alone, Scope { a, b: a, pair: true }).as_bool()
+    }
+
     /// A pair rule reads its second item: anything of B but its type, or an attribute of A against one of B.
     pub fn reads_both_items(&self) -> bool {
         let t = &self.tokens;
@@ -119,6 +126,22 @@ impl Selector {
             collect_reads(e, &mut reads);
         }
         reads
+    }
+}
+
+fn reads_b(e: &Expr) -> bool {
+    matches!(e, Expr::Attr(Side::B, _))
+}
+
+fn without_b(e: &Expr) -> Expr {
+    match e {
+        Expr::Not(x) => Expr::Not(Box::new(without_b(x))),
+        Expr::And(xs) => Expr::And(xs.iter().map(without_b).collect()),
+        Expr::Or(xs) => Expr::Or(xs.iter().map(without_b).collect()),
+        Expr::Compare { left, right, .. } if reads_b(left) || reads_b(right) => Expr::Bool(false),
+        Expr::Call(Side::B, ..) => Expr::Bool(false),
+        Expr::Call(_, f, _) if f == "isCoupledDiffPair" => Expr::Bool(false),
+        other => other.clone(),
     }
 }
 

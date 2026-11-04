@@ -82,6 +82,11 @@ pub fn net_line(net: &str) -> String {
     if net.is_empty() { String::new() } else { format!("\t\t(net {})\n", quoted(net)) }
 }
 
+/// The lines of a locked item: as `net_line`, with the lock. KiCad reads the two in any order.
+pub fn locked_net_line(net: &str) -> String {
+    format!("\t\t(locked yes)\n{}", net_line(net))
+}
+
 /// A segment; `start`, `end` and `width` are already KiCad text, `layer` a quoted name.
 pub fn segment_text(start: &str, end: &str, width: &str, layer: &str, net_line: &str, uuid: &str) -> String {
     format!("\t(segment\n\t\t(start {start})\n\t\t(end {end})\n\t\t(width {width})\n\t\t(layer {layer})\n{net_line}\t\t(uuid \"{uuid}\")\n\t)\n")

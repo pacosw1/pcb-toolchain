@@ -75,7 +75,7 @@ fn pair_of(files_pairs: &[(String, String)]) -> BTreeMap<&str, &str> {
     files_pairs.iter().flat_map(|(p, n)| [(p.as_str(), p.as_str()), (n.as_str(), p.as_str())]).collect()
 }
 
-fn pad_type(kind: PadKind) -> &'static str {
+pub fn pad_type(kind: PadKind) -> &'static str {
     match kind {
         PadKind::ThroughHole => "Through-hole",
         PadKind::Smd => "SMD",

@@ -6,10 +6,12 @@ pub const PINNED_COMMIT: &str = "4fe1ca20605d722a8972dabe11b4a90fc6b3d879";
 pub mod client;
 #[allow(clippy::all, unused_qualifications)]
 pub mod proto;
+mod query;
 mod read;
 pub mod server;
 mod transport;
 
 pub use client::{ApiError, Client, decode};
+pub use query::{connected_vias, read_rules};
 pub use read::read_board;
 pub use server::Server;

@@ -20,7 +20,7 @@ fn rescale(a: i64, b: i64, c: i64) -> i64 {
 
 /// SHAPE_LINE_CHAIN::PointInside with no accuracy margin: an even-odd ray to +x, so a point on a left or top edge is inside and
 /// one on a right or bottom edge is not.
-fn ring_contains(ring: &[Pt], p: Pt) -> bool {
+pub(super) fn ring_contains(ring: &[Pt], p: Pt) -> bool {
     if ring.len() < 3 {
         return false;
     }
@@ -48,7 +48,7 @@ fn dot(a: Pt, b: Pt) -> f64 {
 }
 
 /// Squared distance from a point to a segment.
-fn point_segment_sq(p: Pt, a: Pt, b: Pt) -> f64 {
+pub(super) fn point_segment_sq(p: Pt, a: Pt, b: Pt) -> f64 {
     let (ab, ap) = (b - a, p - a);
     let len = dot(ab, ab);
     let t = if len == 0.0 { 0.0 } else { (dot(ap, ab) / len).clamp(0.0, 1.0) };
@@ -70,7 +70,7 @@ fn overlap_on_line(a: Pt, b: Pt, c: Pt, d: Pt) -> bool {
     a.x.min(b.x) <= c.x.max(d.x) && c.x.min(d.x) <= a.x.max(b.x) && a.y.min(b.y) <= c.y.max(d.y) && c.y.min(d.y) <= a.y.max(b.y)
 }
 
-fn segment_segment_sq(a: Pt, b: Pt, c: Pt, d: Pt) -> f64 {
+pub(super) fn segment_segment_sq(a: Pt, b: Pt, c: Pt, d: Pt) -> f64 {
     if segments_cross(a, b, c, d) {
         return 0.0;
     }

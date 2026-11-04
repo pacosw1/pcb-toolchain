@@ -177,7 +177,7 @@ mod tests {
         BoardPad {
             id: String::new(), number: "9".to_string(), kind: PadKind::Smd, shape: PadShape::Rect, net: "GND".to_string(), position: form.center, orientation: 90.0, size: form.size,
             drill: Pt::default(), layers: vec!["F.Cu".to_string()], bbox: Rect::around(form.center), zone_connection: None, thermal_spoke_angle: 90.0, spoke_templates: 0,
-            copper: form.copper(), polygons: BTreeMap::new(), solder_mask_expansion: 0,
+            copper: form.copper(), polygons: BTreeMap::new(), solder_mask_expansion: 0, clearance_override: None,
         }
     }
 
