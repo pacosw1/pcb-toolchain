@@ -448,7 +448,7 @@ fn start(m: &Model) -> State {
 }
 
 /// One record of the descent.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize)]
 pub struct Iteration {
     pub wa: f64,
     pub overflow: f64,

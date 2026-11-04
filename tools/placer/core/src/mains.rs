@@ -8,7 +8,7 @@
 
 use crate::dru::{Rules, fnmatch};
 use crate::geom::{Point, Rect};
-use crate::numeric::hypot;
+use crate::numeric::{compensated, hypot, round_to};
 use crate::problem::{Place, Problem};
 use serde::Serialize;
 use std::cmp::Ordering;
@@ -20,13 +20,8 @@ fn distance(a: Point, b: Point) -> f64 {
     hypot(a.0 - b.0, a.1 - b.1)
 }
 
-/// `round(v, 6)` of the reference: the decimal rounding of the exact binary value.
-fn round6(v: f64) -> f64 {
-    format!("{v:.6}").parse().expect("a formatted number parses")
-}
-
 fn point6(p: Point) -> Point {
-    (round6(p.0), round6(p.1))
+    (round_to(p.0, 6), round_to(p.1, 6))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -198,17 +193,7 @@ fn simple_paths(a: Point, b: Point) -> Vec<Vec<Point>> {
 }
 
 fn length(path: &[Point]) -> f64 {
-    let mut sum = (0.0, 0.0);
-    for s in path.windows(2) {
-        sum = compensated_step(sum, distance(s[0], s[1]));
-    }
-    sum.0 + sum.1
-}
-
-/// One step of the compensated sum, kept here for a running path length.
-fn compensated_step((sum, carry): (f64, f64), x: f64) -> (f64, f64) {
-    let t = sum + x;
-    (t, carry + if sum.abs() >= x.abs() { (sum - t) + x } else { (x - t) + sum })
+    compensated(path.windows(2).map(|s| distance(s[0], s[1])))
 }
 
 /// Two-bend paths through one channel coordinate, on a grid out to `SPAN` beyond the pads, the shortest first.
@@ -321,7 +306,7 @@ fn maze(a: Point, targets: &[Point], obstacles: &[Obstacle]) -> Option<Vec<Point
     let fold = |f: fn(f64, f64) -> f64, g: fn(&Point) -> f64| targets.iter().map(g).fold(g(&a), f);
     let lo = (fold(f64::min, |p| p.0) - MARGIN, fold(f64::min, |p| p.1) - MARGIN);
     let hi = (fold(f64::max, |p| p.0) + MARGIN, fold(f64::max, |p| p.1) + MARGIN);
-    let at = |k: Cell| (round6(a.0 + k.0 as f64 * STEP), round6(a.1 + k.1 as f64 * STEP));
+    let at = |k: Cell| point6((a.0 + k.0 as f64 * STEP, a.1 + k.1 as f64 * STEP));
     let estimate = |k: Cell| targets.iter().map(|&t| distance(at(k), t)).fold(f64::INFINITY, f64::min);
     let mut best = HashMap::from([((0, 0), 0.0)]);
     let mut previous: HashMap<Cell, Cell> = HashMap::new();
@@ -412,7 +397,7 @@ fn fault_of(net: &str, least: LeastBad) -> Fault {
     let mut worst: BTreeMap<(String, String), f64> = BTreeMap::new();
     for (margin, o) in &least.blocked {
         let label = if o.net.is_empty() { &o.class } else { &o.net };
-        let short = format!("{:.3}", -margin).parse().expect("a formatted number parses");
+        let short = round_to(-margin, 3);
         let slot = worst.entry((o.reference.clone(), label.clone())).or_insert(0.0);
         *slot = f64::max(*slot, short);
     }

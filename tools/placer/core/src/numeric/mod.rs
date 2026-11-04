@@ -13,6 +13,11 @@ pub use pcg::Pcg64;
 pub use rng::PyRandom;
 pub use sum::{compensated, pairwise};
 
+/// `round(v, digits)`: the decimal rounding of the exact binary value.
+pub fn round_to(v: f64, digits: usize) -> f64 {
+    format!("{v:.digits$}").parse().expect("a formatted number parses")
+}
+
 /// The middle of the values; the mean of the two middle values for an even count. Empty gives NaN.
 pub fn median(values: &[f64]) -> f64 {
     let mut v = values.to_vec();

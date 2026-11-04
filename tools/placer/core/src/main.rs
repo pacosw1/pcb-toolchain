@@ -2,10 +2,14 @@
 //!
 //!   iotplace run PROB.json -o RES.json [--workers N --epochs 20 --steps 20000 --seed 1 --top 3] [--param k=v ...]
 //!   iotplace scramble PROB.json -o OUT.json [--seed 1] [--sigma MM]
+//!   iotplace gplace PROB.json -o OUT.json [--param k=v ...]    the analytic stage alone: {pose, history}
+//!   iotplace count DRC.json [--nets NETS.txt]                  the open and error counts of a kicad-cli DRC report
 //!
 //! run: exit 3 when no candidate is legal. Last lines: a cost line per candidate and the speed.
 
 use iotplace::bench::scramble;
+use iotplace::drc_count::{Report, count};
+use iotplace::gplace::place;
 use iotplace::params::Params;
 use iotplace::problem::Problem;
 use iotplace::search::{Candidate, Initial, Plan, SearchResult, optimize};
@@ -22,7 +26,7 @@ struct Args {
     params: Vec<String>,
 }
 
-const VALUE_OPTIONS: [&str; 6] = ["--workers", "--epochs", "--steps", "--seed", "--top", "--sigma"];
+const VALUE_OPTIONS: [&str; 7] = ["--workers", "--epochs", "--steps", "--seed", "--top", "--sigma", "--nets"];
 
 fn parse_args(argv: &[String]) -> iotplace::Result<Args> {
     let mut a = Args::default();
@@ -124,12 +128,35 @@ fn scramble_cmd(a: &Args) -> iotplace::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+fn gplace_cmd(a: &Args) -> iotplace::Result<ExitCode> {
+    let (input, output) = a.paths()?;
+    let pr = Problem::load(input)?;
+    let params = Params::from_args(&a.params)?;
+    let (pose, history) = place(&pr, &params, &|line| println!("{line}"));
+    std::fs::write(output, serde_json::to_string(&serde_json::json!({ "pose": pose, "history": history }))?)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Prints the UNROUTED line and the counts as JSON. NETS.txt is a comma list.
+fn count_cmd(a: &Args) -> iotplace::Result<ExitCode> {
+    let input = a.file.as_deref().ok_or("a DRC report is required")?;
+    let report: Report = serde_json::from_str(&std::fs::read_to_string(input)?)?;
+    let nets = a.options.iter().rev().find(|(f, _)| f == "--nets").map(|(_, path)| std::fs::read_to_string(path)).transpose()?;
+    let nets: Vec<String> = nets.iter().flat_map(|t| t.trim().split(',')).map(String::from).collect();
+    let counts = count(&report, &nets);
+    println!("{}", counts.line());
+    println!("{}", serde_json::to_string(&counts)?);
+    Ok(ExitCode::SUCCESS)
+}
+
 fn dispatch(argv: &[String]) -> iotplace::Result<ExitCode> {
-    let (command, rest) = argv.split_first().ok_or("usage: iotplace run|scramble ...")?;
+    let (command, rest) = argv.split_first().ok_or("usage: iotplace run|scramble|gplace|count ...")?;
     let args = parse_args(rest)?;
     match command.as_str() {
         "run" => run(&args),
         "scramble" => scramble_cmd(&args),
+        "gplace" => gplace_cmd(&args),
+        "count" => count_cmd(&args),
         other => Err(format!("unknown command {other}").into()),
     }
 }
