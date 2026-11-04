@@ -10,8 +10,11 @@
 # 4. Only out/ comes back, to --results DIR (default $TMPDIR/iot-lab-remote/<job-id>).
 #    The Mac board files are never written. Final gates stay on the Mac.
 # The exit code is the exit code of the command; a transport error also gives non-zero.
+# Exit 75: the job waited REMOTE_QUEUE_WAIT in the daemon's queue and never ran; stderr has the reason. There is no SSH
+# retry of it: that path runs on the same box without the budget, so it would go around what held the job.
 #
 # Env: REMOTE_HOST (user@host, required; the project sets it in .pcb-toolchain.env), REMOTE_CPUS (24), REMOTE_MEM (32g), REMOTE_TIMEOUT (s, 300; exit 124 = timed out: fix placement, do not wait longer),
+#      REMOTE_QUEUE_WAIT (s, 3600; the daemon path only. Longest wait for a place; REMOTE_TIMEOUT starts when the job runs),
 #      REMOTE_KEEP=1 keeps the remote job folder after success (a failed job folder is always kept).
 # Image: tools/remote-route.Dockerfile, built on the box in /srv/iot-lab-route/image.
 set -euo pipefail
@@ -73,7 +76,7 @@ if daemon_ready 2>/dev/null; then
   RAW=$(mktemp -d)
   ARGS=("$BOARD")
   for f in ${INPUTS[@]+"${INPUTS[@]}"}; do ARGS+=(--in "$f"); done
-  ARGS+=(--cpus "${REMOTE_CPUS:-24}" --mem "$(mem_gb "${REMOTE_MEM:-32g}")" --timeout "${REMOTE_TIMEOUT:-300}" --fit budget --results "$RAW")
+  ARGS+=(--cpus "${REMOTE_CPUS:-24}" --mem "$(mem_gb "${REMOTE_MEM:-32g}")" --timeout "${REMOTE_TIMEOUT:-300}" --queue-wait "${REMOTE_QUEUE_WAIT:-3600}" --fit budget --results "$RAW")
   [ -z "${REMOTE_IMAGE:-}" ] || ARGS+=(--image "$REMOTE_IMAGE")
   set +e
   IOT_LAB=$REPO PCB_TOOLCHAIN_ROOT=$REPO node --no-warnings --experimental-strip-types "$CLIENT" run "${ARGS[@]}" -- "$@"
@@ -82,6 +85,7 @@ if daemon_ready 2>/dev/null; then
   # Callers read their files from the results folder itself, as on the SSH path: only out/ comes back.
   if [ -d "$RAW/out" ]; then cp -R "$RAW/out/." "$RESULTS/"; fi
   rm -rf "$RAW"
+  [ "$RC" != 75 ] || echo "remote: the job never started: it reached the queue bound (the line above has the reason)" >&2
   echo "remote: daemon job  exit $RC  wall $(( $(date +%s) - T0 )) s  results $RESULTS" >&2
   exit $RC
 fi

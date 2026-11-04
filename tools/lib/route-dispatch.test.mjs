@@ -24,7 +24,8 @@ async function daemon(t,status=200){
 }
 
 // The stand-in client plays one job. `job`: the record `status` prints; `out`: files of out/route, by name.
-function clientSource(root,{job,exit,out={},stdout='',noId=false,stderr='',hang=false}){
+// `queuedMs`, then the job's running line, then `runMs`: the time it waits and the time it runs.
+function clientSource(root,{job,exit,out={},stdout='',noId=false,stderr='',hang=false,queuedMs=0,runMs=0}){
   return`import fs from 'node:fs';
 const root=${JSON.stringify(root)};
 const a=process.argv.slice(2);
@@ -36,6 +37,8 @@ const ins=a.flatMap((x,i)=>x==='--in'?[a[i+1]]:[]);
 fs.writeFileSync(root+'/inputs.json',JSON.stringify(ins.map(f=>({f,mtime:fs.statSync(f).mtimeMs,mode:fs.statSync(f).mode}))));
 ${noId?'':`console.error('pcb-job: job J1');`}
 ${stderr?`console.error(${JSON.stringify(stderr)});`:''}
+${queuedMs||runMs?`const pause=ms=>Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,ms);
+pause(${queuedMs});console.error('[2026-11-04T16:59:08.408Z] running: attempt 1, after 333 s queued');pause(${runMs});`:''}
 ${hang?'setInterval(()=>{},1000);':`
 for(const [n,text] of Object.entries(${JSON.stringify(out)})){
   const f=k('--results')+'/out/route/'+n;fs.mkdirSync(f.slice(0,f.lastIndexOf('/')),{recursive:true});fs.writeFileSync(f,text);
@@ -235,6 +238,74 @@ for(const [name,client] of [
   assert.ok(ranLocally(p));
   assert.ok(!existsSync(r.out+'.iotroute'));
   assert.deepEqual(readdirSync(dirname(r.out)),[]);
+});
+
+const HELD='[2026-11-04T16:53:40.000Z] queued for 5 s: host cpu: 90 % busy, job adds 25 %, limit 95 %';
+const QUEUE_CAUSE='queued for 300 s: host cpu: 90 % busy, job adds 25 %, limit 95 %';
+const queueFailed={id:'J1',state:'failed',attempts:[],spec:{image:'iot-lab-route:10.0'},result:{outcome:'queue',exitCode:null,detail:QUEUE_CAUSE}};
+
+test('the job gets the queue bound: 300 s, or PCB_QUEUE_WAIT_S',async t=>{
+  const after=(c,k)=>c.a[c.a.indexOf(k)+1];
+  for(const [env,want] of [[{},'300'],[{PCB_QUEUE_WAIT_S:'45'},'45']]){
+    const p=project(t,{client:{exit:0,job:jobOf('passed','passed',0),out:files(record('PASS'))}});
+    await dispatch(p,{JOBD_URL:await daemon(t),...env});
+    assert.equal(after(calls(p)[0],'--queue-wait'),want);
+  }
+});
+
+test('the default bound is the one tools/pcb_cli.py credits',()=>{
+  const number=(file,re)=>re.exec(readFileSync(new URL(file,import.meta.url),'utf8'))?.[1];
+  const node=number('../router/route-dispatch.mjs',/^const QUEUE_WAIT_S=(\d+);/m);
+  assert.ok(node);
+  assert.equal(number('../pcb_cli.py',/^QUEUE_WAIT_S = (\d+)/m),node);
+});
+
+test('a job the daemon gave up on in the queue never started: the run is local, and says why',async t=>{
+  const p=project(t,{client:{exit:75,job:queueFailed,stderr:HELD}});
+  const r=await dispatch(p,{JOBD_URL:await daemon(t)});
+  assert.equal(r.status,5,r.stderr);
+  assert.ok(ranLocally(p));
+  assert.match(r.stderr,/queued for 5 s: host cpu: 90 % busy/,'the client\'s hold lines reach the user');
+  assert.match(r.stderr,/route: job J1 never started: queued for 300 s: host cpu/);
+  assert.deepEqual(readdirSync(dirname(r.out)),[]);
+});
+
+test('an attempt on record is not a queue timeout: no local run',async t=>{
+  const p=project(t,{client:{exit:1,job:{...queueFailed,attempts:[{outcome:'infra'}]}}});
+  const r=await dispatch(p,{JOBD_URL:await daemon(t)});
+  assert.equal(r.status,2);
+  assert.ok(!ranLocally(p));
+});
+
+test('the queue clock counts from the job id to the running line, and stops there',async t=>{
+  const p=project(t,{client:{exit:0,job:jobOf('passed','passed',0),out:files(record('PASS')),queuedMs:1300,runMs:1500}});
+  const clock=join(p.root,'run/operation/queue-wait.json');
+  const r=await dispatch(p,{JOBD_URL:await daemon(t),PCB_QUEUE_CLOCK:clock});
+  assert.equal(r.status,0,r.stderr);
+  const {seconds}=JSON.parse(readFileSync(clock,'utf8'));
+  assert.ok(seconds>=1.2&&seconds<2.5,String(seconds));
+  assert.deepEqual(readdirSync(dirname(clock)),['queue-wait.json']);
+});
+
+test('the clock moves while the job waits, so a run deadline cannot pass it by',async t=>{
+  const p=project(t,{client:{hang:true}});
+  const clock=join(p.root,'run/operation/queue-wait.json');
+  const run=dispatch(p,{JOBD_URL:await daemon(t),PCB_QUEUE_CLOCK:clock},{wait:false});
+  for(let i=0;i<300&&!existsSync(clock);i++)await new Promise(r=>setTimeout(r,20));
+  t.after(()=>run.child.kill('SIGKILL'));
+  const first=JSON.parse(readFileSync(clock,'utf8')).seconds;
+  await new Promise(r=>setTimeout(r,1300));
+  assert.ok(JSON.parse(readFileSync(clock,'utf8')).seconds>first);
+  run.child.kill('SIGTERM');
+  await run.done;
+});
+
+test('a job the daemon ended in the queue stops the clock at the bound, and the local run keeps it',async t=>{
+  const p=project(t,{client:{exit:75,job:queueFailed,stderr:'[t] failed: '+QUEUE_CAUSE}});
+  const clock=join(p.root,'run/operation/queue-wait.json');
+  const r=await dispatch(p,{JOBD_URL:await daemon(t),PCB_QUEUE_CLOCK:clock});
+  assert.equal(r.status,5,r.stderr);
+  assert.ok(existsSync(clock));
 });
 
 test('SIGTERM cancels the job',async t=>{

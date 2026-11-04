@@ -15,7 +15,12 @@
 // A daemon failure partway. A job that may have run is never run again here, because the same route would run twice:
 // after an unclear submit, a lost connection, a timeout or a lost result the exit is 2 and result.json names the job.
 // Local runs only when the job provably never started: the daemon refused the submit, the submit never left this Mac
-// (client exit 2 and no job id, except HTTP 500, which may come after the record), or every attempt ended `start`.
+// (client exit 2 and no job id, except HTTP 500, which may come after the record), every attempt ended `start`, or the
+// job reached its queue bound (PCB_QUEUE_WAIT_S). The daemon ends that job itself, so no start can race the local run.
+//
+// The wait does not spend the run's time. --timeout starts when the job runs, and under `pcb` the seconds spent queued
+// go to PCB_QUEUE_CLOCK, which the supervisor adds to the run deadline (tools/pcb_cli.py). A local run after the bound
+// therefore still has its whole budget.
 import {spawn,spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import fs from 'node:fs';
@@ -28,6 +33,10 @@ const HAPPY='kicad-happy';
 const RECORD_SCHEMA='iot-lab.iotroute-run.v1';
 const DEFAULT_TIMEOUT_S=600;   // tools/pcb's --timeout default
 const CANCEL_MS=1500;          // lean_owned sends SIGKILL 2 s after SIGTERM
+// To tune. A wait this long has a good chance to end: 90 % of the host's busy spells were over in 210 s (guard log,
+// 17 days to 2026-11-04), and the local run is there. tools/pcb_cli.py has the same number; a test keeps them equal.
+const QUEUE_WAIT_S=300;
+const QUEUE_CLOCK_MS=1000;     // how far the credit may lag; the supervisor checks 10 times a second
 const VALUE_OPTIONS=new Set(['--iters','--max-time']);
 const FLAGS=new Set(['--congestion','--return-exempt']);
 const FILE_OPTIONS=new Set(['--pcb','--lock-from']);
@@ -164,19 +173,40 @@ function stageInputs(plan,stage){
   return[bin,tar];
 }
 
+/**
+ * Seconds in the daemon's queue, for the run deadline: from the job id to its first state past `queued`. The file is
+ * replaced whole, because the supervisor reads it at any moment, and every second, because it must stay ahead of the
+ * deadline while the job waits.
+ */
+function queueClock(file){
+  let since=0,timer=null;
+  const write=()=>{
+    fs.mkdirSync(path.dirname(file),{recursive:true});
+    fs.writeFileSync(file+'.tmp',JSON.stringify({seconds:(Date.now()-since)/1000}));
+    fs.renameSync(file+'.tmp',file);
+  };
+  return{
+    start(){if(!file||since)return;since=Date.now();write();timer=setInterval(write,QUEUE_CLOCK_MS);},
+    stop(){if(!timer)return;clearInterval(timer);timer=null;write();},
+  };
+}
+
 /** `client run`: streams the job to stderr, fills `results`. -> {code, id, refused500, stdout}. */
 function submitAndWatch(plan,inputs,timeoutS,results){
   const name=path.basename(plan.out,'.kicad_pcb');
   const cmd=['bash','-c',JOB_SCRIPT,'_','tools/router/run.py',plan.board,`out/route/${name}.kicad_pcb`,'--bin',`in/${BIN}`,...plan.args];
-  const args=['run',plan.board,...inputs.flatMap(f=>['--in',f]),'--timeout',String(timeoutS),'--results',results,'--name',`route-${name}`];
+  const queueWait=process.env.PCB_QUEUE_WAIT_S||String(QUEUE_WAIT_S);
+  const args=['run',plan.board,...inputs.flatMap(f=>['--in',f]),'--timeout',String(timeoutS),'--queue-wait',queueWait,'--results',results,'--name',`route-${name}`];
   if(process.env.REMOTE_IMAGE)args.push('--image',process.env.REMOTE_IMAGE);
   const [exe,argv,opts]=clientProcess(plan,[...args,'--',...cmd],['ignore','pipe','pipe']);
   return new Promise(resolve=>{
-    const child=spawn(exe,argv,opts),seen={id:null,stdout:'',stderr:''};
+    const child=spawn(exe,argv,opts),seen={id:null,stdout:'',stderr:''},clock=queueClock(process.env.PCB_QUEUE_CLOCK);
     child.stdout.on('data',d=>{seen.stdout+=d;process.stderr.write(d);});
     child.stderr.on('data',d=>{
       seen.stderr+=d;process.stderr.write(d);
       seen.id??=seen.stderr.match(/^pcb-job: job (\S+)$/m)?.[1]??null;
+      if(seen.id)clock.start();
+      if(/^\[\S+\] (running|passed|failed|cancelled): /m.test(seen.stderr))clock.stop();
     });
     // A stopped `pcb route` must not leave its job holding the budget until the job's own time limit.
     for(const [signal,number] of [['SIGTERM',15],['SIGINT',2]])process.on(signal,()=>{
@@ -184,7 +214,7 @@ function submitAndWatch(plan,inputs,timeoutS,results){
       child.kill();process.exit(128+number);
     });
     child.on('error',e=>{say(`cannot start the client: ${e.message}`);resolve({code:1,...seen});});
-    child.on('close',code=>resolve({code,...seen}));
+    child.on('close',code=>{clock.stop();resolve({code,...seen});});
   });
 }
 
@@ -259,7 +289,8 @@ async function runOnDaemon(plan,timeoutS){
     if(code===3)return noVerdict(plan,`daemon unreachable, job ${id} goes on: pcb-job watch ${id}`,id,null);
     const job=jobRecord(plan,id);
     if(!job)return noVerdict(plan,`no status for job ${id}: pcb-job status ${id}`,id,null);
-    if(job.state==='failed'&&job.attempts.length&&job.attempts.every(a=>a.outcome==='start')){
+    const queueBound=job.result?.outcome==='queue'&&!job.attempts.length;
+    if(job.state==='failed'&&(queueBound||job.attempts.length&&job.attempts.every(a=>a.outcome==='start'))){
       say(`job ${id} never started: ${job.result?.detail}`);return null;
     }
     const verdict=job.state==='passed'||(job.result?.outcome==='command'&&[1,2].includes(job.result.exitCode));

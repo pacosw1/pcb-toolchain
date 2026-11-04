@@ -14,7 +14,7 @@ TUNNEL=
 
 export JOBD_URL=http://127.0.0.1:$PORT
 export JOBD_TOKEN=$(openssl rand -hex 32)
-export PCB_TOOLCHAIN_ROOT=$HERE/../..
+export PCB_TOOLCHAIN_ROOT=$STAGE   # an empty tools/: these jobs run in/*.sh, and each submit would upload the real one
 export IOT_LAB=$STAGE
 
 r() { ssh -o BatchMode=yes "$HOST" "$@"; }
@@ -37,7 +37,7 @@ results() { # id dir: 409 until the cleanup is done
 }
 daemon_start() { r "cd $RDIR && JOBD_TOKEN_FILE=$RDIR/token JOBD_DATA_DIR=$RDIR/data JOBD_PORT=$PORT JOBD_INSTANCE=e2e \
   JOBD_CPU_BUDGET=8 JOBD_MEM_BUDGET_GB=8 JOBD_DEFAULT_CPUS=1 JOBD_DEFAULT_MEM_GB=1 JOBD_RETRY_BACKOFF_S=2 JOBD_TICK_MS=500 \
-  JOBD_DEFAULT_DISK_GB=1 JOBD_MIN_FREE_GB=${FLOOR:-5} JOBD_DISK_CHECK_S=1 JOBD_PIDS_LIMIT=64 \
+  JOBD_DEFAULT_DISK_GB=1 JOBD_MIN_FREE_GB=${FLOOR:-5} JOBD_DISK_CHECK_S=1 JOBD_PIDS_LIMIT=64 JOBD_CPU_BUSY_MAX_PCT=${BUSY_MAX:-95} \
   JOBD_CGROUP_PARENT=system.slice nohup node --no-warnings src/main.ts >> daemon.log 2>&1 < /dev/null & echo \$! > $RDIR/daemon.pid"; }
 daemon_kill9() { r "kill -9 \$(cat $RDIR/daemon.pid)"; }
 
@@ -49,7 +49,7 @@ cleanup() {
 trap cleanup EXIT
 
 # The fixture: an empty board folder and small job scripts.
-mkdir -p "$STAGE/board" "$STAGE/jobs"
+mkdir -p "$STAGE/board" "$STAGE/jobs" "$STAGE/tools"
 echo '{}' > "$STAGE/board/gate.json"
 printf 'echo hello; echo result > out/hello.txt\n' > "$STAGE/jobs/hello.sh"
 printf 'echo failing; exit 3\n' > "$STAGE/jobs/verdict.sh"
@@ -243,6 +243,22 @@ check 'no cleaner left' "$(r "docker ps -aq --filter label=pcb-job-cleaner=e2e |
 echo '# open files are capped'
 pcb run board $(job nofile) --results "$STAGE/r13" -- bash in/nofile.sh > "$STAGE/r13.log" 2> /dev/null
 check 'ulimit -n' "$(cat "$STAGE/r13.log")" 1024
+
+echo '# the real CPU reading holds a job; the reason is on record and the queue bound ends the wait'
+r "kill \$(cat $RDIR/daemon.pid)"
+BUSY_MAX=0 daemon_start
+sleep 2
+pcb run board $(job hello) --queue-wait 9 --results "$STAGE/r14" -- bash in/hello.sh > /dev/null 2> "$STAGE/r14.log"
+check 'exit 75' $? 75
+check 'held on a real reading' "$(grep -c -E 'failed: queued for (9|10) s: host cpu: [0-9]+ % busy, job adds 3 %, limit 0 %' "$STAGE/r14.log")" 1
+check 'reason shown while it waits' "$(grep -c -m1 -E '\] queued for [0-9]+ s: host cpu' "$STAGE/r14.log")" 1
+check 'reason in the journal' "$(r "grep -c -m1 'queued for [0-9]* s: host cpu' $RDIR/daemon.log")" 1
+ID=$(pcb list | tail -1 | cut -d' ' -f1)
+check 'never started' "$(attempts "$ID")" 0
+check 'outcome' "$(outcome "$ID")" queue
+r "kill \$(cat $RDIR/daemon.pid)"
+daemon_start
+sleep 2
 
 echo '# unlinked files, which du cannot see: the host disk floor kills the job'
 AVAIL=$(r "df -k --output=avail $RDIR/data | tail -1")

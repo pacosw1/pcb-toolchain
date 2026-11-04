@@ -27,7 +27,7 @@ pcb-job results ID [DIR]
 ```
 
 `run` and `watch` exit 0 on passed, the command's code on failed, 130 on cancelled, 3 if the daemon stayed unreachable
-for 5 minutes (the job goes on). Results: `out/` of the last attempt, `job.json`, `events.jsonl`, and
+for 5 minutes (the job goes on), 75 if the job reached its queue bound and never ran. Results: `out/` of the last attempt, `job.json`, `events.jsonl`, and
 `attempts/N/out/job.log` of earlier attempts.
 
 The client ships what `remote.sh` ships, plus the evidence files named by `tools/driver-edges.json` and
@@ -42,13 +42,34 @@ rule for a daemon failure partway. The placer needs the numpy wheel, as in `tool
 
 ```
 queued -> running -> passed
-            |  |---> failed
-            |  |---> cancelled
-            v
-         retrying -> running (next attempt) or cancelled
+   |        |  |---> failed
+   |        |  |---> cancelled
+   |        v
+   |     retrying -> running (next attempt) or cancelled
+   v
+ failed (queue bound) or cancelled
 ```
 
 `queued` and `retrying` jobs cancel at once. A running job's container is killed and it ends at the next tick.
+
+## Queue wait
+
+`--timeout` is the job's own time and starts when the attempt starts, so a wait never spends it. The wait has its own
+bound, `--queue-wait` (spec `queueWaitS`), counted from the submit. Past it the daemon fails the job with outcome
+`queue` and the cause `queued for N s: <hold reason>`. The daemon decides this in the tick, not the client, so no start
+can race it: outcome `queue` with no attempts means the job never ran. A job that can start at its bound starts. A
+`retrying` job has run already and is not bounded.
+
+What a client does at the bound: `route-dispatch.mjs` runs locally (`PCB_QUEUE_WAIT_S`, 300 s), `remote.sh` exits 75
+(`REMOTE_QUEUE_WAIT`, 3600 s; it has no other place to run, and its SSH path would go around the budget on the same box).
+
+Each hold reason goes to the job's `events.jsonl` (an event with `from` = `to`) and to the journal, when the reason
+changes and every 30 s while it lasts. `pcb-job run` and `watch` print it, `pcb-job list` shows it, and `hold` is in the
+job's record while it waits. A job behind the head of the queue says `behind <id>: <reason>`.
+
+Under `pcb route --router iotroute` the run deadline is the supervisor's, not the daemon's. `route-dispatch.mjs` writes
+the seconds queued to `operation/queue-wait.json` and `tools/pcb_cli.py` adds them to the deadline, up to the same
+bound. Children read `IOT_LEAN_DEADLINE` only once, so theirs holds the whole bound; the supervisor enforces the real one.
 
 ## Retry rule
 
@@ -66,6 +87,7 @@ folder takes part. If the container is gone, the job has no verdict: it is `infr
 | Container gone with no state | `infra` | Yes |
 | Exit 137 before the time limit (SIGKILL from outside), or 255 (Docker lost it) | `infra` | Yes |
 | `docker run` error | `infra` | Yes |
+| Still queued at `--queue-wait` | `queue` | No: there was no attempt |
 
 A tool that really exits 255 is retried too, within `--retries`. Exit 0 is what the job's PID 1 reported, so a hostile
 job can always claim success, as any process can. What it cannot do is turn a kill or a limit into a pass.
@@ -138,11 +160,22 @@ The box is already fully claimed on paper: `ci-runners.slice` 20 CPUs and 40 GB,
 2. **Hard limits per job.** `docker run --cpus --memory --memory-swap`, no swap.
 3. **`pcbjobs.slice`.** Top-level, `CPUWeight=10`, so CI and the orchestrator win when CPU is contended, with a hard
    ceiling for the sum. `--oom-score-adj 1000` makes jobs the kernel's first choice if the host runs out of memory.
-4. **Admission on live pressure.** A job does not start while CPU PSI or free memory is outside the limits below,
-   the same signals `servterm-resource-guard` reads. `pcb-job status` gives the reason in `hold`.
+4. **Admission on live load.** A job does not start while host CPU plus the job's whole `--cpus`, or free memory, is
+   outside the limits below. `servterm-resource-guard` reads the same two numbers. `pcb-job status` gives the reason in
+   `hold`.
 
-Known limit: the guard cuts CI's quota at 95 % host CPU, also when that load comes from jobs, down to its floor of 60 %
-of 32 CPUs = 19.2 CPUs, about CI's static 20. Running jobs are not paused. If that hurts, lower `JOBD_CPU_BUDGET`.
+Admission does not read CPU PSI. It did, against the guard's recovery line of 5, and that held job FW-IO for 5 min 33 s
+on 2026-11-04 while the guard logged the host at 19-51 % busy. `some` counts a task waiting anywhere, and a task
+throttled by its own cgroup quota counts up to the root: two compile containers capped at 2 CPUs gave root PSI 78 with the
+host 78 % idle. So high PSI here says those containers want more than their quota, not that the host has no room, and
+a new job in its own cgroup does not compete with them for that quota. In the guard log PSI was at or over 5 in 9.4 % of
+samples over 17 days, and over the last 7 days 84 % of the samples at or over 20 had the host below 80 % busy. Raising
+the limit does not fix this: FW-IO saw 83.
+
+Known limits: the guard cuts CI's quota at 95 % host CPU or CPU PSI 20, also when that comes from jobs, down to its floor
+of 60 % of 32 CPUs = 19.2 CPUs, about CI's static 20. Running jobs are not paused. If that hurts, lower `JOBD_CPU_BUDGET`.
+A job at its own `--cpus` quota adds to root PSI just as those containers do. Two starts on neighbouring ticks can pass on
+one CPU reading, because a job takes time to load the host; the budget bounds that to `JOBD_CPU_BUDGET`.
 
 ## Defaults
 
@@ -160,7 +193,9 @@ of 32 CPUs = 19.2 CPUs, about CI's static 20. Running jobs are not paused. If th
 | `JOBD_MAX_TIMEOUT_S` | 21600 | **To tune.** Stops a job from holding budget without end. Compaction's budget is 45 min |
 | `JOBD_DEFAULT_RETRIES`, `JOBD_MAX_RETRIES` | 2, 5 | **To tune** |
 | `JOBD_RETRY_BACKOFF_S` | 30 | **To tune.** Doubles per retry |
-| `JOBD_CPU_PSI_MAX` | 5 | Guard: CI's quota recovers only below CPU PSI some avg10 = 5 |
+| `JOBD_CPU_BUSY_MAX_PCT` | 95 | Guard: it cuts CI's quota at 95 % host CPU. Compared after adding the job's `--cpus` as a share of the host, over the guard's 5 s window. Holds an 8-CPU job at 70 % busy: 2.2 % of 17 days of guard samples |
+| `JOBD_DEFAULT_QUEUE_WAIT_S` | 3600 | **To tune.** For clients with no other place to run. Above the longest known job, compaction's 45 min, and the 32 min p99 of spells at 70 % busy or more |
+| `JOBD_MAX_QUEUE_WAIT_S` | 21600 | **To tune.** `JOBD_MAX_TIMEOUT_S`: one job ahead can hold the budget that long |
 | `JOBD_MEM_FLOOR_FRACTION` | 0.2 | Guard: CI's memory recovers only above 20 % available. Compared after subtracting the job's `--mem` |
 | `JOBD_MIN_FREE_GB` | 20 | **To tune.** Refuses submits and holds starts below it |
 | `JOBD_MAX_UPLOAD_MB` | 512 | **To tune.** `tools/` is 8 MB and the driver evidence 17 MB, before compression; boards and `--in` files add to that |
@@ -175,7 +210,7 @@ of 32 CPUs = 19.2 CPUs, about CI's static 20. Running jobs are not paused. If th
 | `JOBD_MAX_UPLOADS` | 2 | **To tune.** Each holds a `tar -t` for up to 60 s |
 | `JOBD_MAX_STREAMS` | 64 | **To tune.** Logs, events and results together |
 
-Guard numbers: `internal/resourceguard/guard.go` in server-term. One start per tick, because PSI is a 10 s average.
+Guard numbers: `internal/resourceguard/guard.go` in server-term. One start per tick, so the next job sees this one begin.
 
 Spec floors, below which a value would mean "no limit" or be refused: `cpus` 0.01 (the kernel's minimum quota, 1 ms per
 100 ms); `timeoutS` 1 (`timeout 0` means none); `memGb` 0.0625 (to tune; Docker's minimum is 6 MiB and `--memory 0` means

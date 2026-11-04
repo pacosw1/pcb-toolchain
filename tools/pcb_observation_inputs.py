@@ -37,7 +37,10 @@ AUDITED = {
     # route_plan import on that route path only. Parts branch unchanged.
     # 2026-11-04 review: ROOT from project_root; router.run import is lazy on route --router iotroute
     # only. Parts submission, interpreter selection and external commands unchanged.
-    "pcb_cli.py": "1c266dfe989bfc77a8256691557f8649003bfe02500f9f58eb69470adb79e32e",
+    # 2026-11-04 review: worker() credits a job daemon queue wait to the run deadline, read from a JSON file in the run's
+    # operation/ folder, for router iotroute only (manifest key absent on parts runs). No new import or command. Parts
+    # branch unchanged.
+    "pcb_cli.py": "382f8a12d952b0b9f2a87571ebebc8a445ab41a87f182f56e6ceebe2f3a17ecf",
     # 2026-10-21 review: plain Fastroute route passes the host runtime; adds
     # stdlib `import sys` (builtin, cannot be shadowed). Parts branch unchanged.
     # 2026-10-21 review: route-json route branch runs tools/route.py; pcb_identity

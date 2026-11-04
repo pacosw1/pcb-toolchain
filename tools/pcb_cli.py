@@ -31,6 +31,9 @@ ROOT = project_root.root().resolve()
 TERMINAL = {'passed', 'failed', 'error', 'cancelled', 'timeout'}
 RUN_ID = re.compile(r'run-[A-Za-z0-9_-]+\Z')
 OBSERVATIONS = ('parts', 'placement', 'routing', 'design', 'schematic', 'outcomes', 'ml')
+# route-dispatch's bound on a job daemon queue wait, its reason there; PCB_QUEUE_WAIT_S tunes both.
+QUEUE_WAIT_S = 300
+QUEUE_CLOCK = 'operation/queue-wait.json'
 
 
 def backend_option(arguments, name):
@@ -271,6 +274,14 @@ def gate_outcome(folder, code, gate_ended, findings):
                 metrics=metrics, input_sha256=provenance['input_sha256'], findings=findings)
 
 
+def queued_s(folder, bound):
+    """Seconds route-dispatch reports in the job daemon's queue, at most `bound`: not the run's own time."""
+    try:
+        return min(max(float(read_json(folder / QUEUE_CLOCK)['seconds']), 0.), bound)
+    except (OSError, ValueError, KeyError, TypeError):
+        return 0.
+
+
 def worker(folder):
     manifest = read_json(folder / 'run.json')
     # The lock file also records admission permanently. Replaying _worker must
@@ -295,6 +306,7 @@ def worker(folder):
         offset, gate_ended, findings = 0, False, []
         heartbeat = time.monotonic()
         deadline = lean.deadline_after(manifest['timeout_s'], {})
+        queue_bound = 0.
 
         def drain():
             nonlocal offset, gate_ended
@@ -316,6 +328,12 @@ def worker(folder):
                 cleanup = dict(complete=True, errors=[])
             else:
                 env = dict(os.environ, IOT_LEAN_DEADLINE=lean.encode_deadline(deadline))
+                if manifest.get('router') == 'iotroute':
+                    # Children read this deadline once, so it holds the whole bound; this loop enforces the real one.
+                    wait = os.environ.get('PCB_QUEUE_WAIT_S', str(QUEUE_WAIT_S))
+                    queue_bound = float(wait)
+                    env.update(IOT_LEAN_DEADLINE=lean.encode_deadline(deadline + queue_bound),
+                               PCB_QUEUE_CLOCK=str(folder / QUEUE_CLOCK), PCB_QUEUE_WAIT_S=wait)
                 with (folder / 'gate.log').open('wb') as log:
                     with measured_stage(journal.emit, 'process-startup', 'startup', 'supervisor'):
                         proc = lean_owned.prepare(manifest['command'], dict(cwd=ROOT, env=env,
@@ -324,7 +342,8 @@ def worker(folder):
                         proc.activate()
                     while True:
                         drain()
-                        if interrupted or (folder / 'cancel.request').exists() or lean.remaining(deadline) <= 0:
+                        if (interrupted or (folder / 'cancel.request').exists() or
+                                lean.remaining(deadline) <= 0 and lean.remaining(deadline + queued_s(folder, queue_bound)) <= 0):
                             cancelled = bool(interrupted or (folder / 'cancel.request').exists())
                             result = dict(status='cancelled' if cancelled else 'timeout', exit_code=130 if cancelled else 124,
                                           cause='cancellation requested' if cancelled else 'run deadline reached')

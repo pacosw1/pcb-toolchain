@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { after, afterEach, before, beforeEach, describe, it } from 'node:test';
 import { isDesignFile, pack } from '../src/client.ts';
 import { bindAllowed, loadConfig } from '../src/config.ts';
-import { parseMeminfoKb, parsePsiSome10 } from '../src/host.ts';
+import { CpuMeter, parseCpuCount, parseMeminfoKb } from '../src/host.ts';
 import { createServer } from '../src/server.ts';
 import { TOKEN, rig, tarOf } from './helpers.ts';
 import type { Rig } from './helpers.ts';
@@ -252,6 +252,25 @@ describe('client', () => {
     });
   }
 
+  it('run shows why the job waits, and stops at --queue-wait with exit 75', async () => {
+    r.host.cpuBusyPct = 100;
+    const results = path.join(root, 'queue-results');
+    const running = run(['run', 'hardware-design/boards/B', '--queue-wait', '3', '--results', results, '--', 'pass']);
+    for (let i = 0; i < 500 && r.mgr.jobs.size === 0; i++) await new Promise((ok) => setTimeout(ok, 10));
+    const [job] = [...r.mgr.jobs.values()];
+    assert.equal(job.spec.queueWaitS, 3);
+    for (let i = 0; i < 300 && !job.hold; i++) await new Promise((ok) => setTimeout(ok, 10));
+    const listed = await run(['list']);
+    assert.match(listed.out, /held: host cpu/);
+    const status = await run(['status', job.id]);
+    assert.match(JSON.parse(status.out).hold, /host cpu/);
+    r.clock.now += 3000;
+    const res = await running;
+    assert.equal(res.code, 75, res.err);
+    assert.match(res.err, /\] queued for 0 s: host cpu: 100 % busy/);
+    assert.match(res.err, /failed: queued for 3 s: host cpu: 100 % busy/);
+  });
+
   it('--fit budget lowers cpus and memory to the budget; without it they are refused', async () => {
     const args = ['hardware-design/boards/B', '--cpus', '30', '--mem', '32'];
     const refused = await run(['submit', ...args, '--', 'true']);
@@ -315,8 +334,24 @@ describe('client', () => {
 });
 
 describe('host readings', () => {
-  it('parses PSI and meminfo', () => {
-    assert.equal(parsePsiSome10('some avg10=12.34 avg60=0.00 avg300=0.11 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n'), 12.34);
+  it('parses meminfo', () => {
     assert.equal(parseMeminfoKb('MemTotal:       65000000 kB\nMemAvailable:   1000 kB\n', 'MemAvailable'), 1000);
+  });
+
+  // user nice system idle iowait irq softirq steal guest guest_nice, as /proc/stat
+  const stat = (user: number, idle: number, iowait = 0): string =>
+    `cpu  ${user} 0 0 ${idle} ${iowait} 0 0 0 0 0\ncpu0 1 0 0 1 0 0 0 0 0 0\ncpu1 1 0 0 1 0 0 0 0 0 0\nintr 1\n`;
+
+  it('counts the CPUs of /proc/stat', () => {
+    assert.equal(parseCpuCount(stat(1, 1)), 2);
+  });
+
+  it('measures busy as the guard does, over its 5 s window: iowait is idle', () => {
+    const m = new CpuMeter();
+    assert.equal(m.read(stat(100, 100), 0), null, 'one sample is no reading');
+    assert.equal(m.read(stat(9999, 1), 4999), null, 'inside the window: not resampled');
+    assert.equal(m.read(stat(130, 150, 20), 5000), 30); // busy +30 of +100
+    assert.equal(m.read(stat(9999, 1), 6000), 30, 'keeps the last window between samples');
+    assert.equal(m.read(stat(230, 150, 20), 10000), 100);
   });
 });
