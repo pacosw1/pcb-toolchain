@@ -90,7 +90,7 @@ tools/jlc-snapshot.mjs
 tools/jlc_api_evidence.mjs
 tools/jlc_stock.mjs
 tools/kicad_happy_gate.py
-tools/krt_planes_advisory.py
+tools/krt_planes_advisory.ts
 tools/lean_owned.py
 tools/lean_owned_exec.py
 tools/lean_resources.py
@@ -142,6 +142,7 @@ tools/lib/jlc-tools.test.mjs
 tools/lib/json-file.test.ts
 tools/lib/json-file.ts
 tools/lib/kicad-population.mjs
+tools/lib/krt-planes-advisory.test.ts
 tools/lib/pack-fab.test.ts
 tools/lib/pcb-workflow.test.ts
 tools/lib/pcb-workflow.ts
@@ -546,7 +547,6 @@ tools/test_ibis_screening.py
 tools/test_import_pose_guard.py
 tools/test_import_replay_guard.py
 tools/test_kicad_happy_gate.py
-tools/test_krt_planes_advisory.py
 tools/test_lean_clock.py
 tools/test_lean_native.py
 tools/test_lean_owned.py
