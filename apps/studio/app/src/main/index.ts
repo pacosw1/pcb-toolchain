@@ -6,14 +6,13 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { EngineSupervisor } from './engine'
 import { AgentHost } from './agent'
-import { engineDir } from './config'
 import type { AgentContext, GlbResult, ProjectInfo } from '../preload/types'
 
 // pcbfile://local/<absolute path> serves files of the open project only (datasheet PDFs for Chromium's viewer).
 // The open project is the root of the engine's last project.open result: main reads it from the engine reply,
 // never from a renderer argument.
 let projectRoot: string | null = null
-const engine = new EngineSupervisor(engineDir(app.getAppPath(), process.resourcesPath))
+const engine = new EngineSupervisor(join(__dirname, 'engineMain.js'))
 const agent = new AgentHost(
   engine,
   (e) => BrowserWindow.getAllWindows().forEach((w) => w.webContents.send('agent:event', e)),

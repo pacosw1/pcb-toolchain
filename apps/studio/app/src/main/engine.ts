@@ -1,14 +1,13 @@
-// Engine supervisor: starts `pcbstudio serve` (uv), reads its READY line, keeps one WebSocket JSON-RPC
-// connection, restarts the engine with backoff when it exits. The renderer reaches it only through IPC.
-// Each engine process gets a new random token in its environment (not on the command line); the socket refuses
-// connections without it (engine server.py).
+// Engine supervisor: starts the engine process (engineMain, on this app's own binary running as Node), reads its READY
+// line, keeps one WebSocket JSON-RPC connection, restarts the engine with backoff when it exits. The renderer reaches it
+// only through IPC. Each engine process gets a new random token in its environment (not on the command line); the
+// socket refuses connections without it (server.ts).
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { randomBytes } from 'crypto'
 import { EventEmitter } from 'events'
 import { existsSync } from 'fs'
-import { join } from 'path'
 import type { EngineStatus } from '../preload/types'
-import { findTool, toolPath } from './config'
+import { toolPath } from './config'
 
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }
 
@@ -38,7 +37,7 @@ export class EngineSupervisor extends EventEmitter {
   generation = 0
   status: EngineStatus = { state: 'stopped', port: null, pid: null, restarts: 0, lastError: null }
 
-  constructor(private engineDir: string | null) {
+  constructor(private engineEntry: string) {
     super()
   }
 
@@ -47,14 +46,10 @@ export class EngineSupervisor extends EventEmitter {
     this.setStatus({ state: this.status.restarts ? 'restarting' : 'starting', port: null, pid: null })
     let proc: ChildProcessWithoutNullStreams
     try {
-      if (!this.engineDir || !existsSync(join(this.engineDir, 'pyproject.toml'))) {
-        throw new Error('engine project not found (set PCBSTUDIO_ENGINE_DIR)')
-      }
-      const uv = findTool('uv', 'PCBSTUDIO_UV')
-      if (!uv) throw new Error('uv not found on PATH (set PCBSTUDIO_UV or PCBSTUDIO_PATH)')
+      if (!existsSync(this.engineEntry)) throw new Error(`engine not found: ${this.engineEntry}`)
       this.token = randomBytes(32).toString('base64url')
-      proc = spawn(uv, ['run', '--project', this.engineDir, 'pcbstudio', 'serve'], {
-        env: { ...process.env, PATH: toolPath(), PCBSTUDIO_ENGINE_TOKEN: this.token }
+      proc = spawn(process.execPath, [this.engineEntry, 'serve'], {
+        env: { ...process.env, PATH: toolPath(), PCBSTUDIO_ENGINE_TOKEN: this.token, ELECTRON_RUN_AS_NODE: '1', NODE_NO_WARNINGS: '1' }
       })
     } catch (e) {
       this.setStatus({ state: 'stopped', lastError: String(e) })
