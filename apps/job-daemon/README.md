@@ -184,6 +184,8 @@ one CPU reading, because a job takes time to load the host; the budget bounds th
 | `JOBD_BIND` | 127.0.0.1 | 127.0.0.1, ::1 or 100.64.0.0/10 only, the rule of `tools/route_live.py`; anything else refuses to start |
 | `JOBD_PORT` | 8793 | Free on the host |
 | `JOBD_TOKEN_FILE`, `JOBD_DATA_DIR` | required | At least 32 characters: 128 bits as hex |
+| `JOBD_BLOB_KEEP_DAYS` | `30` | days a cached job file stays after its last use |
+| `JOBD_REQUEST_TIMEOUT_S` | `3600` | longest one request may take; Node's 300 s fails a large file on a slow link |
 | `JOBD_IMAGES` | `iot-lab-route:10.0,iot-lab-route:10.0-fr241` | `remote.sh`; the first is the default |
 | `JOBD_CPU_BUDGET` | 16 | **To tune.** Half of 32; leaves 16 of the 32 for the 12 + 20 others under contention, with the low weight |
 | `JOBD_MEM_BUDGET_GB` | 16 | **To tune.** Host peak is unknown; admission checks live memory as well |
