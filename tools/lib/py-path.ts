@@ -8,7 +8,7 @@ import { jsonLoads, osError, PyError, readText, typeName } from './py-compat.mjs
 
 const MAX_LINKS = 40;
 const ABSENT = new Set(['ENOENT', 'ENOTDIR', 'ELOOP', 'EBADF']);
-const OS_ERRORS = new Set(['OSError', 'FileNotFoundError', 'FileExistsError', 'PermissionError', 'NotADirectoryError', 'IsADirectoryError']);
+const OS_ERRORS = new Set(['OSError', 'FileNotFoundError', 'FileExistsError', 'PermissionError', 'NotADirectoryError', 'IsADirectoryError', 'TimeoutError']);
 const VALUE_ERRORS = new Set(['ValueError', 'json.decoder.JSONDecodeError', 'UnicodeDecodeError']);
 
 const normalize = (path: string): string => {
