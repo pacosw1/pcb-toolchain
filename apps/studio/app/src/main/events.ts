@@ -1,4 +1,4 @@
-// Server-to-client notifications (JSON-RPC 2.0 notifications without id). Port of engine/src/pcbstudio/events.py.
+// Server-to-client notifications (JSON-RPC 2.0 notifications without id).
 export type Sender = (text: string) => void | Promise<void>
 
 const subscribers = new Set<Sender>()

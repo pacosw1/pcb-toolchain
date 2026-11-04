@@ -1,4 +1,4 @@
-// BOM evidence CSVs (BOM-VERIFIED.csv and friends) with normalised column names. Port of engine/src/pcbstudio/bomcsv.py.
+// BOM evidence CSVs (BOM-VERIFIED.csv and friends) with normalised column names.
 //
 // Board CSVs name the same thing in different ways ('Stock status' / 'Stock observed', 'LCSC' / 'LCSC Part #',
 // 'MPN/value' / 'MPN'). Each header is normalised (lower case, non-alphanumerics to '_') and mapped to one canonical

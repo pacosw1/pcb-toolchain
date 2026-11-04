@@ -1,4 +1,4 @@
-// Port of engine/tests/test_parts.py. Run: node --test test/
+// BOM CSVs, the parts index and BOMs. Run: node --test test/
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'

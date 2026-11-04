@@ -1,4 +1,4 @@
-// Run shapes (generated from engine/src/pcbstudio/model/runs.py) and helpers shared by Checks and Runs.
+// Run shapes and helpers shared by Checks and Runs.
 import type { RunSummary } from '../../shared/generated'
 
 export type { Candidate, RunSummary } from '../../shared/generated'
@@ -11,7 +11,7 @@ export const STATE_COLOR: Record<RunSummary['state'], string> = {
   failed: 'var(--err)',
   error: 'var(--err)',
   cancelled: 'var(--dim)',
-  interrupted: 'var(--dim)' // its engine stopped while it ran (engine runs.py load)
+  interrupted: 'var(--dim)' // its engine stopped while it ran (runs.ts load)
 }
 
 export function isWarning(metric: string): boolean {

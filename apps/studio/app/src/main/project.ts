@@ -1,5 +1,4 @@
 // A hardware project (an iot-lab style repo): boards, revisions, their KiCad files and gates. Read only.
-// Port of engine/src/pcbstudio/project.py, without the board.yaml writer (that goes with `migrate`).
 //
 // Board identity has one source per board:
 // - `<boards_dir>/<DIR>/board.yaml` (schema pcbstudio.board.v1) when the board has one;

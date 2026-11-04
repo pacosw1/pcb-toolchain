@@ -1,4 +1,4 @@
-// Port of engine/tests/test_project.py, without the migrate writer. Run: node --test test/
+// The project model. Run: node --test test/
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'

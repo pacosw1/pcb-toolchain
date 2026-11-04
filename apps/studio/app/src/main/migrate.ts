@@ -1,6 +1,5 @@
 // `migrate --project ROOT --out DIR`: one board.yaml per board from the legacy derivation (registry + gate configs +
-// folders), a conflict report, and a round-trip check (re-read DIR -> the same boards). Port of
-// engine/src/pcbstudio/migrate.py.
+// folders), a conflict report, and a round-trip check (re-read DIR -> the same boards).
 //
 // DIR gets `<BOARD-DIR>/board.yaml` and `migrate-report.json`. With `--out <ROOT>/<boards_dir>` the files land in the
 // project itself; the default flow writes elsewhere first and checks the round trip.

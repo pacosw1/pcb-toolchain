@@ -1,4 +1,4 @@
-// Port of engine/tests/test_runs.py, test_candidates.py and test_durable_runs.py, with a stand-in tools/pcb that writes
+// Runs, candidates and durable records, with a stand-in tools/pcb that writes
 // CLI style run records. Run: node --test test/
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'

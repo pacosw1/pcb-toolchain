@@ -1,4 +1,4 @@
-// Port of engine/tests/test_cli.py, plus the exact arguments of each command. Run: node --test test/
+// The kicad-cli wrapper and the exact arguments of each command. Run: node --test test/
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'

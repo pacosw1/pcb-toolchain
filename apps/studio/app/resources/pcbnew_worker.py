@@ -1,153 +1,21 @@
-"""KiCad's own pcbnew, isolated in a subprocess of KiCad's bundled Python.
+"""KiCad's own pcbnew, isolated in a subprocess of KiCad's bundled Python. The client is src/main/kicad/pcbnew.ts.
 
-Headless pcbnew can crash or assert. It never runs inside the engine: `PcbnewWorker` starts
-`<kicad python> pcbnew_worker.py --serve` and talks one JSON object per line.
+Headless pcbnew can crash or assert, so it never runs inside the engine: the client starts
+`<kicad python> -I pcbnew_worker.py --serve` and talks one JSON object per line.
 
 Request  {"id": n, "op": "...", ...params}
 Reply    {"id": n, "ok": true, "result": ...} | {"id": n, "ok": false, "error": "..."}
 
 Ops: ping, load {path} -> {board}, query {board, what}, move_footprint {board, ref, x, y, rot?},
-save {board, path?}, close {board}, crash {how} (tests only). A crash, an exit or a timeout of the
-subprocess raises `WorkerError` in the caller; the next call starts a fresh worker.
+save {board, path?}, close {board}, crash {how} (tests only).
 
-This file is also the server: it must run on KiCad's Python (3.9), so it uses no newer syntax at run
-time and imports nothing from pcbstudio.
+It runs on KiCad's Python (3.9), so it uses no newer syntax at run time.
 """
-from __future__ import annotations
-
 import json
 import os
-import queue
-import shutil
-import subprocess
 import sys
-import threading
-from pathlib import Path
-
-_MAC_PY = '/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3'
 
 
-class WorkerError(RuntimeError):
-    """The worker died, timed out or answered with an error."""
-
-
-def find_kicad_python() -> str | None:
-    """PCBSTUDIO_KICAD_PYTHON, then the macOS KiCad app, then a `python3` on PATH that can import pcbnew."""
-    env = os.environ.get('PCBSTUDIO_KICAD_PYTHON')
-    if env:
-        return env if Path(env).is_file() else None
-    if Path(_MAC_PY).is_file():
-        return _MAC_PY
-    for name in ('python3',):
-        exe = shutil.which(name)
-        if exe:
-            try:
-                r = subprocess.run([exe, '-c', 'import pcbnew'], capture_output=True, timeout=30)
-                if r.returncode == 0:
-                    return exe
-            except (OSError, subprocess.TimeoutExpired):
-                pass
-    return None
-
-
-class PcbnewWorker:
-    """Client. Thread safe (one request at a time). Use as a context manager or call close()."""
-
-    def __init__(self, python: str | None = None, timeout_s: float = 300.0):
-        self.python = python or find_kicad_python()
-        if not self.python:
-            raise WorkerError('KiCad Python with pcbnew not found (set PCBSTUDIO_KICAD_PYTHON)')
-        self.timeout_s = timeout_s
-        self._proc: subprocess.Popen | None = None
-        self._lines: queue.Queue = queue.Queue()
-        self._stderr: list[str] = []
-        self._lock = threading.Lock()
-        self._next = 0
-
-    # ---------------------------------------------------------------- process
-    def _start(self) -> None:
-        self._lines = queue.Queue()
-        self._stderr = []
-        self._proc = subprocess.Popen([self.python, '-I', str(Path(__file__).resolve()), '--serve'],
-                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                      text=True, encoding='utf-8', bufsize=1)
-        proc, lines, err = self._proc, self._lines, self._stderr
-
-        def pump_out():
-            for ln in proc.stdout:
-                lines.put(ln)
-            lines.put(None)
-
-        def pump_err():
-            for ln in proc.stderr:
-                if 'Adding duplicate image handler' in ln:
-                    continue
-                err.append(ln.rstrip('\n'))
-                del err[:-200]
-        threading.Thread(target=pump_out, daemon=True).start()
-        threading.Thread(target=pump_err, daemon=True).start()
-
-    def _fail(self, msg: str) -> WorkerError:
-        proc = self._proc
-        self._proc = None
-        code = None
-        if proc is not None:
-            if proc.poll() is None:
-                proc.kill()
-            try:
-                code = proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                pass
-        tail = '\n'.join(self._stderr[-15:])
-        return WorkerError(f'pcbnew worker {msg} (exit {code})' + (f':\n{tail}' if tail else ''))
-
-    def call(self, op: str, timeout_s: float | None = None, **params):
-        with self._lock:
-            if self._proc is None or self._proc.poll() is not None:
-                self._start()
-            assert self._proc is not None and self._proc.stdin is not None
-            self._next += 1
-            rid = self._next
-            try:
-                self._proc.stdin.write(json.dumps({'id': rid, 'op': op, **params}) + '\n')
-                self._proc.stdin.flush()
-            except (BrokenPipeError, OSError):
-                raise self._fail('stopped before the request') from None
-            while True:
-                try:
-                    ln = self._lines.get(timeout=timeout_s or self.timeout_s)
-                except queue.Empty:
-                    raise self._fail(f'timed out on {op!r}') from None
-                if ln is None:
-                    raise self._fail(f'stopped during {op!r}')
-                try:
-                    msg = json.loads(ln)
-                except ValueError:
-                    continue                       # not protocol (should not happen: fd 1 goes to stderr)
-                if msg.get('id') == rid:
-                    break
-            if not msg.get('ok'):
-                raise WorkerError(f'{op}: {msg.get("error")}')
-            return msg.get('result')
-
-    def close(self) -> None:
-        proc, self._proc = self._proc, None
-        if proc is None:
-            return
-        try:
-            proc.stdin.close()
-            proc.wait(timeout=10)
-        except Exception:
-            proc.kill()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        self.close()
-
-
-# =================================================================== server (KiCad Python)
 def _serve() -> None:
     proto = os.fdopen(os.dup(1), 'w', encoding='utf-8', buffering=1)
     os.dup2(2, 1)                                  # stray prints from pcbnew/wx go to stderr, not the protocol

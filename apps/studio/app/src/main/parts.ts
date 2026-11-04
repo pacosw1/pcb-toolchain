@@ -1,5 +1,4 @@
 // BOM and part evidence for a board revision, from its .kicad_pcb footprints plus the project registry. Read only.
-// Port of engine/src/pcbstudio/parts.py.
 //
 // A BOM line groups footprints with the same value, C-number, MPN and footprint. Joined per line:
 // - datasheet: the parts index (partsIndex.ts: file names, source.json, CAD manifests, components.json, BOM CSVs), else

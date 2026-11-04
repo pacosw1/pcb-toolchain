@@ -1,4 +1,4 @@
-// Port of engine/tests/test_rpc.py and test_auth.py. Run: node --test test/
+// JSON-RPC and socket access. Run: node --test test/
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'

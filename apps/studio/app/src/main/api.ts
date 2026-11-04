@@ -1,5 +1,4 @@
-// Engine API methods. The desktop app, the agent and the web viewer call the same registry. Port of
-// engine/src/pcbstudio/api.py.
+// Engine API methods. The desktop app, the agent and the web viewer call the same registry.
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'

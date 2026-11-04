@@ -1,4 +1,4 @@
-// Port of the corpus-free cases of engine/tests/test_board.py. Run: node --test test/
+// Board geometry without a corpus. Run: node --test test/
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { bbox, fromTree } from '../src/main/kicad/board.ts'

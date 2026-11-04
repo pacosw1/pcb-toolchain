@@ -1,4 +1,4 @@
-// Port of engine/tests/test_sexpr.py, plus number and whitespace cases. Run: node --test test/
+// The s-expression reader/writer. Run: node --test test/
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'

@@ -1,4 +1,4 @@
-// Engine shapes, generated from the engine models (engine/src/pcbstudio/model) into src/shared/generated.ts.
+// Engine shapes, from src/shared/generated.ts.
 export type {
   Board,
   BoardParts,
