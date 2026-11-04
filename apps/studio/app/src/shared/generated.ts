@@ -184,8 +184,6 @@ export interface ProjectLayout {
   gate_file: string
   gate_variant_glob: string
   gate_reserved: string[]
-  pipeline: string
-  pipeline_aliases: string
 }
 
 /** A datasheet PDF in the project (project-relative, exists) with its measured sha256. */
