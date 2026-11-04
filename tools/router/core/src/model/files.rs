@@ -225,15 +225,25 @@ pub struct CurrentPaths {
     pub nets: BTreeMap<String, NetPaths>,
 }
 
-/// A net's current: one chain, or `chains`.
+/// A net's current: the fields of one chain, or `chains`.
 #[derive(Debug, Default, Deserialize)]
 pub struct NetPaths {
-    #[serde(flatten)]
-    pub chain: Chain,
+    pub amps: Option<Num>,
+    #[serde(default)]
+    pub pads: Vec<String>,
+    #[serde(default)]
+    pub parallel: bool,
     pub chains: Option<Vec<Chain>>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+impl NetPaths {
+    /// The net's chains, its own fields being one when it lists none.
+    pub fn chains(&self) -> Vec<Chain> {
+        self.chains.clone().unwrap_or_else(|| vec![Chain { amps: self.amps, pads: self.pads.clone(), parallel: self.parallel }])
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct Chain {
     pub amps: Option<Num>,
     #[serde(default)]
@@ -390,8 +400,8 @@ mod tests {
     fn a_net_has_one_chain_or_many() {
         let p: CurrentPaths = serde_json::from_str(r#"{"dT": 10, "nets": {"A": {"amps": 1.5, "pads": ["J1.1"]}, "B": {"chains": [{"amps": 2, "pads": ["J2.1"], "parallel": true}]}}}"#).unwrap();
         assert_eq!(p.dt, Some(Num::Int(10)));
-        assert_eq!(p.nets["A"].chain.amps, Some(Num::Float(1.5)));
-        assert!(p.nets["B"].chains.as_ref().unwrap()[0].parallel);
+        assert_eq!(p.nets["A"].chains()[0].amps, Some(Num::Float(1.5)));
+        assert!(p.nets["B"].chains()[0].parallel);
     }
 
     #[test]
