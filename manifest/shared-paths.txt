@@ -263,8 +263,11 @@ tools/placer/bench.py
 tools/placer/bench_a.sh
 tools/placer/bench_b.sh
 tools/placer/bench_batch.py
+tools/placer/bench_clusters.mjs
 tools/placer/bench_place.py
 tools/placer/cli.py
+tools/placer/clusters.mjs
+tools/placer/clusters.test.mjs
 tools/placer/compact.py
 tools/placer/compact_cli.py
 tools/placer/congest.py
@@ -300,6 +303,7 @@ tools/placer/test_anneal.py
 tools/placer/test_batch.py
 tools/placer/test_batch_capabilities.py
 tools/placer/test_bench.py
+tools/placer/test_clusters.py
 tools/placer/test_compact.py
 tools/placer/test_congest.py
 tools/placer/test_cost.py

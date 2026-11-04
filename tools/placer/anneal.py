@@ -17,6 +17,9 @@ optimize(problem, params, workers, epochs, steps, seed, top) -> result dict
 Moves: translate (dx, dy multiples of params['grid'], unit origin inside problem['move_box'] (region mode)
 or else the outline box; a unit with u['in_box'] also keeps its courtyard in that box), rotate 90/180/270 deg,
 swap the places of two units whose courtyard areas differ by at most swap_ratio.
+Soft clusters (problem['clusters'], cli.py read --auto-clusters): gather() first brings each part to the pin it is tied to.
+A group move then moves or turns a cluster as one. For the first CLU_PHASE of the epochs a member moves only with its
+cluster; after that it may also move alone inside CLU_LOCAL mm. Without clusters no move, cost or random draw changes.
 """
 import copy
 import math
@@ -31,6 +34,21 @@ SEARCH = {'grid': 0.05, 'p_swap': 0.1, 'p_rot': 0.1, 'swap_ratio': 1.5, 't_ratio
           'ramp': 20.0, 'schedule': 'geometric', 'base_lam': 0.44, 'lam_rate': 0.885, 'lam_window': 500,
           'area_ref': 10.0, 'area_max': 5.0, 'normalize': 0, 'distinct': 0.0,
           'mains': 0, 'legal_rotate': 1, 'max_displacement': 0}  # optional cumulative seed radius, 0 = unbounded
+
+
+# Soft clusters. Defaults to tune; the search params can set them (clu_phase, clu_local, clu_gather). They stay out of
+# SEARCH so that a run without clusters reports the same params as before.
+CLU_PHASE = 0.5   # fraction of the epochs with cluster moves only: place the clusters first, then refine inside them
+CLU_LOCAL = 3.0   # mm: a member's own move window, and the pad distance gather() leaves alone (cli.py read --decap-tie)
+CLU_REACH = 10.0  # mm: how far from its pin gather() looks for room (a part stays where it is when none is free)
+ANCHORED = {'J', 'P', 'CN', 'SW', 'BT', 'BZ', 'TP', 'H', 'MH', 'LED'}  # clusters.mjs CONNECTOR and ANCHORED
+
+
+def held(u):
+    """A constraint or a role holds this unit to a place: a cluster does not take it along. Role: a connector, button, LED,
+    test point or hole (clusters.mjs ANCHORED): the search may still move it alone, as before."""
+    return bool(u['fixed'] or u.get('edge') or u.get('in_box') or u.get('near')
+                or any(cost.ref_prefix(r) in ANCHORED for r in u['refs']))
 
 
 def params_all(params):
@@ -81,6 +99,7 @@ def epoch_params(p, e, epochs):
     q = dict(p)
     q['w_ov'] = p['w_ov'] * p['ramp'] ** f
     q['w_oob'] = p['w_oob'] * p['ramp'] ** f
+    q['clu_free'] = e >= p.get('clu_phase', CLU_PHASE) * epochs  # members may move alone (Mover)
     return q
 
 
@@ -117,9 +136,49 @@ class Mover:
         self.partners = {i: [j for j in self.mov if j != i and max(a[i], a[j]) <= q * max(min(a[i], a[j]), 1e-9)]
                          for i in self.mov}
         self.swappable = [i for i in self.mov if self.partners[i]]
+        self.groups, self.p_group, self.local, self.p_turn = [], 0.0, {}, 0.0
+        if pr.get('clusters') and not self.max_displacement:
+            self._set_groups(pr, p)
         # Lam schedule: a small unit moves farther (SA_PCB sigma ~ 1 / area), up to area_max times the window
         self.sc = ([min(max(p['area_ref'] / max(a[i], 1e-9), 1.0), p['area_max']) for i in range(ev.n)]
                    if p['schedule'] == 'lam' else [1.0] * ev.n)
+
+    def _set_groups(self, pr, p):
+        """Cluster moves. A group = the parts of a cluster that no constraint holds to a place: a fixed unit, an edge
+        anchor, a region box or a near rule stays out (a part of a group would leave it), and pulls the others only by
+        the cost term. In the first phase a part of a group moves only with it."""
+        us = pr['units']
+        self.groups = [g for g in ([i for i in c['units'] if not held(us[i])] for c in pr['clusters']) if len(g) > 1]
+        grouped = {i for g in self.groups for i in g}
+        self.p_turn = p['p_rot']
+        self.turnable = [all(us[i].get('rotate', True) for i in g) for g in self.groups]
+        if p.get('clu_free'):
+            self.local = {i: p.get('clu_local', CLU_LOCAL) for i in grouped}
+        else:
+            self.mov = [i for i in self.mov if i not in grouped]
+            self.rot = [i for i in self.rot if i not in grouped]
+            self.swappable = [i for i in self.swappable if i not in grouped]
+            self.partners = {i: [j for j in v if j not in grouped] for i, v in self.partners.items()}
+            self.swappable = [i for i in self.swappable if self.partners[i]]
+        self.p_group = len(self.groups) / max(len(self.groups) + len(self.mov), 1)  # each thing to move is equally likely
+
+    def _group_move(self, rng, window):
+        """Move or turn one cluster as a whole, inside the box. Turn: about its first unit, as the search turns a unit."""
+        ev = self.ev
+        k = rng.randrange(len(self.groups))
+        g = self.groups[k]
+        if self.turnable[k] and rng.random() < self.p_turn:
+            q = rng.randint(1, 3)
+            cx, cy = ev.X[g[0]], ev.Y[g[0]]
+            moves = []
+            for i in g:
+                dx, dy = cost.rot_pt(ev.X[i] - cx, ev.Y[i] - cy, q)
+                moves.append((i, cx + dx, cy + dy, (ev.R[i] + q) % 4))
+            return moves, 'group'
+        bx0, by0, bx1, by1 = self.box
+        dx = self._off(rng.uniform(-window, window), bx0 - min(ev.X[i] for i in g), bx1 - max(ev.X[i] for i in g))
+        dy = self._off(rng.uniform(-window, window), by0 - min(ev.Y[i] for i in g), by1 - max(ev.Y[i] for i in g))
+        return [(i, ev.X[i] + dx, ev.Y[i] + dy, ev.R[i]) for i in g], 'group'
 
     def _off(self, d, lo, hi):
         g = self.g
@@ -128,6 +187,8 @@ class Mover:
 
     def propose(self, rng, window):
         ev = self.ev
+        if self.groups and rng.random() < self.p_group:
+            return self._group_move(rng, window)
         u = rng.random()
         if u < self.p_swap and self.swappable:
             a = rng.choice(self.swappable)
@@ -139,6 +200,7 @@ class Mover:
             i = rng.choice(self.rot)
             return [(i, ev.X[i], ev.Y[i], (ev.R[i] + rng.randint(1, 3)) % 4)], 'rotate'
         i = rng.choice(self.mov)
+        window = min(window, self.local.get(i, window))
         x, y = ev.X[i], ev.Y[i]
         bx0, by0, bx1, by1 = self.box
         if i in self.inbox:  # translate inside the region box (a unit outside it moves into it)
@@ -160,6 +222,12 @@ class Mover:
                 vy = math.trunc(vy*scale/self.g)*self.g
                 dx, dy = ax+vx-x, ay+vy-y
         return [(i, x + dx, y + dy, ev.R[i])], 'translate'
+
+
+def _step(ev, proposal):
+    """ev.propose of a Mover proposal; a group keeps the relative places of its units."""
+    moves, kind = proposal
+    return ev.propose(moves, kind == 'group'), moves
 
 
 def lam_target(f, base):
@@ -194,8 +262,7 @@ def anneal_lam(ev, mover, rng, steps, lam, f0, f1, t_ref, w0, w1):
     improved, acc = False, 0
     for s in range(steps):
         T = lam.t
-        moves, _ = mover.propose(rng, min(max(w0 * T / t_ref, w1), w0))
-        d = ev.propose(moves)
+        d, moves = _step(ev, mover.propose(rng, min(max(w0 * T / t_ref, w1), w0)))
         ok = d <= 0 or rand() < exp(-d / T)
         if ok:
             acc += 1
@@ -215,7 +282,7 @@ def anneal_lam(ev, mover, rng, steps, lam, f0, f1, t_ref, w0, w1):
 def estimate_t0(ev, mover, rng, window, samples=200):
     ups = []
     for _ in range(samples):
-        d = ev.propose(mover.propose(rng, window)[0])
+        d = _step(ev, mover.propose(rng, window))[0]
         ev.revert()
         if d > 0:
             ups.append(d)
@@ -233,8 +300,7 @@ def anneal(ev, mover, rng, steps, t0, t1, w0, w1):
     improved = False
     for s in range(steps):
         T = exp(lt0 + dlt * s)
-        moves, _ = mover.propose(rng, exp(lw0 + dlw * s))
-        d = ev.propose(moves)
+        d, moves = _step(ev, mover.propose(rng, exp(lw0 + dlw * s)))
         if d <= 0 or rand() < exp(-d / T):
             ev.commit()
             if ev.cost < best - 1e-12:
@@ -265,6 +331,54 @@ def ring(k):
     for b in range(-k + 1, k):
         yield (-k, b)
         yield (k, b)
+
+
+def gather(pr, pose, p):
+    """Start pose with each part of a cluster next to the pin it is tied to, so that a cluster can move as one from a
+    scattered start. A part already within clu_local mm of its pin stays (a warm start keeps its placement). A part goes
+    to the nearest free place on legal_step, inside the board, clear of the parts of its cluster by their spacing; a
+    part that is held to a place (Mover._set_groups) does not move. Parents go first (clusters.mjs orders the ties)."""
+    pose = [tuple(q) for q in pose]
+    us = pr['units']
+    mask = cost.Mask(pr['board'], p['mask_cell'], p['gap'])
+    step, local = p['legal_step'], p.get('clu_local', CLU_LOCAL)
+
+    def box(i, q):
+        rs = [r for k, r in enumerate(cost.world_rects(us[i], q)) if k not in set(us[i].get('ko', []))]
+        return (min(r[0] for r in rs), min(r[1] for r in rs), max(r[2] for r in rs), max(r[3] for r in rs),
+                max(r[4] for r in rs))
+
+    def clear(b, placed):
+        return not any(b[0] - g < c[2] and b[2] + g > c[0] and b[1] - g < c[3] and b[3] + g > c[1]
+                       for c in placed for g in (max(b[4], c[4]),))
+    for c in pr['clusters']:
+        done = {c['anchor']}
+        placed = [box(c['anchor'], pose[c['anchor']])]
+        for t in c['ties']:
+            i, j = t['unit'], t['to']
+            if i in done:
+                continue
+            done.add(i)
+            u = us[i]
+            x, y, r = pose[i]
+            tx, ty = cost.rot_pt(t['target'][0], t['target'][1], pose[j][2])
+            tx, ty = tx + pose[j][0], ty + pose[j][1]
+            ax, ay = cost.rot_pt(t['at'][0], t['at'][1], r)
+            if not held(u) and math.hypot(x + ax - tx, y + ay - ty) > local:
+                best = None
+                for k in range(int(CLU_REACH / step) + 1):
+                    for a, b in ([(0, 0)] if k == 0 else ring(k)):
+                        q = (tx - ax + a * step, ty - ay + b * step, r)
+                        d = math.hypot(a, b)
+                        if (best is None or d < best[0]) and clear(box(i, q), placed) and not mask.edge_area(
+                                cost.world_rects(u, q), set(u.get('ko', []))):
+                            best = (d, q)
+                    if best:
+                        break
+                if best:
+                    pose[i] = best[1]
+            placed.append(box(i, pose[i]))
+    return pose
 
 
 class LegalizeTimeout(RuntimeError):
@@ -408,6 +522,8 @@ def optimize(pr, params, workers=1, epochs=10, steps=10000, seed=1, top=3, log=N
         glob = {'iters': len(g['history']), 'overflow': g['history'][-1]['overflow'] if g['history'] else None}
     if p['normalize']:  # SA_PCB: each term relative to its value on the start pose
         p = normalized(p, cost.components(pr, cost.initial_pose(pr), p))
+    if pr.get('clusters') and p.get('clu_gather', 1) and not p['max_displacement']:
+        start = gather(pr, start or cost.initial_pose(pr), p)
     if p.get('batch'):  # K chains as one torch batch (batch.py); the scalar workers below stay the default
         try:
             from . import batch
@@ -422,7 +538,8 @@ def optimize(pr, params, workers=1, epochs=10, steps=10000, seed=1, top=3, log=N
     bx0, by0, bx1, by1 = cost.outline_box(pr['board'])
     w0 = p.get('w0') or max(bx1 - bx0, by1 - by0) / 2
     w1 = min(p['w1'], w0)
-    t0 = p.get('t0') or estimate_t0(ev0, Mover(pr, ev0, p), random.Random(seed), w0)
+    # T0 from single moves: a group move of a whole cluster has a far bigger uphill delta (RELAY-4: 3400 against 1050)
+    t0 = p.get('t0') or estimate_t0(ev0, Mover(dict(pr, clusters=None), ev0, p), random.Random(seed), w0)
     t1 = t0 * p['t_ratio']
     frac = lambda a, b, f: a * (b / a) ** f  # noqa: E731
     cur = [initial['pose']] * workers

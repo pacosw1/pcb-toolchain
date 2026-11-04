@@ -38,7 +38,7 @@ import re
 
 import pcbnew
 
-from . import cost, dru
+from . import cost, dru, membership
 from .cost import ref_prefix
 
 M = 1e6
@@ -350,8 +350,11 @@ def cohesion_nets(units, member_of, members, w_block, w_comp):
 def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), free_box=None,
                  region_refs=(), region_weight=1.0, region_box=None, spacing=(0.5, 1.0), tie=0.0,
                  rigid_nets=(), decap_tie=0.0, keepout_zones=(), edges=None, zone_refs=None, domains=None, via_nets=(),
-                 rigid_groups=(), blocks=None, w_block=0.0, w_comp=0.0, tp_pins=False, in_boxes=(), near=()):
-    """in_boxes: [(fnmatch pattern of refs, [x0, y0, x1, y1])]: each movable unit with a matching part keeps its
+                 rigid_groups=(), blocks=None, w_block=0.0, w_comp=0.0, tp_pins=False, in_boxes=(), near=(),
+                 clusters=None, w_cluster=0.0):
+    """clusters: a proposal (clusters.mjs JSON) for soft clusters, w_cluster the weight of each tie
+    (membership.cluster_model).
+    in_boxes: [(fnmatch pattern of refs, [x0, y0, x1, y1])]: each movable unit with a matching part keeps its
     courtyard rects inside the box (u['in_box'], cost.box_miss; illegal outside). A pattern that matches no part, a
     unit with two different boxes, or a box smaller than the unit is an error.
     tp_pins: the pad of each test point is a pin of its net (README "Test-point pins"); without it a test point
@@ -626,6 +629,18 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
     if mship is not None:
         nets += cohesion_nets(out_units, {r: index[member[r]] for r in member if member[r] in index}, mship,
                               w_block, w_comp)
+    soft = None
+    if clusters is not None:
+        def pad_at(ref, num, net):
+            u = out_units[index[member[ref]]]
+            for p in by_ref[ref].Pads():
+                if p.GetNumber() == num and p.GetNetname() == net:
+                    q = p.GetPosition()
+                    return [round(mm(q.x) - u['x'], 6), round(mm(q.y) - u['y'], 6)]
+            raise ValueError('stale cluster proposal: %s pad %s is not on %s' % (ref, num, net))
+        soft, cnets = membership.cluster_model(out_units, {r: index[member[r]] for r in member if member[r] in index},
+                                               clusters, pad_at, w_cluster)
+        nets += cnets
     region = None
     if region_refs:
         if region_box is None:
@@ -638,7 +653,8 @@ def read_problem(path, fix=(), skip=('GND',), edge_dist=1.5, keepout_layers=(), 
     locked = [t for t in locked if t.m_Uuid.AsString() not in moving]
     fixed_copper = [_copper_row(board, t) for t in locked]
     fixed_copper_layers = [row for t in locked for row in _layer_copper_rows(board, t)]
-    return {'board_file': os.path.abspath(path), 'units': out_units, 'nets': nets,
+    extra = {'clusters': soft} if soft is not None else {}
+    return {**extra, 'board_file': os.path.abspath(path), 'units': out_units, 'nets': nets,
             'board': {'outline': outline, 'keepouts': keepouts, 'edge_clearance': edge, 'copper': copper,
                       'fixed_copper': fixed_copper, 'fixed_copper_layers': fixed_copper_layers,
                       'via_keepouts': via_keepouts,

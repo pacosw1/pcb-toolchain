@@ -4,7 +4,7 @@
 Run with the KiCad bundled Python ($PY; it has numpy and pcbnew):
   $PY tools/placer/cli.py read  BOARD -o prob.json [--fix REF ...] [--skip-net=GND,+3V3,...] [--keepout-layer User.Comments]
                                  [--free-box X0 Y0 X1 Y1] [--region-ref U1 --region-weight 3 [--region-box ...]]
-                                 [--in-box 'TP*=X0,Y0,X1,Y1' ...]
+                                 [--in-box 'TP*=X0,Y0,X1,Y1' ...] [--auto-clusters [FILE]]
   $PY tools/placer/cli.py run   prob.json -o result.json [--workers 16 --epochs 20 --steps 20000 --seed 1 --top 3]
                                  [--param w_ov=20 ...]
   $PY tools/placer/cli.py write BOARD prob.json result.json --outdir DIR [--initial]
@@ -19,6 +19,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import lean_resources as resources
@@ -45,7 +46,8 @@ def cmd_read(a):
                                zone_refs=dict(x.split('=', 1) for x in a.zone_ref),
                                domains=parse_domains(a.domain) if a.domain else None, via_nets=a.via_net,
                                rigid_groups=groups, blocks=a.blocks, w_block=a.w_block, w_comp=a.w_comp,
-                               tp_pins=a.tp_pins, in_boxes=parse_in_boxes(a.in_box), near=parse_near(a.near))
+                               tp_pins=a.tp_pins, in_boxes=parse_in_boxes(a.in_box), near=parse_near(a.near),
+                               clusters=load_clusters(a.auto_clusters, a.board), w_cluster=a.w_cluster)
     if engineering:
         from engineering_constraints import prepare_problem
         pr = prepare_problem(a.engineering_root,a.engineering_board,a.engineering_manifest,pr)
@@ -54,11 +56,31 @@ def cmd_read(a):
     print('units %d (movable %d, blocks %d), nets %d, keepouts %d' % (
         len(pr['units']), len(mov), sum(1 for u in pr['units'] if u['box']), len(pr['nets']),
         len(pr['board']['keepouts'])))
+    if 'clusters' in pr:
+        print('soft clusters %d, ties %d' % (len(pr['clusters']), sum(len(c['ties']) for c in pr['clusters'])))
     if pr['dru_ignored']:
         print('NOT MODELLED .kicad_dru rules (check them after placement): %s' % ', '.join(pr['dru_ignored']))
     far = [d for d in pr['decaps'] if d[2] > 1.0]
     print('decaps %d tied, %d over 1.0 mm (D-040): %s' % (len(pr['decaps']), len(far),
                                                         ' '.join('%s-%s %.2f' % tuple(d) for d in far)))
+
+
+def load_clusters(source, board):
+    """None (the default, no clusters), a proposal file, or 'propose': run tools/placer/clusters.mjs on the board."""
+    if source is None:
+        return None
+    if source != 'propose':
+        with open(source) as stream:
+            proposal = json.load(stream)
+        if proposal.get('schema') != 'iot-lab.placer-clusters.v1':
+            raise ValueError('%s: not a cluster proposal' % source)
+        return proposal
+    tool = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'clusters.mjs')
+    with tempfile.TemporaryDirectory() as tmp:
+        out = os.path.join(tmp, 'clusters.json')
+        subprocess.run(['node', tool, board, '-o', out], check=True, stdout=subprocess.DEVNULL)
+        with open(out) as stream:
+            return json.load(stream)
 
 
 def parse_domains(items):
@@ -293,6 +315,11 @@ def main(argv=None):
                    help='pad of a movable part within MM (centre to centre) of a pad of a fixed part, for example a TVS '
                         'at its connector pin; illegal beyond (cost.near_miss)')
     r.add_argument('--w-comp', type=float, default=1.0, help='cohesion weight of a component (with --blocks)')
+    r.add_argument('--auto-clusters', nargs='?', const='propose', default=None, metavar='CLUSTERS.json',
+                   help='soft clusters: the parts of a cluster move as one and are pulled to their pins; never rigid, never '
+                        'above a reviewed rule (README "Automatic clusters"). No FILE: run clusters.mjs on the board')
+    r.add_argument('--w-cluster', type=float, default=1.0, help='weight of each cluster tie: one mm of tie costs one mm of wire. '
+                        'Default to tune: 1 beat 4 on cost on 3 of 4 boards (README "Automatic clusters")')
     r.add_argument('--engineering-manifest',default=os.environ.get('PCB_ENGINEERING_MANIFEST'))
     r.add_argument('--engineering-board',default=os.environ.get('PCB_ENGINEERING_BOARD'),help='exact configured board ID for the reviewed manifest')
     r.add_argument('--engineering-root',default=os.environ.get('PCB_ENGINEERING_ROOT',project_root.root_str()))

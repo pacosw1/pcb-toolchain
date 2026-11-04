@@ -1264,11 +1264,13 @@ class Evaluator:
             ex = ex * self.cw[s[0]:s[1], s[2]:s[3]]
         return float(ex.sum())
 
-    def _moved_pairs(self, M, Ms):
+    def _moved_pairs(self, M, Ms, rigid=False):
         h, s = 0.0, 0.0
         for i in M:
             a, b = self._unit_pairs(i, Ms)
             h, s = h + a, s + b
+        if rigid:  # the units keep their relative places: the pairs among them do not change
+            return h, s
         for a in range(len(M)):
             for b in range(a + 1, len(M)):
                 x, y = self._pen(M[a], M[b])
@@ -1323,7 +1325,8 @@ class Evaluator:
         self._set_ub(i)
         return pen
 
-    def propose(self, moves):
+    def propose(self, moves, rigid=False):
+        """Apply moves; rigid = True when they keep the relative places of the moved units (a cluster move)."""
         if self.pending is not None:
             raise RuntimeError('propose() before commit()/revert()')
         M = [m[0] for m in moves]
@@ -1334,7 +1337,7 @@ class Evaluator:
         old_pose = [(i, self.X[i], self.Y[i], self.R[i]) for i in M]
         pad_spans = [self._pad_span(i) for i in M] if self.pd else []
         pad_old = [(i, self._pad_cells(i)) for i in M] if self.pd else []
-        ov0, sp0 = self._moved_pairs(M, Ms)
+        ov0, sp0 = self._moved_pairs(M, Ms, rigid)
         fb0 = sum(self.forb[i] for i in M)
         va = self._via_units(M) if self.vsites is not None else set()
         cb_old = [self.CB[i].copy() for i in M] if self.eunits else []
@@ -1342,7 +1345,7 @@ class Evaluator:
             self.X[i], self.Y[i], self.R[i] = float(x), float(y), int(r) % 4
             self._set_ub(i)
             self._set_cb(i)
-        ov1, sp1 = self._moved_pairs(M, Ms)
+        ov1, sp1 = self._moved_pairs(M, Ms, rigid)
         old_area = (self.hulls, self.apen)
         if self.areas:
             if Ms & self.adom:

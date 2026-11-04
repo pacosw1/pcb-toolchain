@@ -15,6 +15,8 @@ def check_cost(problem, params):
         raise ValueError('batch: near rules (cli.py read --near) are not supported (use the scalar path)')
     if problem.get('via_nets'):
         raise ValueError('batch: via nets (via room term) are not supported (use the scalar path)')
+    if problem.get('clusters'):
+        raise ValueError('batch: soft clusters (cli.py read --auto-clusters) are not supported (use the scalar path)')
 
 
 def check_search(problem, params):

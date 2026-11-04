@@ -55,6 +55,11 @@ Pin distance, clearance and access requirements reach the existing legalizer's
 `rule_miss` checks; objective weights and legacy geometrical policies are unchanged.
 Source hashes are checked before worker admission, after search and before writing.
 
+Automatic clusters (`cli.py read --auto-clusters`, `placer/README.md`) are not
+reviewed rules. They add a soft pull and a group move, never a rigid unit. A fixed
+part, an edge anchor, a region box or a near rule keeps its part out of a group
+move, and legality and the reviewed checks above stay as they are.
+
 An initially failing distance/access requirement remains repairable. Search
 results that still violate a requirement cannot be ranked as legal or written.
 Compaction validates reviewed poses before routing; a virtual outline cannot

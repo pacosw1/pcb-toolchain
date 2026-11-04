@@ -414,6 +414,26 @@ class EngineeringTests(unittest.TestCase):
         self.assertEqual(cost.rule_miss(prepared,corrected,1),0)
         self.assertEqual(engineering.check_problem(prepared,corrected)['status'],'passed')
 
+    def test_soft_clusters_give_way_to_every_reviewed_rule(self):
+        from placer import anneal, cost, membership
+        self.rules(self.rule('fixed',refs=['J1']),self.rule('rigid_group',refs=['U1','C1']),
+                   self.rule('pin_distance',a=dict(ref='C1',pad='1'),b=dict(ref='J1',pad='1'),
+                             metric='pad_center_euclidean',min_mm=8))
+        problem = self.problem(group=True)
+        tie = dict(ref='C1',pad='1',to='J1',to_pad='1',net='N',rule='support',why='test')
+        problem['clusters'],nets = membership.cluster_model(problem['units'],{'U1':0,'C1':0,'J1':1},
+            dict(clusters=[dict(name='J1',anchor='J1',why='test',ties=[tie])]),lambda ref,num,net:[0.,0.],40.)
+        problem['nets'] += nets
+        prepared = engineering.prepare_problem(self.root,'X',self.manifest,problem)
+        self.assertEqual(prepared['clusters'],problem['clusters'])
+        self.assertTrue(prepared['units'][1]['fixed'])
+        # The tie pulls C1 onto J1; the reviewed minimum, the fixed J1 and the rigid U1 + C1 all hold.
+        result = anneal.optimize(prepared,dict(mask_cell=.25),workers=1,epochs=4,steps=800,seed=1,top=1)
+        pose = result['candidates'][0]['pose']
+        self.assertEqual(result['candidates'][0]['illegal'],[])
+        self.assertEqual(engineering.check_problem(prepared,pose)['status'],'passed')
+        self.assertEqual(tuple(pose[1]),tuple(cost.initial_pose(prepared)[1]))
+
     def test_missing_or_unreviewed_source_and_unknown_fields_fail_closed(self):
         for change in (dict(status='blocked',blockers=[dict(code='datasheet_review_missing')]),):
             self.review.update(change)

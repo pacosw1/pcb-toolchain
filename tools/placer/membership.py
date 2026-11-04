@@ -49,6 +49,41 @@ def prefix(ref):
     return m.group(0) if m else ''
 
 
+# ---------- soft clusters ----------
+
+def cluster_model(units, member_of, proposal, pad_at, weight):
+    """Soft clusters from a proposal (clusters.mjs JSON) -> (pr['clusters'], cohesion nets). Each tie becomes a two-pin
+    cohesion net, part pad to the pad it should sit next to, in the existing HPWL term: no RUDY demand, no halo fan-out.
+    pad_at(ref, pad, net) = the pad centre local to its unit; it stops on a pad that is not on that net on the board (a
+    stale proposal). Clusters that meet in a unit (a rigid group, a decap tie) merge,
+    because a unit moves with one cluster only. A tie inside one unit or between two fixed units has no net.
+    A proposal changes no unit: it adds no rigid link and cannot make a fixed part move."""
+    groups, nets = [], []
+    missing = sorted({r for c in proposal['clusters'] for t in c['ties'] for r in (t['ref'], t['to'])} - set(member_of))
+    if missing:
+        raise ValueError('cluster proposal names parts not on the board: ' + ', '.join(missing[:8]))
+    for c in proposal['clusters']:
+        anchor = member_of[c['anchor']]
+        ties, used = [], {anchor}
+        for t in c['ties']:
+            i, j = member_of[t['ref']], member_of[t['to']]
+            used |= {i, j}
+            if i == j or (units[i]['fixed'] and units[j]['fixed']):
+                continue
+            at, target = pad_at(t['ref'], t['pad'], t['net']), pad_at(t['to'], t['to_pad'], t['net'])
+            ties.append({'unit': i, 'to': j, 'at': at, 'target': target, 'ref': t['ref'], 'pad': t['pad'], 'to_ref': t['to'],
+                         'to_pad': t['to_pad'], 'net': t['net'], 'rule': t['rule'], 'why': t['why']})
+            nets.append({'name': '~cluster:%s.%s' % (t['ref'], t['pad']), 'weight': weight, 'track': 0.0, 'cohesion': True,
+                         'pins': [[i, at[0], at[1], at[0], at[1]], [j, target[0], target[1], target[0], target[1]]]})
+        merged = {'name': c['name'], 'why': c['why'], 'anchor': anchor, 'units': used, 'ties': ties}
+        for g in [g for g in groups if g['units'] & used]:
+            groups.remove(g)
+            merged = {'name': g['name'] + '+' + merged['name'], 'why': g['why'] + '; ' + merged['why'], 'anchor': g['anchor'],
+                      'units': g['units'] | merged['units'], 'ties': g['ties'] + merged['ties']}
+        groups.append(merged)
+    return [dict(g, units=sorted(g['units'])) for g in groups if len(g['units']) > 1], nets
+
+
 # ---------- schematic ----------
 
 def _sexpr_items(text):
