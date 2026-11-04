@@ -23,9 +23,12 @@ pub struct Board {
     /// Board graphics, not the footprints'.
     pub graphics: Vec<Graphic>,
     /// Board texts, not the footprints'.
+    #[serde(default)]
     pub texts: Vec<Text>,
     /// Every group, nested ones too: a nested group's id is in the items of its parent.
+    #[serde(default)]
     pub groups: Vec<Group>,
+    #[serde(default)]
     pub constraints: Constraints,
     /// The box of Edge.Cuts with line widths, as BOARD::GetBoardEdgesBoundingBox.
     pub edges_bbox: Rect,
@@ -119,6 +122,7 @@ pub struct Footprint {
     pub orientation: f64,
     pub locked: bool,
     /// The footprint's copper clearance override, when it has one.
+    #[serde(default)]
     pub clearance_override: Option<Iu>,
     /// The fields other than Reference and Value, as name and text.
     pub fields: Vec<(String, String)>,
@@ -158,6 +162,7 @@ pub struct Via {
     pub net: String,
     pub locked: bool,
     /// Copper layers in stack order.
+    #[serde(default)]
     pub layers: Vec<String>,
 }
 
@@ -189,7 +194,9 @@ pub struct RuleArea {
     pub tracks: bool,
     pub vias: bool,
     pub pour: bool,
+    #[serde(default)]
     pub pads: bool,
+    #[serde(default)]
     pub footprints: bool,
 }
 

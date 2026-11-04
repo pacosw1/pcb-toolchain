@@ -17,6 +17,7 @@ pub enum Geometry {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Graphic {
+    #[serde(default)]
     pub id: String,
     pub geometry: Geometry,
     pub layer: String,

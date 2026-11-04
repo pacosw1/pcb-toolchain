@@ -260,6 +260,9 @@ fn empty_board() -> Board {
         path: String::new(),
         copper_layers: vec!["F.Cu".to_string(), "In1.Cu".to_string(), "B.Cu".to_string()],
         stackup: Vec::new(),
+        texts: Vec::new(),
+        groups: Vec::new(),
+        constraints: Default::default(),
         nets: BTreeMap::new(),
         footprints: Vec::new(),
         copper: Vec::new(),
@@ -276,7 +279,7 @@ fn zone(net: &str, layer: &str, clearance: i64) -> Zone {
 }
 
 fn via(net: &str, x: i64, y: i64, size: i64) -> RoutedCopper {
-    RoutedCopper::Via(Via { id: String::new(), at: Pt::new(x, y), size, drill: 0, net: net.to_string(), locked: false })
+    RoutedCopper::Via(Via { id: String::new(), at: Pt::new(x, y), size, drill: 0, net: net.to_string(), locked: false, layers: Vec::new() })
 }
 
 #[test]
