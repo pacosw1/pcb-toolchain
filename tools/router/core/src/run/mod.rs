@@ -206,6 +206,68 @@ impl Run<'_> {
     }
 }
 
+/// `iotroute lock-input BOARD SRC.kicad_pcb OUT.kicad_pcb [--tools DIR] [--nets NET,NET]`: the locked copy of --lock-from on its own,
+/// for tools that prepare a board. The lock nets come from SRC's model unless --nets names them. Prints a JSON line with what it did.
+pub fn lock_input_cli(args: &[String]) -> i32 {
+    let usage = "usage: iotroute lock-input BOARD SRC.kicad_pcb OUT.kicad_pcb [--tools DIR] [--nets NET,NET]";
+    let (mut positional, mut tools, mut named) = (Vec::new(), PathBuf::from("tools"), None);
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--tools" => tools = it.next().map_or(tools, PathBuf::from),
+            "--nets" => named = it.next().map(|n| n.split(',').map(str::to_string).collect::<std::collections::BTreeSet<_>>()),
+            _ => positional.push(arg.as_str()),
+        }
+    }
+    let [board, source, out] = positional[..] else {
+        eprintln!("{usage}");
+        return 2;
+    };
+    match lock_input(board, source, out, &tools, named) {
+        Ok(line) => {
+            println!("{line}");
+            0
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            2
+        }
+    }
+}
+
+fn lock_input(board: &str, source: &str, out: &str, tools: &Path, named: Option<std::collections::BTreeSet<String>>) -> Result<String, String> {
+    let (source, out) = (absolute(source)?, absolute(out)?);
+    let root = std::path::absolute(tools).map_err(|e| e.to_string())?;
+    let (folder, _) = board_project(board, root.parent().unwrap_or(Path::new(".")))?;
+    let nets = match named {
+        Some(nets) => nets,
+        None => {
+            let work = PathBuf::from(format!("{}.lock", out.display()));
+            fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
+            let model = work.join("lock-model.json");
+            let (code, text) = Steps::new(tools)?.model(&folder, &source, &model, &work.join("lock-model.log"), false)?;
+            if code != 0 {
+                return Err(format!("iotroute model failed: {}", last_line(&text)));
+            }
+            lock_nets(&fs::read_to_string(&model).map_err(|e| format!("{}: {e}", model.display()))?)?
+        }
+    };
+    let (removed, kept) = make_locked_input(&source, &source, &nets, &out)?;
+    serde_json::to_string(&serde_json::json!({"removed": removed, "kept": kept, "nets": nets})).map_err(|e| e.to_string())
+}
+
+/// `iotroute sheets ROOT.kicad_sch BASE`: the sheets a root sheet names, relative to BASE, one per line.
+pub fn sheets_cli(args: &[String]) -> i32 {
+    let [root, base] = args else {
+        eprintln!("usage: iotroute sheets ROOT.kicad_sch BASE");
+        return 2;
+    };
+    for sheet in project::referenced_sheets(Path::new(root), Path::new(base)) {
+        println!("{sheet}");
+    }
+    0
+}
+
 /// The verdict: KiCad DRC with parity on OUT, and its copper.
 fn finish(rec: &mut Record, out: &Path, work: &Path) -> Result<DrcCounts, String> {
     let drc = run_drc(out, &work.join("drc.json"))?;

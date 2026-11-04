@@ -1,7 +1,7 @@
-// Compaction router backend `iotroute` (milestone M4, tools/router/DESIGN.md): one step = tools/router/run.py on the step
+// Compaction router backend `iotroute` (milestone M4, tools/router/DESIGN.md): one step = iotroute run on the step
 // board, then the board gate on the routed copy. The step score is measured, never the router claim:
 //
-//   score = DRC errors + unconnected + parity   (run.py: kicad-cli pcb drc --schematic-parity on the saved board)
+//   score = DRC errors + unconnected + parity   (iotroute run: kicad-cli pcb drc --schematic-parity on the saved board)
 //         + every other gate metric with a target (erc_errors, planes, pairs, viapads, paths_low, kicad_happy, ...)
 //
 // The gate runs only when the DRC part is 0 (a cheaper check that fails first). A step passes only at score 0 with a
@@ -10,10 +10,9 @@
 // snapshot's project path, then `node tools/gate.mjs BOARD --fresh --evidence-dir`.
 import { spawn } from 'node:child_process';
 import { closeSync, copyFileSync, mkdirSync, openSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { basename, dirname, parse, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { kiCadPaths } from '../lib/env-paths.mjs';
+import { iotrouteBin } from '../lib/iotroute-bin.ts';
 import { readPyJson, parseTyped, readTyped } from '../lib/json-file.ts';
 import { defaultCpu } from '../lib/lean-resources.ts';
 import { Float, jsonDumps, number, osError, processText, PyError, pyStr, splitlines } from '../lib/py-compat.mjs';
@@ -25,10 +24,10 @@ import type { Measure } from './compact-rank.ts';
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 export const NO_RESULT = 10 ** 6;
 const INFO_METRICS = new Set(['erc_warnings', 'drc_warnings']);   // tools/lib/gate-core.mjs METRICS without a target
-const DRC_METRICS = new Set(['drc_errors', 'drc_unconnected', 'drc_parity']);   // measured by run.py on the saved board
+const DRC_METRICS = new Set(['drc_errors', 'drc_unconnected', 'drc_parity']);   // measured by iotroute run on the saved board
 const THREAD_MARKS = ['std::thread', 'thread::spawn', 'thread::scope', 'rayon', 'available_parallelism', 'crossbeam'];
-const DRC_TOKENS = 1;   // run.py ends with kicad-cli pcb drc on the saved board: one more token for that phase
-const MEASURE_SOURCE = 'tools/router/run.py copper_counts: pcbnew track lengths and via count of the saved board';
+const DRC_TOKENS = 1;   // iotroute run ends with kicad-cli pcb drc on the saved board: one more token for that phase
+const MEASURE_SOURCE = 'iotroute run copper_counts: track lengths and via count of the saved board';
 
 export type Metrics = Record<string, unknown>;
 /** Starts a command with its output captured, stderr into stdout. The driver's owned stage goes here. */
@@ -50,7 +49,7 @@ function sourceText(core: string): string[] {
   return [joinPath(core, 'Cargo.toml'), ...names.map(name => joinPath(source, name))].map(path => readFileSync(path, 'utf8'));
 }
 
-/** CPU tokens for one run.py job from the router's real thread use: 1 + DRC_TOKENS when the core sources (Cargo.toml and
+/** CPU tokens for one iotroute run job from the router's real thread use: 1 + DRC_TOKENS when the core sources (Cargo.toml and
  *  src/) use no thread or parallel crate (the binary runs on one thread), else `full` (the resource default). A core that
  *  cannot be read gets `full` (fail safe). */
 export function routerCpu(full: number = defaultCpu(), core: string = joinPath(REPO, 'tools/router/core')): number {
@@ -84,7 +83,7 @@ export function gatePart(metrics: Metrics | null | undefined): [number, boolean]
 const finished = (rec: Dict): boolean => rec.status === 'PASS' || rec.status === 'FAIL';
 const drcPart = (rec: Dict): number => ['drc_errors', 'unconnected', 'parity'].reduce((sum, key) => sum + number(need(rec, key)), 0);
 
-/** Step score from the run.py record and the gate metrics (null = gate not run). */
+/** Step score from the run record and the gate metrics (null = gate not run). */
 export function score(rec: Dict, metrics: Metrics | null): number {
   if (!finished(rec)) return NO_RESULT;
   const drc = drcPart(rec);
@@ -172,7 +171,7 @@ function savedRun(d: string): Dict | null {
   }
 }
 
-/** Measure of the step route d/route-0/score.json: the routed length (mm) and via count that run.py measured on the saved
+/** Measure of the step route d/route-0/score.json: the routed length (mm) and via count that iotroute run measured on the saved
  *  board (never the router core claim). Null when the record has no measure. */
 export function measure(d: string): Measure | null {
   const rec = savedRun(d);
@@ -182,16 +181,15 @@ export function measure(d: string): Measure | null {
 
 function runRecord(output: string): Dict {
   const line = splitlines(output).findLast(text => text.startsWith('{'));
-  return line === undefined ? { status: 'ERROR', cause: 'run.py printed no JSON record' } : parseTyped<Dict>(line);
+  return line === undefined ? { status: 'ERROR', cause: 'iotroute run printed no JSON record' } : parseTyped<Dict>(line);
 }
 
-/** Route the step board `path` into d/route-0 with run.py, gate it, write d/route-0/score.json; gives [score]. */
+/** Route the step board `path` into d/route-0 with iotroute run, gate it, write d/route-0/score.json; gives [score]. */
 export async function routeStep(path: string, d: string, board: string, gate: Gate, iters: number, extra: readonly string[] = [], runStage: RunStage = captured): Promise<number[]> {
   const folder = joinPath(d, 'route-0');
   mkdirSync(folder, { recursive: true });
   const out = joinPath(folder, `${parse(basename(path)).name}.kicad_pcb`);
-  const python = kiCadPaths(process.platform, homedir(), process.env).kicadPython;
-  const command = [python, joinPath(REPO, 'tools/router/run.py'), board, out, '--pcb', path, '--iters', String(iters), '--json', ...extra];
+  const command = [iotrouteBin(), 'run', board, out, '--pcb', path, '--iters', String(iters), '--tools', joinPath(REPO, 'tools'), '--json', ...extra];
   const { stdout } = await runStage(command, 'routing', { cwd: REPO });
   writeFileSync(joinPath(d, 'route-0.log'), stdout ?? '');
   const rec = runRecord(stdout ?? '');

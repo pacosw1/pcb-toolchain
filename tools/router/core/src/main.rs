@@ -62,7 +62,7 @@ const DEF_VIA_COST: f64 = 3.0;
 const DEF_RET_COST: f64 = 0.0;
 const DEF_WEB_COST: f64 = 3.0;
 /// gate scope (reffill.rs RefFill::soft): an A* step of a soft net off its reference costs (1 + this) times more. A
-/// search preference only (as DEF_VIA_COST): which off-reference runs are legal is decided by si_planes in run.py.
+/// search preference only (as DEF_VIA_COST): which off-reference runs are legal is decided by si_planes in iotroute run.
 pub(crate) const DEF_REF_COST: f64 = 3.0;
 /// a join is searched first inside the bounding box of the net's items grown by this margin (mm)
 const JOIN_MARGIN: f64 = 5.0;
@@ -438,7 +438,7 @@ struct Board {
     /// the largest pair value (unit tests that set iso by hand).
     pidx: Vec<(Index, Index)>,
     prad: Vec<f64>,
-    /// nets that need no return via (model `return_exempt`: the gate's RP-001 exemptions, run.py --return-exempt)
+    /// nets that need no return via (model `return_exempt`: the gate's RP-001 exemptions, iotroute run --return-exempt)
     noret: Vec<i32>,
     /// isolation: the return ground of each net (the ground whose via has the smallest pair value with the net's vias:
     /// a field net returns on the field ground). Empty = gnd for every net (no pair rules, or one ground)
@@ -4212,6 +4212,8 @@ fn main() {
         Some("si-pairs") => std::process::exit(iotroute::si::pairs_cli(&args[2..])),
         Some("run") => std::process::exit(iotroute::run::cli(&args[2..])),
         Some("route-policy") => std::process::exit(iotroute::run::policy::cli(&args[2..])),
+        Some("lock-input") => std::process::exit(iotroute::run::lock_input_cli(&args[2..])),
+        Some("sheets") => std::process::exit(iotroute::run::sheets_cli(&args[2..])),
         _ => {}
     }
     route_cli(&args);

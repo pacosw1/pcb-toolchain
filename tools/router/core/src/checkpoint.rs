@@ -23,7 +23,7 @@ pub(crate) use iotroute::sha256::sha256;
 
 #[derive(Serialize, Clone)]
 pub(crate) struct Bind {
-    /// --source-sha: run.py's sources_sha256 of the core; null when the core was started by hand
+    /// --source-sha: iotroute run's sources_sha256 of the core; null when the core was started by hand
     source_sha256: Option<String>,
     binary_sha256: Option<String>,
     model_sha256: String,

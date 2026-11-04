@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 
 
 def sha(path):
@@ -127,6 +128,20 @@ def python_native():
     return os.environ.get('KICAD_PYTHON', os.environ.get('KICAD_PY',
         '/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3'
         if sys_platform() == 'darwin' else 'python3'))
+
+
+def iotroute_bin():
+    """The iotroute binary of these sources (tools/lib/iotroute-bin.ts)."""
+    finder = Path(__file__).resolve().parent / 'lib/iotroute-bin.ts'
+    return subprocess.run(['node', '--no-warnings', '--experimental-strip-types', str(finder)], check=True, capture_output=True, text=True).stdout.strip()
+
+
+def route_policy_args(spec, candidate):
+    """The run arguments of a route policy, checked by iotroute route-policy. A bad spec is a ValueError."""
+    done = subprocess.run([iotroute_bin(), 'route-policy', str(candidate)], input=json.dumps(spec), capture_output=True, text=True)
+    if done.returncode:
+        raise ValueError(done.stderr.strip())
+    return done.stdout.split()
 
 
 def sys_platform():

@@ -304,12 +304,12 @@ The in-house router is the judge (idea: TraceMaker `src/place/routable.cpp` at c
 
 ```sh
 $PY tools/placer/repair.py prepare SRC.kicad_pcb PLACE.kicad_pcb --board NET-CORE [--keep lock-nets|locked]
-$PY tools/router/run.py NET-CORE ROUTED.kicad_pcb --pcb PLACE.kicad_pcb              # the failed full route
+iotroute run NET-CORE ROUTED.kicad_pcb --pcb PLACE.kicad_pcb              # the failed full route
 $PY tools/placer/repair.py run NET-CORE PLACE.kicad_pcb ROUTED.kicad_pcb --outdir DIR [--mode local|full]
     [--max-routes 8] [--per-round 4] [--no-rotate] [--no-decap-slide] [--read ARG ...]
 ```
 
-- prepare: all footprints unlocked; `lock-nets` (default) keeps only the pair + crystal copper (as run.py
+- prepare: all footprints unlocked; `lock-nets` (default) keeps only the pair + crystal copper (as iotroute run
   `--lock-from`); `locked` also keeps every other locked track and via of SRC (hand geometry). NET-CORE needs
   `locked`: its 15 locked GND items include the stubs of U8.6 and U3.2. Without them the router reports
   "fixed copper alone walls it in (input)" and KiCad reports starved_thermal on those pads.
@@ -324,7 +324,7 @@ $PY tools/placer/repair.py run NET-CORE PLACE.kicad_pcb ROUTED.kicad_pcb --outdi
   located item. Rank: term decrease, placement cost, displacement; round-robin over the units. Deterministic.
 - Decap slide: a decap tied to its IC (`cli.py read --decap-tie`, 3 mm) may move alone when the tie stays true
   (pad-edge gap to the IC pin <= the tie distance).
-- Route: `reuse` (default since 2026-11-01, see the last section) routes the moved placement with `run.py --reuse` from
+- Route: `reuse` (default since 2026-11-01, see the last section) routes the moved placement with `iotroute run --reuse` from
   the present candidate's route. `local` rips the copper that the moved pads meet and the unlocked clusters within `legal_radius`
   of a failure or on a failed net, keeps and locks the rest, and routes only what is open (NET-CORE: 40 s against
   270 s for a full route). `full` routes the moved placement board again.
@@ -425,7 +425,7 @@ when its tie stays true. These proposals alternate with the failure-point propos
 proposed only R27 (no gain); the new one proposes C47 0.75 mm south (blocked 0.16 -> 0) and C49 moves.
 
 CPU tokens: an iotroute routing stage reserves `iotroute_step.router_cpu()` = 1 (the router core has no thread or
-parallel crate) + 1 (the kicad-cli DRC phase of run.py) instead of the whole budget. The 16 GiB declared memory with
+parallel crate) + 1 (the kicad-cli DRC phase of iotroute run) instead of the whole budget. The 16 GiB declared memory with
 8 GiB per job still limits the Mac to 2 compaction runs side by side (a third run waits 30 s, then stops).
 
 Result (2026-11-01, NET-CORE from the spread placement 1faf8ad8, blocks, router v7 judge, scratch only). Run A
@@ -452,9 +452,9 @@ Cause: the halo rank kept the passing step with the smallest halo. On NET-CORE (
 1914 mm, but s 0.542 routed 1580 mm. Below s 0.54 the routed length does not fall, and HPWL does not predict it.
 
 - Measure: each `--router iotroute` step records `measure` = {length_mm, vias, routed} in `run.json`. Source: the
-  `run.py --json` record (`copper_counts`: pcbnew track lengths and via count of the saved routed board, not the
+  `iotroute run --json` record (`copper_counts`: pcbnew track lengths and via count of the saved routed board, not the
   router core claim). A step that passes through the repair takes the measure of the repaired board (the repair
-  key, from the same run.py record). `box_sum` = the block box sum of the search pose in the problem model (rigid
+  key, from the same iotroute run record). `box_sum` = the block box sum of the search pose in the problem model (rigid
   block border boxes + the box of each soft block cohesion net; a repair move is not in it).
 - Rank (`--rank length`, default for `--router iotroute`): a real-outline step first, then the shortest routed
   length, then fewer vias, then the smaller box sum. `--rank halo` = the old rule (smallest halo, maximum
@@ -482,7 +482,7 @@ the placement costs of steps 0-4 are the same as in escape A; only the router ch
 `STOP length stop: the 2 passing steps after step 2 (s 0.542, 1597.5 mm) rank after it`. The halo rank would have
 kept step 4 (+48 mm). Independent check of the step 2 routed board (scratch copy): `kicad-cli pcb drc
 --schematic-parity` 0 / 0 / 0, `node tools/gate.mjs NET-CORE --fresh` PASS (detached origin/main worktree), pcbnew
-1597.5 mm / 304 vias (the same as the run.py measure). Against the table above: the same placement routed 1580 mm /
+1597.5 mm / 304 vias (the same as the iotroute run measure). Against the table above: the same placement routed 1580 mm /
 296 vias with v7; the hand placement routed 1558 mm / 287 vias with v7 (not routed again with v8 here). The rank
 choice and the stop worked; the length gap to the hand placement is the next problem (a length-aware term).
 
@@ -490,9 +490,9 @@ choice and the stop worked; the length gap to the hand placement is the next pro
 
 Cause (data, router v8, scratch only). 23 routed NET-CORE placements with 0 unconnected: escape A steps 0-5, escape
 C steps 0-7, PR #73 run A steps 0-1, PR #73 run B7 step 0, PR #71 run 4 steps 0-3 and 6, and the hand placement
-(`run.py --lock-from`). 18 are DRC 0 / 0 / 0; 5 have 1-2 DRC items and 0 unconnected (C1, C3, C6, BA0, R4_3). 6 more
+(`iotroute run --lock-from`). 18 are DRC 0 / 0 / 0; 5 have 1-2 DRC items and 0 unconnected (C1, C3, C6, BA0, R4_3). 6 more
 routes left 1 open and are not in the data. Escape A steps 0-4 are the rank-by-length run boards; the others were
-routed again with v8 (`run.py BOARD OUT --pcb PLACE --iters 80`).
+routed again with v8 (`iotroute run BOARD OUT --pcb PLACE --iters 80`).
 Each placement metric comes from the pads of the routed board (repair moves included). Spearman with the routed length:
 
 | Metric (signal nets: not GND, not VDD_3V3) | Spearman | n |
@@ -550,7 +550,7 @@ Independent check of the step 1 routed board (scratch copy, sha256 75a473f9...):
 
 | Board | length mm | vias | DRC / unconn / parity | gate |
 | --- | --- | --- | --- | --- |
-| hand placement (`run.py --lock-from`, v8) | 1592.9 | 285 | 0 / 0 / 0 | - (router PASS) |
+| hand placement (`iotroute run --lock-from`, v8) | 1592.9 | 285 | 0 / 0 / 0 | - (router PASS) |
 | rank-by-length run, step 2 (no TP pins, w_mst 0) | 1597.5 | 304 | 0 / 0 / 0 | PASS |
 | this run, step 1 (TP pins + w_mst 1) | 1390.9 | 287 | 0 / 0 / 0 | PASS |
 
@@ -601,7 +601,7 @@ NET-CORE constraints (spread placement f9fcd2ed; SW1, SW2, D1, D2 are already at
 
 | Board | length mm | vias | DRC / unconn / parity | gate |
 | --- | --- | --- | --- | --- |
-| hand placement (`run.py --lock-from`, v9) | 1558.6 | 280 | 0 / 0 / 0 | PASS |
+| hand placement (`iotroute run --lock-from`, v9) | 1558.6 | 280 | 0 / 0 / 0 | PASS |
 | w_mst run step 1, no constraints (v8) | 1390.9 | 287 | 0 / 0 / 0 | PASS |
 | this run step 0, constraints (v9) | 1485.6 | 286 | 0 / 0 / 0 | PASS |
 
@@ -612,14 +612,14 @@ the box. The KiCad courtyard (1.297 mm radius with the line, model 1.25 mm) goes
 The constraints cost 95 mm against the unconstrained run. The result stays 73 mm shorter than the hand placement
 with 6 more vias. The halo shrink failed at s 0.694 and below on interior escapes, not at the constrained parts.
 
-## Repair with a partial re-route (`--repair-mode reuse`, router `run.py --reuse`, 2026-11-01)
+## Repair with a partial re-route (`--repair-mode reuse`, router `iotroute run --reuse`, 2026-11-01)
 
 Cause: each repair proposal moves 1-2 parts, but it was routed as a whole board (`full`) or with the copper locked
 around a ripped region (`local`). `local` cannot move the kept copper, and its rip left pieces: PR #79 step 1 (s 0.637),
 proposal C13: 1 unconnected item, a 0.05 mm VCC_DRAM track stub at C25.1 (in all 4 local attempts).
 
 Change. `repair.run(..., mode='reuse')` (default; `compact_cli.py --repair-mode reuse`) writes the moved placement
-(PLACE + the move, lock-net copper only) and routes it with `run.py --reuse <present candidate's routed board>
+(PLACE + the move, lock-net copper only) and routes it with `iotroute run --reuse <present candidate's routed board>
 --reuse-fallback none`. The router keeps the copper of the nets that the move does not touch and routes the rest
 (tools/router/DESIGN.md 5c); the negotiation may still move kept copper. The key and the accept rule do not change.
 

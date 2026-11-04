@@ -213,14 +213,14 @@ def parser():
     ap.add_argument('--router', choices=['freerouting', 'fastroute', 'iotroute'], default='fastroute',
                     help='fastroute: tools/fastroute_job.py on this computer (default). freerouting: 2.1.0 on Hetzner '
                     '(its timed-out runs lost most of the result, 2026-10-03; kept for old benchmarks only). '
-                    'iotroute: tools/router/run.py on this computer; step score = DRC errors + unconnected + parity '
+                    'iotroute: iotroute run on this computer; step score = DRC errors + unconnected + parity '
                     '+ board gate (placer/iotroute_step.py), never the router claim')
     ap.add_argument('--passes', type=int, default=40, help='router passes per step (fastroute; iotroute --iters)')
     ap.add_argument('--repair', action='store_true', help='iotroute only: a failed step with located DRC failures '
                     'runs the failure-driven repair (placer/repair.py) on its routed board; the step passes when the '
                     'repair reaches DRC 0/0/0 + gate at target')
     ap.add_argument('--repair-mode', choices=['reuse', 'local', 'full'], default='reuse', help='repair re-route: reuse '
-                    '(run.py --reuse from the failed route: keep the copper of the nets the move does not touch, route the '
+                    '(iotroute run --reuse from the failed route: keep the copper of the nets the move does not touch, route the '
                     'rest; default), local (rip the failure region and the moved-part copper, lock the rest) or full')
     ap.add_argument('--repair-rank', choices=['term', 'hot'], default='term', help='repair proposal order: term '
                     '(failure term decrease; default) or hot (first the moves that take the most PathFinder history of '
@@ -253,7 +253,7 @@ def parser():
 
 def main(argv=None):
     a = parser().parse_args(argv)
-    if getattr(a, 'repair_rank', 'term') == 'hot':  # rank 'hot' reads the map of the failed route: run.py writes it
+    if getattr(a, 'repair_rank', 'term') == 'hot':  # rank 'hot' reads the map of the failed route: iotroute run writes it
         os.environ['IOTROUTE_CONGESTION'] = '1'
     if not math.isfinite(a.budget) or a.budget <= 0:
         raise ValueError('budget must be positive')

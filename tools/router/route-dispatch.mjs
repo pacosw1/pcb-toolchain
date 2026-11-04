@@ -1,20 +1,21 @@
 #!/usr/bin/env node
-// tools/router/run.py on the job daemon. The candidate's verdict stays the gate on the Mac.
+// iotroute run on the job daemon. The candidate's verdict stays the gate on the Mac.
 //
-// A run the daemon cannot take stops on macOS with exit 2 and says why: a route is Python, and it does not start on the Mac
-// by surprise (a local route there ran for minutes unnoticed, 2026-11-04). REMOTE_NO_DAEMON=1 asks for it. Elsewhere, on a
+// A run the daemon cannot take stops on macOS with exit 2 and says why: a route needs the job image, and it does not start on
+// the Mac by surprise (a local route there ran for minutes unnoticed, 2026-11-04). REMOTE_NO_DAEMON=1 asks for it. Elsewhere, on a
 // Linux host or in CI, the run is local as before. Below, "local" means that case.
 //
-//   node tools/router/route-dispatch.mjs [--timeout S] -- PYTHON tools/router/run.py BOARD OUT --pcb IN [run.py options]
+//   node tools/router/route-dispatch.mjs [--timeout S] -- iotroute run BOARD OUT --pcb IN [run options]
 //
-// Run from the workspace that holds tools/ and hardware-design/. The local path runs the command unchanged.
+// Run from the workspace that holds tools/ and hardware-design/. The local path runs the command, with the word iotroute
+// standing for the binary of these sources (tools/lib/iotroute-bin.ts).
 //
 // The daemon path needs what tools/remote.sh needs (REMOTE_NO_DAEMON not 1, JOBD_URL from the environment or
 // .pcb-toolchain.env, a readable token, a client, /status within 3 s) and also: bin/iotroute-linux-x86_64 under
 // PCB_TOOLCHAIN_ROOT built from these core sources, kicad-happy at its pin, and the input boards in the shipped board
 // folder. When one is missing the run is local and stderr says why. The job gets the workspace's own tools/ and board.
 //
-// Exit: run.py's. 0 PASS, 1 FAIL, 2 no verdict, also for what only the daemon can do: timeout, out of memory, lost job.
+// Exit: the run's. 0 PASS, 1 FAIL, 2 no verdict, also for what only the daemon can do: timeout, out of memory, lost job.
 //
 // A daemon failure partway. A job that may have run is never run again here, because the same route would run twice:
 // after an unclear submit, a lost connection, a timeout or a lost result the exit is 2 and result.json names the job.
@@ -49,12 +50,12 @@ const ROUTE_MEM_GB=4;
 const VALUE_OPTIONS=new Set(['--iters','--max-time','--seed','--stall-passes']);
 const FLAGS=new Set(['--congestion','--return-exempt','--checkpoint']);
 const FILE_OPTIONS=new Set(['--pcb','--lock-from']);
-// The image has no kicad-happy, and run.py's KICAD_CLI default is the Mac path.
+// The image has no kicad-happy.
 const JOB_SCRIPT=`set -e
 mkdir .happy
 tar -xzf in/${HAPPY}.tar.gz -C .happy
 export KICAD_HAPPY_DIR=$PWD/.happy KICAD_CLI=kicad-cli
-exec python3 "$@"`;
+exec "$@"`;
 
 const say=text=>console.error(`route: ${text}`);
 const sha=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
@@ -72,10 +73,19 @@ function localOrStop(command,why){
   return 2;
 }
 
+/** The binary of these sources: the finder may build it, which can take a minute. */
+function localBinary(){
+  const finder=new URL('../lib/iotroute-bin.ts',import.meta.url).pathname;
+  const r=spawnSync(process.execPath,['--no-warnings','--experimental-strip-types',finder],{encoding:'utf8',stdio:['ignore','pipe','inherit']});
+  if(r.status!==0)throw Error('no local iotroute binary');
+  return r.stdout.trim();
+}
+
 function runLocal(command){
   return new Promise(resolve=>{
-    const child=spawn(command[0],command.slice(1),{stdio:'inherit'});
-    child.on('error',e=>{say(`cannot start ${command[0]}: ${e.message}`);resolve(2);});
+    const exe=command[0]==='iotroute'?localBinary():command[0];
+    const child=spawn(exe,command.slice(1),{stdio:'inherit'});
+    child.on('error',e=>{say(`cannot start ${exe}: ${e.message}`);resolve(2);});
     child.on('close',(code,signal)=>resolve(code??128+os.constants.signals[signal]));
   });
 }
@@ -89,7 +99,7 @@ function projectSetting(key){
   }
 }
 
-/** run.py's arguments as job arguments -> {board, out, pcb, json, args}, or a string: why they stay local. */
+/** The run's arguments as job arguments -> {board, out, pcb, json, args}, or a string: why they stay local. */
 function jobArguments(argv,cwd){
   const positional=[],args=[],files={};
   let json=false;
@@ -127,8 +137,7 @@ function coreSources(root){
 }
 
 /**
- * Why this binary cannot route these sources, or null. run.py --bin compares mtimes, which mean nothing in a snapshot
- * (its copies are all new). So: run.py's rule against the toolchain tree, and the snapshot's core equal to that tree.
+ * Why this binary cannot route these sources, or null: older than the toolchain tree, or that tree's core not the snapshot's.
  */
 function binaryProblem(toolchain,cwd,bin){
   if(!isFile(bin))return`no Linux router at ${bin}`;
@@ -182,11 +191,10 @@ function clientProcess(plan,args,stdio){
   return[process.execPath,['--no-warnings','--experimental-strip-types',plan.client,...args],{env,stdio}];
 }
 
-/** The binary and the kicad-happy tar for --in. The binary's new mtime passes run.py's check; binaryProblem did the real one. */
+/** The binary and the kicad-happy tar for --in. */
 function stageInputs(plan,stage){
   const bin=path.join(stage,BIN),tar=path.join(stage,`${HAPPY}.tar.gz`);
   fs.copyFileSync(plan.bin,bin);
-  const now=new Date();fs.utimesSync(bin,now,now);
   fs.copyFileSync(happyTar(plan),tar);
   return[bin,tar];
 }
@@ -225,7 +233,7 @@ function queueClock(file){
 /** `client run`: streams the job to stderr, fills `results`. -> {code, id, refused500, stdout}. */
 function submitAndWatch(plan,inputs,timeoutS,results){
   const name=path.basename(plan.out,'.kicad_pcb');
-  const cmd=['bash','-c',JOB_SCRIPT,'_','tools/router/run.py',plan.board,`out/route/${name}.kicad_pcb`,'--bin',`in/${BIN}`,...plan.args];
+  const cmd=['bash','-c',JOB_SCRIPT,'_',`in/${BIN}`,'run',plan.board,`out/route/${name}.kicad_pcb`,...plan.args];
   const queueWait=process.env.PCB_QUEUE_WAIT_S||String(QUEUE_WAIT_S);
   const args=['run',plan.board,...inputs.flatMap(f=>['--in',f]),'--timeout',String(timeoutS),'--cpus',String(ROUTE_CPUS),'--mem',String(ROUTE_MEM_GB),'--queue-wait',queueWait,'--results',results,'--name',`route-${name}`];
   if(process.env.REMOTE_IMAGE)args.push('--image',process.env.REMOTE_IMAGE);
@@ -337,7 +345,7 @@ async function main(argv){
   const split=argv.indexOf('--');
   const options=argv.slice(0,split),command=argv.slice(split+1);
   const timeoutS=options[0]==='--timeout'?Math.ceil(Number(options[1])):DEFAULT_TIMEOUT_S;
-  if(split<0||command.length<3||!(timeoutS>0)){say('usage: route-dispatch.mjs [--timeout S] -- PYTHON tools/router/run.py BOARD OUT ...');return 2;}
+  if(split<0||command.length<3||!(timeoutS>0)){say('usage: route-dispatch.mjs [--timeout S] -- iotroute run BOARD OUT ...');return 2;}
   const plan=await daemonPlan(command);
   if(typeof plan==='string')return localOrStop(command,plan);
   const code=await runOnDaemon(plan,timeoutS);

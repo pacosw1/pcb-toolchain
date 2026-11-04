@@ -115,7 +115,7 @@ fn lexical(path: &Path) -> PathBuf {
 
 /// Relative paths of the sheets a root sheet names, recursively. A path counts relative to the sheet that names it, else to
 /// `base`; a missing file, or one outside `base`, is skipped.
-fn referenced_sheets(root: &Path, base: &Path) -> Vec<String> {
+pub fn referenced_sheets(root: &Path, base: &Path) -> Vec<String> {
     let base = lexical(base);
     let (mut found, mut todo, mut seen): (Vec<String>, Vec<PathBuf>, Vec<PathBuf>) = (Vec::new(), vec![root.to_path_buf()], Vec::new());
     while let Some(current) = todo.pop() {
@@ -248,6 +248,17 @@ mod tests {
         let files = project_files(&b).unwrap();
         let keys: Vec<&str> = files.keys().map(String::as_str).collect();
         assert_eq!(keys, [".kicad_dru", ".kicad_pro", ".kicad_sch", "blocks/X.kicad_sch", "blocks/deep/Y.kicad_sch", "fp-lib-table", "sub.kicad_sch"]);
+    }
+
+    #[test]
+    fn a_sheet_no_one_names_stays_behind_but_sheets_beside_the_root_come() {
+        let f = Folder::new("unused");
+        let b = f.write("in/B.kicad_pcb", "");
+        f.write("in/B.kicad_pro", "pro");
+        f.write("in/ETH.kicad_sch", "");
+        f.write("in/blocks/unused.kicad_sch", "");
+        let keys: Vec<String> = project_files(&b).unwrap().into_keys().collect();
+        assert_eq!(keys, [".kicad_pro", "ETH.kicad_sch"]);
     }
 
     #[test]

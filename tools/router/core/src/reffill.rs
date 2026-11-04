@@ -128,10 +128,10 @@ pub(crate) struct RefFill {
     /// gate scope (2026-11-02, model net `ref_soft`): a net whose off-reference run the gate may accept (si_planes
     /// D-124c: a stub, a run whose terminal snap discs meet in reference copper, a return detour within the edge budget,
     /// or no rule above the board perimeter) is not blocked off the reference: each step there costs more
-    /// (Ctx::search_n, --ref-cost), and run.py checks the written board with si_planes itself; a net the gate fails
+    /// (Ctx::search_n, --ref-cost), and iotroute run checks the written board with si_planes itself; a net the gate fails
     /// is routed again with ref_soft false (blocked, as before). Fast nets stay blocked (D-124 fast-crossing).
     pub(crate) soft: Vec<bool>,
-    /// per net: the off-reference step price (model net `ref_cost`, default crate::DEF_REF_COST); run.py raises it for
+    /// per net: the off-reference step price (model net `ref_cost`, default crate::DEF_REF_COST); iotroute run raises it for
     /// a soft net whose run the gate failed, before it sets the net hard
     pub(crate) cost: Vec<f64>,
 }
