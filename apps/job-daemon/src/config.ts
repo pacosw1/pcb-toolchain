@@ -20,7 +20,9 @@ export interface Config {
   defaultRetries: number;
   maxRetriesCap: number;
   retryBackoffS: number;
-  cpuPsiMax: number;
+  cpuBusyMaxPct: number;
+  defaultQueueWaitS: number;
+  maxQueueWaitS: number;
   memFloorFraction: number;
   minFreeGb: number;
   maxUploadMb: number;
@@ -79,7 +81,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     defaultRetries: num(env, 'JOBD_DEFAULT_RETRIES', 2),
     maxRetriesCap: num(env, 'JOBD_MAX_RETRIES', 5),
     retryBackoffS: num(env, 'JOBD_RETRY_BACKOFF_S', 30),
-    cpuPsiMax: num(env, 'JOBD_CPU_PSI_MAX', 5),
+    cpuBusyMaxPct: num(env, 'JOBD_CPU_BUSY_MAX_PCT', 95),
+    defaultQueueWaitS: num(env, 'JOBD_DEFAULT_QUEUE_WAIT_S', 3600),
+    maxQueueWaitS: num(env, 'JOBD_MAX_QUEUE_WAIT_S', 21600),
     memFloorFraction: num(env, 'JOBD_MEM_FLOOR_FRACTION', 0.2),
     minFreeGb: num(env, 'JOBD_MIN_FREE_GB', 20),
     maxUploadMb: num(env, 'JOBD_MAX_UPLOAD_MB', 512),

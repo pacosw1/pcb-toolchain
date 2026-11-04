@@ -183,6 +183,155 @@ describe('retry rule', () => {
   });
 });
 
+describe('queue wait', () => {
+  const events = (id: string): { from: string | null; to: string; detail: string }[] =>
+    fs.readFileSync(r.mgr.store.eventsFile(id), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  const holds = (id: string): string[] => events(id).filter((e) => e.from === e.to).map((e) => e.detail);
+  const busy = async (seconds: number): Promise<void> => {
+    r.clock.now += seconds * 1000;
+    await r.mgr.tick();
+  };
+
+  it('the run\'s own time starts when it runs: a long wait costs it nothing', async () => {
+    const job = r.submit(['hang'], { timeoutS: 60 });
+    r.host.cpuBusyPct = 90;
+    await busy(1000);
+    assert.equal(job.state, 'queued');
+    r.host.cpuBusyPct = 10;
+    await r.mgr.tick();
+    assert.equal(job.state, 'running');
+    await busy(70);
+    assert.equal(job.state, 'running', 'inside timeout + kill margin, counted from the start');
+    await busy(10);
+    await r.mgr.tick();
+    assert.equal(job.result?.outcome, 'timeout');
+  });
+
+  it('at the bound the job fails with the cause, and it never started', async () => {
+    const job = r.submit(['hang'], { queueWaitS: 300 });
+    r.host.cpuBusyPct = 90;
+    await busy(299);
+    assert.equal(job.state, 'queued');
+    await busy(1);
+    assert.equal(job.state, 'failed');
+    assert.equal(job.result?.outcome, 'queue');
+    assert.equal(job.result?.exitCode, null);
+    assert.match(job.result?.detail ?? '', /^queued for 300 s: host cpu: 90 % busy/);
+    assert.equal(job.attempts.length, 0);
+    assert.equal(r.runtime.started.length, 0);
+    assert.equal(r.mgr.status().queued, 0);
+  });
+
+  it('a job that can start at the bound starts', async () => {
+    const job = r.submit(['hang'], { queueWaitS: 300 });
+    r.host.cpuBusyPct = 90;
+    await r.mgr.tick();
+    r.host.cpuBusyPct = 0;
+    await busy(300);
+    assert.equal(job.state, 'running');
+  });
+
+  it('the bound survives a restart: it counts from the submit', async () => {
+    const { id } = r.submit(['hang'], { queueWaitS: 300 });
+    r.host.cpuBusyPct = 90;
+    await r.mgr.tick();
+    r.clock.now += 301_000;
+    r.restart();
+    await r.mgr.tick();
+    const job = r.mgr.jobs.get(id)!;
+    assert.equal(job.result?.outcome, 'queue');
+    assert.match(job.result?.detail ?? '', /host cpu/);
+  });
+
+  it('a job already in the queue when the daemon is upgraded gets the default bound', async () => {
+    const job = r.submit(['hang']);
+    delete (job.spec as Partial<typeof job.spec>).queueWaitS;
+    r.host.cpuBusyPct = 90;
+    await busy(r.cfg.defaultQueueWaitS);
+    assert.equal(job.result?.outcome, 'queue');
+  });
+
+  it('a retry is not a queue wait: the job has run, so "never started" must stay true of this outcome', async () => {
+    const job = r.submit(['killed', 'pass'], { queueWaitS: 5 });
+    await r.mgr.tick();
+    await r.mgr.tick();
+    assert.equal(job.state, 'retrying');
+    r.host.cpuBusyPct = 90;
+    await busy(1000);
+    assert.equal(job.state, 'retrying');
+    assert.match(job.hold ?? '', /host cpu/);
+  });
+
+  it('every hold reason goes to the job\'s events and the journal, once per reason', async (t) => {
+    const journal = t.mock.method(console, 'log', () => undefined);
+    const job = r.submit(['hang'], { cpus: 8 });
+    r.host.cpuBusyPct = 90;
+    await busy(2);
+    r.host.cpuBusyPct = 91; // the same reason with another number
+    await busy(2);
+    r.host.memAvailableGb = 15;
+    r.host.cpuBusyPct = 10;
+    await busy(2);
+    const seen = holds(job.id);
+    assert.equal(seen.length, 2, seen.join('\n'));
+    assert.match(seen[0], /^queued for 2 s: host cpu: 90 % busy/);
+    assert.match(seen[1], /^queued for 6 s: host memory/);
+    const lines = journal.mock.calls.map((c) => String(c.arguments[0]));
+    assert.equal(lines.length, 2);
+    assert.ok(lines[0].includes(job.id) && lines[0].includes('host cpu'), lines[0]);
+    assert.ok(lines[1].includes(job.id) && lines[1].includes('host memory'), lines[1]);
+  });
+
+  it('a hold that lasts says so again every 30 s, with the live numbers', async (t) => {
+    t.mock.method(console, 'log', () => undefined);
+    const job = r.submit(['hang'], { cpus: 8 });
+    r.host.cpuBusyPct = 90;
+    await busy(2);
+    r.host.cpuBusyPct = 80;
+    await busy(29);
+    assert.equal(holds(job.id).length, 1);
+    await busy(1);
+    const seen = holds(job.id);
+    assert.equal(seen.length, 2);
+    assert.match(seen[1], /^queued for 32 s: host cpu: 80 % busy/);
+  });
+
+  it('the record carries the reason while it holds and drops it at the start', async (t) => {
+    t.mock.method(console, 'log', () => undefined);
+    const { id } = r.submit(['hang']);
+    r.host.cpuBusyPct = 90;
+    await busy(2);
+    assert.match(r.mgr.store.loadAll()[0].hold ?? '', /host cpu/);
+    r.host.cpuBusyPct = 0;
+    await busy(2);
+    const job = r.mgr.jobs.get(id)!;
+    assert.equal(job.hold, undefined);
+    assert.equal(r.mgr.store.loadAll()[0].hold, undefined);
+    assert.equal(events(id).at(-1)?.detail, 'attempt 1, after 4 s queued');
+  });
+
+  it('a job behind the head says which job it waits for, and why', async (t) => {
+    t.mock.method(console, 'log', () => undefined);
+    const a = r.submit(['hang'], { cpus: 16 });
+    await r.mgr.tick();
+    const b = r.submit(['hang'], { cpus: 8 });
+    const c = r.submit(['hang'], { cpus: 1 });
+    await busy(2);
+    assert.equal(a.state, 'running');
+    assert.match(holds(b.id)[0], /cpu budget: 16 of 16/);
+    assert.match(holds(c.id)[0], new RegExp(`behind ${b.id}: cpu budget`));
+  });
+
+  it('checks the bound it is given', () => {
+    const spec = (o: object) => validateSpec({ command: ['x'], ...o }, r.cfg);
+    assert.equal(spec({}).queueWaitS, r.cfg.defaultQueueWaitS);
+    assert.equal(spec({ queueWaitS: 120 }).queueWaitS, 120);
+    for (const v of [0, -1, r.cfg.maxQueueWaitS + 1, 1.5, '60']) {
+      assert.throws(() => spec({ queueWaitS: v }), (e: HttpError) => e.status === 400, String(v));
+    }
+  });
+});
+
 describe('budget and queue', () => {
   it('stays inside the CPU budget, FIFO, and starts the next job when one ends', async () => {
     const a = r.submit(['hang'], { cpus: 10 });
@@ -219,16 +368,41 @@ describe('budget and queue', () => {
     assert.equal(r.runtime.started.length, 1);
   });
 
-  it('holds on host cpu pressure, then starts', async () => {
-    const job = r.submit(['hang']);
-    r.host.cpuPsiSome10 = 5;
+  it('holds when the job would take the host to the guard\'s cut line, then starts', async () => {
+    const job = r.submit(['hang'], { cpus: 8 }); // 8 of 32 CPUs is 25 %
+    r.host.cpuBusyPct = 70;
     await r.mgr.tick();
     assert.equal(job.state, 'queued');
-    assert.match(r.mgr.hold, /cpu pressure/);
-    r.host.cpuPsiSome10 = 4.99;
+    assert.match(r.mgr.hold, /host cpu: 70 % busy, job adds 25 %, limit 95 %/);
+    r.host.cpuBusyPct = 69.9;
     await r.mgr.tick();
     assert.equal(job.state, 'running');
     assert.equal(r.mgr.hold, '');
+  });
+
+  it('a bigger job needs more room on the same host', async () => {
+    const job = r.submit(['hang'], { cpus: 16 });
+    r.host.cpuBusyPct = 45;
+    await r.mgr.tick();
+    assert.equal(job.state, 'queued');
+    r.host.cpuBusyPct = 44;
+    await r.mgr.tick();
+    assert.equal(job.state, 'running');
+  });
+
+  it('the FW-IO hold does not repeat: the guard logged 19-51 % busy for those 5 min 33 s', async () => {
+    const job = r.submit(['hang'], { cpus: 8 });
+    r.host.cpuBusyPct = 50.7;
+    await r.mgr.tick();
+    assert.equal(job.state, 'running');
+  });
+
+  it('holds until the host has a first CPU reading', async () => {
+    const job = r.submit(['hang']);
+    r.host.cpuBusyPct = null;
+    await r.mgr.tick();
+    assert.equal(job.state, 'queued');
+    assert.match(r.mgr.hold, /host cpu: no reading yet/);
   });
 
   it('holds when the job would take host memory below the floor', async () => {

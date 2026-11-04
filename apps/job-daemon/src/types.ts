@@ -5,7 +5,7 @@ export const TERMINAL: readonly JobState[] = ['passed', 'failed', 'cancelled'];
 export const isTerminal = (s: JobState): boolean => TERMINAL.includes(s);
 
 /** Why an attempt ended. README "Retry rule" says which of these retry. */
-export type Outcome = 'passed' | 'cancelled' | 'timeout' | 'oom' | 'disk' | 'command' | 'infra' | 'start';
+export type Outcome = 'passed' | 'cancelled' | 'timeout' | 'oom' | 'disk' | 'command' | 'infra' | 'start' | 'queue';
 
 export interface JobSpec {
   name: string;
@@ -15,6 +15,8 @@ export interface JobSpec {
   memGb: number;
   diskGb: number;
   timeoutS: number;
+  /** Longest wait in `queued`, from the submit. Past it the job ends with outcome `queue`. timeoutS starts at the run. */
+  queueWaitS: number;
   maxRetries: number;
   /** Exit codes of the command that also retry. Empty by default: a tool's non-zero exit is a verdict. */
   retryExitCodes: number[];
@@ -47,6 +49,8 @@ export interface JobRecord {
   cancelRequested: boolean;
   attempts: Attempt[];
   nextAttemptAt?: string;
+  /** Why it is waiting now. Only while it waits. */
+  hold?: string;
   result?: { outcome: Outcome; exitCode: number | null; detail: string };
 }
 

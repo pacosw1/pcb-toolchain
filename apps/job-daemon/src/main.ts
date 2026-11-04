@@ -1,12 +1,12 @@
 import { loadConfig } from './config.ts';
 import { DockerRuntime } from './docker.ts';
-import { readHost } from './host.ts';
+import { hostReader } from './host.ts';
 import { JobManager } from './manager.ts';
 import { createServer } from './server.ts';
 import { Store } from './store.ts';
 
 const cfg = loadConfig(process.env);
-const mgr = new JobManager(cfg, new Store(cfg.dataDir), new DockerRuntime(cfg), () => readHost(cfg.dataDir));
+const mgr = new JobManager(cfg, new Store(cfg.dataDir), new DockerRuntime(cfg), hostReader(cfg.dataDir));
 const server = createServer(mgr);
 
 const timer = setInterval(() => {

@@ -15,8 +15,8 @@ export function testConfig(dataDir: string, over: Partial<Config> = {}): Config 
   return {
     bind: '127.0.0.1', port: 0, token: TOKEN, dataDir, instance: 'test', images: ['img:1'],
     cpuBudget: 16, memBudgetGb: 16, cgroupParent: '', defaultCpus: 8, defaultMemGb: 8, defaultTimeoutS: 300,
-    maxTimeoutS: 21600, defaultRetries: 2, maxRetriesCap: 5, retryBackoffS: 30, cpuPsiMax: 5, memFloorFraction: 0.2,
-    minFreeGb: 20, maxUploadMb: 1, retainDays: 7, jobUid: null, tickMs: 20,
+    maxTimeoutS: 21600, defaultRetries: 2, maxRetriesCap: 5, retryBackoffS: 30, cpuBusyMaxPct: 95, defaultQueueWaitS: 3600,
+    maxQueueWaitS: 21600, memFloorFraction: 0.2, minFreeGb: 20, maxUploadMb: 1, retainDays: 7, jobUid: null, tickMs: 20,
     pidsLimit: 4096, nofile: 1024, defaultDiskGb: 10, maxDiskGb: 50, diskCheckS: 5, maxQueued: 64, maxUploads: 2, maxStreams: 64,
     ...over,
   };
@@ -146,7 +146,7 @@ export function rig(over: Partial<Config> = {}): Rig {
   const cfg = testConfig(path.join(dir, 'data'), over);
   const runtime = new FakeRuntime();
   const clock = { now: Date.parse('2026-11-04T12:00:00Z') };
-  const host: HostState = { cpuPsiSome10: 0, memAvailableGb: 50, memTotalGb: 62, diskFreeGb: 500 };
+  const host: HostState = { cpuBusyPct: 0, cpuCount: 32, memAvailableGb: 50, memTotalGb: 62, diskFreeGb: 500 };
   const make = (): JobManager => new JobManager(cfg, new Store(cfg.dataDir), runtime, () => host, () => clock.now);
   const r: Rig = {
     dir, cfg, runtime, host, clock,

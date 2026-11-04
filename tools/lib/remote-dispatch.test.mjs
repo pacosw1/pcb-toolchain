@@ -79,6 +79,23 @@ test('the project setting names the daemon',t=>{
   assert.match(readFileSync(join(root,'curl.log'),'utf8'),/from-project:2/);
 });
 
+test('the job gets the queue bound: 3600 s, or REMOTE_QUEUE_WAIT',t=>{
+  for(const [env,want] of [[{},'3600'],[{REMOTE_QUEUE_WAIT:'120'},'120']]){
+    const root=project(t);
+    assert.equal(run(root,env).status,0);
+    assert.equal(after(client(root).a,'--queue-wait'),want);
+  }
+});
+
+test('the queue bound: exit 75, a line that says the job never ran, and no SSH copy of it',t=>{
+  const root=project(t,{exit:75});
+  writeFileSync(join(root,'bin/ssh'),`#!/bin/sh\necho ssh >> "${root}/ssh.log"\n`);chmodSync(join(root,'bin/ssh'),0o755);
+  const r=run(root,{REMOTE_HOST:'root@x'});
+  assert.equal(r.status,75);
+  assert.match(r.stderr,/remote: the job never started: it reached the queue bound/);
+  assert.ok(!existsSync(join(root,'ssh.log')));
+});
+
 test('memory in MB becomes GB',t=>{
   const root=project(t);run(root,{REMOTE_MEM:'512m'});
   assert.equal(after(client(root).a,'--mem'),'0.5');

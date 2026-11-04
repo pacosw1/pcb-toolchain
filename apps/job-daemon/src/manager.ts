@@ -10,7 +10,7 @@ import { HttpError, isTerminal } from './types.ts';
 import type { Attempt, Classified, JobRecord, JobSpec, JobState } from './types.ts';
 
 const NEXT: Record<JobState, readonly JobState[]> = {
-  queued: ['running', 'cancelled'],
+  queued: ['running', 'cancelled', 'failed'],
   running: ['passed', 'failed', 'retrying', 'cancelled'],
   retrying: ['running', 'cancelled'],
   passed: [],
@@ -29,6 +29,13 @@ const MIN_TIMEOUT_S = 1;
 const MIN_DISK_GB = 0.01;
 /** Failed disk measurements in a row before a job is killed. One failure is normal: see dirBytes. A default to tune. */
 const MAX_DISK_MISSES = 3;
+/** The queue bound's floor: `queueWaitS` is whole seconds and 0 would refuse every job that has to wait a tick. */
+const MIN_QUEUE_WAIT_S = 1;
+/** How often a hold that does not change is logged again. The period of the guard's own log line. A default to tune. */
+const HOLD_REPEAT_MS = 30_000;
+
+/** The kind of a hold: its text up to the numbers, so a reading that moves is not a new reason. */
+const holdKind = (reason: string): string => reason.split(':')[0];
 
 export function validateSpec(raw: unknown, cfg: Config): JobSpec {
   if (typeof raw !== 'object' || raw === null) throw new HttpError(400, 'spec is not an object');
@@ -57,6 +64,8 @@ export function validateSpec(raw: unknown, cfg: Config): JobSpec {
   }
   const timeoutS = number('timeoutS', cfg.defaultTimeoutS, MIN_TIMEOUT_S, cfg.maxTimeoutS);
   if (!Number.isInteger(timeoutS)) bad('timeoutS must be an integer');
+  const queueWaitS = number('queueWaitS', cfg.defaultQueueWaitS, MIN_QUEUE_WAIT_S, cfg.maxQueueWaitS);
+  if (!Number.isInteger(queueWaitS)) bad('queueWaitS must be an integer');
   return {
     name: typeof r.name === 'string' ? r.name.slice(0, 100) : '',
     command: command as string[],
@@ -65,6 +74,7 @@ export function validateSpec(raw: unknown, cfg: Config): JobSpec {
     memGb: number('memGb', Math.min(cfg.defaultMemGb, cfg.memBudgetGb), MIN_MEM_GB, cfg.memBudgetGb),
     diskGb: number('diskGb', Math.min(cfg.defaultDiskGb, cfg.maxDiskGb), MIN_DISK_GB, cfg.maxDiskGb),
     timeoutS,
+    queueWaitS,
     maxRetries: retries as number,
     retryExitCodes: codes as number[],
   };
@@ -96,6 +106,8 @@ export class JobManager {
   private recovered = false;
   private lastSweep = 0;
   private diskMisses = new Map<string, number>();
+  /** What was last logged for each waiting job. Lost at a restart, which logs each hold once more. */
+  private holdLogged = new Map<string, { kind: string; at: number }>();
 
   constructor(cfg: Config, store: Store, runtime: Runtime, host: () => HostState, now: () => number = Date.now) {
     this.cfg = cfg;
@@ -139,6 +151,8 @@ export class JobManager {
     const from = job.state;
     job.state = to;
     job.updatedAt = this.iso();
+    job.hold = undefined;
+    this.holdLogged.delete(job.id);
     this.store.save(job); // the record first: the event log may lag it after a crash, never lead it
     this.store.appendEvent(job.id, { t: job.updatedAt, from, to, attempt: job.attempts.length, detail });
   }
@@ -200,6 +214,7 @@ export class JobManager {
       this.enforceHostFloor();
       for (const job of this.list('running')) await this.reconcile(job);
       await this.admit();
+      this.expireQueued(); // after admit: a job that can start at its bound starts
     } finally {
       this.ticking = false;
     }
@@ -363,7 +378,12 @@ export class JobManager {
     const { cpus, memGb } = this.usage();
     if (cpus + spec.cpus > this.cfg.cpuBudget) return `cpu budget: ${cpus} of ${this.cfg.cpuBudget} in use, job needs ${spec.cpus}`;
     if (memGb + spec.memGb > this.cfg.memBudgetGb) return `memory budget: ${memGb} of ${this.cfg.memBudgetGb} GB in use, job needs ${spec.memGb}`;
-    if (host.cpuPsiSome10 >= this.cfg.cpuPsiMax) return `host cpu pressure ${host.cpuPsiSome10} >= ${this.cfg.cpuPsiMax}`;
+    if (host.cpuBusyPct === null) return 'host cpu: no reading yet';
+    // Busy CPUs, not PSI: see README "CPU budget and the shared host". The job is counted at its full --cpus.
+    const adds = (100 * spec.cpus) / host.cpuCount;
+    if (host.cpuBusyPct + adds >= this.cfg.cpuBusyMaxPct) {
+      return `host cpu: ${host.cpuBusyPct.toFixed(0)} % busy, job adds ${adds.toFixed(0)} %, limit ${this.cfg.cpuBusyMaxPct} %`;
+    }
     const floor = host.memTotalGb * this.cfg.memFloorFraction;
     if (host.memAvailableGb - spec.memGb < floor) return `host memory: ${host.memAvailableGb.toFixed(1)} GB available, floor ${floor.toFixed(1)} GB`;
     if (host.diskFreeGb - spec.diskGb < this.cfg.minFreeGb) {
@@ -372,28 +392,69 @@ export class JobManager {
     return '';
   }
 
-  /** One start per tick: PSI is a 10 s average, so a burst of starts would all pass on the same quiet reading. */
+  /** Seconds this job has been waiting, whole: since the submit, or for a retry since it came due. */
+  private waitedS(job: JobRecord): number {
+    return Math.round((this.now() - Date.parse(job.nextAttemptAt ?? job.createdAt)) / 1000);
+  }
+
+  /**
+   * Into the record every tick, into the events and the journal when the reason changes and every HOLD_REPEAT_MS.
+   * The event has from = to, so the state log still reads as states and the client can tell it from a transition.
+   */
+  private noteHold(job: JobRecord, reason: string): void {
+    job.hold = reason;
+    const kind = holdKind(reason);
+    const last = this.holdLogged.get(job.id);
+    if (last?.kind === kind && this.now() - last.at < HOLD_REPEAT_MS) return;
+    this.holdLogged.set(job.id, { kind, at: this.now() });
+    const detail = `${job.state} for ${this.waitedS(job)} s: ${reason}`;
+    this.store.save(job);
+    this.store.appendEvent(job.id, { t: this.iso(), from: job.state, to: job.state, attempt: job.attempts.length, detail });
+    console.log(`job ${job.id} ${job.spec.name}: ${detail}`);
+  }
+
+  /** One start per tick, so that the next job is judged on a host that has seen this one at least begin. */
   private async admit(): Promise<void> {
     const due = (j: JobRecord): boolean => j.state === 'queued' || Date.parse(j.nextAttemptAt ?? '') <= this.now();
-    const next = this.list('queued', 'retrying').find(due);
+    const [next, ...behind] = this.list('queued', 'retrying').filter(due);
     if (!next) {
       this.hold = '';
       return;
     }
     this.hold = this.blockedBy(next.spec, this.host());
     if (!this.hold && !(await this.runtime.ping())) this.hold = 'docker is not answering';
-    if (this.hold) return;
+    if (this.hold) {
+      this.noteHold(next, this.hold);
+      for (const job of behind) this.noteHold(job, `behind ${next.id}: ${this.hold}`);
+      return;
+    }
     await this.startAttempt(next);
+  }
+
+  /**
+   * The bound on a wait. The daemon decides it, not the client, so the verdict cannot race a start: a job that ends
+   * here has no attempt, and that is what lets a client run the work elsewhere. A retry has run already, so it waits on.
+   */
+  private expireQueued(): void {
+    for (const job of this.list('queued')) {
+      const limitS = job.spec.queueWaitS ?? this.cfg.defaultQueueWaitS; // a record from before the bound existed
+      if (this.now() - Date.parse(job.createdAt) < limitS * 1000) continue;
+      const detail = `queued for ${this.waitedS(job)} s: ${job.hold || 'no hold reason on record'}`;
+      job.result = { outcome: 'queue', exitCode: null, detail };
+      this.setState(job, 'failed', detail);
+      console.log(`job ${job.id} ${job.spec.name}: ${detail}`);
+    }
   }
 
   private async startAttempt(job: JobRecord): Promise<void> {
     const n = job.attempts.length + 1;
     const attempt: Attempt = { n, container: `pcbjob-${job.id}-${n}`, startedAt: this.iso() };
+    const waited = n === 1 ? `, after ${this.waitedS(job)} s queued` : '';
     job.attempts.push(attempt);
     job.nextAttemptAt = undefined;
     // Durable before the side effects: a crash from here on leaves "running" with no container, which reconcile
     // sees as an infrastructure failure.
-    this.setState(job, 'running', `attempt ${n}`);
+    this.setState(job, 'running', `attempt ${n}${waited}`);
     const workDir = this.store.workDir(job.id, n);
     const outDir = this.store.outDir(job.id, n);
     try {

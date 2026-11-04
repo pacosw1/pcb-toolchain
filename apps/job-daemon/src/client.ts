@@ -16,14 +16,16 @@ const USAGE = `usage:
   pcb-job list                                          all jobs on record
   pcb-job cancel <id>
   pcb-job results <id> [<dir>]
-options: --in FILE (repeatable) --results DIR --cpus N --mem GB --disk GB --timeout S --image I --retries N
-         --retry-exit CODE (repeatable) --name NAME
+options: --in FILE (repeatable) --results DIR --cpus N --mem GB --disk GB --timeout S --queue-wait S --image I
+         --retries N --retry-exit CODE (repeatable) --name NAME
 env: JOBD_URL, JOBD_TOKEN or JOBD_TOKEN_FILE, IOT_LAB (project root), PCB_TOOLCHAIN_ROOT`;
 
 /** The client gives up when the daemon stays unreachable this long. The job itself goes on. A default to tune. */
 const GIVE_UP_MS = 300_000;
 const RECONNECT_MS = 2_000;
 const EXIT_UNREACHABLE = 3;
+/** The job reached its queue bound and never ran. EX_TEMPFAIL of sysexits.h: nothing is wrong with it, try again later. */
+const EXIT_QUEUE_BOUND = 75;
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const die = (msg: string, code = 2): never => {
@@ -94,8 +96,8 @@ async function watchEvents(id: string): Promise<void> {
     const lines = rest.split('\n');
     rest = lines.pop() ?? '';
     for (const line of lines) {
-      const e = JSON.parse(line) as { t: string; to: string; detail: string };
-      console.error(`[${e.t}] ${e.to}: ${e.detail}`);
+      const e = JSON.parse(line) as { t: string; from: string | null; to: string; detail: string };
+      console.error(e.from === e.to ? `[${e.t}] ${e.detail}` : `[${e.t}] ${e.to}: ${e.detail}`); // from = to: a hold
     }
   };
   for (;;) {
@@ -137,6 +139,7 @@ async function watch(id: string): Promise<JobRecord> {
 function exitCodeOf(job: JobRecord): number {
   if (job.state === 'passed') return 0;
   if (job.state === 'cancelled') return 130;
+  if (job.result?.outcome === 'queue') return EXIT_QUEUE_BOUND;
   return job.result?.exitCode || 1;
 }
 
@@ -247,6 +250,7 @@ function parseSubmit(argv: string[]): Parsed {
     else if (k === '--mem') p.spec.memGb = Number(v);
     else if (k === '--disk') p.spec.diskGb = Number(v);
     else if (k === '--timeout') p.spec.timeoutS = Number(v);
+    else if (k === '--queue-wait') p.spec.queueWaitS = Number(v);
     else if (k === '--retries') p.spec.maxRetries = Number(v);
     else if (k === '--retry-exit') retryExitCodes.push(Number(v));
     else if (k === '--image') p.spec.image = v;
@@ -318,7 +322,8 @@ async function main(): Promise<void> {
       return;
     case 'list':
       for (const j of await apiJson<JobRecord[]>('/jobs')) {
-        console.log(`${j.id}  ${j.state.padEnd(9)}  attempts ${j.attempts.length}  cpus ${j.spec.cpus}  ${j.spec.name}`);
+        const held = j.hold ? `  held: ${j.hold}` : '';
+        console.log(`${j.id}  ${j.state.padEnd(9)}  attempts ${j.attempts.length}  cpus ${j.spec.cpus}  ${j.spec.name}${held}`);
       }
       return;
     case 'cancel':
