@@ -40,6 +40,6 @@ json.dump({'schema': 'pcb-toolchain.manifest.v1', 'version': version, 'source_sh
 print(len(files), 'files')
 EOF
 tar -C "$stage" -czf "$here/dist/$name.tar.gz" "$name"
-(cd "$here/dist" && shasum -a 256 "$name.tar.gz" >> SHA256SUMS && tail -1 SHA256SUMS)
+(cd "$here/dist" && { grep -v "  $name.tar.gz\$" SHA256SUMS 2>/dev/null; shasum -a 256 "$name.tar.gz"; } > SHA256SUMS.new && mv SHA256SUMS.new SHA256SUMS && tail -1 SHA256SUMS)   # a rebuild replaces its line
 rm -rf "$stage"
 echo "PASS: dist/$name.tar.gz"
