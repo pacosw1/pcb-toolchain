@@ -1,6 +1,6 @@
 """Router and kicad-cli DRC agree on a pair clearance and a creepage case (tiny KiCad 10 test board).
 
-Needs KiCad (python3 of KiCad.app for model.py / write.py, kicad-cli) and cargo (run.find_or_build). About 30 s.
+Needs KiCad (python3 of KiCad.app for model.py, kicad-cli) and cargo (run.find_or_build). About 30 s.
   python3 -m unittest test_iso_board
 
 Board 40 x 35 mm, F.Cu / B.Cu. ISO1 (class ISO) joins two pads past an OTH1 pad (class OTH) that sits 0.1 mm from the
@@ -95,7 +95,7 @@ class Agreement(unittest.TestCase):
             route = os.path.join(cls.dir, f'route-{tag}.json')
             subprocess.run([cls.exe, m, route, '--iters', '20'], capture_output=True, text=True, check=True)
             out = os.path.join(cls.dir, 'w-' + tag)
-            subprocess.run([KPY, os.path.join(HERE, 'write.py'), cls.pcb, route, out], capture_output=True, text=True)
+            subprocess.run([cls.exe, 'write', cls.pcb, route, out], capture_output=True, text=True)
             cls.res[tag] = drc(os.path.join(out, 'iso.kicad_pcb'), os.path.join(cls.dir, f'drc-{tag}.json'))
 
     @classmethod

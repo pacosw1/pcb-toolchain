@@ -47,6 +47,7 @@ mod pour;
 mod reffill;
 mod reuse;
 mod seed;
+mod write;
 
 const EPS: f64 = 0.002;
 // Defaults when the model has no `hole_rules` key (an old model.json); a model value and then a CLI flag override them.
@@ -4200,6 +4201,9 @@ pub(crate) fn add_result(bd: &mut Board, r: &Value) {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).is_some_and(|a| a == "write") {
+        std::process::exit(write::cli(&args[2..]));
+    }
     route_cli(&args);
 }
 

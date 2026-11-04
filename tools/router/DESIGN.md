@@ -42,7 +42,7 @@ tools/router/
                 per-net clearance halos, layer masks, length / via-count limits, pair centerline mode
   plan.py       stage order: pairs + crystals -> plane vias (+ return vias) -> power (width per current path,
                 neck at fine pitch) -> fast nets (outer layers) -> slow nets (In2 allowed) -> rip-up / reroute
-  write.py      RouteModel result -> tracks / vias into a copy of the board (pcbnew), locked input copper untouched
+  iotroute write  RouteModel result -> tracks / vias into a copy of the board as text, then kicad-cli refills and saves; locked input copper untouched (core/src/write.rs, replaced write.py 2026-11-04)
   run.py        CLI: python3 tools/router/run.py BOARD OUT.kicad_pcb [--stage ...]; then DRC + gate
 ```
 
@@ -237,7 +237,7 @@ different bytes do not prove different copper: compare `tracks` as a set.
 
 One unexplained case outside the core. In one daemon job, PWR-24V-5V's `run.py --lock-from` wrote its locked input with two
 footprint keepout zones swapped (H3 / H5), for every run of that job. The model then differs only in that list order (so
-`geometry_sha256` differs too) and route.json stays the same, but write.py seeds its KIIDs from that file, so the board has the
+`geometry_sha256` differs too) and route.json stays the same, but the writer seeds its KIIDs from that file, so the board has the
 same copper with other UUIDs and track order. It did not come back: main's and this run.py gave the main board in 8 of 8 runs in
 one folder of the route image (other OUT names included), and in serial, parallel and 1, 2 and 3 CPU runs. make_locked_input is not
 touched here. If two boards of one input differ, compare route.json first.

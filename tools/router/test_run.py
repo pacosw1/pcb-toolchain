@@ -177,7 +177,7 @@ class Output(unittest.TestCase):
                 for a in (SimpleNamespace(iters=80, max_time=None), SimpleNamespace(iters=80, max_time=None, seed=None, stall_passes=None, checkpoint=False),
                           SimpleNamespace(iters=80, max_time=None, seed=0, stall_passes=12, checkpoint=True)):
                     with self.assertRaises(run.StepError):  # the fake core writes no route.json
-                        run.route_attempt(a, 'exe', 'py', 'm.json', 'in.kicad_pcb', 'src', 'out', d)
+                        run.route_attempt(a, 'exe', 'm.json', 'in.kicad_pcb', 'src', 'out', d)
                 self.assertEqual(seen[0], ['exe', 'm.json', os.path.join(d, 'route.json'), '--iters', '80'])
                 self.assertEqual(seen[1], seen[0])
                 self.assertEqual(seen[2][5:], ['--seed', '0', '--stall-passes', '12', '--checkpoint', os.path.join(d, 'checkpoint.json'),
@@ -192,10 +192,10 @@ class Output(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as d:
                 with self.assertRaises(run.StepError):  # default: no map
-                    run.route_attempt(SimpleNamespace(iters=80, max_time=None), 'exe', 'py', 'm.json', 'in.kicad_pcb', 'src', 'out', d)
+                    run.route_attempt(SimpleNamespace(iters=80, max_time=None), 'exe', 'm.json', 'in.kicad_pcb', 'src', 'out', d)
                 self.assertNotIn('--congestion', seen[0])
                 with self.assertRaises(run.StepError):  # the fake core writes no route.json
-                    run.route_attempt(SimpleNamespace(iters=80, max_time=None, congestion=True), 'exe', 'py', 'm.json', 'in.kicad_pcb', 'src', 'out', d)
+                    run.route_attempt(SimpleNamespace(iters=80, max_time=None, congestion=True), 'exe', 'm.json', 'in.kicad_pcb', 'src', 'out', d)
                 cmd = seen[1]
                 self.assertEqual(cmd[:5], ['exe', 'm.json', os.path.join(d, 'route.json'), '--iters', '80'])
                 self.assertEqual(cmd[cmd.index('--congestion') + 1], os.path.join(d, 'congestion.json'))
@@ -314,9 +314,9 @@ b.Save({t!r} + '/T.kicad_pcb')
             res = {'tracks': [{'net': '', 'layer': 'F.Cu', 'a': [10 + i, 10], 'b': [10 + i, 20], 'w': 0.2} for i in range(12)],
                    'vias': [{'net': '', 'x': 30 + i, 'y': 30, 'd': 0.6, 'drill': 0.3} for i in range(6)]}
             json.dump(res, open(os.path.join(t, 'r.json'), 'w'))
-            w = os.path.join(os.path.dirname(run.__file__), 'write.py')
+            exe = run.find_or_build()[0]
             for d in ('a', 'b'):
-                subprocess.run([KPY, w, os.path.join(t, 'T.kicad_pcb'), os.path.join(t, 'r.json'), os.path.join(t, d)],
+                subprocess.run([exe, 'write', os.path.join(t, 'T.kicad_pcb'), os.path.join(t, 'r.json'), os.path.join(t, d)],
                                capture_output=True, text=True)
             self.assertEqual(open(os.path.join(t, 'a', 'T.kicad_pcb'), 'rb').read(),
                              open(os.path.join(t, 'b', 'T.kicad_pcb'), 'rb').read())

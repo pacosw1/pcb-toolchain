@@ -16,8 +16,8 @@ Steps (each step stops the run at its first failure):
   2. The release binary. --bin PATH: used only when it is not older than the newest core source. Default: a cache
      folder per sha256 of the core sources (~/Library/Caches/iot-lab/iotroute/<sha>, env IOTROUTE_CACHE); cargo
      builds it there when it is missing. The stamp file binds the binary to the exact source bytes.
-  3. tools/router/model.py, then iotroute MODEL ROUTE --iters N, then tools/router/write.py (adds the result to a
-     copy, refills every zone, saves, puts back the .kicad_pro that pcbnew overwrites). With --congestion the core
+  3. tools/router/model.py, then iotroute MODEL ROUTE --iters N, then iotroute write (adds the result to a
+     copy, refills every zone with kicad-cli, saves, puts back the .kicad_pro). With --congestion the core
      also writes OUT.iotroute/congestion.json (the congestion map for the placer, DESIGN.md 5d; it does not change ROUTE).
      --seed, --stall-passes and --checkpoint (OUT.iotroute/checkpoint.json) go to the core as they are (DESIGN.md 5e).
   4. OUT gets the board and the project files of the input. run.py checks that OUT's .kicad_pro is byte-identical
@@ -498,7 +498,7 @@ def run(a, rec, t0):
         raise StepError('model.py failed: ' + (text.strip().splitlines() or ['no output'])[-1][:300])
     rec['stages']['model'] = dict(line=(text.strip().splitlines() or [''])[-1], sha256=sha_file(model))
     if not a.reuse:
-        stages = route_attempt(a, exe, py, model, route_in, src, out, work)
+        stages = route_attempt(a, exe, model, route_in, src, out, work)
         rec['stages'].update(stages)
         rec['stages']['ref_gate'] = ref_gate_rounds(a, exe, py, model, route_in, src, out, work, bdir)
         return finish(rec, out, work)
@@ -513,7 +513,7 @@ def run(a, rec, t0):
         d = os.path.join(work, 'a-' + name)
         os.makedirs(d)
         cand = os.path.join(d, os.path.basename(out))
-        st = route_attempt(a, exe, py, model, route_in, src, cand, d, extra)
+        st = route_attempt(a, exe, model, route_in, src, cand, d, extra)
         st.pop('pro_restored', None)
         att = dict(stages=st, claim=st['core']['claim'])
         rec['reuse']['attempts'][name] = att
@@ -594,7 +594,7 @@ def ref_gate_rounds(a, exe, py, model, route_in, src, out, work, bdir):
         d = os.path.join(work, f'ref-r{k + 2}')
         os.makedirs(d)
         cand = os.path.join(d, os.path.basename(out))
-        st = route_attempt(a, exe, py, model, route_in, src, cand, d)
+        st = route_attempt(a, exe, model, route_in, src, cand, d)
         rounds[-1]['next_core'] = st['core']['claim']
         for n in ('route.json', 'route.log', 'write.log'):
             if os.path.isfile(os.path.join(d, n)):
@@ -605,8 +605,8 @@ def ref_gate_rounds(a, exe, py, model, route_in, src, out, work, bdir):
     return dict(rounds=rounds)
 
 
-def route_attempt(a, exe, py, model, route_in, src, out, work, extra=()):
-    """iotroute (+ extra flags) -> write.py -> OUT with its project files; -> stages {core, write}."""
+def route_attempt(a, exe, model, route_in, src, out, work, extra=()):
+    """iotroute (+ extra flags) -> iotroute write -> OUT with its project files; -> stages {core, write}."""
     stages = {}
     route = os.path.join(work, 'route.json')
     # the congestion map (core congestion.rs, DESIGN.md 5d) is an opt-in side file for the placer repair rank 'hot'
@@ -626,10 +626,10 @@ def route_attempt(a, exe, py, model, route_in, src, out, work, extra=()):
     if not os.path.isfile(route) or claim is None:
         raise StepError(f'iotroute wrote no result (exit {rc}), see {os.path.join(work, "route.log")}')
     wdir = os.path.join(work, 'write')
-    rc, text = step([py, os.path.join(HERE, 'write.py'), route_in, route, wdir], os.path.join(work, 'write.log'))
+    rc, text = step([exe, 'write', route_in, route, wdir], os.path.join(work, 'write.log'))
     written = os.path.join(wdir, os.path.splitext(os.path.basename(project_files(route_in)['.kicad_pro']))[0] + '.kicad_pcb')
     if not os.path.isfile(written):
-        raise StepError(f'write.py wrote no board (exit {rc}), see {os.path.join(work, "write.log")}')
+        raise StepError(f'iotroute write wrote no board (exit {rc}), see {os.path.join(work, "write.log")}')
     stages['write'] = dict(exit=rc, line=(text.strip().splitlines() or [''])[-1])
 
     # 4. OUT + project files
