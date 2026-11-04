@@ -119,6 +119,29 @@ export function polygonsOverlap(a: Polygon, b: Polygon): boolean {
     || (a.outline[0] !== undefined && polygonContains(b, a.outline[0]));
 }
 
+/** Chords of an arc track, no further than `error` from it. */
+function arcChords(track: Track & { mid: Pt }, error: number): Pt[] {
+  const { start, mid, end } = track;
+  const centre = circleCentre(start, mid, end);
+  const radius = Math.hypot(start.x - centre.x, start.y - centre.y);
+  const startAngle = Math.atan2(start.y - centre.y, start.x - centre.x);
+  const turn = (to: Pt): number => normalize180(angleOf(minus(to, centre)) - angleOf(minus(start, centre)));
+  const sweep = (turn(mid) + normalize180(angleOf(minus(end, centre)) - angleOf(minus(mid, centre)))) * Math.PI / 180;
+  const steps = Math.max(1, Math.ceil(Math.abs(sweep) / (2 * Math.acos(Math.max(0, 1 - error / radius)))));
+  return Array.from({ length: steps + 1 }, (_, i) => {
+    const angle = startAngle + sweep * i / steps;
+    return i === steps ? end : { x: Math.round(centre.x + radius * Math.cos(angle)), y: Math.round(centre.y + radius * Math.sin(angle)) };
+  });
+}
+
+/** Does a track's copper reach into the polygon? An arc is cut into chords within `error`, as pcbnew's polygon of it was. */
+export function polygonNearTrack(polygon: Polygon, track: Track, error = 1000): boolean {
+  const half = Math.trunc(track.width / 2);
+  if (!track.mid) return polygonNearSegment(polygon, track.start, track.end, half);
+  const points = arcChords({ ...track, mid: track.mid }, error);
+  return points.slice(1).some((point, i) => polygonNearSegment(polygon, points[i]!, point, half));
+}
+
 /** SHAPE_POLY_SET::Collide of a piece of copper. */
 export function polygonCollides(polygon: Polygon, copper: PadCopper): boolean {
   if ('Circle' in copper) return polygonNear(polygon, copper.Circle.center, copper.Circle.radius);

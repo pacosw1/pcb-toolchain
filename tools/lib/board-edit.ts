@@ -31,6 +31,13 @@ export function itemUuid(seed: string, n: number): string {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }
 
+/** Ids for the new items of one edit: seeded by the board's text, so a rerun on a changed board cannot repeat one. */
+export function itemIds(board: string, tool: string): () => string {
+  const seed = `${tool}:${createHash('sha256').update(board).digest('hex')}`;
+  let n = 0;
+  return () => itemUuid(seed, n++);
+}
+
 export interface Span { kind: string; start: number; end: number }
 /** A PCB_GROUP as the file holds it: a (group ...) form that names its members by uuid. */
 export interface BoardGroup { uuid: string; name: string; members: string[] }
