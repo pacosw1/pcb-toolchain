@@ -25,6 +25,10 @@ fi
 lock="$project/toolchain.lock"
 if [ -f "$lock" ]; then
   want=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$lock")
+  other="${HOME}/.local/share/pcb-toolchain/$want/bin/pcb"
+  if [ "$want" != "$version" ] && [ -x "$other" ] && [ "${PCB_ALLOW_VERSION_MISMATCH:-}" != 1 ]; then
+    exec "$other" "$@"                              # the installed release that this project pins
+  fi
   if [ "$want" != "$version" ] && [ "${PCB_ALLOW_VERSION_MISMATCH:-}" != 1 ]; then
     echo "pcb: project $project pins pcb-toolchain $want, this is $version (scripts/install.sh $want)" >&2
     exit 2
