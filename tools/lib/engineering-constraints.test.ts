@@ -6,8 +6,9 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import { bindInstance } from './block-bindings.ts';
 import { checkManifest, nativeGeometry, reviewedContract, SCHEMA, type ReviewServices } from './engineering-constraints.ts';
+import { fingerprint } from './fingerprint.ts';
 import { sha256File } from './json-file.ts';
-import { jsonDumps } from './py-compat.mjs';
+import { jsonCanonical, jsonDumps, jsonLoads } from './py-compat.mjs';
 
 type Row = Record<string, any>;
 
@@ -159,6 +160,28 @@ test('the contract digest is stable and changes with the geometry', () => {
   writeFileSync(native, text.replace('(at 14 10)', '(at 14.5 10)'));
   review.native_inputs[native] = sha256File(native);
   assert.notEqual(first.review_sha256, reviewedContract(root, 'X', manifest, services).review_sha256);
+});
+
+test('the digest of a reviewed tree is the one Python gives', () => {
+  // pcb_search.contracts.fingerprint on Hetzner, 2026-11-04, from this exact file text.
+  const file = '{"rules":[{"id":"r","min_mm":1.0,"max_mm":2,"corridor_mm":[-4.0,-0.6,0,1e2],"tiny":1.5e-7,"big":12345678901234567890,"name":"Ω"}]}';
+  assert.equal(fingerprint(jsonLoads(file)), 'b9b1ea923b254cadd8325506186b7685f6fcfc1a314149627b817c01d0278054');
+});
+
+test('rule numbers reach the contract as the reviewed file wrote them', () => {
+  const loaded = (limit: string) => {
+    const reviewed = rule('pin_distance', { ...pads, metric: 'pad_center_euclidean', max_mm: '@' });
+    review.constraints.rules = jsonLoads(JSON.stringify([reviewed]).replace('"@"', limit));
+    return { ...services, verifyManifest: () => review };
+  };
+  const float = reviewedContract(root, 'X', manifest, loaded('5.0'));
+  const whole = reviewedContract(root, 'X', manifest, loaded('5'));
+  assert.match(jsonCanonical(float.rules), /"max_mm":5\.0[,}]/);
+  assert.match(jsonCanonical(whole.rules), /"max_mm":5[,}]/);
+  assert.notEqual(float.review_sha256, whole.review_sha256);
+  const report = checkManifest(root, 'X', manifest, loaded('3.0'), { candidate: candidate(text.replace('(at 14 10)', '(at 15 10)')) });
+  assert.equal(report.status, 'blocked');
+  assert.match(jsonDumps((report.blockers as Row[])[0]), /"max_mm": 3\.0/);
 });
 
 test('a bound block is an actual native instance and never transfers qualification', () => {

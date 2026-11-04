@@ -75,13 +75,28 @@ const contractDigest = (contract: Contract): string => {
 const read = (path: string): Dict => readObject<Dict>(path, `expected JSON object: ${path}`);
 const resolveIn = (base: string, name: unknown): string => resolvePath(joinPath(base, name));
 
-function numeric(value: unknown): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error('finite numeric constraint required');
-  return value;
+/**
+ * Reviewed rules as plain objects, from the Map, Float and bigint values of jsonLoads. Numbers stay exact: the digest must see
+ * 1.0 where the file says 1.0, as Python's dict did, or stored hashes stop verifying. Only arithmetic goes through numeric().
+ */
+function exactTree(value: unknown): unknown {
+  if (value === null || typeof value !== 'object' || value instanceof Float) return value;
+  if (Array.isArray(value)) return value.map(exactTree);
+  const entries = value instanceof Map ? [...value] : Object.entries(value);
+  return Object.fromEntries(entries.map(([key, item]) => [key, exactTree(item)]));
 }
 
+function numeric(value: unknown): number {
+  const number = value instanceof Float ? value.value : typeof value === 'bigint' ? Number(value) : value;
+  if (typeof number !== 'number' || !Number.isFinite(number)) throw new Error('finite numeric constraint required');
+  return number;
+}
+
+const limit = (rule: Rule, key: string, otherwise: number): number => (key in rule ? numeric(rule[key]) : otherwise);
+
 function sourceDocument(base: string, source: unknown): string {
-  if (!isDict(source) || !Number.isInteger(source.page) || (source.page as number) < 1) {
+  const whole = isDict(source) && (typeof source.page === 'bigint' || Number.isInteger(source.page));
+  if (!whole || Number(source.page) < 1) {
     throw new Error('constraint requires a reviewed document and one-based page');
   }
   const path = resolveIn(base, need(source, 'path'));
@@ -242,7 +257,7 @@ function checkDistance(rule: Rule, geometry: Geometry): void {
   if (rule.metric !== (clearance ? 'copper_edge_2d' : 'pad_center_euclidean')) throw new Error(`unsupported engineering metric: ${String(rule.metric)}`);
   if ((!('min_mm' in rule) && !('max_mm' in rule)) || (clearance && (!('min_mm' in rule) || 'max_mm' in rule))) throw new Error('sourced min/max distance required');
   for (const key of ['min_mm', 'max_mm']) if (key in rule && numeric(rule[key]) < 0) throw new Error('negative sourced distance');
-  if (((rule.min_mm as number) ?? 0) > ((rule.max_mm as number) ?? Infinity)) throw new Error('contradictory sourced distances');
+  if (limit(rule, 'min_mm', 0) > limit(rule, 'max_mm', Infinity)) throw new Error('contradictory sourced distances');
   if (clearance && [a, b].some(pad => !['rect', 'circle'].includes(pad.shape) || pad.kind === 'np_thru_hole' || !pad.axis_aligned)) {
     throw new Error(`unsupported exact copper shape for clearance: ${rule.id}`);
   }
@@ -250,7 +265,7 @@ function checkDistance(rule: Rule, geometry: Geometry): void {
 
 function checkConnector(rule: Rule, geometry: Geometry): void {
   if (rule.metric !== 'courtyard_corridor_2d' || !['L', 'R', 'T', 'B'].includes(rule.exit_side as string)) throw new Error('unsupported connector access metric');
-  const box = (rule.corridor_mm ?? []) as number[];
+  const box = (rule.corridor_mm ?? []) as unknown[];
   if (box.length !== 4) throw new Error('connector corridor requires a nonempty local rectangle');
   const [x0, y0, x1, y1] = box.map(numeric) as Box;
   if (!(x0 < x1 && y0 < y1)) throw new Error('connector corridor requires a nonempty local rectangle');
@@ -272,11 +287,11 @@ function checkEscape(rule: Rule, refs: Set<string>, geometry: Geometry): void {
 
 function normalizedRules(root: string, envelope: Dict, geometry: Geometry): { rules: Rule[]; sources: Map<string, string>; bindings: Binding[] } {
   if (envelope.schema !== SCHEMA || !Array.isArray(envelope.rules)) throw new Error('reviewed placement constraints schema missing');
-  const given = envelope.rules as Dict[];
+  const given = exactTree(envelope.rules) as Dict[];
   const declared = new Map(given.filter(isDict).map(rule => [rule.id, rule as Rule]));
   const rules: Rule[] = [], sources = new Map<string, string>(), bindings: Binding[] = [], seen = new Set<string>();
   for (const original of given) {
-    const rule = structuredClone(original) as Rule;
+    const rule = exactTree(original) as Rule;
     if (typeof rule.id !== 'string' || !rule.id || seen.has(rule.id)) throw new Error('constraint needs a distinct reviewed ID');
     seen.add(rule.id);
     if (!KINDS.includes(rule.kind)) throw new Error(`unsupported engineering constraint: ${String(rule.kind ?? 'None')}`);
@@ -348,14 +363,14 @@ function measureMove(rule: Rule, original: Geometry, geometry: Geometry): Measur
 function measureDistance(rule: Rule, geometry: Geometry): Measured {
   const a = endpoint(geometry, rule.a), b = endpoint(geometry, rule.b);
   const measured = rule.kind === 'pin_distance' ? dist(a.center, b.center) : padGap(a, b);
-  const low = (rule.min_mm as number) ?? 0, high = (rule.max_mm as number) ?? Infinity;
+  const low = limit(rule, 'min_mm', 0), high = limit(rule, 'max_mm', Infinity);
   const limits = Object.fromEntries(['min_mm', 'max_mm'].filter(key => key in rule).map(key => [key, rule[key]]));
   return { miss: Math.max(low - measured, 0, measured - high), detail: { measured_mm: measured, metric: rule.metric, ...limits } };
 }
 
 function measureConnector(rule: Rule, geometry: Geometry): Measured {
   const part = geometry.refs.get(rule.ref as string) as Part;
-  const box = transformedBox(rule.corridor_mm as number[], part.quarter, part.origin);
+  const box = transformedBox((rule.corridor_mm as unknown[]).map(numeric), part.quarter, part.origin);
   const [x0, y0, x1, y1] = geometry.bounds as Box;
   const exits: Record<string, boolean> = { L: box[0] <= x0, R: box[2] >= x1, T: box[1] <= y0, B: box[3] >= y1 };
   const clashes = [...geometry.refs].filter(([ref, other]) => {
