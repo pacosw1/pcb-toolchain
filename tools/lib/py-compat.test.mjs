@@ -78,6 +78,7 @@ test('subprocess errors read like Python', () => {
   assert.throws(() => run('/no/such/tool', []), e => e.type === 'FileNotFoundError' && e.message === "[Errno 2] No such file or directory: '/no/such/tool'");
   assert.throws(() => run('false', ['x'], {check: true}), e => e.type === 'subprocess.CalledProcessError' && e.message === "Command '['false', 'x']' returned non-zero exit status 1.");
   assert.throws(() => run('', []), e => e.type === 'PermissionError');
+  assert.throws(() => run('sleep', ['5'], {timeout: 0.05}), e => e.type === 'subprocess.TimeoutExpired' && e.message === "Command '['sleep', '5']' timed out after 0.05 seconds");
 });
 test('utc time like datetime.isoformat', () => {
   assert.equal(utcNow(new Date('2026-11-04T01:02:03.456Z')), '2026-11-04T01:02:03.456000+00:00');

@@ -60,7 +60,7 @@ new `FAB_OUT`/`RENDER_OUT` locations for exploratory output.
 The existing executor can build a separate Gerber-capable runtime with:
 
 ```sh
-python3 tools/build-release-image.py /absolute/new/image-run
+node tools/build-release-image.mjs /absolute/new/image-run
 ```
 
 This derives from the immutable native CI image ID recorded in the helper. It
@@ -72,7 +72,8 @@ the pinned pip 25.0.1 wheel is used only for installation. Docker installs
 offline into a dedicated target and exposes `GERBERCHECK_PY`, preserving native
 pcbnew's interpreter. The helper records source hashes, image ID and original
 wheel hashes. A matching image is reused; an existing tag with different inputs
-is refused. `--wheel-cache DIR` reuses only matching original wheel hashes.
+is refused. The recipe hashes the helper, so a changed helper needs a new default
+tag. `--wheel-cache DIR` reuses only matching original wheel hashes.
 
 `release-manifest.json` binds the checked gate, native population, release-tool
 source closure, board-specific reports and hashes of the candidate artifacts.

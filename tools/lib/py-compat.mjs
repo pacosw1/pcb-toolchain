@@ -93,6 +93,7 @@ export function get(dict, key, otherwise = null) {
 }
 // d[key]
 export function item(dict, key) {
+  if (Array.isArray(dict) && typeof key === 'number') { if (key < dict.length) return dict[key]; throw new PyError('IndexError', 'list index out of range'); }
   if (dict instanceof Map) { if (dict.has(key)) return dict.get(key); throw new PyError('KeyError', pyRepr(key)); }
   if (Array.isArray(dict)) throw new PyError('TypeError', 'list indices must be integers or slices, not str');
   if (typeof dict === 'string') throw new PyError('TypeError', "string indices must be integers, not 'str'");
@@ -202,9 +203,10 @@ export function globNames(folder) {
 export function lexists(path) { try { lstatSync(path); return true; } catch { return false; } }
 
 // subprocess.run with captured output. check=True raises what CalledProcessError raised.
-export function run(command, args, {check = false, stdio = 'pipe'} = {}) {
+export function run(command, args, {check = false, stdio = 'pipe', timeout} = {}) {
   if (command === '') throw new PyError('PermissionError', "[Errno 13] Permission denied: ''");
-  const result = spawnSync(command, args, {maxBuffer: Infinity, stdio});
+  const result = spawnSync(command, args, {maxBuffer: Infinity, stdio, timeout: timeout && timeout * 1000, killSignal: 'SIGKILL'});
+  if (result.error?.code === 'ETIMEDOUT') throw new PyError('subprocess.TimeoutExpired', `Command '${pyRepr([command, ...args])}' timed out after ${timeout} seconds`);
   if (result.error) throw osError(result.error, command);
   if (check && result.status !== 0) {
     throw new PyError('subprocess.CalledProcessError', `Command '${pyRepr([command, ...args])}' returned non-zero exit status ${result.status}.`);
