@@ -29,14 +29,19 @@ export function parse(text: string): SList {
   return root;
 }
 
+/** The tokens of a native file: a quoted atom keeps its quotes, so a quoted parenthesis is not a parenthesis. */
+export function tokens(text: string): string[] {
+  const kept = splitlines(text).filter(line => !line.trimStart().startsWith('#')).join('\n');
+  return kept.match(/"(?:[^"\\]|\\[^\n])*"|\(|\)|[^\s()]+/g) ?? [];
+}
+
 /**
  * Every top-level form as the native tools read it: a quoted atom loses its quotes and keeps its escapes, a line that
  * starts with # is dropped, and an unclosed list ends the read. Hashes of native forms depend on this exact text.
  */
 export function forms(text: string): SList {
-  const kept = splitlines(text).filter(line => !line.trimStart().startsWith('#')).join('\n');
   const stack: SList[] = [[]];
-  for (const [token] of kept.matchAll(/"(?:[^"\\]|\\[^\n])*"|\(|\)|[^\s()]+/g)) {
+  for (const token of tokens(text)) {
     if (token === '(') {
       stack.push([]);
     } else if (token === ')') {

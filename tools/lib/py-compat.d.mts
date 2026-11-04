@@ -36,6 +36,8 @@ export function jsonDumps(value: unknown, indent?: number | null): string;
 export function jsonCanonical(value: unknown, options?: { separators?: [string, string]; ascii?: boolean; sort?: boolean }): string;
 /** json.load: dicts are Maps, ints BigInts, floats Float, so a hash of the value matches Python's. */
 export function jsonLoad(path: string): unknown;
+/** Path.exists() or Path.is_symlink(). */
+export function lexists(path: string): boolean;
 export function compare(a: string, b: string): number;
 /** sys.exit(code) from parseArgs. */
 export class SystemExit extends Error { constructor(code: number, message?: string); code: number; }

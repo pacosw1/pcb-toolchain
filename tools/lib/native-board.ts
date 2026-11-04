@@ -58,7 +58,7 @@ export function rotate<T>(x: T, y: T, quarters: number, negate: (value: T) => T)
   return turns[quarters] as [T, T];
 }
 
-const canonical = (value: Decimal): string => value.isZero ? '0' : value.normalize().toString();
+export const canonical = (value: Decimal): string => value.isZero ? '0' : value.normalize().toString();
 
 /** A local (at x y [angle]) with its world angle made relative to the parent footprint. */
 function localAt(at: SList, parentAngle: Decimal): SList {
