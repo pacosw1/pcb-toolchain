@@ -2,7 +2,8 @@
 //!
 //! With no lineage in the environment this process is the root broker. Inside an owned stage it is a client of the
 //! broker that owns that stage, so nesting works from any caller. stdio, cwd and environment come from the caller.
-//! SIGTERM, SIGINT and SIGHUP cancel the stage. On settle it writes FILE atomically and exits.
+//! SIGTERM, SIGINT and SIGHUP cancel the stage: TERM, then KILL after the grace. SIGUSR1 is one graceful TERM of the stage and
+//! no more, for a command that writes its best result and exits by itself. On settle it writes FILE atomically and exits.
 
 use super::bootstrap;
 use super::client::rpc;
@@ -133,6 +134,16 @@ impl Canceller {
     }
 }
 
+/// Passes each SIGUSR1 on to the stage. The broker sends one TERM however often it is asked.
+fn watch_interrupt(action: impl Fn() -> bool + Send + 'static) {
+    std::thread::spawn(move || {
+        loop {
+            native::wait_interrupt_signal();
+            action();
+        }
+    });
+}
+
 fn run_root(command: Vec<String>) -> Result<Report, Failure> {
     let options = SpawnOptions::inherited()?;
     let scope = Scope::open()?;
@@ -141,6 +152,8 @@ fn run_root(command: Vec<String>) -> Result<Report, Failure> {
     })?;
     let (signalled_scope, handle) = (Arc::clone(&scope), stage.handle.clone());
     let canceller = Canceller::watch(move || json!(signalled_scope.cancel(&handle, true, false, None)));
+    let (interrupted_scope, interrupted) = (Arc::clone(&scope), Arc::clone(&stage));
+    watch_interrupt(move || interrupted_scope.interrupt(&interrupted).is_ok());
     let admission = scope.start(&stage).and_then(|_| scope.activate(&stage));
     let primary = admission.err().filter(|_| !canceller.triggered());
     let refused = primary.as_ref().map(|_| json!(scope.cancel(&stage.handle, true, false, None)));
@@ -207,6 +220,8 @@ fn run_nested(lineage: Lineage, command: Vec<String>) -> Result<Report, Failure>
     let handle = nested_spawn(&lineage, &command)?;
     let (socket, cap, target) = (lineage.socket.clone(), lineage.cap.clone(), handle.clone());
     let canceller = Canceller::watch(move || nested_cancel(&socket, &cap, &target));
+    let (socket, cap, target) = (lineage.socket.clone(), lineage.cap.clone(), handle.clone());
+    watch_interrupt(move || rpc(&socket, &json!({"op": "interrupt", "cap": cap, "handle": target}), &[], Some(CANCEL_RPC)).is_ok());
     let activate = json!({"op": "activate", "cap": lineage.cap, "handle": handle});
     let primary = rpc(&lineage.socket, &activate, &[], Some(SHORT_RPC)).err().filter(|_| !canceller.triggered());
     let refused = primary.as_ref().map(|_| nested_cancel(&lineage.socket, &lineage.cap, &handle));

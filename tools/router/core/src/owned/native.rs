@@ -186,26 +186,35 @@ pub fn pipe() -> io::Result<(OwnedFd, OwnedFd)> {
 
 /// The three signals that cancel a stage, as a set for sigprocmask and sigwait.
 fn stop_signals() -> libc::sigset_t {
+    signal_set(&[libc::SIGHUP, libc::SIGINT, libc::SIGTERM])
+}
+
+fn signal_set(signals: &[i32]) -> libc::sigset_t {
     let mut set: libc::sigset_t = unsafe { zeroed() };
     unsafe {
         libc::sigemptyset(&mut set);
-        for signal in [libc::SIGHUP, libc::SIGINT, libc::SIGTERM] {
-            libc::sigaddset(&mut set, signal);
+        for signal in signals {
+            libc::sigaddset(&mut set, *signal);
         }
     }
     set
 }
 
-/// Must run before any thread starts, so that only wait_stop_signal sees them.
+/// The stop signals and the graceful stop of `owned run`.
+fn handled_signals() -> libc::sigset_t {
+    signal_set(&[libc::SIGHUP, libc::SIGINT, libc::SIGTERM, libc::SIGUSR1])
+}
+
+/// Must run before any thread starts, so that only wait_stop_signal and wait_interrupt_signal see them.
 pub fn block_stop_signals() {
-    let set = stop_signals();
+    let set = handled_signals();
     unsafe { libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut()) };
 }
 
 /// For a child between fork and exec, so async-signal-safe. std's Command inherits the signal mask, and a stage
 /// that kept these blocked could not be cancelled by TERM: it would only ever die on the KILL phase.
 pub fn unblock_stop_signals() -> io::Result<()> {
-    let set = stop_signals();
+    let set = handled_signals();
     match unsafe { libc::pthread_sigmask(libc::SIG_UNBLOCK, &set, std::ptr::null_mut()) } {
         0 => Ok(()),
         code => Err(io::Error::from_raw_os_error(code)),
@@ -214,6 +223,13 @@ pub fn unblock_stop_signals() -> io::Result<()> {
 
 pub fn wait_stop_signal() {
     let set = stop_signals();
+    let mut signal = 0;
+    while unsafe { libc::sigwait(&set, &mut signal) } != 0 {}
+}
+
+/// SIGUSR1: `owned run` asks its stage to stop by itself.
+pub fn wait_interrupt_signal() {
+    let set = signal_set(&[libc::SIGUSR1]);
     let mut signal = 0;
     while unsafe { libc::sigwait(&set, &mut signal) } != 0 {}
 }

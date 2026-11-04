@@ -43,7 +43,7 @@ use std::collections::BinaryHeap;
 mod checkpoint;
 mod congestion;
 mod layers;
-mod owned;
+
 mod pour;
 mod reffill;
 mod reuse;
@@ -4201,7 +4201,7 @@ pub(crate) fn add_result(bd: &mut Board, r: &Value) {
 }
 
 fn main() {
-    if let Some(code) = owned::dispatch() {
+    if let Some(code) = iotroute::owned::dispatch() {
         std::process::exit(code);
     }
     let args: Vec<String> = std::env::args().collect();

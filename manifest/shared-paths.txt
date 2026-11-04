@@ -608,11 +608,27 @@ tools/router/core/src/fixtures/checkin_front.json
 tools/router/core/src/fixtures/m2_j2_16.json
 tools/router/core/src/fixtures/m2_j2_18.json
 tools/router/core/src/fixtures/t1_u8.json
+<<<<<<< HEAD
 tools/router/core/src/gnd_pad_vias/mod.rs
 tools/router/core/src/gnd_pad_vias/native.rs
 tools/router/core/src/gnd_pad_vias/place.rs
 tools/router/core/src/gnd_pad_vias/proof.rs
 tools/router/core/src/gnd_pad_vias/tests.rs
+=======
+tools/router/core/src/job/backend.rs
+tools/router/core/src/job/clock.rs
+tools/router/core/src/job/files.rs
+tools/router/core/src/job/mod.rs
+tools/router/core/src/job/progress.rs
+tools/router/core/src/job/record.rs
+tools/router/core/src/job/resources.rs
+tools/router/core/src/job/scan.rs
+tools/router/core/src/job/snapshots.rs
+tools/router/core/src/job/stage.rs
+tools/router/core/src/job/stop.rs
+tools/router/core/src/job/uuids.rs
+tools/router/core/src/job/watch.rs
+>>>>>>> 37b3bf4 (job: the job's services in Rust: files, clock, record, stages, queue)
 tools/router/core/src/kicad/api/client.rs
 tools/router/core/src/kicad/api/mod.rs
 tools/router/core/src/kicad/api/proto/kiapi.board.commands.rs
@@ -727,6 +743,7 @@ tools/router/core/src/tests_v8.rs
 tools/router/core/src/tests_v9.rs
 tools/router/core/src/tool_args.rs
 tools/router/core/src/write.rs
+tools/router/core/tests/job_stage.rs
 tools/router/core/tests/owned_lock.rs
 tools/router/core/tests/owned_run.rs
 tools/router/reports/2026-11-01-congestion.md
