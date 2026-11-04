@@ -25,7 +25,7 @@ fn point6(p: Point) -> Point {
 }
 
 #[derive(Clone, Copy, Debug)]
-enum Shape {
+pub enum Shape {
     /// Centre, width, height.
     Pad { c: Point, w: f64, h: f64 },
     Segment { a: Point, b: Point },
@@ -49,7 +49,7 @@ fn point_pad(p: Point, c: Point, w: f64, h: f64) -> f64 {
 
 impl Shape {
     /// Distance from a track centre line to the shape (0 when they touch).
-    fn distance_to(&self, a: Point, b: Point) -> f64 {
+    pub fn distance_to(&self, a: Point, b: Point) -> f64 {
         match *self {
             Self::Segment { a: c, b: d } => {
                 if cross(a, b, c, d) {
@@ -80,11 +80,11 @@ impl Shape {
 }
 
 #[derive(Clone, Debug)]
-struct Item {
-    reference: String,
-    net: String,
-    class: String,
-    shape: Shape,
+pub struct Item {
+    pub reference: String,
+    pub net: String,
+    pub class: String,
+    pub shape: Shape,
 }
 
 impl Item {
@@ -101,10 +101,10 @@ const EDGE_CLASS: &str = "EDGE";
 const HOLE_CLASS: &str = "HOLE:";
 
 /// Gap between two classes from the parsed .kicad_dru and the net class clearances.
-struct ClassGaps<'a> {
-    dru: &'a Rules,
-    clearance: BTreeMap<&'a str, f64>,
-    edge: f64,
+pub struct ClassGaps<'a> {
+    pub dru: &'a Rules,
+    pub clearance: BTreeMap<&'a str, f64>,
+    pub edge: f64,
 }
 
 fn members(class: &str) -> Vec<&str> {
@@ -147,7 +147,7 @@ impl ClassGaps<'_> {
         base
     }
 
-    fn gap(&self, a: &str, b: &str) -> f64 {
+    pub fn gap(&self, a: &str, b: &str) -> f64 {
         if b == EDGE_CLASS {
             return self.edge;
         }
@@ -162,15 +162,15 @@ impl ClassGaps<'_> {
 }
 
 /// An obstacle of another net with the distance a track centre line must keep.
-struct Obstacle<'a> {
-    item: &'a Item,
-    half_track: f64,
-    need: f64,
+pub struct Obstacle<'a> {
+    pub item: &'a Item,
+    pub half_track: f64,
+    pub need: f64,
 }
 
 impl Obstacle<'_> {
     /// Margin of a path to the obstacle; below 0 is a violation.
-    fn margin(&self, path: &[Point]) -> f64 {
+    pub fn margin(&self, path: &[Point]) -> f64 {
         let d = path.windows(2).map(|s| self.item.shape.distance_to(s[0], s[1])).fold(f64::INFINITY, f64::min);
         d - self.half_track - self.need
     }
@@ -433,7 +433,7 @@ fn next_join<'a>(done: &[&Item], todo: &[&Item], obstacles: &'a [Obstacle<'a>], 
 }
 
 /// Join the pads of a net, nearest legal first. The joins do not depend on each other (own-net copper is no obstacle).
-fn route_net<'a>(net: &str, pads: &[&'a Item], obstacles: &'a [Obstacle<'a>]) -> Option<Fault> {
+pub fn route_net<'a>(net: &str, pads: &[&'a Item], obstacles: &'a [Obstacle<'a>]) -> Option<Fault> {
     let (mut done, mut todo) = (vec![*pads.first()?], pads[1..].to_vec());
     while !todo.is_empty() {
         let mut least = None;
