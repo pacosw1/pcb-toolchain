@@ -1,12 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sourceIdentity } from '../src/source-identity.ts';
+import http from 'node:http';
 // @ts-expect-error Plain JavaScript host installer.
-import { install, recover, statusUrl } from '../deploy/install-release.mjs';
+import { install, recover, verifySocket } from '../deploy/install-release.mjs';
 // @ts-expect-error Plain JavaScript release preparer.
 import { prepareRelease } from '../deploy/prepare-release.mjs';
 
@@ -62,10 +63,13 @@ test('installer verifies identity, rolls back failure, and recovers interruption
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('health endpoint is loopback only and cannot redirect credentials through a URL', () => {
-  assert.equal(statusUrl('http://127.0.0.1:8793/status').hostname, '127.0.0.1');
-  assert.equal(statusUrl('http://[::1]:8793/status').hostname, '[::1]');
-  for (const url of ['http://100.93.34.43:8793/status', 'http://localhost:8793/status', 'http://127.0.0.1:8793/status?x=1', 'http://u:p@127.0.0.1:8793/status']) {
-    assert.throws(() => statusUrl(url), /loopback/);
-  }
+test('socket must be in a private directory and owned by the expected user', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'jobd-socket-check-')); const socket = join(dir, 'status.sock');
+  const server = http.createServer();
+  try {
+    await new Promise<void>((resolve) => server.listen(socket, resolve));
+    verifySocket(socket, process.getuid!());
+    chmodSync(dir, 0o755); assert.throws(() => verifySocket(socket, process.getuid!()), /unsafe/);
+    chmodSync(dir, 0o700); assert.throws(() => verifySocket(socket, process.getuid!() + 1), /unsafe/);
+  } finally { if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });

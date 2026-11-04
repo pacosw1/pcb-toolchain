@@ -7,13 +7,15 @@ import { Store } from './store.ts';
 import { sourceIdentity } from './source-identity.ts';
 import { fileURLToPath } from 'node:url';
 import { startListeners } from './listeners.ts';
+import { prepareLocalSocket } from './local-socket.ts';
+import fs from 'node:fs';
 
 const cfg = loadConfig(process.env);
 const mgr = new JobManager(cfg, new Store(cfg.dataDir), new DockerRuntime(cfg), hostReader(cfg.dataDir));
 const identity = sourceIdentity(fileURLToPath(new URL('.', import.meta.url)));
 const server = createServer(mgr, identity);
-// The deployed API may bind to a Tailscale address; keep local deployment verification local.
-const health = cfg.bind === '127.0.0.1' ? null : createHealthServer(mgr, identity);
+const health = createHealthServer(mgr, identity);
+const socket = prepareLocalSocket('/run/pcb-job-daemon', process.getuid!());
 
 const timer = setInterval(() => {
   mgr.tick().catch((e: unknown) => console.error('tick failed:', e));
@@ -25,7 +27,7 @@ const cleanTimer = setInterval(() => {
   mgr.clean().catch((e: unknown) => console.error('cleanup failed:', e));
 }, cfg.tickMs);
 
-startListeners(server, health, cfg.port, cfg.bind).then(() => {
+startListeners(server, health, cfg.port, cfg.bind, socket).then(() => {
   const s = mgr.status();
   console.log(`pcb-job-daemon on ${cfg.bind}:${cfg.port} data ${cfg.dataDir}: ${mgr.jobs.size} jobs on record, ${s.running} running`);
 }).catch((error: unknown) => {
@@ -50,8 +52,12 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     clearInterval(cleanTimer);
     server.close();
     server.closeAllConnections();
+    const socketWasListening = health.listening;
     health?.close();
     health?.closeAllConnections();
+    if (socketWasListening) {
+      try { fs.unlinkSync(socket); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') console.error('cannot remove health socket:', error); }
+    }
     process.exit(0);
   });
 }

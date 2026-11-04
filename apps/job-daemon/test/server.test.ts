@@ -3,7 +3,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import type { AddressInfo } from 'node:net';
-import type http from 'node:http';
+import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, afterEach, before, beforeEach, describe, it } from 'node:test';
@@ -54,6 +54,22 @@ it('local health server serves authenticated status only', async () => {
     assert.equal((await fetch(`${url}/jobs`, { headers: auth })).status, 404);
     assert.equal((await fetch(`${url}/status`, { method: 'POST', headers: auth })).status, 404);
   } finally { health.closeAllConnections(); await new Promise((ok) => health.close(ok)); }
+});
+it('local socket returns identity only with valid authentication', async () => {
+  const local = createHealthServer(r.mgr, 'socket-source');
+  const socket = path.join(r.dir, 'health.sock');
+  await new Promise<void>((ok) => local.listen(socket, ok));
+  const request = (token: string) => new Promise<{ status: number | undefined; body: string }>((resolve, reject) => {
+    http.get({ socketPath: socket, path: '/status', headers: { authorization: `Bearer ${token}` } }, (res) => {
+      let body = ''; res.setEncoding('utf8'); res.on('data', (part: string) => { body += part; });
+      res.on('end', () => resolve({ status: res.statusCode, body }));
+    }).on('error', reject);
+  });
+  try {
+    assert.equal((await request('incorrect')).status, 401);
+    const result = await request(TOKEN);
+    assert.equal(result.status, 200); assert.equal(JSON.parse(result.body).sourceSha256, 'socket-source');
+  } finally { local.closeAllConnections(); await new Promise((ok) => local.close(ok)); }
 });
 const specHeader = (o: unknown): string => Buffer.from(JSON.stringify(o)).toString('base64');
 

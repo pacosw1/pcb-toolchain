@@ -5,6 +5,7 @@ import path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import http from 'node:http';
 
 function identity(dir) {
   if (!fs.lstatSync(dir).isDirectory()) throw Error('source is not a directory');
@@ -96,15 +97,17 @@ export async function install(root, archive, manifest, expectedArchiveSha256, se
   }
 }
 
-export function statusUrl(url) {
-  const u = new URL(url);
-  if (u.protocol !== 'http:' || !['127.0.0.1', '[::1]'].includes(u.hostname) || u.username || u.password || u.pathname !== '/status' || u.search || u.hash) throw Error('expected a loopback http /status URL');
-  return u;
+export function verifySocket(socket, uid) {
+  const dir = fs.lstatSync(path.dirname(socket));
+  if (!dir.isDirectory() || dir.uid !== uid || (dir.mode & 0o777) !== 0o700) throw Error('unsafe health socket directory');
+  const endpoint = fs.lstatSync(socket);
+  if (!endpoint.isSocket() || endpoint.uid !== uid) throw Error('unsafe health socket');
 }
 async function main() {
-  const [operation, archive, url, tokenFile, expectedArchiveSha256] = process.argv.slice(2);
-  if (!['install', 'recover'].includes(operation) || (operation === 'install' && (!archive || !expectedArchiveSha256)) || !url || !tokenFile) throw Error('usage: install-release.mjs install|recover ARCHIVE_OR_- STATUS_URL TOKEN_FILE [EXPECTED_ARCHIVE_SHA256]');
-  const u = statusUrl(url);
+  const [operation, archive, tokenFile, expectedArchiveSha256] = process.argv.slice(2);
+  if (!['install', 'recover'].includes(operation) || (operation === 'install' && (!archive || !expectedArchiveSha256)) || !tokenFile) throw Error('usage: install-release.mjs install|recover ARCHIVE_OR_- TOKEN_FILE [EXPECTED_ARCHIVE_SHA256]');
+  if (process.getuid?.() !== 0) throw Error('installer must run as root');
+  const socket = '/run/pcb-job-daemon/status.sock';
   const token = fs.readFileSync(tokenFile, 'utf8').trim(); if (token.length < 32) throw Error('invalid token');
   const root = '/opt/pcb-job-daemon', lock = path.join(root, '.deploy-lock');
   fs.mkdirSync(lock); // On interruption the lock remains: verify no installer is running before removing it.
@@ -112,7 +115,18 @@ async function main() {
     restart: async () => { execFileSync('systemctl', ['restart', 'pcb-job-daemon.service']); },
     healthy: async (expected) => {
       for (let n = 0; n < 15; n++) {
-        try { const r = await fetch(u, { headers: { authorization: `Bearer ${token}` }, redirect: 'error', signal: AbortSignal.timeout(1000) }); if (r.ok && (await r.json()).sourceSha256 === expected) return true; } catch { /* retry during startup */ }
+        try {
+          verifySocket(socket, 0);
+          const identity = await new Promise((resolve, reject) => {
+            const request = http.get({ socketPath: socket, path: '/status', headers: { authorization: `Bearer ${token}` }, timeout: 1000 }, (response) => {
+              let body = '';
+              response.setEncoding('utf8'); response.on('data', (chunk) => { body += chunk; if (body.length > 16384) request.destroy(); });
+              response.on('end', () => { try { resolve(response.statusCode === 200 ? JSON.parse(body).sourceSha256 : null); } catch (e) { reject(e); } });
+            });
+            request.on('timeout', () => request.destroy()); request.on('error', reject);
+          });
+          if (identity === expected) return true;
+        } catch { /* retry during startup */ }
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
       return false;
