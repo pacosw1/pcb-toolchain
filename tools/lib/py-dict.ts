@@ -5,6 +5,13 @@ export type Dict = Map<string, unknown>;
 
 export const isDict = (value: unknown): value is Dict => value instanceof Map;
 
+/** An int or float above zero; a bool, NaN or infinity is none. */
+export function isPositive(value: unknown): boolean {
+  if (typeof value === 'bigint') return value > 0n;
+  const number = value instanceof Float ? value.value : value;
+  return typeof number === 'number' && Number.isFinite(number) && number > 0;
+}
+
 const isRecord = (value: unknown): value is object =>
   value !== null && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Float);
 const entriesOf = (value: object): [string, unknown][] =>

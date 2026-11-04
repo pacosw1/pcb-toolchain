@@ -205,7 +205,7 @@ export function lexists(path) { try { lstatSync(path); return true; } catch { re
 // subprocess.run with captured output. check=True raises what CalledProcessError raised.
 export function run(command, args, {check = false, stdio = 'pipe', timeout, env} = {}) {
   if (command === '') throw new PyError('PermissionError', "[Errno 13] Permission denied: ''");
-  const result = spawnSync(command, args, {maxBuffer: Infinity, stdio, env, timeout: timeout && timeout * 1000, killSignal: 'SIGKILL'});
+  const result = spawnSync(command, args, {maxBuffer: Infinity, stdio, env, timeout: timeout && Math.ceil(timeout * 1000), killSignal: 'SIGKILL'});
   if (result.error?.code === 'ETIMEDOUT') throw new PyError('subprocess.TimeoutExpired', `Command '${pyRepr([command, ...args])}' timed out after ${timeout} seconds`);
   if (result.error) throw osError(result.error, command);
   if (check && result.status !== 0) {

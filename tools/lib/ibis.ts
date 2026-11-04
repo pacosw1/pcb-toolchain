@@ -4,7 +4,7 @@
 // unchanged; corner omissions and load/PVT remain explicit. Absent corners never inherit typical values.
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { osError, splitlines, strip } from './py-compat.mjs';
+import { osError, PyError, splitlines, strip } from './py-compat.mjs';
 import { resolvePath } from './py-path.ts';
 
 export const CORNERS = ['typ', 'min', 'max'] as const;
@@ -17,7 +17,12 @@ const NUMBER = /^([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)([TGMkmunpf]?)([A-Za
 const OUTPUT_TYPES = new Set(['output', 'i/o', '3-state', 'open_drain', 'open_sink', 'open_source']);
 const METHOD = 'max(ramp 10-90 time, static V-I arithmetic-mean C*dV/I), D-124e';
 
-export class IbisError extends Error {}
+/** A ValueError to callers that catch by family, as net-drivers.ts does. */
+export class IbisError extends PyError {
+  constructor(message: string) {
+    super('ValueError', message);
+  }
+}
 
 /** typ, min, max; null is an NA corner. */
 export type Triple = (number | null)[];

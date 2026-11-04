@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { IbisError, load, type Model, number, parse, rampEdges, viAvgCurrent, viEdges, type ViRow } from './ibis.ts';
 
-export const FIX = `[IBIS Ver] 4.1
+const FIX = `[IBIS Ver] 4.1
 [Component] GATE
 [Pin] signal_name model_name
 1 A IN
