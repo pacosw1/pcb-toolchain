@@ -25,7 +25,7 @@ import { subscribe, unsubscribe } from './events.ts'
 import { resolveReal } from './project.ts'
 
 export const READ_ONLY = new Set(['engine.ping', 'engine.info', 'project.open', 'board.geometry', 'board.bom', 'board.glb', 'file.resolve',
-  'run.list', 'run.get', 'run.findings', 'run.candidate', 'board.parts', 'part.get', 'parts.index'])   // never op.*, run.adopt, gate.check or run.cancel
+  'run.list', 'run.get', 'run.findings', 'run.candidate', 'board.parts', 'part.get', 'parts.index', 'board.watch', 'board.unwatch'])   // never op.*, run.adopt, gate.check or run.cancel
 
 const FILE_TYPES = new Set(['.pdf', '.glb', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'])
 const COOKIE = 'pcbstudio_view'
@@ -164,7 +164,7 @@ export function makeServer(staticDir: string, project: string, glbDirGiven: stri
 
   const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false })
 
-  async function answer(ws: WebSocket, raw: string): Promise<void> {
+  async function answer(ws: WebSocket, raw: string, client: (text: string) => void): Promise<void> {
     let req: { id?: unknown, method?: unknown, params?: Record<string, unknown> } | null
     try { req = JSON.parse(raw) } catch { return }
     const isRequest = req !== null && typeof req === 'object' && !Array.isArray(req)
@@ -182,9 +182,9 @@ export function makeServer(staticDir: string, project: string, glbDirGiven: stri
         return
       }
       glbBusy = true
-      try { reply = await registry.handle(JSON.stringify(req)) } finally { glbBusy = false }
+      try { reply = await registry.handle(JSON.stringify(req), client) } finally { glbBusy = false }
     } else {
-      reply = await registry.handle(JSON.stringify(req))
+      reply = await registry.handle(JSON.stringify(req), client)
     }
     if (reply !== null && ws.readyState === ws.OPEN) ws.send(reply)
   }
@@ -218,7 +218,7 @@ export function makeServer(staticDir: string, project: string, glbDirGiven: stri
         clearInterval(beat)
         unsubscribe(send)
       })
-      ws.on('message', (raw, binary) => { if (!binary) void answer(ws, String(raw)) })
+      ws.on('message', (raw, binary) => { if (!binary) void answer(ws, String(raw), send) })
     })
   })
   return server

@@ -118,6 +118,9 @@ test('the socket allows viewing methods only and refuses other sites', async t =
   }
   assert.equal((await ask({ jsonrpc: '2.0', id: 2, method: 'engine.ping' })).result!.ok, true)
   assert.equal((await ask({ jsonrpc: '2.0', id: 3, method: 'project.open', params: { root: '/etc' } })).result!.root, v.root)   // pinned
+  write(path.join(v.root, 'b.kicad_pcb'), '(kicad_pcb (version 1))')
+  assert.ok((await ask({ jsonrpc: '2.0', id: 4, method: 'board.watch', params: { pcb: 'b.kicad_pcb' } })).result)    // live view works here too
+  assert.ok((await ask({ jsonrpc: '2.0', id: 5, method: 'board.unwatch', params: { pcb: 'b.kicad_pcb' } })).result)
   ws.close()
   assert.equal(await upgrade(url, { Cookie: cookie, Origin: 'http://evil.example' }), 403)
   assert.equal(await upgrade(url, { Cookie: cookie, Origin: v.base }), 101)
