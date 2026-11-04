@@ -1,5 +1,6 @@
 //! The parts of the core that other tools use. The router itself is the binary, main.rs.
 pub mod gnd_pad_vias;
+pub mod grid;
 pub mod job;
 pub mod kicad;
 pub mod model;
