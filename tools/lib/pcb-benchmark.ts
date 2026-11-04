@@ -4,7 +4,7 @@ import { basename } from 'node:path';
 import { verify } from './pcb-evidence.ts';
 import { Float, get, item, jsonLoads, number, splitlines, truthy } from './py-compat.mjs';
 import { caught, joinPath, jsonOf, pathExists, textOf } from './py-path.ts';
-import { fromEvents, type TimingEvent } from './timing.ts';
+import { fromEvents, timingJson, type TimingEvent } from './timing.ts';
 
 const GATE_SCOPES = new Set(['configured_board_gate', 'candidate_board_gate']);
 const COMPARABLE = 'matching recorded source and compliance scope';
@@ -65,7 +65,7 @@ function summarizeRun(folder: string): BenchmarkRow & Record<string, unknown> {
   return {
     run_id: basename(folder), board: item(manifest, 'board'), operation: get(manifest, 'operation', 'check'), scope: get(result, 'scope'),
     status: item(result, 'status'), input_sha256: truthy(source) ? source : get(result, 'input_sha256'), elapsed_s: elapsed,
-    child_cpu_s: get(result, 'child_cpu_s'), timing: truthy(timing) ? timing : fromEvents(events, get(manifest, 'created_at'), true),
+    child_cpu_s: get(result, 'child_cpu_s'), timing: truthy(timing) ? timing : timingJson(fromEvents(events, get(manifest, 'created_at'), true)),
     cpu_scope: get(result, 'cpu_scope'), evidence_verified: verified,
     time_to_configured_targets_s: completed && gateScope && valid && verified ? elapsed : null,
     cache_hits: count(events, row => row.type === 'cache.hit'), completed_checks: count(events, check(['passed', 'failed'])),

@@ -107,6 +107,17 @@ test('a whole float receipt value stays a float in the summary', () => {
   assert.match(jsonDumps(summarize([folder])), /"elapsed_s": 12\.0/);
 });
 
+test('timing from events keeps whole seconds as floats and counts as ints', () => {
+  const span = '"stage":"drc","span_id":"s","category":"kicad","started_unix_s":100.0';
+  put('events.jsonl', `{"type":"stage.start",${span}}\n{"type":"stage.end",${span},"ended_unix_s":102.0,"duration_s":2.0,"status":"passed"}\n`);
+  put('result.json', '{"status":"passed","elapsed_s":2.0}');
+  const text = jsonDumps(summarize([folder]));
+  assert.match(text, /"busy_wall_s": 2\.0/);
+  assert.match(text, /"duration_s": 2\.0/);
+  assert.match(text, /"completed_spans": 1/);
+  assert.match(text, /"schema_version": 1, "supervisor_startup_s"/);
+});
+
 test('changed evidence or a failed gate gives no time to targets', () => {
   seal({ scope: 'configured_board_gate', input_sha256: 'abc', elapsed_s: 1.5, timing: { x: 1 } });
   put('operation/log.txt', 'changed');

@@ -1,5 +1,6 @@
 // Measured workflow boundaries. Overlapping stages are never added as wall time.
 import { randomBytes } from 'node:crypto';
+import { Float } from './py-compat.mjs';
 import { round } from './py-numbers.ts';
 
 export const CATEGORIES = ['startup', 'snapshot', 'preflight', 'kicad', 'export', 'validation', 'operation', 'cleanup', 'sealing', 'queue'];
@@ -213,4 +214,17 @@ export function fromEvents(rows: TimingEvent[], submittedAt?: unknown, terminal 
   const timeline = new Timeline(submittedAt);
   rows.forEach(row => timeline.observe(row));
   return timeline.summary(undefined, terminal);
+}
+
+const FLOAT_FIELDS = new Set([
+  'supervisor_startup_s', 'queue_wait_s', 'busy_wall_s', 'wall_s', 'started_unix_s', 'ended_unix_s', 'last_activity_unix_s',
+  'duration_s', 'elapsed_s', 'last_activity_age_s',
+]);
+
+/** A summary for jsonDumps: Python's seconds are floats, so a whole 2.0 must not print as 2. Counts stay ints. */
+export function timingJson(value: unknown, field = ''): unknown {
+  if (typeof value === 'number') return FLOAT_FIELDS.has(field) ? new Float(value) : value;
+  if (Array.isArray(value)) return value.map(entry => timingJson(entry));
+  if (value === null || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, timingJson(entry, key)]));
 }
