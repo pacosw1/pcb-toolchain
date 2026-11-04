@@ -2,13 +2,13 @@
 import { randomUUID } from 'node:crypto';
 import { lstatSync, readdirSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
-import { readObject, sha256File } from './json-file.ts';
-import { current as observationCurrent, launcher } from './pcb-observation-inputs.ts';
+import { readObject as readSharedObject, sha256File } from './json-file.ts';
+import { current as observationCurrent } from './pcb-observation-inputs.ts';
 import { verify } from './pcb-evidence.ts';
 import { boardConfig, context as boardContext } from './pcb-workflow.ts';
 import { stockPopulationCurrent } from './part-stock.ts';
 import { jsonDumps, PyError } from './py-compat.mjs';
-import { isFile, isRelativeTo, pathExists, resolvePath } from './py-path.ts';
+import { caught, isFile, isRelativeTo, pathExists, resolvePath, which } from './py-path.ts';
 import { sameValue } from './py-values.ts';
 import { timestamp } from './timing.ts';
 import type { ObservationReport, RunState } from './pcb-cycle.ts';
@@ -59,6 +59,11 @@ export interface Decision extends Fields {
 const plain = <T>(value: unknown): T => JSON.parse(jsonDumps(value)) as T;
 const receipt = (folder: string): Receipt => plain<Receipt>(verify(folder));
 function stale(message: string): never { throw new PyError('ValueError', message); }
+function readObject<T extends object = Fields>(path: string): T {
+  const message = 'expected object: ' + path;
+  try { return readSharedObject<T>(path, message); }
+  catch (error) { if (error instanceof Error && error.message === message) stale(message); throw error; }
+}
 const isLink = (path: string): boolean => lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink() ?? false;
 const active = (state: RunState): boolean => state.controller_alive === true || ACTIVE.has(state.status);
 const quote = (value: string): string => value && /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\"'\"'")}'`;
@@ -79,7 +84,7 @@ export function latestRun(root: string, board: string, project: string | null, b
       const requested = operation === 'readiness' ? manifest.arguments?.[0] : manifest.board;
       if (requested !== board || !operations.has(operation)) continue;
       if (resolvePath(manifest.root ?? '') !== root) { rejected.push({ path: folder, cause: 'run belongs to a different checkout' }); continue; }
-      if (operation !== 'readiness' && manifest.project !== project) { rejected.push({ path: folder, cause: 'run belongs to a different configured revision/project' }); continue; }
+      if (operation !== 'readiness' && (manifest.project ?? null) !== project) { rejected.push({ path: folder, cause: 'run belongs to a different configured revision/project' }); continue; }
       if (manifest.run_id !== basename(folder) || !/^run-[A-Za-z0-9_-]+$/.test(basename(folder))) stale('run identity mismatch');
       const time = timestamp(manifest.created_at);
       if (time === null) stale('run timestamp has no timezone or is invalid');
@@ -103,7 +108,7 @@ export function repoInputsUnchanged(root: string, gate: Gate): void {
 /** The owning supervisor supplies its shared owned runner, including descendant cleanup and inherited deadlines. */
 export async function verifyCurrentInputs(root: string, board: string, gateDir: string, runStage: OwnedProbe): Promise<InputVerification> {
   const raw = readObject<Gate>(join(gateDir, 'result.json')); repoInputsUnchanged(root, raw);
-  const node = launcher(process.env.NODE ?? 'node');
+  const node = which(process.env.NODE ?? 'node');
   if (!node) throw new Error('Node.js unavailable; dependency freshness is unverified');
   let result: ProbeResult;
   try {
@@ -308,7 +313,7 @@ export async function nextAction(rootPath: string, board: string, options: NextO
     return finish('review', 'next_stage_unverified', 'Configured gate passed; review the next stage and board workflow before changing scope', 'review_stage', ['context', board, '--json'], { evidence: { path: join(gateDir, 'result.json') } });
   } catch (error) {
     const missing = (error as NodeJS.ErrnoException).code === 'ENOENT' || (error instanceof PyError && error.type === 'FileNotFoundError');
-    const freshness = missing ? 'missing' : phase === 'artifacts' ? 'invalid' : error instanceof PyError && error.type === 'ValueError' ? 'stale' : 'unverified';
+    const freshness = missing ? 'missing' : phase === 'artifacts' ? 'invalid' : error instanceof SyntaxError || caught(error, 'ValueError') ? 'stale' : 'unverified';
     Object.assign(output.evidence, { freshness, cause: messageOf(error) });
     return check('evidence_not_current', messageOf(error), { evidence: { path: join(folder, 'result.json') } });
   }

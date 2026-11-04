@@ -1,10 +1,11 @@
 // Reviewed observation boundaries. Reading a legacy Python source never imports or executes it.
-import { accessSync, constants, existsSync, lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sha256Text } from './fingerprint.ts';
 import { sha256File } from './json-file.ts';
+import { resolvePath, which } from './py-path.ts';
 
 export const SCHEMA = 'iot-lab.observation-input-policy.v1';
 export const COMMON = ['pcb_cli.py', 'pcb_operations.py', 'pcb_evidence.py', 'pcb_workflow.py',
@@ -62,11 +63,8 @@ const file = (path: string): boolean => statSync(path, { throwIfNoEntry: false }
 const sortedRecord = <T>(value: Record<string, T>): Record<string, T> => Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
 
 export function launcher(command: string): string | null {
-  if (!command) return null;
-  for (const name of command.includes('/') ? [resolve(command)] : (process.env.PATH ?? '').split(delimiter).map(path => resolve(path, command))) {
-    try { accessSync(name, constants.X_OK); if (file(name)) return realpathSync(name); } catch { /* Try the next PATH entry. */ }
-  }
-  return null;
+  const found = command ? which(command) : null;
+  return found ? resolvePath(found) : null;
 }
 
 function environment(): Record<string, string> {
@@ -80,7 +78,7 @@ function selectedTools(): Record<string, string | null> {
   for (const name of ['pdfinfo', 'pdftotext', 'pdftoppm']) {
     const bundled = join(homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/bin', name);
     const candidate = process.env[name.toUpperCase()] || (file(bundled) ? bundled : launcher(name));
-    selected[name] = candidate ? realpathSync(candidate) : null;
+    selected[name] = candidate ? resolvePath(candidate) : null;
   }
   return selected;
 }

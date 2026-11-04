@@ -6,6 +6,7 @@ import { atomicJson, readObject, sha256File } from './json-file.ts';
 import { evidenceFiles } from './pcb-evidence.ts';
 import { boardConfig } from './pcb-workflow.ts';
 import { sameValue } from './py-values.ts';
+import { isFile } from './py-path.ts';
 import { isNumber, timestamp, unionSeconds } from './timing.ts';
 
 export const STAGES = ['requirements', 'architecture', 'parts', 'datasheets', 'schematic', 'placement',
@@ -65,7 +66,7 @@ export const read = (path: string): CycleRecord => readObject<CycleRecord>(path,
 export function folderFor(base: string, cycle: string): string {
   if (!/^cycle-[A-Za-z0-9_-]+$/.test(cycle)) throw new Error('invalid cycle ID');
   const folder = join(resolve(base), cycle);
-  if (lstatSync(folder, { throwIfNoEntry: false })?.isSymbolicLink() || !existsSync(join(folder, 'cycle.json'))) throw new Error('unknown engineering cycle');
+  if (lstatSync(folder, { throwIfNoEntry: false })?.isSymbolicLink() || !isFile(join(folder, 'cycle.json'))) throw new Error('unknown engineering cycle');
   return folder;
 }
 
@@ -79,7 +80,7 @@ export function create(rootPath: string, basePath: string, board: string, owner:
     design = { path: contract, sha256: sha256File(contract), design_id: identity.design_id };
   }
   let project: string | null = null;
-  if (existsSync(join(root, 'hardware-design/boards', board, 'gate.json'))) project = relative(root, boardConfig(root, board).project);
+  if (isFile(join(root, 'hardware-design/boards', board, 'gate.json'))) project = relative(root, boardConfig(root, board).project);
   else if (!design) throw new Error('a cycle before native CAD requires an explicit design contract');
   if (!owner.trim()) throw new Error('one integration owner is required');
   mkdirSync(base, { recursive: true });

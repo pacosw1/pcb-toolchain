@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -161,6 +161,18 @@ test('dependency verification rejects changed sources before launching and enfor
   await assert.rejects(verifyCurrentInputs(f.root, 'X', gate, async () => { throw Object.assign(new Error(), { name: 'TimeoutError', cleanup: { complete: true } }); }), /owned probes stopped/);
   writeFileSync(f.project + '.kicad_pcb', 'changed');
   await assert.rejects(verifyCurrentInputs(f.root, 'X', gate, async () => { assert.fail('changed input must fail before probe'); }), /input changed/);
+});
+
+test('dependency probes preserve the invoked name of a multicall Node shim', async t => {
+  const f = fixture(t), folder = f.run(), executable = join(f.root, 'multicall'), alias = join(f.root, 'node-alias');
+  writeFileSync(executable, 'fixture executable identity'); chmodSync(executable, 0o755); symlinkSync(executable, alias);
+  const previous = process.env.NODE; process.env.NODE = alias;
+  try {
+    await verifyCurrentInputs(f.root, 'X', join(folder, 'gate'), async command => {
+      assert.equal(command[0], alias);
+      return { returncode: 0, stderr: '', stdout: JSON.stringify({ verified: true, input_sha256: f.fingerprint }) };
+    });
+  } finally { if (previous === undefined) delete process.env.NODE; else process.env.NODE = previous; }
 });
 
 test('design assessments stop at the repeated unchanged failure and expire with their contract', async t => {
