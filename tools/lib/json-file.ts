@@ -2,11 +2,28 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { jsonDumps } from './py-compat.mjs';
+import { Float, jsonDumps, jsonLoad, osError } from './py-compat.mjs';
 
 const CHUNK_BYTES = 1024 * 1024;
 
 export const readJson = <T>(path: string): T => JSON.parse(readFileSync(path, 'utf8')) as T;
+
+const plain = (value: unknown): unknown => {
+  if (value instanceof Map) return Object.fromEntries([...value].map(([key, item]) => [key, plain(item)]));
+  if (Array.isArray(value)) return value.map(plain);
+  if (typeof value === 'bigint') return Number(value);
+  return value instanceof Float ? value.value : value;
+};
+
+/** json.loads of a file as plain values, with Python's error text; NaN and Infinity read as numbers. */
+export const readPyJson = <T = unknown>(path: string): T => plain(jsonLoad(path)) as T;
+
+/** A file that must hold a JSON object; `message` is the error when it does not. */
+export function readObject<T extends object = Record<string, unknown>>(path: string, message = `expected a JSON object: ${path}`): T {
+  const value = readPyJson(path);
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error(message);
+  return value as T;
+}
 
 function assertFinite(value: unknown): void {
   if (typeof value === 'number' && !Number.isFinite(value)) throw new RangeError(`not a JSON number: ${value}`);
@@ -32,7 +49,12 @@ export function atomicJson(path: string, data: unknown): void {
 export function sha256File(path: string): string {
   const hash = createHash('sha256');
   const chunk = Buffer.allocUnsafe(CHUNK_BYTES);
-  const file = openSync(path, 'r');
+  let file: number;
+  try {
+    file = openSync(path, 'r');
+  } catch (error) {
+    throw osError(error, path);
+  }
   try {
     for (let read = readSync(file, chunk); read > 0; read = readSync(file, chunk)) hash.update(chunk.subarray(0, read));
   } finally {

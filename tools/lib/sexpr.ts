@@ -1,4 +1,6 @@
 // KiCad s-expression reader for tools that only look at a file. Atoms stay strings; the reader knows no KiCad schema.
+import { splitlines } from './py-compat.mjs';
+
 export type SExpr = string | SList;
 export type SList = SExpr[];
 
@@ -25,6 +27,34 @@ export function parse(text: string): SList {
   const root = current[0];
   if (!Array.isArray(root)) throw new Error('s-expression: no top-level list');
   return root;
+}
+
+/**
+ * Every top-level form as the native tools read it: a quoted atom loses its quotes and keeps its escapes, a line that
+ * starts with # is dropped, and an unclosed list ends the read. Hashes of native forms depend on this exact text.
+ */
+export function forms(text: string): SList {
+  const kept = splitlines(text).filter(line => !line.trimStart().startsWith('#')).join('\n');
+  const stack: SList[] = [[]];
+  for (const [token] of kept.matchAll(/"(?:[^"\\]|\\[^\n])*"|\(|\)|[^\s()]+/g)) {
+    if (token === '(') {
+      stack.push([]);
+    } else if (token === ')') {
+      const closed = stack.pop() as SList;
+      if (!stack.length) throw new Error('s-expression: unbalanced )');
+      (stack.at(-1) as SList).push(closed);
+    } else {
+      (stack.at(-1) as SList).push(token.startsWith('"') ? token.slice(1, -1) : token);
+    }
+  }
+  return stack[0] as SList;
+}
+
+/** The fields after the name of the one child `name`; two such children are ambiguous. */
+export function field(form: SList, name: string): SList | undefined {
+  const rows = form.filter((item): item is SList => Array.isArray(item) && item[0] === name);
+  if (rows.length > 1) throw new Error('ambiguous native field: ' + name);
+  return rows[0]?.slice(1);
 }
 
 /** The child lists of `node` that start with `name`. */

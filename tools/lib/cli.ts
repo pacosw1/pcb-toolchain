@@ -1,6 +1,10 @@
 // Entry point of a TypeScript tool: runs main only when the file is the program, and turns a UsageError into exit code.
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { osError } from './py-compat.mjs';
+
+/** str(exception): a Node file error reads as Python's OSError did. */
+export const errorText = (error: unknown): string => osError(error).message ?? String(error);
 
 export class UsageError extends Error {
   readonly code: number;

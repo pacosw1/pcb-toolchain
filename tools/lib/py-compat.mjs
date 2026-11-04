@@ -367,6 +367,27 @@ export function jsonDumps(value, indent = null, depth = 0) {
   return `{${inner}${entries.map(([k, v]) => `${jsonString(k)}: ${jsonDumps(v, indent, depth + 1)}`).join(separator)}${outer}}`;
 }
 
+// json.dumps(value, sort_keys=True, separators=..., ensure_ascii=..., allow_nan=False): the text behind a content hash.
+const utf8String = text => `"${text.replace(/["\\\x00-\x1f]/g, c => SHORT[c] ?? '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'))}"`;
+export function jsonCanonical(value, {separators = [',', ':'], ascii = true, sort = true} = {}) {
+  const quote = ascii ? jsonString : utf8String;
+  const encode = item => {
+    if (item === null || item === undefined) return 'null';
+    if (typeof item === 'string') return quote(item);
+    if (item === true || item === false || typeof item === 'bigint') return String(item);
+    const float = item instanceof Float ? item.value : typeof item === 'number' ? item : null;
+    if (float !== null) {
+      if (!Number.isFinite(float)) throw new PyError('ValueError', 'Out of range float values are not JSON compliant: ' + floatRepr(float));
+      return item instanceof Float || !Number.isInteger(float) ? floatRepr(float) : String(float);
+    }
+    if (Array.isArray(item)) return `[${item.map(encode).join(separators[0])}]`;
+    const entries = item instanceof Map ? [...item] : Object.entries(item);
+    if (sort) entries.sort(([a], [b]) => compare(a, b));
+    return `{${entries.map(([k, v]) => quote(k) + separators[1] + encode(v)).join(separators[0])}}`;
+  };
+  return encode(value);
+}
+
 // argparse for the shape these tools use: positionals, then options that take one value.
 //   spec = {prog, positionals: ['bom'], options: [{flag: '--boards', type: 'int', fallback: 5n}, {flag: '--x', required: true}]}
 // Same parse order, abbreviations and messages. The usage text is built on one line: the tools keep it under 78
