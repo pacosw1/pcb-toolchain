@@ -243,7 +243,25 @@ test/e2e-host.sh [user@host]              # real containers, from a temp dir; in
 
 ## Deploy
 
-Nothing below has been applied. On the host, as root:
+To prepare a reproducible source bundle from a reviewed commit, run from the repository root:
+
+```sh
+node apps/job-daemon/deploy/prepare-release.mjs <commit> /tmp/pcb-job-daemon.tar
+```
+
+The tar contains only the daemon source at that commit; its adjacent `.json` records the commit, archive SHA-256, and source SHA-256. It does not contain local changes, the token, host configuration, or systemd units. The daemon reports its startup source hash in authenticated `/status` as `sourceSha256`; compare it to the manifest after installation. This is source identity, not a health or deployment guarantee. This command prepares a bundle only: it does not install it or restart the daemon. Both output paths must be new.
+
+For a host already running a version that reports this identity, copy the bundle and manifest to the host, then run the installer from a trusted checkout as root:
+
+```sh
+node apps/job-daemon/deploy/install-release.mjs install /path/release.tar /etc/pcb-job-daemon.token EXPECTED_ARCHIVE_SHA256
+```
+
+Supply `EXPECTED_ARCHIVE_SHA256` independently from the reviewed release; the archive and adjacent manifest alone prove integrity, not provenance. The installer checks authenticated status over the systemd service's PID-specific socket under `/run/pcb-job-daemon/default/`, in root-owned mode-0700 directories, before and after the source swap. It pins the production instance to `default` and verifies the service PID again after each check. Other instances and crash-stale sockets use separate paths; if a PID is reused and its old path still exists, startup fails closed until that path is investigated and removed. The installer stages source, journals the swap, restarts the service, and retains the previous source. A failure attempts to restore and restart it. An interrupted transaction leaves `.deploy-journal.json` and may leave `.deploy-lock` under `/opt/pcb-job-daemon`: first verify no installer is running, remove the stale lock if present, and run the same command with `recover` and `-` in place of the archive (no hash argument). Recovery verifies the previous source before replacement and its authenticated status after restart; retain the journal and investigate if that check fails. Running containers and job data are not intentionally changed, but the host recovery path still requires an isolated host test before production reliance. The first upgrade from a version without this socket and `sourceSha256` is deliberately refused and needs a separately verified bootstrap.
+
+Non-root direct runs default to a private `.health` directory in their job data directory. Non-production runs may set the absolute `JOBD_HEALTH_ROOT` path; its parent and ancestors must be owned by the daemon user or root and not writable by other users, except root-owned sticky directories such as `/tmp`. The root-owned `default` instance remains pinned to `/run/pcb-job-daemon`.
+
+For initial installation on the host, as root:
 
 ```sh
 mkdir -p /opt/pcb-job-daemon /var/lib/docker/pcb-jobs     # data on md4: the root disk has 12 GB free

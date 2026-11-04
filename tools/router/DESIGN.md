@@ -194,6 +194,15 @@ take away from the unit pins (`compact_cli.py --repair-rank hot`).
 
 ## 5e. Seeds, checkpoint, early stop (`--seed`, `--checkpoint`, `--stall-passes`, core `seed.rs`, `checkpoint.rs`)
 
+**Resume prototype (not yet validated for production):** `--resume-save FILE` saves negotiation state at nonterminal pass
+boundaries; `--resume FILE` restores one. The same binary, model bytes, source identifier and routing flags are required;
+the pass limit may increase. Resume and save may name the same literal, non-symlink path. `--reuse` is not supported.
+Convergence or unchanged hard failures atomically replace the save with a terminal marker. Integrity checks detect accidental
+corruption; they are not authentication. The counters measure elapsed wall and process CPU through each saved boundary,
+excluding the current write, post-boundary finalization and time between invocations. Progress-file elapsed time is per
+invocation. Resumed runs reject `--max-time`; an external supervisor must enforce a total deadline. The state file contains
+full grids and can be large; overhead, physical-board replay, hard-door replay and return-via replay are not yet established.
+
 Why: 5-8 short parallel runs on a 32-core box instead of one long blind run. The router had no seed and printed one line at
 the end, so runs could not differ and nothing could see them.
 
