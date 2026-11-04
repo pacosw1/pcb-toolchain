@@ -3,7 +3,7 @@
 
   $PY tools/router/run.py BOARD OUT.kicad_pcb [--pcb IN.kicad_pcb] [--iters N] [--max-time S]
                           [--lock-from SRC.kicad_pcb] [--reuse PREV.kicad_pcb [--reuse-fallback full|none]]
-                          [--bin PATH] [--json]
+                          [--seed N] [--stall-passes N] [--checkpoint] [--bin PATH] [--json]
 
 BOARD is the board ID (hardware-design/boards/<BOARD>, gate.json or gate.pending.json names the project) or that
 folder. The input is --pcb, else the project board. The input is only read.
@@ -19,6 +19,7 @@ Steps (each step stops the run at its first failure):
   3. tools/router/model.py, then iotroute MODEL ROUTE --iters N, then tools/router/write.py (adds the result to a
      copy, refills every zone, saves, puts back the .kicad_pro that pcbnew overwrites). With --congestion the core
      also writes OUT.iotroute/congestion.json (the congestion map for the placer, DESIGN.md 5d; it does not change ROUTE).
+     --seed, --stall-passes and --checkpoint (OUT.iotroute/checkpoint.json) go to the core as they are (DESIGN.md 5e).
   4. OUT gets the board and the project files of the input. run.py checks that OUT's .kicad_pro is byte-identical
      to the input's .kicad_pro (pcbnew save rewrites it) and puts it back when it is not.
   5. kicad-cli pcb drc --schematic-parity on OUT (the saved zone fill, no --refill-zones: a stale fill shows here).
@@ -400,7 +401,11 @@ def parse_route_line(text):
     if not m:
         return None
     s, conv, it, tr, vi, fa = m[-1]
-    return dict(status=s, converged=conv == 'true', iters=int(it), tracks=int(tr), vias=int(vi), failed=int(fa))
+    claim = dict(status=s, converged=conv == 'true', iters=int(it), tracks=int(tr), vias=int(vi), failed=int(fa))
+    stop = re.findall(r'^ROUTE .* stop (stall-passes|cancelled) ', text, re.M)
+    if stop:
+        claim['stop'] = stop[-1]
+    return claim
 
 
 # ---------- tools/pcb route --router iotroute policy ----------
@@ -462,6 +467,8 @@ def run(a, rec, t0):
     bdir, proj = board_project(a.board)
     src = os.path.abspath(a.pcb or proj + '.kicad_pcb')
     rec.update(board=os.path.basename(bdir), input=src, input_sha256=sha_file(src), iters=a.iters)
+    if getattr(a, 'seed', None) is not None:
+        rec['seed'] = a.seed
 
     # 1. lock copper
     route_in = src
@@ -607,6 +614,11 @@ def route_attempt(a, exe, py, model, route_in, src, out, work, extra=()):
     cmd = [exe, model, route, '--iters', str(a.iters)] + (['--max-time', str(a.max_time)] if a.max_time else []) + list(extra)
     if getattr(a, 'congestion', False):
         cmd += ['--congestion', os.path.join(work, 'congestion.json'), '--cong-free', '1']
+    for flag, value in (('--seed', getattr(a, 'seed', None)), ('--stall-passes', getattr(a, 'stall_passes', None))):
+        if value is not None:
+            cmd += [flag, str(value)]
+    if getattr(a, 'checkpoint', False):
+        cmd += ['--checkpoint', os.path.join(work, 'checkpoint.json'), '--source-sha', sources_sha()]
     tc = time.monotonic()
     rc, text = step(cmd, os.path.join(work, 'route.log'))
     claim = parse_route_line(text)
@@ -655,6 +667,9 @@ def parser():
                     help='also write OUT.iotroute/congestion.json (DESIGN.md 5d; default off, env IOTROUTE_CONGESTION=1)')
     ap.add_argument('--return-exempt', action='store_true',
                     help='the nets of the gate kicad-happy RP-001 exemptions need no return via (model.py --return-exempt)')
+    ap.add_argument('--seed', type=int, help='iotroute --seed: another route of the same board (DESIGN.md 5e; default none)')
+    ap.add_argument('--stall-passes', type=int, help='iotroute --stall-passes: stop after N passes with no progress (default off)')
+    ap.add_argument('--checkpoint', action='store_true', help='also write OUT.iotroute/checkpoint.json after each pass (DESIGN.md 5e)')
     ap.add_argument('--bin', help='use this iotroute binary (must not be older than its sources)')
     ap.add_argument('--json', action='store_true', help='also print the JSON record')
     return ap

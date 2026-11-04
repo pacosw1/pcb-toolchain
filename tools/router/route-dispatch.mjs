@@ -37,8 +37,8 @@ const CANCEL_MS=1500;          // lean_owned sends SIGKILL 2 s after SIGTERM
 // 17 days to 2026-11-04), and the local run is there. tools/pcb_cli.py has the same number; a test keeps them equal.
 const QUEUE_WAIT_S=300;
 const QUEUE_CLOCK_MS=1000;     // how far the credit may lag; the supervisor checks 10 times a second
-const VALUE_OPTIONS=new Set(['--iters','--max-time']);
-const FLAGS=new Set(['--congestion','--return-exempt']);
+const VALUE_OPTIONS=new Set(['--iters','--max-time','--seed','--stall-passes']);
+const FLAGS=new Set(['--congestion','--return-exempt','--checkpoint']);
 const FILE_OPTIONS=new Set(['--pcb','--lock-from']);
 // The image has no kicad-happy, and run.py's KICAD_CLI default is the Mac path.
 const JOB_SCRIPT=`set -e
