@@ -7,6 +7,7 @@ import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 
 const happyStub=`import fs from 'node:fs';\nconst a=process.argv;\nfs.writeFileSync(a[a.indexOf('--result')+1],JSON.stringify({schema_version:1,completed:true,findings:0,stale_exemptions:0,exit:0}));\n`;
+const pcbtoolStub=`console.log(process.argv[2]==='viapads' ? '0 vias in SMD pads' : '0 power-path pairs below the design current\\n0 supply nets not covered');\n`;
 const labelStub=word=>`// ${word} implementation\nconsole.log('port_labels: 0 checked, 0 failures');\n`;
 function fixture(t) {
  const root=mkdtempSync(join(tmpdir(),'gate-cli-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
@@ -14,6 +15,7 @@ function fixture(t) {
  const source=fileURLToPath(new URL('../..',import.meta.url));
  for(const p of ['tools/gate.mjs','tools/lib/env.mjs','tools/lib/env-paths.mjs','tools/lib/gate-core.mjs','tools/lib/gate-runtime.mjs','tools/lib/gate-inputs.mjs','tools/lib/check-cache.mjs','tools/lib/gate-findings.mjs','tools/lib/project-root.mjs']) {mkdirSync(join(root,p,'..'),{recursive:true});copyFileSync(join(source,p),join(root,p));}
  put('tools/port_labels.ts',labelStub('fixture'));
+ put('tools/pcbtool.ts',pcbtoolStub);
  put('tools/kicad_happy_gate.ts',happyStub);
  const base='hardware-design/boards/X/';
  put(base+'gate.json',JSON.stringify({project:'cad/X',checks:{erc:true,drc:true,paths:'current-paths.json',viapads:{},kicad_happy:{},port_labels:true}}));
@@ -34,8 +36,6 @@ if(a[0]==='sch' || a[0]==='pcb') {
 }
 const script=path.basename(a[0]);
 if(script==='si_planes.py'){console.log('WARN unproved-fastest-edge F.Cu /SIG: missing source\\n0 reference-plane failures');process.exit(0);}
-if(a[1]==='viapads'){console.log('0 vias in SMD pads');process.exit(0);}
-if(a[1]==='paths'){console.log('0 power-path pairs below the design current\\n0 supply nets not covered');process.exit(0);}
 process.exit(2);
 `);
  chmodSync(join(root,'bin/fake-tool'),0o755);

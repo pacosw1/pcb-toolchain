@@ -3,7 +3,10 @@
 // check(name, ok, detail) records one result. A tool failure is a failed check (fail closed).
 
 import {execFileSync} from 'node:child_process';
-import {modernPython} from './env.mjs';
+import {fileURLToPath} from 'node:url';
+import {modernPython, TS_NODE} from './env.mjs';
+
+const PCBTOOL = fileURLToPath(new URL('../pcbtool.ts', import.meta.url));
 
 // parseGateOutput is pure: no process spawn, so a test can call it directly with fake output.
 // summaryRegex finds the one-line summary. failPrefix (a string or a list of strings) marks a failing detail line.
@@ -50,9 +53,9 @@ export function viaPadsArgs(pcb, allow = []) {
   return ['viapads', pcb, ...(allow.length ? ['--allow', ...allow] : [])];
 }
 
-export function viaPadsCheck({python, tool, pcb, check, allow = []}) {
-  const name = `no via lands inside an SMD pad (pcbtool.py viapads${allow.length ? `, allowed: ${allow.join(' ')}` : ''})`;
-  const {out, exit} = runGate({python, tool, args: viaPadsArgs(pcb, allow)});
+export function viaPadsCheck({pcb, check, allow = []}) {
+  const name = `no via lands inside an SMD pad (pcbtool.ts viapads${allow.length ? `, allowed: ${allow.join(' ')}` : ''})`;
+  const {out, exit} = runGate({python: process.execPath, tool: TS_NODE[0], args: [...TS_NODE.slice(1), PCBTOOL, ...viaPadsArgs(pcb, allow)]});
   const {ok, detail} = parseGateOutput(out, exit, /vias in SMD pads/, 'FAIL via in pad');
   check(name, ok, detail);
 }

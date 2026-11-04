@@ -172,6 +172,13 @@ export function padHit(pad: Pad, p: Pt, accuracy = 0): boolean {
   return copper || holeHit(pad, p, accuracy);
 }
 
+/** GetEffectiveShape(layer)->Collide(SHAPE_CIRCLE): the pad's polygon on the layer, else its copper. */
+export function padCollidesCircle(pad: Pad, layer: string, center: Pt, radius: number): boolean {
+  const polygon = pad.polygons[layer];
+  if (polygon) return polygonNear(polygon, center, radius);
+  return pad.copper.some(piece => copperContains(piece, center, radius));
+}
+
 /** TestSegmentHit. */
 function segmentHit(p: Pt, a: Pt, b: Pt, distance: number): boolean {
   return pointSegmentSq(p, a, b) < (distance + 1) ** 2;
