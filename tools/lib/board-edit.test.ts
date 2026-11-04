@@ -25,6 +25,55 @@ const BOARD = `(kicad_pcb
 )
 `;
 
+const GROUPED = `(kicad_pcb
+\t(gr_line
+\t\t(uuid "aaaa")
+\t)
+\t(gr_line
+\t\t(uuid "bbbb")
+\t)
+\t(gr_line
+\t\t(uuid "cccc")
+\t)
+\t(group "art"
+\t\t(uuid "gggg")
+\t\t(members "aaaa" "bbbb" "gone")
+\t)
+\t(group "solo"
+\t\t(uuid "hhhh")
+\t\t(members "cccc")
+\t)
+)
+`;
+
+test('a group is read by name and members', () => {
+  assert.deepEqual(new BoardEdit(GROUPED).groups(), [{ uuid: 'gggg', name: 'art', members: ['aaaa', 'bbbb', 'gone'] },
+    { uuid: 'hhhh', name: 'solo', members: ['cccc'] }]);
+});
+
+test('a removed item leaves its group, and a group left empty goes', () => {
+  const edit = new BoardEdit(GROUPED);
+  edit.remove('aaaa');
+  edit.remove('cccc');
+  const text = edit.text();
+  assert.match(text, /\(members "bbbb" "gone"\)/);
+  assert.doesNotMatch(text, /aaaa|cccc|"solo"/);
+});
+
+test('removing a group removes what it holds, a stale member and a nested group included', () => {
+  const nested = GROUPED.replace('"aaaa" "bbbb" "gone"', '"aaaa" "hhhh" "gone"');
+  const edit = new BoardEdit(nested);
+  edit.removeGroup(edit.groups()[0]!);
+  assert.doesNotMatch(edit.text(), /aaaa|cccc|gggg|hhhh/);
+  assert.match(edit.text(), /bbbb/);
+});
+
+test('a new group lists its members', () => {
+  const edit = new BoardEdit(GROUPED);
+  edit.addGroup('n"ew', ['aaaa', 'zzzz'], 'kkkk');
+  assert.deepEqual(new BoardEdit(edit.text()).groups().at(-1), { uuid: 'kkkk', name: 'n"ew', members: ['aaaa', 'zzzz'] });
+});
+
 test('millimetres are cut to whole nanometres like pcbnew, as write.rs does', () => {
   const cases: [number, string][] = [[178.705, '178.705'], [0.4, '0.4'], [2, '2'], [-1.5, '-1.5'], [222.0289881, '222.028988'],
     [1.2345679, '1.234567'], [-0.0000004, '0'], [122.52499999999999, '122.524999']];
