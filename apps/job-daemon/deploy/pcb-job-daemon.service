@@ -1,0 +1,22 @@
+# Not installed by anything: see ../README.md "Deploy".
+[Unit]
+Description=PCB remote job daemon (placer and router jobs in containers)
+Wants=docker.service tailscaled.service
+After=docker.service tailscaled.service
+
+[Service]
+Type=simple
+# Root, like tools/remote.sh: the data folder is under /var/lib/docker (mode 710 root), and Docker access is
+# root-equivalent in any case.
+User=root
+EnvironmentFile=/etc/pcb-job-daemon.env
+WorkingDirectory=/opt/pcb-job-daemon
+ExecStart=/usr/local/bin/node --no-warnings /opt/pcb-job-daemon/src/main.ts
+# Restart also covers a boot where the Tailscale address is not up yet.
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

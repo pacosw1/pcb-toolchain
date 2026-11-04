@@ -1,0 +1,321 @@
+#!/usr/bin/env node
+// Thin client for the job daemon. README "Client" has the commands.
+import { spawn, spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import type { JobRecord } from './types.ts';
+import { isTerminal } from './types.ts';
+
+const USAGE = `usage:
+  pcb-job run <board-dir> [options] -- <command...>     submit, stream, fetch results, exit with the job's code
+  pcb-job submit <board-dir> [options] -- <command...>  submit and print the job id
+  pcb-job watch <id>                                    stream states and logs until the job ends
+  pcb-job status [<id>]                                 one job, or the daemon's budget and queue
+  pcb-job list                                          all jobs on record
+  pcb-job cancel <id>
+  pcb-job results <id> [<dir>]
+options: --in FILE (repeatable) --results DIR --cpus N --mem GB --timeout S --image I --retries N
+         --retry-exit CODE (repeatable) --name NAME
+env: JOBD_URL, JOBD_TOKEN or JOBD_TOKEN_FILE, IOT_LAB (project root), PCB_TOOLCHAIN_ROOT`;
+
+/** The client gives up when the daemon stays unreachable this long. The job itself goes on. A default to tune. */
+const GIVE_UP_MS = 300_000;
+const RECONNECT_MS = 2_000;
+const EXIT_UNREACHABLE = 3;
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+const die = (msg: string, code = 2): never => {
+  console.error(`pcb-job: ${msg}`);
+  process.exit(code);
+};
+
+const baseUrl = (): string => (process.env.JOBD_URL || die('set JOBD_URL=http://host:port')).replace(/\/$/, '');
+
+function token(): string {
+  if (process.env.JOBD_TOKEN) return process.env.JOBD_TOKEN;
+  if (process.env.JOBD_TOKEN_FILE) return fs.readFileSync(process.env.JOBD_TOKEN_FILE, 'utf8').trim();
+  return die('set JOBD_TOKEN or JOBD_TOKEN_FILE');
+}
+
+function api(p: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  headers.set('authorization', `Bearer ${token()}`);
+  return fetch(baseUrl() + p, { ...init, headers });
+}
+
+async function apiJson<T>(p: string, init?: RequestInit): Promise<T> {
+  const res = await api(p, init);
+  const body = (await res.json()) as T & { error?: string };
+  if (!res.ok) die(`${res.status}: ${body.error ?? 'request failed'}`);
+  return body;
+}
+
+/** Keeps trying through a dropped connection or a daemon restart. An HTTP error is an answer and is not retried. */
+async function persist<T>(what: string, fn: () => Promise<T>): Promise<T> {
+  let downSince = 0;
+  for (;;) {
+    try {
+      return await fn();
+    } catch (e) {
+      downSince ||= Date.now();
+      if (Date.now() - downSince > GIVE_UP_MS) {
+        die(`daemon unreachable for ${GIVE_UP_MS / 1000} s during ${what} (${String(e)}); the job goes on, run: pcb-job watch`, EXIT_UNREACHABLE);
+      }
+      await sleep(RECONNECT_MS);
+    }
+  }
+}
+
+/** Streams one file from the daemon into `sink` and returns the new offset, also when the connection drops. */
+async function stream(p: string, offset: number, sink: (b: Buffer) => void): Promise<number> {
+  let pos = offset;
+  try {
+    const res = await api(`${p}${p.includes('?') ? '&' : '?'}offset=${pos}&follow=1`);
+    if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+    for await (const chunk of res.body) {
+      const b = Buffer.from(chunk);
+      sink(b);
+      pos += b.length;
+    }
+    return pos;
+  } catch (e) {
+    if (pos === offset) throw e; // no progress: let persist() count the outage
+    return pos;
+  }
+}
+
+async function watchEvents(id: string): Promise<void> {
+  let offset = 0;
+  let rest = '';
+  const print = (b: Buffer): void => {
+    rest += b.toString('utf8');
+    const lines = rest.split('\n');
+    rest = lines.pop() ?? '';
+    for (const line of lines) {
+      const e = JSON.parse(line) as { t: string; to: string; detail: string };
+      console.error(`[${e.t}] ${e.to}: ${e.detail}`);
+    }
+  };
+  for (;;) {
+    offset = await persist('events', () => stream(`/jobs/${id}/events`, offset, print));
+    const job = await persist('status', () => apiJson<JobRecord>(`/jobs/${id}`));
+    if (isTerminal(job.state)) {
+      offset = await persist('events', () => stream(`/jobs/${id}/events`, offset, print));
+      return;
+    }
+    await sleep(RECONNECT_MS);
+  }
+}
+
+async function watchLogs(id: string): Promise<void> {
+  let n = 1;
+  let offset = 0;
+  for (;;) {
+    const job = await persist('status', () => apiJson<JobRecord>(`/jobs/${id}`));
+    if (job.attempts.length < n) {
+      if (isTerminal(job.state)) return;
+      await sleep(RECONNECT_MS / 2);
+      continue;
+    }
+    offset = await persist('log', () => stream(`/jobs/${id}/log?attempt=${n}`, offset, (b) => process.stdout.write(b)));
+    const now = await persist('status', () => apiJson<JobRecord>(`/jobs/${id}`));
+    if (now.attempts[n - 1]?.endedAt) {
+      if (isTerminal(now.state) && now.attempts.length === n) return;
+      n += 1;
+      offset = 0;
+    }
+  }
+}
+
+async function watch(id: string): Promise<JobRecord> {
+  await Promise.all([watchEvents(id), watchLogs(id)]);
+  return persist('status', () => apiJson<JobRecord>(`/jobs/${id}`));
+}
+
+function exitCodeOf(job: JobRecord): number {
+  if (job.state === 'passed') return 0;
+  if (job.state === 'cancelled') return 130;
+  return job.result?.exitCode || 1;
+}
+
+async function fetchResults(id: string, dir: string): Promise<void> {
+  fs.mkdirSync(dir, { recursive: true });
+  const res = await api(`/jobs/${id}/results`);
+  const body = res.ok ? res.body : null;
+  if (!body) return die(`results: HTTP ${res.status}`);
+  const tar = spawn('tar', ['-xzf', '-', '-C', dir], { stdio: ['pipe', 'inherit', 'inherit'] });
+  const done = new Promise<number | null>((r) => tar.on('close', r));
+  for await (const chunk of body) {
+    if (!tar.stdin.write(chunk)) await new Promise((r) => tar.stdin.once('drain', r));
+  }
+  tar.stdin.end();
+  if ((await done) !== 0) die('results: tar failed');
+  console.error(`pcb-job: results in ${dir}`);
+}
+
+// remote.sh's selection: design files only, no renders, fab outputs, reports or 3D models.
+const SKIP_DIRS = new Set(['__pycache__', 'render', 'fab', 'reports']);
+const DESIGN_EXT = ['.kicad_pcb', '.kicad_sch', '.kicad_pro', '.kicad_dru', '.kicad_sym', '.kicad_mod', '.json'];
+const DESIGN_NAMES = new Set(['fp-lib-table', 'sym-lib-table']);
+
+export function isDesignFile(name: string): boolean {
+  return !name.startsWith('.') && (DESIGN_NAMES.has(name) || DESIGN_EXT.includes(path.extname(name)));
+}
+
+function copyDesign(src: string, dst: string): void {
+  for (const e of fs.readdirSync(src, { withFileTypes: true })) {
+    if (e.name.startsWith('.')) continue;
+    const from = path.join(src, e.name);
+    if (e.isDirectory()) {
+      if (!SKIP_DIRS.has(e.name) && !e.name.endsWith('.3dshapes')) copyDesign(from, path.join(dst, e.name));
+    } else if (isDesignFile(e.name)) {
+      fs.mkdirSync(dst, { recursive: true });
+      fs.cpSync(from, path.join(dst, e.name), { preserveTimestamps: true });
+    }
+  }
+}
+
+/**
+ * router/model.py refuses to run unless the evidence files named by these two tables are in the project, by sha256
+ * (net_drivers.verify_evidence). remote.sh does not ship them. A missing file stays missing: model.py reports it.
+ */
+function copyDriverEvidence(toolchain: string, project: string, stage: string): void {
+  for (const name of ['driver-edges.json', 'edge-rates.json']) {
+    const table = path.join(toolchain, 'tools', name);
+    if (!fs.existsSync(table)) continue;
+    const raw = JSON.parse(fs.readFileSync(table, 'utf8')) as { evidence_files?: { path: string }[] };
+    for (const { path: rel } of raw.evidence_files ?? []) {
+      const from = path.join(project, rel);
+      if (fs.existsSync(from)) fs.cpSync(from, path.join(stage, rel), { preserveTimestamps: true });
+    }
+  }
+}
+
+/** Builds the job folder of tools/remote.sh, at the same relative paths, plus the driver evidence, and packs it. */
+export function pack(toolchain: string, project: string, board: string, inputs: string[], tarFile: string): void {
+  const rel = path.isAbsolute(board) ? path.relative(project, board) : board.replace(/\/$/, '');
+  if (rel.startsWith('..') || !fs.statSync(path.join(project, rel), { throwIfNoEntry: false })?.isDirectory()) {
+    die(`no board dir ${board} under ${project} (set IOT_LAB to the project root)`);
+  }
+  const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'pcb-job-'));
+  try {
+    fs.cpSync(path.join(toolchain, 'tools'), path.join(stage, 'tools'), {
+      recursive: true,
+      preserveTimestamps: true,
+      verbatimSymlinks: true,
+      filter: (f) => path.basename(f) !== '__pycache__',
+    });
+    copyDesign(path.join(project, rel), path.join(stage, rel));
+    copyDriverEvidence(toolchain, project, stage);
+    fs.mkdirSync(path.join(stage, 'in'));
+    for (const f of inputs) fs.cpSync(f, path.join(stage, 'in', path.basename(f)), { preserveTimestamps: true });
+    // COPYFILE_DISABLE and --no-xattrs: no macOS metadata entries for GNU tar on the host to trip over.
+    const r = spawnSync('tar', ['--no-xattrs', '-czf', tarFile, '-C', stage, '.'], {
+      env: { ...process.env, COPYFILE_DISABLE: '1' },
+      stdio: 'inherit',
+    });
+    if (r.status !== 0) die('tar failed');
+  } finally {
+    fs.rmSync(stage, { recursive: true, force: true });
+  }
+}
+
+interface Parsed {
+  board: string;
+  inputs: string[];
+  results: string;
+  spec: Record<string, unknown>;
+}
+
+function parseSubmit(argv: string[]): Parsed {
+  const split = argv.indexOf('--');
+  if (split < 1 || split === argv.length - 1) die(USAGE);
+  const command = argv.slice(split + 1);
+  const opts = argv.slice(1, split);
+  const p: Parsed = { board: argv[0], inputs: [], results: '', spec: { command } };
+  const retryExitCodes: number[] = [];
+  for (let i = 0; i < opts.length; i += 2) {
+    const [k, v] = [opts[i], opts[i + 1]];
+    if (v === undefined) die(`${k} needs a value`);
+    if (k === '--in') p.inputs.push(fs.existsSync(v) ? v : die(`no input file ${v}`));
+    else if (k === '--results') p.results = v;
+    else if (k === '--cpus') p.spec.cpus = Number(v);
+    else if (k === '--mem') p.spec.memGb = Number(v);
+    else if (k === '--timeout') p.spec.timeoutS = Number(v);
+    else if (k === '--retries') p.spec.maxRetries = Number(v);
+    else if (k === '--retry-exit') retryExitCodes.push(Number(v));
+    else if (k === '--image') p.spec.image = v;
+    else if (k === '--name') p.spec.name = v;
+    else die(`unknown option ${k}\n${USAGE}`);
+  }
+  if (retryExitCodes.length) p.spec.retryExitCodes = retryExitCodes;
+  return p;
+}
+
+async function submit(p: Parsed): Promise<JobRecord> {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const toolchain = process.env.PCB_TOOLCHAIN_ROOT || path.resolve(here, '../../..');
+  const project = process.env.IOT_LAB || toolchain;
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pcb-job-tar-'));
+  try {
+    const tarFile = path.join(tmp, 'input.tar.gz');
+    pack(toolchain, project, p.board, p.inputs, tarFile);
+    if (!p.spec.name) p.spec.name = path.basename(p.board);
+    const header = Buffer.from(JSON.stringify(p.spec)).toString('base64');
+    return await apiJson<JobRecord>('/jobs', {
+      method: 'POST',
+      headers: { 'x-job-spec': header, 'content-type': 'application/gzip' },
+      body: await fs.openAsBlob(tarFile),
+    });
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+async function main(): Promise<void> {
+  const [cmd, ...rest] = process.argv.slice(2);
+  const print = (o: unknown): void => console.log(JSON.stringify(o, null, 2));
+  switch (cmd) {
+    case 'submit': {
+      console.log((await submit(parseSubmit(rest))).id);
+      return;
+    }
+    case 'run': {
+      const p = parseSubmit(rest);
+      const { id } = await submit(p);
+      console.error(`pcb-job: job ${id}`);
+      const job = await watch(id);
+      await persist('results', () => fetchResults(id, p.results || path.join(os.tmpdir(), 'pcb-job', id)));
+      process.exit(exitCodeOf(job));
+      return;
+    }
+    case 'watch': {
+      process.exit(exitCodeOf(await watch(rest[0] ?? die(USAGE))));
+      return;
+    }
+    case 'status':
+      print(await apiJson(rest[0] ? `/jobs/${rest[0]}` : '/status'));
+      return;
+    case 'list':
+      for (const j of await apiJson<JobRecord[]>('/jobs')) {
+        console.log(`${j.id}  ${j.state.padEnd(9)}  attempts ${j.attempts.length}  cpus ${j.spec.cpus}  ${j.spec.name}`);
+      }
+      return;
+    case 'cancel':
+      print(await apiJson(`/jobs/${rest[0] ?? die(USAGE)}/cancel`, { method: 'POST' }));
+      return;
+    case 'results': {
+      const id = rest[0] ?? die(USAGE);
+      await fetchResults(id, rest[1] ?? path.join(os.tmpdir(), 'pcb-job', id));
+      return;
+    }
+    default:
+      die(USAGE);
+  }
+}
+
+if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((e: unknown) => die(String(e), 1));
+}
