@@ -34,6 +34,7 @@ from . import events
 from .model.runs import Candidate, Findings, RunSummary
 
 MAX_EVENTS = 2000
+LINE_LIMIT = 1 << 26                  # bytes of one event line; the asyncio default of 64 KiB is less than a large run.end
 OPS = ('check', 'build', 'route')
 POLICY_SCHEMA = 'iot-lab.routing-policy.v1'
 POLICY_FIELDS = {'schema', 'layers', 'only_nets', 'passes', 'threads', 'timeout_s', 'optimizer', 'max_repairs'}
@@ -228,7 +229,7 @@ class Runs:
         try:
             run.proc = await asyncio.create_subprocess_exec(
                 *run.argv, cwd=str(root), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-                start_new_session=True, env={**os.environ})
+                start_new_session=True, env={**os.environ}, limit=LINE_LIMIT)
             if run.cancel_requested:                    # cancelled while the process was starting
                 _killpg(run.proc.pid)
             await asyncio.gather(self._read_events(run), self._read_stderr(run))

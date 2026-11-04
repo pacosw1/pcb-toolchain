@@ -122,3 +122,25 @@ def test_killpg_of_an_exited_process_group_does_not_raise():
     p = subprocess.Popen(['true'], start_new_session=True)
     p.wait()
     runs_mod._killpg(p.pid)                      # ProcessLookupError is swallowed
+
+
+LONG_LINE = r'''#!/bin/sh
+printf '{"run_id": "run-long", "type": "run.end", "status": "passed", "exit_code": 0, "cause": "'
+head -c 200000 /dev/zero | tr '\0' a
+printf '"}\n'
+'''
+
+
+def test_an_event_longer_than_the_stream_buffer_is_read(project):
+    (project / 'tools/pcb').write_text(LONG_LINE)
+
+    async def go():
+        r = Runs()
+        run = r.start(project, 'check', 'DEMO')
+        for _ in range(200):
+            if run.state != 'running':
+                break
+            await asyncio.sleep(0.02)
+        assert run.state == 'passed', run.stderr
+        assert len(run.end['cause']) == 200000
+    asyncio.run(go())
