@@ -4,7 +4,10 @@ import { fileURLToPath } from 'node:url';
 import { osError } from './py-compat.mjs';
 
 /** str(exception): a Node file error reads as Python's OSError did. */
-export const errorText = (error: unknown): string => osError(error).message ?? String(error);
+export const errorText = (error: unknown): string => {
+  const translated = osError(error);
+  return translated instanceof Error ? translated.message : String(translated);
+};
 
 export class UsageError extends Error {
   readonly code: number;

@@ -1,5 +1,4 @@
 // Types of the parts of py-compat.mjs that TypeScript tools use. Add a line when a tool needs another export.
-export class PyError extends Error { constructor(type: string, message: string); type: string; }
 export class Float { constructor(value: number); value: number; }
 /** A Python exception: `type` is its class name, the message is str(exception). */
 export class PyError extends Error { constructor(type: string, message: string); type: string; }
@@ -30,10 +29,6 @@ export function jsonDumps(value: unknown, indent?: number | null): string;
 export function jsonCanonical(value: unknown, options?: { separators?: [string, string]; ascii?: boolean; sort?: boolean }): string;
 /** json.load: dicts are Maps, ints BigInts, floats Float, so a hash of the value matches Python's. */
 export function jsonLoad(path: string): unknown;
-/** open(path).read(), with Python's error text. */
-export function readText(path: string): string;
-/** The Python exception for a Node file error; other errors unchanged. */
-export function osError(error: unknown, name?: string): Error;
 export function pyStr(value: unknown): string;
 export function compare(a: string, b: string): number;
 export function splitlines(text: string): string[];
