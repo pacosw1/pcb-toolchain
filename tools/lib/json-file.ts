@@ -2,7 +2,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { Float, jsonDumps, jsonLoad, osError } from './py-compat.mjs';
+import { Float, jsonDumps, jsonLoad, jsonLoads, osError } from './py-compat.mjs';
 
 const CHUNK_BYTES = 1024 * 1024;
 
@@ -17,6 +17,17 @@ const plain = (value: unknown): unknown => {
 
 /** json.loads of a file as plain values, with Python's error text; NaN and Infinity read as numbers. */
 export const readPyJson = <T = unknown>(path: string): T => plain(jsonLoad(path)) as T;
+
+const typed = (value: unknown): unknown => {
+  if (value instanceof Map) return Object.fromEntries([...value].map(([key, item]) => [key, typed(item)]));
+  if (Array.isArray(value)) return value.map(typed);
+  return typeof value === 'bigint' && Number.isSafeInteger(Number(value)) ? Number(value) : value;
+};
+
+/** json.loads with Python's number types kept: a dict is an object, an int a number, a float a Float. JSON.parse and
+ *  readPyJson turn 1.0 into 1, and a value hashed or written again then differs from Python's. */
+export const parseTyped = <T = unknown>(text: string): T => typed(jsonLoads(text)) as T;
+export const readTyped = <T = unknown>(path: string): T => typed(jsonLoad(path)) as T;
 
 /** A file that must hold a JSON object; `message` is the error when it does not. */
 export function readObject<T extends object = Record<string, unknown>>(path: string, message = `expected a JSON object: ${path}`): T {
