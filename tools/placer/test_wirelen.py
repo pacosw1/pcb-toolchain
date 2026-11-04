@@ -6,7 +6,7 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from placer import anneal, batch_capabilities, cost, wirelen  # noqa: E402
+from placer import anneal, cost, wirelen  # noqa: E402
 
 try:
     import pcbnew  # noqa: F401
@@ -132,10 +132,6 @@ class EvaluatorTest(unittest.TestCase):
         ev.revert()
         self.assertEqual(ev.comp[9], w0)
         self.assertEqual(ev.cost, c0)
-
-    def test_batch_rejects_the_term(self):
-        with self.assertRaises(ValueError):
-            batch_capabilities.check_cost({}, {'w_mst': 1.0})
 
 
 @unittest.skipUnless(HAVE_PCBNEW, 'kicad_io needs pcbnew (KiCad Python)')

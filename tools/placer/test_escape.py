@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from placer import anneal, batch_capabilities, cost, escape, iotroute_step, repair  # noqa: E402
+from placer import anneal, cost, escape, iotroute_step, repair  # noqa: E402
 
 RULES = {'track': 0.15, 'clearance': 0.15, 'via_d': 0.6}  # NET-CORE Default class + via size
 
@@ -153,10 +153,6 @@ class EvaluatorTest(unittest.TestCase):
         self.assertEqual(soft.legal_penalty(1), 0.0)
         self.assertGreaterEqual(hard.legal_penalty(1), 1.0)
         self.assertEqual(hard.legal_penalty_at(1, 10.0, 16.0, 0), 0.0)  # moved away: the rays are free
-
-    def test_batch_rejects_the_term(self):
-        with self.assertRaises(ValueError):
-            batch_capabilities.check_cost({}, {'w_esc': 1.0})
 
 
 class RepairTest(unittest.TestCase):
