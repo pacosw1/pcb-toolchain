@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -21,6 +21,15 @@ test('a held lock is seen as held, and free again after release', needsBinary, a
   await lock.release();
   await lock.release();
   assert.equal(lockHeld(path), false);
+});
+
+test('code after an awaited release runs even when nothing else keeps the process alive', needsBinary, () => {
+  const program = `import { holdLock } from ${JSON.stringify(new URL('./file-lock.ts', import.meta.url).href)};
+    const lock = await holdLock(${JSON.stringify(join(root, 'last'))});
+    await lock.release();
+    console.log('after release');`;
+  const run = spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', '--input-type=module', '-e', program], { encoding: 'utf8', timeout: 30000 });
+  assert.equal(run.stdout, 'after release\n', run.stderr);
 });
 
 test('a second holder fails at once without a wait', needsBinary, async () => {
