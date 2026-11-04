@@ -113,6 +113,33 @@ test('cancel returns the cleanup of a stage that failed', needsBinary, async () 
   assert.equal(cleanup.family_cleanup, 'registered owned-stage groups', 'the cleanup of the failed stage, not of an early stop');
 });
 
+test('interrupt is one graceful TERM: the stage ends by itself, with no cancel and no KILL', needsBinary, async () => {
+  const [pidfile, terms, release] = ['interrupt-leader', 'interrupt-terms', 'interrupt-release'].map(name => join(root, name));
+  const script = `trap 'echo term >> ${terms}' TERM; echo $$ > ${pidfile}; while [ ! -e ${release} ]; do sleep 0.02; done; exit 7`;
+  const stage = startOwned(sh(script), { stdin: 'ignore' });
+  await fileText(pidfile);
+  assert.equal(await stage.interrupt(), true);
+  assert.equal(await fileText(terms), 'term');
+  assert.equal(await stage.interrupt(), true, 'a repeat is safe');
+  await sleep(200);
+  assert.equal(readFileSync(terms, 'utf8'), 'term\n', 'the repeat sent no second TERM');
+  assert.equal(stage.done, false, 'an interrupt does not end a stage that keeps working');
+  closeSync(openSync(release, 'w'));
+  const result = await stage.settled;
+  assert.equal(result.returncode, 7);
+  assert.equal(result.cleanup.complete, true, JSON.stringify(result.cleanup));
+  assert.equal(await stage.interrupt(), false, 'nothing to stop after settling');
+  assert.equal(readFileSync(terms, 'utf8'), 'term\n');
+});
+
+test('interrupt right after start never reports a lost broker', needsBinary, async () => {
+  const stage = startOwned(sh('sleep 0.1'), { stdin: 'ignore' });
+  await stage.interrupt();
+  const result = await stage.settled;
+  assert.ok([0, -15, 125].includes(result.returncode), String(result.returncode));
+  assert.equal(result.cleanup.complete, true, JSON.stringify(result.cleanup));
+});
+
 test('a broker killed outright reports unconfirmed cleanup, never a clean one', needsBinary, async () => {
   const pidfile = join(root, 'orphan');
   const socketfile = join(root, 'orphan-socket');
@@ -146,4 +173,23 @@ test('a stage started inside a stage goes through the root broker', needsBinary,
   const output = collected(stage.stdout);
   assert.equal((await stage.settled).returncode, 0);
   assert.equal(await output, '2\n4 true\n');
+});
+
+test('interrupt of a nested stage goes through the broker wire op', needsBinary, async () => {
+  const child = fileURLToPath(new URL('./owned-stage.ts', import.meta.url));
+  const [pidfile, terms] = ['nested-leader', 'nested-terms'].map(name => join(root, name));
+  const inner = `trap 'echo term >> ${terms}; exit 6' TERM; echo $$ > ${pidfile}; while :; do sleep 0.02; done`;
+  const script = `import { existsSync } from 'node:fs';
+    import { startOwned } from ${JSON.stringify(child)};
+    const stage = startOwned(['/bin/sh', '-c', ${JSON.stringify(inner)}], { env: { PATH: '/bin:/usr/bin' }, stdin: 'ignore' });
+    while (!existsSync(${JSON.stringify(pidfile)})) await new Promise(resolve => setTimeout(resolve, 10));
+    await new Promise(resolve => setTimeout(resolve, 50));
+    const asked = await stage.interrupt();
+    const result = await stage.settled;
+    console.log(asked, result.returncode, result.cleanup.complete);`;
+  const stage = startOwned([process.execPath, '--experimental-strip-types', '--no-warnings', '--input-type=module', '-e', script], { stdin: 'ignore', stdout: 'pipe', stderr: 'inherit' });
+  const output = collected(stage.stdout);
+  assert.equal((await stage.settled).returncode, 0);
+  assert.equal(await output, 'true 6 true\n');
+  assert.equal(readFileSync(terms, 'utf8'), 'term\n');
 });
