@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""BOM-VERIFIED.csv for a board from its native schematic + registry evidence (read only on JLC: tools/jlc_stock.py).
+"""BOM-VERIFIED.csv for a board from its native schematic + registry evidence (read only on JLC: tools/jlc_stock.mjs).
 
   python3 tools/build-bom-verified.py BOARD [--boards N]
 
 1. kicad-cli netlist of the board schematic (gate.json / gate.pending.json names the project); one line per C-number
    (footprint iot-lab:<C>), DNP parts on their own line.
-2. BOARD/BOM-JLC.csv (Designator, Value, LCSC Part #) -> tools/jlc_stock.py -> registry/evidence/<today>/<BOARD>-stock.json
+2. BOARD/BOM-JLC.csv (Designator, Value, LCSC Part #) -> tools/jlc_stock.mjs -> registry/evidence/<today>/<BOARD>-stock.json
    (class Basic / Extended, stock, sha256 of the response).
 3. BOARD/BOM-VERIFIED.csv in the ESP32-CORE column set: manufacturer / MPN / package from the newest JLC snapshot
    (registry/evidence/*/*/<C>/<C>.json), datasheet = registry/datasheets/*<C>.pdf.
@@ -60,7 +60,7 @@ def main():
     day = datetime.date.today().isoformat()
     stock_out = os.path.join(ROOT, 'hardware-design/registry/evidence', day, f'{a.board}-stock.json')
     os.makedirs(os.path.dirname(stock_out), exist_ok=True)
-    r = subprocess.run([sys.executable, os.path.join(ROOT, 'tools/jlc_stock.py'), jlc, stock_out, '--boards', str(a.boards)],
+    r = subprocess.run(['node', os.path.join(ROOT, 'tools/jlc_stock.mjs'), jlc, stock_out, '--boards', str(a.boards)],
                        capture_output=True, text=True)
     stock = json.load(open(stock_out)) if os.path.exists(stock_out) else {}
     parts = stock.get('parts', stock) if isinstance(stock, dict) else {}

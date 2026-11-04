@@ -95,7 +95,7 @@ tools/import_ses.py
 tools/inspect-pdfs.py
 tools/jlc-snapshot.mjs
 tools/jlc_api_evidence.py
-tools/jlc_stock.py
+tools/jlc_stock.mjs
 tools/kicad_happy_gate.py
 tools/krt_planes_advisory.py
 tools/lean_fill_profile.py
@@ -138,6 +138,7 @@ tools/lib/gate-pool.mjs
 tools/lib/gate-pool.test.mjs
 tools/lib/gate-runtime.mjs
 tools/lib/gate-runtime.test.mjs
+tools/lib/jlc-tools.test.mjs
 tools/lib/kicad-population.mjs
 tools/lib/pixel-art-checks.mjs
 tools/lib/power-symbols.test.mjs
