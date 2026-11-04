@@ -739,12 +739,12 @@ def stock_board(root, board, candidate, boards, receipts, runner=None):
         if not required:
             raise ValueError('candidate has no fitted assembly population')
         day = dt.datetime.now(dt.timezone.utc).date().isoformat()
-        helper = Path(__file__).resolve().parent / 'release-stock.py'
+        helper = Path(__file__).resolve().parent / 'release-stock.mjs'
         report.update(candidate=str(candidate), candidate_sha256=manifest_hash, order_day_utc=day, boards=boards,
                       required_quantities=required, receipts=str(receipts),
                       inputs={**native['native_inputs'], **variant_inputs, str(manifest_path): manifest_hash, str(evidence_path): sha(evidence_path)},
-                      tool_inputs={str(helper): sha(helper)})
-        command = [sys.executable, str(helper), str(candidate), str(receipts), '--boards', str(boards)]
+                      tool_inputs={str(path): sha(path) for path in (helper, helper.parent / 'lib/py-compat.mjs')})
+        command = ['node', str(helper), str(candidate), str(receipts), '--boards', str(boards)]
         run = runner or subprocess.run
         result = run(command, stdout=sys.stderr, stderr=sys.stderr, timeout=30 * (len(required) + 1))
         if result.returncode:

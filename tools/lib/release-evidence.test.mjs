@@ -127,6 +127,11 @@ test('complete assembly availability cannot omit required harness, contact or ba
  assert.throws(()=>inspectCompleteAssembly(f.root,entry,f.candidate,manifest,stock,args),/availability/);
  receipt.items=[];f.put('stock/assembly.json',receipt);assert.throws(()=>inspectCompleteAssembly(f.root,entry,f.candidate,manifest,stock,args),/every required/);
 });
+test('an empty candidate, a publication claim in progress or left by a crash, is blocked',async t=>{
+ const f=fixture(t);f.finish();f.put('hardware-design/registry/boards.json',{schema_version:1,boards:[]});const claim=join(f.root,'claim');mkdirSync(claim);
+ const result=await releaseReadiness(f.root,f.board,claim,{asOf:'2026-10-15'});
+ assert.equal(result.status,'blocked');assert.equal(result.checks.cad_fabrication.status,'blocked');assert.match(result.checks.cad_fabrication.cause,/release-manifest\.json/);
+});
 test('CAD/fab success never converts missing verified BOM/stock/review into order readiness',async t=>{
  const f=fixture(t);f.finish();f.put('hardware-design/registry/boards.json',{schema_version:1,boards:[{id:f.board,directory:f.board,kind:'board',lifecycle:'active',packet:'full',revisions:[{revision:'A',spec:'SPEC.md',state:'candidate',gate:f.board,project:'cad/BASE-PWR/BASE-PWR'}]}]});
  f.put(f.prefix+'/SPEC.md','spec');f.put(f.prefix+'/BOM-VERIFIED.csv','Designator,Function block,MPN/value,LCSC\n');
@@ -140,10 +145,10 @@ test('release artifact hashes reject escaping symbolic links',t=>{
 });
 test('atomic publication refuses an existing empty destination without nesting or replacement',t=>{
  const f=fixture(t),destination=join(f.root,'destination');mkdirSync(destination);
- const command=new URL('../publish-release.py',import.meta.url).pathname;
- const failed=spawnSync('python3',[command,f.candidate,destination],{encoding:'utf8'});assert.notEqual(failed.status,0);
+ const command=new URL('../publish-release.mjs',import.meta.url).pathname;
+ const failed=spawnSync(process.execPath,[command,f.candidate,destination],{encoding:'utf8'});assert.notEqual(failed.status,0);
  assert.ok(readFileSync(join(f.candidate,'gate/result.json')));rmSync(destination,{recursive:true});
- const passed=spawnSync('python3',[command,f.candidate,destination],{encoding:'utf8'});assert.equal(passed.status,0,passed.stderr);assert.ok(readFileSync(join(destination,'gate/result.json')));
+ const passed=spawnSync(process.execPath,[command,f.candidate,destination],{encoding:'utf8'});assert.equal(passed.status,0,passed.stderr);assert.ok(readFileSync(join(destination,'gate/result.json')));
 });
 test('BASE exporter honors staged output and the chosen KiCad executable without replacing canonical files',t=>{
  const f=fixture(t),tools=join(f.root,'tools');mkdirSync(tools,{recursive:true});

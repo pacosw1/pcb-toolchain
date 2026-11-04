@@ -39,7 +39,7 @@ tools/board_uuids.py
 tools/brand_mark.py
 tools/build-bom-verified.mjs
 tools/build-cad-catalog.mjs
-tools/build-release-image.py
+tools/build-release-image.mjs
 tools/check-consistency.mjs
 tools/check-fab-zip.mjs
 tools/check-packets.mjs
@@ -114,6 +114,7 @@ tools/lib/bom-coverage.test.mjs
 tools/lib/bom-ownership.mjs
 tools/lib/bom-ownership.test.mjs
 tools/lib/build-bom-verified.test.mjs
+tools/lib/build-release-image.test.mjs
 tools/lib/check-cache.mjs
 tools/lib/check-cache.test.mjs
 tools/lib/check-fab-zip.test.mjs
@@ -147,11 +148,13 @@ tools/lib/pixel-art-checks.mjs
 tools/lib/power-symbols.test.mjs
 tools/lib/project-root.mjs
 tools/lib/project-root.test.mjs
+tools/lib/publish-release.test.mjs
 tools/lib/py-compat.mjs
 tools/lib/py-compat.test.mjs
 tools/lib/release-evidence.mjs
 tools/lib/release-evidence.test.mjs
 tools/lib/release-readiness.mjs
+tools/lib/release-stock.test.mjs
 tools/lib/si-checks.mjs
 tools/lib/si-checks.test.mjs
 tools/lib/staged-gates.mjs
@@ -334,12 +337,12 @@ tools/progress.sh
 tools/progress.tcss
 tools/progress_tui.py
 tools/project_root.py
-tools/publish-release.py
+tools/publish-release.mjs
 tools/real_board_regression.py
 tools/refresh_courtyards.py
 tools/release-native.Dockerfile
 tools/release-recipe.mjs
-tools/release-stock.py
+tools/release-stock.mjs
 tools/remote-route-fr241.Dockerfile
 tools/remote-route.Dockerfile
 tools/remote.sh

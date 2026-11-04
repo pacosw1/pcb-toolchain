@@ -891,9 +891,16 @@ class KnownGoodGateTest(unittest.TestCase):
         self.assertAlmostEqual(penalty(8.1), 0.0)
 
     def test_the_bench_b_v2_placement_that_broke_the_mains_rule_is_illegal(self):
-        pose = [tuple(q) for q in json.load(open(os.path.join(HERE, 'testdata', 'relay4-bench-b-v2-P.json')))['pose']]
+        # The poses are by name: the board of this placement had 53 units, and TP1-TP7 came later (iot-lab 9c801232). Those
+        # and the fixed units stay where the board has them. 16 of the listed units are illegal only by the mains area.
+        with open(os.path.join(HERE, 'testdata', 'relay4-bench-b-v2-P.json')) as f:
+            bench = json.load(f)
+        units = self.pr['units']
+        self.assertLessEqual(set(bench['pose']), {u['name'] for u in units})
+        pose = [p if u['fixed'] else tuple(bench['pose'].get(u['name'], p)) for u, p in zip(units, cost.initial_pose(self.pr))]
         ev = cost.Evaluator(self.pr, {}, pose)
-        self.assertGreater(sum(1 for i in range(ev.n) if not ev.fixed[i] and ev.legal_penalty(i) > 0), 10)
+        illegal = {units[i]['name'] for i in range(ev.n) if not ev.fixed[i] and ev.legal_penalty(i) > 0}
+        self.assertLessEqual(set(bench['illegal_units']), illegal)
 
 
 if __name__ == '__main__':

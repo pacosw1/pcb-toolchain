@@ -84,7 +84,7 @@ export function truthy(value) {
   return Boolean(value);
 }
 
-const typeName = v => v === null || v === undefined ? 'NoneType' : Array.isArray(v) ? 'list' : v instanceof Map ? 'dict' : v instanceof Float ? 'float'
+export const typeName = v => v === null || v === undefined ? 'NoneType' : Array.isArray(v) ? 'list' : v instanceof Map ? 'dict' : v instanceof Float ? 'float'
   : typeof v === 'string' ? 'str' : typeof v === 'boolean' ? 'bool' : 'int';
 // d.get(key, default)
 export function get(dict, key, otherwise = null) {
@@ -93,6 +93,7 @@ export function get(dict, key, otherwise = null) {
 }
 // d[key]
 export function item(dict, key) {
+  if (Array.isArray(dict) && typeof key === 'number') { if (key < dict.length) return dict[key]; throw new PyError('IndexError', 'list index out of range'); }
   if (dict instanceof Map) { if (dict.has(key)) return dict.get(key); throw new PyError('KeyError', pyRepr(key)); }
   if (Array.isArray(dict)) throw new PyError('TypeError', 'list indices must be integers or slices, not str');
   if (typeof dict === 'string') throw new PyError('TypeError', "string indices must be integers, not 'str'");
@@ -202,9 +203,10 @@ export function globNames(folder) {
 export function lexists(path) { try { lstatSync(path); return true; } catch { return false; } }
 
 // subprocess.run with captured output. check=True raises what CalledProcessError raised.
-export function run(command, args, {check = false, stdio = 'pipe'} = {}) {
+export function run(command, args, {check = false, stdio = 'pipe', timeout} = {}) {
   if (command === '') throw new PyError('PermissionError', "[Errno 13] Permission denied: ''");
-  const result = spawnSync(command, args, {maxBuffer: Infinity, stdio});
+  const result = spawnSync(command, args, {maxBuffer: Infinity, stdio, timeout: timeout && timeout * 1000, killSignal: 'SIGKILL'});
+  if (result.error?.code === 'ETIMEDOUT') throw new PyError('subprocess.TimeoutExpired', `Command '${pyRepr([command, ...args])}' timed out after ${timeout} seconds`);
   if (result.error) throw osError(result.error, command);
   if (check && result.status !== 0) {
     throw new PyError('subprocess.CalledProcessError', `Command '${pyRepr([command, ...args])}' returned non-zero exit status ${result.status}.`);
@@ -366,13 +368,13 @@ export function jsonDumps(value, indent = null, depth = 0) {
 }
 
 // argparse for the shape these tools use: positionals, then options that take one value.
-//   spec = {prog, positionals: ['bom'], options: [{flag: '--boards', type: 'int', fallback: 5n}]}
+//   spec = {prog, positionals: ['bom'], options: [{flag: '--boards', type: 'int', fallback: 5n}, {flag: '--x', required: true}]}
 // Same parse order, abbreviations and messages. The usage text is built on one line: the tools keep it under 78
 // columns, where argparse does not wrap it. With a narrower COLUMNS argparse wraps it and this does not.
 export function parseArgs(spec, argv) {
   const dest = flag => flag.replace(/^--/, '').replaceAll('-', '_');
   const metavar = o => dest(o.flag).toUpperCase();
-  const usage = `usage: ${spec.prog} [-h]${spec.options.map(o => ` [${o.flag} ${metavar(o)}]`).join('')}${spec.positionals.map(p => ' ' + p).join('')}\n`;
+  const usage = `usage: ${spec.prog} [-h]${spec.options.map(o => o.required ? ` ${o.flag} ${metavar(o)}` : ` [${o.flag} ${metavar(o)}]`).join('')}${spec.positionals.map(p => ' ' + p).join('')}\n`;
   const fail = message => {
     write(2, `${usage}${spec.prog}: error: ${message}\n`);
     throw new SystemExit(2);
@@ -428,7 +430,7 @@ export function parseArgs(spec, argv) {
     }
     result[dest(option.flag)] = value;
   }
-  const missing = spec.positionals.slice(positional.length);
+  const missing = [...spec.positionals.slice(positional.length), ...spec.options.filter(o => o.required && result[dest(o.flag)] === null).map(o => o.flag)];
   if (missing.length) fail(`the following arguments are required: ${missing.join(', ')}`);
   spec.positionals.forEach((name, i) => { result[name] = positional[i]; });
   if (extras.length) fail(`unrecognized arguments: ${extras.join(' ')}`);

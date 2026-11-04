@@ -613,6 +613,7 @@ class StockObservationTests(unittest.TestCase):
 
     def runner(self, command, **kwargs):
         self.called += 1
+        self.assertEqual(command[:2], ['node', str(Path(evidence.__file__).resolve().parent / 'release-stock.mjs')])
         self.assertEqual(command[-2:], ['--boards', '3'])
         self.receipts.mkdir()
         day = evidence.dt.datetime.now(evidence.dt.timezone.utc).date().isoformat()
@@ -637,6 +638,7 @@ class StockObservationTests(unittest.TestCase):
     def test_exact_observation_retains_original_responses_and_is_not_engineering_approval(self):
         result = self.observe()
         self.assertEqual(result['status'], 'observed', result['blockers'])
+        self.assertIn(str(Path(evidence.__file__).resolve().parent / 'lib/py-compat.mjs'), result['tool_inputs'])
         self.assertTrue(result['stock_current']); self.assertFalse(result['qualified']); self.assertFalse(result['release_approved'])
         self.assertEqual(result['observations']['C900001']['required'], 6)
         self.assertEqual(result['inputs'][str((self.receipts/'C900001.json').resolve())],evidence.sha(self.receipts/'C900001.json'))

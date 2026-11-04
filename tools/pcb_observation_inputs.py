@@ -23,7 +23,9 @@ COMMON = ('pcb_cli.py', 'pcb_operations.py', 'pcb_evidence.py', 'pcb_workflow.py
 AUDITED = {
     # 2026-11-04 review: --root default comes from project_root (stdlib os/pathlib only; in COMMON
     # and the import closure). Same result as before when IOT_LAB is set. Parts branch otherwise unchanged.
-    "part_evidence.py": "e5ffc8084fc7eb059f72913ef6c6750c4e3998a9669502dced51294b3cba3f2e",
+    # 2026-11-04 review: stock_board launches tools/release-stock.mjs with node and binds lib/py-compat.mjs in tool_inputs.
+    # stock is not in PARTS_ACTIONS, so the audited actions do not reach this change. Parts branch otherwise unchanged.
+    "part_evidence.py": "1eb4560fb473c5e7313386ca97038b24f2dc71c563cf1e9956751cb1e96a9b08",
     "part_native.py": "9a21ded435da26ccedcb6da845bd9c7cc87b959d5d0a848d325e177b4a400287",
     # 2026-11-04 review: new dependency of part_evidence.py and pcb_cli.py. os and pathlib only, no subprocess or file
     # reads; IOT_LAB, the cwd and --root all resolve to the root that collect() records in the policy context.

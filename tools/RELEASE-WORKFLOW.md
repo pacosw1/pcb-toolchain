@@ -17,8 +17,11 @@ node tools/check-release-readiness.mjs BASE-PWR /absolute/new/candidate \
 
 `FAB_WORK_DIR` is optional; the default is a unique directory next to the
 canonical fabrication destination. Failed evidence remains there. A successful
-run uses an exclusive atomic rename to `FAB_RELEASE_OUT`; existing files,
-directories and symlinks are never replaced or nested into. Read live native
+run claims `FAB_RELEASE_OUT` with an exclusive mkdir, then atomically renames the
+stage over that empty directory; existing files, directories and symlinks are
+never replaced or nested into. An empty `FAB_RELEASE_OUT` is never a candidate:
+it is a publication in progress, or a crash between the two steps that left the
+stage intact and refuses further publishing until `rmdir` removes it. Read live native
 events at `FAB_WORK_DIR/gate/events.jsonl`, switching to
 `FAB_RELEASE_OUT/gate/events.jsonl` after publication. `START`/`PASS`/`FAIL`
 messages identify phases. The owning CLI supplies deadlines and cancellation.
@@ -57,7 +60,7 @@ new `FAB_OUT`/`RENDER_OUT` locations for exploratory output.
 The existing executor can build a separate Gerber-capable runtime with:
 
 ```sh
-python3 tools/build-release-image.py /absolute/new/image-run
+node tools/build-release-image.mjs /absolute/new/image-run
 ```
 
 This derives from the immutable native CI image ID recorded in the helper. It
@@ -69,7 +72,8 @@ the pinned pip 25.0.1 wheel is used only for installation. Docker installs
 offline into a dedicated target and exposes `GERBERCHECK_PY`, preserving native
 pcbnew's interpreter. The helper records source hashes, image ID and original
 wheel hashes. A matching image is reused; an existing tag with different inputs
-is refused. `--wheel-cache DIR` reuses only matching original wheel hashes.
+is refused. The recipe hashes the helper, so a changed helper needs a new default
+tag. `--wheel-cache DIR` reuses only matching original wheel hashes.
 
 `release-manifest.json` binds the checked gate, native population, release-tool
 source closure, board-specific reports and hashes of the candidate artifacts.
@@ -92,7 +96,7 @@ quantity; there is no invented availability margin. Each population is checked
 independently, so a mixed-population order needs its own total quantity plan.
 
 ```sh
-python3 tools/release-stock.py /absolute/new/candidate /absolute/new/stock --boards 5
+node tools/release-stock.mjs /absolute/new/candidate /absolute/new/stock --boards 5
 ```
 
 This opt-in read-only collector saves unmodified JLC assembly-search responses,
