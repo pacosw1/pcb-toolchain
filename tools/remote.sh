@@ -16,7 +16,7 @@
 # Env: REMOTE_HOST (user@host, required; the project sets it in .pcb-toolchain.env), REMOTE_CPUS (24), REMOTE_MEM (32g), REMOTE_TIMEOUT (s, 300; exit 124 = timed out: fix placement, do not wait longer),
 #      REMOTE_QUEUE_WAIT (s, 3600; the daemon path only. Longest wait for a place; REMOTE_TIMEOUT starts when the job runs),
 #      REMOTE_KEEP=1 keeps the remote job folder after success (a failed job folder is always kept).
-# Image: tools/remote-route.Dockerfile, built on the box in /srv/iot-lab-route/image.
+# Image: tools/remote-route.Dockerfile, built on the box in /srv/iot-lab-route/image. iot-lab-route:10.0-nightly-4fe1ca2060 (tools/remote-route-nightly.Dockerfile) adds the pinned nightly for iotroute board-json.
 set -euo pipefail
 
 HOST=${REMOTE_HOST:-}

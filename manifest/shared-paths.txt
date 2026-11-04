@@ -405,6 +405,7 @@ tools/release-native.Dockerfile
 tools/release-recipe.mjs
 tools/release-stock.mjs
 tools/remote-route-fr241.Dockerfile
+tools/remote-route-nightly.Dockerfile
 tools/remote-route.Dockerfile
 tools/remote.sh
 tools/render_with_plugs.py
