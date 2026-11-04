@@ -66,6 +66,20 @@
           }
         },
         {
+          "name": "tools-iotroute",
+          "image": "rust:1.93.1",
+          "steps": [
+            {
+              "run": "sh .cip/run-iotroute-tests.sh"
+            }
+          ],
+          "limits": {
+            "timeoutSec": 600,
+            "cpus": 4,
+            "memoryMb": 4096
+          }
+        },
+        {
           "name": "pcbsearch",
           "image": "rust:1.93.1",
           "steps": [

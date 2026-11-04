@@ -4,9 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import { holdLock } from './file-lock.ts';
+import { iotrouteMissing } from './iotroute-bin.ts';
 import { inherited, jobMemory, limits, liveClaims, nativeEnv, NATIVE_KEYS, reserve, routerEnv, StageCancelled, summarize } from './lean-resources.ts';
 import { DEADLINE_PROTOCOL } from './lean-workflow.ts';
 import { jsonDumps, PyError } from './py-compat.mjs';
+const needsBinary = { skip: iotrouteMissing() };   // runs for real in CI job tools-iotroute
 
 let root: string;
 const saved = { ...process.env };
@@ -41,7 +43,7 @@ test('native env pins each numeric library to one thread', () => {
   assert.ok(NATIVE_KEYS.every(key => env[key] === '1'));
 });
 
-test('a free ticket is a dead owner and is removed; a held one is a live claim', async () => {
+test('a free ticket is a dead owner and is removed; a held one is a live claim', needsBinary, async () => {
   writeFileSync(join(root, 'dead.ticket'), claim('dead', 'admitted'));
   const path = join(root, 'live.ticket');
   const lock = await holdLock(path);
@@ -52,7 +54,7 @@ test('a free ticket is a dead owner and is removed; a held one is a live claim',
   await lock.release();
 });
 
-test('a reservation runs the body, writes a Python-readable ticket and releases it', async () => {
+test('a reservation runs the body, writes a Python-readable ticket and releases it', needsBinary, async () => {
   const events = join(root, 'log/events.jsonl');
   const seen = await reserve(2, { memoryGib: 3, events, label: 'test' }, async ({ env }) => {
     const ticket = JSON.parse(readFileSync(env.IOT_RESOURCE_TICKET!, 'utf8'));
@@ -78,7 +80,7 @@ test('a request over capacity is refused before any ticket', async () => {
   assert.deepEqual(tickets(), []);
 });
 
-test('capacity held by another job times out, and the ticket goes away', async () => {
+test('capacity held by another job times out, and the ticket goes away', needsBinary, async () => {
   const path = join(root, 'other.ticket');
   const lock = await holdLock(path);
   writeFileSync(path, claim('other', 'admitted', { cpu: 4 }));
@@ -87,7 +89,7 @@ test('capacity held by another job times out, and the ticket goes away', async (
   await lock.release();
 });
 
-test('jobs with other capacities or clock protocols are refused', async () => {
+test('jobs with other capacities or clock protocols are refused', needsBinary, async () => {
   const path = join(root, 'other.ticket');
   const lock = await holdLock(path);
   writeFileSync(path, claim('other', 'admitted', { cpu_capacity: 2 }));
@@ -97,7 +99,7 @@ test('jobs with other capacities or clock protocols are refused', async () => {
   await lock.release();
 });
 
-test('a failed body still releases its ticket and records why', async () => {
+test('a failed body still releases its ticket and records why', needsBinary, async () => {
   const events = join(root, 'e.jsonl');
   await assert.rejects(reserve(1, { events }, async () => { throw new PyError('ValueError', 'boom'); }), /boom/);
   assert.deepEqual(tickets(), []);
@@ -105,7 +107,7 @@ test('a failed body still releases its ticket and records why', async () => {
   assert.deepEqual(rows.slice(-2).map(row => [row.action, row.reason ?? null]), [['failed', 'ValueError'], ['released', null]]);
 });
 
-test('a signal cancels the body, aborts its signal and releases the ticket', async () => {
+test('a signal cancels the body, aborts its signal and releases the ticket', needsBinary, async () => {
   const events = join(root, 'e.jsonl');
   let aborted = false;
   const run = reserve(1, { events }, ({ signal }) => new Promise(() => {
@@ -120,7 +122,7 @@ test('a signal cancels the body, aborts its signal and releases the ticket', asy
   assert.equal(process.listenerCount('SIGTERM'), 0);
 });
 
-test('a cancel during admission stops the queue loop, so the ticket stays gone', async () => {
+test('a cancel during admission stops the queue loop, so the ticket stays gone', needsBinary, async () => {
   const path = join(root, 'other.ticket');
   const lock = await holdLock(path);
   writeFileSync(path, claim('other', 'admitted', { cpu: 4 }));
@@ -134,7 +136,7 @@ test('a cancel during admission stops the queue loop, so the ticket stays gone',
   assert.deepEqual(tickets(), ['other.ticket']);
 });
 
-test('two jobs for all the capacity run one after the other', async () => {
+test('two jobs for all the capacity run one after the other', needsBinary, async () => {
   let running = 0;
   let peak = 0;
   const job = () => reserve(4, { waitS: 10 }, async () => {
@@ -148,7 +150,7 @@ test('two jobs for all the capacity run one after the other', async () => {
   assert.deepEqual(tickets(), []);
 });
 
-test('an inherited reservation needs a live, large enough, admitted ticket', async () => {
+test('an inherited reservation needs a live, large enough, admitted ticket', needsBinary, async () => {
   const path = join(root, 'parent.ticket');
   const lock = await holdLock(path);
   writeFileSync(path, claim('parent', 'admitted', { cpu: 2, memory_gib: 4 }));
@@ -164,7 +166,7 @@ test('an inherited reservation needs a live, large enough, admitted ticket', asy
   assert.throws(() => inherited(1, 1, { IOT_RESOURCE_TICKET: join(root, 'gone') }), pyType('FileNotFoundError'));
 });
 
-test('a child inside an inherited reservation takes no new ticket', async () => {
+test('a child inside an inherited reservation takes no new ticket', needsBinary, async () => {
   const path = join(root, 'parent.ticket');
   const lock = await holdLock(path);
   writeFileSync(path, claim('parent', 'admitted', { cpu: 2, memory_gib: 4 }));

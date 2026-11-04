@@ -4,8 +4,10 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import { holdLock } from './file-lock.ts';
+import { iotrouteMissing } from './iotroute-bin.ts';
 import { backendOption, compactTerminal, controllerAlive, eventLine, events, explain, gateDirectory, liveStages, requestCancel, runDir, stageStatus, status, utc } from './pcb-runs.ts';
 import { jsonDumps, jsonLoads, PyError } from './py-compat.mjs';
+const needsBinary = { skip: iotrouteMissing() };   // runs for real in CI job tools-iotroute
 
 let folder: string;
 const put = (name: string, text: string) => {
@@ -49,7 +51,7 @@ test('a terminal view keeps inventory sizes and binds its receipt', () => {
   assert.equal(result.has('artifacts'), true, 'the receipt itself is not changed');
 });
 
-test('controller liveness is the lock: absent, free or held', async () => {
+test('controller liveness is the lock: absent, free or held', needsBinary, async () => {
   assert.equal(controllerAlive(folder), null);
   const path = join(folder, 'worker.lock');
   const lock = await holdLock(path);
@@ -58,7 +60,7 @@ test('controller liveness is the lock: absent, free or held', async () => {
   assert.equal(controllerAlive(folder), false);
 });
 
-test('a running supervisor adds its wall time; a free lock means it stopped', async () => {
+test('a running supervisor adds its wall time; a free lock means it stopped', needsBinary, async () => {
   state({ status: 'running', updated_unix: 1000.0, elapsed_s: 5.0, active_stage_timing: [{ stage: 'drc', started_unix_s: 990.5, last_activity_unix_s: 999.5 }], timing: { x: 1 } });
   const lock = await holdLock(join(folder, 'worker.lock'));
   const live = status(folder, 1002);
@@ -80,7 +82,7 @@ test('a clock behind the update gives the int 0, as max(0, x) does', () => {
   assert.match(jsonDumps(status(folder, 1000)), /"heartbeat_age_s": 0[,}]/);
 });
 
-test('startup gets ten seconds, with or without a lock', () => {
+test('startup gets ten seconds, with or without a lock', needsBinary, () => {
   state({ status: 'starting', updated_unix: 1000.0 });
   assert.equal(status(folder, 1005).get('status'), 'starting');
   assert.equal(status(folder, 1005).get('controller_alive'), null);
@@ -96,7 +98,7 @@ test('a terminal run stays as recorded', () => {
   assert.deepEqual([final.get('status'), final.get('cause'), final.has('elapsed_clock')], ['failed', 'x', false]);
 });
 
-test('cancel writes the request for a live run only', async () => {
+test('cancel writes the request for a live run only', needsBinary, async () => {
   state({ status: 'passed', updated_unix: Date.now() / 1000 });
   assert.equal(requestCancel(folder).has('cancellation_requested'), false);
   assert.equal(existsSync(join(folder, 'cancel.request')), false);

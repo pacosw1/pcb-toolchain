@@ -57,15 +57,29 @@ function explicitBin(path: string): string {
   throw new Error(`IOTROUTE_BIN is not an executable file: ${path}`);
 }
 
-/** The binary for the exact current sources. A cache miss builds it, which can take a minute. */
-export function iotrouteBin(core: string = CORE): string {
-  const explicit = process.env.IOTROUTE_BIN;
-  if (explicit) return explicitBin(explicit);
+function cacheEntry(core: string) {
   const sha = sourcesSha(core);
   const folder = join(cacheBase(), sha);
   const exe = join(folder, 'release', 'iotroute');
   const stamp = join(folder, 'sources.sha256');
   const cached = existsSync(exe) && existsSync(stamp) && readFileSync(stamp, 'utf8').trim() === sha;
+  return { sha, folder, exe, stamp, cached };
+}
+
+/** The binary for the exact current sources. A cache miss builds it, which can take a minute. */
+export function iotrouteBin(core: string = CORE): string {
+  const explicit = process.env.IOTROUTE_BIN;
+  if (explicit) return explicitBin(explicit);
+  const { sha, folder, exe, stamp, cached } = cacheEntry(core);
   if (!cached) build(core, folder, sha, exe, stamp);
   return exe;
+}
+
+/**
+ * For a test's `skip`: why this host cannot get the binary, else false. Only a host with no way to build one skips;
+ * a wrong IOTROUTE_BIN or a failed build still fails the test. CI job tools-iotroute runs these tests with a real binary.
+ */
+export function iotrouteMissing(core: string = CORE): string | false {
+  if (process.env.IOTROUTE_BIN || cacheEntry(core).cached) return false;
+  return spawnSync('cargo', ['--version'], { stdio: 'ignore' }).error ? 'needs iotroute: no IOTROUTE_BIN, no cached build, no cargo' : false;
 }

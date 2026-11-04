@@ -65,6 +65,7 @@ export async function holdLock(path: string, options: HoldOptions = {}): Promise
   detachFromEventLoop(helper);
   return {
     release: () => {
+      helper.ref();   // the wait below must hold the loop open: on Node 22 it otherwise ends with this await pending
       helper.stdin?.end();
       return exited(helper);
     },

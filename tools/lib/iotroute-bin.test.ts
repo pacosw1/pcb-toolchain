@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { after, afterEach, test } from 'node:test';
-import { coreSources, iotrouteBin, sourcesSha } from './iotroute-bin.ts';
+import { coreSources, iotrouteBin, iotrouteMissing, sourcesSha } from './iotroute-bin.ts';
 
 const root = mkdtempSync(join(tmpdir(), 'iotroute-bin-'));
 const saved = { bin: process.env.IOTROUTE_BIN, cache: process.env.IOTROUTE_CACHE };
@@ -55,6 +55,20 @@ test('a stamped cache folder is used without a build', () => {
   writeFileSync(exe, '');
   writeFileSync(join(root, 'cache', sha, 'sources.sha256'), `${sha}\n`);
   assert.equal(iotrouteBin(folder), exe);
+});
+
+test('only a host with no binary and no cargo skips; a wrong IOTROUTE_BIN does not', () => {
+  const path = process.env.PATH;
+  process.env.IOTROUTE_CACHE = join(root, 'empty-cache');
+  process.env.PATH = join(root, 'no-tools');
+  try {
+    delete process.env.IOTROUTE_BIN;
+    assert.match(String(iotrouteMissing()), /no IOTROUTE_BIN, no cached build, no cargo/);
+    process.env.IOTROUTE_BIN = join(root, 'not-there');
+    assert.equal(iotrouteMissing(), false);
+  } finally {
+    process.env.PATH = path;
+  }
 });
 
 test('a core without sources fails clearly', () => {
