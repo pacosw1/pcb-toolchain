@@ -14,8 +14,8 @@
 // Rows are Maps from jsonLoads, so a read row and a derived row have one shape, and 12.0 stays 12.0 when written back.
 import { appendFileSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { fixed, Float, get, item, jsonDumps, jsonLoads, number, PyError, pyRepr, pyStr, sorted, splitlines, strip, truthy } from './py-compat.mjs';
-import { round } from './py-numbers.ts';
+import { fixed, Float, get, item, jsonDumps, jsonLoads, number, PyError, pyStr, sorted, splitlines, strip, truthy } from './py-compat.mjs';
+import { pyFloat, round } from './py-numbers.ts';
 import { caught, isDirectory, isFile, jsonOf, textOf } from './py-path.ts';
 
 export const FILE = 'run.jsonl';
@@ -48,12 +48,7 @@ function localSeconds(now = new Date()): string {
   return `${date}T${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
 }
 
-function float(value: unknown): number {
-  if (typeof value !== 'string') return number(value);
-  const parsed = Number(value);
-  if (!value.trim() || Number.isNaN(parsed)) throw new PyError('ValueError', `could not convert string to float: ${pyRepr(value)}`);
-  return parsed;
-}
+const float = (value: unknown): number => (typeof value === 'string' ? pyFloat(value) : number(value));
 
 const logNumber = (text: string): Float => new Float(float(text));
 const whole = (text: string): bigint => BigInt(text);

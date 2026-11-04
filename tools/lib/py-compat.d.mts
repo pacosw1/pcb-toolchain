@@ -2,15 +2,10 @@
 export class Float { constructor(value: number); value: number; }
 /** A Python exception: `type` is its class name, the message is str(exception). */
 export class PyError extends Error { constructor(type: string, message: string); type: string; }
-/** str(value) and repr(value) of a value from jsonLoads. */
-export function pyStr(value: unknown): string;
+/** repr(value) of a value from jsonLoads. */
 export function pyRepr(value: unknown): string;
 /** The number in an int, float or bool; TypeError on anything else. */
 export function number(value: unknown): number;
-/** text.strip(). */
-export function strip(text: string): string;
-/** text.splitlines(). */
-export function splitlines(text: string): string[];
 /** bool(value). */
 export function truthy(value: unknown): boolean;
 /** type(value).__name__ of a value from jsonLoads. */

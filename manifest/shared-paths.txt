@@ -143,7 +143,13 @@ tools/lib/json-file.test.ts
 tools/lib/json-file.ts
 tools/lib/kicad-population.mjs
 tools/lib/krt-planes-advisory.test.ts
+tools/lib/lean-clock.ts
+tools/lib/lean-workflow.test.ts
+tools/lib/lean-workflow.ts
 tools/lib/pack-fab.test.ts
+tools/lib/pcb-benchmark.ts
+tools/lib/pcb-evidence.test.ts
+tools/lib/pcb-evidence.ts
 tools/lib/pcb-workflow.test.ts
 tools/lib/pcb-workflow.ts
 tools/lib/pixel-art-checks.mjs
