@@ -239,8 +239,7 @@ def movable(pr, i):
     u = pr['units'][i]
     if u['fixed']:
         return False
-    from placer.kicad_io import ref_prefix
-    return not any(ref_prefix(r) in CONNECTOR for r in u['refs'])
+    return not any(cost.ref_prefix(r) in CONNECTOR for r in u['refs'])
 
 
 def candidates(pr, pose, fails, radius):

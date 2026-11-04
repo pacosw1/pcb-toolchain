@@ -5,8 +5,10 @@ import sys
 import tempfile
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import placer  # noqa: E402
 from placer import compact_cli, iotroute_step as s  # noqa: E402
 
 CLEAN = dict(status='PASS', drc_errors=0, unconnected=0, parity=0, track_length_mm=10.0, vias=3)
@@ -120,6 +122,14 @@ class Measure(unittest.TestCase):
         self.assertEqual(a.length_patience, 2)
         with self.assertRaises(ValueError):
             compact_cli.main(['p', 'b', '--board-dir', 'x', '--outdir', 'o', '--size', '1', '1', '--rank', 'length'])
+
+    def test_bad_options_stop_before_pcbnew(self):
+        argv = ['p', 'b', '--board-dir', 'x', '--outdir', 'o', '--size', '1', '1', '--rank', 'length']
+        with mock.patch.dict(sys.modules, {'pcbnew': None}), mock.patch.dict(placer.__dict__):
+            sys.modules.pop('placer.kicad_io', None)
+            placer.__dict__.pop('kicad_io', None)
+            with self.assertRaisesRegex(ValueError, '--rank length needs --router iotroute'):
+                compact_cli.main(argv)
 
 
 if __name__ == '__main__':
