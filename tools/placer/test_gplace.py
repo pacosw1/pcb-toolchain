@@ -309,7 +309,15 @@ class TorchBackendTest(unittest.TestCase):
             np.testing.assert_allclose(fb, fa, rtol=1e-3, atol=1e-3)
 
     def test_torch_cpu_place_gives_the_numpy_place(self):
-        a = gplace.place(clusters(seed=3), {'bins': 32, 'iters': 300, 'rotate': 1})
-        b = gplace.place(clusters(seed=3), {'bins': 32, 'iters': 300, 'rotate': 1, 'backend': 'torch', 'device': 'cpu'})
+        # This run stops on overflow at step 74, and roundoff grows about 1e6 times from step 50 to there (torch 0.97 um
+        # at the stop, numpy with 1 ulp of noise 1.6 um): the end of the run shows chaos, not the backend. So compare at
+        # step 50, past the turn pass of step 25. The noise floor there: numpy alone, its gradients scaled by 1 + u with
+        # |u| up to 1 and 4 ulp, 64 seeds each, moves the pose at most 2.613e-9 mm (torch 2.15 CPU on Linux, 1 to 24
+        # threads: 1.482e-9 mm). Each backend is within the floor of the noise-free path, so they agree to twice the floor.
+        noise_floor = 2.7e-9
+        params = {'bins': 32, 'iters': 50, 'rotate': 1}
+        a = gplace.place(clusters(seed=3), params)
+        b = gplace.place(clusters(seed=3), dict(params, backend='torch', device='cpu'))
+        self.assertEqual(len(a['history']), 50)  # the overflow stop must stay later than the compared step
         self.assertEqual([q[2] for q in b['pose']], [q[2] for q in a['pose']])
-        np.testing.assert_allclose(np.array(b['pose']), np.array(a['pose']), atol=1e-4)  # 0.1 um: roundoff
+        np.testing.assert_allclose(np.array(b['pose']), np.array(a['pose']), rtol=0, atol=2 * noise_floor)
