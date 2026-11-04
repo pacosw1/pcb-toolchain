@@ -64,6 +64,17 @@ def _subreaper(acquire):
             _adoption_scopes-=1
 
 
+def _proc_stat(entry):
+    """The stat line of one /proc entry, or None if that process is gone.
+
+    /proc lists every process, not only owned ones, and any of them can exit
+    during a scan: open then fails with ENOENT or ESRCH, or a read after a good
+    open fails with ESRCH. All mean the same: a reaped PID is no live member.
+    """
+    try:return (entry/'stat').read_text()
+    except (FileNotFoundError,ProcessLookupError):return None
+
+
 def _reap_adopted(state,deadline):
     if sys.platform!='linux':return
     # The group's leader is still held unreaped, reserving this group identity.
@@ -72,8 +83,8 @@ def _reap_adopted(state,deadline):
     for entry in Path('/proc').iterdir():
         if time.monotonic()>=deadline:raise TimeoutError('owned adoption budget exhausted')
         if not entry.name.isdigit():continue
-        try:line=(entry/'stat').read_text()
-        except FileNotFoundError:continue
+        line=_proc_stat(entry)
+        if line is None:continue
         pid,group,status=_proc_state(line)
         if pid!=int(entry.name):raise ValueError('native process state PID mismatched')
         parent=int(line.rpartition(')')[2].split()[1])
@@ -184,8 +195,11 @@ def _proc_state(line):
     before,separator,after=line.rpartition(')')
     pid=before.split('(',1)[0].strip()
     fields=after.split()
+    # A task being released has left its group: Linux prints parent 0, group -1,
+    # session -1, with state X or a stale Z. No owned group can equal -1. Any
+    # other non-numeric parent or group stays malformed.
     if (not separator or not pid.isdigit() or len(fields)<3 or fields[0] not in set('RSDZTtXxKWPI')
-            or not fields[1].isdigit() or not fields[2].isdigit()):
+            or not (fields[1].isdigit() and fields[2].isdigit() or fields[1:4]==['0','-1','-1'])):
         raise ValueError('malformed native process-group state')
     return int(pid),int(fields[2]),fields[0]
 
@@ -201,8 +215,9 @@ def _live_members(pgid, leader, deadline=None, include_zombies=False):
         for entry in Path('/proc').iterdir():
             if time.monotonic()>=deadline:raise TimeoutError('native group-state budget exhausted')
             if not entry.name.isdigit():continue
-            try:pid,group,status=_proc_state((entry/'stat').read_text())
-            except FileNotFoundError:continue  # Concurrently exited process.
+            line=_proc_stat(entry)
+            if line is None:continue
+            pid,group,status=_proc_state(line)
             if pid!=int(entry.name):raise ValueError('native process state PID mismatched')
             if group==pgid and pid!=leader and (include_zombies or status not in ('Z','X','x')):members.append(pid)
         return members

@@ -52,7 +52,10 @@ AUDITED = {
     "pcb_workflow.py": "08ec41de3f9da4a8c45ecd8f9b2f007bb5a78703b7b36ecb942ab45fde982f93",
     "pcb_timing.py": "07ed104072e56166625ffc36e774892c3761832cf00fe72b6abef2d967f05ddd",
     "lean_workflow.py": "926caceb8697718d86e279e114a7c9a57b5f78f20afa635109460601c27f1bb8",
-    "lean_owned.py": "9034a7b33d37fb78a0e3f6cd3efe0f9ce95ae29b411ea38ae2bc47f242a1d78e",
+    # 2026-11-04 review: the /proc scans treat ESRCH like ENOENT, and accept the parent 0, group -1, session -1 row of a
+    # task being released (a process exited mid-scan). No new import, command, file read or signal; a scan skips only a
+    # PID that is gone or going. Parts branch otherwise unchanged.
+    "lean_owned.py": "6b975cc6fbbc75e2a0f0e0dbe4b73ce11032e0f2087ce39e881281e53428664e",
     "lean_owned_exec.py": "dbee0c764a174ea3bae49f429d836d50b0d632bf828f20469a785d8268bc83ba",
     "lib/kicad-population.mjs": "0aebb28a1409de93200b081dc2226dede1225db367f72abdb156822e2de95040",
     "run_record.py": "015c92d8eb27ae21b98cc19e9ad9e7d48d83127618c31091978aff42c81031a6"
