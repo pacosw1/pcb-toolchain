@@ -376,3 +376,42 @@ export class Project {
     return { id: bf.id, directory, lifecycle: bf.lifecycle, kind: bf.kind, variant_of: bf.variant_of, identity: 'board.yaml', revisions }
   }
 }
+
+export interface BoardFileText {
+  schema: string, id: string, lifecycle: string, kind?: string | null, variant_of?: string | null, revisions: Record<string, unknown>[]
+}
+
+/** The board.yaml content that reproduces `b` (paths relative to the board folder). */
+export function boardFileFor(project: Project, b: Board): BoardFileText {
+  const d = resolveReal(path.join(project.boardsPath, b.directory)), bp = resolveReal(project.boardsPath)
+  const rel = (p: string | null): string | null => {
+    if (!p) return null
+    const ap = resolveReal(path.join(project.root, p))
+    return ap.startsWith(d + path.sep) ? path.relative(d, ap) : path.join('..', path.relative(bp, ap))
+  }
+  return {
+    schema: 'pcbstudio.board.v1', id: b.id, lifecycle: b.lifecycle, kind: b.kind, variant_of: b.variant_of,
+    revisions: b.revisions.map(r => ({ rev: r.revision, state: r.state, pcb: rel(r.pcb), sch: rel(r.sch), spec: rel(r.spec), bom: rel(r.bom),
+                                       gate: r.gate, gates: r.gates.map(g => ({ name: g.name, config: g.config })), pipeline: r.pipeline }))
+  }
+}
+
+/** board.yaml text: empty fields left out, default gate config left out. */
+export function dumpBoardFile(bf: BoardFileText): string {
+  const revisions = bf.revisions.map(r => {
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(r)) {
+      if (k === 'gates' && Array.isArray(v) && v.length) {
+        out.gates = (v as { name: string, config: string }[]).map(g => g.config === 'gate.json' ? { name: g.name } : g)
+      } else if (k === 'rev' || (v !== null && !(Array.isArray(v) && !v.length))) {
+        out[k] = v
+      }
+    }
+    return out
+  })
+  const data: Record<string, unknown> = { schema: bf.schema, id: bf.id, lifecycle: bf.lifecycle }
+  if (bf.kind !== null && bf.kind !== undefined) data.kind = bf.kind
+  if (bf.variant_of !== null && bf.variant_of !== undefined) data.variant_of = bf.variant_of
+  data.revisions = revisions
+  return yaml.dump(data, { lineWidth: -1, noRefs: true })
+}
