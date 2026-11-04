@@ -1,13 +1,11 @@
-"""Pin-escape term (escape.py), its Evaluator integration, the escape-aware repair proposals and the router tokens."""
-import math
+"""The escape-aware repair proposals and the router tokens. The pin-escape term: tools/placer/core/tests/escape.rs."""
 import os
-import random
 import sys
 import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from placer import anneal, cost, escape, iotroute_step, repair  # noqa: E402
+from placer import cost, escape, iotroute_step, repair  # noqa: E402
 
 RULES = {'track': 0.15, 'clearance': 0.15, 'via_d': 0.6}  # NET-CORE Default class + via size
 
@@ -47,112 +45,6 @@ def problem(units):
     return {'units': [ic_unit(10.0, 10.0)] + units + [sink, sink2], 'nets': [],
             'board': {'outline': [[0, 0], [30, 0], [30, 30], [0, 30]], 'keepouts': [], 'edge_clearance': 0.0},
             'escape_rules': dict(RULES)}
-
-
-class GeometryTest(unittest.TestCase):
-    def test_corridor_length_has_a_stated_source(self):
-        rt, rv, L, t, rad = escape.geometry(RULES, 0.5)
-        self.assertAlmostEqual(rt, 0.225)
-        self.assertAlmostEqual(rv, 0.45)
-        self.assertAlmostEqual(L, 0.15 + 0.3 + 2 * 0.75)  # n = ceil(0.75 / 0.5) = 2 staggered neighbour vias
-        self.assertAlmostEqual(rad[-1], rv)
-        self.assertLessEqual(max(b - a for a, b in zip(t, t[1:])), rt + 1e-9)  # samples keep the track radius
-        self.assertAlmostEqual(escape.geometry(RULES, 1.27)[2], 0.45)  # pitch >= via pitch: one via in line
-
-    def test_rules_from_problem_or_default_class(self):
-        self.assertEqual(escape.rules({'escape_rules': RULES}), RULES)
-        r = escape.rules({'route_rules': {'classes': {'Default': [0.2, 0.25]}}}, {'via_d': 0.5})
-        self.assertEqual(r, {'track': 0.25, 'clearance': 0.2, 'via_d': 0.5})
-
-    def test_pins_sides_pitch_need(self):
-        pr = problem([])
-        m = escape.Model(pr)
-        q = m.pins[0]
-        self.assertEqual(q['n'], 6)  # the exposed pad is not a pin
-        sides = sorted(s for _, s in q['names'])
-        self.assertEqual(sides, ['E', 'N', 'S', 'S', 'S', 'W'])
-        self.assertEqual(list(q['need'][:3]), [1.0, 1.0, 1.0])
-        self.assertEqual(list(q['need'][3:]), [0.0, 0.0, 0.0])  # no net
-        self.assertIsNone(m.pins[1])  # a resistor is not an IC
-
-    def test_turned_unit_turns_its_corridors(self):
-        pr = problem([])
-        m = escape.Model(pr)
-        b0 = m.pin_boxes(0, (10.0, 10.0, 0))[0]
-        b1 = m.pin_boxes(0, (10.0, 10.0, 1))[0]
-        self.assertGreater(b0[3], 11.0)  # south pin: the corridor goes to +y
-        self.assertGreater(b1[2], 11.0)  # r = 1 maps (x, y) -> (y, -x): south becomes east
-
-
-class BlockedTest(unittest.TestCase):
-    def test_free_pins_cost_nothing(self):
-        self.assertEqual(escape.escape(problem([]), cost.initial_pose(problem([]))), (0.0, 0))
-
-    def test_foreign_pad_in_front_blocks_and_partner_does_not(self):
-        pr = problem([wall('C1', 10.0, 11.8)])  # a wide foreign pad right below the south pins
-        d, h = escape.escape(pr, cost.initial_pose(pr))
-        self.assertAlmostEqual(d, 3.0)
-        self.assertEqual(h, 1)  # every south pin blocked
-        rep = escape.report(pr, cost.initial_pose(pr))
-        self.assertEqual(sorted(r['pad'] for r in rep), ['1', '2', '3'])
-        pr2 = problem([wall('C1', 10.0, 11.8, net=11)])
-        b2 = escape.unit_blocked(pr2, cost.initial_pose(pr2), escape.Model(pr2), 0)
-        self.assertEqual(list(b2[:3]), [0.0, 1.0, 1.0])  # the partner pad of net 11 does not block pin 1
-
-    def test_partner_within_reach_frees_the_pin(self):
-        m = escape.Model(problem([]))
-        pr = problem([part('C1', 9.75, 11.6, (11, 0)), part('C2', 10.4, 12.5, (5, 6))])
-        b = escape.unit_blocked(pr, cost.initial_pose(pr), escape.Model(pr), 0)
-        self.assertEqual(b[0], 0.0)  # pin 1 (net 11) has its partner pad 0.35 mm below its toe
-        self.assertIsNotNone(m)
-
-    def test_one_free_ray_is_enough(self):
-        pr = problem([part('C1', 10.5, 12.3, (5, 6))])  # blocks the straight and the south-east rays of pin 3
-        b = escape.unit_blocked(pr, cost.initial_pose(pr), escape.Model(pr), 0)
-        self.assertEqual(b[2], 0.0)
-
-
-class EvaluatorTest(unittest.TestCase):
-    def pr(self):
-        units = [wall('W1', 10.0, 16.0)] + [part('C%d' % k, 6.0 + 2.5 * k, 20.0, (5, 6)) for k in range(4)]
-        return problem(units)
-
-    def test_off_by_default(self):
-        ev = cost.Evaluator(self.pr(), {})
-        self.assertIsNone(ev.esc)
-        self.assertEqual(ev.components()['escape'], 0.0)
-
-    def test_incremental_equals_full(self):
-        pr = self.pr()
-        p = anneal.params_all({'w_esc': 20.0})
-        ev = cost.Evaluator(pr, p)
-        rng = random.Random(1)
-        mv = [i for i in range(ev.n) if not ev.fixed[i]]
-        for _ in range(300):
-            i = rng.choice(mv)
-            ev.propose([(i, 10.0 + rng.uniform(-2.5, 2.5), 12.0 + rng.uniform(-0.5, 2), rng.randrange(4))])
-            ev.commit() if rng.random() < 0.5 else ev.revert()
-        full = cost.components(pr, ev.pose(), p)
-        self.assertAlmostEqual(ev.components()['escape'], full['escape'], places=9)
-        self.assertAlmostEqual(ev.cost, cost.weighted(full, p), places=6)
-
-    def test_move_into_the_corridor_costs(self):
-        pr = self.pr()
-        ev = cost.Evaluator(pr, {'w_esc': 20.0})
-        self.assertEqual(ev.comp[8], 0.0)
-        d = ev.propose([(1, 10.0, 11.8, 0)])
-        self.assertGreater(ev.comp[8], 0.0)
-        self.assertGreater(d, 0.0)
-        ev.revert()
-        self.assertEqual(ev.comp[8], 0.0)
-
-    def test_hard_side_is_illegal_only_with_esc_hard(self):
-        pr = problem([wall('C1', 10.0, 11.8)])
-        soft = cost.Evaluator(pr, {'w_esc': 20.0})
-        hard = cost.Evaluator(pr, {'w_esc': 20.0, 'esc_hard': 1})
-        self.assertEqual(soft.legal_penalty(1), 0.0)
-        self.assertGreaterEqual(hard.legal_penalty(1), 1.0)
-        self.assertEqual(hard.legal_penalty_at(1, 10.0, 16.0, 0), 0.0)  # moved away: the rays are free
 
 
 class RepairTest(unittest.TestCase):

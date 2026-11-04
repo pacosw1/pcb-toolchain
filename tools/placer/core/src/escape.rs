@@ -158,10 +158,10 @@ fn side_pitch(pins: &[RawPin], side: Side) -> f64 {
 
 /// The pins of one unit, in pin order.
 pub struct UnitPins {
-    side_of: Vec<usize>,
+    pub side_of: Vec<usize>,
     sides: usize,
     net: Vec<i64>,
-    need: Vec<f64>,
+    pub need: Vec<f64>,
     part: Vec<i64>,
     corridors: Vec<Corridor>,
     /// Toe per pin, for the 4 turns.
@@ -177,7 +177,7 @@ pub struct EscapeModel {
     /// Per unit: part id of each copper row (index of the ref in u.refs; -1 unknown).
     part_of_row: Vec<Vec<i64>>,
     /// Per unit: None or its pins.
-    pins: Vec<Option<UnitPins>>,
+    pub pins: Vec<Option<UnitPins>>,
 }
 
 fn row_ref(u: &Unit, k: usize) -> Option<&CuPad> {
@@ -285,7 +285,7 @@ fn build_unit_pins(pins: Vec<(i64, RawPin, Corridor)>) -> UnitPins {
 }
 
 impl UnitPins {
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.net.len()
     }
 
@@ -300,7 +300,7 @@ impl UnitPins {
     }
 
     /// World box of the corridors of each pin (with the via radius).
-    fn pin_boxes(&self, at: (f64, f64, u8)) -> Vec<Rect> {
+    pub fn pin_boxes(&self, at: (f64, f64, u8)) -> Vec<Rect> {
         let g = self.radius_max;
         let boxes = |pin: usize| {
             let points = (0..3).flat_map(|d| (0..self.samples).map(move |k| (d, k)));
@@ -383,15 +383,15 @@ struct Pad {
 }
 
 #[derive(Clone)]
-struct UnitEscape {
-    blocked: Vec<f64>,
+pub struct UnitEscape {
+    pub blocked: Vec<f64>,
     deficit: f64,
     boxes: Vec<Rect>,
 }
 
 /// Blocked pins of the escape units of the current layout.
 pub struct EscapeState {
-    units: BTreeMap<usize, UnitEscape>,
+    pub units: BTreeMap<usize, UnitEscape>,
     copper_boxes_before: Vec<Rect>,
     undo: Vec<(usize, UnitEscape)>,
 }
@@ -536,5 +536,31 @@ mod tests {
     fn a_wide_pitch_has_its_own_via() {
         let c = Corridor::new(Rules { track: 0.2, clearance: 0.2, via_d: 0.6 }, 1.27);
         assert!((c.length - 0.5).abs() < 1e-12);
+        let c = Corridor::new(Rules { track: 0.15, clearance: 0.15, via_d: 0.6 }, 1.27);
+        assert!((c.length - 0.45).abs() < 1e-12);
+    }
+
+    #[test]
+    fn corridor_samples_keep_the_track_radius_and_end_at_the_via() {
+        let c = Corridor::new(Rules { track: 0.15, clearance: 0.15, via_d: 0.6 }, 0.5);
+        assert_eq!(c.radius(c.samples.len() - 1), c.rv);
+        assert!(c.samples.windows(2).all(|w| w[1] - w[0] <= c.rt + 1e-9));
+    }
+
+    fn rules_of(v: serde_json::Value, p: &Params) -> Rules {
+        Rules::new(&serde_json::from_value(v).unwrap(), p)
+    }
+
+    #[test]
+    fn rules_from_the_problem_or_the_default_class() {
+        let base = serde_json::json!({"units": [], "nets": [], "board": {"outline": [[0, 0], [1, 0], [1, 1]]}});
+        let mut v = base.clone();
+        v["escape_rules"] = serde_json::json!({"track": 0.15, "clearance": 0.15, "via_d": 0.6});
+        let r = rules_of(v, &Params::default());
+        assert_eq!((r.track, r.clearance, r.via_d), (0.15, 0.15, 0.6));
+        let mut v = base;
+        v["route_rules"] = serde_json::json!({"classes": {"Default": [0.2, 0.25]}, "dru": {}});
+        let r = rules_of(v, &Params::from_args(&["via_d=0.5"]).unwrap());
+        assert_eq!((r.track, r.clearance, r.via_d), (0.25, 0.2, 0.5));
     }
 }
