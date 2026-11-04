@@ -8,15 +8,16 @@ const CHUNK_BYTES = 1024 * 1024;
 
 export const readJson = <T>(path: string): T => JSON.parse(readFileSync(path, 'utf8')) as T;
 
-const plain = (value: unknown): unknown => {
-  if (value instanceof Map) return Object.fromEntries([...value].map(([key, item]) => [key, plain(item)]));
-  if (Array.isArray(value)) return value.map(plain);
+/** A value of jsonLoads as plain JavaScript: objects, and numbers that have forgotten whether they were int or float. */
+export const plainJson = (value: unknown): unknown => {
+  if (value instanceof Map) return Object.fromEntries([...value].map(([key, item]) => [key, plainJson(item)]));
+  if (Array.isArray(value)) return value.map(plainJson);
   if (typeof value === 'bigint') return Number(value);
   return value instanceof Float ? value.value : value;
 };
 
 /** json.loads of a file as plain values, with Python's error text; NaN and Infinity read as numbers. */
-export const readPyJson = <T = unknown>(path: string): T => plain(jsonLoad(path)) as T;
+export const readPyJson = <T = unknown>(path: string): T => plainJson(jsonLoad(path)) as T;
 
 const typed = (value: unknown): unknown => {
   if (value instanceof Map) return Object.fromEntries([...value].map(([key, item]) => [key, typed(item)]));
