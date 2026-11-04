@@ -26,6 +26,7 @@ test_board_frame          needs Pillow
 placer.test_movie             needs matplotlib
 router.test_model             needs pcbnew
 lib/fab-workflow.test.mjs     needs hardware-design/boards/*/gate.json data
+lib/net-drivers-project.test.ts needs hardware-design/registry/datasheets and ibis data
 lib/release-evidence.test.mjs needs hardware-design/boards/*/gate.json data and iot-lab tools/make-base-pwr-fab.sh
 # Single tests of files that run here: file | test | cause. They must fail; see .cip/run-unit.sh.
 placer.test_mainspath | test_each_dru_gap_comes_from_its_own_rule | needs hardware-design/boards data
