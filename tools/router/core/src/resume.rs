@@ -308,4 +308,26 @@ mod tests {
         assert!(Snapshot::read(save.to_str().unwrap()).err().unwrap().contains("terminal: converged"));
         std::fs::remove_dir_all(d).unwrap();
     }
+    #[test]
+    fn fixed_obstruction_invalidates_older_snapshot() {
+        let d = std::env::temp_dir().join(format!("resume-hardfail-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let model = d.join("model.json"); let out = d.join("out.json"); let save = d.join("state.json"); let progress = d.join("progress.json");
+        let m = serde_json::json!({"copper_layers":["F.Cu", "B.Cu"], "plane_layers":[], "outline_bbox":[0,0,10,10],
+            "setup":{"edge_clearance":0.25}, "classes":{"Default":{"width":0.2,"clearance":0.2,"via":0.6,"drill":0.3}},
+            "nets":{"A":{"class":"Default","width":0.2,"clearance":0.2,"layers":["F.Cu"]}},
+            "pads":[{"ref":"J1","num":"1","net":"A","x":2.0,"y":5.0,"bbox":[1.7,4.7,2.3,5.3],"layers":["F.Cu"]},
+                    {"ref":"J2","num":"1","net":"A","x":8.0,"y":5.0,"bbox":[7.7,4.7,8.3,5.3],"layers":["F.Cu"]}],
+            "keepouts":[{"bbox":[4.0,0.0,6.0,10.0],"rect":true,"tracks":true,"vias":true,"layers":["F.Cu","B.Cu"]}], "copper":[]});
+        std::fs::write(&model, m.to_string()).unwrap();
+        std::fs::write(&save, "old snapshot").unwrap();
+        route_cli(&["iotroute".into(), model.to_str().unwrap().into(), out.to_str().unwrap().into(),
+            "--pitch".into(), "0.2".into(), "--iters".into(), "20".into(), "--checkpoint".into(), progress.to_str().unwrap().into(),
+            "--resume-save".into(), save.to_str().unwrap().into()]);
+        let progress: Value = serde_json::from_slice(&std::fs::read(progress).unwrap()).unwrap();
+        assert_eq!(progress["stop"], "converged");
+        assert_eq!(progress["unrouted"], 1);
+        assert!(Snapshot::read(save.to_str().unwrap()).err().unwrap().contains("terminal: converged"));
+        std::fs::remove_dir_all(d).unwrap();
+    }
 }
