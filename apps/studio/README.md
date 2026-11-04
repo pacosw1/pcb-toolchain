@@ -21,6 +21,9 @@ npx electron-vite build && npx playwright test  # e2e: start, crash + restart, g
 npm run build:web && npm run web -- --project DIR   # read-only web viewer (publish with: tailscale serve --bg 8787)
 ```
 
+Web viewer as a launchd user agent (survives reboots; after `npm run build:web`): `sh apps/studio/deploy/install-web-viewer.sh`, which writes `~/Library/LaunchAgents/com.pcbstudio.web.plist` and loads it.
+Log: `~/Library/Logs/pcbstudio-web.log`; project override `PCBSTUDIO_PROJECT=DIR`; remove with `launchctl bootout gui/$(id -u)/com.pcbstudio.web`.
+
 ## Phases
 0 mockups ✓ · 1 skeleton ✓ · 2 model + KiCad I/O + read-only browse · 3 runs + gates · 4 agent · 5 generic build
 (NET-NODE pilot) · 6 parts, schematic, fab · 7 Linux.

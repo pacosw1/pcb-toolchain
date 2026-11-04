@@ -233,6 +233,8 @@ export function serveWeb(o: WebOptions): void {
   }
   const token = loadToken(o.tokenFile)
   makeServer(staticDir, home(o.project), home(o.glbDir), token).listen(o.port, o.host, () => {
-    console.log(`web viewer on http://${o.host}:${o.port}/?t=${token} (project ${o.project}; the token is in ${home(o.tokenFile)})`)
+    // The token goes to a terminal only: under launchd this line lands in a log file.
+    const query = process.stdout.isTTY ? `?t=${token}` : ''
+    console.log(`web viewer on http://${o.host}:${o.port}/${query} (project ${o.project}; the token is in ${home(o.tokenFile)})`)
   })
 }
