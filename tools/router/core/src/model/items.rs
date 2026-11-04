@@ -224,7 +224,7 @@ mod tests {
     use crate::kicad::shape::Arc;
 
     fn graphic(geometry: Geometry) -> Graphic {
-        Graphic { geometry, layer: "Edge.Cuts".to_string(), width: 50_000, filled: false }
+        Graphic { id: String::new(), geometry, layer: "Edge.Cuts".to_string(), width: 50_000, filled: false }
     }
 
     #[test]

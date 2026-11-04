@@ -254,7 +254,7 @@ mod tests {
             id: String::new(), name: String::new(), net: "GND".to_string(), layers: vec!["In1.Cu".to_string()], outline: Vec::new(),
             filled: vec![crate::kicad::board::FilledLayer { layer: "In1.Cu".to_string(), polygons: vec![fill] }], rule_area: None, fill: None,
         };
-        let filled = Board { path: String::new(), copper_layers: Vec::new(), stackup: Vec::new(), nets: BTreeMap::new(), footprints: Vec::new(), copper: Vec::new(), zones: vec![zone], graphics: Vec::new(), edges_bbox: crate::kicad::geom::Rect::around(Pt::default()), outlines: Vec::new() };
+        let filled = Board { path: String::new(), copper_layers: Vec::new(), stackup: Vec::new(), nets: BTreeMap::new(), footprints: Vec::new(), copper: Vec::new(), zones: vec![zone], graphics: Vec::new(), texts: Vec::new(), groups: Vec::new(), constraints: Default::default(), edges_bbox: crate::kicad::geom::Rect::around(Pt::default()), outlines: Vec::new() };
         let boxes = vec![[Num::Int(10), Num::Int(0), Num::Int(20), Num::Int(10)]];
         let merged = domain_fill(&filled, "In1.Cu", "GND", Some(&boxes), &spec()).unwrap();
         assert_eq!((merged.len(), merged[0].outline.len()), (1, 4));

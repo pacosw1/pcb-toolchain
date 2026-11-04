@@ -22,6 +22,11 @@ pub struct Board {
     pub zones: Vec<Zone>,
     /// Board graphics, not the footprints'.
     pub graphics: Vec<Graphic>,
+    /// Board texts, not the footprints'.
+    pub texts: Vec<Text>,
+    /// Every group, nested ones too: a nested group's id is in the items of its parent.
+    pub groups: Vec<Group>,
+    pub constraints: Constraints,
     /// The box of Edge.Cuts with line widths, as BOARD::GetBoardEdgesBoundingBox.
     pub edges_bbox: Rect,
     /// GetBoardPolygonOutlines with no inferred outline: empty when Edge.Cuts does not close.
@@ -53,6 +58,31 @@ impl Board {
     pub fn net_class(&self, net: &str) -> &str {
         self.nets.get(net).map_or("Default", String::as_str)
     }
+}
+
+/// A PCB_TEXT of the board.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Text {
+    pub id: String,
+    pub text: String,
+    pub layer: String,
+    pub position: Pt,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Group {
+    pub id: String,
+    pub name: String,
+    pub items: Vec<String>,
+}
+
+/// The board's minimum constraints (BOARD_DESIGN_SETTINGS).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Constraints {
+    pub min_clearance: Iu,
+    pub min_track_width: Iu,
+    pub min_via_size: Iu,
+    pub copper_edge_clearance: Iu,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -88,6 +118,8 @@ pub struct Footprint {
     pub position: Pt,
     pub orientation: f64,
     pub locked: bool,
+    /// The footprint's copper clearance override, when it has one.
+    pub clearance_override: Option<Iu>,
     /// The fields other than Reference and Value, as name and text.
     pub fields: Vec<(String, String)>,
     pub pads: Vec<Pad>,
@@ -96,9 +128,6 @@ pub struct Footprint {
     /// GetCourtyard of each side: empty when the side has none or it does not close.
     pub courtyard_front: Vec<Polygon>,
     pub courtyard_back: Vec<Polygon>,
-    /// The footprint's copper clearance, for its pads with none of their own. Not part of iot-lab.board.v1.
-    #[serde(skip)]
-    pub clearance_override: Option<Iu>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -128,6 +157,8 @@ pub struct Via {
     pub drill: Iu,
     pub net: String,
     pub locked: bool,
+    /// Copper layers in stack order.
+    pub layers: Vec<String>,
 }
 
 impl Track {
@@ -158,6 +189,8 @@ pub struct RuleArea {
     pub tracks: bool,
     pub vias: bool,
     pub pour: bool,
+    pub pads: bool,
+    pub footprints: bool,
 }
 
 /// Copper zone settings; a rule area has none.

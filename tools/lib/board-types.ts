@@ -12,7 +12,7 @@ export type Geometry =
   | { Poly: { rings: Pt[][] } }
   | 'Other';
 
-export interface Graphic { geometry: Geometry; layer: string; width: number; filled: boolean }
+export interface Graphic { id: string; geometry: Geometry; layer: string; width: number; filled: boolean }
 
 export type PadCopper =
   | { Circle: { center: Pt; radius: number } }
@@ -27,11 +27,11 @@ export interface Pad {
   shape: 'Circle' | 'Rect' | 'Oval' | 'RoundRect' | 'Custom' | 'Other';
   net: string; position: Pt; orientation: number; size: Pt; drill: Pt; layers: string[]; bbox: Rect;
   zone_connection: ZoneConnection | null; thermal_spoke_angle: number; spoke_templates: number;
-  copper: PadCopper[]; polygons: Record<string, Polygon>; solder_mask_expansion: number;
+  copper: PadCopper[]; polygons: Record<string, Polygon>; solder_mask_expansion: number; clearance_override: number | null;
 }
 
 export interface FilledLayer { layer: string; polygons: Polygon[] }
-export interface RuleArea { tracks: boolean; vias: boolean; pour: boolean }
+export interface RuleArea { tracks: boolean; vias: boolean; pour: boolean; pads: boolean; footprints: boolean }
 export interface ZoneFill {
   clearance: number; min_thickness: number; thermal_gap: number; spoke_width: number;
   pad_connection: ZoneConnection | null; island_removal_mode: number; min_island_area: number;
@@ -43,21 +43,27 @@ export interface Zone {
 
 export interface Footprint {
   id: string; reference: string; value: string; lib_id: string; layer: string; position: Pt; orientation: number; locked: boolean;
-  fields: [string, string][]; pads: Pad[]; graphics: Graphic[]; zones: Zone[];
+  clearance_override: number | null; fields: [string, string][]; pads: Pad[]; graphics: Graphic[]; zones: Zone[];
   courtyard_front: Polygon[]; courtyard_back: Polygon[];
 }
 
 export interface Track { id: string; start: Pt; end: Pt; mid: Pt | null; width: number; layer: string; net: string; locked: boolean }
-export interface Via { id: string; at: Pt; size: number; drill: number; net: string; locked: boolean }
+export interface Via { id: string; at: Pt; size: number; drill: number; net: string; locked: boolean; layers: string[] }
 export type RoutedCopper = { Track: Track } | { Via: Via };
 
 export interface StackupLayer { layer: string; kind: 'Copper' | 'Core' | 'Prepreg' | 'Other'; thickness: number }
+
+export interface Text { id: string; text: string; layer: string; position: Pt }
+/** Nested groups are listed too: a nested group's id is in the items of its parent. */
+export interface Group { id: string; name: string; items: string[] }
+export interface Constraints { min_clearance: number; min_track_width: number; min_via_size: number; copper_edge_clearance: number }
 
 export interface Board {
   path: string; copper_layers: string[]; stackup: StackupLayer[];
   /** Net name to net class. */
   nets: Record<string, string>;
-  footprints: Footprint[]; copper: RoutedCopper[]; zones: Zone[]; graphics: Graphic[]; edges_bbox: Rect; outlines: Polygon[];
+  footprints: Footprint[]; copper: RoutedCopper[]; zones: Zone[]; graphics: Graphic[]; texts: Text[]; groups: Group[];
+  constraints: Constraints; edges_bbox: Rect; outlines: Polygon[];
 }
 
 export interface BoardDocument {

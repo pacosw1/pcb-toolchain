@@ -105,7 +105,7 @@ mod tests {
     }
 
     fn board(stackup: Vec<StackupLayer>) -> Board {
-        Board { path: String::new(), copper_layers: Vec::new(), stackup, nets: BTreeMap::new(), footprints: Vec::new(), copper: Vec::new(), zones: Vec::new(), graphics: Vec::new(), edges_bbox: crate::kicad::geom::Rect::around(Default::default()), outlines: Vec::new() }
+        Board { path: String::new(), copper_layers: Vec::new(), stackup, nets: BTreeMap::new(), footprints: Vec::new(), copper: Vec::new(), zones: Vec::new(), graphics: Vec::new(), texts: Vec::new(), groups: Vec::new(), constraints: Default::default(), edges_bbox: crate::kicad::geom::Rect::around(Default::default()), outlines: Vec::new() }
     }
 
     fn four_layers() -> Board {

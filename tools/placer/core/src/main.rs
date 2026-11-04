@@ -4,6 +4,7 @@
 //!   iotplace scramble PROB.json -o OUT.json [--seed 1] [--sigma MM]
 //!   iotplace gplace PROB.json -o OUT.json [--param k=v ...]    the analytic stage alone: {pose, history}
 //!   iotplace count DRC.json [--nets NETS.txt]                  the open and error counts of a kicad-cli DRC report
+//!   iotplace read BOARD.kicad_pcb --board-json DOC.json -o PROB.json [flags]    the problem of a board (read/cli.rs)
 //!
 //! run: exit 3 when no candidate is legal. Last lines: a cost line per candidate and the speed.
 
@@ -150,7 +151,11 @@ fn count_cmd(a: &Args) -> iotplace::Result<ExitCode> {
 }
 
 fn dispatch(argv: &[String]) -> iotplace::Result<ExitCode> {
-    let (command, rest) = argv.split_first().ok_or("usage: iotplace run|scramble|gplace|count ...")?;
+    let (command, rest) = argv.split_first().ok_or("usage: iotplace run|scramble|gplace|count|read ...")?;
+    if command == "read" {
+        iotplace::read::cli::run(rest)?;
+        return Ok(ExitCode::SUCCESS);
+    }
     let args = parse_args(rest)?;
     match command.as_str() {
         "run" => run(&args),

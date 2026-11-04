@@ -87,8 +87,8 @@ pub struct Pad {
     pub polygons: BTreeMap<String, Polygon>,
     /// GetSolderMaskExpansion, without DRU solder_mask_expansion rules.
     pub solder_mask_expansion: Iu,
-    /// The pad's own copper clearance, for GetOwnClearance. Not part of iot-lab.board.v1.
-    #[serde(skip)]
+    /// The pad's copper clearance override, when it has one.
+    #[serde(default)]
     pub clearance_override: Option<Iu>,
 }
 

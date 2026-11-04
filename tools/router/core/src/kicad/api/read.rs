@@ -24,16 +24,21 @@ pub fn read_board(client: &mut Client, path: &Path) -> Result<Board, ApiError> {
     set_pad_polygons(client, &doc, &copper_layers, &mut footprints)?;
     let graphics = client.items(&doc, &[ct::KiCadObjectType::KotPcbShape])?.iter().filter_map(decode).map(|g: bt::BoardGraphicShape| read_graphic(&g)).collect::<Result<_, _>>()?;
     let zones = client.items(&doc, &[ct::KiCadObjectType::KotPcbZone])?.iter().filter_map(decode).map(|z: bt::Zone| read_zone(&z, &copper_layers)).collect::<Result<_, _>>()?;
+    let texts = client.items(&doc, &[ct::KiCadObjectType::KotPcbText])?.iter().filter_map(decode).map(|t: bt::BoardText| read_text(&t)).collect();
+    let groups = client.items(&doc, &[ct::KiCadObjectType::KotPcbGroup])?.iter().filter_map(decode).map(|g: bt::Group| read_group(&g)).collect();
     let mut board = Board {
         path: path.display().to_string(),
         stackup: read_stackup(client, &doc)?,
         nets: read_nets(client, &doc)?,
-        copper: read_copper(client, &doc)?,
+        copper: read_copper(client, &doc, &copper_layers)?,
+        constraints: read_constraints(client, &doc)?,
         edges_bbox: edges_box(client, &doc)?,
         copper_layers,
         footprints,
         zones,
         graphics,
+        texts,
+        groups,
         outlines: Vec::new(),
     };
     board.outlines = outline::board_outlines(&board).unwrap_or_default();
@@ -43,6 +48,26 @@ pub fn read_board(client: &mut Client, path: &Path) -> Result<Board, ApiError> {
 fn board_mask_expansion(client: &mut Client, doc: &ct::DocumentSpecifier) -> Result<i64, ApiError> {
     let reply: bc::BoardDesignRulesResponse = client.call(&bc::GetBoardDesignRules { board: Some(doc.clone()) })?;
     Ok(reply.rules.and_then(|r| r.solder_mask_paste).map_or(0, |m| nm(&m.mask_expansion)))
+}
+
+fn read_constraints(client: &mut Client, doc: &ct::DocumentSpecifier) -> Result<Constraints, ApiError> {
+    let reply: bc::BoardDesignRulesResponse = client.call(&bc::GetBoardDesignRules { board: Some(doc.clone()) })?;
+    let rules = reply.rules.and_then(|r| r.constraints).ok_or_else(|| missing("board constraints"))?;
+    Ok(Constraints {
+        min_clearance: nm(&rules.min_clearance),
+        min_track_width: nm(&rules.min_track_width),
+        min_via_size: nm(&rules.min_via_size),
+        copper_edge_clearance: nm(&rules.copper_edge_clearance),
+    })
+}
+
+fn read_text(t: &bt::BoardText) -> Text {
+    let text = t.text.as_ref();
+    Text { id: id(&t.id), text: text.map_or(String::new(), |x| x.text.clone()), layer: layer_name(t.layer()), position: pt(&text.and_then(|x| x.position)) }
+}
+
+fn read_group(g: &bt::Group) -> Group {
+    Group { id: id(&g.id), name: g.name.clone(), items: g.items.iter().map(|i| i.value.clone()).collect() }
 }
 
 /// KiCad's own polygon of each pad, a layer at a time. Ids that repeat stay out: the reply would be another pad's.
@@ -155,13 +180,13 @@ fn box_of(b: &ct::Box2) -> Result<Rect, ApiError> {
     Ok(Rect { left: at.x, top: at.y, right: at.x + size.x, bottom: at.y + size.y })
 }
 
-fn read_copper(client: &mut Client, doc: &ct::DocumentSpecifier) -> Result<Vec<RoutedCopper>, ApiError> {
+fn read_copper(client: &mut Client, doc: &ct::DocumentSpecifier, copper_layers: &[String]) -> Result<Vec<RoutedCopper>, ApiError> {
     use ct::KiCadObjectType::{KotPcbArc, KotPcbTrace, KotPcbVia};
     let items = client.items(doc, &[KotPcbTrace, KotPcbArc, KotPcbVia])?;
-    items.iter().map(routed_copper).collect()
+    items.iter().map(|item| routed_copper(item, copper_layers)).collect()
 }
 
-fn routed_copper(item: &Any) -> Result<RoutedCopper, ApiError> {
+fn routed_copper(item: &Any, copper_layers: &[String]) -> Result<RoutedCopper, ApiError> {
     if let Some(t) = decode::<bt::Track>(item) {
         return Ok(RoutedCopper::Track(Track { id: id(&t.id), start: pt(&t.start), end: pt(&t.end), mid: None, width: nm(&t.width), layer: layer_name(t.layer()), net: net(&t.net), locked: locked(t.locked()) }));
     }
@@ -172,7 +197,9 @@ fn routed_copper(item: &Any) -> Result<RoutedCopper, ApiError> {
     let stack = v.pad_stack.as_ref().ok_or_else(|| missing("via stack"))?;
     let size = stack.copper_layers.first().map_or(Pt::default(), |l| pt(&l.size));
     let drill = stack.drill.as_ref().map_or(Pt::default(), |d| pt(&d.diameter));
-    Ok(RoutedCopper::Via(Via { id: id(&v.id), at: pt(&v.position), size: size.x, drill: drill.x, net: net(&v.net), locked: locked(v.locked()) }))
+    let on_via: Vec<String> = stack.layers().map(layer_name).collect();
+    let layers = copper_layers.iter().filter(|l| on_via.contains(l)).cloned().collect();
+    Ok(RoutedCopper::Via(Via { id: id(&v.id), at: pt(&v.position), size: size.x, drill: drill.x, net: net(&v.net), locked: locked(v.locked()), layers }))
 }
 
 fn field_text(f: &Option<bt::Field>) -> String {
@@ -183,7 +210,6 @@ fn read_footprint(f: &bt::FootprintInstance, copper_layers: &[String], board_mas
     let mask = |o: &Option<bt::SolderMaskOverrides>| o.as_ref().and_then(|m| m.solder_mask_margin.as_ref()).map(|d| d.value_nm);
     let footprint_mask = mask(&f.overrides.as_ref().and_then(|o| o.solder_mask.clone()));
     let definition = f.definition.as_ref().ok_or_else(|| missing("footprint definition"))?;
-    let clearance_override = f.overrides.as_ref().and_then(|o| o.copper_clearance.as_ref()).map(|d| d.value_nm);
     let mut out = Footprint {
         id: id(&f.id),
         reference: field_text(&f.reference_field),
@@ -193,13 +219,13 @@ fn read_footprint(f: &bt::FootprintInstance, copper_layers: &[String], board_mas
         position: pt(&f.position),
         orientation: normalize_deg(deg(&f.orientation)),
         locked: locked(f.locked()),
+        clearance_override: f.overrides.as_ref().and_then(|o| o.copper_clearance.as_ref()).map(|d| d.value_nm),
         fields: Vec::new(),
         pads: Vec::new(),
         graphics: Vec::new(),
         zones: Vec::new(),
         courtyard_front: Vec::new(),
         courtyard_back: Vec::new(),
-        clearance_override,
     };
     for item in &definition.items {
         if let Some(p) = decode::<bt::Pad>(item) {
@@ -352,6 +378,7 @@ fn read_graphic(g: &bt::BoardGraphicShape) -> Result<Graphic, ApiError> {
         _ => Geometry::Other,
     };
     Ok(Graphic {
+        id: id(&g.id),
         geometry,
         layer: layer_name(g.layer()),
         width: attrs.and_then(|a| a.stroke.as_ref()).map_or(0, |s| nm(&s.width)),
@@ -364,7 +391,7 @@ fn read_zone(z: &bt::Zone, copper_layers: &[String]) -> Result<Zone, ApiError> {
     let on_zone: Vec<String> = z.layers().map(layer_name).collect();
     let (copper, area) = match &z.settings {
         Some(Settings::CopperSettings(c)) => (Some(c), None),
-        Some(Settings::RuleAreaSettings(r)) => (None, Some(RuleArea { tracks: r.keepout_tracks, vias: r.keepout_vias, pour: r.keepout_copper })),
+        Some(Settings::RuleAreaSettings(r)) => (None, Some(RuleArea { tracks: r.keepout_tracks, vias: r.keepout_vias, pour: r.keepout_copper, pads: r.keepout_pads, footprints: r.keepout_footprints })),
         None => (None, None),
     };
     let filled = z.filled_polygons.iter().map(|f| Ok(FilledLayer { layer: layer_name(f.layer()), polygons: read_polygons(&f.shapes)? })).collect::<Result<Vec<_>, ApiError>>()?;

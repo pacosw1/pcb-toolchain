@@ -16,6 +16,9 @@ export const BOARD_JSON_SCHEMA = 'iot-lab.board.v1';
 /** KiCad 10 and the pinned nightly in one image: tools/remote-route-nightly.Dockerfile. */
 const BOARD_JSON_IMAGE = 'iot-lab-route:10.0-nightly-4fe1ca2060';
 
+/** Goes up when the document gains fields under the same schema, so a cached copy without them is not used. */
+const DOCUMENT_REVISION = 2;
+
 const BINARY = 'iotroute-linux-x86_64';
 const DOCUMENT = 'board.json';
 /** To tune. A read takes seconds; 0.62 s to start a server on MC-MAIN, the largest board. */
@@ -58,7 +61,7 @@ export function cacheKey(pcb: string, schema: string, kicadCommit: string, refil
     const file = projectFiles(pcb).find(name => name.endsWith(suffix));
     return `${suffix}=${file ? sha256File(file) : 'absent'}`;
   };
-  const parts = [`.kicad_pcb=${sha256File(pcb)}`, fileHash('.kicad_pro'), fileHash('.kicad_dru'), `schema=${schema}`, `kicad=${kicadCommit}`, `refill=${refill}`];
+  const parts = [`.kicad_pcb=${sha256File(pcb)}`, fileHash('.kicad_pro'), fileHash('.kicad_dru'), `schema=${schema}`, `kicad=${kicadCommit}`, `refill=${refill}`, `revision=${DOCUMENT_REVISION}`];
   return createHash('sha256').update(parts.join('\n')).digest('hex');
 }
 

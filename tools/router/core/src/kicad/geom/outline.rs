@@ -153,11 +153,11 @@ mod tests {
     use super::*;
 
     fn line(a: (Iu, Iu), b: (Iu, Iu)) -> Graphic {
-        Graphic { geometry: Geometry::Segment { start: Pt::new(a.0, a.1), end: Pt::new(b.0, b.1) }, layer: "F.CrtYd".to_string(), width: 50_000, filled: false }
+        Graphic { id: String::new(), geometry: Geometry::Segment { start: Pt::new(a.0, a.1), end: Pt::new(b.0, b.1) }, layer: "F.CrtYd".to_string(), width: 50_000, filled: false }
     }
 
     fn rect(a: (Iu, Iu), b: (Iu, Iu)) -> Graphic {
-        Graphic { geometry: Geometry::Rect { top_left: Pt::new(a.0, a.1), bottom_right: Pt::new(b.0, b.1) }, layer: "F.CrtYd".to_string(), width: 50_000, filled: false }
+        Graphic { id: String::new(), geometry: Geometry::Rect { top_left: Pt::new(a.0, a.1), bottom_right: Pt::new(b.0, b.1) }, layer: "F.CrtYd".to_string(), width: 50_000, filled: false }
     }
 
     #[test]
