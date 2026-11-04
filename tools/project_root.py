@@ -13,7 +13,7 @@ FALLBACK = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def find(start):
     """The nearest folder at or above START that holds hardware-design/boards, else None."""
-    here = Path(os.path.abspath(start))
+    here = Path(os.path.realpath(start))
     for folder in (here, *here.parents):
         if (folder / MARKER).is_dir():
             return folder
@@ -22,10 +22,10 @@ def find(start):
 
 def root(explicit=None, environ=None, cwd=None):
     if explicit:
-        return Path(os.path.abspath(explicit))
+        return Path(os.path.realpath(explicit))
     value = (os.environ if environ is None else environ).get('IOT_LAB')
     if value:
-        return Path(os.path.abspath(value))
+        return Path(os.path.realpath(value))
     try:
         found = find(cwd if cwd is not None else os.getcwd())
     except OSError:

@@ -2,7 +2,7 @@
 // Order: an explicit argument (for example --project) > env IOT_LAB > the nearest parent of the current
 // directory that holds hardware-design/boards > the old file-relative root (the folder above tools/).
 // Use it for project data; imports of sibling modules stay relative.
-import {existsSync} from 'node:fs';
+import {existsSync, realpathSync} from 'node:fs';
 import {join, resolve, dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
@@ -13,8 +13,11 @@ export function findProjectRoot(start) {
     if (dirname(dir) === dir) return null;
   }
 }
+// The real path, like the old file-relative root (import.meta.url is a real path), so that relative()
+// against real input paths never climbs out through a symlink such as /var -> /private/var.
+const real = (p) => { try { return realpathSync(p); } catch { return p; } };
 export function projectRoot(explicit, env = process.env, cwd = process.cwd()) {
-  if (explicit) return resolve(explicit);
-  if (env.IOT_LAB) return resolve(env.IOT_LAB);
-  return findProjectRoot(cwd) ?? fileRoot;
+  if (explicit) return real(resolve(explicit));
+  if (env.IOT_LAB) return real(resolve(env.IOT_LAB));
+  return real(findProjectRoot(cwd) ?? fileRoot);
 }
