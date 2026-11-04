@@ -3,6 +3,7 @@ pub mod api;
 pub mod board;
 pub mod board_json;
 pub mod geom;
+pub mod item_text;
 pub mod pad;
 pub mod raw;
 pub mod sexpr;
