@@ -6,9 +6,10 @@ bundle=$(cd "$self/.." && pwd -P)
 version=$(sed -n '1p' "$bundle/VERSION" 2>/dev/null | cut -d' ' -f1)
 
 project=''
+sync_only=''
 prev=''
 for a in "$@"; do                                   # --project DIR (or --project=DIR) anywhere in the arguments
-  case "$prev" in --project) project=$a ;; esac
+  case "$prev" in --project) project=$a ;; *) [ "$a" = toolchain-sync ] && sync_only=1 ;; esac
   case "$a" in --project=*) project=${a#--project=} ;; esac
   prev=$a
 done
@@ -53,5 +54,5 @@ esac
 if [ -f "$bundle/VERSION" ] && [ -f "$lock" ] && [ "$project" != "$bundle" ]; then   # pinned: release tools/ into the project (read-only)
   node "$bundle/bin/toolchain_sync.mjs" "$project" || exit $?
 fi
-[ "${1:-}" = toolchain-sync ] && exit 0
+[ -z "$sync_only" ] || exit 0
 exec python3 "$bundle/tools/pcb" "$@"
