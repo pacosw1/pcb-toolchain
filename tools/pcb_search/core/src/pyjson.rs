@@ -42,6 +42,18 @@ pub fn indented(value: &Value) -> Result<String> {
     Ok(text)
 }
 
+/// `==` of Python's JSON values: 2 and 2.0 are equal, which `Value`'s own comparison denies.
+pub fn same_value(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Number(x), Value::Number(y)) => x.as_f64() == y.as_f64(),
+        (Value::Array(x), Value::Array(y)) => x.len() == y.len() && x.iter().zip(y).all(|(p, q)| same_value(p, q)),
+        (Value::Object(x), Value::Object(y)) => {
+            x.len() == y.len() && x.iter().all(|(key, p)| y.get(key).is_some_and(|q| same_value(p, q)))
+        }
+        _ => a == b,
+    }
+}
+
 /// The text of a value inside a status line.
 pub fn inline(value: &Value) -> Result<String> {
     let mut text = String::new();
@@ -212,6 +224,12 @@ mod tests {
         let value = parsed(r#"{"b": 1, "a": [2, {}], "c": []}"#);
         assert_eq!(canonical(&value), r#"{"a":[2,{}],"b":1,"c":[]}"#);
         assert_eq!(indented(&value).unwrap(), "{\n  \"b\": 1,\n  \"a\": [\n    2,\n    {}\n  ],\n  \"c\": []\n}");
+    }
+
+    #[test]
+    fn numbers_compare_by_value_not_by_text() {
+        assert!(same_value(&parsed("[1, {\"x\": 2.50}]"), &parsed("[1.0, {\"x\": 2.5}]")));
+        assert!(!same_value(&parsed("{\"x\": 1}"), &parsed("{\"x\": 1, \"y\": 2}")));
     }
 
     #[test]

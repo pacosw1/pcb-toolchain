@@ -16,8 +16,7 @@ use super::eco::{prepare_shift, shift_via};
 use crate::budget::Budget;
 use crate::decimal::Decimal;
 use crate::error::{Invalid, Result, invalid};
-use crate::pyjson::{float_repr, indented};
-use crate::srj::same_value;
+use crate::pyjson::{float_repr, indented, same_value};
 
 const RANKING: &str = "Most reported conflicts targeted, then shortest bridge; move initially away from every conflicting pad anchor";
 const STALE: &str = "stale, incomplete or unattributed native DRC evidence";
