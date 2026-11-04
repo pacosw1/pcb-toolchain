@@ -1,0 +1,39 @@
+#!/bin/sh
+# pcb launcher of an installed pcb-toolchain bundle: find the project, check its toolchain.lock, run tools/pcb.
+set -eu
+self=$(cd "$(dirname "$0")" && pwd -P)
+bundle=$(cd "$self/.." && pwd -P)
+version=$(sed -n '1p' "$bundle/VERSION" 2>/dev/null | cut -d' ' -f1)
+
+project=''
+prev=''
+for a in "$@"; do                                   # --project DIR (or --project=DIR) anywhere in the arguments
+  case "$prev" in --project) project=$a ;; esac
+  case "$a" in --project=*) project=${a#--project=} ;; esac
+  prev=$a
+done
+if [ -z "$project" ] && [ -n "${IOT_LAB:-}" ]; then project=$IOT_LAB; fi
+if [ -z "$project" ]; then
+  d=$(pwd -P)
+  while [ "$d" != / ]; do
+    if [ -d "$d/hardware-design/boards" ]; then project=$d; break; fi
+    d=$(dirname "$d")
+  done
+fi
+[ -n "$project" ] || { echo "pcb: no project (use --project DIR, IOT_LAB, or run inside a project)" >&2; exit 2; }
+
+lock="$project/toolchain.lock"
+if [ -f "$lock" ]; then
+  want=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$lock")
+  if [ "$want" != "$version" ] && [ "${PCB_ALLOW_VERSION_MISMATCH:-}" != 1 ]; then
+    echo "pcb: project $project pins pcb-toolchain $want, this is $version (scripts/install.sh $want)" >&2
+    exit 2
+  fi
+fi
+
+export IOT_LAB="$project" PCB_TOOLCHAIN_ROOT="$bundle" PCB_TOOLCHAIN_VERSION="$version"
+case "$(uname -s)-$(uname -m)" in
+  Darwin-arm64) export IOTROUTE_BIN="$bundle/bin/iotroute-darwin-arm64" ;;
+  Linux-x86_64) export IOTROUTE_BIN="$bundle/bin/iotroute-linux-x86_64" ;;
+esac
+exec python3 "$bundle/tools/pcb" "$@"

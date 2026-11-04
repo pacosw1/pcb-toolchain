@@ -1,0 +1,44 @@
+#!/bin/sh
+# Build a pcb-toolchain release bundle: dist/pcb-toolchain-VERSION.tar.gz + SHA256SUMS. Never publishes.
+#   scripts/build-bundle.sh VERSION [--linux]
+# --linux also builds iotroute for linux-x86_64 on the Hetzner box (root@100.64.0.2, Docker rust image).
+set -eu
+here=$(cd "$(dirname "$0")/.." && pwd -P)
+version=${1:?usage: build-bundle.sh VERSION [--linux]}
+linux=${2:-}
+sha=$(git -C "$here" rev-parse HEAD)
+[ -z "$(git -C "$here" status --porcelain)" ] || { echo 'FAIL: working tree not clean' >&2; exit 2; }
+name="pcb-toolchain-$version"
+stage=$(mktemp -d)
+out="$stage/$name"
+mkdir -p "$out/bin" "$here/dist"
+echo "START: copy tool tree"
+(cd "$here" && git archive --format=tar HEAD tools bin) | tar -x -C "$out"
+echo "$version $sha" > "$out/VERSION"
+echo "START: iotroute darwin-arm64"
+(cd "$here/tools/router/core" && cargo build --release --quiet)
+cp "$here/tools/router/core/target/release/iotroute" "$out/bin/iotroute-darwin-arm64"
+if [ "$linux" = --linux ]; then
+  echo "START: iotroute linux-x86_64 (Hetzner)"
+  ssh root@100.64.0.2 'rm -rf /tmp/iotroute-src && mkdir -p /tmp/iotroute-src'
+  (cd "$here/tools/router/core" && git archive --format=tar HEAD .) | ssh root@100.64.0.2 'tar -x -C /tmp/iotroute-src'
+  ssh root@100.64.0.2 'docker run --rm -v /tmp/iotroute-src:/src -w /src rust:1 cargo build --release --quiet'
+  scp -q root@100.64.0.2:/tmp/iotroute-src/target/release/iotroute "$out/bin/iotroute-linux-x86_64"
+fi
+echo "START: manifest"
+python3 - "$out" "$version" "$sha" <<'EOF'
+import hashlib, json, os, sys
+root, version, sha = sys.argv[1:]
+files = {}
+for d, _, fs in os.walk(root):
+    for f in sorted(fs):
+        p = os.path.join(d, f)
+        files[os.path.relpath(p, root)] = hashlib.sha256(open(p, 'rb').read()).hexdigest()
+json.dump({'schema': 'pcb-toolchain.manifest.v1', 'version': version, 'source_sha': sha, 'files': files},
+          open(os.path.join(root, 'manifest.json'), 'w'), indent=1, sort_keys=True)
+print(len(files), 'files')
+EOF
+tar -C "$stage" -czf "$here/dist/$name.tar.gz" "$name"
+(cd "$here/dist" && shasum -a 256 "$name.tar.gz" >> SHA256SUMS && tail -1 SHA256SUMS)
+rm -rf "$stage"
+echo "PASS: dist/$name.tar.gz"
