@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { copyFileSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { boardJson, cacheKey, jobArguments, pinnedKicadCommit, type BoardFetcher } from './board-json.ts';
 
 const COMMIT = 'a'.repeat(40);
+const SCHEMA = 'iot-lab.board.v1';
+const fileHash = (file: string) => createHash('sha256').update(readFileSync(file)).digest('hex');
 
 function project(t: TestContext) {
   const root = mkdtempSync(join(tmpdir(), 'board-json-'));
@@ -17,11 +20,12 @@ function project(t: TestContext) {
   return { root, pcb, cacheDir: join(root, 'cache') };
 }
 
-function counting(document: object = { schema_version: 1, nets: [] }) {
-  const calls: string[][] = [];
+/** A fetcher that answers for whatever board it is given, with `over` on top. */
+function counting(over: object = {}) {
+  const calls: { pcb: string; project: string[] }[] = [];
   const fetcher: BoardFetcher = (input, file) => {
-    calls.push(input.project);
-    writeFileSync(file, JSON.stringify(document));
+    calls.push(input);
+    writeFileSync(file, JSON.stringify({ schema: SCHEMA, kicad_commit: COMMIT, board_sha256: fileHash(input.pcb), ...over }));
   };
   return { calls, fetcher };
 }
@@ -30,15 +34,15 @@ test('an unchanged board is fetched once', t => {
   const { pcb, cacheDir } = project(t);
   const { calls, fetcher } = counting();
   const options = { cacheDir, kicadCommit: COMMIT, fetcher };
-  assert.deepEqual(boardJson(pcb, options), { schema_version: 1, nets: [] });
-  assert.deepEqual(boardJson(pcb, options), { schema_version: 1, nets: [] });
+  assert.equal(boardJson(pcb, options).schema, SCHEMA);
+  assert.equal(boardJson(pcb, options).schema, SCHEMA);
   assert.equal(calls.length, 1);
-  assert.equal(calls[0]!.length, 2);
+  assert.equal(calls[0]!.project.length, 2);
 });
 
 test('a change to the board, project, rules, schema or KiCad commit misses the cache', t => {
   const { root, pcb } = project(t);
-  const key = (schema = 1, commit = COMMIT) => cacheKey(pcb, schema, commit);
+  const key = (schema = SCHEMA, commit = COMMIT) => cacheKey(pcb, schema, commit);
   const keys = new Set([key()]);
   writeFileSync(pcb, '(kicad_pcb (version 2))');
   keys.add(key());
@@ -46,9 +50,10 @@ test('a change to the board, project, rules, schema or KiCad commit misses the c
   keys.add(key());
   writeFileSync(join(root, 'X.kicad_dru'), '(version 1)\n(rule a)');
   keys.add(key());
-  keys.add(key(2));
-  keys.add(key(1, 'b'.repeat(40)));
-  assert.equal(keys.size, 6);
+  keys.add(key('iot-lab.board.v2'));
+  keys.add(key(SCHEMA, 'b'.repeat(40)));
+  keys.add(cacheKey(pcb, SCHEMA, COMMIT, true));
+  assert.equal(keys.size, 7);
 });
 
 test('a board with no project still has a key, and adding a project changes it', t => {
@@ -56,16 +61,42 @@ test('a board with no project still has a key, and adding a project changes it',
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const pcb = join(root, 'Y.kicad_pcb');
   writeFileSync(pcb, '(kicad_pcb)');
-  const bare = cacheKey(pcb, 1, COMMIT);
+  const bare = cacheKey(pcb, SCHEMA, COMMIT);
   writeFileSync(join(root, 'Y.kicad_pro'), '{}');
-  assert.notEqual(cacheKey(pcb, 1, COMMIT), bare);
+  assert.notEqual(cacheKey(pcb, SCHEMA, COMMIT), bare);
 });
 
-test('a wrong schema is refused and not kept', t => {
+test('a wrong schema, KiCad commit or board hash is refused and not kept', t => {
   const { pcb, cacheDir } = project(t);
-  const { fetcher } = counting({ schema_version: 2 });
-  assert.throws(() => boardJson(pcb, { cacheDir, kicadCommit: COMMIT, fetcher }), /schema 2, this tool reads 1/);
-  assert.deepEqual(readdirSync(cacheDir), []);
+  const refused = (over: object, message: RegExp) => {
+    assert.throws(() => boardJson(pcb, { cacheDir, kicadCommit: COMMIT, fetcher: counting(over).fetcher }), message);
+    assert.deepEqual(readdirSync(cacheDir), []);
+  };
+  refused({ schema: 'iot-lab.board.v2' }, /schema iot-lab\.board\.v2, this tool reads/);
+  refused({ kicad_commit: 'b'.repeat(40) }, /not the pinned/);
+  refused({ board_sha256: 'c'.repeat(64) }, /of another file/);
+});
+
+test('refill reads a refilled copy, under its own key, and the source stays as it was', t => {
+  const { root, pcb, cacheDir } = project(t);
+  const { calls, fetcher } = counting();
+  const refiller = (source: string, outDir: string) => {
+    const copy = join(outDir, 'X.kicad_pcb');
+    copyFileSync(source, copy);
+    writeFileSync(copy, '(kicad_pcb (zone (filled)))');
+    copyFileSync(join(root, 'X.kicad_pro'), join(outDir, 'X.kicad_pro'));
+    return copy;
+  };
+  const before = readFileSync(pcb, 'utf8');
+  const options = { cacheDir, kicadCommit: COMMIT, fetcher, refill: true, refiller };
+  boardJson(pcb, options);
+  boardJson(pcb, options);
+  assert.equal(calls.length, 1);
+  assert.notEqual(calls[0]!.pcb, pcb);
+  assert.equal(readFileSync(pcb, 'utf8'), before);
+  boardJson(pcb, { cacheDir, kicadCommit: COMMIT, fetcher });
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1]!.pcb, pcb);
 });
 
 test('a failed fetch leaves nothing in the cache', t => {

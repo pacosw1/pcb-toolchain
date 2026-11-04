@@ -6,12 +6,15 @@ import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { projectName } from './board-edit.ts';
+import { projectName, saveBoard } from './board-edit.ts';
+import type { BoardDocument } from './board-types.ts';
 import { sha256File } from './json-file.ts';
 import { fileRoot } from './project-root.mjs';
 
-/** The version this code reads. It must equal the schema_version `iotroute board-json` writes. */
-export const BOARD_JSON_SCHEMA = 1;
+/** The schema this code reads, as `iotroute board-json` names it. */
+export const BOARD_JSON_SCHEMA = 'iot-lab.board.v1';
+/** KiCad 10 and the pinned nightly in one image: tools/remote-route-nightly.Dockerfile. */
+const BOARD_JSON_IMAGE = 'iot-lab-route:10.0-nightly-4fe1ca2060';
 
 const BINARY = 'iotroute-linux-x86_64';
 const DOCUMENT = 'board.json';
@@ -20,13 +23,17 @@ const JOB_TIMEOUT_S = 300;
 const JOB_CPUS = 1;
 const JOB_MEM_GB = 2;
 
-export interface BoardDocument { schema_version: number }
-
 export interface FetchInput { pcb: string; project: string[]; kicadCommit: string }
 /** Writes the board's JSON to `file`. */
 export type BoardFetcher = (input: FetchInput, file: string) => void;
 
-export interface BoardJsonOptions { cacheDir?: string; schema?: number; kicadCommit?: string; fetcher?: BoardFetcher }
+export interface BoardJsonOptions {
+  cacheDir?: string; schema?: string; kicadCommit?: string; fetcher?: BoardFetcher;
+  /** Read a copy whose zones KiCad 10 refilled. For checks of filled copper: the file may hold a stale fill. */
+  refill?: boolean;
+  /** The refill step; tests replace it. */
+  refiller?: (pcb: string, outDir: string) => string;
+}
 
 const defaultCacheDir = (): string =>
   join(process.env.XDG_CACHE_HOME || join(homedir(), '.cache'), 'pcb-toolchain', 'board-json');
@@ -46,37 +53,46 @@ function projectFiles(pcb: string): string[] {
   return ['kicad_pro', 'kicad_dru'].map(suffix => join(dirname(pcb), `${project}.${suffix}`)).filter(file => existsSync(file));
 }
 
-export function cacheKey(pcb: string, schema: number, kicadCommit: string): string {
+export function cacheKey(pcb: string, schema: string, kicadCommit: string, refill = false): string {
   const fileHash = (suffix: string) => {
     const file = projectFiles(pcb).find(name => name.endsWith(suffix));
     return `${suffix}=${file ? sha256File(file) : 'absent'}`;
   };
-  const parts = [`.kicad_pcb=${sha256File(pcb)}`, fileHash('.kicad_pro'), fileHash('.kicad_dru'), `schema=${schema}`, `kicad=${kicadCommit}`];
+  const parts = [`.kicad_pcb=${sha256File(pcb)}`, fileHash('.kicad_pro'), fileHash('.kicad_dru'), `schema=${schema}`, `kicad=${kicadCommit}`, `refill=${refill}`];
   return createHash('sha256').update(parts.join('\n')).digest('hex');
 }
 
-function checkedDocument(text: string, schema: number, source: string): BoardDocument {
+function checkedDocument(text: string, schema: string, kicadCommit: string, source: string): BoardDocument {
   const document = JSON.parse(text) as BoardDocument;
-  if (document.schema_version !== schema) {
-    throw new Error(`${source}: board JSON schema ${document.schema_version}, this tool reads ${schema}`);
-  }
+  if (document.schema !== schema) throw new Error(`${source}: board JSON schema ${document.schema}, this tool reads ${schema}`);
+  if (document.kicad_commit !== kicadCommit) throw new Error(`${source}: read by KiCad ${document.kicad_commit}, not the pinned ${kicadCommit}`);
   return document;
+}
+
+/** KiCad 10 refills every zone of a copy and saves it; the source is only read. */
+function refilledCopy(pcb: string, outDir: string): string {
+  return saveBoard(pcb, readFileSync(pcb, 'utf8'), outDir).board;
 }
 
 /** The board's JSON, from the cache when nothing in the key changed. A file that fails the check is never kept. */
 export function boardJson(pcb: string, options: BoardJsonOptions = {}): BoardDocument {
   const { cacheDir = defaultCacheDir(), schema = BOARD_JSON_SCHEMA, kicadCommit = pinnedKicadCommit(), fetcher = fetchThroughDaemon } = options;
-  const cached = join(cacheDir, `${cacheKey(pcb, schema, kicadCommit)}.json`);
-  if (existsSync(cached)) return checkedDocument(readFileSync(cached, 'utf8'), schema, cached);
+  const { refill = false, refiller = refilledCopy } = options;
+  const cached = join(cacheDir, `${cacheKey(pcb, schema, kicadCommit, refill)}.json`);
+  if (existsSync(cached)) return checkedDocument(readFileSync(cached, 'utf8'), schema, kicadCommit, cached);
   mkdirSync(cacheDir, { recursive: true });
   const fresh = `${cached}.${process.pid}`;
+  const work = mkdtempSync(join(tmpdir(), 'board-refill-'));
   try {
-    fetcher({ pcb, project: projectFiles(pcb), kicadCommit }, fresh);
-    const document = checkedDocument(readFileSync(fresh, 'utf8'), schema, pcb);
+    const source = refill ? refiller(pcb, work) : pcb;
+    fetcher({ pcb: source, project: projectFiles(source), kicadCommit }, fresh);
+    const document = checkedDocument(readFileSync(fresh, 'utf8'), schema, kicadCommit, pcb);
+    if (document.board_sha256 !== sha256File(source)) throw new Error(`${pcb}: the board JSON is of another file`);
     renameSync(fresh, cached);
     return document;
   } finally {
     rmSync(fresh, { force: true });
+    rmSync(work, { recursive: true, force: true });
   }
 }
 
@@ -96,12 +112,10 @@ function jobClient(toolchain: string): string {
 
 /**
  * One daemon job. The client stages a project and its tools; here they are an empty stand-in, because the read needs only the
- * board files and the binary. KICAD_API_IMAGE names the pinned image. An error stops the tool: a read never falls back to the Mac.
+ * board files and the binary. An error stops the tool: a read never falls back to the Mac.
  */
 export function fetchThroughDaemon(input: FetchInput, file: string): void {
   const toolchain = process.env.PCB_TOOLCHAIN_ROOT || fileRoot;
-  const image = process.env.KICAD_API_IMAGE;
-  if (!image) throw new Error('board JSON: set KICAD_API_IMAGE to the pinned KiCad image');
   const binary = join(toolchain, 'bin', BINARY);
   if (!existsSync(binary)) throw new Error(`board JSON: no ${binary}`);
   const standIn = mkdtempSync(join(tmpdir(), 'board-json-'));
@@ -110,7 +124,7 @@ export function fetchThroughDaemon(input: FetchInput, file: string): void {
     mkdirSync(join(standIn, 'job'));
     const results = join(standIn, 'results');
     const run = spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', jobClient(toolchain),
-      ...jobArguments(input, binary, image, results)],
+      ...jobArguments(input, binary, BOARD_JSON_IMAGE, results)],
       { encoding: 'utf8', env: { ...process.env, IOT_LAB: standIn, PCB_TOOLCHAIN_ROOT: standIn } });
     if (run.status !== 0) throw new Error(`board JSON job of ${input.pcb} ended with ${run.status}: ${run.stderr.slice(-500)}`);
     copyFileSync(join(results, 'out', DOCUMENT), file);
