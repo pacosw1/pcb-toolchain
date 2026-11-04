@@ -16,7 +16,7 @@ export function testConfig(dataDir: string, over: Partial<Config> = {}): Config 
     bind: '127.0.0.1', port: 0, token: TOKEN, dataDir, instance: 'test', images: ['img:1'],
     cpuBudget: 16, memBudgetGb: 16, cgroupParent: '', defaultCpus: 8, defaultMemGb: 8, defaultTimeoutS: 300,
     maxTimeoutS: 21600, defaultRetries: 2, maxRetriesCap: 5, retryBackoffS: 30, cpuBusyMaxPct: 95, defaultQueueWaitS: 3600,
-    maxQueueWaitS: 21600, memFloorFraction: 0.2, minFreeGb: 20, maxUploadMb: 1, retainDays: 7, jobUid: null, tickMs: 20,
+    maxQueueWaitS: 21600, memFloorFraction: 0.2, minFreeGb: 20, maxUploadMb: 1, blobKeepDays: 30, requestTimeoutS: 3600, retainDays: 7, jobUid: null, tickMs: 20,
     pidsLimit: 4096, nofile: 1024, defaultDiskGb: 10, maxDiskGb: 50, diskCheckS: 5, maxQueued: 64, maxUploads: 2, maxStreams: 64,
     ...over,
   };

@@ -5,6 +5,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { BlobStore, isSha256, parseManifest } from './blobs.ts';
 import { exec, lowPriority } from './docker.ts';
 import type { JobManager } from './manager.ts';
 import { validateSpec } from './manager.ts';
@@ -16,6 +17,8 @@ import type { JobRecord } from './types.ts';
 const MAX_CONNECTIONS = 256;
 /** Most recent jobs in GET /jobs. A default to tune. */
 const MAX_LIST = 500;
+/** A manifest or a hash list as JSON. Above the 300 kB of a real job. A default to tune. */
+const MAX_JSON_BYTES = 16 * 1024 * 1024;
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const sha = (s: string): Buffer => createHash('sha256').update(s).digest();
@@ -37,6 +40,21 @@ export async function checkTar(file: string, signal: AbortSignal): Promise<void>
   if (r.code !== 0) throw new HttpError(400, 'body is not a gzip tar');
   for (const name of r.stdout.split('\n')) {
     if (name.startsWith('/') || name.split('/').includes('..')) throw new HttpError(400, `unsafe path in tar: ${name}`);
+  }
+}
+
+async function readJson(req: http.IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  for await (const chunk of req as AsyncIterable<Buffer>) {
+    bytes += chunk.length;
+    if (bytes > MAX_JSON_BYTES) throw new HttpError(413, `body over ${MAX_JSON_BYTES} bytes`);
+    chunks.push(chunk);
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch {
+    throw new HttpError(400, 'body is not JSON');
   }
 }
 
@@ -159,7 +177,7 @@ class Slots {
   }
 }
 
-async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: JobManager, uploads: Slots, streams: Slots): Promise<void> {
+async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: JobManager, uploads: Slots, streams: Slots, blobs: BlobStore): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://x');
   const method = req.method ?? 'GET';
   if (url.pathname === '/status' && method === 'GET') return json(res, 200, mgr.status());
@@ -170,6 +188,22 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: J
       throw new HttpError(400, `limit must be an integer in 1..${MAX_LIST}`);
     }
     return json(res, 200, [...mgr.jobs.values()].sort((a, b) => b.seq - a.seq).slice(0, limit));
+  }
+  if (url.pathname === '/blobs/missing' && method === 'POST') {
+    const hashes = ((await readJson(req)) as { sha256?: unknown } | null)?.sha256;
+    if (!Array.isArray(hashes) || !hashes.every(isSha256)) throw new HttpError(400, 'sha256 must be a list of hashes');
+    return json(res, 200, { missing: blobs.missing(hashes) });
+  }
+  const blob = /^\/blobs\/([^/]+)$/.exec(url.pathname);
+  if (blob && method === 'PUT') {
+    if (!isSha256(blob[1])) throw new HttpError(400, 'bad sha256');
+    const release = uploads.take();
+    try {
+      await blobs.put(req, blob[1], mgr.cfg.maxUploadMb * 1024 * 1024);
+      return json(res, 201, { sha256: blob[1] });
+    } finally {
+      release();
+    }
   }
   if (url.pathname === '/jobs' && method === 'POST') {
     const header = req.headers['x-job-spec'];
@@ -191,7 +225,12 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: J
     res.once('close', () => left.abort());
     let file = '';
     try {
-      file = await receive(req, mgr.store.incomingDir(), maxBytes);
+      if (req.headers['content-type'] === 'application/json') {
+        file = await blobs.buildTar(parseManifest(await readJson(req)), maxBytes, left.signal);
+        blobs.sweep();
+      } else {
+        file = await receive(req, mgr.store.incomingDir(), maxBytes);
+      }
       await checkTar(file, left.signal);
       return json(res, 201, mgr.submit(spec, file));
     } finally {
@@ -229,12 +268,13 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: J
 export function createServer(mgr: JobManager): http.Server {
   const uploads = new Slots('uploads', mgr.cfg.maxUploads);
   const streams = new Slots('streams', mgr.cfg.maxStreams);
+  const blobs = new BlobStore(mgr.store.blobsDir(), mgr.store.incomingDir(), mgr.cfg.blobKeepDays);
   const server = http.createServer((req, res) => {
     if (!authorized(req, mgr.cfg.token)) {
       res.setHeader('connection', 'close');
       return json(res, 401, { error: 'unauthorized' });
     }
-    route(req, res, mgr, uploads, streams).catch((e: unknown) => {
+    route(req, res, mgr, uploads, streams, blobs).catch((e: unknown) => {
       const status = e instanceof HttpError ? e.status : 500;
       if (status === 500) console.error(e);
       if (res.headersSent) return res.destroy();
@@ -243,5 +283,7 @@ export function createServer(mgr: JobManager): http.Server {
     });
   });
   server.maxConnections = MAX_CONNECTIONS;
+  // Node's default of 300 s fails a large file on a slow link; the file then starts again from nothing.
+  server.requestTimeout = mgr.cfg.requestTimeoutS * 1000;
   return server;
 }

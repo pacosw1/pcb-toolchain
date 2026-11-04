@@ -27,6 +27,7 @@ export class Store {
 
   jobsDir = (): string => path.join(this.root, 'jobs');
   incomingDir = (): string => path.join(this.root, 'incoming');
+  blobsDir = (): string => path.join(this.root, 'blobs');
   jobDir = (id: string): string => path.join(this.jobsDir(), id);
   inputTar = (id: string): string => path.join(this.jobDir(id), 'input.tar.gz');
   eventsFile = (id: string): string => path.join(this.jobDir(id), 'events.jsonl');
