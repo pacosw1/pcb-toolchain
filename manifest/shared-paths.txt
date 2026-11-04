@@ -12,7 +12,6 @@ tools/PCB-ENGINEERING.md
 tools/PCB-ML.md
 tools/PLACEMENT-CONSTRAINTS.md
 tools/PLACEMENT-OUTCOMES.md
-tools/PROGRESS.md
 tools/RELEASE-WORKFLOW.md
 tools/ROUTE-DECISIONS.md
 tools/SCHEMATIC-CONTRACT.md
@@ -30,10 +29,8 @@ tools/blocks.py
 tools/board3d/index.html
 tools/board_3d.sh
 tools/board_frame.py
-tools/board_gpu.py
 tools/board_labels.py
 tools/board_route_rules.py
-tools/board_stage.py
 tools/board_uuids.py
 tools/brand_mark.py
 tools/build-bom-verified.mjs
@@ -84,7 +81,6 @@ tools/grid_finish.py
 tools/grid_ripup.py
 tools/hard_exit.py
 tools/ibis_ramp.py
-tools/import-route-preview.py
 tools/import_nets.py
 tools/import_pose_guard.py
 tools/import_replay_guard.py
@@ -353,10 +349,6 @@ tools/placer/viewer.py
 tools/placer/wirelen.py
 tools/port_labels.ts
 tools/pq_cadlib.py
-tools/progress.py
-tools/progress.sh
-tools/progress.tcss
-tools/progress_tui.py
 tools/project_root.py
 tools/publish-release.mjs
 tools/real_board_regression.py
@@ -440,7 +432,6 @@ tools/run_record.py
 tools/schematic_contract.py
 tools/schematic_contract_smoke.py
 tools/set_stackup.py
-tools/setup-progress.py
 tools/si_pairs.py
 tools/si_planes.py
 tools/silk_jlc.py
@@ -462,8 +453,6 @@ tools/test_block_qualification.py
 tools/test_block_reuse.py
 tools/test_blocks.py
 tools/test_board_frame.py
-tools/test_board_gpu.py
-tools/test_board_stage.py
 tools/test_board_uuids.py
 tools/test_compact_immutable.py
 tools/test_design_contract.py
@@ -525,8 +514,6 @@ tools/test_pcbtool.py
 tools/test_physical_current.py
 tools/test_pin_escape_flow.py
 tools/test_placement_outcomes.py
-tools/test_progress.py
-tools/test_progress_tui.py
 tools/test_project_root.py
 tools/test_real_board_regression.py
 tools/test_refresh_courtyards.py

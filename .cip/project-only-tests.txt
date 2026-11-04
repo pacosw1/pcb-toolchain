@@ -9,8 +9,6 @@ test_si_pairs_pcbnew      needs pcbnew
 test_si_planes_pcbnew     needs pcbnew
 test_si_projection_native needs pcbnew
 test_si_spatial_native    needs pcbnew
-test_board_gpu            needs trimesh + moderngl
-test_progress_tui         needs rich + textual
 test_mandatory_preflight  needs project plugin base_b_route_rules.py
 test_pcb_search_regional  needs project plugin env_routing_rules.py
 test_compact_immutable    needs hardware-design/boards data
@@ -23,7 +21,6 @@ test_si_junctions         needs hardware-design/registry/datasheets data
 test_si_planes            needs hardware-design/registry/datasheets data
 test_si_projection        needs hardware-design/registry/datasheets data
 test_pcbtool              needs hardware-design/registry/datasheets data
-test_board_stage          needs hardware-design/boards data
 test_pcb_engine_integration needs hardware-design/boards data
 test_pcb_iotroute         needs hardware-design/boards data
 test_board_frame          needs Pillow
