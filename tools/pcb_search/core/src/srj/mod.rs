@@ -3,6 +3,7 @@
 //! Backends add their own annotations, so documents stay `serde_json::Value` and pass through whole. Only the geometry
 //! these checks need is read into types.
 
+pub mod capacity;
 pub mod check;
 pub mod crossings;
 pub mod repair;

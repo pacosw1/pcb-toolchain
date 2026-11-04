@@ -310,7 +310,9 @@ tools/pcb_search/core/src/native/eco/tests.rs
 tools/pcb_search/core/src/native/mod.rs
 tools/pcb_search/core/src/patterns.rs
 tools/pcb_search/core/src/patterns/tests.rs
+tools/pcb_search/core/src/process.rs
 tools/pcb_search/core/src/pyjson.rs
+tools/pcb_search/core/src/srj/capacity.rs
 tools/pcb_search/core/src/srj/check.rs
 tools/pcb_search/core/src/srj/crossings.rs
 tools/pcb_search/core/src/srj/mod.rs

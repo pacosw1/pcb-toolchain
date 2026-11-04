@@ -13,6 +13,7 @@ use crate::error::{Invalid, Result, invalid};
 use crate::pyjson::fingerprint;
 
 const USAGE: &str = "usage: pcbsearch route INPUT --output OUTPUT --budget-s SECONDS
+       pcbsearch route-srj INPUT --output OUTPUT --budget-s SECONDS --adapter DIR [--pipeline NAME] [--capture-stages yes]
        pcbsearch scope FOLDER RESULT OUTPUT
        pcbsearch repair FOLDER RESULT OUTPUT --budget-s SECONDS
        pcbsearch native-candidate SOURCE CANDIDATE OUT --net NET...
@@ -28,6 +29,7 @@ const EXIT_STUCK: u8 = 3;
 pub fn run(args: &[String]) -> u8 {
     match args.split_first().map(|(mode, rest)| (mode.as_str(), rest)) {
         Some(("route", rest)) => report_fail(route::run(rest)),
+        Some(("route-srj", rest)) => report_fail(route::run_srj(rest)),
         Some(("scope", rest)) => srj::scope(rest),
         Some(("repair", rest)) => srj::repair(rest),
         Some(("native-candidate", rest)) => native::candidate(rest),
