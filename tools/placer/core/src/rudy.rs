@@ -154,7 +154,7 @@ struct Undo {
 
 /// HPWL and congestion of the current layout.
 pub struct NetState {
-    demand: Vec<f64>,
+    pub demand: Vec<f64>,
     records: Vec<NetRecord>,
     /// Pad cells of the moved units before the move.
     pad_cells_before: Vec<Vec<usize>>,

@@ -259,7 +259,7 @@ impl<'m> Evaluator<'m> {
         (mask.locked_area(edge_pads, layers), mask.gap_area(self.layout.world(i), &self.model.units[i].domain_rects))
     }
 
-    fn forbidden_area(&self, i: usize) -> f64 {
+    pub fn forbidden_area(&self, i: usize) -> f64 {
         let s = &self.model.units[i];
         let place = self.layout.place(i);
         let pads = world(&s.pad_rects, place);

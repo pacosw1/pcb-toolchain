@@ -8,7 +8,7 @@ use crate::numeric::{compensated, pairwise};
 use std::ops::Range;
 
 /// 1 - 2x^2 for |x| <= 0.5, 2 (1 - |x|)^2 for |x| <= 1, else 0.
-fn bump(x: f64) -> f64 {
+pub fn bump(x: f64) -> f64 {
     let a = x.abs();
     if a <= 0.5 {
         1.0 - 2.0 * a * a
