@@ -4,12 +4,13 @@ import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { unwatchAll, unwatchBoard, watchBoard } from './boardWatch.ts'
 import { exportGlb, version as kicadVersion } from './kicad/cli.ts'
 import { bbox, load } from './kicad/board.ts'
 import { bom, boardParts } from './parts.ts'
 import { indexFor } from './partsIndex.ts'
 import { Project } from './project.ts'
-import { Registry } from './rpc.ts'
+import { Registry, currentClient } from './rpc.ts'
 import { routingPolicy, runs } from './runs.ts'
 import type { RoutingPolicy } from './runs.ts'
 
@@ -34,7 +35,9 @@ registry.method('engine.info', [], 0, async () => ({
 }))
 
 export function projectOpen(root: string): ReturnType<Project['info']> {
-  project = new Project(root)
+  const next = new Project(root)
+  if (project && project.root !== next.root) unwatchAll()
+  project = next
   runs.load(project.root)                           // runs of earlier engine processes (durable run records)
   return project.info()
 }
@@ -45,6 +48,12 @@ registry.method('board.geometry', ['pcb'], 1, (pcb: string) => {
   const geo = load(needProject().resolve(pcb))
   return { ...geo, bbox: bbox(geo), pcb }
 })
+
+/** Watch a board file for this client: board.changed / board.invalid notifications follow (boardWatch.ts). Ends with
+ *  board.unwatch or when the client disconnects. Returns the file's hash now. */
+registry.method('board.watch', ['pcb'], 1, (pcb: string) => watchBoard(currentClient(), pcb, needProject().resolve(pcb)))
+
+registry.method('board.unwatch', ['pcb'], 1, (pcb: string) => unwatchBoard(currentClient(), pcb))
 
 /** BOM of a board revision joined to that revision's own BOM CSV (`bom` overrides it, project-relative). */
 registry.method('board.bom', ['pcb', 'bom'], 1, (pcb: string, csv?: string | null) => bom(needProject(), pcb, csv ?? null))

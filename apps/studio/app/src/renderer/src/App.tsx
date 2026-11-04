@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { EngineStatus } from '../../preload/types'
 import { BoardView, type Selection } from './BoardView'
 import { BoardPicker } from './BoardPicker'
@@ -134,6 +134,12 @@ function App(): React.JSX.Element {
   const [findings, setFindings] = useState<Finding[]>([])
   const [focusPoint, setFocusPoint] = useState<{ x: number; y: number; span?: number } | null>(null)
   const [reload, setReload] = useState(0) // bumped after an adopt replaced the board file
+  const [live, setLive] = useState(true)
+  const [liveGeo, setLiveGeo] = useState<Geometry | null>(null) // the geo that came from a live refresh
+  const [liveError, setLiveError] = useState<string | null>(null)
+  const [updatedAt, setUpdatedAt] = useState<number | null>(null)
+  const liveSeq = useRef(0) // only the newest live refresh may land
+  const liveResume = useRef(false) // switched back on: the file may have changed while off
   const mention = selection
     ? `@${selection.ref}.${selection.pad.num}${selection.pad.net ? ` #${selection.pad.net}` : ''}`
     : null
@@ -170,6 +176,63 @@ function App(): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, status?.restarts])
 
+  const refreshBoard = useCallback((p: string) => {
+    const seq = ++liveSeq.current
+    window.api.engine
+      .call('board.geometry', { pcb: p })
+      .then((r) => {
+        if (seq !== liveSeq.current) return
+        const g = r as Geometry
+        setLiveGeo(g)
+        setGeo(g)
+        setUpdatedAt(Date.now())
+        setLiveError(null)
+        setError(null)
+        return window.api.engine.call('board.bom', { pcb: p }).then((b) => {
+          if (seq === liveSeq.current) setBom(b as Bom)
+        })
+      })
+      .catch((e) => {
+        // The file changed again under the read: the last good board stays, the next save refreshes it.
+        if (seq === liveSeq.current) setLiveError(`Showing the last good board: ${e}`)
+      })
+  }, [])
+
+  // Must stay above the board load effect: board.watch reaches the engine first and takes its baseline hash there, so a
+  // save during the load still arrives as board.changed.
+  useEffect(() => {
+    if (!pcb || !ready || !project || !live) return
+    setLiveError(null)
+    const off = window.api.engine.onNotify((n) => {
+      if (n.params.pcb !== pcb) return
+      if (n.method === 'board.changed') refreshBoard(pcb)
+      else if (n.method === 'board.invalid') {
+        liveSeq.current++
+        setLiveError(`Showing the last good board: ${n.params.error}`)
+      }
+    })
+    let closed = false
+    window.api.engine.call('board.watch', { pcb }).catch((e) => {
+      if (!closed) setLiveError(`Live view stopped: ${e}`)
+    })
+    if (liveResume.current) {
+      liveResume.current = false
+      refreshBoard(pcb)
+    }
+    return () => {
+      closed = true
+      off()
+      liveSeq.current++
+      window.api.engine.call('board.unwatch', { pcb }).catch(() => undefined) // a dead engine has no watch left
+    }
+  }, [pcb, ready, project, live, refreshBoard])
+
+  const toggleLive = (): void => {
+    liveResume.current = !live
+    setLiveError(null)
+    setLive(!live)
+  }
+
   useEffect(() => {
     if (!pcb || !ready || !project) return
     setFindings([])
@@ -179,7 +242,10 @@ function App(): React.JSX.Element {
     setError(null)
     window.api.engine
       .call('board.geometry', { pcb })
-      .then((g) => setGeo(g as Geometry))
+      .then((g) => {
+        setGeo(g as Geometry)
+        setUpdatedAt(Date.now())
+      })
       .catch((e) => setError(String(e)))
       .finally(() => setBusy(false))
     window.api.engine
@@ -294,7 +360,15 @@ function App(): React.JSX.Element {
             </div>
           ) : null}
           {geo && tab === 'board' ? (
-            <BoardView geo={geo} onSelect={setSelection} focusRef={focus} findings={findings} focusPoint={focusPoint} />
+            <BoardView
+              geo={geo}
+              onSelect={setSelection}
+              focusRef={focus}
+              findings={findings}
+              focusPoint={focusPoint}
+              live={{ on: live, updatedAt, error: liveError, onToggle: toggleLive }}
+              liveRefresh={geo === liveGeo}
+            />
           ) : geo && tab === '3d' && pcb ? (
             <Viewer3D pcb={pcb} />
           ) : geo && tab === 'parts' && bom ? (

@@ -2,6 +2,33 @@
 // view transform. Build once per geometry (buildCache) so pan and zoom only replay the paths.
 import type { Footprint, Geometry, Pad, Track } from './types'
 
+/** What the viewer has picked: a pad, a track (net highlight) or a whole part (search). */
+export type Pick =
+  | { kind: 'pad'; fp: Footprint; pad: Pad }
+  | { kind: 'track'; track: Track }
+  | { kind: 'part'; fp: Footprint }
+
+/** The same pick in a newer geometry of the board, or null when the item is gone. A part is found by reference, a pad
+ *  by reference and number (the nearest one when several share the number), a track by its exact ends and layer. */
+export function rebasePick(p: Pick, geo: Geometry): Pick | null {
+  if (p.kind === 'track') {
+    const t = p.track
+    const track = geo.tracks.find(
+      (n) => n.layer === t.layer && n.x1 === t.x1 && n.y1 === t.y1 && n.x2 === t.x2 && n.y2 === t.y2
+    )
+    return track ? { kind: 'track', track } : null
+  }
+  const fp = geo.footprints.find((f) => f.ref === p.fp.ref)
+  if (!fp) return null
+  if (p.kind === 'part') return { kind: 'part', fp }
+  const old = p.pad
+  const dist = (n: Pad): number => Math.hypot(n.x - old.x, n.y - old.y)
+  const pad = fp.pads
+    .filter((n) => n.num === old.num)
+    .reduce<Pad | null>((best, n) => (!best || dist(n) < dist(best) ? n : best), null)
+  return pad ? { kind: 'pad', fp, pad } : null
+}
+
 export function padOnLayer(p: Pad, layer: string): boolean {
   return (
     p.layers.includes(layer) ||

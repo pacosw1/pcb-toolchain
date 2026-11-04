@@ -270,7 +270,11 @@ function zoneOf(z: Node[]): Zone {
 }
 
 export function load(path: string): BoardData {
-  return fromTree(parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(fs.readFileSync(path))))
+  return fromBytes(fs.readFileSync(path))
+}
+
+export function fromBytes(bytes: Uint8Array): BoardData {
+  return fromTree(parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes)))
 }
 
 export function fromTree(root: SList): BoardData {
