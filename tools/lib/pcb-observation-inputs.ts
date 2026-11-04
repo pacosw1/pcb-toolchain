@@ -12,15 +12,16 @@ export const COMMON = ['pcb_cli.py', 'pcb_operations.py', 'pcb_evidence.py', 'pc
   'pcb_timing.py', 'lean_workflow.py', 'lean_owned.py', 'lean_owned_exec.py', 'project_root.py'] as const;
 const PARTS_ACTIONS = new Set(['inspect', 'selection', 'verify', 'status']);
 
-// The certificate is deliberately unchanged during the port. Any producer edit falls back to the broad boundary.
+// The same certificate as tools/pcb_observation_inputs.py, refreshed with it after a review. Any other producer edit falls back
+// to the broad boundary.
 const AUDITED: Record<string, string> = {
   'part_evidence.py': '1eb4560fb473c5e7313386ca97038b24f2dc71c563cf1e9956751cb1e96a9b08',
   'part_native.py': '9a21ded435da26ccedcb6da845bd9c7cc87b959d5d0a848d325e177b4a400287',
   'project_root.py': '698f463b76abaed6dcd1cc915b1c02373708244fd95372330c5bf10186325171',
-  'pcb_cli.py': '382f8a12d952b0b9f2a87571ebebc8a445ab41a87f182f56e6ceebe2f3a17ecf',
-  'pcb_operations.py': 'c9176dddcdf421d3d404a2ae246d93eaa3a88d6b663fbc9cd314c5b7d0470c7a',
+  'pcb_cli.py': '17169043df5f9e2df0bd4df7de352a62ca168ce9b76bc5e3b76091f77c956bc0',
+  'pcb_operations.py': 'a34b189daa487b3428a29bfe133b163e17d3baa5a8493ca6b5b6bac9b5c2bea7',
   'pcb_evidence.py': '9d929244915407bddefd096f8a981113652e2706ea8785cf5ddb70061330687f',
-  'pcb_workflow.py': '08ec41de3f9da4a8c45ecd8f9b2f007bb5a78703b7b36ecb942ab45fde982f93',
+  'pcb_workflow.py': '6ca3155f354a4f57e196e0491f28ff20d95df96c86862caaeb131d5b7ce7ab2d',
   'pcb_timing.py': '07ed104072e56166625ffc36e774892c3761832cf00fe72b6abef2d967f05ddd',
   'lean_workflow.py': '926caceb8697718d86e279e114a7c9a57b5f78f20afa635109460601c27f1bb8',
   'lean_owned.py': '6b975cc6fbbc75e2a0f0e0dbe4b73ce11032e0f2087ce39e881281e53428664e',
