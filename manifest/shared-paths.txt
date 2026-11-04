@@ -33,6 +33,7 @@ tools/board_3d.sh
 tools/board_frame.py
 tools/board_gpu.py
 tools/board_labels.py
+tools/board_route_rules.py
 tools/board_stage.py
 tools/board_uuids.py
 tools/brand_mark.py
@@ -104,6 +105,7 @@ tools/lean_route_bench.py
 tools/lean_workflow.py
 tools/lib/board-packets.mjs
 tools/lib/board-packets.test.mjs
+tools/lib/board-release.mjs
 tools/lib/board-selections.mjs
 tools/lib/board-selections.test.mjs
 tools/lib/bom-coverage.mjs
@@ -137,6 +139,8 @@ tools/lib/gate-runtime.test.mjs
 tools/lib/kicad-population.mjs
 tools/lib/pixel-art-checks.mjs
 tools/lib/power-symbols.test.mjs
+tools/lib/project-root.mjs
+tools/lib/project-root.test.mjs
 tools/lib/release-evidence.mjs
 tools/lib/release-evidence.test.mjs
 tools/lib/release-readiness.mjs
@@ -319,10 +323,12 @@ tools/progress.py
 tools/progress.sh
 tools/progress.tcss
 tools/progress_tui.py
+tools/project_root.py
 tools/publish-release.py
 tools/real_board_regression.py
 tools/refresh_courtyards.py
 tools/release-native.Dockerfile
+tools/release-recipe.mjs
 tools/release-stock.py
 tools/remote-route-fr241.Dockerfile
 tools/remote-route.Dockerfile
@@ -498,6 +504,7 @@ tools/test_port_labels.py
 tools/test_power_pour.py
 tools/test_progress.py
 tools/test_progress_tui.py
+tools/test_project_root.py
 tools/test_real_board_regression.py
 tools/test_refresh_courtyards.py
 tools/test_render_with_plugs.py
