@@ -6,8 +6,8 @@
 set -eu
 if [ "${1:-}" = --lock ]; then
   lock=${2:?usage: install.sh --lock FILE}
-  version=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$lock")
-  want=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sha256"])' "$lock")
+  version=$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1])).version' "$lock")
+  want=$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1])).sha256' "$lock")
   tarball=''
 else
   version=${1:?usage: install.sh VERSION [TARBALL]}

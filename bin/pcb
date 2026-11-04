@@ -6,9 +6,10 @@ bundle=$(cd "$self/.." && pwd -P)
 version=$(sed -n '1p' "$bundle/VERSION" 2>/dev/null | cut -d' ' -f1)
 
 project=''
+sync_only=''
 prev=''
 for a in "$@"; do                                   # --project DIR (or --project=DIR) anywhere in the arguments
-  case "$prev" in --project) project=$a ;; esac
+  case "$prev" in --project) project=$a ;; *) [ "$a" = toolchain-sync ] && sync_only=1 ;; esac
   case "$a" in --project=*) project=${a#--project=} ;; esac
   prev=$a
 done
@@ -24,7 +25,7 @@ fi
 
 lock="$project/toolchain.lock"
 if [ -f "$lock" ]; then
-  want=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$lock")
+  want=$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1])).version' "$lock")
   other="${HOME}/.local/share/pcb-toolchain/$want/bin/pcb"
   if [ "$want" != "$version" ] && [ -x "$other" ] && [ "${PCB_ALLOW_VERSION_MISMATCH:-}" != 1 ]; then
     exec "$other" "$@"                              # the installed release that this project pins
@@ -51,7 +52,7 @@ case "$(uname -s)-$(uname -m)" in
   Linux-x86_64) export IOTROUTE_BIN="$bundle/bin/iotroute-linux-x86_64" ;;
 esac
 if [ -f "$bundle/VERSION" ] && [ -f "$lock" ] && [ "$project" != "$bundle" ]; then   # pinned: release tools/ into the project (read-only)
-  python3 "$bundle/bin/toolchain_sync.py" "$project" || exit $?
+  node "$bundle/bin/toolchain_sync.mjs" "$project" || exit $?
 fi
-[ "${1:-}" = toolchain-sync ] && exit 0
+[ -z "$sync_only" ] || exit 0
 exec python3 "$bundle/tools/pcb" "$@"
