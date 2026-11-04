@@ -19,12 +19,12 @@ function fixture(board,variables={}) {
  copyFileSync(new URL('../publish-release.py',import.meta.url),join(root,'tools/publish-release.py'));
  copyFileSync(new URL('../pcb_timing.py',import.meta.url),join(root,'tools/pcb_timing.py'));
  writeFileSync(join(root,'tools/check-env-schematic.py'),'import os,sys; sys.exit(int(os.environ.get("SCHEMATIC_STATUS", "0")))\n');
- writeFileSync(join(root,'tools/check-fab-zip.py'),'print("{\\"status\\":\\"passed\\"}")\n');
  writeFileSync(join(root,'bin/node'),`#!/bin/sh
 case "$1" in
  --input-type=module) echo '{}';;
  -e) echo fixture.kicad_pcb;;
  tools/gate.mjs) [ "$3" != --evidence-dir ] || mkdir "$4"; exit "\${GATE_STATUS:-0}";;
+ tools/check-fab-zip.mjs) echo '{"status":"passed"}';;
  tools/check-release-gate.mjs)
   if [ "$3" != --gate-dir ]; then echo '{}' > "$4"; exit "\${LATE_EVIDENCE_STATUS:-0}"; fi
   echo fixture-token; exit "\${EVIDENCE_STATUS:-0}";;
