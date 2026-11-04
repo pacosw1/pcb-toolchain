@@ -3,6 +3,7 @@ pub mod gnd_pad_vias;
 pub mod kicad;
 pub mod model;
 pub mod plan;
+pub mod run;
 pub mod sha256;
 pub mod specctra;
 pub mod si;

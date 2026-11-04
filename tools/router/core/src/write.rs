@@ -6,13 +6,13 @@
 //! after it. The input copper is not touched. Prints one line: WRITE PASS|FAIL drc <errors by type> unconnected N parity N -> OUT.
 use crate::checkpoint::sha256;
 use iotroute::kicad::item_text::{board_nets, copper_layers, item_uuid, mm_text, quoted, segment_text, via_text, with_items};
+use iotroute::kicad::kicad_cli;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const MAC_KICAD_CLI: &str = "/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli";
 
 /// The JSON with each number as a string. serde_json's default float parse can miss the nearest double by a bit, and the cut
 /// to whole nanometres then lands 1 nm away from pcbnew's; `str::parse` is exact. Its float_roundtrip feature would do the same
@@ -116,10 +116,6 @@ fn project_of(pcb: &Path) -> Result<String, String> {
         return Ok(own.to_string());
     }
     names.pop().ok_or_else(|| format!("no .kicad_pro next to {}", pcb.display()))
-}
-
-fn kicad_cli() -> String {
-    std::env::var("KICAD_CLI").unwrap_or_else(|_| if Path::new(MAC_KICAD_CLI).exists() { MAC_KICAD_CLI.to_string() } else { "kicad-cli".to_string() })
 }
 
 /// 0 PASS, 1 FAIL. An Err is no verdict.

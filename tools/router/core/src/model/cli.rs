@@ -7,14 +7,13 @@
 use super::build::{Inputs, build, summary};
 use super::files::{BoardFiles, read_pin_ratings};
 use super::returns::RpScope;
-use crate::kicad::Board;
+use crate::kicad::{Board, kicad_cli};
 use crate::kicad::api::{Server, read_board};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-const MAC_KICAD_CLI: &str = "/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli";
 const DEFAULT_PYTHON: &str = "python3";
 
 struct Args {
@@ -41,10 +40,6 @@ fn parse_args(args: &[String]) -> Result<Args, String> {
         }
     }
     Ok(parsed)
-}
-
-fn kicad_cli() -> String {
-    std::env::var("KICAD_CLI").unwrap_or_else(|_| if Path::new(MAC_KICAD_CLI).exists() { MAC_KICAD_CLI.to_string() } else { "kicad-cli".to_string() })
 }
 
 fn read_through_api(path: &Path) -> Result<Board, String> {
