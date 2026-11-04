@@ -31,6 +31,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {pinnedRepos} from '../lib/env.mjs';
+import {happyTar} from '../lib/happy-tar.mjs';
 
 const BIN='iotroute-linux-x86_64';
 const HAPPY='kicad-happy';
@@ -187,21 +188,8 @@ function stageInputs(plan,stage){
   const bin=path.join(stage,BIN),tar=path.join(stage,`${HAPPY}.tar.gz`);
   fs.copyFileSync(plan.bin,bin);
   const now=new Date();fs.utimesSync(bin,now,now);
-  fs.copyFileSync(happyTar(plan),tar);
+  fs.copyFileSync(happyTar(plan.happy,plan.happyCommit),tar);
   return[bin,tar];
-}
-
-/** One tar per pinned commit: a tar made again differs in its gzip time, so its hash misses the daemon's file cache. */
-function happyTar(plan){
-  const dir=path.join(process.env.XDG_CACHE_HOME||path.join(os.homedir(),'.cache'),'pcb-toolchain');
-  const file=path.join(dir,`${HAPPY}-${plan.happyCommit}.tar.gz`);
-  if(isFile(file))return file;
-  fs.mkdirSync(dir,{recursive:true});
-  const tmp=`${file}.${process.pid}`;
-  const r=spawnSync('tar',['--no-xattrs','-czf',tmp,'-C',plan.happy,'.'],{env:{...process.env,COPYFILE_DISABLE:'1'},stdio:['ignore','ignore','inherit']});
-  if(r.status!==0)throw Error(`tar of ${plan.happy} failed`);
-  fs.renameSync(tmp,file);
-  return file;
 }
 
 /**

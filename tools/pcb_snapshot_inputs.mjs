@@ -3,7 +3,7 @@ import {gateInputs, fingerprint} from './lib/gate-inputs.mjs';
 import {readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {execFileSync} from 'node:child_process';
-import {kicadCli,kicadPython,modernPython,kicadShared,kicadConfig,pinnedRepos} from './lib/env.mjs';
+import {kicadCli,kicadPython,happyRuntime,kicadShared,kicadConfig,pinnedRepos} from './lib/env.mjs';
 import {verifyReleaseGate, releaseRecipe} from './lib/release-evidence.mjs';
 import {readReport} from './lib/gate-runtime.mjs';
 const [root, board, mode, evidence, failedStage] = process.argv.slice(2);
@@ -19,7 +19,7 @@ try {
     const tools={kicad:probe(kicadCli,['--version']),node:process.version};
     if(Object.keys(c).some(k=>c[k] && !['erc','drc','kicad_happy'].includes(k))) tools.pcbnew=probe(kicadPython,['-c','import pcbnew; print(pcbnew.Version())']);
     if(c.kicad_happy) {
-      tools.python=probe(modernPython(),['--version']);
+      tools.kicad_happy_runtime=happyRuntime();
       for(const repo of pinnedRepos.filter(r=>r.needed==='gate')) tools[repo.name]=probe('git',['-C',repo.dir,'rev-parse','HEAD']);
     }
     const result=JSON.parse(readFileSync(join(evidence,'result.json'),'utf8'));

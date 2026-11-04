@@ -8,6 +8,7 @@ import {readReport} from './gate-runtime.mjs';
 import {readPopulation,parseNative,children,single,properties} from './kicad-population.mjs';
 import {parseCsv} from './csv.mjs';
 import {gateConfigPath,releaseRecipe,requireRelease} from './board-release.mjs';
+import {happyRuntime} from './env.mjs';
 
 export {gateConfigPath,releaseRecipe,requireRelease};
 
@@ -16,7 +17,7 @@ const need=(condition,message)=>{if(!condition)throw new Error(message);};
 const json=path=>JSON.parse(readFileSync(path,'utf8'));
 export function probeReleaseTools(paths) {
  const probe=(cmd,args)=>execFileSync(cmd,args,{encoding:'utf8',stdio:['ignore','pipe','pipe'],timeout:15000}).trim();
- const tools={kicad:probe(paths.kicadCli,['--version']),pcbnew:probe(paths.kicadPython,['-c','import pcbnew; print(pcbnew.Version())']),python:probe(paths.modernPython,['--version']),node:process.version};
+ const tools={kicad:probe(paths.kicadCli,['--version']),pcbnew:probe(paths.kicadPython,['-c','import pcbnew; print(pcbnew.Version())']),kicad_happy_runtime:happyRuntime(),node:process.version};
  for(const repo of paths.pinnedRepos.filter(r=>r.needed==='gate'))tools[repo.name]=probe('git',['-C',repo.dir,'rev-parse','HEAD']);
  return tools;
 }

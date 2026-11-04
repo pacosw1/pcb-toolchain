@@ -4,7 +4,8 @@ import { copyFileSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFile
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
-import { boardJson, cacheKey, daemonSettings, jobArguments, pinnedKicadCommit, type BoardFetcher } from './board-json.ts';
+import { boardJob, boardJson, cacheKey, pinnedKicadCommit, type BoardFetcher } from './board-json.ts';
+import { daemonSettings, jobArguments } from './daemon-job.ts';
 
 const COMMIT = 'a'.repeat(40);
 const SCHEMA = 'iot-lab.board.v1';
@@ -111,7 +112,7 @@ test('a failed fetch leaves nothing in the cache', t => {
 
 test('the job ships only the board files and the binary, and writes to out/', () => {
   const input = { pcb: '/a/X.kicad_pcb', project: ['/a/X.kicad_pro'], kicadCommit: COMMIT };
-  const args = jobArguments(input, '/t/iotroute-linux-x86_64', 'img:1', '/r');
+  const args = jobArguments(boardJob(input, '/t/iotroute-linux-x86_64', 'img:1'), '/r');
   assert.deepEqual(args.slice(0, 8), ['run', 'job', '--in', '/a/X.kicad_pcb', '--in', '/a/X.kicad_pro', '--in', '/t/iotroute-linux-x86_64']);
   assert.equal(args[args.indexOf('--image') + 1], 'img:1');
   assert.equal(args[args.indexOf('--results') + 1], '/r');

@@ -4,7 +4,8 @@
 // exit 0 even on internal errors, so this wrapper checks their JSON output itself and turns matching findings into a
 // non-zero exit code.
 //
-// It runs three pinned kicad-happy scripts, in this order:
+// It runs three pinned kicad-happy scripts, in this order, through tools/lib/kicad-happy-phases.ts: on macOS in daemon jobs, whose
+// results are kept by content, so no Python starts on the Mac. The wrapper reads their outputs here:
 //   1. analyze_schematic.py  needed for UC-001 (VBUS decoupling), which is schematic-only and never appears in the PCB
 //      or EMC output.
 //   2. analyze_pcb.py --full needed for VP-001 (via in pad) and to feed return-path data to the EMC analyzer.
@@ -22,16 +23,16 @@
 // cannot rot.
 //
 // Exit codes: 0 no matching findings, 1 one or more matching findings, 2 tool error (missing/unpinned clone, bad board
-// path, analyzer crash, bad or stale exemption).
+// path, analyzer crash, unreachable daemon, bad or stale exemption).
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { readdirSync, statSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { errorText, parseFlags, runMain, UsageError } from './lib/cli.ts';
-import { modernPython } from './lib/env.mjs';
-import { creditOwnHoles, markGroundVias, plainJson, returnRadius, takeExemptTransitions, takeReturnStitched, type Pad, type Sample, type Tree } from './lib/kicad-happy-board.ts';
+import { creditOwnHoles, markGroundVias, plainJson, returnRadius, takeExemptTransitions, takeReturnStitched, type Tree } from './lib/kicad-happy-board.ts';
 import { evaluate, loadExemptFile, parseExemptArgs, SEVERITY_ORDER, type Exemption, type Finding } from './lib/kicad-happy-findings.ts';
-import { fixed, floatRepr, jsonDumps, jsonLoads, pyRepr, pyStr, readText, strip } from './lib/py-compat.mjs';
+import { analyzeBoard, analyzeEmc, type Board, type Happy } from './lib/kicad-happy-phases.ts';
+import { fixed, floatRepr, jsonDumps, jsonLoads, pyRepr, pyStr, readText } from './lib/py-compat.mjs';
 
 const USAGE = 'usage: tools/kicad_happy_gate.ts BOARD_DIR_OR_PCB [--result FILE] [--rules A,B] [--min-severity LEVEL] '
   + '[--exempt RULE:NET] [--exempt-file FILE] [--ground NET] [--planes FILE]';
@@ -42,23 +43,7 @@ const PINNED_COMMIT = 'a6bba1a';
 // hardware-design/reports/2026-10-09-design-rules-sources.md A2, NO SOURCE). The si_planes crossing and detour rules
 // replace it. Run it by hand with --rules GP-001 if needed.
 const DEFAULT_RULES = ['RP-001', 'DC-002', 'UC-001'];
-const STDERR_SHOWN = 500;
-const SCHEMATIC_SCRIPT = 'skills/kicad/scripts/analyze_schematic.py';
-const PCB_SCRIPT = 'skills/kicad/scripts/analyze_pcb.py';
-const EMC_SCRIPT = 'skills/emc/scripts/analyze_emc.py';
 
-// The one call into kicad-happy's own code that is not one of its scripts: analyze_pcb leaves the pads out of its JSON.
-// The pad geometry has to be the geometry of its analysis, so this asks its parser and does nothing else.
-const LOAD_PADS = `import json, sys
-sys.path.insert(0, sys.argv[1])
-import sexp_parser
-import analyze_pcb
-pads = [p for f in analyze_pcb.extract_footprints(sexp_parser.parse_file(sys.argv[2])) for p in f.get("pads", [])]
-json.dump(pads, open(sys.argv[3], "w"))
-`;
-
-export interface Board { pcb: string; sch: string | null }
-interface Report { findings: Finding[] }
 interface Options {
   rules: string[];
   minSeverity: string | undefined;
@@ -112,81 +97,21 @@ export function resolveBoard(boardDirOrPcb: string): Board {
   return { pcb, sch: isFile(root) ? root : schematics.length === 1 ? join(folder, schematics[0]!) : null };
 }
 
-const isDict = (value: unknown) => typeof value === 'object' && value !== null && !Array.isArray(value);
-/** Python's bool() of a JSON value: an empty list or dict counts as nothing. */
-const present = (value: unknown) => (typeof value === 'object' && value !== null ? Object.keys(value).length > 0 : Boolean(value));
-
-/** The analyzer's report, whose exit code says nothing: only a complete document counts. */
-export function checkReport(script: string, doc: unknown): Report {
-  const report = doc as { error?: unknown; errors?: unknown; findings?: unknown };
-  const complete = isDict(report) && !present(report.error) && !present(report.errors)
-    && Array.isArray(report.findings) && report.findings.every(isDict);
-  if (!complete) throw new Error(`${script} produced an incomplete or error report`);
-  return report as Report;
-}
-
-function runAnalyzer(happyDir: string, script: string, args: string[], output: string): { report: Report; tree: unknown } {
-  const run = spawnSync(modernPython(), [join(happyDir, script), ...args, '-o', output], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
-  if (run.error) throw run.error;
-  const stderr = strip(run.stderr).slice(0, STDERR_SHOWN);
-  if (run.status !== 0) throw new Error(`${script} failed (exit ${run.status}): ${stderr}`);
-  if (!existsSync(output)) throw new Error(`${script} produced no output (exit ${run.status}): ${stderr}`);
-  const tree = jsonLoads(readText(output));
-  return { report: checkReport(script, plainJson(tree)), tree };
-}
-
-function loadPads(happyDir: string, pcb: string, folder: string): Pad[] {
-  const output = join(folder, 'pads.json');
-  const scripts = join(happyDir, 'skills/kicad/scripts');
-  const run = spawnSync(modernPython(), ['-c', LOAD_PADS, scripts, pcb, output], { encoding: 'utf8' });
-  if (run.error) throw run.error;
-  if (run.status !== 0) throw new Error(`kicad-happy pad reader failed (exit ${run.status}): ${strip(run.stderr).slice(-STDERR_SHOWN)}`);
-  return plainJson(jsonLoads(readText(output))) as Pad[];
-}
-
-/** --gp001-debug writes gp001_debug.json next to the board, so analyze_pcb reads a copy in the temporary folder. */
-function copyBoard(pcb: string, folder: string): string {
-  const copy = join(folder, 'board');
-  mkdirSync(copy);
-  const stem = pcb.slice(0, -'.kicad_pcb'.length);
-  for (const extension of ['.kicad_pcb', '.kicad_pro', '.kicad_dru']) {
-    if (existsSync(stem + extension)) copyFileSync(stem + extension, join(copy, basename(stem + extension)));
-  }
-  return join(copy, basename(pcb));
-}
-
-function debugSamples(boardCopy: string): Sample[] {
-  const path = join(dirname(boardCopy), 'gp001_debug.json');
-  if (!existsSync(path)) throw new Error('analyze_pcb.py --gp001-debug wrote no gp001_debug.json');
-  return (plainJson(jsonLoads(readText(path))) as { samples?: Sample[] }).samples ?? [];
-}
-
 /** The merged raw findings of the three analyzers. */
-function runGate(happyDir: string, board: Board, folder: string, grounds: string[], exemptRpNets: Set<string>, rpRadius: number | null): Finding[] {
-  const findings: Finding[] = [];
-  const schematicOutput = join(folder, 'sch.json');
-  const schematicArgs = board.sch ? ['--schematic', schematicOutput] : [];
-  if (board.sch) findings.push(...runAnalyzer(happyDir, SCHEMATIC_SCRIPT, [board.sch], schematicOutput).report.findings);
-
-  const pcbOutput = join(folder, 'pcb.json');
-  const boardCopy = copyBoard(board.pcb, folder);
-  const pcb = runAnalyzer(happyDir, PCB_SCRIPT, [boardCopy, '--full', '--gp001-debug', ...schematicArgs], pcbOutput);
-  findings.push(...pcb.report.findings);
-  const doc = pcb.tree as Tree;
+function runGate(happy: Happy, board: Board, grounds: string[], exemptRpNets: Set<string>, rpRadius: number | null): Finding[] {
+  const analysis = analyzeBoard(happy, board);
+  const findings = [...analysis.schematic?.report.findings ?? [], ...analysis.pcb.report.findings];
+  const doc = analysis.pcb.tree as Tree;
   if (grounds.length) markGroundVias(doc, grounds);
-  const pads = loadPads(happyDir, board.pcb, folder);
   if (rpRadius) {
-    const stitched = takeReturnStitched(doc, rpRadius, pads);
+    const stitched = takeReturnStitched(doc, rpRadius, analysis.pads);
     console.error(`RP-001 return radius ${fixed(rpRadius, 2)} mm (stackup): ${stitched} transitions stitched`);
   }
   findings.push(...takeExemptTransitions(doc, exemptRpNets));
-  for (const { net, old, pct } of creditOwnHoles(doc, debugSamples(boardCopy), pads)) {
+  for (const { net, old, pct } of creditOwnHoles(doc, analysis.samples, analysis.pads)) {
     console.error(`GP-001 own-hole antipad credit: ${net} ${pyStr(old ?? null)}% -> ${floatRepr(pct)}%`);
   }
-  writeFileSync(pcbOutput, jsonDumps(doc));
-
-  const emc = runAnalyzer(happyDir, EMC_SCRIPT, ['--pcb', pcbOutput, ...schematicArgs], join(folder, 'emc.json'));
-  findings.push(...emc.report.findings);
+  findings.push(...analyzeEmc(happy, analysis, jsonDumps(doc)).findings);
   return findings;
 }
 
@@ -239,17 +164,14 @@ function main(argv: string[]): number {
   } catch (error) {
     return fail(error);
   }
-  const folder = mkdtempSync(join(tmpdir(), 'kicad_happy_gate_'));
   let findings: Finding[];
   try {
     const rpNets = new Set(exemptions.filter(exemption => exemption.rule === 'RP-001' && exemption.net).map(exemption => exemption.net!));
     const radius = options.planes ? returnRadius(board.pcb, options.planes) : null;
     if (options.planes && radius === null) return fail('--planes given but no return dielectric from the stackup / adjacent map');
-    findings = runGate(happyDir, board, folder, options.grounds, rpNets, radius);
+    findings = runGate({ dir: happyDir, commit: PINNED_COMMIT }, board, options.grounds, rpNets, radius);
   } catch (error) {
     return fail(error);
-  } finally {
-    rmSync(folder, { recursive: true, force: true });
   }
   const { lines, code, kept, stale } = evaluate(findings, options.rules, options.minSeverity, exemptions);
   if (options.result) {

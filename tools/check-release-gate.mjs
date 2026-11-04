@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import {readFileSync,writeFileSync} from 'node:fs';
 import {join,resolve} from 'node:path';
-import {root,kicadCli,kicadPython,modernPython,kicadShared,kicadConfig,pinnedRepos} from './lib/env.mjs';
+import {root,kicadCli,kicadPython,kicadShared,kicadConfig,pinnedRepos} from './lib/env.mjs';
 import {verifyReleaseGate,probeReleaseTools} from './lib/release-evidence.mjs';
 try {
  const args=process.argv.slice(2),index=args.indexOf('--gate-dir');
@@ -16,7 +16,7 @@ try {
  }
  const environment={configDir:kicadConfig,variables:{KICAD10_FOOTPRINT_DIR:join(kicadShared,'footprints'),KICAD10_SYMBOL_DIR:join(kicadShared,'symbols')},repositories:pinnedRepos.filter(r=>r.needed==='gate').map(r=>r.dir)};
  const externalRoots={kicad:kicadShared,kicad_config:kicadConfig,...Object.fromEntries(pinnedRepos.map(r=>[r.name,r.dir]))};
- const evidence=verifyReleaseGate(root,board,gateDir,environment,externalRoots,probeReleaseTools({kicadCli,kicadPython,modernPython:modernPython(),pinnedRepos}));
+ const evidence=verifyReleaseGate(root,board,gateDir,environment,externalRoots,probeReleaseTools({kicadCli,kicadPython,pinnedRepos}));
  if(expected && expected!==evidence.token)throw new Error('gate evidence changed during export');
  if(out)writeFileSync(out,JSON.stringify(evidence,null,2)+'\n',{flag:'wx'});
  console.log(evidence.token);
