@@ -38,9 +38,10 @@ if [ "$linux" = --linux ]; then
   clean_linux
   echo "START: iotplace linux-x86_64 ($linux_host)"
   rsrc=$(ssh "$linux_host" 'mktemp -d /tmp/iotplace-src.XXXXXX')
-  (cd "$here/tools/placer/core" && git archive --format=tar HEAD .) | ssh "$linux_host" "tar -x -C '$rsrc'"
-  ssh "$linux_host" "docker run --rm -e RUSTFLAGS='--remap-path-prefix=/src=.' -v '$rsrc:/src' -w /src rust:1.93.1 cargo build --release --locked --quiet"
-  scp -q "$linux_host:$rsrc/target/release/iotplace" "$out/bin/iotplace-linux-x86_64"
+  # iotplace links the iotroute library by path: both crates go, at their place in the tree
+  (cd "$here" && git archive --format=tar HEAD tools/placer/core tools/router/core) | ssh "$linux_host" "tar -x -C '$rsrc'"
+  ssh "$linux_host" "docker run --rm -e RUSTFLAGS='--remap-path-prefix=/src=.' -v '$rsrc:/src' -w /src/tools/placer/core rust:1.93.1 cargo build --release --locked --quiet"
+  scp -q "$linux_host:$rsrc/tools/placer/core/target/release/iotplace" "$out/bin/iotplace-linux-x86_64"
   clean_linux
   trap - EXIT
 fi

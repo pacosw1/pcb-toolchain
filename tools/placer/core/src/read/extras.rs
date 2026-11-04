@@ -6,7 +6,7 @@ use super::out::{CuRow, Edge, Unit, Xy};
 use super::parts::fp_rect;
 use crate::dru::fnmatch;
 use crate::geom::Rect;
-use crate::kicad::doc::{Board, Footprint, Geometry, Graphic, Pt, Zone, mm};
+use crate::kicad::doc::{Board, CopperItem, Footprint, Geometry, Graphic, Pt, PtMm, Zone, mm, zone_box};
 use std::collections::{BTreeSet, HashMap};
 
 /// mm: an Edge.Cuts shape box includes its line width.
@@ -41,7 +41,7 @@ fn anchor(u: &mut Unit, a: &EdgeAnchor, fp: &Footprint) -> (char, f64, f64) {
 /// A rule area that moves with a unit is a keepout rect, cut at the anchor line when the unit has one: the part beyond lies off
 /// the board.
 fn attach_zone(u: &mut Unit, zone: &Zone, cut: Option<(char, f64, f64)>) {
-    let Some(mut r) = zone.bbox() else { return };
+    let Some(mut r) = zone_box(zone) else { return };
     match cut {
         Some(('S', _, ay)) => r.y1 = r.y1.min(ay),
         Some(('N', _, ay)) => r.y0 = r.y0.max(ay),
@@ -156,10 +156,8 @@ fn shape_box(g: &Graphic) -> Rect {
             let (x, y) = c.mm();
             Rect::new(x - r, y - r, x + r, y + r)
         }
-        Geometry::Arc { start, end, center } => {
-            let r = ((start.x - center.x) as f64).hypot((start.y - center.y) as f64) / 1e6;
-            let (x, y) = center.mm();
-            let _ = end;
+        Geometry::Arc(arc) => {
+            let (x, y, r) = (mm(arc.center.x), mm(arc.center.y), mm(arc.radius()));
             Rect::new(x - r, y - r, x + r, y + r)
         }
         Geometry::Poly { rings } => points_box(&rings.concat()),

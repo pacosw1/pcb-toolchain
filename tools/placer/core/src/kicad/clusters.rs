@@ -1,7 +1,7 @@
 //! Copper clusters: tracks and vias of one net joined by shared end points. The reader asks which copper stays whatever the
 //! movable units do; the writer rips whole clusters.
 
-use super::doc::{Copper, Pad, Pt, mm};
+use super::doc::{Copper, CopperItem, Pad, mm};
 use super::hit::pad_hit;
 use crate::geom::Rect;
 use std::collections::{BTreeSet, HashMap};
@@ -14,14 +14,14 @@ pub struct Clusters<'b> {
 impl<'b> Clusters<'b> {
     pub fn new(items: Vec<&'b Copper>) -> Self {
         let mut clusters = Self { parent: (0..items.len()).collect(), items };
-        let mut at: HashMap<(&str, Pt), usize> = HashMap::new();
+        let mut at: HashMap<(&str, i64, i64), usize> = HashMap::new();
         for k in 0..clusters.items.len() {
             let item = clusters.items[k];
             for end in item.ends() {
-                match at.get(&(item.net(), end)) {
+                match at.get(&(item.net(), end.x, end.y)) {
                     Some(&other) => clusters.join(k, other),
                     None => {
-                        at.insert((item.net(), end), k);
+                        at.insert((item.net(), end.x, end.y), k);
                     }
                 }
             }
@@ -80,14 +80,14 @@ pub fn contains(r: Rect, x: f64, y: f64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kicad::doc::{Track, Via};
+    use crate::kicad::doc::{Pt, Track, Via};
 
     fn track(net: &str, a: (i64, i64), b: (i64, i64)) -> Copper {
-        Copper::Track(Track { id: String::new(), start: Pt { x: a.0, y: a.1 }, end: Pt { x: b.0, y: b.1 }, mid: None, width: 1, layer: String::new(), net: net.to_string(), locked: false })
+        Copper::Track(Track { id: String::new(), start: Pt::new(a.0, a.1), end: Pt::new(b.0, b.1), mid: None, width: 1, layer: String::new(), net: net.to_string(), locked: false })
     }
 
     fn via(net: &str, at: (i64, i64)) -> Copper {
-        Copper::Via(Via { id: String::new(), at: Pt { x: at.0, y: at.1 }, size: 1, net: net.to_string(), locked: false, layers: Vec::new() })
+        Copper::Via(Via { id: String::new(), at: Pt::new(at.0, at.1), size: 1, drill: 0, net: net.to_string(), locked: false, layers: Vec::new() })
     }
 
     #[test]
