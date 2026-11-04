@@ -87,6 +87,7 @@ tools/hard_exit.py
 tools/ibis_ramp.py
 tools/ibis_ramp.ts
 tools/import_nets.py
+tools/import_nets.ts
 tools/import_pose_guard.py
 tools/import_replay_guard.py
 tools/import_ses.py
@@ -173,6 +174,7 @@ tools/lib/gate-runtime.mjs
 tools/lib/gate-runtime.test.mjs
 tools/lib/ibis.test.ts
 tools/lib/ibis.ts
+tools/lib/import-nets.test.ts
 tools/lib/iotroute-bin.test.ts
 tools/lib/iotroute-bin.ts
 tools/lib/iso-time.ts
