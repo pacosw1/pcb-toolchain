@@ -117,14 +117,14 @@ mod tests {
 
     #[test]
     fn a_graphic_keeps_its_line_width() {
-        let line = Graphic { geometry: Geometry::Segment { start: Pt::new(0, 0), end: Pt::new(100, 0) }, layer: "Edge.Cuts".to_string(), width: 10, filled: false };
+        let line = Graphic { id: String::new(), geometry: Geometry::Segment { start: Pt::new(0, 0), end: Pt::new(100, 0) }, layer: "Edge.Cuts".to_string(), width: 10, filled: false };
         assert!(graphic_near_point(&line, Pt::new(50, 14), 10));
         assert!(!graphic_near_point(&line, Pt::new(50, 15), 10));
     }
 
     #[test]
     fn an_open_circle_has_a_clear_middle_and_a_filled_one_does_not() {
-        let circle = |filled| Graphic { geometry: Geometry::Circle { center: Pt::new(0, 0), radius_point: Pt::new(100, 0) }, layer: "Edge.Cuts".to_string(), width: 0, filled };
+        let circle = |filled| Graphic { id: String::new(), geometry: Geometry::Circle { center: Pt::new(0, 0), radius_point: Pt::new(100, 0) }, layer: "Edge.Cuts".to_string(), width: 0, filled };
         assert!(!graphic_near_point(&circle(false), Pt::new(0, 0), 10));
         assert!(graphic_near_point(&circle(true), Pt::new(0, 0), 10));
         assert!(graphic_near_point(&circle(false), Pt::new(95, 0), 10));
@@ -133,7 +133,7 @@ mod tests {
     #[test]
     fn an_arc_ends_where_it_ends() {
         let arc = Arc::through(Pt::new(100, 0), Pt::new(71, 71), Pt::new(0, 100));
-        let g = Graphic { geometry: Geometry::Arc(arc), layer: "Edge.Cuts".to_string(), width: 0, filled: false };
+        let g = Graphic { id: String::new(), geometry: Geometry::Arc(arc), layer: "Edge.Cuts".to_string(), width: 0, filled: false };
         assert!(graphic_near_point(&g, Pt::new(71, 75), 10));
         assert!(!graphic_near_point(&g, Pt::new(-71, -71), 10));
     }

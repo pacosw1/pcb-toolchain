@@ -133,7 +133,7 @@ mod tests {
     }
 
     fn board() -> Board {
-        Board { path: String::new(), copper_layers: Vec::new(), stackup: Vec::new(), nets: [("A".to_string(), "HV".to_string())].into_iter().collect(), footprints: Vec::new(), copper: Vec::new(), zones: Vec::new(), graphics: Vec::new(), edges_bbox: crate::kicad::geom::Rect { left: 0, top: 0, right: 0, bottom: 0 }, outlines: Vec::new() }
+        Board { path: String::new(), copper_layers: Vec::new(), stackup: Vec::new(), nets: [("A".to_string(), "HV".to_string())].into_iter().collect(), footprints: Vec::new(), copper: Vec::new(), zones: Vec::new(), graphics: Vec::new(), texts: Vec::new(), groups: Vec::new(), constraints: Default::default(), edges_bbox: crate::kicad::geom::Rect { left: 0, top: 0, right: 0, bottom: 0 }, outlines: Vec::new() }
     }
 
     #[test]

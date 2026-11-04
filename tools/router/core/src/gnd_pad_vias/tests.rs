@@ -52,7 +52,7 @@ fn footprint(reference: &str, pads: Vec<Pad>) -> Footprint {
 }
 
 fn via(net: &str, x: f64, y: f64) -> RoutedCopper {
-    RoutedCopper::Via(Via { id: format!("via-{x}-{y}"), at: at(x, y), size: mm(0.6), drill: mm(0.3), net: net.to_string(), locked: false })
+    RoutedCopper::Via(Via { id: format!("via-{x}-{y}"), at: at(x, y), size: mm(0.6), drill: mm(0.3), net: net.to_string(), locked: false, layers: Vec::new() })
 }
 
 fn track(net: &str, a: Pt, b: Pt) -> RoutedCopper {
@@ -63,7 +63,7 @@ fn track(net: &str, a: Pt, b: Pt) -> RoutedCopper {
 fn board(footprints: Vec<Footprint>, copper: Vec<RoutedCopper>) -> Board {
     let square = vec![at(0.0, 0.0), at(20.0, 0.0), at(20.0, 20.0), at(0.0, 20.0)];
     let nets = footprints.iter().flat_map(|f| &f.pads).map(|p| (p.net.clone(), "Default".to_string())).collect();
-    Board { path: String::new(), copper_layers: vec!["F.Cu".to_string(), "B.Cu".to_string()], stackup: Vec::new(), nets, footprints, copper, zones: Vec::new(), graphics: Vec::new(), edges_bbox: Rect { left: 0, top: 0, right: mm(20.0), bottom: mm(20.0) }, outlines: vec![Polygon::of_ring(square)] }
+    Board { path: String::new(), copper_layers: vec!["F.Cu".to_string(), "B.Cu".to_string()], stackup: Vec::new(), nets, footprints, copper, zones: Vec::new(), graphics: Vec::new(), texts: Vec::new(), groups: Vec::new(), constraints: Default::default(), edges_bbox: Rect { left: 0, top: 0, right: mm(20.0), bottom: mm(20.0) }, outlines: vec![Polygon::of_ring(square)] }
 }
 
 fn rules() -> DesignRules {
