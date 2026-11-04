@@ -251,6 +251,14 @@ node apps/job-daemon/deploy/prepare-release.mjs <commit> /tmp/pcb-job-daemon.tar
 
 The tar contains only the daemon source at that commit; its adjacent `.json` records the commit, archive SHA-256, and source SHA-256. It does not contain local changes, the token, host configuration, or systemd units. The daemon reports its startup source hash in authenticated `/status` as `sourceSha256`; compare it to the manifest after installation. This is source identity, not a health or deployment guarantee. This command prepares a bundle only: it does not install it or restart the daemon. Both output paths must be new.
 
+For a host already running a version that reports this identity, copy the bundle and manifest to the host, then run the installer from a trusted checkout as root:
+
+```sh
+node apps/job-daemon/deploy/install-release.mjs install /path/release.tar http://100.93.34.43:8793/status /etc/pcb-job-daemon.token
+```
+
+The installer checks the existing identity and archive, stages source, journals the swap, restarts the service, and checks the new identity. It retains the previous source. A failure attempts to restore and restart it. An interrupted transaction leaves `.deploy-journal.json` and may leave `.deploy-lock` under `/opt/pcb-job-daemon`: first verify no installer is running, remove the stale lock if present, and run the same command with `recover` and `-` in place of the archive. Recovery verifies the previous source and its authenticated status; retain the journal and investigate if that check fails. Running containers and job data are not intentionally changed, but the host recovery path still requires an isolated host test before production reliance. The first upgrade from a version without `sourceSha256` is deliberately refused and needs a separately verified bootstrap.
+
 For initial installation on the host, as root:
 
 ```sh
