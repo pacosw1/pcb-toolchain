@@ -1,0 +1,163 @@
+/* ---- sidebar: board picker, revision, sections ---- */
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.picker {
+  position: relative;
+}
+
+.picker-button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  text-align: left;
+  gap: 2px 8px;
+  padding: 8px 10px;
+  background: var(--panel);
+}
+
+.picker-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.picker-sub {
+  grid-column: 1;
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.chev {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  color: var(--dim);
+}
+
+.picker-pop {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  width: 280px;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.picker-pop input[type='search'] {
+  width: 100%;
+}
+
+.picker-list {
+  overflow-y: auto;
+}
+
+.picker-group {
+  margin: 8px 4px 4px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.picker-item {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  background: transparent;
+  border-color: transparent;
+  padding: 5px 8px;
+}
+
+.picker-item:hover,
+.picker-item.on {
+  background: var(--raised);
+  border-color: var(--border);
+}
+
+.picker-revs {
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.revpick {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.revpick select {
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 6px;
+}
+
+.sections {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.section {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+  padding: 7px 10px;
+}
+
+.section:hover {
+  border-color: var(--border);
+}
+
+.section.on {
+  background: var(--raised);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.section .note {
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.sidebar details.panel {
+  padding: 8px;
+  font-size: 12px;
+}
+
+.sidebar .kv {
+  grid-template-columns: 70px 1fr;
+}
+
+.overlay-msg {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  pointer-events: none;
+}
