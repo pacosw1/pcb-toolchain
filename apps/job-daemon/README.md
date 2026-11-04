@@ -249,7 +249,7 @@ To prepare a reproducible source bundle from a reviewed commit, run from the rep
 node apps/job-daemon/deploy/prepare-release.mjs <commit> /tmp/pcb-job-daemon.tar
 ```
 
-The tar contains only the daemon source at that commit; its adjacent `.json` records the commit and SHA-256. It does not contain local changes, the token, host configuration, or systemd units. Verify the checksum and commit before use. This command prepares a bundle only: it does not install it, restart the daemon, or prove host health. Both output paths must be new.
+The tar contains only the daemon source at that commit; its adjacent `.json` records the commit, archive SHA-256, and source SHA-256. It does not contain local changes, the token, host configuration, or systemd units. The daemon reports its startup source hash in authenticated `/status` as `sourceSha256`; compare it to the manifest after installation. This is source identity, not a health or deployment guarantee. This command prepares a bundle only: it does not install it or restart the daemon. Both output paths must be new.
 
 For initial installation on the host, as root:
 

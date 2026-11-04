@@ -4,10 +4,12 @@ import { hostReader } from './host.ts';
 import { JobManager } from './manager.ts';
 import { createServer } from './server.ts';
 import { Store } from './store.ts';
+import { sourceIdentity } from './source-identity.ts';
+import { fileURLToPath } from 'node:url';
 
 const cfg = loadConfig(process.env);
 const mgr = new JobManager(cfg, new Store(cfg.dataDir), new DockerRuntime(cfg), hostReader(cfg.dataDir));
-const server = createServer(mgr);
+const server = createServer(mgr, sourceIdentity(fileURLToPath(new URL('.', import.meta.url))));
 
 const timer = setInterval(() => {
   mgr.tick().catch((e: unknown) => console.error('tick failed:', e));

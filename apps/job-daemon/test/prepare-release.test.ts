@@ -5,6 +5,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
+import { sourceIdentity } from '../src/source-identity.ts';
 // @ts-expect-error The release utility is plain JavaScript, also usable without a build.
 import { prepareRelease } from '../deploy/prepare-release.mjs';
 
@@ -28,6 +29,9 @@ test('release contains the requested committed source, not dirty files or secret
     assert.match(paths, /apps\/job-daemon\/src\/main.ts/);
     assert.doesNotMatch(paths, /secret/);
     assert.equal(execFileSync('tar', ['-xOf', out, 'apps/job-daemon/src/main.ts']).toString(), 'committed\n');
+    const extracted = join(root, 'extracted'); mkdirSync(extracted);
+    execFileSync('tar', ['-xf', out, '-C', extracted]);
+    assert.equal(manifest.sourceSha256, sourceIdentity(join(extracted, 'apps/job-daemon/src')));
     assert.throws(() => prepareRelease(repo, 'HEAD', out), /EEXIST/);
     assert.throws(() => prepareRelease(repo, 'missing-ref', join(root, 'missing.tar')));
   } finally { rmSync(root, { recursive: true, force: true }); }

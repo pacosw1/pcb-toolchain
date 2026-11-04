@@ -22,7 +22,7 @@ let timer: NodeJS.Timeout;
 beforeEach(async () => {
   r = rig();
   r.clock.now = Date.now();
-  server = createServer(r.mgr);
+  server = createServer(r.mgr, 'startup-identity');
   await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   timer = setInterval(() => {
@@ -38,6 +38,12 @@ afterEach(async () => {
 });
 
 const auth = { authorization: `Bearer ${TOKEN}` };
+it('exposes the startup source identity only to authenticated clients', async () => {
+  assert.equal((await fetch(`${base}/status`)).status, 401);
+  const response = await fetch(`${base}/status`, { headers: auth });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).sourceSha256, 'startup-identity');
+});
 const specHeader = (o: unknown): string => Buffer.from(JSON.stringify(o)).toString('base64');
 
 async function post(spec: unknown, file = tarOf(r.dir), maxRetries = 0): Promise<Response> {
