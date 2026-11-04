@@ -243,7 +243,15 @@ test/e2e-host.sh [user@host]              # real containers, from a temp dir; in
 
 ## Deploy
 
-Nothing below has been applied. On the host, as root:
+To prepare a reproducible source bundle from a reviewed commit, run from the repository root:
+
+```sh
+node apps/job-daemon/deploy/prepare-release.mjs <commit> /tmp/pcb-job-daemon.tar
+```
+
+The tar contains only the daemon source at that commit; its adjacent `.json` records the commit and SHA-256. It does not contain local changes, the token, host configuration, or systemd units. Verify the checksum and commit before use. This command prepares a bundle only: it does not install it, restart the daemon, or prove host health. Both output paths must be new.
+
+For initial installation on the host, as root:
 
 ```sh
 mkdir -p /opt/pcb-job-daemon /var/lib/docker/pcb-jobs     # data on md4: the root disk has 12 GB free
