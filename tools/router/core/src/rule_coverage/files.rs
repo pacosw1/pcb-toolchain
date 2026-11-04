@@ -5,7 +5,7 @@
 use super::dsn_model::first_minimum;
 use super::forms::rule_forms;
 use super::identity::{FootprintIdentity, fixed_geometry, footprint_identity};
-use super::{Collaborators, Coverage, Disposition, DrilledRequest, DsnBinding, FileBinding, Model, ProjectRequest, RouteScope, Row, Status, inspect, validate_backend_command};
+use super::{Collaborators, Coverage, Disposition, DrilledRequest, DsnBinding, FileBinding, Model, ProjectRequest, RouteScope, Row, Status, inspect, thermal_scope, validate_backend_command};
 use crate::decimal::Decimal;
 use crate::pytext::{Separators, dumps};
 use crate::sha256::sha256;
@@ -303,12 +303,12 @@ fn require_stitching(gate: Option<&Path>) -> Result<bool, String> {
     }
 }
 
-fn thermal_of(native: &dyn Collaborators, board_text: &str, base_text: &str, rules: &Path) -> Value {
+fn thermal_of(board_text: &str, base_text: &str, rules: &Path) -> Value {
     let read = || -> Result<Value, String> {
         let mut roots = rule_forms(board_text)?;
         roots.extend(rule_forms(base_text)?);
         let custom = if rules.is_file() { rule_forms(&read_text(rules)?)? } else { Vec::new() };
-        Ok(native.thermal_scope(&roots, &custom))
+        Ok(thermal_scope(&roots, &custom))
     };
     read().unwrap_or_else(|reason| json!({"thermal_connections_possible": true, "reason": reason}))
 }
@@ -341,7 +341,7 @@ pub fn check_files(request: &CheckRequest, native: &dyn Collaborators) -> Result
         return Err("footprint/pad definitions or poses changed before routing admission".to_string());
     }
     let fixed_preserved = fixed_geometry(&board_text)? == fixed_geometry(&base_text)?;
-    let thermal = thermal_of(native, &board_text, &base_text, &sidecars.rules);
+    let thermal = thermal_of(&board_text, &base_text, &sidecars.rules);
     let stitching = require_stitching(request.gate)?;
     let (pads, pad_error) = match native.native_pth_pads(request.base) {
         Ok(pads) => (Some(pads), None),

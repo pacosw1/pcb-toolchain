@@ -3,7 +3,7 @@
 use super::exact::Exact;
 use crate::decimal::Decimal;
 use crate::kicad::raw::Form;
-use crate::rule_coverage::{ClearanceRequirement, Collaborators, Model, RouteScope, dsn_forms, project_clearance_requirement, unit_mm};
+use crate::rule_coverage::{ClearanceRequirement, Model, RouteScope, dsn_forms, project_clearance_requirement, unit_mm};
 use crate::sha256::sha256;
 use serde::Serialize;
 use std::cmp::Ordering;
@@ -188,9 +188,9 @@ fn applied(text: &str, edits: Vec<(std::ops::Range<usize>, ClearanceEdit)>) -> (
 
 /// Raises every existing new-copper clearance of `text` to the floor of `project_text`. `source` is the project path the
 /// receipt names. An error is a value this cannot prove; the model is then not admitted.
-pub fn strengthen_project_clearance(text: &str, project_text: &str, source: &str, scope: &RouteScope, native: &dyn Collaborators) -> Result<(String, StrengthenReceipt), String> {
+pub fn strengthen_project_clearance(text: &str, project_text: &str, source: &str, scope: &RouteScope) -> Result<(String, StrengthenReceipt), String> {
     let model = Model::new(text, scope.layers).map_err(|error| format!("invalid source DSN model: {error}"))?;
-    let requirement = project_clearance_requirement(project_text, source, scope, native)?;
+    let requirement = project_clearance_requirement(project_text, source, scope)?;
     if requirement.counterparts.iter().any(|net| !net.is_empty() && !model.membership.contains_key(net)) {
         return Err("native active/retained net is absent from the DSN model".to_string());
     }
