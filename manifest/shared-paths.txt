@@ -94,7 +94,7 @@ tools/import_replay_guard.py
 tools/import_ses.py
 tools/inspect-pdfs.py
 tools/jlc-snapshot.mjs
-tools/jlc_api_evidence.py
+tools/jlc_api_evidence.mjs
 tools/jlc_stock.mjs
 tools/kicad_happy_gate.py
 tools/krt_planes_advisory.py

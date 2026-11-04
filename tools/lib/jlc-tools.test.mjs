@@ -66,3 +66,27 @@ test('jlc_stock usage errors exit 2 and name the program', t => {
   assert.equal(missing.status, 1);
   assert.equal(missing.stderr, "FileNotFoundError: [Errno 2] No such file or directory: 'nofile.csv'\n");
 });
+
+const evidence = root => join(root, 'hardware-design/registry/evidence');
+test('jlc_api_evidence saves a record with indent 1 and keeps an existing one', t => {
+  const f = fixture(t, {C1: page(record('C1'))});
+  mkdirSync(join(evidence(f.root), '2026-01-01'), {recursive: true});
+  writeFileSync(join(evidence(f.root), '2026-01-01/C2.api.json'), '{}');
+  const r = f.run('jlc_api_evidence.mjs', ['C2', 'C1'], {IOT_LAB: f.root});
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, 'C2: kept\nC1: M-C1 stock 100000 expand\n');
+  const day = readdirSync(evidence(f.root)).find(name => name !== '2026-01-01');
+  const out = readFileSync(join(evidence(f.root), day, 'C1.api.json'), 'utf8');
+  assert.match(out, /^\{\n "fetched_at_utc": "/);
+  assert.ok(out.includes('"request": {\n  "keyword": "C1",\n  "currentPage": 1,\n  "pageSize": 10\n }'));
+  assert.ok(out.includes('"productPrice": 0.125,\n    "x": 1'));
+  assert.equal(JSON.parse(readFileSync(join(f.root, 'curl.log'), 'utf8').trim()).at(-1), '{"keyword": "C1", "currentPage": 1, "pageSize": 10}');
+});
+test('jlc_api_evidence stops at a code the API does not know', t => {
+  const f = fixture(t, {});
+  mkdirSync(evidence(f.root), {recursive: true});
+  const r = f.run('jlc_api_evidence.mjs', ['C7'], {IOT_LAB: f.root});
+  assert.equal(r.status, 1);
+  assert.equal(r.stderr, 'C7: not in the JLC parts API\n');
+  assert.equal(existsSync(join(f.root, 'hardware-design/registry/evidence/C7.api.json')), false);
+});
