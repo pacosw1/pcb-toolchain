@@ -58,4 +58,14 @@ Project settings in `.pcb-toolchain.env`:
 
 `scripts/build-bundle.sh VERSION [--linux]` builds `dist/pcb-toolchain-VERSION.tar.gz` + `SHA256SUMS`: it copies the
 tool tree, builds `iotroute` for darwin-arm64 with cargo (and for linux-x86_64 on `BUILD_LINUX_HOST` with `--linux`),
-and writes `VERSION` and `manifest.json`. `gh release create vVERSION dist/*` publishes it.
+and writes `VERSION` and `manifest.json`.
+
+Publish only this version's tarball, with a one-line `SHA256SUMS` (the asset name `install.sh` reads). Run from the
+repo root, with VERSION replaced:
+
+```sh
+(cd dist && shasum -a 256 pcb-toolchain-VERSION.tar.gz > SHA256SUMS)
+gh release create vVERSION --target "$(git rev-parse HEAD)" dist/pcb-toolchain-VERSION.tar.gz dist/SHA256SUMS
+```
+
+`--target` must be the commit the bundle was built from (its `VERSION` file). Use the same HEAD as the build.
