@@ -139,6 +139,8 @@ tools/lib/json-file.test.ts
 tools/lib/json-file.ts
 tools/lib/kicad-population.mjs
 tools/lib/pack-fab.test.ts
+tools/lib/pcb-workflow.test.ts
+tools/lib/pcb-workflow.ts
 tools/lib/pixel-art-checks.mjs
 tools/lib/port-labels.test.ts
 tools/lib/power-symbols.test.mjs
@@ -150,6 +152,7 @@ tools/lib/py-compat.d.mts
 tools/lib/py-compat.mjs
 tools/lib/py-compat.test.mjs
 tools/lib/py-numbers.ts
+tools/lib/py-path.ts
 tools/lib/release-evidence.mjs
 tools/lib/release-evidence.test.mjs
 tools/lib/release-readiness.mjs
