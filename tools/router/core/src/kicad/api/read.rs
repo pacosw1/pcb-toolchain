@@ -373,16 +373,19 @@ fn read_zone(z: &bt::Zone, copper_layers: &[String]) -> Result<Zone, ApiError> {
         outline: read_polygons(&z.outline)?,
         filled,
         rule_area: area,
-        fill: copper.map(zone_fill),
+        fill: copper.map(|c| zone_fill(c, z.priority)),
     })
 }
 
-fn zone_fill(c: &bt::CopperZoneSettings) -> ZoneFill {
+fn zone_fill(c: &bt::CopperZoneSettings, priority: u32) -> ZoneFill {
     let connection = c.connection.as_ref();
     let spokes = connection.and_then(|s| s.thermal_spokes.as_ref());
     ZoneFill {
         clearance: nm(&c.clearance),
+        priority,
         min_thickness: nm(&c.min_thickness),
+        corner_smoothing: c.corner_smoothing,
+        corner_radius: nm(&c.corner_radius),
         thermal_gap: spokes.map_or(0, |s| nm(&s.gap)),
         spoke_width: spokes.map_or(0, |s| nm(&s.width)),
         pad_connection: connection.and_then(|s| zone_connection(s.zone_connection())),

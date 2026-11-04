@@ -36,6 +36,18 @@ fn pad_reached(board: &Board, pad: &Pad, copper: &[Copper], net_zones: &[usize],
     plane_zones.iter().any(|z| board.zones[*z].outline.iter().any(|p| p.near(center, from_mm(FANOUT_REACH_MM))))
 }
 
+/// The zones with each pour once. The router has always counted pours of one outline as one, by pcbnew's zone equality; their
+/// plane outlines are the same, and a pad they miss still has the fan-out reach.
+fn distinct_pours(board: &Board, zones: BTreeSet<usize>) -> Vec<usize> {
+    let mut kept: Vec<usize> = Vec::new();
+    for z in zones {
+        if !kept.iter().any(|k| board.zones[*k].same_pour(&board.zones[z])) {
+            kept.push(z);
+        }
+    }
+    kept
+}
+
 /// A ground or alt-ref net is a plane net only where its plane exists: a net with no plane-layer zone, or with a pad not reached,
 /// is routed with tracks like a signal net (`plane_off` gives the reason). POE-ETHERNET: ISO_GND has no plane on the board, and
 /// the VDD_3V3 In2 zones do not reach J1.11 / J1.13. A plane net gets its outlines: the core puts its fan-out vias inside them.
@@ -46,7 +58,7 @@ pub fn plane_reach(board: &Board, nets: &mut BTreeMap<String, Net>, pads: &[Pad]
         let of_net = |only_planes: bool| -> Vec<usize> {
             let found = zones.iter().zip(sources).filter(|(z, _)| z.net == *name && (!only_planes || plane_layers.contains(&z.layer)));
             let unique: BTreeSet<usize> = found.map(|(_, s)| *s).collect();
-            unique.into_iter().collect()
+            distinct_pours(board, unique)
         };
         let (all, on_planes) = (of_net(false), of_net(true));
         let off: Vec<String> = pads.iter().enumerate().filter(|(_, p)| p.net == *name).filter(|(i, p)| !pad_reached(board, p, copper[*i], &all, &on_planes, &sorted_planes)).map(|(_, p)| p.name()).collect();

@@ -134,7 +134,10 @@ pub struct RuleArea {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ZoneFill {
     pub clearance: Iu,
+    pub priority: u32,
     pub min_thickness: Iu,
+    pub corner_smoothing: i32,
+    pub corner_radius: Iu,
     pub thermal_gap: Iu,
     pub spoke_width: Iu,
     pub pad_connection: Option<ZoneConnection>,
@@ -155,4 +158,13 @@ pub struct Zone {
     pub filled: Vec<FilledLayer>,
     pub rule_area: Option<RuleArea>,
     pub fill: Option<ZoneFill>,
+}
+
+impl Zone {
+    /// pcbnew's ZONE == for copper zones: settings and corners, with no regard to layer, net or name, so two pours of one outline
+    /// are one zone to it.
+    pub fn same_pour(&self, other: &Zone) -> bool {
+        let settings = |z: &Zone| z.fill.as_ref().map(|f| (f.priority, f.min_thickness, f.corner_smoothing, f.corner_radius));
+        settings(self) == settings(other) && self.outline == other.outline
+    }
 }
