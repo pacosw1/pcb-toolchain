@@ -157,6 +157,7 @@ def _serve() -> None:
     import pcbnew
 
     boards = {}
+    opened = [0]                                   # handles are never reused, even after a close
     mm = pcbnew.ToMM
 
     def names(cls_prefix):
@@ -231,7 +232,8 @@ def _serve() -> None:
             b = pcbnew.LoadBoard(req['path'])
             if b is None:
                 raise ValueError('LoadBoard returned nothing for %s' % req['path'])
-            key = 'b%d' % (len(boards) + 1)
+            opened[0] += 1
+            key = 'b%d' % opened[0]
             boards[key] = b
             return {'board': key}
         if op == 'query':
