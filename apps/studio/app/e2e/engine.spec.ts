@@ -159,6 +159,8 @@ test('runs the real gate from the Checks tab', async () => {
   await win.getByRole('button', { name: 'Checks' }).click()
   await win.getByRole('button', { name: 'Run changed checks' }).click()
   const state = win.getByRole('status', { name: 'Run state' })
+  // The view opens on the latest stored run, so wait for this run before reading a result.
+  await expect(state).toHaveText('running', { timeout: 10_000 })
   await expect(state).toHaveText(/passed|failed/, { timeout: 180_000 })
   await expect(win.getByRole('region', { name: 'Run events' })).toContainText('run.end')
   await expect(win.locator('table.metrics')).toContainText('drc errors')
