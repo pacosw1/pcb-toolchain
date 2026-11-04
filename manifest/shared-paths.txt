@@ -86,7 +86,6 @@ tools/grid_ripup.py
 tools/hard_exit.py
 tools/ibis_ramp.py
 tools/ibis_ramp.ts
-tools/import_nets.py
 tools/import_nets.ts
 tools/import_pose_guard.py
 tools/import_replay_guard.py

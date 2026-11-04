@@ -9,7 +9,7 @@
 //   1. node tools/gate.mjs + tools/route_plan.mjs give the open SLOW nets, shortest first. Power nets and fast
 //      nets are never routed here (they need width, pairs and reference planes: hand work).
 //   2. Freerouting routes the next --size nets on the Hetzner box (tools/remote.sh; --local uses this computer).
-//   3. tools/import_nets.py puts the new copper of these nets on the board. The gate runs with
+//   3. tools/import_nets.ts puts the new copper of these nets on the board. The gate runs with
 //      --ratchet --strict against git HEAD. Accept = no gate is worse and fewer connections are open.
 //   4. Accept: git commit (board + gate-metrics.json). Reject: git checkout the board, then bisect the net list
 //      with the same candidate (no new router run). A net that fails alone goes to the failed list.
@@ -22,7 +22,7 @@ import {execFileSync} from 'node:child_process';
 import {readFileSync, writeFileSync, appendFileSync, existsSync, mkdtempSync, copyFileSync} from 'node:fs';
 import {join, relative} from 'node:path';
 import {tmpdir} from 'node:os';
-import {root, kicadPython} from './lib/env.mjs';
+import {root, kicadPython, TS_NODE} from './lib/env.mjs';
 
 const args = process.argv.slice(2);
 const opt = (name, dflt) => (args.includes(name) ? args[args.indexOf(name) + 1] : dflt);
@@ -94,7 +94,7 @@ function accept(nets, cand, before) {
   // pcbnew SaveBoard also rewrites the .kicad_pro: restore the project file too, and never commit it here.
   const restore = () => git('checkout', '--', pcbRel, metricsRel, pcbRel.replace(/\.kicad_pcb$/, '.kicad_pro'));
   let reason = 'import failed';
-  if (ok(kicadPython, ['tools/import_nets.py', pcb, cand, pcb, '--nets', nets.join(',')])) {
+  if (ok(process.execPath, [...TS_NODE, 'tools/import_nets.ts', pcb, cand, pcb, '--nets', nets.join(',')])) {
     const gateOk = ok('node', ['tools/gate.mjs', board, '--ratchet', '--strict', '--write']);
     const now = metrics();
     if (gateOk && now.drc_unconnected < before.drc_unconnected) {
