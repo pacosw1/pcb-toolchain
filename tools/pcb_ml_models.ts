@@ -5,7 +5,7 @@ import { compare } from './lib/py-compat.mjs';
 import { isRelativeTo } from './lib/py-path.ts';
 import { loadDataset, SPLITS, type Dataset, type DatasetRow, type Features, type TargetSpec } from './pcb_ml_data.ts';
 import {
-  artifactIdentity, assertUnchanged, exactKeys, finite, fingerprint, float, ID, isObject, maybeFloat,
+  artifactIdentity, assertUnchanged, exactKeys, fingerprint, float, Float, ID, isObject, maybeFloat,
   jsonCopy, names, number, object, readObject, resolve, same, sha256File, text, validateBindings, without, writeArtifact,
   type Bindings, type Json, type Numeric, type Obj,
 } from './pcb_ml_json.ts';
@@ -84,10 +84,14 @@ export function weights(rows: DatasetRow[]): number[] {
 
 export function normalization(rows: DatasetRow[], featureNames: string[], w: number[]): Column[] {
   return featureNames.map(feature => {
-    const values = rows.map(row => number(row.features[feature])), magnitude = Math.max(...values.map(Math.abs)) || 1;
+    const raw = rows.map(row => row.features[feature]!);
+    const largest = raw.reduce((a, b) => Math.abs(number(a)) >= Math.abs(number(b)) ? a : b);
+    const magnitudeValue = number(largest) === 0 ? float(1) : largest instanceof Float ? float(Math.abs(largest.value))
+      : typeof largest === 'bigint' ? (largest < 0n ? -largest : largest) : Math.abs(largest);
+    const values = raw.map(v => number(v)), magnitude = number(magnitudeValue);
     const scaled = values.map(v => v / magnitude), center = average(scaled, w)!;
     const spread = Math.sqrt(fsum(scaled.map((v, i) => w[i] * (v - center) ** 2)) / fsum(w));
-    return { feature, magnitude: float(magnitude), center_scaled: float(center), scale_scaled: float(spread || 1), constant: Math.max(...values) === Math.min(...values) };
+    return { feature, magnitude: magnitudeValue, center_scaled: float(center), scale_scaled: float(spread || 1), constant: Math.max(...values) === Math.min(...values) };
   });
 }
 export const transform = (features: Features, columns: Column[]): number[] => columns.map(column => column.constant ? 0

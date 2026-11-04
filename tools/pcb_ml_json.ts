@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { dirname, isAbsolute } from 'node:path';
 import { utf8Fingerprint } from './lib/fingerprint.ts';
 import { sha256File } from './lib/json-file.ts';
-import { Float, jsonCanonical, readText } from './lib/py-compat.mjs';
+import { Float, jsonCanonical, readText, truthy as pyTruthy } from './lib/py-compat.mjs';
 import { isFile, joinPath, resolvePath } from './lib/py-path.ts';
 
 export { Float, isFile, sha256File };
@@ -22,6 +22,7 @@ export const hasPath = (path: string): boolean => { try { lstatSync(path); retur
 } };
 export const isObject = (value: unknown): value is Obj => value !== null && typeof value === 'object'
   && !Array.isArray(value) && !(value instanceof Float) && Object.getPrototypeOf(value) === Object.prototype;
+export const truthy = (value: unknown): boolean => isObject(value) ? Object.keys(value).length > 0 : pyTruthy(value);
 export function object(value: unknown, label = 'JSON value'): Obj {
   if (!isObject(value)) throw new Error(`${label} must be an object`);
   return value;

@@ -3,7 +3,7 @@ import { compare } from './lib/py-compat.mjs';
 import {
   artifactIdentity, assertUnchanged, exactKeys, finite, Float, fingerprint, isObject, jsonCopy, names,
   normalizeInputs, number, object, readObject, resolve, same, text, without,
-  type Bindings, type Json, type Numeric, type Obj,
+  type Bindings, type Numeric, type Obj,
 } from './pcb_ml_json.ts';
 export { artifactIdentity, assertUnchanged } from './pcb_ml_json.ts';
 

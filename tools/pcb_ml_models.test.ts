@@ -3,8 +3,9 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { finalizeDataset, type DatasetRow } from './pcb_ml_data.ts';
-import { artifactIdentity, encode, float, number, object, readObject, sha256File, type Obj } from './pcb_ml_json.ts';
+import { fileURLToPath } from 'node:url';
+import { finalizeDataset } from './pcb_ml_data.ts';
+import { artifactIdentity, encode, float, number, object, readObject, same, sha256File, type Obj } from './pcb_ml_json.ts';
 import { algorithms, dependencyFiles, evaluateModel, predictRows, trainModel } from './pcb_ml_models.ts';
 import { fsum } from './pcb_ml_numeric.ts';
 
@@ -32,6 +33,7 @@ export function modelFixture() {
 test('ridge learns a known line on disjoint folds and is reproducible; TRAIN owns normalization', t => {
   const f = modelFixture(); t.after(f.cleanup);
   const path = f.save(), model = f.fit(path, 'first.json', { hyperparameters: { alpha: 0 } });
+  assert.equal(model.normalization.columns[0].magnitude, 3);
   const report = evaluateModel(f.root, 'first.json', path), fold = object(object(report.folds).test);
   // The analytic fixture y=2x+5 has zero residual; allow only binary64 elimination roundoff (epsilon squared).
   assert.ok(number(object(fold.model).mse) < (Number.EPSILON * 100) ** 2);
@@ -111,4 +113,17 @@ test('partial sums retain cancellation and use round-to-even', () => {
   assert.equal(fsum([1e100, 1, -1e100]), 1);
   assert.equal(fsum([1, 1e-16, 1e-16]), 1.0000000000000002);
   assert.throws(() => fsum([Number.MAX_VALUE, Number.MAX_VALUE]), /finite range/);
+});
+
+test('numeric model and all folds exactly match the constrained Hetzner Python reference', t => {
+  const reference = readObject(fileURLToPath(new URL('./pcb_ml_baseline.fixture.json', import.meta.url)));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'pcb-ml-reference-ts-'))); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const source = join(root, 'evidence.json'); writeFileSync(source, reference.source_text as string);
+  const input = object(reference.dataset), data = finalizeDataset(root, { dataset_id: input.dataset_id as string, task: input.task as string,
+    feature_names: input.feature_names as string[], target_specs: { y: { type: 'regression', direction: 'max' } },
+    rows: input.rows as Obj[], inputs: { [source]: sha256File(source) } });
+  writeFileSync(join(root, 'dataset.json'), encode(data, true));
+  const model = trainModel(root, 'dataset.json', { modelId: 'BASELINE', target: 'y', hyperparameters: { alpha: 0 }, output: 'model.json' });
+  const report = evaluateModel(root, 'model.json', 'dataset.json');
+  assert.ok(same({ normalization: model.normalization, parameters: model.parameters, constant_baseline: model.constant_baseline, folds: report.folds }, reference.expected));
 });
