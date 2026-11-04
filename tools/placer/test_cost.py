@@ -31,28 +31,6 @@ P = {'rudy_cell': 1.0, 'mask_cell': 0.25, 'layers': 1, 'pitch': 1.0, 'limit': 0.
      'w_wl': 1.0, 'w_cong': 1.0, 'w_ov': 1.0, 'w_oob': 1.0}
 
 
-def random_problem(rng, n=8, nets=10):
-    units = []
-    for i in range(n):
-        w, h = rng.uniform(.5, 3), rng.uniform(.5, 3)
-        rects = [[-w / 2, -h / 2, w / 2, h / 2, rng.choice([.5, 1.0])]]
-        if i % 3 == 0:
-            rects.append([w / 2, -h / 2, w / 2 + 1, h / 2, .5])
-        units.append(unit('U%d' % i, rng.uniform(0, 20), rng.uniform(0, 20), rects, fixed=(i == 0)))
-        if i % 3 == 0:
-            units[-1]['hard'] = [1]
-        units[-1]['pads'] = [[rng.uniform(-w / 2, w / 2), rng.uniform(-h / 2, h / 2)] for _ in range(rng.randint(0, 6))]
-    ns = []
-    for j in range(nets):
-        us = rng.sample(range(n), rng.randint(2, 4))
-        ns.append({'name': 'N%d' % j, 'weight': rng.choice([1.0, 2.0]),
-                   'pins': [[u, rng.uniform(-1, 1), rng.uniform(-1, 1), 0, 0] for u in us]})
-        for p in ns[-1]['pins']:
-            p[3], p[4] = p[1] + .2, p[2] + .1
-    return problem(units, ns, board=square_board(20, edge=1.0, keepouts=[[[8, 8], [12, 8], [12, 12], [8, 12]]]),
-                   region={'box': [0, 0, 10, 10], 'weight': 2.0, 'refs': []})
-
-
 class CliParseTest(unittest.TestCase):
     def test_parse_edges_inset_and_tol(self):
         from placer import cli

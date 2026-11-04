@@ -25,10 +25,10 @@ const SAMPLES: usize = 4;
 
 /// A dense row-major matrix.
 #[derive(Clone)]
-struct Matrix {
+pub struct Matrix {
     rows: usize,
     cols: usize,
-    data: Vec<f64>,
+    pub data: Vec<f64>,
 }
 
 impl Matrix {
@@ -36,12 +36,12 @@ impl Matrix {
         Self { rows, cols, data: vec![0.0; rows * cols] }
     }
 
-    fn from_fn(rows: usize, cols: usize, f: impl Fn(usize, usize) -> f64) -> Self {
+    pub fn from_fn(rows: usize, cols: usize, f: impl Fn(usize, usize) -> f64) -> Self {
         let data = (0..rows).flat_map(|i| (0..cols).map(move |j| (i, j))).map(|(i, j)| f(i, j)).collect();
         Self { rows, cols, data }
     }
 
-    fn at(&self, i: usize, j: usize) -> f64 {
+    pub fn at(&self, i: usize, j: usize) -> f64 {
         self.data[i * self.cols + j]
     }
 
@@ -80,14 +80,14 @@ fn linspace(a: f64, b: f64, n: usize) -> Vec<f64> {
 }
 
 /// A unit in the model.
-struct Body {
+pub struct Body {
     /// Rect box grown by half the clearance, at turn 0.
     grown: Rect,
     bare: Rect,
-    inflation: f64,
+    pub inflation: f64,
     /// Offsets of the density box from the origin.
     offsets: Rect,
-    area: f64,
+    pub area: f64,
 }
 
 impl Body {
@@ -107,22 +107,22 @@ struct PinRow {
     dy: f64,
 }
 
-struct Model<'a> {
+pub struct Model<'a> {
     pr: &'a Problem,
     p: &'a Params,
-    bodies: Vec<Body>,
-    x0: Vec<f64>,
-    y0: Vec<f64>,
-    movable: Vec<usize>,
-    fixed: Vec<usize>,
+    pub bodies: Vec<Body>,
+    pub x0: Vec<f64>,
+    pub y0: Vec<f64>,
+    pub movable: Vec<usize>,
+    pub fixed: Vec<usize>,
     pins: Vec<PinRow>,
     net_weight: Vec<f64>,
     net_factor: Vec<f64>,
     unit_pins: Vec<f64>,
-    bounds: Rect,
+    pub bounds: Rect,
     bins: usize,
-    ex: Vec<f64>,
-    ey: Vec<f64>,
+    pub ex: Vec<f64>,
+    pub ey: Vec<f64>,
     bin_w: f64,
     bin_h: f64,
     bin_area: f64,
@@ -159,7 +159,7 @@ fn bin_overlap(lo: f64, hi: f64, edges: &[f64], out: &mut [f64]) {
 }
 
 impl<'a> Model<'a> {
-    fn new(pr: &'a Problem, p: &'a Params) -> Self {
+    pub fn new(pr: &'a Problem, p: &'a Params) -> Self {
         let bins = p.bins as usize;
         let b = pr.board.outline_box();
         let (bin_w, bin_h) = ((b.x1 - b.x0) / bins as f64, (b.y1 - b.y0) / bins as f64);
@@ -250,7 +250,7 @@ impl<'a> Model<'a> {
     }
 
     /// RUDY per bin (mm of track per mm2): each net spreads (w + h) * weight * track factor uniformly over its pin box.
-    fn rudy(&self, x: &[f64], y: &[f64]) -> Matrix {
+    pub fn rudy(&self, x: &[f64], y: &[f64]) -> Matrix {
         let nets = self.net_weight.len();
         let mut boxes: Vec<Option<Rect>> = vec![None; nets];
         let mut count = vec![0; nets];
@@ -281,7 +281,7 @@ impl<'a> Model<'a> {
 
     /// RePlAce cell inflation: each movable unit grows in area by its overlap-weighted RUDY over the routing capacity,
     /// clipped to [1, max_infl] in total.
-    fn inflate(&mut self, x: &[f64], y: &[f64]) {
+    pub fn inflate(&mut self, x: &[f64], y: &[f64]) {
         let capacity = self.p.limit * self.p.layers / self.p.pitch;
         let r = self.rudy(x, y);
         let (ax, ay) = self.overlaps(x, y, &self.movable);
@@ -326,14 +326,14 @@ impl<'a> Model<'a> {
     }
 
     /// (WA length, gradient) of the point.
-    fn wa(&self, z: &State, gamma: f64) -> (f64, Vec<f64>) {
+    pub fn wa(&self, z: &State, gamma: f64) -> (f64, Vec<f64>) {
         let (tx, gx) = self.wa_axis(&z.x, |r| r.dx, gamma);
         let (ty, gy) = self.wa_axis(&z.y, |r| r.dy, gamma);
         (tx + ty, [gx, gy].concat())
     }
 
     /// (field x, field y) on the bin centres: Poisson with a cosine (DCT-II) basis.
-    fn field(&self, rho: &Matrix) -> (Matrix, Matrix) {
+    pub fn field(&self, rho: &Matrix) -> (Matrix, Matrix) {
         let scale = 4.0 / (self.bins * self.bins) as f64;
         let a = self.cx.transposed().times(rho).times(&self.cy).map(|i, j, v| {
             // the u = 0 and v = 0 modes have half weight in the inverse DCT-II (DREAMPlace)
@@ -348,7 +348,7 @@ impl<'a> Model<'a> {
     }
 
     /// (gradient, overflow) of the movable units in the fixed charge.
-    fn density(&self, z: &State) -> (Vec<f64>, f64) {
+    pub fn density(&self, z: &State) -> (Vec<f64>, f64) {
         let (ax, ay) = self.overlaps(&z.x, &z.y, &self.movable);
         let d = ax.transposed().times(&ay);
         let rho = d.map(|i, j, v| (v + self.charge.at(i, j)) / self.bin_area);
@@ -408,9 +408,9 @@ impl<'a> Model<'a> {
 
 /// A point of the descent: all unit origins.
 #[derive(Clone)]
-struct State {
-    x: Vec<f64>,
-    y: Vec<f64>,
+pub struct State {
+    pub x: Vec<f64>,
+    pub y: Vec<f64>,
 }
 
 impl State {
