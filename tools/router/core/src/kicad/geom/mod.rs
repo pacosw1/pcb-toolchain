@@ -3,6 +3,12 @@
 use serde::Serialize;
 use std::ops::{Add, Sub};
 
+pub mod boolean;
+pub mod outline;
+pub mod polygon;
+
+pub use polygon::Polygon;
+
 /// Nanometres, KiCad's internal unit.
 pub type Iu = i64;
 

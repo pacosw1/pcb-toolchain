@@ -5,8 +5,8 @@ use super::proto::kiapi::board::types as bt;
 use super::proto::kiapi::board::{BoardStackupDielectricType, BoardStackupLayer as ApiStackupLayer, BoardStackupLayerType, board_stackup_layer};
 use super::proto::kiapi::common::types as ct;
 use crate::kicad::board::*;
-use crate::kicad::geom::{Pt, Rect, normalize_deg};
-use crate::kicad::pad::{Copper, Pad, PadForm, PadKind, PadShape, ZoneConnection, hole_box};
+use crate::kicad::geom::{Polygon, Pt, Rect, normalize_deg, outline};
+use crate::kicad::pad::{Copper, Pad, PadForm, PadKind, PadShape, ZoneConnection, hole_box, mask_expansion};
 use crate::kicad::shape::{Arc, Geometry, Graphic, radius};
 use prost_types::Any;
 use std::collections::BTreeMap;
@@ -16,13 +16,15 @@ use std::path::Path;
 pub fn read_board(client: &mut Client, path: &Path) -> Result<Board, ApiError> {
     let doc = client.board_document()?;
     let copper_layers = copper_stack(client, &doc)?;
+    let board_mask = board_mask_expansion(client, &doc)?;
     let mut footprints = Vec::new();
     for item in client.items(&doc, &[ct::KiCadObjectType::KotPcbFootprint])? {
-        footprints.push(read_footprint(&open(&item)?, &copper_layers)?);
+        footprints.push(read_footprint(&open(&item)?, &copper_layers, board_mask)?);
     }
+    set_pad_polygons(client, &doc, &copper_layers, &mut footprints)?;
     let graphics = client.items(&doc, &[ct::KiCadObjectType::KotPcbShape])?.iter().filter_map(decode).map(|g: bt::BoardGraphicShape| read_graphic(&g)).collect::<Result<_, _>>()?;
     let zones = client.items(&doc, &[ct::KiCadObjectType::KotPcbZone])?.iter().filter_map(decode).map(|z: bt::Zone| read_zone(&z, &copper_layers)).collect::<Result<_, _>>()?;
-    Ok(Board {
+    let mut board = Board {
         path: path.display().to_string(),
         stackup: read_stackup(client, &doc)?,
         nets: read_nets(client, &doc)?,
@@ -32,7 +34,38 @@ pub fn read_board(client: &mut Client, path: &Path) -> Result<Board, ApiError> {
         footprints,
         zones,
         graphics,
-    })
+        outlines: Vec::new(),
+    };
+    board.outlines = outline::board_outlines(&board).unwrap_or_default();
+    Ok(board)
+}
+
+fn board_mask_expansion(client: &mut Client, doc: &ct::DocumentSpecifier) -> Result<i64, ApiError> {
+    let reply: bc::BoardDesignRulesResponse = client.call(&bc::GetBoardDesignRules { board: Some(doc.clone()) })?;
+    Ok(reply.rules.and_then(|r| r.solder_mask_paste).map_or(0, |m| nm(&m.mask_expansion)))
+}
+
+/// KiCad's own polygon of each pad, a layer at a time. Ids that repeat stay out: the reply would be another pad's.
+fn set_pad_polygons(client: &mut Client, doc: &ct::DocumentSpecifier, copper_layers: &[String], footprints: &mut [Footprint]) -> Result<(), ApiError> {
+    let mut uses: BTreeMap<String, usize> = BTreeMap::new();
+    for pad in footprints.iter().flat_map(|f| &f.pads) {
+        *uses.entry(pad.id.clone()).or_default() += 1;
+    }
+    for name in copper_layers {
+        let layer = bt::BoardLayer::from_str_name(&format!("BL_{}", name.replace('.', "_"))).ok_or_else(|| missing("layer"))?;
+        let pads: Vec<ct::Kiid> = footprints.iter().flat_map(|f| &f.pads).filter(|p| uses[&p.id] == 1 && p.layers.contains(name)).map(|p| ct::Kiid { value: p.id.clone() }).collect();
+        let reply: bc::PadShapeAsPolygonResponse = client.call(&bc::GetPadShapeAsPolygon { board: Some(doc.clone()), pads, layer: layer as i32 })?;
+        let mut shapes: BTreeMap<String, Polygon> = BTreeMap::new();
+        for (id, polygon) in reply.pads.iter().zip(&reply.polygons) {
+            shapes.insert(id.value.clone(), read_polygon(polygon)?);
+        }
+        for pad in footprints.iter_mut().flat_map(|f| &mut f.pads) {
+            if let Some(polygon) = shapes.remove(&pad.id) {
+                pad.polygons.insert(name.clone(), polygon);
+            }
+        }
+    }
+    Ok(())
 }
 
 fn open<T: prost::Name + Default>(item: &Any) -> Result<T, ApiError> {
@@ -146,7 +179,9 @@ fn field_text(f: &Option<bt::Field>) -> String {
     f.as_ref().and_then(|f| f.text.as_ref()).and_then(|t| t.text.as_ref()).map_or(String::new(), |t| t.text.clone())
 }
 
-fn read_footprint(f: &bt::FootprintInstance, copper_layers: &[String]) -> Result<Footprint, ApiError> {
+fn read_footprint(f: &bt::FootprintInstance, copper_layers: &[String], board_mask: i64) -> Result<Footprint, ApiError> {
+    let mask = |o: &Option<bt::SolderMaskOverrides>| o.as_ref().and_then(|m| m.solder_mask_margin.as_ref()).map(|d| d.value_nm);
+    let footprint_mask = mask(&f.overrides.as_ref().and_then(|o| o.solder_mask.clone()));
     let definition = f.definition.as_ref().ok_or_else(|| missing("footprint definition"))?;
     let mut out = Footprint {
         id: id(&f.id),
@@ -161,10 +196,15 @@ fn read_footprint(f: &bt::FootprintInstance, copper_layers: &[String]) -> Result
         pads: Vec::new(),
         graphics: Vec::new(),
         zones: Vec::new(),
+        courtyard_front: Vec::new(),
+        courtyard_back: Vec::new(),
     };
     for item in &definition.items {
         if let Some(p) = decode::<bt::Pad>(item) {
-            out.pads.push(read_pad(&p)?);
+            let mut pad = read_pad(&p)?;
+            let pad_mask = p.pad_stack.as_ref().and_then(|s| s.front_outer_layers.as_ref()).and_then(|l| mask(&l.solder_mask_settings));
+            pad.solder_mask_expansion = if pad.layers.iter().any(|l| l.ends_with(".Cu")) { mask_expansion(pad_mask, footprint_mask, board_mask, pad.size) } else { 0 };
+            out.pads.push(pad);
         } else if let Some(g) = decode::<bt::BoardGraphicShape>(item) {
             out.graphics.push(read_graphic(&g)?);
         } else if let Some(z) = decode::<bt::Zone>(item) {
@@ -174,6 +214,8 @@ fn read_footprint(f: &bt::FootprintInstance, copper_layers: &[String]) -> Result
             out.fields.push((field.name, text));
         }
     }
+    out.courtyard_front = outline::courtyard(&out, false).unwrap_or_default();
+    out.courtyard_back = outline::courtyard(&out, true).unwrap_or_default();
     Ok(out)
 }
 
@@ -242,6 +284,8 @@ fn read_pad(p: &bt::Pad) -> Result<Pad, ApiError> {
         thermal_spoke_angle: settings.and_then(|s| s.thermal_spokes.as_ref()).map_or(0.0, |t| deg(&t.angle)),
         spoke_templates: layer.custom_shapes.iter().filter(|g| is_spoke_template(g)).count(),
         copper,
+        polygons: BTreeMap::new(),
+        solder_mask_expansion: 0,
     })
 }
 
@@ -284,11 +328,12 @@ fn read_ring(line: &Option<ct::PolyLine>) -> Result<Vec<Pt>, ApiError> {
     }).collect()
 }
 
+fn read_polygon(p: &ct::PolygonWithHoles) -> Result<Polygon, ApiError> {
+    Ok(Polygon { outline: read_ring(&p.outline)?, holes: p.holes.iter().map(|h| read_ring(&Some(h.clone()))).collect::<Result<_, _>>()? })
+}
+
 fn read_polygons(set: &Option<ct::PolySet>) -> Result<Vec<Polygon>, ApiError> {
-    let polygons = set.as_ref().map_or(&[][..], |s| &s.polygons);
-    polygons.iter().map(|p| {
-        Ok(Polygon { outline: read_ring(&p.outline)?, holes: p.holes.iter().map(|h| read_ring(&Some(h.clone()))).collect::<Result<_, _>>()? })
-    }).collect()
+    set.as_ref().map_or(&[][..], |s| &s.polygons).iter().map(read_polygon).collect()
 }
 
 fn read_graphic(g: &bt::BoardGraphicShape) -> Result<Graphic, ApiError> {

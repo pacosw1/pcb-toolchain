@@ -1,6 +1,7 @@
 //! Pads and the copper KiCad builds for them (PAD::buildEffectiveShape): the primitives its collision tests run on.
-use super::geom::{Iu, Pt, Rect, ki_round};
+use super::geom::{Iu, Polygon, Pt, Rect, ki_round};
 use serde::Serialize;
+use std::collections::BTreeMap;
 
 /// Roundrect pads this close to a circle are circles in KiCad (0.0001 mm).
 const MIN_ROUND_LEG: Iu = 100;
@@ -79,7 +80,19 @@ pub struct Pad {
     pub thermal_spoke_angle: f64,
     /// Thermal spoke templates of a custom pad.
     pub spoke_templates: usize,
+    /// The primitives of GetEffectiveShape.
     pub copper: Vec<Copper>,
+    /// GetEffectivePolygon per copper layer, KiCad's own. Missing for a pad that shares its uuid with another: the API cannot
+    /// tell them apart.
+    pub polygons: BTreeMap<String, Polygon>,
+    /// GetSolderMaskExpansion, without DRU solder_mask_expansion rules.
+    pub solder_mask_expansion: Iu,
+}
+
+/// PAD::GetSolderMaskExpansion: the pad's margin, else the footprint's, else the board's. A shrink stops at half the narrow side.
+pub fn mask_expansion(pad: Option<Iu>, footprint: Option<Iu>, board: Iu, size: Pt) -> Iu {
+    let margin = pad.or(footprint).unwrap_or(board);
+    margin.max(-(size.x.min(size.y)) / 2)
 }
 
 /// What the copper of a pad is built from.
@@ -145,6 +158,15 @@ mod tests {
         let c = form(PadShape::Oval, Pt::new(2_000_000, 1_000_000), 0.0).copper();
         assert_eq!(c, [Copper::Segment { a: Pt::new(9_500_000, 20_000_000), b: Pt::new(10_500_000, 20_000_000), width: 1_000_000 }]);
         assert!(matches!(form(PadShape::Oval, Pt::new(1_000_000, 1_000_000), 0.0).copper()[0], Copper::Circle { .. }));
+    }
+
+    #[test]
+    fn mask_margin_comes_from_the_nearest_owner_and_stops_at_half_the_pad() {
+        let size = Pt::new(1_000, 600);
+        assert_eq!(mask_expansion(Some(10), Some(20), 30, size), 10);
+        assert_eq!(mask_expansion(None, Some(20), 30, size), 20);
+        assert_eq!(mask_expansion(None, None, 30, size), 30);
+        assert_eq!(mask_expansion(Some(-1_000), None, 30, size), -300);
     }
 
     #[test]

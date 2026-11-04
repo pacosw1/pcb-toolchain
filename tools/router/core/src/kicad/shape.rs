@@ -62,6 +62,11 @@ impl Arc {
         radius(self.center, self.start)
     }
 
+    /// The angle of the start point about the centre, in degrees.
+    pub fn start_angle(&self) -> f64 {
+        vector_angle(self.start - self.center)
+    }
+
     /// The included angle in degrees, as EDA_SHAPE::GetArcAngle.
     pub fn sweep(&self) -> f64 {
         let start = vector_angle(self.start - self.center);

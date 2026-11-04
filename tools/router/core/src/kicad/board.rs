@@ -1,5 +1,5 @@
 //! A board as typed data, in KiCad's units and order. `kicad::api::read_board` fills it.
-use super::geom::{Iu, Pt, Rect, to_mm};
+use super::geom::{Iu, Polygon, Pt, Rect, to_mm};
 use super::pad::{Pad, ZoneConnection};
 use super::shape::Graphic;
 use serde::Serialize;
@@ -23,6 +23,8 @@ pub struct Board {
     pub graphics: Vec<Graphic>,
     /// The box of Edge.Cuts with line widths, as BOARD::GetBoardEdgesBoundingBox.
     pub edges_bbox: Rect,
+    /// GetBoardPolygonOutlines with no inferred outline: empty when Edge.Cuts does not close.
+    pub outlines: Vec<Polygon>,
 }
 
 impl Board {
@@ -65,7 +67,7 @@ impl StackupLayer {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize)]
 pub struct Footprint {
     pub id: String,
     pub reference: String,
@@ -80,6 +82,9 @@ pub struct Footprint {
     pub pads: Vec<Pad>,
     pub graphics: Vec<Graphic>,
     pub zones: Vec<Zone>,
+    /// GetCourtyard of each side: empty when the side has none or it does not close.
+    pub courtyard_front: Vec<Polygon>,
+    pub courtyard_back: Vec<Polygon>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -109,13 +114,6 @@ pub struct Via {
     pub drill: Iu,
     pub net: String,
     pub locked: bool,
-}
-
-/// A polygon: an outline and its holes. Rings are closed by the last point joining the first.
-#[derive(Debug, Clone, PartialEq, Default, Serialize)]
-pub struct Polygon {
-    pub outline: Vec<Pt>,
-    pub holes: Vec<Vec<Pt>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
