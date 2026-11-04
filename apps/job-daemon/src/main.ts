@@ -2,14 +2,18 @@ import { loadConfig } from './config.ts';
 import { DockerRuntime } from './docker.ts';
 import { hostReader } from './host.ts';
 import { JobManager } from './manager.ts';
-import { createServer } from './server.ts';
+import { createHealthServer, createServer } from './server.ts';
 import { Store } from './store.ts';
 import { sourceIdentity } from './source-identity.ts';
 import { fileURLToPath } from 'node:url';
 
 const cfg = loadConfig(process.env);
 const mgr = new JobManager(cfg, new Store(cfg.dataDir), new DockerRuntime(cfg), hostReader(cfg.dataDir));
-const server = createServer(mgr, sourceIdentity(fileURLToPath(new URL('.', import.meta.url))));
+const identity = sourceIdentity(fileURLToPath(new URL('.', import.meta.url)));
+const server = createServer(mgr, identity);
+// The deployed API may bind to a Tailscale address; keep local deployment verification local.
+const health = cfg.bind === '127.0.0.1' ? null : createHealthServer(mgr, identity);
+health?.listen(cfg.port, '127.0.0.1');
 
 const timer = setInterval(() => {
   mgr.tick().catch((e: unknown) => console.error('tick failed:', e));
@@ -34,6 +38,8 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     clearInterval(cleanTimer);
     server.close();
     server.closeAllConnections();
+    health?.close();
+    health?.closeAllConnections();
     process.exit(0);
   });
 }

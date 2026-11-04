@@ -10,7 +10,7 @@ import { after, afterEach, before, beforeEach, describe, it } from 'node:test';
 import { isDesignFile, manifestOf, pack } from '../src/client.ts';
 import { bindAllowed, loadConfig } from '../src/config.ts';
 import { CpuMeter, parseCpuCount, parseMeminfoKb } from '../src/host.ts';
-import { createServer } from '../src/server.ts';
+import { createHealthServer, createServer } from '../src/server.ts';
 import { TOKEN, rig, tarOf } from './helpers.ts';
 import type { Rig } from './helpers.ts';
 
@@ -43,6 +43,17 @@ it('exposes the startup source identity only to authenticated clients', async ()
   const response = await fetch(`${base}/status`, { headers: auth });
   assert.equal(response.status, 200);
   assert.equal((await response.json()).sourceSha256, 'startup-identity');
+});
+it('local health server serves authenticated status only', async () => {
+  const health = createHealthServer(r.mgr, 'local-source');
+  await new Promise<void>((ok) => health.listen(0, '127.0.0.1', ok));
+  try {
+    const url = `http://127.0.0.1:${(health.address() as AddressInfo).port}`;
+    assert.equal((await fetch(`${url}/status`)).status, 401);
+    assert.equal((await (await fetch(`${url}/status`, { headers: auth })).json()).sourceSha256, 'local-source');
+    assert.equal((await fetch(`${url}/jobs`, { headers: auth })).status, 404);
+    assert.equal((await fetch(`${url}/status`, { method: 'POST', headers: auth })).status, 404);
+  } finally { health.closeAllConnections(); await new Promise((ok) => health.close(ok)); }
 });
 const specHeader = (o: unknown): string => Buffer.from(JSON.stringify(o)).toString('base64');
 

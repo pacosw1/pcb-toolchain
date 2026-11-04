@@ -287,3 +287,15 @@ export function createServer(mgr: JobManager, sourceSha256: string | null = null
   server.requestTimeout = mgr.cfg.requestTimeoutS * 1000;
   return server;
 }
+
+/** Local-only status endpoint; the caller must bind it to loopback. */
+export function createHealthServer(mgr: JobManager, sourceSha256: string): http.Server {
+  const server = http.createServer((req, res) => {
+    if (!authorized(req, mgr.cfg.token)) return json(res, 401, { error: 'unauthorized' });
+    if (req.method !== 'GET' || req.url !== '/status') return json(res, 404, { error: 'not found' });
+    return json(res, 200, { ...mgr.status(), sourceSha256 });
+  });
+  server.maxConnections = 32;
+  server.requestTimeout = 5000;
+  return server;
+}

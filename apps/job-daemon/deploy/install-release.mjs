@@ -28,8 +28,8 @@ function prepare(archive, manifest, stage) {
   if (createHash('sha256').update(bytes).digest('hex') !== manifest.sha256) throw Error('archive checksum mismatch');
   if (!/^[0-9a-f]{64}$/.test(manifest.sourceSha256)) throw Error('invalid source identity');
   // Read each flat regular file individually; never extract archive paths or links onto the host.
-  const names = execFileSync('tar', ['-tf', archive], { encoding: 'utf8', maxBuffer: 1 << 20 }).trim().split('\n');
-  const entries = execFileSync('tar', ['-tvf', archive], { encoding: 'utf8', maxBuffer: 1 << 20 }).trim().split('\n');
+  const names = execFileSync('tar', ['-tf', '-'], { input: bytes, encoding: 'utf8', maxBuffer: 1 << 20 }).trim().split('\n');
+  const entries = execFileSync('tar', ['-tvf', '-'], { input: bytes, encoding: 'utf8', maxBuffer: 1 << 20 }).trim().split('\n');
   if (names.length !== entries.length) throw Error('ambiguous archive listing');
   const seen = new Set();
   fs.mkdirSync(stage, { mode: 0o700 });
@@ -42,7 +42,7 @@ function prepare(archive, manifest, stage) {
     const m = /^apps\/job-daemon\/src\/([A-Za-z0-9_.-]+)$/.exec(name);
     if (!m || entries[i][0] !== '-' || seen.has(m[1])) throw Error(`invalid archive entry: ${name}`);
     seen.add(m[1]);
-    const content = execFileSync('tar', ['-xOf', archive, name], { maxBuffer: 16 << 20 });
+    const content = execFileSync('tar', ['-xOf', '-', name], { input: bytes, maxBuffer: 16 << 20 });
     const fd = fs.openSync(path.join(stage, m[1]), 'wx', entries[i][3] === 'x' ? 0o755 : 0o644);
     try { fs.writeFileSync(fd, content); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
   }
