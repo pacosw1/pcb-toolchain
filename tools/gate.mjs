@@ -98,6 +98,9 @@ const json = (file) => {
 const bySeverity = (items, severity) => (items ?? []).filter((v) => v.severity === severity).length;
 
 const c = cfg.checks ?? {};
+// Checks that read the board through board-json: they need no pcbnew, and their verdict follows the reader.
+const boardChecks = ['rf'];
+const boardReader = join(process.env.PCB_TOOLCHAIN_ROOT || root, 'bin/iotroute-linux-x86_64');
 const required = expectedMetrics(cfg);
 const environment={configDir:kicadConfig,variables:{KICAD10_FOOTPRINT_DIR:join(kicadShared,'footprints'),KICAD10_SYMBOL_DIR:join(kicadShared,'symbols')},repositories:c.kicad_happy ? pinnedRepos.filter(r=>r.needed==='gate').map(r=>r.dir) : []};
 const externalRoots={kicad:kicadShared,kicad_config:kicadConfig,...Object.fromEntries(pinnedRepos.map(r=>[r.name,r.dir]))};
@@ -119,7 +122,7 @@ try { inputs=gateInputs(root,board,configName,environment); }
 catch (error) { preflightErrors.push(`input evidence: ${error.message}`);inputs={files:[]}; }
 const versions = {};
 const probes=[['kicad',kicadCli,['--version']],
-  ...(Object.keys(c).some(k=>c[k] && !['erc','drc','kicad_happy','port_labels'].includes(k)) ? [['pcbnew',kicadPython,['-c','import pcbnew; print(pcbnew.Version())']]] : []),
+  ...(Object.keys(c).some(k=>c[k] && !['erc','drc','kicad_happy','port_labels',...boardChecks].includes(k)) ? [['pcbnew',kicadPython,['-c','import pcbnew; print(pcbnew.Version())']]] : []),
   ...(c.kicad_happy ? [['python',modernPython,['--version']]] : [])];
 for (const [name,cmd,args] of preflightErrors.length ? [] : probes) {
   gateEvent(logDir,'preflight.probe',{stage:'preflight',tool:name});
@@ -183,10 +186,10 @@ const jobs = {
     const result = await runTool(logDir, 'kicad_happy', process.execPath, a);
     return {kicad_happy_findings: readHappyResult(file, result)};
   },
-  // RF line rule (tools/rf_lines.py + <board>/rf-lines.json, first used on CELLULAR 2026-10-09): GCPW width/gap, no via,
+  // RF line rule (tools/rf_lines.ts + <board>/rf-lines.json, first used on CELLULAR 2026-10-09): GCPW width/gap, no via,
   // length, coplanar and reference ground, ground via fence.
   async rf() {
-    return {rf_failures: countFrom(await output('rf', kicadPython, [tool('rf_lines.py'), pcb, spec(c.rf)]), /rf_lines: \d+ PASS, (\d+) FAIL/)};
+    return {rf_failures: countFrom(await output('rf', process.execPath, [...TS_NODE, tool('rf_lines.ts'), pcb, spec(c.rf)]), /rf_lines: \d+ PASS, (\d+) FAIL/)};
   },
   async port_labels() {
     return {port_label_failures: countFrom(await output('port_labels', process.execPath, [...TS_NODE, tool('port_labels.ts'), pcb]), /port_labels: .* (\d+) failures/)};
@@ -202,13 +205,13 @@ const checks = {};
 const cache = {enabled:reuse,hits:0,misses:0,rejected:0};
 const pendingCache = [];
 const cacheDir = cacheDirArg ? resolve(cacheDirArg) : join(dir,'.gate/check-cache');
-const scripts = {planes:'si_planes.py',pairs:'si_pairs.py',viapads:'pcbtool.py',paths:'pcbtool.py',kicad_happy:'kicad_happy_gate.ts',rf:'rf_lines.py',port_labels:'port_labels.ts'};
+const scripts = {planes:'si_planes.py',pairs:'si_pairs.py',viapads:'pcbtool.py',paths:'pcbtool.py',kicad_happy:'kicad_happy_gate.ts',rf:'rf_lines.ts',port_labels:'port_labels.ts'};
 function keyFor(k,files) {
-  const names=['node','kicad',...(k==='kicad_happy' ? ['python','kicad-happy'] : ['erc','drc','port_labels'].includes(k) ? [] : ['pcbnew'])];
+  const names=['node','kicad',...(k==='kicad_happy' ? ['python','kicad-happy'] : ['erc','drc','port_labels',...boardChecks].includes(k) ? [] : ['pcbnew'])];
   return checkKey({root,stage:k,files:checkInputs(root,files,k,scripts[k],environment.repositories),
     config:{project:cfg.project,stage:cfg.stage ?? 'G4',options:c[k]},externalRoots,
     versions:Object.fromEntries(names.filter(name=>name in versions).map(name=>[name,versions[name]])),
-    commands:['erc','drc'].includes(k) ? [kicadCli] : k==='kicad_happy' ? [process.execPath,modernPython,'git'] : k==='port_labels' ? [process.execPath] : [kicadPython,kicadCli]});
+    commands:['erc','drc'].includes(k) ? [kicadCli] : k==='kicad_happy' ? [process.execPath,modernPython,'git'] : k==='port_labels' ? [process.execPath] : boardChecks.includes(k) ? [process.execPath,kicadCli,boardReader] : [kicadPython,kicadCli]});
 }
 async function execute(k) {
   let metrics,key,hit=false;
