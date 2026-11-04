@@ -77,7 +77,7 @@ test('a child environment cannot extend or remove the parent budget', needsBinar
   }
 });
 
-test('a child environment cannot reset the stage depth', async () => {
+test('a child environment cannot reset the stage depth', needsBinary, async () => {
   await assert.rejects(runStage(['true'], { stage: 'depth', env: { IOT_LEAN_STAGE_DEPTH: '2' } }), (error: unknown) => error instanceof PyError && /reset owned stage depth/.test(error.message));
 });
 
