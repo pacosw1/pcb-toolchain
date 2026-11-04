@@ -121,6 +121,8 @@ tools/lib/env-paths.test.mjs
 tools/lib/env.mjs
 tools/lib/fab-workflow.test.mjs
 tools/lib/fetch-e2k-assets.test.mjs
+tools/lib/file-lock.test.ts
+tools/lib/file-lock.ts
 tools/lib/gate-cli.test.mjs
 tools/lib/gate-core.mjs
 tools/lib/gate-core.test.mjs
@@ -134,6 +136,8 @@ tools/lib/gate-pool.mjs
 tools/lib/gate-pool.test.mjs
 tools/lib/gate-runtime.mjs
 tools/lib/gate-runtime.test.mjs
+tools/lib/iotroute-bin.test.ts
+tools/lib/iotroute-bin.ts
 tools/lib/jlc-tools.test.mjs
 tools/lib/json-file.test.ts
 tools/lib/json-file.ts
@@ -442,6 +446,8 @@ tools/router/core/src/fixtures/m2_j2_18.json
 tools/router/core/src/fixtures/t1_u8.json
 tools/router/core/src/layers.rs
 tools/router/core/src/main.rs
+tools/router/core/src/owned/lock.rs
+tools/router/core/src/owned/mod.rs
 tools/router/core/src/plan/board_text.rs
 tools/router/core/src/plan/load.rs
 tools/router/core/src/plan/mod.rs
@@ -465,6 +471,7 @@ tools/router/core/src/tests_v7.rs
 tools/router/core/src/tests_v8.rs
 tools/router/core/src/tests_v9.rs
 tools/router/core/src/write.rs
+tools/router/core/tests/owned_lock.rs
 tools/router/model.py
 tools/router/pairrules.py
 tools/router/reports/2026-11-01-congestion.md

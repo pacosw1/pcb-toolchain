@@ -43,6 +43,7 @@ use std::collections::BinaryHeap;
 mod checkpoint;
 mod congestion;
 mod layers;
+mod owned;
 mod pour;
 mod reffill;
 mod reuse;
@@ -4200,6 +4201,9 @@ pub(crate) fn add_result(bd: &mut Board, r: &Value) {
 }
 
 fn main() {
+    if let Some(code) = owned::dispatch() {
+        std::process::exit(code);
+    }
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
         Some("write") => std::process::exit(write::cli(&args[2..])),
