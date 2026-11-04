@@ -40,6 +40,17 @@ export function stagedGateMap(root, changed, oldConfigs = new Map(), headInputs 
   }).sort();
   return {boards,reasons};
 }
+// The pcb-toolchain release that the staged toolchain.lock pins (~/.local/share/pcb-toolchain/<version>), or null
+// when the project has no lock (its tools/ are all tracked). The release copies its tools/ into the snapshot.
+export function pinnedRelease(snapshot, home = process.env.HOME) {
+  const lock=join(snapshot,'toolchain.lock');
+  if(!existsSync(lock)) return null;
+  const {version}=JSON.parse(readFileSync(lock,'utf8'));
+  const bundle=join(home,'.local/share/pcb-toolchain',version);
+  const installed=existsSync(join(bundle,'VERSION')) ? readFileSync(join(bundle,'VERSION'),'utf8').split(' ')[0].trim() : '';
+  if(installed!==version) throw new Error(`toolchain.lock pins pcb-toolchain ${version}, not installed: run pcb-toolchain scripts/install.sh --lock toolchain.lock`);
+  return {bundle,version};
+}
 export function affectedGates(root, changed, oldConfigs = new Map(), headInputs = new Map()) {
   return stagedGateMap(root,changed,oldConfigs,headInputs).boards;
 }
@@ -57,6 +68,9 @@ export async function checkStaged(root) {
   try {
     git(['checkout-index','--all',`--prefix=${snapshot}/`]);
     if(git(['write-tree']).trim()!==indexTree) throw new Error('index changed while taking gate snapshot; retry the commit');
+    const release=pinnedRelease(snapshot);
+    if(release) execFileSync('python3',[join(release.bundle,'bin/toolchain_sync.py'),snapshot,'--no-exclude'],{stdio:['ignore','inherit','inherit']});
+    console.log(`staged gates: tools ${release ? `pcb-toolchain ${release.version}` : 'tracked in the project'}`);
     const oldConfigs=new Map();
     const paths=git(['ls-tree','-r','--name-only','HEAD','hardware-design/boards']).split('\n').filter(p=>/\/gate.json$/.test(p));
     for(const p of paths) oldConfigs.set(p.split('/')[2],JSON.parse(git(['show',`HEAD:${p}`])));

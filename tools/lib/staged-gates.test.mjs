@@ -4,7 +4,7 @@ import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,readdirSync} fro
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {execFileSync} from 'node:child_process';
-import {affectedGates,stagedGateMap,checkStaged,recordedInputs} from './staged-gates.mjs';
+import {affectedGates,stagedGateMap,checkStaged,recordedInputs,pinnedRelease} from './staged-gates.mjs';
 const fixture=t=>{
  const root=mkdtempSync(join(tmpdir(),'staged-gate-test-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
  const put=(p,v)=>{mkdirSync(join(root,p,'..'),{recursive:true});writeFileSync(join(root,p),v);};
@@ -138,4 +138,15 @@ test('parallel boards give the same staged metrics as serial; a failure names th
  process.env.IOT_LAB_GATE_JOBS='2';process.env.LIVE=join(root,'.live2');process.env.WAIT_FAIL='1';
  await assert.rejects(checkStaged(root),/gate failed: BASE-PWR \(exit 1\); not run: C, D/);
  assert.equal(git(['write-tree']).trim(),before);
+});
+
+test('pinned release: none without a lock, error when not installed, the bundle when installed',t=>{
+ const dir=mkdtempSync(join(tmpdir(),'pinned-release-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
+ const snap=join(dir,'snap'),home=join(dir,'home');mkdirSync(snap);
+ assert.equal(pinnedRelease(snap,home),null);
+ writeFileSync(join(snap,'toolchain.lock'),JSON.stringify({version:'9.9.9',sha256:'x'}));
+ assert.throws(()=>pinnedRelease(snap,home),/pins pcb-toolchain 9\.9\.9, not installed/);
+ const bundle=join(home,'.local/share/pcb-toolchain/9.9.9');mkdirSync(bundle,{recursive:true});
+ writeFileSync(join(bundle,'VERSION'),'9.9.9 abc\n');
+ assert.deepEqual(pinnedRelease(snap,home),{bundle,version:'9.9.9'});
 });

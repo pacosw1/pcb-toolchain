@@ -46,4 +46,8 @@ case "$(uname -s)-$(uname -m)" in
   Darwin-arm64) export IOTROUTE_BIN="$bundle/bin/iotroute-darwin-arm64" ;;
   Linux-x86_64) export IOTROUTE_BIN="$bundle/bin/iotroute-linux-x86_64" ;;
 esac
+if [ -f "$bundle/VERSION" ] && [ "$project" != "$bundle" ]; then   # the release tools/ into the project (read-only)
+  python3 "$bundle/bin/toolchain_sync.py" "$project" || exit $?
+fi
+[ "${1:-}" = toolchain-sync ] && exit 0
 exec python3 "$bundle/tools/pcb" "$@"
