@@ -17,6 +17,8 @@ mkdir -p "$out/bin" "$here/dist"
 echo "START: copy tool tree"
 (cd "$here" && git archive --format=tar HEAD tools bin) | tar -x -C "$out"
 echo "$version $sha" > "$out/VERSION"
+mkdir -p "$out/tools/pcb-job"                                          # tools/remote.sh submits to the job daemon with this client
+(cd "$here" && git archive --format=tar HEAD apps/job-daemon/src/client.ts apps/job-daemon/src/types.ts) | tar -x -C "$out/tools/pcb-job" --strip-components=3
 echo "START: iotroute darwin-arm64"
 (cd "$here/tools/router/core" && RUSTFLAGS="--remap-path-prefix=$HOME=~ --remap-path-prefix=$here=." cargo build --release --locked --quiet)   # no build-machine paths in the binary
 cp "$here/tools/router/core/target/release/iotroute" "$out/bin/iotroute-darwin-arm64"

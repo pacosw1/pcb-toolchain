@@ -16,7 +16,7 @@
 # Image: tools/remote-route.Dockerfile, built on the box in /srv/iot-lab-route/image.
 set -euo pipefail
 
-HOST=${REMOTE_HOST:?set REMOTE_HOST=user@host (project .pcb-toolchain.env)}
+HOST=${REMOTE_HOST:-}
 BASE=/srv/iot-lab-route/jobs
 IMAGE=${REMOTE_IMAGE:-iot-lab-route:10.0}
 REPO=$(cd "$(dirname "$0")/.." && pwd)
@@ -43,8 +43,51 @@ JOB=$(date +%Y%m%d-%H%M%S)-$$-$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')
 RDIR=$BASE/$JOB
 RESULTS=${RESULTS:-${TMPDIR:-/tmp}/iot-lab-remote/$JOB}
 mkdir -p "$RESULTS"
-echo "remote: job $JOB  remote $HOST:$RDIR  results $RESULTS" >&2
 T0=$(date +%s)
+
+# True when the daemon answers with this token within 3 s. Sets CLIENT.
+daemon_ready() {
+  [ "${REMOTE_NO_DAEMON:-0}" != 1 ] || return 1
+  [ -n "${JOBD_URL:-}" ] || JOBD_URL=$(sed -n 's/^JOBD_URL=//p' "$REPO/.pcb-toolchain.env" 2>/dev/null | tail -1)
+  [ -n "$JOBD_URL" ] || return 1
+  export JOBD_URL JOBD_TOKEN_FILE=${JOBD_TOKEN_FILE:-$HOME/.config/pcb-job/token}
+  CLIENT=
+  for c in "$REPO/tools/pcb-job/client.ts" "$REPO/apps/job-daemon/src/client.ts"; do
+    if [ -f "$c" ]; then CLIENT=$c; break; fi
+  done
+  [ -n "$CLIENT" ] && [ -r "$JOBD_TOKEN_FILE" ] || return 1
+  curl -fsS -m 3 -o /dev/null -H "Authorization: Bearer $(cat "$JOBD_TOKEN_FILE")" "$JOBD_URL/status"
+}
+
+# 32g -> 32, 512m -> 0.5: the daemon takes GB.
+mem_gb() {
+  case $1 in
+    *[gG]) echo "${1%?}" ;;
+    *[mM]) awk -v m="${1%?}" 'BEGIN { print m / 1024 }' ;;
+    *) echo "$1" ;;
+  esac
+}
+
+if daemon_ready 2>/dev/null; then
+  echo "remote: job goes to the daemon $JOBD_URL  results $RESULTS" >&2
+  RAW=$(mktemp -d)
+  ARGS=("$BOARD")
+  for f in ${INPUTS[@]+"${INPUTS[@]}"}; do ARGS+=(--in "$f"); done
+  ARGS+=(--cpus "${REMOTE_CPUS:-24}" --mem "$(mem_gb "${REMOTE_MEM:-32g}")" --timeout "${REMOTE_TIMEOUT:-300}" --fit budget --results "$RAW")
+  [ -z "${REMOTE_IMAGE:-}" ] || ARGS+=(--image "$REMOTE_IMAGE")
+  set +e
+  IOT_LAB=$REPO PCB_TOOLCHAIN_ROOT=$REPO node --no-warnings --experimental-strip-types "$CLIENT" run "${ARGS[@]}" -- "$@"
+  RC=$?
+  set -e
+  # Callers read their files from the results folder itself, as on the SSH path: only out/ comes back.
+  if [ -d "$RAW/out" ]; then cp -R "$RAW/out/." "$RESULTS/"; fi
+  rm -rf "$RAW"
+  echo "remote: daemon job  exit $RC  wall $(( $(date +%s) - T0 )) s  results $RESULTS" >&2
+  exit $RC
+fi
+
+[ -n "$HOST" ] || { echo "remote: no job daemon answered and REMOTE_HOST is not set (project .pcb-toolchain.env)" >&2; exit 2; }
+echo "remote: job $JOB  remote $HOST:$RDIR  results $RESULTS" >&2
 
 # One shared SSH connection for all steps of this job.
 SSH="ssh -o BatchMode=yes -o ControlMaster=auto -o ControlPath=/tmp/iotr-$$ -o ControlPersist=30"
