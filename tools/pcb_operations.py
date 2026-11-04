@@ -14,7 +14,7 @@ import tempfile
 import time
 
 import lean_workflow as lean
-from pcb_workflow import board_config, operation_command, python_native, sha
+from pcb_workflow import board_config, operation_command, python_native, route_policy_args, sha
 from pcb_timing import MeasuredSpan, measured_stage
 
 
@@ -649,19 +649,18 @@ def run(folder):
                 raise ValueError('route.py returned success without its board_file')
             shutil.copyfile(routed, native)
     elif iotroute:
-        # tools/router/run.py from the snapshot (the same flow as route-json): it reads the candidate, writes only
+        # iotroute run from the snapshot (the same flow as route-json): it reads the candidate, writes only
         # its own folder and gives its verdict from KiCad DRC with parity; then the normal gate runs on the copy.
-        from router.run import policy_args
         solver_output = folder / 'operation/router'
         solver_output.mkdir(parents=True, exist_ok=True)
         out = solver_output / native.name
         command = [manifest['node'], 'tools/router/route-dispatch.mjs', '--timeout', str(manifest['timeout_s']), '--',
-                   python_native(), 'tools/router/run.py', board, str(out), '--pcb', str(native),
-                   '--json'] + policy_args(manifest.get('spec'), native)
+                   'iotroute', 'run', board, str(out), '--pcb', str(native),
+                   '--json'] + route_policy_args(manifest.get('spec'), native)
         code = execute(folder, 'route', command, workspace, env)
         record = Path(str(out) + '.iotroute') / 'result.json'
         solver_report = json.loads(record.read_text()) if record.is_file() else dict(
-            status='ERROR', cause='tools/router/run.py wrote no result.json')
+            status='ERROR', cause='iotroute run wrote no result.json')
         if solver_report.get('status') == 'FAIL':
             solver_report['cause'] = 'iotroute DRC not clean: errors %s unconnected %s parity %s' % (
                 solver_report.get('drc_errors'), solver_report.get('unconnected'), solver_report.get('parity'))
@@ -669,7 +668,7 @@ def run(folder):
         if not code:
             routed = Path(solver_report.get('board_file') or '')
             if solver_report.get('status') != 'PASS' or not routed.is_file():
-                raise ValueError('run.py returned success without a PASS record and its board_file')
+                raise ValueError('iotroute run returned success without a PASS record and its board_file')
             shutil.copyfile(routed, native)
     else:
         code = execute(folder, operation, command, workspace, env)

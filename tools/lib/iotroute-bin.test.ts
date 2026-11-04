@@ -23,12 +23,12 @@ function core(name: string): string {
   return folder;
 }
 
-test('sources keep the os.walk order of run.py: a folder\'s files, then its sorted folders', () => {
+test('sources keep the order of iotroute run: a folder\'s files, then its sorted folders', () => {
   const folder = core('order');
   assert.deepEqual(coreSources(folder).map(file => relative(folder, file)), ['Cargo.toml', 'src/m.rs', 'src/z.rs', 'src/a/x.rs', 'src/b/y.rs']);
 });
 
-test('the sha is the value of run.py sources_sha on the same tree', () => {
+test('the sha is the value of iotroute run on the same tree', () => {
   // run.sources_sha printed this for the same tree, in the route image.
   assert.equal(sourcesSha(core('sha')), 'c9369a2eec15ecf751ee5b77bc66167ed2ca854f7d96be66472a24d48652dd4c');
 });

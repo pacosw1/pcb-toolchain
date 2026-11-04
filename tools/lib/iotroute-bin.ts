@@ -1,4 +1,4 @@
-// Finds the iotroute binary: IOTROUTE_BIN, else the per-source-sha cache and cargo build of tools/router/run.py.
+// Finds the iotroute binary: IOTROUTE_BIN, else a per-source-sha cache and cargo build. Run as a script it prints the path.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { accessSync, constants, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const CORE = fileURLToPath(new URL('../router/core', import.meta.url));
 
-/** The files that define the binary, in the order of run.py core_sources: a folder's files, then its sorted folders. */
+/** The files that define the binary: a folder's files, then its sorted folders. iotroute run hashes the same (src/run/steps.rs). */
 function sourcesBelow(folder: string): string[] {
   const entries = readdirSync(folder, { withFileTypes: true });
   const names = (wanted: boolean) => entries.filter(entry => entry.isDirectory() === wanted).map(entry => entry.name).sort();
@@ -23,7 +23,7 @@ export function coreSources(core: string = CORE): string[] {
   return files;
 }
 
-/** The sources_sha of run.py, so both find the same cache folder. */
+/** The hash of the core sources, which names the cache folder. */
 export function sourcesSha(core: string = CORE): string {
   const hash = createHash('sha256');
   for (const file of coreSources(core)) {
@@ -83,3 +83,5 @@ export function iotrouteMissing(core: string = CORE): string | false {
   if (process.env.IOTROUTE_BIN || cacheEntry(core).cached) return false;
   return spawnSync('cargo', ['--version'], { stdio: 'ignore' }).error ? 'needs iotroute: no IOTROUTE_BIN, no cached build, no cargo' : false;
 }
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) console.log(iotrouteBin());

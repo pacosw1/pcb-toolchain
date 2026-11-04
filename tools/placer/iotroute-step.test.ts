@@ -1,10 +1,11 @@
-// The iotroute step score is measured (DRC + gate), never the router claim. run.py and the gate are fakes here.
+// The iotroute step score is measured (DRC + gate), never the router claim. iotroute run and the gate are fakes here.
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { Float, number, PyError } from '../lib/py-compat.mjs';
+process.env.IOTROUTE_BIN = process.execPath;   // the steps run on a stand-in stage: any executable will do
 import { boardId, GateWorkspace, gatePart, measure, measureKey, NO_RESULT, routeStep, routerCpu, score, type Metrics } from './iotroute-step.ts';
 
 const CLEAN = { status: 'PASS', drc_errors: 0, unconnected: 0, parity: 0, track_length_mm: 10.0, vias: 3 };
@@ -74,7 +75,7 @@ test('a clean step runs the gate and passes', async t => {
   const { out, calls, gates, summary, d } = await runStep(t, CLEAN, GATE_OK);
   const [command, stage] = calls[0];
   assert.equal(stage, 'routing');
-  assert.ok(command[1].endsWith('tools/router/run.py'));
+  assert.equal(command[1], 'run');
   assert.equal(command[2], 'NET-CORE');
   assert.ok(command[3].endsWith('route-0/NET-CORE.kicad_pcb'));
   assert.equal(command[command.indexOf('--iters') + 1], '40');
@@ -111,7 +112,7 @@ test('score.json keeps the floats of the record and the indent of json.dump', as
   assert.ok(!text.endsWith('\n'));
 });
 
-test('the measure reads the saved board counts of run.py', t => {
+test('the measure reads the saved board counts of the run', t => {
   const d = folder(t);
   const path = join(d, 'route-0', 'score.json');
   mkdirSync(join(d, 'route-0'));

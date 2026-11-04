@@ -136,7 +136,7 @@ fn assign_domains(board: &Board, nets: &mut BTreeMap<String, Net>, files: &Board
         let boxes: Vec<[Num; 4]> = planes.exempt.areas.iter().filter(|a| a.nets.contains(name)).map(|a| a.bounds).collect();
         let (key, exempt) = if boxes.is_empty() { (domain, None) } else { (exempt_domain(&domain, &boxes), Some((domain, boxes))) };
         net.ref_domain = Some(key.clone());
-        // The screen may accept an off-reference run of a net that is not fast: the core prices it and run.py lets si_planes
+        // The screen may accept an off-reference run of a net that is not fast: the core prices it and iotroute run lets si_planes
         // judge the written board. A fast net may cross no gap.
         net.ref_soft = Some(!is_fast(name, files));
         domains.insert(key, exempt);

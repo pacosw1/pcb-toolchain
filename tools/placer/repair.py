@@ -7,12 +7,12 @@ c6fcb7b, tools/pcb_search/README.md "Repair locally").
         [--mode reuse|local|full] [--max-routes 8] [--per-round 4] [--iters 80] [--seed 1] [--no-rotate] [--read ARG ...]
 
 prepare: a copy of SRC with all tracks and vias removed except the lock-net copper (diff pairs + DRU via_count 0
-nets, as tools/router/run.py --lock-from), locked, and all footprints unlocked. --keep locked keeps all locked copper
+nets, as iotroute run --lock-from), locked, and all footprints unlocked. --keep locked keeps all locked copper
 of SRC instead (the hand geometry: pairs, crystals and the locked GND stubs of fixed pads). This is the placement board: the
 problem is read from it (cli.py read; a unit with a pad on locked copper, a connector at the edge and a mounting
 hole stay fixed).
 
-run: ROUTED is a tools/router/run.py result of PLACE (FAIL, with ROUTED.iotroute/drc.json). One round:
+run: ROUTED is a iotroute run result of PLACE (FAIL, with ROUTED.iotroute/drc.json). One round:
   1. Failures = the KiCad DRC errors and unconnected items of ROUTED, with their locations (zone items have no
      location and are not used as points).
   2. Candidate units = movable units (not fixed, no connector) that own a failure pad or have a rect within
@@ -26,12 +26,12 @@ run: ROUTED is a tools/router/run.py result of PLACE (FAIL, with ROUTED.iotroute
      Decap slide: a decap that cli.py read ties to its IC (--decap-tie, default 3 mm) may move alone (problem read
      again with --decap-tie 0) when the tie stays true (pad-edge gap to its IC pin <= the tie distance).
      Deterministic (no random state; --seed is recorded).
-  4. Each proposal is written (kicad_io.write_board) and routed with run.py:
-     reuse (default): the moved placement (PLACE + the move) routed with run.py --reuse ROUTED --reuse-fallback
+  4. Each proposal is written (kicad_io.write_board) and routed with iotroute run:
+     reuse (default): the moved placement (PLACE + the move) routed with iotroute run --reuse ROUTED --reuse-fallback
             none: the router keeps the copper of the nets that the move does not touch and routes the rest
             (tools/router/DESIGN.md 5c); ROUTED = the present candidate's routed board.
      local: on a copy of ROUTED; the writer rips the copper that the moved pads meet, and the unlocked copper
-            clusters within legal_radius of a failure point or on a failed net are ripped too. run.py keeps and
+            clusters within legal_radius of a failure point or on a failed net are ripped too. iotroute run keeps and
             locks all other copper and routes only what is open.
      full:  on a copy of PLACE (lock-net copper only): a full route.
      The score is measured (placer/iotroute_step.py): DRC errors + unconnected + parity (kicad-cli on the saved
@@ -569,9 +569,10 @@ def copy_sidecars(src_pcb, dst_pcb):
             shutil.copyfile(os.path.join(sd, t), os.path.join(dd, t))
     # sub-sheets of a hierarchical schematic (FW-IO blocks/X.kicad_sch): without them the parity check of the copy
     # reads a partial netlist (FW-IO compaction step 0: 55 extra_footprint items on a board with parity 0)
-    from router.run import referenced_sheets
     if os.path.isfile(os.path.join(sd, ss + '.kicad_sch')) and sd != dd:
-        for rel in referenced_sheets(os.path.join(sd, ss + '.kicad_sch'), sd):
+        sheets = subprocess.run([iotroute_step.iotroute_bin(), 'sheets', os.path.join(sd, ss + '.kicad_sch'), sd], check=True,
+                                capture_output=True, text=True).stdout.split('\n')
+        for rel in filter(None, sheets):
             os.makedirs(os.path.dirname(os.path.join(dd, rel)) or dd, exist_ok=True)
             shutil.copyfile(os.path.join(sd, rel), os.path.join(dd, rel))
 
@@ -617,22 +618,16 @@ def write_pose(src, pr, pose, out, sidecar_src):
 
 def prepare(src, out, board, keep='lock-nets'):
     """Placement board, all footprints unlocked, sidecars copied. keep lock-nets: only the lock-net copper
-    (pairs + DRU via_count 0 nets, as run.py --lock-from), locked. keep locked: also every other locked track and
+    (pairs + DRU via_count 0 nets, as iotroute run --lock-from), locked. keep locked: also every other locked track and
     via of SRC (the hand geometry, for example the GND stubs of fixed pads)."""
     import pcbnew
     if keep not in ('lock-nets', 'locked'):
         raise ValueError('keep must be lock-nets or locked')
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
-    sys.path.insert(0, os.path.join(REPO, 'tools', 'router'))
-    import run as router_run
-    bdir, _ = router_run.board_project(board)
-    work = out + '.prepare'
-    os.makedirs(work, exist_ok=True)
-    model = os.path.join(work, 'lock-model.json')
-    subprocess.run(router_run.model_command(router_run.find_or_build()[0], bdir, src, model), check=True,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    nets = router_run.lock_nets(load(model))
-    info = router_run.make_locked_input(src, src, nets, out)
+    done = subprocess.run([iotroute_step.iotroute_bin(), 'lock-input', board, src, out, '--tools', os.path.join(REPO, 'tools')],
+                          check=True, capture_output=True, text=True)
+    info = json.loads(done.stdout)
+    nets = set(info['nets'])
     b = pcbnew.LoadBoard(out)
     if keep == 'locked':
         s = pcbnew.LoadBoard(src)
@@ -673,7 +668,7 @@ def run(board, place, routed, outdir, mode='reuse', max_routes=8, per_round=4, i
     """Repair loop (see the module text). The effects are injectable for tests. -> record dict."""
     outdir = os.path.abspath(outdir)   # the gate runs in its snapshot folder: evidence paths must be absolute
     os.makedirs(outdir, exist_ok=True)
-    if rank_mode == 'hot':  # the next rounds rank on the map of the repair's own routes: run.py writes it (opt-in)
+    if rank_mode == 'hot':  # the next rounds rank on the map of the repair's own routes: iotroute run writes it (opt-in)
         os.environ['IOTROUTE_CONGESTION'] = '1'
     route_fn = route_fn or route
     read_fn = read_fn or read_problem
@@ -687,7 +682,7 @@ def run(board, place, routed, outdir, mode='reuse', max_routes=8, per_round=4, i
     if start_summary is None:
         sp = os.path.join(os.path.dirname(os.path.abspath(routed)), 'score.json')
         start_summary = load(sp) if os.path.isfile(sp) else None
-    if start_summary is None:   # no score of the start: measure it (DRC from run.py, gate when DRC part is 0)
+    if start_summary is None:   # no score of the start: measure it (DRC from iotroute run, gate when DRC part is 0)
         start_summary = dict(run=load(routed + '.iotroute/result.json'), gate_metrics=None)
         if score_key(start_summary)[0] == 0:
             start_summary['gate_metrics'] = gate.run(routed, os.path.join(outdir, 'start-gate'),
@@ -767,7 +762,7 @@ def run(board, place, routed, outdir, mode='reuse', max_routes=8, per_round=4, i
             else:
                 route_in, ripped = new_place, 0
             if mode == 'reuse':
-                # partial re-route from the present candidate's route (run.py --reuse, no full-route fallback: a
+                # partial re-route from the present candidate's route (iotroute run --reuse, no full-route fallback: a
                 # proposal that the reuse route does not repair is rejected like any other)
                 summary, out = route_fn(route_in, d, board, gate, iters,
                                         extra=('--reuse', state['routed'], '--reuse-fallback', 'none'))
@@ -801,11 +796,11 @@ def main(argv=None):
     a.add_argument('out')
     a.add_argument('--board', required=True, help='board ID (hardware-design/boards/<ID>)')
     a.add_argument('--keep', choices=['lock-nets', 'locked'], default='lock-nets',
-                   help='lock-nets: pair + crystal copper (run.py --lock-from); locked: all locked copper of SRC')
+                   help='lock-nets: pair + crystal copper (iotroute run --lock-from); locked: all locked copper of SRC')
     r = sub.add_parser('run')
     r.add_argument('board', help='board ID (hardware-design/boards/<ID>)')
     r.add_argument('place', help='placement board (repair.py prepare)')
-    r.add_argument('routed', help='run.py result of PLACE (with ROUTED.iotroute/)')
+    r.add_argument('routed', help='iotroute run result of PLACE (with ROUTED.iotroute/)')
     r.add_argument('--outdir', required=True)
     r.add_argument('--mode', choices=['reuse', 'local', 'full'], default='reuse')
     r.add_argument('--max-routes', type=int, default=8)

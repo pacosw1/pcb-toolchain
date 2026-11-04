@@ -32,8 +32,6 @@ lib/release-evidence.test.mjs needs hardware-design/boards/*/gate.json data and 
 # Single tests of files that run here: file | test | cause. They must fail; see .cip/run-unit.sh.
 placer.test_mainspath | test_each_dru_gap_comes_from_its_own_rule | needs hardware-design/boards data
 placer.test_mainspath | test_relay_4_rules | needs hardware-design/boards data
-router.test_run | test_locked_input_is_byte_identical_and_keeps_the_source_kiids | needs KiCad Python and hardware-design/boards data
-router.test_run | test_write_gives_a_byte_identical_board | needs KiCad Python and hardware-design/boards data
 lib/bom-coverage.test.mjs | actual BASE A generated root references retain repeated child instances and native PCB origins | needs hardware-design/boards data
 lib/bom-coverage.test.mjs | actual BASE B uses only three explicit reviewed legacy project-name mappings | needs hardware-design/boards data
 lib/bom-coverage.test.mjs | actual AC multi-part geometry rejects a one-row selected BOM even with a complete synthetic scope | needs hardware-design/boards data
@@ -42,5 +40,4 @@ lib/power-symbols.test.mjs | real BASE A and explicit B native closure recognize
 # Tests that skip themselves here (skipUnless in the file), with the count:
 #   placer.test_kicad_io 48, placer.test_pinswap_io 4, placer.test_membership 2, placer.test_validate 2,
 #   placer.test_repair 2, placer.test_wirelen 1: need pcbnew (10 of test_kicad_io also the RELAY-4 board)
-#   router.test_iso_board 3: needs KiCad and cargo
 #   placer.test_batch 10, placer.test_surrogate 6, placer.test_gplace 3: need torch

@@ -132,7 +132,7 @@ export class RouteOutcome {
 }
 
 /** Router counts plus the copper measured on the routed board of the step (a driver with a measure, for example
- *  iotroute: run.py counts the tracks and vias of the saved board). */
+ *  iotroute: iotroute run counts the tracks and vias of the saved board). */
 export class Measured {
   readonly counts: number[];
   readonly measure: Measure | null;

@@ -145,7 +145,7 @@ fn sha256_matches_the_standard() {
     assert_eq!(sha256(&[b'a'; 1000]), "41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3");
 }
 
-/// The bind block names the run: the model file, its rules and its geometry apart, the flags, the source given by run.py.
+/// The bind block names the run: the model file, its rules and its geometry apart, the flags, the source given by iotroute run.
 #[test]
 fn checkpoint_binds_the_run() {
     let d = Dir::new("bind");

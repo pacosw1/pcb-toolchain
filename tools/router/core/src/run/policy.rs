@@ -1,9 +1,9 @@
-//! `iotroute route-policy SPEC.json CANDIDATE.kicad_pcb`: the --spec of `tools/pcb route --router iotroute`, checked, as run
-//! arguments, one per line. Exact fields: {"schema", "iters": 1..1000, "max_time_s": null or > 0, "keep": "lock-nets" | "all"}.
+//! `iotroute route-policy CANDIDATE.kicad_pcb < SPEC.json`: the --spec of `tools/pcb route --router iotroute`, checked, as run
+//! arguments, one per line. An empty spec or null is the default policy. Exact fields: {"schema", "iters": 1..1000, "max_time_s": null or > 0, "keep": "lock-nets" | "all"}.
 //! keep lock-nets: route from the candidate's pair and crystal copper; keep all: keep and lock all candidate copper, route only
 //! what is open.
 use serde_json::Value;
-use std::fs;
+use std::io::Read;
 
 const SCHEMA: &str = "iot-lab.iotroute-policy.v1";
 const FIELDS: [&str; 4] = ["schema", "iters", "max_time_s", "keep"];
@@ -49,20 +49,25 @@ pub fn policy_args(p: &Policy, candidate: &str) -> Vec<String> {
     args
 }
 
-fn read_spec(path: &str) -> Result<Option<Value>, String> {
-    if path == "-" {
+fn read_spec(text: &str) -> Result<Option<Value>, String> {
+    if text.trim().is_empty() {
         return Ok(None);
     }
-    let text = fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
-    serde_json::from_str(&text).map(Some).map_err(|e| format!("{path}: {e}"))
+    let value: Value = serde_json::from_str(text).map_err(|e| format!("spec: {e}"))?;
+    Ok(Some(value).filter(|v| !v.is_null()))
 }
 
 pub fn cli(args: &[String]) -> i32 {
-    let [spec, candidate] = args else {
-        eprintln!("usage: iotroute route-policy SPEC.json|- CANDIDATE.kicad_pcb");
+    let [candidate] = args else {
+        eprintln!("usage: iotroute route-policy CANDIDATE.kicad_pcb < SPEC.json");
         return 2;
     };
-    match read_spec(spec).and_then(|s| policy(s.as_ref())) {
+    let mut text = String::new();
+    if let Err(e) = std::io::stdin().read_to_string(&mut text) {
+        eprintln!("spec: {e}");
+        return 2;
+    }
+    match read_spec(&text).and_then(|s| policy(s.as_ref())) {
         Ok(p) => {
             println!("{}", policy_args(&p, candidate).join("\n"));
             0
@@ -89,6 +94,13 @@ mod tests {
     fn a_spec_sets_its_fields() {
         let p = policy(Some(&json!({"schema": SCHEMA, "iters": 5, "max_time_s": 1.5, "keep": "all"}))).unwrap();
         assert_eq!(policy_args(&p, "c"), ["--iters", "5", "--max-time", "1.5"]);
+    }
+
+    #[test]
+    fn no_text_and_null_are_no_spec() {
+        assert_eq!(read_spec(" ").unwrap(), None);
+        assert_eq!(read_spec("null").unwrap(), None);
+        assert!(read_spec("{").is_err());
     }
 
     #[test]
