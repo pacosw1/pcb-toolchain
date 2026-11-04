@@ -66,6 +66,22 @@ export function formsByUuid(board: string): Map<string, Span> {
   return forms;
 }
 
+/** Where the form that opens at `open` ends, past its closing parenthesis, skipping quoted text. */
+export function formEnd(board: string, open: number): number {
+  let depth = 0;
+  for (let at = open; at < board.length;) {
+    const c = board[at]!;
+    if (c === '"') {
+      at = stringEnd(board, at);
+      continue;
+    }
+    if (c === '(') depth += 1;
+    if (c === ')' && --depth === 0) return at + 1;
+    at += 1;
+  }
+  throw new Error('the board text does not close');
+}
+
 function stringEnd(board: string, open: number): number {
   for (let at = open + 1; at < board.length; at++) {
     if (board[at] === '\\') at += 1;

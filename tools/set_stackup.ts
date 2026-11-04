@@ -11,6 +11,7 @@
 // kicad-happy (GP-001, RP-001) reads the reference layer of each signal layer from this list. With no list, or with a
 // 4-layer list on a 6-layer board, it takes the wrong layer as the reference and reports false plane gaps.
 // CONFIRM the dielectric thicknesses with the stackup that JLCPCB shows for the order before an impedance claim.
+import { formEnd } from './lib/board-edit.ts';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { parseFlags, runMain, UsageError } from './lib/cli.ts';
 import { floatRepr } from './lib/py-compat.mjs';
@@ -95,14 +96,10 @@ export function copperNames(board: string): string[] {
   return [...layers.matchAll(COPPER_LAYER)].map(match => match[1]!).sort((a, b) => layerRank(a) - layerRank(b));
 }
 
-/**
- * Adds the stackup as the first child of the setup. Known bug, kept so that this writes the bytes set_stackup.py writes:
- * an old stackup is not removed, the new one goes in front of it. KiCad keeps the last block, so on a board that already
- * has a stackup the new values are lost at the next KiCad save, although the tool reports them.
- */
+/** The board with this stackup in its setup: in place of an old one, else as the first child. */
 export function withStackup(board: string, stackup: string): string {
   const old = board.indexOf('\n\t\t(stackup');
-  if (old >= 0) return board.slice(0, old + 1) + stackup + board.slice(old + 2);
+  if (old >= 0) return board.slice(0, old + 1) + stackup + board.slice(formEnd(board, board.indexOf('(', old)));
   const setup = required(board, '\n\t(setup') + '\n\t(setup'.length;
   return `${board.slice(0, setup)}\n${stackup}${board.slice(setup)}`;
 }
