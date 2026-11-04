@@ -60,7 +60,7 @@ const repr = (x: string | null): string => x === null ? 'None' : `'${x}'`
 
 /** Absolute path with symlinks resolved one part at a time; the parts that do not exist are kept. Not path.resolve,
  *  which removes `..` before it knows whether the part before it is a link. */
-function resolveReal(start: string): string {
+export function resolveReal(start: string): string {
   let cur = path.parse(start).root
   for (const part of start.split(path.sep)) {
     if (part === '' || part === '.') continue
