@@ -162,6 +162,8 @@ tools/lib/release-evidence.mjs
 tools/lib/release-evidence.test.mjs
 tools/lib/release-readiness.mjs
 tools/lib/release-stock.test.mjs
+tools/lib/route-progress.ts
+tools/lib/route-status.test.ts
 tools/lib/run-record.test.ts
 tools/lib/run-record.ts
 tools/lib/sexpr.ts
@@ -445,7 +447,7 @@ tools/route_progress.py
 tools/route_project_coverage.py
 tools/route_rule_coverage.py
 tools/route_snapshots.py
-tools/route_status.py
+tools/route_status.ts
 tools/router/DESIGN.md
 tools/router/core/.gitignore
 tools/router/core/Cargo.lock

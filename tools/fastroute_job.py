@@ -73,7 +73,7 @@ import import_replay_guard
 import board_uuids
 import backend_quality
 import routing_rules  # noqa: E402  (D-125 staged order, via cost, reference-plane keepouts)
-import route_progress  # noqa: E402  (D-126 live progress: OUTDIR/progress.jsonl, tools/route_status.py)
+import route_progress  # noqa: E402  (D-126 live progress: OUTDIR/progress.jsonl, tools/route_status.ts)
 
 STUCK_RC = 3   # fail_fast: routed with open signal connections (the result is imported and triaged, not qualified)
 BIN = os.environ.get("FASTROUTE_BIN") or os.path.expanduser("~/opt/fastroute/fastroute-0.1.7-macos-arm64/fastroute")
