@@ -145,11 +145,6 @@ test('atomic publication refuses an existing empty destination without nesting o
  assert.ok(readFileSync(join(f.candidate,'gate/result.json')));rmSync(destination,{recursive:true});
  const passed=spawnSync('python3',[command,f.candidate,destination],{encoding:'utf8'});assert.equal(passed.status,0,passed.stderr);assert.ok(readFileSync(join(destination,'gate/result.json')));
 });
-test('the fabrication ZIP must contain exactly the staged Gerber/drill bytes',t=>{
- const f=fixture(t),helper=new URL('../check-fab-zip.py',import.meta.url).pathname;
- const script='import importlib.util,pathlib,sys,zipfile\ns=importlib.util.spec_from_file_location("zipcheck",sys.argv[1]);m=importlib.util.module_from_spec(s);s.loader.exec_module(m)\nd=pathlib.Path(sys.argv[2]);d.mkdir();(d/"board.gbr").write_text("original")\nz=d.parent/"fab.zip"\nwith zipfile.ZipFile(z,"w") as a:a.write(d/"board.gbr","board.gbr")\nassert m.verify(z,d)["files"]==1\n(d/"board.gbr").write_text("changed")\ntry:m.verify(z,d)\nexcept ValueError:pass\nelse:raise AssertionError("changed Gerber accepted")\nwith zipfile.ZipFile(z,"w") as a:a.writestr("../board.gbr","changed")\ntry:m.verify(z,d)\nexcept ValueError:pass\nelse:raise AssertionError("unsafe ZIP accepted")\nprint("PASS: ZIP identity and unsafe-path rejection")';
- const result=spawnSync('python3',['-c',script,helper,join(f.root,'zip-fixture')],{encoding:'utf8'});assert.equal(result.status,0,result.stderr);assert.match(result.stdout,/PASS/);
-});
 test('BASE exporter honors staged output and the chosen KiCad executable without replacing canonical files',t=>{
  const f=fixture(t),tools=join(f.root,'tools');mkdirSync(tools,{recursive:true});
  writeFileSync(join(tools,'make-base-pwr-fab.sh'),readFileSync(new URL('../make-base-pwr-fab.sh',import.meta.url)));

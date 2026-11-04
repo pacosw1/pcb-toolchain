@@ -41,7 +41,7 @@ tools/build-bom-verified.py
 tools/build-cad-catalog.mjs
 tools/build-release-image.py
 tools/check-consistency.mjs
-tools/check-fab-zip.py
+tools/check-fab-zip.mjs
 tools/check-packets.mjs
 tools/check-release-fab.mjs
 tools/check-release-gate.mjs
@@ -115,6 +115,7 @@ tools/lib/bom-ownership.mjs
 tools/lib/bom-ownership.test.mjs
 tools/lib/check-cache.mjs
 tools/lib/check-cache.test.mjs
+tools/lib/check-fab-zip.test.mjs
 tools/lib/consistency-offline.test.mjs
 tools/lib/csv.mjs
 tools/lib/current-paths-check.mjs
@@ -142,6 +143,8 @@ tools/lib/pixel-art-checks.mjs
 tools/lib/power-symbols.test.mjs
 tools/lib/project-root.mjs
 tools/lib/project-root.test.mjs
+tools/lib/py-compat.mjs
+tools/lib/py-compat.test.mjs
 tools/lib/release-evidence.mjs
 tools/lib/release-evidence.test.mjs
 tools/lib/release-readiness.mjs
@@ -149,6 +152,7 @@ tools/lib/si-checks.mjs
 tools/lib/si-checks.test.mjs
 tools/lib/staged-gates.mjs
 tools/lib/staged-gates.test.mjs
+tools/lib/zip-read.mjs
 tools/live-view.py
 tools/mandatory_preflight.py
 tools/model_fit.py
