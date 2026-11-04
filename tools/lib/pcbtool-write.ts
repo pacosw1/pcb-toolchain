@@ -3,7 +3,7 @@
 // are not here. Coordinates are millimetres, y down. Items of a net a spec names are matched in the document by uuid.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { BoardEdit, itemIds, saveBoardInPlace, type DrcFile } from './board-edit.ts';
+import { BoardEdit, itemIds, mmText, saveBoardInPlace, type DrcFile } from './board-edit.ts';
 import { boardJson } from './board-json.ts';
 import { clearanceTo, copperObstacles, edgeObstacles, mmPoint, netClass, netRules, padShape, viaCentres, type ProjectFile } from './board-obstacles.ts';
 import { arcText, circleText, lineText, textText, trackText, viaText, type Xy } from './board-items.ts';
@@ -14,7 +14,7 @@ import { clearMargin, dotShape, firstConflict, polyShape, segmentShape, type Obs
 import { UsageError } from './cli.ts';
 import { drcLines, summarizeDrc } from './drc-summary.ts';
 import { fnmatchCase } from './fnmatch.ts';
-import { footprintAngle, movedFootprint } from './footprint-move.ts';
+import { movedFootprint } from './footprint-move.ts';
 import { readJson } from './json-file.ts';
 import { fixed, floatRepr, pyRepr } from './py-compat.mjs';
 import { dist } from './py-math.ts';
@@ -35,10 +35,7 @@ const printDrc = (drc: DrcFile): void => console.log(drcLines(summarizeDrc(drc))
 const boardText = (pcb: string): string => readFileSync(pcb, 'utf8');
 const listOf = (tuple: string): string => `[${tuple.slice(1, -1)}]`;
 
-/** One run of edit on the board's text, saved in place. `edit` may refuse with an error: nothing is written then. */
-function saved(pcb: string, edit: BoardEdit): DrcFile {
-  return saveBoardInPlace(pcb, edit.text()).drc;
-}
+const saved = (pcb: string, edit: BoardEdit): DrcFile => saveBoardInPlace(pcb, edit.text()).drc;
 
 export function place(pcb: string, specFile: string): number {
   const wanted = placements(readJson<PlaceSpec>(specFile));
@@ -93,16 +90,11 @@ export function widen(pcb: string, net: string, width: number, options: WidenOpt
   const shown = floatRepr(width);
   if (!picked.length) throw stop(`no ${net} track narrower than ${shown} mm matches`);
   const edit = new BoardEdit(boardText(pcb));
-  for (const { id } of picked) edit.replace(id, edit.textOf(id).replace(/\(width [^)]*\)/, `(width ${mmTextOf(width)})`));
+  for (const { id } of picked) edit.replace(id, edit.textOf(id).replace(/\(width [^)]*\)/, `(width ${mmText(width)})`));
   const drc = saved(pcb, edit);
   console.log(`widened ${picked.length} ${net} segments to ${shown} mm`);
   printDrc(drc);
   return 0;
-}
-
-const mmTextOf = (mm: number): string => trackWidthText(mm);
-function trackWidthText(mm: number): string {
-  return trackText({ start: [0, 0], end: [0, 0], width: mm, layer: '', net: '', uuid: '' }).match(/\(width ([^)]*)\)/)![1]!;
 }
 
 interface MoveVia { net: string; from: Xy; to: Xy }
@@ -160,7 +152,7 @@ function applyRoutes(pcb: string, spec: RouteFile, show: (point: [number, number
   const gone = removeNets(board, edit, new Set(spec.clear ?? []));
   const moved = new Map<string, Xy>();
   for (const { move, via } of moves) {
-    edit.replace(via.id, edit.textOf(via.id).replace(/\(at [^)]*\)/, viaAtText(move.to)));
+    edit.replace(via.id, edit.textOf(via.id).replace(/\(at [^)]*\)/, `(at ${mmText(move.to[0])} ${mmText(move.to[1])})`));
     moved.set(via.id, move.to);
   }
   const defaults = spec.via ?? DEFAULT_VIA;
@@ -202,8 +194,6 @@ function applyRoutes(pcb: string, spec: RouteFile, show: (point: [number, number
   printDrc(drc);
   return 0;
 }
-
-const viaAtText = (to: Xy): string => viaText({ at: to, size: 0, drill: 0, net: '', uuid: '' }).match(/\(at [^)]*\)/)![0];
 
 export const route = (pcb: string, specFile: string): number => applyRoutes(pcb, readJson<RouteFile>(specFile), specPoint);
 
@@ -558,5 +548,3 @@ export const writeCommands: Record<string, (argv: string[]) => number> = {
   place: twoWords(place), route: twoWords(route), art: twoWords(art), unroute: unrouteCommand, widen: widenCommand,
   connect: connectCommand, stitch: stitchCommand, setcolors: setColorsCommand,
 };
-
-export { footprintAngle };
