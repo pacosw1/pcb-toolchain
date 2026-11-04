@@ -17,6 +17,9 @@ Containment uses arbitrary precision decimals and squared distances. There is
 no new numerical tolerance. The backend grid bound and patch are the same
 reviewed upstream contract as the original check.
 
+The current shared board JSON omits via type/layer extent. Such inventory rows
+remain present and unsupported; they cannot receive a false through-via proof.
+
 Two intentional provenance changes require fresh evidence:
 
 - `native_form_sha256` binds normalized API geometry instead of parsed source

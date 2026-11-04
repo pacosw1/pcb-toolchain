@@ -197,3 +197,22 @@ fn strict_json_rejects_duplicate_keys_recursively() {
         "0.10000000000000000000001"
     );
 }
+
+#[test]
+fn missing_api_via_type_and_extent_cannot_certify_a_through_via() {
+    let board: NativeBoard = serde_json::from_value(json!({
+        "copper_layers": ["F.Cu", "B.Cu"], "footprints": [],
+        "copper": [{"Via": {"id": "via", "at": {"x": 0, "y": 0},
+            "size": 600000, "drill": 300000, "net": "GND", "locked": false}}]
+    }))
+    .unwrap();
+    let rows = board::native_drilled_geometry(&board).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["supported"], false);
+    assert!(
+        rows[0]["cause"]
+            .as_str()
+            .unwrap()
+            .contains("extent is unresolved")
+    );
+}

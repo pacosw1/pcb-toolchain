@@ -295,6 +295,20 @@ pub fn native_drilled_geometry(board: &NativeBoard) -> Result<Vec<Value>> {
             }
             let mut row = json!({"kind":"via","identity":id,"net":v["net"],"supported":false,"cause":null,"native_form_sha256":evidence::identity(v)});
             let fill = (|| -> Result<Value> {
+                // The current shared API projection omits via type and layer span. Never infer a through via.
+                let span = v["layers"]
+                    .as_array()
+                    .ok_or("native API via type/layer extent is unresolved")?;
+                if v["via_type"] != "Through"
+                    || span
+                        != &serde_json::to_value(&board.copper_layers)
+                            .unwrap()
+                            .as_array()
+                            .unwrap()
+                            .clone()
+                {
+                    return Err("blind/micro/custom via is unsupported".into());
+                }
                 let size = v["size"].as_i64().ok_or("unknown via dimensions")?;
                 let drill = v["drill"].as_i64().ok_or("unknown via drill")?;
                 let net = v["net"]
