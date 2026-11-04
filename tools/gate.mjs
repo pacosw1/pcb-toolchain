@@ -179,8 +179,8 @@ const jobs = {
   },
   async kicad_happy() {
     const file = join(logDir, 'kicad_happy.json');
-    const a = [tool('kicad_happy_gate.py'), pcb, '--result', file, ...(c.kicad_happy?.exempt ? ['--exempt-file', spec(c.kicad_happy.exempt)] : []), ...(c.kicad_happy?.grounds ?? []).flatMap((g) => ['--ground', g]), ...(c.kicad_happy?.return_planes ? ['--planes', spec(c.kicad_happy.return_planes)] : [])];
-    const result = await runTool(logDir, 'kicad_happy', modernPython, a);
+    const a = [...TS_NODE, tool('kicad_happy_gate.ts'), pcb, '--result', file, ...(c.kicad_happy?.exempt ? ['--exempt-file', spec(c.kicad_happy.exempt)] : []), ...(c.kicad_happy?.grounds ?? []).flatMap((g) => ['--ground', g]), ...(c.kicad_happy?.return_planes ? ['--planes', spec(c.kicad_happy.return_planes)] : [])];
+    const result = await runTool(logDir, 'kicad_happy', process.execPath, a);
     return {kicad_happy_findings: readHappyResult(file, result)};
   },
   // RF line rule (tools/rf_lines.py + <board>/rf-lines.json, first used on CELLULAR 2026-10-09): GCPW width/gap, no via,
@@ -202,13 +202,13 @@ const checks = {};
 const cache = {enabled:reuse,hits:0,misses:0,rejected:0};
 const pendingCache = [];
 const cacheDir = cacheDirArg ? resolve(cacheDirArg) : join(dir,'.gate/check-cache');
-const scripts = {planes:'si_planes.py',pairs:'si_pairs.py',viapads:'pcbtool.py',paths:'pcbtool.py',kicad_happy:'kicad_happy_gate.py',rf:'rf_lines.py',port_labels:'port_labels.ts'};
+const scripts = {planes:'si_planes.py',pairs:'si_pairs.py',viapads:'pcbtool.py',paths:'pcbtool.py',kicad_happy:'kicad_happy_gate.ts',rf:'rf_lines.py',port_labels:'port_labels.ts'};
 function keyFor(k,files) {
   const names=['node','kicad',...(k==='kicad_happy' ? ['python','kicad-happy'] : ['erc','drc','port_labels'].includes(k) ? [] : ['pcbnew'])];
   return checkKey({root,stage:k,files:checkInputs(root,files,k,scripts[k],environment.repositories),
     config:{project:cfg.project,stage:cfg.stage ?? 'G4',options:c[k]},externalRoots,
     versions:Object.fromEntries(names.filter(name=>name in versions).map(name=>[name,versions[name]])),
-    commands:['erc','drc'].includes(k) ? [kicadCli] : k==='kicad_happy' ? [modernPython,'git'] : k==='port_labels' ? [process.execPath] : [kicadPython,kicadCli]});
+    commands:['erc','drc'].includes(k) ? [kicadCli] : k==='kicad_happy' ? [process.execPath,modernPython,'git'] : k==='port_labels' ? [process.execPath] : [kicadPython,kicadCli]});
 }
 async function execute(k) {
   let metrics,key,hit=false;
