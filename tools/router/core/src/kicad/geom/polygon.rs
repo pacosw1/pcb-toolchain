@@ -1,10 +1,10 @@
 //! Polygons with holes and the point and shape tests of SHAPE_POLY_SET.
 use super::{Iu, Pt, Rect};
 use crate::kicad::pad::Copper;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// A polygon: an outline and its holes. A ring closes by its last point joining its first.
-#[derive(Debug, Clone, PartialEq, Default, Serialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Polygon {
     pub outline: Vec<Pt>,
     pub holes: Vec<Vec<Pt>>,
@@ -24,19 +24,23 @@ fn ring_contains(ring: &[Pt], p: Pt) -> bool {
     if ring.len() < 3 {
         return false;
     }
-    let mut inside = false;
-    for (i, &a) in ring.iter().enumerate() {
-        let b = ring[(i + 1) % ring.len()];
-        let (dx, dy) = (b.x - a.x, b.y - a.y);
-        if dy != 0 && ((a.y >= p.y) != (b.y >= p.y)) && p.x - a.x < rescale(dx, p.y - a.y, dy) {
-            inside = !inside;
-        }
-    }
-    inside
+    ring_edges(ring).filter(|&(a, b)| ray_crosses(a, b, p)).count() % 2 == 1
 }
 
-fn ring_edges(ring: &[Pt]) -> impl Iterator<Item = (Pt, Pt)> + '_ {
+/// Does the ray to +x from `p` cross this edge? Only an edge that spans p.y can.
+pub(super) fn ray_crosses(a: Pt, b: Pt, p: Pt) -> bool {
+    let (dx, dy) = (b.x - a.x, b.y - a.y);
+    dy != 0 && ((a.y >= p.y) != (b.y >= p.y)) && p.x - a.x < rescale(dx, p.y - a.y, dy)
+}
+
+pub(super) fn ring_edges(ring: &[Pt]) -> impl Iterator<Item = (Pt, Pt)> + '_ {
     (0..ring.len()).map(|i| (ring[i], ring[(i + 1) % ring.len()]))
+}
+
+/// SHAPE_LINE_CHAIN::Area, absolute.
+fn ring_area(ring: &[Pt]) -> f64 {
+    let area: f64 = ring_edges(ring).map(|(a, b)| (a.x as f64 + b.x as f64) * (a.y as f64 - b.y as f64)).sum();
+    (area * 0.5).abs()
 }
 
 fn dot(a: Pt, b: Pt) -> f64 {
@@ -88,6 +92,11 @@ impl Polygon {
 
     pub fn bbox(&self) -> Option<Rect> {
         Rect::of_points(self.outline.iter().copied())
+    }
+
+    /// SHAPE_POLY_SET::Area of this polygon, in square nanometres.
+    pub fn area(&self) -> f64 {
+        ring_area(&self.outline) - self.holes.iter().map(|h| ring_area(h)).sum::<f64>()
     }
 
     /// SHAPE_POLY_SET::Contains with accuracy 0: inside the outline and in no hole.

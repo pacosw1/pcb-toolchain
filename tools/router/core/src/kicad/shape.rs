@@ -1,9 +1,9 @@
 //! Graphic items and arcs, with the arc arithmetic of KiCad's EDA_SHAPE: KiCad gives an arc by three points and works from a
 //! centre it rounds itself, so the same three points must give the same centre here.
 use super::geom::{Iu, Pt, ki_round};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Geometry {
     Segment { start: Pt, end: Pt },
     Rect { top_left: Pt, bottom_right: Pt },
@@ -15,7 +15,7 @@ pub enum Geometry {
     Other,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Graphic {
     pub geometry: Geometry,
     pub layer: String,
@@ -24,7 +24,7 @@ pub struct Graphic {
 }
 
 /// An arc as KiCad keeps it: `center` is KiCad's rounded centre, and start to end runs in its direction of increasing angle.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Arc {
     pub start: Pt,
     pub end: Pt,

@@ -507,6 +507,7 @@ tools/router/core/src/kicad/api/transport.rs
 tools/router/core/src/kicad/board.rs
 tools/router/core/src/kicad/board_json.rs
 tools/router/core/src/kicad/geom/boolean.rs
+tools/router/core/src/kicad/geom/index.rs
 tools/router/core/src/kicad/geom/mod.rs
 tools/router/core/src/kicad/geom/outline.rs
 tools/router/core/src/kicad/geom/polygon.rs
@@ -567,6 +568,13 @@ tools/router/core/src/routing_rules/stages.rs
 tools/router/core/src/routing_rules/tests.rs
 tools/router/core/src/seed.rs
 tools/router/core/src/sha256.rs
+tools/router/core/src/si/impedance.rs
+tools/router/core/src/si/json.rs
+tools/router/core/src/si/mod.rs
+tools/router/core/src/si/pairs.rs
+tools/router/core/src/si/pairs/tests.rs
+tools/router/core/src/si/py.rs
+tools/router/core/src/si/source.rs
 tools/router/core/src/specctra/import.rs
 tools/router/core/src/specctra/import/tests.rs
 tools/router/core/src/specctra/mod.rs

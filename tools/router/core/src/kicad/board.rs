@@ -2,10 +2,10 @@
 use super::geom::{Iu, Polygon, Pt, Rect, to_mm};
 use super::pad::{Pad, ZoneConnection};
 use super::shape::Graphic;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Board {
     pub path: String,
     /// Copper layer names from top to bottom.
@@ -44,7 +44,7 @@ impl Board {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StackupKind {
     Copper,
     Core,
@@ -52,7 +52,7 @@ pub enum StackupKind {
     Other,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StackupLayer {
     /// The layer name; "" for a dielectric, which has none in KiCad's API.
     pub layer: String,
@@ -67,7 +67,7 @@ impl StackupLayer {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Default, Serialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Footprint {
     pub id: String,
     pub reference: String,
@@ -87,14 +87,14 @@ pub struct Footprint {
     pub courtyard_back: Vec<Polygon>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum RoutedCopper {
     Track(Track),
     Via(Via),
 }
 
 /// A segment, or an arc when `mid` is set.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Track {
     pub id: String,
     pub start: Pt,
@@ -106,7 +106,7 @@ pub struct Track {
     pub locked: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Via {
     pub id: String,
     pub at: Pt,
@@ -116,14 +116,14 @@ pub struct Via {
     pub locked: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FilledLayer {
     pub layer: String,
     pub polygons: Vec<Polygon>,
 }
 
 /// True for each item a rule area does not allow.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuleArea {
     pub tracks: bool,
     pub vias: bool,
@@ -131,7 +131,7 @@ pub struct RuleArea {
 }
 
 /// Copper zone settings; a rule area has none.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ZoneFill {
     pub clearance: Iu,
     pub priority: u32,
@@ -146,7 +146,7 @@ pub struct ZoneFill {
     pub min_island_area: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Zone {
     pub id: String,
     pub name: String,

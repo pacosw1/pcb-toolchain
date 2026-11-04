@@ -10,3 +10,4 @@ serde_json = { version = "1.0.154", features = ["raw_value"] }
 prost = "0.14"
 prost-types = "0.14"
 clipper2-rs = "0.3"
+regex-lite = "0.1"

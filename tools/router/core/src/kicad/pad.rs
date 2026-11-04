@@ -1,12 +1,12 @@
 //! Pads and the copper KiCad builds for them (PAD::buildEffectiveShape): the primitives its collision tests run on.
 use super::geom::{Iu, Polygon, Pt, Rect, ki_round};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// Roundrect pads this close to a circle are circles in KiCad (0.0001 mm).
 const MIN_ROUND_LEG: Iu = 100;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PadKind {
     ThroughHole,
     Smd,
@@ -14,7 +14,7 @@ pub enum PadKind {
     NpThroughHole,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PadShape {
     Circle,
     Rect,
@@ -25,7 +25,7 @@ pub enum PadShape {
     Other,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ZoneConnection {
     None,
     Thermal,
@@ -34,7 +34,7 @@ pub enum ZoneConnection {
 }
 
 /// One piece of copper, in board coordinates.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Copper {
     Circle { center: Pt, radius: Iu },
     Segment { a: Pt, b: Pt, width: Iu },
@@ -60,7 +60,7 @@ pub fn hole_box(size: Pt, oval: bool, position: Pt, orientation: f64) -> Rect {
     Copper::Segment { a: position - leg, b: position + leg, width: half_width * 2 }.bbox()
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Pad {
     pub id: String,
     pub number: String,

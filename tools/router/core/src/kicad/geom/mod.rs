@@ -1,12 +1,14 @@
 //! Board units and the plane arithmetic of KiCad's reader: whole nanometres, y down, angles in degrees, positive clockwise on
 //! screen. Values round the way KiCad does, so a point lands on the same nanometre as it does in pcbnew.
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::ops::{Add, Sub};
 
 pub mod boolean;
 pub mod outline;
+pub mod index;
 pub mod polygon;
 
+pub use index::FillIndex;
 pub use polygon::Polygon;
 
 /// Nanometres, KiCad's internal unit.
@@ -44,7 +46,7 @@ pub fn normalize_deg(deg: f64) -> f64 {
     if d < 0.0 { d + 360.0 } else { d }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Pt {
     pub x: Iu,
     pub y: Iu,
@@ -88,7 +90,7 @@ impl Sub for Pt {
 }
 
 /// An axis-parallel box, left <= right and top <= bottom.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rect {
     pub left: Iu,
     pub top: Iu,
