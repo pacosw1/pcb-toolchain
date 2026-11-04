@@ -11,7 +11,7 @@ which the app opens as a project.
   Claude Agent SDK host. Renderer: the UI. The engine itself is `src/main/engineMain.ts`: a separate process on the app's
   own binary, WebSocket JSON-RPC on 127.0.0.1; it prints `READY {"port": N}` and exits when its stdin closes (the app
   owns it).
-- `engine/` — the old Python engine. Nothing runs it now. It stays for `kicad/pcbnew_worker.py` (the one part that stays Python: it uses pcbnew) and the type generator.
+- `app/resources/pcbnew_worker.py` — the only Python here: it runs on KiCad's own Python because it calls the pcbnew API.
 
 ## Develop
 ```sh

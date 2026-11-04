@@ -1,5 +1,4 @@
-// Runs of the project's CLI in the project root: gate checks and candidate operations. Port of
-// engine/src/pcbstudio/runs.py.
+// Runs of the project's CLI in the project root: gate checks and candidate operations.
 //
 //   check  `tools/pcb check BOARD --fresh|--changed --json`
 //   build  `tools/pcb build BOARD --json`              (the board's own pipeline; unsupported boards fail explicitly)

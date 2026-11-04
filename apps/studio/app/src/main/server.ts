@@ -1,5 +1,4 @@
-// WebSocket JSON-RPC server on 127.0.0.1. Prints one READY line with the port, then serves until stdin closes. Port of
-// engine/src/pcbstudio/server.py.
+// WebSocket JSON-RPC server on 127.0.0.1. Prints one READY line with the port, then serves until stdin closes.
 //
 // Authentication: the app generates a random token and gives it in the environment (PCBSTUDIO_ENGINE_TOKEN, not on the
 // command line, so `ps` does not show it). The server removes it from its own environment (tools/pcb children do not

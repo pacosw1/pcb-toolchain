@@ -1,5 +1,4 @@
-// Read-only web viewer server: the app's web build, JSON-RPC over WebSocket and project files, on one port. Port of
-// engine/src/pcbstudio/web.py.
+// Read-only web viewer server: the app's web build, JSON-RPC over WebSocket and project files, on one port.
 //
 // Bind to 127.0.0.1 and publish with `tailscale serve` (HTTPS, tailnet only). Only viewing methods are allowed: no gate
 // runs, no adopt, no edits.

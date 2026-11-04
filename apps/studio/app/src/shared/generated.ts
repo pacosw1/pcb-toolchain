@@ -1,5 +1,4 @@
-// GENERATED from engine/src/pcbstudio/model by `npm run types:gen` (python -m pcbstudio.model.tsgen).
-// Do not edit. `npm run types:check` fails when this file is stale.
+// The engine's shapes: what the JSON-RPC methods return. Edit by hand; the engine and the renderer both use these types.
 
 export type Pt = [number, number]
 

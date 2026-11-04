@@ -1,4 +1,4 @@
-// The one KiCad s-expression reader/writer of the engine. Port of engine/src/pcbstudio/kicad/sexpr.py.
+// The one KiCad s-expression reader/writer of the engine.
 //
 // Model: a list is an array; a quoted string is a JS string; an unquoted token (keyword, number, yes/no) is a Sym,
 // which keeps its exact text so numbers round-trip unchanged. `.kicad_dru` files hold several top-level forms and

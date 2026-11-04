@@ -1,6 +1,5 @@
 // Client of KiCad's own pcbnew, isolated in a subprocess of KiCad's bundled Python.
-// Port of the client half of engine/src/pcbstudio/kicad/pcbnew_worker.py. The server half stays Python: it is the one
-// place that needs the pcbnew API. This client starts `<kicad python> -I SCRIPT --serve` and talks one JSON object
+// The server is resources/pcbnew_worker.py: Python, because it is the one place that needs the pcbnew API. This client starts `<kicad python> -I SCRIPT --serve` and talks one JSON object
 // per line.
 //
 // Request  {"id": n, "op": "...", ...params}

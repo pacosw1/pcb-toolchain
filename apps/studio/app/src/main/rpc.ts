@@ -1,5 +1,4 @@
-// JSON-RPC 2.0 core: one method registry shared by the WebSocket API and the web viewer. Port of
-// engine/src/pcbstudio/rpc.py.
+// JSON-RPC 2.0 core: one method registry shared by the WebSocket API and the web viewer.
 import { AsyncLocalStorage } from 'node:async_hooks'
 
 export const PARSE_ERROR = -32700, INVALID_REQUEST = -32600, METHOD_NOT_FOUND = -32601, INVALID_PARAMS = -32602, INTERNAL_ERROR = -32603

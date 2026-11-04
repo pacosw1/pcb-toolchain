@@ -1,4 +1,4 @@
-// Port of engine/tests/test_web.py and the migrate cases of test_project.py. Run: node --test test/
+// The web viewer and migrate. Run: node --test test/
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import http from 'node:http'

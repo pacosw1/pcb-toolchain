@@ -1,5 +1,5 @@
 // The one kicad-cli wrapper. Every call of kicad-cli in the engine goes through this module.
-// Port of engine/src/pcbstudio/kicad/cli.py. Async: the engine runs in the app's main process, which must not block.
+// Async: a slow KiCad run must not block the engine's other calls.
 //
 // Executable: env PCBSTUDIO_KICAD_CLI, then `kicad-cli` on PATH, then the macOS KiCad app. Each run has a timeout;
 // a failure raises KiCadCliError with the exit code and the end of the log.

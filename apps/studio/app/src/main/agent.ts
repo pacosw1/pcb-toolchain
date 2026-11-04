@@ -13,7 +13,7 @@ import type { EngineSupervisor } from './engine'
 
 // Agent route limits: bound one agent request (the CLI deadline is timeout_s + 600 s of verification).
 export const ROUTE_LIMITS = { passes: 200, timeout_s: 3600, threads: Math.max(1, availableParallelism()) }
-const VERIFY_S = 600 // engine runs.py: default CLI deadline = router timeout_s + 600 s for the fresh gate
+const VERIFY_S = 600 // runs.ts: default CLI deadline = router timeout_s + 600 s for the fresh gate
 const GATE_WAIT_MS = 60 * 60_000
 const BUILD_WAIT_MS = 2 * 60 * 60_000
 

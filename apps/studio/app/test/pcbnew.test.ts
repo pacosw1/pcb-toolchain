@@ -1,5 +1,5 @@
-// The worker client, and board.ts against KiCad's own pcbnew on every iot-lab board. Port of the worker and pcbnew
-// parts of engine/tests/test_board.py. Compared per board: pad position, orientation, size, shape, drill, custom pad
+// The worker client, and board.ts against KiCad's own pcbnew on every iot-lab board.
+// Compared per board: pad position, orientation, size, shape, drill, custom pad
 // extent; track and via counts; zone count, rule-area flag, keepout flags, polygon counts; board outline loops.
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -12,7 +12,7 @@ import { PcbnewWorker, WorkerError, findKicadPython } from '../src/main/kicad/pc
 import type { Pad } from '../src/shared/generated'
 
 const CORPUS = process.env.PCBSTUDIO_CORPUS ?? path.join(os.homedir(), 'code/iot-lab')
-const SCRIPT = path.join(import.meta.dirname, '../../engine/src/pcbstudio/kicad/pcbnew_worker.py')
+const SCRIPT = path.join(import.meta.dirname, '../resources/pcbnew_worker.py')
 const BOARDS_DIR = path.join(CORPUS, 'hardware-design/boards')
 const TOL = 1e-3                    // mm and degrees
 

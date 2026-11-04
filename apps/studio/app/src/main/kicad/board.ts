@@ -1,5 +1,4 @@
 // Board geometry from a .kicad_pcb file, for the viewer (and later the checks). Read only; plain objects.
-// Port of engine/src/pcbstudio/kicad/board.py.
 //
 // Coordinates are KiCad board mm (y down). A footprint item's `(at x y)` / `(start x y)` is in the footprint frame:
 // rotate it by the footprint angle, then add the footprint position. A pad's angle in the file is its absolute

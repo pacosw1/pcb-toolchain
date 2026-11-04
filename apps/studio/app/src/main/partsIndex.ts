@@ -1,5 +1,4 @@
 // Parts index: C-number -> datasheets (with sha256), MPN, manufacturer, CAD asset and catalog evidence.
-// Port of engine/src/pcbstudio/store/parts_index.py.
 //
 // SQLite file in the engine cache folder (`<cache>/index/parts-<root-hash>.sqlite`), never in the project. Sources, in
 // preference order for a part's main datasheet:
