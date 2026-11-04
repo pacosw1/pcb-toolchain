@@ -10,10 +10,10 @@ const ofRing = (outline: Pt[]): Polygon => ({ outline, holes: [] });
 const pad = (fields: Partial<Pad>): Pad => ({
   id: 'p', number: '1', kind: 'Smd', shape: 'Rect', net: 'N', position: pt(0, 0), orientation: 0, size: pt(100, 100), drill: pt(0, 0),
   layers: ['F.Cu'], bbox: { left: 0, top: 0, right: 0, bottom: 0 }, zone_connection: null, thermal_spoke_angle: 0, spoke_templates: 0,
-  copper: [], polygons: {}, solder_mask_expansion: 0, ...fields,
+  copper: [], polygons: {}, solder_mask_expansion: 0, clearance_override: null, ...fields,
 });
 const track = (fields: Partial<Track>): Track => ({ id: 't', start: pt(0, 0), end: pt(1000, 0), mid: null, width: 100, layer: 'F.Cu', net: 'N', locked: false, ...fields });
-const via: Via = { id: 'v', at: pt(0, 0), size: 601, drill: 300, net: 'N', locked: false };
+const via: Via = { id: 'v', at: pt(0, 0), size: 601, drill: 300, net: 'N', locked: false, layers: ['F.Cu', 'B.Cu'] };
 
 test('FromMM cuts toward zero', () => {
   assert.equal(fromMm(1.0000009), 1_000_000);

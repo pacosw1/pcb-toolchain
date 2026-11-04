@@ -161,8 +161,8 @@ test('CLI validates action-specific flags and engine orchestration forwards type
 test('routing labels require known controls and the owned budget; verified failure is the only negative failure label', async t => {
   const f = adapterFixture(); t.after(f.cleanup);
   const trial = f.run('route'), source = join(f.root, 'ENV-SENSE.kicad_pcb'); writeFileSync(source, 'synthetic original source');
-  const board: Board = { path: source, copper_layers: ['F.Cu', 'B.Cu'], stackup: [], nets: {}, footprints: [], copper: [], zones: [], graphics: [],
-    edges_bbox: { left: 0, right: 0, top: 0, bottom: 0 }, outlines: [] };
+  const board: Board = { path: source, copper_layers: ['F.Cu', 'B.Cu'], stackup: [], nets: {}, footprints: [], copper: [], zones: [], graphics: [], texts: [], groups: [],
+    constraints: { min_clearance: 0, min_track_width: 0, min_via_size: 0, copper_edge_clearance: 0 }, edges_bbox: { left: 0, right: 0, top: 0, bottom: 0 }, outlines: [] };
   const boardReader = (path: string): BoardDocument => ({ schema: 'iot-lab.board.v1', kicad_commit: pinnedKicadCommit(), kicad: 'fixture',
     board_sha256: sha256File(path), project_sha256: '', rules_sha256: '', board });
   const policy = f.json('route/operation/policy.json', { effort: { router_timeout_s: 1 } });

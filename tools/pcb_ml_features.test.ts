@@ -6,12 +6,13 @@ import { artifactIdentity, encode, float, number, object } from './pcb_ml_json.t
 
 export const pad = (x: number, y: number, net = 'N'): Pad => ({ id: `${x},${y}`, number: '1', kind: 'Smd', shape: 'Rect', net,
   position: { x, y }, orientation: 0, size: { x: 1e6, y: 1e6 }, drill: { x: 0, y: 0 }, layers: ['F.Cu'], bbox: { left: x, right: x, top: y, bottom: y },
-  zone_connection: null, thermal_spoke_angle: 0, spoke_templates: 0, copper: [], polygons: {}, solder_mask_expansion: 0 });
+  zone_connection: null, thermal_spoke_angle: 0, spoke_templates: 0, copper: [], polygons: {}, solder_mask_expansion: 0, clearance_override: null });
 export const footprint = (pads: Pad[]): Footprint => ({ id: 'fp', reference: 'J1', value: '', lib_id: '', layer: 'F.Cu', position: { x: 0, y: 0 },
-  orientation: 0, locked: false, fields: [], pads, graphics: [], zones: [], courtyard_front: [], courtyard_back: [] });
+  orientation: 0, locked: false, clearance_override: null, fields: [], pads, graphics: [], zones: [], courtyard_front: [], courtyard_back: [] });
 export const boardFixture = (): Board => ({ path: 'synthetic', copper_layers: ['F.Cu', 'B.Cu'], stackup: [], nets: { N: 'Default' },
   footprints: [footprint([pad(0, 0), pad(3e6, 4e6)])], copper: [{ Track: { id: 't', start: { x: 0, y: 0 }, end: { x: 3e6, y: 4e6 }, mid: null, width: 250000, layer: 'F.Cu', net: 'N', locked: false } }],
-  zones: [], graphics: [{ layer: 'Edge.Cuts', width: 50000, filled: false, geometry: { Rect: { top_left: { x: 0, y: 0 }, bottom_right: { x: 10e6, y: 20e6 } } } }],
+  zones: [], texts: [], groups: [], graphics: [{ id: 'g', layer: 'Edge.Cuts', width: 50000, filled: false, geometry: { Rect: { top_left: { x: 0, y: 0 }, bottom_right: { x: 10e6, y: 20e6 } } } }],
+  constraints: { min_clearance: 0, min_track_width: 0, min_via_size: 0, copper_edge_clearance: 0 },
   edges_bbox: { left: -25000, top: -25000, right: 10025000, bottom: 20025000 }, outlines: [] });
 
 test('API world pad centers, straight copper and outline vertices give analytic measurements', () => {
@@ -32,7 +33,7 @@ test('unsupported arcs/outlines are unknown; via proof cannot omit missing span/
   board.graphics[0].geometry = { Circle: { center: { x: 0, y: 0 }, radius_point: { x: 1e6, y: 0 } } };
   const [values, reasons] = routingFeatures(board);
   assert.equal(values.retained_track_length_mm, null); assert.equal(values.edge_bbox_area_mm2, null); assert.equal(reasons.length, 2);
-  const viaBoard = boardFixture(); viaBoard.copper.push({ Via: { id: 'v', at: { x: 0, y: 0 }, size: 600000, drill: 300000, net: 'N', locked: false } });
+  const viaBoard = boardFixture(); viaBoard.copper.push({ Via: { id: 'v', at: { x: 0, y: 0 }, size: 600000, drill: 300000, net: 'N', locked: false, layers: ['F.Cu', 'B.Cu'] } });
   const metrics = nativeCopperMetrics(viaBoard); assert.equal(metrics.track_length_mm, 5); assert.equal(metrics.copper, null); assert.match(metrics.unknowns.copper, /layer\/type/);
   const bad = boardFixture(); bad.footprints[0].pads[0].position.x = NaN;
   assert.equal(routingFeatures(bad)[0].all_net_pad_hpwl_mm, null);

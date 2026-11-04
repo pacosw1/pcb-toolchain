@@ -11,17 +11,17 @@ const box = (x0: number, y0: number, x1: number, y1: number): Polygon => ({ outl
 const track = (start: Pt, end: Pt, fields: Partial<Track> = {}): RoutedCopper => ({
   Track: { id: 't', start, end, mid: null, width: 0.38 * MM, layer: 'F.Cu', net: '/RF', locked: false, ...fields },
 });
-const via = (at: Pt, net = 'GND'): RoutedCopper => ({ Via: { id: 'v', at, size: 0.6 * MM, drill: 0.3 * MM, net, locked: false } satisfies Via });
+const via = (at: Pt, net = 'GND'): RoutedCopper => ({ Via: { id: 'v', at, size: 0.6 * MM, drill: 0.3 * MM, net, locked: false, layers: ['F.Cu', 'B.Cu'] } satisfies Via });
 const zone = (net: string, layer: string, polygons: Polygon[], fields: Partial<Zone> = {}): Zone => ({
   id: 'z', name: '', net, layers: [layer], outline: polygons, filled: [{ layer, polygons }], rule_area: null, fill: null, ...fields,
 });
 const pad = (net: string, center: Pt, half: number, layers = ['F.Cu']): Pad => ({
   id: 'p', number: '1', kind: 'Smd', shape: 'Rect', net, position: center, orientation: 0, size: pt(half * 2, half * 2), drill: pt(0, 0), layers,
   bbox: { left: 0, top: 0, right: 0, bottom: 0 }, zone_connection: null, thermal_spoke_angle: 0, spoke_templates: 0, copper: [],
-  polygons: { 'F.Cu': box(center.x / MM - half, center.y / MM - half, center.x / MM + half, center.y / MM + half) }, solder_mask_expansion: 0,
+  polygons: { 'F.Cu': box(center.x / MM - half, center.y / MM - half, center.x / MM + half, center.y / MM + half) }, solder_mask_expansion: 0, clearance_override: null,
 });
 const footprint = (pads: Pad[], zones: Zone[] = []): Footprint => ({
-  id: 'f', reference: 'U1', value: '', lib_id: '', layer: 'F.Cu', position: pt(0, 0), orientation: 0, locked: false, fields: [], pads, graphics: [], zones,
+  id: 'f', reference: 'U1', value: '', lib_id: '', layer: 'F.Cu', position: pt(0, 0), orientation: 0, locked: false, clearance_override: null, fields: [], pads, graphics: [], zones,
   courtyard_front: [], courtyard_back: [],
 });
 
@@ -29,7 +29,8 @@ const footprint = (pads: Pad[], zones: Zone[] = []): Footprint => ({
 function goodBoard(): Board {
   const fence = [0, 2, 4, 6, 8, 10].flatMap(x => [via(pt(x, 9.3)), via(pt(x, 10.7))]);
   return {
-    path: 'x', copper_layers: ['F.Cu', 'In1.Cu'], stackup: [], nets: {}, footprints: [], graphics: [], outlines: [],
+    path: 'x', copper_layers: ['F.Cu', 'In1.Cu'], stackup: [], nets: {}, footprints: [], graphics: [], texts: [], groups: [], outlines: [],
+    constraints: { min_clearance: 0, min_track_width: 0, min_via_size: 0, copper_edge_clearance: 0 },
     edges_bbox: { left: 0, top: 0, right: 0, bottom: 0 }, copper: [track(pt(0, 10), pt(10, 10)), ...fence],
     zones: [zone('GND', 'F.Cu', [box(-5, 0, 15, 9.61), box(-5, 10.39, 15, 20)]), zone('GND', 'In1.Cu', [box(-5, 0, 15, 20)])],
   };
@@ -140,7 +141,7 @@ test('misses show six entries, all with verbose', () => {
 
 test('rule areas and footprint zones are not fill', () => {
   const board = goodBoard();
-  board.zones[1] = zone('GND', 'In1.Cu', [box(-5, 0, 15, 20)], { rule_area: { tracks: true, vias: true, pour: true } });
+  board.zones[1] = zone('GND', 'In1.Cu', [box(-5, 0, 15, 20)], { rule_area: { tracks: true, vias: true, pour: true, pads: false, footprints: false } });
   board.footprints.push(footprint([], [zone('GND', 'In1.Cu', [box(-5, 0, 15, 20)])]));
   assert.equal(named(rfChecks(board, spec()), 'solid GND').ok, false);
 });

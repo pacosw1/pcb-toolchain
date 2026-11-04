@@ -27,7 +27,7 @@ function apiBoard(path: string): Board {
   const point = (form: SList, name: string) => { const p = field(form, name)!; return { x: nm(p[0]), y: nm(p[1]) }; };
   const tracks: Track[] = segments.map(form => ({ id: field(form, 'uuid')![0] as string, start: point(form, 'start'), end: point(form, 'end'),
     mid: null, width: nm(field(form, 'width')![0]), layer: field(form, 'layer')![0] as string, net: field(form, 'net')!.at(-1) as string, locked: form.includes('locked') }));
-  return { path, copper_layers: ['F.Cu', 'B.Cu'], stackup: [], nets: { A: 'Default' }, footprints: [], copper: tracks.map(Track => ({ Track })), zones: [], graphics: [], edges_bbox: { left: 0, top: 0, right: 0, bottom: 0 }, outlines: [] };
+  return { path, copper_layers: ['F.Cu', 'B.Cu'], stackup: [], nets: { A: 'Default' }, footprints: [], copper: tracks.map(Track => ({ Track })), zones: [], graphics: [], texts: [], groups: [], constraints: { min_clearance: 0, min_track_width: 0, min_via_size: 0, copper_edge_clearance: 0 }, edges_bbox: { left: 0, top: 0, right: 0, bottom: 0 }, outlines: [] };
 }
 class Fixture {
   base = realpathSync(mkdtempSync(join(tmpdir(), 'route-decision-'))); root = join(this.base, 'source');
@@ -118,7 +118,7 @@ test('exact segment intersection and native-grid conversion retain boundary case
   assert.equal(bridgeUuid('https://example.com'), '4fd35a71-71ef-5a55-a9d9-aa75c889a6d0');
 });
 test('API via records without explicit type and extent cannot justify repair', t => {
-  const f = fixture(t), board = apiBoard(f.board); board.copper.push({ Via: { id: 'v', at: { x: 0, y: 0 }, size: 600000, drill: 300000, net: 'A', locked: false } });
+  const f = fixture(t), board = apiBoard(f.board); board.copper.push({ Via: { id: 'v', at: { x: 0, y: 0 }, size: 600000, drill: 300000, net: 'A', locked: false, layers: ['F.Cu', 'B.Cu'] } });
   const report: DrcReport = { violations: [{ type: 'clearance', severity: 'error', items: [{ uuid: 'v' }, { uuid: 'pad' }] }], schematic_parity: [], unconnected_items: [] };
   assert.equal(selectVia(board, report), null);
   const right = board.copper[1]!; if ('Track' in right) { right.Track.start = { x: 0, y: 0 }; right.Track.layer = 'B.Cu'; }
