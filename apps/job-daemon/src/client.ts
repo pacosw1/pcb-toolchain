@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Thin client for the job daemon. README "Client" has the commands.
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -197,8 +198,8 @@ function copyDriverEvidence(toolchain: string, project: string, stage: string): 
   }
 }
 
-/** Builds the job folder of tools/remote.sh, at the same relative paths, plus the driver evidence, and packs it. */
-export function pack(toolchain: string, project: string, board: string, inputs: string[], tarFile: string): void {
+/** The job folder of tools/remote.sh, at the same relative paths, plus the driver evidence. The caller removes it. */
+export function stageJob(toolchain: string, project: string, board: string, inputs: string[]): string {
   const rel = path.isAbsolute(board) ? path.relative(project, board) : board.replace(/\/$/, '');
   if (rel.startsWith('..') || !fs.statSync(path.join(project, rel), { throwIfNoEntry: false })?.isDirectory()) {
     die(`no board dir ${board} under ${project} (set IOT_LAB to the project root)`);
@@ -215,15 +216,107 @@ export function pack(toolchain: string, project: string, board: string, inputs: 
     copyDriverEvidence(toolchain, project, stage);
     fs.mkdirSync(path.join(stage, 'in'));
     for (const f of inputs) fs.cpSync(f, path.join(stage, 'in', path.basename(f)), { preserveTimestamps: true });
-    // COPYFILE_DISABLE and --no-xattrs: no macOS metadata entries for GNU tar on the host to trip over.
-    const r = spawnSync('tar', ['--no-xattrs', '-czf', tarFile, '-C', stage, '.'], {
-      env: { ...process.env, COPYFILE_DISABLE: '1' },
-      stdio: 'inherit',
-    });
-    if (r.status !== 0) die('tar failed');
+    return stage;
+  } catch (e) {
+    fs.rmSync(stage, { recursive: true, force: true });
+    throw e;
+  }
+}
+
+export function pack(toolchain: string, project: string, board: string, inputs: string[], tarFile: string): void {
+  const stage = stageJob(toolchain, project, board, inputs);
+  try {
+    packStage(stage, tarFile);
   } finally {
     fs.rmSync(stage, { recursive: true, force: true });
   }
+}
+
+function packStage(stage: string, tarFile: string): void {
+  // COPYFILE_DISABLE and --no-xattrs: no macOS metadata entries for GNU tar on the host to trip over.
+  const r = spawnSync('tar', ['--no-xattrs', '-czf', tarFile, '-C', stage, '.'], {
+    env: { ...process.env, COPYFILE_DISABLE: '1' },
+    stdio: 'inherit',
+  });
+  if (r.status !== 0) die('tar failed');
+}
+
+interface ManifestFile {
+  path: string;
+  sha256: string;
+  mode: number;
+  mtimeMs: number;
+  bytes: number;
+  source: string;
+}
+
+/** Every file of the stage with its hash, or null when it holds anything else: only the tar keeps a link. */
+export function manifestOf(stage: string): ManifestFile[] | null {
+  const files: ManifestFile[] = [];
+  const walk = (dir: string): boolean => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const source = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        if (!walk(source)) return false;
+      } else if (e.isFile()) {
+        const st = fs.statSync(source);
+        const sha256 = createHash('sha256').update(fs.readFileSync(source)).digest('hex');
+        files.push({ path: path.relative(stage, source), sha256, mode: st.mode & 0o777, mtimeMs: st.mtimeMs, bytes: st.size, source });
+      } else {
+        return false;
+      }
+    }
+    return true;
+  };
+  return walk(stage) ? files : null;
+}
+
+/** Two at a time: the daemon's upload slots are shared with other clients. */
+const SEND_AT_ONCE = 2;
+const BUSY_RETRIES = 60;
+
+async function sendBlob(f: ManifestFile): Promise<void> {
+  for (let i = 0; i < BUSY_RETRIES; i++) {
+    const res = await api(`/blobs/${f.sha256}`, { method: 'PUT', body: await fs.openAsBlob(f.source) });
+    if (res.ok) return;
+    if (res.status !== 503) die(`${res.status}: upload of ${f.path} failed`);
+    await sleep(2000);
+  }
+  die(`upload of ${f.path}: daemon busy`);
+}
+
+/** The job as a manifest: only the files the daemon lacks cross the network. null when the daemon has no cache. */
+async function sendCached(spec: Parsed['spec'], stage: string): Promise<JobRecord | null> {
+  const files = manifestOf(stage);
+  if (!files) return null;
+  const header = Buffer.from(JSON.stringify(spec)).toString('base64');
+  for (let round = 0; round < 2; round++) {
+    const asked = await api('/blobs/missing', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sha256: files.map((f) => f.sha256) }),
+    });
+    if (asked.status === 404) return null;
+    if (!asked.ok) die(`${asked.status}: cache check failed`);
+    const missing = new Set(((await asked.json()) as { missing: string[] }).missing);
+    const send = [...new Map(files.filter((f) => missing.has(f.sha256)).map((f) => [f.sha256, f])).values()];
+    const bytes = send.reduce((n, f) => n + f.bytes, 0);
+    console.error(`pcb-job: cache: ${files.length} files, sending ${send.length} (${Math.ceil(bytes / 1024)} KB)`);
+    const queue = [...send];
+    await Promise.all(Array.from({ length: SEND_AT_ONCE }, async () => {
+      for (let f = queue.shift(); f; f = queue.shift()) await sendBlob(f);
+    }));
+    const res = await api('/jobs', {
+      method: 'POST',
+      headers: { 'x-job-spec': header, 'content-type': 'application/json' },
+      body: JSON.stringify({ files: files.map(({ path: p, sha256, mode, mtimeMs }) => ({ path: p, sha256, mode, mtimeMs })) }),
+    });
+    if (res.status === 409) continue; // a file left the cache between the check and the job
+    const body = (await res.json()) as JobRecord & { error?: string };
+    if (!res.ok) die(`${res.status}: ${body.error ?? 'request failed'}`);
+    return body;
+  }
+  return die('the cache lost files twice during one submit');
 }
 
 interface Parsed {
@@ -280,11 +373,14 @@ async function submit(p: Parsed): Promise<JobRecord> {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const toolchain = process.env.PCB_TOOLCHAIN_ROOT || path.resolve(here, '../../..');
   const project = process.env.IOT_LAB || toolchain;
+  if (!p.spec.name) p.spec.name = path.basename(p.board);
+  const stage = stageJob(toolchain, project, p.board, p.inputs);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pcb-job-tar-'));
   try {
+    const cached = await sendCached(p.spec, stage);
+    if (cached) return cached;
     const tarFile = path.join(tmp, 'input.tar.gz');
-    pack(toolchain, project, p.board, p.inputs, tarFile);
-    if (!p.spec.name) p.spec.name = path.basename(p.board);
+    packStage(stage, tarFile);
     const header = Buffer.from(JSON.stringify(p.spec)).toString('base64');
     return await apiJson<JobRecord>('/jobs', {
       method: 'POST',
@@ -292,6 +388,7 @@ async function submit(p: Parsed): Promise<JobRecord> {
       body: await fs.openAsBlob(tarFile),
     });
   } finally {
+    fs.rmSync(stage, { recursive: true, force: true });
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 }

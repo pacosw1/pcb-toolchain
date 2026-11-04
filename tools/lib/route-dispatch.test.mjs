@@ -100,6 +100,7 @@ test('a daemon that answers gets the job: workspace tools, Linux router, kicad-h
   assert.deepEqual([a[0],a[1]],['run',BOARD]);
   assert.deepEqual([lab,tc],[p.ws,p.ws]);
   assert.equal(a[a.indexOf('--timeout')+1],'60');
+  assert.deepEqual([a[a.indexOf('--cpus')+1],a[a.indexOf('--mem')+1]],['2','4']);
   const inputs=JSON.parse(readFileSync(join(p.root,'inputs.json'),'utf8'));
   assert.deepEqual(inputs.map(i=>i.f.split('/').pop()),['iotroute-linux-x86_64','kicad-happy.tar.gz']);
   assert.ok(inputs[0].mode&0o100);

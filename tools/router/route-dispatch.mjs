@@ -37,6 +37,11 @@ const CANCEL_MS=1500;          // lean_owned sends SIGKILL 2 s after SIGTERM
 // 17 days to 2026-11-04), and the local run is there. tools/pcb_cli.py has the same number; a test keeps them equal.
 const QUEUE_WAIT_S=300;
 const QUEUE_CLOCK_MS=1000;     // how far the credit may lag; the supervisor checks 10 times a second
+// To tune. What a route job reserves; without these it takes the daemon default of 8 CPUs and 8 GB. The core is one thread;
+// DRC uses about 3 cores for a few seconds. Largest board (MC-MAIN, 2026-11-04): whole route on the Mac peaks at 2.8 GB in one
+// process; refill and DRC on Linux at 2 CPUs and 4 GB peak at 0.45 GB. A live core on H7-CORE held 0.6 GB.
+const ROUTE_CPUS=2;
+const ROUTE_MEM_GB=4;
 const VALUE_OPTIONS=new Set(['--iters','--max-time','--seed','--stall-passes']);
 const FLAGS=new Set(['--congestion','--return-exempt','--checkpoint']);
 const FILE_OPTIONS=new Set(['--pcb','--lock-from']);
@@ -155,7 +160,7 @@ async function daemonPlan(command){
   const problem=binaryProblem(toolchain,cwd,bin)??happyProblem(repo);
   if(problem)return problem;
   if(!await daemonAnswers(url,tokenFile))return`the daemon at ${url} does not answer`;
-  return{...job,url,tokenFile,cwd,client,bin,happy:repo.dir,started:Date.now()};
+  return{...job,url,tokenFile,cwd,client,bin,happy:repo.dir,happyCommit:repo.commit,started:Date.now()};
 }
 
 function clientProcess(plan,args,stdio){
@@ -168,9 +173,21 @@ function stageInputs(plan,stage){
   const bin=path.join(stage,BIN),tar=path.join(stage,`${HAPPY}.tar.gz`);
   fs.copyFileSync(plan.bin,bin);
   const now=new Date();fs.utimesSync(bin,now,now);
-  const r=spawnSync('tar',['--no-xattrs','-czf',tar,'-C',plan.happy,'.'],{env:{...process.env,COPYFILE_DISABLE:'1'},stdio:['ignore','ignore','inherit']});
-  if(r.status!==0)throw Error(`tar of ${plan.happy} failed`);
+  fs.copyFileSync(happyTar(plan),tar);
   return[bin,tar];
+}
+
+/** One tar per pinned commit: a tar made again differs in its gzip time, so its hash misses the daemon's file cache. */
+function happyTar(plan){
+  const dir=path.join(process.env.XDG_CACHE_HOME||path.join(os.homedir(),'.cache'),'pcb-toolchain');
+  const file=path.join(dir,`${HAPPY}-${plan.happyCommit}.tar.gz`);
+  if(isFile(file))return file;
+  fs.mkdirSync(dir,{recursive:true});
+  const tmp=`${file}.${process.pid}`;
+  const r=spawnSync('tar',['--no-xattrs','-czf',tmp,'-C',plan.happy,'.'],{env:{...process.env,COPYFILE_DISABLE:'1'},stdio:['ignore','ignore','inherit']});
+  if(r.status!==0)throw Error(`tar of ${plan.happy} failed`);
+  fs.renameSync(tmp,file);
+  return file;
 }
 
 /**
@@ -196,7 +213,7 @@ function submitAndWatch(plan,inputs,timeoutS,results){
   const name=path.basename(plan.out,'.kicad_pcb');
   const cmd=['bash','-c',JOB_SCRIPT,'_','tools/router/run.py',plan.board,`out/route/${name}.kicad_pcb`,'--bin',`in/${BIN}`,...plan.args];
   const queueWait=process.env.PCB_QUEUE_WAIT_S||String(QUEUE_WAIT_S);
-  const args=['run',plan.board,...inputs.flatMap(f=>['--in',f]),'--timeout',String(timeoutS),'--queue-wait',queueWait,'--results',results,'--name',`route-${name}`];
+  const args=['run',plan.board,...inputs.flatMap(f=>['--in',f]),'--timeout',String(timeoutS),'--cpus',String(ROUTE_CPUS),'--mem',String(ROUTE_MEM_GB),'--queue-wait',queueWait,'--results',results,'--name',`route-${name}`];
   if(process.env.REMOTE_IMAGE)args.push('--image',process.env.REMOTE_IMAGE);
   const [exe,argv,opts]=clientProcess(plan,[...args,'--',...cmd],['ignore','pipe','pipe']);
   return new Promise(resolve=>{

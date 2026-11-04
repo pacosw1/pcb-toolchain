@@ -26,6 +26,8 @@ export interface Config {
   memFloorFraction: number;
   minFreeGb: number;
   maxUploadMb: number;
+  blobKeepDays: number;
+  requestTimeoutS: number;
   retainDays: number;
   jobUid: number | null;
   tickMs: number;
@@ -87,6 +89,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     memFloorFraction: num(env, 'JOBD_MEM_FLOOR_FRACTION', 0.2),
     minFreeGb: num(env, 'JOBD_MIN_FREE_GB', 20),
     maxUploadMb: num(env, 'JOBD_MAX_UPLOAD_MB', 512),
+    blobKeepDays: num(env, 'JOBD_BLOB_KEEP_DAYS', 30),
+    requestTimeoutS: num(env, 'JOBD_REQUEST_TIMEOUT_S', 3600),
     retainDays: num(env, 'JOBD_RETAIN_DAYS', 7),
     jobUid: env.JOBD_JOB_UID === 'none' ? null : num(env, 'JOBD_JOB_UID', 1000),
     tickMs: num(env, 'JOBD_TICK_MS', 2000),

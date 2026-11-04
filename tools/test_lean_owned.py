@@ -60,6 +60,20 @@ class OwnedStageTests(unittest.TestCase):
             with mock.patch.object(owned.sys,'platform','linux'),mock.patch.object(owned,'Path',side_effect=path):
                 with self.assertRaises(ValueError):owned._live_members(123,123)
 
+    def test_linux_task_being_released_is_no_group_member(self):
+        # Rows seen in real exits on Linux 6.12: state X or a stale Z, parent 0, group and session -1.
+        row='239587 (true) %s 0 -1 -1 0 -1 4227084 48 0 0 0 0 0 0 0 20 0 0 0 687932574 0 0 0\n'
+        for state in 'XZ':
+            self.assertEqual(owned._proc_state(row%state),(239587,-1,state))
+            with tempfile.TemporaryDirectory() as folder:
+                root=Path(folder);(root/'239587').mkdir();(root/'239587'/'stat').write_text(row%state)
+                real=Path
+                def path(value):return root if value=='/proc' else real(value)
+                with mock.patch.object(owned.sys,'platform','linux'),mock.patch.object(owned,'Path',side_effect=path):
+                    self.assertEqual(owned._live_members(123,123,include_zombies=True),[])
+        for bad in ('1 (x) S 1 -1 -1 0','1 (x) S 0 -1 5 0','1 (x) S 0 -2 -2 0','1 (x) S 0 -1'):
+            with self.assertRaises(ValueError):owned._proc_state(bad)
+
     def test_darwin_malformed_process_rows_fail_closed(self):
         rows=subprocess.CompletedProcess([],0,stdout='bad row\n',stderr='')
         with mock.patch.object(owned.sys,'platform','darwin'),mock.patch.object(subprocess,'run',return_value=rows):
@@ -198,6 +212,36 @@ class OwnedStageTests(unittest.TestCase):
                     pid=int(pidfile.read_text())
                     try:os.kill(pid,signal.SIGKILL)
                     except ProcessLookupError:pass
+
+    @unittest.skipUnless(sys.platform=='linux','/proc scan is Linux only')
+    def test_unrelated_exit_during_proc_scan_does_not_fail_stage(self):
+        # /proc lists every process, owned or not. The real race, driven in order: open a process's stat, the process
+        # exits and is reaped, read() gets ESRCH from the kernel. The stage itself succeeded and must report that.
+        real_read=Path.read_text
+        for scanner in ('_live_members','_reap_adopted'):
+            real_scan=getattr(owned,scanner)
+            armed,raised=[],[]
+            def scan(*args,**kwargs):
+                armed.append(True)
+                return real_scan(*args,**kwargs)
+            def read_text(path,*args,**kwargs):
+                if not armed or raised or path.name!='stat' or not path.parent.name.isdigit():
+                    return real_read(path,*args,**kwargs)
+                victim=subprocess.Popen(['sleep','30'])
+                with open('/proc/%d/stat'%victim.pid) as stat:
+                    victim.kill();victim.wait()
+                    try:return stat.read()
+                    except ProcessLookupError:
+                        raised.append(True)
+                        raise
+            with self.subTest(scanner=scanner),tempfile.TemporaryDirectory() as folder:
+                event=Path(folder)/'event'
+                with mock.patch.object(owned,scanner,scan),mock.patch.object(Path,'read_text',read_text):
+                    result=lean.run_stage([sys.executable,'-c','print("done")'],stage='scan-race',event_file=event,
+                        stdout=subprocess.PIPE,text=True)
+                self.assertEqual(raised,[True])
+                self.assertEqual((result.returncode,result.stdout),(0,'done\n'))
+                self.assertEqual(json.loads(event.read_text())['status'],'complete')
 
     def test_cwd_exact_environment_text_binary_and_high_passed_fds(self):
         with tempfile.TemporaryDirectory() as folder:

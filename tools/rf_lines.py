@@ -16,7 +16,7 @@ Checks (each one PASS or FAIL):
      sides touch no copper of another net on `layer`, and the points at W/2 + gap + tol + 0.05 are in `ground` copper
      (the coplanar ground is there).
   5. Reference: the sample is inside the filled `ground` zone on `ref_layer`.
-  6. Length of all tracks of the nets <= max_length_mm.
+  6. Length of all tracks of the nets <= max_length_mm (per line when the SPEC has "lines": [{"name", "nets"}]).
   7. Fence: at each sample, a `ground` via on each side within fence_offset_max_mm of the track edge and within
      fence_pitch_max_mm / 2 along the track.
 The zones are filled in memory; the board is not saved. Prints "rf_lines: N PASS, M FAIL" (gate.mjs reads it).
@@ -78,8 +78,14 @@ def main():
     check(bool(tracks) and not badw, f'{len(tracks)} RF tracks on {s["layer"]}, width {w} +- {s["width_tol_mm"]} mm; wrong {badw}')
     check(not vias, f'RF vias: {len(vias)}')
     segs = {(t.GetLayer(), *sorted([(t.GetStart().x, t.GetStart().y), (t.GetEnd().x, t.GetEnd().y)])): t for t in tracks}
-    length = sum(T(t.GetLength()) for t in segs.values())     # an exact duplicate segment is counted once
-    check(length <= s['max_length_mm'], f'RF track length {length:.2f} mm (max {s["max_length_mm"]})')
+    # Optional "lines": [{"name", "nets"}, ...]: a board with more than one RF line (CELLULAR rev B: LTE main + GNSS) checks
+    # max_length_mm per line (the sum of the tracks of that line's nets). Without "lines": one line = all nets (as before).
+    lines = s.get('lines') or [{'name': 'RF', 'nets': sorted(nets)}]
+    named = sorted(n for ln in lines for n in ln['nets'])
+    check(named == sorted(nets), f'lines must name each net once: {named} against nets {sorted(nets)}')   # none escapes its length check
+    for ln in lines:
+        length = sum(T(t.GetLength()) for t in segs.values() if t.GetNetname() in set(ln['nets']))   # duplicates once
+        check(length <= s['max_length_mm'], f'{ln["name"]} track length {length:.2f} mm (max {s["max_length_mm"]})')
     # Samples near a pad of a part on the line (series R, shunt C, ESD, connector, module) are not line samples.
     rf_pads = [p for fp in b.GetFootprints() if any(q.GetNetname() in nets for q in fp.Pads()) for p in fp.Pads()]
     other_pads = [p for fp in b.GetFootprints() for p in fp.Pads() if p.GetNetname() not in nets and p.IsOnLayer(layer)]

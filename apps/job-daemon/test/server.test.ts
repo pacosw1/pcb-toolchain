@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import type http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, afterEach, before, beforeEach, describe, it } from 'node:test';
-import { isDesignFile, pack } from '../src/client.ts';
+import { isDesignFile, manifestOf, pack } from '../src/client.ts';
 import { bindAllowed, loadConfig } from '../src/config.ts';
 import { CpuMeter, parseCpuCount, parseMeminfoKb } from '../src/host.ts';
 import { createServer } from '../src/server.ts';
@@ -330,6 +331,70 @@ describe('client', () => {
     const res = await run(['status'], { JOBD_TOKEN: 'wrong' });
     assert.equal(res.code, 2);
     assert.match(res.err, /401/);
+  });
+});
+
+describe('file cache', () => {
+  const sha = (b: Buffer): string => createHash('sha256').update(b).digest('hex');
+  const entry = (p: string, b: Buffer) => ({ path: p, sha256: sha(b), mode: 0o755, mtimeMs: 1_700_000_000_000 });
+  const put = (b: Buffer, name = sha(b)) => fetch(`${base}/blobs/${name}`, { method: 'PUT', headers: auth, body: new Uint8Array(b) });
+  const job = (files: unknown) => fetch(`${base}/jobs`, {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/json', 'x-job-spec': specHeader({ command: ['pass'], maxRetries: 0 }) },
+    body: JSON.stringify({ files }),
+  });
+
+  it('reports what is missing, stores it, and builds the job from it', async () => {
+    const a = Buffer.from('tools file'), b = Buffer.from('board file');
+    const asked = await fetch(`${base}/blobs/missing`, { method: 'POST', headers: auth, body: JSON.stringify({ sha256: [sha(a), sha(b)] }) });
+    assert.deepEqual(((await asked.json()) as { missing: string[] }).missing, [sha(a), sha(b)]);
+    assert.equal((await put(a)).status, 201);
+    assert.equal((await job([entry('tools/a.py', a), entry('b.kicad_pcb', b)])).status, 409);
+    assert.equal((await put(b)).status, 201);
+    const res = await job([entry('tools/a.py', a), entry('b.kicad_pcb', b)]);
+    assert.equal(res.status, 201);
+    const { id } = (await res.json()) as { id: string };
+    const out = spawnSync('tar', ['-tzvf', r.mgr.store.inputTar(id)], { encoding: 'utf8' }).stdout;
+    assert.match(out, /rwxr-xr-x.*tools\/a\.py/);
+    assert.match(out, /b\.kicad_pcb/);
+  });
+
+  it('refuses a body that does not match its hash', async () => {
+    assert.equal((await put(Buffer.from('real'), sha(Buffer.from('other')))).status, 400);
+    assert.deepEqual(fs.readdirSync(r.mgr.store.blobsDir()), []);
+  });
+
+  it('refuses a manifest path that could leave the job folder', async () => {
+    const a = Buffer.from('x');
+    await put(a);
+    for (const p of ['../a', '/etc/a', 'a/../../b', 'a//b', '']) assert.equal((await job([entry(p, a)])).status, 400, p);
+  });
+
+  it('refuses a file where a manifest path needs a folder', async () => {
+    const a = Buffer.from('x');
+    await put(a);
+    assert.equal((await job([entry('a', a), entry('a/b', a)])).status, 400);
+  });
+
+  it('refuses a name that is not a hash', async () => {
+    assert.equal((await put(Buffer.from('x'), 'nothash')).status, 400);
+  });
+
+  it('drops the setuid bit', async () => {
+    const a = Buffer.from('x');
+    await put(a);
+    const res = await job([{ ...entry('a', a), mode: 0o4755 }]);
+    const { id } = (await res.json()) as { id: string };
+    assert.match(spawnSync('tar', ['-tzvf', r.mgr.store.inputTar(id)], { encoding: 'utf8' }).stdout, /rwxr-xr-x/);
+  });
+
+  it('manifestOf lists files with hashes and gives up on a link', () => {
+    const d = fs.mkdtempSync(path.join(r.dir, 'stage-'));
+    fs.mkdirSync(path.join(d, 'tools'));
+    fs.writeFileSync(path.join(d, 'tools/a'), 'x');
+    assert.deepEqual(manifestOf(d)?.map((f) => [f.path, f.sha256]), [['tools/a', sha(Buffer.from('x'))]]);
+    fs.symlinkSync('a', path.join(d, 'tools/l'));
+    assert.equal(manifestOf(d), null);
   });
 });
 
