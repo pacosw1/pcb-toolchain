@@ -1,0 +1,22 @@
+# Resource boundary for pcb-job-daemon containers. Not installed by anything: see ../README.md "Deploy".
+# No hyphen in the name: systemd reads pcb-jobs.slice as pcb.slice/pcb-jobs.slice.
+# This is a top-level slice, so CPUWeight competes directly with ci.slice and agent.slice (weight 100 and default).
+[Unit]
+Description=Resource boundary for pcb-job-daemon jobs
+Before=docker.service
+
+[Slice]
+CPUAccounting=true
+MemoryAccounting=true
+# Low weight: when CPU is contended, CI and the orchestrator get about 10 shares for each 1 here.
+# Default to tune.
+CPUWeight=10
+# Hard ceiling. Keep equal to JOBD_CPU_BUDGET.
+CPUQuota=1600%
+# Keep equal to JOBD_MEM_BUDGET_GB. ci-runners.slice and agent-orchestrator.slice already claim the rest of the
+# host on paper, so this memory is borrowed: admission checks live MemAvailable and jobs are first in line for OOM.
+MemoryMax=16G
+MemorySwapMax=0
+# Processes and threads for all jobs together: twice the per-job --pids-limit (JOBD_PIDS_LIMIT), which is the
+# TasksMax of agent-orchestrator.slice. A default to tune.
+TasksMax=8192
