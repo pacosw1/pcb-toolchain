@@ -9,7 +9,7 @@ import { basename, dirname, join } from 'node:path';
 import { projectName, saveBoard } from './board-edit.ts';
 import type { BoardDocument } from './board-types.ts';
 import { sha256File } from './json-file.ts';
-import { fileRoot } from './project-root.mjs';
+import { fileRoot, projectRoot } from './project-root.mjs';
 
 /** The schema this code reads, as `iotroute board-json` names it. */
 export const BOARD_JSON_SCHEMA = 'iot-lab.board.v1';
@@ -104,6 +104,15 @@ export function jobArguments(input: FetchInput, binary: string, image: string, r
     '--', 'sh', '-c', script, '_', basename(input.pcb)];
 }
 
+/** The daemon settings of the environment, else of the project's .pcb-toolchain.env, as tools/router/route-dispatch.mjs reads them. */
+export function daemonSettings(env: NodeJS.ProcessEnv, project: string, home = homedir()): { JOBD_URL: string; JOBD_TOKEN_FILE: string } {
+  const file = join(project, '.pcb-toolchain.env');
+  const lines = existsSync(file) ? readFileSync(file, 'utf8').split('\n') : [];
+  const url = env.JOBD_URL || lines.filter(line => line.startsWith('JOBD_URL=')).at(-1)?.slice('JOBD_URL='.length);
+  if (!url) throw new Error(`board JSON: no JOBD_URL in the environment or in ${file}`);
+  return { JOBD_URL: url, JOBD_TOKEN_FILE: env.JOBD_TOKEN_FILE || join(home, '.config/pcb-job/token') };
+}
+
 function jobClient(toolchain: string): string {
   const client = [join(toolchain, 'tools/pcb-job/client.ts'), join(toolchain, 'apps/job-daemon/src/client.ts')].find(file => existsSync(file));
   if (!client) throw new Error(`no job client under ${toolchain}`);
@@ -125,7 +134,7 @@ export function fetchThroughDaemon(input: FetchInput, file: string): void {
     const results = join(standIn, 'results');
     const run = spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', jobClient(toolchain),
       ...jobArguments(input, binary, BOARD_JSON_IMAGE, results)],
-      { encoding: 'utf8', env: { ...process.env, IOT_LAB: standIn, PCB_TOOLCHAIN_ROOT: standIn } });
+      { encoding: 'utf8', env: { ...process.env, ...daemonSettings(process.env, projectRoot()), IOT_LAB: standIn, PCB_TOOLCHAIN_ROOT: standIn } });
     if (run.status !== 0) throw new Error(`board JSON job of ${input.pcb} ended with ${run.status}: ${run.stderr.slice(-500)}`);
     copyFileSync(join(results, 'out', DOCUMENT), file);
   } finally {

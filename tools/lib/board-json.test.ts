@@ -4,7 +4,7 @@ import { copyFileSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFile
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
-import { boardJson, cacheKey, jobArguments, pinnedKicadCommit, type BoardFetcher } from './board-json.ts';
+import { boardJson, cacheKey, daemonSettings, jobArguments, pinnedKicadCommit, type BoardFetcher } from './board-json.ts';
 
 const COMMIT = 'a'.repeat(40);
 const SCHEMA = 'iot-lab.board.v1';
@@ -118,6 +118,14 @@ test('the job ships only the board files and the binary, and writes to out/', ()
   assert.deepEqual(args.slice(args.indexOf('--') + 1, args.indexOf('--') + 3), ['sh', '-c']);
   assert.match(args.at(-3)!, /board-json "in\/\$1" > out\/board\.json$/);
   assert.equal(args.at(-1), 'X.kicad_pcb');
+});
+
+test('daemon settings come from the environment, else from the project file', t => {
+  const { root } = project(t);
+  assert.throws(() => daemonSettings({}, root, '/home/x'), /no JOBD_URL/);
+  writeFileSync(join(root, '.pcb-toolchain.env'), 'REMOTE_HOST=a\nJOBD_URL=http://old\nJOBD_URL=http://new:1\n');
+  assert.deepEqual(daemonSettings({}, root, '/home/x'), { JOBD_URL: 'http://new:1', JOBD_TOKEN_FILE: '/home/x/.config/pcb-job/token' });
+  assert.deepEqual(daemonSettings({ JOBD_URL: 'http://env', JOBD_TOKEN_FILE: '/t' }, root), { JOBD_URL: 'http://env', JOBD_TOKEN_FILE: '/t' });
 });
 
 test('the pinned commit comes from the proto PIN', () => {
