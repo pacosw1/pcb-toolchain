@@ -3,6 +3,8 @@
 
 use crate::dru::{self, Rules, fnmatch};
 use crate::kicad::doc::{Board, Footprint, Pad, mm};
+use iotroute::kicad::geom::from_mm;
+use iotroute::kicad::rules::{ClassValues, DesignRules, Minimums, clearance_rules_of};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -34,20 +36,23 @@ pub struct Project {
     pub rules: Rules,
     /// The text of the .kicad_dru, empty when there is none.
     pub dru_text: String,
+    /// What GetOwnClearance reads: the board minimums, each net's class, the custom clearance rules.
+    pub design: DesignRules,
 }
 
 impl Project {
     /// The sidecars of a board. A .kicad_pro is required; `domains` replaces the rules of the .kicad_dru.
-    pub fn load(board: &Path, domains: Option<&[(String, f64, f64)]>) -> crate::Result<Self> {
-        let pro = board.with_extension("kicad_pro");
+    pub fn load(path: &Path, board: &Board, domains: Option<&[(String, f64, f64)]>) -> crate::Result<Self> {
+        let pro = path.with_extension("kicad_pro");
         let text = std::fs::read_to_string(&pro).map_err(|e| format!("{}: {e}", pro.display()))?;
         let file: ProjectFile = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", pro.display()))?;
-        let dru_text = std::fs::read_to_string(board.with_extension("kicad_dru")).unwrap_or_default();
+        let dru_text = std::fs::read_to_string(path.with_extension("kicad_dru")).unwrap_or_default();
         let rules = match domains {
             Some(given) => Rules { domains: given.to_vec(), ..Rules::default() },
             None => dru::parse(&dru_text),
         };
-        Ok(Self { classes: file.net_settings.classes, rules, dru_text })
+        let design = design_rules(path, board, &file.net_settings.classes)?;
+        Ok(Self { classes: file.net_settings.classes, rules, dru_text, design })
     }
 
     pub fn class(&self, name: &str) -> Option<&NetClass> {
@@ -80,19 +85,22 @@ impl Project {
         patterns.into_iter().any(|q| class.split(',').any(|x| fnmatch(x, q)))
     }
 
-    /// GetOwnClearance on F.Cu: a pad override, a footprint override, else the net class.
-    pub fn pad_clearance(&self, board: &Board, fp: &Footprint, pad: &Pad) -> f64 {
-        if let Some(v) = pad.clearance_override.or(fp.clearance_override) {
-            return mm(v);
-        }
-        self.net_clearance(board, &pad.net)
+    /// GetOwnClearance of a pad on F.Cu in mm.
+    pub fn pad_clearance(&self, board: &Board, fp: &Footprint, pad: &Pad) -> crate::Result<f64> {
+        Ok(mm(self.design.pad_clearance(board, fp, pad, "F.Cu")?))
     }
+}
 
-    /// The largest clearance of a net's classes, Default for a class the project does not list.
-    pub fn net_clearance(&self, board: &Board, net: &str) -> f64 {
-        let class = |name: &str| self.class(name).or_else(|| self.class("Default")).map_or(0.0, |c| c.clearance);
-        board.net_class(net).split(',').map(class).fold(0.0, f64::max)
-    }
+/// The design rules from the document and the project: the board minimums, and per net the largest clearance of its classes.
+fn design_rules(path: &Path, board: &Board, classes: &[NetClass]) -> crate::Result<DesignRules> {
+    let c = &board.constraints;
+    let minimums = Minimums { clearance: c.min_clearance, track_width: c.min_track_width, via_size: c.min_via_size, copper_edge_clearance: c.copper_edge_clearance, ..Minimums::default() };
+    let find = |name: &str| classes.iter().find(|k| k.name == name).or_else(|| classes.iter().find(|k| k.name == "Default"));
+    let widest = |class: &str| class.split(',').filter_map(find).map(|k| k.clearance).fold(0.0, f64::max);
+    let of = |class: &str| ClassValues { clearance: Some(from_mm(widest(class))), via_diameter: None };
+    let mut nets: BTreeMap<String, ClassValues> = board.nets.iter().map(|(net, class)| (net.clone(), of(class))).collect();
+    nets.insert(String::new(), of("Default"));
+    Ok(DesignRules { minimums, classes: nets, clearance_rules: clearance_rules_of(path)? })
 }
 
 /// How the classes of a problem's domain pads are numbered: the first class met is 1.

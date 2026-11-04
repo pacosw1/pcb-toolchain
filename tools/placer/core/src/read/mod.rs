@@ -18,7 +18,7 @@ pub mod units;
 use crate::dru::fnmatch;
 use crate::geom::Rect;
 use crate::kicad::clusters::{Clusters, contains};
-use crate::kicad::doc::{Board, Copper, Footprint, Pad, mm};
+use crate::kicad::doc::{Board, Copper, CopperItem, Footprint, Pad, PtMm, board_outline, mm};
 use extras::{Index, block_cuts, edges_and_zones, in_boxes, matching_codes, near_rules, net_codes};
 use grouping::{group_parts, shape_polygon};
 use options::{Members, Options};
@@ -197,8 +197,8 @@ fn cu_nets(units: &[Unit], codes: &HashMap<String, i64>, board: &Board) -> BTree
 
 /// The problem of a board. `path` is the board file: its project files sit beside it.
 pub fn read_problem(path: &Path, board: &Board, options: &Options) -> crate::Result<ProblemOut> {
-    let project = Project::load(path, options.domains.as_deref())?;
-    let (outline, holes) = board.outline()?;
+    let project = Project::load(path, board, options.domains.as_deref())?;
+    let (outline, holes) = board_outline(board)?;
     let locked: Vec<&Copper> = board.copper.iter().filter(|t| t.locked()).collect();
     let by_ref: HashMap<&str, &Footprint> = board.footprints.iter().map(|f| (f.reference.as_str(), f)).collect();
     let grouping = group_parts(board, options, &outline, &locked, &by_ref)?;
@@ -206,7 +206,7 @@ pub fn read_problem(path: &Path, board: &Board, options: &Options) -> crate::Res
     let reader = Reader { board, by_ref: &by_ref, options, project: &project, outline: &outline, locked: &locked, net_codes: &codes };
     let mut classes = DomainClasses::default();
     let drafts: Vec<_> = grouping.units.iter().filter(|d| !d.refs.is_empty()).collect();
-    let mut units: Vec<Unit> = drafts.iter().map(|d| reader.unit(d, &mut classes)).collect();
+    let mut units: Vec<Unit> = drafts.iter().map(|d| reader.unit(d, &mut classes)).collect::<crate::Result<_>>()?;
     let unit_of: HashMap<String, usize> = drafts.iter().enumerate().flat_map(|(i, d)| d.refs.iter().map(move |r| (r.clone(), i))).collect();
 
     let index = Index { by_ref: &by_ref, unit_of: &unit_of };

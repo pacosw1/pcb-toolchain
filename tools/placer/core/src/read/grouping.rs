@@ -6,7 +6,7 @@ use super::parts::{fp_rect, is_mounting_hole, is_test_point, pad_gap, pads_box, 
 use crate::dru::fnmatch;
 use crate::geom::Rect;
 use crate::kicad::clusters::contains;
-use crate::kicad::doc::{Board, Copper, Footprint, Geometry, Graphic, mm};
+use crate::kicad::doc::{Board, Copper, CopperItem, Footprint, Geometry, Graphic, PtMm, mm};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 

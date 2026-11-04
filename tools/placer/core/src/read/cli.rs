@@ -4,7 +4,7 @@ use super::options::{Members, Options, parse_domain, parse_edge, parse_in_box, p
 use super::out::ProblemOut;
 use super::read_problem;
 use crate::geom::Rect;
-use crate::kicad::doc::Board;
+use crate::kicad::doc::load_board;
 use std::path::{Path, PathBuf};
 
 /// The flags of one command line: each flag with the words after it.
@@ -128,7 +128,7 @@ fn summary(pr: &ProblemOut) {
 pub fn run(argv: &[String]) -> crate::Result<()> {
     let flags = Flags::parse(argv, &["--tp-pins"]);
     let [board_file] = &flags.positional[..] else { return Err("usage: iotplace read BOARD.kicad_pcb --board-json DOC.json -o PROB.json".into()) };
-    let board = Board::load(&flags.path("--board-json")?)?;
+    let board = load_board(&flags.path("--board-json")?)?;
     let output = flags.path("-o")?;
     let pr = read_problem(Path::new(board_file), &board, &options(&flags)?)?;
     std::fs::write(output, serde_json::to_string(&pr)?)?;

@@ -11,6 +11,8 @@ name = "iotplace"
 path = "src/main.rs"
 
 [dependencies]
+# The board document, KiCad rule evaluation, collisions, board text and the KiCad 10 save.
+iotroute = { path = "../../router/core" }
 serde = { version = "1.0.229", features = ["derive"] }
 # float_roundtrip: a number in a problem file reads back as the same double the writer held.
 serde_json = { version = "1.0.154", features = ["float_roundtrip"] }

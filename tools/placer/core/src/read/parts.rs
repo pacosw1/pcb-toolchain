@@ -3,7 +3,7 @@
 use super::options::Options;
 use crate::dru::fnmatch;
 use crate::geom::Rect;
-use crate::kicad::doc::{Copper, Footprint, Geometry, Pad, PadKind, mm, pad_boxes, ring_mm};
+use crate::kicad::doc::{Copper, CopperItem, Footprint, Geometry, Pad, PadKind, PtMm, RectMm, mm, pad_boxes, ring_mm};
 use crate::kicad::hit::{copper_hit, pad_hit};
 
 /// A part rect is its pads + this when it has no courtyard.
@@ -83,7 +83,7 @@ pub fn in_ring(x: f64, y: f64, ring: &[(f64, f64)]) -> bool {
 /// True when a locked track or via of a pad's net meets the pad: the route is fixed.
 pub fn locked_on_pad(fp: &Footprint, locked: &[&Copper]) -> bool {
     fp.pads.iter().filter(|p| !p.net.is_empty()).any(|p| {
-        locked.iter().any(|t| t.net() == p.net && (copper_hit(t, p.position) || t.ends().iter().any(|e| pad_hit(p, *e))))
+        locked.iter().any(|t| t.net() == p.net.as_str() && (copper_hit(t, p.position) || t.ends().iter().any(|e| pad_hit(p, *e))))
     })
 }
 

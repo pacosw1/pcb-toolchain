@@ -7,7 +7,7 @@ use super::parts::{fp_rect, is_test_point, locked_on_pad, pads_box, part_fixed, 
 use super::project::{DomainClasses, Project};
 use crate::geom::Rect;
 use crate::kicad::clusters::contains;
-use crate::kicad::doc::{Board, Copper, Footprint, Pad, PadKind, mm};
+use crate::kicad::doc::{Board, Copper, CopperItem, Footprint, Pad, PadKind, RectMm, mm};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Refs with a spacing of the IC and connector class.
@@ -81,29 +81,31 @@ impl Reader<'_> {
     }
 
     /// Every net pad of a domain part is its own rect; the courtyard holds no pad.
-    fn domain_rects(&self, fp: &Footprint, classes: &mut DomainClasses, out: &mut Rects) {
+    fn domain_rects(&self, fp: &Footprint, classes: &mut DomainClasses, out: &mut Rects) -> crate::Result<()> {
         out.mech.push(out.rects.len() - 1);
         for p in fp.pads.iter().filter(|p| !p.net.is_empty()) {
-            let clearance = self.project.pad_clearance(self.board, fp, p);
+            let clearance = self.project.pad_clearance(self.board, fp, p)?;
             let gaps = self.domain_gaps(p);
             if let Some((_, class_gap)) = gaps {
                 out.dom.push((out.pads.len(), classes.id(self.class_of(p)), class_gap, clearance));
             }
             out.pads.push((p.bbox.mm(), gaps.and_then(|g| g.0).unwrap_or(clearance)));
         }
+        Ok(())
     }
 
     /// A pad of a net class with a larger clearance (mains) gets its own spacing rect.
-    fn wide_clearance_rects(&self, fp: &Footprint, spacing: f64, out: &mut Rects) {
-        for p in &fp.pads {
-            let clearance = if p.net.is_empty() { 0.0 } else { self.project.pad_clearance(self.board, fp, p) };
+    fn wide_clearance_rects(&self, fp: &Footprint, spacing: f64, out: &mut Rects) -> crate::Result<()> {
+        for p in fp.pads.iter().filter(|p| !p.net.is_empty()) {
+            let clearance = self.project.pad_clearance(self.board, fp, p)?;
             if clearance > spacing {
                 out.pads.push((p.bbox.mm(), clearance));
             }
         }
+        Ok(())
     }
 
-    fn part_rects(&self, fp: &Footprint, classes: &mut DomainClasses, out: &mut Rects) -> Rect {
+    fn part_rects(&self, fp: &Footprint, classes: &mut DomainClasses, out: &mut Rects) -> crate::Result<Rect> {
         let spacing = self.spacing(&fp.reference);
         let round = round_courtyard(fp);
         // Copper pads beyond the courtyard belong to the part rect (NET-CORE J1 USB-C: A1B12 0.8 mm out); a circle stays one.
@@ -117,11 +119,11 @@ impl Reader<'_> {
         if (!rules.domains.is_empty() || !rules.pairs.is_empty()) && net_pads == 0 {
             self.hole_rects(fp, out);
         } else if fp.pads.iter().any(|p| !p.net.is_empty() && self.domain_gaps(p).is_some()) {
-            self.domain_rects(fp, classes, out);
+            self.domain_rects(fp, classes, out)?;
         } else if spacing != 0.0 {
-            self.wide_clearance_rects(fp, spacing, out);
+            self.wide_clearance_rects(fp, spacing, out)?;
         }
-        rc
+        Ok(rc)
     }
 
     fn footprints<'f>(&'f self, draft: &'f Draft) -> impl Iterator<Item = &'f Footprint> {
@@ -170,9 +172,9 @@ impl Reader<'_> {
     }
 
     /// The unit of a draft; `classes` numbers the domain classes across units.
-    pub fn unit(&self, draft: &Draft, classes: &mut DomainClasses) -> Unit {
+    pub fn unit(&self, draft: &Draft, classes: &mut DomainClasses) -> crate::Result<Unit> {
         let mut parts = Rects::default();
-        let part_rects: Vec<Rect> = self.footprints(draft).map(|f| self.part_rects(f, classes, &mut parts)).collect();
+        let part_rects: Vec<Rect> = self.footprints(draft).map(|f| self.part_rects(f, classes, &mut parts)).collect::<crate::Result<_>>()?;
         let (x, y) = self.origin(draft, &parts.rects);
         let fixed = self.is_fixed(draft, (x, y), &part_rects);
         let mut rects = parts.rects;
@@ -218,6 +220,6 @@ impl Reader<'_> {
         };
         u.rects = rects.iter().map(|(r, spacing)| u.local(*r, *spacing)).collect();
         self.copper_rows(draft, &mut u);
-        u
+        Ok(u)
     }
 }

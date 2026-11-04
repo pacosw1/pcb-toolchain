@@ -26,5 +26,6 @@ pub mod search;
 pub mod spacing;
 pub mod via;
 pub mod wirelen;
+pub mod write;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
