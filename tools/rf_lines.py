@@ -80,7 +80,10 @@ def main():
     segs = {(t.GetLayer(), *sorted([(t.GetStart().x, t.GetStart().y), (t.GetEnd().x, t.GetEnd().y)])): t for t in tracks}
     # Optional "lines": [{"name", "nets"}, ...]: a board with more than one RF line (CELLULAR rev B: LTE main + GNSS) checks
     # max_length_mm per line (the sum of the tracks of that line's nets). Without "lines": one line = all nets (as before).
-    for ln in s.get('lines') or [{'name': 'RF', 'nets': sorted(nets)}]:
+    lines = s.get('lines') or [{'name': 'RF', 'nets': sorted(nets)}]
+    named = sorted(n for ln in lines for n in ln['nets'])
+    check(named == sorted(nets), f'lines must name each net once: {named} against nets {sorted(nets)}')   # none escapes its length check
+    for ln in lines:
         length = sum(T(t.GetLength()) for t in segs.values() if t.GetNetname() in set(ln['nets']))   # duplicates once
         check(length <= s['max_length_mm'], f'{ln["name"]} track length {length:.2f} mm (max {s["max_length_mm"]})')
     # Samples near a pad of a part on the line (series R, shunt C, ESD, connector, module) are not line samples.
