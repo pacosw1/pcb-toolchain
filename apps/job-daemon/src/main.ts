@@ -7,7 +7,7 @@ import { Store } from './store.ts';
 import { sourceIdentity } from './source-identity.ts';
 import { fileURLToPath } from 'node:url';
 import { startListeners } from './listeners.ts';
-import { prepareLocalSocket } from './local-socket.ts';
+import { healthRoot, prepareLocalSocket } from './local-socket.ts';
 import fs from 'node:fs';
 
 const cfg = loadConfig(process.env);
@@ -15,7 +15,8 @@ const mgr = new JobManager(cfg, new Store(cfg.dataDir), new DockerRuntime(cfg), 
 const identity = sourceIdentity(fileURLToPath(new URL('.', import.meta.url)));
 const server = createServer(mgr, identity);
 const health = createHealthServer(mgr, identity);
-const socket = prepareLocalSocket('/run/pcb-job-daemon', cfg.instance, process.getuid!(), process.pid);
+const uid = process.getuid!();
+const socket = prepareLocalSocket(healthRoot(cfg.instance, uid, cfg.dataDir, process.env.JOBD_HEALTH_ROOT), cfg.instance, uid, process.pid);
 
 const timer = setInterval(() => {
   mgr.tick().catch((e: unknown) => console.error('tick failed:', e));

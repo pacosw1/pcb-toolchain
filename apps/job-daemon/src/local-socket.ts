@@ -10,6 +10,24 @@ function privateDirectory(directory: string, uid: number): void {
   if (!stat.isDirectory() || stat.uid !== uid || (stat.mode & 0o777) !== 0o700) throw new Error('unsafe health socket directory');
 }
 
+/** Production's root-owned default instance is pinned to /run. Other runs can select a private root. */
+export function healthRoot(instance: string, uid: number, dataDir: string, configured?: string): string {
+  if (configured && !path.isAbsolute(configured)) throw new Error('JOBD_HEALTH_ROOT must be absolute');
+  if (uid === 0 && instance === 'default' && configured && configured !== '/run/pcb-job-daemon') throw new Error('production health root is fixed');
+  const root = configured || (uid === 0 ? '/run/pcb-job-daemon' : path.resolve(dataDir, '.health'));
+  let ancestor = fs.realpathSync(path.dirname(root));
+  const resolved = path.join(ancestor, path.basename(root));
+  for (;;) {
+    const parent = fs.lstatSync(ancestor);
+    const stickyRoot = parent.uid === 0 && (parent.mode & 0o1000) !== 0;
+    if (!parent.isDirectory() || (parent.uid !== uid && parent.uid !== 0) || ((parent.mode & 0o022) !== 0 && !stickyRoot)) throw new Error('unsafe health socket parent');
+    const next = path.dirname(ancestor);
+    if (next === ancestor) break;
+    ancestor = next;
+  }
+  return resolved;
+}
+
 /** Separate instances and processes; never remove an existing endpoint. */
 export function prepareLocalSocket(root: string, instance: string, uid: number, pid: number): string {
   if (!instance || !Number.isSafeInteger(pid) || pid <= 0) throw new Error('invalid health socket instance or pid');
