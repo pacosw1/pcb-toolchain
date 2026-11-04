@@ -4,6 +4,7 @@
 //!            [--return-r 2.0] [--return-via 0.45,0.2] [--pres-mult 1.5] [--pres-max 1000] [--hist 0.3] [--max-time S] [--door-hist 2.0] [--check RESULT.json]
 //!            [--congestion MAP.json [--cong-cell 1.0] [--cong-free 0|1]] (congestion.rs: the map for the placer)
 //!            [--seed N] (seed.rs: another route of the same board) [--checkpoint FILE [--source-sha HEX]] (checkpoint.rs: progress per pass)
+//!            [--resume-save FILE] [--resume FILE] (resume.rs: negotiation state at a pass boundary)
 //!            [--stall-passes N] (stop after N passes that do not beat the best pass; default off)
 //!
 //! MODEL.json comes from tools/router/model.py (schema iot-lab.route-model.v0). Every clearance is checked against
@@ -35,7 +36,7 @@
 //! DOOR_STALL iterations the door (its path from the spoke test point to a via or track end of the net) is reserved as
 //! pour. --check RESULT.json runs only the pour check on a routed result (verification against KiCad DRC).
 //! The output is a proposal: KiCad DRC with parity and tools/gate.mjs decide. Last line: ROUTE PASS|FAIL ... summary.
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
@@ -46,6 +47,7 @@ mod layers;
 mod pour;
 mod reffill;
 mod reuse;
+mod resume;
 mod seed;
 mod write;
 
@@ -79,7 +81,7 @@ const DEF_VIA_LEN: f64 = 1.6;
 /// site (v6: the 40-try RP-001 limit gives the end; 8 leaves 32 tries with the v6 rule)
 const RET_SOFT_AFTER: usize = 8;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 enum Geo {
     Rect(f64, f64, f64, f64),
     Seg(f64, f64, f64, f64, f64),
@@ -123,7 +125,7 @@ impl Geo {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
 enum Kind {
     Pad,
     Track,
@@ -133,7 +135,7 @@ enum Kind {
     Spoke,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Shape {
     net: i32,
     geo: Geo,
@@ -4209,7 +4211,7 @@ fn main() {
 
 fn route_cli(args: &[String]) {
     if args.len() < 3 {
-        eprintln!("usage: iotroute MODEL.json OUT.json [--pitch 0.05] [--iters 40] [--plane-clr 0.25] [--hole-to-hole 0.45] [--hole-clr 0.28] [--return-r 2.0] [--return-via 0.45,0.2] [--pres-mult 1.5] [--pres-max 1000] [--hist 0.3] [--max-time S] [--door-hist 2.0] [--check RESULT.json] [--congestion MAP.json [--cong-cell 1.0] [--cong-free 0|1]] [--seed N] [--checkpoint FILE [--source-sha HEX]] [--stall-passes N]");
+        eprintln!("usage: iotroute MODEL.json OUT.json [--pitch 0.05] [--iters 40] [--plane-clr 0.25] [--hole-to-hole 0.45] [--hole-clr 0.28] [--return-r 2.0] [--return-via 0.45,0.2] [--pres-mult 1.5] [--pres-max 1000] [--hist 0.3] [--max-time S] [--door-hist 2.0] [--check RESULT.json] [--congestion MAP.json [--cong-cell 1.0] [--cong-free 0|1]] [--seed N] [--checkpoint FILE [--source-sha HEX]] [--resume-save FILE] [--resume FILE] [--stall-passes N]");
         std::process::exit(2);
     }
     let mut o = Opts { pitch: 0.05, passes: 40, plane_clr: DEF_PLANE_CLR, hth: DEF_HOLE_TO_HOLE, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2,
@@ -4228,6 +4230,8 @@ fn route_cli(args: &[String]) {
     let mut cong_free = false;
     let mut seed: Option<u64> = None;
     let mut ckpt_path: Option<String> = None;
+    let mut resume_path: Option<String> = None;
+    let mut resume_save: Option<String> = None;
     let mut source_sha: Option<String> = None;
     let mut i = 3;
     while i + 1 < args.len() {
@@ -4261,6 +4265,8 @@ fn route_cli(args: &[String]) {
             "--ret-cost" => o.ret_cost = v.parse().unwrap(),
             "--seed" => seed = Some(v.parse().unwrap()),
             "--checkpoint" => ckpt_path = Some(v.clone()),
+            "--resume" => resume_path = Some(v.clone()),
+            "--resume-save" => resume_save = Some(v.clone()),
             "--source-sha" => source_sha = Some(v.clone()),
             "--stall-passes" => o.stall_passes = v.parse().unwrap(),
             "--return-via" => {
@@ -4279,11 +4285,23 @@ fn route_cli(args: &[String]) {
     let t0 = std::time::Instant::now();
     let mut ckpt = ckpt_path.as_ref().map(|p| checkpoint::Writer::new(p, t0, seed, o.passes));
     let model_text = std::fs::read_to_string(&args[1]).expect("model");
+    if (resume_path.is_some() || resume_save.is_some()) && (reuse_path.is_some() || check_only.is_some()) {
+        eprintln!("resume does not support --reuse or --check");
+        std::process::exit(2);
+    }
+    if ckpt_path.is_some() && (ckpt_path == resume_path || ckpt_path == resume_save) {
+        eprintln!("progress and resume checkpoint paths must differ");
+        std::process::exit(2);
+    }
+    let resume_binding = if resume_path.is_some() || resume_save.is_some() {
+        Some(resume::binding(&model_text, &args[3..]).unwrap_or_else(|e| { eprintln!("resume binding: {e}"); std::process::exit(2) }))
+    } else { None };
     let model: Value = serde_json::from_str(&model_text).expect("json");
     if let Some(w) = &mut ckpt {
         w.bind(checkpoint::Bind::new(&model_text, &model, source_sha, &args[3..]));
         checkpoint::stop_on_signal();
     }
+    if resume_save.is_some() && ckpt.is_none() { checkpoint::stop_on_signal(); }
     let (m_hole, m_hth, m_plane) = hole_rules(&model);
     let hole_clr = cli_hole.or(m_hole).unwrap_or(DEF_HOLE_CLR);
     o.hth = cli_hth.or(m_hth).unwrap_or(DEF_HOLE_TO_HOLE);
@@ -4448,7 +4466,20 @@ fn route_cli(args: &[String]) {
     let mut stop = "iters";
     let mut since_best = 0usize;
     let mut stall_note: Option<String> = None;
-    for it in 0..o.passes {
+    let mut start_pass = 0;
+    let (mut prior_elapsed, mut prior_cpu) = (0.0, 0.0);
+    if let Some(path) = &resume_path {
+        let saved = resume::Snapshot::load(path, resume_binding.as_ref().unwrap(), &ctx, o.passes)
+            .unwrap_or_else(|e| { eprintln!("resume {path}: {e}"); std::process::exit(2) });
+        (start_pass, prior_elapsed, prior_cpu, todo, state, best, limited_prev, stall, stall_sig, pour_seen, hard_doors, moves, since_best) = saved.restore(&mut ctx);
+        if o.max_time > 0.0 && prior_elapsed + t0.elapsed().as_secs_f64() >= o.max_time {
+            eprintln!("resume: cumulative --max-time is exhausted; increase the limit");
+            std::process::exit(2);
+        }
+        ctx.fan_keep = false;
+        eprintln!("resumed after pass {start_pass}");
+    }
+    for it in start_pass..o.passes {
         iters = it + 1;
         ctx.bd.compact();
         let mut total = 0u32;
@@ -4554,13 +4585,33 @@ fn route_cli(args: &[String]) {
             stop = "converged";
             break;
         }
-        if o.max_time > 0.0 && t0.elapsed().as_secs_f64() > o.max_time {
+        let timed_out = o.max_time > 0.0 && prior_elapsed + t0.elapsed().as_secs_f64() > o.max_time;
+        let cancelled = checkpoint::stop_asked();
+        let stalled = o.stall_passes > 0 && since_best >= o.stall_passes;
+        // Build the next pass before saving: the snapshot describes a complete negotiation boundary.
+        let sig: Vec<(usize, Option<String>)> = involved.iter().map(|&n| (n, state[n].0.clone())).collect();
+        let hard_stalled = if au.pairs == 0 && involved.iter().all(|&n| state[n].0.is_some()) && stall_sig.as_ref() == Some(&sig) {
+            stall += 1;
+            stall >= STALL
+        } else { stall = 0; false };
+        stall_sig = Some(sig);
+        let prior_pres = ctx.gr.pres;
+        ctx.gr.pres = (ctx.gr.pres * o.pres_mult).min(o.pres_max);
+        todo = rip_order(&order, &involved, &moves);
+        if let Some(path) = resume_save.as_ref().filter(|_| !hard_stalled) {
+            let cpu_s = resume::cpu_seconds().unwrap_or_else(|e| { eprintln!("resume accounting: {e}"); std::process::exit(2) });
+            let s = resume::Snapshot::capture(resume_binding.as_ref().unwrap(), it + 1, prior_elapsed + t0.elapsed().as_secs_f64(), prior_cpu + cpu_s, &ctx, &todo, &state, &best,
+                &limited_prev, stall, &stall_sig, &pour_seen, hard_doors, &moves, since_best);
+            if let Err(e) = s.save(path) { eprintln!("resume checkpoint {path}: {e}"); std::process::exit(2); }
+        }
+        if timed_out || cancelled || stalled || hard_stalled { ctx.gr.pres = prior_pres; }
+        if timed_out {
             eprintln!("time limit {:.0} s reached", o.max_time);
             stop = "max-time";
             break;
         }
         // a pass end is the safe boundary: every net has its copper, so the best pass can be restored as for --max-time
-        if checkpoint::stop_asked() {
+        if cancelled {
             let m = format!("stopped early: cancel signal, ended at pass {}", it + 1);
             eprintln!("{m}");
             stall_note = Some(m);
@@ -4569,7 +4620,7 @@ fn route_cli(args: &[String]) {
         }
         // progress = a pass better than the best so far, on the score that picks the iteration a run ends from: a pass that
         // does not beat it would not change what an early stop keeps
-        if o.stall_passes > 0 && since_best >= o.stall_passes {
+        if stalled {
             let b = best.as_ref().unwrap();
             let m = format!("stopped early: no progress for {since_best} passes (--stall-passes {}), best pass {}: {} nets in conflict, {} pairs", o.stall_passes, b.1, b.0.0, b.0.1);
             eprintln!("{m}");
@@ -4579,22 +4630,11 @@ fn route_cli(args: &[String]) {
         }
         // stop early: the copper is legal and every net still open is a hard fail whose reason has not changed for
         // STALL iterations (v3 ran iterations 20-80 on one unchanged hard fail)
-        let sig: Vec<(usize, Option<String>)> = involved.iter().map(|&n| (n, state[n].0.clone())).collect();
-        if au.pairs == 0 && involved.iter().all(|&n| state[n].0.is_some()) && stall_sig.as_ref() == Some(&sig) {
-            stall += 1;
-            if stall >= STALL {
-                eprintln!("stopped: {} hard fail(s) unchanged for {} iterations, no conflicts", involved.len(), STALL + 1);
-                stop = "hard-fails";
-                break;
-            }
-        } else {
-            stall = 0;
+        if hard_stalled {
+            eprintln!("stopped: {} hard fail(s) unchanged for {} iterations, no conflicts", involved.len(), STALL + 1);
+            stop = "hard-fails";
+            break;
         }
-        stall_sig = Some(sig);
-        ctx.gr.pres = (ctx.gr.pres * o.pres_mult).min(o.pres_max);
-        // hard fails are walls of fixed copper: they do not change, so a hard-failed net is routed again only when it
-        // is in conflict
-        todo = rip_order(&order, &involved, &moves);
     }
     let best_end = best.as_ref().map(|b| (b.1, b.0));
     let mut web_relaxed = 0.0f64;
