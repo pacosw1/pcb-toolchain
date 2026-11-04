@@ -2,10 +2,23 @@
 //!
 //! `iotroute lock ...` holds and probes flock files shared with the Python tools.
 //! `iotroute clock` prints the clock of the IOT_LEAN_DEADLINE protocol.
+//! `iotroute owned run` is the root broker of lean_owned.py, or a client of the broker it already runs under.
 
 use std::ffi::OsString;
 
+mod bootstrap;
+mod capture;
+mod client;
+mod failure;
+mod group;
 mod lock;
+mod native;
+mod options;
+mod run;
+mod scope;
+mod server;
+mod stage;
+mod wire;
 
 /// Runs a service subcommand and returns its exit code; None leaves the arguments to the router CLI.
 pub fn dispatch() -> Option<i32> {
@@ -13,6 +26,7 @@ pub fn dispatch() -> Option<i32> {
     match args.first()?.to_str()? {
         "clock" if args.len() == 1 => Some(clock()),
         "lock" => Some(lock::main(&args[1..])),
+        "owned" => Some(run::main(&args[1..])),
         _ => None,
     }
 }
