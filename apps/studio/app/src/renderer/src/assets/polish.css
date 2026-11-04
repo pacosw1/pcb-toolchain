@@ -1,0 +1,481 @@
+/* UI polish pass (2026-10-24): one place that refines the base styles. Loaded last. */
+:root {
+  --bg: #0d0f13;
+  --bar: #111419;
+  --panel: #151920;
+  --raised: #1d232d;
+  --border: #252b36;
+  --border-soft: #1f242e;
+  --text: #e8eaef;
+  --muted: #a7afbd;
+  --dim: #8891a1;
+  --accent: #6aa8ff;
+  --radius: 8px;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, Inter, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: #2f4f7a;
+}
+
+button {
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+button:hover:not(:disabled) {
+  border-color: #3a4352;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+button.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+  padding: 5px 10px;
+}
+
+button.ghost:hover:not(:disabled) {
+  background: var(--raised);
+  color: var(--text);
+}
+
+/* ---- top bar: room for the inset traffic lights, draggable ---- */
+.topbar {
+  height: 48px;
+  padding: 0 14px 0 84px;
+  gap: 14px;
+  background: var(--bar);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.brand {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  -webkit-app-region: no-drag;
+}
+
+.crumbs .sep {
+  color: #4a5262;
+}
+
+.crumbs .cur {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.statechip {
+  margin-left: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--raised);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.pill {
+  border-color: var(--border-soft);
+  background: transparent;
+  font-size: 11px;
+  padding: 3px 9px;
+}
+
+/* ---- sidebar ---- */
+.sidebar {
+  flex: 0 0 236px;
+  padding: 12px 10px;
+  gap: 10px;
+  border-right: 1px solid var(--border-soft);
+}
+
+.picker-button {
+  border-color: var(--border);
+  border-radius: var(--radius);
+}
+
+.revpick {
+  padding: 0 4px;
+}
+
+.sections {
+  margin-top: 4px;
+}
+
+.section {
+  gap: 10px;
+  justify-content: flex-start;
+  padding: 7px 10px;
+  border-radius: 6px;
+}
+
+.section .label {
+  flex: 1 1 auto;
+  text-align: left;
+}
+
+.section svg {
+  color: var(--dim);
+}
+
+.section.on svg {
+  color: var(--accent);
+}
+
+.sidebar details.panel {
+  background: transparent;
+  border-color: var(--border-soft);
+}
+
+/* ---- main area ---- */
+.main {
+  padding: 12px;
+  gap: 10px;
+}
+
+.boardview,
+.panel,
+.tablewrap,
+.dsdoc {
+  border-color: var(--border-soft);
+  border-radius: var(--radius);
+}
+
+.boardview-bar {
+  padding: 6px 8px;
+  gap: 4px;
+  border-bottom-color: var(--border-soft);
+}
+
+.toggle {
+  border-color: transparent;
+  padding: 4px 9px;
+  color: var(--muted);
+}
+
+.toggle.on {
+  color: var(--text);
+  background: var(--raised);
+  border-color: var(--border);
+}
+
+.placeholder {
+  color: var(--dim);
+  font-size: 13px;
+}
+
+.tablewrap tr:hover td {
+  background: #181d26;
+}
+
+/* ---- chat ---- */
+.chat {
+  flex: 0 0 380px;
+  border-left: 1px solid var(--border-soft);
+}
+
+.chathead {
+  height: 44px;
+  padding: 0 8px 0 14px;
+  gap: 8px;
+  border-bottom-color: var(--border-soft);
+  white-space: nowrap;
+}
+
+.claude-mark {
+  color: #d97757;
+  font-size: 15px;
+}
+
+.chip-ro {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--raised);
+  color: var(--dim);
+  font-size: 10.5px;
+}
+
+.chatlog {
+  padding: 14px;
+  gap: 10px;
+}
+
+.chat-empty {
+  color: var(--dim);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.chat-empty p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.quick {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.quick button {
+  border: 1px solid var(--border-soft);
+  font-size: 12px;
+}
+
+.bubble {
+  border: none;
+  max-width: 100%;
+  padding: 0;
+  background: transparent;
+  line-height: 1.55;
+}
+
+.bubble.you {
+  align-self: flex-end;
+  max-width: 88%;
+  padding: 8px 12px;
+  border-radius: 12px 12px 4px 12px;
+  background: #1c2a3d;
+  white-space: pre-wrap;
+}
+
+.bubble.claude {
+  align-self: stretch;
+  background: transparent;
+}
+
+.toolrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.toolchip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #15243a;
+  color: #9fc4ff;
+  font-size: 11px;
+}
+
+.meta {
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.working {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid #2f4f7a;
+  border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.chatform {
+  padding: 10px 12px 12px;
+  gap: 6px;
+  border-top-color: var(--border-soft);
+}
+
+.mention {
+  align-self: flex-start;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #15243a;
+  border-color: #23406a;
+  color: #9fc4ff;
+  font-size: 11px;
+}
+
+.composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 6px 6px 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg);
+}
+
+.composer:focus-within {
+  border-color: #35507a;
+}
+
+.composer textarea {
+  flex: 1 1 auto;
+  border: none;
+  padding: 4px 0;
+  background: transparent;
+  outline: none;
+  max-height: 160px;
+}
+
+.composer textarea:focus-visible {
+  outline: none;
+}
+
+button.send {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+}
+
+.hint {
+  font-size: 10.5px;
+  color: #6d7686;
+  padding-left: 2px;
+}
+
+/* ---- markdown in answers ---- */
+.md p {
+  margin: 0 0 8px;
+}
+
+.md p:last-child,
+.md ul:last-child,
+.md ol:last-child {
+  margin-bottom: 0;
+}
+
+.md ul,
+.md ol {
+  margin: 0 0 8px;
+  padding-left: 18px;
+}
+
+.md li {
+  margin: 2px 0;
+}
+
+.md code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #1b212b;
+  color: #d5dbe6;
+}
+
+.md .md-h {
+  font-weight: 600;
+  margin: 10px 0 4px;
+}
+
+.md .md-pre {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #0a0c10;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  overflow-x: auto;
+}
+
+.md a {
+  color: #8dbbff;
+}
+
+/* Board viewer: focus, search, hover tip, measure box, key hint */
+.boardview-canvas:focus {
+  outline: none;
+}
+.boardview-canvas:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.bv-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.bv-search input {
+  width: 128px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.bv-search input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.bv-notfound {
+  color: #f5a524;
+  font-size: 12px;
+}
+.bv-tip {
+  position: absolute;
+  pointer-events: none;
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: rgba(17, 20, 25, 0.92);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.bv-tip strong {
+  color: var(--text);
+}
+.bv-measure {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  display: flex;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid #2d5a66;
+  border-radius: 6px;
+  background: rgba(17, 20, 25, 0.92);
+  color: #7fe3ff;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.selbox .bv-dim {
+  color: var(--dim);
+}
+.bv-hint {
+  position: absolute;
+  left: 12px;
+  bottom: 8px;
+  pointer-events: none;
+  color: var(--dim);
+  font-size: 11px;
+  opacity: 0.7;
+}

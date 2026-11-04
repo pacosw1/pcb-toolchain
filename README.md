@@ -4,6 +4,8 @@ A KiCad 10 PCB toolchain as a versioned, installed release: the `pcb` CLI (`tool
 `iotroute` (Rust core + model/write), the placer, the board gate (`gate.mjs` + checks), doctor and the JLC part
 tools. Board data and board build scripts stay in the project repo that uses it.
 
+`apps/studio/` is PCB Studio, the desktop app (see its README). It is not part of the release bundle.
+
 License: GPL-3.0 (see `LICENSE`). Parts are derived from GPL-3.0 sources (`tools/backend-patches/`,
 `tools/FreeroutingLive.java`).
 
