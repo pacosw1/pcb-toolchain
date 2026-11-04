@@ -1,6 +1,6 @@
 // Owned stages from TypeScript. Everything Node cannot do lives in `iotroute owned run`: this client starts it, reads
-// its result file and turns cancel into SIGTERM. Inside an owned stage the same command is a client of the broker
-// that owns the stage, so nesting needs nothing here but the lineage variables.
+// its result file and turns cancel into SIGTERM and interrupt into SIGUSR1. Inside an owned stage the same command is a
+// client of the broker that owns the stage, so nesting needs nothing here but the lineage variables.
 import { type ChildProcess, type StdioOptions, spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -15,7 +15,7 @@ const LINEAGE = [SOCKET_ENV, HANDLE_ENV, DEPTH_ENV];
 const NEVER_SPAWNED = 'unavailable; cancelled before leader spawn';
 const NO_LEADER = 'unavailable; no owned leader reaped';
 /** The broker blocks these first thing, so one that killed it came before it could start any stage. */
-const EARLY_STOP_SIGNALS: readonly string[] = ['SIGTERM', 'SIGINT', 'SIGHUP'];
+const EARLY_STOP_SIGNALS: readonly string[] = ['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGUSR1'];
 
 export interface CleanupError {
   operation: string;
@@ -76,6 +76,12 @@ export interface OwnedStage {
   readonly stderr: Readable | null;
   /** TERM, then KILL after the grace, for the stage and its registered subtree. Safe to repeat, or after settling. */
   cancel(): Promise<Cleanup>;
+  /**
+   * One graceful TERM of the stage's registered group, with no cancel and no KILL: a command that writes its best result
+   * ends by itself. True when the broker took the request, false once the stage has settled. Repeating it sends no second
+   * TERM. The broker has nothing to signal before the stage has a process, so an interrupt that early does not stop it.
+   */
+  interrupt(): Promise<boolean>;
 }
 
 /** The content of the result file, as `iotroute owned run` writes it. */
@@ -192,5 +198,6 @@ export function startOwned(command: string[], options: OwnedOptions = {}): Owned
         throw error;
       }
     },
+    interrupt: async () => !done && broker.kill('SIGUSR1'),
   };
 }
