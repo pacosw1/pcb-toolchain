@@ -37,7 +37,7 @@ tools/board_route_rules.py
 tools/board_stage.py
 tools/board_uuids.py
 tools/brand_mark.py
-tools/build-bom-verified.py
+tools/build-bom-verified.mjs
 tools/build-cad-catalog.mjs
 tools/build-release-image.py
 tools/check-consistency.mjs
@@ -113,6 +113,7 @@ tools/lib/bom-coverage.mjs
 tools/lib/bom-coverage.test.mjs
 tools/lib/bom-ownership.mjs
 tools/lib/bom-ownership.test.mjs
+tools/lib/build-bom-verified.test.mjs
 tools/lib/check-cache.mjs
 tools/lib/check-cache.test.mjs
 tools/lib/check-fab-zip.test.mjs
@@ -154,6 +155,7 @@ tools/lib/si-checks.mjs
 tools/lib/si-checks.test.mjs
 tools/lib/staged-gates.mjs
 tools/lib/staged-gates.test.mjs
+tools/lib/xml-read.mjs
 tools/lib/zip-read.mjs
 tools/live-view.py
 tools/mandatory_preflight.py
