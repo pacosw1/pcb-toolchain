@@ -37,6 +37,7 @@ tools/board_route_rules.py
 tools/board_stage.py
 tools/board_uuids.py
 tools/brand_mark.py
+tools/build-bom-verified.py
 tools/build-cad-catalog.mjs
 tools/build-release-image.py
 tools/check-consistency.mjs
