@@ -17,7 +17,7 @@ export function testConfig(dataDir: string, over: Partial<Config> = {}): Config 
     cpuBudget: 16, memBudgetGb: 16, cgroupParent: '', defaultCpus: 8, defaultMemGb: 8, defaultTimeoutS: 300,
     maxTimeoutS: 21600, defaultRetries: 2, maxRetriesCap: 5, retryBackoffS: 30, cpuPsiMax: 5, memFloorFraction: 0.2,
     minFreeGb: 20, maxUploadMb: 1, retainDays: 7, jobUid: null, tickMs: 20,
-    pidsLimit: 4096, defaultDiskGb: 10, maxDiskGb: 50, diskCheckS: 5, maxQueued: 64, maxUploads: 2, maxStreams: 64,
+    pidsLimit: 4096, nofile: 1024, defaultDiskGb: 10, maxDiskGb: 50, diskCheckS: 5, maxQueued: 64, maxUploads: 2, maxStreams: 64,
     ...over,
   };
 }
@@ -38,12 +38,39 @@ export class FakeRuntime implements Runtime {
   /** Containers the record no longer needs, as after a crash between the save and the remove. */
   orphans: string[] = [];
 
+  removeBroken = false;
+  listBroken = false;
+  cleanBroken = false;
+  cleanHangs = false;
+  /** Attempt folders the cleaner container ran on. */
+  cleaned: string[] = [];
+
   async layerBytes(): Promise<number | null> {
     return this.layerSize;
   }
 
-  async list(): Promise<string[]> {
-    return [...this.orphans];
+  async list(): Promise<string[] | null> {
+    return this.listBroken ? null : [...this.orphans];
+  }
+
+  /** What the cleaner container does. */
+  async cleanAttempt(attemptDir: string, keepOut: boolean): Promise<boolean> {
+    if (this.cleanHangs) return new Promise(() => undefined);
+    if (this.cleanBroken) return false;
+    this.cleaned.push(attemptDir);
+    // Stands in for the container, so it must not look like the daemon deleting: a test watches fs.rmSync.
+    await fs.promises.rm(path.join(attemptDir, 'work'), { recursive: true, force: true });
+    if (!keepOut) await fs.promises.rm(path.join(attemptDir, 'out'), { recursive: true, force: true });
+    const stack = [path.join(attemptDir, 'out')];
+    while (stack.length > 0) {
+      const dir = stack.pop() as string;
+      if (!fs.existsSync(dir)) continue;
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (e.isDirectory()) stack.push(path.join(dir, e.name));
+        else if (!e.isFile()) await fs.promises.rm(path.join(dir, e.name), { force: true });
+      }
+    }
+    return true;
   }
 
   async ping(): Promise<boolean> {
@@ -56,6 +83,10 @@ export class FakeRuntime implements Runtime {
     this.started.push(req);
     if (act === 'start-infra') return { ok: false, permanent: false, detail: 'docker: daemon busy' };
     if (act === 'start-image') return { ok: false, permanent: true, detail: 'No such image' };
+    if (act === 'start-alive') {
+      this.containers.set(req.container, { status: 'running' });
+      return { ok: false, permanent: true, detail: 'docker run timed out' };
+    }
     spawnSync('tar', ['-xzf', req.inputTar, '-C', req.workDir]);
     fs.writeFileSync(path.join(req.outDir, 'job.log'), `attempt ${n}: ${act}\n`);
     const finish = (rc: number): void => {
@@ -81,6 +112,7 @@ export class FakeRuntime implements Runtime {
   }
 
   async remove(c: string): Promise<void> {
+    if (this.removeBroken) return;
     this.containers.delete(c);
     this.orphans = this.orphans.filter((o) => o !== c);
   }

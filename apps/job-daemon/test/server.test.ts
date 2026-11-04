@@ -24,7 +24,10 @@ beforeEach(async () => {
   server = createServer(r.mgr);
   await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  timer = setInterval(() => void r.mgr.tick(), 20);
+  timer = setInterval(() => {
+    r.mgr.tick().catch(() => undefined); // in flight when a test deletes its folder, as main.ts catches them
+    r.mgr.clean().catch(() => undefined);
+  }, 20);
 });
 afterEach(async () => {
   clearInterval(timer);
@@ -89,6 +92,7 @@ describe('submit', () => {
     const job = (await res.json()) as { id: string };
     r.mgr.cfg.retryBackoffS = 0;
     await until(job.id, 'passed');
+    while (!r.mgr.jobs.get(job.id)!.attempts.every((a) => a.trimmed)) await new Promise((ok) => setTimeout(ok, 10));
     const tar = await fetch(`${base}/jobs/${job.id}/results`, { headers: auth });
     assert.equal(tar.status, 200);
     const file = path.join(r.dir, 'res.tar.gz');

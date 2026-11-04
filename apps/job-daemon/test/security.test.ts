@@ -38,7 +38,10 @@ async function boot(over: Parameters<typeof rig>[0] = {}): Promise<string> {
   r.clock.now = Date.now();
   server = createServer(r.mgr);
   await new Promise<void>((ok) => server!.listen(0, '127.0.0.1', ok));
-  timer = setInterval(() => void r.mgr.tick(), 10);
+  timer = setInterval(() => {
+    r.mgr.tick().catch(() => undefined); // in flight when a test deletes its folder, as main.ts catches them
+    r.mgr.clean().catch(() => undefined);
+  }, 10);
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 }
 
@@ -133,7 +136,7 @@ describe('finding 1: reads under the job-writable tree', () => {
     fs.symlinkSync('/', path.join(out, 'sub', 'root'));
     assert.equal(spawnSync('mkfifo', [path.join(out, 'pipe')]).status, 0);
     r.mgr.cancel(id);
-    await until(() => r.mgr.jobs.get(id)!.state === 'cancelled', 'cancelled');
+    await until(() => r.mgr.jobs.get(id)!.attempts[0].trimmed === true, 'cleaned');
     const tar = await fetch(`${base}/jobs/${id}/results`, { headers: auth, signal: AbortSignal.timeout(5000) });
     const file = path.join(r.dir, 'res.tgz');
     fs.writeFileSync(file, Buffer.from(await tar.arrayBuffer()));
@@ -250,7 +253,7 @@ describe('finding 4: disk', () => {
   it('fails closed when the size cannot be measured in time', async () => {
     const id = await startHang();
     r.runtime.layerSize = null;
-    await r.mgr.watchDisk();
+    for (let i = 0; i < 3; i++) await r.mgr.watchDisk();
     assert.equal(r.runtime.killed.length, 1);
     await r.mgr.tick();
     assert.match(r.mgr.jobs.get(id)!.result?.detail ?? '', /could not be measured/);
@@ -367,6 +370,7 @@ describe('finding 6: forged success', () => {
       void remove;
     };
     await r.mgr.tick();
+    await r.mgr.clean();
     assert.equal(stateAtRemove, 'passed');
     r.runtime.remove = remove;
     r.restart();

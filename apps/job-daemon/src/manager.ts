@@ -27,6 +27,8 @@ const MIN_CPUS = 0.01;
 const MIN_TIMEOUT_S = 1;
 /** 10 MB, a default to tune: it only has to hold a small job folder. */
 const MIN_DISK_GB = 0.01;
+/** Failed disk measurements in a row before a job is killed. One failure is normal: see dirBytes. A default to tune. */
+const MAX_DISK_MISSES = 3;
 
 export function validateSpec(raw: unknown, cfg: Config): JobSpec {
   if (typeof raw !== 'object' || raw === null) throw new HttpError(400, 'spec is not an object');
@@ -90,8 +92,10 @@ export class JobManager {
   private seq = 0;
   private ticking = false;
   private watching = false;
+  private cleaning = false;
   private recovered = false;
   private lastSweep = 0;
+  private diskMisses = new Map<string, number>();
 
   constructor(cfg: Config, store: Store, runtime: Runtime, host: () => HostState, now: () => number = Date.now) {
     this.cfg = cfg;
@@ -193,32 +197,74 @@ export class JobManager {
     this.ticking = true;
     try {
       if (!this.recovered) await this.recover();
+      this.enforceHostFloor();
       for (const job of this.list('running')) await this.reconcile(job);
       await this.admit();
-      this.sweep();
     } finally {
       this.ticking = false;
     }
   }
 
-  /** Once per start. The verdict is saved before the container goes, so a crash can leave these two things behind. */
+  /** Clears containers of this daemon that no running attempt owns. No answer means try again, not "there are none". */
   private async recover(): Promise<void> {
-    this.recovered = true;
+    const names = await this.runtime.list();
+    if (names === null) return;
     const live = new Set(this.list('running').map((j) => j.attempts[j.attempts.length - 1].container));
-    for (const name of await this.runtime.list()) {
+    for (const name of names) {
       if (!live.has(name)) await this.runtime.remove(name);
     }
-    for (const job of this.jobs.values()) {
-      for (const a of job.attempts) if (a.endedAt) this.trim(job, a);
+    this.recovered = true;
+  }
+
+  /**
+   * The last line against filling the disk: statfs sees what du cannot, such as files a job has unlinked but keeps
+   * open. Past the floor every running job is killed, whoever used the space. Killing them also frees those files.
+   */
+  private enforceHostFloor(): void {
+    const free = this.host().diskFreeGb;
+    if (free >= this.cfg.minFreeGb) return;
+    for (const job of this.list('running')) {
+      const attempt = job.attempts[job.attempts.length - 1];
+      if (attempt.killedFor || job.cancelRequested) continue;
+      attempt.killedFor = 'disk';
+      attempt.killDetail = `host disk at ${free.toFixed(1)} GB free, below the ${this.cfg.minFreeGb} GB floor`;
+      this.store.save(job);
     }
   }
 
-  private trim(job: JobRecord, attempt: Attempt): void {
+  /**
+   * The only code that touches job trees, and it runs apart from tick(), so a slow delete never delays a deadline.
+   * Failure of any step means stop and try again on the next call.
+   */
+  async clean(): Promise<void> {
+    if (this.cleaning) return;
+    this.cleaning = true;
     try {
-      this.store.trimAttempt(job.id, attempt.n);
-    } catch (e) {
-      console.error(`job ${job.id}: trim failed:`, e); // a hostile tree must not stop the tick; retention removes it
+      for (const job of [...this.jobs.values()]) {
+        for (const attempt of job.attempts) {
+          if (!attempt.endedAt || attempt.trimmed) continue;
+          if (!(await this.cleanOne(job, attempt, true))) continue;
+          attempt.trimmed = true;
+          this.store.save(job);
+        }
+      }
+      await this.sweep();
+    } finally {
+      this.cleaning = false;
     }
+  }
+
+  /** Never touches the tree unless Docker says the container does not exist: a live job could race any delete. */
+  private async cleanOne(job: JobRecord, attempt: Attempt, keepOut: boolean): Promise<boolean> {
+    await this.runtime.remove(attempt.container);
+    const state = await this.runtime.inspect(attempt.container);
+    if (state.status !== 'missing') {
+      console.error(`job ${job.id}: cleanup waits, container ${attempt.container} is ${state.status}`);
+      return false;
+    }
+    this.diskMisses.delete(attempt.container);
+    const dir = this.store.attemptDir(job.id, attempt.n);
+    return !fs.existsSync(dir) || this.runtime.cleanAttempt(dir, keepOut);
   }
 
   private async reconcile(job: JobRecord): Promise<void> {
@@ -245,11 +291,9 @@ export class JobManager {
       timeoutS: job.spec.timeoutS,
       diskGb: job.spec.diskGb,
     });
-    // The record first. If the daemon dies before the remove, recover() clears the container. The other order would
-    // lose Docker's verdict, and no file the job can write may stand in for it.
+    // The record only. clean() removes the container afterwards: the other order would lose Docker's verdict, and no
+    // file the job can write may stand in for it.
     this.finish(job, attempt, c);
-    await this.runtime.remove(attempt.container);
-    this.trim(job, attempt);
   }
 
   /**
@@ -277,9 +321,18 @@ export class JobManager {
     if (job.state !== 'running' || job.attempts[job.attempts.length - 1] !== attempt) return;
     const limit = `the ${job.spec.diskGb} GB disk limit`;
     let why = '';
-    // Fails closed: a job must not get out of the limit by making its tree too slow to measure.
-    if (files === null || layer === null) why = `disk use could not be measured in time, treated as over ${limit}`;
-    else if (files + layer > job.spec.diskGb * 1024 ** 3) why = `${((files + layer) / 1024 ** 3).toFixed(2)} GB written, over ${limit}`;
+    if (files === null || layer === null) {
+      // A Docker outage says nothing about the job, and no kill would reach it anyway.
+      if (layer === null && !(await this.runtime.ping())) return;
+      // Fails closed: a job must not get out of the limit by making its tree impossible to measure.
+      const misses = (this.diskMisses.get(attempt.container) ?? 0) + 1;
+      this.diskMisses.set(attempt.container, misses);
+      if (misses < MAX_DISK_MISSES) return;
+      why = `disk use could not be measured ${misses} times in a row, treated as over ${limit}`;
+    } else {
+      this.diskMisses.delete(attempt.container);
+      if (files + layer > job.spec.diskGb * 1024 ** 3) why = `${((files + layer) / 1024 ** 3).toFixed(2)} GB written, over ${limit}`;
+    }
     if (!why) return;
     attempt.killedFor = 'disk';
     attempt.killDetail = why;
@@ -358,21 +411,24 @@ export class JobManager {
     const inputTar = this.store.inputTar(job.id);
     const r = await this.runtime.start({ container: attempt.container, workDir, outDir, inputTar, image, cpus, memGb, diskGb, timeoutS, command });
     if (r.ok) return;
+    // The container may exist all the same, if docker run timed out. clean() checks before it touches anything.
     this.finish(job, attempt, { outcome: r.permanent ? 'start' : 'infra', exitCode: null, detail: r.detail });
-    await this.runtime.remove(attempt.container);
-    this.trim(job, attempt);
   }
 
   /** The disk on this host is shared, so finished jobs do not stay for ever. Hourly is enough for a limit in days. */
-  private sweep(): void {
+  private async sweep(): Promise<void> {
     if (this.now() - this.lastSweep < 3_600_000) return;
     this.lastSweep = this.now();
     const cutoff = this.now() - this.cfg.retainDays * 86_400_000;
     for (const job of this.list('passed', 'failed', 'cancelled')) {
-      if (Date.parse(job.updatedAt) < cutoff) {
-        this.store.remove(job.id);
-        this.jobs.delete(job.id);
+      if (Date.parse(job.updatedAt) >= cutoff || job.attempts.some((a) => !a.trimmed)) continue;
+      let emptied = true;
+      for (const attempt of job.attempts) {
+        if (!(await this.cleanOne(job, attempt, false))) emptied = false;
       }
+      if (!emptied) continue; // the next sweep tries again
+      await this.store.remove(job.id);
+      this.jobs.delete(job.id);
     }
   }
 }

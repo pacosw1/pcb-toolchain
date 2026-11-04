@@ -30,9 +30,14 @@ wait_state() { # id state seconds
   for ((i = 0; i < $3 * 2; i++)); do [ "$(state "$1")" = "$2" ] && return 0; sleep 0.5; done
   echo "  state is $(state "$1"), wanted $2"; return 1
 }
+results() { # id dir: 409 until the cleanup is done
+  local i
+  for ((i = 0; i < 40; i++)); do pcb results "$1" "$2" 2> /dev/null && return 0; sleep 0.5; done
+  echo "  no results for $1"; return 1
+}
 daemon_start() { r "cd $RDIR && JOBD_TOKEN_FILE=$RDIR/token JOBD_DATA_DIR=$RDIR/data JOBD_PORT=$PORT JOBD_INSTANCE=e2e \
   JOBD_CPU_BUDGET=8 JOBD_MEM_BUDGET_GB=8 JOBD_DEFAULT_CPUS=1 JOBD_DEFAULT_MEM_GB=1 JOBD_RETRY_BACKOFF_S=2 JOBD_TICK_MS=500 \
-  JOBD_DEFAULT_DISK_GB=1 JOBD_MIN_FREE_GB=5 JOBD_DISK_CHECK_S=1 JOBD_PIDS_LIMIT=64 \
+  JOBD_DEFAULT_DISK_GB=1 JOBD_MIN_FREE_GB=${FLOOR:-5} JOBD_DISK_CHECK_S=1 JOBD_PIDS_LIMIT=64 \
   JOBD_CGROUP_PARENT=system.slice nohup node --no-warnings src/main.ts >> daemon.log 2>&1 < /dev/null & echo \$! > $RDIR/daemon.pid"; }
 daemon_kill9() { r "kill -9 \$(cat $RDIR/daemon.pid)"; }
 
@@ -58,6 +63,9 @@ printf 'for i in $(seq 1 200); do sleep 20 & done; wait\n' > "$STAGE/jobs/forks.
 printf 'i=0; while :; do dd if=/dev/urandom of=f$i bs=1M count=10 2>/dev/null; i=$((i+1)); done\n' > "$STAGE/jobs/fill.sh"
 printf 'cd /tmp; i=0; while :; do dd if=/dev/urandom of=f$i bs=1M count=10 2>/dev/null; i=$((i+1)); done\n' > "$STAGE/jobs/filllayer.sh"
 printf 'dd if=/dev/zero of=big bs=1M count=200\n' > "$STAGE/jobs/bigfile.sh"
+printf 'mkdir -m 000 locked; mkdir sub; touch sub/f; chmod 000 sub; ln -s %s/canary out/escape; ln -s %s/canary escape; mkdir out/d; ln -s %s/canary out/d/link; echo ok > out/keep.txt\n' "$RDIR" "$RDIR" "$RDIR" > "$STAGE/jobs/trees.sh"
+printf 'exec 3<>a 4<>b 5<>c; rm a b c; for fd in 3 4 5; do dd if=/dev/zero bs=1M count=300 2>/dev/null >&$fd; done; echo unlinked; sleep 60\n' > "$STAGE/jobs/unlinked.sh"
+printf 'ulimit -n\n' > "$STAGE/jobs/nofile.sh"
 dd if=/dev/zero of="$STAGE/zeros" bs=1048576 count=300 2> /dev/null
 job() { echo "--in $STAGE/jobs/$1.sh"; }
 
@@ -106,7 +114,7 @@ wait_state "$ID" retrying 10 && ok 'retrying'
 wait_state "$ID" passed 40 && ok 'passed'
 check 'two attempts' "$(attempts "$ID")" 2
 check 'attempt 1 was infrastructure' "$(pcb status "$ID" | sed -n 's/^      "outcome": "\(.*\)",$/\1/p' | head -1)" infra
-pcb results "$ID" "$STAGE/r5" 2> /dev/null
+results "$ID" "$STAGE/r5"
 check 'attempt 1 log kept' "$(head -1 "$STAGE/r5/attempts/1/out/job.log")" 'tick 1'
 
 echo '# cancel a running job'
@@ -187,7 +195,7 @@ wait_state "$ID" running 20
 sleep 2
 check 'nothing from the host in the log' "$(curl -s -H "Authorization: Bearer $JOBD_TOKEN" "$JOBD_URL/jobs/$ID/log?attempt=1" | grep -c root)" 0
 wait_state "$ID" passed 20 && ok 'passed'
-pcb results "$ID" "$STAGE/r9" 2> /dev/null
+results "$ID" "$STAGE/r9"
 check 'no links or FIFOs in the results' "$(find "$STAGE/r9/out" ! -type f ! -type d | wc -l | tr -d ' ')" 0
 
 echo '# hostile: the job tries to replace out with a symlink'
@@ -197,7 +205,7 @@ check 'out is still the mount' "$(cat "$STAGE/r10/out/mount.txt")" mount
 echo '# hostile: fork bomb stops at the pids limit'
 ID=$(pcb submit board $(job forks) --timeout 4 -- bash in/forks.sh)
 wait_state "$ID" failed 40 && ok 'failed'
-pcb results "$ID" "$STAGE/r11" 2> /dev/null
+results "$ID" "$STAGE/r11"
 check 'the limit was hit' "$(grep -c -m1 'Resource temporarily unavailable' "$STAGE/r11/out/job.log")" 1
 
 echo '# hostile: disk'
@@ -219,6 +227,35 @@ check 'outcome' "$(outcome "$ID")" disk
 echo '# a limit Docker would read as none is refused'
 pcb submit board $(job hello) --mem 0.0001 -- bash in/hello.sh > /dev/null 2>&1
 check 'exit' $? 2
+
+echo '# cleanup: the cleaner container gets past chmod 000 and takes links, not their targets'
+r "mkdir $RDIR/canary; echo alive > $RDIR/canary/file"
+ID=$(pcb submit board $(job trees) -- bash in/trees.sh)
+wait_state "$ID" passed 20 && ok 'passed'
+results "$ID" "$STAGE/r12"
+A=$RDIR/data/jobs/$ID/attempts/1
+check 'work removed' "$(r "ls -A $A")" out
+check 'links gone from out' "$(r "find $A/out -type l | wc -l" | tr -d ' ')" 0
+check 'target untouched' "$(r "cat $RDIR/canary/file")" alive
+check 'result kept' "$(cat "$STAGE/r12/out/keep.txt")" ok
+check 'no cleaner left' "$(r "docker ps -aq --filter label=pcb-job-cleaner=e2e | wc -l" | tr -d ' ')" 0
+
+echo '# open files are capped'
+pcb run board $(job nofile) --results "$STAGE/r13" -- bash in/nofile.sh > "$STAGE/r13.log" 2> /dev/null
+check 'ulimit -n' "$(cat "$STAGE/r13.log")" 1024
+
+echo '# unlinked files, which du cannot see: the host disk floor kills the job'
+AVAIL=$(r "df -k --output=avail $RDIR/data | tail -1")
+FLOOR=$(echo "$AVAIL" | awk '{printf "%.2f", $1 / 1048576 - 0.4}')
+r "kill \$(cat $RDIR/daemon.pid)"
+FLOOR=$FLOOR daemon_start
+sleep 2
+ID=$(pcb submit board $(job unlinked) --disk 0.35 --mem 2 --timeout 40 -- bash in/unlinked.sh)
+wait_state "$ID" failed 30 && ok 'failed'
+check 'outcome' "$(outcome "$ID")" disk
+check 'cause named' "$(pcb status "$ID" | grep -c -m1 'host disk at')" 1
+check 'one attempt' "$(attempts "$ID")" 1
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ "$(r "docker ps -aq --filter label=pcb-job-daemon=e2e | wc -l" | tr -d ' ')" = 0 ] && break; sleep 1; done
 
 echo '# nothing left behind by finished jobs'
 check 'no containers' "$(r "docker ps -aq --filter label=pcb-job-daemon=e2e | wc -l" | tr -d ' ')" 0

@@ -5,7 +5,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { exec } from './docker.ts';
+import { exec, lowPriority } from './docker.ts';
 import type { JobManager } from './manager.ts';
 import { validateSpec } from './manager.ts';
 import { openNoFollow } from './store.ts';
@@ -31,8 +31,9 @@ function json(res: http.ServerResponse, status: number, body: unknown): void {
 }
 
 /** The tar is extracted as root, so it is refused here if any entry could leave the job folder. */
-export async function checkTar(file: string): Promise<void> {
-  const r = await exec('tar', ['-tzf', file], 60_000);
+export async function checkTar(file: string, signal: AbortSignal): Promise<void> {
+  const [cmd, args] = lowPriority('tar', ['-tzf', file]);
+  const r = await exec(cmd, args, 60_000, { signal });
   if (r.code !== 0) throw new HttpError(400, 'body is not a gzip tar');
   for (const name of r.stdout.split('\n')) {
     if (name.startsWith('/') || name.split('/').includes('..')) throw new HttpError(400, `unsafe path in tar: ${name}`);
@@ -52,7 +53,7 @@ async function receive(req: http.IncomingMessage, dir: string, maxBytes: number)
     await pipeline(req, limit, fs.createWriteStream(file));
     return file;
   } catch (e) {
-    fs.rmSync(file, { force: true });
+    await fs.promises.rm(file, { force: true });
     throw e;
   }
 }
@@ -112,6 +113,8 @@ function offsetOf(url: URL): number {
 
 function sendResults(res: http.ServerResponse, mgr: JobManager, job: JobRecord): void {
   if (!isTerminal(job.state)) throw new HttpError(409, `job is ${job.state}`);
+  // Until then the container may not be confirmed gone, and out/ may still hold links.
+  if (job.attempts.some((a) => !a.trimmed)) throw new HttpError(409, 'results are not ready: cleanup is running');
   const dir = mgr.store.jobDir(job.id);
   const last = job.attempts.length;
   // out/ of the last attempt, the logs of earlier attempts, and the record: the evidence of how it got here. The job
@@ -130,7 +133,7 @@ function sendResults(res: http.ServerResponse, mgr: JobManager, job: JobRecord):
   res.on('close', () => tar.kill());
 }
 
-/** Counts work that holds a process, a file or a socket for a long time. The slot comes back when the response ends. */
+/** Counts work that holds a process, a file or a socket for a long time. */
 class Slots {
   active = 0;
   what: string;
@@ -141,12 +144,18 @@ class Slots {
     this.limit = limit;
   }
 
-  take(res: http.ServerResponse): void {
+  /** The caller releases when the work has really ended, which can be after the client has gone. */
+  take(): () => void {
     if (this.active >= this.limit) throw new HttpError(503, `busy: ${this.active} ${this.what} in progress, limit ${this.limit}`);
     this.active += 1;
-    res.once('close', () => {
+    return () => {
       this.active -= 1;
-    });
+    };
+  }
+
+  /** For work that ends with the response. */
+  untilClose(res: http.ServerResponse): void {
+    res.once('close', this.take());
   }
 }
 
@@ -155,7 +164,11 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: J
   const method = req.method ?? 'GET';
   if (url.pathname === '/status' && method === 'GET') return json(res, 200, mgr.status());
   if (url.pathname === '/jobs' && method === 'GET') {
-    const limit = Math.min(Number(url.searchParams.get('limit')) || MAX_LIST, MAX_LIST);
+    const raw = url.searchParams.get('limit');
+    const limit = raw === null ? MAX_LIST : Number(raw);
+    if (raw === '' || !Number.isInteger(limit) || limit < 1 || limit > MAX_LIST) {
+      throw new HttpError(400, `limit must be an integer in 1..${MAX_LIST}`);
+    }
     return json(res, 200, [...mgr.jobs.values()].sort((a, b) => b.seq - a.seq).slice(0, limit));
   }
   if (url.pathname === '/jobs' && method === 'POST') {
@@ -171,13 +184,19 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: J
     mgr.assertQueueRoom();
     const maxBytes = mgr.cfg.maxUploadMb * 1024 * 1024;
     if (Number(req.headers['content-length'] ?? 0) > maxBytes) throw new HttpError(413, `upload over ${maxBytes} bytes`);
-    uploads.take(res);
-    const file = await receive(req, mgr.store.incomingDir(), maxBytes);
+    // The slot covers the upload, the validation and its cleanup, so it must outlive a client that leaves. A client
+    // that leaves cancels the validation.
+    const release = uploads.take();
+    const left = new AbortController();
+    res.once('close', () => left.abort());
+    let file = '';
     try {
-      await checkTar(file);
+      file = await receive(req, mgr.store.incomingDir(), maxBytes);
+      await checkTar(file, left.signal);
       return json(res, 201, mgr.submit(spec, file));
     } finally {
-      fs.rmSync(file, { force: true });
+      if (file) await fs.promises.rm(file, { force: true });
+      release();
     }
   }
   const m = /^\/jobs\/([0-9]{8}-[0-9]{6}-[0-9a-f]{6})(?:\/(cancel|log|events|results))?$/.exec(url.pathname);
@@ -190,17 +209,17 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: J
     case 'POST cancel':
       return json(res, 200, mgr.cancel(job.id));
     case 'GET events':
-      streams.take(res);
+      streams.untilClose(res);
       return tail(res, mgr.store.eventsFile(job.id), offsetOf(url), follow, () => isTerminal(job.state));
     case 'GET log': {
       const n = Number(url.searchParams.get('attempt') ?? job.attempts.length);
       const attempt = job.attempts.find((a) => a.n === n);
       if (!attempt) throw new HttpError(404, 'no such attempt');
-      streams.take(res);
+      streams.untilClose(res);
       return tail(res, mgr.store.logFile(job.id, n), offsetOf(url), follow, () => attempt.endedAt !== undefined);
     }
     case 'GET results':
-      streams.take(res);
+      streams.untilClose(res);
       return sendResults(res, mgr, job);
     default:
       throw new HttpError(405, 'method not allowed');

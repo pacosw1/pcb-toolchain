@@ -38,6 +38,7 @@ describe('states', () => {
     await r.mgr.tick();
     assert.equal(job.state, 'passed');
     assert.deepEqual(states(job.id), ['queued', 'running', 'passed']);
+    await r.mgr.clean();
     assert.deepEqual(fs.readdirSync(r.mgr.store.attemptDir(job.id, 1)), ['out']);
     assert.equal(r.runtime.containers.size, 0, 'container removed');
   });
@@ -343,10 +344,11 @@ describe('retention', () => {
   it('removes finished jobs after retainDays and keeps the rest', async () => {
     const old = r.submit(['pass']);
     await settle(old.id);
+    await r.mgr.clean();
     const running = r.submit(['hang']);
     await r.mgr.tick();
     r.clock.now += 8 * 86_400_000;
-    await r.mgr.tick();
+    await r.mgr.clean();
     assert.ok(!r.mgr.jobs.has(old.id));
     assert.ok(!fs.existsSync(r.mgr.store.jobDir(old.id)));
     assert.ok(r.mgr.jobs.has(running.id));

@@ -143,6 +143,7 @@ function exitCodeOf(job: JobRecord): number {
 async function fetchResults(id: string, dir: string): Promise<void> {
   fs.mkdirSync(dir, { recursive: true });
   const res = await api(`/jobs/${id}/results`);
+  if (res.status === 409) throw new Error('results are not ready yet'); // `run` waits this out through persist()
   const body = res.ok ? res.body : null;
   if (!body) return die(`results: HTTP ${res.status}`);
   const tar = spawn('tar', ['-xzf', '-', '-C', dir], { stdio: ['pipe', 'inherit', 'inherit'] });

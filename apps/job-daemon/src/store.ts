@@ -12,7 +12,8 @@ import type { JobRecord } from './types.ts';
  *     out/          mounted at /job/out, so out itself is a mount point the job cannot replace with a symlink
  *
  * Everything in work/ and out/ is hostile: the daemon runs as root and the job writes there. The daemon never takes
- * a verdict from those files. It reads one file, out/job.log, through openNoFollow(), and sizes them with du.
+ * a verdict from those files, and never walks or deletes them in this process. It reads one file, out/job.log,
+ * through openNoFollow(), sizes them with du, and deletes them through Runtime.cleanAttempt.
  */
 export class Store {
   root: string;
@@ -66,26 +67,9 @@ export class Store {
     return jobs.sort((a, b) => a.seq - b.seq);
   }
 
-  /**
-   * Call only when the container is gone, so nothing can race this. work/ goes, and out/ keeps regular files and
-   * folders only: no symlink or FIFO reaches the results. Dirent types come from readdir and do not follow links.
-   */
-  trimAttempt(id: string, n: number): void {
-    fs.rmSync(this.workDir(id, n), { recursive: true, force: true });
-    const stack = [this.outDir(id, n)];
-    while (stack.length > 0) {
-      const dir = stack.pop() as string;
-      if (!fs.existsSync(dir)) continue;
-      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-        const full = path.join(dir, e.name);
-        if (e.isDirectory()) stack.push(full);
-        else if (!e.isFile()) fs.rmSync(full, { force: true });
-      }
-    }
-  }
-
-  remove(id: string): void {
-    fs.rmSync(this.jobDir(id), { recursive: true, force: true });
+  /** Call only after the cleaner has emptied every attempt: what is left is the daemon's own files. */
+  async remove(id: string): Promise<void> {
+    await fs.promises.rm(this.jobDir(id), { recursive: true, force: true });
   }
 }
 

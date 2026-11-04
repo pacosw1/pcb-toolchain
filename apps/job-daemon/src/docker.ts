@@ -31,10 +31,12 @@ export interface Runtime {
   inspect(container: string): Promise<ContainerState>;
   kill(container: string): Promise<void>;
   remove(container: string): Promise<void>;
-  /** This daemon's containers, running or not. */
-  list(): Promise<string[]>;
-  /** Bytes in the container's writable layer; 0 if it does not exist; null if Docker did not answer in time. */
+  /** This daemon's containers, running or not. null: no answer, which is not the same as none. */
+  list(): Promise<string[] | null>;
+  /** Bytes in the container's writable layer; 0 only if Docker says it does not exist; null when not measured. */
   layerBytes(container: string): Promise<number | null>;
+  /** Deletes the job's files in a throw-away container. Call only when the job's container is confirmed gone. */
+  cleanAttempt(attemptDir: string, keepOut: boolean): Promise<boolean>;
 }
 
 // Same job contract as tools/remote.sh: run in /job, write to out/, stdout+stderr in out/job.log, timeout -k 10.
@@ -53,21 +55,53 @@ export interface Exec {
   stderr: string;
 }
 
-export function exec(cmd: string, args: string[], timeoutMs = 30_000): Promise<Exec> {
+export function exec(
+  cmd: string,
+  args: string[],
+  timeoutMs = 30_000,
+  opts: { signal?: AbortSignal; killSignal?: NodeJS.Signals } = {},
+): Promise<Exec> {
   return new Promise((resolve) => {
-    execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
+    const { signal, killSignal } = opts;
+    const child = execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, killSignal }, (err, stdout, stderr) => {
+      signal?.removeEventListener('abort', stop);
       const code = err ? (typeof err.code === 'number' ? err.code : null) : 0;
       resolve({ code, stdout, stderr: stderr || (err ? err.message : '') });
     });
+    // Not execFile's own `signal`: that one calls back at once, while the process may still be running, and callers
+    // count on this promise meaning the process has ended.
+    function stop(): void {
+      child.kill();
+      setTimeout(() => child.kill('SIGKILL'), 2000).unref();
+    }
+    if (signal?.aborted) stop();
+    else signal?.addEventListener('abort', stop, { once: true });
   });
 }
 
-/** Disk blocks in use, not following links, staying on the filesystem. null if du did not finish in time. */
-export async function dirBytes(dirs: string[]): Promise<number | null> {
-  const r = await exec('du', ['-skx', ...dirs]);
-  if (r.code === null) return null;
-  // A non-zero code here means files went away during the walk, which is normal for a running job.
-  return r.stdout.split('\n').reduce((sum, line) => sum + (Number.parseInt(line, 10) || 0) * 1024, 0);
+/** For root workers that walk or read what a job made: they must not compete with CI. ionice is Linux only. */
+export function lowPriority(cmd: string, args: string[], platform: string = process.platform): [string, string[]] {
+  return ['nice', ['-n', '19', ...(platform === 'linux' ? ['ionice', '-c', '3'] : []), cmd, ...args]];
+}
+
+/**
+ * Disk blocks in use, not following links, staying on the filesystem. Anything but a clean, complete answer is null:
+ * a partial total would let a job pass by making du fail. du also fails when a file vanishes during the walk, which
+ * is normal, so one null is not a verdict; JobManager.checkDisk decides.
+ */
+export async function dirBytes(dirs: string[], timeoutMs = 30_000): Promise<number | null> {
+  const [cmd, args] = lowPriority('du', ['-skx', ...dirs]);
+  const r = await exec(cmd, args, timeoutMs, { killSignal: 'SIGKILL' });
+  if (r.code !== 0) return null;
+  const lines = r.stdout.trim().split('\n');
+  if (lines.length !== dirs.length) return null;
+  let kb = 0;
+  for (const line of lines) {
+    const m = /^(\d+)\s/.exec(line);
+    if (!m) return null;
+    kb += Number(m[1]);
+  }
+  return kb * 1024;
 }
 
 export function runArgs(req: StartRequest, cfg: Config): string[] {
@@ -81,11 +115,32 @@ export function runArgs(req: StartRequest, cfg: Config): string[] {
     '--cpus', String(req.cpus), '--memory', mem, '--memory-swap', mem, '--pids-limit', String(cfg.pidsLimit),
     // Hard, per file, and it also stops a sparse file. The sum over all files is JobManager.watchDisk.
     '--ulimit', `fsize=${Math.round(req.diskGb * 1024 ** 3)}`,
+    // Per process, so with fsize it only bounds what one process can hide in unlinked files. README "Limits".
+    '--ulimit', `nofile=${cfg.nofile}:${cfg.nofile}`,
     // The kernel picks a job first when the host runs out of memory, not CI or the orchestrator.
     '--oom-score-adj', '1000',
     '-v', `${req.workDir}:/job`, '-v', `${req.outDir}:/job/out`, '-v', `${req.inputTar}:/input.tar.gz:ro`,
     '-w', '/job', '-e', 'TMPDIR=/job/out/tmp',
     req.image, 'bash', '-c', WRAPPER, '_', String(req.timeoutS), ...req.command,
+  ];
+}
+
+/**
+ * The cleaner: only the attempt folder is mounted, so even wrong logic or a link in the tree cannot reach the host.
+ * It runs as root with just the capabilities that get past a job's chmod 000. rm and find -delete do not follow
+ * links. keepOut leaves regular files and folders in out/, for the results. The limits are defaults to tune.
+ */
+export function cleanArgs(name: string, attemptDir: string, keepOut: boolean, cfg: Config): string[] {
+  const script = keepOut
+    ? 'rm -rf /a/work && if [ -d /a/out ]; then find /a/out -mindepth 1 ! -type f ! -type d -delete; fi'
+    : 'rm -rf /a/work /a/out';
+  return [
+    'run', '--rm', '--pull', 'never', '--name', name, '--label', `pcb-job-cleaner=${cfg.instance}`,
+    ...(cfg.cgroupParent ? ['--cgroup-parent', cfg.cgroupParent] : []),
+    '--network', 'none', '--cap-drop', 'ALL', '--cap-add', 'DAC_OVERRIDE', '--cap-add', 'DAC_READ_SEARCH',
+    '--security-opt', 'no-new-privileges', '--log-driver', 'none', '--user', '0:0',
+    '--cpus', '1', '--memory', '256m', '--pids-limit', '64',
+    '-v', `${attemptDir}:/a`, cfg.images[0], 'sh', '-c', script,
   ];
 }
 
@@ -126,14 +181,21 @@ export class DockerRuntime implements Runtime {
     await exec('docker', ['rm', '-f', container]);
   }
 
-  async list(): Promise<string[]> {
+  async list(): Promise<string[] | null> {
     const r = await exec('docker', ['ps', '-a', '--filter', `label=pcb-job-daemon=${this.cfg.instance}`, '--format', '{{.Names}}']);
-    return r.code === 0 ? r.stdout.split('\n').filter(Boolean) : [];
+    return r.code === 0 ? r.stdout.split('\n').filter(Boolean) : null;
   }
 
   async layerBytes(container: string): Promise<number | null> {
     const r = await exec('docker', ['inspect', '--size', '--format', '{{.SizeRw}}', container]);
-    if (r.code === null) return null;
-    return r.code === 0 ? Number.parseInt(r.stdout, 10) || 0 : 0;
+    if (r.code === 0) return /^\d+$/.test(r.stdout.trim()) ? Number(r.stdout.trim()) : null;
+    return /no such (object|container)/i.test(r.stderr) ? 0 : null;
+  }
+
+  async cleanAttempt(attemptDir: string, keepOut: boolean): Promise<boolean> {
+    const [n, , id] = attemptDir.split('/').reverse(); // <data>/jobs/<id>/attempts/<n>
+    const name = `pcbclean-${id}-${n}`;
+    await exec('docker', ['rm', '-f', name]); // one left by a run that timed out
+    return (await exec('docker', cleanArgs(name, attemptDir, keepOut, this.cfg), 600_000)).code === 0;
   }
 }

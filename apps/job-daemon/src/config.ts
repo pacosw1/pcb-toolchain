@@ -28,6 +28,7 @@ export interface Config {
   jobUid: number | null;
   tickMs: number;
   pidsLimit: number;
+  nofile: number;
   defaultDiskGb: number;
   maxDiskGb: number;
   diskCheckS: number;
@@ -86,6 +87,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     jobUid: env.JOBD_JOB_UID === 'none' ? null : num(env, 'JOBD_JOB_UID', 1000),
     tickMs: num(env, 'JOBD_TICK_MS', 2000),
     pidsLimit: num(env, 'JOBD_PIDS_LIMIT', 4096),
+    nofile: num(env, 'JOBD_NOFILE', 1024),
     defaultDiskGb: num(env, 'JOBD_DEFAULT_DISK_GB', 10),
     maxDiskGb: num(env, 'JOBD_MAX_DISK_GB', 50),
     diskCheckS: num(env, 'JOBD_DISK_CHECK_S', 5),

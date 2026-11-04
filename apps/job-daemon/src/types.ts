@@ -28,6 +28,8 @@ export interface Attempt {
   /** The daemon decided to kill this attempt, and why. Durable, so the reason survives a restart. */
   killedFor?: 'deadline' | 'disk';
   killDetail?: string;
+  /** The container is confirmed gone and work/ is removed: out/ holds regular files and folders only. */
+  trimmed?: boolean;
   exitCode?: number | null;
   outcome?: Outcome;
   detail?: string;
