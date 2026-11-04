@@ -62,7 +62,7 @@ pub fn simplify(a: &[Polygon]) -> Result<Vec<Polygon>, String> {
 }
 
 /// GetArcToSegmentCount for a full circle.
-fn circle_segments(radius: Iu, max_error: Iu) -> i64 {
+pub fn circle_segments(radius: Iu, max_error: Iu) -> i64 {
     let rel_error = max_error.max(1) as f64 / radius.max(1) as f64;
     let increment = ((1.0 - rel_error).acos() * 2.0).to_degrees().min(360.0 / MIN_SEGMENTS_PER_CIRCLE);
     ((360.0 / increment).round() as i64).max(2)

@@ -4209,6 +4209,7 @@ fn main() {
         Some("write") => std::process::exit(write::cli(&args[2..])),
         Some("board-json") => std::process::exit(iotroute::kicad::cli(&args[2..])),
         Some("model") => std::process::exit(iotroute::model::cli::cli(&args[2..])),
+        Some("si-planes") => std::process::exit(iotroute::si::planes_cli(&args[2..])),
         Some("si-pairs") => std::process::exit(iotroute::si::pairs_cli(&args[2..])),
         _ => {}
     }

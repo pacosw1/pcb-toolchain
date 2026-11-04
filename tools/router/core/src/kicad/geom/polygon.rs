@@ -159,6 +159,16 @@ pub fn copper_contains(copper: &Copper, p: Pt) -> bool {
     }
 }
 
+/// Does this copper touch a track from `a` to `b`? SHAPE::Collide with clearance 0.
+pub fn segment_touches(copper: &Copper, a: Pt, b: Pt, width: Iu) -> bool {
+    let reach = |other: f64| (other + width as f64 / 2.0).powi(2);
+    match copper {
+        Copper::Circle { center, radius } => point_segment_sq(*center, a, b) < reach(*radius as f64),
+        Copper::Segment { a: c, b: d, width: w } => segment_segment_sq(a, b, *c, *d) < reach(*w as f64 / 2.0),
+        Copper::Polygon(points) => Polygon::of_ring(points.clone()).near_segment(a, b, width / 2),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
