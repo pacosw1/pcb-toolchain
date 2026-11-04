@@ -9,8 +9,6 @@ Type=simple
 # Root, like tools/remote.sh: the data folder is under /var/lib/docker (mode 710 root), and Docker access is
 # root-equivalent in any case.
 User=root
-RuntimeDirectory=pcb-job-daemon
-RuntimeDirectoryMode=0700
 EnvironmentFile=/etc/pcb-job-daemon.env
 WorkingDirectory=/opt/pcb-job-daemon
 ExecStart=/usr/local/bin/node --no-warnings /opt/pcb-job-daemon/src/main.ts

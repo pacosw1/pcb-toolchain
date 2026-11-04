@@ -64,7 +64,7 @@ test('installer verifies identity, rolls back failure, and recovers interruption
 });
 
 test('socket must be in a private directory and owned by the expected user', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'jobd-socket-check-')); const socket = join(dir, 'status.sock');
+  const dir = mkdtempSync(join(tmpdir(), 'jobd-socket-check-')); const subdir = join(dir, 'default'); mkdirSync(subdir, { mode: 0o700 }); const socket = join(subdir, 'pid-1.sock');
   const server = http.createServer();
   try {
     await new Promise<void>((resolve) => server.listen(socket, resolve));

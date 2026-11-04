@@ -15,7 +15,7 @@ const mgr = new JobManager(cfg, new Store(cfg.dataDir), new DockerRuntime(cfg), 
 const identity = sourceIdentity(fileURLToPath(new URL('.', import.meta.url)));
 const server = createServer(mgr, identity);
 const health = createHealthServer(mgr, identity);
-const socket = prepareLocalSocket('/run/pcb-job-daemon', process.getuid!());
+const socket = prepareLocalSocket('/run/pcb-job-daemon', cfg.instance, process.getuid!(), process.pid);
 
 const timer = setInterval(() => {
   mgr.tick().catch((e: unknown) => console.error('tick failed:', e));

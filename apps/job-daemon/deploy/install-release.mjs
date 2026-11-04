@@ -98,8 +98,10 @@ export async function install(root, archive, manifest, expectedArchiveSha256, se
 }
 
 export function verifySocket(socket, uid) {
-  const dir = fs.lstatSync(path.dirname(socket));
-  if (!dir.isDirectory() || dir.uid !== uid || (dir.mode & 0o777) !== 0o700) throw Error('unsafe health socket directory');
+  for (const p of [path.dirname(socket), path.dirname(path.dirname(socket))]) {
+    const dir = fs.lstatSync(p);
+    if (!dir.isDirectory() || dir.uid !== uid || (dir.mode & 0o777) !== 0o700) throw Error('unsafe health socket directory');
+  }
   const endpoint = fs.lstatSync(socket);
   if (!endpoint.isSocket() || endpoint.uid !== uid) throw Error('unsafe health socket');
 }
@@ -107,7 +109,11 @@ async function main() {
   const [operation, archive, tokenFile, expectedArchiveSha256] = process.argv.slice(2);
   if (!['install', 'recover'].includes(operation) || (operation === 'install' && (!archive || !expectedArchiveSha256)) || !tokenFile) throw Error('usage: install-release.mjs install|recover ARCHIVE_OR_- TOKEN_FILE [EXPECTED_ARCHIVE_SHA256]');
   if (process.getuid?.() !== 0) throw Error('installer must run as root');
-  const socket = '/run/pcb-job-daemon/status.sock';
+  const servicePid = () => {
+    const raw = execFileSync('systemctl', ['show', 'pcb-job-daemon.service', '--property=MainPID', '--value'], { encoding: 'utf8' }).trim();
+    if (!/^[1-9][0-9]*$/.test(raw)) throw Error('service has no main process');
+    return raw;
+  };
   const token = fs.readFileSync(tokenFile, 'utf8').trim(); if (token.length < 32) throw Error('invalid token');
   const root = '/opt/pcb-job-daemon', lock = path.join(root, '.deploy-lock');
   fs.mkdirSync(lock); // On interruption the lock remains: verify no installer is running before removing it.
@@ -116,6 +122,8 @@ async function main() {
     healthy: async (expected) => {
       for (let n = 0; n < 15; n++) {
         try {
+          const pid = servicePid();
+          const socket = `/run/pcb-job-daemon/default/pid-${pid}.sock`;
           verifySocket(socket, 0);
           const identity = await new Promise((resolve, reject) => {
             const request = http.get({ socketPath: socket, path: '/status', headers: { authorization: `Bearer ${token}` }, timeout: 1000 }, (response) => {
@@ -125,7 +133,7 @@ async function main() {
             });
             request.on('timeout', () => request.destroy()); request.on('error', reject);
           });
-          if (identity === expected) return true;
+          if (identity === expected && servicePid() === pid) return true;
         } catch { /* retry during startup */ }
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
