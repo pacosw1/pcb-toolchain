@@ -52,6 +52,7 @@ counts like the region box miss.
 """
 import math
 import json
+import re
 
 import numpy as np
 
@@ -96,6 +97,11 @@ def rot_rect(rect, r):
     if r == 2:
         return (-x1, -y1, -x0, -y0)
     return (-y1, x0, -y0, x1)
+
+
+def ref_prefix(ref):
+    m = re.match(r'[A-Za-z_]+', ref)
+    return m.group(0) if m else ''
 
 
 def initial_pose(pr):

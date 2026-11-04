@@ -41,13 +41,6 @@ def wall(ref, x, y, net=5):
             'cu_pads': [[ref, 'smd', '1'], [ref, 'smd', '2']]}
 
 
-try:
-    import pcbnew  # noqa: F401  (repair.movable reads kicad_io)
-    HAVE_PCBNEW = True
-except ImportError:
-    HAVE_PCBNEW = False
-
-
 def problem(units):
     sink = part('R9', 20.0, 20.0, (11, 12))  # the far end of nets 11 and 12 (they must leave U1)
     sink2 = part('R8', 22.0, 20.0, (13, 99))
@@ -167,7 +160,6 @@ class EvaluatorTest(unittest.TestCase):
 
 
 class RepairTest(unittest.TestCase):
-    @unittest.skipUnless(HAVE_PCBNEW, 'repair.movable needs pcbnew (KiCad Python)')
     def test_proposals_move_the_unit_that_walls_in_the_failed_pin(self):
         pr = problem([wall('C1', 10.0, 11.8)])
         fails = [dict(kind='unconnected', type='unconnected',

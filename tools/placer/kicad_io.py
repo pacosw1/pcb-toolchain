@@ -39,6 +39,7 @@ import re
 import pcbnew
 
 from . import cost, dru
+from .cost import ref_prefix
 
 M = 1e6
 IC_PREFIX = ('U', 'J', 'P', 'CN', 'K', 'SW', 'Y', 'X')
@@ -48,11 +49,6 @@ BLOCK_SHARE = 0.6  # a part is in a block when its anchor and this share of its 
 
 def mm(v):
     return v / M
-
-
-def ref_prefix(ref):
-    m = re.match(r'[A-Za-z_]+', ref)
-    return m.group(0) if m else ''
 
 
 def poly_points(chain):

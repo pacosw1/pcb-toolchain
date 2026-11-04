@@ -5,6 +5,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from placer import cost, repair  # noqa: E402
@@ -89,6 +90,12 @@ class Term(unittest.TestCase):
 
 
 class Candidates(unittest.TestCase):
+    def test_movable_needs_no_pcbnew(self):
+        pr = board_problem()                             # U1 fixed, J1 a connector: no KiCad needed to say so
+        with mock.patch.dict(sys.modules, {'pcbnew': None}):
+            sys.modules.pop('placer.kicad_io', None)
+            self.assertEqual([repair.movable(pr, i) for i in range(5)], [False, True, True, False, True])
+
     def test_near_movable_no_connector_no_fixed(self):
         pr = board_problem()
         f = repair.parse_failures(drc([OPEN], [('starved_thermal', THERMAL)]))

@@ -206,7 +206,6 @@ KPY = run.python_native()
 NET_CORE = os.path.join(run.ROOT, 'hardware-design', 'boards', 'NET-CORE', 'cad', 'NET-CORE', 'NET-CORE.kicad_pcb')
 
 
-@unittest.skipUnless(os.path.exists(KPY) and os.path.exists(NET_CORE), 'needs the KiCad Python (pcbnew) and NET-CORE')
 class RefGate(unittest.TestCase):
     """Gate scope of the reference rule (2026-11-02): run.py reads the net of each D-124c reference FAIL line of the
     gate's own si_planes.py output (formats of tools/si_planes.py d124c_reference_failures); other lines are not nets."""

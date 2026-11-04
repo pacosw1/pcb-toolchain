@@ -255,7 +255,6 @@ def main(argv=None):
     a = parser().parse_args(argv)
     if getattr(a, 'repair_rank', 'term') == 'hot':  # rank 'hot' reads the map of the failed route: run.py writes it
         os.environ['IOTROUTE_CONGESTION'] = '1'
-    from placer import kicad_io
     if not math.isfinite(a.budget) or a.budget <= 0:
         raise ValueError('budget must be positive')
     if a.diagnostic_budget is not None and (not math.isfinite(a.diagnostic_budget) or a.diagnostic_budget < 0):
@@ -284,6 +283,7 @@ def main(argv=None):
         raise ValueError('--rank length needs --router iotroute (the only router step that measures the routed board)')
     if a.length_patience < 0:
         raise ValueError('--length-patience must be 0 or more')
+    from placer import kicad_io  # after the option checks: a bad option needs no pcbnew
     deadline = lean.deadline_after(a.budget)
     with open(a.prob) as problem_file:
         pr = json.load(problem_file)
