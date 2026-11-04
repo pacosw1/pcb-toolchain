@@ -75,7 +75,14 @@ def main(argv):
             and all(os.path.exists(os.path.join(tools, r)) for r in rels)):
         return 0
     old = open(listing).read().split('\n') if os.path.exists(listing) else []
-    for r in filter(None, old):
+    ours = set(filter(None, old))
+    for r in rels:                                  # check every path first: a collision changes nothing
+        src, dst = os.path.join(bundle, 'tools', r), os.path.join(tools, r)
+        if r not in ours and os.path.lexists(dst) and not (os.path.isfile(dst) and digest(dst) == digest(src)):
+            print(f'FAIL: toolchain_sync: project file tools/{r} differs from pcb-toolchain {stamp_text}; '
+                  'move it to the pcb-toolchain repo or rename it', file=sys.stderr)
+            return 1
+    for r in ours:
         p = os.path.join(tools, r)
         if os.path.lexists(p):
             os.chmod(p, stat.S_IWUSR | stat.S_IRUSR)
