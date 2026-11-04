@@ -34,6 +34,60 @@ class ViaCurrent(unittest.TestCase):
 
 
 
+class RuleValues(unittest.TestCase):
+    """A rule value that the router cannot keep stops the model (state unknown), it is not reported as applied.
+    KiCad DRC after the route would see the rule, but the search would not have tried to meet it."""
+
+    def compile(self, constraint):
+        import subprocess
+        import tempfile
+        import test_iso_board
+        with tempfile.TemporaryDirectory() as d:
+            test_iso_board.make_board(d)
+            with open(os.path.join(d, 'iso.kicad_dru'), 'w') as fh:
+                fh.write('(version 1)\n' + constraint + '\n')
+            out = os.path.join(d, 'model.json')
+            p = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'model.py'), d, '--out', out],
+                               capture_output=True, text=True)
+            with open(out) as fh:
+                m = json.load(fh)
+        return p.returncode, m
+
+    def assert_stops(self, constraint, why):
+        rc, m = self.compile(constraint)
+        self.assertEqual(rc, 1)
+        self.assertEqual([r['state'] for r in m['rules']], ['unknown'])
+        self.assertIn(why, m['rules'][0]['why'])
+
+    def test_width_needs_opt(self):
+        self.assert_stops("""(rule "w" (condition "A.NetClass == 'ISO'") (constraint track_width (min 0.8mm)))""", 'no opt')
+
+    def test_width_on_one_layer(self):
+        self.assert_stops("""(rule "w" (layer "F.Cu") (condition "A.NetClass == 'ISO'") (constraint track_width (opt 0.4mm)))""", 'F.Cu')
+
+    def test_length_min(self):
+        self.assert_stops("""(rule "l" (condition "A.NetClass == 'ISO'") (constraint length (min 20mm) (max 30mm)))""", 'min')
+
+    def test_via_count_min(self):
+        self.assert_stops("""(rule "c" (condition "A.NetClass == 'ISO'") (constraint via_count (min 1) (max 3)))""", 'min')
+
+    def test_via_diameter_max(self):
+        self.assert_stops("""(rule "v" (condition "A.NetClass == 'ISO'") (constraint via_diameter (min 0.5mm) (max 0.7mm)))""", 'max')
+
+    def test_values_the_router_keeps_are_applied(self):
+        rc, m = self.compile("""(rule "w" (condition "A.NetClass == 'ISO'") (constraint track_width (min 0.2mm) (opt 0.3mm) (max 0.4mm)))
+(rule "l" (condition "A.NetClass == 'ISO'") (constraint length (max 30mm)))
+(rule "c" (condition "A.NetClass == 'ISO'") (constraint via_count (max 3)))
+(rule "v" (condition "A.NetClass == 'ISO'") (constraint via_diameter (min 0.5mm)))""")
+        self.assertEqual(rc, 0)
+        self.assertEqual({r['state'] for r in m['rules']}, {'applied'})
+        self.assertEqual(m['nets']['ISO1']['width'], 0.3)
+
+    def test_a_rule_that_reaches_no_net_stops_nothing(self):
+        rc, m = self.compile("""(rule "w" (condition "A.NetClass == 'NONE'") (constraint track_width (min 0.8mm)))""")
+        self.assertEqual(rc, 0)
+
+
 class IsolationBoards(unittest.TestCase):
     """model.py on committed isolation boards (isolation work, reports/2026-11-01-isolation.md). Each case failed before:
     the model stopped (MODEL FAIL, unknown creepage / pair selectors) or had no such key."""

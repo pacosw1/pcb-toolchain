@@ -45,6 +45,8 @@ def ipc_width(amps, thick, dT):
 T = pcbnew.ToMM
 ROUTED_KINDS = {'clearance', 'track_width', 'via_count', 'length', 'disallow', 'hole_clearance', 'hole_to_hole'}
 PAIR_KINDS = {'diff_pair_gap', 'diff_pair_uncoupled', 'skew'}
+# The rule values that reach the router of each constraint. track_width has its own test (dropped_value).
+KEPT_VALUES = {'hole_size': {'min'}, 'via_diameter': {'min'}, 'annular_width': {'min'}, 'length': {'max'}, 'via_count': {'max'}}
 ZC_NAMES = {pcbnew.ZONE_CONNECTION_NONE: 'none', pcbnew.ZONE_CONNECTION_THERMAL: 'thermal',
             pcbnew.ZONE_CONNECTION_FULL: 'full', pcbnew.ZONE_CONNECTION_THT_THERMAL: 'tht_thermal'}
 HOLE_KINDS = {'hole_clearance', 'hole_to_hole'}
@@ -146,6 +148,17 @@ def plane_fanout_vias(nets, classes, plating, dT):
                 if pad not in out or out[pad][0] < dr:
                     out[pad] = (dr, d, amps)
     return out
+
+
+def dropped_value(kind, vals, layer):
+    """Why the router cannot keep all of a rule that reaches a net, or None. The model then stops (state unknown):
+    'applied' must not mean that part of the rule was thrown away. A net has one width and one limit of each kind."""
+    if kind == 'track_width':
+        if 'opt' not in vals:
+            return 'track_width with no opt: the router takes a net width from opt only'
+        return f'track_width on {layer}: the router has one width per net, on every layer' if layer else None
+    extra = sorted(set(vals) - KEPT_VALUES.get(kind, set(vals)))
+    return f'{kind} {" ".join(extra)}: the router keeps only {" ".join(KEPT_VALUES[kind])}' if extra else None
 
 
 def disallow_types(con):
@@ -744,6 +757,9 @@ def main():
             if kind in ('hole_size', 'via_diameter', 'annular_width'):
                 vals = {c[0]: c[1] for c in con[2:] if isinstance(c, list) and len(c) == 2}
                 state, why = 'applied', 'router via geometry'
+                lost = dropped_value(kind, vals, layer) if hits or unknown else None
+                if lost:
+                    state, why = 'unknown', lost
                 for name in hits:
                     v = nets[name].setdefault('via', {})
                     if 'min' in vals:
@@ -763,8 +779,9 @@ def main():
             elif unknown and not hits:
                 state, why = 'unknown', 'selector not evaluable for any net'
             elif kind in ROUTED_KINDS:
-                state, why = 'applied', ''
                 vals = {c[0]: c[1] for c in con[2:] if isinstance(c, list) and len(c) == 2}
+                lost = dropped_value(kind, vals, layer) if hits else None
+                state, why = ('unknown', lost) if lost else ('applied', '')
                 for name in hits:
                     lim = nets[name]['limits']
                     if kind == 'track_width' and 'opt' in vals:
