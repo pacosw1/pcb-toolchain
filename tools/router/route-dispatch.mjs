@@ -37,6 +37,11 @@ const CANCEL_MS=1500;          // lean_owned sends SIGKILL 2 s after SIGTERM
 // 17 days to 2026-11-04), and the local run is there. tools/pcb_cli.py has the same number; a test keeps them equal.
 const QUEUE_WAIT_S=300;
 const QUEUE_CLOCK_MS=1000;     // how far the credit may lag; the supervisor checks 10 times a second
+// To tune. What a route job reserves; without these it takes the daemon default of 8 CPUs and 8 GB. The core is one thread;
+// DRC uses about 3 cores for a few seconds. Largest board (MC-MAIN, 2026-11-04): whole route on the Mac peaks at 2.8 GB in one
+// process; refill and DRC on Linux at 2 CPUs and 4 GB peak at 0.45 GB. A live core on H7-CORE held 0.6 GB.
+const ROUTE_CPUS=2;
+const ROUTE_MEM_GB=4;
 const VALUE_OPTIONS=new Set(['--iters','--max-time']);
 const FLAGS=new Set(['--congestion','--return-exempt']);
 const FILE_OPTIONS=new Set(['--pcb','--lock-from']);
@@ -196,7 +201,7 @@ function submitAndWatch(plan,inputs,timeoutS,results){
   const name=path.basename(plan.out,'.kicad_pcb');
   const cmd=['bash','-c',JOB_SCRIPT,'_','tools/router/run.py',plan.board,`out/route/${name}.kicad_pcb`,'--bin',`in/${BIN}`,...plan.args];
   const queueWait=process.env.PCB_QUEUE_WAIT_S||String(QUEUE_WAIT_S);
-  const args=['run',plan.board,...inputs.flatMap(f=>['--in',f]),'--timeout',String(timeoutS),'--queue-wait',queueWait,'--results',results,'--name',`route-${name}`];
+  const args=['run',plan.board,...inputs.flatMap(f=>['--in',f]),'--timeout',String(timeoutS),'--cpus',String(ROUTE_CPUS),'--mem',String(ROUTE_MEM_GB),'--queue-wait',queueWait,'--results',results,'--name',`route-${name}`];
   if(process.env.REMOTE_IMAGE)args.push('--image',process.env.REMOTE_IMAGE);
   const [exe,argv,opts]=clientProcess(plan,[...args,'--',...cmd],['ignore','pipe','pipe']);
   return new Promise(resolve=>{
