@@ -51,7 +51,7 @@ Project settings in `.pcb-toolchain.env`:
 | Key | Use |
 | --- | --- |
 | `REMOTE_HOST` | `user@host` for `tools/remote.sh` jobs over SSH |
-| `JOBD_URL` | job daemon for `tools/remote.sh` (`apps/job-daemon`); used when it answers, else SSH |
+| `JOBD_URL` | job daemon (`apps/job-daemon`) for `tools/remote.sh`, used when it answers, else SSH; and for `pcb route --router iotroute`, else local (`tools/router/route-dispatch.mjs`) |
 | `PCB_LIVE_BIND` | address for the live route viewer (default `127.0.0.1`) |
 | `PCB_LIVE_HOST` | host name the viewer prints in its URL (default `localhost`) |
 

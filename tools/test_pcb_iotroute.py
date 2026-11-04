@@ -52,7 +52,7 @@ class Dispatch(unittest.TestCase):
         folder = Path(d) / 'run'
         (folder / 'operation').mkdir(parents=True)
         (folder / 'run.json').write_text(json.dumps(dict(root=d, board='X', operation='route', router='iotroute',
-                                                         timeout_s=60)))
+                                                         timeout_s=60, node='node')))
         calls = []
 
         def execute(folder_, stage, command, workspace, env):
@@ -80,7 +80,8 @@ class Dispatch(unittest.TestCase):
             native = Path(d) / 'X.kicad_pcb'
             stage, command = calls[0]
             self.assertEqual(stage, 'route')
-            self.assertEqual(command[1:4], ['tools/router/run.py', 'X', str(folder.resolve() / 'operation/router/X.kicad_pcb')])
+            self.assertEqual(command[:5], ['node', 'tools/router/route-dispatch.mjs', '--timeout', '60', '--'])
+            self.assertEqual(command[6:9], ['tools/router/run.py', 'X', str(folder.resolve() / 'operation/router/X.kicad_pcb')])
             self.assertEqual(command[command.index('--pcb') + 1], str(native))
             self.assertEqual(command[command.index('--lock-from') + 1], str(native))
             self.assertEqual(command[command.index('--iters') + 1], '80')

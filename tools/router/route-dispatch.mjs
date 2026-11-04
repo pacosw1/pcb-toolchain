@@ -1,0 +1,285 @@
+#!/usr/bin/env node
+// tools/router/run.py on the job daemon when it answers, else locally. The candidate's verdict stays the gate on the Mac.
+//
+//   node tools/router/route-dispatch.mjs [--timeout S] -- PYTHON tools/router/run.py BOARD OUT --pcb IN [run.py options]
+//
+// Run from the workspace that holds tools/ and hardware-design/. The local path runs the command unchanged.
+//
+// The daemon path needs what tools/remote.sh needs (REMOTE_NO_DAEMON not 1, JOBD_URL from the environment or
+// .pcb-toolchain.env, a readable token, a client, /status within 3 s) and also: bin/iotroute-linux-x86_64 under
+// PCB_TOOLCHAIN_ROOT built from these core sources, kicad-happy at its pin, and the input boards in the shipped board
+// folder. When one is missing the run is local and stderr says why. The job gets the workspace's own tools/ and board.
+//
+// Exit: run.py's. 0 PASS, 1 FAIL, 2 no verdict, also for what only the daemon can do: timeout, out of memory, lost job.
+//
+// A daemon failure partway. A job that may have run is never run again here, because the same route would run twice:
+// after an unclear submit, a lost connection, a timeout or a lost result the exit is 2 and result.json names the job.
+// Local runs only when the job provably never started: the daemon refused the submit, the submit never left this Mac
+// (client exit 2 and no job id, except HTTP 500, which may come after the record), or every attempt ended `start`.
+import {spawn,spawnSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {pinnedRepos} from '../lib/env.mjs';
+
+const BIN='iotroute-linux-x86_64';
+const HAPPY='kicad-happy';
+const RECORD_SCHEMA='iot-lab.iotroute-run.v1';
+const DEFAULT_TIMEOUT_S=600;   // tools/pcb's --timeout default
+const CANCEL_MS=1500;          // lean_owned sends SIGKILL 2 s after SIGTERM
+const VALUE_OPTIONS=new Set(['--iters','--max-time']);
+const FLAGS=new Set(['--congestion','--return-exempt']);
+const FILE_OPTIONS=new Set(['--pcb','--lock-from']);
+// The image has no kicad-happy, and run.py's KICAD_CLI default is the Mac path.
+const JOB_SCRIPT=`set -e
+mkdir .happy
+tar -xzf in/${HAPPY}.tar.gz -C .happy
+export KICAD_HAPPY_DIR=$PWD/.happy KICAD_CLI=kicad-cli
+exec python3 "$@"`;
+
+const say=text=>console.error(`route: ${text}`);
+const sha=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+const isFile=file=>fs.statSync(file,{throwIfNoEntry:false})?.isFile()??false;
+const isDir=dir=>fs.statSync(dir,{throwIfNoEntry:false})?.isDirectory()??false;
+const inside=(rel)=>rel&&!rel.startsWith('..')&&!path.isAbsolute(rel);
+
+function runLocal(command){
+  return new Promise(resolve=>{
+    const child=spawn(command[0],command.slice(1),{stdio:'inherit'});
+    child.on('error',e=>{say(`cannot start ${command[0]}: ${e.message}`);resolve(2);});
+    child.on('close',(code,signal)=>resolve(code??128+os.constants.signals[signal]));
+  });
+}
+
+/** The project setting, from .pcb-toolchain.env in this folder or above: a run's workspace sits below the project. */
+function projectSetting(key){
+  for(let dir=process.cwd();;dir=path.dirname(dir)){
+    const file=path.join(dir,'.pcb-toolchain.env');
+    if(isFile(file))return fs.readFileSync(file,'utf8').split('\n').filter(l=>l.startsWith(key+'=')).at(-1)?.slice(key.length+1)??'';
+    if(dir===path.dirname(dir))return'';
+  }
+}
+
+/** run.py's arguments as job arguments -> {board, out, pcb, json, args}, or a string: why they stay local. */
+function jobArguments(argv,cwd){
+  const positional=[],args=[],files={};
+  let json=false;
+  for(let i=0;i<argv.length;i++){
+    const a=argv[i];
+    if(a==='--json')json=true;
+    else if(FLAGS.has(a))args.push(a);
+    else if(VALUE_OPTIONS.has(a))args.push(a,argv[++i]);
+    else if(FILE_OPTIONS.has(a))files[a]=argv[++i];
+    else if(a.startsWith('-'))return`${a} is not sent to the daemon`;
+    else positional.push(a);
+  }
+  if(positional.length!==2)return'BOARD and OUT are not plain arguments';
+  if(!files['--pcb'])return'no --pcb input';
+  const [board,outArg]=positional;
+  const boardDir=path.relative(cwd,path.resolve(isDir(board)?board:path.join('hardware-design/boards',board)));
+  if(!inside(boardDir)||!isDir(boardDir))return`board folder ${boardDir} is not in the workspace`;
+  for(const [option,file] of Object.entries(files)){
+    if(!isFile(file))return`${option} ${file} is not a file`;
+    const rel=path.relative(path.join(cwd,boardDir),fs.realpathSync(file));
+    // BASE-PWR-B and -C: the project sits in another board's folder and the client ships one folder.
+    if(!inside(rel))return`${option} ${file} is outside the shipped folder ${boardDir}`;
+    args.push(option,path.join(boardDir,rel));
+  }
+  const out=path.resolve(outArg);
+  if(fs.existsSync(out)||fs.existsSync(out+'.iotroute'))return'OUT or its work folder exists';
+  if(process.env.IOTROUTE_CONGESTION==='1'&&!args.includes('--congestion'))args.push('--congestion');
+  return{board:boardDir,out,pcb:path.resolve(files['--pcb']),json,args};
+}
+
+function coreSources(root){
+  const core=path.join(root,'tools/router/core');
+  const walk=dir=>fs.readdirSync(dir,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(path.join(dir,e.name)):[path.join(dir,e.name)]);
+  return['Cargo.toml','Cargo.lock'].map(n=>path.join(core,n)).filter(isFile).concat(isDir(path.join(core,'src'))?walk(path.join(core,'src')):[]).map(f=>path.relative(core,f));
+}
+
+/**
+ * Why this binary cannot route these sources, or null. run.py --bin compares mtimes, which mean nothing in a snapshot
+ * (its copies are all new). So: run.py's rule against the toolchain tree, and the snapshot's core equal to that tree.
+ */
+function binaryProblem(toolchain,cwd,bin){
+  if(!isFile(bin))return`no Linux router at ${bin}`;
+  const sources=coreSources(toolchain),here=coreSources(cwd);
+  if(!sources.length)return`no router core sources under ${toolchain}`;
+  const core=root=>path.join(root,'tools/router/core');
+  const differs=sources.find(f=>!isFile(path.join(core(cwd),f))||sha(path.join(core(cwd),f))!==sha(path.join(core(toolchain),f)))??here.find(f=>!sources.includes(f));
+  if(differs)return`the workspace's router core differs from ${bin}'s sources (${differs})`;
+  const newest=sources.reduce((a,f)=>Math.max(a,fs.statSync(path.join(core(toolchain),f)).mtimeMs),0);
+  if(fs.statSync(bin).mtimeMs<newest)return`${bin} is older than its sources: rebuild it`;
+  return null;
+}
+
+/** Why kicad-happy cannot ship, or null. Its .git goes along: tools/kicad_happy_gate.py check_pinned reads HEAD. */
+function happyProblem(repo){
+  if(!repo?.dir||!isDir(path.join(repo.dir,'.git')))return`no ${HAPPY} checkout at ${repo?.dir}`;
+  const env=Object.fromEntries(Object.entries(process.env).filter(([k])=>!k.startsWith('GIT_')));
+  const head=spawnSync('git',['-C',repo.dir,'rev-parse','HEAD'],{encoding:'utf8',env}).stdout?.trim()??'';
+  return head.startsWith(repo.commit)?null:`${HAPPY} at ${repo.dir} is at ${head.slice(0,12)||'no commit'}, not the pinned ${repo.commit}`;
+}
+
+async function daemonAnswers(url,tokenFile){
+  try{
+    const headers={authorization:`Bearer ${fs.readFileSync(tokenFile,'utf8').trim()}`};
+    return(await fetch(`${url.replace(/\/$/,'')}/status`,{headers,signal:AbortSignal.timeout(3000)})).ok;
+  }catch{return false;}
+}
+
+/** Everything a daemon run needs, or a string: why this run stays local. */
+async function daemonPlan(command){
+  if(process.env.REMOTE_NO_DAEMON==='1')return'REMOTE_NO_DAEMON=1';
+  const url=process.env.JOBD_URL||projectSetting('JOBD_URL');
+  if(!url)return'no JOBD_URL';
+  const tokenFile=process.env.JOBD_TOKEN_FILE||path.join(os.homedir(),'.config/pcb-job/token');
+  try{fs.accessSync(tokenFile,fs.constants.R_OK);}catch{return`no readable token at ${tokenFile}`;}
+  const cwd=process.cwd(),toolchain=process.env.PCB_TOOLCHAIN_ROOT;
+  if(!toolchain)return'PCB_TOOLCHAIN_ROOT is not set: no Linux router to ship';
+  const client=[path.join(cwd,'tools/pcb-job/client.ts'),path.join(toolchain,'tools/pcb-job/client.ts'),path.join(toolchain,'apps/job-daemon/src/client.ts')].find(isFile);
+  if(!client)return'no job client';
+  const job=jobArguments(command.slice(2),cwd);
+  if(typeof job==='string')return job;
+  const bin=path.join(toolchain,'bin',BIN),repo=pinnedRepos.find(r=>r.name===HAPPY);
+  const problem=binaryProblem(toolchain,cwd,bin)??happyProblem(repo);
+  if(problem)return problem;
+  if(!await daemonAnswers(url,tokenFile))return`the daemon at ${url} does not answer`;
+  return{...job,url,tokenFile,cwd,client,bin,happy:repo.dir,started:Date.now()};
+}
+
+function clientProcess(plan,args,stdio){
+  const env={...process.env,JOBD_URL:plan.url,JOBD_TOKEN_FILE:plan.tokenFile,IOT_LAB:plan.cwd,PCB_TOOLCHAIN_ROOT:plan.cwd};
+  return[process.execPath,['--no-warnings','--experimental-strip-types',plan.client,...args],{env,stdio}];
+}
+
+/** The binary and the kicad-happy tar for --in. The binary's new mtime passes run.py's check; binaryProblem did the real one. */
+function stageInputs(plan,stage){
+  const bin=path.join(stage,BIN),tar=path.join(stage,`${HAPPY}.tar.gz`);
+  fs.copyFileSync(plan.bin,bin);
+  const now=new Date();fs.utimesSync(bin,now,now);
+  const r=spawnSync('tar',['--no-xattrs','-czf',tar,'-C',plan.happy,'.'],{env:{...process.env,COPYFILE_DISABLE:'1'},stdio:['ignore','ignore','inherit']});
+  if(r.status!==0)throw Error(`tar of ${plan.happy} failed`);
+  return[bin,tar];
+}
+
+/** `client run`: streams the job to stderr, fills `results`. -> {code, id, refused500, stdout}. */
+function submitAndWatch(plan,inputs,timeoutS,results){
+  const name=path.basename(plan.out,'.kicad_pcb');
+  const cmd=['bash','-c',JOB_SCRIPT,'_','tools/router/run.py',plan.board,`out/route/${name}.kicad_pcb`,'--bin',`in/${BIN}`,...plan.args];
+  const args=['run',plan.board,...inputs.flatMap(f=>['--in',f]),'--timeout',String(timeoutS),'--results',results,'--name',`route-${name}`];
+  if(process.env.REMOTE_IMAGE)args.push('--image',process.env.REMOTE_IMAGE);
+  const [exe,argv,opts]=clientProcess(plan,[...args,'--',...cmd],['ignore','pipe','pipe']);
+  return new Promise(resolve=>{
+    const child=spawn(exe,argv,opts),seen={id:null,stdout:'',stderr:''};
+    child.stdout.on('data',d=>{seen.stdout+=d;process.stderr.write(d);});
+    child.stderr.on('data',d=>{
+      seen.stderr+=d;process.stderr.write(d);
+      seen.id??=seen.stderr.match(/^pcb-job: job (\S+)$/m)?.[1]??null;
+    });
+    // A stopped `pcb route` must not leave its job holding the budget until the job's own time limit.
+    for(const [signal,number] of [['SIGTERM',15],['SIGINT',2]])process.on(signal,()=>{
+      if(seen.id){const [e,a,o]=clientProcess(plan,['cancel',seen.id],'ignore');spawnSync(e,a,{...o,timeout:CANCEL_MS});}
+      child.kill();process.exit(128+number);
+    });
+    child.on('error',e=>{say(`cannot start the client: ${e.message}`);resolve({code:1,...seen});});
+    child.on('close',code=>resolve({code,...seen}));
+  });
+}
+
+function jobRecord(plan,id){
+  const [exe,argv,opts]=clientProcess(plan,['status',id],['ignore','pipe','inherit']);
+  const r=spawnSync(exe,argv,{...opts,encoding:'utf8'});
+  try{return r.status===0?JSON.parse(r.stdout):null;}catch{return null;}
+}
+
+/** Job paths in a string or a JSON value -> local ones. `map` is ordered [job path, local path]. */
+function localPaths(value,map){
+  if(typeof value==='string')return map.reduce((text,[from,to])=>text.replace(new RegExp(`(?<![\\w./-])${from.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}(?![\\w-])`,'g'),()=>to),value);
+  if(Array.isArray(value))return value.map(v=>localPaths(v,map));
+  if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,localPaths(v,map)]));
+  return value;
+}
+
+function remoteFacts(plan,id,job){
+  return{url:plan.url,job:id,state:job?.state??null,outcome:job?.result?.outcome??null,exit_code:job?.result?.exitCode??null,
+    attempts:job?.attempts?.length??null,image:job?.spec?.image??null,platform:'linux-x86_64'};
+}
+
+function report(plan,record,line,code){
+  fs.mkdirSync(record.work,{recursive:true});
+  fs.writeFileSync(path.join(record.work,'result.json'),JSON.stringify(record,null,1));
+  console.log(line);
+  if(plan.json)console.log(JSON.stringify(record));
+  return code;
+}
+
+function noVerdict(plan,cause,id,job){
+  say(cause);
+  const seconds=Math.round((Date.now()-plan.started)/100)/10;
+  const record={schema:RECORD_SCHEMA,status:'ERROR',board_file:plan.out,work:plan.out+'.iotroute',stages:{},drc_errors:null,
+    unconnected:null,parity:null,tracks:null,vias:null,cause,seconds,remote:remoteFacts(plan,id,job)};
+  return report(plan,record,`ERROR ${seconds.toFixed(0)} ${cause}`,2);
+}
+
+/** The job's folder, moved next to OUT and read back with local paths. Its exit code and its record must agree. */
+function adopt(plan,results,id,job,stdout){
+  const code=job.result.exitCode,want={0:'PASS',1:'FAIL',2:'ERROR'}[code];
+  const from=path.join(results,'out/route');
+  const name=path.basename(plan.out);
+  if(!isFile(path.join(from,`${name}.iotroute/result.json`)))return noVerdict(plan,`job ${id} (exit ${code}) brought back no result.json`,id,job);
+  fs.cpSync(from,path.dirname(plan.out),{recursive:true});
+  const map=[[`/job/out/route/${name}`,plan.out],['/job/out/route',path.dirname(plan.out)],[`/job/in/${BIN}`,plan.bin],['/job/.happy',plan.happy],['/job',plan.cwd]];
+  let raw;
+  try{raw=JSON.parse(fs.readFileSync(`${plan.out}.iotroute/result.json`,'utf8'));}
+  catch(e){return noVerdict(plan,`job ${id}: result.json does not parse: ${e.message}`,id,job);}
+  const record={...localPaths(raw,map),remote:remoteFacts(plan,id,job)};
+  if(record.status!==want)return noVerdict(plan,`job ${id} exited ${code} but its record says ${record.status}`,id,job);
+  if(code!==2){
+    if(!isFile(plan.out)||record.board_sha256!==sha(plan.out))return noVerdict(plan,`job ${id}: the board that came back is not the board of its record`,id,job);
+    if(record.input_sha256!==sha(plan.pcb))return noVerdict(plan,`job ${id} routed another input than ${plan.pcb}`,id,job);
+  }
+  const line=localPaths(stdout.split('\n').filter(l=>/^(PASS|FAIL|ERROR) /.test(l)).at(-1)??record.status,map);
+  return report(plan,record,line,code);
+}
+
+/** -> the exit code, or null: the job provably never started, run locally. */
+async function runOnDaemon(plan,timeoutS){
+  const stage=fs.mkdtempSync(path.join(os.tmpdir(),'route-dispatch-'));
+  fs.mkdirSync(path.dirname(plan.out),{recursive:true});
+  const results=fs.mkdtempSync(path.join(path.dirname(plan.out),'.job-'));
+  try{
+    say(`job goes to the daemon ${plan.url}`);
+    const {code,id,stdout,stderr}=await submitAndWatch(plan,stageInputs(plan,stage),timeoutS,results);
+    if(!id){
+      if(code===2&&!/^pcb-job: 500:/m.test(stderr)){say('the daemon took no job');return null;}
+      return noVerdict(plan,`submit ended with exit ${code} and no job id: the job may exist, not rerun`,null,null);
+    }
+    if(code===3)return noVerdict(plan,`daemon unreachable, job ${id} goes on: pcb-job watch ${id}`,id,null);
+    const job=jobRecord(plan,id);
+    if(!job)return noVerdict(plan,`no status for job ${id}: pcb-job status ${id}`,id,null);
+    if(job.state==='failed'&&job.attempts.length&&job.attempts.every(a=>a.outcome==='start')){
+      say(`job ${id} never started: ${job.result?.detail}`);return null;
+    }
+    const verdict=job.state==='passed'||(job.result?.outcome==='command'&&[1,2].includes(job.result.exitCode));
+    if(!verdict)return noVerdict(plan,`job ${id} ${job.state}: ${job.result?.detail??'no result yet'}, not rerun`,id,job);
+    return adopt(plan,results,id,job,stdout);
+  }finally{
+    fs.rmSync(stage,{recursive:true,force:true});
+    fs.rmSync(results,{recursive:true,force:true});
+  }
+}
+
+async function main(argv){
+  const split=argv.indexOf('--');
+  const options=argv.slice(0,split),command=argv.slice(split+1);
+  const timeoutS=options[0]==='--timeout'?Math.ceil(Number(options[1])):DEFAULT_TIMEOUT_S;
+  if(split<0||command.length<3||!(timeoutS>0)){say('usage: route-dispatch.mjs [--timeout S] -- PYTHON tools/router/run.py BOARD OUT ...');return 2;}
+  const plan=await daemonPlan(command);
+  if(typeof plan==='string'){say(`local run: ${plan}`);return runLocal(command);}
+  const code=await runOnDaemon(plan,timeoutS);
+  return code??runLocal(command);
+}
+
+main(process.argv.slice(2)).then(code=>{process.exitCode=code;},e=>{say(String(e?.stack??e));process.exitCode=2;});

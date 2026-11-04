@@ -42,7 +42,9 @@ AUDITED = {
     # takes optional declared pours (default unchanged). Parts branch unchanged.
     # 2026-11-04 review: snapshot and post_verify changes (gate.json keys instead of board names) and the
     # iotroute branch are off the parts path: observations run from root, without snapshot(). Parts branch unchanged.
-    "pcb_operations.py": "28b08c998749f35ff3ee7825755226fd93a4171b98ee33ba6f6740d08792789c",
+    # 2026-11-04 review: the iotroute launch line goes through tools/router/route-dispatch.mjs (job daemon or local);
+    # route branch only, off the parts path. Parts branch unchanged.
+    "pcb_operations.py": "c9176dddcdf421d3d404a2ae246d93eaa3a88d6b663fbc9cd314c5b7d0470c7a",
     "pcb_evidence.py": "9d929244915407bddefd096f8a981113652e2706ea8785cf5ddb70061330687f",
     # 2026-11-04 review: pipeline() reads gate.json instead of ALIASES; build/status only. Parts branch unchanged.
     "pcb_workflow.py": "08ec41de3f9da4a8c45ecd8f9b2f007bb5a78703b7b36ecb942ab45fde982f93",

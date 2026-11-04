@@ -35,7 +35,8 @@ The client ships what `remote.sh` ships, plus the evidence files named by `tools
 
 Router jobs need two more inputs that the image does not have, given with `--in`: a Linux `iotroute` for `--bin`, and
 a git checkout of kicad-happy at the commit pinned in `tools/lib/env.mjs`, as a tar unpacked by the job, with
-`KICAD_HAPPY_DIR` set. The placer needs the numpy wheel, as in `tools/placer/README.md`.
+`KICAD_HAPPY_DIR` set. `tools/router/route-dispatch.mjs` does this for `pcb route --router iotroute`; its header has the
+rule for a daemon failure partway. The placer needs the numpy wheel, as in `tools/placer/README.md`.
 
 ## States
 
