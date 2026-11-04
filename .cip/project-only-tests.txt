@@ -28,6 +28,3 @@ test_board_stage          needs hardware-design/boards data
 test_pcb_engine_integration needs hardware-design/boards data
 test_pcb_iotroute         needs hardware-design/boards data
 test_board_frame          needs Pillow
-# Real bug, not an input gap: stale AUDITED hashes in tools/pcb_observation_inputs.py. Remove with that fix.
-test_pcb_engineering      stale AUDITED hashes
-test_pcb_next             stale AUDITED hashes

@@ -21,21 +21,31 @@ COMMON = ('pcb_cli.py', 'pcb_operations.py', 'pcb_evidence.py', 'pcb_workflow.py
 # commands. A changed producer still runs, using the previous broad boundary.
 # Refresh only after reviewing its execution/dependency changes.
 AUDITED = {
-    "part_evidence.py": "9177b0ac5c3e038f69e38f144e0795fae485b87c1fb9338b2bf1b03ac227fca0",
+    # 2026-11-04 review: --root default comes from project_root (stdlib os/pathlib only; in COMMON
+    # and the import closure). Same result as before when IOT_LAB is set. Parts branch otherwise unchanged.
+    "part_evidence.py": "e5ffc8084fc7eb059f72913ef6c6750c4e3998a9669502dced51294b3cba3f2e",
     "part_native.py": "9a21ded435da26ccedcb6da845bd9c7cc87b959d5d0a848d325e177b4a400287",
+    # 2026-11-04 review: new dependency of part_evidence.py and pcb_cli.py. os and pathlib only, no subprocess or file
+    # reads; IOT_LAB, the cwd and --root all resolve to the root that collect() records in the policy context.
+    "project_root.py": "698f463b76abaed6dcd1cc915b1c02373708244fd95372330c5bf10186325171",
     # 2026-10-19 review: engine/viewer dispatch is lazy and confined to route,
     # view, and engine-* ML actions. Parts submission, interpreter selection,
     # external commands and dependency boundaries are unchanged.
     # 2026-10-21 review: route --router route-json; optional route spec and a lazy
     # route_plan import on that route path only. Parts branch unchanged.
-    "pcb_cli.py": "a3926fe1032bab3e3f2e46fc8526e7fa7dfad2dd06934f7a13c1224069b69ab5",
+    # 2026-11-04 review: ROOT from project_root; router.run import is lazy on route --router iotroute
+    # only. Parts submission, interpreter selection and external commands unchanged.
+    "pcb_cli.py": "1c266dfe989bfc77a8256691557f8649003bfe02500f9f58eb69470adb79e32e",
     # 2026-10-21 review: plain Fastroute route passes the host runtime; adds
     # stdlib `import sys` (builtin, cannot be shadowed). Parts branch unchanged.
     # 2026-10-21 review: route-json route branch runs tools/route.py; pcb_identity
     # takes optional declared pours (default unchanged). Parts branch unchanged.
-    "pcb_operations.py": "d95cde904f78d590c6a76d4b8252c15bbfefe76c3fae69c62470add6bbbfc49d",
+    # 2026-11-04 review: snapshot and post_verify changes (gate.json keys instead of board names) and the
+    # iotroute branch are off the parts path: observations run from root, without snapshot(). Parts branch unchanged.
+    "pcb_operations.py": "28b08c998749f35ff3ee7825755226fd93a4171b98ee33ba6f6740d08792789c",
     "pcb_evidence.py": "9d929244915407bddefd096f8a981113652e2706ea8785cf5ddb70061330687f",
-    "pcb_workflow.py": "b556dd585683b8c3afe412a4b347c11ba872ff5ecb867fcfc345dd6079516a51",
+    # 2026-11-04 review: pipeline() reads gate.json instead of ALIASES; build/status only. Parts branch unchanged.
+    "pcb_workflow.py": "08ec41de3f9da4a8c45ecd8f9b2f007bb5a78703b7b36ecb942ab45fde982f93",
     "pcb_timing.py": "07ed104072e56166625ffc36e774892c3761832cf00fe72b6abef2d967f05ddd",
     "lean_workflow.py": "926caceb8697718d86e279e114a7c9a57b5f78f20afa635109460601c27f1bb8",
     "lean_owned.py": "9034a7b33d37fb78a0e3f6cd3efe0f9ce95ae29b411ea38ae2bc47f242a1d78e",
