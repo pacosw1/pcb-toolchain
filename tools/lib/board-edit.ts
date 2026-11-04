@@ -123,14 +123,11 @@ export class BoardEdit {
   }
 }
 
-/** The project next to the board: the one of its name when there is one, else the last by name. */
-function projectOf(pcb: string): string {
+/** The project next to the board: the one of its name when there is one, else the last by name, else null. */
+export function projectName(pcb: string): string | null {
   const names = readdirSync(dirname(pcb)).filter(name => name.endsWith('.kicad_pro')).map(name => name.slice(0, -'.kicad_pro'.length)).sort();
   const own = basename(pcb).replace(/\.kicad_pcb$/, '');
-  if (names.includes(own)) return own;
-  const last = names.at(-1);
-  if (last === undefined) throw new Error(`no .kicad_pro next to ${pcb}`);
-  return last;
+  return names.includes(own) ? own : names.at(-1) ?? null;
 }
 
 export interface SaveReport {
@@ -161,7 +158,8 @@ function readReport(file: string): Omit<SaveReport, 'board'> {
  */
 export function saveBoard(pcb: string, text: string, outDir: string): SaveReport {
   const source = dirname(pcb);
-  const project = projectOf(pcb);
+  const project = projectName(pcb);
+  if (project === null) throw new Error(`no .kicad_pro next to ${pcb}`);
   mkdirSync(outDir, { recursive: true });
   for (const name of [`${project}.kicad_pro`, `${project}.kicad_dru`, `${project}.kicad_sch`, 'sym-lib-table', 'fp-lib-table']) {
     if (existsSync(join(source, name))) copyFileSync(join(source, name), join(outDir, name));
