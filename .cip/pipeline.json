@@ -39,9 +39,6 @@
               "run": "cd tools && npm ci --ignore-scripts --no-audit --no-fund"
             },
             {
-              "run": "npm ci --prefix tools/gerber-netcheck --ignore-scripts --no-audit --no-fund"
-            },
-            {
               "run": "cd tools && npm run -s typecheck"
             }
           ],
