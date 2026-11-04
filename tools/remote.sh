@@ -5,7 +5,7 @@
 #
 # 1. A new job folder gets tools/ and the design files of <board-dir> (same paths as in the repo).
 #    Each --in FILE (any local file, e.g. a scratch board copy) goes to in/<basename>.
-# 2. The command runs in the job folder, in the iot-lab-route:10.0 container (python3 has pcbnew).
+# 2. The command runs in the job folder, in the iot-lab-route:10.0-nightly-4fe1ca2060 container (python3 has pcbnew; kicad-cli-nightly serves the board API).
 # 3. The command must write its files to out/ (relative). stdout+stderr also go to out/job.log.
 # 4. Only out/ comes back, to --results DIR (default $TMPDIR/iot-lab-remote/<job-id>).
 #    The Mac board files are never written. Final gates stay on the Mac.
@@ -21,7 +21,7 @@ set -euo pipefail
 
 HOST=${REMOTE_HOST:-}
 BASE=/srv/iot-lab-route/jobs
-IMAGE=${REMOTE_IMAGE:-iot-lab-route:10.0}
+IMAGE=${REMOTE_IMAGE:-iot-lab-route:10.0-nightly-4fe1ca2060}
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 
 usage() { echo "usage: tools/remote.sh <board-dir> [--in FILE]... [--results DIR] -- <command...>" >&2; exit 2; }

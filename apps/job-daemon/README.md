@@ -31,7 +31,7 @@ for 5 minutes (the job goes on), 75 if the job reached its queue bound and never
 `attempts/N/out/job.log` of earlier attempts.
 
 The client ships what `remote.sh` ships, plus the evidence files named by `tools/driver-edges.json` and
-`tools/edge-rates.json`, because `router/model.py` refuses to run without them.
+`tools/edge-rates.json`, because `si_planes.py` refuses to run without them.
 
 Router jobs need two more inputs that the image does not have, given with `--in`: a Linux `iotroute` for `--bin`, and
 a git checkout of kicad-happy at the commit pinned in `tools/lib/env.mjs`, as a tar unpacked by the job, with
@@ -186,7 +186,7 @@ one CPU reading, because a job takes time to load the host; the budget bounds th
 | `JOBD_TOKEN_FILE`, `JOBD_DATA_DIR` | required | At least 32 characters: 128 bits as hex |
 | `JOBD_BLOB_KEEP_DAYS` | `30` | days a cached job file stays after its last use |
 | `JOBD_REQUEST_TIMEOUT_S` | `3600` | longest one request may take; Node's 300 s fails a large file on a slow link |
-| `JOBD_IMAGES` | `iot-lab-route:10.0,iot-lab-route:10.0-fr241` | `remote.sh`; the first is the default |
+| `JOBD_IMAGES` | `iot-lab-route:10.0-nightly-4fe1ca2060,iot-lab-route:10.0,iot-lab-route:10.0-fr241` | `remote.sh`; the first is the default |
 | `JOBD_CPU_BUDGET` | 16 | **To tune.** Half of 32; leaves 16 of the 32 for the 12 + 20 others under contention, with the low weight |
 | `JOBD_MEM_BUDGET_GB` | 16 | **To tune.** Deployed at 32 since 2026-11-04: at 16, routes waited 25 minutes behind other jobs with 50 GB free. Host peak is unknown; admission checks live memory as well. Keep equal to `MemoryMax` in `pcbjobs.slice` |
 | `JOBD_CGROUP_PARENT` | none | `pcbjobs.slice` when deployed. No hyphen: systemd reads it as nesting |

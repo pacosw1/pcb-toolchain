@@ -9,14 +9,14 @@ BOARD is the board ID (hardware-design/boards/<BOARD>, gate.json or gate.pending
 folder. The input is --pcb, else the project board. The input is only read.
 
 Steps (each step stops the run at its first failure):
-  1. --lock-from SRC: a copy of the input without tracks and vias, with the copper of the lock nets from SRC added
-     and locked. Lock nets = diff-pairs.json pairs + nets with DRU via_count 0 (crystals), read from the model of
-     SRC. Every pad of a lock net must be at the same place in SRC and in the input, else the copper cannot fit.
-     Without --lock-from, all copper of the input stays and is locked (model.py reads it as fixed copper).
-  2. The release binary. --bin PATH: used only when it is not older than the newest core source. Default: a cache
+  1. The release binary. --bin PATH: used only when it is not older than the newest core source. Default: a cache
      folder per sha256 of the core sources (~/Library/Caches/iot-lab/iotroute/<sha>, env IOTROUTE_CACHE); cargo
      builds it there when it is missing. The stamp file binds the binary to the exact source bytes.
-  3. tools/router/model.py, then iotroute MODEL ROUTE --iters N, then iotroute write (adds the result to a
+  2. --lock-from SRC: a copy of the input without tracks and vias, with the copper of the lock nets from SRC added
+     and locked. Lock nets = diff-pairs.json pairs + nets with DRU via_count 0 (crystals), read from the model of
+     SRC. Every pad of a lock net must be at the same place in SRC and in the input, else the copper cannot fit.
+     Without --lock-from, all copper of the input stays and is locked (iotroute model reads it as fixed copper).
+  3. iotroute model (needs the pinned KiCad API server, kicad-cli-nightly), then iotroute MODEL ROUTE --iters N, then iotroute write (adds the result to a
      copy, refills every zone with kicad-cli, saves, puts back the .kicad_pro). With --congestion the core
      also writes OUT.iotroute/congestion.json (the congestion map for the placer, DESIGN.md 5d; it does not change ROUTE).
      --seed, --stall-passes and --checkpoint (OUT.iotroute/checkpoint.json) go to the core as they are (DESIGN.md 5e).
@@ -449,6 +449,11 @@ def policy_args(spec, candidate):
 
 # ---------- main ----------
 
+def model_command(exe, bdir, pcb, out):
+    """iotroute model on a board folder; tools holds pin-ratings.json and rpscope.py."""
+    return [exe, 'model', bdir, '--pcb', pcb, '--out', out, '--tools', os.path.dirname(HERE)]
+
+
 def step(cmd, log, **kw):
     with open(log, 'w') as fh:
         p = subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT, text=True, **kw)
@@ -470,32 +475,31 @@ def run(a, rec, t0):
     if getattr(a, 'seed', None) is not None:
         rec['seed'] = a.seed
 
-    # 1. lock copper
-    route_in = src
-    if a.lock_from:
-        lock_src = os.path.abspath(a.lock_from)
-        rc, text = step([py, os.path.join(HERE, 'model.py'), bdir, '--pcb', lock_src,
-                         '--out', os.path.join(work, 'lock-model.json')], os.path.join(work, 'lock-model.log'))
-        if rc:
-            raise StepError('model.py on --lock-from failed: ' + text.strip().splitlines()[-1][:300])
-        nets = lock_nets(json.load(open(os.path.join(work, 'lock-model.json'))))
-        route_in = os.path.join(work, 'input', os.path.basename(src))
-        rec['stages']['lock'] = dict(make_locked_input(src, lock_src, nets, route_in), source=lock_src,
-                                     source_sha256=sha_file(lock_src))
-
-    # 2. binary
+    # 1. binary
     if a.bin:
         exe, src_sha, how = check_explicit_bin(os.path.abspath(a.bin)), sources_sha(), 'explicit'
     else:
         exe, src_sha, how = find_or_build(log=os.path.join(work, 'cargo.log'))
     rec['stages']['binary'] = dict(path=exe, how=how, sources_sha256=src_sha, sha256=sha_file(exe))
 
+    # 2. lock copper
+    route_in = src
+    if a.lock_from:
+        lock_src = os.path.abspath(a.lock_from)
+        rc, text = step(model_command(exe, bdir, lock_src, os.path.join(work, 'lock-model.json')), os.path.join(work, 'lock-model.log'))
+        if rc:
+            raise StepError('iotroute model on --lock-from failed: ' + (text.strip().splitlines() or ['no output'])[-1][:300])
+        nets = lock_nets(json.load(open(os.path.join(work, 'lock-model.json'))))
+        route_in = os.path.join(work, 'input', os.path.basename(src))
+        rec['stages']['lock'] = dict(make_locked_input(src, lock_src, nets, route_in), source=lock_src,
+                                     source_sha256=sha_file(lock_src))
+
     # 3. model, core, write
     model = os.path.join(work, 'model.json')
-    rc, text = step([py, os.path.join(HERE, 'model.py'), bdir, '--pcb', route_in, '--out', model]
-                    + (['--return-exempt'] if getattr(a, 'return_exempt', False) else []), os.path.join(work, 'model.log'))
+    rc, text = step(model_command(exe, bdir, route_in, model) + (['--return-exempt'] if getattr(a, 'return_exempt', False) else []),
+                    os.path.join(work, 'model.log'))
     if rc:
-        raise StepError('model.py failed: ' + (text.strip().splitlines() or ['no output'])[-1][:300])
+        raise StepError('iotroute model failed: ' + (text.strip().splitlines() or ['no output'])[-1][:300])
     rec['stages']['model'] = dict(line=(text.strip().splitlines() or [''])[-1], sha256=sha_file(model))
     if not a.reuse:
         stages = route_attempt(a, exe, model, route_in, src, out, work)
@@ -666,7 +670,7 @@ def parser():
     ap.add_argument('--congestion', action='store_true', default=os.environ.get('IOTROUTE_CONGESTION') == '1',
                     help='also write OUT.iotroute/congestion.json (DESIGN.md 5d; default off, env IOTROUTE_CONGESTION=1)')
     ap.add_argument('--return-exempt', action='store_true',
-                    help='the nets of the gate kicad-happy RP-001 exemptions need no return via (model.py --return-exempt)')
+                    help='the nets of the gate kicad-happy RP-001 exemptions need no return via (iotroute model --return-exempt)')
     ap.add_argument('--seed', type=int, help='iotroute --seed: another route of the same board (DESIGN.md 5e; default none)')
     ap.add_argument('--stall-passes', type=int, help='iotroute --stall-passes: stop after N passes with no progress (default off)')
     ap.add_argument('--checkpoint', action='store_true', help='also write OUT.iotroute/checkpoint.json after each pass (DESIGN.md 5e)')

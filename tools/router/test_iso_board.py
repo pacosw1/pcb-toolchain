@@ -1,6 +1,6 @@
 """Router and kicad-cli DRC agree on a pair clearance and a creepage case (tiny KiCad 10 test board).
 
-Needs KiCad (python3 of KiCad.app for model.py, kicad-cli) and cargo (run.find_or_build). About 30 s.
+Needs KiCad, the pinned KiCad API server (kicad-cli-nightly) and cargo (run.find_or_build). About 30 s.
   python3 -m unittest test_iso_board
 
 Board 40 x 35 mm, F.Cu / B.Cu. ISO1 (class ISO) joins two pads past an OTH1 pad (class OTH) that sits 0.1 mm from the
@@ -22,7 +22,6 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import run  # noqa: E402
 
-KPY = run.python_native()
 DRU = """(version 1)
 (rule "G" (condition "A.NetClass == 'ISO' && B.NetClass == 'OTH'") (constraint clearance (min 1.5mm)))
 (rule "C" (condition "A.NetClass == 'ISO' && B.NetClass == 'Default'") (constraint creepage (min 2.0mm)))
@@ -73,7 +72,7 @@ def drc(pcb, out):
     return v, len(d.get('unconnected_items', []))
 
 
-@unittest.skipUnless(os.path.exists(run.KICAD_CLI) and shutil.which('cargo'), 'needs KiCad and cargo')
+@unittest.skipUnless(os.path.exists(run.KICAD_CLI) and shutil.which('cargo') and shutil.which('kicad-cli-nightly'), 'needs KiCad, its API server and cargo')
 class Agreement(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -82,7 +81,7 @@ class Agreement(unittest.TestCase):
         cls.pcb = make_board(cls.dir)
         cls.exe = run.find_or_build()[0]
         model = os.path.join(cls.dir, 'model.json')
-        p = subprocess.run([KPY, os.path.join(HERE, 'model.py'), cls.dir, '--out', model], capture_output=True, text=True)
+        p = subprocess.run(run.model_command(cls.exe, cls.dir, cls.pcb, model), capture_output=True, text=True)
         assert 'MODEL ok' in p.stdout, p.stdout + p.stderr
         with open(model) as fh:
             cls.model = json.load(fh)

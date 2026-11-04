@@ -6,7 +6,7 @@
 //!            [--seed N] (seed.rs: another route of the same board) [--checkpoint FILE [--source-sha HEX]] (checkpoint.rs: progress per pass)
 //!            [--stall-passes N] (stop after N passes that do not beat the best pass; default off)
 //!
-//! MODEL.json comes from tools/router/model.py (schema iot-lab.route-model.v0). Every clearance is checked against
+//! MODEL.json comes from `iotroute model` (src/model, schema iot-lab.route-model.v0). Every clearance is checked against
 //! exact geometry (pads as their bounding rectangle, tracks as capsules, vias as circles) with the per-net width and
 //! clearance of the model; the grid only decides where the search may step. Stages, in this order:
 //!   1. plane fan-out: every SMD pad of a plane net (reference-planes.json) gets its own via to its plane, unless a
@@ -146,12 +146,12 @@ struct Shape {
     /// nets may cross it at the negotiated cost (PathFinder) until the run converges.
     owner: i32,
     alive: bool,
-    /// isolation: clearance group of the item (model `iso`, pairrules.py); pads from the model, tracks and vias from
+    /// isolation: clearance group of the item (model `iso`, src/model/pairs.rs); pads from the model, tracks and vias from
     /// their net and the region atoms they touch (Board::add). 0 when the board has no pair rules.
     grp: u16,
 }
 
-/// Isolation (DRU pair rules, model `iso`, tools/router/pairrules.py): clearance groups of the items and the table of
+/// Isolation (DRU pair rules, model `iso`, src/model/pairs.rs): clearance groups of the items and the table of
 /// the pair value (the larger of the resolved DRU clearance and creepage, and pair hole clearances; KiCad: the last
 /// matching rule wins, both item orders). A rule item pair keeps max(the per-net clearance, the table value).
 #[derive(Clone, Default)]
@@ -2347,7 +2347,7 @@ fn f(v: &Value) -> f64 {
     v.as_f64().unwrap_or(0.0)
 }
 
-/// Hole rules of the model (tools/router/model.py `hole_rules`): (hole_clearance, hole_to_hole, plane_clearance).
+/// Hole rules of the model (src/model/rules.rs, `hole_rules`): (hole_clearance, hole_to_hole, plane_clearance).
 /// hole_clearance / hole_to_hole = the largest minimum of the DRU rules and the board minimum (the core applies them to
 /// every drilled item, a superset of the DRU scope 'either / both items are through-hole pads'); a missing key = None.
 fn hole_rules(model: &Value) -> (Option<f64>, Option<f64>, Option<f64>) {
@@ -2365,7 +2365,7 @@ fn hole_rules(model: &Value) -> (Option<f64>, Option<f64>, Option<f64>) {
     (big("hole_clearance"), big("hole_to_hole"), hr["plane_clearance"]["min"].as_f64())
 }
 
-/// Isolation pair rules (model `iso`, pairrules.py): groups, pair table, region polygons, and the group list of each
+/// Isolation pair rules (model `iso`, src/model/pairs.rs): groups, pair table, region polygons, and the group list of each
 /// net (deduplicated; entry 0 = the no-net list). Nothing when the model has no `iso` (no pair rule on the board).
 fn load_iso(bd: &mut Board, model: &Value, names: &std::collections::HashMap<String, usize>) {
     let m = &model["iso"];

@@ -66,7 +66,7 @@ fn return_rule_and_via_in_pad_are_read() {
     assert!(with(None).tvia.is_empty(), "no thermal_vias key: no array");
 }
 
-/// model pad thermal_vias (model.py thermal_via_spec) -> Board::tvia: the via centres, diameter and drill as written.
+/// model pad thermal_vias (src/model/thermal.rs) -> Board::tvia: the via centres, diameter and drill as written.
 #[test]
 fn thermal_vias_are_read() {
     let mut m = model(0.28, 0.45, 0.25);

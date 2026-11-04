@@ -154,13 +154,13 @@ test('results come back next to OUT, the record holds local paths, stdout is run
 
 for(const [name,status,code,outcome,state] of [['FAIL','FAIL',1,'command','failed'],['no verdict','ERROR',2,'command','failed']])
   test(`run.py's ${name} comes back with its exit code ${code}, and no local run`,async t=>{
-    const rec=record(status,status==='ERROR'?{board_sha256:undefined,cause:'model.py failed, see /job/out/route/DEMO.kicad_pcb.iotroute/model.log'}:{});
+    const rec=record(status,status==='ERROR'?{board_sha256:undefined,cause:'iotroute model failed, see /job/out/route/DEMO.kicad_pcb.iotroute/model.log'}:{});
     const p=project(t,{client:{exit:code,job:jobOf(state,outcome,code),out:status==='ERROR'?{'DEMO.kicad_pcb.iotroute/result.json':JSON.stringify(rec)}:files(rec),stdout:`${status} 1 0 0 1 1 3\n`}});
     const r=await dispatch(p,{JOBD_URL:await daemon(t)});
     assert.equal(r.status,code,r.stderr);
     assert.equal(r.record().status,status);
     assert.ok(!ranLocally(p));
-    if(status==='ERROR')assert.equal(r.record().cause,`model.py failed, see ${r.out}.iotroute/model.log`);
+    if(status==='ERROR')assert.equal(r.record().cause,`iotroute model failed, see ${r.out}.iotroute/model.log`);
   });
 
 for(const [name,setup,env,args=[]] of [

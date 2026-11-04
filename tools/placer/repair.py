@@ -629,8 +629,8 @@ def prepare(src, out, board, keep='lock-nets'):
     work = out + '.prepare'
     os.makedirs(work, exist_ok=True)
     model = os.path.join(work, 'lock-model.json')
-    subprocess.run([sys.executable, os.path.join(REPO, 'tools', 'router', 'model.py'), bdir, '--pcb', src,
-                    '--out', model], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(router_run.model_command(router_run.find_or_build()[0], bdir, src, model), check=True,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     nets = router_run.lock_nets(load(model))
     info = router_run.make_locked_input(src, src, nets, out)
     b = pcbnew.LoadBoard(out)

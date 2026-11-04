@@ -25,7 +25,7 @@ The router result is a proposal. A board is done only when KiCad DRC with `--sch
 | `.kicad_pcb` (pcbnew) | outline, pads (shape, layers, net), footprints, existing copper (locked), zones |
 | `.kicad_pro` net classes + board setup | widths, clearances, via 0.6 / 0.3 minimum |
 | `.kicad_dru` (parser of route_rule_coverage) | per-net / per-class clearance, width, pair width / gap / skew / uncoupled / via count, length, via count, layer disallow |
-| `.kicad_dru` pair rules (pairrules.py, 2026-11-01) | clearance / creepage / hole clearance that read both items (class pairs, net pairs, footprint members, `A.X != B.X`, `intersectsCourtyard` / `intersectsArea`): clearance groups + pair table, KiCad order (last match wins, both orders); creepage as a straight clearance (safe form) |
+| `.kicad_dru` pair rules (core/src/model/pairs.rs, 2026-11-01) | clearance / creepage / hole clearance that read both items (class pairs, net pairs, footprint members, `A.X != B.X`, `intersectsCourtyard` / `intersectsArea`): clearance groups + pair table, KiCad order (last match wins, both orders); creepage as a straight clearance (safe form) |
 | `diff-pairs.json` | pair membership, impedance target, reference |
 | `rp001-fast-nets.json` + gate `route_features.rule_compiler.extra.deny_layers` | layer policy (fast + power off In2) and return-via obligation |
 | `reference-planes.json` | plane layers (no tracks), plane nets (pad vias instead of routes) |
@@ -36,7 +36,8 @@ The router result is a proposal. A board is done only when KiCad DRC with `--sch
 
 ```
 tools/router/
-  model.py      board + rules -> RouteModel (JSON): grid, layers, obstacles per layer, nets, pins, per-net rule set
+  core/src/model   `iotroute model`: board + rules -> RouteModel (JSON): layers, obstacles, nets, pins, per-net rule set
+  core/src/kicad   KiCad 11 IPC API client (protos pinned in core/proto) and the geometry pcbnew gave: boards are read through it
   rules.py      .kicad_dru -> per-net constraints (reuses route_rule_coverage._forms / _condition, three-valued)
   core/         Rust crate (our code): multi-layer grid A*, negotiated congestion (PathFinder), via cost,
                 per-net clearance halos, layer masks, length / via-count limits, pair centerline mode
@@ -60,7 +61,7 @@ Return vias: after a fast-net via is placed, the core searches a GND via site wi
 
 | Milestone | Done when |
 | --- | --- |
-| M0 model | `model.py` builds the RouteModel for NET-CORE; every DRU rule maps to a constraint or an explicit "not routed by this stage" |
+| M0 model | `iotroute model` (first `model.py`) builds the RouteModel for NET-CORE; every DRU rule maps to a constraint or an explicit "not routed by this stage" |
 | M1 NET-CORE | the router routes NET-CORE from the placement (pairs included); gate all 0 |
 | M2 comparison | re-route H7-CORE or ESP32-CORE from placement; gate all 0; compare vias / length / time with the hand + Fastroute result |
 | M3 default | `tools/pcb route --router iotlab`; Fastroute kept as a cross-check only |
@@ -103,6 +104,7 @@ The Codex hand finish of NET-CORE reached DRC 0 but left gate findings. The rout
 | 2026-11-02 | reference rule in the gate's scope (branch claude/router-ref-gate-scope): model.py `ref_soft` = not si_planes.is_fast (fast patterns now loaded with si_planes.load_fast); core: a soft net is priced off its reference (x (1 + model `ref_cost`, default 3.0), string pulling keeps it on), not blocked; hard (fast) nets blocked as PR #94; run.py `ref_gate_rounds` runs the gate's own si_planes on the written board, raises the price of each soft net with a D-124c FAIL line (x10, twice), then sets it hard, and routes again (at most 4 rounds) | **STUCK on POE-ETHERNET.** INPUT-4D2A PASS 0/0/0, planes 0, gate PASS (empty exemption file; committed: 10 stale); hand NET-CORE and FW-IO PASS, gate PASS. POE: FAIL 0/1/0 after 4 rounds. /ETH_CT's only gate-accepted exit (B.Cu east from J1.3, 1.24 mm run, detour 0 as on the hand board) is held by VDD_3V3 (J1.11, B.Cu y 112.65); its 11.7 mm F.Cu alternative is rejected by si_planes; set hard, J1.3 has no exit. The J1 standoff of PR #98 again. reports/2026-11-02-ref-gate-scope.md |
 | 2026-11-02 | thermal via arrays (branch claude/router-thermal-vias): optional board file `thermal-vias.json` (per pad: vias along the long / short side, pitches, drill, diameter, datasheet source). model.py `thermal_via_spec` refuses a missing source, a pad that is not an SMD plane-net pad on gate `viapads.allow`, a via under the board / net class / DRU via minimums, a pitch under hole-to-hole, a via disc not inside the pad copper (pcbnew HitTest); writes pad `thermal_vias` (exact centres). Core `fixed_vip_vias`: each spec via at its exact place as fixed copper of the pad's net before routing (a GND return site; the pour model and every rule see it as any fixed via); an illegal one is a note, never moved; the plane fan-out then adds no via. No file = model byte-identical. 82 cargo tests (2 new), 48 py tests (3 new) | FW-IO U4.9 (LM5164 Fig. 28 p.25: 2 x 2 in the EP, 1.27 / 1.10 mm, 0.3 / 0.6 mm) lock-from: PASS 0 / 0 / 0, 4 vias in the EP (= spec; without the file 1), 150 vias (147), tracks byte-identical to the run without the file, converged it 8; gate --fresh PASS. Two runs byte-identical. NET-CORE and INPUT-4D2A lock-from: route.json byte-identical to the main binary on the same model, PASS 0 / 0 / 0, gate PASS (INPUT: with an empty exemption file, the 10 committed RP-001 exemptions are stale as on main). reports/2026-11-02-thermal-vias.md |
 | 2026-11-04 | seeds and progress (branch iotroute-seed-checkpoint, core `seed.rs`, `checkpoint.rs`): `--seed`, `--checkpoint`, `--stall-passes`, section 5e. No new dependency. 92 cargo tests (10 new) | Flags off: route.json and written board byte-identical to main on CHECKIN-FRONT, ENV-SENSE, PWR-24V-5V, AC-24V. ENV-SENSE: no seed 0 / 1 / 0, 5 of 8 seeds 0 / 0 / 0. PWR-24V-5V: seeds change nothing. Checkpoint 0.04-0.17 % of the run |
+| 2026-11-04 | model off Python (CIP #1331): `iotroute model` replaces model.py and pairrules.py. The board comes through the IPC API of the pinned nightly (kicad-cli-nightly api-server, commit in core/proto/PIN); the zone fill comes from a copy KiCad 10 refilled, read the same way, so fill, DRC and parity stay on KiCad 10. Equal to model.py on ENV-SENSE and PWR-24V-5V: every key and value, list order kept. kicad-happy stays a Python boundary (rpscope.py). |
 
 Next (was): negotiated congestion (PathFinder: shared cells with present + history cost, rip-up of all nets per pass) to
 finish the 18 nets; F.Cu spoke channels at GND pads (starved_thermal); read hole clearance from the model rules.

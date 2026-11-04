@@ -1,9 +1,9 @@
-//! Reference-plane fill edge (model `ref_fill`, tools/router/model.py reference_fill; DESIGN 5b "plane fill edge").
+//! Reference-plane fill edge (model `ref_fill`, src/model/planes.rs reference_fill; DESIGN 5b "plane fill edge").
 //!
 //! The planes gate (tools/si_planes.py, D-124c screen) samples the centre line of every track of a checked net on an
 //! outer layer and fails a run of samples that are not inside the filled copper of the net's domain on the adjacent
 //! plane layer (SHAPE_POLY_SET.Contains, accuracy 0: margin 0), except within pad / via radius + via_allow_mm of the
-//! net's own pads and vias. model.py refills the zones of the router input with KiCad's filler and writes the filled
+//! net's own pads and vias. `iotroute model` reads the zones of the router input as KiCad 10 refilled them and writes the filled
 //! polygons per outer layer and domain, so the edge holds the zone clearance, thermal / antipad setback and min-width
 //! removal around holes, keepouts and fixed copper. Routed vias add antipads later; the plane clearance rule of `pref`
 //! nets keeps the tracks off them.
