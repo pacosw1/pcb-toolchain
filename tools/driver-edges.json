@@ -843,6 +843,58 @@
           "source": "bound: C*dV/I (no output rise/fall time published, AC Switching Characteristics p. 15; no IBIS model searched); SO is the only output (pin 2, SPI MISO)"
         }
       ]
+    },
+    "STM32L431": {
+      "mpn": [
+        "STM32L431*"
+      ],
+      "pins": [
+        {
+          "match": "P[A-H]\\d+.*",
+          "role": "push_pull",
+          "tr_ns": 2.5,
+          "tf_ns": 2.5,
+          "stat": "max only (no min or typ published)",
+          "load": "C = 10 pF, 2.7 V <= VDDIOx <= 3.6 V, OSPEEDR = 10 (the shortest Tr/Tf in the table; OSPEEDR = 11 is given at C = 30 pF: 3.3 ns). Setting: no LP-CORE firmware exists, so the fastest edge is used. OSPEEDR = 00 gives 17 ns (C = 10 pF)",
+          "source": "ST DS11453 Rev 3 (STM32L431xx), Table 62 I/O AC characteristics, pp. 134-135: Tr/Tf max 2.5 ns at speed 10, C = 10 pF, 2.7-3.6 V; 3.3 ns at speed 11, C = 30 pF, hardware-design/registry/datasheets/STM32L431CCU6_C1337258.pdf, https://jlc-prod-smt.oss-eu-central-1.aliyuncs.com/smtDataManualFile/8588893825138110464-C1337258.pdf [P]"
+        },
+        {
+          "match": "VDD.*|VSS.*|VREF.*|VBAT|NRST|PH3.*BOOT0|BOOT0",
+          "role": "input"
+        }
+      ]
+    },
+    "MMBT3904": {
+      "mpn": [
+        "MMBT3904*"
+      ],
+      "pins": [
+        {
+          "match": "C",
+          "role": "open_drain",
+          "tr_ns": 35,
+          "tf_ns": 50,
+          "stat": "max",
+          "load": "VCC = 3 V, IC = 10 mA, IB1 = IB2 = 1 mA (switching characteristics)",
+          "source": "MMBT3904 (RANGE:100-300) datasheet C20526, Electrical characteristics, switching: tr 35 ns, tf 50 ns, hardware-design/registry/datasheets/MMBT3904RANGE-100-300_C20526.pdf [P]"
+        },
+        {
+          "match": "B|E",
+          "role": "input"
+        }
+      ]
+    },
+    "W25Q32JV": {
+      "mpn": [
+        "W25Q32JV*"
+      ],
+      "pins": [
+        {
+          "match": "/CS|CLK|VCC|GND",
+          "role": "input",
+          "source": "Winbond W25Q32JV datasheet Rev G (2018-03-27), 3.3 Pin Description (WSON 6x5), p. 5: pad 1 /CS I Chip Select Input, pad 6 CLK I Serial Clock Input, hardware-design/registry/datasheets/W25Q32JVZPIQ_C571260.pdf [P]"
+        }
+      ]
     }
   },
   "evidence_files": [
@@ -917,6 +969,18 @@
     {
       "path": "hardware-design/registry/datasheets/FM25V02A-GTR_C66029.pdf",
       "sha256": "3993f988368aa8dc94b79a888234274959b7e4e091c693535530f3f4dddafefd"
+    },
+    {
+      "path": "hardware-design/registry/datasheets/STM32L431CCU6_C1337258.pdf",
+      "sha256": "71963de3cb899f8fc731e05a46c8bcb62c8ce893fe99f3877b0027ae9dfc5c6f"
+    },
+    {
+      "path": "hardware-design/registry/datasheets/MMBT3904RANGE-100-300_C20526.pdf",
+      "sha256": "6c2034cb0bd0d85be51c9c4f82aad838a688aa70c20de1a71681be8ec02b659b"
+    },
+    {
+      "path": "hardware-design/registry/datasheets/W25Q32JVZPIQ_C571260.pdf",
+      "sha256": "b2585095ac503e7cee7916ab3f025a51699b49e2cad7f6782e92b828c1cc09d8"
     }
   ]
 }
