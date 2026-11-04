@@ -232,13 +232,13 @@
      "name": "contact",
      "amps": 16.0,
      "statistic": "rated",
-     "source": "Hongfa HF32FV-16 datasheet (2021 rev 1.00) p.157, contact data: contact load 16 A 250 VAC (resistive), max switching current 16 A; pins 2 / 3 = contacts (footprint: 1.8 mm drill, coil pins 1 / 4 0.9 mm); local copy hardware-design/registry/datasheets/HF32FV-16_12-HLTF(590)_C2976828.pdf [P]"
+     "source": "Hongfa HF32FV-16 datasheet (2021 rev 1.00) page 157 (PDF page 1), contact data: contact load 16 A 250 VAC (resistive), max switching current 16 A; pins 2 / 3 = contacts (footprint: 1.8 mm drill, coil pins 1 / 4 0.9 mm); local copy hardware-design/registry/datasheets/HF32FV-16_12-HLTF(590)_C2976828.pdf [P]"
     },
     "3": {
      "name": "contact",
      "amps": 16.0,
      "statistic": "rated",
-     "source": "Hongfa HF32FV-16 datasheet (2021 rev 1.00) p.157, contact data: contact load 16 A 250 VAC (resistive), max switching current 16 A; pins 2 / 3 = contacts (footprint: 1.8 mm drill, coil pins 1 / 4 0.9 mm); local copy hardware-design/registry/datasheets/HF32FV-16_12-HLTF(590)_C2976828.pdf [P]"
+     "source": "Hongfa HF32FV-16 datasheet (2021 rev 1.00) page 157 (PDF page 1), contact data: contact load 16 A 250 VAC (resistive), max switching current 16 A; pins 2 / 3 = contacts (footprint: 1.8 mm drill, coil pins 1 / 4 0.9 mm); local copy hardware-design/registry/datasheets/HF32FV-16_12-HLTF(590)_C2976828.pdf [P]"
     }
    }
   },
@@ -251,13 +251,13 @@
      "name": "terminal",
      "amps": 17.3,
      "statistic": "rated",
-     "source": "HoJLR2512-3W-10mR datasheet (local copy hardware-design/registry/datasheets/HoJLR2512-3W-10mR_C2903468.pdf), rated power 3 W (2512, 0.5-500 mR); rated current = sqrt(P / R) = sqrt(3 / 0.010) = 17.3 A (the datasheet gives 2.45-77.45 A over the value range) [P]"
+     "source": "HoJLR2512-3W-10mR datasheet (local copy hardware-design/registry/datasheets/HoJLR2512-3W-10mR_C2903468.pdf), PDF page 2, rated power 3 W (2512, 0.5-500 mR); rated current = sqrt(P / R) = sqrt(3 / 0.010) = 17.3 A (the datasheet gives 2.45-77.45 A over the value range) [P]"
     },
     "2": {
      "name": "terminal",
      "amps": 17.3,
      "statistic": "rated",
-     "source": "HoJLR2512-3W-10mR datasheet (local copy hardware-design/registry/datasheets/HoJLR2512-3W-10mR_C2903468.pdf), rated power 3 W (2512, 0.5-500 mR); rated current = sqrt(P / R) = sqrt(3 / 0.010) = 17.3 A (the datasheet gives 2.45-77.45 A over the value range) [P]"
+     "source": "HoJLR2512-3W-10mR datasheet (local copy hardware-design/registry/datasheets/HoJLR2512-3W-10mR_C2903468.pdf), PDF page 2, rated power 3 W (2512, 0.5-500 mR); rated current = sqrt(P / R) = sqrt(3 / 0.010) = 17.3 A (the datasheet gives 2.45-77.45 A over the value range) [P]"
     }
    }
   }
