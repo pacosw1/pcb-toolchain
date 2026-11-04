@@ -38,9 +38,13 @@ export function jsonDumps(value: unknown, indent?: number | null): string;
 export function jsonCanonical(value: unknown, options?: { separators?: [string, string]; ascii?: boolean; sort?: boolean }): string;
 /** json.load: dicts are Maps, ints BigInts, floats Float, so a hash of the value matches Python's. */
 export function jsonLoad(path: string): unknown;
-export function pyStr(value: unknown): string;
 export function compare(a: string, b: string): number;
-export function splitlines(text: string): string[];
+/** sys.exit(code) from parseArgs. */
+export class SystemExit extends Error { constructor(code: number, message?: string); code: number; }
+/** argparse for positionals and options that take one value. */
+export function parseArgs(spec: { prog: string; positionals: string[]; options: { flag: string; type?: 'int'; fallback?: unknown; required?: boolean }[] }, argv: string[]): Record<string, any>;
+/** The names glob's * sees in a folder: no hidden names, a missing folder is empty. */
+export function globNames(folder: string): string[];
 /** str.strip(): Python's whitespace, which is not the set of String.prototype.trim. */
 export function strip(text: string): string;
 /** csv.DictReader over text from open(path). */
