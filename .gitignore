@@ -3,3 +3,4 @@ dist/
 tools/router/core/target/
 __pycache__/
 *.pyc
+.claude/
