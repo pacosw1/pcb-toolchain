@@ -1,6 +1,6 @@
 //! Arbitrary precision decimal geometry; no tolerances or binary-float comparisons.
 use crate::Result;
-use bigdecimal::{BigDecimal, Zero};
+use bigdecimal::{BigDecimal, Signed, Zero, num_bigint::BigInt};
 use serde_json::Value;
 use std::str::FromStr;
 pub type D = BigDecimal;
@@ -79,8 +79,48 @@ pub fn squared(a: &Point, b: &Point) -> D {
         .sum()
 }
 pub fn half(d: &D) -> D {
-    d / D::from(2)
+    divide(d, &D::from(2)).expect("halving a finite decimal terminates")
 }
 pub fn zero() -> D {
     D::zero()
+}
+
+/// Exact finite division. BigDecimal's / uses a fixed default precision, which cannot prove a containment boundary.
+pub fn divide(value: &D, divisor: &D) -> Result<D> {
+    let (mut a, ea) = value.as_bigint_and_exponent();
+    let (mut b, eb) = divisor.as_bigint_and_exponent();
+    if b.is_zero() {
+        return Err("division by zero in geometry".into());
+    }
+    if b < BigInt::from(0) {
+        a = -a;
+        b = -b;
+    }
+    let (mut x, mut y) = (a.abs(), b.clone());
+    while !y.is_zero() {
+        let r = &x % &y;
+        x = y;
+        y = r;
+    }
+    a /= &x;
+    b /= x;
+    let mut twos = 0u32;
+    let mut fives = 0u32;
+    while (&b % 2u8).is_zero() {
+        b /= 2u8;
+        twos += 1;
+    }
+    while (&b % 5u8).is_zero() {
+        b /= 5u8;
+        fives += 1;
+    }
+    if b != BigInt::from(1) {
+        return Err("inexact decimal geometry division".into());
+    }
+    let places = twos.max(fives);
+    let coefficient = a * BigInt::from(2).pow(places - twos) * BigInt::from(5).pow(places - fives);
+    Ok(D::new(coefficient, ea - eb + i64::from(places)))
+}
+pub fn nanometres(value: i64) -> D {
+    D::new(value.into(), 6).normalized()
 }

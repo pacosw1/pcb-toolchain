@@ -1,7 +1,7 @@
 //! The reviewed upstream integer-grid contract and independently bound quality-backend artifact.
 use crate::{
     Result,
-    decimal::D,
+    decimal::{self as dec, D},
     dsn::{Dsn, num, one},
     evidence,
 };
@@ -11,7 +11,7 @@ const PATCH_SHA: &str = "abc1c6fc3b49f446ce0f28fb2c861abb02255822a5fb58fced5eaa2
 const UPSTREAM: &str = "e5d52c4544795422b8b28077acc0605fdf11265a";
 const LOCK: &str = "4761175c5d8df0ed4c2c69036df2686dc7e3a186cd085d2ae766936134cab9a6";
 pub fn grid_mm(model: &Dsn, value: &D) -> Result<()> {
-    let scaled = value / &model.scale * D::from(10);
+    let scaled = dec::divide(value, &model.scale)? * D::from(10);
     // fr-geom/limits.rs CRIT_INT, fr-io/structure.rs 397–413: no rescale below this bound.
     if scaled != scaled.with_scale(0) || scaled.abs() * D::from(5) >= D::from(33_554_432) {
         return Err("drilled model coordinate/radius/clearance is not exactly representable on the verified backend grid".into());

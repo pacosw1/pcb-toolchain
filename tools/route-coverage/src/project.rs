@@ -81,7 +81,7 @@ pub fn command_floor(command: &[String], name: &str) -> Result<D> {
             "backend control must be an explicit nonnegative integer micrometre value: {prefix}"
         ));
     }
-    Ok(dec::decimal(text)? / D::from(1000))
+    dec::divide(&dec::decimal(text)?, &D::from(1000))
 }
 pub struct Project {
     pub rules: BTreeMap<String, Value>,
@@ -202,7 +202,7 @@ fn via_sizes(req: &Request, model: &Rules, project: &Project) -> Result<Vec<Via>
         result.push(Via {
             source: format!("dsn padstack {name}"),
             diameter: diameter * &model.scale,
-            drill: dec::decimal(&c[4])? / D::from(1000),
+            drill: dec::divide(&dec::decimal(&c[4])?, &D::from(1000))?,
             through: top == 0 && bottom == copper.len() - 1,
         });
     }

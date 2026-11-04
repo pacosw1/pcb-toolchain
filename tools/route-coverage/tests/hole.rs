@@ -216,3 +216,17 @@ fn missing_api_via_type_and_extent_cannot_certify_a_through_via() {
             .contains("extent is unresolved")
     );
 }
+
+#[test]
+fn a_sub_hundred_digit_boundary_difference_must_not_round_into_coverage() {
+    let mut r = request();
+    r.pads[0]["size_mm"] = json!(["0.6", "0.6"]);
+    let drill = format!("0.3{}1", "0".repeat(120));
+    r.pads[0]["drill_mm"] = json!([drill, drill]);
+    r.dsn_text = r
+        .dsn_text
+        .replace("(circle F.Cu 2100)", "(circle F.Cu 600)");
+    r.scope.clearance_floor_mm = "0.13".into();
+    assert_eq!(hole::inspect(&r)["status"], "blocked");
+    assert!(dec::divide(&dec::decimal("1").unwrap(), &dec::decimal("3").unwrap()).is_err());
+}

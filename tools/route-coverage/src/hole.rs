@@ -341,7 +341,7 @@ pub fn api_obstacle(v: &Value) -> Result<Obstacle> {
         let center = center.mm();
         return Ok(Obstacle::Capsule {
             ends: [center.clone(), center],
-            radius: D::from(r) / D::from(1_000_000),
+            radius: dec::nanometres(r),
         });
     }
     if let Some(s) = v.get("Segment") {
@@ -352,7 +352,7 @@ pub fn api_obstacle(v: &Value) -> Result<Obstacle> {
         ends.sort();
         return Ok(Obstacle::Capsule {
             ends,
-            radius: D::from(width) / D::from(2_000_000),
+            radius: dec::half(&dec::nanometres(width)),
         });
     }
     Err("unsupported API copper primitive".into())
@@ -628,8 +628,8 @@ fn drilled(req: &DrilledRequest, out: &mut Value) -> Result<Value> {
                     return Err("unsupported retained via geometry".into());
                 }
                 let text = [
-                    six_g(&(&position[0] / &model.scale))?,
-                    six_g(&(-&position[1] / &model.scale))?,
+                    six_g(&dec::divide(&position[0], &model.scale)?)?,
+                    six_g(&dec::divide(&(-&position[1]), &model.scale)?)?,
                 ];
                 let matches: Vec<_> = model
                     .vias

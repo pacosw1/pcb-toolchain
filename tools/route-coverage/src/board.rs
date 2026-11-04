@@ -1,7 +1,7 @@
 //! Typed adapter for the KiCad API JSON. No text-derived board geometry and no pcbnew.
 use crate::{
     Result,
-    decimal::{self as dec, D, Point},
+    decimal::{self as dec, Point},
     evidence,
 };
 use serde::Deserialize;
@@ -19,10 +19,7 @@ pub struct NmPoint {
 }
 impl NmPoint {
     pub fn mm(&self) -> Point {
-        [
-            D::from(self.x) / D::from(1_000_000),
-            D::from(self.y) / D::from(1_000_000),
-        ]
+        [dec::nanometres(self.x), dec::nanometres(self.y)]
     }
 }
 #[derive(Clone, Debug, Deserialize)]
@@ -323,8 +320,8 @@ pub fn native_drilled_geometry(board: &NativeBoard) -> Result<Vec<Value>> {
                 }
                 let at: NmPoint =
                     serde_json::from_value(v["at"].clone()).map_err(|e| e.to_string())?;
-                let size = dec::normalized(&(D::from(size) / D::from(1_000_000)));
-                let drill = dec::normalized(&(D::from(drill) / D::from(1_000_000)));
+                let size = dec::normalized(&(dec::nanometres(size)));
+                let drill = dec::normalized(&(dec::nanometres(drill)));
                 Ok(
                     json!({"position_mm":dec::strings(&at.mm()),"size_mm":[size,size],"drill_mm":[drill,drill],"drill_shape":"circle",
                 "drill_offset_mm":["0","0"],"shape":"circle","layers":board.copper_layers,"hole_layers":board.copper_layers,"rotation_deg":"0","supported":true}),
