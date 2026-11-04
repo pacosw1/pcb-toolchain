@@ -140,10 +140,36 @@ def parse_params(items):
     return p
 
 
+def iotplace_bin(target=None):
+    """Path of the native search: $IOTPLACE_BIN, bin/iotplace-<target> of the toolchain, else the build in this
+    checkout (the host only). A search never falls back to Python on its own."""
+    target = target or ('darwin-arm64' if sys.platform == 'darwin' else 'linux-x86_64')
+    host = target == ('darwin-arm64' if sys.platform == 'darwin' else 'linux-x86_64')
+    here = os.path.dirname(os.path.abspath(__file__))
+    paths = [os.environ.get('IOTPLACE_BIN') if host else None,
+             os.path.join(os.environ.get('PCB_TOOLCHAIN_ROOT', ''), 'bin', 'iotplace-' + target),
+             os.path.join(here, 'core', 'target', 'release', 'iotplace') if host else None]
+    for path in paths:
+        if path and os.path.isfile(path):
+            return path
+    raise SystemExit('no iotplace for %s: cargo build --release in tools/placer/core, or set PCB_TOOLCHAIN_ROOT' % target)
+
+
+def run_native(a):
+    """The search of tools/placer/core; it takes the same arguments. Exit 3 = no legal candidate."""
+    cmd = [iotplace_bin(), 'run', a.prob, '-o', a.o, '--workers', str(a.workers), '--epochs', str(a.epochs),
+           '--steps', str(a.steps), '--seed', str(a.seed), '--top', str(a.top)] + (['--param'] + a.param if a.param else [])
+    with resources.reserve(a.workers, events=a.o + '.admission.jsonl', label='placement') as env:
+        with resources.environment(env):
+            sys.exit(subprocess.run(cmd).returncode)
+
+
 def cmd_run(a):
     with open(a.prob,'rb') as stream:
         payload = stream.read()
     pr = json.loads(payload)
+    if not pr.get('engineering') and not pr.get('part_rules'):
+        run_native(a)
     from engineering_constraints import check_problem
     frozen = getattr(a,'engineering_frozen_model_sha256',None)
     if frozen:

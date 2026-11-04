@@ -1,7 +1,7 @@
 #!/bin/sh
 # Build a pcb-toolchain release bundle: dist/pcb-toolchain-VERSION.tar.gz + SHA256SUMS. Never publishes.
 #   scripts/build-bundle.sh VERSION [--linux]
-# --linux also builds iotroute for linux-x86_64 on BUILD_LINUX_HOST (user@host with Docker; rust image).
+# --linux also builds iotroute and iotplace for linux-x86_64 on BUILD_LINUX_HOST (user@host with Docker; rust image).
 set -eu
 here=$(cd "$(dirname "$0")/.." && pwd -P)
 version=${1:?usage: build-bundle.sh VERSION [--linux]}
@@ -22,6 +22,9 @@ mkdir -p "$out/tools/pcb-job"                                          # tools/r
 echo "START: iotroute darwin-arm64"
 (cd "$here/tools/router/core" && RUSTFLAGS="--remap-path-prefix=$HOME=~ --remap-path-prefix=$here=." cargo build --release --locked --quiet)   # no build-machine paths in the binary
 cp "$here/tools/router/core/target/release/iotroute" "$out/bin/iotroute-darwin-arm64"
+echo "START: iotplace darwin-arm64"
+(cd "$here/tools/placer/core" && RUSTFLAGS="--remap-path-prefix=$HOME=~ --remap-path-prefix=$here=." cargo build --release --locked --quiet)
+cp "$here/tools/placer/core/target/release/iotplace" "$out/bin/iotplace-darwin-arm64"
 if [ "$linux" = --linux ]; then
   linux_host=${BUILD_LINUX_HOST:?set BUILD_LINUX_HOST=user@host (Docker) for --linux}
   echo "START: iotroute linux-x86_64 ($linux_host)"
@@ -32,6 +35,12 @@ if [ "$linux" = --linux ]; then
   (cd "$here/tools/router/core" && git archive --format=tar HEAD .) | ssh "$linux_host" "tar -x -C '$rsrc'"
   ssh "$linux_host" "docker run --rm -e RUSTFLAGS='--remap-path-prefix=/src=.' -v '$rsrc:/src' -w /src rust:1.93.1 cargo build --release --locked --quiet"
   scp -q "$linux_host:$rsrc/target/release/iotroute" "$out/bin/iotroute-linux-x86_64"
+  clean_linux
+  echo "START: iotplace linux-x86_64 ($linux_host)"
+  rsrc=$(ssh "$linux_host" 'mktemp -d /tmp/iotplace-src.XXXXXX')
+  (cd "$here/tools/placer/core" && git archive --format=tar HEAD .) | ssh "$linux_host" "tar -x -C '$rsrc'"
+  ssh "$linux_host" "docker run --rm -e RUSTFLAGS='--remap-path-prefix=/src=.' -v '$rsrc:/src' -w /src rust:1.93.1 cargo build --release --locked --quiet"
+  scp -q "$linux_host:$rsrc/target/release/iotplace" "$out/bin/iotplace-linux-x86_64"
   clean_linux
   trap - EXIT
 fi

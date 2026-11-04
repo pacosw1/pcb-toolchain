@@ -2,7 +2,7 @@
 """Compaction driver: search and Freerouting on Hetzner (tools/remote.sh), writer on the Mac.
 
   $PY tools/placer/compact_cli.py PROB.json BOARD.kicad_pcb --board-dir hardware-design/boards/X/cad/X \
-      --outdir DIR --size W H --wheel numpy-...whl [--s0 4] [--budget 2700] [--routes 3] [--target 0]
+      --outdir DIR --size W H [--s0 4] [--budget 2700] [--routes 3] [--target 0]
 
 PROB.json comes from `cli.py read` on BOARD (a copy with the signal tracks removed). Each step writes
 DIR/step-N/ (prob.json, search/, b/<board>.kicad_pcb, route-K/). DIR/run.json holds the problem, every
@@ -188,8 +188,8 @@ def parser():
     ap.add_argument('--outdir', required=True)
     ap.add_argument('--size', type=float, nargs=2, required=True, metavar=('W', 'H'))
     ap.add_argument('--search', choices=['local', 'remote'], default='local', help='local: the search runs here '
-                    '(default). remote: Hetzner, needs --wheel')
-    ap.add_argument('--wheel', default='', help='numpy cp313 manylinux wheel for the remote search')
+                    '(default). remote: Hetzner, needs bin/iotplace-linux-x86_64')
+    ap.add_argument('--wheel', default='', help='numpy cp313 manylinux wheel for a remote search of a reviewed engineering problem')
     ap.add_argument('--s0', type=float, default=4.0)
     ap.add_argument('--budget', type=float, default=2700.0, help='seconds (default 45 min)')
     ap.add_argument('--target', type=int, default=0)
@@ -451,7 +451,10 @@ def main(argv=None):
                '--seed', str(a.seed), '--top', str(a.retain_candidates)] + (['--param'] + a.param if a.param else [])
         if q.get('engineering'):
             cmd += ['--engineering-frozen-model-sha256',lean.digest(os.path.join(d,'prob.json'))]
-        rc, _ = _remote(a.board_dir, [os.path.join(d, 'prob.json'), wheel], os.path.join(d, 'search'), cmd,
+        # A reviewed engineering problem runs on Python in the job (the numpy wheel); all others on iotplace.
+        from placer.cli import iotplace_bin
+        runtime = wheel if q.get('engineering') else iotplace_bin('linux-x86_64')
+        rc, _ = _remote(a.board_dir, [os.path.join(d, 'prob.json'), runtime], os.path.join(d, 'search'), cmd,
                         a.workers, os.path.join(d, 'search.log'))
         res_path = os.path.join(d, 'search', 'res.json')
         if not os.path.exists(res_path):
