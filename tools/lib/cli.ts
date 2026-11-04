@@ -1,6 +1,7 @@
 // Entry point of a TypeScript tool: runs main only when the file is the program, and turns a UsageError into exit code.
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { parseArgs, type ParseArgsOptionsConfig } from 'node:util';
 import { osError } from './py-compat.mjs';
 
 /** str(exception): a Node file error reads as Python's OSError did. */
@@ -14,6 +15,15 @@ export class UsageError extends Error {
   constructor(message: string, code = 2) {
     super(message);
     this.code = code;
+  }
+}
+
+/** node:util parseArgs with positionals; a bad command line prints `usage` and exits 2, as argparse does. */
+export function parseFlags<T extends ParseArgsOptionsConfig>(argv: string[], options: T, usage: string) {
+  try {
+    return parseArgs({ args: argv, options, allowPositionals: true });
+  } catch {
+    throw new UsageError(usage);
   }
 }
 

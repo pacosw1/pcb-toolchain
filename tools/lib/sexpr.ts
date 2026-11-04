@@ -57,6 +57,20 @@ export function field(form: SList, name: string): SList | undefined {
   return rows[0]?.slice(1);
 }
 
+/** The index just after the list that opens at text[start]. For tools that edit a file and keep every other byte. */
+export function listEnd(text: string, start: number): number {
+  let depth = 0;
+  let quoted = false;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) quoted = c !== '"' || text[i - 1] === '\\';
+    else if (c === '"') quoted = true;
+    else if (c === '(') depth++;
+    else if (c === ')' && --depth === 0) return i + 1;
+  }
+  throw new Error(`unbalanced s-expression at ${start}`);
+}
+
 /** The child lists of `node` that start with `name`. */
 export const kids = (node: SList, name: string): SList[] =>
   node.slice(1).filter((child): child is SList => Array.isArray(child) && child[0] === name);
