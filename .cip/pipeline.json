@@ -11,7 +11,7 @@
           "name": "tools-unit",
           "image": "iot-lab-ci:node22-python3-numpy-v2",
           "user": "daemon",
-          "env": {"IOT_CPU_BUDGET": "2", "OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1"},
+          "env": {"HOME": "/tmp", "IOT_CPU_BUDGET": "2", "OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1"},
           "steps": [{"run": "sh .cip/run-unit.sh"}],
           "limits": {"timeoutSec": 900, "cpus": 2, "memoryMb": 2048}
         },
