@@ -655,7 +655,8 @@ def run(folder):
         solver_output = folder / 'operation/router'
         solver_output.mkdir(parents=True, exist_ok=True)
         out = solver_output / native.name
-        command = [python_native(), 'tools/router/run.py', board, str(out), '--pcb', str(native),
+        command = [manifest['node'], 'tools/router/route-dispatch.mjs', '--timeout', str(manifest['timeout_s']), '--',
+                   python_native(), 'tools/router/run.py', board, str(out), '--pcb', str(native),
                    '--json'] + policy_args(manifest.get('spec'), native)
         code = execute(folder, 'route', command, workspace, env)
         record = Path(str(out) + '.iotroute') / 'result.json'
