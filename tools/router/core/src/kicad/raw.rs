@@ -56,16 +56,21 @@ impl Form {
 
 /// Every top-level form of the text. A line whose first text is `#` is a comment.
 pub fn parse(text: &str) -> Result<Vec<Form>, String> {
-    read(text, usize::MAX)
+    read(text, usize::MAX, false)
 }
 
 /// The first top-level form of the text; what follows it is not read. For a form inside text that as a whole is not
 /// s-expressions: a Specctra DSN holds an unpaired quote in `(string_quote ")`.
 pub fn parse_first(text: &str) -> Result<Form, String> {
-    read(text, 1)?.pop().ok_or_else(|| "no form".to_string())
+    read(text, 1, false)?.pop().ok_or_else(|| "no form".to_string())
 }
 
-fn read(text: &str, limit: usize) -> Result<Vec<Form>, String> {
+/// As `parse`, but a quote also ends a bare atom: a DSN writes a pin as `R1-"A 1"`, one bare and one quoted atom.
+pub fn parse_unglued(text: &str) -> Result<Vec<Form>, String> {
+    read(text, usize::MAX, true)
+}
+
+fn read(text: &str, limit: usize, quote_ends_atom: bool) -> Result<Vec<Form>, String> {
     let mut open: Vec<(usize, Vec<Form>)> = Vec::new();
     let mut top = Vec::new();
     let mut position = 0;
@@ -85,7 +90,7 @@ fn read(text: &str, limit: usize) -> Result<Vec<Form>, String> {
                 Form { span: start..position, body: Body::Atom(text[start + 1..position - 1].to_string()) }
             }
             _ => {
-                position = bare_end(text, start);
+                position = bare_end(text, start, quote_ends_atom);
                 Form { span: start..position, body: Body::Atom(text[start..position].to_string()) }
             }
         };
@@ -130,8 +135,8 @@ fn quoted_end(text: &str, start: usize) -> Result<usize, String> {
     Err("unterminated string".to_string())
 }
 
-fn bare_end(text: &str, start: usize) -> usize {
-    text[start..].find(|c: char| c.is_whitespace() || matches!(c, '(' | ')')).map_or(text.len(), |end| start + end)
+fn bare_end(text: &str, start: usize, quote_ends_atom: bool) -> usize {
+    text[start..].find(|c: char| c.is_whitespace() || matches!(c, '(' | ')') || (quote_ends_atom && c == '"')).map_or(text.len(), |end| start + end)
 }
 
 #[cfg(test)]
@@ -183,6 +188,14 @@ mod tests {
         assert!(form.is("a"));
         assert!(parse_first("(a").is_err());
         assert!(parse_first("  ").is_err());
+    }
+
+    #[test]
+    fn an_unglued_read_ends_a_bare_atom_at_a_quote() {
+        let text = "(pins R1-\"(a) 1\" \"U 1\"-2)";
+        let form = parse_unglued(text).unwrap().remove(0);
+        let atoms: Vec<_> = form.items().iter().filter_map(Form::atom).collect();
+        assert_eq!(atoms, ["pins", "R1-", "(a) 1", "U 1", "-2"]);
     }
 
     #[test]

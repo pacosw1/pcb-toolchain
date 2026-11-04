@@ -2,6 +2,7 @@
 //!
 //! Board values are compared exactly and their normalized text gets hashed, so floats will not do: `100` normalizes to
 //! the text `1E+2`. KiCad numbers have a few digits, so an i128 mantissa holds every product made from them.
+//! Only std: tools/pcb_search/core includes this file by path, as it does kicad/raw.rs.
 
 use std::cmp::Ordering;
 use std::fmt;
@@ -46,6 +47,11 @@ impl Decimal {
 
     pub fn is_zero(self) -> bool {
         self.mantissa == 0
+    }
+
+    /// The value as `mantissa` over `10^scale`.
+    pub fn parts(self) -> (i128, u32) {
+        (self.mantissa, self.scale)
     }
 
     pub fn to_f64(self) -> f64 {
@@ -111,6 +117,13 @@ impl Decimal {
         format!("{sign}{whole}.{fraction}")
     }
 
+    /// `str(value)`: the written scale, exponent form as Python writes it.
+    pub fn text(self) -> String {
+        let digits = self.mantissa.unsigned_abs().to_string();
+        let sign = if self.mantissa < 0 { "-" } else { "" };
+        format!("{sign}{}", scientific_text(&digits, -(self.scale as i32)))
+    }
+
     /// `str(value.normalize())`: no trailing zeros, exponent form as Python writes it.
     pub fn normalized(self) -> String {
         if self.mantissa == 0 {
@@ -165,10 +178,30 @@ impl PartialOrd for Decimal {
 }
 
 impl Ord for Decimal {
+    /// Exact for any two values: magnitudes are compared by leading digit first, so no scaling can overflow.
     fn cmp(&self, other: &Decimal) -> Ordering {
-        let (a, b, _) = self.aligned(*other);
-        a.cmp(&b)
+        let sign = self.mantissa.signum();
+        match sign.cmp(&other.mantissa.signum()) {
+            Ordering::Equal if sign < 0 => magnitude(*other, *self),
+            Ordering::Equal => magnitude(*self, *other),
+            order => order,
+        }
     }
+}
+
+/// Compares the absolute values of two non-zero numbers, or of two zeros.
+fn magnitude(a: Decimal, b: Decimal) -> Ordering {
+    let (x, y) = (a.mantissa.unsigned_abs(), b.mantissa.unsigned_abs());
+    if x == 0 || y == 0 {
+        return x.cmp(&y);
+    }
+    let (dx, dy) = (x.ilog10() as i64 + 1, y.ilog10() as i64 + 1);
+    let order = (dx - i64::from(a.scale)).cmp(&(dy - i64::from(b.scale)));
+    if order != Ordering::Equal {
+        return order;
+    }
+    let width = dx.max(dy) as u32;
+    (x * 10u128.pow(width - dx as u32)).cmp(&(y * 10u128.pow(width - dy as u32)))
 }
 
 impl Add for Decimal {
@@ -216,6 +249,23 @@ mod tests {
     fn values_compare_across_scales() {
         assert_eq!(d("1.50"), d("1.5"));
         assert!(d("-1") < d("0.5"));
+    }
+
+    #[test]
+    fn far_apart_scales_compare_without_overflow() {
+        assert!(d("0.0000000000000000000000000000000001") < d("99999999999999999999999999999999999"));
+        assert!(d("-0.0000000000000000000000000000000001") > d("-99999999999999999999999999999999999"));
+        assert_eq!(d("0"), d("0.000"));
+        assert!(d("0") < d("0.0001"));
+    }
+
+    #[test]
+    fn text_keeps_the_scale_as_python_str_does() {
+        let cases = [("0.200", "0.200"), ("3", "3"), ("0.0", "0.0"), ("0.000001", "0.000001"), ("0.0000001", "1E-7"), ("-1.50", "-1.50")];
+        for (text, want) in cases {
+            assert_eq!(d(text).text(), want, "{text}");
+        }
+        assert_eq!((d("200") * d("0.001")).text(), "0.200");
     }
 
     #[test]

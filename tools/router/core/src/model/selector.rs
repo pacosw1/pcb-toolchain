@@ -3,6 +3,9 @@
 //! unknown exactly when the router cannot decide it, never a guess.
 use super::text::glob_match;
 
+mod decide;
+pub use decide::{Decider, Stop};
+
 /// A condition. An unparsable text stays a Selector and evaluates to unknown.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Selector {
