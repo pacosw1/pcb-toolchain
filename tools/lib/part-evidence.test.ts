@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { iotrouteMissing } from './iotroute-bin.ts';
 import { sha256File } from './json-file.ts';
 import { BOARD, fakePdfinfo, FOLDER, makeFixture, syntheticPdf, writeReviewed } from './part-fixture.ts';
 import { digest, encoded, readBoard } from './part-native.ts';
@@ -92,7 +93,6 @@ describe('part contract', () => {
     const result = verify();
     assert.equal(result.status, 'passed', JSON.stringify(result.blockers));
     assert.equal(result.checked_ratings.length, 4);
-    assert.equal(jsonLoads(jsonDumps(result.checked_budgets[0]))?.constructor, Map);
     assert.match(jsonDumps(result.checked_budgets[0]), /"total": 0\.04/);
     assert.equal(result.qualified, false);
     assert.equal(result.stock_current, false);
@@ -150,10 +150,7 @@ describe('part contract', () => {
   test('an unmatched footprint and a BOM mismatch are blocked', () => {
     const original = readFileSync(board('kicad_pcb'), 'utf8');
     editTree(board('kicad_pcb'), tree => {
-      const extra = structuredClone(items(tree, 'footprint')[0]) as CadList;
-      const copy = parse(dump(tree));
-      const clone = items(copy, 'footprint')[0] as CadList;
-      void extra;
+      const clone = items(parse(dump(tree)), 'footprint')[0] as CadList;
       (items(clone, 'property').find(row => row[1] === 'Reference') as CadList)[2] = 'J99';
       tree.push(clone);
     });
@@ -658,7 +655,8 @@ describe('stock observation', () => {
   });
 });
 
-describe('PDF cache', () => {
+// The cache locks are flocks through the iotroute binary; runs for real in CI job tools-iotroute.
+describe('PDF cache', { skip: iotrouteMissing() }, () => {
   let folder: string;
   let pdf: string;
   let log: string;

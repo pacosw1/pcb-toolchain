@@ -80,7 +80,7 @@ test('parsing strips the pin number from the pin name', () => {
   assert.equal(pinName('7', 'X_7_7'), 'X_7');
 });
 
-test('the export finds the CLI by KICAD_CLI and a missing schematic never looks like success', needsBinary, (t: TestContext) => {
+test('the export finds the CLI by KICAD_CLI and a missing schematic never looks like success', needsBinary, async (t: TestContext) => {
   const folder = mkdtempSync(join(tmpdir(), 'nd-'));
   t.after(() => rmSync(folder, { recursive: true, force: true }));
   const cli = join(folder, 'custom-cli');
@@ -92,10 +92,10 @@ test('the export finds the CLI by KICAD_CLI and a missing schematic never looks 
   const saved = process.env.KICAD_CLI;
   process.env.KICAD_CLI = cli;
   t.after(() => { if (saved === undefined) delete process.env.KICAD_CLI; else process.env.KICAD_CLI = saved; });
-  assert.equal(exportNetlist(schematic).comps.get('U1'), 'STM32H743VIT6');
-  assert.throws(() => exportNetlist(join(folder, 'missing.kicad_sch')), /no schematic/);
+  assert.equal((await exportNetlist(schematic)).comps.get('U1'), 'STM32H743VIT6');
+  await assert.rejects(exportNetlist(join(folder, 'missing.kicad_sch')), /no schematic/);
   writeFileSync(cli, '#!/bin/sh\necho boom >&2\nexit 3\n');
-  assert.throws(() => exportNetlist(schematic), /netlist export failed .*boom/);
+  await assert.rejects(exportNetlist(schematic), /netlist export failed .*boom/);
 });
 
 test('the edge comes from the part, and a receiver is no driver', () => {

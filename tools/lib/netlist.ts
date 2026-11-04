@@ -2,8 +2,9 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { runStage, TimeoutExpired } from './lean-stage.ts';
 import { deadlineAfter, remaining } from './lean-workflow.ts';
-import { processText, PyError, run, strip, tail } from './py-compat.mjs';
+import { PyError, strip, tail } from './py-compat.mjs';
 import { isFile, textOf } from './py-path.ts';
 import { findText, iter, parseXml } from './xml-read.mjs';
 
@@ -54,19 +55,20 @@ export function parseNetlist(xml: string): Required<Netlist> {
 }
 
 /** Runs kicad-cli on the schematic and parses the netlist; at most 30 s, and never past `deadline`. */
-export function exportNetlist(schematic: string, deadline?: number | null): Required<Netlist> {
+export async function exportNetlist(schematic: string, deadline?: number | null): Promise<Required<Netlist>> {
   if (!isFile(schematic)) throw new PyError('OSError', `no schematic ${schematic} (needed for the net drivers)`);
   const bound = deadlineAfter(EXPORT_SECONDS);
   const limit = deadline === undefined || deadline === null ? bound : Math.min(bound, deadline);
   const folder = mkdtempSync(join(tmpdir(), 'netlist-'));
   try {
     const out = join(folder, 'net.xml');
-    const result = run(kicadCli(), ['sch', 'export', 'netlist', '--format', 'kicadxml', '-o', out, schematic], { timeout: remaining(limit) ?? EXPORT_SECONDS });
-    if (result.status !== 0 || !isFile(out)) {
-      throw new PyError('OSError', `kicad-cli netlist export failed for ${schematic}: ${tail(strip(processText(result.stderr)), 300)}`);
+    const result = await runStage([kicadCli(), 'sch', 'export', 'netlist', '--format', 'kicadxml', '-o', out, schematic],
+      { stage: 'driver-netlist-export', deadline: limit, stdout: 'pipe', stderr: 'pipe' });
+    if (result.returncode !== 0 || !isFile(out)) {
+      throw new PyError('OSError', `kicad-cli netlist export failed for ${schematic}: ${tail(strip(result.stderr ?? ''), 300)}`);
     }
     const netlist = parseNetlist(textOf(out));
-    if ((remaining(limit) ?? 1) <= 0) throw new PyError('subprocess.TimeoutExpired', `Command 'driver-netlist-parse' timed out after ${EXPORT_SECONDS} seconds`);
+    if ((remaining(limit) ?? 1) <= 0) throw new TimeoutExpired(['driver-netlist-parse']);
     return netlist;
   } finally {
     rmSync(folder, { recursive: true, force: true });
