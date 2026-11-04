@@ -15,7 +15,15 @@ else
   want=''
 fi
 dest="$HOME/.local/share/pcb-toolchain/$version"
-if [ -x "$dest/bin/pcb" ]; then echo "PASS: pcb-toolchain $version already installed"; ln -sf "$dest/bin/pcb" "$HOME/.local/bin/pcb"; exit 0; fi
+rec="$HOME/.local/share/pcb-toolchain/$version.sha256"   # tarball sha256 recorded at install time
+if [ -x "$dest/bin/pcb" ]; then
+  if [ -n "$want" ]; then
+    have=$(cat "$rec" 2>/dev/null || true)
+    if [ -z "$have" ]; then echo "FAIL: cannot verify $dest against the lock: no recorded sha256 (remove $dest and reinstall)" >&2; exit 1; fi
+    if [ "$have" != "$want" ]; then echo "FAIL: installed sha256 $have != lock $want (remove $dest and reinstall)" >&2; exit 1; fi
+  fi
+  echo "PASS: pcb-toolchain $version already installed"; ln -sf "$dest/bin/pcb" "$HOME/.local/bin/pcb"; exit 0
+fi
 tmp=$(mktemp -d)
 if [ -z "$tarball" ]; then
   gh release download "v$version" --repo pacosw1/pcb-toolchain --dir "$tmp" --pattern "pcb-toolchain-$version.tar.gz" --pattern SHA256SUMS
@@ -27,6 +35,7 @@ if [ -n "$want" ] && [ "$got" != "$want" ]; then echo "FAIL: sha256 $got != $wan
 mkdir -p "$HOME/.local/share/pcb-toolchain" "$HOME/.local/bin"
 tar -xzf "$tarball" -C "$tmp"
 mv "$tmp/pcb-toolchain-$version" "$dest"
+echo "$got" > "$rec"
 chmod -R a-w "$dest"                          # immutable install: agents run the release, never edit it
 ln -sf "$dest/bin/pcb" "$HOME/.local/bin/pcb"
 rm -rf "$tmp"
