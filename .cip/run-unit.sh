@@ -1,6 +1,6 @@
 #!/bin/sh
 # Run each tools test that needs no project data, one process per file: test_*.py with unittest (top level and
-# subfolders) and subfolder *.test.mjs with node. Ends with one PASS/FAIL line.
+# subfolders) and subfolder *.test.mjs and *.test.ts with node. Ends with one PASS/FAIL line.
 # .cip/project-only-tests.txt names what cannot run here. "name cause" skips a whole file. "name | test | cause" keeps
 # the file and names one test that must fail for that cause: any other failure fails the run, and so does a named
 # test that passes (the entry is stale).
@@ -10,7 +10,7 @@ export PYTHONPATH=tools PYTHONDONTWRITEBYTECODE=1
 list=.cip/project-only-tests.txt
 skip=$(sed -e '/^#/d' -e '/|/d' -e 's/ .*//' "$list")
 log=$(mktemp); ran=0; named=0; failed=''
-for f in $(find tools -type f \( -name 'test_*.py' -o -name '*.test.mjs' \) -not -path '*/node_modules/*' | sort); do
+for f in $(find tools -type f \( -name 'test_*.py' -o -name '*.test.mjs' -o -name '*.test.ts' \) -not -path '*/node_modules/*' | sort); do
   case "$f" in
     *.py) t=${f#tools/}; t=$(echo "${t%.py}" | tr / .) ;;
     *) t=${f#tools/} ;;
@@ -20,7 +20,7 @@ for f in $(find tools -type f \( -name 'test_*.py' -o -name '*.test.mjs' \) -not
   case "$f" in
     *.py) python3 -m unittest "$t" >"$log" 2>&1; rc=$?
           got=$(sed -nE 's/^(ERROR|FAIL): ([^ ]+).*/\2/p' "$log" | sort -u) ;;
-    *) node --test --test-reporter=tap "$f" >"$log" 2>&1; rc=$?
+    *) node --experimental-strip-types --no-warnings --test --test-reporter=tap "$f" >"$log" 2>&1; rc=$?
        got=$(sed -n 's/^not ok [0-9]* - //p' "$log" | sort -u) ;;
   esac
   want=$(awk -F' [|] ' -v t="$t" '$1 == t { print $2 }' "$list" | sort -u)

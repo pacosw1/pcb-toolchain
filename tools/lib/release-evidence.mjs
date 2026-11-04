@@ -100,7 +100,7 @@ export function verifyBoardChecks(board,stage,root) {
 export function releaseInputs(root,board) {
  const recipe=requireRelease(root,board);
  const files=['tools/fab-workflow.sh','tools/release-recipe.mjs','tools/check-release-gate.mjs','tools/check-release-fab.mjs','tools/lib/release-evidence.mjs',
-  'tools/lib/kicad-population.mjs','tools/lib/csv.mjs','tools/gerber_netcheck.py','tools/check-fab-zip.mjs','tools/pack-fab.py','tools/publish-release.mjs','tools/pcb_timing.py',recipe.maker,...(recipe.inputs??[])];
+  'tools/lib/kicad-population.mjs','tools/lib/csv.mjs','tools/gerber_netcheck.py','tools/check-fab-zip.mjs','tools/pack-fab.py','tools/publish-release.mjs','tools/pcb_timing.ts',recipe.maker,...(recipe.inputs??[])];
  // The board gate configuration holds the recipe, so it is a release input too.
  const closure=[...gateTools(root,files.map(p=>join(root,p))),gateConfigPath(root,board)];
  return Object.fromEntries(closure.sort().map(p=>[relative(root,p),existsSync(p)?sha256(readFileSync(p)):null]));

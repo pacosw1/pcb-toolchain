@@ -9,6 +9,7 @@ case "$mode" in explore|release) ;; *) echo 'invalid export mode' >&2; exit 2;; 
 # The board recipe is the "release" key of its gate.json (tools/release-recipe.mjs).
 recipe=$(node tools/release-recipe.mjs "$board" shell) || exit 2
 eval "$recipe"
+TIMED='node --experimental-strip-types --no-warnings tools/pcb_timing.ts'
 PY=${KICAD_PYTHON:-${KICAD_PY:-/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3}}
 GNC=${GERBERCHECK_PY:-$HOME/.cache/iot-lab/gerbercheck/venv/bin/python}
 export KICAD_PYTHON="$PY"
@@ -51,11 +52,11 @@ fi
 if [ "$mode" = release ]; then
   evidence=$(node tools/check-release-gate.mjs "$board" --gate-dir "$stage/gate")
   echo "START: $board staged fabrication export"
-  python3 tools/pcb_timing.py --events "$stage/stages.jsonl" --stage export --category export -- env FAB_OUT="$stage/fab" RENDER_OUT="$stage/renders" sh "$maker"
-  python3 tools/pcb_timing.py --events "$stage/stages.jsonl" --stage fab-zip --category export -- node tools/check-fab-zip.mjs "$stage/fab/$board-gerber.zip" "$stage/fab/gerber" > "$stage/fab-zip.json"
+  $TIMED --events "$stage/stages.jsonl" --stage export --category export -- env FAB_OUT="$stage/fab" RENDER_OUT="$stage/renders" sh "$maker"
+  $TIMED --events "$stage/stages.jsonl" --stage fab-zip --category export -- node tools/check-fab-zip.mjs "$stage/fab/$board-gerber.zip" "$stage/fab/gerber" > "$stage/fab-zip.json"
   echo "START: $board Gerber connectivity reconstruction"
   net_status=0
-  python3 tools/pcb_timing.py --events "$stage/stages.jsonl" --stage gerber-netcheck --category validation -- env GNC_ZIP="$stage/fab/$board-gerber.zip" "$GNC" tools/gerber_netcheck.py "$board" > "$stage/gerber-netcheck.log" 2>&1 || net_status=$?
+  $TIMED --events "$stage/stages.jsonl" --stage gerber-netcheck --category validation -- env GNC_ZIP="$stage/fab/$board-gerber.zip" "$GNC" tools/gerber_netcheck.py "$board" > "$stage/gerber-netcheck.log" 2>&1 || net_status=$?
   cat "$stage/gerber-netcheck.log"
   [ "$net_status" -eq 0 ] || exit "$net_status"
   node tools/release-recipe.mjs "$board" run post "$stage"

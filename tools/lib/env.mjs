@@ -17,6 +17,8 @@ export {fileRoot, findProjectRoot, projectRoot} from './project-root.mjs';
 export const root = projectRoot();
 export const {kicadApp,kicadCli,kicadPython,kicadShared,kicadConfig} = kiCadPaths(process.platform,home,process.env);
 export const KICAD_VERSION = '10.0';
+// Node arguments that run a TypeScript tool; Node 22 needs the flag, later versions accept it.
+export const TS_NODE = ['--experimental-strip-types', '--no-warnings'];
 // KICAD_CONFIG_HOME is the base path: KiCad appends its major/minor version.
 // Fingerprint the same library tables that the CLI actually opens.
 

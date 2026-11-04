@@ -29,6 +29,7 @@ class PcbCliTests(unittest.TestCase):
             target = self.root / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source / name, target)
+        (self.root / 'tools/port_labels.ts').write_text("console.log('port_labels: 0 checked, 0 failures');\n")
         board = self.root / 'hardware-design/boards/X'
         (board / 'cad').mkdir(parents=True)
         (board / 'gate.json').write_text(json.dumps(dict(project='cad/X', checks=dict(

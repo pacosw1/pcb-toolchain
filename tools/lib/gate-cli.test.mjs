@@ -6,11 +6,13 @@ import {tmpdir} from 'node:os';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 
+const labelStub=word=>`// ${word} implementation\nconsole.log('port_labels: 0 checked, 0 failures');\n`;
 function fixture(t) {
  const root=mkdtempSync(join(tmpdir(),'gate-cli-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
  const put=(p,v)=>{mkdirSync(join(root,p,'..'),{recursive:true});writeFileSync(join(root,p),v);};
  const source=fileURLToPath(new URL('../..',import.meta.url));
  for(const p of ['tools/gate.mjs','tools/lib/env.mjs','tools/lib/env-paths.mjs','tools/lib/gate-core.mjs','tools/lib/gate-runtime.mjs','tools/lib/gate-inputs.mjs','tools/lib/check-cache.mjs','tools/lib/gate-findings.mjs','tools/lib/project-root.mjs']) {mkdirSync(join(root,p,'..'),{recursive:true});copyFileSync(join(source,p),join(root,p));}
+ put('tools/port_labels.ts',labelStub('fixture'));
  const base='hardware-design/boards/X/';
  put(base+'gate.json',JSON.stringify({project:'cad/X',checks:{erc:true,drc:true,paths:'current-paths.json',viapads:{},kicad_happy:{},port_labels:true}}));
  put(base+'cad/X.kicad_pcb','original PCB');put(base+'cad/X.kicad_sch','original SCH');
@@ -31,7 +33,6 @@ if(a[0]==='sch' || a[0]==='pcb') {
 const script=path.basename(a[0]);
 if(script==='si_planes.py'){console.log('WARN unproved-fastest-edge F.Cu /SIG: missing source\\n0 reference-plane failures');process.exit(0);}
 if(script==='kicad_happy_gate.py') {fs.writeFileSync(a[a.indexOf('--result')+1],JSON.stringify({schema_version:1,completed:true,findings:0,stale_exemptions:0,exit:0}));process.exit(0);}
-if(script==='port_labels.py'){console.log('port_labels: 0 checked, 0 failures');process.exit(0);}
 if(a[1]==='viapads'){console.log('0 vias in SMD pads');process.exit(0);}
 if(a[1]==='paths'){console.log('0 power-path pairs below the design current\\n0 supply nets not covered');process.exit(0);}
 process.exit(2);
@@ -166,12 +167,12 @@ test('cheap missing-input preflight launches no native or expensive tools',t=>{
 });
 test('editing reuses only completed checks; fresh defaults bypass cache; checker edits invalidate scoped results',t=>{
  const f=fixture(t),go=isolatedRunner(f);
- f.put('tools/port_labels.py','first implementation');
+ f.put('tools/port_labels.ts',labelStub('first'));
  const first=go(['--changed']);assert.equal(first.code,0);assert.equal(first.result.cache.hits,0);
  assert.equal(first.events.filter(e=>e.type==='cache.store').length,6);
  const second=go(['--changed']);assert.equal(second.code,0);assert.equal(second.result.cache.hits,6);
  assert.equal(second.events.filter(e=>e.type==='tool.start').length,0);
- f.put('tools/port_labels.py','changed implementation');
+ f.put('tools/port_labels.ts',labelStub('changed'));
  const scoped=go(['--changed']);assert.equal(scoped.code,0);assert.equal(scoped.result.cache.hits,5);
  assert.deepEqual(scoped.events.filter(e=>e.type==='tool.start').map(e=>e.stage),['port_labels']);
  for(const flags of [[],['--fresh']]) {
@@ -224,14 +225,14 @@ test('native-only gates require no happy clone; enabled happy checks retain the 
 test('commit hook cache: --cache-dir reuses checks across checkout paths and reruns only a changed checker',t=>{
  const cacheDir=mkdtempSync(join(tmpdir(),'gate-cache-'));t.after(()=>rmSync(cacheDir,{recursive:true,force:true}));
  const a=fixture(t),b=fixture(t);
- for(const f of [a,b]) f.put('tools/port_labels.py','first implementation');
+ for(const f of [a,b]) f.put('tools/port_labels.ts',labelStub('first'));
  const first=isolatedRunner(a)(['--cache-dir',cacheDir]);assert.equal(first.code,0);
  assert.equal(first.result.cache.enabled,true);assert.equal(first.result.cache.hits,0);
  assert.equal(first.events.filter(e=>e.type==='cache.store').length,6);
  const go=isolatedRunner(b);
  const moved=go(['--cache-dir',cacheDir]);assert.equal(moved.code,0);assert.equal(moved.result.cache.hits,6);
  assert.equal(moved.events.filter(e=>e.type==='tool.start').length,0);
- b.put('tools/port_labels.py','changed implementation');
+ b.put('tools/port_labels.ts',labelStub('changed'));
  const scoped=go(['--cache-dir',cacheDir]);assert.equal(scoped.code,0);assert.equal(scoped.result.cache.hits,5);
  assert.deepEqual(scoped.events.filter(e=>e.type==='tool.start').map(e=>e.stage),['port_labels']);
  assert.equal(go(['--cache-dir',cacheDir,'--fresh']).code,2);assert.equal(go(['--cache-dir']).code,2);
