@@ -228,6 +228,7 @@ interface Parsed {
   inputs: string[];
   results: string;
   spec: Record<string, unknown>;
+  fit: boolean;
 }
 
 function parseSubmit(argv: string[]): Parsed {
@@ -235,7 +236,7 @@ function parseSubmit(argv: string[]): Parsed {
   if (split < 1 || split === argv.length - 1) die(USAGE);
   const command = argv.slice(split + 1);
   const opts = argv.slice(1, split);
-  const p: Parsed = { board: argv[0], inputs: [], results: '', spec: { command } };
+  const p: Parsed = { board: argv[0], inputs: [], results: '', spec: { command }, fit: false };
   const retryExitCodes: number[] = [];
   for (let i = 0; i < opts.length; i += 2) {
     const [k, v] = [opts[i], opts[i + 1]];
@@ -250,13 +251,28 @@ function parseSubmit(argv: string[]): Parsed {
     else if (k === '--retry-exit') retryExitCodes.push(Number(v));
     else if (k === '--image') p.spec.image = v;
     else if (k === '--name') p.spec.name = v;
+    else if (k === '--fit') p.fit = v === 'budget' || die('--fit takes the value budget');
     else die(`unknown option ${k}\n${USAGE}`);
   }
   if (retryExitCodes.length) p.spec.retryExitCodes = retryExitCodes;
   return p;
 }
 
+/** --fit budget: lower --cpus and --mem to what the daemon allows, for callers written for a bigger machine. */
+async function fitBudget(p: Parsed): Promise<void> {
+  if (!p.fit) return;
+  const { budget } = await apiJson<{ budget: { cpus: number; memGb: number } }>('/status');
+  for (const [key, most] of [['cpus', budget.cpus], ['memGb', budget.memGb]] as const) {
+    const asked = p.spec[key];
+    if (typeof asked === 'number' && asked > most) {
+      console.error(`pcb-job: ${key} ${asked} is over the daemon budget, using ${most}`);
+      p.spec[key] = most;
+    }
+  }
+}
+
 async function submit(p: Parsed): Promise<JobRecord> {
+  await fitBudget(p);
   const here = path.dirname(fileURLToPath(import.meta.url));
   const toolchain = process.env.PCB_TOOLCHAIN_ROOT || path.resolve(here, '../../..');
   const project = process.env.IOT_LAB || toolchain;

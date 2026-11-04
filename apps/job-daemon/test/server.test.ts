@@ -252,6 +252,18 @@ describe('client', () => {
     });
   }
 
+  it('--fit budget lowers cpus and memory to the budget; without it they are refused', async () => {
+    const args = ['hardware-design/boards/B', '--cpus', '30', '--mem', '32'];
+    const refused = await run(['submit', ...args, '--', 'true']);
+    assert.notEqual(refused.code, 0);
+    const fitted = await run(['submit', ...args, '--fit', 'budget', '--', 'true']);
+    assert.equal(fitted.code, 0, fitted.err);
+    assert.match(fitted.err, /cpus 30 is over the daemon budget, using 16/);
+    const id = fitted.out.trim();
+    const job = await (await fetch(`${base}/jobs/${id}`, { headers: auth })).json() as { spec: { cpus: number; memGb: number } };
+    assert.deepEqual([job.spec.cpus, job.spec.memGb], [16, 16]);
+  });
+
   it('selects the same files as remote.sh, plus the driver evidence', () => {
     const tar = path.join(root, 'sel.tar.gz');
     pack(root, root, 'hardware-design/boards/B', [path.join(root, 'prob.json')], tar);
