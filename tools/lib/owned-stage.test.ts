@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { OwnedStageError, startOwned } from './owned-stage.ts';
@@ -113,8 +113,9 @@ test('cancel returns the cleanup of a stage that failed', async () => {
 
 test('a broker killed outright reports unconfirmed cleanup, never a clean one', async () => {
   const pidfile = join(root, 'orphan');
+  const socketfile = join(root, 'orphan-socket');
   // The leader's parent is the broker, so the stage can kill its own broker and live on as a real orphan.
-  const stage = startOwned(sh(`echo $$ > ${pidfile}; kill -KILL $PPID; exec sleep 30`), { stdin: 'ignore' });
+  const stage = startOwned(sh(`echo "$IOT_LEAN_BROKER_SOCKET" > ${socketfile}; echo $$ > ${pidfile}; kill -KILL $PPID; exec sleep 30`), { stdin: 'ignore' });
   await assert.rejects(stage.settled, (error: OwnedStageError) => {
     assert.ok(error instanceof OwnedStageError);
     assert.equal(error.cleanup.complete, false);
@@ -124,6 +125,7 @@ test('a broker killed outright reports unconfirmed cleanup, never a clean one', 
   });
   assert.equal((await stage.cancel()).complete, false, 'cancel must not claim what it cannot know');
   process.kill(Number(await fileText(pidfile)), 'SIGKILL');
+  rmSync(dirname(await fileText(socketfile)), { recursive: true, force: true }); // a killed broker cannot remove its folder
 });
 
 test('a child cannot reset lineage metadata', () => {
