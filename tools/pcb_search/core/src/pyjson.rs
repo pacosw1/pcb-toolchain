@@ -16,6 +16,8 @@ enum Layout {
     Canonical,
     /// `indent=2`, keys in insertion order: the form of a saved record.
     Indented,
+    /// Plain `json.dumps`, keys in insertion order: the form inside a status line.
+    Inline,
 }
 
 /// SHA-256 of the canonical text, as hex.
@@ -37,6 +39,13 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 pub fn indented(value: &Value) -> Result<String> {
     let mut text = String::new();
     write_value(&mut text, value, Layout::Indented, 0)?;
+    Ok(text)
+}
+
+/// The text of a value inside a status line.
+pub fn inline(value: &Value) -> Result<String> {
+    let mut text = String::new();
+    write_value(&mut text, value, Layout::Inline, 0)?;
     Ok(text)
 }
 
@@ -75,7 +84,7 @@ fn write_value(out: &mut String, value: &Value, layout: Layout, depth: usize) ->
 
 fn start_item(out: &mut String, index: usize, layout: Layout, depth: usize) {
     if index > 0 {
-        out.push(',');
+        out.push_str(if layout == Layout::Inline { ", " } else { "," });
     }
     newline(out, layout, depth);
 }

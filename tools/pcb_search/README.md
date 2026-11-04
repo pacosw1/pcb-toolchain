@@ -20,6 +20,11 @@ separate experiments; their skips are not native acceptance evidence.
   reproduces Python's JSON text byte for byte, so its hashes equal `contracts.py`
   `fingerprint`. Anything that hashes JSON belongs there: JavaScript's `JSON.parse`
   loses the difference between `1` and `1.0`.
+* `core/src/srj/` holds the SRJ input checks, crossing screen, via resolution, scoping
+  and one-waypoint repair (`pcbsearch scope`, `pcbsearch repair`). `capacity.py`,
+  `repair.py` and the scope code in `native_srj.py` stay until `native_srj.py` itself
+  moves to the KiCad API; both give the same records. `pcbsearch fingerprint FILE`
+  prints the hash of a JSON file for callers that cannot compute it.
 * `core/src/contract.rs` requires explicit trace widths, per-net and pair clearances,
   layer masks, obstacle envelopes, edge rules, sources and input fingerprints. Unknown
   fields are errors. Known but unrepresented requirements cause abstention.

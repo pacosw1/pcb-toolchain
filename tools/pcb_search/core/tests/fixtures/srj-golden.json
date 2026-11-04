@@ -1,0 +1,7555 @@
+[
+{"name": "random_repair_1", "mode": "repair", "nets": ["A"],
+"stdout": "STUCK: native/SRJ proposal step; native validation required; {\"status\": \"geometry_reject\", \"qualified\": false, \"reason\": \"no single safe-to-test waypoint shortcut; original proposal retained\", \"conflicts\": 0, \"discarded_backend_changes\": 0}",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": [
+    {
+     "x": 46.49801256344561,
+     "y": 11.098083500330375
+    },
+    {
+     "x": 16.862161345250048,
+     "y": 20.49626398947847
+    }
+   ]
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "old",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 1.9259595879940128,
+     "y": 5.61574518942076,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 35.67560434605721,
+     "y": 47.546017178122895,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "geometry_reject",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "old",
+    "connection_name": "B",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 1.9259595879940128,
+      "y": 5.61574518942076,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 35.67560434605721,
+      "y": 47.546017178122895,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 46.49801256344561,
+      "y": 11.098083500330375,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 44.22261567889834,
+      "y": 23.74391485273089,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 26.79730821810538,
+      "y": 8.900876286859102,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 16.862161345250048,
+      "y": 20.49626398947847,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new2",
+    "connection_name": "C",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 40.185838956472395,
+      "y": 25.5,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 0.9323894981911357,
+      "y": 25.5,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "47a12ff21d0ae7ba7219e7f67e4fcf03171cda468acc3fb5c3e5aed7cd38abd6"
+},
+"proposal": {
+  "status": "geometry_reject",
+  "qualified": false,
+  "output": {
+    "traces": [
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "old",
+        "connection_name": "B",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 1.9259595879940128,
+            "y": 5.61574518942076,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 35.67560434605721,
+            "y": 47.546017178122895,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new",
+        "connection_name": "A",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 46.49801256344561,
+            "y": 11.098083500330375,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 44.22261567889834,
+            "y": 23.74391485273089,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 26.79730821810538,
+            "y": 8.900876286859102,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 16.862161345250048,
+            "y": 20.49626398947847,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new2",
+        "connection_name": "C",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 40.185838956472395,
+            "y": 25.5,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 0.9323894981911357,
+            "y": 25.5,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      }
+    ]
+  },
+  "input_sha256": "47a12ff21d0ae7ba7219e7f67e4fcf03171cda468acc3fb5c3e5aed7cd38abd6",
+  "parent_response_sha256": "98335372e27a0727a15f38ccddfa1787883eb6e031777a1f38cb54d01368e40b",
+  "repair": {
+    "strategy": "one_waypoint_crossing_shortcut",
+    "attempts": 0,
+    "edits": [],
+    "elapsed_s": 0.00010108109563589096
+  },
+  "reason": "no single safe-to-test waypoint shortcut; original proposal retained"
+}},
+{"name": "random_repair_11", "mode": "repair", "nets": ["A"],
+"stdout": "STUCK: native/SRJ proposal step; native validation required; {\"status\": \"geometry_reject\", \"qualified\": false, \"reason\": \"no single safe-to-test waypoint shortcut; original proposal retained\", \"conflicts\": 0, \"discarded_backend_changes\": 0}",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": [
+    {
+     "x": 29.123479378932846,
+     "y": 22.158000478594563
+    },
+    {
+     "x": 35.958617941457135,
+     "y": 8.078606369941777
+    }
+   ]
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "old",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 10.635455255692571,
+     "y": 6.707057956004077,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 30.10263442997943,
+     "y": 48.09156470843198,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "geometry_reject",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "old",
+    "connection_name": "B",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 10.635455255692571,
+      "y": 6.707057956004077,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 30.10263442997943,
+      "y": 48.09156470843198,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 29.123479378932846,
+      "y": 22.158000478594563,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 10.488183502335186,
+      "y": 10.822861615951576,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 3.194408059676368,
+      "y": 27.99024238157563,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 35.958617941457135,
+      "y": 8.078606369941777,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new2",
+    "connection_name": "C",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 30.90543748387389,
+      "y": 25.5,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 0.9683609013298344,
+      "y": 25.5,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "94413e5a5b7cada3de1b21adc3db38faf9ea2f54cae289822727c294251665bb"
+},
+"proposal": {
+  "status": "geometry_reject",
+  "qualified": false,
+  "output": {
+    "traces": [
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "old",
+        "connection_name": "B",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 10.635455255692571,
+            "y": 6.707057956004077,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 30.10263442997943,
+            "y": 48.09156470843198,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new",
+        "connection_name": "A",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 29.123479378932846,
+            "y": 22.158000478594563,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 10.488183502335186,
+            "y": 10.822861615951576,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 3.194408059676368,
+            "y": 27.99024238157563,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 35.958617941457135,
+            "y": 8.078606369941777,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new2",
+        "connection_name": "C",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 30.90543748387389,
+            "y": 25.5,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 0.9683609013298344,
+            "y": 25.5,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      }
+    ]
+  },
+  "input_sha256": "94413e5a5b7cada3de1b21adc3db38faf9ea2f54cae289822727c294251665bb",
+  "parent_response_sha256": "a48049f01f93a0ec914af89e797ad7af89e7c09b20bf445636e9ac935c9882fa",
+  "repair": {
+    "strategy": "one_waypoint_crossing_shortcut",
+    "attempts": 2,
+    "edits": [],
+    "elapsed_s": 0.00012941379100084305
+  },
+  "reason": "no single safe-to-test waypoint shortcut; original proposal retained"
+}},
+{"name": "random_repair_13", "mode": "repair", "nets": ["A"],
+"stdout": "STUCK: native/SRJ proposal step; native validation required; {\"status\": \"geometry_reject\", \"qualified\": false, \"reason\": \"no single safe-to-test waypoint shortcut; original proposal retained\", \"conflicts\": 0, \"discarded_backend_changes\": 0}",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": [
+    {
+     "x": 15.319399005416502,
+     "y": 7.870845439783691
+    },
+    {
+     "x": 11.347561125339736,
+     "y": 42.578640658677855
+    }
+   ]
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "old",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 9.29399967626389,
+     "y": 5.006527903027147,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 32.93577671187733,
+     "y": 45.96413195876597,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "geometry_reject",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "old",
+    "connection_name": "B",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 9.29399967626389,
+      "y": 5.006527903027147,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 32.93577671187733,
+      "y": 45.96413195876597,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 15.319399005416502,
+      "y": 7.870845439783691,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 30.82347924859425,
+      "y": 21.953806648009365,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 5.607398750077653,
+      "y": 31.65118618200123,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 16.93527317742597,
+      "y": 43.85470678371131,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 5.322968484518569,
+      "y": 31.61349721141788,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 11.347561125339736,
+      "y": 42.578640658677855,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new2",
+    "connection_name": "C",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 3.7166893499515434,
+      "y": 25.5,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 6.691081825034266,
+      "y": 25.5,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "b3c47b5f5b4a96e4610c9debd5872a3dd5b53e1be2a12dff5bce22038aec7eb7"
+},
+"proposal": {
+  "status": "geometry_reject",
+  "qualified": false,
+  "output": {
+    "traces": [
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "old",
+        "connection_name": "B",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 9.29399967626389,
+            "y": 5.006527903027147,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 32.93577671187733,
+            "y": 45.96413195876597,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new",
+        "connection_name": "A",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 15.319399005416502,
+            "y": 7.870845439783691,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 30.82347924859425,
+            "y": 21.953806648009365,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 5.607398750077653,
+            "y": 31.65118618200123,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 16.93527317742597,
+            "y": 43.85470678371131,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 5.322968484518569,
+            "y": 31.61349721141788,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 11.347561125339736,
+            "y": 42.578640658677855,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new2",
+        "connection_name": "C",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 3.7166893499515434,
+            "y": 25.5,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 6.691081825034266,
+            "y": 25.5,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      }
+    ]
+  },
+  "input_sha256": "b3c47b5f5b4a96e4610c9debd5872a3dd5b53e1be2a12dff5bce22038aec7eb7",
+  "parent_response_sha256": "b2ffce03380af3d81e0ef4c353ee812a26bbc6c9c9a5f274e743f03024b159cd",
+  "repair": {
+    "strategy": "one_waypoint_crossing_shortcut",
+    "attempts": 4,
+    "edits": [],
+    "elapsed_s": 0.0002291221171617508
+  },
+  "reason": "no single safe-to-test waypoint shortcut; original proposal retained"
+}},
+{"name": "random_repair_15", "mode": "repair", "nets": ["A"],
+"stdout": "STUCK: native/SRJ proposal step; native validation required; {\"status\": \"geometry_reject\", \"qualified\": false, \"reason\": \"no single safe-to-test waypoint shortcut; original proposal retained\", \"conflicts\": 0, \"discarded_backend_changes\": 0}",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": [
+    {
+     "x": 34.58233715620932,
+     "y": 36.8642938299404
+    },
+    {
+     "x": 31.78112484411389,
+     "y": 43.424730081774634
+    }
+   ]
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "old",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 7.809555534184703,
+     "y": 4.634001257193275,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 40.28081238748544,
+     "y": 45.2921962809247,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "geometry_reject",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "old",
+    "connection_name": "B",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 7.809555534184703,
+      "y": 4.634001257193275,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 40.28081238748544,
+      "y": 45.2921962809247,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 34.58233715620932,
+      "y": 36.8642938299404,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 15.58341098464253,
+      "y": 21.67372489891654,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 31.78112484411389,
+      "y": 43.424730081774634,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new2",
+    "connection_name": "C",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 44.18675901563221,
+      "y": 25.5,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 28.185629857790484,
+      "y": 25.5,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "bd751588e0c4edda08874ee7a1f11e01e49f5b7f2164e9f5c2fa5988eba7eea4"
+},
+"proposal": {
+  "status": "geometry_reject",
+  "qualified": false,
+  "output": {
+    "traces": [
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "old",
+        "connection_name": "B",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 7.809555534184703,
+            "y": 4.634001257193275,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 40.28081238748544,
+            "y": 45.2921962809247,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new",
+        "connection_name": "A",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 34.58233715620932,
+            "y": 36.8642938299404,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 15.58341098464253,
+            "y": 21.67372489891654,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 31.78112484411389,
+            "y": 43.424730081774634,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new2",
+        "connection_name": "C",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 44.18675901563221,
+            "y": 25.5,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 28.185629857790484,
+            "y": 25.5,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      }
+    ]
+  },
+  "input_sha256": "bd751588e0c4edda08874ee7a1f11e01e49f5b7f2164e9f5c2fa5988eba7eea4",
+  "parent_response_sha256": "c992a48c2f87f62e91627014b41598c5f217aaef415a6ad783c776bceeab06fd",
+  "repair": {
+    "strategy": "one_waypoint_crossing_shortcut",
+    "attempts": 1,
+    "edits": [],
+    "elapsed_s": 0.00011036824434995651
+  },
+  "reason": "no single safe-to-test waypoint shortcut; original proposal retained"
+}},
+{"name": "random_repair_3", "mode": "repair", "nets": ["A"],
+"stdout": "STUCK: native/SRJ proposal step; native validation required; {\"status\": \"geometry_reject\", \"qualified\": false, \"reason\": \"no single safe-to-test waypoint shortcut; original proposal retained\", \"conflicts\": 0, \"discarded_backend_changes\": 0}",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": [
+    {
+     "x": 25.809905718923503,
+     "y": 28.60997058200183
+    },
+    {
+     "x": 17.73740173118999,
+     "y": 12.970923190457246
+    }
+   ]
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "old",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 3.8070899265851317,
+     "y": 11.11641049902719,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 39.642348293979815,
+     "y": 45.0517225335593,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "geometry_reject",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "old",
+    "connection_name": "B",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 3.8070899265851317,
+      "y": 11.11641049902719,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 39.642348293979815,
+      "y": 45.0517225335593,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 25.809905718923503,
+      "y": 28.60997058200183,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 36.566889302137724,
+      "y": 35.373959080024605,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 33.663900866948026,
+      "y": 22.575172910734626,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 16.934099681179084,
+      "y": 18.85692263434498,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 12.123335366194759,
+      "y": 21.641817042437296,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 17.73740173118999,
+      "y": 12.970923190457246,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new2",
+    "connection_name": "C",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 28.895699991330364,
+      "y": 25.5,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 40.53124191264214,
+      "y": 25.5,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "dabe37f6656b315805694423dee7789783b9db9d492b03bf0f5dc97b7bdc96a6"
+},
+"proposal": {
+  "status": "geometry_reject",
+  "qualified": false,
+  "output": {
+    "traces": [
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "old",
+        "connection_name": "B",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 3.8070899265851317,
+            "y": 11.11641049902719,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 39.642348293979815,
+            "y": 45.0517225335593,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new",
+        "connection_name": "A",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 25.809905718923503,
+            "y": 28.60997058200183,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 36.566889302137724,
+            "y": 35.373959080024605,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 33.663900866948026,
+            "y": 22.575172910734626,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 16.934099681179084,
+            "y": 18.85692263434498,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 12.123335366194759,
+            "y": 21.641817042437296,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 17.73740173118999,
+            "y": 12.970923190457246,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new2",
+        "connection_name": "C",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 28.895699991330364,
+            "y": 25.5,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 40.53124191264214,
+            "y": 25.5,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      }
+    ]
+  },
+  "input_sha256": "dabe37f6656b315805694423dee7789783b9db9d492b03bf0f5dc97b7bdc96a6",
+  "parent_response_sha256": "e75669c0d12aca7a1cd8c309105439bd0e28924926b0a38c4d48e6f84b8f2092",
+  "repair": {
+    "strategy": "one_waypoint_crossing_shortcut",
+    "attempts": 4,
+    "edits": [],
+    "elapsed_s": 0.00015490315854549408
+  },
+  "reason": "no single safe-to-test waypoint shortcut; original proposal retained"
+}},
+{"name": "random_repair_5", "mode": "repair", "nets": ["A"],
+"stdout": "STUCK: native/SRJ proposal step; native validation required; {\"status\": \"geometry_reject\", \"qualified\": false, \"reason\": \"no single safe-to-test waypoint shortcut; original proposal retained\", \"conflicts\": 0, \"discarded_backend_changes\": 0}",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": [
+    {
+     "x": 45.37853004568188,
+     "y": 4.810084821102249
+    },
+    {
+     "x": 18.71300483528199,
+     "y": 32.904434933748306
+    }
+   ]
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "old",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 8.531038765111491,
+     "y": 8.602821830940815,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 46.04143381865762,
+     "y": 32.30424165833008,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "geometry_reject",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "old",
+    "connection_name": "B",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 8.531038765111491,
+      "y": 8.602821830940815,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 46.04143381865762,
+      "y": 32.30424165833008,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 45.37853004568188,
+      "y": 4.810084821102249,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 28.38569159544338,
+      "y": 27.88173939002759,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 18.71300483528199,
+      "y": 32.904434933748306,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new2",
+    "connection_name": "C",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 42.3684194881322,
+      "y": 25.5,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 39.93763925504761,
+      "y": 25.5,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "41b2c7c978d241dbf982eb2807015bd6394c1654972ab55fa096fb129ee28827"
+},
+"proposal": {
+  "status": "geometry_reject",
+  "qualified": false,
+  "output": {
+    "traces": [
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "old",
+        "connection_name": "B",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 8.531038765111491,
+            "y": 8.602821830940815,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 46.04143381865762,
+            "y": 32.30424165833008,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new",
+        "connection_name": "A",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 45.37853004568188,
+            "y": 4.810084821102249,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 28.38569159544338,
+            "y": 27.88173939002759,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 18.71300483528199,
+            "y": 32.904434933748306,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new2",
+        "connection_name": "C",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 42.3684194881322,
+            "y": 25.5,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 39.93763925504761,
+            "y": 25.5,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      }
+    ]
+  },
+  "input_sha256": "41b2c7c978d241dbf982eb2807015bd6394c1654972ab55fa096fb129ee28827",
+  "parent_response_sha256": "1c7cb14bc82286b6780678489f453d388984ba08f81352e525e18eeca88ab1ee",
+  "repair": {
+    "strategy": "one_waypoint_crossing_shortcut",
+    "attempts": 1,
+    "edits": [],
+    "elapsed_s": 0.00011076871305704117
+  },
+  "reason": "no single safe-to-test waypoint shortcut; original proposal retained"
+}},
+{"name": "random_repair_7", "mode": "repair", "nets": ["A"],
+"stdout": "STUCK: native/SRJ proposal step; native validation required; {\"status\": \"geometry_reject\", \"qualified\": false, \"reason\": \"no single safe-to-test waypoint shortcut; original proposal retained\", \"conflicts\": 0, \"discarded_backend_changes\": 0}",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": [
+    {
+     "x": 20.237864502816397,
+     "y": 23.7307157617671
+    },
+    {
+     "x": 42.601939220261734,
+     "y": 21.258608827022186
+    }
+   ]
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "old",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 9.658479695049337,
+     "y": 2.0468616495127145,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 43.591433173786584,
+     "y": 31.68819189150268,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "geometry_reject",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "old",
+    "connection_name": "B",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 9.658479695049337,
+      "y": 2.0468616495127145,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 43.591433173786584,
+      "y": 31.68819189150268,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 20.237864502816397,
+      "y": 23.7307157617671,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 22.7054090596295,
+      "y": 22.62275982863398,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 42.27414991346847,
+      "y": 18.232699401785013,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 39.031001108247324,
+      "y": 41.53416730814342,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 42.601939220261734,
+      "y": 21.258608827022186,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new2",
+    "connection_name": "C",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 19.728012392170733,
+      "y": 25.5,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 18.172085293648806,
+      "y": 25.5,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "fadb8500659391c5b54eb319137af243367056fd11588c66ee0401bc2572d943"
+},
+"proposal": {
+  "status": "geometry_reject",
+  "qualified": false,
+  "output": {
+    "traces": [
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "old",
+        "connection_name": "B",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 9.658479695049337,
+            "y": 2.0468616495127145,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 43.591433173786584,
+            "y": 31.68819189150268,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new",
+        "connection_name": "A",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 20.237864502816397,
+            "y": 23.7307157617671,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 22.7054090596295,
+            "y": 22.62275982863398,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 42.27414991346847,
+            "y": 18.232699401785013,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 39.031001108247324,
+            "y": 41.53416730814342,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 42.601939220261734,
+            "y": 21.258608827022186,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new2",
+        "connection_name": "C",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 19.728012392170733,
+            "y": 25.5,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 18.172085293648806,
+            "y": 25.5,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      }
+    ]
+  },
+  "input_sha256": "fadb8500659391c5b54eb319137af243367056fd11588c66ee0401bc2572d943",
+  "parent_response_sha256": "7cf4edbe7306589a2718f87b4beb0786af64fd5565a4bb1cd2c92173a64dc7ee",
+  "repair": {
+    "strategy": "one_waypoint_crossing_shortcut",
+    "attempts": 3,
+    "edits": [],
+    "elapsed_s": 0.00013528577983379364
+  },
+  "reason": "no single safe-to-test waypoint shortcut; original proposal retained"
+}},
+{"name": "random_repair_9", "mode": "repair", "nets": ["A"],
+"stdout": "STUCK: native/SRJ proposal step; native validation required; {\"status\": \"geometry_reject\", \"qualified\": false, \"reason\": \"no single safe-to-test waypoint shortcut; original proposal retained\", \"conflicts\": 0, \"discarded_backend_changes\": 0}",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": [
+    {
+     "x": 37.44618208866854,
+     "y": 23.677414904198336
+    },
+    {
+     "x": 37.51284791692758,
+     "y": 39.44755937412733
+    }
+   ]
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "old",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 9.630203251554725,
+     "y": 15.59070587884202,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 39.60189819783061,
+     "y": 47.31014252515051,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "geometry_reject",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "old",
+    "connection_name": "B",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 9.630203251554725,
+      "y": 15.59070587884202,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 39.60189819783061,
+      "y": 47.31014252515051,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 37.44618208866854,
+      "y": 23.677414904198336,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 27.83409215222769,
+      "y": 37.44316198092101,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 34.73802281950508,
+      "y": 3.6591043480015846,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 22.213243911142108,
+      "y": 20.462139376654356,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 47.96610572094382,
+      "y": 46.7231483667731,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 46.14960481792204,
+      "y": 42.61577989562218,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 37.51284791692758,
+      "y": 39.44755937412733,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new2",
+    "connection_name": "C",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 1.8285751351288404,
+      "y": 25.5,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 37.30325849601219,
+      "y": 25.5,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "804c4818f0e200263196d3826ff53a0b5387a6f89fb8e720993b957730fa965e"
+},
+"proposal": {
+  "status": "geometry_reject",
+  "qualified": false,
+  "output": {
+    "traces": [
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "old",
+        "connection_name": "B",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 9.630203251554725,
+            "y": 15.59070587884202,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 39.60189819783061,
+            "y": 47.31014252515051,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new",
+        "connection_name": "A",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 37.44618208866854,
+            "y": 23.677414904198336,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 27.83409215222769,
+            "y": 37.44316198092101,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 34.73802281950508,
+            "y": 3.6591043480015846,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 22.213243911142108,
+            "y": 20.462139376654356,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 47.96610572094382,
+            "y": 46.7231483667731,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 46.14960481792204,
+            "y": 42.61577989562218,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 37.51284791692758,
+            "y": 39.44755937412733,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new2",
+        "connection_name": "C",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 1.8285751351288404,
+            "y": 25.5,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 37.30325849601219,
+            "y": 25.5,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      }
+    ]
+  },
+  "input_sha256": "804c4818f0e200263196d3826ff53a0b5387a6f89fb8e720993b957730fa965e",
+  "parent_response_sha256": "5ec0b80066dd36058d875912ecd4ce0aea553198987172c0e01c809fa1be3c5a",
+  "repair": {
+    "strategy": "one_waypoint_crossing_shortcut",
+    "attempts": 5,
+    "edits": [],
+    "elapsed_s": 0.0001750793308019638
+  },
+  "reason": "no single safe-to-test waypoint shortcut; original proposal retained"
+}},
+{"name": "random_scope_0", "mode": "scope", "nets": ["A"],
+"stdout": "STUCK: native/SRJ proposal step; native validation required; {\"status\": \"geometry_reject\", \"qualified\": false, \"reason\": \"new copper crosses protected or other-net routing\", \"conflicts\": 1, \"discarded_backend_changes\": 0}",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": [
+    {
+     "x": 14.53913123185706,
+     "y": 8.966745618249636
+    },
+    {
+     "x": 25.706905376029624,
+     "y": 38.03927613982897
+    }
+   ]
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "old",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 11.54216766894896,
+     "y": 17.10029602847076,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 42.64331818215703,
+     "y": 44.89913941123483,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "candidate",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "old",
+    "connection_name": "B",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 11.54216766894896,
+      "y": 17.10029602847076,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 42.64331818215703,
+      "y": 44.89913941123483,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 14.53913123185706,
+      "y": 8.966745618249636,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 8.195727053189524,
+      "y": 33.870066061555434,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 25.706905376029624,
+      "y": 38.03927613982897,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "2e1b2f2d2dd304e44bf94afcef0bbda64236b6a51e9b6a9a86d653170ca152cd"
+},
+"proposal": {
+  "status": "geometry_reject",
+  "qualified": false,
+  "output": {
+    "layerCount": 2,
+    "minTraceWidth": 0.2,
+    "minViaPadDiameter": 0.6,
+    "minViaHoleDiameter": 0.3,
+    "defaultObstacleMargin": 0.2,
+    "minBoardEdgeClearance": 0.2,
+    "allowViaInPad": false,
+    "allowJumpers": false,
+    "bounds": {
+      "minX": 0,
+      "minY": 0,
+      "maxX": 50,
+      "maxY": 50
+    },
+    "obstacles": [],
+    "connections": [
+      {
+        "name": "A",
+        "pointsToConnect": [
+          {
+            "x": 14.53913123185706,
+            "y": 8.966745618249636
+          },
+          {
+            "x": 25.706905376029624,
+            "y": 38.03927613982897
+          }
+        ]
+      }
+    ],
+    "traces": [
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "old",
+        "connection_name": "B",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 11.54216766894896,
+            "y": 17.10029602847076,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 42.64331818215703,
+            "y": 44.89913941123483,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new",
+        "connection_name": "A",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 14.53913123185706,
+            "y": 8.966745618249636,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 8.195727053189524,
+            "y": 33.870066061555434,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 25.706905376029624,
+            "y": 38.03927613982897,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      }
+    ]
+  },
+  "input_sha256": "2e1b2f2d2dd304e44bf94afcef0bbda64236b6a51e9b6a9a86d653170ca152cd",
+  "native_validation_required": true,
+  "reason": "new copper crosses protected or other-net routing",
+  "parent_response_sha256": "87babfb2a10ab507c36123c657e11f3ea55cdc7fb9b3a5a855ecd657ecc82563",
+  "discarded_backend_changes": [],
+  "changed_fields": [],
+  "selected_nets": [
+    "A"
+  ],
+  "conflicts": [
+    {
+      "type": "tracks_crossing",
+      "layer": "top",
+      "trace_ids": [
+        "old",
+        "new"
+      ],
+      "nets": [
+        "B",
+        "A"
+      ],
+      "segments": [
+        [
+          [
+            11.54216766894896,
+            17.10029602847076
+          ],
+          [
+            42.64331818215703,
+            44.89913941123483
+          ]
+        ],
+        [
+          [
+            14.53913123185706,
+            8.966745618249636
+          ],
+          [
+            8.195727053189524,
+            33.870066061555434
+          ]
+        ]
+      ]
+    }
+  ]
+}},
+{"name": "random_scope_10", "mode": "scope", "nets": ["A"],
+"stdout": "STUCK: native/SRJ proposal step; native validation required; {\"status\": \"geometry_reject\", \"qualified\": false, \"reason\": \"new copper crosses protected or other-net routing\", \"conflicts\": 2, \"discarded_backend_changes\": 0}",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": [
+    {
+     "x": 19.808161982245817,
+     "y": 13.686964278894926
+    },
+    {
+     "x": 40.57461478122259,
+     "y": 9.259615186257108
+    }
+   ]
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "old",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 9.190452699172521,
+     "y": 17.26574421732954,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 41.22160435245447,
+     "y": 40.525593762530754,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "candidate",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "old",
+    "connection_name": "B",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 9.190452699172521,
+      "y": 17.26574421732954,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 41.22160435245447,
+      "y": 40.525593762530754,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 19.808161982245817,
+      "y": 13.686964278894926,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 27.525731337035882,
+      "y": 37.07682825768219,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 40.57461478122259,
+      "y": 9.259615186257108,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "15f7977f724637b57fc35c879788c77e87d22fed37c0905ba140689ecf2dcfb5"
+},
+"proposal": {
+  "status": "geometry_reject",
+  "qualified": false,
+  "output": {
+    "layerCount": 2,
+    "minTraceWidth": 0.2,
+    "minViaPadDiameter": 0.6,
+    "minViaHoleDiameter": 0.3,
+    "defaultObstacleMargin": 0.2,
+    "minBoardEdgeClearance": 0.2,
+    "allowViaInPad": false,
+    "allowJumpers": false,
+    "bounds": {
+      "minX": 0,
+      "minY": 0,
+      "maxX": 50,
+      "maxY": 50
+    },
+    "obstacles": [],
+    "connections": [
+      {
+        "name": "A",
+        "pointsToConnect": [
+          {
+            "x": 19.808161982245817,
+            "y": 13.686964278894926
+          },
+          {
+            "x": 40.57461478122259,
+            "y": 9.259615186257108
+          }
+        ]
+      }
+    ],
+    "traces": [
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "old",
+        "connection_name": "B",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 9.190452699172521,
+            "y": 17.26574421732954,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 41.22160435245447,
+            "y": 40.525593762530754,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new",
+        "connection_name": "A",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 19.808161982245817,
+            "y": 13.686964278894926,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 27.525731337035882,
+            "y": 37.07682825768219,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 40.57461478122259,
+            "y": 9.259615186257108,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      }
+    ]
+  },
+  "input_sha256": "15f7977f724637b57fc35c879788c77e87d22fed37c0905ba140689ecf2dcfb5",
+  "native_validation_required": true,
+  "reason": "new copper crosses protected or other-net routing",
+  "parent_response_sha256": "b06f7fea508db21e4286cb82f675575e7dfe002068df688fe4c56c5ca979a7bc",
+  "discarded_backend_changes": [],
+  "changed_fields": [],
+  "selected_nets": [
+    "A"
+  ],
+  "conflicts": [
+    {
+      "type": "tracks_crossing",
+      "layer": "top",
+      "trace_ids": [
+        "old",
+        "new"
+      ],
+      "nets": [
+        "B",
+        "A"
+      ],
+      "segments": [
+        [
+          [
+            9.190452699172521,
+            17.26574421732954
+          ],
+          [
+            41.22160435245447,
+            40.525593762530754
+          ]
+        ],
+        [
+          [
+            19.808161982245817,
+            13.686964278894926
+          ],
+          [
+            27.525731337035882,
+            37.07682825768219
+          ]
+        ]
+      ]
+    },
+    {
+      "type": "tracks_crossing",
+      "layer": "top",
+      "trace_ids": [
+        "old",
+        "new"
+      ],
+      "nets": [
+        "B",
+        "A"
+      ],
+      "segments": [
+        [
+          [
+            9.190452699172521,
+            17.26574421732954
+          ],
+          [
+            41.22160435245447,
+            40.525593762530754
+          ]
+        ],
+        [
+          [
+            27.525731337035882,
+            37.07682825768219
+          ],
+          [
+            40.57461478122259,
+            9.259615186257108
+          ]
+        ]
+      ]
+    }
+  ]
+}},
+{"name": "random_scope_12", "mode": "scope", "nets": ["A"],
+"stdout": "STUCK: native/SRJ proposal step; native validation required; {\"status\": \"geometry_reject\", \"qualified\": false, \"reason\": \"new copper crosses protected or other-net routing\", \"conflicts\": 2, \"discarded_backend_changes\": 0}",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": [
+    {
+     "x": 17.439526810981114,
+     "y": 11.570333485291496
+    },
+    {
+     "x": 40.92915870571935,
+     "y": 6.781733991942245
+    }
+   ]
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "old",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 2.2548156987199635,
+     "y": 17.04425216514815,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 45.10692597139018,
+     "y": 36.752700808808534,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "candidate",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "old",
+    "connection_name": "B",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 2.2548156987199635,
+      "y": 17.04425216514815,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 45.10692597139018,
+      "y": 36.752700808808534,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 17.439526810981114,
+      "y": 11.570333485291496,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 43.8355593280101,
+      "y": 44.063561697520115,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 4.596821070926646,
+      "y": 46.97063132234413,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 42.37271263095211,
+      "y": 43.51387741114659,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 40.92915870571935,
+      "y": 6.781733991942245,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "ed29f8c8b826497434e379e6286559b3fed9429f5196d7e4d0a5faed37bb56b7"
+},
+"proposal": {
+  "status": "geometry_reject",
+  "qualified": false,
+  "output": {
+    "layerCount": 2,
+    "minTraceWidth": 0.2,
+    "minViaPadDiameter": 0.6,
+    "minViaHoleDiameter": 0.3,
+    "defaultObstacleMargin": 0.2,
+    "minBoardEdgeClearance": 0.2,
+    "allowViaInPad": false,
+    "allowJumpers": false,
+    "bounds": {
+      "minX": 0,
+      "minY": 0,
+      "maxX": 50,
+      "maxY": 50
+    },
+    "obstacles": [],
+    "connections": [
+      {
+        "name": "A",
+        "pointsToConnect": [
+          {
+            "x": 17.439526810981114,
+            "y": 11.570333485291496
+          },
+          {
+            "x": 40.92915870571935,
+            "y": 6.781733991942245
+          }
+        ]
+      }
+    ],
+    "traces": [
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "old",
+        "connection_name": "B",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 2.2548156987199635,
+            "y": 17.04425216514815,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 45.10692597139018,
+            "y": 36.752700808808534,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new",
+        "connection_name": "A",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 17.439526810981114,
+            "y": 11.570333485291496,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 43.8355593280101,
+            "y": 44.063561697520115,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 4.596821070926646,
+            "y": 46.97063132234413,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 42.37271263095211,
+            "y": 43.51387741114659,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 40.92915870571935,
+            "y": 6.781733991942245,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      }
+    ]
+  },
+  "input_sha256": "ed29f8c8b826497434e379e6286559b3fed9429f5196d7e4d0a5faed37bb56b7",
+  "native_validation_required": true,
+  "reason": "new copper crosses protected or other-net routing",
+  "parent_response_sha256": "9d2ddbdf53bec4af11db30828e9f9463efec85a87f7a0c9106a51d7a757a79d2",
+  "discarded_backend_changes": [],
+  "changed_fields": [],
+  "selected_nets": [
+    "A"
+  ],
+  "conflicts": [
+    {
+      "type": "tracks_crossing",
+      "layer": "top",
+      "trace_ids": [
+        "old",
+        "new"
+      ],
+      "nets": [
+        "B",
+        "A"
+      ],
+      "segments": [
+        [
+          [
+            2.2548156987199635,
+            17.04425216514815
+          ],
+          [
+            45.10692597139018,
+            36.752700808808534
+          ]
+        ],
+        [
+          [
+            17.439526810981114,
+            11.570333485291496
+          ],
+          [
+            43.8355593280101,
+            44.063561697520115
+          ]
+        ]
+      ]
+    },
+    {
+      "type": "tracks_crossing",
+      "layer": "top",
+      "trace_ids": [
+        "old",
+        "new"
+      ],
+      "nets": [
+        "B",
+        "A"
+      ],
+      "segments": [
+        [
+          [
+            2.2548156987199635,
+            17.04425216514815
+          ],
+          [
+            45.10692597139018,
+            36.752700808808534
+          ]
+        ],
+        [
+          [
+            42.37271263095211,
+            43.51387741114659
+          ],
+          [
+            40.92915870571935,
+            6.781733991942245
+          ]
+        ]
+      ]
+    }
+  ]
+}},
+{"name": "random_scope_14", "mode": "scope", "nets": ["A"],
+"stdout": "STUCK: native/SRJ proposal step; native validation required; {\"status\": \"geometry_reject\", \"qualified\": false, \"reason\": \"new copper crosses protected or other-net routing\", \"conflicts\": 3, \"discarded_backend_changes\": 0}",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": [
+    {
+     "x": 44.34733666961423,
+     "y": 44.30630542817819
+    },
+    {
+     "x": 12.004107599148577,
+     "y": 23.14031417162172
+    }
+   ]
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "old",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 0.700490475027119,
+     "y": 17.80987561578391,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 34.4195604344921,
+     "y": 43.38991702226453,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "candidate",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "old",
+    "connection_name": "B",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 0.700490475027119,
+      "y": 17.80987561578391,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 34.4195604344921,
+      "y": 43.38991702226453,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 44.34733666961423,
+      "y": 44.30630542817819,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 25.881449233685363,
+      "y": 47.793804666862734,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 20.903631695966997,
+      "y": 8.651146414992933,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 6.254276218011173,
+      "y": 46.830416342630244,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 46.753132840969194,
+      "y": 18.522892959659405,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 5.997059823943795,
+      "y": 6.845312538019061,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 12.004107599148577,
+      "y": 23.14031417162172,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "18faf7a7c19e8dd75e454e01eeb4c69f9449a60677831d9bf527fc302abe0b27"
+},
+"proposal": {
+  "status": "geometry_reject",
+  "qualified": false,
+  "output": {
+    "layerCount": 2,
+    "minTraceWidth": 0.2,
+    "minViaPadDiameter": 0.6,
+    "minViaHoleDiameter": 0.3,
+    "defaultObstacleMargin": 0.2,
+    "minBoardEdgeClearance": 0.2,
+    "allowViaInPad": false,
+    "allowJumpers": false,
+    "bounds": {
+      "minX": 0,
+      "minY": 0,
+      "maxX": 50,
+      "maxY": 50
+    },
+    "obstacles": [],
+    "connections": [
+      {
+        "name": "A",
+        "pointsToConnect": [
+          {
+            "x": 44.34733666961423,
+            "y": 44.30630542817819
+          },
+          {
+            "x": 12.004107599148577,
+            "y": 23.14031417162172
+          }
+        ]
+      }
+    ],
+    "traces": [
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "old",
+        "connection_name": "B",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 0.700490475027119,
+            "y": 17.80987561578391,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 34.4195604344921,
+            "y": 43.38991702226453,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new",
+        "connection_name": "A",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 44.34733666961423,
+            "y": 44.30630542817819,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 25.881449233685363,
+            "y": 47.793804666862734,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 20.903631695966997,
+            "y": 8.651146414992933,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 6.254276218011173,
+            "y": 46.830416342630244,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 46.753132840969194,
+            "y": 18.522892959659405,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 5.997059823943795,
+            "y": 6.845312538019061,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 12.004107599148577,
+            "y": 23.14031417162172,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      }
+    ]
+  },
+  "input_sha256": "18faf7a7c19e8dd75e454e01eeb4c69f9449a60677831d9bf527fc302abe0b27",
+  "native_validation_required": true,
+  "reason": "new copper crosses protected or other-net routing",
+  "parent_response_sha256": "8c64668692048bc6c7a46dc4f0ed218a78a4d31e10a8aea8b1764e57655e3fcf",
+  "discarded_backend_changes": [],
+  "changed_fields": [],
+  "selected_nets": [
+    "A"
+  ],
+  "conflicts": [
+    {
+      "type": "tracks_crossing",
+      "layer": "top",
+      "trace_ids": [
+        "old",
+        "new"
+      ],
+      "nets": [
+        "B",
+        "A"
+      ],
+      "segments": [
+        [
+          [
+            0.700490475027119,
+            17.80987561578391
+          ],
+          [
+            34.4195604344921,
+            43.38991702226453
+          ]
+        ],
+        [
+          [
+            25.881449233685363,
+            47.793804666862734
+          ],
+          [
+            20.903631695966997,
+            8.651146414992933
+          ]
+        ]
+      ]
+    },
+    {
+      "type": "tracks_crossing",
+      "layer": "top",
+      "trace_ids": [
+        "old",
+        "new"
+      ],
+      "nets": [
+        "B",
+        "A"
+      ],
+      "segments": [
+        [
+          [
+            0.700490475027119,
+            17.80987561578391
+          ],
+          [
+            34.4195604344921,
+            43.38991702226453
+          ]
+        ],
+        [
+          [
+            20.903631695966997,
+            8.651146414992933
+          ],
+          [
+            6.254276218011173,
+            46.830416342630244
+          ]
+        ]
+      ]
+    },
+    {
+      "type": "tracks_crossing",
+      "layer": "top",
+      "trace_ids": [
+        "old",
+        "new"
+      ],
+      "nets": [
+        "B",
+        "A"
+      ],
+      "segments": [
+        [
+          [
+            0.700490475027119,
+            17.80987561578391
+          ],
+          [
+            34.4195604344921,
+            43.38991702226453
+          ]
+        ],
+        [
+          [
+            6.254276218011173,
+            46.830416342630244
+          ],
+          [
+            46.753132840969194,
+            18.522892959659405
+          ]
+        ]
+      ]
+    }
+  ]
+}},
+{"name": "random_scope_2", "mode": "scope", "nets": ["A"],
+"stdout": "PASS: native/SRJ proposal step; native validation required; {\"status\": \"candidate\", \"qualified\": false, \"reason\": \"selected new routes only; original copper restored; native checks required\", \"conflicts\": 0, \"discarded_backend_changes\": 0}",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": [
+    {
+     "x": 25.048745173517965,
+     "y": 35.25357700942717
+    },
+    {
+     "x": 7.819258215753016,
+     "y": 42.68490787254875
+    }
+   ]
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "old",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 14.726870066824775,
+     "y": 2.3078084002750963,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 41.056845789336066,
+     "y": 34.464797975711896,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "candidate",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "old",
+    "connection_name": "B",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 14.726870066824775,
+      "y": 2.3078084002750963,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 41.056845789336066,
+      "y": 34.464797975711896,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 25.048745173517965,
+      "y": 35.25357700942717,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 29.596820605731022,
+      "y": 35.77355648659801,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 21.47477889967839,
+      "y": 10.792299989979854,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 5.038331212028083,
+      "y": 32.27129258134928,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 7.819258215753016,
+      "y": 42.68490787254875,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "02a1f30a500ec2fbcf247fef43e76c9ff6a13b4e8f4239550346e83a0ddf8d67"
+},
+"proposal": {
+  "status": "candidate",
+  "qualified": false,
+  "output": {
+    "layerCount": 2,
+    "minTraceWidth": 0.2,
+    "minViaPadDiameter": 0.6,
+    "minViaHoleDiameter": 0.3,
+    "defaultObstacleMargin": 0.2,
+    "minBoardEdgeClearance": 0.2,
+    "allowViaInPad": false,
+    "allowJumpers": false,
+    "bounds": {
+      "minX": 0,
+      "minY": 0,
+      "maxX": 50,
+      "maxY": 50
+    },
+    "obstacles": [],
+    "connections": [
+      {
+        "name": "A",
+        "pointsToConnect": [
+          {
+            "x": 25.048745173517965,
+            "y": 35.25357700942717
+          },
+          {
+            "x": 7.819258215753016,
+            "y": 42.68490787254875
+          }
+        ]
+      }
+    ],
+    "traces": [
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "old",
+        "connection_name": "B",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 14.726870066824775,
+            "y": 2.3078084002750963,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 41.056845789336066,
+            "y": 34.464797975711896,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new",
+        "connection_name": "A",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 25.048745173517965,
+            "y": 35.25357700942717,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 29.596820605731022,
+            "y": 35.77355648659801,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 21.47477889967839,
+            "y": 10.792299989979854,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 5.038331212028083,
+            "y": 32.27129258134928,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 7.819258215753016,
+            "y": 42.68490787254875,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      }
+    ]
+  },
+  "input_sha256": "02a1f30a500ec2fbcf247fef43e76c9ff6a13b4e8f4239550346e83a0ddf8d67",
+  "native_validation_required": true,
+  "reason": "selected new routes only; original copper restored; native checks required",
+  "parent_response_sha256": "caddb6771589dc6b9c5c0d0b68cd7e7281243fdb78cedfc0ac920ea3a860fe9e",
+  "discarded_backend_changes": [],
+  "changed_fields": [],
+  "selected_nets": [
+    "A"
+  ]
+}},
+{"name": "random_scope_4", "mode": "scope", "nets": ["A"],
+"stdout": "STUCK: native/SRJ proposal step; native validation required; {\"status\": \"geometry_reject\", \"qualified\": false, \"reason\": \"new copper crosses protected or other-net routing\", \"conflicts\": 3, \"discarded_backend_changes\": 0}",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": [
+    {
+     "x": 28.27178431780626,
+     "y": 14.551266199234531
+    },
+    {
+     "x": 22.85838032740093,
+     "y": 40.57690145381582
+    }
+   ]
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "old",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 4.054517747859712,
+     "y": 3.8029009121483663,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 39.82606769065655,
+     "y": 39.992299084548044,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "candidate",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "old",
+    "connection_name": "B",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 4.054517747859712,
+      "y": 3.8029009121483663,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 39.82606769065655,
+      "y": 39.992299084548044,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 28.27178431780626,
+      "y": 14.551266199234531,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 24.459127913442966,
+      "y": 46.34867145696128,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 21.464190015319822,
+      "y": 27.480518829766904,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 4.06407022572312,
+      "y": 43.77566715040042,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 39.04581238564375,
+      "y": 21.93143344853606,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 4.9206731333027935,
+      "y": 32.7609846139145,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 22.85838032740093,
+      "y": 40.57690145381582,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "1b3e7b2cf03baa1b6a198c3ca1eb36d3ea7a04a4ab63cccd2f847deffd988d3f"
+},
+"proposal": {
+  "status": "geometry_reject",
+  "qualified": false,
+  "output": {
+    "layerCount": 2,
+    "minTraceWidth": 0.2,
+    "minViaPadDiameter": 0.6,
+    "minViaHoleDiameter": 0.3,
+    "defaultObstacleMargin": 0.2,
+    "minBoardEdgeClearance": 0.2,
+    "allowViaInPad": false,
+    "allowJumpers": false,
+    "bounds": {
+      "minX": 0,
+      "minY": 0,
+      "maxX": 50,
+      "maxY": 50
+    },
+    "obstacles": [],
+    "connections": [
+      {
+        "name": "A",
+        "pointsToConnect": [
+          {
+            "x": 28.27178431780626,
+            "y": 14.551266199234531
+          },
+          {
+            "x": 22.85838032740093,
+            "y": 40.57690145381582
+          }
+        ]
+      }
+    ],
+    "traces": [
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "old",
+        "connection_name": "B",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 4.054517747859712,
+            "y": 3.8029009121483663,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 39.82606769065655,
+            "y": 39.992299084548044,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new",
+        "connection_name": "A",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 28.27178431780626,
+            "y": 14.551266199234531,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 24.459127913442966,
+            "y": 46.34867145696128,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 21.464190015319822,
+            "y": 27.480518829766904,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 4.06407022572312,
+            "y": 43.77566715040042,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 39.04581238564375,
+            "y": 21.93143344853606,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 4.9206731333027935,
+            "y": 32.7609846139145,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 22.85838032740093,
+            "y": 40.57690145381582,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      }
+    ]
+  },
+  "input_sha256": "1b3e7b2cf03baa1b6a198c3ca1eb36d3ea7a04a4ab63cccd2f847deffd988d3f",
+  "native_validation_required": true,
+  "reason": "new copper crosses protected or other-net routing",
+  "parent_response_sha256": "d099c864b8f93a35b87ea981af884b9f9ef18365902ddf65594ace35335be539",
+  "discarded_backend_changes": [],
+  "changed_fields": [],
+  "selected_nets": [
+    "A"
+  ],
+  "conflicts": [
+    {
+      "type": "tracks_crossing",
+      "layer": "top",
+      "trace_ids": [
+        "old",
+        "new"
+      ],
+      "nets": [
+        "B",
+        "A"
+      ],
+      "segments": [
+        [
+          [
+            4.054517747859712,
+            3.8029009121483663
+          ],
+          [
+            39.82606769065655,
+            39.992299084548044
+          ]
+        ],
+        [
+          [
+            28.27178431780626,
+            14.551266199234531
+          ],
+          [
+            24.459127913442966,
+            46.34867145696128
+          ]
+        ]
+      ]
+    },
+    {
+      "type": "tracks_crossing",
+      "layer": "top",
+      "trace_ids": [
+        "old",
+        "new"
+      ],
+      "nets": [
+        "B",
+        "A"
+      ],
+      "segments": [
+        [
+          [
+            4.054517747859712,
+            3.8029009121483663
+          ],
+          [
+            39.82606769065655,
+            39.992299084548044
+          ]
+        ],
+        [
+          [
+            4.06407022572312,
+            43.77566715040042
+          ],
+          [
+            39.04581238564375,
+            21.93143344853606
+          ]
+        ]
+      ]
+    },
+    {
+      "type": "tracks_crossing",
+      "layer": "top",
+      "trace_ids": [
+        "old",
+        "new"
+      ],
+      "nets": [
+        "B",
+        "A"
+      ],
+      "segments": [
+        [
+          [
+            4.054517747859712,
+            3.8029009121483663
+          ],
+          [
+            39.82606769065655,
+            39.992299084548044
+          ]
+        ],
+        [
+          [
+            39.04581238564375,
+            21.93143344853606
+          ],
+          [
+            4.9206731333027935,
+            32.7609846139145
+          ]
+        ]
+      ]
+    }
+  ]
+}},
+{"name": "random_scope_6", "mode": "scope", "nets": ["A"],
+"stdout": "STUCK: native/SRJ proposal step; native validation required; {\"status\": \"geometry_reject\", \"qualified\": false, \"reason\": \"new copper crosses protected or other-net routing\", \"conflicts\": 3, \"discarded_backend_changes\": 0}",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": [
+    {
+     "x": 44.99457742785783,
+     "y": 19.880880364161396
+    },
+    {
+     "x": 4.716928960157991,
+     "y": 29.720472289119137
+    }
+   ]
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "old",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 1.4777016646590557,
+     "y": 13.753922588077339,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 37.425661090493975,
+     "y": 43.74775887175824,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "candidate",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "old",
+    "connection_name": "B",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 1.4777016646590557,
+      "y": 13.753922588077339,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 37.425661090493975,
+      "y": 43.74775887175824,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 44.99457742785783,
+      "y": 19.880880364161396,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 6.685167314803771,
+      "y": 24.85440010896623,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 11.83009839515672,
+      "y": 15.854402250542492,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 4.716928960157991,
+      "y": 29.720472289119137,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "3d6fe71955d7106379743adcd6a897c2db71d9faf174370ddca890c5346d8d72"
+},
+"proposal": {
+  "status": "geometry_reject",
+  "qualified": false,
+  "output": {
+    "layerCount": 2,
+    "minTraceWidth": 0.2,
+    "minViaPadDiameter": 0.6,
+    "minViaHoleDiameter": 0.3,
+    "defaultObstacleMargin": 0.2,
+    "minBoardEdgeClearance": 0.2,
+    "allowViaInPad": false,
+    "allowJumpers": false,
+    "bounds": {
+      "minX": 0,
+      "minY": 0,
+      "maxX": 50,
+      "maxY": 50
+    },
+    "obstacles": [],
+    "connections": [
+      {
+        "name": "A",
+        "pointsToConnect": [
+          {
+            "x": 44.99457742785783,
+            "y": 19.880880364161396
+          },
+          {
+            "x": 4.716928960157991,
+            "y": 29.720472289119137
+          }
+        ]
+      }
+    ],
+    "traces": [
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "old",
+        "connection_name": "B",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 1.4777016646590557,
+            "y": 13.753922588077339,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 37.425661090493975,
+            "y": 43.74775887175824,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new",
+        "connection_name": "A",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 44.99457742785783,
+            "y": 19.880880364161396,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 6.685167314803771,
+            "y": 24.85440010896623,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 11.83009839515672,
+            "y": 15.854402250542492,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 4.716928960157991,
+            "y": 29.720472289119137,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      }
+    ]
+  },
+  "input_sha256": "3d6fe71955d7106379743adcd6a897c2db71d9faf174370ddca890c5346d8d72",
+  "native_validation_required": true,
+  "reason": "new copper crosses protected or other-net routing",
+  "parent_response_sha256": "fd017c9c5205cded4337dba4e950c524a7a3abcbf7479310bf3c6d2063551d7d",
+  "discarded_backend_changes": [],
+  "changed_fields": [],
+  "selected_nets": [
+    "A"
+  ],
+  "conflicts": [
+    {
+      "type": "tracks_crossing",
+      "layer": "top",
+      "trace_ids": [
+        "old",
+        "new"
+      ],
+      "nets": [
+        "B",
+        "A"
+      ],
+      "segments": [
+        [
+          [
+            1.4777016646590557,
+            13.753922588077339
+          ],
+          [
+            37.425661090493975,
+            43.74775887175824
+          ]
+        ],
+        [
+          [
+            44.99457742785783,
+            19.880880364161396
+          ],
+          [
+            6.685167314803771,
+            24.85440010896623
+          ]
+        ]
+      ]
+    },
+    {
+      "type": "tracks_crossing",
+      "layer": "top",
+      "trace_ids": [
+        "old",
+        "new"
+      ],
+      "nets": [
+        "B",
+        "A"
+      ],
+      "segments": [
+        [
+          [
+            1.4777016646590557,
+            13.753922588077339
+          ],
+          [
+            37.425661090493975,
+            43.74775887175824
+          ]
+        ],
+        [
+          [
+            6.685167314803771,
+            24.85440010896623
+          ],
+          [
+            11.83009839515672,
+            15.854402250542492
+          ]
+        ]
+      ]
+    },
+    {
+      "type": "tracks_crossing",
+      "layer": "top",
+      "trace_ids": [
+        "old",
+        "new"
+      ],
+      "nets": [
+        "B",
+        "A"
+      ],
+      "segments": [
+        [
+          [
+            1.4777016646590557,
+            13.753922588077339
+          ],
+          [
+            37.425661090493975,
+            43.74775887175824
+          ]
+        ],
+        [
+          [
+            11.83009839515672,
+            15.854402250542492
+          ],
+          [
+            4.716928960157991,
+            29.720472289119137
+          ]
+        ]
+      ]
+    }
+  ]
+}},
+{"name": "random_scope_8", "mode": "scope", "nets": ["A"],
+"stdout": "STUCK: native/SRJ proposal step; native validation required; {\"status\": \"geometry_reject\", \"qualified\": false, \"reason\": \"new copper crosses protected or other-net routing\", \"conflicts\": 1, \"discarded_backend_changes\": 0}",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": [
+    {
+     "x": 43.99253227281968,
+     "y": 19.63281203137376
+    },
+    {
+     "x": 31.210476650488786,
+     "y": 40.52095200425058
+    }
+   ]
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "old",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 0.3519749643057468,
+     "y": 18.78897004704409,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 45.10665179002409,
+     "y": 33.43546152274844,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "candidate",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "old",
+    "connection_name": "B",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 0.3519749643057468,
+      "y": 18.78897004704409,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 45.10665179002409,
+      "y": 33.43546152274844,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 43.99253227281968,
+      "y": 19.63281203137376,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 15.77975226090278,
+      "y": 47.14877655224352,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 5.299180509196213,
+      "y": 44.20981689272905,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 24.095185051716484,
+      "y": 28.31158996853586,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 20.948065528156267,
+      "y": 41.8429448790117,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 31.210476650488786,
+      "y": 40.52095200425058,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "32423fbc5179e79db3582c08e152b5fb95a3437e76d06be14041e23957aa4a11"
+},
+"proposal": {
+  "status": "geometry_reject",
+  "qualified": false,
+  "output": {
+    "layerCount": 2,
+    "minTraceWidth": 0.2,
+    "minViaPadDiameter": 0.6,
+    "minViaHoleDiameter": 0.3,
+    "defaultObstacleMargin": 0.2,
+    "minBoardEdgeClearance": 0.2,
+    "allowViaInPad": false,
+    "allowJumpers": false,
+    "bounds": {
+      "minX": 0,
+      "minY": 0,
+      "maxX": 50,
+      "maxY": 50
+    },
+    "obstacles": [],
+    "connections": [
+      {
+        "name": "A",
+        "pointsToConnect": [
+          {
+            "x": 43.99253227281968,
+            "y": 19.63281203137376
+          },
+          {
+            "x": 31.210476650488786,
+            "y": 40.52095200425058
+          }
+        ]
+      }
+    ],
+    "traces": [
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "old",
+        "connection_name": "B",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 0.3519749643057468,
+            "y": 18.78897004704409,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 45.10665179002409,
+            "y": 33.43546152274844,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new",
+        "connection_name": "A",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 43.99253227281968,
+            "y": 19.63281203137376,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 15.77975226090278,
+            "y": 47.14877655224352,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 5.299180509196213,
+            "y": 44.20981689272905,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 24.095185051716484,
+            "y": 28.31158996853586,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 20.948065528156267,
+            "y": 41.8429448790117,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 31.210476650488786,
+            "y": 40.52095200425058,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      }
+    ]
+  },
+  "input_sha256": "32423fbc5179e79db3582c08e152b5fb95a3437e76d06be14041e23957aa4a11",
+  "native_validation_required": true,
+  "reason": "new copper crosses protected or other-net routing",
+  "parent_response_sha256": "5a2b1ded8fa0edee63f9d394f657060e2b6e37bfa817aaca5ceebeaaac642540",
+  "discarded_backend_changes": [],
+  "changed_fields": [],
+  "selected_nets": [
+    "A"
+  ],
+  "conflicts": [
+    {
+      "type": "tracks_crossing",
+      "layer": "top",
+      "trace_ids": [
+        "old",
+        "new"
+      ],
+      "nets": [
+        "B",
+        "A"
+      ],
+      "segments": [
+        [
+          [
+            0.3519749643057468,
+            18.78897004704409
+          ],
+          [
+            45.10665179002409,
+            33.43546152274844
+          ]
+        ],
+        [
+          [
+            43.99253227281968,
+            19.63281203137376
+          ],
+          [
+            15.77975226090278,
+            47.14877655224352
+          ]
+        ]
+      ]
+    }
+  ]
+}},
+{"name": "refused_model_edit", "mode": "scope", "nets": ["A"],
+"stdout": "STUCK: solver changed non-copper model fields",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": []
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "old",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 0,
+     "y": 0,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 40,
+     "y": 40,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "candidate",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 0,
+      "y": 45,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 40,
+      "y": 45,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "changed_fields": [
+  "bounds"
+ ],
+ "input_sha256": "54059487cbcd3b0e8861031efc9f38d46c4b884f0320c1a868c5ff43ca1d98e3"
+},
+"proposal": null},
+{"name": "refused_no_new_copper", "mode": "scope", "nets": ["A"],
+"stdout": "STUCK: new copper outside requested nets or no new copper",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": []
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "old",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 0,
+     "y": 0,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 40,
+     "y": 40,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "candidate",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "old",
+    "connection_name": "B",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 0,
+      "y": 0,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 40,
+      "y": 40,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "54059487cbcd3b0e8861031efc9f38d46c4b884f0320c1a868c5ff43ca1d98e3"
+},
+"proposal": null},
+{"name": "refused_other_net", "mode": "scope", "nets": ["A"],
+"stdout": "STUCK: new copper outside requested nets or no new copper",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": []
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "old",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 0,
+     "y": 0,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 40,
+     "y": 40,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "candidate",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new",
+    "connection_name": "Z",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 0,
+      "y": 45,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 40,
+      "y": 45,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "54059487cbcd3b0e8861031efc9f38d46c4b884f0320c1a868c5ff43ca1d98e3"
+},
+"proposal": null},
+{"name": "refused_qualified", "mode": "scope", "nets": ["A"],
+"stdout": "STUCK: no completed matching route proposal to restrict",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": []
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "old",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 0,
+     "y": 0,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 40,
+     "y": 40,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "candidate",
+ "qualified": true,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 0,
+      "y": 45,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 40,
+      "y": 45,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "54059487cbcd3b0e8861031efc9f38d46c4b884f0320c1a868c5ff43ca1d98e3"
+},
+"proposal": null},
+{"name": "refused_repair_of_candidate", "mode": "repair", "nets": ["A"],
+"stdout": "STUCK: matching rejected proposal required for local repair",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": []
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "old",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 0,
+     "y": 0,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 40,
+     "y": 40,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "candidate",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "old",
+    "connection_name": "B",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 0,
+      "y": 0,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 40,
+      "y": 40,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 0,
+      "y": 30,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 35,
+      "y": 2,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 6,
+      "y": 20,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 46,
+      "y": 20,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "54059487cbcd3b0e8861031efc9f38d46c4b884f0320c1a868c5ff43ca1d98e3"
+},
+"proposal": null},
+{"name": "refused_wrong_hash", "mode": "scope", "nets": ["A"],
+"stdout": "STUCK: no completed matching route proposal to restrict",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": []
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "old",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 0,
+     "y": 0,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 40,
+     "y": 40,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "candidate",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 0,
+      "y": 45,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 40,
+      "y": 45,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+},
+"proposal": null},
+{"name": "repair_mixed_width_kept", "mode": "repair", "nets": ["A"],
+"stdout": "STUCK: native/SRJ proposal step; native validation required; {\"status\": \"geometry_reject\", \"qualified\": false, \"reason\": \"no single safe-to-test waypoint shortcut; original proposal retained\", \"conflicts\": 0, \"discarded_backend_changes\": 0}",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": [
+    {
+     "x": 10,
+     "y": 10
+    },
+    {
+     "x": 10,
+     "y": 14
+    }
+   ]
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "wall",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 20,
+     "y": 0,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 20,
+     "y": 25,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "geometry_reject",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "wall",
+    "connection_name": "B",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 20,
+      "y": 0,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 20,
+      "y": 25,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "spike",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 10,
+      "y": 10,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 30,
+      "y": 12,
+      "layer": "top",
+      "width": 0.3
+     },
+     {
+      "route_type": "wire",
+      "x": 10,
+      "y": 14,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "4bb6ce67dfc2abb190f1771781ef398beee9bf272bbc036be4ee53a1559a10d3"
+},
+"proposal": {
+  "status": "geometry_reject",
+  "qualified": false,
+  "output": {
+    "traces": [
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "wall",
+        "connection_name": "B",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 20,
+            "y": 0,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 20,
+            "y": 25,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "spike",
+        "connection_name": "A",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 10,
+            "y": 10,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 30,
+            "y": 12,
+            "layer": "top",
+            "width": 0.3
+          },
+          {
+            "route_type": "wire",
+            "x": 10,
+            "y": 14,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      }
+    ]
+  },
+  "input_sha256": "4bb6ce67dfc2abb190f1771781ef398beee9bf272bbc036be4ee53a1559a10d3",
+  "parent_response_sha256": "3284a662546b03af5340b9f6ba59e08ed706e7e689ecb8d4e3404823e352509c",
+  "repair": {
+    "strategy": "one_waypoint_crossing_shortcut",
+    "attempts": 0,
+    "edits": [],
+    "elapsed_s": 8.254218846559525e-05
+  },
+  "reason": "no single safe-to-test waypoint shortcut; original proposal retained"
+}},
+{"name": "repair_no_change_possible", "mode": "repair", "nets": ["A"],
+"stdout": "STUCK: native/SRJ proposal step; native validation required; {\"status\": \"geometry_reject\", \"qualified\": false, \"reason\": \"no single safe-to-test waypoint shortcut; original proposal retained\", \"conflicts\": 0, \"discarded_backend_changes\": 0}",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": [
+    {
+     "x": 0,
+     "y": 40
+    },
+    {
+     "x": 40,
+     "y": 0
+    }
+   ]
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "old",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 0,
+     "y": 0,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 40,
+     "y": 40,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "geometry_reject",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "old",
+    "connection_name": "B",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 0,
+      "y": 0,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 40,
+      "y": 40,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 0,
+      "y": 40,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 40,
+      "y": 0,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "9b177fa4b77ce663316c447275fcc6b2556b6c224a1f1584e0204ff54c95c6b8"
+},
+"proposal": {
+  "status": "geometry_reject",
+  "qualified": false,
+  "output": {
+    "traces": [
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "old",
+        "connection_name": "B",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 0,
+            "y": 0,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 40,
+            "y": 40,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new",
+        "connection_name": "A",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 0,
+            "y": 40,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 40,
+            "y": 0,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      }
+    ]
+  },
+  "input_sha256": "9b177fa4b77ce663316c447275fcc6b2556b6c224a1f1584e0204ff54c95c6b8",
+  "parent_response_sha256": "61c7097abbdf4daa6a40893bc1508d4f686283defa2e6356972f7ee8a9d966d0",
+  "repair": {
+    "strategy": "one_waypoint_crossing_shortcut",
+    "attempts": 0,
+    "edits": [],
+    "elapsed_s": 7.210485637187958e-05
+  },
+  "reason": "no single safe-to-test waypoint shortcut; original proposal retained"
+}},
+{"name": "repair_port_waypoint_kept", "mode": "repair", "nets": ["A"],
+"stdout": "STUCK: native/SRJ proposal step; native validation required; {\"status\": \"geometry_reject\", \"qualified\": false, \"reason\": \"no single safe-to-test waypoint shortcut; original proposal retained\", \"conflicts\": 0, \"discarded_backend_changes\": 0}",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": [
+    {
+     "x": 10,
+     "y": 10
+    },
+    {
+     "x": 10,
+     "y": 14
+    }
+   ]
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "wall",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 20,
+     "y": 0,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 20,
+     "y": 25,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "geometry_reject",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "wall",
+    "connection_name": "B",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 20,
+      "y": 0,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 20,
+      "y": 25,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "spike",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 10,
+      "y": 10,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 30,
+      "y": 12,
+      "layer": "top",
+      "width": 0.2,
+      "start_pcb_port_id": "p1"
+     },
+     {
+      "route_type": "wire",
+      "x": 10,
+      "y": 14,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "4bb6ce67dfc2abb190f1771781ef398beee9bf272bbc036be4ee53a1559a10d3"
+},
+"proposal": {
+  "status": "geometry_reject",
+  "qualified": false,
+  "output": {
+    "traces": [
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "wall",
+        "connection_name": "B",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 20,
+            "y": 0,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 20,
+            "y": 25,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "spike",
+        "connection_name": "A",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 10,
+            "y": 10,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 30,
+            "y": 12,
+            "layer": "top",
+            "width": 0.2,
+            "start_pcb_port_id": "p1"
+          },
+          {
+            "route_type": "wire",
+            "x": 10,
+            "y": 14,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      }
+    ]
+  },
+  "input_sha256": "4bb6ce67dfc2abb190f1771781ef398beee9bf272bbc036be4ee53a1559a10d3",
+  "parent_response_sha256": "6db8144d2ff118c1f32f6b36457a568325efb50ed3a8a9a3860913edf7f10933",
+  "repair": {
+    "strategy": "one_waypoint_crossing_shortcut",
+    "attempts": 0,
+    "edits": [],
+    "elapsed_s": 8.197315037250519e-05
+  },
+  "reason": "no single safe-to-test waypoint shortcut; original proposal retained"
+}},
+{"name": "repair_shortcut", "mode": "repair", "nets": ["A"],
+"stdout": "STUCK: native/SRJ proposal step; native validation required; {\"status\": \"geometry_reject\", \"qualified\": false, \"reason\": \"no single safe-to-test waypoint shortcut; original proposal retained\", \"conflicts\": 0, \"discarded_backend_changes\": 0}",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": [
+    {
+     "x": 0,
+     "y": 30
+    },
+    {
+     "x": 46,
+     "y": 20
+    }
+   ]
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "old",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 0,
+     "y": 0,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 40,
+     "y": 40,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "geometry_reject",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "old",
+    "connection_name": "B",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 0,
+      "y": 0,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 40,
+      "y": 40,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 0,
+      "y": 30,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 35,
+      "y": 2,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 6,
+      "y": 20,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 46,
+      "y": 20,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "946829d4ea1df68abba8053c3bd40f241e96201b8090d5a5a999fba9bc9530e5"
+},
+"proposal": {
+  "status": "geometry_reject",
+  "qualified": false,
+  "output": {
+    "traces": [
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "old",
+        "connection_name": "B",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 0,
+            "y": 0,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 40,
+            "y": 40,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new",
+        "connection_name": "A",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 0,
+            "y": 30,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 35,
+            "y": 2,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 6,
+            "y": 20,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 46,
+            "y": 20,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      }
+    ]
+  },
+  "input_sha256": "946829d4ea1df68abba8053c3bd40f241e96201b8090d5a5a999fba9bc9530e5",
+  "parent_response_sha256": "8513e83759bc7c8dccd5d5655e391d47cd54b95cc8330a07421bf7b34a1e0ca0",
+  "repair": {
+    "strategy": "one_waypoint_crossing_shortcut",
+    "attempts": 2,
+    "edits": [],
+    "elapsed_s": 0.00010004173964262009
+  },
+  "reason": "no single safe-to-test waypoint shortcut; original proposal retained"
+}},
+{"name": "repair_success_cip839", "mode": "repair", "nets": ["A"],
+"stdout": "PASS: native/SRJ proposal step; native validation required; {\"status\": \"candidate\", \"qualified\": false, \"reason\": \"local shortcut proposal; full native checks required\", \"conflicts\": 0, \"discarded_backend_changes\": 0}",
+"srj": {
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "134c5847-3003-48df-952f-b47d37bac1f3",
+   "connection_name": "/SCL",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 118.8453,
+     "y": 122.5076,
+     "layer": "bottom",
+     "width": 0.15
+    },
+    {
+     "route_type": "wire",
+     "x": 115.5582,
+     "y": 119.2204,
+     "layer": "bottom",
+     "width": 0.15
+    }
+   ]
+  }
+ ],
+ "connections": [
+  {
+   "name": "/V_GAS",
+   "pointsToConnect": [
+    {
+     "route_type": "wire",
+     "x": 115.73646838518003,
+     "y": 122.50776751596503,
+     "layer": "bottom",
+     "width": 0.25
+    },
+    {
+     "route_type": "wire",
+     "x": 116.15356072650107,
+     "y": 121.72155178294548,
+     "layer": "bottom",
+     "width": 0.25
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "geometry_reject",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "134c5847-3003-48df-952f-b47d37bac1f3",
+    "connection_name": "/SCL",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 118.8453,
+      "y": 122.5076,
+      "layer": "bottom",
+      "width": 0.15
+     },
+     {
+      "route_type": "wire",
+      "x": 115.5582,
+      "y": 119.2204,
+      "layer": "bottom",
+      "width": 0.15
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "/V_GAS_mst1_0",
+    "connection_name": "/V_GAS",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 115.73646838518003,
+      "y": 122.50776751596503,
+      "layer": "bottom",
+      "width": 0.25
+     },
+     {
+      "route_type": "wire",
+      "x": 117.8413322766497,
+      "y": 120.95757653371493,
+      "layer": "bottom",
+      "width": 0.25
+     },
+     {
+      "route_type": "wire",
+      "x": 116.15356072650107,
+      "y": 121.72155178294548,
+      "layer": "bottom",
+      "width": 0.25
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "710d8e98f2c6c88f5a40d4bf5f230a520b3847c67445d0d65e74e6b26ae68c26"
+},
+"proposal": {
+  "status": "candidate",
+  "qualified": false,
+  "output": {
+    "traces": [
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "134c5847-3003-48df-952f-b47d37bac1f3",
+        "connection_name": "/SCL",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 118.8453,
+            "y": 122.5076,
+            "layer": "bottom",
+            "width": 0.15
+          },
+          {
+            "route_type": "wire",
+            "x": 115.5582,
+            "y": 119.2204,
+            "layer": "bottom",
+            "width": 0.15
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "/V_GAS_mst1_0",
+        "connection_name": "/V_GAS",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 115.73646838518003,
+            "y": 122.50776751596503,
+            "layer": "bottom",
+            "width": 0.25
+          },
+          {
+            "route_type": "wire",
+            "x": 116.15356072650107,
+            "y": 121.72155178294548,
+            "layer": "bottom",
+            "width": 0.25
+          }
+        ]
+      }
+    ]
+  },
+  "input_sha256": "710d8e98f2c6c88f5a40d4bf5f230a520b3847c67445d0d65e74e6b26ae68c26",
+  "parent_response_sha256": "30c066dccfa444497d7f27257a19bf473a4e5878353149d1d7d8b8f9ffb4e010",
+  "repair": {
+    "strategy": "one_waypoint_crossing_shortcut",
+    "attempts": 1,
+    "edits": [
+      {
+        "trace_id": "/V_GAS_mst1_0",
+        "removed_waypoint": {
+          "route_type": "wire",
+          "x": 117.8413322766497,
+          "y": 120.95757653371493,
+          "layer": "bottom",
+          "width": 0.25
+        }
+      }
+    ],
+    "elapsed_s": 9.458791464567184e-05
+  },
+  "native_validation_required": true,
+  "conflicts": [],
+  "reason": "local shortcut proposal; full native checks required"
+}},
+{"name": "repair_success_literal_floats", "mode": "repair", "nets": ["A"],
+"stdout": "PASS: native/SRJ proposal step; native validation required; {\"status\": \"candidate\", \"qualified\": false, \"reason\": \"local shortcut proposal; full native checks required\", \"conflicts\": 0, \"discarded_backend_changes\": 0}",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": [
+    {
+     "x": 10.0,
+     "y": 10.0
+    },
+    {
+     "x": 11.0,
+     "y": 14.0
+    }
+   ]
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "wall",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 20,
+     "y": 0,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 20,
+     "y": 25,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "geometry_reject",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "wall",
+    "connection_name": "B",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 20,
+      "y": 0,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 20,
+      "y": 25,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "spike",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 10.0,
+      "y": 10.0,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 30.0,
+      "y": 12.0,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 11.0,
+      "y": 14.0,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "17c7015d784ace57bf0d234a1877daa05059c5cd3b05805a19d46a1e0ded7f14"
+},
+"proposal": {
+  "status": "candidate",
+  "qualified": false,
+  "output": {
+    "traces": [
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "wall",
+        "connection_name": "B",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 20,
+            "y": 0,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 20,
+            "y": 25,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "spike",
+        "connection_name": "A",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 10.0,
+            "y": 10.0,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 11.0,
+            "y": 14.0,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      }
+    ]
+  },
+  "input_sha256": "17c7015d784ace57bf0d234a1877daa05059c5cd3b05805a19d46a1e0ded7f14",
+  "parent_response_sha256": "1f05e03b04cd9f0d881404326b4f5c4836c8dbe582fdb72ea73a3bfc3cecec90",
+  "repair": {
+    "strategy": "one_waypoint_crossing_shortcut",
+    "attempts": 1,
+    "edits": [
+      {
+        "trace_id": "spike",
+        "removed_waypoint": {
+          "route_type": "wire",
+          "x": 30.0,
+          "y": 12.0,
+          "layer": "top",
+          "width": 0.2
+        }
+      }
+    ],
+    "elapsed_s": 9.544100612401962e-05
+  },
+  "native_validation_required": true,
+  "conflicts": [],
+  "reason": "local shortcut proposal; full native checks required"
+}},
+{"name": "repair_success_second_try", "mode": "repair", "nets": ["A"],
+"stdout": "PASS: native/SRJ proposal step; native validation required; {\"status\": \"candidate\", \"qualified\": false, \"reason\": \"local shortcut proposal; full native checks required\", \"conflicts\": 0, \"discarded_backend_changes\": 0}",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": [
+    {
+     "x": 10,
+     "y": 10
+    },
+    {
+     "x": 10,
+     "y": 14
+    }
+   ]
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "wall",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 20,
+     "y": 0,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 20,
+     "y": 25,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "geometry_reject",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "wall",
+    "connection_name": "B",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 20,
+      "y": 0,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 20,
+      "y": 25,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "spike",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 10,
+      "y": 10,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 12,
+      "y": 10,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 30,
+      "y": 12,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 12,
+      "y": 14,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 10,
+      "y": 14,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "4bb6ce67dfc2abb190f1771781ef398beee9bf272bbc036be4ee53a1559a10d3"
+},
+"proposal": {
+  "status": "candidate",
+  "qualified": false,
+  "output": {
+    "traces": [
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "wall",
+        "connection_name": "B",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 20,
+            "y": 0,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 20,
+            "y": 25,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "spike",
+        "connection_name": "A",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 10,
+            "y": 10,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 12,
+            "y": 10,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 12,
+            "y": 14,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 10,
+            "y": 14,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      }
+    ]
+  },
+  "input_sha256": "4bb6ce67dfc2abb190f1771781ef398beee9bf272bbc036be4ee53a1559a10d3",
+  "parent_response_sha256": "838a16b9fcf38d4c4a9cccd78cb98c54cdeb5b0d81acc4704d4436552f72a4f0",
+  "repair": {
+    "strategy": "one_waypoint_crossing_shortcut",
+    "attempts": 2,
+    "edits": [
+      {
+        "trace_id": "spike",
+        "removed_waypoint": {
+          "route_type": "wire",
+          "x": 30,
+          "y": 12,
+          "layer": "top",
+          "width": 0.2
+        }
+      }
+    ],
+    "elapsed_s": 9.975675493478775e-05
+  },
+  "native_validation_required": true,
+  "conflicts": [],
+  "reason": "local shortcut proposal; full native checks required"
+}},
+{"name": "repair_terminal_kept", "mode": "repair", "nets": ["A"],
+"stdout": "STUCK: native/SRJ proposal step; native validation required; {\"status\": \"geometry_reject\", \"qualified\": false, \"reason\": \"no single safe-to-test waypoint shortcut; original proposal retained\", \"conflicts\": 0, \"discarded_backend_changes\": 0}",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": [
+    {
+     "x": 0,
+     "y": 30
+    },
+    {
+     "x": 35,
+     "y": 2
+    },
+    {
+     "x": 46,
+     "y": 20
+    }
+   ]
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "old",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 0,
+     "y": 0,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 40,
+     "y": 40,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "geometry_reject",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "old",
+    "connection_name": "B",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 0,
+      "y": 0,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 40,
+      "y": 40,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 0,
+      "y": 30,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 35,
+      "y": 2,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 6,
+      "y": 20,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 46,
+      "y": 20,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "726e784da6c4a333f346e0ae7191f41d2c30aad13733894a019c7e387f5df14c"
+},
+"proposal": {
+  "status": "geometry_reject",
+  "qualified": false,
+  "output": {
+    "traces": [
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "old",
+        "connection_name": "B",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 0,
+            "y": 0,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 40,
+            "y": 40,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new",
+        "connection_name": "A",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 0,
+            "y": 30,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 35,
+            "y": 2,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 6,
+            "y": 20,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 46,
+            "y": 20,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      }
+    ]
+  },
+  "input_sha256": "726e784da6c4a333f346e0ae7191f41d2c30aad13733894a019c7e387f5df14c",
+  "parent_response_sha256": "7c015cf14d392b35d393c29ecef649f0745d97e2fe397652e47020753bc918a8",
+  "repair": {
+    "strategy": "one_waypoint_crossing_shortcut",
+    "attempts": 1,
+    "edits": [],
+    "elapsed_s": 9.252596646547318e-05
+  },
+  "reason": "no single safe-to-test waypoint shortcut; original proposal retained"
+}},
+{"name": "scope_clean", "mode": "scope", "nets": ["A"],
+"stdout": "PASS: native/SRJ proposal step; native validation required; {\"status\": \"candidate\", \"qualified\": false, \"reason\": \"selected new routes only; original copper restored; native checks required\", \"conflicts\": 0, \"discarded_backend_changes\": 0}",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": []
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "old",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 0,
+     "y": 0,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 40,
+     "y": 40,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "candidate",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "old",
+    "connection_name": "B",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 0,
+      "y": 0,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 40,
+      "y": 40,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 0,
+      "y": 45,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 40,
+      "y": 45,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "54059487cbcd3b0e8861031efc9f38d46c4b884f0320c1a868c5ff43ca1d98e3"
+},
+"proposal": {
+  "status": "candidate",
+  "qualified": false,
+  "output": {
+    "layerCount": 2,
+    "minTraceWidth": 0.2,
+    "minViaPadDiameter": 0.6,
+    "minViaHoleDiameter": 0.3,
+    "defaultObstacleMargin": 0.2,
+    "minBoardEdgeClearance": 0.2,
+    "allowViaInPad": false,
+    "allowJumpers": false,
+    "bounds": {
+      "minX": 0,
+      "minY": 0,
+      "maxX": 50,
+      "maxY": 50
+    },
+    "obstacles": [],
+    "connections": [
+      {
+        "name": "A",
+        "pointsToConnect": []
+      }
+    ],
+    "traces": [
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "old",
+        "connection_name": "B",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 0,
+            "y": 0,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 40,
+            "y": 40,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new",
+        "connection_name": "A",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 0,
+            "y": 45,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 40,
+            "y": 45,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      }
+    ]
+  },
+  "input_sha256": "54059487cbcd3b0e8861031efc9f38d46c4b884f0320c1a868c5ff43ca1d98e3",
+  "native_validation_required": true,
+  "reason": "selected new routes only; original copper restored; native checks required",
+  "parent_response_sha256": "edc1e8da5337e4eb6eb5dde9e7b2089145a58c189a593a241eed55878c53db22",
+  "discarded_backend_changes": [],
+  "changed_fields": [],
+  "selected_nets": [
+    "A"
+  ]
+}},
+{"name": "scope_crossing", "mode": "scope", "nets": ["A"],
+"stdout": "STUCK: native/SRJ proposal step; native validation required; {\"status\": \"geometry_reject\", \"qualified\": false, \"reason\": \"new copper crosses protected or other-net routing\", \"conflicts\": 1, \"discarded_backend_changes\": 0}",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": []
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "old",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 0,
+     "y": 0,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 40,
+     "y": 40,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "candidate",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "old",
+    "connection_name": "B",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 0,
+      "y": 0,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 40,
+      "y": 40,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 0,
+      "y": 40,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 40,
+      "y": 0,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "54059487cbcd3b0e8861031efc9f38d46c4b884f0320c1a868c5ff43ca1d98e3"
+},
+"proposal": {
+  "status": "geometry_reject",
+  "qualified": false,
+  "output": {
+    "layerCount": 2,
+    "minTraceWidth": 0.2,
+    "minViaPadDiameter": 0.6,
+    "minViaHoleDiameter": 0.3,
+    "defaultObstacleMargin": 0.2,
+    "minBoardEdgeClearance": 0.2,
+    "allowViaInPad": false,
+    "allowJumpers": false,
+    "bounds": {
+      "minX": 0,
+      "minY": 0,
+      "maxX": 50,
+      "maxY": 50
+    },
+    "obstacles": [],
+    "connections": [
+      {
+        "name": "A",
+        "pointsToConnect": []
+      }
+    ],
+    "traces": [
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "old",
+        "connection_name": "B",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 0,
+            "y": 0,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 40,
+            "y": 40,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new",
+        "connection_name": "A",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 0,
+            "y": 40,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 40,
+            "y": 0,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      }
+    ]
+  },
+  "input_sha256": "54059487cbcd3b0e8861031efc9f38d46c4b884f0320c1a868c5ff43ca1d98e3",
+  "native_validation_required": true,
+  "reason": "new copper crosses protected or other-net routing",
+  "parent_response_sha256": "c4e8aa9b84f28a932f1ab278cc18b5fa8a2d11f45176d59797661c77e4824dcf",
+  "discarded_backend_changes": [],
+  "changed_fields": [],
+  "selected_nets": [
+    "A"
+  ],
+  "conflicts": [
+    {
+      "type": "tracks_crossing",
+      "layer": "top",
+      "trace_ids": [
+        "old",
+        "new"
+      ],
+      "nets": [
+        "B",
+        "A"
+      ],
+      "segments": [
+        [
+          [
+            0,
+            0
+          ],
+          [
+            40,
+            40
+          ]
+        ],
+        [
+          [
+            0,
+            40
+          ],
+          [
+            40,
+            0
+          ]
+        ]
+      ]
+    }
+  ]
+}},
+{"name": "scope_literal_floats", "mode": "scope", "nets": ["A"],
+"stdout": "STUCK: native/SRJ proposal step; native validation required; {\"status\": \"geometry_reject\", \"qualified\": false, \"reason\": \"new copper crosses protected or other-net routing\", \"conflicts\": 1, \"discarded_backend_changes\": 0}",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": []
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "old",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 1.0,
+     "y": 2.0,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 30.50,
+     "y": 30,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "candidate",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 1.0,
+      "y": 30.0,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 30.0,
+      "y": 2.0,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "a6a4887556b69e2244a6dbe381a69c58d2f57244f605c7752df9cf04e7d35420"
+},
+"proposal": {
+  "status": "geometry_reject",
+  "qualified": false,
+  "output": {
+    "layerCount": 2,
+    "minTraceWidth": 0.2,
+    "minViaPadDiameter": 0.6,
+    "minViaHoleDiameter": 0.3,
+    "defaultObstacleMargin": 0.2,
+    "minBoardEdgeClearance": 0.2,
+    "allowViaInPad": false,
+    "allowJumpers": false,
+    "bounds": {
+      "minX": 0,
+      "minY": 0,
+      "maxX": 50,
+      "maxY": 50
+    },
+    "obstacles": [],
+    "connections": [
+      {
+        "name": "A",
+        "pointsToConnect": []
+      }
+    ],
+    "traces": [
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "old",
+        "connection_name": "B",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 1.0,
+            "y": 2.0,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 30.5,
+            "y": 30,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new",
+        "connection_name": "A",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 1.0,
+            "y": 30.0,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 30.0,
+            "y": 2.0,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      }
+    ]
+  },
+  "input_sha256": "a6a4887556b69e2244a6dbe381a69c58d2f57244f605c7752df9cf04e7d35420",
+  "native_validation_required": true,
+  "reason": "new copper crosses protected or other-net routing",
+  "parent_response_sha256": "91b13aa8290a14e48ad9d07ab92dcbbd5e2b6246daa20412f1a425b009831508",
+  "discarded_backend_changes": [],
+  "changed_fields": [],
+  "selected_nets": [
+    "A"
+  ],
+  "conflicts": [
+    {
+      "type": "tracks_crossing",
+      "layer": "top",
+      "trace_ids": [
+        "old",
+        "new"
+      ],
+      "nets": [
+        "B",
+        "A"
+      ],
+      "segments": [
+        [
+          [
+            1.0,
+            2.0
+          ],
+          [
+            30.5,
+            30
+          ]
+        ],
+        [
+          [
+            1.0,
+            30.0
+          ],
+          [
+            30.0,
+            2.0
+          ]
+        ]
+      ]
+    }
+  ]
+}},
+{"name": "scope_nudged", "mode": "scope", "nets": ["A"],
+"stdout": "PASS: native/SRJ proposal step; native validation required; {\"status\": \"candidate\", \"qualified\": false, \"reason\": \"selected new routes only; original copper restored; native checks required\", \"conflicts\": 0, \"discarded_backend_changes\": 1}",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": []
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "old",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 0,
+     "y": 0,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 40,
+     "y": 40,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "model_mismatch",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "old",
+    "connection_name": "B",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 1,
+      "y": 1,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 2,
+      "y": 2,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   },
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 0,
+      "y": 45,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 40,
+      "y": 45,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "changed_fields": [
+  "preserved trace:old"
+ ],
+ "input_sha256": "54059487cbcd3b0e8861031efc9f38d46c4b884f0320c1a868c5ff43ca1d98e3"
+},
+"proposal": {
+  "status": "candidate",
+  "qualified": false,
+  "output": {
+    "layerCount": 2,
+    "minTraceWidth": 0.2,
+    "minViaPadDiameter": 0.6,
+    "minViaHoleDiameter": 0.3,
+    "defaultObstacleMargin": 0.2,
+    "minBoardEdgeClearance": 0.2,
+    "allowViaInPad": false,
+    "allowJumpers": false,
+    "bounds": {
+      "minX": 0,
+      "minY": 0,
+      "maxX": 50,
+      "maxY": 50
+    },
+    "obstacles": [],
+    "connections": [
+      {
+        "name": "A",
+        "pointsToConnect": []
+      }
+    ],
+    "traces": [
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "old",
+        "connection_name": "B",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 0,
+            "y": 0,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 40,
+            "y": 40,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new",
+        "connection_name": "A",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 0,
+            "y": 45,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 40,
+            "y": 45,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      }
+    ]
+  },
+  "changed_fields": [],
+  "input_sha256": "54059487cbcd3b0e8861031efc9f38d46c4b884f0320c1a868c5ff43ca1d98e3",
+  "native_validation_required": true,
+  "reason": "selected new routes only; original copper restored; native checks required",
+  "parent_response_sha256": "d5b016918eceb4a7ccf699937e280d201563b225cd9ed7a5466fefcf1e14d4a1",
+  "discarded_backend_changes": [
+    "preserved trace:old"
+  ],
+  "selected_nets": [
+    "A"
+  ]
+}},
+{"name": "scope_unicode", "mode": "scope", "nets": ["Ω+5V"],
+"stdout": "PASS: native/SRJ proposal step; native validation required; {\"status\": \"candidate\", \"qualified\": false, \"reason\": \"selected new routes only; original copper restored; native checks required\", \"conflicts\": 0, \"discarded_backend_changes\": 0}",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": []
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "old",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 0,
+     "y": 0,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 40,
+     "y": 40,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "candidate",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new",
+    "connection_name": "Ω+5V",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 0,
+      "y": 45,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 40,
+      "y": 45,
+      "layer": "top",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "54059487cbcd3b0e8861031efc9f38d46c4b884f0320c1a868c5ff43ca1d98e3"
+},
+"proposal": {
+  "status": "candidate",
+  "qualified": false,
+  "output": {
+    "layerCount": 2,
+    "minTraceWidth": 0.2,
+    "minViaPadDiameter": 0.6,
+    "minViaHoleDiameter": 0.3,
+    "defaultObstacleMargin": 0.2,
+    "minBoardEdgeClearance": 0.2,
+    "allowViaInPad": false,
+    "allowJumpers": false,
+    "bounds": {
+      "minX": 0,
+      "minY": 0,
+      "maxX": 50,
+      "maxY": 50
+    },
+    "obstacles": [],
+    "connections": [
+      {
+        "name": "A",
+        "pointsToConnect": []
+      }
+    ],
+    "traces": [
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "old",
+        "connection_name": "B",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 0,
+            "y": 0,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 40,
+            "y": 40,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new",
+        "connection_name": "\u03a9+5V",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 0,
+            "y": 45,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 40,
+            "y": 45,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      }
+    ]
+  },
+  "input_sha256": "54059487cbcd3b0e8861031efc9f38d46c4b884f0320c1a868c5ff43ca1d98e3",
+  "native_validation_required": true,
+  "reason": "selected new routes only; original copper restored; native checks required",
+  "parent_response_sha256": "388ba760d035b55338a67728bf8dd866a51e1981a50dc38f8b0e0f24d1c0b3f6",
+  "discarded_backend_changes": [],
+  "changed_fields": [],
+  "selected_nets": [
+    "\u03a9+5V"
+  ]
+}},
+{"name": "scope_via_step", "mode": "scope", "nets": ["A"],
+"stdout": "PASS: native/SRJ proposal step; native validation required; {\"status\": \"candidate\", \"qualified\": false, \"reason\": \"selected new routes only; original copper restored; native checks required\", \"conflicts\": 0, \"discarded_backend_changes\": 0}",
+"srj": {
+ "layerCount": 2,
+ "minTraceWidth": 0.2,
+ "minViaPadDiameter": 0.6,
+ "minViaHoleDiameter": 0.3,
+ "defaultObstacleMargin": 0.2,
+ "minBoardEdgeClearance": 0.2,
+ "allowViaInPad": false,
+ "allowJumpers": false,
+ "bounds": {
+  "minX": 0,
+  "minY": 0,
+  "maxX": 50,
+  "maxY": 50
+ },
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "A",
+   "pointsToConnect": []
+  }
+ ],
+ "traces": [
+  {
+   "type": "pcb_trace",
+   "pcb_trace_id": "old",
+   "connection_name": "B",
+   "route": [
+    {
+     "route_type": "wire",
+     "x": 0,
+     "y": 0,
+     "layer": "top",
+     "width": 0.2
+    },
+    {
+     "route_type": "wire",
+     "x": 40,
+     "y": 40,
+     "layer": "top",
+     "width": 0.2
+    }
+   ]
+  }
+ ]
+},
+"response": {
+ "status": "candidate",
+ "qualified": false,
+ "output": {
+  "traces": [
+   {
+    "type": "pcb_trace",
+    "pcb_trace_id": "new",
+    "connection_name": "A",
+    "route": [
+     {
+      "route_type": "wire",
+      "x": 0,
+      "y": 45,
+      "layer": "top",
+      "width": 0.2
+     },
+     {
+      "route_type": "via",
+      "x": 20,
+      "y": 45,
+      "from_layer": "top",
+      "to_layer": "bottom",
+      "via_diameter": 0.6,
+      "via_hole_diameter": 0.3
+     },
+     {
+      "route_type": "wire",
+      "x": 20,
+      "y": 45,
+      "layer": "bottom",
+      "width": 0.2
+     },
+     {
+      "route_type": "wire",
+      "x": 40,
+      "y": 45,
+      "layer": "bottom",
+      "width": 0.2
+     }
+    ]
+   }
+  ]
+ },
+ "input_sha256": "54059487cbcd3b0e8861031efc9f38d46c4b884f0320c1a868c5ff43ca1d98e3"
+},
+"proposal": {
+  "status": "candidate",
+  "qualified": false,
+  "output": {
+    "layerCount": 2,
+    "minTraceWidth": 0.2,
+    "minViaPadDiameter": 0.6,
+    "minViaHoleDiameter": 0.3,
+    "defaultObstacleMargin": 0.2,
+    "minBoardEdgeClearance": 0.2,
+    "allowViaInPad": false,
+    "allowJumpers": false,
+    "bounds": {
+      "minX": 0,
+      "minY": 0,
+      "maxX": 50,
+      "maxY": 50
+    },
+    "obstacles": [],
+    "connections": [
+      {
+        "name": "A",
+        "pointsToConnect": []
+      }
+    ],
+    "traces": [
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "old",
+        "connection_name": "B",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 0,
+            "y": 0,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 40,
+            "y": 40,
+            "layer": "top",
+            "width": 0.2
+          }
+        ]
+      },
+      {
+        "type": "pcb_trace",
+        "pcb_trace_id": "new",
+        "connection_name": "A",
+        "route": [
+          {
+            "route_type": "wire",
+            "x": 0,
+            "y": 45,
+            "layer": "top",
+            "width": 0.2
+          },
+          {
+            "route_type": "via",
+            "x": 20,
+            "y": 45,
+            "from_layer": "top",
+            "to_layer": "bottom",
+            "via_diameter": 0.6,
+            "via_hole_diameter": 0.3
+          },
+          {
+            "route_type": "wire",
+            "x": 20,
+            "y": 45,
+            "layer": "bottom",
+            "width": 0.2
+          },
+          {
+            "route_type": "wire",
+            "x": 40,
+            "y": 45,
+            "layer": "bottom",
+            "width": 0.2
+          }
+        ]
+      }
+    ]
+  },
+  "input_sha256": "54059487cbcd3b0e8861031efc9f38d46c4b884f0320c1a868c5ff43ca1d98e3",
+  "native_validation_required": true,
+  "reason": "selected new routes only; original copper restored; native checks required",
+  "parent_response_sha256": "fdb5a260cb9f87b2f7dfbf8536085a22560db5e9577983461caa0d2b6d7e5ff2",
+  "discarded_backend_changes": [],
+  "changed_fields": [],
+  "selected_nets": [
+    "A"
+  ]
+}}
+]

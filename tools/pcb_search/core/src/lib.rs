@@ -6,3 +6,4 @@ pub mod contract;
 pub mod error;
 pub mod patterns;
 pub mod pyjson;
+pub mod srj;
