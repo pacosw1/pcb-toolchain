@@ -1,9 +1,10 @@
 // Canvas 2D board viewer: zones, tracks, pads, vias, silk, courtyard and outline from engine geometry. Pan (drag), zoom (wheel,
 // about the cursor), layer toggles (1..4), fit (F), click a pad or track to highlight its net, hover for pad
 // info, Shift+drag to measure, search a reference. Geometry is cached as Path2D per layer (boardCache.ts), so
-// pan and zoom only replay paths. WebGL comes when boards outgrow Canvas 2D.
+// pan and zoom only replay paths. WebGL comes when boards outgrow Canvas 2D. With `live`, the toolbar shows the live
+// state; a new `geo` with `liveRefresh` set is the same board after a save and keeps the view and the selection.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Finding, Geometry, Pad, Footprint, Pt, Track } from './types'
+import type { Finding, Geometry, Pad, Footprint, Pt } from './types'
 import {
   buildCache,
   buildNetCache,
@@ -11,6 +12,8 @@ import {
   hitPad,
   hitTrack,
   padPath,
+  rebasePick,
+  type Pick,
   type TrackGroups
 } from './boardCache'
 
@@ -63,11 +66,13 @@ export interface Selection {
   pad: Pad
 }
 
-/** What the viewer has picked: a pad, a track (net highlight) or a whole part (search). */
-type Pick =
-  | { kind: 'pad'; fp: Footprint; pad: Pad }
-  | { kind: 'track'; track: Track }
-  | { kind: 'part'; fp: Footprint }
+/** Live view state, owned by the app. */
+export interface LiveState {
+  on: boolean
+  updatedAt: number | null // ms since the epoch: when the shown board was loaded
+  error: string | null // the file on disk is not usable; the shown board is the last good one
+  onToggle: () => void
+}
 
 interface View {
   scale: number // px per mm
@@ -95,7 +100,9 @@ export function BoardView({
   onSelect,
   focusRef,
   findings = [],
-  focusPoint
+  focusPoint,
+  live,
+  liveRefresh = false
 }: {
   geo: Geometry
   onSelect?: (s: Selection | null) => void
@@ -105,6 +112,10 @@ export function BoardView({
   findings?: Finding[]
   /** Zoom to this board point (a new object each time = focus again). */
   focusPoint?: { x: number; y: number; span?: number } | null
+  /** Shows the live indicator and off switch. */
+  live?: LiveState
+  /** `geo` is a newer version of the board on screen: keep zoom, pan and selection. */
+  liveRefresh?: boolean
 }): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -160,8 +171,13 @@ export function BoardView({
     })
   }, [geo, size])
 
-  // Fit the board when the geometry changes.
+  // Fit the board when the geometry changes; a live refresh of the shown board keeps the view.
   useEffect(() => {
+    if (liveRefresh && view) {
+      if (pick) select(rebasePick(pick, geo))
+      setHover(null)
+      return
+    }
     fit()
     setPick(null)
     setMeasure(null)
@@ -602,6 +618,27 @@ export function BoardView({
         <button type="button" className="toggle" title="Fit board (F)" onClick={fit}>
           Fit
         </button>
+        {live ? (
+          <>
+            <button
+              type="button"
+              aria-pressed={live.on}
+              className={live.on ? 'toggle on' : 'toggle'}
+              title="Redraw when the board file changes on disk"
+              onClick={live.onToggle}
+            >
+              <span className={`bv-livedot${live.on ? (live.error ? ' err' : ' on') : ''}`} />
+              Live
+            </button>
+            <span className="bv-live" role="status" aria-label="Live view">
+              {!live.on
+                ? 'off'
+                : live.updatedAt
+                  ? `updated ${new Date(live.updatedAt).toLocaleTimeString()}`
+                  : 'waiting'}
+            </span>
+          </>
+        ) : null}
         <span style={{ flex: '1 1 auto' }} />
         <form
           className="bv-search"
@@ -658,6 +695,11 @@ export function BoardView({
           onPointerUp={onUp}
           onPointerLeave={() => setHover(null)}
         />
+        {live?.on && live.error ? (
+          <div className="bv-liveerr" role="alert" aria-label="Live view error">
+            {live.error}
+          </div>
+        ) : null}
         {hover ? (
           <div className="bv-tip" style={{ left: hover.x + 14, top: hover.y + 14 }} aria-hidden>
             <strong>{hover.text}</strong> {hover.net}

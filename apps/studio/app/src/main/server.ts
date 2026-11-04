@@ -47,7 +47,7 @@ export function serve(port = 0, watchStdin = true): Promise<void> {
       ws.on('close', () => unsubscribe(send))
       ws.on('message', raw => {
         // Each request is its own promise, so a slow method does not block notifications or other calls.
-        void registry.handle(String(raw)).then(reply => { if (reply !== null && ws.readyState === ws.OPEN) ws.send(reply) })
+        void registry.handle(String(raw), send).then(reply => { if (reply !== null && ws.readyState === ws.OPEN) ws.send(reply) })
       })
     })
     wss.on('listening', () => {

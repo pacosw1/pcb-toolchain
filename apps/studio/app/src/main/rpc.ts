@@ -1,8 +1,15 @@
 // JSON-RPC 2.0 core: one method registry shared by the WebSocket API and the web viewer. Port of
 // engine/src/pcbstudio/rpc.py.
+import { AsyncLocalStorage } from 'node:async_hooks'
+
 export const PARSE_ERROR = -32700, INVALID_REQUEST = -32600, METHOD_NOT_FOUND = -32601, INVALID_PARAMS = -32602, INTERNAL_ERROR = -32603
 
 type Handler = (...args: never[]) => unknown
+
+const clients = new AsyncLocalStorage<unknown>()
+
+/** The client whose request is running (the `client` given to Registry.handle), or undefined. */
+export const currentClient = (): unknown => clients.getStore()
 
 interface Method { fn: Handler, params: string[], required: number }
 
@@ -39,8 +46,13 @@ export class Registry {
     return await (this.methods.get(name)!.fn as (...a: unknown[]) => unknown)(...args)
   }
 
-  /** One request text in, one response text out (null for a notification). */
-  async handle(raw: string): Promise<string | null> {
+  /** One request text in, one response text out (null for a notification). `client` identifies the connection for
+   *  methods that hold something per client; a transport passes its events.ts sender. */
+  handle(raw: string, client?: unknown): Promise<string | null> {
+    return clients.run(client, () => this.dispatch(raw))
+  }
+
+  private async dispatch(raw: string): Promise<string | null> {
     let req: unknown
     try {
       req = JSON.parse(raw)

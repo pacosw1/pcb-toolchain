@@ -479,3 +479,33 @@ button.send {
   font-size: 11px;
   opacity: 0.7;
 }
+.bv-live {
+  color: var(--dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.bv-livedot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--dim);
+}
+.bv-livedot.on {
+  background: var(--ok);
+}
+.bv-livedot.err {
+  background: var(--err);
+}
+.bv-liveerr {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--err);
+  border-radius: var(--radius);
+  background: var(--raised);
+  color: var(--err);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
