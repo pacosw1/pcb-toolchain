@@ -13,7 +13,7 @@ function fixture(t) {
  const root=mkdtempSync(join(tmpdir(),'gate-cli-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
  const put=(p,v)=>{mkdirSync(join(root,p,'..'),{recursive:true});writeFileSync(join(root,p),v);};
  const source=fileURLToPath(new URL('../..',import.meta.url));
- for(const p of ['tools/gate.mjs','tools/lib/env.mjs','tools/lib/env-paths.mjs','tools/lib/gate-core.mjs','tools/lib/gate-runtime.mjs','tools/lib/gate-inputs.mjs','tools/lib/check-cache.mjs','tools/lib/gate-findings.mjs','tools/lib/project-root.mjs']) {mkdirSync(join(root,p,'..'),{recursive:true});copyFileSync(join(source,p),join(root,p));}
+ for(const p of ['tools/gate.mjs','tools/pcb_snapshot_inputs.mjs','tools/lib/env.mjs','tools/lib/env-paths.mjs','tools/lib/gate-core.mjs','tools/lib/gate-runtime.mjs','tools/lib/gate-inputs.mjs','tools/lib/check-cache.mjs','tools/lib/gate-findings.mjs','tools/lib/project-root.mjs','tools/lib/release-evidence.mjs','tools/lib/kicad-population.mjs','tools/lib/csv.mjs','tools/lib/board-release.mjs']) {mkdirSync(join(root,p,'..'),{recursive:true});copyFileSync(join(source,p),join(root,p));}
  put('tools/port_labels.ts',labelStub('fixture'));
  put('tools/pcbtool.ts',pcbtoolStub);
  put('tools/kicad_happy_gate.ts',happyStub);
@@ -137,6 +137,16 @@ function isolatedRunner(fixture) {
    events:existsSync(join(evidence,'events.jsonl')) ? readFileSync(join(evidence,'events.jsonl'),'utf8').trim().split('\n').map(JSON.parse) : []};
  };
 }
+test('fresh gate provenance is verifiable for TypeScript board checks',t=>{
+ const f=fixture(t), run=isolatedRunner(f), fresh=run();
+ assert.equal(fresh.code,0);
+ assert.equal('pcbnew' in fresh.result.provenance.tools,false);
+ const verify=()=>execFileSync(process.execPath,[join(f.root,'tools/pcb_snapshot_inputs.mjs'),f.root,'X','--verify-inputs',fresh.evidence],{cwd:f.root,env:f.env,encoding:'utf8',stdio:'pipe'});
+ assert.equal(JSON.parse(verify()).verified,true);
+ fresh.result.provenance.tools.node='changed';
+ writeFileSync(join(fresh.evidence,'result.json'),JSON.stringify(fresh.result));
+ assert.throws(verify,/gate tool versions changed/);
+});
 test('native reports finish before dependent tools; malformed reports and parity block dependent work',t=>{
  const f=fixture(t),go=isolatedRunner(f);
  const complete=go();assert.equal(complete.code,0);

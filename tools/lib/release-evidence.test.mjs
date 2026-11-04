@@ -58,8 +58,11 @@ function fixture(t,board='BASE-PWR') {
 test('release provenance names the kicad-happy runtime, not a Python on this host',t=>{
  const tool=join(mkdtempSync(join(tmpdir(),'release-tools-')),'tool');t.after(()=>rmSync(join(tool,'..'),{recursive:true,force:true}));
  writeFileSync(tool,'#!/bin/sh\necho 10.0.6\n',{mode:0o755});
- const tools=probeReleaseTools({kicadCli:tool,kicadPython:tool,pinnedRepos:[]});
- assert.deepEqual(tools,{kicad:'10.0.6',pcbnew:'10.0.6',kicad_happy_runtime:happyRuntime(),node:process.version});
+ const paths={kicadCli:tool,kicadPython:tool,pinnedRepos:[]};
+ const tools=probeReleaseTools(paths,{erc:true,drc:true,paths:'paths.json',viapads:{},port_labels:true,kicad_happy:{}});
+ assert.deepEqual(tools,{kicad:'10.0.6',kicad_happy_runtime:happyRuntime(),node:process.version});
+ assert.equal(probeReleaseTools(paths,{erc:true,planes:'planes.json'}).pcbnew,'10.0.6');
+ assert.throws(()=>probeReleaseTools(paths),/gate checks required/);
 });
 
 test('both shipping boards have native/fabrication release recipes and exact population coverage',t=>{

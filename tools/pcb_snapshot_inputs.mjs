@@ -6,6 +6,7 @@ import {execFileSync} from 'node:child_process';
 import {kicadCli,kicadPython,happyRuntime,kicadShared,kicadConfig,pinnedRepos} from './lib/env.mjs';
 import {verifyReleaseGate, releaseRecipe} from './lib/release-evidence.mjs';
 import {readReport} from './lib/gate-runtime.mjs';
+import {gateNeedsPcbnew} from './lib/gate-core.mjs';
 const [root, board, mode, evidence, failedStage] = process.argv.slice(2);
 try {
   const input = gateInputs(root, board);
@@ -17,7 +18,7 @@ try {
     const externalRoots={kicad:kicadShared,kicad_config:kicadConfig,...Object.fromEntries(pinnedRepos.map(r=>[r.name,r.dir]))};
     const probe=(cmd,args)=>execFileSync(cmd,args,{encoding:'utf8',stdio:['ignore','pipe','pipe'],timeout:15000}).trim();
     const tools={kicad:probe(kicadCli,['--version']),node:process.version};
-    if(Object.keys(c).some(k=>c[k] && !['erc','drc','kicad_happy'].includes(k))) tools.pcbnew=probe(kicadPython,['-c','import pcbnew; print(pcbnew.Version())']);
+    if(gateNeedsPcbnew(c)) tools.pcbnew=probe(kicadPython,['-c','import pcbnew; print(pcbnew.Version())']);
     if(c.kicad_happy) {
       tools.kicad_happy_runtime=happyRuntime();
       for(const repo of pinnedRepos.filter(r=>r.needed==='gate')) tools[repo.name]=probe('git',['-C',repo.dir,'rev-parse','HEAD']);

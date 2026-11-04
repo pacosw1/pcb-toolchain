@@ -27,7 +27,7 @@ import {createHash} from 'node:crypto';
 import {readFileSync, writeFileSync, existsSync, readdirSync, renameSync, mkdirSync} from 'node:fs';
 import {join, relative, dirname, resolve} from 'node:path';
 import {root, kicadCli, kicadPython, happyRuntime, kicadShared, kicadConfig, pinnedRepos, TS_NODE} from './lib/env.mjs';
-import {METRICS, CHECK_METRICS, passes, ratchet, metricsText, countFrom, validateConfig, expectedMetrics, pathFailures} from './lib/gate-core.mjs';
+import {METRICS, CHECK_METRICS, passes, ratchet, metricsText, countFrom, validateConfig, expectedMetrics, pathFailures, BOARD_JSON_CHECKS, gateNeedsPcbnew} from './lib/gate-core.mjs';
 import {runDirectory, runTool, readReport, checkedText, readHappyResult, gateEvent, measuredSpan} from './lib/gate-runtime.mjs';
 import {gateInputs, fingerprint} from './lib/gate-inputs.mjs';
 import {checkInputs, checkKey, restoreCheck, storeCheck} from './lib/check-cache.mjs';
@@ -99,7 +99,7 @@ const bySeverity = (items, severity) => (items ?? []).filter((v) => v.severity =
 
 const c = cfg.checks ?? {};
 // Checks that read the board through board-json: they need no pcbnew, and their verdict follows the reader.
-const boardChecks = ['rf', 'viapads', 'paths'];
+const boardChecks = BOARD_JSON_CHECKS;
 const boardReader = join(process.env.PCB_TOOLCHAIN_ROOT || root, 'bin/iotroute-linux-x86_64');
 const required = expectedMetrics(cfg);
 const environment={configDir:kicadConfig,variables:{KICAD10_FOOTPRINT_DIR:join(kicadShared,'footprints'),KICAD10_SYMBOL_DIR:join(kicadShared,'symbols')},repositories:c.kicad_happy ? pinnedRepos.filter(r=>r.needed==='gate').map(r=>r.dir) : []};
@@ -122,7 +122,7 @@ try { inputs=gateInputs(root,board,configName,environment); }
 catch (error) { preflightErrors.push(`input evidence: ${error.message}`);inputs={files:[]}; }
 const versions = {};
 const probes=[['kicad',kicadCli,['--version']],
-  ...(Object.keys(c).some(k=>c[k] && !['erc','drc','kicad_happy','port_labels',...boardChecks].includes(k)) ? [['pcbnew',kicadPython,['-c','import pcbnew; print(pcbnew.Version())']]] : [])];
+  ...(gateNeedsPcbnew(c) ? [['pcbnew',kicadPython,['-c','import pcbnew; print(pcbnew.Version())']]] : [])];
 for (const [name,cmd,args] of preflightErrors.length ? [] : probes) {
   gateEvent(logDir,'preflight.probe',{stage:'preflight',tool:name});
   const probeSpan=measuredSpan(`probe:${name}`,'startup');

@@ -3,7 +3,7 @@ import {join,resolve,relative,basename} from 'node:path';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {gateInputs,fingerprint,gateTools} from './gate-inputs.mjs';
-import {passes,expectedMetrics,validateConfig} from './gate-core.mjs';
+import {passes,expectedMetrics,validateConfig,gateNeedsPcbnew} from './gate-core.mjs';
 import {readReport} from './gate-runtime.mjs';
 import {readPopulation,parseNative,children,single,properties} from './kicad-population.mjs';
 import {parseCsv} from './csv.mjs';
@@ -15,10 +15,15 @@ export {gateConfigPath,releaseRecipe,requireRelease};
 export const sha256 = value => createHash('sha256').update(value).digest('hex');
 const need=(condition,message)=>{if(!condition)throw new Error(message);};
 const json=path=>JSON.parse(readFileSync(path,'utf8'));
-export function probeReleaseTools(paths) {
+export function probeReleaseTools(paths, checks) {
  const probe=(cmd,args)=>execFileSync(cmd,args,{encoding:'utf8',stdio:['ignore','pipe','pipe'],timeout:15000}).trim();
- const tools={kicad:probe(paths.kicadCli,['--version']),pcbnew:probe(paths.kicadPython,['-c','import pcbnew; print(pcbnew.Version())']),kicad_happy_runtime:happyRuntime(),node:process.version};
- for(const repo of paths.pinnedRepos.filter(r=>r.needed==='gate'))tools[repo.name]=probe('git',['-C',repo.dir,'rev-parse','HEAD']);
+ if (!checks || typeof checks !== 'object' || Array.isArray(checks)) throw new Error('gate checks required to probe release tools');
+ const tools={kicad:probe(paths.kicadCli,['--version']),node:process.version};
+ if(gateNeedsPcbnew(checks))tools.pcbnew=probe(paths.kicadPython,['-c','import pcbnew; print(pcbnew.Version())']);
+ if(checks.kicad_happy) {
+  tools.kicad_happy_runtime=happyRuntime();
+  for(const repo of paths.pinnedRepos.filter(r=>r.needed==='gate'))tools[repo.name]=probe('git',['-C',repo.dir,'rev-parse','HEAD']);
+ }
  return tools;
 }
 

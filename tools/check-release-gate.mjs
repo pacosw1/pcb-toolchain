@@ -3,6 +3,7 @@ import {readFileSync,writeFileSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {root,kicadCli,kicadPython,kicadShared,kicadConfig,pinnedRepos} from './lib/env.mjs';
 import {verifyReleaseGate,probeReleaseTools} from './lib/release-evidence.mjs';
+import {gateInputs} from './lib/gate-inputs.mjs';
 try {
  const args=process.argv.slice(2),index=args.indexOf('--gate-dir');
  let gateDir;
@@ -14,9 +15,10 @@ try {
   if(!/^run-[A-Za-z0-9_-]+$/.test(pointer.run))throw new Error('invalid gate run pointer');
   gateDir=join(dir,pointer.run);
  }
- const environment={configDir:kicadConfig,variables:{KICAD10_FOOTPRINT_DIR:join(kicadShared,'footprints'),KICAD10_SYMBOL_DIR:join(kicadShared,'symbols')},repositories:pinnedRepos.filter(r=>r.needed==='gate').map(r=>r.dir)};
+ const checks=gateInputs(root,board).cfg.checks;
+ const environment={configDir:kicadConfig,variables:{KICAD10_FOOTPRINT_DIR:join(kicadShared,'footprints'),KICAD10_SYMBOL_DIR:join(kicadShared,'symbols')},repositories:checks.kicad_happy ? pinnedRepos.filter(r=>r.needed==='gate').map(r=>r.dir) : []};
  const externalRoots={kicad:kicadShared,kicad_config:kicadConfig,...Object.fromEntries(pinnedRepos.map(r=>[r.name,r.dir]))};
- const evidence=verifyReleaseGate(root,board,gateDir,environment,externalRoots,probeReleaseTools({kicadCli,kicadPython,pinnedRepos}));
+ const evidence=verifyReleaseGate(root,board,gateDir,environment,externalRoots,probeReleaseTools({kicadCli,kicadPython,pinnedRepos},checks));
  if(expected && expected!==evidence.token)throw new Error('gate evidence changed during export');
  if(out)writeFileSync(out,JSON.stringify(evidence,null,2)+'\n',{flag:'wx'});
  console.log(evidence.token);
