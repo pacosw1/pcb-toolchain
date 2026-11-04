@@ -185,8 +185,6 @@ tools/lib/zip-read.mjs
 tools/lib/zip-write.ts
 tools/live-view.py
 tools/mandatory_preflight.py
-tools/model_fit.py
-tools/model_sync.py
 tools/native_workflow_smoke.py
 tools/net_drivers.py
 tools/pack-fab.py
@@ -571,8 +569,6 @@ tools/test_lean_resources.py
 tools/test_lean_workflow.py
 tools/test_mandatory_preflight.py
 tools/test_mandatory_records_native.py
-tools/test_model_fit.py
-tools/test_model_sync.py
 tools/test_native_workflow_smoke.py
 tools/test_net_drivers.py
 tools/test_part_evidence.py

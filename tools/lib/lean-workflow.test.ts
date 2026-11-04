@@ -76,6 +76,12 @@ test('the clock samples once a second and carries the sample on hrtime between',
   assert.equal(samples, 2);
 });
 
+test('a sample is stamped midway through its call, not after the subprocess exits', () => {
+  let hr = 0n;
+  const now = createClock(() => { hr += 10_000_000n; return 500; }, () => hr);
+  assert.equal(now(), 500.005);
+});
+
 test('stage depth supports root plus two nested levels', () => {
   assert.equal(stageDepth({}), 0);
   assert.equal(stageDepth({ IOT_LEAN_STAGE_DEPTH: '2' }), 2);
