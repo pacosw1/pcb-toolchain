@@ -82,7 +82,7 @@ function dispatch(p,env={},{args=[],timeout='60',wait=true}={}){
   const out=join(p.ws,'run/router/DEMO.kicad_pcb'),pcb=join(p.ws,BOARD,'DEMO.kicad_pcb');
   const cmd=['fake-python','tools/router/run.py','DEMO',out,'--pcb',pcb,'--json','--iters','5','--lock-from',pcb,...args];
   const child=spawn(process.execPath,[SCRIPT,'--timeout',timeout,'--',...cmd],{cwd:p.ws,stdio:['ignore','pipe','pipe'],
-    env:{PATH:`${join(p.root,'bin')}:${process.env.PATH}`,HOME:p.root,JOBD_TOKEN_FILE:join(p.root,'token'),PCB_TOOLCHAIN_ROOT:p.tc,KICAD_HAPPY_DIR:join(p.root,'happy'),...env}});
+    env:{PCB_HOST_PLATFORM:'linux',PATH:`${join(p.root,'bin')}:${process.env.PATH}`,HOME:p.root,JOBD_TOKEN_FILE:join(p.root,'token'),PCB_TOOLCHAIN_ROOT:p.tc,KICAD_HAPPY_DIR:join(p.root,'happy'),...env}});
   let stdout='',stderr='';
   child.stdout.on('data',d=>stdout+=d);child.stderr.on('data',d=>stderr+=d);
   const done=new Promise(r=>child.on('close',(status,signal)=>r({status,signal,stdout,stderr,out,record:()=>JSON.parse(readFileSync(out+'.iotroute/result.json','utf8'))})));
@@ -205,7 +205,7 @@ test('a candidate outside the shipped board folder stays local',async t=>{
   put(join(p.ws,'hardware-design/boards/OTHER/X.kicad_pcb'),INPUT);
   const url=await daemon(t),out=join(p.ws,'run/router/X.kicad_pcb'),pcb=join(p.ws,'hardware-design/boards/OTHER/X.kicad_pcb');
   const child=spawn(process.execPath,[SCRIPT,'--',join(p.root,'bin/fake-python'),'tools/router/run.py','DEMO',out,'--pcb',pcb,'--json'],{cwd:p.ws,
-    env:{PATH:`${join(p.root,'bin')}:${process.env.PATH}`,HOME:p.root,JOBD_URL:url,JOBD_TOKEN_FILE:join(p.root,'token'),PCB_TOOLCHAIN_ROOT:p.tc,KICAD_HAPPY_DIR:join(p.root,'happy')}});
+    env:{PCB_HOST_PLATFORM:'linux',PATH:`${join(p.root,'bin')}:${process.env.PATH}`,HOME:p.root,JOBD_URL:url,JOBD_TOKEN_FILE:join(p.root,'token'),PCB_TOOLCHAIN_ROOT:p.tc,KICAD_HAPPY_DIR:join(p.root,'happy')}});
   let stderr='';child.stderr.on('data',d=>stderr+=d);
   const status=await new Promise(r=>child.on('close',r));
   assert.equal(status,5);
@@ -269,6 +269,30 @@ test('the default bound is the one tools/pcb_cli.py credits',()=>{
   const node=number('../router/route-dispatch.mjs',/^const QUEUE_WAIT_S=(\d+);/m);
   assert.ok(node);
   assert.equal(number('../pcb_cli.py',/^QUEUE_WAIT_S = (\d+)/m),node);
+});
+
+test('macOS: a run the daemon cannot take stops with no verdict and never runs locally',async t=>{
+  const p=project(t);
+  const r=await dispatch(p,{JOBD_URL:'',PCB_HOST_PLATFORM:'darwin'});
+  assert.equal(r.status,2,r.stderr);
+  assert.ok(!ranLocally(p));
+  assert.match(r.stderr,/route: no run: no JOBD_URL\. This Mac does not route locally/);
+  assert.match(r.stdout,/^ERROR 0 no run: no JOBD_URL$/m);
+});
+
+test('macOS: a job that never started stops with no verdict and never runs locally',async t=>{
+  const p=project(t,{client:{exit:75,job:queueFailed,stderr:HELD}});
+  const r=await dispatch(p,{JOBD_URL:await daemon(t),PCB_HOST_PLATFORM:'darwin'});
+  assert.equal(r.status,2,r.stderr);
+  assert.ok(!ranLocally(p));
+  assert.match(r.stderr,/route: no run: the job never started/);
+});
+
+test('macOS: REMOTE_NO_DAEMON=1 asks for the local run',async t=>{
+  const p=project(t);
+  const r=await dispatch(p,{JOBD_URL:await daemon(t),REMOTE_NO_DAEMON:'1',PCB_HOST_PLATFORM:'darwin'});
+  assert.equal(r.status,5,r.stderr);
+  assert.ok(ranLocally(p));
 });
 
 test('a job the daemon gave up on in the queue never started: the run is local, and says why',async t=>{

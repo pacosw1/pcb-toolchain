@@ -15,7 +15,7 @@ CPUWeight=10
 CPUQuota=1600%
 # Keep equal to JOBD_MEM_BUDGET_GB. ci-runners.slice and agent-orchestrator.slice already claim the rest of the
 # host on paper, so this memory is borrowed: admission checks live MemAvailable and jobs are first in line for OOM.
-MemoryMax=16G
+MemoryMax=32G
 MemorySwapMax=0
 # Processes and threads for all jobs together: twice the per-job --pids-limit (JOBD_PIDS_LIMIT), which is the
 # TasksMax of agent-orchestrator.slice. A default to tune.

@@ -1,5 +1,9 @@
 #!/usr/bin/env node
-// tools/router/run.py on the job daemon when it answers, else locally. The candidate's verdict stays the gate on the Mac.
+// tools/router/run.py on the job daemon. The candidate's verdict stays the gate on the Mac.
+//
+// A run the daemon cannot take stops on macOS with exit 2 and says why: a route is Python, and it does not start on the Mac
+// by surprise (a local route there ran for minutes unnoticed, 2026-11-04). REMOTE_NO_DAEMON=1 asks for it. Elsewhere, on a
+// Linux host or in CI, the run is local as before. Below, "local" means that case.
 //
 //   node tools/router/route-dispatch.mjs [--timeout S] -- PYTHON tools/router/run.py BOARD OUT --pcb IN [run.py options]
 //
@@ -57,6 +61,16 @@ const sha=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex')
 const isFile=file=>fs.statSync(file,{throwIfNoEntry:false})?.isFile()??false;
 const isDir=dir=>fs.statSync(dir,{throwIfNoEntry:false})?.isDirectory()??false;
 const inside=(rel)=>rel&&!rel.startsWith('..')&&!path.isAbsolute(rel);
+
+/** PCB_HOST_PLATFORM: what the tests pass, so they cover macOS on a Linux runner. */
+const localAllowed=()=>process.env.REMOTE_NO_DAEMON==='1'||(process.env.PCB_HOST_PLATFORM??process.platform)!=='darwin';
+
+function localOrStop(command,why){
+  if(localAllowed()){say(`local run: ${why}`);return runLocal(command);}
+  say(`no run: ${why}. This Mac does not route locally; REMOTE_NO_DAEMON=1 asks for it.`);
+  console.log(`ERROR 0 no run: ${why}`);
+  return 2;
+}
 
 function runLocal(command){
   return new Promise(resolve=>{
@@ -325,9 +339,9 @@ async function main(argv){
   const timeoutS=options[0]==='--timeout'?Math.ceil(Number(options[1])):DEFAULT_TIMEOUT_S;
   if(split<0||command.length<3||!(timeoutS>0)){say('usage: route-dispatch.mjs [--timeout S] -- PYTHON tools/router/run.py BOARD OUT ...');return 2;}
   const plan=await daemonPlan(command);
-  if(typeof plan==='string'){say(`local run: ${plan}`);return runLocal(command);}
+  if(typeof plan==='string')return localOrStop(command,plan);
   const code=await runOnDaemon(plan,timeoutS);
-  return code??runLocal(command);
+  return code??localOrStop(command,'the job never started');
 }
 
 main(process.argv.slice(2)).then(code=>{process.exitCode=code;},e=>{say(String(e?.stack??e));process.exitCode=2;});
