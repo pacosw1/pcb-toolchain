@@ -3,3 +3,4 @@ pub mod kicad;
 pub mod model;
 pub mod plan;
 pub mod sha256;
+pub mod specctra;

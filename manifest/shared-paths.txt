@@ -536,6 +536,8 @@ tools/router/core/src/reffill.rs
 tools/router/core/src/reuse.rs
 tools/router/core/src/seed.rs
 tools/router/core/src/sha256.rs
+tools/router/core/src/specctra/mod.rs
+tools/router/core/src/specctra/skip.rs
 tools/router/core/src/tests_congestion.rs
 tools/router/core/src/tests_iso.rs
 tools/router/core/src/tests_layers.rs

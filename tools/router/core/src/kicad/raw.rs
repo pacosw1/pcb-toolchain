@@ -56,6 +56,16 @@ impl Form {
 
 /// Every top-level form of the text. A line whose first text is `#` is a comment.
 pub fn parse(text: &str) -> Result<Vec<Form>, String> {
+    read(text, usize::MAX)
+}
+
+/// The first top-level form of the text; what follows it is not read. For a form inside text that as a whole is not
+/// s-expressions: a Specctra DSN holds an unpaired quote in `(string_quote ")`.
+pub fn parse_first(text: &str) -> Result<Form, String> {
+    read(text, 1)?.pop().ok_or_else(|| "no form".to_string())
+}
+
+fn read(text: &str, limit: usize) -> Result<Vec<Form>, String> {
     let mut open: Vec<(usize, Vec<Form>)> = Vec::new();
     let mut top = Vec::new();
     let mut position = 0;
@@ -80,6 +90,9 @@ pub fn parse(text: &str) -> Result<Vec<Form>, String> {
             }
         };
         open.last_mut().map_or(&mut top, |(_, items)| items).push(form);
+        if open.is_empty() && top.len() == limit {
+            return Ok(top);
+        }
     }
     if open.is_empty() { Ok(top) } else { Err("unbalanced parentheses".to_string()) }
 }
@@ -161,6 +174,15 @@ mod tests {
         assert_eq!(forms.len(), 2);
         assert_eq!(forms[0].text(1), Some("#b"));
         assert_eq!(forms[1].text(1), Some("#d"));
+    }
+
+    #[test]
+    fn the_first_form_does_not_read_what_follows_it() {
+        let form = parse_first("(a (b)) \" ) (").unwrap();
+        assert_eq!(form.span, 0..7);
+        assert!(form.is("a"));
+        assert!(parse_first("(a").is_err());
+        assert!(parse_first("  ").is_err());
     }
 
     #[test]
