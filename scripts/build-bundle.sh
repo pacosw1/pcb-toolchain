@@ -16,7 +16,7 @@ echo "START: copy tool tree"
 (cd "$here" && git archive --format=tar HEAD tools bin) | tar -x -C "$out"
 echo "$version $sha" > "$out/VERSION"
 echo "START: iotroute darwin-arm64"
-(cd "$here/tools/router/core" && cargo build --release --quiet)
+(cd "$here/tools/router/core" && RUSTFLAGS="--remap-path-prefix=$HOME=~ --remap-path-prefix=$here=." cargo build --release --quiet)   # no build-machine paths in the binary
 cp "$here/tools/router/core/target/release/iotroute" "$out/bin/iotroute-darwin-arm64"
 if [ "$linux" = --linux ]; then
   linux_host=${BUILD_LINUX_HOST:?set BUILD_LINUX_HOST=user@host (Docker) for --linux}
