@@ -1,17 +1,19 @@
-"""Run cheap placement or routing on a frozen JSON model; never edit CAD."""
+"""Run cheap placement or capacity routing on a frozen JSON model; never edit CAD.
+
+Cheap pattern routing is `pcbsearch route` (core/).
+"""
 import argparse
 import json
 from pathlib import Path
 import sys
 
 import lean_workflow as lean
-from .contracts import Problem, fingerprint
-from .patterns import route_patterns
+from .contracts import fingerprint
 
 
 def run():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument('mode', choices=('place', 'route', 'route-srj'))
+    ap.add_argument('mode', choices=('place', 'route-srj'))
     ap.add_argument('input')
     ap.add_argument('--output', required=True)
     ap.add_argument('--budget-s', required=True, type=float)
@@ -33,8 +35,6 @@ def run():
     if a.mode == 'route-srj':
         from .capacity import run as route_capacity
         result = route_capacity(raw, budget_s=a.budget_s, pipeline=a.pipeline, capture_stages=a.capture_stages)
-    elif a.mode == 'route':
-        result = route_patterns(Problem.read(raw), budget_s=a.budget_s)
     else:
         from .placement import quench
         if set(raw) != {'problem', 'attachments', 'params'}:

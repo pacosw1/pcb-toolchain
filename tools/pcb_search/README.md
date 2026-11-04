@@ -16,12 +16,16 @@ The CIP CPU unit-test job runs these contracts and regressions on every workflow
 check. Native and installed Node backend integration tests remain explicit,
 separate experiments; their skips are not native acceptance evidence.
 
-* `contracts.py` requires explicit trace widths, per-net and pair clearances, layer
-  masks, obstacle envelopes, edge rules, sources and input fingerprints. Unknown
+* `core/` is the Rust crate `pcbsearch`, where this package is moving. Its `pyjson.rs`
+  reproduces Python's JSON text byte for byte, so its hashes equal `contracts.py`
+  `fingerprint`. Anything that hashes JSON belongs there: JavaScript's `JSON.parse`
+  loses the difference between `1` and `1.0`.
+* `core/src/contract.rs` requires explicit trace widths, per-net and pair clearances,
+  layer masks, obstacle envelopes, edge rules, sources and input fingerprints. Unknown
   fields are errors. Known but unrepresented requirements cause abstention.
-* `patterns.py` tries deterministic, same-layer orthogonal L/Z paths using the actual
-  net width. It preserves input copper envelopes and checks new paths against one
-  another. Exhausting these few patterns is **not proof of unroutability**.
+* `core/src/patterns.rs` tries deterministic, same-layer orthogonal L/Z paths using the
+  actual net width. It preserves input copper envelopes and checks new paths against
+  one another. Exhausting these few patterns is **not proof of unroutability**.
 * `placement.py` uses our existing `placer.cost` geometry, including fixed/fixed
   conflicts excluded by its search objective. A bounded coordinate descent can
   propose translations of intact units while preserving fixed parts and avoiding
@@ -136,7 +140,8 @@ Run from the repository root:
 
 ```sh
 PYTHONPATH=tools python3 -m unittest -v tools.test_pcb_search
-PYTHONPATH=tools python3 -m pcb_search route route-model.json --output new-route.json --budget-s 1
+cargo test --locked --manifest-path tools/pcb_search/core/Cargo.toml
+cargo run --release --manifest-path tools/pcb_search/core/Cargo.toml -- route route-model.json --output new-route.json --budget-s 1
 PYTHONPATH=tools python3 -m pcb_search place placement-model.json --output new-placement.json --budget-s 1 --steps-mm 1 0.5
 ```
 
@@ -319,8 +324,8 @@ the caller must verify the associated files. Search steps and time budgets are
 effort policies, never electrical allowances. The placement timeout is cooperative
 between score evaluations; an outer process deadline is required for heavy runs.
 
-Route input uses schema `iot-lab.route-problem.v1`. See `routing_problem()` in
-`../test_pcb_search.py` for the complete structure. Geometry is in millimetres,
+Route input uses schema `iot-lab.route-problem.v1`. See `problem()` in
+`core/src/patterns/tests.rs` for the complete structure. Geometry is in millimetres,
 in KiCad coordinates. Obstacles are conservative rectangular envelopes; mechanical
 obstacles use an empty net. A connection's layers must be accessible at **both**
 endpoints. `inputs` records SHA-256 values, not permission to trust an incomplete

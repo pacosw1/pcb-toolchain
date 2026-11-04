@@ -6,9 +6,6 @@ from unittest import mock
 import subprocess
 
 from pcb_search.capacity import retains_fields, route_crossings, run, terminal_conflicts, resolve_existing_vias
-from pcb_search.contracts import Problem
-from pcb_search.patterns import route_patterns
-from test_pcb_search import obstacle, routing_problem
 
 
 def srj():
@@ -125,11 +122,6 @@ class CapacityTests(unittest.TestCase):
 
     @unittest.skipUnless(os.environ.get('PCB_CAPACITY_INTEGRATION') == '1', 'optional pinned Node backend')
     def test_topology_resolves_case_beyond_cheap_patterns(self):
-        raw = routing_problem()
-        raw['obstacles'] = [obstacle('wall', [4, 3, 6, 7], layers=['F.Cu', 'B.Cu'])]
-        cheap = route_patterns(Problem.read(raw), budget_s=1)
-        self.assertTrue(cheap['unresolved'])
-        self.assertFalse(cheap['unresolved'][0]['unroutable_proven'])
         result = run(srj(), budget_s=3)
         self.assertEqual(result['status'], 'candidate', result)
         self.assertTrue(result['output']['traces'])

@@ -1,34 +1,14 @@
-"""Constraint and state-transition tests for placement/routing proposals.
+"""Constraint and state-transition tests for placement proposals.
 
 All numerical dimensions below are synthetic test geometry, not design rules.
 No KiCad installation or production-board edits are needed.
 """
 import copy
-import json
-from pathlib import Path
-import subprocess
-import sys
-import tempfile
 import unittest
 
-from pcb_search.contracts import Problem, fingerprint
-from pcb_search.patterns import Route, blockers, route_patterns
+from pcb_search.contracts import fingerprint
 from pcb_search.placement import anchor_fingerprint, quench, screen_pose
 from placer import cost
-
-
-def routing_problem():
-    return dict(schema='iot-lab.route-problem.v1', bounds=[0, 0, 10, 10],
-                edge_clearance=.2, edge_source='synthetic fixture', layers=['F.Cu', 'B.Cu'],
-                nets=[dict(name=n, width=.2, clearance=.2, layers=['F.Cu', 'B.Cu'],
-                           source='synthetic fixture') for n in ('A', 'B')],
-                obstacles=[], connections=[dict(name='a', net='A', start=[1, 5], end=[9, 5],
-                                               layers=['F.Cu'])],
-                pair_clearances=[], unsupported=[], inputs={'fixture': '0' * 64})
-
-
-def obstacle(name, bounds, net='', layers=None, clearance=0):
-    return dict(name=name, bounds=bounds, net=net, layers=layers or ['F.Cu'], clearance=clearance)
 
 
 def placement_problem():
@@ -41,120 +21,6 @@ def placement_problem():
 
 
 PARAMS = dict(mask_cell=.1, rudy_cell=1., layers=2, pitch=.4, limit=.1)
-
-
-class RouteContractTests(unittest.TestCase):
-    def test_malformed_or_unsourced_rules_never_become_defaults(self):
-        mutations = [lambda r: r.update(extra_rule=8), lambda r: r.update(layers='F.Cu'),
-                     lambda r: r.update(obstacles={}), lambda r: r.update(inputs={}),
-                     lambda r: r['nets'][0].update(width=True),
-                     lambda r: r['nets'][0].update(clearance=float('nan')),
-                     lambda r: r['nets'][0].update(source=''),
-                     lambda r: r['nets'].append(copy.deepcopy(r['nets'][0])),
-                     lambda r: r['connections'][0].update(layers=['In1.Cu']),
-                     lambda r: r['connections'][0].update(net='missing'),
-                     lambda r: r['connections'][0].update(start=None),
-                     lambda r: r.update(pair_clearances=[dict(nets=['A', 'B'], clearance=1, source=True)])]
-        for mutate in mutations:
-            with self.subTest(mutation=mutations.index(mutate)):
-                raw = routing_problem()
-                mutate(raw)
-                with self.assertRaises(ValueError):
-                    Problem.read(raw)
-
-    def test_clearance_pair_is_symmetric_and_cannot_weaken_other_rules(self):
-        raw = routing_problem()
-        raw['pair_clearances'] = [dict(nets=['A', 'B'], clearance=2., source='synthetic')]
-        p = Problem.read(raw)
-        self.assertEqual(p.gap('A', 'B'), p.gap('B', 'A'))
-        self.assertEqual(p.gap('A', 'B'), 2.)
-        raw['pair_clearances'][0]['clearance'] = .1
-        self.assertEqual(Problem.read(raw).gap('A', 'B', .3), .3)
-
-    def test_rule_and_input_changes_change_identity(self):
-        raw = routing_problem()
-        before = Problem.read(raw).identity
-        raw['nets'][0]['width'] = .4
-        self.assertNotEqual(before, Problem.read(raw).identity)
-        before = Problem.read(raw).identity
-        raw['inputs']['fixture'] = '1' * 64
-        self.assertNotEqual(before, Problem.read(raw).identity)
-
-
-class PatternTests(unittest.TestCase):
-    def test_complete_proposal_is_deterministic_and_unqualified(self):
-        p = Problem.read(routing_problem())
-        first = route_patterns(p, budget_s=1)
-        second = route_patterns(p, budget_s=1)
-        self.assertEqual(first['routes'], second['routes'])
-        self.assertEqual(first['unresolved'], [])
-        self.assertEqual(first['routes'][0]['length_mm'], 8)
-        self.assertFalse(first['qualified'])
-        self.assertTrue(first['native_validation_required'])
-
-    def test_actual_width_closes_channel_minimum_width_would_pass(self):
-        raw = routing_problem()
-        raw['obstacles'] = [obstacle('lower', [0, 0, 10, 4.5]),
-                            obstacle('upper', [0, 5.5, 10, 10])]
-        self.assertFalse(route_patterns(Problem.read(raw), budget_s=1)['unresolved'])
-        raw['nets'][0]['width'] = .8
-        result = route_patterns(Problem.read(raw), budget_s=1)
-        self.assertFalse(result['routes'])
-        self.assertEqual(set(result['unresolved'][0]['blockers']), {'lower', 'upper'})
-        self.assertFalse(result['unresolved'][0]['unroutable_proven'])
-
-    def test_layers_and_pair_rules_are_preserved(self):
-        raw = routing_problem()
-        raw['obstacles'] = [obstacle('B-pad', [4, 5.6, 6, 6.6], net='B')]
-        self.assertFalse(route_patterns(Problem.read(raw), budget_s=1)['unresolved'])
-        raw['pair_clearances'] = [dict(nets=['A', 'B'], clearance=1, source='synthetic')]
-        self.assertTrue(route_patterns(Problem.read(raw), budget_s=1)['unresolved'])
-        raw['connections'][0]['layers'] = ['B.Cu']
-        result = route_patterns(Problem.read(raw), budget_s=1)
-        self.assertFalse(result['unresolved'])
-        self.assertEqual(result['routes'][0]['layer'], 'B.Cu')
-
-    def test_copper_kept_on_other_net_blocks_and_own_net_connects(self):
-        raw = routing_problem()
-        raw['obstacles'] = [obstacle('locked-trace-envelope', [4, 0, 6, 10], net='B')]
-        before = fingerprint(raw)
-        result = route_patterns(Problem.read(raw), budget_s=1)
-        self.assertTrue(result['unresolved'])
-        self.assertEqual(before, fingerprint(raw))
-        raw['obstacles'][0]['net'] = 'A'
-        self.assertFalse(route_patterns(Problem.read(raw), budget_s=1)['unresolved'])
-
-    def test_generated_routes_cannot_short_each_other(self):
-        raw = routing_problem()
-        raw['connections'].append(dict(name='b', net='B', start=[5, 1], end=[5, 9], layers=['F.Cu']))
-        result = route_patterns(Problem.read(raw), budget_s=1)
-        self.assertEqual(len(result['routes']), 1)
-        self.assertEqual(result['unresolved'][0]['blockers'], ['route:a'])
-        raw['connections'][1]['layers'] = ['B.Cu']
-        self.assertEqual(len(route_patterns(Problem.read(raw), budget_s=1)['routes']), 2)
-
-    def test_edge_and_route_width_are_checked(self):
-        p = Problem.read(routing_problem())
-        self.assertEqual(blockers(p, Route('x', 'A', 'F.Cu', .2, ((.1, 5), (9, 5)))), ['board_edge'])
-        with self.assertRaises(ValueError):
-            blockers(p, Route('x', 'A', 'F.Cu', .1, ((1, 5), (9, 5))))
-
-    def test_unsupported_constraints_abstain_before_search(self):
-        raw = routing_problem()
-        raw['unsupported'] = ['differential-pair skew constraint']
-        result = route_patterns(Problem.read(raw), budget_s=1)
-        self.assertEqual(result['status'], 'unsupported')
-        self.assertEqual(result['attempts'], 0)
-        self.assertFalse(result['routes'])
-
-    def test_timeout_inside_geometry_never_accepts_half_checked_route(self):
-        raw = routing_problem()
-        raw['obstacles'] = [obstacle('far', [1, 1, 2, 2])]
-        ticks = iter([0., 0., 0., 2., 2.])
-        result = route_patterns(Problem.read(raw), budget_s=1, clock=lambda: next(ticks))
-        self.assertEqual(result['status'], 'timeout')
-        self.assertFalse(result['routes'])
-        self.assertEqual(result['unresolved'][0]['reason'], 'budget')
 
 
 class PlacementTests(unittest.TestCase):
@@ -303,25 +169,6 @@ class PlacementTests(unittest.TestCase):
         self.assertEqual(result['status'], 'timeout')
         self.assertEqual(result['evaluated'], 1)
         self.assertFalse(result['moves'])
-
-
-class CLITests(unittest.TestCase):
-    def test_new_output_partial_route_exit_and_no_overwrite(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            src, dst = Path(tmp) / 'input.json', Path(tmp) / 'output.json'
-            raw = routing_problem()
-            raw['obstacles'] = [obstacle('wall', [4, 0, 6, 10])]
-            src.write_text(json.dumps(raw))
-            original = src.read_bytes()
-            cmd = [sys.executable, '-m', 'pcb_search', 'route', str(src), '--output', str(dst), '--budget-s', '1']
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-            self.assertEqual(result.returncode, 3, result.stderr)
-            self.assertIn('STUCK:', result.stdout)
-            self.assertFalse(json.loads(dst.read_text())['qualified'])
-            self.assertEqual(src.read_bytes(), original)
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-            self.assertEqual(result.returncode, 2)
-            self.assertIn('output must be new', result.stderr)
 
 
 if __name__ == '__main__':

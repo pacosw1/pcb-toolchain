@@ -46,6 +46,20 @@
           }
         },
         {
+          "name": "pcbsearch",
+          "image": "rust:1.93.1",
+          "steps": [
+            {
+              "run": "cd tools/pcb_search/core && cargo test --release --locked --quiet"
+            }
+          ],
+          "limits": {
+            "timeoutSec": 600,
+            "cpus": 2,
+            "memoryMb": 4096
+          }
+        },
+        {
           "name": "studio",
           "image": "node:22-bookworm-slim",
           "steps": [
