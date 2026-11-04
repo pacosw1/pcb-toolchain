@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, afterEach, test } from 'node:test';
@@ -62,6 +62,19 @@ test('missing CAD and level stay unknown', () => {
   assert.equal(row.declared_level, null);
   assert.deepEqual(row.missing_files, ['USB.kicad_sch']);
   assert.ok(row.facts_errors.length);
+});
+
+test('a library behind a symlink records its real path, and CRLF text parses', () => {
+  const link = `${library}-link`;
+  symlinkSync(library, link);
+  try {
+    writeFileSync(join(block, 'USB.kicad_pcb'), '(kicad_pcb\r\n\t(footprint "Package:X"\r\n\t\t(property "Reference" "U1")\r\n\t)\r\n)');
+    const row = reuse(link, 'USB');
+    assert.equal(row.source_directory, join(realpathSync(library), 'USB.kicad_block'));
+    assert.deepEqual(row.parts.map(part => part.ref), ['U1']);
+  } finally {
+    rmSync(link);
+  }
 });
 
 test('a path escape is refused', () => {

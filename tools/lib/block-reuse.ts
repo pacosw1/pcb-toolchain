@@ -1,11 +1,12 @@
 // Read-only retrieval of existing KiCad blocks. It never grants design qualification: a receipt applies only through
 // block-qualification.ts.
-import { existsSync, lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
-import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
+import { lstatSync, readdirSync } from 'node:fs';
+import { basename, dirname, extname } from 'node:path';
 import { parseFootprints, validateFacts, type Facts, type Part } from './block-parts.ts';
 import { identity } from './fingerprint.ts';
 import { readObject, readPyJson, sha256File } from './json-file.ts';
-import { compare, jsonDumps, pyStr, readText } from './py-compat.mjs';
+import { compare, jsonDumps, pyStr } from './py-compat.mjs';
+import { isDirectory, isFile, isRelativeTo, joinPath, pathExists, relativeTo, resolvePath, textOf } from './py-path.ts';
 
 const BOUND_SUFFIXES = new Set(['.kicad_sch', '.kicad_pcb', '.kicad_pro', '.kicad_dru', '.kicad_sym', '.kicad_mod', '.json']);
 const REQUIRED_EXTENSIONS = ['.kicad_sch', '.kicad_pcb', '.kicad_pro'];
@@ -49,26 +50,10 @@ export interface TargetPlan {
   port_map?: unknown;
 }
 
-const isFile = (path: string): boolean => {
-  try {
-    return statSync(path).isFile();
-  } catch {
-    return false;
-  }
-};
-
-const isDirectory = (path: string): boolean => {
-  try {
-    return statSync(path).isDirectory();
-  } catch {
-    return false;
-  }
-};
-
 /** Files under `folder` in Path order; a symlink to a folder is not followed, as rglob did not. */
 function* filesUnder(folder: string): Generator<string> {
   for (const name of readdirSync(folder).sort(compare)) {
-    const path = join(folder, name);
+    const path = joinPath(folder, name);
     if (lstatSync(path).isDirectory()) yield* filesUnder(path);
     else if (isFile(path)) yield path;
   }
@@ -81,13 +66,12 @@ const isBoundFile = (path: string): boolean => {
 
 /** All local CAD, rules, library tables and metadata of a block, not GUI state. */
 export function snapshot(directory: string): { digest: string; files: Map<string, string> } {
-  const root = resolve(directory);
+  const root = resolvePath(directory);
   const files = new Map<string, string>();
   for (const path of filesUnder(root)) {
     if (!isBoundFile(path)) continue;
-    const real = realpathSync(path);
-    if (real !== root && !real.startsWith(realpathSync(root) + sep)) throw new Error(`external block file: ${basename(path)}`);
-    files.set(relative(root, path), sha256File(path));
+    if (!isRelativeTo(resolvePath(path), root)) throw new Error(`external block file: ${basename(path)}`);
+    files.set(relativeTo(path, root), sha256File(path));
   }
   return { digest: identity(files), files };
 }
@@ -101,34 +85,35 @@ export function readBlock(directory: string): BlockRow {
   const before = snapshot(directory);
   const id = blockId(directory);
   const object = (name: string): Facts => {
-    const path = join(directory, name);
-    return existsSync(path) ? readObject<Facts>(path, `${path}: expected object`) : {};
+    const path = joinPath(directory, name);
+    return pathExists(path) ? readObject<Facts>(path, `${path}: expected object`) : {};
   };
   const meta = object(`${id}.json`);
   const facts = object('facts.json');
-  const pcb = join(directory, `${id}.kicad_pcb`);
-  const parts = existsSync(pcb) ? parseFootprints(readText(pcb)) : [];
+  const pcb = joinPath(directory, `${id}.kicad_pcb`);
+  const parts = pathExists(pcb) ? parseFootprints(textOf(pcb)) : [];
   if (!sameSnapshot(snapshot(directory), before)) throw new Error(`${id}: source changed during retrieval; inspect again`);
   return {
     schema: 'iot-lab.block-reuse.v1', id,
     description: meta.description ?? '', keywords: meta.keywords ?? '',
-    source_directory: resolve(directory), source_sha256: before.digest, files: before.files,
+    source_directory: resolvePath(directory), source_sha256: before.digest, files: before.files,
     parts, ports: (facts.ports ?? []) as BlockPort[],
     layout_rules: facts.layout_rules ?? [],
     declared_level: facts.level ?? null,
     source_note: facts.source ?? null, declared_gate_notes: facts.gates ?? null,
     open_items: (facts.open_items ?? []) as string[],
     facts_errors: validateFacts(facts),
-    missing_files: REQUIRED_EXTENSIONS.map(extension => id + extension).filter(name => !isFile(join(directory, name))),
+    missing_files: REQUIRED_EXTENSIONS.map(extension => id + extension).filter(name => !isFile(joinPath(directory, name))),
     qualification: 'unverified_for_target',
     target_checks_required: [...TARGET_CHECKS],
   };
 }
 
-const blockFolders = (library: string): string[] =>
-  readdirSync(library).filter(name => name.endsWith('.kicad_block') && !name.startsWith('.')).sort(compare).map(name => join(library, name));
+/** Path.glob('*.kicad_block'), which unlike glob.glob also sees dot names. */
+export const blockFolders = (library: string): string[] => !isDirectory(library) ? [] :
+  readdirSync(library).filter(name => name.endsWith('.kicad_block')).sort(compare).map(name => joinPath(library, name));
 
-export const catalog = (library: string): BlockRow[] => existsSync(library) ? blockFolders(library).map(readBlock) : [];
+export const catalog = (library: string): BlockRow[] => blockFolders(library).map(readBlock);
 
 /** str.casefold for the part names and keywords a query meets. */
 const casefold = (text: string): string => text.toUpperCase().toLowerCase();
@@ -155,7 +140,7 @@ export function find(library: string, query: string, mpn?: string | null, footpr
 
 export function reuse(library: string, id: string, expectedSha256?: string | null): BlockRow {
   if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error('invalid block ID');
-  const path = join(library, `${id}.kicad_block`);
+  const path = joinPath(library, `${id}.kicad_block`);
   if (!isDirectory(path)) throw new Error(`unknown block: ${id}`);
   const row = readBlock(path);
   if (expectedSha256 && row.source_sha256 !== expectedSha256) throw new Error('stale block: source fingerprint changed; inspect again');
@@ -169,7 +154,7 @@ function targetInputs(manifest: string): Map<string, string> {
   const inputs = new Map<string, string>();
   for (const name of names) {
     if (typeof name !== 'string' || !name) throw new Error('target input paths must be nonempty strings');
-    inputs.set(name, sha256File(resolve(dirname(manifest), name)));
+    inputs.set(name, sha256File(resolvePath(joinPath(dirname(manifest), name))));
   }
   inputs.set('$manifest', sha256File(manifest));
   return inputs;
@@ -191,7 +176,7 @@ function checkedPortMap(mapping: TargetPlan, names: string[]): Map<string, strin
  * relative to itself; callers choose the dependency closure. `mapping` is a prior plan whose fingerprints must match.
  */
 export function targetPlan(library: string, id: string, target: string, mapping?: TargetPlan | null) {
-  const manifest = resolve(target);
+  const manifest = resolvePath(target);
   const inputs = targetInputs(manifest);
   const digest = identity(inputs);
   const row = reuse(library, id);
