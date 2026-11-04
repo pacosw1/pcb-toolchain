@@ -4201,8 +4201,10 @@ pub(crate) fn add_result(bd: &mut Board, r: &Value) {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if args.get(1).is_some_and(|a| a == "write") {
-        std::process::exit(write::cli(&args[2..]));
+    match args.get(1).map(String::as_str) {
+        Some("write") => std::process::exit(write::cli(&args[2..])),
+        Some("board-json") => std::process::exit(iotroute::kicad::cli(&args[2..])),
+        _ => {}
     }
     route_cli(&args);
 }
