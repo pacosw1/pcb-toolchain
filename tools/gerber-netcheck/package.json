@@ -1,0 +1,14 @@
+{
+  "name": "pcb-gerber-netcheck",
+  "private": true,
+  "type": "module",
+  "description": "Mac-side Gerber parser for gerber_netcheck.ts; polygon operations use the shared Rust KiCad geometry.",
+  "scripts": {
+    "typecheck": "../node_modules/.bin/tsc --project tsconfig.json",
+    "test": "cargo build --manifest-path ../router/core/Cargo.toml -j 2 --bin gerber_netcheck && node --experimental-strip-types --test check.test.ts"
+  },
+  "dependencies": {
+    "gerber-parser": "4.2.7",
+    "gerber-plotter": "4.2.8"
+  }
+}
