@@ -17,6 +17,7 @@ export function testConfig(dataDir: string, over: Partial<Config> = {}): Config 
     cpuBudget: 16, memBudgetGb: 16, cgroupParent: '', defaultCpus: 8, defaultMemGb: 8, defaultTimeoutS: 300,
     maxTimeoutS: 21600, defaultRetries: 2, maxRetriesCap: 5, retryBackoffS: 30, cpuPsiMax: 5, memFloorFraction: 0.2,
     minFreeGb: 20, maxUploadMb: 1, retainDays: 7, jobUid: null, tickMs: 20,
+    pidsLimit: 4096, defaultDiskGb: 10, maxDiskGb: 50, diskCheckS: 5, maxQueued: 64, maxUploads: 2, maxStreams: 64,
     ...over,
   };
 }
@@ -24,7 +25,7 @@ export function testConfig(dataDir: string, over: Partial<Config> = {}): Config 
 /**
  * The fake job. The command names what the attempt does, one word per attempt, the last one repeating:
  *   pass | exit:N | hang | oom | killed | vanish | start-infra | start-image
- * It writes what the real wrapper writes: out/job.log and .exit-code.
+ * It unpacks the input and writes out/job.log, as the real wrapper does.
  */
 export class FakeRuntime implements Runtime {
   containers = new Map<string, ContainerState>();
@@ -32,6 +33,18 @@ export class FakeRuntime implements Runtime {
   killed: string[] = [];
   dockerUp = true;
   inspectBroken = false;
+  /** Bytes in the writable layer; null = the measurement failed. */
+  layerSize: number | null = 0;
+  /** Containers the record no longer needs, as after a crash between the save and the remove. */
+  orphans: string[] = [];
+
+  async layerBytes(): Promise<number | null> {
+    return this.layerSize;
+  }
+
+  async list(): Promise<string[]> {
+    return [...this.orphans];
+  }
 
   async ping(): Promise<boolean> {
     return this.dockerUp;
@@ -43,10 +56,9 @@ export class FakeRuntime implements Runtime {
     this.started.push(req);
     if (act === 'start-infra') return { ok: false, permanent: false, detail: 'docker: daemon busy' };
     if (act === 'start-image') return { ok: false, permanent: true, detail: 'No such image' };
-    fs.mkdirSync(path.join(req.workDir, 'out'), { recursive: true });
-    fs.writeFileSync(path.join(req.workDir, 'out', 'job.log'), `attempt ${n}: ${act}\n`);
+    spawnSync('tar', ['-xzf', req.inputTar, '-C', req.workDir]);
+    fs.writeFileSync(path.join(req.outDir, 'job.log'), `attempt ${n}: ${act}\n`);
     const finish = (rc: number): void => {
-      fs.writeFileSync(path.join(req.workDir, '.exit-code'), `${rc}\n`);
       this.containers.set(req.container, { status: 'exited', exitCode: rc, oomKilled: false });
     };
     if (act === 'pass') finish(0);
@@ -70,6 +82,7 @@ export class FakeRuntime implements Runtime {
 
   async remove(c: string): Promise<void> {
     this.containers.delete(c);
+    this.orphans = this.orphans.filter((o) => o !== c);
   }
 }
 

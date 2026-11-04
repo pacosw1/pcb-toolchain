@@ -17,7 +17,7 @@ whole job, so it cannot outlive a client or recover. The job contract stays the 
 export JOBD_URL=http://100.93.34.43:8793 JOBD_TOKEN_FILE=~/.config/pcb-job/token IOT_LAB=~/code/iot-lab
 alias pcb-job='node --no-warnings /path/to/pcb-toolchain/apps/job-daemon/src/client.ts'
 
-pcb-job run hardware-design/boards/X --in prob.json --cpus 8 --mem 8 --timeout 600 --results /tmp/x -- <command...>
+pcb-job run hardware-design/boards/X --in prob.json --cpus 8 --mem 8 --disk 10 --timeout 600 --results /tmp/x -- <command...>
 pcb-job submit ...      # the same, prints the id and returns
 pcb-job watch ID        # states on stderr, log on stdout; reconnects; exits with the job's code
 pcb-job status [ID]     # a job, or the budget, the queue and why it waits
@@ -51,19 +51,23 @@ queued -> running -> passed
 
 ## Retry rule
 
-The wrapper in the container writes `.exit-code` when the command ends by itself. That separates a verdict from an
-outside kill, which the container's exit code alone cannot.
+The verdict comes from Docker's own state (`ExitCode`, `OOMKilled`) and the daemon's own record. No file in the job
+folder takes part. If the container is gone, the job has no verdict: it is `infra`, never `passed`.
 
 | How the attempt ended | Outcome | Retries |
 | --- | --- | --- |
-| Command exit 0 | `passed` | - |
-| Exit 124, or 137 at the time limit | `timeout` | No: `remote.sh`'s rule, fix the placement, do not wait longer |
+| Container exit 0 | `passed` | - |
+| Exit 124, 137 at the time limit, or killed by the daemon at its deadline | `timeout` | No: `remote.sh`'s rule, fix the placement, do not wait longer |
 | Out of memory at the job limit | `oom` | No: the same limit gives the same result |
+| Over the disk limit, or exit 153 (a file hit `RLIMIT_FSIZE`) | `disk` | No |
 | Any other non-zero exit, for example router 1 (DRC) or 2 (no verdict) | `command` | No, a tool's exit is a verdict, unless `--retry-exit CODE` names it |
 | Image not on the host | `start` | No |
-| No `.exit-code`: container killed, vanished, host or Docker restarted | `infra` | Yes |
-| Exit 137 before the time limit (SIGKILL from outside) | `infra` | Yes |
-| `docker run` error, input extract failed | `infra` | Yes |
+| Container gone with no state | `infra` | Yes |
+| Exit 137 before the time limit (SIGKILL from outside), or 255 (Docker lost it) | `infra` | Yes |
+| `docker run` error | `infra` | Yes |
+
+A tool that really exits 255 is retried too, within `--retries`. Exit 0 is what the job's PID 1 reported, so a hostile
+job can always claim success, as any process can. What it cannot do is turn a kill or a limit into a pass.
 
 At most `--retries` retries (default 2), after 30, 60, 120 s. Each attempt starts from a fresh copy of the input. A
 retry keeps its place in the queue. While Docker does not answer, nothing starts and no retry is used.
@@ -73,10 +77,32 @@ retry keeps its place in the queue. While Docker does not answer, nothing starts
 `jobs/<id>/job.json` is the record, written atomically before each side effect. Containers run detached, so a daemon
 stop or crash does not touch them. The tick loop compares each record with its container and acts on the difference,
 and that loop is also the only code path for a normal exit. So recovery is: load the records, tick. Running jobs are
-picked up, jobs that ended meanwhile get their verdict from the marker, a lost container is `infra`, and queue order
-and backoff times carry over.
+picked up, jobs that ended meanwhile get their verdict from Docker, a lost container is `infra`, and queue order,
+backoff times and deadlines carry over. The verdict is saved before the container is removed; the first tick after a
+start removes any container left over from a crash in between.
 
 Logs are files, so a client resumes from its byte offset.
+
+## Hostile jobs
+
+A job is treated as hostile: it owns `/job`, and the daemon runs as root.
+
+- **Layout.** `attempts/N/` is root-owned and out of the job's reach. `work/` is `/job`. `out/` is a separate mount at
+  `/job/out`, so the job cannot swap `out` for a symlink.
+- **Reads.** The only job-writable file the daemon reads is `out/job.log`: opened once with `O_NOFOLLOW|O_NONBLOCK`,
+  checked with `fstat`, read from that descriptor. A symlink or FIFO reads as empty.
+- **Results.** When the container is gone, `work/` is removed and `out/` keeps regular files and folders only.
+- **Input.** Unpacked in the container as the job's uid, inside its limits. Root only lists the tar.
+- **Time.** The `timeout` in the container runs as the job's uid, and `kill -STOP` freezes it. The real deadline is
+  the daemon's: `timeoutS` + 10 s (`-k`) + 5 s (margin, a default to tune), from `startedAt` in the record.
+- **Processes.** `--pids-limit` per job, `TasksMax` for the slice.
+- **Disk.** md4 is ext4 without the `quota` and `project` features, and adding them needs `/var/lib/docker` unmounted,
+  so there is no real quota. Instead: `--ulimit fsize` caps each file exactly (it also stops sparse files), and a
+  watcher sums `work/`, `out/` and the container's writable layer every 5 s and kills the job over its `--disk` limit.
+  Between two checks a job can overshoot by what it writes in that time. Inode use is not counted; a tree too slow to
+  measure in 30 s fails closed. Admission needs the job's whole limit to fit above `JOBD_MIN_FREE_GB`.
+- **Requests.** Limits on upload size, concurrent uploads and streams, connections, queue length and list length.
+  Answers: 413, 503, 429.
 
 ## CPU budget and the shared host
 
@@ -116,8 +142,18 @@ of 32 CPUs = 19.2 CPUs, about CI's static 20. Running jobs are not paused. If th
 | `JOBD_RETAIN_DAYS` | 7 | **To tune.** `/srv/iot-lab-route/jobs` has grown to 314 folders with no cleanup |
 | `JOBD_JOB_UID` | 1000 | `kicad` in the image; `remote.sh` chowns to the same. `none` for no `--user` and no chown |
 | `JOBD_TICK_MS` | 2000 | **To tune** |
+| `JOBD_PIDS_LIMIT` | 4096 | `TasksMax` of `agent-orchestrator.slice`. **To tune** |
+| `JOBD_DEFAULT_DISK_GB`, `JOBD_MAX_DISK_GB` | 10, 50 | **To tune.** md4 has 1.1 TB free |
+| `JOBD_DISK_CHECK_S` | 5 | **To tune.** Same period as the guard's sampling |
+| `JOBD_MAX_QUEUED` | 64 | **To tune.** Queued inputs stay on disk, up to 512 MB each |
+| `JOBD_MAX_UPLOADS` | 2 | **To tune.** Each holds a `tar -t` for up to 60 s |
+| `JOBD_MAX_STREAMS` | 64 | **To tune.** Logs, events and results together |
 
 Guard numbers: `internal/resourceguard/guard.go` in server-term. One start per tick, because PSI is a 10 s average.
+
+Spec floors, below which a value would mean "no limit" or be refused: `cpus` 0.01 (the kernel's minimum quota, 1 ms per
+100 ms); `timeoutS` 1 (`timeout 0` means none); `memGb` 0.0625 (to tune; Docker's minimum is 6 MiB and `--memory 0` means
+unlimited); `diskGb` 0.01 (to tune). Non-finite values and non-numbers are refused.
 
 ## API
 
@@ -125,7 +161,7 @@ All routes need `Authorization: Bearer <token>`.
 
 | Route | |
 | --- | --- |
-| `POST /jobs` | Body: gzip tar of the job folder. Header `x-job-spec`: base64 JSON `{command, image, cpus, memGb, timeoutS, maxRetries, retryExitCodes, name}` |
+| `POST /jobs` | Body: gzip tar of the job folder. Header `x-job-spec`: base64 JSON `{command, image, cpus, memGb, diskGb, timeoutS, maxRetries, retryExitCodes, name}` |
 | `GET /jobs`, `GET /jobs/ID`, `GET /status` | Records; budget and queue |
 | `POST /jobs/ID/cancel` | |
 | `GET /jobs/ID/log?attempt=N&offset=B&follow=1` | Raw log from byte B; ends when the attempt ends |

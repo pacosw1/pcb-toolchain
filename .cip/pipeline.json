@@ -64,6 +64,26 @@
             "cpus": 2,
             "memoryMb": 4096
           }
+        },
+        {
+          "name": "job-daemon",
+          "image": "node:22-bookworm-slim",
+          "steps": [
+            {
+              "run": "cd apps/job-daemon && npm ci --ignore-scripts --no-audit --no-fund"
+            },
+            {
+              "run": "cd apps/job-daemon && npm run -s typecheck"
+            },
+            {
+              "run": "cd apps/job-daemon && npm test"
+            }
+          ],
+          "limits": {
+            "timeoutSec": 300,
+            "cpus": 2,
+            "memoryMb": 2048
+          }
         }
       ]
     }

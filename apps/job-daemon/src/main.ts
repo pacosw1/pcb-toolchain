@@ -12,6 +12,9 @@ const server = createServer(mgr);
 const timer = setInterval(() => {
   mgr.tick().catch((e: unknown) => console.error('tick failed:', e));
 }, cfg.tickMs);
+const diskTimer = setInterval(() => {
+  mgr.watchDisk().catch((e: unknown) => console.error('disk check failed:', e));
+}, cfg.diskCheckS * 1000);
 
 server.listen(cfg.port, cfg.bind, () => {
   const s = mgr.status();
@@ -22,6 +25,7 @@ server.listen(cfg.port, cfg.bind, () => {
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.on(signal, () => {
     clearInterval(timer);
+    clearInterval(diskTimer);
     server.close();
     server.closeAllConnections();
     process.exit(0);

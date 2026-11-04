@@ -17,3 +17,6 @@ CPUQuota=1600%
 # host on paper, so this memory is borrowed: admission checks live MemAvailable and jobs are first in line for OOM.
 MemoryMax=16G
 MemorySwapMax=0
+# Processes and threads for all jobs together: twice the per-job --pids-limit (JOBD_PIDS_LIMIT), which is the
+# TasksMax of agent-orchestrator.slice. A default to tune.
+TasksMax=8192

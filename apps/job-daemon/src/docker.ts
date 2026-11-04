@@ -1,12 +1,16 @@
 import { execFile } from 'node:child_process';
 import type { Config } from './config.ts';
+import { KILL_AFTER_S } from './retry.ts';
 
 export interface StartRequest {
   container: string;
   workDir: string;
+  outDir: string;
+  inputTar: string;
   image: string;
   cpus: number;
   memGb: number;
+  diskGb: number;
   timeoutS: number;
   command: string[];
 }
@@ -27,15 +31,23 @@ export interface Runtime {
   inspect(container: string): Promise<ContainerState>;
   kill(container: string): Promise<void>;
   remove(container: string): Promise<void>;
+  /** This daemon's containers, running or not. */
+  list(): Promise<string[]>;
+  /** Bytes in the container's writable layer; 0 if it does not exist; null if Docker did not answer in time. */
+  layerBytes(container: string): Promise<number | null>;
 }
 
 // Same job contract as tools/remote.sh: run in /job, write to out/, stdout+stderr in out/job.log, timeout -k 10.
-// Two changes. The log goes straight to a file: a pipe into tee hangs when a child outlives the command, and the
-// file survives a daemon restart. And .exit-code records that the command ended by itself (retry.ts).
+// Three changes. The input is unpacked here, as the job's uid and inside its limits, not by root on the host. The log
+// goes straight to a file: a pipe into tee hangs when a child outlives the command. And this timeout runs as the job's
+// uid, so a job can stop it: it only gives a clean exit 124; the real deadline is in JobManager.reconcile.
 const WRAPPER =
-  'mkdir -p out/tmp; timeout -k 10 "$1" "${@:2}" > out/job.log 2>&1; rc=$?; rm -rf out/tmp; echo "$rc" > .exit-code; exit "$rc"';
+  'mkdir -p out/tmp; ' +
+  `timeout -k ${KILL_AFTER_S} "$1" bash -c 'tar -xzf /input.tar.gz && exec "$@"' _ "\${@:2}" > out/job.log 2>&1; ` +
+  'rc=$?; rm -rf out/tmp; exit "$rc"';
 
 export interface Exec {
+  /** null: killed at the time limit, or could not run. */
   code: number | null;
   stdout: string;
   stderr: string;
@@ -50,6 +62,14 @@ export function exec(cmd: string, args: string[], timeoutMs = 30_000): Promise<E
   });
 }
 
+/** Disk blocks in use, not following links, staying on the filesystem. null if du did not finish in time. */
+export async function dirBytes(dirs: string[]): Promise<number | null> {
+  const r = await exec('du', ['-skx', ...dirs]);
+  if (r.code === null) return null;
+  // A non-zero code here means files went away during the walk, which is normal for a running job.
+  return r.stdout.split('\n').reduce((sum, line) => sum + (Number.parseInt(line, 10) || 0) * 1024, 0);
+}
+
 export function runArgs(req: StartRequest, cfg: Config): string[] {
   const mem = `${Math.round(req.memGb * 1024)}m`;
   const uid = cfg.jobUid === null ? [] : ['--user', `${cfg.jobUid}:${cfg.jobUid}`];
@@ -58,10 +78,13 @@ export function runArgs(req: StartRequest, cfg: Config): string[] {
     'run', '-d', '--pull', 'never', '--name', req.container, '--label', `pcb-job-daemon=${cfg.instance}`,
     ...uid, ...parent,
     '--network', 'none', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--log-driver', 'none',
-    '--cpus', String(req.cpus), '--memory', mem, '--memory-swap', mem,
+    '--cpus', String(req.cpus), '--memory', mem, '--memory-swap', mem, '--pids-limit', String(cfg.pidsLimit),
+    // Hard, per file, and it also stops a sparse file. The sum over all files is JobManager.watchDisk.
+    '--ulimit', `fsize=${Math.round(req.diskGb * 1024 ** 3)}`,
     // The kernel picks a job first when the host runs out of memory, not CI or the orchestrator.
     '--oom-score-adj', '1000',
-    '-v', `${req.workDir}:/job`, '-w', '/job', '-e', 'TMPDIR=/job/out/tmp',
+    '-v', `${req.workDir}:/job`, '-v', `${req.outDir}:/job/out`, '-v', `${req.inputTar}:/input.tar.gz:ro`,
+    '-w', '/job', '-e', 'TMPDIR=/job/out/tmp',
     req.image, 'bash', '-c', WRAPPER, '_', String(req.timeoutS), ...req.command,
   ];
 }
@@ -101,5 +124,16 @@ export class DockerRuntime implements Runtime {
 
   async remove(container: string): Promise<void> {
     await exec('docker', ['rm', '-f', container]);
+  }
+
+  async list(): Promise<string[]> {
+    const r = await exec('docker', ['ps', '-a', '--filter', `label=pcb-job-daemon=${this.cfg.instance}`, '--format', '{{.Names}}']);
+    return r.code === 0 ? r.stdout.split('\n').filter(Boolean) : [];
+  }
+
+  async layerBytes(container: string): Promise<number | null> {
+    const r = await exec('docker', ['inspect', '--size', '--format', '{{.SizeRw}}', container]);
+    if (r.code === null) return null;
+    return r.code === 0 ? Number.parseInt(r.stdout, 10) || 0 : 0;
   }
 }

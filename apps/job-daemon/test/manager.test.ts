@@ -17,12 +17,13 @@ afterEach(() => r.cleanup());
 const states = (id: string): string[] =>
   fs.readFileSync(r.mgr.store.eventsFile(id), 'utf8').trim().split('\n').map((l) => JSON.parse(l).to as string);
 
-/** Ticks and moves the clock past any backoff until the job ends. */
+/** Ticks and moves the clock to the end of any backoff until the job ends. */
 async function settle(id: string): Promise<void> {
   for (let i = 0; i < 20; i++) {
     await r.mgr.tick();
-    r.clock.now += 1000 * 1000;
-    if (['passed', 'failed', 'cancelled'].includes(r.mgr.jobs.get(id)!.state)) return;
+    const job = r.mgr.jobs.get(id)!;
+    if (job.nextAttemptAt) r.clock.now = Date.parse(job.nextAttemptAt); // only as far as the backoff: the deadline is real
+    if (['passed', 'failed', 'cancelled'].includes(job.state)) return;
   }
   assert.fail(`job did not end: ${r.mgr.jobs.get(id)!.state}`);
 }
@@ -33,11 +34,11 @@ describe('states', () => {
     assert.equal(job.state, 'queued');
     await r.mgr.tick();
     assert.equal(job.state, 'running');
-    assert.ok(fs.existsSync(path.join(r.mgr.store.attemptDir(job.id, 1), 'input.txt')));
+    assert.ok(fs.existsSync(path.join(r.mgr.store.workDir(job.id, 1), 'input.txt')));
     await r.mgr.tick();
     assert.equal(job.state, 'passed');
     assert.deepEqual(states(job.id), ['queued', 'running', 'passed']);
-    assert.deepEqual(fs.readdirSync(r.mgr.store.attemptDir(job.id, 1)).sort(), ['.exit-code', 'out']);
+    assert.deepEqual(fs.readdirSync(r.mgr.store.attemptDir(job.id, 1)), ['out']);
     assert.equal(r.runtime.containers.size, 0, 'container removed');
   });
 
@@ -173,11 +174,11 @@ describe('retry rule', () => {
   it('each attempt starts from a fresh copy of the input', async () => {
     const job = r.submit(['killed', 'hang']);
     await r.mgr.tick();
-    fs.writeFileSync(path.join(r.mgr.store.attemptDir(job.id, 1), 'input.txt'), 'dirty');
+    fs.writeFileSync(path.join(r.mgr.store.workDir(job.id, 1), 'input.txt'), 'dirty');
     await r.mgr.tick();
     r.clock.now += 31_000;
     await r.mgr.tick();
-    assert.equal(fs.readFileSync(path.join(r.mgr.store.attemptDir(job.id, 2), 'input.txt'), 'utf8'), 'in\n');
+    assert.equal(fs.readFileSync(path.join(r.mgr.store.workDir(job.id, 2), 'input.txt'), 'utf8'), 'in\n');
   });
 });
 
@@ -275,7 +276,6 @@ describe('restart recovery', () => {
     assert.equal(r.mgr.usage().cpus, 8, 'the budget counts recovered jobs');
     await r.mgr.tick();
     assert.equal(r.runtime.started.length, 1, 'no second start');
-    fs.writeFileSync(r.mgr.store.markerFile(job.id, 1), '0\n');
     r.runtime.containers.set(container, { status: 'exited', exitCode: 0, oomKilled: false });
     await r.mgr.tick();
     assert.equal(again.state, 'passed');
@@ -289,17 +289,6 @@ describe('restart recovery', () => {
     await settle(job.id);
     assert.equal(r.mgr.jobs.get(job.id)!.state, 'passed');
     assert.equal(r.mgr.jobs.get(job.id)!.attempts[0].detail, 'container gone');
-  });
-
-  it('the marker gives the verdict when the daemon died after docker rm', async () => {
-    const job = r.submit(['hang']);
-    await r.mgr.tick();
-    fs.writeFileSync(r.mgr.store.markerFile(job.id, 1), '0\n');
-    r.runtime.containers.clear();
-    r.restart();
-    await r.mgr.tick();
-    assert.equal(r.mgr.jobs.get(job.id)!.state, 'passed');
-    assert.equal(r.mgr.jobs.get(job.id)!.attempts.length, 1);
   });
 
   it('keeps queue order, retry times and new ids after a restart', async () => {
@@ -367,7 +356,7 @@ describe('retention', () => {
 describe('docker arguments', () => {
   it('hard limits, no network, no pull, low OOM priority', () => {
     const cfg = { ...r.cfg, jobUid: 1000, cgroupParent: 'pcbjobs.slice' };
-    const a = runArgs({ container: 'c', workDir: '/w', image: 'img:1', cpus: 4, memGb: 1.5, timeoutS: 60, command: ['python3', 'a b.py'] }, cfg);
+    const a = runArgs({ container: 'c', workDir: '/w', outDir: '/o', inputTar: '/i', image: 'img:1', cpus: 4, memGb: 1.5, diskGb: 1, timeoutS: 60, command: ['python3', 'a b.py'] }, cfg);
     const after = (flag: string): string => a[a.indexOf(flag) + 1];
     assert.equal(after('--cpus'), '4');
     assert.equal(after('--memory'), '1536m');

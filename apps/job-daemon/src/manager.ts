@@ -1,10 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import type { Config } from './config.ts';
-import { exec } from './docker.ts';
+import { dirBytes } from './docker.ts';
 import type { Runtime } from './docker.ts';
 import type { HostState } from './host.ts';
-import { backoffS, classify, retryable } from './retry.ts';
+import { backoffS, classify, deadlineS, retryable } from './retry.ts';
 import { Store } from './store.ts';
 import { HttpError, isTerminal } from './types.ts';
 import type { Attempt, Classified, JobRecord, JobSpec, JobState } from './types.ts';
@@ -18,6 +18,16 @@ const NEXT: Record<JobState, readonly JobState[]> = {
   cancelled: [],
 };
 
+// Floors. Below them Docker or `timeout` would read the value as "no limit", or refuse it.
+/** 64 MiB, a default to tune. The hard floor is Docker's 6 MiB minimum; --memory 0 means unlimited. */
+const MIN_MEM_GB = 0.0625;
+/** The kernel's minimum CFS quota is 1 ms per 100 ms period. */
+const MIN_CPUS = 0.01;
+/** `timeout 0` means no timeout, and timeout takes whole seconds here. */
+const MIN_TIMEOUT_S = 1;
+/** 10 MB, a default to tune: it only has to hold a small job folder. */
+const MIN_DISK_GB = 0.01;
+
 export function validateSpec(raw: unknown, cfg: Config): JobSpec {
   if (typeof raw !== 'object' || raw === null) throw new HttpError(400, 'spec is not an object');
   const r = raw as Record<string, unknown>;
@@ -30,9 +40,9 @@ export function validateSpec(raw: unknown, cfg: Config): JobSpec {
   }
   const image = r.image ?? cfg.images[0];
   if (typeof image !== 'string' || !cfg.images.includes(image)) bad(`image must be one of: ${cfg.images.join(', ')}`);
-  const number = (key: string, fallback: number, max: number): number => {
+  const number = (key: string, fallback: number, min: number, max: number): number => {
     const v = r[key] ?? fallback;
-    if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0 || v > max) bad(`${key} must be in (0, ${max}]`);
+    if (typeof v !== 'number' || !Number.isFinite(v) || v < min || v > max) bad(`${key} must be in [${min}, ${max}]`);
     return v as number;
   };
   const retries = r.maxRetries ?? cfg.defaultRetries;
@@ -43,14 +53,15 @@ export function validateSpec(raw: unknown, cfg: Config): JobSpec {
   if (!Array.isArray(codes) || !codes.every((c) => Number.isInteger(c) && c > 0 && c < 256)) {
     bad('retryExitCodes must be exit codes 1-255');
   }
-  const timeoutS = number('timeoutS', cfg.defaultTimeoutS, cfg.maxTimeoutS);
+  const timeoutS = number('timeoutS', cfg.defaultTimeoutS, MIN_TIMEOUT_S, cfg.maxTimeoutS);
   if (!Number.isInteger(timeoutS)) bad('timeoutS must be an integer');
   return {
     name: typeof r.name === 'string' ? r.name.slice(0, 100) : '',
     command: command as string[],
     image: image as string,
-    cpus: number('cpus', Math.min(cfg.defaultCpus, cfg.cpuBudget), cfg.cpuBudget),
-    memGb: number('memGb', Math.min(cfg.defaultMemGb, cfg.memBudgetGb), cfg.memBudgetGb),
+    cpus: number('cpus', Math.min(cfg.defaultCpus, cfg.cpuBudget), MIN_CPUS, cfg.cpuBudget),
+    memGb: number('memGb', Math.min(cfg.defaultMemGb, cfg.memBudgetGb), MIN_MEM_GB, cfg.memBudgetGb),
+    diskGb: number('diskGb', Math.min(cfg.defaultDiskGb, cfg.maxDiskGb), MIN_DISK_GB, cfg.maxDiskGb),
     timeoutS,
     maxRetries: retries as number,
     retryExitCodes: codes as number[],
@@ -78,6 +89,8 @@ export class JobManager {
   hold = '';
   private seq = 0;
   private ticking = false;
+  private watching = false;
+  private recovered = false;
   private lastSweep = 0;
 
   constructor(cfg: Config, store: Store, runtime: Runtime, host: () => HostState, now: () => number = Date.now) {
@@ -126,8 +139,15 @@ export class JobManager {
     this.store.appendEvent(job.id, { t: job.updatedAt, from, to, attempt: job.attempts.length, detail });
   }
 
+  /** Also checked before an upload is read, so a full queue costs the caller nothing. */
+  assertQueueRoom(): void {
+    const waiting = this.list('queued', 'retrying').length;
+    if (waiting >= this.cfg.maxQueued) throw new HttpError(429, `queue full: ${waiting} jobs waiting, limit ${this.cfg.maxQueued}`);
+  }
+
   /** The uploaded tar moves into the job folder; job.json is written last, so a crash here leaves no job. */
   submit(spec: JobSpec, tarPath: string): JobRecord {
+    this.assertQueueRoom();
     if (this.host().diskFreeGb < this.cfg.minFreeGb) {
       throw new HttpError(507, `less than ${this.cfg.minFreeGb} GB free in ${this.cfg.dataDir}`);
     }
@@ -172,6 +192,7 @@ export class JobManager {
     if (this.ticking) return;
     this.ticking = true;
     try {
+      if (!this.recovered) await this.recover();
       for (const job of this.list('running')) await this.reconcile(job);
       await this.admit();
       this.sweep();
@@ -180,23 +201,90 @@ export class JobManager {
     }
   }
 
+  /** Once per start. The verdict is saved before the container goes, so a crash can leave these two things behind. */
+  private async recover(): Promise<void> {
+    this.recovered = true;
+    const live = new Set(this.list('running').map((j) => j.attempts[j.attempts.length - 1].container));
+    for (const name of await this.runtime.list()) {
+      if (!live.has(name)) await this.runtime.remove(name);
+    }
+    for (const job of this.jobs.values()) {
+      for (const a of job.attempts) if (a.endedAt) this.trim(job, a);
+    }
+  }
+
+  private trim(job: JobRecord, attempt: Attempt): void {
+    try {
+      this.store.trimAttempt(job.id, attempt.n);
+    } catch (e) {
+      console.error(`job ${job.id}: trim failed:`, e); // a hostile tree must not stop the tick; retention removes it
+    }
+  }
+
   private async reconcile(job: JobRecord): Promise<void> {
     const attempt = job.attempts[job.attempts.length - 1];
-    if (job.cancelRequested) await this.runtime.kill(attempt.container);
+    const started = Date.parse(attempt.startedAt);
+    // The daemon's own clock and its own record. The timeout process in the container runs as the job's uid, so a
+    // job can stop it; this cannot be reached from inside. A restart keeps it: startedAt is durable.
+    if (!attempt.killedFor && this.now() - started > deadlineS(job.spec.timeoutS) * 1000) {
+      attempt.killedFor = 'deadline';
+      attempt.killDetail = `the daemon killed it ${deadlineS(job.spec.timeoutS)} s after the start: timeout ${job.spec.timeoutS} s`;
+      this.store.save(job);
+    }
+    if (job.cancelRequested || attempt.killedFor) await this.runtime.kill(attempt.container);
     const state = await this.runtime.inspect(attempt.container);
     if (state.status === 'running' || state.status === 'unknown') return;
     const c = classify({
-      marker: this.store.readMarker(job.id, attempt.n),
       containerExit: state.status === 'exited' ? state.exitCode : null,
       oomKilled: state.status === 'exited' && state.oomKilled,
       missing: state.status === 'missing',
       cancelRequested: job.cancelRequested,
-      elapsedS: (this.now() - Date.parse(attempt.startedAt)) / 1000,
+      killedFor: attempt.killedFor,
+      killDetail: attempt.killDetail ?? '',
+      elapsedS: (this.now() - started) / 1000,
       timeoutS: job.spec.timeoutS,
+      diskGb: job.spec.diskGb,
     });
-    // Remove before the record is saved: if the daemon dies between the two, the marker still gives the verdict.
-    await this.runtime.remove(attempt.container);
+    // The record first. If the daemon dies before the remove, recover() clears the container. The other order would
+    // lose Docker's verdict, and no file the job can write may stand in for it.
     this.finish(job, attempt, c);
+    await this.runtime.remove(attempt.container);
+    this.trim(job, attempt);
+  }
+
+  /**
+   * The disk limit: a watcher, because md4 is ext4 without the quota and project features, and adding them needs
+   * /var/lib/docker unmounted. It runs apart from tick(), so a slow du never delays the deadlines. Between two checks
+   * a job can overshoot by what it writes in that time; `--ulimit fsize` bounds any single file exactly.
+   */
+  async watchDisk(): Promise<void> {
+    if (this.watching) return;
+    this.watching = true;
+    try {
+      await Promise.all(this.list('running').map((job) => this.checkDisk(job)));
+    } finally {
+      this.watching = false;
+    }
+  }
+
+  private async checkDisk(job: JobRecord): Promise<void> {
+    const attempt = job.attempts[job.attempts.length - 1];
+    if (job.cancelRequested || attempt.killedFor) return;
+    const [files, layer] = await Promise.all([
+      dirBytes([this.store.workDir(job.id, attempt.n), this.store.outDir(job.id, attempt.n)]),
+      this.runtime.layerBytes(attempt.container),
+    ]);
+    if (job.state !== 'running' || job.attempts[job.attempts.length - 1] !== attempt) return;
+    const limit = `the ${job.spec.diskGb} GB disk limit`;
+    let why = '';
+    // Fails closed: a job must not get out of the limit by making its tree too slow to measure.
+    if (files === null || layer === null) why = `disk use could not be measured in time, treated as over ${limit}`;
+    else if (files + layer > job.spec.diskGb * 1024 ** 3) why = `${((files + layer) / 1024 ** 3).toFixed(2)} GB written, over ${limit}`;
+    if (!why) return;
+    attempt.killedFor = 'disk';
+    attempt.killDetail = why;
+    this.store.save(job);
+    await this.runtime.kill(attempt.container);
   }
 
   private finish(job: JobRecord, attempt: Attempt, c: Classified): void {
@@ -215,7 +303,6 @@ export class JobManager {
       const end: JobState = c.outcome === 'passed' ? 'passed' : c.outcome === 'cancelled' ? 'cancelled' : 'failed';
       this.setState(job, end, `attempt ${attempt.n}: ${c.detail}`);
     }
-    this.store.trimAttempt(job.id, attempt.n);
   }
 
   /** Why the job cannot start now, or '' when it can. Strict FIFO, so a large job is not passed over for ever. */
@@ -226,7 +313,9 @@ export class JobManager {
     if (host.cpuPsiSome10 >= this.cfg.cpuPsiMax) return `host cpu pressure ${host.cpuPsiSome10} >= ${this.cfg.cpuPsiMax}`;
     const floor = host.memTotalGb * this.cfg.memFloorFraction;
     if (host.memAvailableGb - spec.memGb < floor) return `host memory: ${host.memAvailableGb.toFixed(1)} GB available, floor ${floor.toFixed(1)} GB`;
-    if (host.diskFreeGb < this.cfg.minFreeGb) return `disk: ${host.diskFreeGb.toFixed(1)} GB free, floor ${this.cfg.minFreeGb} GB`;
+    if (host.diskFreeGb - spec.diskGb < this.cfg.minFreeGb) {
+      return `disk: ${host.diskFreeGb.toFixed(1)} GB free, job may use ${spec.diskGb}, floor ${this.cfg.minFreeGb} GB`;
+    }
     return '';
   }
 
@@ -252,23 +341,26 @@ export class JobManager {
     // Durable before the side effects: a crash from here on leaves "running" with no container, which reconcile
     // sees as an infrastructure failure.
     this.setState(job, 'running', `attempt ${n}`);
-    const workDir = this.store.attemptDir(job.id, n);
-    const prep = await this.prepare(job, workDir);
-    if (prep) return this.finish(job, attempt, { outcome: 'infra', exitCode: null, detail: prep });
-    const { image, cpus, memGb, timeoutS, command } = job.spec;
-    const r = await this.runtime.start({ container: attempt.container, workDir, image, cpus, memGb, timeoutS, command });
+    const workDir = this.store.workDir(job.id, n);
+    const outDir = this.store.outDir(job.id, n);
+    try {
+      // Empty folders only, made by the daemon. The input is unpacked in the container, as the job's uid.
+      fs.mkdirSync(`${workDir}/out`, { recursive: true }); // the mount point of outDir
+      fs.mkdirSync(outDir);
+      if (this.cfg.jobUid !== null) {
+        fs.chownSync(workDir, this.cfg.jobUid, this.cfg.jobUid);
+        fs.chownSync(outDir, this.cfg.jobUid, this.cfg.jobUid);
+      }
+    } catch (e) {
+      return this.finish(job, attempt, { outcome: 'infra', exitCode: null, detail: `job folder: ${String(e)}` });
+    }
+    const { image, cpus, memGb, diskGb, timeoutS, command } = job.spec;
+    const inputTar = this.store.inputTar(job.id);
+    const r = await this.runtime.start({ container: attempt.container, workDir, outDir, inputTar, image, cpus, memGb, diskGb, timeoutS, command });
     if (r.ok) return;
-    await this.runtime.remove(attempt.container);
     this.finish(job, attempt, { outcome: r.permanent ? 'start' : 'infra', exitCode: null, detail: r.detail });
-  }
-
-  private async prepare(job: JobRecord, workDir: string): Promise<string> {
-    fs.mkdirSync(`${workDir}/out`, { recursive: true });
-    const x = await exec('tar', ['-xzf', this.store.inputTar(job.id), '-C', workDir, '--no-same-owner'], 120_000);
-    if (x.code !== 0) return `input extract failed: ${x.stderr.trim()}`;
-    if (this.cfg.jobUid === null) return '';
-    const c = await exec('chown', ['-hR', `${this.cfg.jobUid}:${this.cfg.jobUid}`, workDir], 120_000);
-    return c.code === 0 ? '' : `chown failed: ${c.stderr.trim()}`;
+    await this.runtime.remove(attempt.container);
+    this.trim(job, attempt);
   }
 
   /** The disk on this host is shared, so finished jobs do not stay for ever. Hourly is enough for a limit in days. */

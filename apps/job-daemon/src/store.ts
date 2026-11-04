@@ -6,8 +6,13 @@ import type { JobRecord } from './types.ts';
  * The durable job record. jobs/<id>/ holds:
  *   job.json        the record, replaced atomically; the only state the daemon needs after a restart
  *   events.jsonl    append-only state log, read by the status stream
- *   input.tar.gz    the submitted files; each attempt extracts a fresh copy
- *   attempts/<n>/   the job folder of attempt n; after the attempt only out/ and .exit-code stay
+ *   input.tar.gz    the submitted files; each attempt unpacks a fresh copy, inside its container
+ *   attempts/<n>/   root-owned; the job cannot reach this folder
+ *     work/         mounted at /job, owned by the job; removed when the attempt ends
+ *     out/          mounted at /job/out, so out itself is a mount point the job cannot replace with a symlink
+ *
+ * Everything in work/ and out/ is hostile: the daemon runs as root and the job writes there. The daemon never takes
+ * a verdict from those files. It reads one file, out/job.log, through openNoFollow(), and sizes them with du.
  */
 export class Store {
   root: string;
@@ -25,8 +30,9 @@ export class Store {
   inputTar = (id: string): string => path.join(this.jobDir(id), 'input.tar.gz');
   eventsFile = (id: string): string => path.join(this.jobDir(id), 'events.jsonl');
   attemptDir = (id: string, n: number): string => path.join(this.jobDir(id), 'attempts', String(n));
-  logFile = (id: string, n: number): string => path.join(this.attemptDir(id, n), 'out', 'job.log');
-  markerFile = (id: string, n: number): string => path.join(this.attemptDir(id, n), '.exit-code');
+  workDir = (id: string, n: number): string => path.join(this.attemptDir(id, n), 'work');
+  outDir = (id: string, n: number): string => path.join(this.attemptDir(id, n), 'out');
+  logFile = (id: string, n: number): string => path.join(this.outDir(id, n), 'job.log');
 
   /** Atomic and fsynced: after a crash job.json is the old record or the new one, never a torn one. */
   save(job: JobRecord): void {
@@ -60,25 +66,43 @@ export class Store {
     return jobs.sort((a, b) => a.seq - b.seq);
   }
 
-  readMarker(id: string, n: number): number | null {
-    try {
-      const v = Number.parseInt(fs.readFileSync(this.markerFile(id, n), 'utf8').trim(), 10);
-      return Number.isNaN(v) ? null : v;
-    } catch {
-      return null;
-    }
-  }
-
-  /** Keeps out/ and the marker of a finished attempt; the rest is a copy of the input. */
+  /**
+   * Call only when the container is gone, so nothing can race this. work/ goes, and out/ keeps regular files and
+   * folders only: no symlink or FIFO reaches the results. Dirent types come from readdir and do not follow links.
+   */
   trimAttempt(id: string, n: number): void {
-    const dir = this.attemptDir(id, n);
-    if (!fs.existsSync(dir)) return;
-    for (const name of fs.readdirSync(dir)) {
-      if (name !== 'out' && name !== '.exit-code') fs.rmSync(path.join(dir, name), { recursive: true, force: true });
+    fs.rmSync(this.workDir(id, n), { recursive: true, force: true });
+    const stack = [this.outDir(id, n)];
+    while (stack.length > 0) {
+      const dir = stack.pop() as string;
+      if (!fs.existsSync(dir)) continue;
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) stack.push(full);
+        else if (!e.isFile()) fs.rmSync(full, { force: true });
+      }
     }
   }
 
   remove(id: string): void {
     fs.rmSync(this.jobDir(id), { recursive: true, force: true });
   }
+}
+
+/**
+ * Opens a file the job may have tampered with. O_NOFOLLOW refuses a symlink in the last component (the folders above
+ * it are not the job's), O_NONBLOCK keeps a FIFO from blocking the open, and fstat checks the object that was opened,
+ * not the name, so there is no window between the check and the read. Returns null when there is nothing to read.
+ */
+export function openNoFollow(file: string): number | null {
+  const { O_RDONLY, O_NOFOLLOW, O_NONBLOCK } = fs.constants;
+  let fd: number;
+  try {
+    fd = fs.openSync(file, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+  } catch {
+    return null;
+  }
+  if (fs.fstatSync(fd).isFile()) return fd;
+  fs.closeSync(fd);
+  return null;
 }

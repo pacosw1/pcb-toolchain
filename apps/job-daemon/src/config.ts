@@ -27,6 +27,13 @@ export interface Config {
   retainDays: number;
   jobUid: number | null;
   tickMs: number;
+  pidsLimit: number;
+  defaultDiskGb: number;
+  maxDiskGb: number;
+  diskCheckS: number;
+  maxQueued: number;
+  maxUploads: number;
+  maxStreams: number;
 }
 
 /** 127.0.0.1, ::1 or a Tailscale 100.64.0.0/10 address, the same rule as tools/route_live.py. Never 0.0.0.0. */
@@ -78,6 +85,13 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     retainDays: num(env, 'JOBD_RETAIN_DAYS', 7),
     jobUid: env.JOBD_JOB_UID === 'none' ? null : num(env, 'JOBD_JOB_UID', 1000),
     tickMs: num(env, 'JOBD_TICK_MS', 2000),
+    pidsLimit: num(env, 'JOBD_PIDS_LIMIT', 4096),
+    defaultDiskGb: num(env, 'JOBD_DEFAULT_DISK_GB', 10),
+    maxDiskGb: num(env, 'JOBD_MAX_DISK_GB', 50),
+    diskCheckS: num(env, 'JOBD_DISK_CHECK_S', 5),
+    maxQueued: num(env, 'JOBD_MAX_QUEUED', 64),
+    maxUploads: num(env, 'JOBD_MAX_UPLOADS', 2),
+    maxStreams: num(env, 'JOBD_MAX_STREAMS', 64),
   };
   if (cfg.images.length === 0) throw new Error('JOBD_IMAGES is empty');
   // A hyphen in a slice name means nesting: pcb-jobs.slice would sit under pcb.slice, not beside ci.slice.

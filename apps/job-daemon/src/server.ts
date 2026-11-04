@@ -8,8 +8,14 @@ import { pipeline } from 'node:stream/promises';
 import { exec } from './docker.ts';
 import type { JobManager } from './manager.ts';
 import { validateSpec } from './manager.ts';
+import { openNoFollow } from './store.ts';
 import { HttpError, isTerminal } from './types.ts';
 import type { JobRecord } from './types.ts';
+
+/** Sockets, idle ones included. Past this Node closes new connections. Above uploads + streams. A default to tune. */
+const MAX_CONNECTIONS = 256;
+/** Most recent jobs in GET /jobs. A default to tune. */
+const MAX_LIST = 500;
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const sha = (s: string): Buffer => createHash('sha256').update(s).digest();
@@ -54,6 +60,10 @@ async function receive(req: http.IncomingMessage, dir: string, maxBytes: number)
 /**
  * Sends a file from `offset`. With follow it keeps reading until done() is true and the file is drained. It reads
  * from disk, not from a live pipe, so a client that lost its connection resumes from the offset it holds.
+ *
+ * The file may be job.log, which the job can swap at any moment, and this process is root. So it is opened once with
+ * openNoFollow() and every read is on that descriptor; the name is not used again. A file that is not regular reads
+ * as empty. The size is bounded by `--ulimit fsize`.
  */
 async function tail(res: http.ServerResponse, file: string, offset: number, follow: boolean, done: () => boolean): Promise<void> {
   res.writeHead(200, { 'content-type': 'application/octet-stream', 'cache-control': 'no-store' });
@@ -61,28 +71,37 @@ async function tail(res: http.ServerResponse, file: string, offset: number, foll
   res.on('close', () => {
     closed = true;
   });
+  const writable = (): Promise<void> =>
+    new Promise((ok) => {
+      const go = (): void => {
+        res.off('drain', go);
+        res.off('close', go);
+        ok();
+      };
+      res.once('drain', go);
+      res.once('close', go); // a reader that goes away never drains; its slot must come back
+    });
+  const buf = Buffer.allocUnsafe(64 * 1024);
+  let fd: number | null = null;
   let pos = offset;
-  for (;;) {
-    const finished = !follow || done(); // read before the drain, so nothing written before "done" is missed
-    // lstat: the job owns out/, and this process is root. A job.log that is a symlink must not be followed.
-    const st = fs.lstatSync(file, { throwIfNoEntry: false });
-    const size = st?.isFile() ? st.size : 0;
-    if (size > pos) {
-      const stream = fs.createReadStream(file, { start: pos, end: size - 1 });
-      for await (const chunk of stream) {
-        if (closed) {
-          stream.destroy();
-          return;
-        }
-        if (!res.write(chunk)) await new Promise((r) => res.once('drain', r));
+  try {
+    for (;;) {
+      const finished = !follow || done(); // read before the drain, so nothing written before "done" is missed
+      fd ??= openNoFollow(file);
+      const n = fd === null ? 0 : fs.readSync(fd, buf, 0, buf.length, pos);
+      if (n > 0) {
+        pos += n;
+        if (!res.write(Buffer.from(buf.subarray(0, n)))) await writable();
+        if (closed) return;
+        continue;
       }
-      pos = size;
-      continue;
+      if (finished || closed) break;
+      await sleep(500);
     }
-    if (finished || closed) break;
-    await sleep(500);
+    res.end();
+  } finally {
+    if (fd !== null) fs.closeSync(fd);
   }
-  res.end();
 }
 
 function offsetOf(url: URL): number {
@@ -95,12 +114,14 @@ function sendResults(res: http.ServerResponse, mgr: JobManager, job: JobRecord):
   if (!isTerminal(job.state)) throw new HttpError(409, `job is ${job.state}`);
   const dir = mgr.store.jobDir(job.id);
   const last = job.attempts.length;
-  // out/ of the last attempt, the logs of earlier attempts, and the record: the evidence of how it got here.
+  // out/ of the last attempt, the logs of earlier attempts, and the record: the evidence of how it got here. The job
+  // has ended, so nothing can change this tree. trimAttempt left regular files and folders only, and tar does not
+  // follow links without -h, so no entry can reach outside out/.
   const args = ['-czf', '-', '-C', dir, 'job.json', 'events.jsonl'];
   for (let n = 1; n < last; n++) {
-    if (fs.existsSync(mgr.store.logFile(job.id, n))) args.push(`attempts/${n}/out/job.log`);
+    if (fs.lstatSync(mgr.store.logFile(job.id, n), { throwIfNoEntry: false })?.isFile()) args.push(`attempts/${n}/out/job.log`);
   }
-  if (last > 0 && fs.existsSync(path.join(mgr.store.attemptDir(job.id, last), 'out'))) {
+  if (last > 0 && fs.lstatSync(mgr.store.outDir(job.id, last), { throwIfNoEntry: false })?.isDirectory()) {
     args.push('-C', mgr.store.attemptDir(job.id, last), 'out');
   }
   const tar = spawn('tar', args, { stdio: ['ignore', 'pipe', 'ignore'] });
@@ -109,12 +130,33 @@ function sendResults(res: http.ServerResponse, mgr: JobManager, job: JobRecord):
   res.on('close', () => tar.kill());
 }
 
-async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: JobManager): Promise<void> {
+/** Counts work that holds a process, a file or a socket for a long time. The slot comes back when the response ends. */
+class Slots {
+  active = 0;
+  what: string;
+  limit: number;
+
+  constructor(what: string, limit: number) {
+    this.what = what;
+    this.limit = limit;
+  }
+
+  take(res: http.ServerResponse): void {
+    if (this.active >= this.limit) throw new HttpError(503, `busy: ${this.active} ${this.what} in progress, limit ${this.limit}`);
+    this.active += 1;
+    res.once('close', () => {
+      this.active -= 1;
+    });
+  }
+}
+
+async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: JobManager, uploads: Slots, streams: Slots): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://x');
   const method = req.method ?? 'GET';
   if (url.pathname === '/status' && method === 'GET') return json(res, 200, mgr.status());
   if (url.pathname === '/jobs' && method === 'GET') {
-    return json(res, 200, [...mgr.jobs.values()].sort((a, b) => b.seq - a.seq));
+    const limit = Math.min(Number(url.searchParams.get('limit')) || MAX_LIST, MAX_LIST);
+    return json(res, 200, [...mgr.jobs.values()].sort((a, b) => b.seq - a.seq).slice(0, limit));
   }
   if (url.pathname === '/jobs' && method === 'POST') {
     const header = req.headers['x-job-spec'];
@@ -126,7 +168,11 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: J
       throw new HttpError(400, 'x-job-spec is not base64 JSON');
     }
     const spec = validateSpec(raw, mgr.cfg);
-    const file = await receive(req, mgr.store.incomingDir(), mgr.cfg.maxUploadMb * 1024 * 1024);
+    mgr.assertQueueRoom();
+    const maxBytes = mgr.cfg.maxUploadMb * 1024 * 1024;
+    if (Number(req.headers['content-length'] ?? 0) > maxBytes) throw new HttpError(413, `upload over ${maxBytes} bytes`);
+    uploads.take(res);
+    const file = await receive(req, mgr.store.incomingDir(), maxBytes);
     try {
       await checkTar(file);
       return json(res, 201, mgr.submit(spec, file));
@@ -144,14 +190,17 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: J
     case 'POST cancel':
       return json(res, 200, mgr.cancel(job.id));
     case 'GET events':
+      streams.take(res);
       return tail(res, mgr.store.eventsFile(job.id), offsetOf(url), follow, () => isTerminal(job.state));
     case 'GET log': {
       const n = Number(url.searchParams.get('attempt') ?? job.attempts.length);
       const attempt = job.attempts.find((a) => a.n === n);
       if (!attempt) throw new HttpError(404, 'no such attempt');
+      streams.take(res);
       return tail(res, mgr.store.logFile(job.id, n), offsetOf(url), follow, () => attempt.endedAt !== undefined);
     }
     case 'GET results':
+      streams.take(res);
       return sendResults(res, mgr, job);
     default:
       throw new HttpError(405, 'method not allowed');
@@ -159,12 +208,14 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: J
 }
 
 export function createServer(mgr: JobManager): http.Server {
-  return http.createServer((req, res) => {
+  const uploads = new Slots('uploads', mgr.cfg.maxUploads);
+  const streams = new Slots('streams', mgr.cfg.maxStreams);
+  const server = http.createServer((req, res) => {
     if (!authorized(req, mgr.cfg.token)) {
       res.setHeader('connection', 'close');
       return json(res, 401, { error: 'unauthorized' });
     }
-    route(req, res, mgr).catch((e: unknown) => {
+    route(req, res, mgr, uploads, streams).catch((e: unknown) => {
       const status = e instanceof HttpError ? e.status : 500;
       if (status === 500) console.error(e);
       if (res.headersSent) return res.destroy();
@@ -172,4 +223,6 @@ export function createServer(mgr: JobManager): http.Server {
       json(res, status, { error: e instanceof Error ? e.message : String(e) });
     });
   });
+  server.maxConnections = MAX_CONNECTIONS;
+  return server;
 }

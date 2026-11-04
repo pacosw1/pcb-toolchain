@@ -16,7 +16,7 @@ const USAGE = `usage:
   pcb-job list                                          all jobs on record
   pcb-job cancel <id>
   pcb-job results <id> [<dir>]
-options: --in FILE (repeatable) --results DIR --cpus N --mem GB --timeout S --image I --retries N
+options: --in FILE (repeatable) --results DIR --cpus N --mem GB --disk GB --timeout S --image I --retries N
          --retry-exit CODE (repeatable) --name NAME
 env: JOBD_URL, JOBD_TOKEN or JOBD_TOKEN_FILE, IOT_LAB (project root), PCB_TOOLCHAIN_ROOT`;
 
@@ -243,6 +243,7 @@ function parseSubmit(argv: string[]): Parsed {
     else if (k === '--results') p.results = v;
     else if (k === '--cpus') p.spec.cpus = Number(v);
     else if (k === '--mem') p.spec.memGb = Number(v);
+    else if (k === '--disk') p.spec.diskGb = Number(v);
     else if (k === '--timeout') p.spec.timeoutS = Number(v);
     else if (k === '--retries') p.spec.maxRetries = Number(v);
     else if (k === '--retry-exit') retryExitCodes.push(Number(v));
