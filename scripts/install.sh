@@ -19,8 +19,8 @@ rec="$HOME/.local/share/pcb-toolchain/$version.sha256"   # tarball sha256 record
 if [ -x "$dest/bin/pcb" ]; then
   if [ -n "$want" ]; then
     have=$(cat "$rec" 2>/dev/null || true)
-    if [ -z "$have" ]; then echo "FAIL: cannot verify $dest against the lock: no recorded sha256 (remove $dest and reinstall)" >&2; exit 1; fi
-    if [ "$have" != "$want" ]; then echo "FAIL: installed sha256 $have != lock $want (remove $dest and reinstall)" >&2; exit 1; fi
+    if [ -z "$have" ]; then echo "WARN: $dest has no recorded sha256 (installed before records existed): not checked against the lock" >&2
+    elif [ "$have" != "$want" ]; then echo "FAIL: installed sha256 $have != lock $want (remove $dest and reinstall)" >&2; exit 1; fi
   fi
   echo "PASS: pcb-toolchain $version already installed"; ln -sf "$dest/bin/pcb" "$HOME/.local/bin/pcb"; exit 0
 fi
