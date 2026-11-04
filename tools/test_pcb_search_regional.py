@@ -24,7 +24,7 @@ class RegionalTest(unittest.TestCase):
         self.backend.write_text('(kicad_pcb '+segment('kept',1,1,.25)+segment('new',2,2,.25)+segment('outside',2,8,.25)+')')
         self.rule=dict(id='test',bounds=[0,None,4,4],layers=['F.Cu','B.Cu'],preferred_width_mm=.15,
                        max_width_mm=.2,selection='segment_midpoint',source='synthetic fixture')
-        self.spec=dict(regions=[self.rule],min_width_mm=.15)
+        self.spec=dict(board='ENV-SENSE',regions=[self.rule],min_width_mm=.15)
         self.patch=mock.patch('pcb_search.regional.policy',return_value=copy.deepcopy(self.spec))
         self.patch.start();self.addCleanup(self.patch.stop)
 

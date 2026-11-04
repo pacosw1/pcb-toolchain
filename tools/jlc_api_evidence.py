@@ -3,7 +3,8 @@
 registry/evidence/<date>/<C>.api.json = {fetched_at_utc, source_url, request, response_sha256, record}.
 Usage: python3 tools/jlc_api_evidence.py C123 C456 ...   (existing files are kept)"""
 import datetime, glob, hashlib, json, os, subprocess, sys
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+import project_root  # noqa: E402  (project root: --root/IOT_LAB/cwd; tools/project_root.py)
+ROOT = project_root.root_str()
 EV = os.path.join(ROOT, 'hardware-design/registry/evidence')
 URL = 'https://jlcpcb.com/api/overseas-pcb-order/v1/shoppingCart/smtGood/selectSmtComponentList'
 day = datetime.date.today().isoformat()

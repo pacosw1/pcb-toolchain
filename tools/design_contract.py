@@ -23,7 +23,8 @@ SCHEMA = 'iot-lab.design-contract.v1'
 REPORT = 'iot-lab.design-assessment.v1'
 STAGES = ('requirements','architecture','parts','schematic','placement','routing','prototype','production')
 KINDS = {'part_selection','part_use','schematic','placement','native_gate','release','bench','block_qualification'}
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent  # tools/ sources
+import project_root  # noqa: E402  (project root: --root/IOT_LAB/cwd; tools/project_root.py)
 
 
 def sha(path):
@@ -659,7 +660,7 @@ def current_assessment(report):
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('command',choices=['check'])
     parser.add_argument('design_id');parser.add_argument('--contract',required=True,type=Path)
-    parser.add_argument('--root',type=Path,default=Path(os.environ.get('IOT_LAB',ROOT)))
+    parser.add_argument('--root',type=Path,default=project_root.root())
     parser.add_argument('--through',choices=STAGES);parser.add_argument('--json',action='store_true');parser.add_argument('--output',type=Path)
     args=parser.parse_args(argv);result=evaluate_contract(args.root,args.contract,args.through)
     if result.get('design_id')!=args.design_id:

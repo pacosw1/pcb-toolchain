@@ -11,6 +11,11 @@ function fixture(board,variables={}) {
  const parent=board.startsWith('BASE-PWR-')?'hardware-design/boards/BASE-PWR/cad/'+board:board==='AC-24V-C'?'hardware-design/boards/AC-24V/cad/AC-24V-C':'hardware-design/boards/'+board+'/cad';
  mkdirSync(join(root,parent),{recursive:true});
  copyFileSync(new URL('../fab-workflow.sh',import.meta.url),join(root,'tools/fab-workflow.sh'));
+ // The board recipe comes from the board gate config (the real one of the repository).
+ copyFileSync(new URL('../release-recipe.mjs',import.meta.url),join(root,'tools/release-recipe.mjs'));
+ mkdirSync(join(root,'tools/lib'));copyFileSync(new URL('./board-release.mjs',import.meta.url),join(root,'tools/lib/board-release.mjs'));
+ const config=['gate.json','gate.pending.json'].map(n=>`hardware-design/boards/${board}/${n}`).find(n=>existsSync(new URL('../../'+n,import.meta.url)));
+ mkdirSync(join(root,'hardware-design/boards',board),{recursive:true});copyFileSync(new URL('../../'+config,import.meta.url),join(root,config));
  copyFileSync(new URL('../publish-release.py',import.meta.url),join(root,'tools/publish-release.py'));
  copyFileSync(new URL('../pcb_timing.py',import.meta.url),join(root,'tools/pcb_timing.py'));
  writeFileSync(join(root,'tools/check-env-schematic.py'),'import os,sys; sys.exit(int(os.environ.get("SCHEMATIC_STATUS", "0")))\n');
@@ -24,6 +29,7 @@ case "$1" in
   if [ "$3" != --gate-dir ]; then echo '{}' > "$4"; exit "\${LATE_EVIDENCE_STATUS:-0}"; fi
   echo fixture-token; exit "\${EVIDENCE_STATUS:-0}";;
  tools/check-base-pwr-pcb.mjs) exit "\${CHECK_STATUS:-0}";;
+ tools/release-recipe.mjs) exec ${JSON.stringify(process.execPath)} "$@";;
  tools/check-release-fab.mjs) echo '{}' > "$3/release-manifest.json"; exit "\${FAB_STATUS:-0}";;
  *) exit 99;;
 esac

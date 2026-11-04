@@ -7,19 +7,13 @@ import {passes,expectedMetrics,validateConfig} from './gate-core.mjs';
 import {readReport} from './gate-runtime.mjs';
 import {readPopulation,parseNative,children,single,properties} from './kicad-population.mjs';
 import {parseCsv} from './csv.mjs';
+import {gateConfigPath,releaseRecipe,requireRelease} from './board-release.mjs';
+
+export {gateConfigPath,releaseRecipe,requireRelease};
 
 export const sha256 = value => createHash('sha256').update(value).digest('hex');
 const need=(condition,message)=>{if(!condition)throw new Error(message);};
 const json=path=>JSON.parse(readFileSync(path,'utf8'));
-export const RELEASE_RECIPES={
- 'BASE-PWR':{maker:'make-base-pwr-fab.sh',revision:'A',copper:['F_Cu','In1_Cu','In2_Cu','B_Cu']},
- 'ENV-SENSE':{maker:'make-env-fab.sh',revision:'A',copper:['F_Cu','B_Cu'],variants:['VIB','AIR','ALL']},
- 'CELLULAR':{maker:'make-cell-fab.sh'},'AC-24V':{maker:'make-ac24-fab.sh'},
- 'FIELD-24V-BUS':{maker:'make-field-24v-bus-fab.sh'},'BASE-PWR-B':{maker:'make-base-pwr-b-fab.sh'},
- 'BASE-PWR-C':{maker:'make-base-pwr-c-fab.sh'},'AC-24V-C':{maker:'make-ac24-c-fab.sh'},
- 'H7-CORE':{maker:'make-h7-core-fab.sh',revision:'A',copper:['F_Cu','In1_Cu','In2_Cu','B_Cu']},
-};
-
 export function probeReleaseTools(paths) {
  const probe=(cmd,args)=>execFileSync(cmd,args,{encoding:'utf8',stdio:['ignore','pipe','pipe'],timeout:15000}).trim();
  const tools={kicad:probe(paths.kicadCli,['--version']),pcbnew:probe(paths.kicadPython,['-c','import pcbnew; print(pcbnew.Version())']),python:probe(paths.modernPython,['--version']),node:process.version};
@@ -78,34 +72,42 @@ export function fileHashes(directory) {
  }}walk(directory);return files;
 }
 
-export function verifyBoardChecks(board,stage) {
- if(board==='BASE-PWR') {
-  const file='audit/base-pwr-pcb-audit.json',report=json(join(stage,file));
-  need(report.board===board && report.ok===true && report.passed===report.total && report.total>0 &&
-   report.checks?.length===report.total && report.checks.every(c=>c.ok===true),'BASE-PWR board-specific staged audit is incomplete or failed');
-  return {status:'passed',checks:report.total,reports:{[file]:sha256(readFileSync(join(stage,file)))}};
+const BOARD_CHECKS={
+ // A board audit report: {board, ok, passed, total, checks[]}, every check ok.
+ audit:(board,c,stage)=>{const report=json(join(stage,c.report));
+  return report.board===board && report.ok===true && report.passed===report.total && report.total>0 &&
+   report.checks?.length===report.total && report.checks.every(x=>x.ok===true) ? {checks:report.total} : null;},
+ // A layout check JSON report with an empty fails list.
+ no_fails:(board,c,stage)=>{const report=json(join(stage,c.report));return Array.isArray(report.fails) && !report.fails.length ? {} : null;},
+ // A log that holds every required text and no line that matches forbid.
+ log:(board,c,stage)=>{const log=readFileSync(join(stage,c.report),'utf8');
+  return (c.require??[]).every(t=>log.includes(t)) && !(c.forbid && new RegExp(c.forbid,'m').test(log)) ? {} : null;},
+};
+// Board-specific staged evidence, as the "board_checks" list of the release recipe names it.
+export function verifyBoardChecks(board,stage,root) {
+ need(root,'verifyBoardChecks needs the project root');
+ const checks=requireRelease(root,board).board_checks??[];
+ if(!checks.length)return {status:'covered_by_existing_board_workflow'};
+ let extra={};const reports={};
+ for(const c of checks) {
+  const fn=BOARD_CHECKS[c.kind];need(fn,`${board} release board_checks: unknown kind ${c.kind}`);
+  const result=fn(board,c,stage);need(result,`${board} board-specific ${c.label} is incomplete or failed`);
+  extra={...extra,...result};reports[c.report]=sha256(readFileSync(join(stage,c.report)));
  }
- if(board==='ENV-SENSE') {
-  const layout='env-pcb.json',schematic='env-schematic.log',report=json(join(stage,layout)),log=readFileSync(join(stage,schematic),'utf8');
-  need(Array.isArray(report.fails) && !report.fails.length,'ENV-SENSE board-specific layout check is incomplete or failed');
-  need(log.includes('datasheet nets:') && log.includes('every part has a variant entry') && !/^FAIL/m.test(log),'ENV-SENSE board-specific schematic net/variant check is incomplete or failed');
-  return {status:'passed',reports:Object.fromEntries([layout,schematic].map(p=>[p,sha256(readFileSync(join(stage,p)))]))};
- }
- return {status:'covered_by_existing_board_workflow'};
+ return {status:'passed',...extra,reports};
 }
 
 export function releaseInputs(root,board) {
- const recipe=RELEASE_RECIPES[board];need(recipe,'unsupported board');
- const files=['tools/fab-workflow.sh','tools/check-release-gate.mjs','tools/check-release-fab.mjs','tools/lib/release-evidence.mjs',
-  'tools/lib/kicad-population.mjs','tools/lib/csv.mjs','tools/gerber_netcheck.py','tools/check-fab-zip.py','tools/pack-fab.py','tools/publish-release.py','tools/pcb_timing.py',`tools/${recipe.maker}`];
- if(board==='BASE-PWR')files.push('tools/check-base-pwr-pcb.mjs','tools/check_base_pwr_pcb.py','tools/lib/base-pwr-mech.mjs','tools/check_pixel_art.py','tools/lib/pixel-art-checks.mjs');
- if(board==='ENV-SENSE')files.push('tools/env_fab_variants.py','tools/check-env-pcb.py','tools/check-env-schematic.py','tools/build-env-schematic.py','tools/build-pq-schematic.py');
- const closure=gateTools(root,files.map(p=>join(root,p)));
+ const recipe=requireRelease(root,board);
+ const files=['tools/fab-workflow.sh','tools/release-recipe.mjs','tools/check-release-gate.mjs','tools/check-release-fab.mjs','tools/lib/release-evidence.mjs',
+  'tools/lib/kicad-population.mjs','tools/lib/csv.mjs','tools/gerber_netcheck.py','tools/check-fab-zip.py','tools/pack-fab.py','tools/publish-release.py','tools/pcb_timing.py',recipe.maker,...(recipe.inputs??[])];
+ // The board gate configuration holds the recipe, so it is a release input too.
+ const closure=[...gateTools(root,files.map(p=>join(root,p))),gateConfigPath(root,board)];
  return Object.fromEntries(closure.sort().map(p=>[relative(root,p),existsSync(p)?sha256(readFileSync(p)):null]));
 }
 
 export function verifyFab(root,board,fab) {
- const recipe=RELEASE_RECIPES[board];need(recipe,'unsupported board');
+ const recipe=requireRelease(root,board);
  const dir=join(root,'hardware-design/boards',board),cfg=json(join(dir,'gate.json'));
  const project=relative(root,resolve(dir,cfg.project)),name=basename(project),native=readPopulation(root,project);
  const tree=parseNative(readFileSync(join(root,project+'.kicad_pcb'),'utf8'));

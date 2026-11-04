@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import lean_resources as resources
 os.environ.update({k: '1' for k in resources.NATIVE_KEYS})
 from placer import anneal, cost  # noqa: E402
+import project_root  # noqa: E402
 
 
 def cmd_read(a):
@@ -294,7 +295,7 @@ def main(argv=None):
     r.add_argument('--w-comp', type=float, default=1.0, help='cohesion weight of a component (with --blocks)')
     r.add_argument('--engineering-manifest',default=os.environ.get('PCB_ENGINEERING_MANIFEST'))
     r.add_argument('--engineering-board',default=os.environ.get('PCB_ENGINEERING_BOARD'),help='exact configured board ID for the reviewed manifest')
-    r.add_argument('--engineering-root',default=os.environ.get('PCB_ENGINEERING_ROOT',os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+    r.add_argument('--engineering-root',default=os.environ.get('PCB_ENGINEERING_ROOT',project_root.root_str()))
     r.set_defaults(f=cmd_read)
     r = sub.add_parser('run')
     r.add_argument('prob')

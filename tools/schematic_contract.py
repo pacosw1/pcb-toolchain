@@ -26,6 +26,7 @@ from placer.dru import _tree, _tokens
 SCHEMA = 'iot-lab.schematic-contract.v1'
 RESULT = 'iot-lab.schematic-contract-result.v1'
 ROOT = Path(__file__).resolve().parent.parent
+import project_root  # noqa: E402  (project root: --root/IOT_LAB/cwd; tools/project_root.py)
 PREFIX = {'': Decimal(1), 'p': Decimal('1e-12'), 'n': Decimal('1e-9'), 'u': Decimal('1e-6'),
           'm': Decimal('1e-3'), 'k': Decimal('1e3'), 'M': Decimal('1e6'), 'G': Decimal('1e9')}
 BASES = ('Ohm', 'F', 'H', 'V', 'A', 'W', 'Hz', 's', 'degC')
@@ -412,7 +413,7 @@ def conditions(rows,observed,variant):
 
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('command',choices=['check']);parser.add_argument('board')
-    parser.add_argument('--contract',type=Path,required=True);parser.add_argument('--root',type=Path,default=Path(os.environ.get('IOT_LAB',ROOT)))
+    parser.add_argument('--contract',type=Path,required=True);parser.add_argument('--root',type=Path,default=project_root.root())
     parser.add_argument('--output',type=Path);parser.add_argument('--json',action='store_true');args=parser.parse_args(argv)
     report=check_contract(args.root,args.board,args.contract,args.output)
     payload=report

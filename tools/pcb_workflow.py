@@ -10,15 +10,6 @@ from pathlib import Path
 import re
 
 
-ALIASES = {
-    'BASE-PWR': 'base-pwr', 'BASE-PWR-B': 'base_b', 'BASE-PWR-C': 'base_c',
-    'ENV-SENSE': 'env', 'CELLULAR': 'cell', 'AC-24V': 'ac24', 'AC-24V-C': 'ac24c',
-    'FIELD-24V-BUS': 'field24b', 'AIO': 'aio', 'PQ-METER': 'pq',
-    'RELAY-4': 'relay-4', 'DOOR-RELAY': 'door-relay', 'INPUT-4D2A': 'input-4d2a',
-    'BACKUP-POWER': 'backup-power', 'IO-6X6': 'io-6x6',
-}
-
-
 def sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
@@ -51,9 +42,12 @@ def registry_revision(root, board):
 
 
 def pipeline(root, board):
-    alias = ALIASES.get(board, board.lower().replace('-', '_'))
-    name = 'tools/' + alias + '_pipeline.sh'
-    return name if (Path(root) / name).is_file() else None
+    """The integrated build pipeline of BOARD: the "pipeline" key of its gate.json, when that file exists."""
+    path = Path(root) / 'hardware-design/boards' / board / 'gate.json'
+    if not re.fullmatch(r'[A-Z0-9][A-Z0-9-]*', board) or not path.is_file():
+        return None
+    name = json.loads(path.read_text()).get('pipeline')
+    return name if isinstance(name, str) and name and (Path(root) / name).is_file() else None
 
 
 def context(root, board):

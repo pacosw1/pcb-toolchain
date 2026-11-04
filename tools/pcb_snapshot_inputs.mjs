@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {kicadCli,kicadPython,modernPython,kicadShared,kicadConfig,pinnedRepos} from './lib/env.mjs';
-import {verifyReleaseGate, RELEASE_RECIPES} from './lib/release-evidence.mjs';
+import {verifyReleaseGate, releaseRecipe} from './lib/release-evidence.mjs';
 import {readReport} from './lib/gate-runtime.mjs';
 const [root, board, mode, evidence, failedStage] = process.argv.slice(2);
 try {
@@ -33,7 +33,7 @@ try {
       if(['erc','drc'].includes(failedStage) && !readReport(join(evidence,failedStage+'.json'),failedStage,{code:0}))throw Error('named baseline native report is invalid');
     }
     console.log(JSON.stringify({verified:true,input_sha256:current.input_sha256,
-      ...(mode==='--verify-inputs' ? {board,project:input.cfg.project,release_supported:Boolean(RELEASE_RECIPES[board])} : {})}));
+      ...(mode==='--verify-inputs' ? {board,project:input.cfg.project,release_supported:Boolean(releaseRecipe(root,board))} : {})}));
   }
 }
 catch (error) { console.error(error.message); process.exitCode = 2; }

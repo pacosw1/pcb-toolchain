@@ -20,7 +20,8 @@ import os
 import re
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+import project_root  # noqa: E402  (project root: --root/IOT_LAB/cwd; tools/project_root.py)
+ROOT = project_root.root_str()
 TOL = 0.5  # mm a placed STEP body may extend past the pads + silk box before it counts as misaligned
 _PAD = re.compile(r'\(pad\s+\S+\s+\S+\s+\S+\s+\(at\s+([-\d.]+)\s+([-\d.]+)(?:\s+([-\d.]+))?\)\s+\(size\s+([-\d.]+)\s+([-\d.]+)\)')
 _ITEM = re.compile(r'\((?:fp_line|fp_circle|fp_arc|fp_rect|fp_poly)\b(?:[^()]|\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\))*\)')

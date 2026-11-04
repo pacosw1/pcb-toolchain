@@ -16,6 +16,7 @@ from pcb_workflow import board_config, sha
 from pcb_search.block_bindings import child, footprints, rotate, verify_binding
 from pcb_search.contracts import fingerprint
 from placer.dru import _tree, _tokens
+import project_root  # noqa: E402
 
 SCHEMA = 'iot-lab.engineering-constraints.v1'
 KINDS = {'fixed', 'rigid_group', 'pin_distance', 'clearance', 'connector_access', 'escape'}
@@ -509,7 +510,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command',choices=['check'])
     parser.add_argument('board')
-    parser.add_argument('--root',type=Path,default=Path(__file__).resolve().parent.parent)
+    parser.add_argument('--root',type=Path,default=project_root.root().resolve())
     parser.add_argument('--manifest',type=Path,required=True)
     parser.add_argument('--candidate',type=Path)
     parser.add_argument('--escape-evidence',type=Path)

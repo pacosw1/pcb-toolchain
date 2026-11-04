@@ -6,7 +6,8 @@ unlocked copper, pair-count faults and generic failures remain candidate-local.
 import fnmatch
 import json
 import os
-import base_b_route_rules as rules
+
+import board_route_rules
 
 
 class ImmutableInputFailure(Exception):
@@ -40,14 +41,21 @@ def records(board):
     return out
 
 
-def inspect(a, board_dir, declared_board, load_board, digest, rule_root):
-    """Identical selection/policy check used by wrapper and pre-search driver."""
+def inspect(a, board_dir, declared_board, load_board, digest, rule_root, rules=None):
+    """Identical selection/policy check used by wrapper and pre-search driver.
+
+    RULES is the board route-rule plugin; default: the gate.json "route_rules" of BOARD_DIR."""
+    if rules is None:
+        rules = board_route_rules.load_dir(rule_root, board_dir)
+    if rules is None:
+        raise SelectionError('no route_rules plugin in the gate.json of ' + str(board_dir))
     stem = os.path.splitext(a.board)[0]
     identity = rules.invocation_identity(board_dir, a.board, declared_board)
     cfg = rules.evidence(board_dir, stem + '.kicad_pro')
     source = load_board(a.board)
     if source is None:
-        raise SelectionError('BASE-B cannot read source board for preserved-copper preflight')
+        raise SelectionError(getattr(rules, 'LABEL', os.path.basename(str(board_dir))) +
+                             ' cannot read source board for preserved-copper preflight')
     planes = [n for n in a.plane_nets.split(',') if n]
     if a.gnd_vias and 'GND' not in planes:
         planes.insert(0, 'GND')

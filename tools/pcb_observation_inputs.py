@@ -16,7 +16,7 @@ import sysconfig
 SCHEMA = 'iot-lab.observation-input-policy.v1'
 PARTS_ACTIONS = {'inspect', 'selection', 'verify', 'status'}
 COMMON = ('pcb_cli.py', 'pcb_operations.py', 'pcb_evidence.py', 'pcb_workflow.py',
-          'pcb_timing.py', 'lean_workflow.py', 'lean_owned.py', 'lean_owned_exec.py')
+          'pcb_timing.py', 'lean_workflow.py', 'lean_owned.py', 'lean_owned_exec.py', 'project_root.py')
 # These exact sources were reviewed for the parts branch and its known external
 # commands. A changed producer still runs, using the previous broad boundary.
 # Refresh only after reviewing its execution/dependency changes.

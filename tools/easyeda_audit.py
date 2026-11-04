@@ -30,7 +30,8 @@ import xml.etree.ElementTree as ET
 
 import pcbnew
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+import project_root  # noqa: E402  (project root: --root/IOT_LAB/cwd; tools/project_root.py)
+ROOT = project_root.root_str()
 ASSETS = os.path.join(ROOT, 'hardware-design', 'registry', 'cad-assets')
 KICAD_CLI = '/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli'
 U = 0.254  # EasyEDA unit (10 mil) in mm

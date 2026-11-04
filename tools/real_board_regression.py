@@ -176,7 +176,9 @@ def run(args):
         proc, cleanup = None, None
         try:
             with log.open('wb') as stream:
-                proc = lean_owned.prepare(command, dict(cwd=ROOT, env=dict(os.environ), stdin=subprocess.DEVNULL,
+                # The candidate checkout CLI resolves its own project root (tools/project_root.py).
+                env = dict(os.environ, IOT_LAB=str(workspace)) if str(command[1]).startswith(str(workspace)) else dict(os.environ)
+                proc = lean_owned.prepare(command, dict(cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
                     stdout=stream, stderr=subprocess.STDOUT))
                 proc.start()
                 proc.activate()

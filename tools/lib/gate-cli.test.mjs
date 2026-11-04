@@ -10,7 +10,7 @@ function fixture(t) {
  const root=mkdtempSync(join(tmpdir(),'gate-cli-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
  const put=(p,v)=>{mkdirSync(join(root,p,'..'),{recursive:true});writeFileSync(join(root,p),v);};
  const source=fileURLToPath(new URL('../..',import.meta.url));
- for(const p of ['tools/gate.mjs','tools/lib/env.mjs','tools/lib/env-paths.mjs','tools/lib/gate-core.mjs','tools/lib/gate-runtime.mjs','tools/lib/gate-inputs.mjs','tools/lib/check-cache.mjs','tools/lib/gate-findings.mjs']) {mkdirSync(join(root,p,'..'),{recursive:true});copyFileSync(join(source,p),join(root,p));}
+ for(const p of ['tools/gate.mjs','tools/lib/env.mjs','tools/lib/env-paths.mjs','tools/lib/gate-core.mjs','tools/lib/gate-runtime.mjs','tools/lib/gate-inputs.mjs','tools/lib/check-cache.mjs','tools/lib/gate-findings.mjs','tools/lib/project-root.mjs']) {mkdirSync(join(root,p,'..'),{recursive:true});copyFileSync(join(source,p),join(root,p));}
  const base='hardware-design/boards/X/';
  put(base+'gate.json',JSON.stringify({project:'cad/X',checks:{erc:true,drc:true,paths:'current-paths.json',viapads:{},kicad_happy:{},port_labels:true}}));
  put(base+'cad/X.kicad_pcb','original PCB');put(base+'cad/X.kicad_sch','original SCH');

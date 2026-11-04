@@ -4,7 +4,7 @@ import {inspectPackets,loadBoardRegistry,FULL_PACKET} from './board-packets.mjs'
 import {loadBoardSelection} from './board-selections.mjs';
 import {parseCsv} from './csv.mjs';
 import {owningBomRevision} from './bom-ownership.mjs';
-import {fileHashes,sha256,RELEASE_RECIPES,verifyFab,verifyReleaseGate,verifyBoardChecks} from './release-evidence.mjs';
+import {fileHashes,sha256,releaseRecipe,verifyFab,verifyReleaseGate,verifyBoardChecks} from './release-evidence.mjs';
 
 const json=path=>JSON.parse(readFileSync(path,'utf8'));
 const need=(condition,message)=>{if(!condition)throw new Error(message);};
@@ -80,7 +80,7 @@ export function inspectOrientation(candidate,manifest,path) {
 }
 
 export async function releaseReadiness(root,board,candidate,{stock,orientation,asOf=new Date().toISOString().slice(0,10),boards=1,environment={},externalRoots={}}={}) {
- need(RELEASE_RECIPES[board],'unsupported board');need(/^\d{4}-\d{2}-\d{2}$/.test(asOf) && Number.isFinite(Date.parse(asOf)) && new Date(asOf).toISOString().slice(0,10)===asOf,'invalid order day');
+ need(releaseRecipe(root,board),'unsupported board');need(/^\d{4}-\d{2}-\d{2}$/.test(asOf) && Number.isFinite(Date.parse(asOf)) && new Date(asOf).toISOString().slice(0,10)===asOf,'invalid order day');
  need(Number.isSafeInteger(boards) && boards>0,'boards must be a positive integer');
  const findings=[],checks={},inputs={};
  const check=async(name,fn)=>{try{checks[name]=await fn();}catch(error){checks[name]={status:'blocked',cause:error.message};findings.push({check:name,cause:error.message});}};
@@ -95,7 +95,7 @@ export async function releaseReadiness(root,board,candidate,{stock,orientation,a
   need(gate.token===manifest.gate_token && gate.input_sha256===manifest.input_sha256,'candidate gate evidence changed');
   const fresh=verifyFab(root,board,join(candidate,'fab'));
   need(JSON.stringify(fresh)===JSON.stringify(manifest.assembly),'native source/assembly population changed since export');
-  need(JSON.stringify(verifyBoardChecks(board,candidate))===JSON.stringify(manifest.board_checks),'board-specific semantic evidence missing or changed');
+  need(JSON.stringify(verifyBoardChecks(board,candidate,root))===JSON.stringify(manifest.board_checks),'board-specific semantic evidence missing or changed');
   return {status:'passed',input_sha256:manifest.input_sha256,candidate_sha256:sha256(readFileSync(join(candidate,'release-manifest.json')))};
  });
  const registry=loadBoardRegistry(root),entry=registry.boards.find(e=>e.id===board);

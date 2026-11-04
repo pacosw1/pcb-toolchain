@@ -60,7 +60,7 @@ test('offline checker validates every selected revision and keeps candidate/stoc
  for(const p of ['STATUS','REQUIREMENTS','DECISIONS','DOC-RECONCILIATION','BOARD-INDEX'])f.put('hardware-design/'+p+'.md','Synthetic documentation');
  for(const p of ['PLATFORM.md','MODULES.md','README.md'])f.put(p,'Synthetic documentation');
  f.put('hardware-design/registry/components.json',{candidates:[]});
- const run=()=>{let output;try{output=execFileSync(process.execPath,[join(f.root,'tools/check-consistency.mjs'),'--offline'],{encoding:'utf8'});}catch(e){assert.equal(e.status,1);output=e.stdout;}
+ const run=()=>{let output;try{output=execFileSync(process.execPath,[join(f.root,'tools/check-consistency.mjs'),'--offline'],{cwd:f.root,encoding:'utf8'});}catch(e){assert.equal(e.status,1);output=e.stdout;}
   const summary=JSON.parse(output);return JSON.parse(readFileSync(join(f.root,summary.report),'utf8'));};
  const result=run();assert.equal(result.deterministic.rows_checked,2);assert.equal(result.ok,true);
  f.ledgers.B.parts[0].state=f.ledgers.B.state='stock-observed';f.put(prefix+'/selection-B.json',f.ledgers.B);

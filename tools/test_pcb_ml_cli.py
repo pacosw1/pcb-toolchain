@@ -97,7 +97,7 @@ class MlCliTests(unittest.TestCase):
         source = Path(__file__).resolve().parent
         for name in ('pcb', 'pcb_cli.py', 'pcb_operations.py', 'lean_owned.py', 'lean_owned_exec.py',
                      'lean_workflow.py', 'pcb_workflow.py', 'pcb_timing.py', 'pcb_cycle.py',
-                     'pcb_evidence.py', 'pcb_benchmark.py', 'pcb_observation_inputs.py'):
+                     'pcb_evidence.py', 'pcb_benchmark.py', 'pcb_observation_inputs.py', 'project_root.py'):
             target = self.root / 'tools' / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source / name, target)

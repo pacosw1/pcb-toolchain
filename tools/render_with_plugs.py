@@ -24,7 +24,8 @@ import subprocess
 import sys
 import tempfile
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+import project_root  # noqa: E402  (project root: --root/IOT_LAB/cwd; tools/project_root.py)
+ROOT = project_root.root_str()
 ASSETS = os.path.join(ROOT, 'hardware-design/registry/cad-assets')
 KCLI = '/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli'
 RENDER = ['--side', 'top', '--quality', 'high', '--perspective', '--rotate', '-30,0,20',

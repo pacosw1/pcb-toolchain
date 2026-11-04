@@ -24,7 +24,10 @@ import lean_workflow as lean
 import pcb_workflow
 from pcb_timing import MeasuredSpan, Timeline, live_stages, measured_stage
 
-ROOT = Path(__file__).resolve().parent.parent
+import project_root
+
+# The project root (tools/pcb --project DIR, else IOT_LAB, else the cwd search, else the folder above tools/).
+ROOT = project_root.root().resolve()
 TERMINAL = {'passed', 'failed', 'error', 'cancelled', 'timeout'}
 RUN_ID = re.compile(r'run-[A-Za-z0-9_-]+\Z')
 OBSERVATIONS = ('parts', 'placement', 'routing', 'design', 'schematic', 'outcomes', 'ml')

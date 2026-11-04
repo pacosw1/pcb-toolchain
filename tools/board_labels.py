@@ -419,7 +419,8 @@ def main():
     args = sys.argv[1:]
     board = args[0]
     dry = '--dry-run' in args
-    bd = os.path.join(ROOT, 'hardware-design', 'boards', board)
+    import project_root
+    bd = os.path.join(project_root.root_str(), 'hardware-design', 'boards', board)
     cfg = json.load(open(os.path.join(bd, 'board-labels.json')))
     pcb = os.path.join(bd, json.load(open(os.path.join(bd, 'gate.json')))['project'] + '.kicad_pcb')
     if '--pcb' in args:

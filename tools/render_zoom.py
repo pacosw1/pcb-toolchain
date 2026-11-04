@@ -14,7 +14,8 @@ import sys
 import pcbnew
 from PIL import Image
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+import project_root  # noqa: E402  (project root: --root/IOT_LAB/cwd; tools/project_root.py)
+ROOT = project_root.root_str()
 
 
 def main(argv):

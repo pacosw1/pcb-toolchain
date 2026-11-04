@@ -301,13 +301,19 @@ def main(argv=None):
                                     for ext in ('.kicad_pro','.kicad_dru') if os.path.isfile(os.path.splitext(a.board)[0]+ext)},
                           note='run attribution only; no cached result reuse or release qualification'))
     seed_receipt = None
-    if a.router == 'fastroute' and (os.path.splitext(os.path.basename(a.board))[0] == 'BASE-PWR-B' or os.environ.get('ROUTE_BOARD') == 'BASE-PWR-B'):
+    rules_board = None
+    if a.router == 'fastroute':
+        # Board mandatory route rules: the gate.json "route_rules" plugin with preserved-copper rules (BASE-PWR-B).
+        import board_route_rules
+        rules_board, _ = board_route_rules.mandatory(
+            REPO, [os.environ.get('ROUTE_BOARD', ''), os.path.splitext(os.path.basename(a.board))[0]])
+    if rules_board:
         import fastroute_job
         import pcbnew
         import route_features
         seed_args = fastroute_job._parse_args([a.board, a.outdir] +
                     (['--gnd-vias'] if a.gnd_vias else []) + shlex.split(a.route_args))
-        board_dir = os.path.join(REPO, 'hardware-design', 'boards', 'BASE-PWR-B')
+        board_dir = os.path.join(REPO, 'hardware-design', 'boards', rules_board)
         preflight_started = lean.now()
         native_started = False
         try:

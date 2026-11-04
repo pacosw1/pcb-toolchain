@@ -33,7 +33,8 @@ import subprocess
 import sys
 import tempfile
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+import project_root  # noqa: E402  (project root: --root/IOT_LAB/cwd; tools/project_root.py)
+ROOT = project_root.root_str()
 KICAD_3D = "/Applications/KiCad/KiCad.app/Contents/SharedSupport/3dmodels"
 CENTER_TOL = 0.5
 

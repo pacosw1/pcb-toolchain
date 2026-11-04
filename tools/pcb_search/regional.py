@@ -1,6 +1,7 @@
 """Apply sourced regional widths to new native proposal segments only.
 
-This bounded geometry stage shares the ENV production policy. It keeps the
+This bounded geometry stage shares a board production policy: the gate.json
+"route_rules" plugin of the board (ENV-SENSE: tools/env_routing_rules.py). It keeps the
 backend's centerlines, original copper, vias, placement and rules unchanged.
 It does not make a failed/partial backend output complete, repair connectivity,
 or replace current-path/native/thermal checks. Solvers still need construction
@@ -12,41 +13,53 @@ from pathlib import Path
 import re
 import shutil
 
-from env_routing_rules import applies, thermal_region, SOURCE
+import board_route_rules
+import project_root
 from placer.dru import _tree, _tokens
 from .contracts import fingerprint, number, xy
 from .native_candidate import copper_items
 from .native_srj import digest, geometry_digest, source_set
 
-ROOT = Path(__file__).resolve().parents[2]
-SOURCE_FILES = (SOURCE, 'tools/env_routing_rules.py', 'tools/build-env-pcb.py',
-                'hardware-design/boards/ENV-SENSE/current-paths.json',
-                'hardware-design/boards/ENV-SENSE/SPEC.md')
+ROOT = project_root.root()
 
 
-def policy(source):
-    """Compile the explicitly selected ENV policy against an exact native input."""
+def rules_for(board):
+    """The regional-width plugin of BOARD (gate.json "route_rules" with thermal_region and applies)."""
+    rules = board_route_rules.load(ROOT, board)
+    if rules is None or not hasattr(rules, 'thermal_region') or not hasattr(rules, 'REGIONAL_SOURCE_FILES'):
+        raise ValueError('no regional route_rules plugin in the gate.json of ' + str(board))
+    return rules
+
+
+def source_board(source):
+    """The board that owns SOURCE: the stem of the project file name in its .kicad_pro."""
+    project = json.loads(Path(source).with_suffix('.kicad_pro').read_text())
+    name = str(project.get('meta', {}).get('filename', ''))
+    return name[:-len('.kicad_pro')] if name.endswith('.kicad_pro') else None
+
+
+def policy(source, board=None):
+    """Compile the explicitly selected board policy against an exact native input."""
     import pcbnew as pcb
     source = Path(source).resolve()
-    expected = {SOURCE: 'Gate rule: no track wider than 0.2 mm there.',
-                'hardware-design/boards/ENV-SENSE/SPEC.md':
-                    'pour on any layer on the island, in the neck or 2 mm below it, traces 0.15 mm'}
-    for name, excerpt in expected.items():
+    board = board or source_board(source)
+    rules = rules_for(board)
+    for name, excerpt in rules.REGIONAL_EXPECTED.items():
         if excerpt not in ' '.join((ROOT/name).read_text().split()):
             raise ValueError('regional width source changed: '+name)
     inputs = source_set(source)
     project = json.loads(source.with_suffix('.kicad_pro').read_text())
-    if project.get('meta', {}).get('filename') != 'ENV-SENSE.kicad_pro':
-        raise ValueError('ENV policy requires its owned project identity')
+    if project.get('meta', {}).get('filename') != rules.PROJECT_FILENAME:
+        raise ValueError(rules.LABEL + ' policy requires its owned project identity')
     b = pcb.LoadBoard(str(source))
-    region = thermal_region(b, pcb)
+    region = rules.thermal_region(b, pcb)
     minimum = number(project['board']['design_settings']['rules']['min_track_width'], 'native minimum', True)
     if minimum > region['preferred_width_mm']:
         raise ValueError('regional target conflicts with native track minimum')
     if inputs != source_set(source):
         raise ValueError('native input changed during policy compilation')
-    return dict(schema='iot-lab.regional-widths.v1', board='ENV-SENSE', inputs=inputs,
-                sources={name: digest(ROOT/name) for name in SOURCE_FILES}, regions=[region],
+    return dict(schema='iot-lab.regional-widths.v1', board=board, inputs=inputs,
+                sources={name: digest(ROOT/name) for name in rules.REGIONAL_SOURCE_FILES}, regions=[region],
                 min_width_mm=minimum, qualified=False,
                 scope='shared segment-midpoint width policy; all other board checks remain required')
 
@@ -54,13 +67,14 @@ def policy(source):
 def verify_policy(spec, source):
     # Recompile from native geometry and the current sourced implementation.
     # Matching source hashes alone cannot authorize caller-edited rule values.
-    if spec != policy(source):
+    if spec != policy(source, spec.get('board')):
         raise ValueError('regional policy geometry, widths, inputs or sources changed')
 
 
 def normalize(source, backend, spec, out, *, completed):
     source, backend, out = Path(source).resolve(), Path(backend).resolve(), Path(out).resolve()
     verify_policy(spec, source)
+    select = rules_for(spec.get('board') or source_board(source)).applies
     original_inputs = source_set(source); backend_sha = digest(backend)
     _, original = copper_items(source); text, items = copper_items(backend)
     added = set(items)-set(original)
@@ -78,7 +92,7 @@ def normalize(source, backend, spec, out, *, completed):
         layer=fields['layer'][0];width=number(float(fields['width'][0]),'segment width',True)
         if width < spec['min_width_mm']:
             raise ValueError('backend segment violates native minimum')
-        matches=[r for r in spec['regions'] if applies(r,start,end,layer)]
+        matches=[r for r in spec['regions'] if select(r,start,end,layer)]
         if not matches:continue
         targets={r['preferred_width_mm'] for r in matches}
         if len(targets)!=1:
@@ -109,13 +123,15 @@ def normalize(source, backend, spec, out, *, completed):
 
 def main():
     ap=argparse.ArgumentParser(description=__doc__);sub=ap.add_subparsers(dest='mode',required=True)
-    p=sub.add_parser('export-env');p.add_argument('source');p.add_argument('output')
+    # export-env (old name) = export: the policy of the board that owns SOURCE (its .kicad_pro file name).
+    for name in ('export', 'export-env'):
+        p=sub.add_parser(name);p.add_argument('source');p.add_argument('output')
     n=sub.add_parser('normalize');n.add_argument('source');n.add_argument('backend');n.add_argument('policy');n.add_argument('output')
     # Explicit caller status; a partial remains partial regardless of geometry.
     n.add_argument('--completed',action='store_true')
     a=ap.parse_args()
     try:
-        if a.mode=='export-env':
+        if a.mode in ('export','export-env'):
             result=policy(a.source)
             with Path(a.output).open('x') as f:json.dump(result,f,indent=2)
             print('PASS: sourced regional policy exported; complete board gates still required');return 0

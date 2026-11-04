@@ -26,6 +26,7 @@ SCHEMA = 'iot-lab.part-evidence.v1'
 MANIFEST = 'iot-lab.part-use.v1'
 PROFILE = 'iot-lab.part-profile.v1'
 ROOT = Path(__file__).resolve().parent.parent
+import project_root  # noqa: E402  (project root: --root/IOT_LAB/cwd; tools/project_root.py)
 KINDS = {'fixed', 'rigid_group', 'pin_distance', 'clearance', 'connector_access', 'escape'}
 
 
@@ -791,7 +792,7 @@ def stock_board(root, board, candidate, boards, receipts, runner=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--root', default=os.environ.get('IOT_LAB', str(ROOT)))
+    parser.add_argument('--root', default=project_root.root_str())
     parser.add_argument('--output')
     parser.add_argument('--json', action='store_true')
     commands = parser.add_subparsers(dest='command', required=True)

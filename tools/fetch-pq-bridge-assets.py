@@ -15,7 +15,8 @@ import re
 import subprocess
 import urllib.request
 
-ROOT = Path(__file__).resolve().parent.parent
+import project_root  # noqa: E402  (project root: --root/IOT_LAB/cwd; tools/project_root.py)
+ROOT = project_root.root().resolve()
 ASSETS = ROOT / 'hardware-design/registry/cad-assets'
 BRIDGE = 'http://127.0.0.1:49620/execute'
 import os

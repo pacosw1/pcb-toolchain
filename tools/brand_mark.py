@@ -24,7 +24,8 @@ import pcbnew
 from PIL import Image
 
 MM = pcbnew.FromMM
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+import project_root  # noqa: E402  (project root: --root/IOT_LAB/cwd; tools/project_root.py)
+ROOT = project_root.root_str()
 LOGO = os.path.join(ROOT, 'hardware-design', 'boards', '_art', 'pitsa-logo.png')
 PIX = 0.1  # mm
 SILK_W = 0.16  # mm, JLC silkscreen minimum line 0.153 mm

@@ -6,13 +6,15 @@ import {existsSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 import {homedir} from 'node:os';
 import {join} from 'node:path';
-import {fileURLToPath} from 'node:url';
 import {kiCadPaths} from './env-paths.mjs';
+import {projectRoot} from './project-root.mjs';
 
 const home = homedir();
 const first = (candidates) => candidates.find((p) => p && existsSync(p)) ?? candidates.find(Boolean);
 
-export const root = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/, '');
+// The project root: tools/lib/project-root.mjs (explicit argument > env IOT_LAB > cwd search > file-relative).
+export {fileRoot, findProjectRoot, projectRoot} from './project-root.mjs';
+export const root = projectRoot();
 export const {kicadApp,kicadCli,kicadPython,kicadShared,kicadConfig} = kiCadPaths(process.platform,home,process.env);
 export const KICAD_VERSION = '10.0';
 // KICAD_CONFIG_HOME is the base path: KiCad appends its major/minor version.

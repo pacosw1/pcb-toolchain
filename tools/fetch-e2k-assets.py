@@ -17,7 +17,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+import project_root  # noqa: E402  (project root: --root/IOT_LAB/cwd; tools/project_root.py)
+ROOT = project_root.root().resolve()
 ASSETS = ROOT / 'hardware-design/registry/cad-assets'
 PRETTY = ROOT / 'hardware-design/blocks/iot-lab.pretty'
 E2K = os.environ.get('EASYEDA2KICAD', str(Path.home() / '.local/bin/easyeda2kicad'))

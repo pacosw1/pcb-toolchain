@@ -25,10 +25,13 @@
 import {readFile, writeFile, mkdir, readdir} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {join} from 'node:path';
-import {fileURLToPath} from 'node:url';
-import {resolveApiKey, systemOne, DEFAULT_MODEL} from './lib/jev-client.mjs';
+import {projectRoot} from './lib/project-root.mjs';
 
-const REPO = fileURLToPath(new URL('..', import.meta.url));
+const REPO = projectRoot();
+// The Jev client is optional (an archive candidate). Without it the semantic review is skipped (exit 2, no verdict).
+let jev = null;
+try { jev = await import('./lib/jev-client.mjs'); }
+catch (error) { if (error?.code !== 'ERR_MODULE_NOT_FOUND') throw error; }
 const DATASHEETS = join(REPO, 'hardware-design/registry/datasheets');
 const DRY_RUN = process.argv.includes('--dry-run');
 
@@ -180,7 +183,11 @@ if (active.length === 0) {
   process.exit(0);
 }
 
-const resolved = await resolveApiKey();
+if (!jev) {
+  console.error('SKIPPED: tools/lib/jev-client.mjs is absent; the semantic claim review did not run (no verdict).');
+  process.exit(2);
+}
+const resolved = await jev.resolveApiKey();
 if (!resolved) {
   console.error('Operational error: no TypeSafe API key (set TYPESAFE_API_KEY or use --key-file).');
   process.exit(2);
@@ -189,7 +196,7 @@ if (!resolved) {
 let response;
 try {
   process.stdout.write(`→ verifying ${active.length} claims in one batched call … `);
-  response = await systemOne({state, questions, key: resolved.key});
+  response = await jev.systemOne({state, questions, key: resolved.key});
   console.log(`done (${response.usage.input_tokens} in / ${response.usage.output_tokens} out)`);
 } catch (err) {
   console.error(`\nOperational error: ${err.message}`);

@@ -30,14 +30,19 @@
 import {readFile, writeFile, mkdir} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {join} from 'node:path';
-import {fileURLToPath} from 'node:url';
-import {resolveApiKey, systemOne, DEFAULT_MODEL} from './lib/jev-client.mjs';
+import {projectRoot} from './lib/project-root.mjs';
 import {inspectPackets,loadBoardRegistry,parseCsv} from './lib/board-packets.mjs';
 import {loadBoardSelection} from './lib/board-selections.mjs';
 import {revisionBoms} from './lib/bom-ownership.mjs';
 import {ownedFile} from './lib/kicad-population.mjs';
 
-const REPO = fileURLToPath(new URL('..', import.meta.url));
+const REPO = projectRoot();
+// The Jev client is optional (an archive candidate). Without it only the deterministic --offline layer runs.
+let jev = null;
+try { jev = await import('./lib/jev-client.mjs'); }
+catch (error) { if (error?.code !== 'ERR_MODULE_NOT_FOUND') throw error; }
+const DEFAULT_MODEL = jev?.DEFAULT_MODEL ?? null;
+if (!jev && process.argv.includes('--offline')) console.error('note: tools/lib/jev-client.mjs is absent; only the deterministic layer runs.');
 const DRY_RUN = process.argv.includes('--dry-run');
 const OFFLINE = process.argv.includes('--offline');
 
@@ -247,8 +252,12 @@ const findings = [...deterministic.findings];
 let responses = [];
 let keySource = 'offline';
 
+if (!OFFLINE && !jev) {
+  console.error('Operational error: tools/lib/jev-client.mjs is absent, so the semantic layer cannot run. Run --offline (deterministic layer only).');
+  process.exit(2);
+}
 if (!OFFLINE) {
-  const resolved = await resolveApiKey();
+  const resolved = await jev.resolveApiKey();
   if (!resolved) {
     console.error('Operational error: no TypeSafe API key (set TYPESAFE_API_KEY, use --key-file, or run --offline).');
     process.exit(2);
@@ -257,7 +266,7 @@ if (!OFFLINE) {
   for (const call of calls) {
     try {
       process.stdout.write(`→ semantic call "${call.id}" … `);
-      const response = await systemOne({state: call.state, questions: call.questions, key: resolved.key});
+      const response = await jev.systemOne({state: call.state, questions: call.questions, key: resolved.key});
       console.log(`${Object.keys(response.answers).length} answers (${response.usage.input_tokens} in / ${response.usage.output_tokens} out)`);
       responses.push({call, response});
     } catch (err) {

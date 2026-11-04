@@ -28,7 +28,8 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+import project_root  # noqa: E402  (project root: --root/IOT_LAB/cwd; tools/project_root.py)
+ROOT = project_root.root_str()
 DEFAULTS = os.path.join(ROOT, 'tools', 'route-features.json')
 FLAGS = ('triage_opens', 'rule_compiler', 'via_off_small_pads', 'pin_escape_check', 'via_halo', 'routing_rules',
          'fail_fast')

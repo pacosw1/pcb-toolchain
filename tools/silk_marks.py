@@ -44,7 +44,8 @@ def stackup_keep(path, fn):
 def main():
     board = sys.argv[1]
     dry = '--dry-run' in sys.argv
-    bd = os.path.join(ROOT, 'hardware-design', 'boards', board)
+    import project_root
+    bd = os.path.join(project_root.root_str(), 'hardware-design', 'boards', board)
     spec = json.load(open(os.path.join(bd, 'silk-marks.json')))
     pcb = os.path.join(bd, json.load(open(os.path.join(bd, 'gate.json')))['project'] + '.kicad_pcb')
     if '--pcb' in sys.argv:   # a scratch copy of the board

@@ -12,7 +12,7 @@ test('offline evidence validation checks candidate state, exact MPN and original
  const root=mkdtempSync(join(tmpdir(),'consistency-offline-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
  const put=(p,v)=>{mkdirSync(join(root,p,'..'),{recursive:true});writeFileSync(join(root,p),typeof v==='string'?v:JSON.stringify(v));};
  const repo=fileURLToPath(new URL('../..',import.meta.url));
- for(const p of ['tools/check-consistency.mjs','tools/lib/board-packets.mjs','tools/lib/board-selections.mjs','tools/lib/bom-ownership.mjs','tools/lib/jev-client.mjs','tools/lib/bom-coverage.mjs','tools/lib/kicad-population.mjs','tools/lib/csv.mjs']) {mkdirSync(join(root,p,'..'),{recursive:true});copyFileSync(join(repo,p),join(root,p));}
+ for(const p of ['tools/check-consistency.mjs','tools/lib/board-packets.mjs','tools/lib/board-selections.mjs','tools/lib/bom-ownership.mjs','tools/lib/project-root.mjs','tools/lib/bom-coverage.mjs','tools/lib/kicad-population.mjs','tools/lib/csv.mjs']) {mkdirSync(join(root,p,'..'),{recursive:true});copyFileSync(join(repo,p),join(root,p));}
  for(const p of ['STATUS','REQUIREMENTS','DECISIONS','DOC-RECONCILIATION','BOARD-INDEX']) put('hardware-design/'+p+'.md','current evidence');
  for(const p of ['PLATFORM.md','MODULES.md','README.md']) put(p,'current evidence');
  put('hardware-design/registry/boards.json',{schema_version:1,boards:[{id:'CELLULAR',directory:'CELLULAR',kind:'board',lifecycle:'active',packet:'full',revisions:[{revision:'A',state:'review',spec:'SPEC.md'}]}]});
@@ -23,7 +23,7 @@ test('offline evidence validation checks candidate state, exact MPN and original
  put('hardware-design/registry/evidence/C123.json',{expected_lcsc:'C123',identity_matched:true,stock_verified:true,fetched_at_utc:'2026-10-09T00:00:00Z',source_sha256:sha('original JLC source')});
  put('hardware-design/registry/datasheets/module.pdf','original manufacturer PDF');
  put('hardware-design/registry/datasheets/module.pdf.source.json',{source_url:'https://manufacturer.example/datasheet.pdf',fetched_at_utc:'2026-10-09T00:00:00Z',sha256:sha('original manufacturer PDF')});
- const run=()=>{try{return JSON.parse(execFileSync(process.execPath,[join(root,'tools/check-consistency.mjs'),'--offline'],{encoding:'utf8'}));}catch(e){assert.equal(e.status,1);return JSON.parse(e.stdout);}};
+ const run=()=>{try{return JSON.parse(execFileSync(process.execPath,[join(root,'tools/check-consistency.mjs'),'--offline'],{cwd:root,encoding:'utf8'}));}catch(e){assert.equal(e.status,1);return JSON.parse(e.stdout);}};
  assert.equal(run().ok,false);assert.ok(run().findings.some(f=>f.check==='bom_coverage'));
  component.state='stock-observed';records();assert.ok(run().findings.some(f=>f.check==='bom_candidate_state'));
  component.state='electrically-selected';component.mpn='Different';records();assert.ok(run().findings.some(f=>f.check==='bom_mpn_identity'));

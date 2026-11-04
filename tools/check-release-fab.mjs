@@ -9,7 +9,7 @@ try {
  const stage=resolve(stageArg),inputs=JSON.parse(readFileSync(inputsArg,'utf8'));
  if(JSON.stringify(inputs)!==JSON.stringify(releaseInputs(root,board)))throw new Error('release tooling changed during export');
  const assembly=verifyFab(root,board,join(stage,'fab'));
- const board_checks=verifyBoardChecks(board,stage);
+ const board_checks=verifyBoardChecks(board,stage,root);
  const gerber_runtime=JSON.parse(readFileSync(join(stage,'gerber-runtime.json'),'utf8'));
  if(!gerber_runtime.python || !['gerbonara','shapely','numpy','click'].every(p=>typeof gerber_runtime.packages?.[p]==='string' && gerber_runtime.packages[p]))throw new Error('Gerber runtime provenance missing');
  const gate=JSON.parse(readFileSync(join(stage,'fab/gate-evidence.json'),'utf8'));

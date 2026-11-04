@@ -25,7 +25,8 @@ import zlib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ART_DIR = os.path.join(ROOT, 'tools', 'pixel-art')
-PREVIEW_DIR = os.path.join(ROOT, 'hardware-design', 'boards', '_art')
+import project_root  # noqa: E402  (project root: --root/IOT_LAB/cwd; tools/project_root.py)
+PREVIEW_DIR = os.path.join(project_root.root_str(), 'hardware-design', 'boards', '_art')
 PIXEL_MIN_MM = 0.4
 SILK_W = 0.16
 PREFIX = 'pixel-art '

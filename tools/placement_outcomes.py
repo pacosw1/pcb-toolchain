@@ -18,6 +18,7 @@ import lean_workflow as lean
 from pcb_workflow import sha
 from pcb_timing import union_seconds
 from placer import placement_audit
+import project_root  # noqa: E402
 
 STUDY = 'iot-lab.placement-outcome-study.v1'
 REPORT = 'iot-lab.placement-outcome-comparison.v1'
@@ -759,7 +760,7 @@ def terminal_summary(result, output):
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command',choices=['evaluate']);parser.add_argument('study_id')
-    parser.add_argument('--manifest',type=Path,required=True);parser.add_argument('--root',type=Path,default=Path(__file__).resolve().parent.parent)
+    parser.add_argument('--manifest',type=Path,required=True);parser.add_argument('--root',type=Path,default=project_root.root().resolve())
     parser.add_argument('--output',type=Path);parser.add_argument('--json',action='store_true');args=parser.parse_args(argv)
     try:result=evaluate_study(args.root,args.manifest,args.study_id)
     except (OSError,ValueError,KeyError,TypeError) as error:

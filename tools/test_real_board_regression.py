@@ -52,7 +52,7 @@ class RealBoardRegressionTests(unittest.TestCase):
         def fail_after_detached_start(root, workspace, board):
             shutil.copytree(root, workspace, ignore=shutil.ignore_patterns('.gate'))
             response = subprocess.run([sys.executable, str(workspace / 'tools/pcb_cli.py'), 'check', 'X',
-                '--detach', '--json', '--runs-dir', str(output / 'runs')], env=dict(fixture.env, PCB_FIXTURE_DELAY='60'),
+                '--detach', '--json', '--runs-dir', str(output / 'runs')], env=dict(fixture.env, PCB_FIXTURE_DELAY='60', IOT_LAB=str(workspace)),
                 capture_output=True, text=True, timeout=5)
             self.assertEqual(response.returncode, 0, response.stdout + response.stderr)
             folder = output / 'runs' / json.loads(response.stdout)['run_id']
@@ -116,7 +116,7 @@ class RealBoardRegressionTests(unittest.TestCase):
             root = Path(tmp).resolve()
             board = root / 'hardware-design/boards/ENV-SENSE'
             board.mkdir(parents=True)
-            (board / 'gate.json').write_text('{"project":"native"}')
+            (board / 'gate.json').write_text('{"project":"native","snapshot_schematic_datasheets":true}')
             (board / 'native.kicad_sch').write_text('''(kicad_sch
               (lib_symbols (symbol "Unused" (property "Datasheet" "unused.pdf")))
               (symbol (property "Datasheet" "${KIPRJMOD}/../../registry/datasheets/required.pdf")))''')

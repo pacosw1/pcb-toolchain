@@ -68,7 +68,7 @@ def source_files(root, board=None, extra_inputs=None):
     found = []
     names = ['tools', 'hardware-design']
     if board:
-        _, _, project = board_config(root, board)
+        _, cfg, project = board_config(root, board)
         owner = project.relative_to(root / 'hardware-design/boards').parts[0]
         names = ['tools', 'hardware-design/boards/' + owner, 'hardware-design/blocks', 'hardware-design/registry']
     for name in names:
@@ -97,7 +97,7 @@ def source_files(root, board=None, extra_inputs=None):
             if p.is_relative_to(root) and p.is_file():
                 found.append(p)
         found.extend(p for p in (root / 'hardware-design').glob('*') if p.is_file())
-        if board == 'ENV-SENSE':
+        if cfg.get('snapshot_schematic_datasheets'):
             # The configured candidate semantic checker also requires the exact
             # original datasheets named by each native schematic instance. Its
             # inputs must travel with the candidate and bind adoption freshness.
@@ -118,6 +118,25 @@ def source_files(root, board=None, extra_inputs=None):
             raise ValueError('explicit engineering dependency is missing or outside checkout: ' + str(name))
         found.append(path)
     return sorted(set(found))
+
+
+def post_verify_commands(cfg, folder, candidate, node, env):
+    """The gate.json "post_verify" hooks as (stage, argv, env). Placeholders: {node}, {kicad_python},
+    {candidate} (the candidate .kicad_pcb), {run} (the run folder), {operation} (its operation folder)."""
+    values = {'{node}': str(node), '{kicad_python}': python_native(), '{candidate}': str(candidate),
+              '{run}': str(folder), '{operation}': str(folder / 'operation')}
+
+    def fill(text):
+        for key, value in values.items():
+            text = text.replace(key, value)
+        return text
+    out = []
+    for hook in cfg.get('post_verify') or []:
+        if not isinstance(hook, dict) or not hook.get('stage') or not isinstance(hook.get('run'), list) or not hook['run']:
+            raise ValueError('gate.json post_verify entries need a stage and a run argv')
+        out.append((hook['stage'], [fill(str(a)) for a in hook['run']],
+                    dict(env, **{k: fill(str(v)) for k, v in (hook.get('env') or {}).items()})))
+    return out
 
 
 def source_state(root, board=None, extra_inputs=None):
@@ -700,28 +719,13 @@ def run(folder):
         code = execute(folder, 'validate', gate, workspace, env)
         report = json.loads((folder / 'gate/result.json').read_text()) if (folder / 'gate/result.json').exists() else None
         verified = bool(code == 0 and report and report.get('exit') == 0 and not report.get('changedDuringRun'))
-        if verified and board == 'ENV-SENSE':
-            semantic_commands = [
-                ['python3', 'tools/check-env-schematic.py'],
-                [python_native(),
-                 'tools/check-env-pcb.py', str(native), '--json', str(folder / 'operation/board-check.json')],
-            ]
-            for i, semantic in enumerate(semantic_commands):
-                if execute(folder, 'board-semantic-' + str(i), semantic, workspace, env):
+        if verified:
+            # Board semantic checks after the shared gate: gate.json "post_verify" (for example the ENV
+            # schematic/layout checkers or the BASE-PWR fab audit). They run in the candidate snapshot.
+            for stage, semantic, stage_env in post_verify_commands(cfg, folder, native, manifest['node'], env):
+                if execute(folder, stage, semantic, workspace, stage_env):
                     verified = False
                     break
-        if verified and board == 'BASE-PWR':
-            # The complete legacy board audit includes manufacturing identity;
-            # produce it only inside the candidate snapshot before acceptance.
-            fab = folder / 'operation/fab'
-            render = folder / 'operation/render'
-            stage_env = dict(env, FAB_OUT=str(fab), RENDER_OUT=str(render))
-            if execute(folder, 'candidate-fab', ['sh', 'tools/make-base-pwr-fab.sh'], workspace, stage_env):
-                verified = False
-            elif execute(folder, 'board-semantic', [manifest['node'], 'tools/check-base-pwr-pcb.mjs',
-                         '--fab-dir', str(fab), '--render-dir', str(folder / 'operation/audit'),
-                         '--gate-dir', str(folder / 'gate')], workspace, stage_env):
-                verified = False
         result = dict(status='passed' if verified else 'failed', exit_code=0 if verified else 1,
                       cause='candidate meets configured gate targets' if verified else 'candidate does not meet configured gate targets',
                       candidate_verified=verified, identity_preserved=identity_ok, protected_source_changes=changed,

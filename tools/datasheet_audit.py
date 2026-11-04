@@ -22,8 +22,10 @@ import re
 import subprocess
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-REG = os.path.join(ROOT, 'hardware-design', 'registry')
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # tools/ sources
+import project_root  # noqa: E402  (project root: --root/IOT_LAB/cwd; tools/project_root.py)
+PROJECT = project_root.root_str()
+REG = os.path.join(PROJECT, 'hardware-design', 'registry')
 DS = os.path.join(REG, 'datasheets')
 PDFTEXT = os.path.expanduser('~/.cache/iot-lab/pdftext')
 PKG = ['SOT-23', 'SOT-223', 'SOT-89', 'SOT-323', 'SOT-363', 'SOT-563', 'SOIC', 'SOP', 'SSOP', 'TSSOP', 'HTSSOP', 'MSOP',
@@ -122,7 +124,7 @@ def main():
     ap.add_argument('--prefixes', default='U,Q,D,Y,K,F')
     a = ap.parse_args()
     pre = tuple(a.prefixes.split(','))
-    bd = os.path.join(ROOT, 'hardware-design', 'boards', a.board)
+    bd = os.path.join(PROJECT, 'hardware-design', 'boards', a.board)
     stem = os.path.basename(json.load(open(os.path.join(bd, 'gate.json')))['project'])
     rows = list(csv.DictReader(open(os.path.join(bd, 'cad', 'fab', f'{stem}-BOM-JLC.csv'))))
     res = []

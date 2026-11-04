@@ -14,7 +14,8 @@ import tempfile
 import threading
 import time
 
-ROOT = Path(__file__).resolve().parent.parent
+import project_root  # noqa: E402  (project root: --root/IOT_LAB/cwd; tools/project_root.py)
+ROOT = project_root.root().resolve()
 BOARDS = ('BACKUP-POWER', 'BASE-PWR', 'INPUT-4D2A')
 LOG = ROOT / 'hardware-design/reports/progress-log.csv'
 CLI = shutil.which('kicad-cli') or '/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli'

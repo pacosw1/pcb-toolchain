@@ -4,16 +4,20 @@ import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,symlinkSync} fro
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {spawnSync} from 'node:child_process';
-import {verifyReleaseGate,verifyFab,sha256,fileHashes,RELEASE_RECIPES,verifyBoardChecks,readGateObservation,releaseInputs} from './release-evidence.mjs';
+import {verifyReleaseGate,verifyFab,sha256,fileHashes,releaseRecipe,verifyBoardChecks,readGateObservation,releaseInputs} from './release-evidence.mjs';
+import {fileURLToPath} from 'node:url';
 import {inspectStock,inspectOrientation,releaseReadiness,inspectCompleteAssembly} from './release-readiness.mjs';
 import {gateInputs,fingerprint} from './gate-inputs.mjs';
 
+// The release recipes of the shipping boards, from their gate.json (the fixture copies them).
+const repo=fileURLToPath(new URL('../..',import.meta.url));
+const RECIPES=Object.fromEntries(['BASE-PWR','ENV-SENSE'].map(b=>[b,releaseRecipe(repo,b)]));
 function fixture(t,board='BASE-PWR') {
  const root=mkdtempSync(join(tmpdir(),'release-evidence-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
  const put=(path,value)=>{mkdirSync(join(root,path,'..'),{recursive:true});writeFileSync(join(root,path),typeof value==='string'?value:JSON.stringify(value));};
  const prefix=`hardware-design/boards/${board}`,project=prefix+`/cad/${board}/${board}`,gate=join(root,'candidate/gate'),fab=join(root,'candidate/fab');
  const checks={erc:true,drc:true,paths:'current-paths.json',viapads:{},kicad_happy:{},port_labels:true};
- put(prefix+'/gate.json',{project:`cad/${board}/${board}`,checks});
+ put(prefix+'/gate.json',{project:`cad/${board}/${board}`,checks,release:RECIPES[board]});
  put(project+'.kicad_sch','(kicad_sch (uuid "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa") (symbol (lib_id "Device:R") (unit 1) (in_bom yes) (on_board yes) (dnp no) (uuid "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb") (property "Reference" "R1") (property "Value" "10R") (property "Footprint" "iot-lab:C123") (property "LCSC" "C123")))');
  put(project+'.kicad_pcb','(kicad_pcb (layers (0 "F.Cu" signal)(31 "B.Cu" signal)) (footprint "iot-lab:C123" (layer "F.Cu") (at 10 20 -90) (property "Reference" "R1") (property "LCSC" "C123") (attr smd)))');
  const erc={sheets:[{violations:[]}]},drc={violations:[],schematic_parity:[],unconnected_items:[]};
@@ -24,10 +28,10 @@ function fixture(t,board='BASE-PWR') {
  events.push({type:'gate.end',exit:0,changedDuringRun:false});put('candidate/gate/events.jsonl',events.map(e=>JSON.stringify(e)).join('\n')+'\n');
  const result={exit:0,changedDuringRun:false,metrics,provenance:fingerprint(root,gateInputs(root,board).files,{kicad:'fixture',node:process.version})};
  put('candidate/gate/result.json',result);
- for(const layer of [...(RELEASE_RECIPES[board].copper),'F_Mask','B_Mask','F_Paste','B_Paste','F_Silkscreen','B_Silkscreen','Edge_Cuts'])put(`candidate/fab/gerber/${board}-${layer}.gbr`,'gerber fixture');
+ for(const layer of [...(RECIPES[board].copper),'F_Mask','B_Mask','F_Paste','B_Paste','F_Silkscreen','B_Silkscreen','Edge_Cuts'])put(`candidate/fab/gerber/${board}-${layer}.gbr`,'gerber fixture');
  for(const drill of ['PTH','NPTH'])put(`candidate/fab/gerber/${board}-${drill}.drl`,'drill fixture');
  put(`candidate/fab/${board}-gerber.zip`,'zip fixture');
- const populations=RELEASE_RECIPES[board].variants??['DEFAULT'];
+ const populations=RECIPES[board].variants??['DEFAULT'];
  if(board==='ENV-SENSE') {
   put(prefix+'/variants.json',{variants:populations,fit:{R1:populations}});
   result.provenance=fingerprint(root,gateInputs(root,board).files,result.provenance.tools);put('candidate/gate/result.json',result);
@@ -43,7 +47,7 @@ function fixture(t,board='BASE-PWR') {
   put('candidate/fab/VERIFIED','CAD/fabrication only');
   if(board==='BASE-PWR')put('candidate/audit/base-pwr-pcb-audit.json',{board,ok:true,passed:1,total:1,checks:[{ok:true}]});
   else {put('candidate/env-pcb.json',{fails:[]});put('candidate/env-schematic.log','OK datasheet nets: fixture\nOK every part has a variant entry\n');}
-  const board_checks=verifyBoardChecks(board,candidate);
+  const board_checks=verifyBoardChecks(board,candidate,root);
   const manifest={schema_version:1,board,revision:'A',scope:'cad_fabrication_candidate',input_sha256:evidence.input_sha256,gate_token:evidence.token,assembly,board_checks,artifacts:fileHashes(candidate),g5_ready:false,g6_qualified:false};
   put('candidate/release-manifest.json',manifest);return manifest;
  };
@@ -53,7 +57,7 @@ function fixture(t,board='BASE-PWR') {
 test('both shipping boards have native/fabrication release recipes and exact population coverage',t=>{
  for(const board of ['BASE-PWR','ENV-SENSE']) {
   const f=fixture(t,board),result=verifyFab(f.root,board,f.fab);
-  assert.deepEqual(Object.keys(result.populations),RELEASE_RECIPES[board].variants??['DEFAULT']);
+  assert.deepEqual(Object.keys(result.populations),RECIPES[board].variants??['DEFAULT']);
   for(const p of Object.values(result.populations))assert.deepEqual(p.references,{R1:'C123'});
   assert.match(result.rotation_scope,/supplier package orientation/);
  }
@@ -163,4 +167,12 @@ test('fabrication packaging is deterministic and never overwrites existing archi
  for(const destination of [a,b]){const r=spawnSync('python3',[helper,join(f.fab,'gerber'),destination],{encoding:'utf8'});assert.equal(r.status,0,r.stderr);}
  assert.deepEqual(readFileSync(a),readFileSync(b));const before=readFileSync(a);
  assert.notEqual(spawnSync('python3',[helper,join(f.fab,'gerber'),a],{encoding:'utf8'}).status,0);assert.deepEqual(readFileSync(a),before);
+});
+test('a board without a release entry in its gate config fails with a clear message',t=>{
+ const f=fixture(t);f.put(f.prefix+'/gate.json',{project:`cad/${f.board}/${f.board}`,checks:{erc:true}});
+ assert.equal(releaseRecipe(f.root,f.board),null);
+ assert.throws(()=>releaseInputs(f.root,f.board),/has no "release" entry/);
+ assert.throws(()=>verifyFab(f.root,f.board,f.fab),/has no "release" entry/);
+ const r=spawnSync(process.execPath,[fileURLToPath(new URL('../release-recipe.mjs',import.meta.url)),f.board,'shell'],{cwd:f.root,encoding:'utf8'});
+ assert.equal(r.status,2);assert.match(r.stderr,/FAIL: unsupported board: BASE-PWR has no "release" entry/);
 });

@@ -25,6 +25,7 @@ from pcb_search.native_conflicts import pad_anchors, select_repair
 from pcb_search.native_eco import point, shift_via
 from pcb_search.native_srj import geometry_digest, source_set
 from placer.dru import _tree, _tokens
+import project_root  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 SCHEMA = 'iot-lab.route-decision.v1'
@@ -740,7 +741,7 @@ def main(argv=None):
     sub = parser.add_subparsers(dest='mode',required=True)
     for name in ('diagnose','repair','escape','compute-status','compute-calibrate'):
         p=sub.add_parser(name);p.add_argument('board');p.add_argument('--json',action='store_true');p.add_argument('--output',type=Path)
-        p.add_argument('--root',type=Path,default=ROOT)
+        p.add_argument('--root',type=Path,default=project_root.root().resolve())
         if name in ('diagnose','repair'):p.add_argument('--evidence' if name=='diagnose' else '--plan',type=Path,required=True)
         if name in ('repair','escape'):p.add_argument('--timeout',type=float,default=120 if name=='repair' else 30)
         if name.startswith('compute-'):p.add_argument('--timeout',type=float,default=60)

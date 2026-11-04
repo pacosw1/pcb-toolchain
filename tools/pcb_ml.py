@@ -11,6 +11,7 @@ import tempfile
 
 import pcb_ml_data as data
 import pcb_ml_models as models
+import project_root  # noqa: E402
 
 
 SCHEMA = 'iot-lab.pcb-ml-result.v1'
@@ -39,7 +40,7 @@ def arguments(values):
     parser.add_argument('--epochs', type=int)
     parser.add_argument('--device', choices=('auto', 'cpu', 'mps'))
     parser.add_argument('--precision', choices=('float16', 'float32'))
-    parser.add_argument('--root', type=Path, default=Path(os.environ.get('IOT_LAB', Path(__file__).resolve().parent.parent)))
+    parser.add_argument('--root', type=Path, default=project_root.root())
     parser.add_argument('--output', type=Path)
     parser.add_argument('--json', action='store_true')
     args = parser.parse_args(values)

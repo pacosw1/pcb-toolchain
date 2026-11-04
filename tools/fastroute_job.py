@@ -518,23 +518,29 @@ def _main(a=None):
                                     if os.path.isfile(os.path.splitext(a.board)[0]+ext)},
                           qualified=False))
     base = os.path.join(a.outdir, "base.kicad_pcb")
-    base_b_cfg = None
-    if os.path.basename(stem) == 'BASE-PWR-B' or os.environ.get('ROUTE_BOARD') == 'BASE-PWR-B':
+    mandatory_cfg = None
+    # Board mandatory route rules: the gate.json "route_rules" plugin of the declared board (ROUTE_BOARD) or of
+    # the board named like the input file, when that plugin has preserved-copper rules (BASE-PWR-B today).
+    import board_route_rules
+    rules_board, board_rules = board_route_rules.mandatory(
+        route_features.ROOT, [os.environ.get('ROUTE_BOARD', ''), os.path.basename(stem)])
+    if board_rules is not None:
         import mandatory_preflight
-        import base_b_route_rules
-        base_b_dir = os.path.join(route_features.ROOT, 'hardware-design', 'boards', 'BASE-PWR-B')
+        rules_label = getattr(board_rules, 'LABEL', rules_board)
+        rules_dir = os.path.join(route_features.ROOT, 'hardware-design', 'boards', rules_board)
         try:
-            base_b_cfg, receipt = mandatory_preflight.inspect(
-                a, base_b_dir, os.environ.get('ROUTE_BOARD', ''), pcbnew.LoadBoard, lean.digest, route_features.ROOT)
+            mandatory_cfg, receipt = mandatory_preflight.inspect(
+                a, rules_dir, os.environ.get('ROUTE_BOARD', ''), pcbnew.LoadBoard, lean.digest, route_features.ROOT,
+                rules=board_rules)
         except mandatory_preflight.SelectionError as exc:
-            sys.exit('BASE-B mandatory preflight rejected: ' + str(exc))
-        with open(os.path.join(base_b_dir, 'diff-pairs.json')) as pair_file:
+            sys.exit(rules_label + ' mandatory preflight rejected: ' + str(exc))
+        with open(os.path.join(rules_dir, 'diff-pairs.json')) as pair_file:
             mandatory_pairs = json.load(pair_file)['pairs']
         pair_profile = receipt['preserved_pair_profile']
         policy_sources = list(receipt['policy_sources'])
         lean.atomic_json(os.path.join(a.outdir, 'mandatory-preflight.json'), receipt)
         if receipt['faults']:
-            sys.exit('BASE-B immutable mandatory-rule faults block routing; see mandatory-preflight.json')
+            sys.exit(rules_label + ' immutable mandatory-rule faults block routing; see mandatory-preflight.json')
     if backend_policy['mode'] == 'quality-first':
         capability = lean.run_stage([BIN, '--help'], stage='quality-backend-capability',
             event_file=phases, deadline=lean.deadline_after(10),
@@ -655,13 +661,13 @@ def _main(a=None):
                             "--out", os.path.join(a.outdir, "pin-escape.json")], stage="pin-escape", event_file=phases, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         print(([l for l in p.stdout.splitlines() if l.startswith("ESCAPE")] or ["ESCAPE failed"])[-1], flush=True)
     mandatory_masks = {}
-    if base_b_cfg:
+    if mandatory_cfg:
         layers = [l for l in a.layers.split(',') if l]
         for n in nets:
             allow = [l for l in layers if l != 'In1.Cu' and
-                     (l != 'In2.Cu' or base_b_route_rules.eligible(n, *base_b_cfg))]
+                     (l != 'In2.Cu' or board_rules.eligible(n, *mandatory_cfg))]
             if not allow:
-                sys.exit(f'BASE-B no legal routing layer for {n}')
+                sys.exit(f'{rules_label} no legal routing layer for {n}')
             if allow != layers:
                 mandatory_masks[n] = allow
     if unlock - nets:
@@ -795,7 +801,7 @@ def _main(a=None):
     if rules and feat.get('_board_dir'):
         sources += [os.path.join(feat['_board_dir'], f) for f in
                     ('reference-planes.json', 'current-paths.json', 'diff-pairs.json')]
-    if base_b_cfg:
+    if mandatory_cfg:
         sources += policy_sources
     router_env = resources.router_env(a.threads)
     import hashlib
@@ -903,7 +909,7 @@ def _main(a=None):
             for n, allowed in mandatory_masks.items():
                 masks[n] = [l for l in masks.get(n, a.layers.split(',')) if l in allowed]
                 if not masks[n]:
-                    sys.exit(f'BASE-B and compiled rules deny every layer for {n}')
+                    sys.exit(f'{rules_label} and compiled rules deny every layer for {n}')
             text = route_features.apply_layer_masks(text, masks)
             route_features.verify_layer_masks(text, masks)
             if rc_cfg.get("class_class", True):
@@ -1533,18 +1539,18 @@ def _main(a=None):
             native_postconditions=os.path.join(a.outdir, 'native-postconditions.json')))
         print('STUCK native postcondition: ' + post['cause'], flush=True)
         sys.exit(4)
-    if base_b_cfg:
+    if mandatory_cfg:
         rb = pcbnew.LoadBoard(out)
-        faults = base_b_route_rules.layer_faults([(t.GetNetname(), t.GetLayerName()) for t in rb.GetTracks()
-                                                if t.GetClass() != 'PCB_VIA'], *base_b_cfg)
+        faults = board_rules.layer_faults([(t.GetNetname(), t.GetLayerName()) for t in rb.GetTracks()
+                                           if t.GetClass() != 'PCB_VIA'], *mandatory_cfg)
         counts = {}
         for t in rb.GetTracks():
             if t.GetClass() == 'PCB_VIA':
                 counts[t.GetNetname()] = counts.get(t.GetNetname(), 0) + 1
-        faults += base_b_route_rules.pair_via_faults(counts, mandatory_pairs, pair_profile)
+        faults += board_rules.pair_via_faults(counts, mandatory_pairs, pair_profile)
         lean.atomic_json(os.path.join(a.outdir, 'mandatory-rules.json'), dict(faults=faults, preserved_pair_profile=pair_profile, qualified=False))
         if faults:
-            sys.exit('BASE-B mandatory imported-board rule check failed; see mandatory-rules.json')
+            sys.exit(rules_label + ' mandatory imported-board rule check failed; see mandatory-rules.json')
     # Required image reflects the final repaired board, not the earlier import.
     if a.render:
         p = lean.run_stage([KICAD_CLI, "pcb", "render", "--side", "top", "--quality", "basic", "-w", "1600", "-h", "1200",
