@@ -567,7 +567,10 @@ tools/router/core/src/routing_rules/stages.rs
 tools/router/core/src/routing_rules/tests.rs
 tools/router/core/src/seed.rs
 tools/router/core/src/sha256.rs
+tools/router/core/src/specctra/import.rs
+tools/router/core/src/specctra/import/tests.rs
 tools/router/core/src/specctra/mod.rs
+tools/router/core/src/specctra/records.rs
 tools/router/core/src/specctra/skip.rs
 tools/router/core/src/tests_congestion.rs
 tools/router/core/src/tests_iso.rs
