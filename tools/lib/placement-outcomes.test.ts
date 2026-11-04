@@ -317,6 +317,113 @@ test('the argv hash is ordered JSON', () => {
   assert.notEqual(identityCommand(['a', 'b']), identityCommand(['b', 'a']));
 });
 
+/** A finalized controlled Fastroute failure before a configured gate; no programs run. */
+function failedExecution(): [string, Row, () => Row] {
+  const [folder, trial] = runFixture('development', 'DEV', 'baseline', 1, 'failed');
+  rmSync(join(folder, 'gate'), { recursive: true });
+  write(join(folder, 'operation/result.json'), { status: 'failed', exit_code: 1, tool_exit: 1, source_unchanged: true });
+  const original: string = trial.placement_input.path, router = join(folder, 'operation/router'), script = '/recorded/tools/fastroute_job.py';
+  mkdirSync(router);
+  const stem = 'hardware-design/boards/DEV/native';
+  const source = read(join(folder, 'operation/source.json'));
+  for (const extension of ['.kicad_sch', '.kicad_pro', '.kicad_dru']) writeFileSync(original.replace(/\.kicad_pcb$/, extension), `original ${extension}`);
+  const projectFiles = ['.kicad_pcb', '.kicad_sch', '.kicad_pro', '.kicad_dru'];
+  const onDisk = (extension: string) => original.replace(/\.kicad_pcb$/, extension);
+  for (const extension of projectFiles) source.files[stem + extension] = sha256File(onDisk(extension));
+  source.files['tools/fastroute_job.py'] = 'e'.repeat(64);
+  source.files['hardware-design/boards/DEV/gate.json'] = 'd'.repeat(64);
+  write(join(folder, 'operation/source.json'), source);
+  const spec = { schema: 'iot-lab.routing-policy.v1', layers: ['F.Cu'], only_nets: ['N'], passes: 40, threads: 1, timeout_s: 30, optimizer: 'off', max_repairs: 0 };
+  update(join(folder, 'run.json'), run => Object.assign(run, { router: 'fastroute', timeout_s: 120, spec }));
+  const backend = { mode: 'quality-first', binary_sha256: 'b'.repeat(64), manifest_sha256: 'f'.repeat(64), patch_sha256: '1'.repeat(64), upstream_commit: '2'.repeat(40) };
+  const config = {
+    board: original, outdir: router, passes: 40, layers: 'F.Cu', only_nets: 'N', threads: 1, max_time: 30, optimizer: 'off', preflight: true,
+    skip_net: '', plane_nets: '', gnd_vias: false, route_planes: false, unlock_nets: '', set: [], neck_um: 0, native_thermal_checkback: false,
+  };
+  const manifestPath = join(router, 'input-manifest.json');
+  write(manifestPath, { board_sha256: sha256File(original), router_sha256: 'b'.repeat(64), configuration: config, features: { _board_dir: 'ignored owner path' } });
+  const dsn = join(router, 'router-model.dsn');
+  writeFileSync(dsn, 'synthetic source-bound DSN\n');
+  const invocation = ['/recorded/fastroute', '-de', dsn, '-mp', '40', '--quality-first', '--max-time=30',
+    '--router.autorouter.max_threads=1', '--router.optimizer.max_threads=1', '--router.optimizer.enabled=false'];
+  const coverage = join(router, 'rule-coverage.json');
+  write(coverage, {
+    status: 'passed', solver_launch_allowed: true, active_nets: ['N'], job_layers: ['F.Cu'], backend_command: invocation,
+    backend_command_sha256: identityCommand(invocation), dsn: { path: dsn, sha256: sha256File(dsn) },
+  });
+  const effective = join(router, 'effective-configuration.json');
+  write(effective, {
+    configuration: config, backend_policy: backend, backend_resources: { global_rayon_threads: 1, autorouter_workers: 1, optimizer_workers: 1 },
+    command: invocation, dsn_sha256: sha256File(dsn), rule_coverage: { path: coverage, sha256: sha256File(coverage) },
+  });
+  write(join(router, 'backend-policy.json'), backend);
+  write(join(router, 'stages.jsonl'), { stage: 'router-screen', command: invocation, status: 'complete', returncode: 0, cleanup: { complete: true } });
+  const context = join(folder, 'operation/execution-context.json');
+  const command = ['/recorded/python', script, original, router];
+  const policyPath = join(folder, trial.execution_policy);
+  const policy = read(policyPath);
+  write(context, { Id: '3'.repeat(64), Image: policy.runtime.image_id, HostConfig: { NetworkMode: 'none', Memory: policy.resources.memory_bytes, NanoCpus: 2000000000 } });
+  Object.assign(policy, {
+    command, effort: { timeout_s: 120, router_timeout_s: 30, passes: 40, max_repairs: 0, optimizer: 'off', backend_policy: backend, feature_policy: {} },
+    inputs: { ...Object.fromEntries(projectFiles.map(extension => [onDisk(extension), source.files[stem + extension]])), [script]: 'e'.repeat(64), '/recorded/fastroute': 'b'.repeat(64) },
+    environment: { FASTROUTE_BIN: '/recorded/fastroute' },
+    execution_context: { path: 'operation/execution-context.json', sha256: sha256File(context), container_id: '3'.repeat(64) },
+    controls: {
+      status: 'observed', effective_configuration_verified: true, tool_exit: 1,
+      effective_configurations: { 'effective-configuration.json': sha256File(effective) }, input_manifest_sha256: sha256File(manifestPath),
+    },
+  });
+  write(policyPath, policy);
+  const start = Date.parse('2026-10-16T00:00:00Z') / 1000;
+  writeFileSync(join(folder, 'operation/events.jsonl'), `${JSON.stringify({ type: 'tool.start', span_id: 'route', command, started_unix_s: start })}\n${
+    JSON.stringify({ type: 'tool.exit', span_id: 'route', code: 1, status: 'failed', ended_unix_s: start + 1 })}\n`);
+  const seal = () => {
+    reseal(folder, 'failed');
+    update(join(folder, 'result.json'), terminal => Object.assign(terminal, { source_unchanged: true, exit_code: 1 }));
+    trial.sha256 = sha256File(join(folder, 'result.json'));
+    return trial;
+  };
+  seal();
+  return [folder, trial, seal];
+}
+
+test('a verified failed attempt separates execution from native acceptance', () => {
+  failedExecution();
+  const row = evaluate().observations[0];
+  assert.equal(row.execution_attempt.status, 'verified', row.execution_attempt.cause);
+  assert.match(row.execution_attempt.fingerprint, /^[0-9a-f]{64}$/);
+  assert.equal(row.full_gate_success, false);
+  assert.equal(row.native, null);
+});
+
+test('each broken control sends a failed attempt back to unknown', () => {
+  const policyOf = (folder: string, trial: Row) => join(folder, trial.execution_policy);
+  const breaks: [string, RegExp, (folder: string, trial: Row) => void][] = [
+    ['tool exit', /matching nonzero tool exit/, (folder, trial) => update(policyOf(folder, trial), policy => { policy.controls.tool_exit = 2; })],
+    ['spec passes', /budget\/specification/, folder => update(join(folder, 'run.json'), run => { run.spec.passes = 41; })],
+    ['container memory', /runtime\/resources differ/, (folder, trial) => {
+      const context = join(folder, 'operation/execution-context.json');
+      update(context, value => { value.HostConfig.Memory = 1; });
+      update(policyOf(folder, trial), policy => { policy.execution_context.sha256 = sha256File(context); });
+    }],
+    ['source hash', /source\/tool\/gate-policy/, (folder, trial) => update(policyOf(folder, trial), policy => { policy.inputs[policy.command[2]] = 'f'.repeat(64); })],
+    ['launch', /launch is missing/, folder => writeFileSync(join(folder, 'operation/events.jsonl'), `${JSON.stringify({ type: 'tool.start', command: ['other'] })}\n`)],
+    ['backend cleanup', /cleanup is unconfirmed/, folder => update(join(folder, 'operation/router/stages.jsonl'), stage => { stage.cleanup.complete = false; })],
+  ];
+  for (const [name, cause, change] of breaks) {
+    rmSync(root, { recursive: true, force: true });
+    mkdirSync(root);
+    study.trials = [];
+    const [folder, trial, seal] = failedExecution();
+    change(folder, trial);
+    seal();
+    const row = evaluate().observations[0];
+    const text = String(row.execution_attempt?.cause ?? row.cause);
+    assert.notEqual(row.execution_attempt?.status, 'verified', name);
+    assert.match(text, name === 'launch' ? /recorded actual invocation|launch is missing/ : cause, name);
+  }
+});
+
 test('a failed run that is not a controlled router stays unknown', () => {
   const [folder, trial] = runFixture('development', 'DEV', 'baseline', 1, 'failed');
   const context: RunContext = { evidence: new Evidence(root), folder, trial, manifest: read(join(folder, 'run.json')), source: {}, thermal: services.thermal };
