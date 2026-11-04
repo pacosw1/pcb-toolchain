@@ -11,12 +11,12 @@
 #    The Mac board files are never written. Final gates stay on the Mac.
 # The exit code is the exit code of the command; a transport error also gives non-zero.
 #
-# Env: REMOTE_HOST (root@100.64.0.2), REMOTE_CPUS (24), REMOTE_MEM (32g), REMOTE_TIMEOUT (s, 300; exit 124 = timed out: fix placement, do not wait longer),
+# Env: REMOTE_HOST (user@host, required; the project sets it in .pcb-toolchain.env), REMOTE_CPUS (24), REMOTE_MEM (32g), REMOTE_TIMEOUT (s, 300; exit 124 = timed out: fix placement, do not wait longer),
 #      REMOTE_KEEP=1 keeps the remote job folder after success (a failed job folder is always kept).
 # Image: tools/remote-route.Dockerfile, built on the box in /srv/iot-lab-route/image.
 set -euo pipefail
 
-HOST=${REMOTE_HOST:-root@100.64.0.2}
+HOST=${REMOTE_HOST:?set REMOTE_HOST=user@host (project .pcb-toolchain.env)}
 BASE=/srv/iot-lab-route/jobs
 IMAGE=${REMOTE_IMAGE:-iot-lab-route:10.0}
 REPO=$(cd "$(dirname "$0")/.." && pwd)

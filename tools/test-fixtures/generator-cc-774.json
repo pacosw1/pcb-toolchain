@@ -1,5 +1,5 @@
 {
-  "source": "/home/user/.codex/worktrees/lean-routing/iot-lab/hardware-design/boards/BASE-PWR/cad/BASE-PWR/BASE-PWR.kicad_pcb",
+  "source": "/work/iot-lab/hardware-design/boards/BASE-PWR/cad/BASE-PWR/BASE-PWR.kicad_pcb",
   "source_sha256": "9ad6ca309673271353064d83e0f2ce46018e3e2219df1402257197685bad1976",
   "note": "Pure parsed rev-A source records; generated seed UUIDs are different. Original source copper is not modified.",
   "records": [

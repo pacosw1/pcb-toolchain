@@ -1,7 +1,7 @@
 #!/bin/sh
 # Build a pcb-toolchain release bundle: dist/pcb-toolchain-VERSION.tar.gz + SHA256SUMS. Never publishes.
 #   scripts/build-bundle.sh VERSION [--linux]
-# --linux also builds iotroute for linux-x86_64 on the Hetzner box (root@100.64.0.2, Docker rust image).
+# --linux also builds iotroute for linux-x86_64 on BUILD_LINUX_HOST (user@host with Docker; rust image).
 set -eu
 here=$(cd "$(dirname "$0")/.." && pwd -P)
 version=${1:?usage: build-bundle.sh VERSION [--linux]}
@@ -19,11 +19,12 @@ echo "START: iotroute darwin-arm64"
 (cd "$here/tools/router/core" && cargo build --release --quiet)
 cp "$here/tools/router/core/target/release/iotroute" "$out/bin/iotroute-darwin-arm64"
 if [ "$linux" = --linux ]; then
-  echo "START: iotroute linux-x86_64 (Hetzner)"
-  ssh root@100.64.0.2 'rm -rf /tmp/iotroute-src && mkdir -p /tmp/iotroute-src'
-  (cd "$here/tools/router/core" && git archive --format=tar HEAD .) | ssh root@100.64.0.2 'tar -x -C /tmp/iotroute-src'
-  ssh root@100.64.0.2 'docker run --rm -v /tmp/iotroute-src:/src -w /src rust:1 cargo build --release --quiet'
-  scp -q root@100.64.0.2:/tmp/iotroute-src/target/release/iotroute "$out/bin/iotroute-linux-x86_64"
+  linux_host=${BUILD_LINUX_HOST:?set BUILD_LINUX_HOST=user@host (Docker) for --linux}
+  echo "START: iotroute linux-x86_64 ($linux_host)"
+  ssh "$linux_host" 'rm -rf /tmp/iotroute-src && mkdir -p /tmp/iotroute-src'
+  (cd "$here/tools/router/core" && git archive --format=tar HEAD .) | ssh "$linux_host" 'tar -x -C /tmp/iotroute-src'
+  ssh "$linux_host" 'docker run --rm -v /tmp/iotroute-src:/src -w /src rust:1 cargo build --release --quiet'
+  scp -q "$linux_host":/tmp/iotroute-src/target/release/iotroute "$out/bin/iotroute-linux-x86_64"
 fi
 echo "START: manifest"
 python3 - "$out" "$version" "$sha" <<'EOF'

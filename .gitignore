@@ -1,3 +1,5 @@
 dist/
 .DS_Store
 tools/router/core/target/
+__pycache__/
+*.pyc

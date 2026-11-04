@@ -31,6 +31,16 @@ if [ -f "$lock" ]; then
   fi
 fi
 
+envf="$project/.pcb-toolchain.env"                # project settings: KEY=VALUE lines (REMOTE_HOST, PCB_LIVE_BIND, PCB_LIVE_HOST)
+if [ -f "$envf" ]; then
+  while IFS='=' read -r k v; do
+    case "$k" in ''|\#*) continue ;; esac
+    case "$k" in *[!A-Za-z0-9_]*) echo "pcb: bad key '$k' in $envf" >&2; exit 2 ;; esac
+    eval "cur=\${$k:-}"
+    [ -n "$cur" ] || export "$k=$v"                 # the caller's environment wins
+  done < "$envf"
+fi
+
 export IOT_LAB="$project" PCB_TOOLCHAIN_ROOT="$bundle" PCB_TOOLCHAIN_VERSION="$version"
 case "$(uname -s)-$(uname -m)" in
   Darwin-arm64) export IOTROUTE_BIN="$bundle/bin/iotroute-darwin-arm64" ;;

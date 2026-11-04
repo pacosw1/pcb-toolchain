@@ -1,11 +1,11 @@
 # pcb-toolchain
 
-The PCB toolchain of the iot-lab hardware repo, as a versioned, installed release: the `pcb` CLI (`tools/pcb`), the
-in-house router `iotroute` (Rust core + model/write), the placer, the board gate (`gate.mjs` + checks), doctor and the
-JLC part tools. Board data and board build scripts stay in iot-lab. CIP epic 87 (user decision 2026-11-04).
+A KiCad 10 PCB toolchain as a versioned, installed release: the `pcb` CLI (`tools/pcb`), the in-house router
+`iotroute` (Rust core + model/write), the placer, the board gate (`gate.mjs` + checks), doctor and the JLC part
+tools. Board data and board build scripts stay in the project repo that uses it.
 
-Status: scaffold. The tool sources are imported with their history from iot-lab after the untangle step (CIP 1289)
-merges (`manifest/shared-paths.txt`, `git filter-repo --paths-from-file`).
+License: GPL-3.0 (see `LICENSE`). Parts are derived from GPL-3.0 sources (`tools/backend-patches/`,
+`tools/FreeroutingLive.java`).
 
 ## Why a bundle, not a wheel
 
@@ -22,9 +22,16 @@ pcb-toolchain-<version>/
   bin/pcb                 launcher
 ```
 
+## Requirements
+
+- KiCad 10 (`kicad-cli` and its bundled Python with `pcbnew`), `python3`, `node`.
+- The gate pins some third-party repos (for example kicad-happy, KiCadRoutingTools). They must be checked out under
+  `~/Documents/GitHub/` at the commits in `tools/lib/env.mjs`. `pcb doctor` reports what is missing.
+- Remote jobs (`tools/remote.sh`) need `REMOTE_HOST=user@host` with Docker and the `iot-lab-route` image.
+
 ## Use from a project
 
-The project (iot-lab) pins one release in `toolchain.lock`:
+The project pins one release in `toolchain.lock`:
 
 ```json
 {"schema": "iot-lab.toolchain-lock.v1", "version": "0.1.0", "sha256": "<tarball sha256>",
@@ -34,10 +41,19 @@ The project (iot-lab) pins one release in `toolchain.lock`:
 `scripts/install.sh` installs the pinned release to `~/.local/share/pcb-toolchain/<version>/` and links
 `~/.local/bin/pcb`. `bin/pcb` finds the project root (`--project DIR`, else `IOT_LAB`, else the nearest parent of the
 working directory that holds `hardware-design/boards/`), checks that the installed version equals the project lock,
-exports `IOT_LAB` and `PCB_TOOLCHAIN_ROOT`, and runs the bundled `tools/pcb`.
+loads `.pcb-toolchain.env` from the project (KEY=VALUE lines; the caller's environment wins), exports `IOT_LAB` and
+`PCB_TOOLCHAIN_ROOT`, and runs the bundled `tools/pcb`.
+
+Project settings in `.pcb-toolchain.env`:
+
+| Key | Use |
+| --- | --- |
+| `REMOTE_HOST` | `user@host` for `tools/remote.sh` jobs |
+| `PCB_LIVE_BIND` | address for the live route viewer (default `127.0.0.1`) |
+| `PCB_LIVE_HOST` | host name the viewer prints in its URL (default `localhost`) |
 
 ## Release
 
-`scripts/build-bundle.sh VERSION` (on the Mac) builds `dist/pcb-toolchain-VERSION.tar.gz` + `SHA256SUMS`:
-it copies the tool tree, builds `iotroute` for darwin-arm64 with cargo and for linux-x86_64 on the Hetzner box
-(`--linux`), writes `VERSION` and `manifest.json`. `gh release create vVERSION dist/*` publishes it (private repo).
+`scripts/build-bundle.sh VERSION [--linux]` builds `dist/pcb-toolchain-VERSION.tar.gz` + `SHA256SUMS`: it copies the
+tool tree, builds `iotroute` for darwin-arm64 with cargo (and for linux-x86_64 on `BUILD_LINUX_HOST` with `--linux`),
+and writes `VERSION` and `manifest.json`. `gh release create vVERSION dist/*` publishes it.

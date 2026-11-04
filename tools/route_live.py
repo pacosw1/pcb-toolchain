@@ -2,7 +2,7 @@
 """Live web view of routing jobs over Tailscale (W12, CIP #829); standard library only, read-only.
 
   python3 tools/route_live.py --serve [OUTDIR ...] [--port 8787]
-      prints the URL http://localhost:8787/ and serves until Ctrl-C.
+      prints the URL http://$PCB_LIVE_HOST:8787/ and serves until Ctrl-C.
       Runs: every /tmp/w*/run* directory plus the OUTDIRs given. No launchd: run it in a terminal pane or with
       `nohup python3 tools/route_live.py --serve >/tmp/route_live.log 2>&1 &`.
 
@@ -22,7 +22,7 @@ Pages (GET only; no write endpoint, no secret, no directory listing outside the 
   /run/<id>/events     text/event-stream: a full event on connect, then one delta event per change (the run dir is polled
                        every 1 s: progress.jsonl, run log size or latest.png mtime), a heartbeat comment every 15 s
 The <id> is the run's path under /tmp (w12/run-1) or "x/<basename>" for a command-line OUTDIR; a request for a path
-that is not in the current run list is a 404. The server binds the Tailscale address 100.64.0.1 only
+that is not in the current run list is a 404. The server binds the Tailscale address in PCB_LIVE_BIND only
 (--bind accepts a 100.64.0.0/10 Tailscale address or 127.0.0.1 for tests; 0.0.0.0, :: and public addresses are refused).
 Single column, large text: readable on an iPhone.
 """
@@ -40,8 +40,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import run_record  # noqa: E402
 
-TS_ADDR = '100.64.0.1'
-TS_HOST = 'localhost'
+TS_ADDR = os.environ.get('PCB_LIVE_BIND', '127.0.0.1')          # project .pcb-toolchain.env: the Tailscale address
+TS_HOST = os.environ.get('PCB_LIVE_HOST', 'localhost')          # project .pcb-toolchain.env: the tailnet host name
 PORT = 8787
 ROOTS = ('/tmp/w*/run*',)
 ACTIVE_S = 60

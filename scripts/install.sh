@@ -1,6 +1,6 @@
 #!/bin/sh
 # Install a pcb-toolchain release and link ~/.local/bin/pcb.
-#   scripts/install.sh VERSION [TARBALL]      (no TARBALL: gh release download vVERSION from the private repo)
+#   scripts/install.sh VERSION [TARBALL]      (no TARBALL: gh release download vVERSION)
 #   scripts/install.sh --lock PROJECT/toolchain.lock
 # The tarball sha256 must equal the lock (with --lock) or SHA256SUMS of the release.
 set -eu
