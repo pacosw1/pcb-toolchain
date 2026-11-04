@@ -1,11 +1,9 @@
-// Where the app finds its tools and the engine. One place, with environment overrides:
+// Where the app finds its tools. One place, with an environment override:
 //   PCBSTUDIO_PATH        complete PATH for the engine and the agent (default: see toolPath)
-//   PCBSTUDIO_UV          the uv executable
-//   PCBSTUDIO_ENGINE_DIR  the engine project folder (with pyproject.toml)
 import { execFileSync } from 'child_process'
 import { existsSync } from 'fs'
 import { homedir } from 'os'
-import { delimiter, join, resolve } from 'path'
+import { delimiter, join } from 'path'
 
 // Standard install folders of Homebrew (Apple silicon, Intel) and uv/pipx. A Finder-launched app gets only
 // /usr/bin:/bin:/usr/sbin:/sbin, so these are the fallback when the login shell gives nothing.
@@ -41,21 +39,4 @@ export function toolPath(): string {
     .split(delimiter)
     .filter((d) => d)
   return [...new Set(dirs)].join(delimiter)
-}
-
-/** An executable by name: the env override, else the first match on toolPath(). */
-export function findTool(name: string, envVar?: string): string | null {
-  const override = envVar ? process.env[envVar] : undefined
-  if (override) return override
-  for (const d of toolPath().split(delimiter)) {
-    const p = join(d, name)
-    if (existsSync(p)) return p
-  }
-  return null
-}
-
-/** The engine project: PCBSTUDIO_ENGINE_DIR, else `engine/` beside the app folder (dev), else in the app resources. */
-export function engineDir(appPath: string, resourcesPath: string): string | null {
-  const candidates = [process.env.PCBSTUDIO_ENGINE_DIR, resolve(appPath, '..', 'engine'), join(resourcesPath, 'engine')]
-  return candidates.find((p): p is string => !!p && existsSync(join(p, 'pyproject.toml'))) ?? null
 }

@@ -7,18 +7,19 @@ Plan: `~/.claude/plans/typed-bubbling-lemur.md` (approved 2026-10-24). Hardware 
 which the app opens as a project.
 
 ## Layout
-- `app/` — Electron + React + TypeScript (electron-vite). Main process: engine supervisor (`src/main/engine.ts`),
-  later the Claude Agent SDK host. Renderer: the UI.
-- `engine/` — Python 3.12 package `pcbstudio` (uv). `pcbstudio serve` = WebSocket JSON-RPC on 127.0.0.1; prints
-  `READY {"port": N}` and exits when its stdin closes (the app owns it).
+- `app/` — Electron + React + TypeScript (electron-vite). Main process: engine supervisor (`src/main/engine.ts`) and the
+  Claude Agent SDK host. Renderer: the UI. The engine itself is `src/main/engineMain.ts`: a separate process on the app's
+  own binary, WebSocket JSON-RPC on 127.0.0.1; it prints `READY {"port": N}` and exits when its stdin closes (the app
+  owns it).
+- `engine/` — the old Python engine. The app no longer runs it. It stays for the web viewer (`pcbstudio web`),
+  `pcbstudio migrate`, `kicad/pcbnew_worker.py` (the one part that stays Python: it uses pcbnew) and the type generator.
 
 ## Develop
 ```sh
-cd engine && uv sync && uv run pytest -q        # engine tests
 cd app && npm install && npm run dev            # app (starts the engine itself)
-cd app && npx electron-vite build && npx playwright test   # e2e: start, ping, crash + restart
+node --no-warnings --test test/*.test.ts        # engine tests
+npx electron-vite build && npx playwright test  # e2e: start, crash + restart, gate, route + adopt
 ```
-`PCBSTUDIO_ENGINE_DIR` overrides the engine folder; `PCBSTUDIO_UV` the uv binary.
 
 ## Phases
 0 mockups ✓ · 1 skeleton ✓ · 2 model + KiCad I/O + read-only browse · 3 runs + gates · 4 agent · 5 generic build
