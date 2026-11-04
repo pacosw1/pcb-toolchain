@@ -157,6 +157,8 @@ tools/lib/release-evidence.mjs
 tools/lib/release-evidence.test.mjs
 tools/lib/release-readiness.mjs
 tools/lib/release-stock.test.mjs
+tools/lib/run-record.test.ts
+tools/lib/run-record.ts
 tools/lib/sexpr.ts
 tools/lib/si-checks.mjs
 tools/lib/si-checks.test.mjs
@@ -479,6 +481,7 @@ tools/router/test_pairrules.py
 tools/router/test_run.py
 tools/routing_rules.py
 tools/run_record.py
+tools/run_record.ts
 tools/schematic_contract.py
 tools/schematic_contract_smoke.py
 tools/set_stackup.py
