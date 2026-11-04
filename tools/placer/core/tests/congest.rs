@@ -6,6 +6,7 @@ use common::{parse, problem_json, square_board};
 use iotplace::congest::{HistoryMap, PinHeat};
 use serde_json::{Value, json};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 const SIZE: usize = 40;
 
@@ -27,7 +28,9 @@ struct TempFile(PathBuf);
 
 impl TempFile {
     fn new(name: &str, v: &Value) -> Self {
-        let path = std::env::temp_dir().join(format!("iotplace-{}-{name}", std::process::id()));
+        static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
+        let id = NEXT_FILE.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("iotplace-{}-{id}-{name}", std::process::id()));
         std::fs::write(&path, v.to_string()).unwrap();
         Self(path)
     }
