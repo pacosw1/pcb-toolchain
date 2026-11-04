@@ -1,0 +1,241 @@
+{"board": "(kicad_pcb (version 20260101) (generator \"pcbnew\") (generator_version \"10.0\")\n (layers (0 \"F.Cu\" signal) (2 \"B.Cu\" signal))\n (net 0 \"\") (net 7 \"LEGACY\")\n (gr_text \"a \\\"quoted\\\" \\\\ back\\nslash\" (at 1.50 2) (layer \"F.SilkS\") (uuid \"txt\"))\n (footprint \"R\\\"x\" (at 3 4 90.0) (property \"Reference\" \"R1\") (property \"Ω note\" \"100 µF \\\"big\\\"\") (uuid \"fp\")\n  (pad \"1\" smd rect (at 0.50 -1) (size 1 1) (net \"A\") (uuid \"p1\")))\n (segment (start 0 0) (end 2 0) (width .25) (layer \"F.Cu\") (net \"A\") (uuid \"top\"))\n (segment (start -1 -1) (end 0 0) (width .15) (layer \"B.Cu\") (net \"A\") (uuid \"bottom\"))\n (segment (start 5 5) (end 6 5) (width 0.2) (layer \"F.Cu\") (net 7) (uuid \"old-style\"))\n (via (at 0 0) (size .6) (drill .3) (layers \"F.Cu\" \"B.Cu\") (net \"A\") (uuid \"via\")))\n",
+"cases": [
+{"name":"FIXTURE_candidate_escape_changed","kind":"native_candidate","args":["/w/cases/boards/FIXTURE/FIXTURE.kicad_pcb","/w/cases/run/FIXTURE_candidate_escape_changed/backend.kicad_pcb","@OUT","--net","A"],"stdout":"STUCK: backend changed protected native board content","board":null,"backend":"(kicad_pcb (version 20260101) (generator \"pcbnew\") (generator_version \"10.0\")\n (layers (0 \"F.Cu\" signal) (2 \"B.Cu\" signal))\n (net 0 \"\") (net 7 \"LEGACY\")\n (gr_text \"a \\\"quotes\\\" \\\\ back\\nslash\" (at 1.50 2) (layer \"F.SilkS\") (uuid \"txt\"))\n (footprint \"R\\\"x\" (at 3 4 90.0) (property \"Reference\" \"R1\") (property \"Ω note\" \"100 µF \\\"big\\\"\") (uuid \"fp\")\n  (pad \"1\" smd rect (at 0.50 -1) (size 1 1) (net \"A\") (uuid \"p1\")))\n (segment (start 0 0) (end 2 0) (width .25) (layer \"F.Cu\") (net \"A\") (uuid \"top\"))\n (segment (start -1 -1) (end 0 0) (width .15) (layer \"B.Cu\") (net \"A\") (uuid \"bottom\"))\n (segment (start 5 5) (end 6 5) (width 0.2) (layer \"F.Cu\") (net 7) (uuid \"old-style\"))\n (via (at 0 0) (size .6) (drill .3) (layers \"F.Cu\" \"B.Cu\") (net \"A\") (uuid \"via\"))(segment (start 8 8) (end 9 8) (width 0.2) (layer \"F.Cu\") (net \"A\") (uuid \"new-a\"))\n)\n",
+"record": null},
+{"name":"FIXTURE_candidate_escaped","kind":"native_candidate","args":["/w/cases/boards/FIXTURE/FIXTURE.kicad_pcb","/w/cases/run/FIXTURE_candidate_escaped/backend.kicad_pcb","@OUT","--net","A"],"stdout":"PASS: native proposal scoped; 1 added, 1 discarded; native checks required","board":"(kicad_pcb (version 20260101) (generator \"pcbnew\") (generator_version \"10.0\")\n (layers (0 \"F.Cu\" signal) (2 \"B.Cu\" signal))\n (net 0 \"\") (net 7 \"LEGACY\")\n (gr_text \"a \\\"quoted\\\" \\\\ back\\nslash\" (at 1.50 2) (layer \"F.SilkS\") (uuid \"txt\"))\n (footprint \"R\\\"x\" (at 3 4 90.0) (property \"Reference\" \"R1\") (property \"Ω note\" \"100 µF \\\"big\\\"\") (uuid \"fp\")\n  (pad \"1\" smd rect (at 0.50 -1) (size 1 1) (net \"A\") (uuid \"p1\")))\n (segment (start 0 0) (end 2 0) (width .25) (layer \"F.Cu\") (net \"A\") (uuid \"top\"))\n (segment (start -1 -1) (end 0 0) (width .15) (layer \"B.Cu\") (net \"A\") (uuid \"bottom\"))\n (segment (start 5 5) (end 6 5) (width 0.2) (layer \"F.Cu\") (net 7) (uuid \"old-style\"))\n (via (at 0 0) (size .6) (drill .3) (layers \"F.Cu\" \"B.Cu\") (net \"A\") (uuid \"via\"))(segment (start 8 8) (end 9 8) (width 0.2) (layer \"F.Cu\") (net \"A\") (uuid \"new-a\"))\n\n)\n","backend":"(kicad_pcb (version 20260101) (generator \"pcbnew\") (generator_version \"10.0\")\n (layers (0 \"F.Cu\" signal) (2 \"B.Cu\" signal))\n (net 0 \"\") (net 7 \"LEGACY\")\n (gr_text \"a \\\"quoted\\\" \\\\ back\\nslash\" (at 1.50 2) (layer \"F.SilkS\") (uuid \"txt\"))\n (footprint \"R\\\"x\" (at 3 4 90.0) (property \"Reference\" \"R1\") (property \"Ω note\" \"100 µF \\\"big\\\"\") (uuid \"fp\")\n  (pad \"1\" smd rect (at 0.50 -1) (size 1 1) (net \"A\") (uuid \"p1\")))\n (segment (start 0 0) (end 2 0) (width .25) (layer \"F.Cu\") (net \"A\") (uuid \"top\"))\n (segment (start -1 -1) (end 0 0) (width .15) (layer \"B.Cu\") (net \"A\") (uuid \"bottom\"))\n (segment (start 5 5) (end 6 5) (width 0.2) (layer \"F.Cu\") (net 7) (uuid \"old-style\"))\n (via (at 0 0) (size .6) (drill .3) (layers \"F.Cu\" \"B.Cu\") (net \"A\") (uuid \"via\"))(segment (start 8 8) (end 9 8) (width 0.2) (layer \"F.Cu\") (net \"A\") (uuid \"new-a\"))\n(segment (start 8 8) (end 9 8) (width 0.2) (layer \"F.Cu\") (net \"LEGACY\") (uuid \"new-b\"))\n)\n",
+"record": {
+  "schema": "iot-lab.native-candidate.v1",
+  "status": "candidate",
+  "qualified": false,
+  "sources": {
+    "FIXTURE.kicad_pcb": "787b2de5165fdbd2944d412e6807f57ace3ac3c2834897fa8b1826f495353598",
+    "FIXTURE.kicad_pro": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+    "FIXTURE.kicad_dru": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+    "FIXTURE.kicad_sch": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d"
+  },
+  "backend_output_sha256": "3a8a31b40d2a0d47ddde0b2cd197bac15af95903cc003dd91a8b103380765938",
+  "selected_nets": [
+    "A"
+  ],
+  "added_items": [
+    "new-a"
+  ],
+  "discarded_items": [
+    "new-b"
+  ],
+  "protected_geometry_sha256": "aa26af33d9daf6395e0c7087d281e9cf4b8cc8c6e1d57b7d386506fbef0d7e66",
+  "output_files": {
+    "candidate.kicad_pcb": "147b07896263785a044c0bac096008fb6fdf818612c8ed37f2325b6b6784d0df",
+    "candidate.kicad_pro": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+    "candidate.kicad_dru": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+    "candidate.kicad_sch": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d"
+  },
+  "native_and_board_specific_gates_required": true
+}},
+{"name":"FIXTURE_candidate_number_form_changed","kind":"native_candidate","args":["/w/cases/boards/FIXTURE/FIXTURE.kicad_pcb","/w/cases/run/FIXTURE_candidate_number_form_changed/backend.kicad_pcb","@OUT","--net","A"],"stdout":"STUCK: backend changed protected native board content","board":null,"backend":"(kicad_pcb (version 20260101) (generator \"pcbnew\") (generator_version \"10.0\")\n (layers (0 \"F.Cu\" signal) (2 \"B.Cu\" signal))\n (net 0 \"\") (net 7 \"LEGACY\")\n (gr_text \"a \\\"quoted\\\" \\\\ back\\nslash\" (at 1.5 2) (layer \"F.SilkS\") (uuid \"txt\"))\n (footprint \"R\\\"x\" (at 3 4 90.0) (property \"Reference\" \"R1\") (property \"Ω note\" \"100 µF \\\"big\\\"\") (uuid \"fp\")\n  (pad \"1\" smd rect (at 0.50 -1) (size 1 1) (net \"A\") (uuid \"p1\")))\n (segment (start 0 0) (end 2 0) (width .25) (layer \"F.Cu\") (net \"A\") (uuid \"top\"))\n (segment (start -1 -1) (end 0 0) (width .15) (layer \"B.Cu\") (net \"A\") (uuid \"bottom\"))\n (segment (start 5 5) (end 6 5) (width 0.2) (layer \"F.Cu\") (net 7) (uuid \"old-style\"))\n (via (at 0 0) (size .6) (drill .3) (layers \"F.Cu\" \"B.Cu\") (net \"A\") (uuid \"via\"))(segment (start 8 8) (end 9 8) (width 0.2) (layer \"F.Cu\") (net \"A\") (uuid \"new-a\"))\n)\n",
+"record": null},
+{"name":"FIXTURE_eco_0","kind":"native_eco","args":["/w/cases/boards/FIXTURE/FIXTURE.kicad_pcb","via","top","@OUT","--fraction","0.5"],"stdout":"PASS: local via proposal; all original tracks retained; native and board gates required","board":"(kicad_pcb (version 20260101) (generator \"pcbnew\") (generator_version \"10.0\")\n (layers (0 \"F.Cu\" signal) (2 \"B.Cu\" signal))\n (net 0 \"\") (net 7 \"LEGACY\")\n (gr_text \"a \\\"quoted\\\" \\\\ back\\nslash\" (at 1.50 2) (layer \"F.SilkS\") (uuid \"txt\"))\n (footprint \"R\\\"x\" (at 3 4 90.0) (property \"Reference\" \"R1\") (property \"Ω note\" \"100 µF \\\"big\\\"\") (uuid \"fp\")\n  (pad \"1\" smd rect (at 0.50 -1) (size 1 1) (net \"A\") (uuid \"p1\")))\n (segment (start 0 0) (end 2 0) (width .25) (layer \"F.Cu\") (net \"A\") (uuid \"top\"))\n (segment (start -1 -1) (end 0 0) (width .15) (layer \"B.Cu\") (net \"A\") (uuid \"bottom\"))\n (segment (start 5 5) (end 6 5) (width 0.2) (layer \"F.Cu\") (net 7) (uuid \"old-style\"))\n (via (at 1.000000 0.000000) (size .6) (drill .3) (layers \"F.Cu\" \"B.Cu\") (net \"A\") (uuid \"via\"))\n(segment (start 0 0) (end 1.000000 0.000000) (width .15) (layer \"B.Cu\") (net \"A\") (uuid \"73e6b326-d66c-54c2-91dd-803e82cafd12\"))\n)\n",
+"record": {
+  "schema": "iot-lab.native-via-eco.v1",
+  "status": "candidate",
+  "qualified": false,
+  "sources": {
+    "FIXTURE.kicad_pcb": "787b2de5165fdbd2944d412e6807f57ace3ac3c2834897fa8b1826f495353598",
+    "FIXTURE.kicad_pro": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+    "FIXTURE.kicad_dru": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+    "FIXTURE.kicad_sch": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d"
+  },
+  "output_files": {
+    "proposal.kicad_pcb": "c5fa48cdb94ca2aee46c950f02e17a7f9a7f559770f012d5bd37b2e85864deb3",
+    "proposal.kicad_pro": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+    "proposal.kicad_dru": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+    "proposal.kicad_sch": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d"
+  },
+  "via_id": "via",
+  "along_trace_id": "top",
+  "other_trace_id": "bottom",
+  "added_bridge_id": "73e6b326-d66c-54c2-91dd-803e82cafd12",
+  "fraction": 0.5,
+  "origin_mm": [
+    "0",
+    "0"
+  ],
+  "destination_mm": [
+    "1.000000",
+    "0.000000"
+  ],
+  "protected_geometry_sha256": "65f60d8633476d657420202c52bc79dddb0a42ee00c25b5e123d0b3d4e2a5b82",
+  "edits": "One via origin and one new bridge; all original tracks unchanged",
+  "native_and_board_specific_gates_required": true
+}},
+{"name":"FIXTURE_eco_1","kind":"native_eco","args":["/w/cases/boards/FIXTURE/FIXTURE.kicad_pcb","via","top","@OUT","--fraction","0.25"],"stdout":"PASS: local via proposal; all original tracks retained; native and board gates required","board":"(kicad_pcb (version 20260101) (generator \"pcbnew\") (generator_version \"10.0\")\n (layers (0 \"F.Cu\" signal) (2 \"B.Cu\" signal))\n (net 0 \"\") (net 7 \"LEGACY\")\n (gr_text \"a \\\"quoted\\\" \\\\ back\\nslash\" (at 1.50 2) (layer \"F.SilkS\") (uuid \"txt\"))\n (footprint \"R\\\"x\" (at 3 4 90.0) (property \"Reference\" \"R1\") (property \"Ω note\" \"100 µF \\\"big\\\"\") (uuid \"fp\")\n  (pad \"1\" smd rect (at 0.50 -1) (size 1 1) (net \"A\") (uuid \"p1\")))\n (segment (start 0 0) (end 2 0) (width .25) (layer \"F.Cu\") (net \"A\") (uuid \"top\"))\n (segment (start -1 -1) (end 0 0) (width .15) (layer \"B.Cu\") (net \"A\") (uuid \"bottom\"))\n (segment (start 5 5) (end 6 5) (width 0.2) (layer \"F.Cu\") (net 7) (uuid \"old-style\"))\n (via (at 0.500000 0.000000) (size .6) (drill .3) (layers \"F.Cu\" \"B.Cu\") (net \"A\") (uuid \"via\"))\n(segment (start 0 0) (end 0.500000 0.000000) (width .15) (layer \"B.Cu\") (net \"A\") (uuid \"cc3a7194-6dc6-5ba4-8458-11f0801108c6\"))\n)\n",
+"record": {
+  "schema": "iot-lab.native-via-eco.v1",
+  "status": "candidate",
+  "qualified": false,
+  "sources": {
+    "FIXTURE.kicad_pcb": "787b2de5165fdbd2944d412e6807f57ace3ac3c2834897fa8b1826f495353598",
+    "FIXTURE.kicad_pro": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+    "FIXTURE.kicad_dru": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+    "FIXTURE.kicad_sch": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d"
+  },
+  "output_files": {
+    "proposal.kicad_pcb": "0ff980dde7b9965f8903b49601443de10a65c9f73bbfc61bae66e52a3fb5b7ec",
+    "proposal.kicad_pro": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+    "proposal.kicad_dru": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+    "proposal.kicad_sch": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d"
+  },
+  "via_id": "via",
+  "along_trace_id": "top",
+  "other_trace_id": "bottom",
+  "added_bridge_id": "cc3a7194-6dc6-5ba4-8458-11f0801108c6",
+  "fraction": 0.25,
+  "origin_mm": [
+    "0",
+    "0"
+  ],
+  "destination_mm": [
+    "0.500000",
+    "0.000000"
+  ],
+  "protected_geometry_sha256": "65f60d8633476d657420202c52bc79dddb0a42ee00c25b5e123d0b3d4e2a5b82",
+  "edits": "One via origin and one new bridge; all original tracks unchanged",
+  "native_and_board_specific_gates_required": true
+}},
+{"name":"FIXTURE_eco_2","kind":"native_eco","args":["/w/cases/boards/FIXTURE/FIXTURE.kicad_pcb","via","top","@OUT","--fraction","0.3"],"stdout":"PASS: local via proposal; all original tracks retained; native and board gates required","board":"(kicad_pcb (version 20260101) (generator \"pcbnew\") (generator_version \"10.0\")\n (layers (0 \"F.Cu\" signal) (2 \"B.Cu\" signal))\n (net 0 \"\") (net 7 \"LEGACY\")\n (gr_text \"a \\\"quoted\\\" \\\\ back\\nslash\" (at 1.50 2) (layer \"F.SilkS\") (uuid \"txt\"))\n (footprint \"R\\\"x\" (at 3 4 90.0) (property \"Reference\" \"R1\") (property \"Ω note\" \"100 µF \\\"big\\\"\") (uuid \"fp\")\n  (pad \"1\" smd rect (at 0.50 -1) (size 1 1) (net \"A\") (uuid \"p1\")))\n (segment (start 0 0) (end 2 0) (width .25) (layer \"F.Cu\") (net \"A\") (uuid \"top\"))\n (segment (start -1 -1) (end 0 0) (width .15) (layer \"B.Cu\") (net \"A\") (uuid \"bottom\"))\n (segment (start 5 5) (end 6 5) (width 0.2) (layer \"F.Cu\") (net 7) (uuid \"old-style\"))\n (via (at 0.600000 0.000000) (size .6) (drill .3) (layers \"F.Cu\" \"B.Cu\") (net \"A\") (uuid \"via\"))\n(segment (start 0 0) (end 0.600000 0.000000) (width .15) (layer \"B.Cu\") (net \"A\") (uuid \"55c13fa0-41a2-5164-8044-671881e53b49\"))\n)\n",
+"record": {
+  "schema": "iot-lab.native-via-eco.v1",
+  "status": "candidate",
+  "qualified": false,
+  "sources": {
+    "FIXTURE.kicad_pcb": "787b2de5165fdbd2944d412e6807f57ace3ac3c2834897fa8b1826f495353598",
+    "FIXTURE.kicad_pro": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+    "FIXTURE.kicad_dru": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+    "FIXTURE.kicad_sch": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d"
+  },
+  "output_files": {
+    "proposal.kicad_pcb": "3759964a40c29ae4eb7f2de20d58ee0b256e5f4a510e0cab34b72a019cbb7731",
+    "proposal.kicad_pro": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+    "proposal.kicad_dru": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+    "proposal.kicad_sch": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d"
+  },
+  "via_id": "via",
+  "along_trace_id": "top",
+  "other_trace_id": "bottom",
+  "added_bridge_id": "55c13fa0-41a2-5164-8044-671881e53b49",
+  "fraction": 0.3,
+  "origin_mm": [
+    "0",
+    "0"
+  ],
+  "destination_mm": [
+    "0.600000",
+    "0.000000"
+  ],
+  "protected_geometry_sha256": "65f60d8633476d657420202c52bc79dddb0a42ee00c25b5e123d0b3d4e2a5b82",
+  "edits": "One via origin and one new bridge; all original tracks unchanged",
+  "native_and_board_specific_gates_required": true
+}},
+{"name":"FIXTURE_eco_3","kind":"native_eco","args":["/w/cases/boards/FIXTURE/FIXTURE.kicad_pcb","via","top","@OUT","--fraction","0.123456789"],"stdout":"PASS: local via proposal; all original tracks retained; native and board gates required","board":"(kicad_pcb (version 20260101) (generator \"pcbnew\") (generator_version \"10.0\")\n (layers (0 \"F.Cu\" signal) (2 \"B.Cu\" signal))\n (net 0 \"\") (net 7 \"LEGACY\")\n (gr_text \"a \\\"quoted\\\" \\\\ back\\nslash\" (at 1.50 2) (layer \"F.SilkS\") (uuid \"txt\"))\n (footprint \"R\\\"x\" (at 3 4 90.0) (property \"Reference\" \"R1\") (property \"Ω note\" \"100 µF \\\"big\\\"\") (uuid \"fp\")\n  (pad \"1\" smd rect (at 0.50 -1) (size 1 1) (net \"A\") (uuid \"p1\")))\n (segment (start 0 0) (end 2 0) (width .25) (layer \"F.Cu\") (net \"A\") (uuid \"top\"))\n (segment (start -1 -1) (end 0 0) (width .15) (layer \"B.Cu\") (net \"A\") (uuid \"bottom\"))\n (segment (start 5 5) (end 6 5) (width 0.2) (layer \"F.Cu\") (net 7) (uuid \"old-style\"))\n (via (at 0.246914 0.000000) (size .6) (drill .3) (layers \"F.Cu\" \"B.Cu\") (net \"A\") (uuid \"via\"))\n(segment (start 0 0) (end 0.246914 0.000000) (width .15) (layer \"B.Cu\") (net \"A\") (uuid \"f35ad979-5942-52cb-83e4-a6235ae0c77c\"))\n)\n",
+"record": {
+  "schema": "iot-lab.native-via-eco.v1",
+  "status": "candidate",
+  "qualified": false,
+  "sources": {
+    "FIXTURE.kicad_pcb": "787b2de5165fdbd2944d412e6807f57ace3ac3c2834897fa8b1826f495353598",
+    "FIXTURE.kicad_pro": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+    "FIXTURE.kicad_dru": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+    "FIXTURE.kicad_sch": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d"
+  },
+  "output_files": {
+    "proposal.kicad_pcb": "88ec267d39f4a14dab874c44c8d2195ace4b5333cb59871e81351fe312094924",
+    "proposal.kicad_pro": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+    "proposal.kicad_dru": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+    "proposal.kicad_sch": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d"
+  },
+  "via_id": "via",
+  "along_trace_id": "top",
+  "other_trace_id": "bottom",
+  "added_bridge_id": "f35ad979-5942-52cb-83e4-a6235ae0c77c",
+  "fraction": 0.123456789,
+  "origin_mm": [
+    "0",
+    "0"
+  ],
+  "destination_mm": [
+    "0.246914",
+    "0.000000"
+  ],
+  "protected_geometry_sha256": "65f60d8633476d657420202c52bc79dddb0a42ee00c25b5e123d0b3d4e2a5b82",
+  "edits": "One via origin and one new bridge; all original tracks unchanged",
+  "native_and_board_specific_gates_required": true
+}},
+{"name":"FIXTURE_eco_4","kind":"native_eco","args":["/w/cases/boards/FIXTURE/FIXTURE.kicad_pcb","via","top","@OUT","--fraction","1e-05"],"stdout":"PASS: local via proposal; all original tracks retained; native and board gates required","board":"(kicad_pcb (version 20260101) (generator \"pcbnew\") (generator_version \"10.0\")\n (layers (0 \"F.Cu\" signal) (2 \"B.Cu\" signal))\n (net 0 \"\") (net 7 \"LEGACY\")\n (gr_text \"a \\\"quoted\\\" \\\\ back\\nslash\" (at 1.50 2) (layer \"F.SilkS\") (uuid \"txt\"))\n (footprint \"R\\\"x\" (at 3 4 90.0) (property \"Reference\" \"R1\") (property \"Ω note\" \"100 µF \\\"big\\\"\") (uuid \"fp\")\n  (pad \"1\" smd rect (at 0.50 -1) (size 1 1) (net \"A\") (uuid \"p1\")))\n (segment (start 0 0) (end 2 0) (width .25) (layer \"F.Cu\") (net \"A\") (uuid \"top\"))\n (segment (start -1 -1) (end 0 0) (width .15) (layer \"B.Cu\") (net \"A\") (uuid \"bottom\"))\n (segment (start 5 5) (end 6 5) (width 0.2) (layer \"F.Cu\") (net 7) (uuid \"old-style\"))\n (via (at 0.000020 0.000000) (size .6) (drill .3) (layers \"F.Cu\" \"B.Cu\") (net \"A\") (uuid \"via\"))\n(segment (start 0 0) (end 0.000020 0.000000) (width .15) (layer \"B.Cu\") (net \"A\") (uuid \"1e9067b0-aaca-5608-8e17-fbabd7ef0276\"))\n)\n",
+"record": {
+  "schema": "iot-lab.native-via-eco.v1",
+  "status": "candidate",
+  "qualified": false,
+  "sources": {
+    "FIXTURE.kicad_pcb": "787b2de5165fdbd2944d412e6807f57ace3ac3c2834897fa8b1826f495353598",
+    "FIXTURE.kicad_pro": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+    "FIXTURE.kicad_dru": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+    "FIXTURE.kicad_sch": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d"
+  },
+  "output_files": {
+    "proposal.kicad_pcb": "cf66133d1b3ad2e7d33646492c4cd73cd01411729db01b7a7501697bfbcebfd5",
+    "proposal.kicad_pro": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+    "proposal.kicad_dru": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+    "proposal.kicad_sch": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d"
+  },
+  "via_id": "via",
+  "along_trace_id": "top",
+  "other_trace_id": "bottom",
+  "added_bridge_id": "1e9067b0-aaca-5608-8e17-fbabd7ef0276",
+  "fraction": 1e-05,
+  "origin_mm": [
+    "0",
+    "0"
+  ],
+  "destination_mm": [
+    "0.000020",
+    "0.000000"
+  ],
+  "protected_geometry_sha256": "65f60d8633476d657420202c52bc79dddb0a42ee00c25b5e123d0b3d4e2a5b82",
+  "edits": "One via origin and one new bridge; all original tracks unchanged",
+  "native_and_board_specific_gates_required": true
+}},
+{"name":"FIXTURE_eco_along_bottom","kind":"native_eco","args":["/w/cases/boards/FIXTURE/FIXTURE.kicad_pcb","via","bottom","@OUT","--fraction","0.5"],"stdout":"PASS: local via proposal; all original tracks retained; native and board gates required","board":"(kicad_pcb (version 20260101) (generator \"pcbnew\") (generator_version \"10.0\")\n (layers (0 \"F.Cu\" signal) (2 \"B.Cu\" signal))\n (net 0 \"\") (net 7 \"LEGACY\")\n (gr_text \"a \\\"quoted\\\" \\\\ back\\nslash\" (at 1.50 2) (layer \"F.SilkS\") (uuid \"txt\"))\n (footprint \"R\\\"x\" (at 3 4 90.0) (property \"Reference\" \"R1\") (property \"Ω note\" \"100 µF \\\"big\\\"\") (uuid \"fp\")\n  (pad \"1\" smd rect (at 0.50 -1) (size 1 1) (net \"A\") (uuid \"p1\")))\n (segment (start 0 0) (end 2 0) (width .25) (layer \"F.Cu\") (net \"A\") (uuid \"top\"))\n (segment (start -1 -1) (end 0 0) (width .15) (layer \"B.Cu\") (net \"A\") (uuid \"bottom\"))\n (segment (start 5 5) (end 6 5) (width 0.2) (layer \"F.Cu\") (net 7) (uuid \"old-style\"))\n (via (at -0.500000 -0.500000) (size .6) (drill .3) (layers \"F.Cu\" \"B.Cu\") (net \"A\") (uuid \"via\"))\n(segment (start 0 0) (end -0.500000 -0.500000) (width .25) (layer \"F.Cu\") (net \"A\") (uuid \"0f16ffe8-6d59-5b4c-8536-ce75bd37c962\"))\n)\n",
+"record": {
+  "schema": "iot-lab.native-via-eco.v1",
+  "status": "candidate",
+  "qualified": false,
+  "sources": {
+    "FIXTURE.kicad_pcb": "787b2de5165fdbd2944d412e6807f57ace3ac3c2834897fa8b1826f495353598",
+    "FIXTURE.kicad_pro": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+    "FIXTURE.kicad_dru": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+    "FIXTURE.kicad_sch": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d"
+  },
+  "output_files": {
+    "proposal.kicad_pcb": "11593307aeed22e3eb75dcec8cd1119b4cda95cd020f34fa18d57d26371eab7b",
+    "proposal.kicad_pro": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+    "proposal.kicad_dru": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+    "proposal.kicad_sch": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d"
+  },
+  "via_id": "via",
+  "along_trace_id": "bottom",
+  "other_trace_id": "top",
+  "added_bridge_id": "0f16ffe8-6d59-5b4c-8536-ce75bd37c962",
+  "fraction": 0.5,
+  "origin_mm": [
+    "0",
+    "0"
+  ],
+  "destination_mm": [
+    "-0.500000",
+    "-0.500000"
+  ],
+  "protected_geometry_sha256": "65f60d8633476d657420202c52bc79dddb0a42ee00c25b5e123d0b3d4e2a5b82",
+  "edits": "One via origin and one new bridge; all original tracks unchanged",
+  "native_and_board_specific_gates_required": true
+}}
+]}

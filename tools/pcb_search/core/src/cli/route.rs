@@ -5,10 +5,11 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use super::{EXIT_PASS, EXIT_STUCK, USAGE, file_sha256, option, read_json, seconds};
+use super::{EXIT_PASS, EXIT_STUCK, USAGE, option, read_json, seconds};
 use crate::budget::{Budget, monotonic};
 use crate::contract::{Problem, check_positive};
 use crate::error::{Invalid, Result, invalid};
+use crate::native::digest::file_sha256;
 use crate::patterns::route_patterns;
 use crate::pyjson::{fingerprint, indented};
 

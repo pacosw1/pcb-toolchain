@@ -1,20 +1,20 @@
 //! `pcbsearch scope` and `repair`: narrow a solver response against a frozen native export.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde_json::{Value, json};
 
-use super::{EXIT_PASS, EXIT_STUCK, USAGE, file_sha256, read_json, seconds};
+use super::{EXIT_PASS, EXIT_STUCK, USAGE, read_json, seconds};
 use crate::budget::{Budget, monotonic};
 use crate::contract::check_positive;
 use crate::error::{Result, invalid};
+use crate::native::digest::source_set;
 use crate::pyjson::{fingerprint, indented, inline};
 use crate::srj::repair::prune_crossing_excursion;
 use crate::srj::same_value;
 use crate::srj::scope::selected_route_proposal;
 
-const SIDECARS: [&str; 4] = ["kicad_pcb", "kicad_pro", "kicad_dru", "kicad_sch"];
 
 struct Frozen {
     manifest: Value,
@@ -63,20 +63,6 @@ fn read_frozen(folder: &Path) -> Result<Frozen> {
         return invalid("native project or SRJ changed before proposal scoping");
     }
     Ok(Frozen { manifest, srj })
-}
-
-/// SHA-256 of the board and its three sidecars, by file name.
-fn source_set(board: &Path) -> Result<Value> {
-    let files: Vec<PathBuf> = SIDECARS.iter().map(|extension| board.with_extension(extension)).collect();
-    if !files.iter().all(|file| file.is_file()) {
-        return invalid("complete native project sidecars required");
-    }
-    let mut set = serde_json::Map::new();
-    for file in files {
-        let name = file.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
-        set.insert(name, file_sha256(&file)?.into());
-    }
-    Ok(Value::Object(set))
 }
 
 fn finish(output: &Path, proposal: Value) -> Result<u8> {

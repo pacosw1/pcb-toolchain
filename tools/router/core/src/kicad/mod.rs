@@ -4,6 +4,7 @@ pub mod board;
 pub mod board_json;
 pub mod geom;
 pub mod pad;
+pub mod raw;
 pub mod sexpr;
 pub mod shape;
 

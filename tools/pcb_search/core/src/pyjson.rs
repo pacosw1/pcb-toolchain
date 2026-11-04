@@ -138,7 +138,7 @@ fn number_text(number: &Number) -> Result<String> {
 }
 
 /// Python's `repr(float)`: shortest digits that round-trip, positional for exponents from -4 to 15.
-fn float_repr(value: f64) -> String {
+pub fn float_repr(value: f64) -> String {
     let scientific = format!("{:e}", value.abs());
     let (mantissa, exponent) = scientific.split_once('e').expect("LowerExp always writes an exponent");
     let exponent: i32 = exponent.parse().expect("LowerExp writes an integer exponent");
