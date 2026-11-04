@@ -432,6 +432,7 @@ tools/router/DESIGN.md
 tools/router/core/.gitignore
 tools/router/core/Cargo.lock
 tools/router/core/Cargo.toml
+tools/router/core/src/bin/route_plan.rs
 tools/router/core/src/checkpoint.rs
 tools/router/core/src/congestion.rs
 tools/router/core/src/fixtures/checkin_front.json
@@ -440,6 +441,11 @@ tools/router/core/src/fixtures/m2_j2_18.json
 tools/router/core/src/fixtures/t1_u8.json
 tools/router/core/src/layers.rs
 tools/router/core/src/main.rs
+tools/router/core/src/plan/board_text.rs
+tools/router/core/src/plan/load.rs
+tools/router/core/src/plan/mod.rs
+tools/router/core/src/plan/stage.rs
+tools/router/core/src/plan/tests.rs
 tools/router/core/src/pour.rs
 tools/router/core/src/reffill.rs
 tools/router/core/src/reuse.rs
