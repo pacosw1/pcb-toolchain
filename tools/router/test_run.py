@@ -164,6 +164,26 @@ class Output(unittest.TestCase):
         self.assertEqual(run.parse_route_line(text), dict(status='PASS', converged=True, iters=11, tracks=1334,
                                                           vias=248, failed=0))
         self.assertIsNone(run.parse_route_line('thread panicked'))
+        stalled = 'ROUTE FAIL converged false iters 9 tracks 3 vias 1 failed 2 notes 4 stop stall-passes 6 s -> x.json\n'
+        self.assertEqual(run.parse_route_line(stalled), dict(status='FAIL', converged=False, iters=9, tracks=3, vias=1,
+                                                             failed=2, stop='stall-passes'))
+
+    def test_seed_stall_and_checkpoint_reach_the_core_only_when_asked(self):
+        seen = []
+        old = run.step
+        run.step = lambda cmd, log: (seen.append(cmd), (0, ''))[1]
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                for a in (SimpleNamespace(iters=80, max_time=None), SimpleNamespace(iters=80, max_time=None, seed=None, stall_passes=None, checkpoint=False),
+                          SimpleNamespace(iters=80, max_time=None, seed=0, stall_passes=12, checkpoint=True)):
+                    with self.assertRaises(run.StepError):  # the fake core writes no route.json
+                        run.route_attempt(a, 'exe', 'py', 'm.json', 'in.kicad_pcb', 'src', 'out', d)
+                self.assertEqual(seen[0], ['exe', 'm.json', os.path.join(d, 'route.json'), '--iters', '80'])
+                self.assertEqual(seen[1], seen[0])
+                self.assertEqual(seen[2][5:], ['--seed', '0', '--stall-passes', '12', '--checkpoint', os.path.join(d, 'checkpoint.json'),
+                                               '--source-sha', run.sources_sha()])
+        finally:
+            run.step = old
 
     def test_core_writes_the_congestion_map_next_to_route_json(self):
         seen = []

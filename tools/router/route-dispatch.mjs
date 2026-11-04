@@ -42,8 +42,8 @@ const QUEUE_CLOCK_MS=1000;     // how far the credit may lag; the supervisor che
 // process; refill and DRC on Linux at 2 CPUs and 4 GB peak at 0.45 GB. A live core on H7-CORE held 0.6 GB.
 const ROUTE_CPUS=2;
 const ROUTE_MEM_GB=4;
-const VALUE_OPTIONS=new Set(['--iters','--max-time']);
-const FLAGS=new Set(['--congestion','--return-exempt']);
+const VALUE_OPTIONS=new Set(['--iters','--max-time','--seed','--stall-passes']);
+const FLAGS=new Set(['--congestion','--return-exempt','--checkpoint']);
 const FILE_OPTIONS=new Set(['--pcb','--lock-from']);
 // The image has no kicad-happy, and run.py's KICAD_CLI default is the Mac path.
 const JOB_SCRIPT=`set -e

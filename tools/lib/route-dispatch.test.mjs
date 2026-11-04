@@ -112,6 +112,16 @@ test('a daemon that answers gets the job: workspace tools, Linux router, kicad-h
     '--pcb',`${BOARD}/DEMO.kicad_pcb`,'--lock-from',`${BOARD}/DEMO.kicad_pcb`,'--congestion']);
 });
 
+test('--seed, --stall-passes and --checkpoint stay on the daemon and reach run.py',async t=>{
+  const p=project(t,{client:{exit:0,job:jobOf('passed','passed',0),out:files(record('PASS')),stdout:'PASS 0 0 0 1 1 3\n'}});
+  const r=await dispatch(p,{JOBD_URL:await daemon(t)},{args:['--seed','7','--stall-passes','12','--checkpoint']});
+  assert.equal(r.status,0,r.stderr);
+  assert.ok(!ranLocally(p));
+  const job=calls(p)[0].a;
+  assert.deepEqual(job.slice(job.indexOf('--iters')),['--iters','5','--seed','7','--stall-passes','12','--checkpoint',
+    '--pcb',`${BOARD}/DEMO.kicad_pcb`,'--lock-from',`${BOARD}/DEMO.kicad_pcb`]);
+});
+
 test('a snapshot source newer than the binary passes run.py: the staged copy gets a new mtime',async t=>{
   const p=project(t,{client:{exit:0,job:jobOf('passed','passed',0),out:files(record('PASS'))}});
   const before=Date.now();

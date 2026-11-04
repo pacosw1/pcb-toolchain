@@ -3,6 +3,8 @@
 //!   iotroute MODEL.json OUT.json [--pitch 0.05] [--iters 40] [--plane-clr 0.25] [--hole-to-hole 0.45] [--hole-clr 0.28]
 //!            [--return-r 2.0] [--return-via 0.45,0.2] [--pres-mult 1.5] [--pres-max 1000] [--hist 0.3] [--max-time S] [--door-hist 2.0] [--check RESULT.json]
 //!            [--congestion MAP.json [--cong-cell 1.0] [--cong-free 0|1]] (congestion.rs: the map for the placer)
+//!            [--seed N] (seed.rs: another route of the same board) [--checkpoint FILE [--source-sha HEX]] (checkpoint.rs: progress per pass)
+//!            [--stall-passes N] (stop after N passes that do not beat the best pass; default off)
 //!
 //! MODEL.json comes from tools/router/model.py (schema iot-lab.route-model.v0). Every clearance is checked against
 //! exact geometry (pads as their bounding rectangle, tracks as capsules, vias as circles) with the per-net width and
@@ -38,11 +40,13 @@ use serde_json::Value;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
+mod checkpoint;
 mod congestion;
 mod layers;
 mod pour;
 mod reffill;
 mod reuse;
+mod seed;
 
 const EPS: f64 = 0.002;
 // Defaults when the model has no `hole_rules` key (an old model.json); a model value and then a CLI flag override them.
@@ -306,6 +310,8 @@ struct Opts {
     web_cost: f64,
     /// v9: skip the length recovery after a legal end state (`--recover 0`, for comparison runs)
     no_recover: bool,
+    /// `--stall-passes N`: stop the negotiation after N passes in a row that do not beat the best pass; 0 = off
+    stall_passes: usize,
 }
 
 struct Index {
@@ -925,6 +931,8 @@ struct Grid {
     /// routable layer index (sized on first use). Each iteration that ends with the net in conflict adds --hist to the
     /// layer its copper is on; route_one_layer prices a layer at its A* cost x (1 + this history).
     lhist: Vec<f32>,
+    /// --seed: the seeded cost field of the search (seed.rs); empty without a seed
+    jit: seed::Jitter,
 }
 
 impl Grid {
@@ -1795,7 +1803,9 @@ impl<'a> Ctx<'a> {
                             }
                         } else { 0.0 };
                         let vh = if recover { 0.0 } else { self.gr.vhist[iy * nx + ix] as f64 };
-                        let vc = (via_base + extra + webc + vh) * (1.0 + pres * kv as f64);
+                        // the seeded field moves the via price as it moves a step, so the two keep their ratio
+                        let vj = if recover { 0.0 } else { self.gr.jit.via(iy * nx + ix) };
+                        let vc = (via_base * (1.0 + vj) + extra + webc + vh) * (1.0 + pres * kv as f64);
                         via_pops += 1;
                         for r2 in 0..nr {
                             if r2 != r && lcost[r2].is_finite() {
@@ -1827,7 +1837,7 @@ impl<'a> Ctx<'a> {
                 if strict && k > 0 {
                     continue;
                 }
-                let hj = if recover { 0.0 } else { self.gr.hist[j] as f64 };
+                let hj = if recover { 0.0 } else { self.gr.hist[j] as f64 + self.gr.jit.cell(j) };
                 let mut c = if len_mode { glen } else if is_via { c } else { c * (1.0 + hj) * (1.0 + pres * k as f64) };
                 if ref_soft && !is_via && !len_mode {
                     let off = *ref_memo.entry(j).or_insert_with(|| {
@@ -4190,12 +4200,16 @@ pub(crate) fn add_result(bd: &mut Board, r: &Value) {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    route_cli(&args);
+}
+
+fn route_cli(args: &[String]) {
     if args.len() < 3 {
-        eprintln!("usage: iotroute MODEL.json OUT.json [--pitch 0.05] [--iters 40] [--plane-clr 0.25] [--hole-to-hole 0.45] [--hole-clr 0.28] [--return-r 2.0] [--return-via 0.45,0.2] [--pres-mult 1.5] [--pres-max 1000] [--hist 0.3] [--max-time S] [--door-hist 2.0] [--check RESULT.json] [--congestion MAP.json [--cong-cell 1.0] [--cong-free 0|1]]");
+        eprintln!("usage: iotroute MODEL.json OUT.json [--pitch 0.05] [--iters 40] [--plane-clr 0.25] [--hole-to-hole 0.45] [--hole-clr 0.28] [--return-r 2.0] [--return-via 0.45,0.2] [--pres-mult 1.5] [--pres-max 1000] [--hist 0.3] [--max-time S] [--door-hist 2.0] [--check RESULT.json] [--congestion MAP.json [--cong-cell 1.0] [--cong-free 0|1]] [--seed N] [--checkpoint FILE [--source-sha HEX]] [--stall-passes N]");
         std::process::exit(2);
     }
     let mut o = Opts { pitch: 0.05, passes: 40, plane_clr: DEF_PLANE_CLR, hth: DEF_HOLE_TO_HOLE, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2,
-                       pres_mult: 1.5, pres_max: 1000.0, hist: 0.3, max_time: 0.0, door_hist: 2.0, via_cost: DEF_VIA_COST, ret_cost: DEF_RET_COST, web_cost: DEF_WEB_COST, no_recover: false };
+                       pres_mult: 1.5, pres_max: 1000.0, hist: 0.3, max_time: 0.0, door_hist: 2.0, via_cost: DEF_VIA_COST, ret_cost: DEF_RET_COST, web_cost: DEF_WEB_COST, no_recover: false, stall_passes: 0 };
     // CLI flags override the model's hole rules, which override the defaults
     let (mut cli_plane, mut cli_hth, mut cli_hole): (Option<f64>, Option<f64>, Option<f64>) = (None, None, None);
     let mut check_only: Option<String> = None;
@@ -4208,6 +4222,9 @@ fn main() {
     let mut cong_path: Option<String> = None;
     let mut cong_cell = 1.0f64;
     let mut cong_free = false;
+    let mut seed: Option<u64> = None;
+    let mut ckpt_path: Option<String> = None;
+    let mut source_sha: Option<String> = None;
     let mut i = 3;
     while i + 1 < args.len() {
         let v = &args[i + 1];
@@ -4238,6 +4255,10 @@ fn main() {
             "--cong-cell" => cong_cell = v.parse().unwrap(),
             "--cong-free" => cong_free = v == "1",
             "--ret-cost" => o.ret_cost = v.parse().unwrap(),
+            "--seed" => seed = Some(v.parse().unwrap()),
+            "--checkpoint" => ckpt_path = Some(v.clone()),
+            "--source-sha" => source_sha = Some(v.clone()),
+            "--stall-passes" => o.stall_passes = v.parse().unwrap(),
             "--return-via" => {
                 let p: Vec<f64> = v.split(',').map(|s| s.parse().unwrap()).collect();
                 o.ret_d = p[0];
@@ -4252,7 +4273,13 @@ fn main() {
         i += 2;
     }
     let t0 = std::time::Instant::now();
-    let model: Value = serde_json::from_str(&std::fs::read_to_string(&args[1]).expect("model")).expect("json");
+    let mut ckpt = ckpt_path.as_ref().map(|p| checkpoint::Writer::new(p, t0, seed, o.passes));
+    let model_text = std::fs::read_to_string(&args[1]).expect("model");
+    let model: Value = serde_json::from_str(&model_text).expect("json");
+    if let Some(w) = &mut ckpt {
+        w.bind(checkpoint::Bind::new(&model_text, &model, source_sha, &args[3..]));
+        checkpoint::stop_on_signal();
+    }
     let (m_hole, m_hth, m_plane) = hole_rules(&model);
     let hole_clr = cli_hole.or(m_hole).unwrap_or(DEF_HOLE_CLR);
     o.hth = cli_hth.or(m_hth).unwrap_or(DEF_HOLE_TO_HOLE);
@@ -4355,8 +4382,8 @@ fn main() {
     let ny = ((e3 - e1) / o.pitch).ceil() as usize + 1;
     let nr = bd.routable.len();
     let tot = nx * ny * nr;
-    let gr = Grid { x0: e0, y0: e1, p: o.pitch, nx, ny, nr, cache: vec![0; tot], vcache: vec![0; nx * ny], dcache: vec![0; tot], hist: vec![0.0; tot], vhist: vec![0.0; nx * ny], pres: 0.5,
-                    g: vec![0.0; tot], from: vec![0; tot], seen: vec![0; tot], closed: vec![0; tot], tgt: vec![0; tot], sgen: 0, tgen: 0, glen: Vec::new(), lhist: Vec::new() };
+    let mut gr = Grid { x0: e0, y0: e1, p: o.pitch, nx, ny, nr, cache: vec![0; tot], vcache: vec![0; nx * ny], dcache: vec![0; tot], hist: vec![0.0; tot], vhist: vec![0.0; nx * ny], pres: 0.5,
+                    g: vec![0.0; tot], from: vec![0; tot], seen: vec![0; tot], closed: vec![0; tot], tgt: vec![0; tot], sgen: 0, tgen: 0, glen: Vec::new(), lhist: Vec::new(), jit: Default::default() };
     let mut order: Vec<usize> = (0..bd.nets.len()).collect();
     let spread = |bd: &Board, n: usize| -> f64 {
         let (mut a, mut b, mut c, mut d) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
@@ -4368,6 +4395,12 @@ fn main() {
     };
     let group = |bd: &Board, n: usize| if bd.nets[n].plane { 0 } else if bd.nets[n].power { 1 } else if bd.nets[n].fast { 2 } else { 3 };
     order.sort_by(|&a, &b| group(&bd, a).cmp(&group(&bd, b)).then(spread(&bd, a).partial_cmp(&spread(&bd, b)).unwrap()));
+    if let Some(s) = seed {
+        let mut rng = seed::Rng::new(s);
+        seed::shuffle_groups(&mut order, &|n| group(&bd, n), &mut rng);
+        gr.jit = seed::Jitter::new(&mut rng, nx, ny, nr, o.pitch);
+        eprintln!("seed {s}: net order shuffled inside its groups, search cost field on");
+    }
     let nets_n = bd.nets.len();
     let mut memo_w: Vec<f64> = bd.nets.iter().flat_map(|n| net_widths(n)).chain([0.3, 0.2, 0.15]).collect();
     // v8: layer floors and pin-escape widths are search widths too (hw_at)
@@ -4407,6 +4440,10 @@ fn main() {
     let mut hard_doors = 0usize;
     // v7 fix 2: times each net was routed in the negotiation (rip_order)
     let mut moves: Vec<u32> = vec![0; nn];
+    // why the negotiation ended; passes in a row that did not beat `best` (--stall-passes, checkpoint)
+    let mut stop = "iters";
+    let mut since_best = 0usize;
+    let mut stall_note: Option<String> = None;
     for it in 0..o.passes {
         iters = it + 1;
         ctx.bd.compact();
@@ -4433,6 +4470,7 @@ fn main() {
             total += r.conflicts;
             state[net] = (r.hard_fail.clone(), r.conflicts);
         }
+        let search_limited = limited.len();
         ctx.fan_keep = false;
         // PathFinder overuse = exact audit of the final copper of this iteration: history on every conflicting item
         // of both nets, and the rip-up set = every net that is still in conflict (not the stale routing-time count)
@@ -4500,13 +4538,39 @@ fn main() {
         let score = (involved.len(), au.pairs);
         if best.as_ref().map(|b| score < b.0).unwrap_or(true) {
             best = Some((score, it + 1, ctx.bd.shapes.iter().filter(|s| s.alive).cloned().collect(), state.clone()));
+            since_best = 0;
+        } else {
+            since_best += 1;
+        }
+        if let Some(w) = &mut ckpt {
+            w.pass(&ctx, &checkpoint::Pass { pass: it + 1, au: &au, involved: &involved, state: &state, pour_faults: pf.len(), search_limited, best: best.as_ref().map(|b| (b.1, b.0)), since_best });
         }
         if involved.is_empty() {
             converged = true;
+            stop = "converged";
             break;
         }
         if o.max_time > 0.0 && t0.elapsed().as_secs_f64() > o.max_time {
             eprintln!("time limit {:.0} s reached", o.max_time);
+            stop = "max-time";
+            break;
+        }
+        // a pass end is the safe boundary: every net has its copper, so the best pass can be restored as for --max-time
+        if checkpoint::stop_asked() {
+            let m = format!("stopped early: cancel signal, ended at pass {}", it + 1);
+            eprintln!("{m}");
+            stall_note = Some(m);
+            stop = "cancelled";
+            break;
+        }
+        // progress = a pass better than the best so far, on the score that picks the iteration a run ends from: a pass that
+        // does not beat it would not change what an early stop keeps
+        if o.stall_passes > 0 && since_best >= o.stall_passes {
+            let b = best.as_ref().unwrap();
+            let m = format!("stopped early: no progress for {since_best} passes (--stall-passes {}), best pass {}: {} nets in conflict, {} pairs", o.stall_passes, b.1, b.0.0, b.0.1);
+            eprintln!("{m}");
+            stall_note = Some(m);
+            stop = "stall-passes";
             break;
         }
         // stop early: the copper is legal and every net still open is a hard fail whose reason has not changed for
@@ -4516,6 +4580,7 @@ fn main() {
             stall += 1;
             if stall >= STALL {
                 eprintln!("stopped: {} hard fail(s) unchanged for {} iterations, no conflicts", involved.len(), STALL + 1);
+                stop = "hard-fails";
                 break;
             }
         } else {
@@ -4527,6 +4592,7 @@ fn main() {
         // is in conflict
         todo = rip_order(&order, &involved, &moves);
     }
+    let best_end = best.as_ref().map(|b| (b.1, b.0));
     let mut web_relaxed = 0.0f64;
     if !converged {
         // graceful end: take the best iteration, rip up nets until the copper is legal (most conflicts first), then
@@ -4705,7 +4771,7 @@ fn main() {
     }
     // v9: length recovery on a legal end state (see recover_length)
     let mut notes = Vec::new();
-    if ctx.audit(0.0).pairs == 0 && !o.no_recover {
+    if ctx.audit(0.0).pairs == 0 && !o.no_recover && !checkpoint::stop_asked() {
         let tr = std::time::Instant::now();
         let len0: f64 = net_lengths(ctx.bd).iter().sum();
         let scope = plan.as_ref().map(|pl| reuse::recover_scope(ctx.bd, pl, &moves, reuse_near));
@@ -4847,6 +4913,10 @@ fn main() {
     }
     notes.extend(ctx.bd.spoke_notes.iter().cloned());
     notes.extend(in_ret_notes.iter().cloned());
+    notes.extend(stall_note);
+    if let Some(s) = seed {
+        notes.push(format!("seed {s}"));
+    }
     notes.sort();
     notes.dedup();
     let mut failed = fan_fail;
@@ -4861,6 +4931,9 @@ fn main() {
     let out = Out { schema: "iot-lab.route-result.v0".into(), tracks, vias, failed, notes, passes: iters };
     std::fs::write(&args[2], serde_json::to_string_pretty(&out).unwrap()).expect("write");
     let route_s = t0.elapsed().as_secs_f64();
+    if let Some(w) = &mut ckpt {
+        w.done(&mut ctx, iters, stop, &out.failed, best_end, since_best);
+    }
     if let Some(cp) = &cong_path {
         // congestion map (congestion.rs): after OUT.json, so it never changes the routed result
         let tc = std::time::Instant::now();
@@ -4869,7 +4942,8 @@ fn main() {
         eprintln!("congestion map: {cp} (cell {cong_cell} mm, free routes {}) {:.1} s, free routes {fs:.1} s", if cong_free { "on" } else { "off" }, tc.elapsed().as_secs_f64());
     }
     let status = if out.failed.is_empty() { "PASS" } else { "FAIL" };
-    println!("ROUTE {status} converged {converged} iters {iters} tracks {} vias {} failed {} notes {} {:.0} s -> {}",
+    let stopped = if stop == "stall-passes" || stop == "cancelled" { format!(" stop {stop}") } else { String::new() };
+    println!("ROUTE {status} converged {converged} iters {iters} tracks {} vias {} failed {} notes {}{stopped} {:.0} s -> {}",
              out.tracks.len(), out.vias.len(), out.failed.len(), out.notes.len(), route_s, args[2]);
 }
 
@@ -5011,11 +5085,11 @@ mod tests {
         let mut bd = board();
         // a routed track of A crossing the routed track of C on F.Cu
         bd.add(Shape { net: 0, geo: Geo::Seg(2.0, 3.8, 2.0, 5.5, 0.075), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Track, owner: 0, alive: true, grp: 0 });
-        let o = Opts { pitch: 0.05, passes: 1, plane_clr: 0.25, hth: 0.45, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2, pres_mult: 1.5, pres_max: 1000.0, hist: 0.3, max_time: 0.0, door_hist: 2.0, via_cost: DEF_VIA_COST, ret_cost: DEF_RET_COST, web_cost: DEF_WEB_COST, no_recover: false };
+        let o = Opts { pitch: 0.05, passes: 1, plane_clr: 0.25, hth: 0.45, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2, pres_mult: 1.5, pres_max: 1000.0, hist: 0.3, max_time: 0.0, door_hist: 2.0, via_cost: DEF_VIA_COST, ret_cost: DEF_RET_COST, web_cost: DEF_WEB_COST, no_recover: false, stall_passes: 0 };
         let (nx, ny, nr) = (201, 201, 2);
         let tot = nx * ny * nr;
         let gr = Grid { x0: 0.0, y0: 0.0, p: 0.05, nx, ny, nr, cache: vec![0; tot], vcache: vec![0; nx * ny], dcache: vec![0; tot], hist: vec![0.0; tot], vhist: vec![0.0; nx * ny], pres: 0.5,
-                        g: vec![0.0; tot], from: vec![0; tot], seen: vec![0; tot], closed: vec![0; tot], tgt: vec![0; tot], sgen: 0, tgen: 0, glen: Vec::new(), lhist: Vec::new() };
+                        g: vec![0.0; tot], from: vec![0; tot], seen: vec![0; tot], closed: vec![0; tot], tgt: vec![0; tot], sgen: 0, tgen: 0, glen: Vec::new(), lhist: Vec::new(), jit: Default::default() };
         let nn = bd.nets.len();
         let mut ctx = Ctx { bd: &mut bd, gr, o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w: vec![0.15], rcache: vec![0; nx * ny], ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false, ret_soft: true, lfloor: Vec::new(), leaf_necks: false, stubs: std::collections::HashMap::new(), stub_cost: Default::default(), recover: false, fan_keep: false };
         let a = ctx.audit(0.3);
@@ -5031,11 +5105,11 @@ mod tests {
     #[test]
     fn free_sites_stay_legal_from_both_sides() {
         let mut bd = board();
-        let o = Opts { pitch: 0.05, passes: 1, plane_clr: 0.25, hth: 0.45, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2, pres_mult: 1.5, pres_max: 1000.0, hist: 0.3, max_time: 0.0, door_hist: 2.0, via_cost: DEF_VIA_COST, ret_cost: DEF_RET_COST, web_cost: DEF_WEB_COST, no_recover: false };
+        let o = Opts { pitch: 0.05, passes: 1, plane_clr: 0.25, hth: 0.45, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2, pres_mult: 1.5, pres_max: 1000.0, hist: 0.3, max_time: 0.0, door_hist: 2.0, via_cost: DEF_VIA_COST, ret_cost: DEF_RET_COST, web_cost: DEF_WEB_COST, no_recover: false, stall_passes: 0 };
         let (nx, ny, nr) = (201, 201, 2);
         let tot = nx * ny * nr;
         let gr = Grid { x0: 0.0, y0: 0.0, p: 0.05, nx, ny, nr, cache: vec![0; tot], vcache: vec![0; nx * ny], dcache: vec![0; tot], hist: vec![0.0; tot], vhist: vec![0.0; nx * ny], pres: 0.5,
-                        g: vec![0.0; tot], from: vec![0; tot], seen: vec![0; tot], closed: vec![0; tot], tgt: vec![0; tot], sgen: 0, tgen: 0, glen: Vec::new(), lhist: Vec::new() };
+                        g: vec![0.0; tot], from: vec![0; tot], seen: vec![0; tot], closed: vec![0; tot], tgt: vec![0; tot], sgen: 0, tgen: 0, glen: Vec::new(), lhist: Vec::new(), jit: Default::default() };
         let nn = bd.nets.len();
         let mut ctx = Ctx { bd: &mut bd, gr, o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w: vec![0.15], rcache: vec![0; nx * ny], ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false, ret_soft: true, lfloor: Vec::new(), leaf_necks: false, stubs: std::collections::HashMap::new(), stub_cost: Default::default(), recover: false, fan_keep: false };
         let base = ctx.audit(0.0).pairs;
@@ -5100,3 +5174,6 @@ mod tests_iso;
 mod tests_reffill;
 #[cfg(test)]
 mod tests_layers;
+
+#[cfg(test)]
+mod tests_seed;

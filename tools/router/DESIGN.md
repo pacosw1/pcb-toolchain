@@ -102,6 +102,7 @@ The Codex hand finish of NET-CORE reached DRC 0 but left gate findings. The rout
 | 2026-11-02 | RP-001 in the gate's scope + exempt areas (same branch, after PR #94): model.py `return_scope` (tools/router/rpscope.py runs the gate's own kicad-happy a6bba1a net filters: analyze_pcb.py:3925 is_power_net_name / is_ground_name with the schematic power rails, emc_rules.py:3900 _is_power_or_ground) adds the nets the gate never checks to `return_exempt`; reference_fill: a net listed in a spec exempt area gets its own domain = fill + boxes (pcbnew union, no seam) | **STUCK on POE-ETHERNET.** hand NET-CORE PASS 0/0/0 (1113 mm, 264 vias), gate PASS; ESP32-CORE PASS 0/0/0 (477 vias), gate PASS with an empty exemption file (committed file: 9 stale RP-001 exemptions); FW-IO PASS 0/0/0, gate PASS. POE `--return-exempt`: FAIL 0/2/0: /ETH_CT is walled in by the PR #94 reference rule (stricter than the gate's D-124c screen, which passes the hand route's 1.5 mm stub at J1.3), /SCLK open after a J1 standoff. reports/2026-11-02-layer-negotiation.md section 6 |
 | 2026-11-02 | reference rule in the gate's scope (branch claude/router-ref-gate-scope): model.py `ref_soft` = not si_planes.is_fast (fast patterns now loaded with si_planes.load_fast); core: a soft net is priced off its reference (x (1 + model `ref_cost`, default 3.0), string pulling keeps it on), not blocked; hard (fast) nets blocked as PR #94; run.py `ref_gate_rounds` runs the gate's own si_planes on the written board, raises the price of each soft net with a D-124c FAIL line (x10, twice), then sets it hard, and routes again (at most 4 rounds) | **STUCK on POE-ETHERNET.** INPUT-4D2A PASS 0/0/0, planes 0, gate PASS (empty exemption file; committed: 10 stale); hand NET-CORE and FW-IO PASS, gate PASS. POE: FAIL 0/1/0 after 4 rounds. /ETH_CT's only gate-accepted exit (B.Cu east from J1.3, 1.24 mm run, detour 0 as on the hand board) is held by VDD_3V3 (J1.11, B.Cu y 112.65); its 11.7 mm F.Cu alternative is rejected by si_planes; set hard, J1.3 has no exit. The J1 standoff of PR #98 again. reports/2026-11-02-ref-gate-scope.md |
 | 2026-11-02 | thermal via arrays (branch claude/router-thermal-vias): optional board file `thermal-vias.json` (per pad: vias along the long / short side, pitches, drill, diameter, datasheet source). model.py `thermal_via_spec` refuses a missing source, a pad that is not an SMD plane-net pad on gate `viapads.allow`, a via under the board / net class / DRU via minimums, a pitch under hole-to-hole, a via disc not inside the pad copper (pcbnew HitTest); writes pad `thermal_vias` (exact centres). Core `fixed_vip_vias`: each spec via at its exact place as fixed copper of the pad's net before routing (a GND return site; the pour model and every rule see it as any fixed via); an illegal one is a note, never moved; the plane fan-out then adds no via. No file = model byte-identical. 82 cargo tests (2 new), 48 py tests (3 new) | FW-IO U4.9 (LM5164 Fig. 28 p.25: 2 x 2 in the EP, 1.27 / 1.10 mm, 0.3 / 0.6 mm) lock-from: PASS 0 / 0 / 0, 4 vias in the EP (= spec; without the file 1), 150 vias (147), tracks byte-identical to the run without the file, converged it 8; gate --fresh PASS. Two runs byte-identical. NET-CORE and INPUT-4D2A lock-from: route.json byte-identical to the main binary on the same model, PASS 0 / 0 / 0, gate PASS (INPUT: with an empty exemption file, the 10 committed RP-001 exemptions are stale as on main). reports/2026-11-02-thermal-vias.md |
+| 2026-11-04 | seeds and progress (branch iotroute-seed-checkpoint, core `seed.rs`, `checkpoint.rs`): `--seed`, `--checkpoint`, `--stall-passes`, section 5e. No new dependency. 92 cargo tests (10 new) | Flags off: route.json and written board byte-identical to main on CHECKIN-FRONT, ENV-SENSE, PWR-24V-5V, AC-24V. ENV-SENSE: no seed 0 / 1 / 0, 5 of 8 seeds 0 / 0 / 0. PWR-24V-5V: seeds change nothing. Checkpoint 0.04-0.17 % of the run |
 
 Next (was): negotiated congestion (PathFinder: shared cells with present + history cost, rip-up of all nets per pass) to
 finish the 18 nets; F.Cu spoke channels at GND pads (starved_thermal); read hole clearance from the model rules.
@@ -187,6 +188,92 @@ Use (data, n 27 routed placer steps + 8 failed routes): the map explains where a
 residual; the previous step's map does not rank the residual and marks the next step's open only in part (4-6 / 8). So
 there is no placer search term (no data source for its weight); the repair can rank its proposals by the history they
 take away from the unit pins (`compact_cli.py --repair-rank hot`).
+
+## 5e. Seeds, checkpoint, early stop (`--seed`, `--checkpoint`, `--stall-passes`, core `seed.rs`, `checkpoint.rs`)
+
+Why: 5-8 short parallel runs on a 32-core box instead of one long blind run. The router had no seed and printed one line at
+the end, so runs could not differ and nothing could see them.
+
+`--seed N` changes prices and orders, never a rule. The fixed steps stay first and unseeded (returns of locked vias, fixed
+VIP and thermal vias, forced fan-out tracks). Then:
+- the base order is shuffled inside each class (plane fan-out, power, fast, slow); no net moves to another class. The rip-up
+  order stays fewest moves first, then this base order;
+- a smooth random field moves the A* cost of each routing cell and via site by at most 12.5 %, one field per routable
+  layer and one for the vias. The length recovery and the DRU length search do not see it, and the history stays history:
+  the congestion map and the checkpoint read no noise.
+
+Order alone already varies the route, but the field gives copper less alike (see below). No seed: the field is empty, the
+base order untouched, and the output is byte-identical to the unseeded core. The generator is SplitMix64; integer steps and
+IEEE add, multiply and divide give the same field on Mac and Linux.
+
+`--checkpoint FILE`, schema `iot-lab.route-checkpoint.v0`: pass 0 at the start (a path that cannot be written stops the run
+there), one file after each pass, one at the end, each written to FILE.tmp and renamed. Fields: `state` running or done,
+`stop` (converged, iters, max-time, hard-fails, stall-passes, cancelled), `seed`, `bind`, `pass`, `elapsed_s`, `unrouted`
+(nets whose last search left them open), `conflicts` (nets to route again, audit pairs and samples, pour faults,
+`search_limited`: nets stopped by the pop limit, so not proved blocked), `vias`, `wire_mm`, `best`, `passes_since_best`,
+`worst_nets` (8: open first, then most conflict samples, with why), `hot` (8 cells of 1 mm, the DESIGN 5d size: conflict
+pairs of this pass first, then history, with centre in mm and hottest layer). A file that stays `running` is a run that was
+killed. `bind`: source (run.py sources_sha256, by `--source-sha`), binary, model file, rules and geometry hashes (the model
+split by key, the `pcb` path in neither) and the flags. SHA-256 is a local function, no crate. The file only reads what the
+pass knows, so it cannot change the route (a test and the board runs compare the bytes).
+
+Stop. With --checkpoint, SIGTERM or SIGINT ends the negotiation at the end of the pass, as `--max-time` does: at a pass end
+every net has its copper, so the best pass is restored, the strict end steps make it legal and OUT.json is written; the length
+recovery is skipped. A second signal kills. Both bound the negotiation only: the pass under way and the end steps run on, and
+on a big board these take minutes, longer than the 2 s `pcb` gives a job between SIGTERM and SIGKILL. run.py does not forward a
+signal, so it reaches the core only when sent to the core itself or its process group. A run that is killed keeps its last
+checkpoint and no route, so for a bounded job set `--max-time` under the job timeout.
+
+`--stall-passes N` (default off): stop after N passes in a row that do not beat the best pass, and end as `--max-time` does. Best
+= fewest nets in conflict, then fewest audit pairs: the score that picks the pass a run ends from, so a pass that does not beat
+it would not change what an early stop keeps. The reason is in OUT.json `notes`, the ROUTE line (`stop stall-passes`), run.py
+`stages.core.claim.stop` and the checkpoint. N under 4 can end a run before a pour fault gets its hard door (DOOR_STALL 3).
+No default: the score cannot see the present cost rise, and a run can look stuck and still converge (AC-24V seed 5 below).
+
+Replay: same binary, model, flags and seed give the same bytes, on Mac and Linux. Not equal: a run ended by `--max-time` or a
+signal (the pass it ends at depends on the clock), and the checkpoint itself (`elapsed_s`). run.py's reference rounds route
+again into the same checkpoint file, so it shows the last round. Seeds change the order of the lists in OUT.json, so
+different bytes do not prove different copper: compare `tracks` as a set.
+
+One unexplained case outside the core. In one daemon job, PWR-24V-5V's `run.py --lock-from` wrote its locked input with two
+footprint keepout zones swapped (H3 / H5), for every run of that job. The model then differs only in that list order (so
+`geometry_sha256` differs too) and route.json stays the same, but write.py seeds its KIIDs from that file, so the board has the
+same copper with other UUIDs and track order. It did not come back: main's and this run.py gave the main board in 8 of 8 runs in
+one folder of the route image (other OUT names included), and in serial, parallel and 1, 2 and 3 CPU runs. make_locked_input is not
+touched here. If two boards of one input differ, compare route.json first.
+
+Resume is not built. It needs the live copper with its owners and order (shape ids feed the audit and the search ties), return
+and fan-out vias, the hard doors, hist / vhist / lhist (grid-sized, a binary file), present cost, moves, net states, the best
+snapshot, the dead proofs and the stall counters; the RNG needs nothing, it is used only at the start. Those are locals of a
+500-line loop, so it first needs that loop made a struct, and a test that a resumed run equals an unbroken one byte for byte.
+
+Data (2026-11-04, routed on the Hetzner box; each board 8 seeds; DRC with parity through run.py on the job daemon). All seeds
+converged in the core on all boards. Overlap = shared 0.1 mm copper points of two seeds over the smaller route, mean of 28 pairs.
+
+| Board (footprints) | No seed: DRC errors / open / parity, vias, wire mm, passes | 8 seeds: DRC 0 / 0 / 0 | vias | wire mm | passes | Overlap, order only -> order + field |
+| --- | --- | --- | --- | --- | --- | --- |
+| ENV-SENSE (23) | 0 / 1 / 0, 30, 261.6, 7 | **5 of 8** | 22-29 | 256.0-266.8 | 7-11 | 0.50 -> 0.37 |
+| CHECKIN-FRONT (14) | 0 / 5 / 0, 17, 214.8, 8 | 0 of 8 (open 3-8: GND items, the board has no zone) | 12-20 | 206.3-215.3 | 7-11 | 0.42 -> 0.37 |
+| AC-24V (30) | 0 / 0 / 0, 10, 628.0, 5 | 8 of 8 | 9-12 | 609.5-625.3 | 2-20 | 0.74 -> 0.66 |
+| PWR-24V-5V (29) | 0 / 0 / 0, 17, 106.0, 1 | 8 of 8 | 17 | 106.0 | 1 | 1.00: the same copper |
+
+So seeds pay where nets contend and do nothing where they do not: PWR-24V-5V routes in one pass, and the length recovery
+pulls every seed back to the same shortest copper. Best of 8 on ENV-SENSE turns an open board into a clean one; on length alone
+the spread is small (2-4 %), on vias large. Not measured: a board the unseeded router cannot finish (POE-ETHERNET, RELAY-4),
+which is where seeds matter most; those are over the 30-footprint limit of this work.
+
+AC-24V seed 5 sat at 1 net, 1 pair from pass 2 to pass 19 and converged at pass 20 (226 s). With `--stall-passes 6` it stopped at
+pass 8 (159 s) with the same counts: failed 0, 181 tracks, 9 vias. Longest run of passes with no progress in a run that converged:
+17 on that seed, 2 on all other runs.
+
+Defaults to tune (order + field against only the field or only the order, amplitude 0.25 / 0.5 / 1.0, lattice 1 / 2 / 4 mm, on
+CHECKIN-FRONT and ENV-SENSE, 8 seeds each): the spread of vias and wire does not move with amplitude or lattice, so the smallest
+amplitude and the 5d cell size. A field of added cost only ran 1.1-1.7 x slower than order alone on those two boards; with
+mean 0 the times match within the noise of the shared box.
+
+Cost: the checkpoint spent 0.04-0.17 % of the run (0.008 s of 7 s, 0.107 s of 190 s; own timer, hashes included). Flags off and
+checkpoint on against main: inside the run-to-run noise of the shared box (5 pairs each: CHECKIN-FRONT 6.7 / 6.9 / 7.3 s,
+ENV-SENSE 26.4 / 24.1 / 24.4 s).
 
 ## 6. Not in scope (first version)
 

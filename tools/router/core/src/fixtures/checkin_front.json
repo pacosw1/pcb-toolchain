@@ -1,0 +1,1151 @@
+{
+ "schema": "iot-lab.route-model.v0",
+ "board": "CHECKIN-FRONT",
+ "pcb": "/job/hardware-design/boards/CHECKIN-FRONT/cad/CHECKIN-FRONT/CHECKIN-FRONT.kicad_pcb",
+ "copper_layers": [
+  "F.Cu",
+  "B.Cu"
+ ],
+ "plane_layers": [],
+ "adjacent": {},
+ "grounds": [],
+ "current_dT": 10.0,
+ "copper_thickness": {
+  "F.Cu": 0.035,
+  "B.Cu": 0.035
+ },
+ "outline_bbox": [
+  99.95,
+  99.95,
+  176.05,
+  111.05
+ ],
+ "setup": {
+  "min_via": 0.45,
+  "min_drill": 0.2,
+  "min_clearance": 0.0,
+  "min_track": 0.15,
+  "edge_clearance": 0.5,
+  "min_spokes": 2
+ },
+ "return_rule": null,
+ "via_length": 1.58,
+ "classes": {
+  "Default": {
+   "width": 0.15,
+   "clearance": 0.15,
+   "via": 0.6,
+   "drill": 0.3
+  },
+  "PWR": {
+   "width": 0.3,
+   "clearance": 0.15,
+   "via": 0.6,
+   "drill": 0.3
+  }
+ },
+ "nets": {
+  "/LED_G_A": {
+   "class": "Default",
+   "pins": [
+    "D1.1",
+    "R1.2"
+   ],
+   "fast": false,
+   "plane": false,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "width": 0.15,
+   "clearance": 0.15,
+   "limits": {},
+   "plane_ref": true
+  },
+  "/LED_G_K": {
+   "class": "Default",
+   "pins": [
+    "J1.10",
+    "D1.2"
+   ],
+   "fast": false,
+   "plane": false,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "width": 0.15,
+   "clearance": 0.15,
+   "limits": {},
+   "plane_ref": true
+  },
+  "/LED_R_A": {
+   "class": "Default",
+   "pins": [
+    "R2.2",
+    "D2.1"
+   ],
+   "fast": false,
+   "plane": false,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "width": 0.15,
+   "clearance": 0.15,
+   "limits": {},
+   "plane_ref": true
+  },
+  "/LED_R_K": {
+   "class": "Default",
+   "pins": [
+    "J1.11",
+    "D2.2"
+   ],
+   "fast": false,
+   "plane": false,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "width": 0.15,
+   "clearance": 0.15,
+   "limits": {},
+   "plane_ref": true
+  },
+  "/LED_Y_A": {
+   "class": "Default",
+   "pins": [
+    "R3.2",
+    "D3.1"
+   ],
+   "fast": false,
+   "plane": false,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "width": 0.15,
+   "clearance": 0.15,
+   "limits": {},
+   "plane_ref": true
+  },
+  "/LED_Y_K": {
+   "class": "Default",
+   "pins": [
+    "J1.12",
+    "D3.2"
+   ],
+   "fast": false,
+   "plane": false,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "width": 0.15,
+   "clearance": 0.15,
+   "limits": {},
+   "plane_ref": true
+  },
+  "/PROX_INT": {
+   "class": "Default",
+   "pins": [
+    "J1.8",
+    "U1.6"
+   ],
+   "fast": false,
+   "plane": false,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "width": 0.15,
+   "clearance": 0.15,
+   "limits": {},
+   "plane_ref": true
+  },
+  "/PROX_K": {
+   "class": "Default",
+   "pins": [
+    "U1.2",
+    "U1.5"
+   ],
+   "fast": false,
+   "plane": false,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "width": 0.15,
+   "clearance": 0.15,
+   "limits": {},
+   "plane_ref": true
+  },
+  "/SCL0": {
+   "class": "Default",
+   "pins": [
+    "J1.6",
+    "U1.8"
+   ],
+   "fast": false,
+   "plane": false,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "width": 0.15,
+   "clearance": 0.15,
+   "limits": {},
+   "plane_ref": true
+  },
+  "/SDA0": {
+   "class": "Default",
+   "pins": [
+    "J1.4",
+    "U1.7"
+   ],
+   "fast": false,
+   "plane": false,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "width": 0.15,
+   "clearance": 0.15,
+   "limits": {},
+   "plane_ref": true
+  },
+  "5V_SYS": {
+   "class": "PWR",
+   "pins": [
+    "J1.9",
+    "R3.1",
+    "R1.1",
+    "R2.1"
+   ],
+   "fast": false,
+   "plane": false,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "width": 0.3,
+   "clearance": 0.15,
+   "limits": {},
+   "plane_ref": true
+  },
+  "GND": {
+   "class": "PWR",
+   "pins": [
+    "C2.2",
+    "J1.1",
+    "J1.3",
+    "J1.5",
+    "J1.7",
+    "J1.13",
+    "J1.14",
+    "C1.2",
+    "U1.1"
+   ],
+   "fast": false,
+   "plane": false,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "width": 0.3,
+   "clearance": 0.15,
+   "limits": {},
+   "plane_ref": true
+  },
+  "VDD_3V3": {
+   "class": "PWR",
+   "pins": [
+    "C2.1",
+    "J1.2",
+    "C1.1",
+    "U1.3",
+    "U1.4"
+   ],
+   "fast": false,
+   "plane": false,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "width": 0.3,
+   "clearance": 0.15,
+   "limits": {},
+   "plane_ref": true
+  }
+ },
+ "pairs": [],
+ "zones": [],
+ "keepouts": [],
+ "edges": [
+  [
+   100.0,
+   100.0,
+   176.0,
+   100.0
+  ],
+  [
+   100.0,
+   111.0,
+   100.0,
+   100.0
+  ],
+  [
+   157.1,
+   101.8,
+   158.3,
+   101.8
+  ],
+  [
+   157.1,
+   109.2,
+   157.1,
+   101.8
+  ],
+  [
+   158.3,
+   101.8,
+   158.3,
+   109.2
+  ],
+  [
+   158.3,
+   109.2,
+   157.1,
+   109.2
+  ],
+  [
+   176.0,
+   100.0,
+   176.0,
+   111.0
+  ],
+  [
+   176.0,
+   111.0,
+   100.0,
+   111.0
+  ]
+ ],
+ "hole_rules": {
+  "plane_clearance": {
+   "min": 0.0,
+   "source": "max local clearance of the zones on "
+  },
+  "board_min": {
+   "hole_clearance": 0.25,
+   "hole_to_hole": 0.25
+  }
+ },
+ "pads": [
+  {
+   "ref": "C2",
+   "num": "1",
+   "net": "VDD_3V3",
+   "x": 142.9,
+   "y": 108.6,
+   "bbox": [
+    142.5,
+    108.15,
+    143.3,
+    109.05
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "rect",
+   "spoke_deg": 90.0
+  },
+  {
+   "ref": "C2",
+   "num": "2",
+   "net": "GND",
+   "x": 144.3,
+   "y": 108.6,
+   "bbox": [
+    143.9,
+    108.15,
+    144.7,
+    109.05
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "rect",
+   "spoke_deg": 90.0
+  },
+  {
+   "ref": "TH2",
+   "num": "",
+   "net": "",
+   "x": 174.2,
+   "y": 109.6,
+   "bbox": [
+    173.624,
+    109.024,
+    174.776,
+    110.176
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "drill": 1.152,
+   "shape": "circle",
+   "spoke_deg": 45.0
+  },
+  {
+   "ref": "H2",
+   "num": "",
+   "net": "",
+   "x": 173.5,
+   "y": 105.5,
+   "bbox": [
+    172.4,
+    104.4,
+    174.6,
+    106.6
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "drill": 2.2,
+   "shape": "circle",
+   "spoke_deg": 45.0
+  },
+  {
+   "ref": "H1",
+   "num": "",
+   "net": "",
+   "x": 102.5,
+   "y": 105.5,
+   "bbox": [
+    101.4,
+    104.4,
+    103.6,
+    106.6
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "drill": 2.2,
+   "shape": "circle",
+   "spoke_deg": 45.0
+  },
+  {
+   "ref": "J1",
+   "num": "1",
+   "net": "GND",
+   "x": 152.8,
+   "y": 102.75,
+   "bbox": [
+    152.35,
+    102.6,
+    153.25,
+    102.9
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "rect",
+   "spoke_deg": 180.0
+  },
+  {
+   "ref": "J1",
+   "num": "2",
+   "net": "VDD_3V3",
+   "x": 152.8,
+   "y": 103.25,
+   "bbox": [
+    152.35,
+    103.1,
+    153.25,
+    103.4
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "rect",
+   "spoke_deg": 180.0
+  },
+  {
+   "ref": "J1",
+   "num": "3",
+   "net": "GND",
+   "x": 152.8,
+   "y": 103.75,
+   "bbox": [
+    152.35,
+    103.6,
+    153.25,
+    103.9
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "rect",
+   "spoke_deg": 180.0
+  },
+  {
+   "ref": "J1",
+   "num": "4",
+   "net": "/SDA0",
+   "x": 152.8,
+   "y": 104.25,
+   "bbox": [
+    152.35,
+    104.1,
+    153.25,
+    104.4
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "rect",
+   "spoke_deg": 180.0
+  },
+  {
+   "ref": "J1",
+   "num": "5",
+   "net": "GND",
+   "x": 152.8,
+   "y": 104.75,
+   "bbox": [
+    152.35,
+    104.6,
+    153.25,
+    104.9
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "rect",
+   "spoke_deg": 180.0
+  },
+  {
+   "ref": "J1",
+   "num": "6",
+   "net": "/SCL0",
+   "x": 152.8,
+   "y": 105.25,
+   "bbox": [
+    152.35,
+    105.1,
+    153.25,
+    105.4
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "rect",
+   "spoke_deg": 180.0
+  },
+  {
+   "ref": "J1",
+   "num": "7",
+   "net": "GND",
+   "x": 152.8,
+   "y": 105.75,
+   "bbox": [
+    152.35,
+    105.6,
+    153.25,
+    105.9
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "rect",
+   "spoke_deg": 180.0
+  },
+  {
+   "ref": "J1",
+   "num": "8",
+   "net": "/PROX_INT",
+   "x": 152.8,
+   "y": 106.25,
+   "bbox": [
+    152.35,
+    106.1,
+    153.25,
+    106.4
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "rect",
+   "spoke_deg": 180.0
+  },
+  {
+   "ref": "J1",
+   "num": "9",
+   "net": "5V_SYS",
+   "x": 152.8,
+   "y": 106.75,
+   "bbox": [
+    152.35,
+    106.6,
+    153.25,
+    106.9
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "rect",
+   "spoke_deg": 180.0
+  },
+  {
+   "ref": "J1",
+   "num": "10",
+   "net": "/LED_G_K",
+   "x": 152.8,
+   "y": 107.25,
+   "bbox": [
+    152.35,
+    107.1,
+    153.25,
+    107.4
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "rect",
+   "spoke_deg": 180.0
+  },
+  {
+   "ref": "J1",
+   "num": "11",
+   "net": "/LED_R_K",
+   "x": 152.8,
+   "y": 107.75,
+   "bbox": [
+    152.35,
+    107.6,
+    153.25,
+    107.9
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "rect",
+   "spoke_deg": 180.0
+  },
+  {
+   "ref": "J1",
+   "num": "12",
+   "net": "/LED_Y_K",
+   "x": 152.8,
+   "y": 108.25,
+   "bbox": [
+    152.35,
+    108.1,
+    153.25,
+    108.4
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "rect",
+   "spoke_deg": 180.0
+  },
+  {
+   "ref": "J1",
+   "num": "13",
+   "net": "GND",
+   "x": 155.2,
+   "y": 109.25,
+   "bbox": [
+    154.6,
+    108.95,
+    155.8,
+    109.55
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "rect",
+   "spoke_deg": 180.0
+  },
+  {
+   "ref": "J1",
+   "num": "14",
+   "net": "GND",
+   "x": 155.2,
+   "y": 101.75,
+   "bbox": [
+    154.6,
+    101.45,
+    155.8,
+    102.05
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "rect",
+   "spoke_deg": 180.0
+  },
+  {
+   "ref": "C1",
+   "num": "1",
+   "net": "VDD_3V3",
+   "x": 139.7,
+   "y": 108.6,
+   "bbox": [
+    139.3,
+    108.15,
+    140.1,
+    109.05
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "rect",
+   "spoke_deg": 90.0
+  },
+  {
+   "ref": "C1",
+   "num": "2",
+   "net": "GND",
+   "x": 141.1,
+   "y": 108.6,
+   "bbox": [
+    140.7,
+    108.15,
+    141.5,
+    109.05
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "rect",
+   "spoke_deg": 90.0
+  },
+  {
+   "ref": "D1",
+   "num": "1",
+   "net": "/LED_G_A",
+   "x": 121.05,
+   "y": 105.5,
+   "bbox": [
+    120.55,
+    104.8,
+    121.55,
+    106.2
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "rect",
+   "spoke_deg": 270.0
+  },
+  {
+   "ref": "D1",
+   "num": "2",
+   "net": "/LED_G_K",
+   "x": 118.95,
+   "y": 105.5,
+   "bbox": [
+    118.45,
+    104.8,
+    119.45,
+    106.2
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "rect",
+   "spoke_deg": 270.0
+  },
+  {
+   "ref": "R3",
+   "num": "1",
+   "net": "5V_SYS",
+   "x": 131.25,
+   "y": 108.6,
+   "bbox": [
+    130.845,
+    108.17,
+    131.655,
+    109.03
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "rect",
+   "spoke_deg": 90.0
+  },
+  {
+   "ref": "R3",
+   "num": "2",
+   "net": "/LED_Y_A",
+   "x": 132.75,
+   "y": 108.6,
+   "bbox": [
+    132.345,
+    108.17,
+    133.155,
+    109.03
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "rect",
+   "spoke_deg": 90.0
+  },
+  {
+   "ref": "R1",
+   "num": "1",
+   "net": "5V_SYS",
+   "x": 119.25,
+   "y": 108.6,
+   "bbox": [
+    118.845,
+    108.17,
+    119.655,
+    109.03
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "rect",
+   "spoke_deg": 90.0
+  },
+  {
+   "ref": "R1",
+   "num": "2",
+   "net": "/LED_G_A",
+   "x": 120.75,
+   "y": 108.6,
+   "bbox": [
+    120.345,
+    108.17,
+    121.155,
+    109.03
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "rect",
+   "spoke_deg": 90.0
+  },
+  {
+   "ref": "R2",
+   "num": "1",
+   "net": "5V_SYS",
+   "x": 125.25,
+   "y": 108.6,
+   "bbox": [
+    124.845,
+    108.17,
+    125.655,
+    109.03
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "rect",
+   "spoke_deg": 90.0
+  },
+  {
+   "ref": "R2",
+   "num": "2",
+   "net": "/LED_R_A",
+   "x": 126.75,
+   "y": 108.6,
+   "bbox": [
+    126.345,
+    108.17,
+    127.155,
+    109.03
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "rect",
+   "spoke_deg": 90.0
+  },
+  {
+   "ref": "D3",
+   "num": "1",
+   "net": "/LED_Y_A",
+   "x": 133.05,
+   "y": 105.5,
+   "bbox": [
+    132.55,
+    104.8,
+    133.55,
+    106.2
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "rect",
+   "spoke_deg": 270.0
+  },
+  {
+   "ref": "D3",
+   "num": "2",
+   "net": "/LED_Y_K",
+   "x": 130.95,
+   "y": 105.5,
+   "bbox": [
+    130.45,
+    104.8,
+    131.45,
+    106.2
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "rect",
+   "spoke_deg": 270.0
+  },
+  {
+   "ref": "TH1",
+   "num": "",
+   "net": "",
+   "x": 101.8,
+   "y": 101.4,
+   "bbox": [
+    101.224,
+    100.824,
+    102.376,
+    101.976
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "drill": 1.152,
+   "shape": "circle",
+   "spoke_deg": 45.0
+  },
+  {
+   "ref": "U1",
+   "num": "1",
+   "net": "GND",
+   "x": 139.39,
+   "y": 106.54,
+   "bbox": [
+    139.089,
+    105.977,
+    139.691,
+    107.103
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "oval",
+   "spoke_deg": 90.0
+  },
+  {
+   "ref": "U1",
+   "num": "2",
+   "net": "/PROX_K",
+   "x": 140.46,
+   "y": 106.54,
+   "bbox": [
+    140.159,
+    105.977,
+    140.761,
+    107.103
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "oval",
+   "spoke_deg": 90.0
+  },
+  {
+   "ref": "U1",
+   "num": "3",
+   "net": "VDD_3V3",
+   "x": 141.54,
+   "y": 106.54,
+   "bbox": [
+    141.239,
+    105.977,
+    141.841,
+    107.103
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "oval",
+   "spoke_deg": 90.0
+  },
+  {
+   "ref": "U1",
+   "num": "4",
+   "net": "VDD_3V3",
+   "x": 142.61,
+   "y": 106.54,
+   "bbox": [
+    142.309,
+    105.977,
+    142.911,
+    107.103
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "oval",
+   "spoke_deg": 90.0
+  },
+  {
+   "ref": "U1",
+   "num": "5",
+   "net": "/PROX_K",
+   "x": 142.61,
+   "y": 104.46,
+   "bbox": [
+    142.309,
+    103.897,
+    142.911,
+    105.023
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "oval",
+   "spoke_deg": 90.0
+  },
+  {
+   "ref": "U1",
+   "num": "6",
+   "net": "/PROX_INT",
+   "x": 141.54,
+   "y": 104.46,
+   "bbox": [
+    141.239,
+    103.897,
+    141.841,
+    105.023
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "oval",
+   "spoke_deg": 90.0
+  },
+  {
+   "ref": "U1",
+   "num": "7",
+   "net": "/SDA0",
+   "x": 140.46,
+   "y": 104.46,
+   "bbox": [
+    140.159,
+    103.897,
+    140.761,
+    105.023
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "oval",
+   "spoke_deg": 90.0
+  },
+  {
+   "ref": "U1",
+   "num": "8",
+   "net": "/SCL0",
+   "x": 139.39,
+   "y": 104.46,
+   "bbox": [
+    139.089,
+    103.897,
+    139.691,
+    105.023
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "oval",
+   "spoke_deg": 90.0
+  },
+  {
+   "ref": "D2",
+   "num": "1",
+   "net": "/LED_R_A",
+   "x": 126.75,
+   "y": 105.5,
+   "bbox": [
+    126.35,
+    105.1,
+    127.15,
+    105.9
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "rect",
+   "spoke_deg": 90.0
+  },
+  {
+   "ref": "D2",
+   "num": "2",
+   "net": "/LED_R_K",
+   "x": 125.25,
+   "y": 105.5,
+   "bbox": [
+    124.85,
+    105.1,
+    125.65,
+    105.9
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "drill": 0.0,
+   "shape": "rect",
+   "spoke_deg": 90.0
+  }
+ ],
+ "copper": [],
+ "rules": []
+}
