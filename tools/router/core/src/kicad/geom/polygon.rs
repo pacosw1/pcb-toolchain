@@ -138,7 +138,7 @@ impl Polygon {
     }
 }
 
-/// The closest approach of a piece of copper to a point is within `clearance`.
+/// Is the point on this piece of copper? The model's stand-in for PAD::HitTest with no margin.
 pub fn copper_contains(copper: &Copper, p: Pt) -> bool {
     match copper {
         Copper::Circle { center, radius } => {
