@@ -1,6 +1,5 @@
 # Tests under tools/ that cannot run in this repo alone. Name, then the cause. .cip/run-unit.sh skips these.
 # They run where their input exists: a project with the release synced into tools/, or KiCad's Python.
-test_apply_3d_models      needs pcbnew
 test_audit_830_routing    needs pcbnew
 test_gnd_pad_vias         needs pcbnew
 test_pin_escape_flow      needs pcbnew

@@ -200,9 +200,7 @@ been promoted from the synthetic numerical smoke tests.
 ## Validation and rollout
 
 Run engine unit/parity tests plus existing CLI, workflow, diagnosis and ML
-regressions. `tools/pcb_engine_smoke.py` is a developer validation harness: it
-injects an interior track gap only in a new snapshot, submits through the public
-engine CLI, and requires the full outer native/semantic gate. It never adopts.
+regressions.
 
 Native success on a gap fixture proves lifecycle integration, not whole-board
 search superiority. Keep default routing unchanged until matched development

@@ -17,7 +17,6 @@ tools/RELEASE-WORKFLOW.md
 tools/ROUTE-DECISIONS.md
 tools/SCHEMATIC-CONTRACT.md
 tools/add_testpoints.py
-tools/apply-3d-models.py
 tools/backend-patches/fastroute-quality-773/LICENSE.upstream
 tools/backend-patches/fastroute-quality-773/README.md
 tools/backend-patches/fastroute-quality-773/build-provenance.json
@@ -49,7 +48,6 @@ tools/check-release-readiness.mjs
 tools/check-reviews.mjs
 tools/check-staged-gates.mjs
 tools/check_pixel_art.py
-tools/congestion.py
 tools/datasheet_audit.mjs
 tools/design_contract.py
 tools/design_sweep.py
@@ -61,7 +59,6 @@ tools/easyeda_audit.py
 tools/edge-rates.json
 tools/engineering_constraints.py
 tools/engineering_workflow_smoke.py
-tools/escape_stage_smoke.py
 tools/examples/design-idea.json
 tools/examples/design-idea.md
 tools/fab-workflow.sh
@@ -98,11 +95,9 @@ tools/jlc_api_evidence.mjs
 tools/jlc_stock.mjs
 tools/kicad_happy_gate.py
 tools/krt_planes_advisory.py
-tools/lean_fill_profile.py
 tools/lean_owned.py
 tools/lean_owned_exec.py
 tools/lean_resources.py
-tools/lean_route_bench.py
 tools/lean_workflow.py
 tools/lib/board-packets.mjs
 tools/lib/board-packets.test.mjs
@@ -165,7 +160,6 @@ tools/live-view.py
 tools/mandatory_preflight.py
 tools/model_fit.py
 tools/model_sync.py
-tools/move_part.py
 tools/native_workflow_smoke.py
 tools/net_drivers.py
 tools/pack-fab.py
@@ -198,14 +192,12 @@ tools/pcb_engine/requirements-ml.txt
 tools/pcb_engine/search.py
 tools/pcb_engine/session.py
 tools/pcb_engine/viewer.py
-tools/pcb_engine_smoke.py
 tools/pcb_evidence.py
 tools/pcb_ml.py
 tools/pcb_ml_adapters.py
 tools/pcb_ml_data.py
 tools/pcb_ml_features.py
 tools/pcb_ml_models.py
-tools/pcb_ml_smoke.py
 tools/pcb_next.py
 tools/pcb_observation_inputs.py
 tools/pcb_operations.py
@@ -253,7 +245,6 @@ tools/pin-ratings.json
 tools/pin_escape_flow.py
 tools/pixel-art.py
 tools/placement_outcomes.py
-tools/placement_plot.py
 tools/placer/README.md
 tools/placer/__init__.py
 tools/placer/anneal.py
@@ -330,7 +321,6 @@ tools/placer/validate.py
 tools/placer/viewer.py
 tools/placer/wirelen.py
 tools/port_labels.py
-tools/power_pour.py
 tools/pq_cadlib.py
 tools/progress.py
 tools/progress.sh
@@ -347,15 +337,12 @@ tools/remote-route-fr241.Dockerfile
 tools/remote-route.Dockerfile
 tools/remote.sh
 tools/render_with_plugs.py
-tools/render_zoom.py
 tools/requirements-gerbercheck.txt
 tools/rf_lines.py
 tools/ripup.py
 tools/route-features.json
 tools/route.py
 tools/route_batch.mjs
-tools/route_bench.sh
-tools/route_bench_report.py
 tools/route_decision.py
 tools/route_features.py
 tools/route_grid.py
@@ -418,9 +405,7 @@ tools/router/test_pairrules.py
 tools/router/test_run.py
 tools/router/write.py
 tools/routing_rules.py
-tools/routing_trial_smoke.py
 tools/run_record.py
-tools/scale_place.py
 tools/schematic_contract.py
 tools/schematic_contract_smoke.py
 tools/set_stackup.py
@@ -434,13 +419,11 @@ tools/stackup_copy.py
 tools/step.py
 tools/stitch_all.py
 tools/strip_keep_blocks.py
-tools/strip_slow.py
 tools/test-fixtures/generator-cc-774.json
 tools/test-fixtures/mandatory-cc-774.json
 tools/test-gnd-pad-vias.py
 tools/test-route-progress.py
 tools/test-ws2812b-2020-model.py
-tools/test_apply_3d_models.py
 tools/test_audit_830_routing.py
 tools/test_backend_quality.py
 tools/test_block_extract.py
@@ -452,7 +435,6 @@ tools/test_board_gpu.py
 tools/test_board_stage.py
 tools/test_board_uuids.py
 tools/test_compact_immutable.py
-tools/test_congestion.py
 tools/test_design_contract.py
 tools/test_dsn_skip.py
 tools/test_engineering_constraints.py
@@ -470,7 +452,6 @@ tools/test_lean_clock.py
 tools/test_lean_native.py
 tools/test_lean_owned.py
 tools/test_lean_resources.py
-tools/test_lean_route_bench.py
 tools/test_lean_workflow.py
 tools/test_mandatory_preflight.py
 tools/test_mandatory_records_native.py
@@ -514,7 +495,6 @@ tools/test_physical_current.py
 tools/test_pin_escape_flow.py
 tools/test_placement_outcomes.py
 tools/test_port_labels.py
-tools/test_power_pour.py
 tools/test_progress.py
 tools/test_progress_tui.py
 tools/test_project_root.py
@@ -530,7 +510,6 @@ tools/test_route_plan.py
 tools/test_route_rule_coverage.py
 tools/test_routing_rules.py
 tools/test_run_record.py
-tools/test_scale_place.py
 tools/test_schematic_contract.py
 tools/test_set_stackup.py
 tools/test_si_d124c_screen.py
@@ -554,4 +533,3 @@ tools/test_step.py
 tools/test_thermal_repair.py
 tools/thermal_repair.py
 tools/tracemaker_bench.sh
-tools/widen_power.py
