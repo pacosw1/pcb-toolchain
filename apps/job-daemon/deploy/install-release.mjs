@@ -5,7 +5,6 @@ import path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import net from 'node:net';
 
 function identity(dir) {
   if (!fs.lstatSync(dir).isDirectory()) throw Error('source is not a directory');
@@ -59,6 +58,7 @@ export async function recover(root, service) {
   if (!/^[0-9a-f]{16}$/.test(j.id) || !/^[0-9a-f]{64}$/.test(j.previous)) throw Error('invalid recovery journal');
   const src = path.join(root, 'src'), backup = path.join(root, `.src-backup-${j.id}`), displaced = path.join(root, `.src-failed-${j.id}`);
   if (fs.existsSync(backup)) {
+    if (identity(backup) !== j.previous) throw Error('backup source cannot be verified');
     if (fs.existsSync(src)) {
       if (fs.existsSync(displaced)) throw Error('recovery conflict: failed source already exists');
       fs.renameSync(src, displaced); syncDir(root);
@@ -71,7 +71,8 @@ export async function recover(root, service) {
   fs.unlinkSync(journalFile); syncDir(root);
   return { restored: j.previous };
 }
-export async function install(root, archive, manifest, service) {
+export async function install(root, archive, manifest, expectedArchiveSha256, service) {
+  if (!/^[0-9a-f]{64}$/.test(expectedArchiveSha256) || manifest.sha256 !== expectedArchiveSha256) throw Error('manifest does not match independently supplied archive hash');
   const journal = path.join(root, '.deploy-journal.json');
   if (fs.existsSync(journal)) throw Error('recovery required before another deployment');
   const id = randomBytes(8).toString('hex');
@@ -95,13 +96,15 @@ export async function install(root, archive, manifest, service) {
   }
 }
 
-async function main() {
-  const [operation, archive, url, tokenFile] = process.argv.slice(2);
-  if (!['install', 'recover'].includes(operation) || (operation === 'install' && !archive) || !url || !tokenFile) throw Error('usage: install-release.mjs install|recover ARCHIVE_OR_- STATUS_URL TOKEN_FILE');
+export function statusUrl(url) {
   const u = new URL(url);
-  const octets = u.hostname.split('.').map(Number);
-  const local = u.hostname === '127.0.0.1' || u.hostname === '[::1]' || (net.isIPv4(u.hostname) && octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127);
-  if (u.protocol !== 'http:' || !local || u.username || u.password || u.pathname !== '/status' || u.search || u.hash) throw Error('expected a loopback or Tailscale http /status URL');
+  if (u.protocol !== 'http:' || !['127.0.0.1', '[::1]'].includes(u.hostname) || u.username || u.password || u.pathname !== '/status' || u.search || u.hash) throw Error('expected a loopback http /status URL');
+  return u;
+}
+async function main() {
+  const [operation, archive, url, tokenFile, expectedArchiveSha256] = process.argv.slice(2);
+  if (!['install', 'recover'].includes(operation) || (operation === 'install' && (!archive || !expectedArchiveSha256)) || !url || !tokenFile) throw Error('usage: install-release.mjs install|recover ARCHIVE_OR_- STATUS_URL TOKEN_FILE [EXPECTED_ARCHIVE_SHA256]');
+  const u = statusUrl(url);
   const token = fs.readFileSync(tokenFile, 'utf8').trim(); if (token.length < 32) throw Error('invalid token');
   const root = '/opt/pcb-job-daemon', lock = path.join(root, '.deploy-lock');
   fs.mkdirSync(lock); // On interruption the lock remains: verify no installer is running before removing it.
@@ -116,7 +119,7 @@ async function main() {
     },
   };
   try {
-    const result = operation === 'recover' ? await recover(root, service) : await install(root, archive, JSON.parse(fs.readFileSync(`${archive}.json`, 'utf8')), service);
+    const result = operation === 'recover' ? await recover(root, service) : await install(root, archive, JSON.parse(fs.readFileSync(`${archive}.json`, 'utf8')), expectedArchiveSha256, service);
     console.log(JSON.stringify(result));
   } finally { fs.rmdirSync(lock); }
 }
