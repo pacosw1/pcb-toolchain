@@ -1,7 +1,5 @@
 //! Actual-model rule coverage: no native tool, no router. tools/test_route_rule_coverage.py, the parts this module decides.
 use super::*;
-use crate::decimal::Decimal;
-use crate::kicad::raw::Form;
 use crate::route_features::strengthen_project_clearance;
 use crate::sha256::sha256;
 use serde_json::{Value, json};
@@ -88,25 +86,11 @@ pub(super) struct Fake {
 }
 
 impl Collaborators for Fake {
-    fn project_clearances(&self, project_text: &str) -> Result<ProjectClearances, String> {
-        let project: Value = serde_json::from_str(project_text).map_err(|error| error.to_string())?;
-        let decimal = |value: &Value| Decimal::parse(&value.to_string()).ok_or_else(|| "expected authored finite nonnegative number in millimetres".to_string());
-        let items = project["net_settings"]["classes"].as_array().ok_or("project rules and nonempty netclass list are required")?;
-        let classes = items.iter().enumerate().map(|(index, item)| {
-            (item["name"].as_str().unwrap_or("").to_string(), ClassClearance { index, clearance: item.get("clearance").map(decimal) })
-        });
-        Ok(ProjectClearances { classes: classes.collect(), min_clearance: project["board"]["design_settings"]["rules"].get("min_clearance").map(decimal) })
-    }
-
     fn evaluate_project(&self, _: &ProjectRequest) -> Result<Vec<Row>, String> {
         if let Some(mutate) = self.after_project.borrow().as_ref() {
             mutate();
         }
         Ok(self.project_rows.borrow().clone())
-    }
-
-    fn thermal_scope(&self, _: &[Form], _: &[Form]) -> Value {
-        json!({"thermal_connections_possible": false})
     }
 
     fn native_pth_pads(&self, _: &Path) -> Result<Vec<Value>, String> {
@@ -563,7 +547,7 @@ fn project_text(floor: f64, unused: f64) -> String {
 fn strengthen(model: &str, project: &str) -> Result<(String, crate::route_features::StrengthenReceipt), String> {
     let (active, classes, obstacles, layers) = (strings(&[LED]), classes(), obstacles(), strings(&["F.Cu", "B.Cu"]));
     let scope = RouteScope { active_nets: &active, net_classes: &classes, obstacles: &obstacles, layers: &layers };
-    strengthen_project_clearance(model, project, "actual-project.kicad_pro", &scope, &Fake::default())
+    strengthen_project_clearance(model, project, "actual-project.kicad_pro", &scope)
 }
 
 fn default_project() -> String {
@@ -689,7 +673,7 @@ fn unused_native_mapping_without_dsn_membership_does_not_set_the_floor() {
     let (active, mut classes, obstacles, layers) = (strings(&[LED]), classes(), obstacles(), strings(&["F.Cu", "B.Cu"]));
     classes.insert("UNUSED_DECLARATION".to_string(), "UNUSED".to_string());
     let scope = RouteScope { active_nets: &active, net_classes: &classes, obstacles: &obstacles, layers: &layers };
-    let (changed, receipt) = strengthen_project_clearance(&dsn("200"), &default_project(), "actual-project.kicad_pro", &scope, &Fake::default()).unwrap();
+    let (changed, receipt) = strengthen_project_clearance(&dsn("200"), &default_project(), "actual-project.kicad_pro", &scope).unwrap();
     assert_eq!(changed, dsn("300"));
     assert_eq!(receipt.requirement.required_mm, "0.3");
     assert!(!receipt.requirement.counterparts.iter().any(|net| net == "UNUSED_DECLARATION"));

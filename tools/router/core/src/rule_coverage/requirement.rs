@@ -1,5 +1,5 @@
 //! The authored clearances that apply to this new copper: the floor the strengthened DSN must reach.
-use super::{Collaborators, RouteScope, Witness};
+use super::{RouteScope, Witness, project_clearances};
 use crate::decimal::Decimal;
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -57,8 +57,8 @@ fn highest(values: impl Iterator<Item = Decimal>) -> Decimal {
 
 /// Only the authored clearances applicable to this new-copper scope: the classes of the nets a track can come near and the
 /// project minimum. This certifies no router model. `source` is the project path the rows name.
-pub fn project_clearance_requirement(project_text: &str, source: &str, scope: &RouteScope, native: &dyn Collaborators) -> Result<ClearanceRequirement, String> {
-    let project = native.project_clearances(project_text)?;
+pub fn project_clearance_requirement(project_text: &str, source: &str, scope: &RouteScope) -> Result<ClearanceRequirement, String> {
+    let project = project_clearances(project_text)?;
     let nets = counterparts(scope)?;
     let active = scope.sorted_active();
     let pairs: Vec<(String, String)> = active.iter().flat_map(|a| nets.iter().filter(move |b| a != *b).map(move |b| (a.clone(), b.clone()))).collect();
