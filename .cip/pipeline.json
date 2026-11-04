@@ -12,7 +12,7 @@
           "image": "iot-lab-ci:node22-python3-numpy-v2",
           "user": "daemon",
           "env": {"HOME": "/tmp", "IOT_CPU_BUDGET": "2", "OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1"},
-          "steps": [{"run": "node --test scripts/test-toolchain-sync.mjs"}, {"run": "node --experimental-strip-types --no-warnings --test apps/studio/app/test/sexpr.test.ts apps/studio/app/test/board.test.ts"}, {"run": "sh .cip/run-unit.sh"}],
+          "steps": [{"run": "node --test scripts/test-toolchain-sync.mjs"}, {"run": "node --experimental-strip-types --no-warnings --test apps/studio/app/test/*.test.ts"}, {"run": "sh .cip/run-unit.sh"}],
           "limits": {"timeoutSec": 900, "cpus": 2, "memoryMb": 2048}
         },
         {
