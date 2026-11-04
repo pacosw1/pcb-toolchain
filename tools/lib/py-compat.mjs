@@ -84,7 +84,7 @@ export function truthy(value) {
   return Boolean(value);
 }
 
-const typeName = v => v === null || v === undefined ? 'NoneType' : Array.isArray(v) ? 'list' : v instanceof Map ? 'dict' : v instanceof Float ? 'float'
+export const typeName = v => v === null || v === undefined ? 'NoneType' : Array.isArray(v) ? 'list' : v instanceof Map ? 'dict' : v instanceof Float ? 'float'
   : typeof v === 'string' ? 'str' : typeof v === 'boolean' ? 'bool' : 'int';
 // d.get(key, default)
 export function get(dict, key, otherwise = null) {
@@ -366,13 +366,13 @@ export function jsonDumps(value, indent = null, depth = 0) {
 }
 
 // argparse for the shape these tools use: positionals, then options that take one value.
-//   spec = {prog, positionals: ['bom'], options: [{flag: '--boards', type: 'int', fallback: 5n}]}
+//   spec = {prog, positionals: ['bom'], options: [{flag: '--boards', type: 'int', fallback: 5n}, {flag: '--x', required: true}]}
 // Same parse order, abbreviations and messages. The usage text is built on one line: the tools keep it under 78
 // columns, where argparse does not wrap it. With a narrower COLUMNS argparse wraps it and this does not.
 export function parseArgs(spec, argv) {
   const dest = flag => flag.replace(/^--/, '').replaceAll('-', '_');
   const metavar = o => dest(o.flag).toUpperCase();
-  const usage = `usage: ${spec.prog} [-h]${spec.options.map(o => ` [${o.flag} ${metavar(o)}]`).join('')}${spec.positionals.map(p => ' ' + p).join('')}\n`;
+  const usage = `usage: ${spec.prog} [-h]${spec.options.map(o => o.required ? ` ${o.flag} ${metavar(o)}` : ` [${o.flag} ${metavar(o)}]`).join('')}${spec.positionals.map(p => ' ' + p).join('')}\n`;
   const fail = message => {
     write(2, `${usage}${spec.prog}: error: ${message}\n`);
     throw new SystemExit(2);
@@ -428,7 +428,7 @@ export function parseArgs(spec, argv) {
     }
     result[dest(option.flag)] = value;
   }
-  const missing = spec.positionals.slice(positional.length);
+  const missing = [...spec.positionals.slice(positional.length), ...spec.options.filter(o => o.required && result[dest(o.flag)] === null).map(o => o.flag)];
   if (missing.length) fail(`the following arguments are required: ${missing.join(', ')}`);
   spec.positionals.forEach((name, i) => { result[name] = positional[i]; });
   if (extras.length) fail(`unrecognized arguments: ${extras.join(' ')}`);

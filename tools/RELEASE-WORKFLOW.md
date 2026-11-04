@@ -95,7 +95,7 @@ quantity; there is no invented availability margin. Each population is checked
 independently, so a mixed-population order needs its own total quantity plan.
 
 ```sh
-python3 tools/release-stock.py /absolute/new/candidate /absolute/new/stock --boards 5
+node tools/release-stock.mjs /absolute/new/candidate /absolute/new/stock --boards 5
 ```
 
 This opt-in read-only collector saves unmodified JLC assembly-search responses,

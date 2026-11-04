@@ -153,6 +153,7 @@ tools/lib/py-compat.test.mjs
 tools/lib/release-evidence.mjs
 tools/lib/release-evidence.test.mjs
 tools/lib/release-readiness.mjs
+tools/lib/release-stock.test.mjs
 tools/lib/si-checks.mjs
 tools/lib/si-checks.test.mjs
 tools/lib/staged-gates.mjs
@@ -340,7 +341,7 @@ tools/real_board_regression.py
 tools/refresh_courtyards.py
 tools/release-native.Dockerfile
 tools/release-recipe.mjs
-tools/release-stock.py
+tools/release-stock.mjs
 tools/remote-route-fr241.Dockerfile
 tools/remote-route.Dockerfile
 tools/remote.sh

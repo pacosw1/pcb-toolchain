@@ -164,7 +164,7 @@ or establish prototype/bench qualification.
 
 ## Dated assembly stock
 
-`stock` invokes the existing `release-stock.py` once, streams its progress and
+`stock` invokes the existing `release-stock.mjs` once, streams its progress and
 retains original responses plus `stock.json`. It requires a supplied candidate,
 an exact configured board, positive board quantity and a new receipts directory.
 The candidate's native source hashes must still match current schematic/PCB input
