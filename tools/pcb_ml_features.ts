@@ -5,6 +5,7 @@ import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { boardJson, BOARD_JSON_SCHEMA, pinnedKicadCommit } from './lib/board-json.ts';
 import { toMm, tracks, vias, type Board, type BoardDocument, type Pt } from './lib/board-types.ts';
+import { dist } from './lib/py-math.ts';
 import { withSuffix } from './lib/py-path.ts';
 import {
   artifactIdentity, finite, float, isFile, isObject, number, resolve, sha256File, truthy,
@@ -40,7 +41,8 @@ export const QUANTITY_CONTRACTS: Obj = {
 };
 const tools = dirname(fileURLToPath(import.meta.url));
 export const IMPLEMENTATIONS = ['pcb_ml_features.ts', 'pcb_ml_json.ts', 'pcb_ml_numeric.ts', 'lib/board-json.ts', 'lib/board-types.ts',
-  'lib/board-edit.ts', 'lib/env.mjs', 'lib/env-paths.mjs', 'lib/project-root.mjs', 'lib/fingerprint.ts', 'lib/json-file.ts', 'lib/py-compat.mjs', 'lib/py-path.ts', 'router/core/proto/PIN'];
+  'lib/board-edit.ts', 'lib/env.mjs', 'lib/env-paths.mjs', 'lib/project-root.mjs', 'lib/fingerprint.ts', 'lib/json-file.ts', 'lib/py-compat.mjs', 'lib/py-path.ts',
+  'lib/py-math.ts', 'lib/sexpr.ts', 'router/core/proto/PIN'];
 const runtimeHashes = new Map<string, { stat: string; digest: string }>();
 function runtimeDigest(path: string): string {
   const signature = () => { const s = statSync(path, { bigint: true }); return `${s.dev}:${s.ino}:${s.size}:${s.mtimeNs}:${s.ctimeNs}`; };
@@ -57,7 +59,7 @@ export function numericProducer(): Obj {
     float_abi: { radix: 2, mant_dig: 53, epsilon: float(Number.EPSILON) }, byteorder: endianness(),
     os: { system: osType(), release: release(), build: osVersion(), architecture: arch() },
     binaries: { runtime: { sha256: runtimeDigest(process.execPath) } },
-    operations: { coordinates: 'KiCad API whole-nanometre board positions converted to mm', distances: 'ECMAScript Math.hypot', reductions: 'error-free partial summation, binary64 round-to-nearest-even' } };
+    operations: { coordinates: 'KiCad API whole-nanometre board positions converted to mm', distances: 'shared exact binary64 hypot/distance', reductions: 'error-free partial summation, binary64 round-to-nearest-even' } };
 }
 export function featureContract(adapter: Adapter): Obj {
   if (adapter !== 'routing' && adapter !== 'workflow') throw new Error('unsupported feature adapter: ' + adapter);
@@ -82,7 +84,7 @@ const point = (p: Pt): [number, number] => {
   if (!p || !Number.isSafeInteger(p.x) || !Number.isSafeInteger(p.y)) throw new Error('invalid API whole-nanometre coordinate');
   return [toMm(p.x), toMm(p.y)];
 };
-const distance = (a: [number, number], b: [number, number]): number => Math.hypot(b[0] - a[0], b[1] - a[1]);
+const distance = dist;
 const copperLayer = (layer: string): boolean => /^(?:F|B|In[1-9]\d*)\.Cu$/.test(layer);
 export interface CopperMetrics { track_length_mm: number | null; copper: Map<string, number> | null; unknowns: Record<string, string> }
 export function nativeCopperMetrics(board: Board): CopperMetrics {

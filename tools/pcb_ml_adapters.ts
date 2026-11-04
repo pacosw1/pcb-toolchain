@@ -1,9 +1,10 @@
 // Source-bound ML adapters. Unknown/corrupt historical runs remain visible; feature packets are always re-extracted.
 import { lstatSync, readdirSync } from 'node:fs';
-import { basename, dirname, relative } from 'node:path';
+import { basename, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { compare } from './lib/py-compat.mjs';
 import { isRelativeTo } from './lib/py-path.ts';
+import { Evidence as RunEvidence, sealedRun as verifySealedRun } from './lib/outcome-evidence.ts';
 import { finalizeDataset, SPLITS, type Dataset, type Features, type Split, type TargetSpec } from './pcb_ml_data.ts';
 import {
   ADDED_LENGTH_DEFINITION, boardSources, featureContract, implementationInputs, nativeCopperMetrics, readBoard,
@@ -37,17 +38,13 @@ export interface AdapterOptions { boardReader?: BoardReader; observer?: RoutingO
 export type FeaturePacket = Obj & { id: string; task: string; feature_names: string[]; feature_contract: Obj; inputs: Bindings;
   content_sha256: string; rows: (Obj & { id: string; source: { path: string; sha256: string }; features: Features; eligibility: { features: boolean; reasons: Obj[] } })[] };
 
-export class Evidence {
-  readonly root: string;
-  readonly inputs: Bindings = {};
-  constructor(root: string) { this.root = resolve(root, '.'); }
-  file(name: string, expected?: string | null): string {
-    const path = resolve(this.root, name), digest = sha256File(path);
-    if (expected != null && digest !== expected) throw new Error('evidence changed: ' + path);
-    if (this.inputs[path] !== undefined && this.inputs[path] !== digest) throw new Error('evidence changed during observation: ' + path);
-    this.inputs[path] = digest; return path;
+export class Evidence extends RunEvidence {
+  override read(name: string, expected?: string | null): Obj {
+    const value = readObject(this.file(name, expected));
+    // Keep exact numeric JSON types and reject malformed seals before the shared run verifier reads their files.
+    if (Object.hasOwn(value, 'evidence_sha256')) for (const digest of Object.values(object(value.evidence_sha256, 'terminal evidence seal'))) fingerprint(digest, 'sealed evidence hash');
+    return value;
   }
-  read(name: string, expected?: string | null): Obj { return readObject(this.file(name, expected)); }
 }
 export function walkFiles(folder: string): string[] {
   if (!isFile(folder) && !lstatOrNull(folder)?.isDirectory()) return [];
@@ -61,29 +58,8 @@ function lstatOrNull(path: string) {
   try { return lstatSync(path); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
 }
 export function sealedRun(evidence: Evidence, folderName: string, expected: string): { folder: string; terminal: Obj; manifest: Obj; operation: Obj; candidate: string | null } {
-  const folder = resolve(evidence.root, folderName), terminal = evidence.read(resolve(folder, 'result.json'), expected);
-  if (!['passed', 'failed', 'error', 'timeout', 'cancelled'].includes(String(terminal.status)) || object(terminal.cleanup, 'cleanup').complete !== true) throw new Error('run is not terminal with confirmed owned cleanup');
-  const hashes = object(terminal.evidence_sha256, 'terminal evidence seal');
-  if (!Object.hasOwn(hashes, 'run.json')) throw new Error('run has no terminal evidence seal');
-  for (const [name, digest] of Object.entries(hashes)) {
-    const path = resolve(folder, name);
-    if (!isRelativeTo(path, folder)) throw new Error('sealed run path escapes its folder');
-    evidence.file(path, fingerprint(digest, 'sealed evidence hash'));
-  }
-  const manifest = evidence.read(resolve(folder, 'run.json')), operationPath = resolve(folder, 'operation/result.json');
-  const operation = isFile(operationPath) ? evidence.read(operationPath) : {}, actual = new Set(['run.json']);
-  for (const directory of ['operation', 'gate']) for (const path of walkFiles(resolve(folder, directory))) actual.add(relative(folder, path));
-  let candidate: string | null = null;
-  if (operation.candidate) {
-    const recorded = resolve(evidence.root, text(operation.candidate, 'candidate'));
-    const workspace = resolve(evidence.root, typeof operation.workspace === 'string' ? operation.workspace : dirname(recorded));
-    if (!isRelativeTo(recorded, workspace)) throw new Error('candidate escapes recorded workspace');
-    candidate = resolve(folder, 'workspace/' + relative(workspace, recorded));
-    if (!isRelativeTo(candidate, resolve(folder, 'workspace'))) throw new Error('candidate path escapes archived workspace');
-    actual.add(relative(folder, candidate)); evidence.file(candidate, fingerprint(operation.candidate_sha256, 'candidate hash'));
-  }
-  if (!same([...actual].sort(compare), Object.keys(hashes).sort(compare))) throw new Error('run evidence inventory differs from its terminal seal');
-  return { folder, terminal, manifest, operation, candidate };
+  const value = verifySealedRun(evidence, folderName, expected);
+  return { ...value, terminal: object(value.terminal), manifest: object(value.manifest), operation: object(value.operation) };
 }
 
 async function routingObserver(): Promise<RoutingObserver | undefined> {
@@ -109,7 +85,7 @@ function manifest(root: string, name: string, schema?: string): [string, Obj & {
   return [path, value as Obj & { adapter: Adapter }];
 }
 export function codeInputs(): Bindings {
-  return { ...implementationInputs(), ...Object.fromEntries(['pcb_ml_adapters.ts', 'pcb_ml_data.ts'].map(name => [resolve(tools, name), sha256File(resolve(tools, name))])) };
+  return { ...implementationInputs(), ...Object.fromEntries(['pcb_ml_adapters.ts', 'pcb_ml_data.ts', 'lib/outcome-evidence.ts', 'lib/py-values.ts'].map(name => [resolve(tools, name), sha256File(resolve(tools, name))])) };
 }
 export async function manifestDependencies(root: string, name: string, options: AdapterOptions = {}): Promise<Closure> {
   const [path, value] = manifest(root, name), result: Closure = codeInputs();
@@ -259,7 +235,8 @@ export async function buildDataset(root: string, name: string, datasetId?: strin
   const rows: Obj[] = [];
   for (const trial of value.trials as CorpusTrial[]) rows.push(await row(root, trial, value.adapter, evidence, options));
   const inputs = checkClosure(root, closure);
-  for (const [name, digest] of Object.entries(evidence.inputs)) {
+  for (const [name, digest] of evidence.inputs) {
+    if (digest === null) throw new Error('observed source lacks a digest: ' + name);
     if (inputs[name] !== undefined && inputs[name] !== digest) throw new Error('source changed during observation: ' + name);
     inputs[name] = digest;
   }

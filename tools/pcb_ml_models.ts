@@ -16,7 +16,7 @@ export const EVALUATION = 'iot-lab.pcb-ml-evaluation.v1';
 export const PREDICTION = 'iot-lab.pcb-ml-prediction.v1';
 const tools = dirname(fileURLToPath(import.meta.url));
 const IMPLEMENTATIONS = ['pcb_ml_models.ts', 'pcb_ml_data.ts', 'pcb_ml_json.ts', 'pcb_ml_numeric.ts',
-  'lib/fingerprint.ts', 'lib/json-file.ts', 'lib/py-compat.mjs', 'lib/py-path.ts'];
+  'lib/fingerprint.ts', 'lib/json-file.ts', 'lib/py-compat.mjs', 'lib/py-path.ts', 'lib/py-math.ts'];
 type Column = { feature: string; magnitude: Numeric; center_scaled: Numeric; scale_scaled: Numeric; constant: boolean };
 type MeanParameters = { value: Numeric };
 type RidgeParameters = { coefficients: Numeric[]; intercept_scaled: Numeric; target_magnitude: Numeric; numerical_rank: number };
