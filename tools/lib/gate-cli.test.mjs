@@ -166,6 +166,15 @@ test('cheap missing-input preflight launches no native or expensive tools',t=>{
  assert.equal(run.events.some(e=>e.type==='tool.start' || e.type==='preflight.probe'),false);
  assert.match(run.result.preflightErrors.join(' '),/current-paths.json/);assert.equal(run.result.metrics.drc_errors,null);
 });
+test('a board check with no local board reader still runs with the check cache',t=>{
+ const f=fixture(t),go=isolatedRunner(f);
+ const cfg=JSON.parse(readFileSync(join(f.root,f.base,'gate.json')));
+ cfg.checks.rf='rf-lines.json';f.put(f.base+'gate.json',JSON.stringify(cfg));f.put(f.base+'rf-lines.json','{}');
+ f.put('tools/rf_lines.ts',"console.log('rf_lines: 1 PASS, 0 FAIL');\n");
+ assert.equal(existsSync(join(f.root,'bin/iotroute-linux-x86_64')),false);
+ const run=go(['--changed']);
+ assert.equal(run.code,0);assert.equal(run.result.metrics.rf_failures,0);
+});
 test('editing reuses only completed checks; fresh defaults bypass cache; checker edits invalidate scoped results',t=>{
  const f=fixture(t),go=isolatedRunner(f);
  f.put('tools/port_labels.ts',labelStub('first'));
