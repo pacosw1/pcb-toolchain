@@ -69,7 +69,7 @@ export async function checkStaged(root) {
     git(['checkout-index','--all',`--prefix=${snapshot}/`]);
     if(git(['write-tree']).trim()!==indexTree) throw new Error('index changed while taking gate snapshot; retry the commit');
     const release=pinnedRelease(snapshot);
-    if(release) execFileSync('python3',[join(release.bundle,'bin/toolchain_sync.py'),snapshot,'--no-exclude'],{stdio:['ignore','inherit','inherit']});
+    if(release) execFileSync('node',[join(release.bundle,'bin/toolchain_sync.mjs'),snapshot,'--no-exclude'],{stdio:['ignore','inherit','inherit']});
     console.log(`staged gates: tools ${release ? `pcb-toolchain ${release.version}` : 'tracked in the project'}`);
     const oldConfigs=new Map();
     const paths=git(['ls-tree','-r','--name-only','HEAD','hardware-design/boards']).split('\n').filter(p=>/\/gate.json$/.test(p));
