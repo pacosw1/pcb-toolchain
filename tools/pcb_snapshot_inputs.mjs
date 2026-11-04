@@ -19,7 +19,7 @@ try {
     const tools={kicad:probe(kicadCli,['--version']),node:process.version};
     if(Object.keys(c).some(k=>c[k] && !['erc','drc','kicad_happy'].includes(k))) tools.pcbnew=probe(kicadPython,['-c','import pcbnew; print(pcbnew.Version())']);
     if(c.kicad_happy) {
-      tools.python=probe(modernPython,['--version']);
+      tools.python=probe(modernPython(),['--version']);
       for(const repo of pinnedRepos.filter(r=>r.needed==='gate')) tools[repo.name]=probe('git',['-C',repo.dir,'rev-parse','HEAD']);
     }
     const result=JSON.parse(readFileSync(join(evidence,'result.json'),'utf8'));

@@ -31,7 +31,8 @@ export const pinnedRepos = [
 ];
 
 // kicad-happy needs Python 3.10 or later. The macOS python3 and the KiCad Python are 3.9.
-// modernPython: env PYTHON_MODERN, else the first python3.1x on PATH, else 'python3' (doctor.mjs then reports it).
+// modernPython(): env PYTHON_MODERN, else the first python3.1x on PATH, else 'python3' (doctor.mjs then reports it). A call, not
+// a value: importing this module must not start Python, and most tools that import it never need kicad-happy.
 function findModernPython() {
   if (process.env.PYTHON_MODERN) return process.env.PYTHON_MODERN;
   for (const name of ['python3.13', 'python3.12', 'python3.11', 'python3.10', 'python3']) {
@@ -44,4 +45,5 @@ function findModernPython() {
   }
   return 'python3';
 }
-export const modernPython = findModernPython();
+let modern;
+export const modernPython = () => (modern ??= findModernPython());

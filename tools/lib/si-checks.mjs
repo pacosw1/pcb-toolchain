@@ -70,7 +70,7 @@ export function kicadHappyArgs(pcb, exemptFile, grounds = []) {
 export function kicadHappyCheck({python, tool, pcb, check, exemptFile, grounds}) {
   const name = `kicad-happy GP-001 RP-001 DC-002 UC-001 (tools/kicad_happy_gate.py${exemptFile ? `, exempt: ${exemptFile}` : ''})`;
   // kicad-happy needs Python 3.10 or later: a caller that passes plain 'python3' gets modernPython (lib/env.mjs).
-  const {out, exit} = runGate({python: python === 'python3' ? modernPython : python, tool, args: kicadHappyArgs(pcb, exemptFile, grounds)});
+  const {out, exit} = runGate({python: python === 'python3' ? modernPython() : python, tool, args: kicadHappyArgs(pcb, exemptFile, grounds)});
   const {ok, detail} = parseGateOutput(out, exit, KICAD_HAPPY_SUMMARY, KICAD_HAPPY_FAIL);
   check(name, ok, detail);
 }

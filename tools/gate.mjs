@@ -123,7 +123,7 @@ catch (error) { preflightErrors.push(`input evidence: ${error.message}`);inputs=
 const versions = {};
 const probes=[['kicad',kicadCli,['--version']],
   ...(Object.keys(c).some(k=>c[k] && !['erc','drc','kicad_happy','port_labels',...boardChecks].includes(k)) ? [['pcbnew',kicadPython,['-c','import pcbnew; print(pcbnew.Version())']]] : []),
-  ...(c.kicad_happy ? [['python',modernPython,['--version']]] : [])];
+  ...(c.kicad_happy ? [['python',modernPython(),['--version']]] : [])];
 for (const [name,cmd,args] of preflightErrors.length ? [] : probes) {
   gateEvent(logDir,'preflight.probe',{stage:'preflight',tool:name});
   const probeSpan=measuredSpan(`probe:${name}`,'startup');
@@ -211,7 +211,7 @@ function keyFor(k,files) {
   return checkKey({root,stage:k,files:checkInputs(root,files,k,scripts[k],environment.repositories),
     config:{project:cfg.project,stage:cfg.stage ?? 'G4',options:c[k]},externalRoots,
     versions:Object.fromEntries(names.filter(name=>name in versions).map(name=>[name,versions[name]])),
-    commands:['erc','drc'].includes(k) ? [kicadCli] : k==='kicad_happy' ? [process.execPath,modernPython,'git'] : k==='port_labels' ? [process.execPath] : boardChecks.includes(k) ? [process.execPath,kicadCli,boardReader] : [kicadPython,kicadCli]});
+    commands:['erc','drc'].includes(k) ? [kicadCli] : k==='kicad_happy' ? [process.execPath,modernPython(),'git'] : k==='port_labels' ? [process.execPath] : boardChecks.includes(k) ? [process.execPath,kicadCli,boardReader] : [kicadPython,kicadCli]});
 }
 async function execute(k) {
   let metrics,key,hit=false;

@@ -126,7 +126,7 @@ export function checkReport(script: string, doc: unknown): Report {
 }
 
 function runAnalyzer(happyDir: string, script: string, args: string[], output: string): { report: Report; tree: unknown } {
-  const run = spawnSync(modernPython, [join(happyDir, script), ...args, '-o', output], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+  const run = spawnSync(modernPython(), [join(happyDir, script), ...args, '-o', output], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
   if (run.error) throw run.error;
   const stderr = strip(run.stderr).slice(0, STDERR_SHOWN);
   if (run.status !== 0) throw new Error(`${script} failed (exit ${run.status}): ${stderr}`);
@@ -138,7 +138,7 @@ function runAnalyzer(happyDir: string, script: string, args: string[], output: s
 function loadPads(happyDir: string, pcb: string, folder: string): Pad[] {
   const output = join(folder, 'pads.json');
   const scripts = join(happyDir, 'skills/kicad/scripts');
-  const run = spawnSync(modernPython, ['-c', LOAD_PADS, scripts, pcb, output], { encoding: 'utf8' });
+  const run = spawnSync(modernPython(), ['-c', LOAD_PADS, scripts, pcb, output], { encoding: 'utf8' });
   if (run.error) throw run.error;
   if (run.status !== 0) throw new Error(`kicad-happy pad reader failed (exit ${run.status}): ${strip(run.stderr).slice(-STDERR_SHOWN)}`);
   return plainJson(jsonLoads(readText(output))) as Pad[];

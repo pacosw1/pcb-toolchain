@@ -60,8 +60,8 @@ for (const r of pinnedRepos) {
   add(r.needed === 'gate' ? 'REQUIRED' : 'OPTIONAL', `${r.name} (${r.needed})`, ok, detail);
 }
 
-const modern = run(modernPython, ['-c', 'import sys; assert sys.version_info >= (3, 10); print(sys.version.split()[0])']);
-add('REQUIRED', 'Python 3.10 or later (kicad-happy gate)', Boolean(modern), modern ? `${modern} as ${modernPython}` : 'not found: brew install python@3.12, or set PYTHON_MODERN');
+const modern = run(modernPython(), ['-c', 'import sys; assert sys.version_info >= (3, 10); print(sys.version.split()[0])']);
+add('REQUIRED', 'Python 3.10 or later (kicad-happy gate)', Boolean(modern), modern ? `${modern} as ${modernPython()}` : 'not found: brew install python@3.12, or set PYTHON_MODERN');
 
 // Gate ratchet hook (tools/hooks/pre-commit)
 let hooks = run('git', ['-C', root, 'config', '--get', 'core.hooksPath']);
