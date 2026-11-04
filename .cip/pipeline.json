@@ -11,15 +11,59 @@
           "name": "tools-unit",
           "image": "iot-lab-ci:node22-python3-numpy-v2",
           "user": "daemon",
-          "env": {"HOME": "/tmp", "IOT_CPU_BUDGET": "2", "OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1"},
-          "steps": [{"run": "node --test scripts/test-toolchain-sync.mjs"}, {"run": "ls apps/studio/app/test/*.test.ts > /dev/null && node --experimental-strip-types --no-warnings --test apps/studio/app/test/*.test.ts"}, {"run": "sh .cip/run-unit.sh"}],
-          "limits": {"timeoutSec": 900, "cpus": 2, "memoryMb": 2048}
+          "env": {
+            "HOME": "/tmp",
+            "IOT_CPU_BUDGET": "2",
+            "OPENBLAS_NUM_THREADS": "1",
+            "OMP_NUM_THREADS": "1"
+          },
+          "steps": [
+            {
+              "run": "node --test scripts/test-toolchain-sync.mjs"
+            },
+            {
+              "run": "sh .cip/run-unit.sh"
+            }
+          ],
+          "limits": {
+            "timeoutSec": 900,
+            "cpus": 2,
+            "memoryMb": 2048
+          }
         },
         {
           "name": "iotroute",
           "image": "rust:1.93.1",
-          "steps": [{"run": "cd tools/router/core && cargo test --release --locked --quiet"}],
-          "limits": {"timeoutSec": 600, "cpus": 4, "memoryMb": 4096}
+          "steps": [
+            {
+              "run": "cd tools/router/core && cargo test --release --locked --quiet"
+            }
+          ],
+          "limits": {
+            "timeoutSec": 600,
+            "cpus": 4,
+            "memoryMb": 4096
+          }
+        },
+        {
+          "name": "studio",
+          "image": "node:22-bookworm-slim",
+          "steps": [
+            {
+              "run": "cd apps/studio/app && npm ci --ignore-scripts --no-audit --no-fund"
+            },
+            {
+              "run": "cd apps/studio/app && npm run -s typecheck:node"
+            },
+            {
+              "run": "cd apps/studio/app && ls test/*.test.ts > /dev/null && node --experimental-strip-types --no-warnings --test test/*.test.ts"
+            }
+          ],
+          "limits": {
+            "timeoutSec": 600,
+            "cpus": 2,
+            "memoryMb": 4096
+          }
         }
       ]
     }
