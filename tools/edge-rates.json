@@ -1,0 +1,55 @@
+{
+  "about": "D-124: rise (or fall) time per net class for the reference-plane detour budget of tools/si_planes.py. Source report: hardware-design/reports/2026-10-09-design-rules-sources.md C1 and C3. [P] primary source read, [S] secondary (a document that quotes the source). assumption = true: NO SOURCE was found; the value is the report's marked conservative assumption. Use the fastest edge of the driver (the smaller of rise and fall). D-124 addendum (2026-10-09): interface classes only. There is no default class: a net with no class takes the edge of its actual driver (tools/driver-edges.json, tools/net_drivers.py); the former 'gpio, 1 ns, assumption' fallback is removed.",
+  "budget": {
+    "nh_per_ns": 10,
+    "nh_per_ns_source": "Bogatin rule: abrupt inductance (nH) < 10 x rise time (ns) for a ~10 % reflection at 50 ohm; NextPCB 'SI design experience' #55, https://nextpcb.com/blog/engineer-summary-signal-integrity-design-experience-100-1 [S]",
+    "nh_per_mm": 1.5,
+    "nh_per_mm_source": "Return detour adds 0.8-1.5 nH per mm (a 10 mm detour adds 8-15 nH); upper end used. rfessentials 'Current return', https://rfessentials.com/resources/rf-glossary/current-return/ [S]. Allowed detour = 10 / 1.5 = 6.7 mm per ns of rise time."
+  },
+  "classes": {
+    "100base_tx": {
+     "tr_ns": 3.0,
+     "assumption": false,
+     "stat": "min",
+     "source": "100BASE-TX transmit rise/fall time 3.0-5.0 ns (10-90 %) at the active output interface: ANSI X3.263-1995 (FDDI TP-PMD) section 9.1.6, incorporated by IEEE 802.3 clause 25 (the ANSI text itself was not read). [S] UNH-IOL Clause 25 PMD Test Suite v2.5, Test #25.1.2 'All measured rise and fall times shall be between 3ns and 5ns' (references IEEE Std 802.3u-1995 clause 25 and ANSI X3.263-1995 section 9.1.6), hardware-design/registry/datasheets/UNH-IOL-CL25-PMD-Test-Suite-v2.5.pdf sha256 7b28663d1aed71bf4bd355003108f38fa2134657f49a90b1ac733bca56dee1e9; also cited by TI SNLA266B (DP83822 compliance) and the LAN83C185 / LXT9863 datasheets (3.0 ns min, not saved). The minimum 3.0 ns is used (shorter edge = tighter rules). Scope: the bound is at the MDI (line side of the magnetics); it does not bound the PHY pads before the transformer (net_drivers.timing_evidence), so it stays a screening edge, not a qualified fastest-edge bound.",
+     "applicability": {
+      "kind": "protocol",
+      "reason": "100BASE-TX transmit edge per IEEE 802.3 clause 25 / ANSI X3.263 9.1.6 (coordinator decision 2026-10-11, replaces the 1 ns D-124 assumption); line-side bound, screening on pre-transformer traces."
+     }
+    },
+    "usb_fs": {
+      "tr_ns": 4.0,
+      "source": "USB 2.0 Table 7-9: full-speed driver tr >= 4 ns, via mbedded.ninja https://blog.mbedded.ninja/electronics/communication-protocols/usb-protocol/how-to-route-usb-tracks [S]",
+      "applicability": {
+        "kind": "protocol",
+        "reason": "The accepted spec declares USB full-speed, with the stated USB 2.0 edge bound."
+      }
+    },
+    "i2c": {
+      "tr_ns": 12.0,
+      "source": "NXP UM10204 Table 10: Fast-mode fall time tf min = 20 ns x (VDD / 5.5 V) = 12 ns at 3.3 V (rise max 300 ns); report C1/C2, table not re-fetched [S]",
+      "applicability": {
+        "kind": "protocol",
+        "reason": "The accepted spec declares an I2C bus; UM10204 fall-time limit at 3.3 V."
+      }
+    },
+    "rs485": {
+      "tr_ns": 460.0,
+      "source": "TI THVD1410 datasheet, driver tr/tf 460 ns typ (680 ns max), hardware-design/registry/datasheets/THVD1410DR.pdf [P]. Only the bus pins A/B (driver output), not the logic pins DE/RE/D/R, which the MCU or the transceiver logic drives.",
+      "applicability": {
+        "kind": "part",
+        "mpn": [
+          "THVD1410*"
+        ],
+        "pins": "A|B",
+        "reason": "This timing comes from THVD1410 bus outputs only, not a universal RS-485 edge."
+      }
+    }
+  },
+  "evidence_files": [
+    {
+      "path": "hardware-design/registry/datasheets/THVD1410DR.pdf",
+      "sha256": "db9fc93709d880e670769f9e9a1b0313c6a8fca7fe9ee953d1225b2a29d19a0f"
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "name": "iot-lab-capacity-router-adapter",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@tscircuit/capacity-autorouter": "0.0.979"
+  }
+}

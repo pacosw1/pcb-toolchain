@@ -1,0 +1,41 @@
+{
+  "board": "INPUT-4D2A.kicad_pcb",
+  "nets": [
+    {
+      "net_id": 30,
+      "net_name": "SLOT_5V",
+      "crossing_detail": [
+        {
+          "kind": "void",
+          "layer": "F.Cu",
+          "ref_layer": "In1.Cu",
+          "x": 143.54,
+          "y": 116.3685,
+          "length_mm": 1.0285
+        },
+        {
+          "kind": "void",
+          "layer": "F.Cu",
+          "ref_layer": "In1.Cu",
+          "x": 120.5,
+          "y": 115.55,
+          "length_mm": 0.6
+        }
+      ]
+    },
+    {
+      "net_id": 99,
+      "net_name": "CHG_5V",
+      "crossing_detail": [
+        {
+          "kind": "split",
+          "layer": "In2.Cu",
+          "ref_layer": "B.Cu",
+          "x": 109.9,
+          "y": 132.4986,
+          "length_mm": 5.0
+        }
+      ]
+    }
+  ]
+}

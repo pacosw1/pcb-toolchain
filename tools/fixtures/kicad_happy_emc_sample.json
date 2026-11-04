@@ -1,0 +1,91 @@
+{
+  "analyzer_type": "emc",
+  "findings": [
+    {
+      "category": "ground_plane",
+      "severity": "error",
+      "rule_id": "GP-001",
+      "confidence": "heuristic",
+      "title": "Signal has significant reference plane gap",
+      "description": "Net /PS1_24V has 75% reference plane coverage over 3.6mm of routing. Return current must detour around the gap, creating a loop antenna.",
+      "components": [],
+      "nets": [
+        "/PS1_24V"
+      ],
+      "recommendation": "Route this signal to avoid ground plane gaps, or fill the void. If a split is intentional, add a bridge capacitor across the gap.",
+      "detector": "emc_ground_plane",
+      "summary": "Signal has significant reference plane gap",
+      "pins": [],
+      "evidence_source": "heuristic_rule",
+      "report_context": {
+        "section": "Ground Plane",
+        "impact": "",
+        "standard_ref": ""
+      },
+      "signal_net": "/PS1_24V",
+      "coverage_pct": 75.0,
+      "trace_mm": 3.6,
+      "is_high_speed_or_clock": false,
+      "suppressed": false,
+      "suppression_reason": "",
+      "stages": [
+        "layout"
+      ],
+      "finding_id": "emc:GP-001:/ps1_24v"
+    },
+    {
+      "category": "return_path",
+      "severity": "warning",
+      "rule_id": "RP-001",
+      "confidence": "deterministic",
+      "title": "Missing stitching via at layer transition: /RELAY_HB",
+      "description": "Net /RELAY_HB has 4 layer transition(s) across B.Cu, F.Cu, In2.Cu. 4 transition(s) have no ground stitching via within 1.0mm. The return current must find an alternate path, creating a loop antenna.",
+      "components": [],
+      "nets": [
+        "/RELAY_HB"
+      ],
+      "recommendation": "Add a ground stitching via within 1.0mm of each signal via. Place the ground via adjacent to the signal via on the same pad cluster.",
+      "detector": "emc_return_path",
+      "summary": "Missing stitching via at layer transition: /RELAY_HB",
+      "pins": [],
+      "evidence_source": "topology",
+      "report_context": {
+        "section": "Return Path",
+        "impact": "",
+        "standard_ref": ""
+      },
+      "suppressed": false,
+      "suppression_reason": "",
+      "stages": [
+        "layout"
+      ],
+      "finding_id": "emc:RP-001:/relay_hb"
+    },
+    {
+      "category": "stackup",
+      "severity": "error",
+      "rule_id": "SU-001",
+      "confidence": "deterministic",
+      "title": "Adjacent signal layers: F.Cu, In1.Cu",
+      "description": "Signal layers F.Cu and In1.Cu are adjacent without a reference plane between them. This causes high crosstalk and poor return path control for signals on both layers.",
+      "components": [],
+      "nets": [],
+      "recommendation": "Reorder stackup to place a ground or power plane between every pair of signal layers.",
+      "detector": "emc_stackup",
+      "summary": "Adjacent signal layers: F.Cu, In1.Cu",
+      "pins": [],
+      "evidence_source": "topology",
+      "report_context": {
+        "section": "Stackup",
+        "impact": "",
+        "standard_ref": ""
+      },
+      "suppressed": false,
+      "suppression_reason": "",
+      "stages": [
+        "schematic"
+      ],
+      "finding_id": "emc:SU-001:e2cd8b639afb"
+    }
+  ]
+}
