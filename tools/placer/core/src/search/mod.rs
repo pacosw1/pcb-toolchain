@@ -84,7 +84,7 @@ pub struct SearchResult {
 }
 
 /// Weights of an epoch: the spacing and forbidden-area weights grow geometrically over the epochs.
-fn epoch_params(p: &Params, epoch: usize, epochs: usize) -> Params {
+pub fn epoch_params(p: &Params, epoch: usize, epochs: usize) -> Params {
     let f = if epochs > 1 { epoch as f64 / (epochs - 1) as f64 } else { 1.0 };
     let (w_ov, w_oob) = p.spacing_weights_at(f);
     Params { w_ov, w_oob, ..p.clone() }
@@ -165,7 +165,7 @@ fn finish(model: &Model, p: &Params, worker: usize, pose: &Pose) -> Candidate {
 }
 
 /// Final candidate order: legal first, then no mains path faults, then the lower cost.
-fn rank(a: &Candidate, b: &Candidate) -> std::cmp::Ordering {
+pub fn rank(a: &Candidate, b: &Candidate) -> std::cmp::Ordering {
     let key = |c: &Candidate| (c.illegal.len(), c.mains.len());
     key(a).cmp(&key(b)).then(a.cost.total_cmp(&b.cost)).then(a.worker.cmp(&b.worker))
 }
@@ -183,7 +183,7 @@ fn mean_gap(a: &Pose, b: &Pose, movable: &[usize]) -> f64 {
 
 /// Candidates (best first) whose movable units are on average d mm or more from each kept one; with d = 0, only exact
 /// copies are dropped.
-fn distinct(candidates: Vec<Candidate>, d: f64, movable: &[usize]) -> Vec<Candidate> {
+pub fn distinct(candidates: Vec<Candidate>, d: f64, movable: &[usize]) -> Vec<Candidate> {
     let mut seen = BTreeSet::new();
     let mut kept: Vec<Candidate> = Vec::new();
     for c in candidates {
