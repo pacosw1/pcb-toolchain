@@ -67,7 +67,7 @@ tools/examples/design-idea.md
 tools/fab-workflow.sh
 tools/fastroute_job.py
 tools/fetch-datasheet.mjs
-tools/fetch-e2k-assets.py
+tools/fetch-e2k-assets.mjs
 tools/fetch-jlc-datasheet.mjs
 tools/fetch-pq-bridge-assets.py
 tools/fixtures/kicad_happy_emc_sample.json
@@ -125,6 +125,7 @@ tools/lib/env-paths.mjs
 tools/lib/env-paths.test.mjs
 tools/lib/env.mjs
 tools/lib/fab-workflow.test.mjs
+tools/lib/fetch-e2k-assets.test.mjs
 tools/lib/gate-cli.test.mjs
 tools/lib/gate-core.mjs
 tools/lib/gate-core.test.mjs
