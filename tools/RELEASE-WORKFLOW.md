@@ -17,8 +17,11 @@ node tools/check-release-readiness.mjs BASE-PWR /absolute/new/candidate \
 
 `FAB_WORK_DIR` is optional; the default is a unique directory next to the
 canonical fabrication destination. Failed evidence remains there. A successful
-run uses an exclusive atomic rename to `FAB_RELEASE_OUT`; existing files,
-directories and symlinks are never replaced or nested into. Read live native
+run claims `FAB_RELEASE_OUT` with an exclusive mkdir, then atomically renames the
+stage over that empty directory; existing files, directories and symlinks are
+never replaced or nested into. An empty `FAB_RELEASE_OUT` is never a candidate:
+it is a publication in progress, or a crash between the two steps that left the
+stage intact and refuses further publishing until `rmdir` removes it. Read live native
 events at `FAB_WORK_DIR/gate/events.jsonl`, switching to
 `FAB_RELEASE_OUT/gate/events.jsonl` after publication. `START`/`PASS`/`FAIL`
 messages identify phases. The owning CLI supplies deadlines and cancellation.

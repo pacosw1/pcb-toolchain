@@ -147,6 +147,7 @@ tools/lib/pixel-art-checks.mjs
 tools/lib/power-symbols.test.mjs
 tools/lib/project-root.mjs
 tools/lib/project-root.test.mjs
+tools/lib/publish-release.test.mjs
 tools/lib/py-compat.mjs
 tools/lib/py-compat.test.mjs
 tools/lib/release-evidence.mjs
@@ -334,7 +335,7 @@ tools/progress.sh
 tools/progress.tcss
 tools/progress_tui.py
 tools/project_root.py
-tools/publish-release.py
+tools/publish-release.mjs
 tools/real_board_regression.py
 tools/refresh_courtyards.py
 tools/release-native.Dockerfile

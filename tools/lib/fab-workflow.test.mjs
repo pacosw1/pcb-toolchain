@@ -16,7 +16,7 @@ function fixture(board,variables={}) {
  mkdirSync(join(root,'tools/lib'));copyFileSync(new URL('./board-release.mjs',import.meta.url),join(root,'tools/lib/board-release.mjs'));
  const config=['gate.json','gate.pending.json'].map(n=>`hardware-design/boards/${board}/${n}`).find(n=>existsSync(new URL('../../'+n,import.meta.url)));
  mkdirSync(join(root,'hardware-design/boards',board),{recursive:true});copyFileSync(new URL('../../'+config,import.meta.url),join(root,config));
- copyFileSync(new URL('../publish-release.py',import.meta.url),join(root,'tools/publish-release.py'));
+ copyFileSync(new URL('../publish-release.mjs',import.meta.url),join(root,'tools/publish-release.mjs'));copyFileSync(new URL('./py-compat.mjs',import.meta.url),join(root,'tools/lib/py-compat.mjs'));
  copyFileSync(new URL('../pcb_timing.py',import.meta.url),join(root,'tools/pcb_timing.py'));
  writeFileSync(join(root,'tools/check-env-schematic.py'),'import os,sys; sys.exit(int(os.environ.get("SCHEMATIC_STATUS", "0")))\n');
  writeFileSync(join(root,'bin/node'),`#!/bin/sh
@@ -29,7 +29,7 @@ case "$1" in
   if [ "$3" != --gate-dir ]; then echo '{}' > "$4"; exit "\${LATE_EVIDENCE_STATUS:-0}"; fi
   echo fixture-token; exit "\${EVIDENCE_STATUS:-0}";;
  tools/check-base-pwr-pcb.mjs) exit "\${CHECK_STATUS:-0}";;
- tools/release-recipe.mjs) exec ${JSON.stringify(process.execPath)} "$@";;
+ tools/release-recipe.mjs|tools/publish-release.mjs) exec ${JSON.stringify(process.execPath)} "$@";;
  tools/check-release-fab.mjs) echo '{}' > "$3/release-manifest.json"; exit "\${FAB_STATUS:-0}";;
  *) exit 99;;
 esac

@@ -65,7 +65,7 @@ if [ "$mode" = release ]; then
   node tools/check-release-fab.mjs "$board" "$stage" "$stage/release-inputs.json"
   # A second contender must not cause mv to nest into an existing candidate.
   [ ! -e "$destination" ] || { echo 'FAIL: release destination already exists' >&2; exit 2; }
-  python3 tools/publish-release.py "$stage" "$destination"
+  node tools/publish-release.mjs "$stage" "$destination"
   trap - EXIT
   echo "PASS: CAD/fabrication candidate verified; packet/stock/assembly readiness is separate; evidence=$destination"
 else
