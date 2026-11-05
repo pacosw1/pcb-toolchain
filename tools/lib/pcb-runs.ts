@@ -97,7 +97,11 @@ function markStopped(state: Dict, cause: string): void {
 }
 
 function addLiveTiming(state: Dict, age: number, now: number): void {
-  state.set('elapsed_s', float(round(number(get(state, 'elapsed_s', 0n)) + age, 3)));
+  const previous = get(state, 'elapsed_s', 0n);
+  // Python keeps an integer when max(0, negative_age) returns integer zero.
+  const elapsed = typeof previous === 'bigint' && state.get('heartbeat_age_s') === 0n
+    ? previous : float(round(number(previous) + age, 3));
+  state.set('elapsed_s', elapsed);
   state.set('elapsed_clock', 'supervisor_monotonic_plus_wall_since_update');
   const active = liveStages(get(state, 'active_stage_timing', []), now);
   state.set('active_stage_timing', active);

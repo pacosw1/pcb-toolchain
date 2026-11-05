@@ -83,6 +83,12 @@ test('a clock behind the update gives the int 0, as max(0, x) does', () => {
   assert.match(jsonDumps(status(folder, 1000)), /"heartbeat_age_s": 0[,}]/);
 });
 
+test('starting run keeps integer elapsed when the wall clock is behind its update', () => {
+  state({ status: 'starting', updated_unix: 1000, elapsed_s: 1 });
+  assert.match(jsonDumps(status(folder, 999)), /"elapsed_s": 1[,}]/);
+  assert.doesNotMatch(jsonDumps(status(folder, 999)), /"elapsed_s": 1\.0/);
+});
+
 test('startup gets ten seconds, with or without a lock', needsBinary, () => {
   state({ status: 'starting', updated_unix: 1000.0 });
   assert.equal(status(folder, 1005).get('status'), 'starting');
