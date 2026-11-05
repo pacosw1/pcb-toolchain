@@ -14,6 +14,7 @@ use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{DirBuilderExt, FileExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, TryLockError};
 
 fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
@@ -44,6 +45,26 @@ fn open_regular(path: &Path) -> io::Result<File> {
         return Err(invalid("target must be a regular, single-link file"));
     }
     Ok(file)
+}
+
+// Snapshot reads must not themselves change the source atime. A caller that
+// cannot request O_NOATIME cannot safely prepare a Linux commit.
+#[cfg(target_os = "linux")]
+fn open_target(path: &Path) -> io::Result<File> {
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NOATIME)
+        .open(path)?;
+    let meta = file.metadata()?;
+    if !meta.is_file() || meta.nlink() != 1 {
+        return Err(invalid("target must be a regular, single-link file"));
+    }
+    Ok(file)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn open_target(path: &Path) -> io::Result<File> {
+    open_regular(path)
 }
 
 fn same_identity(a: &fs::Metadata, b: &fs::Metadata) -> bool {
@@ -175,6 +196,22 @@ fn require_plain_commit_metadata(_file: &File) -> io::Result<()> {
     ))
 }
 
+#[cfg(target_os = "linux")]
+fn open_stage_without_atime(path: &Path) -> io::Result<File> {
+    OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NOATIME)
+        .open(path)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn open_stage_without_atime(_path: &Path) -> io::Result<File> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "commit metadata policy is not implemented on this platform",
+    ))
+}
+
 /// Exclusive flock is retained on a file owned by this process until Drop.
 /// Canonical directory aliases using the SAME lock directory select the same
 /// path-derived lock. Hardlinks and final symlinks are refused; writers using
@@ -184,6 +221,7 @@ pub struct LockedTarget {
     target_file: File,
     lock_file: File,
     key: String,
+    commit_gate: Mutex<()>,
 }
 
 impl LockedTarget {
@@ -193,7 +231,7 @@ impl LockedTarget {
             return Err(invalid("target symlink is not supported"));
         }
         let canonical = fs::canonicalize(target)?;
-        let target_file = open_regular(&canonical)?;
+        let target_file = open_target(&canonical)?;
         let before = target_file.metadata()?;
         let key = sha256(canonical.as_os_str().as_bytes());
         let lock_path = lock_dir.join(format!("{key}.lock"));
@@ -223,6 +261,7 @@ impl LockedTarget {
             target_file,
             lock_file,
             key,
+            commit_gate: Mutex::new(()),
         })
     }
 
@@ -284,6 +323,12 @@ pub struct PreparedIntent {
     pub uid: u32,
     pub gid: u32,
     pub xattrs: BTreeMap<String, Vec<u8>>,
+    pub atime_seconds: i64,
+    pub atime_nanos: i64,
+    pub mtime_seconds: i64,
+    pub mtime_nanos: i64,
+    pub ctime_seconds: i64,
+    pub ctime_nanos: i64,
 }
 
 fn is_sha256(value: &str) -> bool {
@@ -374,6 +419,12 @@ fn prepare_inner(
         uid: metadata.uid(),
         gid: metadata.gid(),
         xattrs,
+        atime_seconds: metadata.atime(),
+        atime_nanos: metadata.atime_nsec(),
+        mtime_seconds: metadata.mtime(),
+        mtime_nanos: metadata.mtime_nsec(),
+        ctime_seconds: metadata.ctime(),
+        ctime_nanos: metadata.ctime_nsec(),
     };
     let dir = root.join(id);
     fs::DirBuilder::new().mode(0o700).create(&dir)?;
@@ -455,6 +506,34 @@ pub fn observe_recovery(path: &Path, locked: &LockedTarget) -> io::Result<Recove
     )
 }
 
+fn validate_prepared_original(locked: &LockedTarget, intent: &PreparedIntent) -> io::Result<()> {
+    if locked.target != intent.target || locked.key != intent.lock_key {
+        return Err(invalid("journal belongs to a different target"));
+    }
+    let (bytes, meta, attrs) = locked.snapshot()?;
+    #[cfg(target_os = "linux")]
+    let atime_matches =
+        meta.atime() == intent.atime_seconds && meta.atime_nsec() == intent.atime_nanos;
+    #[cfg(not(target_os = "linux"))]
+    let atime_matches = true; // Staging is read-only; commit is unsupported on these platforms.
+    if sha256(&bytes) != intent.original_sha256
+        || meta.dev() != intent.device
+        || meta.ino() != intent.inode
+        || meta.mode() != intent.mode
+        || meta.uid() != intent.uid
+        || meta.gid() != intent.gid
+        || attrs != intent.xattrs
+        || meta.mtime() != intent.mtime_seconds
+        || meta.mtime_nsec() != intent.mtime_nanos
+        || meta.ctime() != intent.ctime_seconds
+        || meta.ctime_nsec() != intent.ctime_nanos
+        || !atime_matches
+    {
+        return Err(invalid("source changed since preparation"));
+    }
+    Ok(())
+}
+
 /// Store only the supplied candidate bytes in the private journal. This does
 /// not create a target-side temporary file or authorize a rename. Re-observe
 /// the source after syncing: concurrent external edits leave this step failed.
@@ -478,17 +557,13 @@ fn stage_candidate_inner(
     if sha256(candidate) != intent.candidate_sha256 {
         return Err(invalid("candidate does not match the intended digest"));
     }
-    if observe_recovery(&dir, locked)? != RecoveryObservation::OriginalBytes {
-        return Err(invalid("source is no longer the prepared original"));
-    }
+    validate_prepared_original(locked, &intent)?;
     create_synced(&dir.join("candidate.bin"), candidate)?;
     File::open(&dir)?.sync_all()?;
     before_marker()?;
     create_synced(&dir.join("staged.ok"), STAGED_MARKER)?;
     File::open(&dir)?.sync_all()?;
-    if observe_recovery(&dir, locked)? != RecoveryObservation::OriginalBytes {
-        return Err(invalid("source changed while staging candidate"));
-    }
+    validate_prepared_original(locked, &intent)?;
     Ok(())
 }
 
@@ -508,6 +583,278 @@ pub fn inspect_staged(path: &Path) -> io::Result<PreparedIntent> {
         return Err(invalid("staged candidate does not match intent"));
     }
     Ok(intent)
+}
+
+// Experimental cooperative commit machinery. This is intentionally private
+// and is NOT wired to a command: advisory flock cannot fence legacy board-key
+// clients or arbitrary writers, the verifier is not owned here, and metadata
+// support is intentionally incomplete. Do not treat it as adoption authority.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct CommitIntent {
+    schema: String,
+    prepared_sha256: String,
+    candidate_sha256: String,
+    stage_name: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct CommitReceipt {
+    schema: String,
+    commit_sha256: String,
+    original_sha256: String,
+    candidate_sha256: String,
+}
+
+fn marker(prefix: &str, bytes: &[u8]) -> Vec<u8> {
+    format!("{prefix}:{}\n", sha256(bytes)).into_bytes()
+}
+
+fn unchanged_intent_bytes(dir: &Path, intent: &PreparedIntent) -> io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    open_regular(&dir.join("intent.json"))?.read_to_end(&mut bytes)?;
+    if bytes != serde_json::to_vec(intent).map_err(io::Error::other)? {
+        return Err(invalid("prepared intent changed"));
+    }
+    require_marker(&dir.join("prepared.ok"), &prepared_marker(&bytes))?;
+    Ok(bytes)
+}
+
+fn stage_name(dir: &Path, key: &str) -> io::Result<String> {
+    let id = dir
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| invalid("invalid journal id"))?;
+    if !valid_id(id) || !is_sha256(key) {
+        return Err(invalid("invalid journal id or lock key"));
+    }
+    Ok(format!(".pcb-adopt-{}-{id}", &key[..16]))
+}
+
+fn validate_original(locked: &LockedTarget, intent: &PreparedIntent) -> io::Result<()> {
+    validate_prepared_original(locked, intent)?;
+    require_plain_commit_metadata(&locked.target_file)
+}
+
+/// Under a live cooperative lock, stage and atomically replace only after the
+/// caller-supplied verifier and a second source check. Error after rename is an
+/// unknown outcome requiring recovery inspection; it never auto-rolls back.
+fn commit_experiment(
+    journal: &Path,
+    locked: &LockedTarget,
+    verify: impl FnOnce() -> io::Result<()>,
+    mut boundary: impl FnMut(&str) -> io::Result<()>,
+) -> io::Result<()> {
+    // The flock excludes other descriptors/processes. This gate also prevents
+    // two threads sharing this same LockedTarget from committing concurrently.
+    let _commit = locked.commit_gate.try_lock().map_err(|error| match error {
+        TryLockError::WouldBlock => io::Error::new(
+            io::ErrorKind::WouldBlock,
+            "target already has a commit in progress",
+        ),
+        TryLockError::Poisoned(_) => invalid("target commit owner is poisoned"),
+    })?;
+    let dir = private_dir(journal)?;
+    let intent = inspect_staged(&dir)?;
+    validate_original(locked, &intent)?;
+    let mut candidate = Vec::new();
+    open_regular(&dir.join("candidate.bin"))?.read_to_end(&mut candidate)?;
+    if sha256(&candidate) != intent.candidate_sha256 {
+        return Err(invalid("candidate changed before commit"));
+    }
+    let parent = locked
+        .target
+        .parent()
+        .ok_or_else(|| invalid("target has no parent"))?;
+    let name = stage_name(&dir, &locked.key)?;
+    let stage_path = parent.join(&name);
+    let commit = CommitIntent {
+        schema: "iot-lab.adopt.commit.v1".into(),
+        prepared_sha256: sha256(&unchanged_intent_bytes(&dir, &intent)?),
+        candidate_sha256: intent.candidate_sha256.clone(),
+        stage_name: name,
+    };
+    let commit_bytes = serde_json::to_vec(&commit).map_err(io::Error::other)?;
+    create_synced(&dir.join("commit-intent.json"), &commit_bytes)?;
+    File::open(&dir)?.sync_all()?;
+    let mut stage = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(&stage_path)?;
+    stage.write_all(&candidate)?;
+    let created = stage.metadata()?;
+    if created.uid() != intent.uid || created.gid() != intent.gid {
+        if unsafe { libc::fchown(stage.as_raw_fd(), intent.uid, intent.gid) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    if unsafe { libc::fchmod(stage.as_raw_fd(), intent.mode & 0o7777) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let times = [
+        libc::timespec {
+            tv_sec: intent.atime_seconds as libc::time_t,
+            tv_nsec: intent.atime_nanos as libc::c_long,
+        },
+        libc::timespec {
+            tv_sec: intent.mtime_seconds as libc::time_t,
+            tv_nsec: intent.mtime_nanos as libc::c_long,
+        },
+    ];
+    if unsafe { libc::futimens(stage.as_raw_fd(), times.as_ptr()) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    require_plain_commit_metadata(&stage)?;
+    stage.sync_all()?;
+    File::open(parent)?.sync_all()?;
+    create_synced(
+        &dir.join("commit.ready"),
+        &marker("iot-lab.adopt.commit-ready.v1", &commit_bytes),
+    )?;
+    File::open(&dir)?.sync_all()?;
+    boundary("before-verifier")?;
+    verify()?;
+    boundary("before-rename")?;
+    validate_original(locked, &intent)?;
+    let staged = stage.metadata()?;
+    if !same_identity(&staged, &fs::symlink_metadata(&stage_path)?)
+        || staged.mode() != intent.mode
+        || staged.uid() != intent.uid
+        || staged.gid() != intent.gid
+        || staged.len() != candidate.len() as u64
+        || staged.atime() != intent.atime_seconds
+        || staged.atime_nsec() != intent.atime_nanos
+        || staged.mtime() != intent.mtime_seconds
+        || staged.mtime_nsec() != intent.mtime_nanos
+    {
+        return Err(invalid("staged candidate metadata changed"));
+    }
+    require_plain_commit_metadata(&stage)?;
+    let mut stage_check = open_stage_without_atime(&stage_path)?;
+    if !same_identity(&staged, &stage_check.metadata()?) {
+        return Err(invalid("staged candidate changed"));
+    }
+    let mut staged_bytes = Vec::new();
+    stage_check.read_to_end(&mut staged_bytes)?;
+    if sha256(&staged_bytes) != intent.candidate_sha256
+        || !same_identity(&staged, &stage_check.metadata()?)
+    {
+        return Err(invalid("staged candidate changed before rename"));
+    }
+    if let Err(error) = fs::rename(&stage_path, &locked.target) {
+        return Err(io::Error::new(
+            error.kind(),
+            format!("rename attempted; recovery inspection required: {error}"),
+        ));
+    }
+    let after_rename = (|| -> io::Result<()> {
+        File::open(parent)?.sync_all()?;
+        boundary("after-rename")?;
+        let target_meta = fs::symlink_metadata(&locked.target)?;
+        if target_meta.dev() != staged.dev()
+            || target_meta.ino() != staged.ino()
+            || target_meta.mode() != intent.mode
+            || target_meta.uid() != intent.uid
+            || target_meta.gid() != intent.gid
+            || target_meta.len() != candidate.len() as u64
+        {
+            return Err(invalid("target changed after rename"));
+        }
+        let receipt = CommitReceipt {
+            schema: "iot-lab.adopt.receipt.v1".into(),
+            commit_sha256: sha256(&commit_bytes),
+            original_sha256: intent.original_sha256,
+            candidate_sha256: intent.candidate_sha256,
+        };
+        let receipt_bytes = serde_json::to_vec(&receipt).map_err(io::Error::other)?;
+        create_synced(&dir.join("receipt.json"), &receipt_bytes)?;
+        File::open(&dir)?.sync_all()?;
+        create_synced(
+            &dir.join("receipt.ok"),
+            &marker("iot-lab.adopt.receipt-ready.v1", &receipt_bytes),
+        )?;
+        File::open(&dir)?.sync_all()?;
+        boundary("after-receipt")?;
+        Ok(())
+    })();
+    after_rename.map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!("target renamed; recovery inspection required: {error}"),
+        )
+    })
+}
+
+/// Read-only evidence classification; it is not authority to adopt, retry or
+/// restore. In particular CandidateUnconfirmed requires human/integrator
+/// reconciliation, and external writers remain outside this advisory lock.
+#[derive(Debug, PartialEq, Eq)]
+pub enum CommitObservation {
+    Incomplete,
+    OriginalWithReadyRecord,
+    CandidateUnconfirmed,
+    ReceiptPresent,
+    Conflict,
+}
+
+pub fn observe_commit(journal: &Path, locked: &LockedTarget) -> io::Result<CommitObservation> {
+    let dir = private_dir(journal)?;
+    let prepared = inspect_staged(&dir)?;
+    let state = observe_recovery(&dir, locked)?;
+    let commit_path = dir.join("commit-intent.json");
+    let ready_path = dir.join("commit.ready");
+    if !commit_path.exists() || !ready_path.exists() {
+        return Ok(if state == RecoveryObservation::OriginalBytes {
+            CommitObservation::Incomplete
+        } else {
+            CommitObservation::Conflict
+        });
+    }
+    let mut commit_bytes = Vec::new();
+    open_regular(&commit_path)?.read_to_end(&mut commit_bytes)?;
+    require_marker(
+        &ready_path,
+        &marker("iot-lab.adopt.commit-ready.v1", &commit_bytes),
+    )?;
+    let commit: CommitIntent =
+        serde_json::from_slice(&commit_bytes).map_err(|_| invalid("invalid commit intent"))?;
+    if commit.schema != "iot-lab.adopt.commit.v1"
+        || commit.prepared_sha256 != sha256(&unchanged_intent_bytes(&dir, &prepared)?)
+        || commit.candidate_sha256 != prepared.candidate_sha256
+        || commit.stage_name != stage_name(&dir, &prepared.lock_key)?
+    {
+        return Err(invalid("commit intent does not match prepared evidence"));
+    }
+    match state {
+        RecoveryObservation::OriginalBytes => Ok(CommitObservation::OriginalWithReadyRecord),
+        RecoveryObservation::CandidateBytes => {
+            let receipt_path = dir.join("receipt.json");
+            let marker_path = dir.join("receipt.ok");
+            if !receipt_path.exists() || !marker_path.exists() {
+                return Ok(CommitObservation::CandidateUnconfirmed);
+            }
+            let mut bytes = Vec::new();
+            open_regular(&receipt_path)?.read_to_end(&mut bytes)?;
+            require_marker(
+                &marker_path,
+                &marker("iot-lab.adopt.receipt-ready.v1", &bytes),
+            )?;
+            let receipt: CommitReceipt =
+                serde_json::from_slice(&bytes).map_err(|_| invalid("invalid commit receipt"))?;
+            if receipt.schema != "iot-lab.adopt.receipt.v1"
+                || receipt.commit_sha256 != sha256(&commit_bytes)
+                || receipt.original_sha256 != prepared.original_sha256
+                || receipt.candidate_sha256 != prepared.candidate_sha256
+            {
+                return Err(invalid("receipt does not match commit evidence"));
+            }
+            Ok(CommitObservation::ReceiptPresent)
+        }
+        _ => Ok(CommitObservation::Conflict),
+    }
 }
 
 #[cfg(test)]
@@ -589,8 +936,22 @@ mod tests {
                 pause,
             )
             .unwrap();
-        } else {
+        } else if phase == "stage" {
             stage_candidate_inner(&journals.join("run"), &locked, b"candidate", pause).unwrap();
+        } else {
+            let wanted = phase.to_string_lossy();
+            commit_experiment(
+                &journals.join("run"),
+                &locked,
+                || Ok(()),
+                |boundary| {
+                    if wanted == boundary {
+                        pause()?;
+                    }
+                    Ok(())
+                },
+            )
+            .unwrap();
         }
     }
 
@@ -658,6 +1019,339 @@ mod tests {
         assert!(inspect_staged(&dir).is_err());
         assert_eq!(fs::read(&target).unwrap(), b"original");
         assert!(LockedTarget::acquire(&locks, &target).is_ok());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn killed_commit_never_silently_rolls_back_or_claims_a_missing_receipt() {
+        for (phase, expected, bytes) in [
+            (
+                "before-rename",
+                CommitObservation::OriginalWithReadyRecord,
+                b"original".as_slice(),
+            ),
+            (
+                "after-rename",
+                CommitObservation::CandidateUnconfirmed,
+                b"candidate".as_slice(),
+            ),
+            (
+                "after-receipt",
+                CommitObservation::ReceiptPresent,
+                b"candidate".as_slice(),
+            ),
+        ] {
+            let temp = Scratch::new();
+            let locks = temp.dir("locks");
+            let journals = temp.dir("journals");
+            let target = temp.0.join("board");
+            fs::write(&target, b"original").unwrap();
+            let lock = LockedTarget::acquire(&locks, &target).unwrap();
+            let dir = prepare(
+                &journals,
+                "run",
+                &lock,
+                &sha256(b"original"),
+                &sha256(b"candidate"),
+            )
+            .unwrap();
+            stage_candidate(&dir, &lock, b"candidate").unwrap();
+            drop(lock);
+            crash_at_journal_boundary(phase, &locks, &journals, &target);
+            assert_eq!(fs::read(&target).unwrap(), bytes);
+            let recovery_lock = LockedTarget::acquire(&locks, &target).unwrap();
+            assert_eq!(observe_commit(&dir, &recovery_lock).unwrap(), expected);
+            assert_eq!(fs::read(&target).unwrap(), bytes);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn cooperative_commit_preserves_supported_metadata_and_records_receipt() {
+        let temp = Scratch::new();
+        let locks = temp.dir("locks");
+        let journals = temp.dir("journals");
+        let target = temp.0.join("board");
+        fs::write(&target, b"original").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o640)).unwrap();
+        let lock = LockedTarget::acquire(&locks, &target).unwrap();
+        let dir = prepare(
+            &journals,
+            "run",
+            &lock,
+            &sha256(b"original"),
+            &sha256(b"candidate"),
+        )
+        .unwrap();
+        let intent = inspect_prepared(&dir).unwrap();
+        stage_candidate(&dir, &lock, b"candidate").unwrap();
+        let mut verified = false;
+        commit_experiment(
+            &dir,
+            &lock,
+            || {
+                verified = true;
+                Ok(())
+            },
+            |_| Ok(()),
+        )
+        .unwrap();
+        assert!(verified);
+        let meta = fs::metadata(&target).unwrap();
+        assert_eq!(
+            (meta.mode(), meta.uid(), meta.gid()),
+            (intent.mode, intent.uid, intent.gid)
+        );
+        assert_eq!(
+            (meta.mtime(), meta.mtime_nsec()),
+            (intent.mtime_seconds, intent.mtime_nanos)
+        );
+        drop(lock);
+        let recovered = LockedTarget::acquire(&locks, &target).unwrap();
+        assert_eq!(
+            observe_commit(&dir, &recovered).unwrap(),
+            CommitObservation::ReceiptPresent
+        );
+        fs::write(dir.join("receipt.json"), b"{}").unwrap();
+        assert!(observe_commit(&dir, &recovered).is_err());
+        assert_eq!(fs::read(target).unwrap(), b"candidate");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn concurrent_commits_sharing_one_owner_cannot_both_enter() {
+        let temp = Scratch::new();
+        let locks = temp.dir("locks");
+        let journals = temp.dir("journals");
+        let target = temp.0.join("board");
+        fs::write(&target, b"original").unwrap();
+        let lock = LockedTarget::acquire(&locks, &target).unwrap();
+        let left = prepare(
+            &journals,
+            "left",
+            &lock,
+            &sha256(b"original"),
+            &sha256(b"candidate"),
+        )
+        .unwrap();
+        let right = prepare(
+            &journals,
+            "right",
+            &lock,
+            &sha256(b"original"),
+            &sha256(b"candidate"),
+        )
+        .unwrap();
+        stage_candidate(&left, &lock, b"candidate").unwrap();
+        stage_candidate(&right, &lock, b"candidate").unwrap();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (resume_tx, resume_rx) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            let left_ref = &left;
+            let lock_ref = &lock;
+            let first = scope.spawn(move || {
+                commit_experiment(
+                    left_ref,
+                    lock_ref,
+                    || Ok(()),
+                    |point| {
+                        if point == "before-rename" {
+                            ready_tx.send(()).unwrap();
+                            resume_rx.recv().unwrap();
+                        }
+                        Ok(())
+                    },
+                )
+            });
+            ready_rx.recv().unwrap();
+            let second = commit_experiment(&right, &lock, || Ok(()), |_| Ok(()));
+            let second_started = right.join("commit-intent.json").exists();
+            resume_tx.send(()).unwrap();
+            first.join().unwrap().unwrap();
+            assert_eq!(second.unwrap_err().kind(), io::ErrorKind::WouldBlock);
+            assert!(!second_started);
+        });
+        assert_eq!(fs::read(target).unwrap(), b"candidate");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn failed_verification_or_changed_source_never_replaces_the_target() {
+        for change_source in [false, true] {
+            let temp = Scratch::new();
+            let locks = temp.dir("locks");
+            let journals = temp.dir("journals");
+            let target = temp.0.join("board");
+            fs::write(&target, b"original").unwrap();
+            let lock = LockedTarget::acquire(&locks, &target).unwrap();
+            let dir = prepare(
+                &journals,
+                "run",
+                &lock,
+                &sha256(b"original"),
+                &sha256(b"candidate"),
+            )
+            .unwrap();
+            stage_candidate(&dir, &lock, b"candidate").unwrap();
+            let result = commit_experiment(
+                &dir,
+                &lock,
+                || {
+                    if change_source {
+                        Ok(())
+                    } else {
+                        Err(invalid("verification failed"))
+                    }
+                },
+                |point| {
+                    if change_source && point == "before-rename" {
+                        fs::write(&target, b"concurrent")?;
+                    }
+                    Ok(())
+                },
+            );
+            assert!(result.is_err());
+            assert_eq!(
+                fs::read(&target).unwrap(),
+                if change_source {
+                    b"concurrent".as_slice()
+                } else {
+                    b"original".as_slice()
+                }
+            );
+            assert!(!dir.join("receipt.ok").exists());
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn error_after_rename_reports_uncertain_outcome_without_restoring() {
+        let temp = Scratch::new();
+        let locks = temp.dir("locks");
+        let journals = temp.dir("journals");
+        let target = temp.0.join("board");
+        fs::write(&target, b"original").unwrap();
+        let lock = LockedTarget::acquire(&locks, &target).unwrap();
+        let dir = prepare(
+            &journals,
+            "run",
+            &lock,
+            &sha256(b"original"),
+            &sha256(b"candidate"),
+        )
+        .unwrap();
+        stage_candidate(&dir, &lock, b"candidate").unwrap();
+        let error = commit_experiment(
+            &dir,
+            &lock,
+            || Ok(()),
+            |point| {
+                if point == "after-rename" {
+                    Err(invalid("injected receipt failure"))
+                } else {
+                    Ok(())
+                }
+            },
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("target renamed; recovery inspection required")
+        );
+        drop(lock);
+        let recovered = LockedTarget::acquire(&locks, &target).unwrap();
+        assert_eq!(
+            observe_commit(&dir, &recovered).unwrap(),
+            CommitObservation::CandidateUnconfirmed
+        );
+        assert_eq!(fs::read(target).unwrap(), b"candidate");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn changed_source_timestamp_blocks_rename_even_when_bytes_match() {
+        let temp = Scratch::new();
+        let locks = temp.dir("locks");
+        let journals = temp.dir("journals");
+        let target = temp.0.join("board");
+        fs::write(&target, b"original").unwrap();
+        let lock = LockedTarget::acquire(&locks, &target).unwrap();
+        let dir = prepare(
+            &journals,
+            "run",
+            &lock,
+            &sha256(b"original"),
+            &sha256(b"candidate"),
+        )
+        .unwrap();
+        let intent = inspect_prepared(&dir).unwrap();
+        stage_candidate(&dir, &lock, b"candidate").unwrap();
+        let result = commit_experiment(
+            &dir,
+            &lock,
+            || Ok(()),
+            |point| {
+                if point == "before-rename" {
+                    let f = OpenOptions::new().write(true).open(&target)?;
+                    let times = [
+                        libc::timespec {
+                            tv_sec: intent.atime_seconds as libc::time_t,
+                            tv_nsec: intent.atime_nanos as libc::c_long,
+                        },
+                        libc::timespec {
+                            tv_sec: (intent.mtime_seconds + 1) as libc::time_t,
+                            tv_nsec: intent.mtime_nanos as libc::c_long,
+                        },
+                    ];
+                    if unsafe { libc::futimens(f.as_raw_fd(), times.as_ptr()) } != 0 {
+                        return Err(io::Error::last_os_error());
+                    }
+                }
+                Ok(())
+            },
+        );
+        assert!(result.is_err());
+        assert_eq!(fs::read(target).unwrap(), b"original");
+        assert!(!dir.join("receipt.ok").exists());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn replaced_staging_file_cannot_be_promoted() {
+        let temp = Scratch::new();
+        let locks = temp.dir("locks");
+        let journals = temp.dir("journals");
+        let target = temp.0.join("board");
+        fs::write(&target, b"original").unwrap();
+        let lock = LockedTarget::acquire(&locks, &target).unwrap();
+        let dir = prepare(
+            &journals,
+            "run",
+            &lock,
+            &sha256(b"original"),
+            &sha256(b"candidate"),
+        )
+        .unwrap();
+        stage_candidate(&dir, &lock, b"candidate").unwrap();
+        let stage = target
+            .parent()
+            .unwrap()
+            .join(stage_name(&dir, lock.lock_key()).unwrap());
+        let result = commit_experiment(
+            &dir,
+            &lock,
+            || Ok(()),
+            |point| {
+                if point == "before-rename" {
+                    fs::write(&stage, b"tampered!")?;
+                }
+                Ok(())
+            },
+        );
+        assert!(result.is_err());
+        assert_eq!(fs::read(target).unwrap(), b"original");
+        assert!(!dir.join("receipt.ok").exists());
     }
 
     #[test]
