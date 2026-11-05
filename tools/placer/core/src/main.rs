@@ -17,7 +17,7 @@ use iotplace::problem::Problem;
 use iotplace::evaluator::Evaluator;
 use iotplace::model::Model;
 use iotplace::problem::Pose;
-use iotplace::search::{Candidate, Initial, Plan, SearchResult, optimize};
+use iotplace::search::{Candidate, Initial, Plan, SearchResult, optimize_with_preview};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -98,7 +98,9 @@ fn run(a: &Args) -> iotplace::Result<ExitCode> {
     if a.options.iter().any(|(f, _)| f == "--engineering-frozen-model-sha256") {
         return Err("digest-only reviewed admission disabled: native source verification is incomplete".into());
     }
-    let mut pr = Problem::load(input)?;
+    let input_bytes = std::fs::read(input)?;
+    let mut pr: Problem = serde_json::from_slice(&input_bytes)?;
+    pr.check_supported()?;
     let plan = Plan {
         workers: a.number("--workers", default_workers())?,
         epochs: a.number("--epochs", 20)?,
@@ -107,7 +109,9 @@ fn run(a: &Args) -> iotplace::Result<ExitCode> {
         top: a.number("--top", 3)?,
     };
     let params = Params::from_args(&a.params)?;
-    let res = optimize(&mut pr, &params, plan, &|line| println!("{line}"))?;
+    let live = iotplace::live_preview::LivePreview::from_environment(&pr, input, &input_bytes);
+    let res = optimize_with_preview(&mut pr, &params, plan, &|line| println!("{line}"),
+        &|epoch, epochs, cost, pose| {if let Some(live) = &live {live.publish(epoch,epochs,cost,pose);}})?;
     let mut output_value = serde_json::to_value(&res)?;
     if a.options.iter().any(|(f, _)| f == "--engineering-frozen-model-sha256") {
         output_value["engineering_source_verification"] = Value::from(

@@ -13,6 +13,7 @@ pub mod geom;
 pub mod gplace;
 pub mod kicad;
 pub mod layout;
+pub mod live_preview;
 pub mod mains;
 pub mod mask;
 pub mod model;
