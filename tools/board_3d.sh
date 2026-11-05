@@ -10,7 +10,7 @@
 # metrics present) and its pcb_sha256 equals the board file now; else "gate UNVERIFIED: <reason>".
 # The page tools/board3d/index.html (model-viewer: drag, pinch, AR Quick Look on iPhone) is copied to OUT.
 # Serve on the tailnet address only (not 0.0.0.0, which listens on every interface):
-#   python3 -m http.server 8788 --bind "$(/Applications/Tailscale.app/Contents/MacOS/Tailscale ip -4)" -d OUT
+# Use a static server bound to the tailnet address rather than every interface.
 # OUT defaults to /tmp/board-3d (outputs are not tracked: sources only). One line per board: PASS or FAIL + cause.
 set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -23,7 +23,7 @@ for b in "$@"; do
   gj="$root/hardware-design/boards/$b/gate.json"
   [ -f "$gj" ] || { echo "board_3d $b: FAIL no $gj"; fail=1; continue; }
   # The board file as tools/gate.mjs finds it: <board>/<gate.json project>.kicad_pcb.
-  proj=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['project'])" "$gj") || { echo "board_3d $b: FAIL gate.json project"; fail=1; continue; }
+  proj=$(node "$root/tools/board3d/metadata.mjs" project "$gj") || { echo "board_3d $b: FAIL gate.json project"; fail=1; continue; }
   pcb="$root/hardware-design/boards/$b/$proj.kicad_pcb"
   [ -f "$pcb" ] || { echo "board_3d $b: FAIL no board file $pcb"; fail=1; continue; }
   sha=$(shasum -a 256 "$pcb" | cut -d' ' -f1)
@@ -43,37 +43,6 @@ for b in "$@"; do
   mv "$tmp/top.png" "$out/$b-top.png" && mv "$tmp/iso.png" "$out/$b-iso.png" && mv "$tmp/opt.glb" "$out/$b.glb" \
     || { echo "board_3d $b: FAIL publish"; rm -rf "$tmp"; fail=1; continue; }
   rm -rf "$tmp" "$out/$b.fail.log"
-  python3 - "$root" "$out" "$b" "$sha" <<'PY' || { echo "board_3d $b: FAIL boards.json"; fail=1; continue; }
-import json, os, sys
-root, out, b, sha = sys.argv[1:5]
-CORE = ('erc_errors', 'drc_errors', 'drc_parity', 'drc_unconnected')
-def note():
-    p = os.path.join(root, 'hardware-design/boards', b, 'gate-metrics.json')
-    try:
-        m = json.load(open(p))
-    except (OSError, ValueError) as e:
-        return f'gate UNVERIFIED: no readable gate-metrics.json ({type(e).__name__})'
-    met = m.get('metrics') if isinstance(m, dict) else None
-    if m.get('schema_version') != 2 or m.get('board') != b or not isinstance(met, dict):
-        return 'gate UNVERIFIED: gate-metrics.json is not schema 2 for this board'
-    absent = [k for k in CORE if not isinstance(met.get(k), (int, float))]
-    if absent:
-        return 'gate UNVERIFIED: metrics missing ' + ', '.join(absent)
-    if m.get('pcb_sha256') != sha:
-        return 'gate UNVERIFIED: gate-metrics.json is for another version of the board file (stale)'
-    opened = {k: v for k, v in met.items() if isinstance(v, (int, float)) and v > 0 and 'warning' not in k}
-    return 'gate at target' if not opened else 'gate NOT at target: ' + ', '.join(f'{k} {v}' for k, v in opened.items())
-path = os.path.join(out, 'boards.json')
-try:
-    have = {x['name']: x for x in json.load(open(path))}
-except (OSError, ValueError, KeyError, TypeError):
-    have = {}
-have[b] = dict(name=b, pcb_sha256=sha, note=note())
-tmp = path + '.tmp'
-json.dump(list(have.values()), open(tmp, 'w'), indent=1)
-os.replace(tmp, path)
-print(f"board_3d {b}: PASS {os.path.getsize(os.path.join(out, b + '.glb'))} bytes GLB, ", end='')
-PY
-  echo "$missing 3D models not found; $(python3 -c "import json,sys;print([x['note'] for x in json.load(open(sys.argv[1])) if x['name']==sys.argv[2]][0])" "$out/boards.json" "$b")"
+  node "$root/tools/board3d/metadata.mjs" record "$root" "$out" "$b" "$sha" "$missing" || { echo "board_3d $b: FAIL boards.json"; fail=1; continue; }
 done
 exit $fail
