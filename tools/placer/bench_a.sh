@@ -1,30 +1,30 @@
 #!/bin/bash
 # Proof benchmark A (proxy correlation), driver on the Mac; search and Freerouting run on Hetzner only.
-#   WHEEL=numpy-...whl tools/placer/bench_a.sh BOARD_DIR NAME BOARD PROB OUT [RUNS]
-# BOARD  copy with the scored nets stripped; PROB = cli.py read of BOARD.
+#   IOTPLACE_LINUX=bin/iotplace-linux-x86_64 tools/placer/bench_a.sh BOARD_DIR NAME BOARD PROB OUT [RUNS]
+# BOARD  copy with the scored nets stripped; PROB = place.ts read of BOARD.
 # 15 placements: base (as is), d1-d4 (default search, 4 seeds), hp (w_cong=0), cg (w_wl=0), c3 (w_cong=3),
 # and 7 legal random ones (scramble sigma 5/10/20 mm and uniform, then a search with w_wl=0 w_cong=0).
-# Each is written against PROB and routed RUNS times (default 5). Last: bench.py collect prints the table
+# Each is written against PROB and routed RUNS times (default 5). Last: bench.ts collect prints the table
 # with the proxy cost (default params) and the Spearman correlation vs the median unrouted.
 set -eu
 BD=$1; N=$2; B=$3; PROB=$4; OUT=$5; RUNS=${6:-5}
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
-PY=/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3
-WHEEL=${WHEEL:?set WHEEL to the numpy cp313 manylinux wheel}
 IOTPLACE_LINUX=${IOTPLACE_LINUX:?set IOTPLACE_LINUX to the Linux iotplace binary}
 [ "$(basename "$IOTPLACE_LINUX")" = iotplace-linux-x86_64 ] || { echo "IOTPLACE_LINUX must be named iotplace-linux-x86_64" >&2; exit 2; }
+NODE="node --no-warnings --experimental-strip-types"
+PLACE="$NODE tools/placer/place.ts"
 mkdir -p "$OUT"
 cd "$REPO"
 search() {  # $1 tag, $2 problem, rest: extra run args
   local t=$1 q=$2; shift 2
-  REMOTE_MEM=8g REMOTE_CPUS=8 tools/remote.sh "$BD" --in "$q" --in "$WHEEL" --results "$OUT/$t-search" -- \
+  REMOTE_MEM=8g REMOTE_CPUS=8 tools/remote.sh "$BD" --in "$q" --in "$IOTPLACE_LINUX" --results "$OUT/$t-search" -- \
     bash tools/placer/remote_run.sh run "in/$(basename "$q")" -o out/res.json --workers 8 --epochs 12 \
     --steps 12000 --top 1 "$@" > "$OUT/$t-search.log" 2>&1 || true
-  [ -f "$OUT/$t-search/res.json" ] && "$PY" tools/placer/cli.py write "$B" "$PROB" "$OUT/$t-search/res.json" \
+  [ -f "$OUT/$t-search/res.json" ] && $PLACE write "$B" "$PROB" "$OUT/$t-search/res.json" \
     --outdir "$OUT/$t" 2>&1 | grep '^cand' || echo "search $t failed, see $OUT/$t-search.log" >&2
 }
 scr() {  # $1 tag, $2 seed, $3 sigma or '' (uniform)
-  "$PY" tools/placer/cli.py scramble "$PROB" -o "$OUT/$1-prob.json" --seed "$2" ${3:+--sigma $3} | tail -1
+  $PLACE scramble "$PROB" -o "$OUT/$1-prob.json" --seed "$2" ${3:+--sigma $3} | tail -1
 }
 scr s5a 11 5; scr s5b 12 5; scr s10 13 10; scr s20 14 20; scr u1 15 ''; scr u2 16 ''; scr u3 17 ''
 R0='--param w_wl=0 w_cong=0'
@@ -56,4 +56,4 @@ for t in $TAGS; do for r in $(seq 1 "$RUNS"); do
 done; done
 wait
 # shellcheck disable=SC2086
-"$PY" tools/placer/bench.py collect "$PROB" "$OUT" $TAGS
+$NODE tools/placer/bench.ts collect "$PROB" "$OUT" $TAGS

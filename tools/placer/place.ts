@@ -12,10 +12,10 @@
 // The repo board is only read. Candidates are proposals: the board gates and a router decide.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { runMain, UsageError } from '../lib/cli.ts';
-import { reviewedContract } from '../lib/engineering-constraints.ts';
+import { reviewedContract, type ReviewServices } from '../lib/engineering-constraints.ts';
 import { kicadCli } from '../lib/env.mjs';
 import { iotplaceBin } from '../lib/iotplace-bin.ts';
 import { parseTyped, readTyped } from '../lib/json-file.ts';
@@ -74,7 +74,9 @@ async function search(prob: string, output: string, workers: number, flags: read
   });
 }
 
-async function cmdRun(argv: string[]): Promise<number> {
+export interface RunServices { review: ReviewServices; search: typeof search }
+
+export async function cmdRun(argv: string[], { review, search: start }: RunServices = { review: reviewServices, search }): Promise<number> {
   const a = parseOptions(argv, {
     '-o': 'text', '--workers': 'int', '--epochs': 'int', '--steps': 'int', '--seed': 'int', '--top': 'int', '--param': 'words', [FROZEN]: 'text',
   }, 'usage: place.ts run prob.json -o result.json [--workers N ...]');
@@ -86,16 +88,16 @@ async function cmdRun(argv: string[]): Promise<number> {
   const payload = readFileSync(prob);
   const problem = parseTyped<ReviewedProblem>(payload.toString('utf8'));
   const frozen = a.text(FROZEN);
-  if (!problem.engineering && !frozen) return search(prob, output, workers, flags);
+  if (!problem.engineering && !frozen) return start(prob, output, workers, flags);
   const digest = createHash('sha256').update(payload).digest('hex');
   if ((frozen && digest !== frozen) || !problem.engineering) throw new Error('transferred engineering model fingerprint differs from verified producer input');
   const verifySources = !frozen;
-  checkProblem(problem, null, { verifySources });   // Invalid coverage fails before admission.
-  const code = await search(prob, output, workers, [...flags, FROZEN, digest]);
+  checkProblem(problem, null, { verifySources, services: review });   // Invalid coverage fails before admission.
+  const code = await start(prob, output, workers, [...flags, FROZEN, digest]);
   if (!existsSync(output)) return code;
   const result = readTyped<Result>(output);
   for (const candidate of result.candidates) {
-    const checked = checkProblem(problem, candidate.pose, { verifySources });
+    const checked = checkProblem(problem, candidate.pose, { verifySources, services: review });
     candidate.engineering = checked;
     candidate.illegal.push(...checked.blockers.map(blocker => `engineering:${String(blocker.id)}`));
   }
@@ -111,7 +113,7 @@ async function cmdRun(argv: string[]): Promise<number> {
 
 const NOT_COPIED = (name: string): boolean => name.endsWith('.kicad_prl') || name.endsWith('-backups') || name === 'fp-info-cache';
 
-function cmdWrite(argv: string[]): number {
+export function cmdWrite(argv: string[], review: ReviewServices = reviewServices): number {
   const a = parseOptions(argv, { '--outdir': 'text', '--initial': 'switch' }, 'usage: place.ts write BOARD prob.json result.json --outdir DIR [--initial]');
   const [board, prob, result] = a.positionals, outdir = a.text('--outdir');
   if (!board || !prob || !result || !outdir) throw new UsageError('usage: place.ts write BOARD prob.json result.json --outdir DIR [--initial]');
@@ -120,8 +122,9 @@ function cmdWrite(argv: string[]): number {
   if (a.has('--initial')) jobs.unshift(['initial', problem.units.map(unit => [unit.x, unit.y, 0])]);
   // A rejected reviewed pose must leave what is already in the output folder.
   if (problem.engineering) {
+    if (realpathSync(board) !== realpathSync(problem.board_file)) throw new Error('reviewed placement writer source differs from its native model');
     for (const [, pose] of jobs) {
-      const checked = checkProblem(problem, pose);
+      const checked = checkProblem(problem, pose, { services: review });
       if (checked.status !== 'passed') throw new Error(`reviewed placement rejected before writing: ${jsonDumps(checked.blockers)}`);
     }
   }
