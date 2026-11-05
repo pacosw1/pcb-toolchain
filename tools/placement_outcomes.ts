@@ -29,7 +29,8 @@ function main(argv: string[]): number {
   }
   if (parsed.values.output) atomicJson(parsed.values.output, result);
   const shown = parsed.values.output ? terminalSummary(result, parsed.values.output) : result;
-  console.log(parsed.values.json ? jsonDumps(shown) : `${result.status === 'passed' ? 'PASS' : 'STUCK'}: ${result.next_action.reason}`);
+  const nextAction = result.next_action as { reason: string };
+  console.log(parsed.values.json ? jsonDumps(shown) : `${result.status === 'passed' ? 'PASS' : 'STUCK'}: ${nextAction.reason}`);
   return result.status === 'passed' ? 0 : 1;
 }
 
