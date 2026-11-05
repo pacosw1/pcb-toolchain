@@ -32,11 +32,11 @@ tools/board3d/metadata.test.mjs
 tools/board_3d.sh
 tools/board_frame.py
 tools/board_frame.ts
-tools/board_labels.py
+tools/board_labels.ts
 tools/board_route_rules.py
 tools/board_uuids.py
 tools/board_uuids.ts
-tools/brand_mark.py
+tools/brand_mark.ts
 tools/build-bom-verified.mjs
 tools/build-cad-catalog.mjs
 tools/build-release-image.mjs
@@ -91,6 +91,8 @@ tools/lean_resources.py
 tools/lean_workflow.py
 tools/lib/backend-quality.test.ts
 tools/lib/backend-quality.ts
+tools/lib/barrier-line.test.ts
+tools/lib/barrier-line.ts
 tools/lib/block-bindings.test.ts
 tools/lib/block-bindings.ts
 tools/lib/block-parts.test.ts
@@ -115,11 +117,14 @@ tools/lib/board-items.ts
 tools/lib/board-json.test.ts
 tools/lib/board-json.ts
 tools/lib/board-obstacles.ts
+tools/lib/board-labels.test.ts
 tools/lib/board-packets.mjs
 tools/lib/board-packets.test.mjs
 tools/lib/board-release.mjs
 tools/lib/board-selections.mjs
 tools/lib/board-selections.test.mjs
+tools/lib/board-silk.test.ts
+tools/lib/board-silk.ts
 tools/lib/board-types.ts
 tools/lib/board-uuids.test.ts
 tools/lib/board-uuids.ts
@@ -210,6 +215,9 @@ tools/lib/kicad-happy-gate.test.ts
 tools/lib/kicad-population.d.mts
 tools/lib/kicad-population.mjs
 tools/lib/krt-planes-advisory.test.ts
+tools/lib/label-board.ts
+tools/lib/label-info.ts
+tools/lib/label-place.ts
 tools/lib/lean-clock.ts
 tools/lib/lean-resources.test.ts
 tools/lib/lean-resources.ts
@@ -217,6 +225,8 @@ tools/lib/lean-stage.test.ts
 tools/lib/lean-stage.ts
 tools/lib/lean-workflow.test.ts
 tools/lib/lean-workflow.ts
+tools/lib/logo-raster.test.ts
+tools/lib/logo-raster.ts
 tools/lib/microstrip.ts
 tools/lib/min-heap.ts
 tools/lib/native-board.ts
@@ -226,6 +236,7 @@ tools/lib/net-drivers.ts
 tools/lib/net-islands.test.ts
 tools/lib/net-islands.ts
 tools/lib/netlist.ts
+tools/lib/newstroke-metrics.json
 tools/lib/outcome-controls.ts
 tools/lib/outcome-evidence.ts
 tools/lib/outcome-quality.ts
@@ -348,6 +359,7 @@ tools/lib/si-checks.mjs
 tools/lib/si-checks.test.mjs
 tools/lib/si-native.test.ts
 tools/lib/si-native.ts
+tools/lib/silk-fixture.ts
 tools/lib/silk-refs.test.ts
 tools/lib/specctra.ts
 tools/lib/stackup-colors.ts
@@ -360,6 +372,8 @@ tools/lib/supply-nets.ts
 tools/lib/thermal-spokes.test.ts
 tools/lib/thermal-spokes.ts
 tools/lib/through-vias.ts
+tools/lib/stroke-text.test.ts
+tools/lib/stroke-text.ts
 tools/lib/timing.test.ts
 tools/lib/timing.ts
 tools/lib/via-pads.ts
@@ -946,8 +960,7 @@ tools/set_stackup.ts
 tools/si_pairs.ts
 tools/si_planes.ts
 tools/silk_jlc.py
-tools/silk_marks.py
-tools/silk_refs.py
+tools/silk_marks.ts
 tools/silk_refs.ts
 tools/stitch_all.ts
 tools/test-fixtures/generator-cc-774.json
@@ -984,7 +997,6 @@ tools/test_route_native_thermals.py
 tools/test_route_plan.py
 tools/test_route_rule_coverage.py
 tools/test_run_record.py
-tools/test_silk_refs.py
 tools/test_thermal_repair.py
 tools/thermal_repair.py
 tools/tracemaker_bench.sh
