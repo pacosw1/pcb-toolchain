@@ -190,14 +190,16 @@ export class AgentHost {
             keep: z
               .enum(['lock-nets', 'all'])
               .default('lock-nets')
-              .describe('lock-nets: route all but the pair and crystal copper; all: keep all copper, route what is open')
+              .describe('lock-nets: route all but the pair and crystal copper; all: keep all copper, route what is open'),
+            layers: z.array(z.string()).default([]).describe('copper layers the router may use; default: all'),
+            nets: z.array(z.string()).default([]).describe('exact net names to route; default: every net. Use with keep all')
           },
-          async ({ board, iters, timeout_s, keep }) => {
+          async ({ board, iters, timeout_s, keep, layers, nets }) => {
             const gate = board || ctx.gate
             if (!gate) throw new Error('this board revision has no gate')
             const started = (await engine.call('op.route', {
               board: gate,
-              policy: { iters, timeout_s, keep }
+              policy: { iters, timeout_s, keep, layers, nets }
             })) as RunSummary
             return json(await candidateSummary(started.id, (timeout_s + VERIFY_S + 300) * 1000))
           }

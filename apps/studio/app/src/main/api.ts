@@ -94,10 +94,10 @@ registry.method('gate.check', ['board', 'fresh'], 1, (board: string, fresh: bool
 registry.method('op.build', ['board', 'timeout_s'], 1, (board: string, timeoutS?: number | null) =>
   runs.start(needProject().root, 'build', board, { timeoutS: timeoutS ?? undefined }).summary())
 
-interface ShortPolicy { iters?: number, timeout_s?: number, keep?: string }
+interface ShortPolicy { iters?: number, timeout_s?: number, keep?: string, layers?: string[], nets?: string[] }
 
 /** `tools/pcb route BOARD --router iotroute --spec POLICY.json`: iotroute on an isolated candidate, then the complete
- *  fresh gate on it. `policy` is a full iot-lab.iotroute-policy.v1 object, or the short form {iters?, timeout_s?, keep?}.
+ *  fresh gate on it. `policy` is a full iot-lab.iotroute-policy.v1 object, or the short form {iters?, timeout_s?, keep?, layers?, nets?}.
  *  The third argument `timeout_s` is the total CLI deadline (router + verification), default router time + 600 s. */
 registry.method('op.route', ['board', 'policy', 'timeout_s'], 2, (board: string, given: ShortPolicy | RoutingPolicy, timeoutS?: number | null) => {
   const p = needProject()
@@ -105,7 +105,7 @@ registry.method('op.route', ['board', 'policy', 'timeout_s'], 2, (board: string,
   if ('schema' in given) {
     policy = given
   } else {
-    policy = routingPolicy(Math.trunc(given.iters ?? 80), Math.trunc(given.timeout_s ?? 300), given.keep ?? 'lock-nets')
+    policy = routingPolicy(Math.trunc(given.iters ?? 80), Math.trunc(given.timeout_s ?? 300), given.keep ?? 'lock-nets', given.layers, given.nets)
   }
   return runs.start(p.root, 'route', board, { policy, timeoutS: timeoutS ?? undefined }).summary()
 })

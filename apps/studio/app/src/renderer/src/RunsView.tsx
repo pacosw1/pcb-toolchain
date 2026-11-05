@@ -15,25 +15,59 @@ function metricColor(k: string, v: number | undefined): string {
 }
 
 function RouteForm({
+  layers,
   disabled,
   onStart
 }: {
+  layers: string[]
   disabled: boolean
   onStart: (policy: Record<string, unknown>) => void
 }): React.JSX.Element {
+  const [on, setOn] = useState<string[]>(layers)
+  const [nets, setNets] = useState('')
   const [iters, setIters] = useState(80)
   const [timeout, setTimeout_] = useState(300)
   const [keep, setKeep] = useState('lock-nets')
+  const toggle = (l: string): void =>
+    setOn((cur) => (cur.includes(l) ? cur.filter((x) => x !== l) : [...cur, l]))
+  const netList = nets
+    .split(/[\n,]/)
+    .map((s) => s.trim())
+    .filter(Boolean)
   return (
     <form
       className="panel routeform"
       aria-label="Route policy"
       onSubmit={(e) => {
         e.preventDefault()
-        onStart({ iters, timeout_s: timeout, keep })
+        // Every layer on asks for no limit: the board's own rules still narrow each net.
+        onStart({
+          iters,
+          timeout_s: timeout,
+          keep,
+          layers: on.length === layers.length ? [] : on,
+          nets: netList
+        })
       }}
     >
       <h2>Route (iotroute)</h2>
+      <fieldset>
+        <legend>Layers</legend>
+        {layers.map((l) => (
+          <label key={l} className="check">
+            <input type="checkbox" checked={on.includes(l)} onChange={() => toggle(l)} /> {l}
+          </label>
+        ))}
+      </fieldset>
+      <label>
+        <span>Nets (optional; empty = every net; with a list, keep all copper)</span>
+        <textarea
+          rows={3}
+          value={nets}
+          placeholder="/SPI_CLK, /SPI_MOSI"
+          onChange={(e) => setNets(e.target.value)}
+        />
+      </label>
       <div className="row">
         <label>
           <span>Iterations</span>
@@ -68,7 +102,7 @@ function RouteForm({
       </p>
       <button
         type="submit"
-        disabled={disabled || iters < 1 || iters > 1000 || timeout < 1}
+        disabled={disabled || !on.length || iters < 1 || iters > 1000 || timeout < 1}
       >
         Start route
       </button>
@@ -269,6 +303,7 @@ export function RunsView({
       ) : null}
       {desktop && form && gate ? (
         <RouteForm
+          layers={current.layers.filter((l) => l.endsWith('.Cu'))}
           disabled={busy}
           onStart={(policy) => start('op.route', { board: gate, policy })}
         />

@@ -30,7 +30,7 @@ const MAX_EVENTS = 2000
 const MAX_STDERR = 200
 const OPS = ['check', 'build', 'route']
 const POLICY_SCHEMA = 'iot-lab.iotroute-policy.v1'
-const POLICY_FIELDS = ['schema', 'iters', 'max_time_s', 'keep']
+const POLICY_FIELDS = ['schema', 'iters', 'max_time_s', 'keep', 'layers', 'nets']
 const STORE = '.gate/studio/runs'
 const RECORD_FIELDS = ['id', 'op', 'board', 'mode', 'argv', 'policy', 'started', 'state', 'exit_code', 'run_id', 'end',
                        'adoption', 'stderr'] as const
@@ -39,7 +39,7 @@ type Json = Record<string, unknown>
 export type RunState = RunSummary['state']
 export type RunOp = RunSummary['op']
 
-export interface RoutingPolicy { schema: string, iters: number, max_time_s: number, keep: string }
+export interface RoutingPolicy { schema: string, iters: number, max_time_s: number, keep: string, layers: string[], nets: string[] }
 
 const isObject = (x: unknown): x is Json => x !== null && typeof x === 'object' && !Array.isArray(x)
 const isFile = (p: string): boolean => { try { return fs.statSync(p).isFile() } catch { return false } }
@@ -194,11 +194,15 @@ function checkPolicy(p: RoutingPolicy): void {
   if (!Number.isInteger(p.iters) || p.iters < 1 || p.iters > 1000) throw new Error('iters must be an integer 1..1000')
   if (!Number.isInteger(p.max_time_s) || p.max_time_s <= 0) throw new Error('max_time_s must be a positive integer')
   if (!['lock-nets', 'all'].includes(p.keep)) throw new Error('keep must be lock-nets or all')
+  for (const k of ['layers', 'nets'] as const) {
+    const v = p[k]
+    if (!Array.isArray(v) || v.some(x => typeof x !== 'string' || !x) || new Set(v).size !== v.length) throw new Error(`${k} needs a list of distinct names`)
+  }
 }
 
-/** The exact iot-lab.iotroute-policy.v1 object (tools/PCB-CLI.md; iotroute route-policy). */
-export function routingPolicy(iters: number, maxTimeS: number, keep = 'lock-nets'): RoutingPolicy {
-  const policy = { schema: POLICY_SCHEMA, iters, max_time_s: maxTimeS, keep }
+/** The exact iot-lab.iotroute-policy.v1 object (tools/PCB-CLI.md; iotroute route-policy). No layers or nets means all of them. */
+export function routingPolicy(iters: number, maxTimeS: number, keep = 'lock-nets', layers: string[] = [], nets: string[] = []): RoutingPolicy {
+  const policy = { schema: POLICY_SCHEMA, iters, max_time_s: maxTimeS, keep, layers: [...layers], nets: [...nets] }
   checkPolicy(policy)
   return policy
 }
