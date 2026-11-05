@@ -4,6 +4,7 @@ import { appendFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { now } from './lean-clock.ts';
 import { atomicJson, plainJson, readObject } from './json-file.ts';
+import { durableAppend, durableJson } from './pcb-check-durable.ts';
 import { jsonDumps } from './py-compat.mjs';
 import { events, utc } from './pcb-runs.ts';
 import { Timeline, timingJson, type TimingEvent } from './timing.ts';
@@ -42,7 +43,9 @@ export class CheckJournal {
     const elapsed = Math.round((now() - this.started) * 1000) / 1000;
     const row: Row = { schema_version: 1, run_id: basename(this.folder), seq: ++this.seq, time: utc(), elapsed_s: elapsed, type, ...data };
     this.timeline.observe(row as TimingEvent);
-    appendFileSync(join(this.folder, 'events.jsonl'), jsonDumps(row) + '\n');
+    const line = jsonDumps(row) + '\n';
+    if (type === 'run.end') durableAppend(join(this.folder, 'events.jsonl'), line);
+    else appendFileSync(join(this.folder, 'events.jsonl'), line);
     if (type === 'check.end') this.state.last_progress_s = elapsed;
     if (['tool.start', 'tool.exit', 'tool.output', 'stage.start', 'stage.end', 'stage.activity', 'check.end'].includes(type)) this.state.last_activity_s = elapsed;
     const terminal = ['passed', 'failed', 'error', 'cancelled', 'timeout'].includes(String(this.state.status));
@@ -50,6 +53,7 @@ export class CheckJournal {
     Object.assign(this.state, { seq: this.seq, elapsed_s: elapsed, updated_unix: Date.now() / 1000,
       active_stages: terminal ? [] : [...new Set([...this.timeline.active.values()].map(span => span.stage))].sort(),
       active_stage_timing: timing.active_stages, timing: timingJson(timing) });
-    atomicJson(join(this.folder, 'state.json'), this.state);
+    if (terminal) durableJson(join(this.folder, 'state.json'), this.state);
+    else atomicJson(join(this.folder, 'state.json'), this.state);
   }
 }

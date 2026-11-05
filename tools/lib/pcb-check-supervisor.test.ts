@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
 import { iotrouteMissing } from './iotroute-bin.ts';
@@ -10,6 +12,7 @@ import { status } from './pcb-runs.ts';
 import { verify } from './pcb-evidence.ts';
 
 const needsBinary = { skip: iotrouteMissing() };
+const installed = fileURLToPath(new URL(`../../bin/iotroute-${process.platform === 'darwin' ? 'darwin-arm64' : 'linux-x86_64'}`, import.meta.url));
 const terminal = new Set(['passed', 'failed', 'error', 'cancelled', 'timeout']);
 
 async function settled(folder: string): Promise<Record<string, unknown>> {
@@ -51,12 +54,47 @@ test('check seals a matching gate only after the owned worker settles', needsBin
   assert.ok(readFileSync(join(folder, 'events.jsonl'), 'utf8').includes('"type": "run.end"'));
 });
 
+test('installed pcb check admits a detached run without Python', { skip: !existsSync(installed) }, async t => {
+  const root = fixture(t, gate(0));
+  const shim = join(root, 'shim'); mkdirSync(shim);
+  writeFileSync(join(shim, 'python3'), '#!/bin/sh\nexit 72\n', { mode: 0o755 });
+  const bin = fileURLToPath(new URL('../../bin/pcb', import.meta.url));
+  const call = spawnSync(bin, ['--project', root, 'check', 'X', '--detach', '--json'], {
+    encoding: 'utf8', env: { ...process.env, PATH: `${shim}:${process.env.PATH}` },
+  });
+  assert.equal(call.status, 0, call.stderr || call.stdout);
+  const state = JSON.parse(call.stdout);
+  assert.match(state.run_id, /^run-/);
+  const result = await settled(join(root, '.gate/cli', state.run_id));
+  assert.equal(result.status, 'passed');
+});
+
+test('conflicting check flags fail before creating a run', () => {
+  const root = mkdtempSync(join(tmpdir(), 'pcb-check-flags-'));
+  try {
+    const cli = fileURLToPath(new URL('../pcb-check.ts', import.meta.url));
+    const call = spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', cli, '--project', root,
+      'check', 'X', '--changed', '--fresh', '--json'], { encoding: 'utf8' });
+    assert.equal(call.status, 2);
+    assert.match(JSON.parse(call.stdout).cause, /cannot be used together/);
+    assert.equal(existsSync(join(root, '.gate/cli')), false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('check never passes without gate.end', needsBinary, async t => {
   const root = fixture(t, gate(0, false));
   const folder = await startCheck({ root, base: join(root, '.gate/cli'), board: 'X', timeout: 20, heartbeat: 1 });
   const result = await settled(folder);
   assert.equal(result.status, 'error');
   assert.match(String(result.cause), /terminal evidence disagree/);
+});
+
+test('check refuses a gate changed after admission even if the tool exits zero', needsBinary, async t => {
+  const root = fixture(t, gate(0) + `\nwriteFileSync('hardware-design/boards/X/gate.json', '{}');`);
+  const folder = await startCheck({ root, base: join(root, '.gate/cli'), board: 'X', timeout: 20, heartbeat: 1 });
+  const result = await settled(folder);
+  assert.equal(result.status, 'error');
+  assert.match(String(result.cause), /configured gate changed after check admission/);
 });
 
 test('deadline cancels the owned gate and never produces a pass', needsBinary, async t => {

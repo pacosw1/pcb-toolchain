@@ -2,7 +2,8 @@
 // descendants. That broker execs this process without releasing worker.lock.
 import { spawnSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
-import { atomicJson, plainJson, readObject } from './lib/json-file.ts';
+import { plainJson, readObject } from './lib/json-file.ts';
+import { durableJson } from './lib/pcb-check-durable.ts';
 import { iotrouteBin } from './lib/iotroute-bin.ts';
 import { now } from './lib/lean-clock.ts';
 import { compactTerminal, events, type Dict } from './lib/pcb-runs.ts';
@@ -11,8 +12,9 @@ import { gateOutcome, type Finding } from './lib/pcb-gate-outcome.ts';
 import { jsonDumps, jsonLoads } from './lib/py-compat.mjs';
 import { CheckJournal, type Row } from './lib/pcb-check-journal.ts';
 import { timingJson } from './lib/timing.ts';
+import { sha } from './lib/pcb-workflow.ts';
 
-interface Manifest extends Row { board: string; created_at: string; operation: string }
+interface Manifest extends Row { root: string; board: string; created_at: string; operation: string; gate_config_sha256: string }
 
 function verifyLock(folder: string): void {
   const path = join(folder, 'worker.lock'), fd = Number(process.env.IOT_PCB_WORKER_FD);
@@ -40,6 +42,8 @@ function finalize(ownerPath: string): number {
   let evidenceProblem: string | undefined;
   if (settled && ['passed', 'failed'].includes(String(preliminary.status))) {
     try {
+      if (sha(join(manifest.root, 'hardware-design/boards', manifest.board, 'gate.json')) !== manifest.gate_config_sha256)
+        throw new Error('configured gate changed after check admission');
       let cursor = 0, ended = false;
       const findings: Finding[] = [];
       for (;;) {
@@ -74,7 +78,7 @@ function finalize(ownerPath: string): number {
   Object.assign(result, { elapsed_s: Math.round((now() - started) * 1000) / 1000,
     timing: timingJson(journal.timeline.summary(undefined, true)), ended_unix_s: Date.now() / 1000 });
   verifyLock(folder);
-  atomicJson(join(folder, 'result.json'), result);
+  durableJson(join(folder, 'result.json'), result);
   Object.assign(journal.state, result);
   journal.timeline.active.clear();
   const compact = plainJson(compactTerminal(jsonLoads(jsonDumps(result)) as Dict, folder)) as Row;

@@ -10,8 +10,9 @@ import { startOwned, OwnedStageError, type Cleanup, type OwnedResult, type Owned
 import { events } from './lib/pcb-runs.ts';
 import { gateOutcome, type Finding } from './lib/pcb-gate-outcome.ts';
 import { CheckJournal, type Row } from './lib/pcb-check-journal.ts';
+import { sha } from './lib/pcb-workflow.ts';
 
-interface Manifest extends Row { root: string; board: string; command: string[]; timeout_s: number; heartbeat_s: number; created_at: string; operation: string }
+interface Manifest extends Row { root: string; board: string; command: string[]; timeout_s: number; heartbeat_s: number; created_at: string; operation: string; gate_config_sha256: string }
 type Preliminary = Row & { status: string; exit_code: number; cause: string };
 const nothing = (): Cleanup => ({ complete: true, errors: [], child_reaped: true, leader_spawned: false });
 
@@ -56,6 +57,8 @@ async function worker(folderPath: string): Promise<number> {
       result = { status: 'cancelled', exit_code: 130, cause: 'cancelled before gate admission' };
       cleanup = nothing();
     } else {
+      if (sha(join(manifest.root, 'hardware-design/boards', manifest.board, 'gate.json')) !== manifest.gate_config_sha256)
+        throw new Error('configured gate changed after check admission');
       log = openSync(join(folder, 'gate.log'), 'w');
       const env = { ...process.env, IOT_LEAN_DEADLINE: encodeDeadline(deadline) };
       proc = startOwned(manifest.command, { cwd: manifest.root, env, stdin: 'ignore', stdout: log, stderr: log });
