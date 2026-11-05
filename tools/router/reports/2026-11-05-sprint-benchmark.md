@@ -1,6 +1,10 @@
-# Long run versus packed sprints (#1318)
+# Long run versus packed sprints (#1318, #1358)
 
-## Decision
+## Decision after the three-board extension
+
+**The no-go for adding LLM scheduling/ranking holds on this evidence.** FIELD-24V-BUS adds another fully verified comparison with no quality improvement from sprints and greater whole-job CPU. ESP32-CORE rev B produces no verified candidate within either tested budget, so its quality comparison is inconclusive. These observations apply to pinned toolchain `696715d`; later router fixes are not part of this experiment. There is no statistical or general large-board claim. See the [extension results](#three-board-extension-1358).
+
+## Original ENV-SENSE decision
 
 **No-go for adding LLM scheduling/ranking on this evidence.** Keep the sprint
 runner opt-in. On the eligible ENV-SENSE fixture, the existing single run reaches
@@ -9,9 +13,9 @@ the same fully verified board sooner and with less actual job CPU at the same
 This is a bounded engineering decision, not a general claim about all boards or
 all portfolio policies.
 
-The current brief narrowed the older three-board task body to at most two small
-active boards on Hetzner, ENV-SENSE plus a smaller eligible board. Current
-`iot-lab` main `aa14d14ce1f728c558c988bd978fbcb60d4f391c` has no such smaller board:
+The original #1318 brief narrowed the older three-board task body to at most two small
+active boards on Hetzner, ENV-SENSE plus a smaller eligible board. At that time,
+`iot-lab` main `aa14d14ce1f728c558c988bd978fbcb60d4f391c` had no such smaller board:
 
 | Active option | Footprints | Decision |
 | --- | ---: | --- |
@@ -20,9 +24,9 @@ active boards on Hetzner, ENV-SENSE plus a smaller eligible board. Current
 | CELLULAR-B | 104 | Larger than ENV |
 | BASE-PWR revisions | 139-211 | Explicitly excluded from this work |
 
-NET-CORE and planned boards were not substituted. This leaves a one-board
-experiment. It does not satisfy the superseded three-board task body or provide
-statistical or large-board generalization.
+NET-CORE and planned boards were not substituted. That original scope left a one-board
+experiment. The extension below adds the two subsequently authorized fixtures;
+neither experiment provides statistical generalization.
 
 ## Fixed protocol
 
@@ -202,3 +206,54 @@ Validation: the harness and three JavaScript helpers pass syntax checks; the
 harness passes strict TypeScript checking with the repository's Node types.
 The actual five daemon jobs provide the acceptance-path verification. No router
 implementation or gate threshold changes are included in this report PR.
+
+## Three-board extension (#1358)
+
+The user expanded the scope to exactly three frozen boards total. The existing ENV-SENSE data above is retained unchanged. New trials cover FIELD-24V-BUS B (34 footprints, two copper layers) and the explicitly requested historical ESP32-CORE B at `a545d5e1` (78 footprint records, four copper layers). The initial brief said 84; the frozen file has 78. Current ESP32 revision C was not substituted. Fixture commits and full hashes are preregistered in [the protocol](2026-11-05-sprint-benchmark-protocol.md#preregistered-extension-1358-2026-11-05-1943-utc).
+
+Protocol commit `923a25e` precedes these runs. The exact original Linux binary, Node runtime, image, and all 212 bound router source files were reused. The harness gains a board argument; solver and acceptance rules do not change. All real-board trials ran sequentially through the existing Hetzner-local daemon, **not in CI**. Normal PR syntax/type/unit verification is separate. No canonical CAD or production runtime was changed.
+
+### FIELD-24V-BUS B
+
+| Trial | Job ID | CPUs / limit | Status | First verified s | Job wall s | CPU s | Client s |
+| --- | --- | --- | --- | ---: | ---: | ---: | ---: |
+| single-cold-v2 | `20261105-194805-0328a4` | 2 / 120s | PASS | 43.363 | 43.363 | 68.495 | 60.114 |
+| sprint-cold | `20261105-194951-813b09` | 2 / 120s | PASS | 43.348 | 102.272 | 190.566 | 118.137 |
+| sprint-warm | `20261105-195149-add659` | 2 / 120s | PASS | 54.862 | 99.642 | 187.856 | 112.269 |
+| single-warm | `20261105-195341-ebd01f` | 2 / 120s | PASS | 47.745 | 47.745 | 76.708 | 61.873 |
+| single-equal-cpu | `20261105-195442-06e01f` | 1 / 240s | PASS | 77.356 | 77.356 | 74.828 | 89.881 |
+
+All five clean trials pass native DRC, connectivity and schematic parity, plus the board's fresh configured gate. Every selected output has the same hash, `cb6e5c1c15f1533539e852efb8a7153b9beed84f079d14277e7aca2adb59c2ed`: 319.7 mm of track and two vias. Each sprint verifies two candidates. In the cold-labeled trial, another variant fails verification and the fourth is stopped at the budget. In the warm trial, one additional variant is stopped and the fourth never starts. All of these states remain in the evidence.
+
+At two CPUs the descriptive median time to first verification is **45.554 s single versus 49.105 s sprint**. Median whole-operation CPU is **72.602 versus 189.211 s**, about 2.61 times as much for the portfolio, with no selected quality gain. The first cold-labeled pair differs by only 0.014 s, and the single clock includes final cleanup; this is not evidence of a meaningful sprint timing win. Two repetitions per mode are not a statistical claim.
+
+The one-CPU single run verifies in 77.356 s with 74.828 actual CPU-seconds. The two-CPU portfolio can reach its first accepted candidate sooner under the same reserved 240 CPU-second ceiling, but the two-CPU single run already reaches acceptance as soon or sooner with much less whole-job CPU. CPU at the instant of first verification was not sampled; do not infer it from the whole-job number.
+
+### ESP32-CORE B
+
+| Trial | Job ID | CPUs / limit | Status | First verified s | Job wall s | CPU s | Client s |
+| --- | --- | --- | --- | ---: | ---: | ---: | ---: |
+| single-cold | `20261105-195616-08147d` | 2 / 120s | ERROR | N/A | 117.317 | 131.671 | 133.834 |
+| sprint-cold | `20261105-195832-945e60` | 2 / 120s | ERROR | N/A | 112.352 | 198.780 | 132.192 |
+| sprint-warm | `20261105-200040-fa1c7d` | 2 / 120s | ERROR | N/A | 112.242 | 199.693 | 126.216 |
+| single-warm | `20261105-200250-2182cf` | 2 / 120s | ERROR | N/A | 117.321 | 130.630 | 135.484 |
+| single-equal-cpu | `20261105-200505-0c5c50` | 1 / 240s | ERROR | N/A | 237.247 | 235.401 | 256.113 |
+
+**Zero of five trials produces a fully verified candidate.** Single runs are stopped by the parent budget (native exit -15); both sprint reports end with reason `deadline` and no accepted candidates. The first sprint retains variants at passes 3/4/2/2; the repeat retains two stopped and two yielded variants at pass 2. These are partial search records, not accepted route quality. Native logs and every variant's output/checkpoint remain available. This does not show that the board cannot be routed, nor establish a single-versus-sprint quality winner on the larger fixture. Longer budgets or newer solver revisions were not substituted.
+
+### Overhead, exclusions, and audit
+
+The first FIELD submission `single-cold` (`20261105-194615-4b4a01`) actually completed PASS at 45.370 s and 71.251 CPU-seconds, but is excluded from comparison: macOS archive metadata added AppleDouble source files (9,390 staged files). Its raw successful record is retained, not relabeled a routing failure. Generated metadata was removed only from the isolated copies and the exact 212-file core binding was rechecked with no extras before the clean `single-cold-v2` trial. No source semantics or gate threshold changed.
+
+All clean FIELD submissions report 4,125 cached files, zero missing and zero uploaded KB. The first ESP32 submission reports 3,677 files, 131 misses and 41,150 KB; its repeats upload zero. The shared cache was never cleared. The labels identify order, not globally cold-cache measurements; the excluded attempt warmed FIELD's cache. Client-minus-operation overhead, queue intervals, container intervals and raw cgroup counters are retained in the JSON. This combined overhead must not be called pure transfer time.
+
+An independent final audit rehashed every accepted board, native result, gate result and sprint verification receipt; confirmed fresh gate exit 0 without source changes; checked owned child cleanup; and independently found **all 11 new-trial containers absent** (ten clean trials plus the excluded setup case). Frozen source PCB hashes remain unchanged. Failed trials have null first-verified time and no accepted quality.
+
+The appended `extension_1358` in [the machine-readable report](2026-11-05-sprint-benchmark.json) preserves all trial outcomes, failed portfolios and exclusions. Full raw evidence and the complete frozen project/runtime closure are retained under the session's durable `artifacts/benchmark-1358/` directory, with gzip integrity checked:
+
+| Archive | SHA-256 |
+| --- | --- |
+| `benchmark-1358-evidence.tar.gz` | `0540aa93c6350269de5eadbacd0609035f72379ab6d485df39a20d400cec23b6` |
+| `benchmark-1358-fixtures-runtime.tar.gz` | `20fc64aabae3b2a159e278a556d7447dcf60d8f44262c93575db2d440fe3e705` |
+
+Validation: strict TypeScript and JavaScript syntax checks pass. Analyzer fixtures check board-specific paths, null verification time on failure, and retention of failed portfolio progress without a native accepted result. The benchmark itself ran only on Hetzner. The conclusion remains a no-go for additional LLM scheduling on the measured evidence, with the larger-board comparison explicitly inconclusive.

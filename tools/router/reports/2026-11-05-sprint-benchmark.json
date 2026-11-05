@@ -587,5 +587,998 @@
       ],
       "verified_candidates": 1
     }
-  ]
+  ],
+  "extension_1358": {
+    "schema": "pcb.route-benchmark-extension.v1",
+    "protocol_commit": "923a25e",
+    "decision": "no-go for LLM scheduling on this evidence; ESP32 quality comparison inconclusive within fixed budgets",
+    "execution": "Hetzner-local daemon jobs; no benchmark in CI",
+    "total_boards_including_original": 3,
+    "toolchain_commit": "696715dd81e6143c65af7652e18c1d70499d2a8a",
+    "binary_sha256": "71b5b44c16daf1673d31dab5b33900d8f88904ad1484204552d23460d89c69c0",
+    "node": "v22.23.2",
+    "node_sha256": "3517c2df0b2f8cd7f422b4b8450ef81c6889f08eb03e281d6de9079b15e6a327",
+    "core_source_files_verified": 212,
+    "fixtures": [
+      {
+        "board": "FIELD-24V-BUS",
+        "revision": "B",
+        "commit": "ee20736e250cf1146496dc7044b596b4658bec23",
+        "pcb_sha256": "2aec6532e0c3dfc6925453c74c31f99582514169e9355352117e91ad988861a5",
+        "footprints": 34,
+        "copper_layers": 2
+      },
+      {
+        "board": "ESP32-CORE",
+        "revision": "B",
+        "commit": "a545d5e18428e03256ea876f45864b25061c1397",
+        "pcb_sha256": "b6b97508157893ccca5c5c2cc3e0c90d55691a42d094f9c1015ad8b7f31bdb2b",
+        "footprints": 78,
+        "copper_layers": 4
+      }
+    ],
+    "excluded_trials": [
+      {
+        "reason": "AppleDouble metadata polluted source closure; raw PASS retained, not a routing failure",
+        "board": "FIELD-24V-BUS",
+        "label": "single-cold",
+        "job_id": "20261105-194615-4b4a01",
+        "mode": "single",
+        "cpus": 2,
+        "wall_limit_s": 120,
+        "reserved_cpu_ceiling_s": 240,
+        "status": "PASS",
+        "error": null,
+        "first_verified_s": 45.370218992000005,
+        "operation_wall_s": 45.370218992000005,
+        "operation_cpu_s": 71.250822,
+        "container_cpu_at_harness_end_s": 72.788508,
+        "client_wall_s": 86.93539973799999,
+        "client_minus_operation_s": 41.56518074599998,
+        "cache": "9390 files, sending 51 (17312 KB)",
+        "queue_s": 1.975,
+        "container_attempt_s": 50.008,
+        "result": {
+          "status": "PASS",
+          "drc": 0,
+          "opens": 0,
+          "parity": 0,
+          "mm": 319.7,
+          "vias": 2,
+          "tracks": 156,
+          "sha256": "cb6e5c1c15f1533539e852efb8a7153b9beed84f079d14277e7aca2adb59c2ed",
+          "native_seconds": 28.1,
+          "core_seconds": 9.1,
+          "model_sha256": "75c5b76e38e913b8f4907f302d313c5f0b1d3b05e9e9172b403a758fa74eca39"
+        },
+        "attempts": 1,
+        "retries": 0,
+        "source_unchanged": true,
+        "container_absent": true,
+        "trimmed": true,
+        "verified_candidates": 1,
+        "owned_stages": [
+          {
+            "stage": "native",
+            "wall_s": 28.304548964,
+            "exit": 0,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "gate",
+            "wall_s": 16.539905614000002,
+            "exit": 0,
+            "cleanup_complete": true
+          }
+        ]
+      }
+    ],
+    "trials": [
+      {
+        "board": "FIELD-24V-BUS",
+        "label": "single-cold-v2",
+        "job_id": "20261105-194805-0328a4",
+        "mode": "single",
+        "cpus": 2,
+        "wall_limit_s": 120,
+        "reserved_cpu_ceiling_s": 240,
+        "status": "PASS",
+        "error": null,
+        "first_verified_s": 43.362711708999996,
+        "operation_wall_s": 43.362711708999996,
+        "operation_cpu_s": 68.49504,
+        "container_cpu_at_harness_end_s": 70.019507,
+        "client_wall_s": 60.113949184,
+        "client_minus_operation_s": 16.751237475000003,
+        "cache": "4125 files, sending 0 (0 KB)",
+        "queue_s": 1.437,
+        "container_attempt_s": 45.998,
+        "result": {
+          "status": "PASS",
+          "drc": 0,
+          "opens": 0,
+          "parity": 0,
+          "mm": 319.7,
+          "vias": 2,
+          "tracks": 156,
+          "sha256": "cb6e5c1c15f1533539e852efb8a7153b9beed84f079d14277e7aca2adb59c2ed",
+          "native_seconds": 27,
+          "core_seconds": 9.2,
+          "model_sha256": "75c5b76e38e913b8f4907f302d313c5f0b1d3b05e9e9172b403a758fa74eca39"
+        },
+        "attempts": 1,
+        "retries": 0,
+        "source_unchanged": true,
+        "container_absent": true,
+        "trimmed": true,
+        "verified_candidates": 1,
+        "owned_stages": [
+          {
+            "stage": "native",
+            "wall_s": 26.991527331,
+            "exit": 0,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "gate",
+            "wall_s": 16.087099845000004,
+            "exit": 0,
+            "cleanup_complete": true
+          }
+        ]
+      },
+      {
+        "board": "FIELD-24V-BUS",
+        "label": "sprint-cold",
+        "job_id": "20261105-194951-813b09",
+        "mode": "sprint",
+        "cpus": 2,
+        "wall_limit_s": 120,
+        "reserved_cpu_ceiling_s": 240,
+        "status": "PASS",
+        "error": null,
+        "first_verified_s": 43.348452954,
+        "operation_wall_s": 102.271566971,
+        "operation_cpu_s": 190.566229,
+        "container_cpu_at_harness_end_s": 191.903311,
+        "client_wall_s": 118.136831282,
+        "client_minus_operation_s": 15.865264311000004,
+        "cache": "4125 files, sending 0 (0 KB)",
+        "queue_s": 2.01,
+        "container_attempt_s": 104.002,
+        "result": {
+          "status": "PASS",
+          "drc": 0,
+          "opens": 0,
+          "parity": 0,
+          "mm": 319.7,
+          "vias": 2,
+          "tracks": 156,
+          "sha256": "cb6e5c1c15f1533539e852efb8a7153b9beed84f079d14277e7aca2adb59c2ed",
+          "native_seconds": 102.18046018199999,
+          "model_sha256": "76bce4053e717c863bfc45c9e90bcb7eda24cfac955128d3fe747542462931b5"
+        },
+        "attempts": 1,
+        "retries": 0,
+        "source_unchanged": true,
+        "container_absent": true,
+        "trimmed": true,
+        "verified_candidates": 2,
+        "owned_stages": [
+          {
+            "stage": "prepare.log",
+            "wall_s": 7.289679928000001,
+            "exit": 0,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "v01/slice-1.log",
+            "wall_s": 6.41910933,
+            "exit": 0,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "v00/slice-1.log",
+            "wall_s": 15.478281659,
+            "exit": 0,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "v01/native.log",
+            "wall_s": 12.457418913,
+            "exit": 0,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "v01/gate.log",
+            "wall_s": 16.929348152000003,
+            "exit": 0,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "v00/native.log",
+            "wall_s": 11.337873504000003,
+            "exit": 0,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "v02/slice-1.log",
+            "wall_s": 28.941194991999996,
+            "exit": 0,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "v00/gate.log",
+            "wall_s": 17.828284851000003,
+            "exit": 0,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "v02/native.log",
+            "wall_s": 11.341849918000007,
+            "exit": 0,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "v03/slice-1.log",
+            "wall_s": 24.236322316000006,
+            "exit": -9,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "v02/gate.log",
+            "wall_s": 17.754032735,
+            "exit": 1,
+            "cleanup_complete": true
+          }
+        ],
+        "portfolio": {
+          "status": "PASS",
+          "reason": "winner passed native checks and configured gate",
+          "variants": [
+            {
+              "id": "v00",
+              "seed": 0,
+              "state": "complete",
+              "pass": 2,
+              "cpu_s": 8.741927,
+              "progress": {
+                "pass": 2,
+                "unrouted": 0,
+                "conflicts": 0,
+                "wire_mm": 319.719,
+                "vias": 2
+              }
+            },
+            {
+              "id": "v01",
+              "seed": 1,
+              "state": "complete",
+              "pass": 2,
+              "cpu_s": 6.158984,
+              "progress": {
+                "pass": 2,
+                "unrouted": 0,
+                "conflicts": 0,
+                "wire_mm": 319.74,
+                "vias": 2
+              }
+            },
+            {
+              "id": "v02",
+              "seed": 2,
+              "state": "complete",
+              "pass": 2,
+              "cpu_s": 8.482599,
+              "progress": {
+                "pass": 2,
+                "unrouted": 0,
+                "conflicts": 0,
+                "wire_mm": 319.781,
+                "vias": 3
+              }
+            },
+            {
+              "id": "v03",
+              "seed": 3,
+              "state": "stopped",
+              "pass": 0,
+              "cpu_s": null,
+              "progress": {
+                "pass": 2,
+                "unrouted": 0,
+                "conflicts": 0,
+                "wire_mm": 323.714,
+                "vias": 3
+              },
+              "reason": "Error: variant v03 exited -9"
+            }
+          ],
+          "candidates": [
+            {
+              "variant": "v00",
+              "board_sha256": "cb6e5c1c15f1533539e852efb8a7153b9beed84f079d14277e7aca2adb59c2ed",
+              "wire_mm": 319.7,
+              "vias": 2
+            },
+            {
+              "variant": "v01",
+              "board_sha256": "99ff8ed52ee4642e9bade5cf0c30ff4f7631371746ba6c760a59f750989332d3",
+              "wire_mm": 319.7,
+              "vias": 2
+            }
+          ]
+        }
+      },
+      {
+        "board": "FIELD-24V-BUS",
+        "label": "sprint-warm",
+        "job_id": "20261105-195149-add659",
+        "mode": "sprint",
+        "cpus": 2,
+        "wall_limit_s": 120,
+        "reserved_cpu_ceiling_s": 240,
+        "status": "PASS",
+        "error": null,
+        "first_verified_s": 54.862016097,
+        "operation_wall_s": 99.64198283399999,
+        "operation_cpu_s": 187.856315,
+        "container_cpu_at_harness_end_s": 189.306594,
+        "client_wall_s": 112.26871569500001,
+        "client_minus_operation_s": 12.626732861000022,
+        "cache": "4125 files, sending 0 (0 KB)",
+        "queue_s": 1.646,
+        "container_attempt_s": 101.994,
+        "result": {
+          "status": "PASS",
+          "drc": 0,
+          "opens": 0,
+          "parity": 0,
+          "mm": 319.7,
+          "vias": 2,
+          "tracks": 156,
+          "sha256": "cb6e5c1c15f1533539e852efb8a7153b9beed84f079d14277e7aca2adb59c2ed",
+          "native_seconds": 99.550568196,
+          "model_sha256": "76bce4053e717c863bfc45c9e90bcb7eda24cfac955128d3fe747542462931b5"
+        },
+        "attempts": 1,
+        "retries": 0,
+        "source_unchanged": true,
+        "container_absent": true,
+        "trimmed": true,
+        "verified_candidates": 2,
+        "owned_stages": [
+          {
+            "stage": "prepare.log",
+            "wall_s": 7.081364344,
+            "exit": 0,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "v01/slice-1.log",
+            "wall_s": 7.621820607,
+            "exit": 0,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "v00/slice-1.log",
+            "wall_s": 17.27895982,
+            "exit": 0,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "v01/native.log",
+            "wall_s": 14.676147040999998,
+            "exit": 0,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "v01/gate.log",
+            "wall_s": 25.183094468,
+            "exit": 0,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "v00/native.log",
+            "wall_s": 17.619455040000002,
+            "exit": 0,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "v02/slice-1.log",
+            "wall_s": 42.109353898,
+            "exit": -9,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "v00/gate.log",
+            "wall_s": 26.824942591,
+            "exit": 0,
+            "cleanup_complete": true
+          }
+        ],
+        "portfolio": {
+          "status": "PASS",
+          "reason": "winner passed native checks and configured gate",
+          "variants": [
+            {
+              "id": "v00",
+              "seed": 0,
+              "state": "complete",
+              "pass": 2,
+              "cpu_s": 10.216728,
+              "progress": {
+                "pass": 2,
+                "unrouted": 0,
+                "conflicts": 0,
+                "wire_mm": 319.719,
+                "vias": 2
+              }
+            },
+            {
+              "id": "v01",
+              "seed": 1,
+              "state": "complete",
+              "pass": 2,
+              "cpu_s": 7.436414999999999,
+              "progress": {
+                "pass": 2,
+                "unrouted": 0,
+                "conflicts": 0,
+                "wire_mm": 319.74,
+                "vias": 2
+              }
+            },
+            {
+              "id": "v02",
+              "seed": 2,
+              "state": "stopped",
+              "pass": 0,
+              "cpu_s": null,
+              "progress": {
+                "pass": 2,
+                "unrouted": 0,
+                "conflicts": 0,
+                "wire_mm": 322.628,
+                "vias": 4
+              },
+              "reason": "Error: variant v02 exited -9"
+            },
+            {
+              "id": "v03",
+              "seed": 3,
+              "state": "pending",
+              "pass": 0,
+              "cpu_s": 0
+            }
+          ],
+          "candidates": [
+            {
+              "variant": "v00",
+              "board_sha256": "cb6e5c1c15f1533539e852efb8a7153b9beed84f079d14277e7aca2adb59c2ed",
+              "wire_mm": 319.7,
+              "vias": 2
+            },
+            {
+              "variant": "v01",
+              "board_sha256": "99ff8ed52ee4642e9bade5cf0c30ff4f7631371746ba6c760a59f750989332d3",
+              "wire_mm": 319.7,
+              "vias": 2
+            }
+          ]
+        }
+      },
+      {
+        "board": "FIELD-24V-BUS",
+        "label": "single-warm",
+        "job_id": "20261105-195341-ebd01f",
+        "mode": "single",
+        "cpus": 2,
+        "wall_limit_s": 120,
+        "reserved_cpu_ceiling_s": 240,
+        "status": "PASS",
+        "error": null,
+        "first_verified_s": 47.744604296999995,
+        "operation_wall_s": 47.744604296999995,
+        "operation_cpu_s": 76.708204,
+        "container_cpu_at_harness_end_s": 78.139601,
+        "client_wall_s": 61.873024893,
+        "client_minus_operation_s": 14.128420596000005,
+        "cache": "4125 files, sending 0 (0 KB)",
+        "queue_s": 1.656,
+        "container_attempt_s": 50.006,
+        "result": {
+          "status": "PASS",
+          "drc": 0,
+          "opens": 0,
+          "parity": 0,
+          "mm": 319.7,
+          "vias": 2,
+          "tracks": 156,
+          "sha256": "cb6e5c1c15f1533539e852efb8a7153b9beed84f079d14277e7aca2adb59c2ed",
+          "native_seconds": 26.6,
+          "core_seconds": 9.4,
+          "model_sha256": "75c5b76e38e913b8f4907f302d313c5f0b1d3b05e9e9172b403a758fa74eca39"
+        },
+        "attempts": 1,
+        "retries": 0,
+        "source_unchanged": true,
+        "container_absent": true,
+        "trimmed": true,
+        "verified_candidates": 1,
+        "owned_stages": [
+          {
+            "stage": "native",
+            "wall_s": 26.683253346,
+            "exit": 0,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "gate",
+            "wall_s": 20.807504435999995,
+            "exit": 0,
+            "cleanup_complete": true
+          }
+        ]
+      },
+      {
+        "board": "FIELD-24V-BUS",
+        "label": "single-equal-cpu",
+        "job_id": "20261105-195442-06e01f",
+        "mode": "single",
+        "cpus": 1,
+        "wall_limit_s": 240,
+        "reserved_cpu_ceiling_s": 240,
+        "status": "PASS",
+        "error": null,
+        "first_verified_s": 77.35644074400001,
+        "operation_wall_s": 77.35644074400001,
+        "operation_cpu_s": 74.828473,
+        "container_cpu_at_harness_end_s": 76.196636,
+        "client_wall_s": 89.88092136600001,
+        "client_minus_operation_s": 12.524480621999999,
+        "cache": "4125 files, sending 0 (0 KB)",
+        "queue_s": 0.317,
+        "container_attempt_s": 79.978,
+        "result": {
+          "status": "PASS",
+          "drc": 0,
+          "opens": 0,
+          "parity": 0,
+          "mm": 319.7,
+          "vias": 2,
+          "tracks": 156,
+          "sha256": "cb6e5c1c15f1533539e852efb8a7153b9beed84f079d14277e7aca2adb59c2ed",
+          "native_seconds": 43.9,
+          "core_seconds": 8.4,
+          "model_sha256": "75c5b76e38e913b8f4907f302d313c5f0b1d3b05e9e9172b403a758fa74eca39"
+        },
+        "attempts": 1,
+        "retries": 0,
+        "source_unchanged": true,
+        "container_absent": true,
+        "trimmed": true,
+        "verified_candidates": 1,
+        "owned_stages": [
+          {
+            "stage": "native",
+            "wall_s": 43.984502744000004,
+            "exit": 0,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "gate",
+            "wall_s": 32.494822905,
+            "exit": 0,
+            "cleanup_complete": true
+          }
+        ]
+      },
+      {
+        "board": "ESP32-CORE",
+        "label": "single-cold",
+        "job_id": "20261105-195616-08147d",
+        "mode": "single",
+        "cpus": 2,
+        "wall_limit_s": 120,
+        "reserved_cpu_ceiling_s": 240,
+        "status": "ERROR",
+        "error": "Error: native exit -15",
+        "first_verified_s": null,
+        "operation_wall_s": 117.316724854,
+        "operation_cpu_s": 131.670835,
+        "container_cpu_at_harness_end_s": 133.382706,
+        "client_wall_s": 133.83414170900002,
+        "client_minus_operation_s": 16.51741685500002,
+        "cache": "3677 files, sending 131 (41150 KB)",
+        "queue_s": 0.506,
+        "container_attempt_s": 119.989,
+        "result": null,
+        "attempts": 1,
+        "retries": 0,
+        "source_unchanged": true,
+        "container_absent": true,
+        "trimmed": true,
+        "verified_candidates": 0,
+        "owned_stages": [
+          {
+            "stage": "native",
+            "wall_s": 117.313685307,
+            "exit": -15,
+            "cleanup_complete": true
+          }
+        ]
+      },
+      {
+        "board": "ESP32-CORE",
+        "label": "sprint-cold",
+        "job_id": "20261105-195832-945e60",
+        "mode": "sprint",
+        "cpus": 2,
+        "wall_limit_s": 120,
+        "reserved_cpu_ceiling_s": 240,
+        "status": "ERROR",
+        "error": "Error: sprint exit 2",
+        "first_verified_s": null,
+        "operation_wall_s": 112.35193201300001,
+        "operation_cpu_s": 198.780363,
+        "container_cpu_at_harness_end_s": 200.74149,
+        "client_wall_s": 132.191696033,
+        "client_minus_operation_s": 19.83976401999999,
+        "cache": "3677 files, sending 0 (0 KB)",
+        "queue_s": 0.601,
+        "container_attempt_s": 115.99,
+        "result": {
+          "status": "ERROR",
+          "drc": null,
+          "opens": null,
+          "parity": null,
+          "vias": null,
+          "tracks": null,
+          "native_seconds": 112.24910582700001
+        },
+        "attempts": 1,
+        "retries": 0,
+        "source_unchanged": true,
+        "container_absent": true,
+        "trimmed": true,
+        "verified_candidates": 0,
+        "owned_stages": [
+          {
+            "stage": "prepare.log",
+            "wall_s": 21.602445541,
+            "exit": 0,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "v01/slice-1.log",
+            "wall_s": 23.838403603,
+            "exit": 3,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "v00/slice-1.log",
+            "wall_s": 24.640343079999997,
+            "exit": 3,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "v03/slice-1.log",
+            "wall_s": 20.827276893999993,
+            "exit": 3,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "v02/slice-1.log",
+            "wall_s": 23.234610103000005,
+            "exit": 3,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "v01/slice-2.log",
+            "wall_s": 28.64280898300001,
+            "exit": 3,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "v00/slice-2.log",
+            "wall_s": 27.438781063,
+            "exit": -9,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "v01/finalize.log",
+            "wall_s": 15.227529649000004,
+            "exit": -15,
+            "cleanup_complete": true
+          }
+        ],
+        "portfolio": {
+          "status": "ERROR",
+          "reason": "deadline",
+          "variants": [
+            {
+              "id": "v00",
+              "seed": 0,
+              "state": "yielded",
+              "pass": 3,
+              "cpu_s": 51.654115000000004,
+              "progress": {
+                "pass": 3,
+                "unrouted": 2,
+                "conflicts": 38,
+                "wire_mm": 1897.949,
+                "vias": 135
+              }
+            },
+            {
+              "id": "v01",
+              "seed": 1,
+              "state": "yielded",
+              "pass": 4,
+              "cpu_s": 51.97631,
+              "progress": {
+                "pass": 4,
+                "unrouted": 2,
+                "conflicts": 38,
+                "wire_mm": 1895.246,
+                "vias": 141
+              }
+            },
+            {
+              "id": "v02",
+              "seed": 2,
+              "state": "yielded",
+              "pass": 2,
+              "cpu_s": 22.928957,
+              "progress": {
+                "pass": 2,
+                "unrouted": 2,
+                "conflicts": 45,
+                "wire_mm": 1880.922,
+                "vias": 127
+              }
+            },
+            {
+              "id": "v03",
+              "seed": 3,
+              "state": "yielded",
+              "pass": 2,
+              "cpu_s": 20.569824999999998,
+              "progress": {
+                "pass": 2,
+                "unrouted": 2,
+                "conflicts": 47,
+                "wire_mm": 1887.015,
+                "vias": 130
+              }
+            }
+          ],
+          "candidates": []
+        }
+      },
+      {
+        "board": "ESP32-CORE",
+        "label": "sprint-warm",
+        "job_id": "20261105-200040-fa1c7d",
+        "mode": "sprint",
+        "cpus": 2,
+        "wall_limit_s": 120,
+        "reserved_cpu_ceiling_s": 240,
+        "status": "ERROR",
+        "error": "Error: sprint exit 2",
+        "first_verified_s": null,
+        "operation_wall_s": 112.241667528,
+        "operation_cpu_s": 199.693114,
+        "container_cpu_at_harness_end_s": 201.122991,
+        "client_wall_s": 126.215862074,
+        "client_minus_operation_s": 13.974194546000007,
+        "cache": "3677 files, sending 0 (0 KB)",
+        "queue_s": 0.998,
+        "container_attempt_s": 113.987,
+        "result": {
+          "status": "ERROR",
+          "drc": null,
+          "opens": null,
+          "parity": null,
+          "vias": null,
+          "tracks": null,
+          "native_seconds": 112.087780396
+        },
+        "attempts": 1,
+        "retries": 0,
+        "source_unchanged": true,
+        "container_absent": true,
+        "trimmed": true,
+        "verified_candidates": 0,
+        "owned_stages": [
+          {
+            "stage": "prepare.log",
+            "wall_s": 29.97477031,
+            "exit": 0,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "v01/slice-1.log",
+            "wall_s": 21.636117697,
+            "exit": 3,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "v00/slice-1.log",
+            "wall_s": 25.047147897,
+            "exit": 3,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "v02/slice-1.log",
+            "wall_s": 30.265758862000002,
+            "exit": 3,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "v03/slice-1.log",
+            "wall_s": 32.274554011,
+            "exit": 3,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "v00/slice-2.log",
+            "wall_s": 8.626593234,
+            "exit": -9,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "v01/slice-2.log",
+            "wall_s": 14.295528787000002,
+            "exit": -9,
+            "cleanup_complete": true
+          },
+          {
+            "stage": "v00/finalize.log",
+            "wall_s": 14.42879566399999,
+            "exit": -15,
+            "cleanup_complete": true
+          }
+        ],
+        "portfolio": {
+          "status": "ERROR",
+          "reason": "deadline",
+          "variants": [
+            {
+              "id": "v00",
+              "seed": 0,
+              "state": "stopped",
+              "pass": 2,
+              "cpu_s": null,
+              "progress": {
+                "pass": 2,
+                "unrouted": 2,
+                "conflicts": 43,
+                "wire_mm": 1877.753,
+                "vias": 127
+              },
+              "reason": "Error: variant v00 exited -9"
+            },
+            {
+              "id": "v01",
+              "seed": 1,
+              "state": "stopped",
+              "pass": 2,
+              "cpu_s": null,
+              "progress": {
+                "pass": 2,
+                "unrouted": 2,
+                "conflicts": 44,
+                "wire_mm": 1884.722,
+                "vias": 129
+              },
+              "reason": "Error: variant v01 exited -9"
+            },
+            {
+              "id": "v02",
+              "seed": 2,
+              "state": "yielded",
+              "pass": 2,
+              "cpu_s": 29.95169,
+              "progress": {
+                "pass": 2,
+                "unrouted": 2,
+                "conflicts": 45,
+                "wire_mm": 1880.922,
+                "vias": 127
+              }
+            },
+            {
+              "id": "v03",
+              "seed": 3,
+              "state": "yielded",
+              "pass": 2,
+              "cpu_s": 31.892924999999998,
+              "progress": {
+                "pass": 2,
+                "unrouted": 2,
+                "conflicts": 47,
+                "wire_mm": 1887.015,
+                "vias": 130
+              }
+            }
+          ],
+          "candidates": []
+        }
+      },
+      {
+        "board": "ESP32-CORE",
+        "label": "single-warm",
+        "job_id": "20261105-200250-2182cf",
+        "mode": "single",
+        "cpus": 2,
+        "wall_limit_s": 120,
+        "reserved_cpu_ceiling_s": 240,
+        "status": "ERROR",
+        "error": "Error: native exit -15",
+        "first_verified_s": null,
+        "operation_wall_s": 117.32136892199999,
+        "operation_cpu_s": 130.629674,
+        "container_cpu_at_harness_end_s": 132.964546,
+        "client_wall_s": 135.483575327,
+        "client_minus_operation_s": 18.16220640500002,
+        "cache": "3677 files, sending 0 (0 KB)",
+        "queue_s": 0.535,
+        "container_attempt_s": 120.002,
+        "result": null,
+        "attempts": 1,
+        "retries": 0,
+        "source_unchanged": true,
+        "container_absent": true,
+        "trimmed": true,
+        "verified_candidates": 0,
+        "owned_stages": [
+          {
+            "stage": "native",
+            "wall_s": 117.31646591500001,
+            "exit": -15,
+            "cleanup_complete": true
+          }
+        ]
+      },
+      {
+        "board": "ESP32-CORE",
+        "label": "single-equal-cpu",
+        "job_id": "20261105-200505-0c5c50",
+        "mode": "single",
+        "cpus": 1,
+        "wall_limit_s": 240,
+        "reserved_cpu_ceiling_s": 240,
+        "status": "ERROR",
+        "error": "Error: native exit -15",
+        "first_verified_s": null,
+        "operation_wall_s": 237.24738834099998,
+        "operation_cpu_s": 235.401048,
+        "container_cpu_at_harness_end_s": 237.568876,
+        "client_wall_s": 256.112634403,
+        "client_minus_operation_s": 18.86524606200004,
+        "cache": "3677 files, sending 0 (0 KB)",
+        "queue_s": 2.004,
+        "container_attempt_s": 240.018,
+        "result": null,
+        "attempts": 1,
+        "retries": 0,
+        "source_unchanged": true,
+        "container_absent": true,
+        "trimmed": true,
+        "verified_candidates": 0,
+        "owned_stages": [
+          {
+            "stage": "native",
+            "wall_s": 237.243035749,
+            "exit": -15,
+            "cleanup_complete": true
+          }
+        ]
+      }
+    ],
+    "evidence_archive_sha256": "0540aa93c6350269de5eadbacd0609035f72379ab6d485df39a20d400cec23b6",
+    "fixtures_runtime_archive_sha256": "20fc64aabae3b2a159e278a556d7447dcf60d8f44262c93575db2d440fe3e705"
+  }
 }
