@@ -382,7 +382,6 @@ tools/lib/xml-read.mjs
 tools/lib/zip-read.d.mts
 tools/lib/zip-read.mjs
 tools/lib/zip-write.ts
-tools/mandatory_preflight.py
 tools/pack-fab.py
 tools/pack-fab.ts
 tools/package-lock.json
@@ -953,8 +952,6 @@ tools/test_lean_native.py
 tools/test_lean_owned.py
 tools/test_lean_resources.py
 tools/test_lean_workflow.py
-tools/test_mandatory_preflight.py
-tools/test_mandatory_records_native.py
 tools/test_run_record.py
 tools/test_thermal_repair.py
 tools/thermal_repair.py
