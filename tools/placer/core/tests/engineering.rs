@@ -200,6 +200,9 @@ fn unit_misses_recompute_cross_unit_dependents_and_verify_mapping() {
     );
     let reversed = vec![vec!["C1".into()], vec!["U1".into()]];
     assert!(ReviewedGeometry::compile(&input, &reversed, &[(10.0, 10.0), (14.0, 10.0)]).is_err());
+    let mut extra = input.clone();
+    extra["geometry"]["refs"]["UNMAPPED"] = json!({"pads": {}});
+    assert!(ReviewedGeometry::compile(&extra, &refs, &[(10.0, 10.0), (14.0, 10.0)]).is_err());
 }
 
 #[test]

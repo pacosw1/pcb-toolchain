@@ -754,6 +754,11 @@ impl ReviewedGeometry {
         if mapping != reviewed_mapping {
             return Err("reviewed model reference mapping changed".into());
         }
+        let geometry_refs = value.get("geometry").and_then(|v| v.get("refs"))
+            .and_then(|v| v.as_object()).ok_or("reviewed geometry references missing")?;
+        if geometry_refs.len() != mapping.len() || geometry_refs.keys().any(|r| !mapping.contains_key(r)) {
+            return Err("reviewed geometry population differs from model".into());
+        }
         let mut rules = Vec::new();
         for (row, rule) in rows.iter().zip(compiled) {
             let kind = row
