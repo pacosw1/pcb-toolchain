@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import { protectedJobSpecDigest } from './protected-job-spec.ts';
 import { isTerminal } from './types.ts';
 
-function matchesArchive(file: string, expected: {sha256:string;size:number}): boolean {
+export function matchesProtectedArchive(file: string, expected: {sha256:string;size:number}): boolean {
   let fd: number;
   try { fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK); } catch { return false; }
   try {
@@ -36,7 +36,7 @@ export function installProtectedRuntime(authority: ProtectedCommitStore, manager
   manager.protectedAdmission = job => {
     if (!job.protectedRef || !authority.canDispatchProtected(job.protectedRef, job.id)) return false;
     const expected = authority.runtimeInputIdentity(job.protectedRef, job.id);
-    return !!expected && expected.image === job.spec.image && expected.specSha256 === protectedJobSpecDigest(job.spec) && matchesArchive(manager.store.inputTar(job.id), expected);
+    return !!expected && expected.image === job.spec.image && expected.specSha256 === protectedJobSpecDigest(job.spec) && matchesProtectedArchive(manager.store.inputTar(job.id), expected);
   };
   manager.protectedContinuation = job => !!job.protectedRef && authority.canDispatchProtected(job.protectedRef, job.id, true);
   manager.protectedAttest = (job,image) => !!job.protectedRef && authority.recordRuntimeAttestationFromTrustedService(job.protectedRef,job.id,image);

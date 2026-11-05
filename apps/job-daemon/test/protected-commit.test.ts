@@ -4,6 +4,7 @@ import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path'
 import { ProtectedCommitStore } from '../src/protected-commit.ts'; import { parseCanonicalJson } from '../src/canonical-json.ts';
 import { installProtectedRuntime, reconcileProtectedCancellations, recoverAbandonedProtectedAttempt } from '../src/protected-runtime.ts';
 import { prepareAttemptInput } from '../src/protected-input.ts';
+import { launchProtectedAttemptFromTrustedService } from '../src/protected-launch.ts';
 import { validateSpec } from '../src/manager.ts';
 import { protectedJobSpecDigest } from '../src/protected-job-spec.ts';
 import { rig } from './helpers.ts';
@@ -55,6 +56,18 @@ test('fenced verified commit atomically advances the target and replays its dura
     installProtectedRuntime(store,jobRig.mgr);
     await jobRig.mgr.tick(); assert.equal(runtimeJob.state,'queued');
     assert.equal(store.canDispatchProtected(candidateRef,runtimeJob.id),false);
+    assert.throws(()=>store.associateRuntimeFromTrustedService(candidateRef,runtimeJob.id,associatedInput),/association is stale/);
+    store.reserveSubmissionFromTrustedService(candidateRef,associatedInput);
+    store.reserveSubmissionFromTrustedService(candidateRef,associatedInput);
+    assert.throws(()=>store.reserveSubmissionFromTrustedService(candidateRef,{...associatedInput,sha256:'f'.repeat(64)}),/intent changed/);
+    const options={tarPath:'/usr/bin/tar',tarSha256:tarHash,maxFiles:10,maxBytes:100,maxArchiveBytes:100000,timeoutMs:10000};
+    const other=rig({images:[`sha256:${'b'.repeat(64)}`]});
+    try {
+      installProtectedRuntime(store,other.mgr);
+      assert.equal(launchProtectedAttemptFromTrustedService(store,other.mgr,candidateRef,runtimeJob.spec,parent,options).state,'UNKNOWN');
+      assert.equal(other.mgr.jobs.size,0);
+    } finally { other.cleanup(); }
+    assert.deepEqual(launchProtectedAttemptFromTrustedService(store,jobRig.mgr,candidateRef,runtimeJob.spec,parent,options),{state:'SUBMITTED',runtimeJob:runtimeJob.id});
     store.associateRuntimeFromTrustedService(candidateRef,runtimeJob.id,associatedInput);
     store.associateRuntimeFromTrustedService(candidateRef,runtimeJob.id,associatedInput);
     assert.throws(()=>store.associateRuntimeFromTrustedService(candidateRef,'different-job',associatedInput),/changed/);
@@ -113,10 +126,15 @@ test('recovery keeps a prior-boot writer fenced until the manager proves cleanup
     const lease=store.acquire(submit.token,request);if(lease.state!=='ACQUIRED')throw Error('lease missing');
     const ref={project:'p',board:'b',operation:'route',job:'job',attempt:'attempt'};
     store.bindAttempt(submit.token,{...ref,generation:lease.generation,token:lease.token},{job:'job',attempt:'attempt',sourceManifest:source,policyDigest:policy,runtimeDigest:runtime,toolchainDigest:toolchain});
-    const input=prepareAttemptInput(store,ref,parent,{tarPath:'/usr/bin/tar',tarSha256:tarHash,maxFiles:10,maxBytes:100,maxArchiveBytes:100000,timeoutMs:10000});
-    const job=jobRig.mgr.submit(validateSpec({command:['hang'],maxRetries:0},jobRig.cfg),input.archive,ref);
-    store.associateRuntimeFromTrustedService(ref,job.id,{...input,specSha256:protectedJobSpecDigest(job.spec)});
-    installProtectedRuntime(store,jobRig.mgr);await jobRig.mgr.tick();assert.equal(job.state,'running');
+    installProtectedRuntime(store,jobRig.mgr);
+    const spec=validateSpec({command:['hang'],maxRetries:0},jobRig.cfg), options={tarPath:'/usr/bin/tar',tarSha256:tarHash,maxFiles:10,maxBytes:100,maxArchiveBytes:100000,timeoutMs:10000};
+    const launched=launchProtectedAttemptFromTrustedService(store,jobRig.mgr,ref,spec,parent,options);
+    if(launched.state!=='SUBMITTED') throw Error('launch unresolved');
+    assert.deepEqual(launchProtectedAttemptFromTrustedService(store,jobRig.mgr,ref,spec,parent,options),launched);
+    assert.throws(()=>launchProtectedAttemptFromTrustedService(store,jobRig.mgr,ref,{...spec,command:['different']},parent,options),/changed/);
+    assert.equal(jobRig.mgr.jobs.size,1);
+    const job=jobRig.mgr.jobs.get(launched.runtimeJob)!;
+    await jobRig.mgr.tick();assert.equal(job.state,'running');
     store.close();store=new Fixture(path.join(parent,'store'),{maxBlobBytes:10000,quotaBytes:100000},()=>1000,()=>0n);
     jobRig.restart();installProtectedRuntime(store,jobRig.mgr);
     const fresh=issue('after');if(fresh.state!=='ISSUED')throw Error('capability missing');

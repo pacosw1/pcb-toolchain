@@ -29,6 +29,8 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
         PRIMARY KEY(job,attempt)) STRICT;
       CREATE TABLE IF NOT EXISTS protected_runtime_jobs (job TEXT NOT NULL, attempt TEXT NOT NULL, runtime_job TEXT NOT NULL UNIQUE, input_sha256 TEXT, input_size INTEGER, spec_sha256 TEXT, attested_image TEXT, archive_tool_digest TEXT,
         PRIMARY KEY(job,attempt)) STRICT;
+      CREATE TABLE IF NOT EXISTS protected_submission_intents (job TEXT NOT NULL, attempt TEXT NOT NULL, input_sha256 TEXT NOT NULL, input_size INTEGER NOT NULL,
+        spec_sha256 TEXT NOT NULL, archive_tool_digest TEXT NOT NULL, state TEXT NOT NULL, PRIMARY KEY(job,attempt)) STRICT;
       CREATE TABLE IF NOT EXISTS protected_revisions (project TEXT NOT NULL, board TEXT NOT NULL, revision INTEGER NOT NULL,
         manifest TEXT NOT NULL, verification TEXT NOT NULL, PRIMARY KEY(project,board,revision)) STRICT;
       CREATE TABLE IF NOT EXISTS protected_commit_results (request_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, revision INTEGER NOT NULL, manifest TEXT NOT NULL) STRICT;`);
@@ -40,6 +42,39 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
     if (!runtimeColumns.some(column => column.name === 'spec_sha256')) this.db.exec('ALTER TABLE protected_runtime_jobs ADD COLUMN spec_sha256 TEXT');
     if (!runtimeColumns.some(column => column.name === 'attested_image')) this.db.exec('ALTER TABLE protected_runtime_jobs ADD COLUMN attested_image TEXT');
     if (!runtimeColumns.some(column => column.name === 'archive_tool_digest')) this.db.exec('ALTER TABLE protected_runtime_jobs ADD COLUMN archive_tool_digest TEXT');
+  }
+  /** Persist the exact prepared archive and command before creating any runtime job. */
+  reserveSubmissionFromTrustedService(ref: {project:string;board:string;operation:string;job:string;attempt:string}, input: {sha256:string;size:number;specSha256:string;archiveToolSha256:string}): void {
+    if (!ref || ![ref.project,ref.board,ref.operation,ref.job,ref.attempt].every(x => typeof x === 'string' && ID.test(x)) || !input ||
+        ![input.sha256,input.specSha256,input.archiveToolSha256].every(x => typeof x === 'string' && SHA.test(x)) || !Number.isSafeInteger(input.size) || input.size < 1)
+      throw new Error('invalid protected submission intent');
+    this.transaction(() => {
+      const now = this.clock();
+      const attempt = this.db.prepare('SELECT * FROM protected_attempt_bindings WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as Attempt | undefined;
+      const lease = this.db.prepare('SELECT * FROM protected_leases WHERE project=? AND board=?').get(ref.project,ref.board) as Lease | undefined;
+      const target = this.db.prepare('SELECT revision,alias_revision,state,source_manifest FROM protected_targets WHERE project=? AND board=?').get(ref.project,ref.board) as Target | undefined;
+      const cancel = this.db.prepare('SELECT cancelled FROM protected_attempt_cancellation WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {cancelled:number} | undefined;
+      const tool = this.db.prepare("SELECT enabled FROM protected_approved_digests WHERE kind='archive-tool' AND digest=?").get(input.archiveToolSha256) as {enabled:number} | undefined;
+      if (!attempt || attempt.project !== ref.project || attempt.board !== ref.board || attempt.operation !== ref.operation ||
+          !target || target.state !== 'ACTIVE' || target.revision !== attempt.source_revision || target.alias_revision !== attempt.alias_revision || target.source_manifest !== attempt.source_manifest ||
+          !lease || lease.boot_id !== this.bootId || lease.pinned !== 1 || lease.expires_at <= now || lease.generation !== attempt.generation || lease.source_manifest !== attempt.source_manifest ||
+          !cancel || cancel.cancelled !== 0 || tool?.enabled !== 1) throw new Error('protected submission intent is stale');
+      const prior = this.db.prepare('SELECT * FROM protected_submission_intents WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {input_sha256:string;input_size:number;spec_sha256:string;archive_tool_digest:string;state:string} | undefined;
+      if (prior) { if (prior.input_sha256 !== input.sha256 || prior.input_size !== input.size || prior.spec_sha256 !== input.specSha256 || prior.archive_tool_digest !== input.archiveToolSha256 || !['PREPARED','ATTACHED'].includes(prior.state)) throw new Error('protected submission intent changed'); return; }
+      this.db.prepare("INSERT INTO protected_submission_intents VALUES (?,?,?,?,?,?,'PREPARED')").run(ref.job,ref.attempt,input.sha256,input.size,input.specSha256,input.archiveToolSha256);
+    });
+  }
+  submissionFromTrustedService(ref: {project:string;board:string;operation:string;job:string;attempt:string}):
+    {sha256:string;size:number;specSha256:string;archiveToolSha256:string;state:string;runtimeJob:string|null} | null {
+    return this.transaction(() => {
+      this.safeNow();
+      const attempt = this.db.prepare('SELECT project,board,operation FROM protected_attempt_bindings WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {project:string;board:string;operation:string} | undefined;
+      if (!attempt || attempt.project !== ref.project || attempt.board !== ref.board || attempt.operation !== ref.operation) throw new Error('protected attempt unavailable');
+      const row = this.db.prepare(`SELECT i.input_sha256,i.input_size,i.spec_sha256,i.archive_tool_digest,i.state,r.runtime_job
+        FROM protected_submission_intents i LEFT JOIN protected_runtime_jobs r ON r.job=i.job AND r.attempt=i.attempt WHERE i.job=? AND i.attempt=?`).get(ref.job,ref.attempt) as
+        {input_sha256:string;input_size:number;spec_sha256:string;archive_tool_digest:string;state:string;runtime_job:string|null} | undefined;
+      return row ? {sha256:row.input_sha256,size:row.input_size,specSha256:row.spec_sha256,archiveToolSha256:row.archive_tool_digest,state:row.state,runtimeJob:row.runtime_job} : null;
+    });
   }
   /** Internal only; approval entries themselves require an authenticated trust bootstrap. */
   approvedArtifactFromTrustedService(kind: 'archive-tool', digest: string): boolean {
@@ -97,7 +132,7 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
     });
   }
   /** Internal launcher only: snapshot preparation must recheck this binding after producing its archive. */
-  sourceForAttemptFromTrustedService(ref: {project:string;board:string;operation:string;job:string;attempt:string}): {manifest:string;closure:ManifestClosure} {
+  sourceForAttemptFromTrustedService(ref: {project:string;board:string;operation:string;job:string;attempt:string}): {manifest:string;runtimeDigest:string;closure:ManifestClosure} {
     if (!ref || ![ref.project,ref.board,ref.operation,ref.job,ref.attempt].every(x => typeof x === 'string' && ID.test(x))) throw new Error('invalid protected attempt');
     return this.transaction(() => {
       const now = this.clock();
@@ -114,7 +149,7 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
         {maxDepth:16,maxManifests:256,maxNodes:100_000,maxBytes:64*1024**3,maxManifestBytes:64*1024**2});
       if (!target.board_path || closure.rootProject !== ref.project || !closure.rootManifest.required_paths.includes(target.board_path) ||
           !closure.rootManifest.entries.some(entry => entry.kind === 'file' && entry.path === target.board_path)) throw new Error('protected source board unavailable');
-      return {manifest:attempt.source_manifest,closure};
+      return {manifest:attempt.source_manifest,runtimeDigest:attempt.runtime_digest,closure};
     });
   }
   /** Internal orchestrator only: persist runtime identity; the future launcher must enforce its admission barrier. */
@@ -128,12 +163,15 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
       const lease = this.db.prepare('SELECT * FROM protected_leases WHERE project=? AND board=?').get(ref.project,ref.board) as Lease | undefined;
       const cancellation = this.db.prepare('SELECT cancelled FROM protected_attempt_cancellation WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {cancelled:number} | undefined;
       const tool = this.db.prepare("SELECT enabled FROM protected_approved_digests WHERE kind='archive-tool' AND digest=?").get(input.archiveToolSha256) as {enabled:number} | undefined;
+      const intent = this.db.prepare('SELECT * FROM protected_submission_intents WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {input_sha256:string;input_size:number;spec_sha256:string;archive_tool_digest:string;state:string} | undefined;
       if (!attempt || attempt.project !== ref.project || attempt.board !== ref.board || attempt.operation !== ref.operation ||
           !lease || lease.boot_id !== this.bootId || lease.pinned !== 1 || lease.expires_at <= now || lease.generation !== attempt.generation ||
-          !cancellation || cancellation.cancelled !== 0 || tool?.enabled !== 1) throw new Error('protected runtime association is stale');
+          !cancellation || cancellation.cancelled !== 0 || tool?.enabled !== 1 || !intent || !['PREPARED','ATTACHED'].includes(intent.state) ||
+          intent.input_sha256 !== input.sha256 || intent.input_size !== input.size || intent.spec_sha256 !== input.specSha256 || intent.archive_tool_digest !== input.archiveToolSha256) throw new Error('protected runtime association is stale');
       const prior = this.db.prepare('SELECT runtime_job,input_sha256,input_size,spec_sha256,archive_tool_digest FROM protected_runtime_jobs WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {runtime_job:string;input_sha256:string|null;input_size:number|null;spec_sha256:string|null;archive_tool_digest:string|null} | undefined;
       if (prior) { if (prior.runtime_job !== runtimeJob || prior.input_sha256 !== input.sha256 || prior.input_size !== input.size || prior.spec_sha256 !== input.specSha256 || prior.archive_tool_digest !== input.archiveToolSha256) throw new Error('protected runtime job changed'); return; }
       this.db.prepare('INSERT INTO protected_runtime_jobs (job,attempt,runtime_job,input_sha256,input_size,spec_sha256,archive_tool_digest) VALUES (?,?,?,?,?,?,?)').run(ref.job,ref.attempt,runtimeJob,input.sha256,input.size,input.specSha256,input.archiveToolSha256);
+      this.db.prepare("UPDATE protected_submission_intents SET state='ATTACHED' WHERE job=? AND attempt=?").run(ref.job,ref.attempt);
     });
   }
   /** Identity to compare with the manager's private archive before starting the worker. */
