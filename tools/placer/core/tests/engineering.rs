@@ -124,3 +124,36 @@ fn direct_library_model_cannot_bypass_reviewed_contract_rejection() {
     let problem: Problem = serde_json::from_value(raw).unwrap();
     assert!(Model::new(&problem, &Params::default()).is_err());
 }
+
+#[test]
+fn connector_corridor_checks_board_exit_and_other_courtyards() {
+    use iotplace::engineering::connector_rules;
+    let mut input = contract();
+    input["geometry"]["bounds"] = json!([0.0, 0.0, 20.0, 20.0]);
+    input["geometry"]["refs"]["U1"]["origin"] = json!([1.0, 3.0]);
+    input["geometry"]["refs"]["U1"]["quarter"] = json!(0);
+    input["geometry"]["refs"]["U1"]["courtyard"] = json!([0.5, 2.5, 1.5, 3.5]);
+    input["geometry"]["refs"]["C1"]["origin"] = json!([14.0, 10.0]);
+    input["geometry"]["refs"]["C1"]["quarter"] = json!(0);
+    input["geometry"]["refs"]["C1"]["courtyard"] = json!([13.5, 9.5, 14.5, 10.5]);
+    input["rules"] = json!([{"id":"connector","kind":"connector_access", "ref":"U1", "metric":"courtyard_corridor_2d", "corridor_mm":[-4.0,-0.6,0.0,0.6], "exit_side":"L"}]);
+    let rules = connector_rules(&input, &[(1.0, 3.0), (14.0, 10.0)]).unwrap();
+    assert_eq!(
+        rules[0]
+            .miss(&vec![(1.0, 3.0, 0), (14.0, 10.0, 0)])
+            .unwrap(),
+        0.0
+    );
+    assert_eq!(
+        rules[0].miss(&vec![(1.0, 3.0, 0), (0.0, 3.0, 0)]).unwrap(),
+        1.0
+    );
+    assert_eq!(
+        rules[0]
+            .miss(&vec![(5.0, 3.0, 0), (14.0, 10.0, 0)])
+            .unwrap(),
+        1.0
+    );
+    input["geometry"]["refs"]["C1"]["courtyard"] = serde_json::Value::Null;
+    assert!(connector_rules(&input, &[(1.0, 3.0), (14.0, 10.0)]).is_err());
+}

@@ -29,11 +29,17 @@ struct Part {
     #[serde(default)]
     origin: Option<(f64, f64)>,
     #[serde(default)]
+    quarter: Option<u8>,
+    #[serde(default)]
+    courtyard: Option<(f64, f64, f64, f64)>,
+    #[serde(default)]
     pads: BTreeMap<String, Vec<Pad>>,
 }
 #[derive(Debug, Deserialize)]
 struct Geometry {
     refs: BTreeMap<String, Part>,
+    #[serde(default)]
+    bounds: Option<(f64, f64, f64, f64)>,
 }
 #[derive(Debug, Deserialize)]
 struct Rule {
@@ -48,6 +54,12 @@ struct Rule {
     refs: Vec<String>,
     #[serde(default)]
     retained_internal_copper: bool,
+    #[serde(default)]
+    r#ref: Option<String>,
+    #[serde(default)]
+    corridor_mm: Option<(f64, f64, f64, f64)>,
+    #[serde(default)]
+    exit_side: Option<String>,
 }
 #[derive(Debug, Deserialize)]
 struct Contract {
@@ -424,6 +436,7 @@ pub enum ReviewedRule {
     Pin(PinDistance),
     Clearance(Clearance),
     Rigid(RigidGroup),
+    Connector(ConnectorAccess),
 }
 impl ReviewedRule {
     pub fn affects(&self, unit: usize) -> bool {
@@ -431,6 +444,7 @@ impl ReviewedRule {
             Self::Pin(r) => r.affects(unit),
             Self::Clearance(r) => r.affects(unit),
             Self::Rigid(r) => r.affects(unit),
+            Self::Connector(r) => r.affects(unit),
         }
     }
     pub fn miss(&self, pose: &Pose) -> crate::Result<f64> {
@@ -438,6 +452,7 @@ impl ReviewedRule {
             Self::Pin(r) => r.miss(pose),
             Self::Clearance(r) => r.miss(pose),
             Self::Rigid(r) => r.miss(pose),
+            Self::Connector(r) => r.miss(pose),
         }
     }
 }
@@ -463,8 +478,178 @@ pub fn compile_supported_rules(
             Some("fixed" | "rigid_group") => {
                 out.push(ReviewedRule::Rigid(rigid_rules(&one, origins)?.remove(0)))
             }
+            Some("connector_access") => out.push(ReviewedRule::Connector(
+                connector_rules(&one, origins)?.remove(0),
+            )),
             _ => return Err("unsupported reviewed engineering rule".into()),
         }
     }
     Ok(out)
+}
+
+#[derive(Debug)]
+struct Courtyard {
+    reference: String,
+    unit: usize,
+    origin: Endpoint,
+    quarter: u8,
+    local_box: crate::geom::Rect,
+}
+#[derive(Debug)]
+pub struct ConnectorAccess {
+    pub id: String,
+    connector: String,
+    corridor: crate::geom::Rect,
+    side: String,
+    bounds: crate::geom::Rect,
+    parts: Vec<Courtyard>,
+}
+impl ConnectorAccess {
+    // Every unit may obstruct a connector corridor, including one with no connector rule of its own.
+    pub fn affects(&self, _unit: usize) -> bool {
+        true
+    }
+    pub fn miss(&self, pose: &Pose) -> crate::Result<f64> {
+        let connector = self
+            .parts
+            .iter()
+            .find(|p| p.reference == self.connector)
+            .ok_or("reviewed connector missing")?;
+        let (x, y) = PinDistance::point(&connector.origin, pose)?;
+        let turn = (connector.quarter + pose[connector.unit].2) % 4;
+        let box_ = self.corridor.turned(turn).shifted(x, y);
+        let exits = match self.side.as_str() {
+            "L" => box_.x0 <= self.bounds.x0,
+            "R" => box_.x1 >= self.bounds.x1,
+            "T" => box_.y0 <= self.bounds.y0,
+            "B" => box_.y1 >= self.bounds.y1,
+            _ => return Err("invalid connector exit".into()),
+        };
+        if !exits {
+            return Ok(1.0);
+        }
+        for part in &self.parts {
+            if part.reference == self.connector {
+                continue;
+            }
+            let &(x, y, turn) = pose
+                .get(part.unit)
+                .ok_or("reviewed courtyard pose missing")?;
+            if !x.is_finite() || !y.is_finite() || turn > 3 {
+                return Err("invalid reviewed courtyard pose".into());
+            }
+            let other = part.local_box.turned(turn).shifted(x, y);
+            if box_.x1.min(other.x1) > box_.x0.max(other.x0)
+                && box_.y1.min(other.y1) > box_.y0.max(other.y0)
+            {
+                return Ok(1.0);
+            }
+        }
+        Ok(0.0)
+    }
+}
+pub fn connector_rules(
+    value: &serde_json::Value,
+    origins: &[(f64, f64)],
+) -> crate::Result<Vec<ConnectorAccess>> {
+    let mut value = value.clone();
+    let object = value
+        .as_object_mut()
+        .ok_or("reviewed contract must be an object")?;
+    let where_ = object.remove("where").ok_or("reviewed mapping missing")?;
+    object.insert("where_".into(), where_);
+    let contract: Contract = serde_json::from_value(value)?;
+    let (x0, y0, x1, y1) = contract
+        .geometry
+        .bounds
+        .ok_or("reviewed board bounds missing")?;
+    if ![x0, y0, x1, y1].iter().all(|v| v.is_finite()) || x0 >= x1 || y0 >= y1 {
+        return Err("invalid reviewed board bounds".into());
+    }
+    let bounds = crate::geom::Rect::new(x0, y0, x1, y1);
+    let mut parts = Vec::new();
+    for (reference, part) in &contract.geometry.refs {
+        let unit = *contract
+            .where_
+            .get(reference)
+            .ok_or("reviewed courtyard reference not mapped")?;
+        let &(x, y) = origins.get(unit).ok_or("reviewed courtyard unit missing")?;
+        let (px, py) = part.origin.ok_or("reviewed courtyard origin missing")?;
+        let quarter = part
+            .quarter
+            .filter(|q| *q < 4)
+            .ok_or("invalid reviewed courtyard orientation")?;
+        let (a, b, c, d) = part.courtyard.ok_or("reviewed courtyard missing")?;
+        if ![x, y, px, py, a, b, c, d].iter().all(|v| v.is_finite()) || a > c || b > d {
+            return Err("invalid reviewed courtyard".into());
+        }
+        parts.push(Courtyard {
+            reference: reference.clone(),
+            unit,
+            origin: Endpoint {
+                unit,
+                local: (px - x, py - y),
+            },
+            quarter,
+            local_box: crate::geom::Rect::new(a - x, b - y, c - x, d - y),
+        });
+    }
+    contract
+        .rules
+        .iter()
+        .map(|rule| {
+            if rule.kind != "connector_access"
+                || rule.metric.as_deref() != Some("courtyard_corridor_2d")
+            {
+                return Err("unsupported reviewed engineering rule".into());
+            }
+            let connector = rule
+                .r#ref
+                .clone()
+                .ok_or("reviewed connector reference missing")?;
+            if !contract.geometry.refs.contains_key(&connector) {
+                return Err("reviewed connector missing".into());
+            }
+            let (a, b, c, d) = rule
+                .corridor_mm
+                .ok_or("reviewed connector corridor missing")?;
+            if ![a, b, c, d].iter().all(|v| v.is_finite())
+                || a >= c
+                || b >= d
+                || a > 0.0
+                || c < 0.0
+                || b > 0.0
+                || d < 0.0
+            {
+                return Err("invalid reviewed connector corridor".into());
+            }
+            let side = rule
+                .exit_side
+                .clone()
+                .filter(|s| ["L", "R", "T", "B"].contains(&s.as_str()))
+                .ok_or("invalid reviewed connector exit")?;
+            // Clone immutable modeled geometry; every rule is independent of later callers.
+            let parts = parts
+                .iter()
+                .map(|p| Courtyard {
+                    reference: p.reference.clone(),
+                    unit: p.unit,
+                    origin: Endpoint {
+                        unit: p.origin.unit,
+                        local: p.origin.local,
+                    },
+                    quarter: p.quarter,
+                    local_box: p.local_box,
+                })
+                .collect();
+            Ok(ConnectorAccess {
+                id: rule.id.clone(),
+                connector,
+                corridor: crate::geom::Rect::new(a, b, c, d),
+                side,
+                bounds,
+                parts,
+            })
+        })
+        .collect()
 }
