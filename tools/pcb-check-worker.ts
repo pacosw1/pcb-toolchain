@@ -19,7 +19,7 @@ const nothing = (): Cleanup => ({ complete: true, errors: [], child_reaped: true
 
 async function worker(folderPath: string): Promise<number> {
   const folder = resolve(folderPath), manifest = readObject<Manifest>(join(folder, 'run.json'));
-  if (!['check', 'doctor', 'readiness'].includes(manifest.operation) || !Array.isArray(manifest.command) || manifest.command.length === 0
+  if (!['check', 'doctor', 'readiness', 'blocks'].includes(manifest.operation) || !Array.isArray(manifest.command) || manifest.command.length === 0
       || !Number.isFinite(manifest.timeout_s) || manifest.timeout_s <= 0 || !Number.isFinite(manifest.heartbeat_s) || manifest.heartbeat_s <= 0)
     throw new Error('invalid check manifest');
   if (process.env.IOT_PCB_WORKER_LOCK !== join(folder, 'worker.lock') || !process.env.IOT_LEAN_STAGE_HANDLE)
@@ -87,7 +87,7 @@ async function worker(folderPath: string): Promise<number> {
           } else {
             const code = outcome.returncode;
             result = { status: code === 0 ? 'passed' : code === 2 ? 'error' : 'failed', exit_code: code === 0 ? 0 : code === 2 ? 2 : 1,
-              cause: manifest.operation + (code === 0 ? ' completed' : ' failed; inspect original tool evidence'), scope: manifest.operation === 'doctor' ? 'environment' : 'assembly_readiness', operation: manifest.operation, tool_exit: code, artifact_directory: null };
+              cause: manifest.operation + (code === 0 ? ' completed' : ' failed; inspect original tool evidence'), scope: manifest.operation === 'doctor' ? 'environment' : manifest.operation === 'blocks' ? 'block_evidence' : 'assembly_readiness', operation: manifest.operation, tool_exit: code, artifact_directory: null };
             atomicJson(join(folder, 'operation/result.json'), result);
           }
           break;

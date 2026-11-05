@@ -28,7 +28,7 @@ function finalize(ownerPath: string): number {
   if (owner !== join(folder, 'worker-owner.json')) throw new Error('invalid owner receipt path');
   verifyLock(folder);
   const manifest = readObject<Manifest>(join(folder, 'run.json'));
-  if (!['check', 'doctor', 'readiness'].includes(manifest.operation)) throw new Error('invalid check manifest');
+  if (!['check', 'doctor', 'readiness', 'blocks'].includes(manifest.operation)) throw new Error('invalid check manifest');
   let preliminary: Row;
   try { preliminary = readObject(join(folder, 'worker-preliminary.json')); }
   catch { preliminary = { status: 'error', exit_code: 2, cause: 'worker ended without preliminary evidence', nested_cleanup: null }; }
@@ -76,7 +76,7 @@ function finalize(ownerPath: string): number {
   if (!settled) Object.assign(result, { status: 'error', exit_code: 2,
     cause: evidenceProblem ? `gate evidence unconfirmed: ${evidenceProblem}`
       : `${String(preliminary.cause ?? 'worker result unavailable')}; owned process cleanup or result unconfirmed` });
-  Object.assign(result, { scope: manifest.operation === 'doctor' ? 'environment' : manifest.operation === 'readiness' ? 'assembly_readiness' : 'configured_board_gate', schema_version: 1, run_id: folder.split('/').at(-1), board: manifest.board,
+  Object.assign(result, { scope: manifest.operation === 'doctor' ? 'environment' : manifest.operation === 'readiness' ? 'assembly_readiness' : manifest.operation === 'blocks' ? 'block_evidence' : 'configured_board_gate', schema_version: 1, run_id: folder.split('/').at(-1), board: manifest.board,
     operation: manifest.operation, cleanup: { ...(ownerCleanup ?? {}), complete: cleanupConfirmed, nested },
     ...(manifest.operation === 'check' ? { gate_result: join(folder, 'gate/result.json') } : {}), evidence_dir: folder });
   const state = readObject<Row>(join(folder, 'state.json'));

@@ -11,7 +11,7 @@ import { isFile, resolvePath, which } from './py-path.ts';
 import { attach, folderFor, read } from './pcb-cycle.ts';
 import { holdLock } from './file-lock.ts';
 
-export interface CheckOptions { root: string; base: string; board: string; operation?: 'check' | 'doctor' | 'readiness'; arguments?: string[]; timeout: number; heartbeat: number; changed?: boolean; fresh?: boolean; baseline?: string; cycle?: string }
+export interface CheckOptions { root: string; base: string; board: string; operation?: 'check' | 'doctor' | 'readiness' | 'blocks'; arguments?: string[]; timeout: number; heartbeat: number; changed?: boolean; fresh?: boolean; baseline?: string; cycle?: string }
 
 export async function startCheck(options: CheckOptions): Promise<string> {
   const root = resolvePath(options.root), base = resolvePath(options.base);
@@ -30,16 +30,17 @@ export async function startCheck(options: CheckOptions): Promise<string> {
   if (cycleFolder) {
     const cycle = read(join(cycleFolder, 'cycle.json'));
     if (cycle.status !== 'open' || resolvePath(cycle.root) !== root) throw new Error('cycle must be open and belong to this checkout');
-    if (operation !== 'doctor' && cycle.board !== options.board) throw new Error('run belongs to another board than its engineering cycle');
+    if ((operation === 'check' || operation === 'readiness') && cycle.board !== options.board) throw new Error('run belongs to another board than its engineering cycle');
   }
   const node = which(process.env.NODE ?? 'node');
   if (!node) throw new Error('Node.js is required to run the existing gate');
   mkdirSync(base, { recursive: true });
   const folder = mkdtempSync(join(base, 'run-'));
-  const board = operation === 'doctor' ? (cycleFolder ? read(join(cycleFolder, 'cycle.json')).board : 'ENVIRONMENT')
+  const board = operation === 'doctor' || operation === 'blocks' ? (cycleFolder ? read(join(cycleFolder, 'cycle.json')).board : operation === 'doctor' ? 'ENVIRONMENT' : 'BLOCKS')
     : operation === 'readiness' && !cycleFolder ? 'ASSEMBLY' : options.board;
   const command = operation === 'doctor' ? [node, join(root, 'tools/doctor.mjs'), '--gate-only']
     : operation === 'readiness' ? [node, join(root, 'tools/check-release-readiness.mjs'), ...(options.arguments ?? [])]
+    : operation === 'blocks' ? [node, '--experimental-strip-types', '--no-warnings', join(root, 'tools/blocks.ts'), ...(options.arguments ?? [])]
     : [node, join(root, 'tools/gate.mjs'), board, '--evidence-dir', join(folder, 'gate')];
   if (options.changed) command.push('--changed');
   if (options.fresh) command.push('--fresh');
@@ -47,7 +48,7 @@ export async function startCheck(options: CheckOptions): Promise<string> {
   const manifest = { schema_version: 1, run_id: basename(folder), board, project: configInfo?.cfg.get('project') ?? null,
     created_at: utc(), root, command, timeout_s: options.timeout, heartbeat_s: options.heartbeat,
     operation, node, gate_config_sha256: config ? sha(config) : null,
-    ...(operation === 'readiness' ? { arguments: options.arguments ?? [] } : {}), ...(cycleFolder ? { cycle: basename(cycleFolder) } : {}) };
+    ...(['readiness', 'blocks'].includes(operation) ? { arguments: options.arguments ?? [] } : {}), ...(cycleFolder ? { cycle: basename(cycleFolder) } : {}) };
   atomicJson(join(folder, 'run.json'), manifest);
   if (cycleFolder) await attach(cycleFolder, folder, { withLock: async (path, work) => {
     const lock = await holdLock(path, { waitS: 30 });
