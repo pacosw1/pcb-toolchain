@@ -237,7 +237,7 @@ export function LiveView(): React.JSX.Element {
           {typeof active.data.cause === 'string' && active.data.cause ? <p>{active.data.cause}</p> : null}
           {metrics.length ? <table className="metrics"><tbody>{metrics.map(([name, value]) => <tr key={name}><td>{name.replace(/_/g, ' ')}</td><td>{String(value ?? 'not reported')}</td></tr>)}</tbody></table> : null}
           {now - active.receivedAt > 45_000 && ['running', 'queued', 'stopping'].includes(rawStatus) ? <p>Run status has not updated recently.</p> : null}
-          {['build', 'edit', 'route', 'repair', 'release'].includes(String(active.data.operation)) && ['running', 'queued', 'stopping'].includes(rawStatus) && active.data.coordinated === false
+          {['build', 'edit', 'route', 'repair', 'release', 'placement'].includes(String(active.data.operation)) && ['running', 'queued', 'stopping'].includes(rawStatus) && active.data.coordinated === false
             ? <p role="alert">This run is not protected by the shared board lock.</p> : null}
           {routeFrame ? <p>Router: pass {String(routeFrame.data.passes ?? 'not reported')}{typeof routeFrame.data.maxPasses === 'number' ? ` of ${routeFrame.data.maxPasses}` : ''}
             {typeof routeFrame.data.conflictNets === 'number' ? ` · ${routeFrame.data.conflictNets} nets in conflict` : ''}

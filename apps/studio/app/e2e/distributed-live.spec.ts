@@ -44,7 +44,7 @@ test('a saved board follows its real run preview and readable activity', async (
   const events = [
     { ...common, cursor: 1, eventId: 'saved', run: 'saved', kind: 'board.snapshot', data: { sha256: boardSha, path: 'board.kicad_pcb' } },
     { ...common, cursor: 2, eventId: 'base', run: 'run-1', kind: 'board.snapshot', data: { sha256: boardSha, path: 'live-route-base.kicad_pcb' } },
-    { ...common, cursor: 3, eventId: 'state', run: 'run-1', kind: 'run.state', data: { status: 'running', operation: 'route', active_stages: ['routing'], supervisorAlive: true } },
+    { ...common, cursor: 3, eventId: 'state', run: 'run-1', kind: 'run.state', data: { status: 'running', operation: 'placement', active_stages: ['routing'], supervisorAlive: true, coordinated: false } },
     { ...common, board: 'project/_host', cursor: 4, eventId: 'hb', run: '_host', kind: 'host.heartbeat', data: {} },
     { ...common, source: 'local', host: hostname(), cursor: 5, eventId: 'local-board', run: 'saved', kind: 'board.snapshot', data: { sha256: boardSha, path: 'board.kicad_pcb' } },
     { ...common, source: 'local', host: hostname(), board: 'project/_host', cursor: 6, eventId: 'local-hb', run: '_host', kind: 'host.heartbeat', data: {} }
@@ -89,6 +89,7 @@ test('a saved board follows its real run preview and readable activity', async (
     await expect(selector).toHaveValue(/saved/)
     await expect(win.getByRole('heading', { name: 'Current activity' })).toBeVisible()
     await expect(win.getByText('Working on: routing')).toBeVisible()
+    await expect(win.getByText('This run is not protected by the shared board lock.')).toBeVisible()
     await expect.poll(() => streams.size).toBeGreaterThan(0)
     const frame = { ...common, cursor: 7, eventId: 'frame', run: 'run-1', kind: 'route.preview',
       data: { sha256: previewSha, baseSha256: boardSha, path: 'live-route.json', passes: 2, maxPasses: 5, conflictPairs: 3 } }
