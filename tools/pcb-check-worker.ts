@@ -103,7 +103,7 @@ async function worker(folderPath: string): Promise<number> {
   cleanup ??= proc ? { complete: false, child_reaped: false, errors: [{ operation: 'cleanup', error: 'owned stage did not report cleanup' }] } : nothing();
   if (cleanup.complete !== true) Object.assign(result, { status: 'error', exit_code: 2, cause: result.cause + '; owned process cleanup unconfirmed' });
   atomicJson(join(folder, 'worker-preliminary.json'), { ...result, nested_cleanup: cleanup,
-    child_cpu_s: outcome?.childCpuS ?? null, cpu_scope: outcome?.cpuScope ?? null });
+    gate_returncode: outcome?.returncode ?? null, child_cpu_s: outcome?.childCpuS ?? null, cpu_scope: outcome?.cpuScope ?? null });
   journal.state.status = 'stopping';
   journal.emit('run.settling', { provisional_status: result.status });
   return result.exit_code;

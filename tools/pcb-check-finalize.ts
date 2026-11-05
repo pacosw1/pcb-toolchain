@@ -5,8 +5,9 @@ import { join, resolve } from 'node:path';
 import { atomicJson, plainJson, readObject } from './lib/json-file.ts';
 import { iotrouteBin } from './lib/iotroute-bin.ts';
 import { now } from './lib/lean-clock.ts';
-import { compactTerminal, type Dict } from './lib/pcb-runs.ts';
+import { compactTerminal, events, type Dict } from './lib/pcb-runs.ts';
 import { evidenceFiles } from './lib/pcb-evidence.ts';
+import { gateOutcome, type Finding } from './lib/pcb-gate-outcome.ts';
 import { jsonDumps, jsonLoads } from './lib/py-compat.mjs';
 import { CheckJournal, type Row } from './lib/pcb-check-journal.ts';
 import { timingJson } from './lib/timing.ts';
@@ -34,12 +35,35 @@ function finalize(ownerPath: string): number {
   const ownerCleanup = report.cleanup as Row | undefined;
   const nested = preliminary.nested_cleanup as Row | undefined;
   const validStatus = ['passed', 'failed', 'error', 'cancelled', 'timeout'].includes(String(preliminary.status));
-  const settled = validStatus && ownerCleanup?.complete === true && ownerCleanup.child_reaped === true
+  let settled = validStatus && ownerCleanup?.complete === true && ownerCleanup.child_reaped === true
     && report.error === null && report.returncode === preliminary.exit_code && nested?.complete === true;
+  let evidenceProblem: string | undefined;
+  if (settled && ['passed', 'failed'].includes(String(preliminary.status))) {
+    try {
+      let cursor = 0, ended = false;
+      const findings: Finding[] = [];
+      for (;;) {
+        const rows = events(join(folder, 'gate'), cursor, 1000);
+        for (const entry of rows) {
+          cursor = Number(entry.get('cursor'));
+          const row = plainJson(entry) as Row;
+          if (row.schema_version !== 1 || typeof row.type !== 'string') throw new Error('invalid producer event');
+          if (row.type === 'gate.end') ended = true;
+          if (row.type === 'check.end' && Array.isArray(row.findings))
+            for (const text of row.findings) findings.push({ stage: String(row.stage), cause: String(text), log: join(folder, 'gate', `${String(row.stage)}.log`) });
+        }
+        if (rows.length < 1000) break;
+      }
+      const actual = gateOutcome(folder, Number(preliminary.gate_returncode), ended, findings);
+      for (const key of ['status', 'exit_code', 'cause', 'metrics', 'input_sha256', 'findings'] as const)
+        if (JSON.stringify(actual[key]) !== JSON.stringify(preliminary[key])) throw new Error(`gate ${key} changed before sealing`);
+    } catch (error) { settled = false; evidenceProblem = error instanceof Error ? error.message : String(error); }
+  }
   const result: Row = { ...preliminary };
-  delete result.nested_cleanup;
+  delete result.nested_cleanup; delete result.gate_returncode;
   if (!settled) Object.assign(result, { status: 'error', exit_code: 2,
-    cause: `${String(preliminary.cause ?? 'worker result unavailable')}; owned process cleanup or result unconfirmed` });
+    cause: evidenceProblem ? `gate evidence unconfirmed: ${evidenceProblem}`
+      : `${String(preliminary.cause ?? 'worker result unavailable')}; owned process cleanup or result unconfirmed` });
   Object.assign(result, { scope: 'configured_board_gate', schema_version: 1, run_id: folder.split('/').at(-1), board: manifest.board,
     operation: 'check', cleanup: { ...(ownerCleanup ?? {}), complete: settled, nested }, gate_result: join(folder, 'gate/result.json'), evidence_dir: folder });
   const state = readObject<Row>(join(folder, 'state.json'));
