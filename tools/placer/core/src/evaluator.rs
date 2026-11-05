@@ -250,7 +250,14 @@ impl<'m> Evaluator<'m> {
         let board = &self.model.problem.board;
         let edge = u.edge.as_ref().map_or(0.0, |e| edge_miss(e, place, board, self.model.outline_box));
         let region = u.in_box.map_or(0.0, |b| box_miss(b, self.layout.world(i), &self.model.units[i].keepout_rects));
-        sum + edge + region + near_miss(&u.near, place)
+        sum + edge + region + near_miss(&u.near, place) + self.reviewed_miss(i)
+    }
+
+    /// Reviewed rules can depend on several units, including fixed units.
+    pub(crate) fn reviewed_miss(&self, i: usize) -> f64 {
+        self.model.reviewed.as_ref().map_or(0.0, |reviewed| {
+            reviewed.miss_for_unit(i, &self.layout.pose()).expect("compiled reviewed pose is valid")
+        })
     }
 
     fn locked_and_gap_area(&self, i: usize, edge_pads: Option<&[Rect]>) -> (f64, f64) {
@@ -314,7 +321,13 @@ impl<'m> Evaluator<'m> {
         let places: Vec<_> = moved.iter().map(|&i| (i, self.layout.place(i))).collect();
         self.last_places.clone_from(&places);
         let (overlap_before, spacing_before) = self.moved_pairs(&moved);
-        let forbidden_before = compensated(moved.iter().map(|&i| self.forbidden[i]));
+        // A reviewed rule can change another unit's penalty when either endpoint moves.
+        let affected: Vec<usize> = if model.reviewed.is_some() {
+            (0..model.units.len()).filter(|&i| !model.units[i].fixed).collect()
+        } else {
+            moved.clone()
+        };
+        let forbidden_before = compensated(affected.iter().map(|&i| self.forbidden[i]));
         self.vias.before_move(model, &self.layout, &moved);
         self.nets.before_move(model, &self.layout, &moved);
         if let Some(e) = &mut self.escape {
@@ -326,11 +339,11 @@ impl<'m> Evaluator<'m> {
         let (overlap_after, spacing_after) = self.moved_pairs(&moved);
         let area_delta = self.areas.after_move(model, &self.layout, &moved);
         let via = self.vias.after_move(model, &self.layout, &moved);
-        let old_forbidden = moved.iter().map(|&i| (i, self.forbidden[i])).collect();
-        for &i in &moved {
+        let old_forbidden = affected.iter().map(|&i| (i, self.forbidden[i])).collect();
+        for &i in &affected {
             self.forbidden[i] = self.forbidden_area(i);
         }
-        let forbidden_after = compensated(moved.iter().map(|&i| self.forbidden[i]));
+        let forbidden_after = compensated(affected.iter().map(|&i| self.forbidden[i]));
         let nets = self.moved_nets(&moved);
         let (hpwl, cong) = self.nets.after_move(model, &self.layout, &moved, &nets);
         let delta = Terms {
@@ -399,5 +412,46 @@ impl<'m> Evaluator<'m> {
         let mut pose = self.pose();
         self.last_places.iter().for_each(|&(i, place)| pose[i] = place);
         pose
+    }
+}
+
+#[cfg(test)]
+mod reviewed_tests {
+    use super::*;
+    use crate::engineering::ReviewedGeometry;
+    use crate::problem::Problem;
+    use serde_json::json;
+
+    #[test]
+    fn reviewed_cross_unit_move_recomputes_cost_and_revert() {
+        let problem: Problem = serde_json::from_value(json!({
+            "units": [
+                {"name":"U1","refs":["U1"],"fixed":false,"x":10,"y":10,"rects":[[-0.2,-0.2,0.2,0.2,1]]},
+                {"name":"C1","refs":["C1"],"fixed":false,"x":14,"y":10,"rects":[[-0.2,-0.2,0.2,0.2,1]]}
+            ], "nets":[], "board":{"outline":[[0,0],[30,0],[30,30],[0,30]]}
+        })).unwrap();
+        let contract = json!({"where":{"U1":0,"C1":1},"geometry":{"refs":{
+            "U1":{"pads":{"1":[{"center":[11,10]}]}},
+            "C1":{"pads":{"1":[{"center":[14,10]}]}}
+        }},"rules":[{"id":"pin","kind":"pin_distance","metric":"pad_center_euclidean",
+            "a":{"ref":"U1","pad":"1"},"b":{"ref":"C1","pad":"1"},"max_mm":3.0}]});
+        let params = Params::default();
+        let mut model = Model::new(&problem, &params).unwrap();
+        model.reviewed = Some(ReviewedGeometry::compile(&contract,
+            &[vec!["U1".into()],vec!["C1".into()]], &[(10.0,10.0),(14.0,10.0)]).unwrap());
+        let mut ev = Evaluator::new(&model, &params, &problem.initial_pose());
+        let initial = ev.cost();
+        ev.propose(&[(1,(15.0,10.0,0))]);
+        assert_eq!(ev.reviewed_miss(0), 1.0);
+        assert_eq!(ev.reviewed_miss(1), 1.0);
+        let fresh = Evaluator::new(&model, &params, &ev.pose());
+        assert!((ev.cost() - fresh.cost()).abs() < 1e-8);
+        ev.revert();
+        assert_eq!(ev.reviewed_miss(0), 0.0);
+        assert!((ev.cost() - initial).abs() < 1e-8);
+        ev.propose(&[(1,(15.0,10.0,0))]);
+        ev.commit();
+        let fresh = Evaluator::new(&model, &params, &ev.pose());
+        assert!((ev.cost() - fresh.cost()).abs() < 1e-8);
     }
 }

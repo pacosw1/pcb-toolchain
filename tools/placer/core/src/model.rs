@@ -82,6 +82,8 @@ fn largest_gap(u: &Unit, table: Option<&ClassTable>) -> f64 {
 
 pub struct Model<'p> {
     pub problem: &'p Problem,
+    /// Compiled reviewed rules; admission remains disabled until source verification is implemented.
+    pub(crate) reviewed: Option<crate::engineering::ReviewedGeometry>,
     pub params: Params,
     pub units: Vec<UnitShape>,
     pub class_table: Option<ClassTable>,
@@ -125,6 +127,7 @@ impl<'p> Model<'p> {
         let grid = Grid::new(outline_box, p.rudy_cell);
         Ok(Self {
             problem: pr,
+            reviewed: None,
             params: p.clone(),
             units: units.collect::<crate::Result<_>>()?,
             mask: Mask::new(&pr.board, p.mask_cell, p.gap)?,

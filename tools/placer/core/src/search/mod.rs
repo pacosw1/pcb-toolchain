@@ -150,6 +150,14 @@ fn finish(model: &Model, p: &Params, worker: usize, pose: &Pose) -> Candidate {
         Err(Timeout { illegal }) => (illegal, true),
     };
     let pr = model.problem;
+    // A later move can invalidate an earlier unit, and a fixed-only reviewed rule
+    // cannot be repaired by the legalizer. Recheck the final pose in either case.
+    let bad = if model.reviewed.is_some() {
+        (0..model.units.len()).filter(|&i| {
+            if model.units[i].fixed { ev.reviewed_miss(i) > crate::search::legalize::LEGAL }
+            else { ev.legal_penalty(i) > crate::search::legalize::LEGAL }
+        }).collect::<Vec<_>>()
+    } else { bad };
     let mains = if p.mains != 0.0 { crate::mains::faults(pr, &ev.pose(), &crate::mains::domain_nets(pr)) } else { Vec::new() };
     Candidate {
         worker,

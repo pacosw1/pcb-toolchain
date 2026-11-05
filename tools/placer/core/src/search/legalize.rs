@@ -7,7 +7,7 @@ use crate::numeric::hypot;
 use crate::params::Params;
 use std::time::{Duration, Instant};
 
-const LEGAL: f64 = 1e-9;
+pub(super) const LEGAL: f64 = 1e-9;
 
 /// Integer offsets on the square ring at distance k (k >= 1).
 pub fn ring(k: i64) -> impl Iterator<Item = (i64, i64)> {
