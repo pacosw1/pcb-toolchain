@@ -20,7 +20,8 @@ const FULL_TURN = Decimal.of('360');
 const POPULATION_READER = join(dirname(fileURLToPath(import.meta.url)), 'kicad-population.mjs');
 
 export interface Pin { name: string; type: string }
-export interface Blocker { code: string; reference?: string; detail: string }
+export interface NativeLocation { path: string; unit?: number }
+export interface Blocker { code: string; reference?: string; detail: string; path?: string; unit?: number; locations?: NativeLocation[] }
 
 export interface PartFacts extends NativeSymbol {
   pcb_path: string;
@@ -32,6 +33,8 @@ export interface PartFacts extends NativeSymbol {
   pad_numbers: string[];
   required: boolean;
   pose: Tree;
+  /** Native classification only; it grants no part, package, stock or engineering approval. */
+  mechanical_only?: { basis: string; pad_count: number; locations: NativeLocation[] };
 }
 
 export interface NativeBoard {
@@ -150,20 +153,24 @@ function resolveLibrary(libraries: Map<string, Tree>, identifier: string, visiti
 
 function symbolPins(definitions: Tree[], unit: number): Map<string, Pin> {
   const pins = new Map<string, Pin>();
+  let anyPins = false;
+  const declaredUnits = new Set<number>();
   const visit = (node: Tree, parentActive: boolean): void => {
     let active = parentActive;
     if (node[0] === 'symbol' && node.length > 1) {
       const match = /_(\d+)_(\d+)$/.exec(node[1] as string);
       if (match) {
         if (![0, 1].includes(Number(match[2]))) throw valueError('alternate symbol body requires explicit native support');
+        if (Number(match[1]) > 0) declaredUnits.add(Number(match[1]));
         active = [0, unit].includes(Number(match[1]));
       }
     }
-    if (node[0] === 'pin' && active) addPin(pins, node);
+    if (node[0] === 'pin') { anyPins = true; if (active) addPin(pins, node); }
     for (const child of node.slice(1)) if (isList(child) && child.length) visit(child, active);
   };
   for (const definition of definitions) visit(definition, true);
-  if (!pins.size) throw valueError('native symbol has no selected unit pins');
+  if (!pins.size && anyPins) throw valueError('native symbol has no selected unit pins');
+  if (!pins.size && unit !== 1 && !declaredUnits.has(unit)) throw valueError('pinless native symbol has no selected unit definition');
   return pins;
 }
 
@@ -219,23 +226,36 @@ function placedUnit(placed: Tree, ref: string, projectName: string, context: str
   return unit;
 }
 
-interface SymbolBinding { pins: Map<string, Pin>; assets: { unit: number; definitions: Tree[] }[]; uuids: string[] }
+interface SymbolBinding { pins: Map<string, Pin>; assets: { unit: number; definitions: Tree[] }[]; uuids: string[]; locations: NativeLocation[] }
+class NativePartError extends PyError {
+  readonly location: NativeLocation;
+  constructor(message: string, location: NativeLocation) { super('ValueError', message); this.location = location; }
+}
 
 function bindSymbol(native: Native, ref: string, projectName: string, context: string, primaryUuid: string): SymbolBinding {
-  const binding: SymbolBinding = { pins: new Map(), assets: [], uuids: [] };
-  for (const schematic of native.schematics.values()) {
+  const binding: SymbolBinding = { pins: new Map(), assets: [], uuids: [], locations: [] };
+  for (const [file, schematic] of native.schematics) {
     const libraries = new Map(children(schematic.libraries, 'symbol').map(form => [form[1] as string, form]));
     for (const placed of schematic.placed) {
-      const unit = placedUnit(placed, ref, projectName, context, primaryUuid);
-      if (unit === null) continue;
-      const definitions = resolveLibrary(libraries, (single(placed, 'lib_id') as Tree)[1] as string);
-      binding.uuids.push((single(placed, 'uuid')?.[1] ?? '') as string);
-      for (const [number, value] of symbolPins(definitions, unit)) {
-        const known = binding.pins.get(number);
-        if (known && (known.name !== value.name || known.type !== value.type)) throw valueError(`inconsistent multi-unit native pin: ${ref}`);
-        binding.pins.set(number, value);
+      let location: NativeLocation = { path: file };
+      try {
+        const unit = placedUnit(placed, ref, projectName, context, primaryUuid);
+        if (unit === null) continue;
+        location = { path: file, ...(Number.isFinite(unit) ? { unit } : {}) };
+        if (!Number.isInteger(unit) || unit < 1) throw valueError('selected native symbol unit must be a positive integer');
+        const definitions = resolveLibrary(libraries, (single(placed, 'lib_id') as Tree)[1] as string);
+        binding.uuids.push((single(placed, 'uuid')?.[1] ?? '') as string);
+        for (const [number, value] of symbolPins(definitions, unit)) {
+          const known = binding.pins.get(number);
+          if (known && (known.name !== value.name || known.type !== value.type)) throw valueError(`inconsistent multi-unit native pin: ${ref}`);
+          binding.pins.set(number, value);
+        }
+        binding.assets.push({ unit, definitions });
+        binding.locations.push(location);
+      } catch (error) {
+        if (error instanceof PyError && error.type === 'ValueError') throw new NativePartError(error.message, location);
+        throw error;
       }
-      binding.assets.push({ unit, definitions });
     }
   }
   return binding;
@@ -255,10 +275,22 @@ function partFacts(metadata: NativeSymbol, form: Tree, path: string, binding: Sy
   const { geometry, nets } = pads(form);
   const graphics = form.slice(2).filter(child => isList(child) && GRAPHICS.has(child[0] as string));
   const packageIdentity = { identifier: form[1], pads: geometry, graphics: normalized(graphics) };
+  let mechanical: PartFacts['mechanical_only'];
+  if (!binding.pins.size) {
+    const physicalPads = children(form, 'pad');
+    const npthOnly = physicalPads.length > 0 && physicalPads.every(pad => pad[2] === 'np_thru_hole' && !((single(pad, 'net') ?? []).at(-1) ?? ''));
+    const copperGraphic = graphics.some(node => {
+      if (!isList(node) || single(node, 'keepout')) return false;
+      return [...children(node, 'layer'), ...children(node, 'layers')].some(layer => layer.slice(1).some(value => typeof value === 'string' && value.endsWith('.Cu')));
+    });
+    if (!npthOnly || copperGraphic) throw valueError('pinless symbol is not paired with an unconnected NPTH-only footprint; review the symbol pins, selected unit and footprint');
+    mechanical = { basis: 'pinless_definition_and_unconnected_npth_only', pad_count: physicalPads.length, locations: binding.locations };
+  }
   return {
     ...metadata, pcb_path: path, symbol_sha256: digest(encoded(byEncoded(binding.assets))), pin_map: sortedEntries(binding.pins),
     footprint_sha256: digest(encoded(packageIdentity)), land_geometry_sha256: digest(encoded(geometry)), pad_net_map: nets,
     pad_numbers: [...nets.keys()], required: metadata.in_bom && !metadata.dnp, pose: (single(form, 'at') ?? ['at']).slice(1),
+    ...(mechanical ? { mechanical_only: mechanical } : {}),
   };
 }
 
@@ -309,12 +341,21 @@ export function readBoard(rootPath: string, board: unknown): NativeBoard {
     const context = slash < 0 ? '' : path.slice(0, slash);
     const primaryUuid = path.slice(slash + 1);
     const expected = context.startsWith(`/${rootUuid}`) ? context : `/${rootUuid}${context}`;
-    const binding = bindSymbol(native, ref, projectName, expected, primaryUuid);
-    if (!binding.assets.length || !binding.uuids.includes(primaryUuid)) {
-      blockers.push({ code: 'native_symbol_binding', reference: ref, detail: 'PCB path does not identify a schematic instance' });
-      continue;
+    let binding: SymbolBinding | undefined;
+    try {
+      binding = bindSymbol(native, ref, projectName, expected, primaryUuid);
+      if (!binding.assets.length || !binding.uuids.includes(primaryUuid)) {
+        blockers.push({ code: 'native_symbol_binding', reference: ref, detail: 'PCB path does not identify a schematic instance' });
+        continue;
+      }
+      facts.set(ref, partFacts(metadata, form, path, binding));
+    } catch (error) {
+      if (!(error instanceof PyError) || error.type !== 'ValueError') throw error;
+      const locations = error instanceof NativePartError ? [error.location] : binding?.locations ?? [];
+      const origin = locations[0];
+      blockers.push({ code: 'native_part_read', reference: ref, ...(origin ? { path: origin.path, ...(origin.unit === undefined ? {} : { unit: origin.unit }) } : {}), locations,
+        detail: `${ref}: ${locations.map(row => `${row.path} unit ${row.unit ?? 'unknown'}`).join(', ')}: ${error.message}` });
     }
-    facts.set(ref, partFacts(metadata, form, path, binding));
   }
   const inputs: Record<string, string> = { [configName]: digest(configBytes), ...native.sources };
   for (const [file, expected] of Object.entries(inputs)) {

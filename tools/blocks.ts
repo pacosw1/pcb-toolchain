@@ -6,6 +6,7 @@
 //   tools/blocks.ts find "USB" [--mpn MPN]   retrieve candidates without qualifying them
 //   tools/blocks.ts reuse ID                 inspect a fingerprinted reuse proposal
 //   tools/blocks.ts inventory BOARD          native block identities and binding failures
+//   tools/blocks.ts bind ID TARGET --instance PATH [--output NEW_FILE]   draft binding only
 //   tools/blocks.ts native ID --output DIR  fresh standalone ERC/DRC/parity evidence
 //   tools/blocks.ts qualify ID --binding FILE --evidence FILE --output FILE
 //   tools/blocks.ts status RECEIPT           recheck source-bound qualification
@@ -81,7 +82,7 @@ function qualificationResult(result: Dict): number {
   return failed ? 1 : 0;
 }
 
-function writeReceipt(output: string, result: Dict): void {
+function writeReceipt(output: string, result: unknown): void {
   mkdirSync(dirname(output), { recursive: true });
   writeFileSync(output, `${jsonDumps(result, 2)}\n`, { flag: 'wx' });
 }
@@ -156,8 +157,10 @@ function retrieved(command: string, argv: string[], { lib }: Layout): { result: 
     return { result, verified: Boolean(args.receipt) };
   }
   if (command === 'bind') {
-    const args = parseArgs({ prog, positionals: ['id', 'target'], options: [option('--instance', true)] }, argv);
-    return { result: bindInstance(reuse(lib, args.id).source_directory, args.target, args.instance), verified: false };
+    const args = parseArgs({ prog, positionals: ['id', 'target'], options: [option('--instance', true), option('--output')] }, argv);
+    const result = bindInstance(reuse(lib, args.id).source_directory, args.target, args.instance);
+    if (args.output) writeReceipt(args.output, result);
+    return { result, verified: false };
   }
   const args = parseArgs({ prog, positionals: ['id', 'target_manifest'], options: [option('--mapping')] }, argv);
   const mapping = args.mapping ? readPyJson<unknown>(args.mapping) : null;
