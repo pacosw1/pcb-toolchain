@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { dependencyFiles } from './design-contract-load.ts';
 import { designServices } from './design-services.ts';
 import { atomicJson, plainJson, readObject, sha256File } from './json-file.ts';
+import { iotroutePolicy } from './outcome-controls.ts';
 import { verifyManifest } from './part-review.ts';
 import { candidateLayoutCheck, designAdmission, type OperationManifest, placementCheck, routesCopper } from './pcb-candidate-screens.ts';
 import { parentCandidate } from './pcb-candidate.ts';
@@ -161,7 +162,10 @@ async function iotroute(run: Candidate): Promise<ToolOutcome> {
   const record = `${routed}.iotroute/result.json`;
   const report: Row = isFile(record) ? readObject<Row>(record) : { status: 'ERROR', cause: 'iotroute run wrote no result.json' };
   if (report.status === 'FAIL') report.cause = `iotroute DRC not clean: errors ${String(report.drc_errors)} unconnected ${String(report.unconnected)} parity ${String(report.parity)}`;
-  atomicJson(join(folder, 'operation/router-summary.json'), report);
+  const summary = join(folder, 'operation/router-summary.json');
+  atomicJson(summary, report);
+  const policy = iotroutePolicy(command, report, sha256File(summary), manifest.timeout_s, code);
+  if (policy) atomicJson(join(folder, 'operation/execution-policy.json'), policy);
   if (!code) {
     if (report.status !== 'PASS' || !report.board_file || !isFile(String(report.board_file))) throw new Error('iotroute run returned success without a PASS record and its board_file');
     copyFileSync(String(report.board_file), native);

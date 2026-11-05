@@ -261,7 +261,7 @@ function localPaths(value,map){
 
 function remoteFacts(plan,id,job){
   return{url:plan.url,job:id,state:job?.state??null,outcome:job?.result?.outcome??null,exit_code:job?.result?.exitCode??null,
-    attempts:job?.attempts?.length??null,image:job?.spec?.image??null,platform:'linux-x86_64'};
+    attempts:job?.attempts?.length??null,image:job?.spec?.image??null,platform:'linux-x86_64',cpus:ROUTE_CPUS,memory_bytes:ROUTE_MEM_GB*2**30};
 }
 
 function report(plan,record,line,code){

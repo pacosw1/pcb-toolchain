@@ -83,8 +83,12 @@ again. Observations expose both `placement_input_sha256` and
 excludes unlocked poses while retaining electrical identity and existing copper.
 Controlled Fastroute trials (the router was removed on 2026-11-05; old records stay
 readable) also need finalized, sealed effective-configuration and original executor
-receipts. A new `--router iotroute` run has no such receipts and stays an unknown control. A prepared or incomplete receipt remains an
-unknown control; its failed execution stays in the study inventory.
+receipts. A `--router iotroute` run writes `operation/execution-policy.json` from its run
+record, kept in `operation/router-summary.json`: name it as the trial's `execution_policy` and
+the run counts, a failed one as a verified attempt. A local run has no image, and its resources
+are those of the host. A run older than this, or a `--router route-json` run, has no such receipt
+and stays an unknown control. A prepared or incomplete receipt remains an unknown control; its
+failed execution stays in the study inventory.
 
 
 Existing `placer.placement_audit.archive` evidence is also readable through

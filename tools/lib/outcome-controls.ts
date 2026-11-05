@@ -1,4 +1,5 @@
 // Execution controls of a routing trial: what actually ran, against what its policy claims.
+import { availableParallelism, totalmem } from 'node:os';
 import { basename } from 'node:path';
 import { errorText } from './cli.ts';
 import { identity, sha256Text } from './fingerprint.ts';
@@ -16,6 +17,8 @@ const IMAGE = /^sha256:[0-9a-f]{64}$/;
 const PROJECT_EXTENSIONS = ['.kicad_pcb', '.kicad_pro', '.kicad_dru', '.kicad_sch'];
 const WORKERS = ['global_rayon_threads', 'autorouter_workers', 'optimizer_workers'];
 const THERMAL_CHECKBACK = '--native-thermal-checkback';
+/** A copy of the run's record among the sealed files of operation/: the record itself sits in a folder below it. */
+const IOTROUTE_RECORD = 'operation/router-summary.json';
 const POLICY_V2 = 'iot-lab.routing-policy.v2';
 const ROUTING_POLICIES = ['iot-lab.routing-policy.v1', POLICY_V2];
 
@@ -126,9 +129,10 @@ function nativeThermalControls(run: RunContext, policy: Dict, candidate: string 
   return null;
 }
 
-function checkPolicyShape(runtime: Dict, resources: Dict, effort: Dict): void {
+/** A local `iotroute run` has no image; its binary and sources name what ran. */
+function checkPolicyShape(runtime: Dict, resources: Dict, effort: Dict, router: unknown): void {
   const tools = runtime.tools;
-  if (!IMAGE.test((runtime.image_id as string) ?? '') || !isDict(tools) || !Object.keys(tools).length
+  if ((router !== 'iotroute' && !IMAGE.test((runtime.image_id as string) ?? '')) || !isDict(tools) || !Object.keys(tools).length
       || Object.values(tools).some(tool => !isShaText(asDict(tool).sha256 ?? '') || !asDict(tool).version)
       || ['cpus', 'memory_bytes', 'threads'].some(key => !finite(resources[key]) || (resources[key] as number) <= 0)
       || ['timeout_s', 'passes'].some(key => !finite(effort[key]) || (effort[key] as number) <= 0)
@@ -153,6 +157,33 @@ function checkSolverControls(run: RunContext, value: Dict): string | null {
   for (const [name, digest] of Object.entries(configurations)) {
     if (basename(name) !== name || !isShaText(digest)) throw new Error('solver effective configuration binding is malformed');
     evidence.file(joinPath(folder, 'operation/router', name), digest as string);
+  }
+  return null;
+}
+
+/** The receipt of a `--router iotroute` run, from its sealed record. Null when the record names no binary: nothing here can then say
+ *  what ran, and the run stays an unknown control. The core is one thread (tools/router/route-dispatch.mjs). */
+export function iotroutePolicy(command: string[], record: Dict, recordSha256: string, timeoutS: unknown, toolExit: number): Dict | null {
+  const binary = asDict(asDict(record.stages).binary), remote = asDict(record.remote);
+  if (!isShaText(binary.sha256) || !finite(record.iters)) return null;
+  return {
+    schema: POLICY, command,
+    runtime: { image: remote.image ?? 'local', tools: { iotroute: { sha256: binary.sha256, version: binary.sources_sha256 ?? binary.sha256 } } },
+    resources: { cpus: remote.cpus ?? availableParallelism(), memory_bytes: remote.memory_bytes ?? totalmem(), threads: 1 },
+    effort: { timeout_s: timeoutS, passes: record.iters, max_repairs: 0, optimizer: 'none', seed: record.seed ?? null },
+    controls: { status: 'observed', tool_exit: toolExit, record: { path: IOTROUTE_RECORD, sha256: recordSha256 } },
+  };
+}
+
+/** What a receipt claims against the sealed record of the run. Gives what is missing, if anything; a difference is an error. */
+function iotrouteControls(run: RunContext, value: Dict, placementSha256: string | null | undefined): string | null {
+  const binding = asDict(asDict(value.controls).record);
+  if (binding.path !== IOTROUTE_RECORD || !isShaText(binding.sha256)) return 'iotroute run record is not bound to its execution policy';
+  const record = run.evidence.read(joinPath(run.folder, IOTROUTE_RECORD), binding.sha256 as string);
+  const tool = asDict(asDict(asDict(value.runtime).tools).iotroute), binary = asDict(asDict(record.stages).binary), effort = asDict(value.effort);
+  if (binary.sha256 !== tool.sha256 || record.iters !== effort.passes || (record.seed ?? null) !== effort.seed
+      || (placementSha256 && record.input_sha256 !== placementSha256)) {
+    throw new Error('iotroute run record differs from its execution policy');
   }
   return null;
 }
@@ -186,7 +217,11 @@ export function executionPolicy(run: RunContext, gate: Dict, { candidate = null,
   if (!isRelativeTo(path, joinPath(folder, 'operation'))) throw new Error('execution policy must belong to sealed operation evidence');
   const value = evidence.read(path);
   if (value.schema !== POLICY) throw new Error('unsupported execution policy receipt');
-  checkPolicyShape(asDict(value.runtime), asDict(value.resources), asDict(value.effort));
+  checkPolicyShape(asDict(value.runtime), asDict(value.resources), asDict(value.effort), manifest.router);
+  if (manifest.router === 'iotroute') {
+    const missing = iotrouteControls(run, value, placementSha256);
+    if (missing) return [null, missing];
+  }
   if (manifest.router === 'fastroute') {
     const unverified = checkSolverControls(run, value);
     if (unverified) return [null, unverified];
@@ -447,6 +482,11 @@ function verifiedFingerprint(run: RunContext, terminal: Dict, operation: Dict, p
   };
   const configured = Object.entries(need<Dict>(controls, 'effective_configurations')).map(([name, digest]) => checkFailureStage(context, name, digest as string));
   checkNoExtraStages(stages, configured, binary);
+  return attemptIdentity(run, policyPath);
+}
+
+function attemptIdentity(run: RunContext, policyPath: string): string {
+  const { evidence, folder, manifest, source } = run;
   const exactPolicy = evidence.exact(policyPath), exactRun = evidence.exact(joinPath(folder, 'run.json'));
   const files = asDict(source.files);
   return identity({
@@ -456,15 +496,28 @@ function verifiedFingerprint(run: RunContext, terminal: Dict, operation: Dict, p
   });
 }
 
+/** A failed `iotroute run`: the receipt holds against its record, and the launch and its failure are the run's own. */
+function verifiedIotroute(run: RunContext, terminal: Dict, operation: Dict, placementSha256: string | null | undefined): string {
+  const { evidence, folder, trial, manifest } = run;
+  checkFailureEnd(terminal, operation, placementSha256);
+  const [, missing] = executionPolicy(run, {}, { placementSha256, verifyAcceptance: false });
+  if (missing) throw new Error(missing);
+  const policyPath = joinPath(folder, need<string>(trial, 'execution_policy')), policy = evidence.read(policyPath), controls = asDict(policy.controls);
+  checkFailureExit(controls, policy.command, operation, terminal);
+  checkFailureLaunch(evidence, folder, policy.command as string[], controls.tool_exit, manifest, terminal);
+  return attemptIdentity(run, policyPath);
+}
+
 /**
- * Verify an unsuccessful execution, without asserting native acceptance. Only finalized controlled Fastroute failures
- * qualify; prepared, prelaunch, cancelled and ambiguous runs stay unknown.
+ * Verify an unsuccessful execution, without asserting native acceptance. Only finalized controlled routing failures qualify;
+ * prepared, prelaunch, cancelled and ambiguous runs stay unknown.
  */
 export function verifiedFailedAttempt(run: RunContext, terminal: Dict, operation: Dict, placementSha256: string | null | undefined): Attempt {
   const result: Attempt = { schema: ATTEMPT, status: 'unknown', fingerprint: null, qualified: false };
-  if (terminal.status !== 'failed' || run.manifest.router !== 'fastroute') return { ...result, cause: 'not a finalized failed controlled routing attempt' };
+  const verify = { fastroute: verifiedFingerprint, iotroute: verifiedIotroute }[run.manifest.router as string];
+  if (terminal.status !== 'failed' || !verify) return { ...result, cause: 'not a finalized failed controlled routing attempt' };
   try {
-    const fingerprint = verifiedFingerprint(run, terminal, operation, placementSha256);
+    const fingerprint = verify(run, terminal, operation, placementSha256);
     return { ...result, status: 'verified', fingerprint, cause: 'verified execution terminated unsuccessfully; native acceptance remains unproved' };
   } catch (error) {
     return { ...result, cause: errorText(error) };

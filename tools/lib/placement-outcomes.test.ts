@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
-import { identityCommand, POLICY, verifiedFailedAttempt, type RunContext, type Trial } from './outcome-controls.ts';
+import { identityCommand, iotroutePolicy, POLICY, verifiedFailedAttempt, type RunContext, type Trial } from './outcome-controls.ts';
 import { Evidence, sealedRun } from './outcome-evidence.ts';
 import { retainedCopper, routedQuality } from './outcome-quality.ts';
 import { sha256File } from './json-file.ts';
@@ -397,6 +397,50 @@ function failedExecution(): [string, Row, () => Row] {
   seal();
   return [folder, trial, seal];
 }
+
+/** A `--router iotroute` run with the receipt the candidate operation writes from its record. */
+function iotrouteRun(status: string, exit: number): [string, Row, () => void] {
+  const [folder, trial] = runFixture('development', 'DEV', 'baseline', 1, status);
+  const command = ['node', 'tools/router/route-dispatch.mjs', '--', 'iotroute', 'run', 'DEV', 'o.kicad_pcb'];
+  const record = {
+    status: exit ? 'FAIL' : 'PASS', iters: 40, seed: 7, input_sha256: trial.placement_input.sha256,
+    stages: { binary: { sha256: 'b'.repeat(64), sources_sha256: 'c'.repeat(64) } }, remote: { image: 'job-image', cpus: 2, memory_bytes: 4294967296 },
+  };
+  const summary = join(folder, 'operation/router-summary.json');
+  write(summary, record);
+  write(join(folder, trial.execution_policy), iotroutePolicy(command, record, sha256File(summary), 120, exit));
+  update(join(folder, 'run.json'), run => Object.assign(run, { router: 'iotroute', timeout_s: 120 }));
+  if (exit) update(join(folder, 'operation/result.json'), result => Object.assign(result, { tool_exit: exit, exit_code: 1, status: 'failed' }));
+  const start = Date.parse('2026-10-16T00:00:00Z') / 1000;
+  writeFileSync(join(folder, 'operation/events.jsonl'), `${JSON.stringify({ type: 'tool.start', span_id: 'route', command, started_unix_s: start })}\n${
+    JSON.stringify({ type: 'tool.exit', span_id: 'route', code: exit, status: exit ? 'failed' : 'passed', ended_unix_s: start + 1 })}\n`);
+  const seal = () => {
+    reseal(folder, status);
+    if (exit) update(join(folder, 'result.json'), terminal => Object.assign(terminal, { source_unchanged: true, exit_code: 1 }));
+    trial.sha256 = sha256File(join(folder, 'result.json'));
+  };
+  seal();
+  return [folder, trial, seal];
+}
+
+test('an iotroute run counts: a passed one by its policy, a failed one as a verified attempt', () => {
+  iotrouteRun('passed', 0);
+  assert.match(evaluate().observations[0].policy_fingerprint, /^[0-9a-f]{64}$/);
+  study.trials = [];
+  iotrouteRun('failed', 1);
+  const row = evaluate().observations[0];
+  assert.equal(row.execution_attempt.status, 'verified', row.execution_attempt.cause);
+  assert.equal(row.full_gate_success, false);
+});
+
+test('an iotroute receipt that differs from the run record is not a control', () => {
+  const [folder, trial, seal] = iotrouteRun('failed', 1);
+  update(join(folder, trial.execution_policy), policy => { policy.effort.passes = 41; });
+  seal();
+  const row = evaluate().observations[0];
+  assert.equal(row.evidence_valid, false);
+  assert.match(row.cause, /differs from its execution policy/);
+});
 
 test('a verified failed attempt separates execution from native acceptance', () => {
   failedExecution();
