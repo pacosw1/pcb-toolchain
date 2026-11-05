@@ -18,7 +18,7 @@ const USAGE = `usage:
   pcb-job cancel <id>
   pcb-job results <id> [<dir>]
 options: --in FILE (repeatable) --results DIR --cpus N --mem GB --disk GB --timeout S --queue-wait S --image I
-         --retries N --retry-exit CODE (repeatable) --name NAME
+         --retries N --retry-exit CODE (repeatable) --name NAME --snapshot board
 env: JOBD_URL, JOBD_TOKEN or JOBD_TOKEN_FILE, IOT_LAB (project root), PCB_TOOLCHAIN_ROOT`;
 
 /** The client gives up when the daemon stays unreachable this long. The job itself goes on. A default to tune. */
@@ -198,8 +198,29 @@ function copyDriverEvidence(toolchain: string, project: string, stage: string): 
   }
 }
 
+/** Reuse the candidate workflow's declared input closure when the job performs full verification. */
+function copySnapshot(toolchain: string, project: string, board: string, stage: string): void {
+  const provider=path.join(toolchain,'tools/lib/pcb-sources.ts');
+  const code="import {pathToFileURL} from 'node:url'; const [module,root,board]=process.argv.slice(1); const {sourceFiles}=await import(pathToFileURL(module).href); console.log(JSON.stringify(sourceFiles(root,board)));";
+  const result=spawnSync(process.execPath,['--experimental-strip-types','--no-warnings','--input-type=module','-e',code,provider,project,path.basename(board)],
+    {encoding:'utf8',timeout:30_000,maxBuffer:16*1024*1024,env:{...process.env,IOT_LAB:project}});
+  if(result.status!==0)throw Error(`board snapshot failed: ${result.stderr?.trim()||result.error?.message}`);
+  const files:unknown=JSON.parse(result.stdout);
+  if(!Array.isArray(files)||files.some(f=>typeof f!=='string'))throw Error('invalid board snapshot file list');
+  for(const file of files as string[]){
+    const rel=path.relative(project,file);
+    if(!rel||rel.startsWith('..')||path.isAbsolute(rel))throw Error(`snapshot dependency outside project: ${file}`);
+    const real=path.relative(fs.realpathSync(project),fs.realpathSync(file));
+    if(real.startsWith('..')||path.isAbsolute(real))throw Error(`snapshot symlink escapes project: ${rel}`);
+    // The selected toolchain owns its tools; retain additional project semantic hooks.
+    if(rel.startsWith('tools'+path.sep)&&fs.existsSync(path.join(stage,rel)))continue;
+    fs.mkdirSync(path.dirname(path.join(stage,rel)),{recursive:true});
+    fs.copyFileSync(file,path.join(stage,rel));
+  }
+}
+
 /** The job folder of tools/remote.sh, at the same relative paths, plus the driver evidence. The caller removes it. */
-export function stageJob(toolchain: string, project: string, board: string, inputs: string[]): string {
+export function stageJob(toolchain: string, project: string, board: string, inputs: string[], snapshot=false): string {
   const rel = path.isAbsolute(board) ? path.relative(project, board) : board.replace(/\/$/, '');
   if (rel.startsWith('..') || !fs.statSync(path.join(project, rel), { throwIfNoEntry: false })?.isDirectory()) {
     die(`no board dir ${board} under ${project} (set IOT_LAB to the project root)`);
@@ -210,10 +231,11 @@ export function stageJob(toolchain: string, project: string, board: string, inpu
       recursive: true,
       preserveTimestamps: true,
       verbatimSymlinks: true,
-      filter: (f) => path.basename(f) !== '__pycache__',
+      filter: (f) => !path.relative(path.join(toolchain,'tools'),f).split(path.sep).some(p=>['__pycache__','node_modules','target','.git','.gate'].includes(p)),
     });
     copyDesign(path.join(project, rel), path.join(stage, rel));
     copyDriverEvidence(toolchain, project, stage);
+    if(snapshot)copySnapshot(toolchain,project,rel,stage);
     fs.mkdirSync(path.join(stage, 'in'));
     for (const f of inputs) fs.cpSync(f, path.join(stage, 'in', path.basename(f)), { preserveTimestamps: true });
     return stage;
@@ -325,6 +347,7 @@ interface Parsed {
   results: string;
   spec: Record<string, unknown>;
   fit: boolean;
+  snapshot: boolean;
 }
 
 function parseSubmit(argv: string[]): Parsed {
@@ -332,7 +355,7 @@ function parseSubmit(argv: string[]): Parsed {
   if (split < 1 || split === argv.length - 1) die(USAGE);
   const command = argv.slice(split + 1);
   const opts = argv.slice(1, split);
-  const p: Parsed = { board: argv[0], inputs: [], results: '', spec: { command }, fit: false };
+  const p: Parsed = { board: argv[0], inputs: [], results: '', spec: { command }, fit: false, snapshot:false };
   const retryExitCodes: number[] = [];
   for (let i = 0; i < opts.length; i += 2) {
     const [k, v] = [opts[i], opts[i + 1]];
@@ -349,6 +372,7 @@ function parseSubmit(argv: string[]): Parsed {
     else if (k === '--image') p.spec.image = v;
     else if (k === '--name') p.spec.name = v;
     else if (k === '--fit') p.fit = v === 'budget' || die('--fit takes the value budget');
+    else if (k === '--snapshot') p.snapshot = v === 'board' || die('--snapshot takes the value board');
     else die(`unknown option ${k}\n${USAGE}`);
   }
   if (retryExitCodes.length) p.spec.retryExitCodes = retryExitCodes;
@@ -374,7 +398,7 @@ async function submit(p: Parsed): Promise<JobRecord> {
   const toolchain = process.env.PCB_TOOLCHAIN_ROOT || path.resolve(here, '../../..');
   const project = process.env.IOT_LAB || toolchain;
   if (!p.spec.name) p.spec.name = path.basename(p.board);
-  const stage = stageJob(toolchain, project, p.board, p.inputs);
+  const stage = stageJob(toolchain, project, p.board, p.inputs,p.snapshot);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pcb-job-tar-'));
   try {
     const cached = await sendCached(p.spec, stage);

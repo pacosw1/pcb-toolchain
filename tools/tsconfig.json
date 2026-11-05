@@ -11,5 +11,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["*.ts", "lib/*.ts", "lib/*.d.mts", "placer/*.ts"]
+  "include": ["*.ts", "lib/*.ts", "lib/*.d.mts", "placer/*.ts", "router/*.ts", "router/*.d.mts"]
 }

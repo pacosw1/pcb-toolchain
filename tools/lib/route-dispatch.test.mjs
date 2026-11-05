@@ -91,6 +91,51 @@ function dispatch(p,env={},{args=[],timeout='60',wait=true}={}){
 const calls=p=>existsSync(join(p.root,'client.log'))?readFileSync(join(p.root,'client.log'),'utf8').trim().split('\n').map(l=>JSON.parse(l)):[];
 const ranLocally=p=>existsSync(join(p.root,'local.log'));
 
+function sprintRuntime(p){
+  const file=join(p.tc,'bin/node-linux-x86_64');exe(file,'pinned Linux Node runtime');
+  put(file+'.json',JSON.stringify({version:'v22.23.2',sha256:sha('pinned Linux Node runtime')}));
+}
+
+test('a sprint portfolio packs once with one aggregate budget and no automatic retries',async t=>{
+  const p=project(t,{client:{exit:0,job:jobOf('passed','passed',0),out:files(record('PASS')),stdout:'PASS 0 0 0 1 1 3\n'}});
+  sprintRuntime(p);
+  const r=await dispatch(p,{JOBD_URL:await daemon(t)},{args:['--sprints',JSON.stringify({seeds:[1,2],parallelism:2,deadline_s:60,mem_gb:4})]});
+  assert.equal(r.status,0,r.stderr);
+  const runs=calls(p).filter(c=>c.a[0]==='run');assert.equal(runs.length,1);
+  const a=runs[0].a, value=k=>a[a.indexOf(k)+1];
+  assert.equal(value('--cpus'),'2');assert.equal(value('--mem'),'4');assert.equal(value('--timeout'),'60');assert.equal(value('--retries'),'0');
+  assert.equal(value('--image'),'iot-lab-route:10.0-nightly-4fe1ca2060');
+  assert.equal(value('--snapshot'),'board');
+  assert.ok(a.includes('tools/router/sprint-job.ts'));assert.equal(a.filter(v=>v==='--in').length,3);
+  assert.ok(a.includes('in/node-linux-x86_64'));assert.ok(!ranLocally(p));
+});
+
+test('a sprint missing its pinned runtime never starts a Mac job or fallback',async t=>{
+  const p=project(t);
+  const r=await dispatch(p,{PCB_HOST_PLATFORM:'darwin',JOBD_URL:await daemon(t)},{args:['--sprints','{"deadline_s":60}']});
+  assert.equal(r.status,2);assert.match(r.stderr,/no pinned Linux Node/);assert.equal(calls(p).length,0);assert.ok(!ranLocally(p));
+});
+
+test('sprint deadline cannot exceed the parent route timeout',async t=>{
+  const p=project(t);sprintRuntime(p);
+  const r=await dispatch(p,{JOBD_URL:await daemon(t)},{args:['--sprints','{"deadline_s":120}'],timeout:'60'});
+  assert.equal(r.status,2);assert.match(r.stderr,/exceeds the parent/);assert.equal(calls(p).length,0);
+});
+
+test('the parent sprint deadline is checked before any explicit local fallback',async t=>{
+  const p=project(t);
+  const r=await dispatch(p,{REMOTE_NO_DAEMON:'1'},{args:['--sprints','{"deadline_s":120}'],timeout:'60'});
+  assert.equal(r.status,2);assert.match(r.stderr,/exceeds the parent/);assert.equal(calls(p).length,0);assert.ok(!ranLocally(p));
+});
+
+test('a timed-out sprint returns saved states without treating them as a board',async t=>{
+  const p=project(t,{client:{exit:1,job:jobOf('failed','timeout',137),out:{'DEMO.kicad_pcb.iotroute/portfolio/v00/state.json':'saved state'}}});
+  sprintRuntime(p);
+  const r=await dispatch(p,{JOBD_URL:await daemon(t)},{args:['--sprints','{"deadline_s":60}']});
+  assert.equal(r.status,2);assert.equal(r.record().status,'ERROR');assert.ok(!existsSync(r.out));
+  assert.equal(readFileSync(r.out+'.iotroute/portfolio/v00/state.json','utf8'),'saved state');assert.ok(!ranLocally(p));
+});
+
 test('a daemon that answers gets the job: workspace tools, Linux router, kicad-happy, relative paths',async t=>{
   const p=project(t,{client:{exit:0,job:jobOf('passed','passed',0),out:files(record('PASS')),stdout:'PASS 0 0 0 1 1 3\n'}});
   const r=await dispatch(p,{JOBD_URL:await daemon(t),IOTROUTE_CONGESTION:'1'});

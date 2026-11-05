@@ -442,6 +442,20 @@ test('an iotroute receipt that differs from the run record is not a control', ()
   assert.match(row.cause, /differs from its execution policy/);
 });
 
+test('sprint effort is fingerprinted and cannot hide different parallelism',()=>{
+  const [folder,trial,seal]=iotrouteRun('passed',0);
+  const before=evaluate().observations[0].policy_fingerprint;
+  const summary=join(folder,'operation/router-summary.json');
+  const record=JSON.parse(readFileSync(summary,'utf8')) as Row;
+  const previous=JSON.parse(readFileSync(join(folder,trial.execution_policy),'utf8')) as Row;
+  record.portfolio={policy:{seeds:[0,1],parallelism:2,slice_passes:2,deadline_s:120,verify_reserve_s:30,mem_gb:4,via_costs:[3]}};
+  write(summary,record);
+  write(join(folder,trial.execution_policy),iotroutePolicy(previous.command,record,sha256File(summary),120,0));seal();
+  assert.notEqual(evaluate().observations[0].policy_fingerprint,before);
+  update(join(folder,trial.execution_policy),policy=>{policy.effort.sprints.parallelism=3;});seal();
+  const row=evaluate().observations[0];assert.equal(row.evidence_valid,false);assert.match(row.cause,/sprint controls differ/);
+});
+
 test('a verified failed attempt separates execution from native acceptance', () => {
   failedExecution();
   const row = evaluate().observations[0];

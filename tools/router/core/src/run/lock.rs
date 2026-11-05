@@ -16,7 +16,7 @@ use std::process::Command;
 const PAD_TOLERANCE: f64 = 0.001;
 const TRACK_HEADS: [&str; 3] = ["segment", "arc", "via"];
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LockStage {
     pub removed: usize,
     pub kept: usize,

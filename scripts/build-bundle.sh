@@ -1,7 +1,7 @@
 #!/bin/sh
 # Build a pcb-toolchain release bundle: dist/pcb-toolchain-VERSION.tar.gz + SHA256SUMS. Never publishes.
 #   scripts/build-bundle.sh VERSION [--linux]
-# --linux also builds iotroute, iotplace and route-coverage for linux-x86_64 on BUILD_LINUX_HOST (user@host with Docker).
+# --linux builds Linux binaries and extracts the pinned Node runtime for packed sprint jobs on BUILD_LINUX_HOST.
 set -eu
 here=$(cd "$(dirname "$0")/.." && pwd -P)
 version=${1:?usage: build-bundle.sh VERSION [--linux]}
@@ -50,6 +50,18 @@ if [ "$linux" = --linux ]; then
   (cd "$here" && git archive --format=tar HEAD tools/route-coverage tools/router/core) | ssh "$linux_host" "tar -x -C '$rsrc'"
   ssh "$linux_host" "docker run --rm --cpus=2 --memory=4g -e RUSTFLAGS='--remap-path-prefix=/src=.' -v '$rsrc:/src' -w /src/tools/route-coverage $linux_builder cargo build --release --locked --quiet"
   scp -q "$linux_host:$rsrc/tools/route-coverage/target/release/route-coverage" "$out/bin/route-coverage-linux-x86_64"
+  clean_linux
+  echo "START: pinned Node runtime for packed sprint jobs"
+  rsrc=$(ssh "$linux_host" 'mktemp -d /tmp/sprint-node.XXXXXX')
+  ssh "$linux_host" "docker run --rm --user 0:0 --network none --cpus=1 --memory=256m -v '$rsrc:/out' --entrypoint sh iot-lab-ci:native-kicad10.0.6-node22-v2 -c 'test \"\$(/usr/local/bin/node --version)\" = v22.23.2 && cp /usr/local/bin/node /out/node-linux-x86_64'"
+  scp -q "$linux_host:$rsrc/node-linux-x86_64" "$out/bin/node-linux-x86_64"
+  chmod 755 "$out/bin/node-linux-x86_64"
+  NODE_RUNTIME_BIN="$out/bin/node-linux-x86_64" node --input-type=module - <<'NODE'
+import fs from 'node:fs';
+import {createHash} from 'node:crypto';
+const file=process.env.NODE_RUNTIME_BIN;
+fs.writeFileSync(file+'.json',JSON.stringify({version:'v22.23.2',sha256:createHash('sha256').update(fs.readFileSync(file)).digest('hex'),source_image:'iot-lab-ci:native-kicad10.0.6-node22-v2'})+'\n');
+NODE
   clean_linux
   trap - EXIT
 fi

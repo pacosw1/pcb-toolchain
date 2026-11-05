@@ -33,8 +33,11 @@ import os from 'node:os';
 import path from 'node:path';
 import {pinnedRepos} from '../lib/env.mjs';
 import {happyTar} from '../lib/happy-tar.mjs';
+import {sprintPolicy} from './sprint-policy.mjs';
 
 const BIN='iotroute-linux-x86_64';
+const NODE_BIN='node-linux-x86_64';
+const SPRINT_IMAGE='iot-lab-route:10.0-nightly-4fe1ca2060';
 const HAPPY='kicad-happy';
 const RECORD_SCHEMA='iot-lab.iotroute-run.v1';
 const DEFAULT_TIMEOUT_S=600;   // tools/pcb's --timeout default
@@ -48,7 +51,7 @@ const QUEUE_CLOCK_MS=1000;     // how far the credit may lag; the supervisor che
 // process; refill and DRC on Linux at 2 CPUs and 4 GB peak at 0.45 GB. A live core on H7-CORE held 0.6 GB.
 const ROUTE_CPUS=2;
 const ROUTE_MEM_GB=4;
-const VALUE_OPTIONS=new Set(['--iters','--max-time','--seed','--stall-passes','--layer','--net']);
+const VALUE_OPTIONS=new Set(['--iters','--max-time','--seed','--stall-passes','--layer','--net','--sprints']);
 const FLAGS=new Set(['--congestion','--return-exempt','--checkpoint']);
 const FILE_OPTIONS=new Set(['--pcb','--lock-from']);
 // The image has no kicad-happy.
@@ -57,6 +60,12 @@ mkdir .happy
 tar -xzf in/${HAPPY}.tar.gz -C .happy
 export KICAD_HAPPY_DIR=$PWD/.happy KICAD_CLI=kicad-cli
 exec "$@"`;
+const SPRINT_SCRIPT=JOB_SCRIPT.replace('exec "$@"',`mkdir -p bin
+ln -s ../in/${NODE_BIN} bin/node
+ln -s ../in/${BIN} bin/${BIN}
+export PATH="$PWD/bin:$PATH" PCB_TOOLCHAIN_ROOT="$PWD" IOTROUTE_BIN="$PWD/in/${BIN}" PCB_JOBS_LOCAL=1
+export NODE_OPTIONS="--experimental-strip-types --no-warnings"
+exec "$@"`);
 
 const say=text=>console.error(`route: ${text}`);
 const sha=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
@@ -85,7 +94,10 @@ function localBinary(){
 function runLocal(command){
   return new Promise(resolve=>{
     const exe=command[0]==='iotroute'?localBinary():command[0];
-    const child=spawn(exe,command.slice(1),{stdio:'inherit'});
+    const sprint=command.includes('--sprints');
+    const child=sprint
+      ?spawn(process.execPath,['--experimental-strip-types','--no-warnings',new URL('./sprint-job.ts',import.meta.url).pathname,exe,...command.slice(2)],{stdio:'inherit'})
+      :spawn(exe,command.slice(1),{stdio:'inherit'});
     child.on('error',e=>{say(`cannot start ${exe}: ${e.message}`);resolve(2);});
     child.on('close',(code,signal)=>resolve(code??128+os.constants.signals[signal]));
   });
@@ -128,7 +140,23 @@ function jobArguments(argv,cwd){
   const out=path.resolve(outArg);
   if(fs.existsSync(out)||fs.existsSync(out+'.iotroute'))return'OUT or its work folder exists';
   if(process.env.IOTROUTE_CONGESTION==='1'&&!args.includes('--congestion'))args.push('--congestion');
-  return{board:boardDir,out,pcb:path.resolve(files['--pcb']),json,args};
+  let sprints;
+  const si=args.indexOf('--sprints');
+  if(si>=0){
+    if(args.lastIndexOf('--sprints')!==si)return'duplicate --sprints';
+    try{sprints=sprintPolicy(JSON.parse(args[si+1]));}catch(e){return`invalid sprint policy: ${e.message}`;}
+    if(args.some(a=>['--max-time','--seed','--stall-passes'].includes(a)))return'sprints own their deadline, seeds and stopping policy';
+    args[si+1]=JSON.stringify(sprints);
+  }
+  return{board:boardDir,out,pcb:path.resolve(files['--pcb']),json,args,sprints};
+}
+
+function nodeProblem(toolchain){
+  const bin=path.join(toolchain,'bin',NODE_BIN),meta=bin+'.json';
+  if(!isFile(bin)||!isFile(meta))return'no pinned Linux Node runtime for sprint jobs; build the bundle with --linux';
+  try{const r=JSON.parse(fs.readFileSync(meta,'utf8'));if(r.version!=='v22.23.2'||r.sha256!==sha(bin))return'sprint Node runtime version/hash differs from its bundle record';}
+  catch{return'invalid sprint Node runtime record';}
+  return null;
 }
 
 function coreSources(root){
@@ -181,10 +209,10 @@ async function daemonPlan(command){
   const job=jobArguments(command.slice(2),cwd);
   if(typeof job==='string')return job;
   const bin=path.join(toolchain,'bin',BIN),repo=pinnedRepos.find(r=>r.name===HAPPY);
-  const problem=binaryProblem(toolchain,cwd,bin)??happyProblem(repo);
+  const problem=binaryProblem(toolchain,cwd,bin)??happyProblem(repo)??(job.sprints?nodeProblem(toolchain):null);
   if(problem)return problem;
   if(!await daemonAnswers(url,tokenFile))return`the daemon at ${url} does not answer`;
-  return{...job,url,tokenFile,cwd,client,bin,happy:repo.dir,happyCommit:repo.commit,started:Date.now()};
+  return{...job,url,tokenFile,cwd,client,bin,nodeBin:path.join(toolchain,'bin',NODE_BIN),happy:repo.dir,happyCommit:repo.commit,started:Date.now()};
 }
 
 function clientProcess(plan,args,stdio){
@@ -197,7 +225,9 @@ function stageInputs(plan,stage){
   const bin=path.join(stage,BIN),tar=path.join(stage,`${HAPPY}.tar.gz`);
   fs.copyFileSync(plan.bin,bin);
   fs.copyFileSync(happyTar(plan.happy,plan.happyCommit),tar);
-  return[bin,tar];
+  const inputs=[bin,tar];
+  if(plan.sprints){const node=path.join(stage,NODE_BIN);fs.copyFileSync(plan.nodeBin,node);inputs.push(node);}
+  return inputs;
 }
 
 /**
@@ -221,10 +251,13 @@ function queueClock(file){
 /** `client run`: streams the job to stderr, fills `results`. -> {code, id, refused500, stdout}. */
 function submitAndWatch(plan,inputs,timeoutS,results){
   const name=path.basename(plan.out,'.kicad_pcb');
-  const cmd=['bash','-c',JOB_SCRIPT,'_',`in/${BIN}`,'run',plan.board,`out/route/${name}.kicad_pcb`,...plan.args];
+  const cmd=plan.sprints
+    ?['bash','-c',SPRINT_SCRIPT,'_',`in/${NODE_BIN}`,'--experimental-strip-types','--no-warnings','tools/router/sprint-job.ts',`in/${BIN}`,plan.board,`out/route/${name}.kicad_pcb`,...plan.args]
+    :['bash','-c',JOB_SCRIPT,'_',`in/${BIN}`,'run',plan.board,`out/route/${name}.kicad_pcb`,...plan.args];
   const queueWait=process.env.PCB_QUEUE_WAIT_S||String(QUEUE_WAIT_S);
-  const args=['run',plan.board,...inputs.flatMap(f=>['--in',f]),'--timeout',String(timeoutS),'--cpus',String(ROUTE_CPUS),'--mem',String(ROUTE_MEM_GB),'--queue-wait',queueWait,'--results',results,'--name',`route-${name}`];
-  if(process.env.REMOTE_IMAGE)args.push('--image',process.env.REMOTE_IMAGE);
+  const args=['run',plan.board,...inputs.flatMap(f=>['--in',f]),'--timeout',String(plan.sprints?.deadline_s??timeoutS),'--cpus',String(plan.sprints?.parallelism??ROUTE_CPUS),'--mem',String(plan.sprints?.mem_gb??ROUTE_MEM_GB),'--queue-wait',queueWait,'--results',results,'--name',`route-${name}`];
+  if(plan.sprints)args.push('--retries','0','--snapshot','board'); // One budget, and all declared gate/semantic inputs.
+  if(process.env.REMOTE_IMAGE||plan.sprints)args.push('--image',process.env.REMOTE_IMAGE||SPRINT_IMAGE);
   const [exe,argv,opts]=clientProcess(plan,[...args,'--',...cmd],['ignore','pipe','pipe']);
   return new Promise(resolve=>{
     const child=spawn(exe,argv,opts),seen={id:null,stdout:'',stderr:''},clock=queueClock(process.env.PCB_QUEUE_CLOCK);
@@ -261,7 +294,7 @@ function localPaths(value,map){
 
 function remoteFacts(plan,id,job){
   return{url:plan.url,job:id,state:job?.state??null,outcome:job?.result?.outcome??null,exit_code:job?.result?.exitCode??null,
-    attempts:job?.attempts?.length??null,image:job?.spec?.image??null,platform:'linux-x86_64',cpus:ROUTE_CPUS,memory_bytes:ROUTE_MEM_GB*2**30};
+    attempts:job?.attempts?.length??null,image:job?.spec?.image??null,platform:'linux-x86_64',cpus:plan.sprints?.parallelism??ROUTE_CPUS,memory_bytes:(plan.sprints?.mem_gb??ROUTE_MEM_GB)*2**30};
 }
 
 function report(plan,record,line,code){
@@ -321,7 +354,12 @@ async function runOnDaemon(plan,timeoutS){
       say(`job ${id} never started: ${job.result?.detail}`);return null;
     }
     const verdict=job.state==='passed'||(job.result?.outcome==='command'&&[1,2].includes(job.result.exitCode));
-    if(!verdict)return noVerdict(plan,`job ${id} ${job.state}: ${job.result?.detail??'no result yet'}, not rerun`,id,job);
+    if(!verdict){
+      // Keep interrupted portfolio states even when there is no board verdict. Never adopt their copper.
+      const checkpoints=path.join(results,'out/route',path.basename(plan.out)+'.iotroute','portfolio');
+      if(plan.sprints&&isDir(checkpoints))fs.cpSync(checkpoints,path.join(plan.out+'.iotroute','portfolio'),{recursive:true});
+      return noVerdict(plan,`job ${id} ${job.state}: ${job.result?.detail??'no result yet'}, not rerun`,id,job);
+    }
     return adopt(plan,results,id,job,stdout);
   }finally{
     fs.rmSync(stage,{recursive:true,force:true});
@@ -334,6 +372,8 @@ async function main(argv){
   const options=argv.slice(0,split),command=argv.slice(split+1);
   const timeoutS=options[0]==='--timeout'?Math.ceil(Number(options[1])):DEFAULT_TIMEOUT_S;
   if(split<0||command.length<3||!(timeoutS>0)){say('usage: route-dispatch.mjs [--timeout S] -- iotroute run BOARD OUT ...');return 2;}
+  const sprintAt=command.indexOf('--sprints');
+  if(sprintAt>=0&&sprintPolicy(JSON.parse(command[sprintAt+1])).deadline_s>timeoutS){say('sprint deadline_s exceeds the parent route timeout');return 2;}
   const plan=await daemonPlan(command);
   if(typeof plan==='string')return localOrStop(command,plan);
   const code=await runOnDaemon(plan,timeoutS);

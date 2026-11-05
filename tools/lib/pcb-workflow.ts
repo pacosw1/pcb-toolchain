@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { lstatSync, readdirSync } from 'node:fs';
 import { dirname, extname } from 'node:path';
 import { iotrouteBin } from './iotroute-bin.ts';
+import { sprintPolicy } from '../router/sprint-policy.mjs';
 import { sha256File } from './json-file.ts';
 import { get, item, osError, PyError, sorted, truthy } from './py-compat.mjs';
 import { caught, isFile, isInside, isRelativeTo, joinPath, jsonOf, pathExists, relativeTo, resolvePath, textOf, withSuffix } from './py-path.ts';
@@ -233,8 +234,16 @@ export function operationCommand(root: string, board: string, operation: string,
 
 /** The run arguments of a route policy, checked by iotroute route-policy. A bad spec fails here, before any run. */
 export function routePolicyArgs(spec: unknown, candidate: string): string[] {
-  const done = spawnSync(iotrouteBin(), ['route-policy', candidate], { input: JSON.stringify(spec ?? null), encoding: 'utf8' });
+  let nativeSpec=spec;
+  let sprints: ReturnType<typeof sprintPolicy> | undefined;
+  if(spec&&typeof spec==='object'&&!Array.isArray(spec)&&'sprints' in spec){
+    const {sprints:value,...rest}=spec as Record<string,unknown>;
+    sprints=sprintPolicy(value);
+    if(rest.max_time_s!==undefined&&rest.max_time_s!==null)throw new PyError('ValueError','sprints use one deadline_s, not per-core max_time_s');
+    nativeSpec=rest;
+  }
+  const done = spawnSync(iotrouteBin(), ['route-policy', candidate], { input: JSON.stringify(nativeSpec ?? null), encoding: 'utf8' });
   if (done.error) throw done.error;
   if (done.status) throw new PyError('ValueError', done.stderr.trim());
-  return done.stdout.split(/\s+/).filter(Boolean);
+  return [...done.stdout.split(/\r?\n/).filter(Boolean),...(sprints?['--sprints',JSON.stringify(sprints)]:[])];
 }

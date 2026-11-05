@@ -165,12 +165,15 @@ function checkSolverControls(run: RunContext, value: Dict): string | null {
  *  what ran, and the run stays an unknown control. The core is one thread (tools/router/route-dispatch.mjs). */
 export function iotroutePolicy(command: string[], record: Dict, recordSha256: string, timeoutS: unknown, toolExit: number): Dict | null {
   const binary = asDict(asDict(record.stages).binary), remote = asDict(record.remote);
+  const sprints=asDict(record.portfolio).policy;
   if (!isShaText(binary.sha256) || !finite(record.iters)) return null;
   return {
     schema: POLICY, command,
     runtime: { image: remote.image ?? 'local', tools: { iotroute: { sha256: binary.sha256, version: binary.sources_sha256 ?? binary.sha256 } } },
-    resources: { cpus: remote.cpus ?? availableParallelism(), memory_bytes: remote.memory_bytes ?? totalmem(), threads: 1 },
-    effort: { timeout_s: timeoutS, passes: record.iters, max_repairs: 0, optimizer: 'none', seed: record.seed ?? null },
+    resources: { cpus: remote.cpus ?? availableParallelism(), memory_bytes: remote.memory_bytes ?? totalmem(), threads: 1,
+      ...(sprints?{worker_processes:asDict(sprints).parallelism}:{}) },
+    effort: { timeout_s: timeoutS, passes: record.iters, max_repairs: 0, optimizer: sprints?'sprint-portfolio':'none', seed: record.seed ?? null,
+      ...(sprints?{sprints}:{}) },
     controls: { status: 'observed', tool_exit: toolExit, record: { path: IOTROUTE_RECORD, sha256: recordSha256 } },
   };
 }
@@ -185,6 +188,9 @@ function iotrouteControls(run: RunContext, value: Dict, placementSha256: string 
       || (placementSha256 && record.input_sha256 !== placementSha256)) {
     throw new Error('iotroute run record differs from its execution policy');
   }
+  const sprints=asDict(record.portfolio).policy??null;
+  if(!sameValue(sprints,effort.sprints??null)||(sprints&&asDict(value.resources).worker_processes!==asDict(sprints).parallelism))
+    throw new Error('iotroute sprint controls differ from its execution policy');
   return null;
 }
 
