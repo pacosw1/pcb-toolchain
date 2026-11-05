@@ -8,8 +8,11 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
 import { iotrouteMissing } from './iotroute-bin.ts';
+import { BOARD as FIXTURE_BOARD, makeFixture } from './part-fixture.ts';
 import { verify } from './pcb-evidence.ts';
 import { postVerifyCommands } from './pcb-candidate-run.ts';
+import { candidateLayoutCheck, type OperationManifest } from './pcb-candidate-screens.ts';
+import { EscapeStageReceipts } from './route-decision-escape.ts';
 import { status } from './pcb-runs.ts';
 import { sha } from './pcb-workflow.ts';
 
@@ -274,6 +277,34 @@ test('an incomplete part review stops before the snapshot', needsBinary, async t
   assert.equal(existsSync(join(folder, 'workspace')), false);
 });
 
+test('reviewed part use screens a copper edit before and after the tool', needsBinary, async t => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'pcb-operation-review-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const manifest = makeFixture(root);
+  mkdirSync(join(root, 'tools'), { recursive: true });
+  writeFileSync(join(root, 'tools/gate.mjs'), GATE());
+  writeFileSync(join(root, 'tools/pcbtool.ts'), 'process.stdout.write("no change\\n");');
+  writeFileSync(join(root, 'tools/pcb_snapshot_inputs.mjs'), 'console.log("[]");');
+  writeFileSync(join(root, 'spec.json'), '{}');
+  const { folder, result } = await run(root, 'edit', FIXTURE_BOARD, '--kind', 'route', '--spec', join(root, 'spec.json'), '--engineering-manifest', manifest);
+  assert.equal(result.status, 'passed', String(result.cause));
+  for (const name of ['part-review.json', 'placement-preflight.json', 'placement-postcheck.json']) assert.ok(result.evidence_sha256[`operation/${name}`], name);
+  assert.equal((JSON.parse(readFileSync(join(folder, 'operation/placement-postcheck.json'), 'utf8')) as Row).status, 'passed');
+  assert.equal((JSON.parse(readFileSync(join(folder, 'run.json'), 'utf8')) as Row).engineering_manifest.sha256, sha(manifest));
+});
+
+test('an unexpected failure is a sealed error in the operation\'s own scope', needsBinary, async t => {
+  const root = project(t);
+  rmSync(join(root, 'tools/gate.mjs'));
+  writeFileSync(join(root, 'spec.json'), '{"moves":[]}');
+  const contract = join(root, 'hardware-design/registry/design-contracts/X.json');
+  mkdirSync(dirname(contract), { recursive: true });
+  writeFileSync(contract, '{"identity":{"board":"OTHER","design_id":"OTHER"}}');
+  const { result } = await edit(root);
+  assert.equal(result.status, 'error');
+  assert.equal(result.scope, 'candidate_board_gate');
+});
+
 test('a design contract of another board stops the run before any work', needsBinary, async t => {
   const root = project(t), contract = join(root, 'hardware-design/registry/design-contracts/X.json');
   mkdirSync(dirname(contract), { recursive: true });
@@ -367,6 +398,31 @@ test('a live adoption, or a board matching neither side of a crash, is left alon
   assert.equal(stuck.status, 2);
   assert.match(stuck.stdout, /neither side of an interrupted adoption/);
   assert.ok(existsSync(journalOf(root)));
+});
+
+test('incomplete design prerequisites stop before the snapshot, with their report', needsBinary, async t => {
+  const root = project(t), contract = join(root, 'hardware-design/registry/design-contracts/X.json');
+  mkdirSync(dirname(contract), { recursive: true });
+  writeFileSync(contract, '{"schema":"iot-lab.design-contract.v1","identity":{"board":"X","design_id":"X","revision":"1"}}');
+  const { folder, result } = await edit(root);
+  assert.equal(result.status, 'failed', String(result.cause));
+  assert.equal(result.scope, 'design_preflight');
+  assert.equal(result.design_stage, 'schematic');
+  assert.equal(result.candidate_verified, false);
+  assert.ok(result.evidence_sha256['operation/design-preflight.json']);
+  assert.equal(existsSync(join(folder, 'workspace')), false);
+});
+
+test('the candidate layout screen writes a blocked report for a contract it cannot judge', t => {
+  const root = project(t), output = join(root, 'operation/design-layout-preflight.json'), contract = join(root, 'contract.json');
+  mkdirSync(dirname(output));
+  writeFileSync(contract, '{"identity":{"board":"X","design_id":"X"}}');
+  const manifest = { root, board: 'X', operation: 'route', node: process.execPath, timeout_s: 1, design_contract: { path: contract, sha256: sha(contract) } } as OperationManifest;
+  return candidateLayoutCheck(root, root, manifest, output, () => {}, new EscapeStageReceipts()).then(report => {
+    assert.equal(report.status, 'blocked');
+    assert.equal(report.schema, 'iot-lab.design-candidate-layout.v1');
+    assert.equal((JSON.parse(readFileSync(output, 'utf8')) as Row).status, 'blocked');
+  });
 });
 
 test('post_verify hooks fill their placeholders and require a stage and argv', () => {

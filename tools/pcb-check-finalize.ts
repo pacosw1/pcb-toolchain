@@ -84,7 +84,7 @@ function finalize(ownerPath: string): number {
   if (!settled) Object.assign(result, { status: 'error', exit_code: 2,
     cause: evidenceProblem ? `gate evidence unconfirmed: ${evidenceProblem}`
       : `${String(preliminary.cause ?? 'worker result unavailable')}; owned process cleanup or result unconfirmed` });
-  const ownScope = OPERATIONS.has(manifest.operation) ? preliminary.scope : undefined;
+  const ownScope = OPERATIONS.has(manifest.operation) ? preliminary.scope ?? (manifest.operation === 'release' ? 'fabrication_candidate' : 'candidate_board_gate') : undefined;
   Object.assign(result, { scope: ownScope ?? (manifest.operation === 'doctor' ? 'environment' : manifest.operation === 'readiness' ? 'assembly_readiness' : manifest.operation === 'blocks' ? 'block_evidence' : manifest.operation === 'outcomes' ? 'placement_outcomes' : manifest.operation === 'schematic' ? 'schematic_function' : manifest.operation === 'design' ? 'design_assessment' : manifest.operation === 'parts' ? 'part_evidence' : manifest.operation === 'routing' ? 'routing_decision' : manifest.operation === 'placement' ? 'placement_constraints' : manifest.operation === 'ml' ? 'ml_observation' : 'configured_board_gate'), schema_version: 1, run_id: folder.split('/').at(-1), board: manifest.board,
     operation: manifest.operation, cleanup: { ...(ownerCleanup ?? {}), complete: cleanupConfirmed, nested },
     ...(manifest.operation === 'check' ? { gate_result: join(folder, 'gate/result.json') } : OPERATIONS.has(manifest.operation) ? { gate_result: join(gateDirectory(folder), 'result.json') } : {}), evidence_dir: folder });
