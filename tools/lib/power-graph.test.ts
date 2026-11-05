@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { Board, Footprint, Pad, Polygon, Pt, RoutedCopper, Track, Zone } from './board-types.ts';
+import type { Board, Footprint, Pad, Polygon, Pt, RoutedCopper, Track, Via, Zone } from './board-types.ts';
 import { ipcAmps, viaGroupAmps } from './copper-current.ts';
 import type { PinRatings } from './pin-ratings.ts';
 import { maxFlow, netGraph, padNode, pairCapacity, project, widestPath, type Conditions, type Edge } from './power-graph.ts';
@@ -132,6 +132,41 @@ test('vias in parallel join the same copper and their barrels add; one duplicate
   const graph = netGraph(board([via(pt(5, 0)), via(pt(6, 0))], [footprint('J1', [pad('1', pt(5.5, 0), pt(1, 1))]), footprint('J2', [pad('1', pt(5.5, 0), pt(1, 1), { layers: ['B.Cu'] })])]), 'P', conditions());
   assert.ok(graph.edges.some(e => e.label === '2 vias in parallel (drill 0.30-0.30) at (5.0, 0.0)'), String(graph.edges.map(e => e.label)));
   assert.ok(Math.abs(graph.edges.find(e => e.label.startsWith('2 vias'))!.amps - viaGroupAmps([0.3, 0.3])) < 1e-9);
+});
+
+const blind = (at: Pt): RoutedCopper => ({ Via: { ...(via(at) as { Via: Via }).Via, layers: ['F.Cu', 'In1.Cu'] } });
+const inner = (copper: RoutedCopper[], footprints: Footprint[] = [], zones: Zone[] = []): Board => ({ ...board(copper, footprints, zones), copper_layers: ['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu'] });
+const onBack = { layers: ['B.Cu'] };
+const viaNodes = (b: Board): Set<string> => new Set(netGraph(b, 'P', conditions()).edges.flatMap(e => [e.u, e.v]).filter(node => node.startsWith('v|')));
+
+test('two vias at one spot with different spans stay two conductors', () => {
+  const front = track(pt(0, 0), pt(10, 0)), back = track(pt(0, 0), pt(10, 0), 1, { layer: 'B.Cu' });
+  assert.equal(viaNodes(inner([front, back, via(pt(0, 0)), via(pt(0, 0))])).size, 1);
+  assert.equal(viaNodes(inner([front, back, via(pt(0, 0)), blind(pt(0, 0))])).size, 2);
+});
+
+test('a blind via makes no path from the front to the back', () => {
+  const pads = [J1(pt(0, 0)), footprint('J2', [pad('1', pt(10, 0), pt(1, 1), onBack)])];
+  const copper = [track(pt(0, 0), pt(10, 0)), track(pt(0, 0), pt(10, 0), 1, { layer: 'B.Cu' }), blind(pt(5, 0))];
+  assert.equal(between(inner(copper, pads)).amps, 0);
+});
+
+test('a blind via does not touch a pad on the back', () => {
+  const pads = [J1(pt(0, 0)), footprint('J2', [pad('1', pt(0, 0), pt(1, 1), onBack)])];
+  assert.equal(between(inner([blind(pt(0, 0))], pads)).amps, 0);
+});
+
+test('a via that is not on a layer does not cut the track there', () => {
+  const pieces = (extra: RoutedCopper[]): number => netGraph(inner([track(pt(0, 0), pt(10, 0), 1, { layer: 'B.Cu' }), ...extra]), 'P', conditions()).edges.filter(e => !e.label.startsWith('via')).length;
+  assert.equal(pieces([blind(pt(5, 0))]), pieces([]));
+  assert.ok(pieces([via(pt(5, 0))]) > pieces([]));
+});
+
+test('a blind via does not join a pour on a layer it does not reach', () => {
+  const pads = [J1(pt(0, 0)), footprint('J2', [pad('1', pt(10, 0), pt(1, 1), onBack)])];
+  const pour = plane('B.Cu', [box(-5, -5, 15, 5)], 'Full');
+  assert.equal(between(inner([blind(pt(0, 0))], pads, [pour])).amps, 0);
+  assert.ok(between(inner([via(pt(0, 0))], pads, [pour])).amps > 0);
 });
 
 test('a pad in a pour joins it solid or through two thermal spokes', () => {

@@ -56,7 +56,7 @@ function netPads(board: Board, net: string): NetPad[] {
 const padsByLabel = (pads: NetPad[]): Map<string, NetPad> => new Map(pads.map(item => [item.label, item]));
 
 /** A track with where it is cut: another end on it (a T junction), or a pad or via it passes through. */
-function trackCuts(t: Track, ends: [string, Xy][], pads: NetPad[], throughVias: Via[]): Xy[] {
+function trackCuts(t: Track, ends: [string, Xy][], pads: NetPad[], netVias: Via[]): Xy[] {
   const [a, c] = [mmPoint(t.start), mmPoint(t.end)];
   const cuts = new Map<string, Xy>();
   const add = (point: Xy): void => { cuts.set(`${point[0]},${point[1]}`, point); };
@@ -65,7 +65,7 @@ function trackCuts(t: Track, ends: [string, Xy][], pads: NetPad[], throughVias: 
   }
   const passing: [Pt, (p: Pt) => boolean][] = [
     ...pads.filter(({ pad }) => pad.layers.includes(t.layer)).map(({ pad }): [Pt, (p: Pt) => boolean] => [pad.position, p => padHit(pad, p)]),
-    ...throughVias.map((via): [Pt, (p: Pt) => boolean] => [via.at, p => viaHit(via, p)]),
+    ...netVias.filter(via => via.layers.includes(t.layer)).map((via): [Pt, (p: Pt) => boolean] => [via.at, p => viaHit(via, p)]),
   ];
   for (const [position, hit] of passing) {
     const q = project(a, c, mmPoint(position));
@@ -86,13 +86,13 @@ function addEvidence(build: Build, node: string, item: Evidence): void {
 /** The piece of a cut track with the whole track it came from: a pin escape measures that. */
 interface CutPiece extends Piece { whole: readonly [Xy, Xy] }
 
-function cutTracks(segments: Track[], pads: NetPad[], throughVias: Via[], thickness: ReadonlyMap<string, number>): { pieces: CutPiece[]; nodes: Map<string, [string, Xy]> } {
+function cutTracks(segments: Track[], pads: NetPad[], netVias: Via[], thickness: ReadonlyMap<string, number>): { pieces: CutPiece[]; nodes: Map<string, [string, Xy]> } {
   const ends = segments.flatMap((t): [string, Xy][] => [[t.layer, mmPoint(t.start)], [t.layer, mmPoint(t.end)]]);
   const nodes = new Map<string, [string, Xy]>(ends.map(([layer, point]) => [nodeId(layer, point), [layer, point]]));
   const pieces: CutPiece[] = [];
   for (const t of segments) {
     const [a, c] = [mmPoint(t.start), mmPoint(t.end)];
-    const cuts = trackCuts(t, ends, pads, throughVias);
+    const cuts = trackCuts(t, ends, pads, netVias);
     for (const cut of cuts) nodes.set(nodeId(t.layer, cut), [t.layer, cut]);
     const chain = [a, ...cuts, c];
     chain.slice(1).forEach((v, i) => {
@@ -117,13 +117,13 @@ function joinPads(build: Build, pads: Map<string, NetPad>, nodes: Map<string, [s
   }
 }
 
-function joinVias(build: Build, throughVias: Via[], pads: Map<string, NetPad>, nodes: Map<string, [string, Xy]>, copperLayers: string[]): void {
-  throughVias.forEach((via, i) => {
-    for (const [node, [, point]] of nodes) {
-      if (viaHit(via, boardPoint(point))) { build.links[i]!.add(node); build.stops.add(node); }
+function joinVias(build: Build, netVias: Via[], pads: Map<string, NetPad>, nodes: Map<string, [string, Xy]>, copperLayers: string[]): void {
+  netVias.forEach((via, i) => {
+    for (const [node, [layer, point]] of nodes) {
+      if (via.layers.includes(layer) && viaHit(via, boardPoint(point))) { build.links[i]!.add(node); build.stops.add(node); }
     }
     for (const [label, { pad }] of pads) {
-      if (copperLayers.some(layer => pad.layers.includes(layer)) && padHit(pad, via.at)) build.links[i]!.add(padNode(label));
+      if (copperLayers.some(layer => pad.layers.includes(layer) && via.layers.includes(layer)) && padHit(pad, via.at)) build.links[i]!.add(padNode(label));
     }
   });
 }
@@ -134,8 +134,8 @@ function solidJoin(pad: Pad, zone: Zone): boolean {
   return connection === 'Full' || (connection === 'ThtThermal' && pad.kind === 'Smd');
 }
 
-function joinIsland(build: Build, island: Polygon, id: string, zone: Zone, layer: string, context: { pads: Map<string, NetPad>; nodes: Map<string, [string, Xy]>; throughVias: Via[]; conditions: Conditions }): void {
-  const { pads, nodes, throughVias, conditions } = context;
+function joinIsland(build: Build, island: Polygon, id: string, zone: Zone, layer: string, context: { pads: Map<string, NetPad>; nodes: Map<string, [string, Xy]>; netVias: Via[]; conditions: Conditions }): void {
+  const { pads, nodes, netVias, conditions } = context;
   for (const [node, [nodeLayer, point]] of nodes) {
     if (nodeLayer === layer && polygonContains(island, boardPoint(point))) {
       build.edges.push({ u: id, v: node, amps: Infinity, label: 'zone' });
@@ -153,14 +153,14 @@ function joinIsland(build: Build, island: Polygon, id: string, zone: Zone, layer
       label: `zone ${layer} ${solid ? 'solid' : `thermal ${THERMAL_SPOKES} x ${floatRepr(spoke)} mm spokes to ${label}`}`,
     });
   }
-  throughVias.forEach((via, i) => {
+  netVias.forEach((via, i) => {
     const barrel: PadCopper = { Circle: { center: via.at, radius: Math.trunc(via.size / 2) } };
-    if (polygonCollides(island, barrel)) build.links[i]!.add(id);
+    if (via.layers.includes(layer) && polygonCollides(island, barrel)) build.links[i]!.add(id);
   });
 }
 
 /** Vias that join the same copper are in parallel: their barrel areas add. */
-function addViaEdges(build: Build, throughVias: Via[], conditions: Conditions): void {
+function addViaEdges(build: Build, netVias: Via[], conditions: Conditions): void {
   const groups = new Map<string, number[]>();
   build.links.forEach((ends, i) => {
     if (ends.size === 0) return;
@@ -169,9 +169,9 @@ function addViaEdges(build: Build, throughVias: Via[], conditions: Conditions): 
   });
   for (const group of groups.values()) {
     const first = group[0]!;
-    const drills = group.map(i => toMm(throughVias[i]!.drill));
+    const drills = group.map(i => toMm(netVias[i]!.drill));
     const amps = viaGroupAmps(drills, conditions.plating, conditions.rise);
-    const at = pointText(mmPoint(throughVias[first]!.at));
+    const at = pointText(mmPoint(netVias[first]!.at));
     const label = group.length === 1 ? `via drill ${fixed(drills[0]!, 2)} at ${at}`
       : `${group.length} vias in parallel (drill ${fixed(Math.min(...drills), 2)}-${fixed(Math.max(...drills), 2)}) at ${at}`;
     for (const end of build.links[first]!) build.edges.push({ u: `v|${first}`, v: end, amps, label });
@@ -209,27 +209,27 @@ function pieceEdge(piece: CutPiece, amps: number, neckMm: number, neck: boolean,
 
 /**
  * The physical copper of a net, with D-124c end-evidence necks and rated pin escapes. Coincident conductors count once. A via
- * is taken as through: the document holds no layer span, so a blind or buried via would join every layer here.
+ * joins only the layers of its span; two at one spot with different spans are two conductors.
  */
 export function netGraph(board: Board, net: string, conditions: Conditions): NetGraph {
   const onNet = <T extends { net: string }>(items: T[]): T[] => items.filter(item => item.net === net);
   const segments = physicalConductors(onNet(tracks(board)), trackShape, t => -t.width);
-  const throughVias = physicalConductors(onNet(vias(board)), v => `${v.at.x},${v.at.y}`, v => v.drill);
+  const netVias = physicalConductors(onNet(vias(board)), v => `${v.at.x},${v.at.y},${v.layers.join('+')}`, v => v.drill);
   const allPads = netPads(board, net);
   const pads = padsByLabel(allPads);
-  const { pieces, nodes } = cutTracks(segments, allPads, throughVias, conditions.thickness);
-  const build: Build = { edges: [], stops: new Set(), evidence: new Map(), padNodes: new Map(), links: throughVias.map(() => new Set()), onPlane: new Set() };
+  const { pieces, nodes } = cutTracks(segments, allPads, netVias, conditions.thickness);
+  const build: Build = { edges: [], stops: new Set(), evidence: new Map(), padNodes: new Map(), links: netVias.map(() => new Set()), onPlane: new Set() };
   joinPads(build, pads, nodes);
-  joinVias(build, throughVias, pads, nodes, board.copper_layers);
+  joinVias(build, netVias, pads, nodes, board.copper_layers);
   board.zones.forEach((zone, z) => {
     if (zone.rule_area !== null || zone.net !== net) return;
     for (const layer of zone.layers) {
       (zone.filled.find(fill => fill.layer === layer)?.polygons ?? []).forEach((island, k) => {
-        joinIsland(build, island, `z|${z}|${layer}|${k}`, zone, layer, { pads, nodes, throughVias, conditions });
+        joinIsland(build, island, `z|${z}|${layer}|${k}`, zone, layer, { pads, nodes, netVias, conditions });
       });
     }
   });
-  addViaEdges(build, throughVias, conditions);
+  addViaEdges(build, netVias, conditions);
   planeEvidence(build);
   const chains = neckChains(pieces, build.stops);
   const ends = chainEndEvidence(pieces, chains, build.evidence);

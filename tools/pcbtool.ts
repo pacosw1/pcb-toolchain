@@ -89,7 +89,6 @@ export const COMMANDS: Record<string, Command> = {
     run: (args, print) => {
       const pcb = args.board as string;
       const spec = jsonLoad(args.spec as string);
-      requireThroughVias(pcb);
       return powerPathReport(boardJson(pcb, { refill: true }).board, spec, {
         limit: args.limit as number, verbose: args.verbose as boolean, print, supplies: () => supplyNets(schematicNetlist(pcb)),
       });
