@@ -2,6 +2,7 @@
 //
 //   tools/silk_jlc.ts check BOARD.kicad_pcb   list visible silk texts / strokes under the minimums
 //   tools/silk_jlc.ts apply BOARD.kicad_pcb   raise them (board texts, footprint fields and texts, strokes)
+//   tools/silk_jlc.ts clip BOARD.kicad_pcb    trim footprint graphics, leaving texts and board drawings unchanged
 //
 // Source (registry/evidence/2026-11-03/jlcpcb-pcb-capabilities.html, "Legend Features"): minimum line width >= 0.15 mm; minimum
 // text height 40 mil (1.0 mm); character width to height ratio 1:6 preferred. apply: a text under 1.0 mm is scaled to 1.0 mm high
@@ -11,6 +12,8 @@
 //
 // Texts, their sizes and footprint silk ids are read from the board file. pads uses native polygon booleans on the pinned worker;
 // clip uses plotted pad mask polygons and refuses geometry it cannot preserve.
+// Its 0.18 mm reserve plus sampling guard is intentionally more conservative than the old 0.16 mm pad expansion.
+// Unsupported custom mask rules, curved Gerber interpolation, >10 mm curved apertures and Beziers stop before writing.
 import { readFileSync } from 'node:fs';
 import { archive, unique } from './lib/gerber-archive.ts';
 import { geometry, polygons, strokes } from './lib/gerber-geometry.ts';
@@ -83,7 +86,7 @@ function textSize(form: SList): TextSize {
 }
 
 const strokeWidth = (form: SList): number => Number(child(child(form, 'stroke') ?? [], 'width')?.[1] ?? child(form, 'width')?.[1] ?? 0);
-const filledPolygon = (item: SilkItem): boolean => item.shape === 'Polygon' && child(item.form, 'fill')?.[1] === 'yes';
+const filledPolygon = (item: SilkItem): boolean => item.shape === 'Polygon' && ['yes','solid'].includes(String(child(item.form, 'fill')?.[1]));
 
 export function underMinimum(item: SilkItem): boolean {
   if (item.kind === 'text') {

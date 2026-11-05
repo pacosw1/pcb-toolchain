@@ -33,9 +33,39 @@ function arc(a:Xy,m:Xy,b:Xy):{centre:Xy;radius:number;start:number;sweep:number}
  return {centre:c,radius:distance(a,c),start,sweep:mod(angle(m)-start)<ccw?ccw:ccw-2*Math.PI};
 }
 const signedArea=(p:Xy[])=>p.reduce((sum,a,i)=>{const b=p[(i+1)%p.length]!;return sum+a[0]*b[1]-b[0]*a[1];},0)/2;
+const positive=(ring:Xy[])=>signedArea(ring)<0?[...ring].reverse():ring;
+function grouped(rings:Xy[][]):{outer:Xy[];holes:Xy[][]}[]{
+ const groups=rings.filter(r=>signedArea(r)>0).map(outer=>({outer,holes:[] as Xy[][]}));
+ for(const hole of rings.filter(r=>signedArea(r)<0)){
+  const owner=groups.filter(g=>new Outline(g.outer).locate(hole[0]!)>=0).sort((a,b)=>signedArea(a.outer)-signedArea(b.outer))[0];
+  if(!owner)throw new Error('silk clip: polygon hole has no exterior');owner.holes.push(hole);
+ }
+ if(rings.some(r=>Math.abs(signedArea(r))<1e-12))throw new Error('silk clip: zero-area polygon');return groups;
+}
+/** KiCad fp_poly stores holes as a zero-width bridge traversed in both directions (a fractured contour). */
+export function fracture(rings:Xy[][]):Xy[][] {
+ return grouped(rings).map(({outer,holes})=>{
+  let contour=[...outer];
+  const rightmost=(ring:Xy[])=>ring.reduce((best,p,i)=>p[0]>ring[best]![0]?i:best,0);
+  for(const hole of holes.sort((a,b)=>b[rightmost(b)]![0]-a[rightmost(a)]![0])){
+   const hIndex=rightmost(hole),h=hole[hIndex]!;let edge=-1,q:Xy|undefined;
+   for(let i=0;i<contour.length;i++){
+    const a=contour[i]!,b=contour[(i+1)%contour.length]!;
+    if((a[1]>h[1])===(b[1]>h[1]))continue;
+    const x=a[0]+(h[1]-a[1])*(b[0]-a[0])/(b[1]-a[1]);
+    if(x>=h[0]&&(!q||x<q[0])){q=[x,h[1]];edge=i;}
+   }
+   if(!q||edge<0)throw new Error('silk clip: cannot bridge polygon hole');
+   const loop=[...hole.slice(hIndex),...hole.slice(0,hIndex),h];
+   contour=[...contour.slice(0,edge+1),q,...loop,q,...contour.slice(edge+1)];
+  }
+  return contour;
+ });
+}
 export type PolygonBoolean=(operation:'offset'|'difference',a:Xy[][],b:Xy[][],offset:number)=>Xy[][];
 export const polygonBoolean:PolygonBoolean=(operation,a,b,offset)=>{
- const polys=(p:Xy[][])=>p.map(outer=>({outer:outer.map(q=>q.map(v=>Math.round(v*1e6))),holes:[]}));
+ const nm=(ring:Xy[])=>ring.map(q=>q.map(v=>Math.round(v*1e6)));
+ const polys=(p:Xy[][])=>grouped(p).map(g=>({outer:nm(g.outer),holes:g.holes.map(nm)}));
  const result=spawnSync(iotrouteBin(),['gerber-geometry'],{input:JSON.stringify({operation,a:polys(a),b:polys(b),offset_nm:Math.round(offset*1e6)}),encoding:'utf8',maxBuffer:64*1024*1024,timeout:60000});
  if(result.error||result.status!==0)throw new Error(`silk clip polygon operation failed: ${result.error?.message??result.stderr}`);
  const rings:unknown=JSON.parse(result.stdout).rings;
@@ -44,6 +74,9 @@ export const polygonBoolean:PolygonBoolean=(operation,a,b,offset)=>{
 };
 export interface ClipResult {text:string;cut:number;pieces:number;polygons:number;gone:number}
 export function clipSilk(board:string,masks:Record<'F'|'B',Outline[]>,boolean:PolygonBoolean=polygonBoolean):ClipResult {
+ const identities=new Set<string>();
+ const visit=(form:SList):void=>{const uuid=child(form,'uuid')?.[1];if(typeof uuid==='string'){if(identities.has(uuid))throw new Error(`silk clip: duplicate UUID ${uuid}`);identities.add(uuid);}for(const value of form)if(Array.isArray(value))visit(value);};
+ visit(parse(board));
  const edit=new BoardEdit(board),id=itemIds(board,'silk-clip'),result:ClipResult={text:board,cut:0,pieces:0,polygons:0,gone:0};
  const root=parse(board),pads:Record<'F'|'B',Xy[]>={F:[],B:[]};
  const pose=(f:SList)=>{const at=child(f,'at');return {at:[Number(at?.[1]??0),Number(at?.[2]??0)] as Xy,angle:Number(at?.[3]??0)};};
@@ -61,16 +94,13 @@ export function clipSilk(board:string,masks:Record<'F'|'B',Outline[]>,boolean:Po
    const line=(a:Xy,b:Xy)=>`(fp_line (start ${xy(a)}) (end ${xy(b)}) (stroke (width ${mmText(width)}) (type default)) (layer "${layer}") (uuid "${id()}"))`;
    const arcText=(a:Xy,m:Xy,b:Xy)=>`(fp_arc (start ${xy(a)}) (mid ${xy(m)}) (end ${xy(b)}) (stroke (width ${mmText(width)}) (type default)) (layer "${layer}") (uuid "${id()}"))`;
    let replacement:string[]=[];
-   if(s.kind==='fp_poly'&&child(f,'fill')?.[1]==='yes') {
+   if(s.kind==='fp_poly'&&['yes','solid'].includes(String(child(f,'fill')?.[1]))) {
     const pts=kids(child(f,'pts')??[],'xy').map(p=>global([Number(p[1]),Number(p[2])]));
     if(!pts.length||child(f,'pts')!.some(p=>Array.isArray(p)&&p[0]!=='xy'))throw new Error('silk clip: unsupported polygon vertices');
-    const grown=boolean('offset',zones.map(z=>[...z.points]),[],CLEARANCE);
-    // A hole is a real opening, not another filled polygon. Refuse it until a native hole-preserving writer exists.
-    if(grown.some(r=>signedArea(r)<0))throw new Error('silk clip: mask offset has holes that cannot be represented safely');
-    const cut=boolean('difference',[pts],grown,0);
-    if(cut.some(r=>signedArea(r)<0))throw new Error('silk clip: filled polygon subtraction produced a hole; no board was changed');
+    const grown=boolean('offset',zones.map(z=>positive([...z.points])),[],CLEARANCE);
+    const cut=boolean('difference',[positive(pts)],grown,0);
     if(Math.abs(cut.reduce((n,r)=>n+signedArea(r),0)-Math.abs(signedArea(pts)))<1e-9)continue;
-    replacement=cut.map(r=>`(fp_poly (pts ${r.map(p=>`(xy ${xy(p)})`).join(' ')}) (stroke (width ${mmText(width)}) (type default)) (fill yes) (layer "${layer}") (uuid "${id()}"))`);
+    replacement=fracture(cut).map(r=>`(fp_poly (pts ${r.map(p=>`(xy ${xy(p)})`).join(' ')}) (stroke (width ${mmText(width)}) (type default)) (fill yes) (layer "${layer}") (uuid "${id()}"))`);
     result.polygons++;
    } else if(['fp_line','fp_rect','fp_poly'].includes(s.kind)) {
     let pts:Xy[];
@@ -85,9 +115,9 @@ export function clipSilk(board:string,masks:Record<'F'|'B',Outline[]>,boolean:Po
     if(circle){c=global(point(f,'center'));r=distance(c,global(point(f,'end')));start=0;sweep=2*Math.PI;}else {const a=arc(global(point(f,'start')),global(point(f,'mid')),global(point(f,'end')));c=a.centre;r=a.radius;start=a.start;sweep=a.sweep;}
     if(!(r>0)||!Number.isFinite(r))throw new Error('silk clip: invalid arc radius');
     const at=(angle:number,centre=c):Xy=>[centre[0]+r*Math.cos(angle),centre[1]+r*Math.sin(angle)];
-    if(circle&&r<=.5){const ring=(centre:Xy)=>[centre,...Array.from({length:64},(_,i)=>at(i*Math.PI/32,centre))];if(!ring(c).some(p=>bad(p,zones,CLEARANCE+width/2)))continue;
+    if(circle&&r<=.5){if(!bad(c,zones,CLEARANCE+width/2+r))continue;
      const near=pads[side].reduce<Xy|undefined>((best,p)=>!best||distance(p,c)<distance(best,c)?p:best,undefined);if(!near)throw new Error('silk clip: mask has no matching pad centre');const d=distance(c,near);let moved:Xy|undefined;
-     for(let k=1;d>0&&k<=24;k++){const q:Xy=[c[0]+(c[0]-near[0])/d*.05*k,c[1]+(c[1]-near[1])/d*.05*k];if(!ring(q).some(p=>bad(p,zones,CLEARANCE+width/2))){moved=q;break;}}
+     for(let k=1;d>0&&k<=24;k++){const q:Xy=[c[0]+(c[0]-near[0])/d*.05*k,c[1]+(c[1]-near[1])/d*.05*k];if(!bad(q,zones,CLEARANCE+width/2+r)){moved=q;break;}}
      if(moved){replacement=[text.replace(/\(center [^)]*\)/,`(center ${xy(moved)})`).replace(/\(end [^)]*\)/,`(end ${xy([moved[0]+r,moved[1]])})`)];result.cut++;}
     } else {const n=Math.max(8,Math.ceil(Math.abs(sweep)*r/STEP)),points=Array.from({length:n+1},(_,i)=>at(start+sweep*i/n));const runs=freeRuns(points,zones,CLEARANCE+width/2);if(runs.length===1&&runs[0]![0]===0&&runs[0]![1]===n)continue;
      if(circle&&runs.length>1&&runs[0]![0]===0&&runs.at(-1)![1]===n){const first=runs.shift()!,last=runs.pop()!;runs.push([last[0],first[1]+n]);}

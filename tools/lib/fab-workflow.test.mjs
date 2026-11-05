@@ -42,7 +42,7 @@ case "$1" in
 esac
 `,{mode:0o755});
  writeFileSync(join(root,'bin/python'),`#!/bin/sh
-case "$1" in *check-env-schematic.py) exit "\${SCHEMATIC_STATUS:-0}";; -c) echo '{"python":"fixture","packages":{"gerbonara":"fixture","shapely":"fixture","numpy":"fixture","click":"fixture"}}'; exit "\${RUNTIME_STATUS:-0}";; *gerber_netcheck.py) exit "\${NET_STATUS:-0}";; *) exit "\${CHECK_STATUS:-0}";; esac
+case "$1" in *check-env-schematic.py) exit "\${SCHEMATIC_STATUS:-0}";; -c) echo '{"python":"fixture","packages":{"gerbonara":"fixture","shapely":"fixture","numpy":"fixture","click":"fixture"}}'; exit "\${RUNTIME_STATUS:-0}";; *) exit "\${CHECK_STATUS:-0}";; esac
 `,{mode:0o755});
  writeFileSync(join(root,'tools/make-'+boards[board]+'-fab.sh'),`#!/bin/sh
 echo export >> "$TEST_TRACE"

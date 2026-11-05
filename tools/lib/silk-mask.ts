@@ -1,6 +1,6 @@
 // Plot the board's mask openings with KiCad, including board and pad mask margins. Read-only.
 // Custom solder-mask expansion rules are refused: KiCad's plot has not been shown to honor them.
-// This is the complete plotted mask, including non-pad openings; it is not yet a replacement for silk clip.
+// maskOpenings reads all plotted mask; padMaskOpenings isolates pad openings for silk clip.
 import {copyFileSync,existsSync,mkdtempSync,readFileSync,rmSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {basename,join} from 'node:path';
@@ -16,7 +16,7 @@ export type MaskPlot = Record<'F'|'B',string>;
 export type MaskExporter = (pcb:string,sidecars:string[])=>MaskPlot;
 /** The copper parser does not preserve curved region edges. Never use those as a mask keep-out. */
 export function parseMask(text:string):Outline[] {
- if(/G0?[23](?=[XYIJ*])/i.test(text))throw new Error('silk mask: curved Gerber interpolation is not supported safely');
+ if(/G0?[23](?=[XYIJ*])/i.test(text.replace(/\s/g,'')))throw new Error('silk mask: curved Gerber interpolation is not supported safely');
  // The clip reserve covers chord error only for bounded apertures. A larger one needs adaptive subdivision.
  const inches=/%MOIN\*%/.test(text);
  for(const match of text.matchAll(/%ADD\d+[CO],([^*%]+)\*%/g)) {

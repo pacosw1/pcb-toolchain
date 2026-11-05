@@ -68,7 +68,6 @@ tools/fixtures/run-record/report.json
 tools/fixtures/run-record/run.log
 tools/fp_courtyard.ts
 tools/gate.mjs
-tools/gerber_netcheck.py
 tools/gerber_netcheck.ts
 tools/gnd_pad_vias.py
 tools/ibis_ramp.ts
@@ -953,7 +952,6 @@ tools/run_record.ts
 tools/set_stackup.ts
 tools/si_pairs.ts
 tools/si_planes.ts
-tools/silk_jlc.py
 tools/silk_marks.ts
 tools/silk_refs.ts
 tools/stitch_all.ts
@@ -985,3 +983,8 @@ tools/test_thermal_repair.py
 tools/thermal_repair.py
 tools/tracemaker_bench.sh
 tools/tsconfig.json
+tools/silk_jlc.ts
+tools/lib/silk-mask.ts
+tools/lib/silk-mask.test.ts
+tools/lib/silk-clip.ts
+tools/lib/silk-clip.test.ts
