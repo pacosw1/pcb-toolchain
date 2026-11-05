@@ -121,7 +121,12 @@ tools/pcb route BOARD --spec /absolute/routes.json --json
 tools/pcb adopt RUN_ID --json
 ```
 
-Build dispatch uses existing board pipelines; unsupported boards fail explicitly.
+Build dispatch uses an existing board's configured pipeline; unsupported boards
+fail explicitly. The entrypoint must be a regular, repository-relative file in
+`tools/` or the registered board owner's source tree, without symlink components
+or paths excluded from the candidate snapshot. The entrypoint is copied and
+hashed with the candidate inputs. This check does not sandbox a script or prove
+its external dependencies. It does not create a new board revision.
 Placement specs use `{"place":{"R1":[x,y,degrees]}}`; routes use the existing
 `pcbtool.py` format. Commands run in a separate board/dependency snapshot without
 mutable links into canonical CAD. Historical runs/unrelated evidence are excluded.
