@@ -1,0 +1,82 @@
+{
+  "schema": "pcb.stuck-native-replay.v1",
+  "source_archive_sha256": "d1bbe133fb5c82d20eea39586f5cb7f019c663f61b77582db96ece9be009546a",
+  "evidence_archive_sha256": "8626cf5093330fed480d822d14e918f6583d35134a6f72c9f1575dc0b81d9be4",
+  "implementation": "8295143",
+  "cases": {
+    "native-11": {
+      "native_unconnected": 11,
+      "original_report": {
+        "open_nets": [],
+        "unknown": 0
+      },
+      "open_nets": [
+        "/SCL",
+        "/SDA"
+      ],
+      "unknown": 11,
+      "coverage": {
+        "native_connections": 11,
+        "diagnosed_connections": 0,
+        "undiagnosed_connections": 11,
+        "unlocated_connections": 0,
+        "unidentified_connections": 0,
+        "unused_diagnoses": 0,
+        "parity_reported": true
+      },
+      "changed": null,
+      "report_sha256": "fcc61cb85ef90d343aa4fb806b3a0737adad010efdbb1df30501efe521e15bab",
+      "input_sha256": {
+        "drc.json": "ce25b4889731dc655b04a931c7a7f654da5d7842a87bb988fa2c7c8d02772c0e",
+        "model.json": "823fd55a3e68e5855b2cb794e6cfe6db9d0e9236e48078f5c91c5b215eaac9ff"
+      }
+    },
+    "native-33": {
+      "native_unconnected": 33,
+      "original_report": {
+        "open_nets": [],
+        "unknown": 0
+      },
+      "open_nets": [
+        "/SCL",
+        "GND"
+      ],
+      "unknown": 33,
+      "coverage": {
+        "native_connections": 33,
+        "diagnosed_connections": 0,
+        "undiagnosed_connections": 33,
+        "unlocated_connections": 0,
+        "unidentified_connections": 0,
+        "unused_diagnoses": 0,
+        "parity_reported": true
+      },
+      "changed": {
+        "open_before": 2,
+        "open_now": 2,
+        "unconnected_before": 11,
+        "unconnected_now": 33,
+        "drc_before": 0,
+        "drc_now": 0,
+        "parity_before": 0,
+        "parity_now": 0,
+        "names_comparable": true,
+        "worse": true,
+        "better": false,
+        "new": [
+          "GND"
+        ],
+        "resolved": [
+          "/SDA"
+        ],
+        "same": 1
+      },
+      "report_sha256": "8c65a42a753e4c275a8f9ce1179a7af714552b7f534ae22c8cb07e112df1b8d0",
+      "input_sha256": {
+        "drc.json": "aa5b5914c54f1599b8eb1099dc33611923a1eca894372757ad82d7a2a9f3f9ab",
+        "model.json": "4b6af0711db3cb7cf529b258387bc2953b47e09cce9a00306fb8894360af1129",
+        "seed.json": "085c1fb5822842cdbb6bd2a61bd5e91839a195ae72040339c449b98b77b4bae4"
+      }
+    }
+  }
+}
