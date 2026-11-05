@@ -95,3 +95,27 @@ const result={before_sha256:sha(before),after_sha256:sha(after)};fs.writeFileSyn
     assert.equal(fs.readFileSync(target, 'utf8'), 'diverged');
   } finally { server.closeAllConnections(); await new Promise<void>(ok => server.close(() => ok())); r.cleanup(); }
 });
+
+test('a CLI validation failure before run creation releases its pin', async () => {
+  const r = rig(), root = path.join(r.dir, 'project'), cad = path.join(root, 'hardware-design/boards/DEMO/cad');
+  fs.mkdirSync(cad, { recursive: true }); fs.writeFileSync(path.join(cad, 'demo.kicad_pcb'), 'board');
+  fs.writeFileSync(path.join(root, 'hardware-design/boards/DEMO/gate.json'), JSON.stringify({ project: 'cad/demo' }));
+  fs.writeFileSync(path.join(root, '.pcb-live.json'), JSON.stringify({ projectId: 'project' }));
+  const token = path.join(r.dir, 'token'); fs.writeFileSync(token, TOKEN);
+  const server = createServer(r.mgr); await new Promise<void>(ok => server.listen(0, '127.0.0.1', ok));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`, config = path.join(r.dir, 'config.json');
+  fs.writeFileSync(config, JSON.stringify({ url, tokenFile: token }));
+  const fixture = path.join(r.dir, 'fail.mjs'); fs.writeFileSync(fixture, 'console.log(JSON.stringify({status:"error",cause:"invalid policy"})); process.exit(2);');
+  const headers = { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' };
+  try {
+    const result = await new Promise<number | null>((resolve, reject) => {
+      const child = spawn(process.execPath, ['--experimental-strip-types', '--no-warnings', guard, '--project', root, '--', process.execPath,
+        fixture, 'route', 'DEMO', '--json'], { env: { ...process.env, PCB_LIVE_CONFIG: config }, stdio: 'ignore' });
+      child.once('error', reject); child.once('close', resolve);
+    });
+    assert.equal(result, 2);
+    const board = 'project/hardware-design/boards/DEMO/cad/demo.kicad_pcb';
+    const response = await fetch(url + '/board-leases/acquire', { method: 'POST', headers, body: JSON.stringify({ board, owner: 'next', ttlMs: 30000 }) });
+    assert.equal(response.status, 201);
+  } finally { server.closeAllConnections(); await new Promise<void>(ok => server.close(() => ok())); r.cleanup(); }
+});

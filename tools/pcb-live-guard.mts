@@ -25,14 +25,17 @@ function save(file: string, value: Receipt): void {
   try { fs.writeFileSync(fd, JSON.stringify(value)); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
   fs.renameSync(tmp, file);
 }
-function runDir(root: string, args: string[], runId: string): string {
-  if (!idPattern.test(runId)) throw new Error('invalid run ID');
+function runsBase(root: string, args: string[]): string {
   let base = process.env.PCB_RUNS_DIR ?? path.join(root, '.gate/cli');
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--runs-dir' && args[i + 1]) base = args[++i];
     else if (args[i].startsWith('--runs-dir=')) base = args[i].slice(11);
   }
-  return path.resolve(root, base, runId);
+  return path.resolve(root, base);
+}
+function runDir(root: string, args: string[], runId: string): string {
+  if (!idPattern.test(runId)) throw new Error('invalid run ID');
+  return path.join(runsBase(root, args), runId);
 }
 function commandArgs(args: string[]): { op: string; subject: string } {
   const commands = new Set([...WRITERS, 'adopt']);
@@ -229,6 +232,8 @@ async function dispatch(root: string, program: string, args: string[]): Promise<
     process.stdout.write(Buffer.concat(held)); return code;
   }
   const env = { ...process.env, IOTROUTE_LIVE_FILE: path.join(previewDir, 'live-route.json'), PCB_LIVE_ROUTE_FILE: path.join(previewDir, 'live-route.json') };
+  const base = runsBase(root, args);
+  const priorRuns = new Set(fs.existsSync(base) ? fs.readdirSync(base).filter(n => idPattern.test(n)) : []);
   let associated = false;
   const code = await childProcess(program, args, env, line => {
     if (associated) return;
@@ -236,7 +241,16 @@ async function dispatch(root: string, program: string, args: string[]): Promise<
     try { moveReceipt(file, receipt, runId, args); spawnGuardian(file); associated = true; }
     catch (error) { console.error('pcb: cannot attach live guard:', error instanceof Error ? error.message : String(error)); }
   });
-  if (!associated) console.error('pcb: run identity was not confirmed; board lock remains pinned for recovery');
+  if (!associated) {
+    const created = fs.existsSync(base) ? fs.readdirSync(base).filter(n => idPattern.test(n) && !priorRuns.has(n)) : [];
+    if (!created.length) {
+      await finish(coordinator, lease); fs.rmSync(file, { force: true });
+      if (announced) await report('failed', 'The toolchain stopped before starting a run');
+    } else {
+      console.error('pcb: run identity was not confirmed; board lock remains pinned for recovery');
+      await report('error', 'Run identity could not be confirmed; board remains locked');
+    }
+  }
   return code;
 }
 

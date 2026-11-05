@@ -251,6 +251,14 @@ node apps/job-daemon/deploy/prepare-release.mjs <commit> /tmp/pcb-job-daemon.tar
 
 The tar contains only the daemon source at that commit; its adjacent `.json` records the commit, archive SHA-256, and source SHA-256. It does not contain local changes, the token, host configuration, or systemd units. The daemon reports its startup source hash in authenticated `/status` as `sourceSha256`; compare it to the manifest after installation. This is source identity, not a health or deployment guarantee. This command prepares a bundle only: it does not install it or restart the daemon. Both output paths must be new.
 
+For the one-time upgrade from a legacy service that does not report its own source identity, `bootstrap-release.mjs`
+uses the same journaled swap and rollback after checking the authenticated legacy status and the on-disk source hash.
+It refuses to start while jobs are queued, running or retrying. The legacy process cannot attest its own loaded source;
+the bootstrap reports this limitation, and requires the new PID-specific health socket to report the target identity.
+An isolated host exercise is available as `test/bootstrap-host.mjs`; it uses a separate temporary source and data root,
+tests rollback, and starts actual legacy and new daemon processes. To recover an interrupted bootstrap, first verify no
+installer is running and remove its stale `.deploy-lock`, then run the helper with `recover - TOKEN_FILE - STATUS_URL`.
+
 For a host already running a version that reports this identity, copy the bundle and manifest to the host, then run the installer from a trusted checkout as root:
 
 ```sh
