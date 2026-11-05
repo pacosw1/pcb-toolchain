@@ -9,7 +9,7 @@
 // the board in its project folder: the save refills every zone with the .kicad_dru next to it. One summary line: DONE <counts>.
 //
 // check and gerber use native polygon booleans on the pinned worker.
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { archive, unique } from './lib/gerber-archive.ts';
 import { geometry, geometryBatch, polygons, strokes, type Poly, type Request } from './lib/gerber-geometry.ts';
 import { circle, parseLegacyGeometry, parseDrill } from './lib/gerber.ts';
@@ -208,12 +208,21 @@ export function validateZoneInventory(text:string,board:Board):void {
  }
 }
 
+/** Keep PCB, project, and rules bound through the full check. */
+export function validateSourceBinding(expected:string[], observed:unknown[], when:string):void {
+ if(JSON.stringify(expected)!==JSON.stringify(observed)) throw new Error(`board or sidecars changed during keepout ${when}`);
+}
+
 function check(pcb:string,ref:string):number {
- const doc=boardJson(pcb), text=readFileSync(pcb,'utf8');
- if(doc.board_sha256!==sha256File(pcb))throw new Error('board changed during keepout read');
+ const stem=pcb.replace(/\.kicad_pcb$/, '');
+ if(stem===pcb)throw new Error('expected a .kicad_pcb file');
+ const inputs=[pcb,stem+'.kicad_pro',stem+'.kicad_dru'];
+ const snapshot=()=>inputs.map(p=>existsSync(p)?sha256File(p):'');
+ const before=snapshot(),doc=boardJson(pcb), text=readFileSync(pcb,'utf8');
+ validateSourceBinding(before,[doc.board_sha256,doc.project_sha256,doc.rules_sha256],'read');
  validatePadInventory(text,doc);validateZoneInventory(text,doc.board);
  const result=checkBoard(doc.board,ref);
- if(doc.board_sha256!==sha256File(pcb))throw new Error('board changed during keepout check');console.log(result.lines.join('\n'));return result.verdict==='PASS'?0:1;
+ validateSourceBinding(before,snapshot(),'check');console.log(result.lines.join('\n'));return result.verdict==='PASS'?0:1;
 }
 
 export function gerberCheck(board: Board, ref: string, files: Map<string,string>, measure = geometry): {lines:string[]; total:number; areas:number; verdict:string} {
