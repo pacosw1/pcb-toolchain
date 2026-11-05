@@ -20,7 +20,7 @@ class PcbCliTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.runs = self.root / '.gate/cli'
         source = Path(__file__).resolve().parent.parent
-        files = ['tools/pcb', 'tools/pcb_cli.py', 'tools/lean_owned.py', 'tools/lean_owned_exec.py', 'tools/lean_workflow.py',
+        files = ['tools/pcb-python.py', 'tools/pcb_cli.py', 'tools/lean_owned.py', 'tools/lean_owned_exec.py', 'tools/lean_workflow.py',
                  'tools/pcb_workflow.py', 'tools/pcb_operations.py', 'tools/pcb_evidence.py', 'tools/pcb_benchmark.py', 'tools/pcb_timing.py', 'tools/pcb_cycle.py',
                  'tools/pcb_observation_inputs.py', 'tools/project_root.py',
                  'tools/gate.mjs', 'tools/lib/env.mjs', 'tools/lib/gate-core.mjs', 'tools/lib/gate-runtime.mjs', 'tools/lib/gate-inputs.mjs',
@@ -102,7 +102,7 @@ else:
             self.temp.cleanup()
 
     def cli(self, *args, env=None):
-        return subprocess.run([sys.executable, str(self.root / 'tools/pcb'), *args], env=env or self.env,
+        return subprocess.run([sys.executable, str(self.root / 'tools/pcb-python.py'), *args], env=env or self.env,
                               cwd=self.root, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
 
     def until(self, predicate, seconds=12):
