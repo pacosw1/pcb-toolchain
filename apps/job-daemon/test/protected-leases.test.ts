@@ -33,3 +33,23 @@ test('canonical aliases share a fenced lease and expired pins fail closed', () =
     assert.throws(() => store.release(issued.token, { ...req, generation: second.generation, token: second.token }), /cannot be released/);
   } finally { store.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('attempt binding pins the matching lease atomically before dispatch', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pcb-authority-')); let now = 100;
+  const store = new Fixture(path.join(dir, 'store'), { maxBlobBytes: 100, quotaBytes: 1000 }, () => now); store.seed();
+  const issued = store.issueFromTrustedService('issue-2', 'admin', { role: 'submit', principal: 'user', project: 'p', board: 'b', operation: 'route',
+    job: null, attempt: null, issuedAtMs: 100, expiresAtMs: 20_000, maxUses: 50 });
+  if (issued.state !== 'ISSUED') throw new Error('issuance failed');
+  const req = { requestId: 'request-5', project: 'p', board: 'b', alias: 'a', aliasRevision: 1, sourceRevision: 3, operation: 'route', ttlMs: 1000 };
+  const binding = { job: 'job-1', attempt: 'attempt-1', sourceManifest: 'a'.repeat(64), policyDigest: 'b'.repeat(64), runtimeDigest: 'c'.repeat(64), toolchainDigest: 'd'.repeat(64) };
+  try {
+    const acquired = store.acquire(issued.token, req); if (acquired.state !== 'ACQUIRED') throw new Error('acquire failed');
+    const lease = { ...req, generation: acquired.generation, token: acquired.token };
+    assert.throws(() => store.bindAttempt(issued.token, { ...lease, token: '0'.repeat(64) }, binding), /cannot bind/);
+    store.bindAttempt(issued.token, lease, binding);
+    assert.throws(() => store.bindAttempt(issued.token, lease, { ...binding, attempt: 'attempt-2' }), /cannot bind/);
+    now = 1200;
+    assert.equal(store.acquire(issued.token, { ...req, requestId: 'request-6' }).state, 'BUSY');
+    assert.throws(() => store.release(issued.token, lease), /cannot be released/);
+  } finally { store.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});

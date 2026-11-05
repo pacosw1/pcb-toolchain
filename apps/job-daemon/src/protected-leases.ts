@@ -25,7 +25,36 @@ export class ProtectedLeaseStore extends ProtectedCapabilityStore {
       CREATE TABLE IF NOT EXISTS protected_lease_requests (request_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL,
       project TEXT NOT NULL, board TEXT NOT NULL, generation INTEGER NOT NULL) STRICT;
       CREATE TABLE IF NOT EXISTS protected_lease_audit (project TEXT NOT NULL, board TEXT NOT NULL, generation INTEGER NOT NULL,
-      actor TEXT NOT NULL, action TEXT NOT NULL, at_ms INTEGER NOT NULL) STRICT;`);
+      actor TEXT NOT NULL, action TEXT NOT NULL, at_ms INTEGER NOT NULL) STRICT;
+      CREATE TABLE IF NOT EXISTS protected_attempt_bindings (job TEXT NOT NULL, attempt TEXT NOT NULL,
+      project TEXT NOT NULL, board TEXT NOT NULL, generation INTEGER NOT NULL, source_revision INTEGER NOT NULL,
+      alias_revision INTEGER NOT NULL, operation TEXT NOT NULL, source_manifest TEXT NOT NULL, policy_digest TEXT NOT NULL,
+      runtime_digest TEXT NOT NULL, toolchain_digest TEXT NOT NULL, PRIMARY KEY(job,attempt),
+      UNIQUE(project,board,generation)) STRICT;`);
+  }
+  /** Stage a durable attempt binding and pin atomically before dispatch. The caller must separately establish
+   * the identities and immutable inputs; this method alone does not authorize a worker or verify a job. */
+  bindAttempt(capability: string, lease: { project: string; board: string; operation: string; generation: number; token: string },
+    binding: { job: string; attempt: string; sourceManifest: string; policyDigest: string; runtimeDigest: string; toolchainDigest: string }): void {
+    const sha = /^[0-9a-f]{64}$/;
+    if (!lease || ![lease.project, lease.board, lease.operation].every(v => typeof v === 'string' && ID.test(v)) ||
+        !Number.isSafeInteger(lease.generation) || lease.generation < 1 || typeof lease.token !== 'string' || !TOKEN.test(lease.token) ||
+        !binding || ![binding.job, binding.attempt].every(v => typeof v === 'string' && ID.test(v)) ||
+        ![binding.sourceManifest, binding.policyDigest, binding.runtimeDigest, binding.toolchainDigest].every(v => typeof v === 'string' && sha.test(v)))
+      throw new Error('invalid protected attempt binding');
+    this.withCapability(capability, { role: 'submit', project: lease.project, board: lease.board, operation: lease.operation, job: null, attempt: null }, identity => {
+      const now = this.clock(), row = this.db.prepare('SELECT * FROM protected_leases WHERE project=? AND board=?').get(lease.project, lease.board) as LeaseRow | undefined;
+      const target = this.db.prepare('SELECT revision,alias_revision,state FROM protected_targets WHERE project=? AND board=?').get(lease.project, lease.board) as { revision: number; alias_revision: number; state: string } | undefined;
+      if (!Number.isSafeInteger(now) || now < 1 || !row || row.pinned !== 0 || row.generation !== lease.generation || row.owner !== identity.principal ||
+          row.operation !== lease.operation || row.expires_at <= now || !target || target.state !== 'ACTIVE' || target.revision !== row.source_revision ||
+          target.alias_revision !== row.alias_revision || row.token_hash.byteLength !== 32 || !timingSafeEqual(Buffer.from(row.token_hash), leaseHash(lease.token)))
+        throw new Error('protected lease cannot bind attempt');
+      this.db.prepare('INSERT INTO protected_attempt_bindings VALUES (?,?,?,?,?,?,?,?,?,?,?,?)').run(binding.job, binding.attempt,
+        lease.project, lease.board, lease.generation, row.source_revision, row.alias_revision, lease.operation, binding.sourceManifest,
+        binding.policyDigest, binding.runtimeDigest, binding.toolchainDigest);
+      this.db.prepare('UPDATE protected_leases SET pinned=1 WHERE project=? AND board=?').run(lease.project, lease.board);
+      this.db.prepare('INSERT INTO protected_lease_audit VALUES (?,?,?,?,?,?)').run(lease.project, lease.board, lease.generation, identity.principal, 'attempt-bound', now);
+    });
   }
   /** Called only after authenticated submission; only targets activated by a future trusted import can be leased. */
   acquire(capability: string, request: ProtectedLeaseRequest): ProtectedLeaseResult {
