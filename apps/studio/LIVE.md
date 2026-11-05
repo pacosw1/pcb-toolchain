@@ -29,9 +29,10 @@ node --no-warnings --experimental-strip-types tools/pcb-live-setup.mts \
   --token-file ~/.config/pcb-live/token
 ```
 
-The project must pin a release containing the live guard in `toolchain.lock`. The guarded `pcb` launcher refuses to
-silently fall back to an older release for a registered project. Studio uses the configured `cliPath` for its own
-operations. A separate observer can watch all existing Git worktrees using `--discover-worktrees`:
+The guarded `pcb` launcher preserves each project's existing pinned release, or its project-local CLI when it has no
+lock, while keeping the coordinator guard around the command. Older releases can report their existing saved board
+and log updates; live router frames require a release with the Rust preview producer. Studio uses the configured
+`cliPath` for its own operations. A separate observer can watch all existing Git worktrees using `--discover-worktrees`:
 
 ```sh
 node --no-warnings --experimental-strip-types tools/pcb-live-worker.mts \
@@ -39,6 +40,10 @@ node --no-warnings --experimental-strip-types tools/pcb-live-worker.mts \
   --token-file ~/.config/pcb-live/token --state-file ~/.local/state/pcb-live/iot-lab.json \
   --discover-worktrees
 ```
+
+A previously downloaded release can be installed against a project lock without contacting GitHub:
+`sh scripts/install.sh --lock /path/to/toolchain.lock /path/to/pcb-toolchain-VERSION.tar.gz`. The installer verifies
+the archive against the lock before changing the `pcb` symlink.
 
 On macOS `apps/studio/deploy/install-live-worker.ts` installs a per-project LaunchAgent; pass the same options plus
 `--worker /absolute/path/to/pcb-live-worker.mts`. A Linux user-service template and environment example are in the

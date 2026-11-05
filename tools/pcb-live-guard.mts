@@ -25,6 +25,23 @@ function save(file: string, value: Receipt): void {
   try { fs.writeFileSync(fd, JSON.stringify(value)); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
   fs.renameSync(tmp, file);
 }
+function verifyManaged(root: string): void {
+  const dir = path.join(root, 'tools'), listing = path.join(dir, '.toolchain-files'), stamp = path.join(dir, '.toolchain-version');
+  if (!fs.existsSync(listing)) return;
+  if (!fs.existsSync(stamp)) throw new Error('managed tool files have no version stamp');
+  const version = fs.readFileSync(stamp, 'utf8').trim().split(/\s+/)[0];
+  const manifestPath = path.join(os.homedir(), '.local/share/pcb-toolchain', version, 'manifest.json');
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as { files?: Record<string, string> };
+  for (const name of fs.readFileSync(listing, 'utf8').split('\n').filter(Boolean)) {
+    const target = path.resolve(dir, name);
+    if (!target.startsWith(path.resolve(dir) + path.sep)) throw new Error('invalid managed tool path');
+    let st: fs.Stats;
+    try { st = fs.lstatSync(target); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; throw error; }
+    const expected = manifest.files?.['tools/' + name];
+    if (!st.isFile() || typeof expected !== 'string' || hash(fs.readFileSync(target)) !== expected)
+      throw new Error(`managed tool file ${name} was changed; no files were replaced`);
+  }
+}
 function runsBase(root: string, args: string[]): string {
   let base = process.env.PCB_RUNS_DIR ?? path.join(root, '.gate/cli');
   for (let i = 0; i < args.length; i++) {
@@ -257,6 +274,7 @@ async function dispatch(root: string, program: string, args: string[]): Promise<
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   if (args[0] === '--guardian' && args[1]) return guardian(args[1]);
+  if (args[0] === '--check-managed' && args[1]) { verifyManaged(args[1]); return; }
   if (args[0] === '--registered' && args[1]) { process.exitCode = projectId(args[1], loadConfig()) ? 0 : 1; return; }
   const split = args.indexOf('--');
   if (args[0] !== '--project' || !args[1] || split !== 2 || !args[3]) throw new Error('usage: pcb-live-guard --project DIR -- PROGRAM [ARGS...]');

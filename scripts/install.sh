@@ -1,14 +1,14 @@
 #!/bin/sh
 # Install a pcb-toolchain release and link ~/.local/bin/pcb.
 #   scripts/install.sh VERSION [TARBALL]      (no TARBALL: gh release download vVERSION)
-#   scripts/install.sh --lock PROJECT/toolchain.lock
+#   scripts/install.sh --lock PROJECT/toolchain.lock [TARBALL]
 # The tarball sha256 must equal the lock (with --lock) or SHA256SUMS of the release.
 set -eu
 if [ "${1:-}" = --lock ]; then
   lock=${2:?usage: install.sh --lock FILE}
   version=$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1])).version' "$lock")
   want=$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1])).sha256' "$lock")
-  tarball=''
+  tarball=${3:-}
 else
   version=${1:?usage: install.sh VERSION [TARBALL]}
   tarball=${2:-}

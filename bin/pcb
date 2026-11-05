@@ -25,26 +25,24 @@ fi
 
 lock="$project/toolchain.lock"
 live_registered=1
-if [ -f "$bundle/tools/pcb-live-guard.mts" ]; then
+if [ -z "${PCB_LIVE_GUARD_ACTIVE:-}" ] && [ -f "$bundle/tools/pcb-live-guard.mts" ]; then
   if node --no-warnings --experimental-strip-types "$bundle/tools/pcb-live-guard.mts" --registered "$project"; then live_registered=0
   else live_registered=$?; fi
   [ "$live_registered" -le 1 ] || { echo 'pcb: cannot verify live coordination configuration' >&2; exit 2; }
 fi
-if [ "$live_registered" = 0 ] && [ ! -f "$lock" ]; then
-  echo 'pcb: live-coordinated project has no toolchain.lock; install and pin a live-capable release first' >&2
-  exit 2
-fi
+delegate=''
+if [ "$live_registered" = 0 ] && [ ! -f "$lock" ]; then delegate="$project/tools/pcb"; fi
 if [ -f "$lock" ]; then
   want=$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1])).version' "$lock")
-  if [ "$live_registered" = 0 ] && [ "$want" != "$version" ]; then
-    echo "pcb: live-coordinated project pins $want; update its lock to the live-capable release $version" >&2
-    exit 2
-  fi
   other="${HOME}/.local/share/pcb-toolchain/$want/bin/pcb"
-  if [ "$want" != "$version" ] && [ -x "$other" ] && [ "${PCB_ALLOW_VERSION_MISMATCH:-}" != 1 ]; then
+  if [ "$live_registered" = 0 ] && [ "$want" != "$version" ]; then
+    [ -x "$other" ] || { echo "pcb: project pins $want; install it before running" >&2; exit 2; }
+    delegate=$other
+  fi
+  if [ "$live_registered" != 0 ] && [ "$want" != "$version" ] && [ -x "$other" ] && [ "${PCB_ALLOW_VERSION_MISMATCH:-}" != 1 ]; then
     exec "$other" "$@"                              # the installed release that this project pins
   fi
-  if [ "$want" != "$version" ] && [ "${PCB_ALLOW_VERSION_MISMATCH:-}" != 1 ]; then
+  if [ "$live_registered" != 0 ] && [ "$want" != "$version" ] && [ "${PCB_ALLOW_VERSION_MISMATCH:-}" != 1 ]; then
     echo "pcb: project $project pins pcb-toolchain $want, this is $version (scripts/install.sh $want)" >&2
     exit 2
   fi
@@ -60,6 +58,12 @@ if [ -f "$envf" ]; then
   done < "$envf"
 fi
 
+if [ -n "$delegate" ]; then
+  [ -x "$delegate" ] || { echo "pcb: project toolchain is not executable: $delegate" >&2; exit 2; }
+  if [ -f "$lock" ]; then node --no-warnings --experimental-strip-types "$bundle/tools/pcb-live-guard.mts" --check-managed "$project" || exit $?; fi
+  export IOT_LAB="$project" PCB_LIVE_GUARD_ACTIVE=1
+  exec node --no-warnings --experimental-strip-types "$bundle/tools/pcb-live-guard.mts" --project "$project" -- "$delegate" "$@"
+fi
 export IOT_LAB="$project" PCB_TOOLCHAIN_ROOT="$bundle" PCB_TOOLCHAIN_VERSION="$version"
 case "$(uname -s)-$(uname -m)" in
   Darwin-arm64) export IOTROUTE_BIN="$bundle/bin/iotroute-darwin-arm64" ;;
