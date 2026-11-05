@@ -38,5 +38,3 @@ def geometry_digest(path, omit_ids=()):
     if seen != remaining:
         raise ValueError('specified routing item absent from native board')
     return fingerprint(sorted(hashes))
-
-

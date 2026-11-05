@@ -80,5 +80,3 @@ def verify_preserved(source, target, problem, pose):
     original=protected(source)
     if original!=protected(target):raise ValueError('unrelated native forms or retained copper changed')
     return sorted(changed),original
-
-
