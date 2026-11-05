@@ -15,7 +15,6 @@ here=$(cd "$(dirname "$0")/.." && pwd -P)
 host=${RELEASE_SMOKE_HOST:-root@100.93.34.43}
 base=/var/lib/docker/pcb-release-smoke
 image=pcb-release-smoke:test
-fastroute=/srv/iot-lab-route/fastroute/fastroute-0.1.7-linux-x64/fastroute
 builder=rust:1.93.1-bookworm
 board=ENV-SENSE
 project=${IOT_LAB:-$HOME/code/iot-lab}
@@ -58,7 +57,7 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -n "$build_image" ]; then
-  ssh "$host" "mkdir -p $base/image && cp $fastroute $base/image/fastroute" || stuck image "no Linux fastroute at $fastroute on $host"
+  ssh "$host" "mkdir -p $base/image" || stuck image "cannot reach $host"
   scp -q "$here/tools/release-smoke.Dockerfile" "$host:$base/image/Dockerfile"
   ssh "$host" "docker build --pull=false -q -t $image $base/image && rm -rf $base/image" || stuck image 'docker build failed'
   echo "PASS: image $image on $host"
