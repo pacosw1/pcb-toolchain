@@ -14,6 +14,7 @@ import { type Emit, execute, measuredStage, operationEvent, type Row } from './p
 import { validateGate } from './pcb-routing-admission.ts';
 import { snapshot, sourceState, type SourceState } from './pcb-sources.ts';
 import { boardConfig, operationCommand, pythonNative, routePolicyArgs } from './pcb-workflow.ts';
+import { keepStuck } from './route-stuck.ts';
 import { iotrouteBin } from './iotroute-bin.ts';
 import { fileRoot } from './project-root.mjs';
 import { isFile, isRelativeTo, joinPath, relativeTo, resolvePath, which, withSuffix } from './py-path.ts';
@@ -142,6 +143,8 @@ async function routeJson(run: Candidate): Promise<ToolOutcome> {
   const record = join(output, 'result.json');
   // A stage that stops before its end writes no record: the cause is in the stage's own log, named by operation/route.log.
   const report: Row = isFile(record) ? readObject<Row>(record) : { status: 'ERROR', cause: `iotroute route wrote no result.json (exit ${code}); see operation/route.log` };
+  const stuck = keepStuck(run.folder, run.board, join(output, 'stuck.json'));
+  if (stuck) report.cause = `route stuck: ${stuck.summary[0]}`;
   atomicJson(join(run.folder, 'operation/router-summary.json'), report);
   if (!code) {
     if (!report.board_file || !isFile(String(report.board_file))) throw new Error('iotroute route returned success without its board_file');

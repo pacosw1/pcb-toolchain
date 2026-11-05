@@ -17,4 +17,5 @@ pub mod routing_rules;
 pub mod run;
 pub mod sha256;
 pub mod si;
+pub mod stuck;
 pub mod tool_args;

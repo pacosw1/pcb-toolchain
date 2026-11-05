@@ -9,6 +9,8 @@ import { stockPopulationCurrent } from './part-stock.ts';
 import { jsonDumps, PyError } from './py-compat.mjs';
 import { caught, isFile, isRelativeTo, pathExists, resolvePath, which } from './py-path.ts';
 import { sameValue } from './py-values.ts';
+import { STUCK_FILE } from './route-stuck.ts';
+import type { StuckReport } from './route-stuck.ts';
 import { timestamp } from './timing.ts';
 import type { ObservationReport, RunState } from './pcb-cycle.ts';
 
@@ -275,6 +277,13 @@ export async function nextAction(rootPath: string, board: string, options: NextO
     phase = 'source';
     if (manifest.gate_config_sha256 !== sha256File(join(root, 'hardware-design/boards', board, 'gate.json'))) stale('configured board gate changed since the run');
     const gateDir = operation === 'release' ? join(folder, pathExists(join(folder, 'candidate/gate')) ? 'candidate/gate' : 'release-work/gate') : join(folder, 'gate');
+    const stuckPath = join(folder, STUCK_FILE);
+    if (operation === 'route' && pathExists(stuckPath)) {
+      if (result.evidence_sha256[STUCK_FILE] !== sha256File(stuckPath)) stale('stuck report is not bound to sealed run evidence');
+      output.evidence.freshness = 'recorded_only';
+      const stuck = readObject<StuckReport>(stuckPath);
+      return finish('stuck', 'route_stuck', stuck.summary.join('\n'), 'inspect', explain, { evidence: { path: stuckPath }, open_nets: stuck.open_nets, retry_unchanged_inputs: false });
+    }
     if (!pathExists(join(gateDir, 'result.json'))) { output.evidence.freshness = 'recorded_only'; return finish('blocked', 'operation_failed_before_gate', result.cause ?? 'Operation has no completed gate evidence', 'inspect', explain, { evidence: { path: join(folder, 'operation', operation + '.log') } }); }
     phase = 'artifacts';
     const raw = requiredGateEvidence(folder, gateDir, result), checks = raw.checks ?? {}, configured = cfg.get('checks') as Map<string, unknown> ?? new Map();

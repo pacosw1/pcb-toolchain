@@ -13,7 +13,8 @@
 //!     the route, the `widths` rules of the board's route.json and `iotroute write`, whose board must keep all copper of its input.
 //!  3. OUT gets the board and the project files of the input; the input's .kicad_pro goes back if a save rewrote it.
 //!  4. KiCad DRC with --schematic-parity on OUT, on the saved fill.
-//!  5. --diagnose: when OUT has opens, why, for the compaction (diagnose.rs). It never changes the verdict.
+//!  5. --diagnose: when OUT has opens, why, for the compaction (diagnose.rs); when OUT is not clean, the short report of that in
+//!     OUT.iotroute/stuck.json (crate::stuck), against the report of --reuse PREV when it has one. It never changes the verdict.
 //!
 //! --reuse PREV (partial re-route, DESIGN.md 5c): the seed is PREV's route, the parts moved since and the nets PREV left open or in
 //! a DRC error. --reuse-fallback full (default): when the reuse result is not PASS, the full route of the same input runs too and
@@ -23,7 +24,7 @@
 //! PASS|FAIL <drc errors> <unconnected> <parity> <tracks> <vias> <seconds>, or ERROR <seconds> <cause> when a step did not
 //! complete; with --json the record on the next line. The record is also in OUT.iotroute/result.json. Exit: 0 PASS, 1 FAIL, 2 no
 //! verdict.
-mod diagnose;
+pub mod diagnose;
 pub mod guard;
 pub mod lock;
 pub mod measure;
@@ -410,6 +411,11 @@ fn run(a: &Args, rec: &mut Record, out: &Path, work: &Path) -> Result<(), String
     let drc = finish(rec, out, work)?;
     if a.diagnose && drc.unconnected > 0 {
         rec.diagnosis = Some(diagnose::diagnose(&diagnose_in, out, work, &diagnose_model));
+    }
+    if a.diagnose && !drc.clean() {
+        let previous = a.reuse.as_ref().map(|prev| PathBuf::from(format!("{prev}.iotroute/stuck.json"))).filter(|path| path.is_file());
+        let line = crate::stuck::write(work, rec.board.as_deref().unwrap_or(""), previous.as_deref()).map_or_else(|error| format!("STUCK failed: {error}"), |report| report.line());
+        rec.diagnosis.get_or_insert_default().push(line);
     }
     Ok(())
 }

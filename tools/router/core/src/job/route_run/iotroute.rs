@@ -122,7 +122,7 @@ pub fn route(stage: &Stage, folder: &Path, src: &Path, work: &Path, halo: bool) 
     stage_model(&mut data, stage, halo)?;
     fs::write(&model, data.to_string()).map_err(|e| format!("{}: {e}", model.display()))?;
     let routed = work.join("routed.kicad_pcb");
-    let mut argv = vec![folder.display().to_string(), routed.display().to_string(), "--iters".to_string(), stage.budget.passes.to_string()];
+    let mut argv = vec![folder.display().to_string(), routed.display().to_string(), "--iters".to_string(), stage.budget.passes.to_string(), "--checkpoint".to_string()];
     if stage.budget.time_s != 0 {
         argv.extend(["--max-time".to_string(), stage.budget.time_s.to_string()]);
     }

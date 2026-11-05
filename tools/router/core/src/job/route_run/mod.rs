@@ -6,6 +6,7 @@
 //! nets with kicad-cli DRC. The copper of a stage is locked for the next stage (a backend keeps existing copper). Then the widths rules and the pours go in, KiCad 10 fills, and kicad-cli DRC with --schematic-parity runs.
 //! Result: OUTDIR/<BOARD>.kicad_pcb with its sidecars, and OUTDIR/result.json. The input board is only read.
 //! Exit 0 only when every stage check passes and DRC reports 0 errors, 0 unconnected and 0 parity. 2 is a bad command line.
+//! A failed run of the iotroute backend also leaves OUTDIR/stuck.json (crate::stuck), from the files of the last stage it routed.
 pub mod board_edit;
 pub mod iotroute;
 pub mod report;
@@ -19,9 +20,11 @@ use crate::kicad::kicad_cli;
 use crate::kicad::save::{WorkDir, put_in_place, save_refilled};
 use crate::plan::{self, Backend, Plan, Pour, Stage, add_blocks, copy_block, open_nets, split_zones};
 use crate::route_features::{defaults_path, root};
+use crate::run::diagnose::diagnose;
 use crate::run::guard;
 use crate::run::steps::Steps;
 use crate::sha256::sha256;
+use crate::stuck;
 use crate::tool_args::Args;
 use board_edit::{TMP, keepout_area, keepout_zone, pour_area, pour_zone, set_widths};
 use report::Json;
@@ -292,6 +295,24 @@ impl Job {
         Ok((out, record, failures))
     }
 
+    /// Why the run failed, from the last stage it routed: `iotroute run --diagnose` on that stage, then OUTDIR/stuck.json. `finished`:
+    /// the final board failed, not the stage check. It describes only: a diagnosis that fails is a line, not a failed run.
+    fn stuck(&self, number: usize, stage: &Stage, board: &str, finished: bool) -> Vec<String> {
+        let folder = self.outdir.join(format!("{}-{}", number + 1, stage.name));
+        let (work, at) = (folder.join("router"), if finished { self.outdir.clone() } else { folder.clone() });
+        let report = || -> Result<Vec<String>, String> {
+            copy_file(&at.join("drc.json"), &work.join("drc.json"))?;
+            let drc: Value = serde_json::from_str(&read_text(&work.join("drc.json"))?).map_err(|e| format!("drc.json: {e}"))?;
+            let opens = drc["unconnected_items"].as_array().is_some_and(|items| !items.is_empty());
+            let mut lines = if opens { diagnose(&self.board_file(&folder.join("in")), &self.board_file(&at), &work, &work.join("model.json")) } else { Vec::new() };
+            let stuck = stuck::write(&work, board, None)?;
+            copy_file(&work.join("stuck.json"), &self.outdir.join("stuck.json"))?;
+            lines.push(stuck.line());
+            Ok(lines)
+        };
+        report().unwrap_or_else(|error| vec![format!("STUCK failed: {error}")])
+    }
+
     /// The final board: widths, pours, KiCad 10's fill, the input's stackup and sidecars, DRC with parity. The fields of result.json
     /// that come from it, and the failure when DRC is not clean.
     fn finish(&self, plan: &Plan, current: &Path, start: &Path) -> Result<(Vec<(&'static str, Json)>, Option<String>), String> {
@@ -390,8 +411,9 @@ fn route(options: &Options) -> Result<i32, String> {
     }
     guard::preflight(&start, &outdir.join("preflight.json"))?;
     let job = Job { outdir: outdir.clone(), name, folder, backend, halo: iotroute::wants_halo(&plan), pours: plan.pours.clone() };
-    let (mut current, mut stages, mut failures) = (start.clone(), Vec::new(), Vec::new());
+    let (mut current, mut stages, mut failures, mut last) = (start.clone(), Vec::new(), Vec::new(), None);
     for (number, stage) in plan.stages.iter().enumerate() {
+        last = Some((number, stage));
         let (out, record, stage_failures) = job.run_stage(number, stage, &current)?;
         println!("{}", record.line());
         current = out;
@@ -411,10 +433,14 @@ fn route(options: &Options) -> Result<i32, String> {
         ("source", Json::text(&source.display().to_string())),
         ("stages", Json::List(stages)),
     ];
-    if failures.is_empty() {
-        let (finished, failure) = job.finish(&plan, &current, &start)?;
-        fields.extend(finished);
+    let finished = failures.is_empty();
+    if finished {
+        let (final_fields, failure) = job.finish(&plan, &current, &start)?;
+        fields.extend(final_fields);
         failures.extend(failure);
+    }
+    if let (Some((number, stage)), Backend::Iotroute, false) = (last, backend, failures.is_empty()) {
+        job.stuck(number, stage, &options.board, finished).iter().for_each(|line| println!("{line}"));
     }
     fields.push(("failures", Json::texts(&failures)));
     let result = Json::object(fields);

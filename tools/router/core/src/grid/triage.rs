@@ -46,6 +46,8 @@ pub struct Connection {
     pub blocking_nets: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blocking_parts: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocking_keepouts: Option<Vec<String>>,
 }
 
 /// iot-lab.open-triage-evidence.v1
@@ -80,7 +82,7 @@ fn counted(open: &Open, scope: &TriageScope) -> bool {
 fn row(open: &Open, class: &'static str) -> Connection {
     let End { description: a, pos: a_pos, .. } = open.a.clone();
     let End { description: b, pos: b_pos, .. } = open.b.clone();
-    Connection { net: open.net.clone(), a, b, a_pos, b_pos, class, enclosed_side: None, region_mm2: None, blocking_nets: None, blocking_parts: None }
+    Connection { net: open.net.clone(), a, b, a_pos, b_pos, class, enclosed_side: None, region_mm2: None, blocking_nets: None, blocking_parts: None, blocking_keepouts: None }
 }
 
 fn area(region: &[Mask], g: f64) -> f64 {
@@ -100,8 +102,9 @@ fn classify(grid: &mut GridBoard, grids: &NetGrids, open: &Open, ends: (usize, u
     let (side, reach, seeds) = if area_a <= area_b { ("a", reached_a, seed_a) } else { ("b", reached_b, seed_b) };
     // The end itself has no legal cell: name what covers it.
     let region = if reach.iter().any(Mask::any) { reach } else { seeds };
-    let (nets, parts) = blockers(grid, &region, &grids.owners, 8);
-    Connection { enclosed_side: Some(side), region_mm2: Some(round_to(area_a.min(area_b), 2)), blocking_nets: Some(nets), blocking_parts: Some(parts), ..row(open, "ENCLOSED") }
+    let found = blockers(grid, &region, &grids.owners, 8);
+    let keepouts = Some(found.keepouts).filter(|names| !names.is_empty());
+    Connection { enclosed_side: Some(side), region_mm2: Some(round_to(area_a.min(area_b), 2)), blocking_nets: Some(found.nets), blocking_parts: Some(found.parts), blocking_keepouts: keepouts, ..row(open, "ENCLOSED") }
 }
 
 /// Classifies the opens of `drc`, a parsed report of this board.

@@ -11,7 +11,7 @@ use crate::route_features::defaults_path;
 use crate::sha256::sha256;
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
@@ -46,23 +46,28 @@ fn route_scope(model: &Value) -> (Vec<String>, Vec<String>) {
     (layers, nets)
 }
 
+/// The nets a narrowed route was given: the only ones it can have left stuck. None when it had them all.
+fn routed_nets(model: &Value) -> Option<BTreeSet<String>> {
+    model["route_nets"].as_array().map(|nets| nets.iter().filter_map(|net| net.as_str().map(str::to_string)).collect())
+}
+
 fn number(features: &Value, feature: &str, key: &str) -> Result<f64, String> {
     features["features"][feature][key].as_f64().ok_or_else(|| format!("route features: {feature}.{key} is not a number"))
 }
 
-fn open_triage(out: &Path, work: &Path, features: &Value, layers: &[String], skip: &[String]) -> Result<String, String> {
+fn open_triage(out: &Path, work: &Path, features: &Value, layers: &[String], skip: &[String], nets: Option<BTreeSet<String>>) -> Result<String, String> {
     let config = TriageConfig { grid_mm: number(features, "triage_opens", "grid_mm")?, max_opens: number(features, "triage_opens", "max_opens")? as usize };
-    let scope = TriageScope { layers: layers.to_vec(), skip: skip.to_vec(), nets: None };
+    let scope = TriageScope { layers: layers.to_vec(), skip: skip.to_vec(), nets };
     let (board, rules) = read(out)?;
     let report = triage(&board, &rules, out, &read_json(&work.join("drc.json"))?, &config, &scope)?;
     write_json(&work.join("open-triage.json"), &report)?;
     Ok(report.line())
 }
 
-fn pin_escape(route_in: &Path, work: &Path, features: &Value, layers: &[String], skip: &[String]) -> Result<String, String> {
+fn pin_escape(route_in: &Path, work: &Path, features: &Value, layers: &[String], skip: &[String], nets: Option<BTreeSet<String>>) -> Result<String, String> {
     let raw = features["features"]["pin_escape_check"].clone();
     let config = EscapeConfig { grid_mm: number(features, "pin_escape_check", "grid_mm")?, reach_mm: number(features, "pin_escape_check", "reach_mm")?, halo_hint_mm: number(features, "pin_escape_check", "halo_hint_mm")?, raw };
-    let scope = EscapeScope { layers: layers.to_vec(), skip: skip.to_vec(), nets: None };
+    let scope = EscapeScope { layers: layers.to_vec(), skip: skip.to_vec(), nets };
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let digest = sha256(&fs::read(&exe).map_err(|e| format!("{}: {e}", exe.display()))?);
     let runtime = Runtime { kicad_version: PINNED_COMMIT.to_string(), program: BTreeMap::from([(exe.display().to_string(), digest)]) };
@@ -74,13 +79,13 @@ fn pin_escape(route_in: &Path, work: &Path, features: &Value, layers: &[String],
 
 /// One line per diagnosis: what it found, or why it did not run.
 pub fn diagnose(route_in: &Path, out: &Path, work: &Path, model: &Path) -> Vec<String> {
-    let inputs = read_json(model).and_then(|model| Ok((read_json(&defaults_path())?, route_scope(&model))));
-    let (features, (layers, skip)) = match inputs {
+    let inputs = read_json(model).and_then(|model| Ok((read_json(&defaults_path())?, route_scope(&model), routed_nets(&model))));
+    let (features, (layers, skip), nets) = match inputs {
         Ok(inputs) => inputs,
         Err(error) => return vec![format!("DIAGNOSE failed: {error}")],
     };
     let line = |name: &str, result: Result<String, String>| result.unwrap_or_else(|error| format!("{name} failed: {error}"));
-    vec![line("TRIAGE", open_triage(out, work, &features, &layers, &skip)), line("ESCAPE", pin_escape(route_in, work, &features, &layers, &skip))]
+    vec![line("TRIAGE", open_triage(out, work, &features, &layers, &skip, nets.clone())), line("ESCAPE", pin_escape(route_in, work, &features, &layers, &skip, nets))]
 }
 
 #[cfg(test)]
@@ -92,5 +97,7 @@ mod tests {
     fn a_diagnosis_covers_the_routed_layers_and_leaves_the_plane_nets_out() {
         let model = json!({"copper_layers": ["F.Cu", "In1.Cu", "B.Cu"], "plane_layers": ["In1.Cu"], "nets": {"GND": {"plane": true}, "A": {"plane": false}}});
         assert_eq!(route_scope(&model), (vec!["F.Cu".to_string(), "B.Cu".to_string()], vec!["GND".to_string()]));
+        assert_eq!(routed_nets(&model), None);
+        assert_eq!(routed_nets(&json!({"route_nets": ["A"]})), Some(BTreeSet::from(["A".to_string()])));
     }
 }

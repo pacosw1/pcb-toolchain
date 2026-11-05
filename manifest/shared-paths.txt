@@ -325,6 +325,8 @@ tools/lib/route-decision-escape.ts
 tools/lib/route-decision-evidence.ts
 tools/lib/route-decision.test.ts
 tools/lib/route-decision.ts
+tools/lib/route-stuck.test.ts
+tools/lib/route-stuck.ts
 tools/lib/route-dispatch.test.mjs
 tools/lib/route-features.test.ts
 tools/lib/route-features.ts
@@ -814,6 +816,7 @@ tools/router/core/src/si/planes/tests/detour.rs
 tools/router/core/src/si/planes/tests/evidence.rs
 tools/router/core/src/si/planes/tests/native.rs
 tools/router/core/src/si/planes/tests/projection.rs
+tools/router/core/src/stuck.rs
 tools/router/core/src/tests_congestion.rs
 tools/router/core/src/tests_iso.rs
 tools/router/core/src/tests_layers.rs

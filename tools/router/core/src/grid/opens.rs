@@ -44,7 +44,7 @@ pub fn bracket_net(description: &str) -> Option<&str> {
 }
 
 /// `Pad NUM [NET] of REF`, with its other spellings: number, net and reference.
-fn pad_of(description: &str) -> Option<(&str, &str, &str)> {
+pub fn pad_of(description: &str) -> Option<(&str, &str, &str)> {
     let rest = ["Pad ", "PTH pad ", "SMD pad "].iter().find_map(|p| description.strip_prefix(p))?;
     let (number, rest) = rest.split_once(" [")?;
     let (net, rest) = rest.split_once(']')?;

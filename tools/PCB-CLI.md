@@ -143,6 +143,12 @@ and `via_halo`, which it always does; any other feature, a feature set to false,
 `via_skip` are refused by name (`tools/router/core/src/job/route_run/iotroute.rs`). `neck_um` is the narrowest a wider net may
 neck and the width it retries at; a current floor above it stays, and a pad narrower than it is entered at the pad's width.
 
+A failed run on the `iotroute` backend leaves a short report, `operation/stuck.json` (schema `iot-lab.stuck-report.v1`), and
+`tools/pcb next BOARD` prints it: the open nets and their ends in mm, why each is open (walled in by which parts, nets and keepouts;
+a path exists and the router lost it; or the search hit its limit, which proves nothing), the layer limits, and what changed since the
+last report of this board. It describes only: DRC stays the verdict. `iotroute stuck WORK BOARD [--previous STUCK.json]` makes the same
+report from a work folder (`tools/router/core/src/stuck.rs`).
+
 For the in-house router (tools/router/DESIGN.md), use
 `tools/pcb route BOARD --router iotroute [--spec POLICY.json] --detach --json`. The run executes
 `iotroute run` from the snapshot on the candidate board (model, iotroute, write, KiCad DRC with
