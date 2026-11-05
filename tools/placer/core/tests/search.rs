@@ -446,3 +446,39 @@ fn optimize_returns_distinct_candidates() {
         }
     }
 }
+
+#[test]
+fn many_moves_cannot_accumulate_beyond_the_seed_radius() {
+    let pr = common::parse(two_units());
+    let p = params(&["p_swap=0", "p_rot=0", "max_displacement=1"]);
+    let m = model(&pr, &p);
+    let mut ev = Evaluator::new(&m, &p, &pr.initial_pose());
+    let mover = Mover::new(&m, &p);
+    let mut rng = PyRandom::new(1);
+    let (x0, y0, _) = pr.initial_pose()[1];
+    for _ in 0..1000 {
+        let moves = mover.propose(&mut rng, &ev, 3.0);
+        ev.propose(&moves);
+        ev.commit();
+        let (x, y, _) = ev.place(1);
+        assert!((x - x0).hypot(y - y0) <= 1.0 + 1e-9);
+    }
+}
+
+#[test]
+fn the_legalizer_cannot_turn_a_seeded_part_to_escape_illegality() {
+    let wide = common::unit("WIDE", 1.5, 6.0, json!([[-2, -0.5, 2, 0.5, 0.0]]));
+    let pr = common::parse(common::problem_json(json!([wide]), json!([]), common::box_board(3.0, 12.0)));
+    let legal = ["mask_cell=0.25", "legal_step=0.25", "legal_radius=1", "legal_passes=1"];
+    let with = |rotate: &'static str| Params::from_args(&[legal.as_slice(), &[rotate]].concat()).unwrap();
+    let strict = with("legal_rotate=0");
+    let m = model(&pr, &strict);
+    let mut ev = Evaluator::new(&m, &strict, &pr.initial_pose());
+    assert_eq!(legalize(&mut ev, &strict).unwrap(), vec![0]);
+    assert_eq!(ev.place(0).2, 0);
+    let free = with("legal_rotate=1");
+    let m = model(&pr, &free);
+    let mut ev = Evaluator::new(&m, &free, &pr.initial_pose());
+    assert!(legalize(&mut ev, &free).unwrap().is_empty());
+    assert!([1, 3].contains(&ev.place(0).2));
+}

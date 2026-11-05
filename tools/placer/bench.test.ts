@@ -28,6 +28,8 @@ test('rank correlation', () => {
   near(spearman([1, 2, 3, 4], [4, 3, 2, 1]), -1);
   near(spearman([1, 2, 3], [1, 3, 2]), 0.5);
   near(spearman([1, 1, 2], [1, 2, 3]), 0.8660254);   // ties get the average rank
+  near(spearman([1, 2, 3], [3, 2, 1]), -1);
+  near(spearman([1, 1, 3], [2, 2, 4]), 1);
 });
 
 test('no variance is an error, not an invented correlation', () => {
