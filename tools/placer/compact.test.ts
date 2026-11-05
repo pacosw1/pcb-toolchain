@@ -337,6 +337,51 @@ test('the loop stops at the time budget', async () => {
 const one = (): Problem => ({ units: [unit('A', 2, 2, [[0, 0, 1, 1, 0.5]])], nets: [], board: board() });
 const onePose = (): SearchResult => ({ candidates: [{ pose: [[2, 2, 0]], cost: 1, illegal: [] }] });
 
+test('the shared deadline prevents later phases after a search overruns', async () => {
+  let time = 0;
+  const forbidden = (): never => assert.fail('expired search must not start write or route');
+  const result = await run(one(), {
+    search: (_problem, _step, stage) => { assert.equal(stage.deadline, 2); assert.equal(stage.remainingSeconds, 2); time = 3; return onePose(); },
+    write: forbidden, route: forbidden,
+  }, { realFirst: true, budget: 2, clock: () => time });
+  assert.equal(result.steps[0].status, 'timeout');
+  assert.equal(result.steps[0].board, null);
+  assert.equal(result.best, null);
+});
+
+test('a completed write after deadline is retained but cannot start routing', async () => {
+  let time = 0;
+  const result = await run(one(), {
+    search: onePose,
+    write: (_problem, _pose, _k, _step, stage) => { assert.equal(stage.deadline, 2); time = 3; return 'checkpoint'; },
+    route: () => assert.fail('expired write must not start routing'),
+  }, { realFirst: true, budget: 2, clock: () => time });
+  assert.equal(result.steps[0].board, 'checkpoint');
+  assert.equal(result.steps[0].status, 'timeout');
+  assert.equal(result.best, null);
+});
+
+test('a route returning after the deadline cannot become a passing candidate', async () => {
+  let time = 0;
+  const result = await run(one(), {
+    search: onePose, write: () => 'checkpoint',
+    route: (_board, _step, stage) => { assert.equal(stage.deadline, 2); time = 3; return [0]; },
+  }, { realFirst: true, budget: 2, clock: () => time });
+  assert.equal(result.steps[0].status, 'timeout');
+  assert.equal(result.steps[0].passed, false);
+  assert.equal(result.best, null);
+});
+
+test('an earlier outer deadline bounds all stage contexts', async () => {
+  let time = 0;
+  const result = await run(one(), {
+    search: (_problem, _step, stage) => { assert.deepEqual(stage, { deadline: 1, remainingSeconds: 1 }); time = 1; return onePose(); },
+    write: () => assert.fail('outer deadline expired'), route: () => assert.fail('outer deadline expired'),
+  }, { realFirst: true, budget: 10, deadline: 1, clock: () => time });
+  assert.equal(result.steps[0].status, 'timeout');
+  await assert.rejects(run(one(), {}, { budget: Infinity }), /budget must be finite/);
+});
+
 test('a routing timeout keeps the checkpoint board but cannot pass', async () => {
   let time = 0;
   const looped = await run(one(), {
