@@ -142,6 +142,7 @@ tools/lib/datasheet-audit.test.mjs
 tools/lib/decimal.test.ts
 tools/lib/decimal.ts
 tools/lib/design-contract-load.ts
+tools/lib/design-contract-verifiers.test.ts
 tools/lib/design-contract-verifiers.ts
 tools/lib/design-contract.test.ts
 tools/lib/design-contract.ts
