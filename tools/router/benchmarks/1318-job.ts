@@ -4,11 +4,13 @@ import path from 'node:path';
 import {startOwned} from '../../lib/owned-stage.ts';
 import {copyVerificationWorkspace,semanticChecks,digest} from '../sprint-native.ts';
 import {main as sprint} from '../sprint-job.ts';
-const [mode,secondsArg]=process.argv.slice(2),seconds=Number(secondsArg);
+const [mode,secondsArg,board="ENV-SENSE"]=process.argv.slice(2),seconds=Number(secondsArg);
+if(!["ENV-SENSE","FIELD-24V-BUS","ESP32-CORE"].includes(board))throw Error("board outside the three-board benchmark");
 if(!['single','sprint'].includes(mode!)||![120,240].includes(seconds))throw Error('single|sprint 120|240');
 const root=process.cwd(),bin=path.resolve('in/iotroute-linux-x86_64');
-const board='ENV-SENSE',src=path.resolve('hardware-design/boards/ENV-SENSE/cad/ENV-SENSE/ENV-SENSE.kicad_pcb');
-const out=path.resolve('out/route/ENV-SENSE.kicad_pcb'),dir=path.resolve('out/benchmark');
+const config=JSON.parse(fs.readFileSync(path.resolve(`hardware-design/boards/${board}/gate.json`),"utf8"));
+const src=path.resolve(`hardware-design/boards/${board}`,`${config.project}.kicad_pcb`);
+const out=path.resolve(`out/route/${board}.kicad_pcb`),dir=path.resolve('out/benchmark');
 fs.mkdirSync(dir,{recursive:true});
 const read=(p:string)=>JSON.parse(fs.readFileSync(p,'utf8'));
 const cg=()=>{try{return Object.fromEntries(fs.readFileSync('/sys/fs/cgroup/cpu.stat','utf8').trim().split('\n').map(x=>{const[k,v]=x.split(' ');return[k,Number(v)]}));}catch{return null}};
@@ -38,7 +40,6 @@ try{
   const verifyEnv={...env,IOT_LAB:workspace};const gate=path.join(dir,'gate');
   await owned([process.execPath,path.join(workspace,'tools/gate.mjs'),board,'--fresh','--evidence-dir',gate],'gate',workspace,verifyEnv);
   const g=read(path.join(gate,'result.json'));if(g.exit!==0||g.changedDuringRun)throw Error('gate rejected');
-  const config=read(path.resolve('hardware-design/boards/ENV-SENSE/gate.json'));
   for(const h of semanticChecks(config.post_verify,dir,candidate,process.execPath,verifyEnv))await owned(h.command,h.stage,workspace,h.env as typeof env);
   if(digest(candidate)!==rec.board_sha256)throw Error('verification changed candidate');
   fs.writeFileSync(path.join(dir,'verified.json'),JSON.stringify({board:out,sha256:rec.board_sha256,gate_sha256:digest(path.join(gate,'result.json'))}));
@@ -47,7 +48,7 @@ try{
  status='PASS';
 }catch(e){error=String(e);console.error(error)}finally{
  clearTimeout(timer);process.removeListener('SIGTERM',stop);process.removeListener('SIGINT',stop);
- const cpuEnd=cg();const report={schema:'pcb.benchmark-1318.v1',mode,seconds,status,error,elapsed_s:(performance.now()-began)/1000,cpu_start:cpuStart,cpu_end:cpuEnd,cgroup_cpu_s:cpuStart&&cpuEnd?(cpuEnd.usage_usec-cpuStart.usage_usec)/1e6:null,source_sha256:digest(src),binary_sha256:digest(bin),node:process.version,stages};
+ const cpuEnd=cg();const report={schema:'pcb.benchmark-1318.v1',board,mode,seconds,status,error,elapsed_s:(performance.now()-began)/1000,cpu_start:cpuStart,cpu_end:cpuEnd,cgroup_cpu_s:cpuStart&&cpuEnd?(cpuEnd.usage_usec-cpuStart.usage_usec)/1e6:null,source_sha256:digest(src),binary_sha256:digest(bin),node:process.version,stages};
  fs.writeFileSync(path.join(dir,'result.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));
 }
 process.exitCode=status==='PASS'?0:2;
