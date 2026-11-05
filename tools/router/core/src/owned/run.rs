@@ -8,6 +8,7 @@
 use super::bootstrap;
 use super::client::rpc;
 use super::failure::Failure;
+use super::lock;
 use super::native::{self, locked};
 use super::options::SpawnOptions;
 use super::scope::{DEPTH_ENV, HANDLE_ENV, SOCKET_ENV, Scope};
@@ -18,6 +19,7 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
 use std::os::fd::{AsRawFd, BorrowedFd};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
@@ -286,9 +288,32 @@ fn run(args: &[OsString]) -> i32 {
     report.exit_code()
 }
 
+/// A one-shot worker may be finalized only after its owned broker has written
+/// cleanup evidence. The finalizer replaces this lock-owning process, so the
+/// worker flock stays held while the receipt and terminal state are written.
+fn run_finalized(args: &[OsString]) -> i32 {
+    let [result_flag, file, finalizer_flag, finalizer, separator, command @ ..] = args else { return EXIT_USAGE };
+    if result_flag != "--result" || finalizer_flag != "--finalizer" || separator != "--" || command.is_empty() { return EXIT_USAGE; }
+    let finalizer: Option<Vec<String>> = finalizer.to_str().and_then(|value| serde_json::from_str(value).ok());
+    let Some(finalizer) = finalizer.filter(|value| !value.is_empty()) else { return EXIT_USAGE };
+    let Some(lock_path) = std::env::var_os("IOT_PCB_WORKER_LOCK") else { return EXIT_USAGE };
+    let Some(fd) = std::env::var_os("IOT_PCB_WORKER_FD").and_then(|value| value.to_str()?.parse::<i32>().ok()) else { return EXIT_USAGE };
+    if lock::verify_worker_fd(Path::new(&lock_path), fd).is_err() { return EXIT_USAGE; }
+    let mut run_args = vec![OsString::from("--result"), file.clone(), OsString::from("--")];
+    run_args.extend_from_slice(command);
+    let _ = run(&run_args);
+    // An absent or failed broker receipt is interpreted as unconfirmed by the
+    // finalizer; never replace it with an invented success here.
+    if native::unblock_stop_signals().is_err() { return EXIT_FAILED; }
+    let error = std::process::Command::new(&finalizer[0]).args(&finalizer[1..]).arg(file).exec();
+    eprintln!("owned finalizer could not start: {error}");
+    EXIT_FAILED
+}
+
 pub fn main(args: &[OsString]) -> i32 {
     match args.first().and_then(|verb| verb.to_str()) {
         Some("run") => run(&args[1..]),
+        Some("run-finalized") => run_finalized(&args[1..]),
         Some("exec") => bootstrap::main(&args[1..]),
         _ => {
             eprintln!("usage: iotroute owned run --result FILE -- COMMAND...");

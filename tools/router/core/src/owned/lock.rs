@@ -10,6 +10,7 @@ use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::fd::AsRawFd;
+use std::os::unix::fs::MetadataExt;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::Command;
@@ -31,7 +32,7 @@ pub fn main(args: &[OsString]) -> i32 {
         Request::Hold { path, wait } => hold(path, wait),
         Request::Held { path } => report_held(path),
         Request::Append { path } => append_locked(path),
-        Request::Supervise { path, result, command } => supervise(path, result, command),
+        Request::Supervise { path, result, finalizer, command } => supervise(path, result, finalizer, command),
     };
     outcome.unwrap_or_else(|error| {
         eprintln!("lock: {error}");
@@ -43,7 +44,7 @@ enum Request<'a> {
     Hold { path: &'a Path, wait: Duration },
     Held { path: &'a Path },
     Append { path: &'a Path },
-    Supervise { path: &'a Path, result: &'a Path, command: &'a [OsString] },
+    Supervise { path: &'a Path, result: &'a Path, finalizer: &'a OsString, command: &'a [OsString] },
 }
 
 fn parse(args: &[OsString]) -> Option<Request<'_>> {
@@ -51,8 +52,8 @@ fn parse(args: &[OsString]) -> Option<Request<'_>> {
     match (verb.to_str()?, rest) {
         ("held", [path]) => Some(Request::Held { path: Path::new(path) }),
         ("append", [path]) => Some(Request::Append { path: Path::new(path) }),
-        ("supervise", [path, flag, result, separator, command @ ..]) if flag == "--result" && separator == "--" && !command.is_empty() =>
-            Some(Request::Supervise { path: Path::new(path), result: Path::new(result), command }),
+        ("supervise", [path, flag, result, finalize_flag, finalizer, separator, command @ ..]) if flag == "--result" && finalize_flag == "--finalizer" && separator == "--" && !command.is_empty() =>
+            Some(Request::Supervise { path: Path::new(path), result: Path::new(result), finalizer, command }),
         ("hold", [path]) => Some(Request::Hold { path: Path::new(path), wait: Duration::ZERO }),
         ("hold", [path, flag, seconds]) if flag == "--wait-s" => {
             let wait = Duration::try_from_secs_f64(seconds.to_str()?.parse().ok()?).ok()?;
@@ -65,7 +66,7 @@ fn parse(args: &[OsString]) -> Option<Request<'_>> {
 /// Admit once and transfer the flock to an owned-stage broker. Its bootstrap
 /// closes undeclared FDs in the worker and its children; the broker retains
 /// the flock until it has settled the entire registered process family.
-fn supervise(path: &Path, result: &Path, command: &[OsString]) -> io::Result<i32> {
+fn supervise(path: &Path, result: &Path, finalizer: &OsString, command: &[OsString]) -> io::Result<i32> {
     let file = OpenOptions::new().write(true).create_new(true).open(path)?;
     let fd = file.as_raw_fd();
     if fd < 3 { return Err(io::Error::new(io::ErrorKind::InvalidInput, "worker lock fd must be at least 3")); }
@@ -78,9 +79,26 @@ fn supervise(path: &Path, result: &Path, command: &[OsString]) -> io::Result<i32
     if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) } < 0 {
         return Err(io::Error::last_os_error());
     }
-    let error = Command::new(std::env::current_exe()?).args(["owned", "run", "--result"])
-        .arg(result).arg("--").args(command).env("IOT_PCB_WORKER_LOCK", path).exec();
+    let error = Command::new(std::env::current_exe()?).args(["owned", "run-finalized", "--result"])
+        .arg(result).arg("--finalizer").arg(finalizer).arg("--").args(command)
+        .env("IOT_PCB_WORKER_LOCK", path).env("IOT_PCB_WORKER_FD", fd.to_string()).exec();
     Err(error)
+}
+
+/// A forged unlocked descriptor is acceptable only if it points to the right
+/// inode and we can take the exclusive flock on its shared open description.
+pub(super) fn verify_worker_fd(path: &Path, fd: i32) -> io::Result<()> {
+    if fd < 3 { return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid worker lock descriptor")); }
+    let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+    if unsafe { libc::fstat(fd, stat.as_mut_ptr()) } != 0 { return Err(io::Error::last_os_error()); }
+    let stat = unsafe { stat.assume_init() };
+    let path_meta = fs::symlink_metadata(path)?;
+    if !path_meta.is_file() || path_meta.file_type().is_symlink() || path_meta.nlink() != 1
+        || path_meta.dev() != stat.st_dev as u64 || path_meta.ino() != stat.st_ino as u64 || stat.st_nlink != 1 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "worker lock inode changed"));
+    }
+    if unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) } != 0 { return Err(io::Error::last_os_error()); }
+    Ok(())
 }
 
 /// Open once, wait on the same inode, and give up if the caller's pipe closes.

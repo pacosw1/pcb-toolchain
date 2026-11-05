@@ -54,15 +54,16 @@ fn supervisor_keeps_its_admission_flock_in_the_execed_process() {
     let folder = scratch("supervisor");
     let path = folder.join("worker.lock");
     let result = folder.join("owned.json");
-    let mut child = Command::new(BIN).args(["lock", "supervise", path.to_str().unwrap(), "--result", result.to_str().unwrap(), "--", "sh", "-c", "echo ready; sleep 30"])
+    let finalizer = serde_json::to_string(&["sh", "-c", &format!("test -f \"$1\" && \"{BIN}\" lock held \"{}\" >/dev/null", path.display()), "sh"]).unwrap();
+    let mut child = Command::new(BIN).args(["lock", "supervise", path.to_str().unwrap(), "--result", result.to_str().unwrap(), "--finalizer", &finalizer, "--", "sh", "-c", "echo ready; sleep 30"])
         .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
     let mut line = String::new();
     BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
     assert_eq!(line, "ready\n");
     assert_eq!(probe(&path), HELD);
-    assert_eq!(run(&["lock", "supervise", path.to_str().unwrap(), "--result", result.to_str().unwrap(), "--", "true"]).status.code(), Some(2));
+    assert_eq!(run(&["lock", "supervise", path.to_str().unwrap(), "--result", result.to_str().unwrap(), "--finalizer", &finalizer, "--", "true"]).status.code(), Some(2));
     unsafe { libc::kill(child.id() as i32, libc::SIGTERM) };
-    child.wait().unwrap();
+    assert!(child.wait().unwrap().success(), "finalizer runs while lock is held and after broker receipt");
     assert_eq!(probe(&path), FREE);
     let report: serde_json::Value = serde_json::from_slice(&fs::read(result).unwrap()).unwrap();
     assert_eq!(report["cleanup"]["complete"], true);
