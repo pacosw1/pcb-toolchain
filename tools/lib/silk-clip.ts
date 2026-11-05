@@ -7,20 +7,34 @@ import {Outline,type Xy} from './copper-graph.ts';
 import {childForms} from './footprint-move.ts';
 import {iotrouteBin} from './iotroute-bin.ts';
 import {kids,parse,type SList} from './sexpr.ts';
+import {maskChordError} from './silk-mask.ts';
 
-const STEP=.02, MINRUN=.2, CLEARANCE=.18; // 0.15 required + 0.01 legacy reserve + 0.02 plot/chord reserve
+// JLCPCB, https://jlcpcb.com/capabilities/pcb- , Legend / Pad To Silkscreen: 0.15 mm.
+const STEP=.02, MINRUN=.2, CLEARANCE=.15;
+// Board text truncates each local coordinate to 1 nm; its vector error is at most sqrt(2) nm.
+const WRITE_ERROR=Math.SQRT2/1e6;
 const child=(f:SList,k:string)=>kids(f,k)[0];
 const point=(f:SList,k:string):Xy=>{const p=child(f,k);if(!p||p.length<3)throw new Error(`silk clip: missing ${k} point`);const q:[number,number]=[Number(p[1]),Number(p[2])];if(!q.every(Number.isFinite))throw new Error('silk clip: invalid point');return q;};
 const distance=(a:Xy,b:Xy)=>Math.hypot(a[0]-b[0],a[1]-b[1]);
 const mix=(a:Xy,b:Xy,t:number):Xy=>[a[0]+t*(b[0]-a[0]),a[1]+t*(b[1]-a[1])];
 function edgeDistance(p:Xy,a:Xy,b:Xy):number {const d=(b[0]-a[0])**2+(b[1]-a[1])**2;return distance(p,mix(a,b,d?Math.max(0,Math.min(1,((p[0]-a[0])*(b[0]-a[0])+(p[1]-a[1])*(b[1]-a[1]))/d)):0));}
 function bad(p:Xy,zones:Outline[],gap:number):boolean{return zones.some(z=>p[0]>=z.minX-gap&&p[0]<=z.maxX+gap&&p[1]>=z.minY-gap&&p[1]<=z.maxY+gap&&(z.locate(p)>=0||z.points.some((a,i)=>edgeDistance(p,a,z.points[(i+1)%z.points.length]!)<=gap)));}
+function segmentsDistance(a:Xy,b:Xy,c:Xy,d:Xy):number {
+ const cross=(p:Xy,q:Xy,r:Xy)=>(q[0]-p[0])*(r[1]-p[1])-(q[1]-p[1])*(r[0]-p[0]);
+ if(Math.max(Math.min(a[0],b[0]),Math.min(c[0],d[0]))<=Math.min(Math.max(a[0],b[0]),Math.max(c[0],d[0]))&&Math.max(Math.min(a[1],b[1]),Math.min(c[1],d[1]))<=Math.min(Math.max(a[1],b[1]),Math.max(c[1],d[1]))&&cross(a,b,c)*cross(a,b,d)<=0&&cross(c,d,a)*cross(c,d,b)<=0)return 0;
+ return Math.min(edgeDistance(a,c,d),edgeDistance(b,c,d),edgeDistance(c,a,b),edgeDistance(d,a,b));
+}
+function badSegment(a:Xy,b:Xy,zones:Outline[],gap:number):boolean {
+ return zones.some(z=>Math.max(a[0],b[0])>=z.minX-gap&&Math.min(a[0],b[0])<=z.maxX+gap&&Math.max(a[1],b[1])>=z.minY-gap&&Math.min(a[1],b[1])<=z.maxY+gap&&(z.locate(a)>=0||z.locate(b)>=0||z.points.some((c,i)=>segmentsDistance(a,b,c,z.points[(i+1)%z.points.length]!)<=gap)));
+}
 export function freeRuns(points:Xy[],zones:Outline[],gap:number):[number,number][] {
  const out:[number,number][]=[];let start:number|undefined;
  for(let i=0;i<points.length;i++) {
-  // Half a sample interval of reserve ensures a short opening between free samples cannot be bridged.
-  const unsafe=bad(points[i]!,zones,gap+STEP/2);
-  if(!unsafe){if(start===undefined)start=i;}else if(start!==undefined){out.push([start,i-1]);start=undefined;}
+  const unsafe=bad(points[i]!,zones,gap);
+  if(!unsafe){
+   if(start!==undefined&&i>0&&badSegment(points[i-1]!,points[i]!,zones,gap)){out.push([start,i-1]);start=i;}
+   if(start===undefined)start=i;
+  }else if(start!==undefined){out.push([start,i-1]);start=undefined;}
  }
  if(start!==undefined)out.push([start,points.length-1]);return out;
 }
@@ -66,7 +80,9 @@ export type PolygonBoolean=(operation:'offset'|'difference',a:Xy[][],b:Xy[][],of
 export const polygonBoolean:PolygonBoolean=(operation,a,b,offset)=>{
  const nm=(ring:Xy[])=>ring.map(q=>q.map(v=>Math.round(v*1e6)));
  const polys=(p:Xy[][])=>grouped(p).map(g=>({outer:nm(g.outer),holes:g.holes.map(nm)}));
- const result=spawnSync(iotrouteBin(),['gerber-geometry'],{input:JSON.stringify({operation,a:polys(a),b:polys(b),offset_nm:Math.round(offset*1e6)}),encoding:'utf8',maxBuffer:64*1024*1024,timeout:60000});
+ // gerber_geometry.rs uses round-offset tolerance r*(1-cos(pi/64)); compensate its chord deficit.
+ const offsetNm=operation==='offset'?Math.ceil(offset*1e6/Math.cos(Math.PI/64)):0;
+ const result=spawnSync(iotrouteBin(),['gerber-geometry'],{input:JSON.stringify({operation,a:polys(a),b:polys(b),offset_nm:offsetNm}),encoding:'utf8',maxBuffer:64*1024*1024,timeout:60000});
  if(result.error||result.status!==0)throw new Error(`silk clip polygon operation failed: ${result.error?.message??result.stderr}`);
  const rings:unknown=JSON.parse(result.stdout).rings;
  if(!Array.isArray(rings)||rings.some(r=>!Array.isArray(r)||r.length<3||r.some(p=>!Array.isArray(p)||p.length!==2||p.some(v=>!Number.isSafeInteger(v)))))throw new Error('silk clip: invalid polygon operation result');
@@ -87,6 +103,7 @@ export function clipSilk(board:string,masks:Record<'F'|'B',Outline[]>,boolean:Po
   for(const s of childForms(raw).filter(s=>['fp_line','fp_rect','fp_poly','fp_arc','fp_circle','fp_curve'].includes(s.kind))) {
    const text=raw.slice(s.start,s.end),f=parse(text),layer=String(child(f,'layer')?.[1]);if(!['F.SilkS','B.SilkS'].includes(layer))continue;
    const side=layer[0] as 'F'|'B',zones=masks[side];if(!zones.length)continue;
+   const clearance=CLEARANCE+maskChordError(zones)+WRITE_ERROR;
    const uuid=String(child(f,'uuid')?.[1]??'');if(!uuid)throw new Error('silk clip: silk item has no UUID');
    const width=Number(child(child(f,'stroke')??[],'width')?.[1]??child(f,'width')?.[1]??0);if(!Number.isFinite(width)||width<0)throw new Error('silk clip: invalid stroke width');
    if(s.kind==='fp_curve')throw new Error('silk clip: Bezier silk cannot yet be clipped safely');
@@ -97,7 +114,7 @@ export function clipSilk(board:string,masks:Record<'F'|'B',Outline[]>,boolean:Po
    if(s.kind==='fp_poly'&&['yes','solid'].includes(String(child(f,'fill')?.[1]))) {
     const pts=kids(child(f,'pts')??[],'xy').map(p=>global([Number(p[1]),Number(p[2])]));
     if(!pts.length||child(f,'pts')!.some(p=>Array.isArray(p)&&p[0]!=='xy'))throw new Error('silk clip: unsupported polygon vertices');
-    const grown=boolean('offset',zones.map(z=>positive([...z.points])),[],CLEARANCE);
+    const grown=boolean('offset',zones.map(z=>positive([...z.points])),[],clearance);
     const cut=boolean('difference',[positive(pts)],grown,0);
     if(Math.abs(cut.reduce((n,r)=>n+signedArea(r),0)-Math.abs(signedArea(pts)))<1e-9)continue;
     replacement=fracture(cut).map(r=>`(fp_poly (pts ${r.map(p=>`(xy ${xy(p)})`).join(' ')}) (stroke (width ${mmText(width)}) (type default)) (fill yes) (layer "${layer}") (uuid "${id()}"))`);
@@ -108,18 +125,20 @@ export function clipSilk(board:string,masks:Record<'F'|'B',Outline[]>,boolean:Po
     else {const a=point(f,'start'),b=point(f,'end');pts=(s.kind==='fp_line'?[a,b]:[a,[b[0],a[1]],b,[a[0],b[1]]] as Xy[]).map(global);}
     if(pts.length<2)throw new Error('silk clip: empty silk polygon');
     const edges=pts.slice(0,s.kind==='fp_line'?1:pts.length).map((a,i)=>[a,pts[(i+1)%pts.length]!] as const);let touched=false;
-    for(const [a,b] of edges){const samples_=samples(a,b),runs=freeRuns(samples_,zones,CLEARANCE+width/2);if(runs.length!==1||runs[0]![0]!==0||runs[0]![1]!==samples_.length-1)touched=true;for(const [i,j] of runs)if(distance(samples_[i]!,samples_[j]!)>=MINRUN)replacement.push(line(samples_[i]!,samples_[j]!));}
+    for(const [a,b] of edges){const samples_=samples(a,b),runs=freeRuns(samples_,zones,clearance+width/2);if(runs.length!==1||runs[0]![0]!==0||runs[0]![1]!==samples_.length-1)touched=true;for(const [i,j] of runs)if(distance(samples_[i]!,samples_[j]!)>=MINRUN)replacement.push(line(samples_[i]!,samples_[j]!));}
     if(!touched)continue;result.cut++;result.pieces+=replacement.length;
    } else {
     const circle=s.kind==='fp_circle';let c:Xy,r:number,start:number,sweep:number;
     if(circle){c=global(point(f,'center'));r=distance(c,global(point(f,'end')));start=0;sweep=2*Math.PI;}else {const a=arc(global(point(f,'start')),global(point(f,'mid')),global(point(f,'end')));c=a.centre;r=a.radius;start=a.start;sweep=a.sweep;}
     if(!(r>0)||!Number.isFinite(r))throw new Error('silk clip: invalid arc radius');
     const at=(angle:number,centre=c):Xy=>[centre[0]+r*Math.cos(angle),centre[1]+r*Math.sin(angle)];
-    if(circle&&r<=.5){if(!bad(c,zones,CLEARANCE+width/2+r))continue;
+    if(circle&&r<=.5){if(!bad(c,zones,clearance+width/2+r))continue;
      const near=pads[side].reduce<Xy|undefined>((best,p)=>!best||distance(p,c)<distance(best,c)?p:best,undefined);if(!near)throw new Error('silk clip: mask has no matching pad centre');const d=distance(c,near);let moved:Xy|undefined;
-     for(let k=1;d>0&&k<=24;k++){const q:Xy=[c[0]+(c[0]-near[0])/d*.05*k,c[1]+(c[1]-near[1])/d*.05*k];if(!bad(q,zones,CLEARANCE+width/2+r)){moved=q;break;}}
+     for(let k=1;d>0&&k<=24;k++){const q:Xy=[c[0]+(c[0]-near[0])/d*.05*k,c[1]+(c[1]-near[1])/d*.05*k];if(!bad(q,zones,clearance+width/2+r)){moved=q;break;}}
      if(moved){replacement=[text.replace(/\(center [^)]*\)/,`(center ${xy(moved)})`).replace(/\(end [^)]*\)/,`(end ${xy([moved[0]+r,moved[1]])})`)];result.cut++;}
-    } else {const n=Math.max(8,Math.ceil(Math.abs(sweep)*r/STEP)),points=Array.from({length:n+1},(_,i)=>at(start+sweep*i/n));const runs=freeRuns(points,zones,CLEARANCE+width/2);if(runs.length===1&&runs[0]![0]===0&&runs[0]![1]===n)continue;
+    } else {const n=Math.max(8,Math.ceil(Math.abs(sweep)*r/STEP)),points=Array.from({length:n+1},(_,i)=>at(start+sweep*i/n));
+     const chordError=r*(1-Math.cos(Math.abs(sweep)/(2*n)));
+     const runs=freeRuns(points,zones,clearance+width/2+chordError);if(runs.length===1&&runs[0]![0]===0&&runs[0]![1]===n)continue;
      if(circle&&runs.length>1&&runs[0]![0]===0&&runs.at(-1)![1]===n){const first=runs.shift()!,last=runs.pop()!;runs.push([last[0],first[1]+n]);}
      for(const [i,j] of runs){const a=start+sweep*i/n,b=start+sweep*j/n;if(Math.abs(b-a)*r>=MINRUN)replacement.push(arcText(at(a),at((a+b)/2),at(b)));}result.cut++;result.pieces+=replacement.length;
     }

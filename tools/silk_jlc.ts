@@ -12,7 +12,7 @@
 //
 // Texts, their sizes and footprint silk ids are read from the board file. pads uses native polygon booleans on the pinned worker;
 // clip uses plotted pad mask polygons and refuses geometry it cannot preserve.
-// Its 0.18 mm reserve plus sampling guard is intentionally more conservative than the old 0.16 mm pad expansion.
+// Clearance is JLC's 0.15 mm minimum plus aperture/arc chord deficits and the bound from nanometre coordinate truncation.
 // Unsupported custom mask rules, curved Gerber interpolation, >10 mm curved apertures and Beziers stop before writing.
 import { readFileSync } from 'node:fs';
 import { archive, unique } from './lib/gerber-archive.ts';

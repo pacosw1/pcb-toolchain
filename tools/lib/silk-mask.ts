@@ -7,24 +7,29 @@ import {basename,join} from 'node:path';
 import {runDaemonJob} from './daemon-job.ts';
 import {PINNED_IMAGE} from './env.mjs';
 import {sha256File} from './json-file.ts';
-import {parseCopper} from './gerber.ts';
+import {parseCopper,QUADRANT_SEGMENTS} from './gerber.ts';
 import {childForms} from './footprint-move.ts';
 import {kids,parse} from './sexpr.ts';
 import {Outline} from './copper-graph.ts';
 
 export type MaskPlot = Record<'F'|'B',string>;
 export type MaskExporter = (pcb:string,sidecars:string[])=>MaskPlot;
+const chordErrors=new WeakMap<Outline,number>();
+/** Maximum radial deficit of the actual parser's inscribed C/O aperture chords, in mm. */
+export const maskChordError=(outlines:Outline[]):number=>Math.max(0,...outlines.map(shape=>chordErrors.get(shape)??0));
 /** The copper parser does not preserve curved region edges. Never use those as a mask keep-out. */
 export function parseMask(text:string):Outline[] {
  if(/G0?[23](?=[XYIJ*])/i.test(text.replace(/\s/g,'')))throw new Error('silk mask: curved Gerber interpolation is not supported safely');
- // The clip reserve covers chord error only for bounded apertures. A larger one needs adaptive subdivision.
  const inches=/%MOIN\*%/.test(text);
- for(const match of text.matchAll(/%ADD\d+[CO],([^*%]+)\*%/g)) {
-  const dimensions=match[1]!.split('X').map(Number);
+ let error=0;
+ for(const match of text.matchAll(/%ADD\d+([CO]),([^*%]+)\*%/g)) {
+  const dimensions=match[2]!.split('X').map(Number);
   if(dimensions.some(v=>!Number.isFinite(v)||v<0||v*(inches?25.4:1)>10))throw new Error('silk mask: curved aperture exceeds the supported 10 mm bound');
+  const radius=(match[1]==='C'?dimensions[0]!:Math.min(...dimensions.slice(0,2)))*(inches?25.4:1)/2;
+  error=Math.max(error,radius*(1-Math.cos(Math.PI/(4*QUADRANT_SEGMENTS))));
  }
  // Gerber is Y-up; KiCad board coordinates are Y-down. Keep the board origin (no auxiliary origin flag).
- return parseCopper(text).map(shape=>new Outline(shape.points.map(([x,y])=>[x,-y])));
+ return parseCopper(text).map(shape=>{const out=new Outline(shape.points.map(([x,y])=>[x,-y]));chordErrors.set(out,error);return out;});
 }
 function snapshots(files:string[]):string[] {return files.map(p=>existsSync(p)?sha256File(p):'');}
 export function maskOpenings(pcb:string, exporter:MaskExporter=plotMask):Record<'F'|'B',Outline[]> {

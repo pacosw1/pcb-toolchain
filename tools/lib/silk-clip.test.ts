@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {clipSilk,freeRuns,fracture} from './silk-clip.ts';
 import {Outline} from './copper-graph.ts';
-import {parseMask} from './silk-mask.ts';
+import {parseMask,maskChordError} from './silk-mask.ts';
 import {iotrouteMissing} from './iotroute-bin.ts';
 import {kids,parse} from './sexpr.ts';
 const mask=new Outline([[-.5,-.5],[.5,-.5],[.5,.5],[-.5,.5]]);
@@ -12,7 +12,7 @@ const line='(fp_line (start -2 0) (end 2 0) (stroke (width .15) (type default)) 
 test('line clipping preserves two free pieces and its first UUID',()=>{
  const result=clipSilk(board(line),masks);assert.equal(result.cut,1);assert.equal(result.pieces,2);assert.equal(result.gone,0);assert.match(result.text,/uuid "line"/);
  assert.equal((result.text.match(/\(fp_line/g)??[]).length,2);
- const end=Number(result.text.match(/\(end ([\d.-]+) 0\)/)![1]);assert.ok(end<-.75);
+ const end=Number(result.text.match(/\(end ([\d.-]+) 0\)/)![1]);assert.ok(end<-.725);
 });
 test('local coordinates of a rotated footprint are clipped in board space',()=>{
  const result=clipSilk(board(line,'0 0 90'),masks);assert.equal(result.cut,1);assert.equal(result.pieces,2);
@@ -25,13 +25,20 @@ test('far silk and opposite-side silk are byte-identical',()=>{
  const source=board(line,'10 10 0');assert.equal(clipSilk(source,masks).text,source);
  const back=board(line.replace('F.SilkS','B.SilkS'));assert.equal(clipSilk(back,masks).text,back);
 });
-test('free runs keep a reserve between samples for thin openings',()=>{
+test('free runs split at a thin opening between clear sample endpoints',()=>{
  const thin=new Outline([[.009,-1],[.011,-1],[.011,1],[.009,1]]);
- assert.deepEqual(freeRuns([[0,0],[.02,0]],[thin],0),[]);
+ assert.deepEqual(freeRuns([[0,0],[.02,0]],[thin],0),[[0,0],[1,1]]);
 });
 test('a dot is moved clear or removed, never converted into an unfilled arc',()=>{
  const dot='(fp_circle (center .65 0) (end .75 0) (stroke (width .15) (type default)) (fill solid) (layer "F.SilkS") (uuid "dot"))';
- const result=clipSilk(board(dot),masks);assert.equal(result.cut,1);assert.match(result.text,/fill solid/);assert.ok(Number(result.text.match(/\(center ([\d.-]+) /)![1])>.85);
+ const result=clipSilk(board(dot),masks);assert.equal(result.cut,1);assert.match(result.text,/fill solid/);assert.ok(Number(result.text.match(/\(center ([\d.-]+) /)![1])>.825);
+});
+test('mask error equals the measured aperture chord deficit, not a fixed reserve',()=>{
+ const rings=parseMask('%FSLAX46Y46*%\n%MOMM*%\n%ADD10C,3.2*%\nD10*\nX0Y0D03*\nM02*'),ring=rings[0]!,a=ring.points[0]!,b=ring.points[1]!;
+ const measured=1.6-Math.hypot((a[0]+b[0])/2,(a[1]+b[1])/2);
+ assert.ok(Math.abs(maskChordError(rings)-measured)<1e-12);
+ assert.ok(measured>0&&measured<.001);
+ const rect=parseMask('%FSLAX46Y46*%\n%MOMM*%\n%ADD10R,3.2X2*%\nD10*\nX0Y0D03*\nM02*');assert.equal(maskChordError(rect),0);
 });
 test('orphan holes and Beziers fail before a text result exists',()=>{
  const poly='(fp_poly (pts (xy -2 -2) (xy 2 -2) (xy 2 2) (xy -2 2)) (fill yes) (stroke (width 0)) (layer "F.SilkS") (uuid "poly"))';
