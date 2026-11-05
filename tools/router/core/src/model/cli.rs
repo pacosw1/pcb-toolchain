@@ -3,8 +3,10 @@
 //! BOARD_DIR is hardware-design/boards/<BOARD>; gate.json or gate.pending.json names the project. The board comes through the
 //! pinned KiCad's API. The fill comes from a copy that KiCad 10 refilled, read the same way: fill stays on KiCad 10. The RP-001
 //! scope follows the gate (happy_scope.rs). Prints one line:
-//! MODEL ok|FAIL nets N pads N copper N rules <state> <count> ... -> OUT. Exit 0 ok, 1 a rule is unknown, 2 no model.
+//! MODEL ok|FAIL nets N pads N copper N rules <state> <count> ... -> OUT, after a line REFUSED <rule> / <constraint>: <why> for each
+//! rule the router cannot honour (coverage.rs). Exit 0 ok, 1 a rule is unknown, 2 no model.
 use super::build::{Inputs, build, summary};
+use super::coverage::{check_board, refused_lines};
 use super::files::{BoardFiles, read_pin_ratings};
 use super::happy_scope::rp_scope;
 use crate::kicad::{Board, kicad_cli};
@@ -97,7 +99,8 @@ fn run(args: &Args) -> Result<i32, String> {
     let fresh = if files.planes.adjacent.is_empty() { None } else { Some(refilled(&pcb, &files.project_base())?) };
     let nets: Vec<&String> = board.nets.keys().filter(|n| !n.starts_with("unconnected-(")).collect();
     let scope = files.gate.checks.happy_settings().map(|_| rp_scope(&project_pcb, &nets)).transpose()?;
-    let model = build(Inputs { board: &board, filled: fresh.as_ref().unwrap_or(&board), files: &files, ratings: &ratings, rp_scope: scope, return_exempt: args.return_exempt })?;
+    let mut model = build(Inputs { board: &board, filled: fresh.as_ref().unwrap_or(&board), files: &files, ratings: &ratings, rp_scope: scope, return_exempt: args.return_exempt })?;
+    check_board(&mut model, &board, &fs::read_to_string(&pcb).map_err(|e| format!("{}: {e}", pcb.display()))?)?;
     let out = args.out.clone().unwrap_or_else(|| folder.join(".router/model.json"));
     if let Some(parent) = out.parent().filter(|p| !p.as_os_str().is_empty()) {
         fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
@@ -105,6 +108,9 @@ fn run(args: &Args) -> Result<i32, String> {
     let text = serde_json::to_string_pretty(&model).map_err(|e| e.to_string())?;
     fs::write(&out, text).map_err(|e| format!("{}: {e}", out.display()))?;
     let (ok, line) = summary(&model);
+    for refused in refused_lines(&model) {
+        println!("{refused}");
+    }
     println!("{line} -> {}", out.display());
     Ok(if ok { 0 } else { 1 })
 }

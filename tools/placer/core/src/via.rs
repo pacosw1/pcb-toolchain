@@ -1,4 +1,4 @@
-//! Via room: a pad on a via net (pr.via_nets) needs one free site of the 16 that tools/gnd_pad_vias.py tries.
+//! Via room: a pad on a via net (pr.via_nets) needs one free site of the 16 that `gnd_pad_vias` tries.
 //! A site is blocked by pad copper of another net, by the board edge, or by a no-via rule area.
 
 use crate::geom::{EPS, Point, TaggedRect, point_in_poly, poly_edge_d2};

@@ -33,13 +33,13 @@ KiCadRoutingTools (MIT, pinned 46c90458), read 2026-09-27, not used by this tool
 - `py_router/qfn_fanout`: QFN/QFP escape router; a possible later routing step for the U1 LQFP-100 escape.
 Decision: keep this placer; the compaction halo uses the same form (base + coef * sqrt(pins)) as a cross-check.
 
-Compaction (`compact-cli.ts`, easy to hard): each unit gets a routing halo = s * 0.4 * sqrt(fan-out) mm (`compact.HALO`), used as its spacing. The first step uses a large s on a virtual board (the outline scaled by k about its centre, k from the unit area at fill 0.5). Each step: search on Hetzner, legalize, write, then 3 Freerouting runs (300 s, `--routes`). A step passes when the best run is at or below `--target` unrouted: one full route proves the placement is routable; the other runs show router variance (DOOR run 5: 3 and 3 open, different nets in each run). After a pass, s goes down 15 %. After the first fail, the step size is halved (bisect, 5 % tolerance). When the best pass is on a virtual board (k > 1), an outline phase follows. It tries the real board (k = 1) first, then bisects k to 2 %. Each step uses the largest halo that fits (`s_fit`). `--budget` defaults to 45 min. Full-board zones (ground pours) grow with the virtual outline, so the refill reaches the moved parts. `--snapshots DIR` writes `viewer.html` (self-contained: slider, play, click a part), `frames.json`, the timelapse (`movie.ts`: PNG frames, `run.gif`, `run.mp4`) and one `kicad-cli` render of the best routed board per step.
+Compaction (`compact-cli.ts`, easy to hard): each unit gets a routing halo = s * 0.4 * sqrt(fan-out) mm (`compact.HALO`), used as its spacing. The first step uses a large s on a virtual board (the outline scaled by k about its centre, k from the unit area at fill 0.5). Each step: search on Hetzner, legalize, write, then 3 Freerouting runs (300 s; historical, the step now routes with `iotroute run`). A step passes when the best run is at or below `--target` unrouted: one full route proves the placement is routable; the other runs show router variance (DOOR run 5: 3 and 3 open, different nets in each run). After a pass, s goes down 15 %. After the first fail, the step size is halved (bisect, 5 % tolerance). When the best pass is on a virtual board (k > 1), an outline phase follows. It tries the real board (k = 1) first, then bisects k to 2 %. Each step uses the largest halo that fits (`s_fit`). `--budget` defaults to 45 min. Full-board zones (ground pours) grow with the virtual outline, so the refill reaches the moved parts. `--snapshots DIR` writes `viewer.html` (self-contained: slider, play, click a part), `frames.json`, the timelapse (`movie.ts`: PNG frames, `run.gif`, `run.mp4`) and one `kicad-cli` render of the best routed board per step.
 
 Board constraints for `place.ts read`: `--edge REF=SIDES:SIDE` puts the N/S/E/W courtyard side of REF (as placed now) on one of the board edges in SIDES (L, R, T, B; T = smaller y); the miss counts as forbidden area and makes the unit illegal. `--keepout-zone 'H*_KEEPOUT'` makes named rule areas keepouts. `--zone-ref U1_ANTENNA=U5` moves a rule area with the unit of a part (an antenna or mains keepout of a block), and the area keeps other parts out (it may overlap another keepout: a hole keepout or a keepout of another unit); the part beyond an edge anchor is cut off. Other rule areas stay where they are. A connector staged wholly outside the outline is movable. `--scatter SEED` (compact_cli) starts each search from random places inside the board. A pad of a net class with a larger clearance than the D-040 class (for example the 3.0 mm mains classes) gets its own spacing rect; the courtyard keeps the D-040 class. A board slot inside a block border belongs to the block (a keepout rect that moves with it). The domain rules come from the board .kicad_dru (`core/src/dru.rs`; `--domain 'MAINS_K*:8:3'` is an override for tests): each pad of such a net class keeps 8 mm to all other nets and 3 mm to another class of the domain; a part with no domain pad also stays 8 mm out of the convex hull of all domain pads (`pr['domain_areas']`, the mains area: the PORT2 winner had C24 below the mains connectors, its track under J4); a part with domain pads gives every pad its own rect, and its courtyard, a block border, a slot and a part with no net pad keep only their own class to a domain pad. A .kicad_dru hole rule (RELAY-4 "Mains to screw hole" 9.65 mm) keeps its gap from the hole pads to the domain pads. A .kicad_dru pair rule between two class sets (IO-6X6 "Isolation barrier" FIELD/FIELD_PWR to HOST/HOST_PWR 4 mm) makes each pad of those classes a domain pad with its net clearance; `pr['class_gaps']` holds the gap between each two domain classes (at least the net clearance). `place.ts read` lists the clearance rules it cannot read as NOT MODELLED. A block border (`u['border']`, User.1) is not checked by KiCad DRC: border over border and border over a foreign part are a soft cost (spacing); courtyards, pads, .kicad_dru gaps and keepouts stay hard. IO-6X6 has overlapping block borders (BLOCK2 vs DO1-2, 205 mm2, and BLOCK1 parts inside both): a silk/documentation issue for the board owner, not a DRC fault. Hard (illegal) = what KiCad DRC enforces: courtyard over courtyard, pad clearance rects, domain and hole gaps, keepouts, the board edge. The D-040 halo between courtyards is a soft cost (`w_sp`, default 2.0 per mm2). The copper-to-edge band (the board setting) applies to pads only; a courtyard or border stays inside the outline. A courtyard rect is the courtyard polygon box; a round courtyard (test point) is a circle (`u['rho']`). A no-footprint rule area holds parts only when it is on F.Cu (all parts are on top). A locked track or via is fixed copper (`board['fixed_copper']`): the writer never removes it, a pad over it is illegal (no net check: conservative), and a unit with a pad on a locked track of its net is fixed (POE-ETHERNET: 17 locked tracks). A courtyard may leave the outline only inside a keepout rect of its own unit (BASE-PWR `--zone-ref U1_ANTENNA=U1`: the WROOM antenna over the outline notch, D-021). A part with only NPTH pads (`u['nocu']`, a mounting hole) may lie under a keepout of another unit (BASE-PWR H1 in U1_ANTENNA). Other kept copper is a cost only; the writer rips up the clusters a moved part meets. Gate test: the RELAY-4, IO-6X6, INPUT-4D2A, POE-ETHERNET, PWR-24V-5V, FIELD-24V-BUS and BASE-PWR (with `--zone-ref U1_ANTENNA=U1`) originals are legal, and the benchmark B v2 placement P (`testdata/`) is illegal.
 
 Routing room terms. Congestion (RUDY) default: the old term (`tracks` 0, `limit` 0.1), the cost of P2 and P2R. With `tracks` 1 it scales each net by its track (`read` sets `net['track']` = net-class track width + clearance from the `.kicad_pro`; demand x track / pitch). Track RUDY at `limit` 0.3 ranked the 9 routed poses of RELAY-4 bench v5 best (`fixtures/relay4-bench-v5.json`; rank correlation with the unrouted count 0.60; limit 0.1: 0.50, 0.5: -0.23, 0.7: 0.17). Its holdout failed: P5 (the P2R config with track RUDY 0.3) routed 7 8 8 6 8 (median 8) vs P2R 7 8 8 7 5 (median 7), so the default stays the old term until a bench shows a gain. At `limit` 0.7 the P3 search drove the term to 0 and routed worse (11-13 opens) than O (8). The track RUDY 0.7 calibration came from bench v3 and v4 (`fixtures/relay4-bench-v3.json`, `relay4-bench-v4.json`): cong O 206 < S 1369 < P 1559 (v3 opens O 8, S 133, P 142), and O < P2 < P (v4 opens O 8, P2 6, P 67). Without the tracks, `limit` 0.1 ranked O worst on v4 (O 237, P 73, P2 70); most P opens were 24V-class nets (0.5 mm tracks). The clearance in the track is at least the `.kicad_dru` gap between two classes of the net's domain (RELAY-4 mains: 3 mm); the domain gap to other nets stays a placement spacing. A problem read before this change has no tracks: read it again. Diagnosis (bench v4): P also had one relay channel out of its row (BLOCK6 8 mm below the other 3), which broke the 24V/coil bus along the relays. If the width term does not fix that, a soft row-alignment term for repeated blocks is the next candidate. Row term (`row`, weight `w_row`, default 0 = not computed): repeated blocks (movable units of 2 or more parts with the same part count, pad count and rect sizes) cost the sum of |minor coordinate - median| on the axis with the smaller spread, plus `row_pitch` (default 1) x the sum of |gap - mean gap| along the other axis (a block 8 mm out of a row of 4 costs 8). Blocks are one kind when their rect sizes differ by 0.2 mm or less. RELAY-4 relay channels: alignment O 0, P2 1.1, P 8.4 mm; the pitch part does not rank them (O is 24/15/24 mm by design), so use `row_pitch=0` there. Via room (`via`, weight `w_via` 10 per pad): `place.ts read --via-net FIELD_GND` lists the nets whose pads need a plane via (`pr['via_nets']`); each unit has its copper pads with net codes (`u['cu']`). A via-net pad needs one free site of the 16 that `tools/gnd_pad_vias.py` tries (4 sides and 4 corners, 0.2 and 0.5 mm beyond the pad edge + via radius; via 0.6 mm, clearance 0.2 mm). A site is blocked by pad copper of another net (via radius + clearance), by the board edge (edge clearance + via radius), by a no-via rule area of the board (`board['via_keepouts']`), or by a no-via rule area that moves with a unit (`--zone-ref`; a `u['cu']` row with net -1, via radius only). Tracks are not modelled. RELAY-4 FIELD_GND check: via O 0, W 0, S 22, P 28; gnd_pad_vias found no place for the same 28 P pads (all in MAINS_INNER_KEEPOUT or BARRIER_BAND).
 
-Benchmark B, known-good recovery, RELAY-4 (2026-09-27; Hetzner; `bench_b.sh`). All signal tracks are removed and the FIELD_GND copper stays. Scramble seed 7 is uniform. S = a legal random placement (a search with w_wl=0 w_cong=0). P = the placer search from S. There are 5 Freerouting runs of 3.5 min each. The subset is the 56 signal nets.
+Benchmark B, known-good recovery, RELAY-4 (2026-09-27; Hetzner). All signal tracks are removed and the FIELD_GND copper stays. Scramble seed 7 is uniform. S = a legal random placement (a search with w_wl=0 w_cong=0). P = the placer search from S. There are 5 Freerouting runs of 3.5 min each. The subset is the 56 signal nets.
 
 | Board | HPWL (proxy) | Unrouted per run | Signal subset | DRC errors |
 |---|---|---|---|---|
@@ -195,7 +195,7 @@ gate results, and report time to compliant output. Smoke-test timings do not sub
 
 # Cooperating Mac resource budgets (CIP 779)
 
-Local `place.ts run`, compaction stages, and `iotroute fastroute` share
+Local `place.ts run` and compaction stages share
 `~/.cache/iot-lab/resources`. Defaults reserve at most 12 CPU worker tokens
 (or the machine count if smaller), 16 GiB total declared memory, and 8 GiB
 per job. These are conservative initial settings, not measured optimal settings.
@@ -205,9 +205,7 @@ fails closed. An explicit request larger than capacity is rejected.
 
 Placement workers each receive one native library thread (`OMP_NUM_THREADS`,
 `OPENBLAS_NUM_THREADS`, `MKL_NUM_THREADS`, `VECLIB_MAXIMUM_THREADS`,
-`NUMEXPR_NUM_THREADS`, `BLIS_NUM_THREADS`). Fastroute's admitted `--threads`
-applies to both its autorouter and optimizer, supported by pinned 0.1.7 help.
-Use `--threads`, not `--set` thread overrides. A child inherits its live parent's
+`NUMEXPR_NUM_THREADS`, `BLIS_NUM_THREADS`). A child inherits its live parent's
 reservation and must stay within it. CPU reservations count supported worker
 pools; they are not hard OS CPU quotas. Memory is declared capacity, not an RSS
 limit, and unmanaged processes remain outside admission control.
@@ -218,15 +216,6 @@ file locks automatically; the next caller removes its stale reservation ticket.
 No existing router is killed or displaced. Admission events record queued,
 admitted, released, cancelled or failed work; compaction keeps them beside its
 stage log. Logs/checkpoints remain when admission fails.
-
-For a bounded resource profile (use a fresh output directory):
-
-```sh
-IOT_CPU_BUDGET=15 "$PY" tools/lean_resources.py --cpu 8 --memory-gib 8 \
-  --seconds 60 --output /tmp/placement-resource-profile -- \
-  node --no-warnings --experimental-strip-types tools/placer/place.ts run /tmp/frozen/prob.json -o /tmp/result.json \
-  --workers 8 --epochs 3 --steps 8000 --seed 1 --top 1
-```
 
 The profiler preserves raw process RSS/CPU, compressor, swap and paging samples,
 plus wall/child CPU timing and admission events. System VM counters cannot
@@ -265,37 +254,11 @@ KiCad DRC or establish same-net connectivity or electrical qualification.
 
 ## Compaction routing decisions
 
-The Fastroute compaction driver consumes `route-decision.json` before starting
-another placement search. Native geometry/parity failures, unsupported or missing
-evidence, and local connection gaps stop the schedule with exit 3. The loop
-preserves `route-0/routed.kicad_pcb` and its observed hash in `run.json` under
-`retained_candidate`; `next_action` names the diagnosis and original evidence.
-An earlier passing `best` remains separate from the candidate needing attention.
-An identical failed source/rules/effort fingerprint stops without another route.
-
-A failed candidate may continue when the existing source-bound, native-error-clean
-`bounded_feedback` supplies an actual positive spacing change for movable parts.
-The update retains its existing per-reference/cumulative bounds. Unchanged,
-unattributed, stale or capped-out hints do not authorize another broad search;
-native/rule/evidence blockers cannot be overridden by a hint. The driver still
-uses the existing Fastroute bounded repairs within a routing job.
-
-Signal-routing step success preserves the existing explicit skipped-net/plane
-policy. It requires hashed configuration and native reports, zero signal opens
-and errors, and exact agreement between stdout, outcome and native-open counts.
-Every remaining open must name one unambiguous net on every endpoint and match
-the recorded skip/plane policy. Unknown, mixed-net, parity, native-error or escape
-diagnostics still stop. `routing_step_scope` records the remaining native opens;
-this narrow scheduling result is unqualified and final gates still reject them.
-
-The flat compaction step directory does not establish eligibility for
-`route_decision.apply_plan`: that requires a configured isolated workspace and
-source-bound native evidence including schematic parity. Local repair therefore
-hands off the exact retained copper for inspection instead of fabricating a
-repair plan or routing again from the original placement. Native/grid findings
-do not prove physical impossibility. Every result remains `qualified:false`;
-fresh complete configured checks and explicit adoption remain necessary. Legacy
-Freerouting benchmark callbacks retain their count-only behavior.
+The router is `iotroute run`; a step's score is its KiCad DRC and then its gate. A failed step bisects the halo. An
+identical failed source/rules/effort fingerprint stops with exit 3 without another route, and `route-decision.json`
+names the earlier evidence. Fastroute and its route decision, bounded feedback and skipped-net scope were removed on
+2026-11-05. Every result remains `qualified:false`; fresh complete configured checks and explicit adoption remain
+necessary.
 
 ## Failure-driven repair (`repair.ts`, `iotplace repair-proposals`, `compact-cli.ts --repair`)
 

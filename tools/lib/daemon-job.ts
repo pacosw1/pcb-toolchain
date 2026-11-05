@@ -1,10 +1,11 @@
 // Small jobs on the job daemon for Mac-side tools, and the cache that keeps their results by content. A job gets its files
 // through --in, so a scratch copy outside the project works too. An error stops the tool: nothing falls back to the Mac.
+// PCB_JOBS_LOCAL=1 says this host already is the job image (tools/release-smoke.Dockerfile, no network): the same job runs here.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileRoot, projectRoot } from './project-root.mjs';
 
 export interface DaemonJob {
@@ -71,11 +72,26 @@ function jobClient(toolchain: string): string {
   return client;
 }
 
+/** The job in a folder of this host, with the layout of the daemon's: in/ holds the inputs, the command writes out/. */
+export function runJobHere(job: DaemonJob, collect: (out: string) => void): void {
+  const work = mkdtempSync(join(tmpdir(), 'local-job-'));
+  try {
+    mkdirSync(join(work, 'in'));
+    for (const file of job.inputs) copyFileSync(file, join(work, 'in', basename(file)));
+    const run = spawnSync(job.command[0]!, job.command.slice(1), { cwd: work, encoding: 'utf8', timeout: job.timeoutS * 1000, maxBuffer: 1 << 28 });
+    if (run.status !== 0) throw new Error(`${job.label} ended with ${run.status ?? run.signal ?? run.error?.message}: ${String(run.stderr).slice(-500)}`);
+    collect(join(work, 'out'));
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+}
+
 /**
  * One job, waited for. `collect` gets the job's out folder while it exists. The client stages a project and its tools; here they
  * are an empty stand-in, because the job needs only its --in files. A job that does not pass is an error.
  */
 export function runDaemonJob(job: DaemonJob, collect: (out: string) => void): void {
+  if (process.env.PCB_JOBS_LOCAL === '1' && process.platform !== 'darwin') return runJobHere(job, collect);
   const toolchain = process.env.PCB_TOOLCHAIN_ROOT || fileRoot;
   const standIn = mkdtempSync(join(tmpdir(), 'daemon-job-'));
   try {

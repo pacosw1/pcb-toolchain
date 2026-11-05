@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { fixed, Float, jsonDumps, number } from '../lib/py-compat.mjs';
 import {
-  bareScale, blockBoxSum, boardScale, choose, fanout, HALO, halo, ImmutableInputFailure, lengthStop, Measured, rawScale, RouteOutcome, runJson, runLoop,
+  bareScale, blockBoxSum, boardScale, choose, fanout, HALO, halo, lengthStop, Measured, rawScale, RouteOutcome, runJson, runLoop,
   Schedule, TimeoutExpired, verdict, virtual, withHalos,
   type Effects, type LoopOptions, type LoopResult, type Problem, type RankedStep, type SearchResult, type Step, type Unit,
 } from './compact.ts';
@@ -364,26 +364,6 @@ test('a zero diagnostic budget keeps the real attempts and stops the diagnostic 
   assert.ok(looped.steps.length);
   assert.ok(looped.steps.every(t => t.phase === 'real'));
   assert.match(looped.stop, /budget/);
-});
-
-test('an immutable input stops the loop and no earlier pass survives it', async () => {
-  const pr: Problem = { units: [unit('A', 5, 5, [[-5, -5, 5, 5, 2]], true)], nets: [], board: board() };
-  const looped = await run(pr, {
-    search: () => ({ candidates: [{ pose: [], cost: 1, illegal: [] }] }),
-    write: (q, pose, k) => String(k),
-    route: (k, n) => {
-      if (n === 0) return [0];
-      if (Number(k) < boardScale(withHalos(pr, 4))) throw new ImmutableInputFailure({ faults: [{ uuid: 'owned' }] }, 'later-receipt.json');
-      return [3];
-    },
-  }, { budget: 60 });
-  assert.equal(looped.steps[0].passed, true);
-  assert.equal(looped.steps.at(-1)?.phase, 'outline');
-  assert.equal(looped.steps.at(-1)?.status, 'immutable-input');
-  assert.equal(looped.steps.at(-1)?.failure_receipt, 'later-receipt.json');
-  assert.deepEqual(looped.steps.at(-1)?.immutable_faults, [{ uuid: 'owned' }]);
-  assert.equal(looped.stop, 'immutable input mandatory rules');
-  assert.equal(looped.best, null);
 });
 
 test('a step keeps the key order of the Python record, and run.json its floats', async () => {

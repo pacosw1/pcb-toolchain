@@ -63,7 +63,7 @@ test('declared route.json pours are exempt and other zones stay protected', t =>
   for (const candidate of [BOARD, `${opened}${pour('P', undefined, undefined, 5)})`]) assert.equal(identity(candidate, pours), source);
   for (const undeclared of [pour('Q'), pour('P', '"/B"'), pour('P', undefined, '"B.Cu"')]) assert.notEqual(identity(`${opened}${pour('P')}${undeclared})`, pours), source);
   assert.notEqual(identity(BOARD), identity(`${opened}${pour('P')})`));
-  for (const router of ['fastroute', 'explicit']) assert.equal(declaredPours({ ...manifest, router }).size, 0);
+  for (const router of ['iotroute', 'explicit']) assert.equal(declaredPours({ ...manifest, router }).size, 0);
   assert.equal(declaredPours({ ...manifest, operation: 'edit' }).size, 0);
 });
 

@@ -10,7 +10,12 @@ use std::collections::{BTreeMap, BTreeSet};
 const PAIR_KINDS: [&str; 3] = ["diff_pair_gap", "diff_pair_uncoupled", "skew"];
 const ROUTED_KINDS: [&str; 5] = ["clearance", "track_width", "via_count", "length", "disallow"];
 /// Constraints on items the router does not make: KiCad DRC after routing, also when the selector cannot be decided.
-const NOT_ROUTED: [&str; 7] = ["silk_clearance", "courtyard_clearance", "zone_connection", "thermal_relief_gap", "thermal_spoke_width", "text_height", "text_thickness"];
+const NOT_ROUTED: [&str; 11] = ["silk_clearance", "courtyard_clearance", "zone_connection", "thermal_relief_gap", "thermal_spoke_width", "min_resolved_spokes", "text_height", "text_thickness", "solder_mask_expansion", "solder_paste_abs_margin", "solder_paste_rel_margin"];
+/// The item types of a `disallow` as KiCad's rule parser spells them. The router makes tracks and through vias; the rest it never adds.
+const DISALLOW_ITEMS: [&str; 12] = ["track", "via", "through_via", "hole", "micro_via", "blind_via", "buried_via", "pad", "zone", "text", "graphic", "footprint"];
+/// A through via is a via, and a drilled hole.
+const VIA_ITEMS: [&str; 3] = ["via", "through_via", "hole"];
+const NOT_EVERY_NET: &str = "selector not evaluable for every net: the rule would reach only some of the nets it means";
 
 /// A clearance rule that names a zone: the pour model of the core reads it per net.
 pub struct ZoneRule {
@@ -55,6 +60,7 @@ fn reach(condition: &Selector, nets: &BTreeMap<String, Net>) -> Reach {
 fn dropped_value(con: &Constraint, layer: Option<&str>) -> Option<String> {
     let kept: &[&str] = match con.kind.as_str() {
         "track_width" => return dropped_width(con, layer),
+        "disallow" => return con.items.iter().find(|item| !DISALLOW_ITEMS.contains(&item.as_str())).map(|item| format!("disallow {item}: not an item type the router knows")),
         "hole_size" | "via_diameter" | "annular_width" => &["min"],
         "length" | "via_count" => &["max"],
         _ => return None,
@@ -118,7 +124,7 @@ impl Context<'_> {
     }
 
     fn via_rule(&mut self, rule: &Rule, con: &Constraint, reached: &Reach) -> Result<(), String> {
-        let lost = (!reached.hits.is_empty() || reached.unknown).then(|| dropped_value(con, rule.layer.as_deref())).flatten();
+        let lost = (!reached.hits.is_empty() || reached.unknown).then(|| dropped_value(con, rule.layer.as_deref())).flatten().or(reached.unknown.then(|| NOT_EVERY_NET.to_string()));
         for name in &reached.hits {
             let via = self.nets.get_mut(name).expect("a reached net").via.get_or_insert_with(NetVia::default);
             if let Some(min) = con.value("min") {
@@ -138,10 +144,12 @@ impl Context<'_> {
                 for name in &reached.hits {
                     self.keep_value(rule, con, name)?;
                 }
-                let lost = (!reached.hits.is_empty()).then(|| dropped_value(con, rule.layer.as_deref())).flatten();
+                let lost = (!reached.hits.is_empty()).then(|| dropped_value(con, rule.layer.as_deref())).flatten().or(reached.unknown.then(|| NOT_EVERY_NET.to_string()));
                 lost.map_or((RuleState::Applied, String::new()), |w| (RuleState::Unknown, w))
             }
-            None => (RuleState::Checked, format!("{}: KiCad DRC after routing", con.kind)),
+            // The pair stage and the pair table answer for these; what reaches no net asks nothing of the router.
+            None if reached.hits.is_empty() || NOT_ROUTED.contains(&con.kind.as_str()) || PAIR_KINDS.contains(&con.kind.as_str()) || con.kind == "creepage" => (RuleState::Checked, format!("{}: KiCad DRC after routing", con.kind)),
+            None => (RuleState::Unknown, format!("{}: not modelled, so routing would not keep it", con.kind)),
         };
         self.report(rule, con, state, shown_nets(&reached.hits), why);
         Ok(())
@@ -165,8 +173,13 @@ impl Context<'_> {
         if !none && reached.hits.iter().all(|h| self.pair_nets.contains(h)) && pair_stage {
             return Some((RuleState::Stage, "pairs stage (centerline at width + gap)".to_string()));
         }
-        if kind == "clearance" && none && unknown {
+        // A rule on a zone goes to the pour model, the gap inside a pair to the pairs stage, one that reads both items to the pair
+        // table. Nothing else reads the rest.
+        if kind == "clearance" && none && unknown && (text.contains("Zone") || text.contains("isCoupledDiffPair") || rule.condition.reads_both_items()) {
             return Some((RuleState::Checked, "pad / zone geometry rule: KiCad DRC after routing".to_string()));
+        }
+        if kind == "clearance" && none && unknown {
+            return Some((RuleState::Unknown, format!("selector not evaluable for any net, and no pair or pour rule reads it: {text}")));
         }
         if unknown && none {
             return Some((RuleState::Unknown, "selector not evaluable for any net".to_string()));
@@ -205,13 +218,24 @@ fn via_field<'a>(via: &'a mut NetVia, kind: &str) -> &'a mut Option<f64> {
     }
 }
 
-/// KiCad disallow names item types: `track` takes the layer, or every layer, from the net; `via` sets via_count 0, as a through
+/// True when a rule's `layer` clause holds on a copper layer. No clause holds everywhere; `outer` and `inner` are KiCad's own words.
+fn rule_layer_holds(layer: Option<&str>, copper: &str) -> bool {
+    let outer = copper == "F.Cu" || copper == "B.Cu";
+    match layer {
+        None => true,
+        Some("outer") => outer,
+        Some("inner") => !outer,
+        Some(only) => copper == only,
+    }
+}
+
+/// KiCad disallow names item types: `track` takes the layer, or every layer, from the net; a via type sets via_count 0, as a through
 /// via touches every layer. Other types are not router items: KiCad DRC checks them after routing.
 fn disallow(net: &mut Net, con: &Constraint, layer: Option<&str>) {
     if con.items.iter().any(|i| i == "track") {
-        net.layers.retain(|l| layer.is_some_and(|only| l != only));
+        net.layers.retain(|l| !rule_layer_holds(layer, l));
     }
-    if con.items.iter().any(|i| i == "via") {
+    if con.items.iter().any(|i| VIA_ITEMS.contains(&i.as_str())) {
         net.limits.via_count = Some(0.0);
     }
 }
@@ -284,6 +308,12 @@ mod tests {
         assert_eq!(n["ISO1"].limits.via_count, Some(0.0));
         let (_, n, _) = run(r#"(rule "d" (condition "A.NetClass == 'ISO'") (constraint disallow track))"#);
         assert!(n["ISO1"].layers.is_empty());
+        let (_, n, _) = run(r#"(rule "d" (layer outer) (condition "A.NetClass == 'ISO'") (constraint disallow track))"#);
+        assert!(n["ISO1"].layers.is_empty());
+        let (_, n, _) = run(r#"(rule "d" (layer inner) (condition "A.NetClass == 'ISO'") (constraint disallow track))"#);
+        assert_eq!(n["ISO1"].layers, ["F.Cu", "B.Cu"]);
+        let (_, n, _) = run(r#"(rule "d" (condition "A.NetClass == 'ISO'") (constraint disallow through_via))"#);
+        assert_eq!(n["ISO1"].limits.via_count, Some(0.0));
     }
 
     #[test]

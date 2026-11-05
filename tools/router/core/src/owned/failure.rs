@@ -1,4 +1,4 @@
-//! The one error of the broker. `kind` is the exception name lean_owned.py clients match on the wire.
+//! The one error of the broker. `kind` is the name clients match on the wire.
 
 use serde::{Deserialize, Serialize};
 use std::io;

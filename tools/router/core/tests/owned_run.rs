@@ -1,4 +1,4 @@
-//! Black-box checks of `iotroute owned run` on the built binary, the cases of tools/test_lean_owned.py that fit.
+//! Black-box checks of `iotroute owned run` on the built binary.
 //! Process fixtures only: no KiCad, router, daemon or unrelated PID.
 
 use serde_json::{Value, json};

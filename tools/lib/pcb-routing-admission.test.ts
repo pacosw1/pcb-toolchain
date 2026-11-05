@@ -20,5 +20,7 @@ test('shared gate validator rejects missing checks and binds a valid G4 gate wit
   assert.equal(admission.stage, 'G4'); assert.equal(admission.inputs['hardware-design/boards/X/gate.json'], sha256File(config));
   assert.equal(admission.inputs['tools/lib/gate-core.mjs'], sha256File(join(root, 'tools/lib/gate-core.mjs')));
   atomicJson(config, { project: 'cad/X', stage: 'G3', checks: { erc: true } });
-  await assert.rejects(validateGate(root, 'X'), /requires a G4 or G5 gate/);
+  assert.equal((await validateGate(root, 'X')).stage, 'G3');
+  atomicJson(config, { project: 'cad/X', stage: 'G9', checks: { erc: true } });
+  await assert.rejects(validateGate(root, 'X'), /gate configuration rejected/);
 });

@@ -2,7 +2,7 @@
 //!
 //! `iotroute lock ...` holds and probes flock files shared with the Python tools.
 //! `iotroute clock` prints the clock of the IOT_LEAN_DEADLINE protocol.
-//! `iotroute owned run` is the root broker of lean_owned.py, or a client of the broker it already runs under.
+//! `iotroute owned run` is the root broker, or a client of the broker it already runs under.
 
 use std::ffi::OsString;
 

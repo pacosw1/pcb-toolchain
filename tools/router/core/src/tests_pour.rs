@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 fn n(name: &str, plane: bool) -> Net {
     Net { name: name.into(), width: 0.15, clr: 0.15, fast: false, plane, power: false, layers: 0b101, via_d: 0.6, via_drill: 0.3, max_vias: None,
-          max_len: None, pref: false, min_w: 0.0, min_wl: Vec::new(), in_vias: 0 }
+          max_len: None, pref: false, min_w: 0.0, min_wl: Vec::new(), in_vias: 0, neck_w: 0.0 }
 }
 
 /// 10 x 10 mm, F.Cu / In1.Cu (plane) / B.Cu, a GND pour on F.Cu (clearance 0.25, relief 0.3, spokes 0.4, min width 0.1).

@@ -6,7 +6,7 @@ import { isFile, resolvePath } from './py-path.ts';
 
 export const CANDIDATE = new Set(['build', 'edit', 'route', 'repair']);
 export const OPERATIONS = new Set([...CANDIDATE, 'release']);
-export const ROUTERS = ['explicit', 'fastroute', 'route-json', 'iotroute'];
+export const ROUTERS = ['explicit', 'route-json', 'iotroute'];
 const ROUTE_SCHEMA = 'iot-lab.route.v1';
 
 export interface CandidateRequest { spec?: string; kind?: string; router?: string; plan?: string; engineeringManifest?: string; designContract?: string }

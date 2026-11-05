@@ -1,13 +1,18 @@
 //! The steps a run spawns, each with its log: model, route, write and the gate's planes screen. A step is this same binary, so a
 //! core that exits or panics is a failed step of the run, not the end of it.
+use super::guard::keeps_copper;
 use super::record::{AttemptStages, CoreStage, RouteClaim, WriteStage};
 use super::{Args, project::project_of};
 use crate::model::text::round_to;
+use crate::plan::WidthRule;
 use crate::sha256::sha256;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Instant;
+
+/// How a refused admission starts: the compaction stops on it instead of searching on (tools/placer/iotroute-step.ts).
+pub const RULE_COVERAGE: &str = "rule coverage refused";
 
 pub struct Steps {
     pub exe: PathBuf,
@@ -123,8 +128,15 @@ impl Steps {
         run_logged(command, log)
     }
 
-    /// The core, then `iotroute write`, then the written board at `out`.
-    pub fn route_and_write(&self, a: &Args, model: &Path, route_in: &Path, out: &Path, work: &Path, extra: &[String]) -> Result<AttemptStages, String> {
+    /// `iotroute model` as a route's admission: a board whose rules the router cannot honour stops here, each rule by name.
+    pub fn admit(&self, folder: &Path, pcb: &Path, out: &Path, log: &Path, return_exempt: bool) -> Result<String, String> {
+        let (code, text) = self.model(folder, pcb, out, log, return_exempt)?;
+        refused(code, &text)?;
+        Ok(text)
+    }
+
+    /// The core, the board's widths rules, then `iotroute write`, then the written board at `out`.
+    pub fn route_and_write(&self, a: &Args, model: &Path, route_in: &Path, out: &Path, work: &Path, extra: &[String], widths: &[WidthRule]) -> Result<AttemptStages, String> {
         let route = work.join("route.json");
         let source_sha = if a.checkpoint { sources_sha(&self.tools) } else { None };
         let started = Instant::now();
@@ -136,6 +148,7 @@ impl Steps {
             return Err(format!("iotroute wrote no result (exit {exit}), see {}", work.join("route.log").display()));
         }
         let core = CoreStage { exit, seconds: round_to(started.elapsed().as_secs_f64(), 1), claim };
+        super::widths::narrow(&route, widths)?;
         let folder = work.join("write");
         let mut write = Command::new(&self.exe);
         write.arg("write").arg(route_in).arg(&route).arg(&folder);
@@ -144,6 +157,8 @@ impl Steps {
         if !written.is_file() {
             return Err(format!("iotroute write wrote no board (exit {exit}), see {}", work.join("write.log").display()));
         }
+        let read = |path: &Path| fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()));
+        keeps_copper(&read(route_in)?, &read(&written)?)?;
         fs::copy(&written, out).map_err(|e| format!("{}: {e}", out.display()))?;
         Ok(AttemptStages { core, write: WriteStage { exit, line: text.trim().lines().last().unwrap_or("").to_string() } })
     }
@@ -156,6 +171,15 @@ impl Steps {
         let (code, text) = run_logged(command, log)?;
         finished_check(code, text, log)
     }
+}
+
+/// The verdict of a model step: `rule coverage refused` names what it refused; another failure gives its last line.
+fn refused(code: i32, text: &str) -> Result<(), String> {
+    if code == 0 {
+        return Ok(());
+    }
+    let names: Vec<&str> = text.lines().filter_map(|line| line.strip_prefix("REFUSED ")).collect();
+    Err(if names.is_empty() { format!("iotroute model failed: {}", last_line(text)) } else { format!("{RULE_COVERAGE}: {}", names.join("; ")) })
 }
 
 /// A check that gave no result has no FAIL lines either, so a run must not read that as a pass. si-planes exits 0 or 1 when it ran to
@@ -213,6 +237,14 @@ mod tests {
         fs::remove_file(&log).unwrap();
         assert_eq!(code, 3);
         assert!(text.contains("out") && text.contains("err"));
+    }
+
+    #[test]
+    fn a_refused_model_names_its_rules() {
+        assert_eq!(refused(0, "MODEL ok"), Ok(()));
+        assert_eq!(refused(2, "no board"), Err("iotroute model failed: no board".to_string()));
+        let text = "REFUSED r / creepage: why\nREFUSED pad U1.1 / layers: names In3.Cu\nMODEL FAIL nets 1\n";
+        assert_eq!(refused(1, text), Err("rule coverage refused: r / creepage: why; pad U1.1 / layers: names In3.Cu".to_string()));
     }
 
     #[test]

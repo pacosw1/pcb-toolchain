@@ -255,43 +255,8 @@ fn repair_selection_is_ranked_by_distance_then_net_and_respects_layers() {
 }
 
 #[test]
-fn dsn_keepouts_read_a_real_header_with_its_lone_quote() {
-    let text = "(pcb x\n  (parser\n    (string_quote \")\n    (space_in_quoted_tokens on)\n  )\n  (structure\n    (layer F.Cu)\n    (via \"Via[0-3]\")\n  )\n)";
-    let out = call(json!({"op":"add_wire_keepouts","text":text,"rects_by_layer":{"F.Cu":[[1,2,3,4]]}}));
-    assert!(out.as_str().unwrap().contains("(wire_keepout \"iot_ref_void\""));
-}
-
-#[test]
-fn dsn_keepouts_keep_existing_format_and_handle_no_via_or_rule() {
-    let text = "(pcb x\n  (structure\n    (layer F.Cu)\n    (via \"Via[0-3]\")\n    (rule (width 200))\n  )\n)";
-    let out =
-        call(json!({"op":"add_wire_keepouts","text":text,"rects_by_layer":{"F.Cu":[[1,2,3,4]]}}));
-    let out = out.as_str().unwrap();
-    assert!(out.contains("(wire_keepout \"iot_ref_void\" (polygon F.Cu 0  1000 -2000  3000 -2000"));
-    assert!(out.find("wire_keepout") < out.find("(via \"Via"));
-    assert_eq!(
-        call(json!({"op":"add_wire_keepouts","text":text,"rects_by_layer":{"F.Cu":[]}})),
-        json!(text)
-    );
-    let out = call(
-        json!({"op":"add_keepouts","text":"(pcb x (structure (layer F.Cu)))","rects_by_layer":{"F.Cu":[[1,2,3,4]]},"kinds":["wire_keepout","via_keepout"],"name":"iot_belt"}),
-    );
-    assert!(out.as_str().unwrap().contains("(via_keepout \"iot_belt\""));
-    assert!(iotroute::kicad::sexpr::parse(out.as_str().unwrap()).is_ok());
-}
-
-#[test]
-fn malformed_grid_and_dsn_fail_before_work() {
+fn a_malformed_grid_fails_before_work() {
     assert!(g::void_rects(&vec![], &[], &[], 0., 0.05, None).is_err());
-    assert!(
-        g::add_keepouts(
-            "(pcb x)",
-            &BTreeMap::from([("F.Cu".into(), vec![[0., 0., 1., 1.]])]),
-            &kinds(),
-            &name()
-        )
-        .is_err()
-    );
 }
 
 #[test]

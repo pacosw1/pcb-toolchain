@@ -1,16 +1,8 @@
 //! What a stage means for its router and its check: command lines, kept nets, limits.
-use super::{DRC_UNCONNECTED_CAP, Plan, Stage, WidthRule};
+use super::{DRC_UNCONNECTED_CAP, Stage, WidthRule};
 use crate::model::text::glob_match;
 use serde_json::Value;
 use std::collections::{BTreeSet, HashSet};
-
-impl Plan {
-    /// ROUTE_FEATURES value for the Fastroute job.
-    pub fn feature_env(&self) -> String {
-        let pairs = self.features.iter().map(|(key, on)| format!("{key}={}", u8::from(*on)));
-        pairs.collect::<Vec<_>>().join(",")
-    }
-}
 
 impl WidthRule {
     /// A track gets `width_mm` when its midpoint is in the box, its layer is listed and it is wider.
@@ -22,40 +14,6 @@ impl WidthRule {
 }
 
 impl Stage {
-    /// Fastroute job options for this stage (after BOARD OUTDIR).
-    pub fn fastroute_args(&self) -> Vec<String> {
-        let mut args = vec![
-            "--layers".to_string(),
-            self.layers.join(","),
-            "--passes".to_string(),
-            self.budget.passes.to_string(),
-            "--max-time".to_string(),
-            self.budget.time_s.to_string(),
-            "--threads".to_string(),
-            self.budget.threads.to_string(),
-            "--skip-net".to_string(),
-            self.skip_nets.join(","),
-            "--plane-nets".to_string(),
-            self.plane_nets.join(","),
-        ];
-        if !self.only_nets.is_empty() {
-            args.extend(["--only-nets".to_string(), self.only_nets.join(",")]);
-        }
-        if self.route_planes {
-            args.push("--route-planes".to_string());
-        }
-        if self.neck_um != 0 {
-            args.extend(["--neck-um".to_string(), self.neck_um.to_string()]);
-        }
-        if !self.unlock_nets.is_empty() {
-            args.extend(["--unlock-nets".to_string(), self.unlock_nets.join(",")]);
-        }
-        if !self.via_skip.is_empty() {
-            args.push(format!("--via-args=--skip {}", self.via_skip.join(" ")));
-        }
-        args
-    }
-
     /// TraceMaker routes every open connection; the runner keeps only the new copper of `tracemaker_kept` afterwards.
     pub fn tracemaker_args(&self, copper: &[String], binary: &str, source: &str, output: &str, summary: &str) -> Vec<String> {
         let time = self.budget.time_s.to_string();
@@ -90,8 +48,7 @@ impl Stage {
         nets.iter().map(String::as_str).filter(|net| self.keeps(net)).collect()
     }
 
-    /// `kept_nets` plus the plane nets of the stage, because TraceMaker connects plane-net pads with its own copper where
-    /// Fastroute gives them pad vias.
+    /// `kept_nets` plus the plane nets of the stage, because TraceMaker connects plane-net pads with its own copper.
     pub fn tracemaker_kept<'a>(&self, nets: &'a [String]) -> BTreeSet<&'a str> {
         let plane = |net: &str| self.only_nets.is_empty() && self.plane_nets.iter().any(|p| p == net);
         nets.iter().map(String::as_str).filter(|net| self.keeps(net) || plane(net)).collect()

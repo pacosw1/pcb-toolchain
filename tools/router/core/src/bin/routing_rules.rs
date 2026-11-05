@@ -4,7 +4,7 @@
 
 
 use iotroute::routing_rules::{
-    Disc, Keepouts, Point, Rect, ReferenceSpec, Rings, geometry as g, report as r, stages as s,
+    Disc, Point, Rect, ReferenceSpec, Rings, geometry as g, report as r, stages as s,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -25,12 +25,6 @@ fn max_blockers() -> usize {
 }
 fn fine_pitch() -> f64 {
     s::FINE_PITCH_MM
-}
-fn kinds() -> Vec<String> {
-    vec!["wire_keepout".into()]
-}
-fn name() -> String {
-    "iot_ref_void".into()
 }
 
 #[derive(Deserialize)]
@@ -90,18 +84,6 @@ enum Request {
         grid: f64,
         #[serde(default)]
         fast: bool,
-    },
-    AddKeepouts {
-        text: String,
-        rects_by_layer: Keepouts,
-        #[serde(default = "kinds")]
-        kinds: Vec<String>,
-        #[serde(default = "name")]
-        name: String,
-    },
-    AddWireKeepouts {
-        text: String,
-        rects_by_layer: Keepouts,
     },
     ViaReport {
         vias: Vec<r::Via>,
@@ -222,16 +204,6 @@ fn handle(request: Request) -> Result<Value, String> {
         } => json(g::layer_keepouts(
             &spec, &layers, &outline, &fills, &discs, grid, fast,
         )?),
-        Request::AddKeepouts {
-            text,
-            rects_by_layer,
-            kinds,
-            name,
-        } => json(g::add_keepouts(&text, &rects_by_layer, &kinds, &name)?),
-        Request::AddWireKeepouts {
-            text,
-            rects_by_layer,
-        } => json(g::add_keepouts(&text, &rects_by_layer, &kinds(), &name())?),
         Request::ViaReport { vias, options } => json(r::via_report(&vias, &options)),
         Request::SummaryLine { rep } => json(r::summary_line(&rep)),
         Request::FootprintPitch { points } => json(s::footprint_pitch(&points)),
