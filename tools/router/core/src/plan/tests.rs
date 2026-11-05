@@ -72,6 +72,15 @@ fn valid_config_gives_normalized_stages() {
 }
 
 #[test]
+fn reuse_names_an_earlier_run_by_absolute_path() {
+    let mut cfg = config();
+    cfg["reuse"] = json!({"from": "/run/operation/router", "nets": ["/A"]});
+    assert_eq!(plan_of(&cfg).reuse, Some(Reuse { from: "/run/operation/router".to_string(), nets: vec!["/A".to_string()] }));
+    cfg["reuse"] = json!({"from": "router"});
+    assert!(load(&cfg, &copper(), None).unwrap_err().contains("absolute path"));
+}
+
+#[test]
 fn every_error_is_named_in_one_message() {
     let mut cfg = config();
     cfg["schema"] = json!("x");

@@ -325,6 +325,8 @@ tools/lib/route-decision-escape.ts
 tools/lib/route-decision-evidence.ts
 tools/lib/route-decision.test.ts
 tools/lib/route-decision.ts
+tools/lib/route-moves.test.ts
+tools/lib/route-moves.ts
 tools/lib/route-stuck.test.ts
 tools/lib/route-stuck.ts
 tools/lib/route-dispatch.test.mjs

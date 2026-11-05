@@ -9,6 +9,8 @@ import { stockPopulationCurrent } from './part-stock.ts';
 import { jsonDumps, PyError } from './py-compat.mjs';
 import { caught, isFile, isRelativeTo, pathExists, resolvePath, which } from './py-path.ts';
 import { sameValue } from './py-values.ts';
+import { moveArgs, nextMove, NOTHING_REVIEWED, reviewedFrom } from './route-moves.ts';
+import type { Move, Reviewed } from './route-moves.ts';
 import { STUCK_FILE } from './route-stuck.ts';
 import type { StuckReport } from './route-stuck.ts';
 import { timestamp } from './timing.ts';
@@ -44,6 +46,7 @@ export interface NextReaders {
   status(folder: string): RunState;
   sourceState(root: string, board: string, extraInputs?: unknown): unknown;
   parentCandidate(root: string, board: string, reference: NonNullable<Manifest['from_run']>): unknown;
+  reviewedRules?(root: string, board: string): unknown[];
   currentAssessment(report: ObservationReport): boolean;
   runStage: OwnedProbe;
 }
@@ -270,6 +273,10 @@ export async function nextAction(rootPath: string, board: string, options: NextO
         }
         return finish('needs_stock_refresh', 'stock_day_expired', 'Assembly availability observation is from another UTC day', 'inspect_stock_context', explain, { evidence: { path: reportPath }, stock_current: false });
       }
+      if (operation === 'routing' && report.status === 'accepted' && report.next_action) {
+        const { kind, argv } = report.next_action as { kind: string; argv: string[] };
+        return finish('needs_route_move', 'route_move_accepted', 'The checked move is ready to run as a new candidate', kind, argv.slice(1), { evidence: { path: reportPath } });
+      }
       if (operation === 'routing' && report.status === 'repairable') return finish('needs_repair', 'bounded_route_repair', 'Current native evidence supports one bounded isolated repair', 'repair', ['repair', board, '--plan', reportPath, ...(manifest.from_run ? ['--from-run', basename(manifest.from_run.folder)] : []), '--follow', '--json'], { evidence: { path: reportPath }, qualified: false });
       const blockers = report.blockers?.length ? report.blockers : Array.isArray(report.findings) ? report.findings as Fields[] : [], first = blockers[0] ?? {};
       return finish(result.status === 'passed' ? 'review' : 'blocked', String(first.code ?? operation + '_review'), String(first.detail ?? first.message ?? report.cause ?? operation + ' evidence needs an engineering decision'), 'inspect_engineering_evidence', explain, { evidence: { path: reportPath }, engineering_status: report.status ?? null, qualified: false });
@@ -281,8 +288,10 @@ export async function nextAction(rootPath: string, board: string, options: NextO
     if (operation === 'route' && pathExists(stuckPath)) {
       if (result.evidence_sha256[STUCK_FILE] !== sha256File(stuckPath)) stale('stuck report is not bound to sealed run evidence');
       output.evidence.freshness = 'recorded_only';
-      const stuck = readObject<StuckReport>(stuckPath);
-      return finish('stuck', 'route_stuck', stuck.summary.join('\n'), 'inspect', explain, { evidence: { path: stuckPath }, open_nets: stuck.open_nets, retry_unchanged_inputs: false });
+      const stuck = readObject<StuckReport>(stuckPath), rules = (options.readers.reviewedRules?.(root, board) ?? []) as Parameters<typeof reviewedFrom>[0];
+      const reviewed: Reviewed = rules.length ? reviewedFrom(rules) : NOTHING_REVIEWED, move: Move = nextMove(stuck, reviewed);
+      const groups = reviewed.groups.filter(group => group.refs.some(ref => stuck.blockers.parts.includes(ref))).map(group => `rigid group ${group.id}: ${group.refs.join(' ')}`);
+      return finish('stuck', 'route_stuck', [...stuck.summary, ...groups, `next: ${JSON.stringify(move)}`].join('\n'), move.kind, moveArgs(board, stuckPath, move), { evidence: { path: stuckPath }, open_nets: stuck.open_nets, move, retry_unchanged_inputs: false });
     }
     if (!pathExists(join(gateDir, 'result.json'))) { output.evidence.freshness = 'recorded_only'; return finish('blocked', 'operation_failed_before_gate', result.cause ?? 'Operation has no completed gate evidence', 'inspect', explain, { evidence: { path: join(folder, 'operation', operation + '.log') } }); }
     phase = 'artifacts';

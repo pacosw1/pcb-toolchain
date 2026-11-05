@@ -1,9 +1,9 @@
 //! Validation of a route.json object. Every error is collected, so one run names all of them.
-use super::{Backend, Budget, DEFAULT_BUDGET, Keepout, KeepoutMode, NO_FASTROUTE, Plan, Pour, PourConnection, PourShape, Rect, SCHEMA, Stage, WidthRule};
+use super::{Backend, Budget, DEFAULT_BUDGET, Keepout, KeepoutMode, NO_FASTROUTE, Plan, Pour, PourConnection, PourShape, Rect, Reuse, SCHEMA, Stage, WidthRule};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
-const TOP_KEYS: &[&str] = &["schema", "about", "backend", "layers", "budget", "stages", "pours", "widths", "features"];
+const TOP_KEYS: &[&str] = &["schema", "about", "backend", "layers", "budget", "stages", "pours", "widths", "features", "reuse"];
 const BUDGET_KEYS: &[&str] = &["passes", "time_s", "threads"];
 const STAGE_KEYS: &[&str] = &[
     "name", "only_nets", "skip_nets", "layers", "plane_nets", "route_planes", "neck_um", "unlock_nets", "via_skip", "remove_zones",
@@ -35,11 +35,12 @@ pub fn load(cfg: &Value, copper: &[String], known_features: Option<&BTreeSet<Str
     let widths = check.list(cfg, "widths", "widths must be a list").iter().enumerate();
     let widths: Vec<WidthRule> = widths.filter_map(|(i, raw)| check.width(raw, &format!("widths[{i}]"), &layers)).collect();
     let features = check.features(cfg.get("features"), known_features);
+    let reuse = cfg.get("reuse").and_then(|raw| check.reuse(raw));
     if !check.errors.is_empty() {
         return Err(check.finish());
     }
     let about = cfg["about"].as_str().unwrap_or_default().to_string();
-    Ok(Plan { backend, about, layers, stages, pours, widths, features })
+    Ok(Plan { backend, about, layers, stages, pours, widths, features, reuse })
 }
 
 /// The values of a failed field are placeholders: any error makes `load` return Err.
@@ -51,6 +52,21 @@ struct Check<'a> {
 impl Check<'_> {
     fn fail(&mut self, message: String) {
         self.errors.push(message);
+    }
+
+    fn reuse(&mut self, raw: &Value) -> Option<Reuse> {
+        if !self.keys(raw, &["from", "nets"], "reuse") {
+            return None;
+        }
+        let Some(from) = raw["from"].as_str().filter(|from| from.starts_with('/')) else {
+            self.fail("reuse: from must be an absolute path".to_string());
+            return None;
+        };
+        let nets = raw.get("nets").map_or(Some(Vec::new()), |nets| nets.as_array()?.iter().map(|net| net.as_str().map(str::to_string)).collect());
+        if nets.is_none() {
+            self.fail("reuse: nets must be a list of names".to_string());
+        }
+        Some(Reuse { from: from.to_string(), nets: nets? })
     }
 
     fn finish(self) -> String {

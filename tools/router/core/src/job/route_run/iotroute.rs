@@ -14,9 +14,11 @@
 //! Every other feature, `threads`, `unlock_nets` and `via_skip` have no meaning here and are refused by name.
 use super::board_edit::{pour_area, pour_zone};
 use crate::kicad::board::Board;
-use crate::plan::{Plan, Pour, PourShape, Stage};
+use crate::plan::{Plan, Pour, PourShape, Reuse, Stage};
 use crate::route_features::root;
 use crate::run::parse_args;
+use crate::run::project::sha_file;
+use crate::run::reuse::seed_from;
 use crate::run::steps::{Steps, last_line};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -108,8 +110,21 @@ fn stage_model(model: &mut Value, stage: &Stage, halo: bool) -> Result<(), Strin
     Ok(())
 }
 
-/// Routes `src`; the board goes to `work`/routed.kicad_pcb. An open net is no failure here: the stage check decides.
-pub fn route(stage: &Stage, folder: &Path, src: &Path, work: &Path, halo: bool) -> Result<PathBuf, String> {
+/// The core arguments of a stage that starts from the same stage of an earlier run. That run may have stopped before this stage.
+fn reuse_args(reuse: &Reuse, name: &str, src: &Path, work: &Path) -> Result<Vec<String>, String> {
+    let earlier = Path::new(&reuse.from).join(name).join("router");
+    let board = earlier.join("routed.kicad_pcb");
+    if !board.is_file() {
+        return Ok(Vec::new());
+    }
+    let seed = work.join("seed.json");
+    seed_from(&board, &earlier, src, &seed, "none", &reuse.nets)?;
+    Ok(vec!["--reuse".to_string(), seed.display().to_string()])
+}
+
+/// Routes `src`; the board goes to `work`/routed.kicad_pcb. An open net is no failure here: the stage check decides. `reuse`: the plan's
+/// earlier run and the stage's folder name there.
+pub fn route(stage: &Stage, folder: &Path, src: &Path, work: &Path, halo: bool, reuse: Option<(&Reuse, &str)>) -> Result<PathBuf, String> {
     fs::create_dir_all(work).map_err(|e| format!("{}: {e}", work.display()))?;
     let steps = Steps::new(&root().join("tools"))?;
     let model = work.join("model.json");
@@ -126,7 +141,10 @@ pub fn route(stage: &Stage, folder: &Path, src: &Path, work: &Path, halo: bool) 
     if stage.budget.time_s != 0 {
         argv.extend(["--max-time".to_string(), stage.budget.time_s.to_string()]);
     }
-    steps.route_and_write(&parse_args(&argv)?, &model, src, &routed, work, &[], &[])?;
+    let extra = reuse.map_or(Ok(Vec::new()), |(reuse, name)| reuse_args(reuse, name, src, work))?;
+    steps.route_and_write(&parse_args(&argv)?, &model, src, &routed, work, &extra, &[])?;
+    // What a later `reuse` checks the board against.
+    fs::write(work.join("result.json"), json!({"board_sha256": sha_file(&routed)?}).to_string()).map_err(|e| format!("{}: {e}", work.display()))?;
     Ok(routed)
 }
 

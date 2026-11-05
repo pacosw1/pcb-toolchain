@@ -145,10 +145,14 @@ fn seed_passes(route_passes: i64, earlier: Option<&EarlierReuse>) -> i64 {
     }
 }
 
-/// Writes the seed of a reuse route.
+/// Writes the seed of a reuse route from the run work folder beside `previous`.
 pub fn reuse_seed(previous: &Path, route_in: &Path, out_json: &Path, fallback: &str) -> Result<ReuseRecord, String> {
-    let work = format!("{}.iotroute", previous.display());
-    let (result, route, drc) = (Path::new(&work).join("result.json"), Path::new(&work).join("route.json"), Path::new(&work).join("drc.json"));
+    seed_from(previous, Path::new(&format!("{}.iotroute", previous.display())), route_in, out_json, fallback, &[])
+}
+
+/// The seed from the files of `previous` in `work`; `nets` are routed again with the nets it left open.
+pub fn seed_from(previous: &Path, work: &Path, route_in: &Path, out_json: &Path, fallback: &str, nets: &[String]) -> Result<ReuseRecord, String> {
+    let (result, route, drc) = (work.join("result.json"), work.join("route.json"), work.join("drc.json"));
     if !result.is_file() || !route.is_file() {
         return Err(format!("--reuse: {} has no run work folder with result.json and route.json", previous.display()));
     }
@@ -163,6 +167,7 @@ pub fn reuse_seed(previous: &Path, route_in: &Path, out_json: &Path, fallback: &
     if drc.is_file() {
         failed.extend(drc_nets(&read_report(&drc)?));
     }
+    failed.extend(nets.iter().cloned());
     let failed: Vec<String> = failed.into_iter().collect();
     let passes = seed_passes(earlier.passes, record.reuse.as_ref());
     let source = previous.display().to_string();

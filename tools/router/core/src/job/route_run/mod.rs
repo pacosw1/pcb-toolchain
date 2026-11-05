@@ -242,6 +242,7 @@ struct Job {
     backend: Backend,
     halo: bool,
     pours: Vec<Pour>,
+    reuse: Option<plan::Reuse>,
 }
 
 impl Job {
@@ -250,7 +251,8 @@ impl Job {
     }
 
     fn run_stage(&self, number: usize, stage: &Stage, current: &Path) -> Result<(PathBuf, Json, Vec<String>), String> {
-        let folder = self.outdir.join(format!("{}-{}", number + 1, stage.name));
+        let stage_folder = format!("{}-{}", number + 1, stage.name);
+        let folder = self.outdir.join(&stage_folder);
         let src = self.board_file(&folder.join("in"));
         copy_project(current, &src, None)?;
         let (text, removed) = split_zones(&read_text(current)?, &stage.remove_zones)?;
@@ -269,7 +271,7 @@ impl Job {
         let work = folder.join("router");
         let routed_path = match self.backend {
             Backend::Tracemaker => route_tracemaker(stage, &src, &work, &before.copper_layers)?,
-            Backend::Iotroute => iotroute::route(stage, &self.folder, &src, &work, self.halo)?,
+            Backend::Iotroute => iotroute::route(stage, &self.folder, &src, &work, self.halo, self.reuse.as_ref().map(|reuse| (reuse, stage_folder.as_str())))?,
         };
         remove_project_lock(&src);
         let routed = read_api(&routed_path)?;
@@ -406,11 +408,11 @@ fn route(options: &Options) -> Result<i32, String> {
     if backend == Backend::Iotroute {
         iotroute::check_plan(&plan)?;
         Steps::new(&root().join("tools"))?.admit(&folder, &start, &outdir.join("admission-model.json"), &outdir.join("admission-model.log"), true)?;
-    } else if !plan.features.is_empty() {
-        return Err("route: the tracemaker backend cannot apply route.json features".to_string());
+    } else if !plan.features.is_empty() || plan.reuse.is_some() {
+        return Err("route: the tracemaker backend cannot apply route.json features or reuse".to_string());
     }
     guard::preflight(&start, &outdir.join("preflight.json"))?;
-    let job = Job { outdir: outdir.clone(), name, folder, backend, halo: iotroute::wants_halo(&plan), pours: plan.pours.clone() };
+    let job = Job { outdir: outdir.clone(), name, folder, backend, halo: iotroute::wants_halo(&plan), pours: plan.pours.clone(), reuse: plan.reuse.clone() };
     let (mut current, mut stages, mut failures, mut last) = (start.clone(), Vec::new(), Vec::new(), None);
     for (number, stage) in plan.stages.iter().enumerate() {
         last = Some((number, stage));

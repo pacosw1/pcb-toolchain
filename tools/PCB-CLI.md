@@ -147,7 +147,7 @@ A failed run on the `iotroute` backend leaves a short report, `operation/stuck.j
 `tools/pcb next BOARD` prints it: the open nets and their ends in mm, why each is open (walled in by which parts, nets and keepouts;
 a path exists and the router lost it; or the search hit its limit, which proves nothing), the layer limits, and what changed since the
 last report of this board. It describes only: DRC stays the verdict. `iotroute stuck WORK BOARD [--previous STUCK.json]` makes the same
-report from a work folder (`tools/router/core/src/stuck.rs`).
+report from a work folder (`tools/router/core/src/stuck.rs`). `next` then names one move from the fixed list in `ROUTE-DECISIONS.md`.
 
 For the in-house router (tools/router/DESIGN.md), use
 `tools/pcb route BOARD --router iotroute [--spec POLICY.json] --detach --json`. The run executes

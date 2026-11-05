@@ -1,5 +1,30 @@
 # Bounded routing decisions
 
+## After a stuck route
+
+`tools/pcb next BOARD` prints the stuck report of a failed route, then one move from this fixed list
+(`tools/lib/route-moves.ts`). No other action exists, and a move is checked before it runs:
+
+```sh
+tools/pcb routing --json --follow move BOARD --evidence RUN/operation/stuck.json --move '{"kind":"reroute_stuck"}'
+```
+
+| Move | Fields | What it does |
+| --- | --- | --- |
+| `reroute_stuck` | | A route plan with `reuse`: start from that run's copper, route again what it left open. |
+| `change_setting` | `setting`, `value` | `passes` (1..1000), `time_s` (above 0) or `layers` (of the board's routing layers). Rules, widths and clearances are no settings. |
+| `move_part` | `ref`, `dx_mm`, `dy_mm` | A placement spec for `tools/pcb edit`. |
+| `move_cluster` | `refs`, `dx_mm`, `dy_mm` | The same for two or more parts, one offset. A rigid group moves whole. |
+| `swap_pins` | `ref`, `pads` | Only a proposal: nothing runs. It is a schematic change for a person to review. |
+| `widen_region` | `nets` | `reuse` with the blocking nets routed again too. |
+| `ask_user` | `question` | Stop and ask. |
+
+A part move from `next` names the part with null offsets: fill them in. The answer is `accepted` with the next command, `rejected` with the
+reasons, `proposal` or `ask_user`. Refused: an unknown move or field; a locked part; a part in a reviewed `fixed` rule; part of a
+`rigid_group`; a pose off the board; a pad a reviewed rule names; nets the report does not name. Pin distance, clearance and connector
+access are measured on the moved candidate by the checks every candidate run has, so a move can pass here and fail there.
+Every move is reversible: it is a new candidate run, so discard the run. Only `tools/pcb adopt` changes canonical CAD.
+
 The unified CLI records a routing diagnosis as an unqualified engineering run:
 
 ```sh
