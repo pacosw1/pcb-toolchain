@@ -429,9 +429,16 @@ fn check_rule_sources(contract: &Value, manifest: &Value) -> crate::Result<()> {
         if !seen.insert(id) || source_rules.get(id) != Some(&rule) || rule.get("binding").is_some() {
             return Err("reviewed rule differs from manifest or requires unsupported binding".into());
         }
-        match rule["kind"].as_str() {
-            Some("fixed" | "rigid_group" | "pin_distance" | "clearance" | "connector_access") => (),
+        let allowed: &[&str] = match rule["kind"].as_str() {
+            Some("fixed") => &["id","kind","source","refs"],
+            Some("rigid_group") => &["id","kind","source","refs"],
+            Some("pin_distance") => &["id","kind","source","a","b","metric","min_mm","max_mm"],
+            Some("clearance") => &["id","kind","source","a","b","metric","min_mm"],
+            Some("connector_access") => &["id","kind","source","ref","metric","corridor_mm","exit_side"],
             _ => return Err("unsupported reviewed rule kind".into()),
+        };
+        if rule.as_object().is_none_or(|o| o.keys().any(|key| !allowed.contains(&key.as_str()))) {
+            return Err("unsupported reviewed rule field".into());
         }
         let source = &rule["source"];
         if source["page"].as_u64().is_none_or(|v| v == 0) { return Err("reviewed rule source page missing".into()); }
@@ -460,6 +467,11 @@ mod rule_source_tests {
         let manifest = json!({"parts":[{"layout_constraints":[rule.clone()]}]});
         let mut contract = json!({"root":root,"inputs":{"doc.pdf":hash},"rules":[rule]});
         assert!(check_rule_sources(&contract, &manifest).is_ok());
+        let mut unknown = contract.clone();
+        let mut unknown_manifest = manifest.clone();
+        unknown["rules"][0]["unreviewed"] = json!(true);
+        unknown_manifest["parts"][0]["layout_constraints"][0]["unreviewed"] = json!(true);
+        assert!(check_rule_sources(&unknown, &unknown_manifest).is_err());
         contract["rules"][0]["refs"] = json!(["U2"]);
         assert!(check_rule_sources(&contract, &manifest).is_err());
         std::fs::remove_dir_all(root).unwrap();
