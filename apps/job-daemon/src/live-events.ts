@@ -40,6 +40,7 @@ export class LiveEvents {
       PRIMARY KEY(job, attempt)) STRICT;`);
     this.db.exec('CREATE INDEX IF NOT EXISTS live_run_cursor ON live_events(source, board, run, cursor);');
     this.db.exec('CREATE INDEX IF NOT EXISTS live_kind_time ON live_events(kind, received_at);');
+    this.db.exec('CREATE INDEX IF NOT EXISTS live_latest_kind ON live_latest(kind, cursor);');
     this.db.prepare("INSERT INTO live_meta VALUES ('epoch', ?) ON CONFLICT(key) DO NOTHING").run(randomUUID());
     if (!this.db.prepare("SELECT 1 FROM live_meta WHERE key='latest-v1'").get()) {
       this.db.exec(`BEGIN IMMEDIATE;
@@ -114,6 +115,14 @@ export class LiveEvents {
     return (this.db.prepare(`SELECT e.* FROM live_latest l JOIN live_events e ON e.cursor=l.cursor
       WHERE l.kind='job.binding' AND e.received_at>? ORDER BY e.cursor DESC LIMIT 2000`)
       .all(Date.now() - 7 * 86_400_000) as unknown as Row[]).map(fromRow);
+  }
+  hasObservedWriter(boardKey: string, since: number): boolean {
+    return !!this.db.prepare(`SELECT 1 FROM live_latest l JOIN live_events e ON e.cursor=l.cursor
+      WHERE l.kind='run.state' AND e.received_at>=? AND json_extract(e.data,'$.boardKey')=?
+      AND json_extract(e.data,'$.coordinated')=0 AND json_extract(e.data,'$.supervisorAlive')=1
+      AND json_extract(e.data,'$.status') IN ('running','stopping')
+      AND json_extract(e.data,'$.operation') IN ('build','edit','route','repair','release','placement') LIMIT 1`)
+      .get(since, boardKey);
   }
   jobOffset(job: string, attempt: number): number {
     const row = this.db.prepare('SELECT offset FROM live_job_offsets WHERE job=? AND attempt=?').get(job, attempt) as { offset: number } | undefined;

@@ -22,6 +22,8 @@ export function activityRows(data: Record<string, unknown>): ActivityRow[] {
 }
 
 function formatLine(raw: string, stage: string): ActivityRow {
+  const epoch = raw.match(/^epoch\s+(\d+)\/(\d+)\s+T\s+([\d.e+-]+)\s+best\s+([\d.e+-]+)/i)
+  if (epoch) return { title: `Placement epoch ${epoch[1]} of ${epoch[2]}`, detail: `Best cost ${epoch[4]} · temperature ${epoch[3]}`, tone: 'working', raw }
   const pass = raw.match(/^iter\s+(\d+):\s+routed\s+(\d+),.*?audit pairs\s+(\d+).*?involved\s+(\d+).*?hard fails\s+(\d+).*?([\d.]+)\s+s\s+hard:.*?involved:\s*(.*)$/i)
   if (pass) {
     const [, n, routed, conflicts, involved, failures, seconds, nets] = pass

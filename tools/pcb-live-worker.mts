@@ -178,6 +178,16 @@ export class Worker {
       return path.relative(boards, resolved).split(path.sep)[0] || gateId;
     } catch { return gateId; }
   }
+  private boardLockKey(gateId: string): string | null {
+    try {
+      const boards = real(path.join(this.root, 'hardware-design/boards'));
+      const gate = path.join(boards, gateId, 'gate.json');
+      const cfg = JSON.parse(fs.readFileSync(gate, 'utf8')) as { project?: unknown };
+      if (typeof cfg.project !== 'string') return null;
+      const pcb = real(path.resolve(path.dirname(gate), cfg.project + '.kicad_pcb'));
+      return within(boards, pcb) ? `${this.projectId}/${path.relative(this.root, pcb).split(path.sep).join('/')}` : null;
+    } catch { return null; }
+  }
   private async snapshot(p: string, board: string, run = 'saved', kind: 'board.snapshot' | 'candidate.snapshot' = 'board.snapshot'): Promise<void> {
     const st = fs.statSync(p);
     const key = path.relative(this.root, p), stamp = stampOf(st);
@@ -310,12 +320,12 @@ export class Worker {
           catch (e) { alive = (e as NodeJS.ErrnoException).code === 'ESRCH' ? false : null; }
         }
         const coordinated = guardedRuns.has(name);
-        const key = path.relative(this.root, statePath), stamp = `${stampOf(st)}:${alive}:${coordinated}`;
+        const key = path.relative(this.root, statePath), stamp = `${stampOf(st)}:${alive}:${coordinated}:v2`;
         if (this.state.stamps[key] !== stamp) {
           const fields = ['status', 'elapsed_s', 'updated_unix', 'active_stages', 'active_stage_timing', 'last_activity_s', 'last_progress_s', 'cause', 'metrics', 'exit_code'];
           const summary = Object.fromEntries(fields.filter(k => k in state).map(k => [k, state[k]]));
           Object.assign(summary, { operation: manifest.operation ?? 'unknown', router: manifest.router ?? null, gate: gateId,
-            timeoutS: manifest.timeout_s ?? null, supervisorAlive: alive, coordinated });
+            timeoutS: manifest.timeout_s ?? null, supervisorAlive: alive, coordinated, boardKey: this.boardLockKey(gateId) });
           await this.event('state:' + digest(`${key}\0${stamp}`), board, name, 'run.state', summary);
           this.state.stamps[key] = stamp; this.save();
         }
@@ -380,11 +390,11 @@ export class Worker {
     for (const run of runs) {
       this.external.set(run.runId, run);
       const elapsed = Math.floor(run.elapsed / 15) * 15, stateKey = `external:${run.runId}`;
-      const stamp = `${run.stage}:${elapsed}`;
+      const stamp = `${run.stage}:${elapsed}:v2`;
       if (this.state.stamps[stateKey] !== stamp) {
         await this.event('external-state:' + digest(`${stateKey}\0${stamp}`), run.board, run.runId, 'run.state',
           { status: 'running', operation: 'placement', active_stages: [run.stage], elapsed_s: elapsed,
-            timeoutS: run.timeout, supervisorAlive: true, coordinated: false, cause: 'Direct toolchain process; outcome is not yet known' });
+            timeoutS: run.timeout, supervisorAlive: true, coordinated: false, boardKey: this.boardLockKey(run.board), cause: 'Direct toolchain process; outcome is not yet known' });
         this.state.stamps[stateKey] = stamp; this.state.externalRuns = Object.fromEntries(this.external); this.save();
       }
       const stageLog = path.join(run.outdir, 'stages.jsonl');

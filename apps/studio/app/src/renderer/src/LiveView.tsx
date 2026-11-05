@@ -171,6 +171,8 @@ export function LiveView(): React.JSX.Element {
   const recent = activity.filter(e => e.data.executor !== 'coordinator' || typeof e.data.text !== 'string' ||
     !localLines.has(`${e.source}\0${e.run}\0${String(e.data.stage ?? '')}\0${e.data.text}`)).sort((a, b) => b.cursor - a.cursor).slice(0, 12)
   const remoteState = all.find(e => e.kind === 'remote.state' && e.source === active?.source && e.board === active?.board && e.run === active?.run)
+  const epochProgress = activity.sort((a, b) => b.cursor - a.cursor).flatMap(e => typeof e.data.text === 'string'
+    ? [...e.data.text.matchAll(/epoch\s+(\d+)\/(\d+)\s+T\s+([\d.e+-]+)\s+best\s+([\d.e+-]+)/gi)].reverse() : [])[0]
   const rawStatus = typeof active?.data.status === 'string' ? active.data.status : 'unknown'
   const remoteRunning = remoteState && ['queued', 'running', 'retrying'].includes(String(remoteState.data.status)) && now - remoteState.receivedAt < 45_000
   const runStatus = active && ['running', 'stopping'].includes(rawStatus) && stateFor(active) !== 'live' && !remoteRunning
@@ -240,6 +242,8 @@ export function LiveView(): React.JSX.Element {
             {runs.map(e => <option key={runKey(e)} value={runKey(e)}>{e.run} · {e.host} · {String(e.data.status ?? 'unknown')}</option>)}
           </select></label> : null}
           <p>{stages.length ? `Working on: ${stages.join(', ')}` : rawStatus === 'queued' ? 'Waiting to start' : 'No active stage reported'}</p>
+          {epochProgress && Number(epochProgress[2]) > 0 ? <p>Placement search: epoch {epochProgress[1]} of {epochProgress[2]} · best cost {epochProgress[4]}{' '}
+            <progress aria-label="Placement search progress" value={Number(epochProgress[1])} max={Number(epochProgress[2])} /></p> : null}
           {remoteState ? <p>Remote job: {String(remoteState.data.status ?? 'unknown')}{['passed', 'failed', 'cancelled'].includes(String(remoteState.data.status)) ? ' · final board verification runs on the source machine' : ''}</p> : null}
           <p>{elapsed === null ? 'Elapsed time not reported' : `Elapsed: ${Math.round(elapsed)} s`}{lastProgress === null ? '' : ` · Last progress: ${Math.round(lastProgress)} s before the latest update`}</p>
           {typeof active.data.timeoutS === 'number' ? <p>Run time limit: {active.data.timeoutS} s</p> : null}

@@ -205,8 +205,10 @@ async function dispatch(root: string, program: string, args: string[]): Promise<
     try { lease = await coordinator.acquire(boardKey, owner); }
     catch (error) {
       if (!(error instanceof HttpError) || error.status !== 409) throw error;
-      if (!announced) { console.error(`pcb: waiting for ${board} on another machine`); announced = true; }
-      if (Date.now() - reported >= 15000) { await report('queued', 'Waiting for another writer to release this board'); reported = Date.now(); }
+      const cause = error.message === 'board has an observed unguarded writer'
+        ? 'Waiting for an observed unguarded writer to finish' : 'Waiting for another writer to release this board';
+      if (!announced) { console.error(`pcb: ${cause} (${board})`); announced = true; }
+      if (Date.now() - reported >= 15000) { await report('queued', cause); reported = Date.now(); }
       if (Date.now() >= until) { await report('error', 'Timed out waiting for the board lock'); throw new Error('timed out waiting for the board lock'); }
       await sleep(3000);
     }

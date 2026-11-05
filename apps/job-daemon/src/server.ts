@@ -296,6 +296,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: J
         typeof body.owner !== 'string' || !body.owner || body.owner.length > 256 ||
         typeof body.ttlMs !== 'number' || !Number.isSafeInteger(body.ttlMs) || body.ttlMs < 1000 || body.ttlMs > 300_000)
       throw new HttpError(400, 'invalid lease request');
+    if (live.hasObservedWriter(body.board, Date.now() - 45_000)) throw new HttpError(409, 'board has an observed unguarded writer');
     const lease = leases.acquire(body.board, body.owner, body.ttlMs);
     if (!lease) throw new HttpError(409, 'board is leased');
     return json(res, 201, lease);
@@ -308,6 +309,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: J
       return json(res, 200, { released: true });
     }
     if (url.pathname.endsWith('/commit-begin')) {
+      if (live.hasObservedWriter(lease.board, Date.now() - 45_000)) throw new HttpError(409, 'board has an observed unguarded writer');
       if (!leases.beginCommit(lease as BoardLease)) throw new HttpError(409, 'lease expired or replaced');
       return json(res, 200, { pinned: true });
     }

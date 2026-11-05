@@ -29,6 +29,7 @@ test('worker reports state, agent messages, large records, and board removal wit
   const run = path.join(root, '.gate/cli/run-1'), agent = path.join(root, '.gate/live-agent/DEMO');
   fs.mkdirSync(cad, { recursive: true }); fs.mkdirSync(run, { recursive: true }); fs.mkdirSync(agent, { recursive: true });
   const board = path.join(cad, 'demo.kicad_pcb'); fs.writeFileSync(board, 'board');
+  fs.writeFileSync(path.join(root, 'hardware-design/boards/DEMO/gate.json'), JSON.stringify({ project: 'cad/demo' }));
   fs.writeFileSync(path.join(run, 'run.json'), JSON.stringify({ board: 'DEMO', operation: 'route', timeout_s: 90 }));
   fs.writeFileSync(path.join(run, 'state.json'), JSON.stringify({ status: 'running', elapsed_s: 2, active_stages: ['routing'], worker_pid: process.pid, updated_unix: Date.now() / 1000 }));
   fs.writeFileSync(path.join(run, 'events.jsonl'), JSON.stringify({ type: 'tool.output', text: 'x'.repeat(3 * 1024 * 1024) }) + '\n' + JSON.stringify({ type: 'run.end', status: 'passed' }) + '\n');
@@ -44,6 +45,7 @@ test('worker reports state, agent messages, large records, and board removal wit
     await worker.syncEpoch(); await worker.scan();
     const first = await events();
     assert.ok(first.some(e => e.kind === 'run.state' && e.data.supervisorAlive === true && e.data.timeoutS === 90));
+    assert.ok(first.some(e => e.kind === 'run.state' && e.data.boardKey === 'project/hardware-design/boards/DEMO/cad/demo.kicad_pcb'));
     assert.ok(first.some(e => e.kind === 'run.event' && e.data.type === 'run.event_oversize'));
     assert.ok(first.some(e => e.kind === 'run.event' && e.data.type === 'run.end'));
     assert.ok(first.some(e => e.kind === 'run.note' && e.data.message === 'Move connector'));

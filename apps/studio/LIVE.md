@@ -62,6 +62,9 @@ evidence proves it is safe.
 Direct KiCad edits, older toolchains, and scripts that bypass the guarded launcher cannot be locked by this mechanism.
 Studio labels an observed writer without a guard as unprotected. Do not run a second independent coordinator for the
 same project: one durable coordinator is the authority. Preserve its SQLite databases and blob store during upgrades.
+When an observer reports an active unguarded writer and can identify its board, the coordinator also makes new guarded
+runs wait. Observation is best effort: an undetected writer or one that starts after a guard acquires the lease can
+still bypass it, so this is not universal filesystem enforcement.
 
 ## Live information
 

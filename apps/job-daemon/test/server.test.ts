@@ -124,6 +124,16 @@ describe('board leases', () => {
     method: 'POST', headers: { 'content-type': 'application/json', ...(authenticated ? auth : {}) }, body: JSON.stringify(body),
   });
 
+  it('waits while a fresh observed unguarded writer is active on the same board', async () => {
+    const event = { source: 'mini', host: 'mini', board: 'project/B', run: 'direct', kind: 'run.state' };
+    const data = { status: 'running', operation: 'placement', coordinated: false, supervisorAlive: true, boardKey: 'project/cad/B.kicad_pcb' };
+    assert.equal((await call('/live/events', { ...event, eventId: 'started', data })).status, 200);
+    const req = { board: data.boardKey, owner: 'macbook', ttlMs: 30000 };
+    assert.equal((await call('/board-leases/acquire', req)).status, 409);
+    assert.equal((await call('/live/events', { ...event, eventId: 'stopped', data: { ...data, status: 'stopped', supervisorAlive: false } })).status, 200);
+    assert.equal((await call('/board-leases/acquire', req)).status, 201);
+  });
+
   it('requires authentication and rejects competing and stale owners', async () => {
     const request = { board: 'project/board', owner: 'mini', ttlMs: 30000 };
     assert.equal((await call('/board-leases/acquire', request, false)).status, 401);
