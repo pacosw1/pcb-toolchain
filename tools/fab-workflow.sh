@@ -35,9 +35,10 @@ checks=0
 if [ -n "$check" ]; then
   echo "START: $board board-specific layout check"
   pcb=$(node -e 'const fs=require("fs"),p=require("path"),b=process.argv[1],d=p.join("hardware-design/boards",b);console.log(p.join(d,JSON.parse(fs.readFileSync(p.join(d,"gate.json"))).project)+".kicad_pcb")' "$board")
-  if [ -n "$check_json" ] && [ "$mode" = release ]; then "$PY" "$check" "$pcb" --json "$stage/$check_json" || checks=$?;
-  elif [ -n "$config" ]; then "$PY" "$check" "$pcb" "$config" || checks=$?;
-  else "$PY" "$check" "$pcb" || checks=$?; fi
+  run_check() { case "$check" in *.ts) node --experimental-strip-types --no-warnings "$check" "$@";; *) "$PY" "$check" "$@";; esac; }
+  if [ -n "$check_json" ] && [ "$mode" = release ]; then run_check "$pcb" --json "$stage/$check_json" || checks=$?;
+  elif [ -n "$config" ]; then run_check "$pcb" "$config" || checks=$?;
+  else run_check "$pcb" || checks=$?; fi
 fi
 if [ "$checks" -ne 0 ] && [ "$mode" = release ]; then
   echo 'FAIL: board-specific checks failed before shared gate' >&2; exit "$checks"

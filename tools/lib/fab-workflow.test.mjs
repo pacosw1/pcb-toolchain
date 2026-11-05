@@ -72,6 +72,15 @@ for(const board of Object.keys(boards)) {
 test('board-specific check failure prevents release export',()=>{
  const f=fixture('AC-24V',{CHECK_STATUS:'13'});try{assert.equal(f.run().status,13);assert.equal(existsSync(join(f.root,'trace')),false);}finally{rmSync(f.root,{recursive:true,force:true});}
 });
+test('a TypeScript board check runs under node and its failure prevents release export',()=>{
+ const f=fixture('AC-24V');
+ try{
+  const gate=join(f.root,'hardware-design/boards/AC-24V/gate.json'),config=JSON.parse(readFileSync(gate,'utf8'));
+  config.release.check='tools/board-check.ts';writeFileSync(gate,JSON.stringify(config));
+  writeFileSync(join(f.root,'tools/board-check.ts'),'process.exit(21);\n');
+  assert.equal(f.run().status,21);assert.equal(existsSync(join(f.root,'trace')),false);
+ }finally{rmSync(f.root,{recursive:true,force:true});}
+});
 test('ENV schematic semantic failure blocks the shared gate and export',()=>{
  const f=fixture('ENV-SENSE',{SCHEMATIC_STATUS:'11'});try{assert.equal(f.run().status,11);assert.equal(existsSync(join(f.root,'trace')),false);}finally{rmSync(f.root,{recursive:true,force:true});}
 });
