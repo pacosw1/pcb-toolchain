@@ -88,6 +88,19 @@ mod tests {
     }
 
     #[test]
+    fn placement_rules_and_retained_copper_all_count() {
+        let root = "(kicad_pcb (version 1) (footprint \"R\" (at 1 2) (uuid \"f\")) (segment (width .25) (uuid \"t\")))";
+        let digest = geometry_digest(&board(root), &omit(&[])).unwrap();
+        let without_end = &root[..root.len() - 1];
+        let added = format!("{without_end}(segment (width .15) (uuid \"new\")))");
+        assert_eq!(geometry_digest(&board(&added), &omit(&["new"])).unwrap(), digest);
+        for change in [root.replace("(at 1 2)", "(at 2 2)"), root.replace(".25", ".15"), format!("{without_end}(setup (clearance .1)))")] {
+            assert_ne!(geometry_digest(&board(&change), &omit(&[])).unwrap(), digest, "{change}");
+        }
+        assert!(geometry_digest(&board(root), &omit(&["f"])).is_err());
+    }
+
+    #[test]
     fn an_omitted_item_leaves_the_rest_comparable() {
         let extra = BASE.replace("(segment", "(via (uuid \"v1\")) (segment");
         let digest = geometry_digest(&board(BASE), &omit(&[])).unwrap();
