@@ -140,6 +140,10 @@ Before database references can commit, content-addressed blobs and their contain
 written and fsynced. Garbage collection protects in-flight uploads/manifests, pinned jobs and verifier receipts; quota,
 disk-full and crash handling must leave either the old revision or a recoverable journal state, never a dangling
 canonical reference. Idempotency results survive restart, and an `UNKNOWN` mutation is not automatically retried.
+For quota accounting, the proposed store reserves bytes durably before accepting an upload and marks it ready only
+after the verified blob and directory entry are durable. A crash may leave a counted pending reservation; recovery
+must prove the uploader has stopped before reclaiming it. This favors an explicit, recoverable hold over silently
+exceeding quota or deleting a concurrent upload.
 Lease tokens must not be recorded in logs or stored in durable idempotency records; any request fingerprint used for
 deduplication must be derived without persisting the token itself.
 
