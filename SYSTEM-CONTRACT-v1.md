@@ -140,6 +140,10 @@ Before database references can commit, content-addressed blobs and their contain
 written and fsynced. Garbage collection protects in-flight uploads/manifests, pinned jobs and verifier receipts; quota,
 disk-full and crash handling must leave either the old revision or a recoverable journal state, never a dangling
 canonical reference. Idempotency results survive restart, and an `UNKNOWN` mutation is not automatically retried.
+The canonical lease, receipt, revision, blob-reference and idempotency records must share one crash-atomic authority.
+Do not assume transactions across separate SQLite WAL databases are crash-atomic; SQLite documents that limitation
+for [attached databases](https://sqlite.org/lang_attach.html). During migration, a project must never have two
+independent authorities that can both accept canonical commits.
 For quota accounting, the proposed store reserves bytes durably before accepting an upload and marks it ready only
 after the verified blob and directory entry are durable. A crash may leave a counted pending reservation; recovery
 must prove the uploader has stopped before reclaiming it. This favors an explicit, recoverable hold over silently
