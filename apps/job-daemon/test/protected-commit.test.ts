@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path'; import { test } from 'node:test';
 import { ProtectedCommitStore } from '../src/protected-commit.ts'; import { parseCanonicalJson } from '../src/canonical-json.ts';
-import { reconcileProtectedCancellations } from '../src/protected-runtime.ts';
+import { installProtectedRuntime, reconcileProtectedCancellations } from '../src/protected-runtime.ts';
 import { prepareAttemptInput } from '../src/protected-input.ts';
+import { validateSpec } from '../src/manager.ts';
+import { rig } from './helpers.ts';
 const hash=(b:Uint8Array):string=>createHash('sha256').update(b).digest('hex');
 const encode=(x:unknown):Buffer=>parseCanonicalJson(Buffer.from(JSON.stringify(x)),{maxBytes:1_000_000,maxNodes:1000,maxDepth:12}).canonical;
 class Fixture extends ProtectedCommitStore {
@@ -24,8 +26,9 @@ class Fixture extends ProtectedCommitStore {
   seedVerifierForTest():void { this.db.prepare("UPDATE protected_verifiers SET enabled=1 WHERE id='verifier'").run(); }
   resetCancellationForTest():void { this.db.prepare("UPDATE protected_attempt_cancellation SET cancelled=0 WHERE job='job' AND attempt='attempt'").run(); }
 }
-test('fenced verified commit atomically advances the target and replays its durable result',()=>{
+test('fenced verified commit atomically advances the target and replays its durable result',async()=>{
   const parent=fs.mkdtempSync(path.join(os.tmpdir(),'pcb-commit-')); const now=1000;
+  const jobRig = rig();
   const store=new Fixture(path.join(parent,'store'),{maxBlobBytes:10000,quotaBytes:100000},()=>now,()=>0n);
   const put=(b:Buffer):string=>{const h=hash(b);store.put(h,b);return h;};
   const manifest=(content:Buffer):string=>{const h=put(content);return put(encode({schema:'pcb.project-manifest.v1',project_id:'p',entries:[{kind:'file',path:'board',sha256:h,size:content.length,executable:false}],required_paths:['board'],optional_absent_paths:[],external_mounts:[]}));};
@@ -41,16 +44,21 @@ test('fenced verified commit atomically advances the target and replays its dura
     if(lease.state!=='ACQUIRED') throw Error('lease missing');
     store.bindAttempt(submit.token,{project:'p',board:'b',operation:'route',generation:lease.generation,token:lease.token},{job:'job',attempt:'attempt',sourceManifest:source,policyDigest:policy,runtimeDigest:runtime,toolchainDigest:toolchain});
     const candidateRef={project:'p',board:'b',operation:'route',job:'job',attempt:'attempt',manifest:candidate};
-    assert.equal(store.canDispatchProtected(candidateRef,'runtime-job'),false);
     const input = prepareAttemptInput(store,candidateRef,parent,{tarPath:'/usr/bin/tar',maxFiles:10,maxBytes:100,maxArchiveBytes:100000,timeoutMs:10000});
     assert.equal(input.sourceManifest,source);
-    store.associateRuntimeFromTrustedService(candidateRef,'runtime-job',input);
-    store.associateRuntimeFromTrustedService(candidateRef,'runtime-job',input);
+    const runtimeJob=jobRig.mgr.submit(validateSpec({command:['hang'],maxRetries:0},jobRig.cfg),input.archive,candidateRef);
+    installProtectedRuntime(store,jobRig.mgr);
+    await jobRig.mgr.tick(); assert.equal(runtimeJob.state,'queued');
+    assert.equal(store.canDispatchProtected(candidateRef,runtimeJob.id),false);
+    store.associateRuntimeFromTrustedService(candidateRef,runtimeJob.id,input);
+    store.associateRuntimeFromTrustedService(candidateRef,runtimeJob.id,input);
     assert.throws(()=>store.associateRuntimeFromTrustedService(candidateRef,'different-job',input),/changed/);
-    assert.equal(store.canDispatchProtected(candidateRef,'runtime-job'),true);
+    assert.equal(store.canDispatchProtected(candidateRef,runtimeJob.id),true);
+    await jobRig.mgr.tick(); assert.equal(runtimeJob.state,'running');
+    assert.equal(fs.readFileSync(path.join(jobRig.mgr.store.workDir(runtimeJob.id,1),'board'),'utf8'),'old');
     assert.throws(()=>store.stageCandidate(submit.token,candidateRef),/not authorized/);
     store.stageCandidate(worker.token,candidateRef); store.stageCandidate(worker.token,candidateRef);
-    assert.equal(store.canDispatchProtected(candidateRef,'runtime-job'),false);
+    assert.equal(store.canDispatchProtected(candidateRef,runtimeJob.id),false);
     assert.throws(()=>store.stageCandidate(worker.token,{...candidateRef,manifest:source}),/candidate changed/);
     assert.ok(store.pins().some(p=>p.kind==='attempt-candidate'&&p.sha256===candidate));
     const receipt=encode({schema:'pcb.verification.v1',verification_id:'verification',job_id:'job',attempt_id:'attempt',project_id:'p',board_id:'b',alias_revision:1,lease_generation:lease.generation,source_revision:1,source_manifest_sha256:source,candidate_manifest_sha256:candidate,toolchain_digest:toolchain,runtime_digest:runtime,policy_digest:policy,evidence_manifest_sha256:evidence,verifier_identity:'verifier',issued_at_ms:now,expires_at_ms:5000,checks:[{id:'drc',outcome:'passed',evidence_manifest_sha256:evidence}],schematic_parity:'passed',worker_cleanup:'confirmed',cancellation:'not_cancelled',outcome:'passed'});
@@ -60,13 +68,14 @@ test('fenced verified commit atomically advances the target and replays its dura
     store.revoke(); assert.throws(()=>store.commit(commit.token,request),/authority/); assert.equal(store.revision(),1);
     store.seedVerifierForTest();
     store.cancelAttempt(cancel.token,candidateRef);
+    await jobRig.mgr.tick(); assert.equal(runtimeJob.state,'cancelled');
     assert.throws(()=>prepareAttemptInput(store,candidateRef,parent,{tarPath:'/usr/bin/tar',maxFiles:10,maxBytes:100,maxArchiveBytes:100000,timeoutMs:10000}),/stale/);
     const jobs = new Map<string, unknown>(), calls:string[] = [];
     const manager = {jobs,cancel:(id:string)=>{calls.push(id);return jobs.get(id);}};
-    assert.deepEqual(reconcileProtectedCancellations(store,manager as never).unavailable,['runtime-job']);
-    jobs.set('runtime-job',{});
-    assert.deepEqual(reconcileProtectedCancellations(store,manager as never).requested,['runtime-job']);
-    assert.deepEqual(calls,['runtime-job']);
+    assert.deepEqual(reconcileProtectedCancellations(store,manager as never).unavailable,[runtimeJob.id]);
+    jobs.set(runtimeJob.id,{});
+    assert.deepEqual(reconcileProtectedCancellations(store,manager as never).requested,[runtimeJob.id]);
+    assert.deepEqual(calls,[runtimeJob.id]);
     assert.throws(()=>store.commit(commit.token,request),/preconditions/);
     assert.ok(store.pins().some(p=>p.kind==='attempt-candidate'&&p.sha256===candidate));
     store.resetCancellationForTest(); // Test fixture only; no production uncancel path exists.
@@ -80,5 +89,5 @@ test('fenced verified commit atomically advances the target and replays its dura
     assert.equal(pins.some(p=>p.kind==='attempt-candidate'),false);
     assert.deepEqual(store.commit(commit.token,request),result);
     assert.throws(()=>store.commit(commit.token,{...request,candidate_manifest_sha256:source}),/reused/);
-  } finally {store.close();fs.rmSync(parent,{recursive:true,force:true});}
+  } finally {store.close();jobRig.cleanup();fs.rmSync(parent,{recursive:true,force:true});}
 });
