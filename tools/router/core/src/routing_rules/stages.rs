@@ -1,5 +1,5 @@
 use super::{Point, Rect, ReferenceSpec, distance, matches};
-use iotroute::model::text::round_to;
+use crate::model::text::round_to;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -279,7 +279,7 @@ pub fn switch_nodes(
     out
 }
 
-#[derive(Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct HotLoop {
     pub straight_mm: f64,
     pub max_mm: f64,

@@ -609,6 +609,7 @@ tools/route-coverage/src/lib.rs
 tools/route-coverage/src/main.rs
 tools/route-coverage/src/project.rs
 tools/route-coverage/src/thermal.rs
+tools/route-coverage/tests/dsn_floor.rs
 tools/route-coverage/tests/hole.rs
 tools/route-coverage/tests/project.rs
 tools/route-coverage/tests/thermal.rs
@@ -690,6 +691,14 @@ tools/router/core/src/grid/triage.rs
 tools/router/core/src/grid/via_near.rs
 tools/router/core/src/job/backend.rs
 tools/router/core/src/job/clock.rs
+tools/router/core/src/job/fastroute/args.rs
+tools/router/core/src/job/fastroute/copper.rs
+tools/router/core/src/job/fastroute/finish.rs
+tools/router/core/src/job/fastroute/mod.rs
+tools/router/core/src/job/fastroute/pass.rs
+tools/router/core/src/job/fastroute/prepare.rs
+tools/router/core/src/job/fastroute/repair.rs
+tools/router/core/src/job/fastroute/stages.rs
 tools/router/core/src/job/files.rs
 tools/router/core/src/job/mod.rs
 tools/router/core/src/job/progress.rs

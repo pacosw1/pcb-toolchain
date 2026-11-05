@@ -45,6 +45,12 @@ impl From<String> for Stop {
     }
 }
 
+impl From<&str> for Stop {
+    fn from(message: &str) -> Stop {
+        Stop::failed(message)
+    }
+}
+
 static SIGNAL: AtomicI32 = AtomicI32::new(0);
 /// The broker of the stage now running: the first stop signal goes to it.
 static CURRENT_BROKER: Mutex<Option<i32>> = Mutex::new(None);

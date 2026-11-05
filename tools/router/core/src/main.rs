@@ -4209,6 +4209,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
         Some("write") => std::process::exit(write::cli(&args[2..])),
+        Some("fastroute") => std::process::exit(iotroute::job::fastroute::cli(&args[2..])),
         Some("gerber-geos") => std::process::exit(iotroute::gerber_geos::cli()),
         Some("gerber-geometry") => std::process::exit(iotroute::gerber_geometry::cli()),
         Some("board-json") => std::process::exit(iotroute::kicad::cli(&args[2..])),

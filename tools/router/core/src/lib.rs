@@ -11,6 +11,7 @@ pub mod owned;
 pub mod plan;
 pub mod pytext;
 pub mod route_features;
+pub mod routing_rules;
 pub mod rule_coverage;
 pub mod run;
 pub mod sha256;

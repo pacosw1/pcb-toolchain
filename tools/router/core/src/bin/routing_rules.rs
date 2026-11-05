@@ -1,9 +1,9 @@
 //! `routing_rules < request.json`: one typed request in, one JSON value out. Available in route images without Node.
 //! `op` is the original function name; arguments use its names. No board reads or edits happen here.
-#[path = "../routing_rules/mod.rs"]
-mod routing_rules;
 
-use routing_rules::{
+
+
+use iotroute::routing_rules::{
     Disc, Keepouts, Point, Rect, ReferenceSpec, Rings, geometry as g, report as r, stages as s,
 };
 use serde::Deserialize;
