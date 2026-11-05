@@ -11,7 +11,7 @@ import { isFile, resolvePath, which } from './py-path.ts';
 import { attach, folderFor, read } from './pcb-cycle.ts';
 import { holdLock } from './file-lock.ts';
 
-export interface CheckOptions { root: string; base: string; board: string; operation?: 'check' | 'doctor' | 'readiness' | 'blocks' | 'outcomes'; arguments?: string[]; timeout: number; heartbeat: number; changed?: boolean; fresh?: boolean; baseline?: string; cycle?: string }
+export interface CheckOptions { root: string; base: string; board: string; operation?: 'check' | 'doctor' | 'readiness' | 'blocks' | 'outcomes' | 'schematic'; arguments?: string[]; timeout: number; heartbeat: number; changed?: boolean; fresh?: boolean; baseline?: string; cycle?: string }
 
 export async function startCheck(options: CheckOptions): Promise<string> {
   const root = resolvePath(options.root), base = resolvePath(options.base);
@@ -19,7 +19,7 @@ export async function startCheck(options: CheckOptions): Promise<string> {
     throw new Error('timeout and heartbeat must be positive');
   if (options.changed && options.fresh) throw new Error('--changed and --fresh cannot be used together');
   const operation = options.operation ?? 'check';
-  const configInfo = operation === 'check' ? boardConfig(root, options.board) : undefined;
+  const configInfo = (operation === 'check' || operation === 'schematic') ? boardConfig(root, options.board) : undefined;
   const config = configInfo ? join(configInfo.folder, 'gate.json') : undefined;
   let baseline: string | undefined;
   if (options.baseline) {
@@ -30,7 +30,7 @@ export async function startCheck(options: CheckOptions): Promise<string> {
   if (cycleFolder) {
     const cycle = read(join(cycleFolder, 'cycle.json'));
     if (cycle.status !== 'open' || resolvePath(cycle.root) !== root) throw new Error('cycle must be open and belong to this checkout');
-    if ((operation === 'check' || operation === 'readiness') && cycle.board !== options.board) throw new Error('run belongs to another board than its engineering cycle');
+    if ((operation === 'check' || operation === 'readiness' || operation === 'schematic') && cycle.board !== options.board) throw new Error('run belongs to another board than its engineering cycle');
   }
   const node = which(process.env.NODE ?? 'node');
   if (!node) throw new Error('Node.js is required to run the existing gate');
@@ -41,6 +41,7 @@ export async function startCheck(options: CheckOptions): Promise<string> {
   const command = operation === 'doctor' ? [node, join(root, 'tools/doctor.mjs'), '--gate-only']
     : operation === 'readiness' ? [node, join(root, 'tools/check-release-readiness.mjs'), ...(options.arguments ?? [])]
     : operation === 'blocks' ? [node, '--experimental-strip-types', '--no-warnings', join(root, 'tools/blocks.ts'), ...(options.arguments ?? [])]
+    : operation === 'schematic' ? [node, '--experimental-strip-types', '--no-warnings', join(root, 'tools/schematic_contract.ts'), ...(options.arguments ?? []), '--root', root, '--json', '--output', join(folder, 'operation/report.json')]
     : operation === 'outcomes' ? [node, '--experimental-strip-types', '--no-warnings', join(root, 'tools/placement_outcomes.ts'), ...(options.arguments ?? []), '--root', root, '--json', '--output', join(folder, 'operation/report.json')]
     : [node, join(root, 'tools/gate.mjs'), board, '--evidence-dir', join(folder, 'gate')];
   if (options.changed) command.push('--changed');
@@ -49,7 +50,7 @@ export async function startCheck(options: CheckOptions): Promise<string> {
   const manifest = { schema_version: 1, run_id: basename(folder), board, project: configInfo?.cfg.get('project') ?? null,
     created_at: utc(), root, command, timeout_s: options.timeout, heartbeat_s: options.heartbeat,
     operation, node, gate_config_sha256: config ? sha(config) : null,
-    ...(['readiness', 'blocks', 'outcomes'].includes(operation) ? { arguments: options.arguments ?? [] } : {}), ...(cycleFolder ? { cycle: basename(cycleFolder) } : {}) };
+    ...(['readiness', 'blocks', 'outcomes', 'schematic'].includes(operation) ? { arguments: options.arguments ?? [] } : {}), ...(cycleFolder ? { cycle: basename(cycleFolder) } : {}) };
   atomicJson(join(folder, 'run.json'), manifest);
   if (cycleFolder) await attach(cycleFolder, folder, { withLock: async (path, work) => {
     const lock = await holdLock(path, { waitS: 30 });

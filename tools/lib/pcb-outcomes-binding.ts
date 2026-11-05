@@ -1,6 +1,6 @@
 // Fail closed if an outcome producer or any evidence it reports changes during a run.
-import { readdirSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { lstatSync, readdirSync, statSync } from 'node:fs';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { sha256File, readObject } from './json-file.ts';
 
 type Row = Record<string, unknown>;
@@ -39,4 +39,35 @@ export function outcome(folder: string, root: string, study: string, code: numbe
     cause: code === 0 ? 'outcomes completed' : 'outcomes blocked; inspect report.json', scope: 'placement_outcomes', operation: 'outcomes',
     tool_exit: code, report: join(folder, 'operation/report.json'), report_sha256: sha256File(join(folder, 'operation/report.json')), engineering_status: report.status,
     engineering_inputs: inputs, engineering_producer_inputs: binding, qualified: false, release_approved: false };
+}
+
+export function schematic(folder: string, root: string, board: string, code: number, binding: Record<string, string>): Row {
+  if (JSON.stringify(producer(root, process.execPath)) !== JSON.stringify(binding)) throw new Error('schematic producer changed during observation');
+  const path = join(folder, 'operation/report.json'), report = readObject<Row>(path);
+  if (report.schema !== 'iot-lab.schematic-contract-result.v1' || report.board !== board || report.qualified !== false
+      || !['passed', 'blocked', 'stale'].includes(String(report.status)) || (code === 0) !== (report.status === 'passed'))
+    throw new Error('schematic report type, identity, or verdict disagrees');
+  const inputs: Record<string, string> = { ...binding };
+  for (const name of ['inputs', 'native_inputs', 'tool_inputs']) {
+    const entries = report[name] ?? {};
+    if (!entries || typeof entries !== 'object' || Array.isArray(entries)) throw new Error('invalid schematic inputs');
+    for (const [file, digest] of Object.entries(entries)) {
+      const absolute = resolve(root, file);
+      if (typeof digest !== 'string' || !/^[0-9a-f]{64}$/.test(digest) || !statSync(absolute).isFile() || sha256File(absolute) !== digest)
+        throw new Error('schematic input changed: ' + file);
+      if (inputs[absolute] && inputs[absolute] !== digest) throw new Error('schematic producer input disagrees: ' + file);
+      inputs[absolute] = digest;
+    }
+  }
+  const absent = report.absent_inputs ?? [];
+  if (!Array.isArray(absent) || absent.some(name => {
+    if (typeof name !== 'string') return true;
+    const path = resolve(root, name), rel = relative(root, path);
+    return rel === '..' || rel.startsWith('../') || isAbsolute(rel) || !!lstatSync(path, { throwIfNoEntry: false });
+  }))
+    throw new Error('schematic absent input appeared');
+  return { status: code === 0 ? 'passed' : code === 2 ? 'error' : 'failed', exit_code: code === 0 ? 0 : code === 2 ? 2 : 1,
+    cause: code === 0 ? 'schematic completed' : 'schematic blocked; inspect report.json', scope: 'schematic_function', operation: 'schematic',
+    tool_exit: code, report: path, report_sha256: sha256File(path), engineering_status: report.status,
+    engineering_inputs: inputs, engineering_absent_inputs: absent, engineering_producer_inputs: binding, qualified: false, release_approved: false };
 }
