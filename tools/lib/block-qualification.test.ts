@@ -320,6 +320,17 @@ test('blocks native CLI uses the owned runner on a synthetic block', { skip: !pr
   assert.equal(invalid.status, 2);
   assert.match(invalid.stdout, /native timeout must be finite and positive/);
   assert.throws(() => readFileSync(join(root, 'invalid/result.json')));
+  const marker = join(root, 'late-write');
+  const slow = join(root, 'slow-kicad');
+  writeFileSync(slow, `#!/bin/sh\n[ "$1" = --version ] && { echo 10.0.6; exit 0; }\n(sleep 3; touch '${marker}') &\nwait\n`);
+  chmodSync(slow, 0o755);
+  const timedOut = spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', cli, 'native', 'MODULE', '--output', join(root, 'timed-out'), '--timeout', '1'], { encoding: 'utf8', env: { ...env, KICAD_CLI: slow }, timeout: 20_000 });
+  assert.equal(timedOut.status, 1, timedOut.stderr);
+  assert.equal(JSON.parse(timedOut.stdout).status, 'error');
+  assert.match(JSON.parse(timedOut.stdout).cause, /timed out/);
+  spawnSync('sleep', ['4']);
+  assert.throws(() => readFileSync(marker), /ENOENT/);
+  assert.equal(readBlock(input).source_sha256, before);
 });
 
 function benchFixture(value = '3.3'): string {

@@ -6,6 +6,7 @@
 //   tools/blocks.ts find "USB" [--mpn MPN]   retrieve candidates without qualifying them
 //   tools/blocks.ts reuse ID                 inspect a fingerprinted reuse proposal
 //   tools/blocks.ts inventory BOARD          native block identities and binding failures
+//   tools/blocks.ts native ID --output DIR  fresh standalone ERC/DRC/parity evidence
 //   tools/blocks.ts qualify ID --binding FILE --evidence FILE --output FILE
 //   tools/blocks.ts status RECEIPT           recheck source-bound qualification
 //
