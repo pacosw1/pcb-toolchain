@@ -76,12 +76,12 @@ export function iotrouteBin(core: string = CORE): string {
 }
 
 /**
- * For a test's `skip`: why this host cannot get the binary, else false. Only a host with no way to build one skips;
- * a wrong IOTROUTE_BIN or a failed build still fails the test. CI job tools-iotroute runs these tests with a real binary.
+ * For a test's `skip`: require an existing binary; never let cargo availability trigger an implicit build
+ * inside a timed operation. A wrong IOTROUTE_BIN still fails the test. Build explicitly before running native tests.
  */
 export function iotrouteMissing(core: string = CORE): string | false {
   if (process.env.IOTROUTE_BIN || cacheEntry(core).cached) return false;
-  return spawnSync('cargo', ['--version'], { stdio: 'ignore' }).error ? 'needs iotroute: no IOTROUTE_BIN, no cached build, no cargo' : false;
+  return 'needs iotroute: set IOTROUTE_BIN to a prebuilt binary or build the source cache before testing';
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) console.log(iotrouteBin());
