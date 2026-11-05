@@ -123,13 +123,17 @@ impl LockedTarget {
         let mut bytes = Vec::new();
         let mut offset = 0;
         let mut chunk = [0; 64 * 1024];
-        loop {
-            let count = self.target_file.read_at(&mut chunk, offset)?;
+        while offset < before.len() {
+            let length = (before.len() - offset).min(chunk.len() as u64) as usize;
+            let count = self.target_file.read_at(&mut chunk[..length], offset)?;
             if count == 0 {
-                break;
+                return Err(invalid("target shortened during snapshot"));
             }
             bytes.extend_from_slice(&chunk[..count]);
             offset += count as u64;
+        }
+        if self.target_file.read_at(&mut chunk[..1], offset)? != 0 {
+            return Err(invalid("target grew during snapshot"));
         }
         let after = self.target_file.metadata()?;
         let path = fs::symlink_metadata(&self.target)?;
