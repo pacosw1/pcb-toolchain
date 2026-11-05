@@ -154,6 +154,7 @@ fn finish(model: &Model, p: &Params, worker: usize, pose: &Pose) -> Candidate {
     // cannot be repaired by the legalizer. Recheck the final pose in either case.
     let bad = if model.reviewed.is_some() {
         (0..model.units.len()).filter(|&i| {
+            ev.reviewed_native_lock_miss(i) > crate::search::legalize::LEGAL ||
             if model.units[i].fixed { ev.reviewed_miss(i) > crate::search::legalize::LEGAL }
             else { ev.legal_penalty(i) > crate::search::legalize::LEGAL }
         }).collect::<Vec<_>>()

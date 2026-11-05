@@ -201,3 +201,18 @@ fn unit_misses_recompute_cross_unit_dependents_and_verify_mapping() {
     let reversed = vec![vec!["C1".into()], vec!["U1".into()]];
     assert!(ReviewedGeometry::compile(&input, &reversed, &[(10.0, 10.0), (14.0, 10.0)]).is_err());
 }
+
+#[test]
+fn final_screen_checks_unreferenced_native_locks() {
+    use iotplace::engineering::ReviewedGeometry;
+    let mut input = contract();
+    input["rules"] = json!([]);
+    input["geometry"]["refs"]["U1"]["origin"] = json!([10.0, 10.0]);
+    input["geometry"]["refs"]["U1"]["locked"] = json!(true);
+    let refs = vec![vec!["U1".into()], vec!["C1".into()]];
+    let geometry = ReviewedGeometry::compile(&input, &refs, &[(10.0, 10.0), (14.0, 10.0)]).unwrap();
+    let pose = vec![(10.1, 10.0, 0), (14.0, 10.0, 0)];
+    assert_eq!(geometry.miss_for_unit(0, &pose).unwrap(), 0.0);
+    assert_eq!(geometry.native_lock_miss_for_unit(0, &pose).unwrap(), 1.0);
+    assert_eq!(geometry.native_lock_miss_for_unit(1, &pose).unwrap(), 0.0);
+}

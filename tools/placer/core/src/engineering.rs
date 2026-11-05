@@ -831,6 +831,16 @@ impl ReviewedGeometry {
         }
         Ok(sum)
     }
+    /// Final screen checks every native lock, even when no rule references that part.
+    pub fn native_lock_miss_for_unit(&self, unit: usize, pose: &Pose) -> crate::Result<f64> {
+        let mine = self.unit_refs.get(unit).ok_or("reviewed unit missing")?;
+        if pose.len() != self.unit_refs.len() { return Err("reviewed pose cardinality differs".into()); }
+        let mut sum = 0.0;
+        for lock in &self.locks {
+            if mine.contains(&lock.reference) { sum += lock.miss(pose)?; }
+        }
+        Ok(sum)
+    }
     pub fn all_unit_misses(&self, pose: &Pose) -> crate::Result<Vec<f64>> {
         (0..self.unit_refs.len())
             .map(|i| self.miss_for_unit(i, pose))

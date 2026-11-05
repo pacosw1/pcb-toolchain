@@ -260,6 +260,12 @@ impl<'m> Evaluator<'m> {
         })
     }
 
+    pub(crate) fn reviewed_native_lock_miss(&self, i: usize) -> f64 {
+        self.model.reviewed.as_ref().map_or(0.0, |reviewed| {
+            reviewed.native_lock_miss_for_unit(i, &self.layout.pose()).expect("compiled reviewed pose is valid")
+        })
+    }
+
     fn locked_and_gap_area(&self, i: usize, edge_pads: Option<&[Rect]>) -> (f64, f64) {
         let mask = &self.model.mask;
         let layers = self.model.problem.units[i].pad_copper_layers.as_deref();
