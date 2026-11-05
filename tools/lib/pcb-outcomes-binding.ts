@@ -136,3 +136,29 @@ export function parts(folder: string, root: string, board: string, args: string[
     report: path, report_sha256: sha256File(path), engineering_status: report.status, engineering_inputs: inputs,
     engineering_absent_inputs: absent, engineering_producer_inputs: binding, qualified: false, release_approved: false };
 }
+
+export function routing(folder: string, root: string, board: string, reference: { folder: string; result_sha256: string } | undefined, code: number, binding: Record<string, string>): Row {
+  if (JSON.stringify(producer(root, process.execPath)) !== JSON.stringify(binding)) throw new Error('routing producer changed during observation');
+  const backendRoot = reference ? join(reference.folder, 'workspace') : root;
+  const dependencies = reference ? parentCandidate(root, board, reference).dependencies : {};
+  const path = join(folder, 'operation/report.json'), report = readObject<Row>(path);
+  if (report.schema !== 'iot-lab.route-decision.v1' || report.qualified !== false
+      || (code === 0 && (!['repairable', 'decision'].includes(String(report.status)) || report.board !== board))
+      || (code !== 0 && report.status !== 'blocked')) throw new Error('routing report type, identity, or verdict disagrees');
+  const inputs: Record<string, string> = { ...binding, ...dependencies };
+  for (const name of ['inputs', 'native_inputs', 'source_inputs', 'evidence_sha256', 'implementation_sha256']) {
+    const entries = report[name] ?? {};
+    if (!entries || typeof entries !== 'object' || Array.isArray(entries)) throw new Error('invalid routing inputs');
+    for (const [file, digest] of Object.entries(entries)) {
+      const absolute = resolve(name === 'implementation_sha256' ? join(backendRoot, 'tools') : backendRoot, file);
+      if (typeof digest !== 'string' || !/^[0-9a-f]{64}$/.test(digest) || !statSync(absolute).isFile() || sha256File(absolute) !== digest)
+        throw new Error('routing input changed: ' + file);
+      if (inputs[absolute] && inputs[absolute] !== digest) throw new Error('routing input disagrees: ' + file);
+      inputs[absolute] = digest;
+    }
+  }
+  return { status: code === 0 ? 'passed' : code === 2 ? 'error' : 'failed', exit_code: code === 0 ? 0 : code === 2 ? 2 : 1,
+    cause: code === 0 ? 'routing completed' : 'routing blocked; inspect report.json', scope: 'routing_decision', operation: 'routing', tool_exit: code,
+    report: path, report_sha256: sha256File(path), engineering_status: report.status, engineering_inputs: inputs,
+    engineering_absent_inputs: [], engineering_producer_inputs: binding, qualified: false, release_approved: false };
+}

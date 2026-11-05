@@ -7,7 +7,19 @@ case "${1:-}" in
   --project=*) command=${2:-} ;;
   *) command=${1:-} ;;
 esac
+routing_diagnose() {
+  case "${1:-}" in --project) shift 2 ;; --project=*) shift ;; esac
+  [ "${1:-}" = routing ] || return 1
+  shift
+  skip=''
+  for arg in "$@"; do
+    if [ -n "$skip" ]; then skip=''; continue; fi
+    case "$arg" in --runs-dir|--timeout|--heartbeat|--cycle|--from-run) skip=1 ;; --*) ;; diagnose) return 0 ;; *) return 1 ;; esac
+  done
+  return 1
+}
 case "$command" in
+  routing) if routing_diagnose "$@"; then exec node --experimental-strip-types --no-warnings "$here/pcb-check.ts" "$@"; fi ;;
   list|context|next|status|events|explain|cancel|note|benchmark) exec node --experimental-strip-types --no-warnings "$here/pcb-observe.ts" "$@" ;;
   check|doctor|readiness|blocks|outcomes|schematic|design|parts) exec node --experimental-strip-types --no-warnings "$here/pcb-check.ts" "$@" ;;
 esac
