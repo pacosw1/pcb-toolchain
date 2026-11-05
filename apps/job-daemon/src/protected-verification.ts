@@ -36,6 +36,7 @@ export function validateTrustedVerification(value: unknown, expected: Verificati
     throw new Error('verification receipt is stale or has invalid timing');
   if (value.outcome !== 'passed' || value.worker_cleanup !== 'confirmed' || value.cancellation !== 'not_cancelled')
     throw new Error('verification did not pass with confirmed cleanup');
+  if (typeof expected.parity_not_applicable_allowed !== 'boolean') throw new Error('invalid parity policy');
   if (value.schematic_parity !== 'passed' && !(value.schematic_parity === 'not_applicable' && expected.parity_not_applicable_allowed))
     throw new Error('schematic parity is not satisfied');
   if (!Array.isArray(expected.required_checks) || !expected.required_checks.length || expected.required_checks.length > 5000 ||
