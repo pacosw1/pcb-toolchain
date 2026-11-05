@@ -1,6 +1,8 @@
+import { LiveView } from './LiveView'
+import type { InspectSelection } from './LiveCanvas'
 import { SchematicView } from './SchematicView'
 import { SpecView } from './SpecView'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { EngineStatus } from '../../preload/types'
 import { BoardView, type Selection } from './BoardView'
 import { BoardPicker } from './BoardPicker'
@@ -13,7 +15,7 @@ import { RunsView } from './RunsView'
 import { Viewer3D } from './Viewer3D'
 import type { Bom, BomLine, Finding, Geometry, ProjectInfo } from './types'
 
-type Tab = 'schematic' | 'specs' | 'board' | '3d' | 'parts' | 'datasheets' | 'checks' | 'runs'
+type Tab = 'live' | 'schematic' | 'specs' | 'board' | '3d' | 'parts' | 'datasheets' | 'checks' | 'runs'
 
 const STATE_COLOR: Record<EngineStatus['state'], string> = {
   ready: 'var(--ok)',
@@ -129,6 +131,8 @@ function App(): React.JSX.Element {
   const [geo, setGeo] = useState<Geometry | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [linked, setLinked] = useState<InspectSelection | null>(null)
+  const linkedFocus = useMemo(() => linked?.ref ? { ref: linked.ref } : null, [linked?.ref])
   const [selection, setSelection] = useState<Selection | null>(null)
   const [tab, setTab] = useState<Tab>('board')
   const [bom, setBom] = useState<Bom | null>(null)
@@ -270,6 +274,7 @@ function App(): React.JSX.Element {
     ['parts', 'Parts / BOM', 'list', bom ? `${bom.summary.lines} lines` : null],
     ['datasheets', 'Datasheets', 'doc', bom ? String(bom.lines.filter((l) => l.datasheet).length) : null],
     ['checks', 'Checks', 'check', gate ? null : 'no gate'],
+    ['live', 'Live solver', 'runs', null],
     ['runs', 'Runs', 'runs', gate ? null : 'no gate']
   ]
 
@@ -370,28 +375,29 @@ function App(): React.JSX.Element {
           {geo && tab === 'board' ? (
             <BoardView
               geo={geo}
-              onSelect={setSelection}
-              focusRef={focus}
+              onSelect={s => { setSelection(s); if (s) setLinked({ ref: s.ref }) }}
+              linkedNet={linked?.net} onNetSelect={net => { if (net) setLinked({ net }) }}
+              focusRef={linkedFocus ?? focus}
               findings={findings}
               focusPoint={focusPoint}
               live={{ on: live, updatedAt, error: liveError, onToggle: toggleLive }}
               liveRefresh={geo === liveGeo}
             />
           ) : geo && tab === 'schematic' && pcb ? (
-            <SchematicView key={project?.root + pcb} pcb={pcb} />
+            <SchematicView key={project?.root + pcb} pcb={pcb} geo={geo} selection={linked} onSelect={setLinked} />
           ) : geo && tab === 'specs' && pcb ? (
             <SpecView key={project?.root + pcb} pcb={pcb} />
           ) : geo && tab === '3d' && pcb ? (
             <Viewer3D pcb={pcb} />
           ) : geo && tab === 'parts' && bom ? (
             <PartsView
-              bom={bom}
+              bom={bom} geo={geo} selection={linked} onSelect={setLinked}
               onDatasheet={(l) => {
                 setSheet(l)
                 setTab('datasheets')
               }}
               onShowRef={(ref) => {
-                setFocus({ ref })
+                setLinked({ ref }); setFocus({ ref })
                 setTab('board')
               }}
             />
@@ -409,7 +415,7 @@ function App(): React.JSX.Element {
                 setTab('board')
               }}
             />
-          ) : geo && tab === 'runs' ? (
+          ) : tab === 'live' ? (<LiveView selection={linked} onSelect={setLinked} />) : geo && tab === 'runs' ? (
             <RunsView gate={gate} current={geo} onAdopted={() => setReload((n) => n + 1)} />
           ) : (
             <section className="panel placeholder" aria-label="Board view">

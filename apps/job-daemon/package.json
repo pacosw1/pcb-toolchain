@@ -5,9 +5,9 @@
   "type": "module",
   "description": "Remote placer and router jobs on the Linux box. No runtime dependencies; dev dependencies are for the type check.",
   "bin": { "pcb-job": "src/client.ts" },
-  "engines": { "node": ">=22.6" },
+  "engines": { "node": ">=22.13" },
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.worker.json",
     "test": "node --experimental-strip-types --no-warnings --test --test-timeout=60000 test/*.test.ts"
   },
   "devDependencies": {

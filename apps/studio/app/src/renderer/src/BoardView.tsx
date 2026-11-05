@@ -102,9 +102,11 @@ export function BoardView({
   findings = [],
   focusPoint,
   live,
-  liveRefresh = false
+  liveRefresh = false, linkedNet, onNetSelect
 }: {
   geo: Geometry
+  linkedNet?: string | null
+  onNetSelect?: (net: string | null) => void
   onSelect?: (s: Selection | null) => void
   /** Zoom to this footprint and select its first pad (a new object each time = focus again). */
   focusRef?: { ref: string } | null
@@ -149,15 +151,16 @@ export function BoardView({
 
   const copperLayers = useMemo(() => DRAW_ORDER.filter((l) => geo.layers.includes(l)), [geo])
   const cache = useMemo(() => buildCache(geo), [geo])
-  const net = pickNet(pick)
+  const net = linkedNet ?? pickNet(pick)
   const netCache = useMemo(() => (net ? buildNetCache(geo, net) : null), [geo, net])
 
   const select = useCallback(
     (p: Pick | null) => {
       setPick(p)
+      onNetSelect?.(pickNet(p))
       onSelect?.(p?.kind === 'pad' ? { ref: p.fp.ref, pad: p.pad } : null)
     },
-    [onSelect]
+    [onSelect, onNetSelect]
   )
 
   const fit = useCallback((): void => {

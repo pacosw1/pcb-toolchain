@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 list=.cip/project-only-tests.txt
 skip=$(sed -e '/^#/d' -e '/|/d' -e 's/ .*//' "$list")
 log=$(mktemp); ran=0; named=0; failed=''
-for f in $(find tools -type f \( -name '*.test.mjs' -o -name '*.test.ts' \) -not -path '*/node_modules/*' | sort); do
+for f in $(find tools -type f \( -name '*.test.mjs' -o -name '*.test.ts' -o -name '*.test.mts' \) -not -path '*/node_modules/*' | sort); do
   t=${f#tools/}
   case " $(echo $skip) " in *" $t "*) continue ;; esac
   ran=$((ran + 1))

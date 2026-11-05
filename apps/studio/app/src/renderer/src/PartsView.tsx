@@ -1,6 +1,7 @@
 // Parts / BOM for the open board: one line per part, joined with datasheet, CAD asset and verified-BOM status.
 import { useMemo, useState } from 'react'
-import type { Bom, BomLine } from './types'
+import type { InspectSelection } from './LiveCanvas'
+import type { Bom, BomLine, Geometry } from './types'
 
 const yes = <span style={{ color: 'var(--ok)' }}>✓</span>
 const no = <span style={{ color: 'var(--warn)' }}>—</span>
@@ -8,9 +9,12 @@ const no = <span style={{ color: 'var(--warn)' }}>—</span>
 export function PartsView({
   bom,
   onDatasheet,
-  onShowRef
+  onShowRef, selection, onSelect, geo
 }: {
   bom: Bom
+  selection?: InspectSelection | null
+  onSelect?: (s: InspectSelection | null) => void
+  geo?: Geometry
   onDatasheet: (line: BomLine) => void
   onShowRef: (ref: string) => void
 }): React.JSX.Element {
@@ -23,6 +27,8 @@ export function PartsView({
       [l.refs.join(' '), l.value, l.lcsc, l.mpn, l.manufacturer, l.footprint].join(' ').toLowerCase().includes(k)
     )
   }, [bom, q])
+  const highlighted = (line: BomLine): boolean => !!selection && (line.refs.includes(selection.ref ?? '') || !!selection.net && !!geo?.footprints.some(f => line.refs.includes(f.ref) && f.pads.some(p => p.net === selection.net)))
+  const choose = (line: BomLine): void => { setSel(line); onSelect?.({ref: line.refs[0]}) }
   const s = bom.summary
 
   return (
@@ -69,12 +75,12 @@ export function PartsView({
               {rows.map((l) => (
                 <tr
                   key={l.refs[0]}
-                  className={sel === l ? 'on' : l.dnp ? 'dnp' : ''}
-                  onClick={() => setSel(l)}
-                  aria-selected={sel === l}
+                  className={(highlighted(l) || sel === l) ? 'on' : l.dnp ? 'dnp' : ''}
+                  onClick={() => choose(l)}
+                  aria-selected={highlighted(l) || sel === l}
                 >
                   <td className="mono">
-                    <button type="button" className="linkish" onClick={() => setSel(l)}>
+                    <button type="button" className="linkish" onClick={() => choose(l)}>
                       {l.refs.length > 4 ? `${l.refs.slice(0, 4).join(', ')} +${l.refs.length - 4}` : l.refs.join(', ')}
                     </button>
                   </td>

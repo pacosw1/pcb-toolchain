@@ -129,11 +129,16 @@ struct EpochOutcome {
     seconds: f64,
 }
 
-fn run_epoch(model: &Model, mover: &Mover, t: EpochTask) -> EpochOutcome {
+pub type MoveObserver = dyn Fn(usize, usize, usize, usize, usize, f64, &Pose, f64, &Pose) + Sync;
+
+fn run_epoch(model: &Model, mover: &Mover, t: EpochTask, worker: usize, epoch: usize, observer: Option<&MoveObserver>) -> EpochOutcome {
     let mut ev = Evaluator::new(model, t.params, t.pose);
     let mut rng = PyRandom::new(t.seed);
     let start = Instant::now();
-    let best = anneal(&mut ev, mover, &mut rng, t.schedule);
+    let callback = |step, accepted, rejected, cost, current: &Pose, best_cost, best: &Pose| {
+        if let Some(observe) = observer { observe(worker, epoch + 1, step, accepted, rejected, cost, current, best_cost, best); }
+    };
+    let best = anneal::anneal_observed(&mut ev, mover, &mut rng, t.schedule, observer.map(|_| &callback as &dyn Fn(usize,usize,usize,f64,&Pose,f64,&Pose)));
     let seconds = start.elapsed().as_secs_f64();
     EpochOutcome { worker: Worker { pose: ev.pose(), cost: ev.cost(), best_pose: best.pose, best_cost: best.cost }, seconds }
 }
@@ -238,12 +243,12 @@ impl Run<'_> {
         (epoch as f64) < self.params.clu_phase * self.plan.epochs as f64
     }
 
-    fn epoch(&self, mover: &Mover, workers: &[Worker], epoch: usize, steps: usize) -> Vec<EpochOutcome> {
+    fn epoch(&self, mover: &Mover, workers: &[Worker], epoch: usize, steps: usize, observer: Option<&MoveObserver>) -> Vec<EpochOutcome> {
         let params = epoch_params(self.params, epoch, self.plan.epochs);
         let schedule = Schedule { steps, ..self.schedule(epoch) };
         in_parallel(workers.len(), |w| {
             let seed = seed_for(self.plan.seed, w, epoch);
-            run_epoch(self.model, mover, EpochTask { pose: &workers[w].pose, seed, schedule, params: &params })
+            run_epoch(self.model, mover, EpochTask { pose: &workers[w].pose, seed, schedule, params: &params }, w, epoch, observer)
         })
     }
 }
@@ -282,9 +287,14 @@ pub fn optimize(pr: &mut Problem, p: &Params, plan: Plan, log: &dyn Fn(&str)) ->
 /// = as many as fit it.
 pub fn optimize_with_preview(pr: &mut Problem, p: &Params, plan: Plan, log: &dyn Fn(&str),
     preview: &dyn Fn(usize,usize,f64,&Pose), sprint: &Sprint) -> crate::Result<SearchResult> {
+    optimize_observed(pr, p, plan, log, preview, None, sprint)
+}
+
+pub fn optimize_observed(pr: &mut Problem, p: &Params, plan: Plan, log: &dyn Fn(&str),
+    preview: &dyn Fn(usize,usize,f64,&Pose), observer: Option<&MoveObserver>, sprint: &Sprint) -> crate::Result<SearchResult> {
     check(pr, p, plan)?;
     let global = crate::gplace::apply(pr, p, log);
-    anneal_all(pr, p, plan, log, global, preview, sprint)
+    anneal_all(pr, p, plan, log, global, preview, sprint, observer)
 }
 
 /// The plan with the steps that fit a sprint's budget, from the speed of this problem on one thread.
@@ -296,7 +306,7 @@ fn sized(ev: &mut Evaluator, mover: &Mover, plan: Plan, sprint: &Sprint, t: f64,
 }
 
 fn anneal_all(pr: &Problem, p: &Params, plan: Plan, log: &dyn Fn(&str), global: Option<GlobalStage>,
-    preview: &dyn Fn(usize,usize,f64,&Pose), sprint: &Sprint) -> crate::Result<SearchResult> {
+    preview: &dyn Fn(usize,usize,f64,&Pose), sprint: &Sprint, observer: Option<&MoveObserver>) -> crate::Result<SearchResult> {
     let model = Model::new(pr, p)?;
     let clustered = cluster::active(pr, p);
     let start = if clustered && p.clu_gather != 0.0 { cluster::gather(&model, p, &pr.initial_pose()) } else { pr.initial_pose() };
@@ -335,7 +345,7 @@ fn anneal_all(pr: &Problem, p: &Params, plan: Plan, log: &dyn Fn(&str), global: 
     let mut steps_run = 0;
     for e in 0..plan.epochs {
         let epoch_start = Instant::now();
-        let outcomes = run.epoch(moves_of(e), &workers, e, steps);
+        let outcomes = run.epoch(moves_of(e), &workers, e, steps, observer);
         let spent = outcomes.iter().map(|o| o.seconds).sum::<f64>();
         busy += spent;
         steps_run += steps;

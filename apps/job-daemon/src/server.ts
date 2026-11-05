@@ -1,3 +1,4 @@
+import { LiveHttp } from './live-http.ts';
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
@@ -177,9 +178,10 @@ class Slots {
   }
 }
 
-async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: JobManager, uploads: Slots, streams: Slots, blobs: BlobStore, sourceSha256: string | null): Promise<void> {
+async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: JobManager, uploads: Slots, streams: Slots, blobs: BlobStore, sourceSha256: string | null, live: LiveHttp): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://x');
   const method = req.method ?? 'GET';
+  if (await live.handle(req, res, url, () => readJson(req), mgr.cfg.maxUploadMb * 1024 * 1024, () => streams.take(), () => uploads.take())) return;
   if (url.pathname === '/status' && method === 'GET') return json(res, 200, { ...mgr.status(), sourceSha256 });
   if (url.pathname === '/jobs' && method === 'GET') {
     const raw = url.searchParams.get('limit');
@@ -269,12 +271,13 @@ export function createServer(mgr: JobManager, sourceSha256: string | null = null
   const uploads = new Slots('uploads', mgr.cfg.maxUploads);
   const streams = new Slots('streams', mgr.cfg.maxStreams);
   const blobs = new BlobStore(mgr.store.blobsDir(), mgr.store.incomingDir(), mgr.cfg.blobKeepDays);
+  const live = new LiveHttp(mgr.store.root, mgr.store.incomingDir());
   const server = http.createServer((req, res) => {
     if (!authorized(req, mgr.cfg.token)) {
       res.setHeader('connection', 'close');
       return json(res, 401, { error: 'unauthorized' });
     }
-    route(req, res, mgr, uploads, streams, blobs, sourceSha256).catch((e: unknown) => {
+    route(req, res, mgr, uploads, streams, blobs, sourceSha256, live).catch((e: unknown) => {
       const status = e instanceof HttpError ? e.status : 500;
       if (status === 500) console.error(e);
       if (res.headersSent) return res.destroy();
@@ -282,6 +285,7 @@ export function createServer(mgr: JobManager, sourceSha256: string | null = null
       json(res, status, { error: e instanceof Error ? e.message : String(e) });
     });
   });
+  server.once('close', () => live.close());
   server.maxConnections = MAX_CONNECTIONS;
   // Node's default of 300 s fails a large file on a slow link; the file then starts again from nothing.
   server.requestTimeout = mgr.cfg.requestTimeoutS * 1000;

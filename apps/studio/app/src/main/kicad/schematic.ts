@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import { run, version } from './cli.ts'
-import { parse, children } from './sexpr.ts'
+import { parse, children, child } from './sexpr.ts'
 import type { SchematicExport } from '../../shared/inspector.ts'
 
 const DARK_THEME = {
@@ -105,7 +105,23 @@ export async function exportSchematic(root: string, schematic: string, outDir: s
       const target = path.join(cache, name)
       const staged = target + `.${randomUUID()}.tmp`
       await fs.writeFile(staged, svg); await fs.rename(staged, target)
-      sheets.push({ name: path.basename(name, '.svg'), path: target })
+      const stem = path.basename(name, '.svg')
+      const source = [...inputs].find(([file]) => file.endsWith('.kicad_sch') &&
+        (path.basename(file, '.kicad_sch') === stem || stem.endsWith('-' + path.basename(file, '.kicad_sch'))))
+      const targets: NonNullable<SchematicExport['sheets'][number]['targets']> = []
+      if (source) {
+        const tree = parse(source[1].toString('utf8'))
+        for (const symbol of children(tree, 'symbol')) {
+          const at = child(symbol, 'at'), ref = children(symbol, 'property').find(p => String(p[1]) === 'Reference')?.[2]
+          if (at && typeof ref === 'string' && !ref.startsWith('#')) targets.push({ ref, x: Number(at[1]), y: Number(at[2]) })
+        }
+        for (const kind of ['label', 'global_label', 'hierarchical_label']) for (const label of children(tree, kind)) {
+          const at = child(label, 'at'); if (at && typeof label[1] === 'string') targets.push({ net: label[1], x: Number(at[1]), y: Number(at[2]) })
+        }
+      }
+      const view = /viewBox="([^"]+)"/.exec(svg.toString('utf8'))?.[1].trim().split(/\s+/).map(Number)
+      const viewBox = view?.length === 4 && view.every(Number.isFinite) ? view as [number, number, number, number] : undefined
+      sheets.push({ name: stem, path: target, viewBox, targets })
     }
     return { source: schematic, revision, runtime, sheets }
   } finally { await fs.rm(scratch, { recursive: true, force: true }) }

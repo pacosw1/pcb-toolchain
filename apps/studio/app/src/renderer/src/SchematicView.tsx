@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
+import type { InspectSelection } from './LiveCanvas'
+import type { Geometry } from './types'
 import type { SchematicExport } from '../../shared/inspector'
 
-export function SchematicView({ pcb }: { pcb: string }): React.JSX.Element {
+export function SchematicView({ pcb, selection, onSelect, geo }: { pcb: string; selection?: InspectSelection | null; onSelect?: (s: InspectSelection | null) => void; geo?: Geometry }): React.JSX.Element {
   const [data, setData] = useState<SchematicExport | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(true)
   const [refresh, setRefresh] = useState(0)
   const [sheet, setSheet] = useState(0)
-  const viewport = useRef<HTMLDivElement>(null), picture = useRef<HTMLImageElement>(null), zoomLabel = useRef<HTMLSpanElement>(null)
+  const viewport = useRef<HTMLDivElement>(null), picture = useRef<HTMLDivElement>(null), zoomLabel = useRef<HTMLSpanElement>(null)
   const pose = useRef({ scale: 1, x: 0, y: 0 })
   const frame = useRef(0), settle = useRef<ReturnType<typeof setTimeout> | null>(null)
   const drag = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null)
@@ -37,6 +39,13 @@ export function SchematicView({ pcb }: { pcb: string }): React.JSX.Element {
     return () => { active = false }
   }, [pcb, refresh]) // eslint-disable-line react-hooks/exhaustive-deps
   const current = data?.sheets[sheet]
+  const matches = (target: { ref?: string; net?: string }): boolean => !!selection && (
+    !!selection.ref && target.ref === selection.ref || !!selection.net && (target.net === selection.net || target.net === selection.net.split('/').at(-1) || !!target.ref && !!geo?.footprints.find(f => f.ref === target.ref)?.pads.some(p => p.net === selection.net)))
+  useEffect(() => {
+    if (!data || !selection) return
+    const index = data.sheets.findIndex(s => s.targets?.some(matches))
+    if (index >= 0 && index !== sheet) { setSheet(index); fit() }
+  }, [selection, data]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const el = viewport.current
     if (!el || !current) return
@@ -87,8 +96,14 @@ export function SchematicView({ pcb }: { pcb: string }): React.JSX.Element {
       }}>
       {busy ? <p role="status" className="schematic-message">Rendering schematic with KiCad…</p> : null}
       {error ? <p role="alert" className="schematic-message">{error}</p> : null}
-      {current ? <img ref={picture} key={current.path} src={window.api.fileUrl(current.path)} alt={`Schematic ${current.name}`} draggable={false}
-        className="schematic-sheet" onLoad={paint} /> : null}
+      {current ? <div ref={picture} key={current.path} className="schematic-sheet schematic-layer">
+        <img src={window.api.fileUrl(current.path)} alt={`Schematic ${current.name}`} draggable={false} onLoad={paint} />
+        {current.viewBox ? <svg className="schematic-targets" viewBox={current.viewBox.join(' ')} aria-label="Schematic component and net selection">
+          {current.targets?.map((target, i) => <circle key={i} cx={target.x} cy={target.y} r={target.ref ? 4 : 2} className={matches(target) ? 'selected' : ''} role="button" tabIndex={0} aria-label={target.ref ? `Select ${target.ref}` : `Select net ${target.net}`}
+            onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onSelect?.(target.ref ? { ref: target.ref } : { net: target.net }) }}
+            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onSelect?.(target.ref ? { ref: target.ref } : { net: target.net }) } }}><title>{target.ref ?? target.net}</title></circle>)}
+        </svg> : null}
+      </div> : null}
     </div>
     {data ? <div className="schematic-source">{data.source} · {data.sheets.length} sheet(s) · Saved schematic</div> : null}
   </section>

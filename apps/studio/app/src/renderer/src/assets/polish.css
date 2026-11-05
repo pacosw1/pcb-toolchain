@@ -590,3 +590,4 @@ button.send {
   .spec-prose li { margin: 3px 0; }
   .spec-footer { margin-top: 22px; }
 }
+.schematic-layer > img,.schematic-targets{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}.schematic-targets circle{fill:transparent;stroke:transparent;stroke-width:.45;pointer-events:all;cursor:pointer}.schematic-targets circle:hover,.schematic-targets circle:focus{fill:#f6cc7233;stroke:#f6cc72;outline:none}.schematic-targets circle.selected{fill:#f6cc7233;stroke:#ffdf86;stroke-dasharray:1 .6}

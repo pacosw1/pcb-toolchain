@@ -37,6 +37,14 @@ pub fn estimate_t0(ev: &mut Evaluator, mover: &Mover, rng: &mut PyRandom, window
 }
 
 pub fn anneal(ev: &mut Evaluator, mover: &Mover, rng: &mut PyRandom, s: Schedule) -> Best {
+    anneal_observed(ev, mover, rng, s, None)
+}
+
+/// Read-only samples after committed moves; never consumes RNG or changes acceptance.
+pub fn anneal_observed(ev: &mut Evaluator, mover: &Mover, rng: &mut PyRandom, s: Schedule,
+    observer: Option<&dyn Fn(usize, usize, usize, f64, &Pose, f64, &Pose)>) -> Best {
+    let mut last = std::time::Instant::now();
+    let (mut accepted, mut rejected) = (0, 0);
     let mut best = Best { cost: ev.cost(), pose: ev.pose() };
     if s.steps == 0 {
         return best;
@@ -51,6 +59,7 @@ pub fn anneal(ev: &mut Evaluator, mover: &Mover, rng: &mut PyRandom, s: Schedule
         let d = ev.propose(&moves);
         if d <= 0.0 || rng.random() < (-d / t).exp() {
             ev.commit();
+            accepted += 1;
             if ev.cost() < best.cost - 1e-12 {
                 best.cost = ev.cost();
                 improved = true;
@@ -60,6 +69,15 @@ pub fn anneal(ev: &mut Evaluator, mover: &Mover, rng: &mut PyRandom, s: Schedule
             }
         } else {
             ev.revert();
+            rejected += 1;
+        }
+        if let Some(observe) = observer {
+            if last.elapsed().as_millis() >= 100 || step + 1 == s.steps {
+                let current = ev.pose();
+                let best_pose = if improved { &current } else { &best.pose };
+                observe(step + 1, accepted, rejected, ev.cost(), &current, best.cost, best_pose);
+                last = std::time::Instant::now();
+            }
         }
     }
     if improved {

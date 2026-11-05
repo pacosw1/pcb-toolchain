@@ -22,7 +22,7 @@ use iotplace::problem::Problem;
 use iotplace::evaluator::Evaluator;
 use iotplace::model::Model;
 use iotplace::problem::Pose;
-use iotplace::search::{Candidate, Initial, Plan, SearchResult, Sprint, optimize_with_preview};
+use iotplace::search::{Candidate, Initial, Plan, SearchResult, Sprint};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -128,9 +128,14 @@ fn run(a: &Args) -> iotplace::Result<ExitCode> {
         top: a.number("--top", 3)?,
     };
     let params = Params::from_args(&a.params)?;
-    let live = iotplace::live_preview::LivePreview::from_environment(&pr, input, &input_bytes);
-    let res = optimize_with_preview(&mut pr, &params, plan, &|line| println!("{line}"),
-        &|epoch, epochs, cost, pose| { if let Some(live) = &live { live.publish(epoch, epochs, cost, pose); } }, &sprint)?;
+    let live = std::sync::Arc::new(iotplace::live_preview::LivePreview::from_environment(&pr, input, &input_bytes));
+    let enabled = live.is_some();
+    let preview = live.clone();
+    let observer = move |worker,epoch,step,accepted,rejected,cost,current:&iotplace::problem::Pose,best_cost,best:&iotplace::problem::Pose| {
+        if let Some(live) = live.as_ref() { live.sample(worker,epoch,step,accepted,rejected,cost,current,best_cost,best); }
+    };
+    let res = iotplace::search::optimize_observed(&mut pr, &params, plan, &|line| println!("{line}"),
+        &|epoch, epochs, cost, pose| { if let Some(live) = preview.as_ref() { live.publish(epoch, epochs, cost, pose); } }, if enabled { Some(&observer) } else { None }, &sprint)?;
     std::fs::write(output, serde_json::to_string(&res)?)?;
     report(&res.initial, &res);
     if res.candidates.first().is_none_or(|c| !is_legal(c)) {

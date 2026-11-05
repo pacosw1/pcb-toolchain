@@ -23,7 +23,7 @@ export interface SchematicExport {
   source: string
   revision: string
   runtime: string | null
-  sheets: { name: string; path: string }[]
+  sheets: { name: string; path: string; viewBox?: [number, number, number, number]; targets?: { ref?: string; net?: string; x: number; y: number }[] }[]
 }
 
 export interface SpecDocument {

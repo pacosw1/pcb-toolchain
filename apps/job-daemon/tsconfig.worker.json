@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "esModuleInterop": true
+  },
+  "include": ["../../tools/pcb-live-run.mts", "../../tools/pcb-live-run.test.mts"]
+}

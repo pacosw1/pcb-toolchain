@@ -1,0 +1,108 @@
+.solver-live {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg, #111820);
+}
+.live-toolbar,
+.live-timeline,
+.live-metrics {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid #293746;
+}
+.live-toolbar label,
+.live-inspector label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.live-toolbar select {
+  max-width: 360px;
+}
+.live-timeline input {
+  flex: 1;
+  min-width: 120px;
+}
+.live-metrics {
+  font-size: 12px;
+  color: #a2b4c7;
+}
+.live-error {
+  padding: 8px 14px;
+  color: #ffc184;
+  margin: 0;
+}
+.live-workspace {
+  display: flex;
+  flex: 1;
+  min-height: 300px;
+  overflow: hidden;
+}
+.live-canvas {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  min-height: 300px;
+}
+.live-canvas canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+}
+.live-inspector {
+  width: 260px;
+  padding: 12px;
+  border-left: 1px solid #293746;
+  overflow: auto;
+}
+.live-inspector label {
+  flex-direction: column;
+  align-items: stretch;
+  margin-bottom: 12px;
+}
+.live-failure {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  gap: 6px;
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 10px !important;
+}
+.live-failure small {
+  opacity: 0.65;
+}
+.live-inspector h3 {
+  font-size: 13px;
+}
+.live-toolbar button,
+.live-timeline select {
+  white-space: nowrap;
+}
+.solver-live select {
+  background: #1b2531;
+  color: #d4dfeb;
+  border: 1px solid #354353;
+  border-radius: 5px;
+  padding: 5px 8px;
+  font: inherit;
+}
+.live-toolbar input[type='checkbox'] {
+  accent-color: #75bbaa;
+}
+.live-timeline input {
+  accent-color: #75bbaa;
+}
+.live-metrics {
+  line-height: 1.6;
+}
+.live-metrics > span {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}

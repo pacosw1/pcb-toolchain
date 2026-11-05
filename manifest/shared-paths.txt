@@ -715,6 +715,7 @@ tools/router/core/src/kicad/sexpr.rs
 tools/router/core/src/kicad/shape.rs
 tools/router/core/src/layers.rs
 tools/router/core/src/lib.rs
+tools/router/core/src/live.rs
 tools/router/core/src/main.rs
 tools/router/core/src/model/build.rs
 tools/router/core/src/model/cli.rs
