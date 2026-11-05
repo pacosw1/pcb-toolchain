@@ -224,7 +224,16 @@ async function dispatch(root: string, program: string, args: string[]): Promise<
   let pinned = false;
   for (let attempt = 0; attempt < 3; attempt++) {
     try { await coordinator.begin(lease); pinned = true; break; }
-    catch (error) { if (error instanceof HttpError || attempt === 2) throw error; await sleep(1000); }
+    catch (error) {
+      if (error instanceof HttpError || attempt === 2) {
+        // No writer has been started. Release a pin even if its acknowledgement was lost;
+        // retain the receipt if coordinator state cannot be confirmed.
+        try { await finish(coordinator, lease); fs.rmSync(file, { force: true }); }
+        catch { console.error('pcb: lock cleanup is unconfirmed; its receipt remains for recovery'); }
+        throw error;
+      }
+      await sleep(1000);
+    }
   }
   if (!pinned) throw new Error('board lock could not be pinned');
   if (op === 'adopt') {

@@ -307,6 +307,22 @@ export class Worker {
       if (pending.length) { await this.post('/live/events/batch', pending); this.state.offsets[key] = offset; this.save(); }
     } finally { fs.closeSync(fd); }
   }
+  private async bindRemoteJob(log: string, board: string, run: string): Promise<void> {
+    let fd: number;
+    try { fd = fs.openSync(log, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK); }
+    catch { return; }
+    try {
+      const st = fs.fstatSync(fd); if (!st.isFile() || !st.size) return;
+      const bytes = Buffer.alloc(Math.min(st.size, 256 * 1024));
+      const count = fs.readSync(fd, bytes, 0, bytes.length, 0);
+      const match = /^pcb-job: job (\d{8}-\d{6}-[0-9a-f]{6})\s*$/m.exec(bytes.subarray(0, count).toString('utf8'));
+      if (!match) return;
+      const id = match[1], key = `job-binding:${run}:${id}`;
+      if (this.state.stamps[key]) return;
+      await this.event(`observer-job-binding:${id}`, board, run, 'job.binding', { jobId: id });
+      this.state.stamps[key] = '1'; this.save();
+    } finally { fs.closeSync(fd); }
+  }
   private async run(folder: string, guardedRuns: Set<string>): Promise<void> {
     try {
       const manifest = JSON.parse(fs.readFileSync(path.join(folder, 'run.json'), 'utf8')) as Record<string, unknown>;
@@ -331,6 +347,8 @@ export class Worker {
         }
       }
       const routeBase = path.join(folder, 'live-route-base.kicad_pcb'); if (file(routeBase)) await this.snapshot(routeBase, board, name);
+      const routeLog = path.join(folder, 'operation/route.log');
+      if (!file(path.join(folder, 'result.json')) && file(routeLog)) await this.bindRemoteJob(routeLog, board, name);
       for (const [filename, kind, schema] of [
         ['live-route.json', 'route.preview', 'iot-lab.route-preview.v1'],
         ['live-place.json', 'placement.preview', 'iot-lab.placement-preview.v1']
@@ -421,7 +439,10 @@ export class Worker {
       candidates.sort((a, b) => b.mtime - a.mtime);
       if (candidates[0]) await this.snapshot(candidates[0].file, run.board, run.runId, 'candidate.snapshot');
       logs.sort((a, b) => b.mtime - a.mtime);
-      for (const log of logs.slice(0, 3)) await this.lines(log.file, run.board, run.runId, 'run.event', log.stage);
+      for (const log of logs.slice(0, 3)) {
+        if (log.stage === 'routing') await this.bindRemoteJob(log.file, run.board, run.runId);
+        await this.lines(log.file, run.board, run.runId, 'run.event', log.stage);
+      }
     }
   }
   async scanActivity(): Promise<void> {

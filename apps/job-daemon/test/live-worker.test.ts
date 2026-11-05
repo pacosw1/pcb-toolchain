@@ -33,6 +33,7 @@ test('worker reports state, agent messages, large records, and board removal wit
   fs.writeFileSync(path.join(run, 'run.json'), JSON.stringify({ board: 'DEMO', operation: 'route', timeout_s: 90 }));
   fs.writeFileSync(path.join(run, 'state.json'), JSON.stringify({ status: 'running', elapsed_s: 2, active_stages: ['routing'], worker_pid: process.pid, updated_unix: Date.now() / 1000 }));
   fs.writeFileSync(path.join(run, 'events.jsonl'), JSON.stringify({ type: 'tool.output', text: 'x'.repeat(3 * 1024 * 1024) }) + '\n' + JSON.stringify({ type: 'run.end', status: 'passed' }) + '\n');
+  fs.mkdirSync(path.join(run, 'operation')); fs.writeFileSync(path.join(run, 'operation/route.log'), 'pcb-job: job 20261105-020624-8c5ded\n');
   fs.writeFileSync(path.join(run, 'notes.jsonl'), JSON.stringify({ kind: 'decision', message: 'Move connector' }) + '\n');
   fs.writeFileSync(path.join(agent, 'events.jsonl'), JSON.stringify({ state: 'message', message: 'Checking clearances' }) + '\n');
   const token = path.join(r.dir, 'token'); fs.writeFileSync(token, TOKEN);
@@ -46,6 +47,7 @@ test('worker reports state, agent messages, large records, and board removal wit
     const first = await events();
     assert.ok(first.some(e => e.kind === 'run.state' && e.data.supervisorAlive === true && e.data.timeoutS === 90));
     assert.ok(first.some(e => e.kind === 'run.state' && e.data.boardKey === 'project/hardware-design/boards/DEMO/cad/demo.kicad_pcb'));
+    assert.ok(first.some(e => e.kind === 'job.binding' && e.data.jobId === '20261105-020624-8c5ded'));
     assert.ok(first.some(e => e.kind === 'run.event' && e.data.type === 'run.event_oversize'));
     assert.ok(first.some(e => e.kind === 'run.event' && e.data.type === 'run.end'));
     assert.ok(first.some(e => e.kind === 'run.note' && e.data.message === 'Move connector'));
