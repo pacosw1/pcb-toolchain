@@ -31,6 +31,42 @@ test('gate-only revision resolves owner without demanding a second packet',t=>{
  assert.equal(inspectPackets(root,registry).ok,true);
  registry.boards[1].revision='X';assert.ok(inspectPackets(root,registry).findings.some(f=>f.check==='gate_owner'));
 });
+test('declared pending gate resolves a non-active owner revision without gate.json',t=>{
+ const {root,put,registry}=fixture(t);
+ registry.boards[0].lifecycle='planned';
+ registry.boards[0].revisions.push({revision:'C',spec:'SPEC.md',state:'schematic-pending',gate:null,project:'cad/C/C'});
+ const pending={id:'CELLULAR-C',directory:'CELLULAR-C',kind:'gate-only',lifecycle:'planned',owner:'CELLULAR',revision:'C',pending_gate:'gate.pending.json'};
+ registry.boards.push(pending);
+ const gate={project:'../CELLULAR/cad/C/C',stage:'G3',checks:{erc:true}};
+ put('CELLULAR-C/gate.pending.json',JSON.stringify(gate));
+ let report=inspectPackets(root,registry);
+ assert.equal(report.ok,true,JSON.stringify(report.findings));
+ assert.equal(report.checked.find(e=>e.id==='CELLULAR-C').gate_state,'pending');
+ put('CELLULAR-C/gate.pending.json',JSON.stringify({...gate,stage:undefined}));
+ assert.ok(inspectPackets(root,registry).findings.some(f=>f.check==='pending_gate'));
+ put('CELLULAR-C/gate.pending.json',JSON.stringify({...gate,project:'../CELLULAR/cad/OTHER/OTHER'}));
+ assert.ok(inspectPackets(root,registry).findings.some(f=>f.check==='revision_gate'));
+ put('CELLULAR-C/gate.pending.json',JSON.stringify(gate));
+ registry.boards[0].revisions[1].gate='CELLULAR-C';
+ assert.ok(inspectPackets(root,registry).findings.some(f=>f.check==='gate_owner'));
+ registry.boards[0].revisions[1].gate=null;
+ pending.pending_gate='../outside.json';
+ assert.ok(inspectPackets(root,registry).findings.some(f=>f.check==='pending_gate'));
+ pending.pending_gate='gate.pending.json';
+ put('CELLULAR-C/gate.json',JSON.stringify(gate));
+ assert.ok(inspectPackets(root,registry).findings.some(f=>f.check==='pending_gate' && f.detail.includes('active gate.json')));
+});
+test('obsolete lifecycle remains explicit registry data with revision and structure checks',t=>{
+ const {root,put,registry}=fixture(t);registry.boards[0].lifecycle='obsolete';
+ assert.equal(inspectPackets(root,registry).ok,true);
+ registry.boards[0].revisions[0].gate='CELLULAR';
+ registry.boards[0].revisions[0].project='cad/CELLULAR/CELLULAR';
+ assert.ok(inspectPackets(root,registry).findings.some(f=>f.check==='revision_gate'));
+ put('CELLULAR/gate.json',JSON.stringify({project:'cad/CELLULAR/CELLULAR'}));
+ assert.equal(inspectPackets(root,registry).ok,true);
+ registry.boards[0].revisions[0].spec='MISSING.md';
+ assert.ok(inspectPackets(root,registry).findings.some(f=>f.check==='revision_spec'));
+});
 test('population variants share a board and reject unknown fit names',t=>{
  const {root,put,registry}=fixture(t);registry.boards[0].lifecycle='planned';
  registry.boards[0].variants={file:'variants.json',names:['VIB','AIR','ALL']};

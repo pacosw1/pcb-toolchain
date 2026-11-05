@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { auditLayout, type Finding } from './project-layout.ts';
+import { boardConfig } from './pcb-workflow.ts';
 
 type Raw = Record<string, unknown>;
 const BOARDS = 'hardware-design/boards';
@@ -200,7 +201,7 @@ test('a project file at a synced tool path is rejected and names the boards that
   assert.deepEqual(types(audit(p).findings), [], 'a copy that the sync made is not a project file');
 });
 
-test('obsolete boards are reported as obsolete, from the registry when it marks any, else from the declared list', t => {
+test('obsolete is registry data and never hides structure debt or implicitly exempts BASE boards', t => {
   const p = project(t);
   goodBoard(p, 'BASE-PWR', { stage: undefined });
   goodBoard(p, 'BASE-PWR-B', { project: '../../../escape', stage: undefined });
@@ -208,18 +209,66 @@ test('obsolete boards are reported as obsolete, from the registry when it marks 
   const boards = [entry('BASE-PWR'), entry('BASE-PWR-B'), entry('BASE-LP')];
   p.registry(boards);
   const declared = audit(p);
-  assert.deepEqual(declared.summary.obsolete, ['BASE-PWR', 'BASE-PWR-B']);
-  const row = declared.findings.find(finding => finding.board === 'BASE-PWR')!;
-  assert.deepEqual({ type: row.type, severity: row.severity, source: row.source, registry_lifecycle: row.registry_lifecycle, suppressed: row.suppressed },
-    { type: 'obsolete_board', severity: 'info', source: 'declared-list', registry_lifecycle: 'active', suppressed: { gate_stage_missing: 1 } });
-  assert.ok(types(declared.findings).includes('path_escape'), 'an escape is not debt: obsolete does not hide it');
+  assert.deepEqual(declared.summary.obsolete, []);
+  assert.ok(declared.findings.some(finding => finding.board === 'BASE-PWR' && finding.type === 'gate_stage_missing'));
+  assert.ok(types(declared.findings).includes('path_escape'));
   assert.deepEqual(declared.findings.filter(finding => finding.board === 'BASE-LP').map(finding => finding.type), ['gate_stage_missing']);
-  assert.equal(audit(p, 'BASE-PWR').strict!.pass, true);
+  assert.equal(audit(p, 'BASE-PWR').strict!.pass, false);
   assert.equal(audit(p, 'BASE-PWR-B').strict!.pass, false);
   p.registry([boards[0]!, boards[1]!, { ...boards[2], lifecycle: 'obsolete' }]);
   const registry = audit(p);
   assert.deepEqual(registry.summary.obsolete, ['BASE-LP']);
-  assert.equal(registry.findings.find(finding => finding.type === 'obsolete_board')!.source, 'registry');
+  assert.equal(registry.boards.find(board => board.id === 'BASE-LP')!.obsolete, true);
+  assert.ok(registry.findings.some(finding => finding.board === 'BASE-LP' && finding.type === 'gate_stage_missing'));
+  assert.equal(audit(p, 'BASE-LP').strict!.pass, false);
+  goodBoard(p, 'BASE-LP');
+  assert.equal(audit(p, 'BASE-LP').strict!.pass, true, 'an explicitly obsolete board with complete structure can pass without an info finding');
+});
+
+test('declared pending G3 gates validate schematic-only owner revisions without activating a board', t => {
+  const p = project(t), owner = `${BOARDS}/SUPPLY`, folder = `${BOARDS}/SUPPLY-C`;
+  const revisions = [{ revision: 'C', spec: 'SPEC-REV-C.md', state: 'schematic-pending', gate: null, project: 'cad/C/C' }];
+  const pending: Raw = { id: 'SUPPLY-C', directory: 'SUPPLY-C', kind: 'gate-only', lifecycle: 'planned', owner: 'SUPPLY', revision: 'C', pending_gate: 'gate.pending.json' };
+  const register = () => p.registry([entry('SUPPLY', { lifecycle: 'planned', revisions }), pending]);
+  p.write(`${owner}/SPEC-REV-C.md`, '# Schematic-only revision\n');
+  p.write(`${owner}/cad/C/C.kicad_sch`, '(property "Sheetfile" "child.kicad_sch")');
+  p.write(`${owner}/cad/C/child.kicad_sch`, '(x)');
+  p.write(`${owner}/cad/C/C.kicad_pro`, '{}');
+  const gate = { project: '../SUPPLY/cad/C/C', stage: 'G3', checks: { erc: true, drc: true } };
+  p.write(`${folder}/gate.pending.json`, gate);
+  register();
+  const report = audit(p, 'SUPPLY-C');
+  assert.deepEqual(report.findings, []);
+  assert.deepEqual(report.boards.find(board => board.id === 'SUPPLY-C'), {
+    id: 'SUPPLY-C', kind: 'gate-only', lifecycle: 'planned', stage: 'G3', gate_state: 'pending', obsolete: false,
+  });
+  assert.throws(() => boardConfig(p.root, 'SUPPLY-C'), /gate.json/, 'passing a file audit does not activate the operational gate');
+  rmSync(join(p.root, owner, 'cad/C/child.kicad_sch'));
+  assert.ok(paths(audit(p).findings, 'missing_native_file').some(path => path?.endsWith('child.kicad_sch')));
+  p.write(`${owner}/cad/C/child.kicad_sch`, '(x)');
+  p.write(`${folder}/paths.json`, {});
+  p.write(`${folder}/gate.pending.json`, { ...gate, stage: 'G4', checks: FULL_CHECKS });
+  assert.equal(audit(p, 'SUPPLY-C').strict!.pass, false);
+  assert.ok(paths(audit(p).findings, 'missing_native_file').some(path => path?.endsWith('C.kicad_pcb')), 'pending G4 still requires a PCB');
+  p.write(`${folder}/gate.pending.json`, { ...gate, stage: undefined });
+  assert.ok(types(audit(p).findings).includes('gate_stage_missing'), 'pending never invents G3');
+  assert.ok(paths(audit(p).findings, 'missing_native_file').some(path => path?.endsWith('C.kicad_pcb')));
+  p.write(`${folder}/gate.pending.json`, gate);
+  p.write(`${folder}/gate.json`, gate);
+  assert.ok(audit(p).findings.some(finding => finding.type === 'registry_schema' && /active gate.json/.test(finding.detail)));
+  assert.ok(paths(audit(p).findings, 'missing_native_file').some(path => path?.endsWith('C.kicad_pcb')), 'active G3 placement checks retain PCB requirements');
+  rmSync(join(p.root, folder, 'gate.json'));
+  pending.pending_gate = '../outside.json'; register();
+  assert.ok(types(audit(p).findings).includes('registry_schema'));
+  pending.pending_gate = 'gate.pending.json'; register();
+  p.write(`${folder}/gate.pending.json`, { ...gate, project: '../SUPPLY/cad/OTHER/OTHER' });
+  assert.ok(types(audit(p).findings).includes('gate_project_mismatch'));
+  p.write(`${folder}/gate.pending.json`, gate);
+  pending.lifecycle = 'active'; register();
+  assert.ok(audit(p).findings.some(finding => finding.type === 'registry_schema' && /active board/.test(finding.detail)));
+  pending.lifecycle = 'planned'; register();
+  rmSync(join(p.root, folder, 'gate.pending.json'));
+  assert.ok(paths(audit(p).findings, 'missing_required_file').includes(`${folder}/gate.pending.json`));
 });
 
 test('the audit always exits 0 with a JSON summary and --strict decides on one board', t => {
@@ -250,4 +299,19 @@ test('the audit always exits 0 with a JSON summary and --strict decides on one b
   const none = run('--layout');
   assert.equal(none.status, 0);
   assert.equal(none.report.summary.by_type.registry_schema, 1);
+});
+
+test('a planned physical pending board needs schematic indexes and a matching non-active revision', t => {
+  const p = project(t), folder = `${BOARDS}/PLANNED`;
+  p.registry([entry('PLANNED', { lifecycle: 'planned', pending_gate: 'gate.pending.json', revisions: [revision('PLANNED', { gate: null })] })]);
+  for (const name of ['SPEC.md', 'STATUS.md', 'SCHEMATIC.md']) p.write(`${folder}/${name}`, '# Existing evidence\n');
+  for (const extension of ['kicad_sch', 'kicad_pro']) p.write(`${folder}/cad/PLANNED/PLANNED.${extension}`, '(x)');
+  const gate = { project: 'cad/PLANNED/PLANNED', stage: 'G3', checks: { erc: true } };
+  p.write(`${folder}/gate.pending.json`, gate);
+  assert.deepEqual(audit(p).findings, []);
+  p.write(`${folder}/gate.pending.json`, { ...gate, project: 'cad/WRONG/WRONG' });
+  assert.ok(types(audit(p).findings).includes('gate_project_mismatch'));
+  p.write(`${folder}/gate.pending.json`, gate);
+  rmSync(join(p.root, folder, 'STATUS.md'));
+  assert.ok(paths(audit(p).findings, 'missing_required_file').includes(`${folder}/STATUS.md`));
 });
