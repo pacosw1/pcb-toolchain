@@ -125,7 +125,7 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
     });
   }
   /** Internal only; approval entries themselves require an authenticated trust bootstrap. */
-  approvedArtifactFromTrustedService(kind: 'archive-tool', digest: string): boolean {
+  approvedArtifactFromTrustedService(kind: 'archive-tool'|'git', digest: string): boolean {
     if (!SHA.test(digest)) return false;
     return this.transaction(() => {
       this.safeNow();

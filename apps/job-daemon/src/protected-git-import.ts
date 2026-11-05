@@ -39,10 +39,10 @@ async function extract(git:string,repo:string,commit:string,selected:string[],ta
 /** The repository must be an exclusively service-owned private bare copy. Paths select exact explicit Git pathspecs. */
 export async function stageGitImport(store:ProtectedBlobs,repo:string,commit:string,projectId:string,parent:string,options:{gitPath:string;gitSha256:string;tarPath:string;tarSha256:string;
   selectedPaths:string[];requiredPaths:string[];optionalAbsentPaths:string[];externalMounts:{path:string;manifest_sha256:string}[];maxFiles:number;maxFileBytes:number;maxArchiveBytes:number;timeoutMs:number}):
-  Promise<{manifestSha256:string;gitCommit:string;files:number;bytes:number}> {
+  Promise<{manifestSha256:string;provenanceSha256:string;gitCommit:string;files:number;bytes:number}> {
  if(!OID.test(commit)||!ID.test(projectId)||!path.isAbsolute(parent)||!Number.isSafeInteger(options.maxFiles)||options.maxFiles<1||options.maxFiles>25_000||
    !Number.isSafeInteger(options.maxFileBytes)||options.maxFileBytes<1||!Number.isSafeInteger(options.maxArchiveBytes)||options.maxArchiveBytes<1||!Number.isSafeInteger(options.timeoutMs)||options.timeoutMs<1||options.timeoutMs>600_000||
-   !Array.isArray(options.selectedPaths)||options.selectedPaths.length>4096)throw new Error('invalid Git import request');
+   !Array.isArray(options.selectedPaths)||options.selectedPaths.length>4096||new Set(options.selectedPaths).size!==options.selectedPaths.length)throw new Error('invalid Git import request');
  for(const selected of options.selectedPaths){validateManifestPath(selected);if(selected.startsWith(':'))throw new Error('Git pathspec magic is unsupported');}
  const parentStat=fs.lstatSync(parent);if(!parentStat.isDirectory()||parentStat.isSymbolicLink()||(parentStat.mode&0o077)!==0||(process.getuid&&parentStat.uid!==process.getuid()))throw new Error('import parent must be service-private');
  const privatePath=privateRepo(repo),git=trustedExecutable(options.gitPath,options.gitSha256,'git'),tar=trustedExecutable(options.tarPath,options.tarSha256,'archive tool'),selected=options.selectedPaths.map(p=>`:(literal)${p}`);
@@ -76,6 +76,11 @@ export async function stageGitImport(store:ProtectedBlobs,repo:string,commit:str
   nodes.sort((a,b)=>Buffer.compare(Buffer.from(a.path),Buffer.from(b.path)));
   const document={schema:'pcb.project-manifest.v1',project_id:projectId,entries:nodes,required_paths:options.requiredPaths,optional_absent_paths:options.optionalAbsentPaths,external_mounts:options.externalMounts};
   const manifest=parseCanonicalJson(Buffer.from(JSON.stringify(document)),{maxBytes:8*1024*1024,maxNodes:200_000,maxDepth:16});parseProjectManifest(manifest.canonical);store.put(manifest.sha256,manifest.canonical);
-  return {manifestSha256:manifest.sha256,gitCommit:commit,files:nodes.length,bytes:total};
+  const provenance=parseCanonicalJson(Buffer.from(JSON.stringify({schema:'pcb.git-import.v1',project_id:projectId,git_commit:commit,
+    git_object_format:commit.length===40?'sha1':'sha256',selected_paths:[...options.selectedPaths].sort((a,b)=>Buffer.compare(Buffer.from(a),Buffer.from(b))),
+    manifest_sha256:manifest.sha256,git_executable_sha256:options.gitSha256,archive_tool_sha256:options.tarSha256,files:nodes.length,bytes:total})),
+    {maxBytes:1024*1024,maxNodes:20000,maxDepth:8});
+  store.put(provenance.sha256,provenance.canonical);
+  return {manifestSha256:manifest.sha256,provenanceSha256:provenance.sha256,gitCommit:commit,files:nodes.length,bytes:total};
  }finally{fs.rmSync(scratch,{recursive:true,force:true});}
 }
