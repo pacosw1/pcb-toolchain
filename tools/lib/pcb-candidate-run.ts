@@ -4,7 +4,7 @@ import { copyFileSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { dependencyFiles } from './design-contract-load.ts';
 import { designServices } from './design-services.ts';
-import { atomicJson, readObject, sha256File } from './json-file.ts';
+import { atomicJson, plainJson, readObject, sha256File } from './json-file.ts';
 import { verifyManifest } from './part-review.ts';
 import { candidateLayoutCheck, designAdmission, type OperationManifest, placementCheck, routesCopper } from './pcb-candidate-screens.ts';
 import { parentCandidate } from './pcb-candidate.ts';
@@ -215,7 +215,7 @@ async function gate(run: Candidate, changed: string[], identity: boolean): Promi
   let verified = code === 0 && report?.exit === 0 && !report.changedDuringRun;
   if (verified) {
     const hooks = boardConfig(run.root, board).cfg.get('post_verify');
-    for (const hook of postVerifyCommands(JSON.parse(JSON.stringify(hooks ?? null)), folder, native, manifest.node, env)) {
+    for (const hook of postVerifyCommands(plainJson(hooks), folder, native, manifest.node, env)) {
       if (await execute(folder, hook.stage, hook.command, workspace, hook.env)) { verified = false; break; }
     }
   }

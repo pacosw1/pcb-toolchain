@@ -472,6 +472,22 @@ test('the candidate layout screen writes a blocked report for a contract it cann
   });
 });
 
+test('gate.json post_verify hooks run on the verified candidate, and a failing one fails it', needsBinary, async t => {
+  const root = project(t), gate = join(root, 'hardware-design/boards/X/gate.json');
+  writeFileSync(join(root, 'tools/semantic.mjs'), `import { readFileSync, writeFileSync } from 'node:fs';
+writeFileSync(process.argv[3], readFileSync(process.argv[2], 'utf8').length + '\\n'); process.exitCode = process.env.SEMANTIC_EXIT === '1' ? 1 : 0;`);
+  writeFileSync(gate, JSON.stringify({ project: 'cad/X', checks: { drc: true }, post_verify: [{ stage: 'board-semantic-0', run: ['{node}', 'tools/semantic.mjs', '{candidate}', '{operation}/board-check.txt'] }] }));
+  const { folder, result } = await edit(root);
+  assert.equal(result.status, 'passed', String(result.cause));
+  assert.ok(existsSync(join(folder, 'operation/board-semantic-0.log')));
+  assert.equal(readFileSync(join(folder, 'operation/board-check.txt'), 'utf8').trim(), String(MOVED.length));
+  t.after(() => { fixtureEnv = {}; });
+  fixtureEnv = { SEMANTIC_EXIT: '1' };
+  const failed = await edit(root);
+  assert.equal(failed.result.status, 'failed');
+  assert.equal(failed.result.candidate_verified, false);
+});
+
 test('post_verify hooks fill their placeholders and require a stage and argv', () => {
   const hooks = postVerifyCommands([{ stage: 'semantic', run: ['{node}', 'check.mjs', '{candidate}', '{operation}'], env: { OUT: '{run}/x' } }], '/run', '/run/board.kicad_pcb', '/bin/node', { KEEP: '1' });
   assert.deepEqual(hooks, [{ stage: 'semantic', command: ['/bin/node', 'check.mjs', '/run/board.kicad_pcb', '/run/operation'], env: { KEEP: '1', OUT: '/run/x' } }]);
