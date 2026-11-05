@@ -8,6 +8,7 @@ pub mod drc_count;
 pub mod dru;
 pub mod escape;
 pub mod evaluator;
+pub mod engineering;
 pub mod geom;
 pub mod gplace;
 pub mod kicad;
