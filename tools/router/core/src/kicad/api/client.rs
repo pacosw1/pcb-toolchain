@@ -64,6 +64,11 @@ impl Client {
         self.exchange(&Ping {}).map(|_| ())
     }
 
+    /// A command with no typed reply; the envelope must still report AS_OK.
+    pub fn command<R: Name>(&mut self, request: &R) -> Result<(), ApiError> {
+        self.exchange(request).map(|_| ())
+    }
+
     pub fn version(&mut self) -> Result<KiCadVersion, ApiError> {
         let reply: GetVersionResponse = self.call(&GetVersion {})?;
         reply.version.ok_or_else(|| ApiError::from("no version".to_string()))

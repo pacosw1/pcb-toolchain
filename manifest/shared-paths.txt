@@ -6,6 +6,7 @@ tools/BOM-COVERAGE.md
 tools/DESIGN-CONTRACT.md
 tools/FAB-WORKFLOW.md
 tools/FreeroutingLive.java
+tools/KICAD-RUNTIME-PROBE.md
 tools/LEAN-STAGE-OWNERSHIP.md
 tools/PART-EVIDENCE.md
 tools/PCB-CLI.md
@@ -66,6 +67,8 @@ tools/import_nets.ts
 tools/jlc-snapshot.mjs
 tools/jlc_api_evidence.mjs
 tools/jlc_stock.mjs
+tools/kicad-runtime-probe.nightly.json
+tools/kicad-runtime-probe.stable.json
 tools/kicad_happy_gate.ts
 tools/krt_planes_advisory.ts
 tools/lib/add-testpoints.test.ts
@@ -802,6 +805,7 @@ tools/router/core/src/run/record.rs
 tools/router/core/src/run/reuse.rs
 tools/router/core/src/run/steps.rs
 tools/router/core/src/run/widths.rs
+tools/router/core/src/runtime_probe.rs
 tools/router/core/src/seed.rs
 tools/router/core/src/sha256.rs
 tools/router/core/src/si/impedance.rs

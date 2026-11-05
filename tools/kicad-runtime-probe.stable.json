@@ -1,0 +1,6 @@
+{
+  "runtime": "stable",
+  "stable_cli": "kicad-cli",
+  "nightly_cli": "kicad-cli-nightly",
+  "repeats": 3
+}

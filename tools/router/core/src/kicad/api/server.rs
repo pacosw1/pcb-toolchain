@@ -23,12 +23,17 @@ pub struct Server {
 impl Server {
     /// Starts a server on `board` and waits until it answers. Env KICAD_API_CLI names the binary.
     pub fn start(board: &Path) -> Result<(Server, Client), String> {
+        let cli = std::env::var("KICAD_API_CLI").unwrap_or_else(|_| DEFAULT_CLI.to_string());
+        Self::start_with_cli(board, &cli)
+    }
+
+    /// Explicit runtime selection for isolated probes; production's default remains unchanged.
+    pub fn start_with_cli(board: &Path, cli: &str) -> Result<(Server, Client), String> {
         let folder = std::env::temp_dir().join(format!("iotroute-api-{}-{}", std::process::id(), NEXT_SERVER.fetch_add(1, Ordering::Relaxed)));
         fs::create_dir_all(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
         let socket = folder.join("api.sock");
         let log = fs::File::create(folder.join("server.log")).map_err(|e| e.to_string())?;
-        let cli = std::env::var("KICAD_API_CLI").unwrap_or_else(|_| DEFAULT_CLI.to_string());
-        let child = Command::new(&cli).arg("api-server").arg("--socket").arg(&socket).arg(board)
+        let child = Command::new(cli).arg("api-server").arg("--socket").arg(&socket).arg(board)
             .stdin(Stdio::null()).stdout(log.try_clone().map_err(|e| e.to_string())?).stderr(log)
             .spawn().map_err(|e| format!("{cli}: {e}"))?;
         let mut server = Server { child, folder };
