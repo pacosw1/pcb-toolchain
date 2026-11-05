@@ -50,7 +50,8 @@ fn places(text: &str, scale: i64) -> Result<BTreeMap<String, Place>, String> {
     let mut out = BTreeMap::new();
     for row in rows.into_iter().filter(|row| row.items().len() >= 6) {
         let reference = atom(row, 1)?.to_string();
-        let rotation: f64 = atom(row, 5)?.parse().map_err(|_| format!("unsupported rotation of {reference}"))?;
+        // One angle, two spellings: KiCad's DSN writes -90 where Fastroute's session writes 270.
+        let rotation = atom(row, 5)?.parse::<f64>().map_err(|_| format!("unsupported rotation of {reference}"))?.rem_euclid(360.0);
         let place = Place { at: (scaled(atom(row, 2)?, scale)?, -scaled(atom(row, 3)?, scale)?), side: atom(row, 4)?.to_string(), rotation };
         if out.insert(reference.clone(), place).is_some() {
             return Err(format!("duplicate placement of {reference}"));
@@ -131,6 +132,15 @@ mod tests {
         assert!(check(&u1((1_000_550, 2_000_000)), DSN, &ses).unwrap_err().contains("beyond export rounding"));
         assert!(!rounded(150, 200, 100) && !rounded(150, 100, 100) && rounded(149, 100, 100) && rounded(151, 200, 100));
         assert!(rounded(-149, -100, 100) && !rounded(-150, -100, 100));
+    }
+
+    #[test]
+    fn minus_ninety_and_two_hundred_seventy_are_one_angle() {
+        // ENV-SENSE C7: the DSN and the session of one run.
+        let dsn = "(pcb x (resolution um 10)(unit um)(placement (component \"a\" (place C7 116300 -123600 front -90 (PN 100nF)))))";
+        let at = vec![("C7".to_string(), (116_300_000, 123_600_000))];
+        assert_eq!(check(&at, dsn, &session("(place C7 1163000 -1236000 front 270)")), Ok(100));
+        assert!(check(&at, dsn, &session("(place C7 1163000 -1236000 front 90)")).unwrap_err().contains("angle"));
     }
 
     #[test]
