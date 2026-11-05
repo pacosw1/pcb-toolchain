@@ -2,23 +2,22 @@
 // document, edits the board as text and leaves the one KiCad 10 save to put the new items in their place. The read commands
 // are not here. Coordinates are millimetres, y down. Items of a net a spec names are matched in the document by uuid.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
 import { BoardEdit, itemIds, mmText, saveBoardInPlace, type DrcFile } from './board-edit.ts';
 import { boardJson } from './board-json.ts';
-import { clearanceTo, copperObstacles, edgeObstacles, mmPoint, netClass, netRules, padShape, viaCentres, type ProjectFile } from './board-obstacles.ts';
+import { copperObstacles, edgeObstacles, mmPoint, netClass, netRules, padShape, projectOf, viaCentres, type ProjectFile } from './board-obstacles.ts';
 import { arcText, circleText, lineText, textText, trackText, viaText, type Xy } from './board-items.ts';
 import { fromMm, padHit, polygonNear, polygonsContain, trackHit, viaHit } from './board-hit.ts';
-import type { Board, BoardDocument, Pad, Pt, Track, Via, Zone } from './board-types.ts';
+import type { Board, Pad, Pt, Track, Via, Zone } from './board-types.ts';
 import { toMm, tracks, vias } from './board-types.ts';
-import { clearMargin, dotShape, firstConflict, polyShape, segmentShape, type Obstacle, type Obstacles } from './copper-gap.ts';
+import { clearMargin, dotShape, firstConflict, segmentShape, type Obstacle, type Obstacles } from './copper-gap.ts';
 import { UsageError } from './cli.ts';
 import { drcLines, summarizeDrc } from './drc-summary.ts';
-import { fnmatchCase } from './fnmatch.ts';
 import { movedFootprint } from './footprint-move.ts';
 import { readJson } from './json-file.ts';
 import { fixed, floatRepr, pyRepr } from './py-compat.mjs';
 import { dist } from './py-math.ts';
 import { formatG, pyFloat, round } from './py-numbers.ts';
+import { groundSpec, layersError, mixedKinds, netDomain, padGrounds, planesPath } from './reference-planes.ts';
 import { expandRoute, floatPoint, intentRoute, OTHER_SIDE, parseIntent, placements, specPoint, type ExpandedRoute, type Intent, type PlaceSpec, type RouteSegment, type RouteSpec } from './route-spec.ts';
 import { seigaiha } from './seigaiha.ts';
 import { applyColors } from './stackup-colors.ts';
@@ -101,7 +100,7 @@ interface MoveVia { net: string; from: Xy; to: Xy }
 interface RouteFile { clear?: string[]; routes: RouteSpec[]; move_vias?: MoveVia[]; via?: { size: number; drill: number } }
 
 /** The index of the one point within tol mm of q. None or several is an error. */
-function findPoint(points: Xy[], q: Xy, show: (point: [number, number]) => string, tol = 0.01): number {
+export function findPoint(points: Xy[], q: Xy, show: (point: [number, number]) => string, tol = 0.01): number {
   const hits = points.flatMap((point, i) => (dist(point, q) <= tol ? [i] : []));
   if (hits.length !== 1) throw new Error(`${hits.length} points within ${tol} mm of ${show(q as [number, number])}`);
   return hits[0]!;
@@ -197,24 +196,6 @@ function applyRoutes(pcb: string, spec: RouteFile, show: (point: [number, number
 
 export const route = (pcb: string, specFile: string): number => applyRoutes(pcb, readJson<RouteFile>(specFile), specPoint);
 
-const projectOf = (pcb: string): ProjectFile => readJson<ProjectFile>(`${pcb.replace(/\.[^./]*$/, '')}.kicad_pro`);
-const planesPath = (pcb: string, planes: string | undefined): string => planes ?? join(dirname(resolve(pcb)), '..', '..', 'reference-planes.json');
-
-interface PlanesFile { grounds: string[]; domains?: Record<string, string[]>; mixed_layers?: Record<string, unknown> }
-
-/**
- * Why `net` may not use these layers, or null. F.Cu and B.Cu are always allowed. A mixed layer of reference-planes.json is for
- * slow nets only; which nets are slow is tools/si_planes.py's rule, not in TypeScript yet, so such a spec stops here.
- */
-function layersError(net: string, layers: string[], planes: string): string | null {
-  const inner = layers.filter(layer => !(layer in OTHER_SIDE));
-  if (!inner.length) return null;
-  if (existsSync(planes) && Object.keys(readJson<PlanesFile>(planes).mixed_layers ?? {}).length) {
-    throw new Error(`${planes}: mixed_layers need tools/si_planes.py, which has no TypeScript port yet`);
-  }
-  return `${inner[0]} is not a routing layer (F.Cu, B.Cu, or a mixed layer of reference-planes.json)`;
-}
-
 function endPad(board: Board, ref: string, number: string, net: string): Pad {
   const pad = board.footprints.find(footprint => footprint.reference === ref)?.pads.find(item => item.number === number);
   if (!pad) throw stop(`no pad ${ref}.${number}`);
@@ -241,7 +222,7 @@ function plannedRoute(board: Board, project: ProjectFile, planes: string, intent
     throw stop((error as Error).message);
   }
   const used = [...new Set(expanded.segments.map(segment => segment.layer))].sort();
-  const refused = layersError(net, used, planes);
+  const refused = layersError(net, used, used.some(name => !(name in OTHER_SIDE)) ? mixedKinds(net, planes, project) : {});
   if (refused) throw stop(refused);
   const ends: [Pad, string, string][] = [[a, expanded.segments[0]!.layer, 'start'], [b, expanded.segments.at(-1)!.layer, 'end']];
   for (const [pad, onLayer, what] of ends) {
@@ -259,6 +240,23 @@ function earlierRoutes(done: Planned[], net: string, layer: string, clearance: n
   ]);
 }
 
+/** The routes of intent lines, each checked against other-net copper and the routes before it; the first conflict stops them. */
+export function planConnect(board: Board, project: ProjectFile, planes: string, intents: Intent[]): { routes: RouteSpec[] } | { conflict: string } {
+  const edges = edgeObstacles(board, project);
+  const done: Planned[] = [];
+  for (const intent of intents) {
+    const planned = plannedRoute(board, project, planes, intent);
+    const { clearance } = netRules(project, planned.net);
+    const cache = new Map<string, number>();
+    const obstacles: Obstacles = Object.fromEntries(board.copper_layers.map(layer => [layer,
+      [...copperObstacles(board, project, planned.net, clearance, layer, cache), ...edges, ...earlierRoutes(done, planned.net, layer, clearance)]]));
+    const hit = firstConflict(planned.expanded.segments, planned.expanded.vias, planned.viaSize, obstacles);
+    if (hit) return { conflict: `conflict: ${planned.net} ${hit}; nothing written` };
+    done.push(planned);
+  }
+  return { routes: done.map(item => item.route) };
+}
+
 /** Intent lines to tracks and vias. On a conflict with other-net copper nothing is written. Pours are not checked: they refill. */
 export function connect(pcb: string, spec: string, planesFile: string | undefined): number {
   const text = existsSync(spec) ? readFileSync(spec, 'utf8') : spec;
@@ -271,43 +269,12 @@ export function connect(pcb: string, spec: string, planesFile: string | undefine
   }
   if (!intents.length) throw stop('no intent lines');
   const { board } = boardJson(pcb);
-  const project = projectOf(pcb);
-  const planes = planesPath(pcb, planesFile);
-  const edges = edgeObstacles(board, project);
-  const done: Planned[] = [];
-  for (const intent of intents) {
-    const planned = plannedRoute(board, project, planes, intent);
-    const { clearance } = netRules(project, planned.net);
-    const cache = new Map<string, number>();
-    const obstacles: Obstacles = Object.fromEntries(board.copper_layers.map(layer => [layer,
-      [...copperObstacles(board, project, planned.net, clearance, layer, cache), ...edges, ...earlierRoutes(done, planned.net, layer, clearance)]]));
-    const hit = firstConflict(planned.expanded.segments, planned.expanded.vias, planned.viaSize, obstacles);
-    if (hit) {
-      console.log(`conflict: ${planned.net} ${hit}; nothing written`);
-      return 1;
-    }
-    done.push(planned);
+  const plan = planConnect(board, projectOf(pcb), planesPath(pcb, planesFile), intents);
+  if ('conflict' in plan) {
+    console.log(plan.conflict);
+    return 1;
   }
-  return applyRoutes(pcb, { routes: done.map(item => item.route) }, floatPoint);
-}
-
-/** A net's ground domain, as si_planes.py finds it: a ground, a spec pattern, then the ground holding most of its pads. */
-export function netDomain(net: string, padGrounds: (string | null)[], grounds: string[], patterns: Record<string, string[]>): string | null {
-  if (grounds.includes(net)) return net;
-  for (const [ground, globs] of Object.entries(patterns)) {
-    if (globs.some(glob => fnmatchCase(net, glob))) return ground;
-  }
-  const counts = new Map<string, number>();
-  for (const ground of padGrounds) if (ground) counts.set(ground, (counts.get(ground) ?? 0) + 1);
-  const top = [...counts].sort((a, b) => b[1] - a[1]);
-  if (top.length && (top.length === 1 || top[0]![1] > top[1]![1])) return top[0]![0];
-  return grounds.length === 1 ? grounds[0]! : null;
-}
-
-function padGrounds(board: Board, net: string, grounds: string[]): (string | null)[] {
-  const zones = board.zones.filter(zone => !zone.rule_area && grounds.includes(zone.net));
-  return board.footprints.flatMap(footprint => footprint.pads).filter(pad => pad.net === net)
-    .map(pad => zones.find(zone => polygonsContain(zone.outline, pad.position))?.net ?? null);
+  return applyRoutes(pcb, plan, floatPoint);
 }
 
 /** Candidate ground via centres round a signal via: rings at r x ring, n points each, outer ring first. */
@@ -339,15 +306,12 @@ function scopedClearance(board: Board, project: ProjectFile, groundClass: string
     list.map(item => (scoped(item.label) ? { ...item, clearance: Math.min(item.clearance, limit) } : item))]));
 }
 
-/** A ground via within r of each via of the net that has none (kicad-happy RP-001). Without room nothing is written, exit 1. */
-export function stitch(pcb: string, net: string, options: StitchOptions): number {
-  const document: BoardDocument = boardJson(pcb);
-  const { board } = document;
-  if (!(net in board.nets)) throw stop(`cannot load ${pcb} or no net ${net}`);
-  const project = projectOf(pcb);
-  const planes = planesPath(pcb, options.planes);
-  const spec: PlanesFile = existsSync(planes) ? readJson<PlanesFile>(planes) : { grounds: ['GND'] };
-  const ground = netDomain(net, padGrounds(board, net, spec.grounds), spec.grounds, spec.domains ?? {});
+export interface StitchPlan { ground: string; viaSize: number; viaDrill: number; added: Xy[]; missed: Xy[] }
+
+/** Where the ground vias go. `priority` gives a zone's fill priority. Nothing is written here. */
+export function stitchPlan(board: Board, project: ProjectFile, net: string, planes: string, options: StitchOptions, priority: (zone: Zone) => number): StitchPlan {
+  const { grounds, domains } = groundSpec(planes);
+  const ground = netDomain(net, padGrounds(board, net, grounds), grounds, domains);
   if (ground === null || ground === net) throw stop(`${net}: no single ground domain; set "domains" in the planes spec`);
   const rule = netRules(project, ground);
   const cls = netClass(project, rule.className);
@@ -364,14 +328,13 @@ export function stitch(pcb: string, net: string, options: StitchOptions): number
       }
     }
   }
-  const edit = new BoardEdit(boardText(pcb));
   const keepouts = board.zones.filter(zone => zone.rule_area?.vias).flatMap(zone => zone.outline);
   const through = new Set(options.throughPours.split(',').filter(Boolean));
   const innerOnly = (zone: Zone): boolean => zone.layers.every(layer => layer !== 'F.Cu' && layer !== 'B.Cu');
   const pours = board.zones.filter(zone => !zone.rule_area && zone.net !== ground && !(through.has(zone.net) && innerOnly(zone)));
   const groundPours = board.zones.filter(zone => !zone.rule_area && zone.net === ground);
   const covered = (zone: Zone, p: Pt): boolean => zone.layers.some(layer => groundPours.some(pour =>
-    pour.layers.includes(layer) && zonePriority(edit, pour) > zonePriority(edit, zone) && polygonsContain(pour.outline, p)));
+    pour.layers.includes(layer) && priority(pour) > priority(zone) && polygonsContain(pour.outline, p)));
   const all = viaCentres(board);
   const groundVias = all.filter(via => via.net === ground).map(via => via.at);
   const room = (q: Xy): boolean => {
@@ -394,6 +357,15 @@ export function stitch(pcb: string, net: string, options: StitchOptions): number
     added.push(spot);
     groundVias.push(spot);
   }
+  return { ground, viaSize, viaDrill, added, missed };
+}
+
+/** A ground via within r of each via of the net that has none (kicad-happy RP-001). Without room nothing is written, exit 1. */
+export function stitch(pcb: string, net: string, options: StitchOptions): number {
+  const { board } = boardJson(pcb);
+  if (!(net in board.nets)) throw stop(`cannot load ${pcb} or no net ${net}`);
+  const edit = new BoardEdit(boardText(pcb));
+  const { ground, viaSize, viaDrill, added, missed } = stitchPlan(board, projectOf(pcb), net, planesPath(pcb, options.planes), options, zone => zonePriority(edit, zone));
   const place3 = ([x, y]: Xy): string => `(${fixed(x, 3)}, ${fixed(y, 3)})`;
   if (missed.length) {
     console.log(`${net}: no room for a ${ground} via within ${formatG(options.r)} mm of ${missed.map(place3).join(', ')}`

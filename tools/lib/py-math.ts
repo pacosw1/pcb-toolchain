@@ -7,6 +7,14 @@ export function pyMod(x: number, y: number): number {
   return rest < 0 ? rest + y : rest === 0 ? 0 : rest;
 }
 
+/** x // y on floats, for y > 0: floor(x / y) rounds the quotient first, so 0.6 // 0.2 would give 3, not 2. */
+export function floorDiv(x: number, y: number): number {
+  const rest = x % y;
+  const whole = (x - rest) / y - (rest < 0 ? 1 : 0);
+  const low = Math.floor(whole);
+  return whole - low > 0.5 ? low + 1 : low;
+}
+
 const view = new DataView(new ArrayBuffer(8));
 
 /** A finite double as integer mantissa x 2^exponent. */

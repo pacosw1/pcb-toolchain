@@ -9,6 +9,16 @@ test('a grid fills rows of cols and rounds to 4 places', () => {
   assert.deepEqual([...placed], [['A', [1, 2, 90]], ['B', [1.1, 2, 90]], ['C', [1, 2.2, 90]]]);
 });
 
+test('with no cols and no rot a grid is one row at 0 degrees', () => {
+  assert.deepEqual([...gridPositions({ refs: ['C1', 'C2'], origin: [0, 0], pitch: [2, 0] })], [['C1', [0, 0, 0]], ['C2', [2, 0, 0]]]);
+});
+
+test('a path can start on a via: no segment leads to it', () => {
+  const { segments, vias } = expandRoute(route([{ via: [0, 0] }, [0, 2]], { layer: 'B.Cu' }));
+  assert.deepEqual(segments.map(s => [s.a, s.b, s.layer]), [[[0, 0], [0, 2], 'F.Cu']]);
+  assert.deepEqual(vias, [[0, 0]]);
+});
+
 test('a part placed by name and by grid is an error', () => {
   assert.throws(() => placements({ place: { R1: [0, 0, 0] }, grids: [{ refs: ['R1'], origin: [1, 1], pitch: [1, 1] }] }), /R1 is placed twice/);
 });

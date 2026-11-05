@@ -54,6 +54,12 @@ test('a track with no end evidence is rated by IPC alone', () => {
   near(trackAmps(0.25, 0.035, 10, { length: 100, minWidth: 0.25 }), ipcAmps(0.25), 1e-9);
 });
 
+test('the neck formula alone gives no uplift: its ends need evidence', () => {
+  assert.ok(neckAmps(0.2, 0.035, 0.1) > ipcAmps(0.2));
+  assert.equal(trackAmps(0.2, 0.035, 10, { length: 0.1, minWidth: 0.2 }), ipcAmps(0.2));
+  assert.equal(neckCapacity(0.25, 0.035, 2.27, [PAD, PAD], 10), 0);   // PQ-METER /BST_SW: both ends are pads
+});
+
 test('ipcRise inverts ipcAmps', () => {
   for (const [w, t, rise] of [[0.25, 0.035, 10], [1, 0.035, 4], [0.5, 0.0152, 20]] as const) near(ipcRise(ipcAmps(w, t, rise), w, t), rise, 1e-9);
 });

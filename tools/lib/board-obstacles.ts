@@ -1,8 +1,10 @@
-// What new copper must keep clear of, read from a board document and the project's net rules: pcbtool connect and stitch.
-// Millimetres, as copper-gap.ts measures. An arc track counts as the straight line between its ends, as it did through pcbnew.
+// What new copper must keep clear of, read from a board document and the project's net rules: pcbtool connect, stitch, corridor
+// and suggest. Millimetres, as copper-gap.ts measures. An arc track counts as the straight line between its ends, as it did
+// through pcbnew.
 import { dotShape, polyShape, segmentShape, type Obstacle, type Shape } from './copper-gap.ts';
 import { toMm, vias, type Board, type Pad, type Polygon, type Pt } from './board-types.ts';
 import { fnmatchCase } from './fnmatch.ts';
+import { readJson } from './json-file.ts';
 import type { Xy } from './route-spec.ts';
 
 export interface NetClass { name: string; track_width: number; clearance: number; via_diameter: number; via_drill: number }
@@ -11,6 +13,9 @@ export interface ProjectFile {
   board: { design_settings: { rules: { min_copper_edge_clearance: number } } };
 }
 export interface NetRule { className: string; trackWidth: number; clearance: number }
+
+/** The .kicad_pro next to a board. */
+export const projectOf = (pcb: string): ProjectFile => readJson<ProjectFile>(`${pcb.replace(/\.[^./]*$/, '')}.kicad_pro`);
 
 export function netClass(project: ProjectFile, name: string): NetClass {
   const found = project.net_settings.classes.find(item => item.name === name);
@@ -80,14 +85,32 @@ export function copperObstacles(board: Board, project: ProjectFile, net: string,
   return out;
 }
 
+/** The net's own copper on one layer: tracks, vias and pads. */
+export function ownCopper(board: Board, net: string, layer: string): Shape[] {
+  const out: Shape[] = [];
+  for (const item of board.copper) {
+    if ('Via' in item && item.Via.net === net) out.push(dotShape(mmPoint(item.Via.at), toMm(item.Via.size) / 2));
+    if ('Track' in item && item.Track.net === net && item.Track.layer === layer) {
+      out.push(segmentShape(mmPoint(item.Track.start), mmPoint(item.Track.end), toMm(item.Track.width) / 2));
+    }
+  }
+  for (const footprint of board.footprints) {
+    for (const pad of footprint.pads) {
+      if (pad.kind !== 'NpThroughHole' && pad.layers.includes(layer) && pad.net === net) out.push(padShape(pad, layer));
+    }
+  }
+  return out;
+}
+
+export const copperEdgeClearance = (project: ProjectFile): number => project.board.design_settings.rules.min_copper_edge_clearance;
+
+/** The board outline and its holes and cut-outs, each a ring of points. */
+export const boardRings = (board: Board): Xy[][] => board.outlines.flatMap((polygon: Polygon) => [polygon.outline, ...polygon.holes]).map(ringPoints);
+
 /** Every edge of the board outline, holes and cut-outs included, at the copper-to-edge clearance. */
 export function edgeObstacles(board: Board, project: ProjectFile): Obstacle[] {
-  const clearance = project.board.design_settings.rules.min_copper_edge_clearance;
-  const rings = board.outlines.flatMap((polygon: Polygon) => [polygon.outline, ...polygon.holes]);
-  return rings.flatMap(ring => {
-    const points = ringPoints(ring);
-    return points.map((a, i) => ({ shape: segmentShape(a, points[(i + 1) % points.length]!, 0), clearance, label: 'board edge' }));
-  });
+  const clearance = copperEdgeClearance(project);
+  return boardRings(board).flatMap(points => points.map((a, i) => ({ shape: segmentShape(a, points[(i + 1) % points.length]!, 0), clearance, label: 'board edge' })));
 }
 
 export const viaCentres = (board: Board): { net: string; at: Xy }[] => vias(board).map(via => ({ net: via.net, at: mmPoint(via.at) }));

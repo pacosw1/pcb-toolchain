@@ -100,6 +100,18 @@ test('a track drawn twice counts once, the wider one, and a parallel track adds'
   assert.ok(Math.abs(between(beside, true).amps - 2 * ipcAmps(1)) < 1e-9);
 });
 
+test('a branch of the same width gives no thermal uplift', () => {
+  const capacities = (copper: RoutedCopper[]): number[] => netGraph(board(copper, []), 'P', conditions()).edges.filter(e => e.label.startsWith('F.Cu')).map(e => e.amps);
+  const rail = track(pt(0, 0), pt(5, 0), 0.2);
+  assert.deepEqual(capacities([rail]), [ipcAmps(0.2)]);
+  assert.ok(capacities([rail, track(pt(2.5, 0), pt(2.5, 0.1), 0.2)]).every(amps => amps === ipcAmps(0.2)));
+});
+
+test('a short neck between two pads stays a plain IPC track', () => {
+  const b = board([track(pt(0, 0), pt(1, 0), 0.2)], [J1(pt(-0.9, 0)), J2(pt(1.9, 0))]);
+  assert.ok(Math.abs(between(b).amps - ipcAmps(0.2)) < 1e-9);
+});
+
 test('a T junction splits a track', () => {
   const b = board([track(pt(0, 0), pt(10, 0)), track(pt(5, 0), pt(5, 5), 0.5)], [J1(pt(0, 0)), J2(pt(5, 5))]);
   const { items } = between(b);
