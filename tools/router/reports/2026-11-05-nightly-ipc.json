@@ -1,0 +1,354 @@
+{
+  "schema": "pcb.kicad-nightly-1326.v1",
+  "evidence_archive": {
+    "host": "gopadel-ci1",
+    "path": "/var/lib/cip/saved-artifacts/nightly-ipc-1326/evidence.tar.gz",
+    "sha256": "fd2ac399de02ce16518355f83c95c9335b71d64069f34ad2cc4d95e2cfc744be"
+  },
+  "source_base": "fc2934e4faeeae785fcc17b57ee2911bba55e556",
+  "acceptance": false,
+  "image": {
+    "tag": "iot-lab-route:10.0-nightly-4fe1ca2060",
+    "id": "sha256:8c1c6d83c4050f4876f21926846e4e1d640b6be5194f448c3e239392c83a20af"
+  },
+  "resources": {
+    "cpus": 2,
+    "memory_gib": 4,
+    "network": "none"
+  },
+  "binary_sha256": "b7f955ee4dfd10415733f1806c25f267789fa2b3045bce2e7c46e0ca783d2cb2",
+  "stable": {
+    "acceptance": false,
+    "cli_drc": {
+      "command": [
+        "kicad-cli",
+        "pcb",
+        "drc",
+        "--schematic-parity",
+        "--format",
+        "json",
+        "-o",
+        "/bench/final-stable/cli-drc.json",
+        "/bench/final-stable/input/ENV-SENSE.kicad_pcb"
+      ],
+      "exit": 0,
+      "seconds": 0.772695812
+    },
+    "cold_svg": [
+      {
+        "command": [
+          "kicad-cli",
+          "pcb",
+          "export",
+          "svg",
+          "--layers",
+          "F.Cu",
+          "--mode-single",
+          "--page-size-mode",
+          "2",
+          "--exclude-drawing-sheet",
+          "-o",
+          "/bench/final-stable/cold-0.svg",
+          "/bench/final-stable/input/ENV-SENSE.kicad_pcb"
+        ],
+        "exit": 0,
+        "seconds": 0.265899168
+      },
+      {
+        "command": [
+          "kicad-cli",
+          "pcb",
+          "export",
+          "svg",
+          "--layers",
+          "F.Cu",
+          "--mode-single",
+          "--page-size-mode",
+          "2",
+          "--exclude-drawing-sheet",
+          "-o",
+          "/bench/final-stable/cold-1.svg",
+          "/bench/final-stable/input/ENV-SENSE.kicad_pcb"
+        ],
+        "exit": 0,
+        "seconds": 0.262564675
+      },
+      {
+        "command": [
+          "kicad-cli",
+          "pcb",
+          "export",
+          "svg",
+          "--layers",
+          "F.Cu",
+          "--mode-single",
+          "--page-size-mode",
+          "2",
+          "--exclude-drawing-sheet",
+          "-o",
+          "/bench/final-stable/cold-2.svg",
+          "/bench/final-stable/input/ENV-SENSE.kicad_pcb"
+        ],
+        "exit": 0,
+        "seconds": 0.265763321
+      }
+    ],
+    "config": {
+      "nightly_cli": "kicad-cli-nightly",
+      "repeats": 3,
+      "runtime": "stable",
+      "stable_cli": "kicad-cli"
+    },
+    "ipc": null,
+    "runtime_version": {
+      "command": [
+        "kicad-cli",
+        "--version"
+      ],
+      "exit": 0,
+      "seconds": 0.077610303
+    },
+    "schema": "pcb.kicad-runtime-probe.v1",
+    "source_hashes": {
+      "/bench/input/ENV-SENSE/._ENV-SENSE.kicad_sch": "47218952fbf771bd9af76ad2e163678fc511fd4664d3342bded37aa06c6df75e",
+      "/bench/input/ENV-SENSE/ENV-SENSE.kicad_dru": "0f32e6c9b570d23eceed7fa8ba6b7c3b901abac05a4b22da3316fafbc67259a1",
+      "/bench/input/ENV-SENSE/ENV-SENSE.kicad_pcb": "b4bb4a9d759a5d6b9425127ca1a378b48f97e2c8b0b69cf0fa4d221bf2bce0f4",
+      "/bench/input/ENV-SENSE/ENV-SENSE.kicad_pro": "04348ae2b280f2c0aebb00e7e91d05a4ab1e6982bf3923673e435f9ef2a1f8f5",
+      "/bench/input/ENV-SENSE/ENV-SENSE.kicad_sch": "9ccc45e8f189ce9a9e0b514e1c8bc2862b53420f71986ec6c5d19ae36d227209",
+      "/bench/input/ENV-SENSE/fp-lib-table": "38ff9ae2b6ce34f853bc72b397a91e03bb24d8daf33764dabf4365cdb92f8bc0",
+      "/bench/input/ENV-SENSE/sym-lib-table": "eaee6e2c961bff7c3a3ec65a9f34232b8555aa57beef09b4e373b10dac14c13e"
+    },
+    "source_unchanged": true
+  },
+  "nightly": {
+    "acceptance": false,
+    "cli_drc": {
+      "command": [
+        "kicad-cli-nightly",
+        "pcb",
+        "drc",
+        "--schematic-parity",
+        "--format",
+        "json",
+        "-o",
+        "/bench/final-nightly/cli-drc.json",
+        "/bench/final-nightly/input/ENV-SENSE.kicad_pcb"
+      ],
+      "exit": 0,
+      "seconds": 0.282927814
+    },
+    "cold_svg": [
+      {
+        "command": [
+          "kicad-cli-nightly",
+          "pcb",
+          "export",
+          "svg",
+          "--layers",
+          "F.Cu",
+          "--mode-single",
+          "--page-size-mode",
+          "2",
+          "--exclude-drawing-sheet",
+          "-o",
+          "/bench/final-nightly/cold-0.svg",
+          "/bench/final-nightly/input/ENV-SENSE.kicad_pcb"
+        ],
+        "exit": 0,
+        "seconds": 0.211203989
+      },
+      {
+        "command": [
+          "kicad-cli-nightly",
+          "pcb",
+          "export",
+          "svg",
+          "--layers",
+          "F.Cu",
+          "--mode-single",
+          "--page-size-mode",
+          "2",
+          "--exclude-drawing-sheet",
+          "-o",
+          "/bench/final-nightly/cold-1.svg",
+          "/bench/final-nightly/input/ENV-SENSE.kicad_pcb"
+        ],
+        "exit": 0,
+        "seconds": 0.20934443
+      },
+      {
+        "command": [
+          "kicad-cli-nightly",
+          "pcb",
+          "export",
+          "svg",
+          "--layers",
+          "F.Cu",
+          "--mode-single",
+          "--page-size-mode",
+          "2",
+          "--exclude-drawing-sheet",
+          "-o",
+          "/bench/final-nightly/cold-2.svg",
+          "/bench/final-nightly/input/ENV-SENSE.kicad_pcb"
+        ],
+        "exit": 0,
+        "seconds": 0.204356065
+      }
+    ],
+    "config": {
+      "nightly_cli": "kicad-cli-nightly",
+      "repeats": 3,
+      "runtime": "nightly",
+      "stable_cli": "kicad-cli"
+    },
+    "ipc": {
+      "cold_reads": [
+        {
+          "run": {
+            "command": [
+              "/bench/iotroute-final",
+              "board-json",
+              "/bench/final-nightly/input/ENV-SENSE.kicad_pcb"
+            ],
+            "exit": 0,
+            "seconds": 0.365361333
+          },
+          "same_board_value": true
+        },
+        {
+          "run": {
+            "command": [
+              "/bench/iotroute-final",
+              "board-json",
+              "/bench/final-nightly/input/ENV-SENSE.kicad_pcb"
+            ],
+            "exit": 0,
+            "seconds": 0.369426895
+          },
+          "same_board_value": true
+        },
+        {
+          "run": {
+            "command": [
+              "/bench/iotroute-final",
+              "board-json",
+              "/bench/final-nightly/input/ENV-SENSE.kicad_pcb"
+            ],
+            "exit": 0,
+            "seconds": 0.361292018
+          },
+          "same_board_value": true
+        }
+      ],
+      "copy_save": {
+        "error": null,
+        "file_exists": true,
+        "path": "/bench/final-nightly/nightly-saved.kicad_pcb"
+      },
+      "drc_erc_parity_ipc": "not in the pinned request protocol; remain CLI operations",
+      "edit_rollback": {
+        "modified_item_returned": true,
+        "original_restored": true,
+        "seconds": 0.04272057,
+        "update_status": "IRS_OK"
+      },
+      "refill": {
+        "error": null,
+        "seconds": 0.033510389
+      },
+      "stable_reopen": {
+        "command": [
+          "kicad-cli",
+          "pcb",
+          "drc",
+          "--schematic-parity",
+          "--format",
+          "json",
+          "-o",
+          "/bench/final-nightly/stable-after-save-drc.json",
+          "/bench/final-nightly/nightly-saved.kicad_pcb"
+        ],
+        "exit": 3,
+        "seconds": 0.208039815
+      },
+      "startup_s": 0.160590203,
+      "svg_export": {
+        "file_exists": true,
+        "files": [
+          "/bench/final-nightly/warm.svg"
+        ],
+        "message": "",
+        "seconds": 0.059699098,
+        "status": "JS_SUCCESS"
+      },
+      "version": "10.99.0-unknown-4fe1ca2060~190~ubuntu24.04.1",
+      "warm_reads": [
+        {
+          "board_sha256": "b7a92fdef6b98f4b9a26e4b645cbd2414712d91fe150aed2f140188a091d4d6f",
+          "comparison_sha256": "8771c5a9d053d0ec4580868760a04fcd0c7f84a60c36586f3954ab281b984dd2",
+          "copper": 283,
+          "footprints": 23,
+          "nets": 11,
+          "seconds": 0.200071626,
+          "zones": 6
+        },
+        {
+          "board_sha256": "b7a92fdef6b98f4b9a26e4b645cbd2414712d91fe150aed2f140188a091d4d6f",
+          "comparison_sha256": "8771c5a9d053d0ec4580868760a04fcd0c7f84a60c36586f3954ab281b984dd2",
+          "copper": 283,
+          "footprints": 23,
+          "nets": 11,
+          "seconds": 0.195525599,
+          "zones": 6
+        },
+        {
+          "board_sha256": "b7a92fdef6b98f4b9a26e4b645cbd2414712d91fe150aed2f140188a091d4d6f",
+          "comparison_sha256": "8771c5a9d053d0ec4580868760a04fcd0c7f84a60c36586f3954ab281b984dd2",
+          "copper": 283,
+          "footprints": 23,
+          "nets": 11,
+          "seconds": 0.195688819,
+          "zones": 6
+        }
+      ]
+    },
+    "runtime_version": {
+      "command": [
+        "kicad-cli-nightly",
+        "--version"
+      ],
+      "exit": 0,
+      "seconds": 0.080447909
+    },
+    "schema": "pcb.kicad-runtime-probe.v1",
+    "source_hashes": {
+      "/bench/input/ENV-SENSE/._ENV-SENSE.kicad_sch": "47218952fbf771bd9af76ad2e163678fc511fd4664d3342bded37aa06c6df75e",
+      "/bench/input/ENV-SENSE/ENV-SENSE.kicad_dru": "0f32e6c9b570d23eceed7fa8ba6b7c3b901abac05a4b22da3316fafbc67259a1",
+      "/bench/input/ENV-SENSE/ENV-SENSE.kicad_pcb": "b4bb4a9d759a5d6b9425127ca1a378b48f97e2c8b0b69cf0fa4d221bf2bce0f4",
+      "/bench/input/ENV-SENSE/ENV-SENSE.kicad_pro": "04348ae2b280f2c0aebb00e7e91d05a4ab1e6982bf3923673e435f9ef2a1f8f5",
+      "/bench/input/ENV-SENSE/ENV-SENSE.kicad_sch": "9ccc45e8f189ce9a9e0b514e1c8bc2862b53420f71986ec6c5d19ae36d227209",
+      "/bench/input/ENV-SENSE/fp-lib-table": "38ff9ae2b6ce34f853bc72b397a91e03bb24d8daf33764dabf4365cdb92f8bc0",
+      "/bench/input/ENV-SENSE/sym-lib-table": "eaee6e2c961bff7c3a3ec65a9f34232b8555aa57beef09b4e373b10dac14c13e"
+    },
+    "source_unchanged": true
+  },
+  "checks": {
+    "same_svg_except_title": true,
+    "cold_warm_reads_match": true,
+    "source_unchanged": true,
+    "stable_original_drc": {
+      "errors": 0,
+      "opens": 0,
+      "parity": 0
+    },
+    "nightly_original_drc": {
+      "errors": 0,
+      "opens": 0,
+      "parity": 0
+    },
+    "stable_reopen_error": "Failed to load board: KiCad was unable to open this file because it was created with a more recent version than the one you are running.\n\nTo open it you will need to upgrade KiCad to version 10.99 or later (file format dated 20261025 or later).\n",
+    "original_format": "20260206",
+    "saved_format": "20261025"
+  }
+}

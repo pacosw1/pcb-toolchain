@@ -4267,6 +4267,7 @@ fn main() {
         Some("gerber-geos") => std::process::exit(iotroute::gerber_geos::cli()),
         Some("gerber-geometry") => std::process::exit(iotroute::gerber_geometry::cli()),
         Some("board-json") => std::process::exit(iotroute::kicad::cli(&args[2..])),
+        Some("runtime-probe") => std::process::exit(iotroute::runtime_probe::cli(&args[2..])),
         Some("model") => std::process::exit(iotroute::model::cli::cli(&args[2..])),
         Some("si-planes") => std::process::exit(iotroute::si::planes_cli(&args[2..])),
         Some("si-pairs") => std::process::exit(iotroute::si::pairs_cli(&args[2..])),
