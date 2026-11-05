@@ -14,7 +14,7 @@ test('board inventory is published while a backlog upload is blocked', { timeout
   fs.writeFileSync(path.join(run, 'run.json'), JSON.stringify({ board: 'DEMO' }));
   fs.writeFileSync(path.join(run, 'events.jsonl'), JSON.stringify({ type: 'tool.output', text: 'log' }) + '\n');
   const token = path.join(r.dir, 'token'); fs.writeFileSync(token, TOKEN);
-  let batchStarted = false, boardPublished = false, releaseBatch: (() => void) | null = null;
+  let batchStarted = false, boardPublished = false, blobAttempts = 0, releaseBatch: (() => void) | null = null;
   const server = createServer((req, res) => {
     let body = ''; req.on('data', chunk => { body += chunk; }); req.on('end', () => {
       const reply = (value: unknown): void => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(value)); };
@@ -23,7 +23,10 @@ test('board inventory is published while a backlog upload is blocked', { timeout
       if (req.url?.startsWith('/live/models')) return reply([]);
       if (req.url === '/live/events/batch') { batchStarted = true; releaseBatch = () => reply([]); return; }
       if (req.url === '/live/events') { if (JSON.parse(body).kind === 'board.snapshot') boardPublished = true; return reply({}); }
-      if (req.url?.startsWith('/blobs/')) return reply({});
+      if (req.url?.startsWith('/blobs/')) {
+        if (++blobAttempts === 1) { res.writeHead(503); res.end(); return; }
+        return reply({});
+      }
       res.writeHead(404); res.end();
     });
   });
@@ -35,6 +38,7 @@ test('board inventory is published while a backlog upload is blocked', { timeout
     while ((!batchStarted || !boardPublished) && Date.now() < deadline) await new Promise(ok => setTimeout(ok, 50));
     assert.equal(batchStarted, true);
     assert.equal(boardPublished, true, 'inventory must not wait for the blocked activity batch');
+    assert.ok(blobAttempts >= 2, 'temporary upload saturation is retried');
   } finally {
     if (releaseBatch) (releaseBatch as () => void)();
     child.kill(); await new Promise<void>(ok => child.once('close', () => ok()));

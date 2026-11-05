@@ -90,9 +90,16 @@ export class Worker {
   }
   private async request(endpoint: string, init: RequestInit = {}): Promise<Response> {
     const headers = new Headers(init.headers); headers.set('authorization', `Bearer ${this.token}`);
-    const response = await fetch(this.url + endpoint, { ...init, headers, redirect: 'error', signal: AbortSignal.timeout(15000) });
-    if (!response.ok) throw new WorkerHttpError(response.status);
-    return response;
+    for (let attempt = 0; ; attempt++) {
+      const response = await fetch(this.url + endpoint, { ...init, headers, redirect: 'error', signal: AbortSignal.timeout(15000) });
+      if (response.ok) return response;
+      if ((response.status === 503 || response.status === 429) && attempt < 6) {
+        await response.body?.cancel();
+        await sleep(Math.min(3000, 200 * 2 ** attempt) + Math.floor(Math.random() * 250));
+        continue;
+      }
+      throw new WorkerHttpError(response.status);
+    }
   }
   private async post(endpoint: string, body: unknown): Promise<unknown> {
     return (await this.request(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })).json();
@@ -241,6 +248,7 @@ export class Worker {
         this.state.stamps[key] = stamp; this.save();
       } catch (error) {
         // A result may be mid-write or its source may no longer match: never fabricate a frame.
+        if (error instanceof WorkerHttpError && (error.status === 429 || error.status >= 500)) complete = false;
         if (!['ENOENT', 'ELOOP'].includes((error as NodeJS.ErrnoException).code ?? '') && !(error instanceof SyntaxError)) console.error('pcb live placement replay:', error instanceof Error ? error.message : String(error));
       }
     }

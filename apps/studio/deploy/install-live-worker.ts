@@ -28,12 +28,25 @@ const plist = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-
 <key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>ThrottleInterval</key><integer>10</integer>
 <key>StandardOutPath</key><string>${xml(log)}</string><key>StandardErrorPath</key><string>${xml(log)}</string></dict></plist>\n`;
 const prior = fs.existsSync(dest) ? fs.readFileSync(dest) : null;
-spawnSync('launchctl', ['bootout', `${domain}/${label}`], { stdio: 'ignore' });
+const service = `${domain}/${label}`;
+const present = (): boolean => spawnSync('launchctl', ['print', service], { stdio: 'ignore' }).status === 0;
+const remove = (): void => {
+  if (!present()) return;
+  if (spawnSync('launchctl', ['bootout', service], { stdio: 'ignore' }).status !== 0) throw new Error('Could not stop existing live worker');
+  for (let n = 0; n < 100 && present(); n++) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+  if (present()) throw new Error('Existing live worker did not stop; configuration was not changed');
+};
+remove();
 const tmp = dest + '.' + randomUUID() + '.tmp';
 fs.writeFileSync(tmp, plist, { mode: 0o600 }); fs.renameSync(tmp, dest);
 const result = spawnSync('launchctl', ['bootstrap', domain, dest], { stdio: 'inherit' });
 if (result.status !== 0) {
-  if (prior) { fs.writeFileSync(dest, prior, { mode: 0o600 }); spawnSync('launchctl', ['bootstrap', domain, dest], { stdio: 'ignore' }); }
+  remove();
+  if (prior) {
+    fs.writeFileSync(dest, prior, { mode: 0o600 });
+    const restored = spawnSync('launchctl', ['bootstrap', domain, dest], { stdio: 'ignore' });
+    if (restored.status !== 0) throw new Error('Could not start live worker; previous plist restored but service restart failed');
+  }
   else fs.rmSync(dest, { force: true });
   throw new Error('Could not start live worker; previous configuration restored');
 }
