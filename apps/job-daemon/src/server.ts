@@ -423,7 +423,8 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: J
       const n = Number(url.searchParams.get('attempt') ?? job.attempts.length);
       if (!job.attempts.some(a => a.n === n)) throw new HttpError(404, 'no such attempt');
       const kind = url.searchParams.get('kind') ?? 'route';
-      const names: Record<string, string> = { route: 'live-route.json', placement: 'live-place.json', 'route-base': 'live-route-base.kicad_pcb' };
+      const names: Record<string, string> = { route: 'live-route.json', placement: 'live-place.json', 'route-base': 'live-route-base.kicad_pcb',
+        'placement-base': 'live-place-base.kicad_pcb' };
       if (!Object.hasOwn(names, kind)) throw new HttpError(400, 'invalid preview kind');
       const fd = openNoFollow(path.join(mgr.store.outDir(job.id, n), names[kind]));
       if (fd === null) throw new HttpError(404, 'no preview');

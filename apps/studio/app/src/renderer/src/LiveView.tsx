@@ -100,7 +100,7 @@ export function LiveView(): React.JSX.Element {
   const runs = all.filter(e => e.kind === 'run.state' && (!current || (e.source === current.source && e.board === current.board)))
     .sort((a, b) => b.cursor - a.cursor)
   for (const e of all.filter(e => e.kind === 'remote.state' && ['queued', 'running', 'retrying'].includes(String(e.data.status)) && (!current || (e.source === current.source && e.board === current.board)))) {
-    if (!runs.some(r => r.source === e.source && r.run === e.run)) runs.push({ ...e, kind: 'run.state', data: { status: e.data.status === 'queued' ? 'queued' : 'running', operation: 'route', supervisorAlive: true, remoteOnly: true } })
+    if (!runs.some(r => r.source === e.source && r.run === e.run)) runs.push({ ...e, kind: 'run.state', data: { status: e.data.status === 'queued' ? 'queued' : 'running', operation: e.data.operation === 'placement' ? 'placement' : 'route', supervisorAlive: true, remoteOnly: true } })
   }
   const active = runs.find(e => runKey(e) === selectedRun) ?? (current?.run && current.run !== 'saved' ? runs.find(e => e.run === current.run) : runs.find(e => ['queued', 'running', 'stopping'].includes(String(e.data.status))) ?? runs[0])
   const following = current && followRun && active && active.data.status === 'running' && active.data.supervisorAlive === true

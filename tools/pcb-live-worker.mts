@@ -307,7 +307,7 @@ export class Worker {
       if (pending.length) { await this.post('/live/events/batch', pending); this.state.offsets[key] = offset; this.save(); }
     } finally { fs.closeSync(fd); }
   }
-  private async bindRemoteJob(log: string, board: string, run: string): Promise<void> {
+  private async bindRemoteJob(log: string, board: string, run: string, operation: 'route' | 'placement' = 'route'): Promise<void> {
     let fd: number;
     try { fd = fs.openSync(log, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK); }
     catch { return; }
@@ -319,7 +319,7 @@ export class Worker {
       if (!match) return;
       const id = match[1], key = `job-binding:${run}:${id}`;
       if (this.state.stamps[key]) return;
-      await this.event(`observer-job-binding:${id}`, board, run, 'job.binding', { jobId: id });
+      await this.event(`observer-job-binding:${id}`, board, run, 'job.binding', { jobId: id, operation });
       this.state.stamps[key] = '1'; this.save();
     } finally { fs.closeSync(fd); }
   }
@@ -347,6 +347,7 @@ export class Worker {
         }
       }
       const routeBase = path.join(folder, 'live-route-base.kicad_pcb'); if (file(routeBase)) await this.snapshot(routeBase, board, name);
+      const placementBase = path.join(folder, 'live-place-base.kicad_pcb'); if (file(placementBase)) await this.snapshot(placementBase, board, name);
       const routeLog = path.join(folder, 'operation/route.log');
       if (!file(path.join(folder, 'result.json')) && file(routeLog)) await this.bindRemoteJob(routeLog, board, name);
       for (const [filename, kind, schema] of [
@@ -440,7 +441,7 @@ export class Worker {
       if (candidates[0]) await this.snapshot(candidates[0].file, run.board, run.runId, 'candidate.snapshot');
       logs.sort((a, b) => b.mtime - a.mtime);
       for (const log of logs.slice(0, 3)) {
-        if (log.stage === 'routing') await this.bindRemoteJob(log.file, run.board, run.runId);
+        await this.bindRemoteJob(log.file, run.board, run.runId, log.stage === 'placement' ? 'placement' : 'route');
         await this.lines(log.file, run.board, run.runId, 'run.event', log.stage);
       }
     }
@@ -474,6 +475,8 @@ export class Worker {
         const base = path.join(folder, 'live-route-base.kicad_pcb');
         const board = this.boardOwner(run.board);
         if (file(base)) await this.snapshot(base, board, run.runId);
+        const placementBase = path.join(folder, 'live-place-base.kicad_pcb');
+        if (file(placementBase)) await this.snapshot(placementBase, board, run.runId);
         const route = path.join(folder, 'live-route.json');
         if (file(route)) await this.preview(route, board, run.runId, 'route.preview', 'iot-lab.route-preview.v1');
         const placement = path.join(folder, 'live-place.json');

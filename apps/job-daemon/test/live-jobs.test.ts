@@ -48,5 +48,10 @@ test('coordinator relays source-matched remote frames after client disconnect an
     fs.writeFileSync(path.join(out, 'live-route-base.kicad_pcb'), 'different');
     new LiveJobBridge(r.mgr, live, blobs).scan();
     assert.equal(live.history('mini', 'p/B', 'r', 0).events.length, 1, 'mismatched base is never published');
+    fs.writeFileSync(path.join(out, 'live-place-base.kicad_pcb'), board);
+    fs.writeFileSync(path.join(out, 'live-place.json'), JSON.stringify({ schema: 'iot-lab.placement-preview.v1', board_sha256: base, epoch: 2, epochs: 10, cost: 42, units: [] }));
+    new LiveJobBridge(r.mgr, live, blobs).scan();
+    const placement = live.history('mini', 'p/B', 'r', 0).events.find(e => e.kind === 'placement.preview');
+    assert.equal((placement?.data as { baseSha256: string }).baseSha256, base);
   } finally { live.close(); r.cleanup(); }
 });

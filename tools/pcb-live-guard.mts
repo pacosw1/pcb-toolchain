@@ -261,6 +261,7 @@ async function dispatch(root: string, program: string, args: string[]): Promise<
     process.stdout.write(Buffer.concat(held)); return code;
   }
   const env = { ...process.env, IOTROUTE_LIVE_FILE: path.join(previewDir, 'live-route.json'), PCB_LIVE_ROUTE_FILE: path.join(previewDir, 'live-route.json'),
+    IOTPLACE_LIVE_FILE: path.join(previewDir, 'live-place.json'), PCB_LIVE_PLACEMENT_FILE: path.join(previewDir, 'live-place.json'),
     PCB_LIVE_SOURCE: source, PCB_LIVE_HOST: host, PCB_LIVE_BOARD: `${project}/${displayBoard}`,
     PCB_LIVE_COORDINATOR: cfg.url, PCB_LIVE_TOKEN_FILE: cfg.tokenFile };
   const base = runsBase(root, args);

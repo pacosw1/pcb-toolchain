@@ -79,7 +79,11 @@ if daemon_ready 2>/dev/null; then
   ARGS+=(--cpus "${REMOTE_CPUS:-24}" --mem "$(mem_gb "${REMOTE_MEM:-32g}")" --timeout "${REMOTE_TIMEOUT:-300}" --queue-wait "${REMOTE_QUEUE_WAIT:-3600}" --fit budget --results "$RAW")
   [ -z "${REMOTE_IMAGE:-}" ] || ARGS+=(--image "$REMOTE_IMAGE")
   set +e
-  IOT_LAB=$REPO PCB_TOOLCHAIN_ROOT=$REPO node --no-warnings --experimental-strip-types "$CLIENT" run "${ARGS[@]}" -- "$@"
+  if [ -n "${PCB_LIVE_PLACEMENT_FILE:-}" ]; then
+    IOT_LAB=$REPO PCB_TOOLCHAIN_ROOT=$REPO node --no-warnings --experimental-strip-types "$CLIENT" run "${ARGS[@]}" -- env IOTPLACE_LIVE_FILE=/job/out/live-place.json "$@"
+  else
+    IOT_LAB=$REPO PCB_TOOLCHAIN_ROOT=$REPO node --no-warnings --experimental-strip-types "$CLIENT" run "${ARGS[@]}" -- "$@"
+  fi
   RC=$?
   set -e
   # Callers read their files from the results folder itself, as on the SSH path: only out/ comes back.

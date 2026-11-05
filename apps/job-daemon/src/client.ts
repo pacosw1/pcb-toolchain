@@ -144,7 +144,15 @@ async function watch(id: string): Promise<JobRecord> {
       const bytes = Buffer.from(await response.arrayBuffer());
       if (bytes.length > 20 * 1024 * 1024) return;
       const next = createHash('sha256').update(bytes).digest('hex');
-      if (next === digest || (JSON.parse(bytes.toString('utf8')) as { schema?: string }).schema !== 'iot-lab.placement-preview.v1') return;
+      const frame = JSON.parse(bytes.toString('utf8')) as { schema?: string; board_sha256?: string };
+      if (next === digest || frame.schema !== 'iot-lab.placement-preview.v1' || !/^[0-9a-f]{64}$/.test(frame.board_sha256 ?? '')) return;
+      const base = await api(`/jobs/${id}/live?kind=placement-base`, { signal: AbortSignal.timeout(4000), redirect: 'error' });
+      if (base.ok) {
+        const source = Buffer.from(await base.arrayBuffer());
+        if (source.length > 20 * 1024 * 1024 || createHash('sha256').update(source).digest('hex') !== frame.board_sha256) return;
+        const dest = path.join(path.dirname(preview), 'live-place-base.kicad_pcb');
+        fs.writeFileSync(dest + '.tmp', source); fs.renameSync(dest + '.tmp', dest);
+      }
       fs.writeFileSync(preview + '.tmp', bytes);
       fs.renameSync(preview + '.tmp', preview);
       digest = next;
