@@ -113,6 +113,40 @@ test('a changed board routes again, and an identical failure is not routed again
   assert.equal(run.calls, 2);
 });
 
+/** `iotroute run` with its evidence: a refused admission when `cause` says so, else opens with a pin the placer can give room. */
+class EvidenceRouter extends Compaction {
+  cause: string | null = null;
+  override async stage(command: string[]): Promise<StageResult> {
+    const out = command[3]!, work = `${out}.iotroute`;
+    mkdirSync(work, { recursive: true });
+    const record = this.cause === null
+      ? { status: 'FAIL', drc_errors: 0, unconnected: 1, parity: 0, input_sha256: sha256File(command[command.indexOf('--pcb') + 1]!), board_file: out, board_sha256: sha256File(this.a.board) }
+      : { status: 'ERROR', cause: this.cause };
+    if (this.cause === null) {
+      writeFileSync(out, readFileSync(this.a.board));
+      writeFileSync(join(work, 'drc.json'), JSON.stringify({ violations: [], unconnected_items: [{ items: [] }], schematic_parity: [] }));
+      writeFileSync(join(work, 'pin-escape.json'), JSON.stringify({ halo_hint: { U1: 0.25 } }));
+    }
+    writeFileSync(join(work, 'result.json'), JSON.stringify(record));
+    return { returncode: 1, stdout: `${JSON.stringify(record)}\n`, stderr: '' };
+  }
+}
+
+test('a step asks for a diagnosis, its evidence teaches the next search, and a refused admission stops the run', async () => {
+  const native = join(folder, 'source.kicad_pcb');
+  writeFileSync(native, 'bytes');
+  const run = driver(EvidenceRouter as typeof Compaction) as unknown as EvidenceRouter;
+  assert.ok(await run.route(native, 0) instanceof Measured);
+  assert.deepEqual(run.escapeHint, { U1: 0.25 });
+  assert.equal(JSON.parse(readFileSync(join(folder, 'step-0/route-decision.json'), 'utf8')).action, 'diagnose_selected_connections');
+  assert.equal(JSON.parse(readFileSync(join(folder, 'step-0/feedback.json'), 'utf8')).accepted, true);
+  writeFileSync(native, 'other bytes');
+  run.cause = 'rule coverage refused: r / creepage: why';
+  const stopped = await run.route(native, 1) as RouteOutcome;
+  assert.equal(stopped.stop, true);
+  assert.equal(stopped.decision.action, 'resolve_constraint_coverage');
+});
+
 test('the route cap ends routing without another attempt', async () => {
   const native = join(folder, 'source.kicad_pcb');
   writeFileSync(native, 'bytes');

@@ -92,7 +92,7 @@ function noPassVerdict(t: StepSummary): string {
 const KNOWN_FINDINGS = new Set(['native_open', 'escape_failure', 'model_enclosed', 'router_miss', 'no_routing_defect']);
 const FEEDBACK_ACTIONS = new Set(['inspect_escape', 'diagnose_selected_connections']);
 
-export interface OutcomeOptions { candidate?: unknown; geometryFeedback?: boolean; scopedSkippedOpens?: boolean }
+export interface OutcomeOptions { candidate?: unknown; geometryFeedback?: boolean; scopedSkippedOpens?: boolean; measure?: Measure | null }
 
 /** Counts plus a diagnostic handoff. A clean routing-step count may advance the schedule. A failed route may advance only
  *  when its driver has attributed a concrete bounded geometry update. This is routing-search evidence, never a configured
@@ -103,11 +103,13 @@ export class RouteOutcome {
   readonly candidate: unknown;
   readonly routingStepClean: boolean;
   readonly stop: boolean;
+  readonly measure: Measure | null;
 
-  constructor(counts: number[], decision: Dict, { candidate = null, geometryFeedback = false, scopedSkippedOpens = false }: OutcomeOptions = {}) {
+  constructor(counts: number[], decision: Dict, { candidate = null, geometryFeedback = false, scopedSkippedOpens = false, measure = null }: OutcomeOptions = {}) {
     this.counts = [...counts];
     this.decision = deepCopy(decision);
     this.candidate = deepCopy(candidate);
+    this.measure = measure;
     const kinds = new Set(((decision.findings ?? []) as Dict[]).map(row => row.classification));
     const only = (kind: string) => kinds.size === 1 && kinds.has(kind);
     const known = decision.status === 'diagnosed' && kinds.size > 0 && [...kinds].every(kind => KNOWN_FINDINGS.has(kind as string));
@@ -278,7 +280,7 @@ class Loop {
     t.runs = Array.isArray(outcome) ? [...outcome] : [...outcome.counts];
     t.unrouted = smallest(t.runs);
     t.passed = t.unrouted <= this.target;
-    if (outcome instanceof Measured && outcome.measure) {
+    if (!Array.isArray(outcome) && outcome.measure) {
       t.measure = outcome.measure;
       t.box_sum = boxSum(q, pose);
     }

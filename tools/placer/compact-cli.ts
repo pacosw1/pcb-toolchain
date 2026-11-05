@@ -22,16 +22,16 @@ import { iotrouteBin } from '../lib/iotroute-bin.ts';
 import { snapshot } from '../lib/pcb-sources.ts';
 import { Float, PyError, jsonDumps, number } from '../lib/py-compat.mjs';
 import type { Dict } from '../lib/py-values.ts';
-import { retryKey } from '../lib/route-decision.ts';
+import { observeRoute, retryKey } from '../lib/route-decision.ts';
 import { generateEscapeForCandidate } from '../lib/route-decision-escape.ts';
 import { scatter } from './bench.ts';
 import { writeBoard } from './board-io.ts';
 import { LENGTH_PATIENCE, Measured, RANKS, RouteOutcome, runJson, runLoop, TimeoutExpired, deepCopy, type Num, type Pose, type Rank, type RouteResult, type SearchResult } from './compact.ts';
-import { NO_RESULT, bestLine, routeHandoff } from './compact-route.ts';
+import { NO_RESULT, bestLine, routeHandoff, stepOutcome } from './compact-route.ts';
 import { checkProblem, reviewServices, type ReviewedProblem } from './engineering-problem.ts';
 import { GateWorkspace, boardId, measure, measureKey, routeStep, routerCpu } from './iotroute-step.ts';
 import { parseOptions, parseParams, shellWords, type Parsed, type Spec } from './options.ts';
-import { candidateReport, compareCandidates, identity, type AuditCandidate } from './placement-audit.ts';
+import { boundedFeedback, candidateReport, compareCandidates, identity, type AuditCandidate } from './placement-audit.ts';
 import { better, copySidecars, run as runRepair, type Candidate } from './repair.ts';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -42,7 +42,7 @@ const RESTRICTED_BY_SEEDED_POLICY = ['p_swap', 'p_rot', 'global', 'rotate', 'leg
 const SPEC: Spec = {
   '--board-dir': 'text', '--outdir': 'text', '--size': 'words', '--search': 'text', '--s0': 'float', '--budget': 'float', '--target': 'int',
   '--workers': 'int', '--epochs': 'int', '--steps': 'int', '--seed': 'int', '--retain-candidates': 'int', '--seeded-policy': 'switch',
-  '--max-displacement': 'float', '--param': 'words', '--scatter': 'int',
+  '--max-displacement': 'float', '--feedback-max-mm': 'float', '--congestion-feedback': 'switch', '--param': 'words', '--scatter': 'int',
   '--snapshots': 'text', '--router': 'text', '--passes': 'int', '--repair': 'switch', '--repair-mode': 'text', '--repair-rank': 'text', '--repair-routes': 'int',
   '--repair-per-round': 'int', '--read-args': 'text', '--diagnostic-budget': 'float', '--route-args': 'text', '--virtual-first': 'switch',
   '--max-routes': 'int', '--k-cap': 'float', '--shrink': 'float', '--tol': 'float', '--rank': 'text', '--length-patience': 'int',
@@ -51,7 +51,7 @@ const SPEC: Spec = {
 export interface Args {
   prob: string; board: string; board_dir: string; outdir: string; size: [number, number]; search: string; s0: number; budget: number; target: number;
   workers: number; epochs: number; steps: number; seed: number; retain_candidates: number; seeded_policy: boolean; max_displacement: number | null;
-  param: string[]; scatter: number | null; snapshots: string | null; router: string;
+  feedback_max_mm: number; congestion_feedback: boolean; param: string[]; scatter: number | null; snapshots: string | null; router: string;
   passes: number; repair: boolean; repair_mode: string; repair_rank: string; repair_routes: number; repair_per_round: number; read_args: string;
   diagnostic_budget: number | null; route_args: string; virtual_first: boolean; max_routes: number; k_cap: number | null; shrink: number; tol: number;
   rank: Rank | null; length_patience: number;
@@ -73,7 +73,7 @@ export function parseArgs(argv: readonly string[]): Args {
     search: choice(a, '--search', ['local', 'remote'], 'local'), s0: a.float('--s0') ?? 4, budget: a.float('--budget') ?? 2700, target: a.int('--target') ?? 0,
     workers: a.int('--workers') ?? defaultCpu(), epochs: a.int('--epochs') ?? 20, steps: a.int('--steps') ?? 12000, seed: a.int('--seed') ?? 1,
     retain_candidates: a.int('--retain-candidates') ?? 1, seeded_policy: a.has('--seeded-policy'), max_displacement: a.float('--max-displacement') ?? null,
-    param: [...a.words('--param')], scatter: a.int('--scatter') ?? null,
+    feedback_max_mm: a.float('--feedback-max-mm') ?? 1, congestion_feedback: a.has('--congestion-feedback'), param: [...a.words('--param')], scatter: a.int('--scatter') ?? null,
     snapshots: a.text('--snapshots') ?? null, router: choice(a, '--router', ['iotroute'], 'iotroute'),
     passes: a.int('--passes') ?? 40, repair: a.has('--repair'), repair_mode: choice(a, '--repair-mode', ['reuse', 'local', 'full'], 'reuse'),
     repair_rank: choice(a, '--repair-rank', ['term', 'hot'], 'term'), repair_routes: a.int('--repair-routes') ?? 8, repair_per_round: a.int('--repair-per-round') ?? 4,
@@ -89,6 +89,7 @@ export function settle(a: Args): void {
   if (!Number.isFinite(a.budget) || a.budget <= 0) throw new Error('budget must be positive');
   if (a.diagnostic_budget !== null && (!Number.isFinite(a.diagnostic_budget) || a.diagnostic_budget < 0)) throw new Error('diagnostic budget must be finite and nonnegative');
   if (a.retain_candidates < 1 || a.retain_candidates > 8) throw new Error('retain-candidates must be 1..8');
+  if (!Number.isFinite(a.feedback_max_mm) || a.feedback_max_mm < 0 || a.feedback_max_mm > 2) throw new Error('feedback cap must be finite, 0..2mm');
   if (a.max_displacement !== null && (!Number.isFinite(a.max_displacement) || a.max_displacement <= 0)) throw new Error('displacement cap must be finite and positive');
   if (a.seeded_policy) {
     const params = parseParams(a.param);
@@ -122,6 +123,7 @@ export class Compaction {
   deadline: number;
   readonly events: string;
   readonly name: string;
+  readonly escapeHint: Record<string, number> = {};
   readonly attempts = new Map<string, Dict>();
   readonly gate: GateWorkspace;
   readonly iotrouteBoard: string;
@@ -207,6 +209,17 @@ export class Compaction {
     return result;
   }
 
+  private withEscapeHints(q: ReviewedProblem): ReviewedProblem {
+    if (!Object.keys(this.escapeHint).length) return q;
+    const copy = deepCopy(q);
+    for (const unit of copy.units) {
+      const names = new Set([...(unit.refs ?? []), unit.name, (unit.ref as string | undefined) ?? '']);
+      const extra = Math.max(0, ...[...names].map(ref => this.escapeHint[ref] ?? 0));
+      if (extra) for (const rect of unit.rects) rect[4] = new Float(number(rect[4] as Num) + extra);
+    }
+    return copy;
+  }
+
   /** Virtual input changes the outline: it runs only as a bounded diagnostic. */
   private bindDiagnosticBudget(q: ReviewedProblem): void {
     const { size, diagnostic_budget: budget } = this.a;
@@ -238,7 +251,8 @@ export class Compaction {
     }
     this.bindDiagnosticBudget(given);
     const d = this.stepDir(n);
-    const q = this.a.scatter === null ? given : scatter(given, this.a.scatter) as ReviewedProblem;
+    const hinted = this.withEscapeHints(given);
+    const q = this.a.scatter === null ? hinted : scatter(hinted, this.a.scatter) as ReviewedProblem;
     const prob = join(d, 'prob.json');
     writeFileSync(prob, jsonDumps(q));
     await this.runSearch(prob, d, q.engineering ? sha256File(prob) : null);
@@ -280,7 +294,7 @@ export class Compaction {
       return { stdout: `${stdout ?? ''}${stderr ?? ''}` };
     };
     // Plain counts: a failed step bisects the halo, it does not stop the loop.
-    let counts = await routeStep(path, d, board, gate, a.passes, shellWords(a.route_args), run);
+    let counts = await routeStep(path, d, board, gate, a.passes, [...shellWords(a.route_args), '--diagnose'], run);
     let measured = measure(d);
     if (a.repair && counts[0]! > 0 && counts[0]! < NO_RESULT) {
       const rec = await runRepair(board, path, join(d, 'route-0', basename(path)), join(d, 'repair'), {
@@ -297,6 +311,20 @@ export class Compaction {
       }
     }
     return new Measured(counts, measured);
+  }
+
+  /** A step that did not pass: its evidence may stop the run, keep a step whose opens are only plane nets, and teach the next search. */
+  private decide(path: string, d: string, attemptKey: string, measured: Measured): RouteResult {
+    const work = join(d, 'route-0', `${basename(path)}.iotroute`), evidence = join(d, 'route-decision.json');
+    const decision = { ...observeRoute(path, work), evidence, attempt_sha256: attemptKey } as Dict;
+    console.log(`ROUTE_DECISION ${String(decision.action)}; ${String(decision.reason)}; evidence=${evidence}`);
+    const [hints, feedback] = boundedFeedback(this.problem, work, sha256File(path), this.escapeHint, this.a.feedback_max_mm, this.a.congestion_feedback);
+    for (const key of Object.keys(this.escapeHint)) delete this.escapeHint[key];
+    Object.assign(this.escapeHint, hints);
+    atomicJson(join(d, 'feedback.json'), feedback);
+    const result = stepOutcome(measured, decision, work);
+    atomicJson(evidence, result instanceof RouteOutcome ? result.decision : decision);
+    return result;
   }
 
   /** An identical failed source, rules and effort stops here: no blind reroute. */
@@ -329,8 +357,9 @@ export class Compaction {
     if (unchanged) return unchanged;
     this.routesDone += 1;
     const result = await this.routeIotroute(path, n, d);
-    if (result.counts.some(count => count !== 0)) this.attempts.set(attemptKey, { evidence: join(d, 'route-0/score.json') });
-    return result;
+    if (result.counts.every(count => count === 0)) return result;
+    this.attempts.set(attemptKey, { evidence: join(d, 'route-0/score.json') });
+    return this.decide(path, d, attemptKey, result);
   }
 }
 

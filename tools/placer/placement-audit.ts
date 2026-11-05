@@ -14,6 +14,10 @@ export { identity };
 export const digest = sha256File;
 
 const FIXED_TOLERANCE_MM = 1e-6;
+// The soft spacing a route may teach the next search, as it was on the Fastroute step: never a rule, only placement room.
+const CONGESTION_HINT_MM = 0.25;
+const UPDATE_LIMIT_MM = 0.5;
+const MAX_REFS_PER_UPDATE = 8;
 const SEEDED_FORBIDDEN = ['p_swap', 'p_rot', 'global', 'rotate', 'legal_rotate'];
 
 export interface Movement { unit: string; refs: string[]; fixed: boolean; displacement_mm: Float; turn_delta: Num }
@@ -97,6 +101,56 @@ export function candidateReport(pr: Problem, candidate: AuditCandidate, params: 
     legalizer_movement: before === null ? null : movement(pr, candidate.pose, before), illegal: faults, qualified: false,
     constraints: constraints(pr, candidate, rows),
   };
+}
+
+function routeRecord(work: string): Dict | null {
+  try {
+    return readPyJson<Dict>(joinPath(work, 'result.json'));
+  } catch (error) {
+    if (caught(error, 'OSError', 'ValueError')) return null;
+    throw error;
+  }
+}
+
+function hintSources(work: string, congestion: boolean): { additions: Map<string, number>; sources: Record<string, string> } {
+  const additions = new Map<string, number>();
+  const sources: Record<string, string> = {};
+  const escape = joinPath(work, 'pin-escape.json');
+  if (isFile(escape)) {
+    for (const [ref, value] of Object.entries(readPyJson<Dict>(escape).halo_hint ?? {})) additions.set(ref, number(value));
+    sources[escape] = digest(escape);
+  }
+  const triage = joinPath(work, 'open-triage.json');
+  if (congestion && isFile(triage)) {
+    for (const connection of (readPyJson<Dict>(triage).connections ?? []) as Dict[]) {
+      if (connection.class !== 'ENCLOSED') continue;
+      for (const ref of (connection.blocking_parts ?? []) as string[]) additions.set(ref, Math.max(additions.get(ref) ?? 0, CONGESTION_HINT_MM));
+    }
+    sources[triage] = digest(triage);
+  }
+  return { additions, sources };
+}
+
+/** Only a finished run of this exact candidate, with no DRC error, may teach hints; `work` is its OUT.iotroute. Gives [hints, evidence]. */
+export function boundedFeedback(pr: Problem, work: string, boardSha256: string, prior: Hints, capMm: number, congestion = false): [Hints, Dict] {
+  const record = routeRecord(work);
+  if (record === null) return [{ ...prior }, { accepted: false, reason: 'missing complete attributed evidence' }];
+  const routed = record.board_file as string | undefined;
+  if (record.input_sha256 !== boardSha256 || !['PASS', 'FAIL'].includes(record.status as string) || record.drc_errors !== 0 || !routed || !isFile(routed) || record.board_sha256 !== digest(routed)) {
+    return [{ ...prior }, { accepted: false, reason: 'candidate mismatch, incomplete or native errors' }];
+  }
+  const allowed = new Set(pr.units.filter(unit => !truthy(unit.fixed)).flatMap(unit => unit.refs ?? [unit.name]));
+  const { additions, sources } = hintSources(work, congestion);
+  const out = { ...prior };
+  for (const ref of (sorted([...additions.keys()].filter(key => allowed.has(key))) as string[]).slice(0, MAX_REFS_PER_UPDATE)) {
+    const value = additions.get(ref) as number;
+    if (Number.isFinite(value) && value > 0) out[ref] = Math.min(capMm, (out[ref] ?? 0) + Math.min(value, UPDATE_LIMIT_MM));
+  }
+  const hints = Object.fromEntries(Object.entries(out).map(([ref, value]) => [ref, new Float(value)]));
+  return [out, {
+    accepted: true, source_board_sha256: boardSha256, sources, cap_mm: new Float(capMm), per_update_limit_mm: UPDATE_LIMIT_MM,
+    max_refs_per_update: MAX_REFS_PER_UPDATE, hints, note: 'bounded soft spacing; never relaxes native constraints or moves fixed units',
+  }];
 }
 
 /** Sort key of a candidate: a legal, complete one first, however low the score of another. */

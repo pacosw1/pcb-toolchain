@@ -8,7 +8,7 @@ import { test, type TestContext } from 'node:test';
 import { parseTyped } from '../lib/json-file.ts';
 import { Float, jsonDumps, number } from '../lib/py-compat.mjs';
 import { withHalos, type Problem } from './compact.ts';
-import { candidateKey, candidateReport, compareCandidates, digest, identity, movement, type AuditCandidate } from './placement-audit.ts';
+import { boundedFeedback, candidateKey, candidateReport, compareCandidates, digest, identity, movement, type AuditCandidate } from './placement-audit.ts';
 
 type Row = Record<string, any>;
 
@@ -19,6 +19,31 @@ const problem = (): Problem => ({
 });
 const candidate = (values: Partial<AuditCandidate>): AuditCandidate => ({ pose: [], cost: 0, illegal: [], components: {}, ...values });
 const report = (...args: Parameters<typeof candidateReport>) => candidateReport(...args) as Row;
+
+test('feedback is scoped to this candidate, bounded, and never teaches fixed units or a router miss', (t: TestContext) => {
+  const d = mkdtempSync(join(tmpdir(), 'placement-audit-'));
+  t.after(() => rmSync(d, { recursive: true, force: true }));
+  const routed = join(d, 'routed.kicad_pcb');
+  writeFileSync(routed, 'result');
+  const record = (values: Row = {}) => writeFileSync(join(d, 'result.json'), JSON.stringify({ status: 'FAIL', drc_errors: 0, input_sha256: 'source', board_file: routed, board_sha256: digest(routed), ...values }));
+  record();
+  writeFileSync(join(d, 'pin-escape.json'), JSON.stringify({ halo_hint: { J1: 10, R1: 10, UNKNOWN: 10 } }));
+  let hints: Record<string, number> = {};
+  let evidence: Row = {};
+  for (let i = 0; i < 10; i++) [hints, evidence] = boundedFeedback(problem(), d, 'source', hints, 1);
+  assert.deepEqual(hints, { R1: 1 });
+  assert.equal(evidence.accepted, true);
+  assert.equal(boundedFeedback(problem(), d, 'other', {}, 1)[1].accepted, false);
+  record({ drc_errors: 1 });
+  assert.equal(boundedFeedback(problem(), d, 'source', {}, 1)[1].accepted, false);
+  record({ status: 'ERROR' });
+  assert.equal(boundedFeedback(problem(), d, 'source', {}, 1)[1].accepted, false);
+  record();
+  rmSync(join(d, 'pin-escape.json'));
+  writeFileSync(join(d, 'open-triage.json'), JSON.stringify({ connections: [{ class: 'ROUTER_MISS', blocking_parts: ['R1'] }, { class: 'ENCLOSED', blocking_parts: ['R1', 'J1'] }] }));
+  assert.deepEqual(boundedFeedback(problem(), d, 'source', {}, 1)[0], {});
+  assert.deepEqual(boundedFeedback(problem(), d, 'source', {}, 1, true)[0], { R1: 0.25 });
+});
 
 test('identity hashes the text of json.dumps(sort_keys=True)', () => {
   // The expected text is what CPython writes for these values: default separators, sorted keys, float repr, ensure_ascii.

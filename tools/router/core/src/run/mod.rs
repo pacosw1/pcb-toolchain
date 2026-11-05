@@ -1,6 +1,6 @@
 //! `iotroute run BOARD OUT.kicad_pcb [--pcb IN.kicad_pcb] [--iters N] [--max-time S] [--lock-from SRC.kicad_pcb]
 //!               [--reuse PREV.kicad_pcb [--reuse-fallback full|none]] [--seed N] [--stall-passes N] [--checkpoint]
-//!               [--congestion] [--return-exempt] [--tools DIR] [--json]`
+//!               [--congestion] [--return-exempt] [--diagnose] [--tools DIR] [--json]`
 //!
 //! One entry point for the in-house router: model, route, board copy, KiCad DRC (tools/router/DESIGN.md). BOARD is the board ID
 //! (hardware-design/boards/<BOARD>) or that folder. The input is --pcb, else the project board; it is only read. --tools is the
@@ -13,6 +13,7 @@
 //!     the route, the `widths` rules of the board's route.json and `iotroute write`, whose board must keep all copper of its input.
 //!  3. OUT gets the board and the project files of the input; the input's .kicad_pro goes back if a save rewrote it.
 //!  4. KiCad DRC with --schematic-parity on OUT, on the saved fill.
+//!  5. --diagnose: when OUT has opens, why, for the compaction (diagnose.rs). It never changes the verdict.
 //!
 //! --reuse PREV (partial re-route, DESIGN.md 5c): the seed is PREV's route, the parts moved since and the nets PREV left open or in
 //! a DRC error. --reuse-fallback full (default): when the reuse result is not PASS, the full route of the same input runs too and
@@ -22,6 +23,7 @@
 //! PASS|FAIL <drc errors> <unconnected> <parity> <tracks> <vias> <seconds>, or ERROR <seconds> <cause> when a step did not
 //! complete; with --json the record on the next line. The record is also in OUT.iotroute/result.json. Exit: 0 PASS, 1 FAIL, 2 no
 //! verdict.
+mod diagnose;
 pub mod guard;
 pub mod lock;
 pub mod measure;
@@ -46,7 +48,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use steps::{Steps, last_line, sources_sha};
 
-const USAGE: &str = "usage: iotroute run BOARD OUT.kicad_pcb [--pcb IN] [--iters N] [--max-time S] [--lock-from SRC] [--reuse PREV] [--reuse-fallback full|none] [--congestion] [--return-exempt] [--seed N] [--stall-passes N] [--checkpoint] [--tools DIR] [--json]";
+const USAGE: &str = "usage: iotroute run BOARD OUT.kicad_pcb [--pcb IN] [--iters N] [--max-time S] [--lock-from SRC] [--reuse PREV] [--reuse-fallback full|none] [--congestion] [--return-exempt] [--diagnose] [--seed N] [--stall-passes N] [--checkpoint] [--tools DIR] [--json]";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Args {
@@ -60,6 +62,7 @@ pub struct Args {
     pub reuse_fallback: String,
     pub congestion: bool,
     pub return_exempt: bool,
+    pub diagnose: bool,
     pub seed: Option<u64>,
     pub stall_passes: Option<u64>,
     pub checkpoint: bool,
@@ -75,7 +78,7 @@ fn value<T: std::str::FromStr>(flag: &str, text: Option<&String>) -> Result<T, S
 pub fn parse_args(argv: &[String]) -> Result<Args, String> {
     let mut a = Args {
         board: String::new(), out: String::new(), pcb: None, iters: 80, max_time: None, lock_from: None, reuse: None, reuse_fallback: "full".to_string(),
-        congestion: std::env::var("IOTROUTE_CONGESTION").is_ok_and(|v| v == "1"), return_exempt: false, seed: None, stall_passes: None, checkpoint: false, tools: PathBuf::from("tools"), json: false,
+        congestion: std::env::var("IOTROUTE_CONGESTION").is_ok_and(|v| v == "1"), return_exempt: false, diagnose: false, seed: None, stall_passes: None, checkpoint: false, tools: PathBuf::from("tools"), json: false,
     };
     let mut positional = Vec::new();
     let mut it = argv.iter();
@@ -92,6 +95,7 @@ pub fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--tools" => a.tools = PathBuf::from(value::<String>(arg, it.next())?),
             "--congestion" => a.congestion = true,
             "--return-exempt" => a.return_exempt = true,
+            "--diagnose" => a.diagnose = true,
             "--checkpoint" => a.checkpoint = true,
             "--json" => a.json = true,
             other if other.starts_with('-') => return Err(format!("{other} is not an option")),
@@ -331,6 +335,7 @@ fn run(a: &Args, rec: &mut Record, out: &Path, work: &Path) -> Result<(), String
     rec.stages.model = Some(ModelStage { line: text.trim().lines().last().unwrap_or("").to_string(), sha256: sha_file(&model)? });
 
     let widths = widths::board_widths(&folder, &model)?;
+    let (diagnose_in, diagnose_model) = (route_in.clone(), model.clone());
     let context = Run { a, steps, model, route_in, src, folder, widths };
     let (stages, restored) = match &a.reuse {
         Some(previous) => context.reuse_attempts(previous, out, work, rec)?,
@@ -341,7 +346,11 @@ fn run(a: &Args, rec: &mut Record, out: &Path, work: &Path) -> Result<(), String
     if a.reuse.is_none() {
         rec.stages.ref_gate = Some(context.ref_gate(out, work)?);
     }
-    finish(rec, out, work).map(|_| ())
+    let drc = finish(rec, out, work)?;
+    if a.diagnose && drc.unconnected > 0 {
+        rec.diagnosis = Some(diagnose::diagnose(&diagnose_in, out, work, &diagnose_model));
+    }
+    Ok(())
 }
 
 /// The record with sorted keys, as the JSON line.
