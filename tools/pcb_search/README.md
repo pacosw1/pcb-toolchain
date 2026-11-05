@@ -22,7 +22,7 @@ cargo run --release --manifest-path tools/pcb_search/core/Cargo.toml -- MODE ...
 
 Exit codes: 0 complete, 3 stuck, 2 refused. A partial route is STUCK. PASS means complete in this model, never native acceptance.
 
-- `pyjson.rs` writes JSON text exactly as Python does, so hashes equal `contracts.py` `fingerprint`. Anything that hashes JSON
+- `pyjson.rs` writes JSON text exactly as Python does, so hashes match the former `contracts.py` `fingerprint`. Anything that hashes JSON
   belongs here or calls `pcbsearch fingerprint`: JavaScript's `JSON.parse` loses the difference between `1` and `1.0`.
 - `decimal.rs` holds Python's `Decimal` text rules. Normalized numbers get hashed, and `100` normalizes to `1E+2`.
 - `native/` is text work on KiCad 10 files, on the raw reader `tools/router/core/src/kicad/raw.rs`. Hashes cover the undecoded
@@ -32,12 +32,10 @@ Exit codes: 0 complete, 3 stuck, 2 refused. A partial route is STUCK. PASS means
 - `tests/fixtures/*-golden.json` are records written by the Python implementation. They cannot be regenerated once it is gone,
   so a difference there is a change of behaviour.
 
-## The Python that is left
+## Migrated helpers
 
-These stay until their callers, which are top-level tools, have moved:
-
-- `contracts.py`: `fingerprint`.
-- `block_bindings.py`: `child` and `footprints`. `native_placement.py`: `footprint_signature`. TS: `lib/native-board.ts`.
+The Python helpers have been removed. Use `pcbsearch fingerprint` for JSON fingerprints;
+`tools/lib/native-board.ts` provides `footprints` and `footprintSignature` for TypeScript callers.
 
 ## Removed
 

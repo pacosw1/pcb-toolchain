@@ -7,7 +7,7 @@ For source-bound datasets and small advisory models, see [PCB-ML.md](PCB-ML.md).
 `tools/pcb` is the repository entrypoint for board context, builds, explicit
 placement/routing changes, checks, fabrication candidates and block evidence.
 It uses existing native tools and gate targets. Requirements: macOS/Linux,
-Python 3.9+, Node (CI uses 22), Git and KiCad 10.0.6. Windows is unsupported.
+Node 22.6+, Git, KiCad 10.0.6 and the prebuilt Rust tools. Remaining legacy scripts and upstream checks need Python on the worker. Windows is unsupported.
 No CLI installation or service is needed. `tools/pcb doctor --follow` diagnoses
 the required environment with bounded probes and live output.
 

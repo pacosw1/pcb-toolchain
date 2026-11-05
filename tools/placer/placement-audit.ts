@@ -1,5 +1,4 @@
-// Attributed placement diagnostics; no automatic score tuning or board promotion. placement_audit.py stays for
-// tools/placement_outcomes.py, which still takes spearman and archive from it.
+// Attributed placement diagnostics; no automatic score tuning or board promotion.
 //
 // identity is the hash of Python's json.dumps(sort_keys=True). A whole float only keeps its .0 as a Float, so what is
 // hashed must come from readTyped, or from compact.ts, which keeps those types. JSON.parse would make 1.0 an int: other bytes.

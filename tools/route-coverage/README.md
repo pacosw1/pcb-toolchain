@@ -47,8 +47,8 @@ Synthetic native receipts test validation only; no actual KiCad run is implied.
 `node --experimental-strip-types tools/route_decision.ts` supplies `diagnose`,
 `repair`, and `escape`. The implementation is split across
 `tools/lib/route-decision*.ts`; typed board reads use `lib/board-json.ts`, edits
-use `lib/board-edit.ts`, and hashes use the existing shared helpers. Python
-`route_decision.py` remains for its unported engineering/operation callers.
+use `lib/board-edit.ts`, and hashes use the existing shared helpers. The former
+`route_decision.py` entry point has been removed.
 
 The TypeScript port removes the obsolete compute-status/compute-calibrate
 branches (their pcb_engine package has been deleted), Python/pcbnew/NumPy

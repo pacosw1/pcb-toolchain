@@ -57,7 +57,7 @@ function main(argv: string[]): number {
     noRoom += result.noRoom;
     if (result.noRoom) {
       noRoomNets.push(net);
-      console.log(`NOROOM ${net}`);   // tools/cell_route.py re-routes these nets (repair loop)
+      console.log(`NOROOM ${net}`);   // Retained repair-loop status for nets without a stitch site.
     }
   }
   console.log(`stitch_all: ${nets.length} nets, ${added} ground vias added, ${noRoom} signal vias with no room`);

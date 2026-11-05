@@ -31,12 +31,12 @@ for 5 minutes (the job goes on), 75 if the job reached its queue bound and never
 `attempts/N/out/job.log` of earlier attempts.
 
 The client ships what `remote.sh` ships, plus the evidence files named by `tools/driver-edges.json` and
-`tools/edge-rates.json`, because `si_planes.py` refuses to run without them.
+`tools/edge-rates.json`, because `si_planes.ts` refuses to run without them.
 
 Router jobs need two more inputs that the image does not have, given with `--in`: a Linux `iotroute` for `--bin`, and
 a git checkout of kicad-happy at the commit pinned in `tools/lib/env.mjs`, as a tar unpacked by the job, with
 `KICAD_HAPPY_DIR` set. `tools/router/route-dispatch.mjs` does this for `pcb route --router iotroute`; its header has the
-rule for a daemon failure partway. The placer needs the numpy wheel, as in `tools/placer/README.md`.
+rule for a daemon failure partway. The placer uses the native `iotplace` executable, as in `tools/placer/README.md`.
 
 ## States
 
@@ -181,7 +181,7 @@ one CPU reading, because a job takes time to load the host; the budget bounds th
 
 | Env | Default | Source |
 | --- | --- | --- |
-| `JOBD_BIND` | 127.0.0.1 | 127.0.0.1, ::1 or 100.64.0.0/10 only, the rule of `tools/route_live.py`; anything else refuses to start |
+| `JOBD_BIND` | 127.0.0.1 | 127.0.0.1, ::1 or 100.64.0.0/10 only, enforced by `src/config.ts`; anything else refuses to start |
 | `JOBD_PORT` | 8793 | Free on the host |
 | `JOBD_TOKEN_FILE`, `JOBD_DATA_DIR` | required | At least 32 characters: 128 bits as hex |
 | `JOBD_BLOB_KEEP_DAYS` | `30` | days a cached job file stays after its last use |
