@@ -39,6 +39,9 @@ pub struct Problem {
     pub route_rules: Option<RouteRules>,
     #[serde(default)]
     pub cu_nets: BTreeMap<String, (String, String)>,
+    /// Caps tied to their IC by the reader: [cap, IC, gap].
+    #[serde(default)]
+    pub decaps: Option<Vec<(String, String, f64)>>,
     /// Reviewed engineering contract as read: only `bind_engineering` turns it into `contract`.
     #[serde(default)]
     engineering: Value,

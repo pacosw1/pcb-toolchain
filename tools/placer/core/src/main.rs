@@ -9,6 +9,7 @@
 //!   iotplace write BOARD.kicad_pcb --board-json DOC.json PROB.json POSE.json -o OUT.kicad_pcb    a pose as a board (write/cli.rs)
 //!   iotplace pinswap BOARD.kicad_pcb --board-json DOC.json PINMAP.json -o PROPOSAL.json [flags]    a pin swap proposal (pinswap/cli.rs)
 //!   iotplace strip BOARD.kicad_pcb OUT.kicad_pcb [--keep=NET,...] [--only NETS.txt]    a board copy without tracks (write/strip.rs)
+//!   iotplace repair-proposals PROB.json --failures FAILS.json [-o OUT.json] [flags]    ranked repair moves (repair/cli.rs)
 //!
 //! run: exit 3 when no candidate is legal. Last lines: a cost line per candidate and the speed.
 
@@ -193,6 +194,7 @@ fn dispatch(argv: &[String]) -> iotplace::Result<ExitCode> {
         "write" => return iotplace::write::cli::run(rest).map(|()| ExitCode::SUCCESS),
         "pinswap" => return iotplace::pinswap::cli::run(rest).map(|()| ExitCode::SUCCESS),
         "strip" => return iotplace::write::strip::run(rest).map(|()| ExitCode::SUCCESS),
+        "repair-proposals" => return iotplace::repair::cli::run(rest).map(|()| ExitCode::SUCCESS),
         _ => {}
     }
     let args = parse_args(rest)?;

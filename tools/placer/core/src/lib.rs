@@ -22,6 +22,7 @@ pub mod params;
 pub mod pinswap;
 pub mod problem;
 pub mod read;
+pub mod repair;
 pub mod rows;
 pub mod rudy;
 pub mod search;

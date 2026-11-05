@@ -17,7 +17,7 @@ use crate::layout::Layout;
 use crate::model::Model;
 use crate::numeric::{median, pairwise};
 use crate::params::Params;
-use crate::problem::{CuPad, Problem, Unit};
+use crate::problem::{CuPad, Place, Problem, Unit};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// mm: a pad touches a side of the pad box within this distance (footprint rounding).
@@ -117,6 +117,8 @@ struct RawPin {
     toe: Point,
     net: i64,
     need: f64,
+    row: usize,
+    reference: String,
 }
 
 fn touched_side(b: Rect, outer: Rect) -> Option<Side> {
@@ -136,13 +138,13 @@ fn touched_side(b: Rect, outer: Rect) -> Option<Side> {
     touch.first().copied()
 }
 
-fn part_pins(rows: &[(usize, TaggedRect)], leaving: &BTreeSet<i64>) -> Vec<RawPin> {
+fn part_pins(reference: &str, rows: &[(usize, TaggedRect)], leaving: &BTreeSet<i64>) -> Vec<RawPin> {
     let Some(outer) = Rect::bounding(rows.iter().map(|(_, b)| b.rect)) else { return Vec::new() };
-    let pin = |(_, b): &(usize, TaggedRect)| {
+    let pin = |(row, b): &(usize, TaggedRect)| {
         let side = touched_side(b.rect, outer)?;
         let net = b.value as i64;
         let need = (net > 0 && leaving.contains(&net)) as i64 as f64;
-        Some(RawPin { side, toe: side.toe(b.rect), net, need })
+        Some(RawPin { side, toe: side.toe(b.rect), net, need, row: *row, reference: reference.to_string() })
     };
     rows.iter().filter_map(pin).collect()
 }
@@ -162,6 +164,9 @@ pub struct UnitPins {
     sides: usize,
     net: Vec<i64>,
     pub need: Vec<f64>,
+    /// The copper row of each pin, and the reference of its part.
+    pub rows: Vec<usize>,
+    pub refs: Vec<String>,
     part: Vec<i64>,
     corridors: Vec<Corridor>,
     /// Toe per pin, for the 4 turns.
@@ -240,7 +245,7 @@ fn unit_pins(i: usize, u: &Unit, rl: Rules, owners: &BTreeMap<i64, BTreeSet<(usi
         let leaving: BTreeSet<i64> =
             owners.iter().filter(|(_, own)| own.iter().any(|o| *o != (i, r))).map(|(q, _)| *q).collect();
         let part = u.refs.iter().position(|x| x == r).map_or(-1, |n| n as i64);
-        let raw = part_pins(&by_ref[r], &leaving);
+        let raw = part_pins(r, &by_ref[r], &leaving);
         let pitch: BTreeMap<Side, f64> = Side::ALL.iter().map(|&s| (s, side_pitch(&raw, s))).collect();
         pins.extend(raw.into_iter().map(|q| {
             let corridor = Corridor::new(rl, pitch[&q.side]);
@@ -275,6 +280,8 @@ fn build_unit_pins(pins: Vec<(i64, RawPin, Corridor)>) -> UnitPins {
         sides: side_ids.len(),
         net: pins.iter().map(|(_, q, _)| q.net).collect(),
         need: pins.iter().map(|(_, q, _)| q.need).collect(),
+        rows: pins.iter().map(|(_, q, _)| q.row).collect(),
+        refs: pins.iter().map(|(_, q, _)| q.reference.clone()).collect(),
         part: pins.iter().map(|(part, _, _)| *part).collect(),
         radius_max: pins.iter().map(|(_, _, c)| c.rv.max(c.rt)).fold(0.0, f64::max),
         samples: pins.iter().map(|(_, _, c)| c.samples.len()).max().unwrap_or(0),
@@ -343,17 +350,38 @@ impl UnitPins {
         })
     }
 
+    fn is_own(&self, unit: usize, pin: usize, q: &Pad) -> bool {
+        q.unit == unit && q.part == self.part[pin]
+    }
+
+    fn is_partner(&self, pin: usize, q: &Pad) -> bool {
+        q.net == self.net[pin] as f64 && self.net[pin] > 0
+    }
+
+    /// True for copper that does not block this pin: its own part, and the partner pads of its net.
+    pub fn passes(&self, unit: usize, pin: usize, q: &Pad) -> bool {
+        self.is_own(unit, pin, q) || self.is_partner(pin, q)
+    }
+
     /// blocked(pin) in [0, 1].
-    fn blocked(&self, unit: usize, pin: usize, at: (f64, f64, u8), copper: &[Pad]) -> f64 {
-        let net = self.net[pin];
-        let is_own = |q: &Pad| q.unit == unit && q.part == self.part[pin];
-        let is_partner = |q: &Pad| q.net == net as f64 && net > 0;
-        let flagged: Vec<(&Pad, bool)> = copper.iter().map(|q| (q, is_own(q) || is_partner(q))).collect();
+    pub fn blocked(&self, unit: usize, pin: usize, at: (f64, f64, u8), copper: &[Pad]) -> f64 {
+        let flagged: Vec<(&Pad, bool)> = copper.iter().map(|q| (q, self.passes(unit, pin, q))).collect();
         let rt = self.corridors[pin].rt;
         let per_direction = (0..3).map(|d| (-self.room(pin, d, at, &flagged) / rt).clamp(0.0, 1.0));
         let b = per_direction.fold(f64::INFINITY, f64::min);
-        let partners: Vec<&Pad> = copper.iter().filter(|q| is_partner(q) && !is_own(q)).collect();
+        let partners: Vec<&Pad> = copper.iter().filter(|q| self.is_partner(pin, q) && !self.is_own(unit, pin, q)).collect();
         if self.has_near_partner(pin, at, &partners) { 0.0 } else { b }
+    }
+
+    /// Smallest room from the corridors of a pin, in every direction, to a box (negative = inside).
+    pub fn gap_to(&self, pin: usize, at: (f64, f64, u8), rect: Rect) -> f64 {
+        let pad = Pad { rect, net: 0.0, unit: usize::MAX, part: -1 };
+        (0..3).map(|d| self.room(pin, d, at, &[(&pad, false)])).fold(f64::INFINITY, f64::min)
+    }
+
+    /// The track radius of a pin's corridor.
+    pub fn track_radius(&self, pin: usize) -> f64 {
+        self.corridors[pin].rt
     }
 
     /// (deficit, hard sides) from blocked per pin.
@@ -375,10 +403,10 @@ impl UnitPins {
 }
 
 /// One copper pad near a pin.
-struct Pad {
-    rect: Rect,
+pub struct Pad {
+    pub rect: Rect,
     net: f64,
-    unit: usize,
+    pub unit: usize,
     part: i64,
 }
 
@@ -407,6 +435,16 @@ fn copper_near(model: &Model, esc: &EscapeModel, at: &Layout, b: Rect) -> Vec<Pa
             unit: j,
             part: *part,
         }));
+    }
+    pads
+}
+
+/// Every copper pad of a pose. The search asks only the units near a pin; a whole-board question starts here.
+pub fn all_copper(model: &Model, esc: &EscapeModel, pose: &[Place]) -> Vec<Pad> {
+    let mut pads = Vec::new();
+    for (j, &(x, y, r)) in pose.iter().enumerate() {
+        let rows = model.units[j].copper[(r % 4) as usize].iter().zip(&esc.part_of_row[j]);
+        pads.extend(rows.map(|(q, part)| Pad { rect: q.rect.shifted(x, y), net: q.value, unit: j, part: *part }));
     }
     pads
 }
