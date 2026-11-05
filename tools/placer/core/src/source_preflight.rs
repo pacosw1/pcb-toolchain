@@ -188,3 +188,63 @@ mod manifest_tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 }
+
+/// Validate rating and applicability envelopes. Source attribution, native asset
+/// identity and budget coverage remain separate, mandatory verification steps.
+fn check_rating_ranges(manifest: &Value) -> crate::Result<()> {
+    fn interval(v: &Value) -> crate::Result<(&str, f64, f64)> {
+        let unit = v.get("unit").and_then(Value::as_str).filter(|s| !s.is_empty()).ok_or("rating unit missing")?;
+        let min = v.get("min").and_then(Value::as_f64).ok_or("rating minimum missing")?;
+        let max = v.get("max").and_then(Value::as_f64).ok_or("rating maximum missing")?;
+        if !min.is_finite() || !max.is_finite() || min > max || !v.get("source").is_some_and(Value::is_object) {
+            return Err("invalid sourced rating interval".into());
+        }
+        Ok((unit, min, max))
+    }
+    fn contains(limit: &Value, required: &Value) -> crate::Result<()> {
+        let (a, lo, hi) = interval(limit)?;
+        let (b, need_lo, need_hi) = interval(required)?;
+        if a != b || need_lo < lo || need_hi > hi { return Err("required interval exceeds rating".into()); }
+        Ok(())
+    }
+    let parts = manifest.get("parts").and_then(Value::as_array).filter(|a| !a.is_empty()).ok_or("reviewed parts missing")?;
+    for part in parts {
+        if part.get("profile").is_some() { return Err("profile expansion not yet supported".into()); }
+        let ratings = part.get("ratings").and_then(Value::as_array).filter(|a| !a.is_empty()).ok_or("reviewed ratings missing")?;
+        let mut ids = std::collections::BTreeSet::new();
+        for rating in ratings {
+            let id = rating.get("id").and_then(Value::as_str).filter(|s| !s.is_empty()).ok_or("rating ID missing")?;
+            if !ids.insert(id) || rating.get("quantity").and_then(Value::as_str).is_none_or(|s| s.is_empty()) {
+                return Err("duplicate rating or missing quantity".into());
+            }
+            contains(&rating["limit"], &rating["required"])?;
+            let conditions = rating.get("conditions").and_then(Value::as_array).ok_or("rating conditions missing")?;
+            for condition in conditions {
+                if condition.get("quantity").and_then(Value::as_str).is_none_or(|s| s.is_empty()) {
+                    return Err("rating condition quantity missing".into());
+                }
+                contains(&condition["valid"], &condition["required"])?;
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod rating_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn sourced_rating_and_conditions_cover_use() {
+        let interval = |min, max, unit| json!({"min":min,"max":max,"unit":unit,"source":{}});
+        let mut m = json!({"parts":[{"ratings":[{"id":"voltage","quantity":"V",
+            "limit":interval(0, 12, "V"),"required":interval(4, 5, "V"),
+            "conditions":[{"quantity":"temperature","valid":interval(-40,85,"C"),"required":interval(0,60,"C")}]}]}]});
+        assert!(check_rating_ranges(&m).is_ok());
+        m["parts"][0]["ratings"][0]["conditions"][0]["required"]["max"] = json!(90);
+        assert!(check_rating_ranges(&m).is_err());
+        m["parts"][0]["ratings"][0]["conditions"][0]["required"]["max"] = json!(60);
+        m["parts"][0]["ratings"][0]["required"]["unit"] = json!("A");
+        assert!(check_rating_ranges(&m).is_err());
+    }
+}
