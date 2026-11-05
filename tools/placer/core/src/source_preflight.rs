@@ -667,3 +667,64 @@ mod evidence_source_tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 }
+
+/// Verify a PDF page with an independently pinned `pdfinfo` executable. This
+/// checks the page exists; it does not interpret the content as an engineering fact.
+pub fn verify_pdf_page(document: &Path, page: u64, tool: &Path, tool_sha256: &str) -> crate::Result<()> {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+    if page == 0 || !tool.is_absolute() || tool_sha256.len() != 64 ||
+        !tool_sha256.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+        return Err("invalid PDF inspection arguments".into());
+    }
+    let hash = |path:&Path| -> crate::Result<String> { Ok(format!("{:x}",Sha256::digest(std::fs::read(path)?))) };
+    if hash(tool)? != tool_sha256 { return Err("PDF inspection tool identity changed".into()); }
+    let before = hash(document)?;
+    let mut child = Command::new(tool).arg(document).env("LC_ALL","C").stdout(Stdio::piped()).stderr(Stdio::null()).spawn()?;
+    let stdout = child.stdout.take().ok_or("PDF inspector output missing")?;
+    let reader = std::thread::spawn(move || {
+        let mut bytes=Vec::new();
+        stdout.take(65537).read_to_end(&mut bytes).map(|_|bytes)
+    });
+    let end=Instant::now()+Duration::from_secs(30);
+    let status = loop {
+        if let Some(status)=child.try_wait()? {break status;}
+        if Instant::now()>=end {let _=child.kill(); let _=child.wait(); return Err("PDF inspection timed out".into());}
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let output=reader.join().map_err(|_| "PDF inspector output failed")??;
+    if !status.success() || output.len()>65536 || hash(tool)? != tool_sha256 || hash(document)? != before {
+        return Err("PDF inspection failed or source changed".into());
+    }
+    let text=std::str::from_utf8(&output)?;
+    let lines = text.lines().filter_map(|line| line.strip_prefix("Pages:")).collect::<Vec<_>>();
+    if lines.len()!=1 {return Err("PDF page count missing or ambiguous".into());}
+    let count: u64=lines[0].trim().parse()?;
+    if count==0 || page>count {return Err("PDF source page does not exist".into());}
+    Ok(())
+}
+
+#[cfg(test)]
+mod pdf_page_tests {
+    use super::*;
+    #[test]
+    fn pinned_pdf_inspector_checks_actual_pages() {
+        let Ok(tool) = std::env::var("IOTPLACE_TEST_PDFINFO") else { return };
+        let tool = Path::new(&tool).canonicalize().unwrap();
+        let tool_hash = format!("{:x}",Sha256::digest(std::fs::read(&tool).unwrap()));
+        let path=std::env::temp_dir().join(format!("iotplace-page-{}.pdf",std::process::id()));
+        let objects=["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>"];
+        let mut pdf=String::from("%PDF-1.4\n");
+        let mut offsets=vec![0];
+        for (i,object) in objects.iter().enumerate() {offsets.push(pdf.len());pdf.push_str(&format!("{} 0 obj\n{}\nendobj\n",i+1,object));}
+        let xref=pdf.len();pdf.push_str("xref\n0 4\n0000000000 65535 f \n");
+        for offset in offsets.iter().skip(1) {pdf.push_str(&format!("{offset:010} 00000 n \n"));}
+        pdf.push_str(&format!("trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n"));
+        std::fs::write(&path,pdf).unwrap();
+        assert!(verify_pdf_page(&path,1,&tool,&tool_hash).is_ok());
+        assert!(verify_pdf_page(&path,2,&tool,&tool_hash).is_err());
+        assert!(verify_pdf_page(&path,1,&tool,&"0".repeat(64)).is_err());
+        std::fs::remove_file(path).unwrap();
+    }
+}
