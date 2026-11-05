@@ -200,6 +200,26 @@ test('a registered sibling revision may use the owning board source tree', () =>
   assert.deepEqual(operationCommand(root, 'X-B', 'build'), ['sh', 'hardware-design/boards/X/build-revision.sh']);
 });
 
+test('a sibling project must match its registered gate, owner and exact project', () => {
+  put('tools/build-base-b.sh', '#!/bin/sh\n');
+  put('hardware-design/boards/BASE-PWR-B/gate.json', JSON.stringify({ project: '../BASE-PWR/cad/BASE-PWR-B/BASE-PWR-B', stage: 'G3', checks: { erc: true }, pipeline: 'tools/build-base-b.sh' }));
+  const registry = (directory: string, gate: string, project: string | null) => put('hardware-design/registry/boards.json', JSON.stringify({ boards: [{ id: 'BASE-PWR', directory, revisions: [{ revision: 'B', gate, project }] }] }));
+  assert.throws(() => pipeline(root, 'BASE-PWR-B'), /not bound to the registered owner and project/);
+  for (const [directory, gate, project] of [
+    ['OTHER', 'BASE-PWR-B', 'cad/BASE-PWR-B/BASE-PWR-B'],
+    ['BASE-PWR', 'OTHER', 'cad/BASE-PWR-B/BASE-PWR-B'],
+    ['BASE-PWR', 'BASE-PWR-B', 'cad/OTHER/OTHER'],
+    ['BASE-PWR', 'BASE-PWR-B', null],
+    ['BASE-PWR', 'BASE-PWR-B', '/hardware-design/boards/BASE-PWR/cad/BASE-PWR-B/BASE-PWR-B'],
+  ] as const) {
+    registry(directory, gate, project);
+    assert.throws(() => pipeline(root, 'BASE-PWR-B'), /not bound to the registered owner and project/);
+  }
+  // This matches the real registry/gate relationship, without reading or changing its CAD.
+  registry('BASE-PWR', 'BASE-PWR-B', 'cad/BASE-PWR-B/BASE-PWR-B');
+  assert.deepEqual(operationCommand(root, 'BASE-PWR-B', 'build'), ['sh', 'tools/build-base-b.sh']);
+});
+
 test('pythonNative prefers KICAD_PYTHON, then KICAD_PY', () => {
   assert.equal(pythonNative({ KICAD_PYTHON: 'a', KICAD_PY: 'b' }), 'a');
   assert.equal(pythonNative({ KICAD_PY: 'b' }), 'b');

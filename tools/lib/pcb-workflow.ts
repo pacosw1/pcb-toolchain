@@ -85,6 +85,17 @@ export function pipeline(root: string, board: string): string | null {
   const { project } = boardConfig(resolvedRoot, board);
   const boardRoot = joinPath(resolvedRoot, BOARDS);
   const owner = relativeTo(project, boardRoot).split('/')[0]!;
+  if (owner !== board) {
+    const revision = registryRevision(resolvedRoot, board);
+    const registeredProject = get(revision, 'project');
+    const ownerRoot = joinPath(boardRoot, owner);
+    if (get(revision, 'directory') !== owner || typeof registeredProject !== 'string' || !registeredProject
+        || registeredProject.startsWith('/') || registeredProject.includes('\\') || registeredProject.includes('\0')
+        || !isInside(resolvePath(joinPath(ownerRoot, registeredProject)), ownerRoot)
+        || resolvePath(joinPath(ownerRoot, registeredProject)) !== project) {
+      throw new PyError('ValueError', `build pipeline sibling revision is not bound to the registered owner and project: ${board}`);
+    }
+  }
   const selected = resolvePath(joinPath(resolvedRoot, name));
   if (!isInside(selected, joinPath(resolvedRoot, 'tools')) && !isInside(selected, joinPath(boardRoot, owner))) {
     throw new PyError('ValueError', `build pipeline is outside the board's candidate snapshot: ${name}`);
