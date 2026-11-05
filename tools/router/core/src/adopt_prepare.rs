@@ -2,10 +2,12 @@
 //!
 //! This module NEVER replaces, restores, or otherwise writes the target. A
 //! prepared journal is not adoption authorization. Integration still needs
-//! owned verification, alias coordination with older clients, xattr policy,
+//! owned verification, alias coordination with older clients, xattr replay and file-flag policy,
 //! durable commit/receipt recovery and tests at every crash boundary.
 use crate::sha256::sha256;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::ffi::CString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
@@ -57,6 +59,90 @@ fn same_identity(a: &fs::Metadata, b: &fs::Metadata) -> bool {
         && a.mtime_nsec() == b.mtime_nsec()
         && a.ctime() == b.ctime()
         && a.ctime_nsec() == b.ctime_nsec()
+}
+
+#[cfg(target_os = "linux")]
+unsafe fn list_xattrs(fd: libc::c_int, buffer: *mut libc::c_char, length: usize) -> libc::ssize_t {
+    unsafe { libc::flistxattr(fd, buffer, length) }
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn list_xattrs(fd: libc::c_int, buffer: *mut libc::c_char, length: usize) -> libc::ssize_t {
+    unsafe { libc::flistxattr(fd, buffer, length, 0) }
+}
+
+#[cfg(target_os = "linux")]
+unsafe fn get_xattr(
+    fd: libc::c_int,
+    name: *const libc::c_char,
+    buffer: *mut libc::c_void,
+    length: usize,
+) -> libc::ssize_t {
+    unsafe { libc::fgetxattr(fd, name, buffer, length) }
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn get_xattr(
+    fd: libc::c_int,
+    name: *const libc::c_char,
+    buffer: *mut libc::c_void,
+    length: usize,
+) -> libc::ssize_t {
+    unsafe { libc::fgetxattr(fd, name, buffer, length, 0, 0) }
+}
+
+/// Capture all readable xattrs, including ACL xattrs on Linux. Unsupported,
+/// unreadable, malformed or concurrently changing attributes fail closed.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn extended_attributes(file: &File) -> io::Result<BTreeMap<String, Vec<u8>>> {
+    let fd = file.as_raw_fd();
+    let size = unsafe { list_xattrs(fd, std::ptr::null_mut(), 0) };
+    if size < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let mut names = vec![0u8; size as usize];
+    if size > 0 {
+        let count = unsafe { list_xattrs(fd, names.as_mut_ptr().cast(), names.len()) };
+        if count < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if count as usize != names.len() || names.last() != Some(&0) {
+            return Err(invalid("extended attribute list changed"));
+        }
+    }
+    let mut values = BTreeMap::new();
+    for raw in names.split(|b| *b == 0).filter(|name| !name.is_empty()) {
+        let name =
+            std::str::from_utf8(raw).map_err(|_| invalid("unsupported extended attribute name"))?;
+        let c_name = CString::new(raw).map_err(|_| invalid("invalid extended attribute name"))?;
+        let length = unsafe { get_xattr(fd, c_name.as_ptr(), std::ptr::null_mut(), 0) };
+        if length < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut value = vec![0u8; length as usize];
+        if length > 0 {
+            let count =
+                unsafe { get_xattr(fd, c_name.as_ptr(), value.as_mut_ptr().cast(), value.len()) };
+            if count < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if count as usize != value.len() {
+                return Err(invalid("extended attribute changed"));
+            }
+        }
+        if values.insert(name.to_owned(), value).is_some() {
+            return Err(invalid("duplicate extended attribute"));
+        }
+    }
+    Ok(values)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn extended_attributes(_file: &File) -> io::Result<BTreeMap<String, Vec<u8>>> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "extended attribute inspection unsupported",
+    ))
 }
 
 /// Exclusive flock is retained on a file owned by this process until Drop.
@@ -118,8 +204,9 @@ impl LockedTarget {
     }
 
     /// Read through the admitted descriptor and reject detected changes or replacement.
-    fn snapshot(&self) -> io::Result<(Vec<u8>, fs::Metadata)> {
+    fn snapshot(&self) -> io::Result<(Vec<u8>, fs::Metadata, BTreeMap<String, Vec<u8>>)> {
         let before = self.target_file.metadata()?;
+        let attributes = extended_attributes(&self.target_file)?;
         let mut bytes = Vec::new();
         let mut offset = 0;
         let mut chunk = [0; 64 * 1024];
@@ -136,6 +223,9 @@ impl LockedTarget {
             return Err(invalid("target grew during snapshot"));
         }
         let after = self.target_file.metadata()?;
+        if extended_attributes(&self.target_file)? != attributes {
+            return Err(invalid("extended attributes changed during snapshot"));
+        }
         let path = fs::symlink_metadata(&self.target)?;
         if !same_identity(&before, &after)
             || !same_identity(&after, &path)
@@ -145,7 +235,7 @@ impl LockedTarget {
         }
         // Keep the lock live through every snapshot and journal operation.
         let _ = self.lock_file.metadata()?;
-        Ok((bytes, after))
+        Ok((bytes, after, attributes))
     }
 }
 
@@ -163,6 +253,7 @@ pub struct PreparedIntent {
     pub mode: u32,
     pub uid: u32,
     pub gid: u32,
+    pub xattrs: BTreeMap<String, Vec<u8>>,
 }
 
 fn is_sha256(value: &str) -> bool {
@@ -190,8 +281,11 @@ fn create_synced(path: &Path, bytes: &[u8]) -> io::Result<()> {
     file.sync_all()
 }
 
-const PREPARED_MARKER: &[u8] = b"iot-lab.adopt.prepared.v1\n";
 const STAGED_MARKER: &[u8] = b"iot-lab.adopt.staged.v1\n";
+
+fn prepared_marker(intent: &[u8]) -> Vec<u8> {
+    format!("iot-lab.adopt.prepared.v1:{}\n", sha256(intent)).into_bytes()
+}
 
 fn require_marker(path: &Path, expected: &[u8]) -> io::Result<()> {
     let mut data = Vec::new();
@@ -233,7 +327,7 @@ fn prepare_inner(
     if !valid_id(id) || !is_sha256(expected_original_sha256) || !is_sha256(candidate_sha256) {
         return Err(invalid("invalid journal id or digest"));
     }
-    let (bytes, metadata) = locked.snapshot()?;
+    let (bytes, metadata, xattrs) = locked.snapshot()?;
     if sha256(&bytes) != expected_original_sha256 {
         return Err(invalid("target does not match the expected source digest"));
     }
@@ -249,6 +343,7 @@ fn prepare_inner(
         mode: metadata.mode(),
         uid: metadata.uid(),
         gid: metadata.gid(),
+        xattrs,
     };
     let dir = root.join(id);
     fs::DirBuilder::new().mode(0o700).create(&dir)?;
@@ -260,7 +355,7 @@ fn prepare_inner(
     before_marker()?;
     // Payloads and their directory entries were synced before this marker can
     // appear. A crash before that point leaves an explicitly incomplete run.
-    create_synced(&dir.join("prepared.ok"), PREPARED_MARKER)?;
+    create_synced(&dir.join("prepared.ok"), &prepared_marker(&encoded))?;
     File::open(&dir)?.sync_all()?;
     Ok(dir)
 }
@@ -268,9 +363,9 @@ fn prepare_inner(
 /// Validate the prepared evidence only; no recovery, rename or target writes.
 pub fn inspect_prepared(path: &Path) -> io::Result<PreparedIntent> {
     let dir = private_dir(path)?;
-    require_marker(&dir.join("prepared.ok"), PREPARED_MARKER)?;
     let mut intent_bytes = Vec::new();
     open_regular(&dir.join("intent.json"))?.read_to_end(&mut intent_bytes)?;
+    require_marker(&dir.join("prepared.ok"), &prepared_marker(&intent_bytes))?;
     let intent: PreparedIntent = serde_json::from_slice(&intent_bytes)
         .map_err(|_| invalid("invalid or incomplete intent"))?;
     if intent.schema != "iot-lab.adopt.prepare.v1"
@@ -292,7 +387,7 @@ pub fn inspect_prepared(path: &Path) -> io::Result<PreparedIntent> {
 
 /// Byte observations only. None of these variants authorizes a restore or
 /// completion: a future recovery owner must also validate its durable phase,
-/// external-writer exclusion and full metadata, including xattrs and ACLs.
+/// external-writer exclusion and full metadata, including platform file flags.
 #[derive(Debug, PartialEq, Eq)]
 pub enum RecoveryObservation {
     OriginalBytes,
@@ -308,8 +403,12 @@ pub fn observe_recovery(path: &Path, locked: &LockedTarget) -> io::Result<Recove
     if intent.target != locked.target || intent.lock_key != locked.key {
         return Err(invalid("journal belongs to a different target"));
     }
-    let (bytes, meta) = locked.snapshot()?;
-    if meta.mode() != intent.mode || meta.uid() != intent.uid || meta.gid() != intent.gid {
+    let (bytes, meta, xattrs) = locked.snapshot()?;
+    if meta.mode() != intent.mode
+        || meta.uid() != intent.uid
+        || meta.gid() != intent.gid
+        || xattrs != intent.xattrs
+    {
         return Ok(RecoveryObservation::Conflict);
     }
     let actual = sha256(&bytes);
@@ -676,6 +775,33 @@ mod tests {
     }
 
     #[test]
+    fn prepared_marker_binds_exact_intent_bytes() {
+        let temp = Scratch::new();
+        let locks = temp.dir("locks");
+        let journals = temp.dir("journals");
+        let target = temp.0.join("board");
+        fs::write(&target, b"original").unwrap();
+        let lock = LockedTarget::acquire(&locks, &target).unwrap();
+        let dir = prepare(
+            &journals,
+            "run",
+            &lock,
+            &sha256(b"original"),
+            &sha256(b"candidate"),
+        )
+        .unwrap();
+        let mut intent = inspect_prepared(&dir).unwrap();
+        intent.candidate_sha256 = sha256(b"different");
+        fs::write(
+            dir.join("intent.json"),
+            serde_json::to_vec(&intent).unwrap(),
+        )
+        .unwrap();
+        assert!(inspect_prepared(&dir).is_err());
+        assert_eq!(fs::read(target).unwrap(), b"original");
+    }
+
+    #[test]
     fn crash_boundary_shapes_without_complete_intent_fail_closed() {
         let temp = Scratch::new();
         let journals = temp.dir("journals");
@@ -813,6 +939,74 @@ mod tests {
             observe_recovery(&journal, &lock1).unwrap(),
             RecoveryObservation::Conflict
         );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn recovery_detects_changed_extended_attributes() {
+        let temp = Scratch::new();
+        let locks = temp.dir("locks");
+        let journals = temp.dir("journals");
+        let target = temp.0.join("board");
+        fs::write(&target, b"original").unwrap();
+        let file = open_regular(&target).unwrap();
+        #[cfg(target_os = "linux")]
+        let name = CString::new("user.iot-lab-test").unwrap();
+        #[cfg(target_os = "macos")]
+        let name = CString::new("com.iot-lab-test").unwrap();
+        let set = |value: &[u8]| {
+            #[cfg(target_os = "linux")]
+            let result = unsafe {
+                libc::fsetxattr(
+                    file.as_raw_fd(),
+                    name.as_ptr(),
+                    value.as_ptr().cast(),
+                    value.len(),
+                    0,
+                )
+            };
+            #[cfg(target_os = "macos")]
+            let result = unsafe {
+                libc::fsetxattr(
+                    file.as_raw_fd(),
+                    name.as_ptr(),
+                    value.as_ptr().cast(),
+                    value.len(),
+                    0,
+                    0,
+                )
+            };
+            if result != 0 {
+                panic!(
+                    "setting test attribute failed: {}",
+                    io::Error::last_os_error()
+                );
+            }
+        };
+        set(b"before");
+        let lock = LockedTarget::acquire(&locks, &target).unwrap();
+        let dir = prepare(
+            &journals,
+            "run",
+            &lock,
+            &sha256(b"original"),
+            &sha256(b"candidate"),
+        )
+        .unwrap();
+        assert_eq!(
+            inspect_prepared(&dir)
+                .unwrap()
+                .xattrs
+                .get(name.to_str().unwrap())
+                .unwrap(),
+            b"before"
+        );
+        set(b"after");
+        assert_eq!(
+            observe_recovery(&dir, &lock).unwrap(),
+            RecoveryObservation::Conflict
+        );
+        assert_eq!(fs::read(target).unwrap(), b"original");
     }
 
     #[test]
