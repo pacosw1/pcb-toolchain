@@ -30,7 +30,6 @@ tools/board3d/metadata.test.mjs
 tools/board_3d.sh
 tools/board_frame.ts
 tools/board_labels.ts
-tools/board_route_rules.py
 tools/board_uuids.ts
 tools/brand_mark.ts
 tools/build-bom-verified.mjs
