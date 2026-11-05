@@ -88,7 +88,7 @@ test('route a candidate, compare it and adopt it', async () => {
     .click()
   await win.getByRole('button', { name: 'Route…' }).click()
   const form = win.getByRole('form', { name: 'Route policy' })
-  await form.getByLabel('Passes').fill('7')
+  await form.getByLabel('Iterations').fill('7')
   await form.getByRole('button', { name: 'Start route' }).click()
   await expect(win.getByRole('status', { name: 'Candidate run state' })).toHaveText(
     /route · passed/,
@@ -97,7 +97,7 @@ test('route a candidate, compare it and adopt it', async () => {
   const review = win.getByRole('region', { name: 'Run review' })
   await expect(review).toContainText(`.gate/cli/run-route-`)
   await expect(review).toContainText(REL)
-  // The policy the engine wrote (every board net, 7 passes) went to the CLI as --spec.
+  // The policy the engine wrote (7 iterations) went to the CLI as --spec.
   const metrics = win.getByRole('table', { name: 'Candidate metrics' })
   await expect(metrics).toContainText('unconnected')
   await expect(metrics).toContainText('(no check)')

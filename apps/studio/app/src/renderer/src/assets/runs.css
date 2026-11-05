@@ -66,6 +66,7 @@
 }
 
 .routeform input[type='number'],
+.routeform select,
 .routeform textarea {
   font: inherit;
   color: var(--text);

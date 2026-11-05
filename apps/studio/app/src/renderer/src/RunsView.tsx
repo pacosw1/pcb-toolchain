@@ -15,60 +15,34 @@ function metricColor(k: string, v: number | undefined): string {
 }
 
 function RouteForm({
-  layers,
   disabled,
   onStart
 }: {
-  layers: string[]
   disabled: boolean
   onStart: (policy: Record<string, unknown>) => void
 }): React.JSX.Element {
-  const [on, setOn] = useState<string[]>(() => layers.filter((l) => l === 'F.Cu' || l === 'B.Cu'))
-  const [nets, setNets] = useState('')
-  const [passes, setPasses] = useState(40)
+  const [iters, setIters] = useState(80)
   const [timeout, setTimeout_] = useState(300)
-  const [threads, setThreads] = useState(1)
-  const toggle = (l: string): void =>
-    setOn((cur) => (cur.includes(l) ? cur.filter((x) => x !== l) : [...cur, l]))
-  const netList = nets
-    .split(/[\n,]/)
-    .map((s) => s.trim())
-    .filter(Boolean)
+  const [keep, setKeep] = useState('lock-nets')
   return (
     <form
       className="panel routeform"
       aria-label="Route policy"
       onSubmit={(e) => {
         e.preventDefault()
-        onStart({ layers: on, nets: netList, passes, timeout_s: timeout, threads })
+        onStart({ iters, timeout_s: timeout, keep })
       }}
     >
-      <h2>Route (Fastroute)</h2>
-      <fieldset>
-        <legend>Layers</legend>
-        {layers.map((l) => (
-          <label key={l} className="check">
-            <input type="checkbox" checked={on.includes(l)} onChange={() => toggle(l)} /> {l}
-          </label>
-        ))}
-      </fieldset>
-      <label>
-        <span>Nets (optional; empty = every net on the board)</span>
-        <textarea
-          rows={3}
-          value={nets}
-          placeholder="/SPI_CLK, /SPI_MOSI"
-          onChange={(e) => setNets(e.target.value)}
-        />
-      </label>
+      <h2>Route (iotroute)</h2>
       <div className="row">
         <label>
-          <span>Passes</span>
+          <span>Iterations</span>
           <input
             type="number"
             min={1}
-            value={passes}
-            onChange={(e) => setPasses(Number(e.target.value))}
+            max={1000}
+            value={iters}
+            onChange={(e) => setIters(Number(e.target.value))}
           />
         </label>
         <label>
@@ -81,22 +55,20 @@ function RouteForm({
           />
         </label>
         <label>
-          <span>Threads</span>
-          <input
-            type="number"
-            min={1}
-            value={threads}
-            onChange={(e) => setThreads(Number(e.target.value))}
-          />
+          <span>Keep</span>
+          <select value={keep} onChange={(e) => setKeep(e.target.value)}>
+            <option value="lock-nets">Pair and crystal copper</option>
+            <option value="all">All copper</option>
+          </select>
         </label>
       </div>
       <p className="hint">
-        Policy iot-lab.routing-policy.v1. The candidate then gets the complete fresh gate; the CLI
+        Policy iot-lab.iotroute-policy.v1. The candidate then gets the complete fresh gate; the CLI
         deadline is the router timeout + 600 s.
       </p>
       <button
         type="submit"
-        disabled={disabled || !on.length || passes < 1 || timeout < 1 || threads < 1}
+        disabled={disabled || iters < 1 || iters > 1000 || timeout < 1}
       >
         Start route
       </button>
@@ -199,7 +171,6 @@ export function RunsView({
   const lastCheck =
     mine.find((r) => (r.op ?? 'check') === 'check' && r.state !== 'running' && r.metrics) ?? null
   const busy = mine.some((r) => r.state === 'running')
-  const layers = current.layers.filter((l) => l.endsWith('.Cu'))
 
   useEffect(() => {
     if (!run || events[run.id]) return
@@ -298,7 +269,6 @@ export function RunsView({
       ) : null}
       {desktop && form && gate ? (
         <RouteForm
-          layers={layers}
           disabled={busy}
           onStart={(policy) => start('op.route', { board: gate, policy })}
         />

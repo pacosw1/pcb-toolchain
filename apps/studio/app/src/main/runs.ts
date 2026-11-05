@@ -2,7 +2,7 @@
 //
 //   check  `tools/pcb check BOARD --fresh|--changed --json`
 //   build  `tools/pcb build BOARD --json`              (the board's own pipeline; unsupported boards fail explicitly)
-//   route  `tools/pcb route BOARD --router fastroute --spec POLICY.json --timeout S --json`
+//   route  `tools/pcb route BOARD --router iotroute --spec POLICY.json --timeout S --json`
 //   adopt  `tools/pcb adopt RUN_ID --json`             (only on a user click; the only step that writes canonical CAD)
 //
 // Each JSON Lines event of the run record is kept and published as a `run.event` notification; the terminal `run.end`
@@ -29,8 +29,8 @@ import { resolveReal } from './project.ts'
 const MAX_EVENTS = 2000
 const MAX_STDERR = 200
 const OPS = ['check', 'build', 'route']
-const POLICY_SCHEMA = 'iot-lab.routing-policy.v1'
-const POLICY_FIELDS = ['schema', 'layers', 'only_nets', 'passes', 'threads', 'timeout_s', 'optimizer', 'max_repairs']
+const POLICY_SCHEMA = 'iot-lab.iotroute-policy.v1'
+const POLICY_FIELDS = ['schema', 'iters', 'max_time_s', 'keep']
 const STORE = '.gate/studio/runs'
 const RECORD_FIELDS = ['id', 'op', 'board', 'mode', 'argv', 'policy', 'started', 'state', 'exit_code', 'run_id', 'end',
                        'adoption', 'stderr'] as const
@@ -39,10 +39,7 @@ type Json = Record<string, unknown>
 export type RunState = RunSummary['state']
 export type RunOp = RunSummary['op']
 
-export interface RoutingPolicy {
-  schema: string, layers: string[], only_nets: string[], passes: number, threads: number, timeout_s: number,
-  optimizer: string, max_repairs: number
-}
+export interface RoutingPolicy { schema: string, iters: number, max_time_s: number, keep: string }
 
 const isObject = (x: unknown): x is Json => x !== null && typeof x === 'object' && !Array.isArray(x)
 const isFile = (p: string): boolean => { try { return fs.statSync(p).isFile() } catch { return false } }
@@ -74,7 +71,7 @@ export class Run {
   id: string
   op: RunOp
   board: string
-  mode: string                      // check: fresh | changed; build: build; route: the router (fastroute)
+  mode: string                      // check: fresh | changed; build: build; route: the router (iotroute)
   argv: string[]
   root: string | null
   policy: RoutingPolicy | null = null
@@ -194,24 +191,14 @@ function checkPolicy(p: RoutingPolicy): void {
   if (!isObject(p) || [...Object.keys(p)].sort().join() !== [...POLICY_FIELDS].sort().join() || p.schema !== POLICY_SCHEMA) {
     throw new Error(`routing policy needs exactly the ${POLICY_SCHEMA} fields ${[...POLICY_FIELDS].sort().join(', ')}`)
   }
-  for (const k of ['passes', 'threads', 'timeout_s'] as const) {
-    if (!Number.isInteger(p[k]) || p[k] <= 0) throw new Error(`${k} must be a positive integer`)
-  }
-  for (const k of ['layers', 'only_nets'] as const) {
-    const v = p[k]
-    if (!Array.isArray(v) || !v.length || v.some(x => typeof x !== 'string' || !x) || new Set(v).size !== v.length) {
-      throw new Error(`${k} needs a nonempty list of distinct names`)
-    }
-  }
-  if (!['off', 'if-routed'].includes(p.optimizer) || p.max_repairs !== 0) throw new Error('optimizer must be off or if-routed, and max_repairs 0')
-  if (p.only_nets.some(n => /[,*?[\]\r\n\0]/.test(n))) throw new Error('only_nets must be exact net names (no commas or wildcards)')
+  if (!Number.isInteger(p.iters) || p.iters < 1 || p.iters > 1000) throw new Error('iters must be an integer 1..1000')
+  if (!Number.isInteger(p.max_time_s) || p.max_time_s <= 0) throw new Error('max_time_s must be a positive integer')
+  if (!['lock-nets', 'all'].includes(p.keep)) throw new Error('keep must be lock-nets or all')
 }
 
-/** The exact iot-lab.routing-policy.v1 object (tools/PCB-CLI.md; tools/lib/pcb-routing-trial.ts validate()). */
-export function routingPolicy(layers: string[], nets: string[], passes: number, timeoutS: number, threads = 1,
-                              optimizer = 'if-routed'): RoutingPolicy {
-  const policy = { schema: POLICY_SCHEMA, layers: [...layers], only_nets: [...nets], passes, threads, timeout_s: timeoutS,
-                   optimizer, max_repairs: 0 }
+/** The exact iot-lab.iotroute-policy.v1 object (tools/PCB-CLI.md; iotroute route-policy). */
+export function routingPolicy(iters: number, maxTimeS: number, keep = 'lock-nets'): RoutingPolicy {
+  const policy = { schema: POLICY_SCHEMA, iters, max_time_s: maxTimeS, keep }
   checkPolicy(policy)
   return policy
 }
@@ -299,10 +286,10 @@ export class Runs {
       if (!policy) throw new Error('route needs a routing policy')
       checkPolicy(policy)
       // The CLI deadline covers the solver and the complete fresh verification of the candidate.
-      const total = timeoutS || Math.max(600, policy.timeout_s + 600)
-      if (total < policy.timeout_s) throw new Error('the total timeout must be at least the router timeout_s')
-      mode = 'fastroute'
-      argv = [tool, 'route', board, '--router', 'fastroute', '--spec', writeSpec(board, policy), '--timeout', String(total), '--json']
+      const total = timeoutS || Math.max(600, policy.max_time_s + 600)
+      if (total < policy.max_time_s) throw new Error('the total timeout must be at least the router max_time_s')
+      mode = 'iotroute'
+      argv = [tool, 'route', board, '--router', 'iotroute', '--spec', writeSpec(board, policy), '--timeout', String(total), '--json']
     }
     const run = new Run(newId(), op as RunOp, board, mode, argv, root)
     if (op === 'route') run.policy = policy!

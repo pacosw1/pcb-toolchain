@@ -4,7 +4,6 @@
 // file-writing tools: replacing a board file stays a user click in the Runs section.
 // Tools: the pcb MCP tools, WebSearch, and Read/Grep/Glob inside the open project only (agentPolicy.ts). The project
 // root comes from main (the engine's project.open result), never from the renderer's context.
-import { availableParallelism } from 'os'
 import { z } from 'zod'
 import { checkToolUse } from './agentPolicy'
 import { toolPath } from './config'
@@ -12,7 +11,7 @@ import type { AgentContext, AgentEvent, BoardParts, Findings, ProjectInfo, RunSu
 import type { EngineSupervisor } from './engine'
 
 // Agent route limits: bound one agent request (the CLI deadline is timeout_s + 600 s of verification).
-export const ROUTE_LIMITS = { passes: 200, timeout_s: 3600, threads: Math.max(1, availableParallelism()) }
+export const ROUTE_LIMITS = { iters: 1000, timeout_s: 3600 }
 const VERIFY_S = 600 // runs.ts: default CLI deadline = router timeout_s + 600 s for the fresh gate
 const GATE_WAIT_MS = 60 * 60_000
 const BUILD_WAIT_MS = 2 * 60 * 60_000
@@ -64,7 +63,7 @@ The user sees a live board view, a parts/BOM table, datasheets and gate runs nex
 Use the pcb tools to answer from real data: never guess part numbers, counts or gate results.
 - pcb.board_parts / pcb.bom read the board; pcb.run_gate runs the real board gate and waits for the verdict;
   pcb.findings lists DRC findings of a run; pcb.show_on_board moves the user's board view to a part or point.
-- pcb.build / pcb.route make an isolated candidate board (tools/pcb build, or Fastroute with an explicit routing policy),
+- pcb.build / pcb.route make an isolated candidate board (tools/pcb build, or iotroute with an explicit routing policy),
   gate it fresh and return the verdict, the candidate path and its gate metrics. They never change the board file.
 - You cannot adopt a candidate or edit CAD files. Adopting replaces the board file; only the user does it, with the
   Adopt button in the Runs section. Tell the user which run to review and why; never claim it is adopted.
@@ -177,12 +176,10 @@ export class AgentHost {
         ),
         tool(
           'route',
-          'Autoroute the board with Fastroute (tools/pcb route --router fastroute, policy iot-lab.routing-policy.v1) into an isolated candidate, gate it fresh and wait for the verdict. Canonical CAD is not changed. Returns the candidate path and its gate metrics.',
+          'Autoroute the board with iotroute (tools/pcb route --router iotroute, policy iot-lab.iotroute-policy.v1) into an isolated candidate, gate it fresh and wait for the verdict. Canonical CAD is not changed. Returns the candidate path and its gate metrics.',
           {
             board: z.string().optional().describe('gate name; default: the open board'),
-            layers: z.array(z.string()).default(['F.Cu', 'B.Cu']).describe('copper layers the router may use'),
-            nets: z.array(z.string()).optional().describe('exact net names; default: every net on the board'),
-            passes: z.number().int().positive().max(ROUTE_LIMITS.passes).default(40),
+            iters: z.number().int().positive().max(ROUTE_LIMITS.iters).default(80).describe('router iterations'),
             timeout_s: z
               .number()
               .int()
@@ -190,14 +187,17 @@ export class AgentHost {
               .max(ROUTE_LIMITS.timeout_s)
               .default(300)
               .describe('router time budget (verification is extra)'),
-            threads: z.number().int().positive().max(ROUTE_LIMITS.threads).default(1)
+            keep: z
+              .enum(['lock-nets', 'all'])
+              .default('lock-nets')
+              .describe('lock-nets: route all but the pair and crystal copper; all: keep all copper, route what is open')
           },
-          async ({ board, layers, nets, passes, timeout_s, threads }) => {
+          async ({ board, iters, timeout_s, keep }) => {
             const gate = board || ctx.gate
             if (!gate) throw new Error('this board revision has no gate')
             const started = (await engine.call('op.route', {
               board: gate,
-              policy: { layers, nets: nets ?? [], passes, timeout_s, threads }
+              policy: { iters, timeout_s, keep }
             })) as RunSummary
             return json(await candidateSummary(started.id, (timeout_s + VERIFY_S + 300) * 1000))
           }
