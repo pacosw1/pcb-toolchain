@@ -70,7 +70,7 @@ tools/fixtures/kicad_happy_sch_sample.json
 tools/fixtures/krt_impedance_sample.json
 tools/fixtures/run-record/report.json
 tools/fixtures/run-record/run.log
-tools/fp_courtyard.py
+tools/fp_courtyard.ts
 tools/freeroute.py
 tools/gate.mjs
 tools/gerber_netcheck.py
@@ -165,6 +165,7 @@ tools/lib/file-lock.test.ts
 tools/lib/file-lock.ts
 tools/lib/fingerprint.ts
 tools/lib/fnmatch.ts
+tools/lib/fp-courtyard.test.ts
 tools/lib/gate-cli.test.mjs
 tools/lib/gate-core.mjs
 tools/lib/gate-core.test.mjs
@@ -312,6 +313,7 @@ tools/lib/si-native.ts
 tools/lib/silk-refs.test.ts
 tools/lib/specctra.ts
 tools/lib/staged-gates.mjs
+tools/lib/step-box.ts
 tools/lib/staged-gates.test.mjs
 tools/lib/timing.test.ts
 tools/lib/timing.ts
@@ -862,7 +864,6 @@ tools/test_board_uuids.py
 tools/test_compact_immutable.py
 tools/test_dsn_skip.py
 tools/test_fastroute_phases.py
-tools/test_fp_courtyard.py
 tools/test_gnd_pad_vias.py
 tools/test_halo_padstack.py
 tools/test_hard_exit.py
