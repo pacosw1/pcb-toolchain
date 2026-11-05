@@ -29,6 +29,8 @@ export function gateNote(root, board, sha) {
   }
   const absent = CORE.filter(key => !metric(metrics[key]));
   if (absent.length) return `gate UNVERIFIED: metrics missing ${absent.join(', ')}`;
+  const invalid = Object.keys(metrics).filter(key => !metric(metrics[key]));
+  if (invalid.length) return `gate UNVERIFIED: invalid metrics ${invalid.join(', ')}`;
   if (result.pcb_sha256 !== sha) return 'gate UNVERIFIED: gate-metrics.json is for another version of the board file (stale)';
   const issues = Object.entries(metrics).filter(([key, value]) => metric(value) && value > 0 && !key.includes('warning'));
   return issues.length ? `gate NOT at target: ${issues.map(([key, value]) => `${key} ${value}`).join(', ')}` : 'gate at target';

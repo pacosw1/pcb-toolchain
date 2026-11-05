@@ -27,6 +27,8 @@ test('gate notes require current board, valid schema and complete numeric metric
   assert.match(gateNote(f.root, 'TEST', 'sha'), /not schema 2/);
   f.put({ schema_version: 2, board: 'TEST', pcb_sha256: 'sha', metrics: { ...core, drc_errors: false } });
   assert.match(gateNote(f.root, 'TEST', 'sha'), /metrics missing drc_errors/);
+  f.put({ schema_version: 2, board: 'TEST', pcb_sha256: 'sha', metrics: { ...core, paths_low: null } });
+  assert.match(gateNote(f.root, 'TEST', 'sha'), /invalid metrics paths_low/);
   f.put({ schema_version: 2, board: 'TEST', pcb_sha256: 'old', metrics: core });
   assert.match(gateNote(f.root, 'TEST', 'sha'), /stale/);
   f.put({ schema_version: 2, board: 'TEST', pcb_sha256: 'sha', metrics: { ...core, drc_errors: 2, drc_warnings: 4 } });
