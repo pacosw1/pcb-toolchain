@@ -1,7 +1,7 @@
 // Compaction driver: each step searches, writes a board copy and routes it. The schedule is compact.ts.
 //
 //   compact-cli.ts PROB.json BOARD.kicad_pcb --board-dir hardware-design/boards/X/cad/X --outdir DIR --size W H
-//       [--s0 4] [--budget 2700] [--routes 3] [--target 0] ...
+//       [--s0 4] [--budget 2700] [--target 0] ...
 //
 // PROB.json comes from `place.ts read` on BOARD (a copy with the signal tracks removed). Each step writes DIR/step-N/ (prob.json,
 // search/, b/<board>.kicad_pcb, route-K/). DIR/run.json holds the problem, every step (s, k, router runs, epoch history, pose)
@@ -22,40 +22,38 @@ import { iotrouteBin } from '../lib/iotroute-bin.ts';
 import { snapshot } from '../lib/pcb-sources.ts';
 import { Float, PyError, jsonDumps, number } from '../lib/py-compat.mjs';
 import type { Dict } from '../lib/py-values.ts';
-import { observeRoute, retryKey } from '../lib/route-decision.ts';
+import { retryKey } from '../lib/route-decision.ts';
 import { generateEscapeForCandidate } from '../lib/route-decision-escape.ts';
 import { scatter } from './bench.ts';
 import { writeBoard } from './board-io.ts';
-import { ImmutableInputFailure, LENGTH_PATIENCE, Measured, RANKS, RouteOutcome, runJson, runLoop, TimeoutExpired, deepCopy, type Num, type Pose, type Rank, type RouteResult, type SearchResult } from './compact.ts';
-import { NO_RESULT, bestLine, parseUnrouted, reportedCounts, routeCommand, routeHandoff } from './compact-route.ts';
+import { LENGTH_PATIENCE, Measured, RANKS, RouteOutcome, runJson, runLoop, TimeoutExpired, deepCopy, type Num, type Pose, type Rank, type RouteResult, type SearchResult } from './compact.ts';
+import { NO_RESULT, bestLine, routeHandoff } from './compact-route.ts';
 import { checkProblem, reviewServices, type ReviewedProblem } from './engineering-problem.ts';
 import { GateWorkspace, boardId, measure, measureKey, routeStep, routerCpu } from './iotroute-step.ts';
-import { boardRows, mandatoryBoard, stepFaults, type Row } from './mandatory-proof.ts';
 import { parseOptions, parseParams, shellWords, type Parsed, type Spec } from './options.ts';
-import { boundedFeedback, candidateReport, compareCandidates, identity, type AuditCandidate } from './placement-audit.ts';
+import { candidateReport, compareCandidates, identity, type AuditCandidate } from './placement-audit.ts';
 import { better, copySidecars, run as runRepair, type Candidate } from './repair.ts';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const NODE = ['node', '--no-warnings', '--experimental-strip-types'];
 const USAGE = 'usage: compact-cli.ts PROB.json BOARD.kicad_pcb --board-dir DIR --outdir DIR --size W H [options]';
-const IMMUTABLE_STOP = 'immutable input mandatory rules';
 const RESTRICTED_BY_SEEDED_POLICY = ['p_swap', 'p_rot', 'global', 'rotate', 'legal_rotate'];
 
 const SPEC: Spec = {
-  '--board-dir': 'text', '--outdir': 'text', '--size': 'words', '--search': 'text', '--s0': 'float', '--budget': 'float', '--target': 'int', '--routes': 'int',
+  '--board-dir': 'text', '--outdir': 'text', '--size': 'words', '--search': 'text', '--s0': 'float', '--budget': 'float', '--target': 'int',
   '--workers': 'int', '--epochs': 'int', '--steps': 'int', '--seed': 'int', '--retain-candidates': 'int', '--seeded-policy': 'switch',
-  '--max-displacement': 'float', '--feedback-max-mm': 'float', '--congestion-feedback': 'switch', '--param': 'words', '--scatter': 'int', '--gnd-vias': 'switch',
+  '--max-displacement': 'float', '--param': 'words', '--scatter': 'int',
   '--snapshots': 'text', '--router': 'text', '--passes': 'int', '--repair': 'switch', '--repair-mode': 'text', '--repair-rank': 'text', '--repair-routes': 'int',
-  '--repair-per-round': 'int', '--read-args': 'text', '--diagnostic-budget': 'float', '--optimizer': 'text', '--route-args': 'text', '--virtual-first': 'switch',
+  '--repair-per-round': 'int', '--read-args': 'text', '--diagnostic-budget': 'float', '--route-args': 'text', '--virtual-first': 'switch',
   '--max-routes': 'int', '--k-cap': 'float', '--shrink': 'float', '--tol': 'float', '--rank': 'text', '--length-patience': 'int',
 };
 
 export interface Args {
-  prob: string; board: string; board_dir: string; outdir: string; size: [number, number]; search: string; s0: number; budget: number; target: number; routes: number;
+  prob: string; board: string; board_dir: string; outdir: string; size: [number, number]; search: string; s0: number; budget: number; target: number;
   workers: number; epochs: number; steps: number; seed: number; retain_candidates: number; seeded_policy: boolean; max_displacement: number | null;
-  feedback_max_mm: number; congestion_feedback: boolean; param: string[]; scatter: number | null; gnd_vias: boolean; snapshots: string | null; router: string;
+  param: string[]; scatter: number | null; snapshots: string | null; router: string;
   passes: number; repair: boolean; repair_mode: string; repair_rank: string; repair_routes: number; repair_per_round: number; read_args: string;
-  diagnostic_budget: number | null; optimizer: string; route_args: string; virtual_first: boolean; max_routes: number; k_cap: number | null; shrink: number; tol: number;
+  diagnostic_budget: number | null; route_args: string; virtual_first: boolean; max_routes: number; k_cap: number | null; shrink: number; tol: number;
   rank: Rank | null; length_patience: number;
 }
 
@@ -73,13 +71,13 @@ export function parseArgs(argv: readonly string[]): Args {
   return {
     prob: prob as string, board: board as string, board_dir: boardDir, outdir, size: size as [number, number],
     search: choice(a, '--search', ['local', 'remote'], 'local'), s0: a.float('--s0') ?? 4, budget: a.float('--budget') ?? 2700, target: a.int('--target') ?? 0,
-    routes: a.int('--routes') ?? 3, workers: a.int('--workers') ?? defaultCpu(), epochs: a.int('--epochs') ?? 20, steps: a.int('--steps') ?? 12000, seed: a.int('--seed') ?? 1,
+    workers: a.int('--workers') ?? defaultCpu(), epochs: a.int('--epochs') ?? 20, steps: a.int('--steps') ?? 12000, seed: a.int('--seed') ?? 1,
     retain_candidates: a.int('--retain-candidates') ?? 1, seeded_policy: a.has('--seeded-policy'), max_displacement: a.float('--max-displacement') ?? null,
-    feedback_max_mm: a.float('--feedback-max-mm') ?? 1, congestion_feedback: a.has('--congestion-feedback'), param: [...a.words('--param')], scatter: a.int('--scatter') ?? null,
-    gnd_vias: a.has('--gnd-vias'), snapshots: a.text('--snapshots') ?? null, router: choice(a, '--router', ['freerouting', 'fastroute', 'iotroute'], 'fastroute'),
+    param: [...a.words('--param')], scatter: a.int('--scatter') ?? null,
+    snapshots: a.text('--snapshots') ?? null, router: choice(a, '--router', ['iotroute'], 'iotroute'),
     passes: a.int('--passes') ?? 40, repair: a.has('--repair'), repair_mode: choice(a, '--repair-mode', ['reuse', 'local', 'full'], 'reuse'),
     repair_rank: choice(a, '--repair-rank', ['term', 'hot'], 'term'), repair_routes: a.int('--repair-routes') ?? 8, repair_per_round: a.int('--repair-per-round') ?? 4,
-    read_args: a.text('--read-args') ?? '', diagnostic_budget: a.float('--diagnostic-budget') ?? null, optimizer: choice(a, '--optimizer', ['always', 'off', 'if-routed'], 'always'),
+    read_args: a.text('--read-args') ?? '', diagnostic_budget: a.float('--diagnostic-budget') ?? null,
     route_args: a.text('--route-args') ?? '', virtual_first: a.has('--virtual-first'), max_routes: a.int('--max-routes') ?? 0, k_cap: a.float('--k-cap') ?? null,
     shrink: a.float('--shrink') ?? 0.85, tol: a.float('--tol') ?? 0.05, rank: a.has('--rank') ? choice(a, '--rank', RANKS, 'halo') as Rank : null,
     length_patience: a.int('--length-patience') ?? LENGTH_PATIENCE,
@@ -91,7 +89,6 @@ export function settle(a: Args): void {
   if (!Number.isFinite(a.budget) || a.budget <= 0) throw new Error('budget must be positive');
   if (a.diagnostic_budget !== null && (!Number.isFinite(a.diagnostic_budget) || a.diagnostic_budget < 0)) throw new Error('diagnostic budget must be finite and nonnegative');
   if (a.retain_candidates < 1 || a.retain_candidates > 8) throw new Error('retain-candidates must be 1..8');
-  if (!Number.isFinite(a.feedback_max_mm) || a.feedback_max_mm < 0 || a.feedback_max_mm > 2) throw new Error('feedback cap must be finite, 0..2mm');
   if (a.max_displacement !== null && (!Number.isFinite(a.max_displacement) || a.max_displacement <= 0)) throw new Error('displacement cap must be finite and positive');
   if (a.seeded_policy) {
     const params = parseParams(a.param);
@@ -102,9 +99,7 @@ export function settle(a: Args): void {
     if (!a.seeded_policy) throw new Error('displacement cap requires seeded policy');
     a.param.push(`max_displacement=${a.max_displacement}`);
   }
-  if (a.repair && a.router !== 'iotroute') throw new Error('--repair needs --router iotroute');
-  a.rank ??= a.router === 'iotroute' ? 'length' : 'halo';
-  if (a.rank === 'length' && a.router !== 'iotroute') throw new Error('--rank length needs --router iotroute (the only router step that measures the routed board)');
+  a.rank ??= 'length';
   if (a.length_patience < 0) throw new Error('--length-patience must be 0 or more');
 }
 
@@ -127,28 +122,23 @@ export class Compaction {
   deadline: number;
   readonly events: string;
   readonly name: string;
-  readonly escapeHint: Record<string, number> = {};
   readonly attempts = new Map<string, Dict>();
-  /** The copper of the input board, for a board with mandatory route rules: an immutable failure must hold it unchanged. */
-  readonly inputRows: Row[] | null;
-  readonly gate: GateWorkspace | null;
-  readonly iotrouteBoard: string | null;
+  readonly gate: GateWorkspace;
+  readonly iotrouteBoard: string;
   routesDone = 0;
   diagnosticStarted = false;
-  rowsOf: (path: string) => Row[] = boardRows;
   services = reviewServices;
   generateEscape: (root: string, board: string, candidate: string, output: string) => unknown = generateEscapeForCandidate;
   checkManifest: typeof checkManifest = checkManifest;
 
-  constructor(a: Args, problem: ReviewedProblem, deadline: number, inputRows: Row[] | null) {
+  constructor(a: Args, problem: ReviewedProblem, deadline: number) {
     this.a = a;
     this.problem = problem;
     this.deadline = deadline;
-    this.inputRows = inputRows;
     this.events = join(a.outdir, 'stages.jsonl');
     this.name = basename(a.board, extname(a.board));
-    this.iotrouteBoard = a.router === 'iotroute' ? boardId(a.board_dir) : null;
-    this.gate = this.iotrouteBoard === null ? null : new GateWorkspace(a.outdir, this.iotrouteBoard, snapshot);
+    this.iotrouteBoard = boardId(a.board_dir);
+    this.gate = new GateWorkspace(a.outdir, this.iotrouteBoard, snapshot);
   }
 
   stepDir(n: number): string {
@@ -160,7 +150,7 @@ export class Compaction {
   private stageCpu(stage: string): number {
     if (stage === 'placement') return this.a.workers;
     if (stage !== 'routing') return defaultCpu();
-    return routeThreads(this.a) ?? (this.a.router === 'iotroute' ? routerCpu(defaultCpu()) : defaultCpu());
+    return routeThreads(this.a) ?? routerCpu(defaultCpu());
   }
 
   /** A command as an admitted, owned stage. Out of time at any point is the schedule's timeout. */
@@ -217,17 +207,6 @@ export class Compaction {
     return result;
   }
 
-  private withEscapeHints(q: ReviewedProblem): ReviewedProblem {
-    if (!Object.keys(this.escapeHint).length) return q;
-    const copy = deepCopy(q);
-    for (const unit of copy.units) {
-      const names = new Set([...(unit.refs ?? []), unit.name, (unit.ref as string | undefined) ?? '']);
-      const extra = Math.max(0, ...[...names].map(ref => this.escapeHint[ref] ?? 0));
-      if (extra) for (const rect of unit.rects) rect[4] = new Float(number(rect[4] as Num) + extra);
-    }
-    return copy;
-  }
-
   /** Virtual input changes the outline: it runs only as a bounded diagnostic. */
   private bindDiagnosticBudget(q: ReviewedProblem): void {
     const { size, diagnostic_budget: budget } = this.a;
@@ -259,8 +238,7 @@ export class Compaction {
     }
     this.bindDiagnosticBudget(given);
     const d = this.stepDir(n);
-    const hinted = this.withEscapeHints(given);
-    const q = this.a.scatter === null ? hinted : scatter(hinted, this.a.scatter) as ReviewedProblem;
+    const q = this.a.scatter === null ? given : scatter(given, this.a.scatter) as ReviewedProblem;
     const prob = join(d, 'prob.json');
     writeFileSync(prob, jsonDumps(q));
     await this.runSearch(prob, d, q.engineering ? sha256File(prob) : null);
@@ -296,12 +274,12 @@ export class Compaction {
 
   private async routeIotroute(path: string, n: number, d: string): Promise<Measured> {
     const { a } = this;
-    const board = this.iotrouteBoard as string, gate = this.gate as GateWorkspace;
+    const board = this.iotrouteBoard, gate = this.gate;
     const run = async (command: string[], stage: string) => {
       const { stdout, stderr } = await this.stage(command, stage, { stdout: 'pipe', stderr: 'pipe' });
       return { stdout: `${stdout ?? ''}${stderr ?? ''}` };
     };
-    // Plain counts, as the Freerouting path: a failed step bisects the halo, it does not stop the loop.
+    // Plain counts: a failed step bisects the halo, it does not stop the loop.
     let counts = await routeStep(path, d, board, gate, a.passes, shellWords(a.route_args), run);
     let measured = measure(d);
     if (a.repair && counts[0]! > 0 && counts[0]! < NO_RESULT) {
@@ -321,78 +299,15 @@ export class Compaction {
     return new Measured(counts, measured);
   }
 
-  /** A router that failed to finish, with the proof if it stopped on copper this run cannot change. */
-  private failedRoute(path: string, d: string, tool_exit: number, attemptKey: string): RouteOutcome {
-    const receiptPath = join(d, 'route-0/mandatory-preflight.json');
-    if (this.inputRows && existsSync(receiptPath)) {
-      let faults: Dict[] = [];
-      let receipt: Dict = {};
-      try {
-        receipt = JSON.parse(readFileSync(receiptPath, 'utf8')) as Dict;
-        faults = stepFaults(receipt, path, this.inputRows, this.rowsOf);
-      } catch (error) {
-        if (!(error instanceof Error)) throw error;   // invalid or stale evidence is an ordinary failed candidate
-      }
-      if (faults.length) throw new ImmutableInputFailure({ ...receipt, faults }, receiptPath);
-    }
-    const evidence = join(d, 'route-decision.json');
-    const decision = { status: 'unverified', action: 'inspect_evidence', qualified: false, evidence, reason: 'Router/import/native check did not complete; inspect route-0.log', tool_exit };
-    const result = routeHandoff([NO_RESULT], decision, d);
-    atomicJson(evidence, result.decision);
-    this.attempts.set(attemptKey, result.decision);
-    return result;
-  }
-
+  /** An identical failed source, rules and effort stops here: no blind reroute. */
   private unchangedAttempt(attemptKey: string, d: string): RouteOutcome | null {
     const prior = this.attempts.get(attemptKey);
     if (!prior) return null;
     const decision = { ...prior, status: 'unchanged_failed_attempt', action: 'inspect_prior_diagnosis', reason: 'Identical source/rules/effort already failed in this loop; no blind reroute', prior_decision: prior.evidence };
     console.log(`STUCK: unchanged failed routing input; inspect ${String(prior.evidence)}`);
-    const result = routeHandoff([NO_RESULT], decision, d);
-    const candidate = prior.retained_candidate ?? null;
-    const retained = new RouteOutcome(result.counts, { ...result.decision, retained_candidate: candidate, next_action: { ...(result.decision.next_action as Dict), candidate } }, { candidate });
-    atomicJson(join(d, 'route-decision.json'), retained.decision);
-    return retained;
-  }
-
-  private async routeFast(path: string, d: string): Promise<RouteOutcome> {
-    const { a } = this;
-    const attemptKey = retryKey(path, { passes: a.passes, optimizer: a.optimizer, route_args: a.route_args, gnd_vias: a.gnd_vias, router: a.router });
-    const unchanged = this.unchangedAttempt(attemptKey, d);
-    if (unchanged) return unchanged;
-    this.routesDone += 1;
-    // Fastroute runs here (many cores, user rule 2026-10-03); it is deterministic, so one run per step.
-    // The count is the KiCad DRC unconnected count of the verified result.
-    const command = [iotrouteBin(), 'fastroute', path, join(d, 'route-0'), '--passes', String(a.passes), '--optimizer', a.optimizer, '--render',
-      ...(a.gnd_vias ? ['--gnd-vias'] : []), ...shellWords(a.route_args)];
-    const { returncode, text } = await this.logged(command, 'routing', join(d, 'route-0.log'));
-    // Exit 3 (route feature fail_fast): routed with opens, UNROUTED line and triage written.
-    if (returncode !== 0 && returncode !== 3) return this.failedRoute(path, d, returncode, attemptKey);
-    const decision = observeRoute(path, join(d, 'route-0')) as unknown as Dict;
-    decision.evidence = join(d, 'route-decision.json');
-    decision.attempt_sha256 = attemptKey;
-    console.log(`ROUTE_DECISION ${String(decision.action)}; ${String(decision.reason)}; evidence=${String(decision.evidence)}`);
-    const priorHints = { ...this.escapeHint };
-    const [hints, evidence] = boundedFeedback(this.problem, join(d, 'route-0'), sha256File(path), this.escapeHint, a.feedback_max_mm, a.congestion_feedback);
-    for (const key of Object.keys(this.escapeHint)) delete this.escapeHint[key];
-    Object.assign(this.escapeHint, hints);
-    atomicJson(join(d, 'feedback.json'), evidence);
-    // A step passes on 0 open signal connections and 0 DRC errors (the plane-net opens are counted apart).
-    const reported = reportedCounts(text);
-    const score = reported ? reported.signal_open + reported.errors : NO_RESULT;
-    const result = routeHandoff([score], decision, d, { feedback: evidence as Dict, priorHints, hints, reportedCounts: reported });
-    atomicJson(decision.evidence as string, result.decision);
-    if (score || returncode === 3) this.attempts.set(attemptKey, result.decision);
+    const result = routeHandoff([NO_RESULT], decision);
+    atomicJson(join(d, 'route-decision.json'), result.decision);
     return result;
-  }
-
-  private async routeRemote(path: string, d: string): Promise<number[]> {
-    const { a, name } = this;
-    const folder = dirname(path);
-    const inputs = ['.kicad_pcb', '.kicad_pro', '.kicad_dru'].map(extension => join(folder, name + extension)).filter(file => existsSync(file));
-    this.routesDone += 1;
-    const jobs = Array.from({ length: a.routes }, (_, r) => remoteJob(a.board_dir, inputs, join(d, `route-${r}`), routeCommand(name, a.gnd_vias), 4, join(d, `route-${r}.log`)));
-    return (await Promise.all(jobs)).map(parseUnrouted);
   }
 
   async route(path: string, n: number): Promise<RouteResult> {
@@ -402,18 +317,20 @@ export class Compaction {
       const output = join(d, 'engineering-pre-route.json');
       const checked = this.engineeringScreen(path, output);
       if (checked.status !== 'passed') {
-        return routeHandoff([NO_RESULT], { status: 'unverified', action: 'resolve_placement_requirements', qualified: false, reason: `Reviewed placement blocks routing: ${jsonDumps(checked.blockers)}`, evidence: output }, d);
+        return routeHandoff([NO_RESULT], { status: 'unverified', action: 'resolve_placement_requirements', qualified: false, reason: `Reviewed placement blocks routing: ${jsonDumps(checked.blockers)}`, evidence: output });
       }
     }
     if (a.max_routes && this.routesDone >= a.max_routes) {
-      return routeHandoff([NO_RESULT], { status: 'unverified', action: 'inspect_route_budget', reason: 'Router attempt cap reached; no further search/routing', qualified: false }, d);
+      return routeHandoff([NO_RESULT], { status: 'unverified', action: 'inspect_route_budget', reason: 'Router attempt cap reached; no further search/routing', qualified: false });
     }
-    if (a.router === 'fastroute') return this.routeFast(path, d);
-    if (a.router === 'iotroute') {
-      this.routesDone += 1;
-      return this.routeIotroute(path, n, d);
-    }
-    return this.routeRemote(path, d);
+    const { passes, route_args, read_args, repair, repair_mode, repair_rank, repair_routes, repair_per_round, seed } = a;
+    const attemptKey = retryKey(path, { passes, route_args, read_args, repair, repair_mode, repair_rank, repair_routes, repair_per_round, seed, router: a.router });
+    const unchanged = this.unchangedAttempt(attemptKey, d);
+    if (unchanged) return unchanged;
+    this.routesDone += 1;
+    const result = await this.routeIotroute(path, n, d);
+    if (result.counts.some(count => count !== 0)) this.attempts.set(attemptKey, { evidence: join(d, 'route-0/score.json') });
+    return result;
   }
 }
 
@@ -461,9 +378,7 @@ export async function main(argv: string[]): Promise<number> {
   const problem = readTyped<ReviewedProblem>(a.prob);
   if (problem.engineering) checkProblem(problem);   // Source/coverage errors stop before search or routing.
   freshOutput(a);
-  const stem = basename(a.board, extname(a.board));
-  const rulesBoard = a.router === 'fastroute' ? mandatoryBoard(REPO, [process.env.ROUTE_BOARD ?? '', stem]) : null;
-  const driver = new Compaction(a, problem, deadline, rulesBoard ? boardRows(a.board) : null);
+  const driver = new Compaction(a, problem, deadline);
   const run = await runLoop(problem, a.size, {
     search: (q, n) => driver.search(q as ReviewedProblem, n),
     write: (q, pose, k, n) => driver.write(q as ReviewedProblem, pose, k, n),
@@ -475,7 +390,6 @@ export async function main(argv: string[]): Promise<number> {
   writeFileSync(join(a.outdir, 'run.json'), jsonDumps({ ...runJson(run), problem, size: a.size }));
   console.log('VERDICT', run.verdict);
   console.log('STOP', run.stop);
-  if (run.stop === IMMUTABLE_STOP) return 5;
   if (run.next_action) {
     console.log(`STUCK: inspect retained candidate; evidence=${String((run.next_action as Dict).evidence)}`);
     return 3;

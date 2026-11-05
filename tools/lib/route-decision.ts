@@ -123,31 +123,6 @@ export function applyPlan(root: string, board: string, value: Decision | string,
   } finally { rmSync(temporary, { force: true }); }
   return guard;
 }
-export interface RouteObservation {
-  schema: string; qualified: boolean; artifacts: Hashes; source_board_sha256: string; findings: Finding[]; stop_unchanged_retry: boolean;
-  status?: string; action?: string; reason?: string; no_electrical_rule_relaxation?: boolean;
-}
-export function observeRoute(sourceBoard: string, routeDir: string): RouteObservation {
-  const names = ['input-manifest.json', 'outcome.json', 'drc.json', 'open-triage.json', 'pin-escape.json', 'report.json', 'rules.log'];
-  const result: RouteObservation = { schema: 'iot-lab.route-observation.v1', qualified: false,
-    artifacts: Object.fromEntries(names.filter(name => existsSync(join(routeDir, name))).map(name => [name, sha256File(join(routeDir, name))])),
-    source_board_sha256: sha256File(sourceBoard), findings: [], stop_unchanged_retry: true };
-  try {
-    const manifest = read<{ board_sha256?: string }>(join(routeDir, 'input-manifest.json')), outcome = read<{ board_sha256?: string; status?: string }>(join(routeDir, 'outcome.json'));
-    if (manifest.board_sha256 !== sha256File(sourceBoard) || outcome.board_sha256 !== sha256File(join(routeDir, 'routed.kicad_pcb')) || !['stuck', 'complete'].includes(outcome.status ?? '')) throw new Error('route inputs/result are stale or incomplete');
-    const report = read<DrcReport>(join(routeDir, 'drc.json')); checkReport(report);
-    const diagnostics: Diagnostics = {};
-    if (existsSync(join(routeDir, 'open-triage.json'))) diagnostics.triage = read(join(routeDir, 'open-triage.json'));
-    if (existsSync(join(routeDir, 'pin-escape.json'))) diagnostics.escape = read(join(routeDir, 'pin-escape.json'));
-    if (existsSync(join(routeDir, 'rules.log'))) diagnostics.rules = readFileSync(join(routeDir, 'rules.log'), 'utf8');
-    result.findings = classify(report, diagnostics); const kinds = new Set(result.findings.map(row => row.classification));
-    result.status = 'diagnosed'; result.action = kinds.has('escape_failure') || kinds.has('model_enclosed') ? 'inspect_escape'
-      : kinds.has('constraints_unknown') ? 'resolve_constraint_coverage' : kinds.has('native_geometry') ? 'inspect_native_geometry'
-        : kinds.has('native_open') ? 'diagnose_selected_connections' : 'continue_native_validation';
-    result.reason = 'Diagnostic next step; no physical impossibility or joint-routability claim'; result.no_electrical_rule_relaxation = true;
-  } catch (error) { result.status = 'unverified'; result.action = 'inspect_evidence'; result.reason = (error as Error).message; }
-  return result;
-}
 export function retryKey(sourceBoard: string, configuration: unknown): string {
   const board = resolvePath(sourceBoard), files = Object.fromEntries(['.kicad_pcb', '.kicad_pro', '.kicad_dru', '.kicad_sch'].map(ext => {
     const file = withSuffix(board, ext); return [ext, existsSync(file) ? sha256File(file) : null];
@@ -160,9 +135,9 @@ export function retryKey(sourceBoard: string, configuration: unknown): string {
   }
   // The job, its grid and its rules are the router core.
   if (existsSync(join(tools, 'router/core/src'))) policy['router/core'] = sourcesSha(join(tools, 'router/core'));
-  for (const name of ['ROUTE_FEATURES_FILE', 'FASTROUTE_BIN', 'KICAD_CLI', 'IOTROUTE_BIN', 'ROUTE_COVERAGE_BIN']) {
+  for (const name of ['ROUTE_FEATURES_FILE', 'KICAD_CLI', 'IOTROUTE_BIN', 'ROUTE_COVERAGE_BIN']) {
     const path = process.env[name]; if (path && existsSync(path)) policy[path] = sha256File(path);
   }
-  return fingerprint({ inputs: files, configuration, policy, environment: Object.fromEntries(Object.entries(process.env).filter(([key]) => /^(ROUTE_|FASTR|KICAD|IOT_LEAN)/.test(key))) });
+  return fingerprint({ inputs: files, configuration, policy, environment: Object.fromEntries(Object.entries(process.env).filter(([key]) => /^(ROUTE_|KICAD|IOT_LEAN)/.test(key))) });
 }
 const IMPLEMENTATION_RETRY = ['route_decision.ts', 'lib/route-decision.ts', 'lib/route-decision-board.ts', 'lib/route-decision-evidence.ts', 'lib/route-decision-escape.ts'];

@@ -73,8 +73,6 @@ tools/jlc_stock.mjs
 tools/kicad_happy_gate.ts
 tools/krt_planes_advisory.ts
 tools/lib/add-testpoints.test.ts
-tools/lib/backend-quality.test.ts
-tools/lib/backend-quality.ts
 tools/lib/barrier-line.test.ts
 tools/lib/barrier-line.ts
 tools/lib/block-bindings.test.ts
@@ -269,8 +267,6 @@ tools/lib/pcb-operation.test.ts
 tools/lib/pcb-queue-deadline.test.mjs
 tools/lib/pcb-routing-admission.test.ts
 tools/lib/pcb-routing-admission.ts
-tools/lib/pcb-routing-trial.test.ts
-tools/lib/pcb-routing-trial.ts
 tools/lib/pcb-runs.test.ts
 tools/lib/pcb-runs.ts
 tools/lib/pcb-smoke-board.test.ts
@@ -449,8 +445,6 @@ tools/placement_outcomes.ts
 tools/placer/README.md
 tools/placer/bench.test.ts
 tools/placer/bench.ts
-tools/placer/bench_a.sh
-tools/placer/bench_b.sh
 tools/placer/board-io.ts
 tools/placer/compact-cli.test.ts
 tools/placer/compact-cli.ts
@@ -566,11 +560,8 @@ tools/placer/engineering-problem.ts
 tools/placer/fixtures/relay4-bench-v3.json
 tools/placer/fixtures/relay4-bench-v4.json
 tools/placer/fixtures/relay4-bench-v5.json
-tools/placer/fr_job.sh
 tools/placer/iotroute-step.test.ts
 tools/placer/iotroute-step.ts
-tools/placer/mandatory-proof.test.ts
-tools/placer/mandatory-proof.ts
 tools/placer/membership-board.ts
 tools/placer/membership-derive.ts
 tools/placer/membership.test.ts
@@ -628,7 +619,6 @@ tools/route-coverage/tests/hole_pth.rs
 tools/route-coverage/tests/project.rs
 tools/route-coverage/tests/thermal.rs
 tools/route-features.json
-tools/route_batch.mjs
 tools/route_decision.ts
 tools/route_plan.mjs
 tools/route_status.ts
@@ -935,7 +925,6 @@ tools/silk_marks.ts
 tools/silk_refs.ts
 tools/stitch_all.ts
 tools/test-fixtures/generator-cc-774.json
-tools/test-fixtures/mandatory-cc-774.json
 tools/tracemaker_bench.sh
 tools/tsconfig.json
 tools/silk_jlc.ts

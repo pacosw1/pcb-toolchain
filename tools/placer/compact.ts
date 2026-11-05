@@ -16,7 +16,6 @@ export const GROW = 1.15;                      // an illegal search result: same
 export const TRIES = 3;                        // up to 3 tries
 export const K_TOL = 0.02;                     // the outline phase stops when the board scale gap is below 2 %
 const REAL_K_TOL = 1e-9;
-const IMMUTABLE_STOP = 'immutable input mandatory rules';
 const SCHEDULE_DONE = 'schedule done';
 const LENGTH_STOP = 'length stop';
 
@@ -31,17 +30,6 @@ export class TimeoutExpired extends Error {
     super(`Command ${pyStr(command)} timed out after ${seconds} seconds`);
     this.command = command;
     this.seconds = seconds;
-  }
-}
-
-/** The step board breaks a mandatory rule of an input that this run may not change. Ends the loop with no best step. */
-export class ImmutableInputFailure extends Error {
-  readonly receipt: { faults: unknown };
-  readonly path: string;
-  constructor(receipt: { faults: unknown }, path: string) {
-    super(`immutable input mandatory rules: ${path}`);
-    this.receipt = receipt;
-    this.path = path;
   }
 }
 
@@ -163,7 +151,6 @@ export interface Step {
   s: number; k: number; tries: number; cost: Num | null; illegal: string[]; phase: string; history: unknown[]; pose: Pose | null;
   halo: Num[]; runs: number[]; unrouted: number | null; passed: boolean; board: string | null; status?: string;
   measure?: Measure; box_sum?: Num | null; route_decision?: Dict; routed_candidate?: unknown; next_action?: unknown;
-  failure_receipt?: string; immutable_faults?: unknown;
 }
 
 export interface LoopResult {
@@ -193,7 +180,6 @@ function boxSum(pr: Problem, pose: Pose): Float | null {
 }
 
 function terminalStop(result: Step): string | null {
-  if (result.status === 'immutable-input') return IMMUTABLE_STOP;
   if (result.status === 'routing-decision') return `routing diagnosis: ${result.route_decision?.action ?? 'inspect_evidence'}`;
   return null;
 }
@@ -284,9 +270,7 @@ class Loop {
       this.record(t, q, pose, await this.effects.route(t.board, n));
     } catch (error) {
       if (error instanceof TimeoutExpired) Object.assign(t, noRoute(), { status: 'timeout' });
-      else if (error instanceof ImmutableInputFailure) {
-        Object.assign(t, noRoute(), { status: 'immutable-input', failure_receipt: error.path, immutable_faults: error.receipt.faults });
-      } else throw error;
+      else throw error;
     }
   }
 
@@ -314,11 +298,10 @@ class Loop {
   finish(stop: string): LoopResult {
     const summary = this.steps.map(({ s, k, unrouted, passed }) => ({ s, k, unrouted: unrouted ?? -1, passed }));
     const handoff = this.steps.findLast(t => t.status === 'routing-decision');
-    const immutable = stop === IMMUTABLE_STOP;
-    const [best, reason] = immutable ? [null, stop] : choose(this.steps, this.rank);
+    const [best, reason] = choose(this.steps, this.rank);
     return {
       steps: this.steps, best, best_step: best ? this.steps.indexOf(best) : null, best_reason: reason, rank: this.rank,
-      verdict: handoff || immutable ? stop : verdict(summary, this.size), stop,
+      verdict: handoff ? stop : verdict(summary, this.size), stop,
       next_action: handoff?.next_action ?? null, retained_candidate: handoff?.routed_candidate ?? null, qualified: false,
     };
   }
