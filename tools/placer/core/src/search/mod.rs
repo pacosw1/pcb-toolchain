@@ -63,9 +63,12 @@ pub struct Candidate {
     pub timeout: bool,
     pub mains: Vec<crate::mains::Fault>,
     pub finish_seconds: f64,
-    /// A sprint only: lower routes better (sprint.rs).
+    /// A sprint only: estimated congestion overflow, not a native routing verdict.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub route_score: Option<f64>,
+    /// A sprint with route_pressure=1 only: unclipped peak utilization breaks equal overflow scores.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_pressure: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -180,14 +183,16 @@ fn finish(model: &Model, p: &Params, worker: usize, pose: &Pose) -> Candidate {
         mains,
         finish_seconds: start.elapsed().as_secs_f64(),
         route_score: None,
+        route_pressure: None,
     }
 }
 
-/// Final candidate order: legal first, then no mains path faults, then a sprint's route score, then the lower cost.
+/// Final order: legality, mains faults, overflow, peak utilization, cost, worker.
 pub fn rank(a: &Candidate, b: &Candidate) -> std::cmp::Ordering {
     let key = |c: &Candidate| (c.illegal.len(), c.mains.len());
     let score = |c: &Candidate| c.route_score.unwrap_or(0.0);
-    key(a).cmp(&key(b)).then(score(a).total_cmp(&score(b))).then(a.cost.total_cmp(&b.cost)).then(a.worker.cmp(&b.worker))
+    let pressure = |c: &Candidate| c.route_pressure.unwrap_or(0.0);
+    key(a).cmp(&key(b)).then(score(a).total_cmp(&score(b))).then(pressure(a).total_cmp(&pressure(b))).then(a.cost.total_cmp(&b.cost)).then(a.worker.cmp(&b.worker))
 }
 
 /// The pose key at 3 decimals, for exact copies.
@@ -378,7 +383,8 @@ fn anneal_all(pr: &Problem, p: &Params, plan: Plan, log: &dyn Fn(&str), global: 
             (report.unique, report.spread_mm) = sprint::diversity(&poses, &movable);
             progress.trail.push(common.iter().map(Evaluator::cost).collect());
             let state = |(worker, (ev, w)): (usize, (&Evaluator, &Worker))| {
-                WorkerState { worker, cost: ev.cost(), route_score: scorer.score(&w.best_pose), terms: ev.terms(), pose: w.best_pose.clone() }
+                let (route_score, route_pressure) = scorer.metrics(&w.best_pose);
+                WorkerState { worker, cost: ev.cost(), route_score, route_pressure, terms: ev.terms(), pose: w.best_pose.clone() }
             };
             let states: Vec<WorkerState> = common.iter().zip(&workers).enumerate().map(state).collect();
             progress.save("running", &report, &states)?;
@@ -400,11 +406,18 @@ fn anneal_all(pr: &Problem, p: &Params, plan: Plan, log: &dyn Fn(&str), global: 
     let pose_of = |w: usize| if independent { &kept[w].1 } else { &workers[w].best_pose };
     let mut finished = in_parallel(workers.len(), |w| finish(&model, &closing, w, pose_of(w)));
     if let Some(scorer) = scorer.as_ref().filter(|_| independent) {
-        finished.iter_mut().for_each(|c| c.route_score = Some(scorer.score(&c.pose)));
+        finished.iter_mut().for_each(|c| {
+            let (score, pressure) = scorer.metrics(&c.pose);
+            c.route_score = Some(score);
+            c.route_pressure = (p.route_pressure != 0.0).then_some(pressure);
+        });
     }
     finished.sort_by(rank);
     if let Some(scorer) = &scorer {
-        let state = |c: &Candidate| WorkerState { worker: c.worker, cost: c.cost, route_score: scorer.score(&c.pose), terms: c.components, pose: c.pose.clone() };
+        let state = |c: &Candidate| {
+            let (route_score, route_pressure) = scorer.metrics(&c.pose);
+            WorkerState { worker: c.worker, cost: c.cost, route_score, route_pressure, terms: c.components, pose: c.pose.clone() }
+        };
         progress.save("done", &report, &finished.iter().map(state).collect::<Vec<_>>())?;
     }
     let mut candidates = distinct(finished, p.distinct, &movable);

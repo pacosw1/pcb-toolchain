@@ -207,6 +207,15 @@ impl NetState {
         self.excess(model, model.grid.all())
     }
 
+    /// Largest requested fraction of routing capacity, before overflow clipping.
+    /// Unlike overflow this distinguishes sparse poses below the existing limit.
+    pub fn peak_utilization(&self, model: &Model) -> f64 {
+        let capacity = model.params.rudy_cell.powi(2) * model.params.layers / model.params.pitch;
+        self.demand.iter().enumerate().map(|(i, demand)| {
+            demand * model.cell_weights.as_ref().map_or(1.0, |w| w[i]) / capacity
+        }).fold(0.0, f64::max)
+    }
+
     /// Call before the units move: pin demand needs the old pad cells.
     pub fn before_move(&mut self, model: &Model, at: &Layout, moved: &[usize]) {
         self.pad_cells_before.clear();

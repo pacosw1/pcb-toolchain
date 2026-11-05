@@ -11,11 +11,13 @@
 //! stays `running` is a run that was killed: its poses are still good. What to do with it (kill a variant, pack N jobs) belongs to
 //! the sprint runner, not here.
 //!
-//! The route score is the congestion term with net tracks at limit 0.3, the setting that ranked routed poses best on RELAY-4
-//! (README, "Routing room terms"). The router's own congestion map exists only after a route, so this is the estimate before one.
+//! The route score is overflow with net tracks at the existing limit 0.3. Checkpoints also report unclipped peak utilization;
+//! route_pressure=1 uses it to break equal overflow. Off by default: the matched ENV check showed no verified-rate gain.
 
 use super::{mean_gap, pose_key};
-use crate::evaluator::{Evaluator, Terms};
+use crate::evaluator::Terms;
+use crate::layout::Layout;
+use crate::rudy::NetState;
 use crate::model::Model;
 use crate::params::Params;
 use crate::problem::{Pose, Problem};
@@ -77,18 +79,24 @@ pub struct Report {
 
 pub struct Scorer<'p> {
     model: Model<'p>,
-    params: Params,
 }
 
 impl<'p> Scorer<'p> {
     pub fn new(pr: &'p Problem, p: &Params) -> crate::Result<Self> {
         let params = Params { tracks: 1.0, limit: 0.3, ..p.clone() };
-        Ok(Self { model: Model::new(pr, &params)?, params })
+        Ok(Self { model: Model::new(pr, &params)? })
     }
 
-    /// Lower is better; 0 = no cell over its limit.
+    /// Overflow first, then unclipped peak utilization. No new threshold or weighted blend.
+    pub fn metrics(&self, pose: &Pose) -> (f64, f64) {
+        let layout = Layout::new(&self.model, pose);
+        let nets = NetState::new(&self.model, &layout);
+        (nets.overflow(&self.model), nets.peak_utilization(&self.model))
+    }
+
+    /// Existing scalar overflow estimate; zero means no cell exceeds the limit.
     pub fn score(&self, pose: &Pose) -> f64 {
-        Evaluator::new(&self.model, &self.params, pose).terms().cong
+        self.metrics(pose).0
     }
 }
 
@@ -97,6 +105,7 @@ pub struct WorkerState {
     pub worker: usize,
     pub cost: f64,
     pub route_score: f64,
+    pub route_pressure: f64,
     pub terms: Terms,
     pub pose: Pose,
 }

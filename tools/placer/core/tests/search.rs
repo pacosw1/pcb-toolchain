@@ -357,6 +357,7 @@ fn the_mains_check_without_route_rules_stops() {
 fn candidate(worker: usize, cost: f64, pose: Pose, illegal: &[&str], faults: &[&str]) -> Candidate {
     Candidate {
         route_score: None,
+        route_pressure: None,
         worker,
         prelegal_pose: pose.clone(),
         pose,
@@ -374,6 +375,23 @@ fn a_candidate_with_mains_faults_ranks_after_one_without() {
     let mut all = [candidate(0, 1.0, vec![], &[], &["M"]), candidate(1, 9.0, vec![], &[], &[]), candidate(2, 0.5, vec![], &["B"], &[])];
     all.sort_by(rank);
     assert_eq!(all.iter().map(|c| c.worker).collect::<Vec<_>>(), vec![1, 0, 2]);
+}
+
+#[test]
+fn equal_overflow_uses_pressure_without_overriding_legality_or_overflow() {
+    let mut compact = candidate(0, 1.0, vec![], &[], &[]);
+    compact.route_score = Some(0.0);
+    compact.route_pressure = Some(0.1);
+    let mut spread = compact.clone();
+    spread.worker = 1;
+    spread.cost = 2.0;
+    spread.route_pressure = Some(0.05);
+    assert!(rank(&spread, &compact).is_lt());
+    spread.route_score = Some(1.0);
+    assert!(rank(&compact, &spread).is_lt(), "overflow remains primary");
+    spread.route_score = Some(0.0);
+    spread.illegal.push("edge".into());
+    assert!(rank(&compact, &spread).is_lt(), "legality remains primary");
 }
 
 #[test]
