@@ -489,16 +489,21 @@ export class JobManager {
       // Empty folders only, made by the daemon. The input is unpacked in the container, as the job's uid.
       fs.mkdirSync(`${workDir}/out`, { recursive: true }); // the mount point of outDir
       fs.mkdirSync(outDir);
+      if(job.protectedRef||job.protectedVerifierRef)fs.mkdirSync(`${outDir}/home`);
       if (this.cfg.jobUid !== null) {
         fs.chownSync(workDir, this.cfg.jobUid, this.cfg.jobUid);
         fs.chownSync(outDir, this.cfg.jobUid, this.cfg.jobUid);
+        if(job.protectedRef||job.protectedVerifierRef)fs.chownSync(`${outDir}/home`,this.cfg.jobUid,this.cfg.jobUid);
       }
     } catch (e) {
       return this.finish(job, attempt, { outcome: 'infra', exitCode: null, detail: `job folder: ${String(e)}` });
     }
     const { image, cpus, memGb, diskGb, timeoutS, command } = job.spec;
     const inputTar = this.store.inputTar(job.id);
-    const r = await this.runtime.start({ container: attempt.container, workDir, outDir, inputTar, image, cpus, memGb, diskGb, timeoutS, command });
+    let r;
+    try { r = await this.runtime.start({ container: attempt.container, workDir, outDir, inputTar, image, cpus, memGb, diskGb, timeoutS, command,
+      ...(job.protectedRef?{protectedRole:'worker' as const}:job.protectedVerifierRef?{protectedRole:'verifier' as const}:{}) }); }
+    catch(error) { return this.finish(job,attempt,{outcome:'infra',exitCode:null,detail:`runtime start: ${String(error)}`}); }
     if (r.ok) {
       if (job.protectedRef || job.protectedVerifierRef) {
         let allowed = false;

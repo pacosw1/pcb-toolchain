@@ -13,6 +13,7 @@ export interface StartRequest {
   diskGb: number;
   timeoutS: number;
   command: string[];
+  protectedRole?: 'worker' | 'verifier';
 }
 
 export type StartResult = { ok: true } | { ok: false; permanent: boolean; detail: string };
@@ -108,11 +109,13 @@ export async function dirBytes(dirs: string[], timeoutMs = 30_000): Promise<numb
 
 export function runArgs(req: StartRequest, cfg: Config): string[] {
   const mem = `${Math.round(req.memGb * 1024)}m`;
+  if (req.protectedRole && (cfg.jobUid === null || !Number.isSafeInteger(cfg.jobUid) || cfg.jobUid <= 0)) throw new Error('protected jobs require a non-root runtime UID');
   const uid = cfg.jobUid === null ? [] : ['--user', `${cfg.jobUid}:${cfg.jobUid}`];
   const parent = cfg.cgroupParent ? ['--cgroup-parent', cfg.cgroupParent] : [];
+  const protectedOptions = req.protectedRole ? ['--read-only','--tmpfs','/tmp:rw,nosuid,nodev,size=128m','-e','HOME=/job/out/home'] : [];
   return [
     'run', '-d', '--pull', 'never', '--name', req.container, '--label', `pcb-job-daemon=${cfg.instance}`,
-    ...uid, ...parent,
+    ...uid, ...parent, ...protectedOptions,
     '--network', 'none', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--log-driver', 'none',
     '--cpus', String(req.cpus), '--memory', mem, '--memory-swap', mem, '--pids-limit', String(cfg.pidsLimit),
     // Hard, per file, and it also stops a sparse file. The sum over all files is JobManager.watchDisk.

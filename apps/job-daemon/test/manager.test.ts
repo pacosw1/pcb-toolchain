@@ -580,6 +580,14 @@ describe('retention', () => {
 });
 
 describe('docker arguments', () => {
+  it('requires non-root and a read-only root for protected jobs', () => {
+    const req = {container:'c',workDir:'/w',outDir:'/o',inputTar:'/i',image:'img:1',cpus:1,memGb:1,diskGb:1,timeoutS:60,command:['node'],protectedRole:'verifier' as const};
+    assert.throws(()=>runArgs(req,{...r.cfg,jobUid:null}),/non-root/);
+    assert.throws(()=>runArgs(req,{...r.cfg,jobUid:0}),/non-root/);
+    const args=runArgs(req,{...r.cfg,jobUid:1000});
+    assert.ok(args.includes('--read-only'));assert.equal(args[args.indexOf('--user')+1],'1000:1000');
+    assert.ok(args.includes('HOME=/job/out/home'));assert.equal(args[args.indexOf('--network')+1],'none');
+  });
   it('hard limits, no network, no pull, low OOM priority', () => {
     const cfg = { ...r.cfg, jobUid: 1000, cgroupParent: 'pcbjobs.slice' };
     const a = runArgs({ container: 'c', workDir: '/w', outDir: '/o', inputTar: '/i', image: 'img:1', cpus: 4, memGb: 1.5, diskGb: 1, timeoutS: 60, command: ['python3', 'a b.py'] }, cfg);
