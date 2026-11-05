@@ -353,10 +353,10 @@ rectangle shape (NET-CORE draws its borders as lines; before, it had 0 blocks). 
 when they go beyond the courtyard (NET-CORE J1 USB-C: pad A1B12 is 0.8 mm outside; a compaction step put D3 on it:
 shorting_items + solder_mask_bridge).
 
-## Block-aware compaction (`membership.py`, `cli.py read --blocks`, 2026-11-01)
+## Block-aware compaction (`membership.ts`, `iotplace read --blocks`, 2026-11-01)
 
-Membership source (before placement, so the spread board gets it): `membership.py derive SCH PCB -o members.json
-[--tighten] --draw OUT.kicad_pcb [--reference-builder tools/build-<board>-pcb.py]`. Component = the schematic
+Membership source (before placement, so the spread board gets it): `membership.ts derive SCH PCB -o members.json
+[--tighten] --draw OUT.kicad_pcb [--reference REF.kicad_pcb]`. Component = the schematic
 `Group` field. Block = one IC (U, > 3 pads) + the passives that its schematic Description names, else by net
 affinity in the same group (signal nets first; rails only for a part on rails only, a decap). Connector support
 (Description names a connector, no IC), indicator LEDs, switches, test points and holes are not in a block. `--draw`

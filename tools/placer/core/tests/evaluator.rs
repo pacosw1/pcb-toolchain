@@ -7,6 +7,7 @@ use iotplace::evaluator::Evaluator;
 use iotplace::geom::{Rect, turn_point};
 use iotplace::numeric::PyRandom;
 use iotplace::problem::Problem;
+use iotplace::rudy::track_factor;
 use serde_json::{Value, json};
 
 #[test]
@@ -191,4 +192,25 @@ fn the_legal_penalty_is_positive_outside_the_box_and_a_move_takes_it_off() {
     ev.commit();
     near(ev.legal_penalty(0), 0.0);
     within(ev.cost(), Evaluator::new(&m, &p, &ev.pose()).cost(), 5e-7);
+}
+
+#[test]
+fn a_cohesion_net_costs_its_group_box_with_no_rudy_demand() {
+    let cell = json!([[-1, -1, 1, 1, 0.5]]);
+    let units = json!([unit("A", 2.0, 2.0, cell.clone()), unit("B", 8.0, 8.0, cell.clone()), unit("C", 5.0, 5.0, cell)]);
+    let signal = json!({"name": "S", "weight": 1.0, "pins": [[0, 0, 0, 0, 0], [2, 0, 0, 0, 0]]});
+    let cohesion = json!({"name": "~comp:X", "weight": 2.0, "pins": [[0, -1, -1, 1, 1], [1, -1, -1, 1, 1]], "track": 0.0, "cohesion": true});
+    let board = box_board(10.0, 10.0);
+    let (both, alone) = (problem(units.clone(), json!([signal, cohesion]), board.clone()), problem(units, json!([signal]), board));
+    let p = small_params(&["limit=0.05", "tracks=1"]);
+    near(start_terms(&both, &p).hpwl, 6.0 + 2.0 * 16.0); // group box 1..9 x 1..9: half perimeter 16
+    assert_eq!(track_factor(&both.nets[1], &p), 0.0);
+    let (with_net, without) = (start_terms(&both, &p).cong, start_terms(&alone, &p).cong);
+    assert!(with_net > 0.0);
+    near(with_net, without);
+    let m = model(&both, &p);
+    let mut ev = Evaluator::new(&m, &p, &both.initial_pose());
+    let hpwl = ev.terms().hpwl;
+    ev.propose(&[(1, (2.0, 6.0, 0))]); // B toward A: the group box shrinks
+    near(ev.terms().hpwl - hpwl, -2.0 * 8.0);
 }

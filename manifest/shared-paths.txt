@@ -493,7 +493,10 @@ tools/placer/iotroute-step.ts
 tools/placer/iotroute_step.py
 tools/placer/kicad_io.py
 tools/placer/mainspath.py
-tools/placer/membership.py
+tools/placer/membership-board.ts
+tools/placer/membership-derive.ts
+tools/placer/membership.test.ts
+tools/placer/membership.ts
 tools/placer/movie.py
 tools/placer/pinswap.py
 tools/placer/pinswap_io.py
@@ -512,7 +515,6 @@ tools/placer/test_gplace.py
 tools/placer/test_iotroute_step.py
 tools/placer/test_kicad_io.py
 tools/placer/test_mainspath.py
-tools/placer/test_membership.py
 tools/placer/test_movie.py
 tools/placer/test_pinswap_io.py
 tools/placer/test_placement_audit.py
