@@ -1,9 +1,9 @@
 # Route coverage in Rust
 
-The hole, project and native thermal proofs of the route job.
-`route_native_thermals.py` stays until the job can produce its fill receipt:
-`--native-thermal-checkback` needs `ZONE_FILLER.Fill`'s result, which only pcbnew
-reports.
+The hole, project and native thermal proofs of the route job. The thermal
+validator reads receipts; `iotroute fastroute` writes none, and
+`--native-thermal-checkback` is an error there, because a receipt needs
+`ZONE_FILLER.Fill`'s result, which only pcbnew reports.
 
 Build with `cargo build --locked --manifest-path tools/route-coverage/Cargo.toml -j 2`.
 The `route-coverage` binary accepts an operation and a JSON request file (or
@@ -24,8 +24,10 @@ a via with no type or layer extent, stays in the inventory unsupported and canno
 receive a false through-via proof.
 
 The API lists a `*.Cu` pad on every copper layer KiCad knows, enabled or not, so
-a pad naming a disabled copper layer cannot be told from a wildcard. The Python
-read the file's spelling and refused such a pad; here the layer is dropped.
+it cannot tell a wildcard from a pad naming a disabled copper layer. Such a pad is
+refused from the `layers` of the hash-bound `.kicad_pcb` text, read by pad uuid; a
+drilled pad the file does not list is refused too. Geometry still comes from the
+API.
 
 Two intentional provenance changes require fresh evidence:
 

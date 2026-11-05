@@ -4,6 +4,7 @@ use crate::{
     decimal::{self as dec, Point},
     evidence,
 };
+use iotroute::kicad::raw;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
@@ -35,6 +36,10 @@ pub struct Pad {
     pub drill: NmPoint,
     pub layers: Vec<String>,
     pub copper: Vec<Value>,
+    /// The pad's `layers` as the file spells them. The API lists `*.Cu` on every copper layer KiCad knows, enabled or not, so only
+    /// the file tells a wildcard from a pad that names a disabled layer.
+    #[serde(skip)]
+    pub authored_layers: Option<Vec<String>>,
 }
 #[derive(Clone, Debug, Deserialize)]
 pub struct Footprint {
@@ -103,7 +108,35 @@ pub fn read_json(text: &str, path: &Path) -> Result<NativeBoard> {
             return Err("board JSON native sidecars changed".into());
         }
     }
-    Ok(doc.board)
+    let mut board = doc.board;
+    let mut authored = authored_layers(path)?;
+    for pad in board.footprints.iter_mut().flat_map(|footprint| &mut footprint.pads) {
+        pad.authored_layers = authored.remove(&pad.id);
+        if pad.authored_layers.is_none() && (pad.drill.x != 0 || pad.drill.y != 0) {
+            return Err("drilled pad has no layers in the native file".into());
+        }
+    }
+    Ok(board)
+}
+/// The `layers` of each footprint pad of the file, by uuid. Names only: geometry still comes from the API.
+fn authored_layers(path: &Path) -> Result<BTreeMap<String, Vec<String>>> {
+    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let root = raw::parse_first(&text)?;
+    let mut out = BTreeMap::new();
+    for pad in root.children("footprint").flat_map(|footprint| footprint.children("pad")) {
+        let Some(id) = pad.children("uuid").next().and_then(|uuid| uuid.text(1)) else { continue };
+        let Some(layers) = pad.children("layers").next() else { continue };
+        let names = layers.items().iter().skip(1).filter_map(raw::Form::atom).map(str::to_string).collect();
+        if out.insert(id.to_string(), names).is_some() {
+            return Err("ambiguous native pad UUID".into());
+        }
+    }
+    Ok(out)
+}
+/// A copper name that is neither the wildcard nor an enabled layer: such a pad cannot be proved.
+fn names_disabled_copper(p: &Pad, board: &NativeBoard) -> bool {
+    let unknown = |name: &String| name.ends_with(".Cu") && name != "*.Cu" && !board.copper_layers.contains(name);
+    p.authored_layers.iter().flatten().any(unknown)
 }
 fn quarter(v: f64) -> Result<i32> {
     dec::angle_d(dec::decimal(&v.to_string())?)
@@ -169,6 +202,9 @@ fn dimensions(p: &Pad, fp: &Footprint, board: &NativeBoard) -> Result<Value> {
         .collect();
     if p.layers.iter().collect::<BTreeSet<_>>().len() != p.layers.len() {
         return Err("ambiguous drilled pad layers".into());
+    }
+    if names_disabled_copper(p, board) {
+        return Err("unknown drilled copper layer".into());
     }
     Ok(
         json!({"side":"front","footprint_position_mm":dec::strings(&fp.position.mm()),"footprint_rotation_deg":fp_rotation.to_string(),

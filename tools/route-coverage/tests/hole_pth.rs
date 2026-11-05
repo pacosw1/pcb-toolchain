@@ -115,6 +115,30 @@ fn repeated_drills() -> (Vec<Value>, String) {
     (pads(&board(vec![footprint("U1", [100 * MM, 100 * MM], 180, native)])), model)
 }
 
+/// One plated pad as the API reports `*.Cu` on a two-layer board, with this `layers` line in the file.
+fn authored(layers: &str, uuid: &str) -> Result<Vec<Value>, String> {
+    let folder = std::env::temp_dir().join(format!("hole-layers-{}-{uuid}", std::process::id()));
+    std::fs::create_dir_all(&folder).unwrap();
+    let path = folder.join("b.kicad_pcb");
+    std::fs::write(&path, format!("(kicad_pcb (footprint \"x\" (pad \"1\" thru_hole circle (layers {layers}) (uuid \"{uuid}\"))))")).unwrap();
+    let mut pad = pth("1", "GND", [100 * MM, 100 * MM], 0, "Circle", [2_000_000; 2], [1_000_000; 2]);
+    pad["id"] = "a".into();
+    pad["layers"] = json!(["F.Cu", "B.Cu", "In1.Cu", "In3.Cu"]);
+    let board = board(vec![footprint("U1", [100 * MM, 100 * MM], 0, vec![pad])]);
+    let document = json!({"schema": "iot-lab.board.v1", "board_sha256": route_coverage::evidence::hash(&path).unwrap(), "project_sha256": "", "rules_sha256": "", "board": board});
+    native_pth_pads(&route_coverage::board::read_json(&document.to_string(), &path)?)
+}
+
+#[test]
+fn the_file_tells_a_wildcard_from_a_disabled_copper_layer() {
+    assert_eq!(authored(r#""*.Cu" "*.Mask""#, "a").unwrap()[0]["layers"], json!(["F.Cu", "B.Cu"]));
+    assert_eq!(authored(r#""F.Cu" "B.Cu" "F.Mask""#, "a").unwrap().len(), 1);
+    for layers in [r#""F.Cu" "B.Cu" "In3.Cu""#, r#""*.Cu" "In3.Cu""#, r#""F&B.Cu""#] {
+        assert_eq!(authored(layers, "a").unwrap_err(), "unknown drilled copper layer", "{layers}");
+    }
+    assert_eq!(authored(r#""*.Cu""#, "other").unwrap_err(), "drilled pad has no layers in the native file");
+}
+
 #[test]
 fn a_repeated_number_counts_an_npth_pad_in_native_order() {
     let plated = |x| pth("9", "GND", [x, 100 * MM], 0, "Circle", [2_000_000; 2], [1_000_000; 2]);
