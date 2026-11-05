@@ -1,6 +1,7 @@
 // node --test scripts/test-toolchain-sync.mjs
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -22,10 +23,23 @@ function setup(t) {
     fs.mkdirSync(path.join(dir, 'bin'))
     fs.copyFileSync(script, path.join(dir, 'bin/toolchain_sync.mjs'))
     for (const [k, v] of Object.entries(files)) write(path.join(dir, 'tools', k), v)
-    return args => spawnSync('node', [path.join(dir, 'bin/toolchain_sync.mjs'), ...args], { encoding: 'utf8' })
+    return (args, env = process.env) => spawnSync('node', [path.join(dir, 'bin/toolchain_sync.mjs'), ...args], { encoding: 'utf8', env })
   }
-  return { project, bundle, exclude: () => fs.readFileSync(path.join(project, '.git/info/exclude'), 'utf8') }
+  return { root, project, bundle, exclude: () => fs.readFileSync(path.join(project, '.git/info/exclude'), 'utf8') }
 }
+
+test('live upgrade refuses to overwrite an edited managed file', t => {
+  const { root, project, bundle } = setup(t)
+  assert.equal(bundle('b1', '1.0.0 aaa', { 'managed.txt': 'original' })([project]).status, 0)
+  const digest = createHash('sha256').update('original').digest('hex')
+  write(path.join(root, '.local/share/pcb-toolchain/1.0.0/manifest.json'), JSON.stringify({ files: { 'tools/managed.txt': digest } }))
+  const managed = path.join(project, 'tools/managed.txt')
+  fs.chmodSync(managed, 0o644); fs.writeFileSync(managed, 'user edit')
+  const result = bundle('b2', '2.0.0 bbb', { 'managed.txt': 'new' })([project], { ...process.env, HOME: root, PCB_LIVE_SAFE_SYNC: '1' })
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /managed file tools\/managed\.txt was changed/)
+  assert.equal(fs.readFileSync(managed, 'utf8'), 'user edit')
+})
 
 test('copies read-only, skips bytecode, and a rerun does nothing', t => {
   const { project, bundle, exclude } = setup(t)

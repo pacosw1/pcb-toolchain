@@ -24,8 +24,22 @@ fi
 [ -n "$project" ] || { echo "pcb: no project (use --project DIR, IOT_LAB, or run inside a project)" >&2; exit 2; }
 
 lock="$project/toolchain.lock"
+live_registered=1
+if [ -f "$bundle/tools/pcb-live-guard.mts" ]; then
+  if node --no-warnings --experimental-strip-types "$bundle/tools/pcb-live-guard.mts" --registered "$project"; then live_registered=0
+  else live_registered=$?; fi
+  [ "$live_registered" -le 1 ] || { echo 'pcb: cannot verify live coordination configuration' >&2; exit 2; }
+fi
+if [ "$live_registered" = 0 ] && [ ! -f "$lock" ]; then
+  echo 'pcb: live-coordinated project has no toolchain.lock; install and pin a live-capable release first' >&2
+  exit 2
+fi
 if [ -f "$lock" ]; then
   want=$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1])).version' "$lock")
+  if [ "$live_registered" = 0 ] && [ "$want" != "$version" ]; then
+    echo "pcb: live-coordinated project pins $want; update its lock to the live-capable release $version" >&2
+    exit 2
+  fi
   other="${HOME}/.local/share/pcb-toolchain/$want/bin/pcb"
   if [ "$want" != "$version" ] && [ -x "$other" ] && [ "${PCB_ALLOW_VERSION_MISMATCH:-}" != 1 ]; then
     exec "$other" "$@"                              # the installed release that this project pins
@@ -52,7 +66,11 @@ case "$(uname -s)-$(uname -m)" in
   Linux-x86_64) export IOTROUTE_BIN="$bundle/bin/iotroute-linux-x86_64" ;;
 esac
 if [ -f "$bundle/VERSION" ] && [ -f "$lock" ] && [ "$project" != "$bundle" ]; then   # pinned: release tools/ into the project (read-only)
+  if [ "$live_registered" = 0 ]; then export PCB_LIVE_SAFE_SYNC=1; fi
   node "$bundle/bin/toolchain_sync.mjs" "$project" || exit $?
 fi
 [ -z "$sync_only" ] || exit 0
+if [ "$live_registered" = 0 ]; then
+  exec node --no-warnings --experimental-strip-types "$bundle/tools/pcb-live-guard.mts" --project "$project" -- python3 "$bundle/tools/pcb" "$@"
+fi
 exec python3 "$bundle/tools/pcb" "$@"

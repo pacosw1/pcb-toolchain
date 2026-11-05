@@ -1,0 +1,15 @@
+[Unit]
+Description=PCB Studio live observation worker
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/pcb-live/worker.env
+ExecStart=/usr/bin/node --no-warnings --experimental-strip-types ${PCB_LIVE_WORKER} --project ${PCB_LIVE_PROJECT} --project-id ${PCB_LIVE_PROJECT_ID} --url ${PCB_LIVE_URL} --token-file ${PCB_LIVE_TOKEN_FILE} --state-file ${PCB_LIVE_STATE_FILE} --discover-worktrees
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

@@ -5,6 +5,9 @@
 // Tools: the pcb MCP tools, WebSearch, and Read/Grep/Glob inside the open project only (agentPolicy.ts). The project
 // root comes from main (the engine's project.open result), never from the renderer's context.
 import { availableParallelism } from 'os'
+import fs from 'node:fs'
+import path from 'node:path'
+import { liveProject } from './liveConfig'
 import { z } from 'zod'
 import { checkToolUse } from './agentPolicy'
 import { toolPath } from './config'
@@ -76,6 +79,19 @@ export class AgentHost {
   private sessionId: string | null = null
   private abort: AbortController | null = null
   private sdk: typeof import('@anthropic-ai/claude-agent-sdk') | null = null
+
+  /** Publish only explicit, user-facing updates; never private reasoning or tool inputs. */
+  private report(ctx: AgentContext, state: string, message: string): void {
+    const root = this.projectRoot()
+    const board = ctx.pcb?.match(/^hardware-design\/boards\/([A-Z0-9][A-Z0-9-]*)\//)?.[1] ?? ctx.gate
+    if (!root || !board || !/^[A-Z0-9][A-Z0-9-]*$/.test(board)) return
+    try {
+      if (!liveProject(root)) return
+      const dir = path.join(root, '.gate', 'live-agent', board)
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
+      fs.appendFileSync(path.join(dir, 'events.jsonl'), JSON.stringify({ time: new Date().toISOString(), state, message: message.slice(0, 2000) }) + '\n', { mode: 0o600 })
+    } catch { /* agent execution must not depend on the observational feed */ }
+  }
 
   constructor(
     private engine: EngineSupervisor,
@@ -222,10 +238,13 @@ export class AgentHost {
     if (this.abort) throw new Error('the agent is still answering')
     ctx = { ...ctx, projectRoot: this.projectRoot() } // main's verified root, not the renderer's
     const root = ctx.projectRoot
-    const sdk = await this.load()
-    this.abort = new AbortController()
+    this.report(ctx, 'working', 'Agent is working')
+    const controller = new AbortController()
+    this.abort = controller
     const contextLine = `[context] project=${ctx.projectRoot ?? 'none'} board=${ctx.pcb ?? 'none'} gate=${ctx.gate ?? 'none'} selection=${ctx.selection ?? 'none'}`
     try {
+      const sdk = await this.load()
+      if (controller.signal.aborted) throw new Error('Agent cancelled')
       const q = sdk.query({
         prompt: `${contextLine}\n${text}`,
         options: {
@@ -234,7 +253,7 @@ export class AgentHost {
           executable: 'node',
           env: { ...process.env, PATH: toolPath() },
           stderr: (d: string) => console.error('[agent]', d.trimEnd()),
-          abortController: this.abort,
+          abortController: controller,
           cwd: root ?? undefined,
           resume: this.sessionId ?? undefined,
           mcpServers: { pcb: this.tools(sdk, ctx) },
@@ -273,21 +292,29 @@ export class AgentHost {
         if ('session_id' in m && m.session_id) this.sessionId = m.session_id
         if (m.type === 'assistant') {
           for (const block of m.message.content) {
-            if (block.type === 'text' && block.text.trim()) this.emit({ kind: 'text', text: block.text })
-            else if (block.type === 'tool_use') this.emit({ kind: 'tool', name: block.name, input: block.input })
+            if (block.type === 'text' && block.text.trim()) {
+              this.emit({ kind: 'text', text: block.text })
+              this.report(ctx, 'message', block.text)
+            } else if (block.type === 'tool_use') {
+              this.emit({ kind: 'tool', name: block.name, input: block.input })
+              this.report(ctx, 'working', `Using ${block.name}`)
+            }
           }
         } else if (m.type === 'result') {
           if (m.subtype === 'success') {
             this.emit({ kind: 'done', costUsd: m.total_cost_usd, durationMs: m.duration_ms, turns: m.num_turns })
+            this.report(ctx, 'finished', 'Agent finished')
           } else {
             this.emit({ kind: 'error', message: `agent stopped: ${m.subtype}` })
+            this.report(ctx, 'stopped', `Agent stopped: ${m.subtype}`)
           }
         }
       }
     } catch (e) {
       this.emit({ kind: 'error', message: e instanceof Error ? e.message : String(e) })
+      this.report(ctx, 'stopped', 'Agent stopped; see the conversation for details')
     } finally {
-      this.abort = null
+      if (this.abort === controller) this.abort = null
     }
   }
 }

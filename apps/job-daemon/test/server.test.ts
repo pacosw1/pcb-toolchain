@@ -86,6 +86,86 @@ describe('auth and bind', () => {
   });
 });
 
+describe('board leases', () => {
+  const call = (url: string, body: unknown, authenticated = true): Promise<Response> => fetch(base + url, {
+    method: 'POST', headers: { 'content-type': 'application/json', ...(authenticated ? auth : {}) }, body: JSON.stringify(body),
+  });
+
+  it('requires authentication and rejects competing and stale owners', async () => {
+    const request = { board: 'project/board', owner: 'mini', ttlMs: 30000 };
+    assert.equal((await call('/board-leases/acquire', request, false)).status, 401);
+    assert.equal((await call('/board-leases/acquire', { ...request, ttlMs: 1 })).status, 400);
+    const first = await call('/board-leases/acquire', request);
+    assert.equal(first.status, 201);
+    const lease = await first.json() as Record<string, unknown>;
+    assert.equal((await call('/board-leases/acquire', { ...request, owner: 'macbook' })).status, 409);
+    assert.equal((await call('/board-leases/renew', { lease: { ...lease, token: '0'.repeat(64) }, ttlMs: 30000 })).status, 409);
+    assert.equal((await call('/board-leases/renew', { lease, ttlMs: 30000 })).status, 200);
+    assert.equal((await call('/board-leases/commit-begin', { lease })).status, 200);
+    assert.equal((await call('/board-leases/release', { lease })).status, 409);
+    const initial = await call('/board-revisions', { lease, expected: null, content: Buffer.from('board-v1').toString('base64') });
+    assert.equal(initial.status, 200);
+    const revision = await initial.json() as { revision: number; sha256: string };
+    assert.equal(revision.revision, 1);
+    assert.equal((await call('/board-revisions', { lease, expected: null, content: Buffer.from('board-v2').toString('base64') })).status, 409);
+    const meta = await (await fetch(base + '/board-revisions?board=project%2Fboard', { headers: auth })).json() as { sha256: string };
+    assert.equal(meta.sha256, revision.sha256);
+    assert.equal((await call('/board-leases/commit-end', { lease: { ...lease, token: '0'.repeat(64) } })).status, 409);
+    assert.equal((await call('/board-leases/commit-end', { lease })).status, 200);
+    assert.equal((await call('/board-leases/release', { lease })).status, 200);
+    const next = await call('/board-leases/acquire', { ...request, owner: 'macbook' });
+    const nextLease = await next.json() as { generation: number };
+    assert.equal(next.status, 201);
+    assert.equal(nextLease.generation, (lease.generation as number) + 1);
+    assert.equal((await call('/board-leases/release', { lease })).status, 409);
+  });
+});
+
+describe('live progress stream', () => {
+  it('authenticates, replays, deduplicates retries and follows new events', async () => {
+    const input = { source: 'mini:boot-1', eventId: '1', host: 'mini', board: 'project/A', run: 'run-1', kind: 'progress', data: { pass: 1 } };
+    const publish = (body: unknown): Promise<Response> => fetch(base + '/live/events', {
+      method: 'POST', headers: { ...auth, 'content-type': 'application/json' }, body: JSON.stringify(body),
+    });
+    assert.equal((await fetch(base + '/live/events')).status, 401);
+    const first = await (await publish(input)).json() as { cursor: number };
+    const repeat = await (await publish(input)).json() as { cursor: number };
+    assert.equal(repeat.cursor, first.cursor);
+    assert.equal((await publish({ ...input, data: { pass: 2 } })).status, 400);
+    const stream = await fetch(base + '/live/events?after=0&follow=1', { headers: auth });
+    const reader = stream.body!.getReader();
+    const decoder = new TextDecoder();
+    let text = '';
+    while (!text.includes(`id: ${first.cursor}`)) text += decoder.decode((await reader.read()).value);
+    const second = await (await publish({ ...input, eventId: '2', data: { pass: 2 } })).json() as { cursor: number };
+    while (!text.includes(`id: ${second.cursor}`)) text += decoder.decode((await reader.read()).value);
+    await reader.cancel();
+    const replay = await fetch(`${base}/live/events?after=${first.cursor}`, { headers: auth });
+    const events = await replay.json() as { cursor: number }[];
+    assert.deepEqual(events.map(e => e.cursor), [second.cursor]);
+    await publish({ ...input, eventId: '3', kind: 'board.snapshot', data: { path: 'a.kicad_pcb' } });
+    await publish({ ...input, eventId: '4', kind: 'board.snapshot', data: { path: 'b.kicad_pcb' } });
+    const state = await (await fetch(base + '/live/state', { headers: auth })).json() as { events: { kind: string }[] };
+    assert.equal(state.events.filter(e => e.kind === 'board.snapshot').length, 2);
+    assert.equal((await fetch(base + '/live/events?after=0&epoch=wrong&follow=1', { headers: auth })).status, 409);
+  });
+
+  it('serves only a bounded regular preview from a job attempt', async () => {
+    const response = await post({ command: ['hang'], name: 'preview' });
+    const job = await response.json() as { id: string };
+    await until(job.id, 'running');
+    const preview = path.join(r.mgr.store.outDir(job.id, 1), 'live-route.json');
+    const url = `${base}/jobs/${job.id}/live`;
+    assert.equal((await fetch(url, { headers: auth })).status, 404);
+    fs.writeFileSync(preview, '{"schema":"iot-lab.route-preview.v1"}');
+    assert.equal((await (await fetch(url, { headers: auth })).json() as { schema: string }).schema, 'iot-lab.route-preview.v1');
+    fs.unlinkSync(preview);
+    fs.symlinkSync('/etc/passwd', preview);
+    assert.equal((await fetch(url, { headers: auth })).status, 404);
+    assert.equal((await fetch(url)).status, 401);
+  });
+});
+
 describe('submit', () => {
   it('runs a job and returns its results and evidence', async () => {
     const res = await post({ command: ['killed', 'pass'], name: 'demo' }, tarOf(r.dir), 1);

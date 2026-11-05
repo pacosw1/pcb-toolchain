@@ -76,6 +76,24 @@ function main(argv) {
   const rels = releaseFiles(bundle)
   if (fs.existsSync(stamp) && read(stamp).trim() === stampText && rels.every(r => fs.existsSync(path.join(tools, r)))) return 0
   const ours = new Set(fs.existsSync(listing) ? read(listing).split('\n').filter(Boolean) : [])
+  if (process.env.PCB_LIVE_SAFE_SYNC === '1' && ours.size) {
+    const previous = fs.existsSync(stamp) ? read(stamp).trim().split(/\s+/)[0] : ''
+    const manifest = path.join(process.env.HOME ?? '', '.local/share/pcb-toolchain', previous, 'manifest.json')
+    let files
+    try { files = JSON.parse(read(manifest)).files } catch {
+      console.error('FAIL: toolchain_sync: cannot verify the previously installed release; no files changed')
+      return 1
+    }
+    for (const r of ours) {
+      const p = path.join(tools, r)
+      if (!lexists(p)) continue
+      const st = fs.lstatSync(p), expected = files?.['tools/' + r]
+      if (!st.isFile() || typeof expected !== 'string' || digest(p) !== expected) {
+        console.error(`FAIL: toolchain_sync: managed file tools/${r} was changed; no files changed`)
+        return 1
+      }
+    }
+  }
   const collision = r => console.error(`FAIL: toolchain_sync: project file tools/${r} differs from pcb-toolchain ${stampText}; ` +
                                        'move it to the pcb-toolchain repo or rename it')
   for (const r of rels) {                           // check every path first: a collision changes nothing

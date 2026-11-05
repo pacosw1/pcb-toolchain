@@ -225,18 +225,51 @@ function queueClock(file){
 /** `client run`: streams the job to stderr, fills `results`. -> {code, id, refused500, stdout}. */
 function submitAndWatch(plan,inputs,timeoutS,results){
   const name=path.basename(plan.out,'.kicad_pcb');
-  const cmd=['bash','-c',JOB_SCRIPT,'_','tools/router/run.py',plan.board,`out/route/${name}.kicad_pcb`,'--bin',`in/${BIN}`,...plan.args];
+  const jobScript=process.env.PCB_LIVE_ROUTE_FILE ? JOB_SCRIPT.replace('exec python3', 'export IOTROUTE_LIVE_FILE=/job/out/live-route.json\nexec python3') : JOB_SCRIPT;
+  const cmd=['bash','-c',jobScript,'_','tools/router/run.py',plan.board,`out/route/${name}.kicad_pcb`,'--bin',`in/${BIN}`,...plan.args];
   const queueWait=process.env.PCB_QUEUE_WAIT_S||String(QUEUE_WAIT_S);
   const args=['run',plan.board,...inputs.flatMap(f=>['--in',f]),'--timeout',String(timeoutS),'--cpus',String(ROUTE_CPUS),'--mem',String(ROUTE_MEM_GB),'--queue-wait',queueWait,'--results',results,'--name',`route-${name}`];
   if(process.env.REMOTE_IMAGE)args.push('--image',process.env.REMOTE_IMAGE);
   const [exe,argv,opts]=clientProcess(plan,[...args,'--',...cmd],['ignore','pipe','pipe']);
   return new Promise(resolve=>{
     const child=spawn(exe,argv,opts),seen={id:null,stdout:'',stderr:''},clock=queueClock(process.env.PCB_QUEUE_CLOCK);
+    const preview=process.env.PCB_LIVE_ROUTE_FILE;
+    let pulling=false,lastHash='',lastBaseHash='',timer=null;
+    const pull=async()=>{
+      if(!preview||!seen.id||pulling)return;
+      pulling=true;
+      try{
+        const token=fs.readFileSync(plan.tokenFile,'utf8').trim();
+        const base=await fetch(`${plan.url}/jobs/${encodeURIComponent(seen.id)}/live?kind=route-base`,{headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(4000),redirect:'error'});
+        if(base.ok){
+          const bytes=Buffer.from(await base.arrayBuffer());
+          if(bytes.length<=20*1024*1024){
+            const digest=createHash('sha256').update(bytes).digest('hex');
+            if(digest!==lastBaseHash){
+              const dest=path.join(path.dirname(preview),'live-route-base.kicad_pcb');
+              fs.writeFileSync(`${dest}.tmp`,bytes);fs.renameSync(`${dest}.tmp`,dest);lastBaseHash=digest;
+            }
+          }
+        }
+        const response=await fetch(`${plan.url}/jobs/${encodeURIComponent(seen.id)}/live`,{headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(4000),redirect:'error'});
+        if(!response.ok)return;
+        const bytes=Buffer.from(await response.arrayBuffer());
+        if(bytes.length>20*1024*1024)return;
+        const digest=createHash('sha256').update(bytes).digest('hex');
+        if(digest===lastHash)return;
+        const data=JSON.parse(bytes.toString('utf8'));
+        if(data.schema!=='iot-lab.route-preview.v1')return;
+        const tmp=`${preview}.tmp`;
+        fs.writeFileSync(tmp,bytes);fs.renameSync(tmp,preview);lastHash=digest;
+      }catch{/* preview is best effort; routing and its verdict do not depend on it */}
+      finally{pulling=false;}
+    };
+    if(preview)timer=setInterval(pull,2000);
     child.stdout.on('data',d=>{seen.stdout+=d;process.stderr.write(d);});
     child.stderr.on('data',d=>{
       seen.stderr+=d;process.stderr.write(d);
       seen.id??=seen.stderr.match(/^pcb-job: job (\S+)$/m)?.[1]??null;
-      if(seen.id)clock.start();
+      if(seen.id){clock.start();void pull();}
       if(/^\[\S+\] (running|passed|failed|cancelled): /m.test(seen.stderr))clock.stop();
     });
     // A stopped `pcb route` must not leave its job holding the budget until the job's own time limit.
@@ -244,8 +277,8 @@ function submitAndWatch(plan,inputs,timeoutS,results){
       if(seen.id){const [e,a,o]=clientProcess(plan,['cancel',seen.id],'ignore');spawnSync(e,a,{...o,timeout:CANCEL_MS});}
       child.kill();process.exit(128+number);
     });
-    child.on('error',e=>{say(`cannot start the client: ${e.message}`);resolve({code:1,...seen});});
-    child.on('close',code=>{clock.stop();resolve({code,...seen});});
+    child.on('error',e=>{if(timer)clearInterval(timer);say(`cannot start the client: ${e.message}`);resolve({code:1,...seen});});
+    child.on('close',code=>{if(timer)clearInterval(timer);clock.stop();resolve({code,...seen});});
   });
 }
 

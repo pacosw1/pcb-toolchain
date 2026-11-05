@@ -133,8 +133,29 @@ async function watchLogs(id: string): Promise<void> {
 }
 
 async function watch(id: string): Promise<JobRecord> {
-  await Promise.all([watchEvents(id), watchLogs(id)]);
-  return persist('status', () => apiJson<JobRecord>(`/jobs/${id}`));
+  const preview = process.env.PCB_LIVE_PLACEMENT_FILE;
+  let stopped = false, pulling = false, digest = '';
+  const poll = async (): Promise<void> => {
+    if (!preview || stopped || pulling) return;
+    pulling = true;
+    try {
+      const response = await api(`/jobs/${id}/live?kind=placement`, { signal: AbortSignal.timeout(4000), redirect: 'error' });
+      if (!response.ok) return;
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (bytes.length > 20 * 1024 * 1024) return;
+      const next = createHash('sha256').update(bytes).digest('hex');
+      if (next === digest || (JSON.parse(bytes.toString('utf8')) as { schema?: string }).schema !== 'iot-lab.placement-preview.v1') return;
+      fs.writeFileSync(preview + '.tmp', bytes);
+      fs.renameSync(preview + '.tmp', preview);
+      digest = next;
+    } catch { /* live preview does not affect the job or its verdict */ }
+    finally { pulling = false; }
+  };
+  const timer = preview ? setInterval(() => { void poll(); }, 2000) : null;
+  try {
+    await Promise.all([watchEvents(id), watchLogs(id)]);
+    return await persist('status', () => apiJson<JobRecord>(`/jobs/${id}`));
+  } finally { stopped = true; if (timer) clearInterval(timer); }
 }
 
 function exitCodeOf(job: JobRecord): number {

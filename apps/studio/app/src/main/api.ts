@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { unwatchAll, unwatchBoard, watchBoard } from './boardWatch.ts'
 import { exportGlb, version as kicadVersion } from './kicad/cli.ts'
+import { openLive, liveGeometry, livePreview, livePlacement } from './liveRemote.ts'
 import { bbox, load } from './kicad/board.ts'
 import { bom, boardParts } from './parts.ts'
 import { indexFor } from './partsIndex.ts'
@@ -26,6 +27,11 @@ function needProject(): Project {
 
 const lexical = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0
 const expandHome = (p: string): string => p === '~' || p.startsWith('~/') ? path.join(os.homedir(), p.slice(1)) : p
+
+registry.method('live.open', [], 0, openLive)
+registry.method('live.geometry', ['sha256'], 1, liveGeometry)
+registry.method('live.preview', ['sha256'], 1, livePreview)
+registry.method('live.placement', ['sha256'], 1, livePlacement)
 
 registry.method('engine.ping', [], 0, () => ({ ok: true, uptime_s: Math.round(Date.now() - started) / 1000 }))
 

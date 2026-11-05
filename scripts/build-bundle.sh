@@ -36,17 +36,20 @@ if [ "$linux" = --linux ]; then
   trap - EXIT
 fi
 echo "START: manifest"
-python3 - "$out" "$version" "$sha" <<'EOF'
-import hashlib, json, os, sys
-root, version, sha = sys.argv[1:]
-files = {}
-for d, _, fs in os.walk(root):
-    for f in sorted(fs):
-        p = os.path.join(d, f)
-        files[os.path.relpath(p, root)] = hashlib.sha256(open(p, 'rb').read()).hexdigest()
-json.dump({'schema': 'pcb-toolchain.manifest.v1', 'version': version, 'source_sha': sha, 'files': files},
-          open(os.path.join(root, 'manifest.json'), 'w'), indent=1, sort_keys=True)
-print(len(files), 'files')
+node - "$out" "$version" "$sha" <<'EOF'
+const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto');
+const [root, version, sha] = process.argv.slice(2), files = {};
+function walk(dir) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    const p = path.join(dir, entry.name);
+    if (entry.isDirectory()) walk(p);
+    else if (!entry.isSymbolicLink() || !fs.statSync(p).isDirectory())
+      files[path.relative(root, p)] = crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+  }
+}
+walk(root);
+fs.writeFileSync(path.join(root, 'manifest.json'), JSON.stringify({ schema: 'pcb-toolchain.manifest.v1', version, source_sha: sha, files: Object.fromEntries(Object.entries(files).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) }, null, 1));
+console.log(Object.keys(files).length, 'files');
 EOF
 COPYFILE_DISABLE=1 tar --no-xattrs -C "$stage" -czf "$here/dist/$name.tar.gz" "$name"   # macOS tar otherwise adds ._* files, visible only on Linux
 got=$(gzip -dc "$here/dist/$name.tar.gz" | LC_ALL=C grep -a -c "/\._" || true)

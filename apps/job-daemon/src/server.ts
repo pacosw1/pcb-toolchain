@@ -5,6 +5,10 @@ import http from 'node:http';
 import path from 'node:path';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { BoardLeases } from './board-leases.ts';
+import type { BoardLease } from './board-leases.ts';
+import { LiveEvents } from './live-events.ts';
+import type { LiveInput } from './live-events.ts';
 import { BlobStore, isSha256, parseManifest } from './blobs.ts';
 import { exec, lowPriority } from './docker.ts';
 import type { JobManager } from './manager.ts';
@@ -43,12 +47,12 @@ export async function checkTar(file: string, signal: AbortSignal): Promise<void>
   }
 }
 
-async function readJson(req: http.IncomingMessage): Promise<unknown> {
+async function readJson(req: http.IncomingMessage, maxBytes = MAX_JSON_BYTES): Promise<unknown> {
   const chunks: Buffer[] = [];
   let bytes = 0;
   for await (const chunk of req as AsyncIterable<Buffer>) {
     bytes += chunk.length;
-    if (bytes > MAX_JSON_BYTES) throw new HttpError(413, `body over ${MAX_JSON_BYTES} bytes`);
+    if (bytes > maxBytes) throw new HttpError(413, `body over ${maxBytes} bytes`);
     chunks.push(chunk);
   }
   try {
@@ -56,6 +60,17 @@ async function readJson(req: http.IncomingMessage): Promise<unknown> {
   } catch {
     throw new HttpError(400, 'body is not JSON');
   }
+}
+
+function parseLease(value: unknown): BoardLease {
+  const lease = value as Partial<BoardLease> | null;
+  if (!lease || typeof lease.board !== 'string' || !lease.board || lease.board.length > 512 ||
+      typeof lease.owner !== 'string' || !lease.owner || lease.owner.length > 256 ||
+      typeof lease.token !== 'string' || !/^[0-9a-f]{64}$/.test(lease.token) ||
+      !Number.isSafeInteger(lease.generation) || (lease.generation ?? 0) < 1 ||
+      typeof lease.expiresAt !== 'number' || !Number.isSafeInteger(lease.expiresAt))
+    throw new HttpError(400, 'invalid lease');
+  return lease as BoardLease;
 }
 
 async function receive(req: http.IncomingMessage, dir: string, maxBytes: number): Promise<string> {
@@ -177,9 +192,102 @@ class Slots {
   }
 }
 
-async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: JobManager, uploads: Slots, streams: Slots, blobs: BlobStore): Promise<void> {
+async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: JobManager, uploads: Slots, streams: Slots, blobs: BlobStore, leases: BoardLeases, live: LiveEvents): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://x');
   const method = req.method ?? 'GET';
+  if (url.pathname === '/live/identity' && method === 'GET') return json(res, 200, { epoch: live.epoch });
+  if (url.pathname === '/board-leases/status' && method === 'GET') {
+    const board = url.searchParams.get('board');
+    if (!board || board.length > 512) throw new HttpError(400, 'invalid board');
+    return json(res, 200, leases.status(board));
+  }
+  if (url.pathname === '/board-revisions' && method === 'GET') {
+    const board = url.searchParams.get('board');
+    if (!board || board.length > 512) throw new HttpError(400, 'invalid board');
+    return json(res, 200, leases.boardMeta(board));
+  }
+  if (url.pathname === '/board-revisions' && method === 'POST') {
+    const release = uploads.take();
+    try {
+      const body = await readJson(req, 28 * 1024 * 1024) as { lease?: unknown; expected?: unknown; content?: unknown } | null;
+      const lease = parseLease(body?.lease);
+      if (body?.expected !== null && (!Number.isSafeInteger(body?.expected) || (body?.expected as number) < 1))
+        throw new HttpError(400, 'invalid expected revision');
+      if (typeof body?.content !== 'string' || body.content.length > 27_962_028)
+        throw new HttpError(400, 'invalid board content');
+      const bytes = Buffer.from(body.content, 'base64');
+      if (bytes.toString('base64') !== body.content) throw new HttpError(400, 'invalid board content');
+      try { return json(res, 200, leases.publish(lease, body.expected as number | null, bytes)); }
+      catch (error) { throw new HttpError(409, error instanceof Error ? error.message : 'cannot publish board'); }
+    } finally { release(); }
+  }
+  if (url.pathname === '/live/state' && method === 'GET') return json(res, 200, live.current());
+  if (url.pathname === '/live/events' && method === 'POST') {
+    const value = await readJson(req);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new HttpError(400, 'invalid event');
+    try { return json(res, 200, live.append(value as LiveInput)); }
+    catch (e) { throw new HttpError(400, e instanceof Error ? e.message : 'invalid event'); }
+  }
+  if (url.pathname === '/live/events' && method === 'GET') {
+    const cursor = Number(url.searchParams.get('after') ?? req.headers['last-event-id'] ?? '0');
+    if (!Number.isSafeInteger(cursor) || cursor < 0) throw new HttpError(400, 'invalid cursor');
+    const epoch = url.searchParams.get('epoch');
+    if (epoch !== null && epoch !== live.epoch) throw new HttpError(409, 'coordinator history changed; reload state');
+    if (cursor > live.head()) throw new HttpError(409, 'cursor is ahead of coordinator history; reload state');
+    if (url.searchParams.get('follow') !== '1') return json(res, 200, live.after(cursor));
+    streams.untilClose(res);
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
+    res.write(': connected\n\n');
+    let position = cursor, pumping = false, closed = false;
+    const pump = (): void => {
+      if (pumping || closed) return;
+      pumping = true;
+      const batch = live.after(position);
+      for (const event of batch) {
+        if (res.writableLength > 1024 * 1024) { res.destroy(); break; }
+        res.write(`id: ${event.cursor}\ndata: ${JSON.stringify(event)}\n\n`);
+        position = event.cursor;
+      }
+      pumping = false;
+      if (batch.length === 500 && !closed) setImmediate(pump);
+    };
+    const off = live.subscribe(pump);
+    const heartbeat = setInterval(() => { if (!closed) res.write(': heartbeat\n\n'); }, 15_000);
+    res.once('close', () => { closed = true; clearInterval(heartbeat); off(); });
+    pump();
+    return;
+  }
+  if (url.pathname === '/board-leases/acquire' && method === 'POST') {
+    const body = await readJson(req) as { board?: unknown; owner?: unknown; ttlMs?: unknown } | null;
+    if (!body || typeof body.board !== 'string' || !body.board || body.board.length > 512 ||
+        typeof body.owner !== 'string' || !body.owner || body.owner.length > 256 ||
+        typeof body.ttlMs !== 'number' || !Number.isSafeInteger(body.ttlMs) || body.ttlMs < 1000 || body.ttlMs > 300_000)
+      throw new HttpError(400, 'invalid lease request');
+    const lease = leases.acquire(body.board, body.owner, body.ttlMs);
+    if (!lease) throw new HttpError(409, 'board is leased');
+    return json(res, 201, lease);
+  }
+  if (['/board-leases/renew', '/board-leases/release', '/board-leases/commit-begin', '/board-leases/commit-end'].includes(url.pathname) && method === 'POST') {
+    const body = await readJson(req) as { lease?: Partial<BoardLease>; ttlMs?: unknown } | null;
+    const lease = parseLease(body?.lease);
+    if (url.pathname.endsWith('/release')) {
+      if (!leases.release(lease as BoardLease)) throw new HttpError(409, 'lease expired or replaced');
+      return json(res, 200, { released: true });
+    }
+    if (url.pathname.endsWith('/commit-begin')) {
+      if (!leases.beginCommit(lease as BoardLease)) throw new HttpError(409, 'lease expired or replaced');
+      return json(res, 200, { pinned: true });
+    }
+    if (url.pathname.endsWith('/commit-end')) {
+      if (!leases.endCommit(lease as BoardLease)) throw new HttpError(409, 'commit is not pinned by this lease');
+      return json(res, 200, { pinned: false });
+    }
+    if (typeof body?.ttlMs !== 'number' || !Number.isSafeInteger(body.ttlMs) || body.ttlMs < 1000 || body.ttlMs > 300_000)
+      throw new HttpError(400, 'invalid lease duration');
+    const renewed = leases.renew(lease as BoardLease, body.ttlMs);
+    if (!renewed) throw new HttpError(409, 'lease expired or replaced');
+    return json(res, 200, renewed);
+  }
   if (url.pathname === '/status' && method === 'GET') return json(res, 200, mgr.status());
   if (url.pathname === '/jobs' && method === 'GET') {
     const raw = url.searchParams.get('limit');
@@ -195,6 +303,15 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: J
     return json(res, 200, { missing: blobs.missing(hashes) });
   }
   const blob = /^\/blobs\/([^/]+)$/.exec(url.pathname);
+  if (blob && method === 'GET') {
+    const file = blobs.read(blob[1]);
+    streams.untilClose(res);
+    res.writeHead(200, { 'content-type': 'application/octet-stream', 'cache-control': 'private, max-age=3600' });
+    file.on('error', () => res.destroy());
+    res.on('close', () => file.destroy());
+    file.pipe(res);
+    return;
+  }
   if (blob && method === 'PUT') {
     if (!isSha256(blob[1])) throw new HttpError(400, 'bad sha256');
     const release = uploads.take();
@@ -238,7 +355,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: J
       release();
     }
   }
-  const m = /^\/jobs\/([0-9]{8}-[0-9]{6}-[0-9a-f]{6})(?:\/(cancel|log|events|results))?$/.exec(url.pathname);
+  const m = /^\/jobs\/([0-9]{8}-[0-9]{6}-[0-9a-f]{6})(?:\/(cancel|log|events|results|live))?$/.exec(url.pathname);
   const job = m ? mgr.jobs.get(m[1]) : undefined;
   if (!m || !job) throw new HttpError(404, 'not found');
   const follow = url.searchParams.get('follow') === '1';
@@ -250,6 +367,26 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: J
     case 'GET events':
       streams.untilClose(res);
       return tail(res, mgr.store.eventsFile(job.id), offsetOf(url), follow, () => isTerminal(job.state));
+    case 'GET live': {
+      const n = Number(url.searchParams.get('attempt') ?? job.attempts.length);
+      if (!job.attempts.some(a => a.n === n)) throw new HttpError(404, 'no such attempt');
+      const kind = url.searchParams.get('kind') ?? 'route';
+      const names: Record<string, string> = { route: 'live-route.json', placement: 'live-place.json', 'route-base': 'live-route-base.kicad_pcb' };
+      if (!Object.hasOwn(names, kind)) throw new HttpError(400, 'invalid preview kind');
+      const fd = openNoFollow(path.join(mgr.store.outDir(job.id, n), names[kind]));
+      if (fd === null) throw new HttpError(404, 'no preview');
+      try {
+        const size = fs.fstatSync(fd).size;
+        if (size > 20 * 1024 * 1024) throw new HttpError(413, 'route preview too large');
+        const buf = Buffer.allocUnsafe(size + 1);
+        const nread = fs.readSync(fd, buf, 0, buf.length, 0);
+        if (nread !== size) throw new HttpError(409, 'route preview changed while reading');
+        const bytes = buf.subarray(0, nread);
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        res.end(bytes);
+        return;
+      } finally { fs.closeSync(fd); }
+    }
     case 'GET log': {
       const n = Number(url.searchParams.get('attempt') ?? job.attempts.length);
       const attempt = job.attempts.find((a) => a.n === n);
@@ -269,12 +406,14 @@ export function createServer(mgr: JobManager): http.Server {
   const uploads = new Slots('uploads', mgr.cfg.maxUploads);
   const streams = new Slots('streams', mgr.cfg.maxStreams);
   const blobs = new BlobStore(mgr.store.blobsDir(), mgr.store.incomingDir(), mgr.cfg.blobKeepDays);
+  const leases = new BoardLeases(path.join(mgr.store.root, 'board-leases.sqlite'));
+  const live = new LiveEvents(path.join(mgr.store.root, 'live-events.sqlite'));
   const server = http.createServer((req, res) => {
     if (!authorized(req, mgr.cfg.token)) {
       res.setHeader('connection', 'close');
       return json(res, 401, { error: 'unauthorized' });
     }
-    route(req, res, mgr, uploads, streams, blobs).catch((e: unknown) => {
+    route(req, res, mgr, uploads, streams, blobs, leases, live).catch((e: unknown) => {
       const status = e instanceof HttpError ? e.status : 500;
       if (status === 500) console.error(e);
       if (res.headersSent) return res.destroy();
@@ -282,6 +421,7 @@ export function createServer(mgr: JobManager): http.Server {
       json(res, status, { error: e instanceof Error ? e.message : String(e) });
     });
   });
+  server.once('close', () => { leases.close(); live.close(); });
   server.maxConnections = MAX_CONNECTIONS;
   // Node's default of 300 s fails a large file on a slow link; the file then starts again from nothing.
   server.requestTimeout = mgr.cfg.requestTimeoutS * 1000;

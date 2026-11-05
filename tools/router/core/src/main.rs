@@ -289,6 +289,37 @@ struct Out {
     passes: usize,
 }
 
+// An observational frame only: it is never used by the router or accepted as a routed result.
+// Write by rename so readers never see a partially serialized pass.
+fn live_frame(ctx: &Ctx<'_>, base0: usize, pass: usize, max_passes: usize, conflict_nets: usize,
+              conflict_pairs: usize, elapsed_s: f64, board_sha: &str, file: &std::path::Path) -> std::io::Result<()> {
+    let mut tracks = Vec::new();
+    let mut vias = Vec::new();
+    for (i, s) in ctx.bd.shapes.iter().enumerate() {
+        if !s.alive || (s.owner < 0 && i < base0) || s.kind == Kind::Spoke || s.net < 0 { continue; }
+        let net = ctx.bd.nets[s.net as usize].name.clone();
+        match s.geo {
+            Geo::Seg(ax, ay, bx, by, hw) => {
+                if let Some(l) = (0..ctx.bd.layer_names.len()).find(|&l| s.layers & (1 << l) != 0) {
+                    tracks.push(OutTrack { net, layer: ctx.bd.layer_names[l].clone(), a: [ax, ay], b: [bx, by], w: hw * 2.0 });
+                }
+            }
+            Geo::Circ(x, y, r) => {
+                vias.push(OutVia { net, x, y, d: r * 2.0, drill: s.drill, role: "preview".into() });
+            }
+            _ => {}
+        }
+    }
+    let frame = serde_json::json!({"schema": "iot-lab.route-preview.v1", "tracks": tracks, "vias": vias,
+        "passes": pass, "max_passes": max_passes, "conflict_nets": conflict_nets,
+        "conflict_pairs": conflict_pairs, "elapsed_s": elapsed_s,
+        "board_sha256": board_sha});
+    let tmp = file.with_extension("tmp");
+    let bytes = serde_json::to_vec(&frame).map_err(std::io::Error::other)?;
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(tmp, file)
+}
+
 struct Opts {
     pitch: f64,
     passes: usize,
@@ -4280,6 +4311,26 @@ fn route_cli(args: &[String]) {
     let mut ckpt = ckpt_path.as_ref().map(|p| checkpoint::Writer::new(p, t0, seed, o.passes));
     let model_text = std::fs::read_to_string(&args[1]).expect("model");
     let model: Value = serde_json::from_str(&model_text).expect("json");
+    let live = std::env::var_os("IOTROUTE_LIVE_FILE").and_then(|name| {
+        let file = std::path::PathBuf::from(name);
+        let prepare = || -> std::io::Result<String> {
+            let source = model.get("pcb").and_then(Value::as_str)
+                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "model has no source board"))?;
+            if std::fs::metadata(source)?.len() > 20 * 1024 * 1024 {
+                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "source board too large"));
+            }
+            use std::io::Read;
+            let mut bytes = Vec::new();
+            std::fs::File::open(source)?.take(20 * 1024 * 1024 + 1).read_to_end(&mut bytes)?;
+            if bytes.len() > 20 * 1024 * 1024 { return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "source board too large")); }
+            let base = file.with_file_name("live-route-base.kicad_pcb");
+            let tmp = base.with_extension("tmp");
+            std::fs::write(&tmp, &bytes)?;
+            std::fs::rename(tmp, base)?;
+            Ok(checkpoint::sha256(&bytes))
+        };
+        match prepare() { Ok(sha) => Some((file, sha)), Err(error) => { eprintln!("live preview source: {error}"); None } }
+    });
     if let Some(w) = &mut ckpt {
         w.bind(checkpoint::Bind::new(&model_text, &model, source_sha, &args[3..]));
         checkpoint::stop_on_signal();
@@ -4548,6 +4599,12 @@ fn route_cli(args: &[String]) {
         }
         if let Some(w) = &mut ckpt {
             w.pass(&ctx, &checkpoint::Pass { pass: it + 1, au: &au, involved: &involved, state: &state, pour_faults: pf.len(), search_limited, best: best.as_ref().map(|b| (b.1, b.0)), since_best });
+        }
+        if let Some((file, sha)) = &live {
+            if let Err(error) = live_frame(&ctx, base0, it + 1, o.passes, involved.len(), au.pairs,
+                                           t0.elapsed().as_secs_f64(), sha, file) {
+                eprintln!("live preview: {error}");
+            }
         }
         if involved.is_empty() {
             converged = true;

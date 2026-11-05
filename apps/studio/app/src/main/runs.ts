@@ -24,6 +24,7 @@ import path from 'node:path'
 import type { Readable } from 'node:stream'
 import type { Candidate, Finding, Findings, RunSummary } from '../shared/generated'
 import { publish } from './events.ts'
+import { coordinatedTool } from './liveConfig.ts'
 import { resolveReal } from './project.ts'
 
 const MAX_EVENTS = 2000
@@ -184,6 +185,8 @@ export function killGroup(pid: number): void {
 }
 
 function toolOf(root: string): string {
+  const coordinated = coordinatedTool(root)
+  if (coordinated) return coordinated
   const tool = path.join(root, 'tools', 'pcb')
   if (!isFile(tool)) throw new Error(`${tool} (this project has no tools/pcb)`)
   return tool
@@ -315,7 +318,7 @@ export class Runs {
 
   private async supervise(run: Run, root: string): Promise<void> {
     try {
-      const child = spawn(run.argv[0], run.argv.slice(1), { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], detached: true, env: { ...process.env } })
+      const child = spawn(run.argv[0], run.argv.slice(1), { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], detached: true, env: { ...process.env, IOT_LAB: root } })
       run.proc = child
       eachLine(child.stdout, line => this.onEvent(run, line))
       eachLine(child.stderr, line => {
@@ -434,7 +437,7 @@ export class Runs {
 
 function collect(cmd: string, args: string[], cwd: string): Promise<{ code: number, out: string, err: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env } })
+    const child = spawn(cmd, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, IOT_LAB: cwd } })
     const out: Buffer[] = [], err: Buffer[] = []
     child.stdout.on('data', (d: Buffer) => out.push(d))
     child.stderr.on('data', (d: Buffer) => err.push(d))

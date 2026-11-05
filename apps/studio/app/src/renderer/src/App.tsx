@@ -3,6 +3,7 @@ import type { EngineStatus } from '../../preload/types'
 import { BoardView, type Selection } from './BoardView'
 import { BoardPicker } from './BoardPicker'
 import { Icon } from './Icon'
+import { LiveView } from './LiveView'
 import { ChatPanel } from './ChatPanel'
 import { ChecksView } from './ChecksView'
 import { DatasheetView } from './DatasheetView'
@@ -11,7 +12,7 @@ import { RunsView } from './RunsView'
 import { Viewer3D } from './Viewer3D'
 import type { Bom, BomLine, Finding, Geometry, ProjectInfo } from './types'
 
-type Tab = 'board' | '3d' | 'parts' | 'datasheets' | 'checks' | 'runs'
+type Tab = 'live' | 'board' | '3d' | 'parts' | 'datasheets' | 'checks' | 'runs'
 
 const STATE_COLOR: Record<EngineStatus['state'], string> = {
   ready: 'var(--ok)',
@@ -297,6 +298,7 @@ function App(): React.JSX.Element {
       </header>
       <div className="body">
         <nav className="sidebar" aria-label="Board">
+          <button type="button" className={tab === 'live' ? 'section on' : 'section'} aria-current={tab === 'live' ? 'page' : undefined} onClick={() => setTab('live')}>Live boards</button>
           {!project ? (
             <p style={{ color: 'var(--dim)', margin: 0 }}>Open a hardware project (for example iot-lab).</p>
           ) : (
@@ -359,7 +361,9 @@ function App(): React.JSX.Element {
               {error}
             </div>
           ) : null}
-          {geo && tab === 'board' ? (
+          {tab === 'live' ? (
+            <LiveView />
+          ) : geo && tab === 'board' ? (
             <BoardView
               geo={geo}
               onSelect={setSelection}

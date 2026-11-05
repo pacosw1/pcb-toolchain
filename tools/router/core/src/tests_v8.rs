@@ -417,3 +417,25 @@ fn escape_start_near_the_rect_corner_clears_the_neighbour() {
     // clear of the U3.4 corner (4.64, 5.02) by the rule 0.14 + 0.15
     assert!(seg_dist(4.64, 5.02, a.0, a.1, b.0, b.1) >= 0.29);
 }
+
+#[test]
+fn live_preview_writes_only_live_routed_geometry() {
+    let o = opts();
+    let mut bd = board();
+    bd.add(pin(0, 1.0, 1.0));
+    let base = bd.shapes.len();
+    bd.add(Shape { net: 1, geo: Geo::Seg(1.0, 2.0, 3.0, 4.0, 0.1), clr: 0.15, layers: 1, drill: 0.0, kind: Kind::Track, owner: 1, alive: true, grp: 0 });
+    bd.add(Shape { net: 1, geo: Geo::Circ(3.0, 4.0, 0.3), clr: 0.15, layers: 7, drill: 0.3, kind: Kind::Via, owner: 1, alive: true, grp: 0 });
+    let ctx = ctx_of(&mut bd, &o);
+    let file = std::env::temp_dir().join(format!("iotroute-live-test-{}.json", std::process::id()));
+    live_frame(&ctx, base, 7, 20, 2, 3, 5.0, "fixture-hash", &file).unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    assert_eq!(value["schema"], "iot-lab.route-preview.v1");
+    assert_eq!(value["passes"], 7);
+    assert_eq!(value["conflict_pairs"], 3);
+    assert_eq!(value["tracks"].as_array().unwrap().len(), 1);
+    assert_eq!(value["vias"].as_array().unwrap().len(), 1);
+    assert_eq!(value["tracks"][0]["layer"], "F.Cu");
+    assert_eq!(ctx.bd.shapes.len(), 3);
+    std::fs::remove_file(file).unwrap();
+}

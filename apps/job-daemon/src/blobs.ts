@@ -64,7 +64,25 @@ export class BlobStore {
   private file = (sha: string): string => path.join(this.dir, sha);
 
   missing(hashes: string[]): string[] {
-    return [...new Set(hashes)].filter((h) => !fs.existsSync(this.file(h)));
+    const absent: string[] = [];
+    const now = new Date();
+    for (const hash of new Set(hashes)) {
+      try { fs.utimesSync(this.file(hash), now, now); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') absent.push(hash);
+        else throw error;
+      }
+    }
+    return absent;
+  }
+
+  /** A cached, content-addressed file; callers must validate the hash first. */
+  read(sha: string): fs.ReadStream {
+    if (!isSha256(sha)) throw new HttpError(400, 'bad sha256');
+    const file = this.file(sha);
+    if (!fs.existsSync(file)) throw new HttpError(404, 'blob not found');
+    try { fs.utimesSync(file, new Date(), new Date()); } catch { /* a concurrent sweep may remove it */ }
+    return fs.createReadStream(file);
   }
 
   /** A body that does not hash to `sha` is dropped, so a stored file is always what its name says. */
