@@ -67,3 +67,31 @@ test('deadline cancels the owned gate and never produces a pass', needsBinary, a
   assert.equal((result.cleanup as { complete?: boolean }).complete, true);
   assert.equal(existsSync(join(folder, 'gate/result.json')), false);
 });
+
+test('cancellation stops the owned gate before a terminal receipt is sealed', needsBinary, async t => {
+  const root = fixture(t, 'setTimeout(() => {}, 30000);');
+  const folder = await startCheck({ root, base: join(root, '.gate/cli'), board: 'X', timeout: 20, heartbeat: 0.1 });
+  for (let i = 0; i < 100 && status(folder).get('status') !== 'running'; i++) await delay(50);
+  writeFileSync(join(folder, 'cancel.request'), '{}');
+  const result = await settled(folder);
+  assert.equal(result.status, 'cancelled');
+  assert.equal((result.cleanup as { complete?: boolean }).complete, true);
+  assert.equal(existsSync(join(folder, 'gate/result.json')), false);
+});
+
+test('a killed worker cannot leave a successful terminal receipt', needsBinary, async t => {
+  const root = fixture(t, 'setTimeout(() => {}, 30000);');
+  const folder = await startCheck({ root, base: join(root, '.gate/cli'), board: 'X', timeout: 20, heartbeat: 0.1 });
+  let pid = 0;
+  for (let i = 0; i < 100 && !pid; i++) {
+    const state = status(folder);
+    if (state.get('status') === 'running') pid = Number(state.get('worker_pid'));
+    if (!pid) await delay(50);
+  }
+  assert.ok(pid > 0);
+  process.kill(pid, 'SIGKILL');
+  const result = await settled(folder);
+  assert.equal(result.status, 'error');
+  assert.notEqual(result.exit_code, 0);
+  assert.equal(existsSync(join(folder, 'gate/result.json')), false);
+});
