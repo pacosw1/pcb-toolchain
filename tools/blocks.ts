@@ -20,16 +20,21 @@
 //   hardware-design/registry/evidence/<date>/<C-number>.json        dated JLC catalog snapshots
 // Declared facts levels remain historical. Qualification receipts derive levels: 0 = draft/stale, 1 = source and
 // target gates plus applicability reviews, 2 = attributable measured bring-up evidence on that exact target instance.
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { kicadMeta } from './lib/block-parts.ts';
 import { bindInstance } from './lib/block-bindings.ts';
-import { inventory, qualify, reuseQualified, status } from './lib/block-qualification.ts';
+import { inventory, native, qualify, reuseQualified, status, type NativeTools } from './lib/block-qualification.ts';
 import { find, reuse, targetPlan, type TargetPlan } from './lib/block-reuse.ts';
 import { serve } from './lib/block-server.ts';
 import { detail, items, layoutOf, type Layout } from './lib/block-sources.ts';
 import { errorText, runMain } from './lib/cli.ts';
 import { readPyJson } from './lib/json-file.ts';
+import { runStage } from './lib/lean-stage.ts';
+import { deadlineAfter, remaining } from './lib/lean-workflow.ts';
+import { kicadCli } from './lib/netlist.ts';
+import { which } from './lib/py-path.ts';
 import { jsonDumps, parseArgs, pyStr, SystemExit } from './lib/py-compat.mjs';
 import { projectRoot } from './lib/project-root.mjs';
 import { isDict, type Dict } from './lib/py-values.ts';
@@ -99,6 +104,40 @@ function qualification(command: string, argv: string[], root: string, { lib }: L
   }
 }
 
+/** Fresh evidence only: the owned runner rejects timeout or uncertain cleanup. */
+async function nativeQualification(argv: string[], { lib }: Layout): Promise<number> {
+  try {
+    const args = parseArgs({ prog: `${PROG} native`, positionals: ['id'], options: [option('--output', true), { flag: '--timeout', fallback: '600' }] }, argv);
+    const timeout = Number(args.timeout);
+    if (!Number.isFinite(timeout) || timeout <= 0) throw new Error('native timeout must be finite and positive');
+    const row = reuse(lib, args.id);
+    const deadline = deadlineAfter(timeout, {});
+    const tools: NativeTools = {
+      binary: which(kicadCli()),
+      remaining: () => remaining(deadline) ?? 0,
+      version: (binary, seconds) => {
+        if (seconds <= 0) throw new Error('native deadline reached');
+        return execFileSync(binary, ['--version'], { encoding: 'utf8', timeout: Math.max(1, Math.ceil(seconds * 1000)) });
+      },
+      runOwned: async (command, options) => {
+        const log = openSync(options.log, 'w');
+        try {
+          const result = await runStage(command, { stage: options.label, cwd: options.cwd, deadline, stdin: 'ignore', stdout: log, stderr: log });
+          // runStage returns only after the broker has confirmed cleanup.
+          return { returncode: result.returncode, cleanup: { complete: true }, settled: true };
+        } finally { closeSync(log); }
+      },
+    };
+    return qualificationResult(await native(row.source_directory, args.output, tools));
+  } catch (error) {
+    if (error instanceof SystemExit) throw error;
+    const cause = errorText(error);
+    console.log(jsonDumps({ status: 'error', level: 0, qualification: 'draft', cause }));
+    console.error(`FAIL: block qualification: ${cause}`);
+    return 2;
+  }
+}
+
 function retrieved(command: string, argv: string[], { lib }: Layout): { result: unknown; verified: boolean } {
   const prog = `${PROG} ${command}`;
   if (command === 'find') {
@@ -143,11 +182,7 @@ function dispatch(argv: string[]): number | Promise<number> {
   }
   const root = projectRoot();
   const layout = layoutOf(root);
-  if (command === 'native') {
-    // Waits for the owned process runner of the lean owner; tools/blocks.py keeps this command until then.
-    console.error('FAIL: blocks.ts native needs the TypeScript lean_owned runner; use tools/blocks.py native');
-    return 2;
-  }
+  if (command === 'native') return nativeQualification(rest, layout);
   if (['inventory', 'qualify', 'status'].includes(command)) return qualification(command, rest, root, layout);
   if (['find', 'reuse', 'plan', 'bind'].includes(command)) return retrieval(command, rest, layout);
   if (command === 'serve') {

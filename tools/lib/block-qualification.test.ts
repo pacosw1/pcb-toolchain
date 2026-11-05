@@ -1,11 +1,12 @@
 // Recorded gate fixtures exercise proof contracts; they are not PCB qualification evidence.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { bindInstance } from './block-bindings.ts';
 import { Evidence, inventory, native, nativeMetrics, qualify, reuseQualified, status, verifyBench, type NativeTools } from './block-qualification.ts';
 import { readBlock, reuse } from './block-reuse.ts';
@@ -296,6 +297,29 @@ test('the source native runner refuses in-source or existing evidence', async ()
 
 test('a missing KiCad CLI stops before any evidence folder exists', async () => {
   await assert.rejects(native(block, join(root, 'none'), { ...tools(), binary: null }), /KiCad CLI unavailable/);
+});
+
+test('blocks native CLI uses the owned runner on a synthetic block', { skip: !process.env.IOTROUTE_BIN && 'requires a real iotroute owned runner' }, () => {
+  const libraryPath = join(root, 'hardware-design/blocks/iot-lab.kicad_blocks');
+  mkdirSync(libraryPath, { recursive: true });
+  const input = join(libraryPath, 'MODULE.kicad_block');
+  cpSync(block, input, { recursive: true });
+  const before = readBlock(input).source_sha256;
+  const out = join(root, 'owned-native');
+  const cli = fileURLToPath(new URL('../blocks.ts', import.meta.url));
+  const env = { ...process.env, IOT_LAB: root, KICAD_CLI: binary };
+  const result = spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', cli, 'native', 'MODULE', '--output', out, '--timeout', '30'], { encoding: 'utf8', env, timeout: 45_000 });
+  assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.status, 'passed');
+  assert.equal(report.checks.erc.cleanup.complete, true);
+  assert.equal(report.checks.drc.cleanup.complete, true);
+  assert.equal(readBlock(input).source_sha256, before);
+  assert.equal(read(join(out, 'result.json')).source_sha256, before);
+  const invalid = spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', cli, 'native', 'MODULE', '--output', join(root, 'invalid'), '--timeout', '0'], { encoding: 'utf8', env });
+  assert.equal(invalid.status, 2);
+  assert.match(invalid.stdout, /native timeout must be finite and positive/);
+  assert.throws(() => readFileSync(join(root, 'invalid/result.json')));
 });
 
 function benchFixture(value = '3.3'): string {
