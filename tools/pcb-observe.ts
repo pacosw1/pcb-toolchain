@@ -53,7 +53,7 @@ export async function main(argv: string[]): Promise<number> {
   }
   const folder = runDir(base, positionals[0]!);
   if (command === 'note') {
-    note(folder, noteKind as NoteKind, positionals[1]!);
+    await note(folder, noteKind as NoteKind, positionals[1]!);
     console.log(values.json ? jsonDumps({ recorded: true }) : 'PASS: run note recorded');
     return 0;
   }

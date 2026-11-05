@@ -4,11 +4,11 @@
 //!
 //!   iotroute lock hold PATH [--wait-s N]   exit 0 after release, 75 when busy, 1 when given up, 2 on error
 //!   iotroute lock held PATH                exit 0 when held, 1 when free or missing, 2 on error
-//!   iotroute lock append PATH              append stdin while holding the file's exclusive flock
+//!   iotroute lock append PATH              append one input line while the caller keeps stdin open
 
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read, Write};
+use std::io::{self, BufRead, BufReader, Write};
 use std::os::fd::AsRawFd;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -56,17 +56,22 @@ fn parse(args: &[OsString]) -> Option<Request<'_>> {
     }
 }
 
-/// Open once, block on the same inode, then append the complete input while locked.
+/// Open once, wait on the same inode, and give up if the caller's pipe closes.
 fn append_locked(path: &Path) -> io::Result<i32> {
     let mut data = Vec::new();
-    io::stdin().read_to_end(&mut data)?;
-    let mut file = OpenOptions::new().append(true).create(true).open(path)?;
-    loop {
-        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } == 0 { break; }
-        let error = io::Error::last_os_error();
-        if error.kind() != io::ErrorKind::Interrupted { return Err(error); }
+    BufReader::new(io::stdin()).read_until(b'\n', &mut data)?;
+    if data.last() != Some(&b'\n') { return Err(io::Error::new(io::ErrorKind::InvalidInput, "append needs one complete line")); }
+    let file = OpenOptions::new().append(true).create(true).open(path)?;
+    append_with_liveness(file, &data, stdin_closed)
+}
+
+/// Check the caller both while waiting and immediately after acquiring the lock.
+fn append_with_liveness(mut file: File, data: &[u8], mut caller_closed: impl FnMut(Duration) -> io::Result<bool>) -> io::Result<i32> {
+    while try_lock(&file)? == Attempt::Busy {
+        if caller_closed(RETRY)? { return Ok(EXIT_GAVE_UP); }
     }
-    file.write_all(&data)?;
+    if caller_closed(Duration::ZERO)? { return Ok(EXIT_GAVE_UP); }
+    file.write_all(data)?;
     Ok(0)
 }
 
@@ -151,4 +156,24 @@ fn report_held(path: &Path) -> io::Result<i32> {
     };
     println!("{}", if held { "held" } else { "free" });
     Ok(if held { 0 } else { 1 })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn append_checks_caller_after_lock_before_write() {
+        let path = std::env::temp_dir().join(format!("owned-lock-boundary-{}", std::process::id()));
+        let file = OpenOptions::new().write(true).create_new(true).open(&path).unwrap();
+        let mut checks = Vec::new();
+        let outcome = append_with_liveness(file, b"must not appear\n", |wait| {
+            checks.push(wait);
+            Ok(true) // Caller disconnected at the post-acquire boundary.
+        }).unwrap();
+        assert_eq!(outcome, EXIT_GAVE_UP);
+        assert_eq!(checks, [Duration::ZERO]);
+        assert_eq!(fs::read(&path).unwrap(), b"");
+        fs::remove_file(path).unwrap();
+    }
 }

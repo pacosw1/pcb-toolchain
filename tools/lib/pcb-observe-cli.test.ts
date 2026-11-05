@@ -122,3 +122,32 @@ test('concurrent notes remain complete records without changing the run state', 
     assert.equal(readFileSync(join(folder, 'state.json'), 'utf8'), '{"status":"passed"}');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('a killed note caller cannot append later after a held journal unlocks', { skip: iotrouteMissing() }, async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pcb-note-disconnect-'));
+  let lock: Awaited<ReturnType<typeof holdLock>> | undefined;
+  try {
+    const folder = join(root, '.gate/cli/run-notes');
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, 'run.json'), '{}');
+    const journal = join(folder, 'notes.jsonl');
+    lock = await holdLock(journal);
+    const program = fileURLToPath(new URL('../pcb-observe.ts', import.meta.url));
+    const writer = spawn(process.execPath, ['--experimental-strip-types', '--no-warnings', program,
+      '--project', root, 'note', 'run-notes', 'must not appear', '--kind', 'decision'], {
+      env: { ...process.env, IOTROUTE_BIN: iotrouteBin() }, stdio: ['ignore', 'ignore', 'ignore'],
+    });
+    const exited = new Promise<void>((resolve, reject) => {
+      writer.once('error', reject);
+      writer.once('close', () => resolve());
+    });
+    await new Promise(done => setTimeout(done, 300));
+    assert.equal(writer.exitCode, null);
+    writer.kill('SIGKILL');
+    await exited;
+    await lock.release();
+    lock = undefined;
+    await new Promise(done => setTimeout(done, 200));
+    assert.equal(readFileSync(journal, 'utf8'), '');
+  } finally { if (lock) await lock.release(); rmSync(root, { recursive: true, force: true }); }
+});
