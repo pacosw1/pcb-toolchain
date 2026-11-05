@@ -23,6 +23,11 @@ export function preflightSnapshot(snapshotArg: string, project: string, modelArg
   const contract = model.engineering;
   if (!contract || typeof contract.root !== 'string' || !isAbsolute(contract.root) || resolve(contract.root) !== contract.root ||
       !contract.inputs || typeof contract.inputs !== 'object' || Array.isArray(contract.inputs)) throw new Error('invalid reviewed source identity');
+  const nativeName = contract.native;
+  if (typeof nativeName !== 'string') throw new Error('native board identity missing');
+  const nativeRelative = isAbsolute(nativeName) ? relative(contract.root,nativeName) : nativeName;
+  if (!nativeRelative || nativeRelative.split(/[\\/]/).some((part:string)=>!part || part === '.' || part === '..') ||
+      nativeRelative !== project + '.kicad_pcb') throw new Error('snapshot project differs from reviewed native board');
   const manifestName = contract.manifest;
   if (typeof manifestName !== 'string') throw new Error('manifest identity missing');
   const manifestRelative = isAbsolute(manifestName) ? relative(contract.root,manifestName) : manifestName;

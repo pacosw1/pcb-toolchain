@@ -62,6 +62,10 @@ test('staged producer checks population and never treats preflight as approval',
    }
  }
  const model=JSON.parse(readFileSync(join(root,'model.json'),'utf8'));
+ model.engineering.native='/original/hardware-design/boards/X/cad/OTHER.kicad_pcb';
+ put('model.json',JSON.stringify(model));
+ assert.throws(()=>preflightSnapshot(root,project,join(root,'model.json'),bin),/project differs/);
+ model.engineering.native=core.native;
  model.engineering.geometry.refs.U1.origin=[999,999];
  put('model.json',JSON.stringify(model));
  assert.throws(()=>preflightSnapshot(root,project,join(root,'model.json'),bin),/geometry differs/);
