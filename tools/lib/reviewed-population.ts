@@ -26,7 +26,8 @@ export function reconstructSnapshot(root: string, project: string, expected: Rec
     if (!ref || forms.has(ref)) throw new Error('duplicate PCB reference');
     forms.set(ref, form);
   }
-  const parts: Record<string, {required: boolean; mpn: string; lcsc: string; footprint: string; pad_net_map: Record<string, string>}> = {};
+  const parts: Record<string, {required: boolean; mpn: string; lcsc: string; footprint: string;
+    pad_net_map: Record<string, string>; pin_map: Record<string, {name: string; type: string}>}> = {};
   for (const [ref, fp] of population.footprints) {
     if (!population.symbols.has(ref) && !(fp.board_only && fp.excluded)) throw new Error(`unmatched footprint ${ref}`);
   }
@@ -43,21 +44,64 @@ export function reconstructSnapshot(root: string, project: string, expected: Rec
     const primaryUuid = fp.path.slice(slash + 1);
     const instanceContext = context.startsWith('/' + rootUuid) ? context : '/' + rootUuid + context;
     let matched = 0;
+    const pins = new Map<string, {name: string; type: string}>();
     for (const {key, tree} of schematicTrees) {
       for (const placed of children(tree, 'symbol')) {
-        if (single(placed, 'uuid')?.[1] !== primaryUuid) continue;
         const instances = single(placed, 'instances');
+        let unit: string | Tree | undefined;
         if (instances) {
           const projects = children(instances, 'project').filter(p => p[1] === basename(project));
-          for (const entry of projects.flatMap(p => children(p, 'path'))) {
-            if (entry[1] === instanceContext && single(entry, 'reference')?.[1] === ref) matched++;
-          }
-        } else if (key === project + '.kicad_sch' && properties(placed).Reference === ref) {
-          matched++;
+          const paths = projects.flatMap(p => children(p, 'path')).filter(entry =>
+            entry[1] === instanceContext && single(entry, 'reference')?.[1] === ref);
+          if (paths.length > 1) throw new Error(`ambiguous schematic instance ${ref}`);
+          if (paths.length === 1) unit = single(paths[0], 'unit')?.[1];
+        } else if (key === project + '.kicad_sch' && properties(placed).Reference === ref &&
+                   single(placed, 'uuid')?.[1] === primaryUuid) {
+          unit = single(placed, 'unit')?.[1];
         }
+        if (unit === undefined) continue;
+        if (typeof unit !== 'string' || !/^[1-9]\d*$/.test(unit)) throw new Error(`invalid symbol unit ${ref}`);
+        const selectedUnit = unit;
+        if (single(placed, 'uuid')?.[1] === primaryUuid) matched++;
+        const libraries = single(tree, 'lib_symbols');
+        if (!libraries) throw new Error(`embedded symbol definitions missing ${ref}`);
+        const definitions = new Map(children(libraries, 'symbol').map(definition => [definition[1], definition]));
+        const libId = single(placed, 'lib_id')?.[1];
+        if (typeof libId !== 'string') throw new Error(`symbol library ID missing ${ref}`);
+        const resolveDefinition = (id: string, stack: string[] = []): Tree[] => {
+          if (stack.includes(id) || stack.length >= 64) throw new Error(`cyclic symbol inheritance ${ref}`);
+          const definition = definitions.get(id);
+          if (!definition) throw new Error(`embedded symbol missing ${ref}`);
+          const parent = single(definition, 'extends')?.[1];
+          if (parent === undefined) return [definition];
+          if (typeof parent !== 'string') throw new Error(`invalid symbol inheritance ${ref}`);
+          const qualified = id.includes(':') && !parent.includes(':') ? id.slice(0,id.lastIndexOf(':')+1) + parent : parent;
+          const candidates = [...new Set([parent,qualified].filter(name => definitions.has(name)))];
+          if (candidates.length !== 1) throw new Error(`ambiguous symbol parent ${ref}`);
+          return [...resolveDefinition(candidates[0], [...stack,id]), definition];
+        };
+        const visit = (node: Tree, active = true): void => {
+          if (node[0] === 'symbol' && typeof node[1] === 'string') {
+            const suffix = /_(\d+)_(\d+)$/.exec(node[1]);
+            if (suffix) {
+              if (!['0','1'].includes(suffix[2])) throw new Error(`alternate symbol body unsupported ${ref}`);
+              active = ['0',selectedUnit].includes(suffix[1]);
+            }
+          }
+          if (node[0] === 'pin' && active) {
+            const number = single(node, 'number')?.[1], name = single(node, 'name')?.[1], type = node[1];
+            if (typeof number !== 'string' || typeof name !== 'string' || typeof type !== 'string') throw new Error(`invalid symbol pin ${ref}`);
+            const previous = pins.get(number);
+            if (previous && (previous.name !== name || previous.type !== type)) throw new Error(`ambiguous symbol pin ${ref}`);
+            pins.set(number, {name,type});
+          }
+          for (const child of node.slice(1)) if (Array.isArray(child)) visit(child, active);
+        };
+        for (const definition of resolveDefinition(libId)) visit(definition);
       }
     }
     if (matched !== 1) throw new Error(`native PCB path does not bind a schematic instance ${ref}`);
+    if (!pins.size) throw new Error(`native symbol has no pins ${ref}`);
     const nets = new Map<string, string>();
     for (const pad of children(form, 'pad')) {
       const number = pad[1];
@@ -70,7 +114,8 @@ export function reconstructSnapshot(root: string, project: string, expected: Rec
     }
     if (!children(form, 'pad').length) throw new Error(`native footprint has no pads ${ref}`);
     Object.defineProperty(parts, ref, {enumerable: true, value: {required: symbol.in_bom && !symbol.dnp,
-      mpn: symbol.mpn, lcsc: symbol.lcsc, footprint: symbol.footprint, pad_net_map: Object.fromEntries(nets)}});
+      mpn: symbol.mpn, lcsc: symbol.lcsc, footprint: symbol.footprint, pad_net_map: Object.fromEntries(nets),
+      pin_map: Object.fromEntries(pins)}});
   }
   for (const key of keys) {
     if (sha256(readFileSync(resolve(root, key))) !== actual[key]) throw new Error('snapshot changed during reconstruction');
