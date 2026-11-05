@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';import {createHash} from 'node:crypto';import {test} from 'node:test';
+import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
 import {parseCanonicalJson} from '../src/canonical-json.ts';import {resolveManifestClosure} from '../src/protected-closure.ts';import {bindGateInputsToManifest} from '../src/protected-gate-bindings.ts';
 import {validateManifestBoundGateEvidence} from '../src/protected-gate-evidence.ts';
+import {materializeSnapshot} from '../src/protected-materialize.ts';
 const encode=(v:unknown):Buffer=>parseCanonicalJson(Buffer.from(JSON.stringify(v)),{maxBytes:10000,maxNodes:1000,maxDepth:12}).canonical;
 const sha=(v:Buffer):string=>createHash('sha256').update(v).digest('hex');
 test('binds independently scanned files, in-root links, absent optionals and approved external tools',()=>{
@@ -13,6 +15,23 @@ test('binds independently scanned files, in-root links, absent optionals and app
  assert.throws(()=>bindGateInputsToManifest(closure,[{path:'ref',sha256:hash,link:'other'}],external),/not bound/);
  assert.throws(()=>bindGateInputsToManifest(closure,[{path:'optional',sha256:hash}],external),/not bound/);
  assert.throws(()=>bindGateInputsToManifest(closure,scanned,[{path:'board',sha256:hash}]),/ambiguous/);
+});
+test('binds files and optional absence through an in-root directory symlink',()=>{
+ const content=Buffer.from('part'),hash=sha(content),manifest=encode({schema:'pcb.project-manifest.v1',project_id:'p',entries:[
+  {kind:'link',path:'alias',target:'./lib'}, {kind:'file',path:'lib/file',sha256:hash,size:content.length,executable:false}, {kind:'link',path:'lib/ref',target:'./file'}],
+  required_paths:['lib/file'],optional_absent_paths:['lib/optional'],external_mounts:[]});
+ const closure=resolveManifestClosure(sha(manifest),()=>manifest,h=>h===hash?content.length:null,{maxDepth:4,maxManifests:4,maxNodes:10,maxBytes:100,maxManifestBytes:10000});
+ const scan=[{path:'alias/file',sha256:hash},{path:'alias/ref',sha256:hash,link:'./file'},{path:'alias/optional',sha256:null}];
+ assert.deepEqual(bindGateInputsToManifest(closure,scan,[]),scan);
+ const parent=fs.mkdtempSync(path.join(os.tmpdir(),'pcb-dir-link-'));
+ try {
+  const root=materializeSnapshot(parent,closure.nodes,()=>content,{maxFiles:10,maxBytes:100});
+  assert.equal(sha(fs.readFileSync(path.join(root,'alias/file'))),hash);
+  assert.equal(fs.lstatSync(path.join(root,'alias/ref')).isSymbolicLink(),true);
+  assert.equal(fs.readlinkSync(path.join(root,'alias/ref')),'./file');
+  assert.equal(fs.existsSync(path.join(root,'alias/optional')),false);
+ } finally {fs.rmSync(parent,{recursive:true,force:true});}
+ assert.throws(()=>bindGateInputsToManifest(closure,[{path:'alias/file',sha256:'f'.repeat(64)}],[{path:'alias/file',sha256:'f'.repeat(64)}]),/not bound/);
 });
 test('gate acceptance is bound to a manifest rather than a caller-provided fingerprint alone',()=>{
  const content=Buffer.from('board'),hash=sha(content),manifest=encode({schema:'pcb.project-manifest.v1',project_id:'p',entries:[{kind:'file',path:'board',sha256:hash,size:content.length,executable:false}],required_paths:['board'],optional_absent_paths:[],external_mounts:[]});
