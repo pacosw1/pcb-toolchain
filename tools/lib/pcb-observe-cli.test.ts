@@ -1,10 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
+import { holdLock } from './file-lock.ts';
+import { iotrouteBin, iotrouteMissing } from './iotroute-bin.ts';
 
 test('installed launcher reads run status and byte-cursored events without Python', () => {
   const root = mkdtempSync(join(tmpdir(), 'pcb-observe-'));
@@ -38,6 +40,9 @@ test('installed launcher reads run status and byte-cursored events without Pytho
     const status = JSON.parse(execFileSync(bin, [...args, 'status', 'run-test', '--json'], options));
     assert.equal(status.status, 'passed');
     assert.equal(status.evidence_dir, realpathSync(folder));
+    const terminalCancel = JSON.parse(execFileSync(bin, [...args, 'cancel', 'run-test', '--json'], options));
+    assert.equal(terminalCancel.status, 'passed');
+    assert.equal(existsSync(join(folder, 'cancel.request')), false);
     writeFileSync(join(folder, 'state.json'), '{"status":"passed","updated_unix":9999999999,"elapsed_s":null,"cause":null}');
     assert.match(execFileSync(bin, [...args, 'status', 'run-test'], options), /passed/i);
     assert.match(execFileSync(bin, [...args, 'status', 'run-test'], options), /None; elapsed=None/);
@@ -62,4 +67,28 @@ test('installed launcher reads run status and byte-cursored events without Pytho
     assert.equal(badLimit.status, 2);
     assert.equal(JSON.parse(badLimit.stdout).cause, '--limit must be between 1 and 1000');
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('cancel requests an active supervisor without changing its durable state', { skip: iotrouteMissing() }, async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pcb-cancel-'));
+  let lock: Awaited<ReturnType<typeof holdLock>> | undefined;
+  try {
+    const folder = join(root, '.gate/cli/run-active');
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, 'run.json'), '{}');
+    const raw = JSON.stringify({ status: 'running', updated_unix: Date.now() / 1000, elapsed_s: 1 });
+    writeFileSync(join(folder, 'state.json'), raw);
+    lock = await holdLock(join(folder, 'worker.lock'));
+    const program = fileURLToPath(new URL('../pcb-observe.ts', import.meta.url));
+    const text = execFileSync(process.execPath, ['--experimental-strip-types', '--no-warnings', program,
+      '--project', root, 'cancel', 'run-active', '--json'], {
+      encoding: 'utf8', env: { ...process.env, IOTROUTE_BIN: iotrouteBin() },
+    });
+    const result = JSON.parse(text);
+    assert.equal(result.controller_alive, true);
+    assert.equal(result.cancellation_requested, true);
+    assert.equal(readFileSync(join(folder, 'state.json'), 'utf8'), raw);
+    const request = JSON.parse(readFileSync(join(folder, 'cancel.request'), 'utf8'));
+    assert.match(request.requested_at, /^\d{4}-\d\d-\d\dT.*\+00:00$/);
+  } finally { if (lock) await lock.release(); rmSync(root, { recursive: true, force: true }); }
 });
