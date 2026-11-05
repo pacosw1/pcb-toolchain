@@ -550,3 +550,18 @@ export function placementScreen(contract: Contract, model: PlacementModel) {
     check: (pose: PlacementPose) => checkPlacement(ownedContract, ownedModel, pose),
   };
 }
+
+/** Per-unit miss for the reviewed rules touching that unit, including connector-access checks. */
+export function placementMiss(contract: Contract, model: PlacementModel, pose: PlacementPose, index: number): number {
+  const unit = model.units[index];
+  if (!unit) throw new Error('placement unit index out of range');
+  const mine = new Set(unit.refs);
+  const relevant = contract.rules.filter(rule => rule.kind === 'connector_access' || [...ruleRefs(rule)].some(ref => mine.has(ref)));
+  const ids = new Set(relevant.map(rule => rule.id));
+  const allRefs = relevant.some(rule => rule.kind === 'connector_access');
+  const refs = new Set(relevant.flatMap(rule => [...ruleRefs(rule)]));
+  const { blockers } = checkPlacement(contract, model, pose);
+  return blockers.filter(blocker => blocker.code === 'native_locked_part_moved'
+    ? allRefs || refs.has(blocker.reference as string) : ids.has(blocker.id as string))
+    .reduce((sum, blocker) => sum + numeric(blocker.miss), 0);
+}

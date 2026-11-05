@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import { bindInstance } from './block-bindings.ts';
-import { checkManifest, checkPlacement, preparePlacement, placementScreen, nativeGeometry, reviewedContract, SCHEMA, type ReviewServices } from './engineering-constraints.ts';
+import { checkManifest, checkPlacement, preparePlacement, placementScreen, placementMiss, nativeGeometry, reviewedContract, SCHEMA, type ReviewServices } from './engineering-constraints.ts';
 import { fingerprint } from './fingerprint.ts';
 import { sha256File } from './json-file.ts';
 import { jsonCanonical, jsonDumps, jsonLoads } from './py-compat.mjs';
@@ -262,4 +262,17 @@ test('placement screen owns its reviewed model and contract', () => {
   model.units[1].x = 15;
   screen.model.units[1].x = 15;
   assert.equal(screen.check([[10,10,0], [15,10,0], [1,3,0]]).status, 'blocked');
+});
+
+test('per-unit reviewed miss includes only touching rules', () => {
+  rules(rule('pin_distance', { ...pads, metric: 'pad_center_euclidean', max_mm: 3 }));
+  const contract = reviewedContract(root, 'X', manifest, services);
+  const model = { board_file: native, board: { outline: [] }, units: [
+    { name: 'U1', refs: ['U1'], x: 10, y: 10 }, { name: 'C1', refs: ['C1'], x: 14, y: 10 },
+    { name: 'J1', refs: ['J1'], x: 1, y: 3 },
+  ] };
+  const pose: [number, number, number][] = [[10,10,0], [15,10,0], [1,3,0]];
+  assert.equal(placementMiss(contract, model, pose, 0), 1);
+  assert.equal(placementMiss(contract, model, pose, 1), 1);
+  assert.equal(placementMiss(contract, model, pose, 2), 0);
 });
