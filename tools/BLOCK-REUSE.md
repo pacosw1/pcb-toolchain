@@ -91,4 +91,4 @@ blocks, grouped by design family. Do not spend routing compute generating labels
 for a retrieval problem. Public board ingestion still needs provenance/license and
 native-CAD validation before it can supply trustworthy circuit-role labels.
 
-Verification: `python3 tools/test_block_reuse.py` and `python3 tools/test_blocks.py`.
+Verification: `node --test --experimental-strip-types --no-warnings tools/lib/block-*.test.ts`.

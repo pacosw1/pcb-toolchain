@@ -1,6 +1,6 @@
 # Verified block reuse
 
-`tools/blocks.py` uses existing discovery and native binding tools. Qualification
+`tools/blocks.ts` uses existing discovery and native binding tools. Qualification
 is an executable evidence check, recorded separately from CAD and `facts.json`.
 
 | Derived level | Required evidence | Scope |

@@ -24,9 +24,7 @@ tools/backend-patches/fastroute-quality-773/quality-first.patch
 tools/backend_quality.py
 tools/block-reuse-data.json
 tools/block_extract.py
-tools/block_qualification.py
 tools/block_reuse.py
-tools/blocks.py
 tools/blocks.ts
 tools/board3d/index.html
 tools/board3d/metadata.mjs
@@ -837,9 +835,6 @@ tools/test-route-progress.py
 tools/test_audit_830_routing.py
 tools/test_backend_quality.py
 tools/test_block_extract.py
-tools/test_block_qualification.py
-tools/test_block_reuse.py
-tools/test_blocks.py
 tools/test_board_frame.py
 tools/test_board_uuids.py
 tools/test_compact_immutable.py
