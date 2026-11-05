@@ -34,7 +34,7 @@ node --experimental-strip-types --no-warnings tools/pcb-live-run.mts \
 
 Resume uploads recorded events and does not restart the solver. If the original observer did not record the solver exit, recovery reports an unknown outcome rather than inferring success. Preserve the spool until delivery is acknowledged. Native logs are bounded to 512 MiB; an observation limit does not constitute a solver failure or a verified board.
 
-The coordinator persists events and replay checkpoints in `live.sqlite`, and stores immutable source boards separately from the job blob cache. Its authenticated API includes `/live/runs`, `/live/events`, `/live/assets/:sha`, and `/live/runs/:id/{events,state,stream}`. SSE supports `Last-Event-ID`; Studio's polling reader resumes by sequence and retries after connection loss. Replay uses the same reducer as live viewing.
+The coordinator persists events and replay checkpoints in `live.sqlite`, and stores immutable source boards separately from the job blob cache. Its authenticated API includes `/live/runs`, `/live/events`, `/live/assets/:sha`, and `/live/runs/:id/{events,state,stream}`. SSE supports `Last-Event-ID`; Studio relays that stream through its authenticated engine connection, batches presentation at 100 ms, and uses cursor polling for recovery after connection loss. Replay uses the same reducer as live viewing.
 
 ## Reading the view
 
@@ -53,5 +53,6 @@ An isolated Linux coordinator and native worker observed copied ENV-SENSE inputs
 - Placement: 12 epochs, 50,000 steps, two workers; 107 recorded events and two legal candidates. A longer 24-epoch run produced 685 events for pause/replay checks.
 - Routing of the placed copy: six passes at 0.05 mm pitch, 3,154 events; final 158 tracks and 21 vias. Native result was **FAIL**, two unresolved nets. This verifies observation of a failed run, not successful routing.
 - With observation disabled, the same actual ENV-SENSE placement histories/candidates and complete routing JSON were identical.
+- A real cross-machine streaming run measured 6.3 visible geometry updates/s and 60 presentation frames/s over three seconds. A paused view stayed at event 94 while recording advanced to 124.
 - Browser checks covered pause while head advances, exact checkpoint seek, comparison, best/current pose, return to live, U1 across BOM/schematic, failure zoom and page reload/reconnect. No browser errors were observed.
 - Automated tests cover native on/off equality, group rotation, lost HTTP acknowledgment, spool re-upload, protocol validation, atomic deltas, journal restart/seek and HTTP reconnect/replay.

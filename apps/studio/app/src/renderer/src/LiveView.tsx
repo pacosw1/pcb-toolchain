@@ -64,37 +64,68 @@ export function LiveView({
   }, [])
   useEffect(() => {
     if (!run) return
-    let dead = false
+    let dead = false,
+      dirty = false
     let timer: ReturnType<typeof setTimeout>
     live.current = emptyLiveState(run)
     setState(null)
+    setHead(0)
     setGeo(null)
     setCompare(null)
     setPaused(false)
     pausedRef.current = false
     setFocus(null)
     seek.current++
-    const poll = async (): Promise<void> => {
+    const receive = (events: LiveEvent[]): void => {
+      const s = live.current!
+      for (const event of events) {
+        if (event.seq <= s.seq) continue
+        applyLiveEvent(s, event)
+        dirty = true
+      }
+      setHead((old) => Math.max(old, s.seq))
+    }
+    const stop = window.api.engine.onNotify((n) => {
+      if (dead || n.params.run !== run) return
+      if (n.method === 'live.events') {
+        try {
+          receive(n.params.events as LiveEvent[])
+          setError('')
+        } catch (e) {
+          setError(String(e))
+        }
+      } else if (n.method === 'live.error') setError(String(n.params.error))
+    })
+    const paint = setInterval(() => {
+      if (dirty && !pausedRef.current) {
+        setState(structuredClone(live.current!))
+        dirty = false
+      }
+    }, 100)
+    const recover = async (): Promise<void> => {
       try {
         const s = live.current!
+        await window.api.engine.call('live.watch', { run, after: s.seq })
         const r = (await window.api.engine.call('live.events', { run, after: s.seq })) as {
           events: LiveEvent[]
           headSeq: number
         }
         if (dead) return
-        for (const e of r.events) applyLiveEvent(s, e)
-        setHead(r.headSeq)
-        if (!pausedRef.current && r.events.length) setState(structuredClone(s))
+        receive(r.events)
+        setHead((old) => Math.max(old, r.headSeq))
         setError('')
       } catch (e) {
         if (!dead) setError(`Reconnecting: ${String(e)}`)
       }
-      if (!dead) timer = setTimeout(poll, 100)
+      if (!dead) timer = setTimeout(recover, 2000)
     }
-    void poll()
+    void recover()
     return () => {
       dead = true
       clearTimeout(timer)
+      clearInterval(paint)
+      stop()
+      void window.api.engine.call('live.unwatch').catch(() => {})
     }
   }, [run])
   useEffect(() => {

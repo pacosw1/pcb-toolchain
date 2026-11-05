@@ -1,4 +1,4 @@
-import { liveRuns, liveEvents, liveState, liveGeometry } from './live.ts'
+import { liveRuns, liveEvents, liveState, liveGeometry, watchLive, stopLive } from './live.ts'
 import { specification } from './spec.ts'
 import { exportSchematic } from './kicad/schematic.ts'
 import { batchGlb } from './kicad/glb.ts'
@@ -166,3 +166,6 @@ registry.method('live.runs', [], 0, liveRuns)
 registry.method('live.events', ['run', 'after'], 1, liveEvents)
 registry.method('live.state', ['run', 'at'], 1, liveState)
 registry.method('live.geometry', ['sha'], 1, liveGeometry)
+
+registry.method('live.watch', ['run', 'after'], 1, (run: string, after?: number) => watchLive(currentClient(), run, after))
+registry.method('live.unwatch', [], 0, () => stopLive(currentClient()))
