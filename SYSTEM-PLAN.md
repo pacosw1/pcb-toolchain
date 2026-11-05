@@ -127,6 +127,10 @@ An initial read-only inventory of currently reporting worktrees found 46 board p
 with differing board hashes. These are observations, not a decision about which copy is canonical; active worktrees can
 change and require a fresh inventory before migration.
 
+The verifier owner also found 506 tracked library symlinks in the current `iot-lab` main tree (CIP message 360).
+Safe link representation or an explicit, verified in-root import transform is required; silently dropping those links
+would break the project. The exact normalization implementation and version must match between TypeScript and Rust.
+
 ## Decisions to settle with the other agent
 
 - Exact canonical project schema and how complete source snapshots and approved gate evidence are represented.

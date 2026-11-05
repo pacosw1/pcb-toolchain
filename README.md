@@ -6,6 +6,10 @@ tools. Board data and board build scripts stay in the project repo that uses it.
 
 `apps/studio/` is PCB Studio, the desktop app (see its README). It is not part of the release bundle.
 
+The proposed shared Studio/CLI/coordinator architecture and protected-project migration are in
+[SYSTEM-PLAN.md](SYSTEM-PLAN.md); the draft API and verification boundary is in
+[SYSTEM-CONTRACT-v1.md](SYSTEM-CONTRACT-v1.md). These describe future work, not current protection guarantees.
+
 License: GPL-3.0 (see `LICENSE`). Parts are derived from GPL-3.0 sources (`tools/backend-patches/`,
 `tools/FreeroutingLive.java`).
 

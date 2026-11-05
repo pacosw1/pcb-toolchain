@@ -11,8 +11,8 @@ claim. It specifies the minimum boundary between Studio/CLI, the coordinator and
   specific `alias_revision`; ambiguous or changed aliases fail before lease acquisition and before commit.
 - Every source and candidate is a project manifest `pcb.project-manifest.v1`: a sorted set of safe relative POSIX
   paths and each regular file's SHA-256 and byte length, plus an explicitly versioned dependency declaration. Reject
-  absolute paths, empty segments, `.`, `..`, backslashes, NUL, symlinks, duplicate paths and paths colliding after the
-  target platform's normalization. The manifest covers the PCB, schematic, KiCad project/rules, libraries, scripts,
+  absolute paths, empty segments, `.`, `..`, backslashes, NUL, duplicate paths and paths colliding after the target
+  platform's normalization. The manifest covers the PCB, schematic, KiCad project/rules, libraries, scripts,
   reviewed constraints and all other gate inputs; unavailable or undeclared inputs fail closed. Derived/live previews
   never become source inputs implicitly.
 - Hash `SHA-256(UTF-8(JCS(document)))`, where JCS is [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785). Sort file
@@ -26,8 +26,14 @@ claim. It specifies the minimum boundary between Studio/CLI, the coordinator and
   matching cached outputs cannot substitute for it. A valid signature identifies an approved artifact, not correctness
   or protection from an administrator.
 - Manifest v1 must specify regular-file mode and the executable bit, case/Unicode normalization and numeric limits
-  before it is implemented. Reject hardlinks, symlinks and unsupported metadata/dependencies explicitly; never silently
-  rewrite semantics during import. Until a precise cross-platform normalization rule is approved, reject ambiguous paths.
+  before it is implemented. Reject hardlinks and unsupported metadata/dependencies explicitly; never silently rewrite
+  semantics during import. Until a precise cross-platform normalization rule is approved, reject ambiguous paths.
+- Existing `iot-lab` includes hundreds of KiCad library symlinks. The import design must either represent safe links
+  explicitly or transform only links resolved entirely within the import root into immutable regular-file copies. A
+  transform must record both link path/text and resolved target/hash in an import receipt, reject loops and escapes,
+  check normalization/case collisions, and verify that KiCad dependency semantics are preserved. Runtime execution
+  must not follow arbitrary links from an untrusted checkout. The choice and exact semantics remain under review; a
+  blanket link ban would not import the current project intact.
 
 ## Job submission and execution
 
