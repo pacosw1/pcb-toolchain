@@ -17,7 +17,7 @@ use crate::kicad::session::Session;
 use crate::model::text::round_to;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
-const DEFAULT_VIA_MM: f64 = 0.6;
+pub const DEFAULT_VIA_MM: f64 = 0.6;
 /// Vias of a net this close are one via: it is reused, not doubled.
 const SAME_VIA_NM: i64 = 1000;
 const CONNECT_WIDTH_MM: f64 = 0.15;

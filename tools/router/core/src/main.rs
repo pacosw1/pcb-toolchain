@@ -4219,6 +4219,9 @@ fn main() {
         Some("route-policy") => std::process::exit(iotroute::run::policy::cli(&args[2..])),
         Some("lock-input") => std::process::exit(iotroute::run::lock_input_cli(&args[2..])),
         Some("sheets") => std::process::exit(iotroute::run::sheets_cli(&args[2..])),
+        Some("grid-finish") => std::process::exit(iotroute::grid::cli::finish_cli(&args[2..])),
+        Some("grid-ripup") => std::process::exit(iotroute::grid::cli::ripup_cli(&args[2..])),
+        Some("gnd-via-near") => std::process::exit(iotroute::grid::cli::near_cli(&args[2..])),
         _ => {}
     }
     route_cli(&args);

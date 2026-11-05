@@ -9,6 +9,7 @@ pub mod pad;
 pub mod raw;
 pub mod rules;
 pub mod save;
+pub mod session;
 pub mod sexpr;
 pub mod shape;
 

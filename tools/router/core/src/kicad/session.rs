@@ -47,7 +47,8 @@ impl Session {
 
     pub fn add_via(&mut self, v: NewVia) {
         let id = self.next_id();
-        self.board.copper.push(RoutedCopper::Via(Via { id, at: v.at, size: v.size, drill: v.drill, net: v.net.clone(), locked: v.locked }));
+        let layers = self.board.copper_layers.clone();
+        self.board.copper.push(RoutedCopper::Via(Via { id, at: v.at, size: v.size, drill: v.drill, net: v.net.clone(), locked: v.locked, layers }));
         self.edit.vias.push(v);
     }
 
