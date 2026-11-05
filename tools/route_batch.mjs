@@ -93,7 +93,7 @@ function route(nets, work) {
     return existsSync(cand) ? cand : null;
   }
   const env = {...process.env, REMOTE_MEM: process.env.REMOTE_MEM ?? '8g', REMOTE_CPUS: process.env.REMOTE_CPUS ?? '8', REMOTE_TIMEOUT: process.env.REMOTE_TIMEOUT ?? '900'};
-  ok('bash', ['tools/remote.sh', boardRel, '--in', 'bin/iotroute-linux-x86_64', '--results', work, '--', 'bash', '-c', 'chmod +x in/iotroute-linux-x86_64; "$@"; cp out/job/routed.kicad_pcb out/cand.kicad_pcb', '_', ...job('in/iotroute-linux-x86_64', 'out/job')], {env});
+  ok('bash', ['tools/remote.sh', boardRel, '--in', join(process.env.PCB_TOOLCHAIN_ROOT || root, 'bin/iotroute-linux-x86_64'), '--results', work, '--', 'bash', '-c', 'chmod +x in/iotroute-linux-x86_64; "$@"; cp out/job/routed.kicad_pcb out/cand.kicad_pcb', '_', ...job('in/iotroute-linux-x86_64', 'out/job')], {env});
   return existsSync(cand) ? cand : null;
 }
 

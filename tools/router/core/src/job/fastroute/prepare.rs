@@ -129,7 +129,8 @@ fn add_plane_vias(job: &Job, via_skip: &Value) -> Result<(), Stop> {
             with_gate_skip(&via_args, &pads)
         };
         let tmp = job.file("planevias.kicad_pcb");
-        let plan = gnd_pad_vias::run(&job.base, &tmp, &via_options(net, &words)?)?;
+        let options = via_options(net, &words)?;
+        let plan = job.runner.phase(&format!("initial-plane-vias:{net}"), job.deadline, || Ok(gnd_pad_vias::run(&job.base, &tmp, &options)?))?;
         let line = gnd_pad_vias::summary(&plan, net);
         append_line(job.file("planevias.log"), &line[0])?;
         if tmp.is_file() {

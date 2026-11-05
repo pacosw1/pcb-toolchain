@@ -138,7 +138,7 @@ fn repair_pads(job: &Job, todo: &repair::Pads) -> Result<(), Stop> {
         let mut options = prepare::via_options(net, &via_args)?;
         options.only = pads.iter().cloned().collect();
         let tmp = job.file("repair.kicad_pcb");
-        let plan = gnd_pad_vias::run(&job.routed, &tmp, &options)?;
+        let plan = job.runner.phase(&format!("postimport-plane-repair:{net}"), job.deadline, || Ok(gnd_pad_vias::run(&job.routed, &tmp, &options)?))?;
         append_line(job.file("planevias.log"), &format!("repair {}", gnd_pad_vias::summary(&plan, net)[0]))?;
         if tmp.is_file() {
             fs::rename(&tmp, &job.routed).map_err(|e| Stop::failed(format!("{}: {e}", job.routed.display())))?;

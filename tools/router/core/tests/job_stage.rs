@@ -121,3 +121,25 @@ fn a_run_that_finishes_leaves_no_stall() {
     sleep(Duration::from_millis(1200));
     assert!(watch.stop().unwrap().is_none());
 }
+
+#[test]
+fn work_inside_the_job_leaves_a_row_with_its_cpu_by_scope() {
+    let (runner, out) = runner("phase");
+    assert_eq!(runner.phase("ses-import", None, || Ok(7)).unwrap(), 7);
+    assert!(runner.phase("repair", None, || Err::<(), Stop>(Stop::failed("no"))).is_err());
+    let rows = read_jsonl(out.join("stages.jsonl")).unwrap();
+    assert_eq!((rows[0]["stage"].as_str(), rows[0]["kind"].as_str(), rows[0]["status"].as_str()), (Some("ses-import"), Some("inprocess"), Some("complete")));
+    assert_eq!(rows[1]["status"], "failed");
+    assert!(rows[0]["self_cpu_s"].is_f64() && rows[0]["child_cpu_s"].is_f64() && rows[0]["accounting"].as_str().unwrap().contains("non-additive"));
+}
+
+#[test]
+fn expired_work_inside_the_job_never_runs_and_is_no_success() {
+    let (runner, out) = runner("phase-expired");
+    let ran = std::cell::Cell::new(false);
+    let stopped = runner.phase("ses-import", Some(clock::now() - 1.0), || { ran.set(true); Ok(()) }).unwrap_err();
+    assert!(matches!(stopped, Stop::Timeout { .. }) && !ran.get());
+    let late = runner.phase("slow", Some(clock::now() + 0.05), || { sleep(Duration::from_millis(100)); Ok(()) }).unwrap_err();
+    assert!(matches!(late, Stop::Timeout { .. }));
+    assert_eq!(read_jsonl(out.join("stages.jsonl")).unwrap().iter().map(|row| row["status"].as_str().unwrap().to_string()).collect::<Vec<_>>(), ["timeout", "timeout"]);
+}

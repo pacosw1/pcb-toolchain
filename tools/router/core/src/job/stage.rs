@@ -192,6 +192,24 @@ fn wait_child(child: &mut Child, deadline: Option<f64>) -> Result<Wait, String> 
     }
 }
 
+/// CPU seconds of this process and of its reaped children.
+struct Cpu {
+    own: f64,
+    children: f64,
+}
+
+impl Cpu {
+    fn now() -> Cpu {
+        let seconds = |who: i32| {
+            let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+            unsafe { libc::getrusage(who, &mut usage) };
+            let time = |value: libc::timeval| value.tv_sec as f64 + value.tv_usec as f64 / 1e6;
+            time(usage.ru_utime) + time(usage.ru_stime)
+        };
+        Cpu { own: seconds(libc::RUSAGE_SELF), children: seconds(libc::RUSAGE_CHILDREN) }
+    }
+}
+
 impl Runner {
     pub fn new(outdir: &Path, env: Env, record: Option<RunRecord>) -> Result<Runner, String> {
         let exe = std::env::current_exe().map_err(|e| format!("this executable: {e}"))?;
@@ -247,6 +265,27 @@ impl Runner {
                 .result(json!({"returncode": returncode, "wall_s": rounded(wall_s, 3), "cause": cause}));
             let _ = record.append(line);
         }
+    }
+
+    /// Work the job does itself, not in a child: one row in stages.jsonl with its CPU by scope. A deadline cannot stop such work on the
+    /// way, so it is checked before and after: expired work never starts, and work that outlives the deadline is a timeout.
+    pub fn phase<T>(&self, stage: &str, deadline: Option<f64>, work: impl FnOnce() -> Result<T, Stop>) -> Result<T, Stop> {
+        let (begun, before) = (clock::now(), Cpu::now());
+        let spent = || Stop::Timeout { cause: format!("{stage}: deadline reached"), cleanup: Value::Null };
+        let expired = || clock::remaining(deadline) == Some(0.0);
+        let result = if expired() { Err(spent()) } else { work().and_then(|value| if expired() { Err(spent()) } else { Ok(value) }) };
+        let status = match &result {
+            Ok(_) => "complete",
+            Err(Stop::Timeout { .. }) => "timeout",
+            Err(Stop::Cancelled { .. }) => "cancelled",
+            Err(_) => "failed",
+        };
+        let after = Cpu::now();
+        let row = json!({"stage": stage, "kind": "inprocess", "status": status, "wall_s": clock::now() - begun, "self_cpu_s": after.own - before.own, "child_cpu_s": after.children - before.children, "accounting": "process deltas; nested/whole-job intervals are non-additive", "blocking_native": true});
+        if let Err(error) = append_line(&self.events, &row.to_string()) {
+            eprintln!("fastroute_job: stage event: {error}");
+        }
+        result
     }
 
     /// Runs a stage to its end. `started` gets the running stage, for a watcher.
