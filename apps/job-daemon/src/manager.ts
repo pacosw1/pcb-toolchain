@@ -112,6 +112,9 @@ export class JobManager {
   protectedAdmission?: (job: JobRecord) => boolean;
   protectedContinuation?: (job: JobRecord) => boolean;
   protectedAttest?: (job: JobRecord, observedImage: string) => boolean;
+  verifierAdmission?: (job: JobRecord) => boolean;
+  verifierContinuation?: (job: JobRecord) => boolean;
+  verifierAttest?: (job: JobRecord, observedImage: string) => boolean;
   protectedBeforeTick?: () => void;
 
   constructor(cfg: Config, store: Store, runtime: Runtime, host: () => HostState, now: () => number = Date.now) {
@@ -169,9 +172,12 @@ export class JobManager {
   }
 
   /** The uploaded tar moves into the job folder; job.json is written last, so a crash here leaves no job. */
-  submit(spec: JobSpec, tarPath: string, protectedRef?: JobRecord['protectedRef']): JobRecord {
+  submit(spec: JobSpec, tarPath: string, protectedRef?: JobRecord['protectedRef'], verifierRef?: JobRecord['protectedVerifierRef']): JobRecord {
+    if (protectedRef && verifierRef) throw new Error('protected job roles cannot be combined');
     if (protectedRef && (spec.maxRetries !== 0 || ![protectedRef.project,protectedRef.board,protectedRef.operation,protectedRef.job,protectedRef.attempt]
       .every(x => typeof x === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(x)))) throw new Error('invalid protected job');
+    if (verifierRef && (spec.maxRetries !== 0 || ![verifierRef.project,verifierRef.board,verifierRef.operation,verifierRef.job,verifierRef.attempt,verifierRef.verification]
+      .every(x => typeof x === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(x)))) throw new Error('invalid protected verifier job');
     this.assertQueueRoom();
     if (this.host().diskFreeGb < this.cfg.minFreeGb) {
       throw new HttpError(507, `less than ${this.cfg.minFreeGb} GB free in ${this.cfg.dataDir}`);
@@ -191,6 +197,7 @@ export class JobManager {
       cancelRequested: false,
       attempts: [],
       ...(protectedRef ? { protectedRef: { ...protectedRef } } : {}),
+      ...(verifierRef ? { protectedVerifierRef: { ...verifierRef } } : {}),
     };
     this.store.save(job);
     this.store.appendEvent(id, { t, from: null, to: 'queued', attempt: 0, detail: 'submitted' });
@@ -220,9 +227,9 @@ export class JobManager {
     try {
       if (!this.recovered) await this.recover();
       try { this.protectedBeforeTick?.(); } catch (error) { console.error('protected reconciliation failed', error); }
-      for (const job of this.list('running')) if (job.protectedRef) {
+      for (const job of this.list('running')) if (job.protectedRef || job.protectedVerifierRef) {
         let allowed = false;
-        try { allowed = this.protectedContinuation?.(job) === true; } catch { /* fail closed */ }
+        try { allowed = job.protectedRef ? this.protectedContinuation?.(job) === true : this.verifierContinuation?.(job) === true; } catch { /* fail closed */ }
         if (!allowed) this.cancel(job.id);
       }
       this.enforceHostFloor();
@@ -431,8 +438,8 @@ export class JobManager {
   private async admit(): Promise<void> {
     const due = (j: JobRecord): boolean => j.state === 'queued' || Date.parse(j.nextAttemptAt ?? '') <= this.now();
     const admitted = (j: JobRecord): boolean => {
-      if (!j.protectedRef) return true;
-      try { return this.protectedAdmission?.(j) === true; } catch { return false; }
+      if (!j.protectedRef && !j.protectedVerifierRef) return true;
+      try { return j.protectedRef ? this.protectedAdmission?.(j) === true : this.verifierAdmission?.(j) === true; } catch { return false; }
     };
     const waiting = this.list('queued', 'retrying').filter(due);
     for (const job of waiting) if (!admitted(job)) this.noteHold(job, 'protected coordinator admission unavailable');
@@ -493,9 +500,9 @@ export class JobManager {
     const inputTar = this.store.inputTar(job.id);
     const r = await this.runtime.start({ container: attempt.container, workDir, outDir, inputTar, image, cpus, memGb, diskGb, timeoutS, command });
     if (r.ok) {
-      if (job.protectedRef) {
+      if (job.protectedRef || job.protectedVerifierRef) {
         let allowed = false;
-        try { const image = await this.runtime.inspectImage(attempt.container); allowed = !!image && image === job.spec.image && this.protectedAttest?.(job,image) === true; } catch { /* fail closed */ }
+        try { const image = await this.runtime.inspectImage(attempt.container); allowed = !!image && image === job.spec.image && (job.protectedRef ? this.protectedAttest?.(job,image) : this.verifierAttest?.(job,image)) === true; } catch { /* fail closed */ }
         if (!allowed) { this.cancel(job.id); await this.runtime.kill(attempt.container); }
       }
       return;

@@ -1,6 +1,7 @@
 // Internal adapter, not yet wired into job submission, server startup or a public API.
 import type { JobManager } from './manager.ts';
 import type { ProtectedCommitStore } from './protected-commit.ts';
+import type { ProtectedVerifierAuthority, VerifierRef } from './protected-verifier-authority.ts';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import { protectedJobSpecDigest } from './protected-job-spec.ts';
@@ -17,6 +18,11 @@ export function matchesProtectedArchive(file: string, expected: {sha256:string;s
     return digest.digest('hex') === expected.sha256;
   } catch { return false; } finally { fs.closeSync(fd); }
 }
+export function protectedVerifierCommand(policySha256:string):string[] {
+  if(!/^[0-9a-f]{64}$/.test(policySha256))throw new Error('invalid verifier policy digest');
+  return ['/usr/local/bin/node','--no-warnings','--experimental-strip-types','/opt/pcb-verifier/tools/pcb-protected-verifier.ts',
+    '/job','/job/__pcb_verify/source.kicad_pcb','/job/__pcb_verify/policy.json',policySha256,'/job/out'];
+}
 
 /** Reapply durable cancellation after crashes or transient manager failures. Never infer worker cleanup here. */
 export function reconcileProtectedCancellations(authority: ProtectedCommitStore, manager: Pick<JobManager, 'jobs' | 'cancel'>):
@@ -32,7 +38,8 @@ export function reconcileProtectedCancellations(authority: ProtectedCommitStore,
 
 /** Trusted bootstrap only. Protected jobs remain held when the adapter is absent or the authority rejects admission. */
 export function installProtectedRuntime(authority: ProtectedCommitStore, manager: JobManager): void {
-  if (manager.protectedAdmission || manager.protectedContinuation || manager.protectedAttest || manager.protectedBeforeTick) throw new Error('protected runtime is already installed');
+  if (manager.protectedAdmission || manager.protectedContinuation || manager.protectedAttest || manager.protectedBeforeTick || manager.verifierAdmission || manager.verifierContinuation || manager.verifierAttest) throw new Error('protected runtime is already installed');
+  const verifier=authority as Partial<ProtectedVerifierAuthority>;
   manager.protectedAdmission = job => {
     if (!job.protectedRef || !authority.canDispatchProtected(job.protectedRef, job.id)) return false;
     const expected = authority.runtimeInputIdentity(job.protectedRef, job.id);
@@ -40,7 +47,19 @@ export function installProtectedRuntime(authority: ProtectedCommitStore, manager
   };
   manager.protectedContinuation = job => !!job.protectedRef && authority.canDispatchProtected(job.protectedRef, job.id, true);
   manager.protectedAttest = (job,image) => !!job.protectedRef && authority.recordRuntimeAttestationFromTrustedService(job.protectedRef,job.id,image);
-  manager.protectedBeforeTick = () => { reconcileProtectedCancellations(authority, manager); };
+  manager.verifierAdmission = job => {
+    const ref=job.protectedVerifierRef as VerifierRef|undefined;
+    if(!ref||!verifier.canRunVerifier?.(ref,job.id))return false;
+    const expected=verifier.verifierIdentityFromTrustedService?.(ref,job.id);
+    return !!expected&&job.spec.image===expected.verifierImage&&protectedJobSpecDigest(job.spec)===expected.specSha256&&
+      JSON.stringify(job.spec.command)===JSON.stringify(protectedVerifierCommand(expected.policySha256))&&matchesProtectedArchive(manager.store.inputTar(job.id),expected);
+  };
+  manager.verifierContinuation = job => !!job.protectedVerifierRef && verifier.canRunVerifier?.(job.protectedVerifierRef,job.id,true)===true;
+  manager.verifierAttest = (job,image) => !!job.protectedVerifierRef && verifier.recordVerifierAttestationFromTrustedService?.(job.protectedVerifierRef,job.id,image)===true;
+  manager.protectedBeforeTick = () => {
+    reconcileProtectedCancellations(authority, manager);
+    for(const id of verifier.pendingVerifierCancellations?.()??[]) if(manager.jobs.has(id)) manager.cancel(id);
+  };
 }
 
 /** Abandon a protected attempt only after the daemon confirms its exact job is terminal and every container is gone. */

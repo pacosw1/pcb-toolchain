@@ -9,7 +9,7 @@ type Ref={project:string;board:string;operation:string;job:string;attempt:string
 /** Package candidate + original board + signed policy only after the worker is terminal and its container is gone. */
 export async function prepareVerifierInput(authority:ProtectedCommitStore,manager:JobManager,ref:Ref,parent:string,
   options:{tarPath:string;maxFiles:number;maxBytes:number;maxArchiveBytes:number;timeoutMs:number}):Promise<
-    {directory:string;archive:string;sha256:string;size:number;sourceManifest:string;candidateManifest:string;policySha256:string;verifierImage:string}> {
+    {directory:string;archive:string;sha256:string;size:number;sourceManifest:string;candidateManifest:string;policySha256:string;verifierImage:string;archiveToolSha256:string}> {
   const initial=authority.verificationContextFromTrustedService(ref),job=manager.jobs.get(initial.runtimeJob),expected=authority.runtimeInputIdentity(ref,initial.runtimeJob),r=job?.protectedRef;
   if(!job||!r||!expected||r.project!==ref.project||r.board!==ref.board||r.operation!==ref.operation||r.job!==ref.job||r.attempt!==ref.attempt||
       job.spec.maxRetries!==0||job.spec.image!==expected.image||protectedJobSpecDigest(job.spec)!==expected.specSha256||job.state!=='passed'||job.result?.outcome!=='passed'||job.cancelRequested||job.attempts.length!==1)
@@ -18,6 +18,7 @@ export async function prepareVerifierInput(authority:ProtectedCommitStore,manage
   const attempt=job.attempts[0];
   if(manager.jobs.get(job.id)!==job||job.state!=='passed'||attempt.n!==1||attempt.container!==`pcbjob-${job.id}-1`||!attempt.endedAt||attempt.trimmed!==true||
       (await manager.runtime.inspect(attempt.container)).status!=='missing')throw new Error('protected worker cleanup is unconfirmed');
+  authority.recordWorkerCleanupFromTrustedService(ref,job.id);
   const current=authority.verificationContextFromTrustedService(ref);
   if(current.sourceDigest!==initial.sourceDigest||current.candidateDigest!==initial.candidateDigest||current.policyDigest!==initial.policyDigest||current.runtimeJob!==job.id)
     throw new Error('protected verification inputs changed');
@@ -36,6 +37,6 @@ export async function prepareVerifierInput(authority:ProtectedCommitStore,manage
     if(final.sourceDigest!==current.sourceDigest||final.candidateDigest!==current.candidateDigest||final.policyDigest!==current.policyDigest||final.runtimeJob!==job.id||
       manager.jobs.get(job.id)!==job||job.state!=='passed'||job.cancelRequested||finalState.status!=='missing')
       throw new Error('protected verification inputs changed during packaging');
-    return {...prepared,sourceManifest:current.sourceDigest,candidateManifest:current.candidateDigest,policySha256:current.policyDigest,verifierImage:`sha256:${current.policy.verifier_image_sha256}`};
+    return {...prepared,sourceManifest:current.sourceDigest,candidateManifest:current.candidateDigest,policySha256:current.policyDigest,verifierImage:`sha256:${current.policy.verifier_image_sha256}`,archiveToolSha256:current.policy.archive_tool_sha256};
   } catch(error){fs.rmSync(prepared.directory,{recursive:true,force:true});throw error;}
 }

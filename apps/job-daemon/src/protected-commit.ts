@@ -37,7 +37,9 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
         manifest TEXT NOT NULL, verification TEXT NOT NULL, PRIMARY KEY(project,board,revision)) STRICT;
       CREATE TABLE IF NOT EXISTS protected_commit_results (request_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, revision INTEGER NOT NULL, manifest TEXT NOT NULL) STRICT;`);
     this.db.exec(`CREATE TABLE IF NOT EXISTS protected_recoveries (job TEXT NOT NULL, attempt TEXT NOT NULL, generation INTEGER NOT NULL,
-      runtime_job TEXT NOT NULL, state TEXT NOT NULL, PRIMARY KEY(job,attempt)) STRICT;`);
+      runtime_job TEXT NOT NULL, state TEXT NOT NULL, PRIMARY KEY(job,attempt)) STRICT;
+      CREATE TABLE IF NOT EXISTS protected_worker_cleanup (job TEXT NOT NULL,attempt TEXT NOT NULL,generation INTEGER NOT NULL,runtime_job TEXT NOT NULL,
+      source_manifest TEXT NOT NULL,candidate_manifest TEXT NOT NULL,policy_digest TEXT NOT NULL,state TEXT NOT NULL,PRIMARY KEY(job,attempt)) STRICT;`);
     const runtimeColumns = this.db.prepare('PRAGMA table_info(protected_runtime_jobs)').all() as {name:string}[];
     if (!runtimeColumns.some(column => column.name === 'input_sha256')) this.db.exec('ALTER TABLE protected_runtime_jobs ADD COLUMN input_sha256 TEXT');
     if (!runtimeColumns.some(column => column.name === 'input_size')) this.db.exec('ALTER TABLE protected_runtime_jobs ADD COLUMN input_size INTEGER');
@@ -46,6 +48,24 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
     if (!runtimeColumns.some(column => column.name === 'archive_tool_digest')) this.db.exec('ALTER TABLE protected_runtime_jobs ADD COLUMN archive_tool_digest TEXT');
     const verificationColumns = this.db.prepare('PRAGMA table_info(protected_verified_attempts)').all() as {name:string}[];
     if (!verificationColumns.some(column => column.name === 'verifier_image_digest')) this.db.exec('ALTER TABLE protected_verified_attempts ADD COLUMN verifier_image_digest TEXT');
+  }
+  /** Only the owned manager may call this after terminal/trimmed state and a fresh missing-container inspection. */
+  recordWorkerCleanupFromTrustedService(ref:{project:string;board:string;operation:string;job:string;attempt:string},runtimeJob:string):void {
+    const context=this.verificationContextFromTrustedService(ref);
+    this.transaction(()=>{
+      const now=this.safeNow(),attempt=this.db.prepare('SELECT * FROM protected_attempt_bindings WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as Attempt|undefined;
+      const lease=this.db.prepare('SELECT * FROM protected_leases WHERE project=? AND board=?').get(ref.project,ref.board) as Lease|undefined;
+      const cancel=this.db.prepare('SELECT cancelled FROM protected_attempt_cancellation WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {cancelled:number}|undefined;
+      const runtime=this.db.prepare('SELECT runtime_job FROM protected_runtime_jobs WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {runtime_job:string}|undefined;
+      const candidate=this.db.prepare('SELECT manifest,state FROM protected_candidates WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {manifest:string;state:string}|undefined;
+      if(!attempt||attempt.project!==ref.project||attempt.board!==ref.board||attempt.operation!==ref.operation||!lease||lease.boot_id!==this.bootId||lease.pinned!==1||
+        lease.generation!==attempt.generation||lease.expires_at<=now||!cancel||cancel.cancelled!==0||runtime?.runtime_job!==runtimeJob||context.runtimeJob!==runtimeJob||
+        !candidate||candidate.state!=='STAGED'||candidate.manifest!==context.candidateDigest||attempt.source_manifest!==context.sourceDigest||attempt.policy_digest!==context.policyDigest)
+        throw new Error('worker cleanup record is stale');
+      const prior=this.db.prepare('SELECT * FROM protected_worker_cleanup WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {generation:number;runtime_job:string;source_manifest:string;candidate_manifest:string;policy_digest:string;state:string}|undefined;
+      if(prior){if(prior.generation!==attempt.generation||prior.runtime_job!==runtimeJob||prior.source_manifest!==context.sourceDigest||prior.candidate_manifest!==context.candidateDigest||prior.policy_digest!==context.policyDigest||prior.state!=='CLEANED')throw new Error('worker cleanup record changed');return;}
+      this.db.prepare("INSERT INTO protected_worker_cleanup VALUES (?,?,?,?,?,?,?,'CLEANED')").run(ref.job,ref.attempt,attempt.generation,runtimeJob,context.sourceDigest,context.candidateDigest,context.policyDigest);
+    });
   }
   /** The base store has no trust root and therefore cannot authorize protected execution or commit. */
   protected authorizePolicy(_input:{digest:string;project:string;board:string;operation:string;boardPath:string;workerDigest:string;toolchainDigest:string;archiveDigest:string},_now:number): SignedVerificationPolicy|null { return null; }
@@ -196,7 +216,9 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
       const policy=this.authorizePolicy({digest:attempt.policy_digest,project:ref.project,board:ref.board,operation:ref.operation,boardPath:target.board_path,
         workerDigest:attempt.runtime_digest,toolchainDigest:attempt.toolchain_digest,archiveDigest:runtime.archive_tool_digest},now);
       const approved=this.db.prepare('SELECT enabled FROM protected_approved_digests WHERE kind=? AND digest=?');
-      if(!policy||(approved.get('runtime',attempt.runtime_digest) as {enabled:number}|undefined)?.enabled!==1||
+      const current=this.db.prepare('SELECT policy_digest,runtime_digest,toolchain_digest FROM protected_target_policy WHERE project=? AND board=?').get(ref.project,ref.board) as {policy_digest:string;runtime_digest:string;toolchain_digest:string}|undefined;
+      const policyState=this.db.prepare('SELECT enabled FROM protected_policies WHERE digest=?').get(attempt.policy_digest) as {enabled:number}|undefined;
+      if(!policy||policyState?.enabled!==1||!current||current.policy_digest!==attempt.policy_digest||current.runtime_digest!==attempt.runtime_digest||current.toolchain_digest!==attempt.toolchain_digest||(approved.get('runtime',attempt.runtime_digest) as {enabled:number}|undefined)?.enabled!==1||
         (approved.get('toolchain',attempt.toolchain_digest) as {enabled:number}|undefined)?.enabled!==1||
         (approved.get('verifier-runtime',policy.verifier_image_sha256) as {enabled:number}|undefined)?.enabled!==1||
         (approved.get('archive-tool',runtime.archive_tool_digest) as {enabled:number}|undefined)?.enabled!==1)throw new Error('protected verifier policy is unavailable');
