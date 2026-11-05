@@ -526,12 +526,13 @@ impl Board {
     /// sig: the via is of a signal (non-plane) net (the antipad web rule applies against drilled signal items)
     /// g: isolation group of the via (Board::vgrp)
     fn vhit(&self, s: &Shape, x: f64, y: f64, vr: f64, drill: f64, clr: f64, hth: f64, sig: bool, g: u16) -> u8 {
-        let s_fast = s.kind == Kind::Track && s.net >= 0 && {
+        let (s_fast, plane_clr) = if s.kind == Kind::Track && s.net >= 0 {
             let l = (0..8).find(|&l| s.layers & (1 << l) != 0).unwrap_or(0);
-            self.plane_rule(self.pflags(s.net as usize), l)
-        };
+            let pf = self.pflags(s.net as usize);
+            (self.plane_rule(pf, l), self.plane_clr.max(self.reference_via_clearance(pf, l)))
+        } else { (false, self.plane_clr) };
         let web = if self.web_hard && sig && s.net >= 0 && !self.nets[s.net as usize].plane { self.web } else { 0.0 };
-        let h = via_hit(s, x, y, vr, drill, clr, hth, s_fast, self.plane_clr, self.hole_clr, self.eps, web, self.pc(g, s));
+        let h = via_hit(s, x, y, vr, drill, clr, hth, s_fast, plane_clr, self.hole_clr, self.eps, web, self.pc(g, s));
         // an own-net via inside a viapads-allowed pad is legal (3 -> 0, 4 -> 2): the gate allow list names the pad
         if h >= 3 && self.is_vip(s) { if h == 4 { 2 } else { 0 } } else { h }
     }
@@ -701,12 +702,16 @@ impl Board {
     fn plane_rule(&self, pf: u32, l: usize) -> bool {
         pf & 1 != 0 || (pf & 2 != 0 && self.adj & (1 << l) != 0)
     }
+    fn reference_via_clearance(&self, pf: u32, l: usize) -> f64 {
+        if pf & 0x7c != 0 && self.adj & (1 << l) != 0 { self.rfill.via_clearance(l) } else { 0.0 }
+    }
     /// Fixed-copper verdict (FREE / MULTI / n) of a track centre for the profile (hw, clr, plane flags pf).
     fn track_fixed_code(&self, l: usize, x: f64, y: f64, hw: f64, clr: f64, pf: u32, plane_clr: f64) -> i32 {
         if !self.inside(x, y, hw) || self.keep_hit(Some(l), x, y, hw) {
             return MULTI;
         }
         let fast = self.plane_rule(pf, l);
+        let via_clr = self.reference_via_clearance(pf, l);
         // a net under the plane rule keeps out of the plane voids that rule areas make: an area that forbids pour on a
         // plane layer (isolation work, INPUT-4D2A gate planes 3: unknown-driver runs over the H1 / H2 screw-hole voids)
         if fast && self.keep.iter().any(|k| k.pl & self.plane_mask() != 0 && k.touches(x, y, hw + self.eps)) {
@@ -723,8 +728,9 @@ impl Board {
             }
         }
         let g = self.grp_at(pf >> 8, false, (x, y), (x, y), hw);
-        self.near_iso(false, g, l, x, y, self.track_r(hw, plane_clr), hw, &mut |_, s| {
-            if !track_hit(s, x, y, hw, clr, fast, plane_clr, self.hole_clr, self.eps, self.pc(g, s)) {
+        self.near_iso(false, g, l, x, y, self.track_r(hw, plane_clr.max(via_clr)), hw, &mut |_, s| {
+            let pc = plane_clr.max(if s.kind == Kind::Via { via_clr } else { 0.0 });
+            if !track_hit(s, x, y, hw, clr, fast, pc, self.hole_clr, self.eps, self.pc(g, s)) {
                 return false;
             }
             if s.net < 0 || (code >= 0 && code != s.net) {
@@ -739,10 +745,12 @@ impl Board {
     /// Number of distinct routed items of other nets that a track centre conflicts with; `hits` collects their ids.
     fn track_soft(&self, net: usize, l: usize, x: f64, y: f64, hw: f64, plane_clr: f64, hits: Option<&mut Vec<u32>>) -> i32 {
         let (clr, fast) = (self.nets[net].clr, self.plane_rule(self.pflags(net), l));
+        let via_clr = self.reference_via_clearance(self.pflags(net), l);
         let g = self.grp_at(self.iv(net as i32), false, (x, y), (x, y), hw);
         let mut seen: Vec<u32> = Vec::new();
-        self.near_iso(true, g, l, x, y, self.track_r(hw, plane_clr), hw, &mut |id, s| {
-            if s.net != net as i32 && !seen.contains(&id) && track_hit(s, x, y, hw, clr, fast, plane_clr, self.hole_clr, self.eps, self.pc(g, s)) {
+        self.near_iso(true, g, l, x, y, self.track_r(hw, plane_clr.max(via_clr)), hw, &mut |id, s| {
+            let pc = plane_clr.max(if s.kind == Kind::Via { via_clr } else { 0.0 });
+            if s.net != net as i32 && !seen.contains(&id) && track_hit(s, x, y, hw, clr, fast, pc, self.hole_clr, self.eps, self.pc(g, s)) {
                 seen.push(id);
             }
             false
@@ -778,7 +786,7 @@ impl Board {
     }
     fn via_r(&self, d: f64, hth: f64) -> f64 {
         // v7 speed: the web enters via_hit only as a hard rule; as a priced limit (web_items) it does not widen the query
-        d / 2.0 + self.base_reach().max(self.plane_clr).max(hth).max(self.hole_clr).max(if self.web_hard { self.web } else { 0.0 }) + 0.01
+        d / 2.0 + self.base_reach().max(self.plane_clr).max(self.rfill.max_via_clearance()).max(hth).max(self.hole_clr).max(if self.web_hard { self.web } else { 0.0 }) + 0.01
     }
     /// Fixed-copper verdict of a via site for the profile (d, drill, clr): see FREE / MULTI / n / ONLY / COMPUTE.
     /// iv: the isolation var entry of the via's net (Board::iv)
