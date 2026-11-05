@@ -59,7 +59,7 @@ export class ProtectedCapabilityStore extends ProtectedBlobs {
   }
   /** DB-only synchronous action: capability use and protected records commit or roll back together.
    * Files must already be durable; never perform external side effects from this callback. */
-  protected withCapability<T>(token: string, target: CapabilityTarget, action: () => T): T {
+  protected withCapability<T>(token: string, target: CapabilityTarget, action: (identity: { capabilityId: string; principal: string }) => T): T {
     return this.transaction(() => {
       let hash: Buffer;
       try { hash = capabilityHash(token); } catch { throw new Error('capability is not authorized'); }
@@ -69,7 +69,7 @@ export class ProtectedCapabilityStore extends ProtectedBlobs {
       try { scope = JSON.parse(row.scope) as CapabilityScope; } catch { throw new Error('capability is not authorized'); }
       if (!scopeMatches(scope, target, this.now(), row.uses, row.revoked !== 0)) throw new Error('capability is not authorized');
       this.db.prepare('UPDATE protected_capabilities SET uses=uses+1 WHERE id=?').run(row.id);
-      const result = action();
+      const result = action({ capabilityId: row.id, principal: scope.principal });
       if (result && typeof result === 'object' && 'then' in result && typeof result.then === 'function')
         throw new Error('protected transaction action must be synchronous');
       return result;
