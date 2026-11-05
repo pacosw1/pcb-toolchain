@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
-import { bindInstance, verifyBinding } from './block-bindings.ts';
+import { attachToUnits, bindInstance, verifyBinding } from './block-bindings.ts';
 import { footprints, footprintSignature } from './native-board.ts';
 
 const fp = (ref: string, uid: string, net: string, xy: string, angle: number) => `(footprint "Lib:Exact" (layer "F.Cu") (at ${xy} ${angle})
@@ -83,4 +83,22 @@ test('a footprint signature ignores a rigid pose but not a changed definition', 
   const base = board(fp('R1', '/a', 'N', '1 2', 90));
   assert.equal(base, board(fp('R1', '/a', 'N', '9 7', 90)));
   assert.notEqual(base, board(fp('R1', '/a', 'M', '1 2', 90)));
+});
+
+test('a fresh binding attaches to its one intact unit and the input stays as it was', () => {
+  const binding = bind();
+  const problem = { board_file: target, units: [{ name: 'module', refs: ['R7', 'R8'] }] };
+  const result = attachToUnits(problem, [binding]);
+  assert.equal(result.block_bindings[0]?.unit, 'module');
+  assert.deepEqual(result.block_bindings[0]?.refs, ['R7', 'R8']);
+  assert.ok(!('block_bindings' in problem));
+  assert.throws(() => attachToUnits(problem, [binding, binding]), /distinct intact/);
+});
+
+test('split units or a wrong target cannot claim block reuse', () => {
+  const binding = bind();
+  for (const problem of [
+    { board_file: target, units: [{ name: 'a', refs: ['R7'] }, { name: 'b', refs: ['R8'] }] },
+    { board_file: '/different.kicad_pcb', units: [{ name: 'module', refs: ['R7', 'R8'] }] },
+  ]) assert.throws(() => attachToUnits(problem, [binding]));
 });

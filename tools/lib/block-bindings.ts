@@ -4,7 +4,7 @@ import { readBlock } from './block-reuse.ts';
 import { Decimal, positiveDegrees } from './decimal.ts';
 import { fingerprint } from './fingerprint.ts';
 import { footprints, instanceOf, rotate, sourceSet, symbolOf, type Footprint } from './native-board.ts';
-import { jsonCanonical } from './py-compat.mjs';
+import { compare, jsonCanonical } from './py-compat.mjs';
 import { joinPath, resolvePath } from './py-path.ts';
 import { field, type SList } from './sexpr.ts';
 
@@ -154,4 +154,21 @@ export function verifyBinding(binding: Pick<Binding, 'source_directory' | 'targe
   const fresh = bindInstance(binding.source_directory, binding.target, binding.instance_path);
   if (!same(fresh, binding)) throw new Error('stale block binding; inspect source and target again');
   return fresh;
+}
+
+export interface UnitProblem { board_file: string; units: { name: string; refs: string[] }[]; [key: string]: unknown }
+
+/** Use only on a fresh native model: each bound block must be one intact placement unit of the board it was bound to. */
+export function attachToUnits<T extends UnitProblem>(problem: T, bindings: Binding[]): T & { block_bindings: { unit: string; refs: string[]; binding_sha256: string }[] } {
+  const occupied = new Set<string>();
+  const attached = bindings.map(binding => {
+    const fresh = verifyBinding(binding);
+    if (resolvePath(problem.board_file) !== resolvePath(fresh.target)) throw new Error('binding is for a different native board');
+    const wanted = new Set(fresh.refs.values());
+    const matches = problem.units.filter(unit => new Set(unit.refs).size === wanted.size && unit.refs.every(ref => wanted.has(ref)));
+    if (matches.length !== 1 || [...wanted].some(ref => occupied.has(ref))) throw new Error('reused block must be one distinct intact placement unit');
+    for (const ref of wanted) occupied.add(ref);
+    return { unit: (matches[0] as UnitProblem['units'][number]).name, refs: [...wanted].sort(compare), binding_sha256: fingerprint(fresh) };
+  });
+  return { ...structuredClone(problem), block_bindings: attached };
 }

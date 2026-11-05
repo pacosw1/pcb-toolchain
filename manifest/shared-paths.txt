@@ -232,6 +232,8 @@ tools/lib/logo-raster.ts
 tools/lib/microstrip.ts
 tools/lib/min-heap.ts
 tools/lib/native-board.ts
+tools/lib/native-placement.test.ts
+tools/lib/native-placement.ts
 tools/lib/net-drivers-project.test.ts
 tools/lib/net-drivers.test.ts
 tools/lib/net-drivers.ts
