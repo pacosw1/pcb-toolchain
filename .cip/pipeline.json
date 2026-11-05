@@ -70,6 +70,9 @@
           "image": "node:22-bookworm-slim",
           "steps": [
             {
+              "run": "apt-get update && apt-get install -y --no-install-recommends git"
+            },
+            {
               "run": "cd apps/job-daemon && npm ci --ignore-scripts --no-audit --no-fund"
             },
             {

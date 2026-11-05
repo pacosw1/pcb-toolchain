@@ -21,6 +21,13 @@ The `projects` key is the **real Git common directory**; all worktrees in that r
 Alternatively, a project root may contain `.pcb-live.json` with `{ "projectId": "iot-lab" }`. A conflicting marker
 and registration is an error. The token is the existing daemon bearer token, kept in a separate owner-readable file.
 HTTP is accepted only for loopback or a Tailscale IPv4 address; HTTPS may use another origin. Do not publish the token.
+The TypeScript setup helper creates or extends this file without changing an existing project's coordinator:
+
+```sh
+node --no-warnings --experimental-strip-types tools/pcb-live-setup.mts \
+  --project /path/to/iot-lab --project-id iot-lab --url http://100.93.34.43:8793 \
+  --token-file ~/.config/pcb-live/token
+```
 
 The project must pin a release containing the live guard in `toolchain.lock`. The guarded `pcb` launcher refuses to
 silently fall back to an older release for a registered project. Studio uses the configured `cliPath` for its own

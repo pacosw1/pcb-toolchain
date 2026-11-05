@@ -192,10 +192,10 @@ class Slots {
   }
 }
 
-async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: JobManager, uploads: Slots, streams: Slots, blobs: BlobStore, leases: BoardLeases, live: LiveEvents): Promise<void> {
+async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: JobManager, uploads: Slots, streams: Slots, blobs: BlobStore, leases: BoardLeases, live: LiveEvents, sourceSha256: string | null): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://x');
   const method = req.method ?? 'GET';
-  if (url.pathname === '/live/identity' && method === 'GET') return json(res, 200, { epoch: live.epoch });
+  if (url.pathname === '/live/identity' && method === 'GET') return json(res, 200, { epoch: live.epoch, maxSnapshotBytes: Math.min(20 * 1024 * 1024, mgr.cfg.maxUploadMb * 1024 * 1024) });
   if (url.pathname === '/board-leases/status' && method === 'GET') {
     const board = url.searchParams.get('board');
     if (!board || board.length > 512) throw new HttpError(400, 'invalid board');
@@ -249,12 +249,13 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: J
         position = event.cursor;
       }
       pumping = false;
-      if (batch.length === 500 && !closed) setImmediate(pump);
+      if (batch.length === 500 && !closed) setImmediate(safePump);
     };
-    const off = live.subscribe(pump);
+    const safePump = (): void => { try { pump(); } catch { res.destroy(); } };
+    const off = live.subscribe(safePump);
     const heartbeat = setInterval(() => { if (!closed) res.write(': heartbeat\n\n'); }, 15_000);
     res.once('close', () => { closed = true; clearInterval(heartbeat); off(); });
-    pump();
+    safePump();
     return;
   }
   if (url.pathname === '/board-leases/acquire' && method === 'POST') {
@@ -288,7 +289,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: J
     if (!renewed) throw new HttpError(409, 'lease expired or replaced');
     return json(res, 200, renewed);
   }
-  if (url.pathname === '/status' && method === 'GET') return json(res, 200, mgr.status());
+  if (url.pathname === '/status' && method === 'GET') return json(res, 200, { ...mgr.status(), sourceSha256 });
   if (url.pathname === '/jobs' && method === 'GET') {
     const raw = url.searchParams.get('limit');
     const limit = raw === null ? MAX_LIST : Number(raw);
@@ -402,7 +403,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: J
   }
 }
 
-export function createServer(mgr: JobManager): http.Server {
+export function createServer(mgr: JobManager, sourceSha256: string | null = null): http.Server {
   const uploads = new Slots('uploads', mgr.cfg.maxUploads);
   const streams = new Slots('streams', mgr.cfg.maxStreams);
   const blobs = new BlobStore(mgr.store.blobsDir(), mgr.store.incomingDir(), mgr.cfg.blobKeepDays);
@@ -413,7 +414,7 @@ export function createServer(mgr: JobManager): http.Server {
       res.setHeader('connection', 'close');
       return json(res, 401, { error: 'unauthorized' });
     }
-    route(req, res, mgr, uploads, streams, blobs, leases, live).catch((e: unknown) => {
+    route(req, res, mgr, uploads, streams, blobs, leases, live, sourceSha256).catch((e: unknown) => {
       const status = e instanceof HttpError ? e.status : 500;
       if (status === 500) console.error(e);
       if (res.headersSent) return res.destroy();
@@ -425,5 +426,17 @@ export function createServer(mgr: JobManager): http.Server {
   server.maxConnections = MAX_CONNECTIONS;
   // Node's default of 300 s fails a large file on a slow link; the file then starts again from nothing.
   server.requestTimeout = mgr.cfg.requestTimeoutS * 1000;
+  return server;
+}
+
+/** Local-only status endpoint; the caller must bind it to loopback. */
+export function createHealthServer(mgr: JobManager, sourceSha256: string): http.Server {
+  const server = http.createServer((req, res) => {
+    if (!authorized(req, mgr.cfg.token)) return json(res, 401, { error: 'unauthorized' });
+    if (req.method !== 'GET' || req.url !== '/status') return json(res, 404, { error: 'not found' });
+    return json(res, 200, { ...mgr.status(), sourceSha256 });
+  });
+  server.maxConnections = 32;
+  server.requestTimeout = 5000;
   return server;
 }

@@ -3,14 +3,14 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import type { AddressInfo } from 'node:net';
-import type http from 'node:http';
+import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, afterEach, before, beforeEach, describe, it } from 'node:test';
 import { isDesignFile, manifestOf, pack } from '../src/client.ts';
 import { bindAllowed, loadConfig } from '../src/config.ts';
 import { CpuMeter, parseCpuCount, parseMeminfoKb } from '../src/host.ts';
-import { createServer } from '../src/server.ts';
+import { createHealthServer, createServer } from '../src/server.ts';
 import { TOKEN, rig, tarOf } from './helpers.ts';
 import type { Rig } from './helpers.ts';
 
@@ -22,7 +22,7 @@ let timer: NodeJS.Timeout;
 beforeEach(async () => {
   r = rig();
   r.clock.now = Date.now();
-  server = createServer(r.mgr);
+  server = createServer(r.mgr, 'startup-identity');
   await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   timer = setInterval(() => {
@@ -38,6 +38,39 @@ afterEach(async () => {
 });
 
 const auth = { authorization: `Bearer ${TOKEN}` };
+it('exposes the startup source identity only to authenticated clients', async () => {
+  assert.equal((await fetch(`${base}/status`)).status, 401);
+  const response = await fetch(`${base}/status`, { headers: auth });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).sourceSha256, 'startup-identity');
+});
+it('local health server serves authenticated status only', async () => {
+  const health = createHealthServer(r.mgr, 'local-source');
+  await new Promise<void>((ok) => health.listen(0, '127.0.0.1', ok));
+  try {
+    const url = `http://127.0.0.1:${(health.address() as AddressInfo).port}`;
+    assert.equal((await fetch(`${url}/status`)).status, 401);
+    assert.equal((await (await fetch(`${url}/status`, { headers: auth })).json()).sourceSha256, 'local-source');
+    assert.equal((await fetch(`${url}/jobs`, { headers: auth })).status, 404);
+    assert.equal((await fetch(`${url}/status`, { method: 'POST', headers: auth })).status, 404);
+  } finally { health.closeAllConnections(); await new Promise((ok) => health.close(ok)); }
+});
+it('local socket returns identity only with valid authentication', async () => {
+  const local = createHealthServer(r.mgr, 'socket-source');
+  const socket = path.join(r.dir, 'health.sock');
+  await new Promise<void>((ok) => local.listen(socket, ok));
+  const request = (token: string) => new Promise<{ status: number | undefined; body: string }>((resolve, reject) => {
+    http.get({ socketPath: socket, path: '/status', headers: { authorization: `Bearer ${token}` } }, (res) => {
+      let body = ''; res.setEncoding('utf8'); res.on('data', (part: string) => { body += part; });
+      res.on('end', () => resolve({ status: res.statusCode, body }));
+    }).on('error', reject);
+  });
+  try {
+    assert.equal((await request('incorrect')).status, 401);
+    const result = await request(TOKEN);
+    assert.equal(result.status, 200); assert.equal(JSON.parse(result.body).sourceSha256, 'socket-source');
+  } finally { local.closeAllConnections(); await new Promise((ok) => local.close(ok)); }
+});
 const specHeader = (o: unknown): string => Buffer.from(JSON.stringify(o)).toString('base64');
 
 async function post(spec: unknown, file = tarOf(r.dir), maxRetries = 0): Promise<Response> {

@@ -51,6 +51,7 @@ export class Worker {
   readonly root: string; readonly source: string; readonly host: string; readonly projectId: string;
   readonly url: string; readonly token: string; readonly stateFile: string;
   private state: State; private known: Map<string, number>;
+  private uploadLimit = MAX_BOARD;
   private recovering = new Set<string>();
   constructor(a: Args, known = new Map<string, number>()) {
     this.root = real(a.project); this.host = a.host; this.projectId = a.projectId; this.url = coordinatorUrl(a.url);
@@ -79,8 +80,10 @@ export class Worker {
     return (await this.request(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })).json();
   }
   async syncEpoch(): Promise<void> {
-    const identity = await (await this.request('/live/identity')).json() as { epoch?: unknown };
+    const identity = await (await this.request('/live/identity')).json() as { epoch?: unknown; maxSnapshotBytes?: unknown };
     if (typeof identity.epoch !== 'string' || !identity.epoch) throw new Error('invalid coordinator history identity');
+    if (typeof identity.maxSnapshotBytes === 'number' && Number.isSafeInteger(identity.maxSnapshotBytes) && identity.maxSnapshotBytes > 0)
+      this.uploadLimit = Math.min(MAX_BOARD, identity.maxSnapshotBytes);
     if (this.state.epoch !== identity.epoch) {
       this.state = { epoch: identity.epoch, offsets: {}, stamps: {}, hashes: {}, counters: {} }; this.known.clear(); this.save();
     }
@@ -110,9 +113,9 @@ export class Worker {
     const st = fs.statSync(p);
     const key = path.relative(this.root, p), stamp = stampOf(st);
     if (this.state.stamps[key] === stamp) return;
-    if (!st.size || st.size > MAX_BOARD) {
+    if (!st.size || st.size > this.uploadLimit) {
       await this.event('board-invalid:' + digest(`${key}\0${stamp}`), board, run, 'board.invalid',
-        { path: key, error: st.size ? 'Board exceeds the 20 MiB snapshot limit' : 'Board file is empty' });
+        { path: key, error: st.size ? 'Board exceeds the coordinator snapshot limit' : 'Board file is empty' });
       this.state.stamps[key] = stamp; this.save(); return;
     }
     const bytes = fs.readFileSync(p), after = fs.statSync(p);
@@ -129,14 +132,14 @@ export class Worker {
     this.state.stamps[key] = stamp; this.state.hashes[key] = hash; this.save();
   }
   private async preview(p: string, board: string, run: string, kind: 'route.preview' | 'placement.preview', schema: string): Promise<void> {
-    const st = fs.statSync(p); if (!st.size || st.size > MAX_BOARD) return;
+    const st = fs.statSync(p); if (!st.size || st.size > this.uploadLimit) return;
     const key = path.relative(this.root, p), stamp = stampOf(st);
     if (this.state.stamps[key] === stamp) return;
     const bytes = fs.readFileSync(p), after = fs.statSync(p);
     if (stampOf(after) !== stamp || bytes.length !== st.size) return;
     const frame = JSON.parse(bytes.toString('utf8')) as Record<string, unknown>; if (frame.schema !== schema) return;
     if (kind === 'placement.preview' && typeof frame.board_path === 'string' && typeof frame.board_sha256 === 'string') {
-      try { const src = real(frame.board_path); if (within(this.root, src) && fs.statSync(src).size <= MAX_BOARD) {
+      try { const src = real(frame.board_path); if (within(this.root, src) && fs.statSync(src).size <= this.uploadLimit) {
         const base = fs.readFileSync(src); if (digest(base) === frame.board_sha256) await this.upload(frame.board_sha256, base);
       } } catch { /* keep the preview, but the viewer requires the matching source */ }
     }

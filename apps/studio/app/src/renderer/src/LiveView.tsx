@@ -72,6 +72,9 @@ export function LiveView(): React.JSX.Element {
   }, [attempt])
 
   const all = useMemo(() => Object.values(events), [events])
+  const unavailable = all.filter(e => e.kind === 'board.invalid' && !all.some(next =>
+    ['board.snapshot', 'candidate.snapshot', 'board.removed'].includes(next.kind) && next.source === e.source && next.board === e.board &&
+    next.run === e.run && next.data?.path === e.data?.path && next.cursor > e.cursor))
   const boards = useMemo(() => all.filter(e => ['board.snapshot', 'candidate.snapshot', 'route.preview', 'placement.preview'].includes(e.kind) && typeof e.data?.sha256 === 'string' &&
     !(e.kind === 'board.snapshot' && e.run === 'saved' && all.some(r => r.kind === 'board.removed' && r.source === e.source && r.board === e.board && r.data?.path === e.data.path && r.cursor > e.cursor)))
     .sort((a, b) => `${a.board} ${a.host} ${a.run}`.localeCompare(`${b.board} ${b.host} ${b.run}`)), [all])
@@ -164,6 +167,9 @@ export function LiveView(): React.JSX.Element {
       <p role="status">Coordinator: {status}{coordinatorLabel ? ` · ${coordinatorLabel}` : ''}{error ? ` · ${error}` : ''}</p>
       {status === 'disconnected' ? <button type="button" onClick={() => setAttempt(n => n + 1)}>Reconnect</button> : null}
       {truncated ? <p>Some older observations are not shown.</p> : null}
+      {unavailable.length ? <details><summary>{unavailable.length} board snapshot{unavailable.length === 1 ? '' : 's'} unavailable</summary>
+        <ul>{unavailable.map(e => <li key={keyOf(e)}>{e.board} · {e.host} · {String(e.data.error ?? 'Unavailable')}</li>)}</ul>
+      </details> : null}
       <label>Board and machine{' '}
         <select value={selected} onChange={e => { setSelectedRun(''); setSelected(e.target.value) }}>
           <option value="">Choose a board</option>

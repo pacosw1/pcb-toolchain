@@ -68,7 +68,7 @@ test('a board rewritten on disk redraws without a reload and keeps zoom and sele
 
     const bar = win.locator('.boardview-bar')
     const status = win.getByRole('status', { name: 'Live view' })
-    const liveButton = win.getByRole('button', { name: 'Live' })
+    const liveButton = win.getByRole('button', { name: 'Live', exact: true })
     const liveError = win.getByRole('alert', { name: 'Live view error' })
     const selection = win.getByRole('status', { name: 'Selection' })
     await expect(bar).toContainText('1 parts · 1 tracks')
