@@ -11,7 +11,7 @@ import { sha256File } from './json-file.ts';
 const cli = fileURLToPath(new URL('../placement_outcomes.ts', import.meta.url));
 test('observer binds the exact implementation used by placement and thermal evidence', () => {
   const inputs = sourceInputs();
-  for (const suffix of ['placement-outcomes.ts', 'outcome-thermal.ts', 'pcb-identity.ts', 'py-compat.mjs']) {
+  for (const suffix of ['placement_outcomes.ts', 'placement-outcomes.ts', 'outcome-thermal.ts', 'pcb-identity.ts', 'py-compat.mjs']) {
     const path = Object.keys(inputs).find(name => name.endsWith('/' + suffix));
     assert.ok(path, suffix);
     assert.equal(inputs[path], sha256File(path));

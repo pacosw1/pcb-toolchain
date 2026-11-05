@@ -33,7 +33,8 @@ export interface OutcomeServices {
 /** The repository sources this observer depends on. */
 function toolInputs(): Map<string, string> {
   const here = dirname(fileURLToPath(import.meta.url));
-  return new Map(IMPLEMENTATION.map(name => [joinPath(here, name), sha256File(joinPath(here, name))]));
+  const files = [...IMPLEMENTATION.map(name => joinPath(here, name)), resolvePath(joinPath(here, '..', 'placement_outcomes.ts'))];
+  return new Map(files.map(path => [path, sha256File(path)]));
 }
 
 /** Bind the full local implementation used by downstream observation adapters. */
