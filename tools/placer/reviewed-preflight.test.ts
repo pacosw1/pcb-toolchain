@@ -24,9 +24,16 @@ test('staged producer checks population and never treats preflight as approval',
  const canonical=(v:any):string=>Array.isArray(v)?'['+v.map(canonical).join(',')+']':v && typeof v==='object'?
    '{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}':JSON.stringify(v);
  put('hardware-design/boards/X/gate.json',JSON.stringify({project:'cad/PROJECT'}));
- put('hardware-design/boards/X/spec.md','spec'); put('review.md','review'); put('doc.pdf','synthetic');
+ put('hardware-design/boards/X/spec.md','spec'); put('review.md','review');
+ const objects=['<< /Type /Catalog /Pages 2 0 R >>','<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+   '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>'];
+ let pdf='%PDF-1.4\n'; const offsets:number[]=[];
+ for (const [i,object] of objects.entries()) {offsets.push(Buffer.byteLength(pdf));pdf+=`${i+1} 0 obj\n${object}\nendobj\n`;}
+ const xref=Buffer.byteLength(pdf); pdf+='xref\n0 4\n0000000000 65535 f \n';
+ for (const offset of offsets) pdf+=`${String(offset).padStart(10,'0')} 00000 n \n`;
+ pdf+=`trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`; put('doc.pdf',pdf);
  const spec={path:'hardware-design/boards/X/spec.md',sha256:sha256('spec'),section:'use'};
- const doc={path:'doc.pdf',sha256:sha256('synthetic'),page:1,document_id:'D',revision:'A'};
+ const doc={path:'doc.pdf',sha256:sha256(pdf),page:1,document_id:'D',revision:'A'};
  const evidence={path:'review.md',sha256:sha256('review'),section:'review'};
  const manifest:any={schema:'iot-lab.part-use.v1',board:'X',revision:'A',project,spec,
    parts:[{reference:'U1',mpn:'PART',lcsc:'C123',manufacturer:'M',package:{name:'QFN',variant:'A'},unresolved:[],native:{...native,non_electrical_pads:[]},layout_constraints:[],datasheets:[doc],assembly_dependencies:[],
@@ -36,7 +43,7 @@ test('staged producer checks population and never treats preflight as approval',
  put('manifest.json',JSON.stringify(manifest));
  const inputs={...sources,'hardware-design/boards/X/gate.json':sha256(readFileSync(join(root,'hardware-design/boards/X/gate.json'))),
    'manifest.json':sha256(readFileSync(join(root,'manifest.json'))),
-   'hardware-design/boards/X/spec.md':sha256('spec'),'review.md':sha256('review'),'doc.pdf':sha256('synthetic')};
+   'hardware-design/boards/X/spec.md':sha256('spec'),'review.md':sha256('review'),'doc.pdf':sha256(pdf)};
  const units=[{name:'U1',refs:['U1'],x:1,y:2,fixed:false}]; const outline=[[0,0],[10,0],[10,10]];
  const core={schema:'iot-lab.engineering-constraints.v1',root:'/original',board:'X',manifest:'/original/manifest.json',
    native:'/original/'+project+'.kicad_pcb',inputs,rules:[],geometry:reconstructed.geometry,bindings:[]};
@@ -48,8 +55,8 @@ test('staged producer checks population and never treats preflight as approval',
    assert.equal(preflightSnapshot(root,project,join(root,'model.json'),process.env.IOTPLACE_BIN),3);
    if (process.env.IOTPLACE_TEST_PDFINFO) {
      const tool=process.env.IOTPLACE_TEST_PDFINFO;
-     assert.throws(()=>preflightSnapshot(root,project,join(root,'model.json'),process.env.IOTPLACE_BIN!,
-       {path:tool,sha256:sha256(readFileSync(tool))}),/native preflight rejected/);
+     assert.equal(preflightSnapshot(root,project,join(root,'model.json'),process.env.IOTPLACE_BIN!,
+       {path:tool,sha256:sha256(readFileSync(tool))}),3);
    }
  }
  const model=JSON.parse(readFileSync(join(root,'model.json'),'utf8'));
