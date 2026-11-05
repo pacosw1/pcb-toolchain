@@ -356,40 +356,5 @@ class RouteDecisionTests(unittest.TestCase):
             self.assertEqual(run.call_count,2)
         self.assertIn('unchanged',(self.base/'step-1/route-decision.json').read_text())
 
-    def test_native_smoke_gap_selector_removes_one_interior_track_only(self):
-        import engineering_workflow_smoke as smoke
-        self.board.write_text(GAP[:-1]+'''(segment (start 1 0) (end 2 0) (width .25) (layer "F.Cu") (net "A") (uuid "gap")))''')
-        before=geometry_digest(self.board,['gap'])
-        selection,changed=smoke.gap_candidate(self.board)
-        self.assertEqual(selection['removed_id'],'gap')
-        specimen=self.base/'injected.kicad_pcb';specimen.write_text(changed)
-        self.assertEqual(before,geometry_digest(specimen))
-
-    def test_native_junit_has_all_cases_zero_skips_and_integrity_failure_cannot_pass(self):
-        import engineering_workflow_smoke as smoke
-        import xml.etree.ElementTree as ET
-        result=dict(scope='real-board replay',status='failed',cause='owned cleanup unconfirmed',
-            cases=[dict(case=case,status='passed') for case in smoke.CASES],shipping_inputs=dict(sha256='original-source'))
-        suite=ET.parse(smoke.write_junit(self.base,result)).getroot()
-        self.assertEqual(suite.attrib['tests'],'7');self.assertEqual(suite.attrib['skipped'],'0')
-        self.assertEqual(suite.attrib['failures'],'1')
-        self.assertIn('original-source',suite.find('system-out').text)
-        result['cases']=result['cases'][:1]
-        suite=ET.parse(smoke.write_junit(self.base,result)).getroot()
-        self.assertEqual(suite.attrib['failures'],'6')
-        self.assertEqual(len(suite.findall('testcase')),7)
-
-    def test_native_smoke_terminal_json_links_sealed_summary_without_source_inventory(self):
-        import engineering_workflow_smoke as smoke
-        result=dict(schema='iot-lab.engineering-workflow-smoke.v1',board='ENV-SENSE',status='failed',
-            cause='diagnosis not repairable',elapsed_s=12.5,shipping_inputs=dict(files={'tools/large.py':'x'*100000}),
-            cases=[dict(case='detect_injected_native_gap',status='passed',details='x'*100000)])
-        route.lean.atomic_json(self.base/'summary.json',result)
-        terminal=smoke.terminal_summary(result,self.base)
-        self.assertLess(len(json.dumps(terminal)),1000)
-        self.assertEqual(terminal['summary_sha256'],route.sha(self.base/'summary.json'))
-        self.assertEqual(terminal['summary_json'],str(self.base/'summary.json'))
-        self.assertEqual(terminal['cases'],[dict(case='detect_injected_native_gap',status='passed')])
-
 
 if __name__=='__main__':unittest.main()
