@@ -16,6 +16,7 @@ tar -xJf "$work/node.tar.xz" -C "$work" --strip-components=1
 export PATH="$work/bin:$PATH"
 cargo build --release --locked --quiet --manifest-path tools/router/core/Cargo.toml
 export IOTROUTE_BIN="$PWD/tools/router/core/target/release/iotroute"
+cp "$IOTROUTE_BIN" bin/iotroute-linux-x86_64   # where an installed bin/pcb finds it, for the test of that path
 tests=$(grep -l iotrouteMissing tools/lib/*.test.ts tools/lib/*.test.mjs)
 if "$work/bin/node" --experimental-strip-types --no-warnings --test $tests; then
   echo "PASS: iotroute tests: $(echo $tests | wc -w) files"
