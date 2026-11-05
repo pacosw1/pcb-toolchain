@@ -149,3 +149,19 @@ fn live_observation_keeps_route_results_identical_and_records_copper() {
     assert!(events.iter().any(|e|e["kind"]=="route.activity"&&e["data"]["action"]=="accepted"));
     assert!(events.iter().any(|e|e["kind"]=="checkpoint"));
 }
+
+#[test]
+fn daemon_default_spool_records_native_route_without_changing_result() {
+    let f=Fixture::new(false);let out=f.0.join("live");std::fs::create_dir(&out).unwrap();
+    let board=f.path("source.kicad_pcb");std::fs::write(&board,"(kicad_pcb (version 20260101))").unwrap();
+    let mut model=f.read("model.json");model["pcb"]=board.into();std::fs::write(f.path("model.json"),model.to_string()).unwrap();
+    assert!(f.run("off.json",&[]).status.success());
+    let run=Command::new(env!("CARGO_BIN_EXE_iotroute")).args([f.path("model.json"),f.path("on.json")]).args(["--pitch","0.2","--seed","7","--iters","5"]).env_remove("PCB_LIVE_EVENTS").env("PCB_LIVE_DIR",&out).output().unwrap();
+    assert!(run.status.success(),"{}",String::from_utf8_lossy(&run.stderr));assert_eq!(f.read("off.json"),f.read("on.json"));
+    let files:Vec<_>=std::fs::read_dir(&out).unwrap().map(|e|e.unwrap().path()).collect();
+    let manifest=files.iter().find(|p|p.to_string_lossy().ends_with(".manifest.json")).expect("native manifest");
+    let m:Value=serde_json::from_slice(&std::fs::read(manifest).unwrap()).unwrap();assert_eq!(m["operation"],"routing");
+    let done=files.iter().find(|p|p.to_string_lossy().ends_with(".done.json")).expect("normal core exit seals its observation");
+    let d:Value=serde_json::from_slice(&std::fs::read(done).unwrap()).unwrap();assert_eq!(d["outcome"],"passed");
+    assert!(files.iter().any(|p|p.extension().is_some_and(|s|s=="ndjson")&&std::fs::metadata(p).unwrap().len()>0));
+}

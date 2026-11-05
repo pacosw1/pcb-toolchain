@@ -308,3 +308,14 @@ source geometry. A preview is not gate evidence or permission to adopt a board.
 
 On macOS, use `TMPDIR=/tmp npm test` when the default temporary directory would
 make the existing Unix health-socket test paths exceed the platform limit.
+
+Ordinary native jobs now record observation files in their existing `out/`
+mount. The host reads only bounded flat regular files, refusing symlinks and
+hardlinks, verifies source hashes, and uses deterministic IDs/sequences for
+replay after restart. Job output cannot claim verified results. Native observer
+completion and independent board qualification remain separate.
+
+For non-root jobs, the daemon checks its input archive through an open
+no-follow descriptor and grants mode 0640 to the configured job group. The
+archive is still mounted read-only and its parent store remains private. This
+does not grant jobs access to daemon credentials or other jobs' directories.

@@ -5,6 +5,7 @@ use std::{cell::RefCell, collections::BTreeMap, fs::File, io::Write, time::Insta
 thread_local! { static LIVE: RefCell<Option<Live>> = const { RefCell::new(None) }; }
 struct Live {
     file: File,
+    _spool: Option<iotroute::live_spool::Spool>,
     copper: BTreeMap<String, Value>,
     pass: usize,
     last: Instant,
@@ -24,7 +25,7 @@ impl Live {
         if self.disabled {
             return;
         }
-        if let Ok(mut bytes) = serde_json::to_vec(&json!({"kind":kind,"data":data})) {
+        if let Ok(mut bytes) = serde_json::to_vec(&json!({"kind":kind,"data":data,"timeMs":iotroute::live_spool::now_ms()})) {
             bytes.push(b'\n');
             self.bytes += bytes.len();
             if self.bytes > 512 * 1024 * 1024
@@ -42,8 +43,10 @@ impl Live {
 }
 pub fn init() {
     LIVE.with(|l| {
+        let args:Vec<_>=std::env::args().collect();
+        let spool=if std::env::var("PCB_LIVE_EVENTS").is_err() && std::env::var("PCB_LIVE_DIR").is_ok() && !std::env::var("PCB_LIVE").is_ok_and(|v|v=="0") {args.get(1).and_then(|m|std::fs::read(m).ok().and_then(|bytes|iotroute::live_spool::Spool::from_environment(std::path::Path::new(m),&bytes,"routing",args.get(2)?.into())))}else{None};
         *l.borrow_mut() = std::env::var("PCB_LIVE_EVENTS")
-            .ok()
+            .ok().or_else(||spool.as_ref().map(|s|s.raw.to_string_lossy().into_owned()))
             .and_then(|p| {
                 std::fs::OpenOptions::new()
                     .write(true)
@@ -52,7 +55,7 @@ pub fn init() {
                     .ok()
             })
             .map(|file| Live {
-                file,
+                file, _spool:spool,
                 copper: BTreeMap::new(),
                 pass: 0,
                 last: Instant::now(),

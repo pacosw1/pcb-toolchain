@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import {liveCommand} from '../lib/live-command.mjs';
 // iotroute run on the job daemon. The candidate's verdict stays the gate on the Mac.
 //
 // A run the daemon cannot take stops on macOS with exit 2 and says why: a route needs the job image, and it does not start on
@@ -95,9 +96,9 @@ function runLocal(command){
   return new Promise(resolve=>{
     const exe=command[0]==='iotroute'?localBinary():command[0];
     const sprint=command.includes('--sprints');
-    const child=sprint
-      ?spawn(process.execPath,['--experimental-strip-types','--no-warnings',new URL('./sprint-job.ts',import.meta.url).pathname,exe,...command.slice(2)],{stdio:'inherit'})
-      :spawn(exe,command.slice(1),{stdio:'inherit'});
+    const native=sprint?[process.execPath,'--experimental-strip-types','--no-warnings',new URL('./sprint-job.ts',import.meta.url).pathname,exe,...command.slice(2)]:[exe,...command.slice(1)];
+    const observed=liveCommand(native,(command[3]||'route')+'.live');
+    const child=spawn(observed.command[0],observed.command.slice(1),{stdio:'inherit',env:{...process.env,...observed.env}});
     child.on('error',e=>{say(`cannot start ${exe}: ${e.message}`);resolve(2);});
     child.on('close',(code,signal)=>resolve(code??128+os.constants.signals[signal]));
   });

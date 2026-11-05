@@ -1,3 +1,4 @@
+import { liveCommand } from '../lib/live-command.mjs';
 // Block placement on a board: the problem, the search and the candidate boards.
 //
 //   place.ts read  BOARD -o prob.json [flags of `iotplace read`] [--engineering-manifest M --engineering-board ID --engineering-root DIR]
@@ -70,8 +71,9 @@ const finalOrder = (a: Candidate, b: Candidate): number => a.illegal.length - b.
 
 async function search(prob: string, output: string, workers: number, flags: readonly string[]): Promise<number> {
   const command = [iotplaceBin(), 'run', prob, '-o', output, '--workers', String(workers), ...flags];
+  const observed = liveCommand(command, output + '.live');
   return reserve(workers, { events: `${output}.admission.jsonl`, label: 'placement' }, async ({ env }) => {
-    const { returncode } = await runStage(command, { stage: 'placement', env, stdout: 'inherit', stderr: 'inherit' });
+    const { returncode } = await runStage(observed.command, { stage: 'placement', env: {...env,...observed.env}, stdout: 'inherit', stderr: 'inherit' });
     return returncode;
   });
 }

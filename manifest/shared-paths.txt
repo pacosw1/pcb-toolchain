@@ -715,6 +715,7 @@ tools/router/core/src/kicad/sexpr.rs
 tools/router/core/src/kicad/shape.rs
 tools/router/core/src/layers.rs
 tools/router/core/src/lib.rs
+tools/router/core/src/live_spool.rs
 tools/router/core/src/live.rs
 tools/router/core/src/main.rs
 tools/router/core/src/model/build.rs
@@ -885,3 +886,6 @@ tools/router/sprint-controller.test.ts
 tools/router/sprint-native.ts
 tools/router/sprint-native.test.ts
 tools/router/sprint-job.ts
+
+tools/lib/live-command.mjs
+tools/lib/live-command.d.mts

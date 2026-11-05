@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { LiveJobs } from './live-jobs.ts';
+import type { ObservedJob } from './live-jobs.ts';
 // Thin client for the job daemon. README "Client" has the commands.
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -219,6 +221,25 @@ function copySnapshot(toolchain: string, project: string, board: string, stage: 
   }
 }
 
+/** Keep the frozen problem byte-identical; map its original source path to an explicit job input. */
+export function stageLiveSources(project: string, stage: string, inputs: string[]): void {
+  const mapping: Record<string, {source: string; file: string; sha256: string}> = {};
+  for (const input of inputs) {
+    if (!input.endsWith('.json') || fs.statSync(input).size > 32 * 1024 * 1024) continue;
+    try {
+      const bytes = fs.readFileSync(input), model = JSON.parse(bytes.toString('utf8'));
+      if (!Array.isArray(model.units) || typeof model.board_file !== 'string' || !model.board_file.endsWith('.kicad_pcb')) continue;
+      const source = fs.realpathSync(model.board_file), root = fs.realpathSync(project), relative = path.relative(root, source);
+      if (!relative || relative.startsWith('..') || path.isAbsolute(relative) || fs.statSync(source).size > 128 * 1024 * 1024) continue;
+      const board = fs.readFileSync(source), sha256 = createHash('sha256').update(board).digest('hex');
+      const file = 'in/pcb-live-' + sha256 + '.kicad_pcb';
+      fs.writeFileSync(path.join(stage, file), board);
+      mapping[createHash('sha256').update(bytes).digest('hex')] = {source: model.board_file, file, sha256};
+    } catch { /* Optional observation never changes submission or engineering validation. */ }
+  }
+  if (Object.keys(mapping).length) fs.writeFileSync(path.join(stage, '.pcb-live-sources.json'), JSON.stringify(mapping));
+}
+
 /** The job folder of tools/remote.sh, at the same relative paths, plus the driver evidence. The caller removes it. */
 export function stageJob(toolchain: string, project: string, board: string, inputs: string[], snapshot=false): string {
   const rel = path.isAbsolute(board) ? path.relative(project, board) : board.replace(/\/$/, '');
@@ -238,6 +259,8 @@ export function stageJob(toolchain: string, project: string, board: string, inpu
     if(snapshot)copySnapshot(toolchain,project,rel,stage);
     fs.mkdirSync(path.join(stage, 'in'));
     for (const f of inputs) fs.cpSync(f, path.join(stage, 'in', path.basename(f)), { preserveTimestamps: true });
+    if (process.env.PCB_LIVE === '0') fs.writeFileSync(path.join(stage, '.pcb-live-disabled'), 'disabled\n');
+    else stageLiveSources(project, stage, inputs);
     return stage;
   } catch (e) {
     fs.rmSync(stage, { recursive: true, force: true });
@@ -421,6 +444,9 @@ async function main(): Promise<void> {
   const [cmd, ...rest] = process.argv.slice(2);
   const print = (o: unknown): void => console.log(JSON.stringify(o, null, 2));
   switch (cmd) {
+    case 'observe': case 'observe-resume': {
+      process.exitCode=await observeLocal(rest,cmd==='observe-resume'); return;
+    }
     case 'submit': {
       console.log((await submit(parseSubmit(rest))).id);
       return;
@@ -462,4 +488,26 @@ async function main(): Promise<void> {
 
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((e: unknown) => die(String(e), 1));
+}
+
+/** Mac-side upload only. The command and its native result are unchanged by observation failures. */
+async function observeLocal(args:string[],resume:boolean):Promise<number>{
+ const [parent,separator,...command]=args;if(!parent||(!resume&&(separator!=='--'||!command.length)))throw Error('observe SPOOL -- COMMAND or observe-resume SPOOL');
+ fs.mkdirSync(parent,{recursive:true});const out=resume?path.resolve(parent):fs.mkdtempSync(path.join(path.resolve(parent),'attempt-'));
+ const meta=path.join(out,'observer.json');
+ const job:ObservedJob=resume?JSON.parse(fs.readFileSync(meta,'utf8')):{id:'local-'+createHash('sha256').update(out).digest('hex').slice(0,24),name:path.basename(parent),state:'running',host:os.hostname(),attempts:[{n:1,out}]};
+ job.attempts[0].out=out;let code=0,ended=resume;
+ if(resume&&!job.attempts[0].endedAt){job.state='failed';job.attempts[0].endedAt=new Date().toISOString()}
+ const save=():void=>{fs.writeFileSync(meta+'.tmp',JSON.stringify(job));fs.renameSync(meta+'.tmp',meta)};save();
+ const request=async(p:string,init:RequestInit):Promise<void>=>{const r=await api(p,{...init,signal:AbortSignal.timeout(3000)});const body=await r.text();if(!r.ok)throw Error(`live HTTP ${r.status}: ${body.slice(0,200)}`)};
+ const observer=new LiveJobs(()=>[job],{importBoard:(bytes,sha)=>request('/live/assets/'+sha,{method:'PUT',body:new Uint8Array(bytes)}),append:events=>request('/live/events',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({events})})});
+ if(!resume){
+  const child=spawn(command[0]!,command.slice(1),{stdio:'inherit',env:{...process.env,PCB_LIVE_DIR:out}});
+  child.on('error',()=>{code=127;ended=true;job.state='failed';job.attempts[0].endedAt=new Date().toISOString();save()});
+  child.on('close',(status,signal)=>{code=status??128+(os.constants.signals[signal as NodeJS.Signals]??0);ended=true;job.state=code===0?'passed':'failed';job.attempts[0].endedAt=new Date().toISOString();save()});
+ }
+ let finishDeadline=Infinity;
+ do{await observer.poll();if(ended){if(observer.settled())break;if(finishDeadline===Infinity)finishDeadline=Date.now()+10000;}await sleep(100)}while(Date.now()<finishDeadline)
+ if(!observer.settled())console.error(`Live observation retained at ${out}; retry with pcb-job observe-resume ${out}`);
+ observer.stop();return code;
 }
