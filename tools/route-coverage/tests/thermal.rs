@@ -373,6 +373,16 @@ fn duplicate_evidence_keys_are_not_last_value_wins() {
     assert!(f.admit().is_err());
 }
 #[test]
+fn a_float_that_overflows_is_no_evidence() {
+    let f = Fixture::new();
+    let path = f.path("initial-fill.json");
+    let text = fs::read_to_string(&path).unwrap();
+    fs::write(&path, text.replacen('{', "{\"extra\":[{\"x\":1e999}],", 1)).unwrap();
+    refused(f.admit(), "nonfinite evidence JSON");
+    fs::write(&path, text.replacen('{', "{\"extra\":123456789012345678901234567890,", 1)).unwrap();
+    assert!(!f.admit().is_err_and(|error| error.contains("nonfinite")));
+}
+#[test]
 fn capability_is_pending_and_its_discharge_is_deterministic_and_opt_in() {
     let f = Fixture::new();
     let c = f.admit().unwrap();

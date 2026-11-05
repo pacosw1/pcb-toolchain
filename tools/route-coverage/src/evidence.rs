@@ -97,12 +97,29 @@ pub fn check_descriptor(v: &Value) -> Result<Value> {
     }
     Ok(actual)
 }
+/// A float that overflows a double is no evidence: `1e999` would read as infinity. A whole number of any length stays exact.
+fn finite(v: &Value) -> Result<()> {
+    match v {
+        Value::Number(n) => {
+            let text = n.to_string();
+            let float = text.contains(['.', 'e', 'E']);
+            if float && !text.parse::<f64>().is_ok_and(f64::is_finite) {
+                return Err(format!("nonfinite evidence JSON: {text}"));
+            }
+            Ok(())
+        }
+        Value::Array(rows) => rows.iter().try_for_each(finite),
+        Value::Object(rows) => rows.values().try_for_each(finite),
+        _ => Ok(()),
+    }
+}
 pub fn read(p: &Path) -> Result<(Value, Value)> {
     let before = descriptor(p)?;
     let data = parse(&fs::read_to_string(p).map_err(|e| e.to_string())?)?;
     if !data.is_object() {
         return Err("evidence JSON must be an object".into());
     }
+    finite(&data)?;
     if descriptor(p)? != before {
         return Err(format!("evidence changed while reading: {}", p.display()));
     }
