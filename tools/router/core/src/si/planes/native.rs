@@ -4,7 +4,7 @@ use super::Fill;
 use super::projection::{Boundaries, Edge, EdgeIndex, Round, continuous_reference, reference_breaks};
 use super::sample::{P, Run};
 use super::spec::{Caps, Spec};
-use crate::kicad::board::{Board, RoutedCopper, Track};
+use crate::kicad::board::{Board, RoutedCopper, Track, Via};
 use crate::kicad::geom::boolean::circle_segments;
 use crate::kicad::geom::polygon::segment_touches;
 use crate::kicad::geom::{FillIndex, Iu, Polygon, Pt, from_mm, ki_round, to_mm};
@@ -59,12 +59,17 @@ fn track_pieces(t: &Track) -> Vec<(Pt, Pt)> {
     }
 }
 
+/// Whether a via has copper on a layer. A board JSON from before via layers has none listed: every via was a through via then.
+fn via_on(via: &Via, layer: &str) -> bool {
+    via.layers.is_empty() || via.layers.iter().any(|l| l == layer)
+}
+
 /// The copper of a net on a layer, as polygons: the lands that connect a ground barrel to the fill through real copper.
 fn lands(board: &Board, layer: &str, domain: &str) -> Vec<Polygon> {
     let mut out = Vec::new();
     for copper in &board.copper {
         match copper {
-            RoutedCopper::Via(v) if v.net == domain => out.push(circle_ring(v.at, v.size / 2)),
+            RoutedCopper::Via(v) if v.net == domain && via_on(v, layer) => out.push(circle_ring(v.at, v.size / 2)),
             RoutedCopper::Track(t) if t.net == domain && t.layer == layer => out.extend(track_pieces(t).into_iter().map(|(a, b)| stadium(a, b, t.width))),
             _ => {}
         }
@@ -130,14 +135,14 @@ impl<'a> Reference<'a> {
         continuous_reference(&|x, y| self.ok(x, y), &self.boundaries(), a, b, &self.circles)
     }
 
-    fn breaks(&self, a: P, b: P) -> Vec<f64> {
+    pub(crate) fn breaks(&self, a: P, b: P) -> Vec<f64> {
         reference_breaks(&self.boundaries(), a, b, &self.circles)
     }
 }
 
-/// Only the domain's conductive barrels spanning both planes. The board JSON gives no via span: every via is a through via.
+/// Only the domain's conductive barrels spanning both planes.
 pub fn ground_portals(board: &Board, layer: &str, alternate: &str, domain: &str) -> Vec<P> {
-    let vias = board.copper.iter().filter_map(|c| if let RoutedCopper::Via(v) = c { Some(v) } else { None }).filter(|v| v.net == domain).map(|v| mm(v.at));
+    let vias = board.copper.iter().filter_map(|c| if let RoutedCopper::Via(v) = c { Some(v) } else { None }).filter(|v| v.net == domain && via_on(v, layer) && via_on(v, alternate)).map(|v| mm(v.at));
     let on_both = |layers: &[String]| layers.iter().any(|l| l == layer) && layers.iter().any(|l| l == alternate);
     let pads = board.pads().map(|(_, p)| p).filter(|p| p.net == domain && p.kind == PadKind::ThroughHole && on_both(&p.layers)).map(|p| mm(p.position));
     vias.chain(pads).collect()
@@ -193,7 +198,7 @@ fn items_on<'a>(board: &'a Board, layer: &str) -> Vec<Item<'a>> {
     let mut out = Vec::new();
     for copper in &board.copper {
         match copper {
-            RoutedCopper::Via(v) => out.push(Item { net: &v.net, id: &v.id, shape: vec![Copper::Circle { center: v.at, radius: v.size / 2 }] }),
+            RoutedCopper::Via(v) if via_on(v, layer) => out.push(Item { net: &v.net, id: &v.id, shape: vec![Copper::Circle { center: v.at, radius: v.size / 2 }] }),
             RoutedCopper::Track(t) if t.layer == layer => {
                 out.push(Item { net: &t.net, id: &t.id, shape: track_pieces(t).into_iter().map(|(a, b)| Copper::Segment { a, b, width: t.width }).collect() });
             }

@@ -123,6 +123,23 @@ mod tests {
         assert_eq!(round6(-4.819999999999993), -4.82);
     }
 
+    fn pad(kind: PadKind, left: i64, top: i64, right: i64, bottom: i64) -> Pad {
+        let at = crate::kicad::doc::Pt::new(left, top);
+        Pad {
+            id: String::new(), number: "1".into(), kind, shape: iotroute::kicad::pad::PadShape::Rect, net: String::new(), position: at, orientation: 0.0,
+            size: at, drill: at, layers: Vec::new(), bbox: crate::kicad::doc::NmRect { left, top, right, bottom }, zone_connection: None,
+            thermal_spoke_angle: 0.0, spoke_templates: 0, copper: Vec::new(), polygons: Default::default(), solder_mask_expansion: 0, clearance_override: None,
+        }
+    }
+
+    #[test]
+    fn pads_beyond_the_courtyard_grow_the_part_rect() {
+        // J1 A1B12 of NET-CORE stands past its courtyard; a hole has no copper
+        let pads = vec![pad(PadKind::Smd, 106_850_000, 154_500_000, 108_150_000, 155_100_000), pad(PadKind::NpThroughHole, 90_000_000, 150_000_000, 91_000_000, 151_000_000)];
+        let fp = Footprint { pads, ..Footprint::default() };
+        assert_eq!(pads_box(&fp, Rect::new(99.89, 153.49, 107.33, 162.51)), Rect::new(99.89, 153.49, 108.15, 162.51));
+    }
+
     #[test]
     fn a_connector_across_the_outline_is_at_the_edge() {
         let outline = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)];

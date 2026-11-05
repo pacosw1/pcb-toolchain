@@ -15,7 +15,7 @@ const URL_NAMESPACE = '6ba7b8119dad11d180b400c04fd430c8';
 export const BOARD = 'PART-FIXTURE';
 export const FOLDER = `hardware-design/boards/${BOARD}`;
 
-/** uuid5 of the URL namespace: the identities of native_workflow_smoke.py. */
+/** uuid5 of the URL namespace: stable fixture identities. */
 export function uid(name: string): string {
   const hash = createHash('sha1').update(Buffer.from(URL_NAMESPACE, 'hex')).update(`iot-lab-native-smoke:${name}`).digest();
   hash[6] = (hash[6] as number & 0x0f) | 0x50;

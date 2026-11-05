@@ -438,7 +438,8 @@ impl Rules {
     }
     pub fn floor(&self, left: &str, right: Option<&str>) -> Result<D> {
         self.allowed(left)?;
-        if let Some(r) = right {
+        // The unconnected net "" has no class: it is no second net, as in the core's clearance_floor.
+        if let Some(r) = right.filter(|net| !net.is_empty()) {
             self.allowed(r)?;
         }
         self.clearances

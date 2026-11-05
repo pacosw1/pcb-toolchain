@@ -65,20 +65,20 @@ test('a changed path gates only the boards whose recorded inputs or own files in
  const {root,put}=fixture(t);
  put('hardware-design/boards/BASE-PWR/gate-waivers.json','[]');
  const inputs=new Map([
-  ['BASE-PWR',new Set(['tools/gate.mjs','tools/si_planes.py','hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb'])],
-  ['BASE-PWR-B',new Set(['tools/gate.mjs','tools/si_planes.py','tools/rf_lines.ts'])]]);
+  ['BASE-PWR',new Set(['tools/gate.mjs','tools/si_planes.ts','hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb'])],
+  ['BASE-PWR-B',new Set(['tools/gate.mjs','tools/si_planes.ts','tools/rf_lines.ts'])]]);
  assert.deepEqual(affectedGates(root,['tools/route_live.py'],new Map(),inputs),[]);
  assert.deepEqual(affectedGates(root,['tools/test_pcbtool.py','tools/lib/staged-gates.mjs'],new Map(),inputs),[]);
- assert.deepEqual(affectedGates(root,['tools/si_planes.py'],new Map(),inputs),['BASE-PWR','BASE-PWR-B']);
+ assert.deepEqual(affectedGates(root,['tools/si_planes.ts'],new Map(),inputs),['BASE-PWR','BASE-PWR-B']);
  assert.deepEqual(affectedGates(root,['tools/rf_lines.ts'],new Map(),inputs),['BASE-PWR-B']);
  assert.deepEqual(affectedGates(root,['hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb'],new Map(),inputs),['BASE-PWR']);
  assert.deepEqual(affectedGates(root,['hardware-design/boards/BASE-PWR/cad/B/B.kicad_pcb'],new Map(),inputs),['BASE-PWR-B']);
  assert.deepEqual(affectedGates(root,['hardware-design/boards/BASE-PWR/gate-waivers.json'],new Map(),inputs),['BASE-PWR']);
  // A board without committed metrics keeps the conservative rule.
  assert.deepEqual(affectedGates(root,['tools/route_live.py'],new Map(),new Map([['BASE-PWR',inputs.get('BASE-PWR')]])),['BASE-PWR-B']);
- const {boards,reasons}=stagedGateMap(root,['tools/si_planes.py','docs/x.md','hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb'],new Map(),inputs);
+ const {boards,reasons}=stagedGateMap(root,['tools/si_planes.ts','docs/x.md','hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb'],new Map(),inputs);
  assert.deepEqual(boards,['BASE-PWR','BASE-PWR-B']);
- assert.deepEqual([...reasons],[['tools/si_planes.py',['BASE-PWR','BASE-PWR-B']],['hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb',['BASE-PWR']]]);
+ assert.deepEqual([...reasons],[['tools/si_planes.ts',['BASE-PWR','BASE-PWR-B']],['hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb',['BASE-PWR']]]);
 });
 // Audit #802: metrics without a nonempty provenance.inputs list must not disable the conservative fallback.
 test('missing, empty or malformed provenance keeps the conservative rule for deleted shared inputs',t=>{

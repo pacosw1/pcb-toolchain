@@ -242,7 +242,7 @@ pub fn add_keepouts(
     kinds: &[String],
     name: &str,
 ) -> Result<String, String> {
-    use iotroute::kicad::sexpr;
+    use crate::rule_coverage::dsn_forms;
     let mut lines = Vec::new();
     let name = serde_json::to_string(name).map_err(|e| e.to_string())?;
     for (layer, rects) in rects {
@@ -267,8 +267,8 @@ pub fn add_keepouts(
     if lines.is_empty() {
         return Ok(text.to_string());
     }
-    let forms = sexpr::parse(text)?;
-    if forms.len() != 1 || forms[0].child("structure").is_none() {
+    let forms = dsn_forms(text)?;
+    if forms.len() != 1 || forms[0].children("structure").next().is_none() {
         return Err("DSN needs one structure section".into());
     }
     let start = text.find("(structure").ok_or("DSN has no structure")?;

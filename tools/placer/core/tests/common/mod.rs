@@ -1,6 +1,8 @@
 //! Small problems for the tests, built as JSON like the files the board reader writes.
 #![allow(dead_code)]
 
+pub mod board;
+
 use iotplace::evaluator::{Evaluator, Terms};
 use iotplace::model::Model;
 use iotplace::numeric::PyRandom;

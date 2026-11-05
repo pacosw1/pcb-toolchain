@@ -1,6 +1,6 @@
 # Verified block reuse
 
-`tools/blocks.py` uses existing discovery and native binding tools. Qualification
+`tools/blocks.ts` uses existing discovery and native binding tools. Qualification
 is an executable evidence check, recorded separately from CAD and `facts.json`.
 
 | Derived level | Required evidence | Scope |
@@ -18,16 +18,16 @@ different parts, manufacturing release, purchasing, or unmeasured operating rang
 These commands are also callable through the `pcb blocks` command family.
 
 ```sh
-python3 tools/blocks.py inventory BASE-PWR
-python3 tools/blocks.py inventory ENV-SENSE
-python3 tools/blocks.py find 'power switch'
-python3 tools/blocks.py reuse BLOCK
-python3 tools/blocks.py bind BLOCK path/to/target.kicad_pcb --instance /SHEET_UUID > .gate/binding.json
-python3 tools/blocks.py native BLOCK --output .gate/block-native/NEW-RUN
+node --experimental-strip-types tools/blocks.ts inventory BASE-PWR
+node --experimental-strip-types tools/blocks.ts inventory ENV-SENSE
+node --experimental-strip-types tools/blocks.ts find 'power switch'
+node --experimental-strip-types tools/blocks.ts reuse BLOCK
+node --experimental-strip-types tools/blocks.ts bind BLOCK path/to/target.kicad_pcb --instance /SHEET_UUID > .gate/binding.json
+node --experimental-strip-types tools/blocks.ts native BLOCK --output .gate/block-native/NEW-RUN
 tools/pcb check BOARD --fresh --detach --json
-python3 tools/blocks.py qualify BLOCK --binding .gate/binding.json --evidence .gate/block-evidence.json --output .gate/qualification.json
-python3 tools/blocks.py status .gate/qualification.json
-python3 tools/blocks.py reuse BLOCK --receipt .gate/qualification.json
+node --experimental-strip-types tools/blocks.ts qualify BLOCK --binding .gate/binding.json --evidence .gate/block-evidence.json --output .gate/qualification.json
+node --experimental-strip-types tools/blocks.ts status .gate/qualification.json
+node --experimental-strip-types tools/blocks.ts reuse BLOCK --receipt .gate/qualification.json
 ```
 
 Create parent directories before shell redirection. The example identifiers and

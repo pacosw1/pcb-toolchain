@@ -37,7 +37,8 @@ pub fn run(argv: &[String]) -> crate::Result<()> {
     let pr: WriteProblem = read_json(problem)?;
     let places: Vec<Place> = read_json(pose)?;
     let options = WriteOptions { outline_scale: flags.number("--outline-scale", 1.0)?, retain_copper: flags.has("--retain-copper") };
-    let text = std::fs::read_to_string(source).map_err(|e| format!("{board_file}: {e}"))?;
+    pr.check_reviewed(&options)?;
+    let text =std::fs::read_to_string(source).map_err(|e| format!("{board_file}: {e}"))?;
     let (edited, report) = write_board(&text, &board, &design, &pr, &places, options)?;
     save_board(source, &edited, &flags.path("-o")?)?;
     println!("{}", serde_json::to_string(&report)?);

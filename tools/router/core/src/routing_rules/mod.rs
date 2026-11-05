@@ -16,7 +16,7 @@ pub type Keepouts = BTreeMap<String, Vec<Rect>>;
 pub fn matches(net: &str, patterns: &[String]) -> bool {
     patterns
         .iter()
-        .any(|p| iotroute::model::text::glob_match(net, p))
+        .any(|p| crate::model::text::glob_match(net, p))
 }
 
 pub fn distance(a: Point, b: Point) -> f64 {

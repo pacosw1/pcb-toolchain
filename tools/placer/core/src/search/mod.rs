@@ -7,7 +7,7 @@
 //! The best pose of each worker is legalized and ranked: illegal unit count, mains faults, then cost.
 
 mod anneal;
-mod legalize;
+pub(crate) mod legalize;
 mod mover;
 
 pub use anneal::{Best, Schedule, anneal, estimate_t0};

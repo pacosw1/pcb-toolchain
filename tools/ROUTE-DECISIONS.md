@@ -66,8 +66,4 @@ DRU rules or unscreened requested pads block this screen. Width/clearance/layer 
 grid overrides are not silently interpreted. It performs no duplicate DRC: the
 fresh parent gate remains authoritative. KiCad Python and NumPy are required.
 
-Verification: `python3 -m unittest discover -s tools -p test_route_decision.py`.
-The pinned native job also runs `engineering_workflow_smoke.py`: a real ENV copy
-gets one interior segment gap, then unified parts status, failed check, diagnosis,
-repair/full gates, frozen named-defect adoption and cycle evidence. Shipping CAD
-is unchanged; incomplete real part reviews remain blocked throughout the replay.
+Verification: `node --test --experimental-strip-types --no-warnings tools/lib/route-decision.test.ts`.

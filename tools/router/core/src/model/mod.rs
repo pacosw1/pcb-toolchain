@@ -4,6 +4,7 @@ pub mod cli;
 pub mod current;
 pub mod dru;
 pub mod files;
+pub mod happy_scope;
 pub mod isolation;
 pub mod items;
 pub mod num;

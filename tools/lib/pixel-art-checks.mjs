@@ -1,6 +1,6 @@
 // Pixel-art silkscreen checks, shared by the board audits.
 // Geometry comes from tools/check_pixel_art.py (KiCad bundled Python, pcbnew).
-// The art is made by tools/pixel-art.py: one group "pixel-art <name>" per icon.
+// The art is made by tools/pixel-art.ts: one group "pixel-art <name>" per icon.
 
 import {execFileSync} from 'node:child_process';
 

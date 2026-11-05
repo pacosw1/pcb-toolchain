@@ -18,8 +18,8 @@ The backend also runs directly; each command accepts `--root PATH`, `--json` and
 For example:
 
 ```sh
-python3 tools/part_evidence.py inspect original.pdf --cache /path/to/cache --render-pages 1,13 --json --output inspect.json
-python3 tools/part_evidence.py verify ENV-SENSE --manifest review.json --json --output verification.json
+node --experimental-strip-types tools/part_evidence.ts inspect original.pdf --cache /path/to/cache --render-pages 1,13 --json --output inspect.json
+node --experimental-strip-types tools/part_evidence.ts verify ENV-SENSE --manifest review.json --json --output verification.json
 ```
 
 Python3 and Node.js are required for native identity inspection. PDF inspection
@@ -214,7 +214,7 @@ facts remain attributable authored claims; the PDF parser checks original identi
 and page locations, not semantic truth. Its actual executable hash is retained.
 
 ```sh
-python3 tools/part_evidence.py selection NEW-IDEA --manifest review.json --root /path/to/project --json --output selection.json
+node --experimental-strip-types tools/part_evidence.ts selection NEW-IDEA --manifest review.json --root /path/to/project --json --output selection.json
 ```
 
 With `--output`, this command retains the full report and prints a compact JSON

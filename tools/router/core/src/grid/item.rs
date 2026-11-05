@@ -52,6 +52,15 @@ impl Item {
         self.layers & (1 << layer) != 0
     }
 
+    /// Distance from a point to the item's copper, 0 on it.
+    pub fn distance(&self, x: f64, y: f64) -> f64 {
+        match &self.shape {
+            Shape::Segment(seg, half_width) => (seg_dist(x, y, *seg) - half_width).max(0.0),
+            Shape::Polygons(polygons) if polygons.iter().any(|p| in_poly(x, y, p)) => 0.0,
+            Shape::Polygons(polygons) => polygons.iter().map(|p| poly_dist(x, y, p)).fold(f64::INFINITY, f64::min),
+        }
+    }
+
     /// The reference of a pad or hole owner: "U1" of "U1.3".
     pub fn reference(&self) -> &str {
         self.owner.split('.').next().unwrap_or("")

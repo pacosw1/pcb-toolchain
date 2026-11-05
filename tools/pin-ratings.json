@@ -1,5 +1,5 @@
 {
- "about": "D-124c (user decision 2026-10-09, option C, part b; D-124e adds TPS259251): per-part pin or switch current ratings for the pin-escape allowance of tools/pcbtool.py (paths, widths). A track piece that starts on a pad, is no narrower than the pad's narrow dimension and no longer than the pad's long dimension is part of the pad; it carries the pin rating below when that rating is at least the net's design current. A part or pin not listed here gets no allowance. Each value: document, revision, section and table, page, URL, the local copy, and the statistic used (the minimum when the document gives one). [P]: primary source read.",
+ "about": "D-124c (user decision 2026-10-09, option C, part b; D-124e adds TPS259251): per-part pin or switch current ratings for the pin-escape allowance of tools/pcbtool.ts paths. A track piece that starts on a pad, is no narrower than the pad's narrow dimension and no longer than the pad's long dimension is part of the pad; it carries the pin rating below when that rating is at least the net's design current. A part or pin not listed here gets no allowance. Each value: document, revision, section and table, page, URL, the local copy, and the statistic used (the minimum when the document gives one). [P]: primary source read.",
  "evidence_files": [
   {
    "path": "hardware-design/registry/datasheets/TPS61023.pdf"

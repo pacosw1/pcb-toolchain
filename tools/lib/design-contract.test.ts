@@ -1,5 +1,5 @@
 // Source-bound lifecycle plans. Verifiers owned by other clusters are fakes here, so these tests cover the stage engine
-// and the contract checks; the adapters against real part and schematic verifiers stay in test_design_contract.py.
+// and the contract checks; the adapters against the real verifiers are in design-contract-verifiers.test.ts.
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

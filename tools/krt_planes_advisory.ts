@@ -8,7 +8,7 @@
 // A void run under about 0.3 mm is usually just an antipad; this wrapper keeps void crossings of 1.0 mm or longer, one
 // line per crossing. Split crossings are a plane cut, not a void, and never count, however long.
 //
-// Advisory only: a cross-check against tools/si_planes.py, not a pass/fail gate.
+// Advisory only: a cross-check against tools/si_planes.ts, not a pass/fail gate.
 //
 //   tools/krt_planes_advisory.ts BOARD.kicad_pcb [--min-length-mm 1.0]
 //

@@ -16,6 +16,9 @@ export function pyFloat(text: string): number {
 /** round(x, places): half even on the exact binary value. Math.round and toFixed take an exact tie up. */
 export const round = (x: number, places = 0): number => Number(fixed(x, places));
 
+/** round(x) to a whole number: half even. As round(x, 0), for a loop over grid nodes. */
+export const roundWhole = (x: number): number => (Math.abs(x % 1) === 0.5 ? 2 * Math.round(x / 2) : Math.round(x));
+
 /** f'{x:.{digits}g}': significant digits, no trailing zeros, an exponent below 1e-4 and from 10**digits. */
 export function formatG(x: number, digits = 6): string {
   if (x === 0) return Object.is(x, -0) ? '-0' : '0';

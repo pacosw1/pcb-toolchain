@@ -1,5 +1,4 @@
-// Measure complete run outcomes; never substitute proxy route scores for gates. tools/pcb_benchmark.py is the twin
-// until pcb_cli.py goes. Receipt values stay as jsonLoads gave them, so 12.0 prints as 12.0 in the summary.
+// Measure complete run outcomes; never substitute proxy route scores for gates. Receipt values stay as jsonLoads gave them, so 12.0 prints as 12.0 in the summary.
 import { basename } from 'node:path';
 import { verify } from './pcb-evidence.ts';
 import { Float, get, item, jsonLoads, number, splitlines, truthy } from './py-compat.mjs';

@@ -134,11 +134,13 @@ function arcChords(track: Track & { mid: Pt }, error: number): Pt[] {
   });
 }
 
-/** Does a track's copper reach into the polygon? An arc is cut into chords within `error`, as pcbnew's polygon of it was. */
+/** The centre line of a track: its two ends, or an arc cut into chords within `error`, as pcbnew's polygon of it was. */
+export const trackLine = (track: Track, error = 1000): Pt[] => (track.mid ? arcChords({ ...track, mid: track.mid }, error) : [track.start, track.end]);
+
+/** Does a track's copper reach into the polygon? */
 export function polygonNearTrack(polygon: Polygon, track: Track, error = 1000): boolean {
   const half = Math.trunc(track.width / 2);
-  if (!track.mid) return polygonNearSegment(polygon, track.start, track.end, half);
-  const points = arcChords({ ...track, mid: track.mid }, error);
+  const points = trackLine(track, error);
   return points.slice(1).some((point, i) => polygonNearSegment(polygon, points[i]!, point, half));
 }
 

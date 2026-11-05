@@ -281,6 +281,14 @@ function fakeLocal(dir: string, emc: Finding[], args: string[] = [], env: Record
 
 const fakeRun = (emc: Finding[], args: string[] = [], env: Record<string, string> = {}) => fakeLocal(fakeProject(), emc, args, env);
 
+test('a clone at another commit is refused, and the pin reads the clone even under a hook', () => {
+  const dir = fakeProject();
+  script(join(dir, 'bin/git'), '#!/bin/sh\n[ -z "$GIT_DIR" ] || exit 9\necho deadbeef00000000000000000000000000000000\n');
+  const { run } = gate(dir, [], { GIT_DIR: '/elsewhere' });
+  assert.equal(run.status, 2);
+  assert.match(run.stdout + run.stderr, /is at commit deadbeef0000, not the pinned commit a6bba1a\./);
+});
+
 test('a clean run exits 0 and writes the completion report', () => {
   const { run, result, dir } = fakeRun([]);
   assert.equal(run.stderr, '');

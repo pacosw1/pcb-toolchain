@@ -1,8 +1,8 @@
 //! Item tests of pcbnew on board JSON (PAD::HitTest, PCB_TRACK::HitTest, PCB_VIA::HitTest, collisions), on the shapes of
 //! iotroute's geometry. tools/lib/board-hit.ts holds the same tests for the TypeScript tools.
 
-use super::doc::{Copper, Nm, Pad, PadCopper, Polygon, Pt, Track, Via};
-use iotroute::kicad::geom::collide::{graphic_near_point, near_point, near_segment};
+use super::doc::{Copper, Nm, NmRect, Pad, PadCopper, Polygon, Pt, Track, Via};
+use iotroute::kicad::geom::collide::{bbox_of, graphic_near_point, near_point, near_segment};
 use iotroute::kicad::geom::polygon::copper_contains;
 use iotroute::kicad::shape::{Arc, Geometry, Graphic};
 
@@ -49,12 +49,17 @@ pub fn copper_hit(item: &Copper, p: Pt) -> bool {
     }
 }
 
-/// The copper of a track or via for a collision: a segment, as pad copper with its width.
-fn stick(item: &Copper) -> PadCopper {
+/// GetEffectiveShape of a track or via, as pad copper: a segment, an arc as its chords, a via as a circle.
+fn sticks(item: &Copper) -> Vec<PadCopper> {
     match item {
-        Copper::Track(t) => PadCopper::Segment { a: t.start, b: t.end, width: t.width },
-        Copper::Via(v) => PadCopper::Circle { center: v.at, radius: v.size / 2 },
+        Copper::Track(t) => t.copper(),
+        Copper::Via(v) => vec![v.copper()],
     }
+}
+
+/// The box of a track or via, an arc's bend included (GetBoundingBox).
+pub fn copper_box(item: &Copper) -> NmRect {
+    bbox_of(&sticks(item)).expect("a track or via has copper")
 }
 
 fn stick_ends(copper: &PadCopper) -> (Pt, Pt, Nm) {
@@ -67,14 +72,17 @@ fn stick_ends(copper: &PadCopper) -> (Pt, Pt, Nm) {
 
 /// SHAPE::Collide of a track or via with a pad's effective shape on one layer.
 pub fn collides_with_polygon(item: &Copper, polygon: &Polygon, clearance: Nm) -> bool {
-    let (a, b, reach) = stick_ends(&stick(item));
-    polygon.near_segment(a, b, clearance + reach)
+    sticks(item).iter().map(stick_ends).any(|(a, b, reach)| polygon.near_segment(a, b, clearance + reach))
+}
+
+/// SHAPE::Collide of a track or via with one piece of copper.
+pub fn collides_with_piece(item: &Copper, piece: &PadCopper, clearance: Nm) -> bool {
+    sticks(item).iter().map(stick_ends).any(|(a, b, reach)| near_segment(piece, a, b, clearance + reach))
 }
 
 /// SHAPE::Collide of two tracks or vias.
 pub fn collides_with_copper(a: &Copper, b: &Copper, clearance: Nm) -> bool {
-    let (start, end, reach) = stick_ends(&stick(b));
-    near_segment(&stick(a), start, end, clearance + reach)
+    sticks(a).iter().any(|piece| collides_with_piece(b, piece, clearance))
 }
 
 #[cfg(test)]

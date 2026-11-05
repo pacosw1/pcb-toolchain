@@ -217,7 +217,7 @@ struct Net {
     /// smallest width the net's design current needs (model `min_width`, the paths gate formula); 0 = no current
     min_w: f64,
     /// v8: smallest width per copper layer index (model `min_width_layers`: the gate rates each piece with the copper of
-    /// its own layer, tools/pcbtool.py paths); 0 or missing = no floor on that layer. min_w is the smallest of them.
+    /// its own layer, tools/pcbtool.ts paths); 0 or missing = no floor on that layer. min_w is the smallest of them.
     min_wl: Vec<f64>,
     /// locked input vias of the net: they count in the DRU via_count
     in_vias: usize,
@@ -452,7 +452,7 @@ struct Board {
     /// the outline bbox alone misses a notch or a cut-out (BASE-PWR-C)
     edges: Vec<(f64, f64, f64, f64)>,
     /// v8b: fan-out via of a plane-net pad in a power chain that one net via cannot carry (model pad fanout_via,
-    /// pcbtool.via_amps): pad centre, via diameter, drill
+    /// tools/lib/copper-current.ts viaAmps): pad centre, via diameter, drill
     fvia: Vec<(f64, f64, f64, f64)>,
     /// isolation pair rules (model `iso`); None = no pair rule on the board (every query as before)
     iso: Option<Iso>,
@@ -518,7 +518,7 @@ fn track_hit(s: &Shape, x: f64, y: f64, hw: f64, clr: f64, fast: bool, plane_clr
 
 /// Via (radius vr, drill) at (x, y) against item s: 0 no hit, 1 hole-to-hole (any net, own net included),
 /// 2 clearance hit (applies to other nets only), 3 own-net SMD pad under the via (applies to the own net only;
-/// tools/pcbtool.py viapads), 4 = 2 and 3. The clearance hit mirrors every rule track_hit applies from the other
+/// tools/pcbtool.ts viapads), 4 = 2 and 3. The clearance hit mirrors every rule track_hit applies from the other
 /// side, so a via that passes here never puts an existing track in violation: the plane clearance of a fast track to
 /// a foreign drilled item (s_fast) and the hole-to-copper clearance of the via hole.
 fn via_hit(s: &Shape, x: f64, y: f64, vr: f64, drill: f64, clr: f64, hth: f64, s_fast: bool, plane_clr: f64, hole_clr: f64, eps: f64, web: f64, pc: f64) -> u8 {
@@ -1120,7 +1120,7 @@ impl<'a> Ctx<'a> {
             }
         }
     }
-    /// v8b: the straight escape stubs of rated pad `sid` (model pad escape) for `net`: tools/pcbtool.py pin_escape gives
+    /// v8b: the straight escape stubs of rated pad `sid` (model pad escape) for `net`: tools/lib/copper-current.ts pinEscape gives
     /// the pin rating to ONE track that starts on the pad, no narrower than the pad's narrow side and no longer than its
     /// long side. A stub starts on a grid cell inside the pad (cells_of: END_IN from the edge), goes straight (any angle)
     /// to a grid cell outside the pad, not longer than the long side less 1 um, at the pad's narrow width, legal against
@@ -1652,7 +1652,7 @@ impl<'a> Ctx<'a> {
                     // which lies inside a rectangular, round, oval or rounded pad (a bbox corner of a round pad is
                     // bare board: KiCad reported such ends as unconnected)
                     // The end must lie strictly inside the copper, END_IN from its edge: an end on the pad edge is
-                    // connected for KiCad but not for the paths gate (tools/pcbtool.py: pad.HitTest of the end
+                    // connected for KiCad but not for the paths gate (tools/lib/power-graph.ts: padHit of the end
                     // node, rounded to 1 um, excludes the edge: v3 "no copper path" at U4.3, U1.30, L2.2)
                     let in_pad = match (s.kind, s.geo) {
                         (Kind::Pad, Geo::Rect(..)) => {
@@ -2262,7 +2262,7 @@ impl<'a> Ctx<'a> {
         (tracks, vias)
     }
     /// v8 fix 1: the paths gate gives a rated pin escape only to ONE track piece that starts on the pad, no narrower
-    /// than the pad's narrow side and no longer than its long side (tools/pcbtool.py pin_escape). The narrow pieces at
+    /// than the pad's narrow side and no longer than its long side (tools/lib/copper-current.ts pinEscape). The narrow pieces at
     /// the start or the end of a run (tracks[from..]) inside a rated pad become one straight piece: from the far end of
     /// the narrow part to the point where that line is END_IN inside the pad (the inscribed ellipse, as cells_of).
     /// Kept only when it is legal against fixed copper at the neck width and not longer than the escape length.
@@ -2602,7 +2602,7 @@ fn load(model: &Value, hole_clr: f64) -> Board {
                 bd.fvia.push((cx, cy, d, dr));
             }
         }
-        // v8: rated pin escape (model pad escape: tools/pcbtool.py pin_escape with tools/pin-ratings.json)
+        // v8: rated pin escape (model pad escape: tools/lib/copper-current.ts pinEscape with tools/pin-ratings.json)
         if let Some(e) = p["escape"].as_object() {
             let (w, l) = (e["width"].as_f64().unwrap_or(0.0), e["length"].as_f64().unwrap_or(0.0));
             if w > 0.0 && l > 0.0 {
@@ -2950,7 +2950,7 @@ fn fanout_net_inner(ctx: &mut Ctx, net: usize) -> NetResult {
         ws.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
         // v8: the via sites lie within 2 mm of the pad centre; only when that window has none, 3 mm (a pad ringed by
         // pads of its own net, as the 3 x 3 exposed-pad grid of a module, has its nearest legal site further out:
-        // BASE-PWR-C U1.41, 2.2 mm; a via may not sit on an own-net SMD pad, tools/pcbtool.py viapads)
+        // BASE-PWR-C U1.41, 2.2 mm; a via may not sit on an own-net SMD pad, tools/pcbtool.ts viapads)
         'reach: for rad in [2.0f64, 3.0] {
         for &w in &ws {
             let hw = w / 2.0;
@@ -4243,6 +4243,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
         Some("write") => std::process::exit(write::cli(&args[2..])),
+        Some("fastroute") => std::process::exit(iotroute::job::fastroute::cli(&args[2..])),
         Some("gerber-geos") => std::process::exit(iotroute::gerber_geos::cli()),
         Some("gerber-geometry") => std::process::exit(iotroute::gerber_geometry::cli()),
         Some("board-json") => std::process::exit(iotroute::kicad::cli(&args[2..])),
@@ -4250,9 +4251,16 @@ fn main() {
         Some("si-planes") => std::process::exit(iotroute::si::planes_cli(&args[2..])),
         Some("si-pairs") => std::process::exit(iotroute::si::pairs_cli(&args[2..])),
         Some("run") => std::process::exit(iotroute::run::cli(&args[2..])),
+        Some("route") => std::process::exit(iotroute::job::route_run::cli(&args[2..])),
         Some("route-policy") => std::process::exit(iotroute::run::policy::cli(&args[2..])),
         Some("lock-input") => std::process::exit(iotroute::run::lock_input_cli(&args[2..])),
         Some("sheets") => std::process::exit(iotroute::run::sheets_cli(&args[2..])),
+        Some("grid-finish") => std::process::exit(iotroute::grid::cli::finish_cli(&args[2..])),
+        Some("grid-ripup") => std::process::exit(iotroute::grid::cli::ripup_cli(&args[2..])),
+        Some("gnd-via-near") => std::process::exit(iotroute::grid::cli::near_cli(&args[2..])),
+        Some("pin-escape") => std::process::exit(iotroute::pin_escape::cli::cli(&args[2..])),
+        Some("pair-route") => std::process::exit(iotroute::pair::cli::route_cli(&args[2..])),
+        Some("pair-stubs") => std::process::exit(iotroute::pair::cli::stubs_cli(&args[2..])),
         _ => {}
     }
     route_cli(&args);

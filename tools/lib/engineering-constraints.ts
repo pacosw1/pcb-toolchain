@@ -1,8 +1,8 @@
 // Source-bound engineering screens for actual native placement geometry. These checks do not establish electrical,
 // routing, enclosure or bench qualification. Unsupported geometry or rules stop the reviewed workflow.
 //
-// The placer's problem-level screens (prepare_problem, check_problem, pose_miss) stay in engineering_constraints.py:
-// only tools/placer calls them, and its Rust core refuses a problem with a reviewed contract.
+// The placer's problem-level screens are in tools/placer/engineering-problem.ts and, for the search,
+// tools/placer/core/src/engineering.rs.
 import { verifyBinding, type Binding } from './block-bindings.ts';
 import { readBlock } from './block-reuse.ts';
 import { errorText } from './cli.ts';
@@ -67,7 +67,7 @@ function floatTree(value: unknown): unknown {
 
 const hashable = (contract: Contract): Dict => ({ ...contract, geometry: floatTree(contract.geometry) });
 
-const contractDigest = (contract: Contract): string => {
+export const contractDigest = (contract: Contract): string => {
   const whole = hashable(contract);
   return fingerprint(Object.fromEntries(CORE_FIELDS.map(key => [key, whole[key]])));
 };
@@ -79,7 +79,7 @@ const resolveIn = (base: string, name: unknown): string => resolvePath(joinPath(
  * Reviewed rules as plain objects, from the Map, Float and bigint values of jsonLoads. Numbers stay exact: the digest must see
  * 1.0 where the file says 1.0, as Python's dict did, or stored hashes stop verifying. Only arithmetic goes through numeric().
  */
-function exactTree(value: unknown): unknown {
+export function exactTree(value: unknown): unknown {
   if (value === null || typeof value !== 'object' || value instanceof Float) return value;
   if (Array.isArray(value)) return value.map(exactTree);
   const entries = value instanceof Map ? [...value] : Object.entries(value);
@@ -104,7 +104,7 @@ function sourceDocument(base: string, source: unknown): string {
   return path;
 }
 
-function point(x: number, y: number, q: number, origin: readonly number[]): Point {
+export function point(x: number, y: number, q: number, origin: readonly number[]): Point {
   let a: number, b: number;
   if ([0, 1, 2, 3].includes(q)) {
     [a, b] = rotate(x, y, q, value => -value);
@@ -121,7 +121,7 @@ const boundsOf = (points: readonly number[][]): Box => [
   Math.max(...points.map(p => p[0] as number)), Math.max(...points.map(p => p[1] as number)),
 ];
 
-function transformedBox([x0, y0, x1, y1]: number[], q: number, origin: readonly number[]): Box {
+export function transformedBox([x0, y0, x1, y1]: number[], q: number, origin: readonly number[]): Box {
   const corners = ([[x0, y0], [x1, y0], [x1, y1], [x0, y1]] as Point[]).map(([x, y]) => point(x, y, q, origin));
   return boundsOf(corners);
 }
@@ -388,7 +388,7 @@ function measureConnector(rule: Rule, geometry: Geometry): Measured {
   };
 }
 
-function evaluate(contract: Contract, geometry: Geometry): { blockers: Dict[]; measurements: Dict[] } {
+export function evaluate(contract: Contract, geometry: Geometry): { blockers: Dict[]; measurements: Dict[] } {
   const blockers: Dict[] = [], measurements: Dict[] = [];
   const original = contract.geometry;
   for (const rule of contract.rules) {
@@ -408,7 +408,7 @@ function evaluate(contract: Contract, geometry: Geometry): { blockers: Dict[]; m
   return { blockers, measurements };
 }
 
-function inputsCurrent(inputs: ReadonlyMap<string, string>): void {
+export function inputsCurrent(inputs: ReadonlyMap<string, string>): void {
   for (const [name, expected] of inputs) if (sha256File(name) !== expected) throw new Error(`engineering input changed: ${name}`);
 }
 

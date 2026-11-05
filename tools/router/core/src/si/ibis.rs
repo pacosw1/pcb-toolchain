@@ -465,4 +465,173 @@ R_load = 50
         let model = Model { kind: Some("Input".to_string()), ..Model::default() };
         assert_eq!(vi_edges(&model, &Load { c_f: 1e-12, ..Load::default() }).unwrap_err(), "model is not an output");
     }
+
+    // The values of tools/test_ibis_screening.py.
+
+    const FIX: &str = "[IBIS Ver] 4.1
+[Component] GATE
+[Pin] signal_name model_name
+1 A IN
+4 Y OUT
+5 VCC POWER
+[Model Selector] OUT
+OUT_33 output3V3
+[Model] IN_33
+Model_type Input
+C_comp 3pF 2pF 4pF
+[Model] OUT_33
+Model_type Output
+C_comp 3pF NA 4pF
+[Voltage Range] 3.3 3 3.6
+[Temperature Range] 25 125 -40
+[Ramp]
+dV/dt_r 1/10n 1/1n 1/5n
+dV/dt_f 1/10n NA 1/5n
+[End]
+";
+
+    const VI: &str = "[Model] OUT
+Model_type Output
+C_comp 3pF 2pF 4pF
+[Voltage Range] 3.3 3.0 3.6
+[Pulldown]
+0 0 0 0
+3.6 36mA 18mA 72mA
+[Pullup]
+0 0 0 0
+3.6 -18mA -9mA -36mA
+[Ramp]
+dV/dt_r 3.3/0.1n 3.0/0.1n 3.6/0.1n
+dV/dt_f 3.3/0.1n 3.0/0.1n 3.6/0.1n
+[End]
+";
+
+    fn model() -> Model {
+        parse(VI).unwrap().models["out"].clone()
+    }
+
+    fn cap(c_f: f64) -> Load {
+        Load { c_f, ..Load::default() }
+    }
+
+    #[track_caller]
+    fn near(a: f64, b: f64) {
+        assert!((a - b).abs() < 5e-8, "{a} is not {b}");
+    }
+
+    #[test]
+    fn a_public_number_accepts_whitespace() {
+        assert_eq!(number("  3.3n  ").unwrap(), Some(3.3e-9));
+        assert_eq!(number("  NA  ").unwrap(), None);
+    }
+
+    #[test]
+    fn corners_and_ranges_are_explicit() {
+        let parsed = parse(FIX).unwrap();
+        let m = &parsed.models["out_33"];
+        assert_eq!(m.voltage_range, Some([Some(3.3), Some(3.0), Some(3.6)]));
+        assert_eq!(m.temperature_range, Some([Some(25.0), Some(125.0), Some(-40.0)]));
+        assert_eq!(m.c_comp.unwrap()[1], None); // an absent corner is not the typical value
+        assert_eq!(m.ramp_f.unwrap()[1], None);
+    }
+
+    #[test]
+    fn an_explicit_load_is_read() {
+        parse(&FIX.replace("[End]", "R_load = 300ohms\n[End]")).unwrap();
+    }
+
+    #[test]
+    fn invalid_numbers_and_ramps_stop() {
+        for token in ["1e999", "nan", "inf", "1banana"] {
+            assert!(number(token).is_err(), "{token}");
+        }
+        for replacement in ["1/0", "1/-1n", "0/1n", "NA"] {
+            assert!(parse(&FIX.replace("1/10n", replacement)).is_err(), "{replacement}");
+        }
+    }
+
+    #[test]
+    fn a_duplicate_model_stops() {
+        assert!(parse(&format!("{FIX}\n[Model] OUT_33")).is_err());
+    }
+
+    #[test]
+    fn the_hash_binds_the_content() {
+        let folder = std::env::temp_dir().join(format!("si-ibis-hash-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let path = folder.join("x.ibs");
+        std::fs::write(&path, FIX).unwrap();
+        let sha = sha256(FIX.as_bytes());
+        load(&path, Some(&sha)).unwrap();
+        std::fs::write(&path, FIX.replace("1/1n", "1/2n")).unwrap();
+        load(&path, None).unwrap();
+        assert!(load(&path, Some(&sha)).unwrap_err().contains("hash mismatch"));
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn the_static_mean_and_a_hand_calculated_load() {
+        let m = model();
+        near(vi_avg_current(m.pulldown.as_ref().unwrap(), 0, 0.33, 2.97).unwrap(), 0.0165);
+        let (tr, tf) = vi_edges(&m, &cap(4.81e-12)).unwrap();
+        near(tf, 0.3848);
+        near(tr.unwrap(), 0.7696);
+        let (tr, tf) = vi_edges(&m, &Load { c_f: 4.81e-12, swing_v: Some(3.3), open_drain: true, ..Load::default() }).unwrap();
+        assert_eq!(tr, None);
+        near(tf, 0.3848);
+    }
+
+    #[test]
+    fn the_ramp_time_is_a_lower_bound_of_the_edge() {
+        // D-124e. Ramp 3.3 V / 1 ns typ, 3.0 V / 1.5 ns min, 3.6 V / 0.5 ns max: 10-90 % of the corner's swing (Voltage Range
+        // 3.3 / 3.0 / 3.6) = 0.8 V / (dV/dt) = 0.8, 1.2, 0.4 ns; the faster corner (max) is 0.4 ns.
+        let mut m = model();
+        m.ramp_f = Some([Some((3.3, 1e-9)), Some((3.0, 1.5e-9)), Some((3.6, 0.5e-9))]);
+        near(vi_edges(&m, &cap(4.81e-12)).unwrap().1, 0.4); // C*dV/I (fall): typ .7696, max .3848 ns
+        near(vi_edges(&m, &cap(40e-12)).unwrap().1, 3.2); // C*dV/I (fall) max 3.2 ns > 0.4 ns
+    }
+
+    #[test]
+    fn a_missing_ramp_is_an_error() {
+        let m = Model { ramp_r: None, ramp_f: None, ..model() };
+        assert!(vi_edges(&m, &cap(4.81e-12)).is_err());
+    }
+
+    #[test]
+    fn a_missing_corner_is_not_typical() {
+        let mut m = model();
+        m.pulldown.as_mut().unwrap()[0].1[2] = None;
+        near(vi_edges(&m, &cap(4.81e-12)).unwrap().1, 0.7696); // the typ corner, not the max one
+    }
+
+    #[test]
+    fn an_invalid_load_limit_interval_or_current_stops() {
+        for c in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert!(vi_edges(&model(), &cap(c)).is_err(), "{c}");
+        }
+        for limit in [0.0, -1.0, f64::INFINITY] {
+            assert!(vi_edges(&model(), &Load { c_f: 1e-12, i_limit_a: Some(limit), ..Load::default() }).is_err(), "{limit}");
+        }
+        let same = |v: f64| [Some(v); 3];
+        for rows in [vec![(0.0, same(0.0)), (1.0, same(0.01))], vec![(0.0, same(0.01)), (3.6, same(-0.01))], vec![(0.0, same(0.0)), (3.6, same(0.0))]] {
+            assert!(vi_avg_current(&rows, 0, 0.33, 2.97).is_err(), "{rows:?}");
+        }
+    }
+
+    #[test]
+    fn malformed_duplicate_and_nonfinite_v_i_rows_stop() {
+        let head = "[Model] OUT\nModel_type Output\n[Pulldown]\n";
+        for rows in ["0 0 0\n", "NA 0 0 0\n", "0 NA 0 0\n", "0 0 0 0\n0 1 1 1\n", "0 0 0 0\n1 1e999 0 0\n", "0 0 0 0\n[Pulldown]\n"] {
+            assert!(parse(&format!("{head}{rows}")).is_err(), "{rows}");
+        }
+    }
+
+    #[test]
+    fn a_series_limit_and_the_model_type_apply() {
+        let (_, tf) = vi_edges(&model(), &Load { c_f: 1e-12, i_limit_a: Some(0.001), ..Load::default() }).unwrap();
+        near(tf, 2.4);
+        let input = Model { kind: Some("Input".to_string()), ..model() };
+        assert!(vi_edges(&input, &cap(1e-12)).is_err());
+        assert!(vi_edges(&model(), &Load { c_f: 1e-12, open_drain: true, ..Load::default() }).is_err());
+    }
 }

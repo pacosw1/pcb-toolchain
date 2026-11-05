@@ -93,6 +93,18 @@ function candidateFixture(t: { after(fn: () => void): void }) {
   return { root, folder, target, candidate, manifest, operation, save };
 }
 
+test('local adoption refuses a protected project before reading or changing a candidate', async t => {
+  const f=candidateFixture(t),before=readFileSync(f.target);
+  put(join(f.root,'.pcb-protected.json'),'not required to be parseable');
+  await assert.rejects(adopt(f.root,join(f.root,'missing-run')),/protected project cannot be adopted locally/);
+  assert.deepEqual(readFileSync(f.target),before);
+});
+
+test('local adoption respects a protected marker in an ancestor even through a root alias', async t => {
+  const root=scratch(t),project=join(root,'project'),alias=join(root,'alias');mkdirSync(project);symlinkSync(project,alias);put(join(root,'.pcb-protected.json'),'{}');
+  await assert.rejects(adopt(alias,join(root,'missing-run')),/protected project cannot be adopted locally/);
+});
+
 test('adoption rejects unsealed, failed and unverified candidates before canonical mutation', async t => {
   const f = candidateFixture(t), before = readFileSync(f.target);
   f.save({ evidence_sha256: {} });
@@ -110,15 +122,6 @@ test('adoption rejects unsealed, failed and unverified candidates before canonic
   f.operation.protected_source_changes = []; f.save({ cleanup: { complete: 'false' } });
   await assert.rejects(adopt(f.root, f.folder), /confirmed process cleanup/);
   assert.deepEqual(readFileSync(f.target), before);
-});
-
-test('otherwise eligible adoption fails closed before taking a helper lock or changing canonical CAD', async t => {
-  const f = candidateFixture(t), before = readFileSync(f.target);
-  const outcomes = await Promise.allSettled([adopt(f.root, f.folder), adopt(f.root, f.folder)]);
-  assert.ok(outcomes.every(row => row.status === 'rejected' && /lock continuity and crash recovery/.test(String(row.reason))));
-  assert.deepEqual(readFileSync(f.target), before);
-  assert.equal(readdirSync(f.folder).includes('backup'), false);
-  assert.equal(readdirSync(f.folder).includes('adoption.json'), false);
 });
 
 test('parent continuation rejects malformed identity, cleanup and continuation flags', t => {
@@ -200,7 +203,7 @@ test('adoption rejects stale candidate and frozen board without a named baseline
   put(join(baseline, 'result.json'), JSON.stringify({ status: 'failed', cleanup: { complete: true },
     evidence_sha256: { 'run.json': sha(join(baseline, 'run.json')) } }));
   await assert.rejects(adopt(f.root, f.folder, 'DEFECT', baseline), /does not bind required candidate evidence/);
-  // Even a fully bound frozen baseline cannot start an unowned native probe while adoption is disabled.
+  // A fully bound frozen baseline still needs the fresh native probe, and a probe that cannot run is not a pass.
   put(join(baseline, 'gate/result.json'), JSON.stringify({ exit: 1, provenance: { inputs: [] } }));
   put(join(baseline, 'gate/findings.json'), JSON.stringify({ findings: [{ id: 'DEFECT', severity: 'error', stage: 'drc' }], inputs_valid: true, completed_checks: ['drc'] }));
   put(join(baseline, 'result.json'), JSON.stringify({ status: 'failed', cleanup: { complete: true },
@@ -210,6 +213,6 @@ test('adoption rejects stale candidate and frozen board without a named baseline
   const receipt = JSON.parse(readFileSync(join(f.folder, 'result.json'), 'utf8'));
   receipt.evidence_sha256['gate/findings.json'] = sha(join(f.folder, 'gate/findings.json'));
   put(join(f.folder, 'result.json'), JSON.stringify(receipt));
-  await assert.rejects(adopt(f.root, f.folder, 'DEFECT', baseline), /lock continuity and crash recovery/);
+  await assert.rejects(adopt(f.root, f.folder, 'DEFECT', baseline), /not-a-real-node|ENOENT|No such file/);
   assert.deepEqual(readFileSync(f.target), before);
 });

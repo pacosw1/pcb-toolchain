@@ -2,25 +2,8 @@
 # They run where their input exists: a project with the release synced into tools/, or KiCad's Python.
 test_audit_830_routing    needs pcbnew
 test_gnd_pad_vias         needs pcbnew
-test_pin_escape_flow      needs pcbnew
-test_si_detour_native     needs pcbnew
-test_si_junction_native   needs pcbnew
-test_si_pairs_pcbnew      needs pcbnew
-test_si_planes_pcbnew     needs pcbnew
-test_si_projection_native needs pcbnew
-test_si_spatial_native    needs pcbnew
 test_mandatory_preflight  needs project plugin base_b_route_rules.py
 test_compact_immutable    needs hardware-design/boards data
-test_ibis_screening       needs hardware-design/registry/ibis data
-test_part_evidence        needs hardware-design/registry/part-reviews data
-test_net_drivers          needs hardware-design/registry/datasheets data
-test_si_d124c_screen      needs hardware-design/registry/datasheets data
-test_si_evidence          needs hardware-design/registry/datasheets data
-test_si_junctions         needs hardware-design/registry/datasheets data
-test_si_planes            needs hardware-design/registry/datasheets data
-test_si_projection        needs hardware-design/registry/datasheets data
-test_pcbtool              needs hardware-design/registry/datasheets data
-test_pcb_iotroute         needs hardware-design/boards data
 test_board_frame          needs Pillow
 # Subfolder files: name relative to tools/. Python as a module, node as a path.
 placer.test_movie             needs matplotlib

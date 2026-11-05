@@ -1,6 +1,6 @@
 // Microstrip (outer layers): Hammerstad and Jensen 1980, "Accurate models for microstrip computer-aided design", with their
 // thickness correction. Wadell, "Transmission Line Design Handbook" (1991), section 3.5. All lengths in mm. The equations
-// do not model solder mask. tools/si_pairs.py is the twin: it imports pcbnew, so net-drivers.ts cannot use it.
+// do not model solder mask. The twin is si/impedance.rs in the router core.
 const ETA0 = 376.73;
 
 /** Impedance of a zero-thickness microstrip in air, u = w/h. */

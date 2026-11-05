@@ -201,8 +201,13 @@ test('the ratings file has a source per pin', () => {
   assert.equal(pinRating(ratings, 'TPS61023DRLR', '5').amps, 2.7);
   assert.equal(pinRating(ratings, 'TPS61023DRLR', '1').amps, null);
   assert.equal(pinRating(ratings, 'LM5164', '8').amps, null);
-  for (const pin of ['3', '4', '5', '6', '7', '8']) assert.equal(pinRating(ratings, 'TPS259251DRCR', pin).amps, 5);
-  assert.equal(pinRating(ratings, 'TPS259251DRCR', '9').amps, null);
+  for (const mpn of ['TPS259251DRCR', 'TPS259251']) {
+    for (const pin of ['3', '4', '5', '6', '7', '8']) assert.equal(pinRating(ratings, mpn, pin).amps, 5);
+  }
+  for (const pin of ['1', '2', '9', '10']) assert.equal(pinRating(ratings, 'TPS259251DRCR', pin).amps, null);
+  const { source, statistic } = ratings.TPS259251!.pins['4']!;
+  for (const word of ['SLVSCQ3B', '7.3', 'page 4', 'https://www.ti.com/lit/ds/symlink/tps259251.pdf']) assert.ok(source.includes(word), word);
+  assert.equal(statistic, 'max');
 });
 
 test('a footprint is rated by its value or a part-number field', () => {

@@ -1,4 +1,4 @@
-//! The stackup numbers of the model and the RP-001 return rule, as the board gate checks it (tools/kicad_happy_gate.py).
+//! The stackup numbers of the model and the RP-001 return rule, as the board gate checks it (tools/kicad_happy_gate.ts).
 use super::files::{BoardFiles, HappySettings, read_exempt, read_plane_spec};
 use super::output::{Model, ReturnRule, ReturnScope};
 use super::text::round_to;
@@ -8,8 +8,8 @@ use std::collections::BTreeMap;
 const FIRST_DIELECTRIC_DEFAULT_MM: f64 = 0.2;
 const MIN_RADIUS_MM: f64 = 1.0;
 
-/// The output of the kicad-happy boundary (tools/router/rpscope.py): the nets whose layer changes the gate's RP-001 never checks.
-#[derive(Debug, Default, serde::Deserialize)]
+/// The kicad-happy boundary (happy_scope.rs): the nets whose layer changes the gate's RP-001 never checks.
+#[derive(Debug, Default)]
 pub struct RpScope {
     pub power_rails: Vec<String>,
     pub skip: Vec<String>,
@@ -93,7 +93,7 @@ pub fn set_return_scope(model: &mut Model, scope: RpScope) {
     exempt.sort();
     exempt.dedup();
     model.return_exempt = Some(exempt);
-    model.return_scope = Some(ReturnScope { source: "tools/router/rpscope.py (kicad-happy a6bba1a RP-001 net filter)", power_rails: scope.power_rails, skip: scope.skip });
+    model.return_scope = Some(ReturnScope { source: "kicad-happy a6bba1a RP-001 net filter", power_rails: scope.power_rails, skip: scope.skip });
 }
 
 #[cfg(test)]

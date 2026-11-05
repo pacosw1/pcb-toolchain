@@ -1,12 +1,12 @@
 # Idea to production evidence contract
 
-`design_contract.py` connects declared requirements and acceptance plans to the
+`design_contract.ts` connects declared requirements and acceptance plans to the
 existing engineering verifiers. It adds traceability and an explicit next decision;
 it does not replace engineering judgment or confer physical qualification.
 
 ```sh
 tools/pcb design --json check NEW-IDEA --contract tools/examples/design-idea.json --through architecture
-python3 tools/design_contract.py check NEW-IDEA --contract tools/examples/design-idea.json --through architecture --json --output assessment.json
+node --experimental-strip-types tools/design_contract.ts check NEW-IDEA --contract tools/examples/design-idea.json --through architecture --json --output assessment.json
 ```
 
 The example is explicitly synthetic. It needs no gate, native CAD, part choice or

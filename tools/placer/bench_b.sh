@@ -2,8 +2,8 @@
 # Proof benchmark B (known-good recovery), driver on the Mac; search and Freerouting run on Hetzner only.
 #   tools/placer/bench_b.sh BOARD_DIR NAME O_BOARD PROB SCR NETS OUT [RUNS]
 # BOARD_DIR  repo board folder for tools/remote.sh (read only)
-# O_BOARD    copy of the routed board with the signal tracks removed (validate.py strip --keep=<zone nets>)
-# PROB       cli.py read of O_BOARD; SCR = cli.py scramble of PROB; NETS = comma list of the signal nets
+# O_BOARD    copy of the routed board with the signal tracks removed (iotplace strip --keep=<zone nets>)
+# PROB       place.ts read of O_BOARD; SCR = place.ts scramble of PROB; NETS = comma list of the signal nets
 # Steps: S = legal random placement (search SCR with w_wl=0 w_cong=0); P = placer search from SCR;
 # both written against PROB (the writer moves from the original places); then RUNS (default 5)
 # Freerouting jobs each for O, S and P. Prints one line per board: UNROUTED / SUBSET per run.
@@ -11,19 +11,19 @@
 set -eu
 BD=$1; N=$2; OB=$3; PROB=$4; SCR=$5; NETS=$6; OUT=$7; RUNS=${8:-5}
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
-PY=/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3
-WHEEL=${WHEEL:?set WHEEL to the numpy cp313 manylinux wheel}
 IOTPLACE_LINUX=${IOTPLACE_LINUX:?set IOTPLACE_LINUX to the Linux iotplace binary}
 [ "$(basename "$IOTPLACE_LINUX")" = iotplace-linux-x86_64 ] || { echo "IOTPLACE_LINUX must be named iotplace-linux-x86_64" >&2; exit 2; }
+NODE="node --no-warnings --experimental-strip-types"
+PLACE="$NODE tools/placer/place.ts"
 mkdir -p "$OUT"
 cd "$REPO"
 search() {  # $1 tag, rest: extra run args
   local t=$1; shift
-  REMOTE_MEM=8g REMOTE_CPUS=16 tools/remote.sh "$BD" --in "$SCR" --in "$WHEEL" --results "$OUT/$t-search" -- \
+  REMOTE_MEM=8g REMOTE_CPUS=16 tools/remote.sh "$BD" --in "$SCR" --in "$IOTPLACE_LINUX" --results "$OUT/$t-search" -- \
     bash tools/placer/remote_run.sh run "in/$(basename "$SCR")" -o out/res.json --workers 16 --epochs 12 \
     --steps 12000 --seed 3 --top 1 "$@" > "$OUT/$t-search.log" 2>&1 || true
   [ -f "$OUT/$t-search/res.json" ] || { echo "search $t failed, see $OUT/$t-search.log" >&2; exit 3; }
-  "$PY" tools/placer/cli.py write "$OB" "$PROB" "$OUT/$t-search/res.json" --outdir "$OUT/$t" 2>&1 | grep '^cand'
+  $PLACE write "$OB" "$PROB" "$OUT/$t-search/res.json" --outdir "$OUT/$t" 2>&1 | grep '^cand'
 }
 search S --param w_wl=0 w_cong=0 &
 search P &

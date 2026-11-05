@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { TestContext } from 'node:test';
-import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,7 +15,7 @@ import { fingerprint } from './fingerprint.ts';
 import { applyPlan, bridgeUuid, classify, diagnoseEvidence, IMPLEMENTATIONS, intersects, loadEvidence, nativeInputs, nm,
   observeRoute, planDependencies, prepareShift, protectedGeometry, retryKey, selectGap, selectVia, sourceInputs, verifyCopperScope } from './route-decision.ts';
 import type { DecisionServices, DrcReport, Choice } from './route-decision.ts';
-import { EscapeStageReceipts, generateEscape, generateEscapeEvidence, verifyEscapeEvidence } from './route-decision-escape.ts';
+import { EscapeStageReceipts, escapeContext, generateEscape, generateEscapeEvidence, generateEscapeForCandidate, verifyEscapeEvidence } from './route-decision-escape.ts';
 import type { EscapeContext, EscapeContract, EscapeEvidence, EscapeServices } from './route-decision-escape.ts';
 const TOOLS = fileURLToPath(new URL('..', import.meta.url));
 const GAP = `(kicad_pcb (version 20260101) (layers (0 "F.Cu" signal) (2 "B.Cu" signal))
@@ -23,11 +23,17 @@ const GAP = `(kicad_pcb (version 20260101) (layers (0 "F.Cu" signal) (2 "B.Cu" s
  (segment (start 2 0) (end 3 0) (width .25) (layer "F.Cu") (net "A") (uuid "right")))`;
 function apiBoard(path: string): Board {
   const root = forms(readFileSync(path, 'utf8'))[0] as SList;
-  const segments = root.filter((v): v is SList => Array.isArray(v) && v[0] === 'segment');
+  const kind = (name: string) => root.filter((v): v is SList => Array.isArray(v) && v[0] === name);
   const point = (form: SList, name: string) => { const p = field(form, name)!; return { x: nm(p[0]), y: nm(p[1]) }; };
-  const tracks: Track[] = segments.map(form => ({ id: field(form, 'uuid')![0] as string, start: point(form, 'start'), end: point(form, 'end'),
-    mid: null, width: nm(field(form, 'width')![0]), layer: field(form, 'layer')![0] as string, net: field(form, 'net')!.at(-1) as string, locked: form.includes('locked') }));
-  return { path, copper_layers: ['F.Cu', 'B.Cu'], stackup: [], nets: { A: 'Default' }, footprints: [], copper: tracks.map(Track => ({ Track })), zones: [], graphics: [], texts: [], groups: [], constraints: { min_clearance: 0, min_track_width: 0, min_via_size: 0, copper_edge_clearance: 0 }, edges_bbox: { left: 0, top: 0, right: 0, bottom: 0 }, outlines: [] };
+  const text = (form: SList, name: string) => field(form, name)!.at(-1) as string;
+  const tracks: Track[] = kind('segment').map(form => ({ id: text(form, 'uuid'), start: point(form, 'start'), end: point(form, 'end'),
+    mid: null, width: nm(field(form, 'width')![0]), layer: text(form, 'layer'), net: text(form, 'net'), locked: field(form, 'locked') !== undefined }));
+  const vias = kind('via').map(form => ({ id: text(form, 'uuid'), at: point(form, 'at'), size: nm(field(form, 'size')![0]), drill: nm(field(form, 'drill')![0]),
+    net: text(form, 'net'), locked: false, layers: field(form, 'layers')!.slice() as string[], via_type: 'Through' }));
+  const footprints = kind('footprint').map(form => { const at = point(form, 'at'); return {
+    id: text(form, 'uuid'), position: at, graphics: [], zones: [], pads: form.filter((v): v is SList => Array.isArray(v) && v[0] === 'pad').map(pad => {
+      const rel = point(pad, 'at'); return { id: text(pad, 'uuid'), net: text(pad, 'net'), position: { x: at.x + rel.x, y: at.y + rel.y } }; }) }; });
+  return { path, copper_layers: ['F.Cu', 'B.Cu'], stackup: [], nets: { A: 'Default' }, footprints, copper: [...tracks.map(Track => ({ Track })), ...vias.map(Via => ({ Via }))], zones: [], graphics: [], texts: [], groups: [], constraints: { min_clearance: 0, min_track_width: 0, min_via_size: 0, copper_edge_clearance: 0 }, edges_bbox: { left: 0, top: 0, right: 0, bottom: 0 }, outlines: [] } as unknown as Board;
 }
 class Fixture {
   base = realpathSync(mkdtempSync(join(tmpdir(), 'route-decision-'))); root = join(this.base, 'source');
@@ -188,4 +194,197 @@ test('duplicate native copper identities cannot select or verify a local repair'
   board.copper.push(structuredClone(board.copper[0]!));
   assert.throws(() => selectGap(board, f.report), /ambiguous native copper identity/);
   assert.throws(() => verifyCopperScope(board, board, choice, 'bridge'), /ambiguous native copper identity/);
+});
+
+/** A via against a pad of another net, with a track on each side of the via. */
+const VIA_BOARD = `(kicad_pcb (version 20260101)
+ (layers (0 "F.Cu" signal) (2 "B.Cu" signal))
+ (footprint "R" (at 3 4) (property "Reference" "R1") (uuid "fp"))
+ (segment (start 0 0) (end 2 0) (width .25) (layer "F.Cu") (net "A") (uuid "top"))
+ (segment (start -1 -1) (end 0 0) (width .15) (layer "B.Cu") (net "A") (uuid "bottom"))
+ (via (at 0 0) (size .6) (drill .3) (layers "F.Cu" "B.Cu") (net "A") (uuid "via"))
+ (footprint "U" (at -1 -1) (uuid "u") (property "Reference" "U1")
+  (pad "1" smd rect (at 0 0) (size .8 .8) (layers "F.Cu") (net "B") (uuid "p"))))`;
+function viaFixture(t: TestContext): Fixture {
+  const f = fixture(t); writeFileSync(f.board, VIA_BOARD);
+  f.report.unconnected_items = []; f.report.violations = [{ type: 'clearance', severity: 'error', items: [{ uuid: 'via' }, { uuid: 'p' }] }]; f.save();
+  return f;
+}
+const candidateBoard = (workspace: string): string => join(workspace, 'hardware-design/boards/X/native.kicad_pcb');
+const gapRows = (a: { x: number; y: number }, b: { x: number; y: number }, net = 'A') => [{ items: [
+  { uuid: 'left', description: `Track [${net}]`, pos: a }, { uuid: 'right', description: `Track [${net}]`, pos: b }] }];
+
+test('a display anchor at the far track end uses the exact source gap, and equal pairs are not guessed', t => {
+  const f = fixture(t);
+  // KiCad's left display position is the connected start, while the removed 45-degree segment met its end.
+  writeFileSync(f.board, `(kicad_pcb (version 20260101)
+    (segment (start 120.4078 122.2914) (end 119.45 122.2914) (width .25) (layer "F.Cu") (net "/V_GAS") (uuid "left"))
+    (segment (start 119.1767 122.0181) (end 119.1767 121.5) (width .25) (layer "F.Cu") (net "/V_GAS") (uuid "right"))
+    (segment (start 120.7092 122.5928) (end 120.4078 122.2914) (width .25) (layer "F.Cu") (net "/V_GAS") (uuid "left-connected"))
+    (segment (start 118.5 121.5) (end 119.1767 121.5) (width .25) (layer "F.Cu") (net "/V_GAS") (uuid "right-connected")))`);
+  f.report.unconnected_items = gapRows({ x: 120.4078, y: 122.2914 }, { x: 119.1767, y: 122.0181 }, '/V_GAS'); f.save();
+  const plan = f.diagnose(), choice = plan.choice!;
+  assert.ok(choice.strategy === 'straight_gap_bridge');
+  assert.deepEqual(choice.points_mm, [['119.45', '122.2914'], ['119.1767', '122.0181']]);
+  const workspace = f.workspace(), guard = applyPlan(workspace, 'X', plan, join(f.base, 'repair'), f.services);
+  assert.equal(protectedGeometry(apiBoard(f.board)), protectedGeometry(apiBoard(candidateBoard(workspace)), guard.added_items as string[]));
+  writeFileSync(f.board, GAP.replace('(start 2 0) (end 3 0)', '(start 0 1) (end 1 1)'));
+  f.report.unconnected_items = gapRows({ x: 0, y: 0 }, { x: 0, y: 1 }); f.save();
+  assert.equal(f.diagnose().choice, null);
+});
+test('an existing output, and any changed source, sidecar, evidence or implementation, refuse a plan before any write', t => {
+  const f = fixture(t), first = f.diagnose(), existing = f.workspace(); mkdirSync(join(f.base, 'out'));
+  assert.throws(() => applyPlan(existing, 'X', first, join(f.base, 'out'), f.services), /new/);
+  rmSync(existing, { recursive: true });
+  for (const path of [f.board, withSuffix(f.board, '.kicad_dru'), join(f.evidence, 'drc.json'), join(f.root, 'tools/route_decision.ts')]) {
+    const plan = f.diagnose(), workspace = f.workspace(), old = readFileSync(path); writeFileSync(path, Buffer.concat([old, Buffer.from(' ')]));
+    try {
+      assert.throws(() => applyPlan(workspace, 'X', plan, join(f.base, 'repair'), f.services), Error, path);
+      assert.equal(readFileSync(candidateBoard(workspace), 'utf8'), GAP, path);
+    } finally { writeFileSync(path, old); rmSync(workspace, { recursive: true }); }
+  }
+  assert.equal(readFileSync(f.board, 'utf8'), GAP); assert.equal(f.saves, 0);
+});
+test('rehashing an edited choice does not authorise unreported copper', t => {
+  const f = fixture(t), plan = structuredClone(f.diagnose());
+  if (plan.choice?.strategy !== 'straight_gap_bridge') throw new Error('a gap plan is expected');
+  const points = plan.choice.points_mm as unknown as string[][]; points[1]![0] = '900';
+  const { plan_sha256: _old, ...body } = plan;
+  assert.throws(() => applyPlan(f.workspace(), 'X', { ...plan, plan_sha256: fingerprint(body) }, join(f.base, 'repair'), f.services), /stale/);
+});
+test('a crossing, a width change, a lock or an off-end report never gives a choice', t => {
+  const f = fixture(t);
+  for (const source of [`${GAP.slice(0, -1)}(segment (start 1.5 -1) (end 1.5 1) (width .2) (layer "F.Cu") (net "B") (uuid "blocker")))`,
+    GAP.replace('(width .25) (layer "F.Cu") (net "A") (uuid "right")', '(width .3) (layer "F.Cu") (net "A") (uuid "right")'),
+    GAP.replace('(uuid "left")', '(locked yes) (uuid "left")')]) {
+    writeFileSync(f.board, source); f.save(); assert.equal(f.diagnose().choice, null, source);
+  }
+  writeFileSync(f.board, GAP); f.report.unconnected_items[0]!.items![0]!.pos!.x = .5; f.save();
+  assert.equal(f.diagnose().choice, null);
+});
+test('unknown rules in the evidence stop a local repair', t => {
+  const f = fixture(t), rules = join(f.evidence, 'rules.log'), envelope = join(f.evidence, 'envelope.json');
+  writeFileSync(rules, 'rule isolation: term memberOfFootprint not compiled');
+  const artifact = (path: string) => ({ path, sha256: sha256File(path) });
+  atomicJson(envelope, { schema: 'iot-lab.route-evidence.v1', board: 'X', source_inputs: sourceInputs(f.board), artifacts: { native: artifact(join(f.evidence, 'record.json')), rules: artifact(rules) } });
+  const plan = diagnoseEvidence(f.root, 'X', envelope, null, f.services);
+  assert.equal(plan.action, 'resolve_constraint_coverage'); assert.equal(plan.choice, null);
+});
+test('a router miss names no cause, and a disagreement needs an explicit completed net', t => {
+  const f = fixture(t), classified = (name: string, rows: { classification: string }[]) => rows.some(row => row.classification === name);
+  const miss = classify(f.report, { triage: { connections: [{ net: 'A', class: 'ROUTER_MISS' }] } }).find(row => row.classification === 'router_miss')!;
+  assert.match(miss.reason, /joint routability is unproven/); assert.deepEqual(miss.refs, []);
+  assert.equal(classified('native_router_disagreement', classify(f.report, { router: { stats: { unrouted: 0 } } } as never)), false);
+  assert.equal(classified('native_router_disagreement', classify(f.report, { router: { completed_nets: ['A'] } })), true);
+});
+test('a via repair keeps every track and everything not selected', t => {
+  const f = viaFixture(t), plan = f.diagnose(); assert.equal(plan.choice?.strategy, 'via_shift_bridge');
+  const workspace = f.workspace(), guard = applyPlan(workspace, 'X', plan, join(f.base, 'via-repair'), f.services);
+  assert.deepEqual(guard.allowed_original_edits, ['via']);
+  assert.equal(protectedGeometry(apiBoard(f.board), ['via']), protectedGeometry(apiBoard(candidateBoard(workspace)), ['via', ...guard.added_items as string[]]));
+});
+test('a save that changes other copper, the via or the bridge cannot pass the guard', t => {
+  const f = viaFixture(t), plan = f.diagnose(), save = f.services.save;
+  for (const [old, changed, cause] of [['(at 3 4)', '(at 8 9)', /protected geometry/], ['(size .6)', '(size .9)', /./], ['(width 0.15) (layer "B.Cu")', '(width 0.1) (layer "B.Cu")', /./]] as const) {
+    const workspace = f.workspace(), before = readFileSync(f.board);
+    f.services.save = (pcb, text, out) => { assert.ok(text.includes(old), old); return save(pcb, text.replace(old, changed), out); };
+    try {
+      assert.throws(() => applyPlan(workspace, 'X', plan, join(f.base, `bad-${changed.length}`), f.services), cause);
+      assert.deepEqual(readFileSync(candidateBoard(workspace)), before);
+    } finally { rmSync(workspace, { recursive: true }); }
+  }
+});
+
+/** The real context of an escape screen, over a fixture root: feature file, gate config and launcher are its inputs. */
+function realEscape(t: TestContext, f: Fixture, e: ReturnType<typeof escapeFixture>): EscapeServices {
+  const launcher = join(f.root, 'tools', 'grid-artifact'); chmodSync(launcher, 0o755);
+  copyFileSync(join(TOOLS, 'route-features.json'), join(f.root, 'tools/route-features.json'));
+  const old = process.env.ROUTE_GRID_BIN; process.env.ROUTE_GRID_BIN = launcher;
+  t.after(() => { if (old === undefined) delete process.env.ROUTE_GRID_BIN; else process.env.ROUTE_GRID_BIN = old; });
+  return { ...e.services, context: escapeContext };
+}
+const twoPads = (e: ReturnType<typeof escapeFixture>): EscapeContract => structuredClone(e.contract);
+const asEvidence = (path: string) => JSON.parse(readFileSync(path, 'utf8')) as EscapeEvidence;
+
+test('escape evidence needs every reviewed pad, the exact sources and a clean screen', t => {
+  const f = fixture(t), e = escapeFixture(f), output = join(f.evidence, 'escape.json');
+  const proof = generateEscape(f.root, 'X', output, 30, f.board, e.services);
+  assert.equal(proof.native_validation, 'not_run; fresh parent configured gate required'); assert.equal(e.calls(), 1);
+  for (const changes of [{ screened_pads: [] }, { screened_pads: [{ ref: 'OTHER', pad: '1' }] }, { source_inputs: {} },
+    { unsupported_constraints: ['class-to-class clearance'] }, { native_validation: 'passed' }]) {
+    atomicJson(output, { ...proof, ...changes });
+    assert.equal(verifyEscapeEvidence(e.contract, f.board, output, e.services)[0]?.code, 'native_escape_evidence_invalid', JSON.stringify(changes));
+  }
+  atomicJson(output, proof); assert.deepEqual(verifyEscapeEvidence(e.contract, f.board, output, e.services), []);
+  writeFileSync(withSuffix(f.board, '.kicad_pro'), 'different project');
+  assert.ok(verifyEscapeEvidence(e.contract, f.board, output, e.services).length);
+});
+test('an explicit pad scope counts and a reviewed override is refused', t => {
+  const f = fixture(t), e = escapeFixture(f), contract = twoPads(e), output = join(f.evidence, 'escape.json');
+  const proof = generateEscape(f.root, 'X', output, 30, f.board, e.services);
+  contract.rules[0]!.pads = [{ ref: 'U1', pad: '1' }];
+  assert.deepEqual(verifyEscapeEvidence(contract, f.board, output, e.services), []);
+  const override = structuredClone(contract); (override.rules[0] as Record<string, unknown>).width_mm = .5;
+  assert.match(verifyEscapeEvidence(override, f.board, output, e.services)[0]!.detail, /unsupported reviewed/);
+  atomicJson(output, { ...proof, boxed_in: [{ ref: 'U1', pad: 'U1.1', net: 'A' }] });
+  assert.equal(verifyEscapeEvidence(contract, f.board, output, e.services)[0]?.code, 'escape_model_enclosure');
+});
+test('an escape screen is refused after a changed policy, gate, launcher, runtime or parameter, or an outside override', t => {
+  const f = fixture(t), e = escapeFixture(f), services = realEscape(t, f, e), output = join(f.evidence, 'escape.json');
+  const proof = generateEscape(f.root, 'X', output, 30, f.board, services);
+  assert.deepEqual(verifyEscapeEvidence(e.contract, f.board, output, services), []);
+  for (const target of [join(f.root, 'tools/route-features.json'), join(f.root, 'tools/grid-artifact'), join(dirname(f.board), 'gate.json'), e.runtimeFile]) {
+    const old = readFileSync(target); writeFileSync(target, Buffer.concat([old, Buffer.from(' ')]));
+    try { assert.ok(verifyEscapeEvidence(e.contract, f.board, output, services).length, target); } finally { writeFileSync(target, old); }
+  }
+  const changed = structuredClone(proof); changed.model_parameters.grid_mm = .5; atomicJson(output, changed);
+  assert.ok(verifyEscapeEvidence(e.contract, f.board, output, services).length);
+  atomicJson(output, proof);
+  for (const [name, value] of [['ROUTE_FEATURES_FILE', join(f.root, 'tools/route-features.json')], ['ROUTE_BOARD', 'OTHER']] as const) {
+    process.env[name] = value;
+    try {
+      assert.ok(verifyEscapeEvidence(e.contract, f.board, output, services).length, name);
+      assert.throws(() => generateEscape(f.root, 'X', join(f.base, `unknown-${name}.json`), 30, f.board, services), /external/);
+    } finally { delete process.env[name]; }
+  }
+});
+function copyCandidate(f: Fixture, folder: string): string {
+  const candidate = join(f.base, folder, 'native.kicad_pcb'); mkdirSync(dirname(candidate));
+  for (const ext of ['.kicad_pcb', '.kicad_pro', '.kicad_dru', '.kicad_sch']) copyFileSync(withSuffix(f.board, ext), withSuffix(candidate, ext));
+  return candidate;
+}
+test('an explicit candidate keeps the reviewed root policy and its own exact sources', t => {
+  const f = fixture(t), e = escapeFixture(f), candidate = copyCandidate(f, 'compact'), output = join(f.base, 'compact-screen.json'), seen: string[][] = [];
+  const services: EscapeServices = { ...e.services, produce: (root, board, native, work, timeout, c) => { seen.push([root, board, native]); return e.services.produce(root, board, native, work, timeout, c); } };
+  const contract = { ...e.contract, root: f.root }, result = generateEscapeForCandidate(f.root, 'X', candidate, output, 30, services);
+  assert.deepEqual(seen, [[f.root, 'X', candidate]]); assert.deepEqual(result.source_inputs, sourceInputs(candidate));
+  assert.deepEqual(verifyEscapeEvidence(contract, candidate, output, services), []);
+  writeFileSync(withSuffix(candidate, '.kicad_dru'), 'new candidate rule');
+  assert.ok(verifyEscapeEvidence(contract, candidate, output, services).length);
+});
+test('a stage shares one verified receipt and a later stage screens again', t => {
+  const f = fixture(t), e = escapeFixture(f), candidate = copyCandidate(f, 'candidate'), contract = { ...e.contract, root: f.root }, events: string[] = [];
+  const screens = new EscapeStageReceipts(kind => events.push(kind), e.services), first = join(f.base, 'pre-engineering.json'), second = join(f.base, 'pre-design.json');
+  assert.equal(screens.get(contract, candidate, first), first); assert.equal(screens.get(contract, candidate, second), first);
+  assert.equal(existsSync(second), false); assert.equal(e.calls(), 1);
+  assert.equal(new EscapeStageReceipts(undefined, e.services).get(contract, candidate, join(f.base, 'post.json')), join(f.base, 'post.json')); assert.equal(e.calls(), 2);
+  assert.deepEqual([screens.generated, screens.hits], [1, 1]); assert.deepEqual(events, ['cache.miss', 'cache.hit']);
+});
+test('a stage receipt goes stale with the candidate, policy, code, environment or observed runtime', t => {
+  const f = fixture(t), e = escapeFixture(f), services = realEscape(t, f, e), candidate = copyCandidate(f, 'candidate'), contract = { ...e.contract, root: f.root };
+  const targets = [...['.kicad_pcb', '.kicad_sch', '.kicad_pro', '.kicad_dru'].map(ext => withSuffix(candidate, ext)), join(f.root, 'tools/grid-artifact'),
+    join(f.root, 'tools/route_decision.ts'), join(dirname(f.board), 'gate.json'), e.runtimeFile];
+  targets.forEach((target, n) => {
+    const screens = new EscapeStageReceipts(undefined, services), next = join(f.base, `next-${n}.json`); screens.get(contract, candidate, join(f.base, `first-${n}.json`));
+    const old = readFileSync(target), before = e.calls(); writeFileSync(target, Buffer.concat([old, Buffer.from(' ')]));
+    try { assert.equal(screens.get(contract, candidate, next), next, target); } finally { writeFileSync(target, old); }
+    assert.equal(e.calls(), before + 1, target); assert.equal(screens.hits, 0, target);
+  });
+  const environment = new EscapeStageReceipts(undefined, services); environment.get(contract, candidate, join(f.base, 'env-first.json'));
+  process.env.LD_PRELOAD = 'synthetic-cache-key-only';
+  try { assert.equal(environment.get(contract, candidate, join(f.base, 'env-next.json')), join(f.base, 'env-next.json')); } finally { delete process.env.LD_PRELOAD; }
+  const policy = new EscapeStageReceipts(undefined, services); policy.get(contract, candidate, join(f.base, 'policy-first.json'));
+  const changed = structuredClone(contract); changed.rules[0]!.metric = 'native_minimum_track_escape'; (changed.rules[0] as Record<string, unknown>).id = 'changed-reviewed-rule';
+  assert.equal(policy.get(changed, candidate, join(f.base, 'policy-next.json')), join(f.base, 'policy-next.json'));
+  assert.equal(asEvidence(join(f.base, 'policy-next.json')).status, 'screened');
 });

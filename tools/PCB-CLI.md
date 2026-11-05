@@ -107,13 +107,6 @@ and unverified findings. Blocked checks cannot silently resolve prior findings.
 
 ## Candidate changes
 
-For a stateful placement/routing session, use
-`tools/pcb route BOARD --router engine --spec JOB.json --detach --json`.
-The engine owns diagnosis, bounded repairs, declared placement moves and
-candidate selection. `tools/pcb view RUN_ID` opens its localhost observation
-interface. See [PCB-ENGINE.md](PCB-ENGINE.md) for policy, Metal/Core ML and
-experimental rollout status. Existing policies retain their original semantics.
-
 ```sh
 tools/pcb build BOARD --detach --json
 tools/pcb edit BOARD --kind place --spec /absolute/placement.json --json
@@ -128,7 +121,7 @@ or paths excluded from the candidate snapshot. The entrypoint is copied and
 hashed with the candidate inputs. This check does not sandbox a script or prove
 its external dependencies. It does not create a new board revision.
 Placement specs use `{"place":{"R1":[x,y,degrees]}}`; routes use the existing
-`pcbtool.py` format. Commands run in a separate board/dependency snapshot without
+`pcbtool` format. Commands run in a separate board/dependency snapshot without
 mutable links into canonical CAD. Historical runs/unrelated evidence are excluded.
 Source hashes detect concurrent edits. Parts, locked footprint poses, pad/net assignments, outline,
 stackup and rules remain protected; changes require an explicit design revision.
@@ -340,21 +333,9 @@ local provenance, not third-party signatures. Preserve the run for handoff.
 ## Verification
 
 ```sh
-PYTHONPATH=tools python3 -m unittest test_pcb_cli test_pcb_workflow test_block_qualification test_native_workflow_smoke
-node --test tools/lib/*.test.mjs
+node --test --experimental-strip-types --no-warnings tools/lib/pcb-*.test.ts
 ```
 
-Fast fixtures exercise real CLI/gate orchestration with controlled external
-tools. [Mandatory native CI](../.cip/NATIVE.md) runs real KiCad ERC/DRC/parity/
-refill, placement and routing import, plus short/clearance/pad-net defect rejection
-on synthetic boards. Missing runtimes/unexecuted cases fail; no skip-as-pass.
-Neither fixture suite establishes shipping-board or measured qualification.
-
-The separate mandatory `real-board-regression` job runs
-`tools/real_board_regression.py --output NEW_DIRECTORY --json` using the pinned
-native runtime. It copies current ENV-SENSE, injects a C1 placement defect, detects
-it through the CLI, repairs the original pose, runs every configured gate and
-both ENV semantic checks, rejects evidence tampering, and adopts the named frozen
-defect only inside the copy. All original footprint poses and retained tracks/vias
-are compared independently, the backup is byte-exact, and shipping sources must
-remain unchanged. This tests the real workflow without qualifying a board.
+Fast fixtures exercise the real supervisor, evidence seal and adoption with
+controlled external tools. They establish neither shipping-board nor measured
+qualification.

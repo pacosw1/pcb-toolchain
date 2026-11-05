@@ -196,7 +196,7 @@ export function projectName(pcb: string): string | null {
   return names.includes(own) ? own : names.at(-1) ?? null;
 }
 
-export interface DrcItem { description: string }
+export interface DrcItem { description: string; pos?: { x: number; y: number } }
 export interface DrcViolation { type?: string; severity?: string; items?: DrcItem[] }
 /** kicad-cli's JSON report, as far as the tools read it. */
 export interface DrcFile { violations?: DrcViolation[]; unconnected_items?: { items: DrcItem[] }[]; schematic_parity?: unknown[] }

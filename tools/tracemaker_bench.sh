@@ -48,7 +48,7 @@ cp "$OUT/in.kicad_pro" "$OUT/routed.kicad_pro"; cp "$OUT/in.kicad_dru" "$OUT/rou
 # Same post-route step as our pipelines: ground stitching vias for RP-001 (STITCH=0 to skip).
 if [ "${STITCH:-1}" = 1 ]; then
   case $BOARD in AIO) SV="--via 0.45,0.2 --through-pours SLOT_3V3,AVDD";; *) SV="";; esac
-  $PY tools/stitch_all.py "$OUT/routed.kicad_pcb" --planes hardware-design/boards/$BOARD/reference-planes.json $SV \
+  node --no-warnings --experimental-strip-types tools/stitch_all.ts "$OUT/routed.kicad_pcb" --planes hardware-design/boards/$BOARD/reference-planes.json $SV \
     > "$OUT/stitch.log" 2>&1 || true
   tail -3 "$OUT/stitch.log"
 fi

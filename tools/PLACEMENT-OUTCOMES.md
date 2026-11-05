@@ -1,6 +1,6 @@
 # Attributed placement and routing outcomes
 
-`placement_outcomes.py` reads existing evidence. It does not run a placer, router
+`placement_outcomes.ts` reads existing evidence. It does not run a placer, router
 or native checker, change weights, select parts or qualify CAD. Historical
 observations can remain valid after an isolated candidate was adopted: the
 original input artifact, sealed run and routed output must match their recorded
@@ -13,14 +13,14 @@ never an accepted observation. A release built with `--linux` includes
 `bin/route-coverage-linux-x86_64`. Set `ROUTE_COVERAGE_BIN` to its absolute path
 when explicitly testing the validator. The daemon image and route job do not yet
 install or stage that binary automatically, and receipt-level thermal parity is
-not yet proven. The legacy Python entry point remains while its callers exist.
+not yet proven.
 
 ```sh
 node --experimental-strip-types --no-warnings tools/placement_outcomes.ts evaluate STUDY_ID --manifest STUDY.json --json --output REPORT.json
 ```
 
 ```sh
-python3 tools/placement_outcomes.py evaluate STUDY_ID --manifest STUDY.json --json --output REPORT.json
+node --experimental-strip-types tools/placement_outcomes.ts evaluate STUDY_ID --manifest STUDY.json --json --output REPORT.json
 ```
 
 The public API is `evaluate_study(root, manifest, study_id=None)`.

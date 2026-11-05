@@ -1,5 +1,4 @@
-// Bind terminal receipts to the original run inputs and evidence files. tools/pcb_evidence.py is the Python twin while
-// Python modules import it. Hash maps are compared without regard to order: rglob order was never stable, so the order
+// Bind terminal receipts to the original run inputs and evidence files. Hash maps are compared without regard to order: rglob order was never stable, so the order
 // of evidence_sha256 in a receipt carries no meaning.
 import { lstatSync, readdirSync } from 'node:fs';
 import { sha } from './pcb-workflow.ts';

@@ -1,4 +1,4 @@
-`pcb-routing-trial` ports `pcb_routing_trial.py` into a small Rust library. It prepares an invocation and
+`pcb-routing-trial` is the daemon-side twin of `tools/lib/pcb-routing-trial.ts`, as a small Rust library. It prepares an invocation and
 checks the producer's controls; full native gate acceptance remains upstream. Existing Python importers and the
 unported Fastroute/thermal producers still use their original files.
 

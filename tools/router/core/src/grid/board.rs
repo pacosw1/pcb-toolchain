@@ -52,16 +52,26 @@ pub struct GridBoard<'a> {
     board_masks: HashMap<(Window, i64), Rc<Mask>>,
 }
 
-fn mm_point(p: Pt) -> Point {
+pub(crate) fn mm_point(p: Pt) -> Point {
     (to_mm(p.x), to_mm(p.y))
 }
 
-fn ring_mm(ring: &[Pt]) -> Vec<Point> {
+pub(crate) fn ring_mm(ring: &[Pt]) -> Vec<Point> {
     ring.iter().copied().map(mm_point).collect()
 }
 
-fn outlines_mm(polygons: &[Polygon]) -> Vec<Vec<Point>> {
+pub(crate) fn outlines_mm(polygons: &[Polygon]) -> Vec<Vec<Point>> {
     polygons.iter().map(|p| ring_mm(&p.outline)).collect()
+}
+
+/// GetBoardPolygonOutlines with an inferred outline: the box of the edges when Edge.Cuts does not close.
+pub(crate) fn outline_mm(board: &Board) -> Vec<Vec<Point>> {
+    let bb = board.edges_bbox;
+    if board.outlines.is_empty() {
+        vec![ring_mm(&[Pt::new(bb.left, bb.top), Pt::new(bb.right, bb.top), Pt::new(bb.right, bb.bottom), Pt::new(bb.left, bb.bottom)])]
+    } else {
+        outlines_mm(&board.outlines)
+    }
 }
 
 /// Cached by distance rounded to 1 um, as the Python tool did.
@@ -87,12 +97,7 @@ impl<'a> GridBoard<'a> {
     pub fn new(board: &'a Board, rules: &DesignRules, layers: &[String], g: f64) -> Result<GridBoard<'a>, String> {
         let bb = board.edges_bbox;
         let m = rules.minimums;
-        let outline = if board.outlines.is_empty() {
-            // GetBoardPolygonOutlines with an inferred outline: the box of the edges.
-            vec![ring_mm(&[Pt::new(bb.left, bb.top), Pt::new(bb.right, bb.top), Pt::new(bb.right, bb.bottom), Pt::new(bb.left, bb.bottom)])]
-        } else {
-            outlines_mm(&board.outlines)
-        };
+        let outline = outline_mm(board);
         let mut grid = GridBoard {
             board,
             layers: layers.to_vec(),
@@ -368,13 +373,13 @@ fn clear_of(x: f64, y: f64, points: &[Point], margin: f64, limit: f64) -> bool {
 }
 
 /// A pad KiCad gave no polygon for, because its uuid repeats: its box.
-fn box_ring(pad: &Pad) -> Vec<Point> {
+pub(crate) fn box_ring(pad: &Pad) -> Vec<Point> {
     let b = pad.bbox;
     ring_mm(&[Pt::new(b.left, b.top), Pt::new(b.right, b.top), Pt::new(b.right, b.bottom), Pt::new(b.left, b.bottom)])
 }
 
 /// An arc track as a polygon: its chords walked out on one side and back on the other, at half its width.
-fn arc_ring(t: &crate::kicad::board::Track) -> Vec<Point> {
+pub(crate) fn arc_ring(t: &crate::kicad::board::Track) -> Vec<Point> {
     use crate::kicad::geom::outline::arc_points;
     use crate::kicad::shape::Arc;
     let arc = Arc::through(t.start, t.mid.expect("an arc has a mid point"), t.end);

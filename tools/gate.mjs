@@ -101,6 +101,13 @@ const c = cfg.checks ?? {};
 // Checks that read the board through board-json: they need no pcbnew, and their verdict follows the reader.
 const boardChecks = BOARD_JSON_CHECKS;
 const boardReader = join(process.env.PCB_TOOLCHAIN_ROOT || root, 'bin/iotroute-linux-x86_64');
+// planes and pairs are checked by this binary, so a new one is a new key. A host that cannot find it gets a failed check, not a key.
+const nativeChecker = k => {
+  if (k!=='planes' && k!=='pairs') return [];
+  if (process.env.IOTROUTE_BIN) return [process.env.IOTROUTE_BIN];
+  try { return [execFileSync(process.execPath,[...TS_NODE,tool('lib/iotroute-bin.ts')],{encoding:'utf8',stdio:['ignore','pipe','ignore']}).trim()]; }
+  catch { return []; }
+};
 const required = expectedMetrics(cfg);
 const environment={configDir:kicadConfig,variables:{KICAD10_FOOTPRINT_DIR:join(kicadShared,'footprints'),KICAD10_SYMBOL_DIR:join(kicadShared,'symbols')},repositories:c.kicad_happy ? pinnedRepos.filter(r=>r.needed==='gate').map(r=>r.dir) : []};
 const externalRoots={kicad:kicadShared,kicad_config:kicadConfig,...Object.fromEntries(pinnedRepos.map(r=>[r.name,r.dir]))};
@@ -166,12 +173,12 @@ const jobs = {
     };
   },
   async planes() {
-    const out = await output('planes', kicadPython, [tool('si_planes.py'), pcb, spec(c.planes)]);
+    const out = await output('planes', process.execPath, [...TS_NODE, tool('si_planes.ts'), pcb, spec(c.planes)]);
     for (const line of out.split('\n').filter(line => line.startsWith('WARN '))) console.log(`  ${line}`);
     return {planes_failures: countFrom(out, /(\d+) reference-plane failures/)};
   },
   async pairs() {
-    return {pairs_failures: countFrom(await output('pairs', kicadPython, [tool('si_pairs.py'), pcb, spec(c.pairs)]), /si_pairs: \d+ PASS, (\d+) FAIL/)};
+    return {pairs_failures: countFrom(await output('pairs', process.execPath, [...TS_NODE, tool('si_pairs.ts'), pcb, spec(c.pairs)]), /si_pairs: \d+ PASS, (\d+) FAIL/)};
   },
   async viapads() {
     const allow = c.viapads?.allow ?? [];
@@ -208,13 +215,13 @@ const checks = {};
 const cache = {enabled:reuse,hits:0,misses:0,rejected:0};
 const pendingCache = [];
 const cacheDir = cacheDirArg ? resolve(cacheDirArg) : join(dir,'.gate/check-cache');
-const scripts = {planes:'si_planes.py',pairs:'si_pairs.py',viapads:'pcbtool.ts',paths:'pcbtool.ts',kicad_happy:'kicad_happy_gate.ts',rf:'rf_lines.ts',port_labels:'port_labels.ts'};
+const scripts = {planes:'si_planes.ts',pairs:'si_pairs.ts',viapads:'pcbtool.ts',paths:'pcbtool.ts',kicad_happy:'kicad_happy_gate.ts',rf:'rf_lines.ts',port_labels:'port_labels.ts'};
 function keyFor(k,files) {
   const names=['node','kicad',...(k==='kicad_happy' ? ['kicad_happy_runtime','kicad-happy'] : ['erc','drc','port_labels',...boardChecks].includes(k) ? [] : ['pcbnew'])];
   return checkKey({root,stage:k,files:checkInputs(root,files,k,scripts[k],environment.repositories),
     config:{project:cfg.project,stage:cfg.stage ?? 'G4',options:c[k]},externalRoots,
     versions:Object.fromEntries(names.filter(name=>name in versions).map(name=>[name,versions[name]])),
-    commands:['erc','drc'].includes(k) ? [kicadCli] : k==='kicad_happy' ? [process.execPath,'git'] : k==='port_labels' ? [process.execPath] : boardChecks.includes(k) ? [process.execPath,kicadCli,...(existsSync(boardReader) ? [boardReader] : [])] : [kicadPython,kicadCli]});
+    commands:['erc','drc'].includes(k) ? [kicadCli] : k==='kicad_happy' ? [process.execPath,'git'] : k==='port_labels' ? [process.execPath] : boardChecks.includes(k) ? [process.execPath,kicadCli,...(existsSync(boardReader) ? [boardReader] : []),...nativeChecker(k)] : [kicadPython,kicadCli]});
 }
 async function execute(k) {
   let metrics,key,hit=false;

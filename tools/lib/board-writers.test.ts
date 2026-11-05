@@ -9,7 +9,9 @@ import { BoardEdit } from './board-edit.ts';
 import { circleText, rectText, ruleAreaText, textText, trackText, viaText } from './board-items.ts';
 import { polygonNearTrack } from './board-hit.ts';
 import type { Board, Pad, Polygon, Track, Via, Zone } from './board-types.ts';
-import { artItems, netDomain, stitchSpots, tracksToWiden } from './pcbtool-write.ts';
+import { artItems, findPoint, stitchSpots, tracksToWiden } from './pcbtool-write.ts';
+import { netDomain } from './reference-planes.ts';
+import { specPoint } from './route-spec.ts';
 import { seigaiha } from './seigaiha.ts';
 
 const mm = (value: number): number => value * 1e6;
@@ -52,6 +54,21 @@ test('stitch spots start on the outer ring at angle 0', () => {
   assert.equal(spots.length, 4 * 36);
   assert.deepEqual(spots[0], [10.97, 10]);
   assert.deepEqual(spots[36], [10.9, 10]);
+});
+
+test('a via to move is the one point within tolerance; none or several is an error', () => {
+  assert.equal(findPoint([[1, 1], [124.635, 116.912]], [124.64, 116.91], specPoint), 1);
+  assert.throws(() => findPoint([[1, 1]], [2, 2], specPoint), /0 points within 0\.01 mm of \(2, 2\)/);
+  assert.throws(() => findPoint([[1, 1], [1.005, 1]], [1, 1], specPoint), /2 points within/);
+});
+
+test('seigaiha arcs stay inside the box', () => {
+  const arcs = seigaiha([0, 0, 20, 10], 2, 3);
+  assert.ok(arcs.length > 0);
+  for (const { centre: [cx, cy], radius } of arcs) {
+    assert.ok(cx - radius >= 0 && cx + radius <= 20 && cy - radius >= 0 && cy <= 10);
+    assert.ok(radius > 0 && radius <= 2);
+  }
 });
 
 test('seigaiha draws upper arcs, and a lower row hides part of the row above', () => {

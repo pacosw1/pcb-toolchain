@@ -5,12 +5,13 @@
 //! Zones stay; the save refills them. The result goes to a new file only.
 
 pub mod cli;
+pub mod strip;
 pub mod text;
 
 use crate::geom::Rect;
 use crate::kicad::clusters::{Clusters, contains};
-use crate::kicad::doc::{Board, Copper, CopperItem, Footprint, Nm, Pad, Polygon, Pt, PtMm, Via};
-use crate::kicad::hit::{collides_with_copper, collides_with_polygon};
+use crate::kicad::doc::{Board, Copper, CopperItem, Footprint, Nm, Pad, PadCopper, Polygon, Pt, PtMm};
+use crate::kicad::hit::{collides_with_copper, collides_with_piece, collides_with_polygon, copper_box};
 use crate::read::parts::fp_rect;
 use crate::problem::Place;
 use iotroute::kicad::edit::Edit;
@@ -57,6 +58,19 @@ pub struct WriteBoard {
 pub struct WriteProblem {
     pub units: Vec<WriteUnit>,
     pub board: WriteBoard,
+    #[serde(default)]
+    pub engineering: Option<serde_json::Value>,
+}
+
+impl WriteProblem {
+    /// A reviewed board keeps its source copper and outline. tools/placer/board-io.ts screens the pose before it gets here.
+    pub fn check_reviewed(&self, options: &WriteOptions) -> crate::Result<()> {
+        let reviewed = self.engineering.as_ref().is_some_and(|contract| !contract.is_null());
+        if reviewed && (!options.retain_copper || options.outline_scale != 1.0) {
+            return Err("a reviewed problem keeps its copper and real outline: --retain-copper, no --outline-scale".into());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -136,6 +150,27 @@ impl MovedPad<'_> {
         self.pad.polygons.get(layer).map(|g| Polygon { outline: map(&g.outline), holes: g.holes.iter().map(map).collect() })
     }
 
+    /// A pad that shares its uuid has no polygons: then its layers and copper tell.
+    fn on(&self, layer: &str) -> bool {
+        if self.pad.polygons.is_empty() { self.pad.layers.iter().any(|l| l == layer) } else { self.pad.polygons.contains_key(layer) }
+    }
+
+    fn collides(&self, item: &Copper, layer: &str, clearance: Nm) -> bool {
+        match self.polygon(layer) {
+            Some(g) => collides_with_polygon(item, &g, clearance),
+            None => self.pad.copper.iter().any(|c| collides_with_piece(item, &self.moved_piece(c), clearance)),
+        }
+    }
+
+    fn moved_piece(&self, piece: &PadCopper) -> PadCopper {
+        let t = &self.transform;
+        match piece {
+            PadCopper::Circle { center, radius } => PadCopper::Circle { center: t.point(*center), radius: *radius },
+            PadCopper::Segment { a, b, width } => PadCopper::Segment { a: t.point(*a), b: t.point(*b), width: *width },
+            PadCopper::Polygon(ring) => PadCopper::Polygon(ring.iter().map(|p| t.point(*p)).collect()),
+        }
+    }
+
     fn bbox(&self) -> NmRect {
         let b = self.pad.bbox;
         let (a, c) = (self.transform.point(Pt::new(b.left, b.top)), self.transform.point(Pt::new(b.right, b.bottom)));
@@ -155,16 +190,6 @@ fn moved_copper(item: &Copper, t: &Transform) -> Copper {
         Copper::Via(v) => v.at = t.point(v.at),
     }
     out
-}
-
-fn copper_box(item: &Copper) -> NmRect {
-    let reach = match item {
-        Copper::Track(t) => t.width / 2,
-        Copper::Via(Via { size, .. }) => size / 2,
-    };
-    let ends = item.ends();
-    let (xs, ys) = (ends.iter().map(|p| p.x), ends.iter().map(|p| p.y));
-    NmRect { left: xs.clone().min().unwrap_or(0) - reach, top: ys.clone().min().unwrap_or(0) - reach, right: xs.max().unwrap_or(0) + reach, bottom: ys.max().unwrap_or(0) + reach }
 }
 
 fn meet(a: NmRect, b: NmRect, grow: Nm) -> bool {
@@ -192,9 +217,9 @@ impl Clash<'_> {
     }
 
     fn with_pad(&self, t: &Copper, moved: &MovedPad) -> crate::Result<bool> {
-        for layer in self.board.copper_layers.iter().filter(|l| Self::on(t, l) && moved.pad.polygons.contains_key(l.as_str())) {
+        for layer in self.board.copper_layers.iter().filter(|l| Self::on(t, l) && moved.on(l)) {
             let clearance = item_clearance(self.design, self.board, t, layer)?.max(self.design.pad_clearance(self.board, moved.fp, moved.pad, layer)?);
-            if moved.polygon(layer).is_some_and(|g| collides_with_polygon(t, &g, clearance)) {
+            if moved.collides(t, layer, clearance) {
                 return Ok(true);
             }
         }

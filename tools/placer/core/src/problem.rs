@@ -1,10 +1,12 @@
 //! The placement problem, as the board reader writes it (tools/placer/README.md).
 //! Units are mm, KiCad axes. Everything here is read only; the search state lives in `layout`.
 
+use crate::engineering::Contract;
 use crate::geom::{Point, Rect, TaggedRect, Turn};
 use serde::de::{Deserializer, Error as _};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -37,9 +39,15 @@ pub struct Problem {
     pub route_rules: Option<RouteRules>,
     #[serde(default)]
     pub cu_nets: BTreeMap<String, (String, String)>,
-    /// Reviewed engineering contract: the rules live in tools/engineering_constraints.py (see `check_supported`).
+    /// Caps tied to their IC by the reader: [cap, IC, gap].
+    #[serde(default)]
+    pub decaps: Option<Vec<(String, String, f64)>>,
+    /// Reviewed engineering contract as read: only `bind_engineering` turns it into `contract`.
     #[serde(default)]
     engineering: Value,
+    /// The contract the search evaluates (see `bind_engineering`).
+    #[serde(skip)]
+    pub contract: Option<Contract>,
     /// Rules of the pcb_search placer only (see `check_supported`).
     #[serde(default)]
     part_rules: Value,
@@ -271,10 +279,22 @@ impl Problem {
         Ok(problem)
     }
 
-    /// The two rule sets this search does not evaluate. They make a place illegal, so a run must not skip them.
+    /// Takes the reviewed contract of the problem read from `file`. `frozen` is the SHA-256 of the file its producer verified
+    /// against the original sources (tools/placer/engineering-problem.ts): a job has no sources, so it trusts only those bytes.
+    pub fn bind_engineering(&mut self, file: &[u8], frozen: Option<&str>) -> crate::Result<()> {
+        let Some(frozen) = frozen else { return Ok(()) };
+        let digest: String = Sha256::digest(file).iter().map(|b| format!("{b:02x}")).collect();
+        if digest != frozen || !truthy(&self.engineering) {
+            return Err("transferred engineering model fingerprint differs from verified producer input".into());
+        }
+        self.contract = Some(Contract::new(&self.engineering, &self.units)?);
+        Ok(())
+    }
+
+    /// The rule sets a run cannot evaluate. They make a place illegal, so a run must not skip them.
     pub fn check_supported(&self) -> crate::Result<()> {
-        if truthy(&self.engineering) {
-            return Err("a problem with a reviewed engineering contract runs on tools/placer/cli.py".into());
+        if truthy(&self.engineering) && self.contract.is_none() {
+            return Err("a problem with a reviewed engineering contract runs through tools/placer/place.ts, which verifies its sources".into());
         }
         if truthy(&self.part_rules) {
             return Err("part_rules belong to the pcb_search placer".into());

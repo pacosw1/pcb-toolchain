@@ -255,6 +255,13 @@ fn repair_selection_is_ranked_by_distance_then_net_and_respects_layers() {
 }
 
 #[test]
+fn dsn_keepouts_read_a_real_header_with_its_lone_quote() {
+    let text = "(pcb x\n  (parser\n    (string_quote \")\n    (space_in_quoted_tokens on)\n  )\n  (structure\n    (layer F.Cu)\n    (via \"Via[0-3]\")\n  )\n)";
+    let out = call(json!({"op":"add_wire_keepouts","text":text,"rects_by_layer":{"F.Cu":[[1,2,3,4]]}}));
+    assert!(out.as_str().unwrap().contains("(wire_keepout \"iot_ref_void\""));
+}
+
+#[test]
 fn dsn_keepouts_keep_existing_format_and_handle_no_via_or_rule() {
     let text = "(pcb x\n  (structure\n    (layer F.Cu)\n    (via \"Via[0-3]\")\n    (rule (width 200))\n  )\n)";
     let out =

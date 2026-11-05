@@ -1,5 +1,5 @@
-// The read side of a supervised run: state, events and explanation from its durable folder. The supervisor that writes
-// these files is still tools/pcb_cli.py; state and receipts stay as jsonLoads gave them, so numbers keep their Python type.
+// The read side of a supervised run: state, events and explanation from its durable folder. State and receipts stay as
+// jsonLoads gave them, so a number keeps its int or float type.
 import { closeSync, fstatSync, openSync, readdirSync, readSync } from 'node:fs';
 import { atomicJson } from './json-file.ts';
 import { lockHeld } from './file-lock.ts';

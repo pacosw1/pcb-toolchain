@@ -10,14 +10,26 @@ const POINT = /\((?:start|end|mid|center|xy)\s+([-\d.]+)\s+([-\d.]+)\)/g;
 
 const courtyardItems = (text: string) => [...text.matchAll(ITEM)].filter(item => ON_COURTYARD.test(item[0]));
 
-/** The box of every point of the courtyard items, or null with no courtyard. */
-export function courtyardBox(text: string): Box | null {
-  const points = courtyardItems(text).flatMap(item => [...item[0].matchAll(POINT)]);
+/** The box of these points, or null with none. */
+export function pointsBox(points: readonly (readonly [number, number])[]): Box | null {
   if (!points.length) return null;
-  const xs = points.map(point => Number(point[1]));
-  const ys = points.map(point => Number(point[2]));
+  const xs = points.map(point => point[0]);
+  const ys = points.map(point => point[1]);
   return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
 }
+
+const itemsBox = (items: string[]): Box | null =>
+  pointsBox(items.flatMap(item => [...item.matchAll(POINT)].map(point => [Number(point[1]), Number(point[2])] as const)));
+
+/** The box of every point of the items on `layer`, of these kinds when given. */
+export function layerBox(text: string, layer: string, kinds?: readonly string[]): Box | null {
+  const onLayer = new RegExp(`\\(layer\\s+"?${layer.replace('.', '\\.')}"?\\)`);
+  const items = [...text.matchAll(ITEM)].map(item => item[0]).filter(item => onLayer.test(item));
+  return itemsBox(kinds ? items.filter(item => kinds.includes(item.slice(1).split(/\s/, 1)[0]!)) : items);
+}
+
+/** The box of every point of the courtyard items, or null with no courtyard. */
+export const courtyardBox = (text: string): Box | null => itemsBox(courtyardItems(text).map(item => item[0]));
 
 /** Replaces every courtyard item with one rectangle, where the first one stood (else before the model, else at the end). */
 export function setCourtyard(text: string, [x0, y0, x1, y1]: Box, uuid?: string): string {

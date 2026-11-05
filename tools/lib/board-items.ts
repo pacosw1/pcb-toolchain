@@ -5,7 +5,7 @@ import { mmText, quoted } from './board-edit.ts';
 export type Xy = readonly [number, number];
 
 const xy = ([x, y]: Xy): string => `${mmText(x)} ${mmText(y)}`;
-const stroke = (width: number): string => `\t\t(stroke\n\t\t\t(width ${mmText(width)})\n\t\t\t(type default)\n\t\t)\n`;
+const stroke = (width: number, type = 'default'): string => `\t\t(stroke\n\t\t\t(width ${mmText(width)})\n\t\t\t(type ${type})\n\t\t)\n`;
 const tail = (layer: string, uuid: string): string => `\t\t(layer ${quoted(layer)})\n\t\t(uuid ${quoted(uuid)})\n\t)\n`;
 const fill = (filled: boolean): string => `\t\t(fill ${filled ? 'yes' : 'no'})\n`;
 
@@ -23,8 +23,8 @@ export function viaText(item: { at: Xy; size: number; drill: number; net: string
     + `\t\t(layers "F.Cu" "B.Cu")\n\t\t(net ${quoted(item.net)})\n\t\t(uuid ${quoted(item.uuid)})\n\t)\n`;
 }
 
-export const lineText = (item: Stroked & { start: Xy; end: Xy }): string =>
-  `\t(gr_line\n\t\t(start ${xy(item.start)})\n\t\t(end ${xy(item.end)})\n${stroke(item.width)}${tail(item.layer, item.uuid)}`;
+export const lineText = (item: Stroked & { start: Xy; end: Xy; dashed?: boolean }): string =>
+  `\t(gr_line\n\t\t(start ${xy(item.start)})\n\t\t(end ${xy(item.end)})\n${stroke(item.width, item.dashed ? 'dash' : 'default')}${tail(item.layer, item.uuid)}`;
 
 export const arcText = (item: Stroked & { start: Xy; mid: Xy; end: Xy }): string =>
   `\t(gr_arc\n\t\t(start ${xy(item.start)})\n\t\t(mid ${xy(item.mid)})\n\t\t(end ${xy(item.end)})\n${stroke(item.width)}${tail(item.layer, item.uuid)}`;
@@ -38,15 +38,20 @@ export const rectText = (item: Stroked & { start: Xy; end: Xy; filled: boolean }
 export interface TextItem extends Item {
   text: string; at: Xy; size: number; thickness: number;
   angle?: number; bold?: boolean; mirrored?: boolean; face?: string;
+  /** Glyph width when it differs from `size`, which is the height. */
+  width?: number;
+  h?: 'left' | 'center' | 'right';
+  v?: 'top' | 'center' | 'bottom';
 }
 
-/** A board text: centred, as a new PCB_TEXT is. */
+/** A board text: centred unless h or v say otherwise, as a new PCB_TEXT is. */
 export function textText(item: TextItem): string {
   const font = [item.face === undefined ? '' : `\t\t\t\t(face ${quoted(item.face)})\n`,
-    `\t\t\t\t(size ${mmText(item.size)} ${mmText(item.size)})\n\t\t\t\t(thickness ${mmText(item.thickness)})\n`,
+    `\t\t\t\t(size ${mmText(item.size)} ${mmText(item.width ?? item.size)})\n\t\t\t\t(thickness ${mmText(item.thickness)})\n`,
     item.bold ? '\t\t\t\t(bold yes)\n' : ''].join('');
+  const justify = [item.h !== 'center' && item.h, item.v !== 'center' && item.v, item.mirrored && 'mirror'].filter(Boolean).join(' ');
   return `\t(gr_text ${quoted(item.text)}\n\t\t(at ${xy(item.at)} ${item.angle ?? 0})\n\t\t(layer ${quoted(item.layer)})\n\t\t(uuid ${quoted(item.uuid)})\n`
-    + `\t\t(effects\n\t\t\t(font\n${font}\t\t\t)\n${item.mirrored ? '\t\t\t(justify mirror)\n' : ''}\t\t)\n\t)\n`;
+    + `\t\t(effects\n\t\t\t(font\n${font}\t\t\t)\n${justify ? `\t\t\t(justify ${justify})\n` : ''}\t\t)\n\t)\n`;
 }
 
 /** What a rule area forbids. Names as a spec's not_allowed list gives them. */

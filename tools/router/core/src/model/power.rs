@@ -1,4 +1,4 @@
-//! Current in copper, by the formulas of the paths gate (tools/pcbtool.py): IPC-2221 with the external constant on every layer
+//! Current in copper, by the formulas of the paths gate (tools/lib/copper-current.ts): IPC-2221 with the external constant on every layer
 //! (IPC-2152), via barrels rated by their cross-section.
 use super::text::round_to;
 use std::f64::consts::PI;

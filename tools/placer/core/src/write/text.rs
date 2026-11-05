@@ -3,7 +3,7 @@
 
 use crate::kicad::doc::Pt;
 use iotroute::kicad::geom::parse_iu;
-use iotroute::kicad::item_text::nm_text;
+use iotroute::kicad::item_text::{nm_text, quoted};
 use iotroute::kicad::raw::Form;
 use std::collections::HashMap;
 use std::ops::Range;
@@ -119,6 +119,19 @@ pub fn move_footprint(fp: &Form, t: &Transform, changes: &mut Changes) {
     }
 }
 
+/// A pad's net, which a board file stores by name: replaced, taken out with `None`, or added to a pad with none.
+pub fn set_pad_net(pad: &Form, net: Option<&str>, changes: &mut Changes) {
+    let new = net.map_or(String::new(), |n| format!("(net {})", quoted(n)));
+    match pad.children("net").next() {
+        Some(old) => changes.put(old.span.clone(), new),
+        None if net.is_some() => {
+            let close = pad.span.end - 1;
+            changes.put(close..close, new);
+        }
+        None => {}
+    }
+}
+
 /// The top-level items of a board by uuid.
 pub fn items_by_uuid(root: &Form) -> HashMap<&str, &Form> {
     let mut out = HashMap::new();
@@ -163,6 +176,21 @@ mod tests {
     fn a_zone_in_a_footprint_is_in_board_coordinates() {
         let got = turned("(footprint \"x\" (at 1 1) (zone (polygon (pts (xy 2 2)))))", 0);
         assert_eq!(got, "(footprint \"x\" (at 1.5 1) (zone (polygon (pts (xy 2.5 2)))))");
+    }
+
+    fn with_net(text: &str, net: Option<&str>) -> String {
+        let pad = parse_first(text).unwrap();
+        let mut changes = Changes::default();
+        set_pad_net(&pad, net, &mut changes);
+        changes.apply(text)
+    }
+
+    #[test]
+    fn a_pad_net_is_replaced_added_or_taken_out() {
+        assert_eq!(with_net("(pad \"1\" smd (net \"/A\") (uuid \"x\"))", Some("/B")), "(pad \"1\" smd (net \"/B\") (uuid \"x\"))");
+        assert_eq!(with_net("(pad \"1\" smd (uuid \"x\"))", Some("/B")), "(pad \"1\" smd (uuid \"x\")(net \"/B\"))");
+        assert_eq!(with_net("(pad \"1\" smd (net \"/A\") (uuid \"x\"))", None), "(pad \"1\" smd  (uuid \"x\"))");
+        assert_eq!(with_net("(pad \"1\" smd (uuid \"x\"))", None), "(pad \"1\" smd (uuid \"x\"))");
     }
 
     #[test]

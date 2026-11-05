@@ -5,6 +5,8 @@ import { createHash } from 'node:crypto';
 import { closeSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseFlags, runMain, UsageError } from '../lib/cli.ts';
+import { plainJson } from '../lib/json-file.ts';
+import { jsonLoads } from '../lib/py-compat.mjs';
 import { round } from '../lib/py-numbers.ts';
 
 type XY = [number, number];
@@ -31,7 +33,7 @@ const numeric = (value: unknown, size: number, where: string): number[] => {
 };
 
 /** Python viewer's exact quarter-turn rectangle transform, in millimetres. */
-function rotatedRect(rect: readonly number[], turns: number): Rect {
+export function rotatedRect(rect: readonly number[], turns: number): Rect {
   const [x0, y0, x1, y1] = rect as Rect;
   switch ((turns % 4 + 4) % 4) {
     case 0: return [x0, y0, x1, y1];
@@ -164,7 +166,7 @@ function main(argv: string[]): number {
   const [input, output] = parsed.positionals;
   if (!input || !output || parsed.positionals.length !== 2) throw new UsageError(USAGE);
   const duration = parsed.values.seconds === undefined ? 15 : Number(parsed.values.seconds);
-  const source = readFileSync(input), data = playback(JSON.parse(source.toString('utf8')), createHash('sha256').update(source).digest('hex'));
+  const source = readFileSync(input), data = playback(plainJson(jsonLoads(source.toString('utf8'))), createHash('sha256').update(source).digest('hex'));
   const page = html(data, duration), frames = parsed.values['frames-json'];
   if (frames && resolve(frames) === resolve(output)) throw new Error('HTML and frames JSON must use different output paths');
   const created: string[] = [];

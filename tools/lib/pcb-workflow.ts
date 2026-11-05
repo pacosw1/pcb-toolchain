@@ -1,8 +1,10 @@
 // Repository-derived board context and deterministic workflow plans. tools/pcb_workflow.py is the Python twin while
-// Python modules import it. Native CAD, gate.json and the board registry stay the sources of truth: this module holds
+// tools/route.py imports it. Native CAD, gate.json and the board registry stay the sources of truth: this module holds
 // command adapters, not a second part or design database.
+import { spawnSync } from 'node:child_process';
 import { lstatSync, readdirSync } from 'node:fs';
 import { dirname, extname } from 'node:path';
+import { iotrouteBin } from './iotroute-bin.ts';
 import { sha256File } from './json-file.ts';
 import { get, item, osError, PyError, sorted, truthy } from './py-compat.mjs';
 import { caught, isFile, isInside, isRelativeTo, joinPath, jsonOf, pathExists, relativeTo, resolvePath, textOf, withSuffix } from './py-path.ts';
@@ -227,5 +229,13 @@ export function operationCommand(root: string, board: string, operation: string,
   if (!spec) throw new PyError('ValueError', 'an explicit JSON spec is required');
   const command = operation === 'route' ? 'route' : kind;
   if (command !== 'place' && command !== 'route') throw new PyError('ValueError', 'edit kind must be place or route');
-  return [pythonNative(), 'tools/pcbtool.py', command, relativeTo(withSuffix(project, '.kicad_pcb'), root), spec];
+  return [process.execPath, '--experimental-strip-types', '--no-warnings', 'tools/pcbtool.ts', command, relativeTo(withSuffix(project, '.kicad_pcb'), root), spec];
+}
+
+/** The run arguments of a route policy, checked by iotroute route-policy. A bad spec fails here, before any run. */
+export function routePolicyArgs(spec: unknown, candidate: string): string[] {
+  const done = spawnSync(iotrouteBin(), ['route-policy', candidate], { input: JSON.stringify(spec ?? null), encoding: 'utf8' });
+  if (done.error) throw done.error;
+  if (done.status) throw new PyError('ValueError', done.stderr.trim());
+  return done.stdout.split(/\s+/).filter(Boolean);
 }

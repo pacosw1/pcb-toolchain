@@ -45,7 +45,16 @@ export function shapeSegDist(shape: Shape, a: Xy, b: Xy): number {
   return Math.min(...edges(shape.points).map(([p, q]) => segSegDist(a, b, p, q)));
 }
 
-function shapeBox(shape: Shape): [number, number, number, number] {
+/** Distance from a point to a shape's edge, 0 or less inside it. */
+export function shapeDist(shape: Shape, q: Xy): number {
+  if (shape.kind === 'seg') return segDist(q, shape.a, shape.b) - shape.half;
+  const distance = Math.min(...edges(shape.points).map(([a, b]) => segDist(q, a, b)));
+  return inPoly(q, shape.points) ? -distance : distance;
+}
+
+export type Box = [left: number, top: number, right: number, bottom: number];
+
+export function shapeBox(shape: Shape): Box {
   const points = shape.kind === 'seg' ? [shape.a, shape.b] : shape.points;
   const half = shape.kind === 'seg' ? shape.half : 0;
   const xs = points.map(point => point[0]);
@@ -76,17 +85,23 @@ export function firstConflict(segments: RouteSegment[], vias: Xy[], viaSize: num
   return null;
 }
 
-/** Smallest gap minus clearance of new copper to other-net copper, negative on a conflict. Past `window` nothing is measured. */
-export function clearMargin(segments: RouteSegment[], vias: Xy[], viaSize: number, obstacles: Obstacles, window = 1): number {
-  let best = window;
+/** Smallest gap minus clearance of new copper to other-net copper, and to what. Past `window` nothing is measured. */
+export function nearestCopper(segments: RouteSegment[], vias: Xy[], viaSize: number, obstacles: Obstacles, window = 1): { margin: number; label: string } {
+  let margin = window;
+  let nearest = '';
   for (const { layer, a, b, width } of newCopper(segments, vias, viaSize, obstacles)) {
     const reach = width / 2 + window;
     const [loX, loY, hiX, hiY] = [Math.min(a[0], b[0]) - reach, Math.min(a[1], b[1]) - reach, Math.max(a[0], b[0]) + reach, Math.max(a[1], b[1]) + reach];
-    for (const { shape, clearance } of obstacles[layer] ?? []) {
+    for (const { shape, clearance, label } of obstacles[layer] ?? []) {
       const [left, top, right, bottom] = shapeBox(shape);
       if (left - clearance > hiX || right + clearance < loX || top - clearance > hiY || bottom + clearance < loY) continue;
-      best = Math.min(best, shapeSegDist(shape, a, b) - width / 2 - clearance);
+      const gap = shapeSegDist(shape, a, b) - width / 2 - clearance;
+      if (gap < margin) { margin = gap; nearest = label; }
     }
   }
-  return best;
+  return { margin, label: nearest };
 }
+
+/** The margin of nearestCopper: negative on a conflict. */
+export const clearMargin = (segments: RouteSegment[], vias: Xy[], viaSize: number, obstacles: Obstacles, window = 1): number =>
+  nearestCopper(segments, vias, viaSize, obstacles, window).margin;

@@ -1,4 +1,4 @@
-//! Where a plane net really is a plane, and the reference rule of the planes gate (tools/si_planes.py, D-124c screen) as router
+//! Where a plane net really is a plane, and the reference rule of the planes gate (si/planes, D-124c screen) as router
 //! data: which domain each checked net belongs to, and the filled copper of each domain on the adjacent plane layer.
 use super::files::{BoardFiles, PlaneSpec};
 use super::items::fine_point;
@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// The fan-out reach of the core for an SMD pad.
 const FANOUT_REACH_MM: f64 = 3.0;
 const DEFAULT_VIA_ALLOW_MM: Num = Num::Float(0.6);
-const SOURCE: &str = "tools/si_planes.py D-124c: track centre sample inside the filled reference of its domain on the adjacent layer (margin 0), own pads / vias within radius + via_allow_mm exempt";
+const SOURCE: &str = "si/planes D-124c: track centre sample inside the filled reference of its domain on the adjacent layer (margin 0), own pads / vias within radius + via_allow_mm exempt";
 
 fn polys_touch_pad(polygons: &[Polygon], copper: &[Copper]) -> bool {
     polygons.iter().any(|p| copper.iter().any(|c| p.collides(c)))
