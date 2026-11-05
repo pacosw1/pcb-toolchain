@@ -210,7 +210,45 @@ Convergence or unchanged hard failures atomically replace the save with a termin
 corruption; they are not authentication. The counters measure elapsed wall and process CPU through each saved boundary,
 excluding the current write, post-boundary finalization and time between invocations. Progress-file elapsed time is per
 invocation. Resumed runs reject `--max-time`; an external supervisor must enforce a total deadline. The state file contains
-full grids and can be large; overhead, physical-board replay, hard-door replay and return-via replay are not yet established.
+full grids and can be large; one ENV-SENSE model replay is documented in the
+2026-11-05 core audit, but broader physical-board, hard-door and return-via replay
+coverage is not yet established.
+
+**Continuation-only stop:** the core accepts `--yield-after-passes N` with a positive
+count and `--resume-save FILE`. N counts completed passes in this invocation,
+including after resume; `--iters` still bounds the absolute total pass count.
+When work remains, the core saves the next-pass state and skips strict rerouting,
+length/return recovery, route serialization and final congestion export. With
+this mode enabled, an iteration/time/stall limit or handled cancel signal also
+yields at the next safe pass boundary. Convergence and terminal unchanged hard
+failures still produce the ordinary finalized route result. Defaults are unchanged.
+
+| Outcome | Exit | OUT.json |
+| --- | ---: | --- |
+| Yielded continuation | 3 | `iot-lab.route-yield.v1`, `status: yielded`, `finalized: false`; checkpoint hash/path and accounting, no copper |
+| Finalized route | 0 | Existing `iot-lab.route-result.v0`; inspect failures and run native verification |
+| Invalid arguments or failed persistence | 2 | No usable new continuation receipt |
+
+The receipt atomically replaces OUT.json only after the durable checkpoint is
+saved; it must never be sent to the board writer or treated as route success.
+The optional progress file reports `state: yielded`. Receipt accounting samples
+this invocation after state/progress persistence, before receipt write and exit;
+an outer supervisor must measure complete invocation CPU/wall and enforce the
+overall deadline. A yielded snapshot is unverified search state, not a candidate.
+
+```sh
+iotroute model.json slice.json --iters 80 --resume-save state.json --yield-after-passes 2
+# Exit 3 means resume, not failed routing. The same binary/model/routing flags are required.
+iotroute model.json route.json --iters 80 --resume state.json
+```
+
+To yield again, give both `--resume state.json --resume-save state.json` plus
+`--yield-after-passes N`. Omitting the yield flag restores normal finalization.
+To finalize a saved boundary without another negotiation pass, resume without
+the yield flag and set `--iters` to the receipt's completed pass count. A limit
+below the saved pass is refused. Finalization still needs its own resource budget.
+This is the core supervisor interface; `iotroute run` and `pcb route` do not yet
+accept this mode. Do not bypass those board workflows to adopt a continuation.
 
 Why: 5-8 short parallel runs on a 32-core box instead of one long blind run. The router had no seed and printed one line at
 the end, so runs could not differ and nothing could see them.
@@ -263,10 +301,11 @@ same copper with other UUIDs and track order. It did not come back: main's and t
 one folder of the route image (other OUT names included), and in serial, parallel and 1, 2 and 3 CPU runs. make_locked_input is not
 touched here. If two boards of one input differ, compare route.json first.
 
-Resume is not built. It needs the live copper with its owners and order (shape ids feed the audit and the search ties), return
-and fan-out vias, the hard doors, hist / vhist / lhist (grid-sized, a binary file), present cost, moves, net states, the best
-snapshot, the dead proofs and the stall counters; the RNG needs nothing, it is used only at the start. Those are locals of a
-500-line loop, so it first needs that loop made a struct, and a test that a resumed run equals an unbroken one byte for byte.
+The resume prototype preserves live copper/owners/order, return and fan-out vias,
+hard doors, history grids, present cost, moves, net states, incumbent and stall
+counters. The seeded perturbations are recreated at initialization. Synthetic
+and one ENV-SENSE model replay tests cover equivalent final geometry; broader
+native-board and supervisor validation remain necessary before portfolio use.
 
 Data (2026-11-04, routed on the Hetzner box; each board 8 seeds; DRC with parity through iotroute run on the job daemon). All seeds
 converged in the core on all boards. Overlap = shared 0.1 mm copper points of two seeds over the smaller route, mean of 28 pairs.

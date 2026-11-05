@@ -162,19 +162,19 @@ export function measureKey(key: readonly unknown[], routed: string | null, sourc
   return { length_mm: new Float(round(length, 1)), vias: Math.trunc(vias), routed, source: `${source}: ${MEASURE_SOURCE}` };
 }
 
-function savedRun(d: string): Dict | null {
+function savedRun(d: string, index: number): Dict | null {
   try {
-    return (readTyped<Dict>(joinPath(d, 'route-0/score.json')).run || {}) as Dict;
+    return (readTyped<Dict>(joinPath(d, `route-${index}/score.json`)).run || {}) as Dict;
   } catch (error) {
     if (caught(error, 'OSError', 'ValueError')) return null;
     throw error;
   }
 }
 
-/** Measure of the step route d/route-0/score.json: the routed length (mm) and via count that iotroute run measured on the saved
+/** Measure of the step route d/route-K/score.json: the routed length (mm) and via count that iotroute run measured on the saved
  *  board (never the router core claim). Null when the record has no measure. */
-export function measure(d: string): Measure | null {
-  const rec = savedRun(d);
+export function measure(d: string, index = 0): Measure | null {
+  const rec = savedRun(d, index);
   if (rec === null || !finished(rec) || (rec.track_length_mm ?? null) === null || (rec.vias ?? null) === null) return null;
   return measureKey([null, null, rec.track_length_mm, rec.vias], (rec.board_file ?? null) as string | null, 'route');
 }
@@ -184,17 +184,17 @@ function runRecord(output: string): Dict {
   return line === undefined ? { status: 'ERROR', cause: 'iotroute run printed no JSON record' } : parseTyped<Dict>(line);
 }
 
-/** Route the step board `path` into d/route-0 with iotroute run, gate it, write d/route-0/score.json; gives [score]. */
-export async function routeStep(path: string, d: string, board: string, gate: Gate, iters: number, extra: readonly string[] = [], runStage: RunStage = captured): Promise<number[]> {
-  const folder = joinPath(d, 'route-0');
+/** Route the step board `path` into d/route-K with iotroute run, gate it, write d/route-K/score.json; gives [score]. */
+export async function routeStep(path: string, d: string, board: string, gate: Gate, iters: number, extra: readonly string[] = [], runStage: RunStage = captured, index = 0): Promise<number[]> {
+  const folder = joinPath(d, `route-${index}`);
   mkdirSync(folder, { recursive: true });
   const out = joinPath(folder, `${parse(basename(path)).name}.kicad_pcb`);
   const command = [iotrouteBin(), 'run', board, out, '--pcb', path, '--iters', String(iters), '--tools', joinPath(REPO, 'tools'), '--json', ...extra];
   const { stdout } = await runStage(command, 'routing', { cwd: REPO });
-  writeFileSync(joinPath(d, 'route-0.log'), stdout ?? '');
+  writeFileSync(joinPath(d, `route-${index}.log`), stdout ?? '');
   const rec = runRecord(stdout ?? '');
   const clean = finished(rec) && drcPart(rec) === 0;
-  const metrics = clean ? await gate.run(out, joinPath(folder, 'gate'), joinPath(d, 'gate.log')) : null;
+  const metrics = clean ? await gate.run(out, joinPath(folder, 'gate'), joinPath(d, index ? `gate-${index}.log` : 'gate.log')) : null;
   const s = score(rec, metrics);
   const summary = {
     router: 'iotroute', score: s, run: rec, gate_metrics: metrics, gate: metrics === null ? 'not run: DRC part not 0 or no record' : 'run',

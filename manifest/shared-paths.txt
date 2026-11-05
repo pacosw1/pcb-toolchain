@@ -658,6 +658,7 @@ tools/router/core/src/grid/triage.rs
 tools/router/core/src/grid/via_near.rs
 tools/router/core/src/job/mod.rs
 tools/router/core/src/job/route_run/board_edit.rs
+tools/router/core/src/job/route_run/iotroute.rs
 tools/router/core/src/job/route_run/mod.rs
 tools/router/core/src/job/route_run/report.rs
 tools/router/core/src/job/route_run/tests.rs
@@ -772,6 +773,8 @@ tools/router/core/src/routing_rules/mod.rs
 tools/router/core/src/routing_rules/report.rs
 tools/router/core/src/routing_rules/stages.rs
 tools/router/core/src/routing_rules/tests.rs
+tools/router/core/src/run/diagnose.rs
+tools/router/core/src/run/guard.rs
 tools/router/core/src/run/lock.rs
 tools/router/core/src/run/measure.rs
 tools/router/core/src/run/mod.rs
@@ -781,6 +784,7 @@ tools/router/core/src/run/project.rs
 tools/router/core/src/run/record.rs
 tools/router/core/src/run/reuse.rs
 tools/router/core/src/run/steps.rs
+tools/router/core/src/run/widths.rs
 tools/router/core/src/seed.rs
 tools/router/core/src/sha256.rs
 tools/router/core/src/si/impedance.rs

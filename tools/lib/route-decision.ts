@@ -123,6 +123,39 @@ export function applyPlan(root: string, board: string, value: Decision | string,
   } finally { rmSync(temporary, { force: true }); }
   return guard;
 }
+export interface RouteObservation {
+  schema: string; qualified: boolean; artifacts: Hashes; source_board_sha256: string; findings: Finding[]; stop_unchanged_retry: boolean;
+  status?: string; action?: string; reason?: string; no_electrical_rule_relaxation?: boolean;
+}
+/** How `iotroute run` starts the cause of a refused admission (tools/router/core/src/run/steps.rs). */
+const RULE_COVERAGE = 'rule coverage refused';
+interface RunRecord { status?: string; cause?: string; input_sha256?: string; board_sha256?: string; board_file?: string }
+/** The evidence of one `iotroute run`, in its work folder OUT.iotroute: what it found, and the next step that follows from that. */
+export function observeRoute(sourceBoard: string, work: string): RouteObservation {
+  const names = ['result.json', 'drc.json', 'open-triage.json', 'pin-escape.json'];
+  const result: RouteObservation = { schema: 'iot-lab.route-observation.v1', qualified: false,
+    artifacts: Object.fromEntries(names.filter(name => existsSync(join(work, name))).map(name => [name, sha256File(join(work, name))])),
+    source_board_sha256: sha256File(sourceBoard), findings: [], stop_unchanged_retry: true };
+  try {
+    const record = read<RunRecord>(join(work, 'result.json'));
+    if (record.status === 'ERROR') {
+      result.status = 'unverified'; result.reason = record.cause ?? 'iotroute run gave no verdict';
+      result.action = result.reason.startsWith(RULE_COVERAGE) ? 'resolve_constraint_coverage' : 'inspect_evidence';
+      return result;
+    }
+    if (record.input_sha256 !== sha256File(sourceBoard) || !record.board_file || record.board_sha256 !== sha256File(record.board_file) || !['PASS', 'FAIL'].includes(record.status ?? '')) throw new Error('route inputs/result are stale or incomplete');
+    const report = read<DrcReport>(join(work, 'drc.json')); checkReport(report);
+    const diagnostics: Diagnostics = {};
+    if (existsSync(join(work, 'open-triage.json'))) diagnostics.triage = read(join(work, 'open-triage.json'));
+    if (existsSync(join(work, 'pin-escape.json'))) diagnostics.escape = read(join(work, 'pin-escape.json'));
+    result.findings = classify(report, diagnostics); const kinds = new Set(result.findings.map(row => row.classification));
+    result.status = 'diagnosed'; result.action = kinds.has('schematic_parity') ? 'resolve_schematic_parity' : kinds.has('escape_failure') || kinds.has('model_enclosed') ? 'inspect_escape'
+      : kinds.has('constraints_unknown') ? 'resolve_constraint_coverage' : kinds.has('native_geometry') ? 'inspect_native_geometry'
+        : kinds.has('native_open') ? 'diagnose_selected_connections' : 'continue_native_validation';
+    result.reason = 'Diagnostic next step; no physical impossibility or joint-routability claim'; result.no_electrical_rule_relaxation = true;
+  } catch (error) { result.status = 'unverified'; result.action = 'inspect_evidence'; result.reason = (error as Error).message; }
+  return result;
+}
 export function retryKey(sourceBoard: string, configuration: unknown): string {
   const board = resolvePath(sourceBoard), files = Object.fromEntries(['.kicad_pcb', '.kicad_pro', '.kicad_dru', '.kicad_sch'].map(ext => {
     const file = withSuffix(board, ext); return [ext, existsSync(file) ? sha256File(file) : null];

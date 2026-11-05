@@ -192,7 +192,10 @@ test('bad input is refused before anything starts', t => {
 })
 
 test('the routing policy is validated', () => {
-  assert.deepEqual(Object.keys(routingPolicy(80, 30)).sort(), ['iters', 'keep', 'max_time_s', 'schema'])
+  assert.deepEqual(Object.keys(routingPolicy(80, 30)).sort(), ['iters', 'keep', 'layers', 'max_time_s', 'nets', 'schema'])
+  assert.deepEqual(routingPolicy(80, 30, 'all', ['F.Cu'], ['/A']).nets, ['/A'])
+  assert.throws(() => routingPolicy(80, 30, 'all', ['F.Cu', 'F.Cu']))
+  assert.throws(() => routingPolicy(80, 30, 'all', [], ['']))
   assert.equal(routingPolicy(80, 30).schema, 'iot-lab.iotroute-policy.v1')
   assert.equal(routingPolicy(80, 30, 'all').keep, 'all')
   assert.throws(() => routingPolicy(0, 30))

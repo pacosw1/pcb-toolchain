@@ -1,6 +1,6 @@
 //! `iotroute run BOARD OUT.kicad_pcb [--pcb IN.kicad_pcb] [--iters N] [--max-time S] [--lock-from SRC.kicad_pcb]
 //!               [--reuse PREV.kicad_pcb [--reuse-fallback full|none]] [--seed N] [--stall-passes N] [--checkpoint]
-//!               [--congestion] [--return-exempt] [--tools DIR] [--json]`
+//!               [--congestion] [--return-exempt] [--diagnose] [--plane-net NET]... [--layer L]... [--net NET]... [--tools DIR] [--json]`
 //!
 //! One entry point for the in-house router: model, route, board copy, KiCad DRC (tools/router/DESIGN.md). BOARD is the board ID
 //! (hardware-design/boards/<BOARD>) or that folder. The input is --pcb, else the project board; it is only read. --tools is the
@@ -13,6 +13,7 @@
 //!     the route, the `widths` rules of the board's route.json and `iotroute write`, whose board must keep all copper of its input.
 //!  3. OUT gets the board and the project files of the input; the input's .kicad_pro goes back if a save rewrote it.
 //!  4. KiCad DRC with --schematic-parity on OUT, on the saved fill.
+//!  5. --diagnose: when OUT has opens, why, for the compaction (diagnose.rs). It never changes the verdict.
 //!
 //! --reuse PREV (partial re-route, DESIGN.md 5c): the seed is PREV's route, the parts moved since and the nets PREV left open or in
 //! a DRC error. --reuse-fallback full (default): when the reuse result is not PASS, the full route of the same input runs too and
@@ -22,6 +23,7 @@
 //! PASS|FAIL <drc errors> <unconnected> <parity> <tracks> <vias> <seconds>, or ERROR <seconds> <cause> when a step did not
 //! complete; with --json the record on the next line. The record is also in OUT.iotroute/result.json. Exit: 0 PASS, 1 FAIL, 2 no
 //! verdict.
+mod diagnose;
 pub mod guard;
 pub mod lock;
 pub mod measure;
@@ -39,6 +41,7 @@ use planes::{ModelFile, RefGate, Round, ROUNDS, fail_lines, planes_spec};
 use project::{board_project, place_sidecars, restore_pro, sha_file};
 use record::{AttemptStages, BinaryStage, DrcCounts, ModelStage, Record};
 use reuse::{Attempt, reuse_seed};
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
@@ -46,7 +49,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use steps::{Steps, last_line, sources_sha};
 
-const USAGE: &str = "usage: iotroute run BOARD OUT.kicad_pcb [--pcb IN] [--iters N] [--max-time S] [--lock-from SRC] [--reuse PREV] [--reuse-fallback full|none] [--congestion] [--return-exempt] [--seed N] [--stall-passes N] [--checkpoint] [--tools DIR] [--json]";
+const USAGE: &str = "usage: iotroute run BOARD OUT.kicad_pcb [--pcb IN] [--iters N] [--max-time S] [--lock-from SRC] [--reuse PREV] [--reuse-fallback full|none] [--congestion] [--return-exempt] [--diagnose] [--plane-net NET]... [--layer L]... [--net NET]... [--seed N] [--stall-passes N] [--checkpoint] [--tools DIR] [--json]";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Args {
@@ -60,6 +63,10 @@ pub struct Args {
     pub reuse_fallback: String,
     pub congestion: bool,
     pub return_exempt: bool,
+    pub diagnose: bool,
+    pub plane_nets: Vec<String>,
+    pub layers: Vec<String>,
+    pub nets: Vec<String>,
     pub seed: Option<u64>,
     pub stall_passes: Option<u64>,
     pub checkpoint: bool,
@@ -75,7 +82,7 @@ fn value<T: std::str::FromStr>(flag: &str, text: Option<&String>) -> Result<T, S
 pub fn parse_args(argv: &[String]) -> Result<Args, String> {
     let mut a = Args {
         board: String::new(), out: String::new(), pcb: None, iters: 80, max_time: None, lock_from: None, reuse: None, reuse_fallback: "full".to_string(),
-        congestion: std::env::var("IOTROUTE_CONGESTION").is_ok_and(|v| v == "1"), return_exempt: false, seed: None, stall_passes: None, checkpoint: false, tools: PathBuf::from("tools"), json: false,
+        congestion: std::env::var("IOTROUTE_CONGESTION").is_ok_and(|v| v == "1"), return_exempt: false, diagnose: false, plane_nets: Vec::new(), layers: Vec::new(), nets: Vec::new(), seed: None, stall_passes: None, checkpoint: false, tools: PathBuf::from("tools"), json: false,
     };
     let mut positional = Vec::new();
     let mut it = argv.iter();
@@ -90,8 +97,12 @@ pub fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--seed" => a.seed = Some(value(arg, it.next())?),
             "--stall-passes" => a.stall_passes = Some(value(arg, it.next())?),
             "--tools" => a.tools = PathBuf::from(value::<String>(arg, it.next())?),
+            "--plane-net" => a.plane_nets.push(value(arg, it.next())?),
+            "--layer" => a.layers.push(value(arg, it.next())?),
+            "--net" => a.nets.push(value(arg, it.next())?),
             "--congestion" => a.congestion = true,
             "--return-exempt" => a.return_exempt = true,
+            "--diagnose" => a.diagnose = true,
             "--checkpoint" => a.checkpoint = true,
             "--json" => a.json = true,
             other if other.starts_with('-') => return Err(format!("{other} is not an option")),
@@ -298,6 +309,59 @@ fn lock_step(steps: &Steps, folder: &Path, src: &Path, work: &Path, lock_from: &
     Ok((copy, stage))
 }
 
+/// --plane-net: the net gets pad vias into its pour and no tracks, as a stage's `plane_nets` in `iotroute route`.
+fn set_plane_nets(model: &mut Value, names: &[String]) -> Result<(), String> {
+    for name in names {
+        let net = model["nets"].get_mut(name).ok_or_else(|| format!("--plane-net: {name} is not on the board"))?;
+        if net["plane_polys"].is_null() {
+            return Err(format!("--plane-net: {name} has no pour to reach"));
+        }
+        net["plane"] = true.into();
+    }
+    Ok(())
+}
+
+/// --layer: every net may use only these of the layers it had; a net left with none is refused by name.
+fn set_layers(model: &mut Value, names: &[String]) -> Result<(), String> {
+    if let Some(name) = names.iter().find(|name| !model["copper_layers"].as_array().is_some_and(|layers| layers.iter().any(|l| l.as_str() == Some(name)))) {
+        return Err(format!("--layer: {name} is not a copper layer of the board"));
+    }
+    for (name, net) in model["nets"].as_object_mut().ok_or("the model has no nets")? {
+        let Some(layers) = net["layers"].as_array_mut().filter(|layers| !layers.is_empty()) else { continue };
+        layers.retain(|layer| names.iter().any(|allowed| layer.as_str() == Some(allowed)));
+        if layers.is_empty() {
+            return Err(format!("--layer: net {name} may use none of these layers"));
+        }
+    }
+    Ok(())
+}
+
+/// --net: the core routes only these; the copper of every other net stays as it is. The DRC on OUT still judges the whole board.
+fn set_route_nets(model: &mut Value, names: &[String]) -> Result<(), String> {
+    if let Some(name) = names.iter().find(|name| model["nets"].get(name.as_str()).is_none()) {
+        return Err(format!("--net: {name} is not on the board"));
+    }
+    model["route_nets"] = names.into();
+    Ok(())
+}
+
+/// What the caller narrows of a route, written into the model before its hash is recorded.
+fn narrow_model(path: &Path, a: &Args) -> Result<(), String> {
+    if a.plane_nets.is_empty() && a.layers.is_empty() && a.nets.is_empty() {
+        return Ok(());
+    }
+    let text = fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut model: Value = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    set_plane_nets(&mut model, &a.plane_nets)?;
+    if !a.layers.is_empty() {
+        set_layers(&mut model, &a.layers)?;
+    }
+    if !a.nets.is_empty() {
+        set_route_nets(&mut model, &a.nets)?;
+    }
+    fs::write(path, model.to_string()).map_err(|e| format!("{}: {e}", path.display()))
+}
+
 fn run(a: &Args, rec: &mut Record, out: &Path, work: &Path) -> Result<(), String> {
     if out.extension().and_then(|e| e.to_str()) != Some("kicad_pcb") {
         return Err("OUT must end in .kicad_pcb".to_string());
@@ -328,9 +392,11 @@ fn run(a: &Args, rec: &mut Record, out: &Path, work: &Path) -> Result<(), String
     guard::preflight(&route_in, &work.join("preflight.json"))?;
     let model = work.join("model.json");
     let text = steps.admit(&folder, &route_in, &model, &work.join("model.log"), a.return_exempt)?;
+    narrow_model(&model, a)?;
     rec.stages.model = Some(ModelStage { line: text.trim().lines().last().unwrap_or("").to_string(), sha256: sha_file(&model)? });
 
     let widths = widths::board_widths(&folder, &model)?;
+    let (diagnose_in, diagnose_model) = (route_in.clone(), model.clone());
     let context = Run { a, steps, model, route_in, src, folder, widths };
     let (stages, restored) = match &a.reuse {
         Some(previous) => context.reuse_attempts(previous, out, work, rec)?,
@@ -341,7 +407,11 @@ fn run(a: &Args, rec: &mut Record, out: &Path, work: &Path) -> Result<(), String
     if a.reuse.is_none() {
         rec.stages.ref_gate = Some(context.ref_gate(out, work)?);
     }
-    finish(rec, out, work).map(|_| ())
+    let drc = finish(rec, out, work)?;
+    if a.diagnose && drc.unconnected > 0 {
+        rec.diagnosis = Some(diagnose::diagnose(&diagnose_in, out, work, &diagnose_model));
+    }
+    Ok(())
 }
 
 /// The record with sorted keys, as the JSON line.
@@ -401,6 +471,33 @@ mod tests {
         assert_eq!((a.iters, a.reuse.clone(), a.reuse_fallback.as_str(), a.json), (80, None, "full", false));
         let a = args("NET-CORE o.kicad_pcb --reuse p.kicad_pcb --seed 0 --stall-passes 12 --checkpoint --json --max-time 1.5").unwrap();
         assert_eq!((a.reuse.as_deref(), a.seed, a.stall_passes, a.checkpoint, a.max_time), (Some("p.kicad_pcb"), Some(0), Some(12), true, Some(1.5)));
+    }
+
+    #[test]
+    fn what_a_caller_narrows_reaches_the_model_or_is_refused_by_name() {
+        let names = |list: &[&str]| list.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        let board = || serde_json::json!({"copper_layers": ["F.Cu", "In1.Cu", "B.Cu"], "nets": {
+            "GND": {"plane": false, "layers": ["F.Cu", "In1.Cu", "B.Cu"], "plane_polys": [[[0, 0], [1, 0], [1, 1]]]},
+            "A": {"plane": false, "layers": ["In1.Cu"]}, "NC": {"plane": false, "layers": []}}});
+        let a = args("A B --plane-net GND --layer F.Cu --layer B.Cu --net /X --net GND").unwrap();
+        assert_eq!((a.plane_nets, a.layers, a.nets), (names(&["GND"]), names(&["F.Cu", "B.Cu"]), names(&["/X", "GND"])));
+
+        let mut model = board();
+        set_plane_nets(&mut model, &names(&["GND"])).unwrap();
+        assert_eq!((&model["nets"]["GND"]["plane"], &model["nets"]["A"]["plane"]), (&true.into(), &false.into()));
+        assert!(set_plane_nets(&mut model, &names(&["A"])).unwrap_err().contains("A has no pour"));
+        assert!(set_plane_nets(&mut model, &names(&["Z"])).unwrap_err().contains("Z is not on the board"));
+
+        let mut model = board();
+        set_layers(&mut model, &names(&["In1.Cu", "B.Cu"])).unwrap();
+        assert_eq!(model["nets"]["GND"]["layers"], serde_json::json!(["In1.Cu", "B.Cu"]));
+        assert!(set_layers(&mut board(), &names(&["F.Cu"])).unwrap_err().contains("net A may use none"));
+        assert!(set_layers(&mut board(), &names(&["In3.Cu"])).unwrap_err().contains("In3.Cu is not a copper layer"));
+
+        let mut model = board();
+        set_route_nets(&mut model, &names(&["A"])).unwrap();
+        assert_eq!(model["route_nets"], serde_json::json!(["A"]));
+        assert!(set_route_nets(&mut model, &names(&["Z"])).unwrap_err().contains("Z is not on the board"));
     }
 
     #[test]

@@ -304,6 +304,12 @@ Compaction: `compact-cli.ts ... --router iotroute --repair [--repair-mode reuse|
 The step passes when the repair reaches score 0; `step-N/repair/repair.json` names the repaired board.
 `--read-args` must be the `place.ts read` arguments of PROB.json (the repair reads the problem again from each board).
 
+A failed step leaves `step-N/route-decision.json`. A refused rule, a run with no verdict and a parity failure stop the run; opens
+go on bisecting the halo, and a step whose only opens are plane nets counts as routed, never as qualified. A finished step with no
+DRC error teaches the next search room round its boxed-in pins, at most `--feedback-max-mm` (1, up to 2) per part, and with
+`--congestion-feedback` round the parts that enclose an open. `--routes N` (1) tries other seeds until one passes; the best counts.
+`--gnd-vias` makes GND a plane net: pad vias into its pour, no tracks. There is no `--optimizer`: iotroute has no optimizer pass.
+
 Result (2026-11-01, router v6, scratch only): NET-CORE compaction from the spread placement (1faf8ad8, lock-net
 copper), halo 1.04 -> 0.61, 7 steps. Step 3 (s 0.64) failed on 1 clearance (C50 GND pad 0.13 mm from a locked
 ETH_RXP via; rule 0.15 mm, below the 0.1 mm mask raster); one decap slide of C50 (0.5 mm) gave DRC 0/0/0 + gate PASS
