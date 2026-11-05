@@ -56,7 +56,7 @@ test('the credit is capped at the queue bound, so the run stays bounded',needsBi
 });
 
 test('only an iotroute run has a queue: another router gets no clock and no credit',needsBinary,t=>{
-  const {result,seen}=supervise(t,{router:'fastroute',queued:3});
+  const {result,seen}=supervise(t,{router:'route-json',queued:3});
   assert.equal(result.status,'timeout');
   assert.equal(seen.clock,null);
 });
@@ -69,7 +69,7 @@ test('the run tells route-dispatch where the clock goes and what the bound is',n
 
 test('children see the deadline with the bound added: a stage after a long wait must not read it as spent',needsBinary,t=>{
   const left=({deadline,at})=>Number(deadline.split(':').pop())-at/1000;
-  const plain=supervise(t,{router:'fastroute',runMs:0}).seen,routed=supervise(t,{wait:7,runMs:0}).seen;
+  const plain=supervise(t,{router:'route-json',runMs:0}).seen,routed=supervise(t,{wait:7,runMs:0}).seen;
   assert.ok(Math.abs(left(routed)-left(plain)-7)<1,`${left(routed)} ${left(plain)}`);
 });
 

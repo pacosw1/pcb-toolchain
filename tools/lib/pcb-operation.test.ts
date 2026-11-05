@@ -189,6 +189,10 @@ test('no operation of tools/pcb falls back to Python', t => {
 });
 
 function iotroute(root: string, body: string): void {
+  // A route run admits the gate first: a valid configuration, and the validator in the snapshot.
+  writeFileSync(join(root, 'hardware-design/boards/X/gate.json'), JSON.stringify({ project: 'cad/X', stage: 'G4', checks: { erc: true, drc: true, paths: 'paths.json', viapads: {}, kicad_happy: {}, port_labels: true } }));
+  mkdirSync(join(root, 'tools/lib'));
+  writeFileSync(join(root, 'tools/lib/gate-core.mjs'), readFileSync(new URL('./gate-core.mjs', import.meta.url)));
   mkdirSync(join(root, 'tools/router'));
   writeFileSync(join(root, 'tools/router/route-dispatch.mjs'), `
 import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
