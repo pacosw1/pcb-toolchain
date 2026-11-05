@@ -17,7 +17,7 @@ use iotplace::problem::Problem;
 use iotplace::evaluator::Evaluator;
 use iotplace::model::Model;
 use iotplace::problem::Pose;
-use iotplace::search::{Candidate, Initial, Plan, SearchResult, optimize};
+use iotplace::search::{Candidate, Initial, Plan, SearchResult, optimize_with_preview};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -95,7 +95,9 @@ fn is_legal(c: &Candidate) -> bool {
 
 fn run(a: &Args) -> iotplace::Result<ExitCode> {
     let (input, output) = a.paths()?;
-    let mut pr = Problem::load(input)?;
+    let input_bytes = std::fs::read(input)?;
+    let mut pr: Problem = serde_json::from_slice(&input_bytes)?;
+    pr.check_supported()?;
     let plan = Plan {
         workers: a.number("--workers", default_workers())?,
         epochs: a.number("--epochs", 20)?,
@@ -104,7 +106,9 @@ fn run(a: &Args) -> iotplace::Result<ExitCode> {
         top: a.number("--top", 3)?,
     };
     let params = Params::from_args(&a.params)?;
-    let res = optimize(&mut pr, &params, plan, &|line| println!("{line}"))?;
+    let live = iotplace::live_preview::LivePreview::from_environment(&pr, input, &input_bytes);
+    let res = optimize_with_preview(&mut pr, &params, plan, &|line| println!("{line}"),
+        &|epoch, epochs, cost, pose| { if let Some(live) = &live { live.publish(epoch, epochs, cost, pose); } })?;
     std::fs::write(output, serde_json::to_string(&res)?)?;
     report(&res.initial, &res);
     if res.candidates.first().is_none_or(|c| !is_legal(c)) {
