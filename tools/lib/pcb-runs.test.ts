@@ -125,6 +125,19 @@ test('events return byte cursors and leave an unfinished line unread', () => {
   assert.throws(() => events(folder, -1), /outside this run/);
 });
 
+test('events preserve byte cursors across read chunks and stop at the requested limit', () => {
+  const first = JSON.stringify({ type: 'a', text: 'é'.repeat(40_000) }) + '\n';
+  const second = JSON.stringify({ type: 'b' }) + '\n';
+  put('events.jsonl', first + second + '{"type":"partial"');
+  const one = events(folder, 0, 1);
+  assert.equal(one.length, 1);
+  assert.equal(Number(one[0]!.get('cursor')), Buffer.byteLength(first));
+  const next = events(folder, Number(one[0]!.get('cursor')), 1);
+  assert.equal(next[0]!.get('type'), 'b');
+  assert.equal(Number(next[0]!.get('cursor')), Buffer.byteLength(first + second));
+  assert.deepEqual(events(folder, Number(next[0]!.get('cursor'))), []);
+});
+
 test('event lines read as the Python CLI prints them', () => {
   const line = (text: string) => eventLine(row(text), false);
   const head = '"run_id":"run-x","elapsed_s":1.25';

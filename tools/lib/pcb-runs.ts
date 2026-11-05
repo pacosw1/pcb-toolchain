@@ -136,50 +136,51 @@ export function requestCancel(folder: string): Dict {
   return state;
 }
 
-function bytesFrom(path: string, cursor: number): Buffer | null {
+/** Byte cursors permit reconnecting without rescanning old events. An unfinished last line stays unread. */
+export function events(folder: string, cursor = 0, limit = EVENT_LIMIT): Dict[] {
+  const path = joinPath(folder, 'events.jsonl');
   let file: number;
   try {
     file = openSync(path, 'r');
   } catch (error) {
     if (!caught(error, 'OSError') || (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    return null;
+    if (cursor) throw new PyError('ValueError', 'event cursor is outside this run');
+    return [];
   }
   try {
     const size = fstatSync(file).size;
     if (cursor < 0 || cursor > size) throw new PyError('ValueError', 'event cursor is outside this run');
-    const start = Math.max(0, cursor - 1);
-    const data = Buffer.allocUnsafe(size - start);
-    let filled = 0;
-    while (filled < data.length) {
-      const count = readSync(file, data, filled, data.length - filled, start + filled);
-      if (!count) break;
-      filled += count;
+    if (cursor) {
+      const previous = Buffer.allocUnsafe(1);
+      if (readSync(file, previous, 0, 1, cursor - 1) !== 1 || previous[0] !== 0x0a)
+        throw new PyError('ValueError', 'event cursor must be a returned line boundary');
     }
-    if (cursor && data[0] !== 0x0a) throw new PyError('ValueError', 'event cursor must be a returned line boundary');
-    return data.subarray(cursor ? 1 : 0, filled);
+    const rows: Dict[] = [];
+    const chunk = Buffer.allocUnsafe(64 * 1024);
+    let offset = cursor;
+    let fragments: Buffer[] = [];
+    while (offset < size && rows.length < limit) {
+      const count = readSync(file, chunk, 0, Math.min(chunk.length, size - offset), offset);
+      if (!count) break;
+      let at = 0;
+      for (;;) {
+        const end = chunk.indexOf(0x0a, at);
+        if (end < 0 || end >= count) break;
+        const line = Buffer.concat([...fragments, chunk.subarray(at, end + 1)]);
+        fragments = [];
+        const row = jsonLoads(line) as Dict;
+        row.set('cursor', BigInt(offset + end + 1));
+        rows.push(row);
+        at = end + 1;
+        if (rows.length >= limit) break;
+      }
+      if (rows.length < limit && at < count) fragments.push(Buffer.from(chunk.subarray(at, count)));
+      offset += count;
+    }
+    return rows;
   } finally {
     closeSync(file);
   }
-}
-
-/** Byte cursors permit reconnecting without rescanning old events. An unfinished last line stays unread. */
-export function events(folder: string, cursor = 0, limit = EVENT_LIMIT): Dict[] {
-  const data = bytesFrom(joinPath(folder, 'events.jsonl'), cursor);
-  if (data === null) {
-    if (cursor) throw new PyError('ValueError', 'event cursor is outside this run');
-    return [];
-  }
-  const rows: Dict[] = [];
-  let at = 0;
-  while (rows.length < limit) {
-    const end = data.indexOf(0x0a, at);
-    if (end < 0) break;
-    const row = jsonLoads(data.subarray(at, end + 1)) as Dict;
-    at = end + 1;
-    row.set('cursor', BigInt(cursor + at));
-    rows.push(row);
-  }
-  return rows;
 }
 
 const orUnavailable = (value: unknown, suffix: string): string => (value === null ? 'unavailable' : pyStr(value) + suffix);
