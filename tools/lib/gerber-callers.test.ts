@@ -33,9 +33,11 @@ test('keepout board check tests fill and pad overlaps and refuses missing pad ge
  const polygon={outline:points,holes:[]};
  const area={name:'U1 KO test',layers:['F.Cu'],rule_area:{tracks:false,pour:true,pads:true,vias:false},outline:[polygon]};
  const filled={name:'fill',net:'GND',rule_area:null,filled:[{layer:'F.Cu',polygons:[polygon]}]};
- const pad={number:'1',layers:['F.Cu'],polygons:{'F.Cu':polygon}};
+ const pad={number:'1',layers:['F.Cu'],polygons:{'F.Cu':polygon},shape:'Circle',bbox:{left:0,right:1_000_000,top:0,bottom:1_000_000}};
  const board={zones:[area,filled],copper:[],footprints:[{reference:'U1',pads:[pad]}]} as unknown as Board;
- assert.equal(checkBoard(board,'U1',()=>[0,0]).verdict,'PASS');
+ assert.equal(checkBoard(board,'U1',()=>[0,0]).verdict,'UNCERTAIN');
+ const away={...board,footprints:[{reference:'U1',pads:[{...pad,bbox:{left:2_000_000,right:3_000_000,top:0,bottom:1_000_000}}]}]} as unknown as Board;
+ assert.equal(checkBoard(away,'U1',()=>[0,0]).verdict,'PASS');
  assert.equal(checkBoard(board,'U1',()=>[0.01,0]).verdict,'FAIL');
  assert.equal(checkBoard(board,'U1',()=>[0,0.01]).verdict,'FAIL');
  assert.equal(checkBoard(board,'U1',()=>[0,1e-6]).verdict,'UNCERTAIN');
