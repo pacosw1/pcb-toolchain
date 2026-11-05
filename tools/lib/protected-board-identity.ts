@@ -4,6 +4,24 @@ import fs from 'node:fs';
 import { pcbIdentity } from './pcb-identity.ts';
 import type { PourSet } from './pcb-identity.ts';
 import { sameValue } from './py-values.ts';
+import { forms, type SList } from './sexpr.ts';
+
+/** Stable identity for the exact permitted named pours, bound by a signed coordinator policy. */
+export function allowedPoursDigest(pours:PourSet):string {
+  const ordered=[...pours].sort((a,b)=>Buffer.compare(Buffer.from(a),Buffer.from(b)));
+  return createHash('sha256').update('pcb.allowed-pours.v1\0').update(JSON.stringify(ordered)).digest('hex');
+}
+function checkAllowedPours(file:string,pours:PourSet):void {
+  if (!pours.size) return;
+  const top=forms(fs.readFileSync(file,'utf8'))[0];
+  if (!Array.isArray(top) || top[0]!=='kicad_pcb') throw new Error('invalid native board');
+  const counts=new Map<string,number>();
+  for(const zone of top.slice(1)) if(Array.isArray(zone) && zone[0]==='zone') {
+    const fields=new Map((zone as SList).filter((v):v is [string,string]=>Array.isArray(v)&&v.length===2&&typeof v[0]==='string'&&typeof v[1]==='string'));
+    const key=JSON.stringify([fields.get('name')??null,fields.get('net')??null,fields.get('layer')??null]);
+    if(pours.has(key)){const count=(counts.get(key)??0)+1;if(count>1)throw new Error('duplicate policy-authorized pour');counts.set(key,count);}
+  }
+}
 
 function readBoard(file:string): {sha256:string;bytes:number} {
   const fd=fs.openSync(file,fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
@@ -15,11 +33,12 @@ function readBoard(file:string): {sha256:string;bytes:number} {
   } finally {fs.closeSync(fd);}
 }
 /** Allowed pours must be derived by the trusted verifier from its bound policy, never from an untrusted candidate. */
-export function verifyProtectedBoardIdentity(source:string,candidate:string,allowedPours:PourSet = new Set()): {sourceSha256:string;candidateSha256:string;identityPreserved:boolean} {
+export function verifyProtectedBoardIdentity(source:string,candidate:string,allowedPours:PourSet = new Set()): {sourceSha256:string;candidateSha256:string;allowedPoursSha256:string;identityPreserved:boolean} {
   const before=readBoard(source), after=readBoard(candidate);
+  checkAllowedPours(source,allowedPours);checkAllowedPours(candidate,allowedPours);
   const sourceIdentity=pcbIdentity(source,allowedPours), candidateIdentity=pcbIdentity(candidate,allowedPours);
   const beforeAgain=readBoard(source), afterAgain=readBoard(candidate);
   if (before.sha256!==beforeAgain.sha256 || before.bytes!==beforeAgain.bytes || after.sha256!==afterAgain.sha256 || after.bytes!==afterAgain.bytes)
     throw new Error('protected board changed during identity check');
-  return {sourceSha256:before.sha256,candidateSha256:after.sha256,identityPreserved:sameValue(sourceIdentity,candidateIdentity)};
+  return {sourceSha256:before.sha256,candidateSha256:after.sha256,allowedPoursSha256:allowedPoursDigest(allowedPours),identityPreserved:sameValue(sourceIdentity,candidateIdentity)};
 }

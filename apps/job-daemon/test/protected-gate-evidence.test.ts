@@ -2,11 +2,12 @@ import assert from 'node:assert/strict'; import { test } from 'node:test';
 import { createHash } from 'node:crypto';
 import { validateFreshGateEvidence } from '../src/protected-gate-evidence.ts';
 const b=(v:unknown):Buffer=>Buffer.from(JSON.stringify(v)); const inputs=[{path:'cad/X.kicad_pcb',sha256:'a'.repeat(64)}], tools={kicad:'10'};
+const pourHash=createHash('sha256').update('pcb.allowed-pours.v1\0').update('[]').digest('hex');
 const inputHash=createHash('sha256').update(JSON.stringify({inputs,tools})).digest('hex');
-const expected={board:'X',project:'cad/X',inputSha256:inputHash,requiredInputs:inputs,toolVersions:tools,sourceBoardSha256:'b'.repeat(64),candidateBoardSha256:'a'.repeat(64),candidateBoardInputPath:'cad/X.kicad_pcb',requiredChecks:['erc','drc'],processExit:0,terminalEvent:true,warningsAsErrors:false};
+const expected={board:'X',project:'cad/X',inputSha256:inputHash,requiredInputs:inputs,toolVersions:tools,sourceBoardSha256:'b'.repeat(64),candidateBoardSha256:'a'.repeat(64),candidateBoardInputPath:'cad/X.kicad_pcb',allowedPoursSha256:pourHash,requiredChecks:['erc','drc'],processExit:0,terminalEvent:true,warningsAsErrors:false};
 const fixture=()=>({result:{exit:0,changedDuringRun:false,provenance:{input_sha256:inputHash,inputs:inputs.map(x=>({...x})),tools:{...tools}},preflightErrors:[],checks:{erc:{status:'passed',cached:false,metrics:{erc_errors:0}},drc:{status:'passed',cached:false,metrics:{drc_errors:0,drc_parity:0}}}},
   findings:{schema_version:1,board:'X',project:'cad/X',input_sha256:inputHash,inputs_valid:true,complete:true,completed_checks:['erc','drc'],findings:[] as unknown[]},
-  identity:{schema:'pcb.board-identity.v1',sourceSha256:expected.sourceBoardSha256,candidateSha256:expected.candidateBoardSha256,identityPreserved:true},
+  identity:{schema:'pcb.board-identity.v1',sourceSha256:expected.sourceBoardSha256,candidateSha256:expected.candidateBoardSha256,allowedPoursSha256:pourHash,identityPreserved:true},
   erc:{sheets:[{violations:[] as unknown[]}]},drc:{violations:[] as unknown[],schematic_parity:[] as unknown[],unconnected_items:[] as unknown[]}});
 const run=(f:ReturnType<typeof fixture>, e=expected)=>validateFreshGateEvidence({result:b(f.result),findings:b(f.findings),identity:b(f.identity),erc:b(f.erc),drc:b(f.drc)},e);
 test('requires complete fresh gate results and clean native parity',()=>{

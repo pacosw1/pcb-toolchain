@@ -20,7 +20,7 @@ const violations = (value:unknown): boolean => Array.isArray(value) && value.eve
 
 export function validateFreshGateEvidence(input: {result:Uint8Array;findings:Uint8Array;identity:Uint8Array;erc?:Uint8Array;drc?:Uint8Array},
   expected: {board:string;project:string;inputSha256:string;requiredInputs:{path:string;sha256:string|null;link?:string}[];toolVersions:Record<string,string>;
-    sourceBoardSha256:string;candidateBoardSha256:string;candidateBoardInputPath:string;
+    sourceBoardSha256:string;candidateBoardSha256:string;candidateBoardInputPath:string;allowedPoursSha256:string;
     requiredChecks:string[];processExit:number;terminalEvent:boolean;warningsAsErrors:boolean}):
   {resultSha256:string;findingsSha256:string;identitySha256:string;nativeSha256:Record<string,string>} {
   const required = new Set(expected.requiredChecks);
@@ -28,7 +28,7 @@ export function validateFreshGateEvidence(input: {result:Uint8Array;findings:Uin
       !SHA.test(expected.inputSha256) || !Array.isArray(expected.requiredChecks) || required.size !== expected.requiredChecks.length || required.size < 1 || required.size > 5000 ||
       !expected.requiredChecks.every(x => typeof x === 'string' && ID.test(x)) || expected.processExit !== 0 || expected.terminalEvent !== true || typeof expected.warningsAsErrors !== 'boolean' ||
       !Array.isArray(expected.requiredInputs) || expected.requiredInputs.length < 1 || expected.requiredInputs.length > 100_000 || !obj(expected.toolVersions) || !Object.keys(expected.toolVersions).length ||
-      !SHA.test(expected.sourceBoardSha256) || !SHA.test(expected.candidateBoardSha256) || typeof expected.candidateBoardInputPath !== 'string' || !expected.candidateBoardInputPath)
+      !SHA.test(expected.sourceBoardSha256) || !SHA.test(expected.candidateBoardSha256) || !SHA.test(expected.allowedPoursSha256) || typeof expected.candidateBoardInputPath !== 'string' || !expected.candidateBoardInputPath)
     throw new Error('gate invocation is not a valid completed pass');
   const result=json(input.result), findings=json(input.findings);
   if (!obj(result) || result.exit !== 0 || result.changedDuringRun !== false || !obj(result.provenance) || result.provenance.input_sha256 !== expected.inputSha256 ||
@@ -58,8 +58,8 @@ export function validateFreshGateEvidence(input: {result:Uint8Array;findings:Uin
   const fingerprint = digest(Buffer.from(JSON.stringify({inputs:result.provenance.inputs,tools:result.provenance.tools})));
   if (fingerprint !== expected.inputSha256) throw new Error('gate provenance fingerprint is invalid');
   const identity = json(input.identity);
-  if (!obj(identity) || Object.keys(identity).length !== 4 || identity.schema !== 'pcb.board-identity.v1' || identity.identityPreserved !== true ||
-      identity.sourceSha256 !== expected.sourceBoardSha256 || identity.candidateSha256 !== expected.candidateBoardSha256)
+  if (!obj(identity) || Object.keys(identity).length !== 5 || identity.schema !== 'pcb.board-identity.v1' || identity.identityPreserved !== true ||
+      identity.sourceSha256 !== expected.sourceBoardSha256 || identity.candidateSha256 !== expected.candidateBoardSha256 || identity.allowedPoursSha256 !== expected.allowedPoursSha256)
     throw new Error('board identity evidence does not match source and candidate');
   for (const [id,check] of Object.entries(result.checks)) {
     if (!obj(check) || check.status !== 'passed' || check.cached !== false || !obj(check.metrics) || !Object.keys(check.metrics).length ||
