@@ -33,14 +33,6 @@ export class LiveJobBridge {
     try {
       const stat = fs.fstatSync(fd); if (!stat.isFile()) return true;
       let offset = this.live.jobOffset(id, attempt); if (offset > stat.size) offset = 0;
-      if (this.live.sourceOnline(binding.source, Date.now() - 45_000)) {
-        // The source worker already forwards these logs. Remember the last complete line for a later disconnect.
-        const start = Math.max(0, stat.size - 65536), tail = Buffer.alloc(stat.size - start);
-        fs.readSync(fd, tail, 0, tail.length, start);
-        const newline = tail.lastIndexOf(10), next = newline < 0 ? offset : start + newline + 1;
-        if (next > offset) this.live.setJobOffset(id, attempt, next);
-        return true;
-      }
       const bytes = Buffer.alloc(Math.min(65536, stat.size - offset));
       fs.readSync(fd, bytes, 0, bytes.length, offset);
       const events = []; let position = 0;

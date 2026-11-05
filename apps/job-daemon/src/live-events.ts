@@ -115,10 +115,6 @@ export class LiveEvents {
       WHERE l.kind='job.binding' AND e.received_at>? ORDER BY e.cursor DESC LIMIT 2000`)
       .all(Date.now() - 7 * 86_400_000) as unknown as Row[]).map(fromRow);
   }
-  sourceOnline(source: string, since: number): boolean {
-    return !!this.db.prepare(`SELECT 1 FROM live_latest l JOIN live_events e ON e.cursor=l.cursor
-      WHERE l.source=? AND l.kind='host.heartbeat' AND e.received_at>=? LIMIT 1`).get(source, since);
-  }
   jobOffset(job: string, attempt: number): number {
     const row = this.db.prepare('SELECT offset FROM live_job_offsets WHERE job=? AND attempt=?').get(job, attempt) as { offset: number } | undefined;
     return row?.offset ?? 0;

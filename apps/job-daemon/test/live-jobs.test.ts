@@ -37,13 +37,13 @@ test('coordinator relays source-matched remote frames after client disconnect an
     live.append({ source: 'mini', eventId: 'heartbeat', host: 'mini', board: 'p/_host', run: '_host', kind: 'host.heartbeat', data: {} });
     fs.appendFileSync(r.mgr.store.logFile(job.id, 1), 'iter 3: source worker handles this\n');
     new LiveJobBridge(r.mgr, live, blobs).scan();
-    assert.equal(live.after(0).filter(e => e.kind === 'run.event').length, 2, 'online source owns log forwarding');
+    assert.equal(live.after(0).filter(e => e.kind === 'run.event').length, 3, 'coordinator retains logs while the source is online');
     const db = new DatabaseSync(path.join(r.dir, 'events.sqlite'));
     db.prepare("UPDATE live_events SET received_at=0 WHERE event_id='heartbeat'").run(); db.close();
     fs.appendFileSync(r.mgr.store.logFile(job.id, 1), 'iter 4: source offline\n');
     new LiveJobBridge(r.mgr, live, blobs).scan();
     const logs = live.after(0).filter(e => e.kind === 'run.event');
-    assert.equal(logs.length, 3);
+    assert.equal(logs.length, 4);
     assert.equal((logs.at(-1)!.data as { text: string }).text, 'iter 4: source offline');
     fs.writeFileSync(path.join(out, 'live-route-base.kicad_pcb'), 'different');
     new LiveJobBridge(r.mgr, live, blobs).scan();

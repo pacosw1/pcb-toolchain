@@ -164,9 +164,12 @@ export function LiveView(): React.JSX.Element {
     const last = heartbeats.get(e.source)
     return last && now - last < 45_000 ? 'live' : 'stale'
   }
-  const recent = all.filter(e => e.kind === 'run.event' && (!current || (e.source === current.source && e.board === current.board)) &&
+  const activity = all.filter(e => e.kind === 'run.event' && (!current || (e.source === current.source && e.board === current.board)) &&
     (!active || (e.run === active.run && e.source === active.source && e.board === active.board)))
-    .sort((a, b) => b.cursor - a.cursor).slice(0, 12)
+  const localLines = new Set(activity.filter(e => e.data.executor !== 'coordinator' && typeof e.data.text === 'string')
+    .map(e => `${e.source}\0${e.run}\0${String(e.data.stage ?? '')}\0${e.data.text}`))
+  const recent = activity.filter(e => e.data.executor !== 'coordinator' || typeof e.data.text !== 'string' ||
+    !localLines.has(`${e.source}\0${e.run}\0${String(e.data.stage ?? '')}\0${e.data.text}`)).sort((a, b) => b.cursor - a.cursor).slice(0, 12)
   const remoteState = all.find(e => e.kind === 'remote.state' && e.source === active?.source && e.board === active?.board && e.run === active?.run)
   const rawStatus = typeof active?.data.status === 'string' ? active.data.status : 'unknown'
   const remoteRunning = remoteState && ['queued', 'running', 'retrying'].includes(String(remoteState.data.status)) && now - remoteState.receivedAt < 45_000
