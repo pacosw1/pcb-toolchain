@@ -28,6 +28,10 @@ test('installed launcher reads run status and byte-cursored events without Pytho
     assert.equal(board.board, 'X');
     assert.equal(board.stage, 'G3');
     assert.deepEqual(JSON.parse(execFileSync(bin, [...args, 'context', 'X', '--json'], options)), board);
+    const next = JSON.parse(execFileSync(bin, [...args, 'next', 'X', '--json'], options));
+    assert.equal(next.state, 'blocked');
+    assert.equal(next.blocker.code, 'missing_native_input');
+    assert.equal(next.readiness_verified, false);
     const list = JSON.parse(execFileSync(bin, [...args, 'list', '--json'], options));
     assert.deepEqual(list.boards.map((item: { board: string }) => item.board), ['X']);
     assert.equal(execFileSync(bin, [...args, 'list'], options), 'X\n');

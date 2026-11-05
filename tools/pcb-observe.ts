@@ -5,20 +5,23 @@ import { parseArgs, type ParseArgsOptionsConfig } from 'node:util';
 import { projectRoot } from './lib/project-root.mjs';
 import { compactTerminal, eventLine, events, explain, runDir, stageStatus, status, TERMINAL, RUN_ID, type Dict } from './lib/pcb-runs.ts';
 import { catalog, context } from './lib/pcb-workflow.ts';
+import { nextAction } from './lib/pcb-next.ts';
+import { nextReaders } from './lib/pcb-next-readers.ts';
 import { get, item, jsonDumps, pyStr } from './lib/py-compat.mjs';
 
-const usage = 'usage: pcb [--project DIR] {list,context,status,events,explain} [BOARD_OR_RUN_ID] [options]';
+const usage = 'usage: pcb [--project DIR] {list,context,next,status,events,explain} [BOARD_OR_RUN_ID] [options]';
 
 export async function main(argv: string[]): Promise<number> {
   let explicit: string | undefined;
   if (argv[0] === '--project') { explicit = argv[1]; if (!explicit) throw new Error(usage); argv = argv.slice(2); }
   else if (argv[0]?.startsWith('--project=')) { explicit = argv[0].slice(10); argv = argv.slice(1); }
   const command = argv.shift();
-  if (command !== 'list' && command !== 'context' && command !== 'status' && command !== 'events' && command !== 'explain') throw new Error(usage);
+  if (command !== 'list' && command !== 'context' && command !== 'next' && command !== 'status' && command !== 'events' && command !== 'explain') throw new Error(usage);
   const options: ParseArgsOptionsConfig = {
     'runs-dir': { type: 'string' }, json: { type: 'boolean', default: false },
     ...(command === 'events' ? { after: { type: 'string', default: '0' }, limit: { type: 'string', default: '100' }, wait: { type: 'string', default: '0' } } : {}),
     ...(command === 'explain' ? { limit: { type: 'string', default: '20' } } : {}),
+    ...(command === 'next' ? { 'design-contract': { type: 'string' }, through: { type: 'string' } } : {}),
   };
   const { values, positionals } = parseArgs({ args: argv, options, allowPositionals: true });
   if (positionals.length !== (command === 'list' ? 0 : 1)) throw new Error(usage);
@@ -34,6 +37,16 @@ export async function main(argv: string[]): Promise<number> {
   const requestedBase = resolve((values['runs-dir'] as string | undefined) ?? process.env.PCB_RUNS_DIR ?? resolve(projectRoot(explicit), '.gate/cli'));
   let base = requestedBase;
   try { base = realpathSync(requestedBase); } catch { /* runDir reports missing runs consistently */ }
+  if (command === 'next') {
+    const decision = await nextAction(projectRoot(explicit), positionals[0]!, {
+      base, readers: nextReaders,
+      designContract: values['design-contract'] as string | undefined,
+      through: values.through as string | undefined,
+    });
+    if (values.json) console.log(jsonDumps(decision));
+    else console.log(`${pyStr(decision.blocker?.message)}\nNext: ${decision.next_action?.command}`);
+    return 0;
+  }
   const folder = runDir(base, positionals[0]!);
   if (command === 'explain') {
     const limit = Number(values.limit);
