@@ -16,11 +16,20 @@ export async function exportModel(input: ModelInput): Promise<{ bytes: Buffer; w
   try {
     const board = path.join(temp, 'snapshot.kicad_pcb'), out = path.join(temp, 'board.glb');
     fs.writeFileSync(board, input.bytes, { mode: 0o600 });
+    const env = { ...process.env };
+    if (process.platform === 'darwin') {
+      // KiCad's global-library discovery can block on the locked user's Documents directory when spawned by
+      // launchd. Give this short-lived export its own home, retaining KiCad's configuration and model variables.
+      const isolated = path.join(temp, 'home'), source = path.join(os.homedir(), 'Library/Preferences/kicad');
+      fs.mkdirSync(isolated, { recursive: true, mode: 0o700 });
+      if (fs.existsSync(source)) fs.cpSync(source, path.join(isolated, 'Library/Preferences/kicad'), { recursive: true });
+      env.HOME = isolated;
+    }
     const mac = '/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli';
     const exe = input.executable ?? process.env.PCBSTUDIO_KICAD_CLI ?? (fs.existsSync(mac) ? mac : 'kicad-cli');
     const args = ['pcb', 'export', 'glb', '--force', '--subst-models', '--include-tracks', '--include-pads', '--include-zones', '--include-silkscreen', '--include-soldermask', '--no-dnp', '-D', `IOT_LAB=${root}`, '-D', `KIPRJMOD=${projectDir}`, '-o', out, board];
     const log = await new Promise<string>((resolve, reject) => {
-      const child = spawn(exe, args, { cwd: projectDir, stdio: ['ignore', 'pipe', 'pipe'] });
+      const child = spawn(exe, args, { cwd: projectDir, env, stdio: ['ignore', 'pipe', 'pipe'] });
       let output = ''; const collect = (data: Buffer): void => { output = (output + data.toString()).slice(-32_000); };
       child.stdout.on('data', collect); child.stderr.on('data', collect);
       const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('3D export timed out on the reporting machine after 2 minutes')); }, 120_000);
