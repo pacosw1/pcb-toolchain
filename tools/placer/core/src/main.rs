@@ -31,7 +31,7 @@ struct Args {
     params: Vec<String>,
 }
 
-const VALUE_OPTIONS: [&str; 10] = ["--workers", "--epochs", "--steps", "--seed", "--top", "--sigma", "--nets", "--pose", "--engineering-frozen-model-sha256", "--native-population"];
+const VALUE_OPTIONS: [&str; 11] = ["--workers", "--epochs", "--steps", "--seed", "--top", "--sigma", "--nets", "--pose", "--engineering-frozen-model-sha256", "--native-population", "--snapshot-root"];
 
 fn parse_args(argv: &[String]) -> iotplace::Result<Args> {
     let mut a = Args::default();
@@ -197,9 +197,12 @@ fn dispatch(argv: &[String]) -> iotplace::Result<ExitCode> {
         "review-preflight" => {
             let input = args.file.as_deref().ok_or("a problem file is required")?;
             let problem: Value = serde_json::from_slice(&std::fs::read(input)?)?;
-            if let Some((_, path)) = args.options.iter().rev().find(|(f,_)| f == "--native-population") {
-                let population: Value = serde_json::from_slice(&std::fs::read(path)?)?;
-                iotplace::source_preflight::preflight_with_native(&problem, &population)?;
+            let population: Option<Value> = args.options.iter().rev().find(|(f,_)| f == "--native-population")
+                .map(|(_, path)| -> iotplace::Result<Value> { Ok(serde_json::from_slice(&std::fs::read(path)?)?) }).transpose()?;
+            if let Some((_, root)) = args.options.iter().rev().find(|(f,_)| f == "--snapshot-root") {
+                iotplace::source_preflight::preflight_snapshot(&problem, Path::new(root), population.as_ref())?;
+            } else if let Some(population) = &population {
+                iotplace::source_preflight::preflight_with_native(&problem, population)?;
             } else {
                 iotplace::source_preflight::preflight(&problem)?;
             }

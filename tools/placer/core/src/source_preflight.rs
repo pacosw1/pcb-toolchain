@@ -7,7 +7,11 @@ use std::path::{Path, PathBuf};
 
 fn owned(root: &Path, name: &str) -> crate::Result<PathBuf> {
     let p = Path::new(name);
+    if p.components().any(|c| matches!(c, std::path::Component::ParentDir | std::path::Component::CurDir)) {
+        return Err("unsafe reviewed input path".into());
+    }
     let path = if p.is_absolute() { p.to_path_buf() } else { root.join(p) };
+    if !path.starts_with(root) { return Err("reviewed input outside source root".into()); }
     let path = path.canonicalize()?;
     if !path.starts_with(root) || !path.is_file() {
         return Err("reviewed input is not a file owned by the source root".into());
@@ -48,6 +52,7 @@ mod tests {
     fn source_preflight_rechecks_files_and_ownership() {
         let root = std::env::temp_dir().join(format!("iotplace-source-preflight-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
+        let root = root.canonicalize().unwrap();
         let manifest = root.join("review.json");
         let native = root.join("board.kicad_pcb");
         std::fs::write(&manifest, b"review").unwrap();
@@ -174,6 +179,7 @@ mod manifest_tests {
     fn manifest_review_binds_its_actual_facts() {
         let root = std::env::temp_dir().join(format!("iotplace-review-header-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
+        let root = root.canonicalize().unwrap();
         let path = root.join("manifest.json");
         let mut manifest = json!({"schema":"iot-lab.part-use.v1", "board":"A", "revision":"1",
             "project":"board.kicad_pro", "parts":[{"reference":"U1"}]});
@@ -252,6 +258,11 @@ mod rating_tests {
 /// Run the available checks without granting reviewed-model admission.
 /// The caller must treat success as partial evidence only.
 pub fn preflight(problem: &Value) -> crate::Result<()> {
+    check_payload_bindings(problem)?;
+    preflight_relocated(problem)
+}
+
+fn preflight_relocated(problem: &Value) -> crate::Result<()> {
     let contract = problem.get("engineering").ok_or("reviewed contract missing")?;
     if contract.get("schema").and_then(Value::as_str) != Some("iot-lab.engineering-constraints.v1") {
         return Err("unsupported reviewed contract schema".into());
@@ -260,7 +271,6 @@ pub fn preflight(problem: &Value) -> crate::Result<()> {
     let native = owned(&root, contract.get("native").and_then(Value::as_str).ok_or("reviewed native board missing")?)?;
     let board_file = owned(&root, problem.get("board_file").and_then(Value::as_str).ok_or("placement source board missing")?)?;
     if native != board_file { return Err("placement source board differs from reviewed board".into()); }
-    check_payload_bindings(problem)?;
     check_inputs(contract)?;
     check_manifest_identity(contract)?;
     let root = Path::new(contract["root"].as_str().ok_or("reviewed root missing")?).canonicalize()?;
@@ -281,6 +291,7 @@ mod preflight_tests {
     fn runs_partial_source_preflight_and_detects_changed_board() {
         let root = std::env::temp_dir().join(format!("iotplace-preflight-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
+        let root = root.canonicalize().unwrap();
         let native = root.join("board.kicad_pcb");
         let manifest_path = root.join("manifest.json");
         std::fs::write(&native, b"board").unwrap();
@@ -309,6 +320,18 @@ mod preflight_tests {
         assert!(preflight_with_native(&problem, &population).is_ok());
         let incomplete = json!({"parts":{"U1":{"required":true,"pad_net_map":{"1":"OTHER"}}}});
         assert!(preflight_with_native(&problem, &incomplete).is_err());
+        let mut remote = problem.clone();
+        remote["board_file"] = json!("/offline/source/board.kicad_pcb");
+        remote["engineering"]["root"] = json!("/offline/source");
+        remote["engineering"]["native"] = json!("/offline/source/board.kicad_pcb");
+        remote["engineering"]["manifest"] = json!("/offline/source/manifest.json");
+        let mut core = remote["engineering"].clone();
+        core.as_object_mut().unwrap().remove("review_sha256");
+        core.as_object_mut().unwrap().remove("model_anchor_sha256");
+        remote["engineering"]["review_sha256"] = json!(digest(&serde_json::to_vec(&core).unwrap()));
+        assert!(preflight_snapshot(&remote, &root, Some(&population)).is_ok());
+        remote["board_file"] = json!("/outside/board.kicad_pcb");
+        assert!(preflight_snapshot(&remote, &root, None).is_err());
         std::fs::write(native, b"changed").unwrap();
         assert!(preflight(&problem).is_err());
         std::fs::remove_dir_all(root).unwrap();
@@ -465,5 +488,49 @@ pub fn preflight_with_native(problem: &Value, population: &Value) -> crate::Resu
     let value: Value = serde_json::from_slice(&std::fs::read(manifest)?)?;
     check_budget_coverage(&value, &population["parts"])?;
     check_inputs(contract)?;
+    Ok(())
+}
+
+/// Check a relocated immutable snapshot while retaining fingerprint validation against
+/// the original model bytes. Snapshot source authenticity remains the caller's responsibility.
+pub fn preflight_snapshot(problem: &Value, snapshot_root: &Path, population: Option<&Value>) -> crate::Result<()> {
+    use std::path::Component;
+    check_payload_bindings(problem)?;
+    let root = problem["engineering"]["root"].as_str().ok_or("reviewed root missing")?;
+    let original = Path::new(root);
+    if !original.is_absolute() || original.components().any(|c| matches!(c, Component::ParentDir | Component::CurDir)) {
+        return Err("invalid original source root".into());
+    }
+    let snapshot = snapshot_root.canonicalize()?;
+    let map_path = |name: &str| -> crate::Result<String> {
+        let path = Path::new(name);
+        if path.components().any(|c| matches!(c, Component::ParentDir | Component::CurDir)) {
+            return Err("unsafe reviewed snapshot path".into());
+        }
+        let relative = if path.is_absolute() { path.strip_prefix(original).map_err(|_| "reviewed source outside original root")? } else { path };
+        if relative.as_os_str().is_empty() { return Err("empty reviewed snapshot path".into()); }
+        Ok(snapshot.join(relative).to_str().ok_or("non-UTF8 snapshot path")?.to_owned())
+    };
+    let mut relocated = problem.clone();
+    let board_file = map_path(problem["board_file"].as_str().ok_or("placement source board missing")?)?;
+    let native = map_path(problem["engineering"]["native"].as_str().ok_or("reviewed native missing")?)?;
+    let manifest = map_path(problem["engineering"]["manifest"].as_str().ok_or("reviewed manifest missing")?)?;
+    let mut inputs = serde_json::Map::new();
+    for (name, hash) in problem["engineering"]["inputs"].as_object().ok_or("reviewed inputs missing")? {
+        if inputs.insert(map_path(name)?, hash.clone()).is_some() { return Err("duplicate snapshot input".into()); }
+    }
+    relocated["board_file"] = board_file.into();
+    relocated["engineering"]["root"] = snapshot.to_str().ok_or("non-UTF8 snapshot path")?.into();
+    relocated["engineering"]["native"] = native.into();
+    relocated["engineering"]["manifest"] = manifest.into();
+    relocated["engineering"]["inputs"] = Value::Object(inputs);
+    preflight_relocated(&relocated)?;
+    if let Some(population) = population {
+        let contract = &relocated["engineering"];
+        let manifest_path = owned(&snapshot, contract["manifest"].as_str().ok_or("manifest missing")?)?;
+        let manifest: Value = serde_json::from_slice(&std::fs::read(manifest_path)?)?;
+        check_budget_coverage(&manifest, &population["parts"])?;
+        check_inputs(contract)?;
+    }
     Ok(())
 }
