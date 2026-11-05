@@ -30,3 +30,6 @@ pub mod wirelen;
 pub mod write;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
+#[allow(dead_code)]
+mod source_preflight;
