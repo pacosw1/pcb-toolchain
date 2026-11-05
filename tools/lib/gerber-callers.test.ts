@@ -54,3 +54,12 @@ test('keepout check rejects an omitted zone or saved fill from native board data
  assert.throws(()=>validateZoneInventory(text,{zones:[]} as unknown as Board),/zone inventory/);
  assert.throws(()=>validateZoneInventory(text,{zones:[{id:'z1',filled:[]}]} as unknown as Board),/missing saved fill/);
 });
+
+test('keepout source binding rejects project and rules drift during and after the read', async()=>{
+ const {validateSourceBinding}=await import('../fp_keepouts.ts');
+ const original=['pcb','project','rules'];
+ assert.doesNotThrow(()=>validateSourceBinding(original,original,'read'));
+ assert.throws(()=>validateSourceBinding(original,['pcb','changed','rules'],'read'),/sidecars changed during keepout read/);
+ assert.throws(()=>validateSourceBinding(original,['pcb','project','changed'],'check'),/sidecars changed during keepout check/);
+ assert.throws(()=>validateSourceBinding(original,['changed','project','rules'],'check'),/sidecars changed during keepout check/);
+});
