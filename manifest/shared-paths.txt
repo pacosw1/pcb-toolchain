@@ -703,6 +703,10 @@ tools/router/core/src/job/mod.rs
 tools/router/core/src/job/progress.rs
 tools/router/core/src/job/record.rs
 tools/router/core/src/job/resources.rs
+tools/router/core/src/job/route_run/board_edit.rs
+tools/router/core/src/job/route_run/mod.rs
+tools/router/core/src/job/route_run/report.rs
+tools/router/core/src/job/route_run/tests.rs
 tools/router/core/src/job/scan.rs
 tools/router/core/src/job/snapshots.rs
 tools/router/core/src/job/stage.rs

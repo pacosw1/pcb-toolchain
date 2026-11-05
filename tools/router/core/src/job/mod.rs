@@ -7,6 +7,7 @@ pub mod files;
 pub mod progress;
 pub mod record;
 pub mod resources;
+pub mod route_run;
 pub mod scan;
 pub mod snapshots;
 pub mod stage;

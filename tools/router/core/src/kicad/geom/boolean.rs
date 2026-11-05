@@ -70,9 +70,18 @@ pub fn circle_segments(radius: Iu, max_error: Iu) -> i64 {
 
 /// Inflate with CHAMFER_ACUTE_CORNERS: `amount` nanometres outward, inward when negative.
 pub fn inflate(a: &[Polygon], amount: Iu, max_error: Iu) -> Result<Vec<Polygon>, String> {
+    offset_polygons(a, amount, max_error, JoinType::Miter)
+}
+
+/// Inflate with ROUND_ALL_CORNERS.
+pub fn inflate_round(a: &[Polygon], amount: Iu, max_error: Iu) -> Result<Vec<Polygon>, String> {
+    offset_polygons(a, amount, max_error, JoinType::Round)
+}
+
+fn offset_polygons(a: &[Polygon], amount: Iu, max_error: Iu, join: JoinType) -> Result<Vec<Polygon>, String> {
     let mut offset = ClipperOffset::new(MITER_LIMIT, 0.0, false, false);
     for polygon in a {
-        offset.add_paths(&polygon.rings().map(|r| path(r)).collect(), JoinType::Miter, EndType::Polygon);
+        offset.add_paths(&polygon.rings().map(|r| path(r)).collect(), join, EndType::Polygon);
     }
     let segments = circle_segments(amount.abs(), max_error).max(6);
     offset.set_miter_limit(MITER_LIMIT);
@@ -118,6 +127,15 @@ mod tests {
     fn intersection_of_apart_squares_is_empty() {
         assert!(intersection(&[square(0, 0, 10)], &[square(20, 0, 10)]).unwrap().is_empty());
         assert_eq!(area(&intersection(&[square(0, 0, 10)], &[square(5, 5, 10)]).unwrap()[0]), 25);
+    }
+
+    #[test]
+    fn a_round_inflate_rounds_every_corner() {
+        let s = inflate_round(&[square(0, 0, 100_000)], 10_000, 500).unwrap();
+        let (b, corners) = (s[0].bbox().unwrap(), s[0].outline.len());
+        assert_eq!((b.left, b.right), (-10_000, 110_000));
+        assert!(corners > 12, "{corners}");
+        assert!(area(&s[0]) < 120_000i128 * 120_000);
     }
 
     #[test]

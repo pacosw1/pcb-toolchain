@@ -4217,6 +4217,7 @@ fn main() {
         Some("si-planes") => std::process::exit(iotroute::si::planes_cli(&args[2..])),
         Some("si-pairs") => std::process::exit(iotroute::si::pairs_cli(&args[2..])),
         Some("run") => std::process::exit(iotroute::run::cli(&args[2..])),
+        Some("route") => std::process::exit(iotroute::job::route_run::cli(&args[2..])),
         Some("route-policy") => std::process::exit(iotroute::run::policy::cli(&args[2..])),
         Some("lock-input") => std::process::exit(iotroute::run::lock_input_cli(&args[2..])),
         Some("sheets") => std::process::exit(iotroute::run::sheets_cli(&args[2..])),
