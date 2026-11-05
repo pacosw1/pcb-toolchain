@@ -8,6 +8,9 @@ pub mod planes;
 pub mod py;
 pub mod source;
 
+#[cfg(test)]
+mod fixture;
+
 use json::Json;
 use std::fs;
 use std::path::{Path, PathBuf};

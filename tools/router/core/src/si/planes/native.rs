@@ -130,7 +130,7 @@ impl<'a> Reference<'a> {
         continuous_reference(&|x, y| self.ok(x, y), &self.boundaries(), a, b, &self.circles)
     }
 
-    fn breaks(&self, a: P, b: P) -> Vec<f64> {
+    pub(crate) fn breaks(&self, a: P, b: P) -> Vec<f64> {
         reference_breaks(&self.boundaries(), a, b, &self.circles)
     }
 }

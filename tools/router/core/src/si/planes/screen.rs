@@ -28,7 +28,7 @@ fn edge_label(edge: Option<&Edge>) -> (Option<f64>, String) {
 }
 
 /// D-124c: the "edge_classes" class of the net, else its driver edge.
-fn d124c_net_edge(net: &str, spec: &Spec, edges: &Edges) -> (Option<f64>, String) {
+pub(crate) fn d124c_net_edge(net: &str, spec: &Spec, edges: &Edges) -> (Option<f64>, String) {
     spec.edge_class(net).map_or_else(|| edge_label(edges.get(net)), |k| class_label(spec, k))
 }
 

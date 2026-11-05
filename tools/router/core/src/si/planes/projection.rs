@@ -72,7 +72,7 @@ impl EdgeIndex {
 
     /// The edges that can meet the segment a-b. A sub-nanometre segment gets every edge; the margin covers native 1 nm rounding and
     /// near-collinear tolerance.
-    fn near(&self, a: P, b: P) -> Vec<Edge> {
+    pub(crate) fn near(&self, a: P, b: P) -> Vec<Edge> {
         if dist(a, b) < 1e-6 {
             return self.edges.clone();
         }

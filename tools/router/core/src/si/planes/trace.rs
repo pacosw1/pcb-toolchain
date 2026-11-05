@@ -71,6 +71,9 @@ pub fn routed_trace_summary(records: &[TraceRecord]) -> Result<(BTreeMap<String,
         if !r.width_mm.is_finite() || r.width_mm <= 0.0 {
             return Err("trace geometry: invalid native width".to_string());
         }
+        if !matches!(r.path.len(), 2 | 3) {
+            return Err("trace geometry: invalid native path".to_string());
+        }
         let width = widths.entry(r.net.clone()).or_insert(f64::INFINITY);
         *width = width.min(r.width_mm);
         let (a, e) = (r.path[0], r.path[r.path.len() - 1]);

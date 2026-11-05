@@ -167,7 +167,7 @@ fn read_ibis(key: &str, ib: &Json, evidence: &[Json]) -> Result<IbisRef, String>
     Ok(IbisRef { file, sha256: sha, component: text(ib, "component"), supply_pin: text(ib, "supply_pin"), url: text(ib, "url"), downloaded: text(ib, "downloaded"), variants })
 }
 
-fn read_part(path: &str, key: &str, p: &Json, evidence: &[Json]) -> Result<Part, String> {
+pub(crate) fn read_part(path: &str, key: &str, p: &Json, evidence: &[Json]) -> Result<Part, String> {
     let mpn = p.get("mpn").and_then(Json::strings).filter(|m| !m.is_empty());
     let (Some(mpn), Some(rules)) = (mpn, p.get("pins").and_then(Json::as_arr)) else {
         return Err(format!("{path}: part {key} needs \"mpn\" (patterns) and \"pins\" (rules)"));
