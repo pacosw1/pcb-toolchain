@@ -1,6 +1,7 @@
 //! Board text to a saved board: the project copied into a folder, the text written there, one KiCad 10 `kicad-cli pcb drc
 //! --refill-zones --save-board` puts the items in their place and refills every zone. Never the nightly build: a board it saves
 //! may not load in KiCad 10.
+use crate::run::project::copy_hierarchy;
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -39,24 +40,14 @@ pub struct Saved {
     pub report: Value,
 }
 
-fn folder_of(pcb: &Path) -> &Path {
-    pcb.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."))
-}
-
 fn copy_project(pcb: &Path, stem: &str, folder: &Path) -> Result<(), String> {
-    let src = folder_of(pcb);
     for extension in ["kicad_pro", "kicad_dru", "kicad_sch"] {
         let from = pcb.with_extension(extension);
         if from.exists() {
             fs::copy(&from, folder.join(format!("{stem}.{extension}"))).map_err(|e| format!("{}: {e}", from.display()))?;
         }
     }
-    for table in ["sym-lib-table", "fp-lib-table"] {
-        if src.join(table).exists() {
-            fs::copy(src.join(table), folder.join(table)).map_err(|e| format!("{table}: {e}"))?;
-        }
-    }
-    Ok(())
+    copy_hierarchy(pcb, folder)
 }
 
 /// `text` as `<folder>/<stem of pcb>.kicad_pcb`, saved by KiCad 10 with fresh fills. The project next to `pcb` is copied first; a

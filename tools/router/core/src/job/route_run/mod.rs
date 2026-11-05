@@ -22,6 +22,7 @@ use crate::plan::{self, Backend, Plan, Pour, Stage, add_blocks, copy_block, open
 use crate::route_features::{defaults_path, root};
 use crate::run::diagnose::diagnose;
 use crate::run::guard;
+use crate::run::project::copy_hierarchy;
 use crate::run::steps::Steps;
 use crate::sha256::sha256;
 use crate::stuck;
@@ -156,7 +157,7 @@ fn copy_project(src: &Path, dst: &Path, sidecars_of: Option<&Path>) -> Result<()
             copy_file(&side, &dst.with_extension(extension))?;
         }
     }
-    Ok(())
+    copy_hierarchy(base, folder)
 }
 
 /// Runs a command to its end; `log` gets the command line, stdout and stderr. The exit code; a signal counts as its negative.

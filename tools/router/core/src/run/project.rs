@@ -116,8 +116,39 @@ fn lexical(path: &Path) -> PathBuf {
 /// Relative paths of the sheets a root sheet names, recursively. A path counts relative to the sheet that names it, else to
 /// `base`; a missing file, or one outside `base`, is skipped.
 pub fn referenced_sheets(root: &Path, base: &Path) -> Vec<String> {
+    walk_sheets(root, base).0
+}
+
+/// Copies the sheet hierarchy and library tables of the schematic next to `pcb` into `folder`, at the same relative paths, so a
+/// parity check there reads the whole netlist. A sheet that is missing or outside the project stops the copy: with a partial
+/// hierarchy, parity reports the board's footprints as extra.
+pub fn copy_hierarchy(pcb: &Path, folder: &Path) -> Result<(), String> {
+    let pcb = std::path::absolute(pcb).map_err(|e| e.to_string())?;
+    let folder = std::path::absolute(folder).map_err(|e| e.to_string())?;
+    let dir = pcb.parent().ok_or("a board file has a folder")?;
+    let root = pcb.with_extension("kicad_sch");
+    let (sheets, unplaced) = walk_sheets(&root, dir);
+    if !unplaced.is_empty() {
+        return Err(format!("{}: sheets missing or outside the project: {}", root.display(), unplaced.join(", ")));
+    }
+    if lexical(dir) == lexical(&folder) {
+        return Ok(());
+    }
+    let tables = TABLES.iter().map(|t| t.to_string()).filter(|t| dir.join(t).is_file());
+    for relative in tables.chain(sheets) {
+        let dest = folder.join(&relative);
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+        }
+        fs::copy(dir.join(&relative), &dest).map_err(|e| format!("{relative}: {e}"))?;
+    }
+    Ok(())
+}
+
+/// The sheets a root sheet names, and the names no sheet was found for.
+fn walk_sheets(root: &Path, base: &Path) -> (Vec<String>, Vec<String>) {
     let base = lexical(base);
-    let (mut found, mut todo, mut seen): (Vec<String>, Vec<PathBuf>, Vec<PathBuf>) = (Vec::new(), vec![root.to_path_buf()], Vec::new());
+    let (mut found, mut unplaced, mut todo, mut seen): (Vec<String>, Vec<String>, Vec<PathBuf>, Vec<PathBuf>) = (Vec::new(), Vec::new(), vec![root.to_path_buf()], Vec::new());
     while let Some(current) = todo.pop() {
         if seen.contains(&current) || !current.is_file() {
             continue;
@@ -133,11 +164,14 @@ pub fn referenced_sheets(root: &Path, base: &Path) -> Vec<String> {
                     found.push(relative);
                 }
                 todo.push(path);
+            } else if !unplaced.contains(&name) {
+                unplaced.push(name);
             }
         }
     }
     found.sort();
-    found
+    unplaced.sort();
+    (found, unplaced)
 }
 
 fn target(key: &str, out_pcb: &Path) -> PathBuf {
