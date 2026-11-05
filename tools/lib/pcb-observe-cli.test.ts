@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 
 test('installed launcher reads run status and byte-cursored events without Python', () => {
@@ -17,9 +18,15 @@ test('installed launcher reads run status and byte-cursored events without Pytho
     const shim = join(root, 'bin');
     mkdirSync(shim);
     writeFileSync(join(shim, 'python3'), '#!/bin/sh\nexit 72\n', { mode: 0o755 });
-    const bin = resolve('bin/pcb');
+    const bin = fileURLToPath(new URL('../../bin/pcb', import.meta.url));
     const args = ['--project', root];
     const options = { encoding: 'utf8' as const, env: { ...process.env, PATH: `${shim}:${process.env.PATH}` } };
+    const boardFolder = join(root, 'hardware-design/boards/X');
+    mkdirSync(boardFolder, { recursive: true });
+    writeFileSync(join(boardFolder, 'gate.json'), '{"project":"cad/X","stage":"G3","checks":{"erc":true}}');
+    const board = JSON.parse(execFileSync(bin, [...args, 'status', 'X', '--json'], options));
+    assert.equal(board.board, 'X');
+    assert.equal(board.stage, 'G3');
     const status = JSON.parse(execFileSync(bin, [...args, 'status', 'run-test', '--json'], options));
     assert.equal(status.status, 'passed');
     assert.equal(status.evidence_dir, realpathSync(folder));

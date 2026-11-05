@@ -3,7 +3,8 @@ import { resolve } from 'node:path';
 import { realpathSync } from 'node:fs';
 import { parseArgs, type ParseArgsOptionsConfig } from 'node:util';
 import { projectRoot } from './lib/project-root.mjs';
-import { compactTerminal, eventLine, events, runDir, stageStatus, status, TERMINAL, type Dict } from './lib/pcb-runs.ts';
+import { compactTerminal, eventLine, events, runDir, stageStatus, status, TERMINAL, RUN_ID, type Dict } from './lib/pcb-runs.ts';
+import { context } from './lib/pcb-workflow.ts';
 import { jsonDumps, pyStr } from './lib/py-compat.mjs';
 
 const usage = 'usage: pcb [--project DIR] {status,events} RUN_ID [options]';
@@ -20,6 +21,10 @@ export async function main(argv: string[]): Promise<number> {
   };
   const { values, positionals } = parseArgs({ args: argv, options, allowPositionals: true });
   if (positionals.length !== 1) throw new Error(usage);
+  if (command === 'status' && !RUN_ID.test(positionals[0]!)) {
+    console.log(jsonDumps(context(projectRoot(explicit), positionals[0]!), values.json ? null : 2));
+    return 0;
+  }
   const requestedBase = resolve((values['runs-dir'] as string | undefined) ?? process.env.PCB_RUNS_DIR ?? resolve(projectRoot(explicit), '.gate/cli'));
   let base = requestedBase;
   try { base = realpathSync(requestedBase); } catch { /* runDir reports missing runs consistently */ }
