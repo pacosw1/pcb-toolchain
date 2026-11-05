@@ -1,5 +1,5 @@
 // One controlled Fastroute invocation: admit its policy, runtime and inputs, then cross-check the controls it actually used.
-// A routed result still needs the full gate. The router itself is tools/fastroute_job.py, run by KiCad's Python.
+// A routed result still needs the full gate. The job itself is `iotroute fastroute`.
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { availableParallelism, hostname, homedir, machine, release, type } from 'node:os';
@@ -12,7 +12,9 @@ import { runStage } from './lean-stage.ts';
 import { deadlineAfter } from './lean-workflow.ts';
 import { thermalServices } from './outcome-thermal.ts';
 import { validateGate } from './pcb-routing-admission.ts';
-import { boardConfig, pythonNative } from './pcb-workflow.ts';
+import { iotrouteBin } from './iotroute-bin.ts';
+import { boardConfig } from './pcb-workflow.ts';
+import { fileRoot } from './project-root.mjs';
 import { isFile, isRelativeTo, joinPath, pathExists, relativeTo, resolvePath, which, withSuffix } from './py-path.ts';
 import { sameValue, type Dict } from './py-values.ts';
 
@@ -22,7 +24,7 @@ const EXECUTION = 'iot-lab.placement-outcome-execution.v1';
 const FIELDS = ['schema', 'layers', 'only_nets', 'passes', 'threads', 'timeout_s', 'optimizer', 'max_repairs'];
 const COPPER = /^(?:F|B|In(?:[1-9]|[12][0-9]|30))\.Cu$/;
 const SIDECARS = ['.kicad_pcb', '.kicad_sch', '.kicad_pro', '.kicad_dru'];
-const PRODUCERS = ['route_features.py', 'route_rule_coverage.py', 'route_project_coverage.py', 'route_hole_coverage.py', 'backend_quality.py', 'route-features.json'];
+const PRODUCERS = ['route-features.json'];
 const GIB = 1073741824;
 const PROBE_S = 5;
 
@@ -80,6 +82,21 @@ function executable(name: string): string {
   const path = which(name);
   return path ? resolvePath(path) : fail(`controlled routing executable is unavailable: ${name}`);
 }
+
+/** What the Rust route job runs on this host. A missing one stops the run here, by name. */
+export function routeJobTools(): { iotroute: string; coverage: string; api: string; router: string; kicad: string } {
+  const bundled = join(process.env.PCB_TOOLCHAIN_ROOT || fileRoot, 'bin/route-coverage-linux-x86_64');
+  return {
+    iotroute: executable(iotrouteBin()),
+    coverage: executable(process.env.ROUTE_COVERAGE_BIN || (process.platform === 'linux' && isFile(bundled) ? bundled : 'route-coverage')),
+    api: executable(process.env.KICAD_API_CLI || 'kicad-cli-nightly'),
+    router: executable(process.env.FASTROUTE_BIN || join(homedir(), 'opt/fastroute/fastroute-0.1.7-macos-arm64/fastroute')),
+    kicad: executable(process.env.KICAD_CLI ?? (process.platform === 'darwin' ? '/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli' : 'kicad-cli')),
+  };
+}
+
+/** The tools of `routeJobTools` as the job reads them. */
+export const routeJobEnv = (tools: ReturnType<typeof routeJobTools>): NodeJS.ProcessEnv => ({ IOTROUTE_BIN: tools.iotroute, ROUTE_COVERAGE_BIN: tools.coverage, KICAD_API_CLI: tools.api, FASTROUTE_BIN: tools.router, KICAD_CLI: tools.kicad });
 
 async function probe(command: string[], env: NodeJS.ProcessEnv, probes: Dict[]): Promise<string> {
   let run;
@@ -175,35 +192,26 @@ export async function prepare(rootPath: string, nativePath: string, outputPath: 
   if (['PYTHONHOME', 'LD_PRELOAD', 'LD_LIBRARY_PATH', 'DYLD_LIBRARY_PATH'].some(key => process.env[key])) fail('external runtime loader overrides are unsupported in controlled trials');
   const context = runtime === 'native' ? nativeContext() : containerContext();
   if (config.threads > context.cpus) fail(runtime === 'container' ? 'router threads exceed the actual container CPU quota' : 'router threads exceed the admitted native CPU budget');
-  const python = executable(pythonNative());
-  const router = executable(process.env.FASTROUTE_BIN || join(homedir(), 'opt/fastroute/fastroute-0.1.7-macos-arm64/fastroute'));
-  const kicad = executable(process.env.KICAD_CLI ?? (process.platform === 'darwin' ? '/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli' : 'kicad-cli'));
-  const script = join(root, 'tools/fastroute_job.py');
-  if (!isFile(script)) fail('existing fastroute job producer is missing from the snapshot');
+  const jobTools = routeJobTools(), { iotroute, coverage, api, router, kicad } = jobTools;
   const policyFeatures = features(root, board);
   const thermal = config.thermal_verification === 'native-checkback', rules = asDict(policyFeatures.routing_rules);
   if (thermal && rules.on) fail('native thermal checkback requires internal routing/repair stages disabled');
-  const bound = [script, ...PRODUCERS.map(name => join(root, 'tools', name)).filter(isFile), join(root, 'hardware-design/boards', board, 'gate.json'),
-    fileURLToPath(import.meta.url), python, router, kicad];
+  const bound = [...PRODUCERS.map(name => join(root, 'tools', name)).filter(isFile), join(root, 'hardware-design/boards', board, 'gate.json'),
+    fileURLToPath(import.meta.url), iotroute, coverage, api, router, kicad];
   const inputs: Record<string, string> = Object.fromEntries(bound.map(path => [path, sha(path)]));
   for (const [name, digest] of Object.entries(gate.inputs)) inputs[join(root, name)] = digest;
-  if (thermal) {
-    const helper = join(root, 'tools/route_native_thermals.py');
-    if (isFile(helper)) inputs[helper] = sha(helper);
-  }
   for (const extension of SIDECARS) {
     const path = withSuffix(native, extension);
     if (!isFile(path)) fail('controlled routing requires the exact four native sidecars');
     inputs[path] = sha(path);
   }
   const memoryGib = context.memory_bytes / GIB;
-  const env: NodeJS.ProcessEnv = { ...process.env, IOT_LAB: root, ROUTE_BOARD: board, FASTROUTE_BIN: router, KICAD_CLI: kicad, KICAD_PYTHON: python, KICAD_PY: python,
-    PYTHONPATH: join(root, 'tools'), IOT_CPU_BUDGET: String(Math.floor(context.cpus)), IOT_RESOURCE_CPU: String(config.threads), IOT_MEMORY_BUDGET_GIB: String(memoryGib),
+  const env: NodeJS.ProcessEnv = { ...process.env, IOT_LAB: root, ROUTE_BOARD: board, ...routeJobEnv(jobTools), IOT_CPU_BUDGET: String(Math.floor(context.cpus)), IOT_RESOURCE_CPU: String(config.threads), IOT_MEMORY_BUDGET_GIB: String(memoryGib),
     // Native runs leave room for the persistent compute worker: the router records this reservation before launching.
     IOT_JOB_MEMORY_GIB: String(runtime === 'native' ? Math.min(jobMemory(), memoryGib) : memoryGib) };
   const probes: Dict[] = [];
   const versions: Record<string, string> = {};
-  for (const [name, path] of [['python', python], ['router', router], ['kicad', kicad]] as const) versions[name] = await probe([path, '--version'], env, probes);
+  for (const [name, path] of [['iotroute', iotroute], ['kicad_api', api], ['router', router], ['kicad', kicad]] as const) versions[name] = await probe([path, '--version'], env, probes);
   const quality = env.FASTROUTE_QUALITY_MANIFEST ? resolvePath(env.FASTROUTE_QUALITY_MANIFEST) : null;
   if (quality) {
     if (!isFile(quality)) fail('selected quality backend manifest is unavailable');
@@ -216,7 +224,7 @@ export async function prepare(rootPath: string, nativePath: string, outputPath: 
     const validation = readObject<{ native_validation: { evidence: { path: string; sha256: string }[] } }>(quality).native_validation;
     for (const evidence of validation.evidence) inputs[evidence.path] = evidence.sha256;
   }
-  const command = [python, script, native, output, '--preflight', '--skip-net', '', '--plane-nets', '', '--only-nets', config.only_nets.join(','), '--layers', config.layers.join(','),
+  const command = [iotroute, 'fastroute', native, output, '--preflight', '--skip-net', '', '--plane-nets', '', '--only-nets', config.only_nets.join(','), '--layers', config.layers.join(','),
     '--passes', String(config.passes), '--threads', String(config.threads), '--max-time', String(config.timeout_s), '--optimizer', config.optimizer, '--snapshot-interval-s', '0',
     ...(thermal ? ['--native-thermal-checkback'] : [])];
   const parent = dirname(output), receipt = join(parent, 'execution-policy.json'), original = join(parent, 'execution-context.json');
@@ -224,7 +232,7 @@ export async function prepare(rootPath: string, nativePath: string, outputPath: 
   if (pathExists(receipt) || pathExists(original)) fail('controlled execution receipts must be new');
   writeFileSync(original, context.raw);
   const contextSha = createHash('sha256').update(context.raw).digest('hex');
-  const tools = Object.fromEntries(([['python', python], ['router', router], ['kicad', kicad]] as const).map(([name, path]) => [name, { version: versions[name], sha256: sha(path) }]));
+  const tools = Object.fromEntries(([['iotroute', iotroute], ['kicad_api', api], ['router', router], ['kicad', kicad]] as const).map(([name, path]) => [name, { version: versions[name], sha256: sha(path) }]));
   const policy: Dict = { schema: runtime === 'container' ? EXECUTION : 'iot-lab.placement-outcome-execution.v2', command,
     runtime: { image_id: context.image_id, tools, ...(runtime === 'native' ? { kind: 'native', host_identity: context.identity } : {}) },
     resources: { cpus: context.cpus, memory_bytes: context.memory_bytes, threads: config.threads,
@@ -236,7 +244,7 @@ export async function prepare(rootPath: string, nativePath: string, outputPath: 
       ...(runtime === 'native' ? { kind: 'native', attribution: 'locally observed OS and cooperative resource budget; no container isolation' }
         : { attribution: 'host Docker inspect matched to running hostname and exposed cgroup limits' }) },
     gate_admission: { stage: gate.stage, validator: 'gate-core.validateConfig' }, inputs,
-    environment: Object.fromEntries(['ROUTE_BOARD', 'ROUTE_FEATURES', 'ROUTE_FEATURES_FILE', 'FASTROUTE_BIN', 'FASTROUTE_QUALITY_MANIFEST', 'KICAD_CLI', 'KICAD_PYTHON', 'PYTHONPATH',
+    environment: Object.fromEntries(['ROUTE_BOARD', 'ROUTE_FEATURES', 'ROUTE_FEATURES_FILE', 'FASTROUTE_BIN', 'FASTROUTE_QUALITY_MANIFEST', 'KICAD_CLI', 'KICAD_API_CLI', 'IOTROUTE_BIN', 'ROUTE_COVERAGE_BIN',
       'IOT_CPU_BUDGET', 'IOT_RESOURCE_CPU', 'IOT_MEMORY_BUDGET_GIB', 'IOT_JOB_MEMORY_GIB'].map(key => [key, env[key] ?? null])),
     controls: { status: 'prepared', effective_configuration_verified: false }, qualified: false };
   atomicJson(join(parent, 'runtime-probes.json'), probes);

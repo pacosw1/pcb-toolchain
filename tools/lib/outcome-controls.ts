@@ -249,13 +249,19 @@ function checkFailureBudget(spec: unknown, manifest: Dict, effort: Dict, resourc
   }
 }
 
+/** The job of a recorded run: a bound iotroute binary, or the recorded Python job of the source snapshot in an older run. */
+function jobToolBound(command: string[], inputs: Dict, files: Dict): boolean {
+  if (command[1] === 'fastroute') return isShaText(inputs[command[0] as string]);
+  return Boolean(files['tools/fastroute_job.py']) && inputs[command[1] as string] === files['tools/fastroute_job.py'];
+}
+
 function checkFailureInputs(policy: Dict, manifest: Dict, source: Dict, native: string, command: string[], placementSha256: string): void {
   const relative = `hardware-design/boards/${need<string>(manifest, 'board')}/${need<string>(manifest, 'project')}`;
   const inputs = asDict(policy.inputs), files = asDict(source.files);
   const expected = ['.kicad_pcb', '.kicad_sch', '.kicad_pro', '.kicad_dru'].map(extension =>
     [withSuffix(native, extension), extension === '.kicad_pcb' ? placementSha256 : files[relative + extension]] as const);
   if (expected.some(([name, digest]) => !isShaText(digest) || inputs[name] !== digest)
-      || inputs[command[1] as string] !== (files['tools/fastroute_job.py'] ?? null) || !files['tools/fastroute_job.py']
+      || !jobToolBound(command, inputs, files)
       || files[`hardware-design/boards/${String(manifest.board)}/gate.json`] !== manifest.gate_config_sha256) {
     throw new Error('failed attempt source/tool/gate-policy binding differs from the original input');
   }

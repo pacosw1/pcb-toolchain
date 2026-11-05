@@ -4208,6 +4208,10 @@ fn main() {
     }
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
+        Some("--version") => {
+            println!("iotroute {}", env!("CARGO_PKG_VERSION"));
+            return;
+        }
         Some("write") => std::process::exit(write::cli(&args[2..])),
         Some("fastroute") => std::process::exit(iotroute::job::fastroute::cli(&args[2..])),
         Some("gerber-geos") => std::process::exit(iotroute::gerber_geos::cli()),

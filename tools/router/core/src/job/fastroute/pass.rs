@@ -24,6 +24,7 @@ use crate::sha256::sha256;
 use crate::specctra::dsn_edit::{Pair, big_signal_via, pairs_text, restrict_dsn};
 use crate::specctra::export::{Throwaway, with_locks};
 use crate::specctra::import::{Session, existing_copper, import};
+use crate::specctra::kicad10::Unchained;
 use crate::specctra::skip::{exclude, routable_open};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -447,7 +448,8 @@ fn route_pass(job: &mut Job, rules: Option<&Rules>, tag: &str, stage_nets: &BTre
     }
     let (dsn, ses, rep) = (job.file(&format!("board{sfx}.dsn")), job.file(&format!("board{sfx}.ses")), job.file(&format!("report{sfx}.json")));
     let throwaway = Throwaway::new(&job.base, &job.out.join("export"))?;
-    let board = throwaway.read(&with_locks(&job.text, &locked)?, Some(&dsn)).map_err(|error| Stop::failed(format!("fastroute_job: DSN export failed: {error}")))?;
+    let own: Vec<Unchained> = copper::read(&job.text)?.iter().filter(|item| item.kind == copper::Kind::Track && !job.was.contains_key(&item.id)).map(|item| Unchained::of_track(&item.layer, item.start, item.end)).collect();
+    let board = throwaway.read(&with_locks(&job.text, &locked)?, Some(&dsn), &own).map_err(|error| Stop::failed(format!("fastroute_job: DSN export failed: {error}")))?;
     let layers = job.a.layer_list();
     let layer_set: BTreeSet<String> = job.a.layers.split(',').map(str::to_string).collect();
     let exported = fs::read_to_string(&dsn).map_err(|e| Stop::failed(e.to_string()))?;

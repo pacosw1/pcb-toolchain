@@ -18,7 +18,7 @@ import { now } from '../lib/lean-clock.ts';
 import { defaultCpu, reserve } from '../lib/lean-resources.ts';
 import { runStage as ownedStage, TimeoutExpired as StageTimeout, type StageResult } from '../lib/lean-stage.ts';
 import { deadlineAfter, encodeDeadline } from '../lib/lean-workflow.ts';
-import { pythonNative } from '../lib/pcb-workflow.ts';
+import { iotrouteBin } from '../lib/iotroute-bin.ts';
 import { snapshot } from '../lib/pcb-sources.ts';
 import { Float, PyError, jsonDumps, number } from '../lib/py-compat.mjs';
 import type { Dict } from '../lib/py-values.ts';
@@ -363,7 +363,7 @@ export class Compaction {
     this.routesDone += 1;
     // Fastroute runs here (many cores, user rule 2026-10-03); it is deterministic, so one run per step.
     // The count is the KiCad DRC unconnected count of the verified result.
-    const command = [pythonNative(), join(REPO, 'tools/fastroute_job.py'), path, join(d, 'route-0'), '--passes', String(a.passes), '--optimizer', a.optimizer, '--render',
+    const command = [iotrouteBin(), 'fastroute', path, join(d, 'route-0'), '--passes', String(a.passes), '--optimizer', a.optimizer, '--render',
       ...(a.gnd_vias ? ['--gnd-vias'] : []), ...shellWords(a.route_args)];
     const { returncode, text } = await this.logged(command, 'routing', join(d, 'route-0.log'));
     // Exit 3 (route feature fail_fast): routed with opens, UNROUTED line and triage written.

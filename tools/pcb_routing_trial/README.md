@@ -1,6 +1,5 @@
 `pcb-routing-trial` is the daemon-side twin of `tools/lib/pcb-routing-trial.ts`, as a small Rust library. It prepares an invocation and
-checks the producer's controls; full native gate acceptance remains upstream. Existing Python importers and the
-unported Fastroute/thermal producers still use their original files.
+checks the producer's controls; full native gate acceptance remains upstream. The producer is `iotroute fastroute`.
 
 The Mac calls `tools/lib/pcb-routing-admission.ts` for gate and explicitly selected quality-backend admission, using
 the existing shared validators. Ship their hash bindings with the job, remapping absolute external paths through

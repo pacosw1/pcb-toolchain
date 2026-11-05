@@ -8,6 +8,9 @@
 //! Left as they are: the `pcb` line (the output path) and `host_version`, which says truthfully who wrote the file.
 //! Two wires are chained on their text, so ends less than one DSN unit apart chain here and did not in KiCad 10. Only wires of one
 //! type chain: KiCad 10 took the type of the first track of a chain, and a chain of locked and free tracks is not proved here.
+//! KiCad 10 chained what it read from a file. A session it imported in memory stayed one wire per track for the next pass of the
+//! job, and the router does not take the two alike: on ENV-SENSE the rest stage left 40 open chained and 32 unchained
+//! (one thread, same copper, 2026-11-05). So the job names its own copper, and that copper is not chained.
 use crate::kicad::raw::{self, Form};
 
 /// `PATH::Format` of KiCad's specctra.h: a new line once a line is longer than this.
@@ -193,10 +196,38 @@ fn wire_line(wire: &Wire) -> String {
     format!("    (wire {}{}", shape_text("path", &wire.layer, &wire.width, &wire.points), wire.tail)
 }
 
-/// Each wire that starts where the one before ends, on the same layer, width, net and type, joins it.
-fn chain_wires(text: &str) -> String {
+/// A track the job imported, in DSN units: um, y up.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Unchained {
+    pub layer: String,
+    pub ends: [(f64, f64); 2],
+}
+
+impl Unchained {
+    /// A track from its ends in nanometres, y down.
+    pub fn of_track(layer: &str, start: (i64, i64), end: (i64, i64)) -> Unchained {
+        let unit = |point: (i64, i64)| (point.0 as f64 / 1000.0, -(point.1 as f64) / 1000.0);
+        Unchained { layer: layer.to_string(), ends: [unit(start), unit(end)] }
+    }
+
+    fn is(&self, layer: &str, first: (f64, f64), last: (f64, f64)) -> bool {
+        let near = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).abs() <= SAME_POINT_UM && (a.1 - b.1).abs() <= SAME_POINT_UM;
+        let same = (near(first, self.ends[0]) && near(last, self.ends[1])) || (near(first, self.ends[1]) && near(last, self.ends[0]));
+        layer.trim_matches('"') == self.layer && same
+    }
+}
+
+fn is_own(wire: &Wire, own: &[Unchained]) -> Result<bool, String> {
+    let [first, last] = &wire.points[..] else { return Ok(false) };
+    let (first, last) = (value(first)?, value(last)?);
+    Ok(own.iter().any(|segment| segment.is(&wire.layer, first, last)))
+}
+
+/// Each wire that starts where the one before ends, on the same layer, width, net and type, joins it, unless one of them is in `own`.
+fn chain_wires(text: &str, own: &[Unchained]) -> Result<String, String> {
     let mut out = String::with_capacity(text.len());
     let mut open: Option<Wire> = None;
+    let mut open_is_own = false;
     let flush = |open: &mut Option<Wire>, out: &mut String| {
         if let Some(wire) = open.take() {
             out.push_str(&wire_line(&wire));
@@ -209,30 +240,35 @@ fn chain_wires(text: &str) -> String {
             out.push_str(line);
             continue;
         };
+        let next_is_own = is_own(&next, own)?;
         match open.as_mut() {
-            Some(wire) if wire.layer == next.layer && wire.width == next.width && wire.tail == next.tail && wire.points.last() == next.points.first() => {
+            Some(wire) if !open_is_own && !next_is_own && wire.layer == next.layer && wire.width == next.width && wire.tail == next.tail && wire.points.last() == next.points.first() => {
                 wire.points.extend(next.points.into_iter().skip(1));
             }
             _ => {
                 flush(&mut open, &mut out);
                 open = Some(next);
+                open_is_own = next_is_own;
             }
         }
     }
     flush(&mut open, &mut out);
-    out
+    Ok(out)
 }
 
-/// The API's DSN in KiCad 10's form. `starts` comes from the same board: `zone_starts`.
-pub fn kicad10_form(dsn: &str, starts: &[ZoneStart]) -> Result<String, String> {
+/// The API's DSN in KiCad 10's form. `starts` comes from the same board: `zone_starts`. `own`: the copper the job imported.
+pub fn kicad10_form(dsn: &str, starts: &[ZoneStart], own: &[Unchained]) -> Result<String, String> {
     let (text, planes) = take_planes(dsn)?;
+    // With the zones gone, a protected item is an unlocked track or via. KiCad 10 wrote those as `route`: wiring the router may move
+    // (ENV-SENSE repair pass, 2026-11-05: 239 route wires from KiCad 10, 242 protect wires from the nightly on the same nets).
+    let text = text.replace("(type protect)", "(type route)");
     let mut lines = String::new();
     for plane in &planes {
         let ring = from_zone_start(plane, starts)?;
         lines.push_str(&format!("    (plane {} {})\n", plane.net, shape_text("polygon", &plane.layer, &plane.width, &ring)));
     }
     let text = if lines.is_empty() { text } else { after_boundary(&text, &lines)? };
-    Ok(chain_wires(&text))
+    chain_wires(&text, own)
 }
 
 #[cfg(test)]
@@ -249,41 +285,58 @@ mod tests {
 
     #[test]
     fn the_nightly_text_becomes_the_kicad_10_text() {
-        assert_eq!(kicad10_form(NIGHTLY, &gnd()).unwrap(), KICAD10);
+        assert_eq!(kicad10_form(NIGHTLY, &gnd(), &[]).unwrap(), KICAD10);
     }
 
     #[test]
     fn a_kicad_10_text_stays_as_it_is() {
-        assert_eq!(kicad10_form(KICAD10, &gnd()).unwrap(), KICAD10);
+        assert_eq!(kicad10_form(KICAD10, &gnd(), &[]).unwrap(), KICAD10);
     }
 
     #[test]
     fn a_plane_no_zone_starts_on_stops_the_export() {
         let far = [ZoneStart { net: "GND".into(), layer: "B.Cu".into(), x: 1.0, y: 1.0 }];
-        assert!(kicad10_form(NIGHTLY, &far).unwrap_err().contains("no zone of GND"));
+        assert!(kicad10_form(NIGHTLY, &far, &[]).unwrap_err().contains("no zone of GND"));
         let other_layer = [ZoneStart { net: "GND".into(), layer: "F.Cu".into(), x: 130050.0, y: -130050.0 }];
-        assert!(kicad10_form(NIGHTLY, &other_layer).is_err());
+        assert!(kicad10_form(NIGHTLY, &other_layer, &[]).is_err());
     }
 
     #[test]
     fn a_zone_polygon_of_another_type_stops_the_export() {
         let text = NIGHTLY.replace("(type protect)", "(type route)");
-        assert!(kicad10_form(&text, &gnd()).unwrap_err().contains("not protected"));
+        assert!(kicad10_form(&text, &gnd(), &[]).unwrap_err().contains("not protected"));
     }
 
     #[test]
     fn wires_of_another_net_layer_width_or_type_do_not_chain() {
         for second in ["(wire (path B.Cu 250  3 3  4 4)(net A)(type fix))", "(wire (path F.Cu 200  3 3  4 4)(net A)(type fix))", "(wire (path F.Cu 250  3 3  4 4)(net B)(type fix))", "(wire (path F.Cu 250  3 3  4 4)(net A)(type route))", "(wire (path F.Cu 250  9 9  4 4)(net A)(type fix))"] {
             let text = format!("    (wire (path F.Cu 250  1 1  3 3)(net A)(type fix))\n    {second}\n");
-            assert_eq!(chain_wires(&text), text);
+            assert_eq!(chain_wires(&text, &[]).unwrap(), text);
         }
+    }
+
+    #[test]
+    fn an_unlocked_track_or_via_goes_out_as_route_wiring() {
+        let text = "  (wiring\n    (wire (path F.Cu 250  1 1  3 3)(net A)(type protect))\n    (wire (path F.Cu 250  5 5  6 6)(net A)(type fix))\n    (via \"V\" 3 3 (net A)(type protect))\n  )\n";
+        let form = kicad10_form(text, &[], &[]).unwrap();
+        assert_eq!(form, "  (wiring\n    (wire (path F.Cu 250  1 1  3 3)(net A)(type route))\n    (wire (path F.Cu 250  5 5  6 6)(net A)(type fix))\n    (via \"V\" 3 3 (net A)(type route))\n  )\n");
+    }
+
+    #[test]
+    fn copper_the_job_imported_stays_one_wire_per_track() {
+        let text = "    (wire (path F.Cu 250  100000 -100000  200000 -100000)(net A)(type fix))\n    (wire (path F.Cu 250  200000 -100000  300000 -100000)(net A)(type fix))\n    (wire (path F.Cu 250  300000 -100000  400000 -100000)(net A)(type fix))\n";
+        let own = [Unchained::of_track("F.Cu", (300_000_000, 100_000_000), (200_000_000, 100_000_000))];
+        let chained = "    (wire (path F.Cu 250  100000 -100000  200000 -100000)(net A)(type fix))\n    (wire (path F.Cu 250  200000 -100000  300000 -100000)(net A)(type fix))\n    (wire (path F.Cu 250  300000 -100000  400000 -100000)(net A)(type fix))\n";
+        assert_eq!(chain_wires(text, &own).unwrap(), chained);
+        let other_layer = [Unchained::of_track("B.Cu", (300_000_000, 100_000_000), (200_000_000, 100_000_000))];
+        assert_eq!(chain_wires(text, &other_layer).unwrap(), "    (wire (path F.Cu 250  100000 -100000  200000 -100000  300000 -100000  400000 -100000)(net A)(type fix))\n");
     }
 
     #[test]
     fn a_long_chain_wraps_as_kicad_does() {
         let line = |a: i32, b: i32| format!("    (wire (path F.Cu 250  {a}00000 -100000  {b}00000 -100000)(net A)(type fix))\n");
         let text: String = (1..6).map(|n| line(n, n + 1)).collect();
-        assert_eq!(chain_wires(&text), "    (wire (path F.Cu 250  100000 -100000  200000 -100000  300000 -100000  400000 -100000\n            500000 -100000  600000 -100000)(net A)(type fix))\n");
+        assert_eq!(chain_wires(&text, &[]).unwrap(), "    (wire (path F.Cu 250  100000 -100000  200000 -100000  300000 -100000  400000 -100000\n            500000 -100000  600000 -100000)(net A)(type fix))\n");
     }
 
     #[test]

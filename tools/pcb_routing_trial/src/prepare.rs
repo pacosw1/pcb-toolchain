@@ -201,17 +201,12 @@ pub fn prepare(request: PrepareRequest, env: &Environment) -> Result<Prepared> {
             "router threads exceed the admitted native CPU budget"
         },
     )?;
-    let python_default = if cfg!(target_os = "macos") {
-        "/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3"
-    } else {
-        "python3"
+    let tool = |name: &str, fallback: &str| {
+        executable(env.get(name).map_or(fallback, String::as_str), env)
     };
-    let python = executable(
-        env.get("KICAD_PYTHON")
-            .or_else(|| env.get("KICAD_PY"))
-            .map_or(python_default, String::as_str),
-        env,
-    )?;
+    let iotroute = tool("IOTROUTE_BIN", "iotroute")?;
+    let coverage = tool("ROUTE_COVERAGE_BIN", "route-coverage")?;
+    let api = tool("KICAD_API_CLI", "kicad-cli-nightly")?;
     let router_default = PathBuf::from(env.get("HOME").ok_or("HOME is unavailable")?)
         .join("opt/fastroute/fastroute-0.1.7-macos-arm64/fastroute");
     let router = executable(
@@ -232,37 +227,18 @@ pub fn prepare(request: PrepareRequest, env: &Environment) -> Result<Prepared> {
         ),
         env,
     )?;
-    let script = root.join("tools/fastroute_job.py");
-    ensure(
-        script.is_file(),
-        "existing fastroute job producer is missing from the snapshot",
-    )?;
     let features = features(&root, &cfg)?;
     let thermal = config.thermal();
     ensure(
         !(thermal && features["routing_rules"]["on"] == true),
         "native thermal checkback requires internal routing/repair stages disabled",
     )?;
-    for name in [
-        "tools/fastroute_job.py",
-        "tools/route_features.py",
-        "tools/route_rule_coverage.py",
-        "tools/route_project_coverage.py",
-        "tools/route_hole_coverage.py",
-        "tools/backend_quality.py",
-        "tools/route-features.json",
-    ] {
-        let path = root.join(name);
-        bindings.insert(path.clone(), hash(&path)?);
-    }
-    // The port binds its compiled implementation; legacy Python producer dependencies stay until their owners port them.
+    let path = root.join("tools/route-features.json");
+    bindings.insert(path.clone(), hash(&path)?);
+    // The port binds its compiled implementation and the job's binaries.
     let implementation = std::env::current_exe().map_err(|e| e.to_string())?;
-    for path in [&implementation, &python, &router, &kicad] {
+    for path in [&implementation, &iotroute, &coverage, &api, &router, &kicad] {
         bindings.insert(path.clone(), hash(path)?);
-    }
-    if thermal {
-        let path = root.join("tools/route_native_thermals.py");
-        bindings.insert(path.clone(), hash(&path)?);
     }
     for extension in ["kicad_pcb", "kicad_sch", "kicad_pro", "kicad_dru"] {
         let path = native.with_extension(extension);
@@ -276,7 +252,7 @@ pub fn prepare(request: PrepareRequest, env: &Environment) -> Result<Prepared> {
         env,
         &root,
         &board,
-        &python,
+        &[&iotroute, &coverage, &api],
         &router,
         &kicad,
         &context,
@@ -285,7 +261,7 @@ pub fn prepare(request: PrepareRequest, env: &Environment) -> Result<Prepared> {
     )?;
     let mut probes = Vec::new();
     let mut versions = BTreeMap::new();
-    for (name, path) in [("python", &python), ("router", &router), ("kicad", &kicad)] {
+    for (name, path) in [("iotroute", &iotroute), ("kicad_api", &api), ("router", &router), ("kicad", &kicad)] {
         versions.insert(
             name,
             probe(&[text(path), "--version".into()], &child_env, &mut probes)?,
@@ -294,7 +270,7 @@ pub fn prepare(request: PrepareRequest, env: &Environment) -> Result<Prepared> {
     let (backend, backend_bindings) =
         backend(&root, &router, &mut child_env, request.backend.as_ref())?;
     bindings.extend(backend_bindings);
-    let command = command(&python, &script, &native, &output, &config);
+    let command = command(&iotroute, &native, &output, &config);
     let parent = output.parent().ok_or("solver output has no parent")?;
     fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     let receipt = parent.join("execution-policy.json");
@@ -318,7 +294,8 @@ pub fn prepare(request: PrepareRequest, env: &Environment) -> Result<Prepared> {
         &features,
         &bindings,
         &versions,
-        &python,
+        &iotroute,
+        &api,
         &router,
         &kicad,
         &backend,
@@ -348,7 +325,7 @@ fn runtime_environment(
     env: &Environment,
     root: &Path,
     board: &str,
-    python: &Path,
+    job: &[&PathBuf; 3],
     router: &Path,
     kicad: &Path,
     context: &ExecutionContext,
@@ -369,9 +346,9 @@ fn runtime_environment(
         ("ROUTE_BOARD", board.into()),
         ("FASTROUTE_BIN", text(router)),
         ("KICAD_CLI", text(kicad)),
-        ("KICAD_PYTHON", text(python)),
-        ("KICAD_PY", text(python)),
-        ("PYTHONPATH", text(&root.join("tools"))),
+        ("IOTROUTE_BIN", text(job[0])),
+        ("ROUTE_COVERAGE_BIN", text(job[1])),
+        ("KICAD_API_CLI", text(job[2])),
         ("IOT_CPU_BUDGET", (context.cpus.floor() as u64).to_string()),
         ("IOT_RESOURCE_CPU", config.threads.to_string()),
         ("IOT_MEMORY_BUDGET_GIB", float_text(memory)),
@@ -389,15 +366,14 @@ fn float_text(value: f64) -> String {
     }
 }
 fn command(
-    python: &Path,
-    script: &Path,
+    iotroute: &Path,
     native: &Path,
     output: &Path,
     config: &RoutingPolicy,
 ) -> Vec<String> {
     let mut args = vec![
-        text(python),
-        text(script),
+        text(iotroute),
+        "fastroute".into(),
         text(native),
         text(output),
         "--preflight".into(),
@@ -430,7 +406,8 @@ fn policy(
     features: &Value,
     bindings: &BTreeMap<PathBuf, String>,
     versions: &BTreeMap<&str, String>,
-    python: &Path,
+    iotroute: &Path,
+    api: &Path,
     router: &Path,
     kicad: &Path,
     backend: &Value,
@@ -440,7 +417,7 @@ fn policy(
     runtime: Runtime,
 ) -> Result<Value> {
     let mut tools = json!({});
-    for (name, path) in [("python", python), ("router", router), ("kicad", kicad)] {
+    for (name, path) in [("iotroute", iotroute), ("kicad_api", api), ("router", router), ("kicad", kicad)] {
         tools[name] = json!({"version":versions[name], "sha256":hash(path)?});
     }
     let environment: BTreeMap<_, _> = [
@@ -450,8 +427,9 @@ fn policy(
         "FASTROUTE_BIN",
         "FASTROUTE_QUALITY_MANIFEST",
         "KICAD_CLI",
-        "KICAD_PYTHON",
-        "PYTHONPATH",
+        "KICAD_API_CLI",
+        "IOTROUTE_BIN",
+        "ROUTE_COVERAGE_BIN",
         "IOT_CPU_BUDGET",
         "IOT_RESOURCE_CPU",
         "IOT_MEMORY_BUDGET_GIB",

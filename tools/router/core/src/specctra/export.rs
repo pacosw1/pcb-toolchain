@@ -7,7 +7,7 @@ use crate::kicad::api::{Client, Server, read_board};
 use crate::kicad::board::Board;
 use crate::kicad::raw::{self, Form};
 use crate::kicad::save::WorkDir;
-use crate::specctra::kicad10::{kicad10_form, zone_starts};
+use crate::specctra::kicad10::{Unchained, kicad10_form, zone_starts};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -91,13 +91,14 @@ impl Throwaway {
     }
 
     /// Writes `text` here and reads it back as the API sees it, with the DSN of it in `dsn`, in KiCad 10's form, when one is asked for.
-    pub fn read(&self, text: &str, dsn: Option<&Path>) -> Result<Board, String> {
+    /// `own`: the copper the job imported, which stays one wire per track.
+    pub fn read(&self, text: &str, dsn: Option<&Path>, own: &[Unchained]) -> Result<Board, String> {
         fs::write(&self.board, text).map_err(|e| format!("{}: {e}", self.board.display()))?;
         let (_server, mut client) = Server::start(&self.board)?;
         if let Some(dsn) = dsn {
             export(&mut client, dsn)?;
             let exported = fs::read_to_string(dsn).map_err(|e| format!("{}: {e}", dsn.display()))?;
-            let form = kicad10_form(&exported, &zone_starts(text)?)?;
+            let form = kicad10_form(&exported, &zone_starts(text)?, own)?;
             fs::write(dsn, form).map_err(|e| format!("{}: {e}", dsn.display()))?;
         }
         read_board(&mut client, &self.board).map_err(|e| e.to_string())

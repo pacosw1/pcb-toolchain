@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
-import { iotrouteMissing } from './iotroute-bin.ts';
+import { iotrouteBin, iotrouteMissing } from './iotroute-bin.ts';
 import { sha256File as sha } from './json-file.ts';
 import { finalize, prepare, type Prepared, validate } from './pcb-routing-trial.ts';
 
@@ -31,7 +31,6 @@ function fixture(t: { after(fn: () => void): void }) {
   for (const suffix of ['kicad_pcb', 'kicad_sch', 'kicad_pro', 'kicad_dru']) writeFileSync(native.replace(/kicad_pcb$/, suffix), `synthetic ${suffix}`);
   mkdirSync(join(root, 'tools/lib'), { recursive: true });
   copyFileSync(fileURLToPath(new URL('./gate-core.mjs', import.meta.url)), join(root, 'tools/lib/gate-core.mjs'));
-  for (const name of ['fastroute_job.py', 'route_rule_coverage.py', 'route_features.py']) writeFileSync(join(root, 'tools', name), '# synthetic producer identity; never executed\n');
   json(join(root, 'tools/route-features.json'), { features: { routing_rules: { on: true, repair_iterations: 2 } } });
   const bin = (name: string): string => {
     const path = join(root, 'bin', name);
@@ -39,12 +38,13 @@ function fixture(t: { after(fn: () => void): void }) {
     writeFileSync(path, `#!/bin/sh\necho ${name} 1.0\n`, { mode: 0o755 });
     return path;
   };
-  const python = bin('python'), router = bin('router'), kicad = bin('kicad');
-  Object.assign(process.env, { KICAD_PYTHON: python, FASTROUTE_BIN: router, KICAD_CLI: kicad, IOT_CPU_BUDGET: '4', IOT_MEMORY_BUDGET_GIB: '4', IOT_JOB_MEMORY_GIB: '2' });
+  // The real binary: the owned stage runner is this binary too.
+  const iotroute = iotrouteBin(), router = bin('router'), kicad = bin('kicad');
+  Object.assign(process.env, { ROUTE_COVERAGE_BIN: bin('route-coverage'), KICAD_API_CLI: bin('kicad-api'), FASTROUTE_BIN: router, KICAD_CLI: kicad, IOT_CPU_BUDGET: '4', IOT_MEMORY_BUDGET_GIB: '4', IOT_JOB_MEMORY_GIB: '2' });
   delete process.env.ROUTE_BOARD; delete process.env.ROUTE_FEATURES; delete process.env.ROUTE_FEATURES_FILE; delete process.env.FASTROUTE_QUALITY_MANIFEST;
   let counter = 0;
   const start = (config: unknown = CONFIG): Promise<Prepared> => prepare(root, native, join(root, `run-${++counter}/operation/router`), config, 20, 'TRIAL', 'native');
-  return { root, native, router, start };
+  return { root, native, router, iotroute, start };
 }
 
 /** What a complete job leaves behind. `coverageStatus` of the stage gate; `launched` is whether the solver then ran. */
@@ -92,7 +92,7 @@ test('the policy accepts exactly its fields and fits the whole deadline', () => 
 
 test('preparation binds the normalized configuration and observed controls before launch', needsBinary, async t => {
   const f = fixture(t), prepared = await f.start();
-  assert.equal(prepared.command[1], join(f.root, 'tools/fastroute_job.py'));
+  assert.deepEqual(prepared.command.slice(0, 2), [f.iotroute, 'fastroute']);
   assert.deepEqual(prepared.command.slice(4, 13), ['--preflight', '--skip-net', '', '--plane-nets', '', '--only-nets', '/A,/B', '--layers', 'F.Cu,B.Cu']);
   const policy = prepared.policy as Row;
   assert.equal(policy.schema, 'iot-lab.placement-outcome-execution.v2');
@@ -143,7 +143,7 @@ test('a failed router keeps its verdict and any stuck candidate stays a candidat
 test('changed tools, inputs, outputs and configuration are rejected', needsBinary, async t => {
   const f = fixture(t);
   const tampered: [(output: string, prepared: Prepared) => void, RegExp][] = [
-    [() => writeFileSync(join(f.root, 'tools/route_features.py'), '# changed\n'), /input\/tool changed/],
+    [() => writeFileSync(join(f.root, 'tools/route-features.json'), '{"features": {}}\n'), /input\/tool changed/],
     [output => change(join(output, 'input-manifest.json'), value => { value.configuration.passes = 9; }), /effective configuration differs/],
     [output => change(join(output, 'input-manifest.json'), value => { value.board_sha256 = 'a'.repeat(64); }), /another placement input/],
     [output => change(join(output, 'input-manifest.json'), value => { value.router_sha256 = 'a'.repeat(64); }), /router binary differs/],
@@ -158,11 +158,11 @@ test('changed tools, inputs, outputs and configuration are rejected', needsBinar
     [output => rmSync(join(output, 'outcome.json')), /lacks a complete candidate outcome/],
   ];
   for (const [mutate, cause] of tampered) {
-    const original = readFileSync(join(f.root, 'tools/route_features.py'));
+    const original = readFileSync(join(f.root, 'tools/route-features.json'));
     const prepared = await f.start(), output = routerOutput(f, prepared);
     mutate(output, prepared);
     assert.throws(() => finalize(prepared, 0), cause);
-    writeFileSync(join(f.root, 'tools/route_features.py'), original);
+    writeFileSync(join(f.root, 'tools/route-features.json'), original);
   }
 });
 

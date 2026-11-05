@@ -33,18 +33,7 @@ impl Fixture {
         let tools = root.join("tools");
         fs::create_dir_all(tools.join("lib")).unwrap();
         let original = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-        // Copy the existing producers as inert inputs. No Python process is started by any test.
-        for name in [
-            "fastroute_job.py",
-            "route_features.py",
-            "route_rule_coverage.py",
-            "route_project_coverage.py",
-            "route_hole_coverage.py",
-            "backend_quality.py",
-            "route-features.json",
-            "route_native_thermals.py",
-            "lib/gate-core.mjs",
-        ] {
+        for name in ["route-features.json", "lib/gate-core.mjs"] {
             fs::copy(original.join(name), tools.join(name)).unwrap();
         }
         write(
@@ -64,7 +53,7 @@ impl Fixture {
             ("IOT_CPU_BUDGET".into(), "1".into()),
             ("IOT_MEMORY_BUDGET_GIB".into(), "2".into()),
         ]);
-        for name in ["KICAD_PYTHON", "FASTROUTE_BIN", "KICAD_CLI"] {
+        for name in ["IOTROUTE_BIN", "ROUTE_COVERAGE_BIN", "KICAD_API_CLI", "FASTROUTE_BIN", "KICAD_CLI"] {
             env.insert(name.into(), text(&executable));
         }
         let output = root.join("run/operation/router");

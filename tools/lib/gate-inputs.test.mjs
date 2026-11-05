@@ -115,7 +115,7 @@ test('a real board fingerprints the executed gate tools and no tests, viewers or
  const root=fileURLToPath(new URL('../..',import.meta.url)).replace(/\/$/,'');
  const paths=fingerprint(root,gateInputs(root,'BASE-PWR').files).inputs.map(i=>i.path);
  for(const p of ['tools/gate.mjs','tools/lib/gate-core.mjs','tools/si_planes.ts','tools/lib/si-native.ts','tools/pcbtool.ts','tools/edge-rates.json']) assert.ok(paths.includes(p),p);
- for(const p of ['tools/route_live.py','tools/board_frame.py','tools/fastroute_job.py','tools/route-features.json','tools/hooks/pre-commit','tools/lib/staged-gates.mjs']) assert.ok(!paths.includes(p),p);
+ for(const p of ['tools/route-features.json','tools/hooks/pre-commit','tools/lib/staged-gates.mjs']) assert.ok(!paths.includes(p),p);
  assert.deepEqual(paths.filter(p=>/(^|\/)test_[^/]*\.py$|\.test\.mjs$|\/test-/.test(p)),[]);
  assert.ok(paths.filter(p=>p.startsWith('tools/')).length<40,'tools inputs stay a short executed closure');
 });

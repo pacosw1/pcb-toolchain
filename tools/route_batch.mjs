@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Unattended routing batches for a board on the gate runner. No model is in the loop: Freerouting proposes,
+// Unattended routing batches for a board on the gate runner. No model is in the loop: Fastroute proposes,
 // the gate decides, git keeps only what passes.
 //
 //   node tools/route_batch.mjs <BOARD> [--size 8] [--batches 10] [--layers F.Cu,B.Cu] [--timeout 00:03:30]
@@ -8,7 +8,7 @@
 // One batch:
 //   1. node tools/gate.mjs + tools/route_plan.mjs give the open SLOW nets, shortest first. Power nets and fast
 //      nets are never routed here (they need width, pairs and reference planes: hand work).
-//   2. Freerouting routes the next --size nets on the Hetzner box (tools/remote.sh; --local uses this computer).
+//   2. iotroute fastroute routes the next --size nets on the Hetzner box (tools/remote.sh; --local uses this computer).
 //   3. tools/import_nets.ts puts the new copper of these nets on the board. The gate runs with
 //      --ratchet --strict against git HEAD. Accept = no gate is worse and fewer connections are open.
 //   4. Accept: git commit (board + gate-metrics.json). Reject: git checkout the board, then bisect the net list
@@ -22,7 +22,7 @@ import {execFileSync} from 'node:child_process';
 import {readFileSync, writeFileSync, appendFileSync, existsSync, mkdtempSync, copyFileSync} from 'node:fs';
 import {join, relative} from 'node:path';
 import {tmpdir} from 'node:os';
-import {root, kicadPython, TS_NODE} from './lib/env.mjs';
+import {root, TS_NODE} from './lib/env.mjs';
 
 const args = process.argv.slice(2);
 const opt = (name, dflt) => (args.includes(name) ? args[args.indexOf(name) + 1] : dflt);
@@ -79,13 +79,21 @@ function plan() {
   return list.filter((n) => n.cls === 'slow' && !/GND/.test(n.name) && n.mm <= maxMm && !state.failed.includes(n.name));
 }
 
-// Freerouting on the listed nets. Returns the candidate board path, or null.
+// Fastroute on the listed nets. Returns the candidate board path, or null.
+const seconds = (text) => text.split(':').reduce((sum, part) => sum * 60 + Number(part), 0);
 function route(nets, work) {
   const cand = join(work, 'cand.kicad_pcb');
-  const fr = ['tools/freeroute.py', pcbRel, flag('--local') ? cand : 'out/cand.kicad_pcb', '--no-live', '--layers', layers, '--timeout', timeout, '--nets', nets.join(',')];
-  if (flag('--local')) return ok(kicadPython, fr) && existsSync(cand) ? cand : null;
+  // Exit 3 is a routed board with connections left open: the gate decides on it, so only the board counts here.
+  const job = (bin, out) => [bin, 'fastroute', pcbRel, out, '--layers', layers, '--max-time', String(seconds(timeout)), '--skip-net', '', '--plane-nets', '', '--only-nets', nets.join(',')];
+  if (flag('--local')) {
+    const out = join(work, 'job');
+    const [bin, ...words] = job(sh(process.execPath, [...TS_NODE, 'tools/lib/iotroute-bin.ts']).trim(), out);
+    ok(bin, words);
+    if (existsSync(join(out, 'routed.kicad_pcb'))) copyFileSync(join(out, 'routed.kicad_pcb'), cand);
+    return existsSync(cand) ? cand : null;
+  }
   const env = {...process.env, REMOTE_MEM: process.env.REMOTE_MEM ?? '8g', REMOTE_CPUS: process.env.REMOTE_CPUS ?? '8', REMOTE_TIMEOUT: process.env.REMOTE_TIMEOUT ?? '900'};
-  ok('bash', ['tools/remote.sh', boardRel, '--results', work, '--', 'python3', ...fr], {env});
+  ok('bash', ['tools/remote.sh', boardRel, '--in', 'bin/iotroute-linux-x86_64', '--results', work, '--', 'bash', '-c', 'chmod +x in/iotroute-linux-x86_64; "$@"; cp out/job/routed.kicad_pcb out/cand.kicad_pcb', '_', ...job('in/iotroute-linux-x86_64', 'out/job')], {env});
   return existsSync(cand) ? cand : null;
 }
 

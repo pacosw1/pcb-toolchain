@@ -10,7 +10,7 @@ import { candidateLayoutCheck, designAdmission, type OperationManifest, placemen
 import { parentCandidate } from './pcb-candidate.ts';
 import { declaredPours, pcbIdentity, type PourSet } from './pcb-identity.ts';
 import { type Emit, execute, measuredStage, operationEvent, type Row } from './pcb-operation-log.ts';
-import { finalize, prepare, type Prepared } from './pcb-routing-trial.ts';
+import { finalize, prepare, type Prepared, routeJobEnv, routeJobTools } from './pcb-routing-trial.ts';
 import { snapshot, sourceState, type SourceState } from './pcb-sources.ts';
 import { boardConfig, operationCommand, pythonNative, routePolicyArgs } from './pcb-workflow.ts';
 import { fileRoot } from './project-root.mjs';
@@ -139,14 +139,15 @@ async function fastroute(run: Candidate): Promise<ToolOutcome> {
   return { code, report };
 }
 
-/** tools/route.py from the snapshot: it reads the candidate and writes only its own folder. */
+/** `iotroute route`: it reads the candidate and writes only its own folder. */
 async function routeJson(run: Candidate): Promise<ToolOutcome> {
   const output = join(run.folder, 'operation/router');
-  const code = await execute(run.folder, 'route', [pythonNative(), 'tools/route.py', run.board, output, '--input', run.native, '--config', run.spec!], run.workspace, run.env);
+  const tools = routeJobTools();
+  const code = await execute(run.folder, 'route', [tools.iotroute, 'route', run.board, output, '--input', run.native, '--config', run.spec!], run.workspace, { ...run.env, ...routeJobEnv(tools) });
   const report = readObject<Row>(join(output, 'result.json'));
   atomicJson(join(run.folder, 'operation/router-summary.json'), report);
   if (!code) {
-    if (!report.board_file || !isFile(String(report.board_file))) throw new Error('route.py returned success without its board_file');
+    if (!report.board_file || !isFile(String(report.board_file))) throw new Error('iotroute route returned success without its board_file');
     copyFileSync(String(report.board_file), run.native);
   }
   return { code, report };

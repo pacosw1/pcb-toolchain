@@ -8,6 +8,7 @@ import type { SaveReport } from './board-edit.ts';
 import type { Board } from './board-types.ts';
 import { atomicJson, sha256File } from './json-file.ts';
 import { fingerprint } from './fingerprint.ts';
+import { sourcesSha } from './iotroute-bin.ts';
 import { resolvePath, withSuffix } from './py-path.ts';
 import { bridgeUuid, mm, prepareShift, protectedGeometry, selectGap, selectVia, verifyCopperScope } from './route-decision-board.ts';
 import type { Choice, RejectedGap } from './route-decision-board.ts';
@@ -154,11 +155,12 @@ export function retryKey(sourceBoard: string, configuration: unknown): string {
   const tools = resolvePath(fileURLToPath(new URL('..', import.meta.url))), policy: Hashes = {};
   for (const name of [...IMPLEMENTATION_RETRY, 'route-features.json']) policy[name] = sha256File(join(tools, name));
   // Bind the route pipeline while its callers are moving independently on this branch.
-  for (const name of ['fastroute_job.py', 'fastroute_job.ts', 'route_grid.py', 'route_grid.ts', 'route_features.py', 'route_features.ts',
-    'routing_rules.py', 'routing_rules.ts', 'lib/lean-workflow.ts']) {
+  for (const name of ['lib/lean-workflow.ts']) {
     const file = join(tools, name); if (existsSync(file)) policy[name] = sha256File(file);
   }
-  for (const name of ['ROUTE_FEATURES_FILE', 'FASTROUTE_BIN', 'KICAD_CLI', 'ROUTE_GRID_BIN']) {
+  // The job, its grid and its rules are the router core.
+  if (existsSync(join(tools, 'router/core/src'))) policy['router/core'] = sourcesSha(join(tools, 'router/core'));
+  for (const name of ['ROUTE_FEATURES_FILE', 'FASTROUTE_BIN', 'KICAD_CLI', 'IOTROUTE_BIN', 'ROUTE_COVERAGE_BIN']) {
     const path = process.env[name]; if (path && existsSync(path)) policy[path] = sha256File(path);
   }
   return fingerprint({ inputs: files, configuration, policy, environment: Object.fromEntries(Object.entries(process.env).filter(([key]) => /^(ROUTE_|FASTR|KICAD|IOT_LEAN)/.test(key))) });
