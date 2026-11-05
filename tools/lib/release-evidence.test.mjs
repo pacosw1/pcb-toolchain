@@ -164,7 +164,10 @@ test('atomic publication refuses an existing empty destination without nesting o
 test('BASE exporter honors staged output and the chosen KiCad executable without replacing canonical files',t=>{
  const f=fixture(t),tools=join(f.root,'tools');mkdirSync(tools,{recursive:true});
  writeFileSync(join(tools,'make-base-pwr-fab.sh'),readFileSync(new URL('../make-base-pwr-fab.sh',import.meta.url)));
- writeFileSync(join(tools,'pack-fab.py'),readFileSync(new URL('../pack-fab.py',import.meta.url)));
+ for(const file of ['pack-fab.ts','lib/zip-write.ts','lib/zip-read.mjs','lib/cli.ts','lib/py-compat.mjs']) {
+  mkdirSync(join(tools,file,'..'),{recursive:true});
+  writeFileSync(join(tools,file),readFileSync(new URL('../'+file,import.meta.url)));
+ }
  f.put(f.prefix+'/cad/fab/keep','canonical artifact');
  const fake=join(f.root,'fake-kicad');writeFileSync(fake,'#!/usr/bin/env python3\nimport pathlib,sys\na=sys.argv[1:];p=pathlib.Path(a[a.index("-o")+1])\nif str(p).endswith("gerber"):\n p.mkdir(exist_ok=True);(p/"fixture.gbr").write_text("fixture")\nelse:\n p.parent.mkdir(parents=True,exist_ok=True);p.write_text("Ref,Val,Package,PosX,PosY,Rot,Side\\nR1,10R,0603,10,-20,-90,top\\n")\n',{mode:0o755});
  const out=join(f.root,'new-fab'),render=join(f.root,'new-renders'),env={...process.env,FAB_OUT:out,RENDER_OUT:render,KICAD_CLI:fake};
@@ -173,11 +176,28 @@ test('BASE exporter honors staged output and the chosen KiCad executable without
  const before=fileHashes(out),again=spawnSync('sh',[join(tools,'make-base-pwr-fab.sh')],{env,encoding:'utf8'});assert.notEqual(again.status,0);assert.deepEqual(fileHashes(out),before);
 });
 test('fabrication packaging is deterministic and never overwrites existing archives',t=>{
- const f=fixture(t),helper=new URL('../pack-fab.py',import.meta.url).pathname;
- const a=join(f.root,'one.zip'),b=join(f.root,'two.zip');
- for(const destination of [a,b]){const r=spawnSync('python3',[helper,join(f.fab,'gerber'),destination],{encoding:'utf8'});assert.equal(r.status,0,r.stderr);}
+ const root=mkdtempSync(join(tmpdir(),'release-packaging-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
+ const input=join(root,'gerber');mkdirSync(input);writeFileSync(join(input,'fixture.gbr'),'G04 original fabrication bytes*\nM02*\n');
+ const helper=new URL('../pack-fab.ts',import.meta.url).pathname,args=['--experimental-strip-types','--no-warnings',helper,input];
+ const a=join(root,'one.zip'),b=join(root,'two.zip');
+ for(const destination of [a,b]){const r=spawnSync(process.execPath,[...args,destination],{encoding:'utf8'});assert.equal(r.status,0,r.stderr);}
  assert.deepEqual(readFileSync(a),readFileSync(b));const before=readFileSync(a);
- assert.notEqual(spawnSync('python3',[helper,join(f.fab,'gerber'),a],{encoding:'utf8'}).status,0);assert.deepEqual(readFileSync(a),before);
+ assert.notEqual(spawnSync(process.execPath,[...args,a],{encoding:'utf8'}).status,0);assert.deepEqual(readFileSync(a),before);
+});
+test('release inputs bind the TypeScript packer and its ZIP implementation',t=>{
+ const root=mkdtempSync(join(tmpdir(),'release-pack-inputs-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
+ const board=join(root,'hardware-design/boards/X');mkdirSync(board,{recursive:true});
+ writeFileSync(join(board,'gate.json'),JSON.stringify({release:{maker:'tools/make-x.sh',fab:'fab'}}));
+ for(const file of ['pack-fab.ts','lib/zip-write.ts','lib/zip-read.mjs','lib/cli.ts','lib/py-compat.mjs']) {
+  const target=join(root,'tools',file);mkdirSync(join(target,'..'),{recursive:true});
+  writeFileSync(target,readFileSync(new URL('../'+file,import.meta.url)));
+ }
+ const first=releaseInputs(root,'X');
+ assert.equal(first['tools/pack-fab.ts'],sha256(readFileSync(new URL('../pack-fab.ts',import.meta.url))));
+ assert.equal(first['tools/lib/zip-write.ts'],sha256(readFileSync(new URL('./zip-write.ts',import.meta.url))));
+ assert.equal(Object.hasOwn(first,'tools/pack-fab.py'),false);
+ writeFileSync(join(root,'tools/lib/zip-write.ts'),'changed zip implementation');
+ assert.notEqual(releaseInputs(root,'X')['tools/lib/zip-write.ts'],first['tools/lib/zip-write.ts']);
 });
 test('a board without a release entry in its gate config fails with a clear message',t=>{
  const f=fixture(t);f.put(f.prefix+'/gate.json',{project:`cad/${f.board}/${f.board}`,checks:{erc:true}});

@@ -376,7 +376,6 @@ tools/lib/xml-read.mjs
 tools/lib/zip-read.d.mts
 tools/lib/zip-read.mjs
 tools/lib/zip-write.ts
-tools/pack-fab.py
 tools/pack-fab.ts
 tools/package-lock.json
 tools/package.json
