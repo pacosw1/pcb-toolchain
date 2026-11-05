@@ -25,9 +25,11 @@ export function writeBundleManifest(root, version, sourceSha) {
   }
   walk(root)
   entries.sort(([a], [b]) => compareCodepoints(a, b))
-  const manifest = { files: Object.fromEntries(entries), schema: 'pcb-toolchain.manifest.v1', source_sha: sourceSha, version }
-  // Python's previous json.dump(indent=1, sort_keys=True) defaulted to ASCII escapes.
-  const text = JSON.stringify(manifest, null, 1).replace(/[\u007f-\uffff]/g, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)
+  // Do not stringify the file map as an object: JS reorders integer-like keys,
+  // whereas the previous Python writer sorted every filename lexicographically.
+  const quote = value => JSON.stringify(value).replace(/[\u007f-\uffff]/g, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)
+  const files = entries.length ? `{\n${entries.map(([name, hash]) => `  ${quote(name)}: ${quote(hash)}`).join(',\n')}\n }` : '{}'
+  const text = `{\n "files": ${files},\n "schema": "pcb-toolchain.manifest.v1",\n "source_sha": ${quote(sourceSha)},\n "version": ${quote(version)}\n}`
   fs.writeFileSync(path.join(root, 'manifest.json'), text)
   return entries.length
 }

@@ -16,9 +16,13 @@ test('release manifest is sorted, source-bound, and ASCII escaped', t => {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
   write(path.join(root, 'z', 'é.txt'), 'abc')
   write(path.join(root, 'a'), 'abc')
-  assert.equal(writeBundleManifest(root, 'v☃', 'abc123'), 2)
+  write(path.join(root, '2'), 'abc')
+  write(path.join(root, '10'), 'abc')
+  assert.equal(writeBundleManifest(root, 'v☃', 'abc123'), 4)
   assert.equal(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'), `{
  "files": {
+  "10": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+  "2": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
   "a": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
   "z/\\u00e9.txt": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
  },
