@@ -1,5 +1,4 @@
-// CLI admission for the Node check supervisor. A requested cycle is not
-// admitted here until cycle attachment has the same lock ownership guarantees.
+// CLI admission for the Node check supervisor.
 import { basename } from 'node:path';
 import { parseArgs } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -45,12 +44,11 @@ async function main(argv: string[]): Promise<number> {
     changed: { type: 'boolean' }, fresh: { type: 'boolean' }, baseline: { type: 'string' }, cycle: { type: 'string' },
   } });
   if (positionals.length !== 1) throw new Error('check requires one board ID');
-  if (values.cycle) throw new Error('cycle attachment is not yet available in the Node check supervisor');
   if (values.detach && values.follow) throw new Error('--detach and --follow cannot be used together');
   if (values.changed && values.fresh) throw new Error('--changed and --fresh cannot be used together');
   const root = projectRoot(explicit), base = values['runs-dir'] ?? process.env.PCB_RUNS_DIR ?? `${root}/.gate/cli`;
   const folder = await startCheck({ root, base, board: positionals[0]!, timeout: Number(values.timeout), heartbeat: Number(values.heartbeat),
-    changed: values.changed, fresh: values.fresh, baseline: values.baseline });
+    changed: values.changed, fresh: values.fresh, baseline: values.baseline, cycle: values.cycle });
   if (values.detach) {
     if (values.json) console.log(jsonDumps(status(folder)));
     else console.log(`START: ${basename(folder)}; tools/pcb events ${basename(folder)} --wait 20`);

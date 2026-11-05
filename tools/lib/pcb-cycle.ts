@@ -92,7 +92,7 @@ export function create(rootPath: string, basePath: string, board: string, owner:
   return summarize(folder, options);
 }
 
-export async function mutate(folder: string, update: (data: CycleRecord) => void, options: CycleOptions): Promise<void> {
+export async function mutate(folder: string, update: (data: CycleRecord) => void, options: Pick<CycleOptions, 'withLock'>): Promise<void> {
   await options.withLock(join(folder, 'cycle.lock'), () => {
     const data = read(join(folder, 'cycle.json'));
     if (data.status !== 'open') throw new Error('engineering observation cycle is closed');
@@ -121,7 +121,7 @@ export async function end(folder: string, activityId: string, outcome: string, e
   return summarize(folder, options);
 }
 
-export async function attach(folder: string, runPath: string, options: CycleOptions, explicitStage?: Stage): Promise<void> {
+export async function attach(folder: string, runPath: string, options: Pick<CycleOptions, 'withLock'>, explicitStage?: Stage): Promise<void> {
   const runFolder = realpathSync(runPath), manifest = readObject<RunManifest>(join(runFolder, 'run.json'));
   const stage = explicitStage || (manifest.operation === 'design' ? manifest.design_stage : undefined) || OPERATION_STAGE[manifest.operation];
   if (!isStage(stage)) throw new Error('operation requires an explicit engineering stage');

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -67,6 +67,23 @@ test('installed pcb check admits a detached run without Python', { skip: !exists
   assert.match(state.run_id, /^run-/);
   const result = await settled(join(root, '.gate/cli', state.run_id));
   assert.equal(result.status, 'passed');
+});
+
+test('check attaches to an open cycle without Python', needsBinary, async t => {
+  const root = fixture(t, gate(0)), base = join(root, '.gate/cli'), cycle = join(base, 'cycle-test');
+  mkdirSync(cycle, { recursive: true });
+  writeFileSync(join(cycle, 'cycle.json'), JSON.stringify({ root: realpathSync(root), board: 'X', status: 'open', runs: [] }));
+  const shim = join(root, 'shim'); mkdirSync(shim);
+  writeFileSync(join(shim, 'python3'), '#!/bin/sh\nexit 72\n', { mode: 0o755 });
+  const cli = fileURLToPath(new URL('../pcb-check.ts', import.meta.url));
+  const call = spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', cli, '--project', root, 'check', 'X', '--cycle', 'cycle-test', '--detach', '--json'], {
+    encoding: 'utf8', env: { ...process.env, PATH: `${shim}:${process.env.PATH}` },
+  });
+  assert.equal(call.status, 0, call.stderr || call.stdout);
+  const state = JSON.parse(call.stdout), record = JSON.parse(readFileSync(join(cycle, 'cycle.json'), 'utf8'));
+  assert.equal(record.runs[0].run_id, state.run_id);
+  assert.equal(record.runs[0].stage, 'verification');
+  assert.equal((await settled(join(base, state.run_id))).status, 'passed');
 });
 
 test('conflicting check flags fail before creating a run', () => {

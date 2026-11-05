@@ -62,9 +62,6 @@ case "${1:-}" in
 esac
 case "$command" in
   list|context|next|status|events|explain|cancel|note|benchmark) exec node --experimental-strip-types --no-warnings "$bundle/tools/pcb-observe.ts" "$@" ;;
-  check)
-    check_has_cycle=''
-    for arg in "$@"; do case "$arg" in --cycle|--cycle=*) check_has_cycle=1 ;; esac; done
-    if [ -z "$check_has_cycle" ]; then exec node --experimental-strip-types --no-warnings "$bundle/tools/pcb-check.ts" "$@"; fi ;;
+  check) exec node --experimental-strip-types --no-warnings "$bundle/tools/pcb-check.ts" "$@" ;;
 esac
 exec python3 "$bundle/tools/pcb" "$@"
