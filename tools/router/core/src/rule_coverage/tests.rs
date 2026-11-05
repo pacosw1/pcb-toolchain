@@ -239,6 +239,8 @@ fn quoted_net_operator_characters_remain_literal_and_relevant() {
         let row = &result.requirements[0];
         assert_eq!(row.disposition, Disposition::WeakerThanNative);
         assert_eq!(row.witness, Some(Witness { active: active.to_string(), obstacle: Some(POE.to_string()) }));
+        assert_eq!(row.required_mm.as_deref(), Some("3"));
+        assert_eq!(row.model_floor_mm.as_deref(), Some("0.200"));
     }
 }
 
@@ -383,8 +385,18 @@ fn reference_stitching_requires_actual_single_layer_active_net_mask() {
     assert_passed(&passed);
     assert_eq!(passed.requirements[0].disposition, Disposition::Covered);
     assert_blocked(&stitched(&both, &Dsn { mask: Some(&["Unknown.Cu"]), ..Dsn::default() }.text()));
-    assert_blocked(&stitched(&["F.Cu"], &dsn("200")));
-    assert_passed(&stitched(&["F.Cu"], &Dsn { mask: Some(&["F.Cu"]), ..Dsn::default() }.text()));
+}
+
+#[test]
+fn requested_single_layer_does_not_replace_actual_dsn_active_net_mask() {
+    let fake = Fake::default();
+    let stitched = |model: &str| {
+        let mut run = Run::new(&fake).layers(&["F.Cu"]);
+        run.stitching = true;
+        run.inspect("", model)
+    };
+    assert_blocked(&stitched(&dsn("200")));
+    assert_passed(&stitched(&Dsn { mask: Some(&["F.Cu"]), ..Dsn::default() }.text()));
 }
 
 #[test]
@@ -567,6 +579,7 @@ fn applicable_power_class_raises_every_weak_declaration_without_using_unused_cla
     assert_eq!(receipt.requirement.required_mm, "0.3");
     let netclasses: Vec<_> = receipt.requirement.requirements.iter().filter_map(|row| row.netclass.as_deref()).collect();
     assert_eq!(netclasses, ["Default", "POE"]);
+    assert!(!format!("{:?}", receipt.requirement.requirements).contains("UNUSED"));
     assert_eq!(receipt.before_sha256, sha256(model.as_bytes()));
     assert_eq!(receipt.after_sha256, sha256(actual.as_bytes()));
     assert_eq!(receipt.project.sha256, sha256(default_project().as_bytes()));
@@ -677,6 +690,7 @@ fn unused_native_mapping_without_dsn_membership_does_not_set_the_floor() {
     assert_eq!(changed, dsn("300"));
     assert_eq!(receipt.requirement.required_mm, "0.3");
     assert!(!receipt.requirement.counterparts.iter().any(|net| net == "UNUSED_DECLARATION"));
+    assert!(!format!("{:?}", receipt.requirement.requirements).contains("UNUSED"));
 }
 
 #[test]

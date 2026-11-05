@@ -122,7 +122,7 @@ fn pads_only_disposition_cannot_hide_moved_or_changed_base_footprints() {
 #[test]
 fn input_changed_during_admission_is_blocked_even_when_decision_was_passed() {
     let fixture = Fixture::new();
-    let paths = [fixture.board(), fixture.base(), fixture.rules(), fixture.board().with_extension("kicad_pro"), fixture.model(), fixture.gate()];
+    let paths = [fixture.board(), fixture.base(), fixture.rules(), fixture.base().with_extension("kicad_dru"), fixture.board().with_extension("kicad_pro"), fixture.base().with_extension("kicad_pro"), fixture.model(), fixture.gate()];
     for path in paths {
         let before = fs::read(&path).unwrap();
         let fake = Fake::default();
@@ -145,7 +145,8 @@ fn changed_dsn_is_reinterpreted_and_gate_stitching_is_not_ignored() {
     fixture.write(&fixture.gate(), r#"{"checks": {"drc": true, "kicad_happy": true}}"#);
     let pending = fixture.check(&Fake::default()).unwrap();
     assert_eq!(pending.status, Status::PendingNative, "{pending:?}");
-    assert_eq!(pending.native_postconditions.as_ref().unwrap()[0]["enforcement"], "configured-gate");
+    let enforcement: Vec<&Value> = pending.native_postconditions.as_ref().unwrap().iter().map(|item| &item["enforcement"]).collect();
+    assert_eq!(enforcement, ["configured-gate"]);
     assert_eq!(pending.files.as_ref().unwrap().model_status, "partial");
     fixture.write(&fixture.model(), &Dsn { mask: Some(&["F.Cu"]), ..Dsn::default() }.text());
     assert_eq!(fixture.check(&Fake::default()).unwrap().status, Status::Passed);
@@ -163,6 +164,7 @@ fn unknown_native_hole_geometry_cannot_be_silently_omitted() {
     fixture.write(&fixture.model(), &Dsn { clearance: "3000", mask: Some(&["F.Cu"]), ..Dsn::default() }.text());
     let relevant = fixture.check(&fake).unwrap();
     assert_eq!(relevant.status, Status::Blocked, "{relevant:?}");
+    assert!(!relevant.solver_launch_allowed);
     assert_eq!(relevant.requirements[0].disposition, Disposition::Unsupported);
     assert_eq!(relevant.native_pth_geometry_unknown.as_deref(), Some("unsupported offset drill"));
 }
@@ -173,6 +175,7 @@ fn malformed_custom_rules_keep_the_blocked_receipts_source_bindings() {
     fixture.write_rules("(rule \"unterminated)");
     let result = fixture.check(&Fake::default()).unwrap();
     assert_eq!(result.status, Status::Blocked, "{result:?}");
+    assert!(!result.solver_launch_allowed);
     assert_eq!(result.files.unwrap().inputs[&fixture.rules().display().to_string()], hash(&fixture.rules()));
 }
 
@@ -254,6 +257,7 @@ fn an_invalid_native_capability_blocks_even_when_the_thermal_requirement_is_inac
     *fake.capability.borrow_mut() = Some(Err("missing native input evidence".to_string()));
     let result = fixture.check_with(&fake, None, Some(&json!({}))).unwrap();
     assert_eq!(result.status, Status::Blocked);
+    assert!(!result.solver_launch_allowed);
     assert!(result.cause.contains("missing native input evidence"), "{}", result.cause);
 }
 
