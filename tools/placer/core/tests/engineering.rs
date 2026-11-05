@@ -89,3 +89,38 @@ fn fixed_and_rigid_groups_follow_reviewed_unit_mapping() {
     let rules = rigid_rules(&input, &[(10.0, 10.0)]).unwrap();
     assert_eq!(rules[0].miss(&vec![(11.0, 10.0, 0)]).unwrap(), 1.0);
 }
+
+#[test]
+fn mixed_reviewed_rules_compile_and_unknown_rules_fail_closed() {
+    use iotplace::engineering::compile_supported_rules;
+    let mut input = contract();
+    input["geometry"]["refs"]["U1"]["origin"] = json!([10.0, 10.0]);
+    input["rules"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"id":"fixed", "kind":"fixed", "refs":["U1"]}));
+    let rules = compile_supported_rules(&input, &[(10.0, 10.0), (14.0, 10.0)]).unwrap();
+    assert_eq!(rules.len(), 2);
+    assert_eq!(
+        rules[1]
+            .miss(&vec![(11.0, 10.0, 0), (14.0, 10.0, 0)])
+            .unwrap(),
+        1.0
+    );
+    input["rules"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"id":"escape", "kind":"escape"}));
+    assert!(compile_supported_rules(&input, &[(10.0, 10.0), (14.0, 10.0)]).is_err());
+}
+
+#[test]
+fn direct_library_model_cannot_bypass_reviewed_contract_rejection() {
+    use iotplace::{model::Model, params::Params, problem::Problem};
+    let path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden/synthetic.json");
+    let mut raw: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    raw["engineering"] = contract();
+    let problem: Problem = serde_json::from_value(raw).unwrap();
+    assert!(Model::new(&problem, &Params::default()).is_err());
+}

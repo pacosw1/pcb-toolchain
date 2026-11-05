@@ -416,3 +416,55 @@ pub fn rigid_rules(
         })
         .collect()
 }
+
+/// Compiled reviewed rules supported by this incremental port. Compilation is not admission:
+/// a caller must also verify source provenance, locked parts, escape evidence and all other rule kinds.
+#[derive(Debug)]
+pub enum ReviewedRule {
+    Pin(PinDistance),
+    Clearance(Clearance),
+    Rigid(RigidGroup),
+}
+impl ReviewedRule {
+    pub fn affects(&self, unit: usize) -> bool {
+        match self {
+            Self::Pin(r) => r.affects(unit),
+            Self::Clearance(r) => r.affects(unit),
+            Self::Rigid(r) => r.affects(unit),
+        }
+    }
+    pub fn miss(&self, pose: &Pose) -> crate::Result<f64> {
+        match self {
+            Self::Pin(r) => r.miss(pose),
+            Self::Clearance(r) => r.miss(pose),
+            Self::Rigid(r) => r.miss(pose),
+        }
+    }
+}
+pub fn compile_supported_rules(
+    value: &serde_json::Value,
+    origins: &[(f64, f64)],
+) -> crate::Result<Vec<ReviewedRule>> {
+    let rows = value
+        .get("rules")
+        .and_then(|v| v.as_array())
+        .ok_or("reviewed rules missing")?;
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let mut one = value.clone();
+        one["rules"] = serde_json::Value::Array(vec![row.clone()]);
+        match row.get("kind").and_then(|v| v.as_str()) {
+            Some("pin_distance") => out.push(ReviewedRule::Pin(
+                pin_distance_rules(&one, origins)?.remove(0),
+            )),
+            Some("clearance") => out.push(ReviewedRule::Clearance(
+                clearance_rules(&one, origins)?.remove(0),
+            )),
+            Some("fixed" | "rigid_group") => {
+                out.push(ReviewedRule::Rigid(rigid_rules(&one, origins)?.remove(0)))
+            }
+            _ => return Err("unsupported reviewed engineering rule".into()),
+        }
+    }
+    Ok(out)
+}

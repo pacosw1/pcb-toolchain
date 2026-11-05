@@ -114,6 +114,9 @@ fn unit_nets(pr: &Problem) -> Vec<Vec<usize>> {
 impl<'p> Model<'p> {
     /// The cost parameters that shape the tables come from `params`; weights may change per epoch.
     pub fn new(pr: &'p Problem, params: &Params) -> crate::Result<Self> {
+        // A caller may deserialize a Problem directly without Problem::load; never allow
+        // a library search to silently skip unsupported hard-rule contracts either.
+        pr.check_supported()?;
         let p = params;
         let table = class_table(pr);
         let via_nets = pr.via_nets.as_deref().unwrap_or(&[]);
