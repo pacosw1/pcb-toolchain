@@ -70,3 +70,64 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 }
+
+/// Check the model and contract's self-declared fingerprints. These detect accidental
+/// mutation but cannot establish that a review was performed; input is untrusted.
+fn check_payload_bindings(problem: &Value) -> crate::Result<()> {
+    use serde_json::{Map, json};
+    fn hash(value: &Value) -> crate::Result<String> {
+        let bytes = serde_json::to_vec(value)?;
+        // Python's fingerprint escapes non-ASCII; reject it until matching canonicalization
+        // is implemented. Differences in number formatting also fail closed at comparison.
+        if !bytes.is_ascii() { return Err("non-ASCII reviewed fingerprint unsupported".into()); }
+        Ok(format!("{:x}", Sha256::digest(bytes)))
+    }
+    let contract = problem.get("engineering").and_then(Value::as_object).ok_or("reviewed contract missing")?;
+    let mut core = Map::new();
+    for key in ["schema", "root", "board", "manifest", "native", "inputs", "rules", "geometry", "bindings"] {
+        core.insert(key.into(), contract.get(key).ok_or("reviewed contract field missing")?.clone());
+    }
+    if contract.get("review_sha256").and_then(Value::as_str) != Some(hash(&Value::Object(core))?.as_str()) {
+        return Err("reviewed contract fingerprint changed".into());
+    }
+    let units = problem.get("units").and_then(Value::as_array).ok_or("model units missing")?;
+    let mut anchors = Vec::new();
+    for u in units {
+        let mut item = Map::new();
+        for key in ["name", "refs", "x", "y", "fixed"] {
+            item.insert(key.into(), u.get(key).cloned().unwrap_or(Value::Null));
+        }
+        anchors.push(Value::Object(item));
+    }
+    let outline = problem.get("board").and_then(|b| b.get("outline")).ok_or("model outline missing")?;
+    let anchor = json!({"units": anchors, "outline": outline});
+    if contract.get("model_anchor_sha256").and_then(Value::as_str) != Some(hash(&anchor)?.as_str()) {
+        return Err("reviewed model anchors changed".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod binding_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn checks_contract_and_anchor_without_claiming_authenticity() {
+        let mut p = json!({"units":[{"name":"U1","refs":["U1"],"x":1,"y":2,"fixed":false}],
+            "board":{"outline":[[0,0],[10,0],[10,10]]},
+            "engineering":{"schema":"x","root":"r","board":"b","manifest":"m","native":"n",
+                "inputs":{},"rules":[],"geometry":{},"bindings":[]}});
+        let c = &p["engineering"];
+        let digest = |v: &Value| format!("{:x}", Sha256::digest(serde_json::to_vec(v).unwrap()));
+        let review = digest(c);
+        let anchor = digest(&json!({"units":p["units"],"outline":p["board"]["outline"]}));
+        p["engineering"]["review_sha256"] = json!(review);
+        p["engineering"]["model_anchor_sha256"] = json!(anchor);
+        assert!(check_payload_bindings(&p).is_ok());
+        let mut edited = p.clone();
+        edited["units"][0]["x"] = json!(3);
+        assert!(check_payload_bindings(&edited).is_err());
+        p["engineering"]["board"] = json!("other");
+        assert!(check_payload_bindings(&p).is_err());
+    }
+}
