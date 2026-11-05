@@ -1,5 +1,5 @@
 use iotplace::engineering::pin_distance_rules;
-use serde_json::json;
+use serde_json::{json, Value};
 
 fn contract() -> serde_json::Value {
     json!({"where": {"U1": 0, "C1": 1}, "geometry": {"refs": {
@@ -277,4 +277,24 @@ fn final_pose_screen_evaluates_each_rule_and_every_native_lock() {
     assert_eq!(blockers[0].id,"pin");
     assert_eq!(blockers[1].id,"native-lock:U1");
     assert!(geometry.check_pose(&vec![(f64::NAN,10.0,0),(14.0,10.0,0)]).is_err());
+}
+
+#[test]
+fn candidate_geometry_cli_never_implies_source_authority() {
+    use std::process::Command;
+    let root=std::env::temp_dir().join(format!("iotplace-geometry-{}",std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let model=root.join("model.json"); let pose=root.join("pose.json");
+    let problem=json!({"units":[{"refs":["U1"],"x":10,"y":10},{"refs":["C1"],"x":14,"y":10}],"engineering":contract()});
+    std::fs::write(&model,serde_json::to_vec(&problem).unwrap()).unwrap();
+    let run=|p:Value| {
+        std::fs::write(&pose,serde_json::to_vec(&p).unwrap()).unwrap();
+        let out=Command::new(env!("CARGO_BIN_EXE_iotplace")).arg("review-geometry").arg(&model).arg("--pose").arg(&pose).output().unwrap();
+        assert_eq!(out.status.code(),Some(3));serde_json::from_slice::<Value>(&out.stdout).unwrap()
+    };
+    let good=run(json!([[10,10,0],[14,10,0]]));
+    assert_eq!(good["status"],"geometry_passed_unverified");assert_eq!(good["qualified"],false);
+    let bad=run(json!([[10,10,0],[15,10,0]]));
+    assert_eq!(bad["status"],"blocked");assert_eq!(bad["blockers"][0]["id"],"pin");
+    std::fs::remove_dir_all(root).unwrap();
 }

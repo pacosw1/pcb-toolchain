@@ -291,6 +291,28 @@ mod rating_tests {
     }
 }
 
+fn compile_geometry(problem: &Value) -> crate::Result<crate::engineering::ReviewedGeometry> {
+    let contract = problem.get("engineering").ok_or("reviewed contract missing")?;
+    let units = problem["units"].as_array().ok_or("model units missing")?;
+    let mut refs = Vec::new();
+    let mut origins = Vec::new();
+    for unit in units {
+        refs.push(unit["refs"].as_array().ok_or("unit references missing")?.iter()
+            .map(|v| v.as_str().map(str::to_owned).ok_or("invalid unit reference"))
+            .collect::<std::result::Result<Vec<_>,_>>()?);
+        let x = unit["x"].as_f64().ok_or("unit x missing")?;
+        let y = unit["y"].as_f64().ok_or("unit y missing")?;
+        if !x.is_finite() || !y.is_finite() {return Err("invalid unit origin".into());}
+        origins.push((x,y));
+    }
+    crate::engineering::ReviewedGeometry::compile(contract, &refs, &origins)
+}
+
+/// Screen candidate geometry only. Does not verify source review or authorize writing.
+pub fn screen_pose(problem: &Value, pose: &crate::problem::Pose) -> crate::Result<Vec<crate::engineering::PoseBlocker>> {
+    compile_geometry(problem)?.check_pose(pose)
+}
+
 /// Run the available checks without granting reviewed-model admission.
 /// The caller must treat success as partial evidence only.
 pub fn preflight(problem: &Value) -> crate::Result<()> {
@@ -308,19 +330,7 @@ fn preflight_relocated(problem: &Value, inspector: Option<(&Path, &str)>) -> cra
     let board_file = owned(&root, problem.get("board_file").and_then(Value::as_str).ok_or("placement source board missing")?)?;
     if native != board_file { return Err("placement source board differs from reviewed board".into()); }
     check_inputs(contract)?;
-    let units = problem["units"].as_array().ok_or("model units missing")?;
-    let mut refs = Vec::new();
-    let mut origins = Vec::new();
-    for unit in units {
-        refs.push(unit["refs"].as_array().ok_or("unit references missing")?.iter()
-            .map(|v| v.as_str().map(str::to_owned).ok_or("invalid unit reference"))
-            .collect::<std::result::Result<Vec<_>,_>>()?);
-        let x = unit["x"].as_f64().ok_or("unit x missing")?;
-        let y = unit["y"].as_f64().ok_or("unit y missing")?;
-        if !x.is_finite() || !y.is_finite() {return Err("invalid unit origin".into());}
-        origins.push((x,y));
-    }
-    crate::engineering::ReviewedGeometry::compile(contract, &refs, &origins)?;
+    compile_geometry(problem)?;
     check_manifest_identity(contract)?;
     let root = Path::new(contract["root"].as_str().ok_or("reviewed root missing")?).canonicalize()?;
     let path = owned(&root, contract["manifest"].as_str().ok_or("reviewed manifest missing")?)?;

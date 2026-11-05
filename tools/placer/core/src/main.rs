@@ -198,6 +198,16 @@ fn dispatch(argv: &[String]) -> iotplace::Result<ExitCode> {
         "gplace" => gplace_cmd(&args),
         "count" => count_cmd(&args),
         "cost" => cost_cmd(&args),
+        "review-geometry" => {
+            let input = args.file.as_deref().ok_or("a problem file is required")?;
+            let pose = args.options.iter().rev().find(|(f,_)| f == "--pose").ok_or("--pose is required")?;
+            let problem: Value = serde_json::from_slice(&std::fs::read(input)?)?;
+            let pose: Pose = serde_json::from_slice(&std::fs::read(&pose.1)?)?;
+            let blockers = iotplace::source_preflight::screen_pose(&problem, &pose)?;
+            println!("{}", serde_json::json!({"status":if blockers.is_empty() {"geometry_passed_unverified"} else {"blocked"},
+                "qualified":false,"blockers":blockers}));
+            Ok(ExitCode::from(3))
+        },
         "review-preflight" => {
             let input = args.file.as_deref().ok_or("a problem file is required")?;
             let problem: Value = serde_json::from_slice(&std::fs::read(input)?)?;
