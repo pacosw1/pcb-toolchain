@@ -112,7 +112,7 @@
               "run": "cd apps/studio/app && npm ci --ignore-scripts --no-audit --no-fund"
             },
             {
-              "run": "cd apps/studio/app && npm run -s typecheck:node"
+              "run": "cd apps/studio/app && npm run -s typecheck"
             },
             {
               "run": "cd apps/studio/app && ls test/*.test.ts > /dev/null && node --experimental-strip-types --no-warnings --test test/*.test.ts"
