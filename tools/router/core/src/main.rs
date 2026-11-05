@@ -5,6 +5,7 @@
 //!            [--congestion MAP.json [--cong-cell 1.0] [--cong-free 0|1]] (congestion.rs: the map for the placer)
 //!            [--seed N] (seed.rs: another route of the same board) [--checkpoint FILE [--source-sha HEX]] (checkpoint.rs: progress per pass)
 //!            [--resume-save FILE] [--resume FILE] (resume.rs: negotiation state at a pass boundary)
+//!            [--yield-after-passes N] (requires --resume-save; unfinished state exits 3 without finalization)
 //!            [--stall-passes N] (stop after N passes that do not beat the best pass; default off)
 //!
 //! MODEL.json comes from `iotroute model` (src/model, schema iot-lab.route-model.v0). Every clearance is checked against
@@ -4249,7 +4250,7 @@ fn keep_route_nets(order: &mut Vec<usize>, nets: &[Net], model: &Value) {
 
 fn route_cli(args: &[String]) {
     if args.len() < 3 {
-        eprintln!("usage: iotroute MODEL.json OUT.json [--pitch 0.05] [--iters 40] [--plane-clr 0.25] [--hole-to-hole 0.45] [--hole-clr 0.28] [--return-r 2.0] [--return-via 0.45,0.2] [--pres-mult 1.5] [--pres-max 1000] [--hist 0.3] [--max-time S] [--door-hist 2.0] [--check RESULT.json] [--congestion MAP.json [--cong-cell 1.0] [--cong-free 0|1]] [--seed N] [--checkpoint FILE [--source-sha HEX]] [--resume-save FILE] [--resume FILE] [--stall-passes N]");
+        eprintln!("usage: iotroute MODEL.json OUT.json [--pitch 0.05] [--iters 40] [--plane-clr 0.25] [--hole-to-hole 0.45] [--hole-clr 0.28] [--return-r 2.0] [--return-via 0.45,0.2] [--pres-mult 1.5] [--pres-max 1000] [--hist 0.3] [--max-time S] [--door-hist 2.0] [--check RESULT.json] [--congestion MAP.json [--cong-cell 1.0] [--cong-free 0|1]] [--seed N] [--checkpoint FILE [--source-sha HEX]] [--resume-save FILE] [--resume FILE] [--yield-after-passes N] [--stall-passes N]");
         std::process::exit(2);
     }
     let mut o = Opts { pitch: 0.05, passes: 40, plane_clr: DEF_PLANE_CLR, hth: DEF_HOLE_TO_HOLE, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2,
@@ -4270,6 +4271,7 @@ fn route_cli(args: &[String]) {
     let mut ckpt_path: Option<String> = None;
     let mut resume_path: Option<String> = None;
     let mut resume_save: Option<String> = None;
+    let mut yield_after: Option<usize> = None;
     let mut source_sha: Option<String> = None;
     let mut i = 3;
     while i + 1 < args.len() {
@@ -4305,6 +4307,11 @@ fn route_cli(args: &[String]) {
             "--checkpoint" => ckpt_path = Some(v.clone()),
             "--resume" => resume_path = Some(v.clone()),
             "--resume-save" => resume_save = Some(v.clone()),
+            "--yield-after-passes" => {
+                yield_after = Some(v.parse::<usize>().ok().filter(|n| *n > 0).unwrap_or_else(|| {
+                    eprintln!("--yield-after-passes requires a positive pass count"); std::process::exit(2)
+                }));
+            }
             "--source-sha" => source_sha = Some(v.clone()),
             "--stall-passes" => o.stall_passes = v.parse().unwrap(),
             "--return-via" => {
@@ -4320,6 +4327,12 @@ fn route_cli(args: &[String]) {
         }
         i += 2;
     }
+    if args.last().is_some_and(|s| s == "--yield-after-passes") {
+        eprintln!("--yield-after-passes requires a positive pass count"); std::process::exit(2);
+    }
+    if yield_after.is_some() && (resume_save.is_none() || o.passes == 0) {
+        eprintln!("--yield-after-passes requires --resume-save and a positive --iters limit"); std::process::exit(2);
+    }
     if (resume_path.is_some() || resume_save.is_some()) && (reuse_path.is_some() || check_only.is_some()) {
         eprintln!("resume does not support --reuse or --check");
         std::process::exit(2);
@@ -4331,9 +4344,11 @@ fn route_cli(args: &[String]) {
     if resume_path.is_some() || resume_save.is_some() {
         let progress_tmp = ckpt_path.as_ref().map(|p| format!("{p}.tmp"));
         let save_tmp = resume_save.as_ref().map(|p| format!("{p}.tmp.{}", std::process::id()));
+        let yield_tmp = yield_after.map(|_| format!("{}.tmp.{}", args[2], std::process::id()));
         let mut paths = vec![("model", args[1].as_str()), ("output", args[2].as_str())];
         for (role, path) in [("progress", ckpt_path.as_ref()), ("progress temporary", progress_tmp.as_ref()),
-            ("resume input", resume_path.as_ref()), ("resume output", resume_save.as_ref()), ("resume temporary", save_tmp.as_ref())] {
+            ("resume input", resume_path.as_ref()), ("resume output", resume_save.as_ref()), ("resume temporary", save_tmp.as_ref()),
+            ("yield output temporary", yield_tmp.as_ref())] {
             if let Some(p) = path { paths.push((role, p.as_str())); }
         }
         resume::check_paths(&paths).unwrap_or_else(|e| { eprintln!("resume paths: {e}"); std::process::exit(2) });
@@ -4521,6 +4536,8 @@ fn route_cli(args: &[String]) {
         let saved = resume::Snapshot::load(path, resume_binding.as_ref().unwrap(), &ctx, o.passes)
             .unwrap_or_else(|e| { eprintln!("resume {path}: {e}"); std::process::exit(2) });
         (start_pass, prior_elapsed, prior_cpu, todo, state, best, limited_prev, stall, stall_sig, pour_seen, hard_doors, moves, since_best) = saved.restore(&mut ctx);
+        // An equal total pass limit finalizes this saved boundary without another search pass.
+        iters = start_pass;
         ctx.fan_keep = false;
         eprintln!("resumed after pass {start_pass}");
     }
@@ -4656,6 +4673,28 @@ fn route_cli(args: &[String]) {
         if terminal_hard {
             if let Some(path) = &resume_save {
                 resume::Snapshot::terminal(path, "hard-fails").unwrap_or_else(|e| { eprintln!("resume checkpoint {path}: {e}"); std::process::exit(2) });
+            }
+        }
+        // A supervisor may ask for negotiation state without paying for a speculative
+        // final board. The snapshot above owns the next-pass state; never restore the
+        // best pass or run strict/length/return recovery on this continuation path.
+        if yield_after.is_some() && !terminal_hard {
+            let reason = if cancelled { Some("cancelled") }
+                else if timed_out { Some("max-time") }
+                else if stalled { Some("stall-passes") }
+                else if it + 1 == o.passes { Some("iters") }
+                else if it + 1 - start_pass >= yield_after.unwrap() { Some("pass-budget") }
+                else { None };
+            if let Some(reason) = reason {
+                if let Some(w) = &mut ckpt {
+                    w.yielded(&ctx, &checkpoint::Pass { pass: it + 1, au: &au, involved: &involved, state: &state,
+                        pour_faults: pf.len(), search_limited, best: best.as_ref().map(|b| (b.1, b.0)), since_best }, reason);
+                }
+                resume::write_yield(&args[2], resume_save.as_ref().unwrap(), it + 1, reason,
+                    t0.elapsed().as_secs_f64(), prior_elapsed, prior_cpu)
+                    .unwrap_or_else(|e| { eprintln!("yield receipt: {e}"); std::process::exit(2) });
+                println!("ROUTE YIELDED pass {} reason {reason}; checkpoint saved; no final route", it + 1);
+                std::process::exit(3);
             }
         }
         if timed_out || cancelled || stalled || hard_stalled { ctx.gr.pres = prior_pres; }
