@@ -1,7 +1,6 @@
 // Duplicate item UUIDs in a native KiCad board: check and deterministic repair (W9, 2026-10-10).
 //
-// A board whose zones (or other items) share one UUID stops the routing step: immutable_board in iotroute job/fastroute/thermal.rs
-// rejects "duplicate native immutable item identity" in the import replay guard (seen on IO-6X6, DOOR-RELAY, RELAY-4
+// Boards whose zones (or other items) share one UUID broke the import replay guard of the routing step (seen on IO-6X6, DOOR-RELAY, RELAY-4
 // and PWR-24V-5V, each with a zone UUID used two or three times; the generator scripts copy a zone with its UUID).
 // The first occurrence keeps its UUID; each repeat gets uuid5(NAMESPACE, "<uuid>#<ordinal>"), so a repair is the same
 // on every host and run. Only the uuid tokens change: no copper, no geometry, no other text.

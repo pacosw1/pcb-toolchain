@@ -21,7 +21,7 @@
 //   clearance + 0.1 mm from copper of other nets on its layers (all copper layers for tht), not in a rule area, 1.0 mm inside the
 //   board outline and away from each cut-out (the real outline polygon, not its bounding box).
 //   A point with no free place within max_mm stops the tool (nothing is written).
-// The routes come after this tool (fastroute_job, existing copper kept). Then the gate.
+// The routes come after this tool (existing copper kept). Then the gate.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { BoardEdit, itemIds, saveBoardInPlace } from './lib/board-edit.ts';

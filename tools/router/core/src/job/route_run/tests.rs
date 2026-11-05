@@ -7,7 +7,6 @@ use crate::kicad::raw::parse;
 use crate::plan::{Keepout, KeepoutMode, Pour, PourConnection, PourShape, WidthRule};
 use serde_json::json;
 use std::collections::BTreeMap;
-use std::os::unix::fs::PermissionsExt;
 
 fn args(text: &[&str]) -> Vec<String> {
     text.iter().map(|s| s.to_string()).collect()
@@ -21,7 +20,7 @@ fn folder(tag: &str) -> PathBuf {
 }
 
 fn stage() -> Stage {
-    let config = json!({"schema": plan::SCHEMA, "backend": "fastroute", "layers": ["F.Cu", "B.Cu"], "stages": [{"name": "main"}]});
+    let config = json!({"schema": plan::SCHEMA, "backend": "tracemaker", "layers": ["F.Cu", "B.Cu"], "stages": [{"name": "main"}]});
     plan::load(&config, &["F.Cu".to_string(), "B.Cu".to_string()], None).unwrap().stages.remove(0)
 }
 
@@ -147,40 +146,6 @@ fn only_an_empty_folder_takes_a_run() {
     assert!(empty_outdir(&new).unwrap().is_dir());
     let error = empty_outdir(&path).unwrap_err();
     assert!(error.starts_with("route: ") && error.ends_with(" is not empty"), "{error}");
-    fs::remove_dir_all(dir).unwrap();
-}
-
-/// A router script: writes the board when asked, then exits with the code.
-fn fake_router(dir: &Path, code: i32, writes: bool) -> String {
-    let path = dir.join(format!("router-{code}-{writes}.sh"));
-    let write = if writes { "mkdir -p \"$2\"; : > \"$2/routed.kicad_pcb\"" } else { ":" };
-    fs::write(&path, format!("#!/bin/sh\necho \"$ROUTE_BOARD|$ROUTE_FEATURES|$3|$4\"\n{write}\nexit {code}\n")).unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-    path.display().to_string()
-}
-
-#[test]
-fn a_router_exit_of_zero_or_three_with_a_board_goes_to_the_check() {
-    let dir = folder("exit");
-    let work = dir.join("1-main/router");
-    fs::create_dir_all(dir.join("1-main")).unwrap();
-    let cases = [(0, true, true), (3, true, true), (3, false, false), (0, false, false), (1, true, false), (4, true, false)];
-    for (code, writes, passes) in cases {
-        let _ = fs::remove_dir_all(&work);
-        let line = fake_router(&dir, code, writes);
-        // SAFETY: no other test of this binary reads this variable.
-        unsafe { std::env::set_var(FASTROUTE_COMMAND, &line) };
-        let got = route_fastroute(&stage(), Path::new("in.kicad_pcb"), &work, "AB-1", "a=1");
-        assert_eq!(got.is_ok(), passes, "{code} {writes}: {got:?}");
-        if !passes {
-            let error = got.unwrap_err();
-            assert!(error.starts_with(&format!("route: stage main: fastroute_job exit {code}, see ")) && error.ends_with("/1-main/router.log"), "{error}");
-        }
-    }
-    let log = fs::read_to_string(dir.join("1-main/router.log")).unwrap();
-    assert!(log.starts_with(&format!("{} in.kicad_pcb {} --layers F.Cu,B.Cu --passes 60", dir.join("router-4-true.sh").display(), work.display())), "{log}");
-    assert!(log.contains("AB-1|a=1|--layers|F.Cu,B.Cu\n"), "{log}");
-    unsafe { std::env::remove_var(FASTROUTE_COMMAND) };
     fs::remove_dir_all(dir).unwrap();
 }
 
@@ -368,7 +333,7 @@ fn a_board_and_text_that_disagree_stop_the_width_edit() {
 
 #[test]
 fn a_repeated_uuid_does_not_move_a_width_edit() {
-    // Two stages of the Fastroute job gave tracks the same uuid (ENV-SENSE, 2026-11-04): only the track in the box narrows.
+    // Two router stages gave tracks the same uuid (ENV-SENSE, 2026-11-04): only the track in the box narrows.
     let text = TRACKS.replace("\"out\"", "\"in\"");
     let mut b = board(vec![track("in", (1_000_000, 1_000_000), (3_000_000, 1_000_000), 200_000, "F.Cu"), track("in", (50_000_000, 1_000_000), (53_000_000, 1_000_000), 200_000, "F.Cu")]);
     let rules = [WidthRule { bounds: [0.0, 0.0, 10.0, 1.5], ..rule("R", 0.15) }];

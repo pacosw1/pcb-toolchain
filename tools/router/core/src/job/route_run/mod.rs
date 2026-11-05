@@ -1,10 +1,9 @@
-//! `iotroute route BOARD OUTDIR [--input PLACED.kicad_pcb] [--config route.json] [--backend fastroute|tracemaker]`: route a board
+//! `iotroute route BOARD OUTDIR [--input PLACED.kicad_pcb] [--config route.json] [--backend tracemaker]`: route a board
 //! from `<board>/route.json` (schema in `crate::plan`). Runs from the repo root, or with IOT_LAB set.
 //!
-//! Each stage: copy the board, remove the stage's zones, add its keepouts, route (Fastroute: `iotroute fastroute`, or the command in
-//! IOTROUTE_FASTROUTE_CMD; TraceMaker: $TRACEMAKER_BIN, then only the new copper of the stage nets is kept), remove the keepouts,
-//! put the zones back, and check the stage nets with kicad-cli DRC. The copper of a stage is locked for the next stage (both routers
-//! keep existing copper). Then the widths rules and the pours go in, KiCad 10 fills, and kicad-cli DRC with --schematic-parity runs.
+//! Each stage: copy the board, remove the stage's zones, add its keepouts, route (`Job::run_stage` picks the backend; TraceMaker:
+//! $TRACEMAKER_BIN, then only the new copper of the stage nets is kept), remove the keepouts, put the zones back, and check the stage
+//! nets with kicad-cli DRC. The copper of a stage is locked for the next stage (a backend keeps existing copper). Then the widths rules and the pours go in, KiCad 10 fills, and kicad-cli DRC with --schematic-parity runs.
 //! Result: OUTDIR/<BOARD>.kicad_pcb with its sidecars, and OUTDIR/result.json. The input board is only read.
 //! Exit 0 only when every stage check passes and DRC reports 0 errors, 0 unconnected and 0 parity. 2 is a bad command line.
 pub mod board_edit;
@@ -30,12 +29,8 @@ use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-const USAGE: &str = "usage: iotroute route BOARD OUTDIR [--input PLACED.kicad_pcb] [--config route.json] [--backend fastroute|tracemaker]";
+const USAGE: &str = "usage: iotroute route BOARD OUTDIR [--input PLACED.kicad_pcb] [--config route.json] [--backend tracemaker]";
 const SIDECARS: [&str; 3] = ["kicad_pro", "kicad_dru", "kicad_sch"];
-/// The Fastroute job's exit for connections left open: the stage check decides.
-const STUCK_RC: i32 = 3;
-/// The stage router instead of `iotroute fastroute`: a command line split at spaces, before BOARD OUTDIR.
-const FASTROUTE_COMMAND: &str = "IOTROUTE_FASTROUTE_CMD";
 
 #[derive(Debug, PartialEq, Eq)]
 struct Options {
@@ -58,8 +53,8 @@ impl Options {
                 "--config" => config = args.value("--config")?,
                 "--backend" => {
                     backend = Some(match args.value("--backend")?.as_str() {
-                        "fastroute" => Backend::Fastroute,
                         "tracemaker" => Backend::Tracemaker,
+                        "fastroute" => return Err(plan::NO_FASTROUTE.to_string()),
                         other => return Err(format!("--backend: invalid choice: {other}")),
                     })
                 }
@@ -181,35 +176,10 @@ fn drc(pcb: &Path, out: &Path, parity: bool) -> Result<Value, String> {
     serde_json::from_str(&read_text(out)?).map_err(|e| format!("{}: {e}", out.display()))
 }
 
-/// The command before BOARD OUTDIR.
-fn fastroute_command() -> Result<Vec<String>, String> {
-    match std::env::var(FASTROUTE_COMMAND) {
-        Ok(line) if !line.trim().is_empty() => Ok(line.split_whitespace().map(str::to_string).collect()),
-        _ => {
-            let exe = std::env::current_exe().map_err(|e| format!("this executable: {e}"))?;
-            Ok(vec![exe.display().to_string(), "fastroute".to_string()])
-        }
-    }
-}
-
 fn tracemaker_binary() -> String {
     std::env::var("TRACEMAKER_BIN").ok().filter(|b| !b.is_empty()).unwrap_or_else(|| {
         format!("{}/opt/tracemaker/build/macos-metal/src/app/tracemaker", std::env::var("HOME").unwrap_or_default())
     })
-}
-
-/// A stage router's board. Exit 3 means connections left open: the stage check decides. Any other failure stops the run.
-fn route_fastroute(stage: &Stage, src: &Path, work: &Path, board_id: &str, features: &str) -> Result<PathBuf, String> {
-    let folder = work.parent().ok_or("a work folder has a parent")?;
-    let mut command = fastroute_command()?;
-    command.extend([src.display().to_string(), work.display().to_string()]);
-    command.extend(stage.fastroute_args());
-    let code = run(&command, &folder.join("router.log"), &[("ROUTE_BOARD", board_id), ("ROUTE_FEATURES", features)])?;
-    let routed = work.join("routed.kicad_pcb");
-    if (code != 0 && code != STUCK_RC) || !routed.is_file() {
-        return Err(format!("route: stage {}: fastroute_job exit {code}, see {}/router.log", stage.name, folder.display()));
-    }
-    Ok(routed)
 }
 
 /// TraceMaker exits non-zero when connections stay open; the stage check decides.
@@ -260,9 +230,7 @@ struct Job {
     outdir: PathBuf,
     /// The project name, which names the board files.
     name: String,
-    board_id: String,
     backend: Backend,
-    features: String,
 }
 
 impl Job {
@@ -287,7 +255,6 @@ impl Job {
         let kept = stage.kept_nets(&nets);
         let work = folder.join("router");
         let routed_path = match self.backend {
-            Backend::Fastroute => route_fastroute(stage, &src, &work, &self.board_id, &self.features)?,
             Backend::Tracemaker => route_tracemaker(stage, &src, &work, &before.copper_layers)?,
         };
         remove_project_lock(&src);
@@ -403,10 +370,10 @@ fn route(options: &Options) -> Result<i32, String> {
     copy_project(&source, &start, Some(&project_board))?;
     let plan = plan::load(&config, &read_api(&start)?.copper_layers, Some(&known_features()?))?;
     let backend = options.backend.unwrap_or(plan.backend);
-    if !plan.features.is_empty() && backend != Backend::Fastroute {
-        return Err("route: features are Fastroute switches; the tracemaker backend cannot apply them".to_string());
+    if !plan.features.is_empty() && backend == Backend::Tracemaker {
+        return Err("route: the tracemaker backend cannot apply route.json features".to_string());
     }
-    let job = Job { outdir: outdir.clone(), name, board_id: options.board.clone(), backend, features: plan.feature_env() };
+    let job = Job { outdir: outdir.clone(), name, backend };
     let (mut current, mut stages, mut failures) = (start.clone(), Vec::new(), Vec::new());
     for (number, stage) in plan.stages.iter().enumerate() {
         let (out, record, stage_failures) = job.run_stage(number, stage, &current)?;
@@ -418,7 +385,9 @@ fn route(options: &Options) -> Result<i32, String> {
             break;
         }
     }
-    let backend_name = if backend == Backend::Fastroute { "fastroute" } else { "tracemaker" };
+    let backend_name = match backend {
+        Backend::Tracemaker => "tracemaker",
+    };
     let mut fields = vec![
         ("board", Json::text(&options.board)),
         ("backend", Json::text(backend_name)),

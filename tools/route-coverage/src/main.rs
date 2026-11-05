@@ -1,10 +1,10 @@
 //! JSON-in/JSON-out adapter for route jobs, which have no Node runtime.
 use route_coverage::{
     Result,
-    board::{BoardReader, Iotroute},
-    evidence, hole, project, thermal,
+    board::Iotroute,
+    evidence, thermal,
 };
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::{
     io::{self, Read},
     path::Path,
@@ -19,15 +19,10 @@ fn run(operation: &str, v: Value) -> Result<Value> {
         std::env::current_exe().map_err(|e| e.to_string())?,
     );
     match operation{
-        "inspect"=>Ok(hole::inspect(&serde_json::from_value(v).map_err(|e|e.to_string())?)),
-        "inspect-drilled"=>Ok(hole::inspect_drilled(&serde_json::from_value(v).map_err(|e|e.to_string())?)),
-        "native-pth-pads"=>Ok(json!(route_coverage::board::native_pth_pads(&Iotroute.read(path(&v,"board")?)?)?)),
-        "native-drilled-geometry"=>Ok(json!(route_coverage::board::native_drilled_geometry(&Iotroute.read(path(&v,"board")?)?)?)),
-        "evaluate"=>Ok(json!(project::evaluate(&serde_json::from_value(v).map_err(|e|e.to_string())?))),
         "admit"=>validator.admit(path(&v,"source")?,path(&v,"base")?,v["enabled"]==true,&thermal::nets(&v["selected_nets"])?,path(&v,"initial_fill_receipt")?,path(&v,"initial_drc_receipt")?),
         "validate-capability"=>validator.validate_capability(&v["capability"],path(&v,"source")?,path(&v,"base")?,&thermal::nets(&v["selected_nets"])?,v.get("required_count")),
         "discharge"=>validator.discharge(&v["capability"],path(&v,"candidate")?,path(&v,"fill_receipt")?,path(&v,"drc_receipt")?),
-        _=>Err("usage: route-coverage inspect|inspect-drilled|native-pth-pads|native-drilled-geometry|evaluate|admit|validate-capability|discharge [request.json]; otherwise reads stdin".into())
+        _=>Err("usage: route-coverage admit|validate-capability|discharge [request.json]; otherwise reads stdin".into())
     }
 }
 fn main() -> ExitCode {

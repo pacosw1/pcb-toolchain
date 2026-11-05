@@ -1,6 +1,6 @@
 //! Running a condition the way the rule compiler reads it: left to right with short circuits, comparing strings as wildcards
 //! both ways round, and stopping at the first term a side cannot answer. `Selector::eval` is the three-valued reading that
-//! decides admission; this one decides what a Fastroute model gets, and it keeps the name of the term that stopped it.
+//! decides admission; this one decides what a model gets, and it keeps the name of the term that stopped it.
 use super::{Expr, Selector, Side, Token};
 use crate::model::text::glob_match;
 

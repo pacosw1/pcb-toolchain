@@ -3,12 +3,12 @@
 //! Schema `iot-lab.route.v1`, which replaces the per-board route scripts:
 //!
 //! ```text
-//! {"schema": "iot-lab.route.v1", "about": "...", "backend": "fastroute" | "tracemaker",
+//! {"schema": "iot-lab.route.v1", "about": "...", "backend": "tracemaker",
 //!  "layers": ["F.Cu", "B.Cu"],                      signal layers of every stage unless the stage sets its own
 //!  "budget": {"passes": 60, "time_s": 300, "threads": 0},
 //!  "stages": [{                                     run in order; the copper of a stage is locked for the next
 //!      "name": "mains",
-//!      "only_nets": [...] | "skip_nets": [...],     not both; skip_nets are glob patterns (Fastroute --skip-net)
+//!      "only_nets": [...] | "skip_nets": [...],     not both; skip_nets are glob patterns
 //!      "layers": [...], "passes": N, "time_s": N, "threads": N,
 //!      "plane_nets": [...], "route_planes": false,  plane nets get pad vias and are not routed (unless route_planes)
 //!      "neck_um": 0, "unlock_nets": [...], "via_skip": ["U2", "R7.1"],
@@ -21,7 +21,7 @@
 //!             "clearance_mm": 0.3, "thermal_gap_mm": 0.4, "spoke_mm": 1.0}],
 //!  "widths": [{"name", "box": [x0, y0, x1, y1], "layers": [...], "width_mm"}],   after the route, before the pours:
 //!                                                   a track whose midpoint is in the box gets width_mm (never wider)
-//!  "features": {"via_off_small_pads": true}}        Fastroute only: tools/route-features.json switches
+//!  "features": {"via_off_small_pads": true}}        tools/route-features.json switches; no backend applies them yet
 //! ```
 //!
 //! Boxes are in mm, board coordinates. "around" pours cover the pads and copper of the net grown by grow_mm.
@@ -39,6 +39,8 @@ pub use load::load;
 pub use stage::open_nets;
 
 pub const SCHEMA: &str = "iot-lab.route.v1";
+/// What a plan or command line that still names the removed router gets.
+pub const NO_FASTROUTE: &str = "backend fastroute was removed on 2026-11-05: this board needs the iotroute backend of `iotroute route`";
 /// KiCad 10 stops its list of open connections here, so a full list cannot prove that a net is connected.
 pub const DRC_UNCONNECTED_CAP: usize = 499;
 
@@ -48,7 +50,6 @@ pub type Rect = [f64; 4];
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Backend {
-    Fastroute,
     Tracemaker,
 }
 

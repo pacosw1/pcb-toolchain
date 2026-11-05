@@ -1,5 +1,5 @@
 //! Validation of a route.json object. Every error is collected, so one run names all of them.
-use super::{Backend, Budget, DEFAULT_BUDGET, Keepout, KeepoutMode, Plan, Pour, PourConnection, PourShape, Rect, SCHEMA, Stage, WidthRule};
+use super::{Backend, Budget, DEFAULT_BUDGET, Keepout, KeepoutMode, NO_FASTROUTE, Plan, Pour, PourConnection, PourShape, Rect, SCHEMA, Stage, WidthRule};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -17,7 +17,7 @@ const POUR_KEYS: &[&str] = &[
 const WIDTH_KEYS: &[&str] = &["name", "box", "layers", "width_mm"];
 
 /// Validate a route.json object against the copper layers of the board and, when given, the known route feature names
-/// (which fastroute_job would otherwise ignore). The error text names every problem found, joined by "; ".
+/// (which a stage would otherwise ignore). The error text names every problem found, joined by "; ".
 pub fn load(cfg: &Value, copper: &[String], known_features: Option<&BTreeSet<String>>) -> Result<Plan, String> {
     let mut check = Check { copper, errors: Vec::new() };
     if !check.keys(cfg, TOP_KEYS, "route.json") {
@@ -148,11 +148,14 @@ impl Check<'_> {
 
     fn backend(&mut self, value: &Value) -> Backend {
         match value.as_str() {
-            Some("fastroute") => Backend::Fastroute,
             Some("tracemaker") => Backend::Tracemaker,
+            Some("fastroute") => {
+                self.fail(NO_FASTROUTE.to_string());
+                Backend::Tracemaker
+            }
             _ => {
-                self.fail("backend must be one of fastroute, tracemaker".to_string());
-                Backend::Fastroute
+                self.fail("backend must be tracemaker".to_string());
+                Backend::Tracemaker
             }
         }
     }

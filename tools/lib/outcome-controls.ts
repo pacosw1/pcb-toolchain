@@ -249,7 +249,8 @@ function checkFailureBudget(spec: unknown, manifest: Dict, effort: Dict, resourc
   }
 }
 
-/** The job of a recorded run: a bound iotroute binary, or the recorded Python job of the source snapshot in an older run. */
+/** The job of a recorded run: a bound iotroute binary, or the recorded Python job of the source snapshot in an older run.
+ *  Fastroute was removed on 2026-11-05: `router: 'fastroute'` here is only ever an old sealed record, checked as it was. */
 function jobToolBound(command: string[], inputs: Dict, files: Dict): boolean {
   if (command[1] === 'fastroute') return isShaText(inputs[command[0] as string]);
   return Boolean(files['tools/fastroute_job.py']) && inputs[command[1] as string] === files['tools/fastroute_job.py'];
