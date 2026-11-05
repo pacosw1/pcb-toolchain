@@ -19,7 +19,7 @@ const nothing = (): Cleanup => ({ complete: true, errors: [], child_reaped: true
 
 async function worker(folderPath: string): Promise<number> {
   const folder = resolve(folderPath), manifest = readObject<Manifest>(join(folder, 'run.json'));
-  if (!['check', 'doctor'].includes(manifest.operation) || !Array.isArray(manifest.command) || manifest.command.length === 0
+  if (!['check', 'doctor', 'readiness'].includes(manifest.operation) || !Array.isArray(manifest.command) || manifest.command.length === 0
       || !Number.isFinite(manifest.timeout_s) || manifest.timeout_s <= 0 || !Number.isFinite(manifest.heartbeat_s) || manifest.heartbeat_s <= 0)
     throw new Error('invalid check manifest');
   if (process.env.IOT_PCB_WORKER_LOCK !== join(folder, 'worker.lock') || !process.env.IOT_LEAN_STAGE_HANDLE)
@@ -61,8 +61,8 @@ async function worker(folderPath: string): Promise<number> {
     } else {
       if (manifest.operation === 'check' && sha(join(manifest.root, 'hardware-design/boards', manifest.board, 'gate.json')) !== manifest.gate_config_sha256)
         throw new Error('configured gate changed after check admission');
-      if (manifest.operation === 'doctor') mkdirSync(join(folder, 'operation'), { recursive: true });
-      log = openSync(join(folder, manifest.operation === 'doctor' ? 'operation/doctor.log' : 'gate.log'), 'w');
+      if (manifest.operation !== 'check') mkdirSync(join(folder, 'operation'), { recursive: true });
+      log = openSync(join(folder, manifest.operation !== 'check' ? `operation/${manifest.operation}.log` : 'gate.log'), 'w');
       const env = { ...process.env, IOT_LEAN_DEADLINE: encodeDeadline(deadline) };
       proc = startOwned(manifest.command, { cwd: manifest.root, env, stdin: 'ignore', stdout: log, stderr: log });
       let heartbeat = now();
@@ -87,7 +87,7 @@ async function worker(folderPath: string): Promise<number> {
           } else {
             const code = outcome.returncode;
             result = { status: code === 0 ? 'passed' : code === 2 ? 'error' : 'failed', exit_code: code === 0 ? 0 : code === 2 ? 2 : 1,
-              cause: 'doctor ' + (code === 0 ? 'completed' : 'failed; inspect original tool evidence'), scope: 'environment', operation: 'doctor', tool_exit: code, artifact_directory: null };
+              cause: manifest.operation + (code === 0 ? ' completed' : ' failed; inspect original tool evidence'), scope: manifest.operation === 'doctor' ? 'environment' : 'assembly_readiness', operation: manifest.operation, tool_exit: code, artifact_directory: null };
             atomicJson(join(folder, 'operation/result.json'), result);
           }
           break;
