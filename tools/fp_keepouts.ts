@@ -159,7 +159,7 @@ function rip(pcb: string, ref: string): number {
 /** Check saved zone fills and KiCad-provided copper pad polygons against each rule area. */
 export function checkBoard(board: Board, ref: string, measure = geometryBatch): {lines:string[]; verdict:string} {
  const zones=keepoutZones(board,ref), hits=touching(board,ref), lines=hits.map(({item,area})=>`  ${area}: ${describe(item)}`);
- const requests:Request[]=[], rows:{kind:'fill'|'pad';name:string;subject:string}[]=[];
+ const requests:Request[]=[], rows:{kind:'fill'|'pad';name:string;subject:string;couldOverlap?:boolean}[]=[];
  const poly=(p:{outline:Pt[];holes:Pt[][]}):Poly=>({outer:p.outline.map(q=>[toMm(q.x),toMm(q.y)]),holes:p.holes.map(r=>r.map(q=>[toMm(q.x),toMm(q.y)]))});
  for(const zone of zones) {
   if(!zone.outline.length) throw new Error(`keepout ${zone.name} has no outline`);
@@ -171,18 +171,24 @@ export function checkBoard(board: Board, ref: string, measure = geometryBatch): 
   if(zone.rule_area!.pads) for(const fp of board.footprints) for(const pad of fp.pads) for(const layer of zone.layers) {
    if(!pad.layers.includes(layer)) continue;
    const polygon=pad.polygons?.[layer];if(!polygon || polygon.outline.length<3) throw new Error(`missing copper polygon for ${fp.reference}.${pad.number} on ${layer}`);
-   requests.push({operation:'intersection',a,b:[poly(polygon)]});rows.push({kind:'pad',name:zone.name,subject:`${fp.reference}.${pad.number}`});
+   const box=pad.bbox;
+   if(!box || ![box.left,box.right,box.top,box.bottom].every(Number.isSafeInteger) || box.left>box.right || box.top>box.bottom) throw new Error(`missing pad bounds for ${fp.reference}.${pad.number}`);
+   const pts=zone.outline.flatMap(p=>p.outline);
+   const bounds=pts.reduce((b,p)=>({x0:Math.min(b.x0,p.x),x1:Math.max(b.x1,p.x),y0:Math.min(b.y0,p.y),y1:Math.max(b.y1,p.y)}),{x0:Infinity,x1:-Infinity,y0:Infinity,y1:-Infinity});
+   const {x0,x1,y0,y1}=bounds;
+   const couldOverlap=pad.shape==='Custom' || (box.left<=x1 && box.right>=x0 && box.top<=y1 && box.bottom>=y0);
+   requests.push({operation:'intersection',a,b:[poly(polygon)]});rows.push({kind:'pad',name:zone.name,subject:`${fp.reference}.${pad.number}`,couldOverlap});
   }
  }
  const values=measure(requests);if(values.length!==rows.length)throw new Error('incomplete keepout geometry result');
  let fill=0,pads=0,uncertain=false;
  rows.forEach((row,i)=>{const area=values[i]!;
   if(row.kind==='fill' && area>0) {fill+=area;lines.push(`  ${row.name}: zone fill ${row.subject} ${area.toFixed(4)} mm2`);}
-  if(row.kind==='pad' && Math.abs(area-1e-6)<1e-12) uncertain=true;
-  else if(row.kind==='pad' && area>1e-6){pads++;lines.push(`  ${row.name}: pad ${row.subject} ${area.toFixed(4)} mm2`);}
+  if(row.kind==='pad' && area>1e-6+1e-12){pads++;lines.push(`  ${row.name}: pad ${row.subject} ${area.toFixed(4)} mm2`);}
+  else if(row.kind==='pad' && row.couldOverlap) uncertain=true;
  });
  const verdict=!zones.length || hits.length || fill>0 || pads ? 'FAIL':uncertain?'UNCERTAIN':'PASS';
- lines.push(`${verdict} check ${ref}: areas ${zones.length}, tracks+vias ${hits.length}, zone fill ${fill.toFixed(4)} mm2, pads ${pads}${uncertain?' (pad overlap within 1e-12 mm2 of threshold)':''}`);
+ lines.push(`${verdict} check ${ref}: areas ${zones.length}, tracks+vias ${hits.length}, zone fill ${fill.toFixed(4)} mm2, pads ${pads}${uncertain?' (pad polygon may understate overlap)':''}`);
  return {lines,verdict};
 }
 
