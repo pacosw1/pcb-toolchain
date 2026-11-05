@@ -20,6 +20,7 @@ const api: AppApi = {
   setProjectRoot: (root) => ipcRenderer.invoke('app:setProjectRoot', root),
   openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
   boardGlb: (pcb) => ipcRenderer.invoke('board:glb', pcb),
+  liveGlb: (cursor) => ipcRenderer.invoke('board:liveGlb', cursor),
   engine: {
     call: (method, params) => ipcRenderer.invoke('engine:call', method, params),
     status: () => ipcRenderer.invoke('engine:status'),

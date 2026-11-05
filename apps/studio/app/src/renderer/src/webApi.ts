@@ -87,6 +87,10 @@ export function installWebApi(): void {
     boardGlb: async (pcb) => {
       const r = (await call('board.glb', { pcb })) as GlbResult
       return { ...r, url: fileUrl(r.path) }
+    },
+    liveGlb: async (cursor) => {
+      const r = (await call('live.model', { cursor })) as GlbResult
+      return { ...r, url: fileUrl(r.path) }
     }
   }
   ;(window as unknown as { api: AppApi }).api = api

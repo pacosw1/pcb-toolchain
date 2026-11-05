@@ -106,6 +106,10 @@ app.whenReady().then(() => {
     const r = (await engine.call('board.glb', { pcb, out_dir: glbDir() })) as GlbResult
     return { ...r, url: 'pcbfile://local' + encodeURI(r.path) }
   })
+  ipcMain.handle('board:liveGlb', async (_e, cursor: number) => {
+    const r = (await engine.call('live.model', { cursor, out_dir: glbDir() })) as GlbResult
+    return { ...r, url: 'pcbfile://local' + encodeURI(r.path) }
+  })
   ipcMain.handle('app:defaultProject', () => process.env.PCBSTUDIO_PROJECT || null)
   // Kept for the renderer API: main already took the root from the engine's project.open reply. A different root is
   // refused (the renderer cannot widen pcbfile://).

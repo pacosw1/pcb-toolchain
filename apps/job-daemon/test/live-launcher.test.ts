@@ -13,7 +13,7 @@ test('registered projects retain their pinned legacy CLI inside the new lock gua
   const cad = path.join(root, 'hardware-design/boards/DEMO/cad'), old = path.join(home, '.local/share/pcb-toolchain/old/bin');
   fs.mkdirSync(cad, { recursive: true }); fs.mkdirSync(old, { recursive: true }); fs.mkdirSync(path.join(bundle, 'bin'), { recursive: true }); fs.mkdirSync(path.join(bundle, 'tools'), { recursive: true });
   fs.copyFileSync(path.join(repo, 'bin/pcb'), path.join(bundle, 'bin/pcb')); fs.chmodSync(path.join(bundle, 'bin/pcb'), 0o755);
-  for (const name of ['pcb-live-guard.mts', 'pcb-live-common.mts', 'pcb-live-worker.mts', 'pcb-live-processes.mts']) fs.copyFileSync(path.join(repo, 'tools', name), path.join(bundle, 'tools', name));
+  for (const name of ['pcb-live-guard.mts', 'pcb-live-common.mts', 'pcb-live-worker.mts', 'pcb-live-processes.mts', 'pcb-live-model.mts', 'pcb-live-placement-history.mts']) fs.copyFileSync(path.join(repo, 'tools', name), path.join(bundle, 'tools', name));
   fs.writeFileSync(path.join(bundle, 'VERSION'), 'new test\n'); fs.writeFileSync(path.join(root, 'toolchain.lock'), '{"version":"old"}');
   fs.writeFileSync(path.join(root, '.pcb-live.json'), '{"projectId":"project"}'); fs.writeFileSync(path.join(cad, 'demo.kicad_pcb'), 'board');
   fs.writeFileSync(path.join(root, 'hardware-design/boards/DEMO/gate.json'), '{"project":"cad/demo"}');

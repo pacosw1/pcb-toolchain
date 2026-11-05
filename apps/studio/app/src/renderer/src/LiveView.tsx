@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { LiveBoard } from './LiveBoard'
 import { LiveSidebar } from './LiveSidebar'
+import { Viewer3D } from './Viewer3D'
 import { activityRows } from './liveActivity'
 import { interpolatePlacement, placementGeometry, type Placement } from './livePlacement'
 import type { Geometry } from './types'
@@ -32,6 +33,7 @@ export function LiveView(): React.JSX.Element {
   const [replayIndex, setReplayIndex] = useState(0)
   const [playing, setPlaying] = useState(false)
   const [replayBusy, setReplayBusy] = useState(false)
+  const [modelCursor, setModelCursor] = useState<number | null>(null)
   const [geometry, setGeometry] = useState<Geometry | null>(null)
   const [loadedHash, setLoadedHash] = useState<string | null>(null)
   const [loadedIdentity, setLoadedIdentity] = useState<string | null>(null)
@@ -94,6 +96,7 @@ export function LiveView(): React.JSX.Element {
     !(e.kind === 'board.snapshot' && e.run === 'saved' && all.some(r => r.kind === 'board.removed' && r.source === e.source && r.board === e.board && r.data?.path === e.data.path && r.cursor > e.cursor)))
     .sort((a, b) => `${a.board} ${a.host} ${a.run}`.localeCompare(`${b.board} ${b.host} ${b.run}`)), [all])
   const current = boards.find(e => keyOf(e) === selected) ?? all.find(e => e.kind === 'run.state' && keyOf(e) === selected) ?? null
+  useEffect(() => { setModelCursor(null) }, [current?.source, current?.board])
   const runs = all.filter(e => e.kind === 'run.state' && (!current || (e.source === current.source && e.board === current.board)))
     .sort((a, b) => b.cursor - a.cursor)
   const active = runs.find(e => runKey(e) === selectedRun) ?? (current?.run && current.run !== 'saved' ? runs.find(e => e.run === current.run) : runs.find(e => ['queued', 'running', 'stopping'].includes(String(e.data.status))) ?? runs[0])
@@ -103,7 +106,7 @@ export function LiveView(): React.JSX.Element {
   const view = replay[replayIndex] ?? following ?? current
   const viewIdentity = view ? [view.source, view.board, view.run].join('\0') : ''
   const invalid = view && ['board.snapshot', 'candidate.snapshot'].includes(view.kind) ? all.find(e => e.kind === 'board.invalid' && e.source === view.source && e.board === view.board && e.run === view.run && e.data.path === view.data.path && e.cursor > view.cursor) : undefined
-  const base = view?.kind === 'route.preview' ? boards.find(e => e.kind === 'board.snapshot' && e.source === view.source && e.board === view.board && e.run === view.run && e.data.sha256 === view.data.baseSha256) : view
+  const base = view && ['route.preview', 'placement.preview'].includes(view.kind) ? boards.find(e => e.kind === 'board.snapshot' && e.source === view.source && e.board === view.board && e.run === view.run && e.data.sha256 === view.data.baseSha256) : view
   const hash = view && ['placement.preview', 'route.preview'].includes(view.kind) && typeof view.data.baseSha256 === 'string' ? view.data.baseSha256 : typeof base?.data.sha256 === 'string' ? base.data.sha256 : null
   const previewHash = view?.kind === 'route.preview' && typeof view.data.sha256 === 'string' ? view.data.sha256 : null
   const placementHash = view?.kind === 'placement.preview' && typeof view.data.sha256 === 'string' ? view.data.sha256 : null
@@ -189,10 +192,11 @@ export function LiveView(): React.JSX.Element {
     if (!active) return
     setReplayBusy(true); setError(null)
     try {
-      const history = await window.api.engine.call('live.history', { source: active.source, board: active.board, run: active.run }) as { events: LiveEvent[]; truncated: boolean }
-      if (!history.events.length) { setError('No recorded board frames for this run.'); return }
+      const history = await window.api.engine.call('live.history', { source: active.source, board: active.board, run: active.run }) as { events: LiveEvent[]; truncated: boolean; expired?: boolean }
+      if (!history.events.length) { setError(history.expired ? 'Recorded frames for this run have expired.' : 'No recorded board frames for this run.'); return }
       setReplay(history.events.filter(valid)); setReplayIndex(0); setPlaying(false)
       if (history.truncated) setError('Replay is limited to the first 2,000 frames.')
+      else if (history.expired) setError('Older recorded frames have expired.')
     } catch (e) { setError(`Replay unavailable: ${e}`) }
     finally { setReplayBusy(false) }
   }
@@ -216,7 +220,7 @@ export function LiveView(): React.JSX.Element {
         </select>
       </label>
       {current ? <label style={{ marginLeft: 12 }}><input type="checkbox" checked={followRun} onChange={e => setFollowRun(e.target.checked)} /> Follow active run</label> : null}
-      {view ? <p>{stateFor(view)} · {replay.length ? 'Replay · ' : following ? 'Following active run · ' : ''}{view.kind === 'run.state' ? 'Waiting for a board snapshot' : view.kind === 'route.preview' ? `Unverified route preview, pass ${loadedPreviewHash === previewHash ? preview?.passes ?? '…' : '…'}` : view.kind === 'placement.preview' ? `Unverified placement preview, epoch ${String(view.data.epoch ?? '…')}` : view.kind === 'candidate.snapshot' ? `Unverified working candidate from ${view.run}` : view.run === 'saved' ? 'Saved board' : `Candidate from ${view.run}`} · captured {new Date(view.receivedAt).toLocaleString()}</p> : <p>No board selected.</p>}
+      {view ? <p>{stateFor(view)} · {replay.length ? 'Replay · ' : following ? 'Following active run · ' : ''}{view.kind === 'run.state' ? 'Waiting for a board snapshot' : view.kind === 'route.preview' ? `Unverified route preview, pass ${loadedPreviewHash === previewHash ? preview?.passes ?? '…' : '…'}` : view.kind === 'placement.preview' ? `${view.data.recorded ? 'Recorded' : 'Unverified'} placement preview, epoch ${String(view.data.epoch ?? '…')}` : view.kind === 'candidate.snapshot' ? `Unverified working candidate from ${view.run}` : view.run === 'saved' ? 'Saved board' : `Candidate from ${view.run}`} · captured {new Date(view.receivedAt).toLocaleString()}</p> : <p>No board selected.</p>}
       {hash ? <p>Source board version: <code>{hash.slice(0, 12)}</code></p> : null}
       {invalid ? <p role="alert">Showing the last available board: {String(invalid.data.error ?? 'the latest snapshot is unavailable')}.</p> : null}
       <section className="panel runsummary live-activity" aria-label="Current activity">
@@ -258,8 +262,14 @@ export function LiveView(): React.JSX.Element {
       </section> : null}
       {view && !hash ? <p>Waiting for the matching source board snapshot.</p> : null}
       {view?.kind === 'candidate.snapshot' && loadedHash !== hash && rendered ? <p>Loading the latest candidate; showing the previous snapshot.</p> : null}
-      {view?.kind === 'placement.preview' ? <p>Placement preview: existing copper is hidden while parts move.</p> : null}
-      {rendered && view ? <LiveBoard geo={rendered} identity={viewIdentity} animate={view.kind === 'candidate.snapshot'} /> : null}
+      {view?.kind === 'placement.preview' ? <p>Unverified placement preview: existing copper is hidden while parts move.{view.data.recorded ? ' Epochs become available after each placement search finishes.' : ''}</p> : null}
+      {rendered && view ? <>
+        <div className="boardview-bar">
+          <button type="button" onClick={() => setModelCursor(null)}>2D live view</button>
+          <button type="button" disabled={!base || !['board.snapshot', 'candidate.snapshot'].includes(base.kind)} onClick={() => setModelCursor(base?.cursor ?? null)}>3D snapshot</button>
+        </div>
+        {modelCursor ? <><p>3D is a fixed board snapshot. Choose 3D snapshot again to refresh; intermediate routing or placement overlays are shown in 2D.</p><Viewer3D liveCursor={modelCursor} /></> : <LiveBoard geo={rendered} identity={viewIdentity} animate={view.kind === 'candidate.snapshot'} />}
+      </> : null}
       {recent.length ? <section aria-label="Recent run activity"><h2>Recent run activity</h2>
         <ol className="live-timeline">{recent.flatMap(e => activityRows(e.data).map((row, i) => <li key={`${e.cursor}:${i}`} className={`live-entry ${row.tone}`}>
           <time dateTime={new Date(eventTime(e)).toISOString()}>{new Date(eventTime(e)).toLocaleTimeString()}</time>

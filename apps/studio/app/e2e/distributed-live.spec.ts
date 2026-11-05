@@ -9,6 +9,19 @@ import type { AddressInfo } from 'node:net'
 
 const APP = join(__dirname, '..')
 const digest = (b: Buffer): string => createHash('sha256').update(b).digest('hex')
+function modelFixture(): Buffer {
+  const positions = Buffer.alloc(36)
+  ;[0, 0, 0, 0.02, 0, 0, 0, 0, 0.02].forEach((n, i) => positions.writeFloatLE(n, i * 4))
+  const json = Buffer.from(JSON.stringify({ asset: { version: '2.0' }, scene: 0, scenes: [{ nodes: [0] }], nodes: [{ mesh: 0 }],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }], buffers: [{ byteLength: positions.length }],
+    bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: positions.length }],
+    accessors: [{ bufferView: 0, componentType: 5126, count: 3, type: 'VEC3', min: [0, 0, 0], max: [0.02, 0, 0.02] }] }))
+  const padded = Buffer.alloc(Math.ceil(json.length / 4) * 4, 0x20); json.copy(padded)
+  const header = Buffer.alloc(12), chunk = Buffer.alloc(8), bin = Buffer.alloc(8)
+  header.write('glTF'); header.writeUInt32LE(2, 4); header.writeUInt32LE(12 + 8 + padded.length + 8 + positions.length, 8)
+  chunk.writeUInt32LE(padded.length); chunk.write('JSON', 4); bin.writeUInt32LE(positions.length); bin.write('BIN\0', 4)
+  return Buffer.concat([header, chunk, padded, bin, positions])
+}
 const board = Buffer.from(`(kicad_pcb (version 20260206) (generator "test")
  (layers (0 "F.Cu" signal) (2 "B.Cu" signal))
  (gr_rect (start 0 0) (end 30 30) (layer "Edge.Cuts") (stroke (width 0.1) (type solid)))
@@ -24,7 +37,8 @@ test('a saved board follows its real run preview and readable activity', async (
   const previewSha = digest(preview)
   const candidate = Buffer.from(board.toString().replace('(at 10 10)', '(at 15 10)'))
   const candidateSha = digest(candidate)
-  const blobs = new Map([[boardSha, board], [previewSha, preview], [candidateSha, candidate]])
+  const model = modelFixture(), modelSha = digest(model), modelId = '11111111-1111-1111-1111-111111111111'
+  const blobs = new Map([[boardSha, board], [previewSha, preview], [candidateSha, candidate], [modelSha, model]])
   const now = Date.now()
   const common = { source: 'mini', host: 'franciscos-mac-mini', board: 'project/DEMO', receivedAt: now }
   const events = [
@@ -40,6 +54,7 @@ test('a saved board follows its real run preview and readable activity', async (
     if (req.headers.authorization !== `Bearer ${token}`) { res.writeHead(401); res.end(); return }
     const url = new URL(req.url ?? '/', 'http://local')
     if (url.pathname === '/live/state') { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ epoch: 'test', cursor: 6, events, truncated: false })); return }
+    if (url.pathname === '/live/models' && req.method === 'POST') { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ id: modelId, status: 'ready', modelSha, error: null })); return }
     if (url.pathname === '/live/history') {
       res.setHeader('content-type', 'application/json')
       res.end(JSON.stringify({ events: [
@@ -79,7 +94,7 @@ test('a saved board follows its real run preview and readable activity', async (
       data: { sha256: previewSha, baseSha256: boardSha, path: 'live-route.json', passes: 2, maxPasses: 5, conflictPairs: 3 } }
     for (const stream of streams) stream.write(`id: 7\ndata: ${JSON.stringify(frame)}\n\n`)
     await expect(win.getByText(/Following active run.*route preview, pass 2/)).toBeVisible({ timeout: 15_000 })
-    await expect(win.locator('.boardview-bar')).toContainText('1 tracks')
+    await expect(win.locator('.boardview-bar').filter({ hasText: 'Layers' })).toContainText('1 tracks')
     const log = { ...common, cursor: 8, eventId: 'log', run: 'run-1', kind: 'run.event', data: { type: 'tool.output', stage: 'routing',
       text: 'iter  2: routed 1, conflicts 3, audit pairs 3 samples 7 hard 0, pour faults 0 (walls 0, fixed 0), involved 1, hard fails 0, pres 0.50, 1.2 s hard: involved: SIG' } }
     for (const stream of streams) stream.write(`id: 8\ndata: ${JSON.stringify(log)}\n\n`)
@@ -96,6 +111,10 @@ test('a saved board follows its real run preview and readable activity', async (
     await win.getByLabel('Frame').fill('1')
     await expect(win.getByText('2 / 2', { exact: true })).toBeVisible()
     await expect(win.getByText(/Replay.*working candidate/)).toBeVisible()
+    await win.getByRole('button', { name: '3D snapshot' }).click()
+    await expect(win.getByRole('img', { name: '3D board view' })).toBeVisible()
+    await expect(win.getByLabel('3D model info')).toContainText('1 meshes', { timeout: 15_000 })
+    await win.getByRole('button', { name: '2D live view' }).click()
   } finally {
     await app.close()
     for (const stream of streams) stream.destroy()

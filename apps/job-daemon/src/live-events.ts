@@ -30,7 +30,14 @@ export class LiveEvents {
         kind TEXT NOT NULL, path TEXT NOT NULL, cursor INTEGER NOT NULL,
         PRIMARY KEY(source, board, run, kind, path)) STRICT;
       CREATE INDEX IF NOT EXISTS live_kind_cursor ON live_events(kind, cursor DESC);`);
+    this.db.exec(`CREATE TABLE IF NOT EXISTS live_models (
+      id TEXT PRIMARY KEY, source TEXT NOT NULL, board TEXT NOT NULL, run TEXT NOT NULL,
+      path TEXT NOT NULL, board_sha TEXT NOT NULL, created_at INTEGER NOT NULL,
+      status TEXT NOT NULL, model_sha TEXT, error TEXT
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS live_models_pending ON live_models(source, status, created_at);`);
     this.db.exec('CREATE INDEX IF NOT EXISTS live_run_cursor ON live_events(source, board, run, cursor);');
+    this.db.exec('CREATE INDEX IF NOT EXISTS live_kind_time ON live_events(kind, received_at);');
     this.db.prepare("INSERT INTO live_meta VALUES ('epoch', ?) ON CONFLICT(key) DO NOTHING").run(randomUUID());
     if (!this.db.prepare("SELECT 1 FROM live_meta WHERE key='latest-v1'").get()) {
       this.db.exec(`BEGIN IMMEDIATE;
@@ -101,13 +108,61 @@ export class LiveEvents {
   head(): number {
     return (this.db.prepare('SELECT COALESCE(MAX(cursor), 0) AS cursor FROM live_events').get() as { cursor: number }).cursor;
   }
-  history(source: string, board: string, run: string, after: number): { events: LiveEvent[]; more: boolean } {
+  /** Keep replay frame blobs for the same window as the job cache, plus every current observation. */
+  retainedBlobs(since: number): Set<string> {
+    const rows = this.db.prepare(`SELECT data FROM live_events WHERE
+      (received_at >= ? AND kind IN ('candidate.snapshot','route.preview','placement.preview'))
+      OR cursor IN (SELECT cursor FROM live_latest)`).iterate(since) as Iterable<{ data: string }>;
+    const hashes = new Set<string>();
+    for (const row of rows) {
+      const data = JSON.parse(row.data) as { sha256?: unknown; baseSha256?: unknown };
+      for (const value of [data?.sha256, data?.baseSha256]) if (typeof value === 'string' && /^[0-9a-f]{64}$/.test(value)) hashes.add(value);
+    }
+    for (const row of this.db.prepare('SELECT model_sha FROM live_models WHERE created_at >= ? AND model_sha IS NOT NULL').iterate(since) as Iterable<{ model_sha: string }>) hashes.add(row.model_sha);
+    return hashes;
+  }
+  requestModel(cursor: number): ModelRequest {
+    if (!Number.isSafeInteger(cursor) || cursor < 1) throw new Error('invalid snapshot cursor');
+    const row = this.db.prepare('SELECT * FROM live_events WHERE cursor=?').get(cursor) as unknown as Row | undefined;
+    if (!row || !['board.snapshot', 'candidate.snapshot'].includes(row.kind)) throw new Error('3D export requires a board snapshot');
+    const data = JSON.parse(row.data) as { sha256?: unknown; path?: unknown };
+    if (typeof data.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(data.sha256) || typeof data.path !== 'string' || !data.path || data.path.length > 2048)
+      throw new Error('invalid snapshot');
+    const existing = this.db.prepare("SELECT * FROM live_models WHERE source=? AND board_sha=? AND path=? AND created_at>? AND status IN ('pending','ready') ORDER BY created_at DESC LIMIT 1")
+      .get(row.source, data.sha256, data.path, Date.now() - 3600_000) as unknown as ModelRow | undefined;
+    if (existing) return modelFromRow(existing);
+    const pending = this.db.prepare("SELECT COUNT(*) AS n FROM live_models WHERE status='pending' AND created_at>?").get(Date.now() - 3600_000) as { n: number };
+    if (pending.n >= 100) throw new Error('3D export queue is full');
+    const id = randomUUID(), now = Date.now();
+    this.db.prepare("INSERT INTO live_models VALUES (?,?,?,?,?,?,?,'pending',NULL,NULL)").run(id, row.source, row.board, row.run, data.path, data.sha256, now);
+    return this.model(id)!;
+  }
+  model(id: string): ModelRequest | null {
+    if (!/^[0-9a-f-]{36}$/.test(id)) throw new Error('invalid model request');
+    const row = this.db.prepare('SELECT * FROM live_models WHERE id=?').get(id) as unknown as ModelRow | undefined;
+    return row ? modelFromRow(row) : null;
+  }
+  pendingModels(source: string): ModelRequest[] {
+    if (!source || source.length > 512) throw new Error('invalid source');
+    return (this.db.prepare("SELECT * FROM live_models WHERE source=? AND status='pending' AND created_at>? ORDER BY created_at LIMIT 5")
+      .all(source, Date.now() - 3600_000) as unknown as ModelRow[]).map(modelFromRow);
+  }
+  finishModel(id: string, source: string, modelSha: string | null, error: string | null): ModelRequest {
+    if ((!modelSha && !error) || (modelSha !== null && !/^[0-9a-f]{64}$/.test(modelSha)) || (error !== null && (typeof error !== 'string' || error.length > 1000))) throw new Error('invalid model result');
+    const req = this.model(id); if (!req || req.source !== source) throw new Error('model request not found');
+    if (req.status === 'pending') this.db.prepare('UPDATE live_models SET status=?, model_sha=?, error=? WHERE id=? AND status=\'pending\'')
+      .run(modelSha ? 'ready' : 'error', modelSha, error, id);
+    return this.model(id)!;
+  }
+  history(source: string, board: string, run: string, after: number, since = 0): { events: LiveEvent[]; more: boolean; expired: boolean } {
     if (![source, board, run].every(v => typeof v === 'string' && v.length > 0 && v.length <= 512) ||
-        !Number.isSafeInteger(after) || after < 0) throw new Error('invalid history request');
+        !Number.isSafeInteger(after) || after < 0 || !Number.isFinite(since) || since < 0) throw new Error('invalid history request');
     const rows = this.db.prepare(`SELECT * FROM live_events WHERE source=? AND board=? AND run=? AND cursor>?
-      AND kind IN ('candidate.snapshot','route.preview','placement.preview') ORDER BY cursor LIMIT 201`)
-      .all(source, board, run, after) as unknown as Row[];
-    return { events: rows.slice(0, 200).map(fromRow), more: rows.length > 200 };
+      AND received_at >= ? AND kind IN ('candidate.snapshot','route.preview','placement.preview') ORDER BY cursor LIMIT 201`)
+      .all(source, board, run, after, since) as unknown as Row[];
+    const expired = !!this.db.prepare(`SELECT 1 FROM live_events WHERE source=? AND board=? AND run=? AND received_at < ?
+      AND kind IN ('candidate.snapshot','route.preview','placement.preview') LIMIT 1`).get(source, board, run, since);
+    return { events: rows.slice(0, 200).map(fromRow), more: rows.length > 200, expired };
   }
   /** Latest observation per source/board/run/kind, and the cursor from which to follow. */
   current(): { epoch: string; cursor: number; events: LiveEvent[]; truncated: boolean } {
@@ -128,6 +183,12 @@ export class LiveEvents {
 }
 
 interface Row { cursor: number; source: string; event_id: string; host: string; board: string; run: string; kind: string; data: string; received_at: number }
+export interface ModelRequest { id: string; source: string; board: string; run: string; path: string; boardSha: string; createdAt: number; status: string; modelSha: string | null; error: string | null }
+interface ModelRow { id: string; source: string; board: string; run: string; path: string; board_sha: string; created_at: number; status: string; model_sha: string | null; error: string | null }
+function modelFromRow(row: ModelRow): ModelRequest {
+  return { id: row.id, source: row.source, board: row.board, run: row.run, path: row.path, boardSha: row.board_sha,
+    createdAt: row.created_at, status: row.status, modelSha: row.model_sha, error: row.error };
+}
 function fromRow(row: Row): LiveEvent {
   return { cursor: row.cursor, source: row.source, eventId: row.event_id, host: row.host, board: row.board,
     run: row.run, kind: row.kind, data: JSON.parse(row.data) as unknown, receivedAt: row.received_at };

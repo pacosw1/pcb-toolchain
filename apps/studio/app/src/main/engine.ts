@@ -17,6 +17,7 @@ const DEFAULT_TIMEOUT_MS = 30_000
 export const METHOD_TIMEOUT_MS: Record<string, number> = {
   'run.adopt': 30 * 60_000, // tools/pcb adopt re-verifies the sealed candidate before it replaces the board
   'board.glb': 10 * 60_000, // kicad-cli 3D export of a large board
+  'live.model': 11 * 60_000,
   'board.geometry': 2 * 60_000,
   'board.bom': 2 * 60_000,
   'project.open': 60_000,

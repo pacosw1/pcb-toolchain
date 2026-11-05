@@ -4,10 +4,11 @@ import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 
-export function Viewer3D({ pcb }: { pcb: string }): React.JSX.Element {
+export function Viewer3D({ pcb, liveCursor }: { pcb?: string; liveCursor?: number }): React.JSX.Element {
   const host = useRef<HTMLDivElement>(null)
   const [state, setState] = useState<string>('Exporting the 3D model (first time for this board version takes a few seconds)…')
   const [info, setInfo] = useState<string | null>(null)
+  const [warning, setWarning] = useState<string | null>(null)
   const viewRef = useRef<{ fit: (dir: THREE.Vector3) => void } | null>(null)
 
   useEffect(() => {
@@ -47,10 +48,12 @@ export function Viewer3D({ pcb }: { pcb: string }): React.JSX.Element {
     }
     tick()
 
-    window.api
-      .boardGlb(pcb)
+    setState('Exporting the 3D model…'); setInfo(null); setWarning(null)
+    const load = liveCursor ? window.api.liveGlb(liveCursor) : pcb ? window.api.boardGlb(pcb) : Promise.reject(new Error('No board selected'))
+    load
       .then((r) => {
         if (disposed) return
+        if ('warnings' in r && Array.isArray(r.warnings) && r.warnings.length) setWarning(r.warnings.join('; '))
         setState(r.cached ? 'Loading cached 3D model…' : 'Loading 3D model…')
         new GLTFLoader().load(
           r.url,
@@ -98,7 +101,7 @@ export function Viewer3D({ pcb }: { pcb: string }): React.JSX.Element {
       })
       el.removeChild(renderer.domElement)
     }
-  }, [pcb])
+  }, [pcb, liveCursor])
 
   const view = (x: number, y: number, z: number): void => viewRef.current?.fit(new THREE.Vector3(x, y, z))
 
@@ -126,6 +129,7 @@ export function Viewer3D({ pcb }: { pcb: string }): React.JSX.Element {
       <div className="boardview-canvas" ref={host} role="img" aria-label="3D board view">
         {state ? <div className="overlay-msg">{state}</div> : null}
       </div>
+      {warning ? <p role="status">Some 3D models may be missing: {warning}</p> : null}
     </div>
   )
 }

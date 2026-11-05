@@ -222,10 +222,29 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: J
     } finally { release(); }
   }
   if (url.pathname === '/live/state' && method === 'GET') return json(res, 200, live.current());
+  if (url.pathname === '/live/models' && method === 'POST') {
+    const body = await readJson(req) as { cursor?: unknown } | null;
+    try { return json(res, 200, live.requestModel(body?.cursor as number)); }
+    catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'invalid model request'); }
+  }
+  if (url.pathname === '/live/models' && method === 'GET') {
+    try { return json(res, 200, live.pendingModels(url.searchParams.get('source') ?? '')); }
+    catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'invalid source'); }
+  }
+  const model = /^\/live\/models\/([0-9a-f-]{36})$/.exec(url.pathname);
+  if (model && method === 'GET') {
+    const result = live.model(model[1]); if (!result) throw new HttpError(404, 'model request not found');
+    return json(res, 200, result);
+  }
+  if (model && method === 'POST') {
+    const body = await readJson(req) as { source?: unknown; modelSha?: unknown; error?: unknown } | null;
+    try { return json(res, 200, live.finishModel(model[1], body?.source as string, (body?.modelSha ?? null) as string | null, (body?.error ?? null) as string | null)); }
+    catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'invalid model result'); }
+  }
   if (url.pathname === '/live/history' && method === 'GET') {
     const source = url.searchParams.get('source') ?? '', board = url.searchParams.get('board') ?? '', run = url.searchParams.get('run') ?? '';
     const after = Number(url.searchParams.get('after') ?? '0');
-    try { return json(res, 200, live.history(source, board, run, after)); }
+    try { return json(res, 200, live.history(source, board, run, after, Math.max(0, Date.now() - mgr.cfg.blobKeepDays * 86_400_000))); }
     catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'invalid history request'); }
   }
   if (url.pathname === '/live/events/batch' && method === 'POST') {
@@ -357,7 +376,8 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: J
     try {
       if (req.headers['content-type'] === 'application/json') {
         file = await blobs.buildTar(parseManifest(await readJson(req)), maxBytes, left.signal);
-        blobs.sweep();
+        const now = Date.now();
+        blobs.sweep(now, () => live.retainedBlobs(now - mgr.cfg.blobKeepDays * 86_400_000));
       } else {
         file = await receive(req, mgr.store.incomingDir(), maxBytes);
       }

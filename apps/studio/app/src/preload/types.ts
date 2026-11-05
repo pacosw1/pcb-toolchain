@@ -48,6 +48,7 @@ export interface AppApi {
   openExternal: (url: string) => Promise<void>
   /** Export (or reuse) the board's 3D model; returns a pcbfile:// URL. */
   boardGlb: (pcb: string) => Promise<Pick<GlbResult, 'cached' | 'size'> & { url: string }>
+  liveGlb: (cursor: number) => Promise<Pick<GlbResult, 'cached' | 'size' | 'warnings'> & { url: string }>
 }
 
 export interface EngineApi {

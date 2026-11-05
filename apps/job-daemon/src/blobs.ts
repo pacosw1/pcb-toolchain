@@ -147,12 +147,13 @@ export class BlobStore {
   }
 
   /** Drops files no job used for the keep time. A running job does not need them: it has its own input tar. */
-  sweep(nowMs: number = Date.now()): void {
+  sweep(nowMs: number = Date.now(), protectedHashes: () => Set<string> = () => new Set()): void {
     if (nowMs - this.lastSweep < SWEEP_MS) return;
     this.lastSweep = nowMs;
+    const retained = protectedHashes();
     for (const name of fs.readdirSync(this.dir)) {
       const file = this.file(name);
-      if (nowMs - fs.statSync(file).mtimeMs > this.keepMs) fs.rmSync(file, { force: true });
+      if (!retained.has(name) && nowMs - fs.statSync(file).mtimeMs > this.keepMs) fs.rmSync(file, { force: true });
     }
   }
 }

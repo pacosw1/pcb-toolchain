@@ -1,5 +1,5 @@
 // The coordinator token stays in the engine, never in renderer messages.
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
@@ -31,6 +31,13 @@ async function get(endpoint: string, signal?: AbortSignal): Promise<Response> {
   const cfg = config(), token = fs.readFileSync(cfg.tokenFile, 'utf8').trim()
   if (token.length < 32) throw new Error('coordinator token is invalid')
   const response = await fetch(cfg.url + endpoint, { headers: { Authorization: `Bearer ${token}` }, redirect: 'error', signal })
+  if (!response.ok) throw new CoordinatorError(response.status)
+  return response
+}
+async function post(endpoint: string, data: unknown): Promise<Response> {
+  const cfg = config(), token = fs.readFileSync(cfg.tokenFile, 'utf8').trim()
+  if (token.length < 32) throw new Error('coordinator token is invalid')
+  const response = await fetch(cfg.url + endpoint, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify(data), redirect: 'error', signal: AbortSignal.timeout(15000) })
   if (!response.ok) throw new CoordinatorError(response.status)
   return response
 }
@@ -146,14 +153,33 @@ export async function livePlacement(sha256: string): Promise<unknown> {
 export async function liveHistory(source: string, board: string, run: string): Promise<unknown> {
   if (![source, board, run].every(v => typeof v === 'string' && v.length > 0 && v.length <= 512)) throw new Error('invalid run identity')
   const events: { cursor: number }[] = []
-  let after = 0, more = false
+  let after = 0, more = false, expired = false
   do {
     const query = new URLSearchParams({ source, board, run, after: String(after) })
-    const page = await (await get('/live/history?' + query, AbortSignal.timeout(15000))).json() as { events: { cursor: number }[]; more: boolean }
+    const page = await (await get('/live/history?' + query, AbortSignal.timeout(15000))).json() as { events: { cursor: number }[]; more: boolean; expired?: boolean }
     if (!Array.isArray(page.events) || !page.events.every(e => Number.isSafeInteger(e.cursor) && e.cursor > after)) throw new Error('invalid replay history')
-    events.push(...page.events); more = page.more
+    events.push(...page.events); more = page.more; expired ||= page.expired === true
     if (page.events.length) after = page.events[page.events.length - 1].cursor
     else if (more) throw new Error('invalid replay cursor')
   } while (more && events.length < 2000)
-  return { events, truncated: more }
+  return { events, truncated: more, expired }
+}
+
+export async function liveModel(cursor: number, outDir: string): Promise<unknown> {
+  if (!Number.isSafeInteger(cursor) || cursor < 1) throw new Error('invalid board snapshot')
+  type Result = { id: string; status: string; modelSha: string | null; error: string | null }
+  let result = await (await post('/live/models', { cursor })).json() as Result
+  if (!/^[0-9a-f-]{36}$/.test(result.id)) throw new Error('invalid 3D export request')
+  const deadline = Date.now() + 600_000
+  while (result.status === 'pending' && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 2000))
+    result = await (await get('/live/models/' + result.id, AbortSignal.timeout(15000))).json() as Result
+  }
+  if (result.status !== 'ready' || !result.modelSha) throw new Error(result.error ?? '3D export is pending or the source machine is offline')
+  const bytes = await blob(result.modelSha)
+  if (bytes.toString('ascii', 0, 4) !== 'glTF') throw new Error('invalid 3D model')
+  fs.mkdirSync(outDir, { recursive: true })
+  const output = path.join(outDir, `live-${result.modelSha}.glb`), tmp = output + `.${randomUUID()}.tmp`
+  fs.writeFileSync(tmp, bytes, { mode: 0o600 }); fs.renameSync(tmp, output)
+  return { path: output, cached: false, size: bytes.length, warnings: result.error ? [result.error] : [] }
 }

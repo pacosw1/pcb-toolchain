@@ -11,6 +11,8 @@ import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { discoverExternal } from './pcb-live-processes.mts';
 import type { ExternalRun } from './pcb-live-processes.mts';
+import { exportModel } from './pcb-live-model.mts';
+import { placementHistory } from './pcb-live-placement-history.mts';
 
 const MAX_BOARD = 20 * 1024 * 1024;
 const MAX_LINE = 48 * 1024;
@@ -66,6 +68,7 @@ export class Worker {
   private uploadLimit = MAX_BOARD;
   private recovering = new Set<string>();
   private external = new Map<string, ExternalRun>();
+  private modelBusy = false;
   constructor(a: Args, known = new Map<string, number>()) {
     this.root = real(a.project); this.host = a.host; this.projectId = a.projectId; this.url = coordinatorUrl(a.url);
     this.token = fs.readFileSync(a.tokenFile, 'utf8').trim(); this.stateFile = a.stateFile; this.known = known;
@@ -125,6 +128,35 @@ export class Worker {
     return { source: this.source, eventId, host: this.host, board: `${this.projectId}/${board}`, run, kind, data };
   }
   async heartbeat(): Promise<void> { await this.event('heartbeat:' + randomUUID(), '_host', '_host', 'host.heartbeat', {}); }
+  async processModels(): Promise<void> {
+    if (this.modelBusy) return;
+    this.modelBusy = true;
+    try {
+      const requests = await (await this.request('/live/models?source=' + encodeURIComponent(this.source))).json() as { id: string; source: string; path: string; boardSha: string }[];
+      if (!Array.isArray(requests) || !requests.length) return;
+      const request = requests[0];
+      if (request.source !== this.source || !/^[0-9a-f-]{36}$/.test(request.id) || !/^[0-9a-f]{64}$/.test(request.boardSha)) throw new Error('invalid 3D request');
+      try {
+        const response = await this.request('/blobs/' + request.boardSha);
+        const length = Number(response.headers.get('content-length') ?? 0);
+        if (length > this.uploadLimit) throw new Error('board snapshot exceeds upload limit');
+        if (!response.body) throw new Error('empty board snapshot');
+        const reader = response.body.getReader(), chunks: Uint8Array[] = []; let total = 0;
+        for (;;) {
+          const part = await reader.read(); if (part.done) break;
+          total += part.value.length;
+          if (total > this.uploadLimit) { await reader.cancel(); throw new Error('board snapshot exceeds upload limit'); }
+          chunks.push(part.value);
+        }
+        const bytes = Buffer.concat(chunks, total);
+        const model = await exportModel({ root: this.root, boardPath: request.path, boardSha: request.boardSha, bytes, maxBytes: this.uploadLimit });
+        const hash = digest(model.bytes); await this.upload(hash, model.bytes);
+        await this.post('/live/models/' + request.id, { source: this.source, modelSha: hash, error: model.warning });
+      } catch (error) {
+        await this.post('/live/models/' + request.id, { source: this.source, error: String(error instanceof Error ? error.message : error).slice(0, 1000) });
+      }
+    } finally { this.modelBusy = false; }
+  }
   private boardOwner(gateId: string): string {
     try {
       const boards = real(path.join(this.root, 'hardware-design/boards'));
@@ -175,6 +207,42 @@ export class Worker {
         conflictPairs: frame.conflict_pairs ?? null, epoch: frame.epoch ?? null, epochs: frame.epochs ?? null,
         cost: frame.cost ?? null, elapsedS: frame.elapsed_s ?? null, baseSha256: frame.board_sha256 ?? null, path: key });
     this.state.stamps[key] = stamp; this.state.hashes[key] = hash; this.save();
+  }
+  private async placementReplay(outdir: string, cwd: string, board: string, run: string, observedBoard?: string): Promise<boolean> {
+    if (!file(path.join(outdir, 'input-manifest.json'))) return true;
+    let complete = true;
+    const entries = fs.readdirSync(outdir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !/^step-\d+$/.test(entry.name)) continue;
+      const step = path.join(outdir, entry.name), result = path.join(step, 'search/res.json');
+      if (!file(result) || !file(path.join(step, 'prob.json'))) continue;
+      try {
+        const key = `placement-history:${run}:${path.relative(outdir, step)}`, stamp = stampOf(fs.statSync(result));
+        if (this.state.stamps[key] === stamp) continue;
+        if (this.state.stamps[key + ':input'] !== stamp) { this.state.counters[key] = 0; this.state.stamps[key + ':input'] = stamp; this.save(); }
+        const replay = placementHistory(this.root, cwd, outdir, step, observedBoard), boardBytes = fs.readFileSync(replay.board);
+        if (digest(boardBytes) !== replay.sha || boardBytes.length > this.uploadLimit) continue;
+        const relative = path.relative(this.root, replay.board);
+        const index = this.state.counters[key] ?? 0;
+        if (index >= replay.frames.length) { this.state.stamps[key] = stamp; this.save(); continue; }
+        await this.upload(replay.sha, boardBytes);
+        await this.event('history-base:' + digest(`${run}\0${replay.sha}`), board, run, 'board.snapshot', { sha256: replay.sha, path: relative, saved: false });
+        for (let i = index; i < Math.min(index + 5, replay.frames.length); i++) {
+          const bytes = replay.frames[i]; if (bytes.length > this.uploadLimit) throw new Error('placement frame too large');
+          const hash = digest(bytes), frame = JSON.parse(bytes.toString()) as { epoch: number; epochs: number; cost: number };
+          await this.upload(hash, bytes);
+          await this.event('history:' + digest(`${key}\0${i}\0${hash}`), board, run, 'placement.preview',
+            { sha256: hash, baseSha256: replay.sha, epoch: frame.epoch, epochs: frame.epochs, cost: frame.cost, path: key, recorded: true });
+          this.state.counters[key] = i + 1; this.save();
+        }
+        if ((this.state.counters[key] ?? 0) < replay.frames.length) { complete = false; break; }
+        this.state.stamps[key] = stamp; this.save();
+      } catch (error) {
+        // A result may be mid-write or its source may no longer match: never fabricate a frame.
+        if (!['ENOENT', 'ELOOP'].includes((error as NodeJS.ErrnoException).code ?? '') && !(error instanceof SyntaxError)) console.error('pcb live placement replay:', error instanceof Error ? error.message : String(error));
+      }
+    }
+    return complete;
   }
   private async lines(p: string, board: string, run: string, kind: string, plainStage?: string): Promise<void> {
     const key = path.relative(this.root, p), fd = fs.openSync(p, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
@@ -247,11 +315,12 @@ export class Worker {
         ['live-place.json', 'placement.preview', 'iot-lab.placement-preview.v1']
       ] as const) { const p = path.join(folder, filename); if (file(p)) await this.preview(p, board, name, kind, schema); }
       const gate = path.join(folder, 'workspace/hardware-design/boards', gateId, 'gate.json');
-      if (file(gate) && !file(path.join(folder, 'result.json'))) {
+      if (file(gate)) {
         const g = JSON.parse(fs.readFileSync(gate, 'utf8')) as { project?: unknown };
         if (typeof g.project === 'string') {
           const workspace = real(path.join(folder, 'workspace')), candidate = path.resolve(path.dirname(gate), g.project + '.kicad_pcb');
-          if (file(candidate) && within(workspace, real(candidate))) await this.snapshot(real(candidate), board, name);
+          const running = !file(path.join(folder, 'result.json'));
+          if (running && file(candidate) && within(workspace, real(candidate))) await this.snapshot(real(candidate), board, name);
           // Existing placement pipelines write real intermediate boards under operation/work. Observe only the
           // newest same-named candidate; never treat it as a verified result or follow directory symlinks.
           const work = path.join(folder, 'operation/work'), expected = path.basename(candidate);
@@ -266,8 +335,16 @@ export class Worker {
               }
             }
           };
-          walk(work);
-          if (newest) await this.snapshot((newest as { file: string }).file, board, name, 'candidate.snapshot');
+          if (running) walk(work);
+          if (running && newest) await this.snapshot((newest as { file: string }).file, board, name, 'candidate.snapshot');
+          const histories: string[] = []; let directories = 0;
+          const search = (d: string, depth: number): void => {
+            if (!dir(d) || depth > 5 || ++directories > 5000) return;
+            if (file(path.join(d, 'input-manifest.json'))) histories.push(d);
+            for (const e of fs.readdirSync(d, { withFileTypes: true })) if (e.isDirectory() && !/^step-\d+$/.test(e.name)) search(path.join(d, e.name), depth + 1);
+          };
+          search(work, 0);
+          for (const history of histories) await this.placementReplay(history, workspace, board, name);
         }
       }
       for (const [nameOfFile, kind] of [['events.jsonl', 'run.event'], ['notes.jsonl', 'run.note']] as const) {
@@ -283,8 +360,10 @@ export class Worker {
       if (stopped) {
         await this.event('external-stop:' + id, old.board, id, 'run.state', { status: 'stopped', operation: 'placement',
           cause: 'Process ended; its outcome has not been verified', supervisorAlive: false, coordinated: false, elapsed_s: old.elapsed, timeoutS: old.timeout });
-        this.external.delete(id);
-        this.state.externalRuns = Object.fromEntries(this.external); this.save();
+        if (await this.placementReplay(old.outdir, this.root, old.board, id, old.boardFile)) {
+          this.external.delete(id);
+          this.state.externalRuns = Object.fromEntries(this.external); this.save();
+        }
       }
     }
     for (const run of runs) {
@@ -299,6 +378,7 @@ export class Worker {
       }
       const stageLog = path.join(run.outdir, 'stages.jsonl');
       if (file(stageLog)) await this.lines(stageLog, run.board, run.runId, 'external.stage');
+      await this.placementReplay(run.outdir, this.root, run.board, run.runId, run.boardFile);
       let visited = 0;
       const candidates: { file: string; mtime: number }[] = [], logs: { file: string; mtime: number; stage: string }[] = [];
       const basename = path.basename(run.boardFile);
@@ -424,6 +504,9 @@ async function main(): Promise<void> {
     finally { sendingHeartbeat = false; }
   };
   if (!args.once) setInterval(() => { void heartbeat(); }, 15000).unref();
+  if (!args.once) setInterval(() => {
+    for (const worker of workers.values()) void worker.processModels().catch(error => console.error('pcb live 3D:', error instanceof Error ? error.message : String(error)));
+  }, 5000).unref();
   for (;;) {
     try {
       const now = Date.now();
@@ -446,6 +529,7 @@ async function main(): Promise<void> {
       }
       for (const worker of workers.values()) await worker.scanActivity();
       for (const worker of workers.values()) await worker.scanBoards();
+      for (const worker of workers.values()) void worker.processModels().catch(error => console.error('pcb live 3D:', error instanceof Error ? error.message : String(error)));
     } catch (error) {
       if (args.once) throw error;
       console.error('pcb live worker:', error instanceof Error ? error.message : String(error));
