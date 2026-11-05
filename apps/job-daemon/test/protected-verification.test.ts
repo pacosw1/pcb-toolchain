@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { validateTrustedVerification } from '../src/protected-verification.ts';
+import { parseTrustedVerification, validateTrustedVerification } from '../src/protected-verification.ts';
 
 const hash = 'a'.repeat(64);
 const expected = { verification_id: 'verify-1', job_id: 'job-1', attempt_id: 'attempt-1', project_id: 'project-1', board_id: 'board-1',
@@ -16,6 +16,8 @@ const receipt = () => ({ schema: 'pcb.verification.v1', verification_id: 'verify
 
 test('trusted receipt validation rejects stale, mismatched, incomplete and duplicated verification', () => {
   assert.equal(validateTrustedVerification(receipt(), expected).outcome, 'passed');
+  assert.equal(parseTrustedVerification(Buffer.from(JSON.stringify(receipt())), expected).receipt.outcome, 'passed');
+  assert.throws(() => parseTrustedVerification(Buffer.from('{"schema":"pcb.verification.v1","schema":"pcb.verification.v1"}'), expected));
   assert.throws(() => validateTrustedVerification({ ...receipt(), attempt_id: 'other' }, expected), /attempt_id/);
   assert.throws(() => validateTrustedVerification({ ...receipt(), expires_at_ms: 2000 }, expected), /stale/);
   assert.throws(() => validateTrustedVerification({ ...receipt(), cancellation: 'cancelled' }, expected), /cleanup/);

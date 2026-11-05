@@ -1,0 +1,20 @@
+{
+  "schema": "pcb.canonical-json-v1-vectors.v1",
+  "valid": [
+    { "input": "{\"z\":1000,\"a\":[true,\"é\"]}", "canonical": "{\"a\":[true,\"é\"],\"z\":1000}" },
+    { "input": "{\"b\":0,\"a\":\"\\u0061\"}", "canonical": "{\"a\":\"a\",\"b\":0}" },
+    { "input": "{\"max\":9007199254740991}", "canonical": "{\"max\":9007199254740991}" }
+  ],
+  "invalid": [
+    { "input": "{\"a\":1,\"\\u0061\":2}", "reason": "duplicate key after decoding" },
+    { "input": "{\"n\":9007199254740992}", "reason": "unsafe integer" },
+    { "input": "{\"n\":-1}", "reason": "negative number" },
+    { "input": "{\"n\":1.0}", "reason": "fraction token" },
+    { "input": "{\"n\":1e3}", "reason": "exponent token" },
+    { "input": "{\"n\":0.99999999999999999}", "reason": "fraction rounded by floating point" },
+    { "input": "{\"s\":\"\\ud800\"}", "reason": "unpaired surrogate" },
+    { "input": "{\"x\":1,}", "reason": "trailing comma" },
+    { "input_hex": "ff", "reason": "invalid UTF-8" },
+    { "input_hex": "efbbbf7b7d", "reason": "UTF-8 BOM" }
+  ]
+}

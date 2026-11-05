@@ -156,6 +156,10 @@ deduplication must be derived without persisting the token itself.
 All IDs, numeric fields, sizes and limits require runtime schema validation. This draft permits nonnegative decimal
 integer tokens only, at most 2^53-1, with server-side versioned policy bounds; fractional and exponent notation are
 rejected to avoid cross-runtime rounding ambiguity. TypeScript types alone are not validation.
+The shared [canonicalization vectors](contracts/canonical-json-v1-vectors.json) are intended for both TypeScript and
+Rust implementations. Geometry previews and execution telemetry use a separate schema with finite floating-point
+values; v1 contract durations use integer milliseconds, and exact dimensional values need an explicitly typed decimal
+string representation rather than rounding.
 For this draft, opaque protocol/check IDs use `[A-Za-z0-9][A-Za-z0-9._:-]{0,127}`. The policy assigns stable IDs;
 human-facing labels and source identifiers may contain arbitrary board/net names and are stored separately, never
 silently sanitized into IDs. Current gate keys and rule IDs fit this set, but future policies need a versioned registry.

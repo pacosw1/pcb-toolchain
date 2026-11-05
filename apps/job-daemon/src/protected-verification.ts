@@ -2,6 +2,7 @@
 // Callers must obtain the record from trusted storage and recheck authority, revocation, cancellation, lease and CAS
 // within the same canonical transaction. A client-supplied receipt must never be passed here as trusted evidence.
 import type { VerificationReceiptV1 } from '../../../contracts/pcb-system-v1.ts';
+import { parseCanonicalJson } from './canonical-json.ts';
 
 const SHA = /^[0-9a-f]{64}$/;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -48,4 +49,10 @@ export function validateTrustedVerification(value: unknown, expected: Verificati
   }
   if (remaining.size) throw new Error('required verification check is missing');
   return value as unknown as VerificationReceiptV1;
+}
+
+/** Parse trusted-record bytes without duplicate keys before validating; this does not authenticate the verifier. */
+export function parseTrustedVerification(bytes: Uint8Array, expected: VerificationExpectation): { receipt: VerificationReceiptV1; sha256: string } {
+  const parsed = parseCanonicalJson(bytes, { maxBytes: 1024 * 1024, maxNodes: 30_000, maxDepth: 16 });
+  return { receipt: validateTrustedVerification(parsed.value, expected), sha256: parsed.sha256 };
 }
