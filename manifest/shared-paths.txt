@@ -237,6 +237,8 @@ tools/lib/pcb-cycle.test.ts
 tools/lib/pcb-cycle.ts
 tools/lib/pcb-evidence.test.ts
 tools/lib/pcb-evidence.ts
+tools/lib/pcb-gate-outcome.ts
+tools/lib/pcb-gate-outcome.test.ts
 tools/lib/pcb-identity.ts
 tools/lib/pcb-next.test.ts
 tools/lib/pcb-next.ts
