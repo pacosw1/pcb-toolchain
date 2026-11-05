@@ -424,8 +424,8 @@ struct Board {
     iso: Option<Iso>,
     /// isolation: the Iso::var entry of each net (empty without iso)
     niv: Vec<u32>,
-    /// plane outlines of each plane net (model net `plane_polys`): its fan-out vias go inside them (a plane that does
-    /// not cover the board, POE-ETHERNET In2 VDD_3V3). A net with none: no limit (an older model)
+    /// zone outlines of each net (model net `plane_polys`): its fan-out vias and return vias go inside them (a plane that does
+    /// not cover the board, POE-ETHERNET In2 VDD_3V3; a pour with a notch, ENV-SENSE GND_B). A net with none: no limit
     ppoly: Vec<(usize, Vec<(f64, f64)>)>,
     /// parallel copy (model net `twin`, current-paths.json parallel chains): copper layer of the second copy of each
     /// net (-1 none). The net routes on its one layer; every cell is checked on both layers and every track is written
@@ -579,7 +579,7 @@ impl Board {
     fn twin_of(&self, net: usize) -> Option<usize> {
         self.twin.get(net).and_then(|&t| if t >= 0 { Some(t as usize) } else { None })
     }
-    /// A fan-out via of plane net `net` at (x, y) lies inside a plane outline of the net (true when the model gives none)
+    /// A fan-out or return via of `net` at (x, y) lies inside a zone outline of the net (true when the model gives none)
     fn in_plane(&self, net: usize, x: f64, y: f64) -> bool {
         let mut any = false;
         for (n, p) in &self.ppoly {
@@ -1289,7 +1289,8 @@ impl<'a> Ctx<'a> {
         self.rcache[k] == 1
     }
     /// The candidate GND via sites for a signal via at (x, y): grid points (every second grid cell) within
-    /// --return-r, at least the hole-to-hole and clearance distance from the signal via, nearest first.
+    /// --return-r, at least the hole-to-hole and clearance distance from the signal via, inside a zone of the ground (a via
+    /// outside its pour joins nothing: ENV-SENSE, a return via in the GND_B notch stayed unconnected), nearest first.
     fn ret_sites(&self, g: usize, x: f64, y: f64) -> Vec<(f64, usize, usize)> {
         let (gd, gdr) = (self.o.ret_d, self.o.ret_drill);
         // the largest signal via of the board (conservative for every net)
@@ -1307,7 +1308,7 @@ impl<'a> Ctx<'a> {
                 }
                 let (px, py) = self.gr.xy(ix as usize, iy as usize);
                 let dd = ((px - x).powi(2) + (py - y).powi(2)).sqrt();
-                if dd <= self.o.return_r - 1e-9 && dd >= sep {
+                if dd <= self.o.return_r - 1e-9 && dd >= sep && self.bd.in_plane(g, px, py) {
                     v.push((dd, ix as usize, iy as usize));
                 }
             }

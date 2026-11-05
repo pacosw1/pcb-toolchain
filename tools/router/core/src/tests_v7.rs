@@ -155,3 +155,19 @@ fn return_via_must_be_conflict_free() {
     ctx.ret_soft = true;
     assert!(ctx.place_return(0, 10.0, 5.0, &[]), "ret_soft (v6 rule): a conflicting site is taken");
 }
+
+/// A return via outside the zones of its ground joins nothing (ENV-SENSE: a site in the notch of GND_B stayed unconnected, and KiCad
+/// found the open only after the route). Signal via of A at (10, 5), a zone that ends at x = 9.
+#[test]
+fn return_via_stays_inside_the_zone_of_its_ground() {
+    let o = opts();
+    let mut bd = board();
+    let ground = bd.gnd as usize;
+    bd.ppoly.push((ground, vec![(0.0, 0.0), (9.0, 0.0), (9.0, 10.0), (0.0, 10.0)]));
+    let mut ctx = ctx_of(&mut bd, &o);
+    assert!(ctx.place_return(0, 10.0, 5.0, &[]));
+    let Geo::Circ(x, _, _) = ctx.bd.shapes.last().unwrap().geo else { panic!("the return via is the last shape") };
+    assert!(x <= 9.0, "site at x = {x} is outside the zone");
+    ctx.bd.ppoly[0].1 = vec![(0.0, 0.0), (4.0, 0.0), (4.0, 10.0), (0.0, 10.0)];
+    assert!(!ctx.place_return(0, 15.0, 5.0, &[]), "no zone in reach: the layer change is rejected");
+}

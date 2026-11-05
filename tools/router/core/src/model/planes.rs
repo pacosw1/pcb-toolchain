@@ -72,6 +72,16 @@ pub fn plane_reach(board: &Board, nets: &mut BTreeMap<String, Net>, pads: &[Pad]
     }
 }
 
+/// A net that is not a plane net but has zones gets their outlines too: its return vias join its copper only inside them.
+pub fn zone_outlines(board: &Board, nets: &mut BTreeMap<String, Net>, zones: &[Zone], sources: &[usize]) {
+    for (name, net) in nets.iter_mut().filter(|(_, n)| n.plane_polys.is_none()) {
+        let found: BTreeSet<usize> = zones.iter().zip(sources).filter(|(z, _)| z.net == *name).map(|(_, s)| *s).collect();
+        if !found.is_empty() {
+            net.plane_polys = Some(found.iter().flat_map(|z| &board.zones[*z].outline).map(|p| p.outline.iter().copied().map(fine_point).collect()).collect());
+        }
+    }
+}
+
 /// `plane_ref`: a net on a layer of `adjacent` that is not a ground, not exempt and not power must run over its reference plane.
 pub fn set_plane_ref(nets: &mut BTreeMap<String, Net>, planes: &PlaneSpec) {
     let power: Vec<&String> = planes.power.iter().chain(planes.mixed_layers.values().flat_map(|m| &m.power)).collect();
