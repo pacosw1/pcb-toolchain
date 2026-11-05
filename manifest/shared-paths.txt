@@ -952,8 +952,6 @@ tools/test_lean_owned.py
 tools/test_lean_resources.py
 tools/test_lean_workflow.py
 tools/test_run_record.py
-tools/test_thermal_repair.py
-tools/thermal_repair.py
 tools/tracemaker_bench.sh
 tools/tsconfig.json
 tools/silk_jlc.ts

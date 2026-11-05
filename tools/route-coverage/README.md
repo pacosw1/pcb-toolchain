@@ -83,7 +83,11 @@ each, on scratch copies:
 - CHECKIN with `min_resolved_spokes` 0, GND plane vias: blocked with the same
   cause, 27 requirement rows equal, equal DSN wiring in another order.
 
-These runs did not reach a thermal proposal, a replay of preserved copper, a pose
-rounded onto the grid, a layer mask or class pair, a quality backend manifest,
-native thermal checkback, or a positive PTH proof past admission. Those have
-tests with synthetic boards and receipts only.
+- H7-CORE as routed, Y1.4 starved, the pad skipped in the plane-via step: the same
+  target, the same proposal (3361 copper items equal) and the same rejection, no
+  native error improvement, 2 errors before and after.
+
+These runs did not reach an accepted thermal proposal, a replay of preserved
+copper, a pose rounded onto the grid, a layer mask or class pair, a quality backend
+manifest, native thermal checkback, or a positive PTH proof past admission. Those
+have tests with synthetic boards and receipts only.
