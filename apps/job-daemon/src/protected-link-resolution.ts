@@ -11,6 +11,8 @@ function components(value: string, allowParent: boolean): string[] {
   if (parts.some(p => !p || p === '.' || (!allowParent && p === '..') || Buffer.byteLength(p, 'utf8') > 255)) throw new Error('invalid manifest path');
   return parts;
 }
+/** Syntax only; destination-specific Unicode and case collisions require additional validation. */
+export function validateManifestPath(value: string): void { components(value, false); }
 
 /** Resolve only against records in the snapshot; never inspect or follow host filesystem paths. */
 export function resolveManifestLinks(nodes: readonly ManifestNode[]): ResolvedLink[] {

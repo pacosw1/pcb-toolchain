@@ -12,6 +12,9 @@ test('protected blobs remain immutable, private and quota-reserved after uncerta
   const first = Buffer.from('first'), second = Buffer.from('second');
   let store = new ProtectedBlobs(root, { maxBlobBytes: 10, quotaBytes: 11 });
   try {
+    const empty = Buffer.alloc(0);
+    assert.equal(store.put(sha(empty), empty).size, 0);
+    assert.deepEqual(store.read(sha(empty)), empty);
     assert.equal(store.put(sha(first), first).reused, false);
     assert.equal(store.put(sha(first), first).reused, true);
     assert.equal(store.read(sha(first)).toString(), 'first');

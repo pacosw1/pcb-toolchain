@@ -64,7 +64,7 @@ export class ProtectedBlobs {
   }
   protected blobReady(sha: string): boolean { return SHA.test(sha) && this.row(sha)?.state === 'ready'; }
   put(expected: string, bytes: Uint8Array): { sha256: string; size: number; reused: boolean } {
-    if (!SHA.test(expected) || !(bytes instanceof Uint8Array) || !bytes.byteLength || bytes.byteLength > this.maxBlob)
+    if (!SHA.test(expected) || !(bytes instanceof Uint8Array) || bytes.byteLength > this.maxBlob)
       throw new Error('invalid protected blob or hash');
     const content = Buffer.from(bytes);
     if (digest(content) !== expected) throw new Error('invalid protected blob or hash');
