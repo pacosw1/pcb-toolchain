@@ -61,7 +61,7 @@ test('release provenance names the kicad-happy runtime, not a Python on this hos
  const paths={kicadCli:tool,kicadPython:tool,pinnedRepos:[]};
  const tools=probeReleaseTools(paths,{erc:true,drc:true,paths:'paths.json',viapads:{},port_labels:true,kicad_happy:{}});
  assert.deepEqual(tools,{kicad:'10.0.6',kicad_happy_runtime:happyRuntime(),node:process.version});
- assert.equal(probeReleaseTools(paths,{erc:true,planes:'planes.json'}).pcbnew,'10.0.6');
+ assert.equal(probeReleaseTools(paths,{erc:true,planes:'planes.json'}).pcbnew,undefined);
  assert.throws(()=>probeReleaseTools(paths),/gate checks required/);
 });
 

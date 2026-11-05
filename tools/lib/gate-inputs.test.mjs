@@ -53,7 +53,7 @@ test('production pin-rating datasheet and receipt are gate dependencies',t=>{
  const after=fingerprint(r,files).input_sha256;assert.notEqual(after,before);
  put(pdf+'.source.json','source provenance');assert.notEqual(fingerprint(r,files).input_sha256,after);
 });
-test('declared IBIS originals, parser and absent evidence invalidate gates',t=>{
+test('declared IBIS originals and absent evidence invalidate gates',t=>{
  const r=mkdtempSync(join(tmpdir(),'ibis-inputs-'));t.after(()=>rmSync(r,{recursive:true,force:true}));
  const put=(p,v)=>{mkdirSync(join(r,p,'..'),{recursive:true});writeFileSync(join(r,p),v);};
  put('hardware-design/boards/X/gate.json',JSON.stringify({project:'cad/X'}));
@@ -62,9 +62,8 @@ test('declared IBIS originals, parser and absent evidence invalidate gates',t=>{
  put('tools/driver-edges.json',JSON.stringify(table));
  const fp=()=>fingerprint(r,gateInputs(r,'X').files);
  const absent=fp();assert.ok(absent.inputs.some(i=>i.path===file && i.sha256===null));
- assert.ok(absent.inputs.some(i=>i.path==='tools/ibis_ramp.py' && i.sha256===null));
  let last=absent.input_sha256;
- for(const [path,text] of [[file,'[Ramp] initial'],['tools/ibis_ramp.py','parser'],[file+'.source.json','official receipt'],[file,'[Ramp] changed']]) {
+ for(const [path,text] of [[file,'[Ramp] initial'],[file+'.source.json','official receipt'],[file,'[Ramp] changed']]) {
   put(path,text);const next=fp().input_sha256;assert.notEqual(next,last);last=next;
  }
  // An unrelated model must not stand in for the exact declared original.
@@ -115,7 +114,7 @@ test('hierarchical sheets outside the project folder remain dependencies',t=>{
 test('a real board fingerprints the executed gate tools and no tests, viewers or routers',()=>{
  const root=fileURLToPath(new URL('../..',import.meta.url)).replace(/\/$/,'');
  const paths=fingerprint(root,gateInputs(root,'BASE-PWR').files).inputs.map(i=>i.path);
- for(const p of ['tools/gate.mjs','tools/lib/gate-core.mjs','tools/si_planes.py','tools/pcbtool.ts','tools/net_drivers.py','tools/edge-rates.json']) assert.ok(paths.includes(p),p);
+ for(const p of ['tools/gate.mjs','tools/lib/gate-core.mjs','tools/si_planes.ts','tools/lib/si-native.ts','tools/pcbtool.ts','tools/edge-rates.json']) assert.ok(paths.includes(p),p);
  for(const p of ['tools/route_live.py','tools/board_frame.py','tools/fastroute_job.py','tools/route-features.json','tools/hooks/pre-commit','tools/lib/staged-gates.mjs']) assert.ok(!paths.includes(p),p);
  assert.deepEqual(paths.filter(p=>/(^|\/)test_[^/]*\.py$|\.test\.mjs$|\/test-/.test(p)),[]);
  assert.ok(paths.filter(p=>p.startsWith('tools/')).length<40,'tools inputs stay a short executed closure');

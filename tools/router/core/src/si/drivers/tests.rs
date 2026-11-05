@@ -5,7 +5,7 @@ use super::netlist::{Netlist, Node, export_netlist, parse_netlist};
 use super::table::{Part, Table, read_part, verify_evidence};
 use super::*;
 use crate::sha256::sha256;
-use crate::si::fixture::{near, netlist, part, real_table, real_table_with, scratch, spec, spec_error, table_of};
+use crate::si::fixture::{near, netlist, part, real_table, real_table_with, real_text, scratch, spec, spec_error, table_of};
 use crate::si::ibis::{self, Load, vi_edges};
 use crate::si::json::Json;
 use crate::si::planes::sample::{NetResult, Run, Terminal};
@@ -256,6 +256,19 @@ fn nonfinite_or_boolean_driver_timing_is_rejected() {
         let text = format!(r#"{{"mpn": ["TEST"], "pins": [{{"match": "OUT", "role": "push_pull", "tr_ns": {value}, "tf_ns": 1, "source": "fixture"}}]}}"#);
         assert!(read_part("table", "test", &Json::parse(&text).unwrap(), &[]).unwrap_err().contains("needs tr_ns and tf_ns"), "{value}");
     }
+}
+
+#[test]
+fn a_reviewed_minimum_needs_its_primary_evidence_declared() {
+    let raw = Json::parse(&real_text("driver-edges.json")).unwrap();
+    let parts = raw.get("parts").and_then(Json::as_obj).unwrap();
+    let evidence = raw.get("evidence_files").and_then(Json::as_arr).unwrap();
+    let without: Vec<Json> = evidence.iter().filter(|e| !e.get("path").and_then(Json::as_str).unwrap().contains("LAN8742A")).cloned().collect();
+    assert_eq!(without.len(), evidence.len() - 1);
+    let errors: Vec<String> = parts.iter().filter_map(|(key, p)| read_part("t", key, p, &without).err()).collect();
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].ends_with("reviewed minimum primary evidence declaration missing/changed"), "{}", errors[0]);
+    assert!(parts.iter().all(|(key, p)| read_part("t", key, p, evidence).is_ok()));
 }
 
 #[test]

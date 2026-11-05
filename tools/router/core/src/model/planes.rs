@@ -1,4 +1,4 @@
-//! Where a plane net really is a plane, and the reference rule of the planes gate (tools/si_planes.py, D-124c screen) as router
+//! Where a plane net really is a plane, and the reference rule of the planes gate (si/planes, D-124c screen) as router
 //! data: which domain each checked net belongs to, and the filled copper of each domain on the adjacent plane layer.
 use super::files::{BoardFiles, PlaneSpec};
 use super::items::fine_point;

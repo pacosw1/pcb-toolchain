@@ -38,7 +38,7 @@ export const CHECK_METRICS = {
 };
 // Keep provenance collection and receipt verification in agreement about
 // which enabled checks still invoke pcbnew.
-export const BOARD_JSON_CHECKS = ['rf', 'viapads', 'paths'];
+export const BOARD_JSON_CHECKS = ['rf', 'viapads', 'paths', 'planes', 'pairs'];
 export function gateNeedsPcbnew(checks = {}) {
   const withoutPcbnew = new Set(['erc', 'drc', 'kicad_happy', 'port_labels', ...BOARD_JSON_CHECKS]);
   return Object.entries(checks).some(([name, enabled]) => enabled && !withoutPcbnew.has(name));

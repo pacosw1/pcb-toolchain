@@ -29,6 +29,63 @@ impl Json {
         Json::parse(&text).map_err(|e| format!("{}: {e}", path.display()))
     }
 
+    /// json.dumps(value, sort_keys=True, separators=(",", ":")): the text a reviewed record is hashed by.
+    pub fn dumps_sorted(&self) -> String {
+        fn quoted(text: &str, out: &mut String) {
+            out.push('"');
+            for c in text.chars() {
+                match c {
+                    '"' => out.push_str("\\\""),
+                    '\\' => out.push_str("\\\\"),
+                    '\n' => out.push_str("\\n"),
+                    '\r' => out.push_str("\\r"),
+                    '\t' => out.push_str("\\t"),
+                    '\u{8}' => out.push_str("\\b"),
+                    '\u{c}' => out.push_str("\\f"),
+                    ' '..='~' => out.push(c),
+                    _ => c.encode_utf16(&mut [0; 2]).iter().for_each(|unit| out.push_str(&format!("\\u{unit:04x}"))),
+                }
+            }
+            out.push('"');
+        }
+        fn write(value: &Json, out: &mut String) {
+            match value {
+                Json::Null => out.push_str("null"),
+                Json::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+                Json::Int(i) => out.push_str(&i.to_string()),
+                Json::Float(f) => out.push_str(&float_repr(*f)),
+                Json::Str(s) => quoted(s, out),
+                Json::Arr(items) => {
+                    out.push('[');
+                    for (i, item) in items.iter().enumerate() {
+                        if i > 0 {
+                            out.push(',');
+                        }
+                        write(item, out);
+                    }
+                    out.push(']');
+                }
+                Json::Obj(pairs) => {
+                    let mut sorted: Vec<&(String, Json)> = pairs.iter().collect();
+                    sorted.sort_by(|a, b| a.0.chars().cmp(b.0.chars()));
+                    out.push('{');
+                    for (i, (key, item)) in sorted.into_iter().enumerate() {
+                        if i > 0 {
+                            out.push(',');
+                        }
+                        quoted(key, out);
+                        out.push(':');
+                        write(item, out);
+                    }
+                    out.push('}');
+                }
+            }
+        }
+        let mut out = String::new();
+        write(self, &mut out);
+        out
+    }
+
     pub fn get(&self, key: &str) -> Option<&Json> {
         self.as_obj()?.iter().find(|(k, _)| k == key).map(|(_, v)| v)
     }
@@ -281,5 +338,11 @@ mod tests {
         assert!(Json::parse("{").is_err());
         assert!(Json::parse("[1,]").is_err());
         assert!(Json::parse("1 2").is_err());
+    }
+
+    #[test]
+    fn dumps_sorted_is_python_json_dumps() {
+        let value = Json::parse(r#"{"b": [1, 2.5, null, true], "a": {"é": "q\"\n\u0001"}, "C": 1e3}"#).unwrap();
+        assert_eq!(value.dumps_sorted(), r#"{"C":1000.0,"a":{"\u00e9":"q\"\n\u0001"},"b":[1,2.5,null,true]}"#);
     }
 }

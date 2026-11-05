@@ -181,6 +181,10 @@ fn a_portal_must_be_of_the_domain_and_a_pad_must_span_both_planes() {
     let mut b = blank(&["GND", "ISO_0V"]);
     via(&mut b, "GND", (1.0, 5.0));
     via(&mut b, "ISO_0V", (2.0, 5.0));
+    via(&mut b, "GND", (3.0, 5.0));
+    if let Some(RoutedCopper::Via(blind)) = b.copper.last_mut() {
+        blind.layers = vec!["F.Cu".to_string(), "In1.Cu".to_string()];
+    }
     let top_only = ring((4.0, 5.0), 0.5);
     mount(&mut b, "J1", vec![through_pad("ISO_0V", (3.0, 5.0)), pad("GND", PadKind::ThroughHole, (4.0, 5.0), 1.0, &["F.Cu", "In1.Cu"], top_only, Copper::Circle { center: pt((4.0, 5.0)), radius: from_mm(0.5) })]);
     assert_eq!(ground_portals(&b, "In2.Cu", "In1.Cu", "GND"), [(1.0, 5.0)]);

@@ -36,7 +36,7 @@ pub struct RefGate {
     pub note: Option<&'static str>,
 }
 
-/// The net of a D-124c reference FAIL line of tools/si_planes.py: `FAIL <kind> <layer> <net>: ...`.
+/// The net of a D-124c reference FAIL line of the planes check: `FAIL <kind> <layer> <net>: ...`.
 pub fn failed_net(line: &str) -> Option<&str> {
     let rest = line.strip_prefix("FAIL ")?;
     let (kind, rest) = rest.split_once(' ')?;

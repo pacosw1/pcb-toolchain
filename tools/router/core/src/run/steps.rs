@@ -9,8 +9,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Instant;
 
-const DEFAULT_PYTHON: &str = "python3";
-
 pub struct Steps {
     pub exe: PathBuf,
     tools: PathBuf,
@@ -150,12 +148,11 @@ impl Steps {
         Ok(AttemptStages { core, write: WriteStage { exit, line: text.trim().lines().last().unwrap_or("").to_string() } })
     }
 
-    /// The gate's planes check itself, tools/si_planes.py with the gate's spec, as tools/gate.mjs runs it. Its exit is not the
-    /// verdict here: the FAIL lines are.
+    /// The gate's planes check itself, this binary with the gate's spec, as tools/gate.mjs runs it. Its exit is not the verdict
+    /// here: the FAIL lines are.
     pub fn planes_check(&self, board: &Path, spec: &Path, log: &Path) -> Result<String, String> {
-        let python = ["KICAD_PYTHON", "KICAD_PY"].iter().find_map(|k| std::env::var(k).ok()).unwrap_or_else(|| DEFAULT_PYTHON.to_string());
-        let mut command = Command::new(python);
-        command.arg(self.tools.join("si_planes.py")).arg(board).arg(spec);
+        let mut command = Command::new(&self.exe);
+        command.arg("si-planes").arg(board).arg(spec).arg("--tools").arg(&self.tools);
         run_logged(command, log).map(|(_, text)| text)
     }
 }

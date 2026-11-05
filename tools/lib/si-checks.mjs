@@ -34,16 +34,19 @@ function runGate({python, tool, args}) {
   return {out, exit};
 }
 
-export function planesCheck({python, tool, pcb, spec, check}) {
-  const name = 'reference planes under high-speed nets (reference-planes.json, si_planes.py)';
-  const {out, exit} = runGate({python, tool, args: [pcb, spec]});
+// Callers may still name the old Python tool. The check runs the TypeScript wrapper next to it, which runs iotroute.
+const wrapperGate = (tool, args) => runGate({python: process.execPath, tool: TS_NODE[0], args: [...TS_NODE.slice(1), tool.replace(/\.py$/, '.ts'), ...args]});
+
+export function planesCheck({tool, pcb, spec, check}) {
+  const name = 'reference planes under high-speed nets (reference-planes.json, si_planes.ts)';
+  const {out, exit} = wrapperGate(tool, [pcb, spec]);
   const {ok, detail} = parseGateOutput(out, exit, /reference-plane failures/, 'FAIL');
   check(name, ok, detail);
 }
 
-export function pairsCheck({python, tool, pcb, spec, check}) {
-  const name = 'differential pairs meet impedance and reference-plane rules (diff-pairs.json, si_pairs.py)';
-  const {out, exit} = runGate({python, tool, args: [pcb, spec]});
+export function pairsCheck({tool, pcb, spec, check}) {
+  const name = 'differential pairs meet impedance and reference-plane rules (diff-pairs.json, si_pairs.ts)';
+  const {out, exit} = wrapperGate(tool, [pcb, spec]);
   const {ok, detail} = parseGateOutput(out, exit, /^si_pairs: \d+ PASS, \d+ FAIL/, 'FAIL');
   check(name, ok, detail);
 }
@@ -60,7 +63,7 @@ export function viaPadsCheck({pcb, check, allow = []}) {
   check(name, ok, detail);
 }
 
-// kicad-happy (pinned clone, see tools/kicad_happy_gate.py): return path, return vias, via in pad, decoupling.
+// kicad-happy (pinned clone, see tools/kicad_happy_gate.ts): return path, return vias, via in pad, decoupling.
 export const KICAD_HAPPY_SUMMARY = /kicad-happy findings/;
 // A finding line, or an exemption that matched no finding (the tool exits 2).
 export const KICAD_HAPPY_FAIL = ['FAIL', 'STALE exempt'];
@@ -71,10 +74,8 @@ export function kicadHappyArgs(pcb, exemptFile, grounds = []) {
 }
 
 export function kicadHappyCheck({tool, pcb, check, exemptFile, grounds}) {
-  const name = `kicad-happy GP-001 RP-001 DC-002 UC-001 (tools/kicad_happy_gate.py${exemptFile ? `, exempt: ${exemptFile}` : ''})`;
-  // Callers name the old Python tool. The check runs the wrapper, which sends kicad-happy to a daemon job.
-  const wrapper = tool.replace(/\.py$/, '.ts');
-  const {out, exit} = runGate({python: process.execPath, tool: TS_NODE[0], args: [...TS_NODE.slice(1), wrapper, ...kicadHappyArgs(pcb, exemptFile, grounds)]});
+  const name = `kicad-happy GP-001 RP-001 DC-002 UC-001 (tools/kicad_happy_gate.ts${exemptFile ? `, exempt: ${exemptFile}` : ''})`;
+  const {out, exit} = wrapperGate(tool, kicadHappyArgs(pcb, exemptFile, grounds));
   const {ok, detail} = parseGateOutput(out, exit, KICAD_HAPPY_SUMMARY, KICAD_HAPPY_FAIL);
   check(name, ok, detail);
 }

@@ -15,7 +15,7 @@ pub(crate) fn scratch(name: &str) -> PathBuf {
     folder
 }
 
-fn real_text(name: &str) -> String {
+pub(crate) fn real_text(name: &str) -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(name);
     fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }

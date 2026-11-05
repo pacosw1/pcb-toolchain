@@ -8,6 +8,7 @@ import {fileURLToPath} from 'node:url';
 
 const happyStub=`import fs from 'node:fs';\nconst a=process.argv;\nfs.writeFileSync(a[a.indexOf('--result')+1],JSON.stringify({schema_version:1,completed:true,findings:0,stale_exemptions:0,exit:0}));\n`;
 const pcbtoolStub=`console.log(process.argv[2]==='viapads' ? '0 vias in SMD pads' : '0 power-path pairs below the design current\\n0 supply nets not covered');\n`;
+const planesStub=`console.log('WARN unproved-fastest-edge F.Cu /SIG: missing source\\n0 reference-plane failures');\n`;
 const labelStub=word=>`// ${word} implementation\nconsole.log('port_labels: 0 checked, 0 failures');\n`;
 function fixture(t) {
  const root=mkdtempSync(join(tmpdir(),'gate-cli-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
@@ -17,6 +18,7 @@ function fixture(t) {
  put('tools/port_labels.ts',labelStub('fixture'));
  put('tools/pcbtool.ts',pcbtoolStub);
  put('tools/kicad_happy_gate.ts',happyStub);
+ put('tools/si_planes.ts',planesStub);
  const base='hardware-design/boards/X/';
  put(base+'gate.json',JSON.stringify({project:'cad/X',checks:{erc:true,drc:true,paths:'current-paths.json',viapads:{},kicad_happy:{},port_labels:true}}));
  put(base+'cad/X.kicad_pcb','original PCB');put(base+'cad/X.kicad_sch','original SCH');
@@ -34,8 +36,6 @@ if(a[0]==='sch' || a[0]==='pcb') {
   if(process.env.GATE_TEST_DRC_FAIL) process.exit(2);
  }process.exit(0);
 }
-const script=path.basename(a[0]);
-if(script==='si_planes.py'){console.log('WARN unproved-fastest-edge F.Cu /SIG: missing source\\n0 reference-plane failures');process.exit(0);}
 process.exit(2);
 `);
  chmodSync(join(root,'bin/fake-tool'),0o755);
@@ -46,7 +46,7 @@ process.exit(2);
  git(['init','-q']);git(['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-qm','fixture']);
  const pin=execFileSync('git',['-C',join(root,'happy'),'rev-parse','HEAD'],{encoding:'utf8'}).trim();
  const envModule=join(root,'tools/lib/env.mjs');writeFileSync(envModule,readFileSync(envModule,'utf8').replace("commit: 'a6bba1a'",`commit: '${pin}'`));
- const env={...process.env,KICAD_CLI:join(root,'bin/fake-tool'),KICAD_PYTHON:join(root,'bin/fake-tool'),PYTHON_MODERN:join(root,'bin/fake-tool'),KICAD_HAPPY_DIR:join(root,'happy'),KRT_DIR:join(root,'absent'),KRPT_DIR:join(root,'absent'),KICAD_CONFIG_HOME:join(root,'config')};
+ const env={...process.env,KICAD_CLI:join(root,'bin/fake-tool'),KICAD_PYTHON:join(root,'bin/fake-tool'),PYTHON_MODERN:join(root,'bin/fake-tool'),IOTROUTE_BIN:join(root,'bin/fake-tool'),KICAD_HAPPY_DIR:join(root,'happy'),KRT_DIR:join(root,'absent'),KRPT_DIR:join(root,'absent'),KICAD_CONFIG_HOME:join(root,'config')};
  const run=extra=>{try{execFileSync(process.execPath,[join(root,'tools/gate.mjs'),'X','--write'],{cwd:root,env:{...env,...extra},stdio:'pipe'});return 0;}catch(error){return error.status;}};
  const result=()=>{const dir=join(root,base,'.gate');const latest=JSON.parse(readFileSync(join(dir,'latest.json')));return JSON.parse(readFileSync(join(dir,latest.run,'result.json')));};
  return {root,put,base,run,result,env};

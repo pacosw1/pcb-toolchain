@@ -11,6 +11,15 @@ use std::path::{Path, PathBuf};
 
 const ROLES: [&str; 5] = ["input", "push_pull", "open_drain", "opto", "unknown"];
 
+/// Conditional minimums reviewed in accepted D124a sources, as (record hash, primary evidence, its sha256). LAN8742A DS00001989A Table
+/// 5-8, Note 1. The hash covers part, MPN, pin, values, statistic, load and source, not a mutable `stat=min` label. A new reviewed bound
+/// needs its own entry here.
+const REVIEWED_MINIMUMS: [(&str, &str, &str); 1] = [(
+    "7899c7bb904687e8144540d486d688a41f34ba7a271b0615dd565fa8c44fccde",
+    "hardware-design/registry/datasheets/LAN8742A-CZ-TR_C621424.pdf",
+    "35d5d7e4f278efc2c72be68521796ace36f36f0fe46822d065747dd5872fc8ef",
+)];
+
 /// `re.fullmatch` of a table pattern.
 pub fn regex_full(pattern: &str) -> Result<Regex, String> {
     Regex::new(&format!("^(?:{pattern})$")).map_err(|e| format!("bad pin pattern {pattern}: {e}"))
@@ -167,6 +176,17 @@ fn read_ibis(key: &str, ib: &Json, evidence: &[Json]) -> Result<IbisRef, String>
     Ok(IbisRef { file, sha256: sha, component: text(ib, "component"), supply_pin: text(ib, "supply_pin"), url: text(ib, "url"), downloaded: text(ib, "downloaded"), variants })
 }
 
+/// A reviewed record stands on its primary evidence: the table must still declare exactly that file.
+fn check_reviewed(key: &str, mpn: &Json, rule: &Json, evidence: &[Json], place: &str) -> Result<(), String> {
+    let record = Json::Obj(vec![("part".to_string(), Json::Str(key.to_string())), ("mpn".to_string(), mpn.clone()), ("rule".to_string(), rule.clone())]);
+    let hash = sha256(record.dumps_sorted().as_bytes());
+    let Some((_, path, sha)) = REVIEWED_MINIMUMS.iter().find(|(reviewed, _, _)| *reviewed == hash) else {
+        return Ok(());
+    };
+    let declared = Json::Obj(vec![("path".to_string(), Json::Str(path.to_string())), ("sha256".to_string(), Json::Str(sha.to_string()))]);
+    if evidence.iter().any(|e| e.dumps_sorted() == declared.dumps_sorted()) { Ok(()) } else { Err(format!("{place}: reviewed minimum primary evidence declaration missing/changed")) }
+}
+
 pub(crate) fn read_part(path: &str, key: &str, p: &Json, evidence: &[Json]) -> Result<Part, String> {
     let mpn = p.get("mpn").and_then(Json::strings).filter(|m| !m.is_empty());
     let (Some(mpn), Some(rules)) = (mpn, p.get("pins").and_then(Json::as_arr)) else {
@@ -180,7 +200,12 @@ pub(crate) fn read_part(path: &str, key: &str, p: &Json, evidence: &[Json]) -> R
         Ok((pf.expect("checked"), text(c, "source")))
     }).transpose()?;
     let ibis = p.get("ibis").map(|ib| read_ibis(key, ib, evidence)).transpose()?;
-    let pins = rules.iter().enumerate().map(|(i, r)| read_rule(r, ibis.is_some(), &format!("{path}: part {key} pin rule {i}"))).collect::<Result<_, _>>()?;
+    let pins = rules.iter().enumerate().map(|(i, r)| {
+        let place = format!("{path}: part {key} pin rule {i}");
+        let rule = read_rule(r, ibis.is_some(), &place)?;
+        check_reviewed(key, p.get("mpn").expect("checked"), r, evidence, &place)?;
+        Ok::<Rule, String>(rule)
+    }).collect::<Result<_, _>>()?;
     Ok(Part { key: key.to_string(), mpn, pins, pin_c, ibis })
 }
 

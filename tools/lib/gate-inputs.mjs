@@ -169,7 +169,6 @@ export function gateInputs(root, board, configName = 'gate.json', environment = 
       const file=part.ibis.file;
       if(typeof file!=='string' || !file.startsWith('hardware-design/registry/ibis/') || !file.endsWith('.ibs') || file.includes('..') || file.includes('\\')) throw new Error('invalid driver IBIS path');
       add(join(root,file));add(join(root,file+'.source.json'));
-      add(join(root,'tools/ibis_ramp.py'));
     }
   }
   for(const repo of environment.repositories ?? []) for(const p of walkFiles(repo,p=>p.endsWith('.py'))) add(p);
