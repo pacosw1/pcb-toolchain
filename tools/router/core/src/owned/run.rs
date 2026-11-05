@@ -321,3 +321,18 @@ pub fn main(args: &[OsString]) -> i32 {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_primary_error_survives_an_uncertain_broker_close() {
+        let mut report = Report::never_started(Failure::new("FileNotFoundError", "/nonexistent/owned-primary-error"));
+        unconfirmed(&mut report);
+        assert_eq!(report.exit_code(), EXIT_NOT_FOUND);
+        assert_eq!(report.cleanup["complete"], false);
+        assert_eq!(report.cleanup["errors"][0]["operation"], "broker-close");
+        assert_eq!(report.error.unwrap().kind, "FileNotFoundError");
+    }
+}

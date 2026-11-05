@@ -82,6 +82,13 @@ test('a sample is stamped midway through its call, not after the subprocess exit
   assert.equal(now(), 500.005);
 });
 
+test('process-relative hrtime is never the source of a deadline', () => {
+  const clock = createClock(() => 5000, () => -99_999_000_000_000n);
+  const deadline = deadlineAfter(1, {}, clock);
+  assert.equal(deadline, 5001);
+  assert.ok(remaining(deadline, clock)! > 0.9);
+});
+
 test('stage depth supports root plus two nested levels', () => {
   assert.equal(stageDepth({}), 0);
   assert.equal(stageDepth({ IOT_LEAN_STAGE_DEPTH: '2' }), 2);

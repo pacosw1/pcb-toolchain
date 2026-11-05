@@ -299,6 +299,171 @@ fn a_stopped_controller_cannot_hide_its_stage_from_root_cancel() {
     assert_clean(&fixture.result());
 }
 
+/// `levels` owned stages down to a helper that ignores TERM, cancelled at the root.
+fn cancels_a_nested_helper(levels: usize, captured: bool, paused: bool) {
+    let fixture = Fixture::new(&format!("cancel-{levels}-{captured}-{paused}"));
+    let owned = |file: &str| vec![BIN.to_string(), "owned".into(), "run".into(), "--result".into(), fixture.text(file), "--".into()];
+    let mut words = if levels == 3 { owned("middle.json") } else { Vec::new() };
+    words.extend(["/bin/sh", "-c", "echo $$ > controller; exec \"$@\"", "controller"].map(str::to_string));
+    words.extend(owned("inner.json"));
+    words.extend(["/bin/sh", "-c", "trap '' TERM; echo $$ > helper; exec sleep 30"].map(str::to_string));
+    let words: Vec<&str> = words.iter().map(String::as_str).collect();
+    let mut command = fixture.command(&words);
+    if captured {
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    } else {
+        let log = fs::File::create(fixture.path("output.log")).unwrap();
+        command.stdout(log.try_clone().unwrap()).stderr(log);
+    }
+    let mut root = command.spawn().unwrap();
+    let helper: i32 = fixture.wait_for("helper").parse().unwrap();
+    let controller: i32 = fixture.wait_for("controller").parse().unwrap();
+    if paused {
+        assert_eq!(unsafe { libc::kill(controller, libc::SIGSTOP) }, 0);
+    }
+    stop(&root, libc::SIGTERM);
+    let status = root.wait().unwrap();
+    let result = fixture.result();
+    assert!(!status.success(), "{result}");
+    assert_clean(&result);
+    assert_eq!(result["cleanup"]["child_reaped"], true, "{result}");
+    assert!(!alive(helper), "the helper must go with the root cancel");
+    if paused {
+        assert!(!alive(controller), "a stopped controller must go too");
+    }
+    if captured {
+        assert!(closed(root.stdout.take().unwrap()) && closed(root.stderr.take().unwrap()), "no process may keep the captured pipes");
+    }
+}
+
+/// True at end of file: no writer is left. Nonblocking, so a pipe still open fails the test instead of hanging it.
+fn closed(mut pipe: impl Read + AsRawFd) -> bool {
+    proto::native::set_nonblocking(pipe.as_raw_fd()).unwrap();
+    let mut buffer = [0; 4096];
+    loop {
+        match pipe.read(&mut buffer) {
+            Ok(0) => return true,
+            Ok(_) => {}
+            Err(_) => return false,
+        }
+    }
+}
+
+#[test]
+fn two_levels_to_a_file_clean_an_ignoring_helper() {
+    cancels_a_nested_helper(2, false, false);
+}
+
+#[test]
+fn three_levels_to_a_file_clean_an_ignoring_helper() {
+    cancels_a_nested_helper(3, false, false);
+}
+
+#[test]
+fn two_levels_of_captured_pipes_close_after_cancel() {
+    cancels_a_nested_helper(2, true, false);
+}
+
+#[test]
+fn three_levels_of_captured_pipes_close_after_cancel() {
+    cancels_a_nested_helper(3, true, false);
+}
+
+#[test]
+fn a_paused_controller_to_a_file_cleans_its_helper() {
+    cancels_a_nested_helper(2, false, true);
+}
+
+#[test]
+fn a_paused_controller_with_captured_pipes_cleans_its_helper() {
+    cancels_a_nested_helper(2, true, true);
+}
+
+#[test]
+fn a_nested_stage_runs_in_the_directory_of_its_controller() {
+    let fixture = Fixture::new("cwd");
+    fs::create_dir(fixture.path("subdir")).unwrap();
+    let script = format!("cd subdir && exec {BIN} owned run --result {} -- /bin/sh -c 'pwd -P > {}'", fixture.text("inner.json"), fixture.text("seen"));
+    let (status, result) = fixture.run(&["/bin/sh", "-c", &script]);
+    assert!(status.success(), "{result}");
+    assert_eq!(fixture.wait_for("seen"), fixture.text("subdir"));
+}
+
+#[test]
+fn a_signal_while_the_stage_starts_never_releases_work() {
+    let fixture = Fixture::new("startsignal");
+    let marker = fixture.text("work");
+    let mut command = fixture.command(&["/usr/bin/touch", &marker]);
+    // A pending TERM survives exec: the broker's watcher finds it while the stage is being started.
+    unsafe {
+        command.pre_exec(|| {
+            let mut set: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&mut set);
+            libc::sigaddset(&mut set, libc::SIGTERM);
+            libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
+            libc::kill(libc::getpid(), libc::SIGTERM);
+            Ok(())
+        });
+    }
+    let status = command.stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap();
+    let result = fixture.result();
+    assert!(!status.success(), "{result}");
+    assert!(!Path::new(&marker).exists());
+    assert_clean(&result);
+    assert_eq!(result["cleanup"]["child_reaped"], true, "{result}");
+}
+
+/// The helper stage of `mode` with the address space of the root broker capped `headroom` bytes above its use, so that its next
+/// thread really fails to start. The stage waits for the cap, tries, and the cap goes before the broker settles.
+#[cfg(target_os = "linux")]
+fn capped_broker(fixture: &Fixture, mode: &str, headroom: u64) -> (ExitStatus, Value) {
+    let exe = std::env::current_exe().unwrap();
+    let mut root = fixture.command(&[exe.to_str().unwrap(), "--ignored", "--exact", "stage_helper", "--nocapture"])
+        .env("OWNED_HELPER_MODE", mode).env("OWNED_HELPER_FOLDER", &fixture.folder)
+        .stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap();
+    fixture.wait_for("ready");
+    let pid = root.id() as i32;
+    let statm = fs::read_to_string(format!("/proc/{pid}/statm")).unwrap();
+    let pages: u64 = statm.split_whitespace().next().unwrap().parse().unwrap();
+    let used = pages * unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as u64;
+    let mut original = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+    let capped = libc::rlimit { rlim_cur: used + headroom, rlim_max: libc::RLIM_INFINITY };
+    assert_eq!(unsafe { libc::prlimit(pid, libc::RLIMIT_AS, &capped, &mut original) }, 0, "{}", std::io::Error::last_os_error());
+    fs::write(fixture.path("capped"), "1").unwrap();
+    fixture.wait_for("tried");
+    assert_eq!(unsafe { libc::prlimit(pid, libc::RLIMIT_AS, &original, std::ptr::null_mut()) }, 0);
+    fs::write(fixture.path("restored"), "1").unwrap();
+    let status = root.wait().unwrap();
+    (status, serde_json::from_slice(&fs::read(fixture.path("helper.json")).unwrap()).unwrap())
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn a_request_thread_that_cannot_start_fails_closed() {
+    let fixture = Fixture::new("requestthread");
+    let (status, reply) = capped_broker(&fixture, "request-thread", 0);
+    assert_eq!(reply["closed"], true, "the broker must close the connection it cannot serve: {reply}");
+    let result = fixture.result();
+    assert_eq!(status.code(), Some(70), "{result}");
+    assert_eq!(result["cleanup"]["complete"], false, "{result}");
+    assert!(result["cleanup"]["errors"].to_string().contains("broker-close"), "{result}");
+    let socket = reply["socket"].as_str().unwrap();
+    fs::remove_dir_all(Path::new(socket).parent().unwrap()).unwrap();   // kept as evidence by an unconfirmed broker
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn a_spawn_thread_that_cannot_start_closes_the_stage() {
+    const ONE_THREAD_STACK_NOT_TWO: u64 = 3 * 1024 * 1024;
+    let fixture = Fixture::new("spawnthread");
+    let (status, reply) = capped_broker(&fixture, "spawn-thread", ONE_THREAD_STACK_NOT_TWO);
+    assert!(reply["error"]["message"].is_string() && reply["handle"].is_null(), "{reply}");
+    let result = fixture.result();
+    assert!(status.success(), "{result}");
+    assert_clean(&result);
+    assert!(!fixture.path("work").exists());
+}
+
 #[test]
 fn a_foreign_process_cannot_use_a_real_capability() {
     let fixture = Fixture::new("foreign");
@@ -449,7 +614,9 @@ fn a_never_activated_stage_is_cancelled_without_running() {
     let fixture = Fixture::new("pending");
     let reply = helper_stage(&fixture, "pending");
     assert_eq!(reply["cancel"]["cleanup"]["complete"], true, "{reply}");
-    assert_eq!(reply["settled"]["result"]["returncode"], 125);
+    // The gate closes as the TERM goes out: the bootstrap ends on whichever it meets first.
+    let code = reply["settled"]["result"]["returncode"].as_i64();
+    assert!(code == Some(125) || code == Some(-i64::from(libc::SIGTERM)), "{reply}");
     assert!(!fixture.path("work").exists());
 }
 
@@ -458,6 +625,24 @@ fn expired_nested_activation_keeps_the_timeout_type() {
     let fixture = Fixture::new("nesteddeadline");
     let reply = helper_stage(&fixture, "expired");
     assert_eq!(reply["activate"]["error"]["type"], "TimeoutExpired", "{reply}");
+    assert!(!fixture.path("work").exists());
+}
+
+#[test]
+fn an_admission_delay_cannot_extend_the_deadline() {
+    let fixture = Fixture::new("admissiondelay");
+    let reply = helper_stage(&fixture, "delayed");
+    assert_eq!(reply["activate"]["error"]["type"], "TimeoutExpired", "{reply}");
+    assert_eq!(reply["cancel"]["cleanup"]["complete"], true, "{reply}");
+    assert!(!fixture.path("work").exists());
+}
+
+#[test]
+fn a_cancelled_admission_closes_the_descriptors_and_runs_nothing() {
+    let fixture = Fixture::new("descriptors");
+    let reply = helper_stage(&fixture, "descriptors");
+    assert_eq!(reply["cancel"]["cleanup"]["complete"], true, "{reply}");
+    assert_eq!(reply["closed"], true, "no copy of a prepared descriptor may stay open: {reply}");
     assert!(!fixture.path("work").exists());
 }
 
@@ -477,6 +662,14 @@ fn a_collector_failure_kills_the_stage_and_keeps_the_cause() {
     let reply = helper_stage(&fixture, "bound");
     assert!(reply["error"]["message"].as_str().unwrap().contains("output bound"), "{reply}");
     assert_eq!(reply["result"], Value::Null);
+}
+
+#[test]
+fn a_collector_failure_cleans_a_registered_descendant() {
+    let fixture = Fixture::new("descendant");
+    let reply = helper_stage(&fixture, "descendant");
+    assert!(reply["error"]["message"].as_str().unwrap().contains("output bound"), "{reply}");
+    assert!(!alive(fixture.wait_for("helper").parse().unwrap()), "the failed stage's registered subtree must go with it");
 }
 
 // ---------- the client that runs inside a stage ----------
@@ -528,6 +721,24 @@ impl Client {
         self.op("activate", &handle);
         self.rpc(json!({"op": "wait", "handle": handle, "timeout": 15}))
     }
+
+    fn wait_for(&self, name: &str) {
+        let until = Instant::now() + Duration::from_secs(10);
+        while !self.folder.join(name).exists() {
+            assert!(Instant::now() < until, "{name} never appeared");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// The handshake of `capped_broker`: `attempt` runs while the broker is capped.
+    fn while_capped(&self, attempt: impl FnOnce() -> Value) -> Value {
+        fs::write(self.folder.join("ready"), "1").unwrap();
+        self.wait_for("capped");
+        let reply = attempt();
+        fs::write(self.folder.join("tried"), "1").unwrap();
+        self.wait_for("restored");
+        reply
+    }
 }
 
 fn capture_mode(client: &Client) -> Value {
@@ -577,6 +788,55 @@ fn expired_mode(client: &Client) -> Value {
     json!({"activate": activate})
 }
 
+/// The deadline is good at spawn and gone at activation.
+fn delayed_mode(client: &Client) -> Value {
+    let deadline = proto::native::monotonic_s() + 0.05;
+    let env = json!({"PATH": "/bin:/usr/bin", "IOT_LEAN_DEADLINE": format!("clock-monotonic-v1:{deadline:?}")});
+    let handle = client.spawn("touch work", json!({"env": env}));
+    std::thread::sleep(Duration::from_millis(100));
+    let activate = client.op("activate", &handle);
+    let cancel = client.op("cancel", &handle);
+    json!({"activate": activate, "cancel": cancel})
+}
+
+/// The stage's stdout is the only other copy of this pipe, so end of file proves that broker and bootstrap closed theirs.
+fn descriptors_mode(client: &Client) -> Value {
+    let (read, write) = proto::native::pipe().unwrap();
+    let options = client.options(json!({"stdout": {"fd": 0}}));
+    let request = json!({"op": "spawn", "command": ["/bin/sh", "-c", "touch work"], "options": options});
+    let reply = client.rpc_fds(request, &[write.as_raw_fd()]);
+    let handle = reply["handle"].as_str().unwrap_or_else(|| panic!("{reply}")).to_string();
+    drop(write);
+    let cancel = client.op("cancel", &handle);
+    json!({"cancel": cancel, "closed": closed(fs::File::from(read))})
+}
+
+/// A controller stage with a registered helper that ignores TERM, then more output than the collector takes.
+fn descendant_mode(client: &Client) -> Value {
+    let helper = "trap '' TERM; echo $$ > helper; exec sleep 30";
+    let script = format!("{BIN} owned run --result nested.json -- /bin/sh -c \"{}\" </dev/null >/dev/null 2>&1 &
+                          until [ -s helper ]; do sleep 0.01; done; head -c 70000000 /dev/zero; sleep 30", helper.replace('$', "\\$"));
+    client.run(&script, json!({"stdout": -1}))
+}
+
+fn request_thread_mode(client: &Client) -> Value {
+    client.while_capped(|| {
+        let mut connection = UnixStream::connect(&client.socket).unwrap();
+        connection.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let _ = wire::send(&connection, &json!({"op": "spawn", "cap": client.cap, "command": ["true"], "options": client.options(json!({}))}), &[]);
+        let answer = connection.read(&mut [0; 1]);
+        let closed = match answer {
+            Ok(bytes) => bytes == 0,
+            Err(error) => error.kind() == std::io::ErrorKind::ConnectionReset,
+        };
+        json!({"closed": closed, "socket": client.socket})
+    })
+}
+
+fn spawn_thread_mode(client: &Client) -> Value {
+    client.while_capped(|| client.rpc(json!({"op": "spawn", "command": ["/bin/sh", "-c", "touch work"], "options": client.options(json!({}))})))
+}
+
 fn refused_mode(client: &Client) -> Value {
     let handle = client.spawn("exit 0", json!({}));
     let mut roles = client.options(json!({}));
@@ -607,6 +867,11 @@ fn stage_helper() {
         "interrupt" => interrupt_mode(&client),
         "pending" => pending_mode(&client),
         "expired" => expired_mode(&client),
+        "delayed" => delayed_mode(&client),
+        "descriptors" => descriptors_mode(&client),
+        "descendant" => descendant_mode(&client),
+        "request-thread" => request_thread_mode(&client),
+        "spawn-thread" => spawn_thread_mode(&client),
         "refused" => refused_mode(&client),
         "bound" => bound_mode(&client),
         other => panic!("unknown mode {other}"),
