@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 
 export const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 export function requireValue(ok,message) {if(!ok) throw new Error(message);}
-// Native Node reader follows pq_cadlib.parse's list/string representation. It
+// Native Node reader follows pq-cadlib.ts parse's list/string representation. It
 // adds strict token consumption and bounds; packet checks need no Python/KiCad.
 export function parseNative(text) {
  requireValue(text.length<=50*1024*1024,'native file exceeds parser bound');

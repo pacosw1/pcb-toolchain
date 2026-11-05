@@ -621,7 +621,6 @@ tools/placer/testdata/relay4-prob.json
 tools/placer/viewer.test.ts
 tools/placer/viewer.ts
 tools/port_labels.ts
-tools/pq_cadlib.py
 tools/project_root.py
 tools/publish-release.mjs
 tools/refresh_courtyards.ts
