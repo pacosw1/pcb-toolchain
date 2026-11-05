@@ -8,10 +8,10 @@
 // They are board rule areas, not footprint zones, so the shared library footprint stays the JLC/EasyEDA bridge footprint. Run on
 // the board in its project folder: the save refills every zone with the .kicad_dru next to it. One summary line: DONE <counts>.
 //
-// check remains in tools/fp_keepouts.py; gerber uses native polygon booleans on the pinned worker.
+// check and gerber use native polygon booleans on the pinned worker.
 import { readFileSync } from 'node:fs';
 import { archive, unique } from './lib/gerber-archive.ts';
-import { geometry, polygons, strokes } from './lib/gerber-geometry.ts';
+import { geometry, geometryBatch, polygons, strokes, type Poly, type Request } from './lib/gerber-geometry.ts';
 import { circle, parseLegacyGeometry, parseDrill } from './lib/gerber.ts';
 import { Outline, relate } from './lib/copper-graph.ts';
 import { relative, resolve } from 'node:path';
@@ -22,12 +22,14 @@ import { ruleAreaText } from './lib/board-items.ts';
 import { toMm, type Board, type Pt, type RoutedCopper, type Track, type Via, type Zone } from './lib/board-types.ts';
 import { runMain, UsageError } from './lib/cli.ts';
 import { footprintAngle } from './lib/footprint-move.ts';
-import { readJson } from './lib/json-file.ts';
+import { readJson, sha256File } from './lib/json-file.ts';
+import { field, forms, type SList } from './lib/sexpr.ts';
+import { validatePadInventory } from './gerber_netcheck.ts';
 import { fixed, floatRepr } from './lib/py-compat.mjs';
 import { round } from './lib/py-numbers.ts';
 import { fileRoot } from './lib/project-root.mjs';
 
-const USAGE = 'usage: tools/fp_keepouts.ts {apply BOARD REF SPEC | rip BOARD REF | gerber ZIP BOARD REF}; check: tools/fp_keepouts.py';
+const USAGE = 'usage: tools/fp_keepouts.ts {apply BOARD REF SPEC | rip BOARD REF | check BOARD REF | gerber ZIP BOARD REF}';
 
 export interface KeepoutSpec { areas_fp_mm: { name: string; rect: [number, number, number, number] }[]; layers: string[]; not_allowed: string[] }
 export interface Area { name: string; points: [number, number][] }
@@ -154,6 +156,60 @@ function rip(pcb: string, ref: string): number {
   return 0;
 }
 
+/** Check saved zone fills and KiCad-provided copper pad polygons against each rule area. */
+export function checkBoard(board: Board, ref: string, measure = geometryBatch): {lines:string[]; verdict:string} {
+ const zones=keepoutZones(board,ref), hits=touching(board,ref), lines=hits.map(({item,area})=>`  ${area}: ${describe(item)}`);
+ const requests:Request[]=[], rows:{kind:'fill'|'pad';name:string;subject:string}[]=[];
+ const poly=(p:{outline:Pt[];holes:Pt[][]}):Poly=>({outer:p.outline.map(q=>[toMm(q.x),toMm(q.y)]),holes:p.holes.map(r=>r.map(q=>[toMm(q.x),toMm(q.y)]))});
+ for(const zone of zones) {
+  if(!zone.outline.length) throw new Error(`keepout ${zone.name} has no outline`);
+  const a=zone.outline.map(poly);
+  if(zone.rule_area!.pour) for(const fill of board.zones.filter(z=>!z.rule_area)) for(const layer of fill.filled) {
+   if(!zone.layers.includes(layer.layer) || !layer.polygons.length) continue;
+   requests.push({operation:'intersection',a,b:layer.polygons.map(poly)});rows.push({kind:'fill',name:zone.name,subject:`${fill.net} ${layer.layer}`});
+  }
+  if(zone.rule_area!.pads) for(const fp of board.footprints) for(const pad of fp.pads) for(const layer of zone.layers) {
+   if(!pad.layers.includes(layer)) continue;
+   const polygon=pad.polygons?.[layer];if(!polygon || polygon.outline.length<3) throw new Error(`missing copper polygon for ${fp.reference}.${pad.number} on ${layer}`);
+   requests.push({operation:'intersection',a,b:[poly(polygon)]});rows.push({kind:'pad',name:zone.name,subject:`${fp.reference}.${pad.number}`});
+  }
+ }
+ const values=measure(requests);if(values.length!==rows.length)throw new Error('incomplete keepout geometry result');
+ let fill=0,pads=0,uncertain=false;
+ rows.forEach((row,i)=>{const area=values[i]!;
+  if(row.kind==='fill' && area>0) {fill+=area;lines.push(`  ${row.name}: zone fill ${row.subject} ${area.toFixed(4)} mm2`);}
+  if(row.kind==='pad' && Math.abs(area-1e-6)<1e-12) uncertain=true;
+  else if(row.kind==='pad' && area>1e-6){pads++;lines.push(`  ${row.name}: pad ${row.subject} ${area.toFixed(4)} mm2`);}
+ });
+ const verdict=!zones.length || hits.length || fill>0 || pads ? 'FAIL':uncertain?'UNCERTAIN':'PASS';
+ lines.push(`${verdict} check ${ref}: areas ${zones.length}, tracks+vias ${hits.length}, zone fill ${fill.toFixed(4)} mm2, pads ${pads}${uncertain?' (pad overlap within 1e-12 mm2 of threshold)':''}`);
+ return {lines,verdict};
+}
+
+/** Refuse a reader result that omits source zones or saved fill polygons. */
+export function validateZoneInventory(text:string,board:Board):void {
+ const roots=forms(text), root=roots[0];
+ if(roots.length!==1 || !Array.isArray(root) || root[0]!=='kicad_pcb')throw new Error('invalid native PCB inventory');
+ const kids=(node:SList,name:string)=>node.filter((x):x is SList=>Array.isArray(x)&&x[0]===name);
+ const native=kids(root,'zone'), byId=new Map(board.zones.map(z=>[z.id.toLowerCase(),z]));
+ if(byId.size!==board.zones.length || native.length!==board.zones.length)throw new Error('board reader zone inventory mismatch');
+ for(const zone of native){
+  const id=field(zone,'uuid')?.[0];if(typeof id!=='string'||!id)throw new Error('native zone lacks UUID');
+  const actual=byId.get(id.toLowerCase());if(!actual)throw new Error('board reader zone inventory mismatch');
+  const counts=new Map<string,number>();
+  for(const fill of kids(zone,'filled_polygon')){const layer=field(fill,'layer')?.[0];if(typeof layer!=='string')throw new Error('native fill has no layer');counts.set(layer,(counts.get(layer)??0)+1);}
+  for(const [layer,count] of counts){const result=actual.filled.find(f=>f.layer===layer);if(!result || result.polygons.length<count)throw new Error(`board reader missing saved fill on ${layer}`);}
+ }
+}
+
+function check(pcb:string,ref:string):number {
+ const doc=boardJson(pcb), text=readFileSync(pcb,'utf8');
+ if(doc.board_sha256!==sha256File(pcb))throw new Error('board changed during keepout read');
+ validatePadInventory(text,doc);validateZoneInventory(text,doc.board);
+ const result=checkBoard(doc.board,ref);
+ if(doc.board_sha256!==sha256File(pcb))throw new Error('board changed during keepout check');console.log(result.lines.join('\n'));return result.verdict==='PASS'?0:1;
+}
+
 export function gerberCheck(board: Board, ref: string, files: Map<string,string>, measure = geometry): {lines:string[]; total:number; areas:number; verdict:string} {
   const areas=keepoutZones(board,ref), lines:string[]=[]; let total=0;
   for(const area of areas) {
@@ -182,6 +238,7 @@ export function gerberCheck(board: Board, ref: string, files: Map<string,string>
 }
 
 function main([command, pcb, ref, spec, ...rest]: string[]): number {
+  if (command === 'check' && pcb && ref && !spec) return check(pcb,ref);
   if (command === 'gerber' && pcb && ref && spec && !rest.length) { const result=gerberCheck(boardJson(ref).board,spec,archive(pcb)); console.log(result.lines.join('\n')); return result.verdict === 'PASS' ? 0 : 1; }
   if (command === 'apply' && pcb && ref && spec && !rest.length) return apply(pcb, ref, spec);
   if (command === 'rip' && pcb && ref && !spec) return rip(pcb, ref);

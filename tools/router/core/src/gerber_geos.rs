@@ -64,7 +64,22 @@ fn execute(req:Request,path:&str)->Result<f64,String>{
  if result.is_null(){return Err("GEOS intersection failed".into())}let mut area=0.0;let ok=unsafe{(api.area)(api.ctx,result,&mut area)};unsafe{(api.destroy)(api.ctx,result)};
  if ok==0 || !area.is_finite() || area<0.0 {Err("GEOS area failed".into())}else{Ok(area)}
 }
-pub fn cli()->i32 {let mut input=String::new();let r=io::stdin().read_to_string(&mut input).map_err(|e|e.to_string()).and_then(|_|serde_json::from_str::<Request>(&input).map_err(|e|e.to_string())).and_then(|req|execute(req,&std::env::var("GERBER_GEOS_LIBRARY").map_err(|_|"GERBER_GEOS_LIBRARY is required".to_string())?));match r{Ok(a)=>{println!("{{\"area_mm2\":{a}}}");0},Err(e)=>{eprintln!("FAIL GEOS: {e}");1}}}
+pub fn cli()->i32 {
+ let mut input=String::new();
+ let r=io::stdin().read_to_string(&mut input).map_err(|e|e.to_string()).and_then(|_| {
+  let json:serde_json::Value=serde_json::from_str(&input).map_err(|e|e.to_string())?;
+  let path=std::env::var("GERBER_GEOS_LIBRARY").map_err(|_|"GERBER_GEOS_LIBRARY is required".to_string())?;
+  if json.is_array() {
+   let requests:Vec<Request>=serde_json::from_value(json).map_err(|e|e.to_string())?;
+   let results=requests.into_iter().map(|req|execute(req,&path)).collect::<Result<Vec<_>,_>>()?;
+   serde_json::to_string(&serde_json::json!({"areas_mm2":results})).map_err(|e|e.to_string())
+  } else {
+   let request:Request=serde_json::from_value(json).map_err(|e|e.to_string())?;
+   serde_json::to_string(&serde_json::json!({"area_mm2":execute(request,&path)?})).map_err(|e|e.to_string())
+  }
+ });
+ match r{Ok(json)=>{println!("{json}");0},Err(e)=>{eprintln!("FAIL GEOS: {e}");1}}
+}
 
 #[cfg(test)] mod tests {
  use super::*;
