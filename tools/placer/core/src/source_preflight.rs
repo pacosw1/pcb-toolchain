@@ -534,3 +534,98 @@ pub fn preflight_snapshot(problem: &Value, snapshot_root: &Path, population: Opt
     }
     Ok(())
 }
+
+/// Verify manifest evidence references are owned, present in the bound input set,
+/// and unchanged. PDF page existence and native facts still require separate checks.
+#[allow(dead_code)]
+fn check_manifest_sources(contract: &Value, manifest: &Value) -> crate::Result<()> {
+    let root = Path::new(contract["root"].as_str().ok_or("reviewed root missing")?).canonicalize()?;
+    let inputs = contract["inputs"].as_object().ok_or("reviewed inputs missing")?;
+    let mut sources = std::collections::BTreeMap::new();
+    for (name, hash) in inputs { sources.insert(owned(&root,name)?, hash.as_str().ok_or("invalid input hash")?); }
+    let source = |v: &Value, pdf: bool| -> crate::Result<std::path::PathBuf> {
+        let name = v["path"].as_str().ok_or("source path missing")?;
+        if Path::new(name).is_absolute() || name.contains('\\') || name.split('/').any(|part| part.is_empty() || part == "." || part == "..") {
+            return Err("evidence path must be repository-relative".into());
+        }
+        let expected = v["sha256"].as_str().ok_or("source hash missing")?;
+        let path = owned(&root,name)?;
+        if sources.get(&path).copied() != Some(expected) || format!("{:x}", Sha256::digest(std::fs::read(&path)?)) != expected {
+            return Err("evidence source changed or absent".into());
+        }
+        let is_pdf = pdf || path.extension().and_then(|s| s.to_str()).is_some_and(|s| s.eq_ignore_ascii_case("pdf"));
+        if is_pdf {
+            if v["page"].as_u64().is_none_or(|p| p == 0) { return Err("PDF page locator missing".into()); }
+        } else if v["section"].as_str().is_none_or(|s| s.trim().is_empty()) {
+            return Err("evidence section locator missing".into());
+        }
+        Ok(path)
+    };
+    let board = contract["board"].as_str().ok_or("board identity missing")?;
+    if board.is_empty() || !board.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'-') {
+        return Err("invalid board identity".into());
+    }
+    let prefix = format!("hardware-design/boards/{board}/");
+    let check_board_source = |v: &Value| -> crate::Result<()> {
+        let name = v["path"].as_str().ok_or("board source missing")?;
+        if !name.starts_with(&prefix) { return Err("source belongs to another board".into()); }
+        source(v,false)?; Ok(())
+    };
+    check_board_source(&manifest["spec"])?;
+    source(&manifest["review"]["evidence"], false)?;
+    let parts = manifest["parts"].as_array().ok_or("reviewed parts missing")?;
+    for part in parts {
+        if part.get("profile").is_some() { return Err("profile sources unsupported".into()); }
+        let docs = part["datasheets"].as_array().filter(|v| !v.is_empty()).ok_or("datasheets missing")?;
+        let mut doc_ids = std::collections::BTreeSet::new();
+        for doc in docs {
+            if doc["document_id"].as_str().is_none_or(|s| s.is_empty()) || doc["revision"].as_str().is_none_or(|s| s.is_empty()) {
+                return Err("datasheet identity missing".into());
+            }
+            let path = source(doc,true)?;
+            doc_ids.insert((path, doc["sha256"].as_str().ok_or("datasheet hash missing")?.to_owned()));
+        }
+        let check_interval = |limit: &Value, required: &Value| -> crate::Result<()> {
+            let doc = source(&limit["source"],false)?;
+            let hash = limit["source"]["sha256"].as_str().ok_or("rating source hash missing")?;
+            if !doc_ids.contains(&(doc,hash.to_owned())) { return Err("rating source is not the exact datasheet".into()); }
+            check_board_source(&required["source"])?;
+            Ok(())
+        };
+        for rating in part["ratings"].as_array().ok_or("ratings missing")? {
+            check_interval(&rating["limit"], &rating["required"])?;
+            for condition in rating["conditions"].as_array().ok_or("rating conditions missing")? {
+                check_interval(&condition["valid"], &condition["required"])?;
+            }
+        }
+        for dep in part["assembly_dependencies"].as_array().ok_or("assembly dependencies missing")? {source(&dep["source"],false)?;}
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod evidence_source_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn evidence_sources_bind_exact_datasheet_and_board_use() {
+        let root = std::env::temp_dir().join(format!("iotplace-evidence-{}",std::process::id()));
+        let board_dir = root.join("hardware-design/boards/X");
+        std::fs::create_dir_all(&board_dir).unwrap();
+        let root = root.canonicalize().unwrap();
+        for (path, bytes) in [("hardware-design/boards/X/spec.md",&b"spec"[..]),("review.md",&b"review"[..]),("doc.pdf",&b"pdf"[..])] {
+            std::fs::write(root.join(path),bytes).unwrap();
+        }
+        let h = |bytes:&[u8]| format!("{:x}",Sha256::digest(bytes));
+        let spec = json!({"path":"hardware-design/boards/X/spec.md","sha256":h(b"spec"),"section":"load"});
+        let review = json!({"path":"review.md","sha256":h(b"review"),"section":"review"});
+        let doc = json!({"path":"doc.pdf","sha256":h(b"pdf"),"page":1,"document_id":"D","revision":"A"});
+        let manifest = json!({"spec":spec,"review":{"evidence":review},"parts":[{"datasheets":[doc.clone()],
+            "ratings":[{"limit":{"source":doc},"required":{"source":spec},"conditions":[]}],"assembly_dependencies":[]}]});
+        let contract = json!({"root":root,"board":"X","inputs":{"hardware-design/boards/X/spec.md":h(b"spec"),"review.md":h(b"review"),"doc.pdf":h(b"pdf")}});
+        assert!(check_manifest_sources(&contract,&manifest).is_ok());
+        std::fs::write(root.join("doc.pdf"),b"changed").unwrap();
+        assert!(check_manifest_sources(&contract,&manifest).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
