@@ -83,3 +83,73 @@ The clean source archive hash is
 `086c78924035e07a86eca067fa63b6799778306d3cc819d5a9a14f7659b336cf`;
 211 router source files match the archive in both measurement copies, and all
 2,723 frozen hardware-design files match the retained #1389 fixture.
+
+### Comparison registration after calibration, before comparison trials
+
+Calibration job `20261105-232134-d5f4f6` completed in 604.200507 seconds with
+670.867728 operation CPU-seconds; the cumulative container counter through its
+terminal report is 672.546428 CPU-seconds. Native routing/verification took
+569.293923 seconds and the fresh configured gate 34.477024 seconds. Native
+DRC/opens/parity and all configured error/failure counts are zero except the five
+unchanged stale RP-001 entries; active kicad-happy findings are zero. The candidate
+has 956 tracks, 201 vias and 2,225 mm of track, SHA-256
+`e9464aaa21ec7792469d02c4cd7244314ab9e4dd1655ad960536a3b709c499bf`.
+The original gate still exits 1 and the harness reports ERROR. The daemon records
+command exit 2, complete child/container cleanup and no OOM. Its client log stream
+disconnected; results-only recovery succeeded without resubmitting the job.
+Calibration is excluded from the comparison sample.
+
+Set the shared wall budget to **960 seconds**, calculated as
+`ceil(1.5 * 604.200507 / 60) * 60`. Register exactly five sequential trials:
+
+| Order / label | Mode | CPUs | Wall limit | Reserved CPU ceiling |
+| --- | --- | ---: | ---: | ---: |
+| 1 / single-a | single | 2 | 960 s | 1,920 CPU-s |
+| 2 / sprint-a | sprints | 2 | 960 s | 1,920 CPU-s |
+| 3 / sprint-b | sprints | 2 | 960 s | 1,920 CPU-s |
+| 4 / single-b | single | 2 | 960 s | 1,920 CPU-s |
+| 5 / single-equal-cpu | single | 1 | 1,920 s | 1,920 CPU-s |
+
+Each gets eight GiB and retries zero. The first four are the primary matched
+wall/resource comparison in ABBA order. The fifth separates wall allowance from
+the same reserved CPU ceiling; actual CPU consumption is measured, not assumed
+equal. Labels do not claim cold caches. Do not flush the shared cache, change
+inputs, rerun a failed label, increase its budget, or substitute a newer solver.
+Record actual upload/cache, queue and client overhead and shared-host limitations.
+
+Keep the original harness policies: single seed 0, 80 passes, native max-time
+`wall_limit - 30`; sprints seeds 0/1/2/3, via cost 3, two workers, two-pass slices,
+80 passes per variant and the existing 30-second verification reserve. The native
+and configured verification cost can exceed that reserve, so late candidates may
+not finish; this is a measured limitation of the current mode, not a reason to
+change its policy during the experiment. Wrapper/owned-process cancellation and
+cleanup reserves remain unchanged. Only the resource declarations differ from
+the historical reproduction harness, as documented above.
+
+Use the calibration's benchmark success definition for each finished candidate.
+A candidate must complete native and fresh configured checks within its trial's
+wall budget, with zero actual error/failure counts and only stale RP-001 entries
+excluded from the benchmark count. An unfinished or timed-out verification never
+counts. A completed qualifying candidate can still count when later portfolio
+work reaches its normal budget end, provided the parent records terminal evidence
+and complete cleanup; daemon hard-timeout, OOM or incomplete cleanup makes the
+trial unsuccessful. Preserve every official gate/controller status and the null
+full-acceptance time when stale entries prevent acceptance. The controller is not
+modified to stop or accept on the benchmark-only definition.
+
+Report first benchmark verification, total operation wall, all-child cgroup CPU
+(operation delta plus cumulative counter through the terminal report), selected
+qualifying length/vias, preparation/slicing/native/gate cost and overhead. Select
+benchmark quality among qualifying candidates by length, then vias, then variant
+ID, matching the existing winner order. Do not score unverified checkpoints.
+Single first-verification time is the terminal-operation upper bound; sprint time
+is its candidate's `sprint.verify.end` event, even when the official result is
+false solely because of stale exemptions. Post-report teardown and client-side
+packing CPU are not measured. Two repetitions per primary mode are descriptive,
+not statistical proof; no speedup threshold or model benefit is assumed.
+
+**Known current-mode difference:** `iotroute run` includes automatic reference-plane
+feedback and rerouting, used by this calibration. `sprint-finish` writes and checks
+a finalized route without that feedback loop. Keep both unchanged. This comparison
+measures current modes, not isolated scheduler speedup with identical feedback.
+Any result must retain this limitation when discussing the large-board LLM no-go.
