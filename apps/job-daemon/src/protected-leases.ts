@@ -10,10 +10,10 @@ const TOKEN = /^[0-9a-f]{64}$/;
 interface LeaseRow { generation: number; token_hash: Uint8Array; owner: string; expires_at: number; pinned: number; source_revision: number; alias_revision: number; operation: string; source_manifest: string | null }
 export interface ProtectedLeaseRequest { requestId: string; project: string; board: string; alias: string; aliasRevision: number; sourceRevision: number; sourceManifest: string; operation: string; ttlMs: number }
 export type ProtectedLeaseResult = { state: 'ACQUIRED'; generation: number; token: string; expiresAt: number } | { state: 'UNKNOWN'; generation: number } | { state: 'BUSY' };
-const leaseHash = (token: string): Buffer => createHash('sha256').update('pcb.lease.v1\0').update(Buffer.from(token, 'hex')).digest();
+export const protectedLeaseHash = (token: string): Buffer => createHash('sha256').update('pcb.lease.v1\0').update(Buffer.from(token, 'hex')).digest();
 
 export class ProtectedLeaseStore extends ProtectedCapabilityStore {
-  private clock: () => number;
+  protected clock: () => number;
   constructor(root: string, limits: { maxBlobBytes: number; quotaBytes: number }, now: () => number = Date.now) {
     super(root, limits, now); this.clock = now;
     this.db.exec(`CREATE TABLE IF NOT EXISTS protected_targets (project TEXT NOT NULL, board TEXT NOT NULL,
@@ -54,7 +54,7 @@ export class ProtectedLeaseStore extends ProtectedCapabilityStore {
       if (!Number.isSafeInteger(now) || now < 1 || !row || row.generation !== lease.generation || row.owner !== identity.principal ||
           row.operation !== lease.operation || row.expires_at <= now || !target || target.state !== 'ACTIVE' || target.revision !== row.source_revision ||
           target.alias_revision !== row.alias_revision || row.source_manifest !== binding.sourceManifest || target.source_manifest !== binding.sourceManifest || !this.blobReady(binding.sourceManifest) ||
-          row.token_hash.byteLength !== 32 || !timingSafeEqual(Buffer.from(row.token_hash), leaseHash(lease.token)))
+          row.token_hash.byteLength !== 32 || !timingSafeEqual(Buffer.from(row.token_hash), protectedLeaseHash(lease.token)))
         throw new Error('protected lease cannot bind attempt');
       const blob = this.db.prepare("SELECT size FROM protected_uploads WHERE sha256=? AND state='ready'");
       const source = resolveManifestClosure(binding.sourceManifest, sha => this.read(sha), sha => {
@@ -90,7 +90,7 @@ export class ProtectedLeaseStore extends ProtectedCapabilityStore {
         !Number.isSafeInteger(request.aliasRevision) || request.aliasRevision < 1 || !Number.isSafeInteger(request.sourceRevision) || request.sourceRevision < 1 ||
         typeof request.sourceManifest !== 'string' || !TOKEN.test(request.sourceManifest) ||
         !Number.isSafeInteger(request.ttlMs) || request.ttlMs < 1000 || request.ttlMs > 300_000) throw new Error('invalid protected lease request');
-    const token = randomBytes(32).toString('hex'), hash = leaseHash(token), now = this.clock();
+    const token = randomBytes(32).toString('hex'), hash = protectedLeaseHash(token), now = this.clock();
     if (!Number.isSafeInteger(now) || now < 1) throw new Error('invalid coordinator time');
     return this.withCapability(capability, { role: 'submit', project: request.project, board: request.board, operation: request.operation, job: null, attempt: null }, identity => {
       const fingerprint = parseCanonicalJson(Buffer.from(JSON.stringify({ ...request, principal: identity.principal, capabilityId: identity.capabilityId })),
@@ -127,7 +127,7 @@ export class ProtectedLeaseStore extends ProtectedCapabilityStore {
       const target = this.db.prepare('SELECT revision,alias_revision,state,source_manifest FROM protected_targets WHERE project=? AND board=?').get(lease.project, lease.board) as { revision: number; alias_revision: number; state: string; source_manifest: string | null } | undefined;
       if (!row || row.generation !== lease.generation || row.owner !== identity.principal || row.operation !== lease.operation || row.expires_at <= now ||
           !target || target.state !== 'ACTIVE' || target.revision !== row.source_revision || target.alias_revision !== row.alias_revision || !row.source_manifest || target.source_manifest !== row.source_manifest ||
-          row.token_hash.byteLength !== 32 || !timingSafeEqual(Buffer.from(row.token_hash), leaseHash(lease.token))) throw new Error('protected lease is stale');
+          row.token_hash.byteLength !== 32 || !timingSafeEqual(Buffer.from(row.token_hash), protectedLeaseHash(lease.token))) throw new Error('protected lease is stale');
       this.db.prepare('UPDATE protected_leases SET pinned=1 WHERE project=? AND board=?').run(lease.project, lease.board);
       if (!row.pinned) this.db.prepare('INSERT INTO protected_lease_audit VALUES (?,?,?,?,?,?)').run(lease.project, lease.board, lease.generation, identity.principal, 'pinned', now);
     });
@@ -141,7 +141,7 @@ export class ProtectedLeaseStore extends ProtectedCapabilityStore {
       const now = this.clock(), row = this.db.prepare('SELECT * FROM protected_leases WHERE project=? AND board=?').get(lease.project, lease.board) as LeaseRow | undefined;
       if (!Number.isSafeInteger(now) || now < 1 || !Number.isSafeInteger(now + ttlMs)) throw new Error('invalid coordinator time');
       if (!row || row.generation !== lease.generation || row.owner !== identity.principal || row.operation !== lease.operation || row.expires_at <= now ||
-          row.token_hash.byteLength !== 32 || !timingSafeEqual(Buffer.from(row.token_hash), leaseHash(lease.token))) throw new Error('protected lease is stale');
+          row.token_hash.byteLength !== 32 || !timingSafeEqual(Buffer.from(row.token_hash), protectedLeaseHash(lease.token))) throw new Error('protected lease is stale');
       const expiresAt = now + ttlMs;
       this.db.prepare('UPDATE protected_leases SET expires_at=? WHERE project=? AND board=?').run(expiresAt, lease.project, lease.board);
       this.db.prepare('INSERT INTO protected_lease_audit VALUES (?,?,?,?,?,?)').run(lease.project, lease.board, lease.generation, identity.principal, 'renewed', now);
@@ -156,7 +156,7 @@ export class ProtectedLeaseStore extends ProtectedCapabilityStore {
       const now = this.clock(), row = this.db.prepare('SELECT * FROM protected_leases WHERE project=? AND board=?').get(lease.project, lease.board) as LeaseRow | undefined;
       if (!Number.isSafeInteger(now) || now < 1) throw new Error('invalid coordinator time');
       if (!row || row.pinned !== 0 || row.generation !== lease.generation || row.owner !== identity.principal || row.operation !== lease.operation ||
-          row.token_hash.byteLength !== 32 || !timingSafeEqual(Buffer.from(row.token_hash), leaseHash(lease.token))) throw new Error('protected lease cannot be released');
+          row.token_hash.byteLength !== 32 || !timingSafeEqual(Buffer.from(row.token_hash), protectedLeaseHash(lease.token))) throw new Error('protected lease cannot be released');
       this.db.prepare('UPDATE protected_leases SET token_hash=?,owner=?,expires_at=0 WHERE project=? AND board=?').run(Buffer.alloc(32), '', lease.project, lease.board);
       this.db.prepare('INSERT INTO protected_lease_audit VALUES (?,?,?,?,?,?)').run(lease.project, lease.board, lease.generation, identity.principal, 'released', now);
     });

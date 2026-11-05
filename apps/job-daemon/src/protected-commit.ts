@@ -1,0 +1,98 @@
+// Internal, unwired transaction. No API may expose this until trusted policy/target activation, verifier issuance,
+// cancellation/cleanup, filesystem isolation and fail-closed clock/recovery are implemented and authenticated.
+import { timingSafeEqual } from 'node:crypto';
+import { parseCanonicalJson } from './canonical-json.ts';
+import { resolveManifestClosure } from './protected-closure.ts';
+import { ProtectedLeaseStore, protectedLeaseHash } from './protected-leases.ts';
+import { parseTrustedVerification } from './protected-verification.ts';
+import type { CommitRequestV1, CommitResultV1 } from '../../../contracts/pcb-system-v1.ts';
+
+const SHA = /^[0-9a-f]{64}$/;
+const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+type Target = { revision: number; alias_revision: number; state: string; source_manifest: string; board_path: string };
+type Lease = { generation: number; token_hash: Uint8Array; expires_at: number; pinned: number; source_revision: number; alias_revision: number; source_manifest: string; operation: string };
+type Attempt = { project: string; board: string; generation: number; source_revision: number; alias_revision: number; operation: string; source_manifest: string; policy_digest: string; runtime_digest: string; toolchain_digest: string };
+type Verified = { candidate_manifest: string; evidence_manifest: string; verifier: string; receipt: Uint8Array; state: string; cancelled: number; revoked: number };
+
+export class ProtectedCommitStore extends ProtectedLeaseStore {
+  constructor(root: string, limits: { maxBlobBytes: number; quotaBytes: number }, now: () => number = Date.now) {
+    super(root, limits, now);
+    this.db.exec(`CREATE TABLE IF NOT EXISTS protected_target_policy (project TEXT NOT NULL, board TEXT NOT NULL, policy_digest TEXT NOT NULL, runtime_digest TEXT NOT NULL, toolchain_digest TEXT NOT NULL, PRIMARY KEY(project,board)) STRICT;
+      CREATE TABLE IF NOT EXISTS protected_policies (digest TEXT PRIMARY KEY, required_checks TEXT NOT NULL, parity_na INTEGER NOT NULL, enabled INTEGER NOT NULL) STRICT;
+      CREATE TABLE IF NOT EXISTS protected_approved_digests (kind TEXT NOT NULL, digest TEXT NOT NULL, enabled INTEGER NOT NULL, PRIMARY KEY(kind,digest)) STRICT;
+      CREATE TABLE IF NOT EXISTS protected_verifiers (id TEXT PRIMARY KEY, enabled INTEGER NOT NULL) STRICT;
+      CREATE TABLE IF NOT EXISTS protected_verified_attempts (job TEXT NOT NULL, attempt TEXT NOT NULL, verification TEXT NOT NULL,
+        candidate_manifest TEXT NOT NULL, evidence_manifest TEXT NOT NULL, verifier TEXT NOT NULL, receipt BLOB NOT NULL,
+        state TEXT NOT NULL, cancelled INTEGER NOT NULL, revoked INTEGER NOT NULL, PRIMARY KEY(job,attempt,verification)) STRICT;
+      CREATE TABLE IF NOT EXISTS protected_revisions (project TEXT NOT NULL, board TEXT NOT NULL, revision INTEGER NOT NULL,
+        manifest TEXT NOT NULL, verification TEXT NOT NULL, PRIMARY KEY(project,board,revision)) STRICT;
+      CREATE TABLE IF NOT EXISTS protected_commit_results (request_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, revision INTEGER NOT NULL, manifest TEXT NOT NULL) STRICT;`);
+  }
+  /** Only use after a trusted service has recorded independently verified policy, runtime, receipt and cleanup. */
+  commit(capability: string, request: CommitRequestV1): CommitResultV1 {
+    const keys = ['schema','request_id','job_id','attempt_id','verification_id','project_id','board_id','alias_revision','source_revision','candidate_manifest_sha256','lease_generation','lease_token'];
+    if (!request || typeof request !== 'object' || Array.isArray(request) || Object.keys(request).length !== keys.length || !keys.every(k => Object.hasOwn(request,k)) ||
+        request.schema !== 'pcb.commit-request.v1' || ![request.request_id,request.job_id,request.attempt_id,request.verification_id,request.project_id,request.board_id].every(x => typeof x === 'string' && ID.test(x)) ||
+        ![request.alias_revision,request.source_revision,request.lease_generation].every(x => Number.isSafeInteger(x) && x > 0) ||
+        !SHA.test(request.candidate_manifest_sha256) || !SHA.test(request.lease_token)) throw new Error('invalid protected commit request');
+    const tokenHash = protectedLeaseHash(request.lease_token);
+    const fingerprint = parseCanonicalJson(Buffer.from(JSON.stringify({ ...request, lease_token: tokenHash.toString('hex') })), { maxBytes: 16_384, maxNodes: 100, maxDepth: 4 }).sha256;
+    // Commit capabilities are scoped to the exact attempt and operation; determine operation inside the transaction.
+    const binding = this.db.prepare('SELECT operation FROM protected_attempt_bindings WHERE job=? AND attempt=?').get(request.job_id, request.attempt_id) as { operation: string } | undefined;
+    if (!binding) throw new Error('protected attempt unavailable');
+    return this.withCapability(capability, { role: 'commit', project: request.project_id, board: request.board_id, operation: binding.operation, job: request.job_id, attempt: request.attempt_id }, () => {
+      const prior = this.db.prepare('SELECT fingerprint,revision,manifest FROM protected_commit_results WHERE request_id=?').get(request.request_id) as { fingerprint: string; revision: number; manifest: string } | undefined;
+      if (prior) {
+        if (prior.fingerprint !== fingerprint) throw new Error('commit request ID reused with different content');
+        return { schema: 'pcb.commit-result.v1', request_id: request.request_id, state: 'COMMITTED', revision: prior.revision, manifest_sha256: prior.manifest } as const;
+      }
+      const now = this.clock(), target = this.db.prepare('SELECT revision,alias_revision,state,source_manifest,board_path FROM protected_targets WHERE project=? AND board=?').get(request.project_id,request.board_id) as Target | undefined;
+      const lease = this.db.prepare('SELECT * FROM protected_leases WHERE project=? AND board=?').get(request.project_id,request.board_id) as Lease | undefined;
+      const attempt = this.db.prepare('SELECT * FROM protected_attempt_bindings WHERE job=? AND attempt=?').get(request.job_id,request.attempt_id) as Attempt | undefined;
+      const verified = this.db.prepare('SELECT * FROM protected_verified_attempts WHERE job=? AND attempt=? AND verification=?').get(request.job_id,request.attempt_id,request.verification_id) as Verified | undefined;
+      const targetPolicy = this.db.prepare('SELECT policy_digest,runtime_digest,toolchain_digest FROM protected_target_policy WHERE project=? AND board=?').get(request.project_id,request.board_id) as { policy_digest:string; runtime_digest:string; toolchain_digest:string } | undefined;
+      if (!Number.isSafeInteger(now) || now < 1 || !target || target.state !== 'ACTIVE' || !target.board_path || target.revision !== request.source_revision || target.alias_revision !== request.alias_revision ||
+          !lease || lease.pinned !== 1 || lease.expires_at <= now || lease.generation !== request.lease_generation || lease.source_revision !== target.revision || lease.alias_revision !== target.alias_revision ||
+          lease.source_manifest !== target.source_manifest || lease.token_hash.byteLength !== 32 || !timingSafeEqual(Buffer.from(lease.token_hash),tokenHash) ||
+          !attempt || attempt.project !== request.project_id || attempt.board !== request.board_id || attempt.generation !== lease.generation || attempt.source_revision !== target.revision ||
+          attempt.alias_revision !== target.alias_revision || attempt.source_manifest !== target.source_manifest || attempt.operation !== lease.operation || attempt.operation !== binding.operation || !targetPolicy ||
+          attempt.policy_digest !== targetPolicy.policy_digest || attempt.runtime_digest !== targetPolicy.runtime_digest || attempt.toolchain_digest !== targetPolicy.toolchain_digest ||
+          !verified || verified.state !== 'VERIFIED' || verified.cancelled !== 0 || verified.revoked !== 0 || verified.candidate_manifest !== request.candidate_manifest_sha256)
+        throw new Error('protected commit preconditions failed');
+      const policy = this.db.prepare('SELECT required_checks,parity_na,enabled FROM protected_policies WHERE digest=?').get(attempt.policy_digest) as { required_checks:string; parity_na:number; enabled:number } | undefined;
+      const approved = this.db.prepare('SELECT enabled FROM protected_approved_digests WHERE kind=? AND digest=?');
+      const verifier = this.db.prepare('SELECT enabled FROM protected_verifiers WHERE id=?').get(verified.verifier) as { enabled:number } | undefined;
+      if (!policy || policy.enabled !== 1 || ![0,1].includes(policy.parity_na) || verifier?.enabled !== 1 ||
+          (approved.get('runtime',attempt.runtime_digest) as { enabled:number } | undefined)?.enabled !== 1 ||
+          (approved.get('toolchain',attempt.toolchain_digest) as { enabled:number } | undefined)?.enabled !== 1) throw new Error('protected authority is unavailable');
+      let checks: string[]; try { checks = JSON.parse(policy.required_checks) as string[]; } catch { throw new Error('invalid protected policy'); }
+      const blob = this.db.prepare("SELECT size FROM protected_uploads WHERE sha256=? AND state='ready'");
+      const source = resolveManifestClosure(attempt.source_manifest, sha => this.read(sha), sha => (blob.get(sha) as { size:number } | undefined)?.size ?? null,
+        { maxDepth:16,maxManifests:256,maxNodes:100_000,maxBytes:64*1024**3,maxManifestBytes:64*1024**2 });
+      if (source.rootProject !== request.project_id || !source.rootManifest.required_paths.includes(target.board_path) ||
+          !source.rootManifest.entries.some(entry => entry.kind === 'file' && entry.path === target.board_path)) throw new Error('source board is unavailable');
+      const candidate = resolveManifestClosure(request.candidate_manifest_sha256, sha => this.read(sha), sha => (blob.get(sha) as { size:number } | undefined)?.size ?? null,
+        { maxDepth:16,maxManifests:256,maxNodes:100_000,maxBytes:64*1024**3,maxManifestBytes:64*1024**2 });
+      if (candidate.rootProject !== request.project_id || !candidate.rootManifest.required_paths.includes(target.board_path) ||
+          !candidate.rootManifest.entries.some(entry => entry.kind === 'file' && entry.path === target.board_path)) throw new Error('candidate board is unavailable');
+      for (const hash of new Set([...source.nodes, ...candidate.nodes].filter(node => node.kind === 'file').map(node => node.sha256))) this.read(hash);
+      const parsed = parseTrustedVerification(verified.receipt, { verification_id:request.verification_id, job_id:request.job_id, attempt_id:request.attempt_id,
+        project_id:request.project_id, board_id:request.board_id, alias_revision:request.alias_revision, lease_generation:request.lease_generation,
+        source_revision:request.source_revision, source_manifest_sha256:attempt.source_manifest, candidate_manifest_sha256:request.candidate_manifest_sha256,
+        toolchain_digest:attempt.toolchain_digest,runtime_digest:attempt.runtime_digest,policy_digest:attempt.policy_digest,evidence_manifest_sha256:verified.evidence_manifest,
+        verifier_identity:verified.verifier,required_checks:checks,parity_not_applicable_allowed:policy.parity_na===1,now_ms:now,max_receipt_age_ms:300_000 });
+      if (!this.blobReady(verified.evidence_manifest) || parsed.receipt.checks.some(check => !check.evidence_manifest_sha256 || !this.blobReady(check.evidence_manifest_sha256)))
+        throw new Error('verification evidence unavailable');
+      for (const hash of new Set([verified.evidence_manifest, ...parsed.receipt.checks.map(check => check.evidence_manifest_sha256!)])) this.read(hash);
+      const revision = target.revision + 1; if (!Number.isSafeInteger(revision)) throw new Error('protected revision exhausted');
+      const changed = this.db.prepare('UPDATE protected_targets SET revision=?,source_manifest=? WHERE project=? AND board=? AND revision=? AND source_manifest=? AND alias_revision=? AND state=?')
+        .run(revision,request.candidate_manifest_sha256,request.project_id,request.board_id,target.revision,target.source_manifest,target.alias_revision,'ACTIVE');
+      if (changed.changes !== 1) throw new Error('protected revision changed');
+      this.db.prepare('INSERT INTO protected_revisions VALUES (?,?,?,?,?)').run(request.project_id,request.board_id,revision,request.candidate_manifest_sha256,request.verification_id);
+      this.db.prepare('INSERT INTO protected_commit_results VALUES (?,?,?,?)').run(request.request_id,fingerprint,revision,request.candidate_manifest_sha256);
+      this.db.prepare('UPDATE protected_leases SET pinned=0,expires_at=0,token_hash=?,owner=? WHERE project=? AND board=?').run(Buffer.alloc(32),'',request.project_id,request.board_id);
+      this.db.prepare('INSERT INTO protected_lease_audit VALUES (?,?,?,?,?,?)').run(request.project_id,request.board_id,lease.generation,verified.verifier,'committed-cleanup',now);
+      return { schema:'pcb.commit-result.v1',request_id:request.request_id,state:'COMMITTED',revision,manifest_sha256:request.candidate_manifest_sha256 } as const;
+    });
+  }
+}
