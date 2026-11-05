@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import { bindInstance } from './block-bindings.ts';
-import { checkManifest, checkPlacement, preparePlacement, nativeGeometry, reviewedContract, SCHEMA, type ReviewServices } from './engineering-constraints.ts';
+import { checkManifest, checkPlacement, preparePlacement, placementScreen, nativeGeometry, reviewedContract, SCHEMA, type ReviewServices } from './engineering-constraints.ts';
 import { fingerprint } from './fingerprint.ts';
 import { sha256File } from './json-file.ts';
 import { jsonCanonical, jsonDumps, jsonLoads } from './py-compat.mjs';
@@ -248,4 +248,18 @@ test('placement check rejects changed reviewed rules', () => {
   ] };
   contract.rules.length = 0;
   assert.throws(() => preparePlacement(contract, model), /payload changed/);
+});
+
+test('placement screen owns its reviewed model and contract', () => {
+  rules(rule('pin_distance', { ...pads, metric: 'pad_center_euclidean', max_mm: 3 }));
+  const contract = reviewedContract(root, 'X', manifest, services);
+  const model = { board_file: native, board: { outline: [] }, units: [
+    { name: 'U1', refs: ['U1'], x: 10, y: 10 }, { name: 'C1', refs: ['C1'], x: 14, y: 10 },
+    { name: 'J1', refs: ['J1'], x: 1, y: 3 },
+  ] };
+  const screen = placementScreen(contract, model);
+  contract.rules.length = 0;
+  model.units[1].x = 15;
+  screen.model.units[1].x = 15;
+  assert.equal(screen.check([[10,10,0], [15,10,0], [1,3,0]]).status, 'blocked');
 });
