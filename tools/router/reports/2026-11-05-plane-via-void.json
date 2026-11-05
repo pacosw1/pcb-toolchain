@@ -1,0 +1,358 @@
+{
+  "schema": "pcb.router-own-pour-correction.v1",
+  "task": 1389,
+  "base_commit": "06b32160783ddb0058909634daeddf0ac6d28e5d",
+  "fix_commit": "d53c9ff8adfc058904843a5888febca6b25557ad",
+  "binary_sha256": "5c2eb23dbe5706386c34efecee1149efb968ea64c9f4d11e46bdc72b79d5e550",
+  "tests": {
+    "passed": 937,
+    "failed": 0,
+    "ignored": 2,
+    "compiler": "rustc 1.93.1"
+  },
+  "probe": {
+    "point_mm": [
+      154.15,
+      102.25
+    ],
+    "net": "VDD_3V3",
+    "before_eligible": true,
+    "legacy_after_eligible": false,
+    "fresh_model_after_eligible": false
+  },
+  "before": {
+    "job": "20261105-213919-3f1a87",
+    "native": {
+      "drc": 0,
+      "opens": 1,
+      "parity": 0
+    },
+    "accepted": false
+  },
+  "env_regression": {
+    "job": "20261105-222302-920784",
+    "native": {
+      "status": "PASS",
+      "drc": 0,
+      "opens": 0,
+      "parity": 0,
+      "mm": 262,
+      "vias": 20,
+      "tracks": 177,
+      "sha256": "7c4dd481c5454a055da4b956124c984cae450a17547d81c3abe5092b31316da3",
+      "native_seconds": 34.9,
+      "core_seconds": 14.6,
+      "model_sha256": "454bec1afe0c8f7fa46953d2669d52c9df2352bac2f47daa0e1b95262ace8c62"
+    },
+    "status": "PASS",
+    "wall_s": 56.246400867,
+    "cpu_s": 86.292656,
+    "cleanup": [
+      {
+        "container": "pcbjob-20261105-222302-920784-1",
+        "trimmed": true,
+        "absent": true
+      }
+    ],
+    "unchanged_board": true,
+    "gate_and_existing_semantic_checks": "PASS"
+  },
+  "scope": {
+    "native_checks": "Hetzner only",
+    "numeric_rules_changed": false,
+    "canonical_cad_changed": false,
+    "deployed": false
+  },
+  "after": {
+    "job": "20261105-222252-211747",
+    "operation_status": "ERROR",
+    "native": {
+      "status": "PASS",
+      "drc": 0,
+      "opens": 0,
+      "parity": 0,
+      "mm": 2225,
+      "vias": 201,
+      "tracks": 956,
+      "sha256": "e9464aaa21ec7792469d02c4cd7244314ab9e4dd1655ad960536a3b709c499bf",
+      "native_seconds": 650.2,
+      "core_seconds": 275.5,
+      "model_sha256": "5fae672341bea7f9b4f80f477a933a773c94ba49939fd88c0df24147321ba6c9"
+    },
+    "planes_failures": 0,
+    "reference_rounds": [
+      {
+        "round": 1,
+        "planes_fail_lines": 1,
+        "fail_nets": [
+          "/SPI_MISO"
+        ],
+        "raised": [
+          "/SPI_MISO"
+        ],
+        "set_hard": [],
+        "next_core": {
+          "status": "PASS",
+          "converged": true,
+          "iters": 22,
+          "tracks": 926,
+          "vias": 201,
+          "failed": 0
+        }
+      },
+      {
+        "round": 2,
+        "planes_fail_lines": 0,
+        "fail_nets": [],
+        "raised": [],
+        "set_hard": []
+      }
+    ],
+    "wall_s": 687.24393811,
+    "cpu_s": 759.832444,
+    "client_stream_interrupted": true,
+    "results_recovered_without_reroute": true,
+    "cleanup": [
+      {
+        "container": "pcbjob-20261105-222252-211747-1",
+        "trimmed": true,
+        "absent": true
+      }
+    ],
+    "fully_verified": false,
+    "gate_4g": {
+      "exit": 1,
+      "changedDuringRun": false,
+      "metrics": {
+        "erc_errors": 0,
+        "erc_warnings": 186,
+        "drc_errors": 0,
+        "drc_parity": 0,
+        "drc_unconnected": 0,
+        "drc_warnings": 22,
+        "planes_failures": null,
+        "pairs_failures": null,
+        "paths_low": 0,
+        "viapads": 0,
+        "kicad_happy_findings": 5,
+        "port_label_failures": 0
+      },
+      "job_outcome": {
+        "outcome": "oom",
+        "exitCode": 2,
+        "detail": "out of memory at the job limit"
+      },
+      "reason": "Concurrent checker refill processes killed at memory-cgroup limit; five stale exemptions retained"
+    }
+  },
+  "gate_only_8g": {
+    "job": "20261105-223805-a7a9c0",
+    "authorized_by": "coordinator message 1274",
+    "cpus": 2,
+    "mem_gb": 8,
+    "reroute": false,
+    "candidate_sha256": "e9464aaa21ec7792469d02c4cd7244314ab9e4dd1655ad960536a3b709c499bf",
+    "exit": 1,
+    "changedDuringRun": false,
+    "metrics": {
+      "erc_errors": 0,
+      "erc_warnings": 186,
+      "drc_errors": 0,
+      "drc_parity": 0,
+      "drc_unconnected": 0,
+      "drc_warnings": 22,
+      "planes_failures": 0,
+      "pairs_failures": 0,
+      "paths_low": 0,
+      "viapads": 0,
+      "kicad_happy_findings": 5,
+      "port_label_failures": 0
+    },
+    "actual_happy_findings": 0,
+    "stale_exemptions": 5,
+    "exemptions_changed": false,
+    "container_absent": true,
+    "trimmed": true
+  },
+  "stale_exemption_audit": [
+    {
+      "net": "/ETH_RSTn",
+      "original_revB": [
+        {
+          "x": 123.3099,
+          "y": 112.9908,
+          "nearest_ground": {
+            "x": 125.72,
+            "y": 111.48,
+            "mm": 2.844486
+          },
+          "within_1mm": false
+        },
+        {
+          "x": 124.3301,
+          "y": 134.88,
+          "nearest_ground": {
+            "x": 127.395,
+            "y": 136.9,
+            "mm": 3.670696
+          },
+          "within_1mm": false
+        }
+      ],
+      "routed": [],
+      "original_unstitched_1mm": 2,
+      "routed_unstitched_1mm": 0,
+      "reason": "routed net has no layer-transition via",
+      "original_track_layers": [
+        "B.Cu",
+        "F.Cu"
+      ],
+      "routed_track_layers": [
+        "F.Cu"
+      ],
+      "routed_track_count": 11
+    },
+    {
+      "net": "/EXP_P04",
+      "original_revB": [
+        {
+          "x": 125.3932,
+          "y": 101.6272,
+          "nearest_ground": {
+            "x": 128.77,
+            "y": 101.655,
+            "mm": 3.376914
+          },
+          "within_1mm": false
+        }
+      ],
+      "routed": [],
+      "original_unstitched_1mm": 1,
+      "routed_unstitched_1mm": 0,
+      "reason": "routed net has no layer-transition via",
+      "original_track_layers": [
+        "B.Cu",
+        "F.Cu"
+      ],
+      "routed_track_layers": [
+        "F.Cu"
+      ],
+      "routed_track_count": 8
+    },
+    {
+      "net": "/EXP_P06",
+      "original_revB": [
+        {
+          "x": 115.7467,
+          "y": 109.8889,
+          "nearest_ground": {
+            "x": 113.65,
+            "y": 108.65,
+            "mm": 2.435369
+          },
+          "within_1mm": false
+        }
+      ],
+      "routed": [],
+      "original_unstitched_1mm": 1,
+      "routed_unstitched_1mm": 0,
+      "reason": "routed net has no layer-transition via",
+      "original_track_layers": [
+        "B.Cu",
+        "F.Cu"
+      ],
+      "routed_track_layers": [
+        "F.Cu"
+      ],
+      "routed_track_count": 6
+    },
+    {
+      "net": "/SPI_MOSI_S",
+      "original_revB": [
+        {
+          "x": 158.4971,
+          "y": 114.9148,
+          "nearest_ground": {
+            "x": 159.3,
+            "y": 119.75,
+            "mm": 4.901409
+          },
+          "within_1mm": false
+        },
+        {
+          "x": 155.7751,
+          "y": 118.5855,
+          "nearest_ground": {
+            "x": 159.3,
+            "y": 119.75,
+            "mm": 3.712274
+          },
+          "within_1mm": false
+        }
+      ],
+      "routed": [],
+      "original_unstitched_1mm": 2,
+      "routed_unstitched_1mm": 0,
+      "reason": "routed net has no layer-transition via",
+      "original_track_layers": [
+        "B.Cu",
+        "F.Cu"
+      ],
+      "routed_track_layers": [
+        "F.Cu"
+      ],
+      "routed_track_count": 7
+    },
+    {
+      "net": "/WDI",
+      "original_revB": [
+        {
+          "x": 127.2023,
+          "y": 101.2398,
+          "nearest_ground": {
+            "x": 128.77,
+            "y": 101.655,
+            "mm": 1.62175
+          },
+          "within_1mm": false
+        },
+        {
+          "x": 144.3139,
+          "y": 115.1728,
+          "nearest_ground": {
+            "x": 143.275,
+            "y": 115.5,
+            "mm": 1.089208
+          },
+          "within_1mm": false
+        }
+      ],
+      "routed": [],
+      "original_unstitched_1mm": 2,
+      "routed_unstitched_1mm": 0,
+      "reason": "routed net has no layer-transition via",
+      "original_track_layers": [
+        "B.Cu",
+        "F.Cu"
+      ],
+      "routed_track_layers": [
+        "F.Cu"
+      ],
+      "routed_track_count": 16
+    }
+  ],
+  "artifacts": {
+    "source": {
+      "file": "esp1389-source.tar.gz",
+      "sha256": "3398da27db3c68175128bb60fefa8fe53ebce0605a362f91389b3d4c2d2cca0c"
+    },
+    "runtime": {
+      "file": "plane-void-1389-fixtures-runtime.tar.gz",
+      "sha256": "9703e8beb0733096dd1d2fa62b8b05f0b693add5a261b6051ac21aa7a6a5784b"
+    },
+    "evidence": {
+      "file": "plane-void-1389-evidence.tar.gz",
+      "sha256": "c40a26ef3fbcce8e6cac58a0ee72b62f9944d3824ca918b5268e0abf0aa612bd"
+    }
+  }
+}

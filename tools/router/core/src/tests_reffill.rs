@@ -226,3 +226,63 @@ fn a_reference_net_via_has_no_foreign_antipad_but_keeps_physical_clearances() {
     mixed.add(track(-1,0));
     assert!(mixed.via_cost(ground,5.0,5.0,0.6,0.3,0.45,None)<0,"mixed reference planes remain conservative");
 }
+
+fn own_pour_model() -> Value {
+    let mut m = model(false); // own-pour geometry must work without ref_fill
+    m["nets"]["GND"]["plane_polys"] = serde_json::json!([[[1,1],[29,1],[29,19],[1,19]]]);
+    m["nets"]["GND"]["plane_regions"] = serde_json::json!([
+        {"layer":"In1.Cu", "polygons":[[[[1,1],[29,1],[29,19],[1,19]], [[20,8],[24,8],[24,12],[20,12]]]]}
+    ]);
+    m["keepouts"] = serde_json::json!([
+        {"name":"pour only", "bbox":[10,8,14,12], "rect":true,
+         "layers":["In1.Cu"], "pour":true, "tracks":false, "vias":false}
+    ]);
+    m
+}
+
+#[test]
+fn own_pour_sites_exclude_voids_and_outline_holes_without_banning_vias() {
+    let bd = load(&own_pour_model(), 0.28);
+    let g = id(&bd, "GND");
+    assert!(!bd.in_plane(g, 12., 10.), "inside a pour-only void cannot connect");
+    assert!(!bd.in_plane(g, 22., 10.), "inside an outline hole cannot connect");
+    assert!(!bd.in_plane(g, 0.5, 10.), "outside the outline cannot connect");
+    assert!(bd.in_plane(g, 5., 10.), "unvoided own pour remains eligible");
+    assert!(!bd.keep_hit(None, 12., 10., 0.3), "pour-only is not a physical via ban");
+    assert!(!bd.keep_hit(Some(0), 12., 10., 0.075), "outer-layer bridge remains legal");
+}
+
+#[test]
+fn own_pour_sites_require_a_containing_zone_on_an_unvoided_layer() {
+    let mut m = own_pour_model();
+    m["nets"]["GND"]["plane_regions"].as_array_mut().unwrap().push(serde_json::json!(
+        {"layer":"B.Cu", "polygons":[[[[16,8],[18,8],[18,12],[16,12]]]]}
+    ));
+    let bd = load(&m, 0.28);
+    assert!(!bd.in_plane(id(&bd,"GND"), 12., 10.), "distant zone on another layer is not a connection");
+    m["nets"]["GND"]["plane_regions"][1]["polygons"] = serde_json::json!([[[[10,8],[14,8],[14,12],[10,12]]]]);
+    let bd = load(&m, 0.28);
+    assert!(bd.in_plane(id(&bd,"GND"), 12., 10.), "same point can connect on another own-pour layer");
+    m["keepouts"][0]["layers"] = serde_json::json!(["In1.Cu", "B.Cu"]);
+    let bd = load(&m, 0.28);
+    assert!(!bd.in_plane(id(&bd,"GND"), 12., 10.), "all containing layers are voided");
+}
+
+#[test]
+fn own_pour_sites_respect_keepout_holes_and_conservative_legacy_models() {
+    let mut m = own_pour_model();
+    m["keepouts"][0]["rect"] = false.into();
+    m["keepouts"][0]["pts"] = serde_json::json!([[[10,8],[14,8],[14,12],[10,12]]]);
+    m["keepouts"][0]["holes"] = serde_json::json!([[[11,9],[13,9],[13,11],[11,11]]]);
+    let bd = load(&m, 0.28);
+    assert!(bd.in_plane(id(&bd,"GND"), 12., 10.), "hole in the keepout is not a void");
+    assert!(!bd.in_plane(id(&bd,"GND"), 10.5, 10.));
+    m["nets"]["GND"].as_object_mut().unwrap().remove("plane_regions");
+    let bd = load(&m, 0.28);
+    assert!(!bd.in_plane(id(&bd,"GND"), 10.5, 10.), "legacy layerless outline cannot prove this site");
+    assert!(bd.in_plane(id(&bd,"GND"), 5., 10.));
+    assert!(!bd.in_plane(id(&bd,"GND"), 0.5, 10.));
+    m["nets"]["GND"]["plane_regions"] = serde_json::json!([]);
+    let bd = load(&m, 0.28);
+    assert!(!bd.in_plane(id(&bd,"GND"), 5., 10.), "explicit empty geometry must not fall back");
+}
