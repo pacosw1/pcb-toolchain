@@ -9,7 +9,8 @@ import { round } from './py-numbers.ts';
 import { caught, isDirectory, isFile, joinPath, jsonOf, pathExists } from './py-path.ts';
 
 export const TERMINAL = new Set(['passed', 'failed', 'error', 'cancelled', 'timeout']);
-export const RUN_ID = /^run-[A-Za-z0-9_-]+$/;
+// JavaScript's $ also matches before a final newline; require the actual end, like Python fullmatch.
+export const RUN_ID = /^run-[A-Za-z0-9_-]+$(?![\s\S])/;
 export const EVENT_LIMIT = 100;
 const STARTUP_BUDGET_S = 10;
 const INVENTORIES = ['engineering_inputs', 'engineering_absent_inputs', 'evidence_sha256', 'artifacts'];

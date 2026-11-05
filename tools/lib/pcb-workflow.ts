@@ -7,7 +7,8 @@ import { sha256File } from './json-file.ts';
 import { get, item, osError, PyError, sorted, truthy } from './py-compat.mjs';
 import { caught, isFile, isInside, isRelativeTo, joinPath, jsonOf, pathExists, relativeTo, resolvePath, textOf, withSuffix } from './py-path.ts';
 
-const BOARD_ID = /^[A-Z0-9][A-Z0-9-]*$/;
+// JavaScript's $ also matches before a final newline; require the actual end, like Python fullmatch.
+const BOARD_ID = /^[A-Z0-9][A-Z0-9-]*$(?![\s\S])/;
 const BOARDS = 'hardware-design/boards';
 const NATIVE_EXTENSIONS = ['kicad_pcb', 'kicad_sch', 'kicad_pro'];
 const SHARED_SOURCES = ['STATUS', 'REQUIREMENTS', 'INTERFACES', 'CONNECTORS', 'DECISIONS'];

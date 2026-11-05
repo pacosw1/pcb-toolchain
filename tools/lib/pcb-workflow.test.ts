@@ -30,6 +30,10 @@ test('joinPath keeps .. and an absolute part replaces the path, as pathlib does'
   assert.throws(() => joinPath('/a', 5n), pyType('TypeError'));
 });
 
+test('board IDs reject a trailing newline', () => {
+  assert.throws(() => boardConfig(root, 'X\n'), /invalid board ID/);
+});
+
 test('resolvePath is non-strict and treats .. after a symlink physically', () => {
   mkdirSync(join(root, 'real/deep'), { recursive: true });
   symlinkSync(join(root, 'real/deep'), join(root, 'link'));

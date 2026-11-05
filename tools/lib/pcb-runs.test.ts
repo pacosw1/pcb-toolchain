@@ -37,6 +37,7 @@ test('a backend option is read in both spellings, once', () => {
 
 test('a run ID must be well formed and known', () => {
   assert.throws(() => runDir(folder, '../x'), /invalid run ID/);
+  assert.throws(() => runDir(folder, 'run-x\n'), /invalid run ID/);
   assert.throws(() => runDir(folder, 'run-x'), /unknown run: run-x/);
   put('run-x/run.json', '{}');
   assert.equal(runDir(folder, 'run-x'), join(folder, 'run-x'));
