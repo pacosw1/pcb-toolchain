@@ -7,14 +7,14 @@ import { compactTerminal, eventLine, events, explain, runDir, stageStatus, statu
 import { catalog, context } from './lib/pcb-workflow.ts';
 import { get, item, jsonDumps, pyStr } from './lib/py-compat.mjs';
 
-const usage = 'usage: pcb [--project DIR] {list,status,events,explain} [RUN_ID] [options]';
+const usage = 'usage: pcb [--project DIR] {list,context,status,events,explain} [BOARD_OR_RUN_ID] [options]';
 
 export async function main(argv: string[]): Promise<number> {
   let explicit: string | undefined;
   if (argv[0] === '--project') { explicit = argv[1]; if (!explicit) throw new Error(usage); argv = argv.slice(2); }
   else if (argv[0]?.startsWith('--project=')) { explicit = argv[0].slice(10); argv = argv.slice(1); }
   const command = argv.shift();
-  if (command !== 'list' && command !== 'status' && command !== 'events' && command !== 'explain') throw new Error(usage);
+  if (command !== 'list' && command !== 'context' && command !== 'status' && command !== 'events' && command !== 'explain') throw new Error(usage);
   const options: ParseArgsOptionsConfig = {
     'runs-dir': { type: 'string' }, json: { type: 'boolean', default: false },
     ...(command === 'events' ? { after: { type: 'string', default: '0' }, limit: { type: 'string', default: '100' }, wait: { type: 'string', default: '0' } } : {}),
@@ -27,7 +27,7 @@ export async function main(argv: string[]): Promise<number> {
     console.log(values.json ? jsonDumps(data) : data.boards.map(row => row.board).join('\n'));
     return 0;
   }
-  if (command === 'status' && !RUN_ID.test(positionals[0]!)) {
+  if (command === 'context' || (command === 'status' && !RUN_ID.test(positionals[0]!))) {
     console.log(jsonDumps(context(projectRoot(explicit), positionals[0]!), values.json ? null : 2));
     return 0;
   }
