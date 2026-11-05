@@ -173,3 +173,13 @@ test('the BOM is per revision', { skip: skipCorpus }, t => {
   assert.equal(wrong.summary.lcsc_mismatches, 90)
   assert.ok(wrong.summary.lines_with_mismatch > 30)
 })
+
+test('recorded prices require explicit currency and matching part identity', t => {
+  const root = small(t)
+  write(path.join(root, B + 'DEMO/BOM-VERIFIED.csv'), 'Designator,LCSC,Unit price,Currency,Supplier,Price observed UTC,Minimum quantity\n' +
+    'R1,C1001,0.0123,USD,Example,2026-10-01,100\nR2,C9999,0.02,USD,Example,,\nR3,,0.03,USD,Example,,\nU1,C1004,1.2,,Example,,\n')
+  const result = bom(new Project(root), DEMO)
+  const quote = result.lines.find(l => l.refs.includes('R1'))!.quotes!
+  assert.deepEqual(quote, [{ ref: 'R1', unit_price: '0.0123', currency: 'USD', supplier: 'Example', observed_at: '2026-10-01', minimum_quantity: '100', source: B + 'DEMO/BOM-VERIFIED.csv' }])
+  assert.ok(result.lines.filter(l => !l.refs.includes('R1')).every(l => l.quotes?.length === 0))
+})

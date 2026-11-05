@@ -38,8 +38,8 @@ test('a notification has no reply', async () => {
   assert.equal(await request({ jsonrpc: '2.0', method: 'engine.ping' }), null)
 })
 
-test('every method of the Python engine exists', () => {
-  assert.deepEqual(registry.names(), ['board.bom', 'board.geometry', 'board.glb', 'board.parts', 'board.unwatch', 'board.watch', 'engine.info', 'engine.ping', 'file.resolve',
+test('engine exposes the supported method registry', () => {
+  assert.deepEqual(registry.names(), ['board.bom', 'board.geometry', 'board.glb', 'board.inspect', 'board.inventory', 'board.parts', 'board.schematic', 'board.spec', 'board.unwatch', 'board.watch', 'engine.info', 'engine.ping', 'file.resolve',
     'gate.check', 'op.build', 'op.route', 'part.get', 'parts.index', 'project.open', 'run.adopt', 'run.cancel', 'run.candidate', 'run.findings',
     'run.get', 'run.list'])
 })

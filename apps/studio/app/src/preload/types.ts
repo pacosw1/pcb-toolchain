@@ -47,6 +47,7 @@ export interface AppApi {
   setProjectRoot: (root: string) => Promise<void>
   openExternal: (url: string) => Promise<void>
   /** Export (or reuse) the board's 3D model; returns a pcbfile:// URL. */
+  boardSchematic: (pcb: string) => Promise<import('../shared/inspector').SchematicExport>
   boardGlb: (pcb: string) => Promise<Pick<GlbResult, 'cached' | 'size'> & { url: string }>
 }
 

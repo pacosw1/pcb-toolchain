@@ -225,7 +225,18 @@ export interface BomSource {
   header_only: boolean
 }
 
+export interface BomQuote {
+  ref: string
+  unit_price: string
+  currency: string
+  supplier: string | null
+  observed_at: string | null
+  minimum_quantity: string | null
+  source: string
+}
+
 export interface BomLine {
+  quotes?: BomQuote[]
   refs: string[]
   qty: number
   value: string

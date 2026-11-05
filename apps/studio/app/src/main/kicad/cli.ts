@@ -59,9 +59,9 @@ function executable(): string {
 interface Exit { code: number, log: string, stdout: string }
 
 /** Run to its exit. Rejects with a KiCadCliError on a timeout or when it cannot start. */
-function exec(cmd: string[], timeoutS: number, cwd?: string): Promise<Exit> {
+function exec(cmd: string[], timeoutS: number, cwd?: string, env?: NodeJS.ProcessEnv): Promise<Exit> {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd[0], cmd.slice(1), { cwd, stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(cmd[0], cmd.slice(1), { cwd, env: env ? { ...process.env, ...env } : process.env, stdio: ['ignore', 'pipe', 'pipe'] })
     const log: Buffer[] = [], stdout: Buffer[] = []
     child.stdout.on('data', (d: Buffer) => { log.push(d); stdout.push(d) })
     child.stderr.on('data', (d: Buffer) => { log.push(d) })
@@ -98,13 +98,13 @@ export async function version(): Promise<string | null> {
   return versions.get(exe) ?? null
 }
 
-export interface RunOptions { timeoutS?: number, cwd?: string, check?: boolean }
+export interface RunOptions { timeoutS?: number, cwd?: string, check?: boolean, env?: NodeJS.ProcessEnv }
 
 /** kicad-cli ARGS. check (default true) raises KiCadCliError on a non-zero exit. */
 export async function run(args: string[], options: RunOptions = {}): Promise<Result> {
   const { timeoutS = DEFAULT_TIMEOUT_S, cwd, check = true } = options
   const cmd = [executable(), ...args]
-  const r = await exec(cmd, timeoutS, cwd)
+  const r = await exec(cmd, timeoutS, cwd, options.env)
   if (check && r.code !== 0) {
     throw new KiCadCliError(`kicad-cli ${args.slice(0, 3).join(' ')} failed (exit ${r.code})`, r.code, r.log)
   }

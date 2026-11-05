@@ -1,3 +1,5 @@
+import { SchematicView } from './SchematicView'
+import { SpecView } from './SpecView'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { EngineStatus } from '../../preload/types'
 import { BoardView, type Selection } from './BoardView'
@@ -11,7 +13,7 @@ import { RunsView } from './RunsView'
 import { Viewer3D } from './Viewer3D'
 import type { Bom, BomLine, Finding, Geometry, ProjectInfo } from './types'
 
-type Tab = 'board' | '3d' | 'parts' | 'datasheets' | 'checks' | 'runs'
+type Tab = 'schematic' | 'specs' | 'board' | '3d' | 'parts' | 'datasheets' | 'checks' | 'runs'
 
 const STATE_COLOR: Record<EngineStatus['state'], string> = {
   ready: 'var(--ok)',
@@ -119,6 +121,7 @@ function recall(key: string): string | null {
 }
 
 function App(): React.JSX.Element {
+  const [showChat, setShowChat] = useState(false)
   const status = useEngineStatus()
   const ready = status?.state === 'ready'
   const [project, setProject] = useState<ProjectInfo | null>(null)
@@ -261,6 +264,8 @@ function App(): React.JSX.Element {
 
   const sections: [Tab, string, string, string | null][] = [
     ['board', 'Board', 'board', geo ? `${geo.footprints.length} parts` : null],
+    ['schematic', 'Schematic', 'doc', revision?.sch ? null : 'not assigned'],
+    ['specs', 'Specifications', 'doc', null],
     ['3d', '3D', 'cube', null],
     ['parts', 'Parts / BOM', 'list', bom ? `${bom.summary.lines} lines` : null],
     ['datasheets', 'Datasheets', 'doc', bom ? String(bom.lines.filter((l) => l.datasheet).length) : null],
@@ -283,6 +288,9 @@ function App(): React.JSX.Element {
           {revision ? <span className="statechip">{revision.revision ? `rev ${revision.revision}` : 'unregistered'} · {revision.state ?? '—'}</span> : null}
         </nav>
         <span style={{ flex: '1 1 auto' }} />
+        {window.api.mode === 'desktop' ? <button type="button" aria-pressed={showChat} onClick={() => setShowChat(value => !value)}>
+          {showChat ? 'Hide assistant' : 'Show assistant'}
+        </button> : null}
         {window.api.mode === 'desktop' ? (
           <button type="button" onClick={pickProject} disabled={!ready}>
             Open project…
@@ -369,6 +377,10 @@ function App(): React.JSX.Element {
               live={{ on: live, updatedAt, error: liveError, onToggle: toggleLive }}
               liveRefresh={geo === liveGeo}
             />
+          ) : geo && tab === 'schematic' && pcb ? (
+            <SchematicView key={project?.root + pcb} pcb={pcb} />
+          ) : geo && tab === 'specs' && pcb ? (
+            <SpecView key={project?.root + pcb} pcb={pcb} />
           ) : geo && tab === '3d' && pcb ? (
             <Viewer3D pcb={pcb} />
           ) : geo && tab === 'parts' && bom ? (
@@ -405,7 +417,7 @@ function App(): React.JSX.Element {
             </section>
           )}
         </main>
-        {window.api.mode === 'web' ? null : (
+        {window.api.mode === 'web' || !showChat ? null : (
         <ChatPanel
           ctx={{ projectRoot: project?.root ?? null, pcb, gate, selection: mention }}
           mention={mention}
