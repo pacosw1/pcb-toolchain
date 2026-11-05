@@ -28,7 +28,7 @@ pub mod policy;
 pub mod project;
 pub mod record;
 pub mod reuse;
-mod steps;
+pub mod steps;
 mod widths;
 
 use lock::{LockStage, lock_nets, make_locked_input};

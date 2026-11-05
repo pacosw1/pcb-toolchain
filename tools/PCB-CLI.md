@@ -136,8 +136,11 @@ router; the default is the board folder `route.json`. The run executes `iotroute
 candidate board, then the normal gate, seal and `pcb adopt` flow applies.
 Give it an unrouted candidate: `iotroute route` adds the `route.json` pours, and on a routed board
 they overlap the pours already there (`zones_intersect`).
-The only backend is `tracemaker` (`$TRACEMAKER_BIN`). A `route.json` with `"backend": "fastroute"` stops with a
-named error: Fastroute was removed on 2026-11-05, and the board needs the iotroute backend of `iotroute route`.
+The backends are `tracemaker` (`$TRACEMAKER_BIN`) and `iotroute`. A `route.json` with `"backend": "fastroute"` stops with a
+named error: Fastroute was removed on 2026-11-05.
+`"backend": "iotroute"` runs each stage on our own router. Of `features` it takes `rule_compiler`, `via_off_small_pads`
+and `via_halo`, which it always does; any other feature, a feature set to false, and a stage's `threads`, `unlock_nets` or
+`via_skip` are refused by name (`tools/router/core/src/job/route_run/iotroute.rs`).
 
 For the in-house router (tools/router/DESIGN.md), use
 `tools/pcb route BOARD --router iotroute [--spec POLICY.json] --detach --json`. The run executes

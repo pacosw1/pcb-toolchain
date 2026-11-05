@@ -149,12 +149,13 @@ impl Check<'_> {
     fn backend(&mut self, value: &Value) -> Backend {
         match value.as_str() {
             Some("tracemaker") => Backend::Tracemaker,
+            Some("iotroute") => Backend::Iotroute,
             Some("fastroute") => {
                 self.fail(NO_FASTROUTE.to_string());
                 Backend::Tracemaker
             }
             _ => {
-                self.fail("backend must be tracemaker".to_string());
+                self.fail("backend must be tracemaker or iotroute".to_string());
                 Backend::Tracemaker
             }
         }

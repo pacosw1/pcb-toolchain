@@ -3,7 +3,7 @@
 //! Schema `iot-lab.route.v1`, which replaces the per-board route scripts:
 //!
 //! ```text
-//! {"schema": "iot-lab.route.v1", "about": "...", "backend": "tracemaker",
+//! {"schema": "iot-lab.route.v1", "about": "...", "backend": "tracemaker" | "iotroute",
 //!  "layers": ["F.Cu", "B.Cu"],                      signal layers of every stage unless the stage sets its own
 //!  "budget": {"passes": 60, "time_s": 300, "threads": 0},
 //!  "stages": [{                                     run in order; the copper of a stage is locked for the next
@@ -21,7 +21,7 @@
 //!             "clearance_mm": 0.3, "thermal_gap_mm": 0.4, "spoke_mm": 1.0}],
 //!  "widths": [{"name", "box": [x0, y0, x1, y1], "layers": [...], "width_mm"}],   after the route, before the pours:
 //!                                                   a track whose midpoint is in the box gets width_mm (never wider)
-//!  "features": {"via_off_small_pads": true}}        tools/route-features.json switches; no backend applies them yet
+//!  "features": {"via_off_small_pads": true}}        tools/route-features.json switches; job/route_run/iotroute.rs says which iotroute takes
 //! ```
 //!
 //! Boxes are in mm, board coordinates. "around" pours cover the pads and copper of the net grown by grow_mm.
@@ -51,6 +51,7 @@ pub type Rect = [f64; 4];
 #[serde(rename_all = "lowercase")]
 pub enum Backend {
     Tracemaker,
+    Iotroute,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

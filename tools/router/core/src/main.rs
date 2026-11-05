@@ -4236,6 +4236,13 @@ fn main() {
     route_cli(&args);
 }
 
+/// A stage of a route plan names its nets in the model's `route_nets`; the rest stays as it is. No such list routes every net.
+fn keep_route_nets(order: &mut Vec<usize>, nets: &[Net], model: &Value) {
+    if let Some(only) = model["route_nets"].as_array() {
+        order.retain(|&n| only.iter().any(|name| name.as_str() == Some(nets[n].name.as_str())));
+    }
+}
+
 fn route_cli(args: &[String]) {
     if args.len() < 3 {
         eprintln!("usage: iotroute MODEL.json OUT.json [--pitch 0.05] [--iters 40] [--plane-clr 0.25] [--hole-to-hole 0.45] [--hole-clr 0.28] [--return-r 2.0] [--return-via 0.45,0.2] [--pres-mult 1.5] [--pres-max 1000] [--hist 0.3] [--max-time S] [--door-hist 2.0] [--check RESULT.json] [--congestion MAP.json [--cong-cell 1.0] [--cong-free 0|1]] [--seed N] [--checkpoint FILE [--source-sha HEX]] [--resume-save FILE] [--resume FILE] [--stall-passes N]");
@@ -4454,6 +4461,7 @@ fn route_cli(args: &[String]) {
     };
     let group = |bd: &Board, n: usize| if bd.nets[n].plane { 0 } else if bd.nets[n].power { 1 } else if bd.nets[n].fast { 2 } else { 3 };
     order.sort_by(|&a, &b| group(&bd, a).cmp(&group(&bd, b)).then(spread(&bd, a).partial_cmp(&spread(&bd, b)).unwrap()));
+    keep_route_nets(&mut order, &bd.nets, &model);
     if let Some(s) = seed {
         let mut rng = seed::Rng::new(s);
         seed::shuffle_groups(&mut order, &|n| group(&bd, n), &mut rng);
@@ -5042,6 +5050,16 @@ mod tests {
     fn net(name: &str, clr: f64, fast: bool) -> Net {
         Net { name: name.into(), width: 0.15, clr, fast, plane: false, power: false, layers: 0b101, via_d: 0.6, via_drill: 0.3, max_vias: None, max_len: None,
               pref: false, min_w: 0.0, min_wl: Vec::new(), in_vias: 0 }
+    }
+
+    #[test]
+    fn a_stage_routes_only_its_route_nets() {
+        let nets = vec![net("A", 0.15, false), net("B", 0.2, true), net("C", 0.15, true)];
+        let mut order = vec![2, 1, 0];
+        keep_route_nets(&mut order, &nets, &serde_json::json!({}));
+        assert_eq!(order, [2, 1, 0]);
+        keep_route_nets(&mut order, &nets, &serde_json::json!({"route_nets": ["A", "C"]}));
+        assert_eq!(order, [2, 0]);
     }
 
     fn board() -> Board {

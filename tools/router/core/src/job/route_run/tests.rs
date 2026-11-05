@@ -351,9 +351,9 @@ fn zone(name: &str) -> crate::kicad::board::Zone {
 #[test]
 fn only_the_stage_keepouts_leave_the_routed_board() {
     let routed = Board { zones: vec![zone("TMP_ROUTE_main_A"), zone("KEEP")], ..board(Vec::new()) };
-    let text = without_keepouts(ROUTED, &routed).unwrap();
+    let text = without_stage_zones(ROUTED, &routed, &[]).unwrap();
     assert!(!text.contains("TMP_ROUTE_") && text.contains("\"KEEP\"") && parse(&text).is_ok(), "{text}");
-    assert_eq!(without_keepouts(ROUTED, &board(Vec::new())).unwrap(), ROUTED);
+    assert_eq!(without_stage_zones(ROUTED, &board(Vec::new()), &[]).unwrap(), ROUTED);
 }
 
 #[test]
