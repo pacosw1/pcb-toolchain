@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { sha } from './pcb-workflow.ts';
+import { sourceState } from './pcb-sources.ts';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
@@ -39,4 +41,38 @@ test('parts PDF inspection confines actual extraction cache to the run', { skip:
   const report = JSON.parse(readFileSync(join(folder, 'operation/report.json'), 'utf8'));
   assert.ok(report.cache_directory.startsWith(join(realpathSync(folder), 'operation/cache') + '/'));
   assert.ok(Object.keys(result.evidence_sha256).some(name => name.startsWith('operation/cache/')));
+});
+
+test('parts from-run binds the sealed candidate and never mutates canonical CAD', { skip: iotrouteMissing() }, async t => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'pcb-parts-parent-'))); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const tools = fileURLToPath(new URL('..', import.meta.url)); symlinkSync(tools, join(root, 'tools'));
+  const folder = join(root, '.gate/cli/run-parent'), board = join(root, 'hardware-design/boards/X');
+  const put = (path: string, value: string) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, value); };
+  const config = JSON.stringify({ project: 'cad/X', stage: 'G3', checks: {} });
+  const target = join(board, 'cad/X.kicad_pcb'), candidate = join(folder, 'workspace/hardware-design/boards/X/cad/X.kicad_pcb');
+  put(join(board, 'gate.json'), config); put(join(folder, 'workspace/hardware-design/boards/X/gate.json'), config);
+  put(target, '(kicad_pcb (version 20240108))'); put(candidate, '(kicad_pcb (version 20240108))');
+  put(join(board, 'cad/X.kicad_sch'), '(kicad_sch (version 20250114))');
+  put(join(folder, 'workspace/hardware-design/boards/X/cad/X.kicad_sch'), '(kicad_sch (version 20250114))');
+  put(join(folder, 'run.json'), JSON.stringify({ root, board: 'X', operation: 'edit', node: process.execPath }));
+  put(join(folder, 'operation/result.json'), JSON.stringify({ candidate, candidate_sha256: sha(candidate), candidate_verified: true, identity_preserved: true, source_unchanged: true, protected_source_changes: [] }));
+  put(join(folder, 'operation/source.json'), JSON.stringify(sourceState(root, 'X')));
+  const files = ['run.json', 'operation/result.json', 'operation/source.json', 'workspace/hardware-design/boards/X/cad/X.kicad_pcb'];
+  put(join(folder, 'result.json'), JSON.stringify({ status: 'passed', cleanup: { complete: true }, evidence_sha256: Object.fromEntries(files.map(name => [name, sha(join(folder, name))])) }));
+  const parentHash = sha(join(folder, 'result.json')), before = readFileSync(target);
+  const call = spawnSync(join(tools, 'pcb'), ['--project', root, 'parts', '--from-run', 'run-parent', '--detach', '--json', 'status', 'X'], { encoding: 'utf8' });
+  assert.equal(call.status, 0, call.stderr || call.stdout);
+  const child = join(root, '.gate/cli', JSON.parse(call.stdout).run_id);
+  for (let i = 0; i < 200; i++) { const state = status(child); if (['passed', 'failed', 'error', 'cancelled', 'timeout'].includes(String(state.get('status'))) && state.get('controller_alive') !== true) break; await delay(100); }
+  const result = JSON.parse(readFileSync(join(child, 'result.json'), 'utf8'));
+  assert.ok(['passed', 'failed'].includes(result.status), result.cause);
+  assert.equal(result.engineering_inputs[join(folder, 'result.json')], parentHash);
+  assert.equal(result.engineering_inputs[candidate], sha(candidate));
+  assert.equal(JSON.parse(readFileSync(join(child, 'run.json'), 'utf8')).from_run.result_sha256, parentHash);
+  assert.deepEqual(readFileSync(target), before);
+  writeFileSync(candidate, '(kicad_pcb (version 999))');
+  const stale = spawnSync(join(tools, 'pcb'), ['--project', root, 'parts', '--from-run', 'run-parent', '--detach', '--json', 'status', 'X'], { encoding: 'utf8' });
+  assert.equal(stale.status, 2);
+  assert.match(JSON.parse(stale.stdout).cause, /evidence changed/);
+  assert.deepEqual(readFileSync(target), before);
 });
