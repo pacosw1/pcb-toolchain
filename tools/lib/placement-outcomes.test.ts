@@ -1,5 +1,5 @@
-// Evidence mutations, honest unknowns and controlled partition checks; no CAD jobs. The thermal services here are fakes:
-// the real proof is the route-coverage binary, tested with tools/route-coverage.
+// Evidence mutations, honest unknowns and controlled partition checks; no CAD jobs. The thermal services are fakes except in the
+// last group, which goes through the real proof.
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -9,7 +9,8 @@ import { identityCommand, POLICY, verifiedFailedAttempt, type RunContext, type T
 import { Evidence, sealedRun } from './outcome-evidence.ts';
 import { retainedCopper, routedQuality } from './outcome-quality.ts';
 import { sha256File } from './json-file.ts';
-import { evaluateStudy, REPORT, STUDY, terminalSummary, type OutcomeServices } from './placement-outcomes.ts';
+import { localThermalProof, thermalServices } from './outcome-thermal.ts';
+import { cliObservation, evaluateStudy, REPORT, STUDY, terminalSummary, type OutcomeServices } from './placement-outcomes.ts';
 import { cliObservation as wiredObservation } from '../placement_outcomes.ts';
 import { forms, type SList } from './sexpr.ts';
 
@@ -440,4 +441,182 @@ test('a failed run that is not a controlled router stays unknown', () => {
   const attempt = verifiedFailedAttempt(context, { status: 'failed' }, {}, 'a'.repeat(64));
   assert.equal(attempt.status, 'unknown');
   assert.match(attempt.cause as string, /not a finalized failed controlled/);
+});
+
+// The thermal proof itself: receipts go through the real route-coverage binary, which reopens the raw native reports. It is a
+// Linux job binary (ROUTE_COVERAGE_BIN), so these run on Hetzner. Only its board read is a stub: no KiCad runs here.
+const realProof = { skip: process.platform === 'linux' && process.env.ROUTE_COVERAGE_BIN ? false : 'needs the Linux route-coverage binary in ROUTE_COVERAGE_BIN' };
+const proofServices: OutcomeServices = { ...services, thermal: thermalServices() };
+const SIDECARS = ['.kicad_pcb', '.kicad_pro', '.kicad_dru', '.kicad_sch'];
+const sibling = (path: string, extension: string): string => path.replace(/\.kicad_pcb$/, extension);
+const descriptor = (path: string): Row => ({ path, sha256: sha256File(path) });
+
+function boardReader(): string {
+  const script = join(root, 'board-json.mjs'), launcher = join(root, 'board-json-stub');
+  writeFileSync(script, `import { createHash } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
+const path = process.argv[3], hash = file => existsSync(file) ? createHash('sha256').update(readFileSync(file)).digest('hex') : '';
+const sidecar = extension => path.replace(/\\.kicad_pcb$/, extension);
+const pad = { id: 'U1-pad', number: '1', kind: 'Smd', shape: 'Rect', net: 'N', position: { x: 0, y: 0 }, orientation: 0, size: { x: 1, y: 1 }, drill: { x: 0, y: 0 }, layers: ['F.Cu'], copper: [] };
+process.stdout.write(JSON.stringify({ schema: 'iot-lab.board.v1', board_sha256: hash(path), project_sha256: hash(sidecar('.kicad_pro')), rules_sha256: hash(sidecar('.kicad_dru')),
+  board: { copper_layers: ['F.Cu', 'B.Cu'], footprints: [{ reference: 'U1', layer: 'F.Cu', position: { x: 0, y: 0 }, orientation: 0, pads: [pad] }], copper: [] } }));
+`);
+  writeFileSync(launcher, `#!/bin/sh\nexec ${process.execPath} ${script} "$@"\n`, { mode: 0o755 });
+  return launcher;
+}
+
+/** Fill and DRC receipts of `candidate`, in the form the native producers write them. */
+function nativeReceipts(router: string, candidate: string, label: string): { fill: string; drc: string; report: string } {
+  const fill = join(router, `${label}-fill.json`), drc = join(router, `${label}-drc.json`), report = join(router, `${label}-report.json`);
+  const inputs = Object.fromEntries([candidate, sibling(candidate, '.kicad_pro'), sibling(candidate, '.kicad_dru')].map(path => [path, sha256File(path)]));
+  write(fill, { schema: 'iot-lab.native-thermal-fill.v1', candidate: descriptor(candidate), inputs: { ...inputs, [join(router, 'absent-optional-input')]: null }, fill_result: true,
+    tool: descriptor(join(router, 'recorded-python')), pcbnew_version: '10.0.6', invocation: { operation: 'ZONE_FILLER.Fill', saved: true } });
+  write(report, { kicad_version: '10.0.6', coordinate_units: 'mm', source: candidate.split('/').at(-1), included_severities: ['error', 'warning', 'exclusion'], ignored_checks: [],
+    violations: [], schematic_parity: [], unconnected_items: [] });
+  const cli = join(router, 'recorded-kicad-cli');
+  write(drc, { schema: 'iot-lab.native-thermal-drc.v1', candidate: descriptor(candidate), inputs, tool: descriptor(cli), returncode: 0,
+    command: [cli, 'pcb', 'drc', '--severity-all', '--format', 'json', '--units', 'mm', '-o', report, candidate], report: descriptor(report) });
+  return { fill, drc, report };
+}
+
+function updateNative(folder: string, trial: Row, text: string): void {
+  writeFileSync(trial.placement_input.path, text);
+  trial.placement_input.sha256 = sha256File(trial.placement_input.path);
+  const operation = read(join(folder, 'operation/result.json')), inner = relative(operation.workspace, operation.candidate), candidate = join(folder, 'workspace', inner);
+  writeFileSync(candidate, text);
+  update(join(folder, 'operation/result.json'), value => { value.candidate_sha256 = sha256File(candidate); });
+  update(join(folder, 'operation/source.json'), value => { value.files[inner] = sha256File(trial.placement_input.path); });
+  update(join(folder, 'gate/result.json'), value => { value.provenance.inputs[0].sha256 = sha256File(candidate); });
+  resealed(folder, trial);
+}
+
+function thermalFixture(fromParent = false) {
+  process.env.IOTROUTE_BIN = boardReader();
+  const [folder, trial] = runFixture('development', 'DEV', 'baseline', 1);
+  const relativeBoard = 'hardware-design/boards/DEV/native', original = join(folder, 'workspace', `${relativeBoard}.kicad_pcb`);
+  update(join(folder, 'run.json'), run => { Object.assign(run, { router: 'fastroute', spec: { schema: 'iot-lab.routing-policy.v2', thermal_verification: 'native-checkback' } }); });
+  if (fromParent) {
+    const [parent, parentTrial] = runFixture('development', 'DEV', 'proposal', 2);
+    const text = readFileSync(trial.placement_input.path, 'utf8').replace('(at 10 10)', '(at 11 10)');
+    updateNative(parent, parentTrial, text);
+    writeFileSync(trial.placement_input.path, text);
+    trial.placement_input.sha256 = sha256File(trial.placement_input.path);
+    writeFileSync(original, text);
+    update(join(folder, 'run.json'), run => { run.from_run = { result_sha256: parentTrial.sha256 }; });
+    trial.parent_run = { path: parent, sha256: parentTrial.sha256 };
+  }
+  const router = join(folder, 'operation/router'), source = join(router, 'native-thermal-source/native.kicad_pcb');
+  const base = join(router, 'base.kicad_pcb'), final = join(router, 'routed.kicad_pcb');
+  mkdirSync(dirname(source), { recursive: true });
+  writeFileSync(join(router, 'recorded-python'), 'synthetic recorded Python binary identity');
+  writeFileSync(join(router, 'recorded-kicad-cli'), 'synthetic recorded KiCad binary identity');
+  write(sibling(original, '.kicad_pro'), { board: { design_settings: { rules: { min_resolved_spokes: 2 }, rule_severities: { starved_thermal: 'error' }, drc_exclusions: [] } } });
+  writeFileSync(sibling(original, '.kicad_dru'), '(version 1)\n');
+  const sources = read(join(folder, 'operation/source.json'));
+  for (const extension of SIDECARS) {
+    if (!fromParent || extension !== '.kicad_pcb') sources.files[relativeBoard + extension] = sha256File(sibling(original, extension));
+    for (const path of [source, base, final]) writeFileSync(sibling(path, extension), readFileSync(sibling(original, extension)));
+  }
+  // The workspace input is promoted after the producer finishes: the captured source, not that alias, owns admission.
+  writeFileSync(final, `${readFileSync(final, 'utf8')}\n`);
+  const first = nativeReceipts(router, base, 'native-thermal-initial'), last = nativeReceipts(router, final, 'native-thermal-final');
+  const initial = localThermalProof('admit', { source, base, enabled: true, selected_nets: ['N'], initial_fill_receipt: first.fill, initial_drc_receipt: first.drc });
+  const discharged = localThermalProof('discharge', { capability: initial, candidate: final, fill_receipt: last.fill, drc_receipt: last.drc });
+  write(join(router, 'native-thermal-initial.json'), initial);
+  write(join(router, 'native-thermal-final.json'), discharged);
+  write(join(router, 'native-thermal-source.json'), { schema: 'iot-lab.native-thermal-source.v1', qualified: false, original: { path: original, sha256: trial.placement_input.sha256 }, captured: descriptor(source),
+    original_files: Object.fromEntries(SIDECARS.map(extension => [sibling(original, extension), sha256File(sibling(source, extension))])),
+    inputs: Object.fromEntries(SIDECARS.map(extension => [sibling(source, extension), sha256File(sibling(source, extension))])) });
+  writeFileSync(original, readFileSync(final));
+  update(join(folder, 'operation/result.json'), value => { value.candidate_sha256 = sha256File(original); });
+  update(join(folder, 'gate/result.json'), value => { value.provenance.inputs[0].sha256 = sha256File(original); });
+  write(join(folder, 'operation/source.json'), sources);
+  const context = join(folder, 'operation/execution-context.json'), effective = join(router, 'effective-configuration.json'), actual = join(router, 'input-manifest.json');
+  write(context, { fixture: 'archived host context' });
+  write(effective, { fixture: 'observed controls' });
+  write(actual, { fixture: 'observed input' });
+  const retained = (path: string): Row => ({ path: relative(folder, path), sha256: sha256File(path) });
+  const policyPath = join(folder, trial.execution_policy), policy = read(policyPath);
+  policy.effort.thermal_verification = 'native-checkback';
+  policy.command = ['python3', '/recorded/tools/fastroute_job.py', original, router, '--native-thermal-checkback'];
+  policy.execution_context = { path: 'operation/execution-context.json', sha256: sha256File(context) };
+  policy.controls = { effective_configuration_verified: true, effective_configurations: { 'effective-configuration.json': sha256File(effective) }, input_manifest_sha256: sha256File(actual),
+    native_thermal_obligations: { status: 'passed', initial: retained(join(router, 'native-thermal-initial.json')), final: retained(join(router, 'native-thermal-final.json')),
+      source_snapshot: retained(join(router, 'native-thermal-source.json')), candidate: retained(final) } };
+  write(policyPath, policy);
+  write(join(folder, 'operation/events.jsonl'), { type: 'tool.start', command: policy.command });
+  resealed(folder, trial);
+  return { folder, trial, policy, policyPath, router, source, base, final, report: last.report, drc: last.drc };
+}
+
+const evaluateProof = (): Row => {
+  write(manifest, study);
+  return evaluateStudy(root, manifest, null, proofServices);
+};
+const observeProof = (trial: Row): Row => cliObservation(new Evidence(root), trial as Trial, proofServices);
+
+test('the thermal consumer reopens the raw proof after workspace promotion', realProof, () => {
+  const f = thermalFixture(), report = evaluateProof(), observed = report.observations[0];
+  assert.equal(observed.evidence_valid, true, observed.cause);
+  assert.equal(observed.full_gate_success, true);
+  assert.notEqual(observed.policy_fingerprint, null);
+  assert.deepEqual(observed.unknowns, []);
+  assert.notEqual(sha256File(f.policy.command[2]), f.trial.placement_input.sha256);
+  for (const path of [f.source, f.base, f.final, f.report, join(f.router, 'recorded-kicad-cli'), join(f.router, 'recorded-python')]) assert.equal(report.inputs.get(path), sha256File(path), path);
+  assert.equal(report.inputs.get(join(f.router, 'absent-optional-input')), null);
+  assert.ok(report.inputs.has(join(f.router, 'absent-optional-input')));
+});
+
+test('a pending thermal obligation cannot expose quality labels', realProof, () => {
+  const f = thermalFixture();
+  f.policy.controls.native_thermal_obligations.status = 'pending_native';
+  write(f.policyPath, f.policy);
+  resealed(f.folder, f.trial);
+  const row = observeProof(f.trial);
+  assert.equal(row.policy_fingerprint, null);
+  assert.equal(row.routed_quality.routed_track_length_mm, null);
+  assert.match(row.unknowns[0], /unfulfilled/);
+});
+
+test('a continued placement binds the sealed parent, not canonical CAD', realProof, () => {
+  const f = thermalFixture(true);
+  assert.notEqual(read(join(f.folder, 'operation/source.json')).files['hardware-design/boards/DEV/native.kicad_pcb'], f.trial.placement_input.sha256);
+  const row = observeProof(f.trial);
+  assert.notEqual(row.policy_fingerprint, null);
+  assert.deepEqual(row.unknowns, []);
+});
+
+test('a raw thermal error is rejected even with a resealed pass receipt', realProof, () => {
+  const f = thermalFixture();
+  update(f.report, raw => { raw.violations = [{ type: 'starved_thermal', severity: 'error' }]; });
+  update(f.drc, value => { value.report = descriptor(f.report); });
+  resealed(f.folder, f.trial);
+  const row = evaluateProof().observations[0];
+  assert.equal(row.evidence_valid, false);
+  assert.match(row.cause, /thermal/);
+});
+
+test('malformed or mismatched thermal bindings fail closed', realProof, () => {
+  const f = thermalFixture(), original = JSON.stringify(f.policy);
+  const variant = (change: (policy: Row) => void): Row => { const policy = JSON.parse(original); change(policy); return policy; };
+  const obligations = (policy: Row): Row => policy.controls.native_thermal_obligations;
+  const bad = [variant(policy => { obligations(policy).candidate = []; }),
+    variant(policy => { obligations(policy).initial = { path: 'operation/router/native-thermal-initial.json', sha256: 123 }; }),
+    variant(policy => { policy.command = policy.command.filter((item: string) => item !== '--native-thermal-checkback'); }),
+    variant(policy => { obligations(policy).candidate.sha256 = 'a'.repeat(64); })];
+  for (const policy of bad) {
+    write(f.policyPath, policy);
+    resealed(f.folder, f.trial);
+    const row = evaluateProof().observations[0];
+    assert.equal(row.evidence_valid, false);
+    assert.equal(row.full_gate_success, false);
+  }
+  write(f.policyPath, JSON.parse(original));
+  update(join(f.folder, 'run.json'), run => { run.spec.schema = 'iot-lab.routing-policy.v1'; });
+  resealed(f.folder, f.trial);
+  assert.match(evaluateProof().observations[0].cause, /specification/);
+  update(join(f.folder, 'run.json'), run => { delete run.spec.thermal_verification; });
+  write(f.policyPath, variant(policy => { delete policy.effort.thermal_verification; delete policy.controls.native_thermal_obligations; }));
+  resealed(f.folder, f.trial);
+  assert.match(evaluateProof().observations[0].cause, /explicitly selected/);
 });
