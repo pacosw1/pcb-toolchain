@@ -16,9 +16,7 @@
 
 use super::{mean_gap, pose_key};
 use crate::evaluator::{Evaluator, Terms};
-use crate::geom::{Rect, poly_edge_d2};
 use crate::model::Model;
-use crate::numeric::hypot;
 use crate::params::Params;
 use crate::problem::{Pose, Problem};
 use serde::Serialize;
@@ -140,22 +138,7 @@ impl Progress<'_> {
 /// ENV-SENSE it left 27 % of its winners 0.002-0.047 mm inside the clearance, and the router's preflight refused them. Every search
 /// counts such a pose illegal: another worker wins, or the run says no legal candidate before a route is spent on it.
 pub fn edge_misses(model: &Model, pose: &Pose) -> Vec<String> {
-    let board = &model.problem.board;
-    let outline = &board.outline;
-    let clear = board.edge_clearance - 1e-6;
-    let gap = |q: Rect| {
-        let corners = q.corners().into_iter().map(|c| poly_edge_d2(c, outline).sqrt());
-        let vertices = outline.iter().map(|&v| {
-            let (dx, dy) = q.axis_gaps(v);
-            hypot(dx, dy)
-        });
-        corners.chain(vertices).fold(f64::INFINITY, f64::min)
-    };
-    let close = |i: usize| {
-        let (x, y, r) = pose[i];
-        model.units[i].edge_pads.as_ref().is_some_and(|turns| turns[r as usize].iter().any(|q| gap(q.shifted(x, y)) < clear))
-    };
-    (0..pose.len()).filter(|&i| !model.units[i].fixed && close(i)).map(|i| format!("edge:{}", model.problem.units[i].name)).collect()
+    (0..pose.len()).filter(|&i| !model.units[i].fixed && model.edge_miss_at(i, pose[i])).map(|i| format!("edge:{}", model.problem.units[i].name)).collect()
 }
 
 /// How many different poses, and how far apart on average.

@@ -2,9 +2,9 @@
 
 use crate::domain::DomainAreas;
 use crate::escape::EscapeModel;
-use crate::geom::{Point, Rect, TaggedRect, turn_point};
+use crate::geom::{Point, Rect, TaggedRect, poly_edge_d2, turn_point};
 use crate::mask::Mask;
-use crate::numeric::pairwise;
+use crate::numeric::{hypot, pairwise};
 use crate::params::Params;
 use crate::problem::{Problem, Unit};
 use crate::rudy::{Grid, NetShape};
@@ -134,6 +134,22 @@ fn unit_nets(pr: &Problem) -> Vec<Vec<usize>> {
 }
 
 impl<'p> Model<'p> {
+    /// The exact pad-box edge check shared by final admission and legalization. The raster cost is unchanged.
+    pub fn edge_miss_at(&self, i: usize, (x, y, r): crate::problem::Place) -> bool {
+        let board = &self.problem.board;
+        let outline = &board.outline;
+        let clear = board.edge_clearance - 1e-6;
+        let gap = |q: Rect| {
+            let corners = q.corners().into_iter().map(|c| poly_edge_d2(c, outline).sqrt());
+            let vertices = outline.iter().map(|&v| {
+                let (dx, dy) = q.axis_gaps(v);
+                hypot(dx, dy)
+            });
+            corners.chain(vertices).fold(f64::INFINITY, f64::min)
+        };
+        self.units[i].edge_pads.as_ref().is_some_and(|turns| turns[r as usize].iter().any(|q| gap(q.shifted(x, y)) < clear))
+    }
+
     /// The cost parameters that shape the tables come from `params`; weights may change per epoch.
     pub fn new(pr: &'p Problem, params: &Params) -> crate::Result<Self> {
         let p = params;

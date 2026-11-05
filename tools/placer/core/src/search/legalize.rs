@@ -1,5 +1,6 @@
 //! Legalizer: move each unit with spacing overlap or edge/keepout area to the lowest-cost legal spot nearby.
 //! Biggest units first; ring search on legal_step up to legal_radius, own turn first; each pass doubles the radius.
+//! The exact pad-edge predicate also rejects raster misses, for both the current pose and every trial spot.
 
 use crate::evaluator::Evaluator;
 use crate::geom::Turn;
@@ -34,13 +35,14 @@ struct Legalizer<'a, 'm> {
     step: f64,
     max_displacement: f64,
     rotate: bool,
+    exact_edge: bool,
     end: Instant,
 }
 
 /// Returns the units that stay illegal.
 pub fn legalize(ev: &mut Evaluator, p: &Params) -> Result<Vec<usize>, Timeout> {
     let end = Instant::now() + Duration::from_secs_f64(p.legal_time);
-    let mut legalizer = Legalizer { ev, step: p.legal_step, max_displacement: p.max_displacement, rotate: p.legal_rotate != 0.0, end };
+    let mut legalizer = Legalizer { ev, step: p.legal_step, max_displacement: p.max_displacement, rotate: p.legal_rotate != 0.0, exact_edge: p.exact_edge != 0.0, end };
     legalize_with(&mut legalizer, p)
 }
 
@@ -56,12 +58,16 @@ fn legalize_with(l: &mut Legalizer, p: &Params) -> Result<Vec<usize>, Timeout> {
 }
 
 impl Legalizer<'_, '_> {
+    fn illegal(&self, i: usize) -> bool {
+        self.ev.legal_penalty(i) > LEGAL || (self.exact_edge && self.ev.edge_miss_at(i, self.ev.place(i)))
+    }
+
     fn check_time(&self) -> Result<(), Timeout> {
         if Instant::now() <= self.end {
             return Ok(());
         }
         let illegal = (0..self.ev.unit_count())
-            .filter(|&j| !self.ev.shape(j).fixed && self.ev.legal_penalty(j) > LEGAL)
+            .filter(|&j| !self.ev.shape(j).fixed && self.illegal(j))
             .collect();
         Err(Timeout { illegal })
     }
@@ -72,7 +78,7 @@ impl Legalizer<'_, '_> {
         order.sort_by(|&a, &b| self.ev.shape(b).area.total_cmp(&self.ev.shape(a).area).then(a.cmp(&b)));
         let mut bad = Vec::new();
         for i in order {
-            if self.ev.legal_penalty(i) <= LEGAL {
+            if !self.illegal(i) {
                 continue;
             }
             self.check_time()?;
@@ -124,7 +130,7 @@ impl Legalizer<'_, '_> {
 
     /// True when the place is legal; `best` keeps the lowest cost delta.
     fn try_place(&mut self, i: usize, place: (f64, f64, Turn), best: &mut Option<Spot>) -> bool {
-        if !self.within_displacement(i, place) || self.ev.legal_penalty_at(i, place) > LEGAL {
+        if !self.within_displacement(i, place) || (self.exact_edge && self.ev.edge_miss_at(i, place)) || self.ev.legal_penalty_at(i, place) > LEGAL {
             return false;
         }
         let delta = self.ev.propose(&[(i, place)]);
