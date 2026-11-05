@@ -11,7 +11,7 @@ export interface SignedVerificationPolicy {
   schema:'pcb.verification-policy.v1';policy_id:string;project_id:string;board_id:string;operation:string;
   board_path:string;gate_board:string;gate_project:string;
   required_checks:string[];warnings_as_errors:boolean;parity_not_applicable_allowed:boolean;
-  verifier_image_sha256:string;toolchain_sha256:string;archive_tool_sha256:string;
+  worker_image_sha256:string;verifier_image_sha256:string;toolchain_sha256:string;archive_tool_sha256:string;
   tool_versions:Record<string,string>;
   external_inputs:{path:string;sha256:string|null;link?:string}[];
   allowed_pours:{name:string;net:string;layer:string}[];issued_at_ms:number;expires_at_ms:number;
@@ -29,9 +29,9 @@ export function verifySignedPolicy(policyBytes:Uint8Array,signatureBase64:string
   if(signature.length!==64 || signature.toString('base64')!==signatureBase64 || !verify(null,Buffer.concat([Buffer.from('pcb.verification-policy.v1\0'),parsed.canonical]),key,signature))
     throw new Error('policy signature is invalid');
   const p=parsed.value;
-  if(!object(p)||!exact(p,['schema','policy_id','project_id','board_id','operation','board_path','gate_board','gate_project','required_checks','warnings_as_errors','parity_not_applicable_allowed','verifier_image_sha256','toolchain_sha256','archive_tool_sha256','tool_versions','external_inputs','allowed_pours','issued_at_ms','expires_at_ms'])||
+  if(!object(p)||!exact(p,['schema','policy_id','project_id','board_id','operation','board_path','gate_board','gate_project','required_checks','warnings_as_errors','parity_not_applicable_allowed','worker_image_sha256','verifier_image_sha256','toolchain_sha256','archive_tool_sha256','tool_versions','external_inputs','allowed_pours','issued_at_ms','expires_at_ms'])||
     p.schema!=='pcb.verification-policy.v1'||![p.policy_id,p.project_id,p.board_id,p.operation,p.gate_board].every(x=>typeof x==='string'&&ID.test(x))||!pathOk(p.board_path)||!pathOk(p.gate_project)||
-    ![p.verifier_image_sha256,p.toolchain_sha256,p.archive_tool_sha256].every(x=>typeof x==='string'&&SHA.test(x))||typeof p.warnings_as_errors!=='boolean'||typeof p.parity_not_applicable_allowed!=='boolean'||
+    ![p.worker_image_sha256,p.verifier_image_sha256,p.toolchain_sha256,p.archive_tool_sha256].every(x=>typeof x==='string'&&SHA.test(x))||typeof p.warnings_as_errors!=='boolean'||typeof p.parity_not_applicable_allowed!=='boolean'||
     !Number.isSafeInteger(p.issued_at_ms)||!Number.isSafeInteger(p.expires_at_ms)||(p.issued_at_ms as number)<1||(p.issued_at_ms as number)>nowMs||(p.expires_at_ms as number)<=nowMs||
     !Array.isArray(p.required_checks)||!p.required_checks.length||p.required_checks.length>5000||!p.required_checks.every(x=>typeof x==='string'&&ID.test(x))||new Set(p.required_checks).size!==p.required_checks.length||
     !object(p.tool_versions)||Object.keys(p.tool_versions).length<1||Object.keys(p.tool_versions).length>1000||

@@ -8,10 +8,15 @@ import { launchProtectedAttemptFromTrustedService } from '../src/protected-launc
 import { validateSpec } from '../src/manager.ts';
 import { protectedJobSpecDigest } from '../src/protected-job-spec.ts';
 import { rig } from './helpers.ts';
+import type { SignedVerificationPolicy } from '../src/protected-policy.ts';
 const hash=(b:Uint8Array):string=>createHash('sha256').update(b).digest('hex');
 const tarHash=hash(fs.readFileSync('/usr/bin/tar'));
 const encode=(x:unknown):Buffer=>parseCanonicalJson(Buffer.from(JSON.stringify(x)),{maxBytes:1_000_000,maxNodes:1000,maxDepth:12}).canonical;
 class Fixture extends ProtectedCommitStore {
+  protected override authorizePolicy(input:{digest:string;project:string;board:string;operation:string;boardPath:string;workerDigest:string;toolchainDigest:string;archiveDigest:string},_now:number):SignedVerificationPolicy {
+    return {schema:'pcb.verification-policy.v1',policy_id:'fixture',project_id:input.project,board_id:input.board,operation:input.operation,board_path:input.boardPath,gate_board:'X',gate_project:'cad/X',required_checks:['drc'],warnings_as_errors:false,parity_not_applicable_allowed:false,
+      worker_image_sha256:input.workerDigest,verifier_image_sha256:'d'.repeat(64),toolchain_sha256:input.toolchainDigest,archive_tool_sha256:input.archiveDigest,tool_versions:{kicad:'10'},external_inputs:[],allowed_pours:[],issued_at_ms:1,expires_at_ms:10000};
+  }
   seed(source:string,policy:string,runtime:string,toolchain:string):void {
     this.db.prepare("INSERT INTO protected_targets VALUES ('p','b',1,1,'ACTIVE',?,'board')").run(source);
     this.db.prepare("INSERT INTO protected_aliases VALUES ('p','alias','b',1)").run();
@@ -22,7 +27,7 @@ class Fixture extends ProtectedCommitStore {
     this.db.prepare("INSERT INTO protected_verifiers VALUES ('verifier',1)").run();
   }
   verified(candidate:string,evidence:string,receipt:Buffer):void {
-    this.db.prepare("INSERT INTO protected_verified_attempts VALUES ('job','attempt','verification',?,?,'verifier',?,'VERIFIED',0,0)").run(candidate,evidence,receipt);
+    this.db.prepare("INSERT INTO protected_verified_attempts VALUES ('job','attempt','verification',?,?,'verifier',?,'VERIFIED',0,0,?)").run(candidate,evidence,receipt,'d'.repeat(64));
   }
   revision():number { return (this.db.prepare("SELECT revision FROM protected_targets WHERE project='p' AND board='b'").get() as {revision:number}).revision; }
   pins(): {kind:string;owner:string;sha256:string}[] { return this.db.prepare('SELECT * FROM protected_blob_pins').all() as {kind:string;owner:string;sha256:string}[]; }
