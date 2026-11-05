@@ -612,6 +612,7 @@ tools/route_decision.ts
 tools/route_plan.mjs
 tools/route_status.ts
 tools/router/DESIGN.md
+tools/router/benchmarks/1378-baseline.mjs
 tools/router/core/.gitignore
 tools/router/core/Cargo.lock
 tools/router/core/Cargo.toml
