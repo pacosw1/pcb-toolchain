@@ -483,3 +483,14 @@ fn the_legalizer_cannot_turn_a_seeded_part_to_escape_illegality() {
     assert!(legalize(&mut ev, &free).unwrap().is_empty());
     assert!([1, 3].contains(&ev.place(0).2));
 }
+
+#[test]
+fn a_plain_run_counts_a_pad_inside_the_edge_clearance_the_raster_misses() {
+    // The top edge at 30.06 is off the 0.1 mm raster: its band starts at 29.1, the 1 mm clearance at 29.06. The pad box ends at 29.08.
+    let mut padded = unit("P", 5.0, 28.58, json!([[-0.5, -0.5, 0.5, 0.5, 0.1]]));
+    padded["pad_rects"] = json!([[-0.5, -0.5, 0.5, 0.5]]);
+    let board = json!({"outline": [[0, 0], [30, 0], [30, 30.06], [0, 30.06]], "keepouts": [], "edge_clearance": 1.0});
+    let res = run(problem_json(json!([padded]), json!([]), board), &Params::default(), 1, 1, 0, 1, 1);
+    assert_eq!(res.candidates[0].pose, vec![(5.0, 28.58, 0)], "the raster sees no fault, so the legalizer leaves it");
+    assert_eq!(res.candidates[0].illegal, ["edge:P"]);
+}

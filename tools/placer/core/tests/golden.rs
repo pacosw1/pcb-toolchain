@@ -83,7 +83,9 @@ fn check_case(c: &Case) {
     let mut pr = Problem::load(&file(&c.problem)).unwrap();
     let p = &c.plan;
     let plan = Plan { workers: p.workers, epochs: p.epochs, steps: p.steps, seed: p.seed, top: p.top };
-    let res = optimize(&mut pr, &Params::from_args(&c.params).unwrap(), plan, &|_| {}).unwrap();
+    // The Python search had no exact edge check: it would rank other candidates first on these boards.
+    let args = [c.params.as_slice(), &["exact_edge=0".to_string()]].concat();
+    let res = optimize(&mut pr, &Params::from_args(&args).unwrap(), plan, &|_| {}).unwrap();
     let name = format!("{} {:?}", c.problem, c.params);
     assert!(close(res.t0, c.t0, 1e-12), "{name}: t0 {} vs {}", res.t0, c.t0);
     assert_eq!(res.candidates.len(), c.candidates.len(), "{name}");

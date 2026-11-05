@@ -137,8 +137,8 @@ impl Progress<'_> {
 }
 
 /// Movable units with a pad box closer to the outline than the edge clearance, measured exactly. The search works on a raster: on
-/// ENV-SENSE it left 27 % of its winners 0.002-0.047 mm inside the clearance, and the router's preflight refused them. A sprint has
-/// other seeds, so such a pose must not win.
+/// ENV-SENSE it left 27 % of its winners 0.002-0.047 mm inside the clearance, and the router's preflight refused them. Every search
+/// counts such a pose illegal: another worker wins, or the run says no legal candidate before a route is spent on it.
 pub fn edge_misses(model: &Model, pose: &Pose) -> Vec<String> {
     let board = &model.problem.board;
     let outline = &board.outline;

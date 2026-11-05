@@ -50,6 +50,8 @@ pub struct Params {
     pub clu_local: f64,
     /// 1 = start with each tied part at its pin.
     pub clu_gather: f64,
+    /// 1 = a pad inside the edge clearance, measured exactly, is illegal (search/sprint.rs). 0 only to compare with the old search.
+    pub exact_edge: f64,
     // legalizer
     pub legal_step: f64,
     pub legal_radius: f64,
@@ -113,6 +115,7 @@ impl Default for Params {
             clu_phase: 0.5,
             clu_local: 3.0,
             clu_gather: 1.0,
+            exact_edge: 1.0,
             legal_step: 0.25,
             legal_radius: 5.0,
             legal_passes: 3.0,

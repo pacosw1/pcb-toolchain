@@ -160,13 +160,17 @@ fn finish(model: &Model, p: &Params, worker: usize, pose: &Pose) -> Candidate {
     };
     let pr = model.problem;
     let mains = if p.mains != 0.0 { crate::mains::faults(pr, &ev.pose(), &crate::mains::domain_nets(pr)) } else { Vec::new() };
+    let mut illegal: Vec<String> = bad.iter().map(|&i| pr.units[i].name.clone()).collect();
+    if p.exact_edge != 0.0 {
+        illegal.extend(sprint::edge_misses(model, &ev.pose()));
+    }
     Candidate {
         worker,
         pose: ev.pose(),
         prelegal_pose,
         cost: ev.cost(),
         components: ev.terms(),
-        illegal: bad.iter().map(|&i| pr.units[i].name.clone()).collect(),
+        illegal,
         timeout,
         mains,
         finish_seconds: start.elapsed().as_secs_f64(),
@@ -386,10 +390,7 @@ fn anneal_all(pr: &Problem, p: &Params, plan: Plan, log: &dyn Fn(&str), global: 
     let pose_of = |w: usize| if independent { &kept[w].1 } else { &workers[w].best_pose };
     let mut finished = in_parallel(workers.len(), |w| finish(&model, &closing, w, pose_of(w)));
     if let Some(scorer) = scorer.as_ref().filter(|_| independent) {
-        for c in &mut finished {
-            c.route_score = Some(scorer.score(&c.pose));
-            c.illegal.extend(sprint::edge_misses(&model, &c.pose));
-        }
+        finished.iter_mut().for_each(|c| c.route_score = Some(scorer.score(&c.pose)));
     }
     finished.sort_by(rank);
     if let Some(scorer) = &scorer {
