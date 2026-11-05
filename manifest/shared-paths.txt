@@ -239,6 +239,9 @@ tools/lib/pcb-evidence.test.ts
 tools/lib/pcb-evidence.ts
 tools/lib/pcb-gate-outcome.ts
 tools/lib/pcb-gate-outcome.test.ts
+tools/lib/pcb-check-journal.ts
+tools/lib/pcb-check-start.ts
+tools/lib/pcb-check-supervisor.test.ts
 tools/lib/pcb-identity.ts
 tools/lib/pcb-next.test.ts
 tools/lib/pcb-next.ts
@@ -352,6 +355,8 @@ tools/pcb_ml_numeric.ts
 tools/pcb_next.py
 tools/pcb_observation_inputs.py
 tools/pcb-observe.ts
+tools/pcb-check-worker.ts
+tools/pcb-check-finalize.ts
 tools/pcb_operations.py
 tools/pcb_routing_trial.py
 tools/pcb_routing_trial/.gitignore

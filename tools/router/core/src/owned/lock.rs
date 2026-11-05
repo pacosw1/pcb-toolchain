@@ -33,6 +33,7 @@ pub fn main(args: &[OsString]) -> i32 {
         Request::Held { path } => report_held(path),
         Request::Append { path } => append_locked(path),
         Request::Supervise { path, result, finalizer, command } => supervise(path, result, finalizer, command),
+        Request::VerifyFd { path, fd } => verify_worker_fd(path, fd).map(|_| 0),
     };
     outcome.unwrap_or_else(|error| {
         eprintln!("lock: {error}");
@@ -45,6 +46,7 @@ enum Request<'a> {
     Held { path: &'a Path },
     Append { path: &'a Path },
     Supervise { path: &'a Path, result: &'a Path, finalizer: &'a OsString, command: &'a [OsString] },
+    VerifyFd { path: &'a Path, fd: i32 },
 }
 
 fn parse(args: &[OsString]) -> Option<Request<'_>> {
@@ -54,6 +56,7 @@ fn parse(args: &[OsString]) -> Option<Request<'_>> {
         ("append", [path]) => Some(Request::Append { path: Path::new(path) }),
         ("supervise", [path, flag, result, finalize_flag, finalizer, separator, command @ ..]) if flag == "--result" && finalize_flag == "--finalizer" && separator == "--" && !command.is_empty() =>
             Some(Request::Supervise { path: Path::new(path), result: Path::new(result), finalizer, command }),
+        ("verify-fd", [path, fd]) => Some(Request::VerifyFd { path: Path::new(path), fd: fd.to_str()?.parse().ok()? }),
         ("hold", [path]) => Some(Request::Hold { path: Path::new(path), wait: Duration::ZERO }),
         ("hold", [path, flag, seconds]) if flag == "--wait-s" => {
             let wait = Duration::try_from_secs_f64(seconds.to_str()?.parse().ok()?).ok()?;
