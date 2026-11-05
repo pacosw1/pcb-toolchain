@@ -10,10 +10,13 @@ mod anneal;
 pub mod cluster;
 pub(crate) mod legalize;
 mod mover;
+pub mod sprint;
 
 pub use anneal::{Best, Schedule, anneal, estimate_t0};
 pub use legalize::{Timeout, legalize, ring};
 pub use mover::Mover;
+pub use sprint::{Report, Sprint};
+use sprint::{Progress, Scorer, WorkerState};
 
 use crate::evaluator::{Evaluator, Terms};
 use crate::model::Model;
@@ -60,6 +63,9 @@ pub struct Candidate {
     pub timeout: bool,
     pub mains: Vec<crate::mains::Fault>,
     pub finish_seconds: f64,
+    /// A sprint only: lower routes better (sprint.rs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_score: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -82,6 +88,8 @@ pub struct SearchResult {
     pub params: Params,
     pub wall_s: f64,
     pub moves_per_s_per_worker: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sprint: Option<Report>,
 }
 
 /// Weights of an epoch: the spacing and forbidden-area weights grow geometrically over the epochs.
@@ -162,13 +170,15 @@ fn finish(model: &Model, p: &Params, worker: usize, pose: &Pose) -> Candidate {
         timeout,
         mains,
         finish_seconds: start.elapsed().as_secs_f64(),
+        route_score: None,
     }
 }
 
-/// Final candidate order: legal first, then no mains path faults, then the lower cost.
+/// Final candidate order: legal first, then no mains path faults, then a sprint's route score, then the lower cost.
 pub fn rank(a: &Candidate, b: &Candidate) -> std::cmp::Ordering {
     let key = |c: &Candidate| (c.illegal.len(), c.mains.len());
-    key(a).cmp(&key(b)).then(a.cost.total_cmp(&b.cost)).then(a.worker.cmp(&b.worker))
+    let score = |c: &Candidate| c.route_score.unwrap_or(0.0);
+    key(a).cmp(&key(b)).then(score(a).total_cmp(&score(b))).then(a.cost.total_cmp(&b.cost)).then(a.worker.cmp(&b.worker))
 }
 
 /// The pose key at 3 decimals, for exact copies.
@@ -224,9 +234,9 @@ impl Run<'_> {
         (epoch as f64) < self.params.clu_phase * self.plan.epochs as f64
     }
 
-    fn epoch(&self, mover: &Mover, workers: &[Worker], epoch: usize) -> Vec<EpochOutcome> {
+    fn epoch(&self, mover: &Mover, workers: &[Worker], epoch: usize, steps: usize) -> Vec<EpochOutcome> {
         let params = epoch_params(self.params, epoch, self.plan.epochs);
-        let schedule = self.schedule(epoch);
+        let schedule = Schedule { steps, ..self.schedule(epoch) };
         in_parallel(workers.len(), |w| {
             let seed = seed_for(self.plan.seed, w, epoch);
             run_epoch(self.model, mover, EpochTask { pose: &workers[w].pose, seed, schedule, params: &params })
@@ -261,19 +271,28 @@ fn check(pr: &Problem, p: &Params, plan: Plan) -> crate::Result<()> {
 
 /// `log` receives one line per epoch. With params global = 1 the units of the problem move to the analytic places.
 pub fn optimize(pr: &mut Problem, p: &Params, plan: Plan, log: &dyn Fn(&str)) -> crate::Result<SearchResult> {
-    optimize_with_preview(pr, p, plan, log, &|_,_,_,_| {})
+    optimize_with_preview(pr, p, plan, log, &|_,_,_,_| {}, &Sprint::default())
 }
 
-/// Calls preview after each epoch. A preview callback must not affect search state.
+/// Calls preview after each epoch. A preview callback must not affect search state. `sprint`: see sprint.rs; steps 0 with a budget
+/// = as many as fit it.
 pub fn optimize_with_preview(pr: &mut Problem, p: &Params, plan: Plan, log: &dyn Fn(&str),
-    preview: &dyn Fn(usize,usize,f64,&Pose)) -> crate::Result<SearchResult> {
+    preview: &dyn Fn(usize,usize,f64,&Pose), sprint: &Sprint) -> crate::Result<SearchResult> {
     check(pr, p, plan)?;
     let global = crate::gplace::apply(pr, p, log);
-    anneal_all(pr, p, plan, log, global, preview)
+    anneal_all(pr, p, plan, log, global, preview, sprint)
+}
+
+/// The plan with the steps that fit a sprint's budget, from the speed of this problem on one thread.
+fn sized(ev: &mut Evaluator, mover: &Mover, plan: Plan, sprint: &Sprint, t: f64, w: f64) -> Plan {
+    let begin = Instant::now();
+    anneal(ev, mover, &mut PyRandom::new(plan.seed), Schedule { steps: sprint::SPEED_MOVES, t0: t, t1: t, w0: w, w1: w });
+    let speed = sprint::SPEED_MOVES as f64 / begin.elapsed().as_secs_f64().max(1e-9);
+    Plan { steps: sprint.steps(speed, plan.epochs).unwrap_or(0), ..plan }
 }
 
 fn anneal_all(pr: &Problem, p: &Params, plan: Plan, log: &dyn Fn(&str), global: Option<GlobalStage>,
-    preview: &dyn Fn(usize,usize,f64,&Pose)) -> crate::Result<SearchResult> {
+    preview: &dyn Fn(usize,usize,f64,&Pose), sprint: &Sprint) -> crate::Result<SearchResult> {
     let model = Model::new(pr, p)?;
     let clustered = cluster::active(pr, p);
     let start = if clustered && p.clu_gather != 0.0 { cluster::gather(&model, p, &pr.initial_pose()) } else { pr.initial_pose() };
@@ -291,18 +310,33 @@ fn anneal_all(pr: &Problem, p: &Params, plan: Plan, log: &dyn Fn(&str), global: 
         Some(t) => t,
         None => estimate_t0(&mut first, &mover, &mut PyRandom::new(plan.seed), w0),
     };
+    let fitted = plan.steps == 0 && sprint.budget_s.is_some();
+    let plan = if fitted { sized(&mut first, &mover, plan, sprint, t0, w0) } else { plan };
     let run = Run { model: &model, params: p, plan, t0, t1: t0 * p.t_ratio, w0, w1: p.w1.min(w0) };
     // T0 comes from single moves: a move of a whole group has a far bigger uphill delta.
     let phases = clustered.then(|| (Mover::clustered(&model, p, true), Mover::clustered(&model, p, false)));
     let moves_of = |e: usize| phases.as_ref().map_or(&mover, |(together, alone)| if run.together(e) { together } else { alone });
     let seed_worker = Worker { pose: initial.pose.clone(), cost: initial.cost, best_pose: initial.pose.clone(), best_cost: first.cost() };
     let mut workers = vec![seed_worker; plan.workers];
+    let movable: Vec<usize> = (0..pr.units.len()).filter(|&i| !pr.units[i].fixed).collect();
+    let independent = sprint.budget_s.is_some();
+    let scorer = if independent || sprint.checkpoint.is_some() { Some(Scorer::new(pr, p)?) } else { None };
+    let mut progress = Progress { sprint, seed: plan.seed, epochs: plan.epochs, steps: plan.steps, trail: Vec::new() };
+    let mut kept: Vec<(f64, Pose)> = vec![(f64::INFINITY, initial.pose.clone()); plan.workers];
+    let mut report = Report { budget_s: sprint.budget_s, stop: "epochs".into(), ..Report::default() };
     let started = Instant::now();
     let mut busy = 0.0;
     let mut history = Vec::new();
+    let mut steps = plan.steps;
+    let mut steps_run = 0;
     for e in 0..plan.epochs {
-        let outcomes = run.epoch(moves_of(e), &workers, e);
-        busy += outcomes.iter().map(|o| o.seconds).sum::<f64>();
+        let epoch_start = Instant::now();
+        let outcomes = run.epoch(moves_of(e), &workers, e, steps);
+        let spent = outcomes.iter().map(|o| o.seconds).sum::<f64>();
+        busy += spent;
+        steps_run += steps;
+        let epoch_s = epoch_start.elapsed().as_secs_f64();
+        report.idle_s += epoch_s * outcomes.len() as f64 - spent;
         workers = outcomes.into_iter().map(|o| o.worker).collect();
         let g = best_worker(&workers);
         preview(e+1, plan.epochs, workers[g].best_cost, &workers[g].best_pose);
@@ -317,16 +351,54 @@ fn anneal_all(pr: &Problem, p: &Params, plan: Plan, log: &dyn Fn(&str), global: 
             workers[g].best_cost,
             current.join(" ")
         ));
-        if e + 1 < plan.epochs {
+        report.epochs_run = e + 1;
+        report.busy_s = busy;
+        if let Some(scorer) = &scorer {
+            let common: Vec<Evaluator> = workers.iter().map(|w| Evaluator::new(&model, &last, &w.best_pose)).collect();
+            for ((slot, ev), w) in kept.iter_mut().zip(&common).zip(&workers) {
+                if ev.cost() < slot.0 {
+                    *slot = (ev.cost(), w.best_pose.clone());
+                }
+            }
+            let poses: Vec<&Pose> = workers.iter().map(|w| &w.best_pose).collect();
+            (report.unique, report.spread_mm) = sprint::diversity(&poses, &movable);
+            progress.trail.push(common.iter().map(Evaluator::cost).collect());
+            let state = |(worker, (ev, w)): (usize, (&Evaluator, &Worker))| {
+                WorkerState { worker, cost: ev.cost(), route_score: scorer.score(&w.best_pose), terms: ev.terms(), pose: w.best_pose.clone() }
+            };
+            let states: Vec<WorkerState> = common.iter().zip(&workers).enumerate().map(state).collect();
+            progress.save("running", &report, &states)?;
+        }
+        let elapsed = started.elapsed().as_secs_f64();
+        if fitted {
+            // The speed of the threads under load, not of the one that was measured: every epoch still runs, so the schedule cools.
+            steps = sprint.steps_left(steps as f64 / epoch_s.max(1e-9), elapsed, plan.epochs - e - 1);
+        } else if e + 1 < plan.epochs && sprint.out_of_time(elapsed, e + 1) {
+            report.stop = "budget".into();
+            break;
+        }
+        if e + 1 < plan.epochs && !independent {
             exchange(&mut workers, g);
         }
     }
-    let mut finished = in_parallel(workers.len(), |w| finish(&model, &last, w, &workers[w].best_pose));
+    let wall_s = started.elapsed().as_secs_f64();
+    let closing = sprint.finish_params(&last);
+    let pose_of = |w: usize| if independent { &kept[w].1 } else { &workers[w].best_pose };
+    let mut finished = in_parallel(workers.len(), |w| finish(&model, &closing, w, pose_of(w)));
+    if let Some(scorer) = scorer.as_ref().filter(|_| independent) {
+        for c in &mut finished {
+            c.route_score = Some(scorer.score(&c.pose));
+            c.illegal.extend(sprint::edge_misses(&model, &c.pose));
+        }
+    }
     finished.sort_by(rank);
-    let movable: Vec<usize> = (0..pr.units.len()).filter(|&i| !pr.units[i].fixed).collect();
+    if let Some(scorer) = &scorer {
+        let state = |c: &Candidate| WorkerState { worker: c.worker, cost: c.cost, route_score: scorer.score(&c.pose), terms: c.components, pose: c.pose.clone() };
+        progress.save("done", &report, &finished.iter().map(state).collect::<Vec<_>>())?;
+    }
     let mut candidates = distinct(finished, p.distinct, &movable);
     candidates.truncate(plan.top);
-    let moves = (plan.epochs * plan.steps * plan.workers) as f64;
+    let moves = (steps_run * plan.workers) as f64;
     Ok(SearchResult {
         global,
         initial,
@@ -338,8 +410,9 @@ fn anneal_all(pr: &Problem, p: &Params, plan: Plan, log: &dyn Fn(&str), global: 
         epochs: plan.epochs,
         steps: plan.steps,
         params: p.clone(),
-        wall_s: started.elapsed().as_secs_f64(),
+        wall_s,
         moves_per_s_per_worker: if busy > 0.0 { moves / busy } else { 0.0 },
+        sprint: scorer.is_some().then_some(report),
     })
 }
 

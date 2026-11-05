@@ -480,6 +480,7 @@ tools/placer/core/src/pinswap/board.rs
 tools/placer/core/src/pinswap/cli.rs
 tools/placer/core/src/problem.rs
 tools/placer/core/src/read/cli.rs
+tools/placer/core/src/read/clusters.rs
 tools/placer/core/src/read/extras.rs
 tools/placer/core/src/read/grouping.rs
 tools/placer/core/src/read/mod.rs
@@ -498,9 +499,11 @@ tools/placer/core/src/repair/search.rs
 tools/placer/core/src/rows.rs
 tools/placer/core/src/rudy.rs
 tools/placer/core/src/search/anneal.rs
+tools/placer/core/src/search/cluster.rs
 tools/placer/core/src/search/legalize.rs
 tools/placer/core/src/search/mod.rs
 tools/placer/core/src/search/mover.rs
+tools/placer/core/src/search/sprint.rs
 tools/placer/core/src/spacing.rs
 tools/placer/core/src/via.rs
 tools/placer/core/src/wirelen.rs
@@ -513,6 +516,7 @@ tools/placer/core/tests/common/board.rs
 tools/placer/core/tests/common/mod.rs
 tools/placer/core/tests/congest.rs
 tools/placer/core/tests/cost_cli.rs
+tools/placer/core/tests/clusters.rs
 tools/placer/core/tests/crossing.rs
 tools/placer/core/tests/domain.rs
 tools/placer/core/tests/drc_count.rs
@@ -540,6 +544,7 @@ tools/placer/core/tests/rows.rs
 tools/placer/core/tests/rudy.rs
 tools/placer/core/tests/search.rs
 tools/placer/core/tests/spacing.rs
+tools/placer/core/tests/sprint.rs
 tools/placer/core/tests/strip.rs
 tools/placer/core/tests/via.rs
 tools/placer/core/tests/wirelen.rs

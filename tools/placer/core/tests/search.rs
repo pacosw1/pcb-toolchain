@@ -356,6 +356,7 @@ fn the_mains_check_without_route_rules_stops() {
 
 fn candidate(worker: usize, cost: f64, pose: Pose, illegal: &[&str], faults: &[&str]) -> Candidate {
     Candidate {
+        route_score: None,
         worker,
         prelegal_pose: pose.clone(),
         pose,
