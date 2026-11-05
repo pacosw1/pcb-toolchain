@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { chmodSync, fstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { test } from 'node:test';
 import { adopt, parentCandidate, replaceAtomically } from './pcb-candidate.ts';
+import { sourceState } from './pcb-sources.ts';
 import { sha } from './pcb-workflow.ts';
 
 function scratch(t: { after(fn: () => void): void }): string {
@@ -133,6 +134,42 @@ test('parent continuation rejects malformed identity, cleanup and continuation f
   assert.deepEqual(readFileSync(f.target), before);
 });
 
+test('parent continuation refuses unbound operation, source and candidate evidence', t => {
+  const f = candidateFixture(t), before = readFileSync(f.target);
+  f.operation.source_unchanged = true; f.save();
+  const reference = () => ({ folder: f.folder, result_sha256: sha(join(f.folder, 'result.json')) });
+  for (const missing of ['operation/result.json', 'operation/source.json']) {
+    const receipt = JSON.parse(readFileSync(join(f.folder, 'result.json'), 'utf8'));
+    delete receipt.evidence_sha256[missing];
+    put(join(f.folder, 'result.json'), JSON.stringify(receipt));
+    assert.throws(() => parentCandidate(f.root, 'X', reference()), /does not bind required candidate evidence/);
+    f.save();
+  }
+  assert.throws(() => parentCandidate(f.root, 'X', reference()), /does not bind required candidate evidence/);
+  const receipt = JSON.parse(readFileSync(join(f.folder, 'result.json'), 'utf8'));
+  receipt.evidence_sha256[relative(f.folder, f.candidate)] = sha(f.candidate);
+  put(join(f.folder, 'result.json'), JSON.stringify(receipt));
+  put(f.candidate, '(kicad_pcb (version 999))');
+  assert.throws(() => parentCandidate(f.root, 'X', reference()), /verified run evidence changed/);
+  assert.deepEqual(readFileSync(f.target), before);
+});
+
+test('parent continuation accepts a fully bound unchanged candidate', t => {
+  const f = candidateFixture(t), before = readFileSync(f.target);
+  // Synthetic dependency probe returns no additional files; no native CAD is opened or modified.
+  put(join(f.root, 'tools/pcb_snapshot_inputs.mjs'), 'console.log("[]")\n');
+  f.operation.source_unchanged = true; f.save();
+  put(join(f.folder, 'operation/source.json'), JSON.stringify(sourceState(f.root, 'X')));
+  const receipt = JSON.parse(readFileSync(join(f.folder, 'result.json'), 'utf8'));
+  receipt.evidence_sha256['operation/source.json'] = sha(join(f.folder, 'operation/source.json'));
+  receipt.evidence_sha256[relative(f.folder, f.candidate)] = sha(f.candidate);
+  put(join(f.folder, 'result.json'), JSON.stringify(receipt));
+  const output = parentCandidate(f.root, 'X', { folder: f.folder, result_sha256: sha(join(f.folder, 'result.json')) });
+  assert.equal(output.candidate, f.candidate);
+  assert.equal(output.dependencies[f.candidate], sha(f.candidate));
+  assert.deepEqual(readFileSync(f.target), before);
+});
+
 test('adoption requires its source, operation and gate evidence to be bound', async t => {
   const f = candidateFixture(t), before = readFileSync(f.target);
   const required = ['operation/result.json', 'operation/source.json', 'gate/result.json', 'gate/findings.json'];
@@ -140,7 +177,7 @@ test('adoption requires its source, operation and gate evidence to be bound', as
     const receipt = JSON.parse(readFileSync(join(f.folder, 'result.json'), 'utf8'));
     delete receipt.evidence_sha256[omitted];
     put(join(f.folder, 'result.json'), JSON.stringify(receipt));
-    await assert.rejects(adopt(f.root, f.folder), /does not bind required adoption evidence/);
+    await assert.rejects(adopt(f.root, f.folder), /does not bind required candidate evidence/);
     assert.deepEqual(readFileSync(f.target), before);
     f.save();
   }
@@ -162,7 +199,7 @@ test('adoption rejects stale candidate and frozen board without a named baseline
   put(join(baseline, 'gate/findings.json'), '{}');
   put(join(baseline, 'result.json'), JSON.stringify({ status: 'failed', cleanup: { complete: true },
     evidence_sha256: { 'run.json': sha(join(baseline, 'run.json')) } }));
-  await assert.rejects(adopt(f.root, f.folder, 'DEFECT', baseline), /does not bind required adoption evidence/);
+  await assert.rejects(adopt(f.root, f.folder, 'DEFECT', baseline), /does not bind required candidate evidence/);
   // Even a fully bound frozen baseline cannot start an unowned native probe while adoption is disabled.
   put(join(baseline, 'gate/result.json'), JSON.stringify({ exit: 1, provenance: { inputs: [] } }));
   put(join(baseline, 'gate/findings.json'), JSON.stringify({ findings: [{ id: 'DEFECT', severity: 'error', stage: 'drc' }], inputs_valid: true, completed_checks: ['drc'] }));

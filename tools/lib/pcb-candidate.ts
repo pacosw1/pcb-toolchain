@@ -36,7 +36,7 @@ function requireBound(result: Dict, names: string[]): void {
   const evidence = result.evidence_sha256;
   if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) fail('terminal receipt does not bind its evidence; create a new run');
   for (const name of names) {
-    if (typeof (evidence as Dict)[name] !== 'string') fail(`terminal receipt does not bind required adoption evidence: ${name}`);
+    if (typeof (evidence as Dict)[name] !== 'string') fail(`terminal receipt does not bind required candidate evidence: ${name}`);
   }
 }
 
@@ -55,13 +55,15 @@ export function parentCandidate(rootPath: string, board: string, reference: Refe
   const root = resolvePath(rootPath), parent = resolvePath(reference.folder);
   if (sha(joinPath(parent, 'result.json')) !== reference.result_sha256) fail('parent candidate terminal receipt changed');
   const terminal = terminalOf(parent);
+  requireBound(terminal, ['operation/result.json', 'operation/source.json']);
   const manifest = readPyJson<RunManifest>(joinPath(parent, 'run.json'));
   const operation = readPyJson<Dict>(joinPath(parent, 'operation/result.json'));
   if (resolvePath(manifest.root) !== root || manifest.board !== board || !preservesSource(operation, terminal)) fail('parent lacks settled, source-preserving candidate evidence');
-  const sources = readPyJson<SourceState>(joinPath(parent, 'operation/source.json'));
-  if (!sameValue(sourceState(root, board, sources.extra_inputs), sources)) fail('canonical inputs changed since parent candidate creation');
   const candidate = resolvePath(operation.candidate as string);
   if (candidate !== nativeBoard(joinPath(parent, 'workspace'), board) || sha(candidate) !== operation.candidate_sha256) fail('parent candidate differs from its sealed receipt');
+  requireBound(terminal, [relativeTo(candidate, parent)]);
+  const sources = readPyJson<SourceState>(joinPath(parent, 'operation/source.json'));
+  if (!sameValue(sourceState(root, board, sources.extra_inputs), sources)) fail('canonical inputs changed since parent candidate creation');
   if (!sameIdentity(nativeBoard(root, board), candidate, manifest)) fail('parent candidate changes protected board identity');
   const hashes = terminal.evidence_sha256 as Record<string, string>;
   const dependencies = Object.fromEntries(Object.entries(hashes).map(([name, digest]) => [joinPath(parent, name), digest]));
