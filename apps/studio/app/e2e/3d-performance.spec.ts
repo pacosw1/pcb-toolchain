@@ -48,5 +48,10 @@ test('real BASE-PWR geometry renders in bounded batches and stops rendering at r
     await win.getByRole('button', { name: 'Iso', exact: true }).click()
     await win.waitForTimeout(300)
     await win.screenshot({ path: join(APP, 'test-results/3d-performance.png') })
+    for (const angle of ['Top', 'Bottom']) {
+      await win.getByRole('button', { name: angle, exact: true }).click()
+      await win.waitForTimeout(300)
+      await win.screenshot({ path: join(APP, `test-results/3d-${angle.toLowerCase()}.png`) })
+    }
   } finally { await app.close() }
 })

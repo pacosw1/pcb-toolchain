@@ -77,7 +77,7 @@ component boundaries are preserved. Transparent faces stay separate so their
 sorting is preserved. Unsupported animated/compressed GLBs pass through unchanged.
 Raw exports remain cached separately from versioned viewer assets.
 
-The preview renders on camera/size changes, caps pixel density during interaction,
+The preview renders on camera/size changes, uses fixed bounded pixel density to prevent resolution jumps during interaction,
 and uses neutral studio illumination, a cached shadow map, and material defaults
 for diffuse-only CAD faces. Named board layers use a display palette matched to
 KiCad's native render reference. This is a real-time preview style, not KiCad's
@@ -90,3 +90,8 @@ were compared before and after batching. The opt-in Electron benchmark
 checks bounded draw calls and idle rendering with pointer input isolated, then
 captures orbit frame timings and a screenshot. Those timings depend on GPU,
 viewport, and concurrent desktop activity.
+
+The viewer renders silkscreen as opaque ink with a small depth bias, uses an opaque
+board substrate, and disables depth writes for the translucent solder mask. This
+keeps layer visibility stable while orbiting. Camera clipping adapts to zoom, orbit
+motion settles with damping, and the presentation background is dark charcoal.

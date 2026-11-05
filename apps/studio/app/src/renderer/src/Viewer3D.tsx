@@ -27,15 +27,15 @@ export function Viewer3D({ pcb }: { pcb: string }): React.JSX.Element {
   useEffect(() => {
     const el = host.current
     if (!el) return
-    let disposed = false, raf = 0, frames = 0
+    let disposed = false, raf = 0, frames = 0, sceneRadius = 0
     const request = new AbortController()
     setState('Preparing the 3D model…'); setInfo(null); viewRef.current = null
     const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
-    renderer.setClearColor(0xc4c6d5)
+    renderer.setClearColor(0x292727)
     renderer.outputColorSpace = THREE.SRGBColorSpace
     renderer.toneMapping = THREE.ACESFilmicToneMapping
-    renderer.toneMappingExposure = 0.75
+    renderer.toneMappingExposure = 0.9
     renderer.shadowMap.enabled = true
     renderer.shadowMap.type = THREE.PCFSoftShadowMap
     renderer.shadowMap.autoUpdate = false
@@ -56,17 +56,25 @@ export function Viewer3D({ pcb }: { pcb: string }): React.JSX.Element {
     fill.position.set(-1, 0.4, -1); scene.add(fill)
     const camera = new THREE.PerspectiveCamera(35, 1, 0.0001, 100)
     const controls = new OrbitControls(camera, renderer.domElement)
-    controls.enableDamping = false
+    controls.enableDamping = true
     controls.dampingFactor = 0.12
     const invalidate = (): void => { if (!disposed && !raf && !document.hidden) raf = requestAnimationFrame(draw) }
     function draw(): void {
       raf = 0
       if (disposed || document.hidden) return
+      const settling = controls.update()
+      if (sceneRadius > 0) {
+        const distance = camera.position.distanceTo(controls.target)
+        camera.near = Math.max(distance * 0.02, sceneRadius * 0.0001)
+        camera.far = distance + sceneRadius * 8
+        camera.updateProjectionMatrix()
+      }
       renderer.render(scene, camera)
       // Read-only diagnostics used by performance tests; not part of the product UI.
       el!.dataset.frames = String(++frames)
       el!.dataset.drawCalls = String(renderer.info.render.calls)
       el!.dataset.triangles = String(renderer.info.render.triangles)
+      if (settling) invalidate()
 
     }
     let lastWidth = 0, lastHeight = 0
@@ -77,8 +85,8 @@ export function Viewer3D({ pcb }: { pcb: string }): React.JSX.Element {
       lastWidth = w; lastHeight = h
       renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); invalidate()
     }
-    const interactionStart = (): void => { renderer.setPixelRatio(1); resize() }
-    const interactionEnd = (): void => { renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); resize() }
+    const interactionStart = (): void => { invalidate() }
+    const interactionEnd = (): void => { invalidate() }
     const visibility = (): void => { if (document.hidden) { cancelAnimationFrame(raf); raf = 0 } else invalidate() }
     controls.addEventListener('change', invalidate)
     controls.addEventListener('start', interactionStart); controls.addEventListener('end', interactionEnd)
@@ -97,12 +105,18 @@ export function Viewer3D({ pcb }: { pcb: string }): React.JSX.Element {
       scene.add(model)
       const box = new THREE.Box3().setFromObject(model), size = box.getSize(new THREE.Vector3()), center = box.getCenter(new THREE.Vector3())
       const radius = Math.max(size.length() / 2, 0.0001)
+      sceneRadius = radius
+      controls.minDistance = radius * 0.02
       // Native KiCad's presentation render uses neutral key/fill lighting and a shadow floor.
       // Match the board display palette; CAD faces without PBR properties use a dielectric preview.
       const boardMaterials = new Set<number>()
+      const layerMaterials = new Map<number, string>()
       for (const mesh of gltf.parser.json.meshes ?? []) {
         if (/_(soldermask|PCB|copper|pad|via|silkscreen)$/.test(mesh.name ?? '')) {
-          for (const primitive of mesh.primitives) if (typeof primitive.material === 'number') boardMaterials.add(primitive.material)
+          for (const primitive of mesh.primitives) if (typeof primitive.material === 'number') {
+            boardMaterials.add(primitive.material)
+            layerMaterials.set(primitive.material, mesh.name.split('_').pop())
+          }
         }
       }
       const configured = new Set<THREE.Material>()
@@ -124,6 +138,17 @@ export function Viewer3D({ pcb }: { pcb: string }): React.JSX.Element {
           if (association?.materials !== undefined && boardMaterials.has(association.materials)) material.color.convertSRGBToLinear()
           if (exported && exported.metallicFactor === undefined) material.metalness = 0
           if (exported && exported.roughnessFactor === undefined) material.roughness = 0.6
+          const layer = association?.materials === undefined ? undefined : layerMaterials.get(association.materials)
+          if (layer === 'silkscreen') {
+            material.transparent = false; material.opacity = 1; material.depthWrite = true
+            material.polygonOffset = true; material.polygonOffsetFactor = -2; material.polygonOffsetUnits = -2
+            material.roughness = 0.85; material.metalness = 0
+          } else if (layer === 'PCB') {
+            material.transparent = false; material.opacity = 1; material.depthWrite = true
+          } else if (layer === 'soldermask') {
+            material.depthWrite = false
+            material.forceSinglePass = true
+          }
           material.envMapIntensity = 0.25
         }
       })
@@ -140,10 +165,11 @@ export function Viewer3D({ pcb }: { pcb: string }): React.JSX.Element {
       floor.receiveShadow = true; scene.add(floor)
       renderer.shadowMap.needsUpdate = true
       const fit = (dir: THREE.Vector3): void => {
+        controls.enableDamping = false; controls.update()
         const dist = radius / Math.sin((camera.fov * Math.PI) / 360)
         camera.position.copy(center).add(dir.clone().normalize().multiplyScalar(dist * 1.1))
-        camera.near = dist / 100; camera.far = dist * 20; camera.updateProjectionMatrix()
-        controls.target.copy(center); controls.update(); invalidate()
+        camera.near = dist / 20; camera.far = dist * 8; camera.updateProjectionMatrix()
+        controls.target.copy(center); controls.update(); controls.enableDamping = true; invalidate()
       }
       viewRef.current = { fit }; fit(new THREE.Vector3(0.6, 1, 0.9))
       let meshes = 0; model.traverse(o => { if ((o as THREE.Mesh).isMesh) meshes++ })
