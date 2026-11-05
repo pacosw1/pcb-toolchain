@@ -13,6 +13,7 @@ import { type Emit, execute, measuredStage, operationEvent, type Row } from './p
 import { finalize, prepare, type Prepared } from './pcb-routing-trial.ts';
 import { snapshot, sourceState, type SourceState } from './pcb-sources.ts';
 import { boardConfig, operationCommand, pythonNative, routePolicyArgs } from './pcb-workflow.ts';
+import { fileRoot } from './project-root.mjs';
 import { isFile, isRelativeTo, joinPath, relativeTo, resolvePath, withSuffix } from './py-path.ts';
 import { sameValue } from './py-values.ts';
 import { applyPlan, planDependencies } from './route-decision.ts';
@@ -232,7 +233,8 @@ const filesIn = (folder: string): string[] => {
 };
 
 function workEnvironment(root: string, workspace: string, folder: string, manifest: OperationManifest): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, IOT_LAB: workspace, KICAD_PY: pythonNative(), KICAD_PYTHON: pythonNative() };
+  // The snapshot holds tools/ only: its tools find the toolchain's binaries through this.
+  const env: NodeJS.ProcessEnv = { ...process.env, IOT_LAB: workspace, KICAD_PY: pythonNative(), KICAD_PYTHON: pythonNative(), PCB_TOOLCHAIN_ROOT: process.env.PCB_TOOLCHAIN_ROOT ?? fileRoot };
   if (manifest.engineering_manifest) {
     Object.assign(env, { PCB_ENGINEERING_MANIFEST: join(workspace, relativeTo(resolvePath(manifest.engineering_manifest.path), root)), PCB_ENGINEERING_BOARD: manifest.board, PCB_ENGINEERING_ROOT: workspace });
   }
