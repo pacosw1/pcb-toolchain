@@ -509,3 +509,19 @@ button.send {
   font-size: 12px;
   overflow-wrap: anywhere;
 }
+
+.inspector { overflow: auto; min-height: 0; }
+.inspector-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.inspector h2 { margin: 0; }
+.inspector h3 { margin-top: 28px; }
+.inspector p { color: var(--dim); }
+.inspector-source { overflow-wrap: anywhere; font-size: 12px; }
+.inspector-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.inspector-facts > div { border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+.inspector-facts dt { color: var(--dim); font-size: 12px; }
+.inspector-facts dd { margin: 6px 0 0; font-size: 17px; }
+.inspector-table { overflow: auto; max-height: 380px; }
+.inspector table { width: 100%; border-collapse: collapse; text-align: left; }
+.inspector th, .inspector td { padding: 9px 12px; border-bottom: 1px solid var(--border); }
+.inspector details { margin-top: 24px; }
+.inspector pre { max-height: 360px; overflow: auto; }

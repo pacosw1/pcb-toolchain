@@ -171,6 +171,19 @@ export function BoardView({
     })
   }, [geo, size])
 
+  const previousSize = useRef(size)
+  useEffect(() => {
+    const before = previousSize.current
+    previousSize.current = size
+    if (before.w === size.w && before.h === size.h) return
+    const ratio = Math.min(size.w / before.w, size.h / before.h)
+    setView(current => current ? {
+      scale: current.scale * ratio,
+      ox: size.w / 2 + (current.ox - before.w / 2) * ratio,
+      oy: size.h / 2 + (current.oy - before.h / 2) * ratio
+    } : current)
+  }, [size])
+
   // Fit the board when the geometry changes; a live refresh of the shown board keeps the view.
   useEffect(() => {
     if (liveRefresh && view) {

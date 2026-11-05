@@ -62,6 +62,7 @@ export function PartsView({
                 <th scope="col">Datasheet</th>
                 <th scope="col">CAD</th>
                 <th scope="col">Stock / assembly</th>
+                <th scope="col">Recorded unit price</th>
               </tr>
             </thead>
             <tbody>
@@ -97,6 +98,7 @@ export function PartsView({
                   <td style={{ color: 'var(--muted)' }}>
                     {[l.stock_status, l.assembly_status].filter(Boolean).join(' · ') || '—'}
                   </td>
+                  <td>{l.quotes?.length ? [...new Set(l.quotes.map(q => `${q.currency} ${q.unit_price}`))].join(' / ') : 'Not recorded'}</td>
                 </tr>
               ))}
             </tbody>
@@ -120,6 +122,11 @@ export function PartsView({
               <dt>Assembly</dt>
               <dd>{sel.assembly}</dd>
             </dl>
+            {sel.quotes?.length ? <section aria-label="Recorded price evidence"><h4>Recorded prices</h4><p>Historical evidence; availability and current pricing are not verified.</p>{sel.quotes.map((quote, i) => <dl className="kv" key={i}>
+              <dt>Reference</dt><dd>{quote.ref}</dd><dt>Unit price</dt><dd>{quote.currency} {quote.unit_price}</dd>
+              <dt>Supplier</dt><dd>{quote.supplier ?? 'Not recorded'}</dd><dt>Observed</dt><dd>{quote.observed_at ?? 'Not recorded'}</dd>
+              <dt>Minimum quantity</dt><dd>{quote.minimum_quantity ?? 'Not recorded'}</dd><dt>Source</dt><dd>{quote.source}</dd>
+            </dl>)}</section> : null}
             <div className="row">
               <button type="button" disabled={!sel.datasheet && !sel.datasheet_url} onClick={() => onDatasheet(sel)}>
                 Open datasheet

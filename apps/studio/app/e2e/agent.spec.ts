@@ -14,6 +14,7 @@ test('Claude answers from the board with engine tools', async () => {
   app.process().stdout?.on('data', (d) => process.stdout.write(`[main] ${d}`))
   app.process().stderr?.on('data', (d) => process.stdout.write(`[main!] ${d}`))
   const win = await app.firstWindow()
+  await win.getByRole('button', { name: 'Show assistant' }).click()
   win.on('console', (m) => console.log('[renderer]', m.type(), m.text()))
   win.on('pageerror', (e) => console.log('[pageerror]', e.message))
   await expect(win.getByRole('status', { name: 'Engine status' })).toContainText('engine ready', { timeout: 30_000 })

@@ -27,3 +27,44 @@ Log: `~/Library/Logs/pcbstudio-web.log`; project override `PCBSTUDIO_PROJECT=DIR
 ## Phases
 0 mockups ✓ · 1 skeleton ✓ · 2 model + KiCad I/O + read-only browse · 3 runs + gates · 4 agent · 5 generic build
 (NET-NODE pilot) · 6 parts, schematic, fab · 7 Linux.
+
+### Native board specifications
+
+Select a board, then **Specifications** to inspect native KiCad statistics, stackup,
+and the footprint BOM. Exports run on temporary copies of the saved PCB and its
+project companion. The view records the board SHA and capture time; **Refresh
+specifications** reads a new snapshot. This is a saved-board inspector, not a live
+IPC session. Supplier evidence remains in Parts / BOM; native exports do not supply
+price quotes.
+
+The adapter detects each export command using its help response. Unsupported
+commands show an availability message; failed exports show an error without
+hiding successful sections. Stackup nanometers are displayed in millimeters;
+statistics retain KiCad's explicit units. No output cache is used in this version.
+
+The existing runtime selection is unchanged. To opt into an installed nightly,
+launch Studio with `PCBSTUDIO_KICAD_CLI=/absolute/path/to/kicad-cli-nightly`.
+Use an executable wrapper if the nightly needs its own libraries. The tested
+Linux nightly was upstream build `4fe1ca2060` (10.99.0); this does not install or
+select a macOS nightly automatically. Board exports were tested on an isolated
+ENV-SENSE copy; hierarchical schematic IPC and operation progress are separate work.
+
+**Inspect native objects** now starts a short-lived, read-only IPC session for a
+private snapshot of the PCB and its explicitly assigned schematic. It waits for
+API readiness, binds requests to the server token, bounds reply sizes and time,
+and closes the process afterward. It returns object counts, the exact API build,
+and SHA-256 evidence for the copied inputs. Ordinary relative child sheets are
+copied within the project boundary; external paths, variable-based paths, and
+symlinked child sheets are rejected. macOS/Linux are supported by this transport;
+Windows is reported as unavailable. This is an on-demand snapshot inspection,
+not a stream of unsaved editor changes or routing progress. Flat PCB/schematic
+inspection was verified against the pinned Linux nightly; hierarchical native
+behavior still needs a real-project validation.
+
+Parts / BOM also shows **recorded unit prices** when its revision's CSV supplies
+`Unit price`, `Currency`, and a matching LCSC identifier (or matching MPN when no
+LCSC identifier is supplied). Optional columns are `Supplier`, `Price observed
+UTC`, and `Minimum quantity`. Part details retain per-reference provenance and
+quantity breaks; missing dates or prices stay explicit. Values are historical
+project evidence, not fetched quotes. No currency conversion or estimated board
+total is computed.

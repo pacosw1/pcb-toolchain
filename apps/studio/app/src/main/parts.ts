@@ -74,7 +74,7 @@ export function bom(project: Project, pcbRel: string, bomCsv: string | null = nu
       const sheet = lcsc ? sheets.get(lcsc) : undefined
       const url = pr.Datasheet ?? ''
       line = {
-        refs: [], qty: 0, value: pr.Value ?? '', lcsc, mpn: pr.MPN || null, manufacturer: pr.Manufacturer || null,
+        quotes: [], refs: [], qty: 0, value: pr.Value ?? '', lcsc, mpn: pr.MPN || null, manufacturer: pr.Manufacturer || null,
         footprint: fp.lib, description: pr.Description || null, dnp,
         assembly: attrs.includes('through_hole') ? 'tht' : attrs.includes('smd') ? 'smd' : 'other',
         datasheet: sheet?.path ?? null, datasheet_sha256: sheet?.sha256 ?? null,
@@ -94,6 +94,12 @@ export function bom(project: Project, pcbRel: string, bomCsv: string | null = nu
     line.stock_status ||= v.stock_status || null
     line.assembly_status ||= v.assembly_status || null
     const csvC = bomcsv.cNumber(v.lcsc)
+    // Reference alone is not enough for a price: bind it to a matching part identifier.
+    const identityMatches = csvC ? csvC === lcsc : Boolean(pr.MPN && v.mpn === pr.MPN)
+    if (identityMatches && !(pr.MPN && v.mpn && pr.MPN !== v.mpn) && /^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(v.unit_price ?? '') && /^[A-Z]{3}$/.test(v.currency ?? '')) {
+      line.quotes!.push({ ref, unit_price: v.unit_price, currency: v.currency, supplier: v.supplier || null,
+        observed_at: v.price_observed_utc || null, minimum_quantity: v.minimum_quantity || null, source: csvRel! })
+    }
     if (csvC && csvC !== lcsc) {
       line.lcsc_mismatch_refs.push(ref)
       line.csv_lcsc ||= csvC

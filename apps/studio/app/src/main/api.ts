@@ -1,3 +1,5 @@
+import { nativeInventory } from './kicad/inventory.ts'
+import { inspectBoard } from './kicad/inspector.ts'
 // Engine API methods. The desktop app, the agent and the web viewer call the same registry.
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
@@ -58,6 +60,14 @@ registry.method('board.unwatch', ['pcb'], 1, (pcb: string) => unwatchBoard(curre
 registry.method('board.bom', ['pcb', 'bom'], 1, (pcb: string, csv?: string | null) => bom(needProject(), pcb, csv ?? null))
 
 /** Footprints with the engine's C-number rule, position, rotation and pad count. */
+registry.method('board.inventory', ['pcb'], 1, (pcb: string) => {
+  const p = needProject(), revision = p.revisionForPcb(pcb)?.[1]
+  if (!revision) throw new Error('Select a registered board revision')
+  return nativeInventory(p.root, pcb, revision.sch)
+})
+
+registry.method('board.inspect', ['pcb'], 1, (pcb: string) => inspectBoard(needProject().resolve(pcb), pcb))
+
 registry.method('board.parts', ['pcb'], 1, (pcb: string) => boardParts(needProject(), pcb))
 
 /** Part record of a C-number from the parts index: datasheets with sha256, MPN, CAD asset, evidence. */
