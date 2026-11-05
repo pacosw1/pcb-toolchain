@@ -3,6 +3,7 @@
 use super::record::{AttemptStages, CoreStage, RouteClaim, WriteStage};
 use super::{Args, project::project_of};
 use crate::model::text::round_to;
+use crate::plan::WidthRule;
 use crate::sha256::sha256;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -123,8 +124,8 @@ impl Steps {
         run_logged(command, log)
     }
 
-    /// The core, then `iotroute write`, then the written board at `out`.
-    pub fn route_and_write(&self, a: &Args, model: &Path, route_in: &Path, out: &Path, work: &Path, extra: &[String]) -> Result<AttemptStages, String> {
+    /// The core, the board's widths rules, then `iotroute write`, then the written board at `out`.
+    pub fn route_and_write(&self, a: &Args, model: &Path, route_in: &Path, out: &Path, work: &Path, extra: &[String], widths: &[WidthRule]) -> Result<AttemptStages, String> {
         let route = work.join("route.json");
         let source_sha = if a.checkpoint { sources_sha(&self.tools) } else { None };
         let started = Instant::now();
@@ -136,6 +137,7 @@ impl Steps {
             return Err(format!("iotroute wrote no result (exit {exit}), see {}", work.join("route.log").display()));
         }
         let core = CoreStage { exit, seconds: round_to(started.elapsed().as_secs_f64(), 1), claim };
+        super::widths::narrow(&route, widths)?;
         let folder = work.join("write");
         let mut write = Command::new(&self.exe);
         write.arg("write").arg(route_in).arg(&route).arg(&folder);

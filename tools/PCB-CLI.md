@@ -145,8 +145,11 @@ applies. A iotroute run FAIL (DRC, unconnected or parity not 0) is a failed rout
 replaced. The router's own counts are never the verdict. `--spec` is optional; the policy has only these fields:
 
 ```json
-{"schema":"iot-lab.iotroute-policy.v1","iters":80,"max_time_s":null,"keep":"lock-nets"}
+{"schema":"iot-lab.iotroute-policy.v1","iters":80,"max_time_s":null,"keep":"lock-nets","return_exempt":false}
 ```
+
+`return_exempt: true` gives no return vias to the nets the board's gate exempts from RP-001 (`iotroute run --return-exempt`). Use it on a
+board with such exemptions: a route that gives an exempt net its returns leaves the exemption stale, and the gate fails on the stale entry.
 
 `keep: lock-nets` (default) removes all tracks and vias of the candidate and keeps only the copper of the
 diff-pair nets and the DRU `via_count 0` nets (crystals), locked. `keep: all` keeps and locks all copper and

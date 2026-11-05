@@ -9,7 +9,7 @@
 //!  1. --lock-from SRC: a copy of the input without tracks and vias, with the copper of the lock nets from SRC, locked. Lock nets
 //!     are the diff pairs and the nets with DRU via_count 0, read from the model of SRC. Without it all copper of the input stays
 //!     and is locked.
-//!  2. `iotroute model`, then the route, then `iotroute write`.
+//!  2. `iotroute model`, then the route, the `widths` rules of the board's route.json, then `iotroute write`.
 //!  3. OUT gets the board and the project files of the input; the input's .kicad_pro goes back if a save rewrote it.
 //!  4. KiCad DRC with --schematic-parity on OUT, on the saved fill.
 //!
@@ -29,6 +29,7 @@ pub mod project;
 pub mod record;
 pub mod reuse;
 mod steps;
+mod widths;
 
 use lock::{LockStage, lock_nets, make_locked_input};
 use measure::{copper_counts, run_drc};
@@ -115,12 +116,13 @@ struct Run<'a> {
     route_in: PathBuf,
     src: PathBuf,
     folder: PathBuf,
+    widths: Vec<crate::plan::WidthRule>,
 }
 
 impl Run<'_> {
     /// Route and write -> OUT with its project files.
     fn attempt(&self, out: &Path, work: &Path, extra: &[String]) -> Result<(AttemptStages, bool), String> {
-        let stages = self.steps.route_and_write(self.a, &self.model, &self.route_in, out, work, extra)?;
+        let stages = self.steps.route_and_write(self.a, &self.model, &self.route_in, out, work, extra, &self.widths)?;
         place_sidecars(&self.src, out)?;
         Ok((stages, restore_pro(&self.src, out)?))
     }
@@ -328,7 +330,8 @@ fn run(a: &Args, rec: &mut Record, out: &Path, work: &Path) -> Result<(), String
     }
     rec.stages.model = Some(ModelStage { line: text.trim().lines().last().unwrap_or("").to_string(), sha256: sha_file(&model)? });
 
-    let context = Run { a, steps, model, route_in, src, folder };
+    let widths = widths::board_widths(&folder, &model)?;
+    let context = Run { a, steps, model, route_in, src, folder, widths };
     let (stages, restored) = match &a.reuse {
         Some(previous) => context.reuse_attempts(previous, out, work, rec)?,
         None => context.attempt(out, work, &[])?,
