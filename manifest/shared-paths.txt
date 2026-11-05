@@ -530,6 +530,8 @@ tools/placer/testdata/relay4-mains-O-s67.json
 tools/placer/testdata/relay4-prob.json
 tools/placer/validate.py
 tools/placer/viewer.py
+tools/placer/viewer.test.ts
+tools/placer/viewer.ts
 tools/placer/wirelen.py
 tools/port_labels.ts
 tools/pq_cadlib.py

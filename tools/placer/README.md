@@ -686,3 +686,18 @@ and nothing kept the 24 V protection at its connector (SMCJ33A 50 mm from J1 aga
 Result (FW-IO, scratch): near rules for D1 / D3 / R3 at the J1 pins (9-12 mm) with s 1.0 / 0.5 / 0.25 gave no legal
 candidate: the search left 24V IN and U2 TJA1051 1.4-2.3 mm beyond the limits and turned them (the legalizer timed
 out). The committed board fixes those parts at their 100 x 80 places under J1 (`--fix`) instead.
+
+### Node-only recorded playback
+
+For a saved compaction `run.json`:
+
+```sh
+node --experimental-strip-types --no-warnings tools/placer/viewer.ts run.json playback.html --frames-json frames.json --seconds 15
+```
+
+This read-only viewer shows recorded epoch and result poses, approximate unit
+rectangles, the ratsnest and recorded cost values in a self-contained HTML file.
+It records the source SHA-256 and refuses to overwrite output. It does **not**
+compute RUDY heat, emit PNG/GIF/MP4, render routed boards, or establish DRC or
+qualification. The legacy Python viewer and movie remain until their other
+outputs have separately validated replacements and callers are migrated.
