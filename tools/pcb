@@ -21,6 +21,6 @@ routing_diagnose() {
 case "$command" in
   routing) if routing_diagnose "$@"; then exec node --experimental-strip-types --no-warnings "$here/pcb-check.ts" "$@"; fi ;;
   list|context|next|status|events|explain|cancel|note|benchmark) exec node --experimental-strip-types --no-warnings "$here/pcb-observe.ts" "$@" ;;
-  check|doctor|readiness|blocks|outcomes|schematic|design|parts) exec node --experimental-strip-types --no-warnings "$here/pcb-check.ts" "$@" ;;
+  check|doctor|readiness|blocks|outcomes|schematic|design|parts|placement) exec node --experimental-strip-types --no-warnings "$here/pcb-check.ts" "$@" ;;
 esac
 exec python3 "$here/pcb-python.py" "$@"

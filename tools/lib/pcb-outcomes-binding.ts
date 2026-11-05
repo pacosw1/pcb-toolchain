@@ -162,3 +162,46 @@ export function routing(folder: string, root: string, board: string, reference: 
     report: path, report_sha256: sha256File(path), engineering_status: report.status, engineering_inputs: inputs,
     engineering_absent_inputs: [], engineering_producer_inputs: binding, qualified: false, release_approved: false };
 }
+
+export function placementRequested(root: string, args: string[]): { files: Record<string, string>; absent: string[] } {
+  const files: Record<string, string> = {}, absent: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const [flag, inline] = args[i]!.split(/=(.*)/s, 2);
+    if (!['--manifest', '--candidate', '--escape-evidence'].includes(flag!)) continue;
+    const value = inline ?? args[++i];
+    if (!value) throw new Error('placement input path missing');
+    const path = resolve(root, value), stat = lstatSync(path, { throwIfNoEntry: false });
+    if (!stat) absent.push(path); else if (!statSync(path).isFile()) throw new Error('placement input is not a file: ' + path); else files[path] = sha256File(path);
+  }
+  return { files, absent };
+}
+export function placement(folder: string, root: string, board: string, args: string[], reference: { folder: string; result_sha256: string } | undefined,
+  code: number, binding: Record<string, string>, requested: ReturnType<typeof placementRequested>): Row {
+  if (JSON.stringify(producer(root, process.execPath)) !== JSON.stringify(binding)) throw new Error('placement producer changed during observation');
+  if (JSON.stringify(placementRequested(root, args)) !== JSON.stringify(requested)) throw new Error('placement requested inputs changed during observation');
+  const backendRoot = reference ? join(reference.folder, 'workspace') : root;
+  const dependencies = reference ? parentCandidate(root, board, reference).dependencies : {};
+  const path = join(folder, 'operation/report.json'), report = readObject<Row>(path);
+  if (report.schema !== 'iot-lab.engineering-placement-check.v1' || report.board !== board || report.qualified !== false
+      || !['passed', 'blocked', 'stale'].includes(String(report.status)) || (code === 0) !== (report.status === 'passed')) throw new Error('placement report type, identity, or verdict disagrees');
+  const inputs: Record<string, string> = { ...binding, ...dependencies, ...requested.files };
+  for (const name of ['inputs', 'native_inputs', 'tool_inputs', 'source_inputs', 'evidence_sha256']) {
+    const entries = report[name] ?? {};
+    if (!entries || typeof entries !== 'object' || Array.isArray(entries)) throw new Error('invalid placement inputs');
+    for (const [file, digest] of Object.entries(entries)) {
+      const absolute = resolve(backendRoot, file);
+      if (typeof digest !== 'string' || !/^[0-9a-f]{64}$/.test(digest) || !statSync(absolute).isFile() || sha256File(absolute) !== digest) throw new Error('placement input changed: ' + file);
+      if (inputs[absolute] && inputs[absolute] !== digest) throw new Error('placement input disagrees: ' + file);
+      inputs[absolute] = digest;
+    }
+  }
+  if (report.native && report.candidate_sha256) {
+    const native = resolve(root, String(report.native)), digest = report.candidate_sha256;
+    if (typeof digest !== 'string' || sha256File(native) !== digest) throw new Error('placement candidate changed');
+    inputs[native] = digest;
+  }
+  return { status: code === 0 ? 'passed' : code === 2 ? 'error' : 'failed', exit_code: code === 0 ? 0 : code === 2 ? 2 : 1,
+    cause: code === 0 ? 'placement completed' : 'placement blocked; inspect report.json', scope: 'placement_constraints', operation: 'placement', tool_exit: code,
+    report: path, report_sha256: sha256File(path), engineering_status: report.status, engineering_inputs: inputs,
+    engineering_absent_inputs: requested.absent, engineering_requested_inputs: requested, engineering_producer_inputs: binding, qualified: false, release_approved: false };
+}

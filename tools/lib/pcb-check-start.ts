@@ -13,7 +13,7 @@ import { parentCandidate } from './pcb-candidate.ts';
 import { verify } from './pcb-evidence.ts';
 import { holdLock } from './file-lock.ts';
 
-export interface CheckOptions { root: string; base: string; board: string; operation?: 'check' | 'doctor' | 'readiness' | 'blocks' | 'outcomes' | 'schematic' | 'design' | 'parts' | 'routing'; fromRun?: string; arguments?: string[]; timeout: number; heartbeat: number; changed?: boolean; fresh?: boolean; baseline?: string; cycle?: string }
+export interface CheckOptions { root: string; base: string; board: string; operation?: 'check' | 'doctor' | 'readiness' | 'blocks' | 'outcomes' | 'schematic' | 'design' | 'parts' | 'routing' | 'placement'; fromRun?: string; arguments?: string[]; timeout: number; heartbeat: number; changed?: boolean; fresh?: boolean; baseline?: string; cycle?: string }
 
 function readDesign(args: string[]) {
   const option = (name: string) => { const index = args.indexOf(name); return index >= 0 ? args[index + 1] : args.find(item => item.startsWith(name + '='))?.slice(name.length + 1); };
@@ -34,7 +34,7 @@ export async function startCheck(options: CheckOptions): Promise<string> {
   if (design && design.id !== options.board) throw new Error('design action subject differs from its exact contract identity');
   const actualBoard = design ? design.board ?? design.id : options.board;
   const action = options.arguments?.[0];
-  const configInfo = (operation === 'check' || operation === 'schematic' || operation === 'routing' || (operation === 'parts' && action !== 'selection' && action !== 'inspect')) ? boardConfig(root, options.board) : undefined;
+  const configInfo = (operation === 'check' || operation === 'schematic' || operation === 'routing' || operation === 'placement' || (operation === 'parts' && action !== 'selection' && action !== 'inspect')) ? boardConfig(root, options.board) : undefined;
   const config = configInfo ? join(configInfo.folder, 'gate.json') : undefined;
   let baseline: string | undefined;
   if (options.baseline) {
@@ -45,7 +45,7 @@ export async function startCheck(options: CheckOptions): Promise<string> {
   if (cycleFolder) {
     const cycle = read(join(cycleFolder, 'cycle.json'));
     if (cycle.status !== 'open' || resolvePath(cycle.root) !== root) throw new Error('cycle must be open and belong to this checkout');
-    if ((operation === 'check' || operation === 'readiness' || operation === 'schematic' || operation === 'design' || operation === 'routing' || (operation === 'parts' && action !== 'inspect')) && cycle.board !== actualBoard) throw new Error('run belongs to another board than its engineering cycle');
+    if ((operation === 'check' || operation === 'readiness' || operation === 'schematic' || operation === 'design' || operation === 'routing' || operation === 'placement' || (operation === 'parts' && action !== 'inspect')) && cycle.board !== actualBoard) throw new Error('run belongs to another board than its engineering cycle');
   }
   const parentFolder = options.fromRun ? runDir(base, options.fromRun) : undefined;
   const fromRun = parentFolder ? { folder: parentFolder, result_sha256: sha(join(parentFolder, 'result.json')) } : undefined;
@@ -61,6 +61,7 @@ export async function startCheck(options: CheckOptions): Promise<string> {
   const command = operation === 'doctor' ? [node, join(root, 'tools/doctor.mjs'), '--gate-only']
     : operation === 'readiness' ? [node, join(root, 'tools/check-release-readiness.mjs'), ...(options.arguments ?? [])]
     : operation === 'blocks' ? [node, '--experimental-strip-types', '--no-warnings', join(root, 'tools/blocks.ts'), ...(options.arguments ?? [])]
+    : operation === 'placement' ? [node, '--experimental-strip-types', '--no-warnings', join(root, 'tools/engineering_constraints.ts'), ...(options.arguments ?? []), '--root', backendRoot, '--json', '--output', join(folder, 'operation/report.json')]
     : operation === 'routing' ? [node, '--experimental-strip-types', '--no-warnings', join(root, 'tools/route_decision.ts'), ...(options.arguments ?? []), '--root', backendRoot, '--json', '--output', join(folder, 'operation/report.json')]
     : operation === 'parts' ? [node, '--experimental-strip-types', '--no-warnings', join(root, 'tools/part_evidence.ts'), ...(options.arguments ?? []), '--root', backendRoot, '--json', '--output', join(folder, 'operation/report.json'), ...(action === 'inspect' ? ['--cache', join(folder, 'operation/cache')] : [])]
     : operation === 'design' ? [node, '--experimental-strip-types', '--no-warnings', join(root, 'tools/design_contract.ts'), ...designArgs, '--root', root, '--json', '--output', join(folder, 'operation/report.json')]
@@ -75,7 +76,7 @@ export async function startCheck(options: CheckOptions): Promise<string> {
     ...(design ? { design_id: design.id, design_stage: design.stage, design_contract: { path: design.path, sha256: design.hash, content: design.content } } : {}),
     ...(fromRun ? { from_run: fromRun } : {}),
     operation, node, gate_config_sha256: config ? sha(config) : null,
-    ...(['readiness', 'blocks', 'outcomes', 'schematic', 'design', 'parts', 'routing'].includes(operation) ? { arguments: options.arguments ?? [] } : {}), ...(cycleFolder ? { cycle: basename(cycleFolder) } : {}) };
+    ...(['readiness', 'blocks', 'outcomes', 'schematic', 'design', 'parts', 'routing', 'placement'].includes(operation) ? { arguments: options.arguments ?? [] } : {}), ...(cycleFolder ? { cycle: basename(cycleFolder) } : {}) };
   atomicJson(join(folder, 'run.json'), manifest);
   if (cycleFolder) await attach(cycleFolder, folder, { withLock: async (path, work) => {
     const lock = await holdLock(path, { waitS: 30 });
