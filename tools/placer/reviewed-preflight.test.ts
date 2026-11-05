@@ -30,7 +30,7 @@ test('staged producer checks population and never treats preflight as approval',
  const manifest:any={schema:'iot-lab.part-use.v1',board:'X',revision:'A',project,spec,
    parts:[{reference:'U1',mpn:'PART',lcsc:'C123',manufacturer:'M',package:{name:'QFN',variant:'A'},unresolved:[],native:{...native,non_electrical_pads:[]},layout_constraints:[],datasheets:[doc],assembly_dependencies:[],
      ratings:[{id:'V',quantity:'voltage',limit:{min:0,max:10,unit:'V',source:doc},required:{min:0,max:5,unit:'V',source:spec},conditions:[]}]}],
-   budgets:[{net:'VCC',limit:{min:0,max:2,unit:'A',source:{}},loads:[{reference:'U1',required:{min:0,max:1,unit:'A',source:{}}}]}]};
+   budgets:[{net:'VCC',limit:{min:0,max:2,unit:'A',source:spec},loads:[{reference:'U1',required:{min:0,max:1,unit:'A',source:spec}}]}]};
  manifest.review={verdict:'passed',reviewer:'synthetic',reviewed_at_utc:'2026-01-01T00:00:00Z',facts_sha256:sha256(canonical(manifest)),evidence};
  put('manifest.json',JSON.stringify(manifest));
  const inputs={...sources,'manifest.json':sha256(readFileSync(join(root,'manifest.json'))),

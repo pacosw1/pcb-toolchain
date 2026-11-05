@@ -339,8 +339,8 @@ mod preflight_tests {
             "parts":[{"reference":"U1","mpn":"P","lcsc":"C123","manufacturer":"M","package":{"name":"QFN","variant":"A"},"unresolved":[],"layout_constraints":[],"datasheets":[doc],"assembly_dependencies":[],"ratings":[{"id":"r","quantity":"voltage",
                 "limit":{"min":0,"max":10,"unit":"V","source":doc},
                 "required":{"min":0,"max":5,"unit":"V","source":spec},"conditions":[]}]}],
-            "budgets":[{"net":"VCC","limit":{"min":0,"max":2,"unit":"A","source":{}},
-                "loads":[{"reference":"U1","required":{"min":0,"max":1,"unit":"A","source":{}}}]}]});
+            "budgets":[{"net":"VCC","limit":{"min":0,"max":2,"unit":"A","source":spec},
+                "loads":[{"reference":"U1","required":{"min":0,"max":1,"unit":"A","source":spec}}]}]});
         let facts = digest(&serde_json::to_vec(&manifest).unwrap());
         manifest["review"] = json!({"verdict":"passed","reviewer":"R","reviewed_at_utc":"2026-01-01T00:00:00Z","facts_sha256":facts,"evidence":evidence});
         let manifest_bytes = serde_json::to_vec(&manifest).unwrap();
@@ -645,6 +645,13 @@ fn check_manifest_sources(contract: &Value, manifest: &Value, inspector: Option<
             }
         }
         for dep in part["assembly_dependencies"].as_array().ok_or("assembly dependencies missing")? {source(&dep["source"],false)?;}
+    }
+    for budget in manifest.get("budgets").map_or(Some(&[][..]), |v| v.as_array().map(Vec::as_slice)).ok_or("budget list invalid")? {
+        source(&budget["limit"]["source"],false)?;
+        for load in budget["loads"].as_array().ok_or("budget loads missing")? { source(&load["required"]["source"],false)?; }
+        for exclusion in budget.get("exclusions").map_or(Some(&[][..]), |v| v.as_array().map(Vec::as_slice)).ok_or("budget exclusions invalid")? {
+            source(&exclusion["source"],false)?;
+        }
     }
     if let Some((tool,hash)) = inspector {
         for rule in contract["rules"].as_array().ok_or("reviewed rules missing")? {
