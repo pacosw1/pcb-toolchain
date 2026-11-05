@@ -73,3 +73,19 @@ fn copper_clearance_tracks_rotated_pad_edges_and_rejects_unknown_geometry() {
     input["geometry"]["refs"]["C1"]["pads"]["1"][0]["shape"] = json!("oval");
     assert!(clearance_rules(&input, &[(10.0, 10.0), (14.0, 10.0)]).is_err());
 }
+
+#[test]
+fn fixed_and_rigid_groups_follow_reviewed_unit_mapping() {
+    use iotplace::engineering::rigid_rules;
+    let mut input = contract();
+    input["geometry"]["refs"]["U1"]["origin"] = json!([10.0, 10.0]);
+    input["geometry"]["refs"]["C1"]["origin"] = json!([14.0, 10.0]);
+    input["rules"] = json!([{"id":"group","kind":"rigid_group","refs":["U1","C1"]}]);
+    assert!(rigid_rules(&input, &[(10.0, 10.0), (14.0, 10.0)]).is_err());
+    input["where"]["C1"] = json!(0);
+    let rules = rigid_rules(&input, &[(10.0, 10.0)]).unwrap();
+    assert_eq!(rules[0].miss(&vec![(11.0, 10.0, 0)]).unwrap(), 0.0);
+    input["rules"][0]["retained_internal_copper"] = json!(true);
+    let rules = rigid_rules(&input, &[(10.0, 10.0)]).unwrap();
+    assert_eq!(rules[0].miss(&vec![(11.0, 10.0, 0)]).unwrap(), 1.0);
+}

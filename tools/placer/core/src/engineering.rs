@@ -26,6 +26,9 @@ struct Pad {
 }
 #[derive(Debug, Deserialize)]
 struct Part {
+    #[serde(default)]
+    origin: Option<(f64, f64)>,
+    #[serde(default)]
     pads: BTreeMap<String, Vec<Pad>>,
 }
 #[derive(Debug, Deserialize)]
@@ -36,11 +39,15 @@ struct Geometry {
 struct Rule {
     id: String,
     kind: String,
-    a: Selector,
-    b: Selector,
-    metric: String,
+    a: Option<Selector>,
+    b: Option<Selector>,
+    metric: Option<String>,
     min_mm: Option<f64>,
     max_mm: Option<f64>,
+    #[serde(default)]
+    refs: Vec<String>,
+    #[serde(default)]
+    retained_internal_copper: bool,
 }
 #[derive(Debug, Deserialize)]
 struct Contract {
@@ -224,7 +231,8 @@ pub fn pin_distance_rules(
         .rules
         .iter()
         .map(|rule| {
-            if rule.kind != "pin_distance" || rule.metric != "pad_center_euclidean" {
+            if rule.kind != "pin_distance" || rule.metric.as_deref() != Some("pad_center_euclidean")
+            {
                 return Err("unsupported reviewed engineering rule".into());
             }
             if rule.min_mm.is_none() && rule.max_mm.is_none() {
@@ -241,8 +249,16 @@ pub fn pin_distance_rules(
             }
             Ok(PinDistance {
                 id: rule.id.clone(),
-                a: PinDistance::endpoint(&rule.a, &contract, origins)?,
-                b: PinDistance::endpoint(&rule.b, &contract, origins)?,
+                a: PinDistance::endpoint(
+                    rule.a.as_ref().ok_or("missing endpoint")?,
+                    &contract,
+                    origins,
+                )?,
+                b: PinDistance::endpoint(
+                    rule.b.as_ref().ok_or("missing endpoint")?,
+                    &contract,
+                    origins,
+                )?,
                 min,
                 max,
             })
@@ -266,7 +282,9 @@ pub fn clearance_rules(
         .rules
         .iter()
         .map(|rule| {
-            if rule.kind != "clearance" || rule.metric != "copper_edge_2d" || rule.max_mm.is_some()
+            if rule.kind != "clearance"
+                || rule.metric.as_deref() != Some("copper_edge_2d")
+                || rule.max_mm.is_some()
             {
                 return Err("unsupported reviewed engineering rule".into());
             }
@@ -274,8 +292,16 @@ pub fn clearance_rules(
             if !minimum.is_finite() || minimum < 0.0 {
                 return Err("invalid reviewed clearance bound".into());
             }
-            let a = CopperEndpoint::parse(&rule.a, &contract, origins)?;
-            let b = CopperEndpoint::parse(&rule.b, &contract, origins)?;
+            let a = CopperEndpoint::parse(
+                rule.a.as_ref().ok_or("missing endpoint")?,
+                &contract,
+                origins,
+            )?;
+            let b = CopperEndpoint::parse(
+                rule.b.as_ref().ok_or("missing endpoint")?,
+                &contract,
+                origins,
+            )?;
             if !a.layers.iter().any(|l| b.layers.contains(l))
                 && !a.layers.iter().any(|l| l == "*.Cu")
                 && !b.layers.iter().any(|l| l == "*.Cu")
@@ -287,6 +313,105 @@ pub fn clearance_rules(
                 a,
                 b,
                 minimum,
+            })
+        })
+        .collect()
+}
+
+#[derive(Debug)]
+pub struct RigidGroup {
+    pub id: String,
+    members: Vec<(Endpoint, (f64, f64))>,
+    fixed: bool,
+}
+impl RigidGroup {
+    pub fn affects(&self, unit: usize) -> bool {
+        self.members.iter().any(|(part, _)| part.unit == unit)
+    }
+    pub fn miss(&self, pose: &Pose) -> crate::Result<f64> {
+        let mut first = None;
+        for (member, original) in &self.members {
+            let after = PinDistance::point(member, pose)?;
+            let turn = pose[member.unit].2;
+            let rotated = turn_point(*original, turn);
+            let transform = (
+                turn,
+                crate::numeric::round_to(after.0 - rotated.0, 6),
+                crate::numeric::round_to(after.1 - rotated.1, 6),
+            );
+            if self.fixed && transform != (0, 0.0, 0.0) {
+                return Ok(1.0);
+            }
+            if first.is_some_and(|value| value != transform) {
+                return Ok(1.0);
+            }
+            first = Some(transform);
+        }
+        Ok(0.0)
+    }
+}
+
+/// Compile fixed and rigid group rules; caller must separately establish source authenticity.
+pub fn rigid_rules(
+    value: &serde_json::Value,
+    origins: &[(f64, f64)],
+) -> crate::Result<Vec<RigidGroup>> {
+    let mut value = value.clone();
+    let object = value
+        .as_object_mut()
+        .ok_or("reviewed contract must be an object")?;
+    let where_ = object.remove("where").ok_or("reviewed mapping missing")?;
+    object.insert("where_".into(), where_);
+    let contract: Contract = serde_json::from_value(value)?;
+    contract
+        .rules
+        .iter()
+        .map(|rule| {
+            if rule.kind != "fixed" && rule.kind != "rigid_group" {
+                return Err("unsupported reviewed engineering rule".into());
+            }
+            let unique: std::collections::BTreeSet<_> = rule.refs.iter().collect();
+            if unique.len() != rule.refs.len()
+                || rule.refs.is_empty()
+                || (rule.kind == "rigid_group" && rule.refs.len() < 2)
+            {
+                return Err("reviewed group needs distinct references".into());
+            }
+            let mut members = Vec::new();
+            for reference in &rule.refs {
+                let unit = *contract
+                    .where_
+                    .get(reference)
+                    .ok_or("reviewed group reference not mapped")?;
+                let &(x, y) = origins.get(unit).ok_or("reviewed group unit not mapped")?;
+                let original = contract
+                    .geometry
+                    .refs
+                    .get(reference)
+                    .and_then(|p| p.origin)
+                    .ok_or("reviewed group origin missing")?;
+                if ![x, y, original.0, original.1].iter().all(|v| v.is_finite()) {
+                    return Err("reviewed group coordinates must be finite".into());
+                }
+                members.push((
+                    Endpoint {
+                        unit,
+                        local: (original.0 - x, original.1 - y),
+                    },
+                    original,
+                ));
+            }
+            if rule.kind == "rigid_group"
+                && members
+                    .iter()
+                    .any(|(member, _)| member.unit != members[0].0.unit)
+            {
+                return Err("reviewed rigid group was split before search".into());
+            }
+            Ok(RigidGroup {
+                id: rule.id.clone(),
+                members,
+                fixed: rule.kind == "fixed" || rule.retained_internal_copper,
             })
         })
         .collect()
