@@ -66,9 +66,9 @@ function rectangle(x: number, y: number, width: number, height: number, rotation
   return corners.map(([dx, dy]) => [x + dx * cos - dy * sin, y + dx * sin + dy * cos] as const);
 }
 
-function arcPoints(from: Xy, to: Xy, centreOffset: Xy, clockwise: boolean, legacyArc = false): Xy[] {
-  const cx = centreOffset[0] + from[0] * (legacyArc ? 2 : 1);
-  const cy = centreOffset[1] + from[1] * (legacyArc ? 2 : 1);
+function arcPoints(from: Xy, to: Xy, centreOffset: Xy, clockwise: boolean): Xy[] {
+  const cx = centreOffset[0] + from[0];
+  const cy = centreOffset[1] + from[1];
   const radius = Math.hypot(from[0] - cx, from[1] - cy);
   const start = Math.atan2(from[1] - cy, from[0] - cx);
   let end = Math.atan2(to[1] - cy, to[0] - cx);
@@ -209,7 +209,7 @@ class Layer {
     if (width <= 0) return;
     if (this.interpolation === 'linear' || (i === undefined && j === undefined)) this.shapes.push(capsule(from, to, width / 2));
     else {
-      const points=arcPoints(from, to, [i ?? 0, j ?? 0], this.interpolation === 'clockwise', this.legacyArc);
+      const points=arcPoints(from, to, [i ?? 0, j ?? 0], this.interpolation === 'clockwise');
       if (this.legacyArc) this.strokes.push({points,width});
       else this.shapes.push(...points.slice(1).map((point, index)=>capsule(points[index]!,point,width/2)));
     }
