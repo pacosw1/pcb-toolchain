@@ -144,24 +144,31 @@ function run(pcb: string, write: boolean): number {
   return ok ? 0 : 1;
 }
 
-export function padsCheck(files: Map<string,string>, measure = geometry): {lines:string[]; bad:number} {
-  const lines:string[]=[]; let bad=0;
+export function padsCheck(files: Map<string,string>, measure = geometry): {lines:string[]; bad:number; verdict:string} {
+  const lines:string[]=[]; let bad=0; const layers: {a:ReturnType<typeof polygons>;b:ReturnType<typeof polygons>;a_strokes:ReturnType<typeof strokes>;b_strokes:ReturnType<typeof strokes>}[]=[];
   for (const side of ['F','B']) {
     const [,silk]=unique(files,`-${side}_Silkscreen.gbr`), [,mask]=unique(files,`-${side}_Mask.gbr`);
     const silkGeo=parseLegacyGeometry(silk),maskGeo=parseLegacyGeometry(mask);
     const a=polygons(silkGeo.outlines), b=polygons(maskGeo.outlines), a_strokes=strokes(silkGeo.strokes), b_strokes=strokes(maskGeo.strokes);
+    layers.push({a,b,a_strokes,b_strokes});
     const on=measure({operation:'intersection',a,b,a_strokes,b_strokes});
     const near=measure({operation:'buffer_intersection',a,b,a_strokes,b_strokes,offset_nm:149900});
     bad+=near;
     lines.push(`  ${side}: silk on mask openings ${on.toFixed(4)} mm2, silk within 0.15 mm of an opening ${near.toFixed(4)} mm2`);
   }
-  lines.push(`${bad < 1e-6 ? 'PASS':'FAIL'} pads: silk within 0.15 mm of mask openings ${bad.toFixed(4)} mm2`);
-  return {lines,bad};
+  let verdict='FAIL';
+  // The 0.0001 mm2 band exceeds the retained-board difference; an extra 1 um guard also screens zero results.
+  if (bad < 0.000101) {
+    const guarded=layers.reduce((sum,layer)=>sum+measure({operation:'buffer_intersection',...layer,offset_nm:150900}),0);
+    verdict=bad===0 && guarded===0 ? 'PASS' : 'UNCERTAIN';
+  }
+  lines.push(`${verdict} pads: silk within 0.15 mm of mask openings ${bad.toFixed(4)} mm2${verdict==='UNCERTAIN' ? ' (near threshold; native geometry tolerance)' : ''}`);
+  return {lines,bad,verdict};
 }
 
 function main(argv: string[]): number {
   const [command, pcb] = argv;
-  if (command === 'pads' && argv.length === 2 && pcb) { const result=padsCheck(archive(pcb)); console.log(result.lines.join('\n')); return result.bad < 1e-6 ? 0 : 1; }
+  if (command === 'pads' && argv.length === 2 && pcb) { const result=padsCheck(archive(pcb)); console.log(result.lines.join('\n')); return result.verdict === 'PASS' ? 0 : 1; }
   if (argv.length !== 2 || (command !== 'check' && command !== 'apply')) throw new UsageError(USAGE, 1);
   return run(pcb!, command === 'apply');
 }

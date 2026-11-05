@@ -103,6 +103,13 @@ mod tests {
             assert_eq!(run("intersection",a.clone(),vec![b],0).signed_area_nm2,expected);
         }
     }
+    #[test] fn buffered_mask_threshold_on_a_straight_edge() {
+        for (overlap,expected) in [(999,999_000.0),(1000,1_000_000.0),(1001,1_001_000.0)] {
+            let x=1_149_900-overlap;
+            let silk=Polygon {outer:vec![[x,100_000],[x+2_000,100_000],[x+2_000,101_000],[x,101_000]],holes:vec![]};
+            assert_eq!(run("buffer_intersection",vec![silk],vec![square(0,0,1_000_000)],149_900).signed_area_nm2,expected);
+        }
+    }
     #[test] fn round_buffer_of_open_polyline() {
         let req=Request {operation:"union".into(),a:vec![],b:vec![],a_strokes:vec![Stroke{points:vec![[0,0],[1_000_000,0]],width_nm:200_000}],b_strokes:vec![],offset_nm:0};
         let area=execute(req).unwrap().signed_area_nm2/1e12;

@@ -154,8 +154,8 @@ function rip(pcb: string, ref: string): number {
   return 0;
 }
 
-export function gerberCheck(board: Board, ref: string, files: Map<string,string>, measure = geometry): {lines:string[]; total:number; areas:number} {
-  const areas=keepoutZones(board,ref), lines:string[]=[]; let total=0;
+export function gerberCheck(board: Board, ref: string, files: Map<string,string>, measure = geometry): {lines:string[]; total:number; areas:number; verdict:string} {
+  const areas=keepoutZones(board,ref), lines:string[]=[]; let total=0; const guardedInputs: Parameters<typeof geometry>[0][]=[];
   for(const area of areas) {
     if(area.outline.length !== 1 || area.outline[0]!.holes.length) throw new Error(`unsupported keepout polygon ${area.name}`);
     const points=area.outline[0]!.outline.map(p=>[p.x/1e6,-p.y/1e6] as const);
@@ -171,16 +171,24 @@ export function gerberCheck(board: Board, ref: string, files: Map<string,string>
     for(const layer of area.layers) {
       const [name,data]=unique(files,`-${layer.replaceAll('.','_')}.gbr`);
       const copper=parseLegacyGeometry(data);
-      const a=measure({operation:'intersection',a:polygons(copper.outlines),a_strokes:strokes(copper.strokes),b:polygon});total+=a;
+      const input={a:polygons(copper.outlines),a_strokes:strokes(copper.strokes),b:polygon};
+      const a=measure({operation:'intersection',...input});total+=a;
+      guardedInputs.push({operation:'buffer_intersection',...input,offset_nm:1000});
       lines.push(`  ${area.name} ${layer} (${name}): copper ${a.toFixed(6)} mm2 of ${polygonArea.toFixed(3)} mm2`);
     }
   }
-  lines.push(`${areas.length && total < 1e-6 ? 'PASS':'FAIL'} gerber ${ref}: areas ${areas.length}, copper mm2 + via holes in the areas ${total.toFixed(6)}`);
-  return {lines,total,areas:areas.length};
+  let verdict='FAIL';
+  // The 0.0001 mm2 band exceeds the retained-board difference; an extra 1 um guard also screens zero results.
+  if(areas.length && total < 0.000101) {
+    const guarded=guardedInputs.reduce((sum,input)=>sum+measure(input),0);
+    verdict=total===0 && guarded===0 ? 'PASS':'UNCERTAIN';
+  }
+  lines.push(`${verdict} gerber ${ref}: areas ${areas.length}, copper mm2 + via holes in the areas ${total.toFixed(6)}${verdict==='UNCERTAIN' ? ' (near threshold; native geometry tolerance)' : ''}`);
+  return {lines,total,areas:areas.length,verdict};
 }
 
 function main([command, pcb, ref, spec, ...rest]: string[]): number {
-  if (command === 'gerber' && pcb && ref && spec && !rest.length) { const result=gerberCheck(boardJson(ref).board,spec,archive(pcb)); console.log(result.lines.join('\n')); return result.areas && result.total < 1e-6 ? 0 : 1; }
+  if (command === 'gerber' && pcb && ref && spec && !rest.length) { const result=gerberCheck(boardJson(ref).board,spec,archive(pcb)); console.log(result.lines.join('\n')); return result.verdict === 'PASS' ? 0 : 1; }
   if (command === 'apply' && pcb && ref && spec && !rest.length) return apply(pcb, ref, spec);
   if (command === 'rip' && pcb && ref && !spec) return rip(pcb, ref);
   throw new UsageError(USAGE, 1);
