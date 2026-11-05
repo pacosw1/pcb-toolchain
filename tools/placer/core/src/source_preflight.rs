@@ -306,6 +306,7 @@ fn preflight_relocated(problem: &Value, inspector: Option<(&Path, &str)>) -> cra
     let root = Path::new(contract["root"].as_str().ok_or("reviewed root missing")?).canonicalize()?;
     let path = owned(&root, contract["manifest"].as_str().ok_or("reviewed manifest missing")?)?;
     let manifest: Value = serde_json::from_slice(&std::fs::read(path)?)?;
+    check_part_metadata(&manifest)?;
     check_rating_ranges(&manifest)?;
     check_manifest_sources(contract, &manifest, inspector)?;
     check_rule_sources(contract, &manifest)?;
@@ -335,7 +336,7 @@ mod preflight_tests {
         let doc = json!({"path":"doc.pdf","sha256":digest(b"synthetic"),"page":1,"document_id":"D","revision":"A"});
         let evidence = json!({"path":"review.md","sha256":digest(b"review"),"section":"review"});
         let mut manifest = json!({"schema":"iot-lab.part-use.v1","board":"A","revision":"1","project":"board.kicad_pro","spec":spec,
-            "parts":[{"reference":"U1","layout_constraints":[],"datasheets":[doc],"assembly_dependencies":[],"ratings":[{"id":"r","quantity":"voltage",
+            "parts":[{"reference":"U1","mpn":"P","lcsc":"C123","manufacturer":"M","package":{"name":"QFN","variant":"A"},"unresolved":[],"layout_constraints":[],"datasheets":[doc],"assembly_dependencies":[],"ratings":[{"id":"r","quantity":"voltage",
                 "limit":{"min":0,"max":10,"unit":"V","source":doc},
                 "required":{"min":0,"max":5,"unit":"V","source":spec},"conditions":[]}]}],
             "budgets":[{"net":"VCC","limit":{"min":0,"max":2,"unit":"A","source":{}},
@@ -747,5 +748,53 @@ mod pdf_page_tests {
         assert!(verify_pdf_page(&path,2,&tool,&tool_hash).is_err());
         assert!(verify_pdf_page(&path,1,&tool,&"0".repeat(64)).is_err());
         std::fs::remove_file(path).unwrap();
+    }
+}
+
+/// Validate unprofiled part-review metadata and reject unmodeled declarations.
+/// This is one review gate, not a complete authorization decision.
+fn check_part_metadata(manifest: &Value) -> crate::Result<()> {
+    let parts = manifest["parts"].as_array().filter(|a| !a.is_empty()).ok_or("reviewed parts missing")?;
+    let mut refs = std::collections::BTreeSet::new();
+    for part in parts {
+        let object = part.as_object().ok_or("invalid reviewed part")?;
+        let allowed = ["reference","mpn","lcsc","manufacturer","package","datasheets","native","ratings","layout_constraints","assembly_dependencies","unresolved"];
+        if object.keys().any(|key| !allowed.contains(&key.as_str())) { return Err("unsupported reviewed part fields or profile".into()); }
+        let reference = part["reference"].as_str().filter(|v| !v.trim().is_empty()).ok_or("part reference missing")?;
+        if !refs.insert(reference) { return Err("duplicate reviewed part reference".into()); }
+        let mpn = part["mpn"].as_str().filter(|s| !s.is_empty() && s.trim() == *s).ok_or("part MPN missing")?;
+        let lcsc = part["lcsc"].as_str().ok_or("part LCSC missing")?;
+        if mpn.is_empty() || lcsc.len()<2 || !lcsc.starts_with('C') || !lcsc.as_bytes()[1..].iter().all(u8::is_ascii_digit) {
+            return Err("part identity invalid".into());
+        }
+        if part["manufacturer"].as_str().is_none_or(|s| s.trim().is_empty()) ||
+            part["package"]["name"].as_str().is_none_or(|s| s.trim().is_empty()) ||
+            part["package"]["variant"].as_str().is_none_or(|s| s.trim().is_empty()) {
+            return Err("part manufacturer or package missing".into());
+        }
+        if part["unresolved"].as_array().is_none_or(|a| !a.is_empty()) {return Err("unresolved reviewed part items".into());}
+        for dep in part["assembly_dependencies"].as_array().ok_or("assembly dependencies missing")? {
+            if !matches!(dep["kind"].as_str(),Some("mate"|"contact"|"harness"|"battery"|"other")) ||
+                dep["reference"].as_str().is_none_or(|s| s.is_empty()) || dep["mpn"].as_str().is_none_or(|s| s.is_empty()) ||
+                dep["quantity"].as_u64().is_none_or(|n| n==0) { return Err("invalid assembly dependency".into()); }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod metadata_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn rejects_incomplete_or_unresolved_part_review() {
+        let mut manifest=json!({"parts":[{"reference":"U1","mpn":"P","lcsc":"C123","manufacturer":"M",
+            "package":{"name":"QFN","variant":"A"},"unresolved":[],"assembly_dependencies":[]}]});
+        assert!(check_part_metadata(&manifest).is_ok());
+        manifest["parts"][0]["unresolved"]=json!(["needs review"]);
+        assert!(check_part_metadata(&manifest).is_err());
+        manifest["parts"][0]["unresolved"]=json!([]);
+        manifest["parts"][0]["lcsc"]=json!("unknown");
+        assert!(check_part_metadata(&manifest).is_err());
     }
 }

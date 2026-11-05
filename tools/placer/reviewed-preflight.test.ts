@@ -28,7 +28,7 @@ test('staged producer checks population and never treats preflight as approval',
  const doc={path:'doc.pdf',sha256:sha256('synthetic'),page:1,document_id:'D',revision:'A'};
  const evidence={path:'review.md',sha256:sha256('review'),section:'review'};
  const manifest:any={schema:'iot-lab.part-use.v1',board:'X',revision:'A',project,spec,
-   parts:[{reference:'U1',mpn:'PART',lcsc:'C123',native:{...native,non_electrical_pads:[]},layout_constraints:[],datasheets:[doc],assembly_dependencies:[],
+   parts:[{reference:'U1',mpn:'PART',lcsc:'C123',manufacturer:'M',package:{name:'QFN',variant:'A'},unresolved:[],native:{...native,non_electrical_pads:[]},layout_constraints:[],datasheets:[doc],assembly_dependencies:[],
      ratings:[{id:'V',quantity:'voltage',limit:{min:0,max:10,unit:'V',source:doc},required:{min:0,max:5,unit:'V',source:spec},conditions:[]}]}],
    budgets:[{net:'VCC',limit:{min:0,max:2,unit:'A',source:{}},loads:[{reference:'U1',required:{min:0,max:1,unit:'A',source:{}}}]}]};
  manifest.review={verdict:'passed',reviewer:'synthetic',reviewed_at_utc:'2026-01-01T00:00:00Z',facts_sha256:sha256(canonical(manifest)),evidence};
