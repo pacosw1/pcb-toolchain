@@ -7,21 +7,21 @@ import { materializeSnapshot } from './protected-materialize.ts';
 import type { ManifestClosure } from './protected-closure.ts';
 import type { ProtectedCommitStore } from './protected-commit.ts';
 
-function trustedExecutable(file: string, expected: string): string {
-  if (!/^[0-9a-f]{64}$/.test(expected)) throw new Error('invalid archive tool digest');
+export function trustedExecutable(file: string, expected: string, label = 'archive tool'): string {
+  if (!/^[0-9a-f]{64}$/.test(expected)) throw new Error(`invalid ${label} digest`);
   const resolved = fs.realpathSync(file); let parent = path.dirname(resolved);
   for (;;) {
     const stat = fs.lstatSync(parent), stickyRoot = stat.uid === 0 && (stat.mode & 0o1000) !== 0;
-    if (!stat.isDirectory() || (process.getuid && stat.uid !== 0 && stat.uid !== process.getuid()) || ((stat.mode & 0o022) !== 0 && !stickyRoot)) throw new Error('unsafe archive tool directory');
+    if (!stat.isDirectory() || (process.getuid && stat.uid !== 0 && stat.uid !== process.getuid()) || ((stat.mode & 0o022) !== 0 && !stickyRoot)) throw new Error(`unsafe ${label} directory`);
     const next = path.dirname(parent); if (next === parent) break; parent = next;
   }
   const fd = fs.openSync(resolved,fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
   try {
     const stat = fs.fstatSync(fd);
-    if (!stat.isFile() || (stat.mode & 0o111) === 0 || (stat.mode & 0o022) !== 0 || (process.getuid && stat.uid !== 0 && stat.uid !== process.getuid())) throw new Error('unsafe archive tool');
+    if (!stat.isFile() || (stat.mode & 0o111) === 0 || (stat.mode & 0o022) !== 0 || (process.getuid && stat.uid !== 0 && stat.uid !== process.getuid())) throw new Error(`unsafe ${label}`);
     const hash = createHash('sha256'), buffer = Buffer.allocUnsafe(1024*1024); let n:number;
     while ((n=fs.readSync(fd,buffer,0,buffer.length,null))>0) hash.update(buffer.subarray(0,n));
-    if (hash.digest('hex') !== expected) throw new Error('archive tool digest mismatch');
+    if (hash.digest('hex') !== expected) throw new Error(`${label} digest mismatch`);
     return resolved;
   } finally { fs.closeSync(fd); }
 }
