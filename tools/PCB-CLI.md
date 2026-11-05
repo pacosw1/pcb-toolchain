@@ -22,6 +22,19 @@ tools/pcb explain RUN_ID --json
 tools/pcb cancel RUN_ID --json
 ```
 
+`tools/pcb project-check --layout` audits the board tree of a project against
+`hardware-design/registry/boards.json`. It reads files only and prints JSON: the
+registered boards, a summary and the findings. It checks board IDs and path escapes,
+the `gate.json` and `route.json` schemas, every configured native file and script or
+data reference, the required files of each board (`REQUIRED_FILES` in
+`lib/project-layout.ts`: by lifecycle, stage and registered gate), folders the
+registry does not know (`_art` and `.claude` are not boards), and project files at
+synced tool paths. A missing value stays a finding: a gate with no `stage` gets
+`gate_stage_missing` and its stage rows are not evaluated. Obsolete boards get one
+`obsolete_board` info finding with what it replaces as debt; errors stay. The registry
+marks them with lifecycle `obsolete`; while it marks none, `DECLARED_OBSOLETE` applies.
+The audit always exits 0. `--strict BOARD` exits 1 when that board has a violation.
+
 Before native CAD exists, check a reviewed part-use manifest with
 `tools/pcb parts --json selection PLANNED-BOARD --manifest FILE`. This evaluates
 sourced limits, demands and applicability conditions and streams the usual run

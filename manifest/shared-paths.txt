@@ -165,6 +165,7 @@ tools/lib/fnmatch.ts
 tools/lib/footprint-move.ts
 tools/lib/fp-courtyard.test.ts
 tools/lib/gate-cli.test.mjs
+tools/lib/gate-core.d.mts
 tools/lib/gate-core.mjs
 tools/lib/gate-core.test.mjs
 tools/lib/gate-evidence.mjs
@@ -295,6 +296,8 @@ tools/lib/power-paths.ts
 tools/lib/power-symbols.test.mjs
 tools/lib/pq-cadlib.test.ts
 tools/lib/pq-cadlib.ts
+tools/lib/project-layout.test.ts
+tools/lib/project-layout.ts
 tools/lib/project-root.d.mts
 tools/lib/project-root.mjs
 tools/lib/project-root.test.mjs
@@ -334,6 +337,7 @@ tools/lib/route-features.test.ts
 tools/lib/route-features.ts
 tools/lib/route-grid.test.ts
 tools/lib/route-grid.ts
+tools/lib/route-plan-schema.ts
 tools/lib/route-progress.ts
 tools/lib/route-spec.test.ts
 tools/lib/route-spec.ts
@@ -378,6 +382,7 @@ tools/package.json
 tools/part_evidence.ts
 tools/pcb
 tools/pcb-operation.ts
+tools/pcb-project-check.ts
 tools/pcb_ml.ts
 tools/pcb_ml_adapters.test.ts
 tools/pcb_ml_adapters.ts
