@@ -2,7 +2,7 @@
 //! route, the parts that moved since, and the nets it left open or in a DRC error (DESIGN.md 5c).
 use super::measure::{drc_nets, read_report};
 use super::project::sha_file;
-use super::record::{AttemptStages, DrcCounts};
+use super::record::{AttemptStages, DrcCounts, RouteClaim};
 use crate::kicad::api::{Server, read_board};
 use crate::kicad::Board;
 use serde::{Deserialize, Serialize};
@@ -64,6 +64,39 @@ pub struct ReuseRecord {
     pub attempts: BTreeMap<String, Attempt>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chosen: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub incumbent_note: Option<String>,
+}
+
+/// An earlier route may compete as an incumbent only for the same admitted
+/// problem. The input-copy filename is metadata; every geometry/rule/policy
+/// value must match. Verify the earlier model against its own run receipt first.
+pub fn incumbent_claim(previous: &Path, current_model: &Path, moved: &[String]) -> Result<RouteClaim, String> {
+    if !moved.is_empty() { return Err("parts moved; previous route is not an unchanged-input incumbent".into()); }
+    let work = std::path::PathBuf::from(format!("{}.iotroute", previous.display()));
+    let model = work.join("model.json");
+    let receipt: serde_json::Value = read_json(&work.join("result.json"))?;
+    if receipt["stages"]["model"]["sha256"].as_str() != Some(sha_file(&model)?.as_str()) {
+        return Err("previous model does not match its receipt".into());
+    }
+    let before: serde_json::Value = read_json(&model)?;
+    let now: serde_json::Value = read_json(current_model)?;
+    if !same_problem(before, now) { return Err("admitted model changed; previous copper must not be replayed".into()); }
+    let route: serde_json::Value = read_json(&work.join("route.json"))?;
+    if route["schema"].as_str() != Some("iot-lab.route-result.v0") { return Err("previous route schema is not supported".into()); }
+    let tracks = route["tracks"].as_array().ok_or("previous route has no tracks")?.len() as u64;
+    let vias = route["vias"].as_array().ok_or("previous route has no vias")?.len() as u64;
+    let failed = route["failed"].as_array().ok_or("previous route has no failure ledger")?.len() as u64;
+    Ok(RouteClaim { status: if failed == 0 { "PASS" } else { "FAIL" }.into(), converged: failed == 0,
+        iters: route["passes"].as_u64().ok_or("previous route has no passes")?, tracks, vias, failed, stop: None })
+}
+
+fn same_problem(mut before: serde_json::Value, mut now: serde_json::Value) -> bool {
+    let valid = |v: &serde_json::Value| v["schema"].as_str() == Some("iot-lab.route-model.v0") && v["pcb"].is_string();
+    if !valid(&before) || !valid(&now) { return false; }
+    before.as_object_mut().unwrap().remove("pcb");
+    now.as_object_mut().unwrap().remove("pcb");
+    before == now
 }
 
 #[derive(Deserialize)]
@@ -173,7 +206,7 @@ pub fn seed_from(previous: &Path, work: &Path, route_in: &Path, out_json: &Path,
     let source = previous.display().to_string();
     let seed = Seed { failed_nets: &failed, moved_refs: &moved, passes, schema: SEED_SCHEMA, source: &source, source_sha256: &sha, tracks: &earlier.tracks, vias: &earlier.vias };
     fs::write(out_json, serde_json::to_string(&seed).map_err(|e| e.to_string())?).map_err(|e| format!("{}: {e}", out_json.display()))?;
-    Ok(ReuseRecord { source, source_sha256: sha, moved_refs: moved, failed_nets: failed, passes, tracks: earlier.tracks.len(), vias: earlier.vias.len(), seed_sha256: sha_file(out_json)?, fallback: fallback.to_string(), attempts: BTreeMap::new(), chosen: None })
+    Ok(ReuseRecord { source, source_sha256: sha, moved_refs: moved, failed_nets: failed, passes, tracks: earlier.tracks.len(), vias: earlier.vias.len(), seed_sha256: sha_file(out_json)?, fallback: fallback.to_string(), attempts: BTreeMap::new(), chosen: None, incumbent_note: None })
 }
 
 #[cfg(test)]
@@ -220,5 +253,46 @@ mod tests {
         assert_eq!(seed_passes(7, None), 7);
         assert_eq!(seed_passes(7, Some(&EarlierReuse { chosen: Some("reuse".to_string()), passes: Some(5) })), 11);
         assert_eq!(seed_passes(7, Some(&EarlierReuse { chosen: Some("full".to_string()), passes: Some(5) })), 7);
+    }
+
+    #[test]
+    fn incumbent_model_comparison_ignores_only_the_input_copy_path() {
+        let model = serde_json::json!({"schema":"iot-lab.route-model.v0", "pcb":"/old/input.kicad_pcb",
+            "nets":{"GND":{"layers":["F.Cu"]}}, "pads":[{"x":1.0}], "rules":[], "copper":[]});
+        let mut now = model.clone();
+        now["pcb"] = "/new/input.kicad_pcb".into();
+        assert!(same_problem(model.clone(), now.clone()));
+        for field in ["nets", "pads", "rules", "copper"] {
+            let mut changed = now.clone(); changed[field] = serde_json::json!(["changed"]);
+            assert!(!same_problem(model.clone(), changed), "changed {field} must block replay");
+        }
+        now.as_object_mut().unwrap().remove("pcb");
+        assert!(!same_problem(model, now));
+    }
+
+    #[test]
+    fn incumbent_requires_unmoved_parts_and_an_intact_model_receipt() {
+        assert!(incumbent_claim(Path::new("missing"), Path::new("missing"), &["U1".into()]).unwrap_err().contains("parts moved"));
+        struct Temp(std::path::PathBuf);
+        impl Drop for Temp { fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); } }
+        let temp = Temp(std::env::temp_dir().join(format!("iotroute-incumbent-{}", std::process::id())));
+        let previous = temp.0.join("old.kicad_pcb");
+        let work = temp.0.join("old.kicad_pcb.iotroute");
+        fs::create_dir_all(&work).unwrap();
+        let model = serde_json::json!({"schema":"iot-lab.route-model.v0", "pcb":"old/input.kicad_pcb", "nets":{"GND":{}}, "pads":[], "rules":[]});
+        let old_model = work.join("model.json");
+        let current = temp.0.join("current.json");
+        fs::write(&old_model, model.to_string()).unwrap();
+        fs::write(&current, model.to_string()).unwrap();
+        let receipt = serde_json::json!({"stages":{"model":{"sha256":sha_file(&old_model).unwrap()}}});
+        fs::write(work.join("result.json"), receipt.to_string()).unwrap();
+        fs::write(work.join("route.json"), serde_json::json!({"schema":"iot-lab.route-result.v0", "tracks":[],"vias":[],"failed":[{"net":"/SCL"}],"passes":6}).to_string()).unwrap();
+        let claim = incumbent_claim(&previous, &current, &[]).unwrap();
+        assert_eq!((claim.status.as_str(), claim.failed, claim.iters), ("FAIL", 1, 6), "an incomplete incumbent is never called PASS");
+        let mut changed = model.clone(); changed["pads"] = serde_json::json!([{"x":1.0}]);
+        fs::write(&current, changed.to_string()).unwrap();
+        assert!(incumbent_claim(&previous, &current, &[]).unwrap_err().contains("admitted model changed"));
+        fs::write(&old_model, changed.to_string()).unwrap();
+        assert!(incumbent_claim(&previous, &current, &[]).unwrap_err().contains("receipt"));
     }
 }
