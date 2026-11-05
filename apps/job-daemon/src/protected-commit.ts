@@ -76,6 +76,25 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
       return row ? {sha256:row.input_sha256,size:row.input_size,specSha256:row.spec_sha256,archiveToolSha256:row.archive_tool_digest,state:row.state,runtimeJob:row.runtime_job} : null;
     });
   }
+  /** Internal recovery only: associate an unstarted manager record with its prepared intent while cancelling it. */
+  associateOrphanForRecoveryFromTrustedService(ref: {project:string;board:string;operation:string;job:string;attempt:string}, runtimeJob:string): void {
+    if (!ref || ![ref.project,ref.board,ref.operation,ref.job,ref.attempt,runtimeJob].every(x => typeof x === 'string' && ID.test(x))) throw new Error('invalid orphan recovery');
+    this.transaction(() => {
+      this.safeNow();
+      const attempt = this.db.prepare('SELECT * FROM protected_attempt_bindings WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as Attempt | undefined;
+      const lease = this.db.prepare('SELECT * FROM protected_leases WHERE project=? AND board=?').get(ref.project,ref.board) as Lease | undefined;
+      const intent = this.db.prepare('SELECT * FROM protected_submission_intents WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {input_sha256:string;input_size:number;spec_sha256:string;archive_tool_digest:string;state:string} | undefined;
+      const existing = this.db.prepare('SELECT runtime_job FROM protected_runtime_jobs WHERE job=? AND attempt=?').get(ref.job,ref.attempt);
+      if (!attempt || attempt.project !== ref.project || attempt.board !== ref.board || attempt.operation !== ref.operation ||
+          !lease || lease.generation !== attempt.generation || lease.pinned !== 1 || !intent || intent.state !== 'PREPARED' || existing)
+        throw new Error('protected orphan recovery is unavailable');
+      if (this.db.prepare('UPDATE protected_attempt_cancellation SET cancelled=1 WHERE job=? AND attempt=?').run(ref.job,ref.attempt).changes !== 1)
+        throw new Error('protected cancellation state unavailable');
+      this.db.prepare('INSERT INTO protected_runtime_jobs (job,attempt,runtime_job,input_sha256,input_size,spec_sha256,archive_tool_digest) VALUES (?,?,?,?,?,?,?)')
+        .run(ref.job,ref.attempt,runtimeJob,intent.input_sha256,intent.input_size,intent.spec_sha256,intent.archive_tool_digest);
+      this.db.prepare("UPDATE protected_submission_intents SET state='ATTACHED' WHERE job=? AND attempt=?").run(ref.job,ref.attempt);
+    });
+  }
   /** Internal only; approval entries themselves require an authenticated trust bootstrap. */
   approvedArtifactFromTrustedService(kind: 'archive-tool', digest: string): boolean {
     if (!SHA.test(digest)) return false;

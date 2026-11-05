@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path'; import { test } from 'node:test';
 import { ProtectedCommitStore } from '../src/protected-commit.ts'; import { parseCanonicalJson } from '../src/canonical-json.ts';
-import { installProtectedRuntime, reconcileProtectedCancellations, recoverAbandonedProtectedAttempt } from '../src/protected-runtime.ts';
+import { installProtectedRuntime, reconcileProtectedCancellations, recoverAbandonedProtectedAttempt, recoverUnassociatedProtectedSubmission } from '../src/protected-runtime.ts';
 import { prepareAttemptInput } from '../src/protected-input.ts';
 import { launchProtectedAttemptFromTrustedService } from '../src/protected-launch.ts';
 import { validateSpec } from '../src/manager.ts';
@@ -109,6 +109,35 @@ test('fenced verified commit atomically advances the target and replays its dura
     assert.equal(pins.some(p=>p.kind==='attempt-candidate'),false);
     assert.deepEqual(store.commit(commit.token,request),result);
     assert.throws(()=>store.commit(commit.token,{...request,candidate_manifest_sha256:source}),/reused/);
+  } finally {store.close();jobRig.cleanup();fs.rmSync(parent,{recursive:true,force:true});}
+});
+
+test('recovers a queued orphan after intent persisted but runtime association was interrupted',async()=>{
+  const parent=fs.mkdtempSync(path.join(os.tmpdir(),'pcb-orphan-')), jobRig=rig({images:[`sha256:${'b'.repeat(64)}`]});
+  let store=new Fixture(path.join(parent,'store'),{maxBlobBytes:10000,quotaBytes:100000},()=>1000,()=>0n);
+  const put=(b:Buffer):string=>{const h=hash(b);store.put(h,b);return h;};
+  try {
+    const bytes=Buffer.from('source'), boardHash=put(bytes), source=put(encode({schema:'pcb.project-manifest.v1',project_id:'p',entries:[{kind:'file',path:'board',sha256:boardHash,size:bytes.length,executable:false}],required_paths:['board'],optional_absent_paths:[],external_mounts:[]}));
+    const policy='a'.repeat(64),runtime='b'.repeat(64),toolchain='c'.repeat(64);store.seed(source,policy,runtime,toolchain);
+    const issue=(id:string)=>store.issueFromTrustedService(id,'admin',{role:'submit',principal:'operator',project:'p',board:'b',operation:'route',job:null,attempt:null,issuedAtMs:1000,expiresAtMs:10000,maxUses:50});
+    const before=issue('before');if(before.state!=='ISSUED')throw Error('capability missing');
+    const req={requestId:'old',project:'p',board:'b',alias:'alias',aliasRevision:1,sourceRevision:1,sourceManifest:source,operation:'route',ttlMs:5000};
+    const lease=store.acquire(before.token,req);if(lease.state!=='ACQUIRED')throw Error('lease missing');
+    const ref={project:'p',board:'b',operation:'route',job:'job',attempt:'attempt'};
+    store.bindAttempt(before.token,{...ref,generation:lease.generation,token:lease.token},{job:'job',attempt:'attempt',sourceManifest:source,policyDigest:policy,runtimeDigest:runtime,toolchainDigest:toolchain});
+    const input=prepareAttemptInput(store,ref,parent,{tarPath:'/usr/bin/tar',tarSha256:tarHash,maxFiles:10,maxBytes:100,maxArchiveBytes:100000,timeoutMs:10000});
+    const spec=validateSpec({command:['hang'],maxRetries:0},jobRig.cfg), associated={...input,specSha256:protectedJobSpecDigest(spec)};
+    store.reserveSubmissionFromTrustedService(ref,associated);
+    const job=jobRig.mgr.submit(spec,input.archive,ref); // Crash before association.
+    store.close();store=new Fixture(path.join(parent,'store'),{maxBlobBytes:10000,quotaBytes:100000},()=>1000,()=>0n);
+    jobRig.restart();installProtectedRuntime(store,jobRig.mgr);
+    const fresh=issue('after');if(fresh.state!=='ISSUED')throw Error('capability missing');
+    const other=rig({images:[`sha256:${runtime}`]});
+    try { assert.equal(await recoverUnassociatedProtectedSubmission(store,other.mgr,ref),'PENDING'); } finally {other.cleanup();}
+    assert.equal(store.acquire(fresh.token,{...req,requestId:'busy'}).state,'BUSY');
+    assert.equal(await recoverUnassociatedProtectedSubmission(store,jobRig.mgr,ref),'CLEANED');
+    assert.equal(jobRig.mgr.jobs.get(job.id)?.state,'cancelled');assert.equal(jobRig.runtime.started.length,0);
+    assert.equal(store.acquire(fresh.token,{...req,requestId:'next'}).state,'ACQUIRED');
   } finally {store.close();jobRig.cleanup();fs.rmSync(parent,{recursive:true,force:true});}
 });
 

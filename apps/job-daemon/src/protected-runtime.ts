@@ -65,3 +65,23 @@ export async function recoverAbandonedProtectedAttempt(authority: ProtectedCommi
   authority.finishAbandonFromTrustedService(ref,recovery.runtimeJob,recovery.generation);
   return 'CLEANED';
 }
+
+/** Reconcile the crash window between durable intent and runtime association without admitting a queued job. */
+export async function recoverUnassociatedProtectedSubmission(authority: ProtectedCommitStore, manager: JobManager,
+  ref: {project:string;board:string;operation:string;job:string;attempt:string}): Promise<'PENDING' | 'CLEANED'> {
+  if (authority.recoveryStatusFromTrustedService(ref) === 'CLEANED') return 'CLEANED';
+  const intent = authority.submissionFromTrustedService(ref);
+  if (!intent) return 'PENDING';
+  if (intent.runtimeJob) return recoverAbandonedProtectedAttempt(authority,manager,ref);
+  if (intent.state !== 'PREPARED') return 'PENDING';
+  const jobs = [...manager.jobs.values()].filter(job => {
+    const r = job.protectedRef;
+    return !!r && r.project === ref.project && r.board === ref.board && r.operation === ref.operation && r.job === ref.job && r.attempt === ref.attempt;
+  });
+  if (jobs.length !== 1) return 'PENDING';
+  const job = jobs[0];
+  if (!['queued','cancelled','failed'].includes(job.state) || job.attempts.length !== 0 || job.spec.maxRetries !== 0 ||
+      protectedJobSpecDigest(job.spec) !== intent.specSha256 || !matchesProtectedArchive(manager.store.inputTar(job.id),intent)) return 'PENDING';
+  authority.associateOrphanForRecoveryFromTrustedService(ref,job.id);
+  return recoverAbandonedProtectedAttempt(authority,manager,ref);
+}
