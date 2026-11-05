@@ -35,8 +35,10 @@ test('staged producer checks population and never treats preflight as approval',
  const spec={path:'hardware-design/boards/X/spec.md',sha256:sha256('spec'),section:'use'};
  const doc={path:'doc.pdf',sha256:sha256(pdf),page:1,document_id:'D',revision:'A'};
  const evidence={path:'review.md',sha256:sha256('review'),section:'review'};
+ const rule={id:'pin-distance',kind:'pin_distance',metric:'pad_center_euclidean',
+   a:{ref:'U1',pad:'1'},b:{ref:'U1',pad:'1'},max_mm:1,source:{path:'doc.pdf',sha256:sha256(pdf),page:1}};
  const manifest:any={schema:'iot-lab.part-use.v1',board:'X',revision:'A',project,spec,
-   parts:[{reference:'U1',mpn:'PART',lcsc:'C123',manufacturer:'M',package:{name:'QFN',variant:'A'},unresolved:[],native:{...native,non_electrical_pads:[]},layout_constraints:[],datasheets:[doc],assembly_dependencies:[],
+   parts:[{reference:'U1',mpn:'PART',lcsc:'C123',manufacturer:'M',package:{name:'QFN',variant:'A'},unresolved:[],native:{...native,non_electrical_pads:[]},layout_constraints:[rule],datasheets:[doc],assembly_dependencies:[],
      ratings:[{id:'V',quantity:'voltage',limit:{min:0,max:10,unit:'V',source:doc},required:{min:0,max:5,unit:'V',source:spec},conditions:[]}]}],
    budgets:[{net:'VCC',limit:{min:0,max:2,unit:'A',source:spec},loads:[{reference:'U1',required:{min:0,max:1,unit:'A',source:spec}}]}]};
  manifest.review={verdict:'passed',reviewer:'synthetic',reviewed_at_utc:'2026-01-01T00:00:00Z',facts_sha256:sha256(canonical(manifest)),evidence};
@@ -46,7 +48,7 @@ test('staged producer checks population and never treats preflight as approval',
    'hardware-design/boards/X/spec.md':sha256('spec'),'review.md':sha256('review'),'doc.pdf':sha256(pdf)};
  const units=[{name:'U1',refs:['U1'],x:1,y:2,fixed:false}]; const outline=[[0,0],[10,0],[10,10]];
  const core={schema:'iot-lab.engineering-constraints.v1',root:'/original',board:'X',manifest:'/original/manifest.json',
-   native:'/original/'+project+'.kicad_pcb',inputs,rules:[],geometry:reconstructed.geometry,bindings:[]};
+   native:'/original/'+project+'.kicad_pcb',inputs,rules:[rule],geometry:reconstructed.geometry,bindings:[]};
  const engineering={...core,where:{U1:0},review_sha256:sha256(canonical(core)),model_anchor_sha256:sha256(canonical({units,outline}))};
  put('model.json',JSON.stringify({units,board:{outline},board_file:core.native,engineering}));
  const bin=join(root,'stub');writeFileSync(bin,'#!/bin/sh\nexit 3\n');chmodSync(bin,0o700);
