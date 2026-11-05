@@ -1580,5 +1580,181 @@
     ],
     "evidence_archive_sha256": "0540aa93c6350269de5eadbacd0609035f72379ab6d485df39a20d400cec23b6",
     "fixtures_runtime_archive_sha256": "20fc64aabae3b2a159e278a556d7447dcf60d8f44262c93575db2d440fe3e705"
+  },
+  "calibration_1374": {
+    "schema": "pcb.route-calibration.v1",
+    "protocol_commit": "0403f6f",
+    "toolchain_commit": "0ade1efd0be020424ee8d21b91e4340bb2ae176d",
+    "binary_sha256": "6a22f3f5f38766d54d63a326e1acbe4c10373c8a2742a5babc2b56165d6de869",
+    "core_source_files_verified": 212,
+    "board": "ESP32-CORE",
+    "revision": "B",
+    "fixture_commit": "a545d5e18428e03256ea876f45864b25061c1397",
+    "source_sha256": "b6b97508157893ccca5c5c2cc3e0c90d55691a42d094f9c1015ad8b7f31bdb2b",
+    "job_id": "20261105-205510-d1a805",
+    "seed": 0,
+    "max_passes": 80,
+    "cpus": 2,
+    "mem_gb": 4,
+    "experiment_wall_limit_s": null,
+    "daemon_safety_limit_s": 21600,
+    "attempts": 1,
+    "retries": 0,
+    "status": "ERROR",
+    "native_exit": 2,
+    "timed_out": false,
+    "operation_wall_s": 236.24643076799998,
+    "operation_cpu_s": 268.081095,
+    "client_wall_s": 251.19387767299997,
+    "cache": "3686 files, sending 21 (8911 KB)",
+    "first_verified_s": null,
+    "comparison_budget_s": null,
+    "comparison_trials": 0,
+    "verified_candidates": 0,
+    "stop_reason": "Unverified single calibration; no budget escalation or sprint trials",
+    "native_cause": "the planes check gave no result (exit 2): ERROR missing or changed driver evidence: hardware-design/registry/datasheets/FM25V02A-GTR_C66029.pdf; see /job/out/route/ESP32-CORE.kicad_pcb.iotroute/planes-r1.log",
+    "core": {
+      "exit": 0,
+      "seconds": 194.1,
+      "claim": {
+        "status": "FAIL",
+        "converged": true,
+        "iters": 17,
+        "tracks": 826,
+        "vias": 175,
+        "failed": 3
+      }
+    },
+    "core_failures": [
+      {
+        "net": "/IO2",
+        "stage": "route",
+        "reason": "1 component(s) not reachable past fixed copper: pad(s) at (129.65, 145.45)"
+      },
+      {
+        "net": "/IO3",
+        "stage": "route",
+        "reason": "1 component(s) not reachable past fixed copper: pad(s) at (127.11, 142.91)"
+      },
+      {
+        "net": "GND",
+        "stage": "route",
+        "reason": "no via site within 3 mm of 1 pad(s): (161.00, 122.15)"
+      }
+    ],
+    "write_counts": {
+      "drc": 0,
+      "unconnected": 4,
+      "parity": 0
+    },
+    "unconnected_items": [
+      {
+        "description": "Missing connection between items",
+        "items": [
+          {
+            "description": "Pad 2 [VDD_3V3] of U1 on F.Cu",
+            "pos": {
+              "x": 153.055,
+              "y": 102.76
+            },
+            "uuid": "99459557-2eb3-43df-926a-7b1ea5e27490"
+          },
+          {
+            "description": "Pad 1 [VDD_3V3] of C2 on F.Cu",
+            "pos": {
+              "x": 151.355,
+              "y": 103.2
+            },
+            "uuid": "3e362afa-89c5-4578-822a-672ec22b4ae2"
+          }
+        ]
+      },
+      {
+        "description": "Missing connection between items",
+        "items": [
+          {
+            "description": "Zone 'GND_F.Cu' [GND] on F.Cu, priority 0",
+            "pos": {
+              "x": 100.25,
+              "y": 100.25
+            },
+            "uuid": "d09d584a-3ba0-450e-ae42-949aa2a9d23d"
+          },
+          {
+            "description": "Zone 'GND_F.Cu' [GND] on F.Cu, priority 0",
+            "pos": {
+              "x": 100.25,
+              "y": 100.25
+            },
+            "uuid": "d09d584a-3ba0-450e-ae42-949aa2a9d23d"
+          }
+        ]
+      },
+      {
+        "description": "Missing connection between items",
+        "items": [
+          {
+            "description": "PTH pad 27 [/IO3] of J2",
+            "pos": {
+              "x": 127.11,
+              "y": 142.91
+            },
+            "uuid": "c8f6061a-4f01-4750-9c59-f596edd3986b"
+          },
+          {
+            "description": "Pad 26 [/IO3] of U1 on F.Cu",
+            "pos": {
+              "x": 170.555,
+              "y": 104.03
+            },
+            "uuid": "8f6d09bc-8380-4cfe-85f7-4d70292a6f6c"
+          }
+        ]
+      },
+      {
+        "description": "Missing connection between items",
+        "items": [
+          {
+            "description": "PTH pad 26 [/IO2] of J2",
+            "pos": {
+              "x": 129.65,
+              "y": 145.45
+            },
+            "uuid": "76499b48-0bff-43f0-8294-cb0ce79fae74"
+          },
+          {
+            "description": "Pad 27 [/IO2] of U1 on F.Cu",
+            "pos": {
+              "x": 170.555,
+              "y": 102.76
+            },
+            "uuid": "d1cac36d-07b9-4675-aef2-cbbc9a88982a"
+          }
+        ]
+      }
+    ],
+    "missing_driver_evidence": {
+      "path": "hardware-design/registry/datasheets/FM25V02A-GTR_C66029.pdf",
+      "expected_sha256": "3993f988368aa8dc94b79a888234274959b7e4e091c693535530f3f4dddafefd",
+      "absent_from_frozen_commit": true
+    },
+    "stuck_report": {
+      "unconnected": 4,
+      "open_nets": [],
+      "rows": [],
+      "limitation": "No triage data: empty named rows do not mean zero native connectivity errors"
+    },
+    "source_unchanged": true,
+    "owned_cleanup_complete": true,
+    "container_absent": true,
+    "artifact_hashes": {
+      "native": "d69fda2dbd1ffde4d29dccdd1b9b458ad8b967a8ec4db8c425fc0bce539b16fd",
+      "route": "85f39891f8e655c28f9f686c17ce01cf9938d8d07bde1a508b09e7d7688c3e97",
+      "drc": "15203ac8317b49de125b7a40b26e455ed97cb3de85f53c9ef1b8dffbbc51d06b",
+      "stuck": "54d0690b48a9161fad8068feea16bd480143fcc3547f236f7aa07d3145c95d66"
+    },
+    "decision": "No new evidence to change the LLM no-go; large-board relative performance remains unmeasured",
+    "evidence_archive_sha256": "a2b048faa8677d735113ef36e68d90e84d62b3d1308d62c5053522dd6517421d",
+    "fixture_runtime_archive_sha256": "bd1cd297ed2944d5fbdfda9c7757f74f48e9b497fe176c825f5807c25ab6133e"
   }
 }

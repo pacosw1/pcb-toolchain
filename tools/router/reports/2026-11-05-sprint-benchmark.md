@@ -2,7 +2,7 @@
 
 ## Decision after the three-board extension
 
-**The no-go for adding LLM scheduling/ranking holds on this evidence.** FIELD-24V-BUS adds another fully verified comparison with no quality improvement from sprints and greater whole-job CPU. ESP32-CORE rev B produces no verified candidate within either tested budget, so its quality comparison is inconclusive. These observations apply to pinned toolchain `696715d`; later router fixes are not part of this experiment. There is no statistical or general large-board claim. See the [extension results](#three-board-extension-1358).
+**The no-go for adding LLM scheduling/ranking holds on this evidence.** FIELD-24V-BUS adds another fully verified comparison with no quality improvement from sprints and greater whole-job CPU. ESP32-CORE rev B produces no verified candidate within either tested budget, so its quality comparison is inconclusive. The matched comparisons use pinned toolchain `696715d`. A subsequent [current-main single calibration](#current-main-esp32-calibration-1374) also did not verify and therefore stopped before any sprint comparison. There is no statistical or general large-board claim. See the [extension results](#three-board-extension-1358).
 
 ## Original ENV-SENSE decision
 
@@ -257,3 +257,44 @@ The appended `extension_1358` in [the machine-readable report](2026-11-05-sprint
 | `benchmark-1358-fixtures-runtime.tar.gz` | `20fc64aabae3b2a159e278a556d7447dcf60d8f44262c93575db2d440fe3e705` |
 
 Validation: strict TypeScript and JavaScript syntax checks pass. Analyzer fixtures check board-specific paths, null verification time on failure, and retention of failed portfolio progress without a native accepted result. The benchmark itself ran only on Hetzner. The conclusion remains a no-go for additional LLM scheduling on the measured evidence, with the larger-board comparison explicitly inconclusive.
+
+## Current-main ESP32 calibration (#1374)
+
+The follow-up pins main at `0ade1efd0be020424ee8d21b91e4340bb2ae176d`, including the plane-hole and GND reuse fixes. It reuses the exact historical ESP32-CORE B board, rules, locked USB pair policy, Node runtime and image. The newly built Linux router is `6a22f3f5f38766d54d63a326e1acbe4c10373c8a2742a5babc2b56165d6de869`; all 212 source files were checked against the pinned tree. Protocol commit `0403f6f` precedes this single calibration.
+
+The calibration keeps seed 0, 80 passes, two CPUs and four GiB, while omitting both the old experiment timer and native `--max-time`. The daemon's existing 21,600-second maximum is only an operational ceiling. The run terminates naturally; it does not hit that ceiling or a 120/240-second timer.
+
+| Measurement | Observed value |
+| --- | --- |
+| Job | `20261105-205510-d1a805` |
+| Operation wall / actual CPU | 236.246 s / 268.081 CPU-s |
+| Client wall | 251.194 s |
+| Core | 17 passes, 194.1 s, FAIL with three failed nets |
+| Native write | 0 DRC errors, 4 unconnected items, 0 schematic-parity errors |
+| Final operation | ERROR, native exit 2 |
+| First fully verified / shared comparison budget | unavailable / not selected |
+| Comparison trials / retries | 0 / 0 |
+
+There are two separate failure findings. The routed board already fails native connectivity. Then the reference-planes check cannot produce a result because required driver evidence `hardware-design/registry/datasheets/FM25V02A-GTR_C66029.pdf` is absent from the historical fixture. The current table expects SHA-256 `3993f988368aa8dc94b79a888234274959b7e4e091c693535530f3f4dddafefd`; that path does not exist in the frozen `a545d5e1` tree. The full fresh configured gate is never reached. Root result counts are null because of this error; the 0/4/0 counts above are specifically the native write's actual DRC report. No evidence file was invented and no rule was disabled.
+
+| Net | Preserved finding |
+| --- | --- |
+| `/IO2` | Router's fixed-copper reachability test fails at J2.26 (129.65, 145.45); native DRC reports J2.26 to U1.27 open |
+| `/IO3` | Same test fails at J2.27 (127.11, 142.91); native DRC reports J2.27 to U1.26 open |
+| `GND` | Router finds no sampled via site within 3 mm of U4.2 (161.00, 122.15); native DRC also reports disconnected GND zone islands |
+| `VDD_3V3` | Native DRC reports U1.2 to C2.1 open; this is additional to the core's three failed-net list |
+
+These are scoped model/search and native-output findings, not proofs of physical impossibility. The router's sample radius is a search limit, not a new electrical requirement. The search eliminated its reported routing conflicts, but that did not establish connectivity after write/refill.
+
+For the requested stuck report, a separate postmortem directory holds copies of the actual native `write/drc.json` and model. Running the existing `iotroute stuck` on those records performs no routing. It reports four unconnected items but, without triage data, an empty named-net list and the misleading text “0 nets open.” That limitation was handed to the existing stuck-report task. The raw DRC endpoints and core failure records above remain the evidence; empty diagnostic rows are not a clean result.
+
+**Stop decision:** the single calibration did not verify, so no shared comparison budget was derived, no sprint trials were launched, and no budget was increased. The incomplete verification input and native connectivity failures prevent a valid current-main time-to-verification baseline. There is no new evidence to change the LLM no-go; the larger-board relative-performance question remains unmeasured.
+
+The job ended after one attempt, owned child cleanup is complete, its container is independently absent, and the frozen PCB hash is unchanged. The measurement harness now supports the finite-work `measure 0 ESP32-CORE` mode and reports its experiment deadline as null, separately from the daemon safety ceiling. Existing timed runs retain their verification reserve. No solver, gate, canonical board or production-runtime changes are included.
+
+The JSON's `calibration_1374` retains timing, native and write outcomes, all four DRC connection records, the missing-evidence requirement, diagnostic limitation and zero comparison count. Raw evidence and the complete frozen fixture/runtime are preserved under durable `artifacts/benchmark-1374/`, with gzip integrity and hashes checked:
+
+| Archive | SHA-256 |
+| --- | --- |
+| `benchmark-1374-evidence.tar.gz` | `a2b048faa8677d735113ef36e68d90e84d62b3d1308d62c5053522dd6517421d` |
+| `benchmark-1374-fixture-runtime.tar.gz` | `bd1cd297ed2944d5fbdfda9c7757f74f48e9b497fe176c825f5807c25ab6133e` |
