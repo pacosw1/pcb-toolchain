@@ -13,3 +13,11 @@ export function reconcileProtectedCancellations(authority: ProtectedCommitStore,
   }
   return { requested, unavailable };
 }
+
+/** Trusted bootstrap only. Protected jobs remain held when the adapter is absent or the authority rejects admission. */
+export function installProtectedRuntime(authority: ProtectedCommitStore, manager: JobManager): void {
+  if (manager.protectedAdmission || manager.protectedContinuation || manager.protectedBeforeTick) throw new Error('protected runtime is already installed');
+  manager.protectedAdmission = job => !!job.protectedRef && authority.canDispatchProtected(job.protectedRef, job.id);
+  manager.protectedContinuation = job => !!job.protectedRef && authority.canDispatchProtected(job.protectedRef, job.id, true);
+  manager.protectedBeforeTick = () => { reconcileProtectedCancellations(authority, manager); };
+}

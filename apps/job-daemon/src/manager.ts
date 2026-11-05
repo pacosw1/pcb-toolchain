@@ -108,6 +108,10 @@ export class JobManager {
   private diskMisses = new Map<string, number>();
   /** What was last logged for each waiting job. Lost at a restart, which logs each hold once more. */
   private holdLogged = new Map<string, { kind: string; at: number }>();
+  /** Installed only by the trusted protected coordinator; false or absent fails closed. */
+  protectedAdmission?: (job: JobRecord) => boolean;
+  protectedContinuation?: (job: JobRecord) => boolean;
+  protectedBeforeTick?: () => void;
 
   constructor(cfg: Config, store: Store, runtime: Runtime, host: () => HostState, now: () => number = Date.now) {
     this.cfg = cfg;
@@ -164,7 +168,9 @@ export class JobManager {
   }
 
   /** The uploaded tar moves into the job folder; job.json is written last, so a crash here leaves no job. */
-  submit(spec: JobSpec, tarPath: string): JobRecord {
+  submit(spec: JobSpec, tarPath: string, protectedRef?: JobRecord['protectedRef']): JobRecord {
+    if (protectedRef && (spec.maxRetries !== 0 || ![protectedRef.project,protectedRef.board,protectedRef.operation,protectedRef.job,protectedRef.attempt]
+      .every(x => typeof x === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(x)))) throw new Error('invalid protected job');
     this.assertQueueRoom();
     if (this.host().diskFreeGb < this.cfg.minFreeGb) {
       throw new HttpError(507, `less than ${this.cfg.minFreeGb} GB free in ${this.cfg.dataDir}`);
@@ -183,6 +189,7 @@ export class JobManager {
       updatedAt: t,
       cancelRequested: false,
       attempts: [],
+      ...(protectedRef ? { protectedRef: { ...protectedRef } } : {}),
     };
     this.store.save(job);
     this.store.appendEvent(id, { t, from: null, to: 'queued', attempt: 0, detail: 'submitted' });
@@ -211,6 +218,12 @@ export class JobManager {
     this.ticking = true;
     try {
       if (!this.recovered) await this.recover();
+      try { this.protectedBeforeTick?.(); } catch (error) { console.error('protected reconciliation failed', error); }
+      for (const job of this.list('running')) if (job.protectedRef) {
+        let allowed = false;
+        try { allowed = this.protectedContinuation?.(job) === true; } catch { /* fail closed */ }
+        if (!allowed) this.cancel(job.id);
+      }
       this.enforceHostFloor();
       for (const job of this.list('running')) await this.reconcile(job);
       await this.admit();
@@ -416,7 +429,13 @@ export class JobManager {
   /** One start per tick, so that the next job is judged on a host that has seen this one at least begin. */
   private async admit(): Promise<void> {
     const due = (j: JobRecord): boolean => j.state === 'queued' || Date.parse(j.nextAttemptAt ?? '') <= this.now();
-    const [next, ...behind] = this.list('queued', 'retrying').filter(due);
+    const admitted = (j: JobRecord): boolean => {
+      if (!j.protectedRef) return true;
+      try { return this.protectedAdmission?.(j) === true; } catch { return false; }
+    };
+    const waiting = this.list('queued', 'retrying').filter(due);
+    for (const job of waiting) if (!admitted(job)) this.noteHold(job, 'protected coordinator admission unavailable');
+    const [next, ...behind] = waiting.filter(admitted);
     if (!next) {
       this.hold = '';
       return;
@@ -428,6 +447,7 @@ export class JobManager {
       for (const job of behind) this.noteHold(job, `behind ${next.id}: ${this.hold}`);
       return;
     }
+    if (!admitted(next)) { this.noteHold(next, 'protected coordinator admission unavailable'); return; }
     await this.startAttempt(next);
   }
 

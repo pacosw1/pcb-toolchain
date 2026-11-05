@@ -40,11 +40,14 @@ test('fenced verified commit atomically advances the target and replays its dura
     if(lease.state!=='ACQUIRED') throw Error('lease missing');
     store.bindAttempt(submit.token,{project:'p',board:'b',operation:'route',generation:lease.generation,token:lease.token},{job:'job',attempt:'attempt',sourceManifest:source,policyDigest:policy,runtimeDigest:runtime,toolchainDigest:toolchain});
     const candidateRef={project:'p',board:'b',operation:'route',job:'job',attempt:'attempt',manifest:candidate};
+    assert.equal(store.canDispatchProtected(candidateRef,'runtime-job'),false);
     store.associateRuntimeFromTrustedService(candidateRef,'runtime-job');
     store.associateRuntimeFromTrustedService(candidateRef,'runtime-job');
     assert.throws(()=>store.associateRuntimeFromTrustedService(candidateRef,'different-job'),/changed/);
+    assert.equal(store.canDispatchProtected(candidateRef,'runtime-job'),true);
     assert.throws(()=>store.stageCandidate(submit.token,candidateRef),/not authorized/);
     store.stageCandidate(worker.token,candidateRef); store.stageCandidate(worker.token,candidateRef);
+    assert.equal(store.canDispatchProtected(candidateRef,'runtime-job'),false);
     assert.throws(()=>store.stageCandidate(worker.token,{...candidateRef,manifest:source}),/candidate changed/);
     assert.ok(store.pins().some(p=>p.kind==='attempt-candidate'&&p.sha256===candidate));
     const receipt=encode({schema:'pcb.verification.v1',verification_id:'verification',job_id:'job',attempt_id:'attempt',project_id:'p',board_id:'b',alias_revision:1,lease_generation:lease.generation,source_revision:1,source_manifest_sha256:source,candidate_manifest_sha256:candidate,toolchain_digest:toolchain,runtime_digest:runtime,policy_digest:policy,evidence_manifest_sha256:evidence,verifier_identity:'verifier',issued_at_ms:now,expires_at_ms:5000,checks:[{id:'drc',outcome:'passed',evidence_manifest_sha256:evidence}],schematic_parity:'passed',worker_cleanup:'confirmed',cancellation:'not_cancelled',outcome:'passed'});

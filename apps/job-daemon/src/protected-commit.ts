@@ -58,6 +58,28 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
         { job:string; attempt:string; runtimeJob:string }[];
     });
   }
+  /** Admission guard for the manager; does not attest the runtime or authorize a verification verdict. */
+  canDispatchProtected(ref: { project:string; board:string; operation:string; job:string; attempt:string }, runtimeJob: string, continuing = false): boolean {
+    if (!ref || ![ref.project,ref.board,ref.operation,ref.job,ref.attempt,runtimeJob].every(x => typeof x === 'string' && ID.test(x))) return false;
+    return this.transaction(() => {
+      const now = this.clock();
+      const attempt = this.db.prepare('SELECT * FROM protected_attempt_bindings WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as Attempt | undefined;
+      const target = this.db.prepare('SELECT revision,alias_revision,state,source_manifest,board_path FROM protected_targets WHERE project=? AND board=?').get(ref.project,ref.board) as Target | undefined;
+      const lease = this.db.prepare('SELECT * FROM protected_leases WHERE project=? AND board=?').get(ref.project,ref.board) as Lease | undefined;
+      const cancel = this.db.prepare('SELECT cancelled FROM protected_attempt_cancellation WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {cancelled:number} | undefined;
+      const runtime = this.db.prepare('SELECT runtime_job FROM protected_runtime_jobs WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {runtime_job:string} | undefined;
+      const current = this.db.prepare('SELECT policy_digest,runtime_digest,toolchain_digest FROM protected_target_policy WHERE project=? AND board=?').get(ref.project,ref.board) as {policy_digest:string;runtime_digest:string;toolchain_digest:string} | undefined;
+      const policy = attempt && this.db.prepare('SELECT enabled FROM protected_policies WHERE digest=?').get(attempt.policy_digest) as {enabled:number} | undefined;
+      const approved = this.db.prepare('SELECT enabled FROM protected_approved_digests WHERE kind=? AND digest=?');
+      return !!attempt && attempt.project === ref.project && attempt.board === ref.board && attempt.operation === ref.operation &&
+        !!target && target.state === 'ACTIVE' && target.revision === attempt.source_revision && target.alias_revision === attempt.alias_revision && target.source_manifest === attempt.source_manifest &&
+        !!lease && lease.boot_id === this.bootId && lease.pinned === 1 && lease.expires_at > now && lease.generation === attempt.generation && lease.operation === ref.operation && lease.source_manifest === attempt.source_manifest &&
+        !!cancel && cancel.cancelled === 0 && runtime?.runtime_job === runtimeJob && !!current && current.policy_digest === attempt.policy_digest && current.runtime_digest === attempt.runtime_digest && current.toolchain_digest === attempt.toolchain_digest &&
+        policy?.enabled === 1 && (approved.get('runtime',attempt.runtime_digest) as {enabled:number} | undefined)?.enabled === 1 &&
+        (approved.get('toolchain',attempt.toolchain_digest) as {enabled:number} | undefined)?.enabled === 1 &&
+        (continuing || !this.db.prepare('SELECT 1 FROM protected_candidates WHERE job=? AND attempt=?').get(ref.job,ref.attempt));
+    });
+  }
   /** Persist cancellation before the orchestrator stops a worker. Pins remain until trusted cleanup. */
   cancelAttempt(capability: string, ref: { project: string; board: string; operation: string; job: string; attempt: string }): void {
     if (!ref || ![ref.project,ref.board,ref.operation,ref.job,ref.attempt].every(x => typeof x === 'string' && ID.test(x))) throw new Error('invalid protected cancellation');

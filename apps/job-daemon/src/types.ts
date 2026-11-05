@@ -47,6 +47,8 @@ export interface JobRecord {
   createdAt: string;
   updatedAt: string;
   cancelRequested: boolean;
+  /** Internal protected-orchestrator association. A missing admission callback keeps this job queued. */
+  protectedRef?: { project: string; board: string; operation: string; job: string; attempt: string };
   attempts: Attempt[];
   nextAttemptAt?: string;
   /** Why it is waiting now. Only while it waits. */

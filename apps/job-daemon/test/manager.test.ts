@@ -6,7 +6,7 @@ import { runArgs } from '../src/docker.ts';
 import { validateSpec } from '../src/manager.ts';
 import { reconcileProtectedCancellations } from '../src/protected-runtime.ts';
 import { HttpError } from '../src/types.ts';
-import { rig } from './helpers.ts';
+import { rig, tarOf } from './helpers.ts';
 import type { Rig } from './helpers.ts';
 
 let r: Rig;
@@ -30,6 +30,20 @@ async function settle(id: string): Promise<void> {
 }
 
 describe('states', () => {
+  it('keeps protected jobs held across restart until coordinator admits them', async () => {
+    const ref = { project:'p', board:'b', operation:'route', job:'protected', attempt:'attempt' };
+    const spec = validateSpec({ command:['hang'], maxRetries:0 }, r.cfg);
+    const job = r.mgr.submit(spec, tarOf(r.dir), ref);
+    await r.mgr.tick(); assert.equal(job.state, 'queued'); assert.equal(r.runtime.started.length, 0);
+    r.restart(); await r.mgr.tick(); assert.equal(r.mgr.jobs.get(job.id)?.state, 'queued');
+    r.mgr.protectedAdmission = current => current.id === job.id && current.protectedRef?.job === 'protected';
+    r.mgr.protectedContinuation = () => true;
+    await r.mgr.tick(); assert.equal(r.mgr.jobs.get(job.id)?.state, 'running');
+    const container = r.mgr.jobs.get(job.id)!.attempts[0].container;
+    r.restart(); await r.mgr.tick();
+    assert.equal(r.mgr.jobs.get(job.id)?.state, 'cancelled');
+    assert.deepEqual(r.runtime.killed, [container]);
+  });
   it('reconciles a durable protected cancellation into the actual manager', async () => {
     const job = r.submit(['hang']); await r.mgr.tick();
     const authority = { pendingRuntimeCancellations: () => [{ job:'protected', attempt:'attempt', runtimeJob:job.id }] };
