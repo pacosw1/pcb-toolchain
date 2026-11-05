@@ -8,7 +8,7 @@
  *      only datasheet-evidence claims (sourcing/"JLC snapshot" claims and
  *      process sentences are out of scope here);
  *   2. (code) retrieves the best-matching pages from the extracted datasheet
- *      text (datasheets/*.txt, produced by tools/inspect-pdfs.py) by token
+ *      text (datasheets/*.txt, "--- PDF PAGE n ---" per page) by token
  *      overlap — deterministic, inspectable;
  *   3. (Jev, one batched call) judges each claim against its retrieved pages:
  *      supported / contradicted / not_addressed, with confidence.
@@ -137,7 +137,7 @@ for (const c of claims) {
   }
   const pages = pageCache.get(txtName);
   if (!pages) {
-    skipped.push({...c, reason: `extracted text missing for ${txtName} (run tools/inspect-pdfs.py)`});
+    skipped.push({...c, reason: `extracted text missing for ${txtName}`});
     continue;
   }
   c.datasheet = part.datasheet;

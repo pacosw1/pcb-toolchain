@@ -1,0 +1,4214 @@
+[
+{"name": "big_and_tiny", "refusal": "",
+"input": {
+ "schema": "iot-lab.route-problem.v1",
+ "bounds": [
+  0,
+  0,
+  10000000000000000,
+  0.00003
+ ],
+ "edge_clearance": 0,
+ "edge_source": "synthetic fixture",
+ "layers": [
+  "F.Cu",
+  "B.Cu"
+ ],
+ "nets": [
+  {
+   "name": "A",
+   "width": 1e-7,
+   "clearance": 0,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  }
+ ],
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "a",
+   "net": "A",
+   "start": [
+    1,
+    0.00001
+   ],
+   "end": [
+    9000000000000000,
+    0.00002
+   ],
+   "layers": [
+    "F.Cu"
+   ]
+  }
+ ],
+ "pair_clearances": [],
+ "unsupported": [],
+ "inputs": {
+  "fixture": "0000000000000000000000000000000000000000000000000000000000000000"
+ }
+},
+"record": {
+  "schema": "iot-lab.pattern-route.v1",
+  "input_sha256": "de33f0d219944dc1ddf2302ea92ac9d1d67bb77797d340a58ee613d970f9744d",
+  "qualified": false,
+  "routes": [
+    {
+      "connection": "a",
+      "net": "A",
+      "layer": "F.Cu",
+      "width": 1e-07,
+      "points": [
+        [
+          1.0,
+          1e-05
+        ],
+        [
+          1.0,
+          2e-05
+        ],
+        [
+          9000000000000000.0,
+          2e-05
+        ]
+      ],
+      "length_mm": 8999999999999999.0
+    }
+  ],
+  "unresolved": [],
+  "attempts": 1,
+  "native_validation_required": true,
+  "status": "candidate",
+  "elapsed_s": 2.651754766702652e-05,
+  "source_sha256": "de33f0d219944dc1ddf2302ea92ac9d1d67bb77797d340a58ee613d970f9744d",
+  "implementation_sha256": "acacdef003b57ad9eb1ac46b312e210343ca46328f51627a28dbf5deaece6e07"
+}},
+{"name": "edge_blocked", "refusal": "",
+"input": {
+ "schema": "iot-lab.route-problem.v1",
+ "bounds": [
+  0,
+  0,
+  40,
+  30
+ ],
+ "edge_clearance": 0.3,
+ "edge_source": "synthetic fixture",
+ "layers": [
+  "F.Cu",
+  "B.Cu"
+ ],
+ "nets": [
+  {
+   "name": "A",
+   "width": 0.2,
+   "clearance": 0.2,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "B",
+   "width": 0.25,
+   "clearance": 0.15,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "C",
+   "width": 0.5,
+   "clearance": 0.3,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  }
+ ],
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "a",
+   "net": "A",
+   "start": [
+    0.1,
+    5
+   ],
+   "end": [
+    9,
+    5
+   ],
+   "layers": [
+    "F.Cu"
+   ]
+  }
+ ],
+ "pair_clearances": [],
+ "unsupported": [],
+ "inputs": {
+  "fixture": "0000000000000000000000000000000000000000000000000000000000000000"
+ }
+},
+"record": {
+  "schema": "iot-lab.pattern-route.v1",
+  "input_sha256": "d5432aedbd9a5ef031444418a389324ab1446c5136560010375110d4e760f060",
+  "qualified": false,
+  "routes": [],
+  "unresolved": [
+    {
+      "connection": "a",
+      "net": "A",
+      "reason": "patterns_exhausted",
+      "blockers": [
+        "board_edge"
+      ],
+      "unroutable_proven": false
+    }
+  ],
+  "attempts": 2,
+  "native_validation_required": true,
+  "status": "candidate",
+  "elapsed_s": 4.536006599664688e-05,
+  "source_sha256": "d5432aedbd9a5ef031444418a389324ab1446c5136560010375110d4e760f060",
+  "implementation_sha256": "acacdef003b57ad9eb1ac46b312e210343ca46328f51627a28dbf5deaece6e07"
+}},
+{"name": "empty", "refusal": "",
+"input": {
+ "schema": "iot-lab.route-problem.v1",
+ "bounds": [
+  0,
+  0,
+  40,
+  30
+ ],
+ "edge_clearance": 0.3,
+ "edge_source": "synthetic fixture",
+ "layers": [
+  "F.Cu",
+  "B.Cu"
+ ],
+ "nets": [
+  {
+   "name": "A",
+   "width": 0.2,
+   "clearance": 0.2,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "B",
+   "width": 0.25,
+   "clearance": 0.15,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "C",
+   "width": 0.5,
+   "clearance": 0.3,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  }
+ ],
+ "obstacles": [],
+ "connections": [],
+ "pair_clearances": [],
+ "unsupported": [],
+ "inputs": {
+  "fixture": "0000000000000000000000000000000000000000000000000000000000000000"
+ }
+},
+"record": {
+  "schema": "iot-lab.pattern-route.v1",
+  "input_sha256": "8b83d77274a2a5bf918f09f149346e6026e46944ac3042d7d2f31c2cfee85174",
+  "qualified": false,
+  "routes": [],
+  "unresolved": [],
+  "attempts": 0,
+  "native_validation_required": true,
+  "status": "candidate",
+  "elapsed_s": 3.7690624594688416e-06,
+  "source_sha256": "8b83d77274a2a5bf918f09f149346e6026e46944ac3042d7d2f31c2cfee85174",
+  "implementation_sha256": "acacdef003b57ad9eb1ac46b312e210343ca46328f51627a28dbf5deaece6e07"
+}},
+{"name": "integers_stay_integers", "refusal": "",
+"input": {
+ "schema": "iot-lab.route-problem.v1",
+ "bounds": [
+  0,
+  0,
+  40,
+  30
+ ],
+ "edge_clearance": 1,
+ "edge_source": "synthetic fixture",
+ "layers": [
+  "F.Cu",
+  "B.Cu"
+ ],
+ "nets": [
+  {
+   "name": "A",
+   "width": 0.2,
+   "clearance": 0.2,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "B",
+   "width": 0.25,
+   "clearance": 0.15,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "C",
+   "width": 0.5,
+   "clearance": 0.3,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  }
+ ],
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "a",
+   "net": "A",
+   "start": [
+    2,
+    2
+   ],
+   "end": [
+    20,
+    20
+   ],
+   "layers": [
+    "B.Cu",
+    "F.Cu"
+   ]
+  }
+ ],
+ "pair_clearances": [],
+ "unsupported": [],
+ "inputs": {
+  "fixture": "0000000000000000000000000000000000000000000000000000000000000000"
+ }
+},
+"record": {
+  "schema": "iot-lab.pattern-route.v1",
+  "input_sha256": "b7bf6c2873731bab9b63c2df386c8cdc4c205795eec5623adab9f0d7d577f609",
+  "qualified": false,
+  "routes": [
+    {
+      "connection": "a",
+      "net": "A",
+      "layer": "B.Cu",
+      "width": 0.2,
+      "points": [
+        [
+          2.0,
+          2.0
+        ],
+        [
+          2.0,
+          20.0
+        ],
+        [
+          20.0,
+          20.0
+        ]
+      ],
+      "length_mm": 36.0
+    }
+  ],
+  "unresolved": [],
+  "attempts": 1,
+  "native_validation_required": true,
+  "status": "candidate",
+  "elapsed_s": 3.589317202568054e-05,
+  "source_sha256": "b7bf6c2873731bab9b63c2df386c8cdc4c205795eec5623adab9f0d7d577f609",
+  "implementation_sha256": "acacdef003b57ad9eb1ac46b312e210343ca46328f51627a28dbf5deaece6e07"
+}},
+{"name": "random_0", "refusal": "",
+"input": {
+ "schema": "iot-lab.route-problem.v1",
+ "bounds": [
+  0,
+  0,
+  40,
+  30
+ ],
+ "edge_clearance": 0.3,
+ "edge_source": "synthetic fixture",
+ "layers": [
+  "F.Cu",
+  "B.Cu"
+ ],
+ "nets": [
+  {
+   "name": "A",
+   "width": 0.2,
+   "clearance": 0.2,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "B",
+   "width": 0.25,
+   "clearance": 0.15,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "C",
+   "width": 0.5,
+   "clearance": 0.3,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  }
+ ],
+ "obstacles": [
+  {
+   "name": "o0",
+   "bounds": [
+    22.62008360941898,
+    8.010729792998513,
+    25.892755977899185,
+    12.991370874127082
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "net": "",
+   "clearance": 0.25
+  },
+  {
+   "name": "o1",
+   "bounds": [
+    23.21307087978957,
+    4.972054483355979,
+    27.663979587314643,
+    8.596241537153833
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "B",
+   "clearance": 0
+  },
+  {
+   "name": "o2",
+   "bounds": [
+    28.308640373548794,
+    18.006644852928186,
+    30.19602651749553,
+    22.03795642626377
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "C",
+   "clearance": 0
+  },
+  {
+   "name": "o3",
+   "bounds": [
+    7.342932584855208,
+    14.337046003591757,
+    8.741614106782531,
+    15.61910350095439
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "net": "A",
+   "clearance": 0
+  }
+ ],
+ "connections": [
+  {
+   "name": "c0",
+   "net": "A",
+   "start": [
+    30.927793635953122,
+    25.39657975379218
+   ],
+   "end": [
+    33.0715236813163,
+    4.1174812331411434
+   ],
+   "layers": [
+    "F.Cu"
+   ]
+  },
+  {
+   "name": "c1",
+   "net": "B",
+   "start": [
+    18.87472457526006,
+    21.477327833174417
+   ],
+   "end": [
+    14.9085094993508,
+    8.820883277720252
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ]
+  },
+  {
+   "name": "c2",
+   "net": "C",
+   "start": [
+    14.993708855469576,
+    26.724283707199753
+   ],
+   "end": [
+    34.08905531516721,
+    12.739531045658296
+   ],
+   "layers": [
+    "F.Cu"
+   ]
+  }
+ ],
+ "pair_clearances": [
+  {
+   "nets": [
+    "A",
+    "C"
+   ],
+   "clearance": 0.5,
+   "source": "synthetic"
+  }
+ ],
+ "unsupported": [],
+ "inputs": {
+  "fixture": "0000000000000000000000000000000000000000000000000000000000000000"
+ }
+},
+"record": {
+  "schema": "iot-lab.pattern-route.v1",
+  "input_sha256": "c5b9ad7e5a93dd137ee285f2cac0373620832503c437e166e242549dec639945",
+  "qualified": false,
+  "routes": [
+    {
+      "connection": "c2",
+      "net": "C",
+      "layer": "F.Cu",
+      "width": 0.5,
+      "points": [
+        [
+          14.993708855469576,
+          26.724283707199753
+        ],
+        [
+          34.08905531516721,
+          26.724283707199753
+        ],
+        [
+          34.08905531516721,
+          12.739531045658296
+        ]
+      ],
+      "length_mm": 33.08009912123909
+    },
+    {
+      "connection": "c0",
+      "net": "A",
+      "layer": "F.Cu",
+      "width": 0.2,
+      "points": [
+        [
+          30.927793635953122,
+          25.39657975379218
+        ],
+        [
+          30.927793635953122,
+          4.1174812331411434
+        ],
+        [
+          33.0715236813163,
+          4.1174812331411434
+        ]
+      ],
+      "length_mm": 23.422828566014218
+    },
+    {
+      "connection": "c1",
+      "net": "B",
+      "layer": "F.Cu",
+      "width": 0.25,
+      "points": [
+        [
+          18.87472457526006,
+          21.477327833174417
+        ],
+        [
+          18.87472457526006,
+          8.820883277720252
+        ],
+        [
+          14.9085094993508,
+          8.820883277720252
+        ]
+      ],
+      "length_mm": 16.622659631363426
+    }
+  ],
+  "unresolved": [],
+  "attempts": 4,
+  "native_validation_required": true,
+  "status": "candidate",
+  "elapsed_s": 0.00015951506793498993,
+  "source_sha256": "c5b9ad7e5a93dd137ee285f2cac0373620832503c437e166e242549dec639945",
+  "implementation_sha256": "acacdef003b57ad9eb1ac46b312e210343ca46328f51627a28dbf5deaece6e07"
+}},
+{"name": "random_1", "refusal": "",
+"input": {
+ "schema": "iot-lab.route-problem.v1",
+ "bounds": [
+  0,
+  0,
+  40,
+  30
+ ],
+ "edge_clearance": 0.3,
+ "edge_source": "synthetic fixture",
+ "layers": [
+  "F.Cu",
+  "B.Cu"
+ ],
+ "nets": [
+  {
+   "name": "A",
+   "width": 0.2,
+   "clearance": 0.2,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "B",
+   "width": 0.25,
+   "clearance": 0.15,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "C",
+   "width": 0.5,
+   "clearance": 0.3,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  }
+ ],
+ "obstacles": [
+  {
+   "name": "o0",
+   "bounds": [
+    28.050371540268127,
+    4.972709776820945,
+    29.09443454546595,
+    6.766700836581505
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "net": "",
+   "clearance": 0.15000000000000002
+  },
+  {
+   "name": "o1",
+   "bounds": [
+    17.648412533406358,
+    23.378408919264754,
+    20.145824882223188,
+    27.21989246621723
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "B",
+   "clearance": 0
+  },
+  {
+   "name": "o2",
+   "bounds": [
+    8.434941772108406,
+    11.028403495451624,
+    12.840094774374784,
+    15.17740601351364
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "C",
+   "clearance": 0
+  },
+  {
+   "name": "o3",
+   "bounds": [
+    11.159671668968942,
+    13.323341971413859,
+    15.438559145358653,
+    16.914382643818104
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "net": "A",
+   "clearance": 0
+  },
+  {
+   "name": "o4",
+   "bounds": [
+    4.665201069631242,
+    14.552684164397737,
+    5.398189403534955,
+    18.100111936405355
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "",
+   "clearance": 0
+  }
+ ],
+ "connections": [
+  {
+   "name": "c0",
+   "net": "A",
+   "start": [
+    16.184461362280167,
+    20.590491780820532
+   ],
+   "end": [
+    10.657375101771846,
+    11.703586106516228
+   ],
+   "layers": [
+    "B.Cu"
+   ]
+  },
+  {
+   "name": "c1",
+   "net": "B",
+   "start": [
+    16.214685208729787,
+    12.709350114552933
+   ],
+   "end": [
+    36.87580086471318,
+    13.054805284391533
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ]
+  },
+  {
+   "name": "c2",
+   "net": "C",
+   "start": [
+    1.8661859039525437,
+    8.052208203381024
+   ],
+   "end": [
+    6.050340416398989,
+    19.672287353627517
+   ],
+   "layers": [
+    "B.Cu"
+   ]
+  },
+  {
+   "name": "c3",
+   "net": "A",
+   "start": [
+    1.2087402344722022,
+    9.015297669924468
+   ],
+   "end": [
+    11.661733632284093,
+    12.698291784011895
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ]
+  }
+ ],
+ "pair_clearances": [],
+ "unsupported": [],
+ "inputs": {
+  "fixture": "0000000000000000000000000000000000000000000000000000000000000000"
+ }
+},
+"record": {
+  "schema": "iot-lab.pattern-route.v1",
+  "input_sha256": "4dee16502c80da38c76f4f00c50d977f19a16258c6bd84d84e24329d03e70d50",
+  "qualified": false,
+  "routes": [
+    {
+      "connection": "c2",
+      "net": "C",
+      "layer": "B.Cu",
+      "width": 0.5,
+      "points": [
+        [
+          1.8661859039525437,
+          8.052208203381024
+        ],
+        [
+          1.8661859039525437,
+          19.672287353627517
+        ],
+        [
+          6.050340416398989,
+          19.672287353627517
+        ]
+      ],
+      "length_mm": 15.804233662692939
+    },
+    {
+      "connection": "c0",
+      "net": "A",
+      "layer": "B.Cu",
+      "width": 0.2,
+      "points": [
+        [
+          16.184461362280167,
+          20.590491780820532
+        ],
+        [
+          16.184461362280167,
+          11.703586106516228
+        ],
+        [
+          10.657375101771846,
+          11.703586106516228
+        ]
+      ],
+      "length_mm": 14.413991934812625
+    },
+    {
+      "connection": "c1",
+      "net": "B",
+      "layer": "F.Cu",
+      "width": 0.25,
+      "points": [
+        [
+          16.214685208729787,
+          12.709350114552933
+        ],
+        [
+          16.214685208729787,
+          13.054805284391533
+        ],
+        [
+          36.87580086471318,
+          13.054805284391533
+        ]
+      ],
+      "length_mm": 21.00657082582199
+    }
+  ],
+  "unresolved": [
+    {
+      "connection": "c3",
+      "net": "A",
+      "reason": "patterns_exhausted",
+      "blockers": [
+        "o2",
+        "route:c2"
+      ],
+      "unroutable_proven": false
+    }
+  ],
+  "attempts": 11,
+  "native_validation_required": true,
+  "status": "candidate",
+  "elapsed_s": 0.00033576600253582,
+  "source_sha256": "4dee16502c80da38c76f4f00c50d977f19a16258c6bd84d84e24329d03e70d50",
+  "implementation_sha256": "acacdef003b57ad9eb1ac46b312e210343ca46328f51627a28dbf5deaece6e07"
+}},
+{"name": "random_2", "refusal": "",
+"input": {
+ "schema": "iot-lab.route-problem.v1",
+ "bounds": [
+  0,
+  0,
+  40,
+  30
+ ],
+ "edge_clearance": 0.3,
+ "edge_source": "synthetic fixture",
+ "layers": [
+  "F.Cu",
+  "B.Cu"
+ ],
+ "nets": [
+  {
+   "name": "A",
+   "width": 0.2,
+   "clearance": 0.2,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "B",
+   "width": 0.25,
+   "clearance": 0.15,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "C",
+   "width": 0.5,
+   "clearance": 0.3,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  }
+ ],
+ "obstacles": [
+  {
+   "name": "o0",
+   "bounds": [
+    8.19423389769822,
+    19.476030090114115,
+    10.747293059456764,
+    22.305764047152252
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "net": "",
+   "clearance": 0.35000000000000003
+  },
+  {
+   "name": "o1",
+   "bounds": [
+    21.239347348101134,
+    17.085943825582948,
+    21.637136456899874,
+    19.990094781057024
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "B",
+   "clearance": 0
+  },
+  {
+   "name": "o2",
+   "bounds": [
+    15.806496507863745,
+    12.749908095109236,
+    19.225707145931995,
+    14.421573823840161
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "C",
+   "clearance": 0
+  },
+  {
+   "name": "o3",
+   "bounds": [
+    17.10531509672539,
+    22.947129855839133,
+    18.352552505327647,
+    25.68728804233824
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "net": "A",
+   "clearance": 0
+  },
+  {
+   "name": "o4",
+   "bounds": [
+    30.90663553676877,
+    15.019776112409204,
+    31.273305930743604,
+    18.326927339391283
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "",
+   "clearance": 0
+  },
+  {
+   "name": "o5",
+   "bounds": [
+    22.414464245277674,
+    10.177272562485781,
+    26.496438348105382,
+    13.699451571516438
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "C",
+   "clearance": 0.1
+  }
+ ],
+ "connections": [
+  {
+   "name": "c0",
+   "net": "A",
+   "start": [
+    31.123761667927617,
+    28.871378911599226
+   ],
+   "end": [
+    19.727632054466582,
+    6.328326227761957
+   ],
+   "layers": [
+    "F.Cu"
+   ]
+  },
+  {
+   "name": "c1",
+   "net": "B",
+   "start": [
+    22.62035245710069,
+    19.84407950325128
+   ],
+   "end": [
+    33.77048184013483,
+    17.022679813216758
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ]
+  },
+  {
+   "name": "c2",
+   "net": "C",
+   "start": [
+    27.335520518168586,
+    3.4143843662060727
+   ],
+   "end": [
+    36.499544100602876,
+    3.44878769034929
+   ],
+   "layers": [
+    "F.Cu"
+   ]
+  },
+  {
+   "name": "c3",
+   "net": "A",
+   "start": [
+    10.242953483594095,
+    13.690288788029129
+   ],
+   "end": [
+    31.565284862446266,
+    9.673362735972443
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ]
+  },
+  {
+   "name": "c4",
+   "net": "B",
+   "start": [
+    33.712203994724995,
+    7.5722732574549845
+   ],
+   "end": [
+    31.57682152026185,
+    12.451193338004497
+   ],
+   "layers": [
+    "F.Cu"
+   ]
+  }
+ ],
+ "pair_clearances": [],
+ "unsupported": [],
+ "inputs": {
+  "fixture": "0000000000000000000000000000000000000000000000000000000000000000"
+ }
+},
+"record": {
+  "schema": "iot-lab.pattern-route.v1",
+  "input_sha256": "c97770938d801d3edf996701aae57805b338f5e310c0c71abdd4af95e98e4795",
+  "qualified": false,
+  "routes": [
+    {
+      "connection": "c2",
+      "net": "C",
+      "layer": "F.Cu",
+      "width": 0.5,
+      "points": [
+        [
+          27.335520518168586,
+          3.4143843662060727
+        ],
+        [
+          27.335520518168586,
+          3.44878769034929
+        ],
+        [
+          36.499544100602876,
+          3.44878769034929
+        ]
+      ],
+      "length_mm": 9.198426906577506
+    },
+    {
+      "connection": "c4",
+      "net": "B",
+      "layer": "F.Cu",
+      "width": 0.25,
+      "points": [
+        [
+          33.712203994724995,
+          7.5722732574549845
+        ],
+        [
+          33.712203994724995,
+          12.451193338004497
+        ],
+        [
+          31.57682152026185,
+          12.451193338004497
+        ]
+      ],
+      "length_mm": 7.014302555012659
+    },
+    {
+      "connection": "c0",
+      "net": "A",
+      "layer": "F.Cu",
+      "width": 0.2,
+      "points": [
+        [
+          31.123761667927617,
+          28.871378911599226
+        ],
+        [
+          19.727632054466582,
+          28.871378911599226
+        ],
+        [
+          19.727632054466582,
+          6.328326227761957
+        ]
+      ],
+      "length_mm": 33.9391822972983
+    },
+    {
+      "connection": "c1",
+      "net": "B",
+      "layer": "F.Cu",
+      "width": 0.25,
+      "points": [
+        [
+          22.62035245710069,
+          19.84407950325128
+        ],
+        [
+          33.77048184013483,
+          19.84407950325128
+        ],
+        [
+          33.77048184013483,
+          17.022679813216758
+        ]
+      ],
+      "length_mm": 13.971529073068659
+    },
+    {
+      "connection": "c3",
+      "net": "A",
+      "layer": "F.Cu",
+      "width": 0.2,
+      "points": [
+        [
+          10.242953483594095,
+          13.690288788029129
+        ],
+        [
+          10.242953483594095,
+          9.673362735972443
+        ],
+        [
+          31.565284862446266,
+          9.673362735972443
+        ]
+      ],
+      "length_mm": 25.339257430908855
+    }
+  ],
+  "unresolved": [],
+  "attempts": 7,
+  "native_validation_required": true,
+  "status": "candidate",
+  "elapsed_s": 0.00018075108528137207,
+  "source_sha256": "c97770938d801d3edf996701aae57805b338f5e310c0c71abdd4af95e98e4795",
+  "implementation_sha256": "acacdef003b57ad9eb1ac46b312e210343ca46328f51627a28dbf5deaece6e07"
+}},
+{"name": "random_23", "refusal": "",
+"input": {
+ "schema": "iot-lab.route-problem.v1",
+ "bounds": [
+  0,
+  0,
+  40,
+  30
+ ],
+ "edge_clearance": 0.3,
+ "edge_source": "synthetic fixture",
+ "layers": [
+  "F.Cu",
+  "B.Cu"
+ ],
+ "nets": [
+  {
+   "name": "A",
+   "width": 0.2,
+   "clearance": 0.2,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "B",
+   "width": 0.25,
+   "clearance": 0.15,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "C",
+   "width": 0.5,
+   "clearance": 0.3,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  }
+ ],
+ "obstacles": [
+  {
+   "name": "o0",
+   "bounds": [
+    22.419550786455886,
+    14.869176513454494,
+    24.36786889911996,
+    19.056623455209948
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "net": "",
+   "clearance": 0.35000000000000003
+  },
+  {
+   "name": "o1",
+   "bounds": [
+    33.82707728484044,
+    19.641262063123875,
+    37.42083701385224,
+    23.280337534649455
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "B",
+   "clearance": 0
+  },
+  {
+   "name": "o2",
+   "bounds": [
+    18.681241997369213,
+    10.440876011476329,
+    21.631168565680817,
+    12.841590123782675
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "C",
+   "clearance": 0
+  },
+  {
+   "name": "o3",
+   "bounds": [
+    21.623174676961813,
+    7.08314132973698,
+    24.524226580944017,
+    10.527220158105353
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "net": "A",
+   "clearance": 0
+  },
+  {
+   "name": "o4",
+   "bounds": [
+    19.751264580875294,
+    10.331729893261441,
+    21.408361253565346,
+    14.686641699348876
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "",
+   "clearance": 0
+  },
+  {
+   "name": "o5",
+   "bounds": [
+    13.38777733425972,
+    21.66906357774002,
+    17.425174148439048,
+    25.70989381019487
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "C",
+   "clearance": 0.30000000000000004
+  },
+  {
+   "name": "o6",
+   "bounds": [
+    12.186016087972567,
+    1.1011180878156415,
+    12.5673425045178,
+    2.2382401820915936
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "net": "A",
+   "clearance": 0
+  },
+  {
+   "name": "o7",
+   "bounds": [
+    10.336194877203644,
+    7.612692478398183,
+    13.908076089531217,
+    9.463976184355083
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "B",
+   "clearance": 0
+  },
+  {
+   "name": "o8",
+   "bounds": [
+    5.538654210296764,
+    18.08541236123322,
+    8.689889577492089,
+    20.60350477998308
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "",
+   "clearance": 0
+  },
+  {
+   "name": "o9",
+   "bounds": [
+    9.212242368707546,
+    9.56150508325617,
+    13.827835112683399,
+    11.132637433816043
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "net": "A",
+   "clearance": 0
+  },
+  {
+   "name": "o10",
+   "bounds": [
+    21.378147373152036,
+    13.307480579385292,
+    23.22482722826527,
+    17.36456912311938
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "B",
+   "clearance": 0.15000000000000002
+  },
+  {
+   "name": "o11",
+   "bounds": [
+    33.489701524604904,
+    1.1436765194608256,
+    37.36576029884897,
+    3.1004364260474393
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "C",
+   "clearance": 0
+  },
+  {
+   "name": "o12",
+   "bounds": [
+    22.56782365849606,
+    2.7698352345124984,
+    25.83359907517843,
+    4.901078118570651
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "net": "",
+   "clearance": 0
+  },
+  {
+   "name": "o13",
+   "bounds": [
+    9.530538682141593,
+    6.172982575918074,
+    10.645250095308409,
+    10.059434769656246
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "B",
+   "clearance": 0
+  },
+  {
+   "name": "o14",
+   "bounds": [
+    10.203791384214439,
+    13.929466491997925,
+    14.997915155113635,
+    15.824274713603907
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "C",
+   "clearance": 0
+  }
+ ],
+ "connections": [
+  {
+   "name": "c0",
+   "net": "A",
+   "start": [
+    37.173187749540986,
+    10.783661846902064
+   ],
+   "end": [
+    15.866100795039022,
+    19.710808762680184
+   ],
+   "layers": [
+    "B.Cu"
+   ]
+  },
+  {
+   "name": "c1",
+   "net": "B",
+   "start": [
+    9.526268486178605,
+    23.9010790693113
+   ],
+   "end": [
+    17.51309657865814,
+    4.110448361891531
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ]
+  },
+  {
+   "name": "c2",
+   "net": "C",
+   "start": [
+    7.153819981102749,
+    4.662461997783958
+   ],
+   "end": [
+    15.800872869231213,
+    25.24071503814343
+   ],
+   "layers": [
+    "B.Cu"
+   ]
+  },
+  {
+   "name": "c3",
+   "net": "A",
+   "start": [
+    8.91995239626614,
+    13.44114006144979
+   ],
+   "end": [
+    34.381889597224955,
+    10.056599144384544
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ]
+  },
+  {
+   "name": "c4",
+   "net": "B",
+   "start": [
+    5.110239269263222,
+    1.0867551565574274
+   ],
+   "end": [
+    36.01301456662501,
+    9.610771183208922
+   ],
+   "layers": [
+    "B.Cu"
+   ]
+  }
+ ],
+ "pair_clearances": [],
+ "unsupported": [],
+ "inputs": {
+  "fixture": "0000000000000000000000000000000000000000000000000000000000000000"
+ }
+},
+"record": {
+  "schema": "iot-lab.pattern-route.v1",
+  "input_sha256": "31563563607f19e388978d29d70a4530249c0aad8c340977301e8d41c294e17d",
+  "qualified": false,
+  "routes": [
+    {
+      "connection": "c2",
+      "net": "C",
+      "layer": "B.Cu",
+      "width": 0.5,
+      "points": [
+        [
+          7.153819981102749,
+          4.662461997783958
+        ],
+        [
+          7.153819981102749,
+          25.24071503814343
+        ],
+        [
+          15.800872869231213,
+          25.24071503814343
+        ]
+      ],
+      "length_mm": 29.225305928487938
+    },
+    {
+      "connection": "c0",
+      "net": "A",
+      "layer": "B.Cu",
+      "width": 0.2,
+      "points": [
+        [
+          37.173187749540986,
+          10.783661846902064
+        ],
+        [
+          37.173187749540986,
+          19.710808762680184
+        ],
+        [
+          15.866100795039022,
+          19.710808762680184
+        ]
+      ],
+      "length_mm": 30.234233870280082
+    },
+    {
+      "connection": "c1",
+      "net": "B",
+      "layer": "B.Cu",
+      "width": 0.25,
+      "points": [
+        [
+          9.526268486178605,
+          23.9010790693113
+        ],
+        [
+          9.526268486178605,
+          14.005763715601416
+        ],
+        [
+          17.51309657865814,
+          14.005763715601416
+        ],
+        [
+          17.51309657865814,
+          4.110448361891531
+        ]
+      ],
+      "length_mm": 27.777458799899307
+    }
+  ],
+  "unresolved": [
+    {
+      "connection": "c4",
+      "net": "B",
+      "reason": "patterns_exhausted",
+      "blockers": [
+        "o3",
+        "o6",
+        "o9",
+        "route:c2"
+      ],
+      "unroutable_proven": false
+    },
+    {
+      "connection": "c3",
+      "net": "A",
+      "reason": "patterns_exhausted",
+      "blockers": [
+        "o10",
+        "o13",
+        "o2",
+        "o4",
+        "route:c1"
+      ],
+      "unroutable_proven": false
+    }
+  ],
+  "attempts": 22,
+  "native_validation_required": true,
+  "status": "candidate",
+  "elapsed_s": 0.0005211513489484787,
+  "source_sha256": "31563563607f19e388978d29d70a4530249c0aad8c340977301e8d41c294e17d",
+  "implementation_sha256": "acacdef003b57ad9eb1ac46b312e210343ca46328f51627a28dbf5deaece6e07"
+}},
+{"name": "random_3", "refusal": "",
+"input": {
+ "schema": "iot-lab.route-problem.v1",
+ "bounds": [
+  0,
+  0,
+  40,
+  30
+ ],
+ "edge_clearance": 0.3,
+ "edge_source": "synthetic fixture",
+ "layers": [
+  "F.Cu",
+  "B.Cu"
+ ],
+ "nets": [
+  {
+   "name": "A",
+   "width": 0.2,
+   "clearance": 0.2,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "B",
+   "width": 0.25,
+   "clearance": 0.15,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "C",
+   "width": 0.5,
+   "clearance": 0.3,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  }
+ ],
+ "obstacles": [
+  {
+   "name": "o0",
+   "bounds": [
+    15.197307474071769,
+    1.2058416605954252,
+    17.013062595069904,
+    4.835237111307325
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "net": "",
+   "clearance": 0.35000000000000003
+  },
+  {
+   "name": "o1",
+   "bounds": [
+    27.210372340963396,
+    23.93801034564991,
+    30.290627612262327,
+    28.279343116925723
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "B",
+   "clearance": 0
+  },
+  {
+   "name": "o2",
+   "bounds": [
+    11.140745644523179,
+    1.1309599877013639,
+    12.635425170946599,
+    3.914708663250649
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "C",
+   "clearance": 0
+  },
+  {
+   "name": "o3",
+   "bounds": [
+    22.35108901064428,
+    16.77002383012791,
+    25.809473001449124,
+    19.364154585667023
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "net": "A",
+   "clearance": 0
+  },
+  {
+   "name": "o4",
+   "bounds": [
+    22.639113913122152,
+    22.119938383400413,
+    26.14540439808993,
+    23.032751999484727
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "",
+   "clearance": 0
+  },
+  {
+   "name": "o5",
+   "bounds": [
+    19.801163235121017,
+    5.89865315188591,
+    23.28005766998048,
+    8.278234485061017
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "C",
+   "clearance": 0.15000000000000002
+  },
+  {
+   "name": "o6",
+   "bounds": [
+    23.607287655867303,
+    9.17754149817747,
+    25.676319443609714,
+    10.63187935786875
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "net": "A",
+   "clearance": 0
+  }
+ ],
+ "connections": [
+  {
+   "name": "c0",
+   "net": "A",
+   "start": [
+    13.587298875948088,
+    4.324728967307475
+   ],
+   "end": [
+    21.640251824930427,
+    28.148007882362236
+   ],
+   "layers": [
+    "B.Cu"
+   ]
+  },
+  {
+   "name": "c1",
+   "net": "B",
+   "start": [
+    27.622610819815943,
+    15.507424838145928
+   ],
+   "end": [
+    32.39207150013748,
+    23.400502692163226
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ]
+  },
+  {
+   "name": "c2",
+   "net": "C",
+   "start": [
+    13.153216129240215,
+    14.374848848848998
+   ],
+   "end": [
+    19.189614066011092,
+    4.804242612702885
+   ],
+   "layers": [
+    "B.Cu"
+   ]
+  },
+  {
+   "name": "c3",
+   "net": "A",
+   "start": [
+    34.713546709024136,
+    10.655387882914109
+   ],
+   "end": [
+    1.3020935060000483,
+    18.04428937334767
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ]
+  },
+  {
+   "name": "c4",
+   "net": "B",
+   "start": [
+    15.823202140081303,
+    3.71117019779569
+   ],
+   "end": [
+    5.972838582924027,
+    4.408420802749889
+   ],
+   "layers": [
+    "B.Cu"
+   ]
+  },
+  {
+   "name": "c5",
+   "net": "C",
+   "start": [
+    5.693455996314742,
+    22.558821211363572
+   ],
+   "end": [
+    27.99481893842799,
+    20.672609815221566
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ]
+  }
+ ],
+ "pair_clearances": [
+  {
+   "nets": [
+    "A",
+    "C"
+   ],
+   "clearance": 0.5,
+   "source": "synthetic"
+  }
+ ],
+ "unsupported": [],
+ "inputs": {
+  "fixture": "0000000000000000000000000000000000000000000000000000000000000000"
+ }
+},
+"record": {
+  "schema": "iot-lab.pattern-route.v1",
+  "input_sha256": "ffa405ba0971d7d76c4e39155df1dd761e04116906d671ca79c70d10586f56b1",
+  "qualified": false,
+  "routes": [
+    {
+      "connection": "c2",
+      "net": "C",
+      "layer": "B.Cu",
+      "width": 0.5,
+      "points": [
+        [
+          13.153216129240215,
+          14.374848848848998
+        ],
+        [
+          19.189614066011092,
+          14.374848848848998
+        ],
+        [
+          19.189614066011092,
+          4.804242612702885
+        ]
+      ],
+      "length_mm": 15.607004172916989
+    },
+    {
+      "connection": "c5",
+      "net": "C",
+      "layer": "F.Cu",
+      "width": 0.5,
+      "points": [
+        [
+          5.693455996314742,
+          22.558821211363572
+        ],
+        [
+          5.693455996314742,
+          20.672609815221566
+        ],
+        [
+          27.99481893842799,
+          20.672609815221566
+        ]
+      ],
+      "length_mm": 24.187574338255253
+    },
+    {
+      "connection": "c1",
+      "net": "B",
+      "layer": "F.Cu",
+      "width": 0.25,
+      "points": [
+        [
+          27.622610819815943,
+          15.507424838145928
+        ],
+        [
+          32.39207150013748,
+          15.507424838145928
+        ],
+        [
+          32.39207150013748,
+          23.400502692163226
+        ]
+      ],
+      "length_mm": 12.662538534338838
+    },
+    {
+      "connection": "c3",
+      "net": "A",
+      "layer": "F.Cu",
+      "width": 0.2,
+      "points": [
+        [
+          34.713546709024136,
+          10.655387882914109
+        ],
+        [
+          1.3020935060000483,
+          10.655387882914109
+        ],
+        [
+          1.3020935060000483,
+          18.04428937334767
+        ]
+      ],
+      "length_mm": 40.80035469345765
+    }
+  ],
+  "unresolved": [
+    {
+      "connection": "c4",
+      "net": "B",
+      "reason": "patterns_exhausted",
+      "blockers": [
+        "o0"
+      ],
+      "unroutable_proven": false
+    },
+    {
+      "connection": "c0",
+      "net": "A",
+      "reason": "patterns_exhausted",
+      "blockers": [
+        "o0",
+        "route:c2"
+      ],
+      "unroutable_proven": false
+    }
+  ],
+  "attempts": 15,
+  "native_validation_required": true,
+  "status": "candidate",
+  "elapsed_s": 0.0005232533439993858,
+  "source_sha256": "ffa405ba0971d7d76c4e39155df1dd761e04116906d671ca79c70d10586f56b1",
+  "implementation_sha256": "acacdef003b57ad9eb1ac46b312e210343ca46328f51627a28dbf5deaece6e07"
+}},
+{"name": "random_4", "refusal": "",
+"input": {
+ "schema": "iot-lab.route-problem.v1",
+ "bounds": [
+  0,
+  0,
+  40,
+  30
+ ],
+ "edge_clearance": 0.3,
+ "edge_source": "synthetic fixture",
+ "layers": [
+  "F.Cu",
+  "B.Cu"
+ ],
+ "nets": [
+  {
+   "name": "A",
+   "width": 0.2,
+   "clearance": 0.2,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "B",
+   "width": 0.25,
+   "clearance": 0.15,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "C",
+   "width": 0.5,
+   "clearance": 0.3,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  }
+ ],
+ "obstacles": [
+  {
+   "name": "o0",
+   "bounds": [
+    8.215646151088013,
+    11.833364342727402,
+    12.862603574415019,
+    13.60691373325275
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "net": "",
+   "clearance": 0.05
+  },
+  {
+   "name": "o1",
+   "bounds": [
+    30.239587588812963,
+    9.184448126789391,
+    35.16157201317212,
+    10.542281608116944
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "B",
+   "clearance": 0
+  },
+  {
+   "name": "o2",
+   "bounds": [
+    9.2347059586247,
+    14.384160644088016,
+    14.112635278707668,
+    15.875792104832733
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "C",
+   "clearance": 0
+  },
+  {
+   "name": "o3",
+   "bounds": [
+    25.16093684367879,
+    8.016026976991458,
+    29.310069907833853,
+    9.66679692657981
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "net": "A",
+   "clearance": 0
+  },
+  {
+   "name": "o4",
+   "bounds": [
+    18.304232128571826,
+    17.73143530671086,
+    21.074619159370016,
+    21.298106441273404
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "",
+   "clearance": 0
+  },
+  {
+   "name": "o5",
+   "bounds": [
+    23.556658278478615,
+    7.248845580149836,
+    24.49734712727244,
+    11.16513385934063
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "C",
+   "clearance": 0
+  },
+  {
+   "name": "o6",
+   "bounds": [
+    5.281299026813963,
+    12.355765526814277,
+    7.757566270259007,
+    14.37321872127858
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "net": "A",
+   "clearance": 0
+  },
+  {
+   "name": "o7",
+   "bounds": [
+    24.049419413809396,
+    15.422773367922183,
+    27.061299908236276,
+    17.347461517177273
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "B",
+   "clearance": 0
+  }
+ ],
+ "connections": [
+  {
+   "name": "c0",
+   "net": "A",
+   "start": [
+    17.485404975938334,
+    13.14003754227424
+   ],
+   "end": [
+    23.438705454784774,
+    9.760627750661516
+   ],
+   "layers": [
+    "F.Cu"
+   ]
+  },
+  {
+   "name": "c1",
+   "net": "B",
+   "start": [
+    36.4532241986381,
+    27.07103730462074
+   ],
+   "end": [
+    24.364410411270526,
+    12.249977117055085
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ]
+  },
+  {
+   "name": "c2",
+   "net": "C",
+   "start": [
+    34.64443208353801,
+    8.562095645611219
+   ],
+   "end": [
+    2.620925904075115,
+    12.295479660525675
+   ],
+   "layers": [
+    "F.Cu"
+   ]
+  },
+  {
+   "name": "c3",
+   "net": "A",
+   "start": [
+    16.163795716671178,
+    27.246632111373653
+   ],
+   "end": [
+    38.07757021723202,
+    1.8995933536903902
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ]
+  },
+  {
+   "name": "c4",
+   "net": "B",
+   "start": [
+    16.791598506174793,
+    11.587381844682332
+   ],
+   "end": [
+    7.518162968809793,
+    26.146087062147487
+   ],
+   "layers": [
+    "F.Cu"
+   ]
+  },
+  {
+   "name": "c5",
+   "net": "C",
+   "start": [
+    12.203887467833184,
+    27.71885587029106
+   ],
+   "end": [
+    28.2707247861059,
+    28.745047582194697
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ]
+  },
+  {
+   "name": "c6",
+   "net": "A",
+   "start": [
+    30.782783045332312,
+    14.077208525071484
+   ],
+   "end": [
+    26.43366576425436,
+    26.067389499893128
+   ],
+   "layers": [
+    "F.Cu"
+   ]
+  }
+ ],
+ "pair_clearances": [],
+ "unsupported": [],
+ "inputs": {
+  "fixture": "0000000000000000000000000000000000000000000000000000000000000000"
+ }
+},
+"record": {
+  "schema": "iot-lab.pattern-route.v1",
+  "input_sha256": "2a7697892064bb9df6fd02d47ca1dd260ac0239e246192b975edeb28103039a9",
+  "qualified": false,
+  "routes": [
+    {
+      "connection": "c4",
+      "net": "B",
+      "layer": "F.Cu",
+      "width": 0.25,
+      "points": [
+        [
+          16.791598506174793,
+          11.587381844682332
+        ],
+        [
+          16.791598506174793,
+          26.146087062147487
+        ],
+        [
+          7.518162968809793,
+          26.146087062147487
+        ]
+      ],
+      "length_mm": 23.832140754830156
+    },
+    {
+      "connection": "c6",
+      "net": "A",
+      "layer": "F.Cu",
+      "width": 0.2,
+      "points": [
+        [
+          30.782783045332312,
+          14.077208525071484
+        ],
+        [
+          30.782783045332312,
+          26.067389499893128
+        ],
+        [
+          26.43366576425436,
+          26.067389499893128
+        ]
+      ],
+      "length_mm": 16.339298255899596
+    },
+    {
+      "connection": "c5",
+      "net": "C",
+      "layer": "F.Cu",
+      "width": 0.5,
+      "points": [
+        [
+          12.203887467833184,
+          27.71885587029106
+        ],
+        [
+          12.203887467833184,
+          28.745047582194697
+        ],
+        [
+          28.2707247861059,
+          28.745047582194697
+        ]
+      ],
+      "length_mm": 17.093029030176357
+    },
+    {
+      "connection": "c1",
+      "net": "B",
+      "layer": "F.Cu",
+      "width": 0.25,
+      "points": [
+        [
+          36.4532241986381,
+          27.07103730462074
+        ],
+        [
+          36.4532241986381,
+          12.249977117055085
+        ],
+        [
+          24.364410411270526,
+          12.249977117055085
+        ]
+      ],
+      "length_mm": 26.909873974933227
+    },
+    {
+      "connection": "c3",
+      "net": "A",
+      "layer": "B.Cu",
+      "width": 0.2,
+      "points": [
+        [
+          16.163795716671178,
+          27.246632111373653
+        ],
+        [
+          16.163795716671178,
+          1.8995933536903902
+        ],
+        [
+          38.07757021723202,
+          1.8995933536903902
+        ]
+      ],
+      "length_mm": 47.26081325824411
+    }
+  ],
+  "unresolved": [
+    {
+      "connection": "c2",
+      "net": "C",
+      "reason": "patterns_exhausted",
+      "blockers": [
+        "o0",
+        "o1",
+        "o3",
+        "o6"
+      ],
+      "unroutable_proven": false
+    },
+    {
+      "connection": "c0",
+      "net": "A",
+      "reason": "patterns_exhausted",
+      "blockers": [
+        "o5"
+      ],
+      "unroutable_proven": false
+    }
+  ],
+  "attempts": 17,
+  "native_validation_required": true,
+  "status": "candidate",
+  "elapsed_s": 0.0007537649944424629,
+  "source_sha256": "2a7697892064bb9df6fd02d47ca1dd260ac0239e246192b975edeb28103039a9",
+  "implementation_sha256": "acacdef003b57ad9eb1ac46b312e210343ca46328f51627a28dbf5deaece6e07"
+}},
+{"name": "random_5", "refusal": "",
+"input": {
+ "schema": "iot-lab.route-problem.v1",
+ "bounds": [
+  0,
+  0,
+  40,
+  30
+ ],
+ "edge_clearance": 0.3,
+ "edge_source": "synthetic fixture",
+ "layers": [
+  "F.Cu",
+  "B.Cu"
+ ],
+ "nets": [
+  {
+   "name": "A",
+   "width": 0.2,
+   "clearance": 0.2,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "B",
+   "width": 0.25,
+   "clearance": 0.15,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "C",
+   "width": 0.5,
+   "clearance": 0.3,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  }
+ ],
+ "obstacles": [
+  {
+   "name": "o0",
+   "bounds": [
+    11.140328650428135,
+    19.01468635444282,
+    14.2530030549285,
+    22.25683110736163
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "net": "",
+   "clearance": 0.2
+  },
+  {
+   "name": "o1",
+   "bounds": [
+    3.8206503404400545,
+    21.937526205991173,
+    7.62304009493582,
+    22.355683867007347
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "B",
+   "clearance": 0
+  },
+  {
+   "name": "o2",
+   "bounds": [
+    22.65501169006108,
+    7.6268347532613365,
+    26.820155980400816,
+    11.355305163774316
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "C",
+   "clearance": 0
+  },
+  {
+   "name": "o3",
+   "bounds": [
+    32.39029659302453,
+    13.088220482733204,
+    36.860172443259586,
+    14.337216061464147
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "net": "A",
+   "clearance": 0
+  },
+  {
+   "name": "o4",
+   "bounds": [
+    5.069285066830592,
+    6.162825527211104,
+    9.640104843089405,
+    10.217319957594071
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "",
+   "clearance": 0
+  },
+  {
+   "name": "o5",
+   "bounds": [
+    9.888378624286679,
+    8.433352950696532,
+    14.222154289540907,
+    12.378623443040356
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "C",
+   "clearance": 0.30000000000000004
+  },
+  {
+   "name": "o6",
+   "bounds": [
+    24.211952697118722,
+    5.573356153710446,
+    28.4117445088512,
+    9.742378727552659
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "net": "A",
+   "clearance": 0
+  },
+  {
+   "name": "o7",
+   "bounds": [
+    26.247761142089853,
+    6.186170699627218,
+    27.2723979921883,
+    6.886246010282191
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "B",
+   "clearance": 0
+  },
+  {
+   "name": "o8",
+   "bounds": [
+    9.076690766996094,
+    8.932072404740412,
+    11.624307893553892,
+    11.556753187187367
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "",
+   "clearance": 0
+  }
+ ],
+ "connections": [
+  {
+   "name": "c0",
+   "net": "A",
+   "start": [
+    3.378633023415987,
+    10.120563392117882
+   ],
+   "end": [
+    24.756002198791133,
+    26.3564982532321
+   ],
+   "layers": [
+    "B.Cu"
+   ]
+  },
+  {
+   "name": "c1",
+   "net": "B",
+   "start": [
+    8.094943765129402,
+    2.1733287578324454
+   ],
+   "end": [
+    10.584476833038256,
+    22.871042977027148
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ]
+  },
+  {
+   "name": "c2",
+   "net": "C",
+   "start": [
+    19.947144517184768,
+    18.82827187414666
+   ],
+   "end": [
+    22.665986071185202,
+    4.225427629065433
+   ],
+   "layers": [
+    "B.Cu"
+   ]
+  },
+  {
+   "name": "c3",
+   "net": "A",
+   "start": [
+    31.753725245014635,
+    13.240410333611262
+   ],
+   "end": [
+    25.300747167459107,
+    18.45919466831684
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ]
+  },
+  {
+   "name": "c4",
+   "net": "B",
+   "start": [
+    13.131300216601836,
+    4.285065175632511
+   ],
+   "end": [
+    23.313004921336198,
+    16.46548748736525
+   ],
+   "layers": [
+    "B.Cu"
+   ]
+  },
+  {
+   "name": "c5",
+   "net": "C",
+   "start": [
+    30.473477854148243,
+    12.846446042808912
+   ],
+   "end": [
+    2.658769131479212,
+    28.75725163321814
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ]
+  },
+  {
+   "name": "c6",
+   "net": "A",
+   "start": [
+    31.25623561360698,
+    23.385151873522044
+   ],
+   "end": [
+    9.915228371003284,
+    6.509839894953109
+   ],
+   "layers": [
+    "B.Cu"
+   ]
+  },
+  {
+   "name": "c7",
+   "net": "B",
+   "start": [
+    26.458378922873354,
+    27.00720406789668
+   ],
+   "end": [
+    16.452412612481233,
+    14.235963827574608
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ]
+  }
+ ],
+ "pair_clearances": [],
+ "unsupported": [],
+ "inputs": {
+  "fixture": "0000000000000000000000000000000000000000000000000000000000000000"
+ }
+},
+"record": {
+  "schema": "iot-lab.pattern-route.v1",
+  "input_sha256": "7d24ad9435e33ae8c41761aed5a2d8076e2e817a4e72d1b99ccffa258ea8c3ca",
+  "qualified": false,
+  "routes": [
+    {
+      "connection": "c2",
+      "net": "C",
+      "layer": "B.Cu",
+      "width": 0.5,
+      "points": [
+        [
+          19.947144517184768,
+          18.82827187414666
+        ],
+        [
+          19.947144517184768,
+          4.225427629065433
+        ],
+        [
+          22.665986071185202,
+          4.225427629065433
+        ]
+      ],
+      "length_mm": 17.321685799081664
+    },
+    {
+      "connection": "c0",
+      "net": "A",
+      "layer": "B.Cu",
+      "width": 0.2,
+      "points": [
+        [
+          3.378633023415987,
+          10.120563392117882
+        ],
+        [
+          3.378633023415987,
+          26.3564982532321
+        ],
+        [
+          24.756002198791133,
+          26.3564982532321
+        ]
+      ],
+      "length_mm": 37.61330403648937
+    },
+    {
+      "connection": "c6",
+      "net": "A",
+      "layer": "B.Cu",
+      "width": 0.2,
+      "points": [
+        [
+          31.25623561360698,
+          23.385151873522044
+        ],
+        [
+          9.915228371003284,
+          23.385151873522044
+        ],
+        [
+          9.915228371003284,
+          6.509839894953109
+        ]
+      ],
+      "length_mm": 38.216319221172625
+    },
+    {
+      "connection": "c5",
+      "net": "C",
+      "layer": "F.Cu",
+      "width": 0.5,
+      "points": [
+        [
+          30.473477854148243,
+          12.846446042808912
+        ],
+        [
+          30.473477854148243,
+          28.75725163321814
+        ],
+        [
+          2.658769131479212,
+          28.75725163321814
+        ]
+      ],
+      "length_mm": 43.72551431307826
+    },
+    {
+      "connection": "c1",
+      "net": "B",
+      "layer": "B.Cu",
+      "width": 0.25,
+      "points": [
+        [
+          8.094943765129402,
+          2.1733287578324454
+        ],
+        [
+          10.584476833038256,
+          2.1733287578324454
+        ],
+        [
+          10.584476833038256,
+          22.871042977027148
+        ]
+      ],
+      "length_mm": 23.187247287103553
+    },
+    {
+      "connection": "c7",
+      "net": "B",
+      "layer": "F.Cu",
+      "width": 0.25,
+      "points": [
+        [
+          26.458378922873354,
+          27.00720406789668
+        ],
+        [
+          26.458378922873354,
+          14.235963827574608
+        ],
+        [
+          16.452412612481233,
+          14.235963827574608
+        ]
+      ],
+      "length_mm": 22.777206550714194
+    },
+    {
+      "connection": "c3",
+      "net": "A",
+      "layer": "B.Cu",
+      "width": 0.2,
+      "points": [
+        [
+          31.753725245014635,
+          13.240410333611262
+        ],
+        [
+          31.753725245014635,
+          18.45919466831684
+        ],
+        [
+          25.300747167459107,
+          18.45919466831684
+        ]
+      ],
+      "length_mm": 11.671762412261106
+    }
+  ],
+  "unresolved": [
+    {
+      "connection": "c4",
+      "net": "B",
+      "reason": "patterns_exhausted",
+      "blockers": [
+        "route:c2"
+      ],
+      "unroutable_proven": false
+    }
+  ],
+  "attempts": 21,
+  "native_validation_required": true,
+  "status": "candidate",
+  "elapsed_s": 0.0008467864245176315,
+  "source_sha256": "7d24ad9435e33ae8c41761aed5a2d8076e2e817a4e72d1b99ccffa258ea8c3ca",
+  "implementation_sha256": "acacdef003b57ad9eb1ac46b312e210343ca46328f51627a28dbf5deaece6e07"
+}},
+{"name": "random_6", "refusal": "",
+"input": {
+ "schema": "iot-lab.route-problem.v1",
+ "bounds": [
+  0,
+  0,
+  40,
+  30
+ ],
+ "edge_clearance": 0.3,
+ "edge_source": "synthetic fixture",
+ "layers": [
+  "F.Cu",
+  "B.Cu"
+ ],
+ "nets": [
+  {
+   "name": "A",
+   "width": 0.2,
+   "clearance": 0.2,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "B",
+   "width": 0.25,
+   "clearance": 0.15,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "C",
+   "width": 0.5,
+   "clearance": 0.3,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  }
+ ],
+ "obstacles": [
+  {
+   "name": "o0",
+   "bounds": [
+    33.05219604077386,
+    16.509178645680276,
+    35.593310515160354,
+    20.033236846110427
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "net": "",
+   "clearance": 0.2
+  },
+  {
+   "name": "o1",
+   "bounds": [
+    17.62473631679301,
+    17.130363948703913,
+    21.297390708698607,
+    18.78133560041028
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "B",
+   "clearance": 0
+  },
+  {
+   "name": "o2",
+   "bounds": [
+    9.612407211499479,
+    2.123650074528367,
+    10.670571996164774,
+    6.43437987209036
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "C",
+   "clearance": 0
+  },
+  {
+   "name": "o3",
+   "bounds": [
+    17.320810564011712,
+    8.497637513791041,
+    17.641179116229143,
+    9.277712209139816
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "net": "A",
+   "clearance": 0
+  },
+  {
+   "name": "o4",
+   "bounds": [
+    33.36413171904354,
+    19.485044487977888,
+    36.42040460851062,
+    24.375847445743087
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "",
+   "clearance": 0
+  },
+  {
+   "name": "o5",
+   "bounds": [
+    27.161045086645075,
+    17.589376457309992,
+    31.37657624691565,
+    22.5084714988286
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "C",
+   "clearance": 0.25
+  },
+  {
+   "name": "o6",
+   "bounds": [
+    23.101442347327918,
+    4.072235108852496,
+    27.133729514588474,
+    6.044262184921775
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "net": "A",
+   "clearance": 0
+  },
+  {
+   "name": "o7",
+   "bounds": [
+    23.019109616996307,
+    12.407225256509719,
+    27.578918838817124,
+    14.889146322379423
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "B",
+   "clearance": 0
+  },
+  {
+   "name": "o8",
+   "bounds": [
+    2.0720328097567116,
+    16.44207892540939,
+    2.933474016950221,
+    17.46284253455831
+   ],
+   "layers": [
+    "F.Cu"
+   ],
+   "net": "",
+   "clearance": 0
+  },
+  {
+   "name": "o9",
+   "bounds": [
+    33.76622171735681,
+    10.280929569751457,
+    36.15527296497266,
+    10.837835316331049
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "net": "A",
+   "clearance": 0
+  }
+ ],
+ "connections": [
+  {
+   "name": "c0",
+   "net": "A",
+   "start": [
+    36.14352150407784,
+    13.287901407241776
+   ],
+   "end": [
+    24.931990873036902,
+    28.483843339366768
+   ],
+   "layers": [
+    "F.Cu"
+   ]
+  },
+  {
+   "name": "c1",
+   "net": "B",
+   "start": [
+    30.93874932729581,
+    22.751712809201194
+   ],
+   "end": [
+    15.437322623300052,
+    7.1720771818291755
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ]
+  },
+  {
+   "name": "c2",
+   "net": "C",
+   "start": [
+    28.541426850269282,
+    2.6005272872748444
+   ],
+   "end": [
+    1.9825615291402496,
+    24.617331173092747
+   ],
+   "layers": [
+    "F.Cu"
+   ]
+  },
+  {
+   "name": "c3",
+   "net": "A",
+   "start": [
+    16.723362691571637,
+    25.119847785737296
+   ],
+   "end": [
+    25.76301075181133,
+    8.367021087262323
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ]
+  },
+  {
+   "name": "c4",
+   "net": "B",
+   "start": [
+    6.761017563641545,
+    3.3807662736534914
+   ],
+   "end": [
+    23.440682779271473,
+    16.918581969998115
+   ],
+   "layers": [
+    "F.Cu"
+   ]
+  },
+  {
+   "name": "c5",
+   "net": "C",
+   "start": [
+    26.100659858947928,
+    3.2182416926223048
+   ],
+   "end": [
+    11.53631848587483,
+    8.312547210283832
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ]
+  },
+  {
+   "name": "c6",
+   "net": "A",
+   "start": [
+    4.491837264733313,
+    6.082884194833639
+   ],
+   "end": [
+    5.012688996276208,
+    8.937841061473751
+   ],
+   "layers": [
+    "F.Cu"
+   ]
+  },
+  {
+   "name": "c7",
+   "net": "B",
+   "start": [
+    33.08890058104363,
+    3.9340190901113763
+   ],
+   "end": [
+    19.391193577270577,
+    26.652279388928918
+   ],
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ]
+  },
+  {
+   "name": "c8",
+   "net": "C",
+   "start": [
+    3.0366804609245994,
+    20.73083628142757
+   ],
+   "end": [
+    26.806915772057565,
+    12.520844464898502
+   ],
+   "layers": [
+    "F.Cu"
+   ]
+  }
+ ],
+ "pair_clearances": [
+  {
+   "nets": [
+    "A",
+    "C"
+   ],
+   "clearance": 0.2,
+   "source": "synthetic"
+  }
+ ],
+ "unsupported": [],
+ "inputs": {
+  "fixture": "0000000000000000000000000000000000000000000000000000000000000000"
+ }
+},
+"record": {
+  "schema": "iot-lab.pattern-route.v1",
+  "input_sha256": "da6a593d70ab13bc2a97cb478db47b45ae871f2a03e648f5f5d28858ca2f2acc",
+  "qualified": false,
+  "routes": [
+    {
+      "connection": "c2",
+      "net": "C",
+      "layer": "F.Cu",
+      "width": 0.5,
+      "points": [
+        [
+          28.541426850269282,
+          2.6005272872748444
+        ],
+        [
+          28.541426850269282,
+          24.617331173092747
+        ],
+        [
+          1.9825615291402496,
+          24.617331173092747
+        ]
+      ],
+      "length_mm": 48.57566920694694
+    },
+    {
+      "connection": "c4",
+      "net": "B",
+      "layer": "F.Cu",
+      "width": 0.25,
+      "points": [
+        [
+          6.761017563641545,
+          3.3807662736534914
+        ],
+        [
+          6.761017563641545,
+          16.918581969998115
+        ],
+        [
+          23.440682779271473,
+          16.918581969998115
+        ]
+      ],
+      "length_mm": 30.21748091197455
+    },
+    {
+      "connection": "c6",
+      "net": "A",
+      "layer": "F.Cu",
+      "width": 0.2,
+      "points": [
+        [
+          4.491837264733313,
+          6.082884194833639
+        ],
+        [
+          4.491837264733313,
+          8.937841061473751
+        ],
+        [
+          5.012688996276208,
+          8.937841061473751
+        ]
+      ],
+      "length_mm": 3.3758085981830073
+    },
+    {
+      "connection": "c5",
+      "net": "C",
+      "layer": "F.Cu",
+      "width": 0.5,
+      "points": [
+        [
+          26.100659858947928,
+          3.2182416926223048
+        ],
+        [
+          11.53631848587483,
+          3.2182416926223048
+        ],
+        [
+          11.53631848587483,
+          8.312547210283832
+        ]
+      ],
+      "length_mm": 19.658646890734623
+    },
+    {
+      "connection": "c1",
+      "net": "B",
+      "layer": "B.Cu",
+      "width": 0.25,
+      "points": [
+        [
+          30.93874932729581,
+          22.751712809201194
+        ],
+        [
+          30.93874932729581,
+          7.1720771818291755
+        ],
+        [
+          15.437322623300052,
+          7.1720771818291755
+        ]
+      ],
+      "length_mm": 31.081062331367775
+    },
+    {
+      "connection": "c7",
+      "net": "B",
+      "layer": "B.Cu",
+      "width": 0.25,
+      "points": [
+        [
+          33.08890058104363,
+          3.9340190901113763
+        ],
+        [
+          33.08890058104363,
+          15.293149239520147
+        ],
+        [
+          19.391193577270577,
+          15.293149239520147
+        ],
+        [
+          19.391193577270577,
+          26.652279388928918
+        ]
+      ],
+      "length_mm": 36.415967302590595
+    },
+    {
+      "connection": "c3",
+      "net": "A",
+      "layer": "B.Cu",
+      "width": 0.2,
+      "points": [
+        [
+          16.723362691571637,
+          25.119847785737296
+        ],
+        [
+          16.723362691571637,
+          8.367021087262323
+        ],
+        [
+          25.76301075181133,
+          8.367021087262323
+        ]
+      ],
+      "length_mm": 25.792474758714665
+    }
+  ],
+  "unresolved": [
+    {
+      "connection": "c8",
+      "net": "C",
+      "reason": "patterns_exhausted",
+      "blockers": [
+        "o1",
+        "o7",
+        "o8"
+      ],
+      "unroutable_proven": false
+    },
+    {
+      "connection": "c0",
+      "net": "A",
+      "reason": "patterns_exhausted",
+      "blockers": [
+        "o4",
+        "o5",
+        "o7",
+        "route:c2"
+      ],
+      "unroutable_proven": false
+    }
+  ],
+  "attempts": 31,
+  "native_validation_required": true,
+  "status": "candidate",
+  "elapsed_s": 0.0015425710007548332,
+  "source_sha256": "da6a593d70ab13bc2a97cb478db47b45ae871f2a03e648f5f5d28858ca2f2acc",
+  "implementation_sha256": "acacdef003b57ad9eb1ac46b312e210343ca46328f51627a28dbf5deaece6e07"
+}},
+{"name": "refused_bad_hash", "refusal": "FAIL: invalid input fingerprint",
+"input": {
+ "schema": "iot-lab.route-problem.v1",
+ "bounds": [
+  0,
+  0,
+  40,
+  30
+ ],
+ "edge_clearance": 0.3,
+ "edge_source": "synthetic fixture",
+ "layers": [
+  "F.Cu",
+  "B.Cu"
+ ],
+ "nets": [
+  {
+   "name": "A",
+   "width": 0.2,
+   "clearance": 0.2,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "B",
+   "width": 0.25,
+   "clearance": 0.15,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "C",
+   "width": 0.5,
+   "clearance": 0.3,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  }
+ ],
+ "obstacles": [],
+ "connections": [],
+ "pair_clearances": [],
+ "unsupported": [],
+ "inputs": {
+  "fixture": "x"
+ }
+},
+"record": null},
+{"name": "refused_bad_schema", "refusal": "FAIL: unknown/missing route contract fields or schema",
+"input": {
+ "schema": "other",
+ "bounds": [
+  0,
+  0,
+  40,
+  30
+ ],
+ "edge_clearance": 0.3,
+ "edge_source": "synthetic fixture",
+ "layers": [
+  "F.Cu",
+  "B.Cu"
+ ],
+ "nets": [
+  {
+   "name": "A",
+   "width": 0.2,
+   "clearance": 0.2,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "B",
+   "width": 0.25,
+   "clearance": 0.15,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "C",
+   "width": 0.5,
+   "clearance": 0.3,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  }
+ ],
+ "obstacles": [],
+ "connections": [],
+ "pair_clearances": [],
+ "unsupported": [],
+ "inputs": {
+  "fixture": "0000000000000000000000000000000000000000000000000000000000000000"
+ }
+},
+"record": null},
+{"name": "refused_duplicate_names", "refusal": "FAIL: unique item names required",
+"input": {
+ "schema": "iot-lab.route-problem.v1",
+ "bounds": [
+  0,
+  0,
+  40,
+  30
+ ],
+ "edge_clearance": 0.3,
+ "edge_source": "synthetic fixture",
+ "layers": [
+  "F.Cu",
+  "B.Cu"
+ ],
+ "nets": [
+  {
+   "name": "A",
+   "width": 0.2,
+   "clearance": 0.2,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "B",
+   "width": 0.25,
+   "clearance": 0.15,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "C",
+   "width": 0.5,
+   "clearance": 0.3,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  }
+ ],
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "a",
+   "net": "A",
+   "start": [
+    1,
+    1
+   ],
+   "end": [
+    2,
+    2
+   ],
+   "layers": [
+    "F.Cu"
+   ]
+  },
+  {
+   "name": "a",
+   "net": "A",
+   "start": [
+    1,
+    1
+   ],
+   "end": [
+    2,
+    2
+   ],
+   "layers": [
+    "F.Cu"
+   ]
+  }
+ ],
+ "pair_clearances": [],
+ "unsupported": [],
+ "inputs": {
+  "fixture": "0000000000000000000000000000000000000000000000000000000000000000"
+ }
+},
+"record": null},
+{"name": "refused_flat_box", "refusal": "FAIL: box must have positive area",
+"input": {
+ "schema": "iot-lab.route-problem.v1",
+ "bounds": [
+  0,
+  0,
+  0,
+  10
+ ],
+ "edge_clearance": 0.3,
+ "edge_source": "synthetic fixture",
+ "layers": [
+  "F.Cu",
+  "B.Cu"
+ ],
+ "nets": [
+  {
+   "name": "A",
+   "width": 0.2,
+   "clearance": 0.2,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "B",
+   "width": 0.25,
+   "clearance": 0.15,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "C",
+   "width": 0.5,
+   "clearance": 0.3,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  }
+ ],
+ "obstacles": [],
+ "connections": [],
+ "pair_clearances": [],
+ "unsupported": [],
+ "inputs": {
+  "fixture": "0000000000000000000000000000000000000000000000000000000000000000"
+ }
+},
+"record": null},
+{"name": "refused_negative_edge", "refusal": "FAIL: edge clearance out of range",
+"input": {
+ "schema": "iot-lab.route-problem.v1",
+ "bounds": [
+  0,
+  0,
+  40,
+  30
+ ],
+ "edge_clearance": -1,
+ "edge_source": "synthetic fixture",
+ "layers": [
+  "F.Cu",
+  "B.Cu"
+ ],
+ "nets": [
+  {
+   "name": "A",
+   "width": 0.2,
+   "clearance": 0.2,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "B",
+   "width": 0.25,
+   "clearance": 0.15,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "C",
+   "width": 0.5,
+   "clearance": 0.3,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  }
+ ],
+ "obstacles": [],
+ "connections": [],
+ "pair_clearances": [],
+ "unsupported": [],
+ "inputs": {
+  "fixture": "0000000000000000000000000000000000000000000000000000000000000000"
+ }
+},
+"record": null},
+{"name": "refused_no_source", "refusal": "FAIL: edge clearance requires a source",
+"input": {
+ "schema": "iot-lab.route-problem.v1",
+ "bounds": [
+  0,
+  0,
+  40,
+  30
+ ],
+ "edge_clearance": 0.3,
+ "edge_source": "",
+ "layers": [
+  "F.Cu",
+  "B.Cu"
+ ],
+ "nets": [
+  {
+   "name": "A",
+   "width": 0.2,
+   "clearance": 0.2,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "B",
+   "width": 0.25,
+   "clearance": 0.15,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "C",
+   "width": 0.5,
+   "clearance": 0.3,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  }
+ ],
+ "obstacles": [],
+ "connections": [],
+ "pair_clearances": [],
+ "unsupported": [],
+ "inputs": {
+  "fixture": "0000000000000000000000000000000000000000000000000000000000000000"
+ }
+},
+"record": null},
+{"name": "refused_unknown_net", "refusal": "FAIL: connection net lacks a rule",
+"input": {
+ "schema": "iot-lab.route-problem.v1",
+ "bounds": [
+  0,
+  0,
+  40,
+  30
+ ],
+ "edge_clearance": 0.3,
+ "edge_source": "synthetic fixture",
+ "layers": [
+  "F.Cu",
+  "B.Cu"
+ ],
+ "nets": [
+  {
+   "name": "A",
+   "width": 0.2,
+   "clearance": 0.2,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "B",
+   "width": 0.25,
+   "clearance": 0.15,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "C",
+   "width": 0.5,
+   "clearance": 0.3,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  }
+ ],
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "a",
+   "net": "Z",
+   "start": [
+    1,
+    1
+   ],
+   "end": [
+    2,
+    2
+   ],
+   "layers": [
+    "F.Cu"
+   ]
+  }
+ ],
+ "pair_clearances": [],
+ "unsupported": [],
+ "inputs": {
+  "fixture": "0000000000000000000000000000000000000000000000000000000000000000"
+ }
+},
+"record": null},
+{"name": "unicode_names", "refusal": "",
+"input": {
+ "schema": "iot-lab.route-problem.v1",
+ "bounds": [
+  0,
+  0,
+  40,
+  30
+ ],
+ "edge_clearance": 0.3,
+ "edge_source": "synthetic fixture",
+ "layers": [
+  "F.Cu",
+  "B.Cu"
+ ],
+ "nets": [
+  {
+   "name": "Ω+5V",
+   "width": 0.2,
+   "clearance": 0.2,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  }
+ ],
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "é😀\"\\",
+   "net": "Ω+5V",
+   "start": [
+    1,
+    1
+   ],
+   "end": [
+    9,
+    1
+   ],
+   "layers": [
+    "F.Cu"
+   ]
+  }
+ ],
+ "pair_clearances": [],
+ "unsupported": [],
+ "inputs": {
+  "fixture": "0000000000000000000000000000000000000000000000000000000000000000"
+ }
+},
+"record": {
+  "schema": "iot-lab.pattern-route.v1",
+  "input_sha256": "559ff806ceee7d36598d6766a1052d085bf9102d933b59160b577ff804ce46e4",
+  "qualified": false,
+  "routes": [
+    {
+      "connection": "\u00e9\ud83d\ude00\"\\",
+      "net": "\u03a9+5V",
+      "layer": "F.Cu",
+      "width": 0.2,
+      "points": [
+        [
+          1.0,
+          1.0
+        ],
+        [
+          9.0,
+          1.0
+        ]
+      ],
+      "length_mm": 8.0
+    }
+  ],
+  "unresolved": [],
+  "attempts": 1,
+  "native_validation_required": true,
+  "status": "candidate",
+  "elapsed_s": 3.3911317586898804e-05,
+  "source_sha256": "559ff806ceee7d36598d6766a1052d085bf9102d933b59160b577ff804ce46e4",
+  "implementation_sha256": "acacdef003b57ad9eb1ac46b312e210343ca46328f51627a28dbf5deaece6e07"
+}},
+{"name": "unsupported", "refusal": "",
+"input": {
+ "schema": "iot-lab.route-problem.v1",
+ "bounds": [
+  0,
+  0,
+  40,
+  30
+ ],
+ "edge_clearance": 0.3,
+ "edge_source": "synthetic fixture",
+ "layers": [
+  "F.Cu",
+  "B.Cu"
+ ],
+ "nets": [
+  {
+   "name": "A",
+   "width": 0.2,
+   "clearance": 0.2,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "B",
+   "width": 0.25,
+   "clearance": 0.15,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "C",
+   "width": 0.5,
+   "clearance": 0.3,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  }
+ ],
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "a",
+   "net": "A",
+   "start": [
+    1,
+    1
+   ],
+   "end": [
+    9,
+    9
+   ],
+   "layers": [
+    "F.Cu"
+   ]
+  }
+ ],
+ "pair_clearances": [],
+ "unsupported": [
+  "differential-pair skew"
+ ],
+ "inputs": {
+  "fixture": "0000000000000000000000000000000000000000000000000000000000000000"
+ }
+},
+"record": {
+  "schema": "iot-lab.pattern-route.v1",
+  "input_sha256": "2105d631316fb835eb9a59a3594476d8f5651902c5907c7b3b0e3830114871a1",
+  "qualified": false,
+  "routes": [],
+  "unresolved": [
+    {
+      "connection": "a",
+      "net": "A",
+      "reason": "unsupported_constraints"
+    }
+  ],
+  "attempts": 0,
+  "native_validation_required": true,
+  "status": "unsupported",
+  "unsupported": [
+    "differential-pair skew"
+  ],
+  "elapsed_s": 1.5031546354293823e-06,
+  "source_sha256": "2105d631316fb835eb9a59a3594476d8f5651902c5907c7b3b0e3830114871a1",
+  "implementation_sha256": "acacdef003b57ad9eb1ac46b312e210343ca46328f51627a28dbf5deaece6e07"
+}},
+{"name": "zero_length", "refusal": "",
+"input": {
+ "schema": "iot-lab.route-problem.v1",
+ "bounds": [
+  0,
+  0,
+  40,
+  30
+ ],
+ "edge_clearance": 0.3,
+ "edge_source": "synthetic fixture",
+ "layers": [
+  "F.Cu",
+  "B.Cu"
+ ],
+ "nets": [
+  {
+   "name": "A",
+   "width": 0.2,
+   "clearance": 0.2,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "B",
+   "width": 0.25,
+   "clearance": 0.15,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  },
+  {
+   "name": "C",
+   "width": 0.5,
+   "clearance": 0.3,
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "source": "synthetic fixture"
+  }
+ ],
+ "obstacles": [],
+ "connections": [
+  {
+   "name": "a",
+   "net": "A",
+   "start": [
+    5,
+    5
+   ],
+   "end": [
+    5,
+    5
+   ],
+   "layers": [
+    "F.Cu"
+   ]
+  }
+ ],
+ "pair_clearances": [],
+ "unsupported": [],
+ "inputs": {
+  "fixture": "0000000000000000000000000000000000000000000000000000000000000000"
+ }
+},
+"record": {
+  "schema": "iot-lab.pattern-route.v1",
+  "input_sha256": "10a7c626f6f2821ae25e736afe77e726e8e98107d9b040915c0e5278294e096b",
+  "qualified": false,
+  "routes": [
+    {
+      "connection": "a",
+      "net": "A",
+      "layer": "F.Cu",
+      "width": 0.2,
+      "points": [
+        [
+          5.0,
+          5.0
+        ],
+        [
+          5.0,
+          5.0
+        ]
+      ],
+      "length_mm": 0.0
+    }
+  ],
+  "unresolved": [],
+  "attempts": 1,
+  "native_validation_required": true,
+  "status": "candidate",
+  "elapsed_s": 2.3568980395793915e-05,
+  "source_sha256": "10a7c626f6f2821ae25e736afe77e726e8e98107d9b040915c0e5278294e096b",
+  "implementation_sha256": "acacdef003b57ad9eb1ac46b312e210343ca46328f51627a28dbf5deaece6e07"
+}}
+]

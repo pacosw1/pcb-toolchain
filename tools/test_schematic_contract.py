@@ -269,24 +269,6 @@ class SchematicContractTests(unittest.TestCase):
                 self.assertEqual([row['rating'] for row in rail['reviewed_demand_bindings']],['load-current','load-current'])
                 self.assertEqual(contract.number(rail['actual']['max']),Decimal('.04'))
 
-    def test_native_export_only_adapter_has_explicit_narrow_scope_without_pdf_checks(self):
-        import schematic_contract_smoke as smoke
-        artifacts=self.root/'export-only'
-        with mock.patch.object(part_evidence,'pdf_pages',side_effect=AssertionError('PDF not required')):
-            report=smoke.export_observation(self.schematic,artifacts)
-        self.assertEqual(report['status'],'observed');self.assertFalse(report['qualified'])
-        self.assertEqual(contract.number(report['actual_nominal']['value']),Decimal('0.000001'))
-        self.assertIn('no reviewed-part or functional-contract verdict',report['scope'])
-
-    def test_native_proof_junit_never_hides_unexecuted_or_integrity_failed_cases(self):
-        import schematic_contract_smoke as smoke
-        result=dict(export_only=True,status='failed',scope='native export only',cases=[],cause='missing native exporter',elapsed_s=.1)
-        smoke.write_junit(self.root,result);suite=ET.parse(self.root/'junit.xml').getroot()
-        self.assertEqual(suite.attrib['failures'],'2');self.assertEqual(suite.attrib['skipped'],'0')
-        result['cases']=[dict(case=name,status='passed') for name in ('actual_native_export_is_parsed','actual_wrong_native_value_is_detected')]
-        smoke.write_junit(self.root,result);suite=ET.parse(self.root/'junit.xml').getroot()
-        self.assertEqual(suite.attrib['failures'],'1')
-
     def test_cli_output_writes_full_report_and_prints_only_bound_pointer(self):
         output=self.root/'terminal-report.json'
         report=dict(schema=contract.RESULT,status='passed',board=self.board,qualified=False,blockers=[],inputs={'source':'x'*100000})

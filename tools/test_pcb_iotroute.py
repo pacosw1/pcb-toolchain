@@ -1,4 +1,4 @@
-"""tools/pcb route --router iotroute: admission, dispatch of tools/router/run.py in the candidate, fail closed."""
+"""tools/pcb route --router iotroute: admission, dispatch of iotroute run in the candidate, fail closed."""
 import argparse
 import json
 from pathlib import Path
@@ -7,22 +7,6 @@ import unittest
 from unittest.mock import patch
 
 import pcb_cli
-from router import run as iotroute
-
-
-class Policy(unittest.TestCase):
-    def test_default_and_args(self):
-        self.assertEqual(iotroute.policy(None)['keep'], 'lock-nets')
-        self.assertEqual(iotroute.policy_args(None, '/c/X.kicad_pcb'), ['--iters', '80', '--lock-from', '/c/X.kicad_pcb'])
-        spec = dict(schema=iotroute.POLICY_SCHEMA, iters=20, max_time_s=300, keep='all')
-        self.assertEqual(iotroute.policy_args(spec, '/c/X.kicad_pcb'), ['--iters', '20', '--max-time', '300'])
-
-    def test_rejects(self):
-        for spec in ({'schema': 'iot-lab.route.v1'}, dict(schema=iotroute.POLICY_SCHEMA, shell='x'),
-                     dict(schema=iotroute.POLICY_SCHEMA, iters=0), dict(schema=iotroute.POLICY_SCHEMA, iters=2.5),
-                     dict(schema=iotroute.POLICY_SCHEMA, max_time_s=-1), dict(schema=iotroute.POLICY_SCHEMA, keep='some')):
-            with self.subTest(spec=spec), self.assertRaises(ValueError):
-                iotroute.policy(spec)
 
 
 class Admission(unittest.TestCase):
@@ -41,7 +25,8 @@ class Admission(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             spec = Path(d) / 'p.json'
             spec.write_text('{"schema":"iot-lab.iotroute-policy.v1","iters":5,"cmd":"x"}')
-            with self.assertRaisesRegex(ValueError, 'unknown iotroute policy fields'):
+            refused = ValueError('unknown iotroute policy fields: cmd')
+            with patch('pcb_workflow.route_policy_args', side_effect=refused), self.assertRaisesRegex(ValueError, 'unknown iotroute policy fields'):
                 pcb_cli.start_run(self.args(spec), Path(d) / 'runs')
             self.assertFalse((Path(d) / 'runs').exists())
 
@@ -57,7 +42,7 @@ class Dispatch(unittest.TestCase):
 
         def execute(folder_, stage, command, workspace, env):
             calls.append((stage, command))
-            out = Path(command[command.index('tools/router/run.py') + 2])
+            out = Path(command[command.index('iotroute') + 3])
             work = Path(str(out) + '.iotroute')
             work.mkdir(parents=True)
             out.write_text('routed')
@@ -67,6 +52,7 @@ class Dispatch(unittest.TestCase):
             return code
         with patch.object(pcb_operations, 'snapshot', return_value={}), \
                 patch.object(pcb_operations, 'board_config', return_value=(None, {}, Path(d) / 'X.kicad_sch')), \
+                patch.object(pcb_operations, 'route_policy_args', return_value=['--iters', '80', '--lock-from', str(Path(d) / 'X.kicad_pcb')]), \
                 patch.object(pcb_operations, 'execute', side_effect=execute):
             try:
                 pcb_operations.run(folder)
@@ -74,14 +60,14 @@ class Dispatch(unittest.TestCase):
                 pass  # the stubbed snapshot has no files; the route stage is done by then
         return folder, calls
 
-    def test_runs_run_py_on_the_candidate_and_adopts_its_board(self):
+    def test_runs_iotroute_on_the_candidate_and_adopts_its_board(self):
         with tempfile.TemporaryDirectory() as d:
             folder, calls = self.dispatch(d)
             native = Path(d) / 'X.kicad_pcb'
             stage, command = calls[0]
             self.assertEqual(stage, 'route')
             self.assertEqual(command[:5], ['node', 'tools/router/route-dispatch.mjs', '--timeout', '60', '--'])
-            self.assertEqual(command[6:9], ['tools/router/run.py', 'X', str(folder.resolve() / 'operation/router/X.kicad_pcb')])
+            self.assertEqual(command[5:9], ['iotroute', 'run', 'X', str(folder.resolve() / 'operation/router/X.kicad_pcb')])
             self.assertEqual(command[command.index('--pcb') + 1], str(native))
             self.assertEqual(command[command.index('--lock-from') + 1], str(native))
             self.assertEqual(command[command.index('--iters') + 1], '80')

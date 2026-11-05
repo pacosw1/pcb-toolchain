@@ -80,6 +80,6 @@ if [ -f "$bundle/VERSION" ] && [ -f "$lock" ] && [ "$project" != "$bundle" ]; th
 fi
 [ -z "$sync_only" ] || exit 0
 if [ "$live_registered" = 0 ]; then
-  exec node --no-warnings --experimental-strip-types "$bundle/tools/pcb-live-guard.mts" --project "$project" -- python3 "$bundle/tools/pcb" "$@"
+  exec node --no-warnings --experimental-strip-types "$bundle/tools/pcb-live-guard.mts" --project "$project" -- "$bundle/tools/pcb" "$@"
 fi
-exec python3 "$bundle/tools/pcb" "$@"
+exec "$bundle/tools/pcb" "$@"

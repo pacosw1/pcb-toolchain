@@ -43,7 +43,7 @@ export function jsImports(file,text) {
 }
 export function gateTools(root, entries = [join(root,'tools/gate.mjs')]) {
   const tools=join(root,'tools');
-  const inside=p=>{const rel=relative(tools,p);return rel && !rel.startsWith('..') && !rel.includes('\\') && !/(^|\/)(test_[^/]*\.py|[^/]*\.test\.mjs)$/.test(rel);};
+  const inside=p=>{const rel=relative(tools,p);return rel && !rel.startsWith('..') && !rel.includes('\\') && !/(^|\/)(test_[^/]*\.py|[^/]*\.test\.(mjs|ts))$/.test(rel) && !rel.endsWith('.d.mts');};
   const files=new Set();const queue=[...entries];
   while(queue.length) {
     const file=resolve(queue.shift());
@@ -51,7 +51,7 @@ export function gateTools(root, entries = [join(root,'tools/gate.mjs')]) {
     files.add(file);
     if(!existsSync(file)) continue;
     const text=readFileSync(file,'utf8');
-    if(file.endsWith('.mjs')) {
+    if(/\.(mjs|ts)$/.test(file)) {
       for(const spec of jsImports(file,text)) {
         if(spec.startsWith('node:')) continue;
         const target=resolve(dirname(file),spec);

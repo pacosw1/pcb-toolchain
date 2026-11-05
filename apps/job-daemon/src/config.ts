@@ -72,7 +72,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     token,
     dataDir,
     instance: env.JOBD_INSTANCE || 'default',
-    images: (env.JOBD_IMAGES || 'iot-lab-route:10.0,iot-lab-route:10.0-fr241').split(',').map((s) => s.trim()).filter(Boolean),
+    images: (env.JOBD_IMAGES || 'iot-lab-route:10.0-nightly-4fe1ca2060,iot-lab-route:10.0,iot-lab-route:10.0-fr241').split(',').map((s) => s.trim()).filter(Boolean),
     cpuBudget: num(env, 'JOBD_CPU_BUDGET', 16),
     memBudgetGb: num(env, 'JOBD_MEM_BUDGET_GB', 16),
     cgroupParent: env.JOBD_CGROUP_PARENT || '',

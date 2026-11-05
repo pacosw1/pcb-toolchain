@@ -1,5 +1,5 @@
 // tools/router/route-dispatch.mjs: the job daemon when it answers, local otherwise. Stand-ins for the daemon's /status,
-// the client, run.py, git and the toolchain tree. No network beyond localhost.
+// the client, iotroute, git and the toolchain tree. No network beyond localhost.
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
 import {createHash} from 'node:crypto';
@@ -73,14 +73,14 @@ function project(t,{client={exit:0},withBinary=true,sourcesEqual=true,binaryAge=
   mkdirSync(join(root,'happy/.git'),{recursive:true});
   put(join(root,'happy/skills.txt'),'happy');
   exe(join(root,'bin/git'),`#!/bin/sh\necho ${pin}\n`);
-  // run.py's stand-in: what the local path runs, exit 5 so that a local run cannot pass as a job.
-  exe(join(root,'bin/fake-python'),`#!/bin/sh\necho "$@" > "${root}/local.log"\necho "LOCAL OUT"\nexit 5\n`);
+  // iotroute's stand-in: what the local path runs, exit 5 so that a local run cannot pass as a job.
+  exe(join(root,'bin/fake-iotroute'),`#!/bin/sh\necho "$@" > "${root}/local.log"\necho "LOCAL OUT"\nexit 5\n`);
   return{root,ws,tc};
 }
 
 function dispatch(p,env={},{args=[],timeout='60',wait=true}={}){
   const out=join(p.ws,'run/router/DEMO.kicad_pcb'),pcb=join(p.ws,BOARD,'DEMO.kicad_pcb');
-  const cmd=['fake-python','tools/router/run.py','DEMO',out,'--pcb',pcb,'--json','--iters','5','--lock-from',pcb,...args];
+  const cmd=['fake-iotroute','run','DEMO',out,'--pcb',pcb,'--json','--iters','5','--lock-from',pcb,...args];
   const child=spawn(process.execPath,[SCRIPT,'--timeout',timeout,'--',...cmd],{cwd:p.ws,stdio:['ignore','pipe','pipe'],
     env:{PCB_HOST_PLATFORM:'linux',PATH:`${join(p.root,'bin')}:${process.env.PATH}`,HOME:p.root,JOBD_TOKEN_FILE:join(p.root,'token'),PCB_TOOLCHAIN_ROOT:p.tc,KICAD_HAPPY_DIR:join(p.root,'happy'),...env}});
   let stdout='',stderr='';
@@ -125,12 +125,12 @@ test('a daemon that answers gets the job: workspace tools, Linux router, kicad-h
   const job=a.slice(a.indexOf('--')+1);
   assert.deepEqual(job.slice(0,2),['bash','-c']);
   assert.match(job[2],/KICAD_HAPPY_DIR=\$PWD\/\.happy KICAD_CLI=kicad-cli/);
-  assert.match(job[2],/exec python3 "\$@"/);
-  assert.deepEqual(job.slice(4),['tools/router/run.py',BOARD,'out/route/DEMO.kicad_pcb','--bin','in/iotroute-linux-x86_64','--iters','5',
+  assert.match(job[2],/exec "\$@"/);
+  assert.deepEqual(job.slice(4),['in/iotroute-linux-x86_64','run',BOARD,'out/route/DEMO.kicad_pcb','--iters','5',
     '--pcb',`${BOARD}/DEMO.kicad_pcb`,'--lock-from',`${BOARD}/DEMO.kicad_pcb`,'--congestion']);
 });
 
-test('--seed, --stall-passes and --checkpoint stay on the daemon and reach run.py',async t=>{
+test('--seed, --stall-passes and --checkpoint stay on the daemon and reach the run',async t=>{
   const p=project(t,{client:{exit:0,job:jobOf('passed','passed',0),out:files(record('PASS')),stdout:'PASS 0 0 0 1 1 3\n'}});
   const r=await dispatch(p,{JOBD_URL:await daemon(t)},{args:['--seed','7','--stall-passes','12','--checkpoint']});
   assert.equal(r.status,0,r.stderr);
@@ -140,16 +140,7 @@ test('--seed, --stall-passes and --checkpoint stay on the daemon and reach run.p
     '--pcb',`${BOARD}/DEMO.kicad_pcb`,'--lock-from',`${BOARD}/DEMO.kicad_pcb`]);
 });
 
-test('a snapshot source newer than the binary passes run.py: the staged copy gets a new mtime',async t=>{
-  const p=project(t,{client:{exit:0,job:jobOf('passed','passed',0),out:files(record('PASS'))}});
-  const before=Date.now();
-  utimesSync(join(p.ws,'tools/router/core/src/main.rs'),new Date(before),new Date(before));
-  const r=await dispatch(p,{JOBD_URL:await daemon(t)});
-  assert.equal(r.status,0,r.stderr);
-  assert.ok(JSON.parse(readFileSync(join(p.root,'inputs.json'),'utf8'))[0].mtime>=before-1000);
-});
-
-test('results come back next to OUT, the record holds local paths, stdout is run.py\'s',async t=>{
+test('results come back next to OUT, the record holds local paths, stdout is the run\'s',async t=>{
   const p=project(t,{client:{exit:0,job:jobOf('passed','passed',0),out:files(record('PASS')),stdout:'PASS 0 0 0 1 1 3\n'}});
   const r=await dispatch(p,{JOBD_URL:await daemon(t)});
   assert.equal(r.status,0,r.stderr);
@@ -171,14 +162,14 @@ test('results come back next to OUT, the record holds local paths, stdout is run
 });
 
 for(const [name,status,code,outcome,state] of [['FAIL','FAIL',1,'command','failed'],['no verdict','ERROR',2,'command','failed']])
-  test(`run.py's ${name} comes back with its exit code ${code}, and no local run`,async t=>{
-    const rec=record(status,status==='ERROR'?{board_sha256:undefined,cause:'model.py failed, see /job/out/route/DEMO.kicad_pcb.iotroute/model.log'}:{});
+  test(`the run's ${name} comes back with its exit code ${code}, and no local run`,async t=>{
+    const rec=record(status,status==='ERROR'?{board_sha256:undefined,cause:'iotroute model failed, see /job/out/route/DEMO.kicad_pcb.iotroute/model.log'}:{});
     const p=project(t,{client:{exit:code,job:jobOf(state,outcome,code),out:status==='ERROR'?{'DEMO.kicad_pcb.iotroute/result.json':JSON.stringify(rec)}:files(rec),stdout:`${status} 1 0 0 1 1 3\n`}});
     const r=await dispatch(p,{JOBD_URL:await daemon(t)});
     assert.equal(r.status,code,r.stderr);
     assert.equal(r.record().status,status);
     assert.ok(!ranLocally(p));
-    if(status==='ERROR')assert.equal(r.record().cause,`model.py failed, see ${r.out}.iotroute/model.log`);
+    if(status==='ERROR')assert.equal(r.record().cause,`iotroute model failed, see ${r.out}.iotroute/model.log`);
   });
 
 for(const [name,setup,env,args=[]] of [
@@ -197,7 +188,7 @@ for(const [name,setup,env,args=[]] of [
   assert.equal(r.status,5,r.stderr);
   assert.match(r.stdout,/^LOCAL OUT$/m);
   assert.match(r.stderr,/route: local run: \S/);
-  assert.match(readFileSync(join(p.root,'local.log'),'utf8'),/^tools\/router\/run\.py DEMO \S+ --pcb \S+ --json --iters 5 --lock-from \S+/);
+  assert.match(readFileSync(join(p.root,'local.log'),'utf8'),/^run DEMO \S+ --pcb \S+ --json --iters 5 --lock-from \S+/);
   assert.deepEqual(calls(p),[]);
 });
 
@@ -222,7 +213,7 @@ test('a candidate outside the shipped board folder stays local',async t=>{
   const p=project(t);
   put(join(p.ws,'hardware-design/boards/OTHER/X.kicad_pcb'),INPUT);
   const url=await daemon(t),out=join(p.ws,'run/router/X.kicad_pcb'),pcb=join(p.ws,'hardware-design/boards/OTHER/X.kicad_pcb');
-  const child=spawn(process.execPath,[SCRIPT,'--',join(p.root,'bin/fake-python'),'tools/router/run.py','DEMO',out,'--pcb',pcb,'--json'],{cwd:p.ws,
+  const child=spawn(process.execPath,[SCRIPT,'--',join(p.root,'bin/fake-iotroute'),'run','DEMO',out,'--pcb',pcb,'--json'],{cwd:p.ws,
     env:{PCB_HOST_PLATFORM:'linux',PATH:`${join(p.root,'bin')}:${process.env.PATH}`,HOME:p.root,JOBD_URL:url,JOBD_TOKEN_FILE:join(p.root,'token'),PCB_TOOLCHAIN_ROOT:p.tc,KICAD_HAPPY_DIR:join(p.root,'happy')}});
   let stderr='';child.stderr.on('data',d=>stderr+=d);
   const status=await new Promise(r=>child.on('close',r));

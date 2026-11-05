@@ -5,8 +5,8 @@ One line per event: {"t": ISO time, "elapsed_s": since the job start, "stage": n
 "open": open connections of that pass or null, "vias": null until the board is imported, "best_open": lowest open count
 so far, "eta_s": seconds to 0 open from the slope of the recent passes (null when not estimable)}.
 Writers: tools/fastroute_job.py (stage start/end: preflight, plane-vias, route, import, drc, triage; one line per
-Fastroute "Auto-routing pass #N ... (K unrouted" log line), tools/route_status.py --mark for the shell stages (gate,
-render, fab). Reader: tools/route_status.py OUTDIR [--follow].
+Fastroute "Auto-routing pass #N ... (K unrouted" log line), tools/route_status.ts --mark for the shell stages (gate,
+render, fab). Reader: tools/route_status.ts OUTDIR [--follow].
 """
 import datetime as dt
 import json

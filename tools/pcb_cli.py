@@ -459,8 +459,8 @@ def start_run(args, base):
             if spec.get('schema') != SCHEMA:
                 raise ValueError('route --router route-json requires a ' + SCHEMA + ' spec')
         if operation == 'route' and router == 'iotroute':
-            from router.run import policy
-            policy(spec)
+            from pcb_workflow import route_policy_args
+            route_policy_args(spec, 'candidate')
     cycle_folder = None
     if getattr(args, 'cycle', None):
         import pcb_cycle
@@ -742,7 +742,7 @@ def main(argv=None):
             if name in ('edit', 'route'):
                 child.add_argument('--spec', type=Path, required=name == 'edit',
                                    help='route: required, except --router route-json (default: the board route.json) '
-                                        'and --router iotroute (default policy: tools/router/run.py)')
+                                        'and --router iotroute (default policy: iotroute run)')
                 if name == 'edit':
                     child.add_argument('--kind', choices=['place', 'route'], required=True)
                 else:
@@ -750,7 +750,7 @@ def main(argv=None):
                                        default='explicit',
                                        help='explicit tracks, controlled Fastroute, integrated engine search, '
                                             'tools/route.py driven by route.json, or the in-house router '
-                                            '(tools/router/run.py)')
+                                            '(iotroute run)')
             if name == 'repair':
                 child.add_argument('--plan', type=Path, required=True)
             if name in ('build', 'edit', 'route', 'repair'):

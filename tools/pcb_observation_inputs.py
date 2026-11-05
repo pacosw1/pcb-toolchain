@@ -40,7 +40,9 @@ AUDITED = {
     # 2026-11-04 review: worker() credits a job daemon queue wait to the run deadline, read from a JSON file in the run's
     # operation/ folder, for router iotroute only (manifest key absent on parts runs). No new import or command. Parts
     # branch unchanged.
-    "pcb_cli.py": "382f8a12d952b0b9f2a87571ebebc8a445ab41a87f182f56e6ceebe2f3a17ecf",
+    # 2026-11-04 review: the route --router iotroute check calls pcb_workflow.route_policy_args, lazily, on that branch only;
+    # the rest is help text. Parts branch unchanged.
+    "pcb_cli.py": "17169043df5f9e2df0bd4df7de352a62ca168ce9b76bc5e3b76091f77c956bc0",
     # 2026-10-21 review: plain Fastroute route passes the host runtime; adds
     # stdlib `import sys` (builtin, cannot be shadowed). Parts branch unchanged.
     # 2026-10-21 review: route-json route branch runs tools/route.py; pcb_identity
@@ -49,10 +51,14 @@ AUDITED = {
     # iotroute branch are off the parts path: observations run from root, without snapshot(). Parts branch unchanged.
     # 2026-11-04 review: the iotroute launch line goes through tools/router/route-dispatch.mjs (job daemon or local);
     # route branch only, off the parts path. Parts branch unchanged.
-    "pcb_operations.py": "c9176dddcdf421d3d404a2ae246d93eaa3a88d6b663fbc9cd314c5b7d0470c7a",
+    # 2026-11-04 review: the iotroute branch runs `iotroute run` through route-dispatch, not tools/router/run.py. Route branch
+    # only. Parts branch unchanged.
+    "pcb_operations.py": "a34b189daa487b3428a29bfe133b163e17d3baa5a8493ca6b5b6bac9b5c2bea7",
     "pcb_evidence.py": "9d929244915407bddefd096f8a981113652e2706ea8785cf5ddb70061330687f",
     # 2026-11-04 review: pipeline() reads gate.json instead of ALIASES; build/status only. Parts branch unchanged.
-    "pcb_workflow.py": "08ec41de3f9da4a8c45ecd8f9b2f007bb5a78703b7b36ecb942ab45fde982f93",
+    # 2026-11-04 review: adds stdlib `import subprocess`, iotroute_bin and route_policy_args. Only the route branches call them.
+    # Parts branch unchanged.
+    "pcb_workflow.py": "6ca3155f354a4f57e196e0491f28ff20d95df96c86862caaeb131d5b7ce7ab2d",
     "pcb_timing.py": "07ed104072e56166625ffc36e774892c3761832cf00fe72b6abef2d967f05ddd",
     "lean_workflow.py": "926caceb8697718d86e279e114a7c9a57b5f78f20afa635109460601c27f1bb8",
     # 2026-11-04 review: the /proc scans treat ESRCH like ENOENT, and accept the parent 0, group -1, session -1 row of a

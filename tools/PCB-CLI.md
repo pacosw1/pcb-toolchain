@@ -121,7 +121,12 @@ tools/pcb route BOARD --spec /absolute/routes.json --json
 tools/pcb adopt RUN_ID --json
 ```
 
-Build dispatch uses existing board pipelines; unsupported boards fail explicitly.
+Build dispatch uses an existing board's configured pipeline; unsupported boards
+fail explicitly. The entrypoint must be a regular, repository-relative file in
+`tools/` or the registered board owner's source tree, without symlink components
+or paths excluded from the candidate snapshot. The entrypoint is copied and
+hashed with the candidate inputs. This check does not sandbox a script or prove
+its external dependencies. It does not create a new board revision.
 Placement specs use `{"place":{"R1":[x,y,degrees]}}`; routes use the existing
 `pcbtool.py` format. Commands run in a separate board/dependency snapshot without
 mutable links into canonical CAD. Historical runs/unrelated evidence are excluded.
@@ -141,9 +146,9 @@ they overlap the pours already there (`zones_intersect`).
 
 For the in-house router (tools/router/DESIGN.md), use
 `tools/pcb route BOARD --router iotroute [--spec POLICY.json] --detach --json`. The run executes
-`tools/router/run.py` from the snapshot on the candidate board (model, iotroute, write, KiCad DRC with
+`iotroute run` from the snapshot on the candidate board (model, iotroute, write, KiCad DRC with
 parity on the saved fill), the same way as `route-json`. Then the normal gate, seal and `pcb adopt` flow
-applies. A run.py FAIL (DRC, unconnected or parity not 0) is a failed route and the candidate is not
+applies. A iotroute run FAIL (DRC, unconnected or parity not 0) is a failed route and the candidate is not
 replaced. The router's own counts are never the verdict. `--spec` is optional; the policy has only these fields:
 
 ```json

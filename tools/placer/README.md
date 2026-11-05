@@ -1,8 +1,16 @@
-Tests (from the repo root; needs numpy and pcbnew, so use the KiCad Python): `/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3 -m unittest discover -s tools/placer -p 'test_*.py'` (without KiCad: `uv run --with numpy python -m unittest discover -s tools/placer -p 'test_*.py'` runs the cost and search tests; the pcbnew tests skip). Search and benchmark runs go on Hetzner only (`tools/remote.sh`); this Mac runs tests and short smoke runs only.
+The search is Rust: `tools/placer/core` (crate and binary `iotplace`). `iotplace run` takes the arguments of `cli.py run` and writes the same res.json; `cli.py run` calls it for every problem without a reviewed engineering contract. It runs in a daemon job, where the route image has no node and no numpy. `iotplace scramble`, `gplace` (the analytic stage alone) and `count` (the DRC counts of `validate.py count`) are the other commands. Modules: `numeric` (the arithmetic of the reference runs), `problem` and `params` (typed input; an unknown `--param` is an error), `model` (static tables), `layout` (current places), one module per cost term with its own state and undo (`rudy`, `spacing`, `domain`, `via`, `crossing`, `rows`, `escape`, `wirelen`, with `mask`), `evaluator` (the incremental cost), `search` (mover, anneal, legalizer, epochs), `gplace`, `mains`, `dru`, `pinswap`, `congest`, `drc_count`, `bench`.
+
+Rust tests: `cargo test --release` in `tools/placer/core` (`tests/golden.rs`: seeded results of the Python search on ENV-SENSE, PWR-24V-5V and a synthetic problem). A seed gives the same poses as the Python search, bit for bit: `numeric` reproduces `random.Random` (MT19937), numpy pairwise sums, the compensated builtin `sum` of Python 3.12+ and `math.hypot`. Two things differ by design. With `global=1` the search does not match, because the analytic stage does not: numpy runs its matrix products on OpenBLAS, and the descent amplifies that roundoff about 1e9 times in 100 steps (5.5e-7 relative at step 100, 1e-5 mm at the end); `golden.rs` checks that trace instead. The history components of res.json come from the evaluator, not a second cost path: within 1e-15 of Python. About 100x the moves per second of the Python workers.
+
+Not in the Rust search: `schedule=lam`, `normalize`, `init=spectral`, gplace `rotate` (closed experiments below, no caller). `cli.py run` refuses them as unknown `--param`s rather than running another search. Removed from the tree on 2026-11-04 (git history has them; their results stay below): `batch.py`, `batch_capabilities.py`, `bench_batch.py`, `gplace_torch.py` (the torch backends and `batch=1`), `surrogate.py`, `surrogate_gen.py`, `features.py` (the stopped surrogate), `bench_place.py`, `cypress_io.py` and `cypress/` (the closed Cypress comparison).
+
+Python that stays. A problem with a reviewed engineering contract runs on `cli.py` and `anneal.py`, because its rules are in `tools/engineering_constraints.py`. `cost.py`, `dru.py` and `placement_audit.py` have callers in `pcb_search`, `pcb_engine` and top-level tools. The files that use pcbnew wait for `iotroute board-json`: `kicad_io.py`, `repair.py`, `pinswap_io.py`, `membership.py`, `validate.py` (strip), `compact_cli.py`.
+
+Python tests (from the repo root; needs numpy and pcbnew, so use the KiCad Python): `/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3 -m unittest discover -s tools/placer -p 'test_*.py'` (without KiCad: `uv run --with numpy python -m unittest discover -s tools/placer -p 'test_*.py'` runs the cost and search tests; the pcbnew tests skip). Search and benchmark runs go on Hetzner only (`tools/remote.sh`); this Mac runs tests and short smoke runs only.
 
 Seeded compaction: `--seeded-policy` enforces no scatter/global placement/swaps/turns, including legalizer turns. `--retain-candidates 3` preserves scored alternatives without routing them; legal candidates rank before illegal/incomplete ones. Per-step `placement-audit.json` shows seed and legalizer movement, components and constraint hashes. `w0` bounds one move, not total displacement; optional `--max-displacement 3` bounds cumulative seed displacement and rejects violations. This cap and `--congestion-feedback` remain opt-in pending routing evidence. Pin-escape feedback requires complete native-clean matching CAD evidence and is capped by `--feedback-max-mm` (default 1, maximum 2); `feedback.json` records provenance. See `hardware-design/reports/2026-10-09-base-b-placement-audit.md` for the measured limitations.
 
-Search on Hetzner (the image has no numpy): pass a PyPI numpy wheel for CPython 3.13 x86_64 (for example numpy-2.2.6-cp313-cp313-manylinux_2_17_x86_64, sha256 1bc23a79bfabc5d056d106f9befb8d50c31ced2fbc70eedb8155aec74a45798f) with `--in`, and run `bash tools/placer/remote_run.sh run in/prob.json -o out/res.json --workers 30 --epochs 20 --steps 20000` (MC-MAIN: 250 s). Do not use short runs (for example 4 x 2000 steps): the end state is far from legal and the legalizer then takes more than 300 s.
+Search on Hetzner: pass the Linux binary with `--in` and run `bash tools/placer/remote_run.sh run in/prob.json -o out/res.json --workers 30 --epochs 20 --steps 20000` (`tools/placer/remote_run.sh`; `compact_cli.py` takes the binary from `bin/iotplace-linux-x86_64` under PCB_TOOLCHAIN_ROOT). A reviewed engineering problem runs on Python in the job: pass a PyPI numpy wheel for CPython 3.13 x86_64 (for example numpy-2.2.6-cp313-cp313-manylinux_2_17_x86_64, sha256 1bc23a79bfabc5d056d106f9befb8d50c31ced2fbc70eedb8155aec74a45798f) instead. Do not use short runs (for example 4 x 2000 steps): the end state is far from legal and the legalizer then takes more than 300 s.
 
 Pin swap proposal (never edits the schematic): `python3 tools/placer/cli.py pinswap BOARD PINMAP.json -o proposal.json [--apply COPY.kicad_pcb]` (run it on Hetzner through `remote_run.sh`; MC-MAIN U1: 35 s). `--apply` writes a board copy with the swapped pad nets for a routing benchmark only; schematic parity fails on that copy.
 
@@ -296,12 +304,12 @@ The in-house router is the judge (idea: TraceMaker `src/place/routable.cpp` at c
 
 ```sh
 $PY tools/placer/repair.py prepare SRC.kicad_pcb PLACE.kicad_pcb --board NET-CORE [--keep lock-nets|locked]
-$PY tools/router/run.py NET-CORE ROUTED.kicad_pcb --pcb PLACE.kicad_pcb              # the failed full route
+iotroute run NET-CORE ROUTED.kicad_pcb --pcb PLACE.kicad_pcb              # the failed full route
 $PY tools/placer/repair.py run NET-CORE PLACE.kicad_pcb ROUTED.kicad_pcb --outdir DIR [--mode local|full]
     [--max-routes 8] [--per-round 4] [--no-rotate] [--no-decap-slide] [--read ARG ...]
 ```
 
-- prepare: all footprints unlocked; `lock-nets` (default) keeps only the pair + crystal copper (as run.py
+- prepare: all footprints unlocked; `lock-nets` (default) keeps only the pair + crystal copper (as iotroute run
   `--lock-from`); `locked` also keeps every other locked track and via of SRC (hand geometry). NET-CORE needs
   `locked`: its 15 locked GND items include the stubs of U8.6 and U3.2. Without them the router reports
   "fixed copper alone walls it in (input)" and KiCad reports starved_thermal on those pads.
@@ -316,7 +324,7 @@ $PY tools/placer/repair.py run NET-CORE PLACE.kicad_pcb ROUTED.kicad_pcb --outdi
   located item. Rank: term decrease, placement cost, displacement; round-robin over the units. Deterministic.
 - Decap slide: a decap tied to its IC (`cli.py read --decap-tie`, 3 mm) may move alone when the tie stays true
   (pad-edge gap to the IC pin <= the tie distance).
-- Route: `reuse` (default since 2026-11-01, see the last section) routes the moved placement with `run.py --reuse` from
+- Route: `reuse` (default since 2026-11-01, see the last section) routes the moved placement with `iotroute run --reuse` from
   the present candidate's route. `local` rips the copper that the moved pads meet and the unlocked clusters within `legal_radius`
   of a failure or on a failed net, keeps and locks the rest, and routes only what is open (NET-CORE: 40 s against
   270 s for a full route). `full` routes the moved placement board again.
@@ -417,7 +425,7 @@ when its tie stays true. These proposals alternate with the failure-point propos
 proposed only R27 (no gain); the new one proposes C47 0.75 mm south (blocked 0.16 -> 0) and C49 moves.
 
 CPU tokens: an iotroute routing stage reserves `iotroute_step.router_cpu()` = 1 (the router core has no thread or
-parallel crate) + 1 (the kicad-cli DRC phase of run.py) instead of the whole budget. The 16 GiB declared memory with
+parallel crate) + 1 (the kicad-cli DRC phase of iotroute run) instead of the whole budget. The 16 GiB declared memory with
 8 GiB per job still limits the Mac to 2 compaction runs side by side (a third run waits 30 s, then stops).
 
 Result (2026-11-01, NET-CORE from the spread placement 1faf8ad8, blocks, router v7 judge, scratch only). Run A
@@ -444,9 +452,9 @@ Cause: the halo rank kept the passing step with the smallest halo. On NET-CORE (
 1914 mm, but s 0.542 routed 1580 mm. Below s 0.54 the routed length does not fall, and HPWL does not predict it.
 
 - Measure: each `--router iotroute` step records `measure` = {length_mm, vias, routed} in `run.json`. Source: the
-  `run.py --json` record (`copper_counts`: pcbnew track lengths and via count of the saved routed board, not the
+  `iotroute run --json` record (`copper_counts`: pcbnew track lengths and via count of the saved routed board, not the
   router core claim). A step that passes through the repair takes the measure of the repaired board (the repair
-  key, from the same run.py record). `box_sum` = the block box sum of the search pose in the problem model (rigid
+  key, from the same iotroute run record). `box_sum` = the block box sum of the search pose in the problem model (rigid
   block border boxes + the box of each soft block cohesion net; a repair move is not in it).
 - Rank (`--rank length`, default for `--router iotroute`): a real-outline step first, then the shortest routed
   length, then fewer vias, then the smaller box sum. `--rank halo` = the old rule (smallest halo, maximum
@@ -474,7 +482,7 @@ the placement costs of steps 0-4 are the same as in escape A; only the router ch
 `STOP length stop: the 2 passing steps after step 2 (s 0.542, 1597.5 mm) rank after it`. The halo rank would have
 kept step 4 (+48 mm). Independent check of the step 2 routed board (scratch copy): `kicad-cli pcb drc
 --schematic-parity` 0 / 0 / 0, `node tools/gate.mjs NET-CORE --fresh` PASS (detached origin/main worktree), pcbnew
-1597.5 mm / 304 vias (the same as the run.py measure). Against the table above: the same placement routed 1580 mm /
+1597.5 mm / 304 vias (the same as the iotroute run measure). Against the table above: the same placement routed 1580 mm /
 296 vias with v7; the hand placement routed 1558 mm / 287 vias with v7 (not routed again with v8 here). The rank
 choice and the stop worked; the length gap to the hand placement is the next problem (a length-aware term).
 
@@ -482,9 +490,9 @@ choice and the stop worked; the length gap to the hand placement is the next pro
 
 Cause (data, router v8, scratch only). 23 routed NET-CORE placements with 0 unconnected: escape A steps 0-5, escape
 C steps 0-7, PR #73 run A steps 0-1, PR #73 run B7 step 0, PR #71 run 4 steps 0-3 and 6, and the hand placement
-(`run.py --lock-from`). 18 are DRC 0 / 0 / 0; 5 have 1-2 DRC items and 0 unconnected (C1, C3, C6, BA0, R4_3). 6 more
+(`iotroute run --lock-from`). 18 are DRC 0 / 0 / 0; 5 have 1-2 DRC items and 0 unconnected (C1, C3, C6, BA0, R4_3). 6 more
 routes left 1 open and are not in the data. Escape A steps 0-4 are the rank-by-length run boards; the others were
-routed again with v8 (`run.py BOARD OUT --pcb PLACE --iters 80`).
+routed again with v8 (`iotroute run BOARD OUT --pcb PLACE --iters 80`).
 Each placement metric comes from the pads of the routed board (repair moves included). Spearman with the routed length:
 
 | Metric (signal nets: not GND, not VDD_3V3) | Spearman | n |
@@ -542,7 +550,7 @@ Independent check of the step 1 routed board (scratch copy, sha256 75a473f9...):
 
 | Board | length mm | vias | DRC / unconn / parity | gate |
 | --- | --- | --- | --- | --- |
-| hand placement (`run.py --lock-from`, v8) | 1592.9 | 285 | 0 / 0 / 0 | - (router PASS) |
+| hand placement (`iotroute run --lock-from`, v8) | 1592.9 | 285 | 0 / 0 / 0 | - (router PASS) |
 | rank-by-length run, step 2 (no TP pins, w_mst 0) | 1597.5 | 304 | 0 / 0 / 0 | PASS |
 | this run, step 1 (TP pins + w_mst 1) | 1390.9 | 287 | 0 / 0 / 0 | PASS |
 
@@ -593,7 +601,7 @@ NET-CORE constraints (spread placement f9fcd2ed; SW1, SW2, D1, D2 are already at
 
 | Board | length mm | vias | DRC / unconn / parity | gate |
 | --- | --- | --- | --- | --- |
-| hand placement (`run.py --lock-from`, v9) | 1558.6 | 280 | 0 / 0 / 0 | PASS |
+| hand placement (`iotroute run --lock-from`, v9) | 1558.6 | 280 | 0 / 0 / 0 | PASS |
 | w_mst run step 1, no constraints (v8) | 1390.9 | 287 | 0 / 0 / 0 | PASS |
 | this run step 0, constraints (v9) | 1485.6 | 286 | 0 / 0 / 0 | PASS |
 
@@ -604,14 +612,14 @@ the box. The KiCad courtyard (1.297 mm radius with the line, model 1.25 mm) goes
 The constraints cost 95 mm against the unconstrained run. The result stays 73 mm shorter than the hand placement
 with 6 more vias. The halo shrink failed at s 0.694 and below on interior escapes, not at the constrained parts.
 
-## Repair with a partial re-route (`--repair-mode reuse`, router `run.py --reuse`, 2026-11-01)
+## Repair with a partial re-route (`--repair-mode reuse`, router `iotroute run --reuse`, 2026-11-01)
 
 Cause: each repair proposal moves 1-2 parts, but it was routed as a whole board (`full`) or with the copper locked
 around a ripped region (`local`). `local` cannot move the kept copper, and its rip left pieces: PR #79 step 1 (s 0.637),
 proposal C13: 1 unconnected item, a 0.05 mm VCC_DRAM track stub at C25.1 (in all 4 local attempts).
 
 Change. `repair.run(..., mode='reuse')` (default; `compact_cli.py --repair-mode reuse`) writes the moved placement
-(PLACE + the move, lock-net copper only) and routes it with `run.py --reuse <present candidate's routed board>
+(PLACE + the move, lock-net copper only) and routes it with `iotroute run --reuse <present candidate's routed board>
 --reuse-fallback none`. The router keeps the copper of the nets that the move does not touch and routes the rest
 (tools/router/DESIGN.md 5c); the negotiation may still move kept copper. The key and the accept rule do not change.
 
@@ -678,3 +686,18 @@ and nothing kept the 24 V protection at its connector (SMCJ33A 50 mm from J1 aga
 Result (FW-IO, scratch): near rules for D1 / D3 / R3 at the J1 pins (9-12 mm) with s 1.0 / 0.5 / 0.25 gave no legal
 candidate: the search left 24V IN and U2 TJA1051 1.4-2.3 mm beyond the limits and turned them (the legalizer timed
 out). The committed board fixes those parts at their 100 x 80 places under J1 (`--fix`) instead.
+
+### Node-only recorded playback
+
+For a saved compaction `run.json`:
+
+```sh
+node --experimental-strip-types --no-warnings tools/placer/viewer.ts run.json playback.html --frames-json frames.json --seconds 15
+```
+
+This read-only viewer shows recorded epoch and result poses, approximate unit
+rectangles, the ratsnest and recorded cost values in a self-contained HTML file.
+It records the source SHA-256 and refuses to overwrite output. It does **not**
+compute RUDY heat, emit PNG/GIF/MP4, render routed boards, or establish DRC or
+qualification. The legacy Python viewer and movie remain until their other
+outputs have separately validated replacements and callers are migrated.

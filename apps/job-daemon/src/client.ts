@@ -204,8 +204,8 @@ function copyDesign(src: string, dst: string): void {
 }
 
 /**
- * router/model.py refuses to run unless the evidence files named by these two tables are in the project, by sha256
- * (net_drivers.verify_evidence). remote.sh does not ship them. A missing file stays missing: model.py reports it.
+ * si_planes.py refuses to run unless the evidence files named by these two tables are in the project, by sha256
+ * (net_drivers.verify_evidence). remote.sh does not ship them. A missing file stays missing: si_planes.py reports it.
  */
 function copyDriverEvidence(toolchain: string, project: string, stage: string): void {
   for (const name of ['driver-edges.json', 'edge-rates.json']) {

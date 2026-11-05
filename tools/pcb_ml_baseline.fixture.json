@@ -1,0 +1,807 @@
+{
+  "dataset": {
+    "content_sha256": "1a93b898f0f668098ec8bf7d661f3cc2927f169e8ed7cf22019471f108665a5b",
+    "dataset_id": "baseline",
+    "feature_names": [
+      "x",
+      "constant"
+    ],
+    "inputs": {
+      "/work/evidence.json": "1f67906f5b3181cc38e8f633073c08c2b399a81b30c1d14625686454aeb35d78"
+    },
+    "metadata": {},
+    "rows": [
+      {
+        "case_fingerprint": "b0d612624d77960d129a27c6d481784b65e8e49a51dde0088f0dea8bf0d850a4",
+        "eligibility": {
+          "features": true,
+          "reasons": [],
+          "targets": {
+            "y": true
+          }
+        },
+        "evidence_valid": true,
+        "failure_class": null,
+        "family": "test-FAMILY",
+        "features": {
+          "constant": 7.0,
+          "x": -2
+        },
+        "id": "test-0",
+        "pose_fingerprint": "865a29512fb973a1487031b9ebfeb160dc37fd7140704be664775e1f180c02d2",
+        "run_fingerprint": "f539902ee5c4445e114286d3ca86708d231db9dc742073f65ee04edc9dfed2d3",
+        "source_fingerprint": "bbc5f0fa47b2063ce6b0f0d9616dbcf50ff800eafb9b3c3e2be10bcf1d499b43",
+        "split": "test",
+        "status": "passed",
+        "targets": {
+          "y": 1.0
+        }
+      },
+      {
+        "case_fingerprint": "b0d612624d77960d129a27c6d481784b65e8e49a51dde0088f0dea8bf0d850a4",
+        "eligibility": {
+          "features": true,
+          "reasons": [],
+          "targets": {
+            "y": true
+          }
+        },
+        "evidence_valid": true,
+        "failure_class": null,
+        "family": "test-FAMILY",
+        "features": {
+          "constant": 7.0,
+          "x": 1
+        },
+        "id": "test-1",
+        "pose_fingerprint": "b0900e8edcd29f39bf130bcb9f2718fa4716eb97738decce7023716c6bfd7ea8",
+        "run_fingerprint": "203c020d32d648669406c23479a8d137e0fbe67f4c78f0f45450fd53d7aecdbf",
+        "source_fingerprint": "bbc5f0fa47b2063ce6b0f0d9616dbcf50ff800eafb9b3c3e2be10bcf1d499b43",
+        "split": "test",
+        "status": "passed",
+        "targets": {
+          "y": 7.0
+        }
+      },
+      {
+        "case_fingerprint": "b0d612624d77960d129a27c6d481784b65e8e49a51dde0088f0dea8bf0d850a4",
+        "eligibility": {
+          "features": true,
+          "reasons": [],
+          "targets": {
+            "y": true
+          }
+        },
+        "evidence_valid": true,
+        "failure_class": null,
+        "family": "test-FAMILY",
+        "features": {
+          "constant": 7.0,
+          "x": 3
+        },
+        "id": "test-2",
+        "pose_fingerprint": "cf3c346a515921c367f5a7502af5a6c1b5a76b02dce8589657abcd240fa4d90c",
+        "run_fingerprint": "3b9df71dea6acd6c48ca147dab7da4ca0d86c473be97994e623e164f21e714a4",
+        "source_fingerprint": "bbc5f0fa47b2063ce6b0f0d9616dbcf50ff800eafb9b3c3e2be10bcf1d499b43",
+        "split": "test",
+        "status": "passed",
+        "targets": {
+          "y": 11.0
+        }
+      },
+      {
+        "case_fingerprint": "7d6f185fae7511b9b120aba4dc13e51b2c80f6fe2a5a7b409e3aed2b02e1cdc1",
+        "eligibility": {
+          "features": true,
+          "reasons": [],
+          "targets": {
+            "y": true
+          }
+        },
+        "evidence_valid": true,
+        "failure_class": null,
+        "family": "train-FAMILY",
+        "features": {
+          "constant": 7.0,
+          "x": -3
+        },
+        "id": "train-0",
+        "pose_fingerprint": "888d919ad7d1687a752a76b6175d8de23f492eeb5ef89d3ae759d00b80b2a64e",
+        "run_fingerprint": "16768a49c010fc5f2a5073b0615ba00a799c7144e799552b0e7ad763454d61b2",
+        "source_fingerprint": "fd59f83bf3eadaddda1b5f84db828ce1c5ecd5685bfc54c2b13b271689b40fa8",
+        "split": "train",
+        "status": "passed",
+        "targets": {
+          "y": -1.0
+        }
+      },
+      {
+        "case_fingerprint": "7d6f185fae7511b9b120aba4dc13e51b2c80f6fe2a5a7b409e3aed2b02e1cdc1",
+        "eligibility": {
+          "features": true,
+          "reasons": [],
+          "targets": {
+            "y": true
+          }
+        },
+        "evidence_valid": true,
+        "failure_class": null,
+        "family": "train-FAMILY",
+        "features": {
+          "constant": 7.0,
+          "x": -2
+        },
+        "id": "train-1",
+        "pose_fingerprint": "865a29512fb973a1487031b9ebfeb160dc37fd7140704be664775e1f180c02d2",
+        "run_fingerprint": "dea63eb275af7503c6e5ad8d0c04200de7c2fb2ca8c890412bebc0c36fba8e13",
+        "source_fingerprint": "fd59f83bf3eadaddda1b5f84db828ce1c5ecd5685bfc54c2b13b271689b40fa8",
+        "split": "train",
+        "status": "passed",
+        "targets": {
+          "y": 1.0
+        }
+      },
+      {
+        "case_fingerprint": "7d6f185fae7511b9b120aba4dc13e51b2c80f6fe2a5a7b409e3aed2b02e1cdc1",
+        "eligibility": {
+          "features": true,
+          "reasons": [],
+          "targets": {
+            "y": true
+          }
+        },
+        "evidence_valid": true,
+        "failure_class": null,
+        "family": "train-FAMILY",
+        "features": {
+          "constant": 7.0,
+          "x": -1
+        },
+        "id": "train-2",
+        "pose_fingerprint": "7b1ee48421d97bfc7cca60c85c2da583594e747bf4ae70b206aec541f96521f3",
+        "run_fingerprint": "f9d29b61f1045a98605d9e35784c33567edd07017af4785f4c53fbbe484f8c52",
+        "source_fingerprint": "fd59f83bf3eadaddda1b5f84db828ce1c5ecd5685bfc54c2b13b271689b40fa8",
+        "split": "train",
+        "status": "passed",
+        "targets": {
+          "y": 3.0
+        }
+      },
+      {
+        "case_fingerprint": "7d6f185fae7511b9b120aba4dc13e51b2c80f6fe2a5a7b409e3aed2b02e1cdc1",
+        "eligibility": {
+          "features": true,
+          "reasons": [],
+          "targets": {
+            "y": true
+          }
+        },
+        "evidence_valid": true,
+        "failure_class": null,
+        "family": "train-FAMILY",
+        "features": {
+          "constant": 7.0,
+          "x": 0
+        },
+        "id": "train-3",
+        "pose_fingerprint": "ecbbdc6dbaa7de05e95f1ee9ec1774ebda0efcf220bf0b9c1861a9987eed40b4",
+        "run_fingerprint": "5314549292a285ab7ddb86a0a84d32b7b1b54792ca2a4a5b172e595f08d5eeee",
+        "source_fingerprint": "fd59f83bf3eadaddda1b5f84db828ce1c5ecd5685bfc54c2b13b271689b40fa8",
+        "split": "train",
+        "status": "passed",
+        "targets": {
+          "y": 5.0
+        }
+      },
+      {
+        "case_fingerprint": "7d6f185fae7511b9b120aba4dc13e51b2c80f6fe2a5a7b409e3aed2b02e1cdc1",
+        "eligibility": {
+          "features": true,
+          "reasons": [],
+          "targets": {
+            "y": true
+          }
+        },
+        "evidence_valid": true,
+        "failure_class": null,
+        "family": "train-FAMILY",
+        "features": {
+          "constant": 7.0,
+          "x": 1
+        },
+        "id": "train-4",
+        "pose_fingerprint": "b0900e8edcd29f39bf130bcb9f2718fa4716eb97738decce7023716c6bfd7ea8",
+        "run_fingerprint": "b1a784ceb82979caf7eb40387185e07134b09feb6a5b3ea2a21583ec0995935a",
+        "source_fingerprint": "fd59f83bf3eadaddda1b5f84db828ce1c5ecd5685bfc54c2b13b271689b40fa8",
+        "split": "train",
+        "status": "passed",
+        "targets": {
+          "y": 7.0
+        }
+      },
+      {
+        "case_fingerprint": "7d6f185fae7511b9b120aba4dc13e51b2c80f6fe2a5a7b409e3aed2b02e1cdc1",
+        "eligibility": {
+          "features": true,
+          "reasons": [],
+          "targets": {
+            "y": true
+          }
+        },
+        "evidence_valid": true,
+        "failure_class": null,
+        "family": "train-FAMILY",
+        "features": {
+          "constant": 7.0,
+          "x": 2
+        },
+        "id": "train-5",
+        "pose_fingerprint": "812ca56169421c39e0853afe0fe0d56cc4170953e062f7e61beccc73f52cc00f",
+        "run_fingerprint": "cfc86756f6f3224ab759966c0a5f457204b82e8ea43fcbc67c3fe05f61cce9a4",
+        "source_fingerprint": "fd59f83bf3eadaddda1b5f84db828ce1c5ecd5685bfc54c2b13b271689b40fa8",
+        "split": "train",
+        "status": "passed",
+        "targets": {
+          "y": 9.0
+        }
+      },
+      {
+        "case_fingerprint": "7d6f185fae7511b9b120aba4dc13e51b2c80f6fe2a5a7b409e3aed2b02e1cdc1",
+        "eligibility": {
+          "features": true,
+          "reasons": [],
+          "targets": {
+            "y": true
+          }
+        },
+        "evidence_valid": true,
+        "failure_class": null,
+        "family": "train-FAMILY",
+        "features": {
+          "constant": 7.0,
+          "x": 3
+        },
+        "id": "train-6",
+        "pose_fingerprint": "cf3c346a515921c367f5a7502af5a6c1b5a76b02dce8589657abcd240fa4d90c",
+        "run_fingerprint": "f3a2528b8aaadc0f7f0afe80921c4566beacb9a531eedd4f50d9ffcf3c270a08",
+        "source_fingerprint": "fd59f83bf3eadaddda1b5f84db828ce1c5ecd5685bfc54c2b13b271689b40fa8",
+        "split": "train",
+        "status": "passed",
+        "targets": {
+          "y": 11.0
+        }
+      },
+      {
+        "case_fingerprint": "202d90c93a28649d9bd7f95df1d75d36da9b1f7f1b1e5a473a294aa8b9328caf",
+        "eligibility": {
+          "features": true,
+          "reasons": [],
+          "targets": {
+            "y": true
+          }
+        },
+        "evidence_valid": true,
+        "failure_class": null,
+        "family": "validation-FAMILY",
+        "features": {
+          "constant": 7.0,
+          "x": -2.5
+        },
+        "id": "validation-0",
+        "pose_fingerprint": "0e3b3594ce165dc6cd78e32ea604440e1f05f8dfa84b5fc491416e5d3ec2dd53",
+        "run_fingerprint": "a3a1c16437f8475bc0f7c3ae7f8b940882f50a83ced68ed286e82391600dd0cd",
+        "source_fingerprint": "d768b1a15085bb9e02c75510947b380d91a7185c8a87f105f0c0d1a1ec31408d",
+        "split": "validation",
+        "status": "passed",
+        "targets": {
+          "y": 0.0
+        }
+      },
+      {
+        "case_fingerprint": "202d90c93a28649d9bd7f95df1d75d36da9b1f7f1b1e5a473a294aa8b9328caf",
+        "eligibility": {
+          "features": true,
+          "reasons": [],
+          "targets": {
+            "y": true
+          }
+        },
+        "evidence_valid": true,
+        "failure_class": null,
+        "family": "validation-FAMILY",
+        "features": {
+          "constant": 7.0,
+          "x": 0.5
+        },
+        "id": "validation-1",
+        "pose_fingerprint": "262f793978e21ae0207ce1cb68d272f2c881ab5a0be9087b33f9236acd02f5a3",
+        "run_fingerprint": "7ba83801ad5871753a543e2155f84f0bb5d8558b874d2e1ebeb26e76e4b4f86f",
+        "source_fingerprint": "d768b1a15085bb9e02c75510947b380d91a7185c8a87f105f0c0d1a1ec31408d",
+        "split": "validation",
+        "status": "passed",
+        "targets": {
+          "y": 6.0
+        }
+      },
+      {
+        "case_fingerprint": "202d90c93a28649d9bd7f95df1d75d36da9b1f7f1b1e5a473a294aa8b9328caf",
+        "eligibility": {
+          "features": true,
+          "reasons": [],
+          "targets": {
+            "y": true
+          }
+        },
+        "evidence_valid": true,
+        "failure_class": null,
+        "family": "validation-FAMILY",
+        "features": {
+          "constant": 7.0,
+          "x": 2.5
+        },
+        "id": "validation-2",
+        "pose_fingerprint": "6760a406ef39e70baff21c230c0f68e24653c91f8033668db343af62138702ae",
+        "run_fingerprint": "2b667602b7bb1d4ff50a14bfb2e303a375b8a33952351d17170e23120dface5b",
+        "source_fingerprint": "d768b1a15085bb9e02c75510947b380d91a7185c8a87f105f0c0d1a1ec31408d",
+        "split": "validation",
+        "status": "passed",
+        "targets": {
+          "y": 10.0
+        }
+      }
+    ],
+    "schema": "iot-lab.pcb-ml-dataset.v1",
+    "target_specs": {
+      "y": {
+        "direction": "max",
+        "type": "regression"
+      }
+    },
+    "task": "synthetic"
+  },
+  "expected": {
+    "constant_baseline": {
+      "value": 5.0
+    },
+    "folds": {
+      "test": {
+        "actual_outcomes": {
+          "failure_class_counts": {},
+          "status_counts": {
+            "passed": 3
+          }
+        },
+        "constant_baseline": {
+          "brier": null,
+          "calibrated_probability": false,
+          "cases": 1,
+          "logloss": null,
+          "mae": 4.0,
+          "mse": 18.666666666666664,
+          "observations": 3,
+          "reason": null,
+          "status": "observed",
+          "weighting": "equal case then pose then repeat"
+        },
+        "constant_within_case": {
+          "case_reports": [
+            {
+              "case_fingerprint": "b0d612624d77960d129a27c6d481784b65e8e49a51dde0088f0dea8bf0d850a4",
+              "concordance": 0.5,
+              "pair_count": 3,
+              "poses": 3,
+              "selected_known_label_runs": 1,
+              "selected_observed_target": 1.0,
+              "selected_outcomes": {
+                "failure_class_counts": {},
+                "status_counts": {
+                  "passed": 1
+                }
+              },
+              "selected_pose": "865a29512fb973a1487031b9ebfeb160dc37fd7140704be664775e1f180c02d2",
+              "selected_prediction": 5.0,
+              "selected_run_ids": [
+                "test-0"
+              ],
+              "selected_unknown_label_runs": 0
+            }
+          ],
+          "cases": 1,
+          "cases_with_rankable_pairs": 1,
+          "cases_without_scorable_pose": 0,
+          "mean_case_concordance": 0.5,
+          "rows_without_known_pose": 0,
+          "selected_actual_outcomes": {
+            "failure_class_counts": {},
+            "status_counts": {
+              "passed": 1
+            }
+          },
+          "selected_observed_target_sum": 1.0,
+          "selected_outcome_complete": true,
+          "selected_target_aggregation": "sum of per-case selected-pose mean labels; repeated runs are not independent cases",
+          "selected_unknown_label_runs": 0,
+          "tie_break": "lexicographic immutable pose fingerprint; actual target is never consulted",
+          "unknown_prediction_runs": 0
+        },
+        "counts": {
+          "cases": 1,
+          "distinct_known_poses": 3,
+          "families": 1,
+          "feature_eligible": 3,
+          "ineligibility_reasons": {},
+          "missing_pose_runs": 0,
+          "repeated_known_pose_runs": 0,
+          "rows": 3,
+          "target_eligible": 3
+        },
+        "existing_proxy_baseline": {
+          "reason": "no declared proxy baseline",
+          "status": "unknown"
+        },
+        "model": {
+          "brier": null,
+          "calibrated_probability": false,
+          "cases": 1,
+          "logloss": null,
+          "mae": 7.401486830834377e-17,
+          "mse": 1.6434602192104412e-32,
+          "observations": 3,
+          "reason": null,
+          "status": "observed",
+          "weighting": "equal case then pose then repeat"
+        },
+        "within_case": {
+          "case_reports": [
+            {
+              "case_fingerprint": "b0d612624d77960d129a27c6d481784b65e8e49a51dde0088f0dea8bf0d850a4",
+              "concordance": 1.0,
+              "pair_count": 3,
+              "poses": 3,
+              "selected_known_label_runs": 1,
+              "selected_observed_target": 11.0,
+              "selected_outcomes": {
+                "failure_class_counts": {},
+                "status_counts": {
+                  "passed": 1
+                }
+              },
+              "selected_pose": "cf3c346a515921c367f5a7502af5a6c1b5a76b02dce8589657abcd240fa4d90c",
+              "selected_prediction": 11.0,
+              "selected_run_ids": [
+                "test-2"
+              ],
+              "selected_unknown_label_runs": 0
+            }
+          ],
+          "cases": 1,
+          "cases_with_rankable_pairs": 1,
+          "cases_without_scorable_pose": 0,
+          "mean_case_concordance": 1.0,
+          "rows_without_known_pose": 0,
+          "selected_actual_outcomes": {
+            "failure_class_counts": {},
+            "status_counts": {
+              "passed": 1
+            }
+          },
+          "selected_observed_target_sum": 11.0,
+          "selected_outcome_complete": true,
+          "selected_target_aggregation": "sum of per-case selected-pose mean labels; repeated runs are not independent cases",
+          "selected_unknown_label_runs": 0,
+          "tie_break": "lexicographic immutable pose fingerprint; actual target is never consulted",
+          "unknown_prediction_runs": 0
+        }
+      },
+      "train": {
+        "actual_outcomes": {
+          "failure_class_counts": {},
+          "status_counts": {
+            "passed": 7
+          }
+        },
+        "constant_baseline": {
+          "brier": null,
+          "calibrated_probability": false,
+          "cases": 1,
+          "logloss": null,
+          "mae": 3.4285714285714284,
+          "mse": 16.0,
+          "observations": 7,
+          "reason": null,
+          "status": "observed",
+          "weighting": "equal case then pose then repeat"
+        },
+        "constant_within_case": {
+          "case_reports": [
+            {
+              "case_fingerprint": "7d6f185fae7511b9b120aba4dc13e51b2c80f6fe2a5a7b409e3aed2b02e1cdc1",
+              "concordance": 0.5,
+              "pair_count": 21,
+              "poses": 7,
+              "selected_known_label_runs": 1,
+              "selected_observed_target": 3.0,
+              "selected_outcomes": {
+                "failure_class_counts": {},
+                "status_counts": {
+                  "passed": 1
+                }
+              },
+              "selected_pose": "7b1ee48421d97bfc7cca60c85c2da583594e747bf4ae70b206aec541f96521f3",
+              "selected_prediction": 5.0,
+              "selected_run_ids": [
+                "train-2"
+              ],
+              "selected_unknown_label_runs": 0
+            }
+          ],
+          "cases": 1,
+          "cases_with_rankable_pairs": 1,
+          "cases_without_scorable_pose": 0,
+          "mean_case_concordance": 0.5,
+          "rows_without_known_pose": 0,
+          "selected_actual_outcomes": {
+            "failure_class_counts": {},
+            "status_counts": {
+              "passed": 1
+            }
+          },
+          "selected_observed_target_sum": 3.0,
+          "selected_outcome_complete": true,
+          "selected_target_aggregation": "sum of per-case selected-pose mean labels; repeated runs are not independent cases",
+          "selected_unknown_label_runs": 0,
+          "tie_break": "lexicographic immutable pose fingerprint; actual target is never consulted",
+          "unknown_prediction_runs": 0
+        },
+        "counts": {
+          "cases": 1,
+          "distinct_known_poses": 7,
+          "families": 1,
+          "feature_eligible": 7,
+          "ineligibility_reasons": {},
+          "missing_pose_runs": 0,
+          "repeated_known_pose_runs": 0,
+          "rows": 7,
+          "target_eligible": 7
+        },
+        "existing_proxy_baseline": {
+          "reason": "no declared proxy baseline",
+          "status": "unknown"
+        },
+        "model": {
+          "brier": null,
+          "calibrated_probability": false,
+          "cases": 1,
+          "logloss": null,
+          "mae": 6.344131569286608e-17,
+          "mse": 1.4086801878946639e-32,
+          "observations": 7,
+          "reason": null,
+          "status": "observed",
+          "weighting": "equal case then pose then repeat"
+        },
+        "within_case": {
+          "case_reports": [
+            {
+              "case_fingerprint": "7d6f185fae7511b9b120aba4dc13e51b2c80f6fe2a5a7b409e3aed2b02e1cdc1",
+              "concordance": 1.0,
+              "pair_count": 21,
+              "poses": 7,
+              "selected_known_label_runs": 1,
+              "selected_observed_target": 11.0,
+              "selected_outcomes": {
+                "failure_class_counts": {},
+                "status_counts": {
+                  "passed": 1
+                }
+              },
+              "selected_pose": "cf3c346a515921c367f5a7502af5a6c1b5a76b02dce8589657abcd240fa4d90c",
+              "selected_prediction": 11.0,
+              "selected_run_ids": [
+                "train-6"
+              ],
+              "selected_unknown_label_runs": 0
+            }
+          ],
+          "cases": 1,
+          "cases_with_rankable_pairs": 1,
+          "cases_without_scorable_pose": 0,
+          "mean_case_concordance": 1.0,
+          "rows_without_known_pose": 0,
+          "selected_actual_outcomes": {
+            "failure_class_counts": {},
+            "status_counts": {
+              "passed": 1
+            }
+          },
+          "selected_observed_target_sum": 11.0,
+          "selected_outcome_complete": true,
+          "selected_target_aggregation": "sum of per-case selected-pose mean labels; repeated runs are not independent cases",
+          "selected_unknown_label_runs": 0,
+          "tie_break": "lexicographic immutable pose fingerprint; actual target is never consulted",
+          "unknown_prediction_runs": 0
+        }
+      },
+      "validation": {
+        "actual_outcomes": {
+          "failure_class_counts": {},
+          "status_counts": {
+            "passed": 3
+          }
+        },
+        "constant_baseline": {
+          "brier": null,
+          "calibrated_probability": false,
+          "cases": 1,
+          "logloss": null,
+          "mae": 3.6666666666666665,
+          "mse": 17.0,
+          "observations": 3,
+          "reason": null,
+          "status": "observed",
+          "weighting": "equal case then pose then repeat"
+        },
+        "constant_within_case": {
+          "case_reports": [
+            {
+              "case_fingerprint": "202d90c93a28649d9bd7f95df1d75d36da9b1f7f1b1e5a473a294aa8b9328caf",
+              "concordance": 0.5,
+              "pair_count": 3,
+              "poses": 3,
+              "selected_known_label_runs": 1,
+              "selected_observed_target": 0.0,
+              "selected_outcomes": {
+                "failure_class_counts": {},
+                "status_counts": {
+                  "passed": 1
+                }
+              },
+              "selected_pose": "0e3b3594ce165dc6cd78e32ea604440e1f05f8dfa84b5fc491416e5d3ec2dd53",
+              "selected_prediction": 5.0,
+              "selected_run_ids": [
+                "validation-0"
+              ],
+              "selected_unknown_label_runs": 0
+            }
+          ],
+          "cases": 1,
+          "cases_with_rankable_pairs": 1,
+          "cases_without_scorable_pose": 0,
+          "mean_case_concordance": 0.5,
+          "rows_without_known_pose": 0,
+          "selected_actual_outcomes": {
+            "failure_class_counts": {},
+            "status_counts": {
+              "passed": 1
+            }
+          },
+          "selected_observed_target_sum": 0.0,
+          "selected_outcome_complete": true,
+          "selected_target_aggregation": "sum of per-case selected-pose mean labels; repeated runs are not independent cases",
+          "selected_unknown_label_runs": 0,
+          "tie_break": "lexicographic immutable pose fingerprint; actual target is never consulted",
+          "unknown_prediction_runs": 0
+        },
+        "counts": {
+          "cases": 1,
+          "distinct_known_poses": 3,
+          "families": 1,
+          "feature_eligible": 3,
+          "ineligibility_reasons": {},
+          "missing_pose_runs": 0,
+          "repeated_known_pose_runs": 0,
+          "rows": 3,
+          "target_eligible": 3
+        },
+        "existing_proxy_baseline": {
+          "reason": "no declared proxy baseline",
+          "status": "unknown"
+        },
+        "model": {
+          "brier": null,
+          "calibrated_probability": false,
+          "cases": 1,
+          "logloss": null,
+          "mae": 4.070817756958907e-16,
+          "mse": 4.971467163111584e-31,
+          "observations": 3,
+          "reason": null,
+          "status": "observed",
+          "weighting": "equal case then pose then repeat"
+        },
+        "within_case": {
+          "case_reports": [
+            {
+              "case_fingerprint": "202d90c93a28649d9bd7f95df1d75d36da9b1f7f1b1e5a473a294aa8b9328caf",
+              "concordance": 1.0,
+              "pair_count": 3,
+              "poses": 3,
+              "selected_known_label_runs": 1,
+              "selected_observed_target": 10.0,
+              "selected_outcomes": {
+                "failure_class_counts": {},
+                "status_counts": {
+                  "passed": 1
+                }
+              },
+              "selected_pose": "6760a406ef39e70baff21c230c0f68e24653c91f8033668db343af62138702ae",
+              "selected_prediction": 10.0,
+              "selected_run_ids": [
+                "validation-2"
+              ],
+              "selected_unknown_label_runs": 0
+            }
+          ],
+          "cases": 1,
+          "cases_with_rankable_pairs": 1,
+          "cases_without_scorable_pose": 0,
+          "mean_case_concordance": 1.0,
+          "rows_without_known_pose": 0,
+          "selected_actual_outcomes": {
+            "failure_class_counts": {},
+            "status_counts": {
+              "passed": 1
+            }
+          },
+          "selected_observed_target_sum": 10.0,
+          "selected_outcome_complete": true,
+          "selected_target_aggregation": "sum of per-case selected-pose mean labels; repeated runs are not independent cases",
+          "selected_unknown_label_runs": 0,
+          "tie_break": "lexicographic immutable pose fingerprint; actual target is never consulted",
+          "unknown_prediction_runs": 0
+        }
+      }
+    },
+    "normalization": {
+      "columns": [
+        {
+          "center_scaled": 0.0,
+          "constant": false,
+          "feature": "x",
+          "magnitude": 3,
+          "scale_scaled": 0.6666666666666666
+        },
+        {
+          "center_scaled": 1.0,
+          "constant": true,
+          "feature": "constant",
+          "magnitude": 7.0,
+          "scale_scaled": 1.0
+        }
+      ],
+      "method": "TRAIN-only maxabs then weighted standardization; no imputation"
+    },
+    "parameters": {
+      "coefficients": [
+        0.36363636363636365,
+        0.0
+      ],
+      "intercept_scaled": 0.45454545454545453,
+      "numerical_rank": 1,
+      "target_magnitude": 11.0
+    }
+  },
+  "provenance": {
+    "commands": [
+      "python3 tools/pcb_ml.py train BASELINE --dataset /work/dataset.json --target y --algorithm ridge --regularization 0 --root /work --output /work/trained/report.json --json",
+      "python3 tools/pcb_ml.py evaluate BASELINE-EVAL --model /work/trained/model.json --dataset /work/dataset.json --root /work --output /work/evaluated/report.json --json"
+    ],
+    "host": "root@100.93.34.43",
+    "image": "iot-lab-route:10.0",
+    "image_id": "sha256:0409d0d8c4f3c01a1530a42920b9e2db46953ee5df52e534f3f06f3b75d5b7e8",
+    "limits": {
+      "cpus": 2,
+      "memory": "4g"
+    },
+    "scope": "one synthetic regression dataset; no CAD qualification",
+    "source_sha256": {
+      "tools/pcb_ml.py": "24aa410a24ada4d31489ae3704cdd0864d05a97af7ebeed1f1c858b3d0b1d499",
+      "tools/pcb_ml_adapters.py": "96f22f00f666bb61dbdfe2c4f32913d2b6654eaf22bcea3252b6eca7d6f5a08d",
+      "tools/pcb_ml_data.py": "1700d780735d414d9a1e87d2e1ad6ae6745ff84c617acd81b0248a0f36035c7c",
+      "tools/pcb_ml_features.py": "6cc188f6bf6bd584a9ef22c02cca8574d818c25c77332800e3946df801ee8531",
+      "tools/pcb_ml_models.py": "05ce26203d909e606a130b036bf04107104d4639bf83c8755319a584d25dfa21",
+      "tools/project_root.py": "698f463b76abaed6dcd1cc915b1c02373708244fd95372330c5bf10186325171"
+    }
+  },
+  "source_text": "{\"scope\":\"synthetic numeric fixture; no PCB qualification\"}\n"
+}

@@ -14,16 +14,23 @@ function fixture(board,variables={}) {
  // The board recipe comes from the board gate config (the real one of the repository).
  copyFileSync(new URL('../release-recipe.mjs',import.meta.url),join(root,'tools/release-recipe.mjs'));
  mkdirSync(join(root,'tools/lib'));copyFileSync(new URL('./board-release.mjs',import.meta.url),join(root,'tools/lib/board-release.mjs'));
- const config=['gate.json','gate.pending.json'].map(n=>`hardware-design/boards/${board}/${n}`).find(n=>existsSync(new URL('../../'+n,import.meta.url)));
- mkdirSync(join(root,'hardware-design/boards',board),{recursive:true});copyFileSync(new URL('../../'+config,import.meta.url),join(root,config));
+ mkdirSync(join(root,'hardware-design/boards',board),{recursive:true});
+ const release={maker:`tools/make-${boards[board]}-fab.sh`,fab:parent+'/fab'};
+ if(board==='AC-24V' || board==='BASE-PWR') release.check='tools/board-check.py';
+ if(board==='ENV-SENSE') release.pre_checks=[{name:'schematic',run:[join(root,'bin/python'),'tools/check-env-schematic.py'],log:'schematic.log'}];
+ writeFileSync(join(root,'hardware-design/boards',board,'gate.json'),JSON.stringify({project:'cad/fixture',release}));
  copyFileSync(new URL('../publish-release.mjs',import.meta.url),join(root,'tools/publish-release.mjs'));copyFileSync(new URL('./py-compat.mjs',import.meta.url),join(root,'tools/lib/py-compat.mjs'));
- copyFileSync(new URL('../pcb_timing.py',import.meta.url),join(root,'tools/pcb_timing.py'));
+ mkdirSync(join(root,'tools/lib'),{recursive:true});
+ for(const file of ['pcb_timing.ts','lib/cli.ts','lib/timing.ts','lib/py-numbers.ts','lib/py-compat.mjs']) copyFileSync(new URL('../'+file,import.meta.url),join(root,'tools',file));
  writeFileSync(join(root,'tools/check-env-schematic.py'),'import os,sys; sys.exit(int(os.environ.get("SCHEMATIC_STATUS", "0")))\n');
  writeFileSync(join(root,'bin/node'),`#!/bin/sh
 case "$1" in
  --input-type=module) echo '{}';;
+ --experimental-strip-types)
+  case "$3" in tools/gerber_netcheck.ts) printf "%s\\n" "$GNC_ZIP|$*" >> "$TEST_NET_TRACE"; exit "\${NET_STATUS:-0}";; *) exec ${JSON.stringify(process.execPath)} "$@";; esac;;
  -e) echo fixture.kicad_pcb;;
  tools/gate.mjs) [ "$3" != --evidence-dir ] || mkdir "$4"; exit "\${GATE_STATUS:-0}";;
+ tools/lib/gerber-runtime.mjs) echo '{}'; exit "\${RUNTIME_STATUS:-0}";;
  tools/check-fab-zip.mjs) echo '{"status":"passed"}';;
  tools/check-release-gate.mjs)
   if [ "$3" != --gate-dir ]; then echo '{}' > "$4"; exit "\${LATE_EVIDENCE_STATUS:-0}"; fi
@@ -35,7 +42,7 @@ case "$1" in
 esac
 `,{mode:0o755});
  writeFileSync(join(root,'bin/python'),`#!/bin/sh
-case "$1" in -c) echo '{"python":"fixture","packages":{"gerbonara":"fixture","shapely":"fixture","numpy":"fixture","click":"fixture"}}'; exit "\${RUNTIME_STATUS:-0}";; *gerber_netcheck.py) exit "\${NET_STATUS:-0}";; *) exit "\${CHECK_STATUS:-0}";; esac
+case "$1" in *check-env-schematic.py) exit "\${SCHEMATIC_STATUS:-0}";; -c) echo '{"python":"fixture","packages":{"gerbonara":"fixture","shapely":"fixture","numpy":"fixture","click":"fixture"}}'; exit "\${RUNTIME_STATUS:-0}";; *gerber_netcheck.py) exit "\${NET_STATUS:-0}";; *) exit "\${CHECK_STATUS:-0}";; esac
 `,{mode:0o755});
  writeFileSync(join(root,'tools/make-'+boards[board]+'-fab.sh'),`#!/bin/sh
 echo export >> "$TEST_TRACE"
@@ -45,7 +52,7 @@ touch "$FAB_OUT/$1"
 exit "\${EXPORT_STATUS:-0}"
 `);
  const destination=join(root,parent,'candidate');
- const env={...process.env,PATH:join(root,'bin')+':'+process.env.PATH,KICAD_PY:join(root,'bin/python'),GERBERCHECK_PY:join(root,'bin/python'),TEST_TRACE:join(root,'trace'),FAB_OUT:join(root,parent,'fab'),FAB_RELEASE_OUT:destination,...variables};
+ const env={...process.env,PATH:join(root,'bin')+':'+process.env.PATH,KICAD_PY:join(root,'bin/python'),GERBERCHECK_PY:join(root,'bin/python'),TEST_TRACE:join(root,'trace'),TEST_NET_TRACE:join(root,'net-trace'),FAB_OUT:join(root,parent,'fab'),FAB_RELEASE_OUT:destination,...variables};
  return {root,destination,parent:join(root,parent),run:(mode='release')=>spawnSync('sh',[join(root,'tools/fab-workflow.sh'),board,mode],{env,encoding:'utf8'})};
 }
 for(const board of Object.keys(boards)) {
@@ -87,5 +94,13 @@ test('published release carries actual export and reconstruction timing journal'
   assert.deepEqual(rows.filter(r=>r.type==='stage.end').map(r=>r.stage),['export','fab-zip','gerber-netcheck']);
   assert.ok(rows.filter(r=>r.type==='stage.end').every(r=>r.duration_s>=0 && r.code===0));
   assert.equal(readdirSync(f.parent).filter(n=>n.startsWith('.release-')).length,0);
+ }finally{rmSync(f.root,{recursive:true,force:true});}
+});
+
+test('release invokes the native checker with the staged archive and input receipt',()=>{
+ const f=fixture('BASE-PWR');try{
+  assert.equal(f.run().status,0);
+  const trace=readFileSync(join(f.root,'net-trace'),'utf8');
+  assert.match(trace,/\/fab\/BASE-PWR-gerber\.zip\|--experimental-strip-types --no-warnings tools\/gerber_netcheck\.ts BASE-PWR --receipt .*\/gerber-inputs\.json/);
  }finally{rmSync(f.root,{recursive:true,force:true});}
 });

@@ -78,7 +78,7 @@ fn bucket_classes_agree_with_the_exact_test() {
 }
 
 /// Gate scope (2026-11-02, model net `ref_soft`): a soft net is not blocked over the void (the gate's D-124c screen
-/// may accept the run; run.py lets si_planes judge it) but each off-reference step is priced; a hard net stays blocked.
+/// may accept the run; iotroute run lets si_planes judge it) but each off-reference step is priced; a hard net stays blocked.
 /// Before: ref_soft was not read, the void blocked every checked net.
 #[test]
 fn soft_reference_is_priced_not_blocked() {

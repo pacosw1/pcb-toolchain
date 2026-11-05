@@ -20,7 +20,7 @@ class PcbCliTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.runs = self.root / '.gate/cli'
         source = Path(__file__).resolve().parent.parent
-        files = ['tools/pcb', 'tools/pcb_cli.py', 'tools/lean_owned.py', 'tools/lean_owned_exec.py', 'tools/lean_workflow.py',
+        files = ['tools/pcb-python.py', 'tools/pcb_cli.py', 'tools/lean_owned.py', 'tools/lean_owned_exec.py', 'tools/lean_workflow.py',
                  'tools/pcb_workflow.py', 'tools/pcb_operations.py', 'tools/pcb_evidence.py', 'tools/pcb_benchmark.py', 'tools/pcb_timing.py', 'tools/pcb_cycle.py',
                  'tools/pcb_observation_inputs.py', 'tools/project_root.py',
                  'tools/gate.mjs', 'tools/lib/env.mjs', 'tools/lib/gate-core.mjs', 'tools/lib/gate-runtime.mjs', 'tools/lib/gate-inputs.mjs',
@@ -29,6 +29,11 @@ class PcbCliTests(unittest.TestCase):
             target = self.root / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source / name, target)
+        (self.root / 'tools/port_labels.ts').write_text("console.log('port_labels: 0 checked, 0 failures');\n")
+        (self.root / 'tools/pcbtool.ts').write_text("console.log(process.argv[2] === 'viapads' ? '0 vias in SMD pads' : "
+            "'0 power-path pairs below the design current\\n0 supply nets not covered');\n")
+        (self.root / 'tools/kicad_happy_gate.ts').write_text("import fs from 'node:fs';\nconst a = process.argv;\n"
+            "fs.writeFileSync(a[a.indexOf('--result') + 1], JSON.stringify({schema_version: 1, completed: true, findings: 0, stale_exemptions: 0, exit: 0}));\n")
         board = self.root / 'hardware-design/boards/X'
         (board / 'cad').mkdir(parents=True)
         (board / 'gate.json').write_text(json.dumps(dict(project='cad/X', checks=dict(
@@ -69,14 +74,8 @@ if a[0] in ('sch', 'pcb'):
 script = pathlib.Path(a[0]).name
 if script == 'pcbtool.py' and a[1] == 'place':
     sys.exit(subprocess.run([sys.executable] + a).returncode)
-elif script == 'kicad_happy_gate.py':
-    pathlib.Path(a[a.index('--result') + 1]).write_text(json.dumps(dict(schema_version=1, completed=True, findings=0, stale_exemptions=0, exit=0)))
 elif script == 'port_labels.py':
     print('port_labels: 0 checked, 0 failures')
-elif a[1] == 'viapads':
-    print('0 vias in SMD pads')
-elif a[1] == 'paths':
-    print('0 power-path pairs below the design current\n0 supply nets not covered')
 else:
     sys.exit(2)
 ''')
@@ -103,7 +102,7 @@ else:
             self.temp.cleanup()
 
     def cli(self, *args, env=None):
-        return subprocess.run([sys.executable, str(self.root / 'tools/pcb'), *args], env=env or self.env,
+        return subprocess.run([sys.executable, str(self.root / 'tools/pcb-python.py'), *args], env=env or self.env,
                               cwd=self.root, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
 
     def until(self, predicate, seconds=12):

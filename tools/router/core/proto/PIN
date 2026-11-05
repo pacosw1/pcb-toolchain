@@ -1,0 +1,2 @@
+KiCad api/proto at commit 4fe1ca20605d722a8972dabe11b4a90fc6b3d879 (kicad-nightly 202610272031+4fe1ca2060, 10.99.0).
+These files are KiCad's, GPL-3.0-or-later. The code in src/kicad/api/proto comes from them: scripts/gen-kicad-api.sh.

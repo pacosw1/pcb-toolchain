@@ -95,7 +95,7 @@ class MlCliTests(unittest.TestCase):
         self.root = Path(self.temp.name).resolve()
         self.runs = self.root / '.gate/cli'
         source = Path(__file__).resolve().parent
-        for name in ('pcb', 'pcb_cli.py', 'pcb_operations.py', 'lean_owned.py', 'lean_owned_exec.py',
+        for name in ('pcb-python.py', 'pcb_cli.py', 'pcb_operations.py', 'lean_owned.py', 'lean_owned_exec.py',
                      'lean_workflow.py', 'pcb_workflow.py', 'pcb_timing.py', 'pcb_cycle.py',
                      'pcb_evidence.py', 'pcb_benchmark.py', 'pcb_observation_inputs.py', 'project_root.py'):
             target = self.root / 'tools' / name
@@ -118,7 +118,7 @@ class MlCliTests(unittest.TestCase):
             self.temp.cleanup()
 
     def cli(self, *args, mode=''):
-        return subprocess.run([sys.executable, str(self.root / 'tools/pcb'), *args], cwd=self.root,
+        return subprocess.run([sys.executable, str(self.root / 'tools/pcb-python.py'), *args], cwd=self.root,
             env=dict(self.env, ML_FIXTURE_MODE=mode), text=True, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, timeout=20)
 

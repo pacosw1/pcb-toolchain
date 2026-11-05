@@ -203,9 +203,9 @@ export function globNames(folder) {
 export function lexists(path) { try { lstatSync(path); return true; } catch { return false; } }
 
 // subprocess.run with captured output. check=True raises what CalledProcessError raised.
-export function run(command, args, {check = false, stdio = 'pipe', timeout} = {}) {
+export function run(command, args, {check = false, stdio = 'pipe', timeout, env} = {}) {
   if (command === '') throw new PyError('PermissionError', "[Errno 13] Permission denied: ''");
-  const result = spawnSync(command, args, {maxBuffer: Infinity, stdio, timeout: timeout && timeout * 1000, killSignal: 'SIGKILL'});
+  const result = spawnSync(command, args, {maxBuffer: Infinity, stdio, env, timeout: timeout && Math.ceil(timeout * 1000), killSignal: 'SIGKILL'});
   if (result.error?.code === 'ETIMEDOUT') throw new PyError('subprocess.TimeoutExpired', `Command '${pyRepr([command, ...args])}' timed out after ${timeout} seconds`);
   if (result.error) throw osError(result.error, command);
   if (check && result.status !== 0) {
@@ -365,6 +365,27 @@ export function jsonDumps(value, indent = null, depth = 0) {
   const entries = value instanceof Map ? [...value] : Object.entries(value);
   if (!entries.length) return '{}';
   return `{${inner}${entries.map(([k, v]) => `${jsonString(k)}: ${jsonDumps(v, indent, depth + 1)}`).join(separator)}${outer}}`;
+}
+
+// json.dumps(value, sort_keys=True, separators=..., ensure_ascii=..., allow_nan=False): the text behind a content hash.
+const utf8String = text => `"${text.replace(/["\\\x00-\x1f]/g, c => SHORT[c] ?? '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'))}"`;
+export function jsonCanonical(value, {separators = [',', ':'], ascii = true, sort = true} = {}) {
+  const quote = ascii ? jsonString : utf8String;
+  const encode = item => {
+    if (item === null || item === undefined) return 'null';
+    if (typeof item === 'string') return quote(item);
+    if (item === true || item === false || typeof item === 'bigint') return String(item);
+    const float = item instanceof Float ? item.value : typeof item === 'number' ? item : null;
+    if (float !== null) {
+      if (!Number.isFinite(float)) throw new PyError('ValueError', 'Out of range float values are not JSON compliant: ' + floatRepr(float));
+      return item instanceof Float || !Number.isInteger(float) ? floatRepr(float) : String(float);
+    }
+    if (Array.isArray(item)) return `[${item.map(encode).join(separators[0])}]`;
+    const entries = item instanceof Map ? [...item] : Object.entries(item);
+    if (sort) entries.sort(([a], [b]) => compare(a, b));
+    return `{${entries.map(([k, v]) => quote(k) + separators[1] + encode(v)).join(separators[0])}}`;
+  };
+  return encode(value);
 }
 
 // argparse for the shape these tools use: positionals, then options that take one value.

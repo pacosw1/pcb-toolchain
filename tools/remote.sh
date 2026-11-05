@@ -5,7 +5,7 @@
 #
 # 1. A new job folder gets tools/ and the design files of <board-dir> (same paths as in the repo).
 #    Each --in FILE (any local file, e.g. a scratch board copy) goes to in/<basename>.
-# 2. The command runs in the job folder, in the iot-lab-route:10.0 container (python3 has pcbnew).
+# 2. The command runs in the job folder, in the iot-lab-route:10.0-nightly-4fe1ca2060 container (python3 has pcbnew; kicad-cli-nightly serves the board API).
 # 3. The command must write its files to out/ (relative). stdout+stderr also go to out/job.log.
 # 4. Only out/ comes back, to --results DIR (default $TMPDIR/iot-lab-remote/<job-id>).
 #    The Mac board files are never written. Final gates stay on the Mac.
@@ -16,12 +16,12 @@
 # Env: REMOTE_HOST (user@host, required; the project sets it in .pcb-toolchain.env), REMOTE_CPUS (24), REMOTE_MEM (32g), REMOTE_TIMEOUT (s, 300; exit 124 = timed out: fix placement, do not wait longer),
 #      REMOTE_QUEUE_WAIT (s, 3600; the daemon path only. Longest wait for a place; REMOTE_TIMEOUT starts when the job runs),
 #      REMOTE_KEEP=1 keeps the remote job folder after success (a failed job folder is always kept).
-# Image: tools/remote-route.Dockerfile, built on the box in /srv/iot-lab-route/image.
+# Image: tools/remote-route.Dockerfile, built on the box in /srv/iot-lab-route/image. iot-lab-route:10.0-nightly-4fe1ca2060 (tools/remote-route-nightly.Dockerfile) adds the pinned nightly for iotroute board-json.
 set -euo pipefail
 
 HOST=${REMOTE_HOST:-}
 BASE=/srv/iot-lab-route/jobs
-IMAGE=${REMOTE_IMAGE:-iot-lab-route:10.0}
+IMAGE=${REMOTE_IMAGE:-iot-lab-route:10.0-nightly-4fe1ca2060}
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 
 usage() { echo "usage: tools/remote.sh <board-dir> [--in FILE]... [--results DIR] -- <command...>" >&2; exit 2; }

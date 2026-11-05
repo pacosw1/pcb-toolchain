@@ -58,8 +58,10 @@ Project settings in `.pcb-toolchain.env`:
 ## Release
 
 `scripts/build-bundle.sh VERSION [--linux]` builds `dist/pcb-toolchain-VERSION.tar.gz` + `SHA256SUMS`: it copies the
-tool tree, builds `iotroute` for darwin-arm64 with cargo (and for linux-x86_64 on `BUILD_LINUX_HOST` with `--linux`),
-and writes `VERSION` and `manifest.json`.
+tool tree, builds `iotroute` and `iotplace` for darwin-arm64, and writes `VERSION` and `manifest.json`. With `--linux`,
+it also builds those tools and `route-coverage` for linux-x86_64 on `BUILD_LINUX_HOST` using the bookworm Rust image.
+The Linux `route-coverage` artifact is available for explicit testing; daemon staging and native thermal receipt parity
+remain to be verified.
 
 Publish only this version's tarball, with a one-line `SHA256SUMS` (the asset name `install.sh` reads). Run from the
 repo root, with VERSION replaced:
