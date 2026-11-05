@@ -57,6 +57,10 @@ mod tests {
         let native = root.join("board.kicad_pcb");
         std::fs::write(&manifest, b"review").unwrap();
         std::fs::write(&native, b"board").unwrap();
+        std::fs::create_dir_all(root.join("hardware-design/boards/A")).unwrap();
+        std::fs::write(root.join("hardware-design/boards/A/spec.md"), b"spec").unwrap();
+        std::fs::write(root.join("review.md"), b"review").unwrap();
+        std::fs::write(root.join("doc.pdf"), b"synthetic").unwrap();
         let digest = |bytes: &[u8]| format!("{:x}", Sha256::digest(bytes));
         let mut c = json!({"root":root, "manifest":manifest, "native":native,
             "inputs":{"review.json":digest(b"review"),"board.kicad_pcb":digest(b"board")}});
@@ -277,6 +281,7 @@ fn preflight_relocated(problem: &Value) -> crate::Result<()> {
     let path = owned(&root, contract["manifest"].as_str().ok_or("reviewed manifest missing")?)?;
     let manifest: Value = serde_json::from_slice(&std::fs::read(path)?)?;
     check_rating_ranges(&manifest)?;
+    check_manifest_sources(contract, &manifest)?;
     check_rule_sources(contract, &manifest)?;
     // Recheck after evaluation to catch changed source files.
     check_inputs(contract)?;
@@ -295,21 +300,29 @@ mod preflight_tests {
         let native = root.join("board.kicad_pcb");
         let manifest_path = root.join("manifest.json");
         std::fs::write(&native, b"board").unwrap();
+        std::fs::create_dir_all(root.join("hardware-design/boards/A")).unwrap();
+        std::fs::write(root.join("hardware-design/boards/A/spec.md"), b"spec").unwrap();
+        std::fs::write(root.join("review.md"), b"review").unwrap();
+        std::fs::write(root.join("doc.pdf"), b"synthetic").unwrap();
         let digest = |v: &[u8]| format!("{:x}", Sha256::digest(v));
-        let mut manifest = json!({"schema":"iot-lab.part-use.v1","board":"A","revision":"1","project":"board.kicad_pro",
-            "parts":[{"reference":"U1","layout_constraints":[],"ratings":[{"id":"r","quantity":"voltage",
-                "limit":{"min":0,"max":10,"unit":"V","source":{}},
-                "required":{"min":0,"max":5,"unit":"V","source":{}},"conditions":[]}]}],
+        let spec = json!({"path":"hardware-design/boards/A/spec.md","sha256":digest(b"spec"),"section":"use"});
+        let doc = json!({"path":"doc.pdf","sha256":digest(b"synthetic"),"page":1,"document_id":"D","revision":"A"});
+        let evidence = json!({"path":"review.md","sha256":digest(b"review"),"section":"review"});
+        let mut manifest = json!({"schema":"iot-lab.part-use.v1","board":"A","revision":"1","project":"board.kicad_pro","spec":spec,
+            "parts":[{"reference":"U1","layout_constraints":[],"datasheets":[doc],"assembly_dependencies":[],"ratings":[{"id":"r","quantity":"voltage",
+                "limit":{"min":0,"max":10,"unit":"V","source":doc},
+                "required":{"min":0,"max":5,"unit":"V","source":spec},"conditions":[]}]}],
             "budgets":[{"net":"VCC","limit":{"min":0,"max":2,"unit":"A","source":{}},
                 "loads":[{"reference":"U1","required":{"min":0,"max":1,"unit":"A","source":{}}}]}]});
         let facts = digest(&serde_json::to_vec(&manifest).unwrap());
-        manifest["review"] = json!({"verdict":"passed","reviewer":"R","reviewed_at_utc":"2026-01-01T00:00:00Z","facts_sha256":facts});
+        manifest["review"] = json!({"verdict":"passed","reviewer":"R","reviewed_at_utc":"2026-01-01T00:00:00Z","facts_sha256":facts,"evidence":evidence});
         let manifest_bytes = serde_json::to_vec(&manifest).unwrap();
         std::fs::write(&manifest_path, &manifest_bytes).unwrap();
         let mut problem = json!({"units":[{"name":"U1","refs":["U1"],"x":1,"y":2,"fixed":false}],
             "board":{"outline":[[0,0],[10,0],[10,10]]},"board_file":native,
             "engineering":{"schema":"iot-lab.engineering-constraints.v1","root":root,"board":"A","manifest":manifest_path,"native":native,
-                "inputs":{"board.kicad_pcb":digest(b"board"),"manifest.json":digest(&manifest_bytes)},
+                "inputs":{"board.kicad_pcb":digest(b"board"),"manifest.json":digest(&manifest_bytes),
+                    "hardware-design/boards/A/spec.md":digest(b"spec"),"review.md":digest(b"review"),"doc.pdf":digest(b"synthetic")},
                 "rules":[],"geometry":{},"bindings":[]}});
         let review = digest(&serde_json::to_vec(&problem["engineering"]).unwrap());
         let anchor = digest(&serde_json::to_vec(&json!({"units":problem["units"],"outline":problem["board"]["outline"]})).unwrap());
@@ -537,7 +550,6 @@ pub fn preflight_snapshot(problem: &Value, snapshot_root: &Path, population: Opt
 
 /// Verify manifest evidence references are owned, present in the bound input set,
 /// and unchanged. PDF page existence and native facts still require separate checks.
-#[allow(dead_code)]
 fn check_manifest_sources(contract: &Value, manifest: &Value) -> crate::Result<()> {
     let root = Path::new(contract["root"].as_str().ok_or("reviewed root missing")?).canonicalize()?;
     let inputs = contract["inputs"].as_object().ok_or("reviewed inputs missing")?;
