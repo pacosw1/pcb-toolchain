@@ -145,6 +145,36 @@ fn extended_attributes(_file: &File) -> io::Result<BTreeMap<String, Vec<u8>>> {
     ))
 }
 
+/// The disconnected commit experiment currently handles only Linux files
+/// without xattrs/ACL xattrs or user-visible inode flags. Unsupported
+/// platforms and filesystems fail closed rather than discarding metadata.
+#[cfg(target_os = "linux")]
+fn require_plain_commit_metadata(file: &File) -> io::Result<()> {
+    if !extended_attributes(file)?.is_empty() {
+        return Err(invalid(
+            "commit does not yet preserve extended attributes or ACLs",
+        ));
+    }
+    let mut flags: libc::c_long = 0;
+    if unsafe { libc::ioctl(file.as_raw_fd(), libc::FS_IOC_GETFLAGS, &mut flags) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // EXTENT is an internal ext4 allocation-format bit, not a user policy.
+    const FS_EXTENT_FL: libc::c_long = 0x0008_0000;
+    if flags & !FS_EXTENT_FL != 0 {
+        return Err(invalid("commit does not yet preserve inode flags"));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn require_plain_commit_metadata(_file: &File) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "commit metadata policy is not implemented on this platform",
+    ))
+}
+
 /// Exclusive flock is retained on a file owned by this process until Drop.
 /// Canonical directory aliases using the SAME lock directory select the same
 /// path-derived lock. Hardlinks and final symlinks are refused; writers using
@@ -1006,6 +1036,35 @@ mod tests {
             observe_recovery(&dir, &lock).unwrap(),
             RecoveryObservation::Conflict
         );
+        assert_eq!(fs::read(target).unwrap(), b"original");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn commit_metadata_policy_refuses_attributes_instead_of_dropping_them() {
+        let temp = Scratch::new();
+        let target = temp.0.join("board");
+        fs::write(&target, b"original").unwrap();
+        let file = open_regular(&target).unwrap();
+        require_plain_commit_metadata(&file).unwrap();
+        let name = CString::new("user.iot-lab-test").unwrap();
+        let value = b"keep";
+        let result = unsafe {
+            libc::fsetxattr(
+                file.as_raw_fd(),
+                name.as_ptr(),
+                value.as_ptr().cast(),
+                value.len(),
+                0,
+            )
+        };
+        if result != 0 {
+            panic!(
+                "setting test attribute failed: {}",
+                io::Error::last_os_error()
+            );
+        }
+        assert!(require_plain_commit_metadata(&file).is_err());
         assert_eq!(fs::read(target).unwrap(), b"original");
     }
 
