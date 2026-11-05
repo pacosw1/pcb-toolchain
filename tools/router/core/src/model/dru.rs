@@ -9,6 +9,8 @@ pub struct Rule {
     pub condition: Selector,
     pub layer: Option<String>,
     pub constraints: Vec<Constraint>,
+    /// What the file says here and nothing above holds: a head other than `rule`, an unknown field, a second condition or layer.
+    pub unread: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -68,8 +70,31 @@ fn read_rule(form: &Node) -> Result<Rule, String> {
         condition: Selector::new(form.value("condition").unwrap_or("True")),
         layer: form.value("layer").map(str::to_string),
         constraints: form.children("constraint").map(read_constraint).collect::<Result<_, _>>().map_err(|e: String| format!("rule {name}: {e}"))?,
+        unread: unread(form),
         name,
     })
+}
+
+/// `severity` is read by nobody and asks for nothing: a rule the board set to ignore is still kept, which is the safe side.
+fn unread(form: &Node) -> Vec<String> {
+    let (mut fields, mut once) = (Vec::new(), [false, false]);
+    if !form.is("rule") {
+        fields.push(format!("{} (not a rule)", form.head().unwrap_or("?")));
+    }
+    for field in form.items().iter().skip(2) {
+        let (head, seen) = match field.head() {
+            Some("constraint" | "severity") => continue,
+            Some(head @ "condition") => (head, Some(0)),
+            Some(head @ "layer") => (head, Some(1)),
+            head => (head.unwrap_or("?"), None),
+        };
+        match seen {
+            Some(index) if !once[index] => once[index] = true,
+            Some(_) => fields.push(format!("a second {head}")),
+            None => fields.push(head.to_string()),
+        }
+    }
+    fields
 }
 
 fn read_constraint(form: &Node) -> Result<Constraint, String> {

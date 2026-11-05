@@ -1,6 +1,7 @@
 //! The route model: board data and our rule files as the JSON the core routes from (DESIGN.md).
 pub mod build;
 pub mod cli;
+pub mod coverage;
 pub mod current;
 pub mod dru;
 pub mod files;

@@ -143,6 +143,7 @@ pub struct DesignRules {
     pub min_hole_clearance: Option<Num>,
     pub min_hole_to_hole: Option<Num>,
     pub min_via_annular_width: Option<Num>,
+    pub min_connection: Option<Num>,
 }
 
 /// reference-planes.json, the keys the router reads.

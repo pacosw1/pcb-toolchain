@@ -10,8 +10,9 @@ and stop relying on others". First proof board: NET-CORE (branch claude/t113-net
   via size, pair, RMII, crystal and In2 layer rules all "unsupported").
 - The rsixel A* router and Freerouting do not know our pair, RMII, return-via (RP-001) or current-path rules.
   Every board then ends in hand fixes (H7-CORE, ESP32-CORE, NET-CORE).
-- A router that reads our rules as its own model needs no coverage proof: the constraint it routes with is the
-  constraint the gate checks.
+- A router that reads our rules as its own model needs no DSN proof: the constraint it routes with is the constraint
+  the gate checks. What it still needs is admission: `iotroute model` refuses by name each native rule it does not
+  hold (`core/src/model/coverage.rs`), and `iotroute route` and `iotroute run` stop there, before routing.
 
 ## 2. Acceptance (unchanged)
 

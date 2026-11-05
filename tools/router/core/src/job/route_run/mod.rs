@@ -20,6 +20,7 @@ use crate::kicad::save::{WorkDir, put_in_place, save_refilled};
 use crate::plan::{self, Backend, Plan, Pour, Stage, add_blocks, copy_block, open_nets, split_zones};
 use crate::route_features::{defaults_path, root};
 use crate::run::guard;
+use crate::run::steps::Steps;
 use crate::sha256::sha256;
 use crate::tool_args::Args;
 use board_edit::{TMP, keepout_area, keepout_zone, pour_area, pour_zone, set_widths};
@@ -383,6 +384,7 @@ fn route(options: &Options) -> Result<i32, String> {
     let backend = options.backend.unwrap_or(plan.backend);
     if backend == Backend::Iotroute {
         iotroute::check_plan(&plan)?;
+        Steps::new(&root().join("tools"))?.admit(&folder, &start, &outdir.join("admission-model.json"), &outdir.join("admission-model.log"), true)?;
     } else if !plan.features.is_empty() {
         return Err("route: the tracemaker backend cannot apply route.json features".to_string());
     }

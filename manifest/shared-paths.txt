@@ -703,6 +703,7 @@ tools/router/core/src/lib.rs
 tools/router/core/src/main.rs
 tools/router/core/src/model/build.rs
 tools/router/core/src/model/cli.rs
+tools/router/core/src/model/coverage.rs
 tools/router/core/src/model/current.rs
 tools/router/core/src/model/dru.rs
 tools/router/core/src/model/files.rs

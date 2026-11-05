@@ -327,10 +327,7 @@ fn run(a: &Args, rec: &mut Record, out: &Path, work: &Path) -> Result<(), String
     }
     guard::preflight(&route_in, &work.join("preflight.json"))?;
     let model = work.join("model.json");
-    let (code, text) = steps.model(&folder, &route_in, &model, &work.join("model.log"), a.return_exempt)?;
-    if code != 0 {
-        return Err(format!("iotroute model failed: {}", last_line(&text)));
-    }
+    let text = steps.admit(&folder, &route_in, &model, &work.join("model.log"), a.return_exempt)?;
     rec.stages.model = Some(ModelStage { line: text.trim().lines().last().unwrap_or("").to_string(), sha256: sha_file(&model)? });
 
     let widths = widths::board_widths(&folder, &model)?;
