@@ -30,10 +30,21 @@ data reference, the required files of each board (`REQUIRED_FILES` in
 `lib/project-layout.ts`: by lifecycle, stage and registered gate), folders the
 registry does not know (`_art` and `.claude` are not boards), and project files at
 synced tool paths. A missing value stays a finding: a gate with no `stage` gets
-`gate_stage_missing` and its stage rows are not evaluated. Obsolete boards get one
-`obsolete_board` info finding with what it replaces as debt; errors stay. The registry
-marks them with lifecycle `obsolete`; while it marks none, `DECLARED_OBSOLETE` applies.
+`gate_stage_missing` and its stage rows are not evaluated. Lifecycle is registry
+data: `obsolete` is reported on the board and in `summary.obsolete`, but never
+suppresses structure findings. No board family is implicitly classified obsolete.
 The audit always exits 0. `--strict BOARD` exits 1 when that board has a violation.
+
+A retained configuration can declare `pending_gate: "gate.pending.json"` on its
+non-active registry entry. A `gate-only` pending entry names its owner and revision;
+that owner revision keeps `gate: null` and its explicit project path. The pending
+file must match that project, stay inside the board tree, and declare its own stage.
+At explicit G3 the audit requires the schematic, project and hierarchy/libraries,
+without requiring a PCB; G4/G5 still require a PCB and layout rows. A missing or
+invalid stage never defaults to G3. Planned physical entries with a pending gate
+also need STATUS and SCHEMATIC indexes; config-only entries share their owner's
+packet. The JSON board row reports `gate_state: "pending"`. This does not create an
+active `gate.json`, activate operational commands or grant native acceptance.
 
 Before native CAD exists, check a reviewed part-use manifest with
 `tools/pcb parts --json selection PLANNED-BOARD --manifest FILE`. This evaluates

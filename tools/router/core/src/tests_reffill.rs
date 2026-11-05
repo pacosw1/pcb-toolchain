@@ -117,3 +117,66 @@ fn soft_reference_is_priced_not_blocked() {
         _ => 0.0 }).sum();
     assert!(off < 0.5, "soft SIG goes around the void: {off:.2} mm off the reference");
 }
+
+/// Synthetic setback exercises dynamic reference holes outside ordinary clearance.
+#[test]
+fn routed_via_reference_holes_are_symmetric_and_disappear_on_ripup() {
+    let mut m = model(true);
+    m["zones"] = serde_json::json!([{ "net": "GND", "layer": "In1.Cu", "clearance": 1.2, "min_thickness": 0.2 }]);
+    let mut bd = load(&m, 0.28);
+    let (sig, other) = (id(&bd, "SIG"), id(&bd, "SIG2"));
+    let v = bd.add(Shape { net: other as i32, geo: Geo::Circ(5.0, 5.0, 0.3), clr: 0.15, layers: 0b111,
+        drill: 0.3, kind: Kind::Via, owner: other as i32, alive: true, grp: 0 });
+    let mut hits = Vec::new();
+    assert!(bd.track_cost(sig, 0, 6.5, 5.0, 0.075, 0.25, Some(&mut hits)) > 0,
+        "track must see the routed via's plane hole outside its copper clearance");
+    assert_eq!(hits, vec![v as u32], "negotiation must identify the routed blocker");
+    assert_eq!(bd.track_cost(sig, 2, 6.5, 5.0, 0.075, 0.25, None), 0,
+        "a layer without that adjacent plane retains ordinary clearance");
+    assert_eq!(bd.track_cost(other, 0, 6.5, 5.0, 0.075, 0.25, None), 0, "own-via anchors remain legal");
+    assert_eq!(bd.track_cost(id(&bd, "OTH"), 0, 6.5, 5.0, 0.075, 0.25, None), 0,
+        "a net without a reference domain retains ordinary clearance");
+    bd.shapes[v].alive = false;
+    assert_eq!(bd.track_cost(sig, 0, 6.5, 5.0, 0.075, 0.25, None), 0,
+        "ripping the via removes its dynamic hole");
+    bd.add(Shape { net: sig as i32, geo: Geo::Seg(6.5, 4.5, 6.5, 5.5, 0.075), clr: 0.15, layers: 1,
+        drill: 0.0, kind: Kind::Track, owner: sig as i32, alive: true, grp: 0 });
+    assert!(bd.via_cost(other, 5.0, 5.0, 0.6, 0.3, 0.45, None) > 0,
+        "via-first and track-first must enforce the same plane-hole envelope");
+}
+
+#[test]
+fn reference_hole_setback_uses_adjacent_zone_via_rules_and_minimum_width() {
+    let mut m = model(true);
+    m["nets"]["SIG"]["ref_soft"] = serde_json::json!(true);
+    m["zones"] = serde_json::json!([
+        { "net": "GND", "layer": "In1.Cu", "clearance": 0.2, "thermal_gap": 0.3, "min_thickness": 0.25,
+          "net_clearance": { "SIG2": { "via": 1.5, "track": 9.0 } } },
+        { "net": "GND", "layer": "B.Cu", "clearance": 8.0, "min_thickness": 0.5 }
+    ]);
+    let bd = load(&m, 0.28);
+    assert!((bd.rfill.via_clearance(0) - 1.75).abs() < 1e-9,
+        "use the via-specific rule, not track clearance or a different plane");
+    assert_eq!(bd.rfill.via_clearance(2), 0.0);
+    let mut thermal = m.clone();
+    thermal["zones"][0]["thermal_gap"] = serde_json::json!(2.0);
+    assert!((load(&thermal, 0.28).rfill.via_clearance(0) - 2.25).abs() < 1e-9);
+    m["nets"]["SIG2"]["clearance"] = serde_json::json!(2.5);
+    assert!((load(&m, 0.28).rfill.via_clearance(0) - 2.75).abs() < 1e-9);
+}
+
+#[test]
+fn reference_holes_respect_fixed_copper_and_soft_reference_nets() {
+    let mut m = model(true);
+    m["nets"]["SIG"]["ref_soft"] = serde_json::json!(true);
+    m["zones"] = serde_json::json!([{ "net": "GND", "layer": "In1.Cu", "clearance": 1.2, "min_thickness": 0.2 }]);
+    let mut bd = load(&m, 0.28);
+    let (sig, other) = (id(&bd, "SIG"), id(&bd, "SIG2"));
+    bd.add(Shape { net: other as i32, geo: Geo::Circ(5.0, 5.0, 0.3), clr: 0.15, layers: 0b111,
+        drill: 0.3, kind: Kind::Via, owner: -1, alive: true, grp: 0 });
+    assert!(bd.track_cost(sig, 0, 6.5, 5.0, 0.075, 0.25, None) < 0, "fixed holes cannot be negotiated away");
+    let mut reverse = load(&m, 0.28);
+    reverse.add(Shape { net: sig as i32, geo: Geo::Seg(6.5, 4.5, 6.5, 5.5, 0.075), clr: 0.15, layers: 1,
+        drill: 0.0, kind: Kind::Track, owner: -1, alive: true, grp: 0 });
+    assert!(reverse.via_cost(other, 5.0, 5.0, 0.6, 0.3, 0.45, None) < 0, "new via must preserve a fixed track's reference");
+}

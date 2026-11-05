@@ -199,6 +199,11 @@ impl<'m> Evaluator<'m> {
         &self.model.units[i]
     }
 
+    /// Exact edge eligibility at a trial place, without changing any search cost or state.
+    pub fn edge_miss_at(&self, i: usize, place: Place) -> bool {
+        self.model.edge_miss_at(i, place)
+    }
+
     pub fn unit_count(&self) -> usize {
         self.model.units.len()
     }

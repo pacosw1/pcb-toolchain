@@ -5,8 +5,10 @@
 //! plane layer (SHAPE_POLY_SET.Contains, accuracy 0: margin 0), except within pad / via radius + via_allow_mm of the
 //! net's own pads and vias. `iotroute model` reads the zones of the router input as KiCad 10 refilled them and writes the filled
 //! polygons per outer layer and domain, so the edge holds the zone clearance, thermal / antipad setback and min-width
-//! removal around holes, keepouts and fixed copper. Routed vias add antipads later; the plane clearance rule of `pref`
-//! nets keeps the tracks off them.
+//! removal around holes, keepouts and fixed copper. New vias use a conservative local setback derived from the
+//! adjacent zones' clearance, thermal gaps, via-specific rules and minimum width. Live holes are checked in Board's
+//! spatial indexes in both insertion orders, not baked into this immutable fill or its caches. Native refill and
+//! the complete planes gate remain necessary for merged voids, disconnected islands and mixed-layer tracks.
 //!
 //! Board::track_fixed_code applies it to a net whose pflags carry a domain (bits 2..7): a track centre outside the
 //! area is blocked, except inside the anchor discs of exactly one net (that net may pass: fixed code n). Two nets'
@@ -125,6 +127,9 @@ pub(crate) struct RefFill {
     areas: Vec<((usize, u8), Area)>,
     /// own-net exemption discs: centre, radius (pad or via radius + via_allow), net
     anchors: Vec<(f64, f64, f64, i32)>,
+    /// Conservative local hole setback per outer layer, from its adjacent zones.
+    /// Immutable settings only: live via geometry stays in Board's spatial indexes.
+    via_clearance: Vec<(usize, f64)>,
     /// gate scope (2026-11-02, model net `ref_soft`): a net whose off-reference run the gate may accept (si_planes
     /// D-124c: a stub, a run whose terminal snap discs meet in reference copper, a return detour within the edge budget,
     /// or no rule above the board perimeter) is not blocked off the reference: each step there costs more
@@ -165,6 +170,23 @@ impl RefFill {
         let bbox = (crate::f(&ob[0]), crate::f(&ob[1]), crate::f(&ob[2]), crate::f(&ob[3]));
         for (lname, lv) in layers {
             let Some(l) = cu.iter().position(|c| c == lname) else { continue };
+            // A new via was absent when KiCad produced the static fill. Its hole
+            // uses zone/DRU clearance, not the old generic --plane-clr alone.
+            // Take maxima across the adjacent layer (including thermal gaps)
+            // and a full minimum-width margin. This deliberately overestimates
+            // local antipads; it is not a replacement for native refill/islands.
+            let class_clearance = ["classes", "nets"].iter().flat_map(|key| model[key].as_object().into_iter().flatten())
+                .filter_map(|(_, c)| c["clearance"].as_f64()).fold(0.0, f64::max);
+            let setback = model["zones"].as_array().into_iter().flatten()
+                .filter(|z| z["layer"].as_str() == lv["plane"].as_str())
+                .map(|z| {
+                    let via_rule = z["net_clearance"].as_object().into_iter().flatten()
+                        .filter_map(|(_, c)| c["via"].as_f64()).fold(0.0, f64::max);
+                    let clearance = crate::f(&z["clearance"]).max(crate::f(&z["thermal_gap"]))
+                        .max(via_rule).max(class_clearance).max(crate::f(&model["setup"]["min_clearance"]));
+                    clearance + crate::f(&z["min_thickness"])
+                }).fold(0.0, f64::max);
+            out.via_clearance.push((l, setback));
             for (di, d) in doms.iter().enumerate() {
                 let mut sets = Vec::new();
                 for poly in lv["domains"][d.as_str()].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
@@ -187,6 +209,12 @@ impl RefFill {
             }
         }
         out
+    }
+    pub(crate) fn via_clearance(&self, l: usize) -> f64 {
+        self.via_clearance.iter().find(|(layer, _)| *layer == l).map_or(0.0, |(_, c)| *c)
+    }
+    pub(crate) fn max_via_clearance(&self) -> f64 {
+        self.via_clearance.iter().map(|(_, c)| *c).fold(0.0, f64::max)
     }
     /// A soft net (RefFill::soft) with domain d: the track centre at (x, y) on copper layer l is off its reference
     /// (outside the area and outside its own anchor discs), so the A* step there pays --ref-cost.
