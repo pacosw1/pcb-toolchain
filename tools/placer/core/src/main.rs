@@ -14,6 +14,9 @@ use iotplace::drc_count::{Report, count};
 use iotplace::gplace::place;
 use iotplace::params::Params;
 use iotplace::problem::Problem;
+use iotplace::evaluator::Evaluator;
+use iotplace::model::Model;
+use iotplace::problem::Pose;
 use iotplace::search::{Candidate, Initial, Plan, SearchResult, optimize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -28,7 +31,7 @@ struct Args {
     params: Vec<String>,
 }
 
-const VALUE_OPTIONS: [&str; 7] = ["--workers", "--epochs", "--steps", "--seed", "--top", "--sigma", "--nets"];
+const VALUE_OPTIONS: [&str; 8] = ["--workers", "--epochs", "--steps", "--seed", "--top", "--sigma", "--nets", "--pose"];
 
 fn parse_args(argv: &[String]) -> iotplace::Result<Args> {
     let mut a = Args::default();
@@ -151,6 +154,24 @@ fn count_cmd(a: &Args) -> iotplace::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// The default proxy cost for the benchmark table, optionally at an explicit pose.
+fn cost_cmd(a: &Args) -> iotplace::Result<ExitCode> {
+    let input = a.file.as_deref().ok_or("a problem file is required")?;
+    let pr = Problem::load(input)?;
+    let pose: Pose = match a.options.iter().rev().find(|(f, _)| f == "--pose") {
+        Some((_, path)) => serde_json::from_str(&std::fs::read_to_string(path)?)?,
+        None => pr.initial_pose(),
+    };
+    if pose.len() != pr.units.len() || pose.iter().any(|(x, y, r)| !x.is_finite() || !y.is_finite() || *r > 3) {
+        return Err("invalid pose: expected one finite [x, y, turn 0..3] per unit".into());
+    }
+    let params = Params::from_args::<String>(&[])?;
+    let model = Model::new(&pr, &params)?;
+    let evaluator = Evaluator::new(&model, &params, &pose);
+    println!("{}", serde_json::json!({"cost": evaluator.cost(), "components": evaluator.terms()}));
+    Ok(ExitCode::SUCCESS)
+}
+
 fn dispatch(argv: &[String]) -> iotplace::Result<ExitCode> {
     let (command, rest) = argv.split_first().ok_or("usage: iotplace run|scramble|gplace|count|read ...")?;
     match command.as_str() {
@@ -164,6 +185,7 @@ fn dispatch(argv: &[String]) -> iotplace::Result<ExitCode> {
         "scramble" => scramble_cmd(&args),
         "gplace" => gplace_cmd(&args),
         "count" => count_cmd(&args),
+        "cost" => cost_cmd(&args),
         other => Err(format!("unknown command {other}").into()),
     }
 }
