@@ -1,6 +1,6 @@
 # Part and datasheet evidence
 
-`pcb parts` wraps `part_evidence.py` with durable CLI events and reports. Extraction,
+`pcb parts` wraps `part_evidence.ts` with durable CLI events and reports. Extraction,
 reviewed engineering facts, dated assembly availability, native ERC/DRC, release
 approval and measured qualification remain separate states. No command selects a
 part or changes an existing selection ledger.
@@ -100,8 +100,8 @@ profile to avoid copying manufacturer facts between boards:
 
 This fragment illustrates fields, not actual part limits or a valid approval.
 Full synthetic examples live in `hardware-design/registry/part-reviews/examples/`;
-their reviews deliberately remain pending. The runnable `make_fixture` in
-`test_part_evidence.py` creates a self-contained synthetic review and original
+their reviews deliberately remain pending. The runnable `makeFixture` in
+`tools/lib/part-fixture.ts` creates a self-contained synthetic review and original
 synthetic PDF. No production review has been manufactured or migrated.
 
 A shared profile fixes exact MPN/LCSC, manufacturer, package/variant, original
@@ -230,17 +230,12 @@ review/spec files and native hierarchy, for isolated operation snapshots. Relati
 paths resolve within the supplied project root, so a source-bound manifest works
 inside a copied workspace. Sources are rehashed before accepting a verification.
 
-`verify_selection(root, board, path, output=None)` returns the distinct pre-CAD
-scope described above. `dependency_files(root, manifest, include_native=False)`
+`verifySelection(root, board, path, output)` returns the distinct pre-CAD
+scope described above. `dependencyFiles(root, manifest, false)`
 collects its exact profile/PDF/review/spec closure without touching native CAD.
 
 ```sh
-PYTHONPATH=tools python3 -m unittest test_part_evidence
+node --experimental-strip-types --no-warnings --test tools/lib/part-evidence.test.ts
 ```
 
-`test_part_evidence.real_copy_proof(repo, output)` exercises pending real ENV-SENSE
-evidence and deliberate pin, land and voltage mutations only in a copied tree.
-It records unchanged shipping hashes. The separate
-`test_engineering_constraints.native_copy_proof(output)` uses actual pcbnew and
-Poppler on the explicitly synthetic fixture; the native runtime is required.
 Local evidence is indexed at `.gate/pcb-engineering-20261016/parts/summary.json`.

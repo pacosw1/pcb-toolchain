@@ -2,7 +2,7 @@
 //
 // Uses the strict population parser of kicad-population.mjs, including hierarchical instance resolution. Pad angles
 // follow the block_bindings local-angle convention. The hashes here are stored in reviewed manifests, so their input
-// text (Decimal normal form, sorted compact JSON) must stay what the Python reader produced.
+// text (Decimal normal form, sorted compact JSON) must not change.
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';

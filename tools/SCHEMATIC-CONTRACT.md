@@ -36,7 +36,7 @@ The manifest schema is `iot-lab.schematic-contract.v1`. Required top-level field
 | `review` | Passed verdict, reviewer, timezone-bearing timestamp, `facts_sha256` and original review evidence. |
 | `assertions` | Nonempty list of unique IDs and supported typed assertions. |
 
-`facts_sha256` uses `part_evidence.facts_digest(manifest)`, excluding only the
+`facts_sha256` uses `factsDigest(manifest)` of `lib/part-review.ts`, excluding only the
 manifest's root `review`. Sources use the existing `{path,sha256,page}` PDF or
 `{path,sha256,section}` record descriptor. PDF pages are checked against the
 original document. Each assertion names a `requirement` whose design verification

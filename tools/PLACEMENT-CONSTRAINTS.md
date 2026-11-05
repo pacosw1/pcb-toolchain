@@ -1,7 +1,7 @@
 # Reviewed placement constraints
 
 `engineering_constraints.py` consumes the verified part manifest from
-`part_evidence.py`. Reviews remain bound to the actual schematic, footprint,
+`part_evidence.ts`. Reviews remain bound to the actual schematic, footprint,
 pad/net map, land geometry, original PDF hash and one-based source page.
 The engineering screen grants no routing, assembly, enclosure or bench qualification.
 

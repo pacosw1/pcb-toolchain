@@ -87,8 +87,8 @@ files and the actual invoked verifier/source closure.
 
 | Kind | Additional fields and actual evaluation |
 | --- | --- |
-| `part_selection` | `references`: exact planned references; invokes `part_evidence.verify_selection` on reviewed profiles, limits, operating demands and applicability conditions without native files. Manifest revision must equal `identity.revision`; board must equal `identity.board`, or `identity.design_id` while board is null. Reports CAD/native/stock verification as false. |
-| `part_use` | `references`: exact native references; invokes `part_evidence.verify_manifest`. It contributes reviewed part facts, not later physical numeric acceptance. |
+| `part_selection` | `references`: exact planned references; invokes `verifySelection` of `lib/part-review.ts` on reviewed profiles, limits, operating demands and applicability conditions without native files. Manifest revision must equal `identity.revision`; board must equal `identity.board`, or `identity.design_id` while board is null. Reports CAD/native/stock verification as false. |
+| `part_use` | `references`: exact native references; invokes `verifyManifest` of `lib/part-review.ts`. It contributes reviewed part facts, not later physical numeric acceptance. |
 | `schematic` | Path names a functional schematic manifest. Calls `schematic_contract.check_contract`, requires passing entries for every named requirement and its exact design-contract hash binding. |
 | `placement` | Path names the reviewed part manifest; `constraint_ids` and `selectors: {requirement_id: rule_id}` bind actual measured rules. Optional `escape_evidence`. Numeric acceptance supports measured millimetres only. |
 | `native_gate` | Path names the original unified `run.json`. Reuses sealed evidence and current dependency verifiers. Schematic-stage use evaluates ERC only; later use requires all configured checks. Exact board/workspace ownership is required. |
