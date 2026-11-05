@@ -190,6 +190,18 @@ fn create_synced(path: &Path, bytes: &[u8]) -> io::Result<()> {
     file.sync_all()
 }
 
+const PREPARED_MARKER: &[u8] = b"iot-lab.adopt.prepared.v1\n";
+const STAGED_MARKER: &[u8] = b"iot-lab.adopt.staged.v1\n";
+
+fn require_marker(path: &Path, expected: &[u8]) -> io::Result<()> {
+    let mut data = Vec::new();
+    open_regular(path)?.read_to_end(&mut data)?;
+    if data != expected {
+        return Err(invalid("incomplete or invalid journal marker"));
+    }
+    Ok(())
+}
+
 /// Create a durable original-byte backup and intent; never writes the target.
 /// Incomplete directories remain as evidence and are never silently reused.
 pub fn prepare(
@@ -198,6 +210,24 @@ pub fn prepare(
     locked: &LockedTarget,
     expected_original_sha256: &str,
     candidate_sha256: &str,
+) -> io::Result<PathBuf> {
+    prepare_inner(
+        journal_root,
+        id,
+        locked,
+        expected_original_sha256,
+        candidate_sha256,
+        || Ok(()),
+    )
+}
+
+fn prepare_inner(
+    journal_root: &Path,
+    id: &str,
+    locked: &LockedTarget,
+    expected_original_sha256: &str,
+    candidate_sha256: &str,
+    before_marker: impl FnOnce() -> io::Result<()>,
 ) -> io::Result<PathBuf> {
     let root = private_dir(journal_root)?;
     if !valid_id(id) || !is_sha256(expected_original_sha256) || !is_sha256(candidate_sha256) {
@@ -227,12 +257,18 @@ pub fn prepare(
     let encoded = serde_json::to_vec(&intent).map_err(io::Error::other)?;
     create_synced(&dir.join("intent.json"), &encoded)?;
     File::open(&dir)?.sync_all()?;
+    before_marker()?;
+    // Payloads and their directory entries were synced before this marker can
+    // appear. A crash before that point leaves an explicitly incomplete run.
+    create_synced(&dir.join("prepared.ok"), PREPARED_MARKER)?;
+    File::open(&dir)?.sync_all()?;
     Ok(dir)
 }
 
 /// Validate the prepared evidence only; no recovery, rename or target writes.
 pub fn inspect_prepared(path: &Path) -> io::Result<PreparedIntent> {
     let dir = private_dir(path)?;
+    require_marker(&dir.join("prepared.ok"), PREPARED_MARKER)?;
     let mut intent_bytes = Vec::new();
     open_regular(&dir.join("intent.json"))?.read_to_end(&mut intent_bytes)?;
     let intent: PreparedIntent = serde_json::from_slice(&intent_bytes)
@@ -294,6 +330,15 @@ pub fn observe_recovery(path: &Path, locked: &LockedTarget) -> io::Result<Recove
 /// not create a target-side temporary file or authorize a rename. Re-observe
 /// the source after syncing: concurrent external edits leave this step failed.
 pub fn stage_candidate(path: &Path, locked: &LockedTarget, candidate: &[u8]) -> io::Result<()> {
+    stage_candidate_inner(path, locked, candidate, || Ok(()))
+}
+
+fn stage_candidate_inner(
+    path: &Path,
+    locked: &LockedTarget,
+    candidate: &[u8],
+    before_marker: impl FnOnce() -> io::Result<()>,
+) -> io::Result<()> {
     let dir = private_dir(path)?;
     let intent = inspect_prepared(&dir)?;
     if intent.original_sha256 == intent.candidate_sha256 {
@@ -309,6 +354,9 @@ pub fn stage_candidate(path: &Path, locked: &LockedTarget, candidate: &[u8]) -> 
     }
     create_synced(&dir.join("candidate.bin"), candidate)?;
     File::open(&dir)?.sync_all()?;
+    before_marker()?;
+    create_synced(&dir.join("staged.ok"), STAGED_MARKER)?;
+    File::open(&dir)?.sync_all()?;
     if observe_recovery(&dir, locked)? != RecoveryObservation::OriginalBytes {
         return Err(invalid("source changed while staging candidate"));
     }
@@ -319,6 +367,7 @@ pub fn stage_candidate(path: &Path, locked: &LockedTarget, candidate: &[u8]) -> 
 pub fn inspect_staged(path: &Path) -> io::Result<PreparedIntent> {
     let dir = private_dir(path)?;
     let intent = inspect_prepared(&dir)?;
+    require_marker(&dir.join("staged.ok"), STAGED_MARKER)?;
     if intent.original_sha256 == intent.candidate_sha256 {
         return Err(invalid(
             "equal original and candidate digests are ambiguous",
@@ -384,6 +433,102 @@ mod tests {
         println!("ADOPT_TEST_LOCK_HELD");
         io::stdout().flush().unwrap();
         std::thread::sleep(std::time::Duration::from_secs(30));
+    }
+
+    #[test]
+    fn subprocess_journal_holder() {
+        let Some(phase) = std::env::var_os("ADOPT_TEST_JOURNAL_PHASE") else {
+            return;
+        };
+        let locks = PathBuf::from(std::env::var_os("ADOPT_TEST_LOCK_DIR").unwrap());
+        let target = PathBuf::from(std::env::var_os("ADOPT_TEST_TARGET").unwrap());
+        let journals = PathBuf::from(std::env::var_os("ADOPT_TEST_JOURNALS").unwrap());
+        let locked = LockedTarget::acquire(&locks, &target).unwrap();
+        let pause = || {
+            println!("ADOPT_TEST_JOURNAL_BOUNDARY");
+            io::stdout().flush().unwrap();
+            std::thread::sleep(std::time::Duration::from_secs(30));
+            Ok(())
+        };
+        if phase == "prepare" {
+            prepare_inner(
+                &journals,
+                "run",
+                &locked,
+                &sha256(b"original"),
+                &sha256(b"candidate"),
+                pause,
+            )
+            .unwrap();
+        } else {
+            stage_candidate_inner(&journals.join("run"), &locked, b"candidate", pause).unwrap();
+        }
+    }
+
+    fn crash_at_journal_boundary(phase: &str, locks: &Path, journals: &Path, target: &Path) {
+        let child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "adopt_prepare::tests::subprocess_journal_holder",
+                "--nocapture",
+            ])
+            .env("ADOPT_TEST_JOURNAL_PHASE", phase)
+            .env("ADOPT_TEST_LOCK_DIR", locks)
+            .env("ADOPT_TEST_JOURNALS", journals)
+            .env("ADOPT_TEST_TARGET", target)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut child = ChildGuard(child);
+        let stream = child.0.stdout.take().unwrap();
+        let mut ready = false;
+        for line in BufReader::new(stream).lines() {
+            if line.unwrap().contains("ADOPT_TEST_JOURNAL_BOUNDARY") {
+                ready = true;
+                break;
+            }
+        }
+        assert!(ready, "subprocess did not reach journal boundary");
+        child.0.kill().unwrap();
+        child.0.wait().unwrap();
+    }
+
+    #[test]
+    fn killed_before_prepare_marker_leaves_incomplete_journal() {
+        let temp = Scratch::new();
+        let locks = temp.dir("locks");
+        let journals = temp.dir("journals");
+        let target = temp.0.join("board");
+        fs::write(&target, b"original").unwrap();
+        crash_at_journal_boundary("prepare", &locks, &journals, &target);
+        assert!(inspect_prepared(&journals.join("run")).is_err());
+        assert_eq!(fs::read(&target).unwrap(), b"original");
+        assert!(LockedTarget::acquire(&locks, &target).is_ok());
+    }
+
+    #[test]
+    fn killed_before_staged_marker_leaves_only_prepared_evidence() {
+        let temp = Scratch::new();
+        let locks = temp.dir("locks");
+        let journals = temp.dir("journals");
+        let target = temp.0.join("board");
+        fs::write(&target, b"original").unwrap();
+        let locked = LockedTarget::acquire(&locks, &target).unwrap();
+        let dir = prepare(
+            &journals,
+            "run",
+            &locked,
+            &sha256(b"original"),
+            &sha256(b"candidate"),
+        )
+        .unwrap();
+        drop(locked);
+        crash_at_journal_boundary("stage", &locks, &journals, &target);
+        assert!(inspect_prepared(&dir).is_ok());
+        assert!(inspect_staged(&dir).is_err());
+        assert_eq!(fs::read(&target).unwrap(), b"original");
+        assert!(LockedTarget::acquire(&locks, &target).is_ok());
     }
 
     #[test]
@@ -483,6 +628,8 @@ mod tests {
             inspect_prepared(&second).unwrap().original_sha256,
             intent.original_sha256
         );
+        fs::remove_file(first.join("prepared.ok")).unwrap();
+        assert!(inspect_prepared(&first).is_err());
     }
 
     #[test]
@@ -693,6 +840,11 @@ mod tests {
         );
         assert!(stage_candidate(&dir, &lock, b"candidate").is_err());
         assert_eq!(fs::read(&target).unwrap(), b"original");
+        fs::remove_file(dir.join("staged.ok")).unwrap();
+        assert!(inspect_staged(&dir).is_err());
+        fs::write(dir.join("staged.ok"), b"bad").unwrap();
+        assert!(inspect_staged(&dir).is_err());
+        fs::write(dir.join("staged.ok"), STAGED_MARKER).unwrap();
         fs::write(dir.join("candidate.bin"), b"tampered").unwrap();
         assert!(inspect_staged(&dir).is_err());
     }
