@@ -45,6 +45,11 @@ pub struct Params {
     pub mains: f64,
     /// Optional cumulative radius from the seed place; 0 = unbounded.
     pub max_displacement: f64,
+    /// Soft clusters: the share of the epochs with cluster moves only; after it a member also moves alone inside clu_local mm.
+    pub clu_phase: f64,
+    pub clu_local: f64,
+    /// 1 = start with each tied part at its pin.
+    pub clu_gather: f64,
     // legalizer
     pub legal_step: f64,
     pub legal_radius: f64,
@@ -105,6 +110,9 @@ impl Default for Params {
             distinct: 0.0,
             mains: 0.0,
             max_displacement: 0.0,
+            clu_phase: 0.5,
+            clu_local: 3.0,
+            clu_gather: 1.0,
             legal_step: 0.25,
             legal_radius: 5.0,
             legal_passes: 3.0,

@@ -7,6 +7,7 @@
 //! The best pose of each worker is legalized and ranked: illegal unit count, mains faults, then cost.
 
 mod anneal;
+pub mod cluster;
 pub(crate) mod legalize;
 mod mover;
 
@@ -218,6 +219,11 @@ impl Run<'_> {
         }
     }
 
+    /// The cluster phase of an epoch: the moves of the first share take only whole groups.
+    fn together(&self, epoch: usize) -> bool {
+        (epoch as f64) < self.params.clu_phase * self.plan.epochs as f64
+    }
+
     fn epoch(&self, mover: &Mover, workers: &[Worker], epoch: usize) -> Vec<EpochOutcome> {
         let params = epoch_params(self.params, epoch, self.plan.epochs);
         let schedule = self.schedule(epoch);
@@ -268,8 +274,9 @@ pub fn optimize_with_preview(pr: &mut Problem, p: &Params, plan: Plan, log: &dyn
 
 fn anneal_all(pr: &Problem, p: &Params, plan: Plan, log: &dyn Fn(&str), global: Option<GlobalStage>,
     preview: &dyn Fn(usize,usize,f64,&Pose)) -> crate::Result<SearchResult> {
-    let start = pr.initial_pose();
     let model = Model::new(pr, p)?;
+    let clustered = cluster::active(pr, p);
+    let start = if clustered && p.clu_gather != 0.0 { cluster::gather(&model, p, &pr.initial_pose()) } else { pr.initial_pose() };
     let last = epoch_params(p, plan.epochs - 1, plan.epochs);
     let mut first = Evaluator::new(&model, &epoch_params(p, 0, plan.epochs), &start);
     let final_weights = Evaluator::new(&model, &last, &start);
@@ -285,13 +292,16 @@ fn anneal_all(pr: &Problem, p: &Params, plan: Plan, log: &dyn Fn(&str), global: 
         None => estimate_t0(&mut first, &mover, &mut PyRandom::new(plan.seed), w0),
     };
     let run = Run { model: &model, params: p, plan, t0, t1: t0 * p.t_ratio, w0, w1: p.w1.min(w0) };
+    // T0 comes from single moves: a move of a whole group has a far bigger uphill delta.
+    let phases = clustered.then(|| (Mover::clustered(&model, p, true), Mover::clustered(&model, p, false)));
+    let moves_of = |e: usize| phases.as_ref().map_or(&mover, |(together, alone)| if run.together(e) { together } else { alone });
     let seed_worker = Worker { pose: initial.pose.clone(), cost: initial.cost, best_pose: initial.pose.clone(), best_cost: first.cost() };
     let mut workers = vec![seed_worker; plan.workers];
     let started = Instant::now();
     let mut busy = 0.0;
     let mut history = Vec::new();
     for e in 0..plan.epochs {
-        let outcomes = run.epoch(&mover, &workers, e);
+        let outcomes = run.epoch(moves_of(e), &workers, e);
         busy += outcomes.iter().map(|o| o.seconds).sum::<f64>();
         workers = outcomes.into_iter().map(|o| o.worker).collect();
         let g = best_worker(&workers);
