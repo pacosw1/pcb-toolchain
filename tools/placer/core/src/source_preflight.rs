@@ -394,9 +394,11 @@ mod preflight_tests {
         let mut wrong_project = manifest.clone();
         wrong_project["project"] = json!("hardware-design/boards/A/cad/other");
         assert!(check_board_identity(&problem["engineering"], &wrong_project).is_err());
-        let population = json!({"parts":{"U1":{"required":true,"pad_net_map":{"1":"VCC"}}}});
+        let population = json!({"source_hashes":{"hardware-design/boards/A/cad/board.kicad_pcb":digest(b"board")},
+            "parts":{"U1":{"required":true,"pad_net_map":{"1":"VCC"}}}});
         assert!(preflight_with_native(&problem, &population).is_ok());
-        let incomplete = json!({"parts":{"U1":{"required":true,"pad_net_map":{"1":"OTHER"}}}});
+        let incomplete = json!({"source_hashes":{"hardware-design/boards/A/cad/board.kicad_pcb":digest(b"board")},
+            "parts":{"U1":{"required":true,"pad_net_map":{"1":"OTHER"}}}});
         assert!(preflight_with_native(&problem, &incomplete).is_err());
         let mut remote = problem.clone();
         remote["board_file"] = json!("/offline/source/hardware-design/boards/A/cad/board.kicad_pcb");
@@ -574,6 +576,7 @@ mod budget_tests {
 pub fn preflight_with_native(problem: &Value, population: &Value) -> crate::Result<()> {
     preflight(problem)?;
     let contract = &problem["engineering"];
+    check_population_bindings(contract, population)?;
     let root = Path::new(contract["root"].as_str().ok_or("reviewed root missing")?).canonicalize()?;
     let manifest = owned(&root, contract["manifest"].as_str().ok_or("reviewed manifest missing")?)?;
     let value: Value = serde_json::from_slice(&std::fs::read(manifest)?)?;
@@ -624,6 +627,7 @@ pub fn preflight_snapshot_with_pdf(problem: &Value, snapshot_root: &Path, popula
     preflight_relocated(&relocated, inspector)?;
     if let Some(population) = population {
         let contract = &relocated["engineering"];
+        check_population_bindings(contract, population)?;
         let manifest_path = owned(&snapshot, contract["manifest"].as_str().ok_or("manifest missing")?)?;
         let manifest: Value = serde_json::from_slice(&std::fs::read(manifest_path)?)?;
         check_budget_coverage(&manifest, &population["parts"])?;
@@ -902,5 +906,25 @@ fn check_board_identity(contract: &Value, manifest: &Value) -> crate::Result<()>
             }
         }
     }
+    Ok(())
+}
+
+/// Bind declared native population source identities to the model's independently
+/// checked input set. It does not prove population completeness or authenticity.
+fn check_population_bindings(contract: &Value, population: &Value) -> crate::Result<()> {
+    let root=Path::new(contract["root"].as_str().ok_or("reviewed root missing")?).canonicalize()?;
+    let inputs=contract["inputs"].as_object().ok_or("reviewed inputs missing")?;
+    let mut expected=std::collections::BTreeMap::new();
+    for (name,hash) in inputs {expected.insert(owned(&root,name)?,hash.as_str().ok_or("invalid input digest")?);}
+    let hashes=population["source_hashes"].as_object().filter(|h|!h.is_empty()).ok_or("native population sources missing")?;
+    let mut seen=std::collections::BTreeSet::new();
+    for (name,hash) in hashes {
+        let path=owned(&root,name)?;
+        if !seen.insert(path.clone()) || expected.get(&path).copied()!=hash.as_str() {
+            return Err("native population source differs from reviewed inputs".into());
+        }
+    }
+    let board=owned(&root,contract["native"].as_str().ok_or("native board missing")?)?;
+    if !seen.contains(&board) {return Err("native population omits reviewed board".into());}
     Ok(())
 }
