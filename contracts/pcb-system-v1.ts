@@ -40,6 +40,8 @@ export interface VerificationReceiptV1 {
   policy_digest: Sha256
   evidence_manifest_sha256: Sha256
   verifier_identity: OpaqueId
+  issued_at_ms: number
+  expires_at_ms: number
   checks: { id: OpaqueId; outcome: CheckOutcome; evidence_manifest_sha256: Sha256 | null }[]
   schematic_parity: CheckOutcome | 'not_applicable'
   worker_cleanup: 'confirmed' | 'unconfirmed'

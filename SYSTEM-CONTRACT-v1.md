@@ -93,6 +93,8 @@ fresh gate and produces a `pcb.verification.v1` receipt binding:
   "policy_digest": "64-lowercase-hex",
   "evidence_manifest_sha256": "64-lowercase-hex",
   "verifier_identity": "trusted-verifier-id",
+  "issued_at_ms": 1780000000000,
+  "expires_at_ms": 1780003600000,
   "checks": [{ "id": "required-check-id", "outcome": "passed", "evidence_manifest_sha256": "64-lowercase-hex" }],
   "schematic_parity": "passed",
   "worker_cleanup": "confirmed",
@@ -153,6 +155,9 @@ deduplication must be derived without persisting the token itself.
 
 All IDs, numeric fields, sizes and limits require runtime schema validation. Nonnegative numeric values must be safe
 integers and satisfy server-side versioned policy bounds; TypeScript types alone are not validation.
+For this draft, opaque protocol/check IDs use `[A-Za-z0-9][A-Za-z0-9._:-]{0,127}`. The policy assigns stable IDs;
+human-facing labels and source identifiers may contain arbitrary board/net names and are stored separately, never
+silently sanitized into IDs. Current gate keys and rule IDs fit this set, but future policies need a versioned registry.
 
 ## Migration and compatibility
 
