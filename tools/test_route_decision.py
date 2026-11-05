@@ -333,28 +333,4 @@ class RouteDecisionTests(unittest.TestCase):
                 screens.get(contract,candidate,self.base/'failed-next.json')
             self.assertEqual(generate.call_count,1)
 
-    def test_compaction_does_not_repeat_identical_failed_route_but_allows_changed_policy(self):
-        source=Path(route.__file__).with_name('placer')/'compact_cli.py'
-        main=next(node for node in ast.parse(source.read_text()).body if isinstance(node,ast.FunctionDef) and node.name=='main')
-        function=next(node for node in main.body if isinstance(node,ast.FunctionDef) and node.name=='route')
-        def sdir(n):
-            folder=self.base/('step-'+str(n));folder.mkdir(exist_ok=True);return str(folder)
-        run=mock.Mock(return_value=SimpleNamespace(returncode=3,stdout='UNROUTED 1 GND_OPEN 0 ERRORS 0\n'))
-        ns=dict(sdir=sdir,pr={},a=SimpleNamespace(max_routes=0,router='fastroute',passes=1,optimizer='never',gnd_vias=False,
-            route_args='',feedback_max_mm=1,congestion_feedback=False),routes_done=[0],NO_RESULT=1000000,os=os,
-            routing_attempts={},REPO=str(Path(route.__file__).parent.parent),sys=sys,subprocess=subprocess,shlex=shlex,
-            run_stage=run,name='native',seed_receipt=None,lean=route.lean,escape_hint={},re=re,
-            placement_audit=SimpleNamespace(bounded_feedback=lambda *a:({},dict(accepted=False))))
-        exec(compile(ast.Module(body=[function],type_ignores=[]),str(source),'exec'),ns)
-        observe=mock.Mock(return_value=dict(status='diagnosed',qualified=False,action='diagnose_selected_connections',reason='individual router misses'))
-        with mock.patch.object(route,'observe_route',observe):
-            self.assertEqual(ns['route'](str(self.board),0),[1])
-            self.assertEqual(ns['route'](str(self.board),1),[1000000])
-            self.assertEqual(run.call_count,1)
-            ns['a'].passes=2
-            self.assertEqual(ns['route'](str(self.board),2),[1])
-            self.assertEqual(run.call_count,2)
-        self.assertIn('unchanged',(self.base/'step-1/route-decision.json').read_text())
-
-
 if __name__=='__main__':unittest.main()

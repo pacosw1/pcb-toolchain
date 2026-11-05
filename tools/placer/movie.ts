@@ -1,4 +1,4 @@
-// Timelapse of a compaction run (run.json from compact_cli.py): PNG frames (lib/raster.ts), then GIF + MP4 (ffmpeg).
+// Timelapse of a compaction run (run.json from compact-cli.ts): PNG frames (lib/raster.ts), then GIF + MP4 (ffmpeg).
 //   node --experimental-strip-types --no-warnings tools/placer/movie.ts RUN.json OUTDIR [--seconds 15] [--routed RUNDIR]
 // The frames are the viewer frames (viewer.ts playback): one per anneal epoch and one per step result. Left: layout (block colours,
 // halos dashed, ratsnest by length, region box, outline). Right: RUDY heat (same scale on all frames, over-capacity cells red). Below:
