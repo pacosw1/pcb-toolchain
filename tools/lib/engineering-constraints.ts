@@ -572,3 +572,13 @@ export function placementModelAnchor(model: PlacementModel): string {
   return fingerprint({ units: model.units.map(unit => ({ name: unit.name ?? null, refs: unit.refs ?? null,
     x: unit.x ?? null, y: unit.y ?? null, fixed: unit.fixed ?? null })), outline: model.board.outline });
 }
+
+/** Attach the reviewed model mapping and baseline screen for a producer-owned placement problem. */
+export function prepareReviewedProblem<T extends PlacementModel>(contract: Contract, model: T) {
+  const prepared = preparePlacement(contract, model) as T;
+  const where: Record<string, number> = {};
+  prepared.units.forEach((unit, index) => unit.refs.forEach(ref => { where[ref] = index; }));
+  const initial = prepared.units.map(unit => [numeric(unit.x), numeric(unit.y), 0] as [number, number, number]);
+  return { ...prepared, engineering: { ...copyPlacementValue(contract), where,
+    model_anchor_sha256: placementModelAnchor(prepared), initial_screen: checkPlacement(contract, prepared, initial) } };
+}

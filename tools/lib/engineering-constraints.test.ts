@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import { bindInstance } from './block-bindings.ts';
-import { checkManifest, checkPlacement, preparePlacement, placementScreen, placementMiss, placementModelAnchor, nativeGeometry, reviewedContract, SCHEMA, type ReviewServices } from './engineering-constraints.ts';
+import { checkManifest, checkPlacement, preparePlacement, placementScreen, placementMiss, placementModelAnchor, prepareReviewedProblem, nativeGeometry, reviewedContract, SCHEMA, type ReviewServices } from './engineering-constraints.ts';
 import { fingerprint } from './fingerprint.ts';
 import { sha256File } from './json-file.ts';
 import { jsonCanonical, jsonDumps, jsonLoads } from './py-compat.mjs';
@@ -287,4 +287,19 @@ test('placement model anchor detects changed unit positions and outline', () => 
   model.units[0].x--;
   model.board.outline[0][0]++;
   assert.notEqual(placementModelAnchor(model), anchor);
+});
+
+test('prepared reviewed problem attaches baseline evidence and fixes reviewed parts', () => {
+  rules(rule('fixed', { refs: ['U1'] }));
+  const contract = reviewedContract(root, 'X', manifest, services);
+  const model = { board_file: native, board: { outline: [[0, 0], [20, 20]] }, units: [
+    { name: 'U1', refs: ['U1'], x: 10, y: 10, fixed: false }, { name: 'C1', refs: ['C1'], x: 14, y: 10, fixed: false },
+    { name: 'J1', refs: ['J1'], x: 1, y: 3, fixed: false },
+  ] };
+  const prepared = prepareReviewedProblem(contract, model);
+  assert.equal(prepared.units[0].fixed, true);
+  assert.equal(model.units[0].fixed, false);
+  assert.equal(prepared.engineering.initial_screen.status, 'passed');
+  assert.deepEqual(prepared.engineering.where, { U1: 0, C1: 1, J1: 2 });
+  assert.equal(prepared.engineering.model_anchor_sha256, placementModelAnchor(prepared));
 });
