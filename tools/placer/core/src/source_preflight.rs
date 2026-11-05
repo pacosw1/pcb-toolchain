@@ -147,6 +147,7 @@ fn timestamp_with_zone(s: &str) -> bool {
     if !s.is_ascii() { return false; }
     let bytes = s.as_bytes();
     if bytes.len() < 20 || bytes[4] != b'-' || bytes[7] != b'-' || bytes[10] != b'T' || bytes[13] != b':' || bytes[16] != b':' { return false; }
+    if [0,1,2,3,5,6,8,9,11,12,14,15,17,18].into_iter().any(|i| !bytes[i].is_ascii_digit()) { return false; }
     let parse = |start: usize, end: usize| -> Option<u32> { s.get(start..end)?.parse().ok() };
     let (Some(year), Some(month), Some(day), Some(hour), Some(minute), Some(second)) =
         (parse(0,4),parse(5,7),parse(8,10),parse(11,13),parse(14,16),parse(17,19)) else { return false };
@@ -162,6 +163,7 @@ fn timestamp_with_zone(s: &str) -> bool {
     if rest == "Z" { return true; }
     let b = rest.as_bytes();
     b.len()==6 && matches!(b[0],b'+'|b'-') && b[3]==b':' &&
+        [1,2,4,5].into_iter().all(|i|b[i].is_ascii_digit()) &&
         rest[1..3].parse::<u32>().is_ok_and(|v| v<=23) && rest[4..6].parse::<u32>().is_ok_and(|v| v<=59)
 }
 
@@ -216,6 +218,8 @@ mod manifest_tests {
         std::fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
         let contract = json!({"root":root,"manifest":path,"board":"A"});
         assert!(check_manifest_identity(&contract).is_ok());
+        assert!(!timestamp_with_zone("+026-01-01T00:00:00Z"));
+        assert!(!timestamp_with_zone("2026-01-01T00:00:00+0-:00"));
         manifest["review"]["reviewed_at_utc"] = json!("not-a-time");
         std::fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
         assert!(check_manifest_identity(&contract).is_err());
