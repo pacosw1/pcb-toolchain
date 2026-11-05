@@ -10,10 +10,22 @@ import {sha256File} from './json-file.ts';
 import {parseCopper} from './gerber.ts';
 import {childForms} from './footprint-move.ts';
 import {kids,parse} from './sexpr.ts';
-import type {Outline} from './copper-graph.ts';
+import {Outline} from './copper-graph.ts';
 
 export type MaskPlot = Record<'F'|'B',string>;
 export type MaskExporter = (pcb:string,sidecars:string[])=>MaskPlot;
+/** The copper parser does not preserve curved region edges. Never use those as a mask keep-out. */
+export function parseMask(text:string):Outline[] {
+ if(/G0?[23](?=[XYIJ*])/i.test(text))throw new Error('silk mask: curved Gerber interpolation is not supported safely');
+ // The clip reserve covers chord error only for bounded apertures. A larger one needs adaptive subdivision.
+ const inches=/%MOIN\*%/.test(text);
+ for(const match of text.matchAll(/%ADD\d+[CO],([^*%]+)\*%/g)) {
+  const dimensions=match[1]!.split('X').map(Number);
+  if(dimensions.some(v=>!Number.isFinite(v)||v<0||v*(inches?25.4:1)>10))throw new Error('silk mask: curved aperture exceeds the supported 10 mm bound');
+ }
+ // Gerber is Y-up; KiCad board coordinates are Y-down. Keep the board origin (no auxiliary origin flag).
+ return parseCopper(text).map(shape=>new Outline(shape.points.map(([x,y])=>[x,-y])));
+}
 function snapshots(files:string[]):string[] {return files.map(p=>existsSync(p)?sha256File(p):'');}
 export function maskOpenings(pcb:string, exporter:MaskExporter=plotMask):Record<'F'|'B',Outline[]> {
  if(!pcb.endsWith('.kicad_pcb'))throw new Error('expected a .kicad_pcb file');
@@ -23,7 +35,7 @@ export function maskOpenings(pcb:string, exporter:MaskExporter=plotMask):Record<
  const result=exporter(pcb,files.slice(1).filter(existsSync));
  if(JSON.stringify(before)!==JSON.stringify(snapshots(files)))throw new Error('board or sidecars changed during mask plot');
  if(typeof result.F!=='string'||typeof result.B!=='string')throw new Error('mask plot did not return both sides');
- return {F:parseCopper(result.F),B:parseCopper(result.B)};
+ return {F:parseMask(result.F),B:parseMask(result.B)};
 }
 function plotMask(pcb:string,sidecars:string[]):MaskPlot {
  const name=basename(pcb,'.kicad_pcb');let result:MaskPlot|undefined;

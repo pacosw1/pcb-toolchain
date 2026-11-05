@@ -10,7 +10,7 @@
 // One summary line: PASS|FAIL|DONE <counts>.
 //
 // Texts, their sizes and footprint silk ids are read from the board file. pads uses native polygon booleans on the pinned worker;
-// clip remains in tools/silk_jlc.py, which obtains pad mask polygons from pcbnew.
+// clip uses plotted pad mask polygons and refuses geometry it cannot preserve.
 import { readFileSync } from 'node:fs';
 import { archive, unique } from './lib/gerber-archive.ts';
 import { geometry, polygons, strokes } from './lib/gerber-geometry.ts';
@@ -21,10 +21,12 @@ import { childForms } from './lib/footprint-move.ts';
 import { floatRepr } from './lib/py-compat.mjs';
 import { round } from './lib/py-numbers.ts';
 import { kids, parse, type SExpr, type SList } from './lib/sexpr.ts';
+import {padMaskOpenings} from './lib/silk-mask.ts';
+import {clipSilk} from './lib/silk-clip.ts';
 
 const MIN_H = 1;
 const MIN_W = 0.15;
-const USAGE = 'usage: tools/silk_jlc.ts {check|apply} BOARD.kicad_pcb | pads GERBER.zip; clip: tools/silk_jlc.py';
+const USAGE = 'usage: tools/silk_jlc.ts {check|apply|clip} BOARD.kicad_pcb | pads GERBER.zip';
 const SILK = new Set(['F.SilkS', 'B.SilkS']);
 const BOARD_SHAPES: Record<string, string> = { gr_line: 'Line', gr_arc: 'Arc', gr_circle: 'Circle', gr_rect: 'Rect', gr_poly: 'Polygon', gr_curve: 'Bezier' };
 const FOOTPRINT_SHAPES: Record<string, string> = { fp_line: 'Line', fp_arc: 'Arc', fp_circle: 'Circle', fp_rect: 'Rect', fp_poly: 'Polygon', fp_curve: 'Bezier' };
@@ -162,6 +164,14 @@ export function padsCheck(files: Map<string,string>, measure = geometry): {lines
 
 function main(argv: string[]): number {
   const [command, pcb] = argv;
+  if(command==='clip'&&argv.length===2&&pcb){
+    const before=readFileSync(pcb,'utf8'), masks=padMaskOpenings(pcb);
+    const result=clipSilk(before,masks);
+    if(readFileSync(pcb,'utf8')!==before)throw new Error('board changed during silk clipping');
+    if(result.text!==before)saveBoardInPlace(pcb,result.text);
+    console.log(`DONE clip: ${result.cut} strokes cut into ${result.pieces} pieces, ${result.polygons} filled polygons trimmed, ${result.gone} items fully removed`);
+    return 0;
+  }
   if (command === 'pads' && argv.length === 2 && pcb) { const result=padsCheck(archive(pcb)); console.log(result.lines.join('\n')); return result.verdict === 'PASS' ? 0 : 1; }
   if (argv.length !== 2 || (command !== 'check' && command !== 'apply')) throw new UsageError(USAGE, 1);
   return run(pcb!, command === 'apply');
