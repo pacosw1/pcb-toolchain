@@ -1,6 +1,6 @@
 // The iotroute step score is measured (DRC + gate), never the router claim. iotroute run and the gate are fakes here.
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
@@ -40,14 +40,19 @@ test('a clean DRC needs a complete gate', () => {
 });
 
 test('a gate metric that is no int leaves the gate incomplete', () => {
-  assert.deepEqual(gatePart({ a: 1, b: new Float(2) }), [1, false]);
-  assert.deepEqual(gatePart({ a: 1, b: true }), [1, false]);
-  assert.deepEqual(gatePart({ a: 1, b: 2 }), [3, true]);
+  assert.equal(gatePart({ ...GATE_OK, pairs_failures: new Float(2) })[1], false);
+  assert.equal(gatePart({ ...GATE_OK, pairs_failures: true })[1], false);
+  assert.equal(gatePart({ ...GATE_OK, pairs_failures: -1 })[1], false);
+  assert.equal(gatePart({ ...GATE_OK, unexpected: 0 })[1], false);
+  assert.equal(gatePart({ erc_errors: 0 })[1], false);
   assert.deepEqual(gatePart(null), [0, false]);
 });
 
-test('warnings and gate DRC do not count twice', () => {
-  assert.equal(score(CLEAN, { ...GATE_OK, drc_warnings: 99, erc_warnings: 5, drc_errors: 1 }), 0);
+test('warnings do not count but a fresh gate DRC failure cannot pass', () => {
+  assert.equal(score(CLEAN, { ...GATE_OK, drc_warnings: 99, erc_warnings: 5, drc_errors: 1 }), 1);
+  assert.equal(score({ ...CLEAN, status: 'FAIL' }, GATE_OK), NO_RESULT);
+  assert.equal(score({ ...CLEAN, drc_errors: -1, unconnected: 1 }, GATE_OK), NO_RESULT);
+  assert.equal(score({ ...CLEAN, drc_errors: false }, GATE_OK), NO_RESULT);
 });
 
 test('a router claim is not a result', () => {
@@ -65,7 +70,7 @@ async function runStep(t: TestContext, rec: object, metrics: Metrics) {
   const gate = { run: (routed: string) => { gates.push(routed); return metrics; } };
   const stage = (command: string[], name: string) => {
     calls.push([command, name]);
-    return { stdout: `PASS 0 0 0 1 1 1\n${JSON.stringify(rec)}\n` };
+    return { returncode: 0, stdout: `PASS 0 0 0 1 1 1\n${JSON.stringify(rec)}\n` };
   };
   const out = await routeStep(join(d, 'b', 'NET-CORE.kicad_pcb'), d, 'NET-CORE', gate, 40, ['--max-time', '60'], stage);
   return { out, calls, gates, summary: JSON.parse(readFileSync(join(d, 'route-0', 'score.json'), 'utf8')), d };
@@ -96,7 +101,7 @@ test('gate findings fail the step', async t => {
 test('a run with no record is no result, and no gate runs', async t => {
   const d = folder(t);
   const gate = { run: () => assert.fail('no gate without a record') };
-  assert.deepEqual(await routeStep(join(d, 'B.kicad_pcb'), d, 'B', gate, 1, [], () => ({ stdout: 'crashed\n' })), [NO_RESULT]);
+  assert.deepEqual(await routeStep(join(d, 'B.kicad_pcb'), d, 'B', gate, 1, [], () => ({ returncode: 1, stdout: 'crashed\n' })), [NO_RESULT]);
   const summary = JSON.parse(readFileSync(join(d, 'route-0/score.json'), 'utf8'));
   assert.equal(summary.run.status, 'ERROR');
   assert.equal(summary.gate, 'not run: DRC part not 0 or no record');
@@ -105,7 +110,7 @@ test('a run with no record is no result, and no gate runs', async t => {
 test('score.json keeps the floats of the record and the indent of json.dump', async t => {
   const d = folder(t);
   const gate = { run: () => GATE_OK };
-  await routeStep(join(d, 'B.kicad_pcb'), d, 'B', gate, 1, [], () => ({ stdout: '{"status": "PASS", "drc_errors": 0, "unconnected": 0, "parity": 0, "track_length_mm": 12.0}\n' }));
+  await routeStep(join(d, 'B.kicad_pcb'), d, 'B', gate, 1, [], () => ({ returncode: 0, stdout: '{"status": "PASS", "drc_errors": 0, "unconnected": 0, "parity": 0, "track_length_mm": 12.0}\n' }));
   const text = readFileSync(join(d, 'route-0/score.json'), 'utf8');
   assert.ok(text.startsWith('{\n "router": "iotroute",\n "score": 0,\n "run": {\n  "status": "PASS",'), text);
   assert.ok(text.includes('"track_length_mm": 12.0'));
@@ -162,32 +167,93 @@ function gateBoard(t: TestContext, config: string) {
   return { out, made, snapshot };
 }
 
-test('the gate workspace makes one snapshot and reads the metrics of the gate', async t => {
+test('the gate workspace verifies each fresh receipt and exact routed board', async t => {
   const { out, made, snapshot } = gateBoard(t, 'gate.json');
-  const commands: { command: string[]; cwd: string }[] = [];
-  const runner = (command: string[], { cwd, log }: { cwd: string; log: number }) => {
-    commands.push({ command, cwd });
+  const commands: { command: string[]; cwd: string; env: NodeJS.ProcessEnv }[] = [];
+  const runner = (command: string[], { cwd, log, env }: { cwd: string; log: number; env: NodeJS.ProcessEnv }) => {
+    commands.push({ command, cwd, env });
     writeFileSync(log, 'gate output\n');
-    writeFileSync(join(out, 'evidence/result.json'), '{"metrics": {"erc_errors": 0}}');
+    if (command[1].endsWith('gate.mjs') && !command[1].endsWith('check-release-gate.mjs')) {
+      const evidence = command[command.indexOf('--evidence-dir') + 1];
+      mkdirSync(evidence);
+      writeFileSync(join(evidence, 'result.json'), JSON.stringify({ exit: 0, changedDuringRun: false, preflightErrors: [], metrics: GATE_OK }));
+    }
+    return { returncode: 0 };
   };
-  mkdirSync(join(out, 'evidence'));
   writeFileSync(join(out, 'routed.kicad_pcb'), 'routed copper');
   const gate = new GateWorkspace(out, 'B', snapshot, runner);
-  const run = () => gate.run(join(out, 'routed.kicad_pcb'), join(out, 'evidence'), join(out, 'gate.log'));
-  assert.deepEqual(await run(), { erc_errors: 0 });
-  assert.deepEqual(await run(), { erc_errors: 0 });
+  const run = (n: number) => gate.run(join(out, 'routed.kicad_pcb'), join(out, `evidence-${n}`), join(out, `gate-${n}.log`));
+  assert.deepEqual(await run(1), GATE_OK);
+  assert.deepEqual(await run(2), GATE_OK);
   assert.equal(made.length, 1);
   assert.equal(readFileSync(`${gate.project}.kicad_pcb`, 'utf8'), 'routed copper');
-  assert.equal(readFileSync(join(out, 'gate.log'), 'utf8'), 'gate output\n');
   assert.equal(commands[0].cwd, gate.path);
-  assert.deepEqual(commands[0].command.slice(2), ['B', '--fresh', '--evidence-dir', join(out, 'evidence')]);
+  assert.equal(commands[0].env.IOT_LAB, gate.path);
+  assert.deepEqual(commands[0].command.slice(2), ['B', '--fresh', '--evidence-dir', join(out, 'evidence-1')]);
+  assert.deepEqual(commands[1].command.slice(2), ['B', '--gate-dir', join(out, 'evidence-1')]);
 });
 
-test('a pending gate config is named, and a gate with no result gives null', async t => {
+test('a pending gate cannot be accepted as full gate evidence', async t => {
   const { out, snapshot } = gateBoard(t, 'gate.pending.json');
   const commands: string[][] = [];
   writeFileSync(join(out, 'routed.kicad_pcb'), 'routed copper');
-  const gate = new GateWorkspace(out, 'B', snapshot, command => { commands.push(command); });
+  const gate = new GateWorkspace(out, 'B', snapshot, command => { commands.push(command); return { returncode: 0 }; });
   assert.equal(await gate.run(join(out, 'routed.kicad_pcb'), join(out, 'evidence'), join(out, 'gate.log')), null);
-  assert.deepEqual(commands[0].slice(-2), ['--config', 'gate.pending.json']);
+  assert.deepEqual(commands, []);
+});
+
+test('nonzero process status cannot promote a clean-looking route record', async t => {
+  const d = folder(t), gate = { run: () => assert.fail('gate must not run after failed router') };
+  const out = await routeStep(join(d, 'B.kicad_pcb'), d, 'B', gate, 1, [], () => ({ returncode: 1, stdout: JSON.stringify(CLEAN) }));
+  assert.deepEqual(out, [NO_RESULT]);
+});
+
+test('gate process, evidence verifier, stale result and incomplete metrics all fail closed', async t => {
+  const { out, snapshot } = gateBoard(t, 'gate.json');
+  writeFileSync(join(out, 'routed.kicad_pcb'), 'routed copper');
+  for (const kind of ['gate-failed', 'verify-failed', 'changed-result', 'missing-metric', 'gate-error'] as const) {
+    const evidence = join(out, `evidence-${kind}`);
+    const runner = (command: string[]) => {
+      if (command[1].endsWith('/gate.mjs')) {
+        mkdirSync(evidence);
+        const metrics = { ...GATE_OK };
+        if (kind === 'missing-metric') delete metrics.viapads;
+        writeFileSync(join(evidence, 'result.json'), JSON.stringify({ exit: kind === 'gate-error' ? 1 : 0, changedDuringRun: false, preflightErrors: [], metrics }));
+        return { returncode: kind === 'gate-failed' ? 1 : 0 };
+      }
+      if (kind === 'changed-result') writeFileSync(join(evidence, 'result.json'), '{}');
+      return { returncode: kind === 'verify-failed' ? 1 : 0 };
+    };
+    const gate = new GateWorkspace(join(out, `run-${kind}`), 'B', snapshot, runner);
+    assert.equal(await gate.run(join(out, 'routed.kicad_pcb'), evidence, join(out, `gate-${kind}.log`)), null, kind);
+  }
+});
+
+test('a pre-existing gate receipt is not accepted or overwritten', async t => {
+  const { out, snapshot } = gateBoard(t, 'gate.json');
+  const evidence = join(out, 'evidence'); mkdirSync(evidence);
+  writeFileSync(join(evidence, 'result.json'), 'previous result');
+  writeFileSync(join(out, 'routed.kicad_pcb'), 'routed copper');
+  const gate = new GateWorkspace(out, 'B', snapshot, () => assert.fail('stale evidence must not launch a gate'));
+  assert.equal(await gate.run(join(out, 'routed.kicad_pcb'), evidence, join(out, 'gate.log')), null);
+  assert.equal(readFileSync(join(evidence, 'result.json'), 'utf8'), 'previous result');
+});
+
+test('a snapshot cannot write through a dangling symlink or a hard link to the canonical board', async t => {
+  const { out, snapshot } = gateBoard(t, 'gate.json');
+  const canonical = join(out, 'canonical.kicad_pcb'), routed = join(out, 'routed.kicad_pcb');
+  writeFileSync(canonical, 'canonical'); writeFileSync(routed, 'candidate');
+  const runner = () => ({ returncode: 1 });
+  const linked = new GateWorkspace(join(out, 'hard'), 'B', async (root, workspace, board) => {
+    snapshot(root, workspace, board);
+    linkSync(canonical, join(workspace, 'hardware-design/boards/B/cad/B.kicad_pcb'));
+  }, runner);
+  assert.equal(await linked.run(routed, join(out, 'hard-evidence'), join(out, 'hard.log')), null);
+  assert.equal(readFileSync(canonical, 'utf8'), 'canonical');
+  const dangling = new GateWorkspace(join(out, 'symlink'), 'B', async (root, workspace, board) => {
+    snapshot(root, workspace, board);
+    symlinkSync(join(out, 'outside-missing'), join(workspace, 'hardware-design/boards/B/cad/B.kicad_pcb'));
+  }, runner);
+  await assert.rejects(() => dangling.run(routed, join(out, 'sym-evidence'), join(out, 'sym.log')), /symlink/);
+  assert.equal(readFileSync(canonical, 'utf8'), 'canonical');
 });
