@@ -3,7 +3,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { parseCanonicalJson } from './canonical-json.ts';
 import { ProtectedCapabilityStore } from './protected-capability-store.ts';
-import { parseProjectManifest } from './protected-manifest.ts';
+import { resolveManifestClosure } from './protected-closure.ts';
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const TOKEN = /^[0-9a-f]{64}$/;
@@ -53,15 +53,11 @@ export class ProtectedLeaseStore extends ProtectedCapabilityStore {
           target.alias_revision !== row.alias_revision || target.source_manifest !== binding.sourceManifest || !this.blobReady(binding.sourceManifest) ||
           row.token_hash.byteLength !== 32 || !timingSafeEqual(Buffer.from(row.token_hash), leaseHash(lease.token)))
         throw new Error('protected lease cannot bind attempt');
-      const source = parseProjectManifest(this.read(binding.sourceManifest));
-      if (source.sha256 !== binding.sourceManifest || source.manifest.project_id !== lease.project) throw new Error('protected source manifest does not match target');
       const blob = this.db.prepare("SELECT size FROM protected_uploads WHERE sha256=? AND state='ready'");
-      for (const entry of source.manifest.entries) if (entry.kind === 'file') {
-        const stored = blob.get(entry.sha256) as { size: number } | undefined;
-        if (!stored || stored.size !== entry.size) throw new Error('protected source file blob is unavailable');
-      }
-      for (const mount of source.manifest.external_mounts)
-        if (!this.blobReady(mount.manifest_sha256)) throw new Error('protected external manifest blob is unavailable');
+      const source = resolveManifestClosure(binding.sourceManifest, sha => this.read(sha), sha => {
+        const stored = blob.get(sha) as { size: number } | undefined; return stored?.size ?? null;
+      }, { maxDepth: 16, maxManifests: 256, maxNodes: 100_000, maxBytes: 64 * 1024 ** 3, maxManifestBytes: 64 * 1024 ** 2 });
+      if (source.rootProject !== lease.project) throw new Error('protected source manifest does not match target');
       const prior = this.db.prepare('SELECT * FROM protected_attempt_bindings WHERE job=? AND attempt=?').get(binding.job, binding.attempt) as
         { project: string; board: string; generation: number; source_revision: number; alias_revision: number; operation: string;
           source_manifest: string; policy_digest: string; runtime_digest: string; toolchain_digest: string } | undefined;

@@ -62,7 +62,7 @@ test('attempt binding pins the matching lease atomically before dispatch', () =>
       entries: [{ kind: 'file', path: 'board', sha256: 'e'.repeat(64), size: 1, executable: false }],
       required_paths: ['board'], optional_absent_paths: [], external_mounts: [] })), { maxBytes: 1000, maxNodes: 100, maxDepth: 8 }).canonical;
     const unavailableHash = store.source(unavailable);
-    assert.throws(() => store.bindAttempt(issued.token, lease, { ...binding, sourceManifest: unavailableHash }), /file blob is unavailable/);
+    assert.throws(() => store.bindAttempt(issued.token, lease, { ...binding, sourceManifest: unavailableHash }), /file blob unavailable/);
     store.source(manifestBytes);
     store.bindAttempt(issued.token, lease, binding);
     store.bindAttempt(issued.token, lease, binding); // Lost response can be retried with identical content.
