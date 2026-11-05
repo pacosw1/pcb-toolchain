@@ -255,12 +255,19 @@ fn check(pr: &Problem, p: &Params, plan: Plan) -> crate::Result<()> {
 
 /// `log` receives one line per epoch. With params global = 1 the units of the problem move to the analytic places.
 pub fn optimize(pr: &mut Problem, p: &Params, plan: Plan, log: &dyn Fn(&str)) -> crate::Result<SearchResult> {
-    check(pr, p, plan)?;
-    let global = crate::gplace::apply(pr, p, log);
-    anneal_all(pr, p, plan, log, global)
+    optimize_with_preview(pr, p, plan, log, &|_,_,_,_| {})
 }
 
-fn anneal_all(pr: &Problem, p: &Params, plan: Plan, log: &dyn Fn(&str), global: Option<GlobalStage>) -> crate::Result<SearchResult> {
+/// Calls preview after each epoch. A preview callback must not affect search state.
+pub fn optimize_with_preview(pr: &mut Problem, p: &Params, plan: Plan, log: &dyn Fn(&str),
+    preview: &dyn Fn(usize,usize,f64,&Pose)) -> crate::Result<SearchResult> {
+    check(pr, p, plan)?;
+    let global = crate::gplace::apply(pr, p, log);
+    anneal_all(pr, p, plan, log, global, preview)
+}
+
+fn anneal_all(pr: &Problem, p: &Params, plan: Plan, log: &dyn Fn(&str), global: Option<GlobalStage>,
+    preview: &dyn Fn(usize,usize,f64,&Pose)) -> crate::Result<SearchResult> {
     let start = pr.initial_pose();
     let model = Model::new(pr, p)?;
     let last = epoch_params(p, plan.epochs - 1, plan.epochs);
@@ -288,6 +295,7 @@ fn anneal_all(pr: &Problem, p: &Params, plan: Plan, log: &dyn Fn(&str), global: 
         busy += outcomes.iter().map(|o| o.seconds).sum::<f64>();
         workers = outcomes.into_iter().map(|o| o.worker).collect();
         let g = best_worker(&workers);
+        preview(e+1, plan.epochs, workers[g].best_cost, &workers[g].best_pose);
         let terms = Evaluator::new(&model, &last, &workers[g].best_pose).terms();
         history.push(EpochRecord { epoch: e + 1, cost: workers[g].best_cost, pose: workers[g].best_pose.clone(), components: terms });
         let current: Vec<String> = workers.iter().map(|w| format!("{:.1}", w.cost)).collect();

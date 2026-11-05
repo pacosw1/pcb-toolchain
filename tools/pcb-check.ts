@@ -38,11 +38,11 @@ async function main(argv: string[]): Promise<number> {
   if (argv[0] === '--project') { explicit = argv[1]; if (!explicit) throw new Error('missing project'); argv = argv.slice(2); }
   else if (argv[0]?.startsWith('--project=')) { explicit = argv[0].slice(10); argv = argv.slice(1); }
   const operation = argv.shift();
-  if (operation !== 'check' && operation !== 'doctor' && operation !== 'readiness' && operation !== 'blocks' && operation !== 'outcomes' && operation !== 'schematic') throw new Error('expected check, doctor, readiness, or blocks command');
+  if (operation !== 'check' && operation !== 'doctor' && operation !== 'readiness' && operation !== 'blocks' && operation !== 'outcomes' && operation !== 'schematic' && operation !== 'design' && operation !== 'parts') throw new Error('expected check, doctor, readiness, or blocks command');
   // Backend arguments begin at the first positional, as with argparse.REMAINDER.
   let backend: string[] = [];
-  if (operation === 'readiness' || operation === 'blocks' || operation === 'outcomes' || operation === 'schematic') {
-    const withValue = new Set(['--runs-dir', '--timeout', '--heartbeat', '--cycle']);
+  if (operation === 'readiness' || operation === 'blocks' || operation === 'outcomes' || operation === 'schematic' || operation === 'design' || operation === 'parts') {
+    const withValue = new Set(['--runs-dir', '--timeout', '--heartbeat', '--cycle', '--from-run']);
     let i = 0;
     while (i < argv.length && argv[i]!.startsWith('-')) {
       if (argv[i] === '--') { i++; break; }
@@ -53,9 +53,14 @@ async function main(argv: string[]): Promise<number> {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, options: {
     'runs-dir': { type: 'string' }, json: { type: 'boolean' }, detach: { type: 'boolean' }, follow: { type: 'boolean' },
     timeout: { type: 'string', default: '600' }, heartbeat: { type: 'string', default: '5' },
-    changed: { type: 'boolean' }, fresh: { type: 'boolean' }, baseline: { type: 'string' }, cycle: { type: 'string' },
+    changed: { type: 'boolean' }, fresh: { type: 'boolean' }, baseline: { type: 'string' }, cycle: { type: 'string' }, 'from-run': { type: 'string' },
   } });
   if (positionals.length !== (operation === 'check' ? 1 : 0)) throw new Error(operation === 'check' ? 'check requires one board ID' : 'doctor takes no board ID');
+  if (operation === 'parts' && (backend.length < 2 || !['status', 'inspect', 'selection', 'verify', 'stock'].includes(backend[0]!))) throw new Error('parts requires an action and subject');
+  if (operation === 'parts' && backend.some(arg => /^--(root|output|cache)(=|$)/.test(arg))) throw new Error('parts root, output and cache are owned by the run supervisor');
+  if (operation !== 'parts' && values['from-run']) throw new Error('--from-run is not supported for this operation');
+  if (operation === 'design' && (backend.length < 2 || backend[0] !== 'check')) throw new Error('design requires check and a design ID');
+  if (operation === 'design' && backend.some(arg => /^--(root|output)(=|$)/.test(arg))) throw new Error('design root and output are owned by the run supervisor');
   if (operation === 'schematic' && (backend.length < 2 || backend[0] !== 'check')) throw new Error('schematic requires check and a board ID');
   if (operation === 'schematic' && backend.some(arg => /^--(root|output)(=|$)/.test(arg))) throw new Error('schematic root and output are owned by the run supervisor');
   if (operation === 'outcomes' && (backend.length < 2 || backend[0] !== 'evaluate')) throw new Error('outcomes requires evaluate and a study ID');
@@ -65,8 +70,8 @@ async function main(argv: string[]): Promise<number> {
   if (values.detach && values.follow) throw new Error('--detach and --follow cannot be used together');
   if (values.changed && values.fresh) throw new Error('--changed and --fresh cannot be used together');
   const root = projectRoot(explicit), base = values['runs-dir'] ?? process.env.PCB_RUNS_DIR ?? `${root}/.gate/cli`;
-  const folder = await startCheck({ root, base, board: operation === 'outcomes' || operation === 'schematic' ? backend[1]! : operation === 'readiness' ? backend[0]! : positionals[0] ?? (operation === 'blocks' ? 'BLOCKS' : 'ENVIRONMENT'), operation, arguments: backend, timeout: Number(values.timeout), heartbeat: Number(values.heartbeat),
-    changed: values.changed, fresh: values.fresh, baseline: values.baseline, cycle: values.cycle });
+  const folder = await startCheck({ root, base, board: operation === 'parts' ? (backend[0] === 'inspect' ? 'PARTS' : backend[1]!) : operation === 'outcomes' || operation === 'schematic' || operation === 'design' ? backend[1]! : operation === 'readiness' ? backend[0]! : positionals[0] ?? (operation === 'blocks' ? 'BLOCKS' : 'ENVIRONMENT'), operation, arguments: backend, timeout: Number(values.timeout), heartbeat: Number(values.heartbeat),
+    changed: values.changed, fresh: values.fresh, baseline: values.baseline, cycle: values.cycle, fromRun: values['from-run'] });
   if (values.detach) {
     if (values.json) console.log(jsonDumps(status(folder)));
     else console.log(`START: ${basename(folder)}; tools/pcb events ${basename(folder)} --wait 20`);

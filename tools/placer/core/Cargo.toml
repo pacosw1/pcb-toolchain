@@ -16,6 +16,7 @@ iotroute = { path = "../../router/core" }
 serde = { version = "1.0.229", features = ["derive"] }
 # float_roundtrip: a number in a problem file reads back as the same double the writer held.
 serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
+sha2 = "0.10"
 
 [profile.release]
 debug = false
