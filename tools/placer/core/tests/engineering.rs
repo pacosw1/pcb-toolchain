@@ -261,3 +261,20 @@ fn digest_alone_cannot_admit_reviewed_models() {
     assert!(!run(Some(&digest)).status.success());
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+
+#[test]
+fn final_pose_screen_evaluates_each_rule_and_every_native_lock() {
+    use iotplace::engineering::ReviewedGeometry;
+    let mut input = contract();
+    input["geometry"]["refs"]["U1"]["origin"] = json!([10.0,10.0]);
+    input["geometry"]["refs"]["U1"]["locked"] = json!(true);
+    let refs=vec![vec!["U1".into()],vec!["C1".into()]];
+    let geometry=ReviewedGeometry::compile(&input,&refs,&[(10.0,10.0),(14.0,10.0)]).unwrap();
+    assert!(geometry.check_pose(&vec![(10.0,10.0,0),(14.0,10.0,0)]).unwrap().is_empty());
+    let blockers=geometry.check_pose(&vec![(10.1,10.0,0),(15.0,10.0,0)]).unwrap();
+    assert_eq!(blockers.len(),2);
+    assert_eq!(blockers[0].id,"pin");
+    assert_eq!(blockers[1].id,"native-lock:U1");
+    assert!(geometry.check_pose(&vec![(f64::NAN,10.0,0),(14.0,10.0,0)]).is_err());
+}

@@ -442,6 +442,10 @@ pub enum ReviewedRule {
     Connector(ConnectorAccess),
 }
 impl ReviewedRule {
+    pub fn id(&self) -> &str {
+        match self { Self::Pin(r) => &r.id, Self::Clearance(r) => &r.id,
+            Self::Rigid(r) => &r.id, Self::Connector(r) => &r.id }
+    }
     pub fn affects(&self, unit: usize) -> bool {
         match self {
             Self::Pin(r) => r.affects(unit),
@@ -717,6 +721,15 @@ pub fn native_locks(
 
 /// Geometric rules compiled for a producer-verified model. Not an admission or source-verification API.
 /// Recompute all unit misses after a move: two-pin rules and connector corridors can depend on other units.
+/// A geometric candidate blocker. This result is not source-review authorization.
+#[derive(Debug, serde::Serialize, PartialEq)]
+pub struct PoseBlocker {
+    pub code: &'static str,
+    pub id: String,
+    pub refs: Vec<String>,
+    pub miss: f64,
+}
+
 #[derive(Debug)]
 pub struct ReviewedGeometry {
     rules: Vec<(ReviewedRule, std::collections::BTreeSet<String>, bool)>,
@@ -845,6 +858,26 @@ impl ReviewedGeometry {
             if mine.contains(&lock.reference) { sum += lock.miss(pose)?; }
         }
         Ok(sum)
+    }
+    /// Evaluate every supported rule once, plus every native lock, at the final pose.
+    /// The caller must independently verify source review and the actual written board.
+    pub fn check_pose(&self, pose: &Pose) -> crate::Result<Vec<PoseBlocker>> {
+        if pose.len() != self.unit_refs.len() || pose.iter().any(|(x,y,r)| !x.is_finite() || !y.is_finite() || *r > 3) {
+            return Err("invalid reviewed placement pose".into());
+        }
+        let mut blockers=Vec::new();
+        for (rule,refs,_) in &self.rules {
+            let miss=rule.miss(pose)?;
+            if !miss.is_finite() {return Err("invalid reviewed rule miss".into());}
+            if miss > 0.0 {blockers.push(PoseBlocker {code:"constraint_violation",id:rule.id().to_owned(),
+                refs:refs.iter().cloned().collect(),miss});}
+        }
+        for lock in &self.locks {
+            let miss=lock.miss(pose)?;
+            if miss > 0.0 {blockers.push(PoseBlocker {code:"native_locked_part_moved",id:format!("native-lock:{}",lock.reference),
+                refs:vec![lock.reference.clone()],miss});}
+        }
+        Ok(blockers)
     }
     pub fn all_unit_misses(&self, pose: &Pose) -> crate::Result<Vec<f64>> {
         (0..self.unit_refs.len())

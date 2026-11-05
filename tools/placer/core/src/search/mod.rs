@@ -160,13 +160,20 @@ fn finish(model: &Model, p: &Params, worker: usize, pose: &Pose) -> Candidate {
         }).collect::<Vec<_>>()
     } else { bad };
     let mains = if p.mains != 0.0 { crate::mains::faults(pr, &ev.pose(), &crate::mains::domain_nets(pr)) } else { Vec::new() };
+    let mut illegal: Vec<String> = bad.iter().map(|&i| pr.units[i].name.clone()).collect();
+    if let Some(reviewed) = &model.reviewed {
+        match reviewed.check_pose(&ev.pose()) {
+            Ok(blockers) => illegal.extend(blockers.into_iter().map(|b| format!("engineering:{}", b.id))),
+            Err(_) => illegal.push("engineering:invalid-pose".into()),
+        }
+    }
     Candidate {
         worker,
         pose: ev.pose(),
         prelegal_pose,
         cost: ev.cost(),
         components: ev.terms(),
-        illegal: bad.iter().map(|&i| pr.units[i].name.clone()).collect(),
+        illegal,
         timeout,
         mains,
         finish_seconds: start.elapsed().as_secs_f64(),
@@ -348,6 +355,24 @@ fn anneal_all(pr: &Problem, p: &Params, plan: Plan, log: &dyn Fn(&str), global: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fixed_native_lock_is_reported_after_legalization() {
+        use serde_json::json;
+        let pr: Problem = serde_json::from_value(json!({
+            "units":[
+                {"name":"U1","refs":["U1"],"fixed":true,"x":10,"y":10,"rects":[[-0.2,-0.2,0.2,0.2,1]]},
+                {"name":"U2","refs":["U2"],"fixed":false,"x":14,"y":10,"rects":[[-0.2,-0.2,0.2,0.2,1]]}],
+            "nets":[],"board":{"outline":[[0,0],[30,0],[30,30],[0,30]]}})).unwrap();
+        let contract=json!({"where":{"U1":0,"U2":1},"rules":[],"geometry":{"refs":{
+            "U1":{"origin":[10,10],"locked":true,"pads":{}},"U2":{"pads":{}}}}});
+        let p=Params::default();
+        let mut model=Model::new(&pr,&p).unwrap();
+        model.reviewed=Some(crate::engineering::ReviewedGeometry::compile(&contract,
+            &[vec!["U1".into()],vec!["U2".into()]],&[(10.0,10.0),(14.0,10.0)]).unwrap());
+        let candidate=finish(&model,&p,0,&vec![(11.0,10.0,0),(14.0,10.0,0)]);
+        assert!(candidate.illegal.contains(&"engineering:native-lock:U1".to_string()));
+    }
 
     #[test]
     fn seeds_mix_worker_and_epoch() {
