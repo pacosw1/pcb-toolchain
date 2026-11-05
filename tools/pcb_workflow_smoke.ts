@@ -332,6 +332,12 @@ function patchCopy(smoke: Smoke, board: string): void {
     gate.release.variants = variants;
     writeFileSync(file, JSON.stringify(gate, null, 1));
   }
+  const routeFile = join(folder, 'route.json'), route = existsSync(routeFile) ? readObject<Row>(routeFile) : null;
+  if (route?.backend === 'fastroute') {
+    route.backend = 'iotroute';
+    writeFileSync(routeFile, JSON.stringify(route, null, 1));
+    record('route.json', 'backend fastroute -> iotroute');
+  }
   if (!smoke.summary.copy_patches.length) smoke.say('NOTE: --patch-copy: the project has closed these gaps; drop the option');
 }
 
