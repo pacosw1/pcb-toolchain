@@ -241,6 +241,7 @@ tools/lib/pcb-identity.ts
 tools/lib/pcb-next.test.ts
 tools/lib/pcb-next.ts
 tools/lib/pcb-next-readers.ts
+tools/lib/pcb-next-readers.test.ts
 tools/lib/pcb-observation-inputs.test.ts
 tools/lib/pcb-observation-inputs.ts
 tools/lib/pcb-queue-deadline.test.mjs
