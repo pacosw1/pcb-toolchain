@@ -371,3 +371,81 @@ mod rule_source_tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 }
+
+/// Validate worst-case net budgets against an independently reconstructed native
+/// population. Source locators still need the review's document verification.
+#[allow(dead_code)]
+fn check_budget_coverage(manifest: &Value, native_parts: &Value) -> crate::Result<()> {
+    use std::collections::BTreeSet;
+    fn required(v: &Value) -> crate::Result<(&str, f64, f64)> {
+        let unit = v["unit"].as_str().filter(|s| !s.is_empty()).ok_or("budget unit missing")?;
+        let min = v["min"].as_f64().ok_or("budget minimum missing")?;
+        let max = v["max"].as_f64().ok_or("budget maximum missing")?;
+        if !min.is_finite() || !max.is_finite() || min > max || !v["source"].is_object() {
+            return Err("invalid sourced budget interval".into());
+        }
+        Ok((unit,min,max))
+    }
+    let parts = native_parts.as_object().ok_or("native part population missing")?;
+    let budgets = manifest.get("budgets").map_or(Some(&[][..]), |v| v.as_array().map(Vec::as_slice))
+        .ok_or("budget list invalid")?;
+    for budget in budgets {
+        let net = budget["net"].as_str().filter(|s| !s.is_empty()).ok_or("budget net missing")?;
+        let (unit, _, limit) = required(&budget["limit"])?;
+        if !matches!(unit, "A" | "W") { return Err("unsupported budget unit".into()); }
+        let mut connected = BTreeSet::new();
+        for (reference, part) in parts {
+            if part["required"].as_bool().ok_or("native required flag missing")? {
+                let nets = part["pad_net_map"].as_object().ok_or("native pad net map missing")?;
+                if nets.values().any(|n| n.as_str() == Some(net)) { connected.insert(reference.as_str()); }
+            }
+        }
+        if connected.is_empty() { return Err("budget net has no connected required parts".into()); }
+        let mut loads = BTreeSet::new();
+        let mut excluded = BTreeSet::new();
+        let mut total = 0.0;
+        for load in budget["loads"].as_array().ok_or("budget loads missing")? {
+            let reference = load["reference"].as_str().ok_or("budget load reference missing")?;
+            let (load_unit, lo, hi) = required(&load["required"])?;
+            if !connected.contains(reference) || !loads.insert(reference) || load_unit != unit || lo < 0.0 {
+                return Err("invalid budget load".into());
+            }
+            total += hi;
+        }
+        if !total.is_finite() || total > limit { return Err("budget exceeded".into()); }
+        let exclusions = budget.get("exclusions").map_or(Some(&[][..]), |v| v.as_array().map(Vec::as_slice))
+            .ok_or("budget exclusions invalid")?;
+        for exclusion in exclusions {
+            let reference = exclusion["reference"].as_str().ok_or("budget exclusion reference missing")?;
+            if !connected.contains(reference) || !excluded.insert(reference) || loads.contains(reference) ||
+                exclusion["reason"].as_str().is_none_or(|s| s.is_empty()) || !exclusion["source"].is_object() {
+                return Err("invalid budget exclusion".into());
+            }
+        }
+        if loads.union(&excluded).copied().collect::<BTreeSet<_>>() != connected {
+            return Err("budget net coverage incomplete".into());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn budgets_cover_native_net_and_worst_case() {
+        let interval = |max| json!({"min":0,"max":max,"unit":"A","source":{}});
+        let native = json!({"U1":{"required":true,"pad_net_map":{"1":"VCC"}},
+            "U2":{"required":true,"pad_net_map":{"2":"VCC"}}});
+        let mut manifest = json!({"budgets":[{"net":"VCC","limit":interval(2),"loads":[
+            {"reference":"U1","required":interval(1)}, {"reference":"U2","required":interval(1)}]}]});
+        assert!(check_budget_coverage(&manifest, &native).is_ok());
+        manifest["budgets"][0]["loads"][1]["required"]["max"] = json!(2);
+        assert!(check_budget_coverage(&manifest, &native).is_err());
+        manifest["budgets"][0]["loads"] = json!([{"reference":"U1","required":interval(1)}]);
+        assert!(check_budget_coverage(&manifest, &native).is_err());
+        manifest["budgets"][0]["exclusions"] = json!([{"reference":"U2","reason":"no load","source":{}}]);
+        assert!(check_budget_coverage(&manifest, &native).is_ok());
+    }
+}
