@@ -15,6 +15,7 @@ use std::time::Duration;
 const POLL: Duration = Duration::from_millis(50);
 const EXIT_NOT_FOUND: i32 = 127;
 const NO_LEADER: &str = "unavailable; no owned leader reaped";
+const DEPTH_ENV: &str = "IOT_LEAN_STAGE_DEPTH";
 static NEXT_RESULT: AtomicU64 = AtomicU64::new(0);
 
 /// Where a stream of the stage goes.
@@ -171,12 +172,22 @@ enum Wait {
     Cancelled,
 }
 
+/// Root plus two nested owned levels; anything else is refused before the broker is asked.
+fn stage_depth(env: &Env) -> Result<&str, String> {
+    match env.get(DEPTH_ENV).map_or("0", String::as_str) {
+        depth @ ("0" | "1" | "2") => Ok(depth),
+        _ => Err("invalid/excessive owned stage depth".to_string()),
+    }
+}
+
 fn wait_child(child: &mut Child, deadline: Option<f64>) -> Result<Wait, String> {
     let mut asked = false;
     let mut outcome = Wait::Done;
     loop {
         if child.try_wait().map_err(|e| e.to_string())?.is_some() {
-            return Ok(outcome);
+            // Work that ended past the deadline is incomplete, even when no poll saw the deadline pass.
+            let late = matches!(outcome, Wait::Done) && deadline.is_some_and(|deadline| clock::now() >= deadline);
+            return Ok(if late { Wait::Deadline } else { outcome });
         }
         if !asked {
             if stop::stop_signal().is_some() {
@@ -232,6 +243,15 @@ impl Runner {
 
     pub fn set_record(&mut self, record: RunRecord) {
         self.record = Some(record);
+    }
+
+    /// A child environment may not claim another depth than this job's.
+    fn check_depth(&self, spec: &Spec) -> Result<(), String> {
+        let depth = stage_depth(&self.env)?;
+        match spec.env {
+            Some(env) if env.contains_key(DEPTH_ENV) && stage_depth(env)? != depth => Err("child environment cannot reset owned stage depth".to_string()),
+            _ => Ok(()),
+        }
     }
 
     /// The child's deadline: the tightest of the spec, its env and this job.
@@ -291,6 +311,7 @@ impl Runner {
     /// Runs a stage to its end. `started` gets the running stage, for a watcher.
     pub fn run(&self, spec: Spec, started: impl FnOnce(Running)) -> Result<Finished, Stop> {
         let begun = clock::now();
+        self.check_depth(&spec)?;
         let (env, deadline) = self.child_deadline(&spec)?;
         let fail = |status: &str, cause: Value, report: Option<&Report>| self.event(&spec, status, None, clock::now() - begun, &cause, report);
         if clock::remaining(deadline) == Some(0.0) {

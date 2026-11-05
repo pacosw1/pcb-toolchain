@@ -188,6 +188,23 @@ fn admit(root: &Path, id: &str, request: &Request, deadline: f64) -> Result<bool
     Ok(first.is_some_and(|claim| claim["id"] == id) && cpu + f64::from(request.cpu) <= f64::from(request.capacity) && memory + request.memory_gib <= request.memory_capacity)
 }
 
+/// Polls the queue until this claim is admitted, a stop signal comes or a deadline passes.
+fn wait_for_slot(root: &Path, id: &str, request: &Request, deadline: f64, job_deadline: Option<f64>) -> Result<(), Stop> {
+    loop {
+        super::stop::check_cancelled()?;
+        if job_deadline.is_some_and(|job| clock::now() >= job) {
+            return Err(Stop::admission_timeout("end-to-end deadline reached during admission"));
+        }
+        if admit(root, id, request, deadline)? {
+            return Ok(());
+        }
+        if clock::now() >= deadline {
+            return Err(Stop::admission_timeout("cooperating resource admission deadline reached"));
+        }
+        sleep(Duration::from_millis(100));
+    }
+}
+
 /// Waits for a slot, at most `wait_s`. Inside a reservation that covers the request there is nothing to wait for.
 pub fn reserve(cpu: u32, memory_gib: f64, wait_s: f64, events: Option<&Path>, label: &str, env: &Env) -> Result<Reservation, Stop> {
     let (capacity, memory_capacity) = limits(env).map_err(Stop::failed)?;
@@ -211,7 +228,7 @@ pub fn reserve(cpu: u32, memory_gib: f64, wait_s: f64, events: Option<&Path>, la
     let path = root.join(format!("{id}.ticket"));
     let mut claim = json!({"id": id, "pid": std::process::id(), "queued_at": started, "status": "waiting", "clock_protocol": CLOCK_PROTOCOL,
                            "label": label, "cpu": cpu, "memory_gib": memory_gib, "cpu_capacity": capacity, "memory_capacity_gib": memory_capacity});
-    let mut file = {
+    let file = {
         let _guard = guard(&root, deadline)?;
         let mut file = OpenOptions::new().create(true).write(true).read(true).truncate(true).open(&path).map_err(|e| Stop::failed(format!("{}: {e}", path.display())))?;
         if !try_lock(&file) {
@@ -224,34 +241,17 @@ pub fn reserve(cpu: u32, memory_gib: f64, wait_s: f64, events: Option<&Path>, la
     queued["action"] = json!("queued");
     event(events, queued);
     let request = Request { cpu, memory_gib, capacity, memory_capacity };
-    let mut reservation = Reservation { ticket: None, root: root.clone(), events: events.map(Path::to_path_buf), claim: claim.clone(), env: Env::new() };
-    loop {
-        super::stop::check_cancelled().inspect_err(|stop| fail_event(events, &claim, stop, started))?;
-        if job_deadline.is_some_and(|job| clock::now() >= job) {
-            let stop = Stop::admission_timeout("end-to-end deadline reached during admission");
-            fail_event(events, &claim, &stop, started);
-            let _ = fs::remove_file(&path);
-            return Err(stop);
-        }
-        match admit(&root, &id, &request, deadline) {
-            Ok(true) => break,
-            Ok(false) => {}
-            Err(stop) => {
-                fail_event(events, &claim, &stop, started);
-                let _ = fs::remove_file(&path);
-                return Err(stop);
-            }
-        }
-        if clock::now() >= deadline {
-            let stop = Stop::admission_timeout("cooperating resource admission deadline reached");
-            fail_event(events, &claim, &stop, started);
-            let _ = fs::remove_file(&path);
-            return Err(stop);
-        }
-        sleep(Duration::from_millis(100));
+    // From here on the reservation owns the ticket: however admission ends, dropping it gives the ticket back and says so.
+    let mut reservation = Reservation { ticket: Some((file, path.clone())), root: root.clone(), events: events.map(Path::to_path_buf), claim: claim.clone(), env: Env::new() };
+    let slot = wait_for_slot(&root, &id, &request, deadline, job_deadline).and_then(|()| {
+        claim["status"] = json!("admitted");
+        let (file, _) = reservation.ticket.as_mut().expect("the ticket is held until drop");
+        write_claim(file, &claim)
+    });
+    if let Err(stop) = slot {
+        fail_event(events, &claim, &stop, started);
+        return Err(stop);
     }
-    claim["status"] = json!("admitted");
-    write_claim(&mut file, &claim)?;
     let mut admitted = claim.clone();
     admitted["action"] = json!("admitted");
     admitted["queue_s"] = json!(clock::now() - started);
@@ -261,7 +261,6 @@ pub fn reserve(cpu: u32, memory_gib: f64, wait_s: f64, events: Option<&Path>, la
     work.insert("IOT_RESOURCE_CPU".to_string(), cpu.to_string());
     work.insert("IOT_JOB_MEMORY_GIB".to_string(), memory_gib.to_string());
     reservation.claim = claim;
-    reservation.ticket = Some((file, path));
     reservation.env = work;
     Ok(reservation)
 }
@@ -270,6 +269,10 @@ fn fail_event(events: Option<&Path>, claim: &Value, stop: &Stop, started: f64) {
     let mut row = claim.clone();
     row["action"] = json!(if matches!(stop, Stop::Cancelled { .. }) { "cancelled" } else { "failed" });
     row["reason"] = json!(stop.reason());
+    row["signal"] = json!(match stop {
+        Stop::Cancelled { signal, .. } => *signal,
+        _ => None,
+    });
     row["queue_s"] = json!(clock::now() - started);
     event(events, row);
 }
@@ -310,6 +313,25 @@ mod tests {
         assert!(matches!(refused, Stop::AdmissionTimeout(_)));
         let nested = reserve(1, 0.5, 0.2, None, "child", &held.env).unwrap();
         assert!(nested.env.contains_key("IOT_RESOURCE_TICKET"));
+    }
+
+    fn expired(env: &Env) -> Env {
+        let mut env = env.clone();
+        env.insert(clock::DEADLINE_ENV.to_string(), clock::encode(clock::now() - 1.0));
+        env
+    }
+
+    #[test]
+    fn an_expired_deadline_is_refused_before_any_ticket() {
+        let env = expired(&env("expired", 4));
+        assert!(matches!(reserve(1, 1.0, 1.0, None, "test", &env).err().unwrap(), Stop::AdmissionTimeout(_)));
+        assert!(!root_directory(&env).exists());
+    }
+
+    #[test]
+    fn an_expired_parent_budget_beats_an_inherited_reservation() {
+        let held = reserve(2, 1.0, 1.0, None, "test", &env("expiredparent", 4)).unwrap();
+        assert!(matches!(reserve(1, 0.5, 1.0, None, "child", &expired(&held.env)).err().unwrap(), Stop::AdmissionTimeout(_)));
     }
 
     #[test]

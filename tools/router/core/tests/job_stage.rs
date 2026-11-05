@@ -1,18 +1,24 @@
 //! Stages of the job under the real broker: output, deadline, and the graceful stop Fastroute relies on.
-use iotroute::job::clock::{self, Env};
+use iotroute::job::clock::{self, DEADLINE_ENV, Env};
 use iotroute::job::files::read_jsonl;
+use iotroute::job::resources;
 use iotroute::job::stage::{Runner, Spec};
-use iotroute::job::stop::Stop;
+use iotroute::job::stop::{self, Stop};
 use iotroute::job::progress::Progress;
 use iotroute::job::watch::{Owner, Watcher};
+use serde_json::{Value, json};
 use std::fs;
-use std::path::PathBuf;
+use std::os::unix::fs::PermissionsExt;
+use std::os::unix::process::CommandExt;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::channel;
 use std::thread::{sleep, spawn};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const BIN: &str = env!("CARGO_BIN_EXE_iotroute");
+const DEPTH_ENV: &str = "IOT_LEAN_STAGE_DEPTH";
 
 fn runner(name: &str) -> (Runner, PathBuf) {
     let out = std::env::temp_dir().join(format!("job-stage-{name}-{}", std::process::id()));
@@ -142,4 +148,227 @@ fn expired_work_inside_the_job_never_runs_and_is_no_success() {
     let late = runner.phase("slow", Some(clock::now() + 0.05), || { sleep(Duration::from_millis(100)); Ok(()) }).unwrap_err();
     assert!(matches!(late, Stop::Timeout { .. }));
     assert_eq!(read_jsonl(out.join("stages.jsonl")).unwrap().iter().map(|row| row["status"].as_str().unwrap().to_string()).collect::<Vec<_>>(), ["timeout", "timeout"]);
+}
+
+fn events(out: &Path) -> Vec<Value> {
+    read_jsonl(out.join("stages.jsonl")).unwrap()
+}
+
+fn expired_env() -> Env {
+    Env::from([(DEADLINE_ENV.to_string(), clock::encode(clock::now() - 1.0))])
+}
+
+fn touch(marker: &Path) -> Vec<String> {
+    sh(&format!("touch '{}'", marker.display()))
+}
+
+#[test]
+fn a_checkpoint_survives_the_deadline_and_exit_zero_is_still_a_timeout() {
+    let (runner, out) = runner("checkpoint");
+    let checkpoint = out.join("checkpoint");
+    let script = format!("trap 'echo saved > {}; exit 0' TERM; sleep 30 & wait", checkpoint.display());
+    let stopped = runner.run(Spec::new("save", sh(&script)).deadline(Some(clock::now() + 0.5)), |_| {}).unwrap_err();
+    assert!(matches!(stopped, Stop::Timeout { .. }));
+    assert_eq!(fs::read_to_string(&checkpoint).unwrap(), "saved\n");
+    assert_eq!(events(&out)[0]["status"], "timeout");
+}
+
+#[test]
+fn a_stage_seen_finished_past_its_deadline_is_incomplete() {
+    let (runner, out) = runner("late");
+    let spec = Spec::new("late", sh("exit 0")).deadline(Some(clock::now() + 0.2));
+    let stopped = runner.run(spec, |_| sleep(Duration::from_millis(400))).unwrap_err();
+    assert!(matches!(stopped, Stop::Timeout { .. }));
+    assert_eq!(events(&out)[0]["status"], "timeout");
+}
+
+#[test]
+fn a_child_gets_the_explicit_deadline() {
+    let (runner, _) = runner("inherit");
+    let deadline = clock::after(2.0, &Env::new()).unwrap();
+    let done = runner.run(Spec::new("clock", sh("printf %s \"$IOT_LEAN_DEADLINE\"")).deadline(Some(deadline)), |_| {}).unwrap();
+    assert!(clock::remaining(Some(clock::decode(&done.stdout).unwrap())).unwrap() > 0.0);
+}
+
+#[test]
+fn a_stage_cannot_extend_an_expired_inherited_deadline() {
+    let (runner, out) = runner("expired");
+    let (env, marker) = (expired_env(), out.join("work"));
+    let stopped = runner.run(Spec::new("expired-parent", touch(&marker)).env(&env).deadline(Some(clock::now() + 30.0)), |_| {}).unwrap_err();
+    assert!(matches!(stopped, Stop::Timeout { .. }));
+    assert!(!marker.exists());
+}
+
+#[test]
+fn a_child_environment_cannot_remove_the_parent_budget() {
+    let (mut runner, out) = runner("stripped");
+    runner.set_env(expired_env());
+    let (env, marker) = (Env::new(), out.join("work"));
+    let stopped = runner.run(Spec::new("stripped-parent", touch(&marker)).env(&env).deadline(Some(clock::now() + 30.0)), |_| {}).unwrap_err();
+    assert!(matches!(stopped, Stop::Timeout { .. }));
+    assert!(!marker.exists());
+}
+
+#[test]
+fn an_invalid_depth_or_a_child_reset_runs_nothing() {
+    let (mut runner, out) = runner("depth");
+    let marker = out.join("work");
+    let huge = "9".repeat(5000);
+    for depth in ["-1", "01", "3", "9", "1.0", "", "invalid", huge.as_str()] {
+        runner.set_env(Env::from([(DEPTH_ENV.to_string(), depth.to_string())]));
+        let stopped = runner.run(Spec::new("invalid", touch(&marker)), |_| {}).unwrap_err();
+        assert!(stopped.reason().contains("depth"), "{depth}: {}", stopped.reason());
+        assert!(!marker.exists(), "{depth}");
+    }
+    let mut env: Env = std::env::vars().collect();
+    env.insert(DEPTH_ENV.to_string(), "1".to_string());
+    runner.set_env(env.clone());
+    env.insert(DEPTH_ENV.to_string(), "0".to_string());
+    let stopped = runner.run(Spec::new("reset", touch(&marker)).env(&env), |_| {}).unwrap_err();
+    assert!(stopped.reason().contains("reset"), "{}", stopped.reason());
+    assert!(!marker.exists());
+}
+
+/// A stand-in for the broker, for what a real one reports only when the kernel refuses it. It is called
+/// `owned run --result FILE -- COMMAND`, so FILE is $4.
+fn fake_broker(out: &Path, body: &str) -> PathBuf {
+    let path = out.join("broker");
+    fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+fn report(out: &Path, cleanup: Value) -> PathBuf {
+    let path = out.join("report.json");
+    let report = json!({"returncode": 0, "child_cpu_s": 0.0, "adopted_child_cpu_s": 0.0, "cpu_scope": "fixture", "cleanup": cleanup, "error": null});
+    fs::write(&path, report.to_string()).unwrap();
+    path
+}
+
+#[test]
+fn a_live_group_after_the_leader_exits_is_not_confirmed_clean() {
+    let (runner, out) = runner("livegroup");
+    let cleanup = json!({"complete": false, "child_reaped": false, "family_cleanup": "unconfirmed", "errors": [{"operation": "verify", "error": "owned group still has live members"}]});
+    let path = report(&out, cleanup);
+    let runner = runner.with_broker(fake_broker(&out, &format!("cp {} \"$4\"", path.display())));
+    let stopped = runner.run(Spec::new("group", sh("exit 0")), |_| {}).unwrap_err();
+    assert!(stopped.reason().contains("could not be confirmed"), "{}", stopped.reason());
+    let event = &events(&out)[0];
+    assert_eq!(event["status"], "failed");
+    assert_eq!((&event["cleanup"]["complete"], &event["cleanup"]["child_reaped"]), (&json!(false), &json!(false)));
+}
+
+#[test]
+fn a_denied_group_signal_keeps_the_timeout_and_marks_cleanup_uncertain() {
+    let (runner, out) = runner("denied");
+    let cleanup = json!({"complete": false, "child_reaped": true, "family_cleanup": "registered owned-stage groups", "errors": [{"operation": "killpg", "signal": 15, "error": "Operation not permitted"}]});
+    let path = report(&out, cleanup);
+    let body = format!("trap 'cp {} \"$4\"; exit 1' TERM\nwhile :; do sleep 0.05; done", path.display());
+    let runner = runner.with_broker(fake_broker(&out, &body));
+    let stopped = runner.run(Spec::new("denied-group", sh("sleep 30")).deadline(Some(clock::now() + 0.3)), |_| {}).unwrap_err();
+    let Stop::Timeout { cleanup, .. } = stopped else { panic!("{}", stopped.reason()) };
+    assert_eq!((&cleanup["complete"], &cleanup["child_reaped"]), (&json!(false), &json!(true)));
+    assert_eq!(events(&out)[0]["status"], "timeout");
+}
+
+// ---------- a whole process of its own: the same test binary, as `job_helper` ----------
+
+/// `job_helper` in a process that takes stop signals as a job does. The mask is set before exec, because libtest's own threads
+/// must not take them: only the watcher of catch_stop_signals may.
+fn helper(mode: &str, out: &Path, env: &Env) -> Command {
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command.args(["--ignored", "--exact", "job_helper", "--nocapture"]).envs(env).env("JOB_HELPER_MODE", mode).env("JOB_HELPER_FOLDER", out);
+    command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    unsafe {
+        command.pre_exec(|| {
+            let mut set: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&mut set);
+            libc::sigaddset(&mut set, libc::SIGTERM);
+            libc::sigaddset(&mut set, libc::SIGINT);
+            libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
+            Ok(())
+        });
+    }
+    command
+}
+
+#[test]
+fn a_deadline_means_the_same_in_another_process() {
+    let (_, out) = runner("clockprocess");
+    let deadline = clock::after(3.0, &Env::new()).unwrap();
+    let env = Env::from([(DEADLINE_ENV.to_string(), clock::encode(deadline))]);
+    assert!(helper("clock", &out, &env).status().unwrap().success());
+    let text = fs::read_to_string(out.join("clock")).unwrap();
+    let values: Vec<f64> = text.lines().map(|line| line.parse().unwrap()).collect();
+    assert!((values[0] - clock::now()).abs() < 1.0, "{text}");
+    assert!(values[1] > 1.0 && values[1] <= 3.0, "{text}");
+}
+
+fn queue_env(out: &Path) -> Env {
+    let root = out.join("resources").display().to_string();
+    Env::from([("IOT_RESOURCE_DIRECTORY".to_string(), root), ("IOT_CPU_BUDGET".to_string(), "2".to_string()), ("IOT_MEMORY_BUDGET_GIB".to_string(), "4".to_string())])
+}
+
+fn queue_actions(path: &Path) -> Vec<String> {
+    read_jsonl(path).unwrap().iter().map(|row| row["action"].as_str().unwrap().to_string()).collect()
+}
+
+#[test]
+fn a_cancelled_waiter_leaves_its_event() {
+    let (_, out) = runner("waiter");
+    let env = queue_env(&out);
+    let _held = resources::reserve(2, 4.0, 1.0, None, "holder", &env).unwrap();
+    let mut waiter = helper("queue", &out, &env).spawn().unwrap();
+    let (path, until) = (out.join("queue.jsonl"), Instant::now() + Duration::from_secs(5));
+    while !path.exists() {
+        assert!(Instant::now() < until, "the waiter never queued");
+        sleep(Duration::from_millis(5));
+    }
+    assert_eq!(unsafe { libc::kill(waiter.id() as i32, libc::SIGTERM) }, 0);
+    assert_eq!(waiter.wait().unwrap().code(), Some(128 + libc::SIGTERM));
+    assert!(queue_actions(&path).contains(&"cancelled".to_string()));
+}
+
+#[test]
+fn a_signal_at_queued_publication_is_accounted_and_released() {
+    let (_, out) = runner("publication");
+    let env = queue_env(&out);
+    assert_eq!(helper("signalled", &out, &env).status().unwrap().code(), Some(128 + libc::SIGTERM));
+    let path = out.join("queue.jsonl");
+    assert_eq!(queue_actions(&path), ["queued", "cancelled", "released"]);
+    let rows = read_jsonl(&path).unwrap();
+    assert_eq!((rows[1]["signal"].as_i64(), rows[1]["reason"].as_str()), (Some(libc::SIGTERM.into()), Some("StageCancelled")));
+    let left = fs::read_dir(out.join("resources")).unwrap().filter_map(Result::ok).filter(|entry| entry.path().extension().is_some_and(|name| name == "ticket"));
+    assert_eq!(left.count(), 0);
+}
+
+/// Waits in the queue. In `signalled` the stop signal is already in when the queued event goes out.
+fn queue_mode(out: &Path, env: &Env, signalled: bool) -> ! {
+    stop::catch_stop_signals();
+    if signalled {
+        assert_eq!(unsafe { libc::kill(libc::getpid(), libc::SIGTERM) }, 0);
+        while stop::stop_signal().is_none() {
+            sleep(Duration::from_millis(1));
+        }
+    }
+    let refused = resources::reserve(1, 1.0, 10.0, Some(&out.join("queue.jsonl")), "waiter", env).err().expect("no admission once cancelled");
+    assert!(matches!(refused, Stop::Cancelled { .. }));
+    std::process::exit(128 + libc::SIGTERM);
+}
+
+/// Not a test of its own: the body of the processes started by `helper`.
+#[test]
+#[ignore]
+fn job_helper() {
+    let out = PathBuf::from(std::env::var("JOB_HELPER_FOLDER").unwrap());
+    let env: Env = std::env::vars().collect();
+    match std::env::var("JOB_HELPER_MODE").unwrap().as_str() {
+        "clock" => {
+            let left = clock::remaining(clock::inherited(&env).unwrap()).unwrap();
+            fs::write(out.join("clock"), format!("{}\n{left}\n", clock::now())).unwrap();
+        }
+        "queue" => queue_mode(&out, &env, false),
+        "signalled" => queue_mode(&out, &env, true),
+        other => panic!("unknown mode {other}"),
+    }
 }
