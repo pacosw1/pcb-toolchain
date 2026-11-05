@@ -1,6 +1,6 @@
 // Internal check worker. The enclosing iotroute broker owns worker.lock and
 // finalizes only after this worker and every owned child have settled.
-import { closeSync, existsSync, openSync, readFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { atomicJson, plainJson, readObject } from './lib/json-file.ts';
@@ -19,7 +19,7 @@ const nothing = (): Cleanup => ({ complete: true, errors: [], child_reaped: true
 
 async function worker(folderPath: string): Promise<number> {
   const folder = resolve(folderPath), manifest = readObject<Manifest>(join(folder, 'run.json'));
-  if (manifest.operation !== 'check' || !Array.isArray(manifest.command) || manifest.command.length === 0
+  if (!['check', 'doctor'].includes(manifest.operation) || !Array.isArray(manifest.command) || manifest.command.length === 0
       || !Number.isFinite(manifest.timeout_s) || manifest.timeout_s <= 0 || !Number.isFinite(manifest.heartbeat_s) || manifest.heartbeat_s <= 0)
     throw new Error('invalid check manifest');
   if (process.env.IOT_PCB_WORKER_LOCK !== join(folder, 'worker.lock') || !process.env.IOT_LEAN_STAGE_HANDLE)
@@ -59,14 +59,15 @@ async function worker(folderPath: string): Promise<number> {
       result = { status: 'cancelled', exit_code: 130, cause: 'cancelled before gate admission' };
       cleanup = nothing();
     } else {
-      if (sha(join(manifest.root, 'hardware-design/boards', manifest.board, 'gate.json')) !== manifest.gate_config_sha256)
+      if (manifest.operation === 'check' && sha(join(manifest.root, 'hardware-design/boards', manifest.board, 'gate.json')) !== manifest.gate_config_sha256)
         throw new Error('configured gate changed after check admission');
-      log = openSync(join(folder, 'gate.log'), 'w');
+      if (manifest.operation === 'doctor') mkdirSync(join(folder, 'operation'), { recursive: true });
+      log = openSync(join(folder, manifest.operation === 'doctor' ? 'operation/doctor.log' : 'gate.log'), 'w');
       const env = { ...process.env, IOT_LEAN_DEADLINE: encodeDeadline(deadline) };
       proc = startOwned(manifest.command, { cwd: manifest.root, env, stdin: 'ignore', stdout: log, stderr: log });
       let heartbeat = now();
       for (;;) {
-        drain();
+        if (manifest.operation === 'check') drain();
         if (interrupted || existsSync(join(folder, 'cancel.request')) || now() >= deadline) {
           const cancelled = interrupted || existsSync(join(folder, 'cancel.request'));
           result = { status: cancelled ? 'cancelled' : 'timeout', exit_code: cancelled ? 130 : 124,
@@ -75,14 +76,20 @@ async function worker(folderPath: string): Promise<number> {
           journal.emit('run.stopping', { cause: result.cause });
           cleanup = await proc.cancel();
           try { outcome = await proc.settled; } catch { /* cleanup from cancel is authoritative */ }
-          drain();
+          if (manifest.operation === 'check') drain();
           break;
         }
         if (proc.done) {
           outcome = await proc.settled;
           cleanup = outcome.cleanup;
-          drain();
-          result = { ...gateOutcome(folder, outcome.returncode, gateEnded, findings) };
+          if (manifest.operation === 'check') {
+            drain(); result = { ...gateOutcome(folder, outcome.returncode, gateEnded, findings) };
+          } else {
+            const code = outcome.returncode;
+            result = { status: code === 0 ? 'passed' : code === 2 ? 'error' : 'failed', exit_code: code === 0 ? 0 : code === 2 ? 2 : 1,
+              cause: 'doctor ' + (code === 0 ? 'completed' : 'failed; inspect original tool evidence'), scope: 'environment', operation: 'doctor', tool_exit: code, artifact_directory: null };
+            atomicJson(join(folder, 'operation/result.json'), result);
+          }
           break;
         }
         if (now() - heartbeat >= manifest.heartbeat_s) {

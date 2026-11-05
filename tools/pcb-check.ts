@@ -37,17 +37,19 @@ async function main(argv: string[]): Promise<number> {
   let explicit: string | undefined;
   if (argv[0] === '--project') { explicit = argv[1]; if (!explicit) throw new Error('missing project'); argv = argv.slice(2); }
   else if (argv[0]?.startsWith('--project=')) { explicit = argv[0].slice(10); argv = argv.slice(1); }
-  if (argv.shift() !== 'check') throw new Error('expected check command');
+  const operation = argv.shift();
+  if (operation !== 'check' && operation !== 'doctor') throw new Error('expected check or doctor command');
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, options: {
     'runs-dir': { type: 'string' }, json: { type: 'boolean' }, detach: { type: 'boolean' }, follow: { type: 'boolean' },
     timeout: { type: 'string', default: '600' }, heartbeat: { type: 'string', default: '5' },
     changed: { type: 'boolean' }, fresh: { type: 'boolean' }, baseline: { type: 'string' }, cycle: { type: 'string' },
   } });
-  if (positionals.length !== 1) throw new Error('check requires one board ID');
+  if (positionals.length !== (operation === 'check' ? 1 : 0)) throw new Error(operation === 'check' ? 'check requires one board ID' : 'doctor takes no board ID');
+  if (operation === 'doctor' && (values.changed || values.fresh || values.baseline)) throw new Error('check options cannot be used with doctor');
   if (values.detach && values.follow) throw new Error('--detach and --follow cannot be used together');
   if (values.changed && values.fresh) throw new Error('--changed and --fresh cannot be used together');
   const root = projectRoot(explicit), base = values['runs-dir'] ?? process.env.PCB_RUNS_DIR ?? `${root}/.gate/cli`;
-  const folder = await startCheck({ root, base, board: positionals[0]!, timeout: Number(values.timeout), heartbeat: Number(values.heartbeat),
+  const folder = await startCheck({ root, base, board: positionals[0] ?? 'ENVIRONMENT', operation, timeout: Number(values.timeout), heartbeat: Number(values.heartbeat),
     changed: values.changed, fresh: values.fresh, baseline: values.baseline, cycle: values.cycle });
   if (values.detach) {
     if (values.json) console.log(jsonDumps(status(folder)));

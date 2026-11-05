@@ -28,7 +28,7 @@ function finalize(ownerPath: string): number {
   if (owner !== join(folder, 'worker-owner.json')) throw new Error('invalid owner receipt path');
   verifyLock(folder);
   const manifest = readObject<Manifest>(join(folder, 'run.json'));
-  if (manifest.operation !== 'check') throw new Error('invalid check manifest');
+  if (!['check', 'doctor'].includes(manifest.operation)) throw new Error('invalid check manifest');
   let preliminary: Row;
   try { preliminary = readObject(join(folder, 'worker-preliminary.json')); }
   catch { preliminary = { status: 'error', exit_code: 2, cause: 'worker ended without preliminary evidence', nested_cleanup: null }; }
@@ -40,7 +40,15 @@ function finalize(ownerPath: string): number {
   const cleanupConfirmed = ownerCleanup?.complete === true && ownerCleanup.child_reaped === true && nested?.complete === true;
   let settled = validStatus && cleanupConfirmed && report.error === null && report.returncode === preliminary.exit_code;
   let evidenceProblem: string | undefined;
-  if (settled && ['passed', 'failed'].includes(String(preliminary.status))) {
+  if (settled && manifest.operation === 'doctor' && ['passed', 'failed'].includes(String(preliminary.status))) {
+    try {
+      const operation = readObject<Row>(join(folder, 'operation/result.json'));
+      for (const key of ['status', 'exit_code', 'cause', 'scope', 'operation', 'tool_exit'])
+        if (operation[key] !== preliminary[key]) throw new Error('doctor result changed before sealing');
+      if ((operation.tool_exit === 0) !== (operation.status === 'passed')) throw new Error('doctor exit disagrees with result');
+    } catch (error) { settled = false; evidenceProblem = error instanceof Error ? error.message : String(error); }
+  }
+  if (settled && manifest.operation === 'check' && ['passed', 'failed'].includes(String(preliminary.status))) {
     try {
       if (sha(join(manifest.root, 'hardware-design/boards', manifest.board, 'gate.json')) !== manifest.gate_config_sha256)
         throw new Error('configured gate changed after check admission');
@@ -68,8 +76,9 @@ function finalize(ownerPath: string): number {
   if (!settled) Object.assign(result, { status: 'error', exit_code: 2,
     cause: evidenceProblem ? `gate evidence unconfirmed: ${evidenceProblem}`
       : `${String(preliminary.cause ?? 'worker result unavailable')}; owned process cleanup or result unconfirmed` });
-  Object.assign(result, { scope: 'configured_board_gate', schema_version: 1, run_id: folder.split('/').at(-1), board: manifest.board,
-    operation: 'check', cleanup: { ...(ownerCleanup ?? {}), complete: cleanupConfirmed, nested }, gate_result: join(folder, 'gate/result.json'), evidence_dir: folder });
+  Object.assign(result, { scope: manifest.operation === 'doctor' ? 'environment' : 'configured_board_gate', schema_version: 1, run_id: folder.split('/').at(-1), board: manifest.board,
+    operation: manifest.operation, cleanup: { ...(ownerCleanup ?? {}), complete: cleanupConfirmed, nested },
+    ...(manifest.operation === 'check' ? { gate_result: join(folder, 'gate/result.json') } : {}), evidence_dir: folder });
   const state = readObject<Row>(join(folder, 'state.json'));
   const started = typeof state.worker_started_clock_s === 'number' ? state.worker_started_clock_s : now();
   const journal = new CheckJournal(folder, manifest.created_at, started);

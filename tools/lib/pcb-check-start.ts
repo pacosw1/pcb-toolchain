@@ -11,15 +11,16 @@ import { isFile, resolvePath, which } from './py-path.ts';
 import { attach, folderFor, read } from './pcb-cycle.ts';
 import { holdLock } from './file-lock.ts';
 
-export interface CheckOptions { root: string; base: string; board: string; timeout: number; heartbeat: number; changed?: boolean; fresh?: boolean; baseline?: string; cycle?: string }
+export interface CheckOptions { root: string; base: string; board: string; operation?: 'check' | 'doctor'; timeout: number; heartbeat: number; changed?: boolean; fresh?: boolean; baseline?: string; cycle?: string }
 
 export async function startCheck(options: CheckOptions): Promise<string> {
   const root = resolvePath(options.root), base = resolvePath(options.base);
   if (!Number.isFinite(options.timeout) || options.timeout <= 0 || !Number.isFinite(options.heartbeat) || options.heartbeat <= 0)
     throw new Error('timeout and heartbeat must be positive');
   if (options.changed && options.fresh) throw new Error('--changed and --fresh cannot be used together');
-  const { folder: boardFolder, cfg } = boardConfig(root, options.board);
-  const config = join(boardFolder, 'gate.json');
+  const operation = options.operation ?? 'check';
+  const configInfo = operation === 'check' ? boardConfig(root, options.board) : undefined;
+  const config = configInfo ? join(configInfo.folder, 'gate.json') : undefined;
   let baseline: string | undefined;
   if (options.baseline) {
     baseline = join(runDir(base, options.baseline), 'gate/findings.json');
@@ -29,25 +30,27 @@ export async function startCheck(options: CheckOptions): Promise<string> {
   if (cycleFolder) {
     const cycle = read(join(cycleFolder, 'cycle.json'));
     if (cycle.status !== 'open' || resolvePath(cycle.root) !== root) throw new Error('cycle must be open and belong to this checkout');
-    if (cycle.board !== options.board) throw new Error('run belongs to another board than its engineering cycle');
+    if (operation === 'check' && cycle.board !== options.board) throw new Error('run belongs to another board than its engineering cycle');
   }
   const node = which(process.env.NODE ?? 'node');
   if (!node) throw new Error('Node.js is required to run the existing gate');
   mkdirSync(base, { recursive: true });
   const folder = mkdtempSync(join(base, 'run-'));
-  const command = [node, join(root, 'tools/gate.mjs'), options.board, '--evidence-dir', join(folder, 'gate')];
+  const board = operation === 'doctor' ? (cycleFolder ? read(join(cycleFolder, 'cycle.json')).board : 'ENVIRONMENT') : options.board;
+  const command = operation === 'doctor' ? [node, join(root, 'tools/doctor.mjs'), '--gate-only'] :
+    [node, join(root, 'tools/gate.mjs'), board, '--evidence-dir', join(folder, 'gate')];
   if (options.changed) command.push('--changed');
   if (options.fresh) command.push('--fresh');
   if (baseline) command.push('--findings-baseline', baseline);
-  const manifest = { schema_version: 1, run_id: basename(folder), board: options.board, project: cfg.get('project'),
+  const manifest = { schema_version: 1, run_id: basename(folder), board, project: configInfo?.cfg.get('project') ?? null,
     created_at: utc(), root, command, timeout_s: options.timeout, heartbeat_s: options.heartbeat,
-    operation: 'check', node, gate_config_sha256: sha(config), ...(cycleFolder ? { cycle: basename(cycleFolder) } : {}) };
+    operation, node, gate_config_sha256: config ? sha(config) : null, ...(cycleFolder ? { cycle: basename(cycleFolder) } : {}) };
   atomicJson(join(folder, 'run.json'), manifest);
   if (cycleFolder) await attach(cycleFolder, folder, { withLock: async (path, work) => {
     const lock = await holdLock(path, { waitS: 30 });
     try { return work(); } finally { await lock.release(); }
   } });
-  atomicJson(join(folder, 'state.json'), { schema_version: 1, run_id: basename(folder), board: options.board,
+  atomicJson(join(folder, 'state.json'), { schema_version: 1, run_id: basename(folder), board,
     status: 'starting', seq: 0, updated_unix: Date.now() / 1000, elapsed_s: 0, active_stages: [] });
   const worker = fileURLToPath(new URL('../pcb-check-worker.ts', import.meta.url));
   const finalizer = fileURLToPath(new URL('../pcb-check-finalize.ts', import.meta.url));

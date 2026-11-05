@@ -62,6 +62,6 @@ case "${1:-}" in
 esac
 case "$command" in
   list|context|next|status|events|explain|cancel|note|benchmark) exec node --experimental-strip-types --no-warnings "$bundle/tools/pcb-observe.ts" "$@" ;;
-  check) exec node --experimental-strip-types --no-warnings "$bundle/tools/pcb-check.ts" "$@" ;;
+  check|doctor) exec node --experimental-strip-types --no-warnings "$bundle/tools/pcb-check.ts" "$@" ;;
 esac
 exec python3 "$bundle/tools/pcb" "$@"

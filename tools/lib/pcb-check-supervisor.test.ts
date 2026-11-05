@@ -150,3 +150,44 @@ test('a killed worker cannot leave a successful terminal receipt', needsBinary, 
   assert.notEqual(result.exit_code, 0);
   assert.equal(existsSync(join(folder, 'gate/result.json')), false);
 });
+
+test('doctor runs as an owned environment observation with sealed evidence', needsBinary, async t => {
+  const root = fixture(t, gate(0));
+  writeFileSync(join(root, 'tools/doctor.mjs'), "console.log('fixture doctor'); process.exitCode = 1;");
+  const folder = await startCheck({ root, base: join(root, '.gate/cli'), board: 'ENVIRONMENT', operation: 'doctor', timeout: 20, heartbeat: 1 });
+  const result = await settled(folder);
+  assert.equal(result.status, 'failed');
+  assert.equal(result.scope, 'environment');
+  assert.equal(result.operation, 'doctor');
+  assert.equal((result.cleanup as { complete?: boolean }).complete, true);
+  assert.equal(verify(folder).get('status'), 'failed');
+  assert.match(readFileSync(join(folder, 'operation/doctor.log'), 'utf8'), /fixture doctor/);
+});
+
+test('doctor deadline cancels the owned observation', needsBinary, async t => {
+  const root = fixture(t, gate(0));
+  writeFileSync(join(root, 'tools/doctor.mjs'), 'setTimeout(() => {}, 30000);');
+  const folder = await startCheck({ root, base: join(root, '.gate/cli'), board: 'ENVIRONMENT', operation: 'doctor', timeout: 0.5, heartbeat: 0.1 });
+  const result = await settled(folder);
+  assert.equal(result.status, 'timeout');
+  assert.equal((result.cleanup as { complete?: boolean }).complete, true);
+});
+
+test('doctor CLI attaches its environment observation to the selected board cycle', needsBinary, async t => {
+  const root = fixture(t, gate(0)), base = join(root, '.gate/cli'), cycle = join(base, 'cycle-doctor');
+  mkdirSync(cycle, { recursive: true });
+  writeFileSync(join(cycle, 'cycle.json'), JSON.stringify({ root: realpathSync(root), board: 'X', status: 'open', runs: [] }));
+  writeFileSync(join(root, 'tools/doctor.mjs'), "console.log('doctor passed');");
+  const shim = join(root, 'shim'); mkdirSync(shim);
+  writeFileSync(join(shim, 'python3'), '#!/bin/sh\nexit 72\n', { mode: 0o755 });
+  const cli = fileURLToPath(new URL('../pcb-check.ts', import.meta.url));
+  const call = spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', cli, '--project', root, 'doctor', '--cycle', 'cycle-doctor', '--detach', '--json'], {
+    encoding: 'utf8', env: { ...process.env, PATH: `${shim}:${process.env.PATH}` },
+  });
+  assert.equal(call.status, 0, call.stderr || call.stdout);
+  const state = JSON.parse(call.stdout), record = JSON.parse(readFileSync(join(cycle, 'cycle.json'), 'utf8'));
+  assert.equal(state.board, 'X');
+  assert.equal(record.runs[0].run_id, state.run_id);
+  assert.equal(record.runs[0].stage, 'verification');
+  assert.equal((await settled(join(base, state.run_id))).status, 'passed');
+});
