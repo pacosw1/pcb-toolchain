@@ -34,7 +34,9 @@ export class ProtectedLeaseStore extends ProtectedCapabilityStore {
       runtime_digest TEXT NOT NULL, toolchain_digest TEXT NOT NULL, PRIMARY KEY(job,attempt),
       UNIQUE(project,board,generation)) STRICT;`);
     this.db.exec(`CREATE TABLE IF NOT EXISTS protected_blob_pins (kind TEXT NOT NULL, owner TEXT NOT NULL, sha256 TEXT NOT NULL,
-      PRIMARY KEY(kind,owner,sha256)) STRICT;`);
+      PRIMARY KEY(kind,owner,sha256)) STRICT;
+      CREATE TABLE IF NOT EXISTS protected_attempt_cancellation (job TEXT NOT NULL, attempt TEXT NOT NULL, cancelled INTEGER NOT NULL,
+        PRIMARY KEY(job,attempt)) STRICT;`);
     const columns = this.db.prepare('PRAGMA table_info(protected_targets)').all() as { name: string }[];
     if (!columns.some(column => column.name === 'source_manifest')) this.db.exec('ALTER TABLE protected_targets ADD COLUMN source_manifest TEXT');
     if (!columns.some(column => column.name === 'board_path')) this.db.exec('ALTER TABLE protected_targets ADD COLUMN board_path TEXT');
@@ -114,6 +116,7 @@ export class ProtectedLeaseStore extends ProtectedCapabilityStore {
       this.db.prepare('INSERT INTO protected_attempt_bindings VALUES (?,?,?,?,?,?,?,?,?,?,?,?)').run(binding.job, binding.attempt,
         lease.project, lease.board, lease.generation, row.source_revision, row.alias_revision, lease.operation, binding.sourceManifest,
         binding.policyDigest, binding.runtimeDigest, binding.toolchainDigest);
+      this.db.prepare('INSERT INTO protected_attempt_cancellation VALUES (?,?,0)').run(binding.job, binding.attempt);
       this.db.prepare('UPDATE protected_leases SET pinned=1 WHERE project=? AND board=?').run(lease.project, lease.board);
       this.db.prepare('INSERT INTO protected_lease_audit VALUES (?,?,?,?,?,?)').run(lease.project, lease.board, lease.generation, identity.principal, 'attempt-bound', now);
     });

@@ -24,9 +24,49 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
       CREATE TABLE IF NOT EXISTS protected_verified_attempts (job TEXT NOT NULL, attempt TEXT NOT NULL, verification TEXT NOT NULL,
         candidate_manifest TEXT NOT NULL, evidence_manifest TEXT NOT NULL, verifier TEXT NOT NULL, receipt BLOB NOT NULL,
         state TEXT NOT NULL, cancelled INTEGER NOT NULL, revoked INTEGER NOT NULL, PRIMARY KEY(job,attempt,verification)) STRICT;
+      CREATE TABLE IF NOT EXISTS protected_candidates (job TEXT NOT NULL, attempt TEXT NOT NULL, manifest TEXT NOT NULL, state TEXT NOT NULL,
+        PRIMARY KEY(job,attempt)) STRICT;
       CREATE TABLE IF NOT EXISTS protected_revisions (project TEXT NOT NULL, board TEXT NOT NULL, revision INTEGER NOT NULL,
         manifest TEXT NOT NULL, verification TEXT NOT NULL, PRIMARY KEY(project,board,revision)) STRICT;
       CREATE TABLE IF NOT EXISTS protected_commit_results (request_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, revision INTEGER NOT NULL, manifest TEXT NOT NULL) STRICT;`);
+  }
+  /** Persist cancellation before the orchestrator stops a worker. Pins remain until trusted cleanup. */
+  cancelAttempt(capability: string, ref: { project: string; board: string; operation: string; job: string; attempt: string }): void {
+    if (!ref || ![ref.project,ref.board,ref.operation,ref.job,ref.attempt].every(x => typeof x === 'string' && ID.test(x))) throw new Error('invalid protected cancellation');
+    this.withCapability(capability, { role:'cancel',project:ref.project,board:ref.board,operation:ref.operation,job:ref.job,attempt:ref.attempt }, () => {
+      const attempt = this.db.prepare('SELECT * FROM protected_attempt_bindings WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as Attempt | undefined;
+      if (!attempt || attempt.project !== ref.project || attempt.board !== ref.board || attempt.operation !== ref.operation) throw new Error('protected attempt unavailable');
+      const candidate = this.db.prepare('SELECT state FROM protected_candidates WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {state:string} | undefined;
+      if (candidate?.state === 'COMMITTED') throw new Error('protected attempt is already committed');
+      const changed = this.db.prepare('UPDATE protected_attempt_cancellation SET cancelled=1 WHERE job=? AND attempt=?').run(ref.job,ref.attempt);
+      if (changed.changes !== 1) throw new Error('protected cancellation state unavailable');
+    });
+  }
+  /** Records unverified worker output as a pinned candidate; this is not a verdict or permission to commit. */
+  stageCandidate(capability: string, ref: { project: string; board: string; operation: string; job: string; attempt: string; manifest: string }): void {
+    if (!ref || ![ref.project,ref.board,ref.operation,ref.job,ref.attempt].every(x => typeof x === 'string' && ID.test(x)) ||
+        typeof ref.manifest !== 'string' || !SHA.test(ref.manifest)) throw new Error('invalid protected candidate');
+    this.withCapability(capability, { role:'worker',project:ref.project,board:ref.board,operation:ref.operation,job:ref.job,attempt:ref.attempt }, () => {
+      const now = this.clock();
+      const attempt = this.db.prepare('SELECT * FROM protected_attempt_bindings WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as Attempt | undefined;
+      const target = this.db.prepare('SELECT revision,alias_revision,state,source_manifest,board_path FROM protected_targets WHERE project=? AND board=?').get(ref.project,ref.board) as Target | undefined;
+      const lease = this.db.prepare('SELECT * FROM protected_leases WHERE project=? AND board=?').get(ref.project,ref.board) as Lease | undefined;
+      const cancellation = this.db.prepare('SELECT cancelled FROM protected_attempt_cancellation WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {cancelled:number} | undefined;
+      if (!attempt || attempt.project !== ref.project || attempt.board !== ref.board || attempt.operation !== ref.operation ||
+          !target || target.state !== 'ACTIVE' || !target.board_path || target.revision !== attempt.source_revision || target.alias_revision !== attempt.alias_revision || target.source_manifest !== attempt.source_manifest ||
+          !lease || lease.boot_id !== this.bootId || lease.pinned !== 1 || lease.expires_at <= now || lease.generation !== attempt.generation || lease.operation !== ref.operation || lease.source_manifest !== attempt.source_manifest || !cancellation || cancellation.cancelled !== 0)
+        throw new Error('protected candidate attempt is stale');
+      const prior = this.db.prepare('SELECT manifest,state FROM protected_candidates WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {manifest:string;state:string} | undefined;
+      if (prior) { if (prior.manifest !== ref.manifest || prior.state !== 'STAGED') throw new Error('protected candidate changed'); return; }
+      const blob = this.db.prepare("SELECT size FROM protected_uploads WHERE sha256=? AND state='ready'");
+      const closure = resolveManifestClosure(ref.manifest, sha => this.read(sha), sha => (blob.get(sha) as {size:number} | undefined)?.size ?? null,
+        {maxDepth:16,maxManifests:256,maxNodes:100_000,maxBytes:64*1024**3,maxManifestBytes:64*1024**2});
+      if (closure.rootProject !== ref.project || !closure.rootManifest.required_paths.includes(target.board_path) ||
+          !closure.rootManifest.entries.some(entry => entry.kind === 'file' && entry.path === target.board_path)) throw new Error('protected candidate board unavailable');
+      for (const hash of new Set(closure.nodes.filter(node => node.kind === 'file').map(node => node.sha256))) this.read(hash);
+      this.pinClosure('attempt-candidate', JSON.stringify([ref.job,ref.attempt]), closure);
+      this.db.prepare("INSERT INTO protected_candidates VALUES (?,?,?,'STAGED')").run(ref.job,ref.attempt,ref.manifest);
+    });
   }
   /** Only use after a trusted service has recorded independently verified policy, runtime, receipt and cleanup. */
   commit(capability: string, request: CommitRequestV1): CommitResultV1 {
@@ -50,6 +90,8 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
       const lease = this.db.prepare('SELECT * FROM protected_leases WHERE project=? AND board=?').get(request.project_id,request.board_id) as Lease | undefined;
       const attempt = this.db.prepare('SELECT * FROM protected_attempt_bindings WHERE job=? AND attempt=?').get(request.job_id,request.attempt_id) as Attempt | undefined;
       const verified = this.db.prepare('SELECT * FROM protected_verified_attempts WHERE job=? AND attempt=? AND verification=?').get(request.job_id,request.attempt_id,request.verification_id) as Verified | undefined;
+      const staged = this.db.prepare('SELECT manifest,state FROM protected_candidates WHERE job=? AND attempt=?').get(request.job_id,request.attempt_id) as {manifest:string;state:string} | undefined;
+      const cancellation = this.db.prepare('SELECT cancelled FROM protected_attempt_cancellation WHERE job=? AND attempt=?').get(request.job_id,request.attempt_id) as {cancelled:number} | undefined;
       const targetPolicy = this.db.prepare('SELECT policy_digest,runtime_digest,toolchain_digest FROM protected_target_policy WHERE project=? AND board=?').get(request.project_id,request.board_id) as { policy_digest:string; runtime_digest:string; toolchain_digest:string } | undefined;
       if (!Number.isSafeInteger(now) || now < 1 || !target || target.state !== 'ACTIVE' || !target.board_path || target.revision !== request.source_revision || target.alias_revision !== request.alias_revision ||
           !lease || lease.boot_id !== this.bootId || lease.pinned !== 1 || lease.expires_at <= now || lease.generation !== request.lease_generation || lease.source_revision !== target.revision || lease.alias_revision !== target.alias_revision ||
@@ -57,6 +99,7 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
           !attempt || attempt.project !== request.project_id || attempt.board !== request.board_id || attempt.generation !== lease.generation || attempt.source_revision !== target.revision ||
           attempt.alias_revision !== target.alias_revision || attempt.source_manifest !== target.source_manifest || attempt.operation !== lease.operation || attempt.operation !== binding.operation || !targetPolicy ||
           attempt.policy_digest !== targetPolicy.policy_digest || attempt.runtime_digest !== targetPolicy.runtime_digest || attempt.toolchain_digest !== targetPolicy.toolchain_digest ||
+          !staged || staged.state !== 'STAGED' || staged.manifest !== request.candidate_manifest_sha256 || !cancellation || cancellation.cancelled !== 0 ||
           !verified || verified.state !== 'VERIFIED' || verified.cancelled !== 0 || verified.revoked !== 0 || verified.candidate_manifest !== request.candidate_manifest_sha256)
         throw new Error('protected commit preconditions failed');
       const policy = this.db.prepare('SELECT required_checks,parity_na,enabled FROM protected_policies WHERE digest=?').get(attempt.policy_digest) as { required_checks:string; parity_na:number; enabled:number } | undefined;
@@ -95,6 +138,8 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
       this.db.prepare('INSERT INTO protected_revisions VALUES (?,?,?,?,?)').run(request.project_id,request.board_id,revision,request.candidate_manifest_sha256,request.verification_id);
       this.db.prepare('INSERT INTO protected_commit_results VALUES (?,?,?,?)').run(request.request_id,fingerprint,revision,request.candidate_manifest_sha256);
       this.db.prepare("DELETE FROM protected_blob_pins WHERE kind='attempt-source' AND owner=?").run(JSON.stringify([request.job_id, request.attempt_id]));
+      this.db.prepare("DELETE FROM protected_blob_pins WHERE kind='attempt-candidate' AND owner=?").run(JSON.stringify([request.job_id, request.attempt_id]));
+      this.db.prepare("UPDATE protected_candidates SET state='COMMITTED' WHERE job=? AND attempt=?").run(request.job_id,request.attempt_id);
       this.db.prepare('UPDATE protected_leases SET pinned=0,expires_at=0,token_hash=?,owner=? WHERE project=? AND board=?').run(Buffer.alloc(32),'',request.project_id,request.board_id);
       this.db.prepare('INSERT INTO protected_lease_audit VALUES (?,?,?,?,?,?)').run(request.project_id,request.board_id,lease.generation,verified.verifier,'committed-cleanup',now);
       return { schema:'pcb.commit-result.v1',request_id:request.request_id,state:'COMMITTED',revision,manifest_sha256:request.candidate_manifest_sha256 } as const;
