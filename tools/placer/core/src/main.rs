@@ -6,6 +6,8 @@
 //!   iotplace count DRC.json [--nets NETS.txt]                  the open and error counts of a kicad-cli DRC report
 //!   iotplace read BOARD.kicad_pcb --board-json DOC.json -o PROB.json [flags]    the problem of a board (read/cli.rs)
 //!   iotplace write BOARD.kicad_pcb --board-json DOC.json PROB.json POSE.json -o OUT.kicad_pcb    a pose as a board (write/cli.rs)
+//!   iotplace pinswap BOARD.kicad_pcb --board-json DOC.json PINMAP.json -o PROPOSAL.json [flags]    a pin swap proposal (pinswap/cli.rs)
+//!   iotplace strip BOARD.kicad_pcb OUT.kicad_pcb [--keep=NET,...] [--only NETS.txt]    a board copy without tracks (write/strip.rs)
 //!
 //! run: exit 3 when no candidate is legal. Last lines: a cost line per candidate and the speed.
 
@@ -177,10 +179,12 @@ fn cost_cmd(a: &Args) -> iotplace::Result<ExitCode> {
 }
 
 fn dispatch(argv: &[String]) -> iotplace::Result<ExitCode> {
-    let (command, rest) = argv.split_first().ok_or("usage: iotplace run|scramble|gplace|count|read ...")?;
+    let (command, rest) = argv.split_first().ok_or("usage: iotplace run|scramble|gplace|count|read|write|pinswap|strip ...")?;
     match command.as_str() {
         "read" => return iotplace::read::cli::run(rest).map(|()| ExitCode::SUCCESS),
         "write" => return iotplace::write::cli::run(rest).map(|()| ExitCode::SUCCESS),
+        "pinswap" => return iotplace::pinswap::cli::run(rest).map(|()| ExitCode::SUCCESS),
+        "strip" => return iotplace::write::strip::run(rest).map(|()| ExitCode::SUCCESS),
         _ => {}
     }
     let args = parse_args(rest)?;

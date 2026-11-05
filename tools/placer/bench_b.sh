@@ -2,7 +2,7 @@
 # Proof benchmark B (known-good recovery), driver on the Mac; search and Freerouting run on Hetzner only.
 #   tools/placer/bench_b.sh BOARD_DIR NAME O_BOARD PROB SCR NETS OUT [RUNS]
 # BOARD_DIR  repo board folder for tools/remote.sh (read only)
-# O_BOARD    copy of the routed board with the signal tracks removed (validate.py strip --keep=<zone nets>)
+# O_BOARD    copy of the routed board with the signal tracks removed (iotplace strip --keep=<zone nets>)
 # PROB       cli.py read of O_BOARD; SCR = cli.py scramble of PROB; NETS = comma list of the signal nets
 # Steps: S = legal random placement (search SCR with w_wl=0 w_cong=0); P = placer search from SCR;
 # both written against PROB (the writer moves from the original places); then RUNS (default 5)

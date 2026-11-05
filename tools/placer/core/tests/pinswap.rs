@@ -1,7 +1,7 @@
 //! Pin swap proposals: the rules of a pin and the search.
 
 use iotplace::geom::Point;
-use iotplace::pinswap::{Assign, Chip, Kind, Nets, Proposal, Slot, Slots, SwapNet, Weights, port_line, usable};
+use iotplace::pinswap::{Assign, Chip, Kind, Nets, Pin, Proposal, Slot, Slots, SwapNet, Weights, port_line, usable};
 
 const W: Weights = Weights { crossing: 10.0, change: 0.0 };
 const RESTARTS: usize = 5;
@@ -15,7 +15,7 @@ fn plain(name: &str, x: f64) -> Slot {
 }
 
 fn slots(list: Vec<(&str, Slot)>) -> Slots {
-    list.into_iter().map(|(k, s)| (k.to_string(), s)).collect()
+    list.into_iter().map(|(k, s)| (k.into(), s)).collect()
 }
 
 fn net(kind: Kind, pin: &str, ft: bool, end: Point) -> SwapNet {
@@ -27,7 +27,7 @@ fn nets(list: Vec<(&str, SwapNet)>) -> Nets {
 }
 
 fn assign(list: &[(&str, &str)]) -> Assign {
-    list.iter().map(|(n, p)| (n.to_string(), p.to_string())).collect()
+    list.iter().map(|(n, p)| (n.to_string(), (*p).into())).collect()
 }
 
 fn search(n: &Nets, s: &Slots, seed: u64, w: Weights) -> Proposal {
@@ -68,14 +68,14 @@ fn allowed_keeps_exti_lines_unique_drive_and_5v_tolerance() {
     let now = assign(&[("A", "1"), ("B", "5"), ("O", "2"), ("T", "4")]);
     let chip = Chip { nets: &n, slots: &s, fixed: &[] };
     // A to pin 2 (PD2): line 2 is A's own line, so it stays unique
-    assert!(chip.allowed("A", "2", &now));
+    assert!(chip.allowed("A", &"2".into(), &now));
     // B to pin 1 (PE2) collides with A on line 2 while A stays there
-    assert!(!chip.allowed("B", "1", &now));
+    assert!(!chip.allowed("B", &"1".into(), &now));
     // an output never goes to the low-drive RTC pins
-    assert!(!chip.allowed("O", "3", &now));
+    assert!(!chip.allowed("O", &"3".into(), &now));
     // a 5 V tolerant net never goes to a TT pin; a TT net may go to an FT pin
-    assert!(!chip.allowed("A", "4", &now));
-    assert!(chip.allowed("T", "2", &now));
+    assert!(!chip.allowed("A", &"4".into(), &now));
+    assert!(chip.allowed("T", &"2".into(), &now));
 }
 
 /// Two pins on the IC edge (y = 0), each net ends above the other pin: the rat lines cross.
@@ -138,6 +138,15 @@ fn the_search_never_breaks_a_rule_for_a_gain() {
     assert_ne!(port_line(&s[&a["A"]].name), port_line(&s[&a["B"]].name));
     let chip = Chip { nets: &n, slots: &s, fixed: &[] };
     n.keys().for_each(|name| assert!(chip.allowed(name, &a[name], &a)));
+}
+
+#[test]
+fn pins_sort_by_number_and_write_as_the_pin_map_gave_them() {
+    let mut pins: Vec<Pin> = ["10", "9", "A1"].map(Pin::from).to_vec();
+    pins.sort();
+    assert_eq!(pins, ["9", "10", "A1"].map(Pin::from).to_vec());
+    assert_eq!(serde_json::to_string(&pins).unwrap(), r#"[9,10,"A1"]"#);
+    assert_eq!(serde_json::from_str::<Vec<Pin>>("[3,\"B2\"]").unwrap(), ["3", "B2"].map(Pin::from).to_vec());
 }
 
 #[test]

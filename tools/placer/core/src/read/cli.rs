@@ -14,8 +14,17 @@ pub struct Flags {
 }
 
 impl Flags {
-    /// A word that starts with `-` and is no number ends the words of a flag. `single` flags take no words.
+    /// A word that starts with `-` and is no number ends the words of a flag. `switches` take no words.
     pub fn parse(argv: &[String], switches: &[&str]) -> Self {
+        Self::scan(argv, switches, usize::MAX)
+    }
+
+    /// As `parse`, with one word per flag: positional words may follow a flag.
+    pub fn parse_single(argv: &[String], switches: &[&str]) -> Self {
+        Self::scan(argv, switches, 1)
+    }
+
+    fn scan(argv: &[String], switches: &[&str], words_per_flag: usize) -> Self {
         let mut flags = Self { positional: Vec::new(), values: Vec::new() };
         let mut open = false;
         for arg in argv {
@@ -26,6 +35,7 @@ impl Flags {
             } else if open {
                 if let Some((_, words)) = flags.values.last_mut() {
                     words.push(arg.clone());
+                    open = words.len() < words_per_flag;
                 }
             } else {
                 flags.positional.push(arg.clone());
@@ -56,7 +66,7 @@ impl Flags {
         }
     }
 
-    pub fn number(&self, name: &str, default: f64) -> crate::Result<f64> {
+    pub fn number<T: std::str::FromStr>(&self, name: &str, default: T) -> crate::Result<T> {
         self.one(name)?.map_or(Ok(default), |v| v.parse().map_err(|_| format!("{name}: bad value {v}").into()))
     }
 

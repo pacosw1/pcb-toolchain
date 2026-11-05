@@ -5,6 +5,7 @@
 //! Zones stay; the save refills them. The result goes to a new file only.
 
 pub mod cli;
+pub mod strip;
 pub mod text;
 
 use crate::geom::Rect;

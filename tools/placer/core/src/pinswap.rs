@@ -12,6 +12,10 @@ use crate::geom::Point;
 use crate::numeric::{PyRandom, compensated, hypot, round_to};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::fmt;
+
+pub mod board;
+pub mod cli;
 
 const LOW_DRIVE: [&str; 3] = ["PC13", "PC14", "PC15"];
 const KICKS: usize = 3;
@@ -25,9 +29,32 @@ pub enum Kind {
     Plain,
 }
 
+/// A pin as the pin map gives it. Whole numbers sort by value: 9 before 10.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Pin {
+    Number(u32),
+    Name(String),
+}
+
+impl From<&str> for Pin {
+    fn from(text: &str) -> Self {
+        text.parse().map_or_else(|_| Self::Name(text.to_string()), Self::Number)
+    }
+}
+
+impl fmt::Display for Pin {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Number(n) => n.fmt(f),
+            Self::Name(name) => name.fmt(f),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct SwapNet {
-    pub pin: String,
+    pub pin: Pin,
     pub kind: Kind,
     pub ft: bool,
     pub ends: Vec<Point>,
@@ -45,8 +72,8 @@ pub struct Slot {
 }
 
 pub type Nets = BTreeMap<String, SwapNet>;
-pub type Slots = BTreeMap<String, Slot>;
-pub type Assign = BTreeMap<String, String>;
+pub type Slots = BTreeMap<Pin, Slot>;
+pub type Assign = BTreeMap<String, Pin>;
 /// A rat line: x0, y0, x1, y1.
 pub type Segment = [f64; 4];
 
@@ -68,9 +95,9 @@ pub struct Measure {
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct Change {
     pub net: String,
-    pub from_pin: String,
+    pub from_pin: Pin,
     pub from_name: String,
-    pub to_pin: String,
+    pub to_pin: Pin,
     pub to_name: String,
 }
 
@@ -110,9 +137,9 @@ pub struct Chip<'a> {
 }
 
 impl Chip<'_> {
-    pub fn allowed(&self, n: &str, pin: &str, assign: &Assign) -> bool {
+    pub fn allowed(&self, n: &str, pin: &Pin, assign: &Assign) -> bool {
         let (net, s) = (&self.nets[n], &self.slots[pin]);
-        if pin != net.pin && !usable(s) {
+        if *pin != net.pin && !usable(s) {
             return false;
         }
         if net.kind == Kind::Out && LOW_DRIVE.contains(&base_name(&s.name)) {
@@ -125,21 +152,18 @@ impl Chip<'_> {
     }
 
     fn exti_line_free(&self, n: &str, line: Option<u32>, assign: &Assign) -> bool {
-        let taken = |(m, p): (&String, &String)| {
+        let taken = |(m, p): (&String, &Pin)| {
             m != n && self.nets[m].kind == Kind::Exti && port_line(&self.slots[p].name) == line
         };
         line.is_some() && !assign.iter().any(taken)
     }
 
-    fn rat_line(&self, n: &str, pin: &str) -> Segment {
+    fn rat_line(&self, n: &str, pin: &Pin) -> Segment {
         let s = &self.slots[pin];
-        let dist = |q: &Point| hypot(q.0 - s.x, q.1 - s.y);
-        let ends = &self.nets[n].ends;
-        let e = ends.iter().skip(1).fold(ends[0], |best, q| if dist(q) < dist(&best) { *q } else { best });
-        [s.x, s.y, e.0, e.1]
+        rat_line((s.x, s.y), &self.nets[n].ends)
     }
 
-    fn hpwl(&self, n: &str, pin: &str) -> f64 {
+    fn hpwl(&self, n: &str, pin: &Pin) -> f64 {
         let s = &self.slots[pin];
         let ends = &self.nets[n].ends;
         let span = |first: f64, axis: fn(&Point) -> f64| {
@@ -163,7 +187,7 @@ impl Chip<'_> {
 
     /// All legal single moves (to a free pin) and swaps, in a fixed order.
     fn moves(&self, assign: &Assign) -> Vec<Assign> {
-        let held: BTreeMap<&String, &String> = assign.iter().map(|(n, p)| (p, n)).collect();
+        let held: BTreeMap<&Pin, &String> = assign.iter().map(|(n, p)| (p, n)).collect();
         let mut out = Vec::new();
         for (n, current) in assign {
             for pin in self.slots.keys().filter(|p| *p != current) {
@@ -218,16 +242,23 @@ impl Chip<'_> {
         Proposal { before: self.measure(&start, w), after: self.measure(&best, w), assign: best, diff }
     }
 
-    fn change(&self, n: &str, to: &str) -> Change {
+    fn change(&self, n: &str, to: &Pin) -> Change {
         let from = &self.nets[n].pin;
         Change {
             net: n.to_string(),
             from_pin: from.clone(),
             from_name: self.slots[from].name.clone(),
-            to_pin: to.to_string(),
+            to_pin: to.clone(),
             to_name: self.slots[to].name.clone(),
         }
     }
+}
+
+/// The rat line of a pin: to the nearest of the ends, the first of equals.
+pub fn rat_line(pin: Point, ends: &[Point]) -> Segment {
+    let dist = |q: &Point| hypot(q.0 - pin.0, q.1 - pin.1);
+    let e = ends.iter().skip(1).fold(ends[0], |best, q| if dist(q) < dist(&best) { *q } else { best });
+    [pin.0, pin.1, e.0, e.1]
 }
 
 /// True when the two segments cross properly (a shared end point is not a crossing).
@@ -280,10 +311,10 @@ mod tests {
             ("5".into(), slot("VDD", 4.0, 0.0)),
         ]);
         let chip = Chip { nets: &nets, slots: &slots, fixed: &[] };
-        let now = Assign::from([("A".to_string(), "1".to_string()), ("B".to_string(), "2".to_string())]);
-        assert!(!chip.allowed("A", "3", &now), "line 3 is held by B");
-        assert!(chip.allowed("A", "4", &now));
-        assert!(!chip.allowed("A", "5", &now), "a pin with no line");
+        let now = Assign::from([("A".to_string(), "1".into()), ("B".to_string(), "2".into())]);
+        assert!(!chip.allowed("A", &"3".into(), &now), "line 3 is held by B");
+        assert!(chip.allowed("A", &"4".into(), &now));
+        assert!(!chip.allowed("A", &"5".into(), &now), "a pin with no line");
     }
 
     #[test]
