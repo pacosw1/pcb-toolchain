@@ -85,6 +85,12 @@ export function removeSegment(text: string, allowed: (segment: Segment) => boole
   return { text: text.slice(0, removed.span[0]) + text.slice(removed.span[1]), removed };
 }
 
+/** The copper zones of the board, rule areas left out: their net and whether the file holds their fill. */
+export function copperZones(text: string): { net: string; filled: boolean }[] {
+  const zones = topLevel(text).filter(([start, end]) => text.startsWith('(zone', start) && !text.slice(start, end).includes('(keepout'));
+  return zones.map(span => { const body = text.slice(...span); return { net: /\(net "([^"]*)"\)/.exec(body)?.[1] ?? '', filled: body.includes('(filled_polygon') }; });
+}
+
 const segmentText = (a: [number, number], b: [number, number], width: number, layer: string, net: string): string =>
   `\t(segment\n\t\t(start ${a[0]} ${a[1]})\n\t\t(end ${b[0]} ${b[1]})\n\t\t(width ${width})\n\t\t(layer "${layer}")\n\t\t(net "${net}")\n\t\t(uuid "${randomUUID()}")\n\t)\n`;
 const insert = (text: string, segment: string): string => { const end = text.lastIndexOf(')'); return `${text.slice(0, end)}${segment}${text.slice(end)}`; };

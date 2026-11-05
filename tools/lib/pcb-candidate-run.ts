@@ -138,7 +138,9 @@ async function routeJson(run: Candidate): Promise<ToolOutcome> {
   const tools = { IOTROUTE_BIN: iotroute, KICAD_API_CLI: executable(process.env.KICAD_API_CLI || 'kicad-cli-nightly'),
     KICAD_CLI: executable(process.env.KICAD_CLI ?? (process.platform === 'darwin' ? '/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli' : 'kicad-cli')) };
   const code = await execute(run.folder, 'route', [iotroute, 'route', run.board, output, '--input', run.native, '--config', run.spec!], run.workspace, { ...run.env, ...tools });
-  const report = readObject<Row>(join(output, 'result.json'));
+  const record = join(output, 'result.json');
+  // A stage that stops before its end writes no record: the cause is in the stage's own log, named by operation/route.log.
+  const report: Row = isFile(record) ? readObject<Row>(record) : { status: 'ERROR', cause: `iotroute route wrote no result.json (exit ${code}); see operation/route.log` };
   atomicJson(join(run.folder, 'operation/router-summary.json'), report);
   if (!code) {
     if (!report.board_file || !isFile(String(report.board_file))) throw new Error('iotroute route returned success without its board_file');
