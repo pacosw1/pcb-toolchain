@@ -547,6 +547,7 @@ export function placementScreen(contract: Contract, model: PlacementModel) {
   const ownedModel = preparePlacement(ownedContract, model);
   return {
     model: copyPlacementValue(ownedModel),
+    modelAnchor: placementModelAnchor(ownedModel),
     check: (pose: PlacementPose) => checkPlacement(ownedContract, ownedModel, pose),
   };
 }
@@ -564,4 +565,10 @@ export function placementMiss(contract: Contract, model: PlacementModel, pose: P
   return blockers.filter(blocker => blocker.code === 'native_locked_part_moved'
     ? allRefs || refs.has(blocker.reference as string) : ids.has(blocker.id as string))
     .reduce((sum, blocker) => sum + numeric(blocker.miss), 0);
+}
+
+/** Fingerprint the placement anchors and outline using the reviewed Python model format. */
+export function placementModelAnchor(model: PlacementModel): string {
+  return fingerprint({ units: model.units.map(unit => ({ name: unit.name ?? null, refs: unit.refs ?? null,
+    x: unit.x ?? null, y: unit.y ?? null, fixed: unit.fixed ?? null })), outline: model.board.outline });
 }

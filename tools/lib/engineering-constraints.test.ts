@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import { bindInstance } from './block-bindings.ts';
-import { checkManifest, checkPlacement, preparePlacement, placementScreen, placementMiss, nativeGeometry, reviewedContract, SCHEMA, type ReviewServices } from './engineering-constraints.ts';
+import { checkManifest, checkPlacement, preparePlacement, placementScreen, placementMiss, placementModelAnchor, nativeGeometry, reviewedContract, SCHEMA, type ReviewServices } from './engineering-constraints.ts';
 import { fingerprint } from './fingerprint.ts';
 import { sha256File } from './json-file.ts';
 import { jsonCanonical, jsonDumps, jsonLoads } from './py-compat.mjs';
@@ -275,4 +275,16 @@ test('per-unit reviewed miss includes only touching rules', () => {
   assert.equal(placementMiss(contract, model, pose, 0), 1);
   assert.equal(placementMiss(contract, model, pose, 1), 1);
   assert.equal(placementMiss(contract, model, pose, 2), 0);
+});
+
+test('placement model anchor detects changed unit positions and outline', () => {
+  const model = { board_file: native, board: { outline: [[0, 0], [20, 20]] }, units: [
+    { name: 'U1', refs: ['U1'], x: 10, y: 10, fixed: false },
+  ] };
+  const anchor = placementModelAnchor(model);
+  model.units[0].x++;
+  assert.notEqual(placementModelAnchor(model), anchor);
+  model.units[0].x--;
+  model.board.outline[0][0]++;
+  assert.notEqual(placementModelAnchor(model), anchor);
 });
