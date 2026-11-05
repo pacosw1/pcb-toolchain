@@ -91,6 +91,24 @@ function dispatch(p,env={},{args=[],timeout='60',wait=true}={}){
 const calls=p=>existsSync(join(p.root,'client.log'))?readFileSync(join(p.root,'client.log'),'utf8').trim().split('\n').map(l=>JSON.parse(l)):[];
 const ranLocally=p=>existsSync(join(p.root,'local.log'));
 
+test('binds a remote job to its guarded run for coordinator-side observation',async t=>{
+  let binding;
+  const server=createServer((req,res)=>{
+    let body='';req.on('data',x=>body+=x);req.on('end',()=>{
+      if(req.method==='POST'&&req.url==='/live/events')binding=JSON.parse(body);
+      res.statusCode=req.url==='/status'||req.url==='/live/events'?200:404;res.end('{}');
+    });
+  });
+  await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>server.close());
+  const url=`http://127.0.0.1:${server.address().port}`;
+  const p=project(t,{client:{exit:0,job:jobOf('passed','passed',0),out:files(record('PASS')),runMs:500}});
+  const preview=join(p.root,'preview/live-route.json');put(join(p.root,'preview/run.json'),JSON.stringify({board:'DEMO',runId:'run-test'}));
+  const r=await dispatch(p,{JOBD_URL:url,PCB_LIVE_ROUTE_FILE:preview,PCB_LIVE_SOURCE:'source',PCB_LIVE_HOST:'mini',
+    PCB_LIVE_BOARD:'p/DEMO',PCB_LIVE_COORDINATOR:url,PCB_LIVE_TOKEN_FILE:join(p.root,'token')});
+  assert.equal(r.status,0,r.stderr);
+  assert.deepEqual(binding,{source:'source',eventId:'job-binding:J1',host:'mini',board:'p/DEMO',run:'run-test',kind:'job.binding',data:{jobId:'J1'}});
+});
+
 test('a daemon that answers gets the job: workspace tools, Linux router, kicad-happy, relative paths',async t=>{
   const p=project(t,{client:{exit:0,job:jobOf('passed','passed',0),out:files(record('PASS')),stdout:'PASS 0 0 0 1 1 3\n'}});
   const r=await dispatch(p,{JOBD_URL:await daemon(t),IOTROUTE_CONGESTION:'1'});

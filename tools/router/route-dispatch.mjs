@@ -234,11 +234,24 @@ function submitAndWatch(plan,inputs,timeoutS,results){
   return new Promise(resolve=>{
     const child=spawn(exe,argv,opts),seen={id:null,stdout:'',stderr:''},clock=queueClock(process.env.PCB_QUEUE_CLOCK);
     const preview=process.env.PCB_LIVE_ROUTE_FILE;
-    let pulling=false,lastHash='',lastBaseHash='',timer=null;
+    let pulling=false,lastHash='',lastBaseHash='',timer=null,bound=false;
     const pull=async()=>{
       if(!preview||!seen.id||pulling)return;
       pulling=true;
       try{
+        // Bind the durable remote job to its originating live run so the coordinator can continue
+        // publishing progress even if this client disconnects. The index appears once the guard knows the run ID.
+        if(!bound&&process.env.PCB_LIVE_SOURCE&&process.env.PCB_LIVE_HOST&&process.env.PCB_LIVE_BOARD&&process.env.PCB_LIVE_COORDINATOR&&process.env.PCB_LIVE_TOKEN_FILE){
+          try{
+            const index=JSON.parse(fs.readFileSync(path.join(path.dirname(preview),'run.json'),'utf8'));
+            if(typeof index.runId==='string'){
+              const token=fs.readFileSync(process.env.PCB_LIVE_TOKEN_FILE,'utf8').trim();
+              const response=await fetch(`${process.env.PCB_LIVE_COORDINATOR}/live/events`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'content-type':'application/json'},
+                body:JSON.stringify({source:process.env.PCB_LIVE_SOURCE,eventId:`job-binding:${seen.id}`,host:process.env.PCB_LIVE_HOST,board:process.env.PCB_LIVE_BOARD,run:index.runId,kind:'job.binding',data:{jobId:seen.id}}),signal:AbortSignal.timeout(4000),redirect:'error'});
+              bound=response.ok;
+            }
+          }catch{/* retry without changing the job */}
+        }
         const token=fs.readFileSync(plan.tokenFile,'utf8').trim();
         const base=await fetch(`${plan.url}/jobs/${encodeURIComponent(seen.id)}/live?kind=route-base`,{headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(4000),redirect:'error'});
         if(base.ok){

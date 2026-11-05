@@ -36,6 +36,8 @@ export class LiveEvents {
       status TEXT NOT NULL, model_sha TEXT, error TEXT
     ) STRICT;
     CREATE INDEX IF NOT EXISTS live_models_pending ON live_models(source, status, created_at);`);
+    this.db.exec(`CREATE TABLE IF NOT EXISTS live_job_offsets (job TEXT NOT NULL, attempt INTEGER NOT NULL, offset INTEGER NOT NULL,
+      PRIMARY KEY(job, attempt)) STRICT;`);
     this.db.exec('CREATE INDEX IF NOT EXISTS live_run_cursor ON live_events(source, board, run, cursor);');
     this.db.exec('CREATE INDEX IF NOT EXISTS live_kind_time ON live_events(kind, received_at);');
     this.db.prepare("INSERT INTO live_meta VALUES ('epoch', ?) ON CONFLICT(key) DO NOTHING").run(randomUUID());
@@ -107,6 +109,22 @@ export class LiveEvents {
   }
   head(): number {
     return (this.db.prepare('SELECT COALESCE(MAX(cursor), 0) AS cursor FROM live_events').get() as { cursor: number }).cursor;
+  }
+  jobBindings(): LiveEvent[] {
+    return (this.db.prepare(`SELECT e.* FROM live_latest l JOIN live_events e ON e.cursor=l.cursor
+      WHERE l.kind='job.binding' AND e.received_at>? ORDER BY e.cursor DESC LIMIT 2000`)
+      .all(Date.now() - 7 * 86_400_000) as unknown as Row[]).map(fromRow);
+  }
+  sourceOnline(source: string, since: number): boolean {
+    return !!this.db.prepare(`SELECT 1 FROM live_latest l JOIN live_events e ON e.cursor=l.cursor
+      WHERE l.source=? AND l.kind='host.heartbeat' AND e.received_at>=? LIMIT 1`).get(source, since);
+  }
+  jobOffset(job: string, attempt: number): number {
+    const row = this.db.prepare('SELECT offset FROM live_job_offsets WHERE job=? AND attempt=?').get(job, attempt) as { offset: number } | undefined;
+    return row?.offset ?? 0;
+  }
+  setJobOffset(job: string, attempt: number, offset: number): void {
+    this.db.prepare('INSERT INTO live_job_offsets VALUES (?,?,?) ON CONFLICT(job,attempt) DO UPDATE SET offset=excluded.offset').run(job, attempt, offset);
   }
   /** Keep replay frame blobs for the same window as the job cache, plus every current observation. */
   retainedBlobs(since: number): Set<string> {

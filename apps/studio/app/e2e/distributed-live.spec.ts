@@ -106,6 +106,9 @@ test('a saved board follows its real run preview and readable activity', async (
     for (const stream of streams) stream.write(`id: 9\ndata: ${JSON.stringify(placed)}\n\n`)
     await expect(win.getByText(/Following active run.*Unverified working candidate/)).toBeVisible()
     await expect(win.getByRole('img', { name: `Board live:${candidateSha}` })).toBeVisible({ timeout: 15_000 })
+    const remote = { ...common, cursor: 10, eventId: 'remote', run: 'run-1', kind: 'remote.state', data: { status: 'running', jobId: 'job-1', attempt: 1 } }
+    for (const stream of streams) stream.write(`id: 10\ndata: ${JSON.stringify(remote)}\n\n`)
+    await expect(win.getByText('Remote job: running')).toBeVisible()
     await win.getByRole('button', { name: 'Load recorded frames' }).click()
     await expect(win.getByText('1 / 2', { exact: true })).toBeVisible()
     await expect(win.getByText(/Replay.*route preview/)).toBeVisible()

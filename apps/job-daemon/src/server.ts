@@ -10,6 +10,7 @@ import type { BoardLease } from './board-leases.ts';
 import { LiveEvents } from './live-events.ts';
 import type { LiveInput } from './live-events.ts';
 import { BlobStore, isSha256, parseManifest } from './blobs.ts';
+import { LiveJobBridge } from './live-jobs.ts';
 import { exec, lowPriority } from './docker.ts';
 import type { JobManager } from './manager.ts';
 import { validateSpec } from './manager.ts';
@@ -441,6 +442,9 @@ export function createServer(mgr: JobManager, sourceSha256: string | null = null
   const blobs = new BlobStore(mgr.store.blobsDir(), mgr.store.incomingDir(), mgr.cfg.blobKeepDays);
   const leases = new BoardLeases(path.join(mgr.store.root, 'board-leases.sqlite'));
   const live = new LiveEvents(path.join(mgr.store.root, 'live-events.sqlite'));
+  const bridge = new LiveJobBridge(mgr, live, blobs);
+  const liveTimer = setInterval(() => { try { bridge.scan(); } catch (error) { console.error('live job bridge:', error); } }, 2000);
+  liveTimer.unref();
   const server = http.createServer((req, res) => {
     if (!authorized(req, mgr.cfg.token)) {
       res.setHeader('connection', 'close');
@@ -454,7 +458,7 @@ export function createServer(mgr: JobManager, sourceSha256: string | null = null
       json(res, status, { error: e instanceof Error ? e.message : String(e) });
     });
   });
-  server.once('close', () => { leases.close(); live.close(); });
+  server.once('close', () => { clearInterval(liveTimer); leases.close(); live.close(); });
   server.maxConnections = MAX_CONNECTIONS;
   // Node's default of 300 s fails a large file on a slow link; the file then starts again from nothing.
   server.requestTimeout = mgr.cfg.requestTimeoutS * 1000;

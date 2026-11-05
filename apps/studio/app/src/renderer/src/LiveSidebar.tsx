@@ -20,7 +20,7 @@ export function LiveSidebar({ events, boards, selectedSource, selectedBoard, loc
   const machines = useMemo(() => {
     const heartbeats = new Map(events.filter(e => e.kind === 'host.heartbeat').map(e => [e.source, e.receivedAt]))
     const identities = new Map<string, LiveEvent[]>()
-    for (const e of [...boards, ...events.filter(e => e.kind === 'run.state')]) {
+    for (const e of [...boards, ...events.filter(e => e.kind === 'run.state' || e.kind === 'remote.state')]) {
       if (!e.board || e.board.endsWith('/_host')) continue
       const key = `${e.source}\0${e.board}`
       const list = identities.get(key) ?? []
@@ -30,13 +30,14 @@ export function LiveSidebar({ events, boards, selectedSource, selectedBoard, loc
     if (localHost) groups.set(shortHost(localHost), { name: localHost, label: 'This computer', entries: [], local: true })
     for (const items of identities.values()) {
       const list = [...items].sort((a, b) => b.cursor - a.cursor), sample = list[0]
-      const snapshots = list.filter(e => e.kind !== 'run.state')
+      const snapshots = list.filter(e => e.kind !== 'run.state' && e.kind !== 'remote.state')
       const preferred = snapshots.find(e => e.kind === 'board.snapshot' && e.run === 'saved') ?? snapshots[0] ?? sample
       const states = list.filter(e => e.kind === 'run.state')
       const recent = states.find(e => ['running', 'queued', 'stopping'].includes(String(e.data.status)) && e.data.supervisorAlive === true && now - e.receivedAt < 45000)
+      const remote = list.find(e => e.kind === 'remote.state' && ['queued', 'running', 'retrying'].includes(String(e.data.status)) && now - e.receivedAt < 45000)
       const heartbeat = heartbeats.get(sample.source)
       const online = connected && !!heartbeat && now - heartbeat < 45000
-      const status: Entry['status'] = !online ? 'stale' : recent ? recent.data.status === 'queued' ? 'waiting' : 'working' : 'idle'
+      const status: Entry['status'] = remote ? remote.data.status === 'queued' ? 'waiting' : 'working' : !online ? 'stale' : recent ? recent.data.status === 'queued' ? 'waiting' : 'working' : 'idle'
       const host = hostName(sample.host), key = shortHost(host)
       const group = groups.get(key) ?? { name: host, label: labelFor(host, localHost), entries: [], local: !!localHost && key === shortHost(localHost) }
       group.entries.push({ source: sample.source, board: sample.board, host: sample.host, preferred, status, run: recent })

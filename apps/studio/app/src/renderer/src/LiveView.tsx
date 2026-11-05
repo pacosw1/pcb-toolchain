@@ -95,10 +95,13 @@ export function LiveView(): React.JSX.Element {
   const boards = useMemo(() => all.filter(e => ['board.snapshot', 'candidate.snapshot', 'route.preview', 'placement.preview'].includes(e.kind) && typeof e.data?.sha256 === 'string' &&
     !(e.kind === 'board.snapshot' && e.run === 'saved' && all.some(r => r.kind === 'board.removed' && r.source === e.source && r.board === e.board && r.data?.path === e.data.path && r.cursor > e.cursor)))
     .sort((a, b) => `${a.board} ${a.host} ${a.run}`.localeCompare(`${b.board} ${b.host} ${b.run}`)), [all])
-  const current = boards.find(e => keyOf(e) === selected) ?? all.find(e => e.kind === 'run.state' && keyOf(e) === selected) ?? null
+  const current = boards.find(e => keyOf(e) === selected) ?? all.find(e => ['run.state', 'remote.state'].includes(e.kind) && keyOf(e) === selected) ?? null
   useEffect(() => { setModelCursor(null) }, [current?.source, current?.board])
   const runs = all.filter(e => e.kind === 'run.state' && (!current || (e.source === current.source && e.board === current.board)))
     .sort((a, b) => b.cursor - a.cursor)
+  for (const e of all.filter(e => e.kind === 'remote.state' && ['queued', 'running', 'retrying'].includes(String(e.data.status)) && (!current || (e.source === current.source && e.board === current.board)))) {
+    if (!runs.some(r => r.source === e.source && r.run === e.run)) runs.push({ ...e, kind: 'run.state', data: { status: e.data.status === 'queued' ? 'queued' : 'running', operation: 'route', supervisorAlive: true, remoteOnly: true } })
+  }
   const active = runs.find(e => runKey(e) === selectedRun) ?? (current?.run && current.run !== 'saved' ? runs.find(e => e.run === current.run) : runs.find(e => ['queued', 'running', 'stopping'].includes(String(e.data.status))) ?? runs[0])
   const following = current && followRun && active && active.data.status === 'running' && active.data.supervisorAlive === true
     ? boards.filter(e => ['candidate.snapshot', 'route.preview', 'placement.preview'].includes(e.kind) && e.source === active.source && e.board === active.board && e.run === active.run).sort((a, b) => b.cursor - a.cursor)[0]
@@ -164,8 +167,11 @@ export function LiveView(): React.JSX.Element {
   const recent = all.filter(e => e.kind === 'run.event' && (!current || (e.source === current.source && e.board === current.board)) &&
     (!active || (e.run === active.run && e.source === active.source && e.board === active.board)))
     .sort((a, b) => b.cursor - a.cursor).slice(0, 12)
+  const remoteState = all.find(e => e.kind === 'remote.state' && e.source === active?.source && e.board === active?.board && e.run === active?.run)
   const rawStatus = typeof active?.data.status === 'string' ? active.data.status : 'unknown'
-  const runStatus = ['running', 'stopping'].includes(rawStatus) && active?.data.supervisorAlive !== true
+  const remoteRunning = remoteState && ['queued', 'running', 'retrying'].includes(String(remoteState.data.status)) && now - remoteState.receivedAt < 45_000
+  const runStatus = active && ['running', 'stopping'].includes(rawStatus) && stateFor(active) !== 'live' && !remoteRunning
+    ? 'source disconnected; run outcome unconfirmed' : ['running', 'stopping'].includes(rawStatus) && active?.data.supervisorAlive !== true
     ? active?.data.supervisorAlive === false ? 'interrupted (not confirmed)' : 'status unconfirmed' : rawStatus
   const stages = Array.isArray(active?.data.active_stages) ? active.data.active_stages.filter((v): v is string => typeof v === 'string') : []
   const elapsed = typeof active?.data.elapsed_s === 'number' ? active.data.elapsed_s : null
@@ -215,12 +221,12 @@ export function LiveView(): React.JSX.Element {
       <label>Board and machine{' '}
         <select value={selected} onChange={e => { setReplay([]); setPlaying(false); setSelectedRun(''); setSelected(e.target.value) }}>
           <option value="">Choose a board</option>
-          {current?.kind === 'run.state' ? <option value={selected}>{current.board} · waiting for a board snapshot</option> : null}
+          {current && ['run.state', 'remote.state'].includes(current.kind) ? <option value={selected}>{current.board} · waiting for a board snapshot</option> : null}
           {boards.filter(e => !current || (e.source === current.source && e.board === current.board)).map(e => <option key={keyOf(e)} value={keyOf(e)}>{e.board} · {e.host} · {e.kind === 'route.preview' ? `route preview ${e.run}` : e.kind === 'placement.preview' ? `placement preview ${e.run}` : e.run === 'saved' ? `saved ${String(e.data.path ?? '').split('/').pop()}` : `candidate ${e.run}`} · {stateFor(e)}</option>)}
         </select>
       </label>
       {current ? <label style={{ marginLeft: 12 }}><input type="checkbox" checked={followRun} onChange={e => setFollowRun(e.target.checked)} /> Follow active run</label> : null}
-      {view ? <p>{stateFor(view)} · {replay.length ? 'Replay · ' : following ? 'Following active run · ' : ''}{view.kind === 'run.state' ? 'Waiting for a board snapshot' : view.kind === 'route.preview' ? `Unverified route preview, pass ${loadedPreviewHash === previewHash ? preview?.passes ?? '…' : '…'}` : view.kind === 'placement.preview' ? `${view.data.recorded ? 'Recorded' : 'Unverified'} placement preview, epoch ${String(view.data.epoch ?? '…')}` : view.kind === 'candidate.snapshot' ? `Unverified working candidate from ${view.run}` : view.run === 'saved' ? 'Saved board' : `Candidate from ${view.run}`} · captured {new Date(view.receivedAt).toLocaleString()}</p> : <p>No board selected.</p>}
+      {view ? <p>{stateFor(view)} · {replay.length ? 'Replay · ' : following ? 'Following active run · ' : ''}{['run.state', 'remote.state'].includes(view.kind) ? 'Waiting for a board snapshot' : view.kind === 'route.preview' ? `Unverified route preview, pass ${loadedPreviewHash === previewHash ? preview?.passes ?? '…' : '…'}` : view.kind === 'placement.preview' ? `${view.data.recorded ? 'Recorded' : 'Unverified'} placement preview, epoch ${String(view.data.epoch ?? '…')}` : view.kind === 'candidate.snapshot' ? `Unverified working candidate from ${view.run}` : view.run === 'saved' ? 'Saved board' : `Candidate from ${view.run}`} · captured {new Date(view.receivedAt).toLocaleString()}</p> : <p>No board selected.</p>}
       {hash ? <p>Source board version: <code>{hash.slice(0, 12)}</code></p> : null}
       {invalid ? <p role="alert">Showing the last available board: {String(invalid.data.error ?? 'the latest snapshot is unavailable')}.</p> : null}
       <section className="panel runsummary live-activity" aria-label="Current activity">
@@ -231,6 +237,7 @@ export function LiveView(): React.JSX.Element {
             {runs.map(e => <option key={runKey(e)} value={runKey(e)}>{e.run} · {e.host} · {String(e.data.status ?? 'unknown')}</option>)}
           </select></label> : null}
           <p>{stages.length ? `Working on: ${stages.join(', ')}` : rawStatus === 'queued' ? 'Waiting to start' : 'No active stage reported'}</p>
+          {remoteState ? <p>Remote job: {String(remoteState.data.status ?? 'unknown')}{['passed', 'failed', 'cancelled'].includes(String(remoteState.data.status)) ? ' · final board verification runs on the source machine' : ''}</p> : null}
           <p>{elapsed === null ? 'Elapsed time not reported' : `Elapsed: ${Math.round(elapsed)} s`}{lastProgress === null ? '' : ` · Last progress: ${Math.round(lastProgress)} s before the latest update`}</p>
           {typeof active.data.timeoutS === 'number' ? <p>Run time limit: {active.data.timeoutS} s</p> : null}
           <p>Last report: {Math.max(0, Math.round((now - active.receivedAt) / 1000))} s ago</p>

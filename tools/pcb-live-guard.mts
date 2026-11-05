@@ -249,7 +249,9 @@ async function dispatch(root: string, program: string, args: string[]): Promise<
     await finish(coordinator, lease); fs.rmSync(file, { force: true });
     process.stdout.write(Buffer.concat(held)); return code;
   }
-  const env = { ...process.env, IOTROUTE_LIVE_FILE: path.join(previewDir, 'live-route.json'), PCB_LIVE_ROUTE_FILE: path.join(previewDir, 'live-route.json') };
+  const env = { ...process.env, IOTROUTE_LIVE_FILE: path.join(previewDir, 'live-route.json'), PCB_LIVE_ROUTE_FILE: path.join(previewDir, 'live-route.json'),
+    PCB_LIVE_SOURCE: source, PCB_LIVE_HOST: host, PCB_LIVE_BOARD: `${project}/${displayBoard}`,
+    PCB_LIVE_COORDINATOR: cfg.url, PCB_LIVE_TOKEN_FILE: cfg.tokenFile };
   const base = runsBase(root, args);
   const priorRuns = new Set(fs.existsSync(base) ? fs.readdirSync(base).filter(n => idPattern.test(n)) : []);
   let associated = false;

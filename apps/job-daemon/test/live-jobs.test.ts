@@ -1,0 +1,52 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import { test } from 'node:test';
+import { BlobStore } from '../src/blobs.ts';
+import { LiveEvents } from '../src/live-events.ts';
+import { LiveJobBridge } from '../src/live-jobs.ts';
+import { rig } from './helpers.ts';
+
+test('coordinator relays source-matched remote frames after client disconnect and restart', async () => {
+  const r = rig(); r.clock.now = Date.now();
+  const live = new LiveEvents(path.join(r.dir, 'events.sqlite'));
+  const blobs = new BlobStore(r.mgr.store.blobsDir(), r.mgr.store.incomingDir(), 30);
+  try {
+    const job = r.submit(['hang']); await r.mgr.tick();
+    assert.equal(job.state, 'running');
+    const out = r.mgr.store.outDir(job.id, 1), board = Buffer.from('source-board');
+    const base = createHash('sha256').update(board).digest('hex');
+    const preview = Buffer.from(JSON.stringify({ schema: 'iot-lab.route-preview.v1', board_sha256: base, passes: 3, tracks: [], vias: [] }));
+    fs.writeFileSync(path.join(out, 'live-route-base.kicad_pcb'), board);
+    fs.writeFileSync(path.join(out, 'live-route.json'), preview);
+    fs.writeFileSync(r.mgr.store.logFile(job.id, 1), 'iter 1: routing\n');
+    live.append({ source: 'mini', eventId: 'binding', host: 'mini', board: 'p/B', run: 'r', kind: 'job.binding', data: { jobId: job.id } });
+    new LiveJobBridge(r.mgr, live, blobs).scan();
+    const first = live.history('mini', 'p/B', 'r', 0).events;
+    assert.equal(first.length, 1); assert.equal(first[0].data && (first[0].data as { baseSha256: string }).baseSha256, base);
+    assert.equal(live.after(0).filter(e => e.kind === 'run.event').length, 1);
+    assert.equal(fs.readFileSync(path.join(r.mgr.store.blobsDir(), base)).toString(), 'source-board');
+    new LiveJobBridge(r.mgr, live, blobs).scan();
+    assert.equal(live.history('mini', 'p/B', 'r', 0).events.length, 1, 'restart must not duplicate a frame');
+    assert.equal(live.after(0).filter(e => e.kind === 'run.event').length, 1, 'restart must not duplicate log lines');
+    fs.appendFileSync(r.mgr.store.logFile(job.id, 1), 'iter 2: routing\n');
+    new LiveJobBridge(r.mgr, live, blobs).scan();
+    assert.equal(live.after(0).filter(e => e.kind === 'run.event').length, 2);
+    live.append({ source: 'mini', eventId: 'heartbeat', host: 'mini', board: 'p/_host', run: '_host', kind: 'host.heartbeat', data: {} });
+    fs.appendFileSync(r.mgr.store.logFile(job.id, 1), 'iter 3: source worker handles this\n');
+    new LiveJobBridge(r.mgr, live, blobs).scan();
+    assert.equal(live.after(0).filter(e => e.kind === 'run.event').length, 2, 'online source owns log forwarding');
+    const db = new DatabaseSync(path.join(r.dir, 'events.sqlite'));
+    db.prepare("UPDATE live_events SET received_at=0 WHERE event_id='heartbeat'").run(); db.close();
+    fs.appendFileSync(r.mgr.store.logFile(job.id, 1), 'iter 4: source offline\n');
+    new LiveJobBridge(r.mgr, live, blobs).scan();
+    const logs = live.after(0).filter(e => e.kind === 'run.event');
+    assert.equal(logs.length, 3);
+    assert.equal((logs.at(-1)!.data as { text: string }).text, 'iter 4: source offline');
+    fs.writeFileSync(path.join(out, 'live-route-base.kicad_pcb'), 'different');
+    new LiveJobBridge(r.mgr, live, blobs).scan();
+    assert.equal(live.history('mini', 'p/B', 'r', 0).events.length, 1, 'mismatched base is never published');
+  } finally { live.close(); r.cleanup(); }
+});

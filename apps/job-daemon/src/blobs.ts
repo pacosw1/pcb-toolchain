@@ -63,6 +63,17 @@ export class BlobStore {
 
   private file = (sha: string): string => path.join(this.dir, sha);
 
+  /** Store coordinator-produced content under its verified digest. */
+  putBytes(bytes: Buffer): string {
+    const sha = createHash('sha256').update(bytes).digest('hex');
+    const target = this.file(sha);
+    if (fs.existsSync(target)) return sha;
+    const tmp = path.join(this.incoming, `${randomBytes(8).toString('hex')}.blob`);
+    try { fs.writeFileSync(tmp, bytes, { flag: 'wx', mode: 0o600 }); fs.renameSync(tmp, target); }
+    finally { fs.rmSync(tmp, { force: true }); }
+    return sha;
+  }
+
   missing(hashes: string[]): string[] {
     const absent: string[] = [];
     const now = new Date();
