@@ -112,9 +112,11 @@ async function nativeQualification(argv: string[], { lib }: Layout): Promise<num
     const timeout = Number(args.timeout);
     if (!Number.isFinite(timeout) || timeout <= 0) throw new Error('native timeout must be finite and positive');
     const row = reuse(lib, args.id);
-    const deadline = deadlineAfter(timeout, {});
+    const binary = which(kicadCli());
+    if (!binary) throw new Error('KiCad CLI unavailable; set KICAD_CLI');
+    const deadline = deadlineAfter(timeout);
     const tools: NativeTools = {
-      binary: which(kicadCli()),
+      binary,
       remaining: () => remaining(deadline) ?? 0,
       version: (binary, seconds) => {
         if (seconds <= 0) throw new Error('native deadline reached');

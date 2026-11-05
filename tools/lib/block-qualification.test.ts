@@ -320,6 +320,10 @@ test('blocks native CLI uses the owned runner on a synthetic block', { skip: !pr
   assert.equal(invalid.status, 2);
   assert.match(invalid.stdout, /native timeout must be finite and positive/);
   assert.throws(() => readFileSync(join(root, 'invalid/result.json')));
+  const unavailable = spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', cli, 'native', 'MODULE', '--output', join(root, 'unavailable')], { encoding: 'utf8', env: { ...env, KICAD_CLI: '/missing/kicad-cli', IOTROUTE_BIN: '/missing/iotroute' } });
+  assert.equal(unavailable.status, 2);
+  assert.match(unavailable.stdout, /KiCad CLI unavailable/);
+  assert.throws(() => readFileSync(join(root, 'unavailable/result.json')));
   const marker = join(root, 'late-write');
   const slow = join(root, 'slow-kicad');
   writeFileSync(slow, `#!/bin/sh\n[ "$1" = --version ] && { echo 10.0.6; exit 0; }\n(sleep 3; touch '${marker}') &\nwait\n`);
