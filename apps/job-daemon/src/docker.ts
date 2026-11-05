@@ -45,7 +45,7 @@ export interface Runtime {
 // uid, so a job can stop it: it only gives a clean exit 124; the real deadline is in JobManager.reconcile.
 const WRAPPER =
   'mkdir -p out/tmp; ' +
-  `timeout -k ${KILL_AFTER_S} "$1" bash -c 'tar -xzf /input.tar.gz && exec "$@"' _ "\${@:2}" > out/job.log 2>&1; ` +
+  `timeout -k ${KILL_AFTER_S} "$1" bash -c 'tar -xzf /input.tar.gz && { if [ -f .pcb-live-disabled ]; then export PCB_LIVE=0; fi; } && exec "$@"' _ "\${@:2}" > out/job.log 2>&1; ` +
   'rc=$?; rm -rf out/tmp; exit "$rc"';
 
 export interface Exec {
@@ -120,7 +120,7 @@ export function runArgs(req: StartRequest, cfg: Config): string[] {
     // The kernel picks a job first when the host runs out of memory, not CI or the orchestrator.
     '--oom-score-adj', '1000',
     '-v', `${req.workDir}:/job`, '-v', `${req.outDir}:/job/out`, '-v', `${req.inputTar}:/input.tar.gz:ro`,
-    '-w', '/job', '-e', 'TMPDIR=/job/out/tmp',
+    '-w', '/job', '-e', 'TMPDIR=/job/out/tmp', '-e', 'PCB_LIVE_DIR=/job/out',
     req.image, 'bash', '-c', WRAPPER, '_', String(req.timeoutS), ...req.command,
   ];
 }

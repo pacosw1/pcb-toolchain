@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream'
 import type http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -32,6 +33,9 @@ export class LiveHttp {
     this.journal = new LiveJournal(path.join(root, 'live.sqlite'))
     this.assetDir = path.join(root, 'live-assets')
     this.assets = new BlobStore(this.assetDir, incoming, 3650)
+  }
+  async importBoard(bytes: Buffer, sha: string): Promise<void> {
+    if (this.assets.missing([sha]).length) await this.assets.put(Readable.from(bytes) as http.IncomingMessage, sha, 128*1024*1024)
   }
   close(): void { this.journal.close() }
   async handle(req: http.IncomingMessage, res: http.ServerResponse, url: URL,

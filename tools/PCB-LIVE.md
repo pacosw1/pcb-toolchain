@@ -2,7 +2,27 @@
 
 Studio's **Live solver** tab follows actual native search activity. It is read-only: pausing, seeking, comparing and selecting do not control a solver or adopt a candidate.
 
-## Start an observed run
+## Ordinary dispatch
+
+With a configured coordinator, ordinary local placement and route dispatch now
+start observation automatically. The Mac-side job client uploads the native
+spool; its exit code remains the command's exit code. Spools live under
+`$XDG_STATE_HOME/pcb-live` (default `~/.local/state/pcb-live`), outside candidate
+output folders. Interrupted uploads can be retried with
+`pcb-job observe-resume SPOOL_DIRECTORY`.
+
+Daemon jobs receive `PCB_LIVE_DIR=/job/out`. Native Rust observers write flat,
+source-bound files there, and the daemon imports them into the existing journal.
+No credentials or new Node process enter the job. Each recording carries the
+job ID, daemon attempt number, native invocation ID, source digest and model
+digest. A mapped copy of the placement source is shipped separately; frozen
+problem bytes are never rewritten to translate Mac paths into job paths.
+
+Set `PCB_LIVE=0` when dispatching to disable automatic observation. Native
+binaries run directly without the dispatcher remain explicit opt-in.
+These paths require matching updated native binaries, client and daemon.
+
+## Explicit observation wrapper
 
 Run from a full toolchain checkout. Use Node 22.13 or newer, the matching instrumented native binaries, and a coordinator running `apps/job-daemon` from this revision. Set `JOBD_URL` and `JOBD_TOKEN_FILE` in both the worker and Studio engine environments. Keep the token file private; the renderer never receives it.
 
@@ -19,7 +39,7 @@ node --experimental-strip-types --no-warnings tools/pcb-live-run.mts \
   -- iotroute /scratch/route-model.json /scratch/route-result.json --iters 40
 ```
 
-The board must be the source of the supplied model. Use a new spool directory for each invocation. Run the wrapper on the solver host; native observations are local files and only the wrapper contacts the coordinator. This opt-in entry point does not change existing route or placement dispatch defaults. When wrapping Docker, explicitly forward the observation environment and mount its paths identically inside the container.
+The board must be the source of the supplied model. Use a new spool directory for each invocation. Run this optional wrapper on the solver host; native observations are local files and only the wrapper contacts the coordinator. Ordinary dispatch does not require it. When wrapping Docker manually, explicitly forward the observation environment and mount its paths identically inside the container.
 
 The wrapper sets `PCB_LIVE_EVENTS`; placement also receives the existing `IOTPLACE_LIVE_*` board/model/attempt bindings. Observation failures never change move acceptance or router rules. Observation has overhead, so wall-clock-limited searches can reach their time boundary earlier; deterministic equality applies with equal completed work, not equal elapsed time.
 

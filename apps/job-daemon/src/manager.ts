@@ -9,6 +9,17 @@ import { Store } from './store.ts';
 import { HttpError, isTerminal } from './types.ts';
 import type { Attempt, Classified, JobRecord, JobSpec, JobState } from './types.ts';
 
+/** Grant only the job group access to its read-only input mount, after checking the opened inode. */
+export function prepareInputArchive(file: string, gid: number): void {
+  const owner = process.getuid?.(); if (owner === undefined) throw new Error('input owner unavailable');
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.uid !== owner || stat.nlink !== 1) throw new Error('unsafe job input archive');
+    fs.fchownSync(fd, owner, gid); fs.fchmodSync(fd, 0o640); fs.fsyncSync(fd);
+  } finally { fs.closeSync(fd); }
+}
+
 const NEXT: Record<JobState, readonly JobState[]> = {
   queued: ['running', 'cancelled', 'failed'],
   running: ['passed', 'failed', 'retrying', 'cancelled'],
@@ -462,6 +473,7 @@ export class JobManager {
       fs.mkdirSync(`${workDir}/out`, { recursive: true }); // the mount point of outDir
       fs.mkdirSync(outDir);
       if (this.cfg.jobUid !== null) {
+        prepareInputArchive(this.store.inputTar(job.id), this.cfg.jobUid);
         fs.chownSync(workDir, this.cfg.jobUid, this.cfg.jobUid);
         fs.chownSync(outDir, this.cfg.jobUid, this.cfg.jobUid);
       }

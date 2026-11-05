@@ -141,7 +141,7 @@ test('release archive and project sync keep guarded entrypoints importable', { t
   }
   const app = path.join(repo, 'apps/job-daemon/src')
   fs.mkdirSync(app, { recursive: true })
-  for (const name of ['client.ts', 'types.ts']) fs.copyFileSync(path.join(source, 'apps/job-daemon/src', name), path.join(app, name))
+  for (const name of ['client.ts', 'types.ts', 'live-jobs.ts', 'live-protocol.ts', 'store.ts']) fs.copyFileSync(path.join(source, 'apps/job-daemon/src', name), path.join(app, name))
   const git = (...args) => execFileSync('git', ['-C', repo, ...args], { stdio: 'pipe', maxBuffer: 100 * 1024 * 1024 })
   git('init', '-q'); git('add', 'tools', 'bin', 'apps'); git('-c', 'user.name=test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'fixture')
   fs.mkdirSync(bundle); fs.mkdirSync(project)
@@ -151,7 +151,7 @@ test('release archive and project sync keep guarded entrypoints importable', { t
   }
   unpack(git('archive', '--format=tar', 'HEAD', 'tools', 'bin'))
   fs.mkdirSync(path.join(bundle, 'tools/pcb-job'), { recursive: true })
-  const clientArchive = git('archive', '--format=tar', 'HEAD', 'apps/job-daemon/src/client.ts', 'apps/job-daemon/src/types.ts')
+  const clientArchive = git('archive', '--format=tar', 'HEAD', 'apps/job-daemon/src/client.ts', 'apps/job-daemon/src/types.ts', 'apps/job-daemon/src/live-jobs.ts', 'apps/job-daemon/src/live-protocol.ts', 'apps/job-daemon/src/store.ts')
   const client = spawnSync('tar', ['-xf', '-', '-C', path.join(bundle, 'tools/pcb-job'), '--strip-components=3'], { input: clientArchive, encoding: 'utf8' })
   assert.equal(client.status, 0, client.stderr)
   fs.writeFileSync(path.join(bundle, 'VERSION'), '0.0.0 fixture\n')

@@ -87,7 +87,7 @@ if [ -n "$bundle" ]; then
 else
   sha=$(git -C "$here" rev-parse "$ref") || stuck toolchain "no ref $ref"
   git -C "$here" archive --format=tar "$sha" tools bin | ssh "$host" "tar -x -C $run/toolchain"
-  git -C "$here" archive --format=tar "$sha" apps/job-daemon/src/client.ts apps/job-daemon/src/types.ts | ssh "$host" "mkdir -p $run/toolchain/tools/pcb-job && tar -x --strip-components=3 -C $run/toolchain/tools/pcb-job"
+  git -C "$here" archive --format=tar "$sha" apps/job-daemon/src/client.ts apps/job-daemon/src/types.ts apps/job-daemon/src/live-jobs.ts apps/job-daemon/src/live-protocol.ts apps/job-daemon/src/store.ts | ssh "$host" "mkdir -p $run/toolchain/tools/pcb-job && tar -x --strip-components=3 -C $run/toolchain/tools/pcb-job"
   ssh "$host" "cd $run && docker run --rm --cpus=8 --memory=12g -e CARGO_HOME=$base/cargo -e CARGO_TARGET_DIR=/t -e RUSTFLAGS=--remap-path-prefix=/w=. -v $run/toolchain:/w -v $base/cargo:$base/cargo $builder sh -c 'cd /w/tools/router/core && cargo build --release --locked --quiet && cp /t/release/iotroute /w/bin/iotroute-linux-x86_64 && cd /w/tools/route-coverage && cargo build --release --locked --quiet && cp /t/release/route-coverage /w/bin/route-coverage-linux-x86_64'" || stuck toolchain 'Linux binaries of the ref did not build'
   ssh "$host" "echo '0.0.0-smoke $sha' > $run/toolchain/VERSION"
 fi
