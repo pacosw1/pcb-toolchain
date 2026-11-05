@@ -503,12 +503,31 @@ fn live_observer_preserves_search_and_distinguishes_current_from_best() {
 }
 
 #[test]
-fn a_plain_run_counts_a_pad_inside_the_edge_clearance_the_raster_misses() {
+fn a_plain_run_repairs_a_pad_inside_the_edge_clearance_the_raster_misses() {
     // The top edge at 30.06 is off the 0.1 mm raster: its band starts at 29.1, the 1 mm clearance at 29.06. The pad box ends at 29.08.
     let mut padded = unit("P", 5.0, 28.58, json!([[-0.5, -0.5, 0.5, 0.5, 0.1]]));
     padded["pad_rects"] = json!([[-0.5, -0.5, 0.5, 0.5]]);
     let board = json!({"outline": [[0, 0], [30, 0], [30, 30.06], [0, 30.06]], "keepouts": [], "edge_clearance": 1.0});
-    let res = run(problem_json(json!([padded]), json!([]), board), &Params::default(), 1, 1, 0, 1, 1);
-    assert_eq!(res.candidates[0].pose, vec![(5.0, 28.58, 0)], "the raster sees no fault, so the legalizer leaves it");
-    assert_eq!(res.candidates[0].illegal, ["edge:P"]);
+    let input = problem_json(json!([padded]), json!([]), board);
+    let p = Params::default();
+    let pr = common::parse(input.clone());
+    let m = model(&pr, &p);
+    let mut ev = Evaluator::new(&m, &p, &pr.initial_pose());
+    assert_eq!(ev.legal_penalty(0), 0.0, "the raster misses this edge fault");
+    assert!(m.edge_miss_at(0, ev.place(0)));
+    assert!(legalize(&mut ev, &p).unwrap().is_empty());
+    assert!(!m.edge_miss_at(0, ev.place(0)));
+    assert_eq!(ev.legal_penalty(0), 0.0, "repair keeps the other legality checks");
+    let res = run(input.clone(), &p, 1, 1, 0, 1, 1);
+    assert_eq!(res.candidates[0].pose, ev.pose(), "plain run uses the shared legalizer");
+    assert!(res.candidates[0].illegal.is_empty());
+
+    let bounded = Params { max_displacement: 0.01, ..p.clone() };
+    let res = run(input.clone(), &bounded, 1, 1, 0, 1, 1);
+    assert_eq!(res.candidates[0].pose, pr.initial_pose(), "repair cannot override displacement bounds");
+    assert!(res.candidates[0].illegal.contains(&"edge:P".to_string()));
+
+    let legacy = Params { exact_edge: 0.0, ..p };
+    let res = run(input, &legacy, 1, 1, 0, 1, 1);
+    assert_eq!(res.candidates[0].pose, pr.initial_pose(), "explicit golden-comparison mode remains unchanged");
 }
