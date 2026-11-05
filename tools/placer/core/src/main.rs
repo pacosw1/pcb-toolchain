@@ -1,6 +1,7 @@
 //! iotplace: the placer search, with no Python in the job.
 //!
 //!   iotplace run PROB.json -o RES.json [--workers N --epochs 20 --steps 20000 --seed 1 --top 3] [--param k=v ...]
+//!                [--engineering-frozen-model-sha256 HEX]    a reviewed problem: the digest its producer verified
 //!   iotplace scramble PROB.json -o OUT.json [--seed 1] [--sigma MM]
 //!   iotplace gplace PROB.json -o OUT.json [--param k=v ...]    the analytic stage alone: {pose, history}
 //!   iotplace count DRC.json [--nets NETS.txt]                  the open and error counts of a kicad-cli DRC report
@@ -33,7 +34,9 @@ struct Args {
     params: Vec<String>,
 }
 
-const VALUE_OPTIONS: [&str; 8] = ["--workers", "--epochs", "--steps", "--seed", "--top", "--sigma", "--nets", "--pose"];
+/// The SHA-256 of a reviewed problem file that its producer verified against the original sources.
+const FROZEN_MODEL: &str = "--engineering-frozen-model-sha256";
+const VALUE_OPTIONS: [&str; 9] = ["--workers", "--epochs", "--steps", "--seed", "--top", "--sigma", "--nets", "--pose", FROZEN_MODEL];
 
 fn parse_args(argv: &[String]) -> iotplace::Result<Args> {
     let mut a = Args::default();
@@ -58,6 +61,10 @@ fn parse_args(argv: &[String]) -> iotplace::Result<Args> {
 }
 
 impl Args {
+    fn option(&self, flag: &str) -> Option<&str> {
+        self.options.iter().rev().find(|(f, _)| f == flag).map(|(_, v)| v.as_str())
+    }
+
     fn number<T: std::str::FromStr>(&self, flag: &str, default: T) -> iotplace::Result<T> {
         match self.options.iter().rev().find(|(f, _)| f == flag) {
             Some((_, v)) => v.parse().map_err(|_| format!("{flag}: bad value {v}").into()),
@@ -99,6 +106,7 @@ fn run(a: &Args) -> iotplace::Result<ExitCode> {
     let (input, output) = a.paths()?;
     let input_bytes = std::fs::read(input)?;
     let mut pr: Problem = serde_json::from_slice(&input_bytes)?;
+    pr.bind_engineering(&input_bytes, a.option(FROZEN_MODEL))?;
     pr.check_supported()?;
     let plan = Plan {
         workers: a.number("--workers", default_workers())?,

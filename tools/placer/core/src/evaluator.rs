@@ -277,7 +277,12 @@ impl<'m> Evaluator<'m> {
         let overlap = self.unit_pairs(i, |_| false).0 + self.areas.unit_overlap(self.model, &self.layout, i);
         let edge = self.model.mask.edge_area(self.layout.world(i), &s.keepout_rects, edge_pads.as_deref());
         let (locked, gap) = self.locked_and_gap_area(i, edge_pads.as_deref());
-        self.with_rule_misses(i, overlap + edge + locked + gap) + self.hard_escape(i)
+        self.with_rule_misses(i, overlap + edge + locked + gap) + self.hard_escape(i) + self.engineering_miss(i)
+    }
+
+    /// The reviewed contract of the problem counts against legality only: it plays no part in the search cost.
+    fn engineering_miss(&self, i: usize) -> f64 {
+        self.model.problem.contract.as_ref().map_or(0.0, |contract| contract.miss(i, &self.pose()))
     }
 
     fn hard_escape(&self, i: usize) -> f64 {

@@ -6,6 +6,7 @@ pub mod crossing;
 pub mod domain;
 pub mod drc_count;
 pub mod dru;
+pub mod engineering;
 pub mod escape;
 pub mod evaluator;
 pub mod geom;
