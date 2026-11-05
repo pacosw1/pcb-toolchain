@@ -25,7 +25,9 @@ export function verifyCapability(token: unknown, stored: Uint8Array): boolean {
 }
 export function validateScope(scope: CapabilityScope): void {
   const ident = (v: unknown): v is string => typeof v === 'string' && ID.test(v);
-  if (!scope || !ROLES.includes(scope.role) || !ident(scope.principal) || !ident(scope.project) ||
+  const keys = ['role', 'principal', 'project', 'board', 'operation', 'job', 'attempt', 'issuedAtMs', 'expiresAtMs', 'maxUses'];
+  if (!scope || typeof scope !== 'object' || Array.isArray(scope) || Object.keys(scope).length !== keys.length || !keys.every(k => Object.hasOwn(scope, k)) ||
+      !ROLES.includes(scope.role) || !ident(scope.principal) || !ident(scope.project) ||
       (scope.board !== null && !ident(scope.board)) || (scope.operation !== null && !ident(scope.operation)) ||
       (scope.job !== null && !ident(scope.job)) || (scope.attempt !== null && !ident(scope.attempt)) ||
       !Number.isSafeInteger(scope.issuedAtMs) || !Number.isSafeInteger(scope.expiresAtMs) || scope.issuedAtMs < 1 ||
