@@ -133,7 +133,7 @@ const RELAY_RULES: &str = r#"
 
 #[test]
 fn relay_4_rules() {
-    let dru = parse_dru(RELAY_RULES);
+    let dru = parse_dru(RELAY_RULES).unwrap();
     let g = relay_gaps(&dru);
     assert_eq!(g.gap("MAINS_K1", "SELV"), 8.0);
     assert_eq!(g.gap("MAINS_K1", "MAINS_K2"), 3.0);
@@ -146,7 +146,7 @@ fn relay_4_rules() {
 #[test]
 fn each_dru_gap_comes_from_its_own_rule() {
     // Class clearances 0.2 everywhere, so each gap above 0.2 must come from the .kicad_dru rule it tests.
-    let dru = parse_dru(RELAY_RULES);
+    let dru = parse_dru(RELAY_RULES).unwrap();
     let g = ClassGaps { dru: &dru, clearance: BTreeMap::from([("MAINS_K1", 0.2), ("MAINS_K2", 0.2), ("SELV", 0.2)]), edge: 0.5 };
     assert_eq!(g.gap("MAINS_K1", "MAINS_K2"), 3.0); // rule "Relay circuit to relay circuit"
     assert_eq!(g.gap("MAINS_K1", "SELV"), 8.0); // rule "Mains to SELV and 24 V"

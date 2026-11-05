@@ -49,7 +49,7 @@ impl Project {
         let dru_text = std::fs::read_to_string(path.with_extension("kicad_dru")).unwrap_or_default();
         let rules = match domains {
             Some(given) => Rules { domains: given.to_vec(), ..Rules::default() },
-            None => dru::parse(&dru_text),
+            None => dru::parse(&dru_text).map_err(|e| format!("{}: {e}", path.with_extension("kicad_dru").display()))?,
         };
         let design = design_rules(path, board, &file.net_settings.classes)?;
         Ok(Self { classes: file.net_settings.classes, rules, dru_text, design })

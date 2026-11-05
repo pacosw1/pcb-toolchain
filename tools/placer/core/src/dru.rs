@@ -14,6 +14,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+const GAP_KINDS: [&str; 3] = ["clearance", "creepage", "hole_clearance"];
 const LOCAL: [&str; 5] = ["memberOfFootprint", "NetName", "intersectsCourtyard", "DiffPair", "isCoupledDiffPair"];
 const EXCEPT_OPEN: &str = "&&!(B.Type=='Pad'&&B.memberOfFootprint('";
 const EXCEPT_MIDDLE: &str = "')&&B.Pad_Number=='";
@@ -154,6 +155,8 @@ struct RawRule {
     name: String,
     condition: String,
     gaps: Gaps,
+    /// A gap constraint whose min could not be read: its kind.
+    unreadable: Option<String>,
 }
 
 fn constraint_min(items: &[Node]) -> Option<f64> {
@@ -161,14 +164,16 @@ fn constraint_min(items: &[Node]) -> Option<f64> {
 }
 
 fn raw_rule(rule: &[Node]) -> Option<RawRule> {
-    let mut r = RawRule { name: rule.get(1)?.atom()?.to_string(), condition: String::new(), gaps: Gaps::default() };
+    let mut r = RawRule { name: rule.get(1)?.atom()?.to_string(), condition: String::new(), gaps: Gaps::default(), unreadable: None };
     for item in &rule[2..] {
         if let Some(c) = item.headed("condition") {
             r.condition = c.get(1).and_then(Node::atom).unwrap_or("").to_string();
         } else if let Some(c) = item.headed("constraint") {
             let kind = c.get(1).and_then(Node::atom).unwrap_or("");
-            if let Some(v) = constraint_min(&c[2..]) {
-                r.gaps.add(kind, v);
+            match constraint_min(&c[2..]) {
+                Some(v) => r.gaps.add(kind, v),
+                None if GAP_KINDS.contains(&kind) => r.unreadable = Some(kind.to_string()),
+                None => {}
             }
         }
     }
@@ -273,10 +278,14 @@ impl Domains {
     }
 }
 
-pub fn parse(text: &str) -> Rules {
+/// The rules of a .kicad_dru. A gap rule with no min in mm is refused: dropping it would drop a clearance without a word.
+pub fn parse(text: &str) -> Result<Rules, String> {
     let (mut domains, mut between) = (Domains::default(), BTreeMap::<String, f64>::new());
     let mut out = Rules::default();
     for rule in parse_tree(text).iter().filter_map(|n| n.headed("rule")).filter_map(raw_rule) {
+        if let Some(kind) = &rule.unreadable {
+            return Err(format!("rule {}: {kind} has no min in mm", rule.name));
+        }
         let (c, exception) = split_exception(&rule.condition.replace(' ', ""));
         if let (Some(class), Some(creepage)) = (
             c.strip_suffix("&&B.NetName==''").and_then(|a| one_class(a, "A.NetClass==")),
@@ -310,7 +319,7 @@ pub fn parse(text: &str) -> Rules {
     out.members = sorted_unique(out.members);
     out.nonet = sorted_unique(out.nonet);
     out.ignored = sorted_unique(out.ignored);
-    out
+    Ok(out)
 }
 
 /// Shell pattern match: * ? [seq] [!seq].
@@ -368,7 +377,7 @@ mod tests {
     fn domain_and_class_gap() {
         let text = rule("m", "A.NetClass == 'MAINS' && B.NetClass != 'MAINS'", "clearance (min 8mm)")
             + &rule("b", "A.NetClass == 'MAINS' && B.NetClass == 'MAINS' && A.NetClass != B.NetClass", "clearance (min 3mm)");
-        assert_eq!(parse(&text).domains, vec![("MAINS".to_string(), 8.0, 3.0)]);
+        assert_eq!(parse(&text).unwrap().domains, vec![("MAINS".to_string(), 8.0, 3.0)]);
     }
 
     #[test]
@@ -376,26 +385,26 @@ mod tests {
         let text = format!(
             "(rule a (condition \"A.NetClass == 'P' && B.NetClass != 'P'\") (constraint clearance (min 2mm)) (constraint creepage (min 5mm)))"
         );
-        assert_eq!(parse(&text).domains[0].1, 5.0);
+        assert_eq!(parse(&text).unwrap().domains[0].1, 5.0);
     }
 
     #[test]
     fn hole_rule_lists_its_refs() {
         let text = rule("h", "A.NetClass == 'P' && (B.Reference == 'H1' || B.Reference == 'H2')", "hole_clearance (min 9.65mm)");
-        assert_eq!(parse(&text).holes, vec![("P".to_string(), vec!["H1".to_string(), "H2".to_string()], 9.65)]);
+        assert_eq!(parse(&text).unwrap().holes, vec![("P".to_string(), vec!["H1".to_string(), "H2".to_string()], 9.65)]);
     }
 
     #[test]
     fn pair_rule_between_class_sets() {
         let text = rule("i", "(A.NetClass == 'F' || A.NetClass == 'G') && (B.NetClass == 'H')", "clearance (min 4mm)");
-        assert_eq!(parse(&text).pairs, vec![(vec!["F".to_string(), "G".to_string()], vec!["H".to_string()], 4.0)]);
+        assert_eq!(parse(&text).unwrap().pairs, vec![(vec!["F".to_string(), "G".to_string()], vec!["H".to_string()], 4.0)]);
     }
 
     #[test]
     fn member_pad_and_nonet_creepage() {
         let a = rule("m", "A.NetClass == 'P' && B.NetClass != 'P' && !(B.Type == 'Pad' && B.memberOfFootprint('K1') && B.Pad_Number == '7')", "clearance (min 8mm)");
         let b = rule("n", "A.NetClass == 'P' && B.NetName == ''", "creepage (min 6mm)");
-        let r = parse(&(a + &b));
+        let r = parse(&(a + &b)).unwrap();
         assert_eq!(r.members, vec![("P".to_string(), "K1".to_string(), "7".to_string())]);
         assert_eq!(r.nonet, vec![("P".to_string(), 6.0)]);
     }
@@ -404,8 +413,17 @@ mod tests {
     fn local_rules_are_skipped_and_unknown_ones_listed() {
         let local = rule("l", "A.NetClass == 'P' && A.intersectsCourtyard('U1')", "clearance (min 1mm)");
         let unknown = rule("u", "A.NetClass == 'P' || B.Layer == 'F.Cu'", "clearance (min 1mm)");
-        let r = parse(&(local + &unknown));
+        let r = parse(&(local + &unknown)).unwrap();
         assert_eq!(r.ignored, vec!["u".to_string()]);
+    }
+
+    #[test]
+    fn a_gap_rule_with_no_readable_min_is_refused() {
+        for constraint in ["clearance (min 20mil)", "creepage (opt 1mm)", "hole_clearance (max 1mm)"] {
+            let error = parse(&rule("x", "A.NetClass == 'P' && B.NetClass != 'P'", constraint)).unwrap_err();
+            assert!(error.starts_with("rule x:"), "{error}");
+        }
+        assert!(parse(&rule("w", "A.NetClass == 'P'", "track_width (opt 1mm)")).is_ok());
     }
 
     #[test]

@@ -1,6 +1,10 @@
 //! Reading the rules of a .kicad_dru file.
 
-use iotplace::dru::parse;
+use iotplace::dru::Rules;
+
+fn parse(text: &str) -> Rules {
+    iotplace::dru::parse(text).unwrap()
+}
 
 const RELAY: &str = r#"(version 1)
 # comment with (brackets) and 'quotes'

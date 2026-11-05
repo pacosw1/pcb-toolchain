@@ -136,7 +136,7 @@ fn route_rules_hold_the_dru_rules_and_the_net_class_clearance_and_width() {
     let pr = fx.read(&plain());
     let want: BTreeMap<String, [f64; 2]> = [("Default".to_string(), [0.2, 0.25]), ("POWER".to_string(), [0.3, 0.5])].into();
     assert_eq!(pr.route_rules.classes, want);
-    let parsed = dru::parse(text);
+    let parsed = dru::parse(text).unwrap();
     assert_eq!(parsed.domains.len(), 1);
     let got = serde_json::to_value(&pr.route_rules.dru).unwrap();
     assert_eq!(got.as_object().unwrap().keys().map(String::as_str).collect::<BTreeSet<_>>(), BTreeSet::from(["domains", "holes", "members", "pairs"]));
