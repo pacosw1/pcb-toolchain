@@ -1,6 +1,20 @@
 // Internal adapter, not yet wired into job submission, server startup or a public API.
 import type { JobManager } from './manager.ts';
 import type { ProtectedCommitStore } from './protected-commit.ts';
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+
+function matchesArchive(file: string, expected: {sha256:string;size:number}): boolean {
+  let fd: number;
+  try { fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK); } catch { return false; }
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size !== expected.size || (process.getuid && stat.uid !== process.getuid())) return false;
+    const digest = createHash('sha256'), buffer = Buffer.allocUnsafe(1024 * 1024); let n: number;
+    while ((n = fs.readSync(fd, buffer, 0, buffer.length, null)) > 0) digest.update(buffer.subarray(0,n));
+    return digest.digest('hex') === expected.sha256;
+  } catch { return false; } finally { fs.closeSync(fd); }
+}
 
 /** Reapply durable cancellation after crashes or transient manager failures. Never infer worker cleanup here. */
 export function reconcileProtectedCancellations(authority: ProtectedCommitStore, manager: Pick<JobManager, 'jobs' | 'cancel'>):
@@ -17,7 +31,11 @@ export function reconcileProtectedCancellations(authority: ProtectedCommitStore,
 /** Trusted bootstrap only. Protected jobs remain held when the adapter is absent or the authority rejects admission. */
 export function installProtectedRuntime(authority: ProtectedCommitStore, manager: JobManager): void {
   if (manager.protectedAdmission || manager.protectedContinuation || manager.protectedBeforeTick) throw new Error('protected runtime is already installed');
-  manager.protectedAdmission = job => !!job.protectedRef && authority.canDispatchProtected(job.protectedRef, job.id);
+  manager.protectedAdmission = job => {
+    if (!job.protectedRef || !authority.canDispatchProtected(job.protectedRef, job.id)) return false;
+    const expected = authority.runtimeInputIdentity(job.protectedRef, job.id);
+    return !!expected && matchesArchive(manager.store.inputTar(job.id), expected);
+  };
   manager.protectedContinuation = job => !!job.protectedRef && authority.canDispatchProtected(job.protectedRef, job.id, true);
   manager.protectedBeforeTick = () => { reconcileProtectedCancellations(authority, manager); };
 }

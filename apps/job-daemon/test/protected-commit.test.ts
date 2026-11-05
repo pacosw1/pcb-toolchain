@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path'; import { test } from 'node:test';
 import { ProtectedCommitStore } from '../src/protected-commit.ts'; import { parseCanonicalJson } from '../src/canonical-json.ts';
 import { reconcileProtectedCancellations } from '../src/protected-runtime.ts';
+import { prepareAttemptInput } from '../src/protected-input.ts';
 const hash=(b:Uint8Array):string=>createHash('sha256').update(b).digest('hex');
 const encode=(x:unknown):Buffer=>parseCanonicalJson(Buffer.from(JSON.stringify(x)),{maxBytes:1_000_000,maxNodes:1000,maxDepth:12}).canonical;
 class Fixture extends ProtectedCommitStore {
@@ -41,9 +42,11 @@ test('fenced verified commit atomically advances the target and replays its dura
     store.bindAttempt(submit.token,{project:'p',board:'b',operation:'route',generation:lease.generation,token:lease.token},{job:'job',attempt:'attempt',sourceManifest:source,policyDigest:policy,runtimeDigest:runtime,toolchainDigest:toolchain});
     const candidateRef={project:'p',board:'b',operation:'route',job:'job',attempt:'attempt',manifest:candidate};
     assert.equal(store.canDispatchProtected(candidateRef,'runtime-job'),false);
-    store.associateRuntimeFromTrustedService(candidateRef,'runtime-job');
-    store.associateRuntimeFromTrustedService(candidateRef,'runtime-job');
-    assert.throws(()=>store.associateRuntimeFromTrustedService(candidateRef,'different-job'),/changed/);
+    const input = prepareAttemptInput(store,candidateRef,parent,{tarPath:'/usr/bin/tar',maxFiles:10,maxBytes:100,maxArchiveBytes:100000,timeoutMs:10000});
+    assert.equal(input.sourceManifest,source);
+    store.associateRuntimeFromTrustedService(candidateRef,'runtime-job',input);
+    store.associateRuntimeFromTrustedService(candidateRef,'runtime-job',input);
+    assert.throws(()=>store.associateRuntimeFromTrustedService(candidateRef,'different-job',input),/changed/);
     assert.equal(store.canDispatchProtected(candidateRef,'runtime-job'),true);
     assert.throws(()=>store.stageCandidate(submit.token,candidateRef),/not authorized/);
     store.stageCandidate(worker.token,candidateRef); store.stageCandidate(worker.token,candidateRef);
@@ -57,6 +60,7 @@ test('fenced verified commit atomically advances the target and replays its dura
     store.revoke(); assert.throws(()=>store.commit(commit.token,request),/authority/); assert.equal(store.revision(),1);
     store.seedVerifierForTest();
     store.cancelAttempt(cancel.token,candidateRef);
+    assert.throws(()=>prepareAttemptInput(store,candidateRef,parent,{tarPath:'/usr/bin/tar',maxFiles:10,maxBytes:100,maxArchiveBytes:100000,timeoutMs:10000}),/stale/);
     const jobs = new Map<string, unknown>(), calls:string[] = [];
     const manager = {jobs,cancel:(id:string)=>{calls.push(id);return jobs.get(id);}};
     assert.deepEqual(reconcileProtectedCancellations(store,manager as never).unavailable,['runtime-job']);

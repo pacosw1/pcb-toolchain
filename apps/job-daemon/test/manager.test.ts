@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { runArgs } from '../src/docker.ts';
 import { validateSpec } from '../src/manager.ts';
-import { reconcileProtectedCancellations } from '../src/protected-runtime.ts';
+import { installProtectedRuntime, reconcileProtectedCancellations } from '../src/protected-runtime.ts';
 import { HttpError } from '../src/types.ts';
 import { rig, tarOf } from './helpers.ts';
 import type { Rig } from './helpers.ts';
@@ -30,6 +31,17 @@ async function settle(id: string): Promise<void> {
 }
 
 describe('states', () => {
+  it('refuses protected admission when the associated input archive changed', async () => {
+    const ref = { project:'p', board:'b', operation:'route', job:'protected', attempt:'attempt' };
+    const tar = tarOf(r.dir), bytes = fs.readFileSync(tar), identity = { sha256:createHash('sha256').update(bytes).digest('hex'), size:bytes.length };
+    const job = r.mgr.submit(validateSpec({command:['hang'],maxRetries:0},r.cfg),tar,ref);
+    const authority = {canDispatchProtected:()=>true,runtimeInputIdentity:()=>identity,pendingRuntimeCancellations:()=>[]};
+    installProtectedRuntime(authority as never,r.mgr);
+    fs.appendFileSync(r.mgr.store.inputTar(job.id),'tamper');
+    await r.mgr.tick(); assert.equal(job.state,'queued'); assert.equal(r.runtime.started.length,0);
+    fs.writeFileSync(r.mgr.store.inputTar(job.id),bytes);
+    await r.mgr.tick(); assert.equal(job.state,'running');
+  });
   it('keeps protected jobs held across restart until coordinator admits them', async () => {
     const ref = { project:'p', board:'b', operation:'route', job:'protected', attempt:'attempt' };
     const spec = validateSpec({ command:['hang'], maxRetries:0 }, r.cfg);
