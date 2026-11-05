@@ -57,6 +57,19 @@ pub struct WriteBoard {
 pub struct WriteProblem {
     pub units: Vec<WriteUnit>,
     pub board: WriteBoard,
+    #[serde(default)]
+    engineering: serde_json::Value,
+    #[serde(default)]
+    part_rules: serde_json::Value,
+}
+
+impl WriteProblem {
+    fn check_reviewed_write(&self) -> crate::Result<()> {
+        if crate::problem::truthy(&self.engineering) || crate::problem::truthy(&self.part_rules) {
+            return Err("reviewed or part-rule write requires source verification and candidate recheck; native writer does not support it".into());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -346,6 +359,7 @@ fn moved_text(text: &str, board: &Board, moved: &[Moved], by_ref: &HashMap<&str,
 
 /// The edited board text and what was done. Saving it is the caller's: `iotroute::kicad::save`.
 pub fn write_board(text: &str, board: &Board, design: &DesignRules, pr: &WriteProblem, pose: &[Place], options: WriteOptions) -> crate::Result<(String, Report)> {
+    pr.check_reviewed_write()?;
     if pose.len() != pr.units.len() {
         return Err(format!("{} places for {} units", pose.len(), pr.units.len()).into());
     }
@@ -360,4 +374,22 @@ pub fn write_board(text: &str, board: &Board, design: &DesignRules, pr: &WritePr
     }
     let report = Report { moved_units: moved.len(), removed_tracks: ripped.removed.len(), removed_collisions: ripped.collisions, moved_block_tracks: internal.len() };
     Ok((out, report))
+}
+
+#[cfg(test)]
+mod reviewed_write_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn writer_fails_closed_for_reviewed_or_part_rules() {
+        let mut input = json!({"units":[],"board":{"outline":[]}});
+        let parse = |v| serde_json::from_value::<WriteProblem>(v).unwrap();
+        assert!(parse(input.clone()).check_reviewed_write().is_ok());
+        input["engineering"] = json!({"rules":[]});
+        assert!(parse(input.clone()).check_reviewed_write().is_err());
+        input["engineering"] = json!(null);
+        input["part_rules"] = json!({"regions":[]});
+        assert!(parse(input).check_reviewed_write().is_err());
+    }
 }
