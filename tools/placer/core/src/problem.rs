@@ -276,7 +276,8 @@ impl Problem {
     /// Admit only a byte-exact model whose independent producer verified the real reviewed sources.
     /// A digest supplied by an untrusted caller does not establish provenance. The producer must
     /// recheck those sources and every candidate before writing a board.
-    pub fn load_producer_verified(path: &Path, expected_sha256: &str) -> crate::Result<Self> {
+    #[allow(dead_code)]
+    pub(crate) fn load_producer_verified(path: &Path, expected_sha256: &str) -> crate::Result<Self> {
         use sha2::{Digest, Sha256};
         let bytes = std::fs::read(path)?;
         if expected_sha256.len() != 64 || !expected_sha256.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))

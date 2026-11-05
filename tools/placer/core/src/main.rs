@@ -95,10 +95,10 @@ fn is_legal(c: &Candidate) -> bool {
 
 fn run(a: &Args) -> iotplace::Result<ExitCode> {
     let (input, output) = a.paths()?;
-    let mut pr = match a.options.iter().rev().find(|(f, _)| f == "--engineering-frozen-model-sha256") {
-        Some((_, digest)) => Problem::load_producer_verified(input, digest)?,
-        None => Problem::load(input)?,
-    };
+    if a.options.iter().any(|(f, _)| f == "--engineering-frozen-model-sha256") {
+        return Err("digest-only reviewed admission disabled: native source verification is incomplete".into());
+    }
+    let mut pr = Problem::load(input)?;
     let plan = Plan {
         workers: a.number("--workers", default_workers())?,
         epochs: a.number("--epochs", 20)?,

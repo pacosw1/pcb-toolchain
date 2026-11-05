@@ -221,7 +221,7 @@ fn final_screen_checks_unreferenced_native_locks() {
 }
 
 #[test]
-fn producer_verified_cli_binds_bytes_and_rejects_unsupported_rules() {
+fn digest_alone_cannot_admit_reviewed_models() {
     use sha2::{Digest, Sha256};
     use std::process::Command;
     let dir = std::env::temp_dir().join(format!("iotplace-reviewed-{}", std::process::id()));
@@ -245,7 +245,7 @@ fn producer_verified_cli_binds_bytes_and_rejects_unsupported_rules() {
     let digest = format!("{:x}", Sha256::digest(&bytes));
     assert!(!run(None).status.success());
     assert!(!run(Some(&"0".repeat(64))).status.success());
-    assert!(run(Some(&digest)).status.success());
+    assert!(!run(Some(&digest)).status.success());
     let mut fixed = problem.clone();
     fixed["engineering"]["geometry"]["refs"]["U1"]["origin"] = json!([10.0,10.0]);
     fixed["engineering"]["rules"] = json!([{"id":"fixed","kind":"fixed","refs":["U1"]}]);
