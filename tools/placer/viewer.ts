@@ -31,7 +31,7 @@ const numeric = (value: unknown, size: number, where: string): number[] => {
 };
 
 /** Python viewer's exact quarter-turn rectangle transform, in millimetres. */
-function rotatedRect(rect: readonly number[], turns: number): Rect {
+export function rotatedRect(rect: readonly number[], turns: number): Rect {
   const [x0, y0, x1, y1] = rect as Rect;
   switch ((turns % 4 + 4) % 4) {
     case 0: return [x0, y0, x1, y1];

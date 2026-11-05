@@ -499,6 +499,8 @@ tools/placer/membership-derive.ts
 tools/placer/membership.test.ts
 tools/placer/membership.ts
 tools/placer/movie.py
+tools/placer/movie.test.ts
+tools/placer/movie.ts
 tools/placer/pinswap.py
 tools/placer/pinswap_io.py
 tools/placer/placement-audit.test.ts
