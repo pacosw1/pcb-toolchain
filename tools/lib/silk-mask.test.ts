@@ -31,3 +31,10 @@ test('pad mask plotting uses a disposable pad-only board and checks original sou
  assert.equal(padMaskOpenings(p,copy=>{assert.notEqual(copy,p);assert.doesNotMatch(readFileSync(copy,'utf8'),/\(via/);return {F:g,B:g}}).F.length,1);
  assert.throws(()=>padMaskOpenings(p,()=>{writeFileSync(p,source+' ');return {F:g,B:g}}),/changed during pad mask plot/);
 });
+
+test('pad mask plotting refuses a missing side for a through-hole pad',async t=>{
+ const {padMaskOpenings}=await import('./silk-mask.ts');const dir=mkdtempSync(join(tmpdir(),'silk-mask-missing-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
+ const p=join(dir,'board.kicad_pcb');writeFileSync(p,'(kicad_pcb (version 1) (footprint "x" (pad "1" thru_hole circle (layers "*.Cu" "*.Mask"))))');
+ const empty='%FSLAX46Y46*%\n%MOMM*%\nM02*';
+ assert.throws(()=>padMaskOpenings(p,()=>({F:g,B:empty})),/omitted all B openings/);
+});
