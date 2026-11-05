@@ -1,12 +1,14 @@
 // A sealed candidate: continuing one in a new run, and adopting one into canonical CAD. Only adoption changes the board.
 //
-// One adoption of a board at a time, and a crash leaves it recoverable: an exclusive journal names the run and both hashes
-// before the board is touched, and stays until the receipt is durable. It needs no lock holder that could die first, and the
-// target's hash tells whether the replacement happened. Content, mode and owner carry over; extended attributes do not, as with
-// KiCad's own save.
+// One adoption of a board at a time, and a crash leaves it recoverable: a durable journal names the run, its process and both
+// hashes before the board is touched, and stays until the receipt is durable. The journal is the lock for the whole adoption,
+// so no helper process has to outlive it: a flock covers only the moment of settling and claiming the journal. The target's
+// hash tells whether the replacement happened. Content, mode and owner carry over; extended attributes do not, as with KiCad's
+// own save.
 import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, fchmodSync, fchownSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
+import { holdLock } from './file-lock.ts';
 import { plainJson, readObject, readPyJson } from './json-file.ts';
 import { runStage } from './lean-stage.ts';
 import { deadlineAfter } from './lean-workflow.ts';
@@ -16,10 +18,11 @@ import { declaredPours, pcbIdentity } from './pcb-identity.ts';
 import { sourceState, type SourceState } from './pcb-sources.ts';
 import { boardConfig, context, sha } from './pcb-workflow.ts';
 import { PyError } from './py-compat.mjs';
-import { isRelativeTo, joinPath, pathExists, relativeTo, resolvePath, withSuffix } from './py-path.ts';
+import { isFile, isRelativeTo, joinPath, pathExists, relativeTo, resolvePath, withSuffix } from './py-path.ts';
 import { type Dict, sameValue } from './py-values.ts';
 
 const VERIFY_S = 90;
+const CLAIM_WAIT_S = 5;   // settling and claiming a journal takes milliseconds: a longer wait means something is wrong
 
 function fail(message: string): never { throw new PyError('ValueError', message); }
 
@@ -173,64 +176,38 @@ const running = (pid: number): boolean => {
   }
 };
 
-/** Exclusive and durable: whoever creates the file owns the board's adoption until it is gone. */
-function createJournal(path: string, intent: Intent): boolean {
+/** The moment of settling or claiming a journal. The adoption itself runs outside this lock, on the journal. */
+async function underClaim(path: string, work: () => void): Promise<void> {
   mkdirSync(dirname(path), { recursive: true });
-  let file: number;
-  try {
-    file = openSync(path, 'wx', 0o644);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false;
-    throw error;
-  }
-  try {
-    writeFileSync(file, JSON.stringify(intent) + '\n');
-    fsyncSync(file);
-  } finally {
-    closeSync(file);
-  }
-  syncFolder(dirname(path));
-  return true;
+  const lock = await holdLock(`${path}.lock`, { waitS: CLAIM_WAIT_S });
+  try { work(); } finally { await lock.release(); }
 }
 
-function writeReceipt(intent: Intent, saved: string): Dict {
-  const receipt: Dict = { schema_version: 1, board: intent.board, target: intent.target, before_sha256: sha(saved), after_sha256: intent.after_sha256,
+function writeReceipt(intent: Intent): Dict {
+  const receipt: Dict = { schema_version: 1, board: intent.board, target: intent.target, before_sha256: intent.before_sha256, after_sha256: intent.after_sha256,
     candidate_run: intent.run, defect: intent.defect, adopted_at: Date.now() / 1000 };
   durableJson(joinPath(intent.folder, 'adoption.json'), receipt);
   return receipt;
 }
 
-/** A finished replacement keeps its receipt, an unfinished one leaves nothing behind, and anything else stays for a person. */
-function recoverJournal(path: string): void {
+/** Under the claim lock. An adoption that finished keeps its receipt, one that did not leaves nothing, and anything else stays for a person. */
+function settleJournal(path: string): void {
+  if (!pathExists(path)) return;
   const intent = readObject<Intent>(path);
   if (running(intent.pid)) fail(`another adoption of ${intent.board} is running (pid ${intent.pid}): ${path}`);
-  const claimed = `${path}.recovering-${process.pid}`;
-  try {
-    renameSync(path, claimed);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;   // another adopter recovered it first
-    throw error;
-  }
   const current = sha(intent.target);
-  if (current === intent.after_sha256) {
-    const saved = joinPath(intent.folder, 'backup', basename(intent.target));
-    if (!pathExists(joinPath(intent.folder, 'adoption.json'))) writeReceipt(intent, saved);
-  } else if (current === intent.before_sha256) {
+  // Checked first: with equal hashes nothing can tell a replacement happened, so the adoption runs again.
+  if (current === intent.before_sha256) {
     const folder = dirname(intent.target);
     for (const name of readdirSync(folder)) if (name.startsWith('.pcb-adopt-')) rmSync(joinPath(folder, name), { force: true });
+  } else if (current === intent.after_sha256) {
+    const saved = joinPath(intent.folder, 'backup', basename(intent.target));
+    if (!pathExists(saved) || sha(saved) !== intent.before_sha256) fail(`interrupted adoption of run ${intent.run} lacks its exact backup; inspect ${path}`);
+    if (!pathExists(joinPath(intent.folder, 'adoption.json'))) writeReceipt(intent);
   } else {
-    renameSync(claimed, path);
     fail(`canonical PCB matches neither side of an interrupted adoption of run ${intent.run}; inspect ${path}`);
   }
-  rmSync(claimed, { force: true });
-}
-
-function claimJournal(path: string, intent: Intent): void {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    if (createJournal(path, intent)) return;
-    recoverJournal(path);
-  }
-  if (!createJournal(path, intent)) fail(`another adoption of ${intent.board} is running: ${path}`);
+  rmSync(path);
 }
 
 async function commitAdoption(root: string, folder: string, manifest: RunManifest, operation: Dict, candidate: string, defect: string | null): Promise<Dict> {
@@ -241,14 +218,11 @@ async function commitAdoption(root: string, folder: string, manifest: RunManifes
   };
   const before = sources.files[relativeTo(target, root)]!, after = operation.candidate_sha256 as string;
   const intent: Intent = { run: basename(folder), folder, target, before_sha256: before, after_sha256: after, defect, board, pid: process.pid };
-  claimJournal(journal, intent);
-  let replaced = false;
+  await underClaim(journal, () => {
+    settleJournal(journal);
+    durableJson(journal, intent);
+  });
   try {
-    const finished = joinPath(folder, 'adoption.json');
-    if (pathExists(finished)) {
-      rmSync(journal, { force: true });
-      return readObject<Dict>(finished);
-    }
     unchanged('canonical inputs changed since candidate creation; generate and verify a new candidate');
     const workspace = joinPath(folder, 'workspace');
     const check = await snapshotProbe(manifest.node as string, root, [workspace, board, '--verify', joinPath(folder, 'gate')], { ...process.env, IOT_LAB: workspace });
@@ -267,13 +241,12 @@ async function commitAdoption(root: string, folder: string, manifest: RunManifes
     try { writeFileSync(backup, originalBytes); fsyncSync(backup); } finally { closeSync(backup); }
     syncFolder(dirname(saved));
     replaceAtomically(target, candidateBytes, () => unchanged('canonical inputs changed before atomic adoption'));
-    replaced = true;
-    const receipt = writeReceipt(intent, saved);
+    const receipt = writeReceipt(intent);
     rmSync(journal, { force: true });
     return receipt;
   } catch (error) {
-    // After the replacement the journal is what finishes the receipt; before it, the board is free again.
-    if (!replaced) rmSync(journal, { force: true });
+    // A landed replacement keeps its journal, which finishes the receipt. Anything earlier frees the board again.
+    if (before === after || !isFile(target) || sha(target) !== after) rmSync(journal, { force: true });
     throw error;
   }
 }
@@ -284,6 +257,10 @@ export async function adopt(rootPath: string, folderPath: string, defect?: strin
   const operation = readPyJson<Dict>(joinPath(folder, 'operation/result.json'));
   const manifest = readPyJson<RunManifest>(joinPath(folder, 'run.json'));
   const candidate = checkAdoptable(root, folder, manifest, operation, result);
+  // Before anything reads the sources: a replacement that landed has already changed them.
+  const journal = journalOf(root, manifest.board), finished = joinPath(folder, 'adoption.json');
+  await underClaim(journal, () => settleJournal(journal));
+  if (pathExists(finished)) return readObject<Dict>(finished);
   const state = context(root, manifest.board) as { frozen: boolean };
   if (state.frozen) await checkFrozenBaseline(manifest.node as string, root, folder, manifest.board, baseline, defect);
   return commitAdoption(root, folder, manifest, operation, candidate, defect ?? null);

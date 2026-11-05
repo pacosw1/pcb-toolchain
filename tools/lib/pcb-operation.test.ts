@@ -1,6 +1,6 @@
 // Candidate operations through the real owned supervisor. The tools they run are fixtures; the isolation, evidence and verdict are not.
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -382,6 +382,53 @@ test('an adoption interrupted before its replacement is simply done again', need
   assert.equal(call.status, 0, call.stdout + call.stderr);
   assert.equal(readFileSync(canonicalOf(root), 'utf8'), MOVED);
   assert.equal(existsSync(join(dirname(canonicalOf(root)), '.pcb-adopt-leftover')), false);
+});
+
+test('a frozen board finishes an interrupted adoption without asking for its baseline again', needsBinary, async t => {
+  const root = project(t);
+  writeFileSync(join(root, 'FOCUS.md'), '## Frozen\n- X\n');
+  const { folder, result } = await edit(root), id = folder.split('/').at(-1)!;
+  assert.equal(result.status, 'passed', String(result.cause));
+  mkdirSync(join(folder, 'backup'));
+  writeFileSync(join(folder, 'backup/X.kicad_pcb'), BOARD);
+  intent(root, folder, result.candidate, Number(deadPid()));
+  writeFileSync(canonicalOf(root), MOVED);
+  const call = pcb(root, 'adopt', id, '--json');
+  assert.equal(call.status, 0, call.stdout + call.stderr);
+  assert.equal((JSON.parse(call.stdout) as Row).candidate_run, id);
+});
+
+test('a crash of an adoption that changes no bytes is done again, never receipted from a partial backup', needsBinary, async t => {
+  const root = project(t, WRITER(BOARD)), { folder, result } = await edit(root), id = folder.split('/').at(-1)!;
+  assert.equal(result.status, 'passed', String(result.cause));
+  mkdirSync(join(folder, 'backup'));
+  writeFileSync(join(folder, 'backup/X.kicad_pcb'), 'partial');
+  intent(root, folder, result.candidate, Number(deadPid()));
+  const call = pcb(root, 'adopt', id, '--json');
+  assert.equal(call.status, 0, call.stdout + call.stderr);
+  assert.equal(readFileSync(join(folder, 'backup/X.kicad_pcb'), 'utf8'), BOARD);
+});
+
+test('a replaced board without its exact backup is left for a person', needsBinary, async t => {
+  const root = project(t), { folder, result } = await edit(root), id = folder.split('/').at(-1)!;
+  intent(root, folder, result.candidate, Number(deadPid()));
+  writeFileSync(canonicalOf(root), MOVED);
+  const call = pcb(root, 'adopt', id, '--json');
+  assert.equal(call.status, 2);
+  assert.match(call.stdout, /lacks its exact backup/);
+  assert.ok(existsSync(journalOf(root)));
+});
+
+test('concurrent adoptions of one board: exactly one replaces it', needsBinary, async t => {
+  const root = project(t), first = await edit(root), second = await edit(root);
+  const adoptRun = (folder: string) => new Promise<number>(done => {
+    spawn(join(tools, 'pcb'), ['--project', root, 'adopt', folder.split('/').at(-1)!, '--json'], { stdio: 'ignore' }).once('close', code => done(code ?? 1));
+  });
+  const codes = await Promise.all([adoptRun(first.folder), adoptRun(second.folder)]);
+  assert.deepEqual(codes.sort(), [0, 2]);
+  assert.equal(existsSync(journalOf(root)), false);
+  assert.equal(readFileSync(canonicalOf(root), 'utf8'), MOVED);
+  assert.equal([first, second].filter(row => existsSync(join(row.folder, 'adoption.json'))).length, 1);
 });
 
 test('a live adoption, or a board matching neither side of a crash, is left alone', needsBinary, async t => {
