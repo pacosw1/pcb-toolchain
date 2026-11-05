@@ -139,6 +139,7 @@ pub fn run(argv: &[String]) -> crate::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kicad::doc::Footprint;
 
     fn flags(words: &[&str]) -> Flags {
         let argv: Vec<String> = words.iter().map(|w| w.to_string()).collect();
@@ -153,6 +154,16 @@ mod tests {
         assert!(f.has("--tp-pins"));
         assert_eq!(f.one("--skip-net").unwrap(), Some("-15V,GND"));
         assert_eq!(f.rect("--free-box").unwrap(), Some(Rect::new(0.0, -1.0, 2.0, 3.0)));
+    }
+
+    #[test]
+    fn board_first_fix_marks_the_requested_footprint_fixed() {
+        let f = flags(&["B.kicad_pcb", "--board-json", "B.json", "-o", "out.json", "--fix", "U1"]);
+        let options = options(&f).unwrap();
+        let footprint = Footprint { reference: "U1".into(), layer: "F.Cu".into(), ..Footprint::default() };
+        let outline = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)];
+        assert!(super::super::parts::part_fixed(&footprint, Rect::new(4.0, 4.0, 6.0, 6.0), &outline, &options, &[]));
+        assert!(!super::super::parts::part_fixed(&footprint, Rect::new(4.0, 4.0, 6.0, 6.0), &outline, &Options::default(), &[]));
     }
 
     #[test]
