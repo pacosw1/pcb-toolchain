@@ -11,6 +11,8 @@ BD=$1; N=$2; B=$3; PROB=$4; OUT=$5; RUNS=${6:-5}
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 PY=/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3
 WHEEL=${WHEEL:?set WHEEL to the numpy cp313 manylinux wheel}
+IOTPLACE_LINUX=${IOTPLACE_LINUX:?set IOTPLACE_LINUX to the Linux iotplace binary}
+[ "$(basename "$IOTPLACE_LINUX")" = iotplace-linux-x86_64 ] || { echo "IOTPLACE_LINUX must be named iotplace-linux-x86_64" >&2; exit 2; }
 mkdir -p "$OUT"
 cd "$REPO"
 search() {  # $1 tag, $2 problem, rest: extra run args
@@ -45,7 +47,7 @@ route() {  # $1 tag, $2 run
   local d=$OUT/$1/cand0
   [ -f "$d/$N.kicad_pcb" ] || return 0
   REMOTE_MEM=8g REMOTE_CPUS=4 tools/remote.sh "$BD" --in "$d/$N.kicad_pcb" --in "$d/$N.kicad_pro" \
-    --in "$d/$N.kicad_dru" --results "$OUT/$1-r$2" -- bash tools/placer/fr_job.sh "$N" > "$OUT/$1-r$2.log" 2>&1 || true
+    --in "$d/$N.kicad_dru" --in "$IOTPLACE_LINUX" --results "$OUT/$1-r$2" -- bash tools/placer/fr_job.sh "$N" > "$OUT/$1-r$2.log" 2>&1 || true
 }
 k=0
 for t in $TAGS; do for r in $(seq 1 "$RUNS"); do
