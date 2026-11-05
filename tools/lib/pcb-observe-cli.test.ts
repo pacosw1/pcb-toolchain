@@ -37,6 +37,14 @@ test('installed launcher reads run status and byte-cursored events without Pytho
     const list = JSON.parse(execFileSync(bin, [...args, 'list', '--json'], options));
     assert.deepEqual(list.boards.map((item: { board: string }) => item.board), ['X']);
     assert.equal(execFileSync(bin, [...args, 'list'], options), 'X\n');
+    const bench = join(root, '.gate/cli/run-bench');
+    mkdirSync(bench);
+    writeFileSync(join(bench, 'run.json'), JSON.stringify({ board: 'X', operation: 'route' }));
+    writeFileSync(join(bench, 'result.json'), JSON.stringify({ status: 'failed', scope: 'route', elapsed_s: 3, cleanup: { complete: true } }));
+    const summary = JSON.parse(execFileSync(bin, [...args, 'benchmark', 'run-bench', '--json'], options));
+    assert.equal(summary.runs[0].board, 'X');
+    assert.equal(summary.runs[0].evidence_verified, false);
+    assert.equal(summary.runs[0].time_to_configured_targets_s, null);
     const status = JSON.parse(execFileSync(bin, [...args, 'status', 'run-test', '--json'], options));
     assert.equal(status.status, 'passed');
     assert.equal(status.evidence_dir, realpathSync(folder));

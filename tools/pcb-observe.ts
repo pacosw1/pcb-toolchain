@@ -8,16 +8,17 @@ import { catalog, context } from './lib/pcb-workflow.ts';
 import { nextAction } from './lib/pcb-next.ts';
 import { nextReaders } from './lib/pcb-next-readers.ts';
 import { note, NOTE_KINDS, type NoteKind } from './lib/pcb-note.ts';
+import { summarize } from './lib/pcb-benchmark.ts';
 import { get, item, jsonDumps, pyStr } from './lib/py-compat.mjs';
 
-const usage = 'usage: pcb [--project DIR] {list,context,next,status,events,explain,cancel,note} [BOARD_OR_RUN_ID] [options]';
+const usage = 'usage: pcb [--project DIR] {list,context,next,status,events,explain,cancel,note,benchmark} [BOARD_OR_RUN_ID] [options]';
 
 export async function main(argv: string[]): Promise<number> {
   let explicit: string | undefined;
   if (argv[0] === '--project') { explicit = argv[1]; if (!explicit) throw new Error(usage); argv = argv.slice(2); }
   else if (argv[0]?.startsWith('--project=')) { explicit = argv[0].slice(10); argv = argv.slice(1); }
   const command = argv.shift();
-  if (command !== 'list' && command !== 'context' && command !== 'next' && command !== 'status' && command !== 'events' && command !== 'explain' && command !== 'cancel' && command !== 'note') throw new Error(usage);
+  if (command !== 'list' && command !== 'context' && command !== 'next' && command !== 'status' && command !== 'events' && command !== 'explain' && command !== 'cancel' && command !== 'note' && command !== 'benchmark') throw new Error(usage);
   const options: ParseArgsOptionsConfig = {
     'runs-dir': { type: 'string' }, json: { type: 'boolean', default: false },
     ...(command === 'events' ? { after: { type: 'string', default: '0' }, limit: { type: 'string', default: '100' }, wait: { type: 'string', default: '0' } } : {}),
@@ -26,7 +27,7 @@ export async function main(argv: string[]): Promise<number> {
     ...(command === 'note' ? { kind: { type: 'string' } } : {}),
   };
   const { values, positionals } = parseArgs({ args: argv, options, allowPositionals: true });
-  if (positionals.length !== (command === 'list' ? 0 : command === 'note' ? 2 : 1)) throw new Error(usage);
+  if (command === 'benchmark' ? positionals.length < 1 : positionals.length !== (command === 'list' ? 0 : command === 'note' ? 2 : 1)) throw new Error(usage);
   const noteKind = command === 'note' ? values.kind as string | undefined : undefined;
   if (command === 'note' && (!noteKind || !NOTE_KINDS.includes(noteKind as NoteKind))) throw new Error('--kind must be intervention, decision or rework');
   if (command === 'list') {
@@ -41,6 +42,11 @@ export async function main(argv: string[]): Promise<number> {
   const requestedBase = resolve((values['runs-dir'] as string | undefined) ?? process.env.PCB_RUNS_DIR ?? resolve(projectRoot(explicit), '.gate/cli'));
   let base = requestedBase;
   try { base = realpathSync(requestedBase); } catch { /* runDir reports missing runs consistently */ }
+  if (command === 'benchmark') {
+    const data = summarize(positionals.map(id => runDir(base, id)));
+    console.log(jsonDumps(data, values.json ? null : 2));
+    return 0;
+  }
   if (command === 'next') {
     const decision = await nextAction(projectRoot(explicit), positionals[0]!, {
       base, readers: nextReaders,
