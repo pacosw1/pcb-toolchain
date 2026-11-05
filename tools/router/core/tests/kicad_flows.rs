@@ -192,3 +192,52 @@ fn an_existing_out_gives_an_error_line_and_a_record() {
     assert_eq!(fs::read_to_string(&out).unwrap(), "keep");
     assert_eq!(fs::read_dir(&f.0).unwrap().count(), 1);
 }
+
+/// Independent native fill evidence for the local routed-via hole regression.
+/// This is deliberately a tiny geometry probe, not a complete fabricated board.
+#[test]
+fn routed_vias_cut_reference_beyond_generic_plane_clearance() {
+    if !on_path("kicad-cli-nightly") || !on_path(&kicad_cli()) {
+        eprintln!("skipped: needs kicad-cli and kicad-cli-nightly");
+        return;
+    }
+    let root = Folder::new();
+    let mut uid = 900;
+    let mut probe = Vec::new();
+    for with_vias in [false, true] {
+        let name = if with_vias { "holes" } else { "before" };
+        let dir = root.0.join(name);
+        fs::create_dir(&dir).unwrap();
+        let pcb = dir.join("plane.kicad_pcb");
+        let layers = LAYERS.replace("(2 \"B.Cu\" signal)", "(4 \"In1.Cu\" power) (6 \"In2.Cu\" power) (2 \"B.Cu\" signal)");
+        let vias = if with_vias {
+            [4.4, 5.6].iter().map(|y| format!("(via (at 5 {y}) (size 0.6) (drill 0.3) (layers \"F.Cu\" \"B.Cu\") (net \"OTHER\") (uuid \"{}\"))", uuid(&mut uid))).collect::<String>()
+        } else { String::new() };
+        fs::write(&pcb, format!(r#"(kicad_pcb (version 20260206) (generator "pcbnew") (generator_version "10.0")
+(general (thickness 1.6) (legacy_teardrops no)) (paper "A4") {layers} (setup (pad_to_mask_clearance 0))
+(gr_rect (start 0 0) (end 20 20) (stroke (width 0.05) (type default)) (fill no) (layer "Edge.Cuts") (uuid "{}"))
+(zone (net "GND") (layer "In1.Cu") (uuid "{}") (hatch edge 0.5)
+(connect_pads (clearance 1.2)) (min_thickness 0.2) (filled_areas_thickness no)
+(fill yes (thermal_gap 0.3) (thermal_bridge_width 0.3) (island_removal_mode 1))
+(polygon (pts (xy 1 1) (xy 19 1) (xy 19 19) (xy 1 19)))) {vias})"#, uuid(&mut uid), uuid(&mut uid))).unwrap();
+        let report = dir.join("drc.json");
+        let fill = Command::new(kicad_cli()).args(["pcb", "drc", "--refill-zones", "--save-board", "--format", "json", "-o"])
+            .arg(&report).arg(&pcb).output().unwrap();
+        assert!(fill.status.success() && report.is_file(), "{}", text(&fill));
+        let dump = iotroute(&["board-json", pcb.to_str().unwrap()], &dir);
+        assert!(dump.status.success(), "{}", text(&dump));
+        let json: Value = serde_json::from_slice(&dump.stdout).unwrap();
+        let board: iotroute::kicad::Board = serde_json::from_value(json["board"].clone()).unwrap();
+        let inside = |x: f64| {
+            let p = iotroute::kicad::geom::Pt::new((x * 1e6).round() as i64, 5_000_000);
+            board.zones.iter().filter(|z| z.net == "GND").flat_map(|z| &z.filled)
+                .filter(|f| f.layer == "In1.Cu").flat_map(|f| &f.polygons).any(|poy| poy.contains(p))
+        };
+        probe.push((inside(6.2), inside(10.0)));
+    }
+    assert_eq!(probe[0], (true, true), "both samples start over native reference copper");
+    assert_eq!(probe[1], (false, true), "only the sample by the new vias loses its reference");
+    // Each via is sqrt(1.2^2 + 0.6^2) mm from the failed sample, well
+    // outside radius 0.3 + generic plane clearance 0.25 + track halfwidth 0.075.
+    assert!(1.2_f64.hypot(0.6) > 0.3 + 0.25 + 0.075);
+}
