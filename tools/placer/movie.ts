@@ -32,7 +32,7 @@ const GREEN_RED: Rgb[] = [[26, 152, 80], [255, 255, 191], [215, 48, 39]];
 
 type Pose = number[][];
 interface Problem {
-  units: { pads?: number[][] }[];
+  units: { name?: string; pads?: number[][] }[];
   nets: { pins: number[][]; cohesion?: boolean }[];
   board: { outline: number[][]; copper?: [string, number, number, number, number, number][] };
 }
