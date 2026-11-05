@@ -4691,7 +4691,6 @@ fn route_cli(args: &[String]) {
         }
     }
     let best_end = best.as_ref().map(|b| (b.1, b.0));
-    let mut web_relaxed = 0.0f64;
     if !converged {
         // graceful end: take the best iteration, rip up nets until the copper is legal (most conflicts first), then
         // route the ripped nets again with soft conflicts blocking; what stays open is reported as failed
@@ -4753,15 +4752,9 @@ fn route_cli(args: &[String]) {
             ripped.extend((0..nn).filter(|&n| cut[n]));
         }
         ctx.strict = true;
-        // v6 fix 3c: the antipad web is a limit of the negotiation; when it did not converge, the strict end step
-        // routes the ripped nets with the web off (the copper rules stay), and the web pairs left are reported
-        web_relaxed = if ctx.bd.web_hard { ctx.bd.web } else { 0.0 };
-        if web_relaxed > 0.0 {
-            ctx.bd.web_hard = false;
-            ctx.bd.web = 0.0;
-            ctx.memo.clear();
-            ctx.gr.reset_cache();
-        }
+        // Recovery changes the search strategy, never the requested geometry rules.
+        // Keep --web-hard in force through strict rerouting, cascades and length recovery;
+        // a net that cannot satisfy it must remain open.
         let mut reopened = Vec::new();
         for &net in order.iter().filter(|n| ripped.contains(n)) {
             let r = if ctx.bd.nets[net].plane { fanout_net(&mut ctx, net) } else { route_net(&mut ctx, net) };
@@ -4887,13 +4880,8 @@ fn route_cli(args: &[String]) {
     }
     // RP-001 check of the final copper: a net with a signal via and no GND return within --return-r (its return via
     // was the one of a net ripped at the end) is routed again strictly, which places its returns; up to 3 rounds
-    if ctx.bd.web > 0.0 && web_relaxed == 0.0 {
+    if ctx.bd.web > 0.0 {
         notes.push(format!("antipad web {:.2} mm ({}): {} signal via pair(s) closer", ctx.bd.web, if ctx.bd.web_hard { "hard rule" } else { "priced" }, web_pairs(ctx.bd, ctx.bd.web)));
-        eprintln!("{}", notes.last().unwrap());
-    }
-    if web_relaxed > 0.0 {
-        let n = web_pairs(ctx.bd, web_relaxed);
-        notes.push(format!("antipad web {web_relaxed:.2} mm relaxed in the strict end step (negotiation not converged): {n} signal via pair(s) closer"));
         eprintln!("{}", notes.last().unwrap());
     }
     // then the pour check of the final copper: a fault left after the negotiation (or made by a re-route here) gets a
