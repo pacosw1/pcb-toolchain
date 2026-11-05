@@ -147,6 +147,30 @@ test('a step asks for a diagnosis, its evidence teaches the next search, and a r
   assert.equal(stopped.decision.action, 'resolve_constraint_coverage');
 });
 
+test('--routes tries other seeds until one passes, and --gnd-vias makes GND a plane net', async () => {
+  const native = join(folder, 'source.kicad_pcb');
+  writeFileSync(native, 'bytes');
+  class Seeds extends Compaction {
+    commands: string[][] = [];
+    override async stage(command: string[]): Promise<StageResult> {
+      this.commands.push(command);
+      const failed = this.commands.length < 2;
+      return { returncode: 0, stdout: `${JSON.stringify({ status: failed ? 'FAIL' : 'PASS', drc_errors: 0, unconnected: failed ? 1 : 0, parity: 0 })}\n`, stderr: '' };
+    }
+  }
+  const run = driver(Seeds as typeof Compaction) as unknown as Seeds;
+  run.gate.run = async () => ({ erc_errors: 0 });
+  Object.assign(run.a, { routes: 3, gnd_vias: true, seed: 5 });
+  const passed = await run.route(native, 0) as Measured;
+  assert.deepEqual(passed.counts, [1, 0]);
+  assert.equal(run.commands.length, 2);
+  assert.ok(!run.commands[0]!.includes('--seed'));
+  assert.equal(run.commands[1]![run.commands[1]!.indexOf('--seed') + 1], '6');
+  for (const command of run.commands) assert.equal(command[command.indexOf('--plane-net') + 1], 'GND');
+  assert.equal(run.routesDone, 2);
+  assert.ok(existsSync(join(folder, 'step-0/route-1/score.json')));
+});
+
 test('the route cap ends routing without another attempt', async () => {
   const native = join(folder, 'source.kicad_pcb');
   writeFileSync(native, 'bytes');

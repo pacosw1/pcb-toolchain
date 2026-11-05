@@ -1,6 +1,6 @@
 //! `iotroute run BOARD OUT.kicad_pcb [--pcb IN.kicad_pcb] [--iters N] [--max-time S] [--lock-from SRC.kicad_pcb]
 //!               [--reuse PREV.kicad_pcb [--reuse-fallback full|none]] [--seed N] [--stall-passes N] [--checkpoint]
-//!               [--congestion] [--return-exempt] [--diagnose] [--tools DIR] [--json]`
+//!               [--congestion] [--return-exempt] [--diagnose] [--plane-net NET]... [--tools DIR] [--json]`
 //!
 //! One entry point for the in-house router: model, route, board copy, KiCad DRC (tools/router/DESIGN.md). BOARD is the board ID
 //! (hardware-design/boards/<BOARD>) or that folder. The input is --pcb, else the project board; it is only read. --tools is the
@@ -48,7 +48,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use steps::{Steps, last_line, sources_sha};
 
-const USAGE: &str = "usage: iotroute run BOARD OUT.kicad_pcb [--pcb IN] [--iters N] [--max-time S] [--lock-from SRC] [--reuse PREV] [--reuse-fallback full|none] [--congestion] [--return-exempt] [--diagnose] [--seed N] [--stall-passes N] [--checkpoint] [--tools DIR] [--json]";
+const USAGE: &str = "usage: iotroute run BOARD OUT.kicad_pcb [--pcb IN] [--iters N] [--max-time S] [--lock-from SRC] [--reuse PREV] [--reuse-fallback full|none] [--congestion] [--return-exempt] [--diagnose] [--plane-net NET]... [--seed N] [--stall-passes N] [--checkpoint] [--tools DIR] [--json]";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Args {
@@ -63,6 +63,7 @@ pub struct Args {
     pub congestion: bool,
     pub return_exempt: bool,
     pub diagnose: bool,
+    pub plane_nets: Vec<String>,
     pub seed: Option<u64>,
     pub stall_passes: Option<u64>,
     pub checkpoint: bool,
@@ -78,7 +79,7 @@ fn value<T: std::str::FromStr>(flag: &str, text: Option<&String>) -> Result<T, S
 pub fn parse_args(argv: &[String]) -> Result<Args, String> {
     let mut a = Args {
         board: String::new(), out: String::new(), pcb: None, iters: 80, max_time: None, lock_from: None, reuse: None, reuse_fallback: "full".to_string(),
-        congestion: std::env::var("IOTROUTE_CONGESTION").is_ok_and(|v| v == "1"), return_exempt: false, diagnose: false, seed: None, stall_passes: None, checkpoint: false, tools: PathBuf::from("tools"), json: false,
+        congestion: std::env::var("IOTROUTE_CONGESTION").is_ok_and(|v| v == "1"), return_exempt: false, diagnose: false, plane_nets: Vec::new(), seed: None, stall_passes: None, checkpoint: false, tools: PathBuf::from("tools"), json: false,
     };
     let mut positional = Vec::new();
     let mut it = argv.iter();
@@ -93,6 +94,7 @@ pub fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--seed" => a.seed = Some(value(arg, it.next())?),
             "--stall-passes" => a.stall_passes = Some(value(arg, it.next())?),
             "--tools" => a.tools = PathBuf::from(value::<String>(arg, it.next())?),
+            "--plane-net" => a.plane_nets.push(value(arg, it.next())?),
             "--congestion" => a.congestion = true,
             "--return-exempt" => a.return_exempt = true,
             "--diagnose" => a.diagnose = true,
@@ -302,6 +304,23 @@ fn lock_step(steps: &Steps, folder: &Path, src: &Path, work: &Path, lock_from: &
     Ok((copy, stage))
 }
 
+/// --plane-net: the net gets pad vias into its pour and no tracks, as a stage's `plane_nets` in `iotroute route`.
+fn set_plane_nets(path: &Path, names: &[String]) -> Result<(), String> {
+    if names.is_empty() {
+        return Ok(());
+    }
+    let text = fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut model: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    for name in names {
+        let net = model["nets"].get_mut(name).ok_or_else(|| format!("--plane-net: {name} is not on the board"))?;
+        if net["plane_polys"].is_null() {
+            return Err(format!("--plane-net: {name} has no pour to reach"));
+        }
+        net["plane"] = true.into();
+    }
+    fs::write(path, model.to_string()).map_err(|e| format!("{}: {e}", path.display()))
+}
+
 fn run(a: &Args, rec: &mut Record, out: &Path, work: &Path) -> Result<(), String> {
     if out.extension().and_then(|e| e.to_str()) != Some("kicad_pcb") {
         return Err("OUT must end in .kicad_pcb".to_string());
@@ -332,6 +351,7 @@ fn run(a: &Args, rec: &mut Record, out: &Path, work: &Path) -> Result<(), String
     guard::preflight(&route_in, &work.join("preflight.json"))?;
     let model = work.join("model.json");
     let text = steps.admit(&folder, &route_in, &model, &work.join("model.log"), a.return_exempt)?;
+    set_plane_nets(&model, &a.plane_nets)?;
     rec.stages.model = Some(ModelStage { line: text.trim().lines().last().unwrap_or("").to_string(), sha256: sha_file(&model)? });
 
     let widths = widths::board_widths(&folder, &model)?;
@@ -410,6 +430,20 @@ mod tests {
         assert_eq!((a.iters, a.reuse.clone(), a.reuse_fallback.as_str(), a.json), (80, None, "full", false));
         let a = args("NET-CORE o.kicad_pcb --reuse p.kicad_pcb --seed 0 --stall-passes 12 --checkpoint --json --max-time 1.5").unwrap();
         assert_eq!((a.reuse.as_deref(), a.seed, a.stall_passes, a.checkpoint, a.max_time), (Some("p.kicad_pcb"), Some(0), Some(12), true, Some(1.5)));
+    }
+
+    #[test]
+    fn a_plane_net_needs_a_pour_and_stays_out_of_routing() {
+        let path = std::env::temp_dir().join(format!("iotroute-plane-{}.json", std::process::id()));
+        fs::write(&path, r#"{"nets": {"GND": {"plane": false, "plane_polys": [[[0, 0], [1, 0], [1, 1]]]}, "A": {"plane": false}}}"#).unwrap();
+        let names = |list: &[&str]| list.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        assert_eq!(args("A B --plane-net GND").unwrap().plane_nets, ["GND"]);
+        set_plane_nets(&path, &names(&["GND"])).unwrap();
+        let model: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!((&model["nets"]["GND"]["plane"], &model["nets"]["A"]["plane"]), (&true.into(), &false.into()));
+        assert!(set_plane_nets(&path, &names(&["A"])).unwrap_err().contains("A has no pour"));
+        assert!(set_plane_nets(&path, &names(&["Z"])).unwrap_err().contains("Z is not on the board"));
+        fs::remove_file(&path).unwrap();
     }
 
     #[test]
