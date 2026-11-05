@@ -26,9 +26,37 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
         state TEXT NOT NULL, cancelled INTEGER NOT NULL, revoked INTEGER NOT NULL, PRIMARY KEY(job,attempt,verification)) STRICT;
       CREATE TABLE IF NOT EXISTS protected_candidates (job TEXT NOT NULL, attempt TEXT NOT NULL, manifest TEXT NOT NULL, state TEXT NOT NULL,
         PRIMARY KEY(job,attempt)) STRICT;
+      CREATE TABLE IF NOT EXISTS protected_runtime_jobs (job TEXT NOT NULL, attempt TEXT NOT NULL, runtime_job TEXT NOT NULL UNIQUE,
+        PRIMARY KEY(job,attempt)) STRICT;
       CREATE TABLE IF NOT EXISTS protected_revisions (project TEXT NOT NULL, board TEXT NOT NULL, revision INTEGER NOT NULL,
         manifest TEXT NOT NULL, verification TEXT NOT NULL, PRIMARY KEY(project,board,revision)) STRICT;
       CREATE TABLE IF NOT EXISTS protected_commit_results (request_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, revision INTEGER NOT NULL, manifest TEXT NOT NULL) STRICT;`);
+  }
+  /** Internal orchestrator only: persist runtime identity; the future launcher must enforce its admission barrier. */
+  associateRuntimeFromTrustedService(ref: { project:string; board:string; operation:string; job:string; attempt:string }, runtimeJob: string): void {
+    if (!ref || ![ref.project,ref.board,ref.operation,ref.job,ref.attempt,runtimeJob].every(x => typeof x === 'string' && ID.test(x)))
+      throw new Error('invalid protected runtime association');
+    this.transaction(() => {
+      const now = this.clock();
+      const attempt = this.db.prepare('SELECT * FROM protected_attempt_bindings WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as Attempt | undefined;
+      const lease = this.db.prepare('SELECT * FROM protected_leases WHERE project=? AND board=?').get(ref.project,ref.board) as Lease | undefined;
+      const cancellation = this.db.prepare('SELECT cancelled FROM protected_attempt_cancellation WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {cancelled:number} | undefined;
+      if (!attempt || attempt.project !== ref.project || attempt.board !== ref.board || attempt.operation !== ref.operation ||
+          !lease || lease.boot_id !== this.bootId || lease.pinned !== 1 || lease.expires_at <= now || lease.generation !== attempt.generation ||
+          !cancellation || cancellation.cancelled !== 0) throw new Error('protected runtime association is stale');
+      const prior = this.db.prepare('SELECT runtime_job FROM protected_runtime_jobs WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {runtime_job:string} | undefined;
+      if (prior) { if (prior.runtime_job !== runtimeJob) throw new Error('protected runtime job changed'); return; }
+      this.db.prepare('INSERT INTO protected_runtime_jobs VALUES (?,?,?)').run(ref.job,ref.attempt,runtimeJob);
+    });
+  }
+  /** Read cancelled runtime jobs for an internal reconciler; cancellation is durable before signalling. */
+  pendingRuntimeCancellations(): { job:string; attempt:string; runtimeJob:string }[] {
+    return this.transaction(() => {
+      this.safeNow();
+      return this.db.prepare(`SELECT r.job,r.attempt,r.runtime_job AS runtimeJob FROM protected_runtime_jobs r
+        JOIN protected_attempt_cancellation c ON c.job=r.job AND c.attempt=r.attempt WHERE c.cancelled=1 ORDER BY r.job,r.attempt`).all() as
+        { job:string; attempt:string; runtimeJob:string }[];
+    });
   }
   /** Persist cancellation before the orchestrator stops a worker. Pins remain until trusted cleanup. */
   cancelAttempt(capability: string, ref: { project: string; board: string; operation: string; job: string; attempt: string }): void {

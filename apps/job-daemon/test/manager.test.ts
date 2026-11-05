@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { runArgs } from '../src/docker.ts';
 import { validateSpec } from '../src/manager.ts';
+import { reconcileProtectedCancellations } from '../src/protected-runtime.ts';
 import { HttpError } from '../src/types.ts';
 import { rig } from './helpers.ts';
 import type { Rig } from './helpers.ts';
@@ -29,6 +30,15 @@ async function settle(id: string): Promise<void> {
 }
 
 describe('states', () => {
+  it('reconciles a durable protected cancellation into the actual manager', async () => {
+    const job = r.submit(['hang']); await r.mgr.tick();
+    const authority = { pendingRuntimeCancellations: () => [{ job:'protected', attempt:'attempt', runtimeJob:job.id }] };
+    assert.deepEqual(reconcileProtectedCancellations(authority as never, r.mgr).requested, [job.id]);
+    assert.equal(job.cancelRequested, true);
+    await r.mgr.tick();
+    assert.equal(job.state, 'cancelled');
+    assert.deepEqual(r.runtime.killed, [job.attempts[0].container]);
+  });
   it('queued -> running -> passed, input extracted, only out/ kept', async () => {
     const job = r.submit(['pass']);
     assert.equal(job.state, 'queued');

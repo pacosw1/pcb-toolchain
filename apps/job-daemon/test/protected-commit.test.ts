@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path'; import { test } from 'node:test';
 import { ProtectedCommitStore } from '../src/protected-commit.ts'; import { parseCanonicalJson } from '../src/canonical-json.ts';
+import { reconcileProtectedCancellations } from '../src/protected-runtime.ts';
 const hash=(b:Uint8Array):string=>createHash('sha256').update(b).digest('hex');
 const encode=(x:unknown):Buffer=>parseCanonicalJson(Buffer.from(JSON.stringify(x)),{maxBytes:1_000_000,maxNodes:1000,maxDepth:12}).canonical;
 class Fixture extends ProtectedCommitStore {
@@ -39,6 +40,9 @@ test('fenced verified commit atomically advances the target and replays its dura
     if(lease.state!=='ACQUIRED') throw Error('lease missing');
     store.bindAttempt(submit.token,{project:'p',board:'b',operation:'route',generation:lease.generation,token:lease.token},{job:'job',attempt:'attempt',sourceManifest:source,policyDigest:policy,runtimeDigest:runtime,toolchainDigest:toolchain});
     const candidateRef={project:'p',board:'b',operation:'route',job:'job',attempt:'attempt',manifest:candidate};
+    store.associateRuntimeFromTrustedService(candidateRef,'runtime-job');
+    store.associateRuntimeFromTrustedService(candidateRef,'runtime-job');
+    assert.throws(()=>store.associateRuntimeFromTrustedService(candidateRef,'different-job'),/changed/);
     assert.throws(()=>store.stageCandidate(submit.token,candidateRef),/not authorized/);
     store.stageCandidate(worker.token,candidateRef); store.stageCandidate(worker.token,candidateRef);
     assert.throws(()=>store.stageCandidate(worker.token,{...candidateRef,manifest:source}),/candidate changed/);
@@ -50,6 +54,12 @@ test('fenced verified commit atomically advances the target and replays its dura
     store.revoke(); assert.throws(()=>store.commit(commit.token,request),/authority/); assert.equal(store.revision(),1);
     store.seedVerifierForTest();
     store.cancelAttempt(cancel.token,candidateRef);
+    const jobs = new Map<string, unknown>(), calls:string[] = [];
+    const manager = {jobs,cancel:(id:string)=>{calls.push(id);return jobs.get(id);}};
+    assert.deepEqual(reconcileProtectedCancellations(store,manager as never).unavailable,['runtime-job']);
+    jobs.set('runtime-job',{});
+    assert.deepEqual(reconcileProtectedCancellations(store,manager as never).requested,['runtime-job']);
+    assert.deepEqual(calls,['runtime-job']);
     assert.throws(()=>store.commit(commit.token,request),/preconditions/);
     assert.ok(store.pins().some(p=>p.kind==='attempt-candidate'&&p.sha256===candidate));
     store.resetCancellationForTest(); // Test fixture only; no production uncancel path exists.
