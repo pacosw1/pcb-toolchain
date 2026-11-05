@@ -1,5 +1,5 @@
 // The routing-flow feature switches for tools that are not Python: tools/route-features.json, then <board>/gate.json "route_features"
-// merged per feature, then ROUTE_FEATURES="name=1,name=0" ("all=1" and "all=0" set every flag first). tools/route_features.py has the
+// merged per feature, then ROUTE_FEATURES="name=1,name=0" ("all=1" and "all=0" set every flag first). tools/router/core/src/route_features has the
 // DSN side of them; a board's learned halo nets are read by it and written here, so the two must agree on the fingerprint.
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';

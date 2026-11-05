@@ -21,7 +21,6 @@ tools/backend-patches/fastroute-quality-773/LICENSE.upstream
 tools/backend-patches/fastroute-quality-773/README.md
 tools/backend-patches/fastroute-quality-773/build-provenance.json
 tools/backend-patches/fastroute-quality-773/quality-first.patch
-tools/backend_quality.py
 tools/block-reuse-data.json
 tools/block_extract.ts
 tools/blocks.ts
@@ -646,12 +645,8 @@ tools/route-coverage/tests/thermal.rs
 tools/route-features.json
 tools/route_batch.mjs
 tools/route_decision.ts
-tools/route_features.py
-tools/route_hole_coverage.py
 tools/route_native_thermals.py
 tools/route_plan.mjs
-tools/route_project_coverage.py
-tools/route_rule_coverage.py
 tools/route_status.ts
 tools/router/DESIGN.md
 tools/router/core/.gitignore
@@ -959,7 +954,6 @@ tools/stitch_all.ts
 tools/test-fixtures/generator-cc-774.json
 tools/test-fixtures/mandatory-cc-774.json
 tools/test-gnd-pad-vias.py
-tools/test_backend_quality.py
 tools/test_gnd_pad_vias.py
 tools/test_lean_clock.py
 tools/test_lean_native.py
@@ -969,9 +963,7 @@ tools/test_lean_workflow.py
 tools/test_mandatory_preflight.py
 tools/test_mandatory_records_native.py
 tools/test_project_root.py
-tools/test_route_hole_coverage.py
 tools/test_route_native_thermals.py
-tools/test_route_rule_coverage.py
 tools/test_run_record.py
 tools/test_thermal_repair.py
 tools/thermal_repair.py

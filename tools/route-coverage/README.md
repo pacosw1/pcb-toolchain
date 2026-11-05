@@ -1,8 +1,9 @@
 # Route coverage in Rust
 
-Ports of `route_hole_coverage.py`, `route_project_coverage.py`, and
-`route_native_thermals.py`. The Python files and their tests stay while the
-unported route-job and engineering modules still import them.
+The hole, project and native thermal proofs of the route job.
+`route_native_thermals.py` stays until the job can produce its fill receipt:
+`--native-thermal-checkback` needs `ZONE_FILLER.Fill`'s result, which only pcbnew
+reports.
 
 Build with `cargo build --locked --manifest-path tools/route-coverage/Cargo.toml -j 2`.
 The `route-coverage` binary accepts an operation and a JSON request file (or
@@ -17,8 +18,14 @@ Containment uses arbitrary precision decimals and squared distances. There is
 no new numerical tolerance. The backend grid bound and patch are the same
 reviewed upstream contract as the original check.
 
-The current shared board JSON omits via type/layer extent. Such inventory rows
-remain present and unsupported; they cannot receive a false through-via proof.
+Board JSON gives each via its `via_type`: Through, Micro, BlindBuried, Unknown,
+or Custom for a through via with a padstack of its own. Anything but Through, or
+a via with no type or layer extent, stays in the inventory unsupported and cannot
+receive a false through-via proof.
+
+The API lists a `*.Cu` pad on every copper layer KiCad knows, enabled or not, so
+a pad naming a disabled copper layer cannot be told from a wildcard. The Python
+read the file's spelling and refused such a pad; here the layer is dropped.
 
 Two intentional provenance changes require fresh evidence:
 
@@ -59,13 +66,22 @@ descriptors, including that executable. Context schema is escape-context.v2.
 No Python fallback is run. The actual grid adapter is outside these four files;
 this interface has only been exercised with synthetic producers.
 
-Latest targeted evidence: 13 hole, 9 project, and 13 thermal Rust tests pass;
-18 Node decision tests pass, including stale receipts, one guarded gap edit,
-exact crossings, missing via extent, and escape-cache invalidation. Targeted
-TypeScript typechecking passes. The hole proof also rejects differences beyond
-100 decimal places: every finite division is exact, with no library precision
-limit silently rounding a boundary into coverage.
+Latest targeted evidence: 112 Rust tests of this crate pass (hole 45, admission
+24, project 9, thermal 31, DSN floor 3). The hole proof also rejects differences
+beyond 100 decimal places: every finite division is exact, with no library
+precision limit silently rounding a boundary into coverage.
 
-No Python baseline, real-board board-json read, native save/DRC, full configured
-gate, or daemon/grid integration was run. The tests use synthetic boards and
-receipts and make no native-validity claim. No Python files were deleted.
+Compared with `fastroute_job.py` before its removal (2026-11-04), same input to
+each, on scratch copies:
+
+- ENV-SENSE, one net: blocked with the same cause, 24 requirement rows equal.
+- ENV-SENSE with `min_resolved_spokes` 0 in the copied project, features
+  rule_compiler, via_off_small_pads and via_halo on: admitted, routed, the same
+  288 copper items, and equal requirement rows and rules.log.
+- CHECKIN with `min_resolved_spokes` 0, GND plane vias: blocked with the same
+  cause, 27 requirement rows equal, equal DSN wiring in another order.
+
+These runs did not reach a thermal proposal, a replay of preserved copper, a pose
+rounded onto the grid, a layer mask or class pair, a quality backend manifest,
+native thermal checkback, or a positive PTH proof past admission. Those have
+tests with synthetic boards and receipts only.

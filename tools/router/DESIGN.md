@@ -6,7 +6,7 @@ and stop relying on others". First proof board: NET-CORE (branch claude/t113-net
 ## 1. Why
 
 - Fastroute is a closed binary. Our `.kicad_dru` rules must be translated into its DSN model, and
-  `tools/route_rule_coverage.py` correctly refuses to launch it when a rule cannot be proved there (NET-CORE 2026-10-31:
+  `iotroute` rule coverage correctly refuses to launch it when a rule cannot be proved there (NET-CORE 2026-10-31:
   via size, pair, RMII, crystal and In2 layer rules all "unsupported").
 - The rsixel A* router and Freerouting do not know our pair, RMII, return-via (RP-001) or current-path rules.
   Every board then ends in hand fixes (H7-CORE, ESP32-CORE, NET-CORE).
@@ -24,7 +24,7 @@ The router result is a proposal. A board is done only when KiCad DRC with `--sch
 | --- | --- |
 | `.kicad_pcb` (pcbnew) | outline, pads (shape, layers, net), footprints, existing copper (locked), zones |
 | `.kicad_pro` net classes + board setup | widths, clearances, via 0.6 / 0.3 minimum |
-| `.kicad_dru` (parser of route_rule_coverage) | per-net / per-class clearance, width, pair width / gap / skew / uncoupled / via count, length, via count, layer disallow |
+| `.kicad_dru` (parser of rule_coverage) | per-net / per-class clearance, width, pair width / gap / skew / uncoupled / via count, length, via count, layer disallow |
 | `.kicad_dru` pair rules (core/src/model/pairs.rs, 2026-11-01) | clearance / creepage / hole clearance that read both items (class pairs, net pairs, footprint members, `A.X != B.X`, `intersectsCourtyard` / `intersectsArea`): clearance groups + pair table, KiCad order (last match wins, both orders); creepage as a straight clearance (safe form) |
 | `diff-pairs.json` | pair membership, impedance target, reference |
 | `rp001-fast-nets.json` + gate `route_features.rule_compiler.extra.deny_layers` | layer policy (fast + power off In2) and return-via obligation |
@@ -38,7 +38,7 @@ The router result is a proposal. A board is done only when KiCad DRC with `--sch
 tools/router/
   core/src/model   `iotroute model`: board + rules -> RouteModel (JSON): layers, obstacles, nets, pins, per-net rule set
   core/src/kicad   KiCad 11 IPC API client (protos pinned in core/proto) and the geometry pcbnew gave: boards are read through it
-  rules.py      .kicad_dru -> per-net constraints (reuses route_rule_coverage._forms / _condition, three-valued)
+  rules.py      .kicad_dru -> per-net constraints (reuses rule_coverage forms and conditions, three-valued)
   core/         Rust crate (our code): multi-layer grid A*, negotiated congestion (PathFinder), via cost,
                 per-net clearance halos, layer masks, length / via-count limits, pair centerline mode
   plan.py       stage order: pairs + crystals -> plane vias (+ return vias) -> power (width per current path,
