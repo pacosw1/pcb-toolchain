@@ -68,7 +68,7 @@ pub fn mm(text: &str) -> Result<f64, String> {
 
 /// `&&`, `||` and `!` spelled out over the whole text, quoted literals included: the literal a compiled rule compares is
 /// the literal after this, so a net name with `!` in it matches nothing. The coverage check does not share this.
-fn spelled_out(condition: &str) -> String {
+pub fn spelled_out(condition: &str) -> String {
     let words = condition.replace("&&", " and ").replace("||", " or ");
     let mut out = String::with_capacity(words.len());
     let mut chars = words.chars().peekable();

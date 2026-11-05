@@ -8,6 +8,8 @@ pub mod job;
 pub mod kicad;
 pub mod model;
 pub mod owned;
+pub mod pair;
+pub mod pin_escape;
 pub mod plan;
 pub mod pytext;
 pub mod route_features;

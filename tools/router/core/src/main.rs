@@ -4224,6 +4224,9 @@ fn main() {
         Some("grid-finish") => std::process::exit(iotroute::grid::cli::finish_cli(&args[2..])),
         Some("grid-ripup") => std::process::exit(iotroute::grid::cli::ripup_cli(&args[2..])),
         Some("gnd-via-near") => std::process::exit(iotroute::grid::cli::near_cli(&args[2..])),
+        Some("pin-escape") => std::process::exit(iotroute::pin_escape::cli::cli(&args[2..])),
+        Some("pair-route") => std::process::exit(iotroute::pair::cli::route_cli(&args[2..])),
+        Some("pair-stubs") => std::process::exit(iotroute::pair::cli::stubs_cli(&args[2..])),
         _ => {}
     }
     route_cli(&args);

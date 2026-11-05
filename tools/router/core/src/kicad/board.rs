@@ -134,6 +134,16 @@ pub struct Footprint {
     pub courtyard_back: Vec<Polygon>,
 }
 
+impl Footprint {
+    /// GetCourtyard(layer).BBox(): none when the side has no courtyard. A contour keeps the width of its graphic and
+    /// SHAPE_LINE_CHAIN::BBox grows by that whole width, not half; contours of different widths count as the widest.
+    pub fn courtyard_box(&self, layer: &str) -> Option<Rect> {
+        let polygons = if layer.starts_with("B.") { &self.courtyard_back } else { &self.courtyard_front };
+        let width = self.graphics.iter().filter(|g| g.layer == layer).map(|g| g.width).max().unwrap_or(0);
+        polygons.iter().filter_map(Polygon::bbox).reduce(Rect::merged).map(|b| b.inflated(width))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum RoutedCopper {
     Track(Track),

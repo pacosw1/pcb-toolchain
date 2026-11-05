@@ -12,7 +12,7 @@ pub mod opens;
 pub mod ripup;
 pub mod sources;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 pub mod triage;
 pub mod via_near;
 

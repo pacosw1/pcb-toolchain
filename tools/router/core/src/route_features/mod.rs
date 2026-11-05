@@ -11,7 +11,7 @@ mod strengthen;
 #[cfg(test)]
 mod tests;
 
-pub use compile::{Compiled, ExtraRule, compile_dru, mm};
+pub use compile::{Compiled, ExtraRule, compile_dru, mm, spelled_out};
 pub use config::{Env, FLAGS, Feature, Features, HaloEvidence, board_dir, defaults_path, halo_nets, learned_halo, load, load_with, on, root, source_fingerprint, summary};
 pub use dsn_edit::{add_class_class, add_via_keepouts, apply_layer_masks, dsn_classes, verify_layer_masks};
 pub use strengthen::{ClearanceEdit, ProjectBinding, STRENGTHENING_SCHEMA, StrengthenReceipt, strengthen_project_clearance};
