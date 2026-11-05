@@ -10,7 +10,9 @@ use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::fd::AsRawFd;
+use std::os::unix::process::CommandExt;
 use std::path::Path;
+use std::process::Command;
 use std::time::{Duration, Instant};
 
 const EXIT_GAVE_UP: i32 = 1;
@@ -29,6 +31,7 @@ pub fn main(args: &[OsString]) -> i32 {
         Request::Hold { path, wait } => hold(path, wait),
         Request::Held { path } => report_held(path),
         Request::Append { path } => append_locked(path),
+        Request::Supervise { path, result, command } => supervise(path, result, command),
     };
     outcome.unwrap_or_else(|error| {
         eprintln!("lock: {error}");
@@ -40,6 +43,7 @@ enum Request<'a> {
     Hold { path: &'a Path, wait: Duration },
     Held { path: &'a Path },
     Append { path: &'a Path },
+    Supervise { path: &'a Path, result: &'a Path, command: &'a [OsString] },
 }
 
 fn parse(args: &[OsString]) -> Option<Request<'_>> {
@@ -47,6 +51,8 @@ fn parse(args: &[OsString]) -> Option<Request<'_>> {
     match (verb.to_str()?, rest) {
         ("held", [path]) => Some(Request::Held { path: Path::new(path) }),
         ("append", [path]) => Some(Request::Append { path: Path::new(path) }),
+        ("supervise", [path, flag, result, separator, command @ ..]) if flag == "--result" && separator == "--" && !command.is_empty() =>
+            Some(Request::Supervise { path: Path::new(path), result: Path::new(result), command }),
         ("hold", [path]) => Some(Request::Hold { path: Path::new(path), wait: Duration::ZERO }),
         ("hold", [path, flag, seconds]) if flag == "--wait-s" => {
             let wait = Duration::try_from_secs_f64(seconds.to_str()?.parse().ok()?).ok()?;
@@ -54,6 +60,27 @@ fn parse(args: &[OsString]) -> Option<Request<'_>> {
         }
         _ => None,
     }
+}
+
+/// Admit once and transfer the flock to an owned-stage broker. Its bootstrap
+/// closes undeclared FDs in the worker and its children; the broker retains
+/// the flock until it has settled the entire registered process family.
+fn supervise(path: &Path, result: &Path, command: &[OsString]) -> io::Result<i32> {
+    let file = OpenOptions::new().write(true).create_new(true).open(path)?;
+    let fd = file.as_raw_fd();
+    if fd < 3 { return Err(io::Error::new(io::ErrorKind::InvalidInput, "worker lock fd must be at least 3")); }
+    loop {
+        if unsafe { libc::flock(fd, libc::LOCK_EX) } == 0 { break; }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted { return Err(error); }
+    }
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let error = Command::new(std::env::current_exe()?).args(["owned", "run", "--result"])
+        .arg(result).arg("--").args(command).env("IOT_PCB_WORKER_LOCK", path).exec();
+    Err(error)
 }
 
 /// Open once, wait on the same inode, and give up if the caller's pipe closes.

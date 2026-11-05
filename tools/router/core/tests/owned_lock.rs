@@ -50,6 +50,26 @@ fn closing_stdin_releases_the_lock() {
 }
 
 #[test]
+fn supervisor_keeps_its_admission_flock_in_the_execed_process() {
+    let folder = scratch("supervisor");
+    let path = folder.join("worker.lock");
+    let result = folder.join("owned.json");
+    let mut child = Command::new(BIN).args(["lock", "supervise", path.to_str().unwrap(), "--result", result.to_str().unwrap(), "--", "sh", "-c", "echo ready; sleep 30"])
+        .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    let mut line = String::new();
+    BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
+    assert_eq!(line, "ready\n");
+    assert_eq!(probe(&path), HELD);
+    assert_eq!(run(&["lock", "supervise", path.to_str().unwrap(), "--result", result.to_str().unwrap(), "--", "true"]).status.code(), Some(2));
+    unsafe { libc::kill(child.id() as i32, libc::SIGTERM) };
+    child.wait().unwrap();
+    assert_eq!(probe(&path), FREE);
+    let report: serde_json::Value = serde_json::from_slice(&fs::read(result).unwrap()).unwrap();
+    assert_eq!(report["cleanup"]["complete"], true);
+    assert!(path.exists(), "the admission marker prevents replay even after exit");
+}
+
+#[test]
 fn append_waits_for_the_existing_lock_and_writes_a_complete_record() {
     let path = scratch("append").join("journal");
     let (mut holder, holder_stdin) = hold(&path);
