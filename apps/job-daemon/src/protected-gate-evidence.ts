@@ -1,13 +1,14 @@
 // Structural validation of fresh gate output only. It does not invoke a verifier, authenticate output,
 // establish dependency provenance, inspect tool identities or confirm cleanup; never accept client evidence as trusted.
 import { createHash } from 'node:crypto';
+import { parseEvidenceJson } from './canonical-json.ts';
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const SHA = /^[0-9a-f]{64}$/;
 const obj = (v:unknown):v is Record<string,unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const digest = (b:Uint8Array):string => createHash('sha256').update(b).digest('hex');
 function json(bytes:Uint8Array):unknown {
   if (!(bytes instanceof Uint8Array) || bytes.byteLength < 1 || bytes.byteLength > 16 * 1024 * 1024) throw new Error('invalid gate evidence size');
-  try { return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes)); } catch { throw new Error('invalid gate evidence JSON'); }
+  try { return parseEvidenceJson(bytes); } catch { throw new Error('invalid gate evidence JSON'); }
 }
 function sameSet(values:unknown, required:Set<string>): boolean {
   return Array.isArray(values) && values.length === required.size && values.every(v => typeof v === 'string' && required.has(v)) && new Set(values).size === required.size;

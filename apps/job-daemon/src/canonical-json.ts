@@ -4,8 +4,15 @@ import { createHash } from 'node:crypto';
 
 export type CanonicalValue = null | boolean | number | string | CanonicalValue[] | { [key: string]: CanonicalValue };
 export function parseCanonicalJson(input: Uint8Array, limits: { maxBytes: number; maxNodes: number; maxDepth: number }): { value: CanonicalValue; canonical: Buffer; sha256: string } {
-  if (!(input instanceof Uint8Array) || !Number.isSafeInteger(limits.maxBytes) || limits.maxBytes < 1 || limits.maxBytes > 8 * 1024 * 1024 ||
-      !Number.isSafeInteger(limits.maxNodes) || limits.maxNodes < 1 || limits.maxNodes > 200_000 ||
+  return parseBoundedJson(input,limits,false);
+}
+/** For trusted process evidence with coordinates and decimal values, preserving strict duplicate-key and UTF-8 checks. */
+export function parseEvidenceJson(input: Uint8Array): CanonicalValue {
+  return parseBoundedJson(input,{maxBytes:16*1024*1024,maxNodes:1_000_000,maxDepth:128},true).value;
+}
+function parseBoundedJson(input: Uint8Array, limits: { maxBytes: number; maxNodes: number; maxDepth: number }, finiteNumbers: boolean): { value: CanonicalValue; canonical: Buffer; sha256: string } {
+  if (!(input instanceof Uint8Array) || !Number.isSafeInteger(limits.maxBytes) || limits.maxBytes < 1 || limits.maxBytes > (finiteNumbers ? 16 : 8) * 1024 * 1024 ||
+      !Number.isSafeInteger(limits.maxNodes) || limits.maxNodes < 1 || limits.maxNodes > (finiteNumbers ? 1_000_000 : 200_000) ||
       !Number.isSafeInteger(limits.maxDepth) || limits.maxDepth < 1 || limits.maxDepth > 128 || input.byteLength > limits.maxBytes)
     throw new Error('invalid JSON limits');
   let text: string;
@@ -13,7 +20,7 @@ export function parseCanonicalJson(input: Uint8Array, limits: { maxBytes: number
   try { text = new TextDecoder('utf-8', { fatal: true }).decode(input); } catch { throw new Error('invalid JSON UTF-8'); }
   let i = 0, nodes = 0;
   // v1 permits decimal integer tokens only; avoid rounding a fractional/exponent input into a safe integer.
-  const numberPattern = /(?:0|[1-9]\d*)/y;
+  const numberPattern = finiteNumbers ? /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/y : /(?:0|[1-9]\d*)/y;
   const fail = (): never => { throw new Error('invalid protected JSON'); };
   const ws = (): void => { while (i < text.length && /[\x20\x09\x0a\x0d]/.test(text[i])) i++; };
   const string = (): string => {
@@ -59,7 +66,7 @@ export function parseCanonicalJson(input: Uint8Array, limits: { maxBytes: number
     const match = numberPattern.exec(text);
     if (!match) return fail();
     i += match[0].length; const number = Number(match[0]);
-    if (!Number.isSafeInteger(number) || number < 0) return fail();
+    if (finiteNumbers ? !Number.isFinite(number) : !Number.isSafeInteger(number) || number < 0) return fail();
     return number;
   };
   const root = value(0); ws(); if (i !== text.length) return fail();

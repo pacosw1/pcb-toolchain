@@ -13,5 +13,10 @@ test('requires complete fresh gate results and clean native parity',()=>{
   const missing=fixture();missing.findings.completed_checks=['erc'];assert.throws(()=>run(missing),/findings/);
   const parity=fixture();parity.drc.schematic_parity=[{}];assert.throws(()=>run(parity),/DRC/);
   const violation=fixture();violation.erc.sheets[0].violations=[{severity:'error'}];assert.throws(()=>run(violation),/ERC/);
+  const duplicate=fixture(); const raw=b(duplicate.result).toString().replace('"exit":0','"exit":0,"exit":0');
+  assert.throws(()=>validateFreshGateEvidence({result:Buffer.from(raw),findings:b(duplicate.findings),erc:b(duplicate.erc),drc:b(duplicate.drc)},expected),/JSON/);
+  const coordinates=fixture(); coordinates.findings.findings=[{stage:'drc',severity:'warning',location:{x:-0.25,y:1e-3}}];
+  assert.doesNotThrow(()=>run(coordinates));
+  assert.throws(()=>run(coordinates,{...expected,warningsAsErrors:true}),/findings/);
   assert.throws(()=>run(good,{...expected,terminalEvent:false}),/invocation/);
 });
