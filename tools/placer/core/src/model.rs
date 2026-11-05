@@ -44,12 +44,34 @@ pub struct UnitShape {
     pub pad_points: Turned<Point>,
 }
 
+fn is_copper_layer(name: &str) -> bool {
+    let inner = || name.strip_prefix("In")?.strip_suffix(".Cu")?.parse::<u8>().ok();
+    matches!(name, "F.Cu" | "B.Cu") || inner().is_some_and(|n| (1..=62).contains(&n))
+}
+
+/// A pad's layer list lines up with its boxes and names each copper layer once: a wrong row would hide locked copper.
+fn check_pad_layers(u: &Unit) -> crate::Result<()> {
+    let Some(rows) = &u.pad_copper_layers else { return Ok(()) };
+    let pads = u.pad_rects.as_ref().or(u.edge_pads.as_ref()).map_or(0, Vec::len);
+    if rows.len() != pads {
+        return Err(format!("unit {}: pad_copper_layers must align with pad boxes", u.name).into());
+    }
+    for row in rows.iter().flatten() {
+        let distinct = row.iter().collect::<BTreeSet<_>>().len() == row.len();
+        if !distinct || !row.iter().all(|layer| is_copper_layer(layer)) {
+            return Err(format!("unit {}: pad_copper_layers must contain distinct copper layer names", u.name).into());
+        }
+    }
+    Ok(())
+}
+
 impl UnitShape {
     fn new(u: &Unit, table: Option<&ClassTable>, p: &Params, via_nets: &[i64]) -> crate::Result<Self> {
         let local: Vec<Rect> = u.rects.iter().map(|r| r.rect).collect();
         let rects = turned_rects(&local);
         let box_at = |r: usize| Rect::bounding(rects[r].iter().copied()).ok_or(format!("unit {} has no rects", u.name));
         let bounds = [box_at(0)?, box_at(1)?, box_at(2)?, box_at(3)?];
+        check_pad_layers(u)?;
         let pad_rects = u.pad_rects.as_deref().map(turned_rects);
         let edge_pads = pad_rects.clone().or_else(|| u.edge_pads.as_deref().map(turned_rects));
         let turned_copper = |r| u.cu.iter().map(|q| TaggedRect { rect: q.rect.turned(r), value: q.value }).collect();

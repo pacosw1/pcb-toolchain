@@ -2,8 +2,8 @@
 
 mod common;
 
-use common::{model, parse, problem_json, small_params, square_board, unit};
-use iotplace::evaluator::Evaluator;
+use common::{parse, problem_json, small_params, square_board, unit};
+use iotplace::model::Model;
 use serde_json::{Value, json};
 
 #[test]
@@ -27,23 +27,20 @@ fn layered(layers: Value) -> Value {
     problem_json(json!([u]), json!([]), board)
 }
 
-/// Does building and asking the evaluator stop on this problem?
+/// Does building the model stop on this problem?
 fn refused(v: Value) -> bool {
     let p = small_params(&[]);
     let Ok(pr) = serde_json::from_value::<iotplace::problem::Problem>(v) else { return true };
-    let m = model(&pr, &p);
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| Evaluator::new(&m, &p, &pr.initial_pose()).legal_penalty(0))).is_err()
+    Model::new(&pr, &p).is_err()
 }
 
 #[test]
-#[ignore = "no check yet: mask.rs indexes the list and takes unknown layers as no copper; the fix is in problem.rs or model.rs"]
 fn layer_metadata_must_align_with_pad_boxes() {
     assert!(refused(layered(json!([]))));
     assert!(refused(layered(json!([["F.Cu"], ["B.Cu"]]))));
 }
 
 #[test]
-#[ignore = "no check yet: mask.rs indexes the list and takes unknown layers as no copper; the fix is in problem.rs or model.rs"]
 fn malformed_membership_is_rejected() {
     for layers in [json!("B.Cu"), json!(["B.Cu", "B.Cu"]), json!(["B.Mask"]), json!(["Foo.Cu"]), json!(["In63.Cu"])] {
         assert!(refused(layered(json!([layers.clone()]))), "{layers}");
