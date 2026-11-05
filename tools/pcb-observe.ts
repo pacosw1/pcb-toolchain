@@ -43,7 +43,8 @@ export async function main(argv: string[]): Promise<number> {
     return 0;
   }
   const after = Number(values.after), limit = Number(values.limit), wait = Number(values.wait);
-  if (!/^[+-]?\d+$/.test(String(values.after)) || !/^[+-]?\d+$/.test(String(values.limit)) || !Number.isSafeInteger(after) || !Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new Error('--limit must be between 1 and 1000 and --after must be an integer');
+  if (!/^[+-]?\d+$/.test(String(values.after)) || !Number.isSafeInteger(after)) throw new Error('--after must be an integer');
+  if (!/^[+-]?\d+$/.test(String(values.limit)) || !Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new Error('--limit must be between 1 and 1000');
   if (!String(values.wait).trim() || !Number.isFinite(wait) || wait < 0 || wait > 60) throw new Error('--wait must be between 0 and 60 seconds');
   const until = performance.now() + wait * 1000;
   for (;;) {

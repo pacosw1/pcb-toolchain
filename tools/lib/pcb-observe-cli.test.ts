@@ -40,5 +40,8 @@ test('installed launcher reads run status and byte-cursored events without Pytho
     const bad = spawnSync(bin, [...args, 'events', 'run-test', '--after', '1', '--json'], options);
     assert.equal(bad.status, 2);
     assert.match(JSON.parse(bad.stdout).cause, /line boundary/);
+    const badLimit = spawnSync(bin, [...args, 'events', 'run-test', '--limit', '0', '--json'], options);
+    assert.equal(badLimit.status, 2);
+    assert.equal(JSON.parse(badLimit.stdout).cause, '--limit must be between 1 and 1000');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
