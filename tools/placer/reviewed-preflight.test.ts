@@ -38,7 +38,7 @@ test('staged producer checks population and never treats preflight as approval',
  const units=[{name:'U1',refs:['U1'],x:1,y:2,fixed:false}]; const outline=[[0,0],[10,0],[10,10]];
  const core={schema:'iot-lab.engineering-constraints.v1',root:'/original',board:'X',manifest:'/original/manifest.json',
    native:'/original/'+project+'.kicad_pcb',inputs,rules:[],geometry:reconstructed.geometry,bindings:[]};
- const engineering={...core,review_sha256:sha256(canonical(core)),model_anchor_sha256:sha256(canonical({units,outline}))};
+ const engineering={...core,where:{U1:0},review_sha256:sha256(canonical(core)),model_anchor_sha256:sha256(canonical({units,outline}))};
  put('model.json',JSON.stringify({units,board:{outline},board_file:core.native,engineering}));
  const bin=join(root,'stub');writeFileSync(bin,'#!/bin/sh\nexit 3\n');chmodSync(bin,0o700);
  assert.equal(preflightSnapshot(root,project,join(root,'model.json'),bin),3);

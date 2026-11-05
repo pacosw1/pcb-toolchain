@@ -125,10 +125,11 @@ mod binding_tests {
         let mut p = json!({"units":[{"name":"U1","refs":["U1"],"x":1,"y":2,"fixed":false}],
             "board":{"outline":[[0,0],[10,0],[10,10]]},
             "engineering":{"schema":"x","root":"r","board":"b","manifest":"m","native":"n",
-                "inputs":{},"rules":[],"geometry":{},"bindings":[]}});
-        let c = &p["engineering"];
+                "inputs":{},"rules":[],"geometry":{"refs":{"U1":{"pads":{}}}},"bindings":[],"where":{"U1":0}}});
+        let mut c = p["engineering"].clone();
+        c.as_object_mut().unwrap().remove("where");
         let digest = |v: &Value| format!("{:x}", Sha256::digest(serde_json::to_vec(v).unwrap()));
-        let review = digest(c);
+        let review = digest(&c);
         let anchor = digest(&json!({"units":p["units"],"outline":p["board"]["outline"]}));
         p["engineering"]["review_sha256"] = json!(review);
         p["engineering"]["model_anchor_sha256"] = json!(anchor);
@@ -302,6 +303,19 @@ fn preflight_relocated(problem: &Value, inspector: Option<(&Path, &str)>) -> cra
     let board_file = owned(&root, problem.get("board_file").and_then(Value::as_str).ok_or("placement source board missing")?)?;
     if native != board_file { return Err("placement source board differs from reviewed board".into()); }
     check_inputs(contract)?;
+    let units = problem["units"].as_array().ok_or("model units missing")?;
+    let mut refs = Vec::new();
+    let mut origins = Vec::new();
+    for unit in units {
+        refs.push(unit["refs"].as_array().ok_or("unit references missing")?.iter()
+            .map(|v| v.as_str().map(str::to_owned).ok_or("invalid unit reference"))
+            .collect::<std::result::Result<Vec<_>,_>>()?);
+        let x = unit["x"].as_f64().ok_or("unit x missing")?;
+        let y = unit["y"].as_f64().ok_or("unit y missing")?;
+        if !x.is_finite() || !y.is_finite() {return Err("invalid unit origin".into());}
+        origins.push((x,y));
+    }
+    crate::engineering::ReviewedGeometry::compile(contract, &refs, &origins)?;
     check_manifest_identity(contract)?;
     let root = Path::new(contract["root"].as_str().ok_or("reviewed root missing")?).canonicalize()?;
     let path = owned(&root, contract["manifest"].as_str().ok_or("reviewed manifest missing")?)?;
@@ -350,8 +364,10 @@ mod preflight_tests {
             "engineering":{"schema":"iot-lab.engineering-constraints.v1","root":root,"board":"A","manifest":manifest_path,"native":native,
                 "inputs":{"board.kicad_pcb":digest(b"board"),"manifest.json":digest(&manifest_bytes),
                     "hardware-design/boards/A/spec.md":digest(b"spec"),"review.md":digest(b"review"),"doc.pdf":digest(b"synthetic")},
-                "rules":[],"geometry":{},"bindings":[]}});
-        let review = digest(&serde_json::to_vec(&problem["engineering"]).unwrap());
+                "rules":[],"geometry":{"refs":{"U1":{"pads":{}}}},"bindings":[],"where":{"U1":0}}});
+        let mut core = problem["engineering"].clone();
+        core.as_object_mut().unwrap().remove("where");
+        let review = digest(&serde_json::to_vec(&core).unwrap());
         let anchor = digest(&serde_json::to_vec(&json!({"units":problem["units"],"outline":problem["board"]["outline"]})).unwrap());
         problem["engineering"]["review_sha256"] = json!(review);
         problem["engineering"]["model_anchor_sha256"] = json!(anchor);
@@ -368,6 +384,7 @@ mod preflight_tests {
         let mut core = remote["engineering"].clone();
         core.as_object_mut().unwrap().remove("review_sha256");
         core.as_object_mut().unwrap().remove("model_anchor_sha256");
+        core.as_object_mut().unwrap().remove("where");
         remote["engineering"]["review_sha256"] = json!(digest(&serde_json::to_vec(&core).unwrap()));
         assert!(preflight_snapshot(&remote, &root, Some(&population)).is_ok());
         remote["board_file"] = json!("/outside/board.kicad_pcb");
