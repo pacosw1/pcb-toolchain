@@ -7,10 +7,13 @@ original input artifact, sealed run and routed output must match their recorded
 hashes; current canonical CAD is a separate question.
 
 The TypeScript observer is available for the ML routing adapter and can also be
-run directly with Node. It independently revalidates native thermal obligations
-through the `route-coverage` binary in the pinned Linux job runtime; unavailable
-thermal validation remains an unknown, never an accepted observation. The legacy
-Python entry point remains while its Python callers are still present.
+run directly with Node. In a Linux environment it can revalidate native thermal
+obligations through `route-coverage`; unavailable validation remains unknown,
+never an accepted observation. A release built with `--linux` includes
+`bin/route-coverage-linux-x86_64`. Set `ROUTE_COVERAGE_BIN` to its absolute path
+when explicitly testing the validator. The daemon image and route job do not yet
+install or stage that binary automatically, and receipt-level thermal parity is
+not yet proven. The legacy Python entry point remains while its callers exist.
 
 ```sh
 node --experimental-strip-types --no-warnings tools/placement_outcomes.ts evaluate STUDY_ID --manifest STUDY.json --json --output REPORT.json
