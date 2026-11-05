@@ -713,3 +713,126 @@ pub fn native_locks(
         })
         .collect()
 }
+
+/// Geometric rules compiled for a producer-verified model. Not an admission or source-verification API.
+/// Recompute all unit misses after a move: two-pin rules and connector corridors can depend on other units.
+#[derive(Debug)]
+pub struct ReviewedGeometry {
+    rules: Vec<(ReviewedRule, std::collections::BTreeSet<String>, bool)>,
+    locks: Vec<NativeLock>,
+    unit_refs: Vec<std::collections::BTreeSet<String>>,
+}
+impl ReviewedGeometry {
+    pub fn compile(
+        value: &serde_json::Value,
+        unit_refs: &[Vec<String>],
+        origins: &[(f64, f64)],
+    ) -> crate::Result<Self> {
+        if unit_refs.len() != origins.len() {
+            return Err("reviewed model origin cardinality differs".into());
+        }
+        let rows = value
+            .get("rules")
+            .and_then(|v| v.as_array())
+            .ok_or("reviewed rules missing")?;
+        let compiled = compile_supported_rules(value, origins)?;
+        let mut mapping = BTreeMap::new();
+        for (i, refs) in unit_refs.iter().enumerate() {
+            for r in refs {
+                if mapping.insert(r.clone(), i).is_some() {
+                    return Err("reviewed model contains duplicate reference".into());
+                }
+            }
+        }
+        let reviewed_mapping: BTreeMap<String, usize> = serde_json::from_value(
+            value
+                .get("where")
+                .ok_or("reviewed mapping missing")?
+                .clone(),
+        )?;
+        if mapping != reviewed_mapping {
+            return Err("reviewed model reference mapping changed".into());
+        }
+        let mut rules = Vec::new();
+        for (row, rule) in rows.iter().zip(compiled) {
+            let kind = row
+                .get("kind")
+                .and_then(|v| v.as_str())
+                .ok_or("reviewed kind missing")?;
+            let mut refs = std::collections::BTreeSet::new();
+            match kind {
+                "fixed" | "rigid_group" => {
+                    for reference in row
+                        .get("refs")
+                        .and_then(|v| v.as_array())
+                        .ok_or("reviewed references missing")?
+                    {
+                        refs.insert(
+                            reference
+                                .as_str()
+                                .ok_or("invalid reviewed reference")?
+                                .to_owned(),
+                        );
+                    }
+                }
+                "connector_access" => {
+                    refs.insert(
+                        row.get("ref")
+                            .and_then(|v| v.as_str())
+                            .ok_or("reviewed connector missing")?
+                            .to_owned(),
+                    );
+                }
+                "pin_distance" | "clearance" => {
+                    for endpoint in ["a", "b"] {
+                        refs.insert(
+                            row.get(endpoint)
+                                .and_then(|e| e.get("ref"))
+                                .and_then(|v| v.as_str())
+                                .ok_or("reviewed endpoint missing")?
+                                .to_owned(),
+                        );
+                    }
+                }
+                _ => return Err("unsupported reviewed engineering rule".into()),
+            }
+            rules.push((rule, refs, kind == "connector_access"));
+        }
+        Ok(Self {
+            rules,
+            locks: native_locks(value, origins)?,
+            unit_refs: unit_refs
+                .iter()
+                .map(|r| r.iter().cloned().collect())
+                .collect(),
+        })
+    }
+    /// Equivalent to the reviewed pose miss for one unit, including the locks of referenced parts.
+    pub fn miss_for_unit(&self, unit: usize, pose: &Pose) -> crate::Result<f64> {
+        let mine = self.unit_refs.get(unit).ok_or("reviewed unit missing")?;
+        if pose.len() != self.unit_refs.len() {
+            return Err("reviewed pose cardinality differs".into());
+        }
+        let mut refs = std::collections::BTreeSet::new();
+        let mut all = false;
+        let mut sum = 0.0;
+        for (rule, targets, connector) in &self.rules {
+            if *connector || !targets.is_disjoint(mine) {
+                all |= connector;
+                refs.extend(targets.iter().cloned());
+                sum += rule.miss(pose)?;
+            }
+        }
+        for lock in &self.locks {
+            if all || refs.contains(&lock.reference) {
+                sum += lock.miss(pose)?;
+            }
+        }
+        Ok(sum)
+    }
+    pub fn all_unit_misses(&self, pose: &Pose) -> crate::Result<Vec<f64>> {
+        (0..self.unit_refs.len())
+            .map(|i| self.miss_for_unit(i, pose))
+            .collect()
+    }
+}

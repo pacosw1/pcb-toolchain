@@ -185,3 +185,19 @@ fn native_locked_parts_cannot_move_without_a_manifest_rule() {
         1.0
     );
 }
+
+#[test]
+fn unit_misses_recompute_cross_unit_dependents_and_verify_mapping() {
+    use iotplace::engineering::ReviewedGeometry;
+    let input = contract();
+    let refs = vec![vec!["U1".into()], vec!["C1".into()]];
+    let geometry = ReviewedGeometry::compile(&input, &refs, &[(10.0, 10.0), (14.0, 10.0)]).unwrap();
+    assert_eq!(
+        geometry
+            .all_unit_misses(&vec![(10.0, 10.0, 0), (15.0, 10.0, 0)])
+            .unwrap(),
+        vec![1.0, 1.0]
+    );
+    let reversed = vec![vec!["C1".into()], vec!["U1".into()]];
+    assert!(ReviewedGeometry::compile(&input, &reversed, &[(10.0, 10.0), (14.0, 10.0)]).is_err());
+}
