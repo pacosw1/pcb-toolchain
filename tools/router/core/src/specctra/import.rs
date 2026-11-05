@@ -2,8 +2,8 @@
 //! from nightly.
 //!
 //! The copper the job left unlocked goes (the router may have ripped it up) and the session's copper is added. Nothing else in
-//! the board text changes, so footprints cannot move and preserved copper cannot change: the guards pcbnew needed for that have
-//! nothing left to check. What stays is the policy for copper the session repeats. Fastroute returns preserved wiring as
+//! the board text changes, so footprints cannot move and preserved copper cannot change; `pose` checks the placement the session
+//! reports. What stays here is the policy for copper the session repeats. Fastroute returns preserved wiring as
 //! protected copies, sometimes twice, and sometimes with no type; such a copy is proved against the source, the DSN and the
 //! session and then not written. A coincidence that cannot be proved stops the import: it is a foreign result.
 //!

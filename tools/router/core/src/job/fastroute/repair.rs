@@ -1,11 +1,11 @@
-//! Repairs after routing: plane vias that came too close to routed copper, and the detection of starved plane thermals.
-use super::{Job, copper, prepare};
+//! Repairs after routing: plane vias that came too close to routed copper.
+use super::{copper, prepare};
 use crate::kicad::board::Board;
 use crate::kicad::edit::Edit;
 use crate::kicad::geom::to_mm;
 use crate::job::stop::Stop;
 use regex_lite::Regex;
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
@@ -79,51 +79,10 @@ pub fn plane_via_clearance(path: &Path, drc: &Value, planes: &BTreeSet<String>, 
     Ok(todo)
 }
 
-/// Pure detector: native UUID, pad, ref, net and owning zone must all agree.
-pub fn thermal_targets(drc: &Value, pads: &BTreeMap<String, (String, String, String)>, zones: &BTreeMap<String, String>, planes: &BTreeSet<String>) -> Result<BTreeMap<String, Vec<String>>, String> {
-    // kicad-cli wording: "Pad 2 [GND] of U16 on F.Cu" (SMD) or "PTH pad 11 [GND] of U10" (through hole, 10.0.6).
-    let wording = regex(r"^(?:Pad|PTH pad) (\S+) \[([^\]]*)\] of (\S+)(?: on (.+))?$");
-    let mut todo: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for finding in drc["violations"].as_array().into_iter().flatten().filter(|finding| finding["type"] == "starved_thermal" && finding["severity"] == "error") {
-        let items = finding["items"].as_array().filter(|items| items.len() == 2 && items.iter().all(|item| item["uuid"].is_string() && item["description"].is_string())).ok_or("malformed native thermal violation")?;
-        let mut found = Vec::new();
-        for item in items {
-            let Some((reference, number, net)) = pads.get(item["uuid"].as_str().unwrap_or_default()) else { continue };
-            let description = item["description"].as_str().unwrap_or_default();
-            let same = wording.captures(description).is_some_and(|text| &text[3] == reference && &text[1] == number && &text[2] == net);
-            if !same {
-                return Err("native thermal pad identity mismatch".into());
-            }
-            if !items.iter().any(|other| zones.get(other["uuid"].as_str().unwrap_or_default()) == Some(net)) {
-                return Err("native thermal zone identity mismatch".into());
-            }
-            found.push((net.clone(), format!("{reference}.{number}")));
-        }
-        let [(net, name)] = &found[..] else { return Err("ambiguous native thermal pads".into()) };
-        if planes.contains(net) {
-            todo.entry(net.clone()).or_default().insert(name.clone());
-        }
-    }
-    Ok(todo.into_iter().map(|(net, names)| (net, names.into_iter().collect())).collect())
-}
-
-/// The decision on starved plane thermals. With none, nothing changes. With some, no proposal is made here: the fault stays in the
-/// DRC and counts in ERRORS, and the evidence says why.
-pub fn thermal(job: &Job, board_path: &Path, _project: &Path, drc: Value, _via_args: &[String], label: &str) -> Result<(Value, Value), Stop> {
-    let (board, _) = prepare::read(board_path)?;
-    let pads = board.pads().map(|(footprint, pad)| (pad.id.clone(), (footprint.reference.clone(), pad.number.clone(), pad.net.clone()))).collect();
-    let zones = board.zones.iter().map(|zone| (zone.id.clone(), zone.net.clone())).collect();
-    let targets = thermal_targets(&drc, &pads, &zones, &job.plane_names)?;
-    let reason = if targets.is_empty() { "no plane thermal targets" } else { "thermal copper proposals are not made by this job; the faults stay in the DRC" };
-    if !targets.is_empty() {
-        println!("THERMAL {label}: {} plane nets with starved pads left as faults", targets.len());
-    }
-    Ok((drc, json!({"targets": targets, "accepted": false, "qualified": false, "reason": reason})))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use copper::{Item, Kind};
 
     fn item(kind: Kind, id: &str, net: &str, start: copper::Nm, end: copper::Nm, locked: bool) -> Item {
@@ -178,22 +137,5 @@ mod tests {
     fn a_clearance_on_another_net_or_a_warning_is_no_hit() {
         assert!(clearance_hits(&drc_at(1.0, 2.0), &BTreeSet::new()).is_empty());
         assert!(clearance_hits(&json!({"violations": [{"severity": "warning", "type": "clearance", "items": []}]}), &planes()).is_empty());
-    }
-
-    fn thermal_drc(description: &str) -> Value {
-        json!({"violations": [{"type": "starved_thermal", "severity": "error", "items": [{"uuid": "p", "description": description}, {"uuid": "z", "description": "Zone [GND] on B.Cu"}]}]})
-    }
-
-    #[test]
-    fn thermal_targets_need_every_identity_to_agree() {
-        let pads = BTreeMap::from([("p".to_string(), ("U16".to_string(), "2".to_string(), "GND".to_string()))]);
-        let zones = BTreeMap::from([("z".to_string(), "GND".to_string())]);
-        let found = thermal_targets(&thermal_drc("Pad 2 [GND] of U16 on F.Cu"), &pads, &zones, &planes()).unwrap();
-        assert_eq!(found["GND"], vec!["U16.2".to_string()]);
-        let through = thermal_targets(&thermal_drc("PTH pad 2 [GND] of U16"), &pads, &zones, &planes()).unwrap();
-        assert_eq!(through["GND"], vec!["U16.2".to_string()]);
-        assert!(thermal_targets(&thermal_drc("Pad 3 [GND] of U16 on F.Cu"), &pads, &zones, &planes()).unwrap_err().contains("pad identity"));
-        assert!(thermal_targets(&thermal_drc("Pad 2 [GND] of U16 on F.Cu"), &pads, &BTreeMap::new(), &planes()).unwrap_err().contains("zone identity"));
-        assert!(thermal_targets(&thermal_drc("Pad 2 [GND] of U16 on F.Cu"), &pads, &zones, &BTreeSet::new()).unwrap().is_empty());
     }
 }

@@ -732,6 +732,8 @@ tools/router/core/src/job/fastroute/pass.rs
 tools/router/core/src/job/fastroute/prepare.rs
 tools/router/core/src/job/fastroute/repair.rs
 tools/router/core/src/job/fastroute/stages.rs
+tools/router/core/src/job/fastroute/thermal.rs
+tools/router/core/src/job/fastroute/thermal/tests.rs
 tools/router/core/src/job/files.rs
 tools/router/core/src/job/mod.rs
 tools/router/core/src/job/progress.rs
@@ -920,6 +922,7 @@ tools/router/core/src/specctra/import.rs
 tools/router/core/src/specctra/import/tests.rs
 tools/router/core/src/specctra/kicad10.rs
 tools/router/core/src/specctra/mod.rs
+tools/router/core/src/specctra/pose.rs
 tools/router/core/src/specctra/records.rs
 tools/router/core/src/specctra/skip.rs
 tools/router/core/src/tests_congestion.rs

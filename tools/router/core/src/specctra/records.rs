@@ -52,7 +52,7 @@ pub fn modes(records: &[Record]) -> Modes {
 }
 
 /// The one form with this head, read from its own start: the text before it may hold the DSN's unpaired quote.
-fn section(text: &str, name: &str) -> Result<Form, String> {
+pub(super) fn section(text: &str, name: &str) -> Result<Form, String> {
     let head = format!("({name}");
     let ends_head = |at: usize| text[at + head.len()..].chars().next().is_some_and(|c| c.is_whitespace() || matches!(c, '(' | ')'));
     let found: Vec<usize> = text.match_indices(&head).map(|(at, _)| at).filter(|at| ends_head(*at)).collect();
@@ -69,7 +69,7 @@ fn child<'a>(node: &'a Form, tag: &str) -> Result<&'a Form, String> {
 }
 
 /// A decimal text times `scale`, which must come out whole: no float rounds a coordinate here.
-fn scaled(text: &str, scale: i64) -> Result<i64, String> {
+pub(super) fn scaled(text: &str, scale: i64) -> Result<i64, String> {
     let bad = || format!("noninteger native geometry: {text}");
     let (negative, digits) = text.strip_prefix('-').map_or((false, text), |rest| (true, rest));
     let (whole, fraction) = digits.split_once('.').unwrap_or((digits, ""));
@@ -87,12 +87,12 @@ fn scaled(text: &str, scale: i64) -> Result<i64, String> {
     Ok(if negative { -value } else { value })
 }
 
-fn atom<'a>(form: &'a Form, index: usize) -> Result<&'a str, String> {
+pub(super) fn atom<'a>(form: &'a Form, index: usize) -> Result<&'a str, String> {
     form.text(index).ok_or_else(|| "unsupported Specctra form".to_string())
 }
 
 /// Nanometres per unit from `(resolution um N)`: N must divide 1000.
-fn resolution_step(unit: &str, divisor: &str) -> Result<i64, String> {
+pub(super) fn resolution_step(unit: &str, divisor: &str) -> Result<i64, String> {
     let divisor: i64 = divisor.parse().map_err(|_| "unsupported resolution".to_string())?;
     if unit != "um" || divisor <= 0 || 1000 % divisor != 0 {
         return Err("unsupported resolution".to_string());
@@ -101,7 +101,7 @@ fn resolution_step(unit: &str, divisor: &str) -> Result<i64, String> {
 }
 
 /// The atoms of every `(head a b ...)` in the text, each with `count` of them.
-fn directives(text: &str, head: &str, count: usize) -> Vec<Vec<String>> {
+pub(super) fn directives(text: &str, head: &str, count: usize) -> Vec<Vec<String>> {
     let pattern = format!("({head}");
     let mut found = Vec::new();
     for (at, _) in text.match_indices(&pattern) {

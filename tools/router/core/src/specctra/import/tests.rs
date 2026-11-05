@@ -182,3 +182,69 @@ fn every_unlocked_item_must_be_in_the_text() {
     let ses = session_text("");
     assert!(run(&copper, &ids(&[]), &dsn_text("route"), &ses).unwrap_err().contains("0 of 1"));
 }
+
+#[test]
+fn a_difference_in_net_layer_width_or_position_is_no_replay() {
+    let board = BOARD.replace("(net \"P\")", "(net \"P\")\n\t\t(net \"Q\")");
+    let others = [
+        Geometry::segment("Q", "F.Cu", 200_000, (1000, 2000), (3000, 2000)),
+        Geometry::segment("P", "B.Cu", 200_000, (1000, 2000), (3000, 2000)),
+        Geometry::segment("P", "F.Cu", 200_100, (1000, 2000), (3000, 2000)),
+        Geometry::segment("P", "F.Cu", 200_000, (1100, 2000), (3000, 2000)),
+    ];
+    for other in others {
+        let copper = vec![Existing { id: "old".to_string(), geometry: other }];
+        let (preserved, dsn, ses) = (ids(&["old"]), dsn_text("route"), session_text(&wire("protect")));
+        let result = import(&Session { board_text: &board, copper: &copper, preserved: &preserved, dsn: &dsn, ses: &ses, seed: "t" }).unwrap();
+        assert_eq!((result.added, result.replays.len()), (1, 0));
+    }
+}
+
+#[test]
+fn a_via_replay_needs_the_same_size_drill_and_place() {
+    let library = "(library_out(padstack \"Via[0-1]_600:300_um\"(shape(circle F.Cu 6000))(shape(circle B.Cu 6000))))";
+    let ses = format!("(session s (routes(resolution um 10){library}(network_out(net P(via \"Via[0-1]_600:300_um\" 10 -20(type protect))))))");
+    let dsn = "(resolution um 10)(unit um)(library(padstack \"Via[0-1]_600:300_um\"(shape(circle F.Cu 600))(shape(circle B.Cu 600))))(wiring(via \"Via[0-1]_600:300_um\" 1 -2(net P)(type fix)))";
+    let source = |size, drill| vec![Existing { id: "old".to_string(), geometry: Geometry::Via { net: "P".to_string(), at: (1000, 2000), size, drill } }];
+    assert_eq!(run(&source(600_000, 300_000), &ids(&["old"]), dsn, &ses).unwrap().replays.len(), 1);
+    for (size, drill) in [(599_999, 300_000), (600_000, 300_001)] {
+        assert_eq!(run(&source(size, drill), &ids(&["old"]), dsn, &ses).unwrap().replays.len(), 0);
+    }
+}
+
+#[test]
+fn a_preserved_source_the_dsn_offers_at_whole_um_is_accepted_and_a_far_one_is_not() {
+    let wires = |y: &str| format!("(resolution um 10)(unit um)(library)(wiring (wire (path F.Cu 200 1 {y} 3 {y})(net P)(type fix)))");
+    let result = run(&old(), &ids(&["old"]), &wires("-2.3"), &session_text(&wire("protect"))).unwrap();
+    assert_eq!(result.replays[0].dsn_modes, ["fix"]);
+    let error = run(&old(), &ids(&["old"]), &wires("-3.5"), &session_text(&wire("protect"))).unwrap_err();
+    assert!(error.contains("provenance (preserved)"), "{error}");
+}
+
+#[test]
+fn unlocked_copper_needs_route_provenance() {
+    let no_wiring = "(resolution um 10)(unit um)(library)(wiring)";
+    assert!(run(&old(), &ids(&[]), no_wiring, &session_text(&wire("route"))).unwrap_err().contains("provenance"));
+    for mode in ["fix", "protect"] {
+        assert_eq!(run(&old(), &ids(&[]), &dsn_text(mode), &session_text(&wire("route"))).unwrap_err(), "unlocked source was not offered as unlocked wiring");
+    }
+    assert_eq!(run(&old(), &ids(&[]), &dsn_text("route"), &session_text(&wire(""))).unwrap().added, 1);
+}
+
+#[test]
+fn router_copies_of_kept_wiring_count_once() {
+    let ses = session_text(&format!("{0}{0}{0}", wire("route")));
+    let result = run(&old(), &ids(&[]), &dsn_text("route"), &ses).unwrap();
+    assert_eq!((result.added, result.duplicates.len()), (1, 2));
+    let ses = session_text(&format!("{0}{0}", wire("protect")));
+    let result = run(&old(), &ids(&["old"]), &dsn_text("route"), &ses).unwrap();
+    assert_eq!((result.added, result.duplicates.len(), result.replays[0].ses_modes.len()), (0, 1, 2));
+}
+
+#[test]
+fn a_part_stays_byte_for_byte() {
+    let ses = session_text("(wire(path F.Cu 2000 50 -50 60 -50)(type route))");
+    let text = run(&old(), &ids(&["old"]), &dsn_text("route"), &ses).unwrap().text;
+    let parts = |board: &str| raw::parse_first(board).unwrap().children("footprint").map(|form| board[form.span.clone()].to_string()).collect::<Vec<_>>();
+    assert_eq!(parts(&text), parts(BOARD));
+}

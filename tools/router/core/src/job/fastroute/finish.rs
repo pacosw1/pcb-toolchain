@@ -1,7 +1,7 @@
 //! After the last pass: fill and save through KiCad 10, DRC, the repairs, the verdict lines and the exit.
 use super::pass::Done;
 use super::stages::Rules;
-use super::{Job, NOT_VERIFIED, STUCK_RC, copper, prepare, repair};
+use super::{Job, NOT_VERIFIED, STUCK_RC, copper, prepare, repair, thermal};
 use crate::gnd_pad_vias;
 use crate::grid::escape::{self, EscapeConfig, EscapeScope, Runtime};
 use crate::grid::triage::{TriageConfig, TriageScope, triage};
@@ -33,7 +33,7 @@ pub fn blocks_routing(finding: &Value) -> bool {
     error && (existing || finding["type"] == "starved_thermal")
 }
 
-fn validated(path: &Path) -> Result<Value, Stop> {
+pub(super) fn validated(path: &Path) -> Result<Value, Stop> {
     let text = fs::read_to_string(path).map_err(|e| Stop::failed(format!("{}: {e}", path.display())))?;
     let drc: Value = serde_json::from_str(&text).map_err(|e| Stop::failed(format!("{}: {e}", path.display())))?;
     if !drc["violations"].is_array() || !drc["unconnected_items"].is_array() {
@@ -313,7 +313,7 @@ pub fn run(job: &mut Job, rules: Option<&Rules>, last: &Done, secs: i64) -> Resu
     }
     let via_args = prepare::shell_words(&job.a.via_args)?;
     let board_path = job.board.clone();
-    let (checked, thermal) = repair::thermal(job, &routed, &board_path, drc, &via_args, "postroute-thermal")?;
+    let (checked, thermal) = thermal::run(job, &routed, &board_path, drc, &via_args, "postroute-thermal")?;
     let drc = checked;
     atomic_json(&drc_path, &drc)?;
     job.write_json("thermal-repair.json", &thermal)?;

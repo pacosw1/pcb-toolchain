@@ -1,6 +1,6 @@
 //! The job up to its first router pass: the folder, the backend policy, the board copy, plane vias, preflight and the net selection.
 use super::args::{Args, items};
-use super::repair;
+use super::thermal;
 use super::{FailFast, Job, copper, feature_sources, finish, pass, stages};
 use crate::gnd_pad_vias::{self, Options as ViaOptions};
 use crate::job::backend;
@@ -160,7 +160,7 @@ fn preflight(job: &mut Job) -> Result<(), Stop> {
     let check = job.file("preflight.json");
     let drc = finish::native_drc(job, "native-preflight", &job.base.clone(), &check, "preflight failed to produce independent native evidence")?;
     let via_args = shell_words(&job.a.via_args)?;
-    let (drc, thermal) = repair::thermal(job, &job.base.clone(), &job.board.clone(), drc, &via_args, "preflight-thermal")?;
+    let (drc, thermal) = thermal::run(job, &job.base.clone(), &job.board.clone(), drc, &via_args, "preflight-thermal")?;
     job.progress("preflight end");
     atomic_json(&check, &drc)?;
     job.write_json("preflight-thermal.json", &thermal)?;

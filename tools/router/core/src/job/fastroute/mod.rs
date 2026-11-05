@@ -8,8 +8,9 @@
 //! Prints "UNROUTED <signal> GND_OPEN <n> ERRORS <n> ROUTER_UNROUTED <n> CONGESTION <n> BLOCKED <n> TRACK_MM <n> VIAS <n> SECONDS <n>".
 //! Exit 3: routed with open signal connections (fail_fast). Exit 4: the result is not verified; do not use the board.
 //!
-//! The board is text between passes, and the import changes only copper: footprints cannot move and locked copper cannot change, so
-//! pcbnew's pose and replay guards have nothing left to check. Fill, DRC and the save are KiCad 10's `kicad-cli`.
+//! The board is text between passes, and the import changes only copper: footprints cannot move and locked copper cannot change.
+//! What stays is the check of the session itself: its placement (`specctra::pose`) and the copper it repeats (`specctra::import`).
+//! Fill, DRC and the save are KiCad 10's `kicad-cli`.
 //!
 //! Stops rather than run without a proof:
 //! - `--native-thermal-checkback`: its receipts prove `ZONE_FILLER.Fill` returned true, which `kicad-cli` does not report.
@@ -20,6 +21,7 @@ mod finish;
 mod pass;
 mod prepare;
 pub mod repair;
+mod thermal;
 mod stages;
 
 

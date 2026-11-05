@@ -25,6 +25,7 @@ use crate::specctra::dsn_edit::{Pair, big_signal_via, pairs_text, restrict_dsn};
 use crate::specctra::export::{Throwaway, with_locks};
 use crate::specctra::import::{Session, existing_copper, import};
 use crate::specctra::kicad10::Unchained;
+use crate::specctra::pose;
 use crate::specctra::skip::{exclude, routable_open};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -391,11 +392,14 @@ fn import_session(job: &mut Job, tag: &str, sfx: &str, board: &Board, locked: &B
     let existing = existing_copper(board);
     let dsn_text = fs::read_to_string(dsn).map_err(|e| Stop::failed(e.to_string()))?;
     let ses_text = fs::read_to_string(ses).map_err(|e| Stop::failed(e.to_string()))?;
+    let integrity = |error: String| Stop::failed(format!("fastroute_job: SES pose integrity failed; result is not verified: {error}"));
+    let footprints: Vec<(String, (i64, i64))> = board.footprints.iter().map(|part| (part.reference.clone(), (part.position.x, part.position.y))).collect();
+    let grid = pose::check(&footprints, &dsn_text, &ses_text).map_err(integrity)?;
     job.progress(&format!("import{sfx} start"));
     // The board text is in the seed: the route run has one job per stage, and stage tags alone would repeat uuids between them.
     let seed = format!("{}:{tag}", sha256(job.text.as_bytes()));
     let session = Session { board_text: &job.text, copper: &existing, preserved: locked, dsn: &dsn_text, ses: &ses_text, seed: &seed };
-    let imported = import(&session).map_err(|error| Stop::failed(format!("fastroute_job: SES pose integrity failed; result is not verified: {error}")))?;
+    let imported = import(&session).map_err(integrity)?;
     if !imported.duplicates.is_empty() {
         println!("fastroute_job: {} duplicate new segments removed (identical copper), stage {tag}", imported.duplicates.len());
     }
@@ -403,7 +407,7 @@ fn import_session(job: &mut Job, tag: &str, sfx: &str, board: &Board, locked: &B
         println!("fastroute_job: {} new segments shorter than 1 um removed (no copper), stage {tag}", imported.short.len());
     }
     let (dsn_sha, ses_sha) = (digest(dsn)?, digest(ses)?);
-    job.write_json(&format!("import-pose-audit{sfx}.json"), &json!({"grid_nm": null, "restored": [], "exact_poses_and_pads": true, "method": "the session is added to the board text: footprints are not touched", "dsn_sha256": dsn_sha, "ses_sha256": ses_sha, "qualified": false, "independent_native_gate_required": true}))?;
+    job.write_json(&format!("import-pose-audit{sfx}.json"), &json!({"grid_nm": grid, "restored": [], "exact_poses_and_pads": true, "method": "the session is added to the board text and its placement checked: footprints are not touched", "dsn_sha256": dsn_sha, "ses_sha256": ses_sha, "qualified": false, "independent_native_gate_required": true}))?;
     job.write_json(&format!("import-replay-audit{sfx}.json"), &json!({"removed": imported.replays, "preserved_uuids": locked, "duplicate_new_segments_removed": imported.duplicates, "sub_um_new_segments_removed": imported.short, "exact_preserved_source_policy": true, "qualified": false, "independent_native_gate_required": true, "dsn_sha256": dsn_sha, "ses_sha256": ses_sha}))?;
     job.text = imported.text;
     let after = copper::read(&job.text)?;
