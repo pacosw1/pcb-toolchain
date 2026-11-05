@@ -102,6 +102,7 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('agent:cancel', () => agent.cancel())
   ipcMain.handle('agent:reset', () => agent.reset())
+  ipcMain.handle('board:schematic', (_e, pcb: string) => engine.call('board.schematic', { pcb, out_dir: glbDir() }))
   ipcMain.handle('board:glb', async (_e, pcb: string) => {
     const r = (await engine.call('board.glb', { pcb, out_dir: glbDir() })) as GlbResult
     return { ...r, url: 'pcbfile://local' + encodeURI(r.path) }

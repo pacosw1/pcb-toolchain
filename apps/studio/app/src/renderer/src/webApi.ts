@@ -84,6 +84,7 @@ export function installWebApi(): void {
     openExternal: async (url) => {
       window.open(url, '_blank', 'noopener')
     },
+    boardSchematic: (pcb) => call('board.schematic', { pcb }) as Promise<import('../../shared/inspector').SchematicExport>,
     boardGlb: async (pcb) => {
       const r = (await call('board.glb', { pcb })) as GlbResult
       return { ...r, url: fileUrl(r.path) }

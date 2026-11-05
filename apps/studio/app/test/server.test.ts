@@ -39,7 +39,7 @@ test('a notification has no reply', async () => {
 })
 
 test('engine exposes the supported method registry', () => {
-  assert.deepEqual(registry.names(), ['board.bom', 'board.geometry', 'board.glb', 'board.inspect', 'board.inventory', 'board.parts', 'board.unwatch', 'board.watch', 'engine.info', 'engine.ping', 'file.resolve',
+  assert.deepEqual(registry.names(), ['board.bom', 'board.geometry', 'board.glb', 'board.inspect', 'board.inventory', 'board.parts', 'board.schematic', 'board.unwatch', 'board.watch', 'engine.info', 'engine.ping', 'file.resolve',
     'gate.check', 'op.build', 'op.route', 'part.get', 'parts.index', 'project.open', 'run.adopt', 'run.cancel', 'run.candidate', 'run.findings',
     'run.get', 'run.list'])
 })

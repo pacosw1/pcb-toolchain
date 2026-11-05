@@ -18,3 +18,10 @@ export interface NativeInventory {
   sources: { path: string; sha256: string }[]
   documents: { kind: 'pcb' | 'schematic'; path: string; version: string; documents: number; counts: Record<string, number> }[]
 }
+
+export interface SchematicExport {
+  source: string
+  revision: string
+  runtime: string | null
+  sheets: { name: string; path: string }[]
+}

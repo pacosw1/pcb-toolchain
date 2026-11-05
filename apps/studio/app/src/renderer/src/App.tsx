@@ -1,3 +1,4 @@
+import { SchematicView } from './SchematicView'
 import { InspectorView } from './InspectorView'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { EngineStatus } from '../../preload/types'
@@ -12,7 +13,7 @@ import { RunsView } from './RunsView'
 import { Viewer3D } from './Viewer3D'
 import type { Bom, BomLine, Finding, Geometry, ProjectInfo } from './types'
 
-type Tab = 'specs' | 'board' | '3d' | 'parts' | 'datasheets' | 'checks' | 'runs'
+type Tab = 'schematic' | 'specs' | 'board' | '3d' | 'parts' | 'datasheets' | 'checks' | 'runs'
 
 const STATE_COLOR: Record<EngineStatus['state'], string> = {
   ready: 'var(--ok)',
@@ -263,6 +264,7 @@ function App(): React.JSX.Element {
 
   const sections: [Tab, string, string, string | null][] = [
     ['board', 'Board', 'board', geo ? `${geo.footprints.length} parts` : null],
+    ['schematic', 'Schematic', 'doc', revision?.sch ? null : 'not assigned'],
     ['specs', 'Specifications', 'doc', null],
     ['3d', '3D', 'cube', null],
     ['parts', 'Parts / BOM', 'list', bom ? `${bom.summary.lines} lines` : null],
@@ -375,6 +377,8 @@ function App(): React.JSX.Element {
               live={{ on: live, updatedAt, error: liveError, onToggle: toggleLive }}
               liveRefresh={geo === liveGeo}
             />
+          ) : geo && tab === 'schematic' && pcb ? (
+            <SchematicView key={project?.root + pcb} pcb={pcb} />
           ) : geo && tab === 'specs' && pcb ? (
             <InspectorView key={project?.root + pcb} pcb={pcb} />
           ) : geo && tab === '3d' && pcb ? (

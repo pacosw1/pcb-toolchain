@@ -19,6 +19,7 @@ const api: AppApi = {
   defaultProject: () => ipcRenderer.invoke('app:defaultProject'),
   setProjectRoot: (root) => ipcRenderer.invoke('app:setProjectRoot', root),
   openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
+  boardSchematic: (pcb) => ipcRenderer.invoke('board:schematic', pcb),
   boardGlb: (pcb) => ipcRenderer.invoke('board:glb', pcb),
   engine: {
     call: (method, params) => ipcRenderer.invoke('engine:call', method, params),

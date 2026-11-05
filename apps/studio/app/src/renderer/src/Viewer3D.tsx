@@ -30,9 +30,9 @@ export function Viewer3D({ pcb }: { pcb: string }): React.JSX.Element {
     let disposed = false, raf = 0, frames = 0, sceneRadius = 0
     const request = new AbortController()
     setState('Preparing the 3D model…'); setInfo(null); viewRef.current = null
-    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' })
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
-    renderer.setClearColor(0x292727)
+    renderer.setClearColor(0x000000, 0)
     renderer.outputColorSpace = THREE.SRGBColorSpace
     renderer.toneMapping = THREE.ACESFilmicToneMapping
     renderer.toneMappingExposure = 0.9

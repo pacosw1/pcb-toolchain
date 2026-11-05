@@ -95,3 +95,19 @@ The viewer renders silkscreen as opaque ink with a small depth bias, uses an opa
 board substrate, and disables depth writes for the translucent solder mask. This
 keeps layer visibility stable while orbiting. Camera clipping adapts to zoom, orbit
 motion settles with damping, and the presentation background is dark charcoal.
+
+### Schematic viewer
+
+The **Schematic** tab renders the selected board revision's explicitly assigned
+schematic with KiCad's native SVG export. It copies the root, in-project child
+sheets, and project companion into a disposable snapshot, verifies the source
+bytes after export, and serves the generated SVGs as images. Root sheet appears
+first; the sheet selector exposes every exported page. Drag to pan, scroll or use
++/- to zoom, and use **Fit sheet** (or F with the canvas focused) to reset.
+**Refresh schematic** rereads the saved files. This is view-only; symbol editing
+and linked schematic/PCB selection are not implemented.
+
+Schematic exports use a private Studio Dark KiCad color configuration, leaving the
+user's KiCad preferences unchanged. The SVG and WebGL canvases have transparent
+backgrounds and inherit the app's dark surface; there is no white paper fill or
+separate 3D backdrop.
