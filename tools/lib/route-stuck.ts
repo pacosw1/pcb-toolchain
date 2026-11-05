@@ -11,7 +11,12 @@ export const STUCK_FILE = 'operation/stuck.json';
 export interface StuckReport {
   schema: string; board: string; work: string; drc_errors: number; unconnected: number; parity: number; enclosed: number; router_miss: number; unknown: number;
   search: { stop?: string | null; pass?: number; max_passes?: number; passes_since_best?: number; search_limited?: number } | null;
-  route_layers: string[]; reused: boolean; changed: { worse: boolean; better: boolean } | null; open_nets: string[]; region: number[] | null;
+  route_layers: string[]; reused: boolean; changed: { worse: boolean; better: boolean; names_comparable?: boolean;
+    drc_before?: number; drc_now?: number; parity_before?: number; parity_now?: number } | null; open_nets: string[]; region: number[] | null;
+  /** Additive v1 evidence fields; absent on older reports. Unknown causes are not a zero-open verdict. */
+  coverage?: { native_connections: number; diagnosed_connections: number; undiagnosed_connections: number;
+    unlocated_connections: number; unidentified_connections: number; unused_diagnoses: number; parity_reported: boolean };
+  comparison_note?: string | null;
   rows: { net: string; class: string; connections: number; why: string }[];
   blockers: { parts: string[]; nets: string[]; keepouts: string[]; layers: string[]; boxed_in: string[] };
   summary: string[];

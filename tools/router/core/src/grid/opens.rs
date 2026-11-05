@@ -36,18 +36,23 @@ pub struct Open {
     pub b: End,
 }
 
-/// The first `[net]` of an item's text. Any `[` up to the first `]` belongs to the name.
+/// The first `[net]` of an item's text, including balanced bus-index brackets.
 pub fn bracket_net(description: &str) -> Option<&str> {
     let open = description.find('[')?;
-    let close = description[open + 1..].find(']')?;
-    Some(&description[open + 1..open + 1 + close])
+    let mut depth = 1;
+    for (offset, c) in description[open + 1..].char_indices() {
+        match c { '[' => depth += 1, ']' => depth -= 1, _ => {} }
+        if depth == 0 { return Some(&description[open + 1..open + 1 + offset]); }
+    }
+    None
 }
 
 /// `Pad NUM [NET] of REF`, with its other spellings: number, net and reference.
 pub fn pad_of(description: &str) -> Option<(&str, &str, &str)> {
     let rest = ["Pad ", "PTH pad ", "SMD pad "].iter().find_map(|p| description.strip_prefix(p))?;
     let (number, rest) = rest.split_once(" [")?;
-    let (net, rest) = rest.split_once(']')?;
+    let net = bracket_net(description)?;
+    let rest = rest.strip_prefix(net)?.strip_prefix(']')?;
     let reference = rest.strip_prefix(" of ")?.split_whitespace().next()?;
     (!number.contains(char::is_whitespace)).then_some((number, net, reference))
 }
@@ -125,7 +130,8 @@ mod tests {
     #[test]
     fn the_net_is_the_first_bracket() {
         assert_eq!(bracket_net("Pad 2 [GND] of C1"), Some("GND"));
-        assert_eq!(bracket_net("Track [/A[3]] on F.Cu"), Some("/A[3"));
+        assert_eq!(bracket_net("Track [/A[3]] on F.Cu"), Some("/A[3]"));
+        assert_eq!(bracket_net("Track [/A[3] on F.Cu"), None);
         assert_eq!(bracket_net("Via"), None);
         assert_eq!(bracket_net("broken [x"), None);
     }
@@ -135,6 +141,7 @@ mod tests {
         assert_eq!(pad_of("Pad 2 [GND] of C1 on F.Cu"), Some(("2", "GND", "C1")));
         assert_eq!(pad_of("PTH pad A1 [/X] of J1"), Some(("A1", "/X", "J1")));
         assert_eq!(pad_of("SMD pad 3 [] of U1"), Some(("3", "", "U1")));
+        assert_eq!(pad_of("Pad 2 [/A[3]] of U1 on F.Cu"), Some(("2", "/A[3]", "U1")));
         assert_eq!(pad_of("Via [GND]"), None);
     }
 
