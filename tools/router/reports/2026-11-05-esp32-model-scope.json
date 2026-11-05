@@ -1,0 +1,167 @@
+{
+  "schema": "pcb.router-model-correction.v1",
+  "task": 1376,
+  "base_commit": "415414197bb66c0d0b875130c1e10e43fae6bd32",
+  "fix_commit": "e7c84a7",
+  "binary_sha256": "de2e6463a0b7f267decce4afebd09e4d5cbce5e43c0d40e6b9cc1f0449246f41",
+  "fixture": {
+    "board": "ESP32-CORE",
+    "revision": "B",
+    "commit": "a545d5e18428e03256ea876f45864b25061c1397",
+    "sha256": "b6b97508157893ccca5c5c2cc3e0c90d55691a42d094f9c1015ad8b7f31bdb2b",
+    "reference_drc": {
+      "errors": 0,
+      "opens": 0,
+      "parity": 0,
+      "warnings": 84
+    },
+    "reference_planes_failures": 0
+  },
+  "before": {
+    "job": "20261105-205510-d1a805",
+    "core_failed_nets": [
+      "/IO2",
+      "/IO3",
+      "GND"
+    ],
+    "write": {
+      "drc": 0,
+      "opens": 4,
+      "parity": 0
+    },
+    "operation_status": "ERROR",
+    "planes": "missing driver evidence"
+  },
+  "after": {
+    "job": "20261105-213919-3f1a87",
+    "status": "FAIL",
+    "drc": 0,
+    "opens": 1,
+    "parity": 0,
+    "board_sha256": "49f43c0ae17ac4a3d87db093483f101ff29ec147f551ad47943da408cecf2cbb",
+    "planes_failures": 0,
+    "reference_rounds": [
+      {
+        "round": 1,
+        "planes_fail_lines": 1,
+        "fail_nets": [
+          "/SPI_MISO"
+        ],
+        "raised": [
+          "/SPI_MISO"
+        ],
+        "set_hard": [],
+        "next_core": {
+          "status": "PASS",
+          "converged": true,
+          "iters": 22,
+          "tracks": 922,
+          "vias": 201,
+          "failed": 0
+        }
+      },
+      {
+        "round": 2,
+        "planes_fail_lines": 0,
+        "fail_nets": [],
+        "raised": [],
+        "set_hard": []
+      }
+    ],
+    "operation_wall_s": 636.6095320000001,
+    "operation_cpu_s": 679.949367,
+    "client_log_interrupted": true,
+    "results_recovered_without_rerun": true,
+    "fully_verified": false,
+    "cleanup": [
+      {
+        "container": "pcbjob-20261105-213919-3f1a87-1",
+        "trimmed": true,
+        "absent": true
+      }
+    ],
+    "owned_cleanup_complete": true
+  },
+  "env_regression": {
+    "job": "20261105-214038-204c29",
+    "status": "PASS",
+    "native": {
+      "status": "PASS",
+      "drc": 0,
+      "opens": 0,
+      "parity": 0,
+      "mm": 262,
+      "vias": 20,
+      "tracks": 177,
+      "sha256": "7c4dd481c5454a055da4b956124c984cae450a17547d81c3abe5092b31316da3",
+      "native_seconds": 27.8,
+      "core_seconds": 9.9,
+      "model_sha256": "0a3c81c75b2db7fcb98418aebfc65ea9b49918c05371aa585feee3ee6b0a5a63"
+    },
+    "operation_wall_s": 49.654290073,
+    "operation_cpu_s": 79.012262,
+    "fresh_gate": true,
+    "historical_semantic_hooks": 2,
+    "identical_to_prior_accepted_board": true,
+    "cleanup": [
+      {
+        "container": "pcbjob-20261105-214038-204c29-1",
+        "trimmed": true,
+        "absent": true
+      }
+    ]
+  },
+  "residual": {
+    "net": "VDD_3V3",
+    "ends": [
+      "U1.2",
+      "C2.1"
+    ],
+    "via": [
+      154.15,
+      102.25
+    ],
+    "no_pour_layer": "In2.Cu",
+    "no_pour_bbox": [
+      151.76,
+      99.95,
+      172.05,
+      104.45
+    ],
+    "present_before_fix": true,
+    "action": "stop and report; separate narrow follow-up"
+  },
+  "tests": {
+    "rust_passed": 933,
+    "rust_ignored": 2,
+    "reference_probes": "F.Cu source escapes and actual GND via sites change from blocked to legal; numeric rules unchanged"
+  },
+  "driver_evidence": [
+    {
+      "path": "hardware-design/registry/datasheets/FM25V02A-GTR_C66029.pdf",
+      "sha256": "3993f988368aa8dc94b79a888234274959b7e4e091c693535530f3f4dddafefd",
+      "source_commit": "8786e82739317d77d0ce281cb168d934b2431778"
+    },
+    {
+      "path": "hardware-design/registry/datasheets/STM32L431CCU6_C1337258.pdf",
+      "sha256": "71963de3cb899f8fc731e05a46c8bcb62c8ce893fe99f3877b0027ae9dfc5c6f",
+      "source_commit": "8786e82739317d77d0ce281cb168d934b2431778"
+    },
+    {
+      "path": "hardware-design/registry/datasheets/MMBT3904RANGE-100-300_C20526.pdf",
+      "sha256": "6c2034cb0bd0d85be51c9c4f82aad838a688aa70c20de1a71681be8ec02b659b",
+      "source_commit": "8786e82739317d77d0ce281cb168d934b2431778"
+    },
+    {
+      "path": "hardware-design/registry/datasheets/W25Q32JVZPIQ_C571260.pdf",
+      "sha256": "b2585095ac503e7cee7916ab3f025a51699b49e2cad7f6782e92b828c1cc09d8",
+      "source_commit": "8786e82739317d77d0ce281cb168d934b2431778"
+    }
+  ],
+  "canonical_changed": false,
+  "deployed": false,
+  "artifacts": {
+    "evidence_sha256": "eb10ece1ae6c7be6be9c14e6d4c46bc55eb0b4e9845c451cddc3aeb6040e86e2",
+    "fixtures_runtime_sha256": "4a50a8e59763126bc1bb8a4bdfb48a2cf57dc9547c188e6c3f3caf04822e5e82"
+  }
+}
