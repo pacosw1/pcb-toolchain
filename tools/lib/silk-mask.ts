@@ -68,6 +68,12 @@ export function padMaskOpenings(pcb:string,exporter:MaskExporter=plotMask):Recor
   writeFileSync(copy,padsOnlyBoard(readFileSync(pcb,'utf8')),{flag:'wx'});
   for(const [index,suffix] of [[1,'.kicad_pro'],[2,'.kicad_dru']] as const)if(before[index])copyFileSync(files[index]!,copyStem+suffix);
   const result=maskOpenings(copy,exporter);
+  const root=parse(readFileSync(copy,'utf8'));
+  const pads=kids(root,'footprint').flatMap(fp=>kids(fp,'pad'));
+  for(const side of ['F','B'] as const) {
+   const expected=pads.some(p=>{const layers=kids(p,'layers')[0]?.slice(1)??[];return layers.includes(side+'.Mask') || layers.includes('*.Mask');});
+   if(expected && !result[side].length)throw new Error(`pad mask plot omitted all ${side} openings`);
+  }
   if(JSON.stringify(before)!==JSON.stringify(snapshots(files)))throw new Error('board or sidecars changed during pad mask plot');
   return result;
  } finally {rmSync(folder,{recursive:true,force:true});}
