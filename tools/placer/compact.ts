@@ -3,6 +3,7 @@
 // Pure core (no pcbnew, no network): the shrink/bisect schedule, the verdict and the step loop. The halo and area model
 // is in compact-geometry.ts, the rank of the passing steps in compact-rank.ts. The driver runs search and routing.
 import { now } from '../lib/lean-clock.ts';
+import { inheritedDeadline } from '../lib/lean-workflow.ts';
 import { fixed, Float, floatRepr, number, PyError, pyStr } from '../lib/py-compat.mjs';
 import { round } from '../lib/py-numbers.ts';
 import { bareScale, blockBoxSum, boardScale, deepCopy, type Num, outlineS, type Pose, type Problem, sFit, virtual, withHalos } from './compact-geometry.ts';
@@ -146,15 +147,18 @@ export interface Candidate { pose: Pose | null; cost: Num; illegal: string[]; [k
 export interface SearchResult { candidates: Candidate[]; history?: unknown[]; [key: string]: unknown }
 export type RouteResult = number[] | RouteOutcome | Measured;
 
-/** The injected work of a step. search gets the virtual problem; null is no result (a remote timeout), a failed step. */
+/** A same-host monotonic deadline shared by every effect. Effects must enforce it and confirm process cleanup. */
+export interface StageBudget { deadline: number; remainingSeconds: number }
+
+/** The injected work of a step. A null search result is a failed step. */
 export interface Effects {
-  search(problem: Problem, step: number): Maybe<SearchResult | null | undefined>;
-  write(problem: Problem, pose: Pose, k: number, step: number): Maybe<string>;
-  route(board: string, step: number): Maybe<RouteResult>;
+  search(problem: Problem, step: number, budget: StageBudget): Maybe<SearchResult | null | undefined>;
+  write(problem: Problem, pose: Pose, k: number, step: number, budget: StageBudget): Maybe<string>;
+  route(board: string, step: number, budget: StageBudget): Maybe<RouteResult>;
 }
 
 export interface LoopOptions {
-  s0?: number; budget?: number; clock?: () => number; target?: number; shrink?: number; tol?: number;
+  s0?: number; budget?: number; deadline?: number | null; clock?: () => number; target?: number; shrink?: number; tol?: number;
   log?: ((line: string) => void) | null; sMin?: number; realFirst?: boolean; diagnosticBudget?: number | null;
   kCap?: number | null; rank?: Rank; lengthPatience?: number | null;
 }
@@ -193,6 +197,7 @@ function boxSum(pr: Problem, pose: Pose): Float | null {
 }
 
 function terminalStop(result: Step): string | null {
+  if (result.status === 'timeout') return 'stage timeout or time budget exhausted';
   if (result.status === 'immutable-input') return IMMUTABLE_STOP;
   if (result.status === 'routing-decision') return `routing diagnosis: ${result.route_decision?.action ?? 'inspect_evidence'}`;
   return null;
@@ -205,6 +210,7 @@ class Loop {
   readonly clock: () => number;
   readonly started: number;
   budget: number;
+  private readonly upperDeadline: number;
   private readonly pr: Problem;
   private readonly size: readonly number[];
   private readonly effects: Effects;
@@ -219,13 +225,22 @@ class Loop {
     this.clock = options.clock ?? now;
     this.started = this.clock();
     this.budget = options.budget ?? 2700;
+    if (!Number.isFinite(this.started) || !Number.isFinite(this.budget) || this.budget < 0) throw new Error('compaction budget must be finite and nonnegative');
+    const inherited = inheritedDeadline();
+    if (options.deadline !== null && options.deadline !== undefined && !Number.isFinite(options.deadline)) throw new Error('compaction deadline must be finite');
+    this.upperDeadline = Math.min(options.deadline ?? Infinity, inherited ?? Infinity);
     this.target = options.target ?? 0;
     this.log = options.log ?? null;
     this.rank = options.rank ?? 'halo';
   }
 
   over(): boolean {
-    return this.clock() - this.started >= this.budget;
+    return this.clock() >= Math.min(this.started + this.budget, this.upperDeadline);
+  }
+
+  stageBudget(): StageBudget {
+    const deadline = Math.min(this.started + this.budget, this.upperDeadline);
+    return { deadline, remainingSeconds: Math.max(0, deadline - this.clock()) };
   }
 
   budgetStop(): string {
@@ -249,7 +264,8 @@ class Loop {
       s, k, tries, cost: candidate.cost, illegal: candidate.illegal, phase, history: res.history ?? [], pose: candidate.pose,
       halo: q.units.map(unit => (unit.rects.length ? unit.rects[0][4] : new Float(0))),
     } as Step;
-    if (candidate.illegal.length) Object.assign(t, noRoute(), { board: null });
+    if (this.over()) Object.assign(t, noRoute(), { board: null, status: 'timeout' });
+    else if (candidate.illegal.length) Object.assign(t, noRoute(), { board: null });
     else await this.routed(t, q, candidate.pose as Pose, n);
     this.steps.push(t);
     this.report(t, n);
@@ -262,7 +278,9 @@ class Loop {
     for (let tries = 1; ; tries++) {
       let res: SearchResult | null | undefined;
       try {
-        res = await this.effects.search(virtual(q, k), n);
+        const budget = this.stageBudget();
+        if (budget.remainingSeconds <= 0) throw new TimeoutExpired('placement', 0);
+        res = await this.effects.search(virtual(q, k), n, budget);
       } catch (error) {
         if (!(error instanceof TimeoutExpired)) throw error;
         return {
@@ -278,10 +296,17 @@ class Loop {
   }
 
   private async routed(t: Step, q: Problem, pose: Pose, n: number): Promise<void> {
-    t.board = await this.effects.write(q, pose, t.k, n);
+    t.board = null;
     try {
+      let budget = this.stageBudget();
+      if (budget.remainingSeconds <= 0) throw new TimeoutExpired('write', 0);
+      t.board = await this.effects.write(q, pose, t.k, n, budget);
       if (this.over()) throw new TimeoutExpired('routing', 0);
-      this.record(t, q, pose, await this.effects.route(t.board, n));
+      budget = this.stageBudget();
+      if (budget.remainingSeconds <= 0) throw new TimeoutExpired('routing', 0);
+      const outcome = await this.effects.route(t.board, n, budget);
+      if (this.over()) throw new TimeoutExpired('routing', 0);
+      this.record(t, q, pose, outcome);
     } catch (error) {
       if (error instanceof TimeoutExpired) Object.assign(t, noRoute(), { status: 'timeout' });
       else if (error instanceof ImmutableInputFailure) {
