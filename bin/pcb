@@ -55,4 +55,12 @@ if [ -f "$bundle/VERSION" ] && [ -f "$lock" ] && [ "$project" != "$bundle" ]; th
   node "$bundle/bin/toolchain_sync.mjs" "$project" || exit $?
 fi
 [ -z "$sync_only" ] || exit 0
+case "${1:-}" in
+  --project) command=${3:-} ;;
+  --project=*) command=${2:-} ;;
+  *) command=${1:-} ;;
+esac
+case "$command" in
+  status|events) exec node --experimental-strip-types --no-warnings "$bundle/tools/pcb-observe.ts" "$@" ;;
+esac
 exec python3 "$bundle/tools/pcb" "$@"

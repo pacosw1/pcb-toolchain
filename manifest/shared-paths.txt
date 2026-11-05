@@ -242,6 +242,7 @@ tools/lib/pcb-routing-admission.test.ts
 tools/lib/pcb-routing-admission.ts
 tools/lib/pcb-runs.test.ts
 tools/lib/pcb-runs.ts
+tools/lib/pcb-observe-cli.test.ts
 tools/lib/pcb-workflow.test.ts
 tools/lib/pcb-workflow.ts
 tools/lib/pdf-evidence.ts
@@ -336,6 +337,7 @@ tools/pcb_ml_models.ts
 tools/pcb_ml_numeric.ts
 tools/pcb_next.py
 tools/pcb_observation_inputs.py
+tools/pcb-observe.ts
 tools/pcb_operations.py
 tools/pcb_routing_trial.py
 tools/pcb_routing_trial/.gitignore
