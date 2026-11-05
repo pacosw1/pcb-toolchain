@@ -255,11 +255,11 @@ test('the job gets the queue bound: 300 s, or PCB_QUEUE_WAIT_S',async t=>{
   }
 });
 
-test('the default bound is the one tools/pcb_cli.py credits',()=>{
+test('the default bound is the one the run supervisor credits',()=>{
   const number=(file,re)=>re.exec(readFileSync(new URL(file,import.meta.url),'utf8'))?.[1];
   const node=number('../router/route-dispatch.mjs',/^const QUEUE_WAIT_S=(\d+);/m);
   assert.ok(node);
-  assert.equal(number('../pcb_cli.py',/^QUEUE_WAIT_S = (\d+)/m),node);
+  assert.equal(number('../pcb-check-worker.ts',/^const QUEUE_WAIT_S = (\d+);/m),node);
 });
 
 test('macOS: a run the daemon cannot take stops with no verdict and never runs locally',async t=>{

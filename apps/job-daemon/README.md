@@ -68,7 +68,7 @@ changes and every 30 s while it lasts. `pcb-job run` and `watch` print it, `pcb-
 job's record while it waits. A job behind the head of the queue says `behind <id>: <reason>`.
 
 Under `pcb route --router iotroute` the run deadline is the supervisor's, not the daemon's. `route-dispatch.mjs` writes
-the seconds queued to `operation/queue-wait.json` and `tools/pcb_cli.py` adds them to the deadline, up to the same
+the seconds queued to `operation/queue-wait.json` and `tools/pcb-check-worker.ts` adds them to the deadline, up to the same
 bound. Children read `IOT_LEAN_DEADLINE` only once, so theirs holds the whole bound; the supervisor enforces the real one.
 
 ## Retry rule

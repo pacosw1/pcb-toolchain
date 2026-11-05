@@ -207,7 +207,7 @@ function checkPolicy(p: RoutingPolicy): void {
   if (p.only_nets.some(n => /[,*?[\]\r\n\0]/.test(n))) throw new Error('only_nets must be exact net names (no commas or wildcards)')
 }
 
-/** The exact iot-lab.routing-policy.v1 object (tools/PCB-CLI.md; tools/pcb_routing_trial.py validate()). */
+/** The exact iot-lab.routing-policy.v1 object (tools/PCB-CLI.md; tools/lib/pcb-routing-trial.ts validate()). */
 export function routingPolicy(layers: string[], nets: string[], passes: number, timeoutS: number, threads = 1,
                               optimizer = 'if-routed'): RoutingPolicy {
   const policy = { schema: POLICY_SCHEMA, layers: [...layers], only_nets: [...nets], passes, threads, timeout_s: timeoutS,

@@ -24,7 +24,7 @@
 // job reached its queue bound (PCB_QUEUE_WAIT_S). The daemon ends that job itself, so no start can race the local run.
 //
 // The wait does not spend the run's time. --timeout starts when the job runs, and under `pcb` the seconds spent queued
-// go to PCB_QUEUE_CLOCK, which the supervisor adds to the run deadline (tools/pcb_cli.py). A local run after the bound
+// go to PCB_QUEUE_CLOCK, which the supervisor adds to the run deadline (tools/pcb-check-worker.ts). A local run after the bound
 // therefore still has its whole budget.
 import {spawn,spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
@@ -40,7 +40,7 @@ const RECORD_SCHEMA='iot-lab.iotroute-run.v1';
 const DEFAULT_TIMEOUT_S=600;   // tools/pcb's --timeout default
 const CANCEL_MS=1500;          // lean_owned sends SIGKILL 2 s after SIGTERM
 // To tune. A wait this long has a good chance to end: 90 % of the host's busy spells were over in 210 s (guard log,
-// 17 days to 2026-11-04), and the local run is there. tools/pcb_cli.py has the same number; a test keeps them equal.
+// 17 days to 2026-11-04), and the local run is there. tools/pcb-check-worker.ts has the same number; a test keeps them equal.
 const QUEUE_WAIT_S=300;
 const QUEUE_CLOCK_MS=1000;     // how far the credit may lag; the supervisor checks 10 times a second
 // To tune. What a route job reserves; without these it takes the daemon default of 8 CPUs and 8 GB. The core is one thread;

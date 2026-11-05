@@ -112,15 +112,6 @@ test('adoption rejects unsealed, failed and unverified candidates before canonic
   assert.deepEqual(readFileSync(f.target), before);
 });
 
-test('otherwise eligible adoption fails closed before taking a helper lock or changing canonical CAD', async t => {
-  const f = candidateFixture(t), before = readFileSync(f.target);
-  const outcomes = await Promise.allSettled([adopt(f.root, f.folder), adopt(f.root, f.folder)]);
-  assert.ok(outcomes.every(row => row.status === 'rejected' && /lock continuity and crash recovery/.test(String(row.reason))));
-  assert.deepEqual(readFileSync(f.target), before);
-  assert.equal(readdirSync(f.folder).includes('backup'), false);
-  assert.equal(readdirSync(f.folder).includes('adoption.json'), false);
-});
-
 test('parent continuation rejects malformed identity, cleanup and continuation flags', t => {
   const f = candidateFixture(t), before = readFileSync(f.target);
   f.operation.source_unchanged = true;
@@ -200,7 +191,7 @@ test('adoption rejects stale candidate and frozen board without a named baseline
   put(join(baseline, 'result.json'), JSON.stringify({ status: 'failed', cleanup: { complete: true },
     evidence_sha256: { 'run.json': sha(join(baseline, 'run.json')) } }));
   await assert.rejects(adopt(f.root, f.folder, 'DEFECT', baseline), /does not bind required candidate evidence/);
-  // Even a fully bound frozen baseline cannot start an unowned native probe while adoption is disabled.
+  // A fully bound frozen baseline still needs the fresh native probe, and a probe that cannot run is not a pass.
   put(join(baseline, 'gate/result.json'), JSON.stringify({ exit: 1, provenance: { inputs: [] } }));
   put(join(baseline, 'gate/findings.json'), JSON.stringify({ findings: [{ id: 'DEFECT', severity: 'error', stage: 'drc' }], inputs_valid: true, completed_checks: ['drc'] }));
   put(join(baseline, 'result.json'), JSON.stringify({ status: 'failed', cleanup: { complete: true },
@@ -210,6 +201,6 @@ test('adoption rejects stale candidate and frozen board without a named baseline
   const receipt = JSON.parse(readFileSync(join(f.folder, 'result.json'), 'utf8'));
   receipt.evidence_sha256['gate/findings.json'] = sha(join(f.folder, 'gate/findings.json'));
   put(join(f.folder, 'result.json'), JSON.stringify(receipt));
-  await assert.rejects(adopt(f.root, f.folder, 'DEFECT', baseline), /lock continuity and crash recovery/);
+  await assert.rejects(adopt(f.root, f.folder, 'DEFECT', baseline), /not-a-real-node|ENOENT|No such file/);
   assert.deepEqual(readFileSync(f.target), before);
 });

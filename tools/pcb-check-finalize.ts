@@ -6,7 +6,8 @@ import { plainJson, readObject } from './lib/json-file.ts';
 import { durableJson } from './lib/pcb-check-durable.ts';
 import { iotrouteBin } from './lib/iotroute-bin.ts';
 import { now } from './lib/lean-clock.ts';
-import { compactTerminal, events, type Dict } from './lib/pcb-runs.ts';
+import { compactTerminal, events, gateDirectory, type Dict } from './lib/pcb-runs.ts';
+import { OPERATIONS } from './lib/pcb-candidate-admission.ts';
 import { evidenceFiles } from './lib/pcb-evidence.ts';
 import { gateOutcome, type Finding } from './lib/pcb-gate-outcome.ts';
 import { jsonDumps, jsonLoads } from './lib/py-compat.mjs';
@@ -29,7 +30,7 @@ function finalize(ownerPath: string): number {
   if (owner !== join(folder, 'worker-owner.json')) throw new Error('invalid owner receipt path');
   verifyLock(folder);
   const manifest = readObject<Manifest>(join(folder, 'run.json'));
-  if (!['check', 'doctor', 'readiness', 'blocks'].includes(manifest.operation) && !OBSERVATIONS.has(manifest.operation)) throw new Error('invalid check manifest');
+  if (!['check', 'doctor', 'readiness', 'blocks'].includes(manifest.operation) && !OBSERVATIONS.has(manifest.operation) && !OPERATIONS.has(manifest.operation)) throw new Error('invalid check manifest');
   let preliminary: Row;
   try { preliminary = readObject(join(folder, 'worker-preliminary.json')); }
   catch { preliminary = { status: 'error', exit_code: 2, cause: 'worker ended without preliminary evidence', nested_cleanup: null }; }
@@ -52,7 +53,7 @@ function finalize(ownerPath: string): number {
         for (const key of ['status', 'exit_code', 'engineering_status', 'report_sha256']) if (actual[key] !== operation[key] || actual[key] !== preliminary[key]) throw new Error('outcome evidence changed before sealing');
         if (JSON.stringify(actual.engineering_inputs) !== JSON.stringify(preliminary.engineering_inputs)) throw new Error('outcome inputs changed before sealing');
       }
-      if ((operation.tool_exit === 0) !== (operation.status === 'passed')) throw new Error('operation exit disagrees with result');
+      if (!OPERATIONS.has(manifest.operation) && (operation.tool_exit === 0) !== (operation.status === 'passed')) throw new Error('operation exit disagrees with result');
     } catch (error) { settled = false; evidenceProblem = error instanceof Error ? error.message : String(error); }
   }
   if (settled && manifest.operation === 'check' && ['passed', 'failed'].includes(String(preliminary.status))) {
@@ -83,9 +84,10 @@ function finalize(ownerPath: string): number {
   if (!settled) Object.assign(result, { status: 'error', exit_code: 2,
     cause: evidenceProblem ? `gate evidence unconfirmed: ${evidenceProblem}`
       : `${String(preliminary.cause ?? 'worker result unavailable')}; owned process cleanup or result unconfirmed` });
-  Object.assign(result, { scope: manifest.operation === 'doctor' ? 'environment' : manifest.operation === 'readiness' ? 'assembly_readiness' : manifest.operation === 'blocks' ? 'block_evidence' : manifest.operation === 'outcomes' ? 'placement_outcomes' : manifest.operation === 'schematic' ? 'schematic_function' : manifest.operation === 'design' ? 'design_assessment' : manifest.operation === 'parts' ? 'part_evidence' : manifest.operation === 'routing' ? 'routing_decision' : manifest.operation === 'placement' ? 'placement_constraints' : manifest.operation === 'ml' ? 'ml_observation' : 'configured_board_gate', schema_version: 1, run_id: folder.split('/').at(-1), board: manifest.board,
+  const ownScope = OPERATIONS.has(manifest.operation) ? preliminary.scope : undefined;
+  Object.assign(result, { scope: ownScope ?? (manifest.operation === 'doctor' ? 'environment' : manifest.operation === 'readiness' ? 'assembly_readiness' : manifest.operation === 'blocks' ? 'block_evidence' : manifest.operation === 'outcomes' ? 'placement_outcomes' : manifest.operation === 'schematic' ? 'schematic_function' : manifest.operation === 'design' ? 'design_assessment' : manifest.operation === 'parts' ? 'part_evidence' : manifest.operation === 'routing' ? 'routing_decision' : manifest.operation === 'placement' ? 'placement_constraints' : manifest.operation === 'ml' ? 'ml_observation' : 'configured_board_gate'), schema_version: 1, run_id: folder.split('/').at(-1), board: manifest.board,
     operation: manifest.operation, cleanup: { ...(ownerCleanup ?? {}), complete: cleanupConfirmed, nested },
-    ...(manifest.operation === 'check' ? { gate_result: join(folder, 'gate/result.json') } : {}), evidence_dir: folder });
+    ...(manifest.operation === 'check' ? { gate_result: join(folder, 'gate/result.json') } : OPERATIONS.has(manifest.operation) ? { gate_result: join(gateDirectory(folder), 'result.json') } : {}), evidence_dir: folder });
   const state = readObject<Row>(join(folder, 'state.json'));
   const started = typeof state.worker_started_clock_s === 'number' ? state.worker_started_clock_s : now();
   const journal = new CheckJournal(folder, manifest.created_at, started);

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Repository-local dispatcher. Native operations use Node; remaining operations use the legacy CLI.
+# Repository-local dispatcher: tools/pcb [--project DIR] COMMAND ...
 set -eu
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 case "${1:-}" in
@@ -7,20 +7,7 @@ case "${1:-}" in
   --project=*) command=${2:-} ;;
   *) command=${1:-} ;;
 esac
-routing_diagnose() {
-  case "${1:-}" in --project) shift 2 ;; --project=*) shift ;; esac
-  [ "${1:-}" = routing ] || return 1
-  shift
-  skip=''
-  for arg in "$@"; do
-    if [ -n "$skip" ]; then skip=''; continue; fi
-    case "$arg" in --runs-dir|--timeout|--heartbeat|--cycle|--from-run) skip=1 ;; --*) ;; diagnose) return 0 ;; *) return 1 ;; esac
-  done
-  return 1
-}
 case "$command" in
-  routing) if routing_diagnose "$@"; then exec node --experimental-strip-types --no-warnings "$here/pcb-check.ts" "$@"; fi ;;
-  list|context|next|status|events|explain|cancel|note|benchmark) exec node --experimental-strip-types --no-warnings "$here/pcb-observe.ts" "$@" ;;
-  check|doctor|readiness|blocks|outcomes|schematic|design|parts|placement|ml) exec node --experimental-strip-types --no-warnings "$here/pcb-check.ts" "$@" ;;
+  list|context|next|status|events|explain|cancel|note|benchmark|cycle|adopt) exec node --experimental-strip-types --no-warnings "$here/pcb-observe.ts" "$@" ;;
 esac
-exec python3 "$here/pcb-python.py" "$@"
+exec node --experimental-strip-types --no-warnings "$here/pcb-check.ts" "$@"

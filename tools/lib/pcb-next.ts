@@ -3,7 +3,6 @@ import { randomUUID } from 'node:crypto';
 import { lstatSync, readdirSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
 import { readObject as readSharedObject, sha256File } from './json-file.ts';
-import { current as observationCurrent } from './pcb-observation-inputs.ts';
 import { verify } from './pcb-evidence.ts';
 import { boardConfig, context as boardContext } from './pcb-workflow.ts';
 import { stockPopulationCurrent } from './part-stock.ts';
@@ -161,7 +160,7 @@ export function currentFinding(_folder: string, gateDir: string, raw: Gate, boar
 function engineeringInputsCurrent(result: Receipt, subject: 'design assessment' | 'engineering observation'): void {
   const inputs = result.engineering_inputs;
   if (!inputs || !Object.keys(inputs).length) stale(subject === 'design assessment' ? 'design assessment lacks source bindings' : 'engineering observation lacks current input bindings');
-  if ('engineering_policy' in result && !observationCurrent(result.engineering_policy)) stale('engineering code resolution changed since the ' + (subject === 'design assessment' ? 'assessment' : 'observation'));
+  if ('engineering_policy' in result) stale('recorded by the retired Python observer; run the observation again');
   for (const [name, digest] of Object.entries(inputs!)) if (!isFile(name) || sha256File(name) !== digest) stale(subject === 'design assessment' ? 'design assessment source or tool changed' : 'engineering observation input changed: ' + name);
   if ((result.engineering_absent_inputs ?? []).some(name => pathExists(name) || isLink(name))) stale(subject === 'design assessment' ? 'a previously absent design input appeared' : 'a previously absent engineering input appeared');
 }

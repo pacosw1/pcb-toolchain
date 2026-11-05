@@ -192,7 +192,7 @@ test('doctor CLI attaches its environment observation to the selected board cycl
   assert.equal((await settled(join(base, state.run_id))).status, 'passed');
 });
 
-test('direct pcb dispatcher reserves Python fallback for unported operations', t => {
+test('direct pcb dispatcher answers without Python', t => {
   const root = fixture(t, gate(0)), shim = join(root, 'shim'); mkdirSync(shim);
   writeFileSync(join(shim, 'python3'), '#!/bin/sh\necho legacy-fallback >&2\nexit 72\n', { mode: 0o755 });
   const cli = fileURLToPath(new URL('../pcb', import.meta.url));
@@ -200,7 +200,6 @@ test('direct pcb dispatcher reserves Python fallback for unported operations', t
   const native = spawnSync(cli, ['--project', root, 'list', '--json'], { encoding: 'utf8', env });
   assert.equal(native.status, 0, native.stderr || native.stdout);
   assert.doesNotMatch(native.stderr, /legacy-fallback/);
-  const legacy = spawnSync(cli, ['--project', root, 'build', 'X'], { encoding: 'utf8', env });
-  assert.equal(legacy.status, 72);
-  assert.match(legacy.stderr, /legacy-fallback/);
+  const build = spawnSync(cli, ['--project', root, 'build', 'X'], { encoding: 'utf8', env });
+  assert.doesNotMatch(build.stderr, /legacy-fallback/);
 });

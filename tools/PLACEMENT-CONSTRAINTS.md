@@ -6,8 +6,8 @@ pad/net map, land geometry, original PDF hash and one-based source page.
 The engineering screen grants no routing, assembly, enclosure or bench qualification.
 
 ```sh
-python3 tools/engineering_constraints.py check BOARD --manifest REVIEW.json --json --output REPORT.json
-python3 tools/engineering_constraints.py check BOARD --manifest REVIEW.json --candidate COPY.kicad_pcb --json
+node --experimental-strip-types tools/engineering_constraints.ts check BOARD --manifest REVIEW.json --json --output REPORT.json
+node --experimental-strip-types tools/engineering_constraints.ts check BOARD --manifest REVIEW.json --candidate COPY.kicad_pcb --json
 ```
 
 Reports distinguish `passed`, `blocked` and `stale`. A missing review or unsupported

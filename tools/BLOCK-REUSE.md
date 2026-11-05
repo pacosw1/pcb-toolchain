@@ -6,10 +6,10 @@ a viewer, and rigid placement/copper support. This adds retrieval and a review
 dossier; it does not insert a block into a board or promote its validation level.
 
 ```sh
-python3 tools/blocks.py find 'USB'
-python3 tools/blocks.py find 'buck' --mpn AP63203WU-7
-python3 tools/blocks.py reuse BUCK-3V3-AP63203 > proposal.json
-python3 tools/blocks.py reuse BUCK-3V3-AP63203 --expect-sha256 HASH_FROM_PROPOSAL
+node --experimental-strip-types tools/blocks.ts find 'USB'
+node --experimental-strip-types tools/blocks.ts find 'buck' --mpn AP63203WU-7
+node --experimental-strip-types tools/blocks.ts reuse BUCK-3V3-AP63203 > proposal.json
+node --experimental-strip-types tools/blocks.ts reuse BUCK-3V3-AP63203 --expect-sha256 HASH_FROM_PROPOSAL
 ```
 
 Search returns why each candidate matched. MPN and footprint filters are exact;
@@ -32,9 +32,9 @@ schematic, library dependencies and evidence files as well; completeness of this
 list requires review, and missing dependencies cannot be detected automatically.
 
 ```sh
-python3 tools/blocks.py plan IF-USBC-SINK target.json > plan.json
+node --experimental-strip-types tools/blocks.ts plan IF-USBC-SINK target.json > plan.json
 # Fill port_map destinations in plan.json; null means unresolved.
-python3 tools/blocks.py plan IF-USBC-SINK target.json --mapping plan.json
+node --experimental-strip-types tools/blocks.ts plan IF-USBC-SINK target.json --mapping plan.json
 ```
 
 The plan binds each input and the manifest to SHA-256 fingerprints. Rechecking

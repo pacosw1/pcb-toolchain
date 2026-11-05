@@ -4,7 +4,7 @@
 functions against actual native CAD and reviewed evidence. The backend is:
 
 ```
-python3 tools/schematic_contract.py check BOARD --contract FILE --root ROOT --json --output REPORT
+node --experimental-strip-types tools/schematic_contract.ts check BOARD --contract FILE --root ROOT --json --output REPORT
 ```
 
 `check_contract(root, board, path, output=None)` returns

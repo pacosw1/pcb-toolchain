@@ -155,8 +155,8 @@ test('pipeline needs a real script; operationCommand plans build, edit and route
   assert.equal(pipeline(root, 'X'), 'tools/build-x.sh');
   assert.deepEqual(operationCommand(root, 'X', 'build'), ['sh', 'tools/build-x.sh']);
   const pcb = 'hardware-design/boards/X/cad/X.kicad_pcb';
-  assert.deepEqual(operationCommand(root, 'X', 'edit', 's.json', 'place').slice(1), ['tools/pcbtool.py', 'place', pcb, 's.json']);
-  assert.deepEqual(operationCommand(root, 'X', 'route', 's.json').slice(1), ['tools/pcbtool.py', 'route', pcb, 's.json']);
+  assert.deepEqual(operationCommand(root, 'X', 'edit', 's.json', 'place').slice(3), ['tools/pcbtool.ts', 'place', pcb, 's.json']);
+  assert.deepEqual(operationCommand(root, 'X', 'route', 's.json').slice(3), ['tools/pcbtool.ts', 'route', pcb, 's.json']);
   assert.throws(() => operationCommand(root, 'X', 'edit', 's.json', 'other'), /edit kind/);
   assert.throws(() => operationCommand(root, 'X', 'edit'), /explicit JSON spec/);
   assert.throws(() => operationCommand(root, 'X', 'other'), /unknown candidate operation: other/);

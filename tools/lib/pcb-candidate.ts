@@ -1,19 +1,25 @@
 // A sealed candidate: continuing one in a new run, and adopting one into canonical CAD. Only adoption changes the board.
-import { spawnSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
-import { closeSync, fchmodSync, fchownSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+//
+// One adoption of a board at a time, and a crash leaves it recoverable: an exclusive journal names the run and both hashes
+// before the board is touched, and stays until the receipt is durable. It needs no lock holder that could die first, and the
+// target's hash tells whether the replacement happened. Content, mode and owner carry over; extended attributes do not, as with
+// KiCad's own save.
+import { createHash, randomBytes } from 'node:crypto';
+import { closeSync, fchmodSync, fchownSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
-import { atomicJson, plainJson, readPyJson } from './json-file.ts';
+import { plainJson, readObject, readPyJson } from './json-file.ts';
+import { runStage } from './lean-stage.ts';
+import { deadlineAfter } from './lean-workflow.ts';
+import { durableJson } from './pcb-check-durable.ts';
 import { verify } from './pcb-evidence.ts';
 import { declaredPours, pcbIdentity } from './pcb-identity.ts';
 import { sourceState, type SourceState } from './pcb-sources.ts';
 import { boardConfig, context, sha } from './pcb-workflow.ts';
 import { PyError } from './py-compat.mjs';
-import { isRelativeTo, joinPath, relativeTo, resolvePath, withSuffix } from './py-path.ts';
+import { isRelativeTo, joinPath, pathExists, relativeTo, resolvePath, withSuffix } from './py-path.ts';
 import { type Dict, sameValue } from './py-values.ts';
 
-const VERIFY_MS = 90_000;
+const VERIFY_S = 90;
 
 function fail(message: string): never { throw new PyError('ValueError', message); }
 
@@ -71,14 +77,14 @@ export function parentCandidate(rootPath: string, board: string, reference: Refe
   return { candidate, dependencies };
 }
 
-function snapshotProbe(node: string, root: string, args: string[], env?: NodeJS.ProcessEnv): { status: number | null; stderr: string } {
-  const run = spawnSync(node, [joinPath(root, 'tools/pcb_snapshot_inputs.mjs'), ...args], { encoding: 'utf8', timeout: VERIFY_MS, env: env ?? process.env });
-  if (run.error) throw run.error;
-  return run;
+/** The native evidence probe: an owned stage, so a stuck verifier and its children cannot outlive the deadline. */
+async function snapshotProbe(node: string, root: string, args: string[], env: NodeJS.ProcessEnv = process.env): Promise<{ returncode: number; stderr: string }> {
+  const run = await runStage([node, joinPath(root, 'tools/pcb_snapshot_inputs.mjs'), ...args], { stage: 'adoption-verify', deadline: deadlineAfter(VERIFY_S), env, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
+  return { returncode: run.returncode, stderr: run.stderr ?? '' };
 }
 
-/** Check frozen-baseline metadata only. Fresh native evidence still needs an owned probe before any adoption. */
-function checkFrozenBaselineMetadata(root: string, folder: string, board: string, baselinePath: string | null | undefined, defect: string | null | undefined): void {
+/** A frozen board changes only to fix a named defect of a current failed check, and the candidate must have resolved it. */
+async function checkFrozenBaseline(node: string, root: string, folder: string, board: string, baselinePath: string | null | undefined, defect: string | null | undefined): Promise<void> {
   if (!baselinePath || !defect) fail('FOCUS.md freezes this board: provide --baseline RUN_ID and --defect FINDING_ID from a current failed check');
   const baseline = baselinePath!;
   const previous = readPyJson<RunManifest>(joinPath(baseline, 'run.json'));
@@ -95,6 +101,13 @@ function checkFrozenBaselineMetadata(root: string, folder: string, board: string
   for (const input of receipt.provenance.inputs) {
     if (input.path in source.files && source.files[input.path] !== input.sha256) fail('defect baseline does not match candidate source');
   }
+  const check = await snapshotProbe(node, root, [root, board, '--verify-failed', joinPath(baseline, 'gate'), finding.stage]);
+  if (check.returncode) fail(`defect baseline is stale: ${check.stderr.trim()}`);
+}
+
+function syncFolder(path: string): void {
+  const folder = openSync(path, 'r');
+  try { fsyncSync(folder); } finally { closeSync(folder); }
 }
 
 type ChunkWriter = (fd: number, bytes: Buffer, offset: number, length: number) => number;
@@ -124,6 +137,7 @@ export function replaceAtomically(target: string, bytes: Buffer, stillCurrent: (
     if (!current.isFile() || current.dev !== original.dev || current.ino !== original.ino || current.mode !== original.mode
         || current.uid !== original.uid || current.gid !== original.gid) throw new Error('canonical PCB metadata changed before atomic adoption');
     renameSync(temporary, target);
+    syncFolder(dirname(target));
   } finally {
     if (open) { try { closeSync(file); } catch { /* retain the original write/close error */ } }
     rmSync(temporary, { force: true });
@@ -146,36 +160,122 @@ function checkAdoptable(root: string, folder: string, manifest: RunManifest, ope
   return candidate;
 }
 
-function commitAdoption(root: string, folder: string, manifest: RunManifest, operation: Dict, candidate: string, defect: string | null): Dict {
-  const { board } = manifest;
+interface Intent { run: string; folder: string; target: string; before_sha256: string; after_sha256: string; defect: string | null; board: string; pid: number }
+
+const journalOf = (root: string, board: string): string => joinPath(root, '.gate/board-locks', `${board}.adoption.json`);
+
+const running = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+};
+
+/** Exclusive and durable: whoever creates the file owns the board's adoption until it is gone. */
+function createJournal(path: string, intent: Intent): boolean {
+  mkdirSync(dirname(path), { recursive: true });
+  let file: number;
+  try {
+    file = openSync(path, 'wx', 0o644);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false;
+    throw error;
+  }
+  try {
+    writeFileSync(file, JSON.stringify(intent) + '\n');
+    fsyncSync(file);
+  } finally {
+    closeSync(file);
+  }
+  syncFolder(dirname(path));
+  return true;
+}
+
+function writeReceipt(intent: Intent, saved: string): Dict {
+  const receipt: Dict = { schema_version: 1, board: intent.board, target: intent.target, before_sha256: sha(saved), after_sha256: intent.after_sha256,
+    candidate_run: intent.run, defect: intent.defect, adopted_at: Date.now() / 1000 };
+  durableJson(joinPath(intent.folder, 'adoption.json'), receipt);
+  return receipt;
+}
+
+/** A finished replacement keeps its receipt, an unfinished one leaves nothing behind, and anything else stays for a person. */
+function recoverJournal(path: string): void {
+  const intent = readObject<Intent>(path);
+  if (running(intent.pid)) fail(`another adoption of ${intent.board} is running (pid ${intent.pid}): ${path}`);
+  const claimed = `${path}.recovering-${process.pid}`;
+  try {
+    renameSync(path, claimed);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;   // another adopter recovered it first
+    throw error;
+  }
+  const current = sha(intent.target);
+  if (current === intent.after_sha256) {
+    const saved = joinPath(intent.folder, 'backup', basename(intent.target));
+    if (!pathExists(joinPath(intent.folder, 'adoption.json'))) writeReceipt(intent, saved);
+  } else if (current === intent.before_sha256) {
+    const folder = dirname(intent.target);
+    for (const name of readdirSync(folder)) if (name.startsWith('.pcb-adopt-')) rmSync(joinPath(folder, name), { force: true });
+  } else {
+    renameSync(claimed, path);
+    fail(`canonical PCB matches neither side of an interrupted adoption of run ${intent.run}; inspect ${path}`);
+  }
+  rmSync(claimed, { force: true });
+}
+
+function claimJournal(path: string, intent: Intent): void {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (createJournal(path, intent)) return;
+    recoverJournal(path);
+  }
+  if (!createJournal(path, intent)) fail(`another adoption of ${intent.board} is running: ${path}`);
+}
+
+async function commitAdoption(root: string, folder: string, manifest: RunManifest, operation: Dict, candidate: string, defect: string | null): Promise<Dict> {
+  const { board } = manifest, target = nativeBoard(root, board), journal = journalOf(root, board);
   const sources = readPyJson<SourceState>(joinPath(folder, 'operation/source.json'));
   const unchanged = (message: string): void => {
     if (!sameValue(sourceState(root, board, sources.extra_inputs), sources)) fail(message);
   };
-  const target = nativeBoard(root, board);
-  unchanged('canonical inputs changed since candidate creation; generate and verify a new candidate');
-  const workspace = joinPath(folder, 'workspace');
-  const check = snapshotProbe(manifest.node as string, root, [workspace, board, '--verify', joinPath(folder, 'gate')], { ...process.env, IOT_LAB: workspace });
-  if (check.status) fail(`candidate native evidence is stale: ${check.stderr.trim()}`);
-  // Native and library probes take time: the read before them cannot authorize replacing a board edited meanwhile.
-  verify(folder);
-  unchanged('canonical inputs changed during adoption verification');
-  if (!sameIdentity(target, candidate, manifest)) fail('candidate changes protected design identity');
-  const candidateBytes = readFileSync(candidate);
-  if (createHash('sha256').update(candidateBytes).digest('hex') !== operation.candidate_sha256) fail('candidate changed during adoption verification');
-  const originalBytes = readFileSync(target);
-  if (createHash('sha256').update(originalBytes).digest('hex') !== sources.files[relativeTo(target, root)]) fail('canonical PCB changed during adoption verification');
-  const backup = joinPath(folder, 'backup');
-  mkdirSync(backup);
-  const saved = joinPath(backup, basename(target));
-  writeFileSync(saved, originalBytes);
-  replaceAtomically(target, candidateBytes, () => unchanged('canonical inputs changed before atomic adoption'));
-  const receipt: Dict = {
-    schema_version: 1, board, target, before_sha256: sha(saved), after_sha256: sha(target), candidate_run: basename(folder), defect,
-    adopted_at: Date.now() / 1000,
-  };
-  atomicJson(joinPath(folder, 'adoption.json'), receipt);
-  return receipt;
+  const before = sources.files[relativeTo(target, root)]!, after = operation.candidate_sha256 as string;
+  const intent: Intent = { run: basename(folder), folder, target, before_sha256: before, after_sha256: after, defect, board, pid: process.pid };
+  claimJournal(journal, intent);
+  let replaced = false;
+  try {
+    const finished = joinPath(folder, 'adoption.json');
+    if (pathExists(finished)) {
+      rmSync(journal, { force: true });
+      return readObject<Dict>(finished);
+    }
+    unchanged('canonical inputs changed since candidate creation; generate and verify a new candidate');
+    const workspace = joinPath(folder, 'workspace');
+    const check = await snapshotProbe(manifest.node as string, root, [workspace, board, '--verify', joinPath(folder, 'gate')], { ...process.env, IOT_LAB: workspace });
+    if (check.returncode) fail(`candidate native evidence is stale: ${check.stderr.trim()}`);
+    // Native and library probes take time: the read before them cannot authorize replacing a board edited meanwhile.
+    verify(folder);
+    unchanged('canonical inputs changed during adoption verification');
+    if (!sameIdentity(target, candidate, manifest)) fail('candidate changes protected design identity');
+    const candidateBytes = readFileSync(candidate);
+    if (createHash('sha256').update(candidateBytes).digest('hex') !== after) fail('candidate changed during adoption verification');
+    const originalBytes = readFileSync(target);
+    if (createHash('sha256').update(originalBytes).digest('hex') !== before) fail('canonical PCB changed during adoption verification');
+    const saved = joinPath(folder, 'backup', basename(target));
+    mkdirSync(dirname(saved), { recursive: true });
+    const backup = openSync(saved, 'w');
+    try { writeFileSync(backup, originalBytes); fsyncSync(backup); } finally { closeSync(backup); }
+    syncFolder(dirname(saved));
+    replaceAtomically(target, candidateBytes, () => unchanged('canonical inputs changed before atomic adoption'));
+    replaced = true;
+    const receipt = writeReceipt(intent, saved);
+    rmSync(journal, { force: true });
+    return receipt;
+  } catch (error) {
+    // After the replacement the journal is what finishes the receipt; before it, the board is free again.
+    if (!replaced) rmSync(journal, { force: true });
+    throw error;
+  }
 }
 
 export async function adopt(rootPath: string, folderPath: string, defect?: string | null, baseline?: string | null): Promise<Dict> {
@@ -185,11 +285,6 @@ export async function adopt(rootPath: string, folderPath: string, defect?: strin
   const manifest = readPyJson<RunManifest>(joinPath(folder, 'run.json'));
   const candidate = checkAdoptable(root, folder, manifest, operation, result);
   const state = context(root, manifest.board) as { frozen: boolean };
-  if (state.frozen) checkFrozenBaselineMetadata(root, folder, manifest.board, baseline, defect);
-  // A detached flock helper can die before the rename, and the current backup/receipt
-  // sequence is not crash-recoverable. Reject before opening a lock or touching CAD.
-  // A future implementation needs target-keyed lock ownership, a durable journal,
-  // owned verifier cleanup, and an explicit extended-attribute policy.
-  void candidate;
-  fail('adoption unavailable until lock continuity and crash recovery are verified');
+  if (state.frozen) await checkFrozenBaseline(manifest.node as string, root, folder, manifest.board, baseline, defect);
+  return commitAdoption(root, folder, manifest, operation, candidate, defect ?? null);
 }
