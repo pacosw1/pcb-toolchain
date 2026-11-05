@@ -67,7 +67,7 @@ function boardFolders(root: string, board: string): { names: string[]; project: 
   const { cfg, project } = boardConfig(root, board);
   const owner = relativeTo(project, joinPath(root, 'hardware-design/boards')).split('/')[0]!;
   return {
-    names: ['tools', `hardware-design/boards/${owner}`, 'hardware-design/blocks', 'hardware-design/registry'], project,
+    names: ['tools', `hardware-design/boards/${owner}`, 'hardware-design/boards/_art', 'hardware-design/blocks', 'hardware-design/registry'], project,
     datasheets: !!cfg.get('snapshot_schematic_datasheets'),
   };
 }
