@@ -91,6 +91,23 @@ pub fn refused_lines(model: &Model) -> Vec<String> {
     model.rules.iter().filter(|row| row.state == RuleState::Unknown).map(|row| format!("REFUSED {} / {}: {}", row.rule, row.constraint, row.why)).collect()
 }
 
+/// The direct solver also accepts saved diagnostic models. Do not let bypassing the model command's exit status bypass its
+/// refusal. Legacy unversioned models may have no report; a versioned compiler model must carry one.
+pub fn admit_solver_model(model: &serde_json::Value) -> Result<(), String> {
+    let Some(rows) = model.get("rules") else {
+        return if model.get("schema").is_some() {
+            Err("rule coverage refused: versioned model has no rules report".to_string())
+        } else {
+            Ok(())
+        };
+    };
+    let report: Vec<RuleReport> = serde_json::from_value(rows.clone())
+        .map_err(|e| format!("rule coverage refused: invalid rules report: {e}"))?;
+    let refused: Vec<String> = report.iter().filter(|row| row.state == RuleState::Unknown)
+        .map(|row| format!("REFUSED {} / {}: {}", row.rule, row.constraint, row.why)).collect();
+    if refused.is_empty() { Ok(()) } else { Err(format!("rule coverage refused:\n{}", refused.join("\n"))) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
