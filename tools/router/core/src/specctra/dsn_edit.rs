@@ -203,6 +203,12 @@ mod tests {
             assert_eq!(out.matches(" 1800)").count(), layers.len());
             assert!(out.contains(&format!("(via \"Via[0-{last}]_600:300_um\" \"{halo}\")")), "{out}");
             assert!(big_signal_via(&out, 1.8, &[], &[]).unwrap_err().contains("already exists"));
+            // The import reads the halo back: a padstack it refused would stop every session with one.
+            let wired = out.replace("(wiring)", &format!("(wiring (via \"{halo}\" 1000 2000 (net N)))"));
+            let records = crate::specctra::records::dsn_records(&wired).unwrap();
+            let [record] = &records[..] else { panic!("one via, got {records:?}") };
+            let crate::specctra::records::Geometry::Via { size, drill, .. } = record.geometry else { panic!("{record:?}") };
+            assert_eq!((size, drill), (1_800_000, 300_000));
         }
     }
 

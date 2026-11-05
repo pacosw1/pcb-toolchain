@@ -49,7 +49,6 @@ tools/check_pixel_art.ts
 tools/datasheet_audit.mjs
 tools/doctor.mjs
 tools/driver-edges.json
-tools/dsn_skip.py
 tools/easyeda_audit.ts
 tools/edge-rates.json
 tools/examples/design-idea.json
@@ -71,8 +70,6 @@ tools/gerber_netcheck.ts
 tools/gnd_pad_vias.py
 tools/ibis_ramp.ts
 tools/import_nets.ts
-tools/import_pose_guard.py
-tools/import_replay_guard.py
 tools/jlc-snapshot.mjs
 tools/jlc_api_evidence.mjs
 tools/jlc_stock.mjs
@@ -963,11 +960,7 @@ tools/test-fixtures/generator-cc-774.json
 tools/test-fixtures/mandatory-cc-774.json
 tools/test-gnd-pad-vias.py
 tools/test_backend_quality.py
-tools/test_dsn_skip.py
 tools/test_gnd_pad_vias.py
-tools/test_halo_padstack.py
-tools/test_import_pose_guard.py
-tools/test_import_replay_guard.py
 tools/test_lean_clock.py
 tools/test_lean_native.py
 tools/test_lean_owned.py
