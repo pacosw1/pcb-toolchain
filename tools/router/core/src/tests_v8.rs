@@ -5,7 +5,7 @@ use super::tests_v6::opts;
 
 fn n(name: &str, plane: bool) -> Net {
     Net { name: name.into(), width: 0.15, clr: 0.15, fast: false, plane, power: false, layers: 0b101, via_d: 0.6, via_drill: 0.3, max_vias: None,
-          max_len: None, pref: false, min_w: 0.0, min_wl: Vec::new(), in_vias: 0 }
+          max_len: None, pref: false, min_w: 0.0, min_wl: Vec::new(), in_vias: 0, neck_w: 0.0 }
 }
 
 /// A power net of 2.1 A: 0.55 mm on F.Cu / B.Cu (1 oz), 1.27 mm on the thin inner copper (as ESP32-CORE VSYS_IN).

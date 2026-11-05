@@ -221,6 +221,8 @@ struct Net {
     min_wl: Vec<f64>,
     /// locked input vias of the net: they count in the DRU via_count
     in_vias: usize,
+    /// the narrowest width a stage lets this net neck to (model `neck_width`, route.json `neck_um`); 0 = no stage asks
+    neck_w: f64,
 }
 
 /// v8: a KiCad rule area (keepout) that does not allow tracks (on the layers in `tl`) or vias (any layer: a through via
@@ -2445,6 +2447,7 @@ fn load(model: &Value, hole_clr: f64) -> Board {
             min_w: v["min_width"].as_f64().filter(|&w| w > 0.0).map(|w| w.max(min_track)).unwrap_or(0.0),
             min_wl: Vec::new(),
             in_vias: v["input_vias"].as_u64().unwrap_or(0) as usize,
+            neck_w: v["neck_width"].as_f64().unwrap_or(0.0),
         };
         let mut n = n;
         // v8: per-layer current width; min_w = the smallest over the net's layers (the others are layer floors)
@@ -2912,7 +2915,8 @@ fn fanout_net_inner(ctx: &mut Ctx, net: usize) -> NetResult {
         // v6 fix 4: the class width (raised to the pad's current need) with a neck only at the pad entry; narrower
         // widths only when the full width has no path past fixed copper
         let _ = (pw, ph);
-        let mut ws = vec![ctx.bd.nets[net].width.max(need), 0.3f64.max(need), 0.15f64.max(need)];
+        let neck = need.max(ctx.bd.nets[net].neck_w);
+        let mut ws = vec![ctx.bd.nets[net].width.max(need), 0.3f64.max(neck), 0.15f64.max(neck)];
         ws.retain(|&w| w <= ctx.bd.nets[net].width.max(need) + 1e-9);
         ws.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
         // v8: the via sites lie within 2 mm of the pad centre; only when that window has none, 3 mm (a pad ringed by
@@ -3773,7 +3777,7 @@ fn prune_returns(ctx: &mut Ctx) -> usize {
 /// net may neck to 0.3 / 0.2 / 0.15 mm, never below the width its current needs (current-paths.json via the model).
 fn net_widths(n: &Net) -> Vec<f64> {
     let base = n.width.max(n.min_w);
-    if !n.power {
+    if !n.power && n.neck_w <= 0.0 {
         return vec![base];
     }
     let mut v: Vec<f64> = [base, 0.3, 0.2, 0.15, n.min_w].iter().cloned()
@@ -5049,7 +5053,7 @@ mod tests {
 
     fn net(name: &str, clr: f64, fast: bool) -> Net {
         Net { name: name.into(), width: 0.15, clr, fast, plane: false, power: false, layers: 0b101, via_d: 0.6, via_drill: 0.3, max_vias: None, max_len: None,
-              pref: false, min_w: 0.0, min_wl: Vec::new(), in_vias: 0 }
+              pref: false, min_w: 0.0, min_wl: Vec::new(), in_vias: 0, neck_w: 0.0 }
     }
 
     #[test]

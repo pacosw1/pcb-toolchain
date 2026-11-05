@@ -11,7 +11,8 @@
 //!      "only_nets": [...] | "skip_nets": [...],     not both; skip_nets are glob patterns
 //!      "layers": [...], "passes": N, "time_s": N, "threads": N,
 //!      "plane_nets": [...], "route_planes": false,  plane nets get pad vias and are not routed (unless route_planes)
-//!      "neck_um": 0, "unlock_nets": [...], "via_skip": ["U2", "R7.1"],
+//!      "neck_um": 0,                                the narrowest a wider net may neck; a current floor above it stays
+//!      "unlock_nets": [...], "via_skip": ["U2", "R7.1"],
 //!      "remove_zones": ["BARRIER_BAND"],            zones taken out for this stage only, then put back
 //!      "keepouts": [{"name": "SELV", "inside" | "outside": [x0, y0, x1, y1], "layers": [...]}],   this stage only;
 //!                                                   no tracks, vias or fills; default layers: all copper

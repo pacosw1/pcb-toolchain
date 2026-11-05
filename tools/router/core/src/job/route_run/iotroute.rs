@@ -2,7 +2,7 @@
 //!
 //! What a stage says becomes model data before the core reads it: `only_nets` / `skip_nets` and the plane nets are `route_nets`, the
 //! only nets the core routes; `layers` narrows each of them; `plane_nets` (without `route_planes`) get pad vias into their pour;
-//! `neck_um` is the narrowest a wider net may neck; `passes` and `time_s` are --iters and --max-time. The router sees the board pours
+//! `neck_um` is the narrowest a wider net may neck, and the width it retries at (`neck_floor`); `passes` and `time_s` are --iters and --max-time. The router sees the board pours
 //! of the plan during the stage (`pour_view`): pad vias and return vias must land in them. They leave the board again after the
 //! route, and `finish` pours them on the final copper for either backend. Nets the gate exempts from RP-001 get no return vias.
 //!
@@ -63,11 +63,13 @@ pub fn pour_view(board: &Board, pours: &[Pour], seed: &str) -> Result<(Vec<Strin
     Ok((names, zones))
 }
 
-/// A net wider than the neck may not go below it. A narrower net has nothing to neck, and a current floor above it stays.
+/// A net wider than the neck may not go below it and retries at it, power or not, its pad fan-outs too. A narrower net has nothing to
+/// neck, and a current floor above it stays. A pad narrower than the neck is still entered at the pad's own width.
 fn neck_floor(net: &mut Value, neck_mm: f64) {
     if neck_mm <= 0.0 || net["width"].as_f64().is_none_or(|width| width <= neck_mm) {
         return;
     }
+    net["neck_width"] = neck_mm.into();
     net["min_width"] = net["min_width"].as_f64().map_or(neck_mm, |floor| floor.max(neck_mm)).into();
     for floor in net["min_width_layers"].as_object_mut().into_iter().flat_map(|layers| layers.values_mut()) {
         *floor = floor.as_f64().map_or(neck_mm, |width| width.max(neck_mm)).into();
@@ -76,7 +78,9 @@ fn neck_floor(net: &mut Value, neck_mm: f64) {
 
 /// The stage on the model. `halo`: the plan asks for via_halo.
 fn stage_model(model: &mut Value, stage: &Stage, halo: bool) -> Result<(), String> {
-    if halo && model["return_net"].is_null() {
+    // The model writes return_net only when it is not the plain GND, the core's default.
+    let return_net = model["return_net"].as_str().unwrap_or("GND").to_string();
+    if halo && model["nets"].get(&return_net).is_none() {
         return Err(format!("route: stage {}: feature {VIA_HALO} needs a return net, and the board's model has none", stage.name));
     }
     let nets = model["nets"].as_object_mut().ok_or("route: the model has no nets")?;
@@ -146,9 +150,20 @@ mod tests {
         stage_model(&mut model, &plan(json!({})).stages[0], false).unwrap();
         assert_eq!(model["route_nets"], json!(["A", "G"]));
         assert_eq!((&model["nets"]["A"]["layers"], &model["nets"]["A"]["min_width"]), (&json!(["F.Cu"]), &json!(1.0)));
+        assert_eq!(model["nets"]["A"]["neck_width"], json!(1.0));
         assert_eq!((&model["nets"]["G"]["plane"], &model["nets"]["OTHER"]["plane"]), (&json!(true), &json!(true)));
         model["nets"]["G"]["plane_polys"] = Value::Null;
         assert!(stage_model(&mut model, &plan(json!({})).stages[0], false).unwrap_err().contains("plane net G has no pour"));
+    }
+
+    /// NET-CORE: the model leaves out return_net when it is the plain GND, which the core takes as its default.
+    #[test]
+    fn via_halo_takes_the_plain_gnd_as_the_return_net() {
+        let stage = &plan(json!({"stages": [{"name": "s", "only_nets": ["A"]}]})).stages[0];
+        let mut model = json!({"nets": {"A": {"layers": ["F.Cu"], "plane": false}, "GND": {"layers": ["F.Cu"], "plane": true}}});
+        stage_model(&mut model, stage, true).unwrap();
+        model["nets"].as_object_mut().unwrap().remove("GND");
+        assert!(stage_model(&mut model, stage, true).unwrap_err().contains("needs a return net"));
     }
 
     #[test]
