@@ -1,7 +1,7 @@
 // What a failed route left, kept with its run: iotroute's stuck.json (tools/router/core/src/stuck.rs) as operation/stuck.json, against
 // the last report of this board, so each round says what changed. The report is written in the job; this only keeps and compares it.
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, readdirSync } from 'node:fs';
+import { copyFileSync, existsSync, readdirSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { iotrouteBin } from './iotroute-bin.ts';
 import { readObject } from './json-file.ts';
@@ -11,7 +11,7 @@ export const STUCK_FILE = 'operation/stuck.json';
 export interface StuckReport {
   schema: string; board: string; work: string; drc_errors: number; unconnected: number; parity: number; enclosed: number; router_miss: number; unknown: number;
   search: { stop?: string | null; pass?: number; max_passes?: number; passes_since_best?: number; search_limited?: number } | null;
-  route_layers: string[]; open_nets: string[]; region: number[] | null;
+  route_layers: string[]; reused: boolean; changed: { worse: boolean; better: boolean } | null; open_nets: string[]; region: number[] | null;
   rows: { net: string; class: string; connections: number; why: string }[];
   blockers: { parts: string[]; nets: string[]; keepouts: string[]; layers: string[]; boxed_in: string[] };
   summary: string[];
@@ -32,11 +32,11 @@ function compare(work: string, board: string, previous: string): void {
   if (done.status) throw new Error(`iotroute stuck: ${done.stderr.trim()}`);
 }
 
-/** Keeps the report at `file`, when the route wrote one, and returns it. */
+/** Keeps the report at `file`, when the route wrote one, and returns it. A run on another machine left its `work` there: it stays uncompared. */
 export function keepStuck(folder: string, board: string, file: string, again = compare): StuckReport | null {
   if (!isFile(file)) return null;
-  const { work } = readObject<StuckReport>(file), previous = previousStuck(folder, board);
-  if (previous) again(work, board, previous);
-  copyFileSync(join(work, 'stuck.json'), join(folder, STUCK_FILE));
+  const { work } = readObject<StuckReport>(file), previous = previousStuck(folder, board), here = existsSync(join(work, 'drc.json'));
+  if (previous && here) again(work, board, previous);
+  copyFileSync(here ? join(work, 'stuck.json') : file, join(folder, STUCK_FILE));
   return readObject<StuckReport>(join(folder, STUCK_FILE));
 }

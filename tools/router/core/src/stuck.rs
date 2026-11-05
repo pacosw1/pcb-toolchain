@@ -2,7 +2,8 @@
 //! schema `iot-lab.stuck-report.v1`, and its `summary` lines on stdout.
 //!
 //! It only reads what the run wrote into WORK: drc.json (the verdict), open-triage.json and pin-escape.json (`iotroute run --diagnose`),
-//! checkpoint.json (how the search ended) and model.json (which layers a net may use). A file that is not there leaves its part out;
+//! checkpoint.json (how the search ended), model.json (which layers a net may use) and seed.json (the run started from an earlier
+//! one: `reused`). A file that is not there leaves its part out;
 //! only drc.json is needed. Same files, same report: no clock, no search, no LLM.
 //!
 //! Each stuck connection says where its ends are and why it is open. ENCLOSED: no legal path on the diagnosis grid, and what walls it
@@ -55,6 +56,11 @@ pub struct Blockers {
 pub struct Changed {
     pub open_before: usize,
     pub open_now: usize,
+    pub unconnected_before: usize,
+    pub unconnected_now: usize,
+    /// More, or fewer, DRC errors and open connections than the report before.
+    pub worse: bool,
+    pub better: bool,
     pub new: Vec<String>,
     pub resolved: Vec<String>,
     pub same: usize,
@@ -76,6 +82,8 @@ pub struct Report {
     pub search: Value,
     /// The layers the board routes on, planes left out.
     pub route_layers: Vec<String>,
+    /// This run started from the copper of an earlier one.
+    pub reused: bool,
     pub open_nets: Vec<String>,
     pub rows: Vec<Row>,
     /// The box of all stuck ends, mm: x0, y0, x1, y1.
@@ -103,6 +111,7 @@ pub struct Sources {
     pub checkpoint: Value,
     pub model: Value,
     pub previous: Value,
+    pub reused: bool,
 }
 
 fn list(value: &Value) -> &[Value] {
@@ -189,11 +198,13 @@ fn drc_errors(drc: &Value) -> (usize, Vec<Value>) {
     (errors.len(), rows.collect())
 }
 
-fn changed(previous: &Value, open: &[String]) -> Option<Changed> {
+fn changed(previous: &Value, open: &[String], unconnected: usize, errors: usize) -> Option<Changed> {
     let before: BTreeSet<&str> = previous["open_nets"].as_array().map(|_| names(&previous["open_nets"]).collect())?;
     let now: BTreeSet<&str> = open.iter().map(String::as_str).collect();
+    let count = |key: &str| previous[key].as_u64().unwrap_or(0) as usize;
+    let (problems, problems_before) = (unconnected + errors, count("unconnected") + count("drc_errors"));
     let first = |set: Vec<&&str>| set.into_iter().take(MAX_NAMES).map(|net| net.to_string()).collect();
-    Some(Changed { open_before: before.len(), open_now: now.len(), new: first(now.difference(&before).collect()), resolved: first(before.difference(&now).collect()), same: now.intersection(&before).count() })
+    Some(Changed { open_before: before.len(), open_now: now.len(), unconnected_before: count("unconnected"), unconnected_now: unconnected, worse: problems > problems_before, better: problems < problems_before, new: first(now.difference(&before).collect()), resolved: first(before.difference(&now).collect()), same: now.intersection(&before).count() })
 }
 
 fn summary(report: &Report) -> Vec<String> {
@@ -218,7 +229,8 @@ fn summary(report: &Report) -> Vec<String> {
     }
     lines.extend(report.drc.iter().map(|row| format!("DRC {} x{} first at ({}, {})", row["type"].as_str().unwrap_or("?"), row["count"], row["x"], row["y"])));
     if let Some(c) = &report.changed {
-        lines.push(format!("changed: open {} -> {}, new {}, resolved {}, same {}", c.open_before, c.open_now, if c.new.is_empty() { "none".to_string() } else { c.new.join(" ") }, if c.resolved.is_empty() { "none".to_string() } else { c.resolved.join(" ") }, c.same));
+        let verdict = if c.worse { "WORSE: " } else { "" };
+        lines.push(format!("changed: {verdict}open nets {} -> {}, connections {} -> {}, new {}, resolved {}, same {}", c.open_before, c.open_now, c.unconnected_before, c.unconnected_now, if c.new.is_empty() { "none".to_string() } else { c.new.join(" ") }, if c.resolved.is_empty() { "none".to_string() } else { c.resolved.join(" ") }, c.same));
     }
     lines
 }
@@ -245,6 +257,7 @@ pub fn report(board: &str, work: &str, s: &Sources) -> Report {
     let layers = open_nets.iter().filter_map(|net| limits.get(net).map(|on| format!("{net}: {on}"))).take(MAX_NAMES).collect();
     let boxed_in = list(&s.escape["boxed_in"]).iter().take(MAX_NAMES).map(|pad| format!("{}.{}", pad["ref"].as_str().unwrap_or("?"), pad["pad"].as_str().unwrap_or("?"))).collect();
     let (errors, drc) = drc_errors(&s.drc);
+    let unconnected = list(&s.drc["unconnected_items"]).len();
     let count = |class: &str| rows.iter().filter(|row| row.class == class).count();
     // Enclosed first: it needs a change of the board, not another route.
     let mut shown: Vec<Row> = Vec::new();
@@ -257,9 +270,9 @@ pub fn report(board: &str, work: &str, s: &Sources) -> Report {
     shown.sort_by_key(|row| row.class != "ENCLOSED");
     shown.truncate(MAX_ROWS);
     let mut report = Report {
-        schema: SCHEMA, board: board.to_string(), work: work.to_string(), drc_errors: errors, unconnected: list(&s.drc["unconnected_items"]).len(), parity: list(&s.drc["schematic_parity"]).len(),
+        schema: SCHEMA, board: board.to_string(), work: work.to_string(), drc_errors: errors, unconnected, parity: list(&s.drc["schematic_parity"]).len(),
         enclosed: count("ENCLOSED"), router_miss: count("ROUTER_MISS"), unknown: rows.len() - count("ENCLOSED") - count("ROUTER_MISS"), search: search(&s.checkpoint),
-        route_layers: route_layers(&s.model), changed: changed(&s.previous, &open_nets), open_nets, rows: shown, region, hot: list(&s.checkpoint["hot"]).iter().take(MAX_HOT).cloned().collect(),
+        route_layers: route_layers(&s.model), reused: s.reused, changed: changed(&s.previous, &open_nets, unconnected, errors), open_nets, rows: shown, region, hot: list(&s.checkpoint["hot"]).iter().take(MAX_HOT).cloned().collect(),
         blockers: Blockers { parts: tally("blocking_parts"), nets: tally("blocking_nets"), keepouts: tally("blocking_keepouts"), layers, boxed_in }, drc, summary: Vec::new(),
     };
     report.summary = summary(&report);
@@ -279,7 +292,7 @@ fn optional(path: &Path) -> Result<Value, String> {
 pub fn write(work: &Path, board: &str, previous: Option<&Path>) -> Result<Report, String> {
     let sources = Sources {
         drc: read(&work.join("drc.json"))?, triage: optional(&work.join("open-triage.json"))?, escape: optional(&work.join("pin-escape.json"))?, checkpoint: optional(&work.join("checkpoint.json"))?,
-        model: optional(&work.join("model.json"))?, previous: previous.map_or(Ok(Value::Null), read)?,
+        model: optional(&work.join("model.json"))?, previous: previous.map_or(Ok(Value::Null), read)?, reused: work.join("seed.json").is_file(),
     };
     let report = report(board, &work.display().to_string(), &sources);
     let path = work.join("stuck.json");
@@ -329,13 +342,14 @@ mod tests {
                 "conflicts": {"pairs": 1, "search_limited": 0}, "worst_nets": [{"net": "/SDA", "why": "no path"}], "hot": [{"x": 11.5, "y": 21.5, "layer": "F.Cu", "pairs": 1}]}),
             model: json!({"copper_layers": ["F.Cu", "B.Cu"], "nets": {"/INT": {"layers": ["F.Cu"]}, "/SDA": {"layers": ["F.Cu", "B.Cu"]}}}),
             previous: Value::Null,
+            reused: false,
         }
     }
 
     #[test]
     fn a_report_names_what_is_stuck_where_and_why_and_what_changed() {
         let mut s = sources();
-        s.previous = json!({"open_nets": ["/SDA", "/OLD"]});
+        s.previous = json!({"open_nets": ["/SDA", "/OLD"], "unconnected": 1});
         let report = report("ENV-SENSE", "w", &s);
         assert_eq!(report.open_nets, ["/INT", "/SDA"]);
         assert_eq!((report.enclosed, report.router_miss, report.drc_errors, report.unconnected), (1, 1, 1, 2));
@@ -348,7 +362,7 @@ mod tests {
             "/SDA x1 R1.1 (10, 20) -> U1.2 (12, 21): a path exists for this net alone; router: no path",
             "blocked by: parts C4 U1; nets /SCL; keepouts ANT; layer limits /INT: F.Cu; boxed-in pads U1.4",
             "DRC clearance x1 first at (9.0, 8.0)",
-            "changed: open 2 -> 2, new /INT, resolved /OLD, same 1",
+            "changed: WORSE: open nets 2 -> 2, connections 1 -> 2, new /INT, resolved /OLD, same 1",
         ];
         assert_eq!(report.summary, expected);
     }

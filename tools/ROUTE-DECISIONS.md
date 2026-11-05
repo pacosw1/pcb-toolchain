@@ -25,6 +25,11 @@ reasons, `proposal` or `ask_user`. Refused: an unknown move or field; a locked p
 access are measured on the moved candidate by the checks every candidate run has, so a move can pass here and fail there.
 Every move is reversible: it is a new candidate run, so discard the run. Only `tools/pcb adopt` changes canonical CAD.
 
+`reroute_stuck` and `widen_region` are not suggested after a run that reused an earlier one and gained nothing, and they are refused after
+one that came out worse: start from the earlier run. Neither is suggested for a net that is walled in while another move is open. On
+ENV-SENSE held to one layer a reuse routed /SDA by ripping GND, and open connections went from 11 to 33 with 2 nets open before and after;
+on both layers it went from 3 to 2, then stayed at 2. So the report counts connections as well as nets.
+
 The unified CLI records a routing diagnosis as an unqualified engineering run:
 
 ```sh

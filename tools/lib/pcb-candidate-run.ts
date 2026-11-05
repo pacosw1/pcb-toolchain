@@ -159,12 +159,14 @@ async function iotroute(run: Candidate): Promise<ToolOutcome> {
   await validateGate(run.workspace, run.board);
   const { folder, manifest, native } = run, output = join(folder, 'operation/router'), routed = join(output, native.split('/').at(-1)!);
   mkdirSync(output, { recursive: true });
-  const command = [manifest.node, 'tools/router/route-dispatch.mjs', '--timeout', String(manifest.timeout_s), '--', 'iotroute', 'run', run.board, routed, '--pcb', native, '--json',
+  const command = [manifest.node, 'tools/router/route-dispatch.mjs', '--timeout', String(manifest.timeout_s), '--', 'iotroute', 'run', run.board, routed, '--pcb', native, '--json', '--diagnose', '--checkpoint',
     ...routePolicyArgs(manifest.spec ?? null, native)];
   const code = await execute(folder, 'route', command, run.workspace, run.env);
   const record = `${routed}.iotroute/result.json`;
   const report: Row = isFile(record) ? readObject<Row>(record) : { status: 'ERROR', cause: 'iotroute run wrote no result.json' };
   if (report.status === 'FAIL') report.cause = `iotroute DRC not clean: errors ${String(report.drc_errors)} unconnected ${String(report.unconnected)} parity ${String(report.parity)}`;
+  const stuck = keepStuck(folder, run.board, `${routed}.iotroute/stuck.json`);
+  if (stuck) report.cause = `route stuck: ${stuck.summary[0]}`;
   const summary = join(folder, 'operation/router-summary.json');
   atomicJson(summary, report);
   const policy = iotroutePolicy(command, report, sha256File(summary), manifest.timeout_s, code);

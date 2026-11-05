@@ -146,8 +146,8 @@ fn seed_passes(route_passes: i64, earlier: Option<&EarlierReuse>) -> i64 {
 }
 
 /// Writes the seed of a reuse route from the run work folder beside `previous`.
-pub fn reuse_seed(previous: &Path, route_in: &Path, out_json: &Path, fallback: &str) -> Result<ReuseRecord, String> {
-    seed_from(previous, Path::new(&format!("{}.iotroute", previous.display())), route_in, out_json, fallback, &[])
+pub fn reuse_seed(previous: &Path, route_in: &Path, out_json: &Path, fallback: &str, nets: &[String]) -> Result<ReuseRecord, String> {
+    seed_from(previous, Path::new(&format!("{}.iotroute", previous.display())), route_in, out_json, fallback, nets)
 }
 
 /// The seed from the files of `previous` in `work`; `nets` are routed again with the nets it left open.

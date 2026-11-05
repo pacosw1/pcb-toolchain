@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { movedPlan, nextMove, NOTHING_REVIEWED, reviewedFrom, validateMove } from './route-moves.ts';
+import { movedPlan, movedPolicy, nextMove, NOTHING_REVIEWED, reviewedFrom, validateMove } from './route-moves.ts';
 import type { Move, MoveContext, Part } from './route-moves.ts';
 import type { StuckReport } from './route-stuck.ts';
 
 const report = (fields: Partial<StuckReport> = {}): StuckReport => ({ schema: 'iot-lab.stuck-report.v1', board: 'B', work: 'w', drc_errors: 0, unconnected: 1, parity: 0, enclosed: 0, router_miss: 1, unknown: 0,
-  search: { stop: 'stall-passes', max_passes: 80, passes_since_best: 5 }, route_layers: ['F.Cu', 'B.Cu'], open_nets: ['/A'], region: null, rows: [],
+  search: { stop: 'stall-passes', max_passes: 80, passes_since_best: 5 }, route_layers: ['F.Cu', 'B.Cu'], reused: false, changed: null, open_nets: ['/A'], region: null, rows: [],
   blockers: { parts: [], nets: [], keepouts: [], layers: [], boxed_in: [] }, summary: [], ...fields });
 const blocked = (blockers: Partial<StuckReport['blockers']>, fields: Partial<StuckReport> = {}): StuckReport => report({ enclosed: 1, router_miss: 0, blockers: { ...report().blockers, ...blockers }, ...fields });
 const part = (x: number, locked = false): Part => ({ x, y: 10, orientation: 0, locked, pads: ['1', '2'] });
@@ -24,6 +24,18 @@ test('the next move follows from the report', () => {
   assert.equal(nextMove(blocked({ parts: ['J1'] }), reviewed).kind, 'ask_user');
   assert.equal(nextMove(report({ parity: 1 })).kind, 'ask_user');
   assert.equal(NOTHING_REVIEWED.groups.length, 0);
+});
+
+test('a reuse that came out worse is neither suggested nor allowed again', () => {
+  const worse = { reused: true, changed: { worse: true, better: false } };
+  assert.equal(nextMove(report(worse)).kind, 'ask_user');
+  assert.equal(nextMove(blocked({ nets: ['/B'] }, worse)).kind, 'ask_user');
+  assert.equal(nextMove(report({ reused: true, changed: { worse: false, better: true } })).kind, 'reroute_stuck');
+  assert.equal(nextMove(report({ reused: true, changed: { worse: false, better: false } })).kind, 'ask_user');
+  assert.equal(nextMove(report({ reused: false, changed: { worse: true, better: false } })).kind, 'reroute_stuck');
+  assert.deepEqual(validateMove({ kind: 'reroute_stuck' }, context({ report: report({ reused: true, changed: { worse: false, better: false } }) })), []);
+  assert.match(validateMove({ kind: 'reroute_stuck' }, context({ report: report(worse) })).join(), /came out worse/);
+  assert.match(validateMove({ kind: 'widen_region', nets: ['/A'] }, context({ report: report(worse) })).join(), /came out worse/);
 });
 
 test('a move that breaks a reviewed constraint or leaves the list is refused, by name', () => {
@@ -45,6 +57,14 @@ test('a move that breaks a reviewed constraint or leaves the list is refused, by
     { kind: 'move_cluster', refs: ['U1', 'C1'], dx_mm: 1, dy_mm: 0 }, { kind: 'swap_pins', ref: 'R1', pads: ['1', '2'] }, { kind: 'widen_region', nets: ['/B', '/A'] }, { kind: 'ask_user', question: 'Why?' }]) {
     assert.deepEqual(validateMove(good as Move, context()), [], JSON.stringify(good));
   }
+});
+
+test('an iotroute policy takes the same moves', () => {
+  const policy = { schema: 's', iters: 6, keep: 'lock-nets', reuse: '/old', reuse_nets: ['/Z'] };
+  assert.deepEqual(movedPolicy(policy, { kind: 'reroute_stuck' }, '/run/B.kicad_pcb'), { schema: 's', iters: 6, keep: 'lock-nets', reuse: '/run/B.kicad_pcb' });
+  assert.deepEqual(movedPolicy(policy, { kind: 'widen_region', nets: ['/B'] }, '/b').reuse_nets, ['/B']);
+  assert.deepEqual(movedPolicy(policy, { kind: 'change_setting', setting: 'passes', value: 12 }, '/b'), { schema: 's', iters: 12, keep: 'lock-nets' });
+  assert.deepEqual(movedPolicy(policy, { kind: 'change_setting', setting: 'layers', value: ['F.Cu'] }, '/b').layers, ['F.Cu']);
 });
 
 test('a route move changes only its own part of the plan', () => {

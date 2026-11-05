@@ -25,6 +25,7 @@ test('a stuck route is kept with its run and compared with the last report of th
 
   const work = join(base, 'work'), file = join(work, 'stuck.json');
   mkdirSync(work);
+  writeFileSync(join(work, 'drc.json'), '{}');
   assert.equal(keepStuck(current, 'ENV-SENSE', file), null);
   writeFileSync(file, JSON.stringify({ work, summary: ['first'] }));
   const compared: string[] = [];

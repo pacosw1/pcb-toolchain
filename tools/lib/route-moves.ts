@@ -51,6 +51,12 @@ export function reviewedFrom(rules: Rule[]): Reviewed {
   return reviewed;
 }
 
+/** This run started from an earlier one and came out worse: its copper is no place to start from again. On ENV-SENSE held to one layer a
+ *  reuse kept 2 nets open but ripped GND for them, 11 open connections to 33: the count of nets did not show it. */
+const reuseMadeItWorse = (report: StuckReport): boolean => report.reused && report.changed?.worse === true;
+/** The same run gained nothing: not worth suggesting again (ENV-SENSE on two layers: 3 connections to 2, then 2 to 2). It may still be asked for. */
+const reuseStopped = (report: StuckReport): boolean => report.reused && report.changed?.better === false;
+
 /** The next action for this report. A part move names the part; how far is for whoever takes it, so its offsets are null. */
 export function nextMove(report: StuckReport, reviewed: Reviewed = NOTHING_REVIEWED): Move {
   if (report.parity) return { kind: 'ask_user', question: 'The schematic and the board disagree. Which one is right?' };
@@ -58,7 +64,8 @@ export function nextMove(report: StuckReport, reviewed: Reviewed = NOTHING_REVIE
   if (!report.enclosed && !report.unknown) {
     const out = report.search?.stop === 'iters' || report.search?.stop === 'max-time', improving = report.search?.passes_since_best === 0;
     const passes = Math.min(MAX_PASSES, (report.search?.max_passes ?? 0) * 2);
-    return out && improving && passes > (report.search?.max_passes ?? 0) ? { kind: 'change_setting', setting: 'passes', value: passes } : { kind: 'reroute_stuck' };
+    if (out && improving && passes > (report.search?.max_passes ?? 0)) return { kind: 'change_setting', setting: 'passes', value: passes };
+    if (!reuseStopped(report)) return { kind: 'reroute_stuck' };
   }
   if (report.blockers.layers.length && report.route_layers.length) return { kind: 'change_setting', setting: 'layers', value: report.route_layers };
   for (const ref of report.blockers.parts.filter(part => !reviewed.fixed.has(part))) {
@@ -66,7 +73,7 @@ export function nextMove(report: StuckReport, reviewed: Reviewed = NOTHING_REVIE
     if (!group) return { kind: 'move_part', ref, dx_mm: null, dy_mm: null };
     if (!group.refs.some(part => reviewed.fixed.has(part))) return { kind: 'move_cluster', refs: group.refs, dx_mm: null, dy_mm: null };
   }
-  if (report.blockers.nets.length) return { kind: 'widen_region', nets: report.blockers.nets };
+  if (report.blockers.nets.length && !reuseStopped(report)) return { kind: 'widen_region', nets: report.blockers.nets };
   return { kind: 'ask_user', question: `Nothing on the list frees ${report.open_nets.join(', ')}. What may change?` };
 }
 
@@ -90,6 +97,7 @@ export function validateMove(move: Move, context: MoveContext): string[] {
   const extra = Object.keys(move).filter(key => key !== 'kind' && !FIELDS[move.kind].includes(key));
   if (extra.length) return [`${move.kind} has no field ${extra.join(', ')}`];
   const { report, reviewed, parts } = context;
+  if ((move.kind === 'reroute_stuck' || move.kind === 'widen_region') && reuseMadeItWorse(report)) return ['this run reused an earlier one and came out worse: start from the earlier run'];
   switch (move.kind) {
     case 'reroute_stuck': return report.open_nets.length || report.drc_errors ? [] : ['the report has nothing to route again'];
     case 'ask_user': return move.question?.trim() ? [] : ['a question is needed'];
@@ -134,6 +142,8 @@ export interface MoveResult {
   spec: string | null; next_action: { kind: string; argv: string[] } | null; evidence_sha256: Record<string, string>; cause?: string;
 }
 interface StuckRun { router?: string; spec?: RoutePlan }
+const POLICY_SCHEMA = 'iot-lab.iotroute-policy.v1';
+const POLICY_KEY = { passes: 'iters', time_s: 'max_time_s', layers: 'layers' } as const;
 interface RoutePlan { budget?: Record<string, unknown>; layers?: string[]; stages?: Record<string, unknown>[]; reuse?: unknown; [key: string]: unknown }
 
 /** The route plan of a move, from the plan of the stuck run. */
@@ -146,6 +156,15 @@ export function movedPlan(plan: RoutePlan, move: Move, router: string): RoutePla
   // A stage's own value would win over the plan's.
   const stages = (plan.stages ?? []).map(({ [key]: _stage, ...stage }) => stage);
   return key === 'layers' ? { ...next, stages, layers: move.value as string[] } : { ...next, stages, budget: { ...plan.budget, [key]: move.value } };
+}
+
+/** The iotroute policy of a move, from the policy of the stuck run; `board` is the board that run wrote. */
+export function movedPolicy(policy: Record<string, unknown>, move: Move, board: string): Record<string, unknown> {
+  const { reuse: _board, reuse_nets: _nets, ...next } = policy;
+  if (move.kind === 'reroute_stuck') return { ...next, reuse: board };
+  if (move.kind === 'widen_region') return { ...next, reuse: board, reuse_nets: move.nets };
+  if (move.kind !== 'change_setting') throw new Error(`${move.kind} has no iotroute policy`);
+  return { ...next, [POLICY_KEY[move.setting]]: move.value };
 }
 
 function poses(move: Extract<Move, { kind: 'move_part' | 'move_cluster' }>, parts: Map<string, Part>): Record<string, number[]> {
@@ -178,12 +197,13 @@ export function checkMove(root: string, board: string, evidence: string, text: s
     return { ...result, next_action: { kind: move.kind, argv: ['tools/pcb', 'edit', board, '--kind', 'place', '--spec', result.spec, '--detach', '--json'] } };
   }
   const router = join(run, 'operation/router');
-  if (manifest.router !== 'route-json' || !existsSync(router)) {
-    const reason = 'this move needs a stuck run of tools/pcb route --router route-json';
+  if (!['route-json', 'iotroute'].includes(manifest.router ?? '') || !existsSync(router)) {
+    const reason = 'this move needs a stuck run of tools/pcb route with --router route-json or iotroute';
     return { ...result, status: 'rejected', spec: null, reasons: [reason], cause: reason };
   }
-  atomicJson(result.spec, movedPlan(manifest.spec ?? readObject<RoutePlan>(join(boardConfig(root, board).folder, 'route.json')), move, router));
-  return { ...result, next_action: { kind: move.kind, argv: ['tools/pcb', 'route', board, '--router', 'route-json', '--spec', result.spec, '--detach', '--json'] } };
+  if (manifest.router === 'route-json') atomicJson(result.spec, movedPlan(manifest.spec ?? readObject<RoutePlan>(join(boardConfig(root, board).folder, 'route.json')), move, router));
+  else atomicJson(result.spec, movedPolicy(manifest.spec ?? { schema: POLICY_SCHEMA }, move, String(readObject<{ board_file?: string }>(join(run, 'operation/router-summary.json')).board_file)));
+  return { ...result, next_action: { kind: move.kind, argv: ['tools/pcb', 'route', board, '--router', manifest.router!, '--spec', result.spec, '--detach', '--json'] } };
 }
 
 /** The command that checks a move against a run's report; a part move still needs its offsets filled in. */
