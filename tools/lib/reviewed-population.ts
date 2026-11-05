@@ -4,6 +4,7 @@ import {readFileSync} from 'node:fs';
 import {basename, resolve} from 'node:path';
 import {readPopulation, parseNative, children, single, properties, sha256} from './kicad-population.mjs';
 import type {Tree} from './kicad-population.mjs';
+import {footprintHashes, symbolHash} from './reviewed-native-hashes.ts';
 
 export function reconstructSnapshot(root: string, project: string, expected: Record<string, string>) {
   const population = readPopulation(root, project);
@@ -27,7 +28,8 @@ export function reconstructSnapshot(root: string, project: string, expected: Rec
     forms.set(ref, form);
   }
   const parts: Record<string, {required: boolean; mpn: string; lcsc: string; footprint: string;
-    pad_net_map: Record<string, string>; pin_map: Record<string, {name: string; type: string}>}> = {};
+    pad_net_map: Record<string, string>; pin_map: Record<string, {name: string; type: string}>;
+    symbol_sha256: string; footprint_sha256: string; land_geometry_sha256: string}> = {};
   for (const [ref, fp] of population.footprints) {
     if (!population.symbols.has(ref) && !(fp.board_only && fp.excluded)) throw new Error(`unmatched footprint ${ref}`);
   }
@@ -45,6 +47,7 @@ export function reconstructSnapshot(root: string, project: string, expected: Rec
     const instanceContext = context.startsWith('/' + rootUuid) ? context : '/' + rootUuid + context;
     let matched = 0;
     const pins = new Map<string, {name: string; type: string}>();
+    const assets: {unit:number; definitions:Tree[]}[] = [];
     for (const {key, tree} of schematicTrees) {
       for (const placed of children(tree, 'symbol')) {
         const instances = single(placed, 'instances');
@@ -97,7 +100,9 @@ export function reconstructSnapshot(root: string, project: string, expected: Rec
           }
           for (const child of node.slice(1)) if (Array.isArray(child)) visit(child, active);
         };
-        for (const definition of resolveDefinition(libId)) visit(definition);
+        const selected = resolveDefinition(libId);
+        for (const definition of selected) visit(definition);
+        assets.push({unit:Number(selectedUnit), definitions:selected});
       }
     }
     if (matched !== 1) throw new Error(`native PCB path does not bind a schematic instance ${ref}`);
@@ -115,7 +120,7 @@ export function reconstructSnapshot(root: string, project: string, expected: Rec
     if (!children(form, 'pad').length) throw new Error(`native footprint has no pads ${ref}`);
     Object.defineProperty(parts, ref, {enumerable: true, value: {required: symbol.in_bom && !symbol.dnp,
       mpn: symbol.mpn, lcsc: symbol.lcsc, footprint: symbol.footprint, pad_net_map: Object.fromEntries(nets),
-      pin_map: Object.fromEntries(pins)}});
+      pin_map: Object.fromEntries(pins), symbol_sha256:symbolHash(assets), ...footprintHashes(form)}});
   }
   for (const key of keys) {
     if (sha256(readFileSync(resolve(root, key))) !== actual[key]) throw new Error('snapshot changed during reconstruction');
