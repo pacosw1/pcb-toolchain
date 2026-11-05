@@ -85,11 +85,16 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
         throw new Error('verification evidence unavailable');
       for (const hash of new Set([verified.evidence_manifest, ...parsed.receipt.checks.map(check => check.evidence_manifest_sha256!)])) this.read(hash);
       const revision = target.revision + 1; if (!Number.isSafeInteger(revision)) throw new Error('protected revision exhausted');
+      const revisionOwner = JSON.stringify([request.project_id, request.board_id, revision]);
+      this.pinClosure('revision', JSON.stringify([request.project_id, request.board_id, target.revision]), source);
+      this.pinClosure('revision', revisionOwner, candidate);
+      this.pinBlobs('revision-evidence', revisionOwner, [verified.evidence_manifest, ...parsed.receipt.checks.map(check => check.evidence_manifest_sha256!)]);
       const changed = this.db.prepare('UPDATE protected_targets SET revision=?,source_manifest=? WHERE project=? AND board=? AND revision=? AND source_manifest=? AND alias_revision=? AND state=?')
         .run(revision,request.candidate_manifest_sha256,request.project_id,request.board_id,target.revision,target.source_manifest,target.alias_revision,'ACTIVE');
       if (changed.changes !== 1) throw new Error('protected revision changed');
       this.db.prepare('INSERT INTO protected_revisions VALUES (?,?,?,?,?)').run(request.project_id,request.board_id,revision,request.candidate_manifest_sha256,request.verification_id);
       this.db.prepare('INSERT INTO protected_commit_results VALUES (?,?,?,?)').run(request.request_id,fingerprint,revision,request.candidate_manifest_sha256);
+      this.db.prepare("DELETE FROM protected_blob_pins WHERE kind='attempt-source' AND owner=?").run(JSON.stringify([request.job_id, request.attempt_id]));
       this.db.prepare('UPDATE protected_leases SET pinned=0,expires_at=0,token_hash=?,owner=? WHERE project=? AND board=?').run(Buffer.alloc(32),'',request.project_id,request.board_id);
       this.db.prepare('INSERT INTO protected_lease_audit VALUES (?,?,?,?,?,?)').run(request.project_id,request.board_id,lease.generation,verified.verifier,'committed-cleanup',now);
       return { schema:'pcb.commit-result.v1',request_id:request.request_id,state:'COMMITTED',revision,manifest_sha256:request.candidate_manifest_sha256 } as const;

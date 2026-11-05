@@ -17,6 +17,7 @@ class Fixture extends ProtectedCommitStore {
     this.db.prepare("INSERT INTO protected_verified_attempts VALUES ('job','attempt','verification',?,?,'verifier',?,'VERIFIED',0,0)").run(candidate,evidence,receipt);
   }
   revision():number { return (this.db.prepare("SELECT revision FROM protected_targets WHERE project='p' AND board='b'").get() as {revision:number}).revision; }
+  pins(): {kind:string;owner:string;sha256:string}[] { return this.db.prepare('SELECT * FROM protected_blob_pins').all() as {kind:string;owner:string;sha256:string}[]; }
   revoke():void { this.db.prepare("UPDATE protected_verifiers SET enabled=0 WHERE id='verifier'").run(); }
   seedVerifierForTest():void { this.db.prepare("UPDATE protected_verifiers SET enabled=1 WHERE id='verifier'").run(); }
 }
@@ -41,6 +42,11 @@ test('fenced verified commit atomically advances the target and replays its dura
     store.revoke(); assert.throws(()=>store.commit(commit.token,request),/authority/); assert.equal(store.revision(),1);
     store.seedVerifierForTest();
     const result=store.commit(commit.token,request); assert.equal(result.state,'COMMITTED'); assert.equal(store.revision(),2);
+    const pins=store.pins();
+    assert.ok(pins.some(p=>p.kind==='revision'&&p.owner===JSON.stringify(['p','b',1])&&p.sha256===source));
+    assert.ok(pins.some(p=>p.kind==='revision'&&p.owner===JSON.stringify(['p','b',2])&&p.sha256===candidate));
+    assert.ok(pins.some(p=>p.kind==='revision-evidence'&&p.owner===JSON.stringify(['p','b',2])&&p.sha256===evidence));
+    assert.equal(pins.some(p=>p.kind==='attempt-source'),false);
     assert.deepEqual(store.commit(commit.token,request),result);
     assert.throws(()=>store.commit(commit.token,{...request,candidate_manifest_sha256:source}),/reused/);
   } finally {store.close();fs.rmSync(parent,{recursive:true,force:true});}

@@ -4,6 +4,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { parseCanonicalJson } from './canonical-json.ts';
 import { ProtectedCapabilityStore } from './protected-capability-store.ts';
 import { resolveManifestClosure } from './protected-closure.ts';
+import type { ManifestClosure } from './protected-closure.ts';
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const TOKEN = /^[0-9a-f]{64}$/;
@@ -32,12 +33,25 @@ export class ProtectedLeaseStore extends ProtectedCapabilityStore {
       alias_revision INTEGER NOT NULL, operation TEXT NOT NULL, source_manifest TEXT NOT NULL, policy_digest TEXT NOT NULL,
       runtime_digest TEXT NOT NULL, toolchain_digest TEXT NOT NULL, PRIMARY KEY(job,attempt),
       UNIQUE(project,board,generation)) STRICT;`);
+    this.db.exec(`CREATE TABLE IF NOT EXISTS protected_blob_pins (kind TEXT NOT NULL, owner TEXT NOT NULL, sha256 TEXT NOT NULL,
+      PRIMARY KEY(kind,owner,sha256)) STRICT;`);
     const columns = this.db.prepare('PRAGMA table_info(protected_targets)').all() as { name: string }[];
     if (!columns.some(column => column.name === 'source_manifest')) this.db.exec('ALTER TABLE protected_targets ADD COLUMN source_manifest TEXT');
     if (!columns.some(column => column.name === 'board_path')) this.db.exec('ALTER TABLE protected_targets ADD COLUMN board_path TEXT');
     const leaseColumns = this.db.prepare('PRAGMA table_info(protected_leases)').all() as { name: string }[];
     if (!leaseColumns.some(column => column.name === 'source_manifest')) this.db.exec('ALTER TABLE protected_leases ADD COLUMN source_manifest TEXT');
     if (!leaseColumns.some(column => column.name === 'boot_id')) this.db.exec('ALTER TABLE protected_leases ADD COLUMN boot_id TEXT');
+  }
+  /** Called inside the authoritative transaction. Future GC must consider every row here before deleting blobs. */
+  protected pinBlobs(kind: string, owner: string, hashes: Iterable<string>): void {
+    const insert = this.db.prepare('INSERT OR IGNORE INTO protected_blob_pins VALUES (?,?,?)');
+    for (const hash of new Set(hashes)) {
+      if (!this.blobReady(hash)) throw new Error('cannot pin unavailable protected blob');
+      insert.run(kind, owner, hash);
+    }
+  }
+  protected pinClosure(kind: string, owner: string, closure: ManifestClosure): void {
+    this.pinBlobs(kind, owner, [...closure.manifests, ...closure.nodes.filter(node => node.kind === 'file').map(node => node.sha256)]);
   }
   /** Startup reconciliation only. A previous-boot lease that was never pinned or bound cannot have started an
    * authorized writer: pin/binding and boot validation are serialized in this same database. Never call this for
@@ -84,6 +98,8 @@ export class ProtectedLeaseStore extends ProtectedCapabilityStore {
       if (!target.board_path || !source.rootManifest.required_paths.includes(target.board_path) ||
           !source.rootManifest.entries.some(entry => entry.kind === 'file' && entry.path === target.board_path))
         throw new Error('protected board is absent from the source manifest');
+      this.pinClosure('attempt-source', JSON.stringify([binding.job, binding.attempt]), source);
+      this.pinClosure('revision', JSON.stringify([lease.project, lease.board, row.source_revision]), source);
       const prior = this.db.prepare('SELECT * FROM protected_attempt_bindings WHERE job=? AND attempt=?').get(binding.job, binding.attempt) as
         { project: string; board: string; generation: number; source_revision: number; alias_revision: number; operation: string;
           source_manifest: string; policy_digest: string; runtime_digest: string; toolchain_digest: string } | undefined;
