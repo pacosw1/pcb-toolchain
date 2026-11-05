@@ -7,6 +7,7 @@ import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { writeBundleManifest } from './write-bundle-manifest.mjs'
+import { gateTools } from '../tools/lib/gate-inputs.mjs'
 
 const script = path.join(path.dirname(fileURLToPath(import.meta.url)), '../bin/toolchain_sync.mjs')
 const write = (p, text) => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, text) }
@@ -108,6 +109,24 @@ test('the 3D viewer and its metadata helper are listed and copied together', t =
   const result = bundle('board3d', '1.0.0 board3d', content)([project])
   assert.equal(result.status, 0, result.stderr)
   for (const name of files) assert.deepEqual(fs.readFileSync(path.join(project, name)), fs.readFileSync(path.join(repo, name)))
+})
+
+test('candidate build and snapshot share their complete static source policy after sync', t => {
+  const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const shared = new Set(fs.readFileSync(path.join(repo, 'manifest/shared-paths.txt'), 'utf8').split(/\r?\n/))
+  const entries = ['tools/lib/pcb-workflow.ts', 'tools/lib/pcb-sources.ts']
+  const files = gateTools(repo, entries.map(name => path.join(repo, name))).map(name => path.relative(repo, name))
+  assert.ok(files.includes('tools/lib/pcb-source-policy.ts'))
+  for (const name of files) assert.ok(shared.has(name), `${name} missing from shared manifest`)
+  const { project, bundle } = setup(t)
+  const content = Object.fromEntries(files.map(name => [name.slice('tools/'.length), fs.readFileSync(path.join(repo, name))]))
+  const result = bundle('build-sources', '1.0.0 build-sources', content)([project])
+  assert.equal(result.status, 0, result.stderr)
+  for (const name of entries) {
+    const module = pathToFileURL(path.join(project, name)).href
+    const imported = spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', '--input-type=module', '-e', `await import(${JSON.stringify(module)})`], { cwd: project, encoding: 'utf8' })
+    assert.equal(imported.status, 0, `${name}: ${imported.stderr}`)
+  }
 })
 
 test('release archive and project sync keep guarded entrypoints importable', { timeout: 30000 }, t => {
