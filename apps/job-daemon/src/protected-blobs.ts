@@ -21,7 +21,7 @@ function syncDirectory(dir: string): void {
 function digest(bytes: Uint8Array): string { return createHash('sha256').update(bytes).digest('hex'); }
 
 export class ProtectedBlobs {
-  private db: DatabaseSync;
+  protected db: DatabaseSync;
   private objects: string;
   private incoming: string;
   private maxBlob: number;
@@ -38,7 +38,8 @@ export class ProtectedBlobs {
     privateDirectory(this.objects); privateDirectory(this.incoming);
     syncDirectory(root); syncDirectory(path.dirname(root));
     this.maxBlob = limits.maxBlobBytes; this.quota = limits.quotaBytes;
-    const dbFile = path.join(root, 'uploads.sqlite');
+    // The future canonical authority adds its leases, receipts and revisions to this same database.
+    const dbFile = path.join(root, 'authority.sqlite');
     const fd = fs.openSync(dbFile, fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK, 0o600);
     try {
       const st = fs.fstatSync(fd);
@@ -53,7 +54,7 @@ export class ProtectedBlobs {
         upload_id TEXT NOT NULL, created_at INTEGER NOT NULL
       ) STRICT;`);
   }
-  private transaction<T>(fn: () => T): T {
+  protected transaction<T>(fn: () => T): T {
     this.db.exec('BEGIN IMMEDIATE');
     try { const value = fn(); this.db.exec('COMMIT'); return value; }
     catch (error) { this.db.exec('ROLLBACK'); throw error; }
@@ -61,6 +62,7 @@ export class ProtectedBlobs {
   private row(sha: string): Row | undefined {
     return this.db.prepare('SELECT sha256, size, state, upload_id FROM protected_uploads WHERE sha256=?').get(sha) as Row | undefined;
   }
+  protected blobReady(sha: string): boolean { return SHA.test(sha) && this.row(sha)?.state === 'ready'; }
   put(expected: string, bytes: Uint8Array): { sha256: string; size: number; reused: boolean } {
     if (!SHA.test(expected) || !(bytes instanceof Uint8Array) || !bytes.byteLength || bytes.byteLength > this.maxBlob)
       throw new Error('invalid protected blob or hash');

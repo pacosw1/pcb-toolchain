@@ -123,6 +123,11 @@ The agreed working split (CIP message 353): task 1332 owns the Rust verifier/wor
 this work owns the coordinator project store/API and Studio integration. The versioned contract is awaiting review;
 neither side should interpret a draft as authorization to bypass the existing fail-closed adoption path.
 
+Both owners agree that one canonical database must transactionally own lease generations, trusted verification
+records, revision/CAS, blob references, idempotency and GC pins (CIP message 371). A migrated target must not also
+accept canonical commits through the legacy lease database. Scoped worker capabilities bind to the canonical target,
+source revision and attempt. Legacy checkouts remain explicit noncanonical imports until migrated.
+
 An initial read-only inventory of currently reporting worktrees found 46 board paths, 612 observed copies and 18 paths
 with differing board hashes. These are observations, not a decision about which copy is canonical; active worktrees can
 change and require a fresh inventory before migration.
