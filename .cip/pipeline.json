@@ -77,6 +77,20 @@
           }
         },
         {
+          "name": "iotplace",
+          "image": "rust:1.93.1",
+          "steps": [
+            {
+              "run": "cd tools/placer/core && cargo test --release --locked --quiet"
+            }
+          ],
+          "limits": {
+            "timeoutSec": 600,
+            "cpus": 2,
+            "memoryMb": 4096
+          }
+        },
+        {
           "name": "pcbsearch",
           "image": "rust:1.93.1",
           "steps": [
