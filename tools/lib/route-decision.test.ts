@@ -337,7 +337,7 @@ test('an escape screen is refused after a changed policy, gate, launcher, runtim
     const old = readFileSync(target); writeFileSync(target, Buffer.concat([old, Buffer.from(' ')]));
     try { assert.ok(verifyEscapeEvidence(e.contract, f.board, output, services).length, target); } finally { writeFileSync(target, old); }
   }
-  const changed = structuredClone(proof); changed.model_parameters.grid_mm = .5; atomicJson(output, changed);
+  const changed = structuredClone(proof); assert.ok(changed.model_parameters); changed.model_parameters.grid_mm = .5; atomicJson(output, changed);
   assert.ok(verifyEscapeEvidence(e.contract, f.board, output, services).length);
   atomicJson(output, proof);
   for (const [name, value] of [['ROUTE_FEATURES_FILE', join(f.root, 'tools/route-features.json')], ['ROUTE_BOARD', 'OTHER']] as const) {

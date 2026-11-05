@@ -299,7 +299,7 @@ test('a mixed layer in connect follows the kind of the net', (t: TestContext) =>
 
 const STITCH: StitchOptions = { r: 1, bestEffort: false, throughPours: '', via: '', clearance: 0 };
 
-interface Stitched { added: Xy[]; missed: Xy[]; signal: Xy[] }
+interface Stitched { added: (readonly [number, number])[]; missed: (readonly [number, number])[]; signal: Xy[] }
 
 /** SIG routed with 2 vias under a GND wall, then stitched. `pours`: (net, priority) board-size B.Cu pours. `pads`: 0.6 mm GND SMD pads. */
 async function stitched(options: Partial<StitchOptions> = {}, pours: [string, number][] = [], pads: Xy[] = []): Promise<Stitched> {

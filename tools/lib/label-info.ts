@@ -147,7 +147,7 @@ export function drawPanel(canvas: InfoCanvas, block: InfoBlock, cell?: Box): Box
   };
   const c = CHAMFER;
   for (const edge of [[c, 0, width - c, 0], [width, c, width, height - c], [width - c, height, c, height], [0, height - c, 0, c],
-    [0, c, c, 0], [width - c, 0, width, c], [width, height - c, width - c, height], [c, height, 0, height - c]] as const) line(...edge);
+    [0, c, c, 0], [width - c, 0, width, c], [width, height - c, width - c, height], [c, height, 0, height - c]] as const) line(edge[0], edge[1], edge[2], edge[3]);
   let v = pad;
   if (size.headHeight) {
     let u = pad;
