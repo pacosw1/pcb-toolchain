@@ -23,8 +23,8 @@ tools/backend-patches/fastroute-quality-773/build-provenance.json
 tools/backend-patches/fastroute-quality-773/quality-first.patch
 tools/backend_quality.py
 tools/block-reuse-data.json
-tools/block_extract.py
 tools/block_reuse.py
+tools/block_extract.ts
 tools/blocks.ts
 tools/board3d/index.html
 tools/board3d/metadata.mjs
@@ -90,6 +90,8 @@ tools/lib/barrier-line.test.ts
 tools/lib/barrier-line.ts
 tools/lib/block-bindings.test.ts
 tools/lib/block-bindings.ts
+tools/lib/block-extract.test.ts
+tools/lib/block-extract.ts
 tools/lib/block-parts.test.ts
 tools/lib/block-parts.ts
 tools/lib/block-qualification.test.ts
@@ -963,7 +965,6 @@ tools/test-fixtures/generator-cc-774.json
 tools/test-fixtures/mandatory-cc-774.json
 tools/test-gnd-pad-vias.py
 tools/test_backend_quality.py
-tools/test_block_extract.py
 tools/test_dsn_skip.py
 tools/test_gnd_pad_vias.py
 tools/test_halo_padstack.py

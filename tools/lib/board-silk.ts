@@ -120,18 +120,19 @@ function circleCentre(a: Xy, b: Xy, c: Xy): Xy {
   return [a[0] + (cy * bb - by * cc) / d, a[1] + (bx * cc - cx * bb) / d];
 }
 
-function shapeBox(form: SList): Box {
+/** The box of a gr_, fp_ or track shape with its width. */
+export function shapeBox(form: SList): Box {
   const stroke = one(form, 'stroke');
   const widthForm = one(stroke ?? form, 'width');
   const half = (widthForm ? Number(atom(widthForm, 1)) : 0) / 2;
-  const kind = form[0];
+  const kind = String(form[0]).replace(/^(gr|fp)_/, '');
   const [start, end] = [point(one(form, 'start')), point(one(form, 'end'))];
-  if (kind === 'gr_circle') {
+  if (kind === 'circle') {
     const centre = point(one(form, 'center'));
     const radius = Math.hypot(end[0] - centre[0], end[1] - centre[1]);
     return grow([centre[0] - radius, centre[1] - radius, centre[0] + radius, centre[1] + radius], half);
   }
-  if (kind === 'gr_arc') {
+  if (kind === 'arc') {
     const mid = point(one(form, 'mid'));
     const centre = circleCentre(start, mid, end);
     const shrinking = (mid[0] - start[0]) * (end[1] - start[1]) - (mid[1] - start[1]) * (end[0] - start[0]) < 0;
