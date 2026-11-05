@@ -31,13 +31,15 @@ export async function main(argv: string[]): Promise<number> {
     else {
       const active = state.get('active_stage_timing') as Dict[] | undefined;
       const suffix = active?.length ? `active=${stageStatus(active)}; ` : '';
-      console.log(`${pyStr(state.get('status')).toUpperCase()}: ${positionals[0]} ${pyStr(state.get('cause') ?? '')}; elapsed=${pyStr(state.get('elapsed_s') ?? 'unavailable')}s; ${suffix}evidence=${folder}`);
+      const cause = state.has('cause') ? state.get('cause') : '';
+      const elapsed = state.has('elapsed_s') ? state.get('elapsed_s') : 'unavailable';
+      console.log(`${pyStr(state.get('status')).toUpperCase()}: ${positionals[0]} ${pyStr(cause)}; elapsed=${pyStr(elapsed)}s; ${suffix}evidence=${folder}`);
     }
     return 0;
   }
   const after = Number(values.after), limit = Number(values.limit), wait = Number(values.wait);
   if (!/^[+-]?\d+$/.test(String(values.after)) || !/^[+-]?\d+$/.test(String(values.limit)) || !Number.isSafeInteger(after) || !Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new Error('--limit must be between 1 and 1000 and --after must be an integer');
-  if (!Number.isFinite(wait) || wait < 0 || wait > 60) throw new Error('--wait must be between 0 and 60 seconds');
+  if (!String(values.wait).trim() || !Number.isFinite(wait) || wait < 0 || wait > 60) throw new Error('--wait must be between 0 and 60 seconds');
   const until = performance.now() + wait * 1000;
   for (;;) {
     const rows = events(folder, after, limit);

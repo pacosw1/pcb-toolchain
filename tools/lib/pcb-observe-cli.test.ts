@@ -23,6 +23,9 @@ test('installed launcher reads run status and byte-cursored events without Pytho
     const status = JSON.parse(execFileSync(bin, [...args, 'status', 'run-test', '--json'], options));
     assert.equal(status.status, 'passed');
     assert.equal(status.evidence_dir, realpathSync(folder));
+    writeFileSync(join(folder, 'state.json'), '{"status":"passed","updated_unix":9999999999,"elapsed_s":null,"cause":null}');
+    assert.match(execFileSync(bin, [...args, 'status', 'run-test'], options), /passed/i);
+    assert.match(execFileSync(bin, [...args, 'status', 'run-test'], options), /None; elapsed=None/);
     const lines = execFileSync(bin, [...args, 'events', 'run-test', '--json'], options).trim().split('\n').map(line => JSON.parse(line));
     assert.equal(lines.length, 1);
     assert.equal(lines[0].cursor, Buffer.byteLength(first));
