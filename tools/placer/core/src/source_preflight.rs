@@ -141,6 +141,28 @@ mod binding_tests {
     }
 }
 
+fn timestamp_with_zone(s: &str) -> bool {
+    if !s.is_ascii() { return false; }
+    let bytes = s.as_bytes();
+    if bytes.len() < 20 || bytes[4] != b'-' || bytes[7] != b'-' || bytes[10] != b'T' || bytes[13] != b':' || bytes[16] != b':' { return false; }
+    let parse = |start: usize, end: usize| -> Option<u32> { s.get(start..end)?.parse().ok() };
+    let (Some(year), Some(month), Some(day), Some(hour), Some(minute), Some(second)) =
+        (parse(0,4),parse(5,7),parse(8,10),parse(11,13),parse(14,16),parse(17,19)) else { return false };
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days = match month {1|3|5|7|8|10|12=>31,4|6|9|11=>30,2 if leap=>29,2=>28,_=>return false};
+    if year == 0 || day == 0 || day > days || hour > 23 || minute > 59 || second > 59 { return false; }
+    let mut rest = &s[19..];
+    if rest.starts_with('.') {
+        let n = rest[1..].bytes().take_while(u8::is_ascii_digit).count();
+        if n == 0 { return false; }
+        rest = &rest[n+1..];
+    }
+    if rest == "Z" { return true; }
+    let b = rest.as_bytes();
+    b.len()==6 && matches!(b[0],b'+'|b'-') && b[3]==b':' &&
+        rest[1..3].parse::<u32>().is_ok_and(|v| v<=23) && rest[4..6].parse::<u32>().is_ok_and(|v| v<=59)
+}
+
 /// Validate the manifest's review identity and self-binding. The caller must still
 /// reconstruct the native part population, bindings, ratings, budgets and rule sources.
 fn check_manifest_identity(contract: &Value) -> crate::Result<()> {
@@ -164,7 +186,7 @@ fn check_manifest_identity(contract: &Value) -> crate::Result<()> {
     let review = object.remove("review").ok_or("manifest review missing")?;
     if review.get("verdict").and_then(Value::as_str) != Some("passed") ||
         review.get("reviewer").and_then(Value::as_str).is_none_or(|s| s.trim().is_empty()) ||
-        review.get("reviewed_at_utc").and_then(Value::as_str).is_none_or(|s| s.trim().is_empty()) {
+        review.get("reviewed_at_utc").and_then(Value::as_str).is_none_or(|s| !timestamp_with_zone(s)) {
         return Err("attributable reviewed manifest required".into());
     }
     let encoded = serde_json::to_vec(&manifest)?;
@@ -192,6 +214,10 @@ mod manifest_tests {
         std::fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
         let contract = json!({"root":root,"manifest":path,"board":"A"});
         assert!(check_manifest_identity(&contract).is_ok());
+        manifest["review"]["reviewed_at_utc"] = json!("not-a-time");
+        std::fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        assert!(check_manifest_identity(&contract).is_err());
+        manifest["review"]["reviewed_at_utc"] = json!("2026-01-01T00:00:00Z");
         manifest["parts"][0]["reference"] = json!("U2");
         std::fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
         assert!(check_manifest_identity(&contract).is_err());
