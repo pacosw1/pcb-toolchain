@@ -3,6 +3,7 @@ import type { JobManager } from './manager.ts';
 import type { ProtectedCommitStore } from './protected-commit.ts';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
+import { protectedJobSpecDigest } from './protected-job-spec.ts';
 
 function matchesArchive(file: string, expected: {sha256:string;size:number}): boolean {
   let fd: number;
@@ -30,12 +31,13 @@ export function reconcileProtectedCancellations(authority: ProtectedCommitStore,
 
 /** Trusted bootstrap only. Protected jobs remain held when the adapter is absent or the authority rejects admission. */
 export function installProtectedRuntime(authority: ProtectedCommitStore, manager: JobManager): void {
-  if (manager.protectedAdmission || manager.protectedContinuation || manager.protectedBeforeTick) throw new Error('protected runtime is already installed');
+  if (manager.protectedAdmission || manager.protectedContinuation || manager.protectedAttest || manager.protectedBeforeTick) throw new Error('protected runtime is already installed');
   manager.protectedAdmission = job => {
     if (!job.protectedRef || !authority.canDispatchProtected(job.protectedRef, job.id)) return false;
     const expected = authority.runtimeInputIdentity(job.protectedRef, job.id);
-    return !!expected && matchesArchive(manager.store.inputTar(job.id), expected);
+    return !!expected && expected.image === job.spec.image && expected.specSha256 === protectedJobSpecDigest(job.spec) && matchesArchive(manager.store.inputTar(job.id), expected);
   };
   manager.protectedContinuation = job => !!job.protectedRef && authority.canDispatchProtected(job.protectedRef, job.id, true);
+  manager.protectedAttest = (job,image) => !!job.protectedRef && authority.recordRuntimeAttestationFromTrustedService(job.protectedRef,job.id,image);
   manager.protectedBeforeTick = () => { reconcileProtectedCancellations(authority, manager); };
 }

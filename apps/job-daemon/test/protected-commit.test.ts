@@ -5,6 +5,7 @@ import { ProtectedCommitStore } from '../src/protected-commit.ts'; import { pars
 import { installProtectedRuntime, reconcileProtectedCancellations } from '../src/protected-runtime.ts';
 import { prepareAttemptInput } from '../src/protected-input.ts';
 import { validateSpec } from '../src/manager.ts';
+import { protectedJobSpecDigest } from '../src/protected-job-spec.ts';
 import { rig } from './helpers.ts';
 const hash=(b:Uint8Array):string=>createHash('sha256').update(b).digest('hex');
 const encode=(x:unknown):Buffer=>parseCanonicalJson(Buffer.from(JSON.stringify(x)),{maxBytes:1_000_000,maxNodes:1000,maxDepth:12}).canonical;
@@ -28,7 +29,7 @@ class Fixture extends ProtectedCommitStore {
 }
 test('fenced verified commit atomically advances the target and replays its durable result',async()=>{
   const parent=fs.mkdtempSync(path.join(os.tmpdir(),'pcb-commit-')); const now=1000;
-  const jobRig = rig();
+  const jobRig = rig({images:[`sha256:${'b'.repeat(64)}`]});
   const store=new Fixture(path.join(parent,'store'),{maxBlobBytes:10000,quotaBytes:100000},()=>now,()=>0n);
   const put=(b:Buffer):string=>{const h=hash(b);store.put(h,b);return h;};
   const manifest=(content:Buffer):string=>{const h=put(content);return put(encode({schema:'pcb.project-manifest.v1',project_id:'p',entries:[{kind:'file',path:'board',sha256:h,size:content.length,executable:false}],required_paths:['board'],optional_absent_paths:[],external_mounts:[]}));};
@@ -47,12 +48,13 @@ test('fenced verified commit atomically advances the target and replays its dura
     const input = prepareAttemptInput(store,candidateRef,parent,{tarPath:'/usr/bin/tar',maxFiles:10,maxBytes:100,maxArchiveBytes:100000,timeoutMs:10000});
     assert.equal(input.sourceManifest,source);
     const runtimeJob=jobRig.mgr.submit(validateSpec({command:['hang'],maxRetries:0},jobRig.cfg),input.archive,candidateRef);
+    const associatedInput = {...input,specSha256:protectedJobSpecDigest(runtimeJob.spec)};
     installProtectedRuntime(store,jobRig.mgr);
     await jobRig.mgr.tick(); assert.equal(runtimeJob.state,'queued');
     assert.equal(store.canDispatchProtected(candidateRef,runtimeJob.id),false);
-    store.associateRuntimeFromTrustedService(candidateRef,runtimeJob.id,input);
-    store.associateRuntimeFromTrustedService(candidateRef,runtimeJob.id,input);
-    assert.throws(()=>store.associateRuntimeFromTrustedService(candidateRef,'different-job',input),/changed/);
+    store.associateRuntimeFromTrustedService(candidateRef,runtimeJob.id,associatedInput);
+    store.associateRuntimeFromTrustedService(candidateRef,runtimeJob.id,associatedInput);
+    assert.throws(()=>store.associateRuntimeFromTrustedService(candidateRef,'different-job',associatedInput),/changed/);
     assert.equal(store.canDispatchProtected(candidateRef,runtimeJob.id),true);
     await jobRig.mgr.tick(); assert.equal(runtimeJob.state,'running');
     assert.equal(fs.readFileSync(path.join(jobRig.mgr.store.workDir(runtimeJob.id,1),'board'),'utf8'),'old');

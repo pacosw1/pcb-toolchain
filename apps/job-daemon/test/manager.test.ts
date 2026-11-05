@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import { runArgs } from '../src/docker.ts';
 import { validateSpec } from '../src/manager.ts';
 import { installProtectedRuntime, reconcileProtectedCancellations } from '../src/protected-runtime.ts';
+import { protectedJobSpecDigest } from '../src/protected-job-spec.ts';
 import { HttpError } from '../src/types.ts';
 import { rig, tarOf } from './helpers.ts';
 import type { Rig } from './helpers.ts';
@@ -31,11 +32,23 @@ async function settle(id: string): Promise<void> {
 }
 
 describe('states', () => {
+  it('kills a protected container when its inspected image differs', async () => {
+    const ref = { project:'p', board:'b', operation:'route', job:'protected', attempt:'attempt' };
+    const tar = tarOf(r.dir), bytes = fs.readFileSync(tar);
+    const job = r.mgr.submit(validateSpec({command:['hang'],maxRetries:0},r.cfg),tar,ref);
+    const identity = {sha256:createHash('sha256').update(bytes).digest('hex'),size:bytes.length,specSha256:protectedJobSpecDigest(job.spec),image:job.spec.image};
+    const authority = {canDispatchProtected:()=>true,runtimeInputIdentity:()=>identity,pendingRuntimeCancellations:()=>[],recordRuntimeAttestationFromTrustedService:()=>true};
+    installProtectedRuntime(authority as never,r.mgr);
+    r.runtime.imageOverride = 'sha256:' + 'f'.repeat(64);
+    await r.mgr.tick(); assert.equal(job.cancelRequested,true);
+    assert.deepEqual(r.runtime.killed,[job.attempts[0].container]);
+  });
   it('refuses protected admission when the associated input archive changed', async () => {
     const ref = { project:'p', board:'b', operation:'route', job:'protected', attempt:'attempt' };
-    const tar = tarOf(r.dir), bytes = fs.readFileSync(tar), identity = { sha256:createHash('sha256').update(bytes).digest('hex'), size:bytes.length };
+    const tar = tarOf(r.dir), bytes = fs.readFileSync(tar);
     const job = r.mgr.submit(validateSpec({command:['hang'],maxRetries:0},r.cfg),tar,ref);
-    const authority = {canDispatchProtected:()=>true,runtimeInputIdentity:()=>identity,pendingRuntimeCancellations:()=>[]};
+    const identity = {sha256:createHash('sha256').update(bytes).digest('hex'),size:bytes.length,specSha256:protectedJobSpecDigest(job.spec),image:job.spec.image};
+    const authority = {canDispatchProtected:()=>true,runtimeInputIdentity:()=>identity,pendingRuntimeCancellations:()=>[],recordRuntimeAttestationFromTrustedService:()=>true};
     installProtectedRuntime(authority as never,r.mgr);
     fs.appendFileSync(r.mgr.store.inputTar(job.id),'tamper');
     await r.mgr.tick(); assert.equal(job.state,'queued'); assert.equal(r.runtime.started.length,0);
@@ -50,6 +63,7 @@ describe('states', () => {
     r.restart(); await r.mgr.tick(); assert.equal(r.mgr.jobs.get(job.id)?.state, 'queued');
     r.mgr.protectedAdmission = current => current.id === job.id && current.protectedRef?.job === 'protected';
     r.mgr.protectedContinuation = () => true;
+    r.mgr.protectedAttest = () => true;
     await r.mgr.tick(); assert.equal(r.mgr.jobs.get(job.id)?.state, 'running');
     const container = r.mgr.jobs.get(job.id)!.attempts[0].container;
     r.restart(); await r.mgr.tick();

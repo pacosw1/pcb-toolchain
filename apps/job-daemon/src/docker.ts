@@ -29,6 +29,8 @@ export interface Runtime {
   ping(): Promise<boolean>;
   start(req: StartRequest): Promise<StartResult>;
   inspect(container: string): Promise<ContainerState>;
+  /** Image configuration digest of the exact container, or null if inspection is inconclusive. */
+  inspectImage(container: string): Promise<string | null>;
   kill(container: string): Promise<void>;
   remove(container: string): Promise<void>;
   /** This daemon's containers, running or not. null: no answer, which is not the same as none. */
@@ -171,6 +173,12 @@ export class DockerRuntime implements Runtime {
     const s = JSON.parse(r.stdout) as { Status: string; ExitCode: number; OOMKilled: boolean };
     if (s.Status === 'running' || s.Status === 'paused' || s.Status === 'restarting') return { status: 'running' };
     return { status: 'exited', exitCode: s.ExitCode, oomKilled: s.OOMKilled };
+  }
+
+  async inspectImage(container: string): Promise<string | null> {
+    const r = await exec('docker', ['inspect', '--format', '{{.Image}}', container]);
+    const value = r.stdout.trim();
+    return r.code === 0 && /^sha256:[0-9a-f]{64}$/.test(value) ? value : null;
   }
 
   async kill(container: string): Promise<void> {

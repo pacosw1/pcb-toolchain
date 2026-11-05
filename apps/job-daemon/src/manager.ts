@@ -111,6 +111,7 @@ export class JobManager {
   /** Installed only by the trusted protected coordinator; false or absent fails closed. */
   protectedAdmission?: (job: JobRecord) => boolean;
   protectedContinuation?: (job: JobRecord) => boolean;
+  protectedAttest?: (job: JobRecord, observedImage: string) => boolean;
   protectedBeforeTick?: () => void;
 
   constructor(cfg: Config, store: Store, runtime: Runtime, host: () => HostState, now: () => number = Date.now) {
@@ -491,7 +492,14 @@ export class JobManager {
     const { image, cpus, memGb, diskGb, timeoutS, command } = job.spec;
     const inputTar = this.store.inputTar(job.id);
     const r = await this.runtime.start({ container: attempt.container, workDir, outDir, inputTar, image, cpus, memGb, diskGb, timeoutS, command });
-    if (r.ok) return;
+    if (r.ok) {
+      if (job.protectedRef) {
+        let allowed = false;
+        try { const image = await this.runtime.inspectImage(attempt.container); allowed = !!image && image === job.spec.image && this.protectedAttest?.(job,image) === true; } catch { /* fail closed */ }
+        if (!allowed) { this.cancel(job.id); await this.runtime.kill(attempt.container); }
+      }
+      return;
+    }
     // The container may exist all the same, if docker run timed out. clean() checks before it touches anything.
     this.finish(job, attempt, { outcome: r.permanent ? 'start' : 'infra', exitCode: null, detail: r.detail });
   }

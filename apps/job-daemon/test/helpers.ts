@@ -33,6 +33,7 @@ export class FakeRuntime implements Runtime {
   killed: string[] = [];
   dockerUp = true;
   inspectBroken = false;
+  imageOverride: string | null | undefined;
   /** Bytes in the writable layer; null = the measurement failed. */
   layerSize: number | null = 0;
   /** Containers the record no longer needs, as after a crash between the save and the remove. */
@@ -104,6 +105,11 @@ export class FakeRuntime implements Runtime {
   async inspect(c: string): Promise<ContainerState> {
     if (this.inspectBroken) return { status: 'unknown', detail: 'cannot connect' };
     return this.containers.get(c) ?? { status: 'missing' };
+  }
+
+  async inspectImage(c: string): Promise<string | null> {
+    if (this.imageOverride !== undefined) return this.imageOverride;
+    return this.started.find(req => req.container === c)?.image ?? null;
   }
 
   async kill(c: string): Promise<void> {
