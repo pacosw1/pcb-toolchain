@@ -131,3 +131,60 @@ mod binding_tests {
         assert!(check_payload_bindings(&p).is_err());
     }
 }
+
+/// Validate the manifest's review identity and self-binding. The caller must still
+/// reconstruct the native part population, bindings, ratings, budgets and rule sources.
+fn check_manifest_identity(contract: &Value) -> crate::Result<()> {
+    let root = Path::new(contract.get("root").and_then(Value::as_str).ok_or("reviewed root missing")?).canonicalize()?;
+    let manifest_name = contract.get("manifest").and_then(Value::as_str).ok_or("reviewed manifest missing")?;
+    let manifest_path = owned(&root, manifest_name)?;
+    let bytes = std::fs::read(manifest_path)?;
+    let mut manifest: Value = serde_json::from_slice(&bytes)?;
+    let object = manifest.as_object_mut().ok_or("manifest must be an object")?;
+    let allowed = ["schema", "board", "revision", "project", "spec", "review", "parts", "budgets"];
+    if object.keys().any(|key| !allowed.contains(&key.as_str())) {
+        return Err("unsupported reviewed manifest fields".into());
+    }
+    if object.get("schema").and_then(Value::as_str) != Some("iot-lab.part-use.v1") ||
+        object.get("board") != contract.get("board") ||
+        object.get("revision").and_then(Value::as_str).is_none_or(|s| s.is_empty()) ||
+        object.get("project").and_then(Value::as_str).is_none_or(|s| s.is_empty()) ||
+        object.get("parts").and_then(Value::as_array).is_none_or(|a| a.is_empty()) {
+        return Err("reviewed manifest identity or population missing".into());
+    }
+    let review = object.remove("review").ok_or("manifest review missing")?;
+    if review.get("verdict").and_then(Value::as_str) != Some("passed") ||
+        review.get("reviewer").and_then(Value::as_str).is_none_or(|s| s.trim().is_empty()) ||
+        review.get("reviewed_at_utc").and_then(Value::as_str).is_none_or(|s| s.trim().is_empty()) {
+        return Err("attributable reviewed manifest required".into());
+    }
+    let encoded = serde_json::to_vec(&manifest)?;
+    let digest = format!("{:x}", Sha256::digest(encoded));
+    if review.get("facts_sha256").and_then(Value::as_str) != Some(&digest) {
+        return Err("reviewed manifest facts changed".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod manifest_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn manifest_review_binds_its_actual_facts() {
+        let root = std::env::temp_dir().join(format!("iotplace-review-header-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("manifest.json");
+        let mut manifest = json!({"schema":"iot-lab.part-use.v1", "board":"A", "revision":"1",
+            "project":"board.kicad_pro", "parts":[{"reference":"U1"}]});
+        let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&manifest).unwrap()));
+        manifest["review"] = json!({"verdict":"passed","reviewer":"R", "reviewed_at_utc":"2026-01-01T00:00:00Z", "facts_sha256":digest});
+        std::fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let contract = json!({"root":root,"manifest":path,"board":"A"});
+        assert!(check_manifest_identity(&contract).is_ok());
+        manifest["parts"][0]["reference"] = json!("U2");
+        std::fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        assert!(check_manifest_identity(&contract).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
