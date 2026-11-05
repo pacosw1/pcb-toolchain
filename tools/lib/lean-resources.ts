@@ -1,5 +1,5 @@
-// Cooperating local board jobs: declared CPU and memory reservations, not OS quotas. tools/lean_resources.py is the twin
-// while Python imports it; both share one ledger of flocked tickets, so the ticket text and locks must stay compatible.
+// Cooperating local board jobs: declared CPU and memory reservations, not OS quotas.
+// iotroute shares one ledger of flocked tickets (src/job/resources.rs), so the ticket text and locks must stay compatible.
 // A crash releases capacity: a ticket is live only while its flock is held, never by PID. Admission is FIFO, bounded and
 // interruptible; no unrelated process is stopped. Memory requests are estimates, not RSS limits.
 //

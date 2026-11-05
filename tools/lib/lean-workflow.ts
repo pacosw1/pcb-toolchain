@@ -1,5 +1,5 @@
-// Small local workflow controls: deadlines, attribution and candidate selection. tools/lean_workflow.py is the twin while
-// Python modules import it. No cached result is qualified here: native board and release gates stay authoritative.
+// Small local workflow controls: deadlines, attribution and candidate selection.
+// No cached result is qualified here: native board and release gates stay authoritative.
 // run_stage and job_slot need process ownership and flock, which live in the iotroute binary (lib/owned-stage.ts,
 // lib/file-lock.ts).
 import { dirname } from 'node:path';

@@ -65,7 +65,6 @@ tools/fixtures/run-record/run.log
 tools/fp_courtyard.ts
 tools/gate.mjs
 tools/gerber_netcheck.ts
-tools/gnd_pad_vias.py
 tools/ibis_ramp.ts
 tools/import_nets.ts
 tools/jlc-snapshot.mjs
@@ -73,10 +72,6 @@ tools/jlc_api_evidence.mjs
 tools/jlc_stock.mjs
 tools/kicad_happy_gate.ts
 tools/krt_planes_advisory.ts
-tools/lean_owned.py
-tools/lean_owned_exec.py
-tools/lean_resources.py
-tools/lean_workflow.py
 tools/lib/add-testpoints.test.ts
 tools/lib/backend-quality.test.ts
 tools/lib/backend-quality.ts
@@ -453,7 +448,6 @@ tools/pdftext.swift
 tools/pin-ratings.json
 tools/placement_outcomes.ts
 tools/placer/README.md
-tools/placer/__init__.py
 tools/placer/bench.test.ts
 tools/placer/bench.ts
 tools/placer/bench_a.sh
@@ -934,7 +928,6 @@ tools/router/reports/2026-11-02-plane-edge.md
 tools/router/reports/2026-11-02-ref-gate-scope.md
 tools/router/reports/2026-11-02-thermal-vias.md
 tools/router/route-dispatch.mjs
-tools/run_record.py
 tools/run_record.ts
 tools/set_stackup.ts
 tools/si_pairs.ts
@@ -944,14 +937,6 @@ tools/silk_refs.ts
 tools/stitch_all.ts
 tools/test-fixtures/generator-cc-774.json
 tools/test-fixtures/mandatory-cc-774.json
-tools/test-gnd-pad-vias.py
-tools/test_gnd_pad_vias.py
-tools/test_lean_clock.py
-tools/test_lean_native.py
-tools/test_lean_owned.py
-tools/test_lean_resources.py
-tools/test_lean_workflow.py
-tools/test_run_record.py
 tools/tracemaker_bench.sh
 tools/tsconfig.json
 tools/silk_jlc.ts

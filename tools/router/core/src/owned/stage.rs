@@ -1,4 +1,4 @@
-//! One registered stage and the shapes of its result, field for field those of lean_owned.py.
+//! One registered stage and the shapes of its result.
 
 use super::failure::Failure;
 use super::native::locked;

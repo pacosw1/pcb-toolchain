@@ -1,4 +1,4 @@
-//! Cooperating board jobs: declared CPU and memory reservations, not OS quotas. Tickets are the files of lean_resources.py, so
+//! Cooperating board jobs: declared CPU and memory reservations, not OS quotas. Tickets are the files of tools/lib/lean-resources.ts, so
 //! Rust, Python and TypeScript jobs share one queue. A locked ticket is a live job; a dead owner's lock is gone with it.
 use super::clock::{self, Env};
 use super::files::append_line;

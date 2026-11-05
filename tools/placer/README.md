@@ -219,15 +219,6 @@ No existing router is killed or displaced. Admission events record queued,
 admitted, released, cancelled or failed work; compaction keeps them beside its
 stage log. Logs/checkpoints remain when admission fails.
 
-For a bounded resource profile (use a fresh output directory):
-
-```sh
-IOT_CPU_BUDGET=15 "$PY" tools/lean_resources.py --cpu 8 --memory-gib 8 \
-  --seconds 60 --output /tmp/placement-resource-profile -- \
-  node --no-warnings --experimental-strip-types tools/placer/place.ts run /tmp/frozen/prob.json -o /tmp/result.json \
-  --workers 8 --epochs 3 --steps 8000 --seed 1 --top 1
-```
-
 The profiler preserves raw process RSS/CPU, compressor, swap and paging samples,
 plus wall/child CPU timing and admission events. System VM counters cannot
 attribute swap to a router. Sampled RSS includes shared pages and the profiler,

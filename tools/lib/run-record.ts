@@ -1,5 +1,5 @@
-// One run record per routing job (W5, CIP #805): OUTDIR/run.jsonl, one JSON line per action. tools/run_record.py is the
-// Python twin while the job scripts write through it; both read and append the same file.
+// One run record per routing job (W5, CIP #805): OUTDIR/run.jsonl, one JSON line per action.
+// The job writes it (src/job/record.rs); this reads and appends the same file.
 //
 // Record: {"t": ISO time, "elapsed_s": seconds since the job start (null when unknown), "stage": job stage,
 //          "action": what was done, "inputs": what it used, "evidence": file or line it can be checked against,
