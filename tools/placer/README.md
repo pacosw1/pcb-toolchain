@@ -4,7 +4,7 @@ Rust tests: `cargo test --release` in `tools/placer/core` (`tests/golden.rs`: se
 
 Not in the Rust search: `schedule=lam`, `normalize`, `init=spectral`, gplace `rotate` (closed experiments below, no caller). `cli.py run` refuses them as unknown `--param`s rather than running another search. Removed from the tree on 2026-11-04 (git history has them; their results stay below): `batch.py`, `batch_capabilities.py`, `bench_batch.py`, `gplace_torch.py` (the torch backends and `batch=1`), `surrogate.py`, `surrogate_gen.py`, `features.py` (the stopped surrogate), `bench_place.py`, `cypress_io.py` and `cypress/` (the closed Cypress comparison).
 
-Python that stays. A problem with a reviewed engineering contract runs on `cli.py` and `anneal.py`, because its rules are in `tools/engineering_constraints.py`. `cost.py`, `dru.py` and `placement_audit.py` have callers in `pcb_search`, `pcb_engine` and top-level tools. The files that use pcbnew wait for `iotroute board-json`: `kicad_io.py`, `repair.py`, `compact_cli.py`. `pinswap.py`, `pinswap_io.py` and `validate.py` have Rust replacements (`iotplace pinswap`, `strip`, `count`) and go with `cli.py pinswap`.
+Python that stays. A problem with a reviewed engineering contract runs on `cli.py` and `anneal.py`, because its rules are in `tools/engineering_constraints.py`. `cost.py`, `dru.py` and `placement_audit.py` have callers in `pcb_search`, `pcb_engine` and top-level tools. The files that use pcbnew wait for `iotroute board-json`: `kicad_io.py`, `compact_cli.py`. `repair.py` has its replacement (`repair.ts`, `iotplace repair-proposals`) and goes with `compact_cli.py`. `pinswap.py`, `pinswap_io.py` and `validate.py` have Rust replacements (`iotplace pinswap`, `strip`, `count`) and go with `cli.py pinswap`.
 
 Python tests (from the repo root; needs numpy and pcbnew, so use the KiCad Python): `/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3 -m unittest discover -s tools/placer -p 'test_*.py'` (without KiCad: `uv run --with numpy python -m unittest discover -s tools/placer -p 'test_*.py'` runs the cost and search tests; the pcbnew tests skip). Search and benchmark runs go on Hetzner only (`tools/remote.sh`); this Mac runs tests and short smoke runs only.
 
@@ -297,16 +297,17 @@ do not prove physical impossibility. Every result remains `qualified:false`;
 fresh complete configured checks and explicit adoption remain necessary. Legacy
 Freerouting benchmark callbacks retain their count-only behavior.
 
-## Failure-driven repair (`repair.py`, `compact_cli.py --repair`)
+## Failure-driven repair (`repair.ts`, `iotplace repair-proposals`, `compact_cli.py --repair`)
 
 The in-house router is the judge (idea: TraceMaker `src/place/routable.cpp` at c6fcb7b, `tools/pcb_search/README.md`
-"Repair locally"). Run with the KiCad Python:
+"Repair locally"). `repair.ts` owns the loop, the board edits and the score; `iotplace repair-proposals` (`core/src/repair/`)
+ranks the moves of a round. A board edit is text, refilled and saved by KiCad 10 `kicad-cli`:
 
 ```sh
-$PY tools/placer/repair.py prepare SRC.kicad_pcb PLACE.kicad_pcb --board NET-CORE [--keep lock-nets|locked]
+node tools/placer/repair.ts prepare SRC.kicad_pcb PLACE.kicad_pcb --board NET-CORE [--keep lock-nets|locked]
 iotroute run NET-CORE ROUTED.kicad_pcb --pcb PLACE.kicad_pcb              # the failed full route
-$PY tools/placer/repair.py run NET-CORE PLACE.kicad_pcb ROUTED.kicad_pcb --outdir DIR [--mode local|full]
-    [--max-routes 8] [--per-round 4] [--no-rotate] [--no-decap-slide] [--read ARG ...]
+node tools/placer/repair.ts run NET-CORE PLACE.kicad_pcb ROUTED.kicad_pcb --outdir DIR [--mode reuse|local|full]
+    [--max-routes 8] [--per-round 4] [--no-rotate] [--no-decap-slide] [--rank term|hot] [--read ARG ...]
 ```
 
 - prepare: all footprints unlocked; `lock-nets` (default) keeps only the pair + crystal copper (as iotroute run
@@ -322,14 +323,14 @@ $PY tools/placer/repair.py run NET-CORE PLACE.kicad_pcb ROUTED.kicad_pcb --outdi
   (`Evaluator.legal_penalty_at` = 0: courtyard, pad clearance, domain gaps, keepouts, board edge; all parts on top).
   A proposal must decrease the failure term: unconnected pad-to-pad distance, minus the free room around each
   located item. Rank: term decrease, placement cost, displacement; round-robin over the units. Deterministic.
-- Decap slide: a decap tied to its IC (`cli.py read --decap-tie`, 3 mm) may move alone when the tie stays true
+- Decap slide: a decap tied to its IC (`iotplace read --decap-tie`, 3 mm) may move alone when the tie stays true
   (pad-edge gap to the IC pin <= the tie distance).
 - Route: `reuse` (default since 2026-11-01, see the last section) routes the moved placement with `iotroute run --reuse` from
   the present candidate's route. `local` rips the copper that the moved pads meet and the unlocked clusters within `legal_radius`
   of a failure or on a failed net, keeps and locks the rest, and routes only what is open (NET-CORE: 40 s against
   270 s for a full route). `full` routes the moved placement board again.
 - Accept only a strictly lower key: (DRC errors + unconnected + parity, gate metrics, length, vias), measured by
-  `iotroute_step` (kicad-cli DRC with parity on the saved board, then the board gate). The previous candidate stays
+  `iotroute-step.ts` (kicad-cli DRC with parity on the saved board, then the board gate). The previous candidate stays
   until then.
 - Stop: score 0, no proposal, a round without a better route, `--max-routes`, or only failures that no move can
   repair: a DRC item on a pad of a fixed unit that the full start route reports as "fixed copper alone walls it in
@@ -418,7 +419,7 @@ between pins (only through n in L).
 Check (NET-CORE, the three boards of PR #73, w_esc term values): hand board U7 pads 2/3 blocked 0 / 0; step 4 of
 the PR #73 run (1 open at U7 pad 3) 0.36 / 0.16 (C47, R20, C49).
 
-Repair (`repair.py`): an unconnected item at an escape pin gives `escape_proposals`: legal single-unit moves of the
+Repair (`core/src/repair/corridor.rs`): an unconnected item at an escape pin gives escape proposals: legal single-unit moves of the
 units whose copper is within rt of a ray of that pin (`corridor_blockers`), ranked by the sum of blocked(pin) after
 the move (must decrease), then the cost with w_esc 20, then displacement. A tied decap moves in the loose problem
 when its tie stays true. These proposals alternate with the failure-point proposals. PR #73 step 4: the old repair
