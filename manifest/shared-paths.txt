@@ -16,7 +16,7 @@ tools/PLACEMENT-OUTCOMES.md
 tools/RELEASE-WORKFLOW.md
 tools/ROUTE-DECISIONS.md
 tools/SCHEMATIC-CONTRACT.md
-tools/add_testpoints.py
+tools/add_testpoints.ts
 tools/backend-patches/fastroute-quality-773/LICENSE.upstream
 tools/backend-patches/fastroute-quality-773/README.md
 tools/backend-patches/fastroute-quality-773/build-provenance.json
@@ -89,6 +89,7 @@ tools/lean_owned.py
 tools/lean_owned_exec.py
 tools/lean_resources.py
 tools/lean_workflow.py
+tools/lib/add-testpoints.test.ts
 tools/lib/backend-quality.test.ts
 tools/lib/backend-quality.ts
 tools/lib/barrier-line.test.ts
@@ -378,6 +379,8 @@ tools/lib/thermal-spokes.ts
 tools/lib/through-vias.ts
 tools/lib/stroke-text.test.ts
 tools/lib/stroke-text.ts
+tools/lib/testpoint-place.ts
+tools/lib/testpoint-text.ts
 tools/lib/timing.test.ts
 tools/lib/timing.ts
 tools/lib/via-pads.ts
