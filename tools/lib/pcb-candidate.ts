@@ -1,10 +1,9 @@
 // A sealed candidate: continuing one in a new run, and adopting one into canonical CAD. Only adoption changes the board.
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from 'node:fs';
+import { closeSync, fchmodSync, fchownSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { basename, dirname } from 'node:path';
-import { holdLock } from './file-lock.ts';
 import { atomicJson, plainJson, readPyJson } from './json-file.ts';
 import { verify } from './pcb-evidence.ts';
 import { declaredPours, pcbIdentity } from './pcb-identity.ts';
@@ -27,15 +26,29 @@ interface Findings { findings: Finding[]; inputs_valid?: boolean; completed_chec
 interface GateResult { exit: number; provenance: { inputs: { path: string; sha256: string }[] } }
 
 const nativeBoard = (root: string, board: string): string => withSuffix(boardConfig(root, board).project, '.kicad_pcb');
-const terminalOf = (folder: string): Dict => plainJson(verify(folder)) as Dict;
+const terminalOf = (folder: string): Dict => {
+  const terminal = plainJson(verify(folder)) as Dict;
+  if ((terminal.cleanup as Dict | undefined)?.complete !== true) fail('run did not finish with confirmed process cleanup');
+  return terminal;
+};
+
+function requireBound(result: Dict, names: string[]): void {
+  const evidence = result.evidence_sha256;
+  if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) fail('terminal receipt does not bind its evidence; create a new run');
+  for (const name of names) {
+    if (typeof (evidence as Dict)[name] !== 'string') fail(`terminal receipt does not bind required adoption evidence: ${name}`);
+  }
+}
 
 function sameIdentity(a: string, b: string, manifest: RunManifest): boolean {
   const pours = declaredPours(manifest as Parameters<typeof declaredPours>[0]);
   return sameValue(pcbIdentity(a, pours), pcbIdentity(b, pours));
 }
 
-const preservesSource = (operation: Dict, terminal: Dict): boolean => operation.identity_preserved === true && !(operation.protected_source_changes as unknown[] | undefined)?.length
-  && operation.source_unchanged === true && operation.continuation_allowed !== false && ['passed', 'failed'].includes(terminal.status as string);
+const noProtectedChanges = (operation: Dict): boolean => Array.isArray(operation.protected_source_changes) && operation.protected_source_changes.length === 0;
+const preservesSource = (operation: Dict, terminal: Dict): boolean => operation.identity_preserved === true && noProtectedChanges(operation)
+  && operation.source_unchanged === true && (operation.continuation_allowed === undefined || operation.continuation_allowed === true)
+  && ['passed', 'failed'].includes(terminal.status as string);
 
 /** Continues a sealed candidate; failed or partial tool output is never CAD. Gives the candidate and its bound evidence. */
 export function parentCandidate(rootPath: string, board: string, reference: Reference): { candidate: string; dependencies: Record<string, string> } {
@@ -62,37 +75,55 @@ function snapshotProbe(node: string, root: string, args: string[], env?: NodeJS.
   return run;
 }
 
-/** FOCUS.md freezes this board: only a current failed check and one named finding it resolves can change it. */
-function checkFrozenBaseline(root: string, folder: string, board: string, node: string, baselinePath: string | null | undefined, defect: string | null | undefined): void {
+/** Check frozen-baseline metadata only. Fresh native evidence still needs an owned probe before any adoption. */
+function checkFrozenBaselineMetadata(root: string, folder: string, board: string, baselinePath: string | null | undefined, defect: string | null | undefined): void {
   if (!baselinePath || !defect) fail('FOCUS.md freezes this board: provide --baseline RUN_ID and --defect FINDING_ID from a current failed check');
   const baseline = baselinePath!;
   const previous = readPyJson<RunManifest>(joinPath(baseline, 'run.json'));
   const prior = terminalOf(baseline);
+  requireBound(prior, ['gate/result.json', 'gate/findings.json']);
   const receipt = readPyJson<GateResult>(joinPath(baseline, 'gate/result.json'));
   const findings = readPyJson<Findings>(joinPath(baseline, 'gate/findings.json'));
   if (previous.board !== board || resolvePath(previous.root) !== root || receipt.exit !== 1 || prior.status !== 'failed') fail('defect baseline is not a failed check of this board/checkout');
   const finding = findings.findings.find(row => row.id === defect);
-  if (!finding || finding.severity !== 'error' || !findings.inputs_valid || !findings.completed_checks?.includes(finding.stage)) fail('defect ID is absent from the failed-check findings');
+  if (!finding || finding.severity !== 'error' || findings.inputs_valid !== true || !findings.completed_checks?.includes(finding.stage)) fail('defect ID is absent from the failed-check findings');
   const updated = readPyJson<Findings>(joinPath(folder, 'gate/findings.json'));
-  if (!updated.complete || !updated.inputs_valid || updated.findings.some(row => row.id === defect)) fail('candidate did not resolve the named defect with complete evidence');
+  if (updated.complete !== true || updated.inputs_valid !== true || updated.findings.some(row => row.id === defect)) fail('candidate did not resolve the named defect with complete evidence');
   const source = readPyJson<SourceState>(joinPath(folder, 'operation/source.json'));
   for (const input of receipt.provenance.inputs) {
     if (input.path in source.files && source.files[input.path] !== input.sha256) fail('defect baseline does not match candidate source');
   }
-  const check = snapshotProbe(node, root, [root, board, '--verify-failed', joinPath(baseline, 'gate'), finding!.stage]);
-  if (check.status) fail(`defect baseline is stale: ${check.stderr.trim()}`);
 }
 
-function replaceAtomically(target: string, bytes: Buffer, stillCurrent: () => void): void {
+type ChunkWriter = (fd: number, bytes: Buffer, offset: number, length: number) => number;
+
+/** Write the entire candidate before the last freshness check and atomic replacement. */
+export function replaceAtomically(target: string, bytes: Buffer, stillCurrent: () => void,
+  writeChunk: ChunkWriter = (fd, buffer, offset, length) => writeSync(fd, buffer, offset, length)): void {
+  const original = lstatSync(target);
+  if (!original.isFile() || original.isSymbolicLink()) throw new Error('canonical PCB must be a regular file');
   const temporary = joinPath(dirname(target), `.pcb-adopt-${randomBytes(6).toString('hex')}`);
   const file = openSync(temporary, 'wx', 0o600);
+  let open = true;
   try {
-    writeSync(file, bytes);
+    for (let offset = 0; offset < bytes.length;) {
+      const count = writeChunk(file, bytes, offset, bytes.length - offset);
+      if (!Number.isInteger(count) || count <= 0 || count > bytes.length - offset) throw new Error('candidate write made invalid progress');
+      offset += count;
+    }
+    const created = fstatSync(file);
+    if (created.uid !== original.uid || created.gid !== original.gid) fchownSync(file, original.uid, original.gid);
+    fchmodSync(file, original.mode & 0o7777);
     fsyncSync(file);
     closeSync(file);
+    open = false;
     stillCurrent();
+    const current = lstatSync(target);
+    if (!current.isFile() || current.dev !== original.dev || current.ino !== original.ino || current.mode !== original.mode
+        || current.uid !== original.uid || current.gid !== original.gid) throw new Error('canonical PCB metadata changed before atomic adoption');
     renameSync(temporary, target);
   } finally {
+    if (open) { try { closeSync(file); } catch { /* retain the original write/close error */ } }
     rmSync(temporary, { force: true });
   }
 }
@@ -100,8 +131,9 @@ function replaceAtomically(target: string, bytes: Buffer, stillCurrent: () => vo
 function checkAdoptable(root: string, folder: string, manifest: RunManifest, operation: Dict, result: Dict): string {
   if (manifest.operation === 'ml') fail('ML observations cannot adopt native CAD');
   const cleanup = (result.cleanup ?? {}) as Dict;
-  if (resolvePath(manifest.root) !== root || result.status !== 'passed' || !cleanup.complete) fail('only a successful, settled candidate from this checkout can be adopted');
-  if (!operation.candidate_verified || !operation.identity_preserved || (operation.protected_source_changes as unknown[] | undefined)?.length) fail('candidate changes protected design identity or lacks full gate verification');
+  if (resolvePath(manifest.root) !== root || result.status !== 'passed' || cleanup.complete !== true) fail('only a successful, settled candidate from this checkout can be adopted');
+  requireBound(result, ['operation/result.json', 'operation/source.json', 'gate/result.json', 'gate/findings.json']);
+  if (operation.candidate_verified !== true || operation.identity_preserved !== true || !noProtectedChanges(operation)) fail('candidate changes protected design identity or lacks full gate verification');
   const candidate = resolvePath(operation.candidate as string);
   if (candidate !== nativeBoard(joinPath(folder, 'workspace'), manifest.board) || operation.candidate_sha256 !== sha(candidate)) fail('candidate does not match the verified native board');
   if (operation.candidate_sha256 !== result.candidate_sha256) fail('candidate receipt and controller disagree');
@@ -151,13 +183,11 @@ export async function adopt(rootPath: string, folderPath: string, defect?: strin
   const manifest = readPyJson<RunManifest>(joinPath(folder, 'run.json'));
   const candidate = checkAdoptable(root, folder, manifest, operation, result);
   const state = context(root, manifest.board) as { frozen: boolean };
-  if (state.frozen) checkFrozenBaseline(root, folder, manifest.board, manifest.node as string, baseline, defect);
-  const locks = joinPath(root, '.gate/board-locks');
-  mkdirSync(locks, { recursive: true });
-  const lock = await holdLock(joinPath(locks, `${manifest.board}.lock`));
-  try {
-    return commitAdoption(root, folder, manifest, operation, candidate, defect ?? null);
-  } finally {
-    await lock.release();
-  }
+  if (state.frozen) checkFrozenBaselineMetadata(root, folder, manifest.board, baseline, defect);
+  // A detached flock helper can die before the rename, and the current backup/receipt
+  // sequence is not crash-recoverable. Reject before opening a lock or touching CAD.
+  // A future implementation needs target-keyed lock ownership, a durable journal,
+  // owned verifier cleanup, and an explicit extended-attribute policy.
+  void candidate;
+  fail('adoption unavailable until lock continuity and crash recovery are verified');
 }

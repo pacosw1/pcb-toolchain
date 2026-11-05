@@ -1,0 +1,165 @@
+import assert from 'node:assert/strict';
+import { chmodSync, fstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync, writeSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { test } from 'node:test';
+import { adopt, replaceAtomically } from './pcb-candidate.ts';
+import { sha } from './pcb-workflow.ts';
+
+function scratch(t: { after(fn: () => void): void }): string {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'pcb-candidate-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  return root;
+}
+function put(path: string, text: string): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, text);
+}
+
+test('atomic candidate replacement handles short writes without truncating the target', t => {
+  const root = scratch(t), target = join(root, 'board.kicad_pcb');
+  put(target, 'before');
+  chmodSync(target, 0o644);
+  const owner = statSync(target);
+  const candidate = Buffer.from('candidate\0with\nmore bytes');
+  let calls = 0, checked = false;
+  replaceAtomically(target, candidate, () => { checked = true; assert.equal(readFileSync(target, 'utf8'), 'before'); },
+    (fd, bytes, offset, length) => { calls++; return writeSync(fd, bytes, offset, Math.min(length, 3)); });
+  assert.ok(calls > 1);
+  assert.equal(checked, true);
+  assert.deepEqual(readFileSync(target), candidate);
+  assert.equal(statSync(target).mode & 0o7777, 0o644);
+  assert.deepEqual([statSync(target).uid, statSync(target).gid], [owner.uid, owner.gid]);
+  assert.deepEqual(readdirSync(root), ['board.kicad_pcb']);
+});
+
+test('write or freshness failure keeps canonical bytes and removes the temporary file', t => {
+  const root = scratch(t), target = join(root, 'board.kicad_pcb');
+  put(target, 'before');
+  chmodSync(target, 0o644);
+  let descriptor = -1;
+  assert.throws(() => replaceAtomically(target, Buffer.from('candidate'), () => {}, fd => { descriptor = fd; return 0; }), /invalid progress/);
+  assert.throws(() => fstatSync(descriptor), /EBADF/);
+  assert.equal(readFileSync(target, 'utf8'), 'before');
+  assert.deepEqual(readdirSync(root), ['board.kicad_pcb']);
+  let writes = 0;
+  assert.throws(() => replaceAtomically(target, Buffer.from('candidate'), () => {}, (fd, bytes, offset, length) => {
+    descriptor = fd;
+    if (writes++ === 0) return writeSync(fd, bytes, offset, Math.min(length, 2));
+    throw new Error('disk write failed');
+  }), /disk write failed/);
+  assert.throws(() => fstatSync(descriptor), /EBADF/);
+  assert.equal(readFileSync(target, 'utf8'), 'before');
+  assert.deepEqual(readdirSync(root), ['board.kicad_pcb']);
+  assert.throws(() => replaceAtomically(target, Buffer.from('candidate'), () => { throw new Error('changed'); }), /changed/);
+  assert.equal(readFileSync(target, 'utf8'), 'before');
+  assert.deepEqual(readdirSync(root), ['board.kicad_pcb']);
+  assert.throws(() => replaceAtomically(target, Buffer.from('candidate'), () => { chmodSync(target, 0o600); }), /metadata changed/);
+  assert.equal(readFileSync(target, 'utf8'), 'before');
+  assert.deepEqual(readdirSync(root), ['board.kicad_pcb']);
+  const link = join(root, 'linked.kicad_pcb');
+  symlinkSync(target, link);
+  assert.throws(() => replaceAtomically(link, Buffer.from('candidate'), () => {}), /regular file/);
+  assert.equal(readFileSync(target, 'utf8'), 'before');
+});
+
+function candidateFixture(t: { after(fn: () => void): void }) {
+  const root = scratch(t), folder = join(root, '.gate/cli/run-candidate');
+  const board = join(root, 'hardware-design/boards/X');
+  const target = join(board, 'cad/X.kicad_pcb');
+  const workspaceBoard = join(folder, 'workspace/hardware-design/boards/X');
+  const candidate = join(workspaceBoard, 'cad/X.kicad_pcb');
+  const config = JSON.stringify({ project: 'cad/X', stage: 'G3', checks: {} });
+  put(join(board, 'gate.json'), config);
+  put(join(workspaceBoard, 'gate.json'), config);
+  put(target, '(kicad_pcb (version 20240108))');
+  put(candidate, '(kicad_pcb (version 20240108))');
+  const manifest = { root, board: 'X', operation: 'edit', node: process.execPath };
+  const operation: Record<string, unknown> = { candidate, candidate_sha256: sha(candidate), candidate_verified: true,
+    identity_preserved: true, protected_source_changes: [], artifacts: {} };
+  const save = (resultOverrides: Record<string, unknown> = {}) => {
+    put(join(folder, 'run.json'), JSON.stringify(manifest));
+    put(join(folder, 'operation/result.json'), JSON.stringify(operation));
+    put(join(folder, 'operation/source.json'), '{"files":{}}');
+    put(join(folder, 'gate/result.json'), '{}');
+    put(join(folder, 'gate/findings.json'), '{}');
+    const hashes = Object.fromEntries(['run.json', 'operation/result.json', 'operation/source.json', 'gate/result.json', 'gate/findings.json']
+      .map(name => [name, sha(join(folder, name))]));
+    put(join(folder, 'result.json'), JSON.stringify({ status: 'passed', cleanup: { complete: true },
+      candidate_sha256: sha(candidate), evidence_sha256: hashes, ...resultOverrides }));
+  };
+  save();
+  return { root, folder, target, candidate, manifest, operation, save };
+}
+
+test('adoption rejects unsealed, failed and unverified candidates before canonical mutation', async t => {
+  const f = candidateFixture(t), before = readFileSync(f.target);
+  f.save({ evidence_sha256: {} });
+  await assert.rejects(adopt(f.root, f.folder), /does not bind/);
+  f.save({ status: 'failed' });
+  await assert.rejects(adopt(f.root, f.folder), /successful, settled candidate/);
+  f.operation.candidate_verified = false; f.save();
+  await assert.rejects(adopt(f.root, f.folder), /lacks full gate verification/);
+  f.operation.candidate_verified = 'false'; f.save();
+  await assert.rejects(adopt(f.root, f.folder), /lacks full gate verification/);
+  f.operation.candidate_verified = true; f.operation.identity_preserved = 'false'; f.save();
+  await assert.rejects(adopt(f.root, f.folder), /lacks full gate verification/);
+  f.operation.identity_preserved = true; f.operation.protected_source_changes = {}; f.save();
+  await assert.rejects(adopt(f.root, f.folder), /lacks full gate verification/);
+  f.operation.protected_source_changes = []; f.save({ cleanup: { complete: 'false' } });
+  await assert.rejects(adopt(f.root, f.folder), /confirmed process cleanup/);
+  assert.deepEqual(readFileSync(f.target), before);
+});
+
+test('otherwise eligible adoption fails closed before taking a helper lock or changing canonical CAD', async t => {
+  const f = candidateFixture(t), before = readFileSync(f.target);
+  const outcomes = await Promise.allSettled([adopt(f.root, f.folder), adopt(f.root, f.folder)]);
+  assert.ok(outcomes.every(row => row.status === 'rejected' && /lock continuity and crash recovery/.test(String(row.reason))));
+  assert.deepEqual(readFileSync(f.target), before);
+  assert.equal(readdirSync(f.folder).includes('backup'), false);
+  assert.equal(readdirSync(f.folder).includes('adoption.json'), false);
+});
+
+test('adoption requires its source, operation and gate evidence to be bound', async t => {
+  const f = candidateFixture(t), before = readFileSync(f.target);
+  const required = ['operation/result.json', 'operation/source.json', 'gate/result.json', 'gate/findings.json'];
+  for (const omitted of required) {
+    const receipt = JSON.parse(readFileSync(join(f.folder, 'result.json'), 'utf8'));
+    delete receipt.evidence_sha256[omitted];
+    put(join(f.folder, 'result.json'), JSON.stringify(receipt));
+    await assert.rejects(adopt(f.root, f.folder), /does not bind required adoption evidence/);
+    assert.deepEqual(readFileSync(f.target), before);
+    f.save();
+  }
+  put(join(f.folder, 'operation/source.json'), '{"files":{"tampered":true}}');
+  await assert.rejects(adopt(f.root, f.folder), /verified run evidence changed/);
+  assert.deepEqual(readFileSync(f.target), before);
+});
+
+test('adoption rejects stale candidate and frozen board without a named baseline', async t => {
+  const f = candidateFixture(t), before = readFileSync(f.target);
+  f.operation.candidate_sha256 = '0'.repeat(64); f.save();
+  await assert.rejects(adopt(f.root, f.folder), /does not match the verified native board/);
+  f.operation.candidate_sha256 = sha(f.candidate); f.save();
+  put(join(f.root, 'FOCUS.md'), '## Frozen\n- X\n');
+  await assert.rejects(adopt(f.root, f.folder), /provide --baseline RUN_ID and --defect FINDING_ID/);
+  const baseline = join(f.root, '.gate/cli/run-baseline');
+  put(join(baseline, 'run.json'), JSON.stringify({ root: f.root, board: 'X' }));
+  put(join(baseline, 'gate/result.json'), '{}');
+  put(join(baseline, 'gate/findings.json'), '{}');
+  put(join(baseline, 'result.json'), JSON.stringify({ status: 'failed', cleanup: { complete: true },
+    evidence_sha256: { 'run.json': sha(join(baseline, 'run.json')) } }));
+  await assert.rejects(adopt(f.root, f.folder, 'DEFECT', baseline), /does not bind required adoption evidence/);
+  // Even a fully bound frozen baseline cannot start an unowned native probe while adoption is disabled.
+  put(join(baseline, 'gate/result.json'), JSON.stringify({ exit: 1, provenance: { inputs: [] } }));
+  put(join(baseline, 'gate/findings.json'), JSON.stringify({ findings: [{ id: 'DEFECT', severity: 'error', stage: 'drc' }], inputs_valid: true, completed_checks: ['drc'] }));
+  put(join(baseline, 'result.json'), JSON.stringify({ status: 'failed', cleanup: { complete: true },
+    evidence_sha256: Object.fromEntries(['run.json', 'gate/result.json', 'gate/findings.json'].map(name => [name, sha(join(baseline, name))])) }));
+  f.manifest.node = '/not-a-real-node'; f.save();
+  put(join(f.folder, 'gate/findings.json'), JSON.stringify({ complete: true, inputs_valid: true, findings: [] }));
+  const receipt = JSON.parse(readFileSync(join(f.folder, 'result.json'), 'utf8'));
+  receipt.evidence_sha256['gate/findings.json'] = sha(join(f.folder, 'gate/findings.json'));
+  put(join(f.folder, 'result.json'), JSON.stringify(receipt));
+  await assert.rejects(adopt(f.root, f.folder, 'DEFECT', baseline), /lock continuity and crash recovery/);
+  assert.deepEqual(readFileSync(f.target), before);
+});
