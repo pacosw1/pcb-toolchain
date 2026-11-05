@@ -107,6 +107,14 @@ test('a candidate that breaks the contract is illegal and ranks last', async () 
   assert.equal(all, 3);
 });
 
+test('engineering screening preserves the native sparse-map pressure ranking', async () => {
+  const high = { ...candidate(), worker: 0, cost: 1, route_score: 0, route_pressure: 0.1 };
+  const low = { ...candidate(), worker: 1, cost: 2, route_score: 0, route_pressure: 0.05 };
+  await cmdRun(run(), { review: services, search: fakeSearch(JSON.stringify({ candidates: [high, low] })) });
+  const shown = JSON.parse(readFileSync(output(), 'utf8'));
+  assert.deepEqual(shown.candidates.map((c: { worker: number }) => c.worker), [1, 0]);
+});
+
 test('the writer refuses another source before it replaces any output', () => {
   const other = join(root, 'other.kicad_pcb');
   writeFileSync(other, 'other');

@@ -62,12 +62,13 @@ function cmdRead(given: string[]): number {
   return 0;
 }
 
-interface Candidate { pose: Pose; illegal: string[]; mains: unknown[]; cost: Num; worker: Num; route_score?: Num; engineering?: Screen }
+interface Candidate { pose: Pose; illegal: string[]; mains: unknown[]; cost: Num; worker: Num; route_score?: Num; route_pressure?: Num; engineering?: Screen }
 interface Result { candidates: Candidate[]; engineering_source_verification?: string }
 
-/** Final candidate order: legal first, then no mains path faults, then a sprint's route score, then the lower cost. */
+/** Matches the Rust order: legality, mains, overflow, peak utilization, cost, worker. */
 const finalOrder = (a: Candidate, b: Candidate): number => a.illegal.length - b.illegal.length || a.mains.length - b.mains.length
-  || number(a.route_score ?? 0) - number(b.route_score ?? 0) || number(a.cost) - number(b.cost) || number(a.worker) - number(b.worker);
+  || number(a.route_score ?? 0) - number(b.route_score ?? 0) || number(a.route_pressure ?? 0) - number(b.route_pressure ?? 0)
+  || number(a.cost) - number(b.cost) || number(a.worker) - number(b.worker);
 
 async function search(prob: string, output: string, workers: number, flags: readonly string[]): Promise<number> {
   const command = [iotplaceBin(), 'run', prob, '-o', output, '--workers', String(workers), ...flags];

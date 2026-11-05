@@ -52,6 +52,9 @@ pub struct Params {
     pub clu_gather: f64,
     /// 1 = a pad inside the edge clearance, measured exactly, is illegal (search/sprint.rs). 0 only to compare with the old search.
     pub exact_edge: f64,
+    /// 1 = break equal sprint overflow by unclipped peak utilization. Experimental; no verified-rate gain yet.
+    #[serde(default)]
+    pub route_pressure: f64,
     // legalizer
     pub legal_step: f64,
     pub legal_radius: f64,
@@ -116,6 +119,7 @@ impl Default for Params {
             clu_local: 3.0,
             clu_gather: 1.0,
             exact_edge: 1.0,
+            route_pressure: 0.0,
             legal_step: 0.25,
             legal_radius: 5.0,
             legal_passes: 3.0,
@@ -151,7 +155,11 @@ impl Params {
             }
             fields.insert(key.to_string(), parse_value(value));
         }
-        Ok(serde_json::from_value(map)?)
+        let params: Self = serde_json::from_value(map)?;
+        if params.route_pressure != 0.0 && params.route_pressure != 1.0 {
+            return Err("route_pressure must be 0 or 1".into());
+        }
+        Ok(params)
     }
 
     pub fn spacing_weights_at(&self, f: f64) -> (f64, f64) {

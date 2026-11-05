@@ -15,6 +15,36 @@ fn chain() -> Problem {
     common::parse(problem_json(Value::from(units), Value::from(nets), square_board(30.0, 1.0)))
 }
 
+#[test]
+fn sparse_poses_keep_zero_overflow_but_have_distinct_unclipped_pressure() {
+    let rects = json!([[-0.5, -0.5, 0.5, 0.5, 0.0]]);
+    let pr = common::problem(json!([unit("A", 3.0, 3.0, rects.clone()), unit("B", 9.0, 9.0, rects)]),
+        json!([net("signal", &[0, 1])]), square_board(30.0, 1.0));
+    let scorer = iotplace::search::sprint::Scorer::new(&pr, &Params::default()).unwrap();
+    let compact = scorer.metrics(&vec![(3.0, 3.0, 0), (9.0, 9.0, 0)]);
+    let spread = scorer.metrics(&vec![(3.0, 3.0, 0), (21.0, 21.0, 0)]);
+    assert_eq!((compact.0, spread.0), (0.0, 0.0));
+    assert!(compact.1 > spread.1 && spread.1 > 0.0, "unclipped demand must distinguish both sparse maps: {compact:?} {spread:?}");
+}
+
+#[test]
+fn pressure_ranking_is_opt_in_and_leaves_the_search_poses_unchanged() {
+    let plan = Plan { workers: 3, epochs: 4, steps: 300, seed: 7, top: 3 };
+    let sprint = Sprint { budget_s: Some(1000.0), ..Sprint::default() };
+    let run = |params: &Params| optimize_with_preview(&mut chain(), params, plan, &|_| {}, &|_, _, _, _| {}, &sprint).unwrap();
+    let before = run(&Params::default());
+    let enabled = Params::from_args(&["route_pressure=1"]).unwrap();
+    let after = run(&enabled);
+    let by_worker = |r: &SearchResult| {
+        let mut poses: Vec<_> = r.candidates.iter().map(|c| (c.worker, c.pose.clone())).collect();
+        poses.sort_by_key(|c| c.0); poses
+    };
+    assert_eq!(by_worker(&before), by_worker(&after));
+    assert!(before.candidates.iter().all(|c| c.route_pressure.is_none()));
+    assert!(after.candidates.iter().all(|c| c.route_pressure.is_some()));
+    assert!(Params::from_args(&["route_pressure=0.5"]).is_err(), "a switch must not become an unmeasured weight");
+}
+
 fn sprint(sprint: &Sprint, steps: usize) -> SearchResult {
     let plan = Plan { workers: 3, epochs: 4, steps, seed: 7, top: 3 };
     optimize_with_preview(&mut chain(), &Params::default(), plan, &|_| {}, &|_, _, _, _| {}, sprint).unwrap()
