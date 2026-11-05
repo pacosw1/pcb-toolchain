@@ -12,7 +12,7 @@ import { html, playback } from './viewer.ts';
 const sha = 'a'.repeat(64);
 const fixture = () => {
   const units = [
-    { name: 'A', refs: ['A'], fixed: false, x: 2, y: 2, rects: [[-0.5, -0.5, 0.5, 0.5, 0.5]], box: null },
+    { name: 'A', refs: ['A'], fixed: false, x: 2, y: 2, rects: [[-1, -0.5, 1, 0.5, 0.5]], box: null },
     { name: 'B', refs: ['B'], fixed: true, x: 8, y: 8, rects: [[-1, -0.5, 1, 0.5, 0.5]], box: null },
   ];
   const problem = { units, nets: [{ name: 'N', pins: [[0, 0, 0, 0, 0], [1, 0, 0, 0, 0]] }],
@@ -30,6 +30,7 @@ test('uses recorded epoch and step poses, without claiming routed copper or qual
   assert.equal(result.frames[0]!.label, 'step 0 epoch 1');
   assert.deepEqual(result.frames[0]!.outline[0], [-1, -1]);
   assert.deepEqual(result.frames[0]!.segments, [[2, 2, 8, 8]]);
+  assert.deepEqual(result.frames[1]!.rects[0]![0], [2.5, 2, 3.5, 4]);
   assert.deepEqual(result.frames[1]!.rects[1]![0], [7, 7.5, 9, 8.5]);
   assert.equal(result.frames[2]!.unrouted, 0);
   assert.deepEqual(result.units[0]!.nets, ['N']);
@@ -79,14 +80,17 @@ test('embedded playback draws recorded frames and advances without external scri
   const button = { textContent: '', addEventListener: (_name: string, fn: () => void) => { events.button = fn; } };
   const elements: Record<string, any> = { payload: { textContent: payload }, layout: canvas, frame: slider, play: button,
     verdict: { textContent: '' }, source: { textContent: '' }, position: { textContent: '' }, details: { textContent: '' }, info: { textContent: '' } };
-  let tick: (() => void) | undefined;
-  runInNewContext(script, { document: { getElementById: (id: string) => elements[id] }, setInterval: (fn: () => void) => { tick = fn; return 1; }, clearInterval() {} });
+  let tick: (() => void) | undefined, interval = 0;
+  runInNewContext(script, { document: { getElementById: (id: string) => elements[id] }, setInterval: (fn: () => void, ms: number) => { tick = fn; interval = ms; return 1; }, clearInterval() {} });
   assert.ok(rects.length >= 2);
   assert.equal(elements.position.textContent, '1 / 3');
   assert.match(elements.details.textContent, /step 0 epoch 1/);
   events.button!(); assert.ok(tick); tick();
+  assert.equal(interval, 1000);
   assert.equal(elements.position.textContent, '2 / 3');
   assert.match(elements.details.textContent, /step 0 epoch 2/);
+  tick(); assert.equal(elements.position.textContent, '3 / 3'); assert.equal(button.textContent, 'Play');
+  events.button!(); assert.equal(elements.position.textContent, '1 / 3');
 });
 
 test('CLI writes a self-contained HTML and frame JSON once without changing input', t => {
