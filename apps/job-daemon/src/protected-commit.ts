@@ -177,6 +177,38 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
       return {manifest:attempt.source_manifest,runtimeDigest:attempt.runtime_digest,closure};
     });
   }
+  /** Trusted verifier preparation only. Worker completion and cleanup must be proven by the manager separately. */
+  verificationContextFromTrustedService(ref:{project:string;board:string;operation:string;job:string;attempt:string}):
+    {sourceDigest:string;candidateDigest:string;policyDigest:string;runtimeJob:string;policy:SignedVerificationPolicy;source:ManifestClosure;candidate:ManifestClosure} {
+    if(!ref||![ref.project,ref.board,ref.operation,ref.job,ref.attempt].every(x=>typeof x==='string'&&ID.test(x)))throw new Error('invalid protected verification attempt');
+    return this.transaction(()=>{
+      const now=this.clock(),attempt=this.db.prepare('SELECT * FROM protected_attempt_bindings WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as Attempt|undefined;
+      const target=this.db.prepare('SELECT revision,alias_revision,state,source_manifest,board_path FROM protected_targets WHERE project=? AND board=?').get(ref.project,ref.board) as Target|undefined;
+      const lease=this.db.prepare('SELECT * FROM protected_leases WHERE project=? AND board=?').get(ref.project,ref.board) as Lease|undefined;
+      const cancel=this.db.prepare('SELECT cancelled FROM protected_attempt_cancellation WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {cancelled:number}|undefined;
+      const staged=this.db.prepare('SELECT manifest,state FROM protected_candidates WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {manifest:string;state:string}|undefined;
+      const runtime=this.db.prepare('SELECT runtime_job,attested_image,archive_tool_digest FROM protected_runtime_jobs WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {runtime_job:string;attested_image:string|null;archive_tool_digest:string|null}|undefined;
+      if(!attempt||attempt.project!==ref.project||attempt.board!==ref.board||attempt.operation!==ref.operation||!target||target.state!=='ACTIVE'||!target.board_path||
+        target.revision!==attempt.source_revision||target.alias_revision!==attempt.alias_revision||target.source_manifest!==attempt.source_manifest||!lease||lease.boot_id!==this.bootId||
+        lease.pinned!==1||lease.generation!==attempt.generation||lease.expires_at<=now||lease.operation!==ref.operation||lease.source_manifest!==attempt.source_manifest||
+        !cancel||cancel.cancelled!==0||!staged||staged.state!=='STAGED'||!runtime||runtime.attested_image!==`sha256:${attempt.runtime_digest}`||!runtime.archive_tool_digest)
+        throw new Error('protected verification attempt is stale');
+      const policy=this.authorizePolicy({digest:attempt.policy_digest,project:ref.project,board:ref.board,operation:ref.operation,boardPath:target.board_path,
+        workerDigest:attempt.runtime_digest,toolchainDigest:attempt.toolchain_digest,archiveDigest:runtime.archive_tool_digest},now);
+      const approved=this.db.prepare('SELECT enabled FROM protected_approved_digests WHERE kind=? AND digest=?');
+      if(!policy||(approved.get('runtime',attempt.runtime_digest) as {enabled:number}|undefined)?.enabled!==1||
+        (approved.get('toolchain',attempt.toolchain_digest) as {enabled:number}|undefined)?.enabled!==1||
+        (approved.get('verifier-runtime',policy.verifier_image_sha256) as {enabled:number}|undefined)?.enabled!==1||
+        (approved.get('archive-tool',runtime.archive_tool_digest) as {enabled:number}|undefined)?.enabled!==1)throw new Error('protected verifier policy is unavailable');
+      const blob=this.db.prepare("SELECT size FROM protected_uploads WHERE sha256=? AND state='ready'"),resolve=(hash:string)=>resolveManifestClosure(hash,s=>this.read(s),s=>(blob.get(s) as {size:number}|undefined)?.size??null,
+        {maxDepth:16,maxManifests:256,maxNodes:100_000,maxBytes:64*1024**3,maxManifestBytes:64*1024**2});
+      const source=resolve(attempt.source_manifest),candidate=resolve(staged.manifest);
+      if(source.rootProject!==ref.project||candidate.rootProject!==ref.project||!source.rootManifest.required_paths.includes(target.board_path)||!candidate.rootManifest.required_paths.includes(target.board_path))
+        throw new Error('protected verifier board is unavailable');
+      assertBoardOnlyChange(source.rootManifest,candidate.rootManifest,target.board_path);
+      return {sourceDigest:attempt.source_manifest,candidateDigest:staged.manifest,policyDigest:attempt.policy_digest,runtimeJob:runtime.runtime_job,policy,source,candidate};
+    });
+  }
   /** Internal orchestrator only: persist runtime identity; the future launcher must enforce its admission barrier. */
   associateRuntimeFromTrustedService(ref: { project:string; board:string; operation:string; job:string; attempt:string }, runtimeJob: string, input: {sha256:string;size:number;specSha256:string;archiveToolSha256:string}): void {
     if (!ref || ![ref.project,ref.board,ref.operation,ref.job,ref.attempt,runtimeJob].every(x => typeof x === 'string' && ID.test(x)))
