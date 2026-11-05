@@ -121,6 +121,9 @@ impl Area {
 
 #[derive(Clone, Default)]
 pub(crate) struct RefFill {
+    /// Own-pour outlines by net and copper layer, independent of reference-fill rules.
+    /// Presence (including an empty list) is authoritative; absence is a legacy model.
+    own_pours: std::collections::HashMap<usize, Vec<(u8, Vec<Vec<Vec<(f64, f64)>>>)>>,
     /// Explicit trace-layer to reference-plane mapping. A void on another plane is not a void in this reference.
     adjacent_planes: Vec<(usize, u8)>,
     /// A homogeneous reference plane's net. Mixed or unknown planes keep the conservative hole model.
@@ -162,6 +165,20 @@ impl RefFill {
     pub(crate) fn load(model: &Value, cu: &[String], names: &std::collections::HashMap<String, usize>) -> RefFill {
         let rf = &model["ref_fill"];
         let mut out = RefFill { dom: vec![0; names.len()], ..Default::default() };
+        for (name, net) in model["nets"].as_object().into_iter().flatten() {
+            if let (Some(&n), Some(regions)) = (names.get(name), net["plane_regions"].as_array()) {
+                let regions = regions.iter().filter_map(|r| {
+                    let l = cu.iter().position(|c| Some(c.as_str()) == r["layer"].as_str())?;
+                    let polygons = r["polygons"].as_array()?.iter().map(|p| {
+                        p.as_array().unwrap().iter().map(|ring| {
+                            ring.as_array().unwrap().iter().map(|q| (crate::f(&q[0]), crate::f(&q[1]))).collect()
+                        }).collect()
+                    }).collect();
+                    Some((1 << l, polygons))
+                }).collect();
+                out.own_pours.insert(n, regions);
+            }
+        }
         for (trace, plane) in model["adjacent"].as_object().into_iter().flatten() {
             if let (Some(l), Some(p)) = (cu.iter().position(|c| c == trace), plane.as_str().and_then(|p| cu.iter().position(|c| c == p))) {
                 out.add_reference(l, p, model, cu, names);
@@ -239,6 +256,15 @@ impl RefFill {
     }
     pub(crate) fn adjacent_plane_mask(&self, l: usize) -> Option<u8> {
         self.adjacent_planes.iter().find(|&&(layer, _)| layer == l).map(|&(_, mask)| mask)
+    }
+
+    /// Layers whose own-pour outline contains this centre, excluding outline holes.
+    /// This is a geometric eligibility check, not proof of connected native fill.
+    pub(crate) fn own_pour_layers(&self, net: usize, x: f64, y: f64) -> Option<u8> {
+        self.own_pours.get(&net).map(|regions| regions.iter().filter(|(_, polys)| {
+            polys.iter().any(|rings| rings.first().is_some_and(|outer| crate::pt_in_poly(x, y, outer))
+                && !rings.iter().skip(1).any(|hole| crate::pt_in_poly(x, y, hole)))
+        }).fold(0, |mask, (layer, _)| mask | layer))
     }
 
     pub(crate) fn same_reference_net(&self, l: usize, net: i32) -> bool {

@@ -3,7 +3,7 @@
 use super::files::{BoardFiles, PlaneSpec};
 use super::items::fine_point;
 use super::num::{Num, short_float};
-use super::output::{Anchor, Net, Pad, Point, RefFill, RefLayer, Zone};
+use super::output::{Anchor, Net, Pad, PlaneRegion, Point, RefFill, RefLayer, Zone};
 use super::text::{glob_match, round_to};
 use crate::kicad::board::{Board, RoutedCopper};
 use crate::kicad::geom::boolean::union;
@@ -69,6 +69,9 @@ pub fn plane_reach(board: &Board, nets: &mut BTreeMap<String, Net>, pads: &[Pad]
         }
         let outlines = on_planes.iter().flat_map(|z| &board.zones[*z].outline);
         net.plane_polys = Some(outlines.map(|p| p.outline.iter().copied().map(fine_point).collect()).collect());
+        // Do not use distinct_pours here: identical pours on different layers are
+        // separate possible connections, with different pour-only keepouts.
+        net.plane_regions = Some(own_regions(board, zones, sources, name, Some(plane_layers)));
     }
 }
 
@@ -78,8 +81,18 @@ pub fn zone_outlines(board: &Board, nets: &mut BTreeMap<String, Net>, zones: &[Z
         let found: BTreeSet<usize> = zones.iter().zip(sources).filter(|(z, _)| z.net == *name).map(|(_, s)| *s).collect();
         if !found.is_empty() {
             net.plane_polys = Some(found.iter().flat_map(|z| &board.zones[*z].outline).map(|p| p.outline.iter().copied().map(fine_point).collect()).collect());
+            net.plane_regions = Some(own_regions(board, zones, sources, name, None));
         }
     }
+}
+
+fn own_regions(board: &Board, zones: &[Zone], sources: &[usize], net: &str, layers: Option<&BTreeSet<String>>) -> Vec<PlaneRegion> {
+    zones.iter().zip(sources)
+        .filter(|(z, _)| z.net == net && layers.is_none_or(|ls| ls.contains(&z.layer)))
+        .map(|(z, source)| PlaneRegion {
+            layer: z.layer.clone(),
+            polygons: board.zones[*source].outline.iter().map(polygon_points).collect(),
+        }).collect()
 }
 
 /// `plane_ref`: a net on a layer of `adjacent` that is not a ground, not exempt and not power must run over its reference plane.
@@ -216,6 +229,35 @@ pub fn reference_fill(board: &Board, filled: &Board, nets: &mut BTreeMap<String,
 mod tests {
     use super::*;
     use crate::model::files::{AltRef, ExemptArea};
+
+    #[test]
+    fn own_pour_export_preserves_layers_holes_and_net_scope() {
+        let ring = |a, b| vec![Pt::new(a, a), Pt::new(b, a), Pt::new(b, b), Pt::new(a, b)];
+        let polygon = Polygon { outline: ring(0, 10_000_000), holes: vec![ring(2_000_000, 3_000_000)] };
+        let source = crate::kicad::board::Zone {
+            id: String::new(), name: String::new(), net: "GND".into(), layers: vec!["In1.Cu".into(), "B.Cu".into()],
+            outline: vec![polygon], filled: Vec::new(), rule_area: None, fill: None,
+        };
+        let board = Board { path: String::new(), copper_layers: Vec::new(), stackup: Vec::new(), nets: BTreeMap::new(), footprints: Vec::new(), copper: Vec::new(), zones: vec![source], graphics: Vec::new(), texts: Vec::new(), groups: Vec::new(), constraints: Default::default(), edges_bbox: crate::kicad::geom::Rect::around(Pt::default()), outlines: Vec::new() };
+        let zone = |net: &str, layer: &str| Zone {
+            net: net.into(), layer: layer.into(), clearance: 0.2, thermal_gap: 0.2, spoke_width: 0.3,
+            pad_connection: "thermal", min_thickness: 0.2, island_removal_mode: 0, min_island_area_mm2: 0.,
+            bbox: [0., 0., 10., 10.], net_clearance: BTreeMap::new(),
+        };
+        let zones = [zone("GND", "In1.Cu"), zone("GND", "B.Cu"), zone("OTHER", "In2.Cu")];
+        let mut nets = BTreeMap::from([("GND".to_string(), Net { plane: true, ..Default::default() })]);
+        let layers = BTreeSet::from(["In1.Cu".to_string()]);
+        plane_reach(&board, &mut nets, &[], &zones, &[0, 0, 0], &layers);
+        let regions = nets["GND"].plane_regions.as_ref().unwrap();
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].layer, "In1.Cu");
+        assert_eq!(regions[0].polygons[0][1][0], [2., 2.]);
+        let mut nets = BTreeMap::from([("GND".to_string(), Net::default())]);
+        zone_outlines(&board, &mut nets, &zones, &[0, 0, 0]);
+        let regions = nets["GND"].plane_regions.as_ref().unwrap();
+        assert_eq!(regions.iter().map(|r| r.layer.as_str()).collect::<Vec<_>>(), ["In1.Cu", "B.Cu"]);
+        assert_eq!(regions[1].polygons[0].len(), 2);
+    }
 
     fn spec() -> PlaneSpec {
         PlaneSpec {

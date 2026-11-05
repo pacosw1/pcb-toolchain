@@ -588,8 +588,20 @@ impl Board {
     fn twin_of(&self, net: usize) -> Option<usize> {
         self.twin.get(net).and_then(|&t| if t >= 0 { Some(t as usize) } else { None })
     }
-    /// A fan-out or return via of `net` at (x, y) lies inside a zone outline of the net (true when the model gives none)
+    /// A fan-out or return via needs an own-pour outline outside holes and pour-only voids
+    /// on at least one of that outline's layers. Native refill still proves connectivity.
     fn in_plane(&self, net: usize, x: f64, y: f64) -> bool {
+        let void_layers = self.keep.iter().filter(|k| k.pl != 0 && if k.poly.is_empty() {
+            x >= k.r.0 && y >= k.r.1 && x <= k.r.2 && y <= k.r.3
+        } else { k.touches(x, y, 0.0) }).fold(0, |mask, k| mask | k.pl);
+        if let Some(layers) = self.rfill.own_pour_layers(net, x, y) {
+            return layers & !void_layers != 0;
+        }
+        // Legacy outlines have no layer ownership: do not claim a connection in
+        // any pour void. With no outlines and no void, preserve the old fallback.
+        if void_layers != 0 {
+            return false;
+        }
         let mut any = false;
         for (n, p) in &self.ppoly {
             if *n == net {

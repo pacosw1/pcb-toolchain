@@ -123,6 +123,8 @@ pub struct Net {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plane_polys: Option<Vec<Vec<Point>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub plane_regions: Option<Vec<PlaneRegion>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub power_chains: Option<Vec<PowerChain>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_width: Option<f64>,
@@ -134,6 +136,14 @@ pub struct Net {
     pub ref_soft: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_vias: Option<u32>,
+}
+
+/// Own-pour connection geometry, preserving layer ownership and each polygon's holes.
+#[derive(Debug, Clone, Serialize)]
+pub struct PlaneRegion {
+    pub layer: String,
+    /// Polygons, each with its outer ring first, then holes (mm).
+    pub polygons: Vec<Vec<Vec<Point>>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
