@@ -1,6 +1,6 @@
 //! SHAPE::Collide with a clearance, for copper primitives and graphic items. A hit is a distance of 0 or one under the clearance,
 //! never one equal to it, so a part placed exactly on the clearance stays legal as it does in KiCad.
-use super::polygon::{point_segment_sq, ring_contains, ring_edges, segment_segment_sq};
+use super::polygon::{Polygon, point_segment_sq, ring_contains, ring_edges, segment_segment_sq};
 use super::{Iu, Pt, Rect};
 use crate::kicad::pad::Copper;
 use crate::kicad::shape::{Arc, Geometry, Graphic, radius};
@@ -30,6 +30,16 @@ pub fn near_segment(copper: &Copper, a: Pt, b: Pt, clearance: Iu) -> bool {
 /// SHAPE::Collide of a point with a clearance.
 pub fn near_point(copper: &Copper, p: Pt, clearance: Iu) -> bool {
     near_segment(copper, p, p, clearance)
+}
+
+/// SHAPE::Collide of two pieces of copper, with no clearance.
+pub fn collide(a: &Copper, b: &Copper) -> bool {
+    match (a, b) {
+        (_, Copper::Circle { center, radius }) => near_point(a, *center, *radius),
+        (_, Copper::Segment { a: start, b: end, width }) => near_segment(a, *start, *end, (width + 1) / 2),
+        (Copper::Polygon(one), Copper::Polygon(other)) => Polygon::of_ring(one.clone()).overlaps(&Polygon::of_ring(other.clone())),
+        (_, Copper::Polygon(_)) => collide(b, a),
+    }
 }
 
 /// The box of pieces of copper, for a quick miss before the exact test.

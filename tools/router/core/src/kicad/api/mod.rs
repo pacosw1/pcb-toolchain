@@ -13,5 +13,5 @@ mod transport;
 
 pub use client::{ApiError, Client, decode};
 pub use query::{connected_vias, read_rules};
-pub use read::read_board;
+pub use read::{read_board, via_types};
 pub use server::Server;

@@ -186,6 +186,20 @@ fn read_copper(client: &mut Client, doc: &ct::DocumentSpecifier, copper_layers: 
     items.iter().map(|item| routed_copper(item, copper_layers)).collect()
 }
 
+/// The type of each via by uuid, in the words of the board document: Through, Micro, BlindBuried, Unknown. Readers that must not
+/// infer a through via from its layers take it from here.
+pub fn via_types(client: &mut Client) -> Result<std::collections::BTreeMap<String, String>, ApiError> {
+    let doc = client.board_document()?;
+    let items = client.items(&doc, &[ct::KiCadObjectType::KotPcbVia])?;
+    let name = |via: &bt::Via| match via.r#type() {
+        bt::ViaType::VtThrough => "Through",
+        bt::ViaType::VtMicro => "Micro",
+        bt::ViaType::VtBlindBuried | bt::ViaType::VtBlind | bt::ViaType::VtBuried => "BlindBuried",
+        _ => "Unknown",
+    };
+    Ok(items.iter().filter_map(decode).map(|via: bt::Via| (id(&via.id), name(&via).to_string())).collect())
+}
+
 fn routed_copper(item: &Any, copper_layers: &[String]) -> Result<RoutedCopper, ApiError> {
     if let Some(t) = decode::<bt::Track>(item) {
         return Ok(RoutedCopper::Track(Track { id: id(&t.id), start: pt(&t.start), end: pt(&t.end), mid: None, width: nm(&t.width), layer: layer_name(t.layer()), net: net(&t.net), locked: locked(t.locked()) }));

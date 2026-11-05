@@ -148,13 +148,23 @@ impl Steps {
         Ok(AttemptStages { core, write: WriteStage { exit, line: text.trim().lines().last().unwrap_or("").to_string() } })
     }
 
-    /// The gate's planes check itself, this binary with the gate's spec, as tools/gate.mjs runs it. Its exit is not the verdict
-    /// here: the FAIL lines are.
+    /// The gate's planes check itself, this binary with the gate's spec, as tools/gate.mjs runs it. The FAIL lines are the verdict
+    /// here, not the difference between exit 0 and 1.
     pub fn planes_check(&self, board: &Path, spec: &Path, log: &Path) -> Result<String, String> {
         let mut command = Command::new(&self.exe);
         command.arg("si-planes").arg(board).arg(spec).arg("--tools").arg(&self.tools);
-        run_logged(command, log).map(|(_, text)| text)
+        let (code, text) = run_logged(command, log)?;
+        finished_check(code, text, log)
     }
+}
+
+/// A check that gave no result has no FAIL lines either, so a run must not read that as a pass. si-planes exits 0 or 1 when it ran to
+/// its end and 2 when it did not; anything else is a crash or a signal.
+fn finished_check(code: i32, text: String, log: &Path) -> Result<String, String> {
+    if matches!(code, 0 | 1) {
+        return Ok(text);
+    }
+    Err(format!("the planes check gave no result (exit {code}): {}; see {}", text.trim().lines().last().unwrap_or(""), log.display()))
 }
 
 #[cfg(test)]
@@ -203,6 +213,16 @@ mod tests {
         fs::remove_file(&log).unwrap();
         assert_eq!(code, 3);
         assert!(text.contains("out") && text.contains("err"));
+    }
+
+    #[test]
+    fn a_planes_check_with_no_result_stops_the_run() {
+        let log = Path::new("planes.log");
+        assert_eq!(finished_check(0, "0 reference-plane failures\n".into(), log).unwrap(), "0 reference-plane failures\n");
+        assert_eq!(finished_check(1, "FAIL detour F.Cu /B: x\n".into(), log).unwrap(), "FAIL detour F.Cu /B: x\n");
+        let error = finished_check(2, "ERROR the board did not load\n".into(), log).unwrap_err();
+        assert!(error.contains("exit 2") && error.contains("the board did not load") && error.contains("planes.log"), "{error}");
+        assert!(finished_check(-1, String::new(), log).unwrap_err().contains("exit -1"));
     }
 
     #[test]

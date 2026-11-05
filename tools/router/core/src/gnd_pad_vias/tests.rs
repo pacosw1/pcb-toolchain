@@ -249,6 +249,29 @@ fn direct_copper_sees_what_this_run_added() {
     assert_eq!(DirectCopper::of(&b, "GND", &edit).vias_of(&b.footprints[0].pads[0]), Ok(vec![at(10.62, 10.76)]));
 }
 
+fn stub(from: Pt, to: Pt, width: f64) -> Edit {
+    Edit { tracks: vec![NewTrack { start: from, end: to, width: mm(width), layer: "F.Cu".to_string(), net: "GND".to_string(), locked: false }], ..Edit::default() }
+}
+
+#[test]
+fn a_stub_that_overlaps_a_pad_joins_it_though_neither_end_is_on_it() {
+    // ENV-SENSE U1: the stub of pad 2 runs over the corner of pad 3, so pad 3 needs no via. KiCad 10.0.6 CN_VISITOR collides shapes.
+    let (two, three) = (pad("2", "GND", 108.83, 123.25, 0.6, 0.27), pad("3", "GND", 108.83, 123.75, 0.6, 0.27));
+    let probe = three.clone();
+    let b = board(vec![footprint("U1", vec![two, three])], vec![via("GND", 108.03, 123.885)]);
+    let edit = stub(at(108.83, 123.25), at(108.03, 123.885), 0.27);
+    assert_eq!(DirectCopper::of(&b, "GND", &edit).vias_of(&probe), Ok(vec![at(108.03, 123.885)]));
+}
+
+#[test]
+fn a_stub_that_only_passes_near_a_pad_does_not_join_it() {
+    let (two, three) = (pad("2", "GND", 108.83, 123.25, 0.6, 0.27), pad("3", "GND", 108.83, 123.75, 0.6, 0.27));
+    let probe = three.clone();
+    let b = board(vec![footprint("U1", vec![two, three])], vec![via("GND", 108.03, 123.25)]);
+    let edit = stub(at(108.83, 123.25), at(108.03, 123.25), 0.27);
+    assert_eq!(DirectCopper::of(&b, "GND", &edit).vias_of(&probe), Ok(Vec::new()));
+}
+
 fn distance(a: Pt, b: Pt) -> f64 {
     ((a.x - b.x) as f64).hypot((a.y - b.y) as f64)
 }

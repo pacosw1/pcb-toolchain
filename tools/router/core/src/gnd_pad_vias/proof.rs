@@ -1,8 +1,8 @@
 //! Is a pad already joined to a nearby via? Being near proves nothing: only a fresh native connectivity does.
 use crate::kicad::board::Board;
 use crate::kicad::edit::Edit;
-use crate::kicad::geom::collide::near_point;
-use crate::kicad::geom::{Iu, Polygon, Pt};
+use crate::kicad::geom::collide::collide;
+use crate::kicad::geom::{Polygon, Pt};
 use crate::kicad::pad::{Copper, Pad};
 
 /// What connectivity says about one pad: the vias of its net joined to it.
@@ -51,9 +51,6 @@ impl<L: Links> Default for NearbyViaProof<L> {
 /// One item of a net, for the copper-only graph.
 struct Node {
     layers: Vec<String>,
-    anchors: Vec<Pt>,
-    /// How far from its anchors this item reaches into another item: half the track width, as CN_VISITOR.
-    reach: Iu,
     shapes: Vec<Copper>,
     via: Option<Pt>,
 }
@@ -72,10 +69,10 @@ fn pad_shapes(pad: &Pad) -> Vec<Copper> {
     pad.polygons.values().next().map(|p: &Polygon| vec![Copper::Polygon(p.outline.clone())]).unwrap_or_default()
 }
 
+/// CN_VISITOR of KiCad 10.0.6: two items on a common layer connect when their effective shapes collide.
 fn touches(a: &Node, b: &Node) -> bool {
     let common = a.layers.iter().any(|l| b.layers.contains(l));
-    let hits = |from: &Node, to: &Node| from.anchors.iter().any(|p| to.shapes.iter().any(|s| near_point(s, *p, from.reach + 1)));
-    common && (hits(a, b) || hits(b, a))
+    common && a.shapes.iter().any(|one| b.shapes.iter().any(|other| collide(one, other)))
 }
 
 impl DirectCopper {
@@ -84,22 +81,22 @@ impl DirectCopper {
         let (mut nodes, mut pads) = (Vec::new(), Vec::new());
         for (_, pad) in board.pads().filter(|(_, p)| p.net == net) {
             pads.push((pad.id.clone(), nodes.len()));
-            nodes.push(Node { layers: pad.layers.clone(), anchors: vec![pad.position], reach: 0, shapes: pad_shapes(pad), via: None });
+            nodes.push(Node { layers: pad.layers.clone(), shapes: pad_shapes(pad), via: None });
         }
         for t in board.tracks().filter(|t| t.net == net) {
-            nodes.push(Node { layers: vec![t.layer.clone()], anchors: vec![t.start, t.end], reach: (t.width + 1) / 2, shapes: t.copper(), via: None });
+            nodes.push(Node { layers: vec![t.layer.clone()], shapes: t.copper(), via: None });
         }
         for t in added.tracks.iter().filter(|t| t.net == net) {
             let shape = Copper::Segment { a: t.start, b: t.end, width: t.width };
-            nodes.push(Node { layers: vec![t.layer.clone()], anchors: vec![t.start, t.end], reach: (t.width + 1) / 2, shapes: vec![shape], via: None });
+            nodes.push(Node { layers: vec![t.layer.clone()], shapes: vec![shape], via: None });
         }
         let copper = board.copper_layers.clone();
         for v in board.vias().filter(|v| v.net == net) {
-            nodes.push(Node { layers: copper.clone(), anchors: vec![v.at], reach: (v.size + 1) / 2, shapes: vec![v.copper()], via: Some(v.at) });
+            nodes.push(Node { layers: copper.clone(), shapes: vec![v.copper()], via: Some(v.at) });
         }
         for v in added.vias.iter().filter(|v| v.net == net) {
             let shape = Copper::Circle { center: v.at, radius: v.size / 2 };
-            nodes.push(Node { layers: copper.clone(), anchors: vec![v.at], reach: (v.size + 1) / 2, shapes: vec![shape], via: Some(v.at) });
+            nodes.push(Node { layers: copper.clone(), shapes: vec![shape], via: Some(v.at) });
         }
         DirectCopper { nodes, pads }
     }

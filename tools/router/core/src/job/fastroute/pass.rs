@@ -391,7 +391,9 @@ fn import_session(job: &mut Job, tag: &str, sfx: &str, board: &Board, locked: &B
     let dsn_text = fs::read_to_string(dsn).map_err(|e| Stop::failed(e.to_string()))?;
     let ses_text = fs::read_to_string(ses).map_err(|e| Stop::failed(e.to_string()))?;
     job.progress(&format!("import{sfx} start"));
-    let session = Session { board_text: &job.text, copper: &existing, preserved: locked, dsn: &dsn_text, ses: &ses_text, seed: tag };
+    // The board text is in the seed: the route run has one job per stage, and stage tags alone would repeat uuids between them.
+    let seed = format!("{}:{tag}", sha256(job.text.as_bytes()));
+    let session = Session { board_text: &job.text, copper: &existing, preserved: locked, dsn: &dsn_text, ses: &ses_text, seed: &seed };
     let imported = import(&session).map_err(|error| Stop::failed(format!("fastroute_job: SES pose integrity failed; result is not verified: {error}")))?;
     if !imported.duplicates.is_empty() {
         println!("fastroute_job: {} duplicate new segments removed (identical copper), stage {tag}", imported.duplicates.len());
