@@ -143,7 +143,9 @@ export function compareNativeManifest(manifest: unknown, population: ReturnType<
       const o = object(value);
       return '{' + Object.keys(o).sort().map(k => JSON.stringify(k) + ':' + canonical(o[k])).join(',') + '}';
     }
-    return JSON.stringify(value);
+    const encoded = JSON.stringify(value);
+    if (encoded === undefined) throw new Error('unsupported canonical value');
+    return encoded;
   }
   const parts = object(manifest).parts;
   if (!Array.isArray(parts) || !parts.length) throw new Error('reviewed parts missing');

@@ -43,7 +43,9 @@ export function preflightSnapshot(snapshotArg: string, project: string, modelArg
       const object = value as Record<string, unknown>;
       return '{' + Object.keys(object).sort().map(k=>JSON.stringify(k)+':'+canonical(object[k])).join(',') + '}';
     }
-    return JSON.stringify(value);
+    const encoded = JSON.stringify(value);
+    if (encoded === undefined) throw new Error('unsupported canonical value');
+    return encoded;
   }
   if (canonical(contract.geometry) !== canonical(native.geometry)) throw new Error('reviewed geometry differs from native snapshot');
   const scratch = mkdtempSync(join(tmpdir(),'iotplace-reviewed-preflight-'));
