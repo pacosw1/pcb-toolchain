@@ -139,3 +139,23 @@ test('observes changing native candidate boards written by an existing placement
     assert.equal(candidates.length, 2); assert.notEqual(candidates[0].data.sha256, candidates[1].data.sha256);
   } finally { server.closeAllConnections(); await new Promise<void>(ok => server.close(() => ok())); r.cleanup(); }
 });
+
+test('a gate alias marks the owning board as active', async () => {
+  const r = rig(), root = path.join(r.dir, 'project'), boards = path.join(root, 'hardware-design/boards');
+  const run = path.join(root, '.gate/cli/run-alias');
+  fs.mkdirSync(path.join(boards, 'ALIAS'), { recursive: true }); fs.mkdirSync(path.join(boards, 'OWNER/cad'), { recursive: true }); fs.mkdirSync(run, { recursive: true });
+  fs.writeFileSync(path.join(boards, 'ALIAS/gate.json'), JSON.stringify({ project: '../OWNER/cad/demo' }));
+  fs.writeFileSync(path.join(boards, 'OWNER/cad/demo.kicad_pcb'), 'board');
+  fs.writeFileSync(path.join(run, 'run.json'), JSON.stringify({ board: 'ALIAS', operation: 'route' }));
+  fs.writeFileSync(path.join(run, 'state.json'), JSON.stringify({ status: 'running', worker_pid: process.pid, updated_unix: Date.now() / 1000 }));
+  const token = path.join(r.dir, 'token'); fs.writeFileSync(token, TOKEN);
+  const server = createServer(r.mgr); await new Promise<void>(ok => server.listen(0, '127.0.0.1', ok));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const worker = new Worker({ project: root, projectId: 'project', host: 'mini', url, tokenFile: token, stateFile: path.join(r.dir, 'state.json'), interval: 1, discover: false, once: true });
+  try {
+    await worker.syncEpoch(); await worker.scan();
+    const records = await (await fetch(url + '/live/events', { headers: { Authorization: `Bearer ${TOKEN}` } })).json() as { kind: string; board: string; data: { gate?: string } }[];
+    assert.ok(records.some(e => e.kind === 'board.snapshot' && e.board === 'project/OWNER'));
+    assert.ok(records.some(e => e.kind === 'run.state' && e.board === 'project/OWNER' && e.data.gate === 'ALIAS'));
+  } finally { server.closeAllConnections(); await new Promise<void>(ok => server.close(() => ok())); r.cleanup(); }
+});

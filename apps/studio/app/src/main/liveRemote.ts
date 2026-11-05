@@ -8,7 +8,7 @@ import { publish } from './events.ts'
 import { bbox, fromBytes } from './kicad/board.ts'
 
 interface Config { url: string; tokenFile: string; label?: string }
-interface State { epoch: string; cursor: number; events: unknown[]; truncated: boolean; label?: string }
+interface State { epoch: string; cursor: number; events: unknown[]; truncated: boolean; label?: string; localHost?: string }
 class CoordinatorError extends Error {
   readonly status: number
   constructor(status: number) { super(`coordinator HTTP ${status}`); this.status = status }
@@ -40,6 +40,7 @@ export async function openLive(): Promise<State> {
   const state = await (await get('/live/state', AbortSignal.timeout(5000))).json() as State
   if (typeof state.epoch !== 'string' || !Number.isSafeInteger(state.cursor) || !Array.isArray(state.events)) throw new Error('invalid coordinator state')
   state.label = config().label
+  state.localHost = os.hostname()
   abort?.abort()
   abort = new AbortController()
   const gen = ++generation
@@ -140,4 +141,19 @@ export async function livePlacement(sha256: string): Promise<unknown> {
       point(u.origin) && point(u.position) && Number.isInteger(u.turn) && (u.turn as number) >= 0 && (u.turn as number) < 4))
     throw new Error('invalid placement geometry')
   return frame
+}
+
+export async function liveHistory(source: string, board: string, run: string): Promise<unknown> {
+  if (![source, board, run].every(v => typeof v === 'string' && v.length > 0 && v.length <= 512)) throw new Error('invalid run identity')
+  const events: { cursor: number }[] = []
+  let after = 0, more = false
+  do {
+    const query = new URLSearchParams({ source, board, run, after: String(after) })
+    const page = await (await get('/live/history?' + query, AbortSignal.timeout(15000))).json() as { events: { cursor: number }[]; more: boolean }
+    if (!Array.isArray(page.events) || !page.events.every(e => Number.isSafeInteger(e.cursor) && e.cursor > after)) throw new Error('invalid replay history')
+    events.push(...page.events); more = page.more
+    if (page.events.length) after = page.events[page.events.length - 1].cursor
+    else if (more) throw new Error('invalid replay cursor')
+  } while (more && events.length < 2000)
+  return { events, truncated: more }
 }

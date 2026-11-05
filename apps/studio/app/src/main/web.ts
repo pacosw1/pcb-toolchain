@@ -25,7 +25,7 @@ import { resolveReal } from './project.ts'
 
 export const READ_ONLY = new Set(['engine.ping', 'engine.info', 'project.open', 'board.geometry', 'board.bom', 'board.glb', 'file.resolve',
   'run.list', 'run.get', 'run.findings', 'run.candidate', 'board.parts', 'part.get', 'parts.index', 'board.watch', 'board.unwatch',
-  'live.open', 'live.geometry', 'live.preview', 'live.placement'])   // never op.*, run.adopt, gate.check or run.cancel
+  'live.open', 'live.geometry', 'live.preview', 'live.placement', 'live.history'])   // never op.*, run.adopt, gate.check or run.cancel
 
 const FILE_TYPES = new Set(['.pdf', '.glb', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'])
 const COOKIE = 'pcbstudio_view'

@@ -25,10 +25,10 @@ fi
 
 lock="$project/toolchain.lock"
 live_registered=1
-if [ -z "${PCB_LIVE_GUARD_ACTIVE:-}" ] && [ -f "$bundle/tools/pcb-live-guard.mts" ]; then
-  if node --no-warnings --experimental-strip-types "$bundle/tools/pcb-live-guard.mts" --registered "$project"; then live_registered=0
-  else live_registered=$?; fi
-  [ "$live_registered" -le 1 ] || { echo 'pcb: cannot verify live coordination configuration' >&2; exit 2; }
+if [ -z "${PCB_LIVE_GUARD_ACTIVE:-}" ]; then
+  [ -f "$bundle/tools/pcb-live-guard.mts" ] || { echo 'pcb: live coordination module is missing' >&2; exit 2; }
+  registration=$(node --no-warnings --experimental-strip-types "$bundle/tools/pcb-live-guard.mts" --registered "$project") || { echo 'pcb: cannot verify live coordination configuration' >&2; exit 2; }
+  case "$registration" in registered) live_registered=0 ;; unregistered) live_registered=1 ;; *) echo 'pcb: invalid live coordination response' >&2; exit 2 ;; esac
 fi
 delegate=''
 if [ "$live_registered" = 0 ] && [ ! -f "$lock" ]; then delegate="$project/tools/pcb"; fi

@@ -186,12 +186,13 @@ async function dispatch(root: string, program: string, args: string[]): Promise<
   const runFolder = op === 'adopt' ? runDir(root, args, subject) : null;
   const board = op === 'adopt' ? (JSON.parse(fs.readFileSync(path.join(runFolder!, 'run.json'), 'utf8')) as { board: string }).board : subject;
   const target = boardPath(root, board), boardKey = `${project}/${path.relative(root, target).split(path.sep).join('/')}`;
+  const displayBoard = path.relative(path.join(root, 'hardware-design/boards'), target).split(path.sep)[0];
   const owner = `${os.hostname()}:${process.pid}:${randomUUID()}`, coordinator = new Coordinator(cfg);
   const host = `${os.hostname()} (${path.basename(root)}, ${hash(root).slice(0, 6)})`;
   const source = hash(`${host}\0${project}\0${root}`), waitingId = `waiting-${randomUUID()}`;
   const report = async (status: string, cause: string): Promise<void> => {
     try {
-      await coordinator.request('POST', '/live/events', { source, eventId: randomUUID(), host, board: `${project}/${board}`,
+      await coordinator.request('POST', '/live/events', { source, eventId: randomUUID(), host, board: `${project}/${displayBoard}`,
         run: waitingId, kind: 'run.state', data: { status, cause, operation: op, supervisorAlive: status === 'queued' } });
     } catch { /* observation does not grant or release a lock */ }
   };
@@ -275,7 +276,7 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2);
   if (args[0] === '--guardian' && args[1]) return guardian(args[1]);
   if (args[0] === '--check-managed' && args[1]) { verifyManaged(args[1]); return; }
-  if (args[0] === '--registered' && args[1]) { process.exitCode = projectId(args[1], loadConfig()) ? 0 : 1; return; }
+  if (args[0] === '--registered' && args[1]) { console.log(projectId(args[1], loadConfig()) ? 'registered' : 'unregistered'); return; }
   const split = args.indexOf('--');
   if (args[0] !== '--project' || !args[1] || split !== 2 || !args[3]) throw new Error('usage: pcb-live-guard --project DIR -- PROGRAM [ARGS...]');
   process.exitCode = await dispatch(args[1], args[3], args.slice(4));

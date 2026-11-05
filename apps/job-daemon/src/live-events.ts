@@ -30,6 +30,7 @@ export class LiveEvents {
         kind TEXT NOT NULL, path TEXT NOT NULL, cursor INTEGER NOT NULL,
         PRIMARY KEY(source, board, run, kind, path)) STRICT;
       CREATE INDEX IF NOT EXISTS live_kind_cursor ON live_events(kind, cursor DESC);`);
+    this.db.exec('CREATE INDEX IF NOT EXISTS live_run_cursor ON live_events(source, board, run, cursor);');
     this.db.prepare("INSERT INTO live_meta VALUES ('epoch', ?) ON CONFLICT(key) DO NOTHING").run(randomUUID());
     if (!this.db.prepare("SELECT 1 FROM live_meta WHERE key='latest-v1'").get()) {
       this.db.exec(`BEGIN IMMEDIATE;
@@ -45,31 +46,40 @@ export class LiveEvents {
     }
     this.epoch = (this.db.prepare("SELECT value FROM live_meta WHERE key='epoch'").get() as { value: string }).value;
   }
-  append(input: LiveInput): LiveEvent {
-    for (const field of ['source', 'eventId', 'host', 'board', 'run', 'kind'] as const) {
-      const value = input[field];
-      if (typeof value !== 'string' || !value || value.length > 512) throw new Error(`invalid ${field}`);
-    }
-    const data = JSON.stringify(input.data);
-    if (data === undefined || Buffer.byteLength(data) > 256 * 1024) throw new Error('invalid event data');
+  append(input: LiveInput): LiveEvent { return this.appendBatch([input])[0]; }
+  appendBatch(inputs: LiveInput[]): LiveEvent[] {
+    if (!Array.isArray(inputs) || !inputs.length || inputs.length > 20) throw new Error('event batch must contain 1 to 20 events');
+    const encoded = inputs.map(input => {
+      if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('invalid event');
+      for (const field of ['source', 'eventId', 'host', 'board', 'run', 'kind'] as const) {
+        const value = input[field];
+        if (typeof value !== 'string' || !value || value.length > 512) throw new Error(`invalid ${field}`);
+      }
+      const data = JSON.stringify(input.data);
+      if (data === undefined || Buffer.byteLength(data) > 256 * 1024) throw new Error('invalid event data');
+      return { input, data };
+    });
     const receivedAt = Date.now();
     this.db.exec('BEGIN IMMEDIATE');
-    let event: LiveEvent;
+    const events: LiveEvent[] = [], fresh: LiveEvent[] = [];
     try {
-      const result = this.db.prepare(`INSERT INTO live_events (source,event_id,host,board,run,kind,data,received_at)
-        VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(source,event_id) DO NOTHING`)
-        .run(input.source, input.eventId, input.host, input.board, input.run, input.kind, data, receivedAt);
-      if (!result.changes) {
-        const prior = this.db.prepare('SELECT * FROM live_events WHERE source=? AND event_id=?').get(input.source, input.eventId) as unknown as Row;
-        if (prior.host !== input.host || prior.board !== input.board || prior.run !== input.run || prior.kind !== input.kind || prior.data !== data)
-          throw new Error('event ID reused with different content');
-        this.db.exec('COMMIT'); return fromRow(prior);
+      for (const { input, data } of encoded) {
+        const result = this.db.prepare(`INSERT INTO live_events (source,event_id,host,board,run,kind,data,received_at)
+          VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(source,event_id) DO NOTHING`)
+          .run(input.source, input.eventId, input.host, input.board, input.run, input.kind, data, receivedAt);
+        if (!result.changes) {
+          const prior = this.db.prepare('SELECT * FROM live_events WHERE source=? AND event_id=?').get(input.source, input.eventId) as unknown as Row;
+          if (prior.host !== input.host || prior.board !== input.board || prior.run !== input.run || prior.kind !== input.kind || prior.data !== data)
+            throw new Error('event ID reused with different content');
+          events.push(fromRow(prior)); continue;
+        }
+        const event = { ...input, cursor: Number(result.lastInsertRowid), receivedAt };
+        const value = input.data as { path?: unknown } | null;
+        const keyPath = ['board.snapshot', 'board.invalid', 'board.removed', 'route.preview', 'placement.preview'].includes(input.kind) && typeof value?.path === 'string' ? value.path : '';
+        this.db.prepare(`INSERT INTO live_latest VALUES (?,?,?,?,?,?) ON CONFLICT(source,board,run,kind,path)
+          DO UPDATE SET cursor=excluded.cursor`).run(input.source, input.board, input.run, input.kind, keyPath, event.cursor);
+        events.push(event); fresh.push(event);
       }
-      event = { ...input, cursor: Number(result.lastInsertRowid), receivedAt };
-      const value = input.data as { path?: unknown } | null;
-      const keyPath = ['board.snapshot', 'board.invalid', 'board.removed', 'route.preview', 'placement.preview'].includes(input.kind) && typeof value?.path === 'string' ? value.path : '';
-      this.db.prepare(`INSERT INTO live_latest VALUES (?,?,?,?,?,?) ON CONFLICT(source,board,run,kind,path)
-        DO UPDATE SET cursor=excluded.cursor`).run(input.source, input.board, input.run, input.kind, keyPath, event.cursor);
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
     if (receivedAt - this.lastSweep > 3600_000) {
@@ -78,10 +88,10 @@ export class LiveEvents {
         WHERE kind='host.heartbeat' AND received_at < ? AND cursor NOT IN (SELECT cursor FROM live_latest) LIMIT 5000)`)
         .run(receivedAt - 48 * 3600_000);
     }
-    for (const subscriber of [...this.subscribers]) {
+    for (const event of fresh) for (const subscriber of [...this.subscribers]) {
       try { subscriber(event); } catch { this.subscribers.delete(subscriber); }
     }
-    return event;
+    return events;
   }
   after(cursor: number, limit = 500): LiveEvent[] {
     if (!Number.isSafeInteger(cursor) || cursor < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 500)
@@ -90,6 +100,14 @@ export class LiveEvents {
   }
   head(): number {
     return (this.db.prepare('SELECT COALESCE(MAX(cursor), 0) AS cursor FROM live_events').get() as { cursor: number }).cursor;
+  }
+  history(source: string, board: string, run: string, after: number): { events: LiveEvent[]; more: boolean } {
+    if (![source, board, run].every(v => typeof v === 'string' && v.length > 0 && v.length <= 512) ||
+        !Number.isSafeInteger(after) || after < 0) throw new Error('invalid history request');
+    const rows = this.db.prepare(`SELECT * FROM live_events WHERE source=? AND board=? AND run=? AND cursor>?
+      AND kind IN ('candidate.snapshot','route.preview','placement.preview') ORDER BY cursor LIMIT 201`)
+      .all(source, board, run, after) as unknown as Row[];
+    return { events: rows.slice(0, 200).map(fromRow), more: rows.length > 200 };
   }
   /** Latest observation per source/board/run/kind, and the cursor from which to follow. */
   current(): { epoch: string; cursor: number; events: LiveEvent[]; truncated: boolean } {

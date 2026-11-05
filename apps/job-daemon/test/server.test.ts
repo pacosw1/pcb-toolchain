@@ -197,6 +197,36 @@ describe('live progress stream', () => {
     assert.equal((await fetch(url, { headers: auth })).status, 404);
     assert.equal((await fetch(url)).status, 401);
   });
+
+  it('appends event batches atomically and permits an identical retry', async () => {
+    const one = { source: 'mini', eventId: 'one', host: 'mini', board: 'project/B', run: 'r', kind: 'run.event', data: { type: 'start' } };
+    const two = { ...one, eventId: 'two', data: { type: 'done' } };
+    const postBatch = (items: unknown[]) => fetch(base + '/live/events/batch', { method: 'POST', headers: { ...auth, 'content-type': 'application/json' }, body: JSON.stringify(items) });
+    const first = await postBatch([one, two]); assert.equal(first.status, 200);
+    const original = await first.json() as { cursor: number }[];
+    const retry = await postBatch([one, two]); assert.deepEqual((await retry.json() as { cursor: number }[]).map(e => e.cursor), original.map(e => e.cursor));
+    const bad = await postBatch([{ ...one, eventId: 'three' }, { ...one, data: { type: 'changed' } }]);
+    assert.equal(bad.status, 400);
+    const all = await (await fetch(base + '/live/events?after=0', { headers: auth })).json() as { eventId: string }[];
+    assert.deepEqual(all.map(e => e.eventId), ['one', 'two']);
+  });
+
+  it('replays only frames for the selected source, board and run', async () => {
+    const input = { source: 'mini', host: 'mini', board: 'project/B', run: 'r', kind: 'route.preview', data: { sha256: 'a'.repeat(64) } };
+    const batch = Array.from({ length: 20 }, (_, i) => ({ ...input, eventId: `f${i}` }));
+    for (let page = 0; page < 11; page++) {
+      const items = batch.map(e => ({ ...e, eventId: `${page}:${e.eventId}` }));
+      const response = await fetch(base + '/live/events/batch', { method: 'POST', headers: { ...auth, 'content-type': 'application/json' }, body: JSON.stringify(items) });
+      assert.equal(response.status, 200);
+    }
+    const query = '/live/history?source=mini&board=project%2FB&run=r&after=';
+    const first = await (await fetch(base + query + '0', { headers: auth })).json() as { events: { cursor: number }[]; more: boolean };
+    assert.equal(first.events.length, 200); assert.equal(first.more, true);
+    const second = await (await fetch(base + query + first.events.at(-1)!.cursor, { headers: auth })).json() as { events: unknown[]; more: boolean };
+    assert.equal(second.events.length, 20); assert.equal(second.more, false);
+    const other = await (await fetch(base + '/live/history?source=other&board=project%2FB&run=r', { headers: auth })).json() as { events: unknown[] };
+    assert.deepEqual(other.events, []);
+  });
 });
 
 describe('submit', () => {

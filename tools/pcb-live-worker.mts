@@ -9,6 +9,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import { discoverExternal } from './pcb-live-processes.mts';
+import type { ExternalRun } from './pcb-live-processes.mts';
 
 const MAX_BOARD = 20 * 1024 * 1024;
 const MAX_LINE = 48 * 1024;
@@ -20,6 +22,16 @@ const within = (root: string, p: string): boolean => p.startsWith(root + path.se
 const file = (p: string): boolean => { try { return fs.lstatSync(p).isFile(); } catch { return false; } };
 const dir = (p: string): boolean => { try { return fs.lstatSync(p).isDirectory(); } catch { return false; } };
 const stampOf = (st: fs.Stats): string => `${st.ino}:${st.mtimeMs}:${st.ctimeMs}:${st.size}`;
+function stableRead(p: string, expected: fs.Stats, limit: number): Buffer | null {
+  const fd = fs.openSync(p, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stampOf(stat) !== stampOf(expected) || stat.size > limit) return null;
+    const bytes = Buffer.allocUnsafe(stat.size + 1); let n = 0;
+    while (n < bytes.length) { const read = fs.readSync(fd, bytes, n, bytes.length - n, n); if (!read) break; n += read; }
+    return n === stat.size && stampOf(fs.fstatSync(fd)) === stampOf(stat) ? bytes.subarray(0, n) : null;
+  } finally { fs.closeSync(fd); }
+}
 class WorkerHttpError extends Error {
   readonly status: number;
   constructor(status: number) { super(`coordinator HTTP ${status}`); this.status = status; }
@@ -44,7 +56,7 @@ export function worktrees(project: string): string[] {
   } catch { return dir(path.join(root, 'hardware-design/boards')) ? [root] : []; }
 }
 
-interface State { epoch?: string; offsets: Record<string, number>; stamps: Record<string, string>; hashes: Record<string, string>; counters: Record<string, number> }
+interface State { epoch?: string; offsets: Record<string, number>; stamps: Record<string, string>; hashes: Record<string, string>; counters: Record<string, number>; externalRuns?: Record<string, ExternalRun> }
 interface Args { project: string; projectId: string; host: string; url: string; tokenFile: string; stateFile: string; interval: number; discover: boolean; once: boolean }
 
 export class Worker {
@@ -53,6 +65,7 @@ export class Worker {
   private state: State; private known: Map<string, number>;
   private uploadLimit = MAX_BOARD;
   private recovering = new Set<string>();
+  private external = new Map<string, ExternalRun>();
   constructor(a: Args, known = new Map<string, number>()) {
     this.root = real(a.project); this.host = a.host; this.projectId = a.projectId; this.url = coordinatorUrl(a.url);
     this.token = fs.readFileSync(a.tokenFile, 'utf8').trim(); this.stateFile = a.stateFile; this.known = known;
@@ -62,6 +75,7 @@ export class Worker {
     if (file(this.stateFile)) {
       const raw = JSON.parse(fs.readFileSync(this.stateFile, 'utf8')) as Partial<State>;
       this.state = { epoch: raw.epoch, offsets: raw.offsets ?? {}, stamps: raw.stamps ?? {}, hashes: raw.hashes ?? {}, counters: raw.counters ?? {} };
+      this.external = new Map(Object.entries(raw.externalRuns ?? {}));
     }
   }
   private save(): void {
@@ -85,7 +99,7 @@ export class Worker {
     if (typeof identity.maxSnapshotBytes === 'number' && Number.isSafeInteger(identity.maxSnapshotBytes) && identity.maxSnapshotBytes > 0)
       this.uploadLimit = Math.min(MAX_BOARD, identity.maxSnapshotBytes);
     if (this.state.epoch !== identity.epoch) {
-      this.state = { epoch: identity.epoch, offsets: {}, stamps: {}, hashes: {}, counters: {} }; this.known.clear(); this.save();
+      this.state = { epoch: identity.epoch, offsets: {}, stamps: {}, hashes: {}, counters: {} }; this.external.clear(); this.known.clear(); this.save();
     }
   }
   private async upload(hash: string, bytes: Buffer): Promise<void> {
@@ -105,10 +119,24 @@ export class Worker {
     this.save();
   }
   private async event(eventId: string, board: string, run: string, kind: string, data: unknown): Promise<void> {
-    await this.post('/live/events', { source: this.source, eventId, host: this.host,
-      board: `${this.projectId}/${board}`, run, kind, data });
+    await this.post('/live/events', this.record(eventId, board, run, kind, data));
+  }
+  private record(eventId: string, board: string, run: string, kind: string, data: unknown): Record<string, unknown> {
+    return { source: this.source, eventId, host: this.host, board: `${this.projectId}/${board}`, run, kind, data };
   }
   async heartbeat(): Promise<void> { await this.event('heartbeat:' + randomUUID(), '_host', '_host', 'host.heartbeat', {}); }
+  private boardOwner(gateId: string): string {
+    try {
+      const boards = real(path.join(this.root, 'hardware-design/boards'));
+      const gate = path.join(boards, gateId, 'gate.json');
+      const cfg = JSON.parse(fs.readFileSync(gate, 'utf8')) as { project?: unknown };
+      if (typeof cfg.project !== 'string') return gateId;
+      const pcb = path.resolve(path.dirname(gate), cfg.project + '.kicad_pcb');
+      const resolved = real(pcb);
+      if (!within(boards, resolved)) return gateId;
+      return path.relative(boards, resolved).split(path.sep)[0] || gateId;
+    } catch { return gateId; }
+  }
   private async snapshot(p: string, board: string, run = 'saved', kind: 'board.snapshot' | 'candidate.snapshot' = 'board.snapshot'): Promise<void> {
     const st = fs.statSync(p);
     const key = path.relative(this.root, p), stamp = stampOf(st);
@@ -118,8 +146,7 @@ export class Worker {
         { path: key, error: st.size ? 'Board exceeds the coordinator snapshot limit' : 'Board file is empty' });
       this.state.stamps[key] = stamp; this.save(); return;
     }
-    const bytes = fs.readFileSync(p), after = fs.statSync(p);
-    if (stampOf(after) !== stamp || bytes.length !== st.size) return;
+    const bytes = stableRead(p, st, this.uploadLimit); if (!bytes) return;
     const hash = digest(bytes);
     try { await this.upload(hash, bytes); }
     catch (error) {
@@ -135,28 +162,35 @@ export class Worker {
     const st = fs.statSync(p); if (!st.size || st.size > this.uploadLimit) return;
     const key = path.relative(this.root, p), stamp = stampOf(st);
     if (this.state.stamps[key] === stamp) return;
-    const bytes = fs.readFileSync(p), after = fs.statSync(p);
-    if (stampOf(after) !== stamp || bytes.length !== st.size) return;
+    const bytes = stableRead(p, st, this.uploadLimit); if (!bytes) return;
     const frame = JSON.parse(bytes.toString('utf8')) as Record<string, unknown>; if (frame.schema !== schema) return;
     if (kind === 'placement.preview' && typeof frame.board_path === 'string' && typeof frame.board_sha256 === 'string') {
-      try { const src = real(frame.board_path); if (within(this.root, src) && fs.statSync(src).size <= this.uploadLimit) {
-        const base = fs.readFileSync(src); if (digest(base) === frame.board_sha256) await this.upload(frame.board_sha256, base);
+      try { const src = real(frame.board_path), stat = fs.statSync(src); if (within(this.root, src) && stat.size <= this.uploadLimit) {
+        const base = stableRead(src, stat, this.uploadLimit); if (base && digest(base) === frame.board_sha256) await this.upload(frame.board_sha256, base);
       } } catch { /* keep the preview, but the viewer requires the matching source */ }
     }
     const hash = digest(bytes); await this.upload(hash, bytes);
     await this.event('preview:' + digest(`${key}\0${stamp}\0${hash}`), board, run, kind,
       { sha256: hash, passes: frame.passes ?? null, maxPasses: frame.max_passes ?? null, conflictNets: frame.conflict_nets ?? null,
         conflictPairs: frame.conflict_pairs ?? null, epoch: frame.epoch ?? null, epochs: frame.epochs ?? null,
-        cost: frame.cost ?? null, baseSha256: frame.board_sha256 ?? null, path: key });
+        cost: frame.cost ?? null, elapsedS: frame.elapsed_s ?? null, baseSha256: frame.board_sha256 ?? null, path: key });
     this.state.stamps[key] = stamp; this.state.hashes[key] = hash; this.save();
   }
-  private async lines(p: string, board: string, run: string, kind: string): Promise<void> {
-    const key = path.relative(this.root, p), fd = fs.openSync(p, 'r');
+  private async lines(p: string, board: string, run: string, kind: string, plainStage?: string): Promise<void> {
+    const key = path.relative(this.root, p), fd = fs.openSync(p, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
     try {
-      const size = fs.fstatSync(fd).size; let offset = this.state.offsets[key] ?? 0;
+      const stat = fs.fstatSync(fd); if (!stat.isFile()) return;
+      const size = stat.size; let offset = this.state.offsets[key] ?? 0;
       if (offset > size) offset = 0;
-      let sent = 0;
-      while (sent < 100 && offset < size) {
+      if (plainStage && !(key in this.state.offsets) && size > 128 * 1024) {
+        offset = size - 128 * 1024;
+        const bytes = Buffer.allocUnsafe(Math.min(64 * 1024, size - offset)), n = fs.readSync(fd, bytes, 0, bytes.length, offset);
+        const newline = bytes.subarray(0, n).indexOf(10);
+        if (newline < 0) return;
+        offset += newline + 1;
+      }
+      const pending: Record<string, unknown>[] = [];
+      while (pending.length < 20 && offset < size) {
         const start = offset, hash = createHash('sha256'), chunks: Buffer[] = [];
         let length = 0, complete = false, cursor = offset;
         while (cursor < size) {
@@ -169,21 +203,26 @@ export class Worker {
         }
         if (!complete) break;
         const lineHash = hash.digest('hex'); let value: unknown;
-        try { value = length > MAX_LINE ? { type: 'run.event_oversize', bytes: length, sha256: lineHash } : JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+        try {
+          value = length > MAX_LINE ? { type: 'run.event_oversize', bytes: length, sha256: lineHash }
+            : plainStage ? { type: 'tool.output', stage: plainStage, text: Buffer.concat(chunks).toString('utf8').trimEnd() }
+              : JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        }
         catch { value = { type: 'run.event_invalid', bytes: length, sha256: lineHash }; }
         if (!isObject(value)) value = { type: 'run.event_invalid', bytes: length, sha256: lineHash };
-        const eventKind = kind === 'agent.update' && isObject(value) && value.state === 'message' ? 'agent.message' : kind;
-        await this.event('run:' + digest(`${key}:${start}:${lineHash}`), board, run, eventKind, value);
-        this.state.offsets[key] = cursor; offset = cursor; sent++;
+        if (kind === 'external.stage' && isObject(value)) value = { type: 'stage.end', stage: value.stage, status: value.status, cause: value.cause, duration_s: value.wall_s };
+        const eventKind = kind === 'external.stage' ? 'run.event' : kind === 'agent.update' && isObject(value) && value.state === 'message' ? 'agent.message' : kind;
+        pending.push(this.record('run:' + digest(`${key}:${start}:${lineHash}`), board, run, eventKind, value));
+        offset = cursor;
       }
-      if (sent) this.save();
+      if (pending.length) { await this.post('/live/events/batch', pending); this.state.offsets[key] = offset; this.save(); }
     } finally { fs.closeSync(fd); }
   }
   private async run(folder: string, guardedRuns: Set<string>): Promise<void> {
     try {
       const manifest = JSON.parse(fs.readFileSync(path.join(folder, 'run.json'), 'utf8')) as Record<string, unknown>;
       if (typeof manifest.board !== 'string' || !manifest.board) return;
-      const board = manifest.board, name = path.basename(folder), statePath = path.join(folder, 'state.json');
+      const gateId = manifest.board, board = this.boardOwner(gateId), name = path.basename(folder), statePath = path.join(folder, 'state.json');
       if (file(statePath)) {
         const st = fs.statSync(statePath), state = JSON.parse(fs.readFileSync(statePath, 'utf8')) as Record<string, unknown>;
         let alive: boolean | null = null;
@@ -196,7 +235,7 @@ export class Worker {
         if (this.state.stamps[key] !== stamp) {
           const fields = ['status', 'elapsed_s', 'updated_unix', 'active_stages', 'active_stage_timing', 'last_activity_s', 'last_progress_s', 'cause', 'metrics', 'exit_code'];
           const summary = Object.fromEntries(fields.filter(k => k in state).map(k => [k, state[k]]));
-          Object.assign(summary, { operation: manifest.operation ?? 'unknown', router: manifest.router ?? null,
+          Object.assign(summary, { operation: manifest.operation ?? 'unknown', router: manifest.router ?? null, gate: gateId,
             timeoutS: manifest.timeout_s ?? null, supervisorAlive: alive, coordinated });
           await this.event('state:' + digest(`${key}\0${stamp}`), board, name, 'run.state', summary);
           this.state.stamps[key] = stamp; this.save();
@@ -207,7 +246,7 @@ export class Worker {
         ['live-route.json', 'route.preview', 'iot-lab.route-preview.v1'],
         ['live-place.json', 'placement.preview', 'iot-lab.placement-preview.v1']
       ] as const) { const p = path.join(folder, filename); if (file(p)) await this.preview(p, board, name, kind, schema); }
-      const gate = path.join(folder, 'workspace/hardware-design/boards', board, 'gate.json');
+      const gate = path.join(folder, 'workspace/hardware-design/boards', gateId, 'gate.json');
       if (file(gate) && !file(path.join(folder, 'result.json'))) {
         const g = JSON.parse(fs.readFileSync(gate, 'utf8')) as { project?: unknown };
         if (typeof g.project === 'string') {
@@ -234,7 +273,55 @@ export class Worker {
       for (const [nameOfFile, kind] of [['events.jsonl', 'run.event'], ['notes.jsonl', 'run.note']] as const) {
         const p = path.join(folder, nameOfFile); if (file(p)) await this.lines(p, board, name, kind);
       }
-    } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    } catch (error) { if (!['ENOENT', 'ELOOP'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error; }
+  }
+  async scanExternal(runs: ExternalRun[]): Promise<void> {
+    const present = new Set(runs.map(r => r.runId));
+    for (const [id, old] of this.external) if (!present.has(id)) {
+      let stopped = false;
+      try { process.kill(old.pid, 0); } catch (error) { stopped = (error as NodeJS.ErrnoException).code === 'ESRCH'; }
+      if (stopped) {
+        await this.event('external-stop:' + id, old.board, id, 'run.state', { status: 'stopped', operation: 'placement',
+          cause: 'Process ended; its outcome has not been verified', supervisorAlive: false, coordinated: false, elapsed_s: old.elapsed, timeoutS: old.timeout });
+        this.external.delete(id);
+        this.state.externalRuns = Object.fromEntries(this.external); this.save();
+      }
+    }
+    for (const run of runs) {
+      this.external.set(run.runId, run);
+      const elapsed = Math.floor(run.elapsed / 15) * 15, stateKey = `external:${run.runId}`;
+      const stamp = `${run.stage}:${elapsed}`;
+      if (this.state.stamps[stateKey] !== stamp) {
+        await this.event('external-state:' + digest(`${stateKey}\0${stamp}`), run.board, run.runId, 'run.state',
+          { status: 'running', operation: 'placement', active_stages: [run.stage], elapsed_s: elapsed,
+            timeoutS: run.timeout, supervisorAlive: true, coordinated: false, cause: 'Direct toolchain process; outcome is not yet known' });
+        this.state.stamps[stateKey] = stamp; this.state.externalRuns = Object.fromEntries(this.external); this.save();
+      }
+      const stageLog = path.join(run.outdir, 'stages.jsonl');
+      if (file(stageLog)) await this.lines(stageLog, run.board, run.runId, 'external.stage');
+      let visited = 0;
+      const candidates: { file: string; mtime: number }[] = [], logs: { file: string; mtime: number; stage: string }[] = [];
+      const basename = path.basename(run.boardFile);
+      const walk = (dirPath: string): void => {
+        if (!dir(dirPath) || ++visited > 5000) return;
+        for (const e of fs.readdirSync(dirPath, { withFileTypes: true })) {
+          const p = path.join(dirPath, e.name);
+          if (e.isDirectory()) walk(p);
+          else if (e.isFile() && (e.name === basename || ['search.log', 'route.log', 'route-0.log'].includes(e.name))) {
+            try {
+              const st = fs.statSync(p);
+              if (e.name === basename) candidates.push({ file: p, mtime: st.mtimeMs });
+              else logs.push({ file: p, mtime: st.mtimeMs, stage: e.name === 'search.log' ? 'placement' : 'routing' });
+            } catch { /* file changed during inspection */ }
+          }
+        }
+      };
+      walk(run.outdir);
+      candidates.sort((a, b) => b.mtime - a.mtime);
+      if (candidates[0]) await this.snapshot(candidates[0].file, run.board, run.runId, 'candidate.snapshot');
+      logs.sort((a, b) => b.mtime - a.mtime);
+      for (const log of logs.slice(0, 3)) await this.lines(log.file, run.board, run.runId, 'run.event', log.stage);
+    }
   }
   async scanActivity(): Promise<void> {
     const guards = path.join(this.root, '.gate/live-guards'), guardedRuns = new Set<string>();
@@ -263,11 +350,12 @@ export class Worker {
         const run = JSON.parse(fs.readFileSync(manifest, 'utf8')) as { board?: unknown; runId?: unknown };
         if (typeof run.board !== 'string' || typeof run.runId !== 'string') continue;
         const base = path.join(folder, 'live-route-base.kicad_pcb');
-        if (file(base)) await this.snapshot(base, run.board, run.runId);
+        const board = this.boardOwner(run.board);
+        if (file(base)) await this.snapshot(base, board, run.runId);
         const route = path.join(folder, 'live-route.json');
-        if (file(route)) await this.preview(route, run.board, run.runId, 'route.preview', 'iot-lab.route-preview.v1');
+        if (file(route)) await this.preview(route, board, run.runId, 'route.preview', 'iot-lab.route-preview.v1');
         const placement = path.join(folder, 'live-place.json');
-        if (file(placement)) await this.preview(placement, run.board, run.runId, 'placement.preview', 'iot-lab.placement-preview.v1');
+        if (file(placement)) await this.preview(placement, board, run.runId, 'placement.preview', 'iot-lab.placement-preview.v1');
       } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     }
     if (dir(guards)) for (const entry of fs.readdirSync(guards, { withFileTypes: true })) {
@@ -301,7 +389,7 @@ export class Worker {
               const st = fs.statSync(p), changed = this.state.stamps[key] !== stampOf(st);
               if (changed && budget > 0) { budget--; await this.snapshot(p, board.name); }
             }
-            catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+            catch (error) { if (!['ENOENT', 'ELOOP'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error; }
           }
         }
       };
@@ -326,7 +414,7 @@ async function main(): Promise<void> {
   const interval = Number(v.interval ?? '3'); if (!Number.isFinite(interval) || interval < 1) throw new Error('interval must be at least 1 second');
   const args: Args = { project: v.project, projectId: v['project-id'], host: v.host ?? os.hostname(), url: v.url,
     tokenFile: v['token-file'], stateFile: v['state-file'], interval, discover: !!v['discover-worktrees'], once: !!v.once };
-  const shared = new Map<string, number>(); let workers = new Map<string, Worker>(), discoverAt = 0, epochAt = 0, retainAt = 0, heartbeatAt = 0;
+  const shared = new Map<string, number>(); let workers = new Map<string, Worker>(), discoverAt = 0, epochAt = 0, retainAt = 0, heartbeatAt = 0, externalAt = 0;
   let sendingHeartbeat = false;
   const heartbeat = async (): Promise<void> => {
     if (sendingHeartbeat) return;
@@ -351,6 +439,11 @@ async function main(): Promise<void> {
       if (now >= epochAt) { for (const worker of workers.values()) await worker.syncEpoch(); epochAt = Date.now() + 15000; }
       if (now >= retainAt) { for (const worker of workers.values()) await worker.retain(); retainAt = Date.now() + 86400_000; }
       if (Date.now() >= heartbeatAt) { await heartbeat(); heartbeatAt = Date.now() + 15000; }
+      if (Date.now() >= externalAt) {
+        const external = discoverExternal([...workers.keys()]);
+        if (external) for (const [root, worker] of workers) await worker.scanExternal(external.filter(run => run.root === root));
+        externalAt = Date.now() + 6000;
+      }
       for (const worker of workers.values()) await worker.scanActivity();
       for (const worker of workers.values()) await worker.scanBoards();
     } catch (error) {

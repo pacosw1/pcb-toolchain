@@ -13,7 +13,7 @@ test('registered projects retain their pinned legacy CLI inside the new lock gua
   const cad = path.join(root, 'hardware-design/boards/DEMO/cad'), old = path.join(home, '.local/share/pcb-toolchain/old/bin');
   fs.mkdirSync(cad, { recursive: true }); fs.mkdirSync(old, { recursive: true }); fs.mkdirSync(path.join(bundle, 'bin'), { recursive: true }); fs.mkdirSync(path.join(bundle, 'tools'), { recursive: true });
   fs.copyFileSync(path.join(repo, 'bin/pcb'), path.join(bundle, 'bin/pcb')); fs.chmodSync(path.join(bundle, 'bin/pcb'), 0o755);
-  for (const name of ['pcb-live-guard.mts', 'pcb-live-common.mts', 'pcb-live-worker.mts']) fs.copyFileSync(path.join(repo, 'tools', name), path.join(bundle, 'tools', name));
+  for (const name of ['pcb-live-guard.mts', 'pcb-live-common.mts', 'pcb-live-worker.mts', 'pcb-live-processes.mts']) fs.copyFileSync(path.join(repo, 'tools', name), path.join(bundle, 'tools', name));
   fs.writeFileSync(path.join(bundle, 'VERSION'), 'new test\n'); fs.writeFileSync(path.join(root, 'toolchain.lock'), '{"version":"old"}');
   fs.writeFileSync(path.join(root, '.pcb-live.json'), '{"projectId":"project"}'); fs.writeFileSync(path.join(cad, 'demo.kicad_pcb'), 'board');
   fs.writeFileSync(path.join(root, 'hardware-design/boards/DEMO/gate.json'), '{"project":"cad/demo"}');
@@ -37,5 +37,11 @@ test('registered projects retain their pinned legacy CLI inside the new lock gua
     const receipts = path.join(root, '.gate/live-guards');
     for (let i = 0; i < 50 && fs.readdirSync(receipts).length; i++) await new Promise(ok => setTimeout(ok, 100));
     assert.equal(fs.readdirSync(receipts).length, 0);
+    // A broken coordination module must not fall through to the unguarded pinned CLI.
+    fs.unlinkSync(path.join(bundle, 'tools/pcb-live-processes.mts'));
+    fs.unlinkSync(path.join(root, 'used-legacy'));
+    const broken = spawnSync(path.join(bundle, 'bin/pcb'), ['route', 'DEMO'], { cwd: root, env: { ...process.env, HOME: home, IOT_LAB: root, PCB_LIVE_CONFIG: config }, encoding: 'utf8' });
+    assert.equal(broken.status, 2);
+    assert.equal(fs.existsSync(path.join(root, 'used-legacy')), false);
   } finally { server.closeAllConnections(); await new Promise<void>(ok => server.close(() => ok())); r.cleanup(); }
 });

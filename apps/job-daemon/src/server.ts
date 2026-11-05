@@ -222,6 +222,18 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: J
     } finally { release(); }
   }
   if (url.pathname === '/live/state' && method === 'GET') return json(res, 200, live.current());
+  if (url.pathname === '/live/history' && method === 'GET') {
+    const source = url.searchParams.get('source') ?? '', board = url.searchParams.get('board') ?? '', run = url.searchParams.get('run') ?? '';
+    const after = Number(url.searchParams.get('after') ?? '0');
+    try { return json(res, 200, live.history(source, board, run, after)); }
+    catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'invalid history request'); }
+  }
+  if (url.pathname === '/live/events/batch' && method === 'POST') {
+    const value = await readJson(req, 2 * 1024 * 1024);
+    if (!Array.isArray(value)) throw new HttpError(400, 'invalid event batch');
+    try { return json(res, 200, live.appendBatch(value as LiveInput[])); }
+    catch (e) { throw new HttpError(400, e instanceof Error ? e.message : 'invalid event batch'); }
+  }
   if (url.pathname === '/live/events' && method === 'POST') {
     const value = await readJson(req);
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new HttpError(400, 'invalid event');

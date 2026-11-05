@@ -299,7 +299,7 @@ function App(): React.JSX.Element {
       <div className="body">
         <nav className="sidebar" aria-label="Board">
           <button type="button" className={tab === 'live' ? 'section on' : 'section'} aria-current={tab === 'live' ? 'page' : undefined} onClick={() => setTab('live')}>Live boards</button>
-          {!project ? (
+          {tab === 'live' ? <div id="live-board-list" /> : !project ? (
             <p style={{ color: 'var(--dim)', margin: 0 }}>Open a hardware project (for example iot-lab).</p>
           ) : (
             <>
@@ -352,7 +352,7 @@ function App(): React.JSX.Element {
               ) : null}
             </>
           )}
-          <div style={{ flex: '1 1 auto' }} />
+          {tab !== 'live' ? <div style={{ flex: '1 1 auto' }} /> : null}
           <EnginePanel status={status} />
         </nav>
         <main className="main">

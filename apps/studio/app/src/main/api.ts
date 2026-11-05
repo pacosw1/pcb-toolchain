@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { unwatchAll, unwatchBoard, watchBoard } from './boardWatch.ts'
 import { exportGlb, version as kicadVersion } from './kicad/cli.ts'
-import { openLive, liveGeometry, livePreview, livePlacement } from './liveRemote.ts'
+import { openLive, liveGeometry, livePreview, livePlacement, liveHistory } from './liveRemote.ts'
 import { bbox, load } from './kicad/board.ts'
 import { bom, boardParts } from './parts.ts'
 import { indexFor } from './partsIndex.ts'
@@ -32,6 +32,7 @@ registry.method('live.open', [], 0, openLive)
 registry.method('live.geometry', ['sha256'], 1, liveGeometry)
 registry.method('live.preview', ['sha256'], 1, livePreview)
 registry.method('live.placement', ['sha256'], 1, livePlacement)
+registry.method('live.history', ['source', 'board', 'run'], 3, liveHistory)
 
 registry.method('engine.ping', [], 0, () => ({ ok: true, uptime_s: Math.round(Date.now() - started) / 1000 }))
 

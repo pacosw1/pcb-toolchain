@@ -1,27 +1,37 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { LiveBoard } from './LiveBoard'
+import { LiveSidebar } from './LiveSidebar'
 import { activityRows } from './liveActivity'
 import { interpolatePlacement, placementGeometry, type Placement } from './livePlacement'
 import type { Geometry } from './types'
 
-type Event = { cursor: number; source: string; host: string; board: string; run: string; kind: string; receivedAt: number; data: Record<string, unknown> }
+export type LiveEvent = { cursor: number; source: string; host: string; board: string; run: string; kind: string; receivedAt: number; data: Record<string, unknown> }
 type Status = 'connecting' | 'connected' | 'disconnected'
 type Preview = { passes: number; tracks: { a: [number, number]; b: [number, number]; w: number; layer: string; net: string }[];
   vias: { x: number; y: number; d: number; drill: number; net: string }[] }
-const keyOf = (e: Event): string => [e.source, e.board, e.run, e.kind,
+const keyOf = (e: LiveEvent): string => [e.source, e.board, e.run, e.kind,
   e.kind === 'run.event' ? String(e.cursor) : ['board.snapshot', 'board.invalid', 'board.removed', 'route.preview', 'placement.preview'].includes(e.kind) ? String(e.data?.path ?? '') : ''].join('\0')
-const runKey = (e: Event): string => `${e.source}\0${e.run}`
-const valid = (e: Event): boolean => !!e && Number.isSafeInteger(e.cursor) && typeof e.source === 'string' && typeof e.host === 'string' &&
+const runKey = (e: LiveEvent): string => `${e.source}\0${e.run}`
+const eventTime = (e: LiveEvent): number => {
+  const source = typeof e.data.time === 'string' ? Date.parse(e.data.time) : NaN
+  return Number.isFinite(source) ? source : e.receivedAt
+}
+const valid = (e: LiveEvent): boolean => !!e && Number.isSafeInteger(e.cursor) && typeof e.source === 'string' && typeof e.host === 'string' &&
   typeof e.board === 'string' && typeof e.run === 'string' && typeof e.kind === 'string' && Number.isFinite(e.receivedAt) &&
   !!e.data && typeof e.data === 'object' && !Array.isArray(e.data)
 
 export function LiveView(): React.JSX.Element {
-  const [events, setEvents] = useState<Record<string, Event>>({})
+  const [events, setEvents] = useState<Record<string, LiveEvent>>({})
   const [status, setStatus] = useState<Status>('connecting')
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState('')
   const [selectedRun, setSelectedRun] = useState('')
   const [followRun, setFollowRun] = useState(true)
+  const [replay, setReplay] = useState<LiveEvent[]>([])
+  const [replayIndex, setReplayIndex] = useState(0)
+  const [playing, setPlaying] = useState(false)
+  const [replayBusy, setReplayBusy] = useState(false)
   const [geometry, setGeometry] = useState<Geometry | null>(null)
   const [loadedHash, setLoadedHash] = useState<string | null>(null)
   const [loadedIdentity, setLoadedIdentity] = useState<string | null>(null)
@@ -34,12 +44,16 @@ export function LiveView(): React.JSX.Element {
   const [truncated, setTruncated] = useState(false)
   const [attempt, setAttempt] = useState(0)
   const [coordinatorLabel, setCoordinatorLabel] = useState<string | null>(null)
+  const [localHost, setLocalHost] = useState<string | null>(null)
+  const [sidebar, setSidebar] = useState<HTMLElement | null>(null)
+
+  useEffect(() => { setSidebar(document.getElementById('live-board-list')) }, [])
 
   useEffect(() => {
     let closed = false
     setStatus('connecting')
     setError(null)
-    const merge = (incoming: Event[]): void => {
+    const merge = (incoming: LiveEvent[]): void => {
       setEvents(old => {
         const next = { ...old }
         for (const e of incoming.filter(valid)) {
@@ -52,9 +66,9 @@ export function LiveView(): React.JSX.Element {
       })
     }
     const off = window.api.engine.onNotify(n => {
-      if (n.method === 'live.event') merge([n.params as unknown as Event])
+      if (n.method === 'live.event') merge([n.params as unknown as LiveEvent])
       if (n.method === 'live.reset') {
-        const snapshot = n.params as unknown as { events: Event[]; truncated: boolean }
+        const snapshot = n.params as unknown as { events: LiveEvent[]; truncated: boolean }
         setEvents({}); merge(snapshot.events); setTruncated(snapshot.truncated)
       }
       if (n.method === 'live.connection') {
@@ -64,8 +78,9 @@ export function LiveView(): React.JSX.Element {
     })
     window.api.engine.call('live.open').then(value => {
       if (closed) return
-      const snapshot = value as { events: Event[]; truncated: boolean; label?: string }
+      const snapshot = value as { events: LiveEvent[]; truncated: boolean; label?: string; localHost?: string }
       merge(snapshot.events); setTruncated(snapshot.truncated); setCoordinatorLabel(snapshot.label ?? null)
+      setLocalHost(window.api.mode === 'desktop' ? snapshot.localHost ?? null : null)
     }).catch(e => { if (!closed) { setStatus('disconnected'); setError(String(e)) } })
     const timer = setInterval(() => setNow(Date.now()), 5000)
     return () => { closed = true; clearInterval(timer); off() }
@@ -78,18 +93,18 @@ export function LiveView(): React.JSX.Element {
   const boards = useMemo(() => all.filter(e => ['board.snapshot', 'candidate.snapshot', 'route.preview', 'placement.preview'].includes(e.kind) && typeof e.data?.sha256 === 'string' &&
     !(e.kind === 'board.snapshot' && e.run === 'saved' && all.some(r => r.kind === 'board.removed' && r.source === e.source && r.board === e.board && r.data?.path === e.data.path && r.cursor > e.cursor)))
     .sort((a, b) => `${a.board} ${a.host} ${a.run}`.localeCompare(`${b.board} ${b.host} ${b.run}`)), [all])
-  const current = boards.find(e => keyOf(e) === selected) ?? null
+  const current = boards.find(e => keyOf(e) === selected) ?? all.find(e => e.kind === 'run.state' && keyOf(e) === selected) ?? null
   const runs = all.filter(e => e.kind === 'run.state' && (!current || (e.source === current.source && e.board === current.board)))
     .sort((a, b) => b.cursor - a.cursor)
   const active = runs.find(e => runKey(e) === selectedRun) ?? (current?.run && current.run !== 'saved' ? runs.find(e => e.run === current.run) : runs.find(e => ['queued', 'running', 'stopping'].includes(String(e.data.status))) ?? runs[0])
   const following = current && followRun && active && active.data.status === 'running' && active.data.supervisorAlive === true
     ? boards.filter(e => ['candidate.snapshot', 'route.preview', 'placement.preview'].includes(e.kind) && e.source === active.source && e.board === active.board && e.run === active.run).sort((a, b) => b.cursor - a.cursor)[0]
     : undefined
-  const view = following ?? current
+  const view = replay[replayIndex] ?? following ?? current
   const viewIdentity = view ? [view.source, view.board, view.run].join('\0') : ''
   const invalid = view && ['board.snapshot', 'candidate.snapshot'].includes(view.kind) ? all.find(e => e.kind === 'board.invalid' && e.source === view.source && e.board === view.board && e.run === view.run && e.data.path === view.data.path && e.cursor > view.cursor) : undefined
   const base = view?.kind === 'route.preview' ? boards.find(e => e.kind === 'board.snapshot' && e.source === view.source && e.board === view.board && e.run === view.run && e.data.sha256 === view.data.baseSha256) : view
-  const hash = view?.kind === 'placement.preview' && typeof view.data.baseSha256 === 'string' ? view.data.baseSha256 : typeof base?.data.sha256 === 'string' ? base.data.sha256 : null
+  const hash = view && ['placement.preview', 'route.preview'].includes(view.kind) && typeof view.data.baseSha256 === 'string' ? view.data.baseSha256 : typeof base?.data.sha256 === 'string' ? base.data.sha256 : null
   const previewHash = view?.kind === 'route.preview' && typeof view.data.sha256 === 'string' ? view.data.sha256 : null
   const placementHash = view?.kind === 'placement.preview' && typeof view.data.sha256 === 'string' ? view.data.sha256 : null
   useEffect(() => {
@@ -138,7 +153,7 @@ export function LiveView(): React.JSX.Element {
       vias: [...geometry.vias, ...preview.vias.map(v => ({ x: v.x, y: v.y, d: v.d, drill: v.drill, net: v.net, layers: ['F.Cu', 'B.Cu'] }))] }
   }, [geometry, loadedHash, loadedIdentity, viewIdentity, view?.kind, hash, placementHash, placementFrame, preview, loadedPreviewHash, previewHash])
   const heartbeats = new Map(all.filter(e => e.kind === 'host.heartbeat').map(e => [e.source, e.receivedAt]))
-  const stateFor = (e: Event): string => {
+  const stateFor = (e: LiveEvent): string => {
     if (status !== 'connected') return 'disconnected'
     const last = heartbeats.get(e.source)
     return last && now - last < 45_000 ? 'live' : 'stale'
@@ -161,7 +176,30 @@ export function LiveView(): React.JSX.Element {
   const agentMessage = all.filter(e => e.kind === 'agent.message' && e.source === current?.source && e.board === current?.board)
     .sort((a, b) => b.cursor - a.cursor)[0]
   const metrics = active?.data.metrics && typeof active.data.metrics === 'object' && !Array.isArray(active.data.metrics) ? Object.entries(active.data.metrics as Record<string, unknown>) : []
+  useEffect(() => { setReplay([]); setReplayIndex(0); setPlaying(false) }, [active?.source, active?.board, active?.run])
+  useEffect(() => {
+    if (!playing || !replay.length) return
+    const timer = setInterval(() => setReplayIndex(i => {
+      if (i + 1 >= replay.length) { setPlaying(false); return i }
+      return i + 1
+    }), 700)
+    return () => clearInterval(timer)
+  }, [playing, replay.length])
+  const openReplay = async (): Promise<void> => {
+    if (!active) return
+    setReplayBusy(true); setError(null)
+    try {
+      const history = await window.api.engine.call('live.history', { source: active.source, board: active.board, run: active.run }) as { events: LiveEvent[]; truncated: boolean }
+      if (!history.events.length) { setError('No recorded board frames for this run.'); return }
+      setReplay(history.events.filter(valid)); setReplayIndex(0); setPlaying(false)
+      if (history.truncated) setError('Replay is limited to the first 2,000 frames.')
+    } catch (e) { setError(`Replay unavailable: ${e}`) }
+    finally { setReplayBusy(false) }
+  }
   return (
+    <>
+    {sidebar ? createPortal(<LiveSidebar events={all} boards={boards} localHost={localHost} connected={status === 'connected'} now={now}
+      selectedSource={current?.source ?? null} selectedBoard={current?.board ?? null} onPick={e => { setReplay([]); setPlaying(false); setSelectedRun(''); setSelected(keyOf(e)) }} />, sidebar) : null}
     <div className="panel live-view" aria-label="Live boards">
       <h1>Live boards</h1>
       <p role="status">Coordinator: {status}{coordinatorLabel ? ` · ${coordinatorLabel}` : ''}{error ? ` · ${error}` : ''}</p>
@@ -171,13 +209,14 @@ export function LiveView(): React.JSX.Element {
         <ul>{unavailable.map(e => <li key={keyOf(e)}>{e.board} · {e.host} · {String(e.data.error ?? 'Unavailable')}</li>)}</ul>
       </details> : null}
       <label>Board and machine{' '}
-        <select value={selected} onChange={e => { setSelectedRun(''); setSelected(e.target.value) }}>
+        <select value={selected} onChange={e => { setReplay([]); setPlaying(false); setSelectedRun(''); setSelected(e.target.value) }}>
           <option value="">Choose a board</option>
-          {boards.map(e => <option key={keyOf(e)} value={keyOf(e)}>{e.board} · {e.host} · {e.kind === 'route.preview' ? `route preview ${e.run}` : e.kind === 'placement.preview' ? `placement preview ${e.run}` : e.run === 'saved' ? `saved ${String(e.data.path ?? '').split('/').pop()}` : `candidate ${e.run}`} · {stateFor(e)}</option>)}
+          {current?.kind === 'run.state' ? <option value={selected}>{current.board} · waiting for a board snapshot</option> : null}
+          {boards.filter(e => !current || (e.source === current.source && e.board === current.board)).map(e => <option key={keyOf(e)} value={keyOf(e)}>{e.board} · {e.host} · {e.kind === 'route.preview' ? `route preview ${e.run}` : e.kind === 'placement.preview' ? `placement preview ${e.run}` : e.run === 'saved' ? `saved ${String(e.data.path ?? '').split('/').pop()}` : `candidate ${e.run}`} · {stateFor(e)}</option>)}
         </select>
       </label>
       {current ? <label style={{ marginLeft: 12 }}><input type="checkbox" checked={followRun} onChange={e => setFollowRun(e.target.checked)} /> Follow active run</label> : null}
-      {view ? <p>{stateFor(view)} · {following ? 'Following active run · ' : ''}{view.kind === 'route.preview' ? `Unverified route preview, pass ${loadedPreviewHash === previewHash ? preview?.passes ?? '…' : '…'}` : view.kind === 'placement.preview' ? `Unverified placement preview, epoch ${String(view.data.epoch ?? '…')}` : view.kind === 'candidate.snapshot' ? `Unverified working candidate from ${view.run}` : view.run === 'saved' ? 'Saved board' : `Candidate from ${view.run}`} · last received {new Date(view.receivedAt).toLocaleString()}</p> : <p>No board selected.</p>}
+      {view ? <p>{stateFor(view)} · {replay.length ? 'Replay · ' : following ? 'Following active run · ' : ''}{view.kind === 'run.state' ? 'Waiting for a board snapshot' : view.kind === 'route.preview' ? `Unverified route preview, pass ${loadedPreviewHash === previewHash ? preview?.passes ?? '…' : '…'}` : view.kind === 'placement.preview' ? `Unverified placement preview, epoch ${String(view.data.epoch ?? '…')}` : view.kind === 'candidate.snapshot' ? `Unverified working candidate from ${view.run}` : view.run === 'saved' ? 'Saved board' : `Candidate from ${view.run}`} · captured {new Date(view.receivedAt).toLocaleString()}</p> : <p>No board selected.</p>}
       {hash ? <p>Source board version: <code>{hash.slice(0, 12)}</code></p> : null}
       {invalid ? <p role="alert">Showing the last available board: {String(invalid.data.error ?? 'the latest snapshot is unavailable')}.</p> : null}
       <section className="panel runsummary live-activity" aria-label="Current activity">
@@ -203,18 +242,27 @@ export function LiveView(): React.JSX.Element {
           {note ? <p>Latest {String(note.data.kind ?? 'note')}: {String(note.data.message)}</p> : null}
         </> : <p>{current ? 'No run reported for this board on this machine.' : 'Choose a board to see its activity.'}</p>}
       </section>
+      {active ? <section className="panel live-replay" aria-label="Run replay">
+        <strong>Replay</strong>
+        {!replay.length ? <button type="button" disabled={replayBusy} onClick={() => void openReplay()}>{replayBusy ? 'Loading…' : 'Load recorded frames'}</button> : <>
+          <button type="button" onClick={() => setPlaying(!playing)}>{playing ? 'Pause' : 'Play'}</button>
+          <label>Frame <input type="range" min={0} max={replay.length - 1} value={replayIndex} onChange={e => { setPlaying(false); setReplayIndex(Number(e.target.value)) }} /></label>
+          <span>{replayIndex + 1} / {replay.length}</span>
+          <button type="button" onClick={() => { setReplay([]); setPlaying(false) }}>Return to live</button>
+        </>}
+      </section> : null}
       {agentUpdate || agentMessage ? <section className="panel live-activity" aria-label="Agent updates">
         <h2>Agent</h2>
         {agentUpdate ? <p>{String(agentUpdate.data.message ?? agentUpdate.data.state ?? 'Status unavailable')}</p> : null}
         {agentMessage ? <p>Latest update: {String(agentMessage.data.message)}</p> : null}
       </section> : null}
-      {view && !base ? <p>Waiting for the matching source board snapshot.</p> : null}
+      {view && !hash ? <p>Waiting for the matching source board snapshot.</p> : null}
       {view?.kind === 'candidate.snapshot' && loadedHash !== hash && rendered ? <p>Loading the latest candidate; showing the previous snapshot.</p> : null}
       {view?.kind === 'placement.preview' ? <p>Placement preview: existing copper is hidden while parts move.</p> : null}
       {rendered && view ? <LiveBoard geo={rendered} identity={viewIdentity} animate={view.kind === 'candidate.snapshot'} /> : null}
       {recent.length ? <section aria-label="Recent run activity"><h2>Recent run activity</h2>
         <ol className="live-timeline">{recent.flatMap(e => activityRows(e.data).map((row, i) => <li key={`${e.cursor}:${i}`} className={`live-entry ${row.tone}`}>
-          <time dateTime={new Date(e.receivedAt).toISOString()}>{new Date(e.receivedAt).toLocaleTimeString()}</time>
+          <time dateTime={new Date(eventTime(e)).toISOString()}>{new Date(eventTime(e)).toLocaleTimeString()}</time>
           <span className="live-entry-dot" aria-hidden="true" />
           <div><strong>{row.title}</strong>{row.detail ? <span className="live-entry-detail">{row.detail}</span> : null}
             <details><summary>Technical details</summary><pre>{row.raw}</pre></details>
@@ -222,5 +270,6 @@ export function LiveView(): React.JSX.Element {
         </li>))}</ol>
       </section> : null}
     </div>
+    </>
   )
 }
