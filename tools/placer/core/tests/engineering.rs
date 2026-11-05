@@ -131,10 +131,10 @@ fn connector_corridor_checks_board_exit_and_other_courtyards() {
     let mut input = contract();
     input["geometry"]["bounds"] = json!([0.0, 0.0, 20.0, 20.0]);
     input["geometry"]["refs"]["U1"]["origin"] = json!([1.0, 3.0]);
-    input["geometry"]["refs"]["U1"]["quarter"] = json!(0);
+    input["geometry"]["refs"]["U1"]["quarter"] = json!(0.0);
     input["geometry"]["refs"]["U1"]["courtyard"] = json!([0.5, 2.5, 1.5, 3.5]);
     input["geometry"]["refs"]["C1"]["origin"] = json!([14.0, 10.0]);
-    input["geometry"]["refs"]["C1"]["quarter"] = json!(0);
+    input["geometry"]["refs"]["C1"]["quarter"] = json!(0.0);
     input["geometry"]["refs"]["C1"]["courtyard"] = json!([13.5, 9.5, 14.5, 10.5]);
     input["rules"] = json!([{"id":"connector","kind":"connector_access", "ref":"U1", "metric":"courtyard_corridor_2d", "corridor_mm":[-4.0,-0.6,0.0,0.6], "exit_side":"L"}]);
     let rules = connector_rules(&input, &[(1.0, 3.0), (14.0, 10.0)]).unwrap();

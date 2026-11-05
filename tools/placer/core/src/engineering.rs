@@ -29,7 +29,7 @@ struct Part {
     #[serde(default)]
     origin: Option<(f64, f64)>,
     #[serde(default)]
-    quarter: Option<u8>,
+    quarter: Option<f64>,
     #[serde(default)]
     courtyard: Option<(f64, f64, f64, f64)>,
     #[serde(default)]
@@ -577,8 +577,8 @@ pub fn connector_rules(
         let (px, py) = part.origin.ok_or("reviewed courtyard origin missing")?;
         let quarter = part
             .quarter
-            .filter(|q| *q < 4)
-            .ok_or("invalid reviewed courtyard orientation")?;
+            .filter(|q| q.is_finite() && [0.0, 1.0, 2.0, 3.0].contains(q))
+            .ok_or("invalid reviewed courtyard orientation")? as u8;
         let (a, b, c, d) = part.courtyard.ok_or("reviewed courtyard missing")?;
         if ![x, y, px, py, a, b, c, d].iter().all(|v| v.is_finite()) || a > c || b > d {
             return Err("invalid reviewed courtyard".into());
