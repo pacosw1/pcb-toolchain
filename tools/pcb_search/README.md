@@ -36,9 +36,8 @@ Exit codes: 0 complete, 3 stuck, 2 refused. A partial route is STUCK. PASS means
 
 These stay until their callers, which are top-level tools, have moved:
 
-- `contracts.py`: `fingerprint` and `number`.
-- `native_srj.py`: `digest`, `source_set`, `geometry_digest`. Rust: `native/digest.rs`.
-- `block_bindings.py`, `native_placement.py`: not ported yet.
+- `contracts.py`: `fingerprint`.
+- `block_bindings.py`: `child` and `footprints`. `native_placement.py`: `footprint_signature`. TS: `lib/native-board.ts`.
 
 ## Removed
 

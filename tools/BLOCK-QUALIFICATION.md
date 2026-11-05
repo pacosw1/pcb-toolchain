@@ -53,7 +53,7 @@ its exact target scope. Ordinary discovery remains unqualified.
 
 `--evidence` is an attributed review manifest with this shape. Paths resolve
 relative to the manifest; artifacts require the SHA-256 of their original bytes.
-`binding_sha256` is `pcb_search.contracts.fingerprint(binding)`, SHA-256 of JSON
+`binding_sha256` is `fingerprint(binding)` of `lib/fingerprint.ts`, SHA-256 of JSON
 with sorted keys and compact separators, not the pretty-printed file hash.
 
 ```json
@@ -167,8 +167,8 @@ These are identity/qualification gaps, not claims that the frozen board fails
 its release gate. All block facts and board CAD remain unchanged. No gate or
 bench level is granted by this inventory.
 
-Verification: `cd tools && python3 -m unittest test_block_qualification
-test_block_reuse test_pcb_search_block_bindings`. Fixtures cover native binding
+Verification: `node --experimental-strip-types --no-warnings --test tools/lib/block-qualification.test.ts
+tools/lib/block-reuse.test.ts tools/lib/block-bindings.test.ts`. Fixtures cover native binding
 rejection, complete qualification, receipt freshness, source changes, missing
 reviews/artifacts, unsupported requirements, cache rejection, owned native
 invocation and attributed bench data.
