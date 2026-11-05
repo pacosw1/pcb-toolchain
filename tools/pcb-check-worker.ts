@@ -11,6 +11,7 @@ import { events } from './lib/pcb-runs.ts';
 import { gateOutcome, type Finding } from './lib/pcb-gate-outcome.ts';
 import { CheckJournal, type Row } from './lib/pcb-check-journal.ts';
 import { sha } from './lib/pcb-workflow.ts';
+import { MeasuredSpan } from './lib/timing.ts';
 
 interface Manifest extends Row { root: string; board: string; command: string[]; timeout_s: number; heartbeat_s: number; created_at: string; operation: string; gate_config_sha256: string }
 type Preliminary = Row & { status: string; exit_code: number; cause: string };
@@ -29,6 +30,7 @@ async function worker(folderPath: string): Promise<number> {
   journal.emit('run.start', { board: manifest.board, command: manifest.command });
   let cursor = 0, gateEnded = false, interrupted = false, proc: OwnedStage | undefined;
   let outcome: OwnedResult | undefined, cleanup: Cleanup | undefined, result: Preliminary | undefined;
+  let cleanupSpan: Row | undefined;
   const findings: Finding[] = [];
   const onSignal = () => { interrupted = true; };
   process.on('SIGINT', onSignal); process.on('SIGTERM', onSignal);
@@ -96,6 +98,9 @@ async function worker(folderPath: string): Promise<number> {
     if (error instanceof OwnedStageError) cleanup = error.cleanup;
     result = { status: 'error', exit_code: 2, cause: error instanceof Error ? `${error.name}: ${error.message}` : String(error), findings };
   } finally {
+    const span = new MeasuredSpan('cleanup', 'cleanup');
+    cleanupSpan = { ...span.fields, started_clock_s: now() };
+    journal.emit('stage.start', span.fields);
     if (proc && !proc.done) {
       try { cleanup = await proc.cancel(); } catch (error) { cleanup = { complete: false, child_reaped: false, errors: [{ operation: 'cancel', error: String(error) }] }; }
     }
@@ -106,7 +111,8 @@ async function worker(folderPath: string): Promise<number> {
   cleanup ??= proc ? { complete: false, child_reaped: false, errors: [{ operation: 'cleanup', error: 'owned stage did not report cleanup' }] } : nothing();
   if (cleanup.complete !== true) Object.assign(result, { status: 'error', exit_code: 2, cause: result.cause + '; owned process cleanup unconfirmed' });
   atomicJson(join(folder, 'worker-preliminary.json'), { ...result, nested_cleanup: cleanup,
-    gate_returncode: outcome?.returncode ?? null, child_cpu_s: outcome?.childCpuS ?? null, cpu_scope: outcome?.cpuScope ?? null });
+    cleanup_span: cleanupSpan, gate_returncode: outcome?.returncode ?? null,
+    child_cpu_s: outcome?.childCpuS ?? null, cpu_scope: outcome?.cpuScope ?? null });
   journal.state.status = 'stopping';
   journal.emit('run.settling', { provisional_status: result.status });
   return result.exit_code;

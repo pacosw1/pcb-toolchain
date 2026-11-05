@@ -11,7 +11,7 @@ import { evidenceFiles } from './lib/pcb-evidence.ts';
 import { gateOutcome, type Finding } from './lib/pcb-gate-outcome.ts';
 import { jsonDumps, jsonLoads } from './lib/py-compat.mjs';
 import { CheckJournal, type Row } from './lib/pcb-check-journal.ts';
-import { timingJson } from './lib/timing.ts';
+import { MeasuredSpan, timingJson } from './lib/timing.ts';
 import { sha } from './lib/pcb-workflow.ts';
 
 interface Manifest extends Row { root: string; board: string; created_at: string; operation: string; gate_config_sha256: string }
@@ -37,8 +37,8 @@ function finalize(ownerPath: string): number {
   const ownerCleanup = report.cleanup as Row | undefined;
   const nested = preliminary.nested_cleanup as Row | undefined;
   const validStatus = ['passed', 'failed', 'error', 'cancelled', 'timeout'].includes(String(preliminary.status));
-  let settled = validStatus && ownerCleanup?.complete === true && ownerCleanup.child_reaped === true
-    && report.error === null && report.returncode === preliminary.exit_code && nested?.complete === true;
+  const cleanupConfirmed = ownerCleanup?.complete === true && ownerCleanup.child_reaped === true && nested?.complete === true;
+  let settled = validStatus && cleanupConfirmed && report.error === null && report.returncode === preliminary.exit_code;
   let evidenceProblem: string | undefined;
   if (settled && ['passed', 'failed'].includes(String(preliminary.status))) {
     try {
@@ -64,17 +64,26 @@ function finalize(ownerPath: string): number {
     } catch (error) { settled = false; evidenceProblem = error instanceof Error ? error.message : String(error); }
   }
   const result: Row = { ...preliminary };
-  delete result.nested_cleanup; delete result.gate_returncode;
+  delete result.nested_cleanup; delete result.gate_returncode; delete result.cleanup_span;
   if (!settled) Object.assign(result, { status: 'error', exit_code: 2,
     cause: evidenceProblem ? `gate evidence unconfirmed: ${evidenceProblem}`
       : `${String(preliminary.cause ?? 'worker result unavailable')}; owned process cleanup or result unconfirmed` });
   Object.assign(result, { scope: 'configured_board_gate', schema_version: 1, run_id: folder.split('/').at(-1), board: manifest.board,
-    operation: 'check', cleanup: { ...(ownerCleanup ?? {}), complete: settled, nested }, gate_result: join(folder, 'gate/result.json'), evidence_dir: folder });
+    operation: 'check', cleanup: { ...(ownerCleanup ?? {}), complete: cleanupConfirmed, nested }, gate_result: join(folder, 'gate/result.json'), evidence_dir: folder });
   const state = readObject<Row>(join(folder, 'state.json'));
   const started = typeof state.worker_started_clock_s === 'number' ? state.worker_started_clock_s : now();
   const journal = new CheckJournal(folder, manifest.created_at, started);
-  try { result.evidence_sha256 = evidenceFiles(folder); }
-  catch (error) { Object.assign(result, { status: 'error', exit_code: 2, cause: `cannot bind run evidence: ${String(error)}` }); }
+  const cleanupSpan = preliminary.cleanup_span as Row | undefined;
+  if (cleanupSpan && typeof cleanupSpan.started_clock_s === 'number') {
+    const fields = { ...cleanupSpan }; delete fields.started_clock_s;
+    journal.emit('stage.end', { ...fields, ended_unix_s: Date.now() / 1000,
+      duration_s: Math.max(0, now() - cleanupSpan.started_clock_s), duration_source: 'same_host_monotonic',
+      status: cleanupConfirmed ? 'passed' : 'error' });
+  }
+  const sealing = new MeasuredSpan('evidence-sealing', 'sealing');
+  journal.emit('stage.start', sealing.fields);
+  try { result.evidence_sha256 = evidenceFiles(folder); journal.emit('stage.end', sealing.end()); }
+  catch (error) { journal.emit('stage.end', sealing.end('error')); Object.assign(result, { status: 'error', exit_code: 2, cause: `cannot bind run evidence: ${String(error)}` }); }
   Object.assign(result, { elapsed_s: Math.round((now() - started) * 1000) / 1000,
     timing: timingJson(journal.timeline.summary(undefined, true)), ended_unix_s: Date.now() / 1000 });
   verifyLock(folder);
