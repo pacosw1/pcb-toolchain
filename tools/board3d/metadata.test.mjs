@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +10,13 @@ import { gateNote, project, record } from './metadata.mjs';
 const script = fileURLToPath(new URL('../board_3d.sh', import.meta.url));
 const helper = fileURLToPath(new URL('./metadata.mjs', import.meta.url));
 const core = { erc_errors: 0, drc_errors: 0, drc_parity: 0, drc_unconnected: 0 };
+
+test('metadata CLI runs through a symlinked path', t => {
+  const f = fixture(t), link = join(f.root, 'metadata-link.mjs'), gate = join(f.root, 'gate.json');
+  symlinkSync(helper, link);
+  writeFileSync(gate, JSON.stringify({ project: 'cad/X' }));
+  assert.equal(execFileSync(process.execPath, [link, 'project', gate], { encoding: 'utf8' }), 'cad/X\n');
+});
 
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'board3d-'));
