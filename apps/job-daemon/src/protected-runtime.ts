@@ -4,6 +4,7 @@ import type { ProtectedCommitStore } from './protected-commit.ts';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import { protectedJobSpecDigest } from './protected-job-spec.ts';
+import { isTerminal } from './types.ts';
 
 function matchesArchive(file: string, expected: {sha256:string;size:number}): boolean {
   let fd: number;
@@ -40,4 +41,27 @@ export function installProtectedRuntime(authority: ProtectedCommitStore, manager
   manager.protectedContinuation = job => !!job.protectedRef && authority.canDispatchProtected(job.protectedRef, job.id, true);
   manager.protectedAttest = (job,image) => !!job.protectedRef && authority.recordRuntimeAttestationFromTrustedService(job.protectedRef,job.id,image);
   manager.protectedBeforeTick = () => { reconcileProtectedCancellations(authority, manager); };
+}
+
+/** Abandon a protected attempt only after the daemon confirms its exact job is terminal and every container is gone. */
+export async function recoverAbandonedProtectedAttempt(authority: ProtectedCommitStore, manager: JobManager,
+  ref: {project:string;board:string;operation:string;job:string;attempt:string}): Promise<'PENDING' | 'CLEANED'> {
+  if (authority.recoveryStatusFromTrustedService(ref) === 'CLEANED') return 'CLEANED';
+  const recovery = authority.beginAbandonFromTrustedService(ref);
+  const job = manager.jobs.get(recovery.runtimeJob), association = job?.protectedRef;
+  const expected = authority.runtimeInputIdentity(ref,recovery.runtimeJob);
+  if (!job || !association || !expected || job.spec.maxRetries !== 0 ||
+      association.project !== ref.project || association.board !== ref.board || association.operation !== ref.operation || association.job !== ref.job || association.attempt !== ref.attempt ||
+      job.spec.image !== expected.image || protectedJobSpecDigest(job.spec) !== expected.specSha256) return 'PENDING';
+  if (!isTerminal(job.state)) { manager.cancel(job.id); await manager.tick(); }
+  if (!isTerminal(job.state)) return 'PENDING';
+  await manager.clean();
+  if (manager.jobs.get(job.id) !== job || job.attempts.length > 1) return 'PENDING';
+  for (const attempt of job.attempts) {
+    if (attempt.n !== 1 || attempt.container !== `pcbjob-${job.id}-1` || !attempt.endedAt || attempt.trimmed !== true) return 'PENDING';
+    try { if ((await manager.runtime.inspect(attempt.container)).status !== 'missing') return 'PENDING'; }
+    catch { return 'PENDING'; }
+  }
+  authority.finishAbandonFromTrustedService(ref,recovery.runtimeJob,recovery.generation);
+  return 'CLEANED';
 }

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path'; import { test } from 'node:test';
 import { ProtectedCommitStore } from '../src/protected-commit.ts'; import { parseCanonicalJson } from '../src/canonical-json.ts';
-import { installProtectedRuntime, reconcileProtectedCancellations } from '../src/protected-runtime.ts';
+import { installProtectedRuntime, reconcileProtectedCancellations, recoverAbandonedProtectedAttempt } from '../src/protected-runtime.ts';
 import { prepareAttemptInput } from '../src/protected-input.ts';
 import { validateSpec } from '../src/manager.ts';
 import { protectedJobSpecDigest } from '../src/protected-job-spec.ts';
@@ -91,5 +91,36 @@ test('fenced verified commit atomically advances the target and replays its dura
     assert.equal(pins.some(p=>p.kind==='attempt-candidate'),false);
     assert.deepEqual(store.commit(commit.token,request),result);
     assert.throws(()=>store.commit(commit.token,{...request,candidate_manifest_sha256:source}),/reused/);
+  } finally {store.close();jobRig.cleanup();fs.rmSync(parent,{recursive:true,force:true});}
+});
+
+test('recovery keeps a prior-boot writer fenced until the manager proves cleanup',async()=>{
+  const parent=fs.mkdtempSync(path.join(os.tmpdir(),'pcb-abandon-')), jobRig=rig({images:[`sha256:${'b'.repeat(64)}`]});
+  let store=new Fixture(path.join(parent,'store'),{maxBlobBytes:10000,quotaBytes:100000},()=>1000,()=>0n);
+  const put=(b:Buffer):string=>{const h=hash(b);store.put(h,b);return h;};
+  try {
+    const board=Buffer.from('source'), boardHash=put(board);
+    const source=put(encode({schema:'pcb.project-manifest.v1',project_id:'p',entries:[{kind:'file',path:'board',sha256:boardHash,size:board.length,executable:false}],required_paths:['board'],optional_absent_paths:[],external_mounts:[]}));
+    const policy='a'.repeat(64),runtime='b'.repeat(64),toolchain='c'.repeat(64);store.seed(source,policy,runtime,toolchain);
+    const issue=(id:string)=>store.issueFromTrustedService(id,'admin',{role:'submit',principal:'operator',project:'p',board:'b',operation:'route',job:null,attempt:null,issuedAtMs:1000,expiresAtMs:10000,maxUses:50});
+    const submit=issue('before');if(submit.state!=='ISSUED')throw Error('capability missing');
+    const request={requestId:'old',project:'p',board:'b',alias:'alias',aliasRevision:1,sourceRevision:1,sourceManifest:source,operation:'route',ttlMs:5000};
+    const lease=store.acquire(submit.token,request);if(lease.state!=='ACQUIRED')throw Error('lease missing');
+    const ref={project:'p',board:'b',operation:'route',job:'job',attempt:'attempt'};
+    store.bindAttempt(submit.token,{...ref,generation:lease.generation,token:lease.token},{job:'job',attempt:'attempt',sourceManifest:source,policyDigest:policy,runtimeDigest:runtime,toolchainDigest:toolchain});
+    const input=prepareAttemptInput(store,ref,parent,{tarPath:'/usr/bin/tar',maxFiles:10,maxBytes:100,maxArchiveBytes:100000,timeoutMs:10000});
+    const job=jobRig.mgr.submit(validateSpec({command:['hang'],maxRetries:0},jobRig.cfg),input.archive,ref);
+    store.associateRuntimeFromTrustedService(ref,job.id,{...input,specSha256:protectedJobSpecDigest(job.spec)});
+    installProtectedRuntime(store,jobRig.mgr);await jobRig.mgr.tick();assert.equal(job.state,'running');
+    store.close();store=new Fixture(path.join(parent,'store'),{maxBlobBytes:10000,quotaBytes:100000},()=>1000,()=>0n);
+    jobRig.restart();installProtectedRuntime(store,jobRig.mgr);
+    const fresh=issue('after');if(fresh.state!=='ISSUED')throw Error('capability missing');
+    jobRig.runtime.inspectBroken=true;
+    assert.equal(await recoverAbandonedProtectedAttempt(store,jobRig.mgr,ref),'PENDING');
+    assert.equal(store.acquire(fresh.token,{...request,requestId:'busy'}).state,'BUSY');
+    jobRig.runtime.inspectBroken=false;
+    assert.equal(await recoverAbandonedProtectedAttempt(store,jobRig.mgr,ref),'CLEANED');
+    assert.equal(await recoverAbandonedProtectedAttempt(store,jobRig.mgr,ref),'CLEANED');
+    const next=store.acquire(fresh.token,{...request,requestId:'new'});assert.equal(next.state,'ACQUIRED');if(next.state==='ACQUIRED')assert.equal(next.generation,lease.generation+1);
   } finally {store.close();jobRig.cleanup();fs.rmSync(parent,{recursive:true,force:true});}
 });

@@ -32,11 +32,60 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
       CREATE TABLE IF NOT EXISTS protected_revisions (project TEXT NOT NULL, board TEXT NOT NULL, revision INTEGER NOT NULL,
         manifest TEXT NOT NULL, verification TEXT NOT NULL, PRIMARY KEY(project,board,revision)) STRICT;
       CREATE TABLE IF NOT EXISTS protected_commit_results (request_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, revision INTEGER NOT NULL, manifest TEXT NOT NULL) STRICT;`);
+    this.db.exec(`CREATE TABLE IF NOT EXISTS protected_recoveries (job TEXT NOT NULL, attempt TEXT NOT NULL, generation INTEGER NOT NULL,
+      runtime_job TEXT NOT NULL, state TEXT NOT NULL, PRIMARY KEY(job,attempt)) STRICT;`);
     const runtimeColumns = this.db.prepare('PRAGMA table_info(protected_runtime_jobs)').all() as {name:string}[];
     if (!runtimeColumns.some(column => column.name === 'input_sha256')) this.db.exec('ALTER TABLE protected_runtime_jobs ADD COLUMN input_sha256 TEXT');
     if (!runtimeColumns.some(column => column.name === 'input_size')) this.db.exec('ALTER TABLE protected_runtime_jobs ADD COLUMN input_size INTEGER');
     if (!runtimeColumns.some(column => column.name === 'spec_sha256')) this.db.exec('ALTER TABLE protected_runtime_jobs ADD COLUMN spec_sha256 TEXT');
     if (!runtimeColumns.some(column => column.name === 'attested_image')) this.db.exec('ALTER TABLE protected_runtime_jobs ADD COLUMN attested_image TEXT');
+  }
+  /** Internal recovery orchestrator only. Cancellation becomes durable before any runtime operation. */
+  beginAbandonFromTrustedService(ref: {project:string;board:string;operation:string;job:string;attempt:string}): {runtimeJob:string;generation:number} {
+    if (!ref || ![ref.project,ref.board,ref.operation,ref.job,ref.attempt].every(x => typeof x === 'string' && ID.test(x))) throw new Error('invalid recovery attempt');
+    return this.transaction(() => {
+      this.safeNow();
+      const attempt = this.db.prepare('SELECT * FROM protected_attempt_bindings WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as Attempt | undefined;
+      const lease = this.db.prepare('SELECT * FROM protected_leases WHERE project=? AND board=?').get(ref.project,ref.board) as Lease | undefined;
+      const runtime = this.db.prepare('SELECT runtime_job FROM protected_runtime_jobs WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {runtime_job:string} | undefined;
+      const candidate = this.db.prepare('SELECT state FROM protected_candidates WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {state:string} | undefined;
+      if (!attempt || attempt.project !== ref.project || attempt.board !== ref.board || attempt.operation !== ref.operation || !runtime || !lease ||
+          lease.generation !== attempt.generation || lease.pinned !== 1 || candidate?.state === 'COMMITTED') throw new Error('protected recovery is unavailable');
+      const recovery = this.db.prepare('SELECT generation,runtime_job,state FROM protected_recoveries WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {generation:number;runtime_job:string;state:string} | undefined;
+      if (recovery && (recovery.generation !== attempt.generation || recovery.runtime_job !== runtime.runtime_job || recovery.state !== 'PENDING')) throw new Error('protected recovery changed');
+      if (this.db.prepare('UPDATE protected_attempt_cancellation SET cancelled=1 WHERE job=? AND attempt=?').run(ref.job,ref.attempt).changes !== 1)
+        throw new Error('protected cancellation state unavailable');
+      if (!recovery) this.db.prepare("INSERT INTO protected_recoveries VALUES (?,?,?,?,'PENDING')").run(ref.job,ref.attempt,attempt.generation,runtime.runtime_job);
+      return {runtimeJob:runtime.runtime_job,generation:attempt.generation};
+    });
+  }
+  recoveryStatusFromTrustedService(ref: {project:string;board:string;operation:string;job:string;attempt:string}): 'PENDING' | 'CLEANED' | null {
+    return this.transaction(() => {
+      this.safeNow();
+      const row = this.db.prepare(`SELECT a.project,a.board,a.operation,r.state FROM protected_recoveries r
+        JOIN protected_attempt_bindings a ON a.job=r.job AND a.attempt=r.attempt WHERE r.job=? AND r.attempt=?`).get(ref.job,ref.attempt) as
+        {project:string;board:string;operation:string;state:string} | undefined;
+      if (!row || row.project !== ref.project || row.board !== ref.board || row.operation !== ref.operation) return null;
+      return row.state === 'PENDING' || row.state === 'CLEANED' ? row.state : null;
+    });
+  }
+  /** Internal cleanup callback only; never expose this method to clients or accept a client cleanup claim. */
+  finishAbandonFromTrustedService(ref: {project:string;board:string;operation:string;job:string;attempt:string}, runtimeJob:string, generation:number): void {
+    this.transaction(() => {
+      const now = this.safeNow();
+      const attempt = this.db.prepare('SELECT * FROM protected_attempt_bindings WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as Attempt | undefined;
+      const lease = this.db.prepare('SELECT * FROM protected_leases WHERE project=? AND board=?').get(ref.project,ref.board) as Lease | undefined;
+      const recovery = this.db.prepare('SELECT generation,runtime_job,state FROM protected_recoveries WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {generation:number;runtime_job:string;state:string} | undefined;
+      const cancellation = this.db.prepare('SELECT cancelled FROM protected_attempt_cancellation WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {cancelled:number} | undefined;
+      if (!attempt || attempt.project !== ref.project || attempt.board !== ref.board || attempt.operation !== ref.operation || attempt.generation !== generation ||
+          !lease || lease.generation !== generation || lease.pinned !== 1 || !recovery || recovery.state !== 'PENDING' || recovery.generation !== generation ||
+          recovery.runtime_job !== runtimeJob || cancellation?.cancelled !== 1) throw new Error('protected recovery changed');
+      this.db.prepare("UPDATE protected_candidates SET state='ABANDONED' WHERE job=? AND attempt=? AND state='STAGED'").run(ref.job,ref.attempt);
+      this.db.prepare("DELETE FROM protected_blob_pins WHERE kind IN ('attempt-source','attempt-candidate') AND owner=?").run(JSON.stringify([ref.job,ref.attempt]));
+      this.db.prepare("UPDATE protected_recoveries SET state='CLEANED' WHERE job=? AND attempt=?").run(ref.job,ref.attempt);
+      this.db.prepare('UPDATE protected_leases SET pinned=0,expires_at=0,token_hash=?,owner=? WHERE project=? AND board=? AND generation=?').run(Buffer.alloc(32),'',ref.project,ref.board,generation);
+      this.db.prepare('INSERT INTO protected_lease_audit VALUES (?,?,?,?,?,?)').run(ref.project,ref.board,generation,'coordinator','abandoned-cleanup',now);
+    });
   }
   /** Internal launcher only: snapshot preparation must recheck this binding after producing its archive. */
   sourceForAttemptFromTrustedService(ref: {project:string;board:string;operation:string;job:string;attempt:string}): {manifest:string;closure:ManifestClosure} {
