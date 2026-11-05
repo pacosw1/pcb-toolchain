@@ -296,11 +296,19 @@ impl Writer {
 
     /// After a pass, from what it already knows.
     pub(crate) fn pass(&mut self, ctx: &Ctx, p: &Pass) {
+        self.pass_state(ctx, p, "running", None);
+    }
+
+    pub(crate) fn yielded(&mut self, ctx: &Ctx, p: &Pass, reason: &'static str) {
+        self.pass_state(ctx, p, "yielded", Some(reason));
+    }
+
+    fn pass_state(&mut self, ctx: &Ctx, p: &Pass, state: &'static str, stop: Option<&'static str>) {
         let t = std::time::Instant::now();
         let c = Conflicts { nets: p.involved.len(), pairs: p.au.pairs, samples: p.au.samples, pour_faults: p.pour_faults, search_limited: p.search_limited };
         let best = p.best.map(|(pass, s)| Best { pass, nets: s.0, pairs: s.1 });
         let unrouted = p.state.iter().filter(|s| s.0.is_some()).count();
-        let f = self.file(p.pass, "running", None, unrouted, c, copper(ctx.bd), best, p.since_best, worst_nets(ctx, p), hot_cells(ctx, &p.au.pair_ids));
+        let f = self.file(p.pass, state, stop, unrouted, c, copper(ctx.bd), best, p.since_best, worst_nets(ctx, p), hot_cells(ctx, &p.au.pair_ids));
         self.write(f, t);
     }
 

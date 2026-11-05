@@ -83,11 +83,40 @@ pub(crate) fn binding(model: &str, args: &[String]) -> Result<String, String> {
     let binary = std::env::current_exe().and_then(std::fs::read).map_err(|e| e.to_string())?;
     let mut fields = vec![checkpoint::sha256(model.as_bytes()), checkpoint::sha256(&binary)];
     for pair in args.chunks_exact(2) {
-        if !matches!(pair[0].as_str(), "--iters" | "--passes" | "--max-time" | "--checkpoint" | "--resume" | "--resume-save") {
+        if !matches!(pair[0].as_str(), "--iters" | "--passes" | "--max-time" | "--checkpoint" | "--resume" | "--resume-save" | "--yield-after-passes") {
             fields.extend_from_slice(pair);
         }
     }
     Ok(checkpoint::sha256(&serde_json::to_vec(&fields).map_err(|e| e.to_string())?))
+}
+
+/// A yield is a durable continuation receipt, never a route result or a verified candidate.
+/// Accounting is sampled after the state/progress writes; an outer supervisor measures
+/// the complete invocation, including this receipt write and process shutdown.
+pub(crate) fn write_yield(path: &str, checkpoint: &str, pass: usize, reason: &str,
+    invocation_wall_s: f64, prior_wall_s: f64, prior_cpu_s: f64) -> Result<(), String> {
+    let bytes = std::fs::read(checkpoint).map_err(|e| e.to_string())?;
+    let receipt = serde_json::json!({
+        "schema": "iot-lab.route-yield.v1", "status": "yielded", "finalized": false,
+        "pass": pass, "reason": reason,
+        "checkpoint": { "path": checkpoint, "sha256": checkpoint::sha256(&bytes), "bytes": bytes.len() },
+        "accounting": {
+            "invocation_wall_s": invocation_wall_s, "invocation_cpu_s": cpu_seconds()?,
+            "prior_boundary_wall_s": prior_wall_s, "prior_boundary_cpu_s": prior_cpu_s,
+            "scope": "through checkpoint persistence; excludes receipt write and process exit"
+        }
+    });
+    atomic_write(path, &serde_json::to_vec(&receipt).map_err(|e| e.to_string())?)
+}
+
+fn atomic_write(path: &str, bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    let tmp = format!("{path}.tmp.{}", std::process::id());
+    let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp).map_err(|e| e.to_string())?;
+    f.write_all(bytes).and_then(|_| f.sync_all()).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, path).map_err(|e| e.to_string())?;
+    let parent = std::path::Path::new(path).parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(std::path::Path::new("."));
+    std::fs::File::open(parent).and_then(|d| d.sync_all()).map_err(|e| e.to_string())
 }
 
 impl Snapshot {
@@ -115,14 +144,8 @@ impl Snapshot {
     }
 
     fn put(path: &str, envelope: Envelope) -> Result<(), String> {
-        use std::io::Write;
-        let tmp = format!("{path}.tmp.{}", std::process::id());
         let bytes = serde_json::to_vec(&envelope).map_err(|e| e.to_string())?;
-        let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp).map_err(|e| e.to_string())?;
-        f.write_all(&bytes).and_then(|_| f.sync_all()).map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, path).map_err(|e| e.to_string())?;
-        let parent = std::path::Path::new(path).parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(std::path::Path::new("."));
-        std::fs::File::open(parent).and_then(|d| d.sync_all()).map_err(|e| e.to_string())
+        atomic_write(path, &bytes)
     }
 
     fn read(path: &str) -> Result<Self, String> {
@@ -140,7 +163,7 @@ impl Snapshot {
         let nn = ctx.bd.nets.len();
         let valid_net = |n: &usize| *n < nn;
         if s.schema != SCHEMA || s.binding != binding { return Err("checkpoint schema or run binding differs".into()); }
-        if s.pass == 0 || s.pass >= max_passes { return Err("--iters must exceed saved pass".into()); }
+        if s.pass == 0 || s.pass > max_passes { return Err("--iters must be at least the saved pass".into()); }
         if !s.elapsed_s.is_finite() || s.elapsed_s < 0.0 || !s.cpu_s.is_finite() || s.cpu_s < 0.0 || !s.pres.is_finite() || s.pres < 0.0 || !s.max_clearance.is_finite() || s.max_clearance < ctx.bd.maxc {
             return Err("checkpoint accounting or present cost invalid".into());
         }
