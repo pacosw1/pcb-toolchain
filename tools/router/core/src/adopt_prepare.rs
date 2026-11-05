@@ -246,7 +246,9 @@ pub fn inspect_prepared(path: &Path) -> io::Result<PreparedIntent> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{BufRead, BufReader};
     use std::os::unix::fs::{PermissionsExt, symlink};
+    use std::process::{Child, Command, Stdio};
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -273,6 +275,64 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    struct ChildGuard(Child);
+    impl Drop for ChildGuard {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    #[test]
+    fn subprocess_lock_holder() {
+        let Some(locks) = std::env::var_os("ADOPT_TEST_LOCK_DIR") else {
+            return;
+        };
+        let target = std::env::var_os("ADOPT_TEST_TARGET").unwrap();
+        let _lock = LockedTarget::acquire(Path::new(&locks), Path::new(&target)).unwrap();
+        println!("ADOPT_TEST_LOCK_HELD");
+        io::stdout().flush().unwrap();
+        std::thread::sleep(std::time::Duration::from_secs(30));
+    }
+
+    #[test]
+    fn process_death_releases_exclusive_lock_for_a_competitor() {
+        let temp = Scratch::new();
+        let locks = temp.dir("locks");
+        let target = temp.0.join("board");
+        fs::write(&target, b"original").unwrap();
+        let child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "adopt_prepare::tests::subprocess_lock_holder",
+                "--nocapture",
+            ])
+            .env("ADOPT_TEST_LOCK_DIR", &locks)
+            .env("ADOPT_TEST_TARGET", &target)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut child = ChildGuard(child);
+        let stream = child.0.stdout.take().unwrap();
+        let mut ready = false;
+        for line in BufReader::new(stream).lines() {
+            if line.unwrap().contains("ADOPT_TEST_LOCK_HELD") {
+                ready = true;
+                break;
+            }
+        }
+        assert!(ready, "subprocess failed to acquire lock");
+        assert_eq!(
+            LockedTarget::acquire(&locks, &target).err().unwrap().kind(),
+            io::ErrorKind::WouldBlock
+        );
+        child.0.kill().unwrap();
+        child.0.wait().unwrap();
+        assert!(LockedTarget::acquire(&locks, &target).is_ok());
+        assert_eq!(fs::read(&target).unwrap(), b"original");
     }
 
     #[test]
