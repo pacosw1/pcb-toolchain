@@ -27,6 +27,7 @@ import { capsule, circle, HOLE_QUADRANT_SEGMENTS, parseCopper, parseDrill, type 
 import { readJson, sha256File } from './lib/json-file.ts';
 import { fileRoot, projectRoot } from './lib/project-root.mjs';
 import { openZip, readEntry } from './lib/zip-read.mjs';
+import { forms, field, type SList } from './lib/sexpr.ts';
 
 const USAGE = 'usage: tools/gerber_netcheck.ts <BOARD> [--pads PADS.json] [--receipt FILE]';
 const LAYERS = ['F_Cu', 'In1_Cu', 'In2_Cu', 'In3_Cu', 'In4_Cu', 'B_Cu'];
@@ -159,6 +160,39 @@ export function padsOf({ board }: BoardDocument): Pad[] {
   })));
 }
 
+/** Check that KiCad's reader retained every source footprint and pad, including custom pads. */
+export function validatePadInventory(text: string, document: BoardDocument): void {
+  const roots = forms(text), root = roots[0];
+  if (roots.length !== 1 || !Array.isArray(root) || root[0] !== 'kicad_pcb') throw new Error('invalid native PCB inventory');
+  const ids = new Set<string>();
+  const collectIds = (node: SList): void => {
+    if (node[0] === 'uuid') {
+      const id = node[1];
+      if (typeof id !== 'string' || !id || ids.has(id.toLowerCase())) throw new Error('missing or duplicate native UUID');
+      ids.add(id.toLowerCase());
+    }
+    for (const child of node) if (Array.isArray(child)) collectIds(child);
+  };
+  collectIds(root);
+  const children = (node: SList, key: string) => node.filter((x): x is SList => Array.isArray(x) && x[0] === key);
+  const idOf = (node: SList): string => {
+    const value = field(node, 'uuid');
+    if (!value || value.length !== 1 || typeof value[0] !== 'string' || !value[0]) throw new Error('native footprint or pad lacks UUID');
+    return value[0].toLowerCase();
+  };
+  const expected = children(root, 'footprint').map(fp => ({id: idOf(fp), pads: children(fp, 'pad').map(pad => ({id:idOf(pad), number:pad[1]}))}));
+  const actual = document.board?.footprints;
+  if (!Array.isArray(actual) || actual.length !== expected.length) throw new Error('board reader footprint inventory mismatch');
+  const byId = new Map(actual.map(fp => [fp.id?.toLowerCase(), fp]));
+  if (byId.size !== actual.length) throw new Error('board reader duplicate footprint UUID');
+  for (const fp of expected) {
+    const found = byId.get(fp.id);
+    if (!found || !Array.isArray(found.pads) || found.pads.length !== fp.pads.length) throw new Error('board reader pad inventory mismatch');
+    const pads = new Map(found.pads.map(p => [p.id?.toLowerCase(), p]));
+    if (pads.size !== found.pads.length || fp.pads.some(p => pads.get(p.id)?.number !== p.number)) throw new Error('board reader pad inventory mismatch');
+  }
+}
+
 /** A per-run reader snapshot. An absent optional sidecar is bound as absent. */
 function inputState(paths: string[]): string[] { return paths.map(path => existsSync(path) ? sha256File(path) : ''); }
 
@@ -193,6 +227,7 @@ function main(argv: string[]): number {
     const pinNets = readSchematicNets(`${stem}.kicad_sch`, scratch);
     const document = values.pads ? null : boardJson(pcb, { cacheDir: join(scratch, 'board-json') });
     if (document && (document.board_sha256 !== before[0] || document.project_sha256 !== before[1] || document.rules_sha256 !== before[2])) throw new Error('board JSON does not bind the current PCB, project and rules');
+    if (document) validatePadInventory(readFileSync(pcb, 'utf8'), document);
     const pads = values.pads ? readJson<Pad[]>(values.pads) : padsOf(document!);
     const layers: NamedLayer[] = [];
     for (const layer of LAYERS) {
