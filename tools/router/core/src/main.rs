@@ -526,10 +526,14 @@ impl Board {
     /// sig: the via is of a signal (non-plane) net (the antipad web rule applies against drilled signal items)
     /// g: isolation group of the via (Board::vgrp)
     fn vhit(&self, s: &Shape, x: f64, y: f64, vr: f64, drill: f64, clr: f64, hth: f64, sig: bool, g: u16) -> u8 {
+        self.vhit_for(None, s, x, y, vr, drill, clr, hth, sig, g)
+    }
+    /// A via of the reference plane's own net has no foreign-copper antipad there. Copper and drill clearances still apply.
+    fn vhit_for(&self, net: Option<usize>, s: &Shape, x: f64, y: f64, vr: f64, drill: f64, clr: f64, hth: f64, sig: bool, g: u16) -> u8 {
         let (s_fast, plane_clr) = if s.kind == Kind::Track && s.net >= 0 {
             let l = (0..8).find(|&l| s.layers & (1 << l) != 0).unwrap_or(0);
             let pf = self.pflags(s.net as usize);
-            (self.plane_rule(pf, l), self.plane_clr.max(self.reference_via_clearance(pf, l)))
+            (self.plane_rule(pf, l) && !net.is_some_and(|n| self.rfill.same_reference_net(l, n as i32)), self.plane_clr.max(self.reference_via_clearance(pf, l)))
         } else { (false, self.plane_clr) };
         let web = if self.web_hard && sig && s.net >= 0 && !self.nets[s.net as usize].plane { self.web } else { 0.0 };
         let h = via_hit(s, x, y, vr, drill, clr, hth, s_fast, plane_clr, self.hole_clr, self.eps, web, self.pc(g, s));
@@ -714,7 +718,8 @@ impl Board {
         let via_clr = self.reference_via_clearance(pf, l);
         // a net under the plane rule keeps out of the plane voids that rule areas make: an area that forbids pour on a
         // plane layer (isolation work, INPUT-4D2A gate planes 3: unknown-driver runs over the H1 / H2 screw-hole voids)
-        if fast && self.keep.iter().any(|k| k.pl & self.plane_mask() != 0 && k.touches(x, y, hw + self.eps)) {
+        let reference_plane = self.rfill.adjacent_plane_mask(l).unwrap_or_else(|| self.plane_mask());
+        if fast && self.keep.iter().any(|k| k.pl & reference_plane != 0 && k.touches(x, y, hw + self.eps)) {
             return MULTI;
         }
         // the reference-plane fill edge (reffill.rs, si_planes D-124c): the centre of a net with a domain (bits 2..7)
@@ -730,7 +735,8 @@ impl Board {
         let g = self.grp_at(pf >> 8, false, (x, y), (x, y), hw);
         self.near_iso(false, g, l, x, y, self.track_r(hw, plane_clr.max(via_clr)), hw, &mut |_, s| {
             let pc = plane_clr.max(if s.kind == Kind::Via { via_clr } else { 0.0 });
-            if !track_hit(s, x, y, hw, clr, fast, pc, self.hole_clr, self.eps, self.pc(g, s)) {
+            let plane_hole = fast && !(s.kind == Kind::Via && self.rfill.same_reference_net(l, s.net));
+            if !track_hit(s, x, y, hw, clr, plane_hole, pc, self.hole_clr, self.eps, self.pc(g, s)) {
                 return false;
             }
             if s.net < 0 || (code >= 0 && code != s.net) {
@@ -750,7 +756,8 @@ impl Board {
         let mut seen: Vec<u32> = Vec::new();
         self.near_iso(true, g, l, x, y, self.track_r(hw, plane_clr.max(via_clr)), hw, &mut |id, s| {
             let pc = plane_clr.max(if s.kind == Kind::Via { via_clr } else { 0.0 });
-            if s.net != net as i32 && !seen.contains(&id) && track_hit(s, x, y, hw, clr, fast, pc, self.hole_clr, self.eps, self.pc(g, s)) {
+            let plane_hole = fast && !(s.kind == Kind::Via && self.rfill.same_reference_net(l, s.net));
+            if s.net != net as i32 && !seen.contains(&id) && track_hit(s, x, y, hw, clr, plane_hole, pc, self.hole_clr, self.eps, self.pc(g, s)) {
                 seen.push(id);
             }
             false
@@ -830,11 +837,14 @@ impl Board {
         }
     }
     fn via_code_blocks(&self, code: i32, net: usize, x: f64, y: f64, d: f64, drill: f64, hth: f64) -> bool {
-        if code == COMPUTE {
+        // The shared fixed-code cache deliberately remains conservative and net-independent. Recheck a blocked
+        // reference-net via with its actual net instead of caching its exemption for other nets.
+        if code == COMPUTE || (blocks(code, net as i32) && self.rfill.is_reference_net(net)) {
             let (vr, clr, r, sig) = (d / 2.0, self.nets[net].clr, self.via_r(d, hth), !self.nets[net].plane);
+            if !self.inside(x, y, vr) || self.keep_hit(None, x, y, vr) { return true; }
             let g = self.grp_at(self.iv(net as i32), true, (x, y), (x, y), vr);
             return (0..self.layer_names.len()).any(|l| self.near_iso(false, g, l, x, y, r, vr, &mut |_, s| {
-                match self.vhit(s, x, y, vr, drill, clr, hth, sig, g) {
+                match self.vhit_for(Some(net), s, x, y, vr, drill, clr, hth, sig, g) {
                     1 | 4 => true,
                     2 => s.net != net as i32,
                     3 => s.net == net as i32,
@@ -858,7 +868,7 @@ impl Board {
                 if seen.contains(&id) {
                     return false;
                 }
-                let h = self.vhit(s, x, y, vr, drill, clr, hth, sig, g);
+                let h = self.vhit_for(Some(net), s, x, y, vr, drill, clr, hth, sig, g);
                 if h == 1 || ((h == 2 || h == 4) && s.net != net as i32) {
                     seen.push(id);
                 }

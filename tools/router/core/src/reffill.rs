@@ -121,6 +121,10 @@ impl Area {
 
 #[derive(Clone, Default)]
 pub(crate) struct RefFill {
+    /// Explicit trace-layer to reference-plane mapping. A void on another plane is not a void in this reference.
+    adjacent_planes: Vec<(usize, u8)>,
+    /// A homogeneous reference plane's net. Mixed or unknown planes keep the conservative hole model.
+    reference_nets: Vec<(usize, i32)>,
     /// per net: 0 = no rule, k = domain k - 1
     pub(crate) dom: Vec<u8>,
     /// (copper layer, domain) -> area
@@ -142,9 +146,27 @@ pub(crate) struct RefFill {
 }
 
 impl RefFill {
+    fn add_reference(&mut self, l: usize, p: usize, model: &Value, cu: &[String], names: &std::collections::HashMap<String, usize>) {
+        self.adjacent_planes.push((l, 1 << p));
+        let nets: Option<Vec<usize>> = model["zones"].as_array().into_iter().flatten()
+            .filter(|z| z["layer"].as_str() == Some(cu[p].as_str()))
+            .map(|z| z["net"].as_str().and_then(|n| names.get(n)).copied()).collect();
+        if let Some(nets) = nets
+            && let Some(&net) = nets.first()
+            && nets.iter().all(|&n| n == net)
+        {
+            self.reference_nets.push((l, net as i32));
+        }
+    }
+
     pub(crate) fn load(model: &Value, cu: &[String], names: &std::collections::HashMap<String, usize>) -> RefFill {
         let rf = &model["ref_fill"];
         let mut out = RefFill { dom: vec![0; names.len()], ..Default::default() };
+        for (trace, plane) in model["adjacent"].as_object().into_iter().flatten() {
+            if let (Some(l), Some(p)) = (cu.iter().position(|c| c == trace), plane.as_str().and_then(|p| cu.iter().position(|c| c == p))) {
+                out.add_reference(l, p, model, cu, names);
+            }
+        }
         let Some(layers) = rf["layers"].as_object() else { return out };
         let allow = rf["via_allow"].as_f64().unwrap_or(0.6);
         let mut doms: Vec<String> = Vec::new();
@@ -170,6 +192,11 @@ impl RefFill {
         let bbox = (crate::f(&ob[0]), crate::f(&ob[1]), crate::f(&ob[2]), crate::f(&ob[3]));
         for (lname, lv) in layers {
             let Some(l) = cu.iter().position(|c| c == lname) else { continue };
+            if !out.adjacent_planes.iter().any(|&(layer, _)| layer == l)
+                && let Some(p) = lv["plane"].as_str().and_then(|p| cu.iter().position(|c| c == p))
+            {
+                out.add_reference(l, p, model, cu, names);
+            }
             // A new via was absent when KiCad produced the static fill. Its hole
             // uses zone/DRU clearance, not the old generic --plane-clr alone.
             // Take maxima across the adjacent layer (including thermal gaps)
@@ -210,6 +237,18 @@ impl RefFill {
         }
         out
     }
+    pub(crate) fn adjacent_plane_mask(&self, l: usize) -> Option<u8> {
+        self.adjacent_planes.iter().find(|&&(layer, _)| layer == l).map(|&(_, mask)| mask)
+    }
+
+    pub(crate) fn same_reference_net(&self, l: usize, net: i32) -> bool {
+        net >= 0 && self.reference_nets.contains(&(l, net))
+    }
+
+    pub(crate) fn is_reference_net(&self, net: usize) -> bool {
+        self.reference_nets.iter().any(|&(_, n)| n == net as i32)
+    }
+
     pub(crate) fn via_clearance(&self, l: usize) -> f64 {
         self.via_clearance.iter().find(|(layer, _)| *layer == l).map_or(0.0, |(_, c)| *c)
     }
