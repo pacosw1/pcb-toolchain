@@ -808,7 +808,6 @@ tools/routing_rules.py
 tools/run_record.py
 tools/run_record.ts
 tools/schematic_contract.py
-tools/schematic_contract_smoke.py
 tools/set_stackup.py
 tools/set_stackup.ts
 tools/si_pairs.py

@@ -11,7 +11,7 @@ import { dump, items, parse } from './pq-cadlib.ts';
 import { jsonDumps, PyError, strip } from './py-compat.mjs';
 import { round } from './py-numbers.ts';
 import { caught, resolvePath, textOf, which } from './py-path.ts';
-import { canonicalValue, checkContract, exportNative, number, pinKey } from './schematic-contract.ts';
+import { canonicalValue, checkContract, exportNative, number, pinKey, type Exporter } from './schematic-contract.ts';
 import { makeFunctionalFixture, placed } from './schematic-fixture.ts';
 
 const PINNED_KICAD = '10.0.6';
@@ -47,9 +47,9 @@ function filesBelow(folder: string): string[] {
 }
 
 /** Native CI adapter coverage; deliberately does not evaluate part reviews. */
-export async function exportObservation(schematic: string, artifacts: string): Promise<Json> {
+export async function exportObservation(schematic: string, artifacts: string, exporter: Exporter = exportNative): Promise<Json> {
   mkdirSync(artifacts, { recursive: true });
-  const { parsed, evidence, tools } = await exportNative(schematic, artifacts);
+  const { parsed, evidence, tools } = await exporter(schematic, artifacts);
   const adapted = parsed.pins.get(pinKey('J1', '1'))?.net === '/A' && parsed.pins.get(pinKey('J3', '1'))?.net === '/B'
     && parsed.fields.get('J1')?.get('Operating_Mode') === 'low';
   if (!adapted) throw valueError('actual native XML pins/operating-field parsing differs from source fixture');
