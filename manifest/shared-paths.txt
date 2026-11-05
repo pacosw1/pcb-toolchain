@@ -219,6 +219,8 @@ tools/lib/netlist.ts
 tools/lib/outcome-controls.ts
 tools/lib/outcome-evidence.ts
 tools/lib/outcome-quality.ts
+tools/lib/outcome-thermal.test.ts
+tools/lib/outcome-thermal.ts
 tools/lib/owned-stage.test.ts
 tools/lib/owned-stage.ts
 tools/lib/pack-fab.test.ts
@@ -233,6 +235,7 @@ tools/lib/pcb-cycle.test.ts
 tools/lib/pcb-cycle.ts
 tools/lib/pcb-evidence.test.ts
 tools/lib/pcb-evidence.ts
+tools/lib/pcb-identity.ts
 tools/lib/pcb-next.test.ts
 tools/lib/pcb-next.ts
 tools/lib/pcb-observation-inputs.test.ts
@@ -248,6 +251,7 @@ tools/lib/pcb-workflow.ts
 tools/lib/pdf-evidence.ts
 tools/lib/pixel-art-checks.mjs
 tools/lib/placement-outcomes.test.ts
+tools/lib/placement-outcomes-cli.test.ts
 tools/lib/placement-outcomes.ts
 tools/lib/port-labels.test.ts
 tools/lib/power-symbols.test.mjs
@@ -400,6 +404,7 @@ tools/pin-ratings.json
 tools/pin_escape_flow.py
 tools/pixel-art.py
 tools/placement_outcomes.py
+tools/placement_outcomes.ts
 tools/placer/README.md
 tools/placer/__init__.py
 tools/placer/anneal.py
