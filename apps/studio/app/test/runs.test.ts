@@ -9,7 +9,7 @@ import test from 'node:test'
 import type { TestContext } from 'node:test'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { subscribe, unsubscribe } from '../src/main/events.ts'
-import { Run, Runs, killGroup, routingPolicy } from '../src/main/runs.ts'
+import { Run, Runs, killGroup, resolveProjectTool, routingPolicy } from '../src/main/runs.ts'
 
 const REL = 'hardware-design/boards/DEMO/cad/DEMO/DEMO.kicad_pcb'
 const CHECK = `#!/bin/sh
@@ -63,6 +63,39 @@ async function finish(run: Run): Promise<void> {
   for (let i = 0; i < 500 && run.state === 'running'; i++) await sleep(10)
   assert.notEqual(run.state, 'running', 'run did not end')
 }
+
+test('pinned projects use their exact installed launcher with an explicit project', async t => {
+  const root = project(t, CHECK), install = path.join(root, 'installed')
+  fs.writeFileSync(path.join(root, 'toolchain.lock'), JSON.stringify({ schema: 'iot-lab.toolchain-lock.v1', version: '0.2.8' }))
+  const bin = path.join(install, '0.2.8/bin/pcb')
+  fs.mkdirSync(path.dirname(bin), { recursive: true })
+  fs.writeFileSync(path.join(install, '0.2.8/VERSION'), '0.2.8 fixture\n')
+  fs.writeFileSync(bin, '#!/bin/sh\n[ "$1" = --project ] || exit 9\n[ "$2" = "$(pwd -P)" ] || exit 10\nshift 2\n' + CHECK.replace('#!/bin/sh\n', ''), { mode: 0o755 })
+  const run = new Runs(r => resolveProjectTool(r, install)).start(root, 'check', 'DEMO')
+  assert.deepEqual(run.argv.slice(1, 4), ['--project', root, 'check'])
+  await finish(run)
+  assert.equal(run.state, 'passed')
+  fs.writeFileSync(path.join(install, '0.2.8/VERSION'), '0.2.7 fixture\n')
+  assert.throws(() => resolveProjectTool(root, install), /does not match.*pinned version/)
+  fs.rmSync(bin)
+  assert.throws(() => resolveProjectTool(root, install), /pins pcb-toolchain 0\.2\.8.*not installed/)
+  fs.writeFileSync(path.join(root, 'toolchain.lock'), JSON.stringify({ schema: 'iot-lab.toolchain-lock.v1', version: '../escape' }))
+  assert.throws(() => resolveProjectTool(root, install), /invalid project toolchain lock/)
+})
+
+test('pinned candidate adoption uses the same launcher and project', async t => {
+  const root = project(t, CHECK), install = path.join(root, 'installed')
+  fs.writeFileSync(path.join(root, 'toolchain.lock'), JSON.stringify({ schema: 'iot-lab.toolchain-lock.v1', version: '0.2.8' }))
+  const bin = path.join(install, '0.2.8/bin/pcb')
+  fs.mkdirSync(path.dirname(bin), { recursive: true })
+  fs.writeFileSync(path.join(install, '0.2.8/VERSION'), '0.2.8 fixture\n')
+  fs.writeFileSync(bin, '#!/bin/sh\n[ "$1" = --project ] || exit 9\n[ "$2" = "$(pwd -P)" ] || exit 10\nshift 2\n' + CANDIDATE.replace('#!/bin/sh\n', ''), { mode: 0o755 })
+  const r = new Runs(p => resolveProjectTool(p, install)), run = r.start(root, 'build', 'DEMO')
+  await finish(run)
+  assert.equal(run.state, 'passed')
+  assert.equal((await r.adopt(run.id)).candidate_run, 'run-build-DEMO')
+  assert.equal(fs.readFileSync(path.join(root, REL), 'utf8'), 'candidate\n')
+})
 
 const record = (root: string, id: string): Record<string, unknown> =>
   JSON.parse(fs.readFileSync(path.join(root, '.gate/studio/runs', id, 'run.json'), 'utf8'))
@@ -124,6 +157,33 @@ test('route writes the spec, sets the deadline, removes the spec; adopt replaces
   assert.equal(fs.readFileSync(path.join(root, REL), 'utf8'), 'candidate\n')       // canonical board replaced
   assert.deepEqual(run.summary().adoption, receipt)
   await assert.rejects(r.adopt(run.id), /already adopted/)
+})
+
+test('old project router rejection has an actionable cause without a fabricated terminal event', async t => {
+  const root = project(t, `#!/bin/sh
+echo "pcb route: error: argument --router: invalid choice: 'iotroute' (choose from 'explicit', 'fastroute', 'engine')" >&2
+exit 2
+`)
+  const r = new Runs(), run = r.start(root, 'route', 'DEMO', { policy: routingPolicy(5, 30) })
+  await finish(run)
+  assert.equal(run.state, 'error')
+  assert.equal(run.exit_code, 2)
+  assert.equal(run.end, null)
+  assert.equal(run.summary().candidate, null)
+  assert.match(run.summary().cause!, /does not support Studio's iotroute routing policy/)
+  assert.match(run.summary().cause!, /compatible project toolchain/)
+  assert.match(run.stderr.join('\n'), /invalid choice/)
+  const restored = new Runs()
+  assert.equal(restored.load(root), 1)
+  assert.equal(restored.get(run.id).summary().cause, run.summary().cause)
+})
+
+test('unrelated route errors do not claim an unsupported router', async t => {
+  const root = project(t, '#!/bin/sh\necho "cannot open project" >&2\nexit 2\n')
+  const run = new Runs().start(root, 'route', 'DEMO', { policy: routingPolicy(5, 30) })
+  await finish(run)
+  assert.equal(run.state, 'error')
+  assert.equal(run.summary().cause, null)
 })
 
 test('two adopts at once run the CLI once', async t => {

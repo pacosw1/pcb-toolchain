@@ -12,17 +12,19 @@ import { summarize } from './lib/pcb-benchmark.ts';
 import { adopt } from './lib/pcb-candidate.ts';
 import { cycleCommand, CYCLE_OPTIONS } from './lib/pcb-cycle-cli.ts';
 import { get, item, jsonDumps, pyStr } from './lib/py-compat.mjs';
+import { auditBoardIdentities, inspectBoardIdentity, readBoardIdentity } from './lib/pcb-board-identity.ts';
 
-const usage = 'usage: pcb [--project DIR] {list,context,next,status,events,explain,cancel,note,benchmark,cycle,adopt} [BOARD_OR_RUN_ID] [options]';
+const usage = 'usage: pcb [--project DIR] {list,identity,context,next,status,events,explain,cancel,note,benchmark,cycle,adopt} [BOARD_OR_RUN_ID] [options]';
 
 export async function main(argv: string[]): Promise<number> {
   let explicit: string | undefined;
   if (argv[0] === '--project') { explicit = argv[1]; if (!explicit) throw new Error(usage); argv = argv.slice(2); }
   else if (argv[0]?.startsWith('--project=')) { explicit = argv[0].slice(10); argv = argv.slice(1); }
   const command = argv.shift();
-  if (!['list', 'context', 'next', 'status', 'events', 'explain', 'cancel', 'note', 'benchmark', 'cycle', 'adopt'].includes(command ?? '')) throw new Error(usage);
+  if (!['list', 'identity', 'context', 'next', 'status', 'events', 'explain', 'cancel', 'note', 'benchmark', 'cycle', 'adopt'].includes(command ?? '')) throw new Error(usage);
   const options: ParseArgsOptionsConfig = {
     'runs-dir': { type: 'string' }, json: { type: 'boolean', default: false },
+    ...(command === 'identity' ? { file: { type: 'string' }, all: { type: 'boolean', default: false } } : {}),
     ...(command === 'events' ? { after: { type: 'string', default: '0' }, limit: { type: 'string', default: '100' }, wait: { type: 'string', default: '0' } } : {}),
     ...(command === 'explain' ? { limit: { type: 'string', default: '20' } } : {}),
     ...(command === 'next' ? { 'design-contract': { type: 'string' }, through: { type: 'string' } } : {}),
@@ -31,13 +33,28 @@ export async function main(argv: string[]): Promise<number> {
     ...(command === 'cycle' ? CYCLE_OPTIONS : {}),
   };
   const { values, positionals } = parseArgs({ args: argv, options, allowPositionals: true });
-  if (command === 'benchmark' ? positionals.length < 1 : positionals.length !== (command === 'list' ? 0 : command === 'note' || command === 'cycle' ? 2 : 1)) throw new Error(usage);
+  if (command === 'benchmark' ? positionals.length < 1 : positionals.length !== (command === 'list' || (command === 'identity' && values.all) ? 0 : command === 'note' || command === 'cycle' ? 2 : 1)) throw new Error(usage);
   const noteKind = command === 'note' ? values.kind as string | undefined : undefined;
   if (command === 'note' && (!noteKind || !NOTE_KINDS.includes(noteKind as NoteKind))) throw new Error('--kind must be intervention, decision or rework');
   if (command === 'list') {
     const data = catalog(projectRoot(explicit)) as { boards: { board: string }[] };
     console.log(values.json ? jsonDumps(data) : data.boards.map(row => row.board).join('\n'));
     return 0;
+  }
+  if (command === 'identity') {
+    const root = projectRoot(explicit);
+    const path = values.file as string | undefined;
+    if (values.all) {
+      if (path) throw new Error('identity --all cannot be combined with --file');
+      const result = auditBoardIdentities(root) as { ok: boolean };
+      console.log(jsonDumps(result, values.json ? null : 2));
+      return result.ok ? 0 : 1;
+    }
+    const board = positionals[0]!;
+    if (!path) throw new Error('identity requires --file PATH to the staged JSON-formatted board.yaml');
+    const result = inspectBoardIdentity(root, board, readBoardIdentity(path)) as { ok: boolean };
+    console.log(jsonDumps(result, values.json ? null : 2));
+    return result.ok ? 0 : 1;
   }
   if (command === 'context' || (command === 'status' && !RUN_ID.test(positionals[0]!))) {
     console.log(jsonDumps(context(projectRoot(explicit), positionals[0]!), values.json ? null : 2));

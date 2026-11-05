@@ -163,6 +163,7 @@ export class Project {
   boards(): Board[] {
     this.conflicts = []
     const out = this.legacyBoards().map(b => {
+      if (b.identity === 'registry-variant') return b
       const f = this.boardFile(b.directory)
       return isFile(f) ? this.fromBoardFile(b.directory, f) : b
     })
@@ -257,6 +258,17 @@ export class Project {
     const registryGate = new Map<Revision, string | undefined>()
     const names = new Set(folders.map(d => path.basename(d)))
     for (const b of reg.boards ?? []) {
+      if (!b.directory && b.kind === 'variant' && b.id && b.variant_of) {
+        // A virtual variant has no independent board directory or CAD. Keep
+        // its registry identity visible without inventing a filesystem folder.
+        if (names.has(b.id)) {
+          this.conflict(b.id, 'registry_variant_folder_collision', 'virtual variant ID also names a physical board folder')
+          continue
+        }
+        boards.push({ id: b.id, directory: b.id, lifecycle: b.lifecycle || 'unregistered', kind: b.kind,
+                      variant_of: b.variant_of, identity: 'registry-variant', revisions: [] })
+        continue
+      }
       if (!b.directory || (!names.has(b.directory) && !excluded.includes(b.directory))) {
         this.conflict(b.id, 'registry_no_folder', `registry board ${show(b.id)} has no board folder; not listed`)
       }
@@ -264,7 +276,6 @@ export class Project {
     for (const d of folders) {
       const name = path.basename(d)
       if (gateOnly(d)) {
-        this.conflict(name, 'gate_only_folder', `${name} holds only gate data; its gate shows on the revision it checks`)
         continue
       }
       const e = entries.get(name)
@@ -275,7 +286,9 @@ export class Project {
         const proj = r.project
         const pcb = proj ? this.existing(d, proj + '.kicad_pcb') : null
         named ||= pcb !== null
-        if (proj && !pcb) this.conflict(name, 'registry_pcb_missing', `rev ${show(r.revision)}: ${proj}.kicad_pcb does not exist`)
+        const schematicPendingLayout = r.state === 'schematic-pending-layout' && r.gate == null &&
+          proj && this.existing(d, proj + '.kicad_sch') !== null
+        if (proj && !pcb && !schematicPendingLayout) this.conflict(name, 'registry_pcb_missing', `rev ${show(r.revision)}: ${proj}.kicad_pcb does not exist`)
         const bom = this.existing(d, r.bom)
         if (r.bom && !bom) this.conflict(name, 'registry_bom_missing', `rev ${show(r.revision)}: ${r.bom} does not exist`)
         const rev = newRevision({ revision: r.revision ?? null, state: r.state ?? null, pcb,
@@ -289,6 +302,10 @@ export class Project {
       if (!named) {
         for (const pcb of cadBoards(d)) {
           if (path.relative(d, pcb).split(path.sep).some(part => part.startsWith('.'))) continue
+          if (e?.revisions?.length) {
+            this.conflict(name, 'unregistered_native_revision',
+              `${this.rel(pcb)} is native CAD not assigned to a registry revision; review before promoting board.yaml`)
+          }
           revs.push(newRevision({ state: 'unregistered', pcb: this.rel(pcb),
                                   sch: this.existing(path.dirname(pcb), path.basename(pcb, '.kicad_pcb') + '.kicad_sch') }))
         }

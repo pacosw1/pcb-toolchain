@@ -274,6 +274,8 @@ tools/lib/pcb-sources.ts
 tools/lib/pcb-observe-cli.test.ts
 tools/lib/pcb-workflow.test.ts
 tools/lib/pcb-workflow.ts
+tools/lib/pcb-board-identity.ts
+tools/lib/pcb-board-identity.test.ts
 tools/lib/pcbtool-cli.test.ts
 tools/lib/pcbtool-cli.ts
 tools/lib/pcbtool-corridor.ts

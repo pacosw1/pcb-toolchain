@@ -11,7 +11,7 @@ import { Project, boardFileFor, dumpBoardFile, resolveReal } from './project.ts'
 
 export interface MigrateReport {
   root: string, out: string, boards: number, revisions: number, gates: number, written: string[],
-  conflicts: IdentityConflict[], round_trip: boolean
+  conflicts: IdentityConflict[], round_trip: boolean, ready_for_promotion: boolean
 }
 
 const identityFree = (boards: Board[]): unknown[] => boards.map(({ identity: _identity, ...rest }) => rest)
@@ -21,16 +21,24 @@ export function migrate(root: string, outDir: string): MigrateReport {
   const out = resolveReal(path.resolve(outDir))
   const written: string[] = []
   for (const b of boards) {
+    if (b.identity === 'registry-variant') continue
     const f = path.join(out, b.directory, src.layout.board_file)
     fs.mkdirSync(path.dirname(f), { recursive: true })
     fs.writeFileSync(f, dumpBoardFile(boardFileFor(src, b)))
     written.push(path.relative(out, f))
   }
-  const again = new Project(root, {}, out).boards()
+  const reread = new Project(root, {}, out), again = reread.boards()
+  for (const conflict of reread.conflicts) {
+    if (!conflicts.some(c => c.board === conflict.board && c.kind === conflict.kind && c.message === conflict.message)) {
+      conflicts.push(conflict)
+    }
+  }
+  const roundTrip = isDeepStrictEqual(identityFree(again), identityFree(boards)) &&
+    again.every(b => b.identity === 'board.yaml' || b.identity === 'registry-variant')
   const report: MigrateReport = {
     root: src.root, out, boards: boards.length, revisions: boards.reduce((n, b) => n + b.revisions.length, 0),
     gates: boards.flatMap(b => b.revisions).reduce((n, r) => n + r.gates.length, 0), written, conflicts,
-    round_trip: isDeepStrictEqual(identityFree(again), identityFree(boards)) && again.every(b => b.identity === 'board.yaml')
+    round_trip: roundTrip, ready_for_promotion: roundTrip && conflicts.length === 0
   }
   fs.writeFileSync(path.join(out, 'migrate-report.json'), JSON.stringify(report, null, 2) + '\n')
   return report

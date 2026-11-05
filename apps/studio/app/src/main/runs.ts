@@ -161,9 +161,18 @@ export class Run {
 
   summary(): RunSummary {
     const e = this.end ?? {}
+    // Older project CLIs reject the router during argument parsing, before
+    // they can produce a run.end. Preserve stderr and report a precise cause
+    // only for that observed rejection; do not translate policies or infer
+    // compatibility from an unrelated failure.
+    const unsupportedRouter = this.op === 'route' && this.exit_code === 2 && !this.end &&
+      this.stderr.some(line => /argument --router: invalid choice: ['"]iotroute['"]/.test(line))
+    const cause = (e.cause as string) ?? (unsupportedRouter
+      ? "This project's tools/pcb does not support Studio's iotroute routing policy. Use a compatible project toolchain; see tools/PCB-CLI.md. No candidate was created."
+      : null)
     return {
       id: this.id, op: this.op, board: this.board, mode: this.mode, state: this.state, started: this.started,
-      exit_code: this.exit_code, run_id: this.run_id, cause: (e.cause as string) ?? null,
+      exit_code: this.exit_code, run_id: this.run_id, cause,
       metrics: (e.metrics as Record<string, number>) ?? null, findings: ((e.findings as unknown[]) || []).length,
       events: this.events.length, elapsed_s: (e.elapsed_s as number) ?? null, candidate: this.candidate(),
       policy: this.policy as unknown as Json | null, adoption: this.adoption,
@@ -180,10 +189,27 @@ export function killGroup(pid: number): void {
   }
 }
 
-function toolOf(root: string): string {
-  const tool = path.join(root, 'tools', 'pcb')
-  if (!isFile(tool)) throw new Error(`${tool} (this project has no tools/pcb)`)
-  return tool
+export function resolveProjectTool(root: string, installRoot = path.join(os.homedir(), '.local/share/pcb-toolchain')): { executable: string, prefix: string[] } {
+  const lock = path.join(root, 'toolchain.lock')
+  if (isFile(lock)) {
+    let value: unknown
+    try { value = JSON.parse(fs.readFileSync(lock, 'utf8')) } catch { throw new Error(`invalid project toolchain lock: ${lock}`) }
+    if (!isObject(value) || value.schema !== 'iot-lab.toolchain-lock.v1' || typeof value.version !== 'string' ||
+        !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value.version) || value.version.includes('..')) {
+      throw new Error(`invalid project toolchain lock: ${lock}`)
+    }
+    const executable = path.join(installRoot, value.version, 'bin/pcb')
+    try { if (!isFile(executable)) throw new Error('not a file'); fs.accessSync(executable, fs.constants.X_OK) } catch {
+      throw new Error(`Project pins pcb-toolchain ${value.version}, but ${executable} is not installed. Install the pinned release before running Studio operations.`)
+    }
+    let installedVersion = ''
+    try { installedVersion = fs.readFileSync(path.join(installRoot, value.version, 'VERSION'), 'utf8').trim().split(/\s+/)[0] ?? '' } catch { /* invalid install below */ }
+    if (installedVersion !== value.version) throw new Error(`Installed pcb-toolchain at ${path.dirname(executable)} does not match the project's pinned version ${value.version}.`)
+    return { executable, prefix: ['--project', root] }
+  }
+  const executable = path.join(root, 'tools', 'pcb')
+  if (!isFile(executable)) throw new Error(`${executable} (this project has no tools/pcb or toolchain.lock)`)
+  return { executable, prefix: [] }
 }
 
 /** An early, readable refusal of what the CLI refuses anyway (the CLI stays the authority). */
@@ -222,6 +248,9 @@ export interface StartOptions { fresh?: boolean, policy?: RoutingPolicy, timeout
 
 export class Runs {
   runs = new Map<string, Run>()
+  private resolveTool: typeof resolveProjectTool
+
+  constructor(resolveTool: typeof resolveProjectTool = resolveProjectTool) { this.resolveTool = resolveTool }
 
   get(id: string): Run {
     const run = this.runs.get(id)
@@ -278,14 +307,14 @@ export class Runs {
     const { fresh = true, policy, timeoutS } = options
     if (!OPS.includes(op)) throw new Error(`unknown run op '${op}' (one of ${OPS.join(', ')})`)
     if (!board || board.includes('/') || board.startsWith('-')) throw new Error(`invalid board gate name: '${board}'`)
-    const tool = toolOf(root)
+    const { executable: tool, prefix } = this.resolveTool(root)
     let mode: string, argv: string[]
     if (op === 'check') {
       mode = fresh ? 'fresh' : 'changed'
-      argv = [tool, 'check', board, `--${mode}`, '--json']
+      argv = [tool, ...prefix, 'check', board, `--${mode}`, '--json']
     } else if (op === 'build') {
       mode = 'build'
-      argv = [tool, 'build', board, ...(timeoutS ? ['--timeout', String(timeoutS)] : []), '--json']
+      argv = [tool, ...prefix, 'build', board, ...(timeoutS ? ['--timeout', String(timeoutS)] : []), '--json']
     } else {
       if (!policy) throw new Error('route needs a routing policy')
       checkPolicy(policy)
@@ -293,7 +322,7 @@ export class Runs {
       const total = timeoutS || Math.max(600, policy.max_time_s + 600)
       if (total < policy.max_time_s) throw new Error('the total timeout must be at least the router max_time_s')
       mode = 'iotroute'
-      argv = [tool, 'route', board, '--router', 'iotroute', '--spec', writeSpec(board, policy), '--timeout', String(total), '--json']
+      argv = [tool, ...prefix, 'route', board, '--router', 'iotroute', '--spec', writeSpec(board, policy), '--timeout', String(total), '--json']
     }
     const run = new Run(newId(), op as RunOp, board, mode, argv, root)
     if (op === 'route') run.policy = policy!
@@ -394,7 +423,8 @@ export class Runs {
     run.adopting = true                             // set before the first await: a second adopt is refused
     let code: number, out: string, err: string
     try {
-      ({ code, out, err } = await collect(toolOf(run.root!), ['adopt', run.run_id, '--json'], run.root!))
+      const { executable, prefix } = this.resolveTool(run.root!)
+      ;({ code, out, err } = await collect(executable, [...prefix, 'adopt', run.run_id, '--json'], run.root!))
     } finally {
       run.adopting = false
     }

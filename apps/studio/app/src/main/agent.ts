@@ -165,7 +165,7 @@ export class AgentHost {
         ),
         tool(
           'build',
-          "Run the board's own build pipeline (tools/pcb build) into an isolated candidate, gate it fresh and wait for the verdict. Canonical CAD is not changed. Boards without a pipeline fail with a cause.",
+          "Run tools/pcb build into an isolated candidate, gate it fresh and wait for the verdict. Canonical CAD is not changed. The CLI reports whether the build is supported; a missing pipeline in board metadata does not establish that it is unsupported.",
           { board: z.string().optional().describe('gate name; default: the open board') },
           async ({ board }) => {
             const gate = board || ctx.gate

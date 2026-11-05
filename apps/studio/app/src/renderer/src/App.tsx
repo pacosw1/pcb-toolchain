@@ -128,6 +128,7 @@ function App(): React.JSX.Element {
   const ready = status?.state === 'ready'
   const [project, setProject] = useState<ProjectInfo | null>(null)
   const [pcb, setPcb] = useState<string | null>(null)
+  const [selectedBoardId, setSelectedBoardId] = useState<string | null>(null)
   const [geo, setGeo] = useState<Geometry | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -150,7 +151,8 @@ function App(): React.JSX.Element {
   const mention = selection
     ? `@${selection.ref}.${selection.pad.num}${selection.pad.net ? ` #${selection.pad.net}` : ''}`
     : null
-  const board = project?.boards.find((b) => b.revisions.some((r) => r.pcb && r.pcb === pcb)) ?? null
+  const board = project?.boards.find((b) => b.revisions.some((r) => r.pcb && r.pcb === pcb)) ??
+    project?.boards.find((b) => b.id === selectedBoardId) ?? null
   const revision = board?.revisions.find((r) => r.pcb === pcb) ?? null
   const gate = revision?.gate ?? null
 
@@ -317,8 +319,15 @@ function App(): React.JSX.Element {
               <BoardPicker
                 boards={project.boards}
                 current={board}
-                onPick={(_b, p) => {
+                onPick={(b, p) => {
+                  setSelectedBoardId(b.id)
                   choosePcb(p)
+                  if (!p) {
+                    setGeo(null)
+                    setBom(null)
+                    setSelection(null)
+                    setFindings([])
+                  }
                   setTab('board')
                 }}
               />
@@ -372,7 +381,7 @@ function App(): React.JSX.Element {
               {error}
             </div>
           ) : null}
-          {geo && tab === 'board' ? (
+          {geo && pcb && tab === 'board' ? (
             <BoardView
               geo={geo}
               onSelect={s => { setSelection(s); if (s) setLinked({ ref: s.ref }) }}
@@ -389,7 +398,7 @@ function App(): React.JSX.Element {
             <SpecView key={project?.root + pcb} pcb={pcb} />
           ) : geo && tab === '3d' && pcb ? (
             <Viewer3D pcb={pcb} />
-          ) : geo && tab === 'parts' && bom ? (
+          ) : geo && pcb && tab === 'parts' && bom ? (
             <PartsView
               bom={bom} geo={geo} selection={linked} onSelect={setLinked}
               onDatasheet={(l) => {
@@ -401,9 +410,9 @@ function App(): React.JSX.Element {
                 setTab('board')
               }}
             />
-          ) : geo && tab === 'datasheets' && bom ? (
+          ) : geo && pcb && tab === 'datasheets' && bom ? (
             <DatasheetView bom={bom} initial={sheet} />
-          ) : geo && tab === 'checks' ? (
+          ) : geo && pcb && tab === 'checks' ? (
             <ChecksView
               gate={gate}
               onFindings={setFindings}
@@ -415,11 +424,13 @@ function App(): React.JSX.Element {
                 setTab('board')
               }}
             />
-          ) : tab === 'live' ? (<LiveView selection={linked} onSelect={setLinked} />) : geo && tab === 'runs' ? (
+          ) : tab === 'live' ? (<LiveView selection={linked} onSelect={setLinked} />) : geo && pcb && tab === 'runs' ? (
             <RunsView gate={gate} current={geo} onAdopted={() => setReload((n) => n + 1)} />
           ) : (
             <section className="panel placeholder" aria-label="Board view">
-              {busy ? 'Loading board…' : project ? 'Choose a board on the left.' : 'No project open.'}
+              {busy && pcb ? 'Loading board…' : board && !pcb
+                ? `${board.id} has no independent PCB${board.variant_of ? `; it is a variant of ${board.variant_of}` : ''}.`
+                : project ? 'Choose a board on the left.' : 'No project open.'}
             </section>
           )}
         </main>

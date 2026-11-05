@@ -146,16 +146,18 @@ export interface Revision {
   bom: string | null
   gate: string | null
   gates: GateRef[]
+  /** Declared pipeline path if present; null means unknown, not build unavailable. */
   pipeline: string | null
 }
 
 export interface Board {
   id: string
+  /** For registry-variant identities this is a display key, not a filesystem directory. */
   directory: string
   lifecycle: string
   kind: string | null
   variant_of: string | null
-  identity: 'board.yaml' | 'legacy'
+  identity: 'board.yaml' | 'legacy' | 'registry-variant'
   revisions: Revision[]
 }
 

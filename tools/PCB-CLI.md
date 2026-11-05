@@ -299,3 +299,11 @@ candidate refused first; an injected track gap diagnosed, repaired and adopted; 
 engineering cycle over those runs. The source project must stay unchanged. It proves the
 workflow, not the board. The thermal cases of `lib/placement-outcomes.test.ts` need
 `ROUTE_COVERAGE_BIN` on Linux and skip elsewhere.
+# Board identity audit
+
+`pcb --project DIR identity --all --json` compares JSON-formatted
+`pcbstudio.board.v1` board manifests with the registry and configured gate paths.
+`identity BOARD --file PATH --json` checks a staged manifest. The command observes
+metadata only; it does not establish electrical correctness or qualification and
+does not block check, route or build admission. Gate-only pending configurations
+remain inactive and directoryless variants retain their registry identity.

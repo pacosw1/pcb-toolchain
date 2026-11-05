@@ -32,9 +32,10 @@ if (command === 'serve') {
   const { values: v } = parseArgs({ args: rest, options: { project: text, out: text } })
   if (!v.project || !v.out) fail('migrate needs --project DIR --out DIR')
   const r = migrate(v.project, v.out)
-  console.log(`migrate ${r.round_trip ? 'PASS' : 'FAIL'}: ${r.boards} boards, ${r.revisions} revisions, ${r.gates} gates, ` +
-              `${r.conflicts.length} conflicts, round trip ${r.round_trip ? 'same' : 'DIFFERS'} (report ${r.out}/migrate-report.json)`)
-  process.exit(r.round_trip ? 0 : 1)
+  console.log(`migrate ${r.ready_for_promotion ? 'PASS' : 'BLOCKED'}: ${r.boards} boards, ${r.revisions} revisions, ${r.gates} gates, ` +
+              `${r.conflicts.length} conflicts, round trip ${r.round_trip ? 'same' : 'DIFFERS'}, ` +
+              `promotion ${r.ready_for_promotion ? 'ready for review' : 'blocked'} (report ${r.out}/migrate-report.json)`)
+  process.exit(r.ready_for_promotion ? 0 : 1)
 } else {
   fail('usage: engineMain serve|web|migrate ...')
 }

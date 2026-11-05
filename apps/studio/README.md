@@ -6,6 +6,12 @@ with a live board view, Claude chat, datasheets, BOM and parts in one window. Ma
 Plan: `~/.claude/plans/typed-bubbling-lemur.md` (approved 2026-10-24). Hardware data stays in the iot-lab repo,
 which the app opens as a project.
 
+For projects with `toolchain.lock`, Studio runs the matching installed release at
+`~/.local/share/pcb-toolchain/<version>/bin/pcb` with an explicit project path.
+An absent or mismatched release blocks operations with an install message; Studio
+does not silently select another version. Projects without a lock retain the
+repository-local `tools/pcb` entry point.
+
 ## Layout
 - `app/` — Electron + React + TypeScript (electron-vite). Main process: engine supervisor (`src/main/engine.ts`) and the
   Claude Agent SDK host. Renderer: the UI. The engine itself is `src/main/engineMain.ts`: a separate process on the app's

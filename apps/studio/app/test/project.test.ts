@@ -84,7 +84,7 @@ test('gates come from gate.json', t => {
   assert.equal(boards.get('NEW')!.revisions[0].gate, 'NEW')
   assert.equal(boards.get('NEW')!.revisions[0].pipeline, null)            // named in gate.json, but no such file
   const kinds = new Set(p.conflicts.map(c => `${c.board} ${c.kind}`))
-  for (const k of ['MAIN registry_gate_differs', 'MAIN registry_gate_missing', 'MAIN-B gate_only_folder', 'NEW unregistered_board']) {
+  for (const k of ['MAIN registry_gate_differs', 'MAIN registry_gate_missing', 'NEW unregistered_board']) {
     assert.ok(kinds.has(k), k)
   }
 })
