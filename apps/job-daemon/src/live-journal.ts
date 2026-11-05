@@ -14,7 +14,7 @@ export type StoredLiveState = Omit<LiveState, 'tracks' | 'vias'> & { tracks: Liv
 export function packLiveState(state: LiveState): StoredLiveState {
   return structuredClone({ ...state, tracks: [...state.tracks.values()], vias: [...state.vias.values()] })
 }
-function unpack(value: StoredLiveState): LiveState { return { ...value, tracks: new Map(value.tracks.map(t => [t.id, t])), vias: new Map(value.vias.map(v => [v.id, v])) } }
+function unpack(value: StoredLiveState): LiveState { return { ...emptyLiveState(value.runId), ...value, tracks: new Map(value.tracks.map(t => [t.id, t])), vias: new Map(value.vias.map(v => [v.id, v])) } }
 function fork(state: LiveState): LiveState { return { ...state, tracks: new Map(state.tracks), vias: new Map(state.vias), checkpoints: [...state.checkpoints] } }
 interface Row { body: string; digest: string }
 function checked(row: Row): string { if (digest(row.body) !== row.digest) throw new Error('Live journal integrity failure'); return row.body }

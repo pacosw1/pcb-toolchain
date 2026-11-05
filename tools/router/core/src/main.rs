@@ -43,6 +43,7 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
 mod checkpoint;
+mod live;
 mod congestion;
 mod layers;
 
@@ -1744,6 +1745,7 @@ impl<'a> Ctx<'a> {
             }
             self.gr.closed[i] = sgen;
             pops += 1;
+            if pops % 256 == 0 { live::frontier(self, net, i); }
             if dbg && !expd[i] {
                 expd[i] = true;
                 distinct += 1;
@@ -2784,6 +2786,8 @@ fn fanout_net(ctx: &mut Ctx, net: usize) -> NetResult {
     ctx.neck.clear();
     ctx.lfloor.clear();
     ctx.leaf_necks = false;
+    live::snapshot(ctx.bd);
+    if let Some(reason) = &r.hard_fail { live::failure(ctx, net, reason, &[]); }
     r
 }
 
@@ -2795,6 +2799,8 @@ fn fanout_net_inner(ctx: &mut Ctx, net: usize) -> NetResult {
             }
         }
     }
+    live::snapshot(ctx.bd);
+    live::activity(ctx, net, "searching", &[]);
     let mut out = NetResult { hard_fail: None, limit: false, conflicts: 0, cost: 0.0 };
     let all = (1u8 << ctx.bd.layer_names.len()) - 1;
     let pads: Vec<Shape> = ctx.bd.shapes.iter().filter(|s| s.alive && s.net == net as i32 && s.kind == Kind::Pad && s.drill == 0.0).cloned().collect();
@@ -3069,6 +3075,7 @@ struct NetResult {
 
 /// Rip up the copper this net routed before, then join its components again against the present congestion.
 fn route_net(ctx: &mut Ctx, net: usize) -> NetResult {
+    live::activity(ctx, net, "searching", &[]);
     release_returns(ctx, net);
     ctx.ret_soft = false;
     let r = match ctx.layer_choice(net) {
@@ -3089,6 +3096,8 @@ fn route_net_inner(ctx: &mut Ctx, net: usize) -> NetResult {
             s.alive = false;
         }
     }
+    live::snapshot(ctx.bd);
+    live::activity(ctx, net, "ripup", &[]);
     let mut out = NetResult { hard_fail: None, limit: false, conflicts: 0, cost: 0.0 };
     let items: Vec<usize> = (0..ctx.bd.shapes.len()).filter(|&i| { let s = &ctx.bd.shapes[i]; s.alive && s.net == net as i32 && s.owner < 0 && s.kind != Kind::Spoke }).collect();
     if items.len() < 2 {
@@ -3274,6 +3283,8 @@ fn route_net_inner(ctx: &mut Ctx, net: usize) -> NetResult {
                 found = join_search(ctx, net, hw, &src, &anchors, allow_via, vm, last, nbox);
                 match &found {
                     Ok(path) if budget.map(|b| path_vias(&ctx.gr, path) > b).unwrap_or(false) => {
+                        live::activity(ctx, net, "rejected", path);
+                        live::failure(ctx, net, "DRU via_count: candidate path exceeds via budget", path);
                         over_budget = true;
                         found = Err(false);
                     }
@@ -3396,6 +3407,8 @@ fn route_net_inner(ctx: &mut Ctx, net: usize) -> NetResult {
             }
         }
         if !rejected.is_empty() {
+            live::activity(ctx, net, "rejected", &path);
+            live::failure(ctx, net, "RP-001: rejected layer change without GND return", &path);
             for i in first_new..ctx.bd.shapes.len() {
                 ctx.bd.shapes[i].alive = false;
             }
@@ -3433,6 +3446,8 @@ fn route_net_inner(ctx: &mut Ctx, net: usize) -> NetResult {
             }
             continue;
         }
+        live::snapshot(ctx.bd);
+        live::activity(ctx, net, "accepted", &path);
         used_vias += vs.len();
         len_used += tr.iter().map(|&(_, a, b, _)| (b.0 - a.0).hypot(b.1 - a.1)).sum::<f64>() + vs.len() as f64 * via_len;
         out.conflicts += k;
@@ -4497,6 +4512,8 @@ fn route_cli(args: &[String]) {
     let rplanes = 1 + bd.gnds.len();
     let mut ctx = Ctx { bd: &mut bd, gr, o: &o, strict: false, dead: vec![(Vec::new(), String::new()); nets_n], memo: Vec::new(), memo_w,
                         rcache: vec![0; nx * ny * rplanes], ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false, ret_soft: true, lfloor: Vec::new(), leaf_necks: false, stubs: std::collections::HashMap::new(), stub_cost: Default::default(), recover: false, fan_keep: false };
+    live::init();
+    live::snapshot(ctx.bd);
     let fan_fail: Vec<Fail> = Vec::new();
     let nn = ctx.bd.nets.len();
     let mut todo: Vec<usize> = match &plan {
@@ -4543,6 +4560,7 @@ fn route_cli(args: &[String]) {
     }
     for it in start_pass..o.passes {
         iters = it + 1;
+        live::pass(iters);
         ctx.bd.compact();
         let mut total = 0u32;
         let mut limited: Vec<usize> = Vec::new();
@@ -4558,6 +4576,8 @@ fn route_cli(args: &[String]) {
             let tn = std::time::Instant::now();
             moves[net] += 1;
             let r = if ctx.bd.nets[net].plane { fanout_net(&mut ctx, net) } else { route_net(&mut ctx, net) };
+            live::snapshot(ctx.bd);
+            if ctx.bd.nets[net].plane { if let Some(reason) = &r.hard_fail { live::failure(&ctx, net, reason, &[]); } }
             if prof {
                 eprintln!("  {:<14} {:6.2} s conflicts {:5}{}", ctx.bd.nets[net].name, tn.elapsed().as_secs_f64(), r.conflicts, if r.limit { " LIMIT" } else { "" });
             }
@@ -4572,6 +4592,7 @@ fn route_cli(args: &[String]) {
         // PathFinder overuse = exact audit of the final copper of this iteration: history on every conflicting item
         // of both nets, and the rip-up set = every net that is still in conflict (not the stale routing-time count)
         let au = ctx.audit(o.hist);
+        live::conflicts(&ctx, &au);
         let mut involved: Vec<usize> = (0..nn).filter(|&n| au.per_net[n] > 0 || !au.partners[n].is_empty()).collect();
         // layer negotiation (layers.rs): a one-layer net in conflict gets history on the layer it is on
         ctx.layer_hist(&involved, o.hist);
@@ -5054,6 +5075,7 @@ fn route_cli(args: &[String]) {
     }
     failed.extend(pour_fails);
     let out = Out { schema: "iot-lab.route-result.v0".into(), tracks, vias, failed, notes, passes: iters };
+    live::snapshot(ctx.bd);
     std::fs::write(&args[2], serde_json::to_string_pretty(&out).unwrap()).expect("write");
     let route_s = t0.elapsed().as_secs_f64();
     if let Some(w) = &mut ckpt {

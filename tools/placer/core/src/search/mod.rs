@@ -120,11 +120,16 @@ struct EpochOutcome {
     seconds: f64,
 }
 
-fn run_epoch(model: &Model, mover: &Mover, t: EpochTask) -> EpochOutcome {
+pub type MoveObserver = dyn Fn(usize, usize, usize, usize, usize, f64, &Pose, f64, &Pose) + Sync;
+
+fn run_epoch(model: &Model, mover: &Mover, t: EpochTask, worker: usize, epoch: usize, observer: Option<&MoveObserver>) -> EpochOutcome {
     let mut ev = Evaluator::new(model, t.params, t.pose);
     let mut rng = PyRandom::new(t.seed);
     let start = Instant::now();
-    let best = anneal(&mut ev, mover, &mut rng, t.schedule);
+    let callback = |step, accepted, rejected, cost, current: &Pose, best_cost, best: &Pose| {
+        if let Some(observe) = observer { observe(worker, epoch + 1, step, accepted, rejected, cost, current, best_cost, best); }
+    };
+    let best = anneal::anneal_observed(&mut ev, mover, &mut rng, t.schedule, observer.map(|_| &callback as &dyn Fn(usize,usize,usize,f64,&Pose,f64,&Pose)));
     let seconds = start.elapsed().as_secs_f64();
     EpochOutcome { worker: Worker { pose: ev.pose(), cost: ev.cost(), best_pose: best.pose, best_cost: best.cost }, seconds }
 }
@@ -218,12 +223,12 @@ impl Run<'_> {
         }
     }
 
-    fn epoch(&self, mover: &Mover, workers: &[Worker], epoch: usize) -> Vec<EpochOutcome> {
+    fn epoch(&self, mover: &Mover, workers: &[Worker], epoch: usize, observer: Option<&MoveObserver>) -> Vec<EpochOutcome> {
         let params = epoch_params(self.params, epoch, self.plan.epochs);
         let schedule = self.schedule(epoch);
         in_parallel(workers.len(), |w| {
             let seed = seed_for(self.plan.seed, w, epoch);
-            run_epoch(self.model, mover, EpochTask { pose: &workers[w].pose, seed, schedule, params: &params })
+            run_epoch(self.model, mover, EpochTask { pose: &workers[w].pose, seed, schedule, params: &params }, w, epoch, observer)
         })
     }
 }
@@ -261,13 +266,18 @@ pub fn optimize(pr: &mut Problem, p: &Params, plan: Plan, log: &dyn Fn(&str)) ->
 /// Calls preview after each epoch. A preview callback must not affect search state.
 pub fn optimize_with_preview(pr: &mut Problem, p: &Params, plan: Plan, log: &dyn Fn(&str),
     preview: &dyn Fn(usize,usize,f64,&Pose)) -> crate::Result<SearchResult> {
+    optimize_observed(pr, p, plan, log, preview, None)
+}
+
+pub fn optimize_observed(pr: &mut Problem, p: &Params, plan: Plan, log: &dyn Fn(&str),
+    preview: &dyn Fn(usize,usize,f64,&Pose), observer: Option<&MoveObserver>) -> crate::Result<SearchResult> {
     check(pr, p, plan)?;
     let global = crate::gplace::apply(pr, p, log);
-    anneal_all(pr, p, plan, log, global, preview)
+    anneal_all(pr, p, plan, log, global, preview, observer)
 }
 
 fn anneal_all(pr: &Problem, p: &Params, plan: Plan, log: &dyn Fn(&str), global: Option<GlobalStage>,
-    preview: &dyn Fn(usize,usize,f64,&Pose)) -> crate::Result<SearchResult> {
+    preview: &dyn Fn(usize,usize,f64,&Pose), observer: Option<&MoveObserver>) -> crate::Result<SearchResult> {
     let start = pr.initial_pose();
     let model = Model::new(pr, p)?;
     let last = epoch_params(p, plan.epochs - 1, plan.epochs);
@@ -291,7 +301,7 @@ fn anneal_all(pr: &Problem, p: &Params, plan: Plan, log: &dyn Fn(&str), global: 
     let mut busy = 0.0;
     let mut history = Vec::new();
     for e in 0..plan.epochs {
-        let outcomes = run.epoch(&mover, &workers, e);
+        let outcomes = run.epoch(&mover, &workers, e, observer);
         busy += outcomes.iter().map(|o| o.seconds).sum::<f64>();
         workers = outcomes.into_iter().map(|o| o.worker).collect();
         let g = best_worker(&workers);

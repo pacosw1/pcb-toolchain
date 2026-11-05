@@ -3,6 +3,7 @@ use crate::problem::{Pose, Problem};
 use serde::Serialize;
 use sha2::{Digest,Sha256};
 use std::io::Write;
+use std::sync::Mutex;
 use std::path::{Path,PathBuf};
 use std::sync::atomic::{AtomicU64,Ordering};
 
@@ -17,7 +18,8 @@ struct Frame<'a> {schema:&'static str, board_path:&'a str, board_sha256:&'a str,
     rules_id:&'a str, attempt_id:&'a str, epoch:usize, epochs:usize, cost:f64, units:Vec<Unit>}
 
 pub struct LivePreview {output:PathBuf, board_path:String, board_sha256:String, model_sha256:String, model_id:String,
-    rules_id:String, attempt_id:String, units:Vec<(String,Vec<String>,[f64;2])>}
+    rules_id:String, attempt_id:String, units:Vec<(String,Vec<String>,[f64;2])>,
+    fixed:Vec<bool>, stream:Mutex<Option<std::fs::File>>}
 
 fn temporary(path:&Path) -> crate::Result<PathBuf> {
     let dir=path.parent().ok_or("preview parent missing")?;
@@ -79,7 +81,22 @@ impl LivePreview {
         }
         let units=problem.units.iter().map(|u|(u.name.clone(),u.refs.clone(),[u.x,u.y])).collect();
         Ok(Self {output,board_path:base.to_str().ok_or("non-UTF8 preview path")?.to_owned(),board_sha256:expected, model_sha256,
-            model_id,rules_id,attempt_id,units})
+            model_id,rules_id,attempt_id,units, fixed:problem.units.iter().map(|u|u.fixed).collect(),
+            stream:Mutex::new(std::env::var("PCB_LIVE_EVENTS").ok().and_then(|p| std::fs::OpenOptions::new().write(true).create_new(true).open(p).ok()))})
+    }
+    /// Append durable samples; an observer failure disables only observation.
+    pub fn sample(&self, worker:usize, epoch:usize, step:usize, accepted:usize, rejected:usize,
+        cost:f64, current:&Pose, best_cost:f64, best:&Pose) {
+        let Ok(mut stream) = self.stream.lock() else { return };
+        let Some(out) = stream.as_mut() else { return };
+        if out.metadata().map_or(true, |m| m.len() > 512*1024*1024) { *stream=None; return; }
+        let units = |pose:&Pose| self.units.iter().zip(pose).zip(&self.fixed).map(|(((name,refs,origin),&(x,y,turn)),fixed)|
+            serde_json::json!({"name":name,"refs":refs,"origin":origin,"position":[x,y],"turn":turn,"locked":fixed})).collect::<Vec<_>>();
+        let frame=serde_json::json!({"kind":"placement.sample","attemptId":self.attempt_id,"baseSha256":self.board_sha256,
+            "worker":worker,"epoch":epoch,"step":step,"accepted":accepted,"rejected":rejected,
+            "currentCost":cost,"bestCost":best_cost,"bestScope":"epoch","current":units(current),"best":units(best)});
+        let result=(|| -> crate::Result<()> {let mut bytes=serde_json::to_vec(&frame)?;if bytes.len()>MAX_PREVIEW{return Err("live frame exceeds limit".into())}bytes.push(b'\n');out.write_all(&bytes)?;out.flush()?;Ok(())})();
+        if result.is_err() { *stream=None; }
     }
     pub fn publish(&self,epoch:usize,epochs:usize,cost:f64,pose:&Pose) {
         let _=self.write(epoch,epochs,cost,pose);
@@ -111,7 +128,7 @@ mod tests {
         let base=root.join("live-place-base.kicad_pcb");std::fs::write(&base,b"first").unwrap();
         let live=LivePreview {output:root.join("live-place.json"),board_path:base.to_str().unwrap().into(),
             board_sha256:hash(b"first"),model_sha256:"a".repeat(64),model_id:"m".into(),rules_id:"r".into(),
-            attempt_id:"a".into(),units:vec![("U1".into(),vec!["U1".into()],[1.0,2.0])]};
+            attempt_id:"a".into(),units:vec![("U1".into(),vec!["U1".into()],[1.0,2.0])],fixed:vec![false],stream:Mutex::new(None)};
         live.write(1,2,1.0,&vec![(1.0,2.0,0)]).unwrap();
         let before=std::fs::read(&live.output).unwrap();
         std::fs::write(&base,b"changed").unwrap();

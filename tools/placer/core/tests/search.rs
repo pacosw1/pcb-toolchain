@@ -482,3 +482,21 @@ fn the_legalizer_cannot_turn_a_seeded_part_to_escape_illegality() {
     assert!(legalize(&mut ev, &free).unwrap().is_empty());
     assert!([1, 3].contains(&ev.place(0).2));
 }
+
+#[test]
+fn live_observer_preserves_search_and_distinguishes_current_from_best() {
+    use std::sync::{Arc,Mutex};
+    let mut pr=common::parse(two_units());let p=params(&[]);
+    let plan=Plan{workers:2,epochs:3,steps:1000,seed:13,top:2};
+    let plain=optimize(&mut common::parse(two_units()),&p,plan,&|_|{}).unwrap();
+    let frames=Arc::new(Mutex::new(Vec::new()));let got=frames.clone();
+    let observe=move |worker,epoch,step,accepted,rejected,cost,current:&Pose,best_cost,best:&Pose| {
+        assert_eq!(accepted+rejected,step);assert!(cost+1e-8>=best_cost);
+        assert_eq!(current[0],(5.,5.,0));assert_eq!(best[0],(5.,5.,0));
+        got.lock().unwrap().push((worker,epoch,step,current.clone(),best.clone()));
+    };
+    let live=iotplace::search::optimize_observed(&mut pr,&p,plan,&|_|{},&|_,_,_,_|{},Some(&observe)).unwrap();
+    assert!(frames.lock().unwrap().len()>=6);
+    assert_eq!(serde_json::to_value(&plain.history).unwrap(),serde_json::to_value(&live.history).unwrap());
+    for (a,b) in plain.candidates.iter().zip(&live.candidates) {assert_eq!(a.pose,b.pose);assert_eq!(a.cost,b.cost);assert_eq!(a.illegal,b.illegal);}
+}

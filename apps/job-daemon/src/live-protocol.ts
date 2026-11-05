@@ -70,6 +70,7 @@ export interface LiveState {
   placement: LivePlacementFrame | null
   previousPlacement: LivePlacement[]
   tracks: Map<string, LiveTrack>; vias: Map<string, LiveVia>
+  removedTracks: LiveTrack[]; removedVias: LiveVia[]; addedTrackIds: string[]
   activity: Extract<LivePayload, { kind: 'route.activity' }>['data'] | null
   failures: LiveFailure[]
   progress: Extract<LivePayload, { kind: 'progress' }>['data'] | null
@@ -77,7 +78,7 @@ export interface LiveState {
   finished: Extract<LivePayload, { kind: 'run.finished' }>['data'] | null
 }
 export function emptyLiveState(runId: string): LiveState {
-  return { runId, seq: 0, timeMs: 0, baseSha256: '', attemptId: '', run: null, board: null, placement: null, previousPlacement: [], tracks: new Map(), vias: new Map(), activity: null, failures: [], progress: null, checkpoints: [], finished: null }
+  return { runId, seq: 0, timeMs: 0, baseSha256: '', attemptId: '', run: null, board: null, placement: null, previousPlacement: [], tracks: new Map(), vias: new Map(), removedTracks: [], removedVias: [], addedTrackIds: [], activity: null, failures: [], progress: null, checkpoints: [], finished: null }
 }
 
 /** Deterministic state reducer shared by live playback, historical replay and verification. */
@@ -94,7 +95,7 @@ export function applyLiveEvent(state: LiveState, event: LiveEvent): void {
   if (event.kind === 'run.started') state.run = structuredClone(event.data)
   else if (event.kind === 'board.snapshot') {
     state.board = structuredClone(event.data); state.placement = null; state.previousPlacement = []
-    state.tracks.clear(); state.vias.clear(); state.activity = null; state.failures = []
+    state.tracks.clear(); state.vias.clear(); state.removedTracks = []; state.removedVias = []; state.addedTrackIds = []; state.activity = null; state.failures = []
   } else if (event.kind === 'placement.frame') {
     state.previousPlacement = state.placement?.current ?? []
     state.placement = structuredClone(event.data)
@@ -104,6 +105,9 @@ export function applyLiveEvent(state: LiveState, event: LiveEvent): void {
     for (const id of event.data.removeVias) if (!state.vias.has(id)) throw new Error(`Unknown removed via ${id}`)
     for (const item of event.data.addTracks) if (state.tracks.has(item.id) && !event.data.removeTracks.includes(item.id)) throw new Error(`Duplicate track ${item.id}`)
     for (const item of event.data.addVias) if (state.vias.has(item.id) && !event.data.removeVias.includes(item.id)) throw new Error(`Duplicate via ${item.id}`)
+    state.removedTracks = event.data.removeTracks.map(id => state.tracks.get(id)!)
+    state.removedVias = event.data.removeVias.map(id => state.vias.get(id)!)
+    state.addedTrackIds = event.data.addTracks.map(t => t.id)
     for (const id of event.data.removeTracks) state.tracks.delete(id)
     for (const id of event.data.removeVias) state.vias.delete(id)
     for (const item of event.data.addTracks) state.tracks.set(item.id, structuredClone(item))

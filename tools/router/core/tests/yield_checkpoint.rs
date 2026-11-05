@@ -136,3 +136,16 @@ fn sigterm_in_yield_mode_keeps_a_replayable_boundary() {
     let (a,b) = (f.read("full.json"), f.read("resumed.json"));
     for key in ["tracks", "vias", "failed", "passes"] { assert_eq!(a[key],b[key],"{key}"); }
 }
+
+#[test]
+fn live_observation_keeps_route_results_identical_and_records_copper() {
+    let f=Fixture::new(true);
+    let off=f.run("off.json",&[]);assert!(off.status.success());
+    let on=Command::new(env!("CARGO_BIN_EXE_iotroute")).args([f.path("model.json"),f.path("on.json")])
+        .args(["--pitch","0.2","--seed","7","--iters","5"]).env("PCB_LIVE_EVENTS",f.path("live.ndjson")).output().unwrap();
+    assert_eq!(on.status.code(),off.status.code());assert_eq!(f.read("on.json"),f.read("off.json"));
+    let events:Vec<Value>=std::fs::read_to_string(f.path("live.ndjson")).unwrap().lines().map(|s|serde_json::from_str(s).unwrap()).collect();
+    assert!(events.iter().any(|e|e["kind"]=="route.delta"));
+    assert!(events.iter().any(|e|e["kind"]=="route.activity"&&e["data"]["action"]=="accepted"));
+    assert!(events.iter().any(|e|e["kind"]=="checkpoint"));
+}
