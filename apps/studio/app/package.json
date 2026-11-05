@@ -29,6 +29,8 @@
     "@electron-toolkit/utils": "^4.0.0",
     "@types/three": "0.170.0",
     "js-yaml": "4.3.2",
+    "react-markdown": "10.1.0",
+    "remark-gfm": "4.0.1",
     "three": "0.170.0",
     "ws": "8.22.1",
     "zod": "4.6.7"

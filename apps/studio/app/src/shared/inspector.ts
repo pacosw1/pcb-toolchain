@@ -25,3 +25,15 @@ export interface SchematicExport {
   runtime: string | null
   sheets: { name: string; path: string }[]
 }
+
+export interface SpecDocument {
+  board: string
+  revision: string | null
+  state: string | null
+  source: string
+  path: string
+  format: 'markdown' | 'pdf'
+  text: string | null
+  sha256: string
+  updatedAt: string
+}

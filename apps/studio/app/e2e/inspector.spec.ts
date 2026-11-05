@@ -34,6 +34,7 @@ esac
     await win.getByRole('button', { name: 'Choose board' }).click()
     await win.getByRole('option', { name: /DEMO/ }).click()
     await win.getByRole('button', { name: 'Specifications' }).click()
+    await win.getByRole('button', { name: 'Native board data' }).click()
     const panel = win.getByRole('region', { name: 'Board specifications' })
     await expect(panel.getByText('1.6000 mm', { exact: true })).toBeVisible()
     await expect(panel.getByRole('cell', { name: '0.035', exact: true })).toBeVisible()

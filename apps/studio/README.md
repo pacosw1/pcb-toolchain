@@ -116,3 +116,16 @@ Schematic navigation batches transforms once per animation frame without React
 state updates on pointer movement. The SVG stays on a compositor layer during
 gestures and rasterizes at the final scale after settling. The graphite palette
 uses neutral symbol outlines, bright references, and green connections.
+
+### Branded specification documents
+
+**Specifications** opens the selected revision's assigned Markdown or PDF document.
+Markdown uses the SW INDUSTRIES printable-sheet design recovered from iot-lab
+commit `2450d95c`, `site/build.mjs` (`specSheet`) and `site/src/assets/sheet.css`:
+monochrome logo/header, clear section rules, compact tables, and A4 print styles.
+The source document is preserved, including its stated revision and limitations;
+Studio does not invent ratings or silently substitute a different revision's spec.
+The footer records the source path and content hash. **Print / Save PDF** opens the
+platform print flow. **Native board data** retains the KiCad statistics/stackup/BOM
+inspector. The document reader supports standard Markdown and GFM tables; raw HTML
+is not executed. Existing PDF specs use the PDF viewer.

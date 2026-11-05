@@ -1,5 +1,5 @@
 import { SchematicView } from './SchematicView'
-import { InspectorView } from './InspectorView'
+import { SpecView } from './SpecView'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { EngineStatus } from '../../preload/types'
 import { BoardView, type Selection } from './BoardView'
@@ -380,7 +380,7 @@ function App(): React.JSX.Element {
           ) : geo && tab === 'schematic' && pcb ? (
             <SchematicView key={project?.root + pcb} pcb={pcb} />
           ) : geo && tab === 'specs' && pcb ? (
-            <InspectorView key={project?.root + pcb} pcb={pcb} />
+            <SpecView key={project?.root + pcb} pcb={pcb} />
           ) : geo && tab === '3d' && pcb ? (
             <Viewer3D pcb={pcb} />
           ) : geo && tab === 'parts' && bom ? (

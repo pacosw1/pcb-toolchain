@@ -1,3 +1,4 @@
+import { specification } from './spec.ts'
 import { exportSchematic } from './kicad/schematic.ts'
 import { batchGlb } from './kicad/glb.ts'
 import { nativeInventory } from './kicad/inventory.ts'
@@ -73,6 +74,8 @@ registry.method('board.schematic', ['pcb', 'out_dir'], 2, (pcb: string, outDir: 
   if (!schematic) throw new Error('No schematic is assigned to this board revision.')
   return exportSchematic(p.root, schematic, expandHome(outDir))
 })
+
+registry.method('board.spec', ['pcb'], 1, (pcb: string) => specification(needProject(), pcb))
 
 registry.method('board.inspect', ['pcb'], 1, (pcb: string) => inspectBoard(needProject().resolve(pcb), pcb))
 

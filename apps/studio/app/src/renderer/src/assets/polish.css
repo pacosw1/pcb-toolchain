@@ -540,3 +540,53 @@ button.send {
 .schematic-zoom { width: 48px; text-align: center; font-variant-numeric: tabular-nums; color: var(--dim); }
 .schematic-hint { font-size: 11px; color: var(--dim); }
 @media (max-width: 1100px) { .schematic-hint { display: none; } }
+
+/* SW INDUSTRIES printable sheet: adapted from the project's existing sheet.css. */
+.spec-view { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.spec-reader { flex: 1; overflow: auto; min-height: 0; padding: 32px; background: var(--bg); }
+.spec-paper { max-width: 900px; margin: 0 auto; padding: 48px 56px; color: #181818; background: #fafafa; box-shadow: 0 6px 28px #0003; font: 14px/1.65 system-ui, sans-serif; }
+.spec-letterhead { display: flex; justify-content: space-between; align-items: center; gap: 20px; border-bottom: 3px solid #181818; padding-bottom: 16px; }
+.spec-brand { display: flex; align-items: center; gap: 9px; font: 500 12px ui-monospace, monospace; letter-spacing: .28em; }
+.spec-brand svg { width: 76px; height: 31px; }
+.spec-meta { color: #666; font: 10px/1.7 ui-monospace, monospace; text-transform: uppercase; text-align: right; letter-spacing: .08em; }
+.spec-title { padding: 34px 0 20px; }
+.spec-eyebrow { margin: 0 0 10px; font: 10px ui-monospace, monospace; letter-spacing: .16em; color: #777; }
+.spec-title h1 { margin: 0; font: 500 38px/1.1 ui-monospace, monospace; letter-spacing: -.04em; }
+.spec-prose h1, .spec-prose h2 { font: 600 14px/1.5 ui-monospace, monospace; text-transform: uppercase; letter-spacing: .04em; border-bottom: 1.5px solid #222; padding: 7px 0; margin: 30px 0 12px; }
+.spec-prose h3, .spec-prose h4 { font-size: 14px; margin: 24px 0 8px; }
+.spec-prose p { margin: 10px 0; }
+.spec-prose ul, .spec-prose ol { padding-left: 20px; }
+.spec-prose li { margin: 5px 0; }
+.spec-prose li::marker { color: #777; }
+.spec-prose code { font: .9em ui-monospace, monospace; color: #222; background: #eee; border-radius: 3px; padding: 1px 4px; }
+.spec-prose pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #eee; padding: 14px; border-left: 2px solid #777; }
+.spec-prose pre code { padding: 0; }
+.spec-prose blockquote { margin: 18px 0; padding: 2px 16px; border-left: 3px solid #888; color: #555; }
+.spec-prose a { color: #111; text-decoration: underline; }
+.spec-table { overflow-x: auto; margin: 18px 0; }
+.spec-paper table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.spec-paper th, .spec-paper td { border-bottom: 1px solid #ddd; text-align: left; vertical-align: top; padding: 8px 10px 8px 0; }
+.spec-paper th { border-bottom: 1.5px solid #222; font-weight: 600; }
+.spec-footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-top: 40px; padding-top: 12px; border-top: 1px solid #ccc; font: 9px/1.5 ui-monospace, monospace; color: #777; overflow-wrap: anywhere; }
+.spec-image-note { font-style: italic; color: #666; }
+.spec-pdf { width: 100%; height: 100%; border: 0; }
+@media (max-width: 1100px) { .spec-reader { padding: 16px; } .spec-paper { padding: 32px; } }
+@media print {
+  @page { size: A4; margin: 12mm; }
+  .topbar, .sidebar, .spec-toolbar, .chat { display: none !important; }
+  html, body, #root, .shell, .body, .main, .spec-view, .spec-reader { display: block !important; height: auto !important; overflow: visible !important; background: white !important; padding: 0 !important; margin: 0 !important; }
+  .spec-paper { box-shadow: none; padding: 0; max-width: none; background: white; font-size: 10pt; }
+  .spec-paper h2, .spec-paper h3 { break-after: avoid; } .spec-paper tr, .spec-paper pre { break-inside: avoid; }
+}
+@media print {
+  :root { color-scheme: light !important; --bg: #fff !important; --panel: #fff !important; }
+  @page { background: #fff; @bottom-right { content: counter(page); font: 7pt monospace; color: #777; } }
+  .spec-paper { font-size: 9.5pt; line-height: 1.4; }
+  .spec-letterhead { padding-bottom: 10px; }
+  .spec-title { padding: 22px 0 12px; }
+  .spec-title h1 { font-size: 28pt; }
+  .spec-prose h1, .spec-prose h2 { margin-top: 20px; }
+  .spec-prose p { margin: 8px 0; orphans: 3; widows: 3; }
+  .spec-prose li { margin: 3px 0; }
+  .spec-footer { margin-top: 22px; }
+}

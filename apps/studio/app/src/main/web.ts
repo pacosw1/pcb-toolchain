@@ -23,7 +23,7 @@ import { projectOpen, registry } from './api.ts'
 import { subscribe, unsubscribe } from './events.ts'
 import { resolveReal } from './project.ts'
 
-export const READ_ONLY = new Set(['engine.ping', 'engine.info', 'project.open', 'board.geometry', 'board.inspect', 'board.inventory', 'board.bom', 'board.glb', 'board.schematic', 'file.resolve',
+export const READ_ONLY = new Set(['engine.ping', 'engine.info', 'project.open', 'board.geometry', 'board.inspect', 'board.inventory', 'board.bom', 'board.glb', 'board.schematic', 'board.spec', 'file.resolve',
   'run.list', 'run.get', 'run.findings', 'run.candidate', 'board.parts', 'part.get', 'parts.index', 'board.watch', 'board.unwatch'])   // never op.*, run.adopt, gate.check or run.cancel
 
 const FILE_TYPES = new Set(['.pdf', '.glb', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'])
