@@ -42,7 +42,7 @@ use lock::{LockStage, lock_nets, make_locked_input};
 use measure::{copper_counts, run_drc};
 use planes::{ModelFile, RefGate, Round, ROUNDS, fail_lines, planes_spec};
 use project::{board_project, place_sidecars, restore_pro, sha_file};
-use record::{AttemptStages, BinaryStage, DrcCounts, ModelStage, Record};
+use record::{AttemptStages, BinaryStage, CoreStage, DrcCounts, ModelStage, Record};
 use reuse::{Attempt, reuse_seed};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -187,6 +187,11 @@ impl Run<'_> {
     fn reuse_attempts(&self, previous: &str, out: &Path, work: &Path, rec: &mut Record) -> Result<(AttemptStages, bool), String> {
         let seed = work.join("seed.json");
         let mut record = reuse_seed(&absolute(previous)?, &self.route_in, &seed, &self.a.reuse_fallback, &self.a.reuse_nets)?;
+        let incumbent = reuse::incumbent_claim(&absolute(previous)?, &self.model, &record.moved_refs);
+        record.incumbent_note = Some(match &incumbent {
+            Ok(_) => "same admitted model and receipt-bound previous model; replay eligible if routing leaves native problems".into(),
+            Err(reason) => format!("not eligible: {reason}"),
+        });
         let tries: Vec<(&str, Vec<String>)> = std::iter::once(("reuse", vec!["--reuse".to_string(), seed.display().to_string()])).chain((self.a.reuse_fallback == "full").then(|| ("full", Vec::new()))).collect();
         let mut chosen: Option<&str> = None;
         for (name, extra) in &tries {
@@ -195,7 +200,7 @@ impl Run<'_> {
             let candidate = folder.join(out.file_name().expect("OUT has a name"));
             let (stages, _) = self.attempt(&candidate, &folder, extra)?;
             let mut attempt = Attempt::new(stages);
-            if tries.len() == 1 {
+            if tries.len() == 1 && incumbent.is_err() {
                 record.attempts.insert(name.to_string(), attempt);
                 chosen = Some(name);
                 break;
@@ -212,6 +217,29 @@ impl Run<'_> {
             }
             if drc.clean() {
                 break;
+            }
+        }
+        // Retained nets may move during negotiation. If an attempt destroys a
+        // previously useful connection (notably GND), do not discard the bound
+        // incumbent. Replay it through today's writer/width/copper guards and
+        // native DRC; never select using cached acceptance counts.
+        if let Ok(claim) = incumbent {
+            let best = &record.attempts[chosen.expect("at least one attempt")];
+            if best.drc_errors.unwrap_or(0) + best.unconnected.unwrap_or(0) + best.parity.unwrap_or(0) > 0 {
+                let folder = work.join("a-incumbent");
+                fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+                let route = folder.join("route.json");
+                fs::copy(format!("{previous}.iotroute/route.json"), &route).map_err(|e| e.to_string())?;
+                fs::write(folder.join("route.log"), "REUSE INCUMBENT: replay of receipt-bound unchanged problem; no search\n").map_err(|e| e.to_string())?;
+                let candidate = folder.join(out.file_name().expect("OUT has a name"));
+                let write = self.steps.write_route(&self.route_in, &route, &candidate, &folder, &self.widths)?;
+                place_sidecars(&self.src, &candidate)?;
+                restore_pro(&self.src, &candidate)?;
+                let core = CoreStage { exit: 0, seconds: 0.0, claim: Some(claim) };
+                let mut attempt = Attempt::new(AttemptStages { core, write });
+                attempt.set_drc(&run_drc(&candidate, &folder.join("drc.json"))?);
+                if attempt.better_than(best) { chosen = Some("incumbent"); }
+                record.attempts.insert("incumbent".into(), attempt);
             }
         }
         let chosen = chosen.expect("at least one attempt");
