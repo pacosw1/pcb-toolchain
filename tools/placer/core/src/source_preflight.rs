@@ -248,3 +248,55 @@ mod rating_tests {
         assert!(check_rating_ranges(&m).is_err());
     }
 }
+
+/// Run the available checks without granting reviewed-model admission.
+/// The caller must treat success as partial evidence only.
+pub fn preflight(problem: &Value) -> crate::Result<()> {
+    let contract = problem.get("engineering").ok_or("reviewed contract missing")?;
+    check_payload_bindings(problem)?;
+    check_inputs(contract)?;
+    check_manifest_identity(contract)?;
+    let root = Path::new(contract["root"].as_str().ok_or("reviewed root missing")?).canonicalize()?;
+    let path = owned(&root, contract["manifest"].as_str().ok_or("reviewed manifest missing")?)?;
+    let manifest: Value = serde_json::from_slice(&std::fs::read(path)?)?;
+    check_rating_ranges(&manifest)?;
+    // Recheck after evaluation to catch changed source files.
+    check_inputs(contract)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod preflight_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn runs_partial_source_preflight_and_detects_changed_board() {
+        let root = std::env::temp_dir().join(format!("iotplace-preflight-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let native = root.join("board.kicad_pcb");
+        let manifest_path = root.join("manifest.json");
+        std::fs::write(&native, b"board").unwrap();
+        let digest = |v: &[u8]| format!("{:x}", Sha256::digest(v));
+        let mut manifest = json!({"schema":"iot-lab.part-use.v1","board":"A","revision":"1","project":"board.kicad_pro",
+            "parts":[{"reference":"U1","ratings":[{"id":"r","quantity":"voltage",
+                "limit":{"min":0,"max":10,"unit":"V","source":{}},
+                "required":{"min":0,"max":5,"unit":"V","source":{}},"conditions":[]}]}]});
+        let facts = digest(&serde_json::to_vec(&manifest).unwrap());
+        manifest["review"] = json!({"verdict":"passed","reviewer":"R","reviewed_at_utc":"2026-01-01T00:00:00Z","facts_sha256":facts});
+        let manifest_bytes = serde_json::to_vec(&manifest).unwrap();
+        std::fs::write(&manifest_path, &manifest_bytes).unwrap();
+        let mut problem = json!({"units":[{"name":"U1","refs":["U1"],"x":1,"y":2,"fixed":false}],
+            "board":{"outline":[[0,0],[10,0],[10,10]]},
+            "engineering":{"schema":"x","root":root,"board":"A","manifest":manifest_path,"native":native,
+                "inputs":{"board.kicad_pcb":digest(b"board"),"manifest.json":digest(&manifest_bytes)},
+                "rules":[],"geometry":{},"bindings":[]}});
+        let review = digest(&serde_json::to_vec(&problem["engineering"]).unwrap());
+        let anchor = digest(&serde_json::to_vec(&json!({"units":problem["units"],"outline":problem["board"]["outline"]})).unwrap());
+        problem["engineering"]["review_sha256"] = json!(review);
+        problem["engineering"]["model_anchor_sha256"] = json!(anchor);
+        assert!(preflight(&problem).is_ok());
+        std::fs::write(native, b"changed").unwrap();
+        assert!(preflight(&problem).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}

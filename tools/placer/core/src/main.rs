@@ -194,6 +194,13 @@ fn dispatch(argv: &[String]) -> iotplace::Result<ExitCode> {
         "gplace" => gplace_cmd(&args),
         "count" => count_cmd(&args),
         "cost" => cost_cmd(&args),
+        "review-preflight" => {
+            let input = args.file.as_deref().ok_or("a problem file is required")?;
+            let problem: Value = serde_json::from_slice(&std::fs::read(input)?)?;
+            iotplace::source_preflight::preflight(&problem)?;
+            println!("preflight passed; reviewed source verification is incomplete; search and write remain blocked");
+            Ok(ExitCode::from(3))
+        },
         other => Err(format!("unknown command {other}").into()),
     }
 }
