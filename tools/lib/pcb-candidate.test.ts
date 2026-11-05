@@ -3,6 +3,7 @@ import { chmodSync, fstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { test } from 'node:test';
+import { iotrouteMissing } from './iotroute-bin.ts';
 import { adopt, parentCandidate, replaceAtomically } from './pcb-candidate.ts';
 import { sourceState } from './pcb-sources.ts';
 import { sha } from './pcb-workflow.ts';
@@ -177,7 +178,7 @@ test('adoption requires its source, operation and gate evidence to be bound', as
   assert.deepEqual(readFileSync(f.target), before);
 });
 
-test('adoption rejects stale candidate and frozen board without a named baseline', async t => {
+test('adoption rejects stale candidate and frozen board without a named baseline', { skip: iotrouteMissing() }, async t => {
   const f = candidateFixture(t), before = readFileSync(f.target);
   f.operation.candidate_sha256 = '0'.repeat(64); f.save();
   await assert.rejects(adopt(f.root, f.folder), /does not match the verified native board/);

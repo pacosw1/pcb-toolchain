@@ -16,12 +16,19 @@ import type { Row } from './mandatory-proof.ts';
 const BASE = ['p.json', 'b.kicad_pcb', '--board-dir', 'x', '--outdir', 'o', '--size', '72', '80'];
 
 let folder: string;
+const realBin = process.env.IOTROUTE_BIN;
 
 beforeEach(() => {
   folder = realpathSync(mkdtempSync(join(tmpdir(), 'compact-cli-')));
+  // The routers here are fakes that never run the binary, so any executable names it: the path only fills the command.
+  process.env.IOTROUTE_BIN = process.execPath;
 });
 
-afterEach(() => rmSync(folder, { recursive: true, force: true }));
+afterEach(() => {
+  rmSync(folder, { recursive: true, force: true });
+  if (realBin === undefined) delete process.env.IOTROUTE_BIN;
+  else process.env.IOTROUTE_BIN = realBin;
+});
 
 test('the router defaults to fastroute and the size is two numbers', () => {
   assert.equal(parseArgs(BASE).router, 'fastroute');
