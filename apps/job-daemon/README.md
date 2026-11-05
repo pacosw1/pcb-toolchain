@@ -277,3 +277,27 @@ systemctl daemon-reload && systemctl enable --now pcb-job-daemon
 
 Install the slice before the first job: without its unit file the weight and the ceiling do not apply (not tested;
 the e2e script uses `system.slice` as the parent, so `pcbjobs.slice` itself has not run). On the Mac, copy the token to `~/.config/pcb-job/token` (mode 600) and set `JOBD_URL`.
+
+## Recorded live observation API
+
+Node 22.13 or newer is required for the built-in SQLite journal. The same bearer
+credential protects live observation endpoints. These endpoints do not route,
+place, adopt, or modify board files.
+
+- `PUT /live/assets/<sha256>` uploads an immutable source asset (128 MiB cap).
+- `POST /live/events` accepts `{ "events": [...] }` using `pcb-live.v1` from
+  `src/live-protocol.ts`. Upload a source asset before its `board.snapshot` event.
+- `GET /live/runs` lists recent run summaries.
+- `GET /live/runs/<id>/state?at=<sequence>` reconstructs a recorded position.
+- `GET /live/runs/<id>/events?after=<sequence>` reads ordered event pages.
+- `GET /live/runs/<id>/stream?after=<sequence>` streams SSE, with replay after
+  disconnect. `Last-Event-ID` is also supported. A completed stream ends.
+
+The journal rejects sequence gaps, changed source identities without a new base
+snapshot, conflicting retries, and events after a terminal result. Event batches
+are atomic. Events and seek checkpoints survive daemon restarts. Live assets are
+kept separately from the evictable job-input cache so old recordings retain their
+source geometry. A preview is not gate evidence or permission to adopt a board.
+
+On macOS, use `TMPDIR=/tmp npm test` when the default temporary directory would
+make the existing Unix health-socket test paths exceed the platform limit.
