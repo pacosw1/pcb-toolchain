@@ -16,7 +16,9 @@ export class ProtectedVerifierAuthority extends ProtectedTrustStore {
       input_sha256 TEXT NOT NULL,input_size INTEGER NOT NULL,spec_sha256 TEXT NOT NULL,source_manifest TEXT NOT NULL,candidate_manifest TEXT NOT NULL,
       policy_digest TEXT NOT NULL,verifier_image TEXT NOT NULL,archive_tool_digest TEXT NOT NULL,state TEXT NOT NULL,PRIMARY KEY(job,attempt,verification),UNIQUE(job,attempt)) STRICT;
       CREATE TABLE IF NOT EXISTS protected_verifier_jobs (job TEXT NOT NULL,attempt TEXT NOT NULL,verification TEXT NOT NULL,runtime_job TEXT NOT NULL UNIQUE,attested_image TEXT,
-      PRIMARY KEY(job,attempt,verification)) STRICT;`);
+      PRIMARY KEY(job,attempt,verification)) STRICT;
+      CREATE TABLE IF NOT EXISTS protected_verifier_cleanup (job TEXT NOT NULL,attempt TEXT NOT NULL,verification TEXT NOT NULL,runtime_job TEXT NOT NULL,
+      attested_image TEXT NOT NULL,state TEXT NOT NULL,PRIMARY KEY(job,attempt,verification)) STRICT;`);
   }
   /** Called only inside the authority transaction. */
   private base(ref:VerifierRef,now:number):{attempt:Attempt;target:Target;candidate:string;image:string;archive:string}|null {
@@ -107,5 +109,23 @@ export class ProtectedVerifierAuthority extends ProtectedTrustStore {
       if(!intent||image!==intent.verifier_image)return false;
       return this.db.prepare('UPDATE protected_verifier_jobs SET attested_image=? WHERE job=? AND attempt=? AND verification=? AND runtime_job=?').run(image,ref.job,ref.attempt,ref.verification,runtimeJob).changes===1;
     });
+  }
+  /** Internal collector only, after trusted manager cleanup and a fresh missing-container inspection. */
+  recordVerifierCleanupFromTrustedService(ref:VerifierRef,runtimeJob:string):void {
+    if(!valid(ref)||!ID.test(runtimeJob))throw new Error('invalid verifier cleanup');
+    this.transaction(()=>{
+      if(!this.verifierAllowed(ref,runtimeJob,true))throw new Error('verifier cleanup is stale');
+      const job=this.db.prepare('SELECT attested_image FROM protected_verifier_jobs WHERE job=? AND attempt=? AND verification=? AND runtime_job=?').get(ref.job,ref.attempt,ref.verification,runtimeJob) as {attested_image:string}|undefined;
+      if(!job||!/^sha256:[0-9a-f]{64}$/.test(job.attested_image))throw new Error('verifier image is unattested');
+      const prior=this.db.prepare('SELECT runtime_job,attested_image,state FROM protected_verifier_cleanup WHERE job=? AND attempt=? AND verification=?').get(ref.job,ref.attempt,ref.verification) as {runtime_job:string;attested_image:string;state:string}|undefined;
+      if(prior){if(prior.runtime_job!==runtimeJob||prior.attested_image!==job.attested_image||prior.state!=='CLEANED')throw new Error('verifier cleanup changed');return;}
+      this.db.prepare("INSERT INTO protected_verifier_cleanup VALUES (?,?,?,?,?,'CLEANED')").run(ref.job,ref.attempt,ref.verification,runtimeJob,job.attested_image);
+    });
+  }
+  protected override verifierRecordTrusted(ref:VerifierRef,imageDigest:string):boolean {
+    const row=this.db.prepare(`SELECT j.runtime_job,j.attested_image,c.state,c.attested_image AS cleanup_image FROM protected_verifier_jobs j
+      JOIN protected_verifier_cleanup c ON c.job=j.job AND c.attempt=j.attempt AND c.verification=j.verification AND c.runtime_job=j.runtime_job
+      WHERE j.job=? AND j.attempt=? AND j.verification=?`).get(ref.job,ref.attempt,ref.verification) as {runtime_job:string;attested_image:string|null;state:string;cleanup_image:string}|undefined;
+    return !!row&&row.state==='CLEANED'&&row.attested_image===`sha256:${imageDigest}`&&row.cleanup_image===row.attested_image&&this.verifierAllowed(ref,row.runtime_job,true);
   }
 }

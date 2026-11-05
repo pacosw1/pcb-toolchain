@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';import {createHash,generateKeyPairSync,s
 import {parseCanonicalJson} from '../src/canonical-json.ts';import {ProtectedVerifierAuthority} from '../src/protected-verifier-authority.ts';import {launchProtectedAttemptFromTrustedService} from '../src/protected-launch.ts';import {installProtectedRuntime,protectedVerifierCommand} from '../src/protected-runtime.ts';import {validateSpec} from '../src/manager.ts';import {rig} from './helpers.ts';import {protectedJobSpecDigest} from '../src/protected-job-spec.ts';
 import {prepareVerifierInput} from '../src/protected-verifier-input.ts';import {spawnSync} from 'node:child_process';
 import {launchProtectedVerifierFromTrustedService} from '../src/protected-verifier-launch.ts';
+import {collectProtectedVerifierOutput} from '../src/protected-verifier-output.ts';
 const sha=(b:Uint8Array)=>createHash('sha256').update(b).digest('hex'),encode=(v:unknown)=>parseCanonicalJson(Buffer.from(JSON.stringify(v)),{maxBytes:100000,maxNodes:10000,maxDepth:16}).canonical;
 class Fixture extends ProtectedVerifierAuthority {
  setPolicyForTest(policy:string,enabled:number):void{this.db.prepare('UPDATE protected_policies SET enabled=? WHERE digest=?').run(enabled,policy);}
@@ -78,6 +79,21 @@ test('verifier input is built only after the exact worker is cleaned up',async()
   verifyJob.spec.command[0]='/bin/other';await r.mgr.tick();assert.equal(verifyJob.state,'queued');
   verifyJob.spec.command[0]='/usr/local/bin/node';await r.mgr.tick();assert.equal(verifyJob.state,'running');
   assert.equal(store.canRunVerifier(verifierRef,verifyJob.id,true),true);
-  store.cancelAttempt(cancel.token,ref);await r.mgr.tick();assert.equal(verifyJob.state,'cancelled');
+  await assert.rejects(collectProtectedVerifierOutput(store,r.mgr,verifierRef,verifyJob.id),/not completed/);
+  const output=r.mgr.store.outDir(verifyJob.id,1),gate=path.join(output,'gate');fs.mkdirSync(gate,{recursive:true});
+  const inputs=[{path:'board',sha256:candidateHash}],tools={kicad:'10'},fingerprint=sha(Buffer.from(JSON.stringify({inputs,tools}))),pourHash=createHash('sha256').update('pcb.allowed-pours.v1\0').update('[]').digest('hex');
+  const write=(name:string,value:unknown)=>fs.writeFileSync(path.join(output,name),JSON.stringify(value));
+  write('scan.json',{schema:'pcb.verifier-scan.v1',policy_sha256:policyHash,input_sha256:fingerprint,inputs,tools,configured_checks:['drc'],gate_exit:0,terminal_event:true});
+  write('identity.json',{schema:'pcb.board-identity.v1',sourceSha256:oldHash,candidateSha256:candidateHash,allowedPoursSha256:pourHash,identityPreserved:true});
+  write('gate/result.json',{exit:0,changedDuringRun:false,provenance:{input_sha256:fingerprint,inputs,tools},preflightErrors:[],checks:{drc:{status:'passed',cached:false,metrics:{drc_errors:0,drc_parity:0}}}});
+  write('gate/findings.json',{schema_version:1,board:'X',project:'cad/X',input_sha256:fingerprint,inputs_valid:true,complete:true,completed_checks:['drc'],findings:[]});
+  write('gate/drc.json',{violations:[],schematic_parity:[],unconnected_items:[]});
+  fs.writeFileSync(path.join(gate,'events.jsonl'),JSON.stringify({type:'gate.end',exit:0,changedDuringRun:false})+'\n');
+  fs.writeFileSync(path.join(gate,'drc.log'),'');fs.writeFileSync(path.join(output,'gate.stdout'),'');fs.writeFileSync(path.join(output,'gate.stderr'),'');
+  r.runtime.containers.set(verifyJob.attempts[0].container,{status:'exited',exitCode:0,oomKilled:false});await r.mgr.tick();assert.equal(verifyJob.state,'passed');
+  await assert.rejects(collectProtectedVerifierOutput(store,r.mgr,verifierRef,verifyJob.id),/service-private/);
+  fs.chmodSync(r.mgr.store.root,0o700);
+  const collected=await collectProtectedVerifierOutput(store,r.mgr,verifierRef,verifyJob.id);assert.equal(collected.runtimeJob,verifyJob.id);assert.equal(collected.files.size,9);
+  store.cancelAttempt(cancel.token,ref);assert.equal(store.canRunVerifier(verifierRef,verifyJob.id,true),false);
  } finally {store.close();r.cleanup();fs.rmSync(parent,{recursive:true,force:true});}
 });

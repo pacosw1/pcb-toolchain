@@ -1,5 +1,5 @@
 // Internal bootstrap; callers must choose a fixed service-owned trust path, never a network-provided path.
-import { createPublicKey } from 'node:crypto';
+import { createPublicKey, type KeyObject } from 'node:crypto';
 import { ProtectedCommitStore } from './protected-commit.ts';
 import { readPolicyTrust } from './protected-trust.ts';
 import { verifySignedPolicy } from './protected-policy.ts';
@@ -41,6 +41,16 @@ export class ProtectedTrustStore extends ProtectedCommitStore {
           p.worker_image_sha256!==input.workerDigest||p.toolchain_sha256!==input.toolchainDigest||p.archive_tool_sha256!==input.archiveDigest)return null;
       return p;
     } catch {return null;}
+  }
+  /** Internal verifier collector only; checks the live trust file and current signer before returning policy material. */
+  policyMaterialFromTrustedService(digest:string):{bytes:Buffer;signature:string;keyId:string;key:KeyObject;policy:SignedVerificationPolicy;nowMs:number} {
+    return this.transaction(()=>{
+      const nowMs=this.safeNow(),row=this.db.prepare('SELECT key_id,signature FROM protected_signed_policies WHERE digest=?').get(digest) as {key_id:string;signature:string}|undefined;
+      if(!row)throw new Error('signed policy unavailable');
+      const bytes=this.read(digest),verified=this.verifiedPolicy(bytes,row.signature,row.key_id,nowMs),signer=this.db.prepare('SELECT pem,revoked FROM protected_policy_signers WHERE key_id=?').get(row.key_id) as {pem:string;revoked:number}|undefined;
+      if(verified.policySha256!==digest||!signer||signer.revoked!==0)throw new Error('signed policy unavailable');
+      return {bytes,signature:row.signature,keyId:row.key_id,key:createPublicKey(signer.pem),policy:verified.policy,nowMs};
+    });
   }
   /** Internal local-admin path only. Persisted policy is not a target activation or a verifier receipt. */
   registerSignedPolicyFromTrustedService(bytes:Uint8Array,signature:string,keyId:string):string {

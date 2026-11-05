@@ -69,6 +69,8 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
   }
   /** The base store has no trust root and therefore cannot authorize protected execution or commit. */
   protected authorizePolicy(_input:{digest:string;project:string;board:string;operation:string;boardPath:string;workerDigest:string;toolchainDigest:string;archiveDigest:string},_now:number): SignedVerificationPolicy|null { return null; }
+  /** The base store cannot prove that a separate verifier job ran and was cleaned up. */
+  protected verifierRecordTrusted(_ref:{project:string;board:string;operation:string;job:string;attempt:string;verification:string},_imageDigest:string):boolean { return false; }
   /** Persist the exact prepared archive and command before creating any runtime job. */
   reserveSubmissionFromTrustedService(ref: {project:string;board:string;operation:string;job:string;attempt:string}, input: {sha256:string;size:number;specSha256:string;archiveToolSha256:string}): void {
     if (!ref || ![ref.project,ref.board,ref.operation,ref.job,ref.attempt].every(x => typeof x === 'string' && ID.test(x)) || !input ||
@@ -199,7 +201,7 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
   }
   /** Trusted verifier preparation only. Worker completion and cleanup must be proven by the manager separately. */
   verificationContextFromTrustedService(ref:{project:string;board:string;operation:string;job:string;attempt:string}):
-    {sourceDigest:string;candidateDigest:string;policyDigest:string;runtimeJob:string;policy:SignedVerificationPolicy;source:ManifestClosure;candidate:ManifestClosure} {
+    {sourceDigest:string;candidateDigest:string;policyDigest:string;runtimeJob:string;sourceRevision:number;aliasRevision:number;leaseGeneration:number;leaseExpiresAt:number;workerDigest:string;toolchainDigest:string;policy:SignedVerificationPolicy;source:ManifestClosure;candidate:ManifestClosure} {
     if(!ref||![ref.project,ref.board,ref.operation,ref.job,ref.attempt].every(x=>typeof x==='string'&&ID.test(x)))throw new Error('invalid protected verification attempt');
     return this.transaction(()=>{
       const now=this.clock(),attempt=this.db.prepare('SELECT * FROM protected_attempt_bindings WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as Attempt|undefined;
@@ -228,7 +230,7 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
       if(source.rootProject!==ref.project||candidate.rootProject!==ref.project||!source.rootManifest.required_paths.includes(target.board_path)||!candidate.rootManifest.required_paths.includes(target.board_path))
         throw new Error('protected verifier board is unavailable');
       assertBoardOnlyChange(source.rootManifest,candidate.rootManifest,target.board_path);
-      return {sourceDigest:attempt.source_manifest,candidateDigest:staged.manifest,policyDigest:attempt.policy_digest,runtimeJob:runtime.runtime_job,policy,source,candidate};
+      return {sourceDigest:attempt.source_manifest,candidateDigest:staged.manifest,policyDigest:attempt.policy_digest,runtimeJob:runtime.runtime_job,sourceRevision:attempt.source_revision,aliasRevision:attempt.alias_revision,leaseGeneration:attempt.generation,leaseExpiresAt:lease.expires_at,workerDigest:attempt.runtime_digest,toolchainDigest:attempt.toolchain_digest,policy,source,candidate};
     });
   }
   /** Internal orchestrator only: persist runtime identity; the future launcher must enforce its admission barrier. */
@@ -396,7 +398,8 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
       const signed=this.authorizePolicy({digest:attempt.policy_digest,project:request.project_id,board:request.board_id,operation:attempt.operation,
         boardPath:target.board_path,workerDigest:attempt.runtime_digest,toolchainDigest:attempt.toolchain_digest,archiveDigest:runtime.archive_tool_digest},now);
       if (!signed || verified.verifier_image_digest !== signed.verifier_image_sha256 || JSON.stringify(checks)!==JSON.stringify(signed.required_checks) ||
-          (policy.parity_na===1)!==signed.parity_not_applicable_allowed) throw new Error('protected signed policy is unavailable or changed');
+          (policy.parity_na===1)!==signed.parity_not_applicable_allowed || !this.verifierRecordTrusted({project:request.project_id,board:request.board_id,operation:attempt.operation,
+            job:request.job_id,attempt:request.attempt_id,verification:request.verification_id},signed.verifier_image_sha256)) throw new Error('protected signed policy or verifier is unavailable or changed');
       const blob = this.db.prepare("SELECT size FROM protected_uploads WHERE sha256=? AND state='ready'");
       const source = resolveManifestClosure(attempt.source_manifest, sha => this.read(sha), sha => (blob.get(sha) as { size:number } | undefined)?.size ?? null,
         { maxDepth:16,maxManifests:256,maxNodes:100_000,maxBytes:64*1024**3,maxManifestBytes:64*1024**2 });
