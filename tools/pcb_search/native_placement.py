@@ -4,9 +4,12 @@ from decimal import Decimal
 from pathlib import Path
 
 from placer.dru import _tree, _tokens
-from .block_bindings import footprints, rotate
+from .block_bindings import child, footprints, rotate
 from .contracts import fingerprint
-from .native_eco import locked
+
+
+def locked(form):
+    return 'locked' in form or child(form, 'locked', ['no']) != ['no']
 
 
 def footprint_signature(fp):

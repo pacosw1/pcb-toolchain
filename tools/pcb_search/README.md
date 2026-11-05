@@ -38,7 +38,6 @@ These stay until their callers, which are top-level tools, have moved:
 
 - `contracts.py`: `fingerprint` and `number`.
 - `native_srj.py`: `digest`, `source_set`, `geometry_digest`. Rust: `native/digest.rs`.
-- `native_candidate.py`, `native_eco.py`, `native_conflicts.py`. Rust: `native/`.
 - `block_bindings.py`, `native_placement.py`: not ported yet.
 
 ## Removed

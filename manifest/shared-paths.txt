@@ -454,9 +454,6 @@ tools/pcb_search/core/tests/fixtures/native-golden.json
 tools/pcb_search/core/tests/fixtures/route-golden.json
 tools/pcb_search/core/tests/native_golden.rs
 tools/pcb_search/core/tests/route_golden.rs
-tools/pcb_search/native_candidate.py
-tools/pcb_search/native_conflicts.py
-tools/pcb_search/native_eco.py
 tools/pcb_search/native_placement.py
 tools/pcb_search/native_srj.py
 tools/pcb_search/tracemaker/Dockerfile
@@ -991,10 +988,6 @@ tools/test_lean_workflow.py
 tools/test_mandatory_preflight.py
 tools/test_mandatory_records_native.py
 tools/test_pcb_search_block_bindings.py
-tools/test_pcb_search_native.py
-tools/test_pcb_search_native_candidate.py
-tools/test_pcb_search_native_conflicts.py
-tools/test_pcb_search_native_eco.py
 tools/test_pcb_search_native_placement.py
 tools/test_project_root.py
 tools/test_route_hole_coverage.py
