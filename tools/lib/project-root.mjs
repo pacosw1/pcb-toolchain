@@ -1,4 +1,4 @@
-// One resolver for the project (repository) root. The Python twin is tools/project_root.py. No side effects.
+// One resolver for the project (repository) root. No side effects.
 // Order: an explicit argument (for example --project) > env IOT_LAB > the nearest parent of the current
 // directory that holds hardware-design/boards > the old file-relative root (the folder above tools/).
 // Use it for project data; imports of sibling modules stay relative.

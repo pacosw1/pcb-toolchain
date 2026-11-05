@@ -300,6 +300,17 @@ mod tests {
     }
 
     #[test]
+    fn a_short_on_existing_copper_stops_routing_and_an_open_does_not() {
+        let finding = |kind: &str, severity: &str| json!({"type": kind, "severity": severity});
+        assert!(finish::blocks_routing(&finding("shorting_items", "error")));
+        assert!(finish::blocks_routing(&finding("clearance", "error")));
+        assert!(finish::blocks_routing(&finding("starved_thermal", "error")));
+        assert!(!finish::blocks_routing(&json!({"type": "clearance", "severity": "error", "excluded": true})));
+        assert!(!finish::blocks_routing(&finding("shorting_items", "warning")));
+        assert!(!finish::blocks_routing(&finding("unconnected_items", "error")));
+    }
+
+    #[test]
     fn a_diagnosis_count_is_a_measured_number_or_unknown() {
         let report = json!({"diagnosis": {"congestion": 0, "blocked": 1, "bad": "2", "flag": true, "low": -1}});
         let count = |name| finish::diagnosis_count(&report, name);

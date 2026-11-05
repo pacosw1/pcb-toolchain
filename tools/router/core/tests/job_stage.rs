@@ -372,3 +372,18 @@ fn job_helper() {
         other => panic!("unknown mode {other}"),
     }
 }
+
+#[test]
+fn a_job_folder_is_never_used_twice() {
+    let (_, out) = runner("reuse");
+    let job = out.join("job");
+    fs::create_dir_all(&job).unwrap();
+    fs::write(job.join("old.txt"), "an earlier run").unwrap();
+    let board = out.join("x.kicad_pcb");
+    fs::write(&board, "(kicad_pcb)").unwrap();
+    let done = std::process::Command::new(BIN).arg("fastroute").arg(&board).arg(&job).args(["--threads", "1"]).env("FASTROUTE_BIN", "/bin/true").env("IOT_CPU_BUDGET", "1").env("IOT_MEMORY_BUDGET_GIB", "4").env("IOT_RESOURCE_DIRECTORY", out.join("ledger")).output().unwrap();
+    assert!(String::from_utf8_lossy(&done.stderr).contains("not empty"), "{}", String::from_utf8_lossy(&done.stderr));
+    assert_ne!(done.status.code(), Some(0));
+    assert_eq!(fs::read_to_string(job.join("old.txt")).unwrap(), "an earlier run");
+    assert!(!job.join("routed.kicad_pcb").exists() && !job.join("base.kicad_pcb").exists());
+}

@@ -48,7 +48,7 @@ impl Env {
     }
 }
 
-/// The project root, as tools/project_root.py: `IOT_LAB`, the nearest parent of the current folder with
+/// The project root: `IOT_LAB`, the nearest parent of the current folder with
 /// hardware-design/boards, the folder that holds the tools this binary came from.
 pub fn root() -> PathBuf {
     let real = |path: PathBuf| fs::canonicalize(&path).unwrap_or(path);

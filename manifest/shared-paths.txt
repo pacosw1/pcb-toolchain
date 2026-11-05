@@ -602,7 +602,6 @@ tools/placer/testdata/relay4-prob.json
 tools/placer/viewer.test.ts
 tools/placer/viewer.ts
 tools/port_labels.ts
-tools/project_root.py
 tools/publish-release.mjs
 tools/refresh_courtyards.ts
 tools/release-native.Dockerfile
@@ -956,7 +955,6 @@ tools/test_lean_resources.py
 tools/test_lean_workflow.py
 tools/test_mandatory_preflight.py
 tools/test_mandatory_records_native.py
-tools/test_project_root.py
 tools/test_run_record.py
 tools/test_thermal_repair.py
 tools/thermal_repair.py
