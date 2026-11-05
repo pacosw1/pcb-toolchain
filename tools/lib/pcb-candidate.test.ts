@@ -3,7 +3,7 @@ import { chmodSync, fstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
-import { adopt, replaceAtomically } from './pcb-candidate.ts';
+import { adopt, parentCandidate, replaceAtomically } from './pcb-candidate.ts';
 import { sha } from './pcb-workflow.ts';
 
 function scratch(t: { after(fn: () => void): void }): string {
@@ -118,6 +118,19 @@ test('otherwise eligible adoption fails closed before taking a helper lock or ch
   assert.deepEqual(readFileSync(f.target), before);
   assert.equal(readdirSync(f.folder).includes('backup'), false);
   assert.equal(readdirSync(f.folder).includes('adoption.json'), false);
+});
+
+test('parent continuation rejects malformed identity, cleanup and continuation flags', t => {
+  const f = candidateFixture(t), before = readFileSync(f.target);
+  f.operation.source_unchanged = true;
+  f.operation.identity_preserved = 'false'; f.save();
+  const reference = () => ({ folder: f.folder, result_sha256: sha(join(f.folder, 'result.json')) });
+  assert.throws(() => parentCandidate(f.root, 'X', reference()), /parent lacks settled, source-preserving/);
+  f.operation.identity_preserved = true; f.operation.continuation_allowed = 'false'; f.save();
+  assert.throws(() => parentCandidate(f.root, 'X', reference()), /parent lacks settled, source-preserving/);
+  f.operation.continuation_allowed = true; f.save({ cleanup: { complete: 'false' } });
+  assert.throws(() => parentCandidate(f.root, 'X', reference()), /confirmed process cleanup/);
+  assert.deepEqual(readFileSync(f.target), before);
 });
 
 test('adoption requires its source, operation and gate evidence to be bound', async t => {
