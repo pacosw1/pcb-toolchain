@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { runInNewContext } from 'node:vm';
 import { html, playback } from './viewer.ts';
 
 const sha = 'a'.repeat(64);
@@ -66,6 +67,28 @@ test('HTML is self-contained and hostile text cannot terminate the embedded JSON
   assert.throws(() => html(data, 0), /finite and positive/);
 });
 
+test('embedded playback draws recorded frames and advances without external scripts', () => {
+  const output = html(playback(fixture(), sha), 2);
+  const payload = output.match(/<script type="application\/json" id="payload">(.*?)<\/script>/s)?.[1];
+  const script = output.match(/<\/script><script>([\s\S]*?)<\/script>/)?.[1];
+  assert.ok(payload); assert.ok(script);
+  const events: Record<string, (event?: any) => void> = {}, rects: number[][] = [];
+  const context = { clearRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, closePath() {}, stroke() {}, setLineDash() {}, strokeRect() {}, fillRect(...args: number[]) { rects.push(args); } };
+  const canvas = { width: 1000, height: 640, getContext: () => context, addEventListener: (_name: string, fn: (event?: any) => void) => { events.canvas = fn; } };
+  const slider = { max: '', value: '0', addEventListener: (_name: string, fn: () => void) => { events.slider = fn; } };
+  const button = { textContent: '', addEventListener: (_name: string, fn: () => void) => { events.button = fn; } };
+  const elements: Record<string, any> = { payload: { textContent: payload }, layout: canvas, frame: slider, play: button,
+    verdict: { textContent: '' }, source: { textContent: '' }, position: { textContent: '' }, details: { textContent: '' }, info: { textContent: '' } };
+  let tick: (() => void) | undefined;
+  runInNewContext(script, { document: { getElementById: (id: string) => elements[id] }, setInterval: (fn: () => void) => { tick = fn; return 1; }, clearInterval() {} });
+  assert.ok(rects.length >= 2);
+  assert.equal(elements.position.textContent, '1 / 3');
+  assert.match(elements.details.textContent, /step 0 epoch 1/);
+  events.button!(); assert.ok(tick); tick();
+  assert.equal(elements.position.textContent, '2 / 3');
+  assert.match(elements.details.textContent, /step 0 epoch 2/);
+});
+
 test('CLI writes a self-contained HTML and frame JSON once without changing input', t => {
   const root = mkdtempSync(join(tmpdir(), 'placer-viewer-')); t.after(() => rmSync(root, { recursive: true, force: true }));
   const input = join(root, 'run.json'), output = join(root, 'playback.html'), frames = join(root, 'frames.json');
@@ -81,4 +104,23 @@ test('CLI writes a self-contained HTML and frame JSON once without changing inpu
   const before = readFileSync(output, 'utf8');
   assert.notEqual(run().status, 0); assert.equal(readFileSync(output, 'utf8'), before);
   assert.equal(existsSync(join(root, 'run.gif')), false); assert.equal(existsSync(join(root, 'run.mp4')), false);
+});
+
+test('a conflicting second output removes the new HTML and preserves existing bytes', t => {
+  const root = mkdtempSync(join(tmpdir(), 'placer-viewer-conflict-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const input = join(root, 'run.json'), output = join(root, 'new.html'), frames = join(root, 'frames.json');
+  writeFileSync(input, JSON.stringify(fixture())); writeFileSync(frames, 'keep');
+  const program = fileURLToPath(new URL('./viewer.ts', import.meta.url));
+  const result = spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', program, input, output, '--frames-json', frames], { encoding: 'utf8' });
+  assert.notEqual(result.status, 0);
+  assert.equal(existsSync(output), false);
+  assert.equal(readFileSync(frames, 'utf8'), 'keep');
+});
+
+test('the shared source inventory contains the viewer and its tests', t => {
+  const manifest = fileURLToPath(new URL('../../manifest/shared-paths.txt', import.meta.url));
+  if (!existsSync(manifest)) { t.skip('source inventory is not installed in this copy'); return; }
+  const entries = new Set(readFileSync(manifest, 'utf8').split(/\r?\n/));
+  assert.ok(entries.has('tools/placer/viewer.ts'));
+  assert.ok(entries.has('tools/placer/viewer.test.ts'));
 });
