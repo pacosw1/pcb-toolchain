@@ -173,6 +173,46 @@ replaced. The router's own counts are never the verdict. `--spec` is optional; t
 {"schema":"iot-lab.iotroute-policy.v1","iters":80,"max_time_s":null,"keep":"lock-nets","return_exempt":false,"layers":[],"nets":[]}
 ```
 
+An optional `sprints` object runs a bounded portfolio in **one daemon job**:
+
+```json
+{"schema":"iot-lab.iotroute-policy.v1","iters":80,"keep":"lock-nets","return_exempt":true,
+ "sprints":{"seeds":[0,1,2,3],"via_costs":[3],"parallelism":2,"slice_passes":2,
+            "deadline_s":120,"verify_reserve_s":30,"mem_gb":4}}
+```
+
+For ENV-SENSE, use this through the same `pcb route ENV-SENSE --router iotroute
+--spec POLICY.json --timeout 240 --detach --json` workflow. The example retains
+that board's declared return exemptions. All ordinary layer/net/width and native
+acceptance rules remain in force. `max_time_s` cannot be combined with sprints;
+the portfolio owns one deadline. The parent timeout must also cover packing,
+transfer and the final candidate gate; queue credit works as before.
+
+Inputs, including declared gate and semantic-check dependencies, are packed once.
+One native preparation compiles the shared model. Variants have distinct seeds
+and optional via-cost preferences, isolated output/state, and the same hard
+rules. Positive `slice_passes` counts work between resumable yields. At most 16
+variants and 16 concurrent workers are allowed, with at least 2 GiB reserved per
+worker; the daemon enforces the whole job's CPU/RAM limits. Defaults are four
+seeds, two workers, two-pass slices, 120 seconds, 30 seconds reserved for checking,
+and 4 GiB. These are experimental scheduling settings, not engineering limits.
+
+Finished variants enter serialized native/gate/semantic verification promptly.
+Only verified candidates can become the incumbent; among them, shorter copper
+wins, then fewer vias. The controller retains all variant artifacts and current
+checkpoints under `OUT.iotroute/portfolio/`. It does not prune seeds based on an
+unvalidated early quality score. Once an incumbent exists, further verification
+is deferred when the longest measured verification time plus 20% no longer fits;
+the shared deadline and cleanup checks still enforce the actual bound. Deferred
+or interrupted variants are not reported as proven unroutable.
+
+The job uses the existing pinned nightly routing image and a Node 22.23.2 runtime
+shipped as a cached input by `build-bundle.sh --linux`; no daemon/image update is
+required. An absent or mismatched runtime fails before submit. Automatic daemon
+retries are disabled for a portfolio so one budget cannot become two attempts.
+Timeouts retain checkpoints but do not manufacture a successful board. The outer
+candidate gate, sealed evidence and `pcb adopt` remain unchanged.
+
 `layers` limits every net to these copper layers, and `nets` routes only these nets (`iotroute run --layer`, `--net`); empty means all.
 The DRC still judges the whole board, so `nets` belongs with `keep: all` on a board whose other nets are already routed.
 

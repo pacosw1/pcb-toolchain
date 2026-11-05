@@ -13,6 +13,13 @@ whole job, so it cannot outlive a client or recover. The job contract stays the 
 
 ## Client
 
+Packed routing sprints use `--snapshot board` to include the candidate workflow's
+declared input closure, including datasheets, libraries and semantic-check inputs.
+Normal jobs keep the smaller routing-only selection. Snapshot paths and symlinks
+cannot escape the submitted project; build/cache directories are excluded. The
+selected toolchain owns its tools, while extra project hooks are retained. The
+same file cache deduplicates these inputs before one job is submitted.
+
 ```sh
 export JOBD_URL=http://100.93.34.43:8793 JOBD_TOKEN_FILE=~/.config/pcb-job/token IOT_LAB=~/code/iot-lab
 alias pcb-job='node --no-warnings /path/to/pcb-toolchain/apps/job-daemon/src/client.ts'

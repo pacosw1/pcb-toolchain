@@ -31,6 +31,7 @@ pub mod lock;
 pub mod measure;
 pub mod planes;
 pub mod policy;
+pub mod prepared;
 pub mod project;
 pub mod record;
 pub mod reuse;
@@ -53,7 +54,7 @@ use steps::{Steps, last_line, sources_sha};
 
 const USAGE: &str = "usage: iotroute run BOARD OUT.kicad_pcb [--pcb IN] [--iters N] [--max-time S] [--lock-from SRC] [--reuse PREV] [--reuse-fallback full|none] [--reuse-net NET]... [--congestion] [--return-exempt] [--diagnose] [--plane-net NET]... [--layer L]... [--net NET]... [--seed N] [--stall-passes N] [--checkpoint] [--tools DIR] [--json]";
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Args {
     pub board: String,
     pub out: String,
@@ -366,7 +367,7 @@ fn narrow_model(path: &Path, a: &Args) -> Result<(), String> {
     fs::write(path, model.to_string()).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-fn run(a: &Args, rec: &mut Record, out: &Path, work: &Path) -> Result<(), String> {
+fn prepare<'a>(a: &'a Args, rec: &mut Record, out: &Path, work: &Path) -> Result<Run<'a>, String> {
     if out.extension().and_then(|e| e.to_str()) != Some("kicad_pcb") {
         return Err("OUT must end in .kicad_pcb".to_string());
     }
@@ -400,8 +401,12 @@ fn run(a: &Args, rec: &mut Record, out: &Path, work: &Path) -> Result<(), String
     rec.stages.model = Some(ModelStage { line: text.trim().lines().last().unwrap_or("").to_string(), sha256: sha_file(&model)? });
 
     let widths = widths::board_widths(&folder, &model)?;
-    let (diagnose_in, diagnose_model) = (route_in.clone(), model.clone());
-    let context = Run { a, steps, model, route_in, src, folder, widths };
+    Ok(Run { a, steps, model, route_in, src, folder, widths })
+}
+
+fn run(a: &Args, rec: &mut Record, out: &Path, work: &Path) -> Result<(), String> {
+    let context = prepare(a, rec, out, work)?;
+    let (diagnose_in, diagnose_model) = (context.route_in.clone(), context.model.clone());
     let (stages, restored) = match &a.reuse {
         Some(previous) => context.reuse_attempts(previous, out, work, rec)?,
         None => context.attempt(out, work, &[])?,

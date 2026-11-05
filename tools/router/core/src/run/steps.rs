@@ -148,6 +148,12 @@ impl Steps {
             return Err(format!("iotroute wrote no result (exit {exit}), see {}", work.join("route.log").display()));
         }
         let core = CoreStage { exit, seconds: round_to(started.elapsed().as_secs_f64(), 1), claim };
+        let write = self.write_route(route_in, &route, out, work, widths)?;
+        Ok(AttemptStages { core, write })
+    }
+
+    /// Finalize an already computed route using the same width, native writer and copper guards.
+    pub fn write_route(&self, route_in: &Path, route: &Path, out: &Path, work: &Path, widths: &[WidthRule]) -> Result<WriteStage, String> {
         super::widths::narrow(&route, widths)?;
         let folder = work.join("write");
         let mut write = Command::new(&self.exe);
@@ -160,7 +166,7 @@ impl Steps {
         let read = |path: &Path| fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()));
         keeps_copper(&read(route_in)?, &read(&written)?)?;
         fs::copy(&written, out).map_err(|e| format!("{}: {e}", out.display()))?;
-        Ok(AttemptStages { core, write: WriteStage { exit, line: text.trim().lines().last().unwrap_or("").to_string() } })
+        Ok(WriteStage { exit, line: text.trim().lines().last().unwrap_or("").to_string() })
     }
 
     /// The gate's planes check itself, this binary with the gate's spec, as tools/gate.mjs runs it. The FAIL lines are the verdict

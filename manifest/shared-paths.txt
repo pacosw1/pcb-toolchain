@@ -877,3 +877,11 @@ tools/lib/silk-mask.ts
 tools/lib/silk-mask.test.ts
 tools/lib/silk-clip.ts
 tools/lib/silk-clip.test.ts
+tools/router/core/src/run/prepared.rs
+tools/router/sprint-policy.mjs
+tools/router/sprint-policy.d.mts
+tools/router/sprint-controller.ts
+tools/router/sprint-controller.test.ts
+tools/router/sprint-native.ts
+tools/router/sprint-native.test.ts
+tools/router/sprint-job.ts
