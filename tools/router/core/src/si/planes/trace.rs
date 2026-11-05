@@ -129,7 +129,7 @@ pub fn trace_geometry(stackup: Option<&Stackup>, spec: &Spec, records: &[TraceRe
         if !value.is_finite() || value <= 0.0 {
             return Err("trace geometry: invalid modeled capacitance".to_string());
         }
-        let text = format!("screening microstrip w {} h {} t {} mm Er {} ({layer}); Hammerstad-Jensen tools/si_pairs.py; applicability unproved", g(w), g(d.h_mm.expect("usable")), g(d.t_mm.unwrap_or(0.0)), g(d.er.expect("usable")));
+        let text = format!("screening microstrip w {} h {} t {} mm Er {} ({layer}); Hammerstad-Jensen si/impedance.rs; applicability unproved", g(w), g(d.h_mm.expect("usable")), g(d.t_mm.unwrap_or(0.0)), g(d.er.expect("usable")));
         geom.pf_per_mm.insert(net, (value, text));
     }
     Ok(geom)
@@ -145,7 +145,7 @@ pub fn d124c_trace_geometry(stackup: Option<&Stackup>, spec: &Spec, routed: BTre
     }
     for (net, w) in width {
         let (value, layer, d) = lowest(*w, &outer);
-        let text = format!("microstrip w {} h {} t {} mm Er {} ({layer} stackup), C' = sqrt(Eeff)/(c0 Z0), Hammerstad-Jensen (tools/si_pairs.py)", g_with(*w, 3), g(d.h_mm.expect("usable")), g(d.t_mm.unwrap_or(0.0)), g(d.er.expect("usable")));
+        let text = format!("microstrip w {} h {} t {} mm Er {} ({layer} stackup), C' = sqrt(Eeff)/(c0 Z0), Hammerstad-Jensen (si/impedance.rs)", g_with(*w, 3), g(d.h_mm.expect("usable")), g(d.t_mm.unwrap_or(0.0)), g(d.er.expect("usable")));
         geom.pf_per_mm.insert(net.clone(), (value, text));
     }
     geom

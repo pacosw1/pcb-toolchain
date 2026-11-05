@@ -76,7 +76,6 @@ tools/gate.mjs
 tools/gerber_netcheck.py
 tools/gerber_netcheck.ts
 tools/gnd_pad_vias.py
-tools/hard_exit.py
 tools/ibis_ramp.ts
 tools/import_nets.ts
 tools/import_pose_guard.py
@@ -923,7 +922,6 @@ tools/test_dsn_skip.py
 tools/test_fastroute_phases.py
 tools/test_gnd_pad_vias.py
 tools/test_halo_padstack.py
-tools/test_hard_exit.py
 tools/test_import_pose_guard.py
 tools/test_import_replay_guard.py
 tools/test_lean_clock.py
