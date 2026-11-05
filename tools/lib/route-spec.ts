@@ -1,5 +1,6 @@
 // Place and route specs of pcbtool as plain data: what the agent wrote, turned into positions, segments and vias. Millimetres,
 // y down. Nothing here reads a board.
+import { validateGrid, validatePlaceSpec, validateRouteSpec } from './explicit-spec.ts';
 import { floatRepr } from './py-compat.mjs';
 import { pyFloat, round } from './py-numbers.ts';
 
@@ -28,6 +29,7 @@ export const specPoint = ([x, y]: Xy): string => `(${specNumber(x)}, ${specNumbe
 export const floatPoint = ([x, y]: Xy): string => `(${floatRepr(x)}, ${floatRepr(y)})`;
 
 export function gridPositions(grid: GridSpec): Map<string, Placement> {
+  validateGrid(grid);
   const cols = grid.cols || grid.refs.length;
   const [dx, dy] = grid.pitch;
   const [x0, y0] = grid.origin;
@@ -39,6 +41,7 @@ export function gridPositions(grid: GridSpec): Map<string, Placement> {
 }
 
 export function placements(spec: PlaceSpec): Map<string, Placement> {
+  validatePlaceSpec(spec);
   const out = new Map<string, Placement>(Object.entries(spec.place ?? {}));
   for (const grid of spec.grids ?? []) {
     for (const [ref, placed] of gridPositions(grid)) {
@@ -53,6 +56,7 @@ const samePoint = (a: Xy, b: Xy): boolean => a[0] === b[0] && a[1] === b[1];
 
 /** The segments and vias of a route. A bad path is an error; `show` prints a point in its message. */
 export function expandRoute(route: RouteSpec, show: (point: Xy) => string = specPoint): ExpandedRoute {
+  validateRouteSpec(route);
   if (route.path.length < 2) throw new Error(`${route.net}: a path needs 2 or more points`);
   const segments: RouteSegment[] = [];
   const vias: Xy[] = [];

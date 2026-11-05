@@ -1,5 +1,6 @@
 // What a build, edit, route, repair or release run fixes at admission: its spec, its router, and the reviewed inputs it binds.
 import { join } from 'node:path';
+import { validateExplicitSpec } from './explicit-spec.ts';
 import { readObject } from './json-file.ts';
 import { boardConfig, routePolicyArgs, sha } from './pcb-workflow.ts';
 import { isFile, resolvePath } from './py-path.ts';
@@ -38,6 +39,7 @@ export function candidateFields(root: string, operation: string, board: string, 
     if (operation === 'route' && router === 'iotroute') routePolicyArgs(spec, 'candidate');
     Object.assign(fields, { spec, spec_sha256: sha(resolvePath(specPath)) });
   }
+  validateExplicitSpec(operation, request.kind, router, fields.spec);
   if (operation === 'route') fields.router = router;
   if (request.kind) fields.kind = request.kind;
   if (request.plan) fields.plan = bind('plan', request.plan);

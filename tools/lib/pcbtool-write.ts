@@ -12,6 +12,7 @@ import { toMm, tracks, vias } from './board-types.ts';
 import { clearMargin, dotShape, firstConflict, segmentShape, type Obstacle, type Obstacles } from './copper-gap.ts';
 import { UsageError } from './cli.ts';
 import { drcLines, summarizeDrc } from './drc-summary.ts';
+import { validateRouteFile, type RouteFile } from './explicit-spec.ts';
 import { movedFootprint } from './footprint-move.ts';
 import { readJson } from './json-file.ts';
 import { fixed, floatRepr, pyRepr } from './py-compat.mjs';
@@ -96,9 +97,6 @@ export function widen(pcb: string, net: string, width: number, options: WidenOpt
   return 0;
 }
 
-interface MoveVia { net: string; from: Xy; to: Xy }
-interface RouteFile { clear?: string[]; routes: RouteSpec[]; move_vias?: MoveVia[]; via?: { size: number; drill: number } }
-
 /** The index of the one point within tol mm of q. None or several is an error. */
 export function findPoint(points: Xy[], q: Xy, show: (point: [number, number]) => string, tol = 0.01): number {
   const hits = points.flatMap((point, i) => (dist(point, q) <= tol ? [i] : []));
@@ -131,6 +129,7 @@ function viaNetsAt(board: Board): Map<string, string> {
 }
 
 function applyRoutes(pcb: string, spec: RouteFile, show: (point: [number, number]) => string, parseError: (error: Error) => never = error => { throw error; }): number {
+  validateRouteFile(spec);
   let plan: (ExpandedRoute & { route: RouteSpec })[];
   try {
     plan = spec.routes.map(route => ({ route, ...expandRoute(route, show) }));
