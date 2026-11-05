@@ -140,7 +140,8 @@ The backends are `tracemaker` (`$TRACEMAKER_BIN`) and `iotroute`. A `route.json`
 named error: Fastroute was removed on 2026-11-05.
 `"backend": "iotroute"` runs each stage on our own router. Of `features` it takes `rule_compiler`, `via_off_small_pads`
 and `via_halo`, which it always does; any other feature, a feature set to false, and a stage's `threads`, `unlock_nets` or
-`via_skip` are refused by name (`tools/router/core/src/job/route_run/iotroute.rs`).
+`via_skip` are refused by name (`tools/router/core/src/job/route_run/iotroute.rs`). `neck_um` is the narrowest a wider net may
+neck and the width it retries at; a current floor above it stays, and a pad narrower than it is entered at the pad's width.
 
 For the in-house router (tools/router/DESIGN.md), use
 `tools/pcb route BOARD --router iotroute [--spec POLICY.json] --detach --json`. The run executes
