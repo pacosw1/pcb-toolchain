@@ -243,6 +243,7 @@ tools/lib/pcb-check-durable.ts
 tools/lib/pcb-check-start.ts
 tools/lib/pcb-check-supervisor.test.ts
 tools/lib/pcb-identity.ts
+tools/lib/protected-board-identity.ts
 tools/lib/pcb-next.test.ts
 tools/lib/pcb-next.ts
 tools/lib/pcb-next-readers.ts
@@ -359,6 +360,7 @@ tools/pcb-observe.ts
 tools/pcb-check-worker.ts
 tools/pcb-check-finalize.ts
 tools/pcb-check.ts
+tools/pcb-protected-identity.ts
 tools/pcb_operations.py
 tools/pcb_routing_trial.py
 tools/pcb_routing_trial/.gitignore
