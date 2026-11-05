@@ -40,3 +40,20 @@ test('a registered sibling revision copies the owner pipeline and its own gate',
   assert.deepEqual(operationCommand(candidate, 'X-B', 'build'), ['sh', script]);
   assert.equal(readFileSync(join(candidate, script), 'utf8'), '#!/bin/sh\necho candidate\n');
 });
+
+test('a board snapshot carries the shared art that board labels read, and no other board', t => {
+  const root = mkdtempSync(join(tmpdir(), 'pcb-art-source-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const put = (relative: string, content: string) => {
+    const path = join(root, relative); mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, content); return path;
+  };
+  put('tools/pcb_snapshot_inputs.mjs', 'console.log("[]")');
+  put('hardware-design/boards/X/gate.json', JSON.stringify({ project: 'cad/X', pipeline: 'tools/build-x.sh' }));
+  for (const ext of ['kicad_pcb', 'kicad_sch', 'kicad_pro']) put(`hardware-design/boards/X/cad/X.${ext}`, 'synthetic');
+  put('hardware-design/boards/_art/pitsa-logo.png', 'logo');
+  put('hardware-design/boards/Y/gate.json', '{}');
+  const candidate = join(root, 'candidate');
+  const state = snapshot(root, candidate, 'X');
+  assert.equal(readFileSync(join(candidate, 'hardware-design/boards/_art/pitsa-logo.png'), 'utf8'), 'logo');
+  assert.ok(!state.files['hardware-design/boards/Y/gate.json']);
+});

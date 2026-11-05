@@ -42,4 +42,6 @@ The Python helpers have been removed. Use `pcbsearch fingerprint` for JSON finge
 `--router engine` and what only it fed are gone (#1324): the engine, `native_export`, the SRJ export and import, capacity
 routing and the tscircuit adapter, local repair, `place`, packing, regional widths and the TraceMaker adapter. Tag
 `pre-engine-delete` has all of it, in Python and in Rust. `tracemaker/Dockerfile` and `upstreams.json` stay for the TraceMaker
-benchmark rerun (#1318), which needs a small input export rebuilt on `board-json`.
+benchmark rerun (#1378). `tools/tracemaker_bench.sh` uses `iotroute board-json` and the native model on the retained
+frozen NET-CORE project. It runs only in a dedicated Linux scratch directory; see
+`tools/router/benchmarks/1378-baseline.mjs` and the benchmark report for the resource policy and input provenance.
