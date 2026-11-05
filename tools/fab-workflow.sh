@@ -11,7 +11,6 @@ recipe=$(node tools/release-recipe.mjs "$board" shell) || exit 2
 eval "$recipe"
 TIMED='node --experimental-strip-types --no-warnings tools/pcb_timing.ts'
 PY=${KICAD_PYTHON:-${KICAD_PY:-/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3}}
-GNC=${GERBERCHECK_PY:-$HOME/.cache/iot-lab/gerbercheck/venv/bin/python}
 export KICAD_PYTHON="$PY"
 stage=
 if [ "$mode" = release ]; then
@@ -28,7 +27,7 @@ if [ "$mode" = release ]; then
   trap 'code=$?; if [ "$code" -ne 0 ]; then printf "FAIL: release stopped; evidence=%s\n" "$stage" >&2; fi' EXIT
   node --input-type=module -e 'import {releaseInputs} from "./tools/lib/release-evidence.mjs"; console.log(JSON.stringify(releaseInputs(process.cwd(),process.argv[1])))' "$board" > "$stage/release-inputs.json"
   echo 'START: Gerber runtime preflight'
-  "$GNC" -c 'import json,sys; from importlib.metadata import version; import gerbonara,shapely,numpy; print(json.dumps({"python":sys.version,"packages":{name:version(name) for name in ("gerbonara","shapely","numpy","click")}}))' > "$stage/gerber-runtime.json"
+  node tools/lib/gerber-runtime.mjs > "$stage/gerber-runtime.json"
   echo 'PASS: Gerber runtime preflight'
   node tools/release-recipe.mjs "$board" run pre "$stage"
 fi
@@ -56,7 +55,7 @@ if [ "$mode" = release ]; then
   $TIMED --events "$stage/stages.jsonl" --stage fab-zip --category export -- node tools/check-fab-zip.mjs "$stage/fab/$board-gerber.zip" "$stage/fab/gerber" > "$stage/fab-zip.json"
   echo "START: $board Gerber connectivity reconstruction"
   net_status=0
-  $TIMED --events "$stage/stages.jsonl" --stage gerber-netcheck --category validation -- env GNC_ZIP="$stage/fab/$board-gerber.zip" "$GNC" tools/gerber_netcheck.py "$board" > "$stage/gerber-netcheck.log" 2>&1 || net_status=$?
+  $TIMED --events "$stage/stages.jsonl" --stage gerber-netcheck --category validation -- env GNC_ZIP="$stage/fab/$board-gerber.zip" node --experimental-strip-types --no-warnings tools/gerber_netcheck.ts "$board" --receipt "$stage/gerber-inputs.json" > "$stage/gerber-netcheck.log" 2>&1 || net_status=$?
   cat "$stage/gerber-netcheck.log"
   [ "$net_status" -eq 0 ] || exit "$net_status"
   node tools/release-recipe.mjs "$board" run post "$stage"
@@ -71,7 +70,7 @@ if [ "$mode" = release ]; then
   echo "PASS: CAD/fabrication candidate verified; packet/stock/assembly readiness is separate; evidence=$destination"
 else
   sh "$maker"
-  GNC_ZIP="$fab/$board-gerber.zip" "$GNC" tools/gerber_netcheck.py "$board" || checks=$?
+  GNC_ZIP="$fab/$board-gerber.zip" node --experimental-strip-types --no-warnings tools/gerber_netcheck.ts "$board" || checks=$?
   echo "exploratory export: $fab (not release qualified)"
   exit "$checks"
 fi

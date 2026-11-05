@@ -15,7 +15,7 @@
 // Exit 1 on any OPEN, SHORT or MISSING. Clear polarity and any statement this reader does not model stop the check with exit 1:
 // no fab layer of the 17 iot-lab boards uses them, and a check that cannot read a file must not pass it.
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { parseFlags, runMain, UsageError } from './lib/cli.ts';
@@ -24,11 +24,11 @@ import { toMm, type BoardDocument } from './lib/board-types.ts';
 import { CopperLayer, Outline, UnionFind, type Xy } from './lib/copper-graph.ts';
 import { kiCadPaths } from './lib/env-paths.mjs';
 import { capsule, circle, HOLE_QUADRANT_SEGMENTS, parseCopper, parseDrill, type Hole } from './lib/gerber.ts';
-import { readJson } from './lib/json-file.ts';
-import { projectRoot } from './lib/project-root.mjs';
+import { readJson, sha256File } from './lib/json-file.ts';
+import { fileRoot, projectRoot } from './lib/project-root.mjs';
 import { openZip, readEntry } from './lib/zip-read.mjs';
 
-const USAGE = 'usage: tools/gerber_netcheck.ts <BOARD> [--pads PADS.json]';
+const USAGE = 'usage: tools/gerber_netcheck.ts <BOARD> [--pads PADS.json] [--receipt FILE]';
 const LAYERS = ['F_Cu', 'In1_Cu', 'In2_Cu', 'In3_Cu', 'In4_Cu', 'B_Cu'];
 const HOLE_RING_MM = 0.05;
 const SHOWN = 20;
@@ -144,11 +144,23 @@ function run(command: string, args: string[]): void {
 
 /** Each numbered pad as a point, y up in mm, with its copper layers. */
 export function padsOf({ board }: BoardDocument): Pad[] {
+  if (!board || !Array.isArray(board.footprints) || !Array.isArray(board.copper_layers) || !board.copper_layers.length
+    || !board.copper_layers.every(layer => typeof layer === 'string' && layer.endsWith('.Cu'))) throw new Error('board JSON has no valid copper layers or footprints');
+  for (const footprint of board.footprints) {
+    if (!footprint || typeof footprint.reference !== 'string' || !footprint.reference || !Array.isArray(footprint.pads)) throw new Error('board JSON has incomplete footprint data');
+    for (const pad of footprint.pads) {
+      if (!pad || typeof pad.number !== 'string' || !pad.position || !Number.isSafeInteger(pad.position.x) || !Number.isSafeInteger(pad.position.y)
+        || !Array.isArray(pad.layers) || !pad.layers.every(layer => typeof layer === 'string')) throw new Error('board JSON has incomplete pad data');
+    }
+  }
   return board.footprints.flatMap(footprint => footprint.pads.filter(pad => pad.number).map(pad => ({
     ref: footprint.reference, pin: pad.number, x: toMm(pad.position.x), y: -toMm(pad.position.y),
     layers: board.copper_layers.filter(layer => pad.layers.includes(layer)),
   })));
 }
+
+/** A per-run reader snapshot. An absent optional sidecar is bound as absent. */
+function inputState(paths: string[]): string[] { return paths.map(path => existsSync(path) ? sha256File(path) : ''); }
 
 function readSchematicNets(schematic: string, folder: string): PinNets {
   const { kicadCli } = kiCadPaths(process.platform, homedir(), process.env);
@@ -163,17 +175,25 @@ function zipFiles(path: string): Map<string, Buffer> {
 }
 
 function main(argv: string[]): number {
-  const { values, positionals } = parseFlags(argv, { pads: { type: 'string' } }, USAGE);
+  const { values, positionals } = parseFlags(argv, { pads: { type: 'string' }, receipt: { type: 'string' } }, USAGE);
   const [board] = positionals;
   if (positionals.length !== 1 || board === undefined) throw new UsageError(USAGE, 1);
   const folder = join(projectRoot(), 'hardware-design', 'boards', board);
   const stem = join(folder, readJson<{ project: string }>(join(folder, 'gate.json')).project);
   const name = basename(stem);
-  const files = zipFiles(process.env.GNC_ZIP || join(folder, 'cad', 'fab', `${name}-gerber.zip`));
+  const zip = process.env.GNC_ZIP || join(folder, 'cad', 'fab', `${name}-gerber.zip`);
   const scratch = mkdtempSync(join(tmpdir(), 'gnc-'));
   try {
+    const pcb = `${stem}.kicad_pcb`, pro = `${stem}.kicad_pro`, dru = `${stem}.kicad_dru`, sch = `${stem}.kicad_sch`;
+    const reader = join(process.env.PCB_TOOLCHAIN_ROOT || fileRoot, 'bin', 'iotroute-linux-x86_64');
+    const inputs = [pcb, pro, dru, sch, zip, ...(values.pads ? [values.pads] : [reader])];
+    const before = inputState(inputs);
+    if (!before[0] || !before[3] || !before[4] || !before[5]) throw new Error('a required Gerber input or board reader is missing');
+    const files = zipFiles(zip);
     const pinNets = readSchematicNets(`${stem}.kicad_sch`, scratch);
-    const pads = values.pads ? readJson<Pad[]>(values.pads) : padsOf(boardJson(`${stem}.kicad_pcb`));
+    const document = values.pads ? null : boardJson(pcb, { cacheDir: join(scratch, 'board-json') });
+    if (document && (document.board_sha256 !== before[0] || document.project_sha256 !== before[1] || document.rules_sha256 !== before[2])) throw new Error('board JSON does not bind the current PCB, project and rules');
+    const pads = values.pads ? readJson<Pad[]>(values.pads) : padsOf(document!);
     const layers: NamedLayer[] = [];
     for (const layer of LAYERS) {
       const file = files.get(`${name}-${layer}.gbr`);
@@ -185,6 +205,11 @@ function main(argv: string[]): number {
     const drill = files.get(`${name}-PTH.drl`);
     if (!drill) throw new Error(`${name}-PTH.drl is not in the zip`);
     const { lines, failed } = check(board, layers, parseDrill(drill.toString('utf8')), pads, pinNets);
+    if (JSON.stringify(inputState(inputs)) !== JSON.stringify(before)) throw new Error('Gerber inputs or board reader changed during check');
+    if (values.receipt) {
+      if (values.pads) throw new Error('a release receipt cannot use supplied pad data');
+      writeFileSync(values.receipt, JSON.stringify({ schema: 'iot-lab.gerber-inputs.v1', board, pcb: before[0], project: before[1], rules: before[2], schematic: before[3], gerber: before[4], reader: before[5] }) + '\n', { flag: 'wx' });
+    }
     for (const line of lines) console.log(line);
     return failed ? 1 : 0;
   } catch (error) {
