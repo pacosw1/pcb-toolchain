@@ -14,6 +14,7 @@ pub mod plan;
 pub mod pytext;
 pub mod route_features;
 pub mod routing_rules;
+pub mod runtime_probe;
 pub mod run;
 pub mod sha256;
 pub mod si;
