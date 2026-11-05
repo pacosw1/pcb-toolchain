@@ -640,6 +640,9 @@ tools/route-coverage/src/project.rs
 tools/route-coverage/src/thermal.rs
 tools/route-coverage/tests/dsn_floor.rs
 tools/route-coverage/tests/hole.rs
+tools/route-coverage/tests/hole_common/mod.rs
+tools/route-coverage/tests/hole_drilled.rs
+tools/route-coverage/tests/hole_pth.rs
 tools/route-coverage/tests/project.rs
 tools/route-coverage/tests/thermal.rs
 tools/route-features.json

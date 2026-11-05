@@ -340,6 +340,10 @@ pub fn native_drilled_geometry(board: &NativeBoard) -> Result<Vec<Value>> {
     Ok(rows)
 }
 pub fn native_pth_pads(board: &NativeBoard) -> Result<Vec<Value>> {
+    let known = |p: &Pad| matches!(p.kind.as_str(), "ThroughHole" | "NpThroughHole" | "Smd" | "EdgeConnector");
+    if !board.footprints.iter().flat_map(|f| &f.pads).all(known) {
+        return Err("unknown native pad type cannot establish hole coverage".into());
+    }
     let mut pads = Vec::new();
     for mut row in native_drilled_geometry(board)? {
         if row["kind"] != "pth" {

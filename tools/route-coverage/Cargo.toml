@@ -9,3 +9,7 @@ bigdecimal = "0.4"
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision", "raw_value"] }
+
+# A positive drilled proof hashes the running executable; debug info makes that the whole test time.
+[profile.test]
+debug = false
