@@ -40,7 +40,7 @@ test('a notification has no reply', async () => {
 
 test('every method of the Python engine exists', () => {
   assert.deepEqual(registry.names(), ['board.bom', 'board.geometry', 'board.glb', 'board.parts', 'board.unwatch', 'board.watch', 'engine.info', 'engine.ping', 'file.resolve',
-    'gate.check', 'live.geometry', 'live.history', 'live.open', 'live.placement', 'live.preview', 'op.build', 'op.route', 'part.get', 'parts.index', 'project.open', 'run.adopt', 'run.cancel', 'run.candidate', 'run.findings',
+    'gate.check', 'live.geometry', 'live.history', 'live.model', 'live.open', 'live.placement', 'live.preview', 'op.build', 'op.route', 'part.get', 'parts.index', 'project.open', 'run.adopt', 'run.cancel', 'run.candidate', 'run.findings',
     'run.get', 'run.list'])
 })
 
