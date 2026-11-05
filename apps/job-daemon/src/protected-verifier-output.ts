@@ -1,6 +1,7 @@
 // Internal collector only. The manager store and Docker control must be service-owned; never accept a client output path.
 import fs from 'node:fs';import path from 'node:path';
-import {parseEvidenceJson} from './canonical-json.ts';
+import {parseCanonicalJson,parseEvidenceJson} from './canonical-json.ts';
+import {createHash} from 'node:crypto';
 import {validatePolicyBoundGateEvidence} from './protected-policy-gate.ts';
 import {matchesProtectedArchive,protectedVerifierCommand} from './protected-runtime.ts';
 import {protectedJobSpecDigest} from './protected-job-spec.ts';
@@ -27,7 +28,7 @@ function readOutput(root:string,name:string):Buffer {
   if(bytes.length!==before.size||before.dev!==after.dev||before.ino!==after.ino||before.size!==after.size||before.mtimeMs!==after.mtimeMs)throw new Error('verifier evidence changed');return bytes;
  }finally{fs.closeSync(fd);}
 }
-export interface CollectedVerifierOutput {files:Map<string,Buffer>;evidence:ReturnType<typeof validatePolicyBoundGateEvidence>;runtimeJob:string}
+export interface CollectedVerifierOutput {files:Map<string,Buffer>;evidenceManifest:Buffer;evidenceSha256:string;evidence:ReturnType<typeof validatePolicyBoundGateEvidence>;runtimeJob:string}
 /** Only invoke for the fixed verifier job after manager-observed process exit; no result supplied by clients. */
 export async function collectProtectedVerifierOutput(authority:ProtectedVerifierAuthority,manager:JobManager,ref:VerifierRef,runtimeJob:string):Promise<CollectedVerifierOutput> {
  const initial=authority.verificationContextFromTrustedService(ref),expected=authority.verifierIdentityFromTrustedService(ref,runtimeJob),job=manager.jobs.get(runtimeJob),association=job?.protectedVerifierRef;
@@ -56,10 +57,34 @@ export async function collectProtectedVerifierOutput(authority:ProtectedVerifier
   material.bytes,material.signature,material.key,material.keyId,false,{nowMs:material.nowMs,projectId:ref.project,boardId:ref.board,operation:ref.operation,policySha256:initial.policyDigest,
    workerImageSha256:initial.workerDigest,verifierImageSha256:policy.verifier_image_sha256,toolchainSha256:initial.toolchainDigest,archiveToolSha256:policy.archive_tool_sha256,
    source:initial.source,candidate:initial.candidate,scannedInputs:scan.inputs as unknown as GateInputBinding[],inputSha256:scan.input_sha256,configuredChecks:scan.configured_checks as string[],processExit:0,terminalEvent:true});
+ const fileRows=[...files].map(([name,bytes])=>({path:name,sha256:createHash('sha256').update(bytes).digest('hex'),size:bytes.length})).sort((a,b)=>Buffer.compare(Buffer.from(a.path),Buffer.from(b.path)));
+ const manifest=parseCanonicalJson(Buffer.from(JSON.stringify({schema:'pcb.verifier-evidence.v1',project_id:ref.project,board_id:ref.board,job_id:ref.job,attempt_id:ref.attempt,
+  verification_id:ref.verification,source_manifest_sha256:initial.sourceDigest,candidate_manifest_sha256:initial.candidateDigest,policy_sha256:initial.policyDigest,
+  verifier_image_sha256:policy.verifier_image_sha256,files:fileRows})),{maxBytes:1024*1024,maxNodes:10000,maxDepth:12});
  if((await manager.runtime.inspect(attempt.container)).status!=='missing')throw new Error('protected verifier cleanup changed');
  const final=authority.verificationContextFromTrustedService(ref);
  if(final.sourceDigest!==initial.sourceDigest||final.candidateDigest!==initial.candidateDigest||final.policyDigest!==initial.policyDigest||manager.jobs.get(runtimeJob)!==job||job.state!=='passed'||job.cancelRequested||!authority.canRunVerifier(ref,runtimeJob,true))
   throw new Error('protected verification changed during collection');
- authority.recordVerifierCleanupFromTrustedService(ref,runtimeJob);
- return {files,evidence:validated,runtimeJob};
+ authority.recordVerifierCleanupFromTrustedService(ref,runtimeJob,manifest.sha256);
+ return {files,evidenceManifest:manifest.canonical,evidenceSha256:manifest.sha256,evidence:validated,runtimeJob};
+}
+
+/** Full internal collector-to-receipt path. A client cannot supply the files, verdict, cleanup state or signer. */
+export async function collectAndSealProtectedVerification(authority:ProtectedVerifierAuthority,manager:JobManager,ref:VerifierRef,runtimeJob:string):
+  Promise<{receiptSha256:string;evidenceSha256:string}> {
+ const collected=await collectProtectedVerifierOutput(authority,manager,ref,runtimeJob),context=authority.verificationContextFromTrustedService(ref),material=authority.policyMaterialFromTrustedService(context.policyDigest),policy=material.policy;
+ if(!policy.required_checks.includes('drc')&&!policy.parity_not_applicable_allowed)throw new Error('schematic parity was not verified');
+ for(const bytes of collected.files.values()){const hash=createHash('sha256').update(bytes).digest('hex');authority.put(hash,bytes);}
+ authority.put(collected.evidenceSha256,collected.evidenceManifest);
+ const expiresAt=Math.min(material.nowMs+300_000,policy.expires_at_ms,context.leaseExpiresAt);
+ if(!Number.isSafeInteger(expiresAt)||expiresAt<=material.nowMs)throw new Error('verification authority expired');
+ const receipt={schema:'pcb.verification.v1',verification_id:ref.verification,job_id:ref.job,attempt_id:ref.attempt,project_id:ref.project,board_id:ref.board,
+  alias_revision:context.aliasRevision,lease_generation:context.leaseGeneration,source_revision:context.sourceRevision,source_manifest_sha256:context.sourceDigest,
+  candidate_manifest_sha256:context.candidateDigest,toolchain_digest:context.toolchainDigest,runtime_digest:context.workerDigest,policy_digest:context.policyDigest,
+  evidence_manifest_sha256:collected.evidenceSha256,verifier_identity:`verifier:${policy.verifier_image_sha256}`,issued_at_ms:material.nowMs,expires_at_ms:expiresAt,
+  checks:policy.required_checks.map(id=>({id,outcome:'passed',evidence_manifest_sha256:collected.evidenceSha256})),schematic_parity:policy.required_checks.includes('drc')?'passed':'not_applicable',
+  worker_cleanup:'confirmed',cancellation:'not_cancelled',outcome:'passed'};
+ const parsed=parseCanonicalJson(Buffer.from(JSON.stringify(receipt)),{maxBytes:1024*1024,maxNodes:30000,maxDepth:16});
+ authority.put(parsed.sha256,parsed.canonical);
+ return authority.recordVerifiedFromTrustedService(ref,runtimeJob,parsed.sha256,collected.evidenceSha256);
 }

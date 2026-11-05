@@ -28,7 +28,8 @@ class Fixture extends ProtectedCommitStore {
     this.db.prepare("INSERT INTO protected_verifiers VALUES ('verifier',1)").run();
   }
   verified(candidate:string,evidence:string,receipt:Buffer):void {
-    this.db.prepare("INSERT INTO protected_verified_attempts VALUES ('job','attempt','verification',?,?,'verifier',?,'VERIFIED',0,0,?)").run(candidate,evidence,receipt,'d'.repeat(64));
+    const receiptHash=hash(receipt);this.put(receiptHash,receipt);
+    this.db.prepare("INSERT INTO protected_verified_attempts VALUES ('job','attempt','verification',?,?,'verifier',?,'VERIFIED',0,0,?,?)").run(candidate,evidence,receipt,'d'.repeat(64),receiptHash);
   }
   revision():number { return (this.db.prepare("SELECT revision FROM protected_targets WHERE project='p' AND board='b'").get() as {revision:number}).revision; }
   pins(): {kind:string;owner:string;sha256:string}[] { return this.db.prepare('SELECT * FROM protected_blob_pins').all() as {kind:string;owner:string;sha256:string}[]; }

@@ -15,7 +15,7 @@ const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 type Target = { revision: number; alias_revision: number; state: string; source_manifest: string; board_path: string };
 type Lease = { generation: number; token_hash: Uint8Array; expires_at: number; pinned: number; source_revision: number; alias_revision: number; source_manifest: string; operation: string; boot_id: string | null };
 type Attempt = { project: string; board: string; generation: number; source_revision: number; alias_revision: number; operation: string; source_manifest: string; policy_digest: string; runtime_digest: string; toolchain_digest: string };
-type Verified = { candidate_manifest: string; evidence_manifest: string; verifier: string; verifier_image_digest:string|null; receipt: Uint8Array; state: string; cancelled: number; revoked: number };
+type Verified = { candidate_manifest: string; evidence_manifest: string; verifier: string; verifier_image_digest:string|null; receipt: Uint8Array; receipt_sha256:string|null; state: string; cancelled: number; revoked: number };
 
 export class ProtectedCommitStore extends ProtectedLeaseStore {
   constructor(root: string, limits: { maxBlobBytes: number; quotaBytes: number }, now: () => number = Date.now, monotonic: () => bigint = process.hrtime.bigint) {
@@ -26,7 +26,7 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
       CREATE TABLE IF NOT EXISTS protected_verifiers (id TEXT PRIMARY KEY, enabled INTEGER NOT NULL) STRICT;
       CREATE TABLE IF NOT EXISTS protected_verified_attempts (job TEXT NOT NULL, attempt TEXT NOT NULL, verification TEXT NOT NULL,
         candidate_manifest TEXT NOT NULL, evidence_manifest TEXT NOT NULL, verifier TEXT NOT NULL, receipt BLOB NOT NULL,
-        state TEXT NOT NULL, cancelled INTEGER NOT NULL, revoked INTEGER NOT NULL, verifier_image_digest TEXT, PRIMARY KEY(job,attempt,verification)) STRICT;
+        state TEXT NOT NULL, cancelled INTEGER NOT NULL, revoked INTEGER NOT NULL, verifier_image_digest TEXT, receipt_sha256 TEXT, PRIMARY KEY(job,attempt,verification)) STRICT;
       CREATE TABLE IF NOT EXISTS protected_candidates (job TEXT NOT NULL, attempt TEXT NOT NULL, manifest TEXT NOT NULL, state TEXT NOT NULL,
         PRIMARY KEY(job,attempt)) STRICT;
       CREATE TABLE IF NOT EXISTS protected_runtime_jobs (job TEXT NOT NULL, attempt TEXT NOT NULL, runtime_job TEXT NOT NULL UNIQUE, input_sha256 TEXT, input_size INTEGER, spec_sha256 TEXT, attested_image TEXT, archive_tool_digest TEXT,
@@ -48,6 +48,7 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
     if (!runtimeColumns.some(column => column.name === 'archive_tool_digest')) this.db.exec('ALTER TABLE protected_runtime_jobs ADD COLUMN archive_tool_digest TEXT');
     const verificationColumns = this.db.prepare('PRAGMA table_info(protected_verified_attempts)').all() as {name:string}[];
     if (!verificationColumns.some(column => column.name === 'verifier_image_digest')) this.db.exec('ALTER TABLE protected_verified_attempts ADD COLUMN verifier_image_digest TEXT');
+    if (!verificationColumns.some(column => column.name === 'receipt_sha256')) this.db.exec('ALTER TABLE protected_verified_attempts ADD COLUMN receipt_sha256 TEXT');
   }
   /** Only the owned manager may call this after terminal/trimmed state and a fresh missing-container inspection. */
   recordWorkerCleanupFromTrustedService(ref:{project:string;board:string;operation:string;job:string;attempt:string},runtimeJob:string):void {
@@ -70,7 +71,7 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
   /** The base store has no trust root and therefore cannot authorize protected execution or commit. */
   protected authorizePolicy(_input:{digest:string;project:string;board:string;operation:string;boardPath:string;workerDigest:string;toolchainDigest:string;archiveDigest:string},_now:number): SignedVerificationPolicy|null { return null; }
   /** The base store cannot prove that a separate verifier job ran and was cleaned up. */
-  protected verifierRecordTrusted(_ref:{project:string;board:string;operation:string;job:string;attempt:string;verification:string},_imageDigest:string):boolean { return false; }
+  protected verifierRecordTrusted(_ref:{project:string;board:string;operation:string;job:string;attempt:string;verification:string},_imageDigest:string,_evidenceDigest:string):boolean { return false; }
   /** Persist the exact prepared archive and command before creating any runtime job. */
   reserveSubmissionFromTrustedService(ref: {project:string;board:string;operation:string;job:string;attempt:string}, input: {sha256:string;size:number;specSha256:string;archiveToolSha256:string}): void {
     if (!ref || ![ref.project,ref.board,ref.operation,ref.job,ref.attempt].every(x => typeof x === 'string' && ID.test(x)) || !input ||
@@ -385,7 +386,7 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
           attempt.alias_revision !== target.alias_revision || attempt.source_manifest !== target.source_manifest || attempt.operation !== lease.operation || attempt.operation !== binding.operation || !targetPolicy ||
           attempt.policy_digest !== targetPolicy.policy_digest || attempt.runtime_digest !== targetPolicy.runtime_digest || attempt.toolchain_digest !== targetPolicy.toolchain_digest ||
           !staged || staged.state !== 'STAGED' || staged.manifest !== request.candidate_manifest_sha256 || !cancellation || cancellation.cancelled !== 0 || runtime?.attested_image !== `sha256:${attempt.runtime_digest}` ||
-          !verified || verified.state !== 'VERIFIED' || verified.cancelled !== 0 || verified.revoked !== 0 || verified.candidate_manifest !== request.candidate_manifest_sha256)
+          !verified || verified.state !== 'VERIFIED' || verified.cancelled !== 0 || verified.revoked !== 0 || verified.candidate_manifest !== request.candidate_manifest_sha256 || !verified.receipt_sha256 || !this.blobReady(verified.receipt_sha256))
         throw new Error('protected commit preconditions failed');
       const policy = this.db.prepare('SELECT required_checks,parity_na,enabled FROM protected_policies WHERE digest=?').get(attempt.policy_digest) as { required_checks:string; parity_na:number; enabled:number } | undefined;
       const approved = this.db.prepare('SELECT enabled FROM protected_approved_digests WHERE kind=? AND digest=?');
@@ -399,7 +400,7 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
         boardPath:target.board_path,workerDigest:attempt.runtime_digest,toolchainDigest:attempt.toolchain_digest,archiveDigest:runtime.archive_tool_digest},now);
       if (!signed || verified.verifier_image_digest !== signed.verifier_image_sha256 || JSON.stringify(checks)!==JSON.stringify(signed.required_checks) ||
           (policy.parity_na===1)!==signed.parity_not_applicable_allowed || !this.verifierRecordTrusted({project:request.project_id,board:request.board_id,operation:attempt.operation,
-            job:request.job_id,attempt:request.attempt_id,verification:request.verification_id},signed.verifier_image_sha256)) throw new Error('protected signed policy or verifier is unavailable or changed');
+            job:request.job_id,attempt:request.attempt_id,verification:request.verification_id},signed.verifier_image_sha256,verified.evidence_manifest)) throw new Error('protected signed policy or verifier is unavailable or changed');
       const blob = this.db.prepare("SELECT size FROM protected_uploads WHERE sha256=? AND state='ready'");
       const source = resolveManifestClosure(attempt.source_manifest, sha => this.read(sha), sha => (blob.get(sha) as { size:number } | undefined)?.size ?? null,
         { maxDepth:16,maxManifests:256,maxNodes:100_000,maxBytes:64*1024**3,maxManifestBytes:64*1024**2 });
@@ -411,6 +412,7 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
           !candidate.rootManifest.entries.some(entry => entry.kind === 'file' && entry.path === target.board_path)) throw new Error('candidate board is unavailable');
       assertBoardOnlyChange(source.rootManifest,candidate.rootManifest,target.board_path);
       for (const hash of new Set([...source.nodes, ...candidate.nodes].filter(node => node.kind === 'file').map(node => node.sha256))) this.read(hash);
+      if (!this.read(verified.receipt_sha256).equals(Buffer.from(verified.receipt))) throw new Error('protected receipt blob changed');
       const parsed = parseTrustedVerification(verified.receipt, { verification_id:request.verification_id, job_id:request.job_id, attempt_id:request.attempt_id,
         project_id:request.project_id, board_id:request.board_id, alias_revision:request.alias_revision, lease_generation:request.lease_generation,
         source_revision:request.source_revision, source_manifest_sha256:attempt.source_manifest, candidate_manifest_sha256:request.candidate_manifest_sha256,

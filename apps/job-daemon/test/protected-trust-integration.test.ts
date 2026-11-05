@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';import {createHash,generateKeyPairSync,s
 import {parseCanonicalJson} from '../src/canonical-json.ts';import {ProtectedVerifierAuthority} from '../src/protected-verifier-authority.ts';import {launchProtectedAttemptFromTrustedService} from '../src/protected-launch.ts';import {installProtectedRuntime,protectedVerifierCommand} from '../src/protected-runtime.ts';import {validateSpec} from '../src/manager.ts';import {rig} from './helpers.ts';import {protectedJobSpecDigest} from '../src/protected-job-spec.ts';
 import {prepareVerifierInput} from '../src/protected-verifier-input.ts';import {spawnSync} from 'node:child_process';
 import {launchProtectedVerifierFromTrustedService} from '../src/protected-verifier-launch.ts';
-import {collectProtectedVerifierOutput} from '../src/protected-verifier-output.ts';
+import {collectProtectedVerifierOutput,collectAndSealProtectedVerification} from '../src/protected-verifier-output.ts';
 const sha=(b:Uint8Array)=>createHash('sha256').update(b).digest('hex'),encode=(v:unknown)=>parseCanonicalJson(Buffer.from(JSON.stringify(v)),{maxBytes:100000,maxNodes:10000,maxDepth:16}).canonical;
 class Fixture extends ProtectedVerifierAuthority {
  setPolicyForTest(policy:string,enabled:number):void{this.db.prepare('UPDATE protected_policies SET enabled=? WHERE digest=?').run(enabled,policy);}
@@ -11,6 +11,7 @@ class Fixture extends ProtectedVerifierAuthority {
   this.db.prepare("INSERT INTO protected_aliases VALUES ('p','alias','b',1)").run();
   this.db.prepare("INSERT INTO protected_target_policy VALUES ('p','b',?,?,?)").run(policy,worker,toolchain);
   this.db.prepare("INSERT INTO protected_approved_digests VALUES ('runtime',?,1),('toolchain',?,1),('archive-tool',?,1),('verifier-runtime',?,1)").run(worker,toolchain,tar,verifier);
+  this.db.prepare('INSERT INTO protected_verifiers VALUES (?,1)').run(`verifier:${verifier}`);
  }
 }
 test('enrolled signed policy controls real manager admission and a trust change stops the worker',async()=>{
@@ -55,7 +56,8 @@ test('verifier input is built only after the exact worker is cleaned up',async()
   const submit=store.issueFromTrustedService('submit','admin',{role:'submit',principal:'operator',project:'p',board:'b',operation:'route',job:null,attempt:null,issuedAtMs:1000,expiresAtMs:10000,maxUses:50});
   const workerCap=store.issueFromTrustedService('worker','admin',{role:'worker',principal:'worker',project:'p',board:'b',operation:'route',job:'job',attempt:'attempt',issuedAtMs:1000,expiresAtMs:10000,maxUses:50});
   const cancel=store.issueFromTrustedService('cancel','admin',{role:'cancel',principal:'operator',project:'p',board:'b',operation:'route',job:'job',attempt:'attempt',issuedAtMs:1000,expiresAtMs:10000,maxUses:50});
-  if(submit.state!=='ISSUED'||workerCap.state!=='ISSUED'||cancel.state!=='ISSUED')throw Error('capability missing');
+  const commit=store.issueFromTrustedService('commit','admin',{role:'commit',principal:'operator',project:'p',board:'b',operation:'route',job:'job',attempt:'attempt',issuedAtMs:1000,expiresAtMs:10000,maxUses:50});
+  if(submit.state!=='ISSUED'||workerCap.state!=='ISSUED'||cancel.state!=='ISSUED'||commit.state!=='ISSUED')throw Error('capability missing');
   const ref={project:'p',board:'b',operation:'route',job:'job',attempt:'attempt'},lease=store.acquire(submit.token,{requestId:'lease',project:'p',board:'b',alias:'alias',aliasRevision:1,sourceRevision:1,sourceManifest:source,operation:'route',ttlMs:5000});if(lease.state!=='ACQUIRED')throw Error('lease missing');
   store.bindAttempt(submit.token,{...ref,generation:lease.generation,token:lease.token},{job:'job',attempt:'attempt',sourceManifest:source,policyDigest:policyHash,runtimeDigest:worker,toolchainDigest:toolchain});installProtectedRuntime(store,r.mgr);
   const opts={tarPath:'/usr/bin/tar',maxFiles:20,maxBytes:10000,maxArchiveBytes:100000,timeoutMs:10000};
@@ -94,6 +96,16 @@ test('verifier input is built only after the exact worker is cleaned up',async()
   await assert.rejects(collectProtectedVerifierOutput(store,r.mgr,verifierRef,verifyJob.id),/service-private/);
   fs.chmodSync(r.mgr.store.root,0o700);
   const collected=await collectProtectedVerifierOutput(store,r.mgr,verifierRef,verifyJob.id);assert.equal(collected.runtimeJob,verifyJob.id);assert.equal(collected.files.size,9);
-  store.cancelAttempt(cancel.token,ref);assert.equal(store.canRunVerifier(verifierRef,verifyJob.id,true),false);
+  const drcPath=path.join(gate,'drc.json'),originalDrc=fs.readFileSync(drcPath);fs.writeFileSync(drcPath,JSON.stringify({violations:[],schematic_parity:[{}],unconnected_items:[]}));
+  await assert.rejects(collectAndSealProtectedVerification(store,r.mgr,verifierRef,verifyJob.id),/DRC/);fs.writeFileSync(drcPath,originalDrc);
+  const sealed=await collectAndSealProtectedVerification(store,r.mgr,verifierRef,verifyJob.id);
+  assert.deepEqual(await collectAndSealProtectedVerification(store,r.mgr,verifierRef,verifyJob.id),sealed);
+  const request={schema:'pcb.commit-request.v1' as const,request_id:'commit-request',job_id:'job',attempt_id:'attempt',verification_id:'verification',project_id:'p',board_id:'b',alias_revision:1,source_revision:1,candidate_manifest_sha256:candidate,lease_generation:lease.generation,lease_token:lease.token};
+  assert.throws(()=>store.commit(commit.token,{...request,lease_token:'0'.repeat(64)}),/preconditions/);
+  const priorTrust=fs.readFileSync(trustFile);fs.writeFileSync(trustFile,encode({schema:'pcb.policy-trust.v1',version:2,signers:[{key_id:keyId,public_key_pem:pem,revoked:true}]}));
+  assert.throws(()=>store.commit(commit.token,request),/policy|authority|verifier/);fs.writeFileSync(trustFile,priorTrust);
+  const committed=store.commit(commit.token,request);assert.equal(committed.state,'COMMITTED');if(committed.state==='COMMITTED')assert.equal(committed.revision,2);
+  assert.deepEqual(store.commit(commit.token,request),committed);
+  assert.throws(()=>store.cancelAttempt(cancel.token,ref),/already committed/);
  } finally {store.close();r.cleanup();fs.rmSync(parent,{recursive:true,force:true});}
 });

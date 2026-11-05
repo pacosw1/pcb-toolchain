@@ -1,5 +1,7 @@
 // Internal verifier-job authority. No network API, trust bootstrap or verifier receipt is exposed here.
 import { ProtectedTrustStore } from './protected-trust-store.ts';
+import { parseCanonicalJson } from './canonical-json.ts';
+import { parseTrustedVerification } from './protected-verification.ts';
 const ID=/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/, SHA=/^[0-9a-f]{64}$/;
 export type VerifierRef={project:string;board:string;operation:string;job:string;attempt:string;verification:string};
 export type VerifierInputIdentity={sha256:string;size:number;specSha256:string;sourceManifest:string;candidateManifest:string;policySha256:string;verifierImage:string;archiveToolSha256:string};
@@ -18,7 +20,9 @@ export class ProtectedVerifierAuthority extends ProtectedTrustStore {
       CREATE TABLE IF NOT EXISTS protected_verifier_jobs (job TEXT NOT NULL,attempt TEXT NOT NULL,verification TEXT NOT NULL,runtime_job TEXT NOT NULL UNIQUE,attested_image TEXT,
       PRIMARY KEY(job,attempt,verification)) STRICT;
       CREATE TABLE IF NOT EXISTS protected_verifier_cleanup (job TEXT NOT NULL,attempt TEXT NOT NULL,verification TEXT NOT NULL,runtime_job TEXT NOT NULL,
-      attested_image TEXT NOT NULL,state TEXT NOT NULL,PRIMARY KEY(job,attempt,verification)) STRICT;`);
+      attested_image TEXT NOT NULL,state TEXT NOT NULL,evidence_sha256 TEXT,PRIMARY KEY(job,attempt,verification)) STRICT;`);
+    const cleanupColumns=this.db.prepare('PRAGMA table_info(protected_verifier_cleanup)').all() as {name:string}[];
+    if(!cleanupColumns.some(column=>column.name==='evidence_sha256'))this.db.exec('ALTER TABLE protected_verifier_cleanup ADD COLUMN evidence_sha256 TEXT');
   }
   /** Called only inside the authority transaction. */
   private base(ref:VerifierRef,now:number):{attempt:Attempt;target:Target;candidate:string;image:string;archive:string}|null {
@@ -111,21 +115,66 @@ export class ProtectedVerifierAuthority extends ProtectedTrustStore {
     });
   }
   /** Internal collector only, after trusted manager cleanup and a fresh missing-container inspection. */
-  recordVerifierCleanupFromTrustedService(ref:VerifierRef,runtimeJob:string):void {
-    if(!valid(ref)||!ID.test(runtimeJob))throw new Error('invalid verifier cleanup');
+  recordVerifierCleanupFromTrustedService(ref:VerifierRef,runtimeJob:string,evidenceSha256:string):void {
+    if(!valid(ref)||!ID.test(runtimeJob)||!SHA.test(evidenceSha256))throw new Error('invalid verifier cleanup');
     this.transaction(()=>{
       if(!this.verifierAllowed(ref,runtimeJob,true))throw new Error('verifier cleanup is stale');
       const job=this.db.prepare('SELECT attested_image FROM protected_verifier_jobs WHERE job=? AND attempt=? AND verification=? AND runtime_job=?').get(ref.job,ref.attempt,ref.verification,runtimeJob) as {attested_image:string}|undefined;
       if(!job||!/^sha256:[0-9a-f]{64}$/.test(job.attested_image))throw new Error('verifier image is unattested');
-      const prior=this.db.prepare('SELECT runtime_job,attested_image,state FROM protected_verifier_cleanup WHERE job=? AND attempt=? AND verification=?').get(ref.job,ref.attempt,ref.verification) as {runtime_job:string;attested_image:string;state:string}|undefined;
-      if(prior){if(prior.runtime_job!==runtimeJob||prior.attested_image!==job.attested_image||prior.state!=='CLEANED')throw new Error('verifier cleanup changed');return;}
-      this.db.prepare("INSERT INTO protected_verifier_cleanup VALUES (?,?,?,?,?,'CLEANED')").run(ref.job,ref.attempt,ref.verification,runtimeJob,job.attested_image);
+      const prior=this.db.prepare('SELECT runtime_job,attested_image,state,evidence_sha256 FROM protected_verifier_cleanup WHERE job=? AND attempt=? AND verification=?').get(ref.job,ref.attempt,ref.verification) as {runtime_job:string;attested_image:string;state:string;evidence_sha256:string|null}|undefined;
+      if(prior){if(prior.runtime_job!==runtimeJob||prior.attested_image!==job.attested_image||prior.state!=='CLEANED'||prior.evidence_sha256!==evidenceSha256)throw new Error('verifier cleanup changed');return;}
+      this.db.prepare("INSERT INTO protected_verifier_cleanup VALUES (?,?,?,?,?,'CLEANED',?)").run(ref.job,ref.attempt,ref.verification,runtimeJob,job.attested_image,evidenceSha256);
     });
   }
-  protected override verifierRecordTrusted(ref:VerifierRef,imageDigest:string):boolean {
-    const row=this.db.prepare(`SELECT j.runtime_job,j.attested_image,c.state,c.attested_image AS cleanup_image FROM protected_verifier_jobs j
+  /** Internal collector only: persist a receipt after its evidence blobs are durable and its verifier cleanup is bound. */
+  recordVerifiedFromTrustedService(ref:VerifierRef,runtimeJob:string,receiptSha:string,evidenceSha:string):{receiptSha256:string;evidenceSha256:string} {
+    if(!valid(ref)||!ID.test(runtimeJob)||!SHA.test(receiptSha)||!SHA.test(evidenceSha))throw new Error('invalid verified record');
+    return this.transaction(()=>{
+      const now=this.safeNow(),base=this.base(ref,now);
+      if(!base||!this.verifierRecordTrusted(ref,base.image.slice(7),evidenceSha))throw new Error('verified runtime is unavailable');
+      const policy=this.authorizePolicy({digest:base.attempt.policy_digest,project:ref.project,board:ref.board,operation:ref.operation,boardPath:base.target.board_path,
+        workerDigest:base.attempt.runtime_digest,toolchainDigest:base.attempt.toolchain_digest,archiveDigest:base.archive},now);
+      const verifier=`verifier:${base.image.slice(7)}`,approved=this.db.prepare('SELECT enabled FROM protected_verifiers WHERE id=?').get(verifier) as {enabled:number}|undefined;
+      const lease=this.db.prepare('SELECT expires_at FROM protected_leases WHERE project=? AND board=?').get(ref.project,ref.board) as {expires_at:number}|undefined;
+      if(!policy||approved?.enabled!==1||!lease)throw new Error('verifier authority is unavailable');
+      const prior=this.db.prepare('SELECT receipt,receipt_sha256,evidence_manifest,state,revoked,cancelled FROM protected_verified_attempts WHERE job=? AND attempt=? AND verification=?').get(ref.job,ref.attempt,ref.verification) as {receipt:Uint8Array;receipt_sha256:string|null;evidence_manifest:string;state:string;revoked:number;cancelled:number}|undefined;
+      const chosen=prior?.receipt_sha256??receiptSha;
+      if(prior&&(prior.evidence_manifest!==evidenceSha||prior.state!=='VERIFIED'||prior.revoked!==0||prior.cancelled!==0||!prior.receipt_sha256))throw new Error('verified record changed');
+      const receipt=this.read(chosen);if(prior&&!receipt.equals(Buffer.from(prior.receipt)))throw new Error('verified receipt changed');
+      const parsed=parseTrustedVerification(receipt,{verification_id:ref.verification,job_id:ref.job,attempt_id:ref.attempt,project_id:ref.project,board_id:ref.board,
+        alias_revision:base.attempt.alias_revision,lease_generation:base.attempt.generation,source_revision:base.attempt.source_revision,source_manifest_sha256:base.attempt.source_manifest,
+        candidate_manifest_sha256:base.candidate,toolchain_digest:base.attempt.toolchain_digest,runtime_digest:base.attempt.runtime_digest,policy_digest:base.attempt.policy_digest,
+        evidence_manifest_sha256:evidenceSha,verifier_identity:verifier,required_checks:policy.required_checks,parity_not_applicable_allowed:policy.parity_not_applicable_allowed,now_ms:now,max_receipt_age_ms:300_000});
+      if(parsed.receipt.expires_at_ms>policy.expires_at_ms||parsed.receipt.expires_at_ms>lease.expires_at)throw new Error('verification receipt exceeds authority lifetime');
+      const manifestBytes=this.read(evidenceSha),manifest=parseCanonicalJson(manifestBytes,{maxBytes:1024*1024,maxNodes:10000,maxDepth:12});
+      const m=manifest.value;
+      if(!manifest.canonical.equals(manifestBytes)||!m||typeof m!=='object'||Array.isArray(m)||Object.keys(m).length!==11||m.schema!=='pcb.verifier-evidence.v1'||
+        m.project_id!==ref.project||m.board_id!==ref.board||m.job_id!==ref.job||m.attempt_id!==ref.attempt||m.verification_id!==ref.verification||
+        m.source_manifest_sha256!==base.attempt.source_manifest||m.candidate_manifest_sha256!==base.candidate||m.policy_sha256!==base.attempt.policy_digest||m.verifier_image_sha256!==base.image.slice(7)||!Array.isArray(m.files))
+        throw new Error('invalid verifier evidence manifest');
+      const required=new Set(['scan.json','identity.json','gate/result.json','gate/findings.json','gate/events.jsonl','gate.stdout','gate.stderr',...policy.required_checks.map(id=>`gate/${id}.log`),
+        ...(policy.required_checks.includes('erc')?['gate/erc.json']:[]),...(policy.required_checks.includes('drc')?['gate/drc.json']:[])]);
+      const hashes:string[]=[];let previous='';
+      if(m.files.length!==required.size||required.size>128)throw new Error('incomplete verifier evidence manifest');
+      for(const entry of m.files){
+        if(!entry||typeof entry!=='object'||Array.isArray(entry)||Object.keys(entry).length!==3||typeof entry.path!=='string'||!required.delete(entry.path)||
+          (previous&&Buffer.compare(Buffer.from(previous),Buffer.from(entry.path))>=0)||typeof entry.sha256!=='string'||!SHA.test(entry.sha256)||!Number.isSafeInteger(entry.size)||(entry.size as number)<0)
+          throw new Error('invalid verifier evidence entry');
+        previous=entry.path;const bytes=this.read(entry.sha256);if(bytes.length!==entry.size)throw new Error('verifier evidence size changed');hashes.push(entry.sha256);
+      }
+      if(required.size)throw new Error('incomplete verifier evidence manifest');
+      if(!prior){
+        this.pinBlobs('verification',JSON.stringify([ref.job,ref.attempt,ref.verification]),[evidenceSha,chosen,...hashes]);
+        this.db.prepare(`INSERT INTO protected_verified_attempts (job,attempt,verification,candidate_manifest,evidence_manifest,verifier,receipt,state,cancelled,revoked,verifier_image_digest,receipt_sha256)
+          VALUES (?,?,?,?,?,?,?,'VERIFIED',0,0,?,?)`).run(ref.job,ref.attempt,ref.verification,base.candidate,evidenceSha,verifier,receipt,base.image.slice(7),chosen);
+      }
+      return {receiptSha256:chosen,evidenceSha256:evidenceSha};
+    });
+  }
+  protected override verifierRecordTrusted(ref:VerifierRef,imageDigest:string,evidenceDigest:string):boolean {
+    const row=this.db.prepare(`SELECT j.runtime_job,j.attested_image,c.state,c.attested_image AS cleanup_image,c.evidence_sha256 FROM protected_verifier_jobs j
       JOIN protected_verifier_cleanup c ON c.job=j.job AND c.attempt=j.attempt AND c.verification=j.verification AND c.runtime_job=j.runtime_job
-      WHERE j.job=? AND j.attempt=? AND j.verification=?`).get(ref.job,ref.attempt,ref.verification) as {runtime_job:string;attested_image:string|null;state:string;cleanup_image:string}|undefined;
-    return !!row&&row.state==='CLEANED'&&row.attested_image===`sha256:${imageDigest}`&&row.cleanup_image===row.attested_image&&this.verifierAllowed(ref,row.runtime_job,true);
+      WHERE j.job=? AND j.attempt=? AND j.verification=?`).get(ref.job,ref.attempt,ref.verification) as {runtime_job:string;attested_image:string|null;state:string;cleanup_image:string;evidence_sha256:string|null}|undefined;
+    return !!row&&row.state==='CLEANED'&&row.attested_image===`sha256:${imageDigest}`&&row.cleanup_image===row.attested_image&&row.evidence_sha256===evidenceDigest&&this.verifierAllowed(ref,row.runtime_job,true);
   }
 }
