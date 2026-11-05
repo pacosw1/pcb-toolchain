@@ -75,7 +75,6 @@ tools/fixtures/krt_impedance_sample.json
 tools/fixtures/run-record/report.json
 tools/fixtures/run-record/run.log
 tools/fp_courtyard.py
-tools/fp_keepouts.py
 tools/freeroute.py
 tools/gate.mjs
 tools/gerber_netcheck.py
