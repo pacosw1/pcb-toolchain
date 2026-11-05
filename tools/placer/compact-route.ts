@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fnmatchCase } from '../lib/fnmatch.ts';
 import { sha256File } from '../lib/json-file.ts';
+import { fixed, number, pyStr } from '../lib/py-compat.mjs';
 import { joinPath } from '../lib/py-path.ts';
 import type { Dict } from '../lib/py-values.ts';
 import { RouteOutcome } from './compact.ts';
@@ -167,7 +168,7 @@ export function routeHandoff(counts: number[], given: Dict, folder: string, opti
 /** Summary line of the chosen step: board, step, halo, measured length and vias, and why it was chosen. */
 export function bestLine(run: { best: Dict; best_step: unknown; best_reason: unknown }): string {
   const best = run.best, measure = (best.measure ?? {}) as Dict;
-  const shown = (value: unknown) => String(value ?? 'n/a');
-  const fixed3 = (value: unknown) => Number(value).toFixed(3);
+  const shown = (value: unknown) => (value === null || value === undefined ? 'n/a' : pyStr(value));
+  const fixed3 = (value: unknown) => fixed(number(value as number), 3);
   return `BEST board ${String(best.board)} step ${String(run.best_step)} s ${fixed3(best.s)} k ${fixed3(best.k)} unrouted ${String(best.unrouted)} length ${shown(measure.length_mm)} mm vias ${shown(measure.vias)} box ${shown(best.box_sum)} mm2 routed ${shown(measure.routed)}: ${String(run.best_reason)}`;
 }
