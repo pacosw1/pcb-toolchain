@@ -160,15 +160,16 @@ impl Clearance {
         let dx = (ax - bx).abs();
         let dy = (ay - by).abs();
         let gap = if a.circle && b.circle {
-            dx.hypot(dy) - (aw + bw) / 2.0
+            crate::numeric::hypot(dx, dy) - (aw + bw) / 2.0
         } else if a.circle {
-            (dx - bw / 2.0).max(0.0).hypot((dy - bh / 2.0).max(0.0)) - aw / 2.0
+            crate::numeric::hypot((dx - bw / 2.0).max(0.0), (dy - bh / 2.0).max(0.0)) - aw / 2.0
         } else if b.circle {
-            (dx - aw / 2.0).max(0.0).hypot((dy - ah / 2.0).max(0.0)) - bw / 2.0
+            crate::numeric::hypot((dx - aw / 2.0).max(0.0), (dy - ah / 2.0).max(0.0)) - bw / 2.0
         } else {
-            (dx - (aw + bw) / 2.0)
-                .max(0.0)
-                .hypot((dy - (ah + bh) / 2.0).max(0.0))
+            crate::numeric::hypot(
+                (dx - aw / 2.0 - bw / 2.0).max(0.0),
+                (dy - ah / 2.0 - bh / 2.0).max(0.0),
+            )
         };
         Ok((self.minimum - gap).max(0.0))
     }
@@ -220,7 +221,7 @@ impl PinDistance {
     pub fn miss(&self, pose: &Pose) -> crate::Result<f64> {
         let (ax, ay) = Self::point(&self.a, pose)?;
         let (bx, by) = Self::point(&self.b, pose)?;
-        let distance = (ax - bx).hypot(ay - by);
+        let distance = crate::numeric::hypot(ax - bx, ay - by);
         Ok((self.min - distance).max(0.0).max(distance - self.max))
     }
     pub fn affects(&self, unit: usize) -> bool {
