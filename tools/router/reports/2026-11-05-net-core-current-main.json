@@ -1,0 +1,669 @@
+{
+  "schema": "pcb.net-core-calibration-1395.v1",
+  "task": 1395,
+  "source_commit": "c073af76a4c35d77b5475b7549c30bdc257e741f",
+  "conclusion": "NET-CORE passes; stop fix search. ENV-SENSE regression passes.",
+  "policy": {
+    "cpus": 1,
+    "memory_gib": 8,
+    "route_seconds": 600,
+    "hard_timeout_seconds": 660,
+    "kill_after_seconds": 10,
+    "seed": 0,
+    "max_passes": 80
+  },
+  "provenance": {
+    "input": {
+      "NET-CORE.kicad_dru": {
+        "sha256": "c3668dc562af2a0430d636cb546690b617b0df0908a94f3d5aedcfe876dcd928",
+        "matches_baseline": true
+      },
+      "NET-CORE.kicad_pcb": {
+        "sha256": "9109c27c374ca3685cc73cb60e452a66adba81ad71968c1f63db754f7fc5f784",
+        "matches_baseline": true
+      },
+      "NET-CORE.kicad_prl": {
+        "sha256": "26efd7d1adf51cbde76d4004c2388c43d4f8fa5884dda4053d8eb9d5b91bd0a5",
+        "matches_baseline": true
+      },
+      "NET-CORE.kicad_pro": {
+        "sha256": "e7eabad4694910793f3402500c2ff6687277744c2aa61056527bdc8ed9ed2101",
+        "matches_baseline": true
+      },
+      "NET-CORE.kicad_sch": {
+        "sha256": "a3eed01ec162ebe823841c0dcdd76021cae073cc710cfebc1a7cc32e0e5e4f11",
+        "matches_baseline": true
+      },
+      "fp-lib-table": {
+        "sha256": "e2da9309f937aa006df09ade5f9a92fc7ab815502fcc318ddb242fd7ce849c23",
+        "matches_baseline": true
+      },
+      "sym-lib-table": {
+        "sha256": "b9ea706ce87735f3d6700455999bdba69b3e1bca838c41f7279d7b728a3158c5",
+        "matches_baseline": true
+      },
+      "~NET-CORE.kicad_pro.lck": {
+        "sha256": "aa2fc05790944519a91fa3772b5757f83609349fbd38869806a0f802559b4048",
+        "matches_baseline": true
+      }
+    },
+    "metadata": {
+      "current-paths.json": {
+        "sha256": "12a3813281887e5cac932518bc8e567c635d2e6008f956bcbeeed344c74bf7b4",
+        "matches_baseline": true
+      },
+      "diff-pairs.json": {
+        "sha256": "e90ac61f46528b80a70ebf9783bd1aef25344f4c7ba32fab034990032b58cc93",
+        "matches_baseline": true
+      },
+      "gate-metrics.json": {
+        "sha256": "8d4e535eaa07790885a7b5ef003ac06aa6f6efbc1317d8d3bdd119f57fbce721",
+        "matches_baseline": true
+      },
+      "gate-waivers.json": {
+        "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+        "matches_baseline": true
+      },
+      "gate.json": {
+        "sha256": "151819007d2a8d0b5625a9f6f5f3d4ff2040ab9c041327df6d9bf8ee3746ce06",
+        "matches_baseline": true
+      },
+      "gate.pending.json": {
+        "sha256": "151819007d2a8d0b5625a9f6f5f3d4ff2040ab9c041327df6d9bf8ee3746ce06",
+        "matches_baseline": true
+      },
+      "kicad-happy-exempt.json": {
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "matches_baseline": true
+      },
+      "pairs-stubs.json": {
+        "sha256": "b0d9a83fd29a771a2f908c1e675c073eb42eafeb4c513b192720f666eee86e3a",
+        "matches_baseline": true
+      },
+      "port-labels.json": {
+        "sha256": "05d17f1adb82a85e670ef95a7bb9c5b244044949aa29c10e746409bbc4045bb4",
+        "matches_baseline": true
+      },
+      "reference-planes.json": {
+        "sha256": "83c3931d0b3d01469ca3b91ceb1f33ca5badd1134fae3be6eaf96e8988875735",
+        "matches_baseline": true
+      },
+      "route.json": {
+        "sha256": "1d9ca3e6684da03e5aeedfcf019b96ca34de4b5b4dac78a9d5b23266318ee916",
+        "matches_baseline": true
+      },
+      "rp001-fast-nets.json": {
+        "sha256": "06f850a78e05104b66c56d53a43247948640fead195121fa3f4c1ccee933502b",
+        "matches_baseline": true
+      }
+    },
+    "only_backend_converted": true,
+    "copper": {
+      "total": 229,
+      "locked": 229
+    },
+    "model": {
+      "nets": 77,
+      "pads": 491,
+      "layers": [
+        "F.Cu",
+        "In1.Cu",
+        "In2.Cu",
+        "In3.Cu",
+        "In4.Cu",
+        "B.Cu"
+      ]
+    },
+    "binary_sha256": "529ceda5e2e95273460dadc1780faa7928762c7c91f39d8ac97c367d6158ce56",
+    "source_archive_sha256": "94b69aa3f78e6eeede48a84779c6ebe4d9e12eb52252d6acac79d9409b6672a6",
+    "original_control_sha256": "cbe5b29ca487a9dd180e01442e58735fe4914bc23d68107a047573aaa7caf642"
+  },
+  "baseline": {
+    "name": "iotroute",
+    "measured": true,
+    "accepted": false,
+    "route_exit": 1,
+    "metrics": {
+      "board_sha256": "cc0fc8a673a57a397be1f8c76e2672f731270ffc6043e00109dc2f0c7cea86f0",
+      "input_copper": 229,
+      "changed_input_copper": [],
+      "placement_same": true,
+      "tracks": 1125,
+      "vias": 281,
+      "new_tracks": 924,
+      "new_vias": 253,
+      "straight_track_length_mm": 1572.2658230963941,
+      "new_straight_track_length_mm": 1211.8041456797323,
+      "arcs": 0,
+      "drc_errors": 0,
+      "unconnected": 1,
+      "parity": 0
+    },
+    "gate_exit": 1,
+    "gate_changed": false,
+    "gate_metrics": {
+      "erc_errors": 0,
+      "erc_warnings": 368,
+      "drc_errors": 0,
+      "drc_parity": 0,
+      "drc_unconnected": 1,
+      "drc_warnings": 116,
+      "planes_failures": 0,
+      "pairs_failures": 0,
+      "paths_low": 0,
+      "viapads": 0,
+      "kicad_happy_findings": 0,
+      "port_label_failures": 0
+    }
+  },
+  "current": {
+    "native": {
+      "schema": "iot-lab.iotroute-run.v1",
+      "status": "PASS",
+      "board_file": "/bench/runs/iotroute.kicad_pcb",
+      "work": "/bench/runs/iotroute.kicad_pcb.iotroute",
+      "stages": {
+        "binary": {
+          "path": "/bench/toolchain/bin/iotroute-linux-x86_64",
+          "how": "self",
+          "sources_sha256": "d2ed838054bd0ec767745dfb74ccf40ec3309079d6e5441e88e810d3ac94a4e5",
+          "sha256": "529ceda5e2e95273460dadc1780faa7928762c7c91f39d8ac97c367d6158ce56"
+        },
+        "model": {
+          "line": "MODEL ok nets 77 pads 491 copper 229 rules applied 13 checked 2 plane 3 stage 12 -> /bench/runs/iotroute.kicad_pcb.iotroute/model.json",
+          "sha256": "de72a02b17cea74afecc494adb236a0fefcaec9aeaba4ec5e5e89b1a9dc04960"
+        },
+        "core": {
+          "exit": 0,
+          "seconds": 343.9,
+          "claim": {
+            "status": "PASS",
+            "converged": false,
+            "iters": 80,
+            "tracks": 917,
+            "vias": 235,
+            "failed": 0
+          }
+        },
+        "write": {
+          "exit": 0,
+          "line": "WRITE PASS drc 0 {} unconnected 0 parity 0 -> /bench/runs/iotroute.kicad_pcb.iotroute/write/NET-CORE.kicad_pcb"
+        },
+        "ref_gate": {
+          "rounds": [
+            {
+              "round": 1,
+              "planes_fail_lines": 0,
+              "fail_nets": [],
+              "raised": [],
+              "set_hard": []
+            }
+          ]
+        }
+      },
+      "drc_errors": 0,
+      "unconnected": 0,
+      "parity": 0,
+      "tracks": 1118,
+      "vias": 263,
+      "board": "NET-CORE",
+      "input": "/bench/input/NET-CORE.kicad_pcb",
+      "input_sha256": "9109c27c374ca3685cc73cb60e452a66adba81ad71968c1f63db754f7fc5f784",
+      "iters": 80,
+      "pro_restored": false,
+      "drc_by_type": {},
+      "track_length_mm": 1563.9,
+      "board_sha256": "f1deebad65c71c77ad65bec595297ceea491089d8da519ddc50a7bae6d2ffe05",
+      "seconds": 355.7
+    },
+    "verification": {
+      "name": "iotroute",
+      "measured": true,
+      "accepted": true,
+      "route_exit": 0,
+      "metrics": {
+        "board_sha256": "8895966ccac913b3c79effe035ceb05b5872881ff119bb5a1b1dff5e5826c4d4",
+        "input_copper": 229,
+        "changed_input_copper": [],
+        "placement_same": true,
+        "tracks": 1118,
+        "vias": 263,
+        "new_tracks": 917,
+        "new_vias": 235,
+        "straight_track_length_mm": 1563.865717444077,
+        "new_straight_track_length_mm": 1203.4040400274152,
+        "arcs": 0,
+        "drc_errors": 0,
+        "unconnected": 0,
+        "parity": 0
+      },
+      "gate_exit": 0,
+      "gate_changed": false,
+      "gate_metrics": {
+        "erc_errors": 0,
+        "erc_warnings": 368,
+        "drc_errors": 0,
+        "drc_parity": 0,
+        "drc_unconnected": 0,
+        "drc_warnings": 115,
+        "planes_failures": 0,
+        "pairs_failures": 0,
+        "paths_low": 0,
+        "viapads": 0,
+        "kicad_happy_findings": 0,
+        "port_label_failures": 0
+      }
+    },
+    "process": {
+      "command": [
+        "docker",
+        "run",
+        "--name",
+        "net1395-2921358-runs-iotroute",
+        "--rm",
+        "--user",
+        "0:0",
+        "--network",
+        "none",
+        "--cpus",
+        "1",
+        "--memory",
+        "8g",
+        "--mount",
+        "type=bind,src=/var/tmp/net-core-1395,dst=/bench",
+        "--mount",
+        "type=bind,src=/var/tmp/net-core-1395/input,dst=/bench/input,readonly",
+        "-w",
+        "/bench/project",
+        "-e",
+        "PATH=/bench/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "-e",
+        "IOT_LAB=/bench/project",
+        "-e",
+        "PCB_TOOLCHAIN_ROOT=/bench/toolchain",
+        "-e",
+        "PCB_JOBS_LOCAL=1",
+        "-e",
+        "REMOTE_NO_DAEMON=1",
+        "-e",
+        "KICAD_HAPPY_DIR=/bench/happy",
+        "-e",
+        "IOTROUTE_BIN=/bench/toolchain/bin/iotroute-linux-x86_64",
+        "-e",
+        "OMP_NUM_THREADS=1",
+        "-e",
+        "OPENBLAS_NUM_THREADS=1",
+        "-e",
+        "RAYON_NUM_THREADS=1",
+        "iot-lab-route:10.0-nightly-4fe1ca2060",
+        "/bench/time",
+        "-v",
+        "-o",
+        "/bench/runs/iotroute.time",
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=10",
+        "660",
+        "/bench/toolchain/bin/iotroute-linux-x86_64",
+        "run",
+        "/bench/project/hardware-design/boards/NET-CORE",
+        "/bench/runs/iotroute.kicad_pcb",
+        "--pcb",
+        "/bench/input/NET-CORE.kicad_pcb",
+        "--iters",
+        "80",
+        "--max-time",
+        "600",
+        "--tools",
+        "/bench/toolchain/tools",
+        "--json"
+      ],
+      "exit": 0,
+      "signal": null,
+      "error": null,
+      "wall_s": 355.965495163
+    },
+    "gate_process": {
+      "command": [
+        "docker",
+        "run",
+        "--name",
+        "net1395-3081567-verify-iotroute-gate-run",
+        "--rm",
+        "--user",
+        "0:0",
+        "--network",
+        "none",
+        "--cpus",
+        "1",
+        "--memory",
+        "8g",
+        "--mount",
+        "type=bind,src=/var/tmp/net-core-1395,dst=/bench",
+        "--mount",
+        "type=bind,src=/var/tmp/net-core-1395/input,dst=/bench/input,readonly",
+        "-w",
+        "/bench/project",
+        "-e",
+        "PATH=/bench/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "-e",
+        "IOT_LAB=/bench/project",
+        "-e",
+        "PCB_TOOLCHAIN_ROOT=/bench/toolchain",
+        "-e",
+        "PCB_JOBS_LOCAL=1",
+        "-e",
+        "REMOTE_NO_DAEMON=1",
+        "-e",
+        "KICAD_HAPPY_DIR=/bench/happy",
+        "-e",
+        "IOTROUTE_BIN=/bench/toolchain/bin/iotroute-linux-x86_64",
+        "-e",
+        "OMP_NUM_THREADS=1",
+        "-e",
+        "OPENBLAS_NUM_THREADS=1",
+        "-e",
+        "RAYON_NUM_THREADS=1",
+        "iot-lab-route:10.0-nightly-4fe1ca2060",
+        "/bench/toolchain/bin/node-linux-x86_64",
+        "--experimental-strip-types",
+        "--no-warnings",
+        "/bench/toolchain/tools/gate.mjs",
+        "NET-CORE",
+        "--fresh",
+        "--evidence-dir",
+        "/bench/verify-iotroute/gate"
+      ],
+      "exit": 0,
+      "signal": null,
+      "error": null,
+      "wall_s": 31.781238908000002
+    },
+    "timing": {
+      "wall_s": 355.72,
+      "user_s": 348.62,
+      "system_s": 4.99,
+      "max_rss_kib": 601664
+    },
+    "gate_result_sha256": "6a047ae9936b0224eaefb79df559fe3c607697f18c02eb3cc10863476b84c4ba"
+  },
+  "regression": {
+    "native": {
+      "schema": "iot-lab.iotroute-run.v1",
+      "status": "PASS",
+      "board_file": "/bench/out/route/ENV-SENSE.kicad_pcb",
+      "work": "/bench/out/route/ENV-SENSE.kicad_pcb.iotroute",
+      "stages": {
+        "binary": {
+          "path": "/bench/toolchain/bin/iotroute-linux-x86_64",
+          "how": "self",
+          "sources_sha256": "d2ed838054bd0ec767745dfb74ccf40ec3309079d6e5441e88e810d3ac94a4e5",
+          "sha256": "529ceda5e2e95273460dadc1780faa7928762c7c91f39d8ac97c367d6158ce56"
+        },
+        "lock": {
+          "removed": 283,
+          "kept": 0,
+          "nets": [],
+          "source": "/bench/hardware-design/boards/ENV-SENSE/cad/ENV-SENSE/ENV-SENSE.kicad_pcb",
+          "source_sha256": "6abb00a0a30cd3f02d6e96a0cb326e16c1f050b735e5ed43770dcbf653844ae7"
+        },
+        "model": {
+          "line": "MODEL ok nets 5 pads 80 copper 0 rules applied 2 -> /bench/out/route/ENV-SENSE.kicad_pcb.iotroute/model.json",
+          "sha256": "e4f47afa92358eb19b74037d37b7e2282a354573ffa5840badd1383ff07dd0a7"
+        },
+        "core": {
+          "exit": 0,
+          "seconds": 9.5,
+          "claim": {
+            "status": "PASS",
+            "converged": true,
+            "iters": 8,
+            "tracks": 177,
+            "vias": 20,
+            "failed": 0
+          }
+        },
+        "write": {
+          "exit": 0,
+          "line": "WRITE PASS drc 0 {} unconnected 0 parity 0 -> /bench/out/route/ENV-SENSE.kicad_pcb.iotroute/write/ENV-SENSE.kicad_pcb"
+        },
+        "ref_gate": {
+          "rounds": [],
+          "note": "no soft reference net"
+        }
+      },
+      "drc_errors": 0,
+      "unconnected": 0,
+      "parity": 0,
+      "tracks": 177,
+      "vias": 20,
+      "board": "ENV-SENSE",
+      "input": "/bench/hardware-design/boards/ENV-SENSE/cad/ENV-SENSE/ENV-SENSE.kicad_pcb",
+      "input_sha256": "6abb00a0a30cd3f02d6e96a0cb326e16c1f050b735e5ed43770dcbf653844ae7",
+      "iters": 80,
+      "seed": 0,
+      "pro_restored": false,
+      "drc_by_type": {},
+      "track_length_mm": 262,
+      "board_sha256": "7c4dd481c5454a055da4b956124c984cae450a17547d81c3abe5092b31316da3",
+      "seconds": 13.3
+    },
+    "gate": {
+      "exit": 0,
+      "changedDuringRun": false,
+      "metrics": {
+        "erc_errors": 0,
+        "erc_warnings": 117,
+        "drc_errors": 0,
+        "drc_parity": 0,
+        "drc_unconnected": 0,
+        "drc_warnings": 28,
+        "paths_low": 0,
+        "viapads": 0,
+        "kicad_happy_findings": 0,
+        "port_label_failures": 0
+      },
+      "checks": {
+        "erc": {
+          "status": "passed",
+          "metrics": {
+            "erc_errors": 0,
+            "erc_warnings": 117
+          },
+          "cached": false
+        },
+        "drc": {
+          "status": "passed",
+          "metrics": {
+            "drc_errors": 0,
+            "drc_parity": 0,
+            "drc_unconnected": 0,
+            "drc_warnings": 28
+          },
+          "cached": false
+        },
+        "port_labels": {
+          "status": "passed",
+          "metrics": {
+            "port_label_failures": 0
+          },
+          "cached": false
+        },
+        "viapads": {
+          "status": "passed",
+          "metrics": {
+            "viapads": 0
+          },
+          "cached": false
+        },
+        "kicad_happy": {
+          "status": "passed",
+          "metrics": {
+            "kicad_happy_findings": 0
+          },
+          "cached": false
+        },
+        "paths": {
+          "status": "passed",
+          "metrics": {
+            "paths_low": 0
+          },
+          "cached": false
+        }
+      }
+    },
+    "harness": {
+      "schema": "pcb.benchmark-1318.v1",
+      "board": "ENV-SENSE",
+      "mode": "single",
+      "seconds": 120,
+      "calibration": false,
+      "max_passes": 80,
+      "status": "PASS",
+      "error": null,
+      "elapsed_s": 18.182687157,
+      "cpu_start": {
+        "usage_usec": 250386,
+        "user_usec": 219087,
+        "system_usec": 31298,
+        "nice_usec": 0,
+        "nr_periods": 2,
+        "nr_throttled": 1,
+        "throttled_usec": 17177,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      },
+      "cpu_end": {
+        "usage_usec": 17306166,
+        "user_usec": 15544532,
+        "system_usec": 1761634,
+        "nice_usec": 388000,
+        "nr_periods": 182,
+        "nr_throttled": 11,
+        "throttled_usec": 2237379,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      },
+      "cgroup_cpu_s": 17.05578,
+      "source_sha256": "6abb00a0a30cd3f02d6e96a0cb326e16c1f050b735e5ed43770dcbf653844ae7",
+      "binary_sha256": "529ceda5e2e95273460dadc1780faa7928762c7c91f39d8ac97c367d6158ce56",
+      "node": "v22.23.2",
+      "stages": [
+        {
+          "command": [
+            "/bench/in/iotroute-linux-x86_64",
+            "run",
+            "ENV-SENSE",
+            "/bench/out/route/ENV-SENSE.kicad_pcb",
+            "--pcb",
+            "/bench/hardware-design/boards/ENV-SENSE/cad/ENV-SENSE/ENV-SENSE.kicad_pcb",
+            "--lock-from",
+            "/bench/hardware-design/boards/ENV-SENSE/cad/ENV-SENSE/ENV-SENSE.kicad_pcb",
+            "--return-exempt",
+            "--iters",
+            "80",
+            "--seed",
+            "0",
+            "--max-time",
+            "90",
+            "--json"
+          ],
+          "label": "native",
+          "elapsed_s": 13.428341829999999,
+          "returncode": 0,
+          "childCpuS": 12.11935,
+          "adoptedChildCpuS": 0,
+          "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+          "cleanup": {
+            "child_reaped": true,
+            "complete": true,
+            "errors": [],
+            "family_cleanup": "registered owned-stage groups",
+            "owned_group_gone": true
+          }
+        },
+        {
+          "command": [
+            "/bench/toolchain/bin/node-linux-x86_64",
+            "/bench/out/benchmark/workspace/tools/gate.mjs",
+            "ENV-SENSE",
+            "--fresh",
+            "--evidence-dir",
+            "/bench/out/benchmark/gate"
+          ],
+          "label": "gate",
+          "elapsed_s": 2.8400962510000007,
+          "returncode": 0,
+          "childCpuS": 3.6755649999999997,
+          "adoptedChildCpuS": 0,
+          "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+          "cleanup": {
+            "child_reaped": true,
+            "complete": true,
+            "errors": [],
+            "family_cleanup": "registered owned-stage groups",
+            "owned_group_gone": true
+          }
+        },
+        {
+          "command": [
+            "python3",
+            "tools/check-env-schematic.py"
+          ],
+          "label": "board-semantic-0",
+          "elapsed_s": 0.8061177639999987,
+          "returncode": 0,
+          "childCpuS": 0.568009,
+          "adoptedChildCpuS": 0,
+          "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+          "cleanup": {
+            "child_reaped": true,
+            "complete": true,
+            "errors": [],
+            "family_cleanup": "registered owned-stage groups",
+            "owned_group_gone": true
+          }
+        },
+        {
+          "command": [
+            "python3",
+            "tools/check-env-pcb.py",
+            "/bench/out/benchmark/workspace/hardware-design/boards/ENV-SENSE/cad/ENV-SENSE/ENV-SENSE.kicad_pcb",
+            "--json",
+            "/bench/out/benchmark/operation/board-check.json"
+          ],
+          "label": "board-semantic-1",
+          "elapsed_s": 0.40465217699999995,
+          "returncode": 0,
+          "childCpuS": 0.269919,
+          "adoptedChildCpuS": 0,
+          "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+          "cleanup": {
+            "child_reaped": true,
+            "complete": true,
+            "errors": [],
+            "family_cleanup": "registered owned-stage groups",
+            "owned_group_gone": true
+          }
+        }
+      ]
+    },
+    "candidate_identical_to_1389": true,
+    "gate_result_sha256": "d00049657266b63b9d504c53536029b53cca029fb99719e8036ffc965ea16366"
+  },
+  "cleanup": {
+    "remaining_containers": []
+  },
+  "archives": [
+    {
+      "host": "gopadel-ci1",
+      "path": "/var/lib/cip/saved-artifacts/net-core-1395/net-core-evidence-runtime.tar.gz",
+      "sha256": "24c36cdde4611b75878e161fa13d192833db832fe8d9427c5ff7a7ba42013916"
+    },
+    {
+      "host": "gopadel-ci1",
+      "path": "/var/lib/cip/saved-artifacts/net-core-1395/env-sense-evidence-runtime.tar.gz",
+      "sha256": "ed98a3fd258eae7cae5d689a16bceb1ef21c21617ca7064dfb5da2e3eb253ee1"
+    }
+  ]
+}
