@@ -40,10 +40,10 @@ unsupported reviewed width, layer or clearance cannot silently become a default.
 ## Production placement path
 
 ```sh
-python3 tools/placer/cli.py read BOARD.kicad_pcb -o problem.json \
+node --no-warnings --experimental-strip-types tools/placer/place.ts read BOARD.kicad_pcb -o problem.json \
   --engineering-board BOARD --engineering-manifest REVIEW.json
-python3 tools/placer/cli.py run problem.json -o proposals.json --workers 2
-python3 tools/placer/cli.py write BOARD.kicad_pcb problem.json proposals.json --outdir NEW_CANDIDATES
+node --no-warnings --experimental-strip-types tools/placer/place.ts run problem.json -o proposals.json --workers 2
+node --no-warnings --experimental-strip-types tools/placer/place.ts write BOARD.kicad_pcb problem.json proposals.json --outdir NEW_CANDIDATES
 ```
 
 The reader also accepts `PCB_ENGINEERING_MANIFEST`, `PCB_ENGINEERING_BOARD` and

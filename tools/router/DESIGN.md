@@ -185,12 +185,12 @@ A* per net: NET-CORE 4 s median under load, so iotroute run turns it on.
 
 Cell size: 1 mm by data (reports/2026-11-01-congestion.md): the open signal holds at 1 and 2 mm (7 / 8 opens in the top
 9 % of the pads) and is lost at 4 mm (0 / 8 over the 90th percentile): a 4 mm cell averages the hot area of a 0.5 mm
-pitch IC with its quiet neighbours. The placer reads the history only (`tools/placer/congest.py`).
+pitch IC with its quiet neighbours. The placer reads the history only (`tools/placer/core/src/congest.rs`).
 
 Use (data, n 27 routed placer steps + 8 failed routes): the map explains where a route fails (history), not the length
 residual; the previous step's map does not rank the residual and marks the next step's open only in part (4-6 / 8). So
 there is no placer search term (no data source for its weight); the repair can rank its proposals by the history they
-take away from the unit pins (`compact_cli.py --repair-rank hot`).
+take away from the unit pins (`compact-cli.ts --repair-rank hot`).
 
 ## 5e. Seeds, checkpoint, early stop (`--seed`, `--checkpoint`, `--stall-passes`, core `seed.rs`, `checkpoint.rs`)
 

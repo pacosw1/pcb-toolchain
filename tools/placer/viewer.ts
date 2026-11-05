@@ -5,6 +5,8 @@ import { createHash } from 'node:crypto';
 import { closeSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseFlags, runMain, UsageError } from '../lib/cli.ts';
+import { plainJson } from '../lib/json-file.ts';
+import { jsonLoads } from '../lib/py-compat.mjs';
 import { round } from '../lib/py-numbers.ts';
 
 type XY = [number, number];
@@ -164,7 +166,7 @@ function main(argv: string[]): number {
   const [input, output] = parsed.positionals;
   if (!input || !output || parsed.positionals.length !== 2) throw new UsageError(USAGE);
   const duration = parsed.values.seconds === undefined ? 15 : Number(parsed.values.seconds);
-  const source = readFileSync(input), data = playback(JSON.parse(source.toString('utf8')), createHash('sha256').update(source).digest('hex'));
+  const source = readFileSync(input), data = playback(plainJson(jsonLoads(source.toString('utf8'))), createHash('sha256').update(source).digest('hex'));
   const page = html(data, duration), frames = parsed.values['frames-json'];
   if (frames && resolve(frames) === resolve(output)) throw new Error('HTML and frames JSON must use different output paths');
   const created: string[] = [];
