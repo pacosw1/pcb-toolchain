@@ -11,6 +11,7 @@ trap 'rm -rf "$work"' EXIT
 curl -fsSL "https://nodejs.org/dist/$version/node-$version-linux-x64.tar.xz" -o "$work/node.tar.xz"
 echo "$sum  $work/node.tar.xz" | sha256sum -c --quiet -
 tar -xJf "$work/node.tar.xz" -C "$work" --strip-components=1
+export PATH="$work/bin:$PATH"
 cargo build --release --locked --quiet --manifest-path tools/router/core/Cargo.toml
 export IOTROUTE_BIN="$PWD/tools/router/core/target/release/iotroute"
 tests=$(grep -l iotrouteMissing tools/lib/*.test.ts)
