@@ -69,6 +69,7 @@ export class Worker {
   private recovering = new Set<string>();
   private external = new Map<string, ExternalRun>();
   private modelBusy = false;
+  ready = false;
   constructor(a: Args, known = new Map<string, number>()) {
     this.root = real(a.project); this.host = a.host; this.projectId = a.projectId; this.url = coordinatorUrl(a.url);
     this.token = fs.readFileSync(a.tokenFile, 'utf8').trim(); this.stateFile = a.stateFile; this.known = known;
@@ -104,6 +105,7 @@ export class Worker {
     if (this.state.epoch !== identity.epoch) {
       this.state = { epoch: identity.epoch, offsets: {}, stamps: {}, hashes: {}, counters: {} }; this.external.clear(); this.known.clear(); this.save();
     }
+    this.ready = true;
   }
   private async upload(hash: string, bytes: Buffer): Promise<void> {
     if (Date.now() - (this.known.get(hash) ?? 0) < 86400_000) return;
@@ -496,6 +498,21 @@ async function main(): Promise<void> {
     tokenFile: v['token-file'], stateFile: v['state-file'], interval, discover: !!v['discover-worktrees'], once: !!v.once };
   const shared = new Map<string, number>(); let workers = new Map<string, Worker>(), discoverAt = 0, epochAt = 0, retainAt = 0, heartbeatAt = 0, externalAt = 0;
   let sendingHeartbeat = false;
+  let inventoryBusy = false;
+  const inventory = async (): Promise<void> => {
+    if (inventoryBusy) return;
+    inventoryBusy = true;
+    try {
+      const queue = [...workers.values()].filter(worker => worker.ready);
+      await Promise.all(Array.from({ length: Math.min(2, queue.length) }, async () => {
+        while (queue.length) {
+          const worker = queue.shift(); if (!worker) break;
+          try { await worker.scanBoards(); }
+          catch (error) { console.error('pcb live inventory:', error instanceof Error ? error.message : String(error)); }
+        }
+      }));
+    } finally { inventoryBusy = false; }
+  };
   const heartbeat = async (): Promise<void> => {
     if (sendingHeartbeat) return;
     sendingHeartbeat = true;
@@ -504,6 +521,7 @@ async function main(): Promise<void> {
     finally { sendingHeartbeat = false; }
   };
   if (!args.once) setInterval(() => { void heartbeat(); }, 15000).unref();
+  if (!args.once) setInterval(() => { void inventory(); }, 3000).unref();
   if (!args.once) setInterval(() => {
     for (const worker of workers.values()) void worker.processModels().catch(error => console.error('pcb live 3D:', error instanceof Error ? error.message : String(error)));
   }, 5000).unref();
@@ -520,6 +538,7 @@ async function main(): Promise<void> {
         workers = next; discoverAt = now + 30000;
       }
       if (now >= epochAt) { for (const worker of workers.values()) await worker.syncEpoch(); epochAt = Date.now() + 15000; }
+      if (!args.once) void inventory();
       if (now >= retainAt) { for (const worker of workers.values()) await worker.retain(); retainAt = Date.now() + 86400_000; }
       if (Date.now() >= heartbeatAt) { await heartbeat(); heartbeatAt = Date.now() + 15000; }
       if (Date.now() >= externalAt) {
@@ -528,7 +547,7 @@ async function main(): Promise<void> {
         externalAt = Date.now() + 6000;
       }
       for (const worker of workers.values()) await worker.scanActivity();
-      for (const worker of workers.values()) await worker.scanBoards();
+      if (args.once) for (const worker of workers.values()) await worker.scanBoards();
       for (const worker of workers.values()) void worker.processModels().catch(error => console.error('pcb live 3D:', error instanceof Error ? error.message : String(error)));
     } catch (error) {
       if (args.once) throw error;

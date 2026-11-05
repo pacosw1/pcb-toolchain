@@ -72,3 +72,14 @@ pipeline, Studio observes actual intermediate candidate board files and animates
 snapshots. The legacy optimizer does not expose its in-memory pose at each epoch: between saved candidates, its
 progress is shown in the log. Placement providers can also emit `iot-lab.placement-preview.v1` frames directly.
 Neither preview is a DRC, gate, fabrication, or adoption verdict.
+
+The machine sidebar groups known boards by reporting host and marks active, waiting and stale observations. Following
+a board is view-only. Recorded routing and candidate frames can be replayed; when the existing placement search
+finishes, the worker also reads its saved epoch poses for replay. Epoch poses are not available live during that
+search. The coordinator retains replay blobs for its configured `JOBD_BLOB_KEEP_DAYS` window (30 days by default);
+older frames are reported as expired. Replay is capped at the first 2,000 available frames per run.
+
+The 3D snapshot button asks the reporting machine to export the selected board snapshot with its local KiCad models.
+The model is a fixed snapshot; select it again for a newer board. Routing and placement overlays remain in the 2D view.
+KiCad and the referenced model files must be available on the reporting machine, and Studio reports missing-model
+warnings or export errors. A snapshot exported from a project-external scratch path may be unavailable for 3D.
