@@ -21,7 +21,9 @@ pub fn read_board(client: &mut Client, path: &Path) -> Result<Board, ApiError> {
     for item in client.items(&doc, &[ct::KiCadObjectType::KotPcbFootprint])? {
         footprints.push(read_footprint(&open(&item)?, &copper_layers, board_mask)?);
     }
-    set_pad_polygons(client, &doc, &copper_layers, &mut footprints)?;
+    let mut polygon_layers = copper_layers.clone();
+    polygon_layers.extend(["F.Mask".to_string(), "B.Mask".to_string()]);
+    set_pad_polygons(client, &doc, &polygon_layers, &mut footprints)?;
     let graphics = client.items(&doc, &[ct::KiCadObjectType::KotPcbShape])?.iter().filter_map(decode).map(|g: bt::BoardGraphicShape| read_graphic(&g)).collect::<Result<_, _>>()?;
     let zones = client.items(&doc, &[ct::KiCadObjectType::KotPcbZone])?.iter().filter_map(decode).map(|z: bt::Zone| read_zone(&z, &copper_layers)).collect::<Result<_, _>>()?;
     let texts = client.items(&doc, &[ct::KiCadObjectType::KotPcbText])?.iter().filter_map(decode).map(|t: bt::BoardText| read_text(&t)).collect();
@@ -71,14 +73,15 @@ fn read_group(g: &bt::Group) -> Group {
 }
 
 /// KiCad's own polygon of each pad, a layer at a time. Ids that repeat stay out: the reply would be another pad's.
-fn set_pad_polygons(client: &mut Client, doc: &ct::DocumentSpecifier, copper_layers: &[String], footprints: &mut [Footprint]) -> Result<(), ApiError> {
+fn set_pad_polygons(client: &mut Client, doc: &ct::DocumentSpecifier, polygon_layers: &[String], footprints: &mut [Footprint]) -> Result<(), ApiError> {
     let mut uses: BTreeMap<String, usize> = BTreeMap::new();
     for pad in footprints.iter().flat_map(|f| &f.pads) {
         *uses.entry(pad.id.clone()).or_default() += 1;
     }
-    for name in copper_layers {
+    for name in polygon_layers {
         let layer = bt::BoardLayer::from_str_name(&format!("BL_{}", name.replace('.', "_"))).ok_or_else(|| missing("layer"))?;
         let pads: Vec<ct::Kiid> = footprints.iter().flat_map(|f| &f.pads).filter(|p| uses[&p.id] == 1 && p.layers.contains(name)).map(|p| ct::Kiid { value: p.id.clone() }).collect();
+        if pads.is_empty() { continue; }
         let reply: bc::PadShapeAsPolygonResponse = client.call(&bc::GetPadShapeAsPolygon { board: Some(doc.clone()), pads, layer: layer as i32 })?;
         let mut shapes: BTreeMap<String, Polygon> = BTreeMap::new();
         for (id, polygon) in reply.pads.iter().zip(&reply.polygons) {

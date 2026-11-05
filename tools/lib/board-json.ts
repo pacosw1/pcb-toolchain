@@ -15,7 +15,7 @@ import { fileRoot } from './project-root.mjs';
 export const BOARD_JSON_SCHEMA = 'iot-lab.board.v1';
 
 /** Goes up when the document gains fields under the same schema, so a cached copy without them is not used. */
-const DOCUMENT_REVISION = 2;
+const DOCUMENT_REVISION = 3;
 
 const BINARY = 'iotroute-linux-x86_64';
 const DOCUMENT = 'board.json';
