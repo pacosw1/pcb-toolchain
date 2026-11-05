@@ -27,3 +27,59 @@ Before any new comparison, run exactly one calibration on frozen ESP32-CORE B (t
 Calibration uses `measure 0 ESP32-CORE`: zero means no experiment wall timer and no native `--max-time`, not a zero-second measurement. The existing 80-pass terminal result is the finite work stop. The daemon's configured maximum timeout (21,600 seconds on this host) remains an operational ceiling, not the proposed shared comparison budget. There is one attempt, with no automatic retries. A failed native result, failed configured gate, or operational stop ends this experiment with its diagnostic evidence; do not increase the budget or run sprints after an unverified single result.
 
 Only if this calibration fully verifies will its measured phases determine a shared comparison budget. That budget and comparison policy must be recorded here before launching comparison trials. Until then there is no new single-versus-sprint result or revised LLM decision. All actual runs stay on Hetzner, never CI; only this one frozen board is in scope.
+
+## ESP32-CORE single-versus-sprints follow-up (#1399)
+
+### Calibration registration
+
+This report-only follow-up uses the same frozen ESP32-CORE rev B source from
+`a545d5e18428e03256ea876f45864b25061c1397`, PCB SHA-256
+`b6b97508157893ccca5c5c2cc3e0c90d55691a42d094f9c1015ad8b7f31bdb2b`.
+The previously restored FM25V02A PDF is retained unchanged:
+`3993f988368aa8dc94b79a888234274959b7e4e091c693535530f3f4dddafefd`.
+Pin current toolchain main `228b964205037621c36cbc39f92bd0f6d8301d86`.
+Build its Linux router with Rust 1.93.1; record the resulting binary hash before
+submission. Keep Node v22.23.2 and runtime image
+`sha256:8c1c6d83c4050f4876f21926846e4e1d640b6be5194f448c3e239392c83a20af`.
+All board runs are sequential Hetzner jobs, never CI, on isolated copies.
+
+First run exactly one `measure 0 ESP32-CORE` calibration: seed 0, 80 passes,
+source-lock and return-exemption policy unchanged, two CPUs, eight GiB for the
+whole job including the fresh configured gate. No experiment wall timeout or
+native `--max-time` is added during calibration; the daemon's 21,600-second
+operational ceiling remains. The historical reproduction harness is copied with
+only its resource declaration changed from four to eight GiB; archive that copy
+and its diff. No router, gate, rule or exemption changes are permitted.
+
+The benchmark success definition is deliberately separate from board acceptance:
+require fresh native DRC, opens and schematic parity all zero, and every configured
+geometric/electrical check complete with zero error/failure counts and zero active
+kicad-happy findings. Warnings remain reported separately. Unused/stale RP-001
+exemption entries are counted and named separately; they do not become actual
+geometric violations or get removed. Any other gate error, missing check, stale
+input, incomplete cleanup or timeout is unsuccessful. The historical five stale
+entries were ETH_RSTn, EXP_P04, EXP_P06, SPI_MOSI_S and WDI; each trial's actual
+set must be reported. The unchanged full gate and sprint controller may still
+return failure and no accepted incumbent. Report those official outcomes too.
+
+First benchmark-verified time means the completion of the first fresh gate that
+meets the definition above, measured from job/portfolio start. It is not the
+controller's full-acceptance time. Derive it from retained native, gate and owned
+stage evidence; never substitute a promising score or route completion. Report
+whole-job cgroup CPU, native candidate length/vias, preparation, slicing, native
+and configured verification, client/cache overhead, and terminal cleanup.
+
+If calibration fails for a reason other than stale exemptions, stop and report;
+do not launch comparison trials or change rules. After a qualifying calibration,
+preregister the measured shared budget, CPU limits, trial count and order here
+and in the task record before the first comparison. No comparison trial is
+registered or started by this calibration section.
+
+Calibration binary SHA-256:
+`3f307aa46709d9b843b2cb7faefb971c12db35780d82f0dc509c26a5fbb77f46`.
+Node executable SHA-256:
+`3517c2df0b2f8cd7f422b4b8450ef81c6889f08eb03e281d6de9079b15e6a327`.
+The clean source archive hash is
+`086c78924035e07a86eca067fa63b6799778306d3cc819d5a9a14f7659b336cf`;
+211 router source files match the archive in both measurement copies, and all
+2,723 frozen hardware-design files match the retained #1389 fixture.
