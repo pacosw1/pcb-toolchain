@@ -13,6 +13,8 @@ BD=$1; N=$2; OB=$3; PROB=$4; SCR=$5; NETS=$6; OUT=$7; RUNS=${8:-5}
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 PY=/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3
 WHEEL=${WHEEL:?set WHEEL to the numpy cp313 manylinux wheel}
+IOTPLACE_LINUX=${IOTPLACE_LINUX:?set IOTPLACE_LINUX to the Linux iotplace binary}
+[ "$(basename "$IOTPLACE_LINUX")" = iotplace-linux-x86_64 ] || { echo "IOTPLACE_LINUX must be named iotplace-linux-x86_64" >&2; exit 2; }
 mkdir -p "$OUT"
 cd "$REPO"
 search() {  # $1 tag, rest: extra run args
@@ -31,7 +33,7 @@ cp "$(dirname "$OB")"/*.kicad_{pcb,pro,dru} "$OUT/O/cand0/"
 route() {  # $1 board tag, $2 run
   local d=$OUT/$1/cand0
   REMOTE_MEM=8g REMOTE_CPUS=4 tools/remote.sh "$BD" --in "$d/$N.kicad_pcb" --in "$d/$N.kicad_pro" \
-    --in "$d/$N.kicad_dru" --in "$NETS" --results "$OUT/$1-r$2" -- \
+    --in "$d/$N.kicad_dru" --in "$IOTPLACE_LINUX" --in "$NETS" --results "$OUT/$1-r$2" -- \
     env GNDVIAS="${GNDVIAS:-}" GNDNET="${GNDNET:-GND}" bash tools/placer/fr_job.sh "$N" "$(basename "$NETS")" \
     > "$OUT/$1-r$2.log" 2>&1 || true
 }
