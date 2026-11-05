@@ -69,6 +69,7 @@ export function LiveView({
     let timer: ReturnType<typeof setTimeout>
     live.current = emptyLiveState(run)
     setState(null)
+    setHead(0)
     setGeo(null)
     setCompare(null)
     setPaused(false)

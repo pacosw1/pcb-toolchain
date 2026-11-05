@@ -38,6 +38,12 @@ export function SchematicView({ pcb, selection, onSelect, geo }: { pcb: string; 
       .catch(e => { if (active) setError(String(e)) }).finally(() => { if (active) setBusy(false) })
     return () => { active = false }
   }, [pcb, refresh]) // eslint-disable-line react-hooks/exhaustive-deps
+  const resolveNet = (label: string): string => {
+    const nets = [...new Set(geo?.footprints.flatMap(f => f.pads.map(p => p.net)) ?? [])]
+    if (nets.includes(label)) return label
+    const matches = nets.filter(net => net.endsWith('/' + label))
+    return matches.length === 1 ? matches[0] : label
+  }
   const current = data?.sheets[sheet]
   const matches = (target: { ref?: string; net?: string }): boolean => !!selection && (
     !!selection.ref && target.ref === selection.ref || !!selection.net && (target.net === selection.net || target.net === selection.net.split('/').at(-1) || !!target.ref && !!geo?.footprints.find(f => f.ref === target.ref)?.pads.some(p => p.net === selection.net)))
@@ -100,8 +106,8 @@ export function SchematicView({ pcb, selection, onSelect, geo }: { pcb: string; 
         <img src={window.api.fileUrl(current.path)} alt={`Schematic ${current.name}`} draggable={false} onLoad={paint} />
         {current.viewBox ? <svg className="schematic-targets" viewBox={current.viewBox.join(' ')} aria-label="Schematic component and net selection">
           {current.targets?.map((target, i) => <circle key={i} cx={target.x} cy={target.y} r={target.ref ? 4 : 2} className={matches(target) ? 'selected' : ''} role="button" tabIndex={0} aria-label={target.ref ? `Select ${target.ref}` : `Select net ${target.net}`}
-            onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onSelect?.(target.ref ? { ref: target.ref } : { net: target.net }) }}
-            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onSelect?.(target.ref ? { ref: target.ref } : { net: target.net }) } }}><title>{target.ref ?? target.net}</title></circle>)}
+            onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onSelect?.(target.ref ? { ref: target.ref } : { net: resolveNet(target.net!) }) }}
+            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onSelect?.(target.ref ? { ref: target.ref } : { net: resolveNet(target.net!) }) } }}><title>{target.ref ?? target.net}</title></circle>)}
         </svg> : null}
       </div> : null}
     </div>
