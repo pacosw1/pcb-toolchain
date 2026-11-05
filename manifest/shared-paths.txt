@@ -29,6 +29,8 @@ tools/block_reuse.py
 tools/blocks.py
 tools/blocks.ts
 tools/board3d/index.html
+tools/board3d/metadata.mjs
+tools/board3d/metadata.test.mjs
 tools/board_3d.sh
 tools/board_frame.py
 tools/board_frame.ts

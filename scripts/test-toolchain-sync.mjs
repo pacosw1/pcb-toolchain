@@ -75,3 +75,15 @@ test('a worktree writes the exclude of its common git dir', t => {
   assert.equal(bundle('b', '1.0.0 aaa', { 'a.py': 'a' })([worktree]).status, 0)
   assert.ok(exclude().includes('/tools/a.py'))
 })
+
+test('the 3D viewer and its metadata helper are listed and copied together', t => {
+  const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const shared = new Set(fs.readFileSync(path.join(repo, 'manifest/shared-paths.txt'), 'utf8').split(/\r?\n/))
+  const files = ['tools/board_3d.sh', 'tools/board3d/index.html', 'tools/board3d/metadata.mjs', 'tools/board3d/metadata.test.mjs']
+  for (const name of files) assert.ok(shared.has(name), `${name} missing from shared manifest`)
+  const { project, bundle } = setup(t)
+  const content = Object.fromEntries(files.map(name => [name.slice('tools/'.length), fs.readFileSync(path.join(repo, name))]))
+  const result = bundle('board3d', '1.0.0 board3d', content)([project])
+  assert.equal(result.status, 0, result.stderr)
+  for (const name of files) assert.deepEqual(fs.readFileSync(path.join(project, name)), fs.readFileSync(path.join(repo, name)))
+})
