@@ -2,12 +2,11 @@
 //! Zones read the way pcbnew's SaveBoard writes them, so a router and kicad-cli see the same items.
 use crate::kicad::board::{Board, RoutedCopper};
 use crate::kicad::geom::boolean::{circle_segments, difference, inflate_round, intersection, simplify};
-use crate::kicad::geom::{Iu, Polygon, Pt, Rect, from_mm, ki_round, to_mm};
+use crate::kicad::geom::{Iu, Polygon, Pt, Rect, from_mm, ki_round, parse_iu, to_mm};
 use crate::kicad::item_text::{item_uuid, mm_text, nm_text, quoted};
 use crate::kicad::pad::Copper;
-use crate::kicad::raw::parse;
+use crate::kicad::raw::{Form, parse};
 use crate::plan::{Keepout, KeepoutMode, Pour, PourConnection, PourShape, Rect as MmBox, Stage, WidthRule};
-use std::collections::HashMap;
 use std::f64::consts::{FRAC_PI_2, PI};
 
 /// Names the keepouts of a stage, which are taken out again after the router.
@@ -198,40 +197,61 @@ pub fn set_widths(text: &str, board: &mut Board, rules: &[WidthRule]) -> Result<
             counts.push((rule.name.clone(), 0));
         }
     }
-    let mut widths = HashMap::new();
+    let mut changed = 0;
     for item in &mut board.copper {
         let RoutedCopper::Track(track) = item else { continue };
-        let (start, end) = ((to_mm(track.start.x), to_mm(track.start.y)), (to_mm(track.end.x), to_mm(track.end.y)));
-        for rule in rules {
-            if rule.applies(start, end, &track.layer, to_mm(track.width)) {
-                track.width = from_mm(rule.width_mm);
-                widths.insert(track.id.clone(), track.width);
-                counts.iter_mut().filter(|(name, _)| *name == rule.name).for_each(|(_, count)| *count += 1);
-            }
-        }
+        let width = narrowed(rules, track.start, track.end, &track.layer, track.width, |rule| {
+            counts.iter_mut().filter(|(name, _)| *name == rule.name).for_each(|(_, count)| *count += 1);
+        });
+        changed += usize::from(width != track.width);
+        track.width = width;
     }
-    Ok((with_widths(text, &widths)?, counts))
+    let (text, edited) = with_widths(text, rules)?;
+    if edited != changed {
+        return Err(format!("route: the width rules change {changed} tracks of the board and {edited} of its text"));
+    }
+    Ok((text, counts))
 }
 
-/// The text with the `(width ...)` of these tracks, by uuid, replaced.
-fn with_widths(text: &str, widths: &HashMap<String, Iu>) -> Result<String, String> {
-    if widths.is_empty() {
-        return Ok(text.to_string());
+/// A track's width after the rules; `hit` hears each rule that applied.
+fn narrowed(rules: &[WidthRule], start: Pt, end: Pt, layer: &str, width: Iu, mut hit: impl FnMut(&WidthRule)) -> Iu {
+    let (from, to) = ((to_mm(start.x), to_mm(start.y)), (to_mm(end.x), to_mm(end.y)));
+    let mut now = width;
+    for rule in rules {
+        if rule.applies(from, to, layer, to_mm(now)) {
+            now = from_mm(rule.width_mm);
+            hit(rule);
+        }
+    }
+    now
+}
+
+fn form_point(form: &Form, head: &str) -> Result<Pt, String> {
+    let point = form.children(head).next().ok_or_else(|| format!("a track without {head}"))?;
+    let number = |index| parse_iu(point.text(index).unwrap_or_default());
+    Ok(Pt::new(number(1)?, number(2)?))
+}
+
+/// The text with the rules done on each track as it stands there: tracks are told apart by their own text, because a uuid can
+/// repeat on a routed board. The count of tracks changed.
+fn with_widths(text: &str, rules: &[WidthRule]) -> Result<(String, usize), String> {
+    if rules.is_empty() {
+        return Ok((text.to_string(), 0));
     }
     let forms = parse(text)?;
     let root = forms.first().ok_or("an empty board file")?;
-    let (mut out, mut at, mut done) = (String::with_capacity(text.len()), 0, 0);
+    let (mut out, mut at, mut edited) = (String::with_capacity(text.len()), 0, 0);
     for form in root.items().iter().filter(|f| f.is("segment") || f.is("arc")) {
-        let id = form.children("uuid").next().and_then(|u| u.text(1));
-        let Some(width) = id.and_then(|id| widths.get(id)) else { continue };
-        let span = form.children("width").next().ok_or("a track without a width")?.span.clone();
-        out += &text[at..span.start];
-        out += &format!("(width {})", nm_text(*width));
-        at = span.end;
-        done += 1;
+        let old = form.children("width").next().ok_or("a track without a width")?;
+        let width = parse_iu(old.text(1).unwrap_or_default())?;
+        let layer = form.children("layer").next().and_then(|l| l.text(1)).ok_or("a track without a layer")?;
+        let new = narrowed(rules, form_point(form, "start")?, form_point(form, "end")?, layer, width, |_| {});
+        if new != width {
+            out += &text[at..old.span.start];
+            out += &format!("(width {})", nm_text(new));
+            at = old.span.end;
+            edited += 1;
+        }
     }
-    if done != widths.len() {
-        return Err(format!("route: {} of {} tracks to change are not in the board text", widths.len() - done, widths.len()));
-    }
-    Ok(out + &text[at..])
+    Ok((out + &text[at..], edited))
 }

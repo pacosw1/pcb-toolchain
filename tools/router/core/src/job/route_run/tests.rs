@@ -128,6 +128,17 @@ fn a_project_copy_takes_the_sidecars_it_is_told_to() {
 }
 
 #[test]
+fn a_project_lock_leaves_with_its_board_name_only() {
+    let dir = folder("lock");
+    let (mine, other) = (dir.join("~a.kicad_pro.lck"), dir.join("~b.kicad_pro.lck"));
+    fs::write(&mine, "").unwrap();
+    fs::write(&other, "").unwrap();
+    remove_project_lock(&dir.join("a.kicad_pcb"));
+    assert!(!mine.exists() && other.exists());
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn only_an_empty_folder_takes_a_run() {
     let dir = folder("outdir");
     let path = dir.display().to_string();
@@ -350,9 +361,20 @@ fn a_width_rule_never_widens_and_a_later_rule_sees_the_earlier_one() {
 }
 
 #[test]
-fn a_track_the_text_does_not_hold_stops_the_width_edit() {
+fn a_board_and_text_that_disagree_stop_the_width_edit() {
     let mut b = board(vec![track("elsewhere", (1_000_000, 1_000_000), (3_000_000, 1_000_000), 200_000, "F.Cu")]);
-    assert!(set_widths(TRACKS, &mut b, &[rule("R", 0.15)]).unwrap_err().contains("not in the board text"));
+    assert_eq!(set_widths(TRACKS, &mut b, &[rule("R", 0.15)]).unwrap_err(), "route: the width rules change 1 tracks of the board and 2 of its text");
+}
+
+#[test]
+fn a_repeated_uuid_does_not_move_a_width_edit() {
+    // Two stages of the Fastroute job gave tracks the same uuid (ENV-SENSE, 2026-11-04): only the track in the box narrows.
+    let text = TRACKS.replace("\"out\"", "\"in\"");
+    let mut b = board(vec![track("in", (1_000_000, 1_000_000), (3_000_000, 1_000_000), 200_000, "F.Cu"), track("in", (50_000_000, 1_000_000), (53_000_000, 1_000_000), 200_000, "F.Cu")]);
+    let rules = [WidthRule { bounds: [0.0, 0.0, 10.0, 1.5], ..rule("R", 0.15) }];
+    let (out, counts) = set_widths(&text, &mut b, &rules).unwrap();
+    assert_eq!(counts, [("R".to_string(), 1)]);
+    assert!(out.contains("(end 3 1)\n\t\t(width 0.15)") && out.contains("(end 53 1)\n\t\t(width 0.2)"), "{out}");
 }
 
 const ROUTED: &str = "(kicad_pcb\n\t(layers\n\t\t(0 \"F.Cu\" signal)\n\t)\n\t(segment\n\t\t(start 0 0)\n\t\t(end 1 0)\n\t\t(uuid \"old\")\n\t)\n\t(segment\n\t\t(start 1 0)\n\t\t(end 2 0)\n\t\t(uuid \"new-other\")\n\t)\n\t(via\n\t\t(at 2 0)\n\t\t(uuid \"new-kept\")\n\t)\n\t(zone\n\t\t(uuid \"z1\")\n\t\t(name \"TMP_ROUTE_main_A\")\n\t)\n\t(zone\n\t\t(uuid \"z2\")\n\t\t(name \"KEEP\")\n\t)\n)\n";

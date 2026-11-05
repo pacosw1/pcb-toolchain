@@ -101,14 +101,20 @@ fn copy_file(from: &Path, to: &Path) -> Result<(), String> {
     fs::copy(from, to).map(|_| ()).map_err(|e| format!("{}: {e}", from.display()))
 }
 
-/// The board through the KiCad API. The stopped server leaves its project lock, which is no part of a run's folders.
+/// A stopped API server leaves its project lock, which is no part of a run's folders.
+fn remove_project_lock(board: &Path) {
+    if let Some(stem) = board.file_stem().and_then(|s| s.to_str()) {
+        let _ = fs::remove_file(board.with_file_name(format!("~{stem}.kicad_pro.lck")));
+    }
+}
+
+/// The board through the KiCad API.
 fn read_api(path: &Path) -> Result<Board, String> {
     let board = {
         let (_server, mut client) = Server::start(path)?;
         read_board(&mut client, path).map_err(|e| e.to_string())?
     };
-    let stem = path.file_stem().and_then(|s| s.to_str()).ok_or("a board file has a name")?;
-    let _ = fs::remove_file(path.with_file_name(format!("~{stem}.kicad_pro.lck")));
+    remove_project_lock(path);
     Ok(board)
 }
 
@@ -284,6 +290,7 @@ impl Job {
             Backend::Fastroute => route_fastroute(stage, &src, &work, &self.board_id, &self.features)?,
             Backend::Tracemaker => route_tracemaker(stage, &src, &work, &before.copper_layers)?,
         };
+        remove_project_lock(&src);
         let routed = read_api(&routed_path)?;
         let mut text = without_keepouts(&read_text(&routed_path)?, &routed)?;
         let new_vias = vias_on(&routed, &kept) - vias_on(&before, &kept); // before the removal: it drops only nets that are not kept
