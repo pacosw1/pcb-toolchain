@@ -360,6 +360,44 @@ mod tests {
     }
 
     #[test]
+    fn crash_boundary_shapes_without_complete_intent_fail_closed() {
+        let temp = Scratch::new();
+        let journals = temp.dir("journals");
+        let dir = temp.dir("incomplete");
+        assert!(inspect_prepared(&dir).is_err());
+        create_synced(&dir.join("original.bin"), b"original").unwrap();
+        assert!(inspect_prepared(&dir).is_err());
+        create_synced(&dir.join("intent.json"), b"{\"schema\":").unwrap();
+        assert!(inspect_prepared(&dir).is_err());
+        assert!(!journals.join("../escape").exists());
+    }
+
+    #[test]
+    fn unsafe_lock_directory_and_ids_are_rejected() {
+        let temp = Scratch::new();
+        let locks = temp.dir("locks");
+        let journals = temp.dir("journals");
+        let board = temp.0.join("board");
+        fs::write(&board, b"original").unwrap();
+        fs::set_permissions(&locks, fs::Permissions::from_mode(0o777)).unwrap();
+        assert!(LockedTarget::acquire(&locks, &board).is_err());
+        fs::set_permissions(&locks, fs::Permissions::from_mode(0o700)).unwrap();
+        let lock = LockedTarget::acquire(&locks, &board).unwrap();
+        assert!(
+            prepare(
+                &journals,
+                "../escape",
+                &lock,
+                &sha256(b"original"),
+                &sha256(b"new")
+            )
+            .is_err()
+        );
+        assert!(prepare(&journals, "run", &lock, &sha256(b"original"), "bad").is_err());
+        assert!(!journals.join("run").exists());
+    }
+
+    #[test]
     fn target_replacement_invalidates_the_admitted_snapshot() {
         let temp = Scratch::new();
         let locks = temp.dir("locks");
