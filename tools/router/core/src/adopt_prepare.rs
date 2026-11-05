@@ -60,8 +60,9 @@ fn same_identity(a: &fs::Metadata, b: &fs::Metadata) -> bool {
 }
 
 /// Exclusive flock is retained on a file owned by this process until Drop.
-/// Canonical directory aliases select the same path-derived lock. Hardlinks and
-/// final symlinks are refused; existing noncooperating writers are not fenced.
+/// Canonical directory aliases using the SAME lock directory select the same
+/// path-derived lock. Hardlinks and final symlinks are refused; writers using
+/// another lock directory or not cooperating with this protocol are not fenced.
 pub struct LockedTarget {
     target: PathBuf,
     target_file: File,
@@ -184,13 +185,17 @@ pub fn prepare(
     journal_root: &Path,
     id: &str,
     locked: &LockedTarget,
+    expected_original_sha256: &str,
     candidate_sha256: &str,
 ) -> io::Result<PathBuf> {
     let root = private_dir(journal_root)?;
-    if !valid_id(id) || !is_sha256(candidate_sha256) {
-        return Err(invalid("invalid journal id or candidate digest"));
+    if !valid_id(id) || !is_sha256(expected_original_sha256) || !is_sha256(candidate_sha256) {
+        return Err(invalid("invalid journal id or digest"));
     }
     let (bytes, metadata) = locked.snapshot()?;
+    if sha256(&bytes) != expected_original_sha256 {
+        return Err(invalid("target does not match the expected source digest"));
+    }
     let intent = PreparedIntent {
         schema: "iot-lab.adopt.prepare.v1".into(),
         target: locked.target.clone(),
@@ -313,7 +318,8 @@ mod tests {
         fs::write(&target, b"original board").unwrap();
         let lock = LockedTarget::acquire(&locks, &target).unwrap();
         let candidate = sha256(b"candidate");
-        let first = prepare(&journals, "run-1", &lock, &candidate).unwrap();
+        let expected = sha256(b"original board");
+        let first = prepare(&journals, "run-1", &lock, &expected, &candidate).unwrap();
         let intent = inspect_prepared(&first).unwrap();
         assert_eq!(intent.original_sha256, sha256(b"original board"));
         assert_eq!(intent.candidate_sha256, candidate);
@@ -322,8 +328,8 @@ mod tests {
             fs::read(first.join("original.bin")).unwrap(),
             b"original board"
         );
-        assert!(prepare(&journals, "run-1", &lock, &candidate).is_err());
-        let second = prepare(&journals, "run-2", &lock, &candidate).unwrap();
+        assert!(prepare(&journals, "run-1", &lock, &expected, &candidate).is_err());
+        let second = prepare(&journals, "run-2", &lock, &expected, &candidate).unwrap();
         assert_eq!(
             inspect_prepared(&second).unwrap().original_sha256,
             intent.original_sha256
@@ -338,7 +344,14 @@ mod tests {
         let target = temp.0.join("board");
         fs::write(&target, b"original").unwrap();
         let lock = LockedTarget::acquire(&locks, &target).unwrap();
-        let dir = prepare(&journals, "run", &lock, &sha256(b"new")).unwrap();
+        let dir = prepare(
+            &journals,
+            "run",
+            &lock,
+            &sha256(b"original"),
+            &sha256(b"new"),
+        )
+        .unwrap();
         fs::write(dir.join("original.bin"), b"corrupt").unwrap();
         assert!(inspect_prepared(&dir).is_err());
         fs::remove_file(dir.join("intent.json")).unwrap();
@@ -357,7 +370,29 @@ mod tests {
         let replacement = temp.0.join("replacement");
         fs::write(&replacement, b"changed").unwrap();
         fs::rename(replacement, &target).unwrap();
-        assert!(prepare(&journals, "run", &lock, &sha256(b"new")).is_err());
+        assert!(
+            prepare(
+                &journals,
+                "run",
+                &lock,
+                &sha256(b"original"),
+                &sha256(b"new")
+            )
+            .is_err()
+        );
         assert_eq!(fs::read(&target).unwrap(), b"changed");
+    }
+
+    #[test]
+    fn changed_source_digest_is_rejected_without_a_journal() {
+        let temp = Scratch::new();
+        let locks = temp.dir("locks");
+        let journals = temp.dir("journals");
+        let target = temp.0.join("board");
+        fs::write(&target, b"current").unwrap();
+        let lock = LockedTarget::acquire(&locks, &target).unwrap();
+        assert!(prepare(&journals, "run", &lock, &sha256(b"stale"), &sha256(b"new")).is_err());
+        assert!(!journals.join("run").exists());
+        assert_eq!(fs::read(&target).unwrap(), b"current");
     }
 }
