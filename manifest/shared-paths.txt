@@ -93,7 +93,6 @@ tools/import_ses.py
 tools/jlc-snapshot.mjs
 tools/jlc_api_evidence.mjs
 tools/jlc_stock.mjs
-tools/kicad_happy_gate.py
 tools/kicad_happy_gate.ts
 tools/krt_planes_advisory.ts
 tools/lean_owned.py
@@ -688,6 +687,7 @@ tools/router/core/src/model/cli.rs
 tools/router/core/src/model/current.rs
 tools/router/core/src/model/dru.rs
 tools/router/core/src/model/files.rs
+tools/router/core/src/model/happy_scope.rs
 tools/router/core/src/model/isolation.rs
 tools/router/core/src/model/items.rs
 tools/router/core/src/model/mod.rs
@@ -807,7 +807,6 @@ tools/router/reports/2026-11-02-plane-edge.md
 tools/router/reports/2026-11-02-ref-gate-scope.md
 tools/router/reports/2026-11-02-thermal-vias.md
 tools/router/route-dispatch.mjs
-tools/router/rpscope.py
 tools/routing_rules.py
 tools/run_record.py
 tools/run_record.ts
@@ -845,7 +844,6 @@ tools/test_hard_exit.py
 tools/test_ibis_screening.py
 tools/test_import_pose_guard.py
 tools/test_import_replay_guard.py
-tools/test_kicad_happy_gate.py
 tools/test_lean_clock.py
 tools/test_lean_native.py
 tools/test_lean_owned.py

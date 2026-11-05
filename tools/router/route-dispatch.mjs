@@ -152,7 +152,7 @@ function binaryProblem(toolchain,cwd,bin){
   return null;
 }
 
-/** Why kicad-happy cannot ship, or null. Its .git goes along: tools/kicad_happy_gate.py check_pinned reads HEAD. */
+/** Why kicad-happy cannot ship, or null. Its .git goes along: the pin check of tools/kicad_happy_gate.ts reads HEAD. */
 function happyProblem(repo){
   if(!repo?.dir||!isDir(path.join(repo.dir,'.git')))return`no ${HAPPY} checkout at ${repo?.dir}`;
   const env=Object.fromEntries(Object.entries(process.env).filter(([k])=>!k.startsWith('GIT_')));
