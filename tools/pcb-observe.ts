@@ -3,24 +3,30 @@ import { resolve } from 'node:path';
 import { realpathSync } from 'node:fs';
 import { parseArgs, type ParseArgsOptionsConfig } from 'node:util';
 import { projectRoot } from './lib/project-root.mjs';
-import { compactTerminal, eventLine, events, runDir, stageStatus, status, TERMINAL, RUN_ID, type Dict } from './lib/pcb-runs.ts';
-import { context } from './lib/pcb-workflow.ts';
-import { jsonDumps, pyStr } from './lib/py-compat.mjs';
+import { compactTerminal, eventLine, events, explain, runDir, stageStatus, status, TERMINAL, RUN_ID, type Dict } from './lib/pcb-runs.ts';
+import { catalog, context } from './lib/pcb-workflow.ts';
+import { get, item, jsonDumps, pyStr } from './lib/py-compat.mjs';
 
-const usage = 'usage: pcb [--project DIR] {status,events} RUN_ID [options]';
+const usage = 'usage: pcb [--project DIR] {list,status,events,explain} [RUN_ID] [options]';
 
 export async function main(argv: string[]): Promise<number> {
   let explicit: string | undefined;
   if (argv[0] === '--project') { explicit = argv[1]; if (!explicit) throw new Error(usage); argv = argv.slice(2); }
   else if (argv[0]?.startsWith('--project=')) { explicit = argv[0].slice(10); argv = argv.slice(1); }
   const command = argv.shift();
-  if (command !== 'status' && command !== 'events') throw new Error(usage);
+  if (command !== 'list' && command !== 'status' && command !== 'events' && command !== 'explain') throw new Error(usage);
   const options: ParseArgsOptionsConfig = {
     'runs-dir': { type: 'string' }, json: { type: 'boolean', default: false },
     ...(command === 'events' ? { after: { type: 'string', default: '0' }, limit: { type: 'string', default: '100' }, wait: { type: 'string', default: '0' } } : {}),
+    ...(command === 'explain' ? { limit: { type: 'string', default: '20' } } : {}),
   };
   const { values, positionals } = parseArgs({ args: argv, options, allowPositionals: true });
-  if (positionals.length !== 1) throw new Error(usage);
+  if (positionals.length !== (command === 'list' ? 0 : 1)) throw new Error(usage);
+  if (command === 'list') {
+    const data = catalog(projectRoot(explicit)) as { boards: { board: string }[] };
+    console.log(values.json ? jsonDumps(data) : data.boards.map(row => row.board).join('\n'));
+    return 0;
+  }
   if (command === 'status' && !RUN_ID.test(positionals[0]!)) {
     console.log(jsonDumps(context(projectRoot(explicit), positionals[0]!), values.json ? null : 2));
     return 0;
@@ -29,6 +35,21 @@ export async function main(argv: string[]): Promise<number> {
   let base = requestedBase;
   try { base = realpathSync(requestedBase); } catch { /* runDir reports missing runs consistently */ }
   const folder = runDir(base, positionals[0]!);
+  if (command === 'explain') {
+    const limit = Number(values.limit);
+    if (!/^[+-]?\d+$/.test(String(values.limit)) || !Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new Error('--limit must be between 1 and 1000');
+    const report = explain(folder, limit);
+    if (TERMINAL.has(report.run.get('status') as string)) report.run = compactTerminal(report.run, folder);
+    if (values.json) console.log(jsonDumps(report));
+    else {
+      console.log(`${pyStr(item(report.run, 'status')).toUpperCase()}: ${pyStr(get(report.run, 'cause', 'run active'))}`);
+      for (const finding of get(report.run, 'findings', []) as Dict[])
+        console.log(`  ${pyStr(item(finding, 'stage'))}: ${pyStr(item(finding, 'cause'))} (${pyStr(item(finding, 'log'))})`);
+      for (const detail of report.details) console.log('  ' + jsonDumps(detail));
+      console.log(`Evidence: ${folder}`);
+    }
+    return 0;
+  }
   if (command === 'status') {
     let state = status(folder);
     if (TERMINAL.has(state.get('status') as string)) state = compactTerminal(state, folder);
