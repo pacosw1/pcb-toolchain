@@ -66,6 +66,8 @@ candidate/output directory. It cannot mutate canonical data or mint a verificati
 budgets, event cursors, cancellation and disconnect state are durable. A client cannot extend its authority by choosing
 another worker, filesystem path, source hash or operation. The worker sandbox must specify network access, credentials,
 CPU/memory/disk/process budgets and cleanup; worker capabilities cannot be reused for another job or for commit.
+This v1 job contract covers board mutation operations only. Read-only checks and non-board/supervised observations
+need separate versioned request variants rather than a fabricated board revision.
 
 ## Verification
 
@@ -78,6 +80,7 @@ fresh gate and produces a `pcb.verification.v1` receipt binding:
   "schema": "pcb.verification.v1",
   "verification_id": "coordinator-issued-id",
   "job_id": "durable-job-id",
+  "attempt_id": "coordinator-issued-attempt-id",
   "project_id": "opaque-project-id",
   "board_id": "canonical-board-id",
   "alias_revision": 3,
@@ -90,6 +93,10 @@ fresh gate and produces a `pcb.verification.v1` receipt binding:
   "policy_digest": "64-lowercase-hex",
   "evidence_manifest_sha256": "64-lowercase-hex",
   "verifier_identity": "trusted-verifier-id",
+  "checks": [{ "id": "required-check-id", "outcome": "passed", "evidence_manifest_sha256": "64-lowercase-hex" }],
+  "schematic_parity": "passed",
+  "worker_cleanup": "confirmed",
+  "cancellation": "not_cancelled",
   "outcome": "passed"
 }
 ```
@@ -97,16 +104,22 @@ fresh gate and produces a `pcb.verification.v1` receipt binding:
 Evidence is immutable, content-addressed and reachable by the coordinator. Its manifest identifies the actual gate
 outputs, exit status, source and candidate input coverage, and required policy checks. The verifier's authenticated
 identity and the receipt's issuance are recorded server-side; a hash or an unsigned JSON file supplied by a client
-is not verifier authority. The receipt enumerates every required check/rule as `passed`, `failed`, `unsupported`,
+is not verifier authority. The coordinator owns the verifier record and issues/revokes its authority; v1 does not
+accept a client-created receipt. A later remote-verifier protocol must define signed, domain-separated payloads and
+key IDs explicitly before it is accepted. Receipts have coordinator-enforced freshness and revocation semantics, and
+all evidence, cleanup and cancellation state bind to the same job attempt. The receipt enumerates every required check/rule as `passed`, `failed`, `unsupported`,
 `skipped` or `incomplete`. Success requires a complete fresh native/configured gate, schematic parity and confirmed
-worker cleanup; process exit zero alone is insufficient. Source/candidate bytes, transitive schematic/library/rule
+worker cleanup; process exit zero alone is insufficient. IDs must be unique and exactly cover the required policy set;
+missing, duplicate, unsupported, skipped or incomplete required checks cannot pass. Schematic parity may be
+`not_applicable` only when the versioned policy explicitly permits it. Evidence references identify immutable,
+bounded blobs/manifests from the same attempt. Source/candidate bytes, transitive schematic/library/rule
 inputs and exact evidence bytes must bind to the same execution. The existing owned-stage broker, snapshot and `pcb-evidence` mechanisms can be reused as
 components only after their contracts are mapped to these requirements. The Rust transaction prototype is not wired
 and does not establish this guarantee.
 
 ## Canonical commit
 
-A principal with commit permission submits `pcb.commit-request.v1` with an idempotency key, job/verification IDs,
+A principal with commit permission submits `pcb.commit-request.v1` with an idempotency key, job/attempt/verification IDs,
 project/board/alias revision, source revision, candidate manifest digest and the lease generation/token. The
 coordinator verifies authorization, the current canonical alias target, trusted receipt and complete immutable
 candidate/evidence before entering its authoritative transaction. In that transaction it checks the pinned lease and
@@ -129,6 +142,9 @@ disk-full and crash handling must leave either the old revision or a recoverable
 canonical reference. Idempotency results survive restart, and an `UNKNOWN` mutation is not automatically retried.
 Lease tokens must not be recorded in logs or stored in durable idempotency records; any request fingerprint used for
 deduplication must be derived without persisting the token itself.
+
+All IDs, numeric fields, sizes and limits require runtime schema validation. Nonnegative numeric values must be safe
+integers and satisfy server-side versioned policy bounds; TypeScript types alone are not validation.
 
 ## Migration and compatibility
 

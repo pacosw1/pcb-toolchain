@@ -4,6 +4,7 @@
  */
 export type Sha256 = string
 export type OpaqueId = string
+/** v1 covers board mutation jobs only; checks and non-board observations need separate variants. */
 export type JobOperation = 'build' | 'edit' | 'route' | 'repair' | 'release'
 export type CheckOutcome = 'passed' | 'failed' | 'unsupported' | 'skipped' | 'incomplete'
 
@@ -26,6 +27,7 @@ export interface VerificationReceiptV1 {
   schema: 'pcb.verification.v1'
   verification_id: OpaqueId
   job_id: OpaqueId
+  attempt_id: OpaqueId
   project_id: OpaqueId
   board_id: OpaqueId
   alias_revision: number
@@ -38,9 +40,10 @@ export interface VerificationReceiptV1 {
   policy_digest: Sha256
   evidence_manifest_sha256: Sha256
   verifier_identity: OpaqueId
-  checks: { id: OpaqueId; outcome: CheckOutcome; evidence_sha256: Sha256 | null }[]
-  schematic_parity: CheckOutcome
+  checks: { id: OpaqueId; outcome: CheckOutcome; evidence_manifest_sha256: Sha256 | null }[]
+  schematic_parity: CheckOutcome | 'not_applicable'
   worker_cleanup: 'confirmed' | 'unconfirmed'
+  cancellation: 'not_cancelled' | 'cancelled' | 'unknown'
   outcome: 'passed' | 'failed' | 'incomplete'
 }
 
@@ -48,6 +51,7 @@ export interface CommitRequestV1 {
   schema: 'pcb.commit-request.v1'
   request_id: OpaqueId
   job_id: OpaqueId
+  attempt_id: OpaqueId
   verification_id: OpaqueId
   project_id: OpaqueId
   board_id: OpaqueId
