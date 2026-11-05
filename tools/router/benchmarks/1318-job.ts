@@ -6,7 +6,8 @@ import {copyVerificationWorkspace,semanticChecks,digest} from '../sprint-native.
 import {main as sprint} from '../sprint-job.ts';
 const [mode,secondsArg,board="ENV-SENSE"]=process.argv.slice(2),seconds=Number(secondsArg);
 if(!["ENV-SENSE","FIELD-24V-BUS","ESP32-CORE"].includes(board))throw Error("board outside the three-board benchmark");
-if(!['single','sprint'].includes(mode!)||![120,240].includes(seconds))throw Error('single|sprint 120|240');
+const measuring=mode==='measure';
+if(measuring ? seconds!==0||board!=='ESP32-CORE' : !['single','sprint'].includes(mode!)||!Number.isSafeInteger(seconds)||seconds<=30)throw Error('single|sprint SECONDS>30, or measure 0 ESP32-CORE');
 const root=process.cwd(),bin=path.resolve('in/iotroute-linux-x86_64');
 const config=JSON.parse(fs.readFileSync(path.resolve(`hardware-design/boards/${board}/gate.json`),"utf8"));
 const src=path.resolve(`hardware-design/boards/${board}`,`${config.project}.kicad_pcb`);
@@ -16,7 +17,7 @@ const read=(p:string)=>JSON.parse(fs.readFileSync(p,'utf8'));
 const cg=()=>{try{return Object.fromEntries(fs.readFileSync('/sys/fs/cgroup/cpu.stat','utf8').trim().split('\n').map(x=>{const[k,v]=x.split(' ');return[k,Number(v)]}));}catch{return null}};
 const began=performance.now(),cpuStart=cg(),stages:unknown[]=[];
 const env={...process.env,IOTROUTE_BIN:bin,OMP_NUM_THREADS:'1',OPENBLAS_NUM_THREADS:'1',RAYON_NUM_THREADS:'1'};
-const abort=new AbortController(),timer=setTimeout(()=>abort.abort('budget'),(seconds-3)*1000);
+const abort=new AbortController(),timer=measuring?undefined:setTimeout(()=>abort.abort('budget'),(seconds-3)*1000);
 const stop=()=>abort.abort('signal');process.once('SIGTERM',stop);process.once('SIGINT',stop);
 async function owned(command:string[],label:string,cwd=root,extra=env){
  if(abort.signal.aborted)throw Error('budget exhausted');
@@ -32,7 +33,7 @@ try{
   const code=await sprint([bin,board,out,'--pcb',src,'--lock-from',src,'--return-exempt','--iters','80','--sprints',JSON.stringify({seeds:[0,1,2,3],via_costs:[3],parallelism:2,slice_passes:2,deadline_s:seconds,verify_reserve_s:30,mem_gb:4})]);
   if(code!==0)throw Error('sprint exit '+code);
  }else{
-  await owned([bin,'run',board,out,'--pcb',src,'--lock-from',src,'--return-exempt','--iters','80','--seed','0','--max-time',String(seconds-30),'--json'],'native');
+  await owned([bin,'run',board,out,'--pcb',src,'--lock-from',src,'--return-exempt','--iters','80','--seed','0',...(measuring?[]:['--max-time',String(seconds-30)]),'--json'],'native');
   const rec=read(out+'.iotroute/result.json');
   if(rec.status!=='PASS'||rec.drc_errors!==0||rec.unconnected!==0||rec.parity!==0||rec.board_sha256!==digest(out))throw Error('native rejected');
   const workspace=path.join(dir,'workspace');fs.mkdirSync(workspace);copyVerificationWorkspace(root,workspace);
@@ -48,7 +49,7 @@ try{
  status='PASS';
 }catch(e){error=String(e);console.error(error)}finally{
  clearTimeout(timer);process.removeListener('SIGTERM',stop);process.removeListener('SIGINT',stop);
- const cpuEnd=cg();const report={schema:'pcb.benchmark-1318.v1',board,mode,seconds,status,error,elapsed_s:(performance.now()-began)/1000,cpu_start:cpuStart,cpu_end:cpuEnd,cgroup_cpu_s:cpuStart&&cpuEnd?(cpuEnd.usage_usec-cpuStart.usage_usec)/1e6:null,source_sha256:digest(src),binary_sha256:digest(bin),node:process.version,stages};
+ const cpuEnd=cg();const report={schema:'pcb.benchmark-1318.v1',board,mode,seconds,calibration:measuring,max_passes:80,status,error,elapsed_s:(performance.now()-began)/1000,cpu_start:cpuStart,cpu_end:cpuEnd,cgroup_cpu_s:cpuStart&&cpuEnd?(cpuEnd.usage_usec-cpuStart.usage_usec)/1e6:null,source_sha256:digest(src),binary_sha256:digest(bin),node:process.version,stages};
  fs.writeFileSync(path.join(dir,'result.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));
 }
 process.exitCode=status==='PASS'?0:2;
