@@ -3,7 +3,19 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
 import { BoardLeases } from '../src/board-leases.ts';
+
+test('existing board bytes migrate into private revision history', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pcb-revision-migration-')), file = path.join(dir, 'state.sqlite');
+  const legacy = new DatabaseSync(file);
+  legacy.exec('CREATE TABLE board_revisions (board TEXT PRIMARY KEY, sha256 TEXT NOT NULL, content BLOB NOT NULL, generation INTEGER NOT NULL, revision INTEGER NOT NULL) STRICT');
+  legacy.prepare('INSERT INTO board_revisions VALUES (?,?,?,?,?)').run('p/B', 'digest', Buffer.from('original'), 3, 5); legacy.close();
+  fs.chmodSync(file, 0o644);
+  const current = new BoardLeases(file);
+  try { assert.equal(Buffer.from(current.readVersion('p/B', 5)!.content).toString(), 'original'); assert.equal(fs.statSync(file).mode & 0o777, 0o600); }
+  finally { current.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
 
 test('leases are exclusive and generations survive restart', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pcb-leases-'));
@@ -62,6 +74,8 @@ test('publication atomically fences lease and compares revision across connectio
       assert.equal(Buffer.from(stored.content).toString(), 'new');
       assert.equal(stored.generation, next.generation);
       assert.equal(stored.revision, final.revision);
+      assert.equal(Buffer.from(restarted.readVersion('project/board', 1)!.content).toString(), 'original');
+      assert.equal(fs.statSync(file).mode & 0o777, 0o600);
     } finally { restarted.close(); }
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

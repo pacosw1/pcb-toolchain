@@ -5,6 +5,11 @@ self=$(dirname "$(realpath "$0")")   # follow the ~/.local/bin/pcb symlink to th
 bundle=$(cd "$self/.." && pwd -P)
 version=$(sed -n '1p' "$bundle/VERSION" 2>/dev/null | cut -d' ' -f1)
 
+if [ "${1:-}" = protected ]; then
+  shift
+  exec node --no-warnings --experimental-strip-types "$bundle/tools/pcb-protected.mts" "$@"
+fi
+
 project=''
 sync_only=''
 prev=''

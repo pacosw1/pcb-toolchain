@@ -1,6 +1,7 @@
 // Durable coordinator-side leases. Write paths must enforce fencing separately.
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
+import fs from 'node:fs';
 
 export interface BoardLease { board: string; owner: string; generation: number; token: string; expiresAt: number }
 type Row = { generation: number; owner: string | null; token: string | null; expires_at: number };
@@ -10,14 +11,30 @@ export class BoardLeases {
   private now: () => number;
   constructor(file: string, now: () => number = Date.now) {
     this.now = now;
+    if (file !== ':memory:') {
+      const secure = (name: string, create: boolean): void => {
+        let fd: number;
+        try { fd = fs.openSync(name, fs.constants.O_RDWR | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK | (create ? fs.constants.O_CREAT : 0), 0o600); }
+        catch (error) { if (!create && (error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
+        try { if (!fs.fstatSync(fd).isFile()) throw new Error('board revision database must be a regular file'); fs.fchmodSync(fd, 0o600); }
+        finally { fs.closeSync(fd); }
+      };
+      secure(file, true); secure(file + '-wal', false); secure(file + '-shm', false);
+    }
     this.db = new DatabaseSync(file);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
       CREATE TABLE IF NOT EXISTS board_leases (board TEXT PRIMARY KEY, generation INTEGER NOT NULL,
       owner TEXT, token TEXT, expires_at INTEGER NOT NULL DEFAULT 0) STRICT;
       CREATE TABLE IF NOT EXISTS board_revisions (board TEXT PRIMARY KEY, sha256 TEXT NOT NULL,
         content BLOB NOT NULL, generation INTEGER NOT NULL, revision INTEGER NOT NULL) STRICT;
+      CREATE TABLE IF NOT EXISTS board_revision_history (board TEXT NOT NULL, revision INTEGER NOT NULL,
+        sha256 TEXT NOT NULL, content BLOB NOT NULL, generation INTEGER NOT NULL, owner TEXT NOT NULL,
+        created_at INTEGER NOT NULL, PRIMARY KEY(board, revision)) STRICT;
       CREATE TABLE IF NOT EXISTS board_commits (board TEXT PRIMARY KEY, generation INTEGER NOT NULL,
         owner TEXT NOT NULL, token TEXT NOT NULL, started_at INTEGER NOT NULL) STRICT;`);
+    // Existing installations have only the latest bytes; retain that revision when introducing history.
+    this.db.prepare(`INSERT OR IGNORE INTO board_revision_history
+      SELECT board, revision, sha256, content, generation, 'migration', ? FROM board_revisions`).run(this.now());
   }
   private transaction<T>(fn: () => T): T {
     this.db.exec('BEGIN IMMEDIATE');
@@ -109,9 +126,22 @@ export class BoardLeases {
       { sha256: string; generation: number; revision: number } | undefined;
     return row ?? null;
   }
+  listBoards(after: string, limit: number): { boards: { board: string; sha256: string; generation: number; revision: number }[]; next: string | null } {
+    if (typeof after !== 'string' || after.length > 512 || !Number.isSafeInteger(limit) || limit < 1 || limit > 500) throw new Error('invalid board list');
+    const rows = this.db.prepare('SELECT board, sha256, generation, revision FROM board_revisions WHERE board > ? ORDER BY board LIMIT ?')
+      .all(after, limit + 1) as { board: string; sha256: string; generation: number; revision: number }[];
+    const boards = rows.slice(0, limit);
+    return { boards, next: rows.length > limit ? boards[boards.length - 1].board : null };
+  }
   readBoard(board: string): { sha256: string; content: Uint8Array; generation: number; revision: number } | null {
     const row = this.db.prepare('SELECT sha256, content, generation, revision FROM board_revisions WHERE board = ?').get(board) as
       { sha256: string; content: Uint8Array; generation: number; revision: number } | undefined;
+    return row ?? null;
+  }
+  readVersion(board: string, revision: number): { sha256: string; content: Uint8Array; generation: number; revision: number } | null {
+    if (!Number.isSafeInteger(revision) || revision < 1) throw new Error('invalid board revision');
+    const row = this.db.prepare('SELECT sha256, content, generation, revision FROM board_revision_history WHERE board=? AND revision=?')
+      .get(board, revision) as { sha256: string; content: Uint8Array; generation: number; revision: number } | undefined;
     return row ?? null;
   }
 
@@ -129,6 +159,8 @@ export class BoardLeases {
       const revision = (current?.revision ?? 0) + 1;
       if (!Number.isSafeInteger(revision)) throw new Error('board revision exhausted');
       const sha256 = createHash('sha256').update(content).digest('hex');
+      this.db.prepare('INSERT INTO board_revision_history VALUES (?,?,?,?,?,?,?)')
+        .run(lease.board, revision, sha256, content, lease.generation, lease.owner, this.now());
       this.db.prepare(`INSERT INTO board_revisions VALUES (?, ?, ?, ?, ?) ON CONFLICT(board) DO UPDATE SET
         sha256=excluded.sha256, content=excluded.content, generation=excluded.generation, revision=excluded.revision`)
         .run(lease.board, sha256, content, lease.generation, revision);

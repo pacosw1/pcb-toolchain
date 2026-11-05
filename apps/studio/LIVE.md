@@ -51,6 +51,11 @@ same directory. The worker is observational and its cache and journals can be re
 
 ## What is protected
 
+The coordinator keeps its committed board bytes in an owner-only database and exposes them through the authenticated
+API. `pcb protected list` lists these revisions; `pcb protected read --board PROJECT/PATH --out FILE [--revision N]`
+exports one to a new working copy without overwriting an existing file. These stored revisions are not yet a complete
+protected project workspace: ordinary checkouts remain writable, and publishing bytes alone is not gate verification.
+
 The guarded CLI serializes participating build, edit, route, repair, release and adoption operations by the
 project-relative KiCad board path, so gate aliases for the same file share a lock. It pins the coordinator lease
 through confirmed process cleanup, including detached runs. Adoption compares the local board against the last

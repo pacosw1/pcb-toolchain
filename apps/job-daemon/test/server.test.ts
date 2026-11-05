@@ -134,6 +134,22 @@ describe('board leases', () => {
     assert.equal((await call('/board-leases/acquire', req)).status, 201);
   });
 
+  it('exports an authenticated protected revision without overwriting a working file', async () => {
+    const lease = await (await call('/board-leases/acquire', { board: 'project/cad/B.kicad_pcb', owner: 'test', ttlMs: 30000 })).json();
+    await call('/board-leases/commit-begin', { lease });
+    await call('/board-revisions', { lease, expected: null, content: Buffer.from('protected-board').toString('base64') });
+    const token = path.join(r.dir, 'protected-token'), config = path.join(r.dir, 'protected-config.json'), out = path.join(r.dir, 'working.kicad_pcb');
+    fs.writeFileSync(token, TOKEN); fs.writeFileSync(config, JSON.stringify({ url: base, tokenFile: token }));
+    const script = path.resolve('..', '..', 'tools/pcb-protected.mts');
+    const invoke = async (): Promise<number | null> => await new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, ['--no-warnings', '--experimental-strip-types', script, 'read', '--board', 'project/cad/B.kicad_pcb', '--out', out],
+        { env: { ...process.env, PCB_LIVE_CONFIG: config }, stdio: 'ignore' });
+      child.once('error', reject); child.once('close', resolve);
+    });
+    assert.equal(await invoke(), 0); assert.equal(fs.readFileSync(out, 'utf8'), 'protected-board');
+    fs.writeFileSync(out, 'local work'); assert.equal(await invoke(), 2); assert.equal(fs.readFileSync(out, 'utf8'), 'local work');
+  });
+
   it('requires authentication and rejects competing and stale owners', async () => {
     const request = { board: 'project/board', owner: 'mini', ttlMs: 30000 };
     assert.equal((await call('/board-leases/acquire', request, false)).status, 401);
@@ -153,6 +169,12 @@ describe('board leases', () => {
     assert.equal((await call('/board-revisions', { lease, expected: null, content: Buffer.from('board-v2').toString('base64') })).status, 409);
     const meta = await (await fetch(base + '/board-revisions?board=project%2Fboard', { headers: auth })).json() as { sha256: string };
     assert.equal(meta.sha256, revision.sha256);
+    assert.equal((await fetch(base + '/board-revisions/content?board=project%2Fboard')).status, 401);
+    assert.equal((await call('/board-revisions', { lease, expected: 1, content: Buffer.from('board-v2').toString('base64') })).status, 200);
+    const old = await fetch(base + '/board-revisions/content?board=project%2Fboard&revision=1', { headers: auth });
+    assert.equal(await old.text(), 'board-v1');
+    assert.equal(old.headers.get('x-board-sha256'), revision.sha256);
+    assert.equal(await (await fetch(base + '/board-revisions/content?board=project%2Fboard', { headers: auth })).text(), 'board-v2');
     assert.equal((await call('/board-leases/commit-end', { lease: { ...lease, token: '0'.repeat(64) } })).status, 409);
     assert.equal((await call('/board-leases/commit-end', { lease })).status, 200);
     assert.equal((await call('/board-leases/release', { lease })).status, 200);

@@ -207,6 +207,22 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, mgr: J
     if (!board || board.length > 512) throw new HttpError(400, 'invalid board');
     return json(res, 200, leases.boardMeta(board));
   }
+  if (url.pathname === '/board-revisions/list' && method === 'GET') {
+    const limit = Number(url.searchParams.get('limit') ?? '100'), after = url.searchParams.get('after') ?? '';
+    try { return json(res, 200, leases.listBoards(after, limit)); }
+    catch { throw new HttpError(400, 'invalid board list'); }
+  }
+  if (url.pathname === '/board-revisions/content' && method === 'GET') {
+    const board = url.searchParams.get('board'), revision = url.searchParams.get('revision');
+    if (!board || board.length > 512 || (revision !== null && !/^[1-9]\d*$/.test(revision))) throw new HttpError(400, 'invalid board or revision');
+    let record;
+    try { record = revision === null ? leases.readBoard(board) : leases.readVersion(board, Number(revision)); }
+    catch { throw new HttpError(400, 'invalid board revision'); }
+    if (!record) throw new HttpError(404, 'board revision not found');
+    res.writeHead(200, { 'content-type': 'application/octet-stream', 'cache-control': 'no-store',
+      'x-board-sha256': record.sha256, 'x-board-revision': String(record.revision), 'x-board-generation': String(record.generation) });
+    res.end(Buffer.from(record.content)); return;
+  }
   if (url.pathname === '/board-revisions' && method === 'POST') {
     const release = uploads.take();
     try {
