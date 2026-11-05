@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -91,4 +91,34 @@ test('cancel requests an active supervisor without changing its durable state', 
     const request = JSON.parse(readFileSync(join(folder, 'cancel.request'), 'utf8'));
     assert.match(request.requested_at, /^\d{4}-\d\d-\d\dT.*\+00:00$/);
   } finally { if (lock) await lock.release(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('concurrent notes remain complete records without changing the run state', { skip: iotrouteMissing() }, async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pcb-note-'));
+  try {
+    const folder = join(root, '.gate/cli/run-notes');
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, 'run.json'), '{}');
+    writeFileSync(join(folder, 'state.json'), '{"status":"passed"}');
+    const program = fileURLToPath(new URL('../pcb-observe.ts', import.meta.url));
+    const binary = iotrouteBin();
+    const messages = Array.from({ length: 12 }, (_, index) => `${index}:` + 'é'.repeat(2000));
+    const children = messages.map(message => new Promise<void>((resolve, reject) => {
+      const child = spawn(process.execPath, ['--experimental-strip-types', '--no-warnings', program,
+        '--project', root, 'note', 'run-notes', message, '--kind', 'decision', '--json'], {
+        env: { ...process.env, IOTROUTE_BIN: binary }, stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let output = '', error = '';
+      child.stdout.setEncoding('utf8').on('data', text => { output += text; });
+      child.stderr.setEncoding('utf8').on('data', text => { error += text; });
+      child.once('error', reject);
+      child.once('close', code => code === 0 && JSON.parse(output).recorded === true ? resolve() : reject(new Error(error || `exit ${code}`)));
+    }));
+    await Promise.all(children);
+    const lines = readFileSync(join(folder, 'notes.jsonl'), 'utf8').trimEnd().split('\n').map(line => JSON.parse(line));
+    assert.equal(lines.length, messages.length);
+    assert.deepEqual(new Set(lines.map(row => row.message)), new Set(messages));
+    assert.ok(lines.every(row => row.kind === 'decision' && /^\d{4}-\d\d-\d\dT.*\+00:00$/.test(row.time)));
+    assert.equal(readFileSync(join(folder, 'state.json'), 'utf8'), '{"status":"passed"}');
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

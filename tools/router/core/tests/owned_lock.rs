@@ -1,7 +1,7 @@
 //! Black-box checks of `iotroute lock` and `iotroute clock` on the built binary.
 
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Output, Stdio};
 use std::time::{Duration, Instant};
@@ -47,6 +47,22 @@ fn closing_stdin_releases_the_lock() {
     drop(stdin);
     assert_eq!(child.wait().unwrap().code(), Some(0));
     assert_eq!(probe(&path), FREE);
+}
+
+#[test]
+fn append_waits_for_the_existing_lock_and_writes_a_complete_record() {
+    let path = scratch("append").join("journal");
+    let (mut holder, holder_stdin) = hold(&path);
+    let mut writer = Command::new(BIN).args(["lock", "append", path.to_str().unwrap()])
+        .stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().unwrap();
+    writer.stdin.take().unwrap().write_all(b"record\n").unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(writer.try_wait().unwrap().is_none(), "append must wait for the holder");
+    assert_eq!(fs::read(&path).unwrap(), b"");
+    drop(holder_stdin);
+    assert!(holder.wait().unwrap().success());
+    assert!(writer.wait().unwrap().success());
+    assert_eq!(fs::read(&path).unwrap(), b"record\n");
 }
 
 #[test]

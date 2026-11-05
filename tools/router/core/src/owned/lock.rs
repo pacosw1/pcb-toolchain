@@ -4,10 +4,11 @@
 //!
 //!   iotroute lock hold PATH [--wait-s N]   exit 0 after release, 75 when busy, 1 when given up, 2 on error
 //!   iotroute lock held PATH                exit 0 when held, 1 when free or missing, 2 on error
+//!   iotroute lock append PATH              append stdin while holding the file's exclusive flock
 
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -21,12 +22,13 @@ const RETRY: Duration = Duration::from_millis(10);
 
 pub fn main(args: &[OsString]) -> i32 {
     let Some(request) = parse(args) else {
-        eprintln!("usage: iotroute lock hold PATH [--wait-s N] | iotroute lock held PATH");
+        eprintln!("usage: iotroute lock hold PATH [--wait-s N] | iotroute lock held PATH | iotroute lock append PATH");
         return EXIT_ERROR;
     };
     let outcome = match request {
         Request::Hold { path, wait } => hold(path, wait),
         Request::Held { path } => report_held(path),
+        Request::Append { path } => append_locked(path),
     };
     outcome.unwrap_or_else(|error| {
         eprintln!("lock: {error}");
@@ -37,12 +39,14 @@ pub fn main(args: &[OsString]) -> i32 {
 enum Request<'a> {
     Hold { path: &'a Path, wait: Duration },
     Held { path: &'a Path },
+    Append { path: &'a Path },
 }
 
 fn parse(args: &[OsString]) -> Option<Request<'_>> {
     let (verb, rest) = args.split_first()?;
     match (verb.to_str()?, rest) {
         ("held", [path]) => Some(Request::Held { path: Path::new(path) }),
+        ("append", [path]) => Some(Request::Append { path: Path::new(path) }),
         ("hold", [path]) => Some(Request::Hold { path: Path::new(path), wait: Duration::ZERO }),
         ("hold", [path, flag, seconds]) if flag == "--wait-s" => {
             let wait = Duration::try_from_secs_f64(seconds.to_str()?.parse().ok()?).ok()?;
@@ -50,6 +54,20 @@ fn parse(args: &[OsString]) -> Option<Request<'_>> {
         }
         _ => None,
     }
+}
+
+/// Open once, block on the same inode, then append the complete input while locked.
+fn append_locked(path: &Path) -> io::Result<i32> {
+    let mut data = Vec::new();
+    io::stdin().read_to_end(&mut data)?;
+    let mut file = OpenOptions::new().append(true).create(true).open(path)?;
+    loop {
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } == 0 { break; }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted { return Err(error); }
+    }
+    file.write_all(&data)?;
+    Ok(0)
 }
 
 /// The result of one flock attempt that did not fail.
