@@ -27,7 +27,9 @@ export interface Pad {
   shape: 'Circle' | 'Rect' | 'Oval' | 'RoundRect' | 'Custom' | 'Other';
   net: string; position: Pt; orientation: number; size: Pt; drill: Pt; layers: string[]; bbox: Rect;
   zone_connection: ZoneConnection | null; thermal_spoke_angle: number; spoke_templates: number;
-  copper: PadCopper[]; polygons: Record<string, Polygon>; solder_mask_expansion: number; clearance_override: number | null;
+  copper: PadCopper[]; polygons: Record<string, Polygon>; solder_mask_expansion: number;
+  /** Mask margins by side, excluding custom-rule overrides. */
+  solder_mask_expansion_by_layer?: Record<string, number>; clearance_override: number | null;
 }
 
 export interface FilledLayer { layer: string; polygons: Polygon[] }

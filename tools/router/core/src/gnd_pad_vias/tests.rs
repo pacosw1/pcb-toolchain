@@ -37,7 +37,7 @@ fn pad(number: &str, net: &str, x: f64, y: f64, w: f64, h: f64) -> Pad {
         spoke_templates: 0,
         copper,
         polygons: BTreeMap::new(),
-        solder_mask_expansion: 0,
+        solder_mask_expansion: 0, solder_mask_expansion_by_layer: Default::default(),
         clearance_override: None,
     }
 }

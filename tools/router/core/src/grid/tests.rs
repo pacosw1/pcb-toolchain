@@ -21,7 +21,7 @@ pub fn pad(number: &str, net: &str, x: f64, y: f64, side: f64) -> Pad {
     let copper = PadForm { shape: PadShape::Rect, center: position, orientation: 0.0, size, corner_ratio: 0.0 }.copper();
     let bbox = copper.iter().map(Copper::bbox).reduce(Rect::merged).unwrap();
     let polygons = [("F.Cu".to_string(), square(x - side / 2.0, y - side / 2.0, x + side / 2.0, y + side / 2.0))].into_iter().collect();
-    Pad { id: format!("{net}-{number}-{x}-{y}"), number: number.to_string(), kind: PadKind::Smd, shape: PadShape::Rect, net: net.to_string(), position, orientation: 0.0, size, drill: Pt::default(), layers: vec!["F.Cu".to_string()], bbox, zone_connection: None, thermal_spoke_angle: 0.0, spoke_templates: 0, copper, polygons, solder_mask_expansion: 0, clearance_override: None }
+    Pad { id: format!("{net}-{number}-{x}-{y}"), number: number.to_string(), kind: PadKind::Smd, shape: PadShape::Rect, net: net.to_string(), position, orientation: 0.0, size, drill: Pt::default(), layers: vec!["F.Cu".to_string()], bbox, zone_connection: None, thermal_spoke_angle: 0.0, spoke_templates: 0, copper, polygons, solder_mask_expansion: 0, solder_mask_expansion_by_layer: Default::default(), clearance_override: None }
 }
 
 pub fn footprint(reference: &str, pads: Vec<Pad>) -> Footprint {

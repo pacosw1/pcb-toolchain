@@ -87,6 +87,9 @@ pub struct Pad {
     pub polygons: BTreeMap<String, Polygon>,
     /// GetSolderMaskExpansion, without DRU solder_mask_expansion rules.
     pub solder_mask_expansion: Iu,
+    /// Side-specific margins; does not include custom rule overrides.
+    #[serde(default)]
+    pub solder_mask_expansion_by_layer: BTreeMap<String, Iu>,
     /// The pad's copper clearance override, when it has one.
     #[serde(default)]
     pub clearance_override: Option<Iu>,

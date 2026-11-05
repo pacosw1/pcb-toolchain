@@ -235,6 +235,12 @@ fn read_footprint(f: &bt::FootprintInstance, copper_layers: &[String], board_mas
             let mut pad = read_pad(&p)?;
             let pad_mask = p.pad_stack.as_ref().and_then(|s| s.front_outer_layers.as_ref()).and_then(|l| mask(&l.solder_mask_settings));
             pad.solder_mask_expansion = if pad.layers.iter().any(|l| l.ends_with(".Cu")) { mask_expansion(pad_mask, footprint_mask, board_mask, pad.size) } else { 0 };
+            let back_mask = p.pad_stack.as_ref().and_then(|s| s.back_outer_layers.as_ref()).and_then(|l| mask(&l.solder_mask_settings));
+            for (name, value) in [("F.Mask", pad_mask), ("B.Mask", back_mask)] {
+                if pad.layers.iter().any(|layer| layer == name) {
+                    pad.solder_mask_expansion_by_layer.insert(name.to_string(), mask_expansion(value, footprint_mask, board_mask, pad.size));
+                }
+            }
             out.pads.push(pad);
         } else if let Some(g) = decode::<bt::BoardGraphicShape>(item) {
             out.graphics.push(read_graphic(&g)?);
@@ -316,7 +322,7 @@ fn read_pad(p: &bt::Pad) -> Result<Pad, ApiError> {
         spoke_templates: layer.custom_shapes.iter().filter(|g| is_spoke_template(g)).count(),
         copper,
         polygons: BTreeMap::new(),
-        solder_mask_expansion: 0,
+        solder_mask_expansion: 0, solder_mask_expansion_by_layer: Default::default(),
         clearance_override: p.copper_clearance_override.as_ref().map(|d| d.value_nm),
     })
 }
