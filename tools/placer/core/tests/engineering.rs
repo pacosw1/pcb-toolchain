@@ -219,3 +219,38 @@ fn final_screen_checks_unreferenced_native_locks() {
     assert_eq!(geometry.native_lock_miss_for_unit(0, &pose).unwrap(), 1.0);
     assert_eq!(geometry.native_lock_miss_for_unit(1, &pose).unwrap(), 0.0);
 }
+
+#[test]
+fn producer_verified_cli_binds_bytes_and_rejects_unsupported_rules() {
+    use sha2::{Digest, Sha256};
+    use std::process::Command;
+    let dir = std::env::temp_dir().join(format!("iotplace-reviewed-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let input = dir.join("input.json");
+    let output = dir.join("output.json");
+    let problem = json!({
+        "units": [
+            {"name":"U1","refs":["U1"],"fixed":false,"x":10,"y":10,"rects":[[-0.2,-0.2,0.2,0.2,1]]},
+            {"name":"C1","refs":["C1"],"fixed":false,"x":14,"y":10,"rects":[[-0.2,-0.2,0.2,0.2,1]]}
+        ], "nets":[], "board":{"outline":[[0,0],[30,0],[30,30],[0,30]]}, "engineering":contract()
+    });
+    let run = |digest: Option<&str>| {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_iotplace"));
+        cmd.arg("run").arg(&input).arg("-o").arg(&output).args(["--workers","1","--epochs","1","--steps","1","--top","1"]);
+        if let Some(d) = digest { cmd.args(["--engineering-frozen-model-sha256",d]); }
+        cmd.output().unwrap()
+    };
+    let bytes = serde_json::to_vec(&problem).unwrap();
+    std::fs::write(&input, &bytes).unwrap();
+    let digest = format!("{:x}", Sha256::digest(&bytes));
+    assert!(!run(None).status.success());
+    assert!(!run(Some(&"0".repeat(64))).status.success());
+    assert!(run(Some(&digest)).status.success());
+    let mut bad = problem;
+    bad["engineering"]["rules"][0]["kind"] = json!("escape");
+    let bytes = serde_json::to_vec(&bad).unwrap();
+    std::fs::write(&input, &bytes).unwrap();
+    let digest = format!("{:x}", Sha256::digest(&bytes));
+    assert!(!run(Some(&digest)).status.success());
+    std::fs::remove_dir_all(dir).unwrap();
+}

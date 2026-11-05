@@ -31,7 +31,7 @@ struct Args {
     params: Vec<String>,
 }
 
-const VALUE_OPTIONS: [&str; 8] = ["--workers", "--epochs", "--steps", "--seed", "--top", "--sigma", "--nets", "--pose"];
+const VALUE_OPTIONS: [&str; 9] = ["--workers", "--epochs", "--steps", "--seed", "--top", "--sigma", "--nets", "--pose", "--engineering-frozen-model-sha256"];
 
 fn parse_args(argv: &[String]) -> iotplace::Result<Args> {
     let mut a = Args::default();
@@ -95,7 +95,10 @@ fn is_legal(c: &Candidate) -> bool {
 
 fn run(a: &Args) -> iotplace::Result<ExitCode> {
     let (input, output) = a.paths()?;
-    let mut pr = Problem::load(input)?;
+    let mut pr = match a.options.iter().rev().find(|(f, _)| f == "--engineering-frozen-model-sha256") {
+        Some((_, digest)) => Problem::load_producer_verified(input, digest)?,
+        None => Problem::load(input)?,
+    };
     let plan = Plan {
         workers: a.number("--workers", default_workers())?,
         epochs: a.number("--epochs", 20)?,
@@ -105,7 +108,12 @@ fn run(a: &Args) -> iotplace::Result<ExitCode> {
     };
     let params = Params::from_args(&a.params)?;
     let res = optimize(&mut pr, &params, plan, &|line| println!("{line}"))?;
-    std::fs::write(output, serde_json::to_string(&res)?)?;
+    let mut output_value = serde_json::to_value(&res)?;
+    if a.options.iter().any(|(f, _)| f == "--engineering-frozen-model-sha256") {
+        output_value["engineering_source_verification"] = Value::from(
+            "frozen_model_only; producer must recheck original sources before writing");
+    }
+    std::fs::write(output, serde_json::to_string(&output_value)?)?;
     report(&res.initial, &res);
     if res.candidates.first().is_none_or(|c| !is_legal(c)) {
         println!("NO LEGAL CANDIDATE");

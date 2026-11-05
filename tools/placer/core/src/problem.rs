@@ -39,7 +39,9 @@ pub struct Problem {
     pub cu_nets: BTreeMap<String, (String, String)>,
     /// Reviewed engineering contract: the rules live in tools/engineering_constraints.py (see `check_supported`).
     #[serde(default)]
-    engineering: Value,
+    pub(crate) engineering: Value,
+    #[serde(skip)]
+    pub(crate) engineering_frozen: bool,
     /// Rules of the pcb_search placer only (see `check_supported`).
     #[serde(default)]
     part_rules: Value,
@@ -271,9 +273,30 @@ impl Problem {
         Ok(problem)
     }
 
+    /// Admit only a byte-exact model whose independent producer verified the real reviewed sources.
+    /// A digest supplied by an untrusted caller does not establish provenance. The producer must
+    /// recheck those sources and every candidate before writing a board.
+    pub fn load_producer_verified(path: &Path, expected_sha256: &str) -> crate::Result<Self> {
+        use sha2::{Digest, Sha256};
+        let bytes = std::fs::read(path)?;
+        if expected_sha256.len() != 64 || !expected_sha256.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            || format!("{:x}", Sha256::digest(&bytes)) != expected_sha256 {
+            return Err("transferred engineering model fingerprint differs from verified producer input".into());
+        }
+        let mut problem: Self = serde_json::from_slice(&bytes)?;
+        if !truthy(&problem.engineering) { return Err("verified model requires reviewed engineering".into()); }
+        problem.engineering_frozen = true;
+        problem.check_supported()?;
+        // Validate all supported rule kinds and the reference mapping before search.
+        let refs = problem.units.iter().map(|u| u.refs.clone()).collect::<Vec<_>>();
+        let origins = problem.units.iter().map(|u| (u.x, u.y)).collect::<Vec<_>>();
+        crate::engineering::ReviewedGeometry::compile(&problem.engineering, &refs, &origins)?;
+        Ok(problem)
+    }
+
     /// The two rule sets this search does not evaluate. They make a place illegal, so a run must not skip them.
     pub fn check_supported(&self) -> crate::Result<()> {
-        if truthy(&self.engineering) {
+        if truthy(&self.engineering) && !self.engineering_frozen {
             return Err("a problem with a reviewed engineering contract runs on tools/placer/cli.py".into());
         }
         if truthy(&self.part_rules) {

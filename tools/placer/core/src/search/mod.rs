@@ -253,6 +253,9 @@ fn exchange(workers: &mut [Worker], best: usize) {
 }
 
 fn check(pr: &Problem, p: &Params, plan: Plan) -> crate::Result<()> {
+    if pr.engineering_frozen && p.global != 0.0 {
+        return Err("reviewed engineering does not support global placement: it changes model anchors".into());
+    }
     if plan.workers == 0 || plan.epochs == 0 {
         return Err("workers and epochs must be at least 1".into());
     }

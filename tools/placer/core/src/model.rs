@@ -120,6 +120,11 @@ impl<'p> Model<'p> {
         // a library search to silently skip unsupported hard-rule contracts either.
         pr.check_supported()?;
         let p = params;
+        let reviewed = if pr.engineering_frozen {
+            let refs = pr.units.iter().map(|u| u.refs.clone()).collect::<Vec<_>>();
+            let origins = pr.units.iter().map(|u| (u.x, u.y)).collect::<Vec<_>>();
+            Some(crate::engineering::ReviewedGeometry::compile(&pr.engineering, &refs, &origins)?)
+        } else { None };
         let table = class_table(pr);
         let via_nets = pr.via_nets.as_deref().unwrap_or(&[]);
         let units = pr.units.iter().map(|u| UnitShape::new(u, table.as_ref(), p, via_nets));
@@ -127,7 +132,7 @@ impl<'p> Model<'p> {
         let grid = Grid::new(outline_box, p.rudy_cell);
         Ok(Self {
             problem: pr,
-            reviewed: None,
+            reviewed,
             params: p.clone(),
             units: units.collect::<crate::Result<_>>()?,
             mask: Mask::new(&pr.board, p.mask_cell, p.gap)?,
