@@ -16,18 +16,41 @@ function sameSet(values:unknown, required:Set<string>): boolean {
 const violations = (value:unknown): boolean => Array.isArray(value) && value.every(row => obj(row) && ['warning','info','exclusion'].includes(String(row.severity)));
 
 export function validateFreshGateEvidence(input: {result:Uint8Array;findings:Uint8Array;erc?:Uint8Array;drc?:Uint8Array},
-  expected: {board:string;project:string;inputSha256:string;requiredChecks:string[];processExit:number;terminalEvent:boolean;warningsAsErrors:boolean}):
+  expected: {board:string;project:string;inputSha256:string;requiredInputs:{path:string;sha256:string|null;link?:string}[];toolVersions:Record<string,string>;
+    requiredChecks:string[];processExit:number;terminalEvent:boolean;warningsAsErrors:boolean}):
   {resultSha256:string;findingsSha256:string;nativeSha256:Record<string,string>} {
   const required = new Set(expected.requiredChecks);
   if (typeof expected.board !== 'string' || !ID.test(expected.board) || typeof expected.project !== 'string' || !expected.project || expected.project.length > 4096 ||
       !SHA.test(expected.inputSha256) || !Array.isArray(expected.requiredChecks) || required.size !== expected.requiredChecks.length || required.size < 1 || required.size > 5000 ||
-      !expected.requiredChecks.every(x => typeof x === 'string' && ID.test(x)) || expected.processExit !== 0 || expected.terminalEvent !== true || typeof expected.warningsAsErrors !== 'boolean')
+      !expected.requiredChecks.every(x => typeof x === 'string' && ID.test(x)) || expected.processExit !== 0 || expected.terminalEvent !== true || typeof expected.warningsAsErrors !== 'boolean' ||
+      !Array.isArray(expected.requiredInputs) || expected.requiredInputs.length < 1 || expected.requiredInputs.length > 100_000 || !obj(expected.toolVersions) || !Object.keys(expected.toolVersions).length)
     throw new Error('gate invocation is not a valid completed pass');
   const result=json(input.result), findings=json(input.findings);
   if (!obj(result) || result.exit !== 0 || result.changedDuringRun !== false || !obj(result.provenance) || result.provenance.input_sha256 !== expected.inputSha256 ||
-      !obj(result.provenance.tools) || !Object.keys(result.provenance.tools).length || Object.values(result.provenance.tools).some(v => typeof v !== 'string' || !v) ||
+      !obj(result.provenance.tools) || !Object.keys(result.provenance.tools).length || Object.values(result.provenance.tools).some(v => typeof v !== 'string' || !v) || !Array.isArray(result.provenance.inputs) ||
       !Array.isArray(result.preflightErrors) || result.preflightErrors.length || !obj(result.checks) || !sameSet(Object.keys(result.checks),required))
     throw new Error('gate result is incomplete or does not bind the expected inputs');
+  const wanted = new Map<string,{sha256:string|null;link?:string}>();
+  for (const entry of expected.requiredInputs) {
+    if (!entry || typeof entry.path !== 'string' || !entry.path || entry.path.length > 4096 || wanted.has(entry.path) ||
+        (entry.sha256 !== null && (typeof entry.sha256 !== 'string' || !SHA.test(entry.sha256))) || (entry.link !== undefined && typeof entry.link !== 'string'))
+      throw new Error('invalid independently expected gate input');
+    wanted.set(entry.path,{sha256:entry.sha256,...(entry.link === undefined ? {} : {link:entry.link})});
+  }
+  if (result.provenance.inputs.length !== wanted.size) throw new Error('gate dependency set differs');
+  for (const entry of result.provenance.inputs) {
+    if (!obj(entry) || typeof entry.path !== 'string' || !wanted.has(entry.path) || !Object.hasOwn(entry,'sha256') ||
+        Object.keys(entry).some(key => !['path','sha256','link'].includes(key))) throw new Error('invalid gate dependency');
+    const expectedEntry = wanted.get(entry.path)!;
+    if (entry.sha256 !== expectedEntry.sha256 || entry.link !== expectedEntry.link || Object.hasOwn(entry,'link') !== Object.hasOwn(expectedEntry,'link')) throw new Error('gate dependency changed');
+    wanted.delete(entry.path);
+  }
+  const actualTools = result.provenance.tools;
+  if (wanted.size || Object.keys(actualTools).length !== Object.keys(expected.toolVersions).length ||
+      Object.entries(expected.toolVersions).some(([key,value]) => typeof value !== 'string' || !value || actualTools[key] !== value))
+    throw new Error('gate dependency or tool versions changed');
+  const fingerprint = digest(Buffer.from(JSON.stringify({inputs:result.provenance.inputs,tools:result.provenance.tools})));
+  if (fingerprint !== expected.inputSha256) throw new Error('gate provenance fingerprint is invalid');
   for (const [id,check] of Object.entries(result.checks)) {
     if (!obj(check) || check.status !== 'passed' || check.cached !== false || !obj(check.metrics) || !Object.keys(check.metrics).length ||
         Object.values(check.metrics).some(x => !Number.isSafeInteger(x) || (x as number) < 0)) throw new Error(`gate check ${id} is incomplete, cached or not passed`);
