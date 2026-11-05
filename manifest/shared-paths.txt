@@ -638,6 +638,7 @@ tools/route-coverage/src/lib.rs
 tools/route-coverage/src/main.rs
 tools/route-coverage/src/project.rs
 tools/route-coverage/src/thermal.rs
+tools/route-coverage/tests/admission.rs
 tools/route-coverage/tests/dsn_floor.rs
 tools/route-coverage/tests/hole.rs
 tools/route-coverage/tests/hole_common/mod.rs

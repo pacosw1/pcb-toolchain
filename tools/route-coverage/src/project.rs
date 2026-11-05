@@ -268,6 +268,10 @@ fn extend(row: &mut Value, more: Value) {
         .extend(more.as_object().unwrap().clone());
 }
 pub fn evaluate(req: &Request) -> Vec<Value> {
+    evaluate_with(req, &hole::inspect_drilled)
+}
+/// `evaluate` with the drilled proof given: the seam where a test stands in for the geometry.
+pub fn evaluate_with(req: &Request, proof: &dyn Fn(&hole::DrilledRequest) -> Value) -> Vec<Value> {
     let project = match load(req.text.as_deref()) {
         Ok(p) => p,
         Err(e) => {
@@ -284,14 +288,19 @@ pub fn evaluate(req: &Request) -> Vec<Value> {
             ];
         }
     };
-    match evaluate_model(req, &project, &model) {
+    match evaluate_model(req, &project, &model, proof) {
         Ok(rows) => rows,
         Err(e) => vec![
             json!({"rule":"native project","constraint":"router_model","disposition":"unsupported","source":{"path":req.source,"pointer":""},"reason":e}),
         ],
     }
 }
-fn evaluate_model(req: &Request, project: &Project, model: &Rules) -> Result<Vec<Value>> {
+fn evaluate_model(
+    req: &Request,
+    project: &Project,
+    model: &Rules,
+    proof: &dyn Fn(&hole::DrilledRequest) -> Value,
+) -> Result<Vec<Value>> {
     let moving = req
         .active_nets
         .iter()
@@ -404,7 +413,8 @@ fn evaluate_model(req: &Request, project: &Project, model: &Rules) -> Result<Vec
             name.replace('~', "~0").replace('/', "~1")
         );
         let mut row = json!({"rule":"native project","constraint":name,"disposition":"unsupported","source":{"path":req.source,"pointer":pointer}});
-        if let Err(e) = evaluate_rule(req, project, model, &pairs, moving, &vias, name, &mut row) {
+        if let Err(e) = evaluate_rule(req, project, model, &pairs, moving, &vias, name, &mut row, proof)
+        {
             row["reason"] = e.into();
         }
         rows.push(row);
@@ -420,6 +430,7 @@ fn evaluate_rule(
     vias: &Result<Vec<Via>>,
     name: &str,
     row: &mut Value,
+    drilled_proof: &dyn Fn(&hole::DrilledRequest) -> Value,
 ) -> Result<()> {
     let known =
         REQUIRED.contains(&name) || matches!(name, "max_error" | "use_height_for_length_calcs");
@@ -569,7 +580,7 @@ fn evaluate_rule(
                 .into_iter()
                 .min()
                 .unwrap_or(dec::zero());
-            let proof = hole::inspect_drilled(&hole::DrilledRequest {
+            let proof = drilled_proof(&hole::DrilledRequest {
                 dsn_text: req.dsn_text.clone(),
                 holes: holes.clone(),
                 scope: hole::Scope {
@@ -714,6 +725,7 @@ fn evaluate_rule(
             || c["required_count"].as_u64().is_none()
             || dec::number(&c["required_count"])? != value
             || !req.immutable_geometry_preserved
+            || c.get("content_sha256").is_none()
         {
             return Err(
                 "native thermal capability differs from the authored count or immutable scope"

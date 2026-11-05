@@ -101,6 +101,8 @@ fn native_thermal_is_a_pending_postcondition() {
     );
     r.native_thermal_capability["required_count"] = json!(3);
     assert_eq!(row(&r, "min_resolved_spokes")["disposition"], "unsupported");
+    r.native_thermal_capability = json!({"schema":"iot-lab.native-thermal-capability.v1","status":"pending_native","required_count":2});
+    assert_eq!(row(&r, "min_resolved_spokes")["disposition"], "unsupported");
 }
 #[test]
 fn thermal_scope_preserves_unknowns() {
