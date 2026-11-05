@@ -550,7 +550,6 @@ tools/remote.sh
 tools/render_with_plugs.py
 tools/render_with_plugs.ts
 tools/requirements-gerbercheck.txt
-tools/rf_lines.py
 tools/rf_lines.ts
 tools/route-coverage/.gitignore
 tools/route-coverage/Cargo.lock
