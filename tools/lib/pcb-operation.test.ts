@@ -50,7 +50,7 @@ function project(t: { after(fn: () => void): void }, writer = WRITER(MOVED), gat
   writeFileSync(join(root, 'tools/gate.mjs'), gate);
   writeFileSync(join(root, 'tools/pcbtool.ts'), writer);
   writeFileSync(join(root, 'tools/pcb_snapshot_inputs.mjs'), 'console.log("[]");');
-  writeFileSync(join(root, 'spec.json'), '{"moves":[]}');
+  writeFileSync(join(root, 'spec.json'), '{"place":{}}');
   return root;
 }
 
@@ -301,7 +301,7 @@ test('reviewed part use screens a copper edit before and after the tool', needsB
   writeFileSync(join(root, 'tools/gate.mjs'), GATE());
   writeFileSync(join(root, 'tools/pcbtool.ts'), 'process.stdout.write("no change\\n");');
   writeFileSync(join(root, 'tools/pcb_snapshot_inputs.mjs'), 'console.log("[]");');
-  writeFileSync(join(root, 'spec.json'), '{}');
+  writeFileSync(join(root, 'spec.json'), '{"routes":[]}');
   const { folder, result } = await run(root, 'edit', FIXTURE_BOARD, '--kind', 'route', '--spec', join(root, 'spec.json'), '--engineering-manifest', manifest);
   assert.equal(result.status, 'passed', String(result.cause));
   for (const name of ['part-review.json', 'placement-preflight.json', 'placement-postcheck.json']) assert.ok(result.evidence_sha256[`operation/${name}`], name);
@@ -312,7 +312,7 @@ test('reviewed part use screens a copper edit before and after the tool', needsB
 test('an unexpected failure is a sealed error in the operation\'s own scope', needsBinary, async t => {
   const root = project(t);
   rmSync(join(root, 'tools/gate.mjs'));
-  writeFileSync(join(root, 'spec.json'), '{"moves":[]}');
+  writeFileSync(join(root, 'spec.json'), '{"place":{}}');
   const contract = join(root, 'hardware-design/registry/design-contracts/X.json');
   mkdirSync(dirname(contract), { recursive: true });
   writeFileSync(contract, '{"identity":{"board":"OTHER","design_id":"OTHER"}}');

@@ -4,6 +4,7 @@ import { copyFileSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { dependencyFiles } from './design-contract-load.ts';
 import { designServices } from './design-services.ts';
+import { validateExplicitSpec } from './explicit-spec.ts';
 import { atomicJson, plainJson, readObject, sha256File } from './json-file.ts';
 import { iotroutePolicy } from './outcome-controls.ts';
 import { verifyManifest } from './part-review.ts';
@@ -304,6 +305,7 @@ export async function runOperation(folderPath: string): Promise<number> {
   const folder = resolvePath(folderPath), manifest = readObject<OperationManifest>(join(folder, 'run.json')), root = resolvePath(manifest.root);
   const emit: Emit = (kind, data) => operationEvent(folder, kind, data);
   mkdirSync(join(folder, 'operation'), { recursive: true });
+  validateExplicitSpec(manifest.operation, manifest.kind, manifest.router, manifest.spec);
   const design = await designAdmission(root, folder, manifest, emit);
   if (design && design.status !== 'passed') return 1;
   if (manifest.operation === 'release') return release(folder, root, manifest);

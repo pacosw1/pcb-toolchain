@@ -24,6 +24,16 @@ tools/pcb events RUN_ID --after 0 --wait 20 --json
 tools/pcb explain RUN_ID --json
 ```
 
+Explicit placement and routing JSON specs are strict: unknown fields, including
+nested grid, route, via and move-via fields, fail before native work. Placement
+accepts `place` (reference to `[x_mm, y_mm, rotation_deg]`) and `grids`; explicit
+routing requires `routes` and optionally accepts `clear`, `move_vias` and `via`.
+For example, `{"plcae":{"U1":[10,20,90]}}` is an error, not an empty placement.
+Numeric fields must be finite numbers; booleans and arrays are not coerced. The
+supervisor and direct `pcbtool` commands share these checks. This validates input
+syntax; it does not grant movement authority or replace reviewed stage, scope,
+native gate or adoption checks.
+
 Put supervisor options before the action for `parts`, `placement` and `routing`;
 arguments after the action belong to that backend. This also applies to `design`,
 `schematic` and `outcomes`. Every operation uses the
