@@ -371,7 +371,6 @@ tools/lib/zip-read.d.mts
 tools/lib/zip-read.mjs
 tools/lib/zip-write.ts
 tools/mandatory_preflight.py
-tools/net_drivers.py
 tools/pack-fab.py
 tools/pack-fab.ts
 tools/package-lock.json
@@ -451,7 +450,6 @@ tools/pcb_search/upstreams.json
 tools/pcb_snapshot_inputs.mjs
 tools/pcb_timing.ts
 tools/pcb_workflow.py
-tools/pcbtool.py
 tools/pcbtool.ts
 tools/pdfpage.swift
 tools/pdftext.swift
@@ -895,7 +893,6 @@ tools/routing_rules.py
 tools/run_record.py
 tools/run_record.ts
 tools/set_stackup.ts
-tools/si_planes.py
 tools/si_pairs.ts
 tools/si_planes.ts
 tools/silk_jlc.py
@@ -933,8 +930,6 @@ tools/test_pcb_search_native_candidate.py
 tools/test_pcb_search_native_conflicts.py
 tools/test_pcb_search_native_eco.py
 tools/test_pcb_search_native_placement.py
-tools/test_pcbtool.py
-tools/test_physical_current.py
 tools/test_pin_escape_flow.py
 tools/test_project_root.py
 tools/test_route_decision.py

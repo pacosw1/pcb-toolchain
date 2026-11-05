@@ -229,7 +229,7 @@ fn stub_through_routed_copper_is_priced_and_strict_refuses_it() {
     assert!(ctx.stub_price(0, north).is_none() && ctx.stub_price(0, south).is_some());
 }
 
-/// The paths gate rule (tools/pcbtool.py width_report / net_graph pin escape) on the routed copper of `net`: every
+/// The paths gate rule (tools/lib/power-graph.ts netGraph pin escape) on the routed copper of `net`: every
 /// track narrower than `need` is a pin escape of a rated pad in `esc`: one end inside the pad, no narrower than its
 /// narrow side, no longer than its long side. A track with an end in a leaf pad (a pad in no power chain: no
 /// pad_need) is a dead-end branch that carries no chain current; the gate does not rate it.

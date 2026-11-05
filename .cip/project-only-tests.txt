@@ -19,7 +19,6 @@ test_si_evidence          needs hardware-design/registry/datasheets data
 test_si_junctions         needs hardware-design/registry/datasheets data
 test_si_planes            needs hardware-design/registry/datasheets data
 test_si_projection        needs hardware-design/registry/datasheets data
-test_pcbtool              needs hardware-design/registry/datasheets data
 test_pcb_iotroute         needs hardware-design/boards data
 test_board_frame          needs Pillow
 # Subfolder files: name relative to tools/. Python as a module, node as a path.
