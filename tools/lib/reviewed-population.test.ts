@@ -4,7 +4,7 @@ import {mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync} from 'node:
 import {join, dirname} from 'node:path';
 import {tmpdir} from 'node:os';
 import {sha256} from './kicad-population.mjs';
-import {reconstructSnapshot} from './reviewed-population.ts';
+import {compareNativeManifest, reconstructSnapshot} from './reviewed-population.ts';
 
 test('reconstructs snapshot identities and nets and rejects changed sources', t => {
   const root = mkdtempSync(join(tmpdir(), 'reviewed-native-'));
@@ -22,6 +22,11 @@ test('reconstructs snapshot identities and nets and rejects changed sources', t 
   assert.equal(result.verified_review, false);
   assert.deepEqual(result.parts.U1.pad_net_map, {'1':'VCC'});
   assert.deepEqual(result.parts.U1.pin_map, {'1':{name:'VCC',type:'input'}});
+  const native = result.parts.U1;
+  const reviewed = {parts:[{reference:'U1',mpn:'PART',lcsc:'C123',native:{...native,non_electrical_pads:[]}}]};
+  compareNativeManifest(reviewed,result);
+  reviewed.parts[0].native.pin_map = {'1':{name:'OTHER',type:'input'}};
+  assert.throws(()=>compareNativeManifest(reviewed,result),/native pin_map differs/);
   const originalSch = readFileSync(join(root,project+'.kicad_sch')).toString();
   put(project+'.kicad_sch', originalSch.replace('Part_1_1','Part_1_2'));
   const changedSch = {...expected, [project+'.kicad_sch']:sha256(readFileSync(join(root,project+'.kicad_sch')))};

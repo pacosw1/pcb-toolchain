@@ -127,3 +127,48 @@ export function reconstructSnapshot(root: string, project: string, expected: Rec
   }
   return {scope: 'partial_native_population', verified_review: false, source_hashes: actual, parts};
 }
+
+/** Compare reviewed native declarations against independently read snapshot facts.
+ * Evidence documents, ranges, budgets and constraint geometry require additional checks. */
+export function compareNativeManifest(manifest: unknown, population: ReturnType<typeof reconstructSnapshot>): void {
+  function object(value: unknown): Record<string, unknown> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('expected reviewed object');
+    return value as Record<string, unknown>;
+  }
+  function canonical(value: unknown): string {
+    if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']';
+    if (value && typeof value === 'object') {
+      const o = object(value);
+      return '{' + Object.keys(o).sort().map(k => JSON.stringify(k) + ':' + canonical(o[k])).join(',') + '}';
+    }
+    return JSON.stringify(value);
+  }
+  const parts = object(manifest).parts;
+  if (!Array.isArray(parts) || !parts.length) throw new Error('reviewed parts missing');
+  const seen = new Set<string>();
+  for (const value of parts) {
+    const part = object(value);
+    if ('profile' in part) throw new Error('reviewed profiles unsupported');
+    const ref = part.reference;
+    if (typeof ref !== 'string' || !ref || seen.has(ref) || !Object.hasOwn(population.parts,ref)) throw new Error('duplicate or absent native reference');
+    seen.add(ref);
+    const actual = population.parts[ref], native = object(part.native);
+    if (typeof part.mpn !== 'string' || !part.mpn || part.mpn.trim() !== part.mpn ||
+        typeof part.lcsc !== 'string' || !/^C[0-9]+$/.test(part.lcsc) ||
+        part.mpn !== actual.mpn || part.lcsc !== actual.lcsc) throw new Error(`native part identity differs ${ref}`);
+    for (const key of ['symbol_sha256','pin_map','footprint','footprint_sha256','land_geometry_sha256','pad_net_map'] as const) {
+      if (!(key in native) || canonical(native[key]) !== canonical(actual[key])) throw new Error(`native ${key} differs ${ref}`);
+    }
+    if (Object.values(actual.pin_map).some(pin => pin.type === 'unspecified')) throw new Error(`unspecified electrical pin ${ref}`);
+    const mechanical = native.non_electrical_pads;
+    if (!Array.isArray(mechanical) || mechanical.some(v => typeof v !== 'string') || new Set(mechanical).size !== mechanical.length) throw new Error(`invalid mechanical pads ${ref}`);
+    const pinNumbers = new Set(Object.keys(actual.pin_map));
+    const padNumbers = new Set(Object.keys(actual.pad_net_map));
+    if (mechanical.some(n => pinNumbers.has(n)) || canonical([...new Set([...pinNumbers,...mechanical])].sort()) !== canonical([...padNumbers].sort())) {
+      throw new Error(`native pin/pad coverage differs ${ref}`);
+    }
+  }
+  for (const [ref, part] of Object.entries(population.parts)) {
+    if (part.required && !seen.has(ref)) throw new Error(`required native part lacks review ${ref}`);
+  }
+}
