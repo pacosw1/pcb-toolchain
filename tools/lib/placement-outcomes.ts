@@ -22,7 +22,7 @@ export const STUDY = 'iot-lab.placement-outcome-study.v1';
 export const REPORT = 'iot-lab.placement-outcome-comparison.v1';
 const SIDECARS = ['.kicad_sch', '.kicad_pro', '.kicad_dru'];
 const NEEDS_ACCEPTANCE = 'complete fresh native acceptance and verified execution controls are required';
-const IMPLEMENTATION = ['placement-outcomes.ts', 'outcome-evidence.ts', 'outcome-controls.ts', 'outcome-quality.ts', 'native-board.ts', 'fingerprint.ts', 'decimal.ts', 'sexpr.ts', 'timing.ts'];
+const IMPLEMENTATION = ['placement-outcomes.ts', 'outcome-evidence.ts', 'outcome-controls.ts', 'outcome-quality.ts', 'outcome-thermal.ts', 'pcb-identity.ts', 'native-board.ts', 'fingerprint.ts', 'decimal.ts', 'sexpr.ts', 'timing.ts', 'iso-time.ts', 'json-file.ts', 'cli.ts', 'py-compat.mjs', 'py-path.ts', 'py-values.ts', 'py-math.ts', 'py-numbers.ts'];
 
 /** Borrowed from their owners: pcb_identity from the workflow family, the thermal proof from the routing family. */
 export interface OutcomeServices {
@@ -34,6 +34,11 @@ export interface OutcomeServices {
 function toolInputs(): Map<string, string> {
   const here = dirname(fileURLToPath(import.meta.url));
   return new Map(IMPLEMENTATION.map(name => [joinPath(here, name), sha256File(joinPath(here, name))]));
+}
+
+/** Bind the full local implementation used by downstream observation adapters. */
+export function sourceInputs(): Record<string, string> {
+  return Object.fromEntries(toolInputs());
 }
 
 function fullAcceptance(terminal: Dict, operation: Dict, gate: Dict, native: NativeCounts | null): boolean {
