@@ -148,6 +148,13 @@ describe('board leases', () => {
     });
     assert.equal(await invoke(), 0); assert.equal(fs.readFileSync(out, 'utf8'), 'protected-board');
     fs.writeFileSync(out, 'local work'); assert.equal(await invoke(), 2); assert.equal(fs.readFileSync(out, 'utf8'), 'local work');
+    const project = path.join(r.dir, 'registered-project'); fs.mkdirSync(project); fs.writeFileSync(path.join(project, '.pcb-live.json'), '{"projectId":"project"}');
+    const entry = path.resolve('..', '..', 'tools/pcb');
+    const status = await new Promise<number | null>((resolve, reject) => {
+      const child = spawn(entry, ['--project', project, 'protected', 'list'], { env: { ...process.env, PCB_LIVE_CONFIG: config }, stdio: 'ignore' });
+      child.once('error', reject); child.once('close', resolve);
+    });
+    assert.equal(status, 0);
   });
 
   it('requires authentication and rejects competing and stale owners', async () => {

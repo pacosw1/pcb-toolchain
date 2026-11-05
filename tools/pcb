@@ -8,6 +8,7 @@ case "${1:-}" in
   *) command=${1:-} ;;
 esac
 case "$command" in
+  protected) exec node --experimental-strip-types --no-warnings "$here/pcb-protected.mts" "$@" ;;
   list|context|next|status|events|explain|cancel|note|benchmark) exec node --experimental-strip-types --no-warnings "$here/pcb-observe.ts" "$@" ;;
   check|doctor|readiness|blocks|outcomes|schematic) exec node --experimental-strip-types --no-warnings "$here/pcb-check.ts" "$@" ;;
 esac

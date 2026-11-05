@@ -13,8 +13,10 @@ claim. It specifies the minimum boundary between Studio/CLI, the coordinator and
   paths and each regular file's SHA-256 and byte length, plus an explicitly versioned dependency declaration. Reject
   absolute paths, empty segments, `.`, `..`, backslashes, NUL, duplicate paths and paths colliding after the target
   platform's normalization. The manifest covers the PCB, schematic, KiCad project/rules, libraries, scripts,
-  reviewed constraints and all other gate inputs; unavailable or undeclared inputs fail closed. Derived/live previews
-  never become source inputs implicitly.
+  reviewed constraints and all other gate inputs. The dependency declaration distinguishes required inputs,
+  optional-but-absent inputs, and external immutable dependencies; required missing or undeclared inputs fail closed.
+  Derived/live previews never become source inputs implicitly. A read-only ENV-SENSE probe found external and absent
+  paths in the current closure; their roles must be classified, not silently discarded or universally treated as errors.
 - Hash `SHA-256(UTF-8(JCS(document)))`, where JCS is [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785). Sort file
   entries by their UTF-8 path bytes before canonicalization. Hashes are lowercase 64-character hex. Reject duplicate
   JSON keys, non-finite numbers and values outside the chosen schema before hashing. Schema fields below are illustrative
