@@ -2,12 +2,16 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import { ProtectedLeaseStore } from '../src/protected-leases.ts';
 
+const manifestBytes = Buffer.from('staged manifest');
+const manifestHash = createHash('sha256').update(manifestBytes).digest('hex');
 class Fixture extends ProtectedLeaseStore {
   seed(): void {
-    this.db.prepare("INSERT INTO protected_targets VALUES ('p','b',3,1,'ACTIVE')").run();
+    this.put(manifestHash, manifestBytes);
+    this.db.prepare("INSERT INTO protected_targets VALUES ('p','b',3,1,'ACTIVE',?)").run(manifestHash);
     this.db.prepare("INSERT INTO protected_aliases VALUES ('p','a','b',1),('p','other','b',1)").run();
   }
 }
@@ -41,11 +45,12 @@ test('attempt binding pins the matching lease atomically before dispatch', () =>
     job: null, attempt: null, issuedAtMs: 100, expiresAtMs: 20_000, maxUses: 50 });
   if (issued.state !== 'ISSUED') throw new Error('issuance failed');
   const req = { requestId: 'request-5', project: 'p', board: 'b', alias: 'a', aliasRevision: 1, sourceRevision: 3, operation: 'route', ttlMs: 1000 };
-  const binding = { job: 'job-1', attempt: 'attempt-1', sourceManifest: 'a'.repeat(64), policyDigest: 'b'.repeat(64), runtimeDigest: 'c'.repeat(64), toolchainDigest: 'd'.repeat(64) };
+  const binding = { job: 'job-1', attempt: 'attempt-1', sourceManifest: manifestHash, policyDigest: 'b'.repeat(64), runtimeDigest: 'c'.repeat(64), toolchainDigest: 'd'.repeat(64) };
   try {
     const acquired = store.acquire(issued.token, req); if (acquired.state !== 'ACQUIRED') throw new Error('acquire failed');
     const lease = { ...req, generation: acquired.generation, token: acquired.token };
     assert.throws(() => store.bindAttempt(issued.token, { ...lease, token: '0'.repeat(64) }, binding), /cannot bind/);
+    assert.throws(() => store.bindAttempt(issued.token, lease, { ...binding, sourceManifest: 'a'.repeat(64) }), /cannot bind/);
     store.bindAttempt(issued.token, lease, binding);
     store.bindAttempt(issued.token, lease, binding); // Lost response can be retried with identical content.
     assert.throws(() => store.bindAttempt(issued.token, lease, { ...binding, policyDigest: 'e'.repeat(64) }), /binding changed/);

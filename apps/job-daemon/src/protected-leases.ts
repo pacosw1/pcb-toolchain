@@ -16,7 +16,7 @@ export class ProtectedLeaseStore extends ProtectedCapabilityStore {
   constructor(root: string, limits: { maxBlobBytes: number; quotaBytes: number }, now: () => number = Date.now) {
     super(root, limits, now); this.clock = now;
     this.db.exec(`CREATE TABLE IF NOT EXISTS protected_targets (project TEXT NOT NULL, board TEXT NOT NULL,
-      revision INTEGER NOT NULL, alias_revision INTEGER NOT NULL, state TEXT NOT NULL, PRIMARY KEY(project,board)) STRICT;
+      revision INTEGER NOT NULL, alias_revision INTEGER NOT NULL, state TEXT NOT NULL, source_manifest TEXT, PRIMARY KEY(project,board)) STRICT;
       CREATE TABLE IF NOT EXISTS protected_aliases (project TEXT NOT NULL, alias TEXT NOT NULL, board TEXT NOT NULL,
       alias_revision INTEGER NOT NULL, PRIMARY KEY(project,alias)) STRICT;
       CREATE TABLE IF NOT EXISTS protected_leases (project TEXT NOT NULL, board TEXT NOT NULL, generation INTEGER NOT NULL,
@@ -31,6 +31,8 @@ export class ProtectedLeaseStore extends ProtectedCapabilityStore {
       alias_revision INTEGER NOT NULL, operation TEXT NOT NULL, source_manifest TEXT NOT NULL, policy_digest TEXT NOT NULL,
       runtime_digest TEXT NOT NULL, toolchain_digest TEXT NOT NULL, PRIMARY KEY(job,attempt),
       UNIQUE(project,board,generation)) STRICT;`);
+    const columns = this.db.prepare('PRAGMA table_info(protected_targets)').all() as { name: string }[];
+    if (!columns.some(column => column.name === 'source_manifest')) this.db.exec('ALTER TABLE protected_targets ADD COLUMN source_manifest TEXT');
   }
   /** Stage a durable attempt binding and pin atomically before dispatch. The caller must separately establish
    * the identities and immutable inputs; this method alone does not authorize a worker or verify a job. */
@@ -44,10 +46,11 @@ export class ProtectedLeaseStore extends ProtectedCapabilityStore {
       throw new Error('invalid protected attempt binding');
     this.withCapability(capability, { role: 'submit', project: lease.project, board: lease.board, operation: lease.operation, job: null, attempt: null }, identity => {
       const now = this.clock(), row = this.db.prepare('SELECT * FROM protected_leases WHERE project=? AND board=?').get(lease.project, lease.board) as LeaseRow | undefined;
-      const target = this.db.prepare('SELECT revision,alias_revision,state FROM protected_targets WHERE project=? AND board=?').get(lease.project, lease.board) as { revision: number; alias_revision: number; state: string } | undefined;
+      const target = this.db.prepare('SELECT revision,alias_revision,state,source_manifest FROM protected_targets WHERE project=? AND board=?').get(lease.project, lease.board) as { revision: number; alias_revision: number; state: string; source_manifest: string | null } | undefined;
       if (!Number.isSafeInteger(now) || now < 1 || !row || row.generation !== lease.generation || row.owner !== identity.principal ||
           row.operation !== lease.operation || row.expires_at <= now || !target || target.state !== 'ACTIVE' || target.revision !== row.source_revision ||
-          target.alias_revision !== row.alias_revision || row.token_hash.byteLength !== 32 || !timingSafeEqual(Buffer.from(row.token_hash), leaseHash(lease.token)))
+          target.alias_revision !== row.alias_revision || target.source_manifest !== binding.sourceManifest || !this.blobReady(binding.sourceManifest) ||
+          row.token_hash.byteLength !== 32 || !timingSafeEqual(Buffer.from(row.token_hash), leaseHash(lease.token)))
         throw new Error('protected lease cannot bind attempt');
       const prior = this.db.prepare('SELECT * FROM protected_attempt_bindings WHERE job=? AND attempt=?').get(binding.job, binding.attempt) as
         { project: string; board: string; generation: number; source_revision: number; alias_revision: number; operation: string;
