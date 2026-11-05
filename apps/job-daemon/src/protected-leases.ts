@@ -45,10 +45,21 @@ export class ProtectedLeaseStore extends ProtectedCapabilityStore {
     this.withCapability(capability, { role: 'submit', project: lease.project, board: lease.board, operation: lease.operation, job: null, attempt: null }, identity => {
       const now = this.clock(), row = this.db.prepare('SELECT * FROM protected_leases WHERE project=? AND board=?').get(lease.project, lease.board) as LeaseRow | undefined;
       const target = this.db.prepare('SELECT revision,alias_revision,state FROM protected_targets WHERE project=? AND board=?').get(lease.project, lease.board) as { revision: number; alias_revision: number; state: string } | undefined;
-      if (!Number.isSafeInteger(now) || now < 1 || !row || row.pinned !== 0 || row.generation !== lease.generation || row.owner !== identity.principal ||
+      if (!Number.isSafeInteger(now) || now < 1 || !row || row.generation !== lease.generation || row.owner !== identity.principal ||
           row.operation !== lease.operation || row.expires_at <= now || !target || target.state !== 'ACTIVE' || target.revision !== row.source_revision ||
           target.alias_revision !== row.alias_revision || row.token_hash.byteLength !== 32 || !timingSafeEqual(Buffer.from(row.token_hash), leaseHash(lease.token)))
         throw new Error('protected lease cannot bind attempt');
+      const prior = this.db.prepare('SELECT * FROM protected_attempt_bindings WHERE job=? AND attempt=?').get(binding.job, binding.attempt) as
+        { project: string; board: string; generation: number; source_revision: number; alias_revision: number; operation: string;
+          source_manifest: string; policy_digest: string; runtime_digest: string; toolchain_digest: string } | undefined;
+      if (prior) {
+        if (row.pinned !== 1 || prior.project !== lease.project || prior.board !== lease.board || prior.generation !== lease.generation ||
+            prior.source_revision !== row.source_revision || prior.alias_revision !== row.alias_revision || prior.operation !== lease.operation ||
+            prior.source_manifest !== binding.sourceManifest || prior.policy_digest !== binding.policyDigest || prior.runtime_digest !== binding.runtimeDigest ||
+            prior.toolchain_digest !== binding.toolchainDigest) throw new Error('protected attempt binding changed');
+        return; // A response lost after commit can be retried without dispatching or repinning a different attempt.
+      }
+      if (row.pinned !== 0) throw new Error('protected lease cannot bind attempt');
       this.db.prepare('INSERT INTO protected_attempt_bindings VALUES (?,?,?,?,?,?,?,?,?,?,?,?)').run(binding.job, binding.attempt,
         lease.project, lease.board, lease.generation, row.source_revision, row.alias_revision, lease.operation, binding.sourceManifest,
         binding.policyDigest, binding.runtimeDigest, binding.toolchainDigest);

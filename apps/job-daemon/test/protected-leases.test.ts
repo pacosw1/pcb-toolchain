@@ -47,6 +47,8 @@ test('attempt binding pins the matching lease atomically before dispatch', () =>
     const lease = { ...req, generation: acquired.generation, token: acquired.token };
     assert.throws(() => store.bindAttempt(issued.token, { ...lease, token: '0'.repeat(64) }, binding), /cannot bind/);
     store.bindAttempt(issued.token, lease, binding);
+    store.bindAttempt(issued.token, lease, binding); // Lost response can be retried with identical content.
+    assert.throws(() => store.bindAttempt(issued.token, lease, { ...binding, policyDigest: 'e'.repeat(64) }), /binding changed/);
     assert.throws(() => store.bindAttempt(issued.token, lease, { ...binding, attempt: 'attempt-2' }), /cannot bind/);
     now = 1200;
     assert.equal(store.acquire(issued.token, { ...req, requestId: 'request-6' }).state, 'BUSY');
