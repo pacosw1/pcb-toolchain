@@ -11,7 +11,7 @@ test('reconstructs snapshot identities and nets and rejects changed sources', t 
   t.after(() => rmSync(root, {recursive:true,force:true}));
   const project = 'hardware-design/boards/X/cad/PROJECT';
   const put = (name: string, text: string) => {const path=join(root,name); mkdirSync(dirname(path),{recursive:true});writeFileSync(path,text);};
-  put(project+'.kicad_sch', `(kicad_sch (uuid "ROOT") (symbol (lib_id "Fixture:Part") (unit 1) (in_bom yes) (on_board yes) (dnp no)
+  put(project+'.kicad_sch', `(kicad_sch (uuid "ROOT") (symbol (uuid "symbol-uuid") (lib_id "Fixture:Part") (unit 1) (in_bom yes) (on_board yes) (dnp no)
     (property "Reference" "U1") (property "Footprint" "Fixture:Part") (property "MPN" "PART") (property "LCSC" "C123")
     (instances (project "PROJECT" (path "/ROOT" (reference "U1") (unit 1))))))`);
   put(project+'.kicad_pcb', `(kicad_pcb (footprint "Fixture:Part" (property "Reference" "U1")
@@ -21,6 +21,11 @@ test('reconstructs snapshot identities and nets and rejects changed sources', t 
   const result = reconstructSnapshot(root, project, expected);
   assert.equal(result.verified_review, false);
   assert.deepEqual(result.parts.U1.pad_net_map, {'1':'VCC'});
+  const original = readFileSync(join(root,project+'.kicad_pcb')).toString();
+  put(project+'.kicad_pcb', original.replace('symbol-uuid','wrong-uuid'));
+  const rebound = {...expected, [project+'.kicad_pcb']:sha256(readFileSync(join(root,project+'.kicad_pcb')))};
+  assert.throws(()=>reconstructSnapshot(root, project, rebound), /does not bind a schematic instance/);
+  put(project+'.kicad_pcb', original);
   put(project+'.kicad_pcb', readFileSync(join(root,project+'.kicad_pcb')).toString().replace('VCC','OTHER'));
   assert.throws(()=>reconstructSnapshot(root, project, expected), /snapshot sources differ/);
 });

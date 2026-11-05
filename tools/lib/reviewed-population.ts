@@ -1,7 +1,7 @@
 /** Reconstruct a limited native identity/net population from an API-supplied snapshot.
  * This is partial evidence, never a reviewed-manifest authorization. */
 import {readFileSync} from 'node:fs';
-import {resolve} from 'node:path';
+import {basename, resolve} from 'node:path';
 import {readPopulation, parseNative, children, single, properties, sha256} from './kicad-population.mjs';
 import type {Tree} from './kicad-population.mjs';
 
@@ -15,6 +15,11 @@ export function reconstructSnapshot(root: string, project: string, expected: Rec
   const boardBytes = readFileSync(resolve(root, boardPath));
   if (sha256(boardBytes) !== actual[boardPath]) throw new Error('snapshot PCB changed during read');
   const board = parseNative(boardBytes.toString());
+  const schematicTrees = keys.filter(key => key.endsWith('.kicad_sch'))
+    .map(key => ({key, tree: parseNative(readFileSync(resolve(root, key)).toString())}));
+  const primary = schematicTrees.find(s => s.key === project + '.kicad_sch');
+  const rootUuid = primary && single(primary.tree, 'uuid')?.[1];
+  if (typeof rootUuid !== 'string' || !rootUuid) throw new Error('native schematic root UUID missing');
   const forms = new Map<string, Tree>();
   for (const form of children(board, 'footprint')) {
     const ref = properties(form).Reference;
@@ -33,6 +38,26 @@ export function reconstructSnapshot(root: string, project: string, expected: Rec
     if (symbol.mpn !== fp.mpn || symbol.lcsc !== fp.lcsc || symbol.footprint !== fp.footprint ||
         symbol.dnp !== fp.dnp || symbol.in_bom === fp.excluded) throw new Error(`schematic/PCB identity mismatch ${ref}`);
     if (!fp.path) throw new Error(`native symbol path missing ${ref}`);
+    const slash = fp.path.lastIndexOf('/');
+    const context = fp.path.slice(0, slash);
+    const primaryUuid = fp.path.slice(slash + 1);
+    const instanceContext = context.startsWith('/' + rootUuid) ? context : '/' + rootUuid + context;
+    let matched = 0;
+    for (const {key, tree} of schematicTrees) {
+      for (const placed of children(tree, 'symbol')) {
+        if (single(placed, 'uuid')?.[1] !== primaryUuid) continue;
+        const instances = single(placed, 'instances');
+        if (instances) {
+          const projects = children(instances, 'project').filter(p => p[1] === basename(project));
+          for (const entry of projects.flatMap(p => children(p, 'path'))) {
+            if (entry[1] === instanceContext && single(entry, 'reference')?.[1] === ref) matched++;
+          }
+        } else if (key === project + '.kicad_sch' && properties(placed).Reference === ref) {
+          matched++;
+        }
+      }
+    }
+    if (matched !== 1) throw new Error(`native PCB path does not bind a schematic instance ${ref}`);
     const nets = new Map<string, string>();
     for (const pad of children(form, 'pad')) {
       const number = pad[1];
