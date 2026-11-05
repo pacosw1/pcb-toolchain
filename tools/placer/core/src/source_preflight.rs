@@ -253,6 +253,13 @@ mod rating_tests {
 /// The caller must treat success as partial evidence only.
 pub fn preflight(problem: &Value) -> crate::Result<()> {
     let contract = problem.get("engineering").ok_or("reviewed contract missing")?;
+    if contract.get("schema").and_then(Value::as_str) != Some("iot-lab.engineering-constraints.v1") {
+        return Err("unsupported reviewed contract schema".into());
+    }
+    let root = Path::new(contract.get("root").and_then(Value::as_str).ok_or("reviewed root missing")?).canonicalize()?;
+    let native = owned(&root, contract.get("native").and_then(Value::as_str).ok_or("reviewed native board missing")?)?;
+    let board_file = owned(&root, problem.get("board_file").and_then(Value::as_str).ok_or("placement source board missing")?)?;
+    if native != board_file { return Err("placement source board differs from reviewed board".into()); }
     check_payload_bindings(problem)?;
     check_inputs(contract)?;
     check_manifest_identity(contract)?;
@@ -286,8 +293,8 @@ mod preflight_tests {
         let manifest_bytes = serde_json::to_vec(&manifest).unwrap();
         std::fs::write(&manifest_path, &manifest_bytes).unwrap();
         let mut problem = json!({"units":[{"name":"U1","refs":["U1"],"x":1,"y":2,"fixed":false}],
-            "board":{"outline":[[0,0],[10,0],[10,10]]},
-            "engineering":{"schema":"x","root":root,"board":"A","manifest":manifest_path,"native":native,
+            "board":{"outline":[[0,0],[10,0],[10,10]]},"board_file":native,
+            "engineering":{"schema":"iot-lab.engineering-constraints.v1","root":root,"board":"A","manifest":manifest_path,"native":native,
                 "inputs":{"board.kicad_pcb":digest(b"board"),"manifest.json":digest(&manifest_bytes)},
                 "rules":[],"geometry":{},"bindings":[]}});
         let review = digest(&serde_json::to_vec(&problem["engineering"]).unwrap());
