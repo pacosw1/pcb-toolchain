@@ -37,6 +37,15 @@ export function preflightSnapshot(snapshotArg: string, project: string, modelArg
   }
   const native = reconstructSnapshot(snapshot,project,expected);
   compareNativeManifest(manifest,native);
+  function canonical(value: unknown): string {
+    if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']';
+    if (value && typeof value === 'object') {
+      const object = value as Record<string, unknown>;
+      return '{' + Object.keys(object).sort().map(k=>JSON.stringify(k)+':'+canonical(object[k])).join(',') + '}';
+    }
+    return JSON.stringify(value);
+  }
+  if (canonical(contract.geometry) !== canonical(native.geometry)) throw new Error('reviewed geometry differs from native snapshot');
   const scratch = mkdtempSync(join(tmpdir(),'iotplace-reviewed-preflight-'));
   try {
     const nativeFile=join(scratch,'population.json');

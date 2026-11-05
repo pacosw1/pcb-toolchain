@@ -5,6 +5,7 @@ import {basename, resolve} from 'node:path';
 import {readPopulation, parseNative, children, single, properties, sha256} from './kicad-population.mjs';
 import type {Tree} from './kicad-population.mjs';
 import {footprintHashes, symbolHash} from './reviewed-native-hashes.ts';
+import {reconstructGeometry} from './reviewed-native-geometry.ts';
 
 export function reconstructSnapshot(root: string, project: string, expected: Record<string, string>) {
   const population = readPopulation(root, project);
@@ -125,7 +126,8 @@ export function reconstructSnapshot(root: string, project: string, expected: Rec
   for (const key of keys) {
     if (sha256(readFileSync(resolve(root, key))) !== actual[key]) throw new Error('snapshot changed during reconstruction');
   }
-  return {scope: 'partial_native_population', verified_review: false, source_hashes: actual, parts};
+  return {scope: 'partial_native_population', verified_review: false, source_hashes: actual, parts,
+    geometry: reconstructGeometry(boardBytes.toString())};
 }
 
 /** Compare reviewed native declarations against independently read snapshot facts.

@@ -15,8 +15,8 @@ test('reconstructs snapshot identities and nets and rejects changed sources', t 
     (property "Reference" "U1") (property "Footprint" "Fixture:Part") (property "MPN" "PART") (property "LCSC" "C123")
     (instances (project "PROJECT" (path "/ROOT" (reference "U1") (unit 1))))))`);
   put(project+'.kicad_pcb', `(kicad_pcb (footprint "Fixture:Part" (property "Reference" "U1")
-    (property "MPN" "PART") (property "LCSC" "C123") (path "/symbol-uuid") (attr smd)
-    (pad "1" smd rect (net 1 "VCC"))))`);
+    (property "MPN" "PART") (property "LCSC" "C123") (path "/symbol-uuid") (attr smd) (at 10 10)
+    (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "VCC"))))`);
   const expected = Object.fromEntries([project+'.kicad_sch', project+'.kicad_pcb'].map(p=>[p,sha256(readFileSync(join(root,p)))]));
   const result = reconstructSnapshot(root, project, expected);
   assert.equal(result.verified_review, false);
