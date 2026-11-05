@@ -55,7 +55,6 @@ tools/driver-edges.json
 tools/dsn_skip.py
 tools/easyeda_audit.ts
 tools/edge-rates.json
-tools/engineering_constraints.py
 tools/examples/design-idea.json
 tools/examples/design-idea.md
 tools/fab-workflow.sh
@@ -395,7 +394,6 @@ tools/pcb-observe.ts
 tools/pcb-check-worker.ts
 tools/pcb-check-finalize.ts
 tools/pcb-check.ts
-tools/pcb_operations.py
 tools/pcb_routing_trial/.gitignore
 tools/pcb_routing_trial/Cargo.lock
 tools/pcb_routing_trial/Cargo.toml
@@ -636,7 +634,6 @@ tools/route-coverage/tests/thermal.rs
 tools/route-features.json
 tools/route.py
 tools/route_batch.mjs
-tools/route_decision.py
 tools/route_decision.ts
 tools/route_features.py
 tools/route_grid.py
@@ -982,7 +979,6 @@ tools/test_pcb_search_native_conflicts.py
 tools/test_pcb_search_native_eco.py
 tools/test_pcb_search_native_placement.py
 tools/test_project_root.py
-tools/test_route_decision.py
 tools/test_route_hole_coverage.py
 tools/test_route_native_thermals.py
 tools/test_route_plan.py

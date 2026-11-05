@@ -34,7 +34,7 @@ export type Metrics = Record<string, unknown>;
 export type RunStage = (command: string[], stage: string, options: { cwd: string }) => Promise<{ stdout?: string | null }> | { stdout?: string | null };
 /** Runs a command with stdout and stderr on the open file `log`. */
 export type LogRunner = (command: string[], options: { cwd: string; log: number }) => Promise<unknown> | unknown;
-/** tools/pcb_operations.py snapshot: a new folder with the tools, the board folder and its dependencies. */
+/** Candidate snapshot: a new folder with the tools, the board folder and its dependencies. */
 export type Snapshot = (root: string, workspace: string, board: string) => Promise<unknown> | unknown;
 export interface Gate { run(routed: string, evidence: string, log: string): Promise<Metrics | null> | Metrics | null }
 
