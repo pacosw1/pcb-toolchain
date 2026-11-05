@@ -33,6 +33,8 @@ test('snapshot 3D export runs on its source worker and returns a verified model'
     assert.equal(bytes.toString(), 'glTF12345678');
     assert.equal(createHash('sha256').update(bytes).digest('hex'), result.modelSha);
     await assert.rejects(exportModel({ root, boardPath: '../escape.kicad_pcb', boardSha: createHash('sha256').update('board bytes').digest('hex'), bytes: Buffer.from('board bytes'), maxBytes: 1024 }), /invalid board path/);
+    const failed = path.join(r.dir, 'failed-kicad'); fs.writeFileSync(failed, '#!/bin/sh\nexit 42\n', { mode: 0o755 });
+    await assert.rejects(exportModel({ root, boardPath: 'hardware-design/boards/DEMO/cad/demo.kicad_pcb', boardSha: createHash('sha256').update('board bytes').digest('hex'), bytes: Buffer.from('board bytes'), maxBytes: 1024, executable: failed }), /exit 42/);
   } finally {
     if (prior === undefined) delete process.env.PCBSTUDIO_KICAD_CLI; else process.env.PCBSTUDIO_KICAD_CLI = prior;
     server.closeAllConnections(); await new Promise<void>(ok => server.close(() => ok())); r.cleanup();

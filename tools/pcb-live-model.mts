@@ -23,9 +23,9 @@ export async function exportModel(input: ModelInput): Promise<{ bytes: Buffer; w
       const child = spawn(exe, args, { cwd: projectDir, stdio: ['ignore', 'pipe', 'pipe'] });
       let output = ''; const collect = (data: Buffer): void => { output = (output + data.toString()).slice(-32_000); };
       child.stdout.on('data', collect); child.stderr.on('data', collect);
-      const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('3D export timed out')); }, 600_000);
+      const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('3D export timed out on the reporting machine after 2 minutes')); }, 120_000);
       child.once('error', error => { clearTimeout(timer); reject(error); });
-      child.once('close', code => { clearTimeout(timer); if (code === 0) resolve(output); else reject(new Error(`3D export failed: ${output.slice(-500)}`)); });
+      child.once('close', (code, signal) => { clearTimeout(timer); if (code === 0) resolve(output); else reject(new Error(`3D export failed (${signal ? `signal ${signal}` : `exit ${code}`}): ${output.slice(-500)}`)); });
     });
     const st = fs.statSync(out);
     if (!st.isFile() || st.size < 12 || st.size > input.maxBytes) throw new Error('3D model is empty or exceeds the coordinator upload limit');

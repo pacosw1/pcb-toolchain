@@ -248,7 +248,8 @@ export class Worker {
         this.state.stamps[key] = stamp; this.save();
       } catch (error) {
         // A result may be mid-write or its source may no longer match: never fabricate a frame.
-        if (error instanceof WorkerHttpError && (error.status === 429 || error.status >= 500)) complete = false;
+        if ((error instanceof WorkerHttpError && (error.status === 429 || error.status >= 500)) ||
+            error instanceof TypeError || (error instanceof Error && error.name === 'TimeoutError')) complete = false;
         if (!['ENOENT', 'ELOOP'].includes((error as NodeJS.ErrnoException).code ?? '') && !(error instanceof SyntaxError)) console.error('pcb live placement replay:', error instanceof Error ? error.message : String(error));
       }
     }
