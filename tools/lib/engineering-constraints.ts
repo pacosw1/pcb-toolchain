@@ -480,3 +480,56 @@ export function checkManifest(root: string, board: string, manifest: string, ser
   }
   return report;
 }
+
+/** Placement-level review against a freshly derived, source-bound contract. */
+export interface PlacementUnit { name: string; refs: string[]; x: number; y: number; fixed?: boolean }
+export interface PlacementModel { board_file: string; units: PlacementUnit[]; board: { outline: unknown } }
+export type PlacementPose = [number, number, number][];
+
+/** Check the exact native population and preserve reviewed fixed and rigid groups before search. */
+export function preparePlacement(contract: Contract, model: PlacementModel): PlacementModel {
+  if (!contract.review_sha256 || contractDigest(contract) !== contract.review_sha256) throw new Error('reviewed engineering contract payload changed');
+  inputsCurrent(contract.inputs);
+  if (resolvePath(model.board_file) !== contract.native) throw new Error('placement model belongs to another native source');
+  const out = structuredClone(model);
+  const where = new Map<string, number>();
+  out.units.forEach((unit, i) => unit.refs.forEach(ref => {
+    if (where.has(ref)) throw new Error('duplicate placement reference');
+    where.set(ref, i);
+  }));
+  if (where.size !== contract.geometry.refs.size || [...where.keys()].some(ref => !contract.geometry.refs.has(ref))) {
+    throw new Error('placement model differs from exact reviewed native population');
+  }
+  for (const rule of contract.rules) {
+    if (rule.kind === 'rigid_group' && new Set((rule.refs as string[]).map(ref => where.get(ref))).size !== 1) {
+      throw new Error(`reviewed rigid group must be read as one intact placement unit: ${rule.id}`);
+    }
+    if (rule.kind === 'fixed' || rule.retained_internal_copper) {
+      for (const ref of rule.refs as string[]) out.units[where.get(ref) as number].fixed = true;
+    }
+  }
+  return out;
+}
+
+/** Evaluate actual reviewed geometry after a pose, rechecking source hashes before accepting it. */
+export function checkPlacement(contract: Contract, model: PlacementModel, pose: PlacementPose) {
+  inputsCurrent(contract.inputs);
+  const prepared = preparePlacement(contract, model);
+  if (pose.length !== prepared.units.length) throw new Error('placement pose cardinality differs from reviewed model');
+  const refs = new Map<string, Part>();
+  prepared.units.forEach((unit, i) => {
+    const [x, y, q] = pose[i];
+    if (!Number.isFinite(x) || !Number.isFinite(y) || ![0, 1, 2, 3].includes(q)) throw new Error('invalid engineering placement pose');
+    const at = (p: readonly number[]): Point => point(p[0] - unit.x, p[1] - unit.y, q, [x, y]);
+    for (const ref of unit.refs) {
+      const original = contract.geometry.refs.get(ref) as Part;
+      const pads = new Map<string, Pad[]>();
+      for (const [name, rows] of original.pads) pads.set(name, rows.map(pad => ({ ...pad, center: at(pad.center), size: q % 2 ? [...pad.size].reverse() : [...pad.size] })));
+      const box = original.courtyard;
+      refs.set(ref, { ...original, origin: at(original.origin), quarter: (original.quarter + q) % 4, pads,
+        courtyard: box ? transformedBox([box[0] - unit.x, box[1] - unit.y, box[2] - unit.x, box[3] - unit.y], q, [x, y]) : null });
+    }
+  });
+  const { blockers, measurements } = evaluate(contract, { bounds: contract.geometry.bounds, refs });
+  return { status: blockers.length ? 'blocked' : 'passed', qualified: false as const, blockers, measurements };
+}

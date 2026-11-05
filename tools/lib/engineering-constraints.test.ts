@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import { bindInstance } from './block-bindings.ts';
-import { checkManifest, nativeGeometry, reviewedContract, SCHEMA, type ReviewServices } from './engineering-constraints.ts';
+import { checkManifest, checkPlacement, preparePlacement, nativeGeometry, reviewedContract, SCHEMA, type ReviewServices } from './engineering-constraints.ts';
 import { fingerprint } from './fingerprint.ts';
 import { sha256File } from './json-file.ts';
 import { jsonCanonical, jsonDumps, jsonLoads } from './py-compat.mjs';
@@ -209,4 +209,43 @@ test('a bound block is an actual native instance and never transfers qualificati
   writeFileSync(join(block, 'facts.json'), '{"level":1}');
   assert.equal(check().status, 'stale');
   assert.ok(readFileSync(bindingPath, 'utf8').includes('"block_id": "MODULE"'));
+});
+
+test('reviewed placement geometry follows pose and rejects source drift', () => {
+  rules(rule('pin_distance', { ...pads, metric: 'pad_center_euclidean', max_mm: 3 }));
+  const contract = reviewedContract(root, 'X', manifest, services);
+  const model = preparePlacement(contract, { board_file: native, board: { outline: [] }, units: [
+    { name: 'U1', refs: ['U1'], x: 10, y: 10 }, { name: 'C1', refs: ['C1'], x: 14, y: 10 },
+    { name: 'J1', refs: ['J1'], x: 1, y: 3 },
+  ] });
+  assert.equal(checkPlacement(contract, model, [[10,10,0], [14,10,0], [1,3,0]]).status, 'passed');
+  assert.equal(checkPlacement(contract, model, [[10,10,0], [15,10,0], [1,3,0]]).status, 'blocked');
+  assert.throws(() => checkPlacement(contract, model, [[10,10,0]]), /cardinality/);
+  writeFileSync(documentPath, 'changed');
+  assert.throws(() => checkPlacement(contract, model, [[10,10,0], [14,10,0], [1,3,0]]), /input changed/);
+});
+
+test('reviewed placement requires the exact population and intact rigid groups', () => {
+  rules(rule('rigid_group', { refs: ['U1', 'C1'] }));
+  const contract = reviewedContract(root, 'X', manifest, services);
+  const model = { board_file: native, board: { outline: [] }, units: [
+    { name: 'U1', refs: ['U1'], x: 10, y: 10 }, { name: 'C1', refs: ['C1'], x: 14, y: 10 },
+    { name: 'J1', refs: ['J1'], x: 1, y: 3 },
+  ] };
+  assert.throws(() => preparePlacement(contract, model), /rigid group/);
+  model.units[0].refs.push('C1'); model.units.splice(1, 1);
+  assert.doesNotThrow(() => preparePlacement(contract, model));
+  model.units[0].refs.push('J1');
+  assert.throws(() => preparePlacement(contract, model), /duplicate/);
+});
+
+test('placement check rejects changed reviewed rules', () => {
+  rules(rule('fixed', { refs: ['U1'] }));
+  const contract = reviewedContract(root, 'X', manifest, services);
+  const model = { board_file: native, board: { outline: [] }, units: [
+    { name: 'U1', refs: ['U1'], x: 10, y: 10 }, { name: 'C1', refs: ['C1'], x: 14, y: 10 },
+    { name: 'J1', refs: ['J1'], x: 1, y: 3 },
+  ] };
+  contract.rules.length = 0;
+  assert.throws(() => preparePlacement(contract, model), /payload changed/);
 });
