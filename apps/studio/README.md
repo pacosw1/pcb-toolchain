@@ -68,3 +68,25 @@ UTC`, and `Minimum quantity`. Part details retain per-reference provenance and
 quantity breaks; missing dates or prices stay explicit. Values are historical
 project evidence, not fetched quotes. No currency conversion or estimated board
 total is computed.
+
+### Interactive 3D preview
+
+The viewer batches compatible opaque CAD faces inside each glTF mesh before
+loading the model. Triangle data, normals, materials, node transforms, and
+component boundaries are preserved. Transparent faces stay separate so their
+sorting is preserved. Unsupported animated/compressed GLBs pass through unchanged.
+Raw exports remain cached separately from versioned viewer assets.
+
+The preview renders on camera/size changes, caps pixel density during interaction,
+and uses neutral studio illumination, a cached shadow map, and material defaults
+for diffuse-only CAD faces. Named board layers use a display palette matched to
+KiCad's native render reference. This is a real-time preview style, not KiCad's
+raytracer; no native renderer fork or per-mouse-movement CLI process is used.
+
+Validation on the real BASE-PWR-B export reduced 104,860 primitives to 2,342
+(63.8 MB to 42.8 MB). Every indexed vertex/normal and all material/node records
+were compared before and after batching. The opt-in Electron benchmark
+`PCBSTUDIO_3D_BENCHMARK=/path/to/iot-lab npx playwright test e2e/3d-performance.spec.ts`
+checks bounded draw calls and idle rendering with pointer input isolated, then
+captures orbit frame timings and a screenshot. Those timings depend on GPU,
+viewport, and concurrent desktop activity.

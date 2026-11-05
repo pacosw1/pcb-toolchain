@@ -1,3 +1,4 @@
+import { batchGlb } from './kicad/glb.ts'
 import { nativeInventory } from './kicad/inventory.ts'
 import { inspectBoard } from './kicad/inspector.ts'
 // Engine API methods. The desktop app, the agent and the web viewer call the same registry.
@@ -80,11 +81,17 @@ registry.method('parts.index', [], 0, () => indexFor(needProject()).ensure())
 registry.method('board.glb', ['pcb', 'out_dir'], 2, async (pcb: string, outDir: string) => {
   const p = needProject(), file = p.resolve(pcb)
   const digest = createHash('sha256').update(fs.readFileSync(file)).digest('hex').slice(0, 20)
-  const out = path.join(expandHome(outDir), `${path.parse(file).name}-${digest}.glb`)
+  const raw = path.join(expandHome(outDir), `${path.parse(file).name}-${digest}.glb`)
+  const out = raw.replace(/\.glb$/, '-view-v1.glb')
   const size = fs.existsSync(out) && fs.statSync(out).isFile() ? fs.statSync(out).size : 0
   if (size > 0) return { path: out, cached: true, size }
-  const res = await exportGlb(file, out, { defines: { IOT_LAB: p.root, KIPRJMOD: path.dirname(file) } })
-  return { ...res, cached: false }
+  const cached = fs.existsSync(raw) && fs.statSync(raw).size > 0
+  if (!cached) await exportGlb(file, raw, { defines: { IOT_LAB: p.root, KIPRJMOD: path.dirname(file) } })
+  const optimized = batchGlb(fs.readFileSync(raw))
+  const temporary = out + '.' + process.pid + '.tmp'
+  fs.writeFileSync(temporary, optimized.bytes)
+  fs.renameSync(temporary, out)
+  return { path: out, cached, size: optimized.bytes.length }
 })
 
 /** Absolute path of a project file (for the app's PDF viewer), refusing anything outside the project. */
