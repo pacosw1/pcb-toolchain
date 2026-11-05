@@ -1,7 +1,7 @@
 //! The route model as the core reads it (schema iot-lab.route-model.v0). Lengths in mm. Object keys carry no order; every list
 //! keeps its order.
 use super::num::Num;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use std::collections::BTreeMap;
 
@@ -282,7 +282,7 @@ pub enum Copper {
     Track { net: String, layer: String, a: Point, b: Point, w: f64 },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RuleState {
     Applied,
@@ -304,7 +304,7 @@ impl RuleState {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuleReport {
     pub rule: String,
     pub constraint: String,

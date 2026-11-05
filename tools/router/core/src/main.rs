@@ -4372,12 +4372,13 @@ fn route_cli(args: &[String]) {
         resume::check_paths(&paths).unwrap_or_else(|e| { eprintln!("resume paths: {e}"); std::process::exit(2) });
     }
     let t0 = std::time::Instant::now();
-    let mut ckpt = ckpt_path.as_ref().map(|p| checkpoint::Writer::new(p, t0, seed, o.passes));
     let model_text = std::fs::read_to_string(&args[1]).expect("model");
     let resume_binding = if resume_path.is_some() || resume_save.is_some() {
         Some(resume::binding(&model_text, &args[3..]).unwrap_or_else(|e| { eprintln!("resume binding: {e}"); std::process::exit(2) }))
     } else { None };
     let model: Value = serde_json::from_str(&model_text).expect("json");
+    iotroute::model::coverage::admit_solver_model(&model).unwrap_or_else(|e| { eprintln!("{e}"); std::process::exit(2) });
+    let mut ckpt = ckpt_path.as_ref().map(|p| checkpoint::Writer::new(p, t0, seed, o.passes));
     if let Some(w) = &mut ckpt {
         w.bind(checkpoint::Bind::new(&model_text, &model, source_sha, &args[3..]));
         checkpoint::stop_on_signal();
