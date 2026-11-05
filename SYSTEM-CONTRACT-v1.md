@@ -31,12 +31,17 @@ The matching [draft wire types](contracts/pcb-system-v1.ts) make field shapes co
 - Manifest v1 must specify regular-file mode and the executable bit, case/Unicode normalization and numeric limits
   before it is implemented. Reject hardlinks and unsupported metadata/dependencies explicitly; never silently rewrite
   semantics during import. Until a precise cross-platform normalization rule is approved, reject ambiguous paths.
-- Existing `iot-lab` includes hundreds of KiCad library symlinks. The import design must either represent safe links
-  explicitly or transform only links resolved entirely within the import root into immutable regular-file copies. A
-  transform must record both link path/text and resolved target/hash in an import receipt, reject loops and escapes,
-  check normalization/case collisions, and verify that KiCad dependency semantics are preserved. Runtime execution
-  must not follow arbitrary links from an untrusted checkout. The choice and exact semantics remain under review; a
-  blanket link ban would not import the current project intact.
+- Existing `iot-lab` includes hundreds of KiCad library symlinks. The proposed representation preserves each relative
+  link's original text and binds its fully resolved in-root target and file hash; reject loops, escapes, missing targets,
+  path collisions and unsupported metadata. Runtime execution must never follow links from an untrusted checkout.
+  On isolated filesystems, all 506 links and their target bytes from iot-lab tree `3eab7d4b977418d09c487ac6563a5e9322d550ed`
+  materialized consistently on the MacBook, Mac mini and Hetzner (aggregate SHA-256
+  `8d8a553fd25592fae8d6070a124505f777a0c0a187c4e08ddd16d905623f2558`). This is not a full import or KiCad gate proof.
+  Both Mac filesystems collide `ß`/`SS` and final/ordinary sigma in addition to ASCII case and composed/decomposed
+  accents, while the tested Linux filesystem kept those distinct. Plain lowercase comparison is insufficient. Pin a
+  versioned collision policy and check actual destination materialization before enabling import; the sample probes do
+  not establish all filesystem equivalences. External KiCad libraries and environment-dependent paths must be pinned
+  separately rather than followed from host configuration.
 
 ## Job submission and execution
 
