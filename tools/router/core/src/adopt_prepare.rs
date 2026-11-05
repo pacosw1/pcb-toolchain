@@ -7,10 +7,10 @@
 use crate::sha256::sha256;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
+use std::os::unix::fs::{DirBuilderExt, FileExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
 fn invalid(message: &str) -> io::Error {
@@ -120,10 +120,17 @@ impl LockedTarget {
     /// Read through the admitted descriptor and reject detected changes or replacement.
     fn snapshot(&self) -> io::Result<(Vec<u8>, fs::Metadata)> {
         let before = self.target_file.metadata()?;
-        let mut reader = self.target_file.try_clone()?;
-        reader.seek(SeekFrom::Start(0))?;
         let mut bytes = Vec::new();
-        reader.read_to_end(&mut bytes)?;
+        let mut offset = 0;
+        let mut chunk = [0; 64 * 1024];
+        loop {
+            let count = self.target_file.read_at(&mut chunk, offset)?;
+            if count == 0 {
+                break;
+            }
+            bytes.extend_from_slice(&chunk[..count]);
+            offset += count as u64;
+        }
         let after = self.target_file.metadata()?;
         let path = fs::symlink_metadata(&self.target)?;
         if !same_identity(&before, &after)
@@ -239,6 +246,84 @@ pub fn inspect_prepared(path: &Path) -> io::Result<PreparedIntent> {
     open_regular(&dir.join("original.bin"))?.read_to_end(&mut backup)?;
     if backup.len() as u64 != intent.original_size || sha256(&backup) != intent.original_sha256 {
         return Err(invalid("backup does not match intent"));
+    }
+    Ok(intent)
+}
+
+/// Byte observations only. None of these variants authorizes a restore or
+/// completion: a future recovery owner must also validate its durable phase,
+/// external-writer exclusion and full metadata, including xattrs and ACLs.
+#[derive(Debug, PartialEq, Eq)]
+pub enum RecoveryObservation {
+    OriginalBytes,
+    CandidateBytes,
+    AmbiguousEqualBytes,
+    Conflict,
+}
+
+/// Inspect while holding the same cooperative target lock; never changes the
+/// target or journal. Missing/replaced targets fail instead of being restored.
+pub fn observe_recovery(path: &Path, locked: &LockedTarget) -> io::Result<RecoveryObservation> {
+    let intent = inspect_prepared(path)?;
+    if intent.target != locked.target || intent.lock_key != locked.key {
+        return Err(invalid("journal belongs to a different target"));
+    }
+    let (bytes, meta) = locked.snapshot()?;
+    if meta.mode() != intent.mode || meta.uid() != intent.uid || meta.gid() != intent.gid {
+        return Ok(RecoveryObservation::Conflict);
+    }
+    let actual = sha256(&bytes);
+    Ok(
+        match (
+            actual == intent.original_sha256,
+            actual == intent.candidate_sha256,
+        ) {
+            (true, true) => RecoveryObservation::AmbiguousEqualBytes,
+            (true, false) => RecoveryObservation::OriginalBytes,
+            (false, true) => RecoveryObservation::CandidateBytes,
+            (false, false) => RecoveryObservation::Conflict,
+        },
+    )
+}
+
+/// Store only the supplied candidate bytes in the private journal. This does
+/// not create a target-side temporary file or authorize a rename. Re-observe
+/// the source after syncing: concurrent external edits leave this step failed.
+pub fn stage_candidate(path: &Path, locked: &LockedTarget, candidate: &[u8]) -> io::Result<()> {
+    let dir = private_dir(path)?;
+    let intent = inspect_prepared(&dir)?;
+    if intent.original_sha256 == intent.candidate_sha256 {
+        return Err(invalid(
+            "equal original and candidate digests are ambiguous",
+        ));
+    }
+    if sha256(candidate) != intent.candidate_sha256 {
+        return Err(invalid("candidate does not match the intended digest"));
+    }
+    if observe_recovery(&dir, locked)? != RecoveryObservation::OriginalBytes {
+        return Err(invalid("source is no longer the prepared original"));
+    }
+    create_synced(&dir.join("candidate.bin"), candidate)?;
+    File::open(&dir)?.sync_all()?;
+    if observe_recovery(&dir, locked)? != RecoveryObservation::OriginalBytes {
+        return Err(invalid("source changed while staging candidate"));
+    }
+    Ok(())
+}
+
+/// Validate staged bytes only. A valid staged candidate is not a commit receipt.
+pub fn inspect_staged(path: &Path) -> io::Result<PreparedIntent> {
+    let dir = private_dir(path)?;
+    let intent = inspect_prepared(&dir)?;
+    if intent.original_sha256 == intent.candidate_sha256 {
+        return Err(invalid(
+            "equal original and candidate digests are ambiguous",
+        ));
+    }
+    let mut candidate = Vec::new();
+    open_regular(&dir.join("candidate.bin"))?.read_to_end(&mut candidate)?;
+    if sha256(&candidate) != intent.candidate_sha256 {
+        return Err(invalid("staged candidate does not match intent"));
     }
     Ok(intent)
 }
@@ -397,6 +482,26 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_preparations_read_independent_offsets() {
+        let temp = Scratch::new();
+        let locks = temp.dir("locks");
+        let journals = temp.dir("journals");
+        let target = temp.0.join("board");
+        let bytes = vec![b'x'; 200_000];
+        fs::write(&target, &bytes).unwrap();
+        let lock = LockedTarget::acquire(&locks, &target).unwrap();
+        std::thread::scope(|scope| {
+            let left =
+                scope.spawn(|| prepare(&journals, "left", &lock, &sha256(&bytes), &sha256(b"new")));
+            let right = scope
+                .spawn(|| prepare(&journals, "right", &lock, &sha256(&bytes), &sha256(b"new")));
+            assert!(left.join().unwrap().is_ok());
+            assert!(right.join().unwrap().is_ok());
+        });
+        assert_eq!(fs::read(target).unwrap(), bytes);
+    }
+
+    #[test]
     fn partial_or_tampered_journal_is_never_accepted() {
         let temp = Scratch::new();
         let locks = temp.dir("locks");
@@ -492,5 +597,130 @@ mod tests {
         assert!(prepare(&journals, "run", &lock, &sha256(b"stale"), &sha256(b"new")).is_err());
         assert!(!journals.join("run").exists());
         assert_eq!(fs::read(&target).unwrap(), b"current");
+    }
+
+    #[test]
+    fn recovery_observes_bytes_without_changing_or_authorizing_them() {
+        let temp = Scratch::new();
+        let locks = temp.dir("locks");
+        let journals = temp.dir("journals");
+        let target = temp.0.join("board");
+        fs::write(&target, b"original").unwrap();
+        let lock = LockedTarget::acquire(&locks, &target).unwrap();
+        let journal = prepare(
+            &journals,
+            "run",
+            &lock,
+            &sha256(b"original"),
+            &sha256(b"candidate"),
+        )
+        .unwrap();
+        assert_eq!(
+            observe_recovery(&journal, &lock).unwrap(),
+            RecoveryObservation::OriginalBytes
+        );
+        let stage = temp.0.join("stage");
+        fs::write(&stage, b"candidate").unwrap();
+        fs::set_permissions(&stage, fs::metadata(&target).unwrap().permissions()).unwrap();
+        fs::rename(stage, &target).unwrap();
+        // A recovery process opens the new inode after the original owner exits.
+        drop(lock);
+        let lock = LockedTarget::acquire(&locks, &target).unwrap();
+        assert_eq!(
+            observe_recovery(&journal, &lock).unwrap(),
+            RecoveryObservation::CandidateBytes
+        );
+        fs::write(&target, b"other").unwrap();
+        assert_eq!(
+            observe_recovery(&journal, &lock).unwrap(),
+            RecoveryObservation::Conflict
+        );
+        assert_eq!(fs::read(&target).unwrap(), b"other");
+    }
+
+    #[test]
+    fn recovery_rejects_wrong_target_and_marks_equal_digests_ambiguous() {
+        let temp = Scratch::new();
+        let locks = temp.dir("locks");
+        let journals = temp.dir("journals");
+        let first = temp.0.join("first");
+        let second = temp.0.join("second");
+        fs::write(&first, b"same").unwrap();
+        fs::write(&second, b"same").unwrap();
+        fs::set_permissions(&first, fs::Permissions::from_mode(0o644)).unwrap();
+        let lock1 = LockedTarget::acquire(&locks, &first).unwrap();
+        let lock2 = LockedTarget::acquire(&locks, &second).unwrap();
+        let journal =
+            prepare(&journals, "run", &lock1, &sha256(b"same"), &sha256(b"same")).unwrap();
+        assert_eq!(
+            observe_recovery(&journal, &lock1).unwrap(),
+            RecoveryObservation::AmbiguousEqualBytes
+        );
+        assert!(observe_recovery(&journal, &lock2).is_err());
+        fs::set_permissions(&first, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(
+            observe_recovery(&journal, &lock1).unwrap(),
+            RecoveryObservation::Conflict
+        );
+    }
+
+    #[test]
+    fn staging_checks_digest_and_never_writes_the_target() {
+        let temp = Scratch::new();
+        let locks = temp.dir("locks");
+        let journals = temp.dir("journals");
+        let target = temp.0.join("board");
+        fs::write(&target, b"original").unwrap();
+        let lock = LockedTarget::acquire(&locks, &target).unwrap();
+        let dir = prepare(
+            &journals,
+            "run",
+            &lock,
+            &sha256(b"original"),
+            &sha256(b"candidate"),
+        )
+        .unwrap();
+        assert!(stage_candidate(&dir, &lock, b"wrong").is_err());
+        assert!(!dir.join("candidate.bin").exists());
+        stage_candidate(&dir, &lock, b"candidate").unwrap();
+        assert_eq!(
+            inspect_staged(&dir).unwrap().candidate_sha256,
+            sha256(b"candidate")
+        );
+        assert!(stage_candidate(&dir, &lock, b"candidate").is_err());
+        assert_eq!(fs::read(&target).unwrap(), b"original");
+        fs::write(dir.join("candidate.bin"), b"tampered").unwrap();
+        assert!(inspect_staged(&dir).is_err());
+    }
+
+    #[test]
+    fn staging_rejects_equal_bytes_and_changed_source() {
+        let temp = Scratch::new();
+        let locks = temp.dir("locks");
+        let journals = temp.dir("journals");
+        let target = temp.0.join("board");
+        fs::write(&target, b"original").unwrap();
+        let lock = LockedTarget::acquire(&locks, &target).unwrap();
+        let same = prepare(
+            &journals,
+            "same",
+            &lock,
+            &sha256(b"original"),
+            &sha256(b"original"),
+        )
+        .unwrap();
+        assert!(stage_candidate(&same, &lock, b"original").is_err());
+        let other = prepare(
+            &journals,
+            "other",
+            &lock,
+            &sha256(b"original"),
+            &sha256(b"candidate"),
+        )
+        .unwrap();
+        fs::write(&target, b"changed").unwrap();
+        assert!(stage_candidate(&other, &lock, b"candidate").is_err());
+        assert!(!other.join("candidate.bin").exists());
+        assert_eq!(fs::read(&target).unwrap(), b"changed");
     }
 }
