@@ -22,7 +22,6 @@
 // Declared facts levels remain historical. Qualification receipts derive levels: 0 = draft/stale, 1 = source and
 // target gates plus applicability reviews, 2 = attributable measured bring-up evidence on that exact target instance.
 import { closeSync, existsSync, mkdirSync, openSync, writeFileSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { kicadMeta } from './lib/block-parts.ts';
 import { bindInstance } from './lib/block-bindings.ts';
@@ -35,6 +34,7 @@ import { readPyJson } from './lib/json-file.ts';
 import { runStage } from './lib/lean-stage.ts';
 import { deadlineAfter, remaining } from './lib/lean-workflow.ts';
 import { kicadCli } from './lib/netlist.ts';
+import { pyFloat } from './lib/py-numbers.ts';
 import { which } from './lib/py-path.ts';
 import { jsonDumps, parseArgs, pyStr, SystemExit } from './lib/py-compat.mjs';
 import { projectRoot } from './lib/project-root.mjs';
@@ -109,7 +109,7 @@ function qualification(command: string, argv: string[], root: string, { lib }: L
 async function nativeQualification(argv: string[], { lib }: Layout): Promise<number> {
   try {
     const args = parseArgs({ prog: `${PROG} native`, positionals: ['id'], options: [option('--output', true), { flag: '--timeout', fallback: '600' }] }, argv);
-    const timeout = Number(args.timeout);
+    const timeout = pyFloat(args.timeout);
     if (!Number.isFinite(timeout) || timeout <= 0) throw new Error('native timeout must be finite and positive');
     const row = reuse(lib, args.id);
     const binary = which(kicadCli());
@@ -118,9 +118,12 @@ async function nativeQualification(argv: string[], { lib }: Layout): Promise<num
     const tools: NativeTools = {
       binary,
       remaining: () => remaining(deadline) ?? 0,
-      version: (binary, seconds) => {
+      version: async (binary, seconds) => {
         if (seconds <= 0) throw new Error('native deadline reached');
-        return execFileSync(binary, ['--version'], { encoding: 'utf8', timeout: Math.max(1, Math.ceil(seconds * 1000)) });
+        const versionDeadline = Math.min(deadline, deadlineAfter(seconds));
+        const result = await runStage([binary, '--version'], { stage: 'block native version', deadline: versionDeadline, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
+        if (result.returncode !== 0) throw new Error(`native version probe failed (exit ${result.returncode})`);
+        return result.stdout ?? '';
       },
       runOwned: async (command, options) => {
         const log = openSync(options.log, 'w');

@@ -157,7 +157,7 @@ Promise<{ returncode: number | null; cleanup: { complete?: boolean }; settled: b
 export interface NativeTools {
   /** The resolved KiCad CLI, or null when it is unavailable. */
   binary: string | null;
-  version: (binary: string, timeoutSeconds: number) => string;
+  version: (binary: string, timeoutSeconds: number) => Promise<string>;
   runOwned: OwnedRunner;
   /** Seconds left of the deadline this call started. */
   remaining: () => number;
@@ -179,7 +179,7 @@ export async function native(directoryPath: string, outputPath: string, tools: N
     executable: binary, executable_sha256: sha256File(binary), status: 'error', checks,
   };
   try {
-    report.tool_version = tools.version(binary, Math.min(10, tools.remaining())).trim();
+    report.tool_version = (await tools.version(binary, Math.min(10, tools.remaining()))).trim();
     if (!report.tool_version) throw new Error('native tool version unavailable');
     for (const [name, args, extension] of [['erc', ERC_ARGS, '.kicad_sch'], ['drc', DRC_ARGS, '.kicad_pcb']] as const) {
       const result = joinPath(output, `${name}.json`), log = joinPath(output, `${name}.log`);

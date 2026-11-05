@@ -273,7 +273,7 @@ test('inventory requires symbol identity and reports a flat board', () => {
 
 const tools = (): NativeTools => ({
   binary, remaining: () => 10,
-  version: path => spawnSync(path, ['--version'], { encoding: 'utf8' }).stdout,
+  version: async path => spawnSync(path, ['--version'], { encoding: 'utf8' }).stdout,
   runOwned: async (command, { cwd, log }) => {
     const run = spawnSync(command[0] as string, command.slice(1), { cwd, encoding: 'utf8' });
     writeFileSync(log, run.stdout + run.stderr);
@@ -320,6 +320,9 @@ test('blocks native CLI uses the owned runner on a synthetic block', { skip: !pr
   assert.equal(invalid.status, 2);
   assert.match(invalid.stdout, /native timeout must be finite and positive/);
   assert.throws(() => readFileSync(join(root, 'invalid/result.json')));
+  const invalidNumber = spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', cli, 'native', 'MODULE', '--output', join(root, 'invalid-number'), '--timeout', '0x10'], { encoding: 'utf8', env });
+  assert.equal(invalidNumber.status, 2);
+  assert.match(invalidNumber.stdout, /could not convert string to float/);
   const unavailable = spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', cli, 'native', 'MODULE', '--output', join(root, 'unavailable')], { encoding: 'utf8', env: { ...env, KICAD_CLI: '/missing/kicad-cli', IOTROUTE_BIN: '/missing/iotroute' } });
   assert.equal(unavailable.status, 2);
   assert.match(unavailable.stdout, /KiCad CLI unavailable/);
@@ -332,8 +335,17 @@ test('blocks native CLI uses the owned runner on a synthetic block', { skip: !pr
   assert.equal(timedOut.status, 1, timedOut.stderr);
   assert.equal(JSON.parse(timedOut.stdout).status, 'error');
   assert.match(JSON.parse(timedOut.stdout).cause, /timed out/);
+  const versionMarker = join(root, 'late-version-write');
+  const slowVersion = join(root, 'slow-version');
+  writeFileSync(slowVersion, `#!/bin/sh\n(sleep 3; touch '${versionMarker}') &\nwait\n`);
+  chmodSync(slowVersion, 0o755);
+  const versionTimeout = spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', cli, 'native', 'MODULE', '--output', join(root, 'version-timeout'), '--timeout', '1'], { encoding: 'utf8', env: { ...env, KICAD_CLI: slowVersion }, timeout: 20_000 });
+  assert.equal(versionTimeout.status, 1, versionTimeout.stderr);
+  assert.equal(JSON.parse(versionTimeout.stdout).status, 'error');
+  assert.match(JSON.parse(versionTimeout.stdout).cause, /timed out/);
   spawnSync('sleep', ['4']);
   assert.throws(() => readFileSync(marker), /ENOENT/);
+  assert.throws(() => readFileSync(versionMarker), /ENOENT/);
   assert.equal(readBlock(input).source_sha256, before);
 });
 
