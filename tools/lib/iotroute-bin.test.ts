@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { after, afterEach, test } from 'node:test';
@@ -57,13 +57,19 @@ test('a stamped cache folder is used without a build', () => {
   assert.equal(iotrouteBin(folder), exe);
 });
 
-test('only a host with no binary and no cargo skips; a wrong IOTROUTE_BIN does not', () => {
+test('a missing binary skips without probing cargo; a wrong IOTROUTE_BIN does not', () => {
   const path = process.env.PATH;
   process.env.IOTROUTE_CACHE = join(root, 'empty-cache');
   process.env.PATH = join(root, 'no-tools');
   try {
     delete process.env.IOTROUTE_BIN;
-    assert.match(String(iotrouteMissing()), /no IOTROUTE_BIN, no cached build, no cargo/);
+    assert.match(String(iotrouteMissing()), /prebuilt binary/);
+    const tools = join(root, 'cargo-tools'), marker = join(root, 'cargo-called');
+    mkdirSync(tools);
+    writeFileSync(join(tools, 'cargo'), `#!/bin/sh\necho called > '${marker}'\nexit 0\n`, { mode: 0o755 });
+    process.env.PATH = tools;
+    assert.match(String(iotrouteMissing()), /prebuilt binary/);
+    assert.equal(existsSync(marker), false);
     process.env.IOTROUTE_BIN = join(root, 'not-there');
     assert.equal(iotrouteMissing(), false);
   } finally {
