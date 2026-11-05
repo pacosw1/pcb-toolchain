@@ -185,6 +185,14 @@ export class JobManager {
     const id = newId(this.now());
     fs.mkdirSync(this.store.jobDir(id), { recursive: true });
     fs.renameSync(tarPath, this.store.inputTar(id));
+    if ((protectedRef || verifierRef) && this.cfg.jobUid !== null && this.cfg.jobUid > 0) {
+      const uid=process.getuid?.();if(uid===undefined)throw new Error('protected input owner unavailable');
+      // The store remains service-private; grant only the container's dedicated group read access to its mounted tar.
+      const fd=fs.openSync(this.store.inputTar(id),fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);
+      try{const stat=fs.fstatSync(fd);if(!stat.isFile()||stat.uid!==uid||stat.nlink!==1)throw new Error('unsafe protected input archive');
+        fs.fchownSync(fd,uid,this.cfg.jobUid);fs.fchmodSync(fd,0o640);fs.fsyncSync(fd);
+      }finally{fs.closeSync(fd);}
+    }
     const t = this.iso();
     const job: JobRecord = {
       schema: 'pcb-job.v1',

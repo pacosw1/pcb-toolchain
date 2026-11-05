@@ -32,6 +32,13 @@ async function settle(id: string): Promise<void> {
 }
 
 describe('states', () => {
+  it('grants the runtime group read access to protected input inside the private store', () => {
+    const uid=process.getuid?.(),gid=process.getgid?.();if(uid===undefined||gid===undefined||gid<=0)return;
+    r.cfg.jobUid=gid;
+    const ref={project:'p',board:'b',operation:'route',job:'protected',attempt:'attempt'};
+    const job=r.mgr.submit(validateSpec({command:['hang'],maxRetries:0},r.cfg),tarOf(r.dir),ref);
+    const stat=fs.statSync(r.mgr.store.inputTar(job.id));assert.equal(stat.uid,uid);assert.equal(stat.gid,gid);assert.equal(stat.mode&0o777,0o640);
+  });
   it('kills a protected container when its inspected image differs', async () => {
     const ref = { project:'p', board:'b', operation:'route', job:'protected', attempt:'attempt' };
     const tar = tarOf(r.dir), bytes = fs.readFileSync(tar);
