@@ -16,6 +16,8 @@ test('explicit dielectrics alternate prepreg and core from the outside (JLC06161
   assert.deepEqual(dielectrics.map(gap => gap.kind), ['prepreg', 'core', 'prepreg', 'core', 'prepreg']);
   const all = [...stackupText(SIX, dielectrics).matchAll(/\(thickness ([\d.]+)\)/g)].map(match => match[1]);
   assert.deepEqual(all.slice(1, 12).filter((_, i) => i % 2 === 0), ['0.035', '0.0152', '0.0152', '0.0152', '0.0152', '0.035']);
+  const total = thicknesses.reduce((sum, thickness) => sum + thickness, 0) + 2 * 0.035 + 4 * 0.0152 + 0.02;
+  assert.ok(Math.abs(total - 1.5744) < 1e-4); // D-142 dielectrics, copper and mask; nominal 1.6 mm board
 });
 
 test('a dielectric count that does not fit the copper layers fails', () => {
