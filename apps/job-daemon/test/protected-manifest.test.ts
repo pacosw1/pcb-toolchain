@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseCanonicalJson } from '../src/canonical-json.ts';
-import { parseProjectManifest } from '../src/protected-manifest.ts';
+import { assertBoardOnlyChange, parseProjectManifest } from '../src/protected-manifest.ts';
 const encode = (v: unknown): Buffer => parseCanonicalJson(Buffer.from(JSON.stringify(v)), { maxBytes: 1024 * 1024, maxNodes: 1000, maxDepth: 12 }).canonical;
 const doc = () => ({ schema: 'pcb.project-manifest.v1', project_id: 'p', entries: [
   { kind: 'link', path: 'board/ref', target: '../lib/file' },
@@ -12,6 +12,18 @@ test('parses and binds a canonical manifest with required, absent, link and exte
   assert.equal(parsed.manifest.entries.length, 2);
   assert.equal(parsed.manifest.external_mounts[0].manifest_sha256, 'b'.repeat(64));
   assert.match(parsed.sha256, /^[0-9a-f]{64}$/);
+});
+test('board adoption rejects changes to other files, dependencies or file mode', () => {
+  const sourceDoc = doc();
+  const source = parseProjectManifest(encode(sourceDoc)).manifest;
+  const boardEdit = doc(); boardEdit.entries[1].sha256 = 'c'.repeat(64); boardEdit.entries[1].size = 2;
+  assert.doesNotThrow(() => assertBoardOnlyChange(source,parseProjectManifest(encode(boardEdit)).manifest,'lib/file'));
+  const unrelated = doc(); unrelated.entries[1].sha256 = 'c'.repeat(64);
+  assert.throws(() => assertBoardOnlyChange(source,parseProjectManifest(encode(unrelated)).manifest,'board/ref'),/non-board|board is unavailable/);
+  const external = doc(); external.external_mounts[0].manifest_sha256 = 'd'.repeat(64);
+  assert.throws(() => assertBoardOnlyChange(source,parseProjectManifest(encode(external)).manifest,'lib/file'),/dependencies/);
+  const mode = doc(); mode.entries[1].executable = true;
+  assert.throws(() => assertBoardOnlyChange(source,parseProjectManifest(encode(mode)).manifest,'lib/file'),/mode/);
 });
 test('rejects noncanonical bytes, missing inputs, escaping links and overlapping mounts', () => {
   assert.throws(() => parseProjectManifest(Buffer.from(JSON.stringify(doc()))), /canonical/);

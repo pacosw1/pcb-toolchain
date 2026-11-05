@@ -5,6 +5,7 @@ import { parseCanonicalJson } from './canonical-json.ts';
 import { resolveManifestClosure } from './protected-closure.ts';
 import { ProtectedLeaseStore, protectedLeaseHash } from './protected-leases.ts';
 import { parseTrustedVerification } from './protected-verification.ts';
+import { assertBoardOnlyChange } from './protected-manifest.ts';
 import type { ManifestClosure } from './protected-closure.ts';
 import type { CommitRequestV1, CommitResultV1 } from '../../../contracts/pcb-system-v1.ts';
 
@@ -337,6 +338,7 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
         { maxDepth:16,maxManifests:256,maxNodes:100_000,maxBytes:64*1024**3,maxManifestBytes:64*1024**2 });
       if (candidate.rootProject !== request.project_id || !candidate.rootManifest.required_paths.includes(target.board_path) ||
           !candidate.rootManifest.entries.some(entry => entry.kind === 'file' && entry.path === target.board_path)) throw new Error('candidate board is unavailable');
+      assertBoardOnlyChange(source.rootManifest,candidate.rootManifest,target.board_path);
       for (const hash of new Set([...source.nodes, ...candidate.nodes].filter(node => node.kind === 'file').map(node => node.sha256))) this.read(hash);
       const parsed = parseTrustedVerification(verified.receipt, { verification_id:request.verification_id, job_id:request.job_id, attempt_id:request.attempt_id,
         project_id:request.project_id, board_id:request.board_id, alias_revision:request.alias_revision, lease_generation:request.lease_generation,

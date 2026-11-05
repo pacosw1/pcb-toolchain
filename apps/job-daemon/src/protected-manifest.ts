@@ -18,6 +18,24 @@ export interface ProjectManifest {
   external_mounts: { path: string; manifest_sha256: string }[];
 }
 
+/** Board-adoption v1 changes only the canonical PCB bytes; other project changes need a different policy. */
+export function assertBoardOnlyChange(source: ProjectManifest, candidate: ProjectManifest, boardPath: string): void {
+  if (source.schema !== candidate.schema || source.project_id !== candidate.project_id ||
+      JSON.stringify(source.required_paths) !== JSON.stringify(candidate.required_paths) ||
+      JSON.stringify(source.optional_absent_paths) !== JSON.stringify(candidate.optional_absent_paths) ||
+      JSON.stringify(source.external_mounts) !== JSON.stringify(candidate.external_mounts) || source.entries.length !== candidate.entries.length)
+    throw new Error('candidate changes project dependencies or paths');
+  let found = false;
+  for (let i = 0; i < source.entries.length; i++) {
+    const before = source.entries[i], after = candidate.entries[i];
+    if (before.path === boardPath && after.path === boardPath && before.kind === 'file' && after.kind === 'file') {
+      if (before.executable !== after.executable) throw new Error('candidate changes board file mode');
+      found = true;
+    } else if (JSON.stringify(before) !== JSON.stringify(after)) throw new Error('candidate changes a non-board file');
+  }
+  if (!found) throw new Error('candidate board is unavailable');
+}
+
 /** Parses canonical JSON and checks structural references only. It does not establish dependency closure or filesystem compatibility. */
 export function parseProjectManifest(bytes: Uint8Array): { manifest: ProjectManifest; sha256: string } {
   const parsed = parseCanonicalJson(bytes, { maxBytes: 8 * 1024 * 1024, maxNodes: 200_000, maxDepth: 12 });
