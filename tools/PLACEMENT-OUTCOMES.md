@@ -6,6 +6,16 @@ observations can remain valid after an isolated candidate was adopted: the
 original input artifact, sealed run and routed output must match their recorded
 hashes; current canonical CAD is a separate question.
 
+The TypeScript observer is available for the ML routing adapter and can also be
+run directly with Node. It independently revalidates native thermal obligations
+through the `route-coverage` binary in the pinned Linux job runtime; unavailable
+thermal validation remains an unknown, never an accepted observation. The legacy
+Python entry point remains while its Python callers are still present.
+
+```sh
+node --experimental-strip-types --no-warnings tools/placement_outcomes.ts evaluate STUDY_ID --manifest STUDY.json --json --output REPORT.json
+```
+
 ```sh
 python3 tools/placement_outcomes.py evaluate STUDY_ID --manifest STUDY.json --json --output REPORT.json
 ```

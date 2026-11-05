@@ -5,11 +5,12 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
-import { identityCommand, POLICY, verifiedFailedAttempt, type RunContext } from './outcome-controls.ts';
+import { identityCommand, POLICY, verifiedFailedAttempt, type RunContext, type Trial } from './outcome-controls.ts';
 import { Evidence, sealedRun } from './outcome-evidence.ts';
 import { retainedCopper, routedQuality } from './outcome-quality.ts';
 import { sha256File } from './json-file.ts';
 import { evaluateStudy, REPORT, STUDY, terminalSummary, type OutcomeServices } from './placement-outcomes.ts';
+import { cliObservation as wiredObservation } from '../placement_outcomes.ts';
 import { forms, type SList } from './sexpr.ts';
 
 type Row = Record<string, any>;
@@ -128,6 +129,15 @@ const controlledStudy = () => {
   }
 };
 const codes = (report: Row): string[] => report.blockers.map((row: Row) => row.code);
+test('wired routing observer reads a sealed nonthermal trial without claiming qualification', () => {
+  const [, trial] = runFixture('development', 'DEV', 'baseline', 1);
+  const evidence = new Evidence(root);
+  const result = wiredObservation(evidence, trial as Trial);
+  assert.equal(result.evidence_valid, true);
+  assert.equal(result.qualified, false);
+  assert.equal(result.full_gate_success, true);
+  assert.ok(evidence.inputs.size > 0);
+});
 const update = (path: string, change: (value: Row) => void) => {
   const value = read(path);
   change(value);
