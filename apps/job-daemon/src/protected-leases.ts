@@ -39,6 +39,25 @@ export class ProtectedLeaseStore extends ProtectedCapabilityStore {
     if (!leaseColumns.some(column => column.name === 'source_manifest')) this.db.exec('ALTER TABLE protected_leases ADD COLUMN source_manifest TEXT');
     if (!leaseColumns.some(column => column.name === 'boot_id')) this.db.exec('ALTER TABLE protected_leases ADD COLUMN boot_id TEXT');
   }
+  /** Startup reconciliation only. A previous-boot lease that was never pinned or bound cannot have started an
+   * authorized writer: pin/binding and boot validation are serialized in this same database. Never call this for
+   * direct checkout writers or expose it as an unauthenticated network endpoint. */
+  recoverUnusedFromPriorBoot(project: string, board: string, generation: number): boolean {
+    if (![project, board].every(v => typeof v === 'string' && ID.test(v)) || !Number.isSafeInteger(generation) || generation < 1)
+      throw new Error('invalid protected recovery target');
+    return this.transaction(() => {
+      const now = this.safeNow();
+      const row = this.db.prepare('SELECT * FROM protected_leases WHERE project=? AND board=?').get(project, board) as LeaseRow | undefined;
+      if (!row || row.generation !== generation || row.boot_id === this.bootId || row.pinned !== 0 || row.owner === '') return false;
+      const attempt = this.db.prepare('SELECT 1 AS found FROM protected_attempt_bindings WHERE project=? AND board=? AND generation=?').get(project, board, generation);
+      if (attempt) return false;
+      const changed = this.db.prepare('UPDATE protected_leases SET token_hash=?,owner=?,expires_at=0 WHERE project=? AND board=? AND generation=? AND pinned=0')
+        .run(Buffer.alloc(32), '', project, board, generation);
+      if (changed.changes !== 1) throw new Error('protected lease changed during recovery');
+      this.db.prepare('INSERT INTO protected_lease_audit VALUES (?,?,?,?,?,?)').run(project, board, generation, 'coordinator', 'unused-prior-boot-recovered', now);
+      return true;
+    });
+  }
   /** Stage a durable attempt binding and pin atomically before dispatch. The caller must separately establish
    * the identities and immutable inputs; this method alone does not authorize a worker or verify a job. */
   bindAttempt(capability: string, lease: { project: string; board: string; operation: string; generation: number; token: string },

@@ -92,3 +92,28 @@ test('attempt binding pins the matching lease atomically before dispatch', () =>
     assert.throws(() => store.release(issued.token, lease), /cannot be released/);
   } finally { store.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('restart recovery releases only a prior-boot lease that never pinned or bound', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pcb-recovery-')); let now = 100;
+  let store = new Fixture(path.join(dir, 'store'), { maxBlobBytes: 1000, quotaBytes: 10000 }, () => now, () => 0n); store.seed();
+  const issue = (requestId: string) => store.issueFromTrustedService(requestId, 'admin', { role: 'submit', principal: 'user', project: 'p', board: 'b', operation: 'route',
+    job: null, attempt: null, issuedAtMs: now, expiresAtMs: 20_000, maxUses: 50 });
+  const req = { requestId: 'lease-unused', project: 'p', board: 'b', alias: 'a', aliasRevision: 1, sourceRevision: 3, sourceManifest: manifestHash, operation: 'route', ttlMs: 1000 };
+  try {
+    const first = issue('issue-before'); if (first.state !== 'ISSUED') throw new Error('issuance failed');
+    const old = store.acquire(first.token, req); if (old.state !== 'ACQUIRED') throw new Error('acquire failed');
+    assert.equal(store.recoverUnusedFromPriorBoot('p', 'b', old.generation), false);
+    store.close(); now = 200; store = new Fixture(path.join(dir, 'store'), { maxBlobBytes: 1000, quotaBytes: 10000 }, () => now, () => 0n);
+    const fresh = issue('issue-after'); if (fresh.state !== 'ISSUED') throw new Error('issuance failed');
+    assert.equal(store.acquire(fresh.token, { ...req, requestId: 'busy' }).state, 'BUSY');
+    assert.equal(store.recoverUnusedFromPriorBoot('p', 'b', old.generation + 1), false);
+    assert.equal(store.recoverUnusedFromPriorBoot('p', 'b', old.generation), true);
+    assert.equal(store.recoverUnusedFromPriorBoot('p', 'b', old.generation), false);
+    const next = store.acquire(fresh.token, { ...req, requestId: 'next' });
+    if (next.state !== 'ACQUIRED') throw new Error('acquire failed');
+    assert.equal(next.generation, old.generation + 1);
+    store.pin(fresh.token, { ...req, generation: next.generation, token: next.token });
+    store.close(); now = 300; store = new Fixture(path.join(dir, 'store'), { maxBlobBytes: 1000, quotaBytes: 10000 }, () => now, () => 0n);
+    assert.equal(store.recoverUnusedFromPriorBoot('p', 'b', next.generation), false);
+  } finally { store.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
