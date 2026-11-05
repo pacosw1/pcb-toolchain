@@ -339,3 +339,12 @@ node --test --experimental-strip-types --no-warnings tools/lib/pcb-*.test.ts
 Fast fixtures exercise the real supervisor, evidence seal and adoption with
 controlled external tools. They establish neither shipping-board nor measured
 qualification.
+
+`tools/pcb_workflow_smoke.ts --project DIR --board BOARD --output NEW_DIR` runs one
+real board through the real CLI in a throwaway copy, on Hetzner in the pinned native
+image: native rejection of a short, a clearance and a wrong pad net; a placement
+defect detected, repaired and adopted as real bytes on a frozen board, with a tampered
+candidate refused first; an injected track gap diagnosed, repaired and adopted; and the
+engineering cycle over those runs. The source project must stay unchanged. It proves the
+workflow, not the board. The thermal cases of `lib/placement-outcomes.test.ts` need
+`ROUTE_COVERAGE_BIN` on Linux and skip elsewhere.

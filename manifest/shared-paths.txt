@@ -284,6 +284,8 @@ tools/lib/pcb-routing-trial.test.ts
 tools/lib/pcb-routing-trial.ts
 tools/lib/pcb-runs.test.ts
 tools/lib/pcb-runs.ts
+tools/lib/pcb-smoke-board.test.ts
+tools/lib/pcb-smoke-board.ts
 tools/lib/pcb-source-policy.test.ts
 tools/lib/pcb-source-policy.ts
 tools/lib/pcb-sources.ts
@@ -459,6 +461,7 @@ tools/pcb_search/upstreams.json
 tools/pcb_snapshot_inputs.mjs
 tools/pcb_timing.ts
 tools/pcb_workflow.py
+tools/pcb_workflow_smoke.ts
 tools/pcbtool.ts
 tools/pdfpage.swift
 tools/pdftext.swift
