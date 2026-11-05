@@ -332,6 +332,7 @@ tools/part_evidence.py
 tools/part_evidence.ts
 tools/part_native.py
 tools/pcb
+tools/pcb-python.py
 tools/pcb_benchmark.py
 tools/pcb_cli.py
 tools/pcb_cycle.py
