@@ -75,3 +75,51 @@ test('live relay reconnects by sequence and releases its upstream on disconnect'
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('disconnect aborts a still-open upstream stream', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-live-abort-'))
+  const token = path.join(dir, 'token')
+  fs.writeFileSync(token, 'c'.repeat(64))
+  const old = { url: process.env.JOBD_URL, token: process.env.JOBD_TOKEN_FILE }
+  let opened!: () => void, closed!: () => void
+  const ready = new Promise<void>((r) => {
+      opened = r
+    }),
+    stopped = new Promise<void>((r) => {
+      closed = r
+    })
+  const server = http.createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    res.write(': connected\n\n')
+    res.on('close', closed)
+    opened()
+  })
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
+  process.env.JOBD_URL = `http://127.0.0.1:${(server.address() as { port: number }).port}`
+  process.env.JOBD_TOKEN_FILE = token
+  const send = (): void => {}
+  subscribe(send)
+  try {
+    watchLive(send, 'open-run')
+    await ready
+    unsubscribe(send)
+    let expired = false
+    const timeout = setTimeout(() => {
+      expired = true
+      closed()
+    }, 3000)
+    await stopped
+    clearTimeout(timeout)
+    assert.equal(expired, false)
+  } finally {
+    stopLive(send)
+    unsubscribe(send)
+    server.closeAllConnections()
+    await new Promise<void>((r) => server.close(() => r()))
+    if (old.url === undefined) delete process.env.JOBD_URL
+    else process.env.JOBD_URL = old.url
+    if (old.token === undefined) delete process.env.JOBD_TOKEN_FILE
+    else process.env.JOBD_TOKEN_FILE = old.token
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
