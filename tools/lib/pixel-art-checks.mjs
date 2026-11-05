@@ -1,18 +1,25 @@
 // Pixel-art silkscreen checks, shared by the board audits.
-// Geometry comes from tools/check_pixel_art.py (KiCad bundled Python, pcbnew).
+// Geometry comes from tools/check_pixel_art.ts, which reads the board text and its board JSON.
 // The art is made by tools/pixel-art.ts: one group "pixel-art <name>" per icon.
 
 import {execFileSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
+import {TS_NODE} from './env.mjs';
 
 const SILK = {'B.SilkS': ['B.SilkS', 'B.Silkscreen'], 'F.SilkS': ['F.SilkS', 'F.Silkscreen']};
+const PROBE = fileURLToPath(new URL('../check_pixel_art.ts', import.meta.url));
 
-// arts: {name: 'B.SilkS' | 'F.SilkS'}. check(name, ok, detail) records one result.
-export function pixelArtChecks({python, probe, pcb, arts, check}) {
+function runProbe(pcb, names) {
+  const out = execFileSync(process.execPath, [...TS_NODE, PROBE, pcb, ...names], {encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore']});
+  return JSON.parse(out.split('\n').find((line) => line.startsWith('{')));
+}
+
+// arts: {name: 'B.SilkS' | 'F.SilkS'}. check(name, ok, detail) records one result. measure: tests replace the probe.
+export function pixelArtChecks({pcb, arts, check, measure = runProbe}) {
   let art = {};
   let edge = 0.5;
   try {
-    const out = execFileSync(python, [probe, pcb, ...Object.keys(arts)], {encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore']});
-    const res = JSON.parse(out.split('\n').find((line) => line.startsWith('{')));
+    const res = measure(pcb, Object.keys(arts));
     art = res.art;
     edge = res.edge_mm;
   } catch (e) {

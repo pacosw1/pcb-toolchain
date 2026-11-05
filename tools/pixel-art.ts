@@ -11,7 +11,7 @@
 //
 // Each horizontal run of pixels is one filled rectangle. The rectangle has a SILK_W stroke (JLC silkscreen minimum line
 // 0.153 mm) and is inset by SILK_W / 2, so its outer edge is the pixel edge and the runs of adjacent rows touch. On B.SilkS the
-// art is mirrored in x, so it reads correctly from the bottom side. Check the result with tools/check_pixel_art.py.
+// art is mirrored in x, so it reads correctly from the bottom side. Check the result with tools/check_pixel_art.ts.
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { crc32, deflateSync } from 'node:zlib';

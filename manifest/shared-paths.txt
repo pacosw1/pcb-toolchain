@@ -48,7 +48,7 @@ tools/check-release-gate.mjs
 tools/check-release-readiness.mjs
 tools/check-reviews.mjs
 tools/check-staged-gates.mjs
-tools/check_pixel_art.py
+tools/check_pixel_art.ts
 tools/datasheet_audit.mjs
 tools/doctor.mjs
 tools/driver-edges.json
@@ -138,6 +138,7 @@ tools/lib/build-release-image.test.mjs
 tools/lib/check-cache.mjs
 tools/lib/check-cache.test.mjs
 tools/lib/check-fab-zip.test.mjs
+tools/lib/check-pixel-art.test.ts
 tools/lib/cli.ts
 tools/lib/consistency-offline.test.mjs
 tools/lib/copper-current.test.ts
@@ -302,6 +303,7 @@ tools/lib/pcbtool-suggest.ts
 tools/lib/pcbtool-write.ts
 tools/lib/pdf-evidence.ts
 tools/lib/pin-ratings.ts
+tools/lib/pixel-art-checks.d.mts
 tools/lib/pixel-art-checks.mjs
 tools/lib/placement-outcomes.test.ts
 tools/lib/placement-outcomes-cli.test.ts
