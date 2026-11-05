@@ -69,6 +69,13 @@ CPU/memory/disk/process budgets and cleanup; worker capabilities cannot be reuse
 This v1 job contract covers board mutation operations only. Read-only checks and non-board/supervised observations
 need separate versioned request variants rather than a fabricated board revision.
 
+Draft capability primitives use 256-bit random bearer values, a domain-separated SHA-256 verifier and constant-time
+comparison. Roles have no implicit inheritance; worker and verifier capabilities bind exactly to project, board,
+operation, job and attempt, with bounded use count, expiry and revocation. This is not authentication until issuance,
+authenticated transport and atomic use consumption are implemented. A lost issuance response must not silently mint
+a second authority: choose a recipient-encrypted idempotent envelope or an explicit `UNKNOWN` plus audited revoke and
+reissue. Never store or log the bearer itself.
+
 ## Verification
 
 The coordinator invokes a trusted verifier, or authenticates a separately provisioned verifier identity over a channel
