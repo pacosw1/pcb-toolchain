@@ -212,9 +212,14 @@ fn strengthen(job: &Job, text: &str, before: &Path, model: &Path, receipt: &Path
     Ok((strengthened, report))
 }
 
+/// What every router run has. A normal run asks for no `--diagnose`: that is a slow extra pass of its own.
+fn solver_head(bin: &Path, model: &Path, ses: &Path, rep: &Path, passes: impl std::fmt::Display, min_um: i64, edge_um: i64) -> Vec<String> {
+    vec![bin.display().to_string(), "-de".into(), model.display().to_string(), "-do".into(), ses.display().to_string(), "-mp".into(), passes.to_string(), format!("--router.min_trace_width_um={min_um}"), format!("--router.copper_to_edge_clearance_um={edge_um}"), format!("--report={}", rep.display())]
+}
+
 /// The router's command line, complete: admission binds it.
 fn command(job: &Job, model: &Path, ses: &Path, rep: &Path, ignored: &[String], extra: &Extra, pairs: Option<&Path>) -> Result<Vec<String>, Stop> {
-    let mut cmd = vec![job.bin.display().to_string(), "-de".into(), model.display().to_string(), "-do".into(), ses.display().to_string(), "-mp".into(), job.a.passes.to_string(), format!("--router.min_trace_width_um={}", job.min_um), format!("--router.copper_to_edge_clearance_um={}", job.edge_um), format!("--report={}", rep.display())];
+    let mut cmd = solver_head(&job.bin, model, ses, rep, job.a.passes, job.min_um, job.edge_um);
     cmd.extend(job.a.set.iter().map(|entry| format!("--{entry}")));
     if job.rules_on && !job.a.set.iter().any(|entry| entry.split('=').next() == Some("router.scoring.via_costs")) {
         // Rule 2: a layer change costs much more than Freerouting's default (50). A caller's own --set wins.
@@ -708,4 +713,16 @@ pub fn route_all(job: &mut Job) -> Result<(), Stop> {
         job.write_json("stage-plan.json", &json!({"stages": stages, "runs": stage_log, "escape": rules.escape, "hot_loops": hot}))?;
     }
     finish::run(job, rules.as_ref(), &last, (unix_time() - started) as i64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_normal_run_keeps_its_report_and_asks_for_no_diagnosis() {
+        let head = solver_head(Path::new("fastroute"), Path::new("m.dsn"), Path::new("b.ses"), Path::new("r.json"), 40, 150, 500);
+        assert_eq!(head, ["fastroute", "-de", "m.dsn", "-do", "b.ses", "-mp", "40", "--router.min_trace_width_um=150", "--router.copper_to_edge_clearance_um=500", "--report=r.json"]);
+        assert!(!head.iter().any(|word| word.contains("diagnose")));
+    }
 }

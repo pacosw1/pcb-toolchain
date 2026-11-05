@@ -109,7 +109,7 @@ fn a_board_config_is_gate_json_under_the_registry() {
     assert_eq!(board_config(&root, "AB-1").unwrap_err(), "gate configuration requires a project");
     fs::remove_file(board.join("gate.json")).unwrap();
     fs::write(board.join("gate.pending.json"), r#"{"project": "cad/AB-1"}"#).unwrap();
-    assert!(board_config(&root, "AB-1").is_err(), "route.py reads gate.json only");
+    assert!(board_config(&root, "AB-1").is_err(), "a route reads gate.json only");
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -293,7 +293,7 @@ fn an_around_pour_grows_the_copper_and_stays_on_the_board() {
     let b = board(vec![track("t", (5_000_000, 100_000), (10_000_000, 100_000), 200_000, "B.Cu")]);
     let area = pour_area(&b, &pour(PourShape::Around)).unwrap().unwrap();
     let bbox = area[0].bbox().unwrap();
-    // Track ends at 4.9 and 10.1 mm, grown 1 mm, within the arc errors 0.01 + 0.05 mm of route.py; the outline cuts the top.
+    // Track ends at 4.9 and 10.1 mm, grown 1 mm, within the arc errors 0.01 + 0.05 mm of a pour; the outline cuts the top.
     assert!((3_900_000..=3_960_000).contains(&bbox.left), "{bbox:?}");
     assert!((11_040_000..=11_100_000).contains(&bbox.right), "{bbox:?}");
     assert_eq!((bbox.top, bbox.bottom), (0, 1_200_000));

@@ -272,6 +272,30 @@ fn a_stub_that_only_passes_near_a_pad_does_not_join_it() {
     assert_eq!(DirectCopper::of(&b, "GND", &edit).vias_of(&probe), Ok(Vec::new()));
 }
 
+#[test]
+fn a_via_of_another_net_or_a_track_near_the_pad_is_no_connection() {
+    let probe = pad("1", "GND", 10.0, 10.0, 0.8, 0.9);
+    let b = board(vec![footprint("C1", vec![probe.clone()])], vec![via("+3V3", 10.0, 10.0), track("GND", at(10.0, 11.0), at(11.0, 11.0))]);
+    assert_eq!(DirectCopper::of(&b, "GND", &Edit::default()).vias_of(&probe), Ok(Vec::new()));
+}
+
+#[test]
+fn a_plane_joins_nothing_for_direct_copper() {
+    // EXCLUDE_ZONES of the Python: a pad and a via that only a pour joins have no copper of their own between them.
+    let probe = pad("1", "GND", 10.0, 10.0, 0.8, 0.9);
+    let b = board(vec![footprint("C1", vec![probe.clone()])], vec![via("GND", 10.62, 10.76)]);
+    assert_eq!(DirectCopper::of(&b, "GND", &Edit::default()).vias_of(&probe), Ok(Vec::new()));
+}
+
+#[test]
+fn an_unfilled_plane_is_filled_before_a_pad_is_skipped() {
+    let b = board(vec![footprint("C1", vec![pad("2", "GND", 5.0, 5.0, 0.8, 0.9)])], vec![via("GND", 5.62, 5.76)]);
+    let mut fill = Fill::new();
+    fill.joined.insert(b.footprints[0].pads[0].id.clone(), vec![at(5.62, 5.76)]);
+    let p = plan(&b, &rules(), &Options::default(), &mut fill).unwrap();
+    assert_eq!((p.added, fill.calls.get()), (0, 1), "{p:?}");
+}
+
 fn distance(a: Pt, b: Pt) -> f64 {
     ((a.x - b.x) as f64).hypot((a.y - b.y) as f64)
 }

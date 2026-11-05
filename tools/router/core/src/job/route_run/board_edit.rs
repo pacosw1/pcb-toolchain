@@ -13,7 +13,7 @@ use std::f64::consts::{FRAC_PI_2, PI};
 pub const TMP: &str = "TMP_ROUTE_";
 /// An 'outside' keepout reaches this far past the board box.
 const OUTSIDE_MARGIN_MM: f64 = 5.0;
-/// route.py's pour settings: minimum fill width, the arc error of the net's copper and of the growth.
+/// The pour settings of a route run: minimum fill width, the arc error of the net's copper and of the growth.
 const MIN_THICKNESS_MM: f64 = 0.25;
 const COPPER_ERROR_MM: f64 = 0.01;
 const GROW_ERROR_MM: f64 = 0.05;

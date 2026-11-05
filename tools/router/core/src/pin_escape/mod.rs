@@ -30,7 +30,7 @@
 //!   obstacles there grow by clearance + half the neck width. Distance source: the D-124c pin-escape allowance (tools/pin-ratings.json
 //!   "about", tools/pcbtool.py width_report: a track piece that starts on a pad and is no longer than the pad's long dimension is part
 //!   of the pad). The neck zone is the union over all source pads of the part (any net's track there may neck). The grid pitch stays
-//!   the class pitch. (fastroute_job.py --neck-um is a different thing: a retry width for failed power links; not modelled.)
+//!   the class pitch. (iotroute fastroute --neck-um is a different thing: a retry width for failed power links; not modelled.)
 //! - --in2-nets: In2.Cu is added for those nets only; flow enters In2.Cu only from their sources (no other net can reach it), and may
 //!   leave it by via.
 //! - sources: non-plane nets with a pad centre inside the region and another pad outside it or on another part (--only-nets restricts

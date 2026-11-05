@@ -130,11 +130,11 @@ among their existing slots while preserving every area, UUID, name, geometry,
 multiplicity and nested order. Copper-zone order and other protected forms
 remain significant.
 
-For a board with a `route.json` (schema `iot-lab.route.v1`, see `tools/route_plan.py`), use
+For a board with a `route.json` (schema `iot-lab.route.v1`, see `tools/router/core/src/plan/`), use
 `tools/pcb route BOARD --router route-json --detach --json`. `--spec` is optional for this
-router; the default is the board folder `route.json`. The run executes `tools/route.py` from the
-snapshot on the candidate board, then the normal gate, seal and `pcb adopt` flow applies.
-Give it an unrouted candidate: `route.py` adds the `route.json` pours, and on a routed board
+router; the default is the board folder `route.json`. The run executes `iotroute route` on the
+candidate board, then the normal gate, seal and `pcb adopt` flow applies.
+Give it an unrouted candidate: `iotroute route` adds the `route.json` pours, and on a routed board
 they overlap the pours already there (`zones_intersect`).
 
 For the in-house router (tools/router/DESIGN.md), use

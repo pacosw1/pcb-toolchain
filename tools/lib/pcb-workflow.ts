@@ -1,5 +1,4 @@
-// Repository-derived board context and deterministic workflow plans. tools/pcb_workflow.py is the Python twin while
-// tools/route.py imports it. Native CAD, gate.json and the board registry stay the sources of truth: this module holds
+// Repository-derived board context and deterministic workflow plans. Native CAD, gate.json and the board registry stay the sources of truth: this module holds
 // command adapters, not a second part or design database.
 import { spawnSync } from 'node:child_process';
 import { lstatSync, readdirSync } from 'node:fs';

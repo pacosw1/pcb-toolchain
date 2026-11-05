@@ -195,7 +195,7 @@ gate results, and report time to compliant output. Smoke-test timings do not sub
 
 # Cooperating Mac resource budgets (CIP 779)
 
-Local `place.ts run`, compaction stages, and `fastroute_job.py` share
+Local `place.ts run`, compaction stages, and `iotroute fastroute` share
 `~/.cache/iot-lab/resources`. Defaults reserve at most 12 CPU worker tokens
 (or the machine count if smaller), 16 GiB total declared memory, and 8 GiB
 per job. These are conservative initial settings, not measured optimal settings.

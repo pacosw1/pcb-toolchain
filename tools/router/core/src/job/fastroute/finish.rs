@@ -254,7 +254,7 @@ fn via_evidence(job: &Job, rules: &Rules) -> Result<(), Stop> {
     Ok(())
 }
 
-fn diagnosis_count(report: &Value, name: &str) -> String {
+pub(crate) fn diagnosis_count(report: &Value, name: &str) -> String {
     report["diagnosis"][name].as_i64().filter(|value| *value >= 0).map_or("unknown".to_string(), |value| value.to_string())
 }
 

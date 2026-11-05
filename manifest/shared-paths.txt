@@ -30,11 +30,9 @@ tools/board3d/index.html
 tools/board3d/metadata.mjs
 tools/board3d/metadata.test.mjs
 tools/board_3d.sh
-tools/board_frame.py
 tools/board_frame.ts
 tools/board_labels.ts
 tools/board_route_rules.py
-tools/board_uuids.py
 tools/board_uuids.ts
 tools/brand_mark.ts
 tools/build-bom-verified.mjs
@@ -58,7 +56,6 @@ tools/edge-rates.json
 tools/examples/design-idea.json
 tools/examples/design-idea.md
 tools/fab-workflow.sh
-tools/fastroute_job.py
 tools/fetch-datasheet.mjs
 tools/fetch-e2k-assets.mjs
 tools/fetch-jlc-datasheet.mjs
@@ -70,7 +67,6 @@ tools/fixtures/krt_impedance_sample.json
 tools/fixtures/run-record/report.json
 tools/fixtures/run-record/run.log
 tools/fp_courtyard.ts
-tools/freeroute.py
 tools/gate.mjs
 tools/gerber_netcheck.py
 tools/gerber_netcheck.ts
@@ -79,7 +75,6 @@ tools/ibis_ramp.ts
 tools/import_nets.ts
 tools/import_pose_guard.py
 tools/import_replay_guard.py
-tools/import_ses.py
 tools/jlc-snapshot.mjs
 tools/jlc_api_evidence.mjs
 tools/jlc_stock.mjs
@@ -462,7 +457,6 @@ tools/pcb_search/tracemaker/Dockerfile
 tools/pcb_search/upstreams.json
 tools/pcb_snapshot_inputs.mjs
 tools/pcb_timing.ts
-tools/pcb_workflow.py
 tools/pcb_workflow_smoke.ts
 tools/pcbtool.ts
 tools/pdfpage.swift
@@ -650,20 +644,14 @@ tools/route-coverage/tests/hole.rs
 tools/route-coverage/tests/project.rs
 tools/route-coverage/tests/thermal.rs
 tools/route-features.json
-tools/route.py
 tools/route_batch.mjs
 tools/route_decision.ts
 tools/route_features.py
-tools/route_grid.py
 tools/route_hole_coverage.py
 tools/route_native_thermals.py
 tools/route_plan.mjs
-tools/route_plan.py
-tools/route_preview.py
-tools/route_progress.py
 tools/route_project_coverage.py
 tools/route_rule_coverage.py
-tools/route_snapshots.py
 tools/route_status.ts
 tools/router/DESIGN.md
 tools/router/core/.gitignore
@@ -960,7 +948,6 @@ tools/router/reports/2026-11-02-plane-edge.md
 tools/router/reports/2026-11-02-ref-gate-scope.md
 tools/router/reports/2026-11-02-thermal-vias.md
 tools/router/route-dispatch.mjs
-tools/routing_rules.py
 tools/run_record.py
 tools/run_record.ts
 tools/set_stackup.ts
@@ -973,14 +960,9 @@ tools/stitch_all.ts
 tools/test-fixtures/generator-cc-774.json
 tools/test-fixtures/mandatory-cc-774.json
 tools/test-gnd-pad-vias.py
-tools/test-route-progress.py
-tools/test_audit_830_routing.py
 tools/test_backend_quality.py
 tools/test_block_extract.py
-tools/test_board_frame.py
-tools/test_board_uuids.py
 tools/test_dsn_skip.py
-tools/test_fastroute_phases.py
 tools/test_gnd_pad_vias.py
 tools/test_halo_padstack.py
 tools/test_import_pose_guard.py
@@ -997,7 +979,6 @@ tools/test_pcb_search_native_placement.py
 tools/test_project_root.py
 tools/test_route_hole_coverage.py
 tools/test_route_native_thermals.py
-tools/test_route_plan.py
 tools/test_route_rule_coverage.py
 tools/test_run_record.py
 tools/test_thermal_repair.py

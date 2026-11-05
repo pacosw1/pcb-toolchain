@@ -132,6 +132,7 @@ mod tests {
     fn a_pass_line_gives_pass_open_and_seconds() {
         assert_eq!(parse_pass(LINE), Some(Pass { number: 4, open: 17, seconds: 1.25 }));
         assert_eq!(parse_pass("Auto-routing stage started"), None);
+        assert_eq!(parse_pass("    4.2 INFO  checkpoint: best board so far (84 unrouted, 20 violations)"), None);
     }
 
     #[test]

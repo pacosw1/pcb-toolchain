@@ -224,7 +224,7 @@ export class Project {
     this.conflicts.push({ board: board ?? null, kind, message })
   }
 
-  /** The "pipeline" key of the gate's gate.json, when that file exists (as tools/pcb_workflow.py `pipeline`). */
+  /** The "pipeline" key of the gate's gate.json, when that file exists. */
   private pipeline(gate: string | null): string | null {
     if (!gate) return null
     let data: unknown

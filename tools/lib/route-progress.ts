@@ -1,5 +1,5 @@
 // OUTDIR/progress.jsonl seen from outside the job: the status line of the last event, and a stage event for the shell
-// stages (gate, render, fab). The job itself writes the router events (tools/route_progress.py).
+// stages (gate, render, fab). The job itself writes the router events (tools/router/core/src/job/progress.rs).
 //
 // One line per event: {"t": ISO time, "t0": job start, "elapsed_s": since t0, "stage": name, "pass": autorouter pass or null,
 // "open": open connections of that pass or null, "vias": null until the board is imported, "best_open": lowest open count

@@ -261,3 +261,52 @@ pub(crate) fn feature_sources(feat: &Features) -> Vec<PathBuf> {
     sources
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn folder(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("job-end-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn outcome(dir: &Path) -> Value {
+        serde_json::from_str(&std::fs::read_to_string(dir.join("outcome.json")).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_timeout_keeps_its_checkpoint_and_its_cleanup_and_is_never_qualified() {
+        let dir = folder("timeout");
+        std::fs::write(dir.join("board.ses"), "checkpoint").unwrap();
+        let stop = Stop::Timeout { cause: "deadline".into(), cleanup: json!({"complete": false, "errors": ["still alive"]}) };
+        assert_eq!(end(&dir, Err(stop), true, 1, 2.0, 3.0), 124);
+        let value = outcome(&dir);
+        assert_eq!((value["status"].as_str(), value["qualified"].as_bool(), value["cause"].as_str()), (Some("timeout"), Some(false), Some("deadline")));
+        assert_eq!(value["cleanup"]["complete"], false);
+        assert_eq!(value["artifacts"]["board.ses"].as_str().map(str::len), Some(64));
+        assert!(!dir.join("routed.kicad_pcb").exists());
+    }
+
+    #[test]
+    fn a_cancel_says_so_and_is_never_qualified() {
+        let dir = folder("cancel");
+        let stop = Stop::Cancelled { signal: Some(15), cleanup: json!({"complete": true}) };
+        assert_eq!(end(&dir, Err(stop), true, 1, 2.0, 3.0), 143);
+        let value = outcome(&dir);
+        assert_eq!((value["status"].as_str(), value["qualified"].as_bool(), value["signal"].as_i64()), (Some("cancelled"), Some(false), Some(15)));
+    }
+
+    #[test]
+    fn a_diagnosis_count_is_a_measured_number_or_unknown() {
+        let report = json!({"diagnosis": {"congestion": 0, "blocked": 1, "bad": "2", "flag": true, "low": -1}});
+        let count = |name| finish::diagnosis_count(&report, name);
+        assert_eq!((count("congestion"), count("blocked")), ("0".to_string(), "1".to_string()));
+        for name in ["bad", "flag", "low", "absent"] {
+            assert_eq!(count(name), "unknown");
+        }
+        assert_eq!(finish::diagnosis_count(&json!({}), "congestion"), "unknown");
+    }
+}

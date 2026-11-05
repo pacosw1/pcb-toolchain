@@ -17,7 +17,7 @@ export interface BoardIdentity { footprints: Record<string, unknown>; protected:
 
 const pourKey = (name: unknown, net: unknown, layer: unknown): string => JSON.stringify([name ?? null, net ?? null, layer ?? null]);
 
-/** The pours an admitted route.json lets route.py create or replace: they are left out on both sides of a comparison. */
+/** The pours an admitted route.json lets `iotroute route` create or replace: they are left out on both sides of a comparison. */
 export function declaredPours(manifest: RouteManifest): PourSet {
   if (manifest.operation !== 'route' || manifest.router !== 'route-json') return new Set();
   return new Set((manifest.spec?.pours ?? []).map(pour => pourKey(pour.name, pour.net, pour.layer)));

@@ -1,5 +1,5 @@
 //! The Fastroute job and the route runner, off Python. Small services first: the job's files and clock, its record, stages under
-//! the owned broker, the resource queue. tools/fastroute_job.py's stages build on these.
+//! the owned broker, the resource queue. The job's stages build on these.
 pub mod backend;
 pub mod clock;
 pub mod fastroute;
