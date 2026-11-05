@@ -8,9 +8,12 @@
 // They are board rule areas, not footprint zones, so the shared library footprint stays the JLC/EasyEDA bridge footprint. Run on
 // the board in its project folder: the save refills every zone with the .kicad_dru next to it. One summary line: DONE <counts>.
 //
-// check and gerber stay in tools/fp_keepouts.py. They print the overlap area of fills and pads with an area, and only a polygon
-// boolean gives that (SHAPE_POLY_SET.BooleanIntersection, Area): the document holds no such result.
+// check remains in tools/fp_keepouts.py; gerber uses native polygon booleans on the pinned worker.
 import { readFileSync } from 'node:fs';
+import { archive, unique } from './lib/gerber-archive.ts';
+import { geometry, polygons, strokes } from './lib/gerber-geometry.ts';
+import { circle, parseLegacyGeometry, parseDrill } from './lib/gerber.ts';
+import { Outline, relate } from './lib/copper-graph.ts';
 import { relative, resolve } from 'node:path';
 import { BoardEdit, itemIds, saveBoardInPlace } from './lib/board-edit.ts';
 import { boardJson } from './lib/board-json.ts';
@@ -24,7 +27,7 @@ import { fixed, floatRepr } from './lib/py-compat.mjs';
 import { round } from './lib/py-numbers.ts';
 import { fileRoot } from './lib/project-root.mjs';
 
-const USAGE = 'usage: tools/fp_keepouts.ts {apply BOARD REF SPEC | rip BOARD REF}; check and gerber: tools/fp_keepouts.py';
+const USAGE = 'usage: tools/fp_keepouts.ts {apply BOARD REF SPEC | rip BOARD REF | gerber ZIP BOARD REF}; check: tools/fp_keepouts.py';
 
 export interface KeepoutSpec { areas_fp_mm: { name: string; rect: [number, number, number, number] }[]; layers: string[]; not_allowed: string[] }
 export interface Area { name: string; points: [number, number][] }
@@ -151,7 +154,33 @@ function rip(pcb: string, ref: string): number {
   return 0;
 }
 
+export function gerberCheck(board: Board, ref: string, files: Map<string,string>, measure = geometry): {lines:string[]; total:number; areas:number} {
+  const areas=keepoutZones(board,ref), lines:string[]=[]; let total=0;
+  for(const area of areas) {
+    if(area.outline.length !== 1 || area.outline[0]!.holes.length) throw new Error(`unsupported keepout polygon ${area.name}`);
+    const points=area.outline[0]!.outline.map(p=>[p.x/1e6,-p.y/1e6] as const);
+    const outline=new Outline(points), polygon=polygons([outline]);
+    if(area.rule_area!.vias) {
+      const [,data]=unique(files,'-PTH.drl');
+      const hit=parseDrill(data).filter(h=>h.x1===h.x2 && h.y1===h.y2 && relate(outline,new Outline(circle(h.x1,h.y1,h.diameter/2,16)))!==0);
+      total+=hit.length;
+      lines.push(`  ${area.name}: round plated holes touching the area ${hit.length} [${hit.map(h=>`(${floatRepr(h.x1)}, ${floatRepr(h.y1)}, ${floatRepr(h.diameter)})`).join(', ')}]`);
+    }
+    if(!area.rule_area!.tracks || !area.rule_area!.pour) continue;
+    const polygonArea=Math.abs(points.reduce((sum,p,i)=>{const next=points[(i+1)%points.length]!;return sum+p[0]*next[1]-next[0]*p[1]},0))/2;
+    for(const layer of area.layers) {
+      const [name,data]=unique(files,`-${layer.replaceAll('.','_')}.gbr`);
+      const copper=parseLegacyGeometry(data);
+      const a=measure({operation:'intersection',a:polygons(copper.outlines),a_strokes:strokes(copper.strokes),b:polygon});total+=a;
+      lines.push(`  ${area.name} ${layer} (${name}): copper ${a.toFixed(6)} mm2 of ${polygonArea.toFixed(3)} mm2`);
+    }
+  }
+  lines.push(`${areas.length && total < 1e-6 ? 'PASS':'FAIL'} gerber ${ref}: areas ${areas.length}, copper mm2 + via holes in the areas ${total.toFixed(6)}`);
+  return {lines,total,areas:areas.length};
+}
+
 function main([command, pcb, ref, spec, ...rest]: string[]): number {
+  if (command === 'gerber' && pcb && ref && spec && !rest.length) { const result=gerberCheck(boardJson(ref).board,spec,archive(pcb)); console.log(result.lines.join('\n')); return result.areas && result.total < 1e-6 ? 0 : 1; }
   if (command === 'apply' && pcb && ref && spec && !rest.length) return apply(pcb, ref, spec);
   if (command === 'rip' && pcb && ref && !spec) return rip(pcb, ref);
   throw new UsageError(USAGE, 1);

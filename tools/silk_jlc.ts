@@ -9,10 +9,12 @@
 // 0.15 mm becomes 0.15 mm. Filled polygons keep their outline (a fill has no stroke width). Positions are not changed.
 // One summary line: PASS|FAIL|DONE <counts>.
 //
-// Texts, their sizes and footprint silk ids are not in the board document, so this reads the file itself. pads and clip stay in
-// tools/silk_jlc.py: they need polygon booleans (shapely, SHAPE_POLY_SET.BooleanSubtract) and pad polygons grown by a margin
-// (PAD.TransformShapeToPolygon on a mask layer), which the document does not hold.
+// Texts, their sizes and footprint silk ids are read from the board file. pads uses native polygon booleans on the pinned worker;
+// clip remains in tools/silk_jlc.py, which obtains pad mask polygons from pcbnew.
 import { readFileSync } from 'node:fs';
+import { archive, unique } from './lib/gerber-archive.ts';
+import { geometry, polygons, strokes } from './lib/gerber-geometry.ts';
+import { parseLegacyGeometry } from './lib/gerber.ts';
 import { BoardEdit, mmText, saveBoardInPlace } from './lib/board-edit.ts';
 import { runMain, UsageError } from './lib/cli.ts';
 import { childForms } from './lib/footprint-move.ts';
@@ -22,7 +24,7 @@ import { kids, parse, type SExpr, type SList } from './lib/sexpr.ts';
 
 const MIN_H = 1;
 const MIN_W = 0.15;
-const USAGE = 'usage: tools/silk_jlc.ts {check|apply} BOARD.kicad_pcb; pads and clip: tools/silk_jlc.py';
+const USAGE = 'usage: tools/silk_jlc.ts {check|apply} BOARD.kicad_pcb | pads GERBER.zip; clip: tools/silk_jlc.py';
 const SILK = new Set(['F.SilkS', 'B.SilkS']);
 const BOARD_SHAPES: Record<string, string> = { gr_line: 'Line', gr_arc: 'Arc', gr_circle: 'Circle', gr_rect: 'Rect', gr_poly: 'Polygon', gr_curve: 'Bezier' };
 const FOOTPRINT_SHAPES: Record<string, string> = { fp_line: 'Line', fp_arc: 'Arc', fp_circle: 'Circle', fp_rect: 'Rect', fp_poly: 'Polygon', fp_curve: 'Bezier' };
@@ -142,8 +144,24 @@ function run(pcb: string, write: boolean): number {
   return ok ? 0 : 1;
 }
 
+export function padsCheck(files: Map<string,string>, measure = geometry): {lines:string[]; bad:number} {
+  const lines:string[]=[]; let bad=0;
+  for (const side of ['F','B']) {
+    const [,silk]=unique(files,`-${side}_Silkscreen.gbr`), [,mask]=unique(files,`-${side}_Mask.gbr`);
+    const silkGeo=parseLegacyGeometry(silk),maskGeo=parseLegacyGeometry(mask);
+    const a=polygons(silkGeo.outlines), b=polygons(maskGeo.outlines), a_strokes=strokes(silkGeo.strokes), b_strokes=strokes(maskGeo.strokes);
+    const on=measure({operation:'intersection',a,b,a_strokes,b_strokes});
+    const near=measure({operation:'buffer_intersection',a,b,a_strokes,b_strokes,offset_nm:149900});
+    bad+=near;
+    lines.push(`  ${side}: silk on mask openings ${on.toFixed(4)} mm2, silk within 0.15 mm of an opening ${near.toFixed(4)} mm2`);
+  }
+  lines.push(`${bad < 1e-6 ? 'PASS':'FAIL'} pads: silk within 0.15 mm of mask openings ${bad.toFixed(4)} mm2`);
+  return {lines,bad};
+}
+
 function main(argv: string[]): number {
   const [command, pcb] = argv;
+  if (command === 'pads' && argv.length === 2 && pcb) { const result=padsCheck(archive(pcb)); console.log(result.lines.join('\n')); return result.bad < 1e-6 ? 0 : 1; }
   if (argv.length !== 2 || (command !== 'check' && command !== 'apply')) throw new UsageError(USAGE, 1);
   return run(pcb!, command === 'apply');
 }

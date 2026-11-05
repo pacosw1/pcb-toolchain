@@ -66,9 +66,9 @@ function rectangle(x: number, y: number, width: number, height: number, rotation
   return corners.map(([dx, dy]) => [x + dx * cos - dy * sin, y + dx * sin + dy * cos] as const);
 }
 
-function arcCapsules(from: Xy, to: Xy, centreOffset: Xy, clockwise: boolean, width: number): Xy[][] {
-  const cx = centreOffset[0] + from[0];
-  const cy = centreOffset[1] + from[1];
+function arcPoints(from: Xy, to: Xy, centreOffset: Xy, clockwise: boolean, legacyArc = false): Xy[] {
+  const cx = centreOffset[0] + from[0] * (legacyArc ? 2 : 1);
+  const cy = centreOffset[1] + from[1] * (legacyArc ? 2 : 1);
   const radius = Math.hypot(from[0] - cx, from[1] - cy);
   const start = Math.atan2(from[1] - cy, from[0] - cx);
   let end = Math.atan2(to[1] - cy, to[0] - cx);
@@ -79,7 +79,7 @@ function arcCapsules(from: Xy, to: Xy, centreOffset: Xy, clockwise: boolean, wid
     const angle = start + ((end - start) * i) / steps;
     return [cx + radius * Math.cos(angle), cy + radius * Math.sin(angle)] as const;
   });
-  return points.slice(1).map((point, i) => capsule(points[i]!, point, width / 2));
+  return points;
 }
 
 function valueOf(value: MacroValue, parameters: Parameters): number {
@@ -156,7 +156,10 @@ function parseMacro(body: string): MacroPrimitive[] {
 }
 
 class Layer {
+  private readonly legacyArc: boolean;
+  constructor(legacyArc = false) { this.legacyArc = legacyArc; }
   readonly shapes: Xy[][] = [];
+  readonly strokes: {points: Xy[]; width: number}[] = [];
   private readonly apertures = new Map<number, Aperture>();
   private readonly macros = new Map<string, MacroPrimitive[]>();
   private integerDigits: number | undefined;
@@ -205,7 +208,11 @@ class Layer {
     const width = lineWidth(this.aperture);
     if (width <= 0) return;
     if (this.interpolation === 'linear' || (i === undefined && j === undefined)) this.shapes.push(capsule(from, to, width / 2));
-    else this.shapes.push(...arcCapsules(from, to, [i ?? 0, j ?? 0], this.interpolation === 'clockwise', width));
+    else {
+      const points=arcPoints(from, to, [i ?? 0, j ?? 0], this.interpolation === 'clockwise', this.legacyArc);
+      if (this.legacyArc) this.strokes.push({points,width});
+      else this.shapes.push(...points.slice(1).map((point, index)=>capsule(points[index]!,point,width/2)));
+    }
   }
 
   private coordinate(match: RegExpExecArray): void {
@@ -276,13 +283,20 @@ function hasCopper(points: readonly Xy[]): boolean {
 }
 
 /** The copper shapes of a layer. */
-export function parseCopper(text: string): Outline[] {
-  const layer = new Layer();
+function parseLayer(text: string, legacyArc: boolean): Layer {
+  const layer = new Layer(legacyArc);
   for (const [raw] of text.matchAll(COMMANDS)) {
     const command = raw.trim().replace(/^%|%$/g, '').replace(/\*$/, '');
     if (command) layer.statement(command);
   }
-  return layer.shapes.filter(hasCopper).map(points => new Outline(points));
+  return layer;
+}
+export function parseCopper(text: string): Outline[] {
+  return parseLayer(text,false).shapes.filter(hasCopper).map(points => new Outline(points));
+}
+export function parseLegacyGeometry(text: string): {outlines: Outline[]; strokes: {points:Xy[]; width:number}[]} {
+  const layer=parseLayer(text,true);
+  return {outlines:layer.shapes.filter(hasCopper).map(points=>new Outline(points)),strokes:layer.strokes};
 }
 
 /** Plated holes and G85 slots, in mm. Other lines of the file are skipped, as before. */
