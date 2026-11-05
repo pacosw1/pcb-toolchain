@@ -38,10 +38,10 @@ async function main(argv: string[]): Promise<number> {
   if (argv[0] === '--project') { explicit = argv[1]; if (!explicit) throw new Error('missing project'); argv = argv.slice(2); }
   else if (argv[0]?.startsWith('--project=')) { explicit = argv[0].slice(10); argv = argv.slice(1); }
   const operation = argv.shift();
-  if (operation !== 'check' && operation !== 'doctor' && operation !== 'readiness' && operation !== 'blocks') throw new Error('expected check, doctor, readiness, or blocks command');
+  if (operation !== 'check' && operation !== 'doctor' && operation !== 'readiness' && operation !== 'blocks' && operation !== 'outcomes') throw new Error('expected check, doctor, readiness, or blocks command');
   // Backend arguments begin at the first positional, as with argparse.REMAINDER.
   let backend: string[] = [];
-  if (operation === 'readiness' || operation === 'blocks') {
+  if (operation === 'readiness' || operation === 'blocks' || operation === 'outcomes') {
     const withValue = new Set(['--runs-dir', '--timeout', '--heartbeat', '--cycle']);
     let i = 0;
     while (i < argv.length && argv[i]!.startsWith('-')) {
@@ -56,12 +56,14 @@ async function main(argv: string[]): Promise<number> {
     changed: { type: 'boolean' }, fresh: { type: 'boolean' }, baseline: { type: 'string' }, cycle: { type: 'string' },
   } });
   if (positionals.length !== (operation === 'check' ? 1 : 0)) throw new Error(operation === 'check' ? 'check requires one board ID' : 'doctor takes no board ID');
+  if (operation === 'outcomes' && (backend.length < 2 || backend[0] !== 'evaluate')) throw new Error('outcomes requires evaluate and a study ID');
+  if (operation === 'outcomes' && backend.some(arg => /^--(root|output)(=|$)/.test(arg))) throw new Error('outcomes root and output are owned by the run supervisor');
   if (operation === 'readiness' && backend.length < 2) throw new Error('readiness requires a board and candidate');
   if (operation !== 'check' && (values.changed || values.fresh || values.baseline)) throw new Error('check options cannot be used with doctor');
   if (values.detach && values.follow) throw new Error('--detach and --follow cannot be used together');
   if (values.changed && values.fresh) throw new Error('--changed and --fresh cannot be used together');
   const root = projectRoot(explicit), base = values['runs-dir'] ?? process.env.PCB_RUNS_DIR ?? `${root}/.gate/cli`;
-  const folder = await startCheck({ root, base, board: operation === 'readiness' ? backend[0]! : positionals[0] ?? (operation === 'blocks' ? 'BLOCKS' : 'ENVIRONMENT'), operation, arguments: backend, timeout: Number(values.timeout), heartbeat: Number(values.heartbeat),
+  const folder = await startCheck({ root, base, board: operation === 'outcomes' ? backend[1]! : operation === 'readiness' ? backend[0]! : positionals[0] ?? (operation === 'blocks' ? 'BLOCKS' : 'ENVIRONMENT'), operation, arguments: backend, timeout: Number(values.timeout), heartbeat: Number(values.heartbeat),
     changed: values.changed, fresh: values.fresh, baseline: values.baseline, cycle: values.cycle });
   if (values.detach) {
     if (values.json) console.log(jsonDumps(status(folder)));

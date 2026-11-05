@@ -13,6 +13,7 @@ import { jsonDumps, jsonLoads } from './lib/py-compat.mjs';
 import { CheckJournal, type Row } from './lib/pcb-check-journal.ts';
 import { MeasuredSpan, timingJson } from './lib/timing.ts';
 import { sha } from './lib/pcb-workflow.ts';
+import { outcome as outcomeEvidence } from './lib/pcb-outcomes-binding.ts';
 
 interface Manifest extends Row { root: string; board: string; created_at: string; operation: string; gate_config_sha256: string }
 
@@ -28,7 +29,7 @@ function finalize(ownerPath: string): number {
   if (owner !== join(folder, 'worker-owner.json')) throw new Error('invalid owner receipt path');
   verifyLock(folder);
   const manifest = readObject<Manifest>(join(folder, 'run.json'));
-  if (!['check', 'doctor', 'readiness', 'blocks'].includes(manifest.operation)) throw new Error('invalid check manifest');
+  if (!['check', 'doctor', 'readiness', 'blocks', 'outcomes'].includes(manifest.operation)) throw new Error('invalid check manifest');
   let preliminary: Row;
   try { preliminary = readObject(join(folder, 'worker-preliminary.json')); }
   catch { preliminary = { status: 'error', exit_code: 2, cause: 'worker ended without preliminary evidence', nested_cleanup: null }; }
@@ -45,6 +46,11 @@ function finalize(ownerPath: string): number {
       const operation = readObject<Row>(join(folder, 'operation/result.json'));
       for (const key of ['status', 'exit_code', 'cause', 'scope', 'operation', 'tool_exit'])
         if (operation[key] !== preliminary[key]) throw new Error('operation result changed before sealing');
+      if (manifest.operation === 'outcomes') {
+        const actual = outcomeEvidence(folder, manifest.root, String((manifest.arguments as string[])[1]), Number(operation.tool_exit), preliminary.engineering_producer_inputs as Record<string, string>);
+        for (const key of ['status', 'exit_code', 'engineering_status', 'report_sha256']) if (actual[key] !== operation[key] || actual[key] !== preliminary[key]) throw new Error('outcome evidence changed before sealing');
+        if (JSON.stringify(actual.engineering_inputs) !== JSON.stringify(preliminary.engineering_inputs)) throw new Error('outcome inputs changed before sealing');
+      }
       if ((operation.tool_exit === 0) !== (operation.status === 'passed')) throw new Error('operation exit disagrees with result');
     } catch (error) { settled = false; evidenceProblem = error instanceof Error ? error.message : String(error); }
   }
@@ -76,7 +82,7 @@ function finalize(ownerPath: string): number {
   if (!settled) Object.assign(result, { status: 'error', exit_code: 2,
     cause: evidenceProblem ? `gate evidence unconfirmed: ${evidenceProblem}`
       : `${String(preliminary.cause ?? 'worker result unavailable')}; owned process cleanup or result unconfirmed` });
-  Object.assign(result, { scope: manifest.operation === 'doctor' ? 'environment' : manifest.operation === 'readiness' ? 'assembly_readiness' : manifest.operation === 'blocks' ? 'block_evidence' : 'configured_board_gate', schema_version: 1, run_id: folder.split('/').at(-1), board: manifest.board,
+  Object.assign(result, { scope: manifest.operation === 'doctor' ? 'environment' : manifest.operation === 'readiness' ? 'assembly_readiness' : manifest.operation === 'blocks' ? 'block_evidence' : manifest.operation === 'outcomes' ? 'placement_outcomes' : 'configured_board_gate', schema_version: 1, run_id: folder.split('/').at(-1), board: manifest.board,
     operation: manifest.operation, cleanup: { ...(ownerCleanup ?? {}), complete: cleanupConfirmed, nested },
     ...(manifest.operation === 'check' ? { gate_result: join(folder, 'gate/result.json') } : {}), evidence_dir: folder });
   const state = readObject<Row>(join(folder, 'state.json'));

@@ -12,6 +12,7 @@ import { gateOutcome, type Finding } from './lib/pcb-gate-outcome.ts';
 import { CheckJournal, type Row } from './lib/pcb-check-journal.ts';
 import { sha } from './lib/pcb-workflow.ts';
 import { MeasuredSpan } from './lib/timing.ts';
+import { producer, outcome as outcomeEvidence } from './lib/pcb-outcomes-binding.ts';
 
 interface Manifest extends Row { root: string; board: string; command: string[]; timeout_s: number; heartbeat_s: number; created_at: string; operation: string; gate_config_sha256: string }
 type Preliminary = Row & { status: string; exit_code: number; cause: string };
@@ -19,7 +20,7 @@ const nothing = (): Cleanup => ({ complete: true, errors: [], child_reaped: true
 
 async function worker(folderPath: string): Promise<number> {
   const folder = resolve(folderPath), manifest = readObject<Manifest>(join(folder, 'run.json'));
-  if (!['check', 'doctor', 'readiness', 'blocks'].includes(manifest.operation) || !Array.isArray(manifest.command) || manifest.command.length === 0
+  if (!['check', 'doctor', 'readiness', 'blocks', 'outcomes'].includes(manifest.operation) || !Array.isArray(manifest.command) || manifest.command.length === 0
       || !Number.isFinite(manifest.timeout_s) || manifest.timeout_s <= 0 || !Number.isFinite(manifest.heartbeat_s) || manifest.heartbeat_s <= 0)
     throw new Error('invalid check manifest');
   if (process.env.IOT_PCB_WORKER_LOCK !== join(folder, 'worker.lock') || !process.env.IOT_LEAN_STAGE_HANDLE)
@@ -54,6 +55,7 @@ async function worker(folderPath: string): Promise<number> {
     }
   };
   let log = -1;
+  let outcomeBinding: Record<string, string> | undefined;
   try {
     if (existsSync(join(folder, 'cancel.request'))) {
       result = { status: 'cancelled', exit_code: 130, cause: 'cancelled before gate admission' };
@@ -63,6 +65,7 @@ async function worker(folderPath: string): Promise<number> {
         throw new Error('configured gate changed after check admission');
       if (manifest.operation !== 'check') mkdirSync(join(folder, 'operation'), { recursive: true });
       log = openSync(join(folder, manifest.operation !== 'check' ? `operation/${manifest.operation}.log` : 'gate.log'), 'w');
+      if (manifest.operation === 'outcomes') outcomeBinding = producer(manifest.root, process.execPath);
       const env = { ...process.env, IOT_LEAN_DEADLINE: encodeDeadline(deadline) };
       proc = startOwned(manifest.command, { cwd: manifest.root, env, stdin: 'ignore', stdout: log, stderr: log });
       let heartbeat = now();
@@ -86,7 +89,7 @@ async function worker(folderPath: string): Promise<number> {
             drain(); result = { ...gateOutcome(folder, outcome.returncode, gateEnded, findings) };
           } else {
             const code = outcome.returncode;
-            result = { status: code === 0 ? 'passed' : code === 2 ? 'error' : 'failed', exit_code: code === 0 ? 0 : code === 2 ? 2 : 1,
+            result = manifest.operation === 'outcomes' ? outcomeEvidence(folder, manifest.root, String((manifest.arguments as string[])[1]), code, outcomeBinding!) as Preliminary : { status: code === 0 ? 'passed' : code === 2 ? 'error' : 'failed', exit_code: code === 0 ? 0 : code === 2 ? 2 : 1,
               cause: manifest.operation + (code === 0 ? ' completed' : ' failed; inspect original tool evidence'), scope: manifest.operation === 'doctor' ? 'environment' : manifest.operation === 'blocks' ? 'block_evidence' : 'assembly_readiness', operation: manifest.operation, tool_exit: code, artifact_directory: null };
             atomicJson(join(folder, 'operation/result.json'), result);
           }
