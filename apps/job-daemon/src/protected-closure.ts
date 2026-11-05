@@ -5,7 +5,7 @@ import { resolveManifestLinks } from './protected-link-resolution.ts';
 import type { SnapshotNode } from './protected-materialize.ts';
 
 export interface ManifestClosure {
-  rootProject: string; rootManifest: ProjectManifest; nodes: SnapshotNode[]; manifests: string[]; fileBytes: number;
+  rootProject: string; rootManifest: ProjectManifest; nodes: SnapshotNode[]; optionalAbsentPaths: string[]; manifests: string[]; fileBytes: number;
 }
 
 /** Traverse immutable manifest references and produce their mounted file tree, bounded against malicious graphs. */
@@ -16,7 +16,7 @@ export function resolveManifestClosure(rootHash: string, readManifest: (sha: str
       !Number.isSafeInteger(limits.maxNodes) || limits.maxNodes < 1 || limits.maxNodes > 100_000 ||
       !Number.isSafeInteger(limits.maxBytes) || limits.maxBytes < 0 || !Number.isSafeInteger(limits.maxManifestBytes) || limits.maxManifestBytes < 1)
     throw new Error('invalid manifest closure limits');
-  const nodes: SnapshotNode[] = [], manifests: string[] = [], active = new Set<string>(); let fileBytes = 0, manifestBytes = 0, rootProject = '';
+  const nodes: SnapshotNode[] = [], optionalAbsentPaths:string[] = [], manifests: string[] = [], active = new Set<string>(); let fileBytes = 0, manifestBytes = 0, rootProject = '';
   let rootManifest: ProjectManifest | undefined;
   const visit = (hash: string, prefix: string, depth: number): void => {
     if (depth > limits.maxDepth || manifests.length >= limits.maxManifests || active.has(hash)) throw new Error('manifest closure cycle or limit exceeded');
@@ -35,6 +35,10 @@ export function resolveManifestClosure(rootHash: string, readManifest: (sha: str
       }
       nodes.push({ ...entry, path: prefix + entry.path });
     }
+    for (const absent of parsed.manifest.optional_absent_paths) {
+      if (optionalAbsentPaths.length >= limits.maxNodes) throw new Error('manifest closure absent-path limit exceeded');
+      optionalAbsentPaths.push(prefix + absent);
+    }
     for (const mount of parsed.manifest.external_mounts) visit(mount.manifest_sha256, prefix + mount.path + '/', depth + 1);
     if (prefix && nodes.length === before) throw new Error('empty external mount is not representable');
     active.delete(hash);
@@ -43,5 +47,5 @@ export function resolveManifestClosure(rootHash: string, readManifest: (sha: str
   // Recheck combined namespace and links; materialization must also detect destination-specific collisions.
   resolveManifestLinks(nodes);
   if (!rootManifest) throw new Error('root manifest missing');
-  return { rootProject, rootManifest, nodes, manifests, fileBytes };
+  return { rootProject, rootManifest, nodes, optionalAbsentPaths, manifests, fileBytes };
 }

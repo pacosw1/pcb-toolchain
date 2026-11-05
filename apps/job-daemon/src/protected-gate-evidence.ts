@@ -2,6 +2,9 @@
 // establish dependency provenance, inspect tool identities or confirm cleanup; never accept client evidence as trusted.
 import { createHash } from 'node:crypto';
 import { parseEvidenceJson } from './canonical-json.ts';
+import { bindGateInputsToManifest } from './protected-gate-bindings.ts';
+import type { GateInputBinding } from './protected-gate-bindings.ts';
+import type { ManifestClosure } from './protected-closure.ts';
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const SHA = /^[0-9a-f]{64}$/;
 const obj = (v:unknown):v is Record<string,unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -83,4 +86,12 @@ export function validateFreshGateEvidence(input: {result:Uint8Array;findings:Uin
     nativeSha256.drc=digest(input.drc);
   }
   return {resultSha256:digest(input.result),findingsSha256:digest(input.findings),identitySha256:digest(input.identity),nativeSha256};
+}
+
+/** The caller must run the scanner independently inside a trusted snapshot and approve the external inputs. */
+export function validateManifestBoundGateEvidence(input: Parameters<typeof validateFreshGateEvidence>[0],
+  expected: Omit<Parameters<typeof validateFreshGateEvidence>[1],'requiredInputs'> & {closure:ManifestClosure;scannedInputs:GateInputBinding[];approvedExternal:GateInputBinding[]}):
+  ReturnType<typeof validateFreshGateEvidence> {
+  const requiredInputs=bindGateInputsToManifest(expected.closure,expected.scannedInputs,expected.approvedExternal);
+  return validateFreshGateEvidence(input,{...expected,requiredInputs});
 }
