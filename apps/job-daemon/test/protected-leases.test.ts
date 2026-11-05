@@ -28,7 +28,7 @@ class Fixture extends ProtectedLeaseStore {
 }
 test('canonical aliases share a fenced lease and expired pins fail closed', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pcb-authority-')); let now = 100;
-  let store = new Fixture(path.join(dir, 'store'), { maxBlobBytes: 1000, quotaBytes: 10000 }, () => now); store.seed();
+  let store = new Fixture(path.join(dir, 'store'), { maxBlobBytes: 1000, quotaBytes: 10000 }, () => now, () => 0n); store.seed();
   const issued = store.issueFromTrustedService('issue-1', 'admin', { role: 'submit', principal: 'user', project: 'p', board: 'b', operation: 'route',
     job: null, attempt: null, issuedAtMs: 100, expiresAtMs: 20_000, maxUses: 50 });
   if (issued.state !== 'ISSUED') throw new Error('issuance failed');
@@ -42,16 +42,20 @@ test('canonical aliases share a fenced lease and expired pins fail closed', () =
     assert.equal(second.generation, first.generation + 1);
     assert.throws(() => store.pin(issued.token, { ...req, generation: first.generation, token: first.token }), /stale/);
     store.pin(issued.token, { ...req, generation: second.generation, token: second.token });
-    now = 1200; store.close(); store = new Fixture(path.join(dir, 'store'), { maxBlobBytes: 1000, quotaBytes: 10000 }, () => now);
-    assert.equal(store.acquire(issued.token, { ...req, requestId: 'request-4', alias: 'other' }).state, 'BUSY');
-    assert.throws(() => store.renew(issued.token, { ...req, generation: second.generation, token: second.token }, 1000), /stale/);
-    assert.throws(() => store.release(issued.token, { ...req, generation: second.generation, token: second.token }), /cannot be released/);
+    now = 1200; store.close(); store = new Fixture(path.join(dir, 'store'), { maxBlobBytes: 1000, quotaBytes: 10000 }, () => now, () => 0n);
+    assert.throws(() => store.acquire(issued.token, { ...req, requestId: 'request-4', alias: 'other' }), /not authorized/);
+    const fresh = store.issueFromTrustedService('issue-restart', 'admin', { role: 'submit', principal: 'user', project: 'p', board: 'b', operation: 'route',
+      job: null, attempt: null, issuedAtMs: now, expiresAtMs: 20_000, maxUses: 50 });
+    if (fresh.state !== 'ISSUED') throw new Error('issuance failed');
+    assert.equal(store.acquire(fresh.token, { ...req, requestId: 'request-4', alias: 'other' }).state, 'BUSY');
+    assert.throws(() => store.renew(fresh.token, { ...req, generation: second.generation, token: second.token }, 1000), /stale/);
+    assert.throws(() => store.release(fresh.token, { ...req, generation: second.generation, token: second.token }), /cannot be released/);
   } finally { store.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('attempt binding pins the matching lease atomically before dispatch', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pcb-authority-')); let now = 100;
-  const store = new Fixture(path.join(dir, 'store'), { maxBlobBytes: 1000, quotaBytes: 10000 }, () => now); store.seed();
+  const store = new Fixture(path.join(dir, 'store'), { maxBlobBytes: 1000, quotaBytes: 10000 }, () => now, () => 0n); store.seed();
   const issued = store.issueFromTrustedService('issue-2', 'admin', { role: 'submit', principal: 'user', project: 'p', board: 'b', operation: 'route',
     job: null, attempt: null, issuedAtMs: 100, expiresAtMs: 20_000, maxUses: 50 });
   if (issued.state !== 'ISSUED') throw new Error('issuance failed');

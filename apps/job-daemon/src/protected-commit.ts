@@ -10,13 +10,13 @@ import type { CommitRequestV1, CommitResultV1 } from '../../../contracts/pcb-sys
 const SHA = /^[0-9a-f]{64}$/;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 type Target = { revision: number; alias_revision: number; state: string; source_manifest: string; board_path: string };
-type Lease = { generation: number; token_hash: Uint8Array; expires_at: number; pinned: number; source_revision: number; alias_revision: number; source_manifest: string; operation: string };
+type Lease = { generation: number; token_hash: Uint8Array; expires_at: number; pinned: number; source_revision: number; alias_revision: number; source_manifest: string; operation: string; boot_id: string | null };
 type Attempt = { project: string; board: string; generation: number; source_revision: number; alias_revision: number; operation: string; source_manifest: string; policy_digest: string; runtime_digest: string; toolchain_digest: string };
 type Verified = { candidate_manifest: string; evidence_manifest: string; verifier: string; receipt: Uint8Array; state: string; cancelled: number; revoked: number };
 
 export class ProtectedCommitStore extends ProtectedLeaseStore {
-  constructor(root: string, limits: { maxBlobBytes: number; quotaBytes: number }, now: () => number = Date.now) {
-    super(root, limits, now);
+  constructor(root: string, limits: { maxBlobBytes: number; quotaBytes: number }, now: () => number = Date.now, monotonic: () => bigint = process.hrtime.bigint) {
+    super(root, limits, now, monotonic);
     this.db.exec(`CREATE TABLE IF NOT EXISTS protected_target_policy (project TEXT NOT NULL, board TEXT NOT NULL, policy_digest TEXT NOT NULL, runtime_digest TEXT NOT NULL, toolchain_digest TEXT NOT NULL, PRIMARY KEY(project,board)) STRICT;
       CREATE TABLE IF NOT EXISTS protected_policies (digest TEXT PRIMARY KEY, required_checks TEXT NOT NULL, parity_na INTEGER NOT NULL, enabled INTEGER NOT NULL) STRICT;
       CREATE TABLE IF NOT EXISTS protected_approved_digests (kind TEXT NOT NULL, digest TEXT NOT NULL, enabled INTEGER NOT NULL, PRIMARY KEY(kind,digest)) STRICT;
@@ -52,7 +52,7 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
       const verified = this.db.prepare('SELECT * FROM protected_verified_attempts WHERE job=? AND attempt=? AND verification=?').get(request.job_id,request.attempt_id,request.verification_id) as Verified | undefined;
       const targetPolicy = this.db.prepare('SELECT policy_digest,runtime_digest,toolchain_digest FROM protected_target_policy WHERE project=? AND board=?').get(request.project_id,request.board_id) as { policy_digest:string; runtime_digest:string; toolchain_digest:string } | undefined;
       if (!Number.isSafeInteger(now) || now < 1 || !target || target.state !== 'ACTIVE' || !target.board_path || target.revision !== request.source_revision || target.alias_revision !== request.alias_revision ||
-          !lease || lease.pinned !== 1 || lease.expires_at <= now || lease.generation !== request.lease_generation || lease.source_revision !== target.revision || lease.alias_revision !== target.alias_revision ||
+          !lease || lease.boot_id !== this.bootId || lease.pinned !== 1 || lease.expires_at <= now || lease.generation !== request.lease_generation || lease.source_revision !== target.revision || lease.alias_revision !== target.alias_revision ||
           lease.source_manifest !== target.source_manifest || lease.token_hash.byteLength !== 32 || !timingSafeEqual(Buffer.from(lease.token_hash),tokenHash) ||
           !attempt || attempt.project !== request.project_id || attempt.board !== request.board_id || attempt.generation !== lease.generation || attempt.source_revision !== target.revision ||
           attempt.alias_revision !== target.alias_revision || attempt.source_manifest !== target.source_manifest || attempt.operation !== lease.operation || attempt.operation !== binding.operation || !targetPolicy ||

@@ -22,7 +22,7 @@ class Fixture extends ProtectedCommitStore {
 }
 test('fenced verified commit atomically advances the target and replays its durable result',()=>{
   const parent=fs.mkdtempSync(path.join(os.tmpdir(),'pcb-commit-')); const now=1000;
-  const store=new Fixture(path.join(parent,'store'),{maxBlobBytes:10000,quotaBytes:100000},()=>now);
+  const store=new Fixture(path.join(parent,'store'),{maxBlobBytes:10000,quotaBytes:100000},()=>now,()=>0n);
   const put=(b:Buffer):string=>{const h=hash(b);store.put(h,b);return h;};
   const manifest=(content:Buffer):string=>{const h=put(content);return put(encode({schema:'pcb.project-manifest.v1',project_id:'p',entries:[{kind:'file',path:'board',sha256:h,size:content.length,executable:false}],required_paths:['board'],optional_absent_paths:[],external_mounts:[]}));};
   try {

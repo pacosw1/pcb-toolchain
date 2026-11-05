@@ -18,7 +18,7 @@ test('issuance is fail-closed on retry and use is atomic with the protected acti
   const scope: CapabilityScope = { role: 'worker', principal: 'host-1', project: 'p', board: 'b', operation: 'route',
     job: 'job-1', attempt: 'attempt-1', issuedAtMs: 100, expiresAtMs: 1000, maxUses: 1 };
   const target: CapabilityTarget = { role: 'worker', project: 'p', board: 'b', operation: 'route', job: 'job-1', attempt: 'attempt-1' };
-  const store = new Fixture(root, { maxBlobBytes: 100, quotaBytes: 1000 }, () => 200); store.init();
+  const store = new Fixture(root, { maxBlobBytes: 100, quotaBytes: 1000 }, () => 200, () => 0n); store.init();
   try {
     const issued = store.issueFromTrustedService('request-1', 'admin-1', scope); assert.equal(issued.state, 'ISSUED'); if (issued.state !== 'ISSUED') return;
     assert.deepEqual(store.issueFromTrustedService('request-1', 'admin-1', scope), { state: 'UNKNOWN', id: issued.id });
@@ -29,4 +29,25 @@ test('issuance is fail-closed on retry and use is atomic with the protected acti
     assert.equal(store.revokeFromTrustedService(issued.id, 'admin-1'), true); assert.equal(store.revokeFromTrustedService(issued.id, 'admin-1'), true);
     assert.equal(fs.readFileSync(path.join(root, 'authority.sqlite')).includes(issued.token), false);
   } finally { store.close(); fs.rmSync(parent, { recursive: true, force: true }); }
+});
+
+test('rejects wall rollback, displaced boot credentials, and restart before the persisted watermark', () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'pcb-clock-')), root = path.join(parent, 'store');
+  let wall = 1000, mono = 0n;
+  const first = new Fixture(root, { maxBlobBytes: 100, quotaBytes: 1000 }, () => wall, () => mono); first.init();
+  const scope: CapabilityScope = { role: 'worker', principal: 'host', project: 'p', board: 'b', operation: 'route',
+    job: 'job', attempt: 'attempt', issuedAtMs: 1000, expiresAtMs: 10000, maxUses: 10 };
+  const target: CapabilityTarget = { role: 'worker', project: 'p', board: 'b', operation: 'route', job: 'job', attempt: 'attempt' };
+  try {
+    const issued = first.issueFromTrustedService('clock-issue', 'admin', scope); if (issued.state !== 'ISSUED') throw new Error('issuance failed');
+    mono = 2_000_000n; assert.throws(() => first.apply(issued.token, target), /clock/);
+    wall = 1200; mono = 200_000_000n; first.apply(issued.token, target);
+    wall = 1100; assert.throws(() => first.apply(issued.token, target), /clock/);
+    assert.throws(() => new Fixture(root, { maxBlobBytes: 100, quotaBytes: 1000 }, () => wall, () => mono), /regressed/);
+    wall = 1200; const second = new Fixture(root, { maxBlobBytes: 100, quotaBytes: 1000 }, () => wall, () => mono);
+    try {
+      assert.throws(() => first.apply(issued.token, target), /boot identity/);
+      assert.throws(() => second.apply(issued.token, target), /not authorized/);
+    } finally { second.close(); }
+  } finally { first.close(); fs.rmSync(parent, { recursive: true, force: true }); }
 });
