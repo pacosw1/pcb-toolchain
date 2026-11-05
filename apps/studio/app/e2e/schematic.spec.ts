@@ -33,6 +33,13 @@ cp "$2/DEMO.svg" "$2/DEMO-child.svg"
     await expect(win.getByLabel('Schematic zoom')).toHaveText('125%')
     await win.getByRole('button', { name: 'Fit sheet' }).click()
     await expect(win.getByLabel('Schematic zoom')).toHaveText('100%')
+    const viewport = win.getByLabel('Schematic pan and zoom', { exact: true })
+    await viewport.dispatchEvent('wheel', { deltaY: 40, deltaX: 20, deltaMode: 0 })
+    await expect(win.getByLabel('Schematic zoom')).toHaveText('100%')
+    await expect.poll(() => panel.getByRole('img').evaluate(el => { const m = new DOMMatrix(getComputedStyle(el).transform); return [m.a, m.e, m.f] })).toEqual([1, -20, -40])
+    await viewport.dispatchEvent('wheel', { deltaY: -10, deltaX: 0, deltaMode: 0, ctrlKey: true, clientX: 500, clientY: 400 })
+    await expect(win.getByLabel('Schematic zoom')).not.toHaveText('100%')
+    await win.getByRole('button', { name: 'Fit sheet' }).click()
     await win.getByLabel('Sheet', { exact: true }).selectOption('1')
     await expect(panel.getByRole('img')).toHaveAttribute('alt', /Schematic DEMO/)
     await win.screenshot({ path: join(APP, 'test-results/schematic-fixture.png') })
@@ -54,5 +61,21 @@ test('real ENV-SENSE schematic uses native KiCad SVG', async () => {
     await expect(sheet).toBeVisible({ timeout: 30_000 })
     await expect.poll(() => sheet.evaluate(el => (el as HTMLImageElement).naturalWidth)).toBeGreaterThan(0)
     await win.screenshot({ path: join(APP, 'test-results/schematic-native.png') })
+    await win.getByRole('button', { name: 'Zoom in schematic' }).click({ clickCount: 3 })
+    const viewport = win.getByLabel('Schematic pan and zoom', { exact: true })
+    const box = (await viewport.boundingBox())!
+    await win.evaluate(() => {
+      const frames: number[] = []; let last = performance.now()
+      const sample = (now: number): void => { frames.push(now - last); last = now; if (frames.length < 120) requestAnimationFrame(sample) }
+      ;(window as unknown as { schematicFrames: number[] }).schematicFrames = frames
+      requestAnimationFrame(sample)
+    })
+    await win.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.5)
+    await win.mouse.down(); await win.mouse.move(box.x + box.width * 0.65, box.y + box.height * 0.6, { steps: 80 }); await win.mouse.up()
+    await win.waitForTimeout(1000)
+    const frames = await win.evaluate(() => (window as unknown as { schematicFrames: number[] }).schematicFrames)
+    const sorted = frames.slice(3).sort((a, b) => a - b)
+    writeFileSync(join(APP, 'test-results/schematic-performance.json'), JSON.stringify({ samples: sorted.length, medianMs: sorted[Math.floor(sorted.length / 2)], p95Ms: sorted[Math.floor(sorted.length * 0.95)] }, null, 2))
+    await win.screenshot({ path: join(APP, 'test-results/schematic-detail.png') })
   } finally { await app.close() }
 })

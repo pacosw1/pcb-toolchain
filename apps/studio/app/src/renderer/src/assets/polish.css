@@ -535,3 +535,8 @@ button.send {
 .schematic-source { padding: 6px 12px; color: var(--dim); font-size: 11px; overflow-wrap: anywhere; }
 
 .schematic-view select { color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; }
+.schematic-canvas { contain: layout paint; overscroll-behavior: none; }
+.schematic-sheet { backface-visibility: hidden; }
+.schematic-zoom { width: 48px; text-align: center; font-variant-numeric: tabular-nums; color: var(--dim); }
+.schematic-hint { font-size: 11px; color: var(--dim); }
+@media (max-width: 1100px) { .schematic-hint { display: none; } }

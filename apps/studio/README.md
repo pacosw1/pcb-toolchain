@@ -102,8 +102,8 @@ The **Schematic** tab renders the selected board revision's explicitly assigned
 schematic with KiCad's native SVG export. It copies the root, in-project child
 sheets, and project companion into a disposable snapshot, verifies the source
 bytes after export, and serves the generated SVGs as images. Root sheet appears
-first; the sheet selector exposes every exported page. Drag to pan, scroll or use
-+/- to zoom, and use **Fit sheet** (or F with the canvas focused) to reset.
+first; the sheet selector exposes every exported page. Drag or scroll to pan,
+pinch or Ctrl+scroll (or +/-) to zoom around the pointer, and use **Fit sheet** (or F with the canvas focused) to reset.
 **Refresh schematic** rereads the saved files. This is view-only; symbol editing
 and linked schematic/PCB selection are not implemented.
 
@@ -111,3 +111,8 @@ Schematic exports use a private Studio Dark KiCad color configuration, leaving t
 user's KiCad preferences unchanged. The SVG and WebGL canvases have transparent
 backgrounds and inherit the app's dark surface; there is no white paper fill or
 separate 3D backdrop.
+
+Schematic navigation batches transforms once per animation frame without React
+state updates on pointer movement. The SVG stays on a compositor layer during
+gestures and rasterizes at the final scale after settling. The graphite palette
+uses neutral symbol outlines, bright references, and green connections.
