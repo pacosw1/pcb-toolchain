@@ -58,6 +58,19 @@ pub struct WriteBoard {
 pub struct WriteProblem {
     pub units: Vec<WriteUnit>,
     pub board: WriteBoard,
+    #[serde(default)]
+    pub engineering: Option<serde_json::Value>,
+}
+
+impl WriteProblem {
+    /// A reviewed board keeps its source copper and outline. tools/placer/board-io.ts screens the pose before it gets here.
+    pub fn check_reviewed(&self, options: &WriteOptions) -> crate::Result<()> {
+        let reviewed = self.engineering.as_ref().is_some_and(|contract| !contract.is_null());
+        if reviewed && (!options.retain_copper || options.outline_scale != 1.0) {
+            return Err("a reviewed problem keeps its copper and real outline: --retain-copper, no --outline-scale".into());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

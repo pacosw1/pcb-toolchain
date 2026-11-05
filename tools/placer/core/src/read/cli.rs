@@ -108,6 +108,7 @@ pub fn options(f: &Flags) -> crate::Result<Options> {
         region_box: f.rect("--region-box")?,
         tie: f.number("--tie", 0.0)?,
         rigid_nets: comma_list(f.one("--rigid-net")?, "*SW*"),
+        rigid_groups: f.list("--rigid-group").iter().map(|group| group.split(',').map(String::from).collect()).collect(),
         decap_tie: f.number("--decap-tie", 3.0)?,
         keepout_zones: f.list("--keepout-zone"),
         edges: f.list("--edge").iter().map(|e| parse_edge(e)).collect::<crate::Result<_>>()?,
