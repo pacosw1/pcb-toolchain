@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for tools/placer/validate.py (DRC JSON counts; track strip on a board copy).
+"""Tests for tools/placer/validate.py (track strip on a board copy). The DRC counts: core/tests/drc_count.rs.
 
   $PY -m unittest discover -s tools/placer -p 'test_*.py'
 """
@@ -18,38 +18,6 @@ except ImportError:
     pcbnew = None
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-
-def item(net):
-    return {'items': [{'description': 'Pad 1 [%s] of R1 on F.Cu' % net}, {'description': 'Pad 2 [%s] of R2' % net}]}
-
-
-class CountTest(unittest.TestCase):
-    def test_unconnected_total_and_subset(self):
-        drc = {'unconnected_items': [item('/MCU/A'), item('/MCU/A'), item('/MCU/B'), item('C')],
-               'violations': [{'severity': 'error', 'type': 'clearance'}, {'severity': 'warning', 'type': 'silk'}],
-               'schematic_parity': []}
-        c = validate.count_drc(drc, {'/MCU/A', 'C'})
-        self.assertEqual(c['unconnected'], 4)
-        self.assertEqual(c['subset_unconnected'], 3)
-        self.assertEqual(c['errors'], 1)
-        self.assertEqual(c['open_nets'], {'/MCU/A': 2, '/MCU/B': 1, 'C': 1})
-
-    def test_a_list_at_the_kicad_cap_of_499_is_flagged_capped(self):
-        # kicad-cli DRC JSON lists at most 499 unconnected items (MC-MAIN, 2026-09-28): the count is a lower bound
-        drc = {'unconnected_items': [item('A')] * 499, 'violations': [], 'schematic_parity': []}
-        self.assertTrue(validate.count_drc(drc)['capped'])
-        drc['unconnected_items'] = [item('A')] * 498
-        self.assertFalse(validate.count_drc(drc)['capped'])
-
-    def test_the_count_line_says_capped(self):
-        import io, contextlib, tempfile, json as js
-        p = tempfile.mktemp(suffix='.json')
-        js.dump({'unconnected_items': [item('A')] * 499, 'violations': [], 'schematic_parity': []}, open(p, 'w'))
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            validate.main(['count', p])
-        self.assertEqual(out.getvalue().splitlines()[0], 'UNROUTED 499 SUBSET 0 ERRORS 0 CAPPED')
 
 
 @unittest.skipUnless(pcbnew, 'needs pcbnew (KiCad bundled Python)')

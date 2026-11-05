@@ -3,7 +3,10 @@
 // check(name, ok, detail) records one result. A tool failure is a failed check (fail closed).
 
 import {execFileSync} from 'node:child_process';
-import {modernPython} from './env.mjs';
+import {fileURLToPath} from 'node:url';
+import {TS_NODE} from './env.mjs';
+
+const PCBTOOL = fileURLToPath(new URL('../pcbtool.ts', import.meta.url));
 
 // parseGateOutput is pure: no process spawn, so a test can call it directly with fake output.
 // summaryRegex finds the one-line summary. failPrefix (a string or a list of strings) marks a failing detail line.
@@ -50,9 +53,9 @@ export function viaPadsArgs(pcb, allow = []) {
   return ['viapads', pcb, ...(allow.length ? ['--allow', ...allow] : [])];
 }
 
-export function viaPadsCheck({python, tool, pcb, check, allow = []}) {
-  const name = `no via lands inside an SMD pad (pcbtool.py viapads${allow.length ? `, allowed: ${allow.join(' ')}` : ''})`;
-  const {out, exit} = runGate({python, tool, args: viaPadsArgs(pcb, allow)});
+export function viaPadsCheck({pcb, check, allow = []}) {
+  const name = `no via lands inside an SMD pad (pcbtool.ts viapads${allow.length ? `, allowed: ${allow.join(' ')}` : ''})`;
+  const {out, exit} = runGate({python: process.execPath, tool: TS_NODE[0], args: [...TS_NODE.slice(1), PCBTOOL, ...viaPadsArgs(pcb, allow)]});
   const {ok, detail} = parseGateOutput(out, exit, /vias in SMD pads/, 'FAIL via in pad');
   check(name, ok, detail);
 }
@@ -67,21 +70,22 @@ export function kicadHappyArgs(pcb, exemptFile, grounds = []) {
   return [pcb, ...(exemptFile ? ['--exempt-file', exemptFile] : []), ...grounds.flatMap((g) => ['--ground', g])];
 }
 
-export function kicadHappyCheck({python, tool, pcb, check, exemptFile, grounds}) {
+export function kicadHappyCheck({tool, pcb, check, exemptFile, grounds}) {
   const name = `kicad-happy GP-001 RP-001 DC-002 UC-001 (tools/kicad_happy_gate.py${exemptFile ? `, exempt: ${exemptFile}` : ''})`;
-  // kicad-happy needs Python 3.10 or later: a caller that passes plain 'python3' gets modernPython (lib/env.mjs).
-  const {out, exit} = runGate({python: python === 'python3' ? modernPython : python, tool, args: kicadHappyArgs(pcb, exemptFile, grounds)});
+  // Callers name the old Python tool. The check runs the wrapper, which sends kicad-happy to a daemon job.
+  const wrapper = tool.replace(/\.py$/, '.ts');
+  const {out, exit} = runGate({python: process.execPath, tool: TS_NODE[0], args: [...TS_NODE.slice(1), wrapper, ...kicadHappyArgs(pcb, exemptFile, grounds)]});
   const {ok, detail} = parseGateOutput(out, exit, KICAD_HAPPY_SUMMARY, KICAD_HAPPY_FAIL);
   check(name, ok, detail);
 }
 
-// Port labels (tools/port_labels.py): a F.SilkS name at each connector pin and a title.
+// Port labels (tools/port_labels.ts): a F.SilkS name at each connector pin and a title.
 // The tool reads <board>/port-labels.json (exemptions with a reason); a stale exemption fails.
 export const PORT_LABELS_SUMMARY = /^port_labels: \d+ connectors/;
 export const PORT_LABELS_FAIL = ['FAIL', 'STALE exempt'];
 
 export function portLabelsCheck({python, tool, pcb, check}) {
-  const name = 'connector port labels on F.SilkS (tools/port_labels.py, port-labels.json)';
+  const name = 'connector port labels on F.SilkS (tools/port_labels.ts, port-labels.json)';
   const {out, exit} = runGate({python, tool, args: [pcb]});
   const {ok, detail} = parseGateOutput(out, exit, PORT_LABELS_SUMMARY, PORT_LABELS_FAIL);
   check(name, ok, detail);

@@ -1,4 +1,4 @@
-"""Router congestion at the unit pins (congest.py) and the repair rank 'hot' (repair.hot_order)."""
+"""The repair rank 'hot' (repair.hot_order). The congestion map tests moved to tools/placer/core/tests/congest.rs."""
 import json
 import os
 import sys
@@ -6,8 +6,33 @@ import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from placer import congest, cost, repair  # noqa: E402
-from placer.test_wirelen import problem  # noqa: E402
+from placer import repair  # noqa: E402
+
+
+def unit(name, x, y, fixed=False):
+    return {'name': name, 'refs': [name], 'fixed': fixed, 'x': x, 'y': y, 'rects': [[-1.0, -0.5, 1.0, 0.5, 0.5]]}
+
+
+def net(name, pins):
+    """pins: [(unit, local x, local y)] -> one pin box per unit (the box of its points)."""
+    by = {}
+    for u, x, y in pins:
+        by.setdefault(u, []).append((x, y))
+    return {'name': name, 'weight': 1.0, 'track': 0.3,
+            'pins': [[u, min(p[0] for p in q), min(p[1] for p in q), max(p[0] for p in q), max(p[1] for p in q)]
+                     for u, q in sorted(by.items())],
+            'pts': [[list(p) for p in by[u]] for u in sorted(by)]}
+
+
+def problem():
+    units = [unit('U1', 10.0, 10.0, fixed=True), unit('R1', 14.0, 10.0), unit('R2', 10.0, 14.0), unit('TP1', 20.0, 20.0)]
+    nets = [net('A', [(0, 0.5, 0.0), (1, -0.5, 0.0)]),
+            net('B', [(0, -0.5, 0.0), (0, 0.5, 0.3), (2, 0.5, 0.0), (3, 0.0, 0.0)]),
+            net('P', [(1, 0.5, 0.0), (2, -0.5, 0.0)]),  # a plane net
+            {'name': '~comp:x', 'weight': 1.0, 'track': 0.0, 'cohesion': True,
+             'pins': [[1, -1, -0.5, 1, 0.5], [2, -1, -0.5, 1, 0.5]]}]
+    return {'units': units, 'nets': nets, 'plane_nets': ['P'],
+            'board': {'outline': [[0, 0], [40, 0], [40, 40], [0, 40]], 'keepouts': [], 'edge_clearance': 0.5}}
 
 
 def route_map(path, nx=40, ny=40):
@@ -22,36 +47,12 @@ def route_map(path, nx=40, ny=40):
         json.dump(m, fh)
 
 
-class MapTest(unittest.TestCase):
+class HotOrderTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.path = os.path.join(self.tmp.name, 'congestion.json')
-        route_map(self.path)
 
     def tearDown(self):
         self.tmp.cleanup()
-
-    def test_from_route_sums_the_layers_and_checks_the_schema(self):
-        g = congest.from_route(self.path)
-        self.assertEqual((g['nx'], g['ny'], g['cell']), (40, 40, 1.0))
-        self.assertEqual(g['h'][10 * 40 + 10], 2.0)
-        self.assertEqual(sum(g['h']), 18.0)
-        bad = os.path.join(self.tmp.name, 'b.json')
-        with open(bad, 'w') as fh:
-            json.dump({'schema': 'x'}, fh)
-        with self.assertRaises(ValueError):
-            congest.from_route(bad)
-
-    def test_value_counts_signal_pins_in_hot_cells(self):
-        pr = problem()
-        m = congest.Model(pr, congest.from_route(self.path))
-        pose = cost.initial_pose(pr)
-        # U1 (10, 10): signal pins A (10.5, 10), B (9.5, 10) and (10.5, 10.3); the plane net P has no pin on U1
-        self.assertEqual(m.value(0, *pose[0]), 3 * 2.0)
-        # R1 (14, 10): A pin at 13.5 is outside the hot cells; its P pin is a plane net (not counted)
-        self.assertEqual(m.value(1, *pose[1]), 0.0)
-        self.assertEqual(m.value(1, 10.5, 10.0, 0), 2.0)  # A pin (10.0, 10.0) in the hot cells
-        self.assertEqual(m.h_at(-1.0, 5.0), 0.0)  # outside the map
 
     def test_hot_order_puts_the_moves_that_free_history_first(self):
         pr = problem()

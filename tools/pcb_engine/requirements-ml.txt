@@ -1,6 +1,0 @@
-# Optional isolated Python 3.12 environment; never install into KiCad's runtime.
-# This exact combination passed MPS training, FP16/FP32 export and native inference.
-# Core ML Tools warns that its latest officially tested Torch release is 2.5.0.
-torch==2.7.0
-coremltools==8.3.0
-numpy==1.26.4

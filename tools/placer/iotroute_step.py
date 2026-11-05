@@ -1,7 +1,7 @@
-"""Compaction router backend `iotroute` (milestone M4, tools/router/DESIGN.md): one step = tools/router/run.py on the
+"""Compaction router backend `iotroute` (milestone M4, tools/router/DESIGN.md): one step = iotroute run on the
 step board, then the board gate on the routed copy. The step score is measured, never the router claim:
 
-  score = DRC errors + unconnected + parity   (run.py: kicad-cli pcb drc --schematic-parity on the saved board)
+  score = DRC errors + unconnected + parity   (iotroute run: kicad-cli pcb drc --schematic-parity on the saved board)
         + every other gate metric with a target (erc_errors, planes, pairs, viapads, paths_low, kicad_happy, ...)
 
 The gate runs only when the DRC part is 0 (a cheaper check that fails first). A step passes only at score 0 with a
@@ -18,15 +18,15 @@ import sys
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 NO_RESULT = 10 ** 6
 INFO_METRICS = {'erc_warnings', 'drc_warnings'}         # tools/lib/gate-core.mjs METRICS without a target
-DRC_METRICS = {'drc_errors', 'drc_unconnected', 'drc_parity'}  # measured by run.py on the saved board
+DRC_METRICS = {'drc_errors', 'drc_unconnected', 'drc_parity'}  # measured by iotroute run on the saved board
 
 
 THREAD_MARKS = ('std::thread', 'thread::spawn', 'thread::scope', 'rayon', 'available_parallelism', 'crossbeam')
-DRC_TOKENS = 1  # run.py ends with kicad-cli pcb drc on the saved board: one more token for that phase
+DRC_TOKENS = 1  # iotroute run ends with kicad-cli pcb drc on the saved board: one more token for that phase
 
 
 def router_cpu(core=os.path.join(REPO, 'tools', 'router', 'core'), full=None):
-    """CPU tokens for one run.py job from the router's real thread use: 1 + DRC_TOKENS when the core sources
+    """CPU tokens for one iotroute run job from the router's real thread use: 1 + DRC_TOKENS when the core sources
     (Cargo.toml and src/) use no thread or parallel crate (the binary runs on one thread), else `full` (the
     resource default). A core that cannot be read gets `full` (fail safe)."""
     if full is None:
@@ -67,7 +67,7 @@ def gate_part(metrics):
 
 
 def score(rec, metrics):
-    """Step score from the run.py record and the gate metrics (None = gate not run)."""
+    """Step score from the iotroute run record and the gate metrics (None = gate not run)."""
     if rec.get('status') not in ('PASS', 'FAIL'):
         return NO_RESULT
     drc = rec['drc_errors'] + rec['unconnected'] + rec['parity']
@@ -112,7 +112,7 @@ class GateWorkspace:
         return json.load(open(result)).get('metrics')
 
 
-MEASURE_SOURCE = 'tools/router/run.py copper_counts: pcbnew track lengths and via count of the saved board'
+MEASURE_SOURCE = 'iotroute run copper_counts: track lengths and via count of the saved board'
 
 
 def measure_key(key, routed, source='route'):
@@ -128,7 +128,7 @@ def measure_key(key, routed, source='route'):
 
 
 def measure(d):
-    """Measure of the step route d/route-0/score.json: the routed length (mm) and via count that run.py measured
+    """Measure of the step route d/route-0/score.json: the routed length (mm) and via count that iotroute run measured
     on the saved board (never the router core claim). None when the record has no measure."""
     try:
         with open(os.path.join(d, 'route-0', 'score.json')) as fh:
@@ -140,18 +140,24 @@ def measure(d):
     return measure_key((None, None, rec['track_length_mm'], rec['vias']), rec.get('board_file'), 'route')
 
 
+def iotroute_bin():
+    """The binary of these sources (tools/lib/iotroute-bin.ts)."""
+    finder = os.path.join(REPO, 'tools', 'lib', 'iotroute-bin.ts')
+    return subprocess.run(['node', '--no-warnings', '--experimental-strip-types', finder], check=True, capture_output=True, text=True).stdout.strip()
+
+
 def route_step(path, d, board, gate, iters, extra=(), run_stage=None):
-    """Route the step board `path` into d/route-0 with run.py, gate it, write d/route-0/score.json; -> [score]."""
+    """Route the step board `path` into d/route-0 with iotroute run, gate it, write d/route-0/score.json; -> [score]."""
     name = os.path.splitext(os.path.basename(path))[0]
     out_dir = os.path.join(d, 'route-0')
     os.makedirs(out_dir, exist_ok=True)
     out = os.path.join(out_dir, name + '.kicad_pcb')
-    cmd = [sys.executable, os.path.join(REPO, 'tools', 'router', 'run.py'), board, out, '--pcb', path,
-           '--iters', str(iters), '--json'] + list(extra)
+    cmd = [iotroute_bin(), 'run', board, out, '--pcb', path, '--iters', str(iters), '--tools', os.path.join(REPO, 'tools'),
+           '--json'] + list(extra)
     run_stage = run_stage or (lambda c, *a, **k: subprocess.run(c, **k))
     p = run_stage(cmd, 'routing', cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     open(os.path.join(d, 'route-0.log'), 'w').write(p.stdout or '')
-    rec = {'status': 'ERROR', 'cause': 'run.py printed no JSON record'}
+    rec = {'status': 'ERROR', 'cause': 'iotroute run printed no JSON record'}
     for line in reversed((p.stdout or '').splitlines()):
         if line.startswith('{'):
             rec = json.loads(line)

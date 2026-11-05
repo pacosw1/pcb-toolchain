@@ -29,6 +29,11 @@ class PcbCliTests(unittest.TestCase):
             target = self.root / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source / name, target)
+        (self.root / 'tools/port_labels.ts').write_text("console.log('port_labels: 0 checked, 0 failures');\n")
+        (self.root / 'tools/pcbtool.ts').write_text("console.log(process.argv[2] === 'viapads' ? '0 vias in SMD pads' : "
+            "'0 power-path pairs below the design current\\n0 supply nets not covered');\n")
+        (self.root / 'tools/kicad_happy_gate.ts').write_text("import fs from 'node:fs';\nconst a = process.argv;\n"
+            "fs.writeFileSync(a[a.indexOf('--result') + 1], JSON.stringify({schema_version: 1, completed: true, findings: 0, stale_exemptions: 0, exit: 0}));\n")
         board = self.root / 'hardware-design/boards/X'
         (board / 'cad').mkdir(parents=True)
         (board / 'gate.json').write_text(json.dumps(dict(project='cad/X', checks=dict(
@@ -69,14 +74,8 @@ if a[0] in ('sch', 'pcb'):
 script = pathlib.Path(a[0]).name
 if script == 'pcbtool.py' and a[1] == 'place':
     sys.exit(subprocess.run([sys.executable] + a).returncode)
-elif script == 'kicad_happy_gate.py':
-    pathlib.Path(a[a.index('--result') + 1]).write_text(json.dumps(dict(schema_version=1, completed=True, findings=0, stale_exemptions=0, exit=0)))
 elif script == 'port_labels.py':
     print('port_labels: 0 checked, 0 failures')
-elif a[1] == 'viapads':
-    print('0 vias in SMD pads')
-elif a[1] == 'paths':
-    print('0 power-path pairs below the design current\n0 supply nets not covered')
 else:
     sys.exit(2)
 ''')

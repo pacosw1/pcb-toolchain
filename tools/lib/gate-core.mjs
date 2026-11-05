@@ -36,6 +36,13 @@ export const CHECK_METRICS = {
   planes: ['planes_failures'], pairs: ['pairs_failures'], paths: ['paths_low'], viapads: ['viapads'],
   kicad_happy: ['kicad_happy_findings'], port_labels: ['port_label_failures'], rf: ['rf_failures'],
 };
+// Keep provenance collection and receipt verification in agreement about
+// which enabled checks still invoke pcbnew.
+export const BOARD_JSON_CHECKS = ['rf', 'viapads', 'paths'];
+export function gateNeedsPcbnew(checks = {}) {
+  const withoutPcbnew = new Set(['erc', 'drc', 'kicad_happy', 'port_labels', ...BOARD_JSON_CHECKS]);
+  return Object.entries(checks).some(([name, enabled]) => enabled && !withoutPcbnew.has(name));
+}
 export function validateConfig(cfg) {
   const errors = [];
   if(!cfg || typeof cfg!=='object' || Array.isArray(cfg)) return ['gate configuration must be an object'];

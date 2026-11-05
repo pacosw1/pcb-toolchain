@@ -43,6 +43,16 @@ separately. Their deadline checks occur before and after blocking native calls;
 the enclosing stage watchdog supplies preemption. Required fill, native DRC,
 schematic parity and electrical rules are unchanged.
 
+`iotroute owned run --result FILE -- COMMAND...` is the same broker in Rust, for
+callers with no Python (`tools/router/core/src/owned/`, TypeScript client
+`tools/lib/owned-stage.ts`). It keeps the frames, operations, lineage checks,
+bounds and cleanup above, so Python tools run as its children unchanged. Inside
+an owned stage the command is a client of the broker that owns it, either one.
+It does not watch `IOT_LEAN_DEADLINE` while a stage runs: like `run_stage`, the
+caller cancels at its deadline. `tools/lib/file-lock.ts` and `iotroute lock`
+hold the same flock files as the Python tools. Run its checks with
+`cargo test --test owned_run --test owned_lock` in `tools/router/core`.
+
 The focused regression command is:
 
 ```sh

@@ -1,0 +1,19 @@
+[package]
+name = "pcbsearch"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "pcbsearch"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+# arbitrary_precision keeps each number's source text, so 1 and 1.0 stay different and big integers stay exact.
+# preserve_order keeps object keys in insertion order, as Python dicts do. Both are needed to reproduce its hashes.
+serde_json = { version = "1.0.154", features = ["arbitrary_precision", "preserve_order"] }
+sha1 = "0.10"
+sha2 = "0.10"

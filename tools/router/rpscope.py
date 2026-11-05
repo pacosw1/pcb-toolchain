@@ -13,8 +13,7 @@ both by net name (plus the schematic power rails):
    net has `_is_power_or_ground(net_name)` (line 65) is skipped.
 
 This script runs those functions of the pinned clone itself (no copied list). kicad-happy needs Python 3.10+, the KiCad
-Python is 3.9, so model.py runs this file with the gate's interpreter (tools/lib/env.mjs findModernPython: env
-PYTHON_MODERN, else python3.13 ... python3.10).
+Python is 3.9, so iotroute model runs this file with env PYTHON_MODERN, else python3, as the gate does.
 
 Usage: python3.1x rpscope.py BOARD.kicad_pcb < names.json  ->  JSON {"schematic", "power_rails", "skip"} on stdout.
 """

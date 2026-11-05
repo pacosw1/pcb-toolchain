@@ -5,83 +5,14 @@
 //! puts the new items in their place on that save. A save can rewrite .kicad_pro with defaults, so the original goes back
 //! after it. The input copper is not touched. Prints one line: WRITE PASS|FAIL drc <errors by type> unconnected N parity N -> OUT.
 use crate::checkpoint::sha256;
+use iotroute::kicad::item_text::{board_nets, copper_layers, item_uuid, mm_text, quoted, segment_text, via_text, with_items};
+use iotroute::kicad::kicad_cli;
 use serde_json::Value;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const MAC_KICAD_CLI: &str = "/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli";
-
-/// Millimetres as KiCad's text, by way of whole nanometres. The cut toward zero is pcbnew.FromMM's, so a result lands on the
-/// same nanometre as it did through pcbnew.
-fn mm_text(mm: f64) -> String {
-    let nm = (mm * 1e6) as i64;
-    let (sign, abs) = (if nm < 0 { "-" } else { "" }, nm.unsigned_abs());
-    let frac = format!("{:06}", abs % 1_000_000);
-    let frac = frac.trim_end_matches('0');
-    let dot = if frac.is_empty() { "" } else { "." };
-    format!("{sign}{}{dot}{frac}", abs / 1_000_000)
-}
-
-/// A KiCad string: the characters a quoted name can hold.
-fn quoted(s: &str) -> String {
-    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
-}
-
-/// The form that starts at `open`, by depth, skipping quoted text.
-fn form_end(s: &str, open: usize) -> Option<usize> {
-    let (mut depth, mut in_str, mut esc) = (0i32, false, false);
-    for (i, c) in s[open..].char_indices() {
-        if in_str {
-            match c {
-                _ if esc => esc = false,
-                '\\' => esc = true,
-                '"' => in_str = false,
-                _ => {}
-            }
-            continue;
-        }
-        match c {
-            '"' => in_str = true,
-            '(' => depth += 1,
-            ')' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(open + i + 1);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-/// The copper layers of the board's `(layers ...)` table, as quoted names.
-fn copper_layers(board: &str) -> Result<HashSet<String>, String> {
-    let open = board.find("(layers").ok_or("no (layers) table in the board")?;
-    let end = form_end(board, open).ok_or("the (layers) table does not close")?;
-    Ok(board[open..end].split('"').skip(1).step_by(2).filter(|n| n.ends_with(".Cu")).map(|n| format!("\"{n}\"")).collect())
-}
-
-/// Every net the board names, as quoted text: KiCad 10 files name nets on their items and have no net table.
-fn board_nets(board: &str) -> HashSet<String> {
-    let mut nets = HashSet::new();
-    for (i, _) in board.match_indices("(net \"") {
-        let start = i + 5;
-        if let Some(end) = form_end(board, i) {
-            nets.insert(board[start..end - 1].to_string());
-        }
-    }
-    nets
-}
-
-/// A UUID from the seed and the item's number: the same input gives the same ids, so the same file. Another input gives other
-/// ids, so a re-route of a board this tool wrote does not repeat the ones in it.
-fn item_uuid(seed: &str, n: usize) -> String {
-    let h = sha256(format!("{seed}:{n}").as_bytes());
-    format!("{}-{}-4{}-a{}-{}", &h[0..8], &h[8..12], &h[13..16], &h[17..20], &h[20..32])
-}
 
 /// The JSON with each number as a string. serde_json's default float parse can miss the nearest double by a bit, and the cut
 /// to whole nanometres then lands 1 nm away from pcbnew's; `str::parse` is exact. Its float_roundtrip feature would do the same
@@ -159,22 +90,17 @@ fn items_text(result: &Value, board: &str, seed: &str) -> Result<String, String>
         if !layers.contains(&layer) {
             return Err(format!("layer {layer} is not on the board"));
         }
-        out += &format!("\t(segment\n\t\t(start {})\n\t\t(end {})\n\t\t(width {})\n\t\t(layer {layer})\n{}\t\t(uuid \"{}\")\n\t)\n",
-                        point(t, "a")?, point(t, "b")?, mm_text(num(t, "w")?), net_of(t)?, item_uuid(seed, n));
+        let uuid = item_uuid(seed, n);
+        out += &segment_text(&point(t, "a")?, &point(t, "b")?, &mm_text(num(t, "w")?), &layer, &net_of(t)?, &uuid);
         n += 1;
     }
     for v in result["vias"].as_array().ok_or("result has no vias")? {
-        out += &format!("\t(via\n\t\t(at {} {})\n\t\t(size {})\n\t\t(drill {})\n\t\t(layers \"F.Cu\" \"B.Cu\")\n{}\t\t(uuid \"{}\")\n\t)\n",
-                        mm_text(num(v, "x")?), mm_text(num(v, "y")?), mm_text(num(v, "d")?), mm_text(num(v, "drill")?), net_of(v)?, item_uuid(seed, n));
+        let at = format!("{} {}", mm_text(num(v, "x")?), mm_text(num(v, "y")?));
+        let uuid = item_uuid(seed, n);
+        out += &via_text(&at, &mm_text(num(v, "d")?), &mm_text(num(v, "drill")?), &net_of(v)?, &uuid);
         n += 1;
     }
     Ok(out)
-}
-
-/// The board with the items before its closing parenthesis.
-fn with_items(board: &str, items: &str) -> Result<String, String> {
-    let close = board.rfind(')').ok_or("the board file has no closing parenthesis")?;
-    Ok(format!("{}{items}{}", &board[..close], &board[close..]))
 }
 
 /// The project next to the board: the one of its name when there is one, else the last by name.
@@ -190,10 +116,6 @@ fn project_of(pcb: &Path) -> Result<String, String> {
         return Ok(own.to_string());
     }
     names.pop().ok_or_else(|| format!("no .kicad_pro next to {}", pcb.display()))
-}
-
-fn kicad_cli() -> String {
-    std::env::var("KICAD_CLI").unwrap_or_else(|_| if Path::new(MAC_KICAD_CLI).exists() { MAC_KICAD_CLI.to_string() } else { "kicad-cli".to_string() })
 }
 
 /// 0 PASS, 1 FAIL. An Err is no verdict.
@@ -249,6 +171,7 @@ pub(crate) fn cli(args: &[String]) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iotroute::kicad::item_text::form_end;
     use serde_json::json;
 
     const BOARD: &str = "(kicad_pcb\n\t(version 20260206)\n\t(layers\n\t\t(0 \"F.Cu\" signal)\n\t\t(2 \"B.Cu\" signal)\n\t\t(25 \"Edge.Cuts\" user)\n\t)\n\t(footprint \"a\"\n\t\t(pad \"1\" smd rect (net \"/A\"))\n\t\t(pad \"2\" smd rect (net \"N\\\"Q\"))\n\t)\n)\n";

@@ -4,3 +4,4 @@ tools/router/core/target/
 __pycache__/
 *.pyc
 .claude/
+tools/node_modules/

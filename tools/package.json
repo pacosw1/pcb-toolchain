@@ -1,0 +1,15 @@
+{
+  "name": "pcb-tools",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "TypeScript tools under tools/. No runtime dependencies; dev dependencies are for the type check.",
+  "engines": { "node": ">=22.6" },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.8.0"
+  }
+}

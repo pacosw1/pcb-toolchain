@@ -6,6 +6,19 @@ observations can remain valid after an isolated candidate was adopted: the
 original input artifact, sealed run and routed output must match their recorded
 hashes; current canonical CAD is a separate question.
 
+The TypeScript observer is available for the ML routing adapter and can also be
+run directly with Node. In a Linux environment it can revalidate native thermal
+obligations through `route-coverage`; unavailable validation remains unknown,
+never an accepted observation. A release built with `--linux` includes
+`bin/route-coverage-linux-x86_64`. Set `ROUTE_COVERAGE_BIN` to its absolute path
+when explicitly testing the validator. The daemon image and route job do not yet
+install or stage that binary automatically, and receipt-level thermal parity is
+not yet proven. The legacy Python entry point remains while its callers exist.
+
+```sh
+node --experimental-strip-types --no-warnings tools/placement_outcomes.ts evaluate STUDY_ID --manifest STUDY.json --json --output REPORT.json
+```
+
 ```sh
 python3 tools/placement_outcomes.py evaluate STUDY_ID --manifest STUDY.json --json --output REPORT.json
 ```
@@ -72,14 +85,6 @@ Controlled Fastroute trials also need finalized, sealed effective-configuration
 and original executor receipts. A prepared or incomplete receipt remains an
 unknown control; its failed execution stays in the study inventory.
 
-`python3 tools/routing_trial_smoke.py --output NEW --json` exercises one native
-four-pad development pair using the real controlled solver option. Run it in the
-admitted container described in [PCB-CLI.md](PCB-CLI.md), with the original host
-inspect receipt and actual solver available. It retains input legality checks,
-two owned route/gate results, per-arm cycles and the evaluated study. No substitute
-proxy score is invented when the production scorer is unavailable. A successful
-smoke proves this execution/evidence path; one synthetic pair leaves comparative
-readiness, ranking quality and weight adoption unproved.
 
 Existing `placer.placement_audit.archive` evidence is also readable through
 `kind: "placement_archive"`, with the archive folder and expected `run.json` hash.

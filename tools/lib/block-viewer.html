@@ -1,0 +1,86 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>iot-lab blocks</title>
+<script type="module" src="https://cdn.jsdelivr.net/npm/@google/model-viewer@3.5.0/dist/model-viewer.min.js"></script>
+<style>
+:root{--bg:#f6f7f9;--panel:#fff;--ink:#1d2330;--mute:#667085;--line:#e3e6eb;--acc:#2f6fed;--ok:#1a7f37;--bad:#c62828;--warn:#b26a00;--code:#f0f2f5}
+@media (prefers-color-scheme:dark){:root{--bg:#12151b;--panel:#1a1e26;--ink:#e6e9ef;--mute:#98a2b3;--line:#2a303b;--acc:#6c9cff;--ok:#4ac26b;--bad:#ff6b6b;--warn:#f0a93b;--code:#232833}}
+*{box-sizing:border-box}body{margin:0;font:14px/1.45 -apple-system,system-ui,sans-serif;background:var(--bg);color:var(--ink);display:flex;height:100vh}
+nav{width:250px;border-right:1px solid var(--line);background:var(--panel);overflow:auto;padding:12px 0;flex:none}
+nav h3{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--mute);margin:14px 16px 6px}
+nav a{display:flex;justify-content:space-between;padding:6px 16px;color:var(--ink);text-decoration:none;cursor:pointer}
+nav a:hover{background:var(--code)}nav a.on{background:var(--acc);color:#fff}
+main{flex:1;overflow:auto;padding:20px 28px}h1{margin:0 0 4px;font-size:22px}.sub{color:var(--mute);margin-bottom:14px}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:10px 0 16px;flex-wrap:wrap}
+.tabs button{border:0;background:none;color:var(--mute);padding:8px 12px;cursor:pointer;font:inherit;border-bottom:2px solid transparent}
+.tabs button.on{color:var(--ink);border-color:var(--acc)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin-bottom:14px}
+table{border-collapse:collapse;width:100%}td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--mute);font-weight:600}
+.pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;background:var(--code)}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}code{background:var(--code);padding:1px 5px;border-radius:4px}
+.view{background:#fff;border:1px solid var(--line);border-radius:8px;overflow:hidden;position:relative;height:72vh;cursor:grab}
+.view img{position:absolute;transform-origin:0 0;max-width:none;user-select:none;-webkit-user-drag:none}
+.imgs img{max-width:100%;border:1px solid var(--line);border-radius:8px;background:#fff}
+model-viewer{width:100%;height:72vh;background:var(--panel);border:1px solid var(--line);border-radius:8px}
+.btn{border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:6px 12px;border-radius:6px;cursor:pointer;font:inherit}
+.muted{color:var(--mute)}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+</style></head><body>
+<nav id="nav"></nav><main id="main"><p class="muted">Select a block or a board.</p></main>
+<script>
+const $=s=>document.querySelector(s), esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const LV={0:'draft',1:'gates pass',2:'bring-up proven'};let cur=null,tab='overview';
+async function j(u){const r=await fetch(u);return r.json()}
+async function nav(){const it=await j('/api/items');let h='';for(const k of ['block','board']){h+=`<h3>${k}s</h3>`;
+ const l=it.filter(x=>x.kind==k);if(!l.length)h+='<a class="muted">none yet</a>';
+ for(const x of l)h+=`<a data-k="${x.kind}" data-i="${esc(x.id)}">${esc(x.id)}${x.kind=='block'?`<span class="pill">L${x.level??'?'}</span>`:''}</a>`}
+ $('#nav').innerHTML=h;document.querySelectorAll('nav a[data-k]').forEach(a=>a.onclick=()=>open_(a.dataset.k,a.dataset.i));
+ const m=location.hash.slice(1).split('/');if(m.length>=2)open_(m[0],decodeURIComponent(m[1]),m[2])}
+async function open_(k,i,t){document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on',a.dataset.k==k&&a.dataset.i==i));
+ $('#main').innerHTML='<p class="muted">Parsing sources…</p>';cur=await j(`/api/item/${k}/${encodeURIComponent(i)}`);tab=t||'overview';draw()}
+function draw(){const d=cur,T=['overview','schematic','pcb','3d','bom','datasheets','rules','checks'].filter(t=>!(t=='rules'&&d.kind!='block'));
+ location.hash=`${d.kind}/${encodeURIComponent(d.id)}/${tab}`;
+ let h=`<h1>${esc(d.id)}</h1><div class="sub">${d.kind=='block'?esc(d.description)+' · level '+(d.facts.level??'?')+' ('+(LV[d.facts.level]||'?')+')':'board'}</div>
+ <div class="tabs">${T.map(t=>`<button class="${t==tab?'on':''}" data-t="${t}">${t}</button>`).join('')}</div><div id="tab"></div>`;
+ $('#main').innerHTML=h;document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{tab=b.dataset.t;draw()});T_[tab](d)}
+const R=(v)=>`/render/${cur.kind}/${encodeURIComponent(cur.id)}/${v}`;
+const T_={
+overview(d){const n=d.bom.reduce((a,r)=>a+r.qty,0),e=d.part_errors.length+(d.fact_errors||[]).length;
+ $('#tab').innerHTML=`<div class="card"><table>
+ <tr><th>Parts</th><td>${n} in ${d.bom.length} lines</td></tr>
+ <tr><th>Parts cost</th><td>${d.cost?d.kind=='block'?`<b>$${d.cost.parts_usd.toFixed(2)}</b> parts per copy (JLC unit price at the smallest quantity, dated snapshots). ${d.cost.extended.length} Extended parts: ${d.cost.extended.map(esc).join(', ')}. The Extended-part fee is paid once per unique part per order, so it is counted on the board, not here.`:`<b>$${d.cost.first_board_usd.toFixed(2)}</b> for one board = parts $${d.cost.parts_usd.toFixed(2)} (JLC unit price at the smallest quantity, dated snapshots) + Extended-part fee $${d.cost.extended_fee_usd.toFixed(2)} (${d.cost.extended.length} unique x $3.07, once per order: ${d.cost.extended.map(esc).join(', ')}). Each extra board adds only $${d.cost.parts_usd.toFixed(2)}.${d.cost.unknown_class.length?` <span class="bad">JLC class unknown (fee not counted): ${d.cost.unknown_class.map(esc).join(', ')}</span>`:''}${d.cost.missing.length?` · <span class="bad">no price: ${d.cost.missing.map(esc).join(', ')}</span>`:''}`:''}</td></tr>
+ <tr><th>Part checks</th><td class="${e?'bad':'ok'}">${e?e+' errors':'all parts have a C-number and a checked datasheet'}</td></tr>
+ ${d.kind=='block'?`<tr><th>Used in</th><td>${d.used_in.map(esc).join(', ')||'<span class="muted">no board yet</span>'}</td></tr><tr><th>Keywords</th><td>${esc(d.keywords)}</td></tr>`:`<tr><th>Blocks placed</th><td>${d.blocks.map(esc).join(', ')||'<span class="muted">none</span>'}</td></tr>`}
+ <tr><th>Source files</th><td>${d.files.map(f=>`<a href="/file/${d.kind}/${encodeURIComponent(d.id)}/${encodeURIComponent(f)}">${esc(f)}</a>`).join(' · ')}</td></tr></table></div>
+ ${(d.facts&&d.facts.ports||[]).length?`<div class="card"><b>Ports</b><table><tr><th>Port</th><th>Net</th><th>Where</th><th>Dir</th><th>Limits</th></tr>${d.facts.ports.map(p=>`<tr><td>${esc(p.name||'')}</td><td>${esc(p.net)}</td><td>${esc(p.at)}</td><td>${esc(p.dir||'')}</td><td>${esc(p.limits||p.note||'')}</td></tr>`).join('')}</table></div>`:''}
+ <div class="card"><b>Parts and roles</b><table><tr><th>Refs</th><th>Value</th><th>What it does</th></tr>${d.bom.map(r=>`<tr><td>${r.refs.map(esc).join(', ')}</td><td>${esc(r.value)}</td><td>${esc(r.description||'')}</td></tr>`).join('')}</table></div>
+ ${e?`<div class="card"><b class="bad">Errors</b><ul>${[...d.part_errors,...(d.fact_errors||[])].map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`:''}
+ <div class="imgs"><img src="${R('iso')}" alt="3D render (made live by kicad-cli)"></div>`},
+schematic(d){pz(R('sch'))},
+pcb(d){$('#tab').innerHTML=`<div class="row"><button class="btn" data-v="front">Front layers</button><button class="btn" data-v="back">Back layers</button><button class="btn" data-v="top">Top render</button><button class="btn" data-v="bottom">Bottom render</button>
+ <label><input type="checkbox" id="ov-blocks"> <span style="color:#00B8D4">&#9632;</span> Blocks</label> <label><input type="checkbox" id="ov-components"> <span style="color:#D500F9">&#9632;</span> Components</label></div><div id="pv"></div>`;
+ const ovs=['blocks','components'];ovs.forEach(o=>{const c=$('#ov-'+o);let on='1';try{on=localStorage.getItem('ov-'+o)??'1'}catch(e){}c.checked=on=='1';
+  c.onchange=()=>{try{localStorage.setItem('ov-'+o,c.checked?'1':'0')}catch(e){}document.querySelectorAll('img[data-ov="'+o+'"]').forEach(i=>i.style.display=c.checked?'':'none')}});
+ const go=v=>{$('#pv').innerHTML='';pz(R(v),'#pv',v=='front'?ovs.map(o=>({o,src:R(o),on:$('#ov-'+o).checked})):[])};document.querySelectorAll('[data-v]').forEach(b=>b.onclick=()=>go(b.dataset.v));go('front')},
+'3d'(d){$('#tab').innerHTML=`<p class="muted">GLB made live by kicad-cli (first load takes a few seconds).</p><model-viewer src="${R('glb')}" camera-controls auto-rotate shadow-intensity="0.6" exposure="1.1"></model-viewer>`},
+bom(d){$('#tab').innerHTML=`<div class="card"><table><tr><th>Refs</th><th>Qty</th><th>Value</th><th>MPN</th><th>C-number</th><th>JLC snapshot</th><th>Footprint</th><th>Datasheet</th></tr>
+ ${d.bom.map(r=>`<tr><td>${r.refs.map(esc).join(', ')}</td><td>${r.qty}</td><td>${esc(r.value)}</td><td>${esc(r.mpn)}</td>
+ <td>${r.lcsc?`<a href="https://jlcpcb.com/partdetail/${esc(r.lcsc)}" target="_blank">${esc(r.lcsc)}</a>`:'<span class="bad">none</span>'}</td>
+ <td>${r.evidence?`<a href="/evidence/${esc(r.evidence.file)}" target="_blank">${esc(r.evidence.date)}</a> · stock ${r.evidence.stock??'?'} ${r.evidence.verified?'<span class="ok">verified</span>':''}`:'<span class="muted">no snapshot</span>'}</td>
+ <td><code>${esc(r.footprint)}</code></td><td>${r.datasheet?`<a href="/datasheet/${encodeURIComponent(r.datasheet)}" target="_blank">${esc(r.datasheet)}</a>`:'<span class="bad">none</span>'}</td></tr>`).join('')}</table>
+ <p class="muted">Stock is the value in the dated snapshot, not live stock. Recheck at each gate and before an order.</p></div>`},
+datasheets(d){$('#tab').innerHTML=`<div class="card"><table><tr><th>File</th><th>sha256 vs .source.json</th></tr>${d.datasheets.map(x=>`<tr><td><a href="/datasheet/${encodeURIComponent(x.name)}" target="_blank">${esc(x.name)}</a></td><td class="${x.ok?'ok':'bad'}">${x.present?(x.ok?'match':'MISMATCH'):'missing'}</td></tr>`).join('')}</table></div>`},
+rules(d){const r=d.facts.layout_rules||[];$('#tab').innerHTML=`<div class="card"><table><tr><th>#</th><th>Layout rule</th><th>Source</th></tr>${r.map((x,i)=>`<tr><td>${i+1}</td><td>${esc(x.rule)}</td><td>${esc(x.source)}</td></tr>`).join('')||'<tr><td colspan=3 class="muted">no rules yet</td></tr>'}</table></div>
+ ${d.facts.level_note?`<div class="card"><b>Validation</b><p>${esc(d.facts.level_note)}</p></div>`:''}`},
+async checks(d){$('#tab').innerHTML=`<div class="card"><div class="row"><button class="btn" id="run">Run DRC with schematic parity</button><span class="muted">Runs kicad-cli on the source now; cached by source hash.</span></div><div id="dr"></div></div>`;
+ $('#run').onclick=async()=>{$('#dr').innerHTML='<p class="muted">Running…</p>';const r=await j(`/api/drc/${d.kind}/${encodeURIComponent(d.id)}`);
+ $('#dr').innerHTML=r.error?`<p class="bad">${esc(r.error)}</p>`:`<table><tr><th>Errors</th><td class="${r.errors?'bad':'ok'}">${r.errors}</td></tr><tr><th>Unconnected</th><td class="${r.unconnected?'bad':'ok'}">${r.unconnected}</td></tr><tr><th>Parity</th><td class="${r.parity?'bad':'ok'}">${r.parity}</td></tr><tr><th>Warnings</th><td>${r.warnings}</td></tr><tr><th>Error types</th><td>${Object.entries(r.by_type).map(([k,v])=>esc(k)+' '+v).join(', ')||'-'}</td></tr></table>`}}};
+function pz(src,sel='#tab',ovs=[]){const box=document.createElement('div');box.className='view';box.innerHTML='<p class="muted" style="padding:12px">Rendering from source…</p>';$(sel).appendChild(box);
+ const im=new Image();im.onload=()=>{box.innerHTML='';const st=document.createElement('div');st.style.cssText='position:absolute;left:0;top:0;transform-origin:0 0';im.style.position='relative';st.appendChild(im);box.appendChild(st);
+ ovs.forEach(v=>{const o=new Image();o.dataset.ov=v.o;o.style.cssText='position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none';if(!v.on)o.style.display='none';o.src=v.src;st.appendChild(o)});
+ let s=Math.min(box.clientWidth/im.naturalWidth,box.clientHeight/im.naturalHeight),x=0,y=0;
+ const ap=()=>st.style.transform=`translate(${x}px,${y}px) scale(${s})`;ap();
+ box.onwheel=e=>{e.preventDefault();const r=box.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top,f=e.deltaY<0?1.15:1/1.15;x=mx-(mx-x)*f;y=my-(my-y)*f;s*=f;ap()};
+ let dr=null;box.onmousedown=e=>{dr=[e.clientX-x,e.clientY-y];box.style.cursor='grabbing'};onmouseup=()=>{dr=null;box.style.cursor='grab'};
+ box.onmousemove=e=>{if(dr){x=e.clientX-dr[0];y=e.clientY-dr[1];ap()}}};
+ im.onerror=async()=>{const r=await fetch(src);box.innerHTML=`<p class="bad" style="padding:12px">${esc((await r.json()).error)}</p>`};im.src=src}
+nav();let rev=null;setInterval(async()=>{try{const r=(await j('/api/rev')).rev;if(rev&&r!=rev)await nav();rev=r}catch(e){}},3000);
+</script></body></html>

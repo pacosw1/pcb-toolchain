@@ -1,4 +1,4 @@
-//! Unit checks of the isolation pair rules (model `iso`, tools/router/pairrules.py; cargo test --release). Each test
+//! Unit checks of the isolation pair rules (model `iso`, src/model/pairs.rs; cargo test --release). Each test
 //! fails on the code before the isolation work (no pair table: the per-net clearance alone decides).
 use super::*;
 
@@ -9,7 +9,7 @@ fn n(name: &str) -> Net {
 
 /// 30 x 20 mm, F.Cu / In1.Cu (plane) / B.Cu; nets ISO (0), OTH (1), OTH2 (2). Groups: 0 no net, 1 ISO track outside
 /// the region, 2 ISO track inside, 3 OTH pad (inside the region), 4 OTH pad outside, 5 OTH2 track, 6 ISO via, 7 NPTH
-/// hole H1. Table (as pairrules.py resolves POE-ETHERNET): ISO-OTH 3.0, ISO-OTH inside the region (both items) 1.25,
+/// hole H1. Table (as src/model/pairs.rs resolves POE-ETHERNET): ISO-OTH 3.0, ISO-OTH inside the region (both items) 1.25,
 /// ISO-OTH2 3.0, ISO to the H1 hole 9.65 (RELAY-4 'Mains to screw hole').
 fn board(with_iso: bool) -> Board {
     let nets = vec![n("ISO"), n("OTH"), n("OTH2")];

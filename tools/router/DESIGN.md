@@ -25,7 +25,7 @@ The router result is a proposal. A board is done only when KiCad DRC with `--sch
 | `.kicad_pcb` (pcbnew) | outline, pads (shape, layers, net), footprints, existing copper (locked), zones |
 | `.kicad_pro` net classes + board setup | widths, clearances, via 0.6 / 0.3 minimum |
 | `.kicad_dru` (parser of route_rule_coverage) | per-net / per-class clearance, width, pair width / gap / skew / uncoupled / via count, length, via count, layer disallow |
-| `.kicad_dru` pair rules (pairrules.py, 2026-11-01) | clearance / creepage / hole clearance that read both items (class pairs, net pairs, footprint members, `A.X != B.X`, `intersectsCourtyard` / `intersectsArea`): clearance groups + pair table, KiCad order (last match wins, both orders); creepage as a straight clearance (safe form) |
+| `.kicad_dru` pair rules (core/src/model/pairs.rs, 2026-11-01) | clearance / creepage / hole clearance that read both items (class pairs, net pairs, footprint members, `A.X != B.X`, `intersectsCourtyard` / `intersectsArea`): clearance groups + pair table, KiCad order (last match wins, both orders); creepage as a straight clearance (safe form) |
 | `diff-pairs.json` | pair membership, impedance target, reference |
 | `rp001-fast-nets.json` + gate `route_features.rule_compiler.extra.deny_layers` | layer policy (fast + power off In2) and return-via obligation |
 | `reference-planes.json` | plane layers (no tracks), plane nets (pad vias instead of routes) |
@@ -36,14 +36,15 @@ The router result is a proposal. A board is done only when KiCad DRC with `--sch
 
 ```
 tools/router/
-  model.py      board + rules -> RouteModel (JSON): grid, layers, obstacles per layer, nets, pins, per-net rule set
+  core/src/model   `iotroute model`: board + rules -> RouteModel (JSON): layers, obstacles, nets, pins, per-net rule set
+  core/src/kicad   KiCad 11 IPC API client (protos pinned in core/proto) and the geometry pcbnew gave: boards are read through it
   rules.py      .kicad_dru -> per-net constraints (reuses route_rule_coverage._forms / _condition, three-valued)
   core/         Rust crate (our code): multi-layer grid A*, negotiated congestion (PathFinder), via cost,
                 per-net clearance halos, layer masks, length / via-count limits, pair centerline mode
   plan.py       stage order: pairs + crystals -> plane vias (+ return vias) -> power (width per current path,
                 neck at fine pitch) -> fast nets (outer layers) -> slow nets (In2 allowed) -> rip-up / reroute
   iotroute write  RouteModel result -> tracks / vias into a copy of the board as text, then kicad-cli refills and saves; locked input copper untouched (core/src/write.rs, replaced write.py 2026-11-04)
-  run.py        CLI: python3 tools/router/run.py BOARD OUT.kicad_pcb [--stage ...]; then DRC + gate
+  core/src/run     CLI: iotroute run BOARD OUT.kicad_pcb; model, core, write, then DRC
 ```
 
 Grid: 0.05 mm on 6 layers for a 72 x 80 mm board = 2.3 M cells per layer; the Rust core keeps an occupancy and
@@ -60,7 +61,7 @@ Return vias: after a fast-net via is placed, the core searches a GND via site wi
 
 | Milestone | Done when |
 | --- | --- |
-| M0 model | `model.py` builds the RouteModel for NET-CORE; every DRU rule maps to a constraint or an explicit "not routed by this stage" |
+| M0 model | `iotroute model` (first `model.py`) builds the RouteModel for NET-CORE; every DRU rule maps to a constraint or an explicit "not routed by this stage" |
 | M1 NET-CORE | the router routes NET-CORE from the placement (pairs included); gate all 0 |
 | M2 comparison | re-route H7-CORE or ESP32-CORE from placement; gate all 0; compare vias / length / time with the hand + Fastroute result |
 | M3 default | `tools/pcb route --router iotlab`; Fastroute kept as a cross-check only |
@@ -103,17 +104,19 @@ The Codex hand finish of NET-CORE reached DRC 0 but left gate findings. The rout
 | 2026-11-02 | reference rule in the gate's scope (branch claude/router-ref-gate-scope): model.py `ref_soft` = not si_planes.is_fast (fast patterns now loaded with si_planes.load_fast); core: a soft net is priced off its reference (x (1 + model `ref_cost`, default 3.0), string pulling keeps it on), not blocked; hard (fast) nets blocked as PR #94; run.py `ref_gate_rounds` runs the gate's own si_planes on the written board, raises the price of each soft net with a D-124c FAIL line (x10, twice), then sets it hard, and routes again (at most 4 rounds) | **STUCK on POE-ETHERNET.** INPUT-4D2A PASS 0/0/0, planes 0, gate PASS (empty exemption file; committed: 10 stale); hand NET-CORE and FW-IO PASS, gate PASS. POE: FAIL 0/1/0 after 4 rounds. /ETH_CT's only gate-accepted exit (B.Cu east from J1.3, 1.24 mm run, detour 0 as on the hand board) is held by VDD_3V3 (J1.11, B.Cu y 112.65); its 11.7 mm F.Cu alternative is rejected by si_planes; set hard, J1.3 has no exit. The J1 standoff of PR #98 again. reports/2026-11-02-ref-gate-scope.md |
 | 2026-11-02 | thermal via arrays (branch claude/router-thermal-vias): optional board file `thermal-vias.json` (per pad: vias along the long / short side, pitches, drill, diameter, datasheet source). model.py `thermal_via_spec` refuses a missing source, a pad that is not an SMD plane-net pad on gate `viapads.allow`, a via under the board / net class / DRU via minimums, a pitch under hole-to-hole, a via disc not inside the pad copper (pcbnew HitTest); writes pad `thermal_vias` (exact centres). Core `fixed_vip_vias`: each spec via at its exact place as fixed copper of the pad's net before routing (a GND return site; the pour model and every rule see it as any fixed via); an illegal one is a note, never moved; the plane fan-out then adds no via. No file = model byte-identical. 82 cargo tests (2 new), 48 py tests (3 new) | FW-IO U4.9 (LM5164 Fig. 28 p.25: 2 x 2 in the EP, 1.27 / 1.10 mm, 0.3 / 0.6 mm) lock-from: PASS 0 / 0 / 0, 4 vias in the EP (= spec; without the file 1), 150 vias (147), tracks byte-identical to the run without the file, converged it 8; gate --fresh PASS. Two runs byte-identical. NET-CORE and INPUT-4D2A lock-from: route.json byte-identical to the main binary on the same model, PASS 0 / 0 / 0, gate PASS (INPUT: with an empty exemption file, the 10 committed RP-001 exemptions are stale as on main). reports/2026-11-02-thermal-vias.md |
 | 2026-11-04 | seeds and progress (branch iotroute-seed-checkpoint, core `seed.rs`, `checkpoint.rs`): `--seed`, `--checkpoint`, `--stall-passes`, section 5e. No new dependency. 92 cargo tests (10 new) | Flags off: route.json and written board byte-identical to main on CHECKIN-FRONT, ENV-SENSE, PWR-24V-5V, AC-24V. ENV-SENSE: no seed 0 / 1 / 0, 5 of 8 seeds 0 / 0 / 0. PWR-24V-5V: seeds change nothing. Checkpoint 0.04-0.17 % of the run |
+| 2026-11-04 | model off Python (CIP #1331): `iotroute model` replaces model.py and pairrules.py. The board comes through the IPC API of the pinned nightly (kicad-cli-nightly api-server, commit in core/proto/PIN); the zone fill comes from a copy KiCad 10 refilled, read the same way, so fill, DRC and parity stay on KiCad 10. Equal to model.py on ENV-SENSE and PWR-24V-5V: every key and value, list order kept. kicad-happy stays a Python boundary (rpscope.py). |
+| 2026-11-04 | run off Python: `iotroute run` replaces run.py (core/src/run), with its arguments, lines, exit codes and record. Locked inputs are a text edit saved by `kicad-cli pcb upgrade`; pads and poses come through the API; copper counts from the saved text. On ENV-SENSE and PWR-24V-5V, plain, --lock-from and --reuse: byte-equal boards to run.py. The planes screen is still si_planes.py. |
 
 Next (was): negotiated congestion (PathFinder: shared cells with present + history cost, rip-up of all nets per pass) to
 finish the 18 nets; F.Cu spoke channels at GND pads (starved_thermal); read hole clearance from the model rules.
 
-## 5c. Partial re-route (`run.py --reuse`, core `reuse.rs`, user-approved 2026-11-01)
+## 5c. Partial re-route (`iotroute run --reuse`, core `reuse.rs`, user-approved 2026-11-01)
 
 Why: every placer loop routed the whole board (NET-CORE 1-3 min, cores 25-30 min), but a repair proposal moves only
 1-2 parts. A person fixes a board after a part move by re-routing the nets the move broke, not the board.
 
-Input. `run.py BOARD OUT --pcb MOVED --reuse PREV [--reuse-fallback full|none]`. PREV is an earlier run.py result
-(PREV.iotroute/route.json, bound to PREV by the board_sha256 of PREV.iotroute/result.json). run.py writes the seed
+Input. `iotroute run BOARD OUT --pcb MOVED --reuse PREV [--reuse-fallback full|none]`. PREV is an earlier iotroute run result
+(PREV.iotroute/route.json, bound to PREV by the board_sha256 of PREV.iotroute/result.json). iotroute run writes the seed
 (work/seed.json, schema iot-lab.route-seed.v0): the tracks and vias of that route (with their roles), `moved_refs` (the
 footprints whose position (> 100 nm), orientation or side differ between PREV and the route input; another part set
 stops), `failed_nets` (route.json failed + the nets named in the error violations and unconnected items of
@@ -145,7 +148,7 @@ cascade, third-net repair, RP-001 and pour end steps, return pruning) is the ful
 Length recovery: only the nets routed in this run and the nets with routed copper within `--reuse-near` (default
 1.0 mm, a scope choice, not a rule) of a change box (moved pads, seed copper not loaded, new copper of a routed net).
 
-Fallback (run.py). `--reuse-fallback full` (CLI default): a reuse result that is not PASS (KiCad DRC on the written
+Fallback (iotroute run). `--reuse-fallback full` (CLI default): a reuse result that is not PASS (KiCad DRC on the written
 board) is compared with the full route of the same input; the result with fewer DRC errors + unconnected + parity
 (then fewer core failed nets) is kept, a tie keeps the full route; result.json `reuse.attempts` and `reuse.chosen`
 name both. `none` (the placer repair): the reuse result is the result; the repair rejects a proposal that is not
@@ -178,7 +181,7 @@ Per cell: `vias` (routed vias), `vhist` (mean via history). Per non-plane net wi
 pad bbox, routed track length and vias, the A* objective (`cost`, v9 net_cost), the Euclidean MST of the pad centres and,
 with `--cong-free 1`, `free_cost` / `free_len` of the net routed alone (other routed copper off, history off, the v9
 recover search) and `detour` = cost - free_cost; `failed` names a net in OUT.json failed. The alone route is one strict
-A* per net: NET-CORE 4 s median under load, so run.py turns it on.
+A* per net: NET-CORE 4 s median under load, so iotroute run turns it on.
 
 Cell size: 1 mm by data (reports/2026-11-01-congestion.md): the open signal holds at 1 and 2 mm (7 / 8 opens in the top
 9 % of the pads) and is lost at 4 mm (0 / 8 over the 90th percentile): a 4 mm cell averages the hot area of a 0.5 mm
@@ -222,32 +225,32 @@ there), one file after each pass, one at the end, each written to FILE.tmp and r
 `search_limited`: nets stopped by the pop limit, so not proved blocked), `vias`, `wire_mm`, `best`, `passes_since_best`,
 `worst_nets` (8: open first, then most conflict samples, with why), `hot` (8 cells of 1 mm, the DESIGN 5d size: conflict
 pairs of this pass first, then history, with centre in mm and hottest layer). A file that stays `running` is a run that was
-killed. `bind`: source (run.py sources_sha256, by `--source-sha`), binary, model file, rules and geometry hashes (the model
+killed. `bind`: source (iotroute run sources_sha256, by `--source-sha`), binary, model file, rules and geometry hashes (the model
 split by key, the `pcb` path in neither) and the flags. SHA-256 is a local function, no crate. The file only reads what the
 pass knows, so it cannot change the route (a test and the board runs compare the bytes).
 
 Stop. With --checkpoint, SIGTERM or SIGINT ends the negotiation at the end of the pass, as `--max-time` does: at a pass end
 every net has its copper, so the best pass is restored, the strict end steps make it legal and OUT.json is written; the length
 recovery is skipped. A second signal kills. Both bound the negotiation only: the pass under way and the end steps run on, and
-on a big board these take minutes, longer than the 2 s `pcb` gives a job between SIGTERM and SIGKILL. run.py does not forward a
+on a big board these take minutes, longer than the 2 s `pcb` gives a job between SIGTERM and SIGKILL. iotroute run does not forward a
 signal, so it reaches the core only when sent to the core itself or its process group. A run that is killed keeps its last
 checkpoint and no route, so for a bounded job set `--max-time` under the job timeout.
 
 `--stall-passes N` (default off): stop after N passes in a row that do not beat the best pass, and end as `--max-time` does. Best
 = fewest nets in conflict, then fewest audit pairs: the score that picks the pass a run ends from, so a pass that does not beat
-it would not change what an early stop keeps. The reason is in OUT.json `notes`, the ROUTE line (`stop stall-passes`), run.py
+it would not change what an early stop keeps. The reason is in OUT.json `notes`, the ROUTE line (`stop stall-passes`), iotroute run
 `stages.core.claim.stop` and the checkpoint. N under 4 can end a run before a pour fault gets its hard door (DOOR_STALL 3).
 No default: the score cannot see the present cost rise, and a run can look stuck and still converge (AC-24V seed 5 below).
 
 Replay: same binary, model, flags and seed give the same bytes, on Mac and Linux. Not equal: a run ended by `--max-time` or a
-signal (the pass it ends at depends on the clock), and the checkpoint itself (`elapsed_s`). run.py's reference rounds route
+signal (the pass it ends at depends on the clock), and the checkpoint itself (`elapsed_s`). iotroute run's reference rounds route
 again into the same checkpoint file, so it shows the last round. Seeds change the order of the lists in OUT.json, so
 different bytes do not prove different copper: compare `tracks` as a set.
 
-One unexplained case outside the core. In one daemon job, PWR-24V-5V's `run.py --lock-from` wrote its locked input with two
+One unexplained case outside the core. In one daemon job, PWR-24V-5V's `iotroute run --lock-from` wrote its locked input with two
 footprint keepout zones swapped (H3 / H5), for every run of that job. The model then differs only in that list order (so
 `geometry_sha256` differs too) and route.json stays the same, but the writer seeds its KIIDs from that file, so the board has the
-same copper with other UUIDs and track order. It did not come back: main's and this run.py gave the main board in 8 of 8 runs in
+same copper with other UUIDs and track order. It did not come back: main's and this iotroute run gave the main board in 8 of 8 runs in
 one folder of the route image (other OUT names included), and in serial, parallel and 1, 2 and 3 CPU runs. make_locked_input is not
 touched here. If two boards of one input differ, compare route.json first.
 
@@ -256,7 +259,7 @@ and fan-out vias, the hard doors, hist / vhist / lhist (grid-sized, a binary fil
 snapshot, the dead proofs and the stall counters; the RNG needs nothing, it is used only at the start. Those are locals of a
 500-line loop, so it first needs that loop made a struct, and a test that a resumed run equals an unbroken one byte for byte.
 
-Data (2026-11-04, routed on the Hetzner box; each board 8 seeds; DRC with parity through run.py on the job daemon). All seeds
+Data (2026-11-04, routed on the Hetzner box; each board 8 seeds; DRC with parity through iotroute run on the job daemon). All seeds
 converged in the core on all boards. Overlap = shared 0.1 mm copper points of two seeds over the smaller route, mean of 28 pairs.
 
 | Board (footprints) | No seed: DRC errors / open / parity, vias, wire mm, passes | 8 seeds: DRC 0 / 0 / 0 | vias | wire mm | passes | Overlap, order only -> order + field |

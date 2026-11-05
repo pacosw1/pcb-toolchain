@@ -1,7 +1,7 @@
 //! Partial re-route (`--reuse SEED.json`, tools/router/DESIGN.md 5c): start from the copper of an earlier route and
 //! route again only what the moved parts affect.
 //!
-//! SEED.json (schema iot-lab.route-seed.v0, written by run.py --reuse) holds the tracks and vias of the earlier route
+//! SEED.json (schema iot-lab.route-seed.v0, written by iotroute run --reuse) holds the tracks and vias of the earlier route
 //! result (route.json of the earlier board), the references of the parts that moved since (`moved_refs`) and the nets
 //! that the earlier route left open (`failed_nets`). The selection (load_seed):
 //! - a signal / power net is ripped up (no seed copper loaded, routed in iteration 1) when it has a pad on a moved part,

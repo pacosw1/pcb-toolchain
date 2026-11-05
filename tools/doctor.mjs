@@ -9,7 +9,7 @@
 import {execFileSync} from 'node:child_process';
 import {existsSync, mkdirSync, copyFileSync} from 'node:fs';
 import {join} from 'node:path';
-import {root, kicadCli, kicadPython, kicadShared, kicadConfig, KICAD_VERSION, pinnedRepos, modernPython} from './lib/env.mjs';
+import {root, kicadCli, kicadPython, kicadShared, kicadConfig, KICAD_VERSION, pinnedRepos, modernPython, happyRunsLocally, happyRuntime} from './lib/env.mjs';
 import {hookCheck} from './lib/doctor-checks.mjs';
 import {homedir} from 'node:os';
 
@@ -60,8 +60,13 @@ for (const r of pinnedRepos) {
   add(r.needed === 'gate' ? 'REQUIRED' : 'OPTIONAL', `${r.name} (${r.needed})`, ok, detail);
 }
 
-const modern = run(modernPython, ['-c', 'import sys; assert sys.version_info >= (3, 10); print(sys.version.split()[0])']);
-add('REQUIRED', 'Python 3.10 or later (kicad-happy gate)', Boolean(modern), modern ? `${modern} as ${modernPython}` : 'not found: brew install python@3.12, or set PYTHON_MODERN');
+// kicad-happy's Python runs in a daemon job, so this host needs none. A local run is the exception: REMOTE_NO_DAEMON=1, or not macOS.
+if (happyRunsLocally()) {
+  const modern = run(modernPython(), ['-c', 'import sys; assert sys.version_info >= (3, 10); print(sys.version.split()[0])']);
+  add('OPTIONAL', 'Python 3.10 or later (local kicad-happy run)', Boolean(modern), modern ? `${modern} as ${modernPython()}` : 'not found: set PYTHON_MODERN');
+} else {
+  add('OPTIONAL', 'kicad-happy runtime (daemon job)', true, happyRuntime());
+}
 
 // Gate ratchet hook (tools/hooks/pre-commit)
 let hooks = run('git', ['-C', root, 'config', '--get', 'core.hooksPath']);

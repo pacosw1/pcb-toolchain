@@ -26,7 +26,7 @@ from . import cost
 GLOBAL = {'bins': 64, 'target': 0.9, 'iters': 1000, 'stop_overflow': 0.1, 'mu': 1.05, 'gamma': None,
           'max_move': 0.5, 'infl': 1.0, 'seed': 1,
           'init': 'centre', 'route_rounds': 2, 'route_overflow': 0.2, 'max_infl': 2.0,
-          'rotate': 0, 'rot_every': 25, 'backend': 'numpy', 'device': None}
+          'rotate': 0, 'rot_every': 25}
 
 
 def _box(u, r):
@@ -270,15 +270,6 @@ class Model:
         return x, y
 
 
-def make_model(pr, params=None, pose=None):
-    """Model on the backend of params['backend']: 'numpy' (default) or 'torch' (TorchModel)."""
-    p = dict(GLOBAL, **(params or {}))
-    if p['backend'] == 'torch':
-        from . import gplace_torch
-        return gplace_torch.TorchModel(pr, p, pose)
-    return Model(pr, p, pose)
-
-
 def spectral_pose(pr, pose=None, all_orientations=False, span=0.5):
     """NS-Place seed: the 2nd and 3rd eigenvectors of the clique-model Laplacian (weight w / (k - 1) per pin
     pair; a weak all-to-all term joins separate parts), scaled to `span` of the outline box about its centre.
@@ -322,7 +313,7 @@ def spectral_pose(pr, pose=None, all_orientations=False, span=0.5):
 
 
 def place(pr, params=None, pose=None, log=None):
-    m = make_model(pr, params, pose)
+    m = Model(pr, params, pose)
     p = m.p
     mv = m.mov
     n = m.n

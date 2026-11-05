@@ -3,21 +3,27 @@ import {join,resolve,relative,basename} from 'node:path';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {gateInputs,fingerprint,gateTools} from './gate-inputs.mjs';
-import {passes,expectedMetrics,validateConfig} from './gate-core.mjs';
+import {passes,expectedMetrics,validateConfig,gateNeedsPcbnew} from './gate-core.mjs';
 import {readReport} from './gate-runtime.mjs';
 import {readPopulation,parseNative,children,single,properties} from './kicad-population.mjs';
 import {parseCsv} from './csv.mjs';
 import {gateConfigPath,releaseRecipe,requireRelease} from './board-release.mjs';
+import {happyRuntime} from './env.mjs';
 
 export {gateConfigPath,releaseRecipe,requireRelease};
 
 export const sha256 = value => createHash('sha256').update(value).digest('hex');
 const need=(condition,message)=>{if(!condition)throw new Error(message);};
 const json=path=>JSON.parse(readFileSync(path,'utf8'));
-export function probeReleaseTools(paths) {
+export function probeReleaseTools(paths, checks) {
  const probe=(cmd,args)=>execFileSync(cmd,args,{encoding:'utf8',stdio:['ignore','pipe','pipe'],timeout:15000}).trim();
- const tools={kicad:probe(paths.kicadCli,['--version']),pcbnew:probe(paths.kicadPython,['-c','import pcbnew; print(pcbnew.Version())']),python:probe(paths.modernPython,['--version']),node:process.version};
- for(const repo of paths.pinnedRepos.filter(r=>r.needed==='gate'))tools[repo.name]=probe('git',['-C',repo.dir,'rev-parse','HEAD']);
+ if (!checks || typeof checks !== 'object' || Array.isArray(checks)) throw new Error('gate checks required to probe release tools');
+ const tools={kicad:probe(paths.kicadCli,['--version']),node:process.version};
+ if(gateNeedsPcbnew(checks))tools.pcbnew=probe(paths.kicadPython,['-c','import pcbnew; print(pcbnew.Version())']);
+ if(checks.kicad_happy) {
+  tools.kicad_happy_runtime=happyRuntime();
+  for(const repo of paths.pinnedRepos.filter(r=>r.needed==='gate'))tools[repo.name]=probe('git',['-C',repo.dir,'rev-parse','HEAD']);
+ }
  return tools;
 }
 
@@ -100,7 +106,7 @@ export function verifyBoardChecks(board,stage,root) {
 export function releaseInputs(root,board) {
  const recipe=requireRelease(root,board);
  const files=['tools/fab-workflow.sh','tools/release-recipe.mjs','tools/check-release-gate.mjs','tools/check-release-fab.mjs','tools/lib/release-evidence.mjs',
-  'tools/lib/kicad-population.mjs','tools/lib/csv.mjs','tools/gerber_netcheck.py','tools/check-fab-zip.mjs','tools/pack-fab.py','tools/publish-release.mjs','tools/pcb_timing.py',recipe.maker,...(recipe.inputs??[])];
+  'tools/lib/kicad-population.mjs','tools/lib/csv.mjs','tools/gerber_netcheck.py','tools/check-fab-zip.mjs','tools/pack-fab.py','tools/publish-release.mjs','tools/pcb_timing.ts',recipe.maker,...(recipe.inputs??[])];
  // The board gate configuration holds the recipe, so it is a release input too.
  const closure=[...gateTools(root,files.map(p=>join(root,p))),gateConfigPath(root,board)];
  return Object.fromEntries(closure.sort().map(p=>[relative(root,p),existsSync(p)?sha256(readFileSync(p)):null]));

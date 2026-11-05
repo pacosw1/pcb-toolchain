@@ -66,11 +66,11 @@ test('a changed path gates only the boards whose recorded inputs or own files in
  put('hardware-design/boards/BASE-PWR/gate-waivers.json','[]');
  const inputs=new Map([
   ['BASE-PWR',new Set(['tools/gate.mjs','tools/si_planes.py','hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb'])],
-  ['BASE-PWR-B',new Set(['tools/gate.mjs','tools/si_planes.py','tools/rf_lines.py'])]]);
+  ['BASE-PWR-B',new Set(['tools/gate.mjs','tools/si_planes.py','tools/rf_lines.ts'])]]);
  assert.deepEqual(affectedGates(root,['tools/route_live.py'],new Map(),inputs),[]);
  assert.deepEqual(affectedGates(root,['tools/test_pcbtool.py','tools/lib/staged-gates.mjs'],new Map(),inputs),[]);
  assert.deepEqual(affectedGates(root,['tools/si_planes.py'],new Map(),inputs),['BASE-PWR','BASE-PWR-B']);
- assert.deepEqual(affectedGates(root,['tools/rf_lines.py'],new Map(),inputs),['BASE-PWR-B']);
+ assert.deepEqual(affectedGates(root,['tools/rf_lines.ts'],new Map(),inputs),['BASE-PWR-B']);
  assert.deepEqual(affectedGates(root,['hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb'],new Map(),inputs),['BASE-PWR']);
  assert.deepEqual(affectedGates(root,['hardware-design/boards/BASE-PWR/cad/B/B.kicad_pcb'],new Map(),inputs),['BASE-PWR-B']);
  assert.deepEqual(affectedGates(root,['hardware-design/boards/BASE-PWR/gate-waivers.json'],new Map(),inputs),['BASE-PWR']);

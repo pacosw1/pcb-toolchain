@@ -40,7 +40,7 @@ export function checkInputs(root, files, stage, script, repositories = []) {
   const allTools = new Set(gateTools(root));
   const selected = new Set(gateTools(root, script ? [join(root,'tools',script)] : []));
   return files.filter(file => {
-    if (allTools.has(file) && file.endsWith('.py') && !selected.has(file)) return false;
+    if (allTools.has(file) && /\.(py|ts)$/.test(file) && !selected.has(file)) return false;
     if (stage !== 'kicad_happy' && repositories.some(repo => file === repo || file.startsWith(repo + '/'))) return false;
     if (stage === 'erc' && (/\.kicad_(pcb|mod|dru)$/.test(file) || basename(file) === 'fp-lib-table')) return false;
     return true;

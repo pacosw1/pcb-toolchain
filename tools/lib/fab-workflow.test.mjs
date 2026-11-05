@@ -17,11 +17,13 @@ function fixture(board,variables={}) {
  const config=['gate.json','gate.pending.json'].map(n=>`hardware-design/boards/${board}/${n}`).find(n=>existsSync(new URL('../../'+n,import.meta.url)));
  mkdirSync(join(root,'hardware-design/boards',board),{recursive:true});copyFileSync(new URL('../../'+config,import.meta.url),join(root,config));
  copyFileSync(new URL('../publish-release.mjs',import.meta.url),join(root,'tools/publish-release.mjs'));copyFileSync(new URL('./py-compat.mjs',import.meta.url),join(root,'tools/lib/py-compat.mjs'));
- copyFileSync(new URL('../pcb_timing.py',import.meta.url),join(root,'tools/pcb_timing.py'));
+ mkdirSync(join(root,'tools/lib'),{recursive:true});
+ for(const file of ['pcb_timing.ts','lib/cli.ts','lib/timing.ts','lib/py-numbers.ts','lib/py-compat.mjs']) copyFileSync(new URL('../'+file,import.meta.url),join(root,'tools',file));
  writeFileSync(join(root,'tools/check-env-schematic.py'),'import os,sys; sys.exit(int(os.environ.get("SCHEMATIC_STATUS", "0")))\n');
  writeFileSync(join(root,'bin/node'),`#!/bin/sh
 case "$1" in
  --input-type=module) echo '{}';;
+ --experimental-strip-types) exec ${JSON.stringify(process.execPath)} "$@";;
  -e) echo fixture.kicad_pcb;;
  tools/gate.mjs) [ "$3" != --evidence-dir ] || mkdir "$4"; exit "\${GATE_STATUS:-0}";;
  tools/check-fab-zip.mjs) echo '{"status":"passed"}';;

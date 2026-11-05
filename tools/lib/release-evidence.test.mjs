@@ -4,7 +4,8 @@ import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,symlinkSync} fro
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {spawnSync} from 'node:child_process';
-import {verifyReleaseGate,verifyFab,sha256,fileHashes,releaseRecipe,verifyBoardChecks,readGateObservation,releaseInputs} from './release-evidence.mjs';
+import {verifyReleaseGate,verifyFab,sha256,fileHashes,releaseRecipe,verifyBoardChecks,readGateObservation,releaseInputs,probeReleaseTools} from './release-evidence.mjs';
+import {happyRuntime} from './env.mjs';
 import {fileURLToPath} from 'node:url';
 import {inspectStock,inspectOrientation,releaseReadiness,inspectCompleteAssembly} from './release-readiness.mjs';
 import {gateInputs,fingerprint} from './gate-inputs.mjs';
@@ -54,6 +55,16 @@ function fixture(t,board='BASE-PWR') {
  return {root,board,prefix,project,gate,fab,candidate,put,result,events,finish};
 }
 
+test('release provenance names the kicad-happy runtime, not a Python on this host',t=>{
+ const tool=join(mkdtempSync(join(tmpdir(),'release-tools-')),'tool');t.after(()=>rmSync(join(tool,'..'),{recursive:true,force:true}));
+ writeFileSync(tool,'#!/bin/sh\necho 10.0.6\n',{mode:0o755});
+ const paths={kicadCli:tool,kicadPython:tool,pinnedRepos:[]};
+ const tools=probeReleaseTools(paths,{erc:true,drc:true,paths:'paths.json',viapads:{},port_labels:true,kicad_happy:{}});
+ assert.deepEqual(tools,{kicad:'10.0.6',kicad_happy_runtime:happyRuntime(),node:process.version});
+ assert.equal(probeReleaseTools(paths,{erc:true,planes:'planes.json'}).pcbnew,'10.0.6');
+ assert.throws(()=>probeReleaseTools(paths),/gate checks required/);
+});
+
 test('both shipping boards have native/fabrication release recipes and exact population coverage',t=>{
  for(const board of ['BASE-PWR','ENV-SENSE']) {
   const f=fixture(t,board),result=verifyFab(f.root,board,f.fab);
@@ -63,11 +74,11 @@ test('both shipping boards have native/fabrication release recipes and exact pop
  }
 });
 test('measured export helper is sealed as an exact release input',t=>{
- const f=fixture(t);f.put('tools/pcb_timing.py','original timing helper');
+ const f=fixture(t);f.put('tools/pcb_timing.ts','original timing helper');
  const first=releaseInputs(f.root,f.board);
- assert.equal(first['tools/pcb_timing.py'],sha256('original timing helper'));
- f.put('tools/pcb_timing.py','changed timing helper');
- assert.notEqual(releaseInputs(f.root,f.board)['tools/pcb_timing.py'],first['tools/pcb_timing.py']);
+ assert.equal(first['tools/pcb_timing.ts'],sha256('original timing helper'));
+ f.put('tools/pcb_timing.ts','changed timing helper');
+ assert.notEqual(releaseInputs(f.root,f.board)['tools/pcb_timing.ts'],first['tools/pcb_timing.ts']);
 });
 for(const [name,replacement] of [['X coordinate','R1,11mm,-20mm,Top,270'],['Y sign','R1,10mm,20mm,Top,270'],['side','R1,10mm,-20mm,Bottom,270'],['rotation','R1,10mm,-20mm,Top,90'],['angle range','R1,10mm,-20mm,Top,-90'],['duplicate','R1,10mm,-20mm,Top,270\nR1,10mm,-20mm,Top,270']])test('staged CPL rejects '+name,t=>{
  const f=fixture(t);f.put('candidate/fab/BASE-PWR-CPL-JLC.csv','Designator,Mid X,Mid Y,Layer,Rotation\n'+replacement+'\n');

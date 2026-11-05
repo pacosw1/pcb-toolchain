@@ -206,7 +206,7 @@ class RouteOutcome(list):
 
 class Measured(list):
     """Router counts plus the copper measured on the routed board of the step (a driver with a measure, for
-    example iotroute: run.py counts the tracks and vias of the saved board with pcbnew).
+    example iotroute: iotroute run counts the tracks and vias of the saved board with pcbnew).
     measure = {length_mm, vias, routed, source}."""
     def __init__(self, counts, measure=None):
         super().__init__(counts)
