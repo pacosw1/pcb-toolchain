@@ -82,6 +82,25 @@ fn same_identity(a: &fs::Metadata, b: &fs::Metadata) -> bool {
         && a.ctime_nsec() == b.ctime_nsec()
 }
 
+fn read_bounded(file: &File, length: u64) -> io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    let mut offset = 0;
+    let mut chunk = [0; 64 * 1024];
+    while offset < length {
+        let remaining = (length - offset).min(chunk.len() as u64) as usize;
+        let count = file.read_at(&mut chunk[..remaining], offset)?;
+        if count == 0 {
+            return Err(invalid("file shortened during snapshot"));
+        }
+        bytes.extend_from_slice(&chunk[..count]);
+        offset += count as u64;
+    }
+    if file.read_at(&mut chunk[..1], offset)? != 0 {
+        return Err(invalid("file grew during snapshot"));
+    }
+    Ok(bytes)
+}
+
 #[cfg(target_os = "linux")]
 unsafe fn list_xattrs(fd: libc::c_int, buffer: *mut libc::c_char, length: usize) -> libc::ssize_t {
     unsafe { libc::flistxattr(fd, buffer, length) }
@@ -276,21 +295,7 @@ impl LockedTarget {
     fn snapshot(&self) -> io::Result<(Vec<u8>, fs::Metadata, BTreeMap<String, Vec<u8>>)> {
         let before = self.target_file.metadata()?;
         let attributes = extended_attributes(&self.target_file)?;
-        let mut bytes = Vec::new();
-        let mut offset = 0;
-        let mut chunk = [0; 64 * 1024];
-        while offset < before.len() {
-            let length = (before.len() - offset).min(chunk.len() as u64) as usize;
-            let count = self.target_file.read_at(&mut chunk[..length], offset)?;
-            if count == 0 {
-                return Err(invalid("target shortened during snapshot"));
-            }
-            bytes.extend_from_slice(&chunk[..count]);
-            offset += count as u64;
-        }
-        if self.target_file.read_at(&mut chunk[..1], offset)? != 0 {
-            return Err(invalid("target grew during snapshot"));
-        }
+        let bytes = read_bounded(&self.target_file, before.len())?;
         let after = self.target_file.metadata()?;
         if extended_attributes(&self.target_file)? != attributes {
             return Err(invalid("extended attributes changed during snapshot"));
@@ -733,14 +738,16 @@ fn commit_experiment(
         return Err(invalid("staged candidate metadata changed"));
     }
     require_plain_commit_metadata(&stage)?;
-    let mut stage_check = open_stage_without_atime(&stage_path)?;
+    let stage_check = open_stage_without_atime(&stage_path)?;
     if !same_identity(&staged, &stage_check.metadata()?) {
         return Err(invalid("staged candidate changed"));
     }
-    let mut staged_bytes = Vec::new();
-    stage_check.read_to_end(&mut staged_bytes)?;
+    let staged_bytes = read_bounded(&stage_check, staged.len())?;
+    let stage_after = stage_check.metadata()?;
     if sha256(&staged_bytes) != intent.candidate_sha256
-        || !same_identity(&staged, &stage_check.metadata()?)
+        || !same_identity(&staged, &stage_after)
+        || stage_after.atime() != intent.atime_seconds
+        || stage_after.atime_nsec() != intent.atime_nanos
     {
         return Err(invalid("staged candidate changed before rename"));
     }
@@ -763,6 +770,26 @@ fn commit_experiment(
         {
             return Err(invalid("target changed after rename"));
         }
+        let installed = open_target(&locked.target)?;
+        let before = installed.metadata()?;
+        let installed_bytes = read_bounded(&installed, before.len())?;
+        let after = installed.metadata()?;
+        if !same_identity(&before, &after)
+            || !same_identity(&after, &fs::symlink_metadata(&locked.target)?)
+            || after.dev() != staged.dev()
+            || after.ino() != staged.ino()
+            || after.mode() != intent.mode
+            || after.uid() != intent.uid
+            || after.gid() != intent.gid
+            || after.atime() != intent.atime_seconds
+            || after.atime_nsec() != intent.atime_nanos
+            || after.mtime() != intent.mtime_seconds
+            || after.mtime_nsec() != intent.mtime_nanos
+            || sha256(&installed_bytes) != intent.candidate_sha256
+        {
+            return Err(invalid("installed target changed after rename"));
+        }
+        require_plain_commit_metadata(&installed)?;
         let receipt = CommitReceipt {
             schema: "iot-lab.adopt.receipt.v1".into(),
             commit_sha256: sha256(&commit_bytes),
@@ -1266,6 +1293,47 @@ mod tests {
             CommitObservation::CandidateUnconfirmed
         );
         assert_eq!(fs::read(target).unwrap(), b"candidate");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn changed_installed_target_does_not_receive_a_receipt() {
+        let temp = Scratch::new();
+        let locks = temp.dir("locks");
+        let journals = temp.dir("journals");
+        let target = temp.0.join("board");
+        fs::write(&target, b"original").unwrap();
+        let lock = LockedTarget::acquire(&locks, &target).unwrap();
+        let dir = prepare(
+            &journals,
+            "run",
+            &lock,
+            &sha256(b"original"),
+            &sha256(b"candidate"),
+        )
+        .unwrap();
+        stage_candidate(&dir, &lock, b"candidate").unwrap();
+        let error = commit_experiment(
+            &dir,
+            &lock,
+            || Ok(()),
+            |point| {
+                if point == "after-rename" {
+                    fs::write(&target, b"tampered!")?;
+                }
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("recovery inspection required"));
+        assert!(!dir.join("receipt.ok").exists());
+        drop(lock);
+        let recovery = LockedTarget::acquire(&locks, &target).unwrap();
+        assert_eq!(
+            observe_commit(&dir, &recovery).unwrap(),
+            CommitObservation::Conflict
+        );
+        assert_eq!(fs::read(target).unwrap(), b"tampered!");
     }
 
     #[cfg(target_os = "linux")]
