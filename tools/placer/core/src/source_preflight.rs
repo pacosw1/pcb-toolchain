@@ -267,6 +267,7 @@ pub fn preflight(problem: &Value) -> crate::Result<()> {
     let path = owned(&root, contract["manifest"].as_str().ok_or("reviewed manifest missing")?)?;
     let manifest: Value = serde_json::from_slice(&std::fs::read(path)?)?;
     check_rating_ranges(&manifest)?;
+    check_rule_sources(contract, &manifest)?;
     // Recheck after evaluation to catch changed source files.
     check_inputs(contract)?;
     Ok(())
@@ -285,7 +286,7 @@ mod preflight_tests {
         std::fs::write(&native, b"board").unwrap();
         let digest = |v: &[u8]| format!("{:x}", Sha256::digest(v));
         let mut manifest = json!({"schema":"iot-lab.part-use.v1","board":"A","revision":"1","project":"board.kicad_pro",
-            "parts":[{"reference":"U1","ratings":[{"id":"r","quantity":"voltage",
+            "parts":[{"reference":"U1","layout_constraints":[],"ratings":[{"id":"r","quantity":"voltage",
                 "limit":{"min":0,"max":10,"unit":"V","source":{}},
                 "required":{"min":0,"max":5,"unit":"V","source":{}},"conditions":[]}]}]});
         let facts = digest(&serde_json::to_vec(&manifest).unwrap());
@@ -304,6 +305,69 @@ mod preflight_tests {
         assert!(preflight(&problem).is_ok());
         std::fs::write(native, b"changed").unwrap();
         assert!(preflight(&problem).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+/// Check that the normalized rule list exactly matches unprofiled manifest rules and
+/// that each rule cites an unchanged owned document. PDF page existence, profiles,
+/// native geometry and bound blocks still need independent verification.
+fn check_rule_sources(contract: &Value, manifest: &Value) -> crate::Result<()> {
+    let root = Path::new(contract["root"].as_str().ok_or("reviewed root missing")?).canonicalize()?;
+    let inputs = contract["inputs"].as_object().ok_or("reviewed inputs missing")?;
+    let mut verified_inputs = std::collections::BTreeMap::new();
+    for (name, digest) in inputs {
+        verified_inputs.insert(owned(&root, name)?, digest.as_str().ok_or("invalid input hash")?);
+    }
+    let mut source_rules = std::collections::BTreeMap::new();
+    for part in manifest["parts"].as_array().ok_or("reviewed parts missing")? {
+        if part.get("profile").is_some() { return Err("profile expansion not yet supported".into()); }
+        for rule in part["layout_constraints"].as_array().ok_or("layout constraint list missing")? {
+            let id = rule["id"].as_str().filter(|s| !s.is_empty()).ok_or("reviewed rule ID missing")?;
+            if source_rules.insert(id, rule).is_some() { return Err("duplicate reviewed rule ID".into()); }
+        }
+    }
+    let rules = contract["rules"].as_array().ok_or("reviewed rules missing")?;
+    if rules.len() != source_rules.len() { return Err("reviewed rule coverage differs from manifest".into()); }
+    let mut seen = std::collections::BTreeSet::new();
+    for rule in rules {
+        let id = rule["id"].as_str().filter(|s| !s.is_empty()).ok_or("reviewed rule ID missing")?;
+        if !seen.insert(id) || source_rules.get(id) != Some(&rule) || rule.get("binding").is_some() {
+            return Err("reviewed rule differs from manifest or requires unsupported binding".into());
+        }
+        match rule["kind"].as_str() {
+            Some("fixed" | "rigid_group" | "pin_distance" | "clearance" | "connector_access") => (),
+            _ => return Err("unsupported reviewed rule kind".into()),
+        }
+        let source = &rule["source"];
+        if source["page"].as_u64().is_none_or(|v| v == 0) { return Err("reviewed rule source page missing".into()); }
+        let path = owned(&root, source["path"].as_str().ok_or("reviewed rule source path missing")?)?;
+        let expected = source["sha256"].as_str().ok_or("reviewed rule source hash missing")?;
+        if verified_inputs.get(&path).copied() != Some(expected) ||
+            format!("{:x}", Sha256::digest(std::fs::read(path)?)) != expected {
+            return Err("reviewed rule source changed or absent from inputs".into());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod rule_source_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn rule_sources_must_match_manifest_and_owned_input() {
+        let root = std::env::temp_dir().join(format!("iotplace-rule-source-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let doc = root.join("doc.pdf");
+        std::fs::write(&doc, b"doc").unwrap();
+        let hash = format!("{:x}", Sha256::digest(b"doc"));
+        let rule = json!({"id":"r","kind":"fixed","refs":["U1"],"source":{"path":"doc.pdf","sha256":hash,"page":1}});
+        let manifest = json!({"parts":[{"layout_constraints":[rule.clone()]}]});
+        let mut contract = json!({"root":root,"inputs":{"doc.pdf":hash},"rules":[rule]});
+        assert!(check_rule_sources(&contract, &manifest).is_ok());
+        contract["rules"][0]["refs"] = json!(["U2"]);
+        assert!(check_rule_sources(&contract, &manifest).is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
 }
