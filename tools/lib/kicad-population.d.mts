@@ -36,3 +36,4 @@ export interface Population {
 }
 
 export function readPopulation(root: string, project: string): Population;
+export function properties(node: Tree): Record<string, string>;
