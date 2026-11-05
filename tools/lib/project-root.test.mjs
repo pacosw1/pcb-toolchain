@@ -15,7 +15,7 @@ test('project root order: explicit > IOT_LAB > cwd search > file-relative',t=>{
  assert.equal(projectRoot(undefined,{},'/'),fileRoot);
 });
 
-test('the marker must be a folder, and a linked start climbs its real parents, as project_root.py does',t=>{
+test('the marker must be a folder, and a linked start climbs its real parents',t=>{
  const root=realpathSync(mkdtempSync(join(tmpdir(),'project-root-')));t.after(()=>rmSync(root,{recursive:true,force:true}));
  mkdirSync(join(root,'a/hardware-design'),{recursive:true});writeFileSync(join(root,'a/hardware-design/boards'),'');
  assert.equal(findProjectRoot(join(root,'a')),null);

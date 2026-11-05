@@ -83,27 +83,22 @@ the extractor and label adapter. This includes the added-length definition and
 version without putting outcome values in features. Changed quantity semantics
 therefore reject even when the numeric columns are identical.
 
-Routing contract v4 also binds `numeric_producer`: the actual CPython build,
-interpreter, verified math-module origin and a resolvable shared Python runtime,
-float ABI, OS build/architecture and available C-math provider context. An
-extension needs its own content hash; built-in math binds the interpreter or
-actual mapped shared runtime that contains it. A missing extension cannot use
-the built-in branch. Build-time linker filenames do not prove loaded code.
-Host file paths are excluded from this compared identity. Workflow count and
-indicator features remain contract v1 without this routing runtime restriction.
-The measurements and targets are unchanged. Python versions can implement
-summation and distance differently: the same board produced different final
-bits under CPython 3.9.6 and 3.13.5 despite identical v3 source hashes.
+Routing contract v5 binds `numeric_producer` v2: the Node and V8 versions,
+the executable's content hash, binary64 ABI, byte order, OS build and architecture,
+and the shared distance and summation implementations. It also binds the board
+API schema and pinned KiCad commit. Host file paths are excluded from this
+compared identity. Workflow count and indicator features remain contract v1.
+The former Python v4 producer contract is not interchangeable with this Node
+contract; regenerate feature packets and models in the matching runtime.
 
 Create routing datasets, feature packets and source-verified predictions in the
 same frozen numerical runtime. A different producer rejects even a resealed
 feature packet; no rounding or tolerance makes it compatible. A matching profile
 attributes the producer; it does not attest every transitively loaded C library
-or guarantee portable bitwise results. Unresolved shared-runtime/provider
-details retain their explicit cause. Keep the actual execution image/toolchain
+or guarantee portable bitwise results. Keep the actual execution image/toolchain
 evidence and verify exact replay before reusing cached measurements.
-Keep old v3 artifacts immutable. Re-extract their original sealed pre-decision
-sources for a new v4 dataset/model; record the new fit and previously inspected
+Keep old v3/v4 artifacts immutable. Re-extract their original sealed pre-decision
+sources for a new v5 dataset/model; record the new fit and previously inspected
 exposure. Re-extraction does not require rerunning native gates or routing.
 
 Routing targets are `accepted_within_budget`, `owned_elapsed_s`,
@@ -266,8 +261,10 @@ features, source verifier and meaningful labels before adding model complexity.
 
 ```sh
 cd tools
-python3 -m unittest test_pcb_ml_data test_pcb_ml_models test_pcb_ml_adapters test_pcb_ml_backend test_pcb_ml_cli
+node --experimental-strip-types --no-warnings --test pcb_ml_data.test.ts pcb_ml_features.test.ts pcb_ml_models.test.ts pcb_ml_adapters.test.ts lib/pcb-ml-supervisor.test.ts
 ```
+
+Set `IOTROUTE_BIN` to a prebuilt router to exercise the native supervisor cases; otherwise those cases skip when no matching cached binary exists.
 
 The bounded real-board family comparison and its retained stop condition are
 recorded in [the 2026-10-18 study result](../hardware-design/reports/placement-ml-family-study-2026-10-18.json).

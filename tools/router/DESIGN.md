@@ -10,8 +10,9 @@ and stop relying on others". First proof board: NET-CORE (branch claude/t113-net
   via size, pair, RMII, crystal and In2 layer rules all "unsupported").
 - The rsixel A* router and Freerouting do not know our pair, RMII, return-via (RP-001) or current-path rules.
   Every board then ends in hand fixes (H7-CORE, ESP32-CORE, NET-CORE).
-- A router that reads our rules as its own model needs no coverage proof: the constraint it routes with is the
-  constraint the gate checks.
+- A router that reads our rules as its own model needs no DSN proof: the constraint it routes with is the constraint
+  the gate checks. What it still needs is admission: `iotroute model` refuses by name each native rule it does not
+  hold (`core/src/model/coverage.rs`), and `iotroute route` and `iotroute run` stop there, before routing.
 
 ## 2. Acceptance (unchanged)
 
@@ -64,7 +65,15 @@ Return vias: after a fast-net via is placed, the core searches a GND via site wi
 | M0 model | `iotroute model` (first `model.py`) builds the RouteModel for NET-CORE; every DRU rule maps to a constraint or an explicit "not routed by this stage" |
 | M1 NET-CORE | the router routes NET-CORE from the placement (pairs included); gate all 0 |
 | M2 comparison | re-route H7-CORE or ESP32-CORE from placement; gate all 0; compare vias / length / time with the hand + Fastroute result |
-| M3 default | `tools/pcb route --router iotlab`; Fastroute kept as a cross-check only |
+| M3 default | `tools/pcb route --router iotroute`, the only router. Fastroute was removed on 2026-11-05 (section 5b) |
+
+## 5b. Fastroute removed (user decision 2026-11-05)
+
+Fastroute is a closed third-party binary. `iotroute` is the only router going forward; the cross-check role that M3 kept for
+Fastroute is gone too. Removed: `pcb route --router fastroute`, `iotroute fastroute` and its job, `FASTROUTE_BIN`, the DSN and SES
+code and the rule-coverage proof of the DSN model. `iotroute route` keeps its staged plan, stage checks and pours; a `route.json`
+with `"backend": "fastroute"` stops with a named error until that runner has an iotroute backend. Old sealed Fastroute records
+stay readable in placement outcomes.
 
 ## 5a. NET-CORE requirements (from the hand-finished route, 2026-10-31)
 

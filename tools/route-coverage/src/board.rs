@@ -4,10 +4,11 @@ use crate::{
     decimal::{self as dec, Point},
     evidence,
 };
+use iotroute::kicad::raw;
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     path::Path,
     process::Command,
 };
@@ -35,6 +36,10 @@ pub struct Pad {
     pub drill: NmPoint,
     pub layers: Vec<String>,
     pub copper: Vec<Value>,
+    /// The pad's `layers` as the file spells them. The API lists `*.Cu` on every copper layer KiCad knows, enabled or not, so only
+    /// the file tells a wildcard from a pad that names a disabled layer.
+    #[serde(skip)]
+    pub authored_layers: Option<Vec<String>>,
 }
 #[derive(Clone, Debug, Deserialize)]
 pub struct Footprint {
@@ -103,296 +108,30 @@ pub fn read_json(text: &str, path: &Path) -> Result<NativeBoard> {
             return Err("board JSON native sidecars changed".into());
         }
     }
-    Ok(doc.board)
+    let mut board = doc.board;
+    let mut authored = authored_layers(path)?;
+    for pad in board.footprints.iter_mut().flat_map(|footprint| &mut footprint.pads) {
+        pad.authored_layers = authored.remove(&pad.id);
+        if pad.authored_layers.is_none() && (pad.drill.x != 0 || pad.drill.y != 0) {
+            return Err("drilled pad has no layers in the native file".into());
+        }
+    }
+    Ok(board)
 }
-fn quarter(v: f64) -> Result<i32> {
-    dec::angle_d(dec::decimal(&v.to_string())?)
-}
-fn layers(board: &NativeBoard) -> Result<()> {
-    if board.copper_layers.first().map(String::as_str) != Some("F.Cu")
-        || board.copper_layers.last().map(String::as_str) != Some("B.Cu")
-        || board.copper_layers.iter().collect::<BTreeSet<_>>().len() != board.copper_layers.len()
-    {
-        return Err("missing native copper stack".into());
-    }
-    Ok(())
-}
-fn dimensions(p: &Pad, fp: &Footprint, board: &NativeBoard) -> Result<Value> {
-    if fp.layer != "F.Cu" {
-        return Err("mirrored/backside drilled footprint is unsupported".into());
-    }
-    let rotation = quarter(p.orientation)?;
-    let fp_rotation = quarter(fp.orientation)?;
-    let shape = match p.shape.as_str() {
-        "Circle" => "circle",
-        "Rect" => "rect",
-        "Oval" => "oval",
-        _ => return Err("unsupported drilled pad copper shape".into()),
-    };
-    let size = p.size.mm();
-    let drill = p.drill.mm();
-    if size.iter().chain(drill.iter()).any(|v| v <= &dec::zero())
-        || (shape == "circle" && size[0] != size[1])
-    {
-        return Err("invalid drilled pad dimensions".into());
-    }
-    let position = p.position.mm();
-    // Offsets are represented in the API's effective copper, rather than guessed from the authored form.
-    let expected = crate::hole::capsule(position.clone(), size.clone(), rotation);
-    let valid = if shape == "rect" {
-        p.copper.len() == 1
-            && p.copper[0].get("Polygon").is_some_and(|points| {
-                let Ok(points) = serde_json::from_value::<Vec<NmPoint>>(points.clone()) else {
-                    return false;
-                };
-                let expected = crate::hole::rectangle(position.clone(), size.clone(), rotation);
-                points.len() == 4
-                    && points.iter().map(NmPoint::mm).all(|point| match &expected {
-                        crate::hole::Obstacle::Rect([x0, y0, x1, y1]) => {
-                            (point[0] == *x0 || point[0] == *x1)
-                                && (point[1] == *y0 || point[1] == *y1)
-                        }
-                        _ => false,
-                    })
-            })
-    } else {
-        p.copper.len() == 1 && crate::hole::api_obstacle(&p.copper[0]).is_ok_and(|o| o == expected)
-    };
-    if !valid {
-        return Err("custom or offset drilled pad geometry is unsupported".into());
-    }
-    let copper: Vec<_> = p
-        .layers
-        .iter()
-        .filter(|l| board.copper_layers.contains(l))
-        .cloned()
-        .collect();
-    if p.layers.iter().collect::<BTreeSet<_>>().len() != p.layers.len() {
-        return Err("ambiguous drilled pad layers".into());
-    }
-    Ok(
-        json!({"side":"front","footprint_position_mm":dec::strings(&fp.position.mm()),"footprint_rotation_deg":fp_rotation.to_string(),
-        "position_mm":dec::strings(&position),"size_mm":dec::strings(&size),"drill_mm":dec::strings(&drill),
-        "drill_shape":if drill[0]==drill[1]{"circle"}else{"oval"},"drill_offset_mm":["0","0"],"shape":shape,
-        "layers":copper,"hole_layers":board.copper_layers,"rotation_deg":rotation.to_string()}),
-    )
-}
-/// Inventories unsupported geometry as a blocked row; physical multiplicity is never discarded.
-/// `native_form_sha256` now binds the API item, not a Python parser's spelling of its source form.
-pub fn native_drilled_geometry(board: &NativeBoard) -> Result<Vec<Value>> {
-    layers(board)?;
-    let mut rows = Vec::new();
-    let mut ids = BTreeSet::new();
-    let mut refs = BTreeSet::new();
-    for (fi, fp) in board.footprints.iter().enumerate() {
-        if fp.reference.is_empty() || !refs.insert(fp.reference.to_lowercase()) {
-            return Err("ambiguous native drilled reference".into());
-        }
-        let mut aliases: BTreeMap<&str, usize> = BTreeMap::new();
-        let mut nets = BTreeMap::new();
-        for (pi, p) in fp.pads.iter().enumerate() {
-            let kind = match p.kind.as_str() {
-                "ThroughHole" => "pth",
-                "NpThroughHole" => "npth",
-                _ => "unknown",
-            };
-            if !p.number.is_empty()
-                && kind != "npth"
-                && nets
-                    .insert(p.number.clone(), p.net.clone())
-                    .is_some_and(|old| old != p.net)
-            {
-                return Err("conflicting repeated native electrical membership".into());
-            }
-            let ordinal = *aliases.get(p.number.as_str()).unwrap_or(&0);
-            if kind != "npth" {
-                aliases.insert(&p.number, ordinal + 1);
-            }
-            if kind == "unknown"
-                && p.drill.x == 0
-                && p.drill.y == 0
-                && matches!(p.kind.as_str(), "Smd" | "EdgeConnector")
-            {
-                continue;
-            }
-            let id = if p.id.is_empty() {
-                format!("index:{fi}:{pi}")
-            } else {
-                p.id.clone()
-            };
-            if !ids.insert(id.clone()) {
-                return Err("duplicate physical drilled identity".into());
-            }
-            let mut row = json!({"kind":kind,"identity":id,"net":p.net,"supported":false,"cause":null,
-                "native_form_sha256":evidence::identity(&json!({"id":p.id,"kind":p.kind,"shape":p.shape,"net":p.net,
-                    "position":[p.position.x,p.position.y],"orientation":p.orientation,"size":[p.size.x,p.size.y],
-                    "drill":[p.drill.x,p.drill.y],"layers":p.layers,"copper":p.copper})),"reference":fp.reference,"pad":p.number});
-            let fill = (|| -> Result<Value> {
-                if kind == "unknown" {
-                    return Err("unknown drilled pad type".into());
-                }
-                let mut data = dimensions(p, fp, board)?;
-                if kind == "pth" {
-                    if p.number.is_empty()
-                        || p.net.is_empty()
-                        || p.net.bytes().all(|b| b.is_ascii_digit())
-                        || data["layers"].as_array().is_none_or(Vec::is_empty)
-                    {
-                        return Err("missing exact drilled electrical membership".into());
-                    }
-                    if p.shape == "Circle" && p.drill.x >= p.size.x {
-                        return Err(
-                            "copper-less plated drill requires keepout-specific binding".into()
-                        );
-                    }
-                    data["export_pin"] = format!(
-                        "{}{}",
-                        p.number,
-                        if ordinal == 0 {
-                            String::new()
-                        } else {
-                            format!("@{ordinal}")
-                        }
-                    )
-                    .into();
-                } else {
-                    if !p.net.is_empty()
-                        || p.shape != "Circle"
-                        || p.drill.x != p.drill.y
-                        || p.size.x > p.drill.x
-                    {
-                        return Err(
-                            "only copper-less circular NPTH exporter keepouts are supported".into(),
-                        );
-                    }
-                    data["export_pin"] = Value::Null;
-                }
-                data["supported"] = true.into();
-                Ok(data)
-            })();
-            match fill {
-                Ok(data) => row
-                    .as_object_mut()
-                    .unwrap()
-                    .extend(data.as_object().unwrap().clone()),
-                Err(e) => row["cause"] = e.into(),
-            }
-            rows.push(row);
+/// The `layers` of each footprint pad of the file, by uuid. Names only: geometry still comes from the API.
+fn authored_layers(path: &Path) -> Result<BTreeMap<String, Vec<String>>> {
+    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let root = raw::parse_first(&text)?;
+    let mut out = BTreeMap::new();
+    for pad in root.children("footprint").flat_map(|footprint| footprint.children("pad")) {
+        let Some(id) = pad.children("uuid").next().and_then(|uuid| uuid.text(1)) else { continue };
+        let Some(layers) = pad.children("layers").next() else { continue };
+        let names = layers.items().iter().skip(1).filter_map(raw::Form::atom).map(str::to_string).collect();
+        if out.insert(id.to_string(), names).is_some() {
+            return Err("ambiguous native pad UUID".into());
         }
     }
-    for (vi, item) in board.copper.iter().enumerate() {
-        if let Some(v) = item.get("Via") {
-            let id = v["id"]
-                .as_str()
-                .filter(|s| !s.is_empty())
-                .map(str::to_string)
-                .unwrap_or(format!("index:via:{vi}"));
-            if !ids.insert(id.clone()) {
-                return Err("duplicate physical drilled identity".into());
-            }
-            let mut row = json!({"kind":"via","identity":id,"net":v["net"],"supported":false,"cause":null,"native_form_sha256":evidence::identity(v)});
-            let fill = (|| -> Result<Value> {
-                // The current shared API projection omits via type and layer span. Never infer a through via.
-                let span = v["layers"]
-                    .as_array()
-                    .ok_or("native API via type/layer extent is unresolved")?;
-                if v["via_type"] != "Through"
-                    || span
-                        != &serde_json::to_value(&board.copper_layers)
-                            .unwrap()
-                            .as_array()
-                            .unwrap()
-                            .clone()
-                {
-                    return Err("blind/micro/custom via is unsupported".into());
-                }
-                let size = v["size"].as_i64().ok_or("unknown via dimensions")?;
-                let drill = v["drill"].as_i64().ok_or("unknown via drill")?;
-                let net = v["net"]
-                    .as_str()
-                    .ok_or("unknown via electrical membership")?;
-                if net.is_empty()
-                    || net.bytes().all(|c| c.is_ascii_digit())
-                    || drill <= 0
-                    || size <= drill
-                {
-                    return Err("invalid via annulus".into());
-                }
-                let at: NmPoint =
-                    serde_json::from_value(v["at"].clone()).map_err(|e| e.to_string())?;
-                let size = dec::normalized(&(dec::nanometres(size)));
-                let drill = dec::normalized(&(dec::nanometres(drill)));
-                Ok(
-                    json!({"position_mm":dec::strings(&at.mm()),"size_mm":[size,size],"drill_mm":[drill,drill],"drill_shape":"circle",
-                "drill_offset_mm":["0","0"],"shape":"circle","layers":board.copper_layers,"hole_layers":board.copper_layers,"rotation_deg":"0","supported":true}),
-                )
-            })();
-            match fill {
-                Ok(data) => row
-                    .as_object_mut()
-                    .unwrap()
-                    .extend(data.as_object().unwrap().clone()),
-                Err(e) => row["cause"] = e.into(),
-            }
-            rows.push(row);
-        }
-    }
-    Ok(rows)
-}
-pub fn native_pth_pads(board: &NativeBoard) -> Result<Vec<Value>> {
-    let known = |p: &Pad| matches!(p.kind.as_str(), "ThroughHole" | "NpThroughHole" | "Smd" | "EdgeConnector");
-    if !board.footprints.iter().flat_map(|f| &f.pads).all(known) {
-        return Err("unknown native pad type cannot establish hole coverage".into());
-    }
-    // Here a repeated number counts every pad in native order, NPTH included; the drilled inventory leaves round holes out of it.
-    let mut export = BTreeMap::new();
-    for (fi, fp) in board.footprints.iter().enumerate() {
-        let mut seen: BTreeMap<&str, usize> = BTreeMap::new();
-        for (pi, p) in fp.pads.iter().enumerate() {
-            let ordinal = seen.entry(&p.number).or_insert(0);
-            let id = if p.id.is_empty() { format!("index:{fi}:{pi}") } else { p.id.clone() };
-            let pin = if *ordinal == 0 { p.number.clone() } else { format!("{}@{ordinal}", p.number) };
-            export.insert(id, pin);
-            *ordinal += 1;
-        }
-    }
-    let mut pads = Vec::new();
-    for mut row in native_drilled_geometry(board)? {
-        if row["kind"] != "pth" {
-            continue;
-        }
-        if let Some(pin) = row["identity"].as_str().and_then(|id| export.get(id)) {
-            row["export_pin"] = pin.as_str().into();
-        }
-        if row["supported"] != true {
-            return Err(row["cause"]
-                .as_str()
-                .unwrap_or("unsupported PTH geometry")
-                .into());
-        }
-        if row["shape"] == "oval" || row["drill_shape"] != "circle" {
-            return Err(
-                "only circle/rectangle native PTH copper with circular drills is supported".into(),
-            );
-        }
-        let size = dec::pair(&row["size_mm"])?;
-        let drill = dec::pair(&row["drill_mm"])?;
-        if size.iter().min().unwrap() <= &drill[0] {
-            return Err("invalid native PTH dimensions".into());
-        }
-        for key in [
-            "kind",
-            "supported",
-            "cause",
-            "native_form_sha256",
-            "drill_shape",
-            "hole_layers",
-        ] {
-            row.as_object_mut().unwrap().remove(key);
-        }
-        pads.push(row);
-    }
-    Ok(pads)
+    Ok(out)
 }
 pub fn uuid_nets(board: &NativeBoard) -> Result<BTreeMap<String, String>> {
     let mut out = BTreeMap::new();

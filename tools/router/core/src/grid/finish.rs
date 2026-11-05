@@ -1,7 +1,7 @@
 //! Finishes the last open connections of a routed board with the grid A* (2026-10-16, H7-CORE). For each open connection of the
 //! DRC report, one at a time, in report order: A* over (layer, cell) with 8 moves, a turn cost and a via cost, then the path as
 //! merged straight segments and vias, locked. Nothing is moved or removed. The grid is half a cell conservative: the DRC result is
-//! the evidence. Fastroute stays the router; this closes what it leaves.
+//! the evidence. This closes what a router leaves.
 use super::astar::{DEFAULT_WEIGHT, PathItem, Search, astar, counts, to_items, track_length};
 use super::board::{GridBoard, NetGrids};
 use super::item::{Item, ItemKind, Point, Shape};

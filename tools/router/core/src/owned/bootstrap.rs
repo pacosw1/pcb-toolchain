@@ -1,4 +1,4 @@
-//! The private first program of a stage, as lean_owned_exec.py: no work runs before the broker's release byte.
+//! The private first program of a stage: no work runs before the broker's release byte.
 //!
 //!   iotroute owned exec RELEASE_FD ERROR_FD MAPPINGS_JSON COMMAND...
 //!
@@ -17,7 +17,7 @@ use std::process::Command;
 const NOT_APPROVED: i32 = 125;
 const EXEC_FAILED: i32 = 127;
 const USAGE: i32 = 2;
-/// Copies start above this, as in lean_owned_exec.py.
+/// Copies start above this.
 const LOW_DESCRIPTORS: i32 = 63;
 const RELEASE_BYTE: u8 = b'G';
 const MAX_REPORT: usize = 4096;

@@ -1,4 +1,5 @@
 //! The route model from a board and its files.
+use super::coverage::check_rules;
 use super::current::{CurrentContext, apply_paths, plane_fanout_vias, set_fanout_vias, set_pin_escapes, size_power_vias};
 use super::files::{BoardFiles, PinRatings};
 use super::isolation::{IsoContext, apply_pair_rules};
@@ -6,7 +7,7 @@ use super::items::{box4, initial_nets, read_copper, read_edges, read_keepouts, r
 use super::num::Num;
 use super::output::{BoardMin, Class, HoleRules, Model, Net, PlaneClearance, RuleState, Setup, Zone};
 use super::pairs::PairRules;
-use super::planes::{plane_reach, reference_fill, set_plane_ref};
+use super::planes::{plane_reach, reference_fill, set_plane_ref, zone_outlines};
 use super::returns::{RpScope, copper_thickness, return_rule, set_gate_exemptions, set_return_nets, set_return_scope, via_length};
 use super::rules::apply_rules;
 use super::thermal::{ThermalRules, apply_thermal_vias};
@@ -87,9 +88,11 @@ pub fn build(inputs: Inputs) -> Result<Model, String> {
     let keepouts = read_keepouts(board);
     let (mut zones, zone_sources) = read_zones(board, &nets, &outcome.zone_rules);
     plane_reach(board, &mut nets, &pads, &zones, &zone_sources, &plane_layers);
+    zone_outlines(board, &mut nets, &zones, &zone_sources);
     let pair_rules = PairRules::new(&files.rules)?;
     let iso_context = IsoContext { board, rules: &pair_rules, pairs: &pairs, nets: &nets, sources: &zone_sources };
     let iso = apply_pair_rules(&iso_context, &mut pads, &mut zones, &mut report);
+    check_rules(&files.rules, files.rules_setup(), &mut report);
 
     let context = CurrentContext::new(files, copper_thickness(board));
     apply_paths(files, &mut nets, &pads, &context);

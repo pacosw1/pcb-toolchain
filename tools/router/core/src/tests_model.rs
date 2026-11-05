@@ -82,3 +82,14 @@ fn thermal_vias_are_read() {
     assert_eq!(pts, &vec![(19.45, 19.365), (20.55, 19.365), (19.45, 20.635), (20.55, 20.635)]);
     assert_eq!((*d, *dr, name.as_str()), (0.6, 0.3, "U4.9"));
 }
+
+#[test]
+fn a_stage_neck_is_a_retry_width_of_any_wide_net() {
+    let mut m = model(0.28, 0.45, 0.25);
+    m["nets"]["A"]["width"] = serde_json::json!(2.0);
+    let widths = |m: &Value| net_widths(load(m, 0.28).nets.iter().find(|n| n.name == "A").unwrap());
+    assert_eq!(widths(&m), [2.0], "a signal net has one width until a stage names a neck");
+    m["nets"]["A"]["min_width"] = serde_json::json!(1.0);
+    m["nets"]["A"]["neck_width"] = serde_json::json!(1.0);
+    assert_eq!(widths(&m), [2.0, 1.0], "the neck is tried, and nothing narrower");
+}

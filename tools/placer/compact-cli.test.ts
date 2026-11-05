@@ -1,6 +1,6 @@
-// The compaction driver with a fake router: options, the route callback and the stop on immutable input.
+// The compaction driver with a fake router: options, the route callback and the stop on an identical failure.
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync, writeSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
@@ -8,24 +8,31 @@ import { SCHEMA } from '../lib/engineering-constraints.ts';
 import { sha256File } from '../lib/json-file.ts';
 import type { StageResult } from '../lib/lean-stage.ts';
 import { Compaction, main, parseArgs, settle, type Args } from './compact-cli.ts';
-import { ImmutableInputFailure, RouteOutcome } from './compact.ts';
+import { Measured, RouteOutcome } from './compact.ts';
 import { NO_RESULT } from './compact-route.ts';
 import { prepareProblem, type ReviewedProblem } from './engineering-problem.ts';
-import type { Row } from './mandatory-proof.ts';
 
 const BASE = ['p.json', 'b.kicad_pcb', '--board-dir', 'x', '--outdir', 'o', '--size', '72', '80'];
 
 let folder: string;
+const realBin = process.env.IOTROUTE_BIN;
 
 beforeEach(() => {
   folder = realpathSync(mkdtempSync(join(tmpdir(), 'compact-cli-')));
+  // The routers here are fakes that never run the binary, so any executable names it: the path only fills the command.
+  process.env.IOTROUTE_BIN = process.execPath;
 });
 
-afterEach(() => rmSync(folder, { recursive: true, force: true }));
+afterEach(() => {
+  rmSync(folder, { recursive: true, force: true });
+  if (realBin === undefined) delete process.env.IOTROUTE_BIN;
+  else process.env.IOTROUTE_BIN = realBin;
+});
 
-test('the router defaults to fastroute and the size is two numbers', () => {
-  assert.equal(parseArgs(BASE).router, 'fastroute');
+test('the router is iotroute and the size is two numbers', () => {
+  assert.equal(parseArgs(BASE).router, 'iotroute');
   assert.equal(parseArgs([...BASE, '--router', 'iotroute']).router, 'iotroute');
+  assert.throws(() => parseArgs([...BASE, '--router', 'fastroute']), /invalid choice/);
   assert.deepEqual(parseArgs(BASE).size, [72, 80]);
   assert.throws(() => parseArgs([...BASE, '--router', 'hand']), /invalid choice/);
   assert.throws(() => parseArgs(['p', 'b', '--board-dir', 'x', '--outdir', 'o', '--size', '1']), /usage/);
@@ -35,7 +42,7 @@ test('the schedule comes from the command line', () => {
   const given = parseArgs([...BASE, '--tol', '0.2', '--shrink', '0.8']);
   assert.deepEqual([given.tol, given.shrink], [0.2, 0.8]);
   const plain = parseArgs(BASE);
-  assert.deepEqual([plain.tol, plain.shrink, plain.routes, plain.length_patience, plain.rank], [0.05, 0.85, 3, 2, null]);
+  assert.deepEqual([plain.tol, plain.shrink, plain.length_patience, plain.rank], [0.05, 0.85, 2, null]);
 });
 
 test('the iot-lab pipeline arguments parse', () => {
@@ -47,20 +54,19 @@ test('the iot-lab pipeline arguments parse', () => {
   assert.equal(a.max_routes, 1);
 });
 
-test('rank follows the router, and length needs iotroute', () => {
-  const iotroute = parseArgs([...BASE, '--router', 'iotroute']);
-  settle(iotroute);
-  assert.equal(iotroute.rank, 'length');
-  const fast = parseArgs(BASE);
-  settle(fast);
-  assert.equal(fast.rank, 'halo');
-  assert.throws(() => settle(parseArgs([...BASE, '--rank', 'length'])), /--rank length needs --router iotroute/);
+test('rank defaults to the measured length, and a given rank stays', () => {
+  const plain = parseArgs(BASE);
+  settle(plain);
+  assert.equal(plain.rank, 'length');
+  const halo = parseArgs([...BASE, '--rank', 'halo']);
+  settle(halo);
+  assert.equal(halo.rank, 'halo');
 });
 
 test('bad options stop before anything runs', async () => {
   const cases: [string[], RegExp][] = [
-    [['--budget', '0'], /budget must be positive/], [['--retain-candidates', '9'], /retain-candidates/], [['--feedback-max-mm', '3'], /feedback cap/],
-    [['--max-displacement', '3'], /requires seeded policy/], [['--repair'], /--repair needs --router iotroute/], [['--length-patience', '-1'], /--length-patience/],
+    [['--budget', '0'], /budget must be positive/], [['--retain-candidates', '9'], /retain-candidates/],
+    [['--max-displacement', '3'], /requires seeded policy/], [['--length-patience', '-1'], /--length-patience/],
     [['--seeded-policy', '--scatter', '3'], /seeded policy prohibits/], [['--seeded-policy', '--param', 'p_swap=0.3'], /seeded policy prohibits/],
   ];
   for (const [flags, message] of cases) await assert.rejects(main([...BASE, ...flags]), message);
@@ -72,53 +78,97 @@ test('a seeded policy turns off swaps and turns, and carries the cap', () => {
   assert.deepEqual(a.param, ['p_swap=0', 'p_rot=0', 'legal_rotate=0', 'max_displacement=3']);
 });
 
-/** The router of this test: a routed copy, its evidence, and 1 open. */
+/** The router of this test: `iotroute run` reports 1 open, so the step fails before its gate. */
 class FakeRouter extends Compaction {
   calls = 0;
-  override async stage(command: string[], _stage: string, options: { stdout: 'pipe' | number; stderr: 'pipe' | number }): Promise<StageResult> {
+  override async stage(): Promise<StageResult> {
     this.calls += 1;
-    const [source, route] = [command[2] as string, command[3] as string];
-    rmSync(route, { recursive: true, force: true });
-    mkdirSync(route);
-    const routed = join(route, 'routed.kicad_pcb');
-    writeFileSync(routed, `${readFileSync(source, 'utf8')} retained router copper`);
-    const files = {
-      'input-manifest.json': { board_sha256: sha256File(source) }, 'outcome.json': { status: 'complete', errors: 0, board_sha256: sha256File(routed) },
-      'drc.json': { violations: [], schematic_parity: [], unconnected_items: [{ items: [] }] },
-      'pin-escape.json': { boxed_in: [{ ref: 'U1', pad: 'U1.1', net: 'A' }], halo_hint: { U1: 0.5 } },
-    };
-    for (const [name, value] of Object.entries(files)) writeFileSync(join(route, name), JSON.stringify(value));
-    writeSync(options.stdout as number, 'UNROUTED 1 GND_OPEN 0 ERRORS 0\n');
-    return { returncode: 3, stdout: null, stderr: null };
+    return { returncode: 1, stdout: `${JSON.stringify({ status: 'FAIL', drc_errors: 0, unconnected: 1, parity: 0 })}\n`, stderr: '' };
   }
 }
 
-function driver(rows: Row[] | null = null, Kind: typeof Compaction = FakeRouter): FakeRouter {
-  const a: Args = parseArgs(['p', join(folder, 'source.kicad_pcb'), '--board-dir', 'x', '--outdir', folder, '--size', '10', '10', '--optimizer', 'off', '--passes', '1']);
+function driver(Kind: typeof Compaction = FakeRouter): FakeRouter {
+  const a: Args = parseArgs(['p', join(folder, 'source.kicad_pcb'), '--board-dir', join(folder, 'hardware-design/boards/X/cad'), '--outdir', folder, '--size', '10', '10', '--passes', '1']);
   settle(a);
   const problem = { units: [{ name: 'U1', refs: ['U1'], fixed: false, x: 0, y: 0, rects: [] }], nets: [], board: { outline: [] }, board_file: a.board } as unknown as ReviewedProblem;
-  return new Kind(a, problem, Number.MAX_SAFE_INTEGER, rows) as FakeRouter;
+  return new Kind(a, problem, Number.MAX_SAFE_INTEGER) as FakeRouter;
 }
 
-test('a route continues on changed geometry, and an identical failure is not routed again', async () => {
+test('a changed board routes again, and an identical failure is not routed again', async () => {
   const native = join(folder, 'source.kicad_pcb');
   writeFileSync(native, 'synthetic placement bytes A');
   const run = driver();
-  const first = await run.route(native, 0) as RouteOutcome;
-  assert.equal(first.stop, false);
-  assert.deepEqual((first.decision.geometry_feedback as Row).changed_refs, ['U1']);
-  const path = (first.candidate as Row).path as string;
-  const before = readFileSync(path);
+  const first = await run.route(native, 0) as Measured;
+  assert.ok(first instanceof Measured);
+  assert.deepEqual(first.counts, [1]);
   const unchanged = await run.route(native, 1) as RouteOutcome;
   assert.equal(unchanged.stop, true);
+  assert.equal(unchanged.decision.action, 'inspect_prior_diagnosis');
+  assert.equal(unchanged.decision.prior_decision, join(folder, 'step-0/route-0/score.json'));
   assert.equal(run.calls, 1);
-  assert.deepEqual(unchanged.candidate, first.candidate);
+  assert.ok(existsSync(join(folder, 'step-1/route-decision.json')));
   writeFileSync(native, 'synthetic placement bytes B');
-  const changed = await run.route(native, 2) as RouteOutcome;
-  assert.equal(changed.stop, false);
+  const changed = await run.route(native, 2) as Measured;
+  assert.ok(changed instanceof Measured);
   assert.equal(run.calls, 2);
-  assert.notEqual((changed.candidate as Row).sha256, (first.candidate as Row).sha256);
-  assert.deepEqual(readFileSync(path), before);
+});
+
+/** `iotroute run` with its evidence: a refused admission when `cause` says so, else opens with a pin the placer can give room. */
+class EvidenceRouter extends Compaction {
+  cause: string | null = null;
+  override async stage(command: string[]): Promise<StageResult> {
+    const out = command[3]!, work = `${out}.iotroute`;
+    mkdirSync(work, { recursive: true });
+    const record = this.cause === null
+      ? { status: 'FAIL', drc_errors: 0, unconnected: 1, parity: 0, input_sha256: sha256File(command[command.indexOf('--pcb') + 1]!), board_file: out, board_sha256: sha256File(this.a.board) }
+      : { status: 'ERROR', cause: this.cause };
+    if (this.cause === null) {
+      writeFileSync(out, readFileSync(this.a.board));
+      writeFileSync(join(work, 'drc.json'), JSON.stringify({ violations: [], unconnected_items: [{ items: [] }], schematic_parity: [] }));
+      writeFileSync(join(work, 'pin-escape.json'), JSON.stringify({ halo_hint: { U1: 0.25 } }));
+    }
+    writeFileSync(join(work, 'result.json'), JSON.stringify(record));
+    return { returncode: 1, stdout: `${JSON.stringify(record)}\n`, stderr: '' };
+  }
+}
+
+test('a step asks for a diagnosis, its evidence teaches the next search, and a refused admission stops the run', async () => {
+  const native = join(folder, 'source.kicad_pcb');
+  writeFileSync(native, 'bytes');
+  const run = driver(EvidenceRouter as typeof Compaction) as unknown as EvidenceRouter;
+  assert.ok(await run.route(native, 0) instanceof Measured);
+  assert.deepEqual(run.escapeHint, { U1: 0.25 });
+  assert.equal(JSON.parse(readFileSync(join(folder, 'step-0/route-decision.json'), 'utf8')).action, 'diagnose_selected_connections');
+  assert.equal(JSON.parse(readFileSync(join(folder, 'step-0/feedback.json'), 'utf8')).accepted, true);
+  writeFileSync(native, 'other bytes');
+  run.cause = 'rule coverage refused: r / creepage: why';
+  const stopped = await run.route(native, 1) as RouteOutcome;
+  assert.equal(stopped.stop, true);
+  assert.equal(stopped.decision.action, 'resolve_constraint_coverage');
+});
+
+test('--routes tries other seeds until one passes, and --gnd-vias makes GND a plane net', async () => {
+  const native = join(folder, 'source.kicad_pcb');
+  writeFileSync(native, 'bytes');
+  class Seeds extends Compaction {
+    commands: string[][] = [];
+    override async stage(command: string[]): Promise<StageResult> {
+      this.commands.push(command);
+      const failed = this.commands.length < 2;
+      return { returncode: 0, stdout: `${JSON.stringify({ status: failed ? 'FAIL' : 'PASS', drc_errors: 0, unconnected: failed ? 1 : 0, parity: 0 })}\n`, stderr: '' };
+    }
+  }
+  const run = driver(Seeds as typeof Compaction) as unknown as Seeds;
+  run.gate.run = async () => ({ erc_errors: 0 });
+  Object.assign(run.a, { routes: 3, gnd_vias: true, seed: 5 });
+  const passed = await run.route(native, 0) as Measured;
+  assert.deepEqual(passed.counts, [1, 0]);
+  assert.equal(run.commands.length, 2);
+  assert.ok(!run.commands[0]!.includes('--seed'));
+  assert.equal(run.commands[1]![run.commands[1]!.indexOf('--seed') + 1], '6');
+  for (const command of run.commands) assert.equal(command[command.indexOf('--plane-net') + 1], 'GND');
+  assert.equal(run.routesDone, 2);
+  assert.ok(existsSync(join(folder, 'step-0/route-1/score.json')));
 });
 
 test('the route cap ends routing without another attempt', async () => {
@@ -134,10 +184,9 @@ test('the route cap ends routing without another attempt', async () => {
 });
 
 class FailingRouter extends FakeRouter {
-  override async stage(command: string[]): Promise<StageResult> {
+  override async stage(): Promise<StageResult> {
     this.calls += 1;
-    mkdirSync(command[3] as string, { recursive: true });
-    return { returncode: 1, stdout: null, stderr: null };
+    return { returncode: 2, stdout: '', stderr: '' };
   }
 }
 
@@ -202,43 +251,12 @@ test('a reviewed step that fails its screen does not route', async () => {
   assert.equal(run.calls, 0);
 });
 
-test('a router failure with no proof is an ordinary failed candidate', async () => {
+test('a router that prints no record is an ordinary failed step, and is not routed again', async () => {
   const native = join(folder, 'source.kicad_pcb');
   writeFileSync(native, 'bytes');
-  const failed = await driver([], FailingRouter).route(native, 0) as RouteOutcome;
+  const run = driver(FailingRouter);
+  const failed = await run.route(native, 0) as Measured;
   assert.deepEqual(failed.counts, [NO_RESULT]);
-  assert.equal(failed.decision.action, 'inspect_evidence');
-  assert.ok(readFileSync(join(folder, 'step-0/route-decision.json'), 'utf8').includes('inspect_evidence'));
-});
-
-test('a failed receipt on locked input copper stops the run', async () => {
-  const native = join(folder, 'source.kicad_pcb');
-  writeFileSync(native, 'bytes');
-  const policy = join(folder, 'rules.py');
-  writeFileSync(policy, 'rules');
-  const track = { uuid: 'owned', net: '/N', layer: 'In2.Cu', via: false, kind: 'PCB_TRACK', locked: true, geometry: [[1, 2], [3, 4]], width: 150000 };
-  const fault = { uuid: 'owned', net: '/N', layer: 'In2.Cu', source_locked: true, preservation: 'locked or retained by this invocation' };
-  const receipt = {
-    board_sha256: sha256File(native), qualified: false, faults: [fault], source_records: [track], policy_sources: { [policy]: sha256File(policy) },
-    board_identity: { board: 'X', source_project: 'p' }, preserved_pair_profile: null, routed_nets: ['/N'], unlock_nets: '',
-  };
-  class Stopped extends FailingRouter {
-    override async stage(command: string[]): Promise<StageResult> {
-      const result = await super.stage(command);
-      writeFileSync(join(command[3] as string, 'mandatory-preflight.json'), JSON.stringify(receipt));
-      return result;
-    }
-  }
-  const run = driver([track], Stopped);
-  run.rowsOf = () => [track];
-  await assert.rejects(run.route(native, 0), (error: unknown) => {
-    assert.ok(error instanceof ImmutableInputFailure);
-    assert.deepEqual(error.receipt.faults, [fault]);
-    assert.ok(error.path.endsWith('route-0/mandatory-preflight.json'));
-    return true;
-  });
-  const moved = driver([{ ...track, width: 1 }], Stopped);
-  moved.rowsOf = () => [track];
-  const ordinary = await moved.route(native, 1) as RouteOutcome;
-  assert.deepEqual(ordinary.counts, [NO_RESULT], 'copper that is not the input copper proves nothing');
+  assert.equal((await run.route(native, 1) as RouteOutcome).stop, true);
+  assert.equal(run.calls, 1);
 });

@@ -1,5 +1,4 @@
-// Attributed placement diagnostics; no automatic score tuning or board promotion. placement_audit.py stays for
-// tools/placement_outcomes.py, which still takes spearman and archive from it.
+// Attributed placement diagnostics; no automatic score tuning or board promotion.
 //
 // identity is the hash of Python's json.dumps(sort_keys=True). A whole float only keeps its .0 as a Float, so what is
 // hashed must come from readTyped, or from compact.ts, which keeps those types. JSON.parse would make 1.0 an int: other bytes.
@@ -15,6 +14,7 @@ export { identity };
 export const digest = sha256File;
 
 const FIXED_TOLERANCE_MM = 1e-6;
+// The soft spacing a route may teach the next search, as it was on the Fastroute step: never a rule, only placement room.
 const CONGESTION_HINT_MM = 0.25;
 const UPDATE_LIMIT_MM = 0.5;
 const MAX_REFS_PER_UPDATE = 8;
@@ -103,24 +103,24 @@ export function candidateReport(pr: Problem, candidate: AuditCandidate, params: 
   };
 }
 
-function routeRecords(folder: string): [Dict, Dict] | null {
+function routeRecord(work: string): Dict | null {
   try {
-    return [readPyJson<Dict>(joinPath(folder, 'input-manifest.json')), readPyJson<Dict>(joinPath(folder, 'outcome.json'))];
+    return readPyJson<Dict>(joinPath(work, 'result.json'));
   } catch (error) {
     if (caught(error, 'OSError', 'ValueError')) return null;
     throw error;
   }
 }
 
-function hintSources(folder: string, congestion: boolean): { additions: Map<string, number>; sources: Record<string, string> } {
+function hintSources(work: string, congestion: boolean): { additions: Map<string, number>; sources: Record<string, string> } {
   const additions = new Map<string, number>();
   const sources: Record<string, string> = {};
-  const escape = joinPath(folder, 'pin-escape.json');
+  const escape = joinPath(work, 'pin-escape.json');
   if (isFile(escape)) {
     for (const [ref, value] of Object.entries(readPyJson<Dict>(escape).halo_hint ?? {})) additions.set(ref, number(value));
     sources[escape] = digest(escape);
   }
-  const triage = joinPath(folder, 'open-triage.json');
+  const triage = joinPath(work, 'open-triage.json');
   if (congestion && isFile(triage)) {
     for (const connection of (readPyJson<Dict>(triage).connections ?? []) as Dict[]) {
       if (connection.class !== 'ENCLOSED') continue;
@@ -131,17 +131,16 @@ function hintSources(folder: string, congestion: boolean): { additions: Map<stri
   return { additions, sources };
 }
 
-/** Only complete, clean native results on this exact candidate may teach hints. Gives [hints, evidence]. */
-export function boundedFeedback(pr: Problem, routeDir: string, boardSha256: string, prior: Hints, capMm: number, congestion = false): [Hints, Dict] {
-  const records = routeRecords(routeDir);
-  if (records === null) return [{ ...prior }, { accepted: false, reason: 'missing complete attributed evidence' }];
-  const [manifest, outcome] = records;
-  const routed = joinPath(routeDir, 'routed.kicad_pcb');
-  if (manifest.board_sha256 !== boardSha256 || outcome.status !== 'complete' || outcome.errors !== 0 || !isFile(routed) || outcome.board_sha256 !== digest(routed)) {
+/** Only a finished run of this exact candidate, with no DRC error, may teach hints; `work` is its OUT.iotroute. Gives [hints, evidence]. */
+export function boundedFeedback(pr: Problem, work: string, boardSha256: string, prior: Hints, capMm: number, congestion = false): [Hints, Dict] {
+  const record = routeRecord(work);
+  if (record === null) return [{ ...prior }, { accepted: false, reason: 'missing complete attributed evidence' }];
+  const routed = record.board_file as string | undefined;
+  if (record.input_sha256 !== boardSha256 || !['PASS', 'FAIL'].includes(record.status as string) || record.drc_errors !== 0 || !routed || !isFile(routed) || record.board_sha256 !== digest(routed)) {
     return [{ ...prior }, { accepted: false, reason: 'candidate mismatch, incomplete or native errors' }];
   }
   const allowed = new Set(pr.units.filter(unit => !truthy(unit.fixed)).flatMap(unit => unit.refs ?? [unit.name]));
-  const { additions, sources } = hintSources(routeDir, congestion);
+  const { additions, sources } = hintSources(work, congestion);
   const out = { ...prior };
   for (const ref of (sorted([...additions.keys()].filter(key => allowed.has(key))) as string[]).slice(0, MAX_REFS_PER_UPDATE)) {
     const value = additions.get(ref) as number;

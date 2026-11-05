@@ -6,7 +6,7 @@
 // For each net with a via (not a ground, not a --skip net): tools/pcbtool.ts stitch BOARD NET --best-effort. The board is changed in
 // place: run it on the routed copy or on the board of a branch. Prints the vias added and the signal vias with no room. Run DRC and
 // the gate after it. Route feature via_halo (tools/route-features.json, learn_noroom): the nets with no room are added to
-// <board>/.gate/halo-nets.json; the next `iotroute fastroute` run gives their vias the halo padstack.
+// <board>/.gate/halo-nets.json; a router that reads it gives their vias the halo padstack.
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -57,7 +57,7 @@ function main(argv: string[]): number {
     noRoom += result.noRoom;
     if (result.noRoom) {
       noRoomNets.push(net);
-      console.log(`NOROOM ${net}`);   // tools/cell_route.py re-routes these nets (repair loop)
+      console.log(`NOROOM ${net}`);   // Retained repair-loop status for nets without a stitch site.
     }
   }
   console.log(`stitch_all: ${nets.length} nets, ${added} ground vias added, ${noRoom} signal vias with no room`);

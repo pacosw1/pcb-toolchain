@@ -1,10 +1,15 @@
 // One real board through the real workflow, in a throwaway copy: native rejection of injected defects, detection, repair, adoption
-// of real bytes, routing diagnosis and the engineering cycle. Every step is tools/pcb or kicad-cli; the source project stays as it is.
-// Run it on Hetzner, on one small board. It proves the workflow, never the board.
+// of real bytes, routing diagnosis, the engineering cycle, then a real route with the in-house router on the board's own pour, the gate
+// with planes and pairs, adoption of the routed copper, a release and a fab pack. Every step is tools/pcb, kicad-cli or a tool of
+// the release; the source project stays as it is. It proves the workflow, never the board. scripts/release-smoke.sh runs it on a
+// toolchain build, in the scratch image on Hetzner. The last line is one PASS, FAIL or STUCK that names the step.
 //
-//   tools/pcb_workflow_smoke.ts --project DIR --board BOARD --output NEW_DIR [--timeout S] [--json]
-import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+// Each step prints STEP START and STEP PASS or FAIL with its seconds, at once, on stdout and in --progress FILE. Steps block this process, so a
+// small shell beside it prints RUNNING with the current step every HEARTBEAT_S: a run is never silent for 30 s.
+//
+//   tools/pcb_workflow_smoke.ts --project DIR --board BOARD --output NEW_DIR [--skip-step STAGE] [--progress FILE] [--timeout S] [--json]
+import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
+import { appendFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, writeSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { boardJson } from './lib/board-json.ts';
@@ -12,7 +17,7 @@ import { parseFlags, runMain, UsageError } from './lib/cli.ts';
 import { kicadCli } from './lib/env.mjs';
 import { atomicJson, readObject, sha256File as sha } from './lib/json-file.ts';
 import { pcbIdentity } from './lib/pcb-identity.ts';
-import { layoutOf, moveFootprint, removeSegment, type Segment, withClearance, withShort, withWrongPadNet } from './lib/pcb-smoke-board.ts';
+import { copperZones, layoutOf, moveFootprint, removeSegment, type Segment, withClearance, withShort, withWrongPadNet } from './lib/pcb-smoke-board.ts';
 import { snapshot, sourceState } from './lib/pcb-sources.ts';
 import { boardConfig } from './lib/pcb-workflow.ts';
 import { withSuffix } from './lib/py-path.ts';
@@ -20,11 +25,16 @@ import { sameValue } from './lib/py-values.ts';
 import { crossingGuard } from './lib/route-decision-board.ts';
 
 type Row = Record<string, any>;
-const USAGE = 'usage: tools/pcb_workflow_smoke.ts --project DIR --board BOARD --output NEW_DIR [--part REF] [--timeout S] [--json]';
+const USAGE = 'usage: tools/pcb_workflow_smoke.ts --project DIR --board BOARD --output NEW_DIR [--part REF] [--skip-step STAGE] [--patch-copy] [--progress FILE] [--timeout S] [--json]';
 const PCB = fileURLToPath(new URL('./pcb', import.meta.url));
+const PACK_FAB = fileURLToPath(new URL('./pack-fab.ts', import.meta.url)), CHECK_FAB_ZIP = fileURLToPath(new URL('./check-fab-zip.mjs', import.meta.url));
 const CASES = ['baseline_erc_drc_parity_refill', 'reject_short', 'reject_clearance', 'reject_pad_net_parity', 'parts_review_stays_blocked',
   'detect_injected_placement_defect', 'repair_with_fresh_gates', 'reject_candidate_tamper', 'adopt_real_bytes_on_frozen_board',
-  'detect_injected_gap', 'routing_decision_is_source_bound', 'guarded_repair_adds_one_segment', 'adopt_repair', 'cycle_links_actual_runs', 'source_project_unchanged'];
+  'detect_injected_gap', 'routing_decision_is_source_bound', 'guarded_repair_adds_one_segment', 'adopt_repair', 'cycle_links_actual_runs',
+  'route_iotroute_on_real_pour', 'gate_with_planes_and_pairs', 'adopt_routed_copper', 'release_candidate', 'fab_pack', 'source_project_unchanged'];
+/** Not in this smoke yet, and why: a route is no pass until it runs on the board's real pour. */
+const HEARTBEAT_S = 20;
+const DEFERRED = { 'route --router route-json': 'needs an unrouted, zone-free candidate; blocked by rule coverage on the real pour' };
 
 class Smoke {
   readonly summary: Row;
@@ -32,12 +42,41 @@ class Smoke {
   readonly checkout: string;
   readonly runs: string;
   readonly deadline: number;
+  readonly #progress: string | undefined;
+  readonly #stepFile: string;
+  #heart: ChildProcess | undefined;
   #sequence = 0;
-  constructor(output: string, board: string, timeout: number) {
+  #last = Date.now();
+  constructor(output: string, board: string, timeout: number, progress?: string) {
+    this.#progress = progress; this.#stepFile = join(output, 'current-step');
     this.output = output; this.checkout = join(output, 'checkout'); this.runs = join(this.checkout, '.gate/cli');
     this.deadline = Date.now() + timeout * 1000;
-    this.summary = { schema: 'iot-lab.pcb-workflow-smoke.v1', status: 'failed', board, qualified: false, expected_cases: CASES, cases: [], skipped: 0,
+    this.summary = { schema: 'iot-lab.pcb-workflow-smoke.v1', status: 'failed', board, qualified: false, expected_cases: CASES, cases: [], skipped: 0, skipped_steps: [], copy_patches: [], deferred: DEFERRED,
       scope: 'real-board workflow regression in an isolated copy; no release or qualification' };
+  }
+  /** One line at once, on stdout and in the progress file: writeSync, because a step blocks this process right after it. */
+  say(line: string): void {
+    const text = `${new Date().toISOString().slice(11, 19)} ${line}\n`;
+    writeSync(1, text);
+    if (this.#progress) appendFileSync(this.#progress, text);
+  }
+  begin(name: string): void {
+    this.#last = Date.now();
+    writeFileSync(this.#stepFile, name);
+    this.say(`STEP START ${name}`);
+  }
+  /** The heartbeat beside this process. Its step and start are the step file and its time; it stops with this process. */
+  startHeartbeat(): void {
+    const script = `while sleep ${HEARTBEAT_S}; do kill -0 ${process.pid} 2>/dev/null || exit 0; line="$(date -u +%H:%M:%S) RUNNING: $(cat "$1") for $(( $(date +%s) - $(stat -c %Y "$1") )) s"; echo "$line"; [ -z "$2" ] || echo "$line" >> "$2"; done`;
+    this.#heart = spawn('sh', ['-c', script, '_', this.#stepFile, this.#progress ?? ''], { stdio: ['ignore', 'inherit', 'inherit'], detached: true });
+    this.#heart.unref();
+  }
+  stopHeartbeat(): void {
+    if (this.#heart?.pid) try { process.kill(-this.#heart.pid); } catch { /* already gone */ }
+  }
+  /** The failed step, with what it took. */
+  failed(name: string, cause: string): void {
+    this.say(`STEP FAIL ${name} ${Math.round((Date.now() - this.#last) / 100) / 10} s: ${cause.slice(0, 300)}`);
   }
   remaining(): number {
     const left = (this.deadline - Date.now()) / 1000;
@@ -45,13 +84,16 @@ class Smoke {
     return left;
   }
   passed(name: string, evidence: Row = {}): void {
-    this.summary.cases.push({ case: name, status: 'passed', ...evidence });
-    console.error(`PASS: ${name}`);
+    const elapsed_s = Math.round((Date.now() - this.#last) / 100) / 10;
+    this.summary.cases.push({ case: name, status: 'passed', elapsed_s, ...evidence });
+    this.say(`STEP PASS ${name} ${elapsed_s} s`);
+    const next = CASES[CASES.indexOf(name) + 1];
+    if (next) this.begin(next);
   }
   /** One tools/pcb command with its exit checked. The last line of its --json output is its terminal record. */
   pcb(args: string[], expected = 0): Row {
     const label = `${String(++this.#sequence).padStart(2, '0')}-${args[0]}`, log = join(this.output, `${label}.log`);
-    console.error(`START: ${args.slice(0, 3).join(' ')}`);
+    this.say(`RUN: pcb ${args.slice(0, 3).join(' ')}`);
     const run = spawnSync(PCB, ['--project', this.checkout, ...args], { encoding: 'utf8', timeout: Math.ceil(this.remaining() * 1000), maxBuffer: 1 << 28,
       env: { ...process.env, IOT_LAB: this.checkout } });
     writeFileSync(log, `${run.stdout ?? ''}${run.stderr ?? ''}`);
@@ -159,7 +201,8 @@ function placementCycle(smoke: Smoke, board: string, target: string, part: strin
   smoke.passed(CASES[8]!, { before_sha256: adopted.before_sha256, after_sha256: adopted.after_sha256 });
 }
 
-function gapCycle(smoke: Smoke, board: string, target: string, cycle: string): void {
+/** Takes one bridging segment out of the board: the router's own guard says a repair could lay it back. */
+function injectGap(target: string): Segment {
   const text = readFileSync(target, 'utf8'), { board: native } = boardJson(target);
   const allowed = (row: Segment): boolean => {
     const nm = (end: [number, number]): [number, number] => [Math.round(end[0] * 1e6), Math.round(end[1] * 1e6)];
@@ -167,11 +210,18 @@ function gapCycle(smoke: Smoke, board: string, target: string, cycle: string): v
   };
   const { text: gapped, removed } = removeSegment(text, allowed);
   writeFileSync(target, gapped);
+  return removed;
+}
+
+const connectivityDefect = (findings: Row): Row | undefined => (findings.findings as Row[]).find(row => row.stage === 'drc' && String(row.evidence?.pointer ?? '').startsWith('/unconnected_items/'));
+
+function gapCycle(smoke: Smoke, board: string, target: string, cycle: string): void {
+  const removed = injectGap(target);
   const injected = readFileSync(target), budget = ['--timeout', String(smoke.remaining()), '--cycle', cycle];
   const failed = smoke.pcb(['check', board, '--fresh', '--json', ...budget], 1);
   const { gate, findings } = nativeContract(smoke, failed.run_id, 'failed');
   if (gate.metrics.drc_errors !== 0 || gate.metrics.drc_parity !== 0 || gate.metrics.drc_unconnected < 1) throw new Error(`the gap was not an isolated native connectivity defect: ${JSON.stringify(gate.metrics)}`);
-  const defect = (findings.findings as Row[]).find(row => row.stage === 'drc' && String(row.evidence?.pointer ?? '').startsWith('/unconnected_items/'));
+  const defect = connectivityDefect(findings);
   if (!defect || defect.severity !== 'error') throw new Error('native connectivity finding lacks an adoptable defect identity');
   smoke.passed(CASES[9]!, { run_id: failed.run_id, defect: defect.id, opens: gate.metrics.drc_unconnected, net: removed.net });
   const diagnosis = smoke.pcb(['routing', '--json', ...budget, 'diagnose', board, '--evidence', join(smoke.runs, failed.run_id, 'gate/result.json')]);
@@ -190,9 +240,112 @@ function gapCycle(smoke: Smoke, board: string, target: string, cycle: string): v
   smoke.passed(CASES[12]!, { after_sha256: adopted.after_sha256 });
 }
 
-function workflow(smoke: Smoke, project: string, board: string, part: string): void {
+/** A board without planes or pairs specs gets scratch ones on this copy, so that both gate checks really read the board. Always printed. */
+function addSignalChecks(smoke: Smoke, board: string): void {
+  const folder = join(smoke.checkout, 'hardware-design/boards', board), file = join(folder, 'gate.json'), gate = readObject<Row>(file);
+  // The nets the board already exempts from return-path rules, with the reasons of its committed exemption file.
+  const committed = gate.checks.kicad_happy?.exempt ? JSON.parse(readFileSync(join(folder, gate.checks.kicad_happy.exempt as string), 'utf8')) as Row[] : [];
+  const exempt = Object.fromEntries(committed.filter(row => row.rule === 'RP-001' && row.net).map(row => [row.net as string, row.reason as string]));
+  const specs: Row = {
+    planes: { about: 'pcb_workflow_smoke scratch spec', adjacent: { 'F.Cu': 'B.Cu' }, plane_layers: [], grounds: ['GND'], power: ['+3V3', '/V_GAS'], edge_classes: { i2c: ['/SDA', '/SCL'] }, exempt: { nets: exempt }, via_allow_mm: 0.6, step_mm: 0.25 },
+    pairs: { about: 'pcb_workflow_smoke scratch spec', stackup: { source: 'pcb_workflow_smoke', layers: {} }, pairs: [] },
+  };
+  for (const [check, spec] of Object.entries(specs)) {
+    if (gate.checks[check]) continue;
+    atomicJson(join(folder, `smoke-${check}.json`), spec);
+    gate.checks[check] = `smoke-${check}.json`;
+    smoke.say(`NOTE: ${board} has no ${check} spec: this throwaway copy gets a scratch one, so the check runs; it proves the board read, not the board`);
+  }
+  writeFileSync(file, JSON.stringify(gate, null, 1));
+}
+
+/** A real route with the in-house router on the board's own pour, its gate, adoption, a release and a fab pack. */
+function releasePath(smoke: Smoke, board: string, target: string): void {
+  addSignalChecks(smoke, board);
+  const zones = copperZones(readFileSync(target, 'utf8'));
+  if (!zones.length) throw new Error('the board has no copper zone: a route here would prove nothing about its pour');
+  const removed = injectGap(target), budget = (): string[] => ['--timeout', String(Math.floor(smoke.remaining()))];
+  const failed = smoke.pcb(['check', board, '--fresh', '--json', ...budget()], 1);
+  const defect = connectivityDefect(nativeContract(smoke, failed.run_id, 'failed').findings);
+  if (!defect) throw new Error(`gap in ${removed.net} left no connectivity finding for the adoption to resolve`);
+  const policy = join(smoke.output, 'iotroute-policy.json');
+  atomicJson(policy, { schema: 'iot-lab.iotroute-policy.v1', return_exempt: true });
+  const routed = smoke.pcb(['route', board, '--router', 'iotroute', '--spec', policy, '--json', ...budget()]);
+  const { gate } = nativeContract(smoke, routed.run_id, 'passed');
+  const operation = smoke.read(routed.run_id, 'operation/result.json'), router = smoke.read(routed.run_id, 'operation/router-summary.json'), candidate = operation.candidate as string;
+  if (router.status !== 'PASS' || router.drc_errors !== 0 || router.unconnected !== 0 || router.parity !== 0) throw new Error(`iotroute is not clean: ${JSON.stringify(router).slice(0, 300)}`);
+  if (!operation.candidate_verified || !operation.identity_preserved || !operation.source_unchanged) throw new Error('route candidate lacks verification, identity or an unchanged source');
+  const kept = copperZones(readFileSync(candidate, 'utf8'));
+  if (!sameValue(kept.map(zone => zone.net), zones.map(zone => zone.net)) || !kept.every(zone => zone.filled)) throw new Error('the routed board lost its copper zones or their fill');
+  smoke.passed(CASES[14]!, { run_id: routed.run_id, tracks: router.tracks, vias: router.vias, route_seconds: router.seconds, zones: kept.length, candidate_sha256: sha(candidate) });
+  for (const check of ['planes', 'pairs']) if (gate.checks?.[check]?.status !== 'passed' || gate.metrics?.[`${check}_failures`] !== 0) throw new Error(`gate ${check} did not pass: ${JSON.stringify(gate.checks?.[check])}`);
+  smoke.passed(CASES[15]!, { metrics: gate.metrics });
+  const adopted = smoke.pcb(['adopt', routed.run_id, '--baseline', failed.run_id, '--defect', defect.id, '--json']);
+  if (sha(target) !== sha(candidate) || adopted.after_sha256 !== sha(target)) throw new Error('adoption did not keep the exact routed bytes');
+  smoke.passed(CASES[16]!, { after_sha256: adopted.after_sha256 });
+  const release = smoke.pcb(['release', board, '--json', ...budget()]), result = smoke.read(release.run_id, 'operation/result.json');
+  const folder = result.artifact_directory as string, fab = join(folder, 'fab'), zip = join(fab, `${board}-gerber.zip`);
+  if (result.status !== 'passed' || !existsSync(join(fab, 'VERIFIED')) || !existsSync(zip)) throw new Error(`release left no verified candidate: ${result.cause}`);
+  smoke.passed(CASES[17]!, { run_id: release.run_id, zip_sha256: sha(zip) });
+  const packs = ['fab-pack-1.zip', 'fab-pack-2.zip'].map(name => join(smoke.output, name));
+  for (const pack of packs) {
+    const run = spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', PACK_FAB, join(fab, 'gerber'), pack], { encoding: 'utf8', timeout: Math.ceil(smoke.remaining() * 1000) });
+    if (run.status !== 0) throw new Error(`pack-fab: ${run.stderr.trim().split('\n').at(-1)}`);
+  }
+  if (sha(packs[0]!) !== sha(packs[1]!)) throw new Error('pack-fab is not deterministic: two packs differ');
+  const checked = spawnSync(process.execPath, [CHECK_FAB_ZIP, packs[0]!, join(fab, 'gerber')], { encoding: 'utf8', timeout: Math.ceil(smoke.remaining() * 1000) });
+  if (checked.status !== 0) throw new Error(`check-fab-zip: ${checked.stderr.trim().split('\n').at(-1) || checked.stdout.trim().slice(0, 300)}`);
+  smoke.passed(CASES[18]!, { zip_sha256: sha(packs[0]!) });
+}
+
+/** Takes a known failing post_verify stage out of the copy's gate.json, and the same command out of its release recipe. Always printed. */
+function skipStage(smoke: Smoke, board: string, stage: string): void {
+  const file = join(smoke.checkout, 'hardware-design/boards', board, 'gate.json'), gate = readObject<Row>(file);
+  const hook = (gate.post_verify as Row[] | undefined)?.find(row => row.stage === stage);
+  if (!hook) throw new Error(`--skip-step ${stage}: no such post_verify stage`);
+  const same = (row: Row): boolean => sameValue(row.run, hook.run), logs = (gate.release?.pre_checks as Row[] | undefined)?.filter(same).map(row => row.log) ?? [];
+  gate.post_verify = (gate.post_verify as Row[]).filter(row => row !== hook);
+  if (gate.release) {
+    gate.release.pre_checks = (gate.release.pre_checks as Row[] | undefined)?.filter(row => !same(row));
+    gate.release.board_checks = (gate.release.board_checks as Row[] | undefined)?.filter(row => !logs.includes(row.report));
+  }
+  writeFileSync(file, JSON.stringify(gate, null, 1));
+  smoke.summary.skipped += 1;
+  smoke.summary.skipped_steps.push({ stage, run: hook.run, scope: 'this throwaway copy only' });
+  smoke.say(`SKIP: ${stage} (${(hook.run as string[]).join(' ')}) and its release pre-check, on this throwaway copy only: --skip-step asked for it; the source project keeps it`);
+}
+
+/** The gaps the project must close before its lock bump, closed on this copy so that the steps after them run. Each is printed and kept in the
+ * summary; a gap the project has closed is reported as such. Without --patch-copy the release stops on them, as it should. */
+function patchCopy(smoke: Smoke, board: string): void {
+  const record = (file: string, change: string): void => {
+    smoke.summary.copy_patches.push({ file, change, scope: 'this throwaway copy only' });
+    smoke.say(`PATCH: ${file}: ${change}, on this throwaway copy only: --patch-copy asked for it; the project must make this change before its lock bump`);
+  };
+  const folder = join(smoke.checkout, 'hardware-design/boards', board), file = join(folder, 'gate.json'), gate = readObject<Row>(file);
+  const maker = join(smoke.checkout, gate.release.maker as string), text = readFileSync(maker, 'utf8');
+  const packed = text.replace('python3 "$root/tools/pack-fab.py"', 'node --experimental-strip-types --no-warnings "$root/tools/pack-fab.ts"');
+  if (packed !== text) { writeFileSync(maker, packed); record(gate.release.maker as string, 'pack-fab.py -> pack-fab.ts'); }
+  const variants = existsSync(join(folder, 'variants.json')) ? readObject<Row>(join(folder, 'variants.json')).variants : gate.release.variants;
+  if (!sameValue(variants, gate.release.variants)) {
+    record('gate.json', `release.variants ${JSON.stringify(gate.release.variants)} -> ${JSON.stringify(variants)} of variants.json`);
+    gate.release.variants = variants;
+    writeFileSync(file, JSON.stringify(gate, null, 1));
+  }
+  const routeFile = join(folder, 'route.json'), route = existsSync(routeFile) ? readObject<Row>(routeFile) : null;
+  if (route?.backend === 'fastroute') {
+    route.backend = 'iotroute';
+    writeFileSync(routeFile, JSON.stringify(route, null, 1));
+    record('route.json', 'backend fastroute -> iotroute');
+  }
+  if (!smoke.summary.copy_patches.length) smoke.say('NOTE: --patch-copy: the project has closed these gaps; drop the option');
+}
+
+function workflow(smoke: Smoke, project: string, board: string, part: string, skip: string[], patch: boolean): void {
   smoke.summary.source = sourceState(project, board);
   snapshot(project, smoke.checkout, board);
+  for (const stage of skip) skipStage(smoke, board, stage);
+  if (patch) patchCopy(smoke, board);
   const { project: stem } = boardConfig(smoke.checkout, board);
   writeFileSync(join(smoke.checkout, 'FOCUS.md'), `## Frozen\n- ${board}\n`);
   nativeCases(smoke, dirname(stem), stem, part);
@@ -209,6 +362,7 @@ function workflow(smoke: Smoke, project: string, board: string, part: string): v
   if (finished.status !== 'recorded' || finished.qualified !== false || finished.evidence_issues?.length || finished.runs?.length !== 4) throw new Error(`cycle did not bind its four runs: ${JSON.stringify(finished.evidence_issues)}`);
   if (!(finished.runs as Row[]).every(row => row.evidence_verified)) throw new Error('cycle holds an unverified run');
   smoke.passed(CASES[13]!, { runs: (finished.runs as Row[]).map(row => row.run_id), covered_elapsed_s: finished.covered_elapsed_s });
+  releasePath(smoke, board, target);
 }
 
 /** Stops any run a failed step left behind, through its own durable handle. */
@@ -220,27 +374,36 @@ function settle(smoke: Smoke): void {
 }
 
 function main(argv: string[]): number {
-  const { values } = parseFlags(argv, { project: { type: 'string' }, board: { type: 'string' }, output: { type: 'string' }, part: { type: 'string' }, timeout: { type: 'string' }, json: { type: 'boolean' } }, USAGE);
+  const { values } = parseFlags(argv, { project: { type: 'string' }, board: { type: 'string' }, output: { type: 'string' }, part: { type: 'string' }, timeout: { type: 'string' }, json: { type: 'boolean' }, progress: { type: 'string' }, 'skip-step': { type: 'string', multiple: true }, 'patch-copy': { type: 'boolean' } }, USAGE);
   if (!values.project || !values.board || !values.output) throw new UsageError(USAGE);
   const project = resolve(values.project), output = resolve(values.output), timeout = Number(values.timeout ?? 600);
   if (!Number.isFinite(timeout) || timeout <= 0) throw new UsageError('--timeout must be finite and positive');
   if (output === project || output.startsWith(`${project}/tools`) || output.startsWith(`${project}/hardware-design`)) throw new Error('evidence directory overlaps the source project');
   mkdirSync(output);
-  const smoke = new Smoke(output, values.board, timeout), started = Date.now(), summary = smoke.summary;
+  const smoke = new Smoke(output, values.board, timeout, values.progress), started = Date.now(), summary = smoke.summary;
+  smoke.begin(CASES[0]!);
+  smoke.startHeartbeat();
   try {
-    workflow(smoke, project, values.board, values.part ?? 'C1');
+    workflow(smoke, project, values.board, values.part ?? 'C1', values['skip-step'] ?? [], values['patch-copy'] === true);
     if (!sameValue(sourceState(project, values.board), summary.source)) throw new Error('source project changed during the smoke');
-    smoke.passed(CASES[14]!, { source_sha256: summary.source.sha256 });
+    smoke.passed(CASES.at(-1)!, { source_sha256: summary.source.sha256 });
     Object.assign(summary, { status: 'passed', cause: 'all workflow cases passed on the isolated copy; source project unchanged' });
   } catch (error) {
     summary.cause = (error as Error).message;
   }
   settle(smoke);
+  smoke.stopHeartbeat();
   summary.elapsed_s = (Date.now() - started) / 1000;
   summary.not_executed = CASES.filter(name => !(summary.cases as Row[]).some(row => row.case === name));
+  // A clock or a missing tool leaves no verdict on the step; a check that ran and said no does.
+  const stuck = /deadline|got null|ENOENT|not found/.test(String(summary.cause)), word = summary.status === 'passed' ? 'PASS' : stuck ? 'STUCK' : 'FAIL';
+  const step = summary.status === 'passed' ? '' : `step ${summary.not_executed[0]}: `, skips = `${summary.skipped ? `; skipped ${summary.skipped_steps.map((row: Row) => row.stage).join(',')}` : ''}${summary.copy_patches.length ? `; copy patched: ${summary.copy_patches.length}` : ''}`;
+  summary.verdict = word;
+  if (summary.status !== 'passed') smoke.failed(summary.not_executed[0] as string, String(summary.cause));
   atomicJson(join(output, 'summary.json'), summary);
-  const verdict = `${summary.status === 'passed' ? 'PASS' : 'FAIL'}: ${summary.cases.length}/${CASES.length} cases; ${summary.cause}; evidence=${join(output, 'summary.json')}`;
-  console.log(values.json ? JSON.stringify({ status: summary.status, cases: summary.cases.length, expected: CASES.length, cause: summary.cause, not_executed: summary.not_executed, elapsed_s: summary.elapsed_s }) : verdict);
+  const verdict = `${word}: ${step}${summary.cases.length}/${CASES.length} cases in ${Math.round(summary.elapsed_s)} s${skips}; ${summary.cause}; evidence=${join(output, 'summary.json')}`;
+  if (values.progress) appendFileSync(values.progress, `${verdict}\n`);
+  console.log(values.json ? JSON.stringify({ status: summary.status, verdict: word, cases: summary.cases.length, expected: CASES.length, cause: summary.cause, not_executed: summary.not_executed, elapsed_s: summary.elapsed_s }) : verdict);
   return summary.status === 'passed' ? 0 : 1;
 }
 

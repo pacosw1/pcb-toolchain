@@ -41,7 +41,7 @@ export interface Config {
   maxStreams: number;
 }
 
-/** 127.0.0.1, ::1 or a Tailscale 100.64.0.0/10 address, the same rule as tools/route_live.py. Never 0.0.0.0. */
+/** 127.0.0.1, ::1 or a Tailscale 100.64.0.0/10 address. Never 0.0.0.0. */
 export function bindAllowed(addr: string): boolean {
   if (addr === '127.0.0.1' || addr === '::1') return true;
   if (!net.isIPv4(addr)) return false;

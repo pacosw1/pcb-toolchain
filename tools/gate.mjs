@@ -295,7 +295,7 @@ if (flag('--ratchet')) {
   for (const l of r.waived) console.log(`  waived   ${l}`);
   for (const l of r.warnings) console.log(`  WARNING  ${l}`);
   for (const l of r.blocked) console.log(`  BLOCKED  ${l}`);
-  // --strict: a soft regression also fails (tools/route_batch.mjs accepts a batch only when no gate is worse).
+  // --strict: a soft regression also fails.
   if (r.blocked.length || (flag('--strict') && r.warnings.length)) exit = 1;
   console.log(r.blocked.length ? 'gate: regression. Fix it, or add a waiver with a reason to gate-waivers.json' : 'gate: no blocked regression');
 } else {

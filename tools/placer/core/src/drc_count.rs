@@ -1,4 +1,4 @@
-//! Counts of a kicad-cli DRC JSON report, for router scoring (tools/placer/fr_job.sh).
+//! Counts of a kicad-cli DRC JSON report, for router scoring.
 //!
 //! The net of an unconnected item is the [NET] in its first item description. kicad-cli lists at most CAP unconnected
 //! items: a full list makes every open count a lower bound, and the count line ends in CAPPED.

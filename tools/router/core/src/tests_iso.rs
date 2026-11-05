@@ -4,7 +4,7 @@ use super::*;
 
 fn n(name: &str) -> Net {
     Net { name: name.into(), width: 0.2, clr: 0.2, fast: false, plane: false, power: false, layers: 0b101, via_d: 0.6, via_drill: 0.3, max_vias: None,
-          max_len: None, pref: false, min_w: 0.0, min_wl: Vec::new(), in_vias: 0 }
+          max_len: None, pref: false, min_w: 0.0, min_wl: Vec::new(), in_vias: 0, neck_w: 0.0 }
 }
 
 /// 30 x 20 mm, F.Cu / In1.Cu (plane) / B.Cu; nets ISO (0), OTH (1), OTH2 (2). Groups: 0 no net, 1 ISO track outside

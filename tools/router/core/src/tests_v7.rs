@@ -4,7 +4,7 @@ use super::tests_v6::{opts, pad};
 
 fn n(name: &str, plane: bool) -> Net {
     Net { name: name.into(), width: 0.15, clr: 0.15, fast: false, plane, power: false, layers: 0b101, via_d: 0.6, via_drill: 0.3, max_vias: None,
-          max_len: None, pref: false, min_w: 0.0, min_wl: Vec::new(), in_vias: 0 }
+          max_len: None, pref: false, min_w: 0.0, min_wl: Vec::new(), in_vias: 0, neck_w: 0.0 }
 }
 
 fn grid() -> Grid {
@@ -154,4 +154,20 @@ fn return_via_must_be_conflict_free() {
     assert!(!ctx.place_return(0, 10.0, 5.0, &[]), "no conflict-free return site: the layer change is rejected");
     ctx.ret_soft = true;
     assert!(ctx.place_return(0, 10.0, 5.0, &[]), "ret_soft (v6 rule): a conflicting site is taken");
+}
+
+/// A return via outside the zones of its ground joins nothing (ENV-SENSE: a site in the notch of GND_B stayed unconnected, and KiCad
+/// found the open only after the route). Signal via of A at (10, 5), a zone that ends at x = 9.
+#[test]
+fn return_via_stays_inside_the_zone_of_its_ground() {
+    let o = opts();
+    let mut bd = board();
+    let ground = bd.gnd as usize;
+    bd.ppoly.push((ground, vec![(0.0, 0.0), (9.0, 0.0), (9.0, 10.0), (0.0, 10.0)]));
+    let mut ctx = ctx_of(&mut bd, &o);
+    assert!(ctx.place_return(0, 10.0, 5.0, &[]));
+    let Geo::Circ(x, _, _) = ctx.bd.shapes.last().unwrap().geo else { panic!("the return via is the last shape") };
+    assert!(x <= 9.0, "site at x = {x} is outside the zone");
+    ctx.bd.ppoly[0].1 = vec![(0.0, 0.0), (4.0, 0.0), (4.0, 10.0), (0.0, 10.0)];
+    assert!(!ctx.place_return(0, 15.0, 5.0, &[]), "no zone in reach: the layer change is rejected");
 }

@@ -5,16 +5,18 @@ import { join } from 'node:path';
 import { dependencyFiles } from './design-contract-load.ts';
 import { designServices } from './design-services.ts';
 import { atomicJson, plainJson, readObject, sha256File } from './json-file.ts';
+import { iotroutePolicy } from './outcome-controls.ts';
 import { verifyManifest } from './part-review.ts';
 import { candidateLayoutCheck, designAdmission, type OperationManifest, placementCheck, routesCopper } from './pcb-candidate-screens.ts';
 import { parentCandidate } from './pcb-candidate.ts';
 import { declaredPours, pcbIdentity, type PourSet } from './pcb-identity.ts';
 import { type Emit, execute, measuredStage, operationEvent, type Row } from './pcb-operation-log.ts';
-import { finalize, prepare, type Prepared, routeJobEnv, routeJobTools } from './pcb-routing-trial.ts';
+import { validateGate } from './pcb-routing-admission.ts';
 import { snapshot, sourceState, type SourceState } from './pcb-sources.ts';
 import { boardConfig, operationCommand, pythonNative, routePolicyArgs } from './pcb-workflow.ts';
+import { iotrouteBin } from './iotroute-bin.ts';
 import { fileRoot } from './project-root.mjs';
-import { isFile, isRelativeTo, joinPath, relativeTo, resolvePath, withSuffix } from './py-path.ts';
+import { isFile, isRelativeTo, joinPath, relativeTo, resolvePath, which, withSuffix } from './py-path.ts';
 import { sameValue } from './py-values.ts';
 import { applyPlan, planDependencies } from './route-decision.ts';
 import { EscapeStageReceipts } from './route-decision-escape.ts';
@@ -124,27 +126,22 @@ async function repair(run: Candidate): Promise<ToolOutcome> {
   return { code: guard.status === 'passed' || guard.status === 'proposed' ? 0 : 1, report: null };
 }
 
-async function fastroute(run: Candidate): Promise<ToolOutcome> {
-  const { folder, workspace, manifest } = run, output = join(folder, 'operation/router');
-  const prepared: Prepared = await prepare(workspace, run.native, output, manifest.spec, manifest.timeout_s, run.board, process.platform === 'darwin' ? 'native' : 'container');
-  const code = await execute(folder, 'route', prepared.command, workspace, { ...run.env, ...prepared.env });
-  const report = finalize(prepared, code);
-  atomicJson(join(folder, 'operation/router-summary.json'), report);
-  if (!code) {
-    if (report.status !== 'passed') throw new Error('solver completion lacks verified execution controls');
-    const routed = join(output, 'routed.kicad_pcb');
-    if (!isFile(routed)) throw new Error('solver returned success without its routed native candidate');
-    copyFileSync(routed, run.native);
-  }
-  return { code, report };
+function executable(name: string): string {
+  const path = which(name);
+  if (!path) throw new Error(`route executable is unavailable: ${name}`);
+  return resolvePath(path);
 }
 
-/** `iotroute route`: it reads the candidate and writes only its own folder. */
+/** `iotroute route`: it reads the candidate and writes only its own folder. A missing tool stops the run here, by name. */
 async function routeJson(run: Candidate): Promise<ToolOutcome> {
   const output = join(run.folder, 'operation/router');
-  const tools = routeJobTools();
-  const code = await execute(run.folder, 'route', [tools.iotroute, 'route', run.board, output, '--input', run.native, '--config', run.spec!], run.workspace, { ...run.env, ...routeJobEnv(tools) });
-  const report = readObject<Row>(join(output, 'result.json'));
+  const iotroute = executable(iotrouteBin());
+  const tools = { IOTROUTE_BIN: iotroute, KICAD_API_CLI: executable(process.env.KICAD_API_CLI || 'kicad-cli-nightly'),
+    KICAD_CLI: executable(process.env.KICAD_CLI ?? (process.platform === 'darwin' ? '/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli' : 'kicad-cli')) };
+  const code = await execute(run.folder, 'route', [iotroute, 'route', run.board, output, '--input', run.native, '--config', run.spec!], run.workspace, { ...run.env, ...tools });
+  const record = join(output, 'result.json');
+  // A stage that stops before its end writes no record: the cause is in the stage's own log, named by operation/route.log.
+  const report: Row = isFile(record) ? readObject<Row>(record) : { status: 'ERROR', cause: `iotroute route wrote no result.json (exit ${code}); see operation/route.log` };
   atomicJson(join(run.folder, 'operation/router-summary.json'), report);
   if (!code) {
     if (!report.board_file || !isFile(String(report.board_file))) throw new Error('iotroute route returned success without its board_file');
@@ -153,8 +150,10 @@ async function routeJson(run: Candidate): Promise<ToolOutcome> {
   return { code, report };
 }
 
-/** iotroute run gives its verdict from KiCad DRC with parity on the saved fill; then the normal gate runs on the copy. */
+/** iotroute run gives its verdict from KiCad DRC with parity on the saved fill; then the normal gate runs on the copy. A board's
+ *  gate configuration is admitted first: a gate of any stage that the shared validator accepts. */
 async function iotroute(run: Candidate): Promise<ToolOutcome> {
+  await validateGate(run.workspace, run.board);
   const { folder, manifest, native } = run, output = join(folder, 'operation/router'), routed = join(output, native.split('/').at(-1)!);
   mkdirSync(output, { recursive: true });
   const command = [manifest.node, 'tools/router/route-dispatch.mjs', '--timeout', String(manifest.timeout_s), '--', 'iotroute', 'run', run.board, routed, '--pcb', native, '--json',
@@ -163,7 +162,10 @@ async function iotroute(run: Candidate): Promise<ToolOutcome> {
   const record = `${routed}.iotroute/result.json`;
   const report: Row = isFile(record) ? readObject<Row>(record) : { status: 'ERROR', cause: 'iotroute run wrote no result.json' };
   if (report.status === 'FAIL') report.cause = `iotroute DRC not clean: errors ${String(report.drc_errors)} unconnected ${String(report.unconnected)} parity ${String(report.parity)}`;
-  atomicJson(join(folder, 'operation/router-summary.json'), report);
+  const summary = join(folder, 'operation/router-summary.json');
+  atomicJson(summary, report);
+  const policy = iotroutePolicy(command, report, sha256File(summary), manifest.timeout_s, code);
+  if (policy) atomicJson(join(folder, 'operation/execution-policy.json'), policy);
   if (!code) {
     if (report.status !== 'PASS' || !report.board_file || !isFile(String(report.board_file))) throw new Error('iotroute run returned success without a PASS record and its board_file');
     copyFileSync(String(report.board_file), native);
@@ -174,7 +176,6 @@ async function iotroute(run: Candidate): Promise<ToolOutcome> {
 function runTool(run: Candidate): Promise<ToolOutcome> {
   const { manifest } = run, router = manifest.router ?? 'explicit';
   if (manifest.operation === 'repair') return repair(run);
-  if (manifest.operation === 'route' && router === 'fastroute') return fastroute(run);
   if (manifest.operation === 'route' && router === 'route-json') return routeJson(run);
   if (manifest.operation === 'route' && router === 'iotroute') return iotroute(run);
   const command = operationCommand(run.workspace, run.board, manifest.operation, run.spec, manifest.kind);

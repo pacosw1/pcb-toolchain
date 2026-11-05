@@ -78,7 +78,7 @@ stop_overflow 0.07, net_crossing_weight 1e-4. Cypress HPWL 796 mm (pin centres),
 ## 5. Routing score (benchmark B v3 set-up)
 
 Signal tracks stripped, FIELD_GND copper kept, FIELD_GND pad vias (`GNDVIAS=1`), 5 Freerouting runs of 3.5 min,
-`tools/placer/fr_job.sh` through `tools/remote.sh` (3 + 2 jobs, 4 CPUs each). O, S and P are from bench v3.
+a score job (removed 2026-11-05) through `tools/remote.sh` (3 + 2 jobs, 4 CPUs each). O, S and P are from bench v3.
 
 | Board | Unrouted per run | Median | Signal subset | DRC errors after routing |
 |---|---|---|---|---|

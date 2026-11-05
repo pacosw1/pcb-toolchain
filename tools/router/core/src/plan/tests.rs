@@ -18,7 +18,7 @@ fn config() -> Value {
     json!({
         "schema": "iot-lab.route.v1",
         "about": "test board",
-        "backend": "fastroute",
+        "backend": "tracemaker",
         "layers": ["F.Cu", "In2.Cu", "B.Cu"],
         "budget": {"passes": 60, "time_s": 300, "threads": 8},
         "stages": [
@@ -55,7 +55,7 @@ fn assert_rejects(cfg: &Value, text: &str) {
 #[test]
 fn valid_config_gives_normalized_stages() {
     let plan = plan_of(&config());
-    assert_eq!(plan.backend, Backend::Fastroute);
+    assert_eq!(plan.backend, Backend::Tracemaker);
     let (mains, selv) = (&plan.stages[0], &plan.stages[1]);
     assert_eq!(mains.layers, ["B.Cu"]);
     assert_eq!(mains.budget.passes, 100);
@@ -107,6 +107,8 @@ fn unknown_backend_is_rejected() {
     let mut cfg = config();
     cfg["backend"] = json!("freerouting");
     assert_rejects(&cfg, "backend");
+    cfg["backend"] = json!("fastroute");
+    assert_rejects(&cfg, "needs the iotroute backend");
 }
 
 #[test]
@@ -196,14 +198,6 @@ fn float_is_not_a_count() {
 }
 
 #[test]
-fn features_become_the_fastroute_environment() {
-    let mut cfg = config();
-    cfg["features"] = json!({"via_off_small_pads": true, "triage_opens": false});
-    assert_eq!(plan_of(&cfg).feature_env(), "triage_opens=0,via_off_small_pads=1");
-    assert_eq!(plan_of(&config()).feature_env(), "");
-}
-
-#[test]
 fn unknown_feature_is_rejected() {
     let mut cfg = config();
     cfg["features"] = json!({"via_off_small_pad": true});
@@ -290,41 +284,6 @@ fn width_applies_by_segment_midpoint_layer_and_current_width() {
 }
 
 #[test]
-fn fastroute_args_of_an_only_nets_stage() {
-    assert_eq!(
-        stages().0.fastroute_args(),
-        strings(&[
-            "--layers", "B.Cu", "--passes", "100", "--max-time", "300", "--threads", "8", "--skip-net", "", "--plane-nets", "",
-            "--only-nets", "/AC_N,/AC_L",
-        ])
-    );
-}
-
-#[test]
-fn fastroute_args_of_a_plane_and_neck_stage() {
-    assert_eq!(
-        stages().1.fastroute_args(),
-        strings(&[
-            "--layers", "F.Cu,In2.Cu,B.Cu", "--passes", "60", "--max-time", "300", "--threads", "8", "--skip-net", "GND",
-            "--plane-nets", "GND", "--neck-um", "250",
-        ])
-    );
-}
-
-#[test]
-fn fastroute_args_of_route_planes_unlock_and_via_skip() {
-    let mut cfg = config();
-    cfg["stages"][1]["route_planes"] = json!(true);
-    cfg["stages"][1]["unlock_nets"] = json!(["/A"]);
-    cfg["stages"][1]["via_skip"] = json!(["U2", "R7.1"]);
-    let args = plan_of(&cfg).stages[1].fastroute_args();
-    assert!(args.contains(&"--route-planes".to_string()));
-    let unlock = args.iter().position(|arg| arg == "--unlock-nets").unwrap();
-    assert_eq!(args[unlock + 1], "/A");
-    assert!(args.contains(&"--via-args=--skip U2 R7.1".to_string()));
-}
-
-#[test]
 fn tracemaker_layers_become_no_tracks_on_and_only_nets_go_first() {
     let args = stages().0.tracemaker_args(&copper(), "tm", "in.kicad_pcb", "out.kicad_pcb", "sum.json");
     assert_eq!(
@@ -368,7 +327,7 @@ fn skip_nets_are_patterns() {
 
 #[test]
 fn tracemaker_keeps_plane_net_copper_in_place_of_pad_vias() {
-    // GND is skipped and a plane net: Fastroute gives its pads vias; TraceMaker's GND copper does that job.
+    // GND is skipped and a plane net: TraceMaker's GND copper connects its pads.
     let (mains, selv) = stages();
     let nets = strings(&["/AC_N", "GND", "/X"]);
     assert_eq!(selv.tracemaker_kept(&nets), set(&["/AC_N", "GND", "/X"]));

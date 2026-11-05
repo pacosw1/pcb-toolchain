@@ -13,7 +13,7 @@ import { atomicJson, sha256File } from './json-file.ts';
 import { withSuffix } from './py-path.ts';
 import { fingerprint } from './fingerprint.ts';
 import { applyPlan, bridgeUuid, classify, diagnoseEvidence, IMPLEMENTATIONS, intersects, loadEvidence, nativeInputs, nm,
-  observeRoute, planDependencies, prepareShift, protectedGeometry, retryKey, selectGap, selectVia, sourceInputs, verifyCopperScope } from './route-decision.ts';
+  planDependencies, prepareShift, protectedGeometry, retryKey, selectGap, selectVia, sourceInputs, verifyCopperScope } from './route-decision.ts';
 import type { DecisionServices, DrcReport, Choice } from './route-decision.ts';
 import { EscapeStageReceipts, escapeContext, generateEscape, generateEscapeEvidence, generateEscapeForCandidate, verifyEscapeEvidence } from './route-decision-escape.ts';
 import type { EscapeContext, EscapeContract, EscapeEvidence, EscapeServices } from './route-decision-escape.ts';
@@ -131,11 +131,6 @@ test('API via records without explicit type and extent cannot justify repair', t
   assert.throws(() => prepareShift(board, 'v', 'left', .5), /API type\/layer extent/);
   const via = board.copper.at(-1)!; if ('Via' in via) Object.assign(via.Via, { via_type: 'Through', layers: ['F.Cu', 'B.Cu'] });
   assert.deepEqual(prepareShift(board, 'v', 'left', .5).destination, [500000, 0]);
-});
-test('observations bind route input/result bytes and abstain on stale artifacts', t => {
-  const f = fixture(t), route = join(f.base, 'route'); mkdirSync(route); copyFileSync(f.board, join(route, 'routed.kicad_pcb'));
-  atomicJson(join(route, 'input-manifest.json'), { board_sha256: sha256File(f.board) }); atomicJson(join(route, 'outcome.json'), { board_sha256: sha256File(join(route, 'routed.kicad_pcb')), status: 'stuck' }); atomicJson(join(route, 'drc.json'), f.report);
-  assert.equal(observeRoute(f.board, route).action, 'diagnose_selected_connections'); writeFileSync(join(route, 'routed.kicad_pcb'), 'changed'); assert.equal(observeRoute(f.board, route).status, 'unverified');
 });
 function escapeFixture(f: Fixture) {
   const launcher = join(f.root, 'tools', 'grid-artifact'); writeFileSync(launcher, 'synthetic Rust generator identity');

@@ -29,7 +29,6 @@ function needProject(): Project {
   return project
 }
 
-const lexical = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0
 const expandHome = (p: string): string => p === '~' || p.startsWith('~/') ? path.join(os.homedir(), p.slice(1)) : p
 
 registry.method('engine.ping', [], 0, () => ({ ok: true, uptime_s: Math.round(Date.now() - started) / 1000 }))
@@ -122,29 +121,18 @@ registry.method('gate.check', ['board', 'fresh'], 1, (board: string, fresh: bool
 registry.method('op.build', ['board', 'timeout_s'], 1, (board: string, timeoutS?: number | null) =>
   runs.start(needProject().root, 'build', board, { timeoutS: timeoutS ?? undefined }).summary())
 
-function boardNets(gate: string): string[] {
-  const p = needProject()
-  const pcbs = p.boards().flatMap(b => b.revisions).filter(r => r.gate === gate && r.pcb).map(r => r.pcb!)
-  if (!pcbs.length) throw new Error(`no board revision with gate '${gate}'; pass policy.nets`)
-  const nets = load(p.resolve(pcbs[0])).footprints.flatMap(f => f.pads.map(pad => pad.net)).filter(Boolean)
-  return [...new Set(nets)].sort(lexical)
-}
+interface ShortPolicy { iters?: number, timeout_s?: number, keep?: string, layers?: string[], nets?: string[] }
 
-interface ShortPolicy { layers?: string[], nets?: string[], passes?: number, timeout_s?: number, threads?: number, optimizer?: string }
-
-/** `tools/pcb route BOARD --router fastroute --spec POLICY.json`: Fastroute on an isolated candidate, then the complete
- *  fresh gate on it. `policy` is a full iot-lab.routing-policy.v1 object, or the short form {layers, nets?, passes,
- *  timeout_s, threads?, optimizer?}; no nets = every named net with pads on the board. `timeout_s` is the total CLI
- *  deadline (solver + verification), default router timeout + 600 s. */
+/** `tools/pcb route BOARD --router iotroute --spec POLICY.json`: iotroute on an isolated candidate, then the complete
+ *  fresh gate on it. `policy` is a full iot-lab.iotroute-policy.v1 object, or the short form {iters?, timeout_s?, keep?, layers?, nets?}.
+ *  The third argument `timeout_s` is the total CLI deadline (router + verification), default router time + 600 s. */
 registry.method('op.route', ['board', 'policy', 'timeout_s'], 2, (board: string, given: ShortPolicy | RoutingPolicy, timeoutS?: number | null) => {
   const p = needProject()
   let policy: RoutingPolicy
   if ('schema' in given) {
     policy = given
   } else {
-    const nets = given.nets?.length ? [...given.nets] : boardNets(board)
-    policy = routingPolicy(given.layers?.length ? given.layers : ['F.Cu', 'B.Cu'], nets, Math.trunc(given.passes ?? 40),
-                           Math.trunc(given.timeout_s ?? 300), Math.trunc(given.threads ?? 1), given.optimizer ?? 'if-routed')
+    policy = routingPolicy(Math.trunc(given.iters ?? 80), Math.trunc(given.timeout_s ?? 300), given.keep ?? 'lock-nets', given.layers, given.nets)
   }
   return runs.start(p.root, 'route', board, { policy, timeoutS: timeoutS ?? undefined }).summary()
 })

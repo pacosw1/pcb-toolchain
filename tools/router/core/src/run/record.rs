@@ -117,6 +117,8 @@ pub struct Record {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub board_sha256: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnosis: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cause: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seconds: Option<f64>,
@@ -126,7 +128,7 @@ impl Record {
     pub fn new(board_file: String, work: String) -> Record {
         Record {
             schema: SCHEMA, status: "ERROR", board_file, work: Some(work), stages: Stages::default(), drc_errors: None, unconnected: None, parity: None, tracks: None, vias: None,
-            board: None, input: None, input_sha256: None, iters: None, seed: None, reuse: None, pro_restored: None, drc_by_type: None, track_length_mm: None, board_sha256: None, cause: None, seconds: None,
+            board: None, input: None, input_sha256: None, iters: None, seed: None, reuse: None, pro_restored: None, drc_by_type: None, track_length_mm: None, board_sha256: None, diagnosis: None, cause: None, seconds: None,
         }
     }
 

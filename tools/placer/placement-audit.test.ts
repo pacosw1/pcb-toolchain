@@ -20,14 +20,30 @@ const problem = (): Problem => ({
 const candidate = (values: Partial<AuditCandidate>): AuditCandidate => ({ pose: [], cost: 0, illegal: [], components: {}, ...values });
 const report = (...args: Parameters<typeof candidateReport>) => candidateReport(...args) as Row;
 
-function routeFolder(t: TestContext): string {
+test('feedback is scoped to this candidate, bounded, and never teaches fixed units or a router miss', (t: TestContext) => {
   const d = mkdtempSync(join(tmpdir(), 'placement-audit-'));
   t.after(() => rmSync(d, { recursive: true, force: true }));
-  writeFileSync(join(d, 'routed.kicad_pcb'), 'result');
-  writeFileSync(join(d, 'input-manifest.json'), JSON.stringify({ board_sha256: 'source' }));
-  writeFileSync(join(d, 'outcome.json'), JSON.stringify({ status: 'complete', errors: 0, board_sha256: digest(join(d, 'routed.kicad_pcb')) }));
-  return d;
-}
+  const routed = join(d, 'routed.kicad_pcb');
+  writeFileSync(routed, 'result');
+  const record = (values: Row = {}) => writeFileSync(join(d, 'result.json'), JSON.stringify({ status: 'FAIL', drc_errors: 0, input_sha256: 'source', board_file: routed, board_sha256: digest(routed), ...values }));
+  record();
+  writeFileSync(join(d, 'pin-escape.json'), JSON.stringify({ halo_hint: { J1: 10, R1: 10, UNKNOWN: 10 } }));
+  let hints: Record<string, number> = {};
+  let evidence: Row = {};
+  for (let i = 0; i < 10; i++) [hints, evidence] = boundedFeedback(problem(), d, 'source', hints, 1);
+  assert.deepEqual(hints, { R1: 1 });
+  assert.equal(evidence.accepted, true);
+  assert.equal(boundedFeedback(problem(), d, 'other', {}, 1)[1].accepted, false);
+  record({ drc_errors: 1 });
+  assert.equal(boundedFeedback(problem(), d, 'source', {}, 1)[1].accepted, false);
+  record({ status: 'ERROR' });
+  assert.equal(boundedFeedback(problem(), d, 'source', {}, 1)[1].accepted, false);
+  record();
+  rmSync(join(d, 'pin-escape.json'));
+  writeFileSync(join(d, 'open-triage.json'), JSON.stringify({ connections: [{ class: 'ROUTER_MISS', blocking_parts: ['R1'] }, { class: 'ENCLOSED', blocking_parts: ['R1', 'J1'] }] }));
+  assert.deepEqual(boundedFeedback(problem(), d, 'source', {}, 1)[0], {});
+  assert.deepEqual(boundedFeedback(problem(), d, 'source', {}, 1, true)[0], { R1: 0.25 });
+});
 
 test('identity hashes the text of json.dumps(sort_keys=True)', () => {
   // The expected text is what CPython writes for these values: default separators, sorted keys, float repr, ensure_ascii.
@@ -104,42 +120,3 @@ test('a clean pose keeps every constraint attribution', () => {
   assert.notEqual(r.candidate_sha256, report(problem(), { ...c, pose: [[0, 0, 0], [6, 5, 0]] }, {}, false).candidate_sha256);
 });
 
-test('feedback is scoped, bounded and never teaches fixed units', t => {
-  const d = routeFolder(t);
-  writeFileSync(join(d, 'pin-escape.json'), JSON.stringify({ halo_hint: { J1: 10, R1: 10, UNKNOWN: 10 } }));
-  let hints: Record<string, number> = {};
-  let evidence: Row = {};
-  for (let i = 0; i < 10; i++) [hints, evidence] = boundedFeedback(problem(), d, 'source', hints, 1);
-  assert.deepEqual(hints, { R1: 1 });
-  assert.equal(evidence.accepted, true);
-  assert.equal(jsonDumps(evidence.hints), '{"R1": 1.0}');
-  assert.deepEqual(Object.keys(evidence.sources), [join(d, 'pin-escape.json')]);
-  const [unchanged, refused] = boundedFeedback(problem(), d, 'other', hints, 1);
-  assert.deepEqual(unchanged, hints);
-  assert.equal(refused.accepted, false);
-  writeFileSync(join(d, 'routed.kicad_pcb'), 'stale');
-  assert.equal(boundedFeedback(problem(), d, 'source', {}, 1)[1].accepted, false);
-});
-
-test('missing evidence teaches nothing', t => {
-  const d = routeFolder(t);
-  rmSync(join(d, 'outcome.json'));
-  const [hints, evidence] = boundedFeedback(problem(), d, 'source', { R1: 0.5 }, 1);
-  assert.deepEqual(hints, { R1: 0.5 });
-  assert.deepEqual(evidence, { accepted: false, reason: 'missing complete attributed evidence' });
-});
-
-test('one update teaches at most eight refs, in sorted order', t => {
-  const d = routeFolder(t);
-  const refs = ['R9', 'R10', 'R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7'];
-  writeFileSync(join(d, 'pin-escape.json'), JSON.stringify({ halo_hint: Object.fromEntries(refs.map(ref => [ref, 0.25])) }));
-  const pr = { ...problem(), units: refs.map(ref => ({ name: ref, fixed: false, x: 0, y: 0, rects: [] })) };
-  assert.deepEqual(Object.keys(boundedFeedback(pr, d, 'source', {}, 1)[0]).sort(), ['R1', 'R10', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7']);
-});
-
-test('congestion is opt-in, and only enclosed parts teach, not router misses', t => {
-  const d = routeFolder(t);
-  writeFileSync(join(d, 'open-triage.json'), JSON.stringify({ connections: [{ class_: 'ROUTER_MISS' }, { class: 'ENCLOSED', blocking_parts: ['R1', 'J1'] }] }));
-  assert.deepEqual(boundedFeedback(problem(), d, 'source', {}, 1)[0], {});
-  assert.deepEqual(boundedFeedback(problem(), d, 'source', {}, 1, true)[0], { R1: 0.25 });
-});

@@ -16,7 +16,6 @@ export const GROW = 1.15;                      // an illegal search result: same
 export const TRIES = 3;                        // up to 3 tries
 export const K_TOL = 0.02;                     // the outline phase stops when the board scale gap is below 2 %
 const REAL_K_TOL = 1e-9;
-const IMMUTABLE_STOP = 'immutable input mandatory rules';
 const SCHEDULE_DONE = 'schedule done';
 const LENGTH_STOP = 'length stop';
 
@@ -31,17 +30,6 @@ export class TimeoutExpired extends Error {
     super(`Command ${pyStr(command)} timed out after ${seconds} seconds`);
     this.command = command;
     this.seconds = seconds;
-  }
-}
-
-/** The step board breaks a mandatory rule of an input that this run may not change. Ends the loop with no best step. */
-export class ImmutableInputFailure extends Error {
-  readonly receipt: { faults: unknown };
-  readonly path: string;
-  constructor(receipt: { faults: unknown }, path: string) {
-    super(`immutable input mandatory rules: ${path}`);
-    this.receipt = receipt;
-    this.path = path;
   }
 }
 
@@ -104,7 +92,7 @@ function noPassVerdict(t: StepSummary): string {
 const KNOWN_FINDINGS = new Set(['native_open', 'escape_failure', 'model_enclosed', 'router_miss', 'no_routing_defect']);
 const FEEDBACK_ACTIONS = new Set(['inspect_escape', 'diagnose_selected_connections']);
 
-export interface OutcomeOptions { candidate?: unknown; geometryFeedback?: boolean; scopedSkippedOpens?: boolean }
+export interface OutcomeOptions { candidate?: unknown; geometryFeedback?: boolean; scopedSkippedOpens?: boolean; measure?: Measure | null }
 
 /** Counts plus a diagnostic handoff. A clean routing-step count may advance the schedule. A failed route may advance only
  *  when its driver has attributed a concrete bounded geometry update. This is routing-search evidence, never a configured
@@ -115,11 +103,13 @@ export class RouteOutcome {
   readonly candidate: unknown;
   readonly routingStepClean: boolean;
   readonly stop: boolean;
+  readonly measure: Measure | null;
 
-  constructor(counts: number[], decision: Dict, { candidate = null, geometryFeedback = false, scopedSkippedOpens = false }: OutcomeOptions = {}) {
+  constructor(counts: number[], decision: Dict, { candidate = null, geometryFeedback = false, scopedSkippedOpens = false, measure = null }: OutcomeOptions = {}) {
     this.counts = [...counts];
     this.decision = deepCopy(decision);
     this.candidate = deepCopy(candidate);
+    this.measure = measure;
     const kinds = new Set(((decision.findings ?? []) as Dict[]).map(row => row.classification));
     const only = (kind: string) => kinds.size === 1 && kinds.has(kind);
     const known = decision.status === 'diagnosed' && kinds.size > 0 && [...kinds].every(kind => KNOWN_FINDINGS.has(kind as string));
@@ -163,7 +153,6 @@ export interface Step {
   s: number; k: number; tries: number; cost: Num | null; illegal: string[]; phase: string; history: unknown[]; pose: Pose | null;
   halo: Num[]; runs: number[]; unrouted: number | null; passed: boolean; board: string | null; status?: string;
   measure?: Measure; box_sum?: Num | null; route_decision?: Dict; routed_candidate?: unknown; next_action?: unknown;
-  failure_receipt?: string; immutable_faults?: unknown;
 }
 
 export interface LoopResult {
@@ -193,7 +182,6 @@ function boxSum(pr: Problem, pose: Pose): Float | null {
 }
 
 function terminalStop(result: Step): string | null {
-  if (result.status === 'immutable-input') return IMMUTABLE_STOP;
   if (result.status === 'routing-decision') return `routing diagnosis: ${result.route_decision?.action ?? 'inspect_evidence'}`;
   return null;
 }
@@ -284,9 +272,7 @@ class Loop {
       this.record(t, q, pose, await this.effects.route(t.board, n));
     } catch (error) {
       if (error instanceof TimeoutExpired) Object.assign(t, noRoute(), { status: 'timeout' });
-      else if (error instanceof ImmutableInputFailure) {
-        Object.assign(t, noRoute(), { status: 'immutable-input', failure_receipt: error.path, immutable_faults: error.receipt.faults });
-      } else throw error;
+      else throw error;
     }
   }
 
@@ -294,7 +280,7 @@ class Loop {
     t.runs = Array.isArray(outcome) ? [...outcome] : [...outcome.counts];
     t.unrouted = smallest(t.runs);
     t.passed = t.unrouted <= this.target;
-    if (outcome instanceof Measured && outcome.measure) {
+    if (!Array.isArray(outcome) && outcome.measure) {
       t.measure = outcome.measure;
       t.box_sum = boxSum(q, pose);
     }
@@ -314,11 +300,10 @@ class Loop {
   finish(stop: string): LoopResult {
     const summary = this.steps.map(({ s, k, unrouted, passed }) => ({ s, k, unrouted: unrouted ?? -1, passed }));
     const handoff = this.steps.findLast(t => t.status === 'routing-decision');
-    const immutable = stop === IMMUTABLE_STOP;
-    const [best, reason] = immutable ? [null, stop] : choose(this.steps, this.rank);
+    const [best, reason] = choose(this.steps, this.rank);
     return {
       steps: this.steps, best, best_step: best ? this.steps.indexOf(best) : null, best_reason: reason, rank: this.rank,
-      verdict: handoff || immutable ? stop : verdict(summary, this.size), stop,
+      verdict: handoff ? stop : verdict(summary, this.size), stop,
       next_action: handoff?.next_action ?? null, retained_candidate: handoff?.routed_candidate ?? null, qualified: false,
     };
   }

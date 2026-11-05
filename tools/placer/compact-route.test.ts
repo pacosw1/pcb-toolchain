@@ -1,142 +1,13 @@
-// The handoff of a routed step: retained copper, feedback that may continue the search, and scoped skipped opens.
+// What a step that did not pass hands on: the stops, the plane-net scope and the summary line of the chosen step.
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, test } from 'node:test';
+import { test, type TestContext } from 'node:test';
 import { sha256File } from '../lib/json-file.ts';
-import { bestLine, NO_RESULT, parseUnrouted, reportedCounts, routeCommand, routeHandoff, type Counts, type Feedback } from './compact-route.ts';
-
-type Row = Record<string, any>;
-
-let folder: string, route: string, candidate: string, decision: Row, feedback: Feedback;
-
-beforeEach(() => {
-  folder = mkdtempSync(join(tmpdir(), 'compact-route-'));
-  route = join(folder, 'route-0');
-  mkdirSync(route);
-  candidate = join(route, 'routed.kicad_pcb');
-  writeFileSync(candidate, 'synthetic retained copper');
-  writeFileSync(join(route, 'outcome.json'), JSON.stringify({ board_sha256: sha256File(candidate) }));
-  const source = join(route, 'pin-escape.json');
-  writeFileSync(source, 'synthetic source-bound screen fixture');
-  decision = {
-    status: 'diagnosed', action: 'inspect_escape', qualified: false, source_board_sha256: 'b'.repeat(64), findings: [{ classification: 'escape_failure' }],
-    evidence: join(folder, 'route-decision.json'), artifacts: { 'outcome.json': sha256File(join(route, 'outcome.json')), 'pin-escape.json': sha256File(source) },
-  };
-  feedback = { accepted: true, source_board_sha256: 'b'.repeat(64), sources: { [source]: sha256File(source) } };
-});
-
-afterEach(() => rmSync(folder, { recursive: true, force: true }));
-
-test('the last UNROUTED count counts; no line is a no-result', () => {
-  assert.equal(parseUnrouted('FR_RC 0\nUNROUTED 12 SUBSET 3 ERRORS 1\n'), 12);
-  assert.equal(parseUnrouted('remote: exit 124\n'), NO_RESULT);
-  assert.deepEqual(reportedCounts('UNROUTED 9 GND_OPEN 9 ERRORS 9\nUNROUTED 1 GND_OPEN 2 ERRORS 3\n'), { signal_open: 1, ground_open: 2, errors: 3 });
-  assert.equal(reportedCounts('nothing'), null);
-});
-
-test('a route job adds ground pad vias only when asked', () => {
-  assert.deepEqual(routeCommand('B', false), ['bash', 'tools/placer/fr_job.sh', 'B']);
-  assert.deepEqual(routeCommand('B', true), ['env', 'GNDVIAS=1', 'bash', 'tools/placer/fr_job.sh', 'B']);
-});
-
-test('only a source-bound positive geometry update can continue', () => {
-  const checked = routeHandoff([2], decision, folder, { feedback, priorHints: {}, hints: { U1: 0.5 } });
-  assert.equal(checked.stop, false);
-  assert.equal((checked.candidate as Row).sha256, sha256File(candidate));
-  const before = readFileSync(candidate);
-  const cases: [Feedback, Record<string, number>, Record<string, number>][] = [
-    [{ ...feedback, accepted: false }, {}, { U1: 0.5 }],
-    [{ ...feedback, source_board_sha256: 'c'.repeat(64) }, {}, { U1: 0.5 }],
-    [{ ...feedback, sources: {} }, {}, { U1: 0.5 }],
-    [feedback, { U1: 0.5 }, { U1: 0.5 }],
-  ];
-  for (const [given, priorHints, hints] of cases) {
-    const stopped = routeHandoff([2], decision, folder, { feedback: given, priorHints, hints });
-    assert.equal(stopped.stop, true);
-    const next = stopped.decision.next_action as Row;
-    assert.equal(next.full_configured_gates_required, true);
-    assert.equal(next.qualified, false);
-  }
-  assert.deepEqual(readFileSync(candidate), before);
-});
-
-test('changed retained copper or feedback stops instead of reusing it', () => {
-  writeFileSync(candidate, 'changed after native diagnosis');
-  const changed = routeHandoff([2], decision, folder, { feedback, priorHints: {}, hints: { U1: 0.5 } });
-  assert.equal(changed.stop, true);
-  assert.equal(changed.candidate, null);
-  assert.equal(changed.decision.action, 'inspect_evidence');
-  rmSync(candidate);
-  const gone = routeHandoff([0], decision, folder);
-  assert.equal(gone.stop, true);
-  assert.equal(gone.candidate, null);
-});
-
-function skippedFixture() {
-  const manifest: Row = { board_sha256: 'b'.repeat(64), configuration: { skip_net: '*GND*', plane_nets: '', gnd_vias: false, route_planes: false } };
-  const outcome: Row = { status: 'complete', board_sha256: sha256File(candidate), signal_open: 0, ground_open: 1, errors: 0 };
-  const drc: Row = { violations: [], schematic_parity: [], unconnected_items: [{ items: [{ description: 'Pad 1 [GND] of J1' }, { description: 'Zone [GND] on F.Cu' }] }] };
-  const scoped: Row = { ...decision, action: 'diagnose_selected_connections', findings: [{ classification: 'native_open' }], artifacts: { ...decision.artifacts } };
-  return { manifest, outcome, drc, decision: scoped };
-}
-
-function scopedResult({ manifest, outcome, drc, decision: given }: ReturnType<typeof skippedFixture>, reported: Counts = { signal_open: 0, ground_open: 1, errors: 0 }) {
-  for (const [name, value] of Object.entries({ 'input-manifest.json': manifest, 'outcome.json': outcome, 'drc.json': drc })) {
-    writeFileSync(join(route, name), JSON.stringify(value));
-    given.artifacts[name] = sha256File(join(route, name));
-  }
-  return routeHandoff([0], given, folder, { reportedCounts: reported });
-}
-
-test('explicit skipped plane opens keep signal step semantics only', () => {
-  for (const config of [{ skip_net: '*GND*' }, { skip_net: '', gnd_vias: true }, { skip_net: '', plane_nets: 'GND' }, { skip_net: '*GND*', plane_nets: 'GND', route_planes: true }]) {
-    const fixture = skippedFixture();
-    Object.assign(fixture.manifest.configuration, config);
-    const result = scopedResult(fixture);
-    assert.equal(result.stop, false);
-    assert.equal(result.routingStepClean, true);
-    const scope = result.decision.routing_step_scope as Row;
-    assert.equal(scope.excluded_native_opens, 1);
-    assert.deepEqual(scope.nets, ['GND']);
-    assert.equal(scope.native_verified, false);
-    assert.equal(scope.qualified, false);
-    assert.equal(scope.full_configured_gates_required, true);
-    assert.deepEqual(JSON.parse(readFileSync(join(route, 'drc.json'), 'utf8')), fixture.drc);
-  }
-});
-
-test('unconfigured, mixed, unnamed or inconsistent skipped opens do not pass', () => {
-  type Fixture = ReturnType<typeof skippedFixture>;
-  const item = (d: Fixture) => d.drc.unconnected_items[0].items[1];
-  const cases: ((d: Fixture) => void)[] = [
-    d => { d.manifest.configuration.skip_net = ''; },
-    d => { d.manifest.configuration.route_planes = 'false'; },
-    d => { d.outcome.ground_open = 2; },
-    d => { d.outcome.signal_open = 1; },
-    d => { d.outcome.status = 'stuck'; },
-    d => { item(d).description = 'Pad 1 [VCC] of U1'; },
-    d => { item(d).description = 'Unnamed zone'; },
-    d => { item(d).description = 'Zone [[GND]]'; },
-    d => { d.drc.violations.push({ severity: 'error', type: 'clearance' }); },
-    d => { d.drc.schematic_parity.push({ type: 'pad_net_conflict' }); },
-    d => { d.decision.findings.push({ classification: 'constraints_unknown' }); },
-    d => { d.decision.findings.push({ classification: 'escape_failure' }); },
-  ];
-  for (const change of cases) {
-    const fixture = skippedFixture();
-    change(fixture);
-    const result = scopedResult(fixture);
-    assert.equal(result.stop, true);
-    assert.equal(result.routingStepClean, false);
-    assert.equal('routing_step_scope' in result.decision, false);
-  }
-  const fixture = skippedFixture();
-  assert.equal(scopedResult(fixture, { signal_open: 0, ground_open: 2, errors: 0 }).stop, true);
-  delete fixture.decision.artifacts['input-manifest.json'];
-  assert.equal(routeHandoff([0], fixture.decision, folder, { reportedCounts: { signal_open: 0, ground_open: 1, errors: 0 } }).stop, true);
-});
+import { observeRoute } from '../lib/route-decision.ts';
+import { Measured, RouteOutcome } from './compact.ts';
+import { bestLine, skippedOpenScope, stepOutcome } from './compact-route.ts';
 
 test('the best line names step, halo, length, vias and reason', () => {
   const line = bestLine({
@@ -145,4 +16,64 @@ test('the best line names step, halo, length, vias and reason', () => {
   });
   assert.match(line, /^BEST board .*?\/step-(\d+)\//);   // tools/design_sweep.py parses this
   for (const part of ['step 2', 's 0.542', 'length 1580.3 mm', 'vias 296', 'shortest routed length']) assert.ok(line.includes(part));
+});
+
+const open = (net: string) => ({ type: 'unconnected_items', items: [{ description: `Pad 1 [${net}]` }, { description: `Pad 2 [${net}]` }] });
+
+/** The work folder of one `iotroute run` of a step board with these DRC findings. */
+function run(t: TestContext, findings: { opens?: string[]; parity?: number; errors?: number }): { source: string; work: string } {
+  const work = mkdtempSync(join(tmpdir(), 'compact-route-'));
+  t.after(() => rmSync(work, { recursive: true, force: true }));
+  const source = join(work, 'in.kicad_pcb'), board = join(work, 'out.kicad_pcb'), model = join(work, 'model.json');
+  writeFileSync(source, 'step');
+  writeFileSync(board, 'routed');
+  writeFileSync(model, JSON.stringify({ nets: { GND: { plane: true }, A: { plane: false } } }));
+  const opens = (findings.opens ?? []).map(open), parity = Array.from({ length: findings.parity ?? 0 }, () => ({ type: 'missing_footprint' }));
+  const violations = Array.from({ length: findings.errors ?? 0 }, () => ({ type: 'clearance', severity: 'error' }));
+  writeFileSync(join(work, 'drc.json'), JSON.stringify({ violations, unconnected_items: opens, schematic_parity: parity }));
+  writeFileSync(join(work, 'result.json'), JSON.stringify({
+    status: 'FAIL', drc_errors: violations.length, unconnected: opens.length, parity: parity.length, input_sha256: sha256File(source),
+    board_file: board, board_sha256: sha256File(board), stages: { model: { sha256: sha256File(model) } },
+  }));
+  return { source, work };
+}
+
+const outcome = (source: string, work: string, counts = [1]) => stepOutcome(new Measured(counts), { ...observeRoute(source, work) }, work);
+
+test('a refused admission and a run with no verdict stop the search; a route with opens goes on bisecting the halo', t => {
+  const { source, work } = run(t, { opens: ['A'] });
+  assert.ok(outcome(source, work) instanceof Measured);
+  writeFileSync(join(work, 'result.json'), JSON.stringify({ status: 'ERROR', cause: 'rule coverage refused: r / connection_width: not modelled' }));
+  const refused = outcome(source, work, [10 ** 6]) as RouteOutcome;
+  assert.equal(refused.stop, true);
+  assert.equal(refused.decision.action, 'resolve_constraint_coverage');
+  assert.match(refused.decision.reason as string, /connection_width/);
+  writeFileSync(join(work, 'result.json'), JSON.stringify({ status: 'ERROR', cause: 'preflight blocked' }));
+  assert.equal((outcome(source, work) as RouteOutcome).decision.action, 'inspect_evidence');
+});
+
+test('a netlist that disagrees stops, and evidence of another board is not read as this one', t => {
+  const parity = run(t, { parity: 1, opens: ['A'] });
+  assert.equal((outcome(parity.source, parity.work) as RouteOutcome).decision.action, 'resolve_schematic_parity');
+  const stale = run(t, { opens: ['A'] });
+  writeFileSync(stale.source, 'another step');
+  const decision = observeRoute(stale.source, stale.work);
+  assert.deepEqual([decision.status, decision.action], ['unverified', 'inspect_evidence']);
+});
+
+test('only plane-net opens keep a routing step clean, and that is never a qualification', t => {
+  const plane = run(t, { opens: ['GND', 'GND'] });
+  const clean = outcome(plane.source, plane.work, [2]) as RouteOutcome;
+  assert.equal(clean.stop, false);
+  assert.equal(clean.routingStepClean, true);
+  assert.deepEqual(clean.counts, [0]);
+  assert.deepEqual(clean.decision.routing_step_scope, {
+    scope: 'plane_nets_only', status: 'routing_step_complete', excluded_native_opens: 2, nets: ['GND'], qualified: false, native_verified: false, full_configured_gates_required: true,
+  });
+  for (const findings of [{ opens: ['GND', 'A'] }, { opens: ['GND'], errors: 1 }]) {
+    const { source, work } = run(t, findings);
+    assert.equal(skippedOpenScope({ ...observeRoute(source, work) }, work), null);
+  }
+  writeFileSync(join(plane.work, 'model.json'), JSON.stringify({ nets: { GND: { plane: true } }, changed: true }));
+  assert.equal(skippedOpenScope({ ...observeRoute(plane.source, plane.work) }, plane.work), null);
 });

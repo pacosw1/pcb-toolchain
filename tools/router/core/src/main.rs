@@ -221,6 +221,8 @@ struct Net {
     min_wl: Vec<f64>,
     /// locked input vias of the net: they count in the DRU via_count
     in_vias: usize,
+    /// the narrowest width a stage lets this net neck to (model `neck_width`, route.json `neck_um`); 0 = no stage asks
+    neck_w: f64,
 }
 
 /// v8: a KiCad rule area (keepout) that does not allow tracks (on the layers in `tl`) or vias (any layer: a through via
@@ -424,8 +426,8 @@ struct Board {
     iso: Option<Iso>,
     /// isolation: the Iso::var entry of each net (empty without iso)
     niv: Vec<u32>,
-    /// plane outlines of each plane net (model net `plane_polys`): its fan-out vias go inside them (a plane that does
-    /// not cover the board, POE-ETHERNET In2 VDD_3V3). A net with none: no limit (an older model)
+    /// zone outlines of each net (model net `plane_polys`): its fan-out vias and return vias go inside them (a plane that does
+    /// not cover the board, POE-ETHERNET In2 VDD_3V3; a pour with a notch, ENV-SENSE GND_B). A net with none: no limit
     ppoly: Vec<(usize, Vec<(f64, f64)>)>,
     /// parallel copy (model net `twin`, current-paths.json parallel chains): copper layer of the second copy of each
     /// net (-1 none). The net routes on its one layer; every cell is checked on both layers and every track is written
@@ -579,7 +581,7 @@ impl Board {
     fn twin_of(&self, net: usize) -> Option<usize> {
         self.twin.get(net).and_then(|&t| if t >= 0 { Some(t as usize) } else { None })
     }
-    /// A fan-out via of plane net `net` at (x, y) lies inside a plane outline of the net (true when the model gives none)
+    /// A fan-out or return via of `net` at (x, y) lies inside a zone outline of the net (true when the model gives none)
     fn in_plane(&self, net: usize, x: f64, y: f64) -> bool {
         let mut any = false;
         for (n, p) in &self.ppoly {
@@ -1289,7 +1291,8 @@ impl<'a> Ctx<'a> {
         self.rcache[k] == 1
     }
     /// The candidate GND via sites for a signal via at (x, y): grid points (every second grid cell) within
-    /// --return-r, at least the hole-to-hole and clearance distance from the signal via, nearest first.
+    /// --return-r, at least the hole-to-hole and clearance distance from the signal via, inside a zone of the ground (a via
+    /// outside its pour joins nothing: ENV-SENSE, a return via in the GND_B notch stayed unconnected), nearest first.
     fn ret_sites(&self, g: usize, x: f64, y: f64) -> Vec<(f64, usize, usize)> {
         let (gd, gdr) = (self.o.ret_d, self.o.ret_drill);
         // the largest signal via of the board (conservative for every net)
@@ -1307,7 +1310,7 @@ impl<'a> Ctx<'a> {
                 }
                 let (px, py) = self.gr.xy(ix as usize, iy as usize);
                 let dd = ((px - x).powi(2) + (py - y).powi(2)).sqrt();
-                if dd <= self.o.return_r - 1e-9 && dd >= sep {
+                if dd <= self.o.return_r - 1e-9 && dd >= sep && self.bd.in_plane(g, px, py) {
                     v.push((dd, ix as usize, iy as usize));
                 }
             }
@@ -2444,6 +2447,7 @@ fn load(model: &Value, hole_clr: f64) -> Board {
             min_w: v["min_width"].as_f64().filter(|&w| w > 0.0).map(|w| w.max(min_track)).unwrap_or(0.0),
             min_wl: Vec::new(),
             in_vias: v["input_vias"].as_u64().unwrap_or(0) as usize,
+            neck_w: v["neck_width"].as_f64().unwrap_or(0.0),
         };
         let mut n = n;
         // v8: per-layer current width; min_w = the smallest over the net's layers (the others are layer floors)
@@ -2911,7 +2915,8 @@ fn fanout_net_inner(ctx: &mut Ctx, net: usize) -> NetResult {
         // v6 fix 4: the class width (raised to the pad's current need) with a neck only at the pad entry; narrower
         // widths only when the full width has no path past fixed copper
         let _ = (pw, ph);
-        let mut ws = vec![ctx.bd.nets[net].width.max(need), 0.3f64.max(need), 0.15f64.max(need)];
+        let neck = need.max(ctx.bd.nets[net].neck_w);
+        let mut ws = vec![ctx.bd.nets[net].width.max(need), 0.3f64.max(neck), 0.15f64.max(neck)];
         ws.retain(|&w| w <= ctx.bd.nets[net].width.max(need) + 1e-9);
         ws.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
         // v8: the via sites lie within 2 mm of the pad centre; only when that window has none, 3 mm (a pad ringed by
@@ -3772,7 +3777,7 @@ fn prune_returns(ctx: &mut Ctx) -> usize {
 /// net may neck to 0.3 / 0.2 / 0.15 mm, never below the width its current needs (current-paths.json via the model).
 fn net_widths(n: &Net) -> Vec<f64> {
     let base = n.width.max(n.min_w);
-    if !n.power {
+    if !n.power && n.neck_w <= 0.0 {
         return vec![base];
     }
     let mut v: Vec<f64> = [base, 0.3, 0.2, 0.15, n.min_w].iter().cloned()
@@ -4213,7 +4218,6 @@ fn main() {
             return;
         }
         Some("write") => std::process::exit(write::cli(&args[2..])),
-        Some("fastroute") => std::process::exit(iotroute::job::fastroute::cli(&args[2..])),
         Some("gerber-geos") => std::process::exit(iotroute::gerber_geos::cli()),
         Some("gerber-geometry") => std::process::exit(iotroute::gerber_geometry::cli()),
         Some("board-json") => std::process::exit(iotroute::kicad::cli(&args[2..])),
@@ -4234,6 +4238,13 @@ fn main() {
         _ => {}
     }
     route_cli(&args);
+}
+
+/// A stage of a route plan names its nets in the model's `route_nets`; the rest stays as it is. No such list routes every net.
+fn keep_route_nets(order: &mut Vec<usize>, nets: &[Net], model: &Value) {
+    if let Some(only) = model["route_nets"].as_array() {
+        order.retain(|&n| only.iter().any(|name| name.as_str() == Some(nets[n].name.as_str())));
+    }
 }
 
 fn route_cli(args: &[String]) {
@@ -4454,6 +4465,7 @@ fn route_cli(args: &[String]) {
     };
     let group = |bd: &Board, n: usize| if bd.nets[n].plane { 0 } else if bd.nets[n].power { 1 } else if bd.nets[n].fast { 2 } else { 3 };
     order.sort_by(|&a, &b| group(&bd, a).cmp(&group(&bd, b)).then(spread(&bd, a).partial_cmp(&spread(&bd, b)).unwrap()));
+    keep_route_nets(&mut order, &bd.nets, &model);
     if let Some(s) = seed {
         let mut rng = seed::Rng::new(s);
         seed::shuffle_groups(&mut order, &|n| group(&bd, n), &mut rng);
@@ -5041,7 +5053,17 @@ mod tests {
 
     fn net(name: &str, clr: f64, fast: bool) -> Net {
         Net { name: name.into(), width: 0.15, clr, fast, plane: false, power: false, layers: 0b101, via_d: 0.6, via_drill: 0.3, max_vias: None, max_len: None,
-              pref: false, min_w: 0.0, min_wl: Vec::new(), in_vias: 0 }
+              pref: false, min_w: 0.0, min_wl: Vec::new(), in_vias: 0, neck_w: 0.0 }
+    }
+
+    #[test]
+    fn a_stage_routes_only_its_route_nets() {
+        let nets = vec![net("A", 0.15, false), net("B", 0.2, true), net("C", 0.15, true)];
+        let mut order = vec![2, 1, 0];
+        keep_route_nets(&mut order, &nets, &serde_json::json!({}));
+        assert_eq!(order, [2, 1, 0]);
+        keep_route_nets(&mut order, &nets, &serde_json::json!({"route_nets": ["A", "C"]}));
+        assert_eq!(order, [2, 0]);
     }
 
     fn board() -> Board {

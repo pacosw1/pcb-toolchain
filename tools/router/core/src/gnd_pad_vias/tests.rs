@@ -1,4 +1,4 @@
-//! The skip policy and the placement rules, on boards built in memory. tools/test_gnd_pad_vias.py and test-gnd-pad-vias.py moved here.
+//! The skip policy and the placement rules, on boards built in memory.
 use super::proof::{DirectCopper, Links, NearbyViaProof};
 use super::*;
 use crate::kicad::board::{Footprint, RoutedCopper, Track, Via};

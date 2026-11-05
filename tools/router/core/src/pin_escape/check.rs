@@ -32,8 +32,8 @@ pub struct Checker<'b> {
     board: &'b Board,
     pub rules: Rules,
     pub items: BoardItems,
-    /// Width source: the board min_track_width (.kicad_pro design rules), which fastroute_job gives the router as
-    /// router.min_trace_width_um; the router used it (0.15 mm) at the BASE-PWR-B J1 and U19 pads. --neck-mm overrides it, 0 = off.
+    /// Width source: the board min_track_width (.kicad_pro design rules); routers used it (0.15 mm) at the BASE-PWR-B J1 and U19
+    /// pads. --neck-mm overrides it, 0 = off.
     pub neck: f64,
     pub layers: Vec<String>,
     options: Options,

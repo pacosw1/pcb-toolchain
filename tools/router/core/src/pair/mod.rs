@@ -1,7 +1,7 @@
 //! Differential pairs by hand-free geometry (2026-10-25, NET-NODE): `iotroute pair-stubs` draws the stub tips, `iotroute pair-route`
 //! routes each pair as one centreline between them and offsets it into the P and N tracks.
 //!
-//! Why: Fastroute has no coupled pairs, and KiCadRoutingTools route_diff ignores the copper of the pair's own nets (it ran ETH_TXN
+//! Why: KiCadRoutingTools route_diff ignores the copper of the pair's own nets (it ran ETH_TXN
 //! over the J201 pad of ETH_TXP and crossed the polarity crossovers, NET-NODE 2026-10-25). Both results go through DRC with parity
 //! like any router result.
 pub mod cli;

@@ -105,9 +105,9 @@ printf '"}\\n'
 
 test('route writes the spec, sets the deadline, removes the spec; adopt replaces the board once', async t => {
   const root = project(t, CANDIDATE), r = new Runs()
-  const policy = routingPolicy(['F.Cu'], ['/A', 'GND'], 5, 30)
+  const policy = routingPolicy(5, 30)
   const run = r.start(root, 'route', 'DEMO', { policy })
-  assert.equal(run.mode, 'fastroute')
+  assert.equal(run.mode, 'iotroute')
   await finish(run)
   const ev = path.join(root, '.gate/cli/run-route-DEMO')
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(ev, 'spec.json'), 'utf8')), policy)
@@ -187,18 +187,21 @@ test('bad input is refused before anything starts', t => {
   for (const board of ['', 'a/b', '-x']) assert.throws(() => r.start(root, 'check', board), /invalid board gate name/)
   assert.throws(() => r.start(root, 'route', 'DEMO'), /needs a routing policy/)
   assert.throws(() => r.start(path.join(root, 'nope'), 'check', 'DEMO'), /no tools\/pcb/)
-  assert.throws(() => r.start(root, 'route', 'DEMO', { policy: routingPolicy(['F.Cu'], ['/A'], 1, 900), timeoutS: 10 }), /at least the router/)
+  assert.throws(() => r.start(root, 'route', 'DEMO', { policy: routingPolicy(1, 900), timeoutS: 10 }), /at least the router/)
   assert.equal(r.runs.size, 0)
 })
 
 test('the routing policy is validated', () => {
-  assert.deepEqual(Object.keys(routingPolicy(['F.Cu', 'B.Cu'], ['/A'], 40, 30)).sort(),
-                   ['layers', 'max_repairs', 'only_nets', 'optimizer', 'passes', 'schema', 'threads', 'timeout_s'])
-  assert.throws(() => routingPolicy(['F.Cu'], [], 40, 30))
-  assert.throws(() => routingPolicy(['F.Cu'], ['/A,/B'], 40, 30))
-  assert.throws(() => routingPolicy(['F.Cu'], ['/A'], 0, 30))
-  assert.throws(() => routingPolicy(['F.Cu', 'F.Cu'], ['/A'], 40, 30))
-  assert.throws(() => routingPolicy(['F.Cu'], ['/A'], 40, 30, 1, 'always'))
+  assert.deepEqual(Object.keys(routingPolicy(80, 30)).sort(), ['iters', 'keep', 'layers', 'max_time_s', 'nets', 'schema'])
+  assert.deepEqual(routingPolicy(80, 30, 'all', ['F.Cu'], ['/A']).nets, ['/A'])
+  assert.throws(() => routingPolicy(80, 30, 'all', ['F.Cu', 'F.Cu']))
+  assert.throws(() => routingPolicy(80, 30, 'all', [], ['']))
+  assert.equal(routingPolicy(80, 30).schema, 'iot-lab.iotroute-policy.v1')
+  assert.equal(routingPolicy(80, 30, 'all').keep, 'all')
+  assert.throws(() => routingPolicy(0, 30))
+  assert.throws(() => routingPolicy(1001, 30))
+  assert.throws(() => routingPolicy(80, 0))
+  assert.throws(() => routingPolicy(80, 30, 'none'))
 })
 
 test('cancel waits for the exit and tolerates a gone process', async t => {

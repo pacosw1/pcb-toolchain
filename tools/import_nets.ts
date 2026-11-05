@@ -5,7 +5,7 @@
 // New copper is a track or via of CANDIDATE whose uuid is not in BASE (the router keeps the uuids of the old copper). Only
 // items of the listed nets are copied, unlocked; a net BASE does not have is left out. One KiCad 10 kicad-cli run refills the
 // zones and saves. OUT may be BASE. A failed DRC is no error here: the caller runs the gate on the result.
-// Prints "import_nets: <n> items of <m> nets". Used by tools/route_batch.mjs (accept and bisect without a new router run).
+// Prints "import_nets: <n> items of <m> nets".
 import { copyFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

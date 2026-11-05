@@ -1,7 +1,7 @@
 # Owned routing stages (CIP 777)
 
-`lean_workflow.run_stage` owns cooperating subprocess stages through a broker
-inside the root Python process. Nested controllers request stages from that
+`iotroute owned run` owns cooperating subprocess stages through a broker in the
+root process (`src/job/stage.rs`, `tools/lib/lean-stage.ts`). Nested controllers request stages from that
 broker; stopping a controller cannot hide its separately grouped helpers from
 root cancellation. This replaces the previous independent supervisor groups,
 which could leave a TERM-ignoring helper alive after the outer controller died.
@@ -53,15 +53,7 @@ caller cancels at its deadline. `tools/lib/file-lock.ts` and `iotroute lock`
 hold the same flock files as the Python tools. Run its checks with
 `cargo test --test owned_run --test owned_lock` in `tools/router/core`.
 
-The focused regression command is:
-
-```sh
-PYTHONPATH=tools python3 -W error::ResourceWarning -m unittest \
-  test_lean_owned test_fastroute_phases test_lean_clock \
-  test_lean_workflow test_lean_resources
-```
-
-It exercises paused and responsive nested controllers, pending admission,
+These tests exercise paused and responsive nested controllers, pending admission,
 expired deadlines, FD remapping, exact caller cwd/environment, original error
 preservation and same-group orphan cleanup. Native board gates are separate;
 these process fixtures do not establish board qualification or routing quality.

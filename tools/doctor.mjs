@@ -79,9 +79,10 @@ add('REQUIRED', 'git hooks path (gate ratchet)', hook.ok, hook.detail);
 
 // Routing
 if (!gateOnly) {
-const fastroute=process.env.FASTROUTE_BIN ?? join(homedir(),'opt/fastroute/fastroute-0.1.7-macos-arm64/fastroute');
-const routeVersion=existsSync(fastroute) ? run(fastroute,['--version']) : null;
-add('REQUIRED','Fastroute 0.1.7 (primary router)',Boolean(routeVersion?.includes('0.1.7')),routeVersion ?? `not found: ${fastroute}`);
+// Without IOTROUTE_BIN the binary is built from the core sources on first use (lib/iotroute-bin.ts).
+const iotroute=process.env.IOTROUTE_BIN;
+const routeVersion=iotroute ? run(iotroute,['--version']) : run('cargo',['--version']);
+add('REQUIRED','iotroute (primary router): IOTROUTE_BIN, or cargo to build it',Boolean(routeVersion),routeVersion ?? `not runnable: ${iotroute ?? 'cargo'}`);
 const cross=process.env.FREEROUTING_CROSSCHECK_JAR;
 const crossVersion=cross && existsSync(cross) ? run('java',['-jar',cross,'--version']) : null;
 add('OPTIONAL','Freerouting 2.4.1 (remote cross-check)',Boolean(crossVersion?.includes('2.4.1')),cross ? `${cross}: ${crossVersion ?? 'version could not be verified'}` : 'remote-only: iot-lab-route:10.0-fr241; not checked from this host');

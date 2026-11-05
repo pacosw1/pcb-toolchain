@@ -6,14 +6,13 @@ tools. Board data and board build scripts stay in the project repo that uses it.
 
 `apps/studio/` is PCB Studio, the desktop app (see its README). It is not part of the release bundle.
 
-License: GPL-3.0 (see `LICENSE`). Parts are derived from GPL-3.0 sources (`tools/backend-patches/`,
-`tools/FreeroutingLive.java`).
+License: GPL-3.0 (see `LICENSE`). Parts are derived from GPL-3.0 sources (`tools/FreeroutingLive.java`).
 
 ## Why a bundle, not a wheel
 
-`tools/pcb` is a stdlib launcher. Its backends run under four runtimes: system `python3`, KiCad's bundled Python 3.9
-(pcbnew; scripts import their neighbours by file path), `node` (the gate) and the Rust `iotroute` binary. A Python
-wheel or a uv environment cannot serve the KiCad-Python children. So a release is an immutable directory tree:
+`tools/pcb` is a shell dispatcher into Node/TypeScript orchestration. Routing, placement and native board reads use
+Rust executables and KiCad workers. Some legacy scripts and pinned upstream checks still need Python on the worker.
+The release includes these runtimes' shared files as an immutable directory tree:
 
 ```
 pcb-toolchain-<version>/
@@ -26,7 +25,8 @@ pcb-toolchain-<version>/
 
 ## Requirements
 
-- KiCad 10 (`kicad-cli` and its bundled Python with `pcbnew`), `python3`, `node`.
+- KiCad 10 (`kicad-cli`), Node 22.6 or newer, and the release's prebuilt Rust executables.
+- Python remains a worker dependency for the remaining legacy scripts and pinned upstream checks; the `pcb` launcher uses Node.
 - The gate pins some third-party repos (for example kicad-happy, KiCadRoutingTools). They must be checked out under
   `~/Documents/GitHub/` at the commits in `tools/lib/env.mjs`. `pcb doctor` reports what is missing.
 - Remote jobs (`tools/remote.sh`) need `REMOTE_HOST=user@host` with Docker and the `iot-lab-route` image.
