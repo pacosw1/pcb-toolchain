@@ -31,7 +31,7 @@ struct Args {
     params: Vec<String>,
 }
 
-const VALUE_OPTIONS: [&str; 9] = ["--workers", "--epochs", "--steps", "--seed", "--top", "--sigma", "--nets", "--pose", "--engineering-frozen-model-sha256"];
+const VALUE_OPTIONS: [&str; 10] = ["--workers", "--epochs", "--steps", "--seed", "--top", "--sigma", "--nets", "--pose", "--engineering-frozen-model-sha256", "--native-population"];
 
 fn parse_args(argv: &[String]) -> iotplace::Result<Args> {
     let mut a = Args::default();
@@ -197,7 +197,12 @@ fn dispatch(argv: &[String]) -> iotplace::Result<ExitCode> {
         "review-preflight" => {
             let input = args.file.as_deref().ok_or("a problem file is required")?;
             let problem: Value = serde_json::from_slice(&std::fs::read(input)?)?;
-            iotplace::source_preflight::preflight(&problem)?;
+            if let Some((_, path)) = args.options.iter().rev().find(|(f,_)| f == "--native-population") {
+                let population: Value = serde_json::from_slice(&std::fs::read(path)?)?;
+                iotplace::source_preflight::preflight_with_native(&problem, &population)?;
+            } else {
+                iotplace::source_preflight::preflight(&problem)?;
+            }
             println!("preflight passed; reviewed source verification is incomplete; search and write remain blocked");
             Ok(ExitCode::from(3))
         },

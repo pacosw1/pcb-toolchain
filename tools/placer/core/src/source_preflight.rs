@@ -288,7 +288,9 @@ mod preflight_tests {
         let mut manifest = json!({"schema":"iot-lab.part-use.v1","board":"A","revision":"1","project":"board.kicad_pro",
             "parts":[{"reference":"U1","layout_constraints":[],"ratings":[{"id":"r","quantity":"voltage",
                 "limit":{"min":0,"max":10,"unit":"V","source":{}},
-                "required":{"min":0,"max":5,"unit":"V","source":{}},"conditions":[]}]}]});
+                "required":{"min":0,"max":5,"unit":"V","source":{}},"conditions":[]}]}],
+            "budgets":[{"net":"VCC","limit":{"min":0,"max":2,"unit":"A","source":{}},
+                "loads":[{"reference":"U1","required":{"min":0,"max":1,"unit":"A","source":{}}}]}]});
         let facts = digest(&serde_json::to_vec(&manifest).unwrap());
         manifest["review"] = json!({"verdict":"passed","reviewer":"R","reviewed_at_utc":"2026-01-01T00:00:00Z","facts_sha256":facts});
         let manifest_bytes = serde_json::to_vec(&manifest).unwrap();
@@ -303,6 +305,10 @@ mod preflight_tests {
         problem["engineering"]["review_sha256"] = json!(review);
         problem["engineering"]["model_anchor_sha256"] = json!(anchor);
         assert!(preflight(&problem).is_ok());
+        let population = json!({"parts":{"U1":{"required":true,"pad_net_map":{"1":"VCC"}}}});
+        assert!(preflight_with_native(&problem, &population).is_ok());
+        let incomplete = json!({"parts":{"U1":{"required":true,"pad_net_map":{"1":"OTHER"}}}});
+        assert!(preflight_with_native(&problem, &incomplete).is_err());
         std::fs::write(native, b"changed").unwrap();
         assert!(preflight(&problem).is_err());
         std::fs::remove_dir_all(root).unwrap();
@@ -374,7 +380,6 @@ mod rule_source_tests {
 
 /// Validate worst-case net budgets against an independently reconstructed native
 /// population. Source locators still need the review's document verification.
-#[allow(dead_code)]
 fn check_budget_coverage(manifest: &Value, native_parts: &Value) -> crate::Result<()> {
     use std::collections::BTreeSet;
     fn required(v: &Value) -> crate::Result<(&str, f64, f64)> {
@@ -448,4 +453,17 @@ mod budget_tests {
         manifest["budgets"][0]["exclusions"] = json!([{"reference":"U2","reason":"no load","source":{}}]);
         assert!(check_budget_coverage(&manifest, &native).is_ok());
     }
+}
+
+/// Additional partial budget checks against a caller-supplied native snapshot population.
+/// The caller must establish snapshot authenticity separately; success grants no admission.
+pub fn preflight_with_native(problem: &Value, population: &Value) -> crate::Result<()> {
+    preflight(problem)?;
+    let contract = &problem["engineering"];
+    let root = Path::new(contract["root"].as_str().ok_or("reviewed root missing")?).canonicalize()?;
+    let manifest = owned(&root, contract["manifest"].as_str().ok_or("reviewed manifest missing")?)?;
+    let value: Value = serde_json::from_slice(&std::fs::read(manifest)?)?;
+    check_budget_coverage(&value, &population["parts"])?;
+    check_inputs(contract)?;
+    Ok(())
 }
