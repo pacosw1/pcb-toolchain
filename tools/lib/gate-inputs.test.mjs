@@ -132,7 +132,7 @@ const EXPECTED_BASE_GATE_TOOLS=[
  'lib/thermal-spokes.ts','lib/through-vias.ts','lib/via-pads.ts',
  'pcbtool.ts','pin-ratings.json','port_labels.ts','rf_lines.ts','si_pairs.ts','si_planes.ts',
 ].map(name=>'tools/'+name).sort();
-test('a real board fingerprints exactly the reviewed gate tools and no tests, viewers or routers',()=>{
+test('a real board fingerprints the executed gate tools and no tests, viewers or routers',()=>{
  const root=fileURLToPath(new URL('../..',import.meta.url)).replace(/\/$/,'');
  const paths=fingerprint(root,gateInputs(root,'BASE-PWR').files).inputs.map(i=>i.path);
  for(const p of ['tools/gate.mjs','tools/lib/gate-core.mjs','tools/si_planes.ts','tools/lib/si-native.ts','tools/pcbtool.ts','tools/edge-rates.json']) assert.ok(paths.includes(p),p);
