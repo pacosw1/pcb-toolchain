@@ -180,3 +180,49 @@ fn reference_holes_respect_fixed_copper_and_soft_reference_nets() {
         drill: 0.0, kind: Kind::Track, owner: -1, alive: true, grp: 0 });
     assert!(reverse.via_cost(other, 5.0, 5.0, 0.6, 0.3, 0.45, None) < 0, "new via must preserve a fixed track's reference");
 }
+
+#[test]
+fn a_reference_net_via_has_no_foreign_antipad_but_keeps_physical_clearances() {
+    let mut m = model(true);
+    m["copper_layers"] = serde_json::json!(["F.Cu", "In1.Cu", "In2.Cu", "B.Cu"]);
+    m["plane_layers"] = serde_json::json!(["In1.Cu", "In2.Cu"]);
+    m["adjacent"] = serde_json::json!({"F.Cu":"In1.Cu", "B.Cu":"In2.Cu"});
+    m["nets"]["VDD"] = serde_json::json!({"class":"Default", "layers":["F.Cu","B.Cu"], "plane":true});
+    m["zones"] = serde_json::json!([
+        {"net":"GND","layer":"In1.Cu","clearance":0.2,"thermal_gap":0.3,"min_thickness":0.2},
+        {"net":"VDD","layer":"In2.Cu","clearance":0.2,"thermal_gap":0.3,"min_thickness":0.2}
+    ]);
+    m["ref_fill"]["layers"]["B.Cu"] = m["ref_fill"]["layers"]["F.Cu"].clone();
+    m["ref_fill"]["layers"]["B.Cu"]["plane"] = "In2.Cu".into();
+    let ids = load(&m, 0.28);
+    let (sig, other, ground, power) = (id(&ids,"SIG"), id(&ids,"SIG2"), id(&ids,"GND"), id(&ids,"VDD"));
+    let via = |net: usize, owner: i32, y: f64| Shape { net:net as i32, geo:Geo::Circ(5.0,y,0.3), clr:0.15,
+        layers:0b1111, drill:0.3, kind:Kind::Via, owner, alive:true, grp:0 };
+    let track = |owner: i32, layer: usize| Shape { net:sig as i32, geo:Geo::Seg(4.0,5.6,6.0,5.6,0.11), clr:0.15,
+        layers:1<<layer, drill:0.0, kind:Kind::Track, owner, alive:true, grp:0 };
+    for fixed in [true, false] {
+        let owner = if fixed { -1 } else { ground as i32 };
+        let mut forward = load(&m, 0.28);
+        forward.add(via(ground, owner, 5.0));
+        assert_eq!(forward.track_cost(sig,0,5.0,5.6,0.11,0.2,None),0,"ground via joins the F.Cu reference");
+        assert_ne!(forward.track_cost(sig,3,5.0,5.6,0.11,0.2,None),0,"the same via still cuts the B.Cu power reference");
+        assert_ne!(forward.track_cost(sig,0,5.0,5.2,0.11,0.2,None),0,"ordinary copper/drill clearance stays enforced");
+        let mut reverse = load(&m, 0.28);
+        reverse.add(track(if fixed {-1} else {sig as i32},0));
+        assert_eq!(reverse.via_cost(ground,5.0,5.0,0.6,0.3,0.45,None),0,"same answer with track inserted first");
+        assert_ne!(reverse.via_cost(power,5.0,5.0,0.6,0.3,0.45,None),0,"another plane net does not inherit the exemption");
+        assert_ne!(reverse.via_cost(other,5.0,5.0,0.6,0.3,0.45,None),0,"signal via retains the antipad bound");
+        if fixed {
+            let code = reverse.via_fixed_code(5.0,5.0,0.6,0.3,0.15,0.45,false,reverse.iv(ground as i32));
+            assert!(!reverse.via_code_blocks(code,ground,5.0,5.0,0.6,0.3,0.45));
+            assert!(reverse.via_code_blocks(code,power,5.0,5.0,0.6,0.3,0.45),"shared cached code must remain net-independent");
+        }
+    }
+    let mut drilled = load(&m,0.28);
+    drilled.add(via(ground,-1,5.7));
+    assert!(drilled.via_cost(ground,5.0,5.0,0.6,0.3,0.45,None)<0,"same-net hole-to-hole rule stays hard");
+    m["zones"].as_array_mut().unwrap().push(serde_json::json!({"net":"VDD","layer":"In1.Cu","clearance":0.2,"min_thickness":0.2}));
+    let mut mixed = load(&m,0.28);
+    mixed.add(track(-1,0));
+    assert!(mixed.via_cost(ground,5.0,5.0,0.6,0.3,0.45,None)<0,"mixed reference planes remain conservative");
+}

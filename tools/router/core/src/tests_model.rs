@@ -34,6 +34,35 @@ fn model_hole_rules_are_read() {
 }
 
 #[test]
+fn pour_voids_follow_the_trace_layers_declared_reference_plane() {
+    let mut m = model(0.28, 0.45, 0.2);
+    m["copper_layers"] = serde_json::json!(["F.Cu", "In1.Cu", "In2.Cu", "B.Cu"]);
+    m["plane_layers"] = serde_json::json!(["In1.Cu", "In2.Cu"]);
+    m["adjacent"] = serde_json::json!({"F.Cu":"In1.Cu", "B.Cu":"In2.Cu"});
+    m["nets"]["B"]["plane_ref"] = true.into();
+    m["keepouts"] = serde_json::json!([{"layers":["In2.Cu"],"tracks":false,"vias":false,"pour":true,
+        "rect":true,"bbox":[14.0,14.0,16.0,16.0],"pts":[],"holes":[]}]);
+    let b = load(&m, 0.28);
+    let net = b.nets.iter().position(|n| n.name == "B").unwrap();
+    assert_eq!(b.track_cost(net, 0, 15.0, 15.0, 0.1, 0.2, None), 0, "In2 void cannot block the In1 reference of F.Cu");
+    assert_eq!(b.track_cost(net, 3, 15.0, 15.0, 0.1, 0.2, None), -1, "B.Cu still keeps its own reference void");
+
+    m["keepouts"][0]["layers"] = serde_json::json!(["F.Cu"]);
+    m["keepouts"][0]["tracks"] = true.into();
+    m["keepouts"][0]["pour"] = false.into();
+    let b = load(&m, 0.28);
+    assert_eq!(b.track_cost(net, 0, 15.0, 15.0, 0.1, 0.2, None), -1, "an actual track prohibition stays hard");
+
+    m.as_object_mut().unwrap().remove("adjacent");
+    m["nets"]["B"]["fast"] = true.into();
+    m["keepouts"][0]["layers"] = serde_json::json!(["In2.Cu"]);
+    m["keepouts"][0]["tracks"] = false.into();
+    m["keepouts"][0]["pour"] = true.into();
+    let b = load(&m, 0.28);
+    assert_eq!(b.track_cost(net, 0, 15.0, 15.0, 0.1, 0.2, None), -1, "legacy input without a mapping stays conservative");
+}
+
+#[test]
 fn hole_clearance_value_changes_behaviour() {
     // pad copper edge at x = 10.5, hole edge at x = 10.3. A track of half width 0.075 at x = 10.8 keeps 0.225 to the
     // pad copper (clearance 0.15: free) and 0.425 to the hole edge.
