@@ -81,7 +81,7 @@ function finalize(ownerPath: string): number {
       status: cleanupConfirmed ? 'passed' : 'error' });
   }
   const sealing = new MeasuredSpan('evidence-sealing', 'sealing');
-  journal.emit('stage.start', sealing.fields);
+  journal.emit('stage.start', { ...sealing.fields });
   try { result.evidence_sha256 = evidenceFiles(folder); journal.emit('stage.end', sealing.end()); }
   catch (error) { journal.emit('stage.end', sealing.end('error')); Object.assign(result, { status: 'error', exit_code: 2, cause: `cannot bind run evidence: ${String(error)}` }); }
   Object.assign(result, { elapsed_s: Math.round((now() - started) * 1000) / 1000,

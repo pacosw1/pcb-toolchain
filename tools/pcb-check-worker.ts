@@ -100,7 +100,7 @@ async function worker(folderPath: string): Promise<number> {
   } finally {
     const span = new MeasuredSpan('cleanup', 'cleanup');
     cleanupSpan = { ...span.fields, started_clock_s: now() };
-    journal.emit('stage.start', span.fields);
+    journal.emit('stage.start', { ...span.fields });
     if (proc && !proc.done) {
       try { cleanup = await proc.cancel(); } catch (error) { cleanup = { complete: false, child_reaped: false, errors: [{ operation: 'cancel', error: String(error) }] }; }
     }
