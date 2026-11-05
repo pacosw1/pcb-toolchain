@@ -3,6 +3,7 @@
 Status: proposed for review with the task 1332 verifier/worker owner. This is not an implemented API or a security
 claim. It specifies the minimum boundary between Studio/CLI, the coordinator and a trusted verifier. Existing
 `board-revisions` and local adoption do not yet satisfy it.
+The matching [draft wire types](contracts/pcb-system-v1.ts) make field shapes concrete; they are not runtime validation.
 
 ## Identities and immutable inputs
 
@@ -126,6 +127,8 @@ Before database references can commit, content-addressed blobs and their contain
 written and fsynced. Garbage collection protects in-flight uploads/manifests, pinned jobs and verifier receipts; quota,
 disk-full and crash handling must leave either the old revision or a recoverable journal state, never a dangling
 canonical reference. Idempotency results survive restart, and an `UNKNOWN` mutation is not automatically retried.
+Lease tokens must not be recorded in logs or stored in durable idempotency records; any request fingerprint used for
+deduplication must be derived without persisting the token itself.
 
 ## Migration and compatibility
 
