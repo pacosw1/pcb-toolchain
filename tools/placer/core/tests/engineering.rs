@@ -157,3 +157,31 @@ fn connector_corridor_checks_board_exit_and_other_courtyards() {
     input["geometry"]["refs"]["C1"]["courtyard"] = serde_json::Value::Null;
     assert!(connector_rules(&input, &[(1.0, 3.0), (14.0, 10.0)]).is_err());
 }
+
+#[test]
+fn native_locked_parts_cannot_move_without_a_manifest_rule() {
+    use iotplace::engineering::native_locks;
+    let mut input = contract();
+    input["geometry"]["refs"]["U1"]["origin"] = json!([10.0, 10.0]);
+    input["geometry"]["refs"]["U1"]["locked"] = json!(true);
+    let locks = native_locks(&input, &[(10.0, 10.0), (14.0, 10.0)]).unwrap();
+    assert_eq!(locks.len(), 1);
+    assert_eq!(
+        locks[0]
+            .miss(&vec![(10.0, 10.0, 0), (14.0, 10.0, 0)])
+            .unwrap(),
+        0.0
+    );
+    assert_eq!(
+        locks[0]
+            .miss(&vec![(10.1, 10.0, 0), (14.0, 10.0, 0)])
+            .unwrap(),
+        1.0
+    );
+    assert_eq!(
+        locks[0]
+            .miss(&vec![(10.0, 10.0, 1), (14.0, 10.0, 0)])
+            .unwrap(),
+        1.0
+    );
+}

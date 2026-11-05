@@ -31,6 +31,8 @@ struct Part {
     #[serde(default)]
     quarter: Option<f64>,
     #[serde(default)]
+    locked: bool,
+    #[serde(default)]
     courtyard: Option<(f64, f64, f64, f64)>,
     #[serde(default)]
     pads: BTreeMap<String, Vec<Pad>>,
@@ -649,6 +651,64 @@ pub fn connector_rules(
                 side,
                 bounds,
                 parts,
+            })
+        })
+        .collect()
+}
+
+/// A native locked footprint must not move even when no manifest rule names it.
+#[derive(Debug)]
+pub struct NativeLock {
+    pub reference: String,
+    origin: Endpoint,
+    original: (f64, f64),
+}
+impl NativeLock {
+    pub fn affects(&self, unit: usize) -> bool {
+        self.origin.unit == unit
+    }
+    pub fn miss(&self, pose: &Pose) -> crate::Result<f64> {
+        let after = PinDistance::point(&self.origin, pose)?;
+        Ok(if pose[self.origin.unit].2 != 0 || after != self.original {
+            1.0
+        } else {
+            0.0
+        })
+    }
+}
+pub fn native_locks(
+    value: &serde_json::Value,
+    origins: &[(f64, f64)],
+) -> crate::Result<Vec<NativeLock>> {
+    let mut value = value.clone();
+    let object = value
+        .as_object_mut()
+        .ok_or("reviewed contract must be an object")?;
+    let where_ = object.remove("where").ok_or("reviewed mapping missing")?;
+    object.insert("where_".into(), where_);
+    let contract: Contract = serde_json::from_value(value)?;
+    contract
+        .geometry
+        .refs
+        .iter()
+        .filter(|(_, part)| part.locked)
+        .map(|(reference, part)| {
+            let unit = *contract
+                .where_
+                .get(reference)
+                .ok_or("native locked reference not mapped")?;
+            let &(x, y) = origins.get(unit).ok_or("native locked unit missing")?;
+            let original = part.origin.ok_or("native locked origin missing")?;
+            if ![x, y, original.0, original.1].iter().all(|v| v.is_finite()) {
+                return Err("invalid native locked origin".into());
+            }
+            Ok(NativeLock {
+                reference: reference.clone(),
+                origin: Endpoint {
+                    unit,
+                    local: (original.0 - x, original.1 - y),
+                },
+                original,
             })
         })
         .collect()
