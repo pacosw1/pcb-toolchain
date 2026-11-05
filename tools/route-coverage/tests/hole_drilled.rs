@@ -294,6 +294,7 @@ fn via_requires_its_exact_fixed_physical_instance_net_and_copper() {
         ("140000 -100000 (net GND)", "140001 -100000 (net GND)"),
         ("140000 -100000 (net GND)", "140000 -100000 (net /POWER)"),
         ("(type fix)", "(type route)"),
+        ("(type fix)", "(type fix extra)"),
         ("(circle F.Cu 600)", "(circle F.Cu 601)"),
         (VIA, ""),
     ] {

@@ -344,10 +344,25 @@ pub fn native_pth_pads(board: &NativeBoard) -> Result<Vec<Value>> {
     if !board.footprints.iter().flat_map(|f| &f.pads).all(known) {
         return Err("unknown native pad type cannot establish hole coverage".into());
     }
+    // Here a repeated number counts every pad in native order, NPTH included; the drilled inventory leaves round holes out of it.
+    let mut export = BTreeMap::new();
+    for (fi, fp) in board.footprints.iter().enumerate() {
+        let mut seen: BTreeMap<&str, usize> = BTreeMap::new();
+        for (pi, p) in fp.pads.iter().enumerate() {
+            let ordinal = seen.entry(&p.number).or_insert(0);
+            let id = if p.id.is_empty() { format!("index:{fi}:{pi}") } else { p.id.clone() };
+            let pin = if *ordinal == 0 { p.number.clone() } else { format!("{}@{ordinal}", p.number) };
+            export.insert(id, pin);
+            *ordinal += 1;
+        }
+    }
     let mut pads = Vec::new();
     for mut row in native_drilled_geometry(board)? {
         if row["kind"] != "pth" {
             continue;
+        }
+        if let Some(pin) = row["identity"].as_str().and_then(|id| export.get(id)) {
+            row["export_pin"] = pin.as_str().into();
         }
         if row["supported"] != true {
             return Err(row["cause"]

@@ -186,18 +186,60 @@ fn read_copper(client: &mut Client, doc: &ct::DocumentSpecifier, copper_layers: 
     items.iter().map(|item| routed_copper(item, copper_layers)).collect()
 }
 
-/// The type of each via by uuid, in the words of the board document: Through, Micro, BlindBuried, Unknown. Readers that must not
-/// infer a through via from its layers take it from here.
-pub fn via_types(client: &mut Client) -> Result<std::collections::BTreeMap<String, String>, ApiError> {
-    let doc = client.board_document()?;
-    let items = client.items(&doc, &[ct::KiCadObjectType::KotPcbVia])?;
-    let name = |via: &bt::Via| match via.r#type() {
+/// A via whose copper differs by layer: one size does not describe it, so nothing may be proved from that size.
+fn custom_stack(via: &bt::Via) -> bool {
+    via.pad_stack.as_ref().is_some_and(|stack| {
+        let shaped = matches!(stack.r#type(), bt::PadStackType::PstFrontInnerBack | bt::PadStackType::PstCustom);
+        let keeps_all = matches!(stack.unconnected_layer_removal(), bt::UnconnectedLayerRemoval::UlrUnknown | bt::UnconnectedLayerRemoval::UlrKeep);
+        shaped || !keeps_all
+    })
+}
+
+fn via_kind(via: &bt::Via) -> &'static str {
+    match via.r#type() {
+        bt::ViaType::VtThrough if custom_stack(via) => "Custom",
         bt::ViaType::VtThrough => "Through",
         bt::ViaType::VtMicro => "Micro",
         bt::ViaType::VtBlindBuried | bt::ViaType::VtBlind | bt::ViaType::VtBuried => "BlindBuried",
         _ => "Unknown",
-    };
-    Ok(items.iter().filter_map(decode).map(|via: bt::Via| (id(&via.id), name(&via).to_string())).collect())
+    }
+}
+
+/// The type of each via by uuid, in the words of the board document: Through, Micro, BlindBuried, Unknown, and Custom for a through
+/// via with a padstack of its own. Readers that must not infer a through via from its layers take it from here.
+pub fn via_types(client: &mut Client) -> Result<std::collections::BTreeMap<String, String>, ApiError> {
+    let doc = client.board_document()?;
+    let items = client.items(&doc, &[ct::KiCadObjectType::KotPcbVia])?;
+    Ok(items.iter().filter_map(decode).map(|via: bt::Via| (id(&via.id), via_kind(&via).to_string())).collect())
+}
+
+#[cfg(test)]
+mod via_kind_tests {
+    use super::*;
+
+    fn through(stack: bt::PadStack) -> bt::Via {
+        let mut via = bt::Via { pad_stack: Some(stack), ..Default::default() };
+        via.set_type(bt::ViaType::VtThrough);
+        via
+    }
+
+    #[test]
+    fn a_through_via_with_a_padstack_of_its_own_is_no_through_via() {
+        let mut normal = bt::PadStack::default();
+        normal.set_type(bt::PadStackType::PstNormal);
+        normal.set_unconnected_layer_removal(bt::UnconnectedLayerRemoval::UlrKeep);
+        assert_eq!(via_kind(&through(normal.clone())), "Through");
+        for kind in [bt::PadStackType::PstCustom, bt::PadStackType::PstFrontInnerBack] {
+            let mut stack = normal.clone();
+            stack.set_type(kind);
+            assert_eq!(via_kind(&through(stack)), "Custom");
+        }
+        for removal in [bt::UnconnectedLayerRemoval::UlrRemove, bt::UnconnectedLayerRemoval::UlrRemoveExceptStartAndEnd, bt::UnconnectedLayerRemoval::UlrStartEndOnly] {
+            let mut stack = normal.clone();
+            stack.set_unconnected_layer_removal(removal);
+            assert_eq!(via_kind(&through(stack)), "Custom");
+        }
+    }
 }
 
 fn routed_copper(item: &Any, copper_layers: &[String]) -> Result<RoutedCopper, ApiError> {

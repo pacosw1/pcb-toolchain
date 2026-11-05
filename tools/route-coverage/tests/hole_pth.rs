@@ -116,6 +116,17 @@ fn repeated_drills() -> (Vec<Value>, String) {
 }
 
 #[test]
+fn a_repeated_number_counts_an_npth_pad_in_native_order() {
+    let plated = |x| pth("9", "GND", [x, 100 * MM], 0, "Circle", [2_000_000; 2], [1_000_000; 2]);
+    let mut hole = pth("9", "", [105 * MM, 100 * MM], 0, "Circle", [3_000_000; 2], [3_000_000; 2]);
+    hole["kind"] = "NpThroughHole".into();
+    let native = board(vec![footprint("U1", [100 * MM, 100 * MM], 0, vec![plated(100 * MM), hole, plated(110 * MM)])]);
+    let rows = native_pth_pads(&read(&native)).unwrap();
+    let aliases: Vec<_> = rows.iter().map(|p| p["export_pin"].as_str().unwrap()).collect();
+    assert_eq!(aliases, ["9", "9@2"]);
+}
+
+#[test]
 fn repeated_physical_drills_bind_actual_export_aliases_not_one_pad_number() {
     let (pads, model) = repeated_drills();
     assert_eq!(pads.len(), 6);

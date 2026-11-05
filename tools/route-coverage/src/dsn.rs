@@ -209,6 +209,7 @@ impl Dsn {
             for via in w.children("via") {
                 if via.items().len() != 6
                     || one(via, "net")?.items().len() != 2
+                    || one(via, "type")?.items().len() != 2
                     || one(via, "type")?.text(1) != Some("fix")
                 {
                     return Err("retained DSN via is not a fixed, single-center obstacle".into());
