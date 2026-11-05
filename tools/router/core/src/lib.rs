@@ -3,6 +3,7 @@ pub mod decimal;
 pub mod gnd_pad_vias;
 pub mod grid;
 pub mod gerber_geometry;
+pub mod gerber_geos;
 pub mod job;
 pub mod kicad;
 pub mod model;
