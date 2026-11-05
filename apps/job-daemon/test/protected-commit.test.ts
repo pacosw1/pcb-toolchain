@@ -8,6 +8,7 @@ import { validateSpec } from '../src/manager.ts';
 import { protectedJobSpecDigest } from '../src/protected-job-spec.ts';
 import { rig } from './helpers.ts';
 const hash=(b:Uint8Array):string=>createHash('sha256').update(b).digest('hex');
+const tarHash=hash(fs.readFileSync('/usr/bin/tar'));
 const encode=(x:unknown):Buffer=>parseCanonicalJson(Buffer.from(JSON.stringify(x)),{maxBytes:1_000_000,maxNodes:1000,maxDepth:12}).canonical;
 class Fixture extends ProtectedCommitStore {
   seed(source:string,policy:string,runtime:string,toolchain:string):void {
@@ -16,6 +17,7 @@ class Fixture extends ProtectedCommitStore {
     this.db.prepare("INSERT INTO protected_target_policy VALUES ('p','b',?,?,?)").run(policy,runtime,toolchain);
     this.db.prepare("INSERT INTO protected_policies VALUES (?, ?, 0, 1)").run(policy,JSON.stringify(['drc']));
     this.db.prepare("INSERT INTO protected_approved_digests VALUES ('runtime',?,1),('toolchain',?,1)").run(runtime,toolchain);
+    this.db.prepare("INSERT INTO protected_approved_digests VALUES ('archive-tool',?,1)").run(tarHash);
     this.db.prepare("INSERT INTO protected_verifiers VALUES ('verifier',1)").run();
   }
   verified(candidate:string,evidence:string,receipt:Buffer):void {
@@ -25,6 +27,7 @@ class Fixture extends ProtectedCommitStore {
   pins(): {kind:string;owner:string;sha256:string}[] { return this.db.prepare('SELECT * FROM protected_blob_pins').all() as {kind:string;owner:string;sha256:string}[]; }
   revoke():void { this.db.prepare("UPDATE protected_verifiers SET enabled=0 WHERE id='verifier'").run(); }
   seedVerifierForTest():void { this.db.prepare("UPDATE protected_verifiers SET enabled=1 WHERE id='verifier'").run(); }
+  approveArchiveForTest(enabled:number):void { this.db.prepare("UPDATE protected_approved_digests SET enabled=? WHERE kind='archive-tool' AND digest=?").run(enabled,tarHash); }
   resetCancellationForTest():void { this.db.prepare("UPDATE protected_attempt_cancellation SET cancelled=0 WHERE job='job' AND attempt='attempt'").run(); }
 }
 test('fenced verified commit atomically advances the target and replays its durable result',async()=>{
@@ -45,7 +48,7 @@ test('fenced verified commit atomically advances the target and replays its dura
     if(lease.state!=='ACQUIRED') throw Error('lease missing');
     store.bindAttempt(submit.token,{project:'p',board:'b',operation:'route',generation:lease.generation,token:lease.token},{job:'job',attempt:'attempt',sourceManifest:source,policyDigest:policy,runtimeDigest:runtime,toolchainDigest:toolchain});
     const candidateRef={project:'p',board:'b',operation:'route',job:'job',attempt:'attempt',manifest:candidate};
-    const input = prepareAttemptInput(store,candidateRef,parent,{tarPath:'/usr/bin/tar',maxFiles:10,maxBytes:100,maxArchiveBytes:100000,timeoutMs:10000});
+    const input = prepareAttemptInput(store,candidateRef,parent,{tarPath:'/usr/bin/tar',tarSha256:tarHash,maxFiles:10,maxBytes:100,maxArchiveBytes:100000,timeoutMs:10000});
     assert.equal(input.sourceManifest,source);
     const runtimeJob=jobRig.mgr.submit(validateSpec({command:['hang'],maxRetries:0},jobRig.cfg),input.archive,candidateRef);
     const associatedInput = {...input,specSha256:protectedJobSpecDigest(runtimeJob.spec)};
@@ -69,9 +72,11 @@ test('fenced verified commit atomically advances the target and replays its dura
     assert.throws(()=>store.commit(commit.token,{...request,lease_token:'0'.repeat(64)}),/preconditions/); assert.equal(store.revision(),1);
     store.revoke(); assert.throws(()=>store.commit(commit.token,request),/authority/); assert.equal(store.revision(),1);
     store.seedVerifierForTest();
+    store.approveArchiveForTest(0); assert.throws(()=>store.commit(commit.token,request),/authority/); assert.equal(store.revision(),1);
+    store.approveArchiveForTest(1);
     store.cancelAttempt(cancel.token,candidateRef);
     await jobRig.mgr.tick(); assert.equal(runtimeJob.state,'cancelled');
-    assert.throws(()=>prepareAttemptInput(store,candidateRef,parent,{tarPath:'/usr/bin/tar',maxFiles:10,maxBytes:100,maxArchiveBytes:100000,timeoutMs:10000}),/stale/);
+    assert.throws(()=>prepareAttemptInput(store,candidateRef,parent,{tarPath:'/usr/bin/tar',tarSha256:tarHash,maxFiles:10,maxBytes:100,maxArchiveBytes:100000,timeoutMs:10000}),/stale/);
     const jobs = new Map<string, unknown>(), calls:string[] = [];
     const manager = {jobs,cancel:(id:string)=>{calls.push(id);return jobs.get(id);}};
     assert.deepEqual(reconcileProtectedCancellations(store,manager as never).unavailable,[runtimeJob.id]);
@@ -108,7 +113,7 @@ test('recovery keeps a prior-boot writer fenced until the manager proves cleanup
     const lease=store.acquire(submit.token,request);if(lease.state!=='ACQUIRED')throw Error('lease missing');
     const ref={project:'p',board:'b',operation:'route',job:'job',attempt:'attempt'};
     store.bindAttempt(submit.token,{...ref,generation:lease.generation,token:lease.token},{job:'job',attempt:'attempt',sourceManifest:source,policyDigest:policy,runtimeDigest:runtime,toolchainDigest:toolchain});
-    const input=prepareAttemptInput(store,ref,parent,{tarPath:'/usr/bin/tar',maxFiles:10,maxBytes:100,maxArchiveBytes:100000,timeoutMs:10000});
+    const input=prepareAttemptInput(store,ref,parent,{tarPath:'/usr/bin/tar',tarSha256:tarHash,maxFiles:10,maxBytes:100,maxArchiveBytes:100000,timeoutMs:10000});
     const job=jobRig.mgr.submit(validateSpec({command:['hang'],maxRetries:0},jobRig.cfg),input.archive,ref);
     store.associateRuntimeFromTrustedService(ref,job.id,{...input,specSha256:protectedJobSpecDigest(job.spec)});
     installProtectedRuntime(store,jobRig.mgr);await jobRig.mgr.tick();assert.equal(job.state,'running');

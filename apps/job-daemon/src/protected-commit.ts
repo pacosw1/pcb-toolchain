@@ -27,7 +27,7 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
         state TEXT NOT NULL, cancelled INTEGER NOT NULL, revoked INTEGER NOT NULL, PRIMARY KEY(job,attempt,verification)) STRICT;
       CREATE TABLE IF NOT EXISTS protected_candidates (job TEXT NOT NULL, attempt TEXT NOT NULL, manifest TEXT NOT NULL, state TEXT NOT NULL,
         PRIMARY KEY(job,attempt)) STRICT;
-      CREATE TABLE IF NOT EXISTS protected_runtime_jobs (job TEXT NOT NULL, attempt TEXT NOT NULL, runtime_job TEXT NOT NULL UNIQUE, input_sha256 TEXT, input_size INTEGER, spec_sha256 TEXT, attested_image TEXT,
+      CREATE TABLE IF NOT EXISTS protected_runtime_jobs (job TEXT NOT NULL, attempt TEXT NOT NULL, runtime_job TEXT NOT NULL UNIQUE, input_sha256 TEXT, input_size INTEGER, spec_sha256 TEXT, attested_image TEXT, archive_tool_digest TEXT,
         PRIMARY KEY(job,attempt)) STRICT;
       CREATE TABLE IF NOT EXISTS protected_revisions (project TEXT NOT NULL, board TEXT NOT NULL, revision INTEGER NOT NULL,
         manifest TEXT NOT NULL, verification TEXT NOT NULL, PRIMARY KEY(project,board,revision)) STRICT;
@@ -39,6 +39,15 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
     if (!runtimeColumns.some(column => column.name === 'input_size')) this.db.exec('ALTER TABLE protected_runtime_jobs ADD COLUMN input_size INTEGER');
     if (!runtimeColumns.some(column => column.name === 'spec_sha256')) this.db.exec('ALTER TABLE protected_runtime_jobs ADD COLUMN spec_sha256 TEXT');
     if (!runtimeColumns.some(column => column.name === 'attested_image')) this.db.exec('ALTER TABLE protected_runtime_jobs ADD COLUMN attested_image TEXT');
+    if (!runtimeColumns.some(column => column.name === 'archive_tool_digest')) this.db.exec('ALTER TABLE protected_runtime_jobs ADD COLUMN archive_tool_digest TEXT');
+  }
+  /** Internal only; approval entries themselves require an authenticated trust bootstrap. */
+  approvedArtifactFromTrustedService(kind: 'archive-tool', digest: string): boolean {
+    if (!SHA.test(digest)) return false;
+    return this.transaction(() => {
+      this.safeNow();
+      return (this.db.prepare('SELECT enabled FROM protected_approved_digests WHERE kind=? AND digest=?').get(kind,digest) as {enabled:number} | undefined)?.enabled === 1;
+    });
   }
   /** Internal recovery orchestrator only. Cancellation becomes durable before any runtime operation. */
   beginAbandonFromTrustedService(ref: {project:string;board:string;operation:string;job:string;attempt:string}): {runtimeJob:string;generation:number} {
@@ -109,21 +118,22 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
     });
   }
   /** Internal orchestrator only: persist runtime identity; the future launcher must enforce its admission barrier. */
-  associateRuntimeFromTrustedService(ref: { project:string; board:string; operation:string; job:string; attempt:string }, runtimeJob: string, input: {sha256:string;size:number;specSha256:string}): void {
+  associateRuntimeFromTrustedService(ref: { project:string; board:string; operation:string; job:string; attempt:string }, runtimeJob: string, input: {sha256:string;size:number;specSha256:string;archiveToolSha256:string}): void {
     if (!ref || ![ref.project,ref.board,ref.operation,ref.job,ref.attempt,runtimeJob].every(x => typeof x === 'string' && ID.test(x)))
       throw new Error('invalid protected runtime association');
-    if (!input || typeof input.sha256 !== 'string' || !SHA.test(input.sha256) || typeof input.specSha256 !== 'string' || !SHA.test(input.specSha256) || !Number.isSafeInteger(input.size) || input.size < 1) throw new Error('invalid protected input identity');
+    if (!input || typeof input.sha256 !== 'string' || !SHA.test(input.sha256) || typeof input.specSha256 !== 'string' || !SHA.test(input.specSha256) || typeof input.archiveToolSha256 !== 'string' || !SHA.test(input.archiveToolSha256) || !Number.isSafeInteger(input.size) || input.size < 1) throw new Error('invalid protected input identity');
     this.transaction(() => {
       const now = this.clock();
       const attempt = this.db.prepare('SELECT * FROM protected_attempt_bindings WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as Attempt | undefined;
       const lease = this.db.prepare('SELECT * FROM protected_leases WHERE project=? AND board=?').get(ref.project,ref.board) as Lease | undefined;
       const cancellation = this.db.prepare('SELECT cancelled FROM protected_attempt_cancellation WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {cancelled:number} | undefined;
+      const tool = this.db.prepare("SELECT enabled FROM protected_approved_digests WHERE kind='archive-tool' AND digest=?").get(input.archiveToolSha256) as {enabled:number} | undefined;
       if (!attempt || attempt.project !== ref.project || attempt.board !== ref.board || attempt.operation !== ref.operation ||
           !lease || lease.boot_id !== this.bootId || lease.pinned !== 1 || lease.expires_at <= now || lease.generation !== attempt.generation ||
-          !cancellation || cancellation.cancelled !== 0) throw new Error('protected runtime association is stale');
-      const prior = this.db.prepare('SELECT runtime_job,input_sha256,input_size,spec_sha256 FROM protected_runtime_jobs WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {runtime_job:string;input_sha256:string|null;input_size:number|null;spec_sha256:string|null} | undefined;
-      if (prior) { if (prior.runtime_job !== runtimeJob || prior.input_sha256 !== input.sha256 || prior.input_size !== input.size || prior.spec_sha256 !== input.specSha256) throw new Error('protected runtime job changed'); return; }
-      this.db.prepare('INSERT INTO protected_runtime_jobs (job,attempt,runtime_job,input_sha256,input_size,spec_sha256) VALUES (?,?,?,?,?,?)').run(ref.job,ref.attempt,runtimeJob,input.sha256,input.size,input.specSha256);
+          !cancellation || cancellation.cancelled !== 0 || tool?.enabled !== 1) throw new Error('protected runtime association is stale');
+      const prior = this.db.prepare('SELECT runtime_job,input_sha256,input_size,spec_sha256,archive_tool_digest FROM protected_runtime_jobs WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {runtime_job:string;input_sha256:string|null;input_size:number|null;spec_sha256:string|null;archive_tool_digest:string|null} | undefined;
+      if (prior) { if (prior.runtime_job !== runtimeJob || prior.input_sha256 !== input.sha256 || prior.input_size !== input.size || prior.spec_sha256 !== input.specSha256 || prior.archive_tool_digest !== input.archiveToolSha256) throw new Error('protected runtime job changed'); return; }
+      this.db.prepare('INSERT INTO protected_runtime_jobs (job,attempt,runtime_job,input_sha256,input_size,spec_sha256,archive_tool_digest) VALUES (?,?,?,?,?,?,?)').run(ref.job,ref.attempt,runtimeJob,input.sha256,input.size,input.specSha256,input.archiveToolSha256);
     });
   }
   /** Identity to compare with the manager's private archive before starting the worker. */
@@ -156,7 +166,7 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
       const target = this.db.prepare('SELECT revision,alias_revision,state,source_manifest,board_path FROM protected_targets WHERE project=? AND board=?').get(ref.project,ref.board) as Target | undefined;
       const lease = this.db.prepare('SELECT * FROM protected_leases WHERE project=? AND board=?').get(ref.project,ref.board) as Lease | undefined;
       const cancel = this.db.prepare('SELECT cancelled FROM protected_attempt_cancellation WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {cancelled:number} | undefined;
-      const runtime = this.db.prepare('SELECT runtime_job,input_sha256,input_size,spec_sha256,attested_image FROM protected_runtime_jobs WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {runtime_job:string;input_sha256:string|null;input_size:number|null;spec_sha256:string|null;attested_image:string|null} | undefined;
+      const runtime = this.db.prepare('SELECT runtime_job,input_sha256,input_size,spec_sha256,attested_image,archive_tool_digest FROM protected_runtime_jobs WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {runtime_job:string;input_sha256:string|null;input_size:number|null;spec_sha256:string|null;attested_image:string|null;archive_tool_digest:string|null} | undefined;
       const current = this.db.prepare('SELECT policy_digest,runtime_digest,toolchain_digest FROM protected_target_policy WHERE project=? AND board=?').get(ref.project,ref.board) as {policy_digest:string;runtime_digest:string;toolchain_digest:string} | undefined;
       const policy = attempt && this.db.prepare('SELECT enabled FROM protected_policies WHERE digest=?').get(attempt.policy_digest) as {enabled:number} | undefined;
       const approved = this.db.prepare('SELECT enabled FROM protected_approved_digests WHERE kind=? AND digest=?');
@@ -164,7 +174,7 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
         !!target && target.state === 'ACTIVE' && target.revision === attempt.source_revision && target.alias_revision === attempt.alias_revision && target.source_manifest === attempt.source_manifest &&
         !!lease && lease.boot_id === this.bootId && lease.pinned === 1 && lease.expires_at > now && lease.generation === attempt.generation && lease.operation === ref.operation && lease.source_manifest === attempt.source_manifest &&
         !!cancel && cancel.cancelled === 0 && runtime?.runtime_job === runtimeJob && typeof runtime.input_sha256 === 'string' && SHA.test(runtime.input_sha256) && Number.isSafeInteger(runtime.input_size) && runtime.input_size! > 0 && typeof runtime.spec_sha256 === 'string' && SHA.test(runtime.spec_sha256) && (!continuing || runtime.attested_image === `sha256:${attempt.runtime_digest}`) && !!current && current.policy_digest === attempt.policy_digest && current.runtime_digest === attempt.runtime_digest && current.toolchain_digest === attempt.toolchain_digest &&
-        policy?.enabled === 1 && (approved.get('runtime',attempt.runtime_digest) as {enabled:number} | undefined)?.enabled === 1 &&
+        policy?.enabled === 1 && !!runtime.archive_tool_digest && (approved.get('archive-tool',runtime.archive_tool_digest) as {enabled:number} | undefined)?.enabled === 1 && (approved.get('runtime',attempt.runtime_digest) as {enabled:number} | undefined)?.enabled === 1 &&
         (approved.get('toolchain',attempt.toolchain_digest) as {enabled:number} | undefined)?.enabled === 1 &&
         (continuing || !this.db.prepare('SELECT 1 FROM protected_candidates WHERE job=? AND attempt=?').get(ref.job,ref.attempt));
   }
@@ -200,10 +210,11 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
       const target = this.db.prepare('SELECT revision,alias_revision,state,source_manifest,board_path FROM protected_targets WHERE project=? AND board=?').get(ref.project,ref.board) as Target | undefined;
       const lease = this.db.prepare('SELECT * FROM protected_leases WHERE project=? AND board=?').get(ref.project,ref.board) as Lease | undefined;
       const cancellation = this.db.prepare('SELECT cancelled FROM protected_attempt_cancellation WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {cancelled:number} | undefined;
-      const runtime = this.db.prepare('SELECT attested_image FROM protected_runtime_jobs WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {attested_image:string|null} | undefined;
+      const runtime = this.db.prepare('SELECT attested_image,archive_tool_digest FROM protected_runtime_jobs WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {attested_image:string|null;archive_tool_digest:string|null} | undefined;
+      const tool = runtime?.archive_tool_digest ? this.db.prepare("SELECT enabled FROM protected_approved_digests WHERE kind='archive-tool' AND digest=?").get(runtime.archive_tool_digest) as {enabled:number} | undefined : undefined;
       if (!attempt || attempt.project !== ref.project || attempt.board !== ref.board || attempt.operation !== ref.operation ||
           !target || target.state !== 'ACTIVE' || !target.board_path || target.revision !== attempt.source_revision || target.alias_revision !== attempt.alias_revision || target.source_manifest !== attempt.source_manifest ||
-          !lease || lease.boot_id !== this.bootId || lease.pinned !== 1 || lease.expires_at <= now || lease.generation !== attempt.generation || lease.operation !== ref.operation || lease.source_manifest !== attempt.source_manifest || !cancellation || cancellation.cancelled !== 0 || runtime?.attested_image !== `sha256:${attempt.runtime_digest}`)
+          !lease || lease.boot_id !== this.bootId || lease.pinned !== 1 || lease.expires_at <= now || lease.generation !== attempt.generation || lease.operation !== ref.operation || lease.source_manifest !== attempt.source_manifest || !cancellation || cancellation.cancelled !== 0 || runtime?.attested_image !== `sha256:${attempt.runtime_digest}` || tool?.enabled !== 1)
         throw new Error('protected candidate attempt is stale');
       const prior = this.db.prepare('SELECT manifest,state FROM protected_candidates WHERE job=? AND attempt=?').get(ref.job,ref.attempt) as {manifest:string;state:string} | undefined;
       if (prior) { if (prior.manifest !== ref.manifest || prior.state !== 'STAGED') throw new Error('protected candidate changed'); return; }
@@ -241,7 +252,7 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
       const verified = this.db.prepare('SELECT * FROM protected_verified_attempts WHERE job=? AND attempt=? AND verification=?').get(request.job_id,request.attempt_id,request.verification_id) as Verified | undefined;
       const staged = this.db.prepare('SELECT manifest,state FROM protected_candidates WHERE job=? AND attempt=?').get(request.job_id,request.attempt_id) as {manifest:string;state:string} | undefined;
       const cancellation = this.db.prepare('SELECT cancelled FROM protected_attempt_cancellation WHERE job=? AND attempt=?').get(request.job_id,request.attempt_id) as {cancelled:number} | undefined;
-      const runtime = this.db.prepare('SELECT attested_image FROM protected_runtime_jobs WHERE job=? AND attempt=?').get(request.job_id,request.attempt_id) as {attested_image:string|null} | undefined;
+      const runtime = this.db.prepare('SELECT attested_image,archive_tool_digest FROM protected_runtime_jobs WHERE job=? AND attempt=?').get(request.job_id,request.attempt_id) as {attested_image:string|null;archive_tool_digest:string|null} | undefined;
       const targetPolicy = this.db.prepare('SELECT policy_digest,runtime_digest,toolchain_digest FROM protected_target_policy WHERE project=? AND board=?').get(request.project_id,request.board_id) as { policy_digest:string; runtime_digest:string; toolchain_digest:string } | undefined;
       if (!Number.isSafeInteger(now) || now < 1 || !target || target.state !== 'ACTIVE' || !target.board_path || target.revision !== request.source_revision || target.alias_revision !== request.alias_revision ||
           !lease || lease.boot_id !== this.bootId || lease.pinned !== 1 || lease.expires_at <= now || lease.generation !== request.lease_generation || lease.source_revision !== target.revision || lease.alias_revision !== target.alias_revision ||
@@ -255,7 +266,8 @@ export class ProtectedCommitStore extends ProtectedLeaseStore {
       const policy = this.db.prepare('SELECT required_checks,parity_na,enabled FROM protected_policies WHERE digest=?').get(attempt.policy_digest) as { required_checks:string; parity_na:number; enabled:number } | undefined;
       const approved = this.db.prepare('SELECT enabled FROM protected_approved_digests WHERE kind=? AND digest=?');
       const verifier = this.db.prepare('SELECT enabled FROM protected_verifiers WHERE id=?').get(verified.verifier) as { enabled:number } | undefined;
-      if (!policy || policy.enabled !== 1 || ![0,1].includes(policy.parity_na) || verifier?.enabled !== 1 ||
+      if (!policy || policy.enabled !== 1 || ![0,1].includes(policy.parity_na) || verifier?.enabled !== 1 || !runtime?.archive_tool_digest ||
+          (approved.get('archive-tool',runtime.archive_tool_digest) as {enabled:number} | undefined)?.enabled !== 1 ||
           (approved.get('runtime',attempt.runtime_digest) as { enabled:number } | undefined)?.enabled !== 1 ||
           (approved.get('toolchain',attempt.toolchain_digest) as { enabled:number } | undefined)?.enabled !== 1) throw new Error('protected authority is unavailable');
       let checks: string[]; try { checks = JSON.parse(policy.required_checks) as string[]; } catch { throw new Error('invalid protected policy'); }
