@@ -181,6 +181,7 @@ tools/lib/gate-evidence.mjs
 tools/lib/gate-evidence.test.mjs
 tools/lib/gate-findings.mjs
 tools/lib/gate-findings.test.mjs
+tools/lib/gate-inputs.d.mts
 tools/lib/gate-inputs.mjs
 tools/lib/gate-inputs.test.mjs
 tools/lib/gate-pool.mjs
@@ -361,6 +362,7 @@ tools/pcb-check-worker.ts
 tools/pcb-check-finalize.ts
 tools/pcb-check.ts
 tools/pcb-protected-identity.ts
+tools/pcb-protected-verifier.ts
 tools/pcb_operations.py
 tools/pcb_routing_trial.py
 tools/pcb_routing_trial/.gitignore
