@@ -1,0 +1,591 @@
+{
+  "schema": "pcb.route-benchmark-1318.v1",
+  "source_commit": "696715dd81e6143c65af7652e18c1d70499d2a8a",
+  "fixture_pcb_sha256": "6abb00a0a30cd3f02d6e96a0cb326e16c1f050b735e5ed43770dcbf653844ae7",
+  "binary_sha256": "71b5b44c16daf1673d31dab5b33900d8f88904ad1484204552d23460d89c69c0",
+  "raw_archive_sha256": "8fadc96dc16aa12c7a66ff001d169f93afda037aaafab15738352bcd2f476be2",
+  "setup_failures": [
+    {
+      "label": "single-cold",
+      "reason": "client sources absent in scratch copy; no daemon job created"
+    },
+    {
+      "label": "single-first",
+      "reason": "client sources absent in scratch copy; no daemon job created"
+    }
+  ],
+  "trials": [
+    {
+      "label": "single-cold-v2",
+      "job_id": "20261105-190321-d3e136",
+      "mode": "single",
+      "cpus": 2,
+      "wall_limit_s": 120,
+      "reserved_cpu_ceiling_s": 240,
+      "first_verified_s": 55.741231729,
+      "operation_wall_s": 55.741231729,
+      "operation_cpu_s": 89.073343,
+      "container_cpu_at_harness_end_s": 90.926114,
+      "client_wall_s": 76.63064343100001,
+      "cache": "4449 files, sending 79 (9741 KB)",
+      "queue_s": 1.268,
+      "container_attempt_s": 57.998,
+      "result": {
+        "status": "PASS",
+        "drc": 0,
+        "opens": 0,
+        "parity": 0,
+        "mm": 262,
+        "vias": 20,
+        "tracks": 177,
+        "sha256": "7c4dd481c5454a055da4b956124c984cae450a17547d81c3abe5092b31316da3",
+        "native_seconds": 30.5,
+        "core_seconds": 10.7,
+        "model_sha256": "0a3c81c75b2db7fcb98418aebfc65ea9b49918c05371aa585feee3ee6b0a5a63"
+      },
+      "verification_hooks": 2,
+      "attempts": 1,
+      "retries": 0,
+      "trimmed": true,
+      "container_absent": true,
+      "owned_stages": [
+        {
+          "stage": "native",
+          "wall_s": 30.666849189999997,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "gate",
+          "wall_s": 19.78192559,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "board-semantic-0",
+          "wall_s": 4.4929719740000005,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "board-semantic-1",
+          "wall_s": 0.40455451099999484,
+          "cleanup_complete": true
+        }
+      ],
+      "verified_candidates": 1
+    },
+    {
+      "label": "sprint-cold",
+      "job_id": "20261105-190449-e2aeda",
+      "mode": "sprint",
+      "cpus": 2,
+      "wall_limit_s": 120,
+      "reserved_cpu_ceiling_s": 240,
+      "first_verified_s": 72.067833358,
+      "operation_wall_s": 72.19310127300001,
+      "operation_cpu_s": 135.049837,
+      "container_cpu_at_harness_end_s": 136.6116,
+      "client_wall_s": 87.47164124099999,
+      "cache": "4449 files, sending 0 (0 KB)",
+      "queue_s": 1.669,
+      "container_attempt_s": 74.004,
+      "result": {
+        "status": "PASS",
+        "drc": 0,
+        "opens": 0,
+        "parity": 0,
+        "mm": 262,
+        "vias": 20,
+        "tracks": 177,
+        "sha256": "7c4dd481c5454a055da4b956124c984cae450a17547d81c3abe5092b31316da3",
+        "native_seconds": 72.10687344699998,
+        "model_sha256": "56343ad2324972b2126fb78ca068868584e628547c16082e7adb3dd1d178bf3e"
+      },
+      "verification_hooks": 2,
+      "attempts": 1,
+      "retries": 0,
+      "trimmed": true,
+      "container_absent": true,
+      "owned_stages": [
+        {
+          "stage": "prepare.log",
+          "wall_s": 7.677420418,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-1.log",
+          "wall_s": 1.4077099079999997,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-1.log",
+          "wall_s": 1.8099691029999994,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-1.log",
+          "wall_s": 1.2072225639999996,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-1.log",
+          "wall_s": 1.4048721589999986,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-2.log",
+          "wall_s": 2.8110331160000004,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-2.log",
+          "wall_s": 2.6144384580000004,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-2.log",
+          "wall_s": 3.209155325,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-2.log",
+          "wall_s": 3.612328275,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-3.log",
+          "wall_s": 1.8074353929999998,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-3.log",
+          "wall_s": 3.2146255339999987,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-3.log",
+          "wall_s": 3.8126158980000002,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-3.log",
+          "wall_s": 1.8077719440000002,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-4.log",
+          "wall_s": 2.4086331879999996,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-4.log",
+          "wall_s": 2.8108370099999993,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-4.log",
+          "wall_s": 5.810176616000001,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "native.log",
+          "wall_s": 15.391793081,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-4.log",
+          "wall_s": 28.888982797,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "gate.log",
+          "wall_s": 22.889469880999997,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "board-semantic-0.log",
+          "wall_s": 5.092800847999999,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "board-semantic-1.log",
+          "wall_s": 0.4060466949999973,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-5.log",
+          "wall_s": 0.0005543400000024121,
+          "cleanup_complete": true
+        }
+      ],
+      "variants": [
+        {
+          "id": "v00",
+          "seed": 0,
+          "state": "complete",
+          "pass": 8,
+          "progress": {
+            "pass": 8,
+            "unrouted": 0,
+            "conflicts": 0,
+            "wire_mm": 262.029,
+            "vias": 20
+          }
+        },
+        {
+          "id": "v01",
+          "seed": 1,
+          "state": "stopped",
+          "pass": 8,
+          "progress": {
+            "pass": 8,
+            "unrouted": 0,
+            "conflicts": 2,
+            "wire_mm": 265.305,
+            "vias": 20
+          },
+          "reason": "verification deferred: remaining budget below measured verification cost"
+        },
+        {
+          "id": "v02",
+          "seed": 2,
+          "state": "yielded",
+          "pass": 8,
+          "progress": {
+            "pass": 8,
+            "unrouted": 0,
+            "conflicts": 3,
+            "wire_mm": 277.228,
+            "vias": 17
+          },
+          "reason": "verification deferred: remaining budget below measured verification cost"
+        },
+        {
+          "id": "v03",
+          "seed": 3,
+          "state": "complete",
+          "pass": 7,
+          "progress": {
+            "pass": 7,
+            "unrouted": 0,
+            "conflicts": 0,
+            "wire_mm": 259.742,
+            "vias": 19
+          },
+          "reason": "verification deferred: remaining budget below measured verification cost"
+        }
+      ],
+      "verified_candidates": 1
+    },
+    {
+      "label": "sprint-warm",
+      "job_id": "20261105-190622-9590eb",
+      "mode": "sprint",
+      "cpus": 2,
+      "wall_limit_s": 120,
+      "reserved_cpu_ceiling_s": 240,
+      "first_verified_s": 74.46345551799999,
+      "operation_wall_s": 77.20481048699999,
+      "operation_cpu_s": 140.386259,
+      "container_cpu_at_harness_end_s": 141.846446,
+      "client_wall_s": 92.15818484799999,
+      "cache": "4449 files, sending 0 (0 KB)",
+      "queue_s": 1.974,
+      "container_attempt_s": 79.977,
+      "result": {
+        "status": "PASS",
+        "drc": 0,
+        "opens": 0,
+        "parity": 0,
+        "mm": 262,
+        "vias": 20,
+        "tracks": 177,
+        "sha256": "7c4dd481c5454a055da4b956124c984cae450a17547d81c3abe5092b31316da3",
+        "native_seconds": 77.116571154,
+        "model_sha256": "56343ad2324972b2126fb78ca068868584e628547c16082e7adb3dd1d178bf3e"
+      },
+      "verification_hooks": 2,
+      "attempts": 1,
+      "retries": 0,
+      "trimmed": true,
+      "container_absent": true,
+      "owned_stages": [
+        {
+          "stage": "prepare.log",
+          "wall_s": 9.707070751,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-1.log",
+          "wall_s": 1.40776245,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-1.log",
+          "wall_s": 1.8075401450000008,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-1.log",
+          "wall_s": 1.2073332840000002,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-1.log",
+          "wall_s": 1.4069993520000008,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-2.log",
+          "wall_s": 2.208453842000001,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-2.log",
+          "wall_s": 2.8742820809999996,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-2.log",
+          "wall_s": 3.013185399000002,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-2.log",
+          "wall_s": 3.4113946539999978,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-3.log",
+          "wall_s": 1.807963545999999,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-3.log",
+          "wall_s": 3.213854382999998,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-3.log",
+          "wall_s": 2.0054870010000014,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-3.log",
+          "wall_s": 3.8117527389999997,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-4.log",
+          "wall_s": 2.409881534,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-4.log",
+          "wall_s": 5.8116797789999985,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-4.log",
+          "wall_s": 18.771081917999997,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "native.log",
+          "wall_s": 16.255849380000004,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "gate.log",
+          "wall_s": 22.096738839000004,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "board-semantic-0.log",
+          "wall_s": 5.984944405999995,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "board-semantic-1.log",
+          "wall_s": 0.4057880000000005,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "slice-4.log",
+          "wall_s": 2.613879037999999,
+          "cleanup_complete": true
+        }
+      ],
+      "variants": [
+        {
+          "id": "v00",
+          "seed": 0,
+          "state": "complete",
+          "pass": 8,
+          "progress": {
+            "pass": 8,
+            "unrouted": 0,
+            "conflicts": 0,
+            "wire_mm": 262.029,
+            "vias": 20
+          }
+        },
+        {
+          "id": "v01",
+          "seed": 1,
+          "state": "yielded",
+          "pass": 8,
+          "progress": {
+            "pass": 8,
+            "unrouted": 0,
+            "conflicts": 2,
+            "wire_mm": 265.305,
+            "vias": 20
+          },
+          "reason": "verification deferred: remaining budget below measured verification cost"
+        },
+        {
+          "id": "v02",
+          "seed": 2,
+          "state": "yielded",
+          "pass": 8,
+          "progress": {
+            "pass": 8,
+            "unrouted": 0,
+            "conflicts": 3,
+            "wire_mm": 277.228,
+            "vias": 17
+          },
+          "reason": "verification deferred: remaining budget below measured verification cost"
+        },
+        {
+          "id": "v03",
+          "seed": 3,
+          "state": "complete",
+          "pass": 7,
+          "progress": {
+            "pass": 7,
+            "unrouted": 0,
+            "conflicts": 0,
+            "wire_mm": 259.742,
+            "vias": 19
+          },
+          "reason": "verification deferred: remaining budget below measured verification cost"
+        }
+      ],
+      "verified_candidates": 1
+    },
+    {
+      "label": "single-warm",
+      "job_id": "20261105-190802-bbbbbf",
+      "mode": "single",
+      "cpus": 2,
+      "wall_limit_s": 120,
+      "reserved_cpu_ceiling_s": 240,
+      "first_verified_s": 56.115882916,
+      "operation_wall_s": 56.115882916,
+      "operation_cpu_s": 93.765596,
+      "container_cpu_at_harness_end_s": 95.181017,
+      "client_wall_s": 72.269618569,
+      "cache": "4449 files, sending 0 (0 KB)",
+      "queue_s": 1.997,
+      "container_attempt_s": 58.017,
+      "result": {
+        "status": "PASS",
+        "drc": 0,
+        "opens": 0,
+        "parity": 0,
+        "mm": 262,
+        "vias": 20,
+        "tracks": 177,
+        "sha256": "7c4dd481c5454a055da4b956124c984cae450a17547d81c3abe5092b31316da3",
+        "native_seconds": 29.1,
+        "core_seconds": 8.1,
+        "model_sha256": "0a3c81c75b2db7fcb98418aebfc65ea9b49918c05371aa585feee3ee6b0a5a63"
+      },
+      "verification_hooks": 2,
+      "attempts": 1,
+      "retries": 0,
+      "trimmed": true,
+      "container_absent": true,
+      "owned_stages": [
+        {
+          "stage": "native",
+          "wall_s": 29.233101357,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "gate",
+          "wall_s": 20.796593887000004,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "board-semantic-0",
+          "wall_s": 5.396252674999996,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "board-semantic-1",
+          "wall_s": 0.4076045749999976,
+          "cleanup_complete": true
+        }
+      ],
+      "verified_candidates": 1
+    },
+    {
+      "label": "single-equal-cpu",
+      "job_id": "20261105-190924-956a6c",
+      "mode": "single",
+      "cpus": 1,
+      "wall_limit_s": 240,
+      "reserved_cpu_ceiling_s": 240,
+      "first_verified_s": 121.255755863,
+      "operation_wall_s": 121.255755863,
+      "operation_cpu_s": 118.771117,
+      "container_cpu_at_harness_end_s": 120.237629,
+      "client_wall_s": 138.215716939,
+      "cache": "4449 files, sending 0 (0 KB)",
+      "queue_s": 1.922,
+      "container_attempt_s": 124.009,
+      "result": {
+        "status": "PASS",
+        "drc": 0,
+        "opens": 0,
+        "parity": 0,
+        "mm": 262,
+        "vias": 20,
+        "tracks": 177,
+        "sha256": "7c4dd481c5454a055da4b956124c984cae450a17547d81c3abe5092b31316da3",
+        "native_seconds": 60.7,
+        "core_seconds": 8.1,
+        "model_sha256": "0a3c81c75b2db7fcb98418aebfc65ea9b49918c05371aa585feee3ee6b0a5a63"
+      },
+      "verification_hooks": 2,
+      "attempts": 1,
+      "retries": 0,
+      "trimmed": true,
+      "container_absent": true,
+      "owned_stages": [
+        {
+          "stage": "native",
+          "wall_s": 60.874480751,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "gate",
+          "wall_s": 45.17708464299999,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "board-semantic-0",
+          "wall_s": 14.482762243999998,
+          "cleanup_complete": true
+        },
+        {
+          "stage": "board-semantic-1",
+          "wall_s": 0.41115536299999805,
+          "cleanup_complete": true
+        }
+      ],
+      "verified_candidates": 1
+    }
+  ]
+}

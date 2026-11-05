@@ -1,0 +1,8 @@
+# Preregistered #1318 protocol
+Pinned toolchain 696715d; frozen ENV-SENSE fixture from #1317 archive, source PCB 6abb00a0a30cd3f02d6e96a0cb326e16c1f050b735e5ed43770dcbf653844ae7.
+No smaller eligible active board: ENV23 footprints, FIELD34, CELLULAR104; BASE excluded, NET-CORE excluded. At most two boards; use ENV only.
+Sequential daemon jobs, pinned existing nightly image, Node22.23.2, source-built Linux router, 4GiB, retries0. No canonical adoption.
+Order: single-cold (2CPU120s), sprint-cold (2CPU120s), sprint-warm (2CPU120s), single-warm (2CPU120s), single-equal-cpu (1CPU240s). Labels cold mean first observed submission for this experiment, not forced eviction of the shared cache. Report actual hit/miss bytes; do not clear shared cache.
+Single seed0, 80iterations, max-time wall-minus30s. Sprint seeds0,1,2,3, via cost3, slices2passes, parallelism2, 80passes each, 30s verification reserve. Same prepared-source admission, lock, native gates; both get fresh configured gate and post_verify semantic hooks. No cached candidate acceptance.
+Primary equal-wall/equal-resource ceiling: 2CPU120s each, 240reserved CPU-seconds. Additional equal-reserved-CPU comparison: single1CPU240s vs sprint2CPU120s, 240reserved CPU-seconds, explicit different wall. This is not an assertion of equal actual CPU; collect cgroup CPU including all job child processes. Gate failure, timeout or unavailable measurement remains visible.
+Record all attempts, status, native DRC/opens/parity, wire/vias, first verified time, preparation/slicing/verification, cgroup CPU, full client overhead, cache transfer, source/binary/runtime hashes, terminal job/container cleanup. Small descriptive experiment: no statistical generalization or speedup threshold invented.
