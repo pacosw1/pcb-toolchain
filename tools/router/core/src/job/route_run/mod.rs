@@ -19,6 +19,7 @@ use crate::kicad::kicad_cli;
 use crate::kicad::save::{WorkDir, put_in_place, save_refilled};
 use crate::plan::{self, Backend, Plan, Pour, Stage, add_blocks, copy_block, open_nets, split_zones};
 use crate::route_features::{defaults_path, root};
+use crate::run::guard;
 use crate::sha256::sha256;
 use crate::tool_args::Args;
 use board_edit::{TMP, keepout_area, keepout_zone, pour_area, pour_zone, set_widths};
@@ -318,6 +319,7 @@ impl Job {
         for extension in SIDECARS {
             copy_file(&start.with_extension(extension), &out.with_extension(extension))?;
         }
+        guard::keeps_copper(&input, &read_text(&out)?)?;
         let report = drc(&out, &self.outdir.join("drc.json"), true)?;
         Ok(final_fields(&report, &out, widths, plan.pours.len(), &skipped)?)
     }
@@ -384,6 +386,7 @@ fn route(options: &Options) -> Result<i32, String> {
     } else if !plan.features.is_empty() {
         return Err("route: the tracemaker backend cannot apply route.json features".to_string());
     }
+    guard::preflight(&start, &outdir.join("preflight.json"))?;
     let job = Job { outdir: outdir.clone(), name, folder, backend, halo: iotroute::wants_halo(&plan), pours: plan.pours.clone() };
     let (mut current, mut stages, mut failures) = (start.clone(), Vec::new(), Vec::new());
     for (number, stage) in plan.stages.iter().enumerate() {

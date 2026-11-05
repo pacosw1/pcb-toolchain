@@ -9,7 +9,8 @@
 //!  1. --lock-from SRC: a copy of the input without tracks and vias, with the copper of the lock nets from SRC, locked. Lock nets
 //!     are the diff pairs and the nets with DRU via_count 0, read from the model of SRC. Without it all copper of the input stays
 //!     and is locked.
-//!  2. `iotroute model`, then the route, the `widths` rules of the board's route.json, then `iotroute write`.
+//!  2. The preflight (guard.rs): KiCad DRC of what will be routed, which stops at a fault of its existing copper. Then `iotroute model`,
+//!     the route, the `widths` rules of the board's route.json and `iotroute write`, whose board must keep all copper of its input.
 //!  3. OUT gets the board and the project files of the input; the input's .kicad_pro goes back if a save rewrote it.
 //!  4. KiCad DRC with --schematic-parity on OUT, on the saved fill.
 //!
@@ -21,6 +22,7 @@
 //! PASS|FAIL <drc errors> <unconnected> <parity> <tracks> <vias> <seconds>, or ERROR <seconds> <cause> when a step did not
 //! complete; with --json the record on the next line. The record is also in OUT.iotroute/result.json. Exit: 0 PASS, 1 FAIL, 2 no
 //! verdict.
+pub mod guard;
 pub mod lock;
 pub mod measure;
 pub mod planes;
@@ -323,6 +325,7 @@ fn run(a: &Args, rec: &mut Record, out: &Path, work: &Path) -> Result<(), String
         route_in = copy;
         rec.stages.lock = Some(stage);
     }
+    guard::preflight(&route_in, &work.join("preflight.json"))?;
     let model = work.join("model.json");
     let (code, text) = steps.model(&folder, &route_in, &model, &work.join("model.log"), a.return_exempt)?;
     if code != 0 {

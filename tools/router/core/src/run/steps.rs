@@ -1,5 +1,6 @@
 //! The steps a run spawns, each with its log: model, route, write and the gate's planes screen. A step is this same binary, so a
 //! core that exits or panics is a failed step of the run, not the end of it.
+use super::guard::keeps_copper;
 use super::record::{AttemptStages, CoreStage, RouteClaim, WriteStage};
 use super::{Args, project::project_of};
 use crate::model::text::round_to;
@@ -146,6 +147,8 @@ impl Steps {
         if !written.is_file() {
             return Err(format!("iotroute write wrote no board (exit {exit}), see {}", work.join("write.log").display()));
         }
+        let read = |path: &Path| fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()));
+        keeps_copper(&read(route_in)?, &read(&written)?)?;
         fs::copy(&written, out).map_err(|e| format!("{}: {e}", out.display()))?;
         Ok(AttemptStages { core, write: WriteStage { exit, line: text.trim().lines().last().unwrap_or("").to_string() } })
     }

@@ -150,7 +150,7 @@ async function routeJson(run: Candidate): Promise<ToolOutcome> {
 }
 
 /** iotroute run gives its verdict from KiCad DRC with parity on the saved fill; then the normal gate runs on the copy. A board's
- *  gate configuration is admitted first: a G4 or G5 gate that the shared validator accepts. */
+ *  gate configuration is admitted first: a gate of any stage that the shared validator accepts. */
 async function iotroute(run: Candidate): Promise<ToolOutcome> {
   await validateGate(run.workspace, run.board);
   const { folder, manifest, native } = run, output = join(folder, 'operation/router'), routed = join(output, native.split('/').at(-1)!);
