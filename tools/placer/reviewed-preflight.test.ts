@@ -23,6 +23,7 @@ test('staged producer checks population and never treats preflight as approval',
  const native=reconstructed.parts.U1;
  const canonical=(v:any):string=>Array.isArray(v)?'['+v.map(canonical).join(',')+']':v && typeof v==='object'?
    '{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}':JSON.stringify(v);
+ put('hardware-design/boards/X/gate.json',JSON.stringify({project:'cad/PROJECT'}));
  put('hardware-design/boards/X/spec.md','spec'); put('review.md','review'); put('doc.pdf','synthetic');
  const spec={path:'hardware-design/boards/X/spec.md',sha256:sha256('spec'),section:'use'};
  const doc={path:'doc.pdf',sha256:sha256('synthetic'),page:1,document_id:'D',revision:'A'};
@@ -33,7 +34,8 @@ test('staged producer checks population and never treats preflight as approval',
    budgets:[{net:'VCC',limit:{min:0,max:2,unit:'A',source:spec},loads:[{reference:'U1',required:{min:0,max:1,unit:'A',source:spec}}]}]};
  manifest.review={verdict:'passed',reviewer:'synthetic',reviewed_at_utc:'2026-01-01T00:00:00Z',facts_sha256:sha256(canonical(manifest)),evidence};
  put('manifest.json',JSON.stringify(manifest));
- const inputs={...sources,'manifest.json':sha256(readFileSync(join(root,'manifest.json'))),
+ const inputs={...sources,'hardware-design/boards/X/gate.json':sha256(readFileSync(join(root,'hardware-design/boards/X/gate.json'))),
+   'manifest.json':sha256(readFileSync(join(root,'manifest.json'))),
    'hardware-design/boards/X/spec.md':sha256('spec'),'review.md':sha256('review'),'doc.pdf':sha256('synthetic')};
  const units=[{name:'U1',refs:['U1'],x:1,y:2,fixed:false}]; const outline=[[0,0],[10,0],[10,10]];
  const core={schema:'iot-lab.engineering-constraints.v1',root:'/original',board:'X',manifest:'/original/manifest.json',

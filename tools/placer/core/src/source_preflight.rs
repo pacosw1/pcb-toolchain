@@ -59,6 +59,7 @@ mod tests {
         std::fs::write(&native, b"board").unwrap();
         std::fs::create_dir_all(root.join("hardware-design/boards/A")).unwrap();
         std::fs::write(root.join("hardware-design/boards/A/spec.md"), b"spec").unwrap();
+        std::fs::write(root.join("hardware-design/boards/A/gate.json"), b"{\"project\":\"cad/board\"}").unwrap();
         std::fs::write(root.join("review.md"), b"review").unwrap();
         std::fs::write(root.join("doc.pdf"), b"synthetic").unwrap();
         let digest = |bytes: &[u8]| format!("{:x}", Sha256::digest(bytes));
@@ -320,6 +321,7 @@ fn preflight_relocated(problem: &Value, inspector: Option<(&Path, &str)>) -> cra
     let root = Path::new(contract["root"].as_str().ok_or("reviewed root missing")?).canonicalize()?;
     let path = owned(&root, contract["manifest"].as_str().ok_or("reviewed manifest missing")?)?;
     let manifest: Value = serde_json::from_slice(&std::fs::read(path)?)?;
+    check_board_identity(contract, &manifest)?;
     check_part_metadata(&manifest)?;
     check_rating_ranges(&manifest)?;
     check_manifest_sources(contract, &manifest, inspector)?;
@@ -338,18 +340,20 @@ mod preflight_tests {
         let root = std::env::temp_dir().join(format!("iotplace-preflight-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         let root = root.canonicalize().unwrap();
-        let native = root.join("board.kicad_pcb");
+        std::fs::create_dir_all(root.join("hardware-design/boards/A/cad")).unwrap();
+        let native = root.join("hardware-design/boards/A/cad/board.kicad_pcb");
         let manifest_path = root.join("manifest.json");
         std::fs::write(&native, b"board").unwrap();
         std::fs::create_dir_all(root.join("hardware-design/boards/A")).unwrap();
         std::fs::write(root.join("hardware-design/boards/A/spec.md"), b"spec").unwrap();
+        std::fs::write(root.join("hardware-design/boards/A/gate.json"), b"{\"project\":\"cad/board\"}").unwrap();
         std::fs::write(root.join("review.md"), b"review").unwrap();
         std::fs::write(root.join("doc.pdf"), b"synthetic").unwrap();
         let digest = |v: &[u8]| format!("{:x}", Sha256::digest(v));
         let spec = json!({"path":"hardware-design/boards/A/spec.md","sha256":digest(b"spec"),"section":"use"});
         let doc = json!({"path":"doc.pdf","sha256":digest(b"synthetic"),"page":1,"document_id":"D","revision":"A"});
         let evidence = json!({"path":"review.md","sha256":digest(b"review"),"section":"review"});
-        let mut manifest = json!({"schema":"iot-lab.part-use.v1","board":"A","revision":"1","project":"board.kicad_pro","spec":spec,
+        let mut manifest = json!({"schema":"iot-lab.part-use.v1","board":"A","revision":"1","project":"hardware-design/boards/A/cad/board","spec":spec,
             "parts":[{"reference":"U1","mpn":"P","lcsc":"C123","manufacturer":"M","package":{"name":"QFN","variant":"A"},"unresolved":[],"layout_constraints":[],"datasheets":[doc],"assembly_dependencies":[],"ratings":[{"id":"r","quantity":"voltage",
                 "limit":{"min":0,"max":10,"unit":"V","source":doc},
                 "required":{"min":0,"max":5,"unit":"V","source":spec},"conditions":[]}]}],
@@ -362,7 +366,8 @@ mod preflight_tests {
         let mut problem = json!({"units":[{"name":"U1","refs":["U1"],"x":1,"y":2,"fixed":false}],
             "board":{"outline":[[0,0],[10,0],[10,10]]},"board_file":native,
             "engineering":{"schema":"iot-lab.engineering-constraints.v1","root":root,"board":"A","manifest":manifest_path,"native":native,
-                "inputs":{"board.kicad_pcb":digest(b"board"),"manifest.json":digest(&manifest_bytes),
+                "inputs":{"hardware-design/boards/A/cad/board.kicad_pcb":digest(b"board"),"manifest.json":digest(&manifest_bytes),
+                    "hardware-design/boards/A/gate.json":digest(b"{\"project\":\"cad/board\"}"),
                     "hardware-design/boards/A/spec.md":digest(b"spec"),"review.md":digest(b"review"),"doc.pdf":digest(b"synthetic")},
                 "rules":[],"geometry":{"refs":{"U1":{"pads":{}}}},"bindings":[],"where":{"U1":0}}});
         let mut core = problem["engineering"].clone();
@@ -372,14 +377,17 @@ mod preflight_tests {
         problem["engineering"]["review_sha256"] = json!(review);
         problem["engineering"]["model_anchor_sha256"] = json!(anchor);
         assert!(preflight(&problem).is_ok());
+        let mut wrong_project = manifest.clone();
+        wrong_project["project"] = json!("hardware-design/boards/A/cad/other");
+        assert!(check_board_identity(&problem["engineering"], &wrong_project).is_err());
         let population = json!({"parts":{"U1":{"required":true,"pad_net_map":{"1":"VCC"}}}});
         assert!(preflight_with_native(&problem, &population).is_ok());
         let incomplete = json!({"parts":{"U1":{"required":true,"pad_net_map":{"1":"OTHER"}}}});
         assert!(preflight_with_native(&problem, &incomplete).is_err());
         let mut remote = problem.clone();
-        remote["board_file"] = json!("/offline/source/board.kicad_pcb");
+        remote["board_file"] = json!("/offline/source/hardware-design/boards/A/cad/board.kicad_pcb");
         remote["engineering"]["root"] = json!("/offline/source");
-        remote["engineering"]["native"] = json!("/offline/source/board.kicad_pcb");
+        remote["engineering"]["native"] = json!("/offline/source/hardware-design/boards/A/cad/board.kicad_pcb");
         remote["engineering"]["manifest"] = json!("/offline/source/manifest.json");
         let mut core = remote["engineering"].clone();
         core.as_object_mut().unwrap().remove("review_sha256");
@@ -821,4 +829,52 @@ mod metadata_tests {
         manifest["parts"][0]["lcsc"]=json!("unknown");
         assert!(check_part_metadata(&manifest).is_err());
     }
+}
+
+/// Verify board gate ownership and optional registry revision from a staged source tree.
+fn check_board_identity(contract: &Value, manifest: &Value) -> crate::Result<()> {
+    let root=Path::new(contract["root"].as_str().ok_or("review root missing")?).canonicalize()?;
+    let board=contract["board"].as_str().ok_or("review board missing")?;
+    if board.is_empty() || !board.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b==b'-') {return Err("invalid board ID".into());}
+    let base=format!("hardware-design/boards/{board}");
+    let gate_name=format!("{base}/gate.json");
+    let gate_path=owned(&root,&gate_name)?;
+    let inputs=contract["inputs"].as_object().ok_or("reviewed inputs missing")?;
+    let has_input = |path:&Path| -> crate::Result<bool> {
+        for key in inputs.keys() {if owned(&root,key)? == path {return Ok(true);}}
+        Ok(false)
+    };
+    if !has_input(&gate_path)? {return Err("board gate absent from reviewed input closure".into());}
+    let gate:Value=serde_json::from_slice(&std::fs::read(&gate_path)?)?;
+    let stem=gate["project"].as_str().filter(|s| !s.is_empty()).ok_or("board project missing")?;
+    if Path::new(stem).is_absolute() || stem.contains('\\') || stem.split('/').any(|v| v.is_empty() || v=="." || v=="..") {
+        return Err("board project path is unsafe".into());
+    }
+    let relative=format!("{base}/{stem}");
+    if manifest["project"].as_str() != Some(&relative) {return Err("manifest project differs from board gate".into());}
+    let board_path=owned(&root,&format!("{relative}.kicad_pcb"))?;
+    if board_path != owned(&root,contract["native"].as_str().ok_or("native board missing")?)? {return Err("native board differs from gate project".into());}
+    let registry=root.join("hardware-design/registry/boards.json");
+    if registry.exists() {
+        let registry=owned(&root,"hardware-design/registry/boards.json")?;
+        if !has_input(&registry)? {return Err("board registry absent from reviewed input closure".into());}
+        let value:Value=serde_json::from_slice(&std::fs::read(registry)?)?;
+        let mut matches=Vec::new();
+        for entry in value["boards"].as_array().ok_or("board registry malformed")? {
+            let revisions=entry.get("revisions").and_then(Value::as_array);
+            if let Some(revisions)=revisions {
+                for revision in revisions {if revision["gate"].as_str()==Some(board) {matches.push((entry,revision));}}
+            }
+        }
+        if matches.len()>1 {return Err("ambiguous board registry revision".into());}
+        if let Some((entry, revision))=matches.first() {
+            if manifest["revision"] != revision["revision"] {return Err("review revision differs from board registry".into());}
+            let directory=entry["directory"].as_str().ok_or("board registry directory missing")?;
+            let spec=revision["spec"].as_str().ok_or("board registry specification missing")?;
+            if manifest["spec"]["path"].as_str() != Some(&format!("hardware-design/boards/{directory}/{spec}")) {
+                return Err("review specification differs from board registry".into());
+            }
+        }
+    }
+    Ok(())
 }
