@@ -5,6 +5,8 @@ import { evaluateCandidateLayout, evaluateContract } from './design-contract-asy
 import type { Report } from './design-contract-verifiers-async.ts';
 import { designServices } from './design-services.ts';
 import { checkManifest, reviewedContract, type ReviewServices } from './engineering-constraints.ts';
+import { prerequisiteStage, type AdmittedAction } from './pcb-action.ts';
+export { routesCopper } from './pcb-action.ts';
 import { atomicJson, readObject, sha256File } from './json-file.ts';
 import { verifyManifest } from './part-review.ts';
 import { type Emit, measuredStage, type Row } from './pcb-operation-log.ts';
@@ -19,7 +21,7 @@ const plain = (value: unknown): Row => JSON.parse(jsonDumps(value)) as Row;
 export interface Binding { path: string; sha256: string; content?: Row }
 export interface OperationManifest extends Row {
   root: string; board: string; operation: string; node: string; timeout_s: number; kind?: string; router?: string; spec?: Row;
-  design_contract?: Binding; engineering_manifest?: Binding; plan?: Binding; from_run?: { folder: string; result_sha256: string };
+  action?: AdmittedAction; design_contract?: Binding; engineering_manifest?: Binding; plan?: Binding; from_run?: { folder: string; result_sha256: string };
 }
 
 const review: ReviewServices = {
@@ -33,16 +35,6 @@ export function reviewedRules(root: string, board: string): unknown[] {
   return isFile(manifest) ? reviewedContract(root, board, manifest, review).rules : [];
 }
 
-/** A routed board needs its placement screened first. */
-export const routesCopper = (manifest: OperationManifest): boolean =>
-  manifest.operation === 'route' || manifest.operation === 'repair' || (manifest.operation === 'edit' && manifest.kind === 'route');
-
-function stageBefore(manifest: OperationManifest): string {
-  if (manifest.operation === 'release') return 'routing';
-  if (manifest.operation === 'build') return 'architecture';
-  return routesCopper(manifest) ? 'placement' : 'schematic';
-}
-
 /** The previous stage must hold before a candidate costs anything. The fresh gate still judges the changed layout. */
 export async function designAdmission(root: string, folder: string, manifest: OperationManifest, emit: Emit): Promise<Report | null> {
   const binding = manifest.design_contract;
@@ -51,7 +43,7 @@ export async function designAdmission(root: string, folder: string, manifest: Op
   if (!isRelativeTo(path, root) || sha256File(path) !== binding.sha256) throw new Error('design contract changed or escaped its checkout after admission');
   const declared = readObject<{ identity?: Row }>(path).identity ?? {};
   if (declared.board !== manifest.board) throw new Error('candidate design contract must name this exact native board');
-  const through = stageBefore(manifest), output = join(folder, 'operation/design-preflight.json');
+  const through = prerequisiteStage(manifest), output = join(folder, 'operation/design-preflight.json');
   const report = await measuredStage(emit, 'design-prerequisites', 'operation', () => evaluateContract(root, path, through, designServices(root, dirname(output))));
   atomicJson(output, report);
   if (report.status !== 'passed') {
